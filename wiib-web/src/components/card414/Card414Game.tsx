@@ -2,8 +2,16 @@ import { useState, useCallback, useEffect } from 'react';
 import { Button } from '../ui/button';
 import { Card414PlayingCard } from './Card414PlayingCard';
 import { WsIndicator } from './WsIndicator';
+import { MicButton } from './MicButton';
 import { cn } from '../../lib/utils';
 import type { CardRoom, Card414GameState } from '../../types';
+
+interface VoiceState {
+  micOn: boolean;
+  connected: boolean;
+  connecting: boolean;
+  toggleMic: () => void;
+}
 
 interface Props {
   gameState: Card414GameState;
@@ -15,13 +23,14 @@ interface Props {
   onBackToLobby: () => void;
   chaGouFlash: { type: string; seat: number } | null;
   wsConnected: boolean;
+  voice: VoiceState;
 }
 
 function relativePositions(mySeat: number) {
   return [0, 1, 2, 3].map(i => (mySeat + i) % 4);
 }
 
-export function Card414Game({ gameState, room, player, sendWs, onForceQuit, gameOverInfo, onBackToLobby, chaGouFlash, wsConnected }: Props) {
+export function Card414Game({ gameState, room, player, sendWs, onForceQuit, gameOverInfo, onBackToLobby, chaGouFlash, wsConnected, voice }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [roundCountdown, setRoundCountdown] = useState(0);
 
@@ -129,6 +138,12 @@ export function Card414Game({ gameState, room, player, sendWs, onForceQuit, game
           </span>
         </div>
         <div className="flex items-center gap-3">
+          <MicButton
+            micOn={voice.micOn}
+            connected={voice.connected}
+            connecting={voice.connecting}
+            onClick={voice.toggleMic}
+          />
           <WsIndicator connected={wsConnected} />
           <button
           onClick={handleForceQuit}

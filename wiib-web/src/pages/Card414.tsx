@@ -7,6 +7,7 @@ import {useToast} from '../components/ui/use-toast';
 import {Card414Lobby} from '../components/card414/Card414Lobby';
 import {Card414Room} from '../components/card414/Card414Room';
 import {Card414Game} from '../components/card414/Card414Game';
+import {useAgoraVoice} from '../hooks/useAgoraVoice';
 import type {Card414GameState, Card414WsMessage, CardRoom} from '../types';
 
 const STORAGE_KEY = '414-player';
@@ -37,6 +38,13 @@ export function Card414() {
   const clientRef = useRef<Client | null>(null);
   const roomCodeRef = useRef<string>('');
   const wsMsgRef = useRef<(msg: Card414WsMessage) => void>(() => {});
+
+  const voiceEnabled = phase !== 'lobby' && !!room?.roomCode;
+  const voice = useAgoraVoice({
+    roomCode: room?.roomCode || '',
+    playerUuid: player.uuid,
+    enabled: voiceEnabled,
+  });
 
   const updateNickname = useCallback((n: string) => {
     const p = { ...player, nickname: n };
@@ -203,12 +211,13 @@ export function Card414() {
         await card414Api.leaveRoom(player.uuid, roomCodeRef.current);
       } catch { /* */ }
     }
+    voice.disconnect();
     disconnectWs();
     setRoom(null);
     setPhase('lobby');
     roomCodeRef.current = '';
     localStorage.removeItem('414-room');
-  }, [player.uuid, disconnectWs]);
+  }, [player.uuid, disconnectWs, voice]);
 
   // 强制退出(销毁牌局)
   const forceQuit = useCallback(async () => {
@@ -217,16 +226,18 @@ export function Card414() {
         await card414Api.forceQuit(player.uuid, roomCodeRef.current);
       } catch { /* */ }
     }
+    voice.disconnect();
     disconnectWs();
     setRoom(null);
     setGameState(null);
     setPhase('lobby');
     roomCodeRef.current = '';
     localStorage.removeItem('414-room');
-  }, [player.uuid, disconnectWs]);
+  }, [player.uuid, disconnectWs, voice]);
 
   // 游戏结束后返回大厅
   const backToLobby = useCallback(() => {
+    voice.disconnect();
     disconnectWs();
     setRoom(null);
     setGameState(null);
@@ -234,7 +245,7 @@ export function Card414() {
     setPhase('lobby');
     roomCodeRef.current = '';
     localStorage.removeItem('414-room');
-  }, [disconnectWs]);
+  }, [disconnectWs, voice]);
 
   // 页面加载恢复
   useEffect(() => {
@@ -300,6 +311,7 @@ export function Card414() {
           sendWs={sendWs}
           onLeave={leaveRoom}
           wsConnected={wsConnected}
+          voice={voice}
         />
       )}
       {phase === 'game' && gameState && room && (
@@ -313,6 +325,7 @@ export function Card414() {
           onBackToLobby={backToLobby}
           chaGouFlash={chaGouFlash}
           wsConnected={wsConnected}
+          voice={voice}
         />
       )}
     </div>

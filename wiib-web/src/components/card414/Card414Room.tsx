@@ -2,8 +2,16 @@ import { useCallback } from 'react';
 import { Button } from '../ui/button';
 import { useToast } from '../ui/use-toast';
 import { WsIndicator } from './WsIndicator';
+import { MicButton } from './MicButton';
 import { cn } from '../../lib/utils';
 import type { CardRoom } from '../../types';
+
+interface VoiceState {
+  micOn: boolean;
+  connected: boolean;
+  connecting: boolean;
+  toggleMic: () => void;
+}
 
 interface Props {
   room: CardRoom;
@@ -11,6 +19,7 @@ interface Props {
   sendWs: (dest: string, body: Record<string, unknown>) => void;
   onLeave: () => void;
   wsConnected: boolean;
+  voice: VoiceState;
 }
 
 const TEAM_COLORS: Record<string, string> = {
@@ -28,7 +37,7 @@ const SEAT_LAYOUT = [
   { idx: 0, pos: 'col-start-2 row-start-3', label: '我' },
 ];
 
-export function Card414Room({ room, player, sendWs, onLeave, wsConnected }: Props) {
+export function Card414Room({ room, player, sendWs, onLeave, wsConnected, voice }: Props) {
   const { toast } = useToast();
   const mySeat = room.seats.find(s => s.uuid === player.uuid);
 
@@ -63,6 +72,12 @@ export function Card414Room({ room, player, sendWs, onLeave, wsConnected }: Prop
           ← 退出房间
         </button>
         <div className="flex items-center gap-2">
+          <MicButton
+            micOn={voice.micOn}
+            connected={voice.connected}
+            connecting={voice.connecting}
+            onClick={voice.toggleMic}
+          />
           <WsIndicator connected={wsConnected} />
           <span className="font-mono text-lg font-bold tracking-widest">{room.roomCode}</span>
           <button onClick={copyCode} className="text-xs text-muted-foreground hover:text-foreground">

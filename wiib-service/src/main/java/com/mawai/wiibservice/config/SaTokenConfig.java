@@ -22,6 +22,7 @@ public class SaTokenConfig extends BaseSaTokenConfig {
         List<String> paths = new ArrayList<>(getDefaultExcludePaths());
         paths.add("/api/auth/callback/**");
         paths.add("/api/414/**");
+        paths.add("/api/agora/**");
         paths.add("/ws/**");
         return paths;
     }
