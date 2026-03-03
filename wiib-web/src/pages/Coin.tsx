@@ -121,6 +121,16 @@ export function Coin({ symbol = 'BTCUSDT' }: { symbol?: string }) {
 
   const tick = useCryptoStream(symbol);
 
+  // PAXG: USD/CNY 汇率 → 人民币/克
+  const [usdCny, setUsdCny] = useState(0);
+  useEffect(() => {
+    if (symbol !== 'PAXGUSDT') return;
+    fetch('https://open.er-api.com/v6/latest/USD')
+      .then(r => r.json())
+      .then(d => { if (d.result === 'success') setUsdCny(d.rates.CNY); })
+      .catch(() => {});
+  }, [symbol]);
+
   // 交易面板状态
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
   const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET');
@@ -382,6 +392,11 @@ export function Coin({ symbol = 'BTCUSDT' }: { symbol?: string }) {
               {currentPrice > 0 ? (
                 <>
                   <div className="text-2xl font-bold tracking-tight">${formatPrice(currentPrice)}</div>
+                  {symbol === 'PAXGUSDT' && usdCny > 0 && currentPrice > 0 && (
+                    <div className="text-sm text-yellow-500/80 font-mono">
+                      ¥{(currentPrice * usdCny / 31.1035).toFixed(2)}/克
+                    </div>
+                  )}
                   <div className={`flex items-center justify-end gap-1 text-sm ${isUp ? 'text-red-500' : 'text-green-500'}`}>
                     {isUp ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
                     <span>{isUp ? '+' : ''}{formatPrice(change)}</span>
