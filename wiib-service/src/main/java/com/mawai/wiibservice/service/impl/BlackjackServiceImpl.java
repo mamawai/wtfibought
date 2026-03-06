@@ -829,15 +829,17 @@ public class BlackjackServiceImpl implements BlackjackService {
 
     private void checkDailyReset(BlackjackAccount account) {
         LocalDate today = LocalDate.now();
-        if (account.getChips() < INITIAL_CHIPS) {
-            if (account.getLastResetDate() == null || !account.getLastResetDate().equals(today)) {
-                account.setChips(INITIAL_CHIPS);
-                account.setLastResetDate(today);
-                account.setUpdatedAt(LocalDateTime.now());
-                accountMapper.updateById(account);
-                log.info("用户{}积分每日重置为{}", account.getUserId(), INITIAL_CHIPS);
-            }
+        if (account.getLastResetDate() != null && account.getLastResetDate().equals(today)) {
+            return;
         }
+        boolean needReset = account.getChips() < INITIAL_CHIPS;
+        if (needReset) {
+            account.setChips(INITIAL_CHIPS);
+            log.info("用户{}积分每日重置为{}", account.getUserId(), INITIAL_CHIPS);
+        }
+        account.setLastResetDate(today);
+        account.setUpdatedAt(LocalDateTime.now());
+        accountMapper.updateById(account);
     }
 
     private long getTodayConverted(BlackjackAccount account) {
