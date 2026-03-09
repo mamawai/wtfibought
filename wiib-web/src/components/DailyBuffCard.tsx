@@ -71,10 +71,10 @@ export function DailyBuffCard({ status, onDrawn }: Props) {
 
   return (
     <Card id="daily-buff-card">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <div className="p-1.5 rounded-lg bg-primary/10">
-            <Gift className="w-4 h-4 text-primary" />
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <div className="p-1 rounded-md bg-primary/10">
+            <Gift className="w-3.5 h-3.5 text-primary" />
           </div>
           每日福利
         </CardTitle>

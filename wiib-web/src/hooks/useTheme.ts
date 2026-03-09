@@ -1,7 +1,7 @@
 import { useCallback, useState, useRef } from 'react';
 
 export function useTheme() {
-  const [isDark, setIsDark] = useState(() => !document.documentElement.classList.contains('light'));
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
   const ref = useRef<HTMLButtonElement>(null);
 
   const toggleTheme = useCallback(async () => {
@@ -22,9 +22,9 @@ export function useTheme() {
     if (!document.startViewTransition) {
       // 不支持则直接切换
       if (newIsDark) {
-        document.documentElement.classList.remove('light');
+        document.documentElement.classList.add('dark');
       } else {
-        document.documentElement.classList.add('light');
+        document.documentElement.classList.remove('dark');
       }
       localStorage.setItem('theme', newIsDark ? 'dark' : 'light');
       setIsDark(newIsDark);
@@ -34,9 +34,9 @@ export function useTheme() {
     // 使用 View Transition API 实现圆形发散动画
     const transition = document.startViewTransition(() => {
       if (newIsDark) {
-        document.documentElement.classList.remove('light');
+        document.documentElement.classList.add('dark');
       } else {
-        document.documentElement.classList.add('light');
+        document.documentElement.classList.remove('dark');
       }
     });
 

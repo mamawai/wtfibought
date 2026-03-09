@@ -25,7 +25,7 @@ export function Dialog({ open, onClose, children, className }: DialogProps) {
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div className={cn(
-        "relative bg-card border rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] overflow-hidden animate-in zoom-in-95 fade-in",
+        "relative bg-card border-[3px] border-edge rounded-2xl shadow-[6px_6px_0_0_var(--color-edge)] w-full max-w-lg max-h-[80vh] overflow-hidden animate-in zoom-in-95 fade-in",
         className
       )}>
         <button

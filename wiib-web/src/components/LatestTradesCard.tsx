@@ -32,10 +32,10 @@ function formatAmount(n?: number) {
 export function LatestTradesCard({ trades, loading }: Props) {
   return (
     <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <div className="p-1.5 rounded-lg bg-blue-500/10">
-            <Activity className="w-4 h-4 text-blue-500" />
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <div className="p-1 rounded-md bg-primary/10">
+            <Activity className="w-3.5 h-3.5 text-primary" />
           </div>
           最新成交
         </CardTitle>
@@ -58,7 +58,7 @@ export function LatestTradesCard({ trades, loading }: Props) {
               return (
                 <div key={t.id} className="flex items-center justify-between px-4 py-2.5 border-b border-border last:border-b-0 text-sm">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${tone === 'buy' ? 'bg-red-500/10 text-red-500' : 'bg-green-500/10 text-green-500'}`}>
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${tone === 'buy' ? 'bg-gain/10 text-gain' : 'bg-loss/10 text-loss'}`}>
                       {sideLabel}
                     </span>
                     <span className="font-medium truncate">{t.name}</span>

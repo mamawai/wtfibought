@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@stomp/stompjs": "^7.2.1",
+    "agora-rtc-sdk-ng": "^4.24.2",
     "antd": "^6.2.1",
     "axios": "^1.13.2",
     "class-variance-authority": "^0.7.1",
