@@ -2,12 +2,15 @@ package com.mawai.wiibservice.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.mawai.wiibcommon.entity.FuturesPosition;
+import com.mawai.wiibcommon.entity.FuturesStopLoss;
+import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 @Mapper
 public interface FuturesPositionMapper extends BaseMapper<FuturesPosition> {
@@ -51,10 +54,20 @@ public interface FuturesPositionMapper extends BaseMapper<FuturesPosition> {
             "WHERE id = #{positionId} AND status = 'OPEN'")
     int atomicAddFundingFeeTotal(@Param("positionId") Long positionId, @Param("fee") BigDecimal fee);
 
-    /** 更新止损价 */
-    @Update("UPDATE futures_position SET stop_loss_percent = #{stopLossPercent}, stop_loss_price = #{stopLossPrice}, updated_at = NOW() " +
+    /** 原子加仓：更新均价、加数量、加保证金 */
+    @Update("UPDATE futures_position SET entry_price = #{newEntryPrice}, quantity = quantity + #{addQty}, " +
+            "margin = margin + #{addMargin}, updated_at = NOW() " +
             "WHERE id = #{positionId} AND status = 'OPEN'")
-    int updateStopLoss(@Param("positionId") Long positionId,
-                       @Param("stopLossPercent") BigDecimal stopLossPercent,
-                       @Param("stopLossPrice") BigDecimal stopLossPrice);
+    int atomicIncreasePosition(@Param("positionId") Long positionId,
+                               @Param("newEntryPrice") BigDecimal newEntryPrice,
+                               @Param("addQty") BigDecimal addQty,
+                               @Param("addMargin") BigDecimal addMargin);
+
+    @Update("UPDATE futures_position SET stop_losses = #{stopLosses,jdbcType=OTHER,typeHandler=com.mawai.wiibcommon.handler.FuturesStopLossListTypeHandler}::jsonb, updated_at = NOW() " +
+            "WHERE id = #{positionId} AND status = 'OPEN'")
+    int updateStopLosses(@Param("positionId") Long positionId, @Param("stopLosses") List<FuturesStopLoss> stopLosses);
+
+    @Update("UPDATE futures_position SET take_profits = #{takeProfits,jdbcType=OTHER,typeHandler=com.mawai.wiibcommon.handler.FuturesTakeProfitListTypeHandler}::jsonb, updated_at = NOW() " +
+            "WHERE id = #{positionId} AND status = 'OPEN'")
+    int updateTakeProfits(@Param("positionId") Long positionId, @Param("takeProfits") List<FuturesTakeProfit> takeProfits);
 }

@@ -3,6 +3,7 @@ package com.mawai.wiibcommon.dto;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 @Data
 public class FuturesOpenRequest {
@@ -12,5 +13,18 @@ public class FuturesOpenRequest {
     private Integer leverage;
     private String orderType; // MARKET/LIMIT
     private BigDecimal limitPrice; // 限价时必填
-    private BigDecimal stopLossPercent; // 可选止损百分比(保留保证金%) 如5=保留5%
+    private List<StopLoss> stopLosses;
+    private List<TakeProfit> takeProfits;
+
+    @Data
+    public static class StopLoss {
+        private BigDecimal price;
+        private BigDecimal quantity;
+    }
+
+    @Data
+    public static class TakeProfit {
+        private BigDecimal price;
+        private BigDecimal quantity;
+    }
 }

@@ -46,11 +46,25 @@ public class FuturesController {
         return Result.ok();
     }
 
+    /** 加仓 */
+    @PostMapping("/increase")
+    public Result<FuturesOrderResponse> increase(@RequestBody FuturesIncreaseRequest request) {
+        Long userId = StpUtil.getLoginIdAsLong();
+        return Result.ok(futuresService.increasePosition(userId, request));
+    }
+
     /** 设置止损 */
     @PostMapping("/stop-loss")
     public Result<Void> setStopLoss(@RequestBody FuturesStopLossRequest request) {
         Long userId = StpUtil.getLoginIdAsLong();
         futuresService.setStopLoss(userId, request);
+        return Result.ok();
+    }
+
+    @PostMapping("/take-profit")
+    public Result<Void> setTakeProfit(@RequestBody FuturesTakeProfitRequest request) {
+        Long userId = StpUtil.getLoginIdAsLong();
+        futuresService.setTakeProfit(userId, request);
         return Result.ok();
     }
 

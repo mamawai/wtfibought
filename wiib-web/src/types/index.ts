@@ -443,6 +443,11 @@ export interface Card414WsMessage {
 }
 
 // ========== 永续合约类型 ==========
+export interface FuturesSLItem { price: number; quantity: number }
+export interface FuturesTPItem { price: number; quantity: number }
+export interface FuturesSLEntry { id: string; price: number; quantity: number }
+export interface FuturesTPEntry { id: string; price: number; quantity: number }
+
 export interface FuturesOpenRequest {
   symbol: string;
   side: 'LONG' | 'SHORT';
@@ -450,7 +455,8 @@ export interface FuturesOpenRequest {
   leverage: number;
   orderType: 'MARKET' | 'LIMIT';
   limitPrice?: number;
-  stopLossPercent?: number;
+  stopLosses?: FuturesSLItem[];
+  takeProfits?: FuturesTPItem[];
 }
 
 export interface FuturesCloseRequest {
@@ -465,9 +471,21 @@ export interface FuturesAddMarginRequest {
   amount: number;
 }
 
+export interface FuturesIncreaseRequest {
+  positionId: number;
+  quantity: number;
+  orderType: 'MARKET' | 'LIMIT';
+  limitPrice?: number;
+}
+
 export interface FuturesStopLossRequest {
   positionId: number;
-  stopLossPercent: number;
+  stopLosses: FuturesSLItem[];
+}
+
+export interface FuturesTakeProfitRequest {
+  positionId: number;
+  takeProfits: FuturesTPItem[];
 }
 
 export interface FuturesPosition {
@@ -480,8 +498,8 @@ export interface FuturesPosition {
   entryPrice: number;
   margin: number;
   fundingFeeTotal: number;
-  stopLossPercent?: number;
-  stopLossPrice?: number;
+  stopLosses?: FuturesSLEntry[];
+  takeProfits?: FuturesTPEntry[];
   status: string;
   closedPrice?: number;
   closedPnl?: number;

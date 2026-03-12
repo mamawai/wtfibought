@@ -4,5 +4,5 @@ import java.math.BigDecimal;
 
 public interface FuturesLiquidationService {
 
-    void checkOnPriceUpdate(String symbol, BigDecimal markPrice);
+    void checkOnPriceUpdate(String symbol, BigDecimal markPrice, BigDecimal currentPrice);
 }

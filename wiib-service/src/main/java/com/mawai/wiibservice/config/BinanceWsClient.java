@@ -182,8 +182,10 @@ public class BinanceWsClient {
 
         redisTemplate.opsForValue().set(REDIS_MARK_PRICE_KEY_PREFIX + symbol, markPrice);
 
+        String spotPrice = redisTemplate.opsForValue().get(REDIS_KEY_PREFIX + symbol);
+        BigDecimal cp = spotPrice != null ? new BigDecimal(spotPrice) : new BigDecimal(markPrice);
         Thread.startVirtualThread(() -> {
-            try { futuresLiquidationService.checkOnPriceUpdate(symbol, new BigDecimal(markPrice)); }
+            try { futuresLiquidationService.checkOnPriceUpdate(symbol, new BigDecimal(markPrice), cp); }
             catch (Exception e) { log.warn("futures强平检查异常 {}: {}", symbol, e.getMessage()); }
         });
     }
@@ -272,9 +274,12 @@ public class BinanceWsClient {
         try {
             for (String symbol : props.getSymbols()) {
                 BigDecimal[] lowHigh = restClient.getRecentMarkPriceHighLow(symbol);
+                BigDecimal[] spotLowHigh = restClient.getRecentHighLow(symbol);
                 if (lowHigh != null) {
-                    futuresLiquidationService.checkOnPriceUpdate(symbol, lowHigh[0]);
-                    futuresLiquidationService.checkOnPriceUpdate(symbol, lowHigh[1]);
+                    BigDecimal spotLow = spotLowHigh != null ? spotLowHigh[0] : lowHigh[0];
+                    BigDecimal spotHigh = spotLowHigh != null ? spotLowHigh[1] : lowHigh[1];
+                    futuresLiquidationService.checkOnPriceUpdate(symbol, lowHigh[0], spotLow);
+                    futuresLiquidationService.checkOnPriceUpdate(symbol, lowHigh[1], spotHigh);
                 }
             }
         } catch (Exception e) {

@@ -1,11 +1,12 @@
 package com.mawai.wiibservice.service.impl;
-
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.mawai.wiibcommon.dto.*;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
+import com.mawai.wiibcommon.entity.FuturesStopLoss;
+import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
@@ -29,10 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ExecutorService;
@@ -131,14 +129,36 @@ public class FuturesServiceImpl implements FuturesService {
         position.setStatus("OPEN");
 
         // 止损处理
-        BigDecimal stopLossPercent = request.getStopLossPercent();
-        BigDecimal stopLossPrice = null;
-        if (stopLossPercent != null) {
-            validateStopLossPercent(stopLossPercent, leverage);
-            stopLossPrice = calcStopLossPrice(request.getSide(), price, margin, quantity, stopLossPercent);
-            position.setStopLossPercent(stopLossPercent);
-            position.setStopLossPrice(stopLossPrice);
+        List<FuturesOpenRequest.StopLoss> stopLosses = request.getStopLosses();
+        if (stopLosses != null && !stopLosses.isEmpty()) {
+            if (stopLosses.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
+            BigDecimal slTotal = BigDecimal.ZERO;
+            List<FuturesStopLoss> slList = new ArrayList<>();
+            for (FuturesOpenRequest.StopLoss sl : stopLosses) {
+                validateSlPrice(sl.getPrice(), request.getSide(), price);
+                validateQty(sl.getQuantity());
+                slTotal = slTotal.add(sl.getQuantity());
+                slList.add(new FuturesStopLoss(genId(), sl.getPrice(), sl.getQuantity()));
+            }
+            if (slTotal.compareTo(quantity) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
+            position.setStopLosses(slList);
         }
+        // 止盈处理
+        List<FuturesOpenRequest.TakeProfit> takeProfits = request.getTakeProfits();
+        if (takeProfits != null && !takeProfits.isEmpty()) {
+            if (takeProfits.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
+            BigDecimal tpTotal = BigDecimal.ZERO;
+            List<FuturesTakeProfit> tpList = new ArrayList<>();
+            for (FuturesOpenRequest.TakeProfit tp : takeProfits) {
+                validateTpPrice(tp.getPrice(), request.getSide(), price);
+                validateQty(tp.getQuantity());
+                tpTotal = tpTotal.add(tp.getQuantity());
+                tpList.add(new FuturesTakeProfit(genId(), tp.getPrice(), tp.getQuantity()));
+            }
+            if (tpTotal.compareTo(quantity) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
+            position.setTakeProfits(tpList);
+        }
+
         positionMapper.insert(position);
 
         // 创建订单记录
@@ -157,22 +177,13 @@ public class FuturesServiceImpl implements FuturesService {
         order.setStatus("FILLED");
         orderMapper.insert(order);
 
-        // 注册到强平/止损索引
-        setSlOrRegister(price, quantity, margin, position, stopLossPrice, request.getSymbol(), request.getSide());
+        // 注册到强平/止损/止盈索引
+        positionIndexService.registerPositionIndex(position);
 
         log.info("futures市价开仓 userId={} {} side={} qty={} price={} leverage={} margin={}",
                 userId, request.getSymbol(), request.getSide(), quantity, price, leverage, margin);
 
         return buildOrderResponse(order);
-    }
-
-    private void setSlOrRegister(BigDecimal price, BigDecimal quantity, BigDecimal margin, FuturesPosition position, BigDecimal stopLossPrice, String symbol, String side) {
-        if (stopLossPrice != null) {
-            positionIndexService.setStopLoss(position.getId(), symbol, side, stopLossPrice, false);
-        } else {
-            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(side, price, margin, quantity);
-            positionIndexService.register(position.getId(), symbol, side, liqPrice);
-        }
     }
 
     private FuturesOrderResponse createLimitOpenOrder(Long userId, FuturesOpenRequest request, int leverage) {
@@ -182,10 +193,6 @@ public class FuturesServiceImpl implements FuturesService {
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
         BigDecimal commission = tradingConfig.calculateCryptoCommission(positionValue);
         BigDecimal frozenAmount = margin.add(commission);
-
-        if (request.getStopLossPercent() != null) {
-            validateStopLossPercent(request.getStopLossPercent(), leverage);
-        }
 
         // 冻结资金
         int affected = userMapper.atomicFreezeBalance(userId, frozenAmount);
@@ -202,9 +209,40 @@ public class FuturesServiceImpl implements FuturesService {
         order.setLeverage(leverage);
         order.setLimitPrice(limitPrice);
         order.setFrozenAmount(frozenAmount);
-        order.setStopLossPercent(request.getStopLossPercent());
         order.setStatus("PENDING");
         order.setExpireAt(expireAt);
+
+        // SL/TP验证（参考价用limitPrice）
+        String side = request.getSide();
+        List<FuturesOpenRequest.StopLoss> stopLosses = request.getStopLosses();
+        if (stopLosses != null && !stopLosses.isEmpty()) {
+            if (stopLosses.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
+            BigDecimal slTotal = BigDecimal.ZERO;
+            List<FuturesStopLoss> slList = new ArrayList<>();
+            for (FuturesOpenRequest.StopLoss sl : stopLosses) {
+                validateSlPrice(sl.getPrice(), side, limitPrice);
+                validateQty(sl.getQuantity());
+                slTotal = slTotal.add(sl.getQuantity());
+                slList.add(new FuturesStopLoss(genId(), sl.getPrice(), sl.getQuantity()));
+            }
+            if (slTotal.compareTo(quantity) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
+            order.setStopLosses(slList);
+        }
+        List<FuturesOpenRequest.TakeProfit> takeProfits = request.getTakeProfits();
+        if (takeProfits != null && !takeProfits.isEmpty()) {
+            if (takeProfits.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
+            BigDecimal tpTotal = BigDecimal.ZERO;
+            List<FuturesTakeProfit> tpList = new ArrayList<>();
+            for (FuturesOpenRequest.TakeProfit tp : takeProfits) {
+                validateTpPrice(tp.getPrice(), side, limitPrice);
+                validateQty(tp.getQuantity());
+                tpTotal = tpTotal.add(tp.getQuantity());
+                tpList.add(new FuturesTakeProfit(genId(), tp.getPrice(), tp.getQuantity()));
+            }
+            if (tpTotal.compareTo(quantity) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
+            order.setTakeProfits(tpList);
+        }
+
         orderMapper.insert(order);
 
         addToLimitZSet(order);
@@ -278,8 +316,7 @@ public class FuturesServiceImpl implements FuturesService {
             int affected = positionMapper.casClosePosition(position.getId(), "CLOSED", currentPrice, pnl);
             if (affected == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
 
-            // 全部平仓，从强平索引移除
-            positionIndexService.unregister(position.getId(), position.getSymbol(), position.getSide());
+            positionIndexService.unregisterAll(position);
         } else {
             BigDecimal marginReturn = position.getMargin()
                     .multiply(closeQty)
@@ -289,18 +326,6 @@ public class FuturesServiceImpl implements FuturesService {
 
             int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginReturn);
             if (affected == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
-
-            // 部分平仓后更新索引
-            BigDecimal newMargin = position.getMargin().subtract(marginReturn);
-            BigDecimal newQty = position.getQuantity().subtract(closeQty);
-            if (position.getStopLossPrice() != null) {
-                BigDecimal newSlPrice = calcStopLossPrice(position.getSide(), position.getEntryPrice(), newMargin, newQty, position.getStopLossPercent());
-                positionMapper.updateStopLoss(position.getId(), position.getStopLossPercent(), newSlPrice);
-                positionIndexService.setStopLoss(position.getId(), position.getSymbol(), position.getSide(), newSlPrice, false);
-            } else {
-                BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), position.getEntryPrice(), newMargin, newQty);
-                positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
-            }
         }
 
         userMapper.atomicUpdateBalance(userId, returnAmount);
@@ -380,7 +405,7 @@ public class FuturesServiceImpl implements FuturesService {
 
         removeFromLimitZSet(order);
 
-        if (order.getOrderSide().startsWith("OPEN")) {
+        if (!order.getOrderSide().startsWith("CLOSE")) {
             userMapper.atomicUnfreezeBalance(userId, order.getFrozenAmount());
         }
 
@@ -408,36 +433,226 @@ public class FuturesServiceImpl implements FuturesService {
         if (affected2 == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
 
         BigDecimal newMargin = position.getMargin().add(amount);
-        if (position.getStopLossPrice() != null) {
-            BigDecimal newSlPrice = calcStopLossPrice(position.getSide(), position.getEntryPrice(), newMargin, position.getQuantity(), position.getStopLossPercent());
-            positionMapper.updateStopLoss(position.getId(), position.getStopLossPercent(), newSlPrice);
-            positionIndexService.setStopLoss(position.getId(), position.getSymbol(), position.getSide(), newSlPrice, false);
-        } else {
-            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), position.getEntryPrice(), newMargin, position.getQuantity());
-            positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
-        }
+        // SL价格用户设定不变 只需更新LIQ
+        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), position.getEntryPrice(), newMargin, position.getQuantity());
+        positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
 
         log.info("futures追加保证金 userId={} posId={} amount={}", userId, request.getPositionId(), amount);
+    }
+
+    // ==================== 加仓 ====================
+
+    @Override
+    public FuturesOrderResponse increasePosition(Long userId, FuturesIncreaseRequest request) {
+        if (request.getQuantity() == null || request.getQuantity().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
+        }
+        String lockKey = "futures:pos:" + request.getPositionId();
+        String lockValue = redisLockUtil.tryLock(lockKey, 30);
+        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
+        try {
+            return SpringUtils.getAopProxy(this).doIncreasePosition(userId, request);
+        } finally {
+            redisLockUtil.unlock(lockKey, lockValue);
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected FuturesOrderResponse doIncreasePosition(Long userId, FuturesIncreaseRequest request) {
+        FuturesPosition position = getUserPosition(userId, request.getPositionId());
+        getAndValidateUser(userId);
+
+        if ("MARKET".equals(request.getOrderType())) {
+            return executeMarketIncrease(userId, position, request.getQuantity());
+        } else if ("LIMIT".equals(request.getOrderType())) {
+            BigDecimal currentPrice = getPrice(position.getSymbol());
+            tradingConfig.validateLimitPrice(request.getLimitPrice(), currentPrice);
+            return createLimitIncreaseOrder(userId, position, request.getQuantity(), request.getLimitPrice());
+        } else {
+            throw new BizException(ErrorCode.PARAM_ERROR);
+        }
+    }
+
+    private FuturesOrderResponse executeMarketIncrease(Long userId, FuturesPosition position, BigDecimal addQty) {
+        BigDecimal price = getPrice(position.getSymbol());
+        int leverage = position.getLeverage();
+
+        BigDecimal addValue = price.multiply(addQty).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal addMargin = addValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
+        BigDecimal commission = tradingConfig.calculateCryptoCommission(addValue);
+        BigDecimal totalCost = addMargin.add(commission);
+
+        int affected = userMapper.atomicUpdateBalance(userId, totalCost.negate());
+        if (affected == 0) throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
+
+        // 加权均价
+        BigDecimal oldQty = position.getQuantity();
+        BigDecimal newQty = oldQty.add(addQty);
+        BigDecimal newEntryPrice = position.getEntryPrice().multiply(oldQty)
+                .add(price.multiply(addQty))
+                .divide(newQty, 2, RoundingMode.HALF_UP);
+
+        int affected2 = positionMapper.atomicIncreasePosition(position.getId(), newEntryPrice, addQty, addMargin);
+        if (affected2 == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
+
+        // 重算LIQ
+        BigDecimal newMargin = position.getMargin().add(addMargin);
+        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), newEntryPrice, newMargin, newQty);
+        positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
+
+        FuturesOrder order = new FuturesOrder();
+        order.setUserId(userId);
+        order.setPositionId(position.getId());
+        order.setSymbol(position.getSymbol());
+        order.setOrderSide("LONG".equals(position.getSide()) ? "INCREASE_LONG" : "INCREASE_SHORT");
+        order.setOrderType("MARKET");
+        order.setQuantity(addQty);
+        order.setLeverage(leverage);
+        order.setFilledPrice(price);
+        order.setFilledAmount(addValue);
+        order.setMarginAmount(addMargin);
+        order.setCommission(commission);
+        order.setStatus("FILLED");
+        orderMapper.insert(order);
+
+        log.info("futures市价加仓 userId={} posId={} addQty={} price={} addMargin={}",
+                userId, position.getId(), addQty, price, addMargin);
+
+        return buildOrderResponse(order);
+    }
+
+    private FuturesOrderResponse createLimitIncreaseOrder(Long userId, FuturesPosition position,
+                                                           BigDecimal addQty, BigDecimal limitPrice) {
+        int leverage = position.getLeverage();
+        BigDecimal addValue = limitPrice.multiply(addQty).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal addMargin = addValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
+        BigDecimal commission = tradingConfig.calculateCryptoCommission(addValue);
+        BigDecimal frozenAmount = addMargin.add(commission);
+
+        int affected = userMapper.atomicFreezeBalance(userId, frozenAmount);
+        if (affected == 0) throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
+
+        LocalDateTime expireAt = LocalDateTime.now().plusHours(tradingConfig.getLimitOrderMaxHours());
+
+        FuturesOrder order = new FuturesOrder();
+        order.setUserId(userId);
+        order.setPositionId(position.getId());
+        order.setSymbol(position.getSymbol());
+        order.setOrderSide("LONG".equals(position.getSide()) ? "INCREASE_LONG" : "INCREASE_SHORT");
+        order.setOrderType("LIMIT");
+        order.setQuantity(addQty);
+        order.setLeverage(leverage);
+        order.setLimitPrice(limitPrice);
+        order.setFrozenAmount(frozenAmount);
+        order.setStatus("PENDING");
+        order.setExpireAt(expireAt);
+        orderMapper.insert(order);
+
+        addToLimitZSet(order);
+
+        log.info("futures限价加仓单 userId={} posId={} addQty={} limit={} frozen={}",
+                userId, position.getId(), addQty, limitPrice, frozenAmount);
+
+        return buildOrderResponse(order);
     }
 
     // ==================== 设置止损 ====================
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public void setStopLoss(Long userId, FuturesStopLossRequest request) {
+        String lockKey = "futures:pos:" + request.getPositionId();
+        String lockValue = redisLockUtil.tryLock(lockKey, 30);
+        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
+        try {
+            SpringUtils.getAopProxy(this).doSetStopLoss(userId, request);
+        } finally {
+            redisLockUtil.unlock(lockKey, lockValue);
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected void doSetStopLoss(Long userId, FuturesStopLossRequest request) {
         FuturesPosition position = getUserPosition(userId, request.getPositionId());
 
-        BigDecimal stopLossPercent = request.getStopLossPercent();
-        validateStopLossPercent(stopLossPercent, position.getLeverage());
+        List<FuturesStopLossRequest.StopLossItem> items = request.getStopLosses();
+        if (items != null && items.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
 
-        BigDecimal stopLossPrice = calcStopLossPrice(position.getSide(), position.getEntryPrice(),
-                position.getMargin(), position.getQuantity(), stopLossPercent);
+        // 清旧SL ZSet
+        List<FuturesStopLoss> oldSls = position.getStopLosses();
+        if (oldSls != null && !oldSls.isEmpty()) {
+            positionIndexService.unregisterStopLosses(position.getId(), position.getSymbol(), position.getSide(), oldSls);
+        }
 
-        positionMapper.updateStopLoss(request.getPositionId(), stopLossPercent, stopLossPrice);
+        // 空列表 → 清空SL
+        if (items == null || items.isEmpty()) {
+            positionMapper.updateStopLosses(position.getId(), null);
+            return;
+        }
 
-        positionIndexService.setStopLoss(position.getId(), position.getSymbol(), position.getSide(), stopLossPrice, position.getStopLossPrice() == null);
+        BigDecimal markPrice = getMarkPrice(position.getSymbol());
+        BigDecimal totalQty = BigDecimal.ZERO;
+        List<FuturesStopLoss> newList = new ArrayList<>();
+        for (FuturesStopLossRequest.StopLossItem item : items) {
+            validateSlPrice(item.getPrice(), position.getSide(), markPrice);
+            validateQty(item.getQuantity());
+            totalQty = totalQty.add(item.getQuantity());
+            newList.add(new FuturesStopLoss(genId(), item.getPrice(), item.getQuantity()));
+        }
+        if (totalQty.compareTo(position.getQuantity()) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
 
-        log.info("futures设置止损 userId={} posId={} percent={}% price={}", userId, request.getPositionId(), stopLossPercent, stopLossPrice);
+        positionMapper.updateStopLosses(position.getId(), newList);
+        positionIndexService.registerStopLosses(position.getId(), position.getSymbol(), position.getSide(), newList);
+
+        log.info("futures设置止损 userId={} posId={} count={}", userId, request.getPositionId(), newList.size());
+    }
+
+    @Override
+    public void setTakeProfit(Long userId, FuturesTakeProfitRequest request) {
+        String lockKey = "futures:pos:" + request.getPositionId();
+        String lockValue = redisLockUtil.tryLock(lockKey, 30);
+        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
+        try {
+            SpringUtils.getAopProxy(this).doSetTakeProfit(userId, request);
+        } finally {
+            redisLockUtil.unlock(lockKey, lockValue);
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected void doSetTakeProfit(Long userId, FuturesTakeProfitRequest request) {
+        FuturesPosition position = getUserPosition(userId, request.getPositionId());
+
+        List<FuturesTakeProfitRequest.TakeProfitItem> items = request.getTakeProfits();
+        if (items != null && items.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
+
+        // 清旧TP ZSet
+        List<FuturesTakeProfit> oldTps = position.getTakeProfits();
+        if (oldTps != null && !oldTps.isEmpty()) {
+            positionIndexService.unregisterTakeProfits(position.getId(), position.getSymbol(), position.getSide(), oldTps);
+        }
+
+        // 空列表 → 清空TP
+        if (items == null || items.isEmpty()) {
+            positionMapper.updateTakeProfits(position.getId(), null);
+            log.info("futures清空止盈 userId={} posId={}", userId, request.getPositionId());
+            return;
+        }
+
+        BigDecimal markPrice = getMarkPrice(position.getSymbol());
+        BigDecimal totalQty = BigDecimal.ZERO;
+        List<FuturesTakeProfit> newList = new ArrayList<>();
+        for (FuturesTakeProfitRequest.TakeProfitItem item : items) {
+            validateTpPrice(item.getPrice(), position.getSide(), markPrice);
+            validateQty(item.getQuantity());
+            totalQty = totalQty.add(item.getQuantity());
+            newList.add(new FuturesTakeProfit(genId(), item.getPrice(), item.getQuantity()));
+        }
+        if (totalQty.compareTo(position.getQuantity()) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
+
+        positionMapper.updateTakeProfits(position.getId(), newList);
+        positionIndexService.registerTakeProfits(position.getId(), position.getSymbol(), position.getSide(), newList);
+
+        log.info("futures设置止盈 userId={} posId={} count={}", userId, request.getPositionId(), newList.size());
     }
 
     // ==================== 查询仓位 ====================
@@ -478,8 +693,8 @@ public class FuturesServiceImpl implements FuturesService {
         dto.setEntryPrice(pos.getEntryPrice());
         dto.setMargin(pos.getMargin());
         dto.setFundingFeeTotal(pos.getFundingFeeTotal());
-        dto.setStopLossPercent(pos.getStopLossPercent());
-        dto.setStopLossPrice(pos.getStopLossPrice());
+        dto.setStopLosses(pos.getStopLosses());
+        dto.setTakeProfits(pos.getTakeProfits());
         dto.setStatus(pos.getStatus());
         dto.setClosedPrice(pos.getClosedPrice());
         dto.setClosedPnl(pos.getClosedPnl());
@@ -647,6 +862,8 @@ public class FuturesServiceImpl implements FuturesService {
 
         if (order.getOrderSide().startsWith("OPEN")) {
             processTriggeredOpenOrder(order, executePrice);
+        } else if (order.getOrderSide().startsWith("INCREASE")) {
+            processTriggeredIncreaseOrder(order, executePrice);
         } else {
             processTriggeredCloseOrder(order, executePrice);
         }
@@ -679,23 +896,62 @@ public class FuturesServiceImpl implements FuturesService {
         position.setFundingFeeTotal(BigDecimal.ZERO);
         position.setStatus("OPEN");
 
-        // 止损处理：用实际成交价算止损价
-        BigDecimal stopLossPercent = order.getStopLossPercent();
-        BigDecimal stopLossPrice = null;
-        if (stopLossPercent != null) {
-            stopLossPrice = calcStopLossPrice(position.getSide(), executePrice, margin, quantity, stopLossPercent);
-            position.setStopLossPercent(stopLossPercent);
-            position.setStopLossPrice(stopLossPrice);
-        }
+        // 从订单恢复SL/TP
+        position.setStopLosses(order.getStopLosses());
+        position.setTakeProfits(order.getTakeProfits());
+
         positionMapper.insert(position);
 
         // 更新订单
         orderMapper.casUpdateToFilled(order.getId(), executePrice, positionValue, commission, margin, null);
 
-        // 注册到强平/止损索引
-        setSlOrRegister(executePrice, quantity, margin, position, stopLossPrice, order.getSymbol(), position.getSide());
+        // 注册到强平/止损/止盈索引
+        positionIndexService.registerPositionIndex(position);
 
         log.info("futures限价开仓成交 orderId={} price={} margin={}", order.getId(), executePrice, margin);
+    }
+
+    private void processTriggeredIncreaseOrder(FuturesOrder order, BigDecimal executePrice) {
+        FuturesPosition position = positionMapper.selectById(order.getPositionId());
+        if (position == null || !"OPEN".equals(position.getStatus())) {
+            orderMapper.casUpdateStatus(order.getId(), "TRIGGERED", "CANCELLED");
+            BigDecimal frozenAmount = order.getFrozenAmount();
+            userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
+            userMapper.atomicUpdateBalance(order.getUserId(), frozenAmount);
+            return;
+        }
+
+        BigDecimal addQty = order.getQuantity();
+        int leverage = position.getLeverage();
+        BigDecimal addValue = executePrice.multiply(addQty).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal addMargin = addValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
+        BigDecimal commission = tradingConfig.calculateCryptoCommission(addValue);
+        BigDecimal actualCost = addMargin.add(commission);
+
+        // 解冻并退差额
+        BigDecimal frozenAmount = order.getFrozenAmount();
+        userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
+        if (actualCost.compareTo(frozenAmount) < 0) {
+            userMapper.atomicUpdateBalance(order.getUserId(), frozenAmount.subtract(actualCost));
+        }
+
+        // 加权均价
+        BigDecimal oldQty = position.getQuantity();
+        BigDecimal newQty = oldQty.add(addQty);
+        BigDecimal newEntryPrice = position.getEntryPrice().multiply(oldQty)
+                .add(executePrice.multiply(addQty))
+                .divide(newQty, 2, RoundingMode.HALF_UP);
+
+        positionMapper.atomicIncreasePosition(position.getId(), newEntryPrice, addQty, addMargin);
+
+        // 重算LIQ
+        BigDecimal newMargin = position.getMargin().add(addMargin);
+        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), newEntryPrice, newMargin, newQty);
+        positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
+
+        orderMapper.casUpdateToFilled(order.getId(), executePrice, addValue, commission, addMargin, null);
+
+        log.info("futures限价加仓成交 orderId={} posId={} price={} addMargin={}", order.getId(), position.getId(), executePrice, addMargin);
     }
 
     private void processTriggeredCloseOrder(FuturesOrder order, BigDecimal executePrice) {
@@ -718,8 +974,7 @@ public class FuturesServiceImpl implements FuturesService {
             returnAmount = returnAmount.max(BigDecimal.ZERO);
             positionMapper.casClosePosition(position.getId(), "CLOSED", executePrice, pnl);
 
-            // 全部平仓，从强平索引移除
-            positionIndexService.unregister(position.getId(), position.getSymbol(), position.getSide());
+            positionIndexService.unregisterAll(position);
         } else {
             BigDecimal marginReturn = position.getMargin()
                     .multiply(closeQty)
@@ -727,11 +982,6 @@ public class FuturesServiceImpl implements FuturesService {
             returnAmount = marginReturn.add(pnl).subtract(commission);
             returnAmount = returnAmount.max(BigDecimal.ZERO);
             positionMapper.atomicPartialClose(position.getId(), closeQty, marginReturn);
-
-            BigDecimal newMargin = position.getMargin().subtract(marginReturn);
-            BigDecimal newQty = position.getQuantity().subtract(closeQty);
-            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), position.getEntryPrice(), newMargin, newQty);
-            positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
         }
 
         userMapper.atomicUpdateBalance(order.getUserId(), returnAmount);
@@ -818,7 +1068,7 @@ public class FuturesServiceImpl implements FuturesService {
 
         removeFromLimitZSet(order);
 
-        if (order.getOrderSide().startsWith("OPEN")) {
+        if (!order.getOrderSide().startsWith("CLOSE")) {
             userMapper.atomicUnfreezeBalance(order.getUserId(), order.getFrozenAmount());
         }
 
@@ -905,7 +1155,7 @@ public class FuturesServiceImpl implements FuturesService {
         int affected = positionMapper.casClosePosition(positionId, "LIQUIDATED", price, pnl);
         if (affected == 0) return;
 
-        positionIndexService.unregister(positionId, position.getSymbol(), position.getSide());
+        positionIndexService.unregisterAll(position);
 
         if (returnAmount.compareTo(BigDecimal.ZERO) > 0) {
             userMapper.atomicUpdateBalance(position.getUserId(), returnAmount);
@@ -962,8 +1212,8 @@ public class FuturesServiceImpl implements FuturesService {
 
     private String getZSetKey(String orderSide, String symbol) {
         return switch (orderSide) {
-            case "OPEN_LONG" -> LIMIT_OPEN_LONG_PREFIX + symbol;
-            case "OPEN_SHORT" -> LIMIT_OPEN_SHORT_PREFIX + symbol;
+            case "OPEN_LONG", "INCREASE_LONG" -> LIMIT_OPEN_LONG_PREFIX + symbol;
+            case "OPEN_SHORT", "INCREASE_SHORT" -> LIMIT_OPEN_SHORT_PREFIX + symbol;
             case "CLOSE_LONG" -> LIMIT_CLOSE_LONG_PREFIX + symbol;
             case "CLOSE_SHORT" -> LIMIT_CLOSE_SHORT_PREFIX + symbol;
             default -> throw new IllegalArgumentException("Invalid orderSide: " + orderSide);
@@ -1003,42 +1253,22 @@ public class FuturesServiceImpl implements FuturesService {
 
     // ==================== 工具方法 ====================
 
-    /** 百分比算止损价: percent=保留保证金% LONG跌到这个价止损 SHORT涨到这个价止损 */
-    private BigDecimal calcStopLossPrice(String side, BigDecimal entryPrice, BigDecimal margin, BigDecimal quantity, BigDecimal percent) {
-        // 最大亏损比例 = 1 - percent/100
-        BigDecimal lossRatio = BigDecimal.ONE.subtract(percent.divide(BigDecimal.valueOf(100), 4, RoundingMode.HALF_UP));
-        BigDecimal maxLoss = margin.multiply(lossRatio);
-        BigDecimal priceMove = maxLoss.divide(quantity, 2, RoundingMode.HALF_UP);
-        if ("LONG".equals(side)) {
-            return entryPrice.subtract(priceMove);
-        } else {
-            return entryPrice.add(priceMove);
-        }
+    private void validateSlPrice(BigDecimal price, String side, BigDecimal refPrice) {
+        if (price == null || price.compareTo(BigDecimal.ZERO) <= 0) throw new BizException(ErrorCode.FUTURES_INVALID_STOP_LOSS);
+        // LONG止损价 < 参考价, SHORT止损价 > 参考价
+        if ("LONG".equals(side) && price.compareTo(refPrice) >= 0) throw new BizException(ErrorCode.FUTURES_INVALID_STOP_LOSS);
+        if ("SHORT".equals(side) && price.compareTo(refPrice) <= 0) throw new BizException(ErrorCode.FUTURES_INVALID_STOP_LOSS);
     }
 
-    /**
-     * 校验止损百分比(保留保证金%) 必须 > 强平时剩余保证金%
-     * <p>
-     * 推导(以LONG为例):
-     *   强平价 liqP = (entry*qty - margin) / (qty*(1-mmr))</br>
-     *   强平时维持保证金 = liqP * qty * mmr = (entry*qty - margin) * mmr / (1-mmr)</br>
-     *   又 margin = entry*qty / leverage  代入:</br>
-     *   维持保证金 = entry*qty*(1 - 1/leverage) * mmr / (1-mmr) = margin*(leverage-1) * mmr / (1-mmr)</br>
-     *   剩余% = 维持保证金/margin * 100 = mmr*(leverage-1)/(1-mmr) * 100</br>
-     * <p>
-     * 止损保留% 必须 > 此值 否则强平先触发 止损无意义
-     */
-    private void validateStopLossPercent(BigDecimal percent, int leverage) {
-        if (percent == null || percent.compareTo(BigDecimal.ZERO) <= 0 || percent.compareTo(BigDecimal.valueOf(100)) >= 0) {
-            throw new BizException(ErrorCode.FUTURES_INVALID_STOP_LOSS);
-        }
-        BigDecimal mmr = tradingConfig.getFutures().getMaintenanceMarginRate();
-        BigDecimal minPercent = mmr.multiply(BigDecimal.valueOf(leverage - 1))
-                .divide(BigDecimal.ONE.subtract(mmr), 4, RoundingMode.HALF_UP)
-                .multiply(BigDecimal.valueOf(100));
-        if (percent.compareTo(minPercent) <= 0) {
-            throw new BizException(ErrorCode.FUTURES_INVALID_STOP_LOSS);
-        }
+    private void validateTpPrice(BigDecimal price, String side, BigDecimal refPrice) {
+        if (price == null || price.compareTo(BigDecimal.ZERO) <= 0) throw new BizException(ErrorCode.FUTURES_INVALID_TAKE_PROFIT);
+        // LONG止盈价 > 参考价, SHORT止盈价 < 参考价
+        if ("LONG".equals(side) && price.compareTo(refPrice) <= 0) throw new BizException(ErrorCode.FUTURES_INVALID_TAKE_PROFIT);
+        if ("SHORT".equals(side) && price.compareTo(refPrice) >= 0) throw new BizException(ErrorCode.FUTURES_INVALID_TAKE_PROFIT);
+    }
+
+    private void validateQty(BigDecimal qty) {
+        if (qty == null || qty.compareTo(BigDecimal.ZERO) <= 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
     }
 
     private void validateOpenRequest(FuturesOpenRequest request) {
@@ -1071,5 +1301,163 @@ public class FuturesServiceImpl implements FuturesService {
             throw new BizException(ErrorCode.FUTURES_INVALID_LEVERAGE);
         }
         return leverage;
+    }
+
+    // ==================== 止损/止盈触发 ====================
+
+    @Override
+    public void batchTriggerStopLoss(Long positionId, Collection<String> slIds, BigDecimal price) {
+        String lockKey = "futures:pos:" + positionId;
+        String lockValue = redisLockUtil.tryLock(lockKey, 30);
+        if (lockValue == null) return;
+        try {
+            SpringUtils.getAopProxy(this).doBatchTriggerStopLoss(positionId, slIds, price);
+        } finally {
+            redisLockUtil.unlock(lockKey, lockValue);
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected void doBatchTriggerStopLoss(Long positionId, Collection<String> slIds, BigDecimal price) {
+        FuturesPosition position = positionMapper.selectById(positionId);
+        if (position == null || !"OPEN".equals(position.getStatus())) return;
+
+        List<FuturesStopLoss> sls = position.getStopLosses();
+        if (sls == null) return;
+
+        Set<String> idSet = new HashSet<>(slIds);
+        BigDecimal totalCloseQty = BigDecimal.ZERO;
+        for (FuturesStopLoss sl : sls) {
+            if (idSet.contains(sl.getId())) {
+                totalCloseQty = totalCloseQty.add(sl.getQuantity());
+            }
+        }
+        if (totalCloseQty.compareTo(BigDecimal.ZERO) == 0) return;
+
+        totalCloseQty = totalCloseQty.min(position.getQuantity());
+        boolean isFullClose = totalCloseQty.compareTo(position.getQuantity()) >= 0;
+
+        BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), price, totalCloseQty);
+        BigDecimal closeValue = price.multiply(totalCloseQty).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal commission = tradingConfig.calculateCryptoCommission(closeValue);
+
+        BigDecimal returnAmount;
+        if (isFullClose) {
+            returnAmount = position.getMargin().add(pnl).subtract(commission).max(BigDecimal.ZERO);
+            int affected = positionMapper.casClosePosition(positionId, "CLOSED", price, pnl);
+            if (affected == 0) return;
+            positionIndexService.unregisterAll(position);
+        } else {
+            BigDecimal marginReturn = position.getMargin()
+                    .multiply(totalCloseQty)
+                    .divide(position.getQuantity(), 2, RoundingMode.HALF_UP);
+            returnAmount = marginReturn.add(pnl).subtract(commission).max(BigDecimal.ZERO);
+            int affected = positionMapper.atomicPartialClose(positionId, totalCloseQty, marginReturn);
+            if (affected == 0) return;
+
+            sls.removeIf(s -> idSet.contains(s.getId()));
+            positionMapper.updateStopLosses(positionId, sls);
+        }
+
+        if (returnAmount.compareTo(BigDecimal.ZERO) > 0) {
+            userMapper.atomicUpdateBalance(position.getUserId(), returnAmount);
+        }
+
+        FuturesOrder order = new FuturesOrder();
+        order.setUserId(position.getUserId());
+        order.setPositionId(positionId);
+        order.setSymbol(position.getSymbol());
+        order.setOrderSide("LONG".equals(position.getSide()) ? "CLOSE_LONG" : "CLOSE_SHORT");
+        order.setOrderType("MARKET");
+        order.setQuantity(totalCloseQty);
+        order.setLeverage(position.getLeverage());
+        order.setFilledPrice(price);
+        order.setFilledAmount(closeValue);
+        order.setCommission(commission);
+        order.setRealizedPnl(pnl);
+        order.setStatus("STOP_LOSS");
+        orderMapper.insert(order);
+
+        log.info("futures批量止损平仓 posId={} slIds={} qty={} price={} pnl={}", positionId, slIds, totalCloseQty, price, pnl);
+    }
+
+    @Override
+    public void batchTriggerTakeProfit(Long positionId, Collection<String> tpIds, BigDecimal price) {
+        String lockKey = "futures:pos:" + positionId;
+        String lockValue = redisLockUtil.tryLock(lockKey, 30);
+        if (lockValue == null) return;
+        try {
+            SpringUtils.getAopProxy(this).doBatchTriggerTakeProfit(positionId, tpIds, price);
+        } finally {
+            redisLockUtil.unlock(lockKey, lockValue);
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected void doBatchTriggerTakeProfit(Long positionId, Collection<String> tpIds, BigDecimal price) {
+        FuturesPosition position = positionMapper.selectById(positionId);
+        if (position == null || !"OPEN".equals(position.getStatus())) return;
+
+        List<FuturesTakeProfit> tps = position.getTakeProfits();
+        if (tps == null) return;
+
+        Set<String> idSet = new HashSet<>(tpIds);
+        BigDecimal totalCloseQty = BigDecimal.ZERO;
+        for (FuturesTakeProfit tp : tps) {
+            if (idSet.contains(tp.getId())) {
+                totalCloseQty = totalCloseQty.add(tp.getQuantity());
+            }
+        }
+        if (totalCloseQty.compareTo(BigDecimal.ZERO) == 0) return;
+
+        totalCloseQty = totalCloseQty.min(position.getQuantity());
+        boolean isFullClose = totalCloseQty.compareTo(position.getQuantity()) >= 0;
+
+        BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), price, totalCloseQty);
+        BigDecimal closeValue = price.multiply(totalCloseQty).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal commission = tradingConfig.calculateCryptoCommission(closeValue);
+
+        BigDecimal returnAmount;
+        if (isFullClose) {
+            returnAmount = position.getMargin().add(pnl).subtract(commission).max(BigDecimal.ZERO);
+            int affected = positionMapper.casClosePosition(positionId, "CLOSED", price, pnl);
+            if (affected == 0) return;
+            positionIndexService.unregisterAll(position);
+        } else {
+            BigDecimal marginReturn = position.getMargin()
+                    .multiply(totalCloseQty)
+                    .divide(position.getQuantity(), 2, RoundingMode.HALF_UP);
+            returnAmount = marginReturn.add(pnl).subtract(commission).max(BigDecimal.ZERO);
+            int affected = positionMapper.atomicPartialClose(positionId, totalCloseQty, marginReturn);
+            if (affected == 0) return;
+
+            tps.removeIf(t -> idSet.contains(t.getId()));
+            positionMapper.updateTakeProfits(positionId, tps);
+        }
+
+        if (returnAmount.compareTo(BigDecimal.ZERO) > 0) {
+            userMapper.atomicUpdateBalance(position.getUserId(), returnAmount);
+        }
+
+        FuturesOrder order = new FuturesOrder();
+        order.setUserId(position.getUserId());
+        order.setPositionId(positionId);
+        order.setSymbol(position.getSymbol());
+        order.setOrderSide("LONG".equals(position.getSide()) ? "CLOSE_LONG" : "CLOSE_SHORT");
+        order.setOrderType("MARKET");
+        order.setQuantity(totalCloseQty);
+        order.setLeverage(position.getLeverage());
+        order.setFilledPrice(price);
+        order.setFilledAmount(closeValue);
+        order.setCommission(commission);
+        order.setRealizedPnl(pnl);
+        order.setStatus("TAKE_PROFIT");
+        orderMapper.insert(order);
+
+        log.info("futures批量止盈平仓 posId={} tpIds={} qty={} price={} pnl={}", positionId, tpIds, totalCloseQty, price, pnl);
+    }
+
+    private static String genId() {
+        return UUID.randomUUID().toString().substring(0, 8);
     }
 }

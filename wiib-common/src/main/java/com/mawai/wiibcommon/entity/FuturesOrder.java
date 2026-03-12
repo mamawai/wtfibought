@@ -1,13 +1,16 @@
 package com.mawai.wiibcommon.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.mawai.wiibcommon.handler.FuturesStopLossListTypeHandler;
+import com.mawai.wiibcommon.handler.FuturesTakeProfitListTypeHandler;
 import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
-@TableName("futures_order")
+@TableName(value = "futures_order", autoResultMap = true)
 public class FuturesOrder {
 
     @TableId(type = IdType.AUTO)
@@ -19,7 +22,7 @@ public class FuturesOrder {
 
     private String symbol; // 交易对
 
-    private String orderSide; // OPEN_LONG开多 OPEN_SHORT开空 CLOSE_LONG平多 CLOSE_SHORT平空
+    private String orderSide; // OPEN_LONG开多 OPEN_SHORT开空 CLOSE_LONG平多 CLOSE_SHORT平空 INCREASE_LONG加多 INCREASE_SHORT加空
 
     private String orderType; // MARKET市价 LIMIT限价
 
@@ -41,7 +44,11 @@ public class FuturesOrder {
 
     private BigDecimal realizedPnl; // 已实现盈亏(平仓单才有)
 
-    private BigDecimal stopLossPercent; // 开仓时带的止损百分比(可选)
+    @TableField(typeHandler = FuturesStopLossListTypeHandler.class)
+    private List<FuturesStopLoss> stopLosses; // 止损
+
+    @TableField(typeHandler = FuturesTakeProfitListTypeHandler.class)
+    private List<FuturesTakeProfit> takeProfits; // 止盈
 
     private String status; // PENDING待触发 TRIGGERED已触发 FILLED已成交 CANCELLED已取消 EXPIRED已过期 LIQUIDATED强平
 

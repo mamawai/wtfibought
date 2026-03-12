@@ -2,8 +2,6 @@ import { useCallback, useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { authApi } from '../api';
 import { useUserStore } from '../stores/userStore';
-import { Button } from '../components/ui/button';
-import { Card, CardContent } from '../components/ui/card';
 import { Typewriter } from '../components/ui/typewriter';
 import { TrendingUp, Loader2, Globe, BarChart3, Wallet, LineChart } from 'lucide-react';
 

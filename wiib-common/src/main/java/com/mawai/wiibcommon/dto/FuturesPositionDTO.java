@@ -1,9 +1,12 @@
 package com.mawai.wiibcommon.dto;
 
+import com.mawai.wiibcommon.entity.FuturesStopLoss;
+import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 public class FuturesPositionDTO {
@@ -16,8 +19,8 @@ public class FuturesPositionDTO {
     private BigDecimal entryPrice;
     private BigDecimal margin;
     private BigDecimal fundingFeeTotal;
-    private BigDecimal stopLossPercent;
-    private BigDecimal stopLossPrice;
+    private List<FuturesStopLoss> stopLosses;
+    private List<FuturesTakeProfit> takeProfits;
     private String status;
     private BigDecimal closedPrice;
     private BigDecimal closedPnl;

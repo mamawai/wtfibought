@@ -5,6 +5,7 @@ import com.mawai.wiibcommon.dto.*;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Collection;
 
 public interface FuturesService {
 
@@ -20,8 +21,14 @@ public interface FuturesService {
     /** 追加保证金 */
     void addMargin(Long userId, FuturesAddMarginRequest request);
 
+    /** 加仓 */
+    FuturesOrderResponse increasePosition(Long userId, FuturesIncreaseRequest request);
+
     /** 设置止损 */
     void setStopLoss(Long userId, FuturesStopLossRequest request);
+
+    /** 设置止盈 */
+    void setTakeProfit(Long userId, FuturesTakeProfitRequest request);
 
     /** 查询用户仓位列表 */
     List<FuturesPositionDTO> getUserPositions(Long userId, String symbol);
@@ -49,4 +56,10 @@ public interface FuturesService {
 
     /** 强制平仓 */
     void forceClose(Long positionId, BigDecimal price);
+
+    /** 批量止损触发（同仓位合并） */
+    void batchTriggerStopLoss(Long positionId, Collection<String> slIds, BigDecimal price);
+
+    /** 批量止盈触发（同仓位合并） */
+    void batchTriggerTakeProfit(Long positionId, Collection<String> tpIds, BigDecimal price);
 }

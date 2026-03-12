@@ -1,13 +1,16 @@
 package com.mawai.wiibcommon.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.mawai.wiibcommon.handler.FuturesStopLossListTypeHandler;
+import com.mawai.wiibcommon.handler.FuturesTakeProfitListTypeHandler;
 import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
-@TableName("futures_position")
+@TableName(value = "futures_position", autoResultMap = true)
 public class FuturesPosition {
 
     @TableId(type = IdType.AUTO)
@@ -29,9 +32,11 @@ public class FuturesPosition {
 
     private BigDecimal fundingFeeTotal; // 累计资金费
 
-    private BigDecimal stopLossPercent; // 止损百分比(保留保证金%) null=未设置
+    @TableField(typeHandler = FuturesStopLossListTypeHandler.class)
+    private List<FuturesStopLoss> stopLosses;
 
-    private BigDecimal stopLossPrice; // 止损价(后端计算) null=未设置
+    @TableField(typeHandler = FuturesTakeProfitListTypeHandler.class)
+    private List<FuturesTakeProfit> takeProfits;
 
     private String status; // OPEN持仓 CLOSED已平仓 LIQUIDATED已强平
 

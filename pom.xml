@@ -34,6 +34,7 @@
         <hutool.version>5.8.24</hutool.version>
         <pagehelper-starter.version>1.4.5</pagehelper-starter.version>
         <openapi.version>2.8.4</openapi.version>
+        <fastjson2.version>2.0.61</fastjson2.version>
     </properties>
 
     <dependencyManagement>
@@ -105,6 +106,12 @@
                 <groupId>org.springdoc</groupId>
                 <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
                 <version>${openapi.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.alibaba.fastjson2</groupId>
+                <artifactId>fastjson2</artifactId>
+                <version>${fastjson2.version}</version>
             </dependency>
 
             <!-- PageHelper分页 -->
