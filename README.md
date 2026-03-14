@@ -2,7 +2,7 @@
 
 虚拟股票模拟交易平台 —— "如果当初买了会怎样"
 
-用户通过 [LinuxDo](https://linux.do) OAuth 登录，使用虚拟资金在 AI 生成的行情中进行模拟股票/期权交易，附带小游戏。
+用户通过 [LinuxDo](https://linux.do) OAuth 登录，使用虚拟资金在 AI 生成的行情中进行模拟股票/期权/永续合约交易，附带小游戏。
 
 线上地址: https://linuxdo.stockgame.icu
 
@@ -13,12 +13,13 @@
 - T+1 资金结算，0.05% 手续费
 - 杠杆交易（借款买入、计息、爆仓清算）
 - CALL/PUT 期权交易，Black-Scholes 定价，自动到期结算
-- 加密货币模拟交易（BTC/USDT、PAXG/USDT），接入 Binance 实时行情，支持市价/限价单
+- 加密货币现货交易（BTC/USDT、PAXG/USDT、ETH/USDT），接入 Binance 实时行情，支持市价/限价单
+- 加密货币永续合约（最高 100 倍杠杆，逐仓保证金，多/空双向，分批止损/止盈，0.01%/8h 资金费率，自动强平）
 
 **行情系统**
 - AI 每日生成 20 只股票的分时行情（1440 个价格点）
 - WebSocket(STOMP) 每 10 秒实时推送行情、资产变动、订单状态
-- Binance WebSocket 接入加密货币实时行情（~1次/秒），3 秒节流推送前端
+- Binance 双 WebSocket 流：现货价格（miniTicker ~1次/秒）+ 永续合约标记价格（markPrice @1s）
 - TradingView 嵌入式 K 线图
 
 **游戏与社交**
@@ -33,7 +34,7 @@
 | 后端 | Java 21（虚拟线程）+ Spring Boot 3.4 + MyBatis-Plus 3.5 |
 | 前端 | React 19 + TypeScript + Vite + TailwindCSS + Ant Design + ECharts |
 | 数据库 | PostgreSQL |
-| 缓存 | Redis（行情数据、会话、排行榜、牌局状态、分布式锁、限流） |
+| 缓存 | Caffeine（L1 本地热数据）+ Redis（L2 分布式，行情/会话/排行榜/牌局/分布式锁/限流） |
 | 实时通信 | STOMP over WebSocket + Redis Pub/Sub（多实例广播） |
 | 认证 | LinuxDo OAuth2 + Sa-Token（Redis 持久化会话） |
 | 状态管理 | Zustand（仅持久化 token，用户数据按需拉取） |
@@ -79,8 +80,14 @@ AI(LLM) → { openPrice, mu, sigma }  →  带跳跃的几何布朗运动  →  
 | `bj:pool:{date}` | String | 每日积分池余额（200万），TTL 24h |
 | `limiter:{type}:{userId}` | Hash | 令牌桶限流状态 |
 | `order:execute:{orderId}` | String（分布式锁） | 订单操作互斥，TTL 30s |
-| `market:price:{symbol}` | String | 加密货币最新价缓存（如 BTCUSDT） |
+| `market:price:{symbol}` | String | 加密货币现货价缓存（如 BTCUSDT） |
+| `market:markprice:{symbol}` | String | 永续合约标记价缓存 |
 | `crypto:limit:{buy\|sell}:{symbol}` | ZSet（score=limitPrice） | 加密货币限价单索引 |
+| `futures:liq:{long\|short}:{symbol}` | ZSet（score=强平价） | 永续合约强平价索引 |
+| `futures:sl:{long\|short}:{symbol}` | ZSet（score=止损价） | 永续合约止损价索引 |
+| `futures:tp:{long\|short}:{symbol}` | ZSet（score=止盈价） | 永续合约止盈价索引 |
+| `futures:limit:{side}:{symbol}` | ZSet（score=限价） | 永续合约限价单索引（open_long/open_short/close_long/close_short） |
+| `futures:pos:{positionId}` | String（分布式锁） | 永续合约仓位操作互斥 |
 | `mines:session:{userId}` | String（序列化对象） | Mines 牌局快照，TTL 2h |
 | `mines:lock:{userId}` | String（分布式锁） | Mines 操作互斥，TTL 20s |
 
@@ -100,27 +107,30 @@ AI(LLM) → { openPrice, mu, sigma }  →  带跳跃的几何布朗运动  →  
 
 ### 加密货币实时行情推送链路
 
-独立于AI模拟行情，接入 Binance 真实市场数据（当前支持 BTCUSDT、PAXGUSDT）：
+独立于AI模拟行情，接入 Binance 真实市场数据（当前支持 BTCUSDT、PAXGUSDT、ETHUSDT）：
 
 ```
-Binance WSS (miniTicker ~1次/秒)
+Binance WSS ─┬─ Spot流 (miniTicker ~1次/秒)     → 现货价格
+              └─ Futures流 (markPrice @1s)        → 标记价格（永续合约强平基准）
         │
         ▼
-BinanceWsClient.onText()
-        │  解析 symbol + close price + event time
+BinanceWsClient.onSpotMessage() / onFuturesMessage()
+        │  解析 symbol + price + event time
         ▼
-writeRedisAndPush(symbol, price, ts)
+writeRedisAndPush(symbol, price, ts) / writeFuturesMarkPrice(symbol, markPrice)
         │
-        ├─① Redis SET "market:price:BTCUSDT"         ← 最新价缓存
+        ├─① Caffeine L1 PUT spot/mark:{symbol}          ← 本地热缓存（限价单/强平读取）
+        │   Redis SET "market:price:{symbol}"              ← 现货价 L2 缓存
+        │   Redis SET "market:markprice:{symbol}"          ← 标记价 L2 缓存
         │
-        ├─② Redis PUBLISH "ws:broadcast:crypto"       ← 集群广播
-        │       payload: "BTCUSDT|{\"price\":\"68878.50\",\"ts\":...}"
+        ├─② Redis PUBLISH "ws:broadcast:crypto"          ← 集群广播
+        │       payload: "{symbol}|{\"price\":\"...\",\"ts\":...}"
         │       │
         │       ▼
         │   RedisMessageBroadcastService.onMessage()
         │       │
         │       ▼
-        │   SimpMessagingTemplate → /topic/crypto/BTCUSDT
+        │   SimpMessagingTemplate → /topic/crypto/{symbol}
         │       │
         │       ▼  SockJS + STOMP (端点 /ws/quotes, 心跳15s)
         │       │
@@ -129,38 +139,55 @@ writeRedisAndPush(symbol, price, ts)
         │       ▼
         │   Coin.tsx  ← 价格显示 + 1D K线实时追加
         │
-        └─③ Virtual Thread → cryptoOrderService.onPriceUpdate()
-                │  Redis ZSet rangeByScore 匹配限价单
+        ├─③ Virtual Thread → cryptoOrderService.onPriceUpdate()
+        │       │  Redis ZSet rangeByScore 匹配现货限价单
+        │       ▼
+        │   triggerAndExecuteOrder()
+        │
+        └─④ Virtual Thread → futuresLiquidationService.checkOnPriceUpdate()
+                │  Redis ZSet rangeByScore 匹配强平/止损/止盈
                 ▼
-            triggerAndExecuteOrder()
+            forceClose() / batchTriggerStopLoss() / batchTriggerTakeProfit()
 ```
 
 **数据源 — BinanceWsClient**
-- 订阅 `btcusdt@miniTicker`，Java 21 原生 `java.net.http.WebSocket`
-- 配置: `application.yml` → `binance.ws-url / symbols`，当前仅 BTCUSDT
+- Spot 流订阅 `{symbol}@miniTicker`，Futures 流订阅 `{symbol}@markPrice@1s`
+- Java 21 原生 `java.net.http.WebSocket`，两条独立连接
+- 配置: `application.yml` → `binance.ws-url / futures-ws-url / symbols`
 
 **写入与广播 — writeRedisAndPush()**
-- `market:price:{symbol}` 缓存最新价（供 REST 接口读取）
+- `market:price:{symbol}` 缓存现货价 + Caffeine L1 热缓存
+- `market:markprice:{symbol}` 缓存标记价 + Caffeine L1 热缓存
 - Redis Pub/Sub `ws:broadcast:crypto` 广播（集群多实例扇出）
-- 虚拟线程异步触发限价单检查
+- 虚拟线程异步触发现货限价单检查 + 永续合约强平/止损/止盈检查
 
 **STOMP 推送 — RedisMessageBroadcastService**
 - 监听 Redis 频道，解析 `symbol|json`，推到 `/topic/crypto/{symbol}`
 - 集群只需一个实例连 Binance WS，所有实例通过 Redis 同步
 
 **前端消费 — useCryptoStream + Coin.tsx**
-- `@stomp/stompjs` + `sockjs-client` 连 `/ws/quotes`，订阅 `/topic/crypto/BTCUSDT`
+- `@stomp/stompjs` + `sockjs-client` 连 `/ws/quotes`，订阅 `/topic/crypto/{symbol}`
 - 3秒节流(trailing)，避免高频 re-render
 - tick 实时追加到 1D K线图：同分钟更新 close/high/low，跨分钟新增K线点
 
-**限价单事件驱动 — onPriceUpdate()**
+**现货限价单事件驱动 — onPriceUpdate()**
 - 买单/卖单索引: `crypto:limit:{buy|sell}:{symbol}` (ZSet, score=limitPrice)
 - 每 tick O(logN) `rangeByScore` 匹配，启动时 `rebuildLimitOrderZSets()` 从 DB 重建
 
+**永续合约强平/止损/止盈事件驱动 — checkOnPriceUpdate()**
+- 强平索引: `futures:liq:{long|short}:{symbol}` (ZSet, score=liquidationPrice)
+- 止损索引: `futures:sl:{long|short}:{symbol}` (ZSet, score=stopLossPrice)
+- 止盈索引: `futures:tp:{long|short}:{symbol}` (ZSet, score=takeProfitPrice)
+- 标记价格穿过强平/止损价即触发，成交价穿过止盈价即触发
+- 启动时 `init()` 从 DB 重建全部索引
+
 **断线容灾**
 ```
+Spot/Futures WS 独立断线检测
 WS断线 → 指数退避重连 {1,2,5,10,30}s + REST轮询兜底(5s)
-重连成功 → 停止轮询 + recoverMissedLimitOrders() 拉最近1分钟高低价恢复
+  Spot断线  → getTickerPrice() 轮询现货价
+  Futures断线 → getMarkPrice() 轮询标记价
+重连成功 → 停止轮询 + recoverMissedLimitOrders() / recoverMissedFutures() 拉最近高低价恢复
 ```
 
 ### 订单撮合引擎
@@ -180,6 +207,60 @@ PENDING  →  TRIGGERED  →  FILLED
 3. **Semaphore 限流**：虚拟线程并发上限
 
 事务与锁顺序：获取锁 → 开启事务 → 执行操作 → 提交事务 → 释放锁。成交后通过虚拟线程异步发布 Spring 事件触发 WebSocket 推送。
+
+### 永续合约交易引擎
+
+加密货币永续合约，逐仓保证金模式，支持多/空双向：
+
+**开仓**
+```
+1. 计算保证金 margin = (price × qty) / leverage
+2. 手续费 commission = positionValue × 0.1%
+3. 原子扣款 (margin + commission)
+4. 计算强平价并注册到 Redis ZSet 索引
+```
+
+**强平价公式**
+```
+维持保证金率 MMR = 0.5%
+
+LONG:  liqPrice = (entryPrice × qty - margin) / (qty × (1 - MMR))
+SHORT: liqPrice = (entryPrice × qty + margin) / (qty × (1 + MMR))
+```
+
+**仓位管理**
+- 加仓：加权计算新入场价，合并保证金，重算强平价
+- 追加保证金：增加保证金降低强平价，0 手续费
+- 部分平仓：保证金按比例返还，剩余止损/止盈保留
+
+**止损/止盈**
+- 单仓位最多 4 个止损 + 4 个止盈，支持分批平仓
+- 止损由标记价格触发（LONG: markPrice ≤ slPrice，SHORT: markPrice ≥ slPrice）
+- 止盈由成交价触发（LONG: currentPrice ≥ tpPrice，SHORT: currentPrice ≤ tpPrice）
+- Redis ZSet 索引 O(logN) rangeByScore 匹配
+
+**资金费率**
+```
+每 8 小时扣除：fee = entryPrice × qty × 0.01%
+优先扣余额 → 余额不足扣保证金（强平价变近）→ 保证金耗尽触发强平
+```
+
+**并发控制**
+- `futures:pos:{positionId}` 分布式锁：仓位级互斥
+- 数据库 CAS 乐观锁：状态机 OPEN → CLOSED/LIQUIDATED 不可逆
+- 虚拟线程异步处理强平/止损/止盈
+
+### 双层缓存架构
+
+Caffeine（L1 本地）+ Redis（L2 分布式），减少热数据的 Redis 往返：
+
+| 缓存 | 容量 | 内容 |
+|------|------|------|
+| `stockDailyCache` | 500 | 股票日内 OHLC（last/open/high/low/prevClose） |
+| `cryptoPriceCache` | 50 | 加密货币价格（`spot:{symbol}` / `mark:{symbol}` 区分现货/标记） |
+| `stockStaticCache` | 全量 | 股票静态数据（TTL 10min，启动预热） |
+
+加载策略：Caffeine 未命中 → Redis → DB。实时行情直接双写 Caffeine + Redis。
 
 ### 期权定价：Black-Scholes
 
@@ -217,6 +298,9 @@ PUT  = K·e^(-rT)·N(-d2) - S·N(-d1)
 15:00  收盘，期权到期结算
 16:00  清理过期限价单
 17:00  杠杆计息 + 爆仓检查
+每小时  Crypto 维护（过期限价单 + 孤儿 TRIGGERED 执行）
+每小时  Futures 维护（过期限价单 + 孤儿 TRIGGERED 执行）
+每8h   永续合约资金费率扣除（00:00 / 08:00 / 16:00）
 ```
 
 冷启动自愈：`@PostConstruct` 检查当前时间，如在交易时段则自动补启遗漏的周期任务。
@@ -247,12 +331,13 @@ PUT  = K·e^(-rT)·N(-d2) - S·N(-d1)
 | `/stock/:id/kline` | 日K线 |
 | `/portfolio` | 持仓与资产概览 |
 | `/options` | 期权交易 |
-| `/coin` | 加密货币选择（BTC / PAXG） |
-| `/coin/:symbol` | 加密货币详情（实时价格 + TradingView K线 + 交易面板） |
+| `/coin` | 加密货币选择（BTC / PAXG / ETH） |
+| `/coin/:symbol` | 加密货币详情（现货交易 + 永续合约 + TradingView K线） |
 | `/ranking` | 排行榜 |
 | `/games` | 小游戏大厅 |
 | `/blackjack` | 21点小游戏 |
 | `/mines` | 翻翻爆金币 |
+| `/me` | 个人中心（主题切换、游戏入口、排行榜） |
 | `/admin` | 管理后台 |
 
 ## 本地开发
@@ -353,6 +438,8 @@ docker compose up -d --build
 | blackjack_account | 21 点积分账户 |
 | crypto_order | 加密货币订单（市价/限价，BUY/SELL） |
 | crypto_position | 加密货币持仓（用户-币种唯一约束） |
+| futures_position | 永续合约持仓（逐仓保证金、强平价、止损/止盈 JSONB） |
+| futures_order | 永续合约订单（开/平/加仓，市价/限价） |
 | mines_game | 翻翻爆金币游戏记录（下注/倍率/雷位/结算） |
 
 ## License
