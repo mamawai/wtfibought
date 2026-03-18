@@ -724,15 +724,15 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
       <Card className="relative overflow-hidden mb-6">
         <div className={`absolute top-0 right-0 p-32 rounded-full blur-3xl -z-10 transform translate-x-1/3 -translate-y-1/2 opacity-20 bg-linear-to-br ${cfg.gradientClass}`} />
         <CardContent className="p-5 md:p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-2xl bg-card neu-raised-sm">
-                <Icon className={`w-7 h-7 ${cfg.colorClass}`} />
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="p-2.5 sm:p-3 rounded-2xl bg-card neu-raised-sm shrink-0">
+                <Icon className={`w-6 h-6 sm:w-7 sm:h-7 ${cfg.colorClass}`} />
               </div>
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2.5">
-                  <span className="text-xl font-black tracking-tight">{cfg.pair}</span>
-                  <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-card neu-flat text-[10px]">
+              <div className="space-y-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-lg sm:text-xl font-black tracking-tight">{cfg.pair}</span>
+                  <div className="flex items-center gap-2 px-2 py-0.5 rounded-full bg-card neu-flat text-[10px]">
                     <span className="flex items-center gap-1.5" title="现货行情">
                       <span className={`inline-block w-2 h-2 rounded-full ${tick?.ws ? 'bg-success' : 'bg-destructive animate-pulse'}`} />
                       <span className="text-foreground font-bold">现货</span>
@@ -744,7 +744,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                     </span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-xs font-bold text-muted-foreground">Binance</span>
                   {cfg.unitLabel && (
                     <>
@@ -755,11 +755,11 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                 </div>
               </div>
             </div>
-            <div className="text-right">
+            <div className="text-left sm:text-right">
               {currentPrice > 0 ? (
-                <div className="flex flex-col items-end">
+                <div className="flex flex-col items-start sm:items-end">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-3xl font-black tracking-tight font-mono" style={{ color: 'var(--color-foreground)' }}>
+                    <span className="text-2xl sm:text-3xl font-black tracking-tight font-mono" style={{ color: 'var(--color-foreground)' }}>
                       ${formatPrice(currentPrice)}
                     </span>
                   </div>
@@ -768,14 +768,14 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                       ¥{(currentPrice * usdCny / cfg.unitFactor!).toFixed(2)}/{cfg.unitLabel}
                     </div>
                   )}
-                  <div className={`flex items-center justify-end gap-1.5 text-sm font-bold mt-2 px-2.5 py-1 rounded-lg neu-flat ${isUp ? 'bg-gain/10 text-gain' : 'bg-loss/10 text-loss'}`}>
+                  <div className={`flex items-center gap-1.5 text-sm font-bold mt-2 px-2.5 py-1 rounded-lg neu-flat ${isUp ? 'bg-gain/10 text-gain' : 'bg-loss/10 text-loss'}`}>
                     {isUp ? <TrendingUp className="w-4 h-4 stroke-[3px]" /> : <TrendingDown className="w-4 h-4 stroke-[3px]" />}
                     <span>{isUp ? '+' : ''}{formatPrice(change)}</span>
                     <span>({isUp ? '+' : ''}{changePct.toFixed(2)}%)</span>
                   </div>
                 </div>
               ) : (
-                <div className="space-y-2 flex flex-col items-end">
+                <div className="space-y-2 flex flex-col items-start sm:items-end">
                   <Skeleton className="h-10 w-40" />
                   <Skeleton className="h-6 w-24" />
                 </div>
@@ -844,7 +844,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-5 text-xs font-bold text-muted-foreground pt-1">
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs font-bold text-muted-foreground pt-1">
                   <span>均价 <span className="text-foreground font-mono">${formatPrice(position.avgCost)}</span></span>
                   <span>现价 <span className="text-foreground font-mono">${formatPrice(currentPrice)}</span></span>
                   <span>市值 <span className="text-foreground font-mono">${formatPrice(currentPrice * position.quantity)}</span></span>
@@ -857,8 +857,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
         })()}
 
         {/* 买卖/做多做空 + 市价限价合约 */}
-        <div className="px-5 pt-5 flex items-center gap-4">
-          <div className="flex flex-1 rounded-xl bg-card overflow-hidden neu-raised">
+        <div className="px-5 pt-5 flex flex-wrap items-center gap-3">
+          <div className="flex flex-1 min-w-[140px] rounded-xl bg-card overflow-hidden neu-raised">
             {orderType === 'FUTURES' ? (
               <>
                 <button onClick={() => setFuturesSide('LONG')} className={`flex-1 py-2.5 text-sm font-black border-r border-border transition-colors ${futuresSide === 'LONG' ? 'bg-gain text-white' : 'bg-card text-foreground hover:bg-surface-hover'}`}>做多</button>
@@ -932,7 +932,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               </div>
 
               {/* 数量输入 */}
-              <div className="flex gap-3 items-end">
+              <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
                 {/* 左半边：保证金输入框 */}
                 <div className="flex-1">
                   <div className="relative">
@@ -1549,7 +1549,7 @@ function HelpTip({ text }: { text: string }) {
         <HelpCircle className="w-3.5 h-3.5" />
       </button>
       {open && (
-        <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 z-50 w-52 p-2.5 rounded-lg border bg-card text-xs text-muted-foreground shadow-lg leading-relaxed">
+        <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 z-50 w-52 p-2.5 rounded-lg border bg-card text-xs text-muted-foreground shadow-lg leading-relaxed">
           {text}
         </div>
       )}
