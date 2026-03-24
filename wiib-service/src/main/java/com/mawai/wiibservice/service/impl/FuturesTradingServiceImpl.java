@@ -75,7 +75,9 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         BigDecimal totalCost = margin.add(commission);
 
         User user = userService.getById(userId);
-        if (user.getBalance().compareTo(totalCost) < 0) {
+        // 允许0.05 USDT的价格滑点容差，避免前后端价格时间差导致误报余额不足
+        BigDecimal tolerance = new BigDecimal("0.05");
+        if (user.getBalance().add(tolerance).compareTo(totalCost) < 0) {
             throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
         }
 
