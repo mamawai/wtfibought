@@ -561,3 +561,34 @@ export interface PredictionBetLive {
   source?: string;
   ts: number;
 }
+
+// ========== 资产快照类型 ==========
+export interface AssetSnapshot {
+  date: string;
+  totalAssets: number;
+  profit: number;
+  profitPct: number;
+  stockProfit: number;
+  cryptoProfit: number;
+  futuresProfit: number;
+  optionProfit: number;
+  predictionProfit: number;
+  gameProfit: number;
+  dailyProfit: number;
+  dailyProfitPct: number;
+  dailyStockProfit: number;
+  dailyCryptoProfit: number;
+  dailyFuturesProfit: number;
+  dailyOptionProfit: number;
+  dailyPredictionProfit: number;
+  dailyGameProfit: number;
+}
+
+export interface CategoryAverages {
+  stockProfit: number;
+  cryptoProfit: number;
+  futuresProfit: number;
+  optionProfit: number;
+  predictionProfit: number;
+  gameProfit: number;
+}

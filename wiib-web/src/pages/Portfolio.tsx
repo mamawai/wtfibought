@@ -10,6 +10,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader } from '../components
 import { useToast } from '../components/ui/use-toast';
 import { PortfolioChart } from '../components/PortfolioChart';
 import { PortfolioWallet } from '../components/PortfolioWallet';
+import { ProfitChart } from '../components/ProfitChart';
+import { RadarChart } from '../components/RadarChart';
 import type { WalletAsset } from '../components/PortfolioWallet';
 import { cn } from '../lib/utils';
 import {
@@ -24,12 +26,14 @@ import {
   ChevronRight,
   PieChart,
   BarChart3,
+  LineChart,
+  Radar,
   CircleDollarSign,
   Scale,
   Layers,
   Target,
 } from 'lucide-react';
-import type { Position, Order, Settlement, CryptoPosition, FuturesPosition, OptionPosition, PredictionPnl } from '../types';
+import type { Position, Order, Settlement, CryptoPosition, FuturesPosition, OptionPosition, PredictionPnl, AssetSnapshot, CategoryAverages } from '../types';
 import { useDedupedEffect } from '../hooks/useDedupedEffect';
 import { getCoin } from '../lib/coinConfig';
 
@@ -90,18 +94,42 @@ export function Portfolio() {
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [cancelOrder, setCancelOrder] = useState<Order | null>(null);
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
-  const [showChart, setShowChart] = useState(false);
-  const [showWallet, setShowWallet] = useState(true);
+  const [panel, setPanel] = useState<'chart' | 'wallet' | 'profit' | 'radar' | null>('wallet');
   const [chartReady, setChartReady] = useState(false);
   const [walletReady, setWalletReady] = useState(false);
+  const [profitData, setProfitData] = useState<AssetSnapshot[]>([]);
+  const [profitLoaded, setProfitLoaded] = useState(false);
+  const [realtimeSnapshot, setRealtimeSnapshot] = useState<AssetSnapshot | null>(null);
+  const [categoryAverages, setCategoryAverages] = useState<CategoryAverages | null>(null);
 
   useEffect(() => {
-    // 只有当token不存在时才跳转login（用户确实未登录）
-    // 如果token存在但user为null，说明正在等待fetchUser完成，不跳转
     if (!token) {
       navigate('/login');
     }
   }, [token, navigate]);
+
+  useEffect(() => {
+    if (panel === 'profit' && !profitLoaded) {
+      Promise.all([
+        userApi.assetHistory(30),
+        userApi.assetRealtime(),
+      ]).then(([history, realtime]) => {
+        setProfitData(history);
+        setRealtimeSnapshot(realtime);
+      }).catch(() => {
+        setProfitData([]);
+        setRealtimeSnapshot(null);
+      }).finally(() => setProfitLoaded(true));
+    }
+  }, [panel, profitLoaded]);
+
+  useEffect(() => {
+    if (panel === 'radar') {
+      userApi.categoryAverages(30)
+        .then(setCategoryAverages)
+        .catch(() => setCategoryAverages(null));
+    }
+  }, [panel]);
 
   const loadCryptoPositions = useCallback(async () => {
     try {
@@ -247,7 +275,7 @@ export function Portfolio() {
       )}
 
       {/* 总资产概览 */}
-      <div className={cn("relative rounded-2xl border border-primary/15", showWallet ? "" : "overflow-hidden")}
+      <div className={cn("relative rounded-2xl border border-primary/15", panel === 'wallet' || panel === 'profit' ? "" : "overflow-hidden")}
         style={{
           backgroundImage: `linear-gradient(135deg, color-mix(in oklab, var(--color-primary) 12%, var(--color-card)) 0%, var(--color-card) 60%), repeating-linear-gradient(0deg, transparent, transparent 24px, color-mix(in oklab, var(--color-border) 30%, transparent) 24px, color-mix(in oklab, var(--color-border) 30%, transparent) 25px), repeating-linear-gradient(90deg, transparent, transparent 24px, color-mix(in oklab, var(--color-border) 30%, transparent) 24px, color-mix(in oklab, var(--color-border) 30%, transparent) 25px)`,
         }}
@@ -255,9 +283,9 @@ export function Portfolio() {
         {/* 顶部光晕 */}
         <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
 
-        <div className="relative p-5">
+        <div className="relative p-4 sm:p-5">
           {/* 头部行：头像+用户名 / 切换按钮 */}
-          <div className="flex justify-between items-center mb-5">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 sm:mb-5">
             <div className="flex items-center gap-3">
               {user.avatar ? (
                 <img src={user.avatar} alt="" className="w-10 h-10 rounded-full ring-1 ring-primary/30 ring-offset-1 ring-offset-card" />
@@ -273,10 +301,10 @@ export function Portfolio() {
             </div>
             <div className="flex gap-1.5">
               <button
-                onClick={() => { setShowChart(v => !v); if (!showChart) setShowWallet(false); }}
+                onClick={() => setPanel(p => p === 'chart' ? null : 'chart')}
                 className={cn(
                   "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all",
-                  showChart
+                  panel === 'chart'
                     ? "bg-primary/15 text-primary border border-primary/25"
                     : "text-muted-foreground border border-border/50 hover:border-border hover:text-foreground"
                 )}
@@ -285,10 +313,34 @@ export function Portfolio() {
                 分布
               </button>
               <button
-                onClick={() => { setShowWallet(v => !v); if (!showWallet) setShowChart(false); }}
+                onClick={() => setPanel(p => p === 'profit' ? null : 'profit')}
                 className={cn(
                   "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all",
-                  showWallet
+                  panel === 'profit'
+                    ? "bg-primary/15 text-primary border border-primary/25"
+                    : "text-muted-foreground border border-border/50 hover:border-border hover:text-foreground"
+                )}
+              >
+                <LineChart className="w-3.5 h-3.5" />
+                收益
+              </button>
+              <button
+                onClick={() => setPanel(p => p === 'radar' ? null : 'radar')}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all",
+                  panel === 'radar'
+                    ? "bg-primary/15 text-primary border border-primary/25"
+                    : "text-muted-foreground border border-border/50 hover:border-border hover:text-foreground"
+                )}
+              >
+                <Radar className="w-3.5 h-3.5" />
+                能力
+              </button>
+              <button
+                onClick={() => setPanel(p => p === 'wallet' ? null : 'wallet')}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all",
+                  panel === 'wallet'
                     ? "bg-primary/15 text-primary border border-primary/25"
                     : "text-muted-foreground border border-border/50 hover:border-border hover:text-foreground"
                 )}
@@ -301,10 +353,10 @@ export function Portfolio() {
 
           {/* 主体：饼图左 + 数据右 */}
           <div className="flex flex-col sm:flex-row gap-0">
-            {/* 左：饼图 */}
-            {(showChart || showWallet) && (
-              <div className="sm:w-[48%] sm:border-r border-border/30 sm:pr-4 flex items-center justify-center">
-                {showChart ? (
+            {/* 左：饼图/收益/钱包（profit模式全宽） */}
+            {panel && (
+              <div className={cn("flex items-center justify-center", panel === 'profit' || panel === 'radar' ? "w-full" : "sm:w-[48%] sm:border-r border-border/30 sm:pr-4")}>
+                {panel === 'chart' ? (
                   chartReady ? (
                     <div className="w-full animate-in fade-in duration-300">
                       <PortfolioChart
@@ -322,6 +374,56 @@ export function Portfolio() {
                       </svg>
                     </div>
                   )
+                ) : panel === 'profit' ? (
+                  <div className="w-full animate-in fade-in duration-300 px-1 sm:px-0 py-3">
+                    {realtimeSnapshot && (
+                      <div className="mb-3">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-xs sm:text-[11px] text-muted-foreground uppercase tracking-wider">今日收益</span>
+                          <span className={cn(
+                            "text-sm sm:text-xs font-bold tabular-nums",
+                            realtimeSnapshot.dailyProfit >= 0 ? "text-green-400" : "text-red-400"
+                          )}>
+                            {realtimeSnapshot.dailyProfit >= 0 ? '+' : ''}{fmt(realtimeSnapshot.dailyProfit)}
+                            <span className="ml-1 opacity-70">
+                              ({realtimeSnapshot.dailyProfitPct >= 0 ? '+' : ''}{realtimeSnapshot.dailyProfitPct?.toFixed(2)}%)
+                            </span>
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-2 text-xs">
+                          {[
+                            { label: '股票', value: realtimeSnapshot.dailyStockProfit },
+                            { label: '加密', value: realtimeSnapshot.dailyCryptoProfit },
+                            { label: '合约', value: realtimeSnapshot.dailyFuturesProfit },
+                            { label: '期权', value: realtimeSnapshot.dailyOptionProfit },
+                            { label: '预测', value: realtimeSnapshot.dailyPredictionProfit },
+                            { label: '游戏', value: realtimeSnapshot.dailyGameProfit },
+                          ].filter(item => item.value !== 0).map(item => (
+                            <div key={item.label} className="flex justify-between">
+                              <span className="text-muted-foreground">{item.label}</span>
+                              <span className={cn("tabular-nums font-medium", item.value >= 0 ? "text-green-400" : "text-red-400")}>
+                                {item.value >= 0 ? '+' : ''}{fmt(item.value)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <ProfitChart data={profitData} />
+                  </div>
+                ) : panel === 'radar' ? (
+                  <div className="w-full animate-in fade-in duration-300 px-1 sm:px-0 py-3">
+                    {categoryAverages ? (
+                      <RadarChart userData={categoryAverages} />
+                    ) : (
+                      <div className="w-full h-56 sm:h-72 flex items-center justify-center">
+                        <svg className="w-7 h-7 text-muted-foreground/40 animate-spin" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <div className="animate-in fade-in duration-300 py-4">
                     <PortfolioWallet
@@ -336,8 +438,9 @@ export function Portfolio() {
               </div>
             )}
 
-            {/* 右：指标区 */}
-            <div className={cn("flex flex-col justify-center", (showChart || showWallet) ? "sm:flex-1 sm:pl-5 pt-3 sm:pt-0" : "w-full")}>
+            {/* 右：指标区（profit/radar模式不显示） */}
+            {panel && panel !== 'profit' && panel !== 'radar' && (
+              <div className={cn("flex flex-col justify-center", panel ? "sm:flex-1 sm:pl-5 pt-3 sm:pt-0" : "w-full")}>
               {/* 总资产主指标 */}
               <div className="mb-4">
                 <span className="text-[11px] text-muted-foreground uppercase tracking-widest">总资产</span>
@@ -418,6 +521,7 @@ export function Portfolio() {
                 )}
               </div>
             </div>
+            )}
           </div>
         </div>
 
@@ -444,6 +548,8 @@ export function Portfolio() {
           size="sm"
           onClick={() => {
             setRefreshNonce((n) => n + 1);
+            setProfitLoaded(false);
+            setRealtimeSnapshot(null);
             toast('已刷新', 'info');
           }}
         >

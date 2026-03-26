@@ -10,14 +10,13 @@ import {ArrowLeftRight, CopyPlus, Hand, RotateCcw, Shield, Spade, Split, Square}
 import {cn} from '../lib/utils';
 import type {BlackjackStatus, GameState, HandResult} from '../types';
 
-const BET_PRESETS = [100, 500, 1000, 5000, 10000, 50000];
+const BET_PRESETS = [100, 500, 1000, 5000, 10000];
 const CHIP_COLORS: Record<number, string> = {
   100: 'bj-chip-100',
   500: 'bj-chip-500',
   1000: 'bj-chip-1000',
   5000: 'bj-chip-5000',
   10000: 'bj-chip-10000',
-  50000: 'bj-chip-50000',
 };
 
 const RESULT_LABELS: Record<string, string> = {
@@ -100,7 +99,7 @@ export function Blackjack() {
       setConvertOpen(false);
       setConvertAmount('');
       if (status) {
-        setStatus({ ...status, chips: result.chips, todayConverted: result.todayConverted, convertable: Math.max(0, result.chips - 100000) });
+        setStatus({ ...status, chips: result.chips, todayConverted: result.todayConverted, convertable: Math.max(0, result.chips - 20000) });
       }
     } catch (e: unknown) {
       toast((e as Error).message || '转出失败', 'error');
@@ -437,7 +436,7 @@ export function Blackjack() {
           <div className="space-y-3">
             <div className="text-sm text-muted-foreground space-y-1">
               <p>可转出: <span className="font-bold text-foreground">{(status?.convertable ?? 0).toLocaleString()}</span></p>
-              <p>今日已转: {(status?.todayConverted ?? 0).toLocaleString()} / {(status?.todayConvertLimit ?? 100000).toLocaleString()}</p>
+              <p>今日已转: {(status?.todayConverted ?? 0).toLocaleString()} / {(status?.todayConvertLimit ?? 20000).toLocaleString()}</p>
             </div>
             <input
               type="number"
@@ -446,7 +445,7 @@ export function Blackjack() {
               placeholder="输入转出金额"
               className="w-full px-3 py-2 rounded-lg bg-background text-sm neu-inset"
               min={1}
-              max={Math.min(status?.convertable ?? 0, (status?.todayConvertLimit ?? 100000) - (status?.todayConverted ?? 0))}
+              max={Math.min(status?.convertable ?? 0, (status?.todayConvertLimit ?? 20000) - (status?.todayConverted ?? 0))}
             />
             <div className="flex gap-2">
               {[1000, 5000, 10000].map(v => (
@@ -457,7 +456,7 @@ export function Blackjack() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setConvertAmount(String(Math.min(status?.convertable ?? 0, (status?.todayConvertLimit ?? 100000) - (status?.todayConverted ?? 0))))}
+                onClick={() => setConvertAmount(String(Math.min(status?.convertable ?? 0, (status?.todayConvertLimit ?? 20000) - (status?.todayConverted ?? 0))))}
                 className="flex-1"
               >
                 MAX

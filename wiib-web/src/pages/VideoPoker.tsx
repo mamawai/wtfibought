@@ -384,7 +384,7 @@ export function VideoPoker() {
           <section>
             <h3 className="font-semibold mb-1.5 text-xs uppercase tracking-wider text-muted-foreground">基础规则</h3>
             <ul className="list-disc list-inside text-muted-foreground space-y-0.5 text-xs">
-              <li>54张牌（含2张小丑），目标凑最高牌型</li>
+              <li>一副牌牌（含小丑牌），目标凑最高牌型</li>
               <li>下注后发5张，选择保留（HOLD）或不保留</li>
               <li>换牌后未保留的牌被替换，按赔率表结算</li>
             </ul>

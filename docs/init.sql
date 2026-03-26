@@ -412,7 +412,7 @@ COMMENT ON COLUMN user_buff.created_at IS '创建时间';
 CREATE TABLE IF NOT EXISTS blackjack_account (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL UNIQUE REFERENCES "user"(id),
-    chips BIGINT NOT NULL DEFAULT 100000,
+    chips BIGINT NOT NULL DEFAULT 20000,
     today_converted BIGINT NOT NULL DEFAULT 0,
     last_convert_date DATE,
     last_reset_date DATE,
@@ -437,6 +437,24 @@ COMMENT ON COLUMN blackjack_account.total_lost IS '总输额';
 COMMENT ON COLUMN blackjack_account.biggest_win IS '单局最大赢额';
 COMMENT ON COLUMN blackjack_account.created_at IS '创建时间';
 COMMENT ON COLUMN blackjack_account.updated_at IS '更新时间';
+
+-- ============================================
+-- 14b. Blackjack 转出日志表
+-- ============================================
+CREATE TABLE IF NOT EXISTS blackjack_convert_log (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    amount BIGINT NOT NULL,
+    chips_before BIGINT NOT NULL,
+    chips_after BIGINT NOT NULL,
+    balance_before DECIMAL(18,2) NOT NULL,
+    balance_after DECIMAL(18,2) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_bj_convert_user ON blackjack_convert_log(user_id);
+
+COMMENT ON TABLE blackjack_convert_log IS 'Blackjack积分转出日志';
 
 -- ============================================
 -- 15. 加密货币持仓表
@@ -538,8 +556,7 @@ COMMENT ON COLUMN mines_game.status IS 'PLAYING/CASHED_OUT/EXPLODED';
 COMMENT ON COLUMN mines_game.created_at IS '创建时间';
 COMMENT ON COLUMN mines_game.updated_at IS '更新时间';
 
-CREATE INDEX idx_mines_game_user ON mines_game(user_id);
-CREATE INDEX idx_mines_game_status ON mines_game(status);
+CREATE INDEX idx_mines_game_user_status ON mines_game(user_id, status);
 
 -- ============================================
 -- 18. 永续合约仓位表
@@ -661,8 +678,7 @@ COMMENT ON COLUMN video_poker_game.multiplier IS '赔率倍数';
 COMMENT ON COLUMN video_poker_game.payout IS '赔付金额';
 COMMENT ON COLUMN video_poker_game.status IS 'DEALING/SETTLED';
 
-CREATE INDEX idx_vp_game_user ON video_poker_game(user_id);
-CREATE INDEX idx_vp_game_status ON video_poker_game(status);
+CREATE INDEX idx_vp_game_user_status ON video_poker_game(user_id, status);
 
 -- ============================================
 -- 21. BTC 5min 涨跌预测回合表
@@ -716,3 +732,25 @@ COMMENT ON COLUMN prediction_bet.status IS '状态：ACTIVE/WON/LOST/DRAW/SOLD';
 
 CREATE INDEX idx_pred_bet_round ON prediction_bet(round_id, status);
 CREATE INDEX idx_pred_bet_user ON prediction_bet(user_id, created_at DESC);
+
+-- ============================================
+-- 用户资产每日快照
+-- ============================================
+CREATE TABLE IF NOT EXISTS user_asset_snapshot (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    snapshot_date DATE NOT NULL,
+    total_assets DECIMAL(18,2) NOT NULL,
+    profit DECIMAL(18,2) NOT NULL,
+    profit_pct DECIMAL(10,4) NOT NULL,
+    stock_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
+    crypto_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
+    futures_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
+    option_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
+    prediction_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
+    game_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_snapshot_user_date UNIQUE (user_id, snapshot_date)
+);
+
+COMMENT ON TABLE user_asset_snapshot IS '用户资产每日快照';

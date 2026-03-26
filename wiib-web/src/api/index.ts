@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, CardRoom, Card414GameState, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl } from '../types';
+import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, CardRoom, Card414GameState, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -85,10 +85,11 @@ export const orderApi = {
 
 // ========== 用户接口 ==========
 export const userApi = {
-  // 获取用户资产概览
   portfolio: () => api.get<unknown, User>('/user/portfolio'),
-  // 获取用户持仓列表
   positions: () => api.get<unknown, Position[]>('/user/positions'),
+  assetHistory: (days = 30) => api.get<unknown, AssetSnapshot[]>('/user/asset-history', { params: { days } }),
+  assetRealtime: () => api.get<unknown, AssetSnapshot>('/user/asset-realtime'),
+  categoryAverages: (days = 30) => api.get<unknown, CategoryAverages>('/user/category-averages', { params: { days } }),
 };
 
 // ========== 结算接口 ==========
@@ -143,6 +144,7 @@ export const adminApi = {
   getDailyInterestRate: () => api.get<unknown, number>('/admin/task/margin/daily-interest-rate'),
   setDailyInterestRate: (dailyInterestRate: number) =>
     api.post<unknown, number>('/admin/task/margin/daily-interest-rate', { dailyInterestRate }),
+  assetSnapshot: () => api.post<unknown, void>('/admin/task/asset-snapshot'),
 };
 
 // ========== 期权接口 ==========

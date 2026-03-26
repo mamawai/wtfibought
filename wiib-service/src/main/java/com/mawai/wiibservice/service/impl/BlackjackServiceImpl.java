@@ -3,9 +3,11 @@ package com.mawai.wiibservice.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.dto.*;
 import com.mawai.wiibcommon.entity.BlackjackAccount;
+import com.mawai.wiibcommon.entity.BlackjackConvertLog;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibservice.mapper.BlackjackAccountMapper;
+import com.mawai.wiibservice.mapper.BlackjackConvertLogMapper;
 import com.mawai.wiibservice.service.BlackjackService;
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.UserService;
@@ -37,24 +39,25 @@ import java.util.concurrent.TimeUnit;
 public class BlackjackServiceImpl implements BlackjackService {
 
     private final BlackjackAccountMapper accountMapper;
+    private final BlackjackConvertLogMapper convertLogMapper;
     private final CacheService cacheService;
     private final UserService userService;
     private final GameLockExecutor gameLock;
 
     /** 用户初始积分，同时也是每日保底重置目标值。 */
-    private static final long INITIAL_CHIPS = 100_000L;
+    private static final long INITIAL_CHIPS = 20_000L;
     /** 每日最多可从 Blackjack 转出的积分上限。 */
-    private static final long DAILY_CONVERT_LIMIT = 100_000L;
+    private static final long DAILY_CONVERT_LIMIT = 20_000L;
     /** 单次下注最小积分。 */
     private static final long MIN_BET = 100L;
     /** 单次下注最大积分。 */
-    private static final long MAX_BET = 50_000L;
+    private static final long MAX_BET = 10_000L;
     /** 一局牌靴使用的副数（当前为单副牌）。 */
     private static final int SHOE_DECKS = 1;
     private static final Random RANDOM = new SecureRandom();
 
     /** 每日积分池总额度。 */
-    private static final long DAILY_POOL = 2_000_000L;
+    private static final long DAILY_POOL = 400_000L;
     /** 积分池 Redis 键前缀。 */
     private static final String POOL_KEY_PREFIX = "bj:pool:";
 
@@ -533,6 +536,9 @@ public class BlackjackServiceImpl implements BlackjackService {
                 throw new BizException(ErrorCode.BJ_CONVERT_LIMIT);
             }
 
+            long chipsBefore = account.getChips();
+            BigDecimal balanceBefore = userService.getById(userId).getBalance();
+
             account.setChips(account.getChips() - amount);
             account.setTodayConverted(todayConverted + amount);
             account.setLastConvertDate(LocalDate.now());
@@ -541,9 +547,19 @@ public class BlackjackServiceImpl implements BlackjackService {
 
             userService.updateBalance(userId, BigDecimal.valueOf(amount));
 
+            BlackjackConvertLog logEntry = new BlackjackConvertLog();
+            logEntry.setUserId(userId);
+            logEntry.setAmount(amount);
+            logEntry.setChipsBefore(chipsBefore);
+            logEntry.setChipsAfter(account.getChips());
+            logEntry.setBalanceBefore(balanceBefore);
+            logEntry.setBalanceAfter(balanceBefore.add(BigDecimal.valueOf(amount)));
+            logEntry.setCreatedAt(LocalDateTime.now());
+            convertLogMapper.insert(logEntry);
+
             ConvertResultDTO result = new ConvertResultDTO();
             result.setChips(account.getChips());
-            result.setBalance(userService.getUserPortfolio(userId).getBalance().doubleValue());
+            result.setBalance(userService.getById(userId).getBalance().doubleValue());
             result.setTodayConverted(account.getTodayConverted());
             return result;
         });

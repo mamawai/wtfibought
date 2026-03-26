@@ -246,11 +246,6 @@ public class VideoPokerServiceImpl implements VideoPokerService {
             if (pairCount == 2) {
                 return "Full House";
             }
-        } else if (jokers == 2) {
-            // 3张自然牌：一对+一张散牌 → 百搭补成 Full House
-            if (countMap.size() == 2 && maxCount == 2) {
-                return "Full House";
-            }
         }
         if (isFlush) {
             return "Flush";
@@ -311,14 +306,13 @@ public class VideoPokerServiceImpl implements VideoPokerService {
     // ==================== 辅助 ====================
 
     private static List<String> buildDeck() {
-        List<String> deck = new ArrayList<>(54);
+        List<String> deck = new ArrayList<>(53);
         for (String s : SUITS) {
             for (String r : RANKS) {
                 deck.add(r + s);
             }
         }
         deck.add("JK1");
-        deck.add("JK2");
         return deck;
     }
 

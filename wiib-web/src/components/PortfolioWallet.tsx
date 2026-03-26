@@ -96,7 +96,7 @@ export function PortfolioWallet({ totalAssets, balance, username, assets, ready 
                 color: c.isDark ? '#1e293b' : '#fff',
                 '--spread-y': `${spreadY}px`,
                 '--spread-r': `${rotate}deg`,
-                ...(shouldAnimate ? {} : { animation: 'none', opacity: 0 }),
+                ...(shouldAnimate ? {} : { animationDuration: '0s', animationIterationCount: '0', opacity: 0 }),
               } as React.CSSProperties}
             >
               <div className="card-inner">

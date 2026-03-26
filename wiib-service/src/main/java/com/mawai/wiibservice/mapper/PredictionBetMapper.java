@@ -4,12 +4,16 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.mawai.wiibcommon.entity.PredictionBet;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.math.BigDecimal;
 
 @Mapper
 public interface PredictionBetMapper extends BaseMapper<PredictionBet> {
+
+    @Select("SELECT COALESCE(SUM(COALESCE(payout, 0) - cost), 0) FROM prediction_bet WHERE user_id = #{userId} AND status IN ('WON', 'LOST', 'DRAW', 'SOLD')")
+    BigDecimal sumRealizedProfit(@Param("userId") Long userId);
 
     /** CAS卖出: 仅ACTIVE→SOLD，返回affected行数防并发 */
     @Update("UPDATE prediction_bet SET status = 'SOLD', payout = #{payout}, updated_at = NOW() " +

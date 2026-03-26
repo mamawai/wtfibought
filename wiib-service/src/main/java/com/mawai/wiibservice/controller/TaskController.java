@@ -6,6 +6,7 @@ import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.service.BankruptcyService;
 import com.mawai.wiibservice.service.MarginAccountService;
 import com.mawai.wiibservice.service.MarketDataService;
+import com.mawai.wiibservice.service.AssetSnapshotService;
 import com.mawai.wiibservice.task.MarketDataTask;
 import com.mawai.wiibservice.task.ScheduledTasks;
 import io.swagger.v3.oas.annotations.Operation;
@@ -32,6 +33,7 @@ public class TaskController {
     private final BankruptcyService bankruptcyService;
     private final MarketDataService marketDataService;
     private final MarginAccountService marginAccountService;
+    private final AssetSnapshotService assetSnapshotService;
 
     private void checkAdmin() {
         long userId = StpUtil.getLoginIdAsLong();
@@ -157,6 +159,14 @@ public class TaskController {
 
         tradingConfig.getMargin().setDailyInterestRate(normalized);
         return Result.ok(tradingConfig.getMargin().getDailyInterestRate());
+    }
+
+    @PostMapping("/asset-snapshot")
+    @Operation(summary = "手动触发每日资产快照")
+    public Result<Void> assetSnapshot() {
+        checkAdmin();
+        assetSnapshotService.snapshotAll();
+        return Result.ok();
     }
 
     @Data

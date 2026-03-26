@@ -269,6 +269,13 @@ export function Admin() {
               >
                 按ticks重建今日汇总缓存
               </Button>
+              <Button
+                variant="outline"
+                onClick={() => handleAction(adminApi.assetSnapshot, 'assetSnapshot')}
+                disabled={actionLoading !== null}
+              >
+                资产快照
+              </Button>
             </CardContent>
           </Card>
         </>
