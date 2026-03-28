@@ -23,6 +23,8 @@ public class SaTokenConfig extends BaseSaTokenConfig {
         paths.add("/api/auth/callback/**");
         paths.add("/api/414/**");
         paths.add("/api/agora/**");
+        paths.add("/api/invite/**");
+        paths.add("/linuxdo/**");
         paths.add("/ws/**");
         return paths;
     }

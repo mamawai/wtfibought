@@ -6,7 +6,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication(scanBasePackages = {"com.mawai"})
-@MapperScan({"com.mawai.wiibservice.mapper", "com.mawai.wiibservice.fouronefour.mapper"})
+@MapperScan({"com.mawai.wiibservice.mapper", "com.mawai.wiibservice.fouronefour.mapper", "com.mawai.wiibservice.invitecode.mapper"})
 @EnableScheduling
 public class WiibServiceApplication {
 

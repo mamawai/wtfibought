@@ -5,5 +5,6 @@ package com.mawai.wiibcommon.constant;
  */
 public enum RateLimiterType {
     BUY,
-    SELL
+    SELL,
+    INVITE_CLICK
 }
