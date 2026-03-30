@@ -354,7 +354,7 @@ public class MarketDataServiceImpl implements MarketDataService {
         for (int i = 1; i < steps; i++) {
             // --- A. 基础 GBM 波动 ---
             double z = random.nextGaussian();
-            z = Math.max(-4.0, Math.min(4.0, z)); // 防极值
+            z = Math.clamp(z, -4.0, 4.0); // 防极值
 
             double gbmPrice = prices[i - 1] * Math.exp(
                     (params.mu - 0.5 * params.sigma * params.sigma) * dt
@@ -368,13 +368,13 @@ public class MarketDataServiceImpl implements MarketDataService {
                 // 触发向上跳跃
                 double rawJump = params.pJumpMu + jumpSigma * random.nextGaussian();
                 // 钳制上限 5%
-                double clampedJump = Math.min(0.05, Math.max(0.01, rawJump));
+                double clampedJump = Math.clamp(rawJump, 0.01, 0.05);
                 jumpMultiplier = Math.exp(clampedJump);
             } else if (jumpMap[i] == -1) {
                 // 触发向下跳跃
                 double rawJump = params.nJumpMu + jumpSigma * random.nextGaussian();
                 // 钳制下限 -5%
-                double clampedJump = Math.max(-0.05, Math.min(-0.01, rawJump));
+                double clampedJump = Math.clamp(rawJump, -0.05, -0.01);
                 jumpMultiplier = Math.exp(clampedJump);
             }
             // --- C. 合成最终价格 ---

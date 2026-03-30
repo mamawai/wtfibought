@@ -63,6 +63,7 @@ public class FuturesController {
         return Result.ok();
     }
 
+    /** 设置止盈 */
     @PostMapping("/take-profit")
     public Result<Void> setTakeProfit(@RequestBody FuturesTakeProfitRequest request) {
         Long userId = StpUtil.getLoginIdAsLong();
