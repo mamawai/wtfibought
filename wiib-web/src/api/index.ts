@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, CardRoom, Card414GameState, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, ForceOrder } from '../types';
+import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, CardRoom, Card414GameState, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, ForceOrder } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -290,68 +290,8 @@ export const predictionApi = {
 
 // ========== AI Agent 接口 ==========
 export const aiAgentApi = {
-  analyzeBehavior: (onStep?: (message: string) => void): Promise<BehaviorAnalysisReport> => {
-    return new Promise((resolve, reject) => {
-      const token = getToken();
-      fetch('/api/ai/analyze-behavior', {
-        method: 'POST',
-        headers: token ? { satoken: token } : {},
-      })
-        .then(res => {
-          const contentType = res.headers.get('Content-Type') || '';
-          if (!contentType.includes('text/event-stream')) {
-            // 后端返回了普通JSON（全局异常处理），解析错误信息
-            res.json().then(err => reject(new Error(err.msg || '请求失败')))
-                      .catch(() => reject(new Error('请求失败')));
-            return;
-          }
-          const reader = res.body!.getReader();
-          const decoder = new TextDecoder();
-          let buf = '';
-          let hasResult = false;
-
-          function read() {
-            reader.read().then(({ done, value }) => {
-              if (done) {
-                if (!hasResult) {
-                  reject(new Error('分析中断，未收到结果'));
-                }
-                return;
-              }
-              buf += decoder.decode(value, { stream: true });
-              let idx;
-              while ((idx = buf.indexOf('\n\n')) !== -1) {
-                const block = buf.slice(0, idx);
-                buf = buf.slice(idx + 2);
-                let eventType = '';
-                let data = '';
-                for (const line of block.split('\n')) {
-                  if (line.startsWith('event:')) eventType = line.slice(6).trim();
-                  else if (line.startsWith('data:')) data += line.slice(5);
-                }
-                data = data.trim();
-                if (!data) continue;
-                try {
-                  const parsed = JSON.parse(data);
-                  if (eventType === 'step') {
-                    onStep?.(parsed.message);
-                  } else if (eventType === 'result') {
-                    hasResult = true;
-                    resolve(parsed);
-                  } else if (eventType === 'error') {
-                    hasResult = true;
-                    reject(new Error(parsed.message || '分析失败'));
-                  }
-                } catch { /* skip malformed */ }
-              }
-              read();
-            }).catch(reject);
-          }
-          read();
-        })
-        .catch(reject);
-    });
-  },
+  analyzeBehavior: (_onStep?: (message: string) => void) =>
+    api.post<unknown, BehaviorAnalysisReport>('/ai/analyze-behavior'),
   analyzeCrypto: (symbol?: string) => api.post<unknown, CryptoAnalysisReport>('/ai/analyze-crypto', symbol ? { symbol } : {}),
   latestSignals: (symbol?: string) => api.get<unknown, QuantLatestSignal>('/ai/quant/signals/latest', { params: { symbol: symbol || 'BTCUSDT' } }),
   forecasts: (symbol?: string, limit = 20) => api.get<unknown, QuantForecastCycle[]>('/ai/quant/forecasts', { params: { symbol: symbol || 'BTCUSDT', limit } }),

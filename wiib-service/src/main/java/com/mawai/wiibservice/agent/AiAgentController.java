@@ -24,19 +24,21 @@ import com.mawai.wiibservice.mapper.QuantSignalDecisionMapper;
 import com.alibaba.fastjson2.JSON;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.servlet.http.HttpServletResponse;
+import jakarta.annotation.PreDestroy;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 
-import java.io.PrintWriter;
+import org.springframework.web.context.request.async.DeferredResult;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Slf4j
 @Tag(name = "AI Agent接口")
@@ -50,6 +52,7 @@ public class AiAgentController {
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantSignalDecisionMapper decisionMapper;
     private final ChatClient chatClient;
+    private final ExecutorService behaviorAnalysisExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public AiAgentController(AiAgentConfig aiAgentConfig, CompiledGraph cryptoAnalysisGraph,
                              QuantForecastPersistService persistService,
@@ -94,96 +97,79 @@ public class AiAgentController {
 
     @PostMapping("/analyze-behavior")
     @Operation(summary = "用户行为分析")
-    public void analyzeBehavior(HttpServletResponse response) {
-        response.setContentType(MediaType.TEXT_EVENT_STREAM_VALUE);
-        response.setCharacterEncoding("UTF-8");
-        response.setHeader("Cache-Control", "no-cache");
+    @RateLimiter(type = RateLimiterType.AI_BEHAVIOR, permitsPerSecond = 1.0 / 300, bucketCapacity = 1, message = "行为分析每5分钟限1次")
+    public DeferredResult<Result<BehaviorAnalysisReport>> analyzeBehavior() {
+        long userId = StpUtil.getLoginIdAsLong();
+        DeferredResult<Result<BehaviorAnalysisReport>> deferred = new DeferredResult<>(300_000L);
 
-        long userId;
-        try {
-            userId = StpUtil.getLoginIdAsLong();
-        } catch (Exception e) {
-            try {
-                PrintWriter writer = response.getWriter();
-                writeSse(writer, "error", Map.of("message", "未登录或登录已过期"));
-                writer.flush();
-                writer.close();
-            } catch (Exception ignored) {}
-            return;
-        }
+        deferred.onTimeout(() -> {
+            log.warn("行为分析超时 userId={}", userId);
+            if (!deferred.isSetOrExpired()) {
+                deferred.setResult(Result.fail("分析超时，请稍后重试"));
+            }
+        });
+        deferred.onError(e -> {
+            log.error("行为分析异步请求异常 userId={}", userId, e);
+            if (!deferred.isSetOrExpired()) {
+                deferred.setResult(Result.fail("分析失败，请稍后重试"));
+            }
+        });
 
-        try {
-            // 通过代理调用，触发 @RateLimiter AOP
-            SpringUtils.getAopProxy(this).doAnalyzeBehaviorInternal(userId, response);
-        } catch (Exception e) {
+        behaviorAnalysisExecutor.submit(() -> {
             try {
-                PrintWriter writer = response.getWriter();
-                writeSse(writer, "error", Map.of("message", e.getMessage() != null ? e.getMessage() : "请求失败"));
-                writer.flush();
-                writer.close();
-            } catch (Exception ignored) {}
-        }
+                Result<BehaviorAnalysisReport> result = doAnalyzeBehavior(userId);
+                if (!deferred.isSetOrExpired()) {
+                    deferred.setResult(result);
+                }
+            } catch (Exception e) {
+                log.error("行为分析失败 userId={}", userId, e);
+                if (!deferred.isSetOrExpired()) {
+                    deferred.setResult(Result.fail("分析失败: " + (e.getMessage() != null ? e.getMessage() : "未知错误")));
+                }
+            }
+        });
+
+        return deferred;
     }
 
-    @RateLimiter(type = RateLimiterType.AI_BEHAVIOR, permitsPerSecond = 1.0 / 300, bucketCapacity = 1, message = "行为分析每5分钟限1次")
-    public void doAnalyzeBehaviorInternal(long userId, HttpServletResponse response) {
+    private Result<BehaviorAnalysisReport> doAnalyzeBehavior(long userId) {
         log.info("用户{}请求行为分析", userId);
 
+        ReactAgent agent = aiAgentConfig.createBehaviorAgent(step -> {
+            log.info("用户{} 工具调用: {}", userId, step);
+        });
+
+        AssistantMessage aiResponse;
         try {
-            PrintWriter writer = response.getWriter();
-
-            writeSse(writer, "step", Map.of("message", "开始分析"));
-            log.info("用户{} 行为分析开始", userId);
-
-            ReactAgent agent = aiAgentConfig.createBehaviorAgent(step -> {
-                log.info("用户{} 工具调用: {}", userId, step);
-                writeSse(writer, "step", Map.of("message", step));
-            });
-
-            AssistantMessage aiResponse = agent.call(
-                    "分析用户#" + userId + "的全部行为数据，用户ID为" + userId);
-
-            log.info("用户{} 行为分析完成, responseLength={}", userId, aiResponse.getText().length());
-
-            writeSse(writer, "step", Map.of("message", "生成分析报告"));
-
-            String text = aiResponse.getText();
-            BehaviorAnalysisReport report;
-            try {
-                report = JSON.parseObject(JsonUtils.extractJson(text), BehaviorAnalysisReport.class);
-            } catch (Exception e) {
-                log.error("行为分析报告解析失败 userId={}", userId, e);
-                writeSse(writer, "error", Map.of("message", "分析结果解析失败"));
-                writer.close();
-                return;
-            }
-
-            if (!report.isValid()) {
-                log.error("行为分析关键字段缺失 userId={}", userId);
-                writeSse(writer, "error", Map.of("message", "分析结果不完整，请重试"));
-                writer.close();
-                return;
-            }
-
-            writeSse(writer, "result", report);
-
-            log.info("用户{} 行为分析完成", userId);
-            writer.close();
+            aiResponse = agent.call("分析用户#" + userId + "的全部行为数据，用户ID为" + userId);
         } catch (Exception e) {
-            log.error("行为分析失败 userId={}", userId, e);
-            try {
-                PrintWriter writer = response.getWriter();
-                writeSse(writer, "error", Map.of("message", "分析失败，请稍后重试"));
-                writer.flush();
-                writer.close();
-            } catch (Exception ignored) {}
+            log.error("行为分析执行失败 userId={}", userId, e);
+            return Result.fail("分析执行失败: " + e.getMessage());
         }
+
+        log.info("用户{} 行为分析完成, responseLength={}", userId, aiResponse.getText().length());
+
+        String text = aiResponse.getText();
+        BehaviorAnalysisReport report;
+        try {
+            report = JSON.parseObject(JsonUtils.extractJson(text), BehaviorAnalysisReport.class);
+        } catch (Exception e) {
+            log.error("行为分析报告解析失败 userId={}", userId, e);
+            return Result.fail("分析结果解析失败");
+        }
+
+        if (!report.isValid()) {
+            log.error("行为分析关键字段缺失 userId={}", userId);
+            return Result.fail("分析结果不完整，请重试");
+        }
+
+        log.info("用户{} 行为分析完成", userId);
+        return Result.ok(report);
     }
 
-    private void writeSse(PrintWriter writer, String event, Object data) {
-        writer.write("event: " + event + "\n");
-        writer.write("data: " + JSON.toJSONString(data) + "\n\n");
-        writer.flush();
+    @PreDestroy
+    public void shutdownBehaviorAnalysisExecutor() {
+        behaviorAnalysisExecutor.shutdown();
     }
 
     @PostMapping("/analyze-crypto")

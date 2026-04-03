@@ -275,11 +275,6 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
 
     private static final String FEAR_GREED_URL = "https://api.alternative.me/fng/";
 
-    public String getForceOrders(String symbol, int limit) {
-        return callFuturesApi("/fapi/v1/allForceOrders", "forceOrders",
-                b -> b.queryParam("symbol", symbol).queryParam("limit", Math.min(limit, 100)));
-    }
-
     public String getTopTraderPositionRatio(String symbol, String period, int limit) {
         return callFuturesApi("/futures/data/topLongShortPositionRatio", "topTraderPosition",
                 b -> b.queryParam("symbol", symbol).queryParam("period", period).queryParam("limit", limit));
