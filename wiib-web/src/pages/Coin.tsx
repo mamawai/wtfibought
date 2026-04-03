@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import * as echarts from 'echarts';
 import { cryptoApi, cryptoOrderApi, buffApi, futuresApi } from '../api';
 import { useUserStore } from '../stores/userStore';
@@ -913,6 +913,9 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               </button>
             ))}
           </div>
+          <Link to="/force-orders" className="px-4 py-2.5 rounded-xl bg-red-500/10 text-red-500 text-xs font-black hover:bg-red-500/20 transition-colors border border-red-500/20">
+            爆仓
+          </Link>
         </div>
 
         <CardContent className="p-5 space-y-6 mt-2">

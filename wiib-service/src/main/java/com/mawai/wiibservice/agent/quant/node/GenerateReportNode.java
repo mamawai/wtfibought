@@ -32,14 +32,16 @@ import java.util.Map;
 public class GenerateReportNode implements NodeAction {
 
     private final ChatClient chatClient;
+    private final LlmCallMode callMode;
     private final MemoryService memoryService;
 
-    public GenerateReportNode(ChatClient.Builder builder) {
-        this(builder, null);
+    public GenerateReportNode(ChatClient.Builder builder, LlmCallMode callMode) {
+        this(builder, callMode, null);
     }
 
-    public GenerateReportNode(ChatClient.Builder builder, MemoryService memoryService) {
+    public GenerateReportNode(ChatClient.Builder builder, LlmCallMode callMode, MemoryService memoryService) {
         this.chatClient = builder.build();
+        this.callMode = callMode;
         this.memoryService = memoryService;
     }
 
@@ -81,7 +83,7 @@ public class GenerateReportNode implements NodeAction {
             String memorySummary = buildMemorySummary(snapshot);
             String prompt = buildLlmPrompt(hardReport, voteSummary, indicators, priceChanges,
                     filteredNews, riskStatus, snapshot, debateSummary, memorySummary);
-            String response = chatClient.prompt().user(prompt).call().content();
+            String response = callMode.call(chatClient, prompt);
             log.info("[Q6.2] LLM推理返回 {}chars 耗时{}ms",
                     response != null ? response.length() : 0, System.currentTimeMillis() - startMs);
 

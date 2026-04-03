@@ -24,6 +24,19 @@ public record FeatureSnapshot(
         double fundingRateExtreme,
         double lsrExtreme,
 
+        // 爆仓压力: 正=多头爆仓多(空头力量), 负=空头爆仓多(多头力量), 归一化[-1,1]
+        double liquidationPressure,
+        // 近期爆仓总额(USDT)
+        double liquidationVolumeUsdt,
+        // 大户持仓趋势: 正=大户加多, 负=大户加空, 归一化[-1,1]
+        double topTraderBias,
+        // 主动买卖量比趋势: 正=主动买入主导, 负=主动卖出主导, 归一化[-1,1]
+        double takerBuySellPressure,
+        // 恐惧贪婪指数: 0=极度恐惧, 100=极度贪婪
+        int fearGreedIndex,
+        // 恐惧贪婪分类: Extreme Fear/Fear/Neutral/Greed/Extreme Greed
+        String fearGreedLabel,
+
         // 波动率
         BigDecimal atr1m,
         BigDecimal atr5m,

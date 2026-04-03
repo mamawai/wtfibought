@@ -661,3 +661,16 @@ export interface QuantForecastCycle {
   riskStatus: string;
   reportJson: string | null;
 }
+
+export interface ForceOrder {
+  id: number;
+  symbol: string;
+  side: string;
+  price: number;
+  avgPrice: number;
+  quantity: number;
+  amount: number;
+  status: string;
+  tradeTime: string;
+  createdAt: string;
+}

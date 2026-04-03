@@ -6,6 +6,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
+import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.domain.MarketRegime;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import lombok.extern.slf4j.Slf4j;
@@ -23,14 +24,16 @@ import java.util.*;
 public class RegimeReviewNode implements NodeAction {
 
     private final ChatClient chatClient;
+    private final LlmCallMode callMode;
     private final MemoryService memoryService;
 
-    public RegimeReviewNode(ChatClient.Builder builder) {
-        this(builder, null);
+    public RegimeReviewNode(ChatClient.Builder builder, LlmCallMode callMode) {
+        this(builder, callMode, null);
     }
 
-    public RegimeReviewNode(ChatClient.Builder builder, MemoryService memoryService) {
+    public RegimeReviewNode(ChatClient.Builder builder, LlmCallMode callMode, MemoryService memoryService) {
         this.chatClient = builder.build();
+        this.callMode = callMode;
         this.memoryService = memoryService;
     }
 
@@ -53,7 +56,7 @@ public class RegimeReviewNode implements NodeAction {
 
         try {
             String prompt = buildPrompt(snapshot, indicatorMap, priceChangeMap);
-            String response = chatClient.prompt().user(prompt).call().content();
+            String response = callMode.call(chatClient, prompt);
             log.info("[Q2.5.1] LLM返回 {}chars 耗时{}ms",
                     response != null ? response.length() : 0, System.currentTimeMillis() - startMs);
 
@@ -202,6 +205,9 @@ public class RegimeReviewNode implements NodeAction {
                             snapshot.bidAskImbalance(), snapshot.tradeDelta(), snapshot.oiChangeRate(),
                             snapshot.fundingDeviation(), snapshot.fundingRateTrend(), snapshot.fundingRateExtreme(),
                             snapshot.lsrExtreme(),
+                            snapshot.liquidationPressure(), snapshot.liquidationVolumeUsdt(),
+                            snapshot.topTraderBias(), snapshot.takerBuySellPressure(),
+                            snapshot.fearGreedIndex(), snapshot.fearGreedLabel(),
                             snapshot.atr1m(), snapshot.atr5m(), snapshot.bollBandwidth(), snapshot.bollSqueeze(),
                             llmRegime,
                             snapshot.newsItems(), snapshot.qualityFlags());

@@ -92,6 +92,19 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         }
     }
 
+    /**
+     * 拉取future最近5分钟 K线，返回 [periodLow, periodHigh]
+     */
+    public BigDecimal[] getRecentFuturesHighLow(String symbol) {
+        try {
+            String json = getFuturesKlines(symbol, "1m", 5, null);
+            return getHighLow(json);
+        } catch (Exception e) {
+            log.error("获取合约K线高低价失败 symbol={}", symbol, e);
+            return null;
+        }
+    }
+
     public String getMarkPrice(String symbol) {
         String baseUrl = props.getFuturesRestBaseUrl();
         if (baseUrl == null || baseUrl.isBlank()) return null;
@@ -254,6 +267,56 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
             return restTemplate.getForObject(uri, String.class);
         } catch (Exception e) {
             log.warn("getArticleDetail failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    // ==================== 新增数据源 ====================
+
+    private static final String FEAR_GREED_URL = "https://api.alternative.me/fng/";
+
+    public String getForceOrders(String symbol, int limit) {
+        return callFuturesApi("/fapi/v1/allForceOrders", "forceOrders",
+                b -> b.queryParam("symbol", symbol).queryParam("limit", Math.min(limit, 100)));
+    }
+
+    public String getTopTraderPositionRatio(String symbol, String period, int limit) {
+        return callFuturesApi("/futures/data/topLongShortPositionRatio", "topTraderPosition",
+                b -> b.queryParam("symbol", symbol).queryParam("period", period).queryParam("limit", limit));
+    }
+
+    public String getTakerLongShortRatio(String symbol, String period, int limit) {
+        return callFuturesApi("/futures/data/takerlongshortRatio", "takerLongShortRatio",
+                b -> b.queryParam("symbol", symbol).queryParam("period", period).queryParam("limit", limit));
+    }
+
+    public String getFearGreedIndex(int limit) {
+        URI uri = UriComponentsBuilder
+                .fromUriString(FEAR_GREED_URL)
+                .queryParam("limit", limit)
+                .queryParam("format", "json")
+                .build().toUri();
+        try {
+            log.info("FearGreed API: {}", uri);
+            return restTemplate.getForObject(uri, String.class);
+        } catch (Exception e) {
+            log.warn("获取恐惧贪婪指数失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private String callFuturesApi(String endpoint, String logLabel,
+                                   java.util.function.Consumer<UriComponentsBuilder> paramConfigurer) {
+        String baseUrl = props.getFuturesRestBaseUrl();
+        if (baseUrl == null || baseUrl.isBlank()) return null;
+        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(baseUrl + endpoint);
+        paramConfigurer.accept(builder);
+        URI uri = builder.build().toUri();
+        try {
+            log.info("Binance REST {}: {}", logLabel, uri);
+            return restTemplate.getForObject(uri, String.class);
+        } catch (Exception e) {
+            log.warn("获取{}失败: {}", logLabel, e.getMessage());
             return null;
         }
     }

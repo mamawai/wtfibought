@@ -31,11 +31,12 @@ public class RiskGateNode implements NodeAction {
         var atr5m = snapshot != null ? snapshot.atr5m() : null;
         var lastPrice = snapshot != null ? snapshot.lastPrice() : null;
         var qualityFlags = snapshot != null ? snapshot.qualityFlags() : List.<String>of();
+        int fearGreedIndex = snapshot != null ? snapshot.fearGreedIndex() : -1;
 
-        log.info("[Q5.0] risk_gate开始 regime={} forecasts={} qualityFlags={} upstreamRiskStatus={}",
-                regime, forecasts.size(), qualityFlags, upstreamRiskStatus);
+        log.info("[Q5.0] risk_gate开始 regime={} forecasts={} qualityFlags={} fearGreed={} upstreamRiskStatus={}",
+                regime, forecasts.size(), qualityFlags, fearGreedIndex, upstreamRiskStatus);
 
-        RiskGate.RiskResult result = RiskGate.apply(forecasts, regime, atr5m, lastPrice, qualityFlags);
+        RiskGate.RiskResult result = RiskGate.apply(forecasts, regime, atr5m, lastPrice, qualityFlags, fearGreedIndex);
         String mergedRiskStatus = mergeRiskStatus(upstreamRiskStatus, result.riskStatus());
 
         for (HorizonForecast f : result.forecasts()) {

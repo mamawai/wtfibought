@@ -6,10 +6,12 @@ import com.alibaba.cloud.ai.graph.KeyStrategy;
 import com.alibaba.cloud.ai.graph.KeyStrategyFactory;
 import com.alibaba.cloud.ai.graph.StateGraph;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
+import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.factor.*;
 import com.mawai.wiibservice.agent.quant.node.*;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibservice.service.ForceOrderService;
 import org.springframework.ai.chat.client.ChatClient;
 
 import java.util.HashMap;
@@ -35,11 +37,16 @@ public class QuantForecastWorkflow {
      * @param shallowChatClient 浅模型（regime审核/新闻/报告等快速任务）
      * @param binanceRestClient Binance数据接口
      * @param memoryService     记忆查询服务（可为null，无记忆时跳过注入）
+     * @param deepCallMode      深模型调用策略
+     * @param shallowCallMode   浅模型调用策略
      */
     public static CompiledGraph build(ChatClient.Builder deepChatClient,
                                        ChatClient.Builder shallowChatClient,
                                        BinanceRestClient binanceRestClient,
-                                       MemoryService memoryService) throws Exception {
+                                       MemoryService memoryService,
+                                       ForceOrderService forceOrderService,
+                                       LlmCallMode deepCallMode,
+                                       LlmCallMode shallowCallMode) throws Exception {
 
         // 5个因子Agent（NewsEventAgent用浅模型）
         List<FactorAgent> agents = List.of(
@@ -47,18 +54,18 @@ public class QuantForecastWorkflow {
                 new MomentumAgent(),
                 new RegimeAgent(),
                 new VolatilityAgent(),
-                new NewsEventAgent(shallowChatClient)
+                new NewsEventAgent(shallowChatClient, shallowCallMode)
         );
 
         StateGraph workflow = new StateGraph(createKeyStrategyFactory())
-                .addNode("collect_data",       node_async(new CollectDataNode(binanceRestClient)))
+                .addNode("collect_data",       node_async(new CollectDataNode(binanceRestClient, forceOrderService)))
                 .addNode("build_features",     node_async(new BuildFeaturesNode()))
-                .addNode("regime_review",      node_async(new RegimeReviewNode(shallowChatClient, memoryService)))
+                .addNode("regime_review",      node_async(new RegimeReviewNode(shallowChatClient, shallowCallMode, memoryService)))
                 .addNode("run_factors",        node_async(new RunFactorAgentsNode(agents)))
                 .addNode("run_judges",         node_async(new RunHorizonJudgesNode()))
-                .addNode("debate_judge",       node_async(new DebateJudgeNode(deepChatClient, memoryService)))
+                .addNode("debate_judge",       node_async(new DebateJudgeNode(deepChatClient, deepCallMode, memoryService)))
                 .addNode("risk_gate",          node_async(new RiskGateNode()))
-                .addNode("generate_report",    node_async(new GenerateReportNode(shallowChatClient, memoryService)));
+                .addNode("generate_report",    node_async(new GenerateReportNode(shallowChatClient, shallowCallMode, memoryService)));
 
         workflow.addEdge(START, "collect_data");
         workflow.addEdge("collect_data", "build_features");
@@ -87,6 +94,10 @@ public class QuantForecastWorkflow {
             s.put("open_interest_map", new ReplaceStrategy());
             s.put("oi_hist_map", new ReplaceStrategy());
             s.put("long_short_ratio_map", new ReplaceStrategy());
+            s.put("force_orders_map", new ReplaceStrategy());
+            s.put("top_trader_position_map", new ReplaceStrategy());
+            s.put("taker_long_short_map", new ReplaceStrategy());
+            s.put("fear_greed_data", new ReplaceStrategy());
             s.put("news_data", new ReplaceStrategy());
             s.put("data_available", new ReplaceStrategy());
             // BuildFeaturesNode输出

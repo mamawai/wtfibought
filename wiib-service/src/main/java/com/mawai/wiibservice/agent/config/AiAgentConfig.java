@@ -5,10 +5,12 @@ import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.mawai.wiibservice.agent.behavior.BehaviorAnalysisReport;
 import com.mawai.wiibservice.agent.behavior.BehaviorAnalysisTools;
 import com.mawai.wiibservice.agent.quant.QuantForecastWorkflow;
+import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.mapper.*;
 import com.mawai.wiibservice.service.CryptoPositionService;
+import com.mawai.wiibservice.service.ForceOrderService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.support.ToolCallbacks;
@@ -36,6 +38,7 @@ public class AiAgentConfig {
     private final VideoPokerGameMapper videoPokerGameMapper;
     private final BinanceRestClient binanceRestClient;
     private final MemoryService memoryService;
+    private final ForceOrderService forceOrderService;
 
     public AiAgentConfig(ChatModel chatModel,
                          UserMapper userMapper,
@@ -52,7 +55,8 @@ public class AiAgentConfig {
                          MinesGameMapper minesGameMapper,
                          VideoPokerGameMapper videoPokerGameMapper,
                          BinanceRestClient binanceRestClient,
-                         MemoryService memoryService) {
+                         MemoryService memoryService,
+                         ForceOrderService forceOrderService) {
         this.chatModel = chatModel;
         this.userMapper = userMapper;
         this.snapshotMapper = snapshotMapper;
@@ -69,6 +73,7 @@ public class AiAgentConfig {
         this.videoPokerGameMapper = videoPokerGameMapper;
         this.binanceRestClient = binanceRestClient;
         this.memoryService = memoryService;
+        this.forceOrderService = forceOrderService;
     }
 
     public ReactAgent createBehaviorAgent(Consumer<String> onProgress) {
@@ -101,6 +106,7 @@ public class AiAgentConfig {
         // 当前深/浅指向同一模型，未来可配置不同模型
         ChatClient.Builder deepClient = ChatClient.builder(chatModel);
         ChatClient.Builder shallowClient = ChatClient.builder(chatModel);
-        return QuantForecastWorkflow.build(deepClient, shallowClient, binanceRestClient, memoryService);
+        return QuantForecastWorkflow.build(deepClient, shallowClient, binanceRestClient, memoryService,
+                forceOrderService, LlmCallMode.STREAMING, LlmCallMode.STREAMING);
     }
 }

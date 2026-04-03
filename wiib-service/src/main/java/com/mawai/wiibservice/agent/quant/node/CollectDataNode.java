@@ -2,11 +2,15 @@ package com.mawai.wiibservice.agent.quant.node;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
+import com.alibaba.fastjson2.JSON;
+import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibservice.service.ForceOrderService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
 
@@ -19,6 +23,7 @@ import java.util.concurrent.*;
 public class CollectDataNode implements NodeAction {
 
     private final BinanceRestClient binanceRestClient;
+    private final ForceOrderService forceOrderService;
 
     @Override
     public Map<String, Object> apply(OverAllState state) {
@@ -35,6 +40,10 @@ public class CollectDataNode implements NodeAction {
         Map<String, String> openInterestMap = new HashMap<>();
         Map<String, String> openInterestHistMap = new HashMap<>();
         Map<String, String> longShortRatioMap = new HashMap<>();
+        Map<String, String> forceOrdersMap = new HashMap<>();
+        Map<String, String> topTraderPositionMap = new HashMap<>();
+        Map<String, String> takerLongShortMap = new HashMap<>();
+        String fearGreedData = "{}";
         String newsData = "{}";
 
         String[] intervals = {"1m", "5m", "15m", "1h", "4h", "1d"};
@@ -58,6 +67,10 @@ public class CollectDataNode implements NodeAction {
             var oiF = executor.submit(() -> binanceRestClient.getOpenInterest(sym));
             var oiHistF = executor.submit(() -> binanceRestClient.getOpenInterestHist(sym, "5m", 48));
             var lsrF = executor.submit(() -> binanceRestClient.getLongShortRatio(sym));
+            var forceOrdersF = executor.submit(() -> buildForceOrdersJson(sym));
+            var topTraderF = executor.submit(() -> binanceRestClient.getTopTraderPositionRatio(sym, "5m", 24));
+            var takerLsrF = executor.submit(() -> binanceRestClient.getTakerLongShortRatio(sym, "5m", 24));
+            var fearGreedF = executor.submit(() -> binanceRestClient.getFearGreedIndex(2));
             String coin = sym.replace("USDT", "").replace("USDC", "");
             var newsF = executor.submit(() -> binanceRestClient.getCryptoNews(coin, 30, "EN"));
 
@@ -81,6 +94,15 @@ public class CollectDataNode implements NodeAction {
             putIfNotNull(openInterestMap, sym, safeGet(oiF, "openInterest"));
             putIfNotNull(openInterestHistMap, sym, safeGet(oiHistF, "openInterestHist"));
             putIfNotNull(longShortRatioMap, sym, safeGet(lsrF, "longShortRatio"));
+            putIfNotNull(forceOrdersMap, sym, safeGet(forceOrdersF, "forceOrders"));
+            putIfNotNull(topTraderPositionMap, sym, safeGet(topTraderF, "topTraderPosition"));
+            putIfNotNull(takerLongShortMap, sym, safeGet(takerLsrF, "takerLongShort"));
+
+            // 恐惧贪婪
+            String rawFearGreed = safeGet(fearGreedF, "fearGreed");
+            if (rawFearGreed != null && !rawFearGreed.isBlank()) {
+                fearGreedData = rawFearGreed;
+            }
 
             // 新闻
             String rawNews = safeGet(newsF, "news");
@@ -96,11 +118,13 @@ public class CollectDataNode implements NodeAction {
         String ticker = tickerMap.get(symbol);
         boolean klineOk = kline != null && kline.values().stream().anyMatch(v -> v != null && !v.isBlank());
         boolean dataAvailable = klineOk && ticker != null && !ticker.isBlank();
-        log.info("[Q1.1] collect_data完成 symbol={} klines={}周期 dataAvailable={} ticker={} funding={} fundingHist={} ob={} oi={} oiHist={} lsr={} news={}chars 耗时{}ms",
+        log.info("[Q1.1] collect_data完成 symbol={} klines={}周期 dataAvailable={} ticker={} funding={} fundingHist={} ob={} oi={} oiHist={} lsr={} forceOrders={} topTrader={} takerLsr={} fearGreed={}chars news={}chars 耗时{}ms",
                 symbol, kline != null ? kline.size() : 0, dataAvailable,
                 ticker != null, fundingRateMap.containsKey(symbol), fundingRateHistMap.containsKey(symbol),
                 orderbookMap.containsKey(symbol), openInterestMap.containsKey(symbol),
-                openInterestHistMap.containsKey(symbol), longShortRatioMap.containsKey(symbol), newsData.length(),
+                openInterestHistMap.containsKey(symbol), longShortRatioMap.containsKey(symbol),
+                forceOrdersMap.containsKey(symbol), topTraderPositionMap.containsKey(symbol),
+                takerLongShortMap.containsKey(symbol), fearGreedData.length(), newsData.length(),
                 System.currentTimeMillis() - startMs);
 
         Map<String, Object> result = new HashMap<>();
@@ -112,6 +136,10 @@ public class CollectDataNode implements NodeAction {
         result.put("open_interest_map", openInterestMap);
         result.put("oi_hist_map", openInterestHistMap);
         result.put("long_short_ratio_map", longShortRatioMap);
+        result.put("force_orders_map", forceOrdersMap);
+        result.put("top_trader_position_map", topTraderPositionMap);
+        result.put("taker_long_short_map", takerLongShortMap);
+        result.put("fear_greed_data", fearGreedData);
         result.put("news_data", newsData);
         result.put("data_available", dataAvailable);
         return result;
@@ -128,5 +156,17 @@ public class CollectDataNode implements NodeAction {
 
     private void putIfNotNull(Map<String, String> map, String key, String value) {
         if (value != null) map.put(key, value);
+    }
+
+    private String buildForceOrdersJson(String symbol) {
+        List<ForceOrder> orders = forceOrderService.getRecent(symbol, 30);
+        if (orders == null || orders.isEmpty()) return null;
+        // 转成 BuildFeaturesNode.calcLiquidationPressure 期望的格式: [{side, price, origQty}]
+        List<Map<String, Object>> list = orders.stream().map(o -> Map.<String, Object>of(
+                "side", o.getSide(),
+                "price", o.getAvgPrice(),
+                "origQty", o.getQuantity()
+        )).toList();
+        return JSON.toJSONString(list);
     }
 }

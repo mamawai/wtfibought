@@ -31,7 +31,8 @@ public class RiskGate {
      * @return 裁剪后的forecasts + 风控状态
      */
     public static RiskResult apply(List<HorizonForecast> forecasts, MarketRegime regime,
-                                    BigDecimal atr5m, BigDecimal lastPrice, List<String> qualityFlags) {
+                                    BigDecimal atr5m, BigDecimal lastPrice,
+                                    List<String> qualityFlags, int fearGreedIndex) {
         if (forecasts == null || forecasts.isEmpty()) {
             return new RiskResult(List.of(), "NO_DATA");
         }
@@ -42,7 +43,7 @@ public class RiskGate {
         List<String> riskActions = new ArrayList<>();
 
         for (HorizonForecast f : forecasts) {
-            HorizonForecast result = clipSingle(f, regime, volPenalty, dataPenalty, qualityFlags, riskActions);
+            HorizonForecast result = clipSingle(f, regime, volPenalty, dataPenalty, qualityFlags, fearGreedIndex, riskActions);
             clipped.add(result);
         }
 
@@ -60,6 +61,7 @@ public class RiskGate {
                                                double volPenalty,
                                                double dataPenalty,
                                                List<String> qualityFlags,
+                                               int fearGreedIndex,
                                                List<String> actions) {
         if (f.direction() == Direction.NO_TRADE) return f;
 
@@ -73,6 +75,7 @@ public class RiskGate {
 
         int maxLev = f.maxLeverage();
         double maxPos = f.maxPositionPct();
+        double confMultiplier = 1.0;
 
         // SHOCK → 杠杆cap 2x, 仓位减半
         if (regime == MarketRegime.SHOCK) {
@@ -87,8 +90,20 @@ public class RiskGate {
             actions.add("SQUEEZE_REDUCE_" + f.horizon());
         }
 
-        // 动态仓位: basePct × confidence × (1-disagreement) × volatilityPenalty
-        double effectiveConfidence = Math.max(0.35, f.confidence());
+        // 恐惧贪婪极端值 → 逆向仓位惩罚
+        if (fearGreedIndex >= 0) {
+            // 极度贪婪做多 / 极度恐惧做空 → 置信度打8折
+            if (fearGreedIndex >= 80 && f.direction() == Direction.LONG) {
+                confMultiplier *= 0.80;
+                actions.add("EXTREME_GREED_LONG_PENALTY_" + f.horizon());
+            } else if (fearGreedIndex <= 20 && f.direction() == Direction.SHORT) {
+                confMultiplier *= 0.80;
+                actions.add("EXTREME_FEAR_SHORT_PENALTY_" + f.horizon());
+            }
+        }
+
+        // 动态仓位: basePct × confidence × (1-disagreement) × volatilityPenalty × confMultiplier
+        double effectiveConfidence = Math.max(0.35, f.confidence() * confMultiplier);
         double agreementFactor = Math.max(0.60, 1.0 - f.disagreement());
         double adjustedPos = maxPos * effectiveConfidence * agreementFactor * volPenalty * dataPenalty;
         adjustedPos = Math.max(0.01, Math.min(maxPos, adjustedPos));

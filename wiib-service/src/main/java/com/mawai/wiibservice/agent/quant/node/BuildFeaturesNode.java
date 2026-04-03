@@ -40,6 +40,10 @@ public class BuildFeaturesNode implements NodeAction {
         var orderbookMap = (Map<String, String>) state.value("orderbook_map").orElse(Map.of());
         var oiHistMap = (Map<String, String>) state.value("oi_hist_map").orElse(Map.of());
         var longShortRatioMap = (Map<String, String>) state.value("long_short_ratio_map").orElse(Map.of());
+        var forceOrdersMap = (Map<String, String>) state.value("force_orders_map").orElse(Map.of());
+        var topTraderPositionMap = (Map<String, String>) state.value("top_trader_position_map").orElse(Map.of());
+        var takerLongShortMap = (Map<String, String>) state.value("taker_long_short_map").orElse(Map.of());
+        String fearGreedData = (String) state.value("fear_greed_data").orElse("{}");
         String newsData = (String) state.value("news_data").orElse("{}");
 
         Map<String, String> rawKlines = klineMap.getOrDefault(symbol, Map.of());
@@ -88,11 +92,29 @@ public class BuildFeaturesNode implements NodeAction {
         double fundingRateTrend = fundingTrend[0];
         double fundingRateExtreme = fundingTrend[1];
 
-        log.info("[Q2.2] 微结构 bia={} td={} oi={} funding={} fundTrend={} fundExtreme={} lsr={}",
+        // 4.6 爆仓压力
+        double[] liqResult = calcLiquidationPressure(forceOrdersMap.get(symbol));
+        double liquidationPressure = liqResult[0];
+        double liquidationVolumeUsdt = liqResult[1];
+
+        // 4.7 大户持仓趋势
+        double topTraderBias = calcTrendBias(topTraderPositionMap.get(symbol), "longShortRatio", 0.5);
+
+        // 4.8 主动买卖量比
+        double takerBuySellPressure = calcTrendBias(takerLongShortMap.get(symbol), "buySellRatio", 0.3);
+
+        // 4.9 恐惧贪婪指数
+        int fearGreedIndex = calcFearGreed(fearGreedData);
+        String fearGreedLabel = mapFearGreedLabel(fearGreedIndex);
+
+        log.info("[Q2.2] 微结构 bia={} td={} oi={} funding={} fundTrend={} fundExtreme={} lsr={} liqPressure={} liqVol={} topTrader={} takerPressure={} fearGreed={}/{}",
                 String.format("%.3f", bidAskImbalance), String.format("%.3f", tradeDelta),
                 String.format("%.3f", oiChangeRate), String.format("%.3f", fundingDeviation),
                 String.format("%.3f", fundingRateTrend), String.format("%.3f", fundingRateExtreme),
-                String.format("%.3f", lsrExtreme));
+                String.format("%.3f", lsrExtreme),
+                String.format("%.3f", liquidationPressure), String.format("%.0f", liquidationVolumeUsdt),
+                String.format("%.3f", topTraderBias), String.format("%.3f", takerBuySellPressure),
+                fearGreedIndex, fearGreedLabel);
 
         // 5. 波动率特征
         BigDecimal atr1m = extractAtr(indicatorsByTf, "1m");
@@ -114,6 +136,10 @@ public class BuildFeaturesNode implements NodeAction {
         if (!fundingRateMap.containsKey(symbol)) qualityFlags.add("NO_FUNDING");
         if (!fundingRateHistMap.containsKey(symbol)) qualityFlags.add("NO_FUNDING_HIST");
         if (!longShortRatioMap.containsKey(symbol)) qualityFlags.add("NO_LONG_SHORT_RATIO");
+        if (!forceOrdersMap.containsKey(symbol)) qualityFlags.add("NO_FORCE_ORDERS");
+        if (!topTraderPositionMap.containsKey(symbol)) qualityFlags.add("NO_TOP_TRADER");
+        if (!takerLongShortMap.containsKey(symbol)) qualityFlags.add("NO_TAKER_LSR");
+        if (fearGreedIndex < 0) qualityFlags.add("NO_FEAR_GREED");
         if (!oiHistMap.containsKey(symbol)) qualityFlags.add("NO_OI_HISTORY");
         if (atr5m == null) qualityFlags.add("NO_ATR_5M");
         if (bollBw == null) qualityFlags.add("NO_BOLL_5M");
@@ -128,6 +154,9 @@ public class BuildFeaturesNode implements NodeAction {
         FeatureSnapshot snapshot = new FeatureSnapshot(symbol, LocalDateTime.now(), lastPrice,
                 indicatorsByTf, priceChanges, bidAskImbalance, tradeDelta, oiChangeRate,
                 fundingDeviation, fundingRateTrend, fundingRateExtreme, lsrExtreme,
+                liquidationPressure, liquidationVolumeUsdt,
+                topTraderBias, takerBuySellPressure,
+                fearGreedIndex, fearGreedLabel,
                 atr1m, atr5m, bollBw, bollSqueeze,
                 regime, newsItems, qualityFlags);
         log.info("[Q2.4] build_features完成 price={} news={}条 qualityFlags={} 耗时{}ms",
@@ -339,6 +368,89 @@ public class BuildFeaturesNode implements NodeAction {
                 qualityFlags.add("INSUFFICIENT_BARS_" + timeframe.toUpperCase());
             }
         }
+    }
+
+    /**
+     * 爆仓压力: 统计近期强平单，多头爆仓多=空头力量(正)，空头爆仓多=多头力量(负)。
+     * 返回 [pressure归一化, 总爆仓额USDT]
+     * Binance forceOrders格式: [{side:"SELL"=多头爆仓, price, origQty, time, ...}]
+     */
+    private double[] calcLiquidationPressure(String forceOrdersJson) {
+        if (forceOrdersJson == null || forceOrdersJson.isBlank()) return new double[]{0, 0};
+        try {
+            JSONArray arr = JSON.parseArray(forceOrdersJson);
+            if (arr == null || arr.isEmpty()) return new double[]{0, 0};
+            double longLiqVol = 0, shortLiqVol = 0;
+            for (int i = 0; i < arr.size(); i++) {
+                JSONObject order = arr.getJSONObject(i);
+                double price = order.getDoubleValue("price");
+                double qty = order.getDoubleValue("origQty");
+                double vol = price * qty;
+                // SELL=多头被强平, BUY=空头被强平
+                if ("SELL".equals(order.getString("side"))) {
+                    longLiqVol += vol;
+                } else {
+                    shortLiqVol += vol;
+                }
+            }
+            double total = longLiqVol + shortLiqVol;
+            if (total < 1) return new double[]{0, 0};
+            // 正=多头爆仓多(利空), 负=空头爆仓多(利多)
+            double pressure = Math.clamp((longLiqVol - shortLiqVol) / total, -1, 1);
+            return new double[]{pressure, total};
+        } catch (Exception e) {
+            log.warn("[Q2] 爆仓数据解析失败: {}", e.getMessage());
+            return new double[]{0, 0};
+        }
+    }
+
+    /**
+     * 通用趋势偏离: 对比JSON数组前半段 vs 后半段某字段的均值变化，归一化到[-1,1]。
+     */
+    private double calcTrendBias(String json, String fieldName, double divisor) {
+        if (json == null || json.isBlank()) return 0;
+        try {
+            JSONArray arr = JSON.parseArray(json);
+            if (arr == null || arr.size() < 4) return 0;
+            int mid = arr.size() / 2;
+            double olderAvg = 0, recentAvg = 0;
+            for (int i = 0; i < mid; i++) {
+                olderAvg += arr.getJSONObject(i).getDoubleValue(fieldName);
+            }
+            olderAvg /= mid;
+            for (int i = mid; i < arr.size(); i++) {
+                recentAvg += arr.getJSONObject(i).getDoubleValue(fieldName);
+            }
+            recentAvg /= (arr.size() - mid);
+            return Math.clamp((recentAvg - olderAvg) / divisor, -1, 1);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /**
+     * 恐惧贪婪指数解析。返回当前值(0-100)，失败返回-1。
+     */
+    private int calcFearGreed(String fearGreedJson) {
+        if (fearGreedJson == null || fearGreedJson.isBlank() || "{}".equals(fearGreedJson)) return -1;
+        try {
+            JSONObject root = JSON.parseObject(fearGreedJson);
+            JSONArray data = root.getJSONArray("data");
+            if (data == null || data.isEmpty()) return -1;
+            return data.getJSONObject(0).getIntValue("value");
+        } catch (Exception e) {
+            log.warn("[Q2] 恐惧贪婪指数解析失败: {}", e.getMessage());
+            return -1;
+        }
+    }
+
+    private String mapFearGreedLabel(int index) {
+        if (index < 0) return "UNKNOWN";
+        if (index <= 24) return "EXTREME_FEAR";
+        if (index <= 44) return "FEAR";
+        if (index <= 55) return "NEUTRAL";
+        if (index <= 74) return "GREED";
+        return "EXTREME_GREED";
     }
 
     /**

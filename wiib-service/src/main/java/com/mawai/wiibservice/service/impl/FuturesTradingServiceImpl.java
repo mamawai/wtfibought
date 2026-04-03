@@ -593,7 +593,9 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     // ==================== 内部工具 ====================
 
     private BigDecimal getPrice(String symbol) {
-        BigDecimal price = cacheService.getCryptoPrice(symbol);
+        BigDecimal price = cacheService.getFuturesPrice(symbol);
+        if (price != null) return price;
+        price = cacheService.getMarkPrice(symbol);
         if (price == null) throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
         return price;
     }

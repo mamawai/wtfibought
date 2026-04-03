@@ -16,10 +16,12 @@ import java.util.Map;
 public class NewsEventAgent implements FactorAgent {
 
     private final ChatClient chatClient;
+    private final LlmCallMode callMode;
     private List<FilteredNewsItem> lastFilteredNews = List.of();
 
-    public NewsEventAgent(ChatClient.Builder builder) {
+    public NewsEventAgent(ChatClient.Builder builder, LlmCallMode callMode) {
         this.chatClient = builder.build();
+        this.callMode = callMode;
     }
 
     @Override
@@ -43,7 +45,7 @@ public class NewsEventAgent implements FactorAgent {
 
         try {
             String prompt = buildPrompt(snapshot.symbol(), preFiltered);
-            String response = chatClient.prompt().user(prompt).call().content();
+            String response = callMode.call(chatClient, prompt);
             log.info("[Q3.news] LLM返回 {}chars", response != null ? response.length() : 0);
             return parseResponse(response);
         } catch (Exception e) {

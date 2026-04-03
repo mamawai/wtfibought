@@ -214,8 +214,22 @@ public class CacheService {
         return getCryptoPrice(symbol);
     }
 
+    public BigDecimal getFuturesPrice(String symbol) {
+        BigDecimal cached = cryptoPriceCache.getIfPresent("futures:" + symbol);
+        if (cached != null) return cached;
+        String val = stringRedisTemplate.opsForValue().get("market:futures-price:" + symbol);
+        if (val == null) return null;
+        BigDecimal price = new BigDecimal(val);
+        cryptoPriceCache.put("futures:" + symbol, price);
+        return price;
+    }
+
     public void putCryptoPrice(String symbol, BigDecimal price) {
         cryptoPriceCache.put("spot:" + symbol, price);
+    }
+
+    public void putFuturesPrice(String symbol, BigDecimal price) {
+        cryptoPriceCache.put("futures:" + symbol, price);
     }
 
     public void putMarkPrice(String symbol, BigDecimal price) {

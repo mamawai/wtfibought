@@ -2,6 +2,7 @@ package com.mawai.wiibservice.config;
 
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.CryptoOrderService;
+import com.mawai.wiibservice.service.ForceOrderService;
 import com.mawai.wiibservice.service.FuturesLiquidationService;
 import com.mawai.wiibservice.service.FuturesSettlementService;
 import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
@@ -34,6 +35,7 @@ public class BinanceWsClient implements SmartLifecycle {
     private final FuturesLiquidationService futuresLiquidationService;
     private final FuturesSettlementService futuresSettlementService;
     private final CacheService cacheService;
+    private final ForceOrderService forceOrderService;
 
     private HttpClient httpClient;
     private ScheduledExecutorService scheduler;
@@ -43,9 +45,11 @@ public class BinanceWsClient implements SmartLifecycle {
 
     private WsConnection spotWs;
     private WsConnection futuresWs;
+    private WsConnection forceOrderWs;
 
     private static final String REDIS_KEY_PREFIX = "market:price:";
     private static final String REDIS_MARK_PRICE_KEY_PREFIX = "market:markprice:";
+    private static final String REDIS_FUTURES_PRICE_KEY_PREFIX = "market:futures-price:";
 
     @PostConstruct
     public void init() {
@@ -66,10 +70,14 @@ public class BinanceWsClient implements SmartLifecycle {
         futuresWs = new WsConnection("Futures", this::buildFuturesUrl, this::onFuturesMessage,
                 ws -> onFuturesConnected(), this::startFuturesFallbackPolling,
                 httpClient, scheduler, shutdown);
+        forceOrderWs = new WsConnection("ForceOrder", this::buildForceOrderUrl, this::onForceOrderMessage,
+                ws -> log.info("ForceOrder WS已连接"), () -> {},
+                httpClient, scheduler, shutdown);
 
         // 启动ws
         spotWs.connect();
         futuresWs.connect();
+        forceOrderWs.connect();
     }
 
     @Override
@@ -79,6 +87,7 @@ public class BinanceWsClient implements SmartLifecycle {
         stopFuturesFallbackPolling();
         if (spotWs != null) spotWs.close();
         if (futuresWs != null) futuresWs.close();
+        if (forceOrderWs != null) forceOrderWs.close();
         if (scheduler != null) scheduler.shutdownNow();
         if (httpClient != null) httpClient.close();
     }
@@ -147,29 +156,28 @@ public class BinanceWsClient implements SmartLifecycle {
             try { cryptoOrderService.onPriceUpdate(symbol, bd); }
             catch (Exception e) { log.warn("crypto限价单检查异常 {}: {}", symbol, e.getMessage()); }
         });
-        Thread.startVirtualThread(() -> {
-            try { futuresSettlementService.onPriceUpdate(symbol, bd); }
-            catch (Exception e) { log.warn("futures限价单检查异常 {}: {}", symbol, e.getMessage()); }
-        });
     }
 
     // ── Futures ──
 
     private void onFuturesConnected() {
         stopFuturesFallbackPolling();
-        // 重连后补漏离线期间的强平检查
-        Thread.startVirtualThread(this::recoverMissedLiquidations);
+        Thread.startVirtualThread(() -> {
+            recoverMissedFuturesLimitOrders();
+            recoverMissedLiquidations();
+        });
     }
 
     private String buildFuturesUrl() {
-        String streams = props.getSymbols().stream()
-                .map(s -> s.toLowerCase() + "@markPrice@1s")
-                .reduce((a, b) -> a + "/" + b).orElse("");
-        String base = props.getFuturesWsUrl();
-        if (props.getSymbols().size() == 1) {
-            return base + "/" + streams;
+        java.util.List<String> streams = new java.util.ArrayList<>();
+        for (String s : props.getSymbols()) {
+            String lower = s.toLowerCase();
+            streams.add(lower + "@markPrice@1s");
+            streams.add(lower + "@miniTicker");
         }
-        return base.replace("/ws", "/stream?streams=" + streams);
+        String joined = String.join("/", streams);
+        String base = props.getFuturesWsUrl();
+        return base.replace("/ws", "/stream?streams=" + joined);
     }
 
     private void onFuturesMessage(String raw) {
@@ -177,20 +185,36 @@ public class BinanceWsClient implements SmartLifecycle {
         if (sIdx < 0) return;
         String symbol = extractQuoted(raw, sIdx + 5);
 
+        // @markPrice@1s: 含"p":"(标记价格) → 强平/止损检查
         int pIdx = raw.indexOf("\"p\":\"");
-        if (pIdx < 0) return;
-        String markPrice = extractQuoted(raw, pIdx + 5);
+        if (pIdx >= 0) {
+            String markPrice = extractQuoted(raw, pIdx + 5);
+            redisTemplate.opsForValue().set(REDIS_MARK_PRICE_KEY_PREFIX + symbol, markPrice);
+            BigDecimal mp = new BigDecimal(markPrice);
+            cacheService.putMarkPrice(symbol, mp);
 
-        redisTemplate.opsForValue().set(REDIS_MARK_PRICE_KEY_PREFIX + symbol, markPrice);
-        BigDecimal mp = new BigDecimal(markPrice);
-        cacheService.putMarkPrice(symbol, mp);
+            String futuresPrice = redisTemplate.opsForValue().get(REDIS_FUTURES_PRICE_KEY_PREFIX + symbol);
+            BigDecimal cp = futuresPrice != null ? new BigDecimal(futuresPrice) : mp;
+            Thread.startVirtualThread(() -> {
+                try { futuresLiquidationService.checkOnPriceUpdate(symbol, mp, cp); }
+                catch (Exception e) { log.warn("futures强平检查异常 {}: {}", symbol, e.getMessage()); }
+            });
+            return;
+        }
 
-        String spotPrice = redisTemplate.opsForValue().get(REDIS_KEY_PREFIX + symbol);
-        BigDecimal cp = spotPrice != null ? new BigDecimal(spotPrice) : mp;
-        Thread.startVirtualThread(() -> {
-            try { futuresLiquidationService.checkOnPriceUpdate(symbol, mp, cp); }
-            catch (Exception e) { log.warn("futures强平检查异常 {}: {}", symbol, e.getMessage()); }
-        });
+        // @miniTicker: 含"c":"(合约最新价) → 限价单触发
+        int cIdx = raw.indexOf("\"c\":\"");
+        if (cIdx >= 0) {
+            String price = extractQuoted(raw, cIdx + 5);
+            redisTemplate.opsForValue().set(REDIS_FUTURES_PRICE_KEY_PREFIX + symbol, price);
+            BigDecimal bd = new BigDecimal(price);
+            cacheService.putFuturesPrice(symbol, bd);
+
+            Thread.startVirtualThread(() -> {
+                try { futuresSettlementService.onPriceUpdate(symbol, bd); }
+                catch (Exception e) { log.warn("futures限价单检查异常 {}: {}", symbol, e.getMessage()); }
+            });
+        }
     }
 
     // ── REST兜底：WS断开期间切REST轮询保证价格不中断 ──
@@ -226,11 +250,21 @@ public class BinanceWsClient implements SmartLifecycle {
             for (String symbol : props.getSymbols()) {
                 try {
                     String json = restClient.getMarkPrice(symbol);
-                    if (json == null) continue;
-                    int idx = json.indexOf("\"markPrice\":\"");
-                    if (idx < 0) continue;
-                    String markPrice = extractQuoted(json, idx + 13);
-                    onFuturesMessage("{\"s\":\"" + symbol + "\",\"p\":\"" + markPrice + "\"}");
+                    if (json != null) {
+                        int idx = json.indexOf("\"markPrice\":\"");
+                        if (idx >= 0) {
+                            String markPrice = extractQuoted(json, idx + 13);
+                            onFuturesMessage("{\"s\":\"" + symbol + "\",\"p\":\"" + markPrice + "\"}");
+                        }
+                    }
+                    String tickerJson = restClient.getFutures24hTicker(symbol);
+                    if (tickerJson != null) {
+                        int idx = tickerJson.indexOf("\"lastPrice\":\"");
+                        if (idx >= 0) {
+                            String lastPrice = extractQuoted(tickerJson, idx + 13);
+                            onFuturesMessage("{\"s\":\"" + symbol + "\",\"c\":\"" + lastPrice + "\"}");
+                        }
+                    }
                 } catch (Exception e) {
                     log.warn("REST轮询Futures {}失败: {}", symbol, e.getMessage());
                 }
@@ -263,31 +297,92 @@ public class BinanceWsClient implements SmartLifecycle {
                 if (lowHigh != null) {
                     cryptoOrderService.recoverLimitOrders(symbol, lowHigh[0], lowHigh[1]);
                 }
-                BigDecimal[] markLowHigh = restClient.getRecentMarkPriceHighLow(symbol);
-                if (markLowHigh != null) {
-                    futuresSettlementService.recoverLimitOrders(symbol, markLowHigh[0], markLowHigh[1]);
+            }
+        } catch (Exception e) {
+            log.error("恢复现货限价单失败", e);
+        }
+    }
+
+    private void recoverMissedFuturesLimitOrders() {
+        try {
+            for (String symbol : props.getSymbols()) {
+                BigDecimal[] futuresLowHigh = restClient.getRecentFuturesHighLow(symbol);
+                if (futuresLowHigh != null) {
+                    futuresSettlementService.recoverLimitOrders(symbol, futuresLowHigh[0], futuresLowHigh[1]);
                 }
             }
         } catch (Exception e) {
-            log.error("恢复限价单失败", e);
+            log.error("恢复合约限价单失败", e);
         }
     }
 
     private void recoverMissedLiquidations() {
         try {
             for (String symbol : props.getSymbols()) {
-                BigDecimal[] lowHigh = restClient.getRecentMarkPriceHighLow(symbol);
-                BigDecimal[] spotLowHigh = restClient.getRecentHighLow(symbol);
-                if (lowHigh != null) {
-                    BigDecimal spotLow = spotLowHigh != null ? spotLowHigh[0] : lowHigh[0];
-                    BigDecimal spotHigh = spotLowHigh != null ? spotLowHigh[1] : lowHigh[1];
-                    futuresLiquidationService.checkOnPriceUpdate(symbol, lowHigh[0], spotLow);
-                    futuresLiquidationService.checkOnPriceUpdate(symbol, lowHigh[1], spotHigh);
+                BigDecimal[] markLowHigh = restClient.getRecentMarkPriceHighLow(symbol);
+                BigDecimal[] futuresLowHigh = restClient.getRecentFuturesHighLow(symbol);
+                if (markLowHigh != null) {
+                    BigDecimal futuresLow = futuresLowHigh != null ? futuresLowHigh[0] : markLowHigh[0];
+                    BigDecimal futuresHigh = futuresLowHigh != null ? futuresLowHigh[1] : markLowHigh[1];
+                    futuresLiquidationService.checkOnPriceUpdate(symbol, markLowHigh[0], futuresLow);
+                    futuresLiquidationService.checkOnPriceUpdate(symbol, markLowHigh[1], futuresHigh);
                 }
             }
         } catch (Exception e) {
             log.error("恢复强平检查失败", e);
         }
+    }
+
+    // ── ForceOrder（全市场爆仓） ──
+
+    private String buildForceOrderUrl() {
+        return props.getFuturesWsUrl() + "/!forceOrder@arr";
+    }
+
+    private void onForceOrderMessage(String raw) {
+        // {"e":"forceOrder","E":...,"o":{"s":"BTCUSDT","S":"SELL","p":"66531.20","ap":"66723.50","q":"0.069","X":"FILLED","T":1775182662535}}
+        int sIdx = raw.indexOf("\"s\":\"");
+        if (sIdx < 0) return;
+        String symbol = extractQuoted(raw, sIdx + 5);
+
+        int sideIdx = raw.indexOf("\"S\":\"");
+        if (sideIdx < 0) return;
+        String side = extractQuoted(raw, sideIdx + 5);
+
+        int pIdx = raw.indexOf("\"p\":\"");
+        if (pIdx < 0) return;
+        String price = extractQuoted(raw, pIdx + 5);
+
+        int apIdx = raw.indexOf("\"ap\":\"");
+        if (apIdx < 0) return;
+        String avgPrice = extractQuoted(raw, apIdx + 6);
+
+        int qIdx = raw.indexOf("\"q\":\"");
+        if (qIdx < 0) return;
+        String qty = extractQuoted(raw, qIdx + 5);
+
+        int xIdx = raw.indexOf("\"X\":\"");
+        String status = xIdx >= 0 ? extractQuoted(raw, xIdx + 5) : "FILLED";
+
+        int tIdx = raw.indexOf("\"T\":");
+        long tt = System.currentTimeMillis();
+        if (tIdx >= 0) {
+            int tStart = tIdx + 4;
+            int tEnd = raw.indexOf(',', tStart);
+            if (tEnd < 0) tEnd = raw.indexOf('}', tStart);
+            tt = Long.parseLong(raw.substring(tStart, tEnd).trim());
+        }
+        final long tradeTime = tt;
+
+        Thread.startVirtualThread(() -> {
+            try {
+                forceOrderService.handleForceOrder(symbol, side,
+                        new BigDecimal(price), new BigDecimal(avgPrice),
+                        new BigDecimal(qty), status, tradeTime);
+            } catch (Exception e) {
+                log.warn("爆仓入库异常 {} {}: {}", symbol, side, e.getMessage());
+            }
+        });
     }
 
     // ── 工具 ──

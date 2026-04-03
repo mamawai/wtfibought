@@ -29,10 +29,12 @@ import java.util.*;
 public class DebateJudgeNode implements NodeAction {
 
     private final ChatClient chatClient;
+    private final LlmCallMode callMode;
     private final MemoryService memoryService;
 
-    public DebateJudgeNode(ChatClient.Builder builder, MemoryService memoryService) {
+    public DebateJudgeNode(ChatClient.Builder builder, LlmCallMode callMode, MemoryService memoryService) {
         this.chatClient = builder.build();
+        this.callMode = callMode;
         this.memoryService = memoryService;
     }
 
@@ -58,7 +60,7 @@ public class DebateJudgeNode implements NodeAction {
         try {
             String prompt = buildDebatePrompt(forecasts, votes, snapshot,
                     overallDecision, riskStatus, regimeTransition);
-            String response = chatClient.prompt().user(prompt).call().content();
+            String response = callMode.call(chatClient, prompt);
             log.info("[Q4.5.1] 辩论LLM返回 {}chars 耗时{}ms",
                     response != null ? response.length() : 0, System.currentTimeMillis() - startMs);
 
@@ -143,6 +145,9 @@ public class DebateJudgeNode implements NodeAction {
                 4. 微结构背离：做多但盘口卖压(bid<0)？做空但盘口买压(bid>0)？
                 5. 转换风险：regime转换信号下是否需要更保守？
                 6. 历史教训：记忆中的偏差提示是否适用于当前场景？
+                7. 情绪极端：fearGreed<=20(极度恐惧)时做空要警惕反弹，>=80(极度贪婪)时做多要警惕回调
+                8. 爆仓信号：大量多头爆仓(liquidationPressure>0.5)可能是下跌末端，大量空头爆仓(<-0.5)可能是上涨末端
+                9. 聪明钱方向：topTraderBias与系统方向背离时需降低confidence
 
                 裁决原则：
                 - 不要因为双方都有道理就默认NO_TRADE，要做出明确判断
@@ -312,9 +317,14 @@ public class DebateJudgeNode implements NodeAction {
 
     private String buildMicroBlock(FeatureSnapshot snapshot) {
         if (snapshot == null) return "无";
-        return "bidAskImbalance=%.3f tradeDelta=%.3f oiChange=%.3f fundingDev=%.3f lsrExtreme=%.3f".formatted(
+        return ("bidAskImbalance=%.3f tradeDelta=%.3f oiChange=%.3f fundingDev=%.3f lsrExtreme=%.3f" +
+                " liquidationPressure=%.3f(vol=%.0fUSDT) topTraderBias=%.3f takerPressure=%.3f" +
+                " fearGreed=%d(%s)").formatted(
                 snapshot.bidAskImbalance(), snapshot.tradeDelta(), snapshot.oiChangeRate(),
-                snapshot.fundingDeviation(), snapshot.lsrExtreme());
+                snapshot.fundingDeviation(), snapshot.lsrExtreme(),
+                snapshot.liquidationPressure(), snapshot.liquidationVolumeUsdt(),
+                snapshot.topTraderBias(), snapshot.takerBuySellPressure(),
+                snapshot.fearGreedIndex(), snapshot.fearGreedLabel());
     }
 
     private String buildQualityText(FeatureSnapshot snapshot) {

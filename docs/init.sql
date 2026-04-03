@@ -932,3 +932,24 @@ CREATE INDEX idx_qrm_symbol_time ON quant_reflection_memory(symbol, created_at D
 
 -- quant_forecast_cycle 增加辩论记录字段
 ALTER TABLE quant_forecast_cycle ADD COLUMN IF NOT EXISTS debate_json JSONB;
+
+-- 爆仓记录（Binance WS @forceOrder 推送）
+CREATE TABLE IF NOT EXISTS force_order (
+    id              BIGSERIAL       PRIMARY KEY,
+    symbol          VARCHAR(20)     NOT NULL,
+    side            VARCHAR(10)     NOT NULL,
+    price           DECIMAL(18,2)   NOT NULL,
+    avg_price       DECIMAL(18,2)   NOT NULL,
+    quantity        DECIMAL(18,8)   NOT NULL,
+    amount          DECIMAL(18,2)   NOT NULL,
+    status          VARCHAR(20)     NOT NULL DEFAULT 'FILLED',
+    trade_time      TIMESTAMP       NOT NULL,
+    created_at      TIMESTAMP       DEFAULT CURRENT_TIMESTAMP
+);
+COMMENT ON TABLE force_order IS 'Binance合约强平记录';
+COMMENT ON COLUMN force_order.side IS 'SELL=多头被强平, BUY=空头被强平';
+COMMENT ON COLUMN force_order.price IS '强平委托价';
+COMMENT ON COLUMN force_order.avg_price IS '成交均价';
+COMMENT ON COLUMN force_order.amount IS '爆仓金额(avg_price * quantity)';
+
+CREATE INDEX idx_fo_symbol_time ON force_order(symbol, trade_time DESC);

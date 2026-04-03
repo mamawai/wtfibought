@@ -426,7 +426,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private BigDecimal getMarkPrice(String symbol) {
         BigDecimal mp = cacheService.getMarkPrice(symbol);
         if (mp != null) return mp;
-        BigDecimal price = cacheService.getCryptoPrice(symbol);
+        BigDecimal price = cacheService.getFuturesPrice(symbol);
         if (price == null) throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
         return price;
     }

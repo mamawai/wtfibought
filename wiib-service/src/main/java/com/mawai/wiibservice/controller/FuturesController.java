@@ -4,6 +4,8 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.mawai.wiibcommon.dto.*;
 import com.mawai.wiibcommon.util.Result;
+import com.mawai.wiibcommon.entity.ForceOrder;
+import com.mawai.wiibservice.service.ForceOrderService;
 import com.mawai.wiibservice.service.FuturesRiskService;
 import com.mawai.wiibservice.service.FuturesTradingService;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +20,7 @@ public class FuturesController {
 
     private final FuturesTradingService futuresTradingService;
     private final FuturesRiskService futuresRiskService;
+    private final ForceOrderService forceOrderService;
 
     /** 开仓 */
     @PostMapping("/open")
@@ -92,5 +95,13 @@ public class FuturesController {
     @GetMapping("/live")
     public Result<List<FuturesOrderResponse>> live() {
         return Result.ok(futuresTradingService.getLatestOrders());
+    }
+
+    /** Binance爆仓记录-匿名 */
+    @GetMapping("/force-orders")
+    public Result<List<ForceOrder>> forceOrders(
+            @RequestParam(required = false) String symbol,
+            @RequestParam(defaultValue = "50") int limit) {
+        return Result.ok(forceOrderService.getLatest(symbol, Math.min(limit, 200)));
     }
 }
