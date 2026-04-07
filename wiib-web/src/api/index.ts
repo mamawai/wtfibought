@@ -259,6 +259,13 @@ export const card414Api = {
 
 // ========== 永续合约接口 ==========
 export const futuresApi = {
+  klines: (symbol = 'BTCUSDT', interval = '1m', limit = 500, endTime?: number) => {
+    const token = getToken();
+    return axios.get<number[][]>(`/api/futures/klines`, {
+      params: { symbol, interval, limit, ...(endTime ? { endTime } : {}) },
+      ...(token ? { headers: { satoken: token } } : {}),
+    }).then(res => res.data);
+  },
   open: (data: FuturesOpenRequest) => api.post<unknown, FuturesOrder>('/futures/open', data),
   close: (data: FuturesCloseRequest) => api.post<unknown, FuturesOrder>('/futures/close', data),
   cancel: (orderId: number) => api.post<unknown, FuturesOrder>(`/futures/cancel/${orderId}`),
@@ -270,8 +277,8 @@ export const futuresApi = {
   orders: (status?: string, pageNum = 1, pageSize = 10, symbol?: string) =>
     api.get<unknown, PageResult<FuturesOrder>>('/futures/orders', { params: { status, pageNum, pageSize, symbol } }),
   live: () => api.get<unknown, FuturesOrder[]>('/futures/live'),
-  forceOrders: (symbol?: string, limit = 50) =>
-    api.get<unknown, ForceOrder[]>('/futures/force-orders', { params: { symbol, limit } }),
+  forceOrders: (symbol?: string, pageNum = 1, pageSize = 20) =>
+    api.get<unknown, PageResult<ForceOrder>>('/futures/force-orders', { params: { symbol, pageNum, pageSize } }),
 };
 
 // ========== BTC 5min 涨跌预测接口 ==========

@@ -2,6 +2,7 @@ package com.mawai.wiibservice.service.impl;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
@@ -38,11 +39,13 @@ public class RedisMessageBroadcastService implements MessageListener {
     private static final String CRYPTO_CHANNEL = CHANNEL_PREFIX + "crypto";
     private static final String PREDICTION_CHANNEL = CHANNEL_PREFIX + "prediction";
     private static final String QUANT_CHANNEL = CHANNEL_PREFIX + "quant";
+    private static final String FUTURES_CHANNEL = CHANNEL_PREFIX + "futures";
 
     @PostConstruct
     public void init() {
         redisMessageListenerContainer.addMessageListener(this, new ChannelTopic(STOCK_CHANNEL));
         redisMessageListenerContainer.addMessageListener(this, new ChannelTopic(CRYPTO_CHANNEL));
+        redisMessageListenerContainer.addMessageListener(this, new ChannelTopic(FUTURES_CHANNEL));
         redisMessageListenerContainer.addMessageListener(this, new ChannelTopic(PREDICTION_CHANNEL));
         redisMessageListenerContainer.addMessageListener(this, new ChannelTopic(QUANT_CHANNEL));
         log.info("已订阅Redis广播频道: {}, {}, {}, {}", STOCK_CHANNEL, CRYPTO_CHANNEL, PREDICTION_CHANNEL, QUANT_CHANNEL);
@@ -78,6 +81,18 @@ public class RedisMessageBroadcastService implements MessageListener {
     }
 
     /**
+     * 广播合约行情消息（标记价 + 最新价）
+     */
+    public void broadcastFuturesQuote(String symbol, String message) {
+        try {
+            String payload = symbol + "|" + message;
+            redisTemplate.convertAndSend(FUTURES_CHANNEL, payload);
+        } catch (Exception e) {
+            log.error("广播合约行情失败: {}", symbol, e);
+        }
+    }
+
+    /**
      * 广播预测市场消息
      * @param topic price/round/activity
      */
@@ -108,7 +123,7 @@ public class RedisMessageBroadcastService implements MessageListener {
      * 接收Redis消息并推送到本地WebSocket连接
      */
     @Override
-    public void onMessage(Message message, byte[] pattern) {
+    public void onMessage(@NonNull Message message, byte[] pattern) {
         try {
             String channel = new String(message.getChannel(), java.nio.charset.StandardCharsets.UTF_8);
             String payload = new String(message.getBody(), java.nio.charset.StandardCharsets.UTF_8);
@@ -121,15 +136,15 @@ public class RedisMessageBroadcastService implements MessageListener {
             String code = payload.substring(0, separatorIndex);
             String jsonMessage = payload.substring(separatorIndex + 1);
 
-            if (CRYPTO_CHANNEL.equals(channel)) {
-                messagingTemplate.convertAndSend("/topic/crypto/" + code, jsonMessage);
-            } else if (PREDICTION_CHANNEL.equals(channel)) {
-                messagingTemplate.convertAndSend("/topic/prediction/" + code, jsonMessage);
-            } else if (QUANT_CHANNEL.equals(channel)) {
-                messagingTemplate.convertAndSend("/topic/quant/" + code, jsonMessage);
-            } else {
-                messagingTemplate.convertAndSend("/topic/quote/" + code, jsonMessage);
-                log.debug("本地推送股票行情: {}", code);
+            switch (channel) {
+                case CRYPTO_CHANNEL -> messagingTemplate.convertAndSend("/topic/crypto/" + code, jsonMessage);
+                case FUTURES_CHANNEL -> messagingTemplate.convertAndSend("/topic/futures/" + code, jsonMessage);
+                case PREDICTION_CHANNEL -> messagingTemplate.convertAndSend("/topic/prediction/" + code, jsonMessage);
+                case QUANT_CHANNEL -> messagingTemplate.convertAndSend("/topic/quant/" + code, jsonMessage);
+                default -> {
+                    messagingTemplate.convertAndSend("/topic/quote/" + code, jsonMessage);
+                    log.debug("本地推送股票行情: {}", code);
+                }
             }
         } catch (Exception e) {
             log.error("处理Redis广播消息失败", e);

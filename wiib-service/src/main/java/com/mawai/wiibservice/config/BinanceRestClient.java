@@ -68,6 +68,24 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         }
     }
 
+    public String getFuturesKlinesLight(String symbol, String interval, int limit, Long endTime) {
+        String raw = getFuturesKlines(symbol, interval, limit, endTime);
+        try {
+            JSONArray root = JSON.parseArray(raw);
+            JSONArray result = new JSONArray(root.size());
+            for (int i = 0; i < root.size(); i++) {
+                JSONArray kline = root.getJSONArray(i);
+                JSONArray slim = new JSONArray(5);
+                for (int j = 0; j <= 4; j++) slim.add(kline.get(j));
+                result.add(slim);
+            }
+            return result.toJSONString();
+        } catch (Exception e) {
+            log.warn("futures klines精简失败，返回原始数据", e);
+            return raw;
+        }
+    }
+
     /**
      * 获取最新价格（WS断线兜底用）
      */

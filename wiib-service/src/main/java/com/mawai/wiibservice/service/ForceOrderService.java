@@ -1,6 +1,8 @@
 package com.mawai.wiibservice.service;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibservice.mapper.ForceOrderMapper;
 import lombok.RequiredArgsConstructor;
@@ -13,7 +15,6 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
-import java.util.Set;
 
 @Slf4j
 @Service
@@ -22,12 +23,8 @@ public class ForceOrderService {
 
     private final ForceOrderMapper forceOrderMapper;
 
-    private static final Set<String> WATCH_SYMBOLS = Set.of("BTCUSDT", "ETHUSDT", "PAXGUSDT");
-
     public void handleForceOrder(String symbol, String side, BigDecimal price,
                                   BigDecimal avgPrice, BigDecimal qty, String status, long tradeTimeMs) {
-        if (!WATCH_SYMBOLS.contains(symbol)) return;
-
         ForceOrder order = new ForceOrder();
         order.setSymbol(symbol);
         order.setSide(side);
@@ -55,5 +52,12 @@ public class ForceOrderService {
                 .eq(symbol != null, ForceOrder::getSymbol, symbol)
                 .orderByDesc(ForceOrder::getTradeTime)
                 .last("LIMIT " + limit));
+    }
+
+    public IPage<ForceOrder> getPage(String symbol, int pageNum, int pageSize) {
+        Page<ForceOrder> page = Page.of(pageNum, pageSize);
+        return forceOrderMapper.selectPage(page, new LambdaQueryWrapper<ForceOrder>()
+                .eq(symbol != null && !symbol.isBlank(), ForceOrder::getSymbol, symbol)
+                .orderByDesc(ForceOrder::getTradeTime));
     }
 }

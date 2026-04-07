@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.mawai.wiibcommon.dto.*;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.entity.ForceOrder;
+import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.service.ForceOrderService;
 import com.mawai.wiibservice.service.FuturesRiskService;
 import com.mawai.wiibservice.service.FuturesTradingService;
@@ -21,6 +22,7 @@ public class FuturesController {
     private final FuturesTradingService futuresTradingService;
     private final FuturesRiskService futuresRiskService;
     private final ForceOrderService forceOrderService;
+    private final BinanceRestClient binanceRestClient;
 
     /** 开仓 */
     @PostMapping("/open")
@@ -99,9 +101,21 @@ public class FuturesController {
 
     /** Binance爆仓记录-匿名 */
     @GetMapping("/force-orders")
-    public Result<List<ForceOrder>> forceOrders(
+    public Result<IPage<ForceOrder>> forceOrders(
             @RequestParam(required = false) String symbol,
-            @RequestParam(defaultValue = "50") int limit) {
-        return Result.ok(forceOrderService.getLatest(symbol, Math.min(limit, 200)));
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "20") int pageSize) {
+        int safePageNum = Math.max(pageNum, 1);
+        int safePageSize = Math.min(Math.max(pageSize, 1), 100);
+        return Result.ok(forceOrderService.getPage(symbol, safePageNum, safePageSize));
+    }
+
+    @GetMapping("/klines")
+    public String klines(
+            @RequestParam(defaultValue = "BTCUSDT") String symbol,
+            @RequestParam(defaultValue = "1m") String interval,
+            @RequestParam(defaultValue = "500") int limit,
+            @RequestParam(required = false) Long endTime) {
+        return binanceRestClient.getFuturesKlinesLight(symbol, interval, limit, endTime);
     }
 }

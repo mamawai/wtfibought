@@ -16,6 +16,8 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -145,10 +147,8 @@ public class BinanceWsClient implements SmartLifecycle {
         redisTemplate.opsForValue().set(REDIS_KEY_PREFIX + symbol, price);
         BigDecimal bd = new BigDecimal(price);
         cacheService.putCryptoPrice(symbol, bd);
-        String markPrice = redisTemplate.opsForValue().get(REDIS_MARK_PRICE_KEY_PREFIX + symbol);
         String msg = "{\"price\":\"" + price + "\",\"ts\":" + ts
-                + ",\"ws\":" + isConnected() + ",\"fws\":" + isFuturesConnected()
-                + (markPrice != null ? ",\"mp\":\"" + markPrice + "\"" : "") + "}";
+                + ",\"ws\":" + isConnected() + "}";
         broadcastService.broadcastCryptoQuote(symbol, msg);
 
         // 虚拟线程跑业务逻辑，不阻塞WS接收线程
@@ -169,7 +169,7 @@ public class BinanceWsClient implements SmartLifecycle {
     }
 
     private String buildFuturesUrl() {
-        java.util.List<String> streams = new java.util.ArrayList<>();
+        List<String> streams = new ArrayList<>();
         for (String s : props.getSymbols()) {
             String lower = s.toLowerCase();
             streams.add(lower + "@markPrice@1s");
@@ -181,34 +181,52 @@ public class BinanceWsClient implements SmartLifecycle {
     }
 
     private void onFuturesMessage(String raw) {
+        // 真实WS组合流: {"stream":"btcusdt@markPrice@1s","data":{"e":"...","E":...,"s":"BTCUSDT","p":"..."}} / {"stream":"btcusdt@miniTicker","data":{"e":"...","E":...,"s":"BTCUSDT","c":"..."}}
+        // REST兜底伪消息: {"s":"BTCUSDT","p":"..."} / {"s":"BTCUSDT","c":"..."}
+        int streamIdx = raw.indexOf("\"stream\":\"");
+        boolean isMarkPrice;
+        if (streamIdx >= 0) {
+            int streamStart = streamIdx + 10;
+            int streamEnd = raw.indexOf('"', streamStart);
+            if (streamEnd < 0) return;
+            isMarkPrice = raw.regionMatches(streamEnd - 12, "markPrice@1s", 0, 12);
+        } else {
+            int pIdx = raw.indexOf("\"p\":\"");
+            int cIdx = raw.indexOf("\"c\":\"");
+            if (pIdx < 0 && cIdx < 0) return;
+            isMarkPrice = pIdx >= 0 && (cIdx < 0 || pIdx < cIdx);
+        }
+
         int sIdx = raw.indexOf("\"s\":\"");
         if (sIdx < 0) return;
         String symbol = extractQuoted(raw, sIdx + 5);
 
-        // @markPrice@1s: 含"p":"(标记价格) → 强平/止损检查
-        int pIdx = raw.indexOf("\"p\":\"");
-        if (pIdx >= 0) {
+        if (isMarkPrice) {
+            int pIdx = raw.indexOf("\"p\":\"", sIdx);
+            if (pIdx < 0) return;
             String markPrice = extractQuoted(raw, pIdx + 5);
             redisTemplate.opsForValue().set(REDIS_MARK_PRICE_KEY_PREFIX + symbol, markPrice);
             BigDecimal mp = new BigDecimal(markPrice);
             cacheService.putMarkPrice(symbol, mp);
 
+            broadcastService.broadcastFuturesQuote(symbol, "{\"mp\":\"" + markPrice + "\",\"fws\":" + isFuturesConnected() + "}");
+
             String futuresPrice = redisTemplate.opsForValue().get(REDIS_FUTURES_PRICE_KEY_PREFIX + symbol);
-            BigDecimal cp = futuresPrice != null ? new BigDecimal(futuresPrice) : mp;
+            final BigDecimal finalCp = futuresPrice != null ? new BigDecimal(futuresPrice) : mp;
             Thread.startVirtualThread(() -> {
-                try { futuresLiquidationService.checkOnPriceUpdate(symbol, mp, cp); }
+                try { futuresLiquidationService.checkOnPriceUpdate(symbol, mp, finalCp); }
                 catch (Exception e) { log.warn("futures强平检查异常 {}: {}", symbol, e.getMessage()); }
             });
-            return;
-        }
-
-        // @miniTicker: 含"c":"(合约最新价) → 限价单触发
-        int cIdx = raw.indexOf("\"c\":\"");
-        if (cIdx >= 0) {
+        } else {
+            // miniTicker: "c" 是最新价
+            int cIdx = raw.indexOf("\"c\":\"", sIdx);
+            if (cIdx < 0) return;
             String price = extractQuoted(raw, cIdx + 5);
             redisTemplate.opsForValue().set(REDIS_FUTURES_PRICE_KEY_PREFIX + symbol, price);
             BigDecimal bd = new BigDecimal(price);
             cacheService.putFuturesPrice(symbol, bd);
+
+            broadcastService.broadcastFuturesQuote(symbol, "{\"fp\":\"" + price + "\",\"fws\":" + isFuturesConnected() + "}");
 
             Thread.startVirtualThread(() -> {
                 try { futuresSettlementService.onPriceUpdate(symbol, bd); }
@@ -336,49 +354,86 @@ public class BinanceWsClient implements SmartLifecycle {
     // ── ForceOrder（全市场爆仓） ──
 
     private String buildForceOrderUrl() {
-        return props.getFuturesWsUrl() + "/!forceOrder@arr";
+        String streams = props.getSymbols().stream()
+                .map(s -> s.toLowerCase() + "@forceOrder")
+                .reduce((a, b) -> a + "/" + b).orElse("");
+        if (props.getSymbols().size() == 1) {
+            return props.getFuturesWsUrl() + "/" + streams;
+        }
+        return props.getFuturesWsUrl().replace("/ws", "/stream?streams=" + streams);
     }
 
     private void onForceOrderMessage(String raw) {
-        // {"e":"forceOrder","E":...,"o":{"s":"BTCUSDT","S":"SELL","p":"66531.20","ap":"66723.50","q":"0.069","X":"FILLED","T":1775182662535}}
-        int sIdx = raw.indexOf("\"s\":\"");
+        // 单流: {"e":"forceOrder","E":...,"o":{"s":"BTCUSDT","S":"SELL","p":"66531.20","ap":"66723.50","q":"0.069","X":"FILLED","T":1775182662535}}
+        // 组合流: {"stream":"btcusdt@forceOrder","data":{"e":"forceOrder","E":...,"o":{"s":"BTCUSDT","S":"SELL","p":"66531.20","ap":"66723.50","q":"0.069","X":"FILLED","T":1775182662535}}}
+        int oIdx = raw.indexOf("\"o\":{");
+        if (oIdx < 0) return;
+
+        int from = oIdx + 5;
+
+        int sIdx = raw.indexOf("\"s\":\"", from);
         if (sIdx < 0) return;
-        String symbol = extractQuoted(raw, sIdx + 5);
+        int sStart = sIdx + 5;
+        int sEnd = raw.indexOf('"', sStart);
+        if (sEnd < 0) return;
+        String symbol = raw.substring(sStart, sEnd);
 
-        int sideIdx = raw.indexOf("\"S\":\"");
+        int sideIdx = raw.indexOf("\"S\":\"", sEnd);
         if (sideIdx < 0) return;
-        String side = extractQuoted(raw, sideIdx + 5);
+        int sideStart = sideIdx + 5;
+        int sideEnd = raw.indexOf('"', sideStart);
+        if (sideEnd < 0) return;
+        String side = raw.substring(sideStart, sideEnd);
 
-        int pIdx = raw.indexOf("\"p\":\"");
+        int pIdx = raw.indexOf("\"p\":\"", sideEnd);
         if (pIdx < 0) return;
-        String price = extractQuoted(raw, pIdx + 5);
+        int pStart = pIdx + 5;
+        int pEnd = raw.indexOf('"', pStart);
+        if (pEnd < 0) return;
+        String price = raw.substring(pStart, pEnd);
 
-        int apIdx = raw.indexOf("\"ap\":\"");
+        int apIdx = raw.indexOf("\"ap\":\"", pEnd);
         if (apIdx < 0) return;
-        String avgPrice = extractQuoted(raw, apIdx + 6);
+        int apStart = apIdx + 6;
+        int apEnd = raw.indexOf('"', apStart);
+        if (apEnd < 0) return;
+        String avgPrice = raw.substring(apStart, apEnd);
 
-        int qIdx = raw.indexOf("\"q\":\"");
+        int qIdx = raw.indexOf("\"q\":\"", apEnd);
         if (qIdx < 0) return;
-        String qty = extractQuoted(raw, qIdx + 5);
+        int qStart = qIdx + 5;
+        int qEnd = raw.indexOf('"', qStart);
+        if (qEnd < 0) return;
+        String qty = raw.substring(qStart, qEnd);
 
-        int xIdx = raw.indexOf("\"X\":\"");
-        String status = xIdx >= 0 ? extractQuoted(raw, xIdx + 5) : "FILLED";
+        String status = "FILLED";
+        int searchFrom = qEnd;
+        int xIdx = raw.indexOf("\"X\":\"", qEnd);
+        if (xIdx >= 0) {
+            int xStart = xIdx + 5;
+            int xEnd = raw.indexOf('"', xStart);
+            if (xEnd < 0) return;
+            status = raw.substring(xStart, xEnd);
+            searchFrom = xEnd;
+        }
 
-        int tIdx = raw.indexOf("\"T\":");
+        int tIdx = raw.indexOf("\"T\":", searchFrom);
         long tt = System.currentTimeMillis();
         if (tIdx >= 0) {
             int tStart = tIdx + 4;
             int tEnd = raw.indexOf(',', tStart);
             if (tEnd < 0) tEnd = raw.indexOf('}', tStart);
-            tt = Long.parseLong(raw.substring(tStart, tEnd).trim());
+            if (tEnd < 0) return;
+            tt = Long.parseLong(raw.substring(tStart, tEnd));
         }
+        final String finalStatus = status;
         final long tradeTime = tt;
 
         Thread.startVirtualThread(() -> {
             try {
                 forceOrderService.handleForceOrder(symbol, side,
                         new BigDecimal(price), new BigDecimal(avgPrice),
-                        new BigDecimal(qty), status, tradeTime);
+                        new BigDecimal(qty), finalStatus, tradeTime);
             } catch (Exception e) {
                 log.warn("爆仓入库异常 {} {}: {}", symbol, side, e.getMessage());
             }

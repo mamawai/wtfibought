@@ -203,9 +203,6 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const chartInst1D = useRef<echarts.ECharts | null>(null);
   const chartInst7D = useRef<echarts.ECharts | null>(null);
 
-  const tick = useCryptoStream(symbol);
-  const isDark = useIsDark();
-
   // 实物换算币种: USD/CNY 汇率
   const [usdCny, setUsdCny] = useState(0);
   useEffect(() => {
@@ -242,6 +239,9 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const [limitPrice, setLimitPrice] = useState('');
   const [leverage, setLeverage] = useState(1);
   const [submitting, setSubmitting] = useState(false);
+  const isFuturesMode = orderType === 'FUTURES';
+  const tick = useCryptoStream(symbol, isFuturesMode ? 'futures' : 'spot');
+  const isDark = useIsDark();
 
   // 合约专用状态
   const [futuresSide, setFuturesSide] = useState<'LONG' | 'SHORT'>('LONG');
@@ -290,12 +290,15 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
     cryptoOrderApi.position(symbol).then(setPosition).catch(() => setPosition(null));
   }, []);
 
-  // 拉取K线
+  // 拉取K线（现货/合约分用不同数据源）
   const fetchKlines = useCallback(async (tabIdx: number) => {
     setLoading(true);
     try {
       const tab = TABS[tabIdx];
-      const data = parseKlines(await cryptoApi.klines(symbol, tab.interval, tab.limit));
+      const raw = orderType === 'FUTURES'
+        ? await futuresApi.klines(symbol, tab.interval, tab.limit)
+        : await cryptoApi.klines(symbol, tab.interval, tab.limit);
+      const data = parseKlines(raw);
       if (tabIdx === 0) setPoints1D(data); else setPoints7D(data);
     } catch (e) {
       console.error('拉取K线失败', e);
@@ -303,7 +306,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [symbol, orderType]);
 
   useEffect(() => { if (activeTab < TABS.length) fetchKlines(activeTab); }, [activeTab, fetchKlines]);
 
@@ -314,22 +317,25 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
     inst?.resize();
   }, [activeTab]);
 
+  const livePrice = isFuturesMode ? (tick?.fp ?? tick?.price) : tick?.price;
+  const liveTs = tick?.ts;
+
   // 实时价格追加到1D图表末端
   useEffect(() => {
-    if (!tick || points1D.length === 0) return;
+    if (livePrice == null || liveTs == null || points1D.length === 0) return;
     setPoints1D(prev => {
       const last = prev[prev.length - 1];
       if (!last) return prev;
-      const minuteStart = Math.floor(tick.ts / 60000) * 60000;
+      const minuteStart = Math.floor(liveTs / 60000) * 60000;
       if (last.time === minuteStart) {
-        return [...prev.slice(0, -1), { ...last, close: tick.price, high: Math.max(last.high, tick.price), low: Math.min(last.low, tick.price) }];
+        return [...prev.slice(0, -1), { ...last, close: livePrice, high: Math.max(last.high, livePrice), low: Math.min(last.low, livePrice) }];
       }
       if (minuteStart > last.time) {
-        return [...prev, { time: minuteStart, open: tick.price, high: tick.price, low: tick.price, close: tick.price }];
+        return [...prev, { time: minuteStart, open: livePrice, high: livePrice, low: livePrice, close: livePrice }];
       }
       return prev;
     });
-  }, [tick]);
+  }, [livePrice, liveTs, points1D.length]);
 
   // 图表渲染函数
   const chart1DReady = useRef(false);
@@ -722,7 +728,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
 
   // 计算涨跌
   const points = activeTab === 0 ? points1D : points7D;
-  const currentPrice = tick?.price ?? (points.length > 0 ? points[points.length - 1].close : 0);
+  const currentPrice = livePrice ?? (points.length > 0 ? points[points.length - 1].close : 0);
   const firstPrice = points.length > 0 ? points[0].close : 0;
   const change = firstPrice ? currentPrice - firstPrice : 0;
   const changePct = firstPrice ? (change / firstPrice) * 100 : 0;
@@ -754,13 +760,13 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                   <span className="text-lg sm:text-xl font-black tracking-tight">{cfg.pair}</span>
                   <div className="flex items-center gap-2 px-2 py-0.5 rounded-full bg-card neu-flat text-[10px]">
                     <span className="flex items-center gap-1.5" title="现货行情">
-                      <span className={`inline-block w-2 h-2 rounded-full ${tick?.ws ? 'bg-success' : 'bg-destructive animate-pulse'}`} />
-                      <span className="text-foreground font-bold">现货</span>
+                      <span className={`inline-block w-2 h-2 rounded-full ${isFuturesMode ? 'bg-muted-foreground/35' : (tick?.ws ? 'bg-success' : 'bg-destructive animate-pulse')}`} />
+                      <span className={`font-bold ${isFuturesMode ? 'text-muted-foreground' : 'text-foreground'}`}>现货</span>
                     </span>
                     <span className="w-0.5 h-2.5 bg-border" />
                     <span className="flex items-center gap-1.5" title="合约行情">
-                      <span className={`inline-block w-2 h-2 rounded-full ${tick?.fws ? 'bg-success' : 'bg-destructive animate-pulse'}`} />
-                      <span className="text-foreground font-bold">合约</span>
+                      <span className={`inline-block w-2 h-2 rounded-full ${isFuturesMode ? (tick?.fws ? 'bg-success' : 'bg-destructive animate-pulse') : 'bg-muted-foreground/35'}`} />
+                      <span className={`font-bold ${isFuturesMode ? 'text-foreground' : 'text-muted-foreground'}`}>合约</span>
                     </span>
                   </div>
                 </div>
@@ -826,7 +832,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
           {loading && activeTab < TABS.length && points.length === 0 && <Skeleton className="absolute inset-0 z-10 m-2" style={{ height: 300 }} />}
           <div ref={chartRef1D} className="w-full" style={{ height: 300, display: activeTab === 0 ? 'block' : 'none' }} />
           <div ref={chartRef7D} className="w-full" style={{ height: 300, display: activeTab === 1 ? 'block' : 'none' }} />
-          {activeTab === 2 && <div style={{ height: 500 }}><TradingViewWidget symbol={cfg.tvSymbol} label={cfg.name} /></div>}
+          {activeTab === 2 && <div style={{ height: 500 }}><TradingViewWidget symbol={orderType === 'FUTURES' ? cfg.futuresTvSymbol : cfg.tvSymbol} label={cfg.name} /></div>}
         </CardContent>
       </Card>
 
@@ -913,7 +919,10 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               </button>
             ))}
           </div>
-          <Link to="/force-orders" className="px-4 py-2.5 rounded-xl bg-red-500/10 text-red-500 text-xs font-black hover:bg-red-500/20 transition-colors border border-red-500/20">
+          <Link
+            to="/force-orders"
+            className="px-4 py-2.5 rounded-xl bg-red-500/8 neu-raised text-xs font-black text-red-500 border border-red-500/15 hover:bg-red-500/12 transition-colors"
+          >
             爆仓
           </Link>
         </div>
