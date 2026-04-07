@@ -12,14 +12,14 @@ import java.util.Map;
  * 区间裁决器：对单个时间区间的全部AgentVote做加权汇总，输出HorizonForecast。
  * <p>
  * 裁决逻辑：
- * 1. 按Agent权重加权计算longScore和shortScore
+ * 1. 按Agent权重加权计算longScore和shortScore（weight × score，不乘confidence）
  * 2. 计算edge和disagreement
- * 3. 当edge过小、分歧过大或预期收益覆盖不了成本时，输出NO_TRADE
+ * 3. 弱信号不判NO_TRADE，而是通过confidence衰减表达不确定性
+ * 4. 只有全部agent无有效投票时才NO_TRADE
  */
 @Slf4j
 public class HorizonJudge {
 
-    private static final double MAX_DISAGREEMENT = 0.35;
     private static final double EPSILON = 1e-9;
 
     /** 初始权重表: agent → horizon → weight */
@@ -32,9 +32,13 @@ public class HorizonJudge {
     );
 
     private final String horizon;
+    private final Map<String, Map<String, Double>> agentAccuracy;
 
-    public HorizonJudge(String horizon) {
+    public HorizonJudge(String horizon) { this(horizon, Map.of()); }
+
+    public HorizonJudge(String horizon, Map<String, Map<String, Double>> agentAccuracy) {
         this.horizon = horizon;
+        this.agentAccuracy = agentAccuracy != null ? agentAccuracy : Map.of();
     }
 
     public HorizonForecast judge(List<AgentVote> allVotes, BigDecimal lastPrice, List<String> qualityFlags) {
@@ -57,13 +61,16 @@ public class HorizonJudge {
         // 独立波动聚合：所有agent（含score==0）都参与
         double totalVolWeighted = 0;
         double totalVolWeightSum = 0;
+        // confidence加权均值，作为独立参考
+        double confWeightedSum = 0;
+        double confWeightDenom = 0;
 
         for (AgentVote vote : filtered) {
             double weight = getWeight(vote.agent(), horizon);
 
-            // 方向聚合：只处理 score != 0 的票
-            double directionalWeighted = weight * Math.abs(vote.score()) * vote.confidence();
-            if (directionalWeighted > 0) {
+            // 方向聚合：weight × |score|（不乘confidence，避免三重衰减）
+            double directionalWeighted = weight * Math.abs(vote.score());
+            if (directionalWeighted > EPSILON) {
                 int calibratedMoveBps = calibrateMoveBps(vote);
 
                 if (vote.score() > 0) {
@@ -75,6 +82,9 @@ public class HorizonJudge {
                     shortMoveWeighted += directionalWeighted * calibratedMoveBps;
                     shortWeightSum += directionalWeighted;
                 }
+                // confidence独立聚合
+                confWeightedSum += directionalWeighted * vote.confidence();
+                confWeightDenom += directionalWeighted;
             }
 
             // 波动聚合：不管score是不是0，只要有volatilityBps就参与
@@ -102,21 +112,27 @@ public class HorizonJudge {
         int dominantVolBps = totalVolWeightSum > EPSILON
                 ? (int) Math.round(totalVolWeighted / totalVolWeightSum)
                 : 0;
+
+        // agent平均confidence（独立参考）
+        double avgAgentConf = confWeightDenom > EPSILON ? confWeightedSum / confWeightDenom : 0.3;
+
+        // confidence = 方向占比 × agent信心 × disagreement衰减，保底0.15
+        double dominantRatio = (direction == Direction.LONG ? longScore : shortScore) / total;
+        double rawConf = dominantRatio * avgAgentConf * (1.0 - disagreement * 0.4);
+        // 弱信号惩罚（不拦截，只衰减）
         double minEdge = getMinEdge(qualityFlags);
         int minMoveBps = getMinMoveBps();
+        if (edge < minEdge) rawConf *= 0.6;
+        if (dominantMoveBps < minMoveBps) rawConf *= 0.7;
+        if (disagreement > 0.35) rawConf *= 0.5;
+        double confidence = Math.clamp(rawConf, 0.15, 1.0);
 
-        // NO_TRADE 判断
-        if (edge < minEdge || disagreement > MAX_DISAGREEMENT || dominantMoveBps < minMoveBps) {
-            log.info("[Q4.judge] {} long={} short={} edge={} disagree={} domMoveBps={} domVolBps={} → NO_TRADE(edge<{}:{} disagree>{}:{} move<{}:{})",
-                    horizon, String.format("%.3f", longScore), String.format("%.3f", shortScore),
-                    String.format("%.3f", edge), String.format("%.3f", disagreement), dominantMoveBps, dominantVolBps,
-                    String.format("%.2f", minEdge), edge < minEdge, MAX_DISAGREEMENT, disagreement > MAX_DISAGREEMENT,
-                    minMoveBps, dominantMoveBps < minMoveBps);
-            return HorizonForecast.noTrade(horizon, disagreement);
-        }
-
-        double confidence = Math.min(1.0, edge * 1.7 * (1.0 - disagreement * 0.35));
         double weightedScore = longScore > shortScore ? longScore : -shortScore;
+
+        log.info("[Q4.judge] {} long={} short={} edge={} disagree={} domMoveBps={} avgConf={} → {} conf={}",
+                horizon, String.format("%.3f", longScore), String.format("%.3f", shortScore),
+                String.format("%.3f", edge), String.format("%.3f", disagreement), dominantMoveBps,
+                String.format("%.2f", avgAgentConf), direction, String.format("%.2f", confidence));
 
         // 入场区间和止损止盈
         BigDecimal entryLow, entryHigh, invalidation, tp1, tp2;
@@ -148,19 +164,27 @@ public class HorizonJudge {
 
         int maxLeverage = getMaxLeverage(horizon);
 
-        log.info("[Q4.judge] {} long={} short={} edge={} disagree={} → {} conf={}",
-                horizon, String.format("%.3f", longScore), String.format("%.3f", shortScore),
-                String.format("%.3f", edge), String.format("%.3f", disagreement),
-                direction, String.format("%.2f", confidence));
-
         return new HorizonForecast(horizon, direction, confidence, weightedScore, disagreement,
                 entryLow, entryHigh, invalidation, tp1, tp2, maxLeverage,
                 getBasePositionPct(horizon));
     }
 
-    private static double getWeight(String agent, String horizon) {
-        return DEFAULT_WEIGHTS.getOrDefault(agent, Map.of())
+    /**
+     * 获取agent权重：基础权重 × 准确率修正。
+     * 准确率 > 0.5 时加权，< 0.5 时减权，范围[0.5x, 1.4x]。
+     * 无准确率数据时使用基础权重。
+     */
+    private double getWeight(String agent, String horizon) {
+        double base = DEFAULT_WEIGHTS.getOrDefault(agent, Map.of())
                 .getOrDefault(horizon, 0.1);
+        if (agentAccuracy.isEmpty()) return base;
+        Map<String, Double> horizonAcc = agentAccuracy.get(agent);
+        if (horizonAcc == null) return base;
+        Double acc = horizonAcc.get(horizon);
+        if (acc == null) return base;
+        // acc=0.5→1.0x, acc=0.8→1.24x, acc=0.3→0.68x, 范围[0.5, 1.4]
+        double multiplier = Math.clamp(0.2 + acc * 1.6, 0.5, 1.4);
+        return base * multiplier;
     }
 
     private static int getMaxLeverage(String horizon) {

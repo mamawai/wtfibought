@@ -764,9 +764,10 @@ CREATE TABLE IF NOT EXISTS quant_forecast_cycle (
     symbol VARCHAR(20) NOT NULL,
     forecast_time TIMESTAMP NOT NULL,
     overall_decision VARCHAR(64) NOT NULL,
-    risk_status VARCHAR(32) NOT NULL,
+    risk_status VARCHAR(512) NOT NULL,
     snapshot_json JSONB,
     report_json JSONB,
+    debate_json JSONB,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -778,6 +779,7 @@ COMMENT ON COLUMN quant_forecast_cycle.overall_decision IS '总体决策（如PR
 COMMENT ON COLUMN quant_forecast_cycle.risk_status IS '风控状态：NORMAL/CAUTIOUS/HIGH_DISAGREEMENT/ALL_NO_TRADE';
 COMMENT ON COLUMN quant_forecast_cycle.snapshot_json IS '当时FeatureSnapshot快照';
 COMMENT ON COLUMN quant_forecast_cycle.report_json IS 'LLM生成的报告';
+COMMENT ON COLUMN quant_forecast_cycle.debate_json IS '辩论摘要';
 
 CREATE INDEX idx_qfc_symbol_time ON quant_forecast_cycle(symbol, forecast_time DESC);
 
@@ -863,7 +865,7 @@ CREATE TABLE IF NOT EXISTS quant_signal_decision (
     confidence DECIMAL(6,4) NOT NULL,
     max_leverage INT NOT NULL DEFAULT 0,
     max_position_pct DECIMAL(6,4) NOT NULL DEFAULT 0,
-    risk_status VARCHAR(32) NOT NULL,
+    risk_status VARCHAR(512) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -892,7 +894,11 @@ CREATE TABLE IF NOT EXISTS quant_forecast_verification (
     actual_price_at_forecast DECIMAL(18,2),
     actual_price_after DECIMAL(18,2),
     actual_change_bps INT,
+    max_favorable_bps INT,
+    max_adverse_bps INT,
+    tp1_hit_first BOOLEAN,
     prediction_correct BOOLEAN,
+    trade_quality VARCHAR(10),
     verified_at TIMESTAMP NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

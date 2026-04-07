@@ -62,7 +62,7 @@ public class QuantForecastWorkflow {
                 .addNode("build_features",     node_async(new BuildFeaturesNode()))
                 .addNode("regime_review",      node_async(new RegimeReviewNode(shallowChatClient, shallowCallMode, memoryService)))
                 .addNode("run_factors",        node_async(new RunFactorAgentsNode(agents)))
-                .addNode("run_judges",         node_async(new RunHorizonJudgesNode()))
+                .addNode("run_judges",         node_async(new RunHorizonJudgesNode(memoryService)))
                 .addNode("debate_judge",       node_async(new DebateJudgeNode(deepChatClient, deepCallMode, memoryService)))
                 .addNode("risk_gate",          node_async(new RiskGateNode()))
                 .addNode("generate_report",    node_async(new GenerateReportNode(shallowChatClient, shallowCallMode, memoryService)));
@@ -118,6 +118,7 @@ public class QuantForecastWorkflow {
             s.put("cycle_id", new ReplaceStrategy());
             // DebateJudgeNode输出
             s.put("debate_summary", new ReplaceStrategy());
+            s.put("debate_probs", new ReplaceStrategy());
             // GenerateReportNode输出
             s.put("report", new ReplaceStrategy());
             s.put("hard_report", new ReplaceStrategy());

@@ -65,10 +65,13 @@ public class GenerateReportNode implements NodeAction {
         String priceChanges = StateHelper.stateJson(state, "price_change_map");
         int avgConfidence = forecasts.isEmpty() ? 0
                 : (int) (forecasts.stream().mapToDouble(HorizonForecast::confidence).average().orElse(0) * 100);
+        @SuppressWarnings("unchecked")
+        Map<String, Integer[]> debateProbs =
+                (Map<String, Integer[]>) state.value("debate_probs").orElse(Map.of());
 
         // ===== Step1: 硬性报告（纯计算，零LLM） =====
         CryptoAnalysisReport hardReport = buildHardReport(
-                symbol, forecasts, votes, filteredNews, overallDecision, riskStatus, snapshot, avgConfidence);
+                symbol, forecasts, votes, filteredNews, overallDecision, riskStatus, snapshot, avgConfidence, debateProbs);
         log.info("[Q6.1] 硬性报告构建完成 dirs=[{}/{}/{}] confidence={} positions={} news={} warnings={}",
                 hardReport.getDirection().getUltraShort(), hardReport.getDirection().getShortTerm(),
                 hardReport.getDirection().getMid(), hardReport.getConfidence(),
@@ -77,12 +80,12 @@ public class GenerateReportNode implements NodeAction {
 
         // ===== Step2: LLM综合推理 =====
         CryptoAnalysisReport finalReport;
+        String debateSummaryRaw = (String) state.value("debate_summary").orElse(null);
         try {
             String voteSummary = buildVoteSummary(votes);
-            String debateSummary = (String) state.value("debate_summary").orElse(null);
             String memorySummary = buildMemorySummary(snapshot);
             String prompt = buildLlmPrompt(hardReport, voteSummary, indicators, priceChanges,
-                    filteredNews, riskStatus, snapshot, debateSummary, memorySummary);
+                    filteredNews, riskStatus, snapshot, debateSummaryRaw, memorySummary);
             String response = callMode.call(chatClient, prompt);
             log.info("[Q6.2] LLM推理返回 {}chars 耗时{}ms",
                     response != null ? response.length() : 0, System.currentTimeMillis() - startMs);
@@ -92,6 +95,20 @@ public class GenerateReportNode implements NodeAction {
         } catch (Exception e) {
             log.warn("[Q6.2] LLM推理失败，最终报告=硬性报告: {}", e.getMessage());
             finalReport = hardReport;
+        }
+
+        // 辩论摘要写入报告
+        if (debateSummaryRaw != null && !debateSummaryRaw.isBlank()) {
+            try {
+                JSONObject ds = JSON.parseObject(debateSummaryRaw);
+                CryptoAnalysisReport.DebateSummary debate = new CryptoAnalysisReport.DebateSummary();
+                debate.setBullArgument(ds.getString("bullArgument"));
+                debate.setBearArgument(ds.getString("bearArgument"));
+                debate.setJudgeReasoning(ds.getString("judgeReasoning"));
+                finalReport.setDebateSummary(debate);
+            } catch (Exception e) {
+                log.warn("[Q6] 辩论摘要解析失败: {}", e.getMessage());
+            }
         }
 
         if (!finalReport.isValid()) {
@@ -113,7 +130,8 @@ public class GenerateReportNode implements NodeAction {
         Map<String, Object> result = new HashMap<>();
         result.put("report", finalReport);
         result.put("hard_report", hardReport);
-        result.put("forecast_result", forecastResult);
+        // 序列化为JSON字符串，避免框架deepCopy把record转成Map
+        result.put("forecast_result", com.alibaba.fastjson2.JSON.toJSONString(forecastResult));
         return result;
     }
 
@@ -124,11 +142,12 @@ public class GenerateReportNode implements NodeAction {
                                                  String overallDecision,
                                                  String riskStatus,
                                                  FeatureSnapshot snapshot,
-                                                 int avgConfidence) {
+                                                 int avgConfidence,
+                                                 Map<String, Integer[]> debateProbs) {
         CryptoAnalysisReport report = new CryptoAnalysisReport();
         report.setSummary(buildSummary(symbol, forecasts, overallDecision, riskStatus, snapshot));
         report.setAnalysisBasis(buildAnalysisBasis(forecasts, votes, overallDecision, riskStatus, snapshot));
-        report.setDirection(buildDirectionInfo(forecasts, votes));
+        report.setDirection(buildDirectionInfo(forecasts, votes, debateProbs));
         report.setKeyLevels(buildKeyLevels(snapshot));
         report.setIndicators(buildIndicatorsSummary(snapshot));
         report.setImportantNews(buildImportantNews(snapshot, votes, filteredNews));
@@ -371,11 +390,12 @@ public class GenerateReportNode implements NodeAction {
     }
 
     private CryptoAnalysisReport.DirectionInfo buildDirectionInfo(List<HorizonForecast> forecasts,
-                                                                    List<AgentVote> votes) {
+                                                                    List<AgentVote> votes,
+                                                                    Map<String, Integer[]> debateProbs) {
         CryptoAnalysisReport.DirectionInfo direction = new CryptoAnalysisReport.DirectionInfo();
-        direction.setUltraShort(formatDirectionWithProb(findForecast(forecasts, "0_10"), votes, "0_10"));
-        direction.setShortTerm(formatDirectionWithProb(findForecast(forecasts, "10_20"), votes, "10_20"));
-        direction.setMid(formatDirectionWithProb(findForecast(forecasts, "20_30"), votes, "20_30"));
+        direction.setUltraShort(formatDirectionWithProb(findForecast(forecasts, "0_10"), votes, "0_10", debateProbs));
+        direction.setShortTerm(formatDirectionWithProb(findForecast(forecasts, "10_20"), votes, "10_20", debateProbs));
+        direction.setMid(formatDirectionWithProb(findForecast(forecasts, "20_30"), votes, "20_30", debateProbs));
         direction.setLongTerm("观望");
         return direction;
     }
@@ -656,10 +676,41 @@ public class GenerateReportNode implements NodeAction {
 
     /**
      * 概率分布格式的方向展示。
-     * 有明确方向：做多(65%) 震荡(25%) 偏空(10%)
-     * NO_TRADE时从原始投票计算倾向：偏空(45%) 震荡(35%) 偏多(20%)
+     * 辩论概率修正优先：DebateJudge挖掘死数据之外的深层信号后给出的概率。
+     * 无辩论概率时回退到Agent投票加权计算。
      */
-    private String formatDirectionWithProb(HorizonForecast forecast, List<AgentVote> allVotes, String horizon) {
+    private String formatDirectionWithProb(HorizonForecast forecast, List<AgentVote> allVotes,
+                                            String horizon, Map<String, Integer[]> debateProbs) {
+        // 辩论概率优先
+        if (debateProbs != null && debateProbs.containsKey(horizon)) {
+            Integer[] probs = debateProbs.get(horizon);
+            int bullPct = probs[0], rangePct = probs[1], bearPct = probs[2];
+
+            // 确保与forecast方向一致：如果forecast有明确方向，概率中该方向必须最高
+            if (forecast != null && forecast.direction() == Direction.LONG && bullPct <= bearPct) {
+                int swap = bullPct;
+                bullPct = bearPct;
+                bearPct = swap;
+            } else if (forecast != null && forecast.direction() == Direction.SHORT && bearPct <= bullPct) {
+                int swap = bearPct;
+                bearPct = bullPct;
+                bullPct = swap;
+            }
+
+            if (forecast != null && forecast.direction() == Direction.LONG) {
+                return "做多(%d%%) 震荡(%d%%) 偏空(%d%%)".formatted(bullPct, rangePct, bearPct);
+            } else if (forecast != null && forecast.direction() == Direction.SHORT) {
+                return "做空(%d%%) 震荡(%d%%) 偏多(%d%%)".formatted(bearPct, rangePct, bullPct);
+            } else if (bearPct > bullPct) {
+                return "偏空(%d%%) 震荡(%d%%) 偏多(%d%%)".formatted(bearPct, rangePct, bullPct);
+            } else if (bullPct > bearPct) {
+                return "偏多(%d%%) 震荡(%d%%) 偏空(%d%%)".formatted(bullPct, rangePct, bearPct);
+            } else {
+                return "震荡(%d%%) 偏多(%d%%) 偏空(%d%%)".formatted(rangePct, bullPct, bearPct);
+            }
+        }
+
+        // 回退：从Agent投票计算
         double bullish = 0, bearish = 0;
         for (AgentVote v : allVotes) {
             if (!horizon.equals(v.horizon())) continue;

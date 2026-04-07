@@ -157,15 +157,24 @@ public class DebateJudgeNode implements NodeAction {
                 - direction只能是LONG/SHORT/NO_TRADE
                 - 不修改entry/tp/sl价位
 
+                ===== 第四步：概率修正 =====
+                基于辩论中挖掘到的死数据之外的深层信息（如Agent未覆盖的跨维度共振、隐含的资金流向矛盾、
+                regime转换的二阶信号等），对每个区间给出你认为的真实概率分布。
+                这个概率应该反映辩论后的综合判断，而不是简单复述Agent投票的加权结果。
+                三个概率之和必须等于100。
+
                 严格返回JSON（不要markdown包裹）：
                 {
                   "bullArgument": "Bull辩手论据摘要(100字内)",
                   "bearArgument": "Bear辩手论据摘要(100字内)",
                   "judgeReasoning": "裁判推理过程(150字内)",
                   "horizons": [
-                    {"horizon":"0_10","approved":true,"newDirection":"LONG","newConfidence":0.65,"reason":"一句话"},
-                    {"horizon":"10_20","approved":true,"newDirection":"NO_TRADE","newConfidence":0,"reason":"一句话"},
-                    {"horizon":"20_30","approved":false,"newDirection":"NO_TRADE","newConfidence":0,"reason":"一句话"}
+                    {"horizon":"0_10","approved":true,"newDirection":"LONG","newConfidence":0.65,"reason":"一句话",
+                     "bullPct":45,"rangePct":35,"bearPct":20},
+                    {"horizon":"10_20","approved":true,"newDirection":"NO_TRADE","newConfidence":0,"reason":"一句话",
+                     "bullPct":30,"rangePct":40,"bearPct":30},
+                    {"horizon":"20_30","approved":false,"newDirection":"NO_TRADE","newConfidence":0,"reason":"一句话",
+                     "bullPct":25,"rangePct":45,"bearPct":30}
                   ]
                 }
                 """.formatted(
@@ -255,6 +264,31 @@ public class DebateJudgeNode implements NodeAction {
             result.put("overall_decision", rebuildDecision(adjusted));
             result.put("risk_status", rebuildRiskStatus(adjusted, originalRiskStatus));
             result.put("debate_summary", buildDebateSummaryJson(bullArg, bearArg, judgeReasoning));
+
+            // 解析辩论概率修正 → 传递给报告层
+            Map<String, Integer[]> debateProbs = new HashMap<>();
+            for (int i = 0; i < horizons.size(); i++) {
+                JSONObject h = horizons.getJSONObject(i);
+                String hz = h.getString("horizon");
+                int bullPct = h.getIntValue("bullPct", -1);
+                int bearPct = h.getIntValue("bearPct", -1);
+                int rangePct = h.getIntValue("rangePct", -1);
+                if (bullPct >= 0 && bearPct >= 0 && rangePct >= 0
+                        && Math.abs(bullPct + bearPct + rangePct - 100) <= 3) {
+                    // 归一化到100
+                    int sum = bullPct + bearPct + rangePct;
+                    if (sum != 100) {
+                        int diff = 100 - sum;
+                        rangePct += diff;
+                    }
+                    debateProbs.put(hz, new Integer[]{bullPct, rangePct, bearPct});
+                    log.info("[Q4.5.prob] {} 辩论概率修正 bull={}% range={}% bear={}%",
+                            hz, bullPct, rangePct, bearPct);
+                }
+            }
+            if (!debateProbs.isEmpty()) {
+                result.put("debate_probs", debateProbs);
+            }
 
             log.info("[Q4.5.end] 辩论裁决完成 decision={} 耗时{}ms",
                     result.get("overall_decision"), System.currentTimeMillis() - startMs);

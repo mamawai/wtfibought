@@ -29,7 +29,15 @@ public class QuantForecastVerification {
 
     private Integer actualChangeBps;
 
+    // 路径验证：最大有利/不利偏移，判断TP/SL是否先触达
+    private Integer maxFavorableBps;
+    private Integer maxAdverseBps;
+    private Boolean tp1HitFirst;
+
     private Boolean predictionCorrect;
+
+    // 综合评级：GOOD=方向+路径都对, LUCKY=终点对但中间触止损, BAD=方向错, FLAT=波动不足
+    private String tradeQuality;
 
     private LocalDateTime verifiedAt;
 

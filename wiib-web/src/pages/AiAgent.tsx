@@ -582,6 +582,40 @@ export function AiAgent() {
                 </Card>
               )}
 
+              {/* Bull vs Bear 辩论 */}
+              {cryptoReport.debateSummary && (
+                <Card className="border-purple-500/30 bg-purple-500/5">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2 text-purple-600">
+                      <Zap className="w-4 h-4" /> 多空辩论
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="p-3 rounded-lg border border-green-500/30 bg-green-500/5">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <TrendingUp className="w-3.5 h-3.5 text-green-500" />
+                        <span className="text-xs font-bold text-green-600">Bull 做多方</span>
+                      </div>
+                      <p className="text-sm leading-relaxed text-muted-foreground">{cryptoReport.debateSummary.bullArgument}</p>
+                    </div>
+                    <div className="p-3 rounded-lg border border-red-500/30 bg-red-500/5">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <TrendingDown className="w-3.5 h-3.5 text-red-500" />
+                        <span className="text-xs font-bold text-red-600">Bear 做空方</span>
+                      </div>
+                      <p className="text-sm leading-relaxed text-muted-foreground">{cryptoReport.debateSummary.bearArgument}</p>
+                    </div>
+                    <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
+                        <span className="text-xs font-bold text-amber-600">Judge 裁判裁决</span>
+                      </div>
+                      <p className="text-sm leading-relaxed text-muted-foreground">{cryptoReport.debateSummary.judgeReasoning}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* 关键价位 */}
               <Card>
                 <CardHeader className="pb-2">

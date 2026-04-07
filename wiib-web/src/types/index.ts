@@ -632,6 +632,8 @@ export interface CryptoAnalysisReport {
   positionAdvice: { period: string; type: string; entry: string; stopLoss: string; takeProfit: string; riskReward: string }[];
   riskWarnings: string[];
   confidence: number;
+  debateSummary?: { bullArgument: string; bearArgument: string; judgeReasoning: string };
+  reasoning?: string;
 }
 
 export interface QuantSignalDecision {

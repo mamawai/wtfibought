@@ -219,11 +219,19 @@ public class AiAgentController {
                     log.error("[Quant] 报告关键字段缺失 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs);
                     return Result.fail("分析结果不完整，请重试");
                 }
-                // 落库
+                // 落库（forecast_result 以 JSON 字符串存入 state，避免框架深拷贝破坏 record 类型）
                 Object fr = state.value("forecast_result").orElse(null);
-                if (fr instanceof ForecastResult forecastResult) {
+                ForecastResult forecastResult = null;
+                if (fr instanceof String frJson) {
+                    forecastResult = JSON.parseObject(frJson, ForecastResult.class);
+                } else if (fr instanceof ForecastResult frObj) {
+                    forecastResult = frObj;
+                }
+                if (forecastResult != null) {
                     String debateSummary = (String) state.value("debate_summary").orElse(null);
                     persistService.persist(forecastResult, debateSummary);
+                } else {
+                    log.warn("[Quant] forecast_result为空或类型异常 type={}", fr != null ? fr.getClass().getName() : "null");
                 }
                 log.info("[Quant] 工作流完成 userId={} symbol={} confidence={} summary={} 总耗时{}ms",
                         userId, symbol, r.getConfidence(), r.getSummary(), System.currentTimeMillis() - startMs);

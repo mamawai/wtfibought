@@ -5,6 +5,7 @@ import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.mawai.wiibservice.agent.quant.domain.*;
 import com.mawai.wiibservice.agent.quant.judge.ConsensusBuilder;
 import com.mawai.wiibservice.agent.quant.judge.HorizonJudge;
+import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
@@ -23,6 +24,10 @@ import java.util.concurrent.TimeUnit;
 public class RunHorizonJudgesNode implements NodeAction {
 
     private static final String[] HORIZONS = {"0_10", "10_20", "20_30"};
+    private final MemoryService memoryService;
+
+    public RunHorizonJudgesNode() { this(null); }
+    public RunHorizonJudgesNode(MemoryService memoryService) { this.memoryService = memoryService; }
 
     @Override
     @SuppressWarnings("unchecked")
@@ -32,16 +37,31 @@ public class RunHorizonJudgesNode implements NodeAction {
         FeatureSnapshot snapshot = (FeatureSnapshot) state.value("feature_snapshot").orElse(null);
         BigDecimal lastPrice = snapshot != null ? snapshot.lastPrice() : null;
         List<String> qualityFlags = snapshot != null ? snapshot.qualityFlags() : List.of();
+        String symbol = snapshot != null ? snapshot.symbol() : "BTCUSDT";
+
+        // 查反思记忆中的agent准确率
+        Map<String, Map<String, Double>> agentAccuracy = Map.of();
+        if (memoryService != null) {
+            try {
+                agentAccuracy = memoryService.getAgentAccuracy(symbol);
+                if (!agentAccuracy.isEmpty()) {
+                    log.info("[Q4.0] 加载agent准确率 agents={}", agentAccuracy.keySet());
+                }
+            } catch (Exception e) {
+                log.warn("[Q4.0] agent准确率查询失败: {}", e.getMessage());
+            }
+        }
 
         log.info("[Q4.0] run_judges开始 共{}票 qualityFlags={}", allVotes.size(), qualityFlags);
 
         List<HorizonForecast> forecasts = new ArrayList<>(3);
+        Map<String, Map<String, Double>> finalAccuracy = agentAccuracy;
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             List<Future<HorizonForecast>> futures = new ArrayList<>(3);
             for (String horizon : HORIZONS) {
                 futures.add(executor.submit(() -> {
-                    HorizonJudge judge = new HorizonJudge(horizon);
+                    HorizonJudge judge = new HorizonJudge(horizon, finalAccuracy);
                     return judge.judge(allVotes, lastPrice, qualityFlags);
                 }));
             }
@@ -64,7 +84,6 @@ public class RunHorizonJudgesNode implements NodeAction {
 
         String overallDecision = ConsensusBuilder.buildDecision(forecasts);
         String riskStatus = ConsensusBuilder.buildRiskStatus(forecasts);
-        String symbol = snapshot != null ? snapshot.symbol() : "UNKNOWN";
         String cycleId = "qf-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
                 + "-" + symbol;
 

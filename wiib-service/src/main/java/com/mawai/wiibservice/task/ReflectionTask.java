@@ -10,6 +10,7 @@ import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibservice.mapper.QuantForecastVerificationMapper;
 import com.mawai.wiibservice.mapper.QuantHorizonForecastMapper;
 import com.mawai.wiibservice.mapper.QuantReflectionMemoryMapper;
+import com.mawai.wiibservice.mapper.QuantAgentVoteMapper;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
@@ -30,6 +31,7 @@ public class ReflectionTask {
     private final QuantHorizonForecastMapper horizonMapper;
     private final QuantForecastVerificationMapper verificationMapper;
     private final QuantReflectionMemoryMapper reflectionMapper;
+    private final QuantAgentVoteMapper voteMapper;
     private final VerificationService verificationService;
 
     public ReflectionTask(ChatModel chatModel,
@@ -37,21 +39,23 @@ public class ReflectionTask {
                           QuantHorizonForecastMapper horizonMapper,
                           QuantForecastVerificationMapper verificationMapper,
                           QuantReflectionMemoryMapper reflectionMapper,
+                          QuantAgentVoteMapper voteMapper,
                           VerificationService verificationService) {
         this.chatClient = ChatClient.builder(chatModel).build();
         this.cycleMapper = cycleMapper;
         this.horizonMapper = horizonMapper;
         this.verificationMapper = verificationMapper;
         this.reflectionMapper = reflectionMapper;
+        this.voteMapper = voteMapper;
         this.verificationService = verificationService;
     }
 
     private static final List<String> WATCH_LIST = List.of("BTCUSDT");
 
     /**
-     * 每6小时执行：批量验证 + LLM反思 + 写入记忆
+     * 每小时执行：批量验证 + LLM反思 + 写入记忆
      */
-    @Scheduled(cron = "0 0 */6 * * *")
+    @Scheduled(cron = "0 5 * * * *")
     public void reflectAndLearn() {
         for (String symbol : WATCH_LIST) {
             Thread.startVirtualThread(() -> {
@@ -84,8 +88,8 @@ public class ReflectionTask {
 
         // 2. 收集最近验证结果用于反思
         List<QuantForecastVerification> recentVerifications = verificationMapper.selectRecent(symbol, 36);
-        if (recentVerifications.size() < 3) {
-            log.info("[Reflect] 验证样本不足({}条)，跳过反思", recentVerifications.size());
+        if (recentVerifications.isEmpty()) {
+            log.info("[Reflect] 无验证数据，跳过反思 symbol={}", symbol);
             return;
         }
 
@@ -112,37 +116,90 @@ public class ReflectionTask {
         sb.append("【预测验证】\n");
 
         int correct = 0, total = 0;
+        int goodCount = 0, luckyCount = 0, badCount = 0;
         for (QuantForecastVerification v : verifications) {
             total++;
             if (v.getPredictionCorrect() != null && v.getPredictionCorrect()) correct++;
+            String quality = v.getTradeQuality() != null ? v.getTradeQuality() : "?";
+            if ("GOOD".equals(quality)) goodCount++;
+            else if ("LUCKY".equals(quality)) luckyCount++;
+            else if ("BAD".equals(quality)) badCount++;
             sb.append(total).append(". ")
                     .append(v.getHorizon()).append(" ")
                     .append("预测=").append(v.getPredictedDirection())
                     .append(" conf=").append(v.getPredictedConfidence())
-                    .append(" 实际=").append(v.getActualChangeBps() >= 0 ? "+" : "").append(v.getActualChangeBps()).append("bps")
-                    .append(v.getPredictionCorrect() != null && v.getPredictionCorrect() ? " ✓" : " ✗")
+                    .append(" 实际=").append(v.getActualChangeBps() >= 0 ? "+" : "").append(v.getActualChangeBps()).append("bps");
+            if (v.getMaxFavorableBps() != null) {
+                sb.append(" 最大有利=+").append(v.getMaxFavorableBps()).append("bps");
+            }
+            if (v.getMaxAdverseBps() != null) {
+                sb.append(" 最大回撤=-").append(v.getMaxAdverseBps()).append("bps");
+            }
+            if (v.getTp1HitFirst() != null) {
+                sb.append(v.getTp1HitFirst() ? " TP1先触" : " SL先触");
+            }
+            sb.append(" 评级=").append(quality)
                     .append("\n");
         }
-        sb.append("\n总命中率: ").append(correct).append("/").append(total)
-                .append(" (").append(total > 0 ? correct * 100 / total : 0).append("%)\n\n");
+        sb.append("\n命中率: ").append(correct).append("/").append(total)
+                .append(" (").append(total > 0 ? correct * 100 / total : 0).append("%)");
+        sb.append(" | GOOD=").append(goodCount).append(" LUCKY=").append(luckyCount)
+                .append(" BAD=").append(badCount).append("\n\n");
+
+        // 注入agent投票历史，供按agent维度分析
+        appendAgentVoteHistory(sb, verifications);
 
         sb.append("""
                 请分析：
                 1. 哪些情况下预测准确/不准确？（按方向、区间维度分析）
                 2. 是否存在系统性偏差？（如总是偏多/偏空）
                 3. confidence高时准确率是否更高？
-                4. 给出2-3条改进建议
+                4. 各个agent（microstructure/momentum/regime/volatility/news_event）在不同区间的贡献质量如何？
+                5. 给出2-3条改进建议
 
                 严格返回JSON（不要markdown包裹）：
                 {
                   "overallAccuracy": 0.65,
                   "biases": ["偏差描述"],
+                  "agentAccuracy": {
+                    "microstructure": {"0_10": 0.7, "10_20": 0.5, "20_30": 0.4},
+                    "momentum": {"0_10": 0.6, "10_20": 0.65, "20_30": 0.6},
+                    "regime": {"0_10": 0.5, "10_20": 0.55, "20_30": 0.6},
+                    "news_event": {"0_10": 0.5, "10_20": 0.5, "20_30": 0.5}
+                  },
                   "lessons": [
                     {"tag": "标签如RANGE_BULLISH_BIAS", "lesson": "具体教训，50字内"}
                   ]
                 }
+
+                说明：agentAccuracy是你对每个agent在各区间预测贡献质量的评估(0-1)，
+                基于验证结果和agent投票方向与实际走势的一致性来判断。
+                如果数据不足以判断某个agent，用0.5（中性）。
                 """);
         return sb.toString();
+    }
+
+    private void appendAgentVoteHistory(StringBuilder sb, List<QuantForecastVerification> verifications) {
+        // 取最近几个cycle的agent投票，让LLM能分析单agent准确性
+        java.util.Set<String> cycleIds = new java.util.LinkedHashSet<>();
+        for (QuantForecastVerification v : verifications) {
+            cycleIds.add(v.getCycleId());
+            if (cycleIds.size() >= 6) break;
+        }
+        if (cycleIds.isEmpty()) return;
+
+        sb.append("【Agent投票历史（最近").append(cycleIds.size()).append("个周期）】\n");
+        for (String cycleId : cycleIds) {
+            var votes = voteMapper.selectByCycleId(cycleId);
+            if (votes == null || votes.isEmpty()) continue;
+            sb.append("cycle=").append(cycleId.substring(Math.max(0, cycleId.length() - 15))).append(":\n");
+            for (var vote : votes) {
+                sb.append("  ").append(vote.getAgent()).append("[").append(vote.getHorizon()).append("]=")
+                        .append(vote.getDirection()).append(" score=").append(vote.getScore())
+                        .append(" conf=").append(vote.getConfidence()).append("\n");
+            }
+        }
+        sb.append("\n");
     }
 
     private void saveReflection(String llmResponse, List<QuantForecastVerification> verifications, String symbol) {
@@ -152,9 +209,7 @@ public class ReflectionTask {
             JSONArray lessons = root.getJSONArray("lessons");
             if (lessons == null || lessons.isEmpty()) return;
 
-            // 取最近一条验证的cycle信息来关联
             QuantForecastVerification latest = verifications.get(0);
-            // 查对应cycle获取regime
             QuantForecastCycle cycle = cycleMapper.selectLatest(symbol);
             String regime = "UNKNOWN";
             if (cycle != null && cycle.getSnapshotJson() != null) {
@@ -174,6 +229,12 @@ public class ReflectionTask {
                 if (text != null) allLessons.append(text).append(" ");
             }
 
+            // agentAccuracy存入reflectionText，供MemoryService解析
+            JSONObject agentAccuracy = root.getJSONObject("agentAccuracy");
+            if (agentAccuracy != null) {
+                allLessons.append("\n[AGENT_ACCURACY]").append(agentAccuracy.toJSONString());
+            }
+
             QuantReflectionMemory memory = new QuantReflectionMemory();
             memory.setSymbol(symbol);
             memory.setCycleId(latest.getCycleId());
@@ -186,7 +247,8 @@ public class ReflectionTask {
             memory.setLessonTags(allTags.length() > 0 ? allTags.substring(0, allTags.length() - 1) : null);
             reflectionMapper.insert(memory);
 
-            log.info("[Reflect] 反思记忆写入成功 symbol={} tags={}", symbol, memory.getLessonTags());
+            log.info("[Reflect] 反思记忆写入成功 symbol={} tags={} hasAgentAccuracy={}",
+                    symbol, memory.getLessonTags(), agentAccuracy != null);
         } catch (Exception e) {
             log.warn("[Reflect] 反思结果解析失败: {}", e.getMessage());
         }

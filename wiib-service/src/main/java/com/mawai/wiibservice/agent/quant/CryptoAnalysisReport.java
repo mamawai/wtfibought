@@ -18,6 +18,7 @@ public class CryptoAnalysisReport {
     private List<PositionAdvice> positionAdvice;
     private List<String> riskWarnings;
     private int confidence;
+    private DebateSummary debateSummary;
 
     @Data
     public static class DirectionInfo {
@@ -48,6 +49,13 @@ public class CryptoAnalysisReport {
         private String title;
         private String sentiment;
         private String summary;
+    }
+
+    @Data
+    public static class DebateSummary {
+        private String bullArgument;
+        private String bearArgument;
+        private String judgeReasoning;
     }
 
     public boolean isValid() {
