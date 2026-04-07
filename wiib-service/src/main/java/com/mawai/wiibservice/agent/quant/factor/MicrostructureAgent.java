@@ -16,8 +16,6 @@ public class MicrostructureAgent implements FactorAgent {
 
     @Override
     public List<AgentVote> evaluate(FeatureSnapshot s) {
-        List<String> flags = new ArrayList<>();
-
         double bia = s.bidAskImbalance();
         double td = s.tradeDelta();
         double oi = s.oiChangeRate();
@@ -27,69 +25,89 @@ public class MicrostructureAgent implements FactorAgent {
         double takerPressure = s.takerBuySellPressure();
         BigDecimal lastPrice = s.lastPrice();
         Map<String, BigDecimal> pc = s.priceChanges();
-        double price1mBps = pc != null && pc.containsKey("5m")
+        double price5mBps = pc != null && pc.containsKey("5m")
                 ? pc.get("5m").doubleValue() * 100 : 0;
 
-        // 盘口偏向
+        // === 各因子独立评分 ===
         double bidAskScore = clamp(bia * 2.5);
-        if (Math.abs(bia) > 0.3) flags.add(bia > 0 ? "BID_DOMINANT" : "ASK_DOMINANT");
-
-        // 主动买卖差
         double deltaScore = clamp(td);
-        if (Math.abs(td) > 0.3) flags.add(td > 0 ? "AGGRESSIVE_BUY" : "AGGRESSIVE_SELL");
 
         // OI-价格共振
         double oiScore = 0;
         if (Math.abs(oi) > 0.01) {
             boolean oiUp = oi > 0;
-            boolean priceUp = price1mBps > 0;
-            if (oiUp && priceUp) { oiScore = 0.6; flags.add("OI_UP_PRICE_UP"); }
-            else if (oiUp && !priceUp) { oiScore = -0.6; flags.add("OI_UP_PRICE_DOWN"); }
-            else if (!oiUp && priceUp) { oiScore = -0.3; flags.add("OI_DOWN_PRICE_UP"); }
-            else { oiScore = 0.3; flags.add("OI_DOWN_PRICE_DOWN"); }
+            boolean priceUp = price5mBps > 0;
+            if (oiUp && priceUp) oiScore = 0.6;
+            else if (oiUp) oiScore = -0.6;
+            else if (priceUp) oiScore = -0.3;
+            else oiScore = 0.3;
         }
 
-        // 爆仓压力: 正=多头爆仓多(利空信号取反), 负=空头爆仓多(利多信号取反)
         double liqScore = clamp(-liqPressure);
-        if (liqVol > 500_000) flags.add(liqPressure > 0 ? "HEAVY_LONG_LIQ" : "HEAVY_SHORT_LIQ");
-
-        // 大户持仓: 正=大户加多(利多), 负=大户加空(利空)
         double topTraderScore = clamp(topTrader);
-        if (Math.abs(topTrader) > 0.3) flags.add(topTrader > 0 ? "TOP_ADDING_LONG" : "TOP_ADDING_SHORT");
-
-        // 主动买卖: 正=主动买入增强(利多), 负=主动卖出增强(利空)
         double takerScore = clamp(takerPressure);
-        if (Math.abs(takerPressure) > 0.3) flags.add(takerPressure > 0 ? "TAKER_BUY_SURGE" : "TAKER_SELL_SURGE");
 
-        // 0-10min: 盘口+taker主导(即时信号)
+        // === 0-10min: 盘口+taker主导(即时信号) ===
+        List<String> flags0 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "0_10");
         double raw0 = 0.25 * bidAskScore + 0.20 * deltaScore + 0.15 * oiScore
                      + 0.15 * liqScore + 0.10 * topTraderScore + 0.15 * takerScore;
-        // 10-20min: OI+大户升权(中期信号)
+
+        // === 10-20min: OI+大户升权(中期信号) ===
+        List<String> flags1 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "10_20");
         double raw1 = 0.10 * bidAskScore + 0.10 * deltaScore + 0.20 * oiScore
                      + 0.20 * liqScore + 0.20 * topTraderScore + 0.20 * takerScore;
-        // 20-30min: 大户+爆仓主导(趋势信号)
-        double raw2 = 0.05 * bidAskScore + 0.05 * deltaScore + 0.15 * oiScore
-                     + 0.25 * liqScore + 0.30 * topTraderScore + 0.20 * takerScore;
 
-        double conf = Math.min(1.0, (Math.abs(bia) + Math.abs(td) + Math.abs(takerPressure)) / 1.5);
+        // confidence: 覆盖所有参与评分的因子
+        double signalStrength = (Math.abs(bia) + Math.abs(td) + Math.abs(takerPressure)
+                + Math.min(1, Math.abs(oi) * 10) + Math.abs(liqPressure) + Math.abs(topTrader)) / 6.0;
+        double conf = Math.min(1.0, signalStrength * 1.5);
 
         int volBps = s.atr1m() != null && lastPrice != null && lastPrice.signum() > 0
                 ? s.atr1m().multiply(BigDecimal.valueOf(10000))
                     .divide(lastPrice, 0, java.math.RoundingMode.HALF_UP).intValue()
                 : 20;
 
-        List<AgentVote> votes = new ArrayList<>(3);
-        votes.add(buildVote("0_10", raw0, conf, volBps, flags));
-        votes.add(buildVote("10_20", raw1, conf * 0.6, volBps, flags));
-        votes.add(buildVote("20_30", raw2, conf * 0.3, volBps, flags));
+        // === 20-30min: OI/爆仓/大户/taker仍有短延续性，但盘口信号衰减 ===
+        List<String> flags2 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "20_30");
+        double raw2 = 0.05 * bidAskScore + 0.08 * deltaScore + 0.22 * oiScore
+                     + 0.25 * liqScore + 0.20 * topTraderScore + 0.20 * takerScore;
+        double conf2 = conf * 0.35;
 
-        log.info("[Q3.micro] bia={} td={} oi={} liq={} topTrader={} taker={} → scores[{},{},{}] conf={} flags={}",
-                String.format("%.3f", bia), String.format("%.3f", td), String.format("%.3f", oi),
-                String.format("%.3f", liqPressure), String.format("%.3f", topTrader),
-                String.format("%.3f", takerPressure),
-                String.format("%.3f", raw0), String.format("%.3f", raw1), String.format("%.3f", raw2),
-                String.format("%.2f", conf), flags);
+        List<AgentVote> votes = new ArrayList<>(3);
+        votes.add(buildVote("0_10", raw0, conf, volBps, flags0));
+        votes.add(buildVote("10_20", raw1, conf * 0.6, volBps, flags1));
+        votes.add(conf2 < 0.12
+                ? AgentVote.noTrade(name(), "20_30", "MICRO_TOO_WEAK")
+                : buildVote("20_30", raw2, conf2, volBps, flags2));
+
+        log.info("[Q3.micro] bia={} td={} oi={} liq={} topTrader={} taker={} → scores[{},{},{}] conf={} flags0={} flags1={} flags2={}",
+                fmt(bia), fmt(td), fmt(oi), fmt(liqPressure), fmt(topTrader), fmt(takerPressure),
+                fmt(raw0), fmt(raw1), fmt(raw2), String.format("%.2f", conf), flags0, flags1, flags2);
         return votes;
+    }
+
+    private List<String> buildFlags(double bia, double td, double oi, double price5mBps,
+                                     double liqPressure, double liqVol, double topTrader, double takerPressure,
+                                     String horizon) {
+        List<String> flags = new ArrayList<>();
+        if (Math.abs(bia) > 0.3) flags.add(bia > 0 ? "BID_DOMINANT" : "ASK_DOMINANT");
+        if (Math.abs(td) > 0.3) flags.add(td > 0 ? "AGGRESSIVE_BUY" : "AGGRESSIVE_SELL");
+        if (Math.abs(oi) > 0.01) {
+            boolean oiUp = oi > 0, priceUp = price5mBps > 0;
+            if (oiUp && priceUp) flags.add("OI_UP_PRICE_UP");
+            else if (oiUp) flags.add("OI_UP_PRICE_DOWN");
+            else if (priceUp) flags.add("OI_DOWN_PRICE_UP");
+            else flags.add("OI_DOWN_PRICE_DOWN");
+        }
+        if (liqVol > 500_000) flags.add(liqPressure > 0 ? "HEAVY_LONG_LIQ" : "HEAVY_SHORT_LIQ");
+        // 10-20min: 大户和taker信号更相关
+        if ("10_20".equals(horizon)) {
+            if (Math.abs(topTrader) > 0.3) flags.add(topTrader > 0 ? "TOP_ADDING_LONG" : "TOP_ADDING_SHORT");
+            if (Math.abs(takerPressure) > 0.3) flags.add(takerPressure > 0 ? "TAKER_BUY_SURGE" : "TAKER_SELL_SURGE");
+        } else {
+            if (Math.abs(takerPressure) > 0.3) flags.add(takerPressure > 0 ? "TAKER_BUY_SURGE" : "TAKER_SELL_SURGE");
+        }
+        return flags;
     }
 
     private AgentVote buildVote(String horizon, double score, double conf, int volBps, List<String> reasons) {
@@ -101,4 +119,5 @@ public class MicrostructureAgent implements FactorAgent {
     }
 
     private static double clamp(double v) { return Math.clamp(v, -1, 1); }
+    private static String fmt(double v) { return String.format("%.3f", v); }
 }

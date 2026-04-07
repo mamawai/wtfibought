@@ -25,56 +25,60 @@ public class RegimeAgent implements FactorAgent {
         }
 
         MarketRegime regime = s.regime();
+        double regimeConf = s.regimeConfidence();
+        String transition = s.regimeTransition();
+
         List<String> reasons = new ArrayList<>();
         reasons.add("REGIME_" + regime.name());
+        if (regimeConf < 0.4) reasons.add("LOW_REGIME_CONF");
 
-        // 根据regime给出方向偏好
-        double dirScore = calcDirectionScore(indicators, regime, reasons);
-
-        // 趋势市: 顺势信号强, 全区间有效
-        // 震荡市: 信号弱, 主要看超短线反转
-        // SQUEEZE: 不给方向, 等突破
-        // SHOCK: 极端谨慎
-        double conf0, conf1, conf2;
-        double s0, s1, s2;
         List<String> riskFlags = new ArrayList<>();
+
+        // 趋势方向从中周期指标提取（仅用于判断趋势方向，不做独立方向投票）
+        double trendDir = extractTrendDirection(indicators);
+
+        // 根据regime计算各区间的方向偏好和置信度
+        double s0, s1, s2, conf0, conf1, conf2;
 
         switch (regime) {
             case TREND_UP, TREND_DOWN -> {
-                s0 = dirScore * 0.6;
-                s1 = dirScore * 0.8;
-                s2 = dirScore * 1.0;
-                conf0 = 0.5;
-                conf1 = 0.65;
-                conf2 = 0.7;
+                double dir = regime == MarketRegime.TREND_UP ? trendDir : -Math.abs(trendDir);
+                if (regime == MarketRegime.TREND_UP && trendDir < 0) dir = 0.2;
+                if (regime == MarketRegime.TREND_DOWN && trendDir > 0) dir = -0.2;
+                // 趋势市：中长线信号更强
+                s0 = dir * 0.5;
+                s1 = dir * 0.7;
+                s2 = dir * 0.9;
+                conf0 = 0.45 * regimeConf;
+                conf1 = 0.55 * regimeConf;
+                conf2 = 0.65 * regimeConf;
             }
             case RANGE -> {
-                // 震荡市：均值回归逻辑，方向反转
-                s0 = dirScore * 0.3;
-                s1 = dirScore * 0.2;
-                s2 = dirScore * 0.1;
-                conf0 = 0.4;
-                conf1 = 0.35;
-                conf2 = 0.3;
+                // 震荡市：弱均值回归
+                s0 = trendDir * 0.2;
+                s1 = trendDir * 0.15;
+                s2 = trendDir * 0.1;
+                conf0 = 0.35 * regimeConf;
+                conf1 = 0.30 * regimeConf;
+                conf2 = 0.25 * regimeConf;
                 riskFlags.add("RANGE_BOUND");
             }
             case SQUEEZE -> {
-                // 收缩不等于没有方向，只是要求更严格地等待确认。
-                s0 = dirScore * 0.45;
-                s1 = dirScore * 0.65;
-                s2 = dirScore * 0.85;
-                conf0 = Math.min(0.45, 0.24 + Math.abs(dirScore) * 0.20);
-                conf1 = Math.min(0.50, 0.28 + Math.abs(dirScore) * 0.22);
-                conf2 = Math.min(0.55, 0.32 + Math.abs(dirScore) * 0.24);
+                // 收缩等突破，弱方向
+                s0 = trendDir * 0.3;
+                s1 = trendDir * 0.45;
+                s2 = trendDir * 0.6;
+                conf0 = Math.min(0.40, 0.20 + Math.abs(trendDir) * 0.15) * regimeConf;
+                conf1 = Math.min(0.45, 0.25 + Math.abs(trendDir) * 0.18) * regimeConf;
+                conf2 = Math.min(0.50, 0.30 + Math.abs(trendDir) * 0.20) * regimeConf;
                 riskFlags.add("SQUEEZE_WAIT_BREAKOUT");
-                riskFlags.add("ONLY_TRADE_WITH_BREAK_CONFIRMATION");
             }
             case SHOCK -> {
-                s0 = dirScore * 0.2;
-                s1 = dirScore * 0.1;
+                s0 = trendDir * 0.15;
+                s1 = trendDir * 0.08;
                 s2 = 0;
-                conf0 = 0.2;
-                conf1 = 0.1;
+                conf0 = 0.15 * regimeConf;
+                conf1 = 0.08 * regimeConf;
                 conf2 = 0.05;
                 riskFlags.add("EXTREME_VOLATILITY");
             }
@@ -84,12 +88,44 @@ public class RegimeAgent implements FactorAgent {
             }
         }
 
+        // transition信号调整
+        if (transition != null) {
+            switch (transition) {
+                case "WEAKENING" -> {
+                    // 趋势衰竭：降低中长线confidence
+                    conf1 *= 0.7;
+                    conf2 *= 0.5;
+                    riskFlags.add("TREND_WEAKENING");
+                    reasons.add("TRANSITION_WEAKENING");
+                }
+                case "BREAKING_OUT" -> {
+                    // 即将突破向上：短线升权
+                    conf0 *= 1.2;
+                    reasons.add("TRANSITION_BREAKING_OUT");
+                }
+                case "BREAKING_DOWN" -> {
+                    // 即将突破向下：短线升权
+                    conf0 *= 1.2;
+                    reasons.add("TRANSITION_BREAKING_DOWN");
+                }
+                case "STRENGTHENING" -> {
+                    reasons.add("TRANSITION_STRENGTHENING");
+                }
+            }
+        }
+
+        // cap confidence to [0,1]
+        conf0 = Math.clamp(conf0, 0, 1);
+        conf1 = Math.clamp(conf1, 0, 1);
+        conf2 = Math.clamp(conf2, 0, 1);
+
         int volBps = estimateVolBps(s);
 
-        log.info("[Q3.regime] regime={} dirScore={} → scores[{},{},{}] riskFlags={}",
-                regime, String.format("%.3f", dirScore),
-                String.format("%.3f", s0), String.format("%.3f", s1),
-                String.format("%.3f", s2), riskFlags);
+        log.info("[Q3.regime] regime={} regimeConf={} transition={} trendDir={} → scores[{},{},{}] confs[{},{},{}] riskFlags={}",
+                regime, String.format("%.2f", regimeConf), transition, String.format("%.3f", trendDir),
+                String.format("%.3f", s0), String.format("%.3f", s1), String.format("%.3f", s2),
+                String.format("%.2f", conf0), String.format("%.2f", conf1), String.format("%.2f", conf2),
+                riskFlags);
 
         return List.of(
                 buildVote("0_10", s0, conf0, volBps, reasons, riskFlags),
@@ -97,43 +133,22 @@ public class RegimeAgent implements FactorAgent {
                 buildVote("20_30", s2, conf2, volBps, reasons, riskFlags));
     }
 
-    private double calcDirectionScore(Map<String, Map<String, Object>> indicators,
-                                       MarketRegime regime, List<String> reasons) {
-        // 从中周期方向判断，15m缺失时退化为5m/1h，避免单个周期缺失直接失明。
-        double score = 0;
-        boolean fallbackUsed = false;
-        List<String> timeframes = new ArrayList<>(2);
-        timeframes.add(indicators.containsKey("15m") ? "15m" : "5m");
-        timeframes.add(indicators.containsKey("1h") ? "1h" : "4h");
-
-        for (String tf : timeframes) {
-            Map<String, Object> ind = indicators.get(tf);
-            if (ind == null) continue;
-            if (!"15m".equals(tf) && !"1h".equals(tf)) {
-                fallbackUsed = true;
-            }
-
+    /**
+     * 从中周期指标提取趋势方向，仅用于判断trend regime下的多空朝向。
+     * 不做独立动量评分（那是MomentumAgent的职责）。
+     */
+    private double extractTrendDirection(Map<String, Map<String, Object>> indicators) {
+        double dir = 0;
+        // 优先15m，fallback到5m
+        Map<String, Object> ind = indicators.getOrDefault("15m", indicators.get("5m"));
+        if (ind != null) {
             BigDecimal plusDi = toBd(ind.get("plus_di"));
             BigDecimal minusDi = toBd(ind.get("minus_di"));
             if (plusDi != null && minusDi != null) {
-                double diff = plusDi.doubleValue() - minusDi.doubleValue();
-                double normalized = Math.clamp(diff / 30.0, -1, 1);
-                score += normalized * 0.5;
-                if (diff > 10) reasons.add("DI_BULLISH_" + tf.toUpperCase());
-                else if (diff < -10) reasons.add("DI_BEARISH_" + tf.toUpperCase());
+                dir = Math.clamp((plusDi.doubleValue() - minusDi.doubleValue()) / 30.0, -1, 1);
             }
-
-            // 均线排列辅助
-            int maAlign = toInt(ind.get("ma_alignment"));
-            score += maAlign * 0.15;
         }
-
-        if (fallbackUsed) {
-            reasons.add("REGIME_TF_FALLBACK");
-            score *= 0.92;
-        }
-
-        return Math.clamp(score, -1, 1);
+        return dir;
     }
 
     private int estimateVolBps(FeatureSnapshot s) {
@@ -151,13 +166,8 @@ public class RegimeAgent implements FactorAgent {
         double s = Math.clamp(score, -1, 1);
         Direction dir = Math.abs(s) < 0.05 ? Direction.NO_TRADE : (s > 0 ? Direction.LONG : Direction.SHORT);
         int moveBps = (int) (Math.abs(s) * volBps * 0.4);
-        return new AgentVote(name(), horizon, dir, s, conf, moveBps, volBps,
+        return new AgentVote(name(), horizon, dir, s, Math.clamp(conf, 0, 1), moveBps, volBps,
                 List.copyOf(reasons), List.copyOf(riskFlags));
-    }
-
-    private static int toInt(Object v) {
-        if (v instanceof Number n) return n.intValue();
-        return 0;
     }
 
     private static BigDecimal toBd(Object v) {

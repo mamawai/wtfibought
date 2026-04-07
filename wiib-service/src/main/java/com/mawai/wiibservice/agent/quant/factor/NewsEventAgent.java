@@ -43,11 +43,13 @@ public class NewsEventAgent implements FactorAgent {
                     AgentVote.noTrade(name(), "20_30", "NO_NEWS"));
         }
 
+        int baseVolBps = estimateVolBps(snapshot);
+
         try {
             String prompt = buildPrompt(snapshot.symbol(), preFiltered);
             String response = callMode.call(chatClient, prompt);
             log.info("[Q3.news] LLM返回 {}chars", response != null ? response.length() : 0);
-            return parseResponse(response);
+            return parseResponse(response, baseVolBps);
         } catch (Exception e) {
             log.warn("[Q3.news] LLM调用失败: {}", e.getMessage());
             return List.of(
@@ -113,7 +115,7 @@ public class NewsEventAgent implements FactorAgent {
     }
 
     @SuppressWarnings("unchecked")
-    private List<AgentVote> parseResponse(String response) {
+    private List<AgentVote> parseResponse(String response, int baseVolBps) {
         if (response == null || response.isBlank()) {
             return defaultVotes("PARSE_ERROR");
         }
@@ -157,8 +159,8 @@ public class NewsEventAgent implements FactorAgent {
 
                 Direction dir = Math.abs(score) < 0.05 ? Direction.NO_TRADE
                         : (score > 0 ? Direction.LONG : Direction.SHORT);
-                int moveBps = (int) (Math.abs(score) * 15);
-                int volBps = 20;
+                int volBps = baseVolBps;
+                int moveBps = (int) (Math.abs(score) * volBps * 0.5);
 
                 result.add(new AgentVote(name(), horizon, dir, score, conf,
                         moveBps, volBps, reasons, flags));
@@ -178,6 +180,16 @@ public class NewsEventAgent implements FactorAgent {
     }
 
     private static double clamp(double v) { return Math.max(-1, Math.min(1, v)); }
+
+    private static int estimateVolBps(FeatureSnapshot snapshot) {
+        java.math.BigDecimal lastPrice = snapshot.lastPrice();
+        java.math.BigDecimal atr = snapshot.atr5m() != null ? snapshot.atr5m() : snapshot.atr1m();
+        if (atr != null && lastPrice != null && lastPrice.signum() > 0) {
+            return atr.multiply(java.math.BigDecimal.valueOf(10000))
+                    .divide(lastPrice, 0, java.math.RoundingMode.HALF_UP).intValue();
+        }
+        return 30;
+    }
 
     private static double toDouble(Object v) {
         if (v instanceof Number n) return n.doubleValue();

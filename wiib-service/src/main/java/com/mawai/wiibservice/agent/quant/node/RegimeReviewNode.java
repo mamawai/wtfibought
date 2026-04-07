@@ -63,7 +63,7 @@ public class RegimeReviewNode implements NodeAction {
             return applyReview(snapshot, ruleRegime, response, startMs);
         } catch (Exception e) {
             log.warn("[Q2.5] LLM regime审核失败，保留规则检测结果: {}", e.getMessage());
-            return Map.of("regime_confidence", 0.5, "regime_transition", "NONE");
+            return rebuildWithDefaults(snapshot);
         }
     }
 
@@ -166,7 +166,7 @@ public class RegimeReviewNode implements NodeAction {
     private Map<String, Object> applyReview(FeatureSnapshot snapshot, MarketRegime ruleRegime,
                                              String llmResponse, long startMs) {
         if (llmResponse == null || llmResponse.isBlank()) {
-            return Map.of("regime_confidence", 0.5, "regime_transition", "NONE");
+            return rebuildWithDefaults(snapshot);
         }
 
         try {
@@ -193,35 +193,63 @@ public class RegimeReviewNode implements NodeAction {
                 result.put("regime_transition_detail", transitionDetail);
             }
 
-            // regime被修正：重建FeatureSnapshot
+            // 确定最终regime
+            MarketRegime finalRegime = llmRegime;
             if (llmRegime != ruleRegime) {
                 // 安全约束：SHOCK只能由规则触发（ATR突增是客观事实），LLM不能凭空升级为SHOCK
                 if (llmRegime == MarketRegime.SHOCK && ruleRegime != MarketRegime.SHOCK) {
                     log.info("[Q2.5.2] LLM建议SHOCK但规则未检测到ATR突增，忽略修正");
+                    finalRegime = ruleRegime;
                 } else {
-                    FeatureSnapshot updated = new FeatureSnapshot(
-                            snapshot.symbol(), snapshot.snapshotTime(), snapshot.lastPrice(),
-                            snapshot.indicatorsByTimeframe(), snapshot.priceChanges(),
-                            snapshot.bidAskImbalance(), snapshot.tradeDelta(), snapshot.oiChangeRate(),
-                            snapshot.fundingDeviation(), snapshot.fundingRateTrend(), snapshot.fundingRateExtreme(),
-                            snapshot.lsrExtreme(),
-                            snapshot.liquidationPressure(), snapshot.liquidationVolumeUsdt(),
-                            snapshot.topTraderBias(), snapshot.takerBuySellPressure(),
-                            snapshot.fearGreedIndex(), snapshot.fearGreedLabel(),
-                            snapshot.atr1m(), snapshot.atr5m(), snapshot.bollBandwidth(), snapshot.bollSqueeze(),
-                            llmRegime,
-                            snapshot.newsItems(), snapshot.qualityFlags());
-                    result.put("feature_snapshot", updated);
                     log.info("[Q2.5.3] regime修正 {}→{}", ruleRegime, llmRegime);
                 }
             }
+
+            // 无论regime是否修正，都重建snapshot写入confidence/transition
+            FeatureSnapshot updated = new FeatureSnapshot(
+                    snapshot.symbol(), snapshot.snapshotTime(), snapshot.lastPrice(),
+                    snapshot.indicatorsByTimeframe(), snapshot.priceChanges(),
+                    snapshot.bidAskImbalance(), snapshot.tradeDelta(), snapshot.oiChangeRate(),
+                    snapshot.fundingDeviation(), snapshot.fundingRateTrend(), snapshot.fundingRateExtreme(),
+                    snapshot.lsrExtreme(),
+                    snapshot.liquidationPressure(), snapshot.liquidationVolumeUsdt(),
+                    snapshot.topTraderBias(), snapshot.takerBuySellPressure(),
+                    snapshot.fearGreedIndex(), snapshot.fearGreedLabel(),
+                    snapshot.atr1m(), snapshot.atr5m(), snapshot.bollBandwidth(), snapshot.bollSqueeze(),
+                    finalRegime,
+                    snapshot.newsItems(), snapshot.qualityFlags(),
+                    confidence, transitionSignal);
+            result.put("feature_snapshot", updated);
 
             log.info("[Q2.5.end] regime_review完成 总耗时{}ms", System.currentTimeMillis() - startMs);
             return result;
         } catch (Exception e) {
             log.warn("[Q2.5] LLM输出解析失败，保留规则regime: {}", e.getMessage());
-            return Map.of("regime_confidence", 0.5, "regime_transition", "NONE");
+            return rebuildWithDefaults(snapshot);
         }
+    }
+
+    private Map<String, Object> rebuildWithDefaults(FeatureSnapshot snapshot) {
+        // 追加fallback标记，让下游能区分"审核失败的默认值"和"真正的中等置信度"
+        List<String> flags = new ArrayList<>(
+                snapshot.qualityFlags() != null ? snapshot.qualityFlags() : List.of());
+        flags.add("REGIME_REVIEW_FALLBACK");
+
+        FeatureSnapshot updated = new FeatureSnapshot(
+                snapshot.symbol(), snapshot.snapshotTime(), snapshot.lastPrice(),
+                snapshot.indicatorsByTimeframe(), snapshot.priceChanges(),
+                snapshot.bidAskImbalance(), snapshot.tradeDelta(), snapshot.oiChangeRate(),
+                snapshot.fundingDeviation(), snapshot.fundingRateTrend(), snapshot.fundingRateExtreme(),
+                snapshot.lsrExtreme(),
+                snapshot.liquidationPressure(), snapshot.liquidationVolumeUsdt(),
+                snapshot.topTraderBias(), snapshot.takerBuySellPressure(),
+                snapshot.fearGreedIndex(), snapshot.fearGreedLabel(),
+                snapshot.atr1m(), snapshot.atr5m(), snapshot.bollBandwidth(), snapshot.bollSqueeze(),
+                snapshot.regime(),
+                snapshot.newsItems(), List.copyOf(flags),
+                0.5, "NONE");
+        return Map.of("feature_snapshot", updated,
+                "regime_confidence", 0.5, "regime_transition", "NONE");
     }
 
     private MarketRegime parseRegime(String str, MarketRegime fallback) {

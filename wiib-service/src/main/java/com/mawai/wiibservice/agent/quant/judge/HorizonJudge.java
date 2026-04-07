@@ -51,31 +51,37 @@ public class HorizonJudge {
         double shortScore = 0;
         double longMoveWeighted = 0;
         double shortMoveWeighted = 0;
-        double longVolWeighted = 0;
-        double shortVolWeighted = 0;
         double longWeightSum = 0;
         double shortWeightSum = 0;
 
+        // 独立波动聚合：所有agent（含score==0）都参与
+        double totalVolWeighted = 0;
+        double totalVolWeightSum = 0;
+
         for (AgentVote vote : filtered) {
             double weight = getWeight(vote.agent(), horizon);
-            double weighted = weight * Math.abs(vote.score()) * vote.confidence();
-            if (weighted <= 0) {
-                continue;
+
+            // 方向聚合：只处理 score != 0 的票
+            double directionalWeighted = weight * Math.abs(vote.score()) * vote.confidence();
+            if (directionalWeighted > 0) {
+                int calibratedMoveBps = calibrateMoveBps(vote);
+
+                if (vote.score() > 0) {
+                    longScore += directionalWeighted;
+                    longMoveWeighted += directionalWeighted * calibratedMoveBps;
+                    longWeightSum += directionalWeighted;
+                } else if (vote.score() < 0) {
+                    shortScore += directionalWeighted;
+                    shortMoveWeighted += directionalWeighted * calibratedMoveBps;
+                    shortWeightSum += directionalWeighted;
+                }
             }
 
-            int calibratedMoveBps = calibrateMoveBps(vote);
-            int calibratedVolBps = Math.max(vote.volatilityBps(), calibratedMoveBps);
-
-            if (vote.score() > 0) {
-                longScore += weighted;
-                longMoveWeighted += weighted * calibratedMoveBps;
-                longVolWeighted += weighted * calibratedVolBps;
-                longWeightSum += weighted;
-            } else if (vote.score() < 0) {
-                shortScore += weighted;
-                shortMoveWeighted += weighted * calibratedMoveBps;
-                shortVolWeighted += weighted * calibratedVolBps;
-                shortWeightSum += weighted;
+            // 波动聚合：不管score是不是0，只要有volatilityBps就参与
+            if (vote.volatilityBps() > 0) {
+                double volatilityWeighted = weight * Math.max(vote.confidence(), 0.35);
+                totalVolWeighted += volatilityWeighted * vote.volatilityBps();
+                totalVolWeightSum += volatilityWeighted;
             }
         }
 
@@ -92,8 +98,9 @@ public class HorizonJudge {
         int dominantMoveBps = dominantWeightSum > EPSILON
                 ? (int) Math.round((direction == Direction.LONG ? longMoveWeighted : shortMoveWeighted) / dominantWeightSum)
                 : 0;
-        int dominantVolBps = dominantWeightSum > EPSILON
-                ? (int) Math.round((direction == Direction.LONG ? longVolWeighted : shortVolWeighted) / dominantWeightSum)
+        // volatilityBps来自全局波动聚合（含score==0的风险agent）
+        int dominantVolBps = totalVolWeightSum > EPSILON
+                ? (int) Math.round(totalVolWeighted / totalVolWeightSum)
                 : 0;
         double minEdge = getMinEdge(qualityFlags);
         int minMoveBps = getMinMoveBps();

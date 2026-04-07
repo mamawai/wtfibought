@@ -158,7 +158,8 @@ public class BuildFeaturesNode implements NodeAction {
                 topTraderBias, takerBuySellPressure,
                 fearGreedIndex, fearGreedLabel,
                 atr1m, atr5m, bollBw, bollSqueeze,
-                regime, newsItems, qualityFlags);
+                regime, newsItems, qualityFlags,
+                0.5, "NONE");
         log.info("[Q2.4] build_features完成 price={} news={}条 qualityFlags={} 耗时{}ms",
                 lastPrice, newsItems.size(), qualityFlags, System.currentTimeMillis() - startMs);
 

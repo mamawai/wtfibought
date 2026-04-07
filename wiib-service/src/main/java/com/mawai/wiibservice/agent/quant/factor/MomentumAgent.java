@@ -60,19 +60,23 @@ public class MomentumAgent implements FactorAgent {
                 reasons0, reasons1, reasons2);
 
         return List.of(
-                buildVote("0_10", score0, volBps, reasons0),
-                buildVote("10_20", score1, volBps, reasons1),
-                buildVote("20_30", score2, volBps, reasons2));
+                buildVote("0_10", score0, volBps, reasons0, pair0.fallbackUsed(), qualityFlags),
+                buildVote("10_20", score1, volBps, reasons1, pair1.fallbackUsed(), qualityFlags),
+                buildVote("20_30", score2, volBps, reasons2, pair2.fallbackUsed(), qualityFlags));
     }
 
     private double calcTimeframeScore(Map<String, Map<String, Object>> indicators,
                                        String primary, String secondary) {
         double score = 0;
         Map<String, Object> p = indicators.get(primary);
-        Map<String, Object> sec = indicators.get(secondary);
 
         if (p != null) score += singleTfScore(p) * 0.6;
-        if (sec != null) score += singleTfScore(sec) * 0.4;
+
+        // fallback导致primary==secondary时，不重复计权
+        if (!primary.equals(secondary)) {
+            Map<String, Object> sec = indicators.get(secondary);
+            if (sec != null) score += singleTfScore(sec) * 0.4;
+        }
 
         return clamp(score);
     }
@@ -216,10 +220,18 @@ public class MomentumAgent implements FactorAgent {
 
     private record TimeframePair(String horizon, String primary, String secondary, boolean fallbackUsed) {}
 
-    private AgentVote buildVote(String horizon, double score, int volBps, List<String> reasons) {
+    private AgentVote buildVote(String horizon, double score, int volBps,
+                                List<String> reasons, boolean fallbackUsed, List<String> qualityFlags) {
         double s = clamp(score);
         Direction dir = Math.abs(s) < 0.05 ? Direction.NO_TRADE : (s > 0 ? Direction.LONG : Direction.SHORT);
         double conf = Math.min(1.0, Math.abs(s) * 1.5);
+
+        // fallback导致数据源退化 → 降信心
+        if (fallbackUsed) conf *= 0.75;
+
+        // 数据质量差 → 进一步衰减
+        if (qualityFlags.contains("PARTIAL_KLINE_DATA")) conf *= 0.8;
+
         int moveBps = (int) (Math.abs(s) * volBps * 0.5);
         return new AgentVote(name(), horizon, dir, s, conf, moveBps, volBps, reasons, List.of());
     }

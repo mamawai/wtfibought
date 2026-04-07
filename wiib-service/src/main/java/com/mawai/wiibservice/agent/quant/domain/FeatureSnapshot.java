@@ -50,6 +50,10 @@ public record FeatureSnapshot(
         List<NewsItem> newsItems,
 
         // 数据质量
-        List<String> qualityFlags
+        List<String> qualityFlags,
+
+        // regime审核结果（RegimeReviewNode产出）
+        double regimeConfidence,
+        String regimeTransition
 ) {}
 

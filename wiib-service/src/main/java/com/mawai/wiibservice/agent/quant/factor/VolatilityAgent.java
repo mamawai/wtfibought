@@ -36,38 +36,31 @@ public class VolatilityAgent implements FactorAgent {
         List<String> reasons = new ArrayList<>();
         List<String> riskFlags = new ArrayList<>();
 
-        // 从布林带判断波动状态
-        double bollScore = calcBollScore(indicators, reasons, riskFlags);
+        // 波动状态分析（不产出方向）
+        analyzeVolState(indicators, reasons, riskFlags);
 
-        // 从ATR判断波动是否在放大/收缩
-        double atrScore = calcAtrTrendScore(indicators, reasons);
+        // ATR趋势（加速/减速）
+        analyzeAtrTrend(indicators, reasons);
 
-        // 综合: 波动率因子不直接给方向,而是给"波动率扩张=趋势延续"或"波动率收缩=变盘"的信号
-        // 扩张+有方向 → 顺势, 收缩 → 中性观望
-        double rawScore = bollScore * 0.6 + atrScore * 0.4;
+        // 波动率估计(基点) — 这是本agent的核心输出
+        int vol0 = estimateVolBps(s, "1m", 10);    // 0-10min: 1m ATR × sqrt(10)
+        int vol1 = estimateVolBps(s, "5m", 4);     // 10-20min: 5m ATR × sqrt(4)
+        int vol2 = estimateVolBps(s, "5m", 6);     // 20-30min: 5m ATR × sqrt(6)
 
-        // 波动率估计(基点)
-        int vol0 = estimateVolBps(s, "1m", 10);    // 0-10min: 用1m ATR × sqrt(10)
-        int vol1 = estimateVolBps(s, "5m", 4);     // 10-20min: 用5m ATR × sqrt(4)
-        int vol2 = estimateVolBps(s, "5m", 6);     // 20-30min: 用5m ATR × sqrt(6)
+        // 波动率agent不给方向，只提供volatilityBps和风险标志
+        double conf = 0.3 + Math.min(0.4, riskFlags.size() * 0.1);
 
-        // 波动率因子给的方向信号很弱，主要贡献是volatilityBps和expectedMoveBps
-        double conf = 0.3 + Math.min(0.4, Math.abs(rawScore) * 0.5);
-
-        log.info("[Q3.vol] bollScore={} atrScore={} rawScore={} → volBps[{},{},{}] reasons={} riskFlags={}",
-                String.format("%.3f", bollScore), String.format("%.3f", atrScore),
-                String.format("%.3f", rawScore), vol0, vol1, vol2, reasons, riskFlags);
+        log.info("[Q3.vol] volBps[{},{},{}] reasons={} riskFlags={}",
+                vol0, vol1, vol2, reasons, riskFlags);
 
         return List.of(
-                buildVote("0_10", rawScore * 0.5, conf * 0.8, vol0, reasons, riskFlags),
-                buildVote("10_20", rawScore * 0.4, conf * 0.7, vol1, reasons, riskFlags),
-                buildVote("20_30", rawScore * 0.3, conf * 0.6, vol2, reasons, riskFlags));
+                buildVote("0_10", conf, vol0, 0.45, reasons, riskFlags),
+                buildVote("10_20", conf, vol1, 0.60, reasons, riskFlags),
+                buildVote("20_30", conf, vol2, 0.75, reasons, riskFlags));
     }
 
-    private double calcBollScore(Map<String, Map<String, Object>> indicators,
+    private void analyzeVolState(Map<String, Map<String, Object>> indicators,
                                   List<String> reasons, List<String> riskFlags) {
-        double score = 0;
-        // 看5m布林带
         Map<String, Object> ind5m = indicators.get("5m");
         if (ind5m != null) {
             BigDecimal pb = toBd(ind5m.get("boll_pb"));
@@ -75,22 +68,17 @@ public class VolatilityAgent implements FactorAgent {
 
             if (pb != null) {
                 double p = pb.doubleValue();
-                // 贴上轨(>85)偏空, 贴下轨(<15)偏多
-                if (p > 85) { score -= 0.3; reasons.add("BOLL_UPPER_TOUCH_5M"); }
-                else if (p < 15) { score += 0.3; reasons.add("BOLL_LOWER_TOUCH_5M"); }
-                // 中轨附近偏中性
-                else if (p > 55) score += 0.05;
-                else if (p < 45) score -= 0.05;
+                if (p > 90) { reasons.add("BOLL_UPPER_EXTREME_5M"); riskFlags.add("PRICE_AT_UPPER_BAND"); }
+                else if (p < 10) { reasons.add("BOLL_LOWER_EXTREME_5M"); riskFlags.add("PRICE_AT_LOWER_BAND"); }
             }
 
             if (bw != null) {
                 double b = bw.doubleValue();
                 if (b < 1.5) { reasons.add("BOLL_SQUEEZE_5M"); riskFlags.add("VOLATILITY_COMPRESSED"); }
-                else if (b > 5.0) { reasons.add("BOLL_EXPANSION_5M"); }
+                else if (b > 5.0) { reasons.add("BOLL_EXPANSION_5M"); riskFlags.add("VOLATILITY_EXPANDED"); }
             }
         }
 
-        // 看15m布林带辅助
         Map<String, Object> ind15m = indicators.get("15m");
         if (ind15m != null) {
             BigDecimal bw15 = toBd(ind15m.get("boll_bandwidth"));
@@ -98,13 +86,10 @@ public class VolatilityAgent implements FactorAgent {
                 riskFlags.add("BOLL_SQUEEZE_15M");
             }
         }
-
-        return Math.max(-1, Math.min(1, score));
     }
 
-    private double calcAtrTrendScore(Map<String, Map<String, Object>> indicators,
-                                      List<String> reasons) {
-        // 看ATR是否在放大: 通过比较1m和5m的ATR占比
+    private void analyzeAtrTrend(Map<String, Map<String, Object>> indicators,
+                                  List<String> reasons) {
         Map<String, Object> ind1m = indicators.get("1m");
         Map<String, Object> ind5m = indicators.get("5m");
 
@@ -112,13 +97,11 @@ public class VolatilityAgent implements FactorAgent {
         BigDecimal atr5m = ind5m != null ? toBd(ind5m.get("atr14")) : null;
 
         if (atr1m != null && atr5m != null && atr5m.signum() > 0) {
-            // 1m ATR 相对于 5m ATR 的比例, 如果1m ATR偏高说明波动在加速
             double ratio = atr1m.multiply(BigDecimal.valueOf(5))
                     .divide(atr5m, 4, RoundingMode.HALF_UP).doubleValue();
-            if (ratio > 1.5) { reasons.add("ATR_ACCELERATING"); return 0.2; }
-            else if (ratio < 0.6) { reasons.add("ATR_DECELERATING"); return -0.1; }
+            if (ratio > 1.5) reasons.add("ATR_ACCELERATING");
+            else if (ratio < 0.6) reasons.add("ATR_DECELERATING");
         }
-        return 0;
     }
 
     private int estimateVolBps(FeatureSnapshot s, String timeframe, int periods) {
@@ -132,18 +115,17 @@ public class VolatilityAgent implements FactorAgent {
         BigDecimal atr = toBd(ind.get("atr14"));
         if (atr == null) return 30;
 
-        // ATR × sqrt(periods) 估算区间波动
         double scaledAtr = atr.doubleValue() * Math.sqrt(periods);
         return Math.max(5, (int) (scaledAtr / lastPrice.doubleValue() * 10000));
     }
 
-    private AgentVote buildVote(String horizon, double score, double conf,
-                                 int volBps, List<String> reasons, List<String> riskFlags) {
-        double s = Math.max(-1, Math.min(1, score));
-        Direction dir = Math.abs(s) < 0.05 ? Direction.NO_TRADE : (s > 0 ? Direction.LONG : Direction.SHORT);
-        int moveBps = (int) (Math.abs(s) * volBps * 0.4);
-        return new AgentVote(name(), horizon, dir, s, Math.max(0, Math.min(1, conf)),
-                moveBps, volBps, List.copyOf(reasons), List.copyOf(riskFlags));
+    private AgentVote buildVote(String horizon, double conf,
+                                 int volBps, double moveRatio,
+                                 List<String> reasons, List<String> riskFlags) {
+        // score=0: 不参与方向投票；expectedMoveBps给出该horizon下合理波动幅度
+        int expectedMoveBps = (int) Math.round(volBps * moveRatio);
+        return new AgentVote(name(), horizon, Direction.NO_TRADE, 0, Math.clamp(conf, 0, 1),
+                expectedMoveBps, volBps, List.copyOf(reasons), List.copyOf(riskFlags));
     }
 
     private static BigDecimal toBd(Object v) {
