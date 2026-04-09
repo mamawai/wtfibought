@@ -14,15 +14,13 @@ import com.mawai.wiibservice.service.ForceOrderService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.support.ToolCallbacks;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
+import org.springframework.stereotype.Component;
 
 import java.util.function.Consumer;
 
-@Configuration
+@Component
 public class AiAgentConfig {
 
-    private final ChatModel chatModel;
     private final UserMapper userMapper;
     private final UserAssetSnapshotMapper snapshotMapper;
     private final PositionMapper positionMapper;
@@ -40,8 +38,7 @@ public class AiAgentConfig {
     private final MemoryService memoryService;
     private final ForceOrderService forceOrderService;
 
-    public AiAgentConfig(ChatModel chatModel,
-                         UserMapper userMapper,
+    public AiAgentConfig(UserMapper userMapper,
                          UserAssetSnapshotMapper snapshotMapper,
                          PositionMapper positionMapper,
                          OrderMapper orderMapper,
@@ -57,7 +54,6 @@ public class AiAgentConfig {
                          BinanceRestClient binanceRestClient,
                          MemoryService memoryService,
                          ForceOrderService forceOrderService) {
-        this.chatModel = chatModel;
         this.userMapper = userMapper;
         this.snapshotMapper = snapshotMapper;
         this.positionMapper = positionMapper;
@@ -76,7 +72,7 @@ public class AiAgentConfig {
         this.forceOrderService = forceOrderService;
     }
 
-    public ReactAgent createBehaviorAgent(Consumer<String> onProgress) {
+    public ReactAgent createBehaviorAgent(ChatModel chatModel, Consumer<String> onProgress) {
         BehaviorAnalysisTools tools = new BehaviorAnalysisTools(
                 userMapper, snapshotMapper, positionMapper, orderMapper,
                 cryptoOrderMapper, cryptoPositionService, futuresOrderMapper,
@@ -101,8 +97,7 @@ public class AiAgentConfig {
                 .build();
     }
 
-    @Bean
-    public CompiledGraph cryptoAnalysisGraph() throws Exception {
+    public CompiledGraph createCryptoAnalysisGraph(ChatModel chatModel) throws Exception {
         // 当前深/浅指向同一模型，未来可配置不同模型
         ChatClient.Builder deepClient = ChatClient.builder(chatModel);
         ChatClient.Builder shallowClient = ChatClient.builder(chatModel);

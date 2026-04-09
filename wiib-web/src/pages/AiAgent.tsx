@@ -1,7 +1,9 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
 import { aiAgentApi } from '../api';
+import { parseRiskTags, translateRiskTag } from '../lib/utils';
 import { useToast } from '../components/ui/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -13,6 +15,14 @@ import type { BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, Q
 type Tab = 'behavior' | 'crypto';
 
 const HORIZON_LABELS: Record<string, string> = { '0_10': '0-10min', '10_20': '10-20min', '20_30': '20-30min' };
+
+function normalizeQuantSymbolInput(value?: string | null) {
+  const raw = (value || '').trim().toUpperCase();
+  if (!raw) return 'BTCUSDT';
+  if (raw.endsWith('USDT')) return raw;
+  if (raw.endsWith('USDC')) return `${raw.slice(0, -4)}USDT`;
+  return `${raw}USDT`;
+}
 
 function ConfidenceBar({ confidence }: { confidence: number }) {
   const color = confidence >= 80 ? 'bg-green-500' : confidence >= 60 ? 'bg-amber-500' : 'bg-red-500';
@@ -69,9 +79,13 @@ function SignalCard({ signal }: { signal: QuantLatestSignal }) {
       <CardContent className="space-y-3">
         <div className="flex items-center gap-2 flex-wrap">
           <Badge variant="outline" className="text-xs">{signal.symbol}</Badge>
-          <Badge variant={signal.riskStatus === 'NORMAL' ? 'default' : 'destructive'} className="text-xs">
-            {signal.riskStatus}
-          </Badge>
+          {signal.riskStatus === 'NORMAL' ? (
+            <Badge variant="default" className="text-xs">正常</Badge>
+          ) : (
+            parseRiskTags(signal.riskStatus).map(tag => (
+              <Badge key={tag} variant="destructive" className="text-[10px]">{translateRiskTag(tag)}</Badge>
+            ))
+          )}
           <span className="text-xs text-muted-foreground">{decisionText}</span>
         </div>
         <div className="grid grid-cols-3 gap-2">
@@ -108,11 +122,15 @@ function HistoryList({ items, onSelect }: { items: QuantForecastCycle[]; onSelec
             className="w-full flex items-center gap-3 p-2.5 rounded-lg border hover:bg-muted/50 transition-colors text-left"
           >
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 flex-wrap">
                 <span className="text-xs font-bold">{item.symbol}</span>
-                <Badge variant={item.riskStatus === 'NORMAL' ? 'default' : 'destructive'} className="text-[10px] h-4">
-                  {item.riskStatus}
-                </Badge>
+                {item.riskStatus === 'NORMAL' ? (
+                  <Badge variant="default" className="text-[10px] h-4">正常</Badge>
+                ) : (
+                  parseRiskTags(item.riskStatus).map(tag => (
+                    <Badge key={tag} variant="destructive" className="text-[10px] h-4">{translateRiskTag(tag)}</Badge>
+                  ))
+                )}
               </div>
               <div className="text-[10px] text-muted-foreground mt-0.5">{decisionText}</div>
             </div>
@@ -133,16 +151,37 @@ export function AiAgent() {
   const [steps, setSteps] = useState<string[]>([]);
   const [behaviorReport, setBehaviorReport] = useState<BehaviorAnalysisReport | null>(null);
   const [cryptoReport, setCryptoReport] = useState<CryptoAnalysisReport | null>(null);
+  const [cryptoForecastTime, setCryptoForecastTime] = useState<string | null>(null);
+  const [reportSymbol, setReportSymbol] = useState('BTCUSDT');
+  const [cryptoPending, setCryptoPending] = useState(false);
+  const [cryptoPendingMsg, setCryptoPendingMsg] = useState('');
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [symbol, setSymbol] = useState('');
   const [chatMessages, setChatMessages] = useState<{ role: string; content: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
+  const chatAbortRef = useRef<AbortController | null>(null);
 
   // 量化信号
   const [latestSignal, setLatestSignal] = useState<QuantLatestSignal | null>(null);
   const [history, setHistory] = useState<QuantForecastCycle[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [signalLoading, setSignalLoading] = useState(false);
+  const navigate = useNavigate();
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const stopChatStream = useCallback(() => {
+    if (chatAbortRef.current) {
+      chatAbortRef.current.abort();
+      chatAbortRef.current = null;
+    }
+  }, []);
 
   // 加载最新信号 + 历史
   const loadSignalData = useCallback(async (sym?: string) => {
@@ -177,6 +216,10 @@ export function AiAgent() {
           try {
             const report: CryptoAnalysisReport = JSON.parse(msg.body);
             setCryptoReport(report);
+            setCryptoForecastTime(new Date().toISOString());
+            setReportSymbol(wsSymbol);
+            setCryptoPending(false);
+            stopPolling();
             toast('收到新的量化预测', 'success');
           } catch { /* skip */ }
           // 同时刷新信号数据
@@ -186,7 +229,7 @@ export function AiAgent() {
     });
     client.activate();
     return () => { client.deactivate(); };
-  }, [tab, symbol, toast, loadSignalData]);
+  }, [tab, symbol, toast, loadSignalData, stopPolling]);
 
   const handleAnalyzeBehavior = useCallback(async () => {
     setLoading(true);
@@ -204,40 +247,87 @@ export function AiAgent() {
     }
   }, [toast]);
 
+  const fetchLatestReport = useCallback(async (sym?: string) => {
+    try {
+      const result = await aiAgentApi.latestCryptoReport(sym || undefined);
+      if (result.status === 'ready' && result.report) {
+        setCryptoReport(result.report);
+        setCryptoForecastTime(result.forecastTime || null);
+        setReportSymbol(normalizeQuantSymbolInput(sym));
+        setCryptoPending(false);
+        setCryptoPendingMsg('');
+        stopPolling();
+        loadSignalData(sym || undefined);
+      } else {
+        setCryptoPending(true);
+        setCryptoPendingMsg(result.message || '分析进行中，请稍候');
+      }
+    } catch (e) {
+      setCryptoPending(false);
+      toast((e as Error).message || '获取失败', 'error');
+      stopPolling();
+    }
+  }, [stopPolling, loadSignalData, toast]);
+
   const handleAnalyzeCrypto = useCallback(async () => {
     setLoading(true);
+    stopChatStream();
     setChatMessages([]);
+    setCryptoReport(null);
+    setCryptoForecastTime(null);
+    setCryptoPending(false);
+    stopPolling();
+
     try {
-      const report = await aiAgentApi.analyzeCrypto(symbol || undefined) as unknown as CryptoAnalysisReport;
-      setCryptoReport(report);
-      // 刷新信号数据
-      loadSignalData(symbol || undefined);
-      toast('分析完成', 'success');
-    } catch (e: unknown) {
-      toast((e as Error).message || '分析失败', 'error');
-    } finally {
-      setLoading(false);
+      const result = await aiAgentApi.latestCryptoReport(symbol || undefined);
+      if (result.status === 'ready' && result.report) {
+        setCryptoReport(result.report);
+        setCryptoForecastTime(result.forecastTime || null);
+        setReportSymbol(normalizeQuantSymbolInput(symbol));
+        loadSignalData(symbol || undefined);
+      } else {
+        setCryptoPending(true);
+        setCryptoPendingMsg(result.message || '分析进行中，请稍候');
+        pollRef.current = setInterval(() => fetchLatestReport(symbol || undefined), 5000);
+      }
+    } catch (e) {
+      toast((e as Error).message || '获取失败', 'error');
     }
-  }, [toast, symbol, loadSignalData]);
+
+    setLoading(false);
+  }, [symbol, fetchLatestReport, stopPolling, loadSignalData, stopChatStream, toast]);
+
+  // 清理轮询
+  useEffect(() => {
+    return () => {
+      stopPolling();
+      stopChatStream();
+    };
+  }, [stopPolling, stopChatStream]);
 
   const handleSelectHistory = useCallback((item: QuantForecastCycle) => {
     if (item.reportJson) {
       try {
         const report: CryptoAnalysisReport = JSON.parse(item.reportJson);
+        stopChatStream();
         setCryptoReport(report);
+        setCryptoForecastTime(item.forecastTime);
+        setReportSymbol(item.symbol);
         setChatMessages([]);
         setShowHistory(false);
       } catch { /* skip */ }
     }
-  }, []);
+  }, [stopChatStream]);
 
   const handleChat = useCallback(async () => {
-    if (!chatInput.trim() || !cryptoReport) return;
+    if (!chatInput.trim() || !cryptoReport || chatLoading) return;
     const userMsg = chatInput.trim();
     setChatInput('');
     const newHistory = [...chatMessages, { role: 'user', content: userMsg }];
     setChatMessages(newHistory);
     setChatLoading(true);
+    const abortController = new AbortController();
+    chatAbortRef.current = abortController;
     try {
       const summaryContext = JSON.stringify({
         direction: cryptoReport.direction,
@@ -245,21 +335,49 @@ export function AiAgent() {
         summary: cryptoReport.summary,
         confidence: cryptoReport.confidence,
       });
-      const trimmedHistory = chatMessages.slice(-3);
-      const answer = await aiAgentApi.chat(userMsg, summaryContext, trimmedHistory) as unknown as string;
-      setChatMessages([...newHistory, { role: 'assistant', content: answer }]);
-    } catch {
-      setChatMessages([...newHistory, { role: 'assistant', content: '回答失败，请重试' }]);
+      await aiAgentApi.chat(userMsg, summaryContext, chatMessages, (chunk) => {
+        setChatMessages(prev => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (!last || last.role !== 'assistant') {
+            next.push({ role: 'assistant', content: chunk });
+          } else {
+            next[next.length - 1] = { ...last, content: last.content + chunk };
+          }
+          return next;
+        });
+      }, abortController.signal);
+    } catch (e) {
+      if (abortController.signal.aborted) {
+        return;
+      }
+      const message = e instanceof Error ? e.message : '回答失败，请重试';
+      setChatMessages(prev => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === 'assistant') {
+          next[next.length - 1] = {
+            ...last,
+            content: last.content || message,
+          };
+        } else {
+          next.push({ role: 'assistant', content: message });
+        }
+        return next;
+      });
     } finally {
+      if (chatAbortRef.current === abortController) {
+        chatAbortRef.current = null;
+      }
       setChatLoading(false);
     }
-  }, [chatInput, chatMessages, cryptoReport]);
+  }, [chatInput, chatLoading, chatMessages, cryptoReport]);
 
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-6 space-y-4">
       <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 border border-primary/20 text-primary text-xs font-bold">
         <Zap className="w-4 h-4" />
-        AI 智能分析 — 基于你的历史行为数据和市场数据，提供个性化投资建议
+        投资有风险，当前分析结果仅供参考不构成任何建议
       </div>
 
       {/* Tab Switcher */}
@@ -502,30 +620,60 @@ export function AiAgent() {
             </div>
           )}
 
+          <Button
+            variant="outline"
+            className="w-full justify-start gap-2"
+            onClick={() => navigate(`/verifications?symbol=${reportSymbol}`)}
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            预测验证
+            <span className="text-xs text-muted-foreground ml-auto">查看已验证的预测结果 →</span>
+          </Button>
+
           {!cryptoReport || !cryptoReport.keyLevels ? (
             <Card>
               <CardContent className="p-8 text-center">
-                <TrendingUp className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <h2 className="text-lg font-bold mb-2">加密货币量化分析</h2>
-                <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-                  基于市场数据、技术指标、链上数据等维度，AI 量化分析指定币种走势并给出交易建议
-                </p>
-                <div className="flex items-center justify-center gap-3 max-w-sm mx-auto">
-                  <Input
-                    placeholder="输入币种，如 BTC、ETH（可选）"
-                    value={symbol}
-                    onChange={e => setSymbol(e.target.value.toUpperCase())}
-                    className="flex-1"
-                  />
-                  <Button onClick={handleAnalyzeCrypto} disabled={loading}>
-                    {loading ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />分析中...</> : '开始分析'}
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground mt-3">不输入则默认分析 BTC</p>
+                {!loading && !cryptoPending ? (
+                  <>
+                    <TrendingUp className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                    <h2 className="text-lg font-bold mb-2">加密货币量化分析</h2>
+                    <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
+                      后台每30分钟自动生成分析报告，点击获取最新结果
+                    </p>
+                    <div className="flex items-center justify-center gap-3 max-w-sm mx-auto">
+                      <Input
+                        placeholder="输入币种，如 BTC、ETH（可选）"
+                        value={symbol}
+                        onChange={e => setSymbol(e.target.value.toUpperCase())}
+                        className="flex-1"
+                      />
+                      <Button onClick={handleAnalyzeCrypto} disabled={loading}>
+                        获取分析
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-3">不输入则默认分析 BTC</p>
+                  </>
+                ) : (
+                  <>
+                    <TrendingUp className="w-12 h-12 mx-auto text-primary mb-4 animate-pulse" />
+                    <h2 className="text-lg font-bold mb-2">分析进行中</h2>
+                    <p className="text-sm text-muted-foreground mb-2">{cryptoPendingMsg || '等待后台生成报告...'}</p>
+                    <Loader2 className="w-5 h-5 animate-spin mx-auto text-primary" />
+                    <p className="text-xs text-muted-foreground mt-4">系统每30分钟生成一次，就快好了</p>
+                  </>
+                )}
               </CardContent>
             </Card>
           ) : (
             <>
+              {/* 报告时间 */}
+              {cryptoForecastTime && (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground px-1">
+                  <Clock className="w-3.5 h-3.5" />
+                  报告时间：{new Date(cryptoForecastTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </div>
+              )}
+
               {/* 总结 + 置信度 */}
               <Card className="border-l-4 border-l-primary">
                 <CardContent className="p-4">
@@ -827,11 +975,12 @@ export function AiAgent() {
                 )}
               </Card>
 
-              <Button variant="outline" onClick={() => { setCryptoReport(null); setChatMessages([]); }}>重新分析</Button>
+              <Button variant="outline" onClick={() => { stopChatStream(); setCryptoReport(null); setCryptoForecastTime(null); setChatMessages([]); stopPolling(); }}>重新获取</Button>
             </>
           )}
         </div>
       )}
+
     </div>
   );
 }

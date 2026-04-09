@@ -22,3 +22,28 @@ export function isTradingHours(): boolean {
   return (time >= morningStart && time <= morningEnd) ||
          (time >= afternoonStart && time <= afternoonEnd);
 }
+
+const RISK_LABEL: Record<string, string> = {
+  NORMAL: '正常',
+  HIGH_DISAGREEMENT: 'agent分歧大',
+  PARTIAL_DATA: '数据不全',
+  CAUTIOUS: '谨慎',
+};
+
+export function translateRiskTag(tag: string): string {
+  if (RISK_LABEL[tag]) return RISK_LABEL[tag];
+  const m = tag.match(/^(.+?)_(0_10|10_20|20_30)$/);
+  if (!m) return tag;
+  const base: Record<string, string> = {
+    SQUEEZE_REDUCE: '波动挤压降仓',
+    HIGH_DISAGREEMENT_PENALTY: '分歧扣分',
+    EXTREME_FEAR_SHORT_PENALTY: '恐慌做空扣分',
+    DATA_PENALTY: '数据不全扣分',
+  };
+  return (base[m[1]] || m[1]) + `(${m[2].replace('_', '-')}min)`;
+}
+
+export function parseRiskTags(riskStatus: string | null | undefined): string[] {
+  if (!riskStatus) return [];
+  return riskStatus.split(',').map(s => s.trim()).filter(Boolean);
+}

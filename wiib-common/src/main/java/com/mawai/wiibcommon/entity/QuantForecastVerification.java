@@ -39,6 +39,8 @@ public class QuantForecastVerification {
     // 综合评级：GOOD=方向+路径都对, LUCKY=终点对但中间触止损, BAD=方向错, FLAT=波动不足
     private String tradeQuality;
 
+    private String resultSummary;
+
     private LocalDateTime verifiedAt;
 
     @TableField(fill = FieldFill.INSERT)

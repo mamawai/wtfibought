@@ -5,18 +5,15 @@ import com.mawai.wiibcommon.entity.QuantForecastVerification;
 import com.mawai.wiibcommon.entity.QuantHorizonForecast;
 import com.mawai.wiibcommon.entity.QuantReflectionMemory;
 import com.mawai.wiibcommon.util.JsonUtils;
+import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
+import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.memory.VerificationService;
-import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
-import com.mawai.wiibservice.mapper.QuantForecastVerificationMapper;
-import com.mawai.wiibservice.mapper.QuantHorizonForecastMapper;
-import com.mawai.wiibservice.mapper.QuantReflectionMemoryMapper;
-import com.mawai.wiibservice.mapper.QuantAgentVoteMapper;
+import com.mawai.wiibservice.mapper.*;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -26,7 +23,7 @@ import java.util.List;
 @Component
 public class ReflectionTask {
 
-    private final ChatClient chatClient;
+    private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantHorizonForecastMapper horizonMapper;
     private final QuantForecastVerificationMapper verificationMapper;
@@ -34,14 +31,14 @@ public class ReflectionTask {
     private final QuantAgentVoteMapper voteMapper;
     private final VerificationService verificationService;
 
-    public ReflectionTask(ChatModel chatModel,
+    public ReflectionTask(AiAgentRuntimeManager aiAgentRuntimeManager,
                           QuantForecastCycleMapper cycleMapper,
                           QuantHorizonForecastMapper horizonMapper,
                           QuantForecastVerificationMapper verificationMapper,
                           QuantReflectionMemoryMapper reflectionMapper,
                           QuantAgentVoteMapper voteMapper,
                           VerificationService verificationService) {
-        this.chatClient = ChatClient.builder(chatModel).build();
+        this.aiAgentRuntimeManager = aiAgentRuntimeManager;
         this.cycleMapper = cycleMapper;
         this.horizonMapper = horizonMapper;
         this.verificationMapper = verificationMapper;
@@ -80,8 +77,7 @@ public class ReflectionTask {
         for (QuantForecastCycle cycle : unverified) {
             List<QuantHorizonForecast> forecasts = horizonMapper.selectByCycleId(cycle.getCycleId());
             if (!forecasts.isEmpty()) {
-                verificationService.verifyCycle(cycle, forecasts);
-                verifiedCount++;
+                if (verificationService.verifyCycle(cycle, forecasts) > 0) verifiedCount++;
             }
         }
         log.info("[Reflect] 验证完成 symbol={} verified={}/{}", symbol, verifiedCount, unverified.size());
@@ -97,9 +93,10 @@ public class ReflectionTask {
         String reflectionPrompt = buildReflectionPrompt(recentVerifications, symbol);
         String llmResponse;
         try {
-            llmResponse = chatClient.prompt().user(reflectionPrompt).call().content();
+            ChatClient chatClient = ChatClient.builder(aiAgentRuntimeManager.current().reflectionChatModel()).build();
+            llmResponse = LlmCallMode.STREAMING.call(chatClient, reflectionPrompt);
         } catch (Exception e) {
-            log.warn("[Reflect] LLM反思调用失败: {}", e.getMessage());
+            log.warn("[Reflect] LLM反思调用失败 symbol={}", symbol, e);
             return;
         }
 
@@ -121,9 +118,11 @@ public class ReflectionTask {
             total++;
             if (v.getPredictionCorrect() != null && v.getPredictionCorrect()) correct++;
             String quality = v.getTradeQuality() != null ? v.getTradeQuality() : "?";
-            if ("GOOD".equals(quality)) goodCount++;
-            else if ("LUCKY".equals(quality)) luckyCount++;
-            else if ("BAD".equals(quality)) badCount++;
+            switch (quality) {
+                case "GOOD" -> goodCount++;
+                case "LUCKY" -> luckyCount++;
+                case "BAD" -> badCount++;
+            }
             sb.append(total).append(". ")
                     .append(v.getHorizon()).append(" ")
                     .append("预测=").append(v.getPredictedDirection())
@@ -209,7 +208,7 @@ public class ReflectionTask {
             JSONArray lessons = root.getJSONArray("lessons");
             if (lessons == null || lessons.isEmpty()) return;
 
-            QuantForecastVerification latest = verifications.get(0);
+            QuantForecastVerification latest = verifications.getFirst();
             QuantForecastCycle cycle = cycleMapper.selectLatest(symbol);
             String regime = "UNKNOWN";
             if (cycle != null && cycle.getSnapshotJson() != null) {
@@ -244,7 +243,7 @@ public class ReflectionTask {
             memory.setActualPriceChangeBps(latest.getActualChangeBps());
             memory.setPredictionCorrect(latest.getPredictionCorrect());
             memory.setReflectionText(allLessons.toString().trim());
-            memory.setLessonTags(allTags.length() > 0 ? allTags.substring(0, allTags.length() - 1) : null);
+            memory.setLessonTags(!allTags.isEmpty() ? allTags.substring(0, allTags.length() - 1) : null);
             reflectionMapper.insert(memory);
 
             log.info("[Reflect] 反思记忆写入成功 symbol={} tags={} hasAgentAccuracy={}",

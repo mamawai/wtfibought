@@ -899,6 +899,7 @@ CREATE TABLE IF NOT EXISTS quant_forecast_verification (
     tp1_hit_first BOOLEAN,
     prediction_correct BOOLEAN,
     trade_quality VARCHAR(10),
+    result_summary VARCHAR(500),
     verified_at TIMESTAMP NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -959,3 +960,41 @@ COMMENT ON COLUMN force_order.avg_price IS '成交均价';
 COMMENT ON COLUMN force_order.amount IS '爆仓金额(avg_price * quantity)';
 
 CREATE INDEX idx_fo_symbol_time ON force_order(symbol, trade_time DESC);
+
+-- ============================================
+-- AI 运行时配置表（API Key 管理，支持多条）
+-- ============================================
+CREATE TABLE IF NOT EXISTS ai_runtime_config (
+    id BIGSERIAL PRIMARY KEY,
+    config_name VARCHAR(32) NOT NULL,
+    api_key VARCHAR(512) NOT NULL,
+    base_url VARCHAR(512) NOT NULL,
+    model VARCHAR(128),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE ai_runtime_config IS 'AI API Key配置（支持多个供应商）';
+COMMENT ON COLUMN ai_runtime_config.config_name IS '配置名称，如 OpenAI、DeepSeek';
+COMMENT ON COLUMN ai_runtime_config.api_key IS 'API Key';
+COMMENT ON COLUMN ai_runtime_config.base_url IS 'OpenAI Compatible Base URL';
+COMMENT ON COLUMN ai_runtime_config.model IS '默认模型名称（保留字段，实际模型由分配表决定）';
+COMMENT ON COLUMN ai_runtime_config.enabled IS '是否启用';
+
+-- ============================================
+-- AI 模型分配表（4个功能独立选择 API Key + 模型）
+-- ============================================
+CREATE TABLE IF NOT EXISTS ai_model_assignment (
+    id BIGSERIAL PRIMARY KEY,
+    function_name VARCHAR(32) NOT NULL,
+    config_id BIGINT NOT NULL,
+    model VARCHAR(128) NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_ai_ma_function UNIQUE (function_name)
+);
+
+COMMENT ON TABLE ai_model_assignment IS 'AI模型分配（每个功能独立配置）';
+COMMENT ON COLUMN ai_model_assignment.function_name IS '功能名称：behavior/quant/chat/reflection';
+COMMENT ON COLUMN ai_model_assignment.config_id IS '关联ai_runtime_config.id';
+COMMENT ON COLUMN ai_model_assignment.model IS '使用的模型名称';

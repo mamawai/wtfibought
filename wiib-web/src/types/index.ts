@@ -664,6 +664,76 @@ export interface QuantForecastCycle {
   reportJson: string | null;
 }
 
+export interface QuantForecastVerificationItem {
+  id: number;
+  cycleId: string;
+  symbol: string;
+  horizon: string;
+  predictedDirection: string;
+  predictedConfidence: number;
+  actualPriceAtForecast: string;
+  actualPriceAfter: string;
+  actualChangeBps: number;
+  maxFavorableBps: number | null;
+  maxAdverseBps: number | null;
+  tp1HitFirst: boolean | null;
+  predictionCorrect: boolean;
+  tradeQuality: string;
+  resultSummary: string | null;
+  verifiedAt: string;
+  createdAt: string;
+}
+
+export interface QuantVerificationCycleResult {
+  cycleId: string;
+  symbol: string;
+  forecastTime: string | null;
+  overallDecision: string | null;
+  riskStatus: string | null;
+  verifiedAt: string | null;
+  items: QuantForecastVerificationItem[];
+}
+
+export interface QuantVerificationSummary {
+  total: number;
+  correct: number;
+  accuracyRate: string;
+  cycles: QuantVerificationCycleResult[];
+}
+
+export interface AiAgentRuntimeConfig {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+}
+
+export interface AiKeyConfig {
+  id?: number;
+  configName: string;
+  apiKey: string;
+  baseUrl: string;
+  model?: string;
+  enabled?: boolean;
+}
+
+export interface AiModelAssignment {
+  id?: number;
+  functionName: string;
+  configId: number;
+  model: string;
+}
+
+export interface LatestCryptoResult {
+  status: 'ready' | 'pending';
+  message?: string;
+  forecastTime?: string;
+  cycleId?: string;
+  overallDecision?: string;
+  riskStatus?: string;
+  report?: CryptoAnalysisReport;
+  lastForecastTime?: string;
+}
+
 export interface ForceOrder {
   id: number;
   symbol: string;

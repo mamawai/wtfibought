@@ -19,7 +19,7 @@ import java.util.*;
  * 1. Bull辩手：从投票和指标中构建做多论证
  * 2. Bear辩手：从投票和指标中构建做空论证
  * 3. Judge裁判：综合辩论+历史教训，审核系统裁决
- *
+ * <p>
  * 安全约束继承自MetaJudge：
  * - confidence只能下调不能上调
  * - 方向翻转时cap到原始50%
@@ -61,8 +61,9 @@ public class DebateJudgeNode implements NodeAction {
             String prompt = buildDebatePrompt(forecasts, votes, snapshot,
                     overallDecision, riskStatus, regimeTransition);
             String response = callMode.call(chatClient, prompt);
-            log.info("[Q4.5.1] 辩论LLM返回 {}chars 耗时{}ms",
-                    response != null ? response.length() : 0, System.currentTimeMillis() - startMs);
+            log.info("[Q4.5.1] 辩论LLM返回 {}chars 耗时{}ms raw={}",
+                    response != null ? response.length() : 0, System.currentTimeMillis() - startMs,
+                    response != null && response.length() < 200 ? response : (response != null ? response.substring(0, 200) + "..." : "null"));
 
             return applyDebateResult(forecasts, response, riskStatus, startMs);
         } catch (Exception e) {
@@ -390,16 +391,7 @@ public class DebateJudgeNode implements NodeAction {
 
     private HorizonForecast rebuildForecast(HorizonForecast f, Direction newDir, double newConf) {
         double newScore = newDir == Direction.LONG ? Math.abs(f.weightedScore()) : -Math.abs(f.weightedScore());
-        if (f.entryLow() != null && f.tp1() != null) {
-            return new HorizonForecast(f.horizon(), newDir, newConf, newScore, f.disagreement(),
-                    f.entryLow(), f.entryHigh(),
-                    newDir == Direction.LONG ? f.tp1() : f.invalidationPrice(),
-                    newDir == Direction.LONG ? f.invalidationPrice() : f.tp1(),
-                    newDir == Direction.LONG
-                            ? (f.tp2() != null ? f.invalidationPrice().subtract(f.invalidationPrice().subtract(f.tp2()).abs()) : null)
-                            : f.tp2(),
-                    f.maxLeverage(), f.maxPositionPct());
-        }
+        // 方向翻转时清空价位：原方向的entry/tp/sl语义已失效，由报告层展示"-"
         return new HorizonForecast(f.horizon(), newDir, newConf, newScore, f.disagreement(),
                 null, null, null, null, null, f.maxLeverage(), f.maxPositionPct());
     }

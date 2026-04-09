@@ -21,6 +21,7 @@ public interface QuantForecastCycleMapper extends BaseMapper<QuantForecastCycle>
             "WHERE c.symbol = #{symbol} " +
             "AND c.forecast_time < NOW() - INTERVAL '35 minutes' " +
             "AND NOT EXISTS (SELECT 1 FROM quant_forecast_verification v WHERE v.cycle_id = c.cycle_id) " +
+            "AND EXISTS (SELECT 1 FROM quant_horizon_forecast h WHERE h.cycle_id = c.cycle_id AND h.direction != 'NO_TRADE') " +
             "ORDER BY c.forecast_time DESC LIMIT #{limit}")
     List<QuantForecastCycle> selectUnverified(@Param("symbol") String symbol, @Param("limit") int limit);
 }

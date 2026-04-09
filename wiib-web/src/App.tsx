@@ -22,6 +22,7 @@ import { Card414 } from './pages/Card414';
 import { Prediction } from './pages/Prediction';
 import { AiAgent } from './pages/AiAgent';
 import { ForceOrders } from './pages/ForceOrders';
+import { QuantVerifications } from './pages/QuantVerifications';
 import { useUserStore } from './stores/userStore';
 import { useDedupedEffect } from './hooks/useDedupedEffect';
 
@@ -71,6 +72,7 @@ function App() {
                 <Route path="/videopoker" element={<RequireAuth><VideoPoker /></RequireAuth>} />
                 <Route path="/prediction" element={<RequireAuth><Prediction /></RequireAuth>} />
                 <Route path="/ai" element={<RequireAuth><AiAgent /></RequireAuth>} />
+                <Route path="/verifications" element={<RequireAuth><QuantVerifications /></RequireAuth>} />
                 <Route path="/force-orders" element={<ForceOrders />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

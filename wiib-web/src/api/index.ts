@@ -1,10 +1,12 @@
 import axios from 'axios';
-import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, CardRoom, Card414GameState, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, ForceOrder } from '../types';
+import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, CardRoom, Card414GameState, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
   withCredentials: true,
 });
+
+type ChatHistoryItem = { role: string; content: string };
 
 // 请求拦截器：添加Token到Header
 api.interceptors.request.use((config) => {
@@ -145,6 +147,18 @@ export const adminApi = {
   setDailyInterestRate: (dailyInterestRate: number) =>
     api.post<unknown, number>('/admin/task/margin/daily-interest-rate', { dailyInterestRate }),
   assetSnapshot: () => api.post<unknown, void>('/admin/task/asset-snapshot'),
+  // AI Key管理
+  listAiKeys: () => api.get<unknown, AiKeyConfig[]>('/admin/ai-agent/keys'),
+  saveAiKey: (key: AiKeyConfig) => api.post<unknown, AiKeyConfig>('/admin/ai-agent/keys', key),
+  deleteAiKey: (id: number) => api.delete<unknown, void>(`/admin/ai-agent/keys/${id}`),
+  // 模型分配
+  listAssignments: () => api.get<unknown, AiModelAssignment[]>('/admin/ai-agent/assignments'),
+  saveAssignments: (assignments: AiModelAssignment[]) =>
+    api.post<unknown, void>('/admin/ai-agent/assignments', assignments),
+  triggerQuant: (symbol: string) =>
+    api.post<unknown, string>('/admin/ai-agent/quant/trigger', null, { params: { symbol } }),
+  triggerQuantVerification: (symbol: string) =>
+    api.post<unknown, string>('/admin/ai-agent/quant/verify/trigger', null, { params: { symbol } }),
 };
 
 // ========== 期权接口 ==========
@@ -210,6 +224,76 @@ const getToken = (): string | undefined => {
   const stored = localStorage.getItem('wiib-user');
   if (!stored) return undefined;
   try { return JSON.parse(stored).state?.token; } catch { return undefined; }
+};
+
+type ChatStreamEvent = {
+  event: string;
+  data: string;
+};
+
+const parseChatStreamEvent = (block: string): ChatStreamEvent => {
+  let event = 'message';
+  const dataLines: string[] = [];
+
+  for (const line of block.split('\n')) {
+    if (!line || line.startsWith(':')) continue;
+    if (line.startsWith('event:')) {
+      event = line.slice(6).trim();
+      continue;
+    }
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trimStart());
+    }
+  }
+
+  return { event, data: dataLines.join('\n') };
+};
+
+const streamChatResponse = async (
+  response: Response,
+  onChunk: (chunk: string) => void,
+) => {
+  if (!response.body) {
+    throw new Error('响应流不可用');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done }).replace(/\r/g, '');
+
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const rawEvent = buffer.slice(0, boundary).trim();
+      buffer = buffer.slice(boundary + 2);
+      if (rawEvent) {
+        const event = parseChatStreamEvent(rawEvent);
+        if (event.event === 'chunk' && event.data) {
+          onChunk(event.data);
+        } else if (event.event === 'error') {
+          throw new Error(event.data || '回答失败');
+        } else if (event.event === 'done') {
+          return;
+        }
+      }
+      boundary = buffer.indexOf('\n\n');
+    }
+
+    if (done) {
+      if (buffer.trim()) {
+        const event = parseChatStreamEvent(buffer.trim());
+        if (event.event === 'chunk' && event.data) {
+          onChunk(event.data);
+        } else if (event.event === 'error') {
+          throw new Error(event.data || '回答失败');
+        }
+      }
+      return;
+    }
+  }
 };
 
 export const cryptoApi = {
@@ -300,8 +384,38 @@ export const aiAgentApi = {
   analyzeBehavior: (_onStep?: (message: string) => void) =>
     api.post<unknown, BehaviorAnalysisReport>('/ai/analyze-behavior'),
   analyzeCrypto: (symbol?: string) => api.post<unknown, CryptoAnalysisReport>('/ai/analyze-crypto', symbol ? { symbol } : {}),
+  latestCryptoReport: (symbol?: string) => api.get<unknown, LatestCryptoResult>('/ai/analyze-crypto/latest', { params: { symbol: symbol || 'BTCUSDT' } }),
   latestSignals: (symbol?: string) => api.get<unknown, QuantLatestSignal>('/ai/quant/signals/latest', { params: { symbol: symbol || 'BTCUSDT' } }),
   forecasts: (symbol?: string, limit = 20) => api.get<unknown, QuantForecastCycle[]>('/ai/quant/forecasts', { params: { symbol: symbol || 'BTCUSDT', limit } }),
-  chat: (message: string, context: string, history: { role: string; content: string }[]) =>
-    api.post<unknown, string>('/ai/chat', { message, context, history }),
+  verifications: (symbol?: string, limit = 10) => api.get<unknown, QuantVerificationSummary>('/ai/quant/verifications', { params: { symbol: symbol || 'BTCUSDT', limit } }),
+  chat: async (
+    message: string,
+    context: string,
+    history: ChatHistoryItem[],
+    onChunk: (chunk: string) => void,
+    signal?: AbortSignal,
+  ) => {
+    const token = getToken();
+    const response = await fetch('/api/ai/chat', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { satoken: token } : {}),
+      },
+      body: JSON.stringify({ message, context, history }),
+      signal,
+    });
+
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const payload = await response.json() as { code?: number; msg?: string };
+      throw new Error(payload.msg || '请求失败');
+    }
+    if (!response.ok) {
+      throw new Error(`请求失败: ${response.status}`);
+    }
+
+    await streamChatResponse(response, onChunk);
+  },
 };

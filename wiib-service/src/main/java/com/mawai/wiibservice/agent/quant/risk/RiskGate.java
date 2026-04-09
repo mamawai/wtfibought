@@ -156,7 +156,8 @@ public class RiskGate {
                         || flag.equals("MISSING_TF_15M"))) {
             return 0.80;
         }
-        if (qualityFlags.stream().anyMatch(flag -> flag.startsWith("MISSING_TF_") || flag.startsWith("NO_"))) {
+        if (qualityFlags.stream().anyMatch(flag -> flag.startsWith("MISSING_TF_")
+                || flag.equals("NO_ATR_1M") || flag.equals("NO_BOLL_1M"))) {
             return 0.90;
         }
         return 1.0;

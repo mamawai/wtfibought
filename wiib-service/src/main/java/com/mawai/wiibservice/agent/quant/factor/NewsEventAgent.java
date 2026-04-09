@@ -17,7 +17,6 @@ public class NewsEventAgent implements FactorAgent {
 
     private final ChatClient chatClient;
     private final LlmCallMode callMode;
-    private List<FilteredNewsItem> lastFilteredNews = List.of();
 
     public NewsEventAgent(ChatClient.Builder builder, LlmCallMode callMode) {
         this.chatClient = builder.build();
@@ -27,24 +26,22 @@ public class NewsEventAgent implements FactorAgent {
     @Override
     public String name() { return "news_event"; }
 
-    public List<FilteredNewsItem> getLastFilteredNews() { return lastFilteredNews; }
+    public record EvaluateResult(List<AgentVote> votes, List<FilteredNewsItem> filteredNews) {}
 
-    @Override
-    public List<AgentVote> evaluate(FeatureSnapshot snapshot) {
-        lastFilteredNews = List.of();
+    public EvaluateResult evaluateWithNews(FeatureSnapshot snapshot) {
         List<NewsItem> allNewsItems = snapshot.newsItems();
         List<NewsItem> preFiltered = NewsRelevance.filterRelevant(snapshot.symbol(), allNewsItems);
         log.info("[Q3.news] symbol={} 总新闻={}条 关键词预过滤后={}条", snapshot.symbol(),
                 allNewsItems != null ? allNewsItems.size() : 0, preFiltered.size());
         if (preFiltered.isEmpty()) {
-            return List.of(
-                    AgentVote.noTrade(name(), "0_10", "NO_NEWS"),
-                    AgentVote.noTrade(name(), "10_20", "NO_NEWS"),
-                    AgentVote.noTrade(name(), "20_30", "NO_NEWS"));
+            return new EvaluateResult(
+                    List.of(AgentVote.noTrade(name(), "0_10", "NO_NEWS"),
+                            AgentVote.noTrade(name(), "10_20", "NO_NEWS"),
+                            AgentVote.noTrade(name(), "20_30", "NO_NEWS")),
+                    List.of());
         }
 
         int baseVolBps = estimateVolBps(snapshot);
-
         try {
             String prompt = buildPrompt(snapshot.symbol(), preFiltered);
             String response = callMode.call(chatClient, prompt);
@@ -52,11 +49,17 @@ public class NewsEventAgent implements FactorAgent {
             return parseResponse(response, baseVolBps);
         } catch (Exception e) {
             log.warn("[Q3.news] LLM调用失败: {}", e.getMessage());
-            return List.of(
-                    AgentVote.noTrade(name(), "0_10", "LLM_ERROR"),
-                    AgentVote.noTrade(name(), "10_20", "LLM_ERROR"),
-                    AgentVote.noTrade(name(), "20_30", "LLM_ERROR"));
+            return new EvaluateResult(
+                    List.of(AgentVote.noTrade(name(), "0_10", "LLM_ERROR"),
+                            AgentVote.noTrade(name(), "10_20", "LLM_ERROR"),
+                            AgentVote.noTrade(name(), "20_30", "LLM_ERROR")),
+                    List.of());
         }
+    }
+
+    @Override
+    public List<AgentVote> evaluate(FeatureSnapshot snapshot) {
+        return evaluateWithNews(snapshot).votes();
     }
 
     private String buildPrompt(String symbol, List<NewsItem> newsItems) {
@@ -115,16 +118,16 @@ public class NewsEventAgent implements FactorAgent {
     }
 
     @SuppressWarnings("unchecked")
-    private List<AgentVote> parseResponse(String response, int baseVolBps) {
+    private EvaluateResult parseResponse(String response, int baseVolBps) {
         if (response == null || response.isBlank()) {
-            return defaultVotes("PARSE_ERROR");
+            return new EvaluateResult(defaultVotes("PARSE_ERROR"), List.of());
         }
 
         try {
             String json = JsonUtils.extractJson(response);
             Map<String, Object> root = JSON.parseObject(json, Map.class);
 
-            // 解析筛选结果
+            List<FilteredNewsItem> filteredNews = List.of();
             List<Map<String, Object>> filtered = (List<Map<String, Object>>) root.get("filteredNews");
             if (filtered != null && !filtered.isEmpty()) {
                 List<FilteredNewsItem> items = new ArrayList<>(filtered.size());
@@ -136,22 +139,21 @@ public class NewsEventAgent implements FactorAgent {
                             String.valueOf(item.getOrDefault("reason", ""))
                     ));
                 }
-                lastFilteredNews = List.copyOf(items);
+                filteredNews = List.copyOf(items);
                 log.info("[Q3.news] LLM筛选出{}条有效新闻: {}", items.size(),
                         items.stream().map(i -> i.sentiment() + ":" + i.title()).toList());
             }
 
-            // 解析投票
             List<Map<String, Object>> votes = (List<Map<String, Object>>) root.get("votes");
             if (votes == null || votes.size() != 3) {
-                return defaultVotes("INVALID_FORMAT");
+                return new EvaluateResult(defaultVotes("INVALID_FORMAT"), filteredNews);
             }
 
             List<AgentVote> result = new ArrayList<>(3);
             for (Map<String, Object> v : votes) {
                 String horizon = (String) v.get("horizon");
                 double score = clamp(toDouble(v.get("score")));
-                double conf = Math.max(0, Math.min(1, toDouble(v.get("confidence"))));
+                double conf = Math.clamp(toDouble(v.get("confidence")), 0, 1);
                 List<String> reasons = v.get("reasonCodes") instanceof List<?> l
                         ? l.stream().map(String::valueOf).toList() : List.of();
                 List<String> flags = v.get("riskFlags") instanceof List<?> l
@@ -159,16 +161,15 @@ public class NewsEventAgent implements FactorAgent {
 
                 Direction dir = Math.abs(score) < 0.05 ? Direction.NO_TRADE
                         : (score > 0 ? Direction.LONG : Direction.SHORT);
-                int volBps = baseVolBps;
-                int moveBps = (int) (Math.abs(score) * volBps * 0.5);
+                int moveBps = (int) (Math.abs(score) * baseVolBps * 0.5);
 
                 result.add(new AgentVote(name(), horizon, dir, score, conf,
-                        moveBps, volBps, reasons, flags));
+                        moveBps, baseVolBps, reasons, flags));
             }
-            return result;
+            return new EvaluateResult(result, filteredNews);
         } catch (Exception e) {
             log.warn("[Q3.news] 解析失败: {}", e.getMessage());
-            return defaultVotes("PARSE_ERROR");
+            return new EvaluateResult(defaultVotes("PARSE_ERROR"), List.of());
         }
     }
 
@@ -179,7 +180,7 @@ public class NewsEventAgent implements FactorAgent {
                 AgentVote.noTrade(name(), "20_30", reason));
     }
 
-    private static double clamp(double v) { return Math.max(-1, Math.min(1, v)); }
+    private static double clamp(double v) { return Math.clamp(v, -1, 1); }
 
     private static int estimateVolBps(FeatureSnapshot snapshot) {
         java.math.BigDecimal lastPrice = snapshot.lastPrice();

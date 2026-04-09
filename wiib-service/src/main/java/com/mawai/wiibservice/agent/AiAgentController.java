@@ -1,7 +1,6 @@
 package com.mawai.wiibservice.agent;
 
 import cn.dev33.satoken.stp.StpUtil;
-import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
@@ -12,10 +11,12 @@ import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibservice.agent.behavior.BehaviorAnalysisReport;
-import com.mawai.wiibservice.agent.config.AiAgentConfig;
+import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibservice.agent.quant.CryptoAnalysisReport;
 import com.mawai.wiibservice.agent.quant.QuantForecastPersistService;
+import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.domain.ForecastResult;
+import com.mawai.wiibservice.agent.quant.memory.VerificationService;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
@@ -27,18 +28,19 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.PreDestroy;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.web.bind.annotation.*;
 
-import org.springframework.web.context.request.async.DeferredResult;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
 @Tag(name = "AI Agent接口")
@@ -46,35 +48,27 @@ import java.util.concurrent.Executors;
 @RequestMapping("/api/ai")
 public class AiAgentController {
 
-    private final AiAgentConfig aiAgentConfig;
-    private final CompiledGraph cryptoAnalysisGraph;
+    private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final QuantForecastPersistService persistService;
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantSignalDecisionMapper decisionMapper;
-    private final ChatClient chatClient;
-    private final ExecutorService behaviorAnalysisExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    private final VerificationService verificationService;
+    private final ExecutorService chatStreamExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    private static final Semaphore BEHAVIOR_SEMAPHORE = new Semaphore(10);
+    private static final long BEHAVIOR_COOLDOWN_MS = 300_000;
+    private final Map<Long, BehaviorAnalysisReport> behaviorReportCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<Long, Long> behaviorLastTime = new java.util.concurrent.ConcurrentHashMap<>();
 
-    public AiAgentController(AiAgentConfig aiAgentConfig, CompiledGraph cryptoAnalysisGraph,
+    public AiAgentController(AiAgentRuntimeManager aiAgentRuntimeManager,
                              QuantForecastPersistService persistService,
                              QuantForecastCycleMapper cycleMapper,
                              QuantSignalDecisionMapper decisionMapper,
-                             ChatModel chatModel) {
-        this.aiAgentConfig = aiAgentConfig;
-        this.cryptoAnalysisGraph = cryptoAnalysisGraph;
+                             VerificationService verificationService) {
+        this.aiAgentRuntimeManager = aiAgentRuntimeManager;
         this.persistService = persistService;
         this.cycleMapper = cycleMapper;
         this.decisionMapper = decisionMapper;
-        this.chatClient = ChatClient.builder(chatModel)
-                .defaultSystem("""
-                        你是专业的加密货币量化分析师，基于已有分析报告回答用户追问。
-                        回答规则：
-                        1. 控制在300字以内，精炼直接
-                        2. 先给结论，再给理由
-                        3. 涉及价格时给出具体数字
-                        4. 术语首次出现带简短注释
-                        5. 不要重复报告里已有的内容，针对问题回答
-                        """)
-                .build();
+        this.verificationService = verificationService;
     }
 
     @Data
@@ -97,59 +91,44 @@ public class AiAgentController {
 
     @PostMapping("/analyze-behavior")
     @Operation(summary = "用户行为分析")
-    @RateLimiter(type = RateLimiterType.AI_BEHAVIOR, permitsPerSecond = 1.0 / 300, bucketCapacity = 1, message = "行为分析每5分钟限1次")
-    public DeferredResult<Result<BehaviorAnalysisReport>> analyzeBehavior() {
+    public Result<BehaviorAnalysisReport> analyzeBehavior() {
         long userId = StpUtil.getLoginIdAsLong();
-        DeferredResult<Result<BehaviorAnalysisReport>> deferred = new DeferredResult<>(300_000L);
 
-        deferred.onTimeout(() -> {
-            log.warn("行为分析超时 userId={}", userId);
-            if (!deferred.isSetOrExpired()) {
-                deferred.setResult(Result.fail("分析超时，请稍后重试"));
-            }
-        });
-        deferred.onError(e -> {
-            log.error("行为分析异步请求异常 userId={}", userId, e);
-            if (!deferred.isSetOrExpired()) {
-                deferred.setResult(Result.fail("分析失败，请稍后重试"));
-            }
-        });
+        Long lastTime = behaviorLastTime.get(userId);
+        if (lastTime != null && System.currentTimeMillis() - lastTime < BEHAVIOR_COOLDOWN_MS) {
+            BehaviorAnalysisReport cached = behaviorReportCache.get(userId);
+            if (cached != null) return Result.ok(cached);
+        }
 
-        behaviorAnalysisExecutor.submit(() -> {
-            try {
-                Result<BehaviorAnalysisReport> result = doAnalyzeBehavior(userId);
-                if (!deferred.isSetOrExpired()) {
-                    deferred.setResult(result);
-                }
-            } catch (Exception e) {
-                log.error("行为分析失败 userId={}", userId, e);
-                if (!deferred.isSetOrExpired()) {
-                    deferred.setResult(Result.fail("分析失败: " + (e.getMessage() != null ? e.getMessage() : "未知错误")));
-                }
+        if (!BEHAVIOR_SEMAPHORE.tryAcquire()) {
+            BehaviorAnalysisReport cached = behaviorReportCache.get(userId);
+            return cached != null ? Result.ok(cached) : Result.fail("当前分析人数已满，请稍后再试");
+        }
+        try {
+            Result<BehaviorAnalysisReport> result = doAnalyzeBehavior(userId);
+            if (result.getCode() == 0 && result.getData() != null) {
+                behaviorReportCache.put(userId, result.getData());
+                behaviorLastTime.put(userId, System.currentTimeMillis());
             }
-        });
-
-        return deferred;
+            return result;
+        } finally {
+            BEHAVIOR_SEMAPHORE.release();
+        }
     }
 
     private Result<BehaviorAnalysisReport> doAnalyzeBehavior(long userId) {
         log.info("用户{}请求行为分析", userId);
 
-        ReactAgent agent = aiAgentConfig.createBehaviorAgent(step -> {
-            log.info("用户{} 工具调用: {}", userId, step);
-        });
+        ReactAgent agent = aiAgentRuntimeManager.createBehaviorAgent(step -> log.info("用户{} 工具调用: {}", userId, step));
 
-        AssistantMessage aiResponse;
+        String text;
         try {
-            aiResponse = agent.call("分析用户#" + userId + "的全部行为数据，用户ID为" + userId);
+            text = collectBehaviorAnalysisResponse(agent, userId);
         } catch (Exception e) {
             log.error("行为分析执行失败 userId={}", userId, e);
             return Result.fail("分析执行失败: " + e.getMessage());
         }
 
-        log.info("用户{} 行为分析完成, responseLength={}", userId, aiResponse.getText().length());
-
-        String text = aiResponse.getText();
         BehaviorAnalysisReport report;
         try {
             report = JSON.parseObject(JsonUtils.extractJson(text), BehaviorAnalysisReport.class);
@@ -167,9 +146,84 @@ public class AiAgentController {
         return Result.ok(report);
     }
 
+    private String collectBehaviorAnalysisResponse(ReactAgent agent, long userId) {
+        String prompt = "分析用户#" + userId + "的全部行为数据，用户ID为" + userId;
+        StringBuilder assistantChunks = new StringBuilder();
+
+        try {
+            agent.streamMessages(prompt, RunnableConfig.builder().threadId("behavior-" + userId).build())
+                    .doOnNext(message -> appendBehaviorResponse(message, assistantChunks))
+                    .blockLast();
+        } catch (Exception e) {
+            throw new RuntimeException("行为分析流式执行失败: " + e.getMessage(), e);
+        }
+
+        String finalText = assistantChunks.toString();
+        if (finalText.isBlank()) {
+            throw new IllegalStateException("行为分析未返回有效内容");
+        }
+        log.info("用户{} 行为分析完成, responseLength={}", userId, finalText.length());
+        return finalText;
+    }
+
+    private void appendBehaviorResponse(Message message, StringBuilder assistantChunks) {
+        if (!(message instanceof AssistantMessage assistant)) {
+            return;
+        }
+        String text = assistant.getText();
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        assistantChunks.append(text);
+    }
+
     @PreDestroy
-    public void shutdownBehaviorAnalysisExecutor() {
-        behaviorAnalysisExecutor.shutdown();
+    public void shutdownExecutors() {
+        chatStreamExecutor.shutdown();
+    }
+
+    @GetMapping("/analyze-crypto/latest")
+    @Operation(summary = "获取最新量化分析报告（不触发分析）")
+    public Result<Map<String, Object>> latestCryptoReport(@RequestParam(defaultValue = "BTCUSDT") String symbol) {
+        StpUtil.checkLogin();
+        String normalized;
+        try {
+            normalized = normalizeSymbol(symbol);
+        } catch (IllegalArgumentException e) {
+            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
+        }
+
+        QuantForecastCycle cycle = cycleMapper.selectLatest(normalized);
+        if (cycle == null) {
+            return Result.ok(Map.of("status", "pending", "message", "暂无分析报告，等待系统生成"));
+        }
+
+        // 35分钟内的报告视为有效（30分钟周期 + 5分钟容差）
+        boolean recent = cycle.getForecastTime() != null
+                && cycle.getForecastTime().isAfter(java.time.LocalDateTime.now().minusMinutes(35));
+        if (!recent) {
+            return Result.ok(Map.of("status", "pending", "message", "报告已过期，等待下一轮分析",
+                    "lastForecastTime", Objects.requireNonNull(cycle.getForecastTime()).toString()));
+        }
+
+        if (cycle.getReportJson() == null || cycle.getReportJson().isBlank()) {
+            return Result.ok(Map.of("status", "pending", "message", "分析进行中，请稍候",
+                    "forecastTime", cycle.getForecastTime().toString()));
+        }
+
+        try {
+            CryptoAnalysisReport report = JSON.parseObject(cycle.getReportJson(), CryptoAnalysisReport.class);
+            return Result.ok(Map.of(
+                    "status", "ready",
+                    "forecastTime", cycle.getForecastTime().toString(),
+                    "cycleId", cycle.getCycleId(),
+                    "overallDecision", cycle.getOverallDecision(),
+                    "riskStatus", cycle.getRiskStatus(),
+                    "report", report));
+        } catch (Exception e) {
+            log.error("报告JSON解析失败 cycleId={}", cycle.getCycleId(), e);
+            return Result.fail("报告数据异常");
+        }
     }
 
     @PostMapping("/analyze-crypto")
@@ -189,17 +243,14 @@ public class AiAgentController {
         return SpringUtils.getAopProxy(this).doAnalyzeCryptoInternal(userId, normalized);
     }
 
-    @RateLimiter(type = RateLimiterType.AI_CRYPTO, permitsPerSecond = 1.0 / 60, bucketCapacity = 1,
-            message = "量化分析每分钟限1次")
+    @RateLimiter(type = RateLimiterType.AI_CRYPTO, message = "量化分析每分钟限1次")
     public Result<CryptoAnalysisReport> doAnalyzeCryptoInternal(long userId, String symbol) {
         long startMs = System.currentTimeMillis();
         log.info("[Quant] 工作流开始 userId={} symbol={}", userId, symbol);
 
         try {
-            Optional<OverAllState> result = cryptoAnalysisGraph.invoke(
-                    Map.of("target_symbol", symbol),
-                    RunnableConfig.builder().threadId("crypto-" + userId).build()
-            );
+            Optional<OverAllState> result = aiAgentRuntimeManager.invokeQuantWithFallback(
+                    symbol, "crypto-" + userId);
 
             if (result.isEmpty()) {
                 log.warn("[Quant] 工作流无结果 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs);
@@ -219,7 +270,6 @@ public class AiAgentController {
                     log.error("[Quant] 报告关键字段缺失 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs);
                     return Result.fail("分析结果不完整，请重试");
                 }
-                // 落库（forecast_result 以 JSON 字符串存入 state，避免框架深拷贝破坏 record 类型）
                 Object fr = state.value("forecast_result").orElse(null);
                 ForecastResult forecastResult = null;
                 if (fr instanceof String frJson) {
@@ -264,14 +314,18 @@ public class AiAgentController {
         return symbol + "USDT";
     }
 
-    @PostMapping("/chat")
+    @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "追问对话")
-    public Result<String> chat(@RequestBody ChatRequest request) {
+    public SseEmitter chat(@RequestBody ChatRequest request) {
         StpUtil.checkLogin();
         if (request.getMessage() == null || request.getMessage().isBlank()) {
-            return Result.fail("消息不能为空");
+            throw new IllegalArgumentException("消息不能为空");
         }
 
+        return SpringUtils.getAopProxy(this).doChatInternal(buildChatPrompt(request));
+    }
+
+    private String buildChatPrompt(ChatRequest request) {
         StringBuilder prompt = new StringBuilder();
         if (request.getContext() != null && !request.getContext().isBlank()) {
             String ctx = request.getContext();
@@ -281,29 +335,93 @@ public class AiAgentController {
             prompt.append("【当前分析报告摘要】\n").append(ctx).append("\n\n");
         }
         if (request.getHistory() != null) {
-            List<ChatMessage> recentHistory = request.getHistory().size() > 3
-                    ? request.getHistory().subList(request.getHistory().size() - 3, request.getHistory().size())
-                    : request.getHistory();
-            for (ChatMessage msg : recentHistory) {
+            for (ChatMessage msg : recentCompleteRounds(request.getHistory(), 3)) {
                 prompt.append("user".equals(msg.getRole()) ? "用户: " : "分析师: ")
                         .append(msg.getContent()).append("\n");
             }
         }
         prompt.append("用户: ").append(request.getMessage());
-
-        // 通过代理调用，触发 @RateLimiter AOP
-        return SpringUtils.getAopProxy(this).doChatInternal(prompt.toString());
+        return prompt.toString();
     }
 
-    @RateLimiter(type = RateLimiterType.AI_CHAT, permitsPerSecond = 1.0, bucketCapacity = 10, message = "追问每秒限1次")
-    public Result<String> doChatInternal(String prompt) {
-        try {
-            String answer = chatClient.prompt().user(prompt).call().content();
-            return Result.ok(answer);
-        } catch (Exception e) {
-            log.error("对话失败", e);
-            return Result.fail("回答失败: " + e.getMessage());
+    private List<ChatMessage> recentCompleteRounds(List<ChatMessage> history, int roundLimit) {
+        List<ChatMessage> completeRounds = new ArrayList<>();
+        ChatMessage pendingUser = null;
+
+        for (ChatMessage msg : history) {
+            if ("user".equals(msg.getRole())) {
+                pendingUser = msg;
+                continue;
+            }
+            if ("assistant".equals(msg.getRole()) && pendingUser != null) {
+                completeRounds.add(pendingUser);
+                completeRounds.add(msg);
+                pendingUser = null;
+            }
         }
+
+        int messageLimit = roundLimit * 2;
+        if (completeRounds.size() <= messageLimit) {
+            return completeRounds;
+        }
+        return completeRounds.subList(completeRounds.size() - messageLimit, completeRounds.size());
+    }
+
+    @RateLimiter(type = RateLimiterType.AI_CHAT, permitsPerSecond = 6.0 / 60.0, bucketCapacity = 6, message = "追问每10秒限1次")
+    public SseEmitter doChatInternal(String prompt) {
+        SseEmitter emitter = new SseEmitter(120_000L);
+        AtomicBoolean closed = new AtomicBoolean(false);
+
+        emitter.onCompletion(() -> closed.set(true));
+        emitter.onTimeout(() -> {
+            closed.set(true);
+            emitter.complete();
+        });
+        emitter.onError(ex -> closed.set(true));
+
+        chatStreamExecutor.submit(() -> {
+            try {
+                ChatClient chatClient = ChatClient.builder(aiAgentRuntimeManager.current().chatChatModel())
+                        .defaultSystem("""
+                                你是专业的加密货币量化分析师，基于已有分析报告回答用户追问。
+                                回答规则：
+                                1. 控制在300字以内，精炼直接
+                                2. 先给结论，再给理由
+                                3. 涉及价格时给出具体数字
+                                4. 术语首次出现带简短注释
+                                5. 不要重复报告里已有的内容，针对问题回答
+                                """)
+                        .build();
+
+                LlmCallMode.STREAMING.stream(chatClient, prompt, chunk -> {
+                    if (closed.get()) {
+                        return;
+                    }
+                    try {
+                        emitter.send(SseEmitter.event().name("chunk").data(chunk));
+                    } catch (Exception sendError) {
+                        throw new RuntimeException(sendError);
+                    }
+                });
+
+                if (!closed.get()) {
+                    emitter.send(SseEmitter.event().name("done").data("[DONE]"));
+                    emitter.complete();
+                }
+            } catch (Exception e) {
+                log.error("对话失败", e);
+                if (!closed.get()) {
+                    try {
+                        emitter.send(SseEmitter.event().name("error")
+                                .data("回答失败: " + (e.getMessage() != null ? e.getMessage() : "未知错误")));
+                    } catch (Exception ignored) {
+                    }
+                    emitter.completeWithError(e);
+                }
+            }
+        });
+
+        return emitter;
     }
 
     @GetMapping("/quant/signals/latest")
@@ -350,6 +468,23 @@ public class AiAgentController {
         limit = Math.min(limit, 100);
         List<QuantForecastCycle> list = cycleMapper.selectRecent(normalized, limit);
         return Result.ok(list);
+    }
+
+    @GetMapping("/quant/verifications")
+    @Operation(summary = "查历史量化预测验证")
+    public Result<VerificationService.VerificationSummary> verifications(
+            @RequestParam(defaultValue = "BTCUSDT") String symbol,
+            @RequestParam(defaultValue = "10") int limit) {
+        StpUtil.checkLogin();
+        String normalized;
+        try {
+            normalized = normalizeSymbol(symbol);
+        } catch (IllegalArgumentException e) {
+            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
+        }
+
+        limit = Math.min(limit, 20);
+        return Result.ok(verificationService.recentVerificationResults(normalized, limit));
     }
 
 }

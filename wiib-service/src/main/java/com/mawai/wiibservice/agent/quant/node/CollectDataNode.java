@@ -43,7 +43,12 @@ public class CollectDataNode implements NodeAction {
         Map<String, String> forceOrdersMap = new HashMap<>();
         Map<String, String> topTraderPositionMap = new HashMap<>();
         Map<String, String> takerLongShortMap = new HashMap<>();
-        String fearGreedData = "{}";
+
+        // FGI：全市场通用，调度器可能已预取
+        String preFetchedFearGreed = (String) state.value("fear_greed_data").orElse(null);
+        boolean skipFearGreed = preFetchedFearGreed != null
+                && !preFetchedFearGreed.isBlank() && !"{}".equals(preFetchedFearGreed);
+        String fearGreedData = skipFearGreed ? preFetchedFearGreed : "{}";
         String newsData = "{}";
 
         String[] intervals = {"1m", "5m", "15m", "1h", "4h", "1d"};
@@ -70,7 +75,8 @@ public class CollectDataNode implements NodeAction {
             var forceOrdersF = executor.submit(() -> buildForceOrdersJson(sym));
             var topTraderF = executor.submit(() -> binanceRestClient.getTopTraderPositionRatio(sym, "5m", 24));
             var takerLsrF = executor.submit(() -> binanceRestClient.getTakerLongShortRatio(sym, "5m", 24));
-            var fearGreedF = executor.submit(() -> binanceRestClient.getFearGreedIndex(2));
+            var fearGreedF = skipFearGreed ? null
+                    : executor.submit(() -> binanceRestClient.getFearGreedIndex(2));
             String coin = sym.replace("USDT", "").replace("USDC", "");
             var newsF = executor.submit(() -> binanceRestClient.getCryptoNews(coin, 30, "EN"));
 
@@ -99,9 +105,11 @@ public class CollectDataNode implements NodeAction {
             putIfNotNull(takerLongShortMap, sym, safeGet(takerLsrF, "takerLongShort"));
 
             // 恐惧贪婪
-            String rawFearGreed = safeGet(fearGreedF, "fearGreed");
-            if (rawFearGreed != null && !rawFearGreed.isBlank()) {
-                fearGreedData = rawFearGreed;
+            if (!skipFearGreed) {
+                String rawFearGreed = safeGet(fearGreedF, "fearGreed");
+                if (rawFearGreed != null && !rawFearGreed.isBlank()) {
+                    fearGreedData = rawFearGreed;
+                }
             }
 
             // 新闻

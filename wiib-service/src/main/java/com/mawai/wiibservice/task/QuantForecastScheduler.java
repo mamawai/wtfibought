@@ -1,13 +1,13 @@
 package com.mawai.wiibservice.task;
 
 import cn.hutool.json.JSONUtil;
-import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.OverAllState;
-import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.fastjson2.JSON;
+import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibservice.agent.quant.CryptoAnalysisReport;
 import com.mawai.wiibservice.agent.quant.QuantForecastPersistService;
 import com.mawai.wiibservice.agent.quant.domain.ForecastResult;
+import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,26 +23,37 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class QuantForecastScheduler {
 
-    private final CompiledGraph cryptoAnalysisGraph;
+    private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final QuantForecastPersistService persistService;
     private final RedisMessageBroadcastService broadcastService;
+    private final BinanceRestClient binanceRestClient;
 
-    private static final List<String> WATCH_LIST = List.of("BTCUSDT");
+    private static final List<String> WATCH_LIST = List.of("BTCUSDT", "ETHUSDT", "PAXGUSDT");
 
     @Scheduled(cron = "0 */30 * * * *")
     public void rollingForecast() {
+        String fearGreedData = fetchFearGreedOnce();
         for (String symbol : WATCH_LIST) {
-            Thread.startVirtualThread(() -> runForecast(symbol));
+            Thread.startVirtualThread(() -> runForecast(symbol, fearGreedData));
         }
     }
 
-    private void runForecast(String symbol) {
+    private String fetchFearGreedOnce() {
+        try {
+            String data = binanceRestClient.getFearGreedIndex(2);
+            return (data != null && !data.isBlank()) ? data : "{}";
+        } catch (Exception e) {
+            log.warn("[Scheduler] FGI预取失败: {}", e.getMessage());
+            return "{}";
+        }
+    }
+
+    private void runForecast(String symbol, String fearGreedData) {
         log.info("定时预测开始 symbol={}", symbol);
         try {
-            Optional<OverAllState> result = cryptoAnalysisGraph.invoke(
-                    Map.of("target_symbol", symbol),
-                    RunnableConfig.builder().threadId("scheduled-" + symbol).build()
-            );
+            Optional<OverAllState> result = aiAgentRuntimeManager.invokeQuantWithFallback(
+                    symbol, "scheduled-" + symbol,
+                    Map.of("fear_greed_data", fearGreedData));
 
             if (result.isEmpty()) {
                 log.warn("定时预测无结果 symbol={}", symbol);
@@ -56,7 +67,6 @@ public class QuantForecastScheduler {
                 return;
             }
 
-            // forecast_result 以 JSON 字符串存入 state，避免框架深拷贝破坏 record 类型
             Object fr = state.value("forecast_result").orElse(null);
             ForecastResult forecastResult = null;
             if (fr instanceof String frJson) {
@@ -68,7 +78,6 @@ public class QuantForecastScheduler {
                 String debateSummary = (String) state.value("debate_summary").orElse(null);
                 persistService.persist(forecastResult, debateSummary);
 
-                // WebSocket推送
                 Object report = state.value("report").orElse(null);
                 if (report instanceof CryptoAnalysisReport r) {
                     broadcastService.broadcastQuantSignal(symbol, JSONUtil.toJsonStr(r));
@@ -81,5 +90,9 @@ public class QuantForecastScheduler {
         } catch (Exception e) {
             log.error("定时预测异常 symbol={}", symbol, e);
         }
+    }
+
+    public void runForecast(String symbol) {
+        runForecast(symbol, "{}");
     }
 }

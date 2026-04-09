@@ -6,6 +6,9 @@ import cn.dev33.satoken.listener.SaTokenListener;
 import cn.dev33.satoken.router.SaRouter;
 import cn.dev33.satoken.stp.StpUtil;
 import cn.dev33.satoken.stp.parameter.SaLoginParameter;
+import jakarta.servlet.DispatcherType;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
@@ -129,6 +132,15 @@ public abstract class BaseSaTokenConfig implements WebMvcConfigurer {
                 SaRouter.match("/**")
                         .notMatch(getExcludePaths())
                         .check(r -> StpUtil.checkLogin())
-        )).addPathPatterns("/**");
+        ) {
+            @Override
+            public boolean preHandle(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull Object handler) throws Exception {
+                if (request.getDispatcherType() == DispatcherType.ASYNC) {
+                    // 跳过流式返回的鉴权，只需要鉴权第一次即可
+                    return true;
+                }
+                return super.preHandle(request, response, handler);
+            }
+        }).addPathPatterns("/**");
     }
 }

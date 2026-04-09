@@ -40,54 +40,64 @@ public class RunFactorAgentsNode implements NodeAction {
 
         log.info("[Q3.0] run_factors开始 agents={} symbol={}", agents.size(), snapshot.symbol());
         List<AgentVote> allVotes = new ArrayList<>();
+        List<NewsEventAgent.FilteredNewsItem> filteredNews = List.of();
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            List<Future<List<AgentVote>>> futures = new ArrayList<>(agents.size());
+            List<Future<List<AgentVote>>> normalFutures = new ArrayList<>();
+            List<String> normalAgentNames = new ArrayList<>();
+            Future<NewsEventAgent.EvaluateResult> newsFuture = null;
 
             for (FactorAgent agent : agents) {
-                futures.add(executor.submit(() -> {
-                    try {
+                if (agent instanceof NewsEventAgent newsAgent) {
+                    newsFuture = executor.submit(() -> {
+                        long start = System.currentTimeMillis();
+                        NewsEventAgent.EvaluateResult result = newsAgent.evaluateWithNews(snapshot);
+                        log.info("[Q3.agent] {}完成 {}ms {}票 {}条新闻",
+                                newsAgent.name(), System.currentTimeMillis() - start,
+                                result.votes().size(), result.filteredNews().size());
+                        return result;
+                    });
+                } else {
+                    normalAgentNames.add(agent.name());
+                    normalFutures.add(executor.submit(() -> {
                         long start = System.currentTimeMillis();
                         List<AgentVote> votes = agent.evaluate(snapshot);
                         log.info("[Q3.agent] {}完成 {}ms {}票",
                                 agent.name(), System.currentTimeMillis() - start, votes.size());
                         return votes;
-                    } catch (Exception e) {
-                        log.warn("[Q3] Agent[{}] 执行失败: {}", agent.name(), e.getMessage());
-                        return List.of(
-                                AgentVote.noTrade(agent.name(), "0_10", "AGENT_ERROR"),
-                                AgentVote.noTrade(agent.name(), "10_20", "AGENT_ERROR"),
-                                AgentVote.noTrade(agent.name(), "20_30", "AGENT_ERROR"));
-                    }
-                }));
+                    }));
+                }
             }
 
-            for (int i = 0; i < futures.size(); i++) {
+            for (int i = 0; i < normalFutures.size(); i++) {
+                String name = normalAgentNames.get(i);
                 try {
-                    // LLM Agent(news_event)给更长超时
-                    int timeout = "news_event".equals(agents.get(i).name()) ? 60 : 30;
-                    allVotes.addAll(futures.get(i).get(timeout, TimeUnit.SECONDS));
+                    allVotes.addAll(normalFutures.get(i).get(30, TimeUnit.SECONDS));
                 } catch (Exception e) {
-                    String name = agents.get(i).name();
                     log.warn("[Q3] Agent[{}] 超时/异常: {}", name, e.getMessage());
                     allVotes.add(AgentVote.noTrade(name, "0_10", "TIMEOUT"));
                     allVotes.add(AgentVote.noTrade(name, "10_20", "TIMEOUT"));
                     allVotes.add(AgentVote.noTrade(name, "20_30", "TIMEOUT"));
                 }
             }
-        }
 
-        log.info("[Q3.end] run_factors完成 共{}票 耗时{}ms", allVotes.size(), System.currentTimeMillis() - startMs);
-
-        // 提取LLM筛选后的新闻
-        List<NewsEventAgent.FilteredNewsItem> filteredNews = List.of();
-        for (FactorAgent agent : agents) {
-            if (agent instanceof NewsEventAgent newsAgent) {
-                filteredNews = newsAgent.getLastFilteredNews();
-                break;
+            // 收集 NewsEventAgent 结果
+            if (newsFuture != null) {
+                try {
+                    NewsEventAgent.EvaluateResult newsResult = newsFuture.get(200, TimeUnit.SECONDS);
+                    allVotes.addAll(newsResult.votes());
+                    filteredNews = newsResult.filteredNews();
+                } catch (Exception e) {
+                    log.warn("[Q3] Agent[news_event] 超时/异常: {}", e.getMessage());
+                    allVotes.add(AgentVote.noTrade("news_event", "0_10", "TIMEOUT"));
+                    allVotes.add(AgentVote.noTrade("news_event", "10_20", "TIMEOUT"));
+                    allVotes.add(AgentVote.noTrade("news_event", "20_30", "TIMEOUT"));
+                }
             }
         }
-        log.info("[Q3.end] LLM筛选新闻={}条", filteredNews.size());
+
+        log.info("[Q3.end] run_factors完成 共{}票 LLM筛选新闻={}条 耗时{}ms",
+                allVotes.size(), filteredNews.size(), System.currentTimeMillis() - startMs);
 
         Map<String, Object> result = new HashMap<>();
         result.put("agent_votes", allVotes);

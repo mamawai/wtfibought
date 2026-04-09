@@ -28,11 +28,19 @@
 - 小游戏（21 点、翻翻爆金币，积分可转为交易资金）
 - 总资产排行榜
 
+**AI Agent 量化分析**
+- 多 Agent 加密货币量化预测系统（5因子Agent + 3区间裁决 + Bull vs Bear辩论）
+- 每30分钟自动生成 0-10/10-20/20-30min 三区间交易信号
+- 历史预测自动验证（K线路径分析 + TP/SL触达检测 + 质量评级）
+- 离线反思学习闭环（LLM分析偏差 → 写入记忆 → 下次预测注入）
+- DB驱动的API Key动态管理 + LLM异常自动降级
+- 详细设计文档：[docs/Quantitative analysis.md](docs/Quantitative%20analysis.md)
+
 ## 技术栈
 
 | 层 | 技术 |
 |---|------|
-| 后端 | Java 21（虚拟线程）+ Spring Boot 3.4 + MyBatis-Plus 3.5 |
+| 后端 | Java 21（虚拟线程）+ Spring Boot 3.4 + MyBatis-Plus 3.5 + Spring AI Alibaba 1.1.2.0 |
 | 前端 | React 19 + TypeScript + Vite + TailwindCSS + Ant Design + ECharts |
 | 数据库 | PostgreSQL |
 | 缓存 | Caffeine（L1 本地热数据）+ Redis（L2 分布式，行情/会话/排行榜/牌局/分布式锁/限流） |
@@ -406,6 +414,8 @@ PUT  = K·e^(-rT)·N(-d2) - S·N(-d1)
 每小时  Futures 维护（过期限价单 + 孤儿 TRIGGERED 执行）
 每8h   永续合约资金费率扣除（00:00 / 08:00 / 16:00）
 每1s   Prediction 回合轮换检测（24/7，窗口切换时触发锁定+新回合+价格轮询）
+每30min 量化预测（采集→指标→Regime审核→5Agent投票→3Judge裁决→辩论→风控→报告）
+每1h:05 预测验证+反思（批量验证历史预测→LLM反思→写入记忆）
 ```
 
 冷启动自愈：`@PostConstruct` 检查当前时间，如在交易时段则自动补启遗漏的周期任务。
@@ -439,6 +449,8 @@ PUT  = K·e^(-rT)·N(-d2) - S·N(-d1)
 | `/coin` | 加密货币选择（BTC / PAXG / ETH） |
 | `/coin/:symbol` | 加密货币详情（现货交易 + 永续合约 + TradingView K线） |
 | `/prediction` | BTC 5分钟涨跌预测（实时图表 + 买卖面板 + 交易动态） |
+| `/ai-agent` | AI量化分析（实时信号 + 历史预测 + 追问对话） |
+| `/ai-agent/verifications` | 量化预测验证（命中率统计 + 各周期验证详情） |
 | `/ranking` | 排行榜 |
 | `/games` | 小游戏大厅 |
 | `/blackjack` | 21点小游戏 |
@@ -549,6 +561,14 @@ docker compose up -d --build
 | mines_game | 翻翻爆金币游戏记录（下注/倍率/雷位/结算） |
 | prediction_round | 涨跌预测回合（window_start、start/end_price、outcome、状态机 OPEN→LOCKED→SETTLED） |
 | prediction_bet | 涨跌预测下注（side UP/DOWN、contracts、cost、payout、状态 ACTIVE/WON/LOST/DRAW/SOLD） |
+| ai_runtime_config | AI运行时配置（API Key、Base URL、Model，支持多套） |
+| ai_model_assignment | AI模型分配（behavior/quant/chat/reflection → config映射） |
+| quant_forecast_cycle | 量化预测周期（含snapshot/report/debate JSON） |
+| quant_agent_vote | 因子Agent投票（5agent × 3区间 = 15票/周期） |
+| quant_horizon_forecast | 区间裁决结果（方向/置信度/入场/止损/止盈） |
+| quant_signal_decision | 风控后最终信号 |
+| quant_forecast_verification | 预测验证（实际价格/路径分析/质量评级/中文摘要） |
+| quant_reflection_memory | 反思记忆（LLM教训 + agentAccuracy） |
 
 ## License
 

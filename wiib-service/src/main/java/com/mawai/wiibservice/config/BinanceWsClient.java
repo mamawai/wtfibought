@@ -364,67 +364,34 @@ public class BinanceWsClient implements SmartLifecycle {
     }
 
     private void onForceOrderMessage(String raw) {
-        // 单流: {"e":"forceOrder","E":...,"o":{"s":"BTCUSDT","S":"SELL","p":"66531.20","ap":"66723.50","q":"0.069","X":"FILLED","T":1775182662535}}
-        // 组合流: {"stream":"btcusdt@forceOrder","data":{"e":"forceOrder","E":...,"o":{"s":"BTCUSDT","S":"SELL","p":"66531.20","ap":"66723.50","q":"0.069","X":"FILLED","T":1775182662535}}}
         int oIdx = raw.indexOf("\"o\":{");
-        if (oIdx < 0) return;
+        if (oIdx < 0) {
+            log.warn("[ForceOrder] 消息缺少o字段: {}", raw.length() > 300 ? raw.substring(0, 300) : raw);
+            return;
+        }
 
         int from = oIdx + 5;
 
-        int sIdx = raw.indexOf("\"s\":\"", from);
-        if (sIdx < 0) return;
-        int sStart = sIdx + 5;
-        int sEnd = raw.indexOf('"', sStart);
-        if (sEnd < 0) return;
-        String symbol = raw.substring(sStart, sEnd);
-
-        int sideIdx = raw.indexOf("\"S\":\"", sEnd);
-        if (sideIdx < 0) return;
-        int sideStart = sideIdx + 5;
-        int sideEnd = raw.indexOf('"', sideStart);
-        if (sideEnd < 0) return;
-        String side = raw.substring(sideStart, sideEnd);
-
-        int pIdx = raw.indexOf("\"p\":\"", sideEnd);
-        if (pIdx < 0) return;
-        int pStart = pIdx + 5;
-        int pEnd = raw.indexOf('"', pStart);
-        if (pEnd < 0) return;
-        String price = raw.substring(pStart, pEnd);
-
-        int apIdx = raw.indexOf("\"ap\":\"", pEnd);
-        if (apIdx < 0) return;
-        int apStart = apIdx + 6;
-        int apEnd = raw.indexOf('"', apStart);
-        if (apEnd < 0) return;
-        String avgPrice = raw.substring(apStart, apEnd);
-
-        int qIdx = raw.indexOf("\"q\":\"", apEnd);
-        if (qIdx < 0) return;
-        int qStart = qIdx + 5;
-        int qEnd = raw.indexOf('"', qStart);
-        if (qEnd < 0) return;
-        String qty = raw.substring(qStart, qEnd);
-
-        String status = "FILLED";
-        int searchFrom = qEnd;
-        int xIdx = raw.indexOf("\"X\":\"", qEnd);
-        if (xIdx >= 0) {
-            int xStart = xIdx + 5;
-            int xEnd = raw.indexOf('"', xStart);
-            if (xEnd < 0) return;
-            status = raw.substring(xStart, xEnd);
-            searchFrom = xEnd;
+        String symbol = extractField(raw, "\"s\":\"", from);
+        String side = extractField(raw, "\"S\":\"", from);
+        String price = extractField(raw, "\"p\":\"", from);
+        String avgPrice = extractField(raw, "\"ap\":\"", from);
+        String qty = extractField(raw, "\"q\":\"", from);
+        if (symbol == null || side == null || price == null || avgPrice == null || qty == null) {
+            log.warn("[ForceOrder] 字段解析失败: {}", raw.length() > 300 ? raw.substring(0, 300) : raw);
+            return;
         }
 
-        int tIdx = raw.indexOf("\"T\":", searchFrom);
+        String status = extractField(raw, "\"X\":\"", from);
+        if (status == null) status = "FILLED";
+
         long tt = System.currentTimeMillis();
+        int tIdx = raw.indexOf("\"T\":", from);
         if (tIdx >= 0) {
             int tStart = tIdx + 4;
             int tEnd = raw.indexOf(',', tStart);
             if (tEnd < 0) tEnd = raw.indexOf('}', tStart);
-            if (tEnd < 0) return;
-            tt = Long.parseLong(raw.substring(tStart, tEnd));
+            if (tEnd > tStart) tt = Long.parseLong(raw.substring(tStart, tEnd));
         }
         final String finalStatus = status;
         final long tradeTime = tt;
@@ -445,6 +412,14 @@ public class BinanceWsClient implements SmartLifecycle {
     private static String extractQuoted(String raw, int start) {
         int end = raw.indexOf('"', start);
         return raw.substring(start, end);
+    }
+
+    private static String extractField(String raw, String key, int from) {
+        int idx = raw.indexOf(key, from);
+        if (idx < 0) return null;
+        int vStart = idx + key.length();
+        int vEnd = raw.indexOf('"', vStart);
+        return vEnd > vStart ? raw.substring(vStart, vEnd) : null;
     }
 
 }
