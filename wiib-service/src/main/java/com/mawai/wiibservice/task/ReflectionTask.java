@@ -90,15 +90,25 @@ public class ReflectionTask {
             return;
         }
 
-        // 3. LLM反思
+        // 3. LLM反思（最多重试3次，间隔递增）
         String reflectionPrompt = buildReflectionPrompt(recentVerifications, symbol);
-        String llmResponse;
-        try {
-            ChatClient chatClient = ChatClient.builder(aiAgentRuntimeManager.current().reflectionChatModel()).build();
-            llmResponse = LlmCallMode.STREAMING.call(chatClient, reflectionPrompt);
-        } catch (Exception e) {
-            log.warn("[Reflect] LLM反思调用失败 symbol={}", symbol, e);
-            return;
+        String llmResponse = null;
+        int maxRetries = 3;
+        for (int i = 0; i <= maxRetries; i++) {
+            try {
+                ChatClient chatClient = ChatClient.builder(aiAgentRuntimeManager.current().reflectionChatModel()).build();
+                llmResponse = LlmCallMode.STREAMING.call(chatClient, reflectionPrompt);
+                break;
+            } catch (Exception e) {
+                if (i < maxRetries) {
+                    log.warn("[Reflect] LLM反思调用失败，重试 {}/{} symbol={}: {}", i + 1, maxRetries, symbol, e.getMessage());
+                    long[] delays = {3000L, 10000L, 30000L};
+                    try { Thread.sleep(delays[i]); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
+                } else {
+                    log.warn("[Reflect] LLM反思调用失败，已重试{}次放弃 symbol={}", maxRetries, symbol, e);
+                    return;
+                }
+            }
         }
 
         // 4. 解析反思结果并写入记忆
