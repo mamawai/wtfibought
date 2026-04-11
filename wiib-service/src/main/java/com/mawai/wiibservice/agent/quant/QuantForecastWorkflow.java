@@ -11,7 +11,10 @@ import com.mawai.wiibservice.agent.quant.factor.*;
 import com.mawai.wiibservice.agent.quant.node.*;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibservice.config.DeribitClient;
+import com.mawai.wiibservice.service.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;
+import com.mawai.wiibservice.service.OrderFlowAggregator;
 import org.springframework.ai.chat.client.ChatClient;
 
 import java.util.HashMap;
@@ -45,6 +48,9 @@ public class QuantForecastWorkflow {
                                        BinanceRestClient binanceRestClient,
                                        MemoryService memoryService,
                                        ForceOrderService forceOrderService,
+                                       OrderFlowAggregator orderFlowAggregator,
+                                       DepthStreamCache depthStreamCache,
+                                       DeribitClient deribitClient,
                                        LlmCallMode deepCallMode,
                                        LlmCallMode shallowCallMode) throws Exception {
 
@@ -58,8 +64,8 @@ public class QuantForecastWorkflow {
         );
 
         StateGraph workflow = new StateGraph(createKeyStrategyFactory())
-                .addNode("collect_data",       node_async(new CollectDataNode(binanceRestClient, forceOrderService)))
-                .addNode("build_features",     node_async(new BuildFeaturesNode()))
+                .addNode("collect_data",       node_async(new CollectDataNode(binanceRestClient, forceOrderService, depthStreamCache, deribitClient)))
+                .addNode("build_features",     node_async(new BuildFeaturesNode(orderFlowAggregator)))
                 .addNode("regime_review",      node_async(new RegimeReviewNode(shallowChatClient, shallowCallMode, memoryService)))
                 .addNode("run_factors",        node_async(new RunFactorAgentsNode(agents)))
                 .addNode("run_judges",         node_async(new RunHorizonJudgesNode(memoryService)))
@@ -87,10 +93,13 @@ public class QuantForecastWorkflow {
             s.put("target_symbol", new ReplaceStrategy());
             // CollectDataNode输出
             s.put("kline_map", new ReplaceStrategy());
+            s.put("spot_kline_map", new ReplaceStrategy());
             s.put("ticker_map", new ReplaceStrategy());
+            s.put("spot_ticker_map", new ReplaceStrategy());
             s.put("funding_rate_map", new ReplaceStrategy());
             s.put("funding_rate_hist_map", new ReplaceStrategy());
             s.put("orderbook_map", new ReplaceStrategy());
+            s.put("spot_orderbook_map", new ReplaceStrategy());
             s.put("open_interest_map", new ReplaceStrategy());
             s.put("oi_hist_map", new ReplaceStrategy());
             s.put("long_short_ratio_map", new ReplaceStrategy());
@@ -100,6 +109,8 @@ public class QuantForecastWorkflow {
             s.put("fear_greed_data", new ReplaceStrategy());
             s.put("news_data", new ReplaceStrategy());
             s.put("data_available", new ReplaceStrategy());
+            s.put("dvol_data", new ReplaceStrategy());
+            s.put("option_book_summary", new ReplaceStrategy());
             // BuildFeaturesNode输出
             s.put("feature_snapshot", new ReplaceStrategy());
             s.put("indicator_map", new ReplaceStrategy());

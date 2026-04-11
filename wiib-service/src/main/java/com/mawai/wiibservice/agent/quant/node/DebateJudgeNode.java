@@ -150,6 +150,7 @@ public class DebateJudgeNode implements NodeAction {
                 7. 情绪极端：fearGreed<=20(极度恐惧)时做空要警惕反弹，>=80(极度贪婪)时做多要警惕回调
                 8. 爆仓信号：大量多头爆仓(liquidationPressure>0.5)可能是下跌末端，大量空头爆仓(<-0.5)可能是上涨末端
                 9. 聪明钱方向：topTraderBias与系统方向背离时需降低confidence
+                10. 期权IV信号：DVOL/ATM IV抬升但价格平静→隐含波动率定价上升，方向选择可能临近；skew极端→方向性押注集中
 
                 裁决原则：
                 - 不要因为双方都有道理就默认NO_TRADE，要做出明确判断
@@ -359,14 +360,19 @@ public class DebateJudgeNode implements NodeAction {
 
     private String buildMicroBlock(FeatureSnapshot snapshot) {
         if (snapshot == null) return "无";
-        return ("bidAskImbalance=%.3f tradeDelta=%.3f oiChange=%.3f fundingDev=%.3f lsrExtreme=%.3f" +
+        String base = ("futuresBidAsk=%.3f spotBidAsk=%.3f tradeDelta=%.3f intensity=%.1f largeBias=%.3f oiChange=%.3f fundingDev=%.3f lsrExtreme=%.3f basis=%.2fbps spotLead=%.3f" +
                 " liquidationPressure=%.3f(vol=%.0fUSDT) topTraderBias=%.3f takerPressure=%.3f" +
                 " fearGreed=%d(%s)").formatted(
-                snapshot.bidAskImbalance(), snapshot.tradeDelta(), snapshot.oiChangeRate(),
-                snapshot.fundingDeviation(), snapshot.lsrExtreme(),
+                snapshot.bidAskImbalance(), snapshot.spotBidAskImbalance(), snapshot.tradeDelta(),
+                snapshot.tradeIntensity(), snapshot.largeTradeBias(),
+                snapshot.oiChangeRate(),
+                snapshot.fundingDeviation(), snapshot.lsrExtreme(), snapshot.spotPerpBasisBps(), snapshot.spotLeadLagScore(),
                 snapshot.liquidationPressure(), snapshot.liquidationVolumeUsdt(),
                 snapshot.topTraderBias(), snapshot.takerBuySellPressure(),
                 snapshot.fearGreedIndex(), snapshot.fearGreedLabel());
+        String iv = snapshot.toIvSummary();
+        if (!"无数据".equals(iv)) base += " " + iv;
+        return base;
     }
 
     private String buildQualityText(FeatureSnapshot snapshot) {

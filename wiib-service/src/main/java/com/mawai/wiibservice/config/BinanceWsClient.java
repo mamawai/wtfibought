@@ -2,9 +2,11 @@ package com.mawai.wiibservice.config;
 
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.CryptoOrderService;
+import com.mawai.wiibservice.service.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;
 import com.mawai.wiibservice.service.FuturesLiquidationService;
 import com.mawai.wiibservice.service.FuturesSettlementService;
+import com.mawai.wiibservice.service.OrderFlowAggregator;
 import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +40,8 @@ public class BinanceWsClient implements SmartLifecycle {
     private final FuturesSettlementService futuresSettlementService;
     private final CacheService cacheService;
     private final ForceOrderService forceOrderService;
+    private final OrderFlowAggregator orderFlowAggregator;
+    private final DepthStreamCache depthStreamCache;
 
     private HttpClient httpClient;
     private ScheduledExecutorService scheduler;
@@ -48,6 +52,8 @@ public class BinanceWsClient implements SmartLifecycle {
     private WsConnection spotWs;
     private WsConnection futuresWs;
     private WsConnection forceOrderWs;
+    private WsConnection aggTradeWs;
+    private WsConnection depthWs;
 
     private static final String REDIS_KEY_PREFIX = "market:price:";
     private static final String REDIS_MARK_PRICE_KEY_PREFIX = "market:markprice:";
@@ -75,11 +81,19 @@ public class BinanceWsClient implements SmartLifecycle {
         forceOrderWs = new WsConnection("ForceOrder", this::buildForceOrderUrl, this::onForceOrderMessage,
                 ws -> log.info("ForceOrder WS已连接"), () -> {},
                 httpClient, scheduler, shutdown);
+        aggTradeWs = new WsConnection("AggTrade", this::buildAggTradeUrl, this::onAggTradeMessage,
+                ws -> log.info("AggTrade WS已连接"), () -> {},
+                httpClient, scheduler, shutdown);
+        depthWs = new WsConnection("Depth", this::buildDepthUrl, this::onDepthMessage,
+                ws -> log.info("Depth WS已连接"), () -> {},
+                httpClient, scheduler, shutdown);
 
         // 启动ws
         spotWs.connect();
         futuresWs.connect();
         forceOrderWs.connect();
+        aggTradeWs.connect();
+        depthWs.connect();
     }
 
     @Override
@@ -90,6 +104,8 @@ public class BinanceWsClient implements SmartLifecycle {
         if (spotWs != null) spotWs.close();
         if (futuresWs != null) futuresWs.close();
         if (forceOrderWs != null) forceOrderWs.close();
+        if (aggTradeWs != null) aggTradeWs.close();
+        if (depthWs != null) depthWs.close();
         if (scheduler != null) scheduler.shutdownNow();
         if (httpClient != null) httpClient.close();
     }
@@ -420,6 +436,113 @@ public class BinanceWsClient implements SmartLifecycle {
         int vStart = idx + key.length();
         int vEnd = raw.indexOf('"', vStart);
         return vEnd > vStart ? raw.substring(vStart, vEnd) : null;
+    }
+
+    // ── AggTrade（逐笔成交流）──
+
+    private String buildAggTradeUrl() {
+        String streams = props.getSymbols().stream()
+                .map(s -> s.toLowerCase() + "@aggTrade")
+                .reduce((a, b) -> a + "/" + b).orElse("");
+        if (props.getSymbols().size() == 1) {
+            return props.getFuturesWsUrl() + "/" + streams;
+        }
+        return props.getFuturesWsUrl().replace("/ws", "/stream?streams=" + streams);
+    }
+
+    private void onAggTradeMessage(String raw) {
+        // 组合流: {"stream":"btcusdt@aggTrade","data":{...}}
+        // 单流:   {"e":"aggTrade","E":...,"s":"BTCUSDT","p":"...","q":"...","m":true/false,...}
+        int pIdx = raw.indexOf("\"p\":\"");
+        int qIdx = raw.indexOf("\"q\":\"");
+        int sIdx = raw.indexOf("\"s\":\"");
+        if (pIdx < 0 || qIdx < 0 || sIdx < 0) return;
+
+        String symbol = extractQuoted(raw, sIdx + 5);
+        String priceStr = extractQuoted(raw, pIdx + 5);
+        String qtyStr = extractQuoted(raw, qIdx + 5);
+
+        // "m":true/false — 手动解析避免JSON开销
+        int mIdx = raw.indexOf("\"m\":", qIdx);
+        if (mIdx < 0) return;
+        boolean isBuyerMaker = raw.charAt(mIdx + 4) == 't';
+
+        // 时间戳
+        int tIdx = raw.indexOf("\"T\":", sIdx);
+        long ts = System.currentTimeMillis();
+        if (tIdx >= 0) {
+            int tStart = tIdx + 4;
+            int tEnd = raw.indexOf(',', tStart);
+            if (tEnd < 0) tEnd = raw.indexOf('}', tStart);
+            if (tEnd > tStart) ts = Long.parseLong(raw.substring(tStart, tEnd).trim());
+        }
+
+        try {
+            double price = Double.parseDouble(priceStr);
+            double qty = Double.parseDouble(qtyStr);
+            orderFlowAggregator.onAggTrade(symbol, price, qty, isBuyerMaker, ts);
+        } catch (NumberFormatException e) {
+            log.warn("[AggTrade] 数值解析失败: p={} q={}", priceStr, qtyStr);
+        }
+
+        // 按时间戳低10位概率触发，约千分之二的频率清理过期数据
+        if ((ts & 0x3FF) < 2) {
+            orderFlowAggregator.trim(symbol);
+        }
+    }
+
+    // ── Depth（深度快照流）──
+
+    private String buildDepthUrl() {
+        String streams = props.getSymbols().stream()
+                .map(s -> s.toLowerCase() + "@depth20@100ms")
+                .reduce((a, b) -> a + "/" + b).orElse("");
+        if (props.getSymbols().size() == 1) {
+            return props.getFuturesWsUrl() + "/" + streams;
+        }
+        return props.getFuturesWsUrl().replace("/ws", "/stream?streams=" + streams);
+    }
+
+    private void onDepthMessage(String raw) {
+        // depth20@100ms 推送的是完整 top20 快照，格式和 REST /fapi/v1/depth 一致
+        // 组合流: {"stream":"btcusdt@depth20@100ms","data":{"e":"depthUpdate","E":...,"s":"BTCUSDT","b":[...],"a":[...]}}
+        // 单流:   {"e":"depthUpdate","E":...,"s":"BTCUSDT","b":[...],"a":[...]}
+
+        int sIdx = raw.indexOf("\"s\":\"");
+        if (sIdx < 0) return;
+        String symbol = extractQuoted(raw, sIdx + 5);
+
+        // 提取 data 部分（组合流）或整体（单流）
+        int dataIdx = raw.indexOf("\"data\":");
+        String depthJson;
+        if (dataIdx >= 0) {
+            int dataStart = dataIdx + 7;
+            // data 对象一直到倒数第二个 }
+            int depth = 0;
+            int end = dataStart;
+            for (int i = dataStart; i < raw.length(); i++) {
+                if (raw.charAt(i) == '{') depth++;
+                else if (raw.charAt(i) == '}') { depth--; if (depth == 0) { end = i + 1; break; } }
+            }
+            depthJson = raw.substring(dataStart, end);
+        } else {
+            depthJson = raw;
+        }
+
+        // 解析交易所事件时间 E，用于 freshness 判定
+        int eIdx = depthJson.indexOf("\"E\":");
+        long eventTime = System.currentTimeMillis();
+        if (eIdx >= 0) {
+            int eStart = eIdx + 4;
+            int eEnd = depthJson.indexOf(',', eStart);
+            if (eEnd < 0) eEnd = depthJson.indexOf('}', eStart);
+            if (eEnd > eStart) eventTime = Long.parseLong(depthJson.substring(eStart, eEnd).trim());
+        }
+
+        // 转换字段名: WS用 "b"/"a"，REST用 "bids"/"asks"，统一为 REST 格式
+        depthJson = depthJson.replace("\"b\":", "\"bids\":").replace("\"a\":", "\"asks\":");
+
+        depthStreamCache.onDepthUpdate(symbol, depthJson, eventTime);
     }
 
 }

@@ -18,15 +18,21 @@ public class MicrostructureAgent implements FactorAgent {
     public List<AgentVote> evaluate(FeatureSnapshot s) {
         double bia = s.bidAskImbalance();
         double td = s.tradeDelta();
+        double tradeIntensity = s.tradeIntensity();
+        double largeBias = s.largeTradeBias();
         double oi = s.oiChangeRate();
         double liqPressure = s.liquidationPressure();
         double liqVol = s.liquidationVolumeUsdt();
         double topTrader = s.topTraderBias();
         double takerPressure = s.takerBuySellPressure();
+        double spotBia = s.spotBidAskImbalance();
+        double spotLeadLag = s.spotLeadLagScore();
+        double basisBps = s.spotPerpBasisBps();
         BigDecimal lastPrice = s.lastPrice();
         Map<String, BigDecimal> pc = s.priceChanges();
         double price5mBps = pc != null && pc.containsKey("5m")
                 ? pc.get("5m").doubleValue() * 100 : 0;
+        double spotPrice5mBps = s.spotPriceChange5m() != null ? s.spotPriceChange5m().doubleValue() * 100 : 0;
 
         double fundDev = s.fundingDeviation();
         double fundTrend = s.fundingRateTrend();
@@ -35,7 +41,10 @@ public class MicrostructureAgent implements FactorAgent {
 
         // === 各因子独立评分 ===
         double bidAskScore = clamp(bia * 2.5);
-        double deltaScore = clamp(td);
+        // aggTrade 可用时用强度加权 delta，放大高活跃度下的信号
+        double intensityBoost = tradeIntensity > 1.5 ? Math.min(1.3, 1.0 + (tradeIntensity - 1.5) * 0.2) : 1.0;
+        double deltaScore = clamp(td * intensityBoost);
+        double largeBiasScore = clamp(largeBias);
 
         // OI-价格共振
         double oiScore = 0;
@@ -51,6 +60,10 @@ public class MicrostructureAgent implements FactorAgent {
         double liqScore = clamp(-liqPressure);
         double topTraderScore = clamp(topTrader);
         double takerScore = clamp(takerPressure);
+        double spotBookScore = clamp(spotBia * 2.0);
+        double leadLagScore = clamp(spotLeadLag);
+        double basisScore = clamp(-basisBps / 12.0);
+        double spotConfirmScore = calcSpotConfirmScore(spotPrice5mBps, price5mBps, spotBia);
 
         // 资金费率复合（反向：高费率=多头拥挤→空头信号）
         double fundingRaw = -(0.5 * fundDev + 0.3 * fundExtreme + 0.2 * fundTrend);
@@ -61,20 +74,32 @@ public class MicrostructureAgent implements FactorAgent {
         // === 0-10min: 盘口+taker主导，衍生品情绪权重低 ===
         List<String> flags0 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "0_10");
         addSentimentFlags(flags0, fundDev, lsr);
-        double raw0 = 0.22 * bidAskScore + 0.18 * deltaScore + 0.13 * oiScore
-                     + 0.13 * liqScore + 0.09 * topTraderScore + 0.13 * takerScore
-                     + 0.05 * fundingScore + 0.07 * lsrScore;
+        addCrossMarketFlags(flags0, spotBia, spotPrice5mBps, price5mBps, basisBps, spotLeadLag);
+        double raw0 = 0.17 * bidAskScore + 0.11 * deltaScore + 0.03 * largeBiasScore + 0.10 * oiScore
+                     + 0.10 * liqScore + 0.07 * topTraderScore + 0.11 * takerScore
+                     + 0.08 * spotBookScore + 0.06 * spotConfirmScore + 0.04 * leadLagScore
+                     + 0.03 * fundingScore + 0.05 * lsrScore + 0.05 * basisScore;
 
         // === 10-20min: OI+大户升权，资金费率权重提升 ===
         List<String> flags1 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "10_20");
         addSentimentFlags(flags1, fundDev, lsr);
-        double raw1 = 0.08 * bidAskScore + 0.08 * deltaScore + 0.17 * oiScore
-                     + 0.17 * liqScore + 0.17 * topTraderScore + 0.18 * takerScore
-                     + 0.10 * fundingScore + 0.05 * lsrScore;
+        addCrossMarketFlags(flags1, spotBia, spotPrice5mBps, price5mBps, basisBps, spotLeadLag);
+        double raw1 = 0.05 * bidAskScore + 0.03 * deltaScore + 0.02 * largeBiasScore + 0.13 * oiScore
+                     + 0.12 * liqScore + 0.12 * topTraderScore + 0.13 * takerScore
+                     + 0.06 * spotBookScore + 0.07 * spotConfirmScore + 0.05 * leadLagScore
+                     + 0.08 * fundingScore + 0.04 * lsrScore + 0.10 * basisScore;
+
+        // 大单/高频 flags 加到全部 horizon
+        for (List<String> fl : List.of(flags0, flags1)) {
+            if (Math.abs(largeBias) > 0.3) fl.add(largeBias > 0 ? "LARGE_BUY_DOMINANT" : "LARGE_SELL_DOMINANT");
+            if (tradeIntensity > 2.0) fl.add("HIGH_TRADE_INTENSITY");
+        }
 
         double signalStrength = (Math.abs(bia) + Math.abs(td) + Math.abs(takerPressure)
                 + Math.min(1, Math.abs(oi) * 10) + Math.abs(liqPressure) + Math.abs(topTrader)
-                + Math.abs(fundingRaw) + Math.abs(lsr)) / 8.0;
+                + Math.abs(fundingRaw) + Math.abs(lsr) + Math.abs(spotBia)
+                + Math.abs(spotLeadLag) + Math.min(1, Math.abs(basisBps) / 12.0)
+                + Math.abs(largeBias)) / 12.0;
         double conf = Math.min(1.0, signalStrength * 1.5);
 
         int volBps = s.atr1m() != null && lastPrice != null && lastPrice.signum() > 0
@@ -85,9 +110,11 @@ public class MicrostructureAgent implements FactorAgent {
         // === 20-30min: 衍生品情绪+OI/大户主导，盘口信号衰减 ===
         List<String> flags2 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "20_30");
         addSentimentFlags(flags2, fundDev, lsr);
-        double raw2 = 0.04 * bidAskScore + 0.05 * deltaScore + 0.18 * oiScore
-                     + 0.20 * liqScore + 0.15 * topTraderScore + 0.18 * takerScore
-                     + 0.12 * fundingScore + 0.08 * lsrScore;
+        addCrossMarketFlags(flags2, spotBia, spotPrice5mBps, price5mBps, basisBps, spotLeadLag);
+        double raw2 = 0.03 * bidAskScore + 0.02 * deltaScore + 0.02 * largeBiasScore + 0.15 * oiScore
+                     + 0.16 * liqScore + 0.12 * topTraderScore + 0.14 * takerScore
+                     + 0.04 * spotBookScore + 0.05 * spotConfirmScore + 0.03 * leadLagScore
+                     + 0.10 * fundingScore + 0.07 * lsrScore + 0.07 * basisScore;
         double conf2 = conf * 0.35;
 
         List<AgentVote> votes = new ArrayList<>(3);
@@ -97,9 +124,10 @@ public class MicrostructureAgent implements FactorAgent {
                 ? AgentVote.noTrade(name(), "20_30", "MICRO_TOO_WEAK")
                 : buildVote("20_30", raw2, conf2, volBps, flags2));
 
-        log.info("[Q3.micro] bia={} td={} oi={} liq={} topTrader={} taker={} funding={} lsr={} → scores[{},{},{}] conf={}",
-                fmt(bia), fmt(td), fmt(oi), fmt(liqPressure), fmt(topTrader), fmt(takerPressure),
-                fmt(fundingRaw), fmt(lsr),
+        log.info("[Q3.micro] futBia={} spotBia={} td={} largeBias={} intensity={} oi={} liq={} topTrader={} taker={} basis={} spotLead={} funding={} lsr={} → scores[{},{},{}] conf={}",
+                fmt(bia), fmt(spotBia), fmt(td), fmt(largeBias), String.format("%.1f", tradeIntensity),
+                fmt(oi), fmt(liqPressure), fmt(topTrader), fmt(takerPressure),
+                fmt(basisBps / 10.0), fmt(spotLeadLag), fmt(fundingRaw), fmt(lsr),
                 fmt(raw0), fmt(raw1), fmt(raw2), String.format("%.2f", conf));
         return votes;
     }
@@ -107,6 +135,34 @@ public class MicrostructureAgent implements FactorAgent {
     private void addSentimentFlags(List<String> flags, double fundDev, double lsr) {
         if (Math.abs(fundDev) > 0.5) flags.add(fundDev > 0 ? "HIGH_FUNDING" : "LOW_FUNDING");
         if (Math.abs(lsr) > 0.5) flags.add(lsr > 0 ? "LSR_EXTREME_LONG" : "LSR_EXTREME_SHORT");
+    }
+
+    private void addCrossMarketFlags(List<String> flags, double spotBia, double spotPrice5mBps,
+                                     double perpPrice5mBps, double basisBps, double spotLeadLag) {
+        if (Math.abs(spotBia) > 0.20) flags.add(spotBia > 0 ? "SPOT_BID_DOMINANT" : "SPOT_ASK_DOMINANT");
+        if (Math.abs(basisBps) >= 8) flags.add(basisBps > 0 ? "PERP_PREMIUM_RICH" : "PERP_DISCOUNT_DEEP");
+        if (Math.abs(spotLeadLag) > 0.35) flags.add(spotLeadLag > 0 ? "SPOT_STRONGER_THAN_PERP" : "PERP_STRONGER_THAN_SPOT");
+
+        if (Math.abs(spotPrice5mBps) < 2 || Math.abs(perpPrice5mBps) < 2) return;
+        boolean sameDirection = Math.signum(spotPrice5mBps) == Math.signum(perpPrice5mBps);
+        if (sameDirection) {
+            flags.add(spotPrice5mBps > 0 ? "SPOT_PERP_CONFIRM_UP" : "SPOT_PERP_CONFIRM_DOWN");
+        } else {
+            flags.add("SPOT_PERP_DIVERGENCE");
+        }
+    }
+
+    private double calcSpotConfirmScore(double spotPrice5mBps, double perpPrice5mBps, double spotBia) {
+        double base = 0;
+        if (Math.abs(spotPrice5mBps) > 1.5 && Math.abs(perpPrice5mBps) > 1.5) {
+            boolean sameDirection = Math.signum(spotPrice5mBps) == Math.signum(perpPrice5mBps);
+            if (sameDirection) {
+                base = 0.55 * Math.signum(spotPrice5mBps);
+            } else {
+                base = -0.45 * Math.signum(perpPrice5mBps != 0 ? perpPrice5mBps : spotPrice5mBps);
+            }
+        }
+        return clamp(base + spotBia * 0.30);
     }
 
     private List<String> buildFlags(double bia, double td, double oi, double price5mBps,
