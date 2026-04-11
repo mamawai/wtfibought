@@ -36,6 +36,7 @@ public class VerificationService {
     private final QuantHorizonForecastMapper horizonMapper;
 
     private static final int NO_TRADE_THRESHOLD_BPS = 10;
+    private static final BigDecimal HIGH_REVERSAL_SEVERITY = new BigDecimal("0.40");
     private static final ZoneId SYSTEM_ZONE = ZoneId.systemDefault();
 
     public record VerificationCycleResult(
@@ -214,10 +215,22 @@ public class VerificationService {
             v.setActualChangeBps(changeBps);
             v.setMaxFavorableBps(path.maxFavorableBps);
             v.setMaxAdverseBps(path.maxAdverseBps);
+
+            BigDecimal reversalSeverity;
+            if ("NO_TRADE".equals(f.getDirection())) {
+                reversalSeverity = null;
+            } else if (path.maxAdverseBps + path.maxFavorableBps > 0) {
+                reversalSeverity = BigDecimal.valueOf(path.maxAdverseBps)
+                        .divide(BigDecimal.valueOf(path.maxAdverseBps + path.maxFavorableBps), 4, RoundingMode.HALF_UP);
+            } else {
+                reversalSeverity = BigDecimal.ZERO;
+            }
+            v.setReversalSeverity(reversalSeverity);
+
             v.setTp1HitFirst(path.tp1HitFirst);
             v.setPredictionCorrect(correct);
             v.setTradeQuality(tradeQuality);
-            v.setResultSummary(buildResultSummary(f.getDirection(), changeBps, tradeQuality, path));
+            v.setResultSummary(buildResultSummary(f.getDirection(), changeBps, tradeQuality, path, reversalSeverity));
             v.setVerifiedAt(LocalDateTime.now(SYSTEM_ZONE));
             verificationMapper.insert(v);
             verified++;
@@ -394,7 +407,7 @@ public class VerificationService {
     }
 
     private String buildResultSummary(String direction, int changeBps,
-                                       String quality, PathResult path) {
+                                       String quality, PathResult path, BigDecimal reversalSeverity) {
         String actualDir = changeBps > 0 ? "上涨" : changeBps < 0 ? "下跌" : "持平";
         String pct = bpsToPercent(Math.abs(changeBps));
 
@@ -430,6 +443,10 @@ public class VerificationService {
             if (path.tp1HitFirst != null) {
                 sb.append(path.tp1HitFirst ? "，止盈先触达" : "，止损先触达");
             }
+        }
+
+        if (reversalSeverity != null && reversalSeverity.compareTo(HIGH_REVERSAL_SEVERITY) >= 0) {
+            sb.append("，段内反转风险显著");
         }
 
         sb.append("，评级");

@@ -102,9 +102,14 @@ public class RegimeReviewNode implements NodeAction {
         }
 
         // 微结构摘要
-        String microText = "盘口失衡=%.3f 主动买卖delta=%.3f OI变化率=%.3f 资金费率偏离=%.3f 资金费率趋势=%.3f 多空比极端度=%.3f"
-                .formatted(snapshot.bidAskImbalance(), snapshot.tradeDelta(), snapshot.oiChangeRate(),
-                        snapshot.fundingDeviation(), snapshot.fundingRateTrend(), snapshot.lsrExtreme());
+        String microText = "合约盘口失衡=%.3f 现货盘口失衡=%.3f 主动买卖delta=%.3f 成交强度=%.1f 大单偏差=%.3f OI变化率=%.3f 资金费率偏离=%.3f 资金费率趋势=%.3f 多空比极端度=%.3f 基差=%.2fbps 现货强弱代理=%.3f"
+                .formatted(snapshot.bidAskImbalance(), snapshot.spotBidAskImbalance(), snapshot.tradeDelta(),
+                        snapshot.tradeIntensity(), snapshot.largeTradeBias(),
+                        snapshot.oiChangeRate(),
+                        snapshot.fundingDeviation(), snapshot.fundingRateTrend(), snapshot.lsrExtreme(),
+                        snapshot.spotPerpBasisBps(), snapshot.spotLeadLagScore());
+
+        String ivText = snapshot.toIvSummary();
 
         String qualityText = snapshot.qualityFlags() != null && !snapshot.qualityFlags().isEmpty()
                 ? String.join(", ", snapshot.qualityFlags()) : "正常";
@@ -119,6 +124,7 @@ public class RegimeReviewNode implements NodeAction {
                 %s
                 【多周期涨跌幅】%s
                 【微结构快照】%s
+                【期权隐含波动率】%s
                 【布林带收缩】%s   【ATR(5m)】%s
                 【数据质量】%s
 
@@ -137,6 +143,7 @@ public class RegimeReviewNode implements NodeAction {
                 2. ADX在20-25之间是灰色地带，结合涨跌幅和均线排列判断更像趋势还是震荡
                 3. 当前状态是否处于转换临界点？（如趋势即将衰竭、挤压即将突破）
                 4. 微结构信号（资金费率、OI、多空比）是否支持当前regime判断？
+                5. 期权IV：价格平静但DVOL/ATM IV抬升→聪明钱布局；skew极端→方向性押注集中
 
                 严格返回JSON（不要markdown包裹）：
                 {
@@ -156,7 +163,7 @@ public class RegimeReviewNode implements NodeAction {
                 """.formatted(
                 snapshot.regime().name(),
                 snapshot.lastPrice() != null ? snapshot.lastPrice().toPlainString() : "未知",
-                indicatorBlock.toString(), priceBlock.toString(), microText,
+                indicatorBlock.toString(), priceBlock.toString(), microText, ivText,
                 snapshot.bollSqueeze() ? "是" : "否",
                 snapshot.atr5m() != null ? snapshot.atr5m().toPlainString() : "无",
                 qualityText,
@@ -205,20 +212,8 @@ public class RegimeReviewNode implements NodeAction {
                 }
             }
 
-            // 无论regime是否修正，都重建snapshot写入confidence/transition
-            FeatureSnapshot updated = new FeatureSnapshot(
-                    snapshot.symbol(), snapshot.snapshotTime(), snapshot.lastPrice(),
-                    snapshot.indicatorsByTimeframe(), snapshot.priceChanges(),
-                    snapshot.bidAskImbalance(), snapshot.tradeDelta(), snapshot.oiChangeRate(),
-                    snapshot.fundingDeviation(), snapshot.fundingRateTrend(), snapshot.fundingRateExtreme(),
-                    snapshot.lsrExtreme(),
-                    snapshot.liquidationPressure(), snapshot.liquidationVolumeUsdt(),
-                    snapshot.topTraderBias(), snapshot.takerBuySellPressure(),
-                    snapshot.fearGreedIndex(), snapshot.fearGreedLabel(),
-                    snapshot.atr1m(), snapshot.atr5m(), snapshot.bollBandwidth(), snapshot.bollSqueeze(),
-                    finalRegime,
-                    snapshot.newsItems(), snapshot.qualityFlags(),
-                    confidence, transitionSignal);
+            FeatureSnapshot updated = snapshot.withRegimeReview(
+                    finalRegime, snapshot.qualityFlags(), confidence, transitionSignal);
             result.put("feature_snapshot", updated);
 
             log.info("[Q2.5.end] regime_review完成 总耗时{}ms", System.currentTimeMillis() - startMs);
@@ -235,19 +230,8 @@ public class RegimeReviewNode implements NodeAction {
                 snapshot.qualityFlags() != null ? snapshot.qualityFlags() : List.of());
         flags.add("REGIME_REVIEW_FALLBACK");
 
-        FeatureSnapshot updated = new FeatureSnapshot(
-                snapshot.symbol(), snapshot.snapshotTime(), snapshot.lastPrice(),
-                snapshot.indicatorsByTimeframe(), snapshot.priceChanges(),
-                snapshot.bidAskImbalance(), snapshot.tradeDelta(), snapshot.oiChangeRate(),
-                snapshot.fundingDeviation(), snapshot.fundingRateTrend(), snapshot.fundingRateExtreme(),
-                snapshot.lsrExtreme(),
-                snapshot.liquidationPressure(), snapshot.liquidationVolumeUsdt(),
-                snapshot.topTraderBias(), snapshot.takerBuySellPressure(),
-                snapshot.fearGreedIndex(), snapshot.fearGreedLabel(),
-                snapshot.atr1m(), snapshot.atr5m(), snapshot.bollBandwidth(), snapshot.bollSqueeze(),
-                snapshot.regime(),
-                snapshot.newsItems(), List.copyOf(flags),
-                0.5, "NONE");
+        FeatureSnapshot updated = snapshot.withRegimeReview(
+                snapshot.regime(), List.copyOf(flags), 0.5, "NONE");
         return Map.of("feature_snapshot", updated,
                 "regime_confidence", 0.5, "regime_transition", "NONE");
     }

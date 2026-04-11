@@ -8,9 +8,12 @@ import com.mawai.wiibservice.agent.quant.QuantForecastWorkflow;
 import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibservice.config.DeribitClient;
 import com.mawai.wiibservice.mapper.*;
 import com.mawai.wiibservice.service.CryptoPositionService;
+import com.mawai.wiibservice.service.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;
+import com.mawai.wiibservice.service.OrderFlowAggregator;
 import com.mawai.wiibservice.service.UserService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
@@ -39,6 +42,9 @@ public class AiAgentConfig {
     private final BinanceRestClient binanceRestClient;
     private final MemoryService memoryService;
     private final ForceOrderService forceOrderService;
+    private final OrderFlowAggregator orderFlowAggregator;
+    private final DepthStreamCache depthStreamCache;
+    private final DeribitClient deribitClient;
 
     public AiAgentConfig(UserMapper userMapper,
                          UserAssetSnapshotMapper snapshotMapper,
@@ -56,7 +62,10 @@ public class AiAgentConfig {
                          UserService userService,
                          BinanceRestClient binanceRestClient,
                          MemoryService memoryService,
-                         ForceOrderService forceOrderService) {
+                         ForceOrderService forceOrderService,
+                         OrderFlowAggregator orderFlowAggregator,
+                         DepthStreamCache depthStreamCache,
+                         DeribitClient deribitClient) {
         this.userMapper = userMapper;
         this.snapshotMapper = snapshotMapper;
         this.positionMapper = positionMapper;
@@ -74,6 +83,9 @@ public class AiAgentConfig {
         this.binanceRestClient = binanceRestClient;
         this.memoryService = memoryService;
         this.forceOrderService = forceOrderService;
+        this.orderFlowAggregator = orderFlowAggregator;
+        this.depthStreamCache = depthStreamCache;
+        this.deribitClient = deribitClient;
     }
 
     public ReactAgent createBehaviorAgent(ChatModel chatModel, Consumer<String> onProgress) {
@@ -107,6 +119,7 @@ public class AiAgentConfig {
         ChatClient.Builder deepClient = ChatClient.builder(chatModel);
         ChatClient.Builder shallowClient = ChatClient.builder(chatModel);
         return QuantForecastWorkflow.build(deepClient, shallowClient, binanceRestClient, memoryService,
-                forceOrderService, LlmCallMode.STREAMING, LlmCallMode.STREAMING);
+                forceOrderService, orderFlowAggregator, depthStreamCache, deribitClient,
+                LlmCallMode.STREAMING, LlmCallMode.STREAMING);
     }
 }

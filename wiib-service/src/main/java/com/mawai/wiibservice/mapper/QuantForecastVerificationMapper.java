@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
+import java.util.Map;
 
 @Mapper
 public interface QuantForecastVerificationMapper extends BaseMapper<QuantForecastVerification> {
@@ -21,4 +22,13 @@ public interface QuantForecastVerificationMapper extends BaseMapper<QuantForecas
 
     @Select("SELECT COUNT(*) FROM quant_forecast_verification WHERE cycle_id = #{cycleId}")
     int countByCycleId(@Param("cycleId") String cycleId);
+
+    @Select("SELECT symbol, horizon, " +
+            "ROUND(AVG(reversal_severity), 4) AS avg_reversal_severity, " +
+            "ROUND(COUNT(CASE WHEN reversal_severity >= 0.40 THEN 1 END)::numeric " +
+            "/ NULLIF(COUNT(reversal_severity), 0), 4) AS high_reversal_rate " +
+            "FROM quant_forecast_verification " +
+            "WHERE symbol = #{symbol} AND reversal_severity IS NOT NULL " +
+            "GROUP BY symbol, horizon ORDER BY horizon")
+    List<Map<String, Object>> selectReversalStats(@Param("symbol") String symbol);
 }

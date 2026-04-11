@@ -28,6 +28,12 @@ public class RegimeAgent implements FactorAgent {
         double regimeConf = s.regimeConfidence();
         String transition = s.regimeTransition();
 
+        // 期权 IV 信号
+        double dvolIndex = s.dvolIndex();
+        double atmIv = s.atmIv();
+        double ivSkew = s.ivSkew25d();
+        boolean hasIv = dvolIndex > 0 || atmIv > 0;
+
         List<String> reasons = new ArrayList<>();
         reasons.add("REGIME_" + regime.name());
         if (regimeConf < 0.4) reasons.add("LOW_REGIME_CONF");
@@ -114,6 +120,29 @@ public class RegimeAgent implements FactorAgent {
             }
         }
 
+        // IV 信号调整
+        if (hasIv) {
+            // skew 方向性押注: 正=call贵(看涨), 负=put贵(看空)
+            if (Math.abs(ivSkew) > 2.0) {
+                double skewBias = Math.clamp(ivSkew / 10.0, -0.3, 0.3);
+                s0 += skewBias * 0.3;
+                s1 += skewBias * 0.5;
+                s2 += skewBias * 0.6;
+                reasons.add(ivSkew > 0 ? "IV_SKEW_CALL_RICH" : "IV_SKEW_PUT_RICH");
+            }
+            // 高IV + squeeze = 聪明钱布局，提升 confidence
+            double ivLevel = atmIv > 0 ? atmIv : dvolIndex;
+            if (ivLevel > 60 && regime == MarketRegime.SQUEEZE) {
+                conf1 *= 1.15;
+                conf2 *= 1.20;
+                reasons.add("HIGH_IV_SQUEEZE");
+            }
+            // 极高IV(>80) 在非SHOCK下 → 风险预警
+            if (ivLevel > 80 && regime != MarketRegime.SHOCK) {
+                riskFlags.add("ELEVATED_IMPLIED_VOL");
+            }
+        }
+
         // cap confidence to [0,1]
         conf0 = Math.clamp(conf0, 0, 1);
         conf1 = Math.clamp(conf1, 0, 1);
@@ -121,8 +150,9 @@ public class RegimeAgent implements FactorAgent {
 
         int volBps = estimateVolBps(s);
 
-        log.info("[Q3.regime] regime={} regimeConf={} transition={} trendDir={} → scores[{},{},{}] confs[{},{},{}] riskFlags={}",
+        log.info("[Q3.regime] regime={} regimeConf={} transition={} trendDir={} dvol={} atmIv={} skew={} → scores[{},{},{}] confs[{},{},{}] riskFlags={}",
                 regime, String.format("%.2f", regimeConf), transition, String.format("%.3f", trendDir),
+                String.format("%.0f", dvolIndex), String.format("%.0f", atmIv), String.format("%.1f", ivSkew),
                 String.format("%.3f", s0), String.format("%.3f", s1), String.format("%.3f", s2),
                 String.format("%.2f", conf0), String.format("%.2f", conf1), String.format("%.2f", conf2),
                 riskFlags);

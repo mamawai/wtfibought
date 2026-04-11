@@ -32,18 +32,20 @@ public class RiskGate {
      */
     public static RiskResult apply(List<HorizonForecast> forecasts, MarketRegime regime,
                                     BigDecimal atr5m, BigDecimal lastPrice,
-                                    List<String> qualityFlags, int fearGreedIndex) {
+                                    List<String> qualityFlags, int fearGreedIndex,
+                                    double dvolIndex) {
         if (forecasts == null || forecasts.isEmpty()) {
             return new RiskResult(List.of(), "NO_DATA");
         }
 
         double volPenalty = calcVolatilityPenalty(atr5m, lastPrice);
         double dataPenalty = calcDataPenalty(qualityFlags);
+        double ivPenalty = calcIvPenalty(dvolIndex);
         List<HorizonForecast> clipped = new ArrayList<>(forecasts.size());
         List<String> riskActions = new ArrayList<>();
 
         for (HorizonForecast f : forecasts) {
-            HorizonForecast result = clipSingle(f, regime, volPenalty, dataPenalty, qualityFlags, fearGreedIndex, riskActions);
+            HorizonForecast result = clipSingle(f, regime, volPenalty, dataPenalty, ivPenalty, qualityFlags, fearGreedIndex, riskActions);
             clipped.add(result);
         }
 
@@ -60,6 +62,7 @@ public class RiskGate {
     private static HorizonForecast clipSingle(HorizonForecast f, MarketRegime regime,
                                                double volPenalty,
                                                double dataPenalty,
+                                               double ivPenalty,
                                                List<String> qualityFlags,
                                                int fearGreedIndex,
                                                List<String> actions) {
@@ -105,10 +108,10 @@ public class RiskGate {
             }
         }
 
-        // 动态仓位: basePct × confidence × (1-disagreement) × volatilityPenalty × confMultiplier
+        // 动态仓位: basePct × confidence × (1-disagreement) × volatilityPenalty × ivPenalty × confMultiplier
         double effectiveConfidence = f.confidence() * confMultiplier;
         double agreementFactor = Math.max(0.60, 1.0 - f.disagreement());
-        double adjustedPos = maxPos * effectiveConfidence * agreementFactor * volPenalty * dataPenalty;
+        double adjustedPos = maxPos * effectiveConfidence * agreementFactor * volPenalty * dataPenalty * ivPenalty;
         adjustedPos = Math.clamp(adjustedPos, 0.01, maxPos);
 
         if (volPenalty < 0.8) {
@@ -117,10 +120,13 @@ public class RiskGate {
         if (dataPenalty < 1.0) {
             actions.add("DATA_PENALTY_" + f.horizon());
         }
+        if (ivPenalty < 1.0) {
+            actions.add("HIGH_IV_PENALTY_" + f.horizon());
+        }
 
-        log.info("[Q5.clip] {} {} regime={} volPenalty={} dataPenalty={} qualityFlags={} → lev={} pos={}% ",
+        log.info("[Q5.clip] {} {} regime={} volPenalty={} dataPenalty={} ivPenalty={} qualityFlags={} → lev={} pos={}% ",
                 f.horizon(), f.direction(), regime, String.format("%.2f", volPenalty), String.format("%.2f", dataPenalty),
-                qualityFlags,
+                String.format("%.2f", ivPenalty), qualityFlags,
                 maxLev, String.format("%.2f", adjustedPos * 100));
 
         return new HorizonForecast(
@@ -160,7 +166,27 @@ public class RiskGate {
                 || flag.equals("NO_ATR_1M") || flag.equals("NO_BOLL_1M"))) {
             return 0.90;
         }
+        if (qualityFlags.stream().anyMatch(flag ->
+                flag.equals("NO_SPOT_KLINE_1M")
+                        || flag.equals("NO_SPOT_TICKER")
+                        || flag.equals("NO_SPOT_ORDERBOOK"))) {
+            return 0.95;
+        }
         return 1.0;
+    }
+
+    /**
+     * 期权IV惩罚因子：DVOL越高，仓位越保守。
+     * dvol < 50 → 1.0（正常）
+     * dvol 50-80 → 线性衰减到0.7
+     * dvol > 80 → 0.5（极端恐慌）
+     * dvol=0（无数据） → 1.0（不惩罚）
+     */
+    private static double calcIvPenalty(double dvolIndex) {
+        if (dvolIndex <= 0) return 1.0;
+        if (dvolIndex < 50) return 1.0;
+        if (dvolIndex > 80) return 0.5;
+        return 1.0 - (dvolIndex - 50) / 30.0 * 0.3;
     }
 
     public record RiskResult(List<HorizonForecast> forecasts, String riskStatus) {}

@@ -31,6 +31,9 @@
 - 大户持仓趋势
 - 主动买卖量比趋势
 - 恐惧贪婪指数
+- 现货-合约联动（基差、现货领先/滞后代理、现货盘口）
+- aggTrade 实时订单流（tradeDelta / tradeIntensity / largeTradeBias）
+- 期权隐含波动率（DVOL / ATM IV / 25d skew / term structure）
 - 波动率与区间估计
 - 止损止盈参数
 - 因子投票评分
@@ -155,8 +158,9 @@ flowchart TB
     end
 
     subgraph SOURCE["外部数据源"]
-        S1["Binance REST / WS"]
+        S1["Binance REST / WS<br/>(K线/盘口/aggTrade/depth)"]
         S2["News API"]
+        S3["Deribit Public API<br/>(DVOL/期权IV)"]
     end
 
     subgraph FEEDBACK["离线验证与学习闭环"]
@@ -170,6 +174,7 @@ flowchart TB
 
     S1 --> F1
     S2 --> F1
+    S3 --> F1
 
     F1 --> F2 --> F3 --> F4 --> F5 --> F6 --> F7 --> F8 --> F9
 
@@ -298,8 +303,8 @@ List<FactorAgent> agents = List.of(
     new NewsEventAgent(shallowChatClient, shallowCallMode));
 
 StateGraph workflow = new StateGraph(createKeyStrategyFactory())
-    .addNode("collect_data",       node_async(new CollectDataNode(binanceRestClient, forceOrderService)))
-    .addNode("build_features",     node_async(new BuildFeaturesNode()))
+    .addNode("collect_data",       node_async(new CollectDataNode(binanceRestClient, forceOrderService, depthStreamCache, deribitClient)))
+    .addNode("build_features",     node_async(new BuildFeaturesNode(orderFlowAggregator)))
     .addNode("regime_review",      node_async(new RegimeReviewNode(shallowChatClient, shallowCallMode, memoryService)))
     .addNode("run_factors",        node_async(new RunFactorAgentsNode(agents)))
     .addNode("run_judges",         node_async(new RunHorizonJudgesNode(memoryService)))
@@ -325,11 +330,14 @@ workflow.addEdge("generate_report", END);
 | Key | 类型 | 产出节点 | 说明 |
 |-----|------|----------|------|
 | `target_symbol` | `String` | 外部输入 | 交易对，如 `BTCUSDT` |
-| `kline_map` | `Map<String,String>` | CollectDataNode | 6 周期 K 线 JSON |
-| `ticker_map` | `Map<String,String>` | CollectDataNode | 24h Ticker JSON |
+| `kline_map` | `Map<String,String>` | CollectDataNode | 6 周期合约 K 线 JSON |
+| `spot_kline_map` | `Map<String,String>` | CollectDataNode | 现货 K 线 JSON（1m/5m） |
+| `ticker_map` | `Map<String,String>` | CollectDataNode | 合约 24h Ticker JSON |
+| `spot_ticker_map` | `Map<String,String>` | CollectDataNode | 现货 24h Ticker JSON |
 | `funding_rate_map` | `Map<String,String>` | CollectDataNode | 资金费率 JSON |
 | `funding_rate_hist_map` | `Map<String,String>` | CollectDataNode | 历史资金费率 JSON |
-| `orderbook_map` | `Map<String,String>` | CollectDataNode | 深度盘口 JSON |
+| `orderbook_map` | `Map<String,String>` | CollectDataNode | 合约深度盘口 JSON（WS优先，REST兜底） |
+| `spot_orderbook_map` | `Map<String,String>` | CollectDataNode | 现货深度盘口 JSON |
 | `open_interest_map` | `Map<String,String>` | CollectDataNode | 持仓量 JSON |
 | `oi_hist_map` | `Map<String,String>` | CollectDataNode | 持仓量历史 JSON |
 | `long_short_ratio_map` | `Map<String,String>` | CollectDataNode | 多空比 JSON |
@@ -339,6 +347,8 @@ workflow.addEdge("generate_report", END);
 | `fear_greed_data` | `String` | CollectDataNode | 恐惧贪婪指数 JSON |
 | `news_data` | `String` | CollectDataNode | 新闻数据 JSON |
 | `data_available` | `Boolean` | CollectDataNode | 数据是否可用 |
+| `dvol_data` | `String` | CollectDataNode | Deribit DVOL 波动率指数 JSON |
+| `option_book_summary` | `String` | CollectDataNode | Deribit 期权 book summary JSON |
 | `feature_snapshot` | `FeatureSnapshot` | BuildFeaturesNode | 特征快照 |
 | `indicator_map` | `Map` | BuildFeaturesNode | 多周期技术指标 |
 | `price_change_map` | `Map` | BuildFeaturesNode | 价格变化率 |
@@ -414,11 +424,14 @@ public class RunFactorAgentsNode implements NodeAction {
 
 ```
 并行任务：
-├─ K线 6 个周期（1m/5m/15m/1h/4h/1d）各自独立请求
-├─ 24h ticker
+├─ 合约 K线 6 个周期（1m/5m/15m/1h/4h/1d）各自独立请求
+├─ 现货 K线 2 个周期（1m/5m）
+├─ 合约 24h ticker
+├─ 现货 24h ticker
 ├─ funding rate（当前）
 ├─ funding rate history（48条）
-├─ orderbook depth 20
+├─ 合约 orderbook depth 20（WS缓存优先，REST兜底）
+├─ 现货 orderbook depth 20
 ├─ open interest（当前）
 ├─ open interest history（5m周期，48条）
 ├─ long-short ratio
@@ -426,7 +439,9 @@ public class RunFactorAgentsNode implements NodeAction {
 ├─ top trader position ratio（5m周期，24条）
 ├─ taker long-short ratio（5m周期，24条）
 ├─ Fear & Greed Index（最近2条，alternative.me API）
-└─ News（通过BinanceRestClient.getCryptoNews）
+├─ News（通过BinanceRestClient.getCryptoNews）
+├─ Deribit DVOL 波动率指数（最近6h，resolution=3600）
+└─ Deribit 期权 book summary（全量BTC期权合约 mark_iv）
 ```
 
 全部通过虚拟线程并行，整体超时 10s。
@@ -438,18 +453,28 @@ public class RunFactorAgentsNode implements NodeAction {
 | 新增特征 | 计算方式 | 用途 |
 |---------|---------|------|
 | `bidAskImbalance` | (bidVol - askVol) / (bidVol + askVol)，盘口前5档 | 盘口偏向 |
-| `tradeDelta` | (takerBuyRatio - 0.5) × 2，用成交量计算主动买卖差 | 资金流向 |
+| `tradeDelta` | aggTrade实时优先（OrderFlowAggregator 3min窗口），fallback K线近似 | 资金流向 |
+| `tradeIntensity` | aggTrade 60s内笔数/秒，除以10归一化，clamp [0,3] | 成交活跃度 |
+| `largeTradeBias` | aggTrade 大单(>均值3倍)买卖方向偏差 [-1,1] | 大单方向 |
+| `spotBidAskImbalance` | 现货盘口前5档失衡 [-1,1] | 现货盘口 |
+| `spotPriceChange5m` | 现货近5根1m收益率 | 现货动量 |
+| `spotPerpBasisBps` | (合约价-现货价)/现货价 × 10000 | 期现基差 |
+| `spotLeadLagScore` | 现货vs合约近3根1m收益差/scalePct，clamp [-1,1] | 现货领先/滞后 |
 | `oiChangeRate` | (当前OI - 前次OI) / 前次OI | 新增仓方向 |
 | `fundingDeviation` | 当前费率 vs 标准费率0.0001偏离度 | 情绪过热/过冷 |
 | `fundingRateTrend` | 近期均值 vs 远期均值的变化方向 | 资金费率趋势 |
 | `fundingRateExtreme` | 最新值偏离历史均值的程度 | 资金费率极端度 |
 | `lsrExtreme` | 多空比是否处于历史极值（>2.0或<0.5） | 反向信号 |
-| `liquidationPressure` | (多头爆仓额-空头爆仓额)/总额，归一化[-1,1]。正=多头爆仓多(利空)，负=空头爆仓多(利多) | 爆仓压力方向 |
+| `liquidationPressure` | (多头爆仓额-空头爆仓额)/总额，归一化[-1,1] | 爆仓压力方向 |
 | `liquidationVolumeUsdt` | 近期爆仓总额(USDT) | 爆仓规模 |
-| `topTraderBias` | 大户持仓比前半段vs后半段均值变化，归一化[-1,1]。正=大户加多，负=大户加空 | 聪明钱方向 |
-| `takerBuySellPressure` | 主动买卖量比前半段vs后半段均值变化，归一化[-1,1]。正=主动买入增强，负=主动卖出增强 | 即时资金流 |
+| `topTraderBias` | 大户持仓比前半段vs后半段均值变化，归一化[-1,1] | 聪明钱方向 |
+| `takerBuySellPressure` | 主动买卖量比前半段vs后半段均值变化，归一化[-1,1] | 即时资金流 |
 | `fearGreedIndex` | 恐惧贪婪指数 0-100（alternative.me API） | 市场情绪 |
 | `fearGreedLabel` | EXTREME_FEAR / FEAR / NEUTRAL / GREED / EXTREME_GREED | 情绪分类 |
+| `dvolIndex` | Deribit DVOL 最新 close（类VIX），0=无数据 | 隐含波动率水平 |
+| `atmIv` | 最近到期日 ATM call 的 mark_iv | 近月隐含波动率 |
+| `ivSkew25d` | OTM 5-8% call IV - OTM 5-8% put IV（正=call贵=看涨偏好） | 方向性押注 |
+| `ivTermSlope` | 次近到期ATM IV - 最近到期ATM IV（正=contango） | 期限结构 |
 | `bollSqueeze` | 布林带宽度 < 1.5 判定为收缩 | 即将变盘 |
 | `regimeLabel` | ADX + 布林带宽 + ATR突增综合判定 | TREND/RANGE/SQUEEZE/SHOCK |
 
@@ -484,25 +509,38 @@ public class RunFactorAgentsNode implements NodeAction {
 
 | 信号 | 权重(0-10) | 权重(10-20) | 权重(20-30) | 逻辑 |
 |------|-----------|-------------|-------------|------|
-| 盘口失衡 | 0.25 | 0.10 | 0.05 | bidAskImbalance > 0 偏多 |
-| 主动买卖 | 0.20 | 0.10 | 0.08 | tradeDelta > 0 主动买强 |
-| OI-价格共振 | 0.15 | 0.20 | 0.22 | OI增+价涨=新多入场 |
-| 爆仓压力 | 0.15 | 0.20 | 0.25 | 多头爆仓多取反为利空 |
-| 大户持仓 | 0.10 | 0.20 | 0.20 | 大户加多=利多 |
-| 主动买卖量比 | 0.15 | 0.20 | 0.20 | 主动买入增强=利多 |
+| 盘口失衡(合约) | 0.17 | 0.05 | 0.03 | bidAskImbalance > 0 偏多 |
+| 主动买卖delta | 0.11 | 0.03 | 0.02 | tradeDelta > 0 主动买强，高intensity加权 |
+| 大单偏差 | 0.03 | 0.02 | 0.02 | largeTradeBias方向 |
+| OI-价格共振 | 0.10 | 0.13 | 0.15 | OI增+价涨=新多入场 |
+| 爆仓压力 | 0.10 | 0.12 | 0.16 | 多头爆仓多取反为利空 |
+| 大户持仓 | 0.07 | 0.12 | 0.12 | 大户加多=利多 |
+| 主动买卖量比 | 0.11 | 0.13 | 0.14 | 主动买入增强=利多 |
+| 现货盘口 | 0.08 | 0.06 | 0.04 | 现货bidAskImbalance |
+| 现货确认 | 0.06 | 0.07 | 0.05 | 现货vs合约价格方向一致性 |
+| 现货领先 | 0.04 | 0.05 | 0.03 | spotLeadLagScore |
+| 资金费率 | 0.03 | 0.08 | 0.10 | 高费率=多头拥挤→空头信号 |
+| 多空比 | 0.05 | 0.04 | 0.07 | 极端多头→空头信号 |
+| 基差 | 0.05 | 0.10 | 0.07 | 正溢价过高→空头信号 |
 
-0-10min 盘口+taker主导（即时信号），10-20min OI+大户升权（中期信号），20-30min OI/爆仓/大户/taker仍有短延续性但盘口信号衰减。
+0-10min 盘口+taker+现货主导（即时信号），10-20min OI+大户+资金费率升权（中期信号），20-30min 衍生品情绪+OI主导。
 
 ```java
-// 0-10min: 盘口+taker主导(即时信号)
-double raw0 = 0.25 * bidAskScore + 0.20 * deltaScore + 0.15 * oiScore
-             + 0.15 * liqScore + 0.10 * topTraderScore + 0.15 * takerScore;
-// 10-20min: OI+大户升权(中期信号)
-double raw1 = 0.10 * bidAskScore + 0.10 * deltaScore + 0.20 * oiScore
-             + 0.20 * liqScore + 0.20 * topTraderScore + 0.20 * takerScore;
-// 20-30min: OI/爆仓/大户/taker仍有短延续性，盘口信号衰减
-double raw2 = 0.05 * bidAskScore + 0.08 * deltaScore + 0.22 * oiScore
-             + 0.25 * liqScore + 0.20 * topTraderScore + 0.20 * takerScore;
+// 0-10min: 盘口+taker+现货主导，衍生品情绪权重低
+double raw0 = 0.17 * bidAskScore + 0.11 * deltaScore + 0.03 * largeBiasScore + 0.10 * oiScore
+             + 0.10 * liqScore + 0.07 * topTraderScore + 0.11 * takerScore
+             + 0.08 * spotBookScore + 0.06 * spotConfirmScore + 0.04 * leadLagScore
+             + 0.03 * fundingScore + 0.05 * lsrScore + 0.05 * basisScore;
+// 10-20min: OI+大户+资金费率升权
+double raw1 = 0.05 * bidAskScore + 0.03 * deltaScore + 0.02 * largeBiasScore + 0.13 * oiScore
+             + 0.12 * liqScore + 0.12 * topTraderScore + 0.13 * takerScore
+             + 0.06 * spotBookScore + 0.07 * spotConfirmScore + 0.05 * leadLagScore
+             + 0.08 * fundingScore + 0.04 * lsrScore + 0.10 * basisScore;
+// 20-30min: 衍生品情绪+OI/大户主导，盘口信号衰减
+double raw2 = 0.03 * bidAskScore + 0.02 * deltaScore + 0.02 * largeBiasScore + 0.15 * oiScore
+             + 0.16 * liqScore + 0.12 * topTraderScore + 0.14 * takerScore
+             + 0.04 * spotBookScore + 0.05 * spotConfirmScore + 0.03 * leadLagScore
+             + 0.10 * fundingScore + 0.07 * lsrScore + 0.07 * basisScore;
 // score ∈ [-1, 1]，正=偏多，负=偏空
 ```
 
@@ -527,7 +565,7 @@ double raw2 = 0.05 * bidAskScore + 0.08 * deltaScore + 0.22 * oiScore
 
 #### RegimeAgent（纯 Java）
 
-识别当前市场状态，影响其他 Agent 的可信度。
+识别当前市场状态，影响其他 Agent 的可信度。结合期权 IV 信号增强判断。
 
 | Regime | 判定条件 | 影响 |
 |--------|---------|------|
@@ -536,6 +574,14 @@ double raw2 = 0.05 * bidAskScore + 0.08 * deltaScore + 0.22 * oiScore
 | `RANGE` | ADX<20 | 微结构/动量权重降低 |
 | `SQUEEZE` | 布林带宽<1.5 + ADX<15 | 全部降权，等突破 |
 | `SHOCK` | 近期ATR > 2倍历史ATR | 禁开仓或极低杠杆 |
+
+**期权 IV 增强（Deribit 数据可用时）：**
+
+| IV 信号 | 条件 | 影响 |
+|---------|------|------|
+| skew 方向性押注 | \|ivSkew25d\| > 2.0 | 按 skew/10 加偏移（短线0.3权重，中线0.6权重），标记 IV_SKEW_CALL_RICH/PUT_RICH |
+| 聪明钱布局 | IV > 60 且 SQUEEZE | conf 提升15-20%，标记 HIGH_IV_SQUEEZE |
+| 隐含波动率预警 | IV > 80 且非 SHOCK | risk flag ELEVATED_IMPLIED_VOL |
 
 #### VolatilityAgent（纯 Java）
 
@@ -638,6 +684,7 @@ rawConf = dominantRatio × avgAgentConf × (1 - disagreement × 0.4)
    - 情绪极端：fearGreed≤20(极度恐惧)时做空要警惕反弹，≥80(极度贪婪)时做多要警惕回调
    - 爆仓信号：大量多头爆仓(liquidationPressure>0.5)可能是下跌末端，大量空头爆仓(<-0.5)可能是上涨末端
    - 聪明钱方向：topTraderBias与系统方向背离时需降低confidence
+   - 期权IV信号：DVOL/ATM IV抬升但价格平静→方向选择临近；skew极端→方向性押注集中
 
 **关键原则**（来自TradingAgents Research Manager）：
 > 不要因为双方都有道理就默认NO_TRADE，要做出明确判断。
@@ -654,6 +701,7 @@ rawConf = dominantRatio × avgAgentConf × (1 - disagreement × 0.4)
 **安全约束：**
 - confidence只能下调不能上调（保守原则）
 - 方向翻转时额外cap到原始置信度的50%以下
+- NO_TRADE翻转为有方向时：允许LLM设置confidence（cap 0.5），仓位用HorizonJudge基准值的一半
 - LLM失败时透传原始裁决
 - 不修改entry/tp/sl价位
 
@@ -679,7 +727,8 @@ String mergeRiskStatus(String upstream, String current) {
 | `regime = SQUEEZE` | 仓位×0.7 |
 | `fearGreed ≥ 80 且 LONG` | confidence×0.8（极度贪婪追多惩罚） |
 | `fearGreed ≤ 20 且 SHORT` | confidence×0.8（极度恐惧追空惩罚） |
-| 数据质量降级 | dataPenalty 0.80-0.90（影响仓位） |
+| 数据质量降级 | dataPenalty 0.80-0.95（影响仓位） |
+| `DVOL > 50` | ivPenalty：50-80线性衰减到0.7，>80为0.5（极端恐慌） |
 
 **波动率惩罚**：根据 5m ATR 占价格的百分比计算。atrPct < 0.3% → 1.0（正常），0.3%-1.0% → 线性衰减到 0.5，> 1.0% → 0.3（极端波动）。
 
@@ -687,10 +736,11 @@ String mergeRiskStatus(String upstream, String current) {
 
 ```
 positionPct = basePositionPct
-            × max(0.35, confidence × confMultiplier)  // 保底0.35
-            × max(0.60, 1.0 - disagreement)            // agreementFactor
+            × confidence × confMultiplier
+            × max(0.60, 1.0 - disagreement)   // agreementFactor
             × volatilityPenalty
             × dataPenalty
+            × ivPenalty
 // clamp到 [0.01, maxPos]
 ```
 
@@ -707,7 +757,15 @@ positionPct = basePositionPct
 
 预测落库35分钟后（确保最长区间30min+5min容差均已结束），自动从 Binance 拉取区间内全部1m K线，做路径分析：
 
-**路径分析：** 遍历 K 线序列，逐根计算最大有利偏移（maxFavorableBps）、最大不利偏移（maxAdverseBps）、TP1/SL 谁先触达（tp1HitFirst）。
+**分段验证策略：** 每个区间按实际时段独立验证：
+- `0_10`：用预测时价格作为入场价，完整 TP/SL 路径评级
+- `10_20`：用T+10min实际价格作为入场价，仅方向+BPS评级（TP/SL基于T+0生成，对后段无效）
+- `20_30`：用T+20min实际价格作为入场价，仅方向+BPS评级
+- `NO_TRADE`：同样验证，|实际变化| < 10bps 为正确
+
+**路径分析：** 遍历 K 线序列，逐根计算最大有利偏移（maxFavorableBps）、最大不利偏移（maxAdverseBps）、TP1/SL 谁先触达（tp1HitFirst，仅0_10区间）。
+
+**reversalSeverity（段内反转严重度）：** `maxAdverseBps / (maxAdverseBps + maxFavorableBps)`，范围 [0,1]。>0.40 时标记"段内反转风险显著"。NO_TRADE 为 null。
 
 **质量评级：**
 
@@ -798,15 +856,24 @@ public record FeatureSnapshot(
     String symbol,
     LocalDateTime snapshotTime,
     BigDecimal lastPrice,
+    BigDecimal spotLastPrice,
 
     // 技术指标（多周期）
     Map<String, Map<String, Object>> indicatorsByTimeframe,
     // 价格变化（多周期）
     Map<String, BigDecimal> priceChanges,
 
+    // 现货-合约联动
+    double spotBidAskImbalance,      // 现货盘口失衡 [-1, 1]
+    BigDecimal spotPriceChange5m,    // 现货近5根1m收益率
+    double spotPerpBasisBps,         // 期现基差(基点)
+    double spotLeadLagScore,         // 现货领先/滞后代理 [-1, 1]
+
     // 微结构特征
     double bidAskImbalance,       // 盘口失衡 [-1, 1]
-    double tradeDelta,            // 主动买卖差 [-1, 1]
+    double tradeDelta,            // 主动买卖差 [-1, 1]（aggTrade优先，fallback K线）
+    double tradeIntensity,        // 成交强度 [0, 3]（aggTrade WS，否则0）
+    double largeTradeBias,        // 大单偏差 [-1, 1]（aggTrade WS，否则0）
     double oiChangeRate,          // OI变化率
     double fundingDeviation,      // 资金费率偏离
     double fundingRateTrend,      // 资金费率趋势 [-1, 1]
@@ -827,6 +894,12 @@ public record FeatureSnapshot(
     BigDecimal bollBandwidth,
     boolean bollSqueeze,
 
+    // 期权隐含波动率（Deribit，0=无数据）
+    double dvolIndex,             // DVOL波动率指数（类VIX）
+    double atmIv,                 // 近月ATM隐含波动率
+    double ivSkew25d,             // 25d skew（正=call贵=看涨偏好）
+    double ivTermSlope,           // 期限结构斜率（正=contango）
+
     // Regime
     MarketRegime regime,          // TREND_UP/TREND_DOWN/RANGE/SQUEEZE/SHOCK
 
@@ -839,7 +912,13 @@ public record FeatureSnapshot(
     // Regime审核结果（RegimeReviewNode产出，写入更新后的snapshot）
     double regimeConfidence,      // regime判断置信度 [0, 1]
     String regimeTransition       // 转换预警: NONE/WEAKENING/STRENGTHENING/BREAKING_OUT/BREAKING_DOWN
-) {}
+) {
+    // 工厂方法：仅替换regime审核相关字段，避免38字段手动重建
+    public FeatureSnapshot withRegimeReview(MarketRegime newRegime, List<String> newFlags,
+                                            double confidence, String transition) { ... }
+    // IV摘要（供LLM prompt使用）
+    public String toIvSummary() { ... }
+}
 ```
 
 ### 7.2 AgentVote
@@ -1251,6 +1330,14 @@ wiib-service/src/main/java/com/mawai/wiibservice/task/
 | `CryptoIndicatorCalculator` | **保留**，扩展微结构特征 |
 | `BinanceRestClient` | **保留** |
 
+新增文件：
+
+| 新文件 | 用途 |
+|--------|------|
+| `config/DeribitClient.java` | Deribit 公开 API 客户端（DVOL + 期权 book summary） |
+| `service/OrderFlowAggregator.java` | aggTrade 流式聚合（5min滑动窗口，输出 tradeDelta/tradeIntensity/largeTradeBias） |
+| `service/DepthStreamCache.java` | depth20@100ms WS 快照缓存，比 REST 更新鲜 |
+
 ## 14. 分阶段落地
 
 ### 第一阶段（核心闭环）✅ 已完成
@@ -1258,19 +1345,22 @@ wiib-service/src/main/java/com/mawai/wiibservice/task/
 - 每 30 分钟滚动预测
 - 单币种 BTCUSDT
 - 4 个纯 Java 因子 Agent + 1 个 LLM 新闻 Agent
-- LLM Regime审核（多周期交叉验证 + 转换预警 + 历史记忆注入）
+- LLM Regime审核（多周期交叉验证 + 转换预警 + 历史记忆注入 + 期权IV信号）
 - 3 个 HorizonJudge（动态阈值）
-- **Bull vs Bear辩论裁决**（替代原MetaJudge+ConsistencyCheck，深模型 + 历史记忆注入）
-- RiskGate + ConsensusBuilder
+- **Bull vs Bear辩论裁决**（替代原MetaJudge+ConsistencyCheck，深模型 + 历史记忆注入 + NO_TRADE翻转）
+- RiskGate + ConsensusBuilder（含 DVOL 仓位惩罚）
 - 两阶段 GenerateReport（+ 辩论结论 + 命中率摘要）
 - 落库 + API 查询 + SSE 推送
-- **预测验证系统**（K线路径分析 + TP/SL触达检测 + GOOD/LUCKY/BAD质量评级 + 中文摘要）
+- **预测验证系统**（分段独立验证 + K线路径分析 + TP/SL触达检测 + GOOD/LUCKY/BAD质量评级 + reversalSeverity + NO_TRADE验证）
 - **离线反思系统**（ReflectionTask，每1h验证+LLM反思+写入记忆+agentAccuracy反馈）
 - **记忆注入**（RegimeReview/DebateJudge/GenerateReport三处注入历史教训）
 - **深/浅模型分工**（辩论用深模型，Regime审核/新闻/报告用浅模型，反思用默认模型）
 - **运行时配置管理**（DB驱动的API Key + 模型分配，Admin界面热切换）
 - **LLM降级机制**（quant的LLM异常时自动降级到default API Key重试）
 - **追问对话**（SSE流式，基于报告上下文的多轮追问）
+- **实时行情WS**（aggTrade订单流聚合 + depth20快照缓存 + REST自动兜底）
+- **现货-合约联动分析**（基差/现货领先代理/现货盘口 纳入因子评分）
+- **期权IV定价增强**（Deribit DVOL/ATM IV/25d skew/term structure → RegimeAgent信号 + RiskGate惩罚）
 
 ### 第二阶段（权重进化）
 

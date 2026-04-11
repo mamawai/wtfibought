@@ -41,6 +41,8 @@ public class QuantForecastVerification {
 
     private String resultSummary;
 
+    private BigDecimal reversalSeverity;
+
     private LocalDateTime verifiedAt;
 
     @TableField(fill = FieldFill.INSERT)

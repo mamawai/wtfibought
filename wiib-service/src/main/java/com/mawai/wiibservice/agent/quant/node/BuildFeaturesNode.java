@@ -9,11 +9,14 @@ import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibservice.agent.quant.domain.MarketRegime;
 import com.mawai.wiibservice.agent.quant.domain.NewsItem;
 import com.mawai.wiibservice.agent.tool.CryptoIndicatorCalculator;
+import com.mawai.wiibservice.service.OrderFlowAggregator;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatterBuilder;
 import java.util.*;
 
 /**
@@ -22,6 +25,18 @@ import java.util.*;
  */
 @Slf4j
 public class BuildFeaturesNode implements NodeAction {
+
+    private final OrderFlowAggregator orderFlowAggregator;
+
+    public BuildFeaturesNode() { this(null); }
+
+    public BuildFeaturesNode(OrderFlowAggregator orderFlowAggregator) {
+        this.orderFlowAggregator = orderFlowAggregator;
+    }
+
+    private static final java.time.format.DateTimeFormatter DERIBIT_EXPIRY_FMT =
+            new DateTimeFormatterBuilder().parseCaseInsensitive()
+                    .appendPattern("dMMMuu").toFormatter(java.util.Locale.ENGLISH);
 
     private static final String[][] PRICE_CHANGE_SOURCES = {
             {"5m", "1m", "5"}, {"15m", "5m", "3"}, {"30m", "5m", "6"},
@@ -34,10 +49,13 @@ public class BuildFeaturesNode implements NodeAction {
         long startMs = System.currentTimeMillis();
         String symbol = (String) state.value("target_symbol").orElse("BTCUSDT");
         var klineMap = (Map<String, Map<String, String>>) state.value("kline_map").orElse(Map.of());
+        var spotKlineMap = (Map<String, Map<String, String>>) state.value("spot_kline_map").orElse(Map.of());
         var tickerMap = (Map<String, String>) state.value("ticker_map").orElse(Map.of());
+        var spotTickerMap = (Map<String, String>) state.value("spot_ticker_map").orElse(Map.of());
         var fundingRateMap = (Map<String, String>) state.value("funding_rate_map").orElse(Map.of());
         var fundingRateHistMap = (Map<String, String>) state.value("funding_rate_hist_map").orElse(Map.of());
         var orderbookMap = (Map<String, String>) state.value("orderbook_map").orElse(Map.of());
+        var spotOrderbookMap = (Map<String, String>) state.value("spot_orderbook_map").orElse(Map.of());
         var oiHistMap = (Map<String, String>) state.value("oi_hist_map").orElse(Map.of());
         var longShortRatioMap = (Map<String, String>) state.value("long_short_ratio_map").orElse(Map.of());
         var forceOrdersMap = (Map<String, String>) state.value("force_orders_map").orElse(Map.of());
@@ -45,14 +63,19 @@ public class BuildFeaturesNode implements NodeAction {
         var takerLongShortMap = (Map<String, String>) state.value("taker_long_short_map").orElse(Map.of());
         String fearGreedData = (String) state.value("fear_greed_data").orElse("{}");
         String newsData = (String) state.value("news_data").orElse("{}");
+        String dvolData = (String) state.value("dvol_data").orElse(null);
+        String bookSummaryData = (String) state.value("option_book_summary").orElse(null);
 
         Map<String, String> rawKlines = klineMap.getOrDefault(symbol, Map.of());
+        Map<String, String> rawSpotKlines = spotKlineMap.getOrDefault(symbol, Map.of());
         log.info("[Q2.0] build_features开始 symbol={} K线周期={}", symbol, rawKlines.keySet());
 
         // 1. 技术指标计算（多周期）
         Map<String, Map<String, Object>> indicatorsByTf = new HashMap<>();
         Map<String, List<BigDecimal>> closesByInterval = new HashMap<>();
         Map<String, List<BigDecimal[]>> parsedKlines = new HashMap<>();  // 保留原始解析数据
+        Map<String, List<BigDecimal>> spotClosesByInterval = new HashMap<>();
+        Map<String, List<BigDecimal[]>> parsedSpotKlines = new HashMap<>();
 
         for (var entry : rawKlines.entrySet()) {
             String interval = entry.getKey();
@@ -63,6 +86,14 @@ public class BuildFeaturesNode implements NodeAction {
             List<BigDecimal> closes = new ArrayList<>(klines.size());
             for (BigDecimal[] k : klines) closes.add(k[2]);
             closesByInterval.put(interval, closes);
+        }
+        for (var entry : rawSpotKlines.entrySet()) {
+            List<BigDecimal[]> klines = CryptoIndicatorCalculator.parseKlines(entry.getValue());
+            if (klines.isEmpty()) continue;
+            parsedSpotKlines.put(entry.getKey(), klines);
+            List<BigDecimal> closes = new ArrayList<>(klines.size());
+            for (BigDecimal[] k : klines) closes.add(k[2]);
+            spotClosesByInterval.put(entry.getKey(), closes);
         }
         log.info("[Q2.1] 指标计算完成 有效周期={}", indicatorsByTf.keySet());
 
@@ -79,10 +110,43 @@ public class BuildFeaturesNode implements NodeAction {
 
         // 3. 最新价格
         BigDecimal lastPrice = extractLastPrice(tickerMap.get(symbol), closesByInterval);
+        BigDecimal spotLastPrice = extractLastPrice(spotTickerMap.get(symbol), spotClosesByInterval);
+
+        // 3.5 现货-合约联动
+        double spotBidAskImbalance = calcBidAskImbalance(spotOrderbookMap.get(symbol));
+        BigDecimal spotPriceChange5m = calcRecentPctChange(spotClosesByInterval.get("1m"), 5);
+        double spotPerpBasisBps = calcBasisBps(lastPrice, spotLastPrice);
+        double spotLeadLagScore = calcSpotLeadLagScore(parsedSpotKlines, parsedKlines);
 
         // 4. 盘口微结构
         double bidAskImbalance = calcBidAskImbalance(orderbookMap.get(symbol));
-        double tradeDelta = calcTradeDelta(parsedKlines);
+
+        // tradeDelta: 优先用 aggTrade 实时数据，fallback K线近似
+        double tradeDelta;
+        double tradeIntensity = 0;
+        double largeTradeBias = 0;
+        boolean aggTradeAvailable = false;
+        if (orderFlowAggregator != null && orderFlowAggregator.hasData(symbol)) {
+            OrderFlowAggregator.Metrics m3 = orderFlowAggregator.getMetrics(symbol, 180);
+            if (m3 != null && m3.tradeCount() >= 10) {
+                tradeDelta = Math.clamp(m3.tradeDelta(), -1, 1);
+                largeTradeBias = Math.clamp(m3.largeTradeBias(), -1, 1);
+                // 强度归一化：BTC 正常约 5-15 笔/秒，除以10 后 clamp
+                OrderFlowAggregator.Metrics m60 = orderFlowAggregator.getMetrics(symbol, 60);
+                if (m60 != null && m60.tradeCount() > 0) {
+                    tradeIntensity = Math.clamp(m60.tradeIntensity() / 10.0, 0, 3);
+                }
+                aggTradeAvailable = true;
+                log.info("[Q2.flow] aggTrade可用 symbol={} delta={} intensity={} largeBias={} trades3m={}",
+                        symbol, String.format("%.3f", tradeDelta),
+                        String.format("%.2f", tradeIntensity),
+                        String.format("%.3f", largeTradeBias), m3.tradeCount());
+            } else {
+                tradeDelta = calcTradeDelta(parsedKlines);
+            }
+        } else {
+            tradeDelta = calcTradeDelta(parsedKlines);
+        }
         double oiChangeRate = calcOiChangeRate(oiHistMap.get(symbol));
         double fundingDeviation = calcFundingDeviation(fundingRateMap.get(symbol));
         double lsrExtreme = calcLsrExtreme(longShortRatioMap.get(symbol));
@@ -107,11 +171,14 @@ public class BuildFeaturesNode implements NodeAction {
         int fearGreedIndex = calcFearGreed(fearGreedData);
         String fearGreedLabel = mapFearGreedLabel(fearGreedIndex);
 
-        log.info("[Q2.2] 微结构 bia={} td={} oi={} funding={} fundTrend={} fundExtreme={} lsr={} liqPressure={} liqVol={} topTrader={} takerPressure={} fearGreed={}/{}",
-                String.format("%.3f", bidAskImbalance), String.format("%.3f", tradeDelta),
+        log.info("[Q2.2] 微结构 futBia={} spotBia={} td={}(agg={}) intensity={} largeBias={} oi={} funding={} fundTrend={} fundExtreme={} lsr={} basis={}bps spotLead={} liqPressure={} liqVol={} topTrader={} takerPressure={} fearGreed={}/{}",
+                String.format("%.3f", bidAskImbalance), String.format("%.3f", spotBidAskImbalance),
+                String.format("%.3f", tradeDelta), aggTradeAvailable,
+                String.format("%.2f", tradeIntensity), String.format("%.3f", largeTradeBias),
                 String.format("%.3f", oiChangeRate), String.format("%.3f", fundingDeviation),
                 String.format("%.3f", fundingRateTrend), String.format("%.3f", fundingRateExtreme),
                 String.format("%.3f", lsrExtreme),
+                String.format("%.2f", spotPerpBasisBps), String.format("%.3f", spotLeadLagScore),
                 String.format("%.3f", liquidationPressure), String.format("%.0f", liquidationVolumeUsdt),
                 String.format("%.3f", topTraderBias), String.format("%.3f", takerBuySellPressure),
                 fearGreedIndex, fearGreedLabel);
@@ -127,12 +194,27 @@ public class BuildFeaturesNode implements NodeAction {
         log.info("[Q2.3] 波动率 atr1m={} atr5m={} bollBw={} squeeze={} regime={}",
                 atr1m, atr5m, bollBw, bollSqueeze, regime);
 
+        // 6.5 期权 IV 特征（Deribit）
+        double dvolIndex = parseDvol(dvolData);
+        double[] ivFeatures = parseOptionIv(bookSummaryData, lastPrice);
+        double atmIv = ivFeatures[0];
+        double ivSkew25d = ivFeatures[1];
+        double ivTermSlope = ivFeatures[2];
+        if (dvolIndex > 0 || atmIv > 0) {
+            log.info("[Q2.3.iv] dvol={} atmIv={} skew25d={} termSlope={}",
+                    String.format("%.1f", dvolIndex), String.format("%.1f", atmIv),
+                    String.format("%.2f", ivSkew25d), String.format("%.2f", ivTermSlope));
+        }
+
         // 7. 数据质量标记
         List<String> qualityFlags = new ArrayList<>();
         if (indicatorsByTf.isEmpty()) qualityFlags.add("NO_INDICATORS");
         if (lastPrice == null) qualityFlags.add("NO_PRICE");
         addMissingTimeframeFlags(qualityFlags, rawKlines, indicatorsByTf);
         if (!orderbookMap.containsKey(symbol)) qualityFlags.add("NO_ORDERBOOK");
+        if (!spotTickerMap.containsKey(symbol)) qualityFlags.add("NO_SPOT_TICKER");
+        if (!spotOrderbookMap.containsKey(symbol)) qualityFlags.add("NO_SPOT_ORDERBOOK");
+        if (!spotClosesByInterval.containsKey("1m")) qualityFlags.add("NO_SPOT_KLINE_1M");
         if (!fundingRateMap.containsKey(symbol)) qualityFlags.add("NO_FUNDING");
         if (!fundingRateHistMap.containsKey(symbol)) qualityFlags.add("NO_FUNDING_HIST");
         if (!longShortRatioMap.containsKey(symbol)) qualityFlags.add("NO_LONG_SHORT_RATIO");
@@ -141,6 +223,8 @@ public class BuildFeaturesNode implements NodeAction {
         if (!takerLongShortMap.containsKey(symbol)) qualityFlags.add("NO_TAKER_LSR");
         if (fearGreedIndex < 0) qualityFlags.add("NO_FEAR_GREED");
         if (!oiHistMap.containsKey(symbol)) qualityFlags.add("NO_OI_HISTORY");
+        if (!aggTradeAvailable) qualityFlags.add("NO_AGG_TRADE");
+        if (dvolIndex <= 0 && atmIv <= 0) qualityFlags.add("NO_OPTION_IV");
         if (atr5m == null) qualityFlags.add("NO_ATR_5M");
         if (bollBw == null) qualityFlags.add("NO_BOLL_5M");
         if (qualityFlags.stream().anyMatch(flag -> flag.startsWith("MISSING_TF_"))) {
@@ -151,13 +235,16 @@ public class BuildFeaturesNode implements NodeAction {
         List<NewsItem> newsItems = parseNewsItems(newsData);
         if (newsItems.isEmpty()) qualityFlags.add("NO_NEWS");
 
-        FeatureSnapshot snapshot = new FeatureSnapshot(symbol, LocalDateTime.now(), lastPrice,
-                indicatorsByTf, priceChanges, bidAskImbalance, tradeDelta, oiChangeRate,
+        FeatureSnapshot snapshot = new FeatureSnapshot(symbol, LocalDateTime.now(), lastPrice, spotLastPrice,
+                indicatorsByTf, priceChanges,
+                spotBidAskImbalance, spotPriceChange5m, spotPerpBasisBps, spotLeadLagScore,
+                bidAskImbalance, tradeDelta, tradeIntensity, largeTradeBias, oiChangeRate,
                 fundingDeviation, fundingRateTrend, fundingRateExtreme, lsrExtreme,
                 liquidationPressure, liquidationVolumeUsdt,
                 topTraderBias, takerBuySellPressure,
                 fearGreedIndex, fearGreedLabel,
                 atr1m, atr5m, bollBw, bollSqueeze,
+                dvolIndex, atmIv, ivSkew25d, ivTermSlope,
                 regime, newsItems, qualityFlags,
                 0.5, "NONE");
         log.info("[Q2.4] build_features完成 price={} news={}条 qualityFlags={} 耗时{}ms",
@@ -172,12 +259,51 @@ public class BuildFeaturesNode implements NodeAction {
             try {
                 JSONObject t = JSON.parseObject(tickerJson);
                 String p = t.getString("lastPrice");
+                if (p == null || p.isBlank()) {
+                    p = t.getString("price");
+                }
                 if (p != null) return new BigDecimal(p);
             } catch (Exception ignored) {}
         }
         // fallback: 最新1m close
         List<BigDecimal> c1m = closes.get("1m");
         return (c1m != null && !c1m.isEmpty()) ? c1m.getLast() : null;
+    }
+
+    private BigDecimal calcRecentPctChange(List<BigDecimal> closes, int bars) {
+        if (closes == null || closes.size() <= bars) return null;
+        return CryptoIndicatorCalculator.pctChange(closes.get(closes.size() - 1 - bars), closes.getLast());
+    }
+
+    private double calcBasisBps(BigDecimal futuresPrice, BigDecimal spotPrice) {
+        if (futuresPrice == null || spotPrice == null || spotPrice.signum() <= 0) return 0;
+        return futuresPrice.subtract(spotPrice)
+                .multiply(BigDecimal.valueOf(10000))
+                .divide(spotPrice, 2, java.math.RoundingMode.HALF_UP)
+                .doubleValue();
+    }
+
+    /**
+     * 现货领先代理：比较近几根现货与合约的短时收益差。
+     * 正值表示现货更强，负值表示合约更强。
+     */
+    private double calcSpotLeadLagScore(Map<String, List<BigDecimal[]>> spotKlines,
+                                        Map<String, List<BigDecimal[]>> futuresKlines) {
+        Double fast = calcLeadLagWindowScore(spotKlines.get("1m"), futuresKlines.get("1m"), 3, 0.08);
+        if (fast != null) return fast;
+        Double slow = calcLeadLagWindowScore(spotKlines.get("5m"), futuresKlines.get("5m"), 1, 0.12);
+        return slow != null ? slow : 0;
+    }
+
+    private Double calcLeadLagWindowScore(List<BigDecimal[]> spot, List<BigDecimal[]> futures,
+                                          int bars, double scalePct) {
+        if (spot == null || futures == null || spot.size() <= bars || futures.size() <= bars) return null;
+        BigDecimal spotChange = CryptoIndicatorCalculator.pctChange(
+                spot.get(spot.size() - 1 - bars)[2], spot.getLast()[2]);
+        BigDecimal futuresChange = CryptoIndicatorCalculator.pctChange(
+                futures.get(futures.size() - 1 - bars)[2], futures.getLast()[2]);
+        if (spotChange == null || futuresChange == null || scalePct <= 0) return null;
+        return Math.clamp((spotChange.subtract(futuresChange)).doubleValue() / scalePct, -1, 1);
     }
 
     private double calcBidAskImbalance(String obJson) {
@@ -507,6 +633,122 @@ public class BuildFeaturesNode implements NodeAction {
         } catch (Exception e) {
             log.warn("[Q2] 新闻解析失败: {}", e.getMessage());
             return List.of();
+        }
+    }
+
+    /**
+     * 解析 Deribit DVOL（BTC波动率指数）。
+     * 响应: {"result":{"data":[[ts,open,high,low,close], ...]}}
+     * 取最新一根 close。
+     */
+    private double parseDvol(String dvolJson) {
+        if (dvolJson == null || dvolJson.isBlank()) return 0;
+        try {
+            JSONObject root = JSON.parseObject(dvolJson);
+            JSONArray data = root.getJSONObject("result").getJSONArray("data");
+            if (data == null || data.isEmpty()) return 0;
+            JSONArray last = data.getJSONArray(data.size() - 1);
+            return last.getDoubleValue(4); // close
+        } catch (Exception e) {
+            log.warn("[Q2.iv] DVOL解析失败: {}", e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * 从 Deribit book_summary_by_currency 计算 ATM IV、25d skew、term structure slope。
+     * 响应: {"result":[{instrument_name:"BTC-28MAR25-90000-C", mark_iv:55.2, underlying_price:84000, ...}]}
+     * <p>
+     * 策略：
+     * - 按到期日分组，找最近到期日（>1天）
+     * - ATM: strike 最接近 underlying_price 的 call 的 mark_iv
+     * - 25d skew 近似: OTM 5-8% call IV - OTM 5-8% put IV（正=call贵=看涨偏好）
+     * - term slope: 次近到期 ATM IV - 最近到期 ATM IV（正=远期IV更高=contango）
+     *
+     * @return [atmIv, skew25d, termSlope]，失败全部返回0
+     */
+    private double[] parseOptionIv(String bookSummaryJson, BigDecimal lastPrice) {
+        double[] empty = {0, 0, 0};
+        if (bookSummaryJson == null || bookSummaryJson.isBlank() || lastPrice == null) return empty;
+        try {
+            JSONObject root = JSON.parseObject(bookSummaryJson);
+            JSONArray results = root.getJSONArray("result");
+            if (results == null || results.isEmpty()) return empty;
+
+            double spot = lastPrice.doubleValue();
+            if (spot <= 0) return empty;
+
+            // 按到期日分组: expiry -> list of {strike, type(C/P), mark_iv}
+            record OptionInfo(String expiry, double strike, String type, double markIv) {}
+            Map<String, List<OptionInfo>> byExpiry = new java.util.TreeMap<>(
+                    Comparator.comparing(s -> LocalDate.parse(s, DERIBIT_EXPIRY_FMT)));
+
+            for (int i = 0; i < results.size(); i++) {
+                JSONObject item = results.getJSONObject(i);
+                double markIv = item.getDoubleValue("mark_iv");
+                if (markIv <= 0) continue;
+                String name = item.getString("instrument_name");
+                if (name == null) continue;
+                // BTC-28MAR25-90000-C
+                String[] parts = name.split("-");
+                if (parts.length < 4) continue;
+                String expiry = parts[1];
+                double strike;
+                try { strike = Double.parseDouble(parts[2]); } catch (NumberFormatException e) { continue; }
+                String type = parts[3]; // C or P
+                byExpiry.computeIfAbsent(expiry, k -> new ArrayList<>())
+                        .add(new OptionInfo(expiry, strike, type, markIv));
+            }
+
+            if (byExpiry.isEmpty()) return empty;
+
+            // 找最近到期日（至少有几个合约的）和次近到期日
+            List<String> expiries = byExpiry.entrySet().stream()
+                    .filter(e -> e.getValue().size() >= 4)
+                    .map(Map.Entry::getKey)
+                    .toList();
+            if (expiries.isEmpty()) return empty;
+
+            String nearExpiry = expiries.getFirst();
+            List<OptionInfo> nearOptions = byExpiry.get(nearExpiry);
+
+            // ATM IV: strike 最接近 spot 的 call
+            double atmIv = nearOptions.stream()
+                    .filter(o -> "C".equals(o.type()))
+                    .min(java.util.Comparator.comparingDouble(o -> Math.abs(o.strike() - spot)))
+                    .map(OptionInfo::markIv)
+                    .orElse(0.0);
+
+            // 25d skew 近似: OTM 5-8% 区间
+            double otmLow = spot * 1.05, otmHigh = spot * 1.08;
+            double otmPutLow = spot * 0.92, otmPutHigh = spot * 0.95;
+            double callIv = nearOptions.stream()
+                    .filter(o -> "C".equals(o.type()) && o.strike() >= otmLow && o.strike() <= otmHigh)
+                    .mapToDouble(OptionInfo::markIv).average().orElse(0);
+            double putIv = nearOptions.stream()
+                    .filter(o -> "P".equals(o.type()) && o.strike() >= otmPutLow && o.strike() <= otmPutHigh)
+                    .mapToDouble(OptionInfo::markIv).average().orElse(0);
+            double skew25d = (callIv > 0 && putIv > 0) ? callIv - putIv : 0;
+
+            // term structure slope
+            double termSlope = 0;
+            if (expiries.size() >= 2) {
+                String farExpiry = expiries.get(1);
+                List<OptionInfo> farOptions = byExpiry.get(farExpiry);
+                double farAtmIv = farOptions.stream()
+                        .filter(o -> "C".equals(o.type()))
+                        .min(java.util.Comparator.comparingDouble(o -> Math.abs(o.strike() - spot)))
+                        .map(OptionInfo::markIv)
+                        .orElse(0.0);
+                if (atmIv > 0 && farAtmIv > 0) {
+                    termSlope = farAtmIv - atmIv;
+                }
+            }
+
+            return new double[]{atmIv, skew25d, termSlope};
+        } catch (Exception e) {
+            log.warn("[Q2.iv] 期权IV解析失败: {}", e.getMessage());
+            return empty;
         }
     }
 }

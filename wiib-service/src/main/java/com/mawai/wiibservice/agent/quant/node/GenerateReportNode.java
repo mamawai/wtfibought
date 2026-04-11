@@ -441,6 +441,11 @@ public class GenerateReportNode implements NodeAction {
         appendTimeframeIndicators(parts, snapshot.indicatorsByTimeframe(), "5m");
         appendTimeframeIndicators(parts, snapshot.indicatorsByTimeframe(), "1h");
         appendTimeframeIndicators(parts, snapshot.indicatorsByTimeframe(), "4h");
+        if (snapshot.spotLastPrice() != null) {
+            parts.add("现货联动: spot=%s basis=%.2fbps spot盘口=%.2f spot驱动代理=%.2f"
+                    .formatted(snapshot.spotLastPrice().setScale(2, RoundingMode.HALF_UP).toPlainString(),
+                            snapshot.spotPerpBasisBps(), snapshot.spotBidAskImbalance(), snapshot.spotLeadLagScore()));
+        }
         if (snapshot.bollSqueeze()) {
             parts.add("5m布林带处于收缩状态，短线更适合等确认而不是抢跑");
         }
