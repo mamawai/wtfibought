@@ -28,6 +28,11 @@ public class MicrostructureAgent implements FactorAgent {
         double price5mBps = pc != null && pc.containsKey("5m")
                 ? pc.get("5m").doubleValue() * 100 : 0;
 
+        double fundDev = s.fundingDeviation();
+        double fundTrend = s.fundingRateTrend();
+        double fundExtreme = s.fundingRateExtreme();
+        double lsr = s.lsrExtreme();
+
         // === 各因子独立评分 ===
         double bidAskScore = clamp(bia * 2.5);
         double deltaScore = clamp(td);
@@ -47,19 +52,29 @@ public class MicrostructureAgent implements FactorAgent {
         double topTraderScore = clamp(topTrader);
         double takerScore = clamp(takerPressure);
 
-        // === 0-10min: 盘口+taker主导(即时信号) ===
+        // 资金费率复合（反向：高费率=多头拥挤→空头信号）
+        double fundingRaw = -(0.5 * fundDev + 0.3 * fundExtreme + 0.2 * fundTrend);
+        double fundingScore = clamp(fundingRaw);
+        // 多空比（反向：极端多头→空头信号）
+        double lsrScore = clamp(-lsr);
+
+        // === 0-10min: 盘口+taker主导，衍生品情绪权重低 ===
         List<String> flags0 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "0_10");
-        double raw0 = 0.25 * bidAskScore + 0.20 * deltaScore + 0.15 * oiScore
-                     + 0.15 * liqScore + 0.10 * topTraderScore + 0.15 * takerScore;
+        addSentimentFlags(flags0, fundDev, lsr);
+        double raw0 = 0.22 * bidAskScore + 0.18 * deltaScore + 0.13 * oiScore
+                     + 0.13 * liqScore + 0.09 * topTraderScore + 0.13 * takerScore
+                     + 0.05 * fundingScore + 0.07 * lsrScore;
 
-        // === 10-20min: OI+大户升权(中期信号) ===
+        // === 10-20min: OI+大户升权，资金费率权重提升 ===
         List<String> flags1 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "10_20");
-        double raw1 = 0.10 * bidAskScore + 0.10 * deltaScore + 0.20 * oiScore
-                     + 0.20 * liqScore + 0.20 * topTraderScore + 0.20 * takerScore;
+        addSentimentFlags(flags1, fundDev, lsr);
+        double raw1 = 0.08 * bidAskScore + 0.08 * deltaScore + 0.17 * oiScore
+                     + 0.17 * liqScore + 0.17 * topTraderScore + 0.18 * takerScore
+                     + 0.10 * fundingScore + 0.05 * lsrScore;
 
-        // confidence: 覆盖所有参与评分的因子
         double signalStrength = (Math.abs(bia) + Math.abs(td) + Math.abs(takerPressure)
-                + Math.min(1, Math.abs(oi) * 10) + Math.abs(liqPressure) + Math.abs(topTrader)) / 6.0;
+                + Math.min(1, Math.abs(oi) * 10) + Math.abs(liqPressure) + Math.abs(topTrader)
+                + Math.abs(fundingRaw) + Math.abs(lsr)) / 8.0;
         double conf = Math.min(1.0, signalStrength * 1.5);
 
         int volBps = s.atr1m() != null && lastPrice != null && lastPrice.signum() > 0
@@ -67,10 +82,12 @@ public class MicrostructureAgent implements FactorAgent {
                     .divide(lastPrice, 0, java.math.RoundingMode.HALF_UP).intValue()
                 : 20;
 
-        // === 20-30min: OI/爆仓/大户/taker仍有短延续性，但盘口信号衰减 ===
+        // === 20-30min: 衍生品情绪+OI/大户主导，盘口信号衰减 ===
         List<String> flags2 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "20_30");
-        double raw2 = 0.05 * bidAskScore + 0.08 * deltaScore + 0.22 * oiScore
-                     + 0.25 * liqScore + 0.20 * topTraderScore + 0.20 * takerScore;
+        addSentimentFlags(flags2, fundDev, lsr);
+        double raw2 = 0.04 * bidAskScore + 0.05 * deltaScore + 0.18 * oiScore
+                     + 0.20 * liqScore + 0.15 * topTraderScore + 0.18 * takerScore
+                     + 0.12 * fundingScore + 0.08 * lsrScore;
         double conf2 = conf * 0.35;
 
         List<AgentVote> votes = new ArrayList<>(3);
@@ -80,10 +97,16 @@ public class MicrostructureAgent implements FactorAgent {
                 ? AgentVote.noTrade(name(), "20_30", "MICRO_TOO_WEAK")
                 : buildVote("20_30", raw2, conf2, volBps, flags2));
 
-        log.info("[Q3.micro] bia={} td={} oi={} liq={} topTrader={} taker={} → scores[{},{},{}] conf={} flags0={} flags1={} flags2={}",
+        log.info("[Q3.micro] bia={} td={} oi={} liq={} topTrader={} taker={} funding={} lsr={} → scores[{},{},{}] conf={}",
                 fmt(bia), fmt(td), fmt(oi), fmt(liqPressure), fmt(topTrader), fmt(takerPressure),
-                fmt(raw0), fmt(raw1), fmt(raw2), String.format("%.2f", conf), flags0, flags1, flags2);
+                fmt(fundingRaw), fmt(lsr),
+                fmt(raw0), fmt(raw1), fmt(raw2), String.format("%.2f", conf));
         return votes;
+    }
+
+    private void addSentimentFlags(List<String> flags, double fundDev, double lsr) {
+        if (Math.abs(fundDev) > 0.5) flags.add(fundDev > 0 ? "HIGH_FUNDING" : "LOW_FUNDING");
+        if (Math.abs(lsr) > 0.5) flags.add(lsr > 0 ? "LSR_EXTREME_LONG" : "LSR_EXTREME_SHORT");
     }
 
     private List<String> buildFlags(double bia, double td, double oi, double price5mBps,

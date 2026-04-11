@@ -7,6 +7,7 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibservice.agent.quant.domain.*;
+import com.mawai.wiibservice.agent.quant.judge.HorizonJudge;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -240,15 +241,21 @@ public class DebateJudgeNode implements NodeAction {
                 double newConf = adj.getDoubleValue("newConfidence");
                 String reason = adj.getString("reason");
 
-                // 保守原则：confidence只能下调
-                newConf = Math.min(newConf, f.confidence());
+                // NO_TRADE翻转时允许LLM提升置信度(cap 0.5)，其余只能下调
+                if (f.direction() != Direction.NO_TRADE) {
+                    newConf = Math.min(newConf, f.confidence());
+                } else {
+                    newConf = Math.min(newConf, 0.5);
+                }
 
                 if (newDir == Direction.NO_TRADE || newConf <= 0) {
                     log.info("[Q4.5.merge] {} →NO_TRADE reason={}", f.horizon(), reason);
                     adjusted.add(HorizonForecast.noTrade(f.horizon(), f.disagreement()));
                 } else if (newDir != f.direction()) {
-                    // 方向翻转：cap到原始50%
-                    double cappedConf = Math.min(newConf, f.confidence() * 0.5);
+                    // NO_TRADE翻转用已cap的conf，LONG↔SHORT翻转cap到原始50%
+                    double cappedConf = f.direction() == Direction.NO_TRADE
+                            ? newConf
+                            : Math.min(newConf, f.confidence() * 0.5);
                     log.info("[Q4.5.merge] {} 翻转 {}→{} conf={} reason={}",
                             f.horizon(), f.direction(), newDir, fmt(cappedConf), reason);
                     adjusted.add(rebuildForecast(f, newDir, cappedConf));
@@ -391,9 +398,15 @@ public class DebateJudgeNode implements NodeAction {
 
     private HorizonForecast rebuildForecast(HorizonForecast f, Direction newDir, double newConf) {
         double newScore = newDir == Direction.LONG ? Math.abs(f.weightedScore()) : -Math.abs(f.weightedScore());
-        // 方向翻转时清空价位：原方向的entry/tp/sl语义已失效，由报告层展示"-"
+        // NO_TRADE原始仓位为0，翻转后用基准值的一半（来源统一在HorizonJudge）
+        int maxLev = f.maxLeverage();
+        double maxPos = f.maxPositionPct();
+        if (maxLev <= 0 || maxPos <= 0) {
+            maxLev = Math.max(1, (HorizonJudge.getMaxLeverage(f.horizon()) + 1) / 2);
+            maxPos = HorizonJudge.getBasePositionPct(f.horizon()) * 0.5;
+        }
         return new HorizonForecast(f.horizon(), newDir, newConf, newScore, f.disagreement(),
-                null, null, null, null, null, f.maxLeverage(), f.maxPositionPct());
+                null, null, null, null, null, maxLev, maxPos);
     }
 
     private Direction parseDirection(String str, Direction fallback) {
