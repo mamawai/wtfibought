@@ -131,7 +131,11 @@ public class VerificationService {
 
     /**
      * 验证一个预测周期的所有区间裁决。
-     * 拉取区间内全部1m K线，走一遍路径判断TP/SL谁先触达。
+     * 按分段区间(0-10/10-20/20-30)各自拉取对应时段K线做路径分析。
+     *
+     * 验证策略：
+     * - 0_10: 完整验证（方向+BPS+TP/SL触达判定）
+     * - 10_20/20_30: 降级验证（仅方向+BPS），因TP/SL基于T+0价格生成，对后段无效
      */
     public int verifyCycle(QuantForecastCycle cycle, List<QuantHorizonForecast> forecasts) {
         if (cycle == null || forecasts == null) return 0;
@@ -155,35 +159,47 @@ public class VerificationService {
         LocalDateTime now = LocalDateTime.now(SYSTEM_ZONE);
         int verified = 0;
         for (QuantHorizonForecast f : forecasts) {
-            if ("NO_TRADE".equals(f.getDirection())) continue;
             if (verifiedHorizons.contains(f.getHorizon())) continue;
 
-            int minutesAfter = horizonToMinutes(f.getHorizon());
-            if (minutesAfter <= 0) continue;
+            int startMin = horizonStartMinutes(f.getHorizon());
+            int endMin = horizonEndMinutes(f.getHorizon());
+            if (startMin < 0 || endMin <= startMin) continue;
 
-            LocalDateTime targetTime = forecastTime.plusMinutes(minutesAfter);
-            if (targetTime.isAfter(now)) {
-                log.debug("[Verify] {} {} 目标时间{}未到，跳过", cycle.getCycleId(), f.getHorizon(), targetTime);
+            LocalDateTime segmentEnd = forecastTime.plusMinutes(endMin);
+            if (segmentEnd.isAfter(now)) {
+                log.debug("[Verify] {} {} 目标时间{}未到，跳过", cycle.getCycleId(), f.getHorizon(), segmentEnd);
                 continue;
             }
 
-            // 拉区间内全部1m K线（含路径信息）
-            List<BigDecimal[]> klines = getKlineRange(cycle.getSymbol(), forecastTime, minutesAfter);
+            // 分段入场价：0_10用预测时价格，10_20/20_30用分段起点实际价格
+            BigDecimal entryPrice;
+            if (startMin == 0) {
+                entryPrice = priceAtForecast;
+            } else {
+                entryPrice = getHistoricalPrice(cycle.getSymbol(), forecastTime.plusMinutes(startMin));
+                if (entryPrice == null) continue;
+            }
+
+            // 只拉分段区间内的1m K线
+            int segmentDuration = endMin - startMin;
+            LocalDateTime segmentStart = forecastTime.plusMinutes(startMin);
+            List<BigDecimal[]> klines = getKlineRange(cycle.getSymbol(), segmentStart, segmentDuration);
             BigDecimal priceAfter = null;
             if (klines != null && !klines.isEmpty()) {
-                priceAfter = klines.getLast()[2]; // 最后一根close
+                priceAfter = klines.getLast()[2];
             }
             if (priceAfter == null) {
-                priceAfter = getHistoricalPrice(cycle.getSymbol(), targetTime);
+                priceAfter = getHistoricalPrice(cycle.getSymbol(), segmentEnd);
             }
             if (priceAfter == null) continue;
 
-            int changeBps = calcChangeBps(priceAtForecast, priceAfter);
+            int changeBps = calcChangeBps(entryPrice, priceAfter);
 
-            // 路径分析
-            PathResult path = analyzePath(klines, priceAtForecast, f);
+            // [降级策略] 0_10: 完整TP/SL路径评级；10_20/20_30: 仅BPS方向评级（TP/SL基于T+0生成，对后段无效）
+            BigDecimal segTp1 = startMin == 0 ? f.getTp1() : null;
+            BigDecimal segSl = startMin == 0 ? f.getInvalidationPrice() : null;
+            PathResult path = analyzePath(klines, entryPrice, f.getDirection(), segTp1, segSl);
 
-            // 综合判定
             String tradeQuality = judgeQuality(f.getDirection(), changeBps, path);
             boolean correct = !"BAD".equals(tradeQuality) && !"FLAT".equals(tradeQuality);
 
@@ -193,7 +209,7 @@ public class VerificationService {
             v.setHorizon(f.getHorizon());
             v.setPredictedDirection(f.getDirection());
             v.setPredictedConfidence(f.getConfidence());
-            v.setActualPriceAtForecast(priceAtForecast);
+            v.setActualPriceAtForecast(entryPrice);
             v.setActualPriceAfter(priceAfter);
             v.setActualChangeBps(changeBps);
             v.setMaxFavorableBps(path.maxFavorableBps);
@@ -206,9 +222,9 @@ public class VerificationService {
             verificationMapper.insert(v);
             verified++;
 
-            log.info("[Verify] {} {} predicted={} conf={} actual={}bps maxFav={}bps maxAdv={}bps tp1First={} quality={}",
+            log.info("[Verify] {} {} predicted={} conf={} entry={} actual={}bps maxFav={}bps maxAdv={}bps tp1First={} quality={}",
                     cycle.getCycleId(), f.getHorizon(), f.getDirection(),
-                    f.getConfidence(), changeBps, path.maxFavorableBps, path.maxAdverseBps,
+                    f.getConfidence(), entryPrice, changeBps, path.maxFavorableBps, path.maxAdverseBps,
                     path.tp1HitFirst, tradeQuality);
         }
         log.info("[Verify] cycle={} 验证完成 {}/{}", cycle.getCycleId(), verified, forecasts.size());
@@ -221,17 +237,16 @@ public class VerificationService {
 
     /**
      * 遍历K线序列，计算最大有利偏移、最大不利偏移、TP1/SL谁先触达。
+     * tp1/sl为null时跳过触达判定，只统计BPS偏移。
      */
     private PathResult analyzePath(List<BigDecimal[]> klines, BigDecimal entryPrice,
-                                    QuantHorizonForecast forecast) {
+                                    String direction, BigDecimal tp1, BigDecimal sl) {
         if (klines == null || klines.isEmpty() || entryPrice == null || entryPrice.signum() <= 0) {
             return new PathResult(0, 0, null);
         }
 
-        boolean isLong = "LONG".equals(forecast.getDirection());
-        boolean isShort = "SHORT".equals(forecast.getDirection());
-        BigDecimal tp1 = forecast.getTp1();
-        BigDecimal sl = forecast.getInvalidationPrice();
+        boolean isLong = "LONG".equals(direction);
+        boolean isShort = "SHORT".equals(direction);
 
         int maxFavBps = 0, maxAdvBps = 0;
         Boolean tp1First = null;
@@ -360,42 +375,61 @@ public class VerificationService {
                 .intValue();
     }
 
-    private int horizonToMinutes(String horizon) {
+    private int horizonStartMinutes(String horizon) {
+        return switch (horizon) {
+            case "0_10" -> 0;
+            case "10_20" -> 10;
+            case "20_30" -> 20;
+            default -> -1;
+        };
+    }
+
+    private int horizonEndMinutes(String horizon) {
         return switch (horizon) {
             case "0_10" -> 10;
             case "10_20" -> 20;
             case "20_30" -> 30;
-            default -> 0;
+            default -> -1;
         };
     }
 
     private String buildResultSummary(String direction, int changeBps,
                                        String quality, PathResult path) {
-        String dirLabel = "LONG".equals(direction) ? "看涨" : "看跌";
         String actualDir = changeBps > 0 ? "上涨" : changeBps < 0 ? "下跌" : "持平";
         String pct = bpsToPercent(Math.abs(changeBps));
-        boolean dirCorrect = ("LONG".equals(direction) && changeBps > 0)
-                || ("SHORT".equals(direction) && changeBps < 0);
 
         StringBuilder sb = new StringBuilder();
-        sb.append("预测").append(dirLabel).append("，实际").append(actualDir).append(pct);
 
-        if (dirCorrect) {
-            sb.append("，方向正确");
-        } else if (changeBps == 0) {
-            sb.append("，价格未变动");
+        if ("NO_TRADE".equals(direction)) {
+            sb.append("预测观望，实际").append(actualDir).append(pct);
+            sb.append(Math.abs(changeBps) < NO_TRADE_THRESHOLD_BPS ? "，判断正确" : "，错过行情");
+            if (path.maxAdverseBps > 0) {
+                sb.append("，期间最大波动").append(bpsToPercent(path.maxAdverseBps));
+            }
         } else {
-            sb.append("，方向错误");
-        }
+            String dirLabel = "LONG".equals(direction) ? "看涨" : "看跌";
+            boolean dirCorrect = ("LONG".equals(direction) && changeBps > 0)
+                    || ("SHORT".equals(direction) && changeBps < 0);
 
-        if (path.maxFavorableBps > 0) {
-            sb.append("，期间最大盈利").append(bpsToPercent(path.maxFavorableBps));
-        }
-        if (path.maxAdverseBps > 0) {
-            sb.append("，最大回撤").append(bpsToPercent(path.maxAdverseBps));
-        }
-        if (path.tp1HitFirst != null) {
-            sb.append(path.tp1HitFirst ? "，止盈先触达" : "，止损先触达");
+            sb.append("预测").append(dirLabel).append("，实际").append(actualDir).append(pct);
+
+            if (dirCorrect) {
+                sb.append("，方向正确");
+            } else if (changeBps == 0) {
+                sb.append("，价格未变动");
+            } else {
+                sb.append("，方向错误");
+            }
+
+            if (path.maxFavorableBps > 0) {
+                sb.append("，期间最大盈利").append(bpsToPercent(path.maxFavorableBps));
+            }
+            if (path.maxAdverseBps > 0) {
+                sb.append("，最大回撤").append(bpsToPercent(path.maxAdverseBps));
+            }
+            if (path.tp1HitFirst != null) {
+                sb.append(path.tp1HitFirst ? "，止盈先触达" : "，止损先触达");
+            }
         }
 
         sb.append("，评级");

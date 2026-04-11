@@ -1,5 +1,6 @@
 package com.mawai.wiibservice.task;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantForecastVerification;
 import com.mawai.wiibcommon.entity.QuantHorizonForecast;
@@ -220,7 +221,9 @@ public class ReflectionTask {
             if (lessons == null || lessons.isEmpty()) return;
 
             QuantForecastVerification latest = verifications.getFirst();
-            QuantForecastCycle cycle = cycleMapper.selectLatest(symbol);
+            QuantForecastCycle cycle = cycleMapper.selectOne(
+                    new LambdaQueryWrapper<QuantForecastCycle>()
+                            .eq(QuantForecastCycle::getCycleId, latest.getCycleId()));
             String regime = "UNKNOWN";
             if (cycle != null && cycle.getSnapshotJson() != null) {
                 try {

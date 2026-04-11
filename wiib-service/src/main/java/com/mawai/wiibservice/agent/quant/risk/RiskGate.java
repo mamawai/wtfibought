@@ -106,7 +106,7 @@ public class RiskGate {
         }
 
         // 动态仓位: basePct × confidence × (1-disagreement) × volatilityPenalty × confMultiplier
-        double effectiveConfidence = Math.max(0.35, f.confidence() * confMultiplier);
+        double effectiveConfidence = f.confidence() * confMultiplier;
         double agreementFactor = Math.max(0.60, 1.0 - f.disagreement());
         double adjustedPos = maxPos * effectiveConfidence * agreementFactor * volPenalty * dataPenalty;
         adjustedPos = Math.clamp(adjustedPos, 0.01, maxPos);

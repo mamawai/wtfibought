@@ -187,11 +187,11 @@ public class HorizonJudge {
         return base * multiplier;
     }
 
-    private static int getMaxLeverage(String horizon) {
-        return 5; // 所有区间默认5x
+    public static int getMaxLeverage(String horizon) {
+        return 5;
     }
 
-    private static double getBasePositionPct(String horizon) {
+    public static double getBasePositionPct(String horizon) {
         return switch (horizon) {
             case "0_10" -> 0.08;
             case "10_20" -> 0.10;
