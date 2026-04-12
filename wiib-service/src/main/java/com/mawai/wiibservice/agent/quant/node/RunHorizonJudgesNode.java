@@ -14,6 +14,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -85,6 +86,7 @@ public class RunHorizonJudgesNode implements NodeAction {
         String overallDecision = ConsensusBuilder.buildDecision(forecasts);
         String riskStatus = ConsensusBuilder.buildRiskStatus(forecasts);
         String cycleId = "qf-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
+                + "-" + Integer.toHexString(ThreadLocalRandom.current().nextInt(0x1000, 0xFFFF))
                 + "-" + symbol;
 
         log.info("[Q4.end] run_judges完成 decision={} riskStatus={} cycleId={} 耗时{}ms",

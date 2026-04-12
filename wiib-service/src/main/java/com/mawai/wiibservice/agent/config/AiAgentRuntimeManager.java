@@ -9,6 +9,7 @@ import com.mawai.wiibservice.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibservice.mapper.AiRuntimeConfigMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.client.RestClientException;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -116,7 +117,7 @@ public class AiAgentRuntimeManager {
             if (extraState != null) initialState.putAll(extraState);
             return graph.invoke(initialState,
                     RunnableConfig.builder().threadId(threadId).build());
-        } catch (Exception e) {
+        } catch (RestClientException e) {
             AiRuntimeConfig defaultConfig = configMapper.selectDefault();
             AiModelAssignment quantAssignment = assignmentMapper.selectByFunction("quant");
             if (defaultConfig == null

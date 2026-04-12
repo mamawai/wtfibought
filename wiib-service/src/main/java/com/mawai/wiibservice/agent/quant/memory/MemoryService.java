@@ -42,7 +42,12 @@ public class MemoryService {
                 sb.append("\n");
             }
             // 最近一条的反思结论
-            String lesson = regimeMemories.get(0).getReflectionText();
+            String lesson = regimeMemories.getFirst().getReflectionText();
+            if (lesson != null && !lesson.isBlank()) {
+                int markerIdx = lesson.indexOf("[AGENT_ACCURACY]");
+                if (markerIdx > 0) lesson = lesson.substring(0, markerIdx);
+                else if (markerIdx == 0) lesson = null;
+            }
             if (lesson != null && !lesson.isBlank()) {
                 sb.append("反思教训: ").append(truncate(lesson, 200)).append("\n");
             }
@@ -53,7 +58,7 @@ public class MemoryService {
         if (!recent.isEmpty()) {
             long correct = recent.stream().filter(v -> v.getPredictionCorrect() != null && v.getPredictionCorrect()).count();
             sb.append("最近命中率: ").append(correct).append("/").append(recent.size())
-                    .append(" (").append(recent.size() > 0 ? correct * 100 / recent.size() : 0).append("%)\n");
+                    .append(" (").append(!recent.isEmpty() ? correct * 100 / recent.size() : 0).append("%)\n");
         }
 
         // 3. 最近的通用反思教训

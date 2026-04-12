@@ -189,7 +189,7 @@ public class AiAgentController {
         StpUtil.checkLogin();
         String normalized;
         try {
-            normalized = normalizeSymbol(symbol);
+            normalized = QuantConstants.normalizeSymbol(symbol);
         } catch (IllegalArgumentException e) {
             return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
         }
@@ -235,7 +235,7 @@ public class AiAgentController {
 
         String normalized;
         try {
-            normalized = normalizeSymbol(symbol);
+            normalized = QuantConstants.normalizeSymbol(symbol);
         } catch (IllegalArgumentException e) {
             return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
         }
@@ -294,26 +294,6 @@ public class AiAgentController {
             log.error("[Quant] 工作流异常 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs, e);
             return Result.fail("分析失败，请稍后重试");
         }
-    }
-
-    private String normalizeSymbol(String symbol) {
-        if (symbol == null || symbol.isBlank()) {
-            return "BTCUSDT";
-        }
-        symbol = symbol.trim().toUpperCase();
-        if (symbol.endsWith("USDT")) {
-            symbol = symbol.substring(0, symbol.length() - 4);
-        } else if (symbol.endsWith("USDC")) {
-            symbol = symbol.substring(0, symbol.length() - 4);
-        }
-        if (symbol.isBlank()) {
-            return "BTCUSDT";
-        }
-        String normalized = symbol + "USDT";
-        if (!QuantConstants.ALLOWED_SYMBOLS.contains(normalized)) {
-            throw new IllegalArgumentException("仅支持 BTC、ETH、PAXG");
-        }
-        return normalized;
     }
 
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -432,7 +412,7 @@ public class AiAgentController {
         StpUtil.checkLogin();
         String normalized;
         try {
-            normalized = normalizeSymbol(symbol);
+            normalized = QuantConstants.normalizeSymbol(symbol);
         } catch (IllegalArgumentException e) {
             return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
         }
@@ -462,7 +442,7 @@ public class AiAgentController {
         StpUtil.checkLogin();
         String normalized;
         try {
-            normalized = normalizeSymbol(symbol);
+            normalized = QuantConstants.normalizeSymbol(symbol);
         } catch (IllegalArgumentException e) {
             return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
         }
@@ -480,7 +460,7 @@ public class AiAgentController {
         StpUtil.checkLogin();
         String normalized;
         try {
-            normalized = normalizeSymbol(symbol);
+            normalized = QuantConstants.normalizeSymbol(symbol);
         } catch (IllegalArgumentException e) {
             return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
         }

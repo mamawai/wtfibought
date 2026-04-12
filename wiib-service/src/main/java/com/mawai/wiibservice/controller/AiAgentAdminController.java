@@ -162,7 +162,12 @@ public class AiAgentAdminController {
     @Operation(summary = "手动触发量化分析")
     public Result<String> triggerQuant(@RequestParam(defaultValue = "BTCUSDT") String symbol) {
         checkAdmin();
-        String normalized = normalizeSymbol(symbol);
+        String normalized;
+        try {
+            normalized = QuantConstants.normalizeSymbol(symbol);
+        } catch (IllegalArgumentException e) {
+            return Result.fail("symbol格式错误: " + e.getMessage());
+        }
         Thread.startVirtualThread(() -> quantForecastScheduler.runForecast(normalized));
         return Result.ok("量化分析已触发: " + normalized);
     }
@@ -171,9 +176,16 @@ public class AiAgentAdminController {
     @Operation(summary = "手动触发量化预测验证")
     public Result<String> triggerQuantVerification(@RequestParam(required = false) String symbol) {
         checkAdmin();
-        List<String> symbols = (symbol == null || symbol.isBlank())
-                ? QuantConstants.WATCH_SYMBOLS
-                : List.of(normalizeSymbol(symbol));
+        List<String> symbols;
+        if (symbol == null || symbol.isBlank()) {
+            symbols = QuantConstants.WATCH_SYMBOLS;
+        } else {
+            try {
+                symbols = List.of(QuantConstants.normalizeSymbol(symbol));
+            } catch (IllegalArgumentException e) {
+                return Result.fail("symbol格式错误: " + e.getMessage());
+            }
+        }
         for (String s : symbols) {
             Thread.startVirtualThread(() -> {
                 try {
@@ -205,19 +217,4 @@ public class AiAgentAdminController {
         private String model;
     }
 
-    private String normalizeSymbol(String symbol) {
-        if (symbol == null || symbol.isBlank()) {
-            return "BTCUSDT";
-        }
-        String normalized = symbol.trim().toUpperCase();
-        if (normalized.endsWith("USDT")) {
-            normalized = normalized.substring(0, normalized.length() - 4);
-        } else if (normalized.endsWith("USDC")) {
-            normalized = normalized.substring(0, normalized.length() - 4);
-        }
-        if (normalized.isBlank() || !normalized.matches("^[A-Z0-9]{2,10}$")) {
-            throw new IllegalArgumentException("symbol格式错误");
-        }
-        return normalized + "USDT";
-    }
 }
