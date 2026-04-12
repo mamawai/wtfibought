@@ -95,11 +95,8 @@ public class AiAgentAdminController {
             configMapper.updateById(config);
         }
 
-        // 如果该Key被引用，刷新运行时
-        if (config.getId() != null && aiAgentRuntimeManager.isConfigReferenced(config.getId())) {
-            aiAgentRuntimeManager.refresh();
-        }
-
+        // 管理端配置修改频率很低，直接全量刷新最稳，确保主图和fallback图缓存都失效
+        aiAgentRuntimeManager.refresh();
         return Result.ok(config);
     }
 
@@ -111,6 +108,7 @@ public class AiAgentAdminController {
             return Result.fail("该API Key正被模型分配引用，无法删除");
         }
         configMapper.deleteById(id);
+        aiAgentRuntimeManager.refresh();
         return Result.ok(null);
     }
 
