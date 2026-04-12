@@ -142,7 +142,8 @@ function HistoryList({ items, onSelect }: { items: QuantForecastCycle[]; onSelec
 export function AiAgent() {
   const { toast } = useToast();
   const [tab, setTab] = useState<Tab>('behavior');
-  const [loading, setLoading] = useState(false);
+  const [behaviorLoading, setBehaviorLoading] = useState(false);
+  const [cryptoLoading, setCryptoLoading] = useState(false);
   const [steps, setSteps] = useState<string[]>([]);
   const [behaviorReport, setBehaviorReport] = useState<BehaviorAnalysisReport | null>(null);
   const [cryptoReport, setCryptoReport] = useState<CryptoAnalysisReport | null>(null);
@@ -228,7 +229,7 @@ export function AiAgent() {
   }, [tab, symbol, toast, loadSignalData, stopPolling]);
 
   const handleAnalyzeBehavior = useCallback(async () => {
-    setLoading(true);
+    setBehaviorLoading(true);
     setSteps([]);
     try {
       const report = await aiAgentApi.analyzeBehavior((step) => {
@@ -239,7 +240,7 @@ export function AiAgent() {
     } catch (e: unknown) {
       toast((e as Error).message || '分析失败', 'error');
     } finally {
-      setLoading(false);
+      setBehaviorLoading(false);
     }
   }, [toast]);
 
@@ -267,7 +268,7 @@ export function AiAgent() {
   }, [stopPolling, loadSignalData, toast]);
 
   const handleAnalyzeCrypto = useCallback(async () => {
-    setLoading(true);
+    setCryptoLoading(true);
     stopChatStream();
     setChatMessages([]);
     setCryptoReport(null);
@@ -291,7 +292,7 @@ export function AiAgent() {
       toast((e as Error).message || '获取失败', 'error');
     }
 
-    setLoading(false);
+    setCryptoLoading(false);
   }, [symbol, fetchLatestReport, stopPolling, loadSignalData, stopChatStream, toast]);
 
   // 清理轮询
@@ -401,7 +402,7 @@ export function AiAgent() {
           {!behaviorReport || !behaviorReport.overview ? (
             <Card>
               <CardContent className="p-5 sm:p-8 text-center">
-                {!loading ? (
+                {!behaviorLoading ? (
                   <>
                     <Brain className="w-10 h-10 sm:w-12 sm:h-12 mx-auto text-muted-foreground mb-4" />
                     <h2 className="text-lg font-bold mb-2">用户行为分析</h2>
@@ -630,7 +631,7 @@ export function AiAgent() {
           {!cryptoReport || !cryptoReport.keyLevels ? (
             <Card>
               <CardContent className="p-5 sm:p-8 text-center">
-                {!loading && !cryptoPending ? (
+                {!cryptoLoading && !cryptoPending ? (
                   <>
                     <TrendingUp className="w-10 h-10 sm:w-12 sm:h-12 mx-auto text-muted-foreground mb-4" />
                     <h2 className="text-lg font-bold mb-2">加密货币量化分析</h2>
@@ -649,7 +650,7 @@ export function AiAgent() {
                         </Button>
                       ))}
                     </div>
-                    <Button onClick={handleAnalyzeCrypto} disabled={loading} className="mt-3">
+                    <Button onClick={handleAnalyzeCrypto} disabled={cryptoLoading} className="mt-3">
                       获取 {SYMBOL_LABELS[symbol]} 分析
                     </Button>
                     <p className="text-xs text-muted-foreground mt-2">选择币种后点击获取</p>
