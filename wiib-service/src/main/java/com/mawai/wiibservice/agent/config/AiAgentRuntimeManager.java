@@ -1,5 +1,6 @@
 package com.mawai.wiibservice.agent.config;
 
+import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
@@ -40,6 +41,9 @@ public class AiAgentRuntimeManager {
     private final String ymlBaseUrl;
     private final String ymlModel;
     private final AtomicReference<AiAgentRuntime> runtimeRef = new AtomicReference<>();
+    private final Object graphLock = new Object();
+    private volatile CompiledGraph quantGraph;
+    private volatile CompiledGraph fallbackGraph;
 
     public AiAgentRuntimeManager(AiAgentConfig aiAgentConfig,
                                  AiRuntimeConfigMapper configMapper,
@@ -78,26 +82,71 @@ public class AiAgentRuntimeManager {
     /**
      * 从DB读取所有配置和分配关系，重建4个独立ChatModel
      */
-    public synchronized void refresh() {
-        Map<Long, AiRuntimeConfig> configMap = configMapper.selectAllConfigs().stream()
-                .collect(Collectors.toMap(AiRuntimeConfig::getId, c -> c));
-        List<AiModelAssignment> assignments = assignmentMapper.selectAll();
+    public void refresh() {
+        synchronized (graphLock) {
+            Map<Long, AiRuntimeConfig> configMap = configMapper.selectAllConfigs().stream()
+                    .collect(Collectors.toMap(AiRuntimeConfig::getId, c -> c));
+            List<AiModelAssignment> assignments = assignmentMapper.selectAll();
 
-        runtimeRef.set(new AiAgentRuntime(
-                buildFromAssignment(assignments, "behavior", configMap),
-                buildFromAssignment(assignments, "quant", configMap),
-                buildFromAssignment(assignments, "chat", configMap),
-                buildFromAssignment(assignments, "reflection", configMap)
-        ));
-        log.info("AI运行时已刷新，共{}个API Key配置，{}个模型分配", configMap.size(), assignments.size());
+            runtimeRef.set(new AiAgentRuntime(
+                    buildFromAssignment(assignments, "behavior", configMap),
+                    buildFromAssignment(assignments, "quant", configMap),
+                    buildFromAssignment(assignments, "chat", configMap),
+                    buildFromAssignment(assignments, "reflection", configMap)
+            ));
+            quantGraph = null;
+            fallbackGraph = null;
+            log.info("AI运行时已刷新，共{}个API Key配置，{}个模型分配", configMap.size(), assignments.size());
+        }
     }
 
-    public com.alibaba.cloud.ai.graph.agent.ReactAgent createBehaviorAgent(Consumer<String> onProgress) {
+    public ReactAgent createBehaviorAgent(Consumer<String> onProgress) {
         return aiAgentConfig.createBehaviorAgent(current().behaviorChatModel(), onProgress);
     }
 
     public CompiledGraph createCryptoAnalysisGraph() throws Exception {
         return aiAgentConfig.createCryptoAnalysisGraph(current().quantChatModel());
+    }
+
+    public CompiledGraph currentQuantGraph() throws Exception {
+        CompiledGraph graph = quantGraph;
+        if (graph != null) return graph;
+        synchronized (graphLock) {
+            graph = quantGraph;
+            if (graph == null) {
+                graph = createCryptoAnalysisGraph();
+                quantGraph = graph;
+                log.info("量化Graph已构建并缓存");
+            }
+            return graph;
+        }
+    }
+
+    private CompiledGraph currentFallbackGraph() throws Exception {
+        CompiledGraph graph = fallbackGraph;
+        if (graph != null) return graph;
+        synchronized (graphLock) {
+            graph = fallbackGraph;
+            if (graph == null) {
+                AiRuntimeConfig defaultConfig = configMapper.selectDefault();
+                AiModelAssignment quantAssignment = assignmentMapper.selectByFunction("quant");
+                if (defaultConfig == null
+                        || (quantAssignment != null && quantAssignment.getConfigId().equals(defaultConfig.getId()))) {
+                    throw new IllegalStateException("无可用的fallback量化配置");
+                }
+
+                String model = defaultConfig.getModel();
+                if (model == null || model.isBlank()) {
+                    model = ymlModel;
+                }
+
+                ChatModel fallbackModel = buildChatModel(defaultConfig.getApiKey(), defaultConfig.getBaseUrl(), model);
+                graph = aiAgentConfig.createCryptoAnalysisGraph(fallbackModel);
+                fallbackGraph = graph;
+                log.info("Fallback量化Graph已构建并缓存 configId={} model={}", defaultConfig.getId(), model);
+            }
+            return graph;
+        }
     }
 
     /**
@@ -112,26 +161,24 @@ public class AiAgentRuntimeManager {
      */
     public Optional<OverAllState> invokeQuantWithFallback(String symbol, String threadId, Map<String, Object> extraState) throws Exception {
         try {
-            CompiledGraph graph = createCryptoAnalysisGraph();
+            CompiledGraph graph = currentQuantGraph();
             Map<String, Object> initialState = new HashMap<>(Map.of("target_symbol", symbol));
             if (extraState != null) initialState.putAll(extraState);
             return graph.invoke(initialState,
                     RunnableConfig.builder().threadId(threadId).build());
         } catch (RestClientException e) {
-            AiRuntimeConfig defaultConfig = configMapper.selectDefault();
-            AiModelAssignment quantAssignment = assignmentMapper.selectByFunction("quant");
-            if (defaultConfig == null
-                    || (quantAssignment != null && quantAssignment.getConfigId().equals(defaultConfig.getId()))) {
+            log.warn("量化LLM异常，降级到default配置重试 symbol={}", symbol, e);
+
+            CompiledGraph fb;
+            try {
+                fb = currentFallbackGraph();
+            } catch (IllegalStateException noFallback) {
                 throw e;
             }
-            log.warn("量化LLM异常，降级到default配置重试 symbol={}", symbol, e);
-            String model = defaultConfig.getModel();
-            if (model == null || model.isBlank()) model = ymlModel;
-            ChatModel fallbackModel = buildChatModel(defaultConfig.getApiKey(), defaultConfig.getBaseUrl(), model);
-            CompiledGraph fallbackGraph = aiAgentConfig.createCryptoAnalysisGraph(fallbackModel);
+
             Map<String, Object> initialState = new HashMap<>(Map.of("target_symbol", symbol));
             if (extraState != null) initialState.putAll(extraState);
-            return fallbackGraph.invoke(initialState,
+            return fb.invoke(initialState,
                     RunnableConfig.builder().threadId(threadId).build());
         }
     }

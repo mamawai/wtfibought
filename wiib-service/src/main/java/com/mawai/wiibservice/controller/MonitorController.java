@@ -26,6 +26,7 @@ public class MonitorController {
     private static final com.sun.management.OperatingSystemMXBean OS_MX =
             (com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
     private static final RuntimeMXBean RUNTIME_MX = ManagementFactory.getRuntimeMXBean();
+    private static final ClassLoadingMXBean CLASS_MX = ManagementFactory.getClassLoadingMXBean();
 
     public MonitorController(SimpMessagingTemplate ws) {
         this.ws = ws;
@@ -34,6 +35,12 @@ public class MonitorController {
     @Scheduled(fixedRate = 5000)
     public void pushMonitor() {
         ws.convertAndSend("/topic/monitor", collectLite());
+    }
+
+    @GetMapping("/detail")
+    @Operation(summary = "详细监控（含classLoading和内存池）")
+    public Result<Map<String, Object>> detail() {
+        return Result.ok(collect());
     }
 
     private static Map<String, Object> collectLite() {
@@ -75,6 +82,13 @@ public class MonitorController {
             pools.add(item);
         }
         data.put("pools", pools);
+
+        Map<String, Object> classLoading = new LinkedHashMap<>();
+        classLoading.put("loaded", CLASS_MX.getLoadedClassCount());
+        classLoading.put("totalLoaded", CLASS_MX.getTotalLoadedClassCount());
+        classLoading.put("unloaded", CLASS_MX.getUnloadedClassCount());
+        data.put("classLoading", classLoading);
+
         return data;
     }
 
