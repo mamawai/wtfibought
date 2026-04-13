@@ -44,6 +44,7 @@ public class HorizonJudge {
     public HorizonForecast judge(List<AgentVote> allVotes, BigDecimal lastPrice, List<String> qualityFlags) {
         List<AgentVote> filtered = allVotes.stream()
                 .filter(v -> horizon.equals(v.horizon()))
+                .filter(v -> !v.reasonCodes().contains("TIMEOUT")) // 超时票不参与裁决
                 .toList();
 
         if (filtered.isEmpty()) {
@@ -116,15 +117,17 @@ public class HorizonJudge {
         // agent平均confidence（独立参考）
         double avgAgentConf = confWeightDenom > EPSILON ? confWeightedSum / confWeightDenom : 0.3;
 
-        // confidence = 方向占比 × agent信心 × disagreement衰减，保底0.15
-        double dominantRatio = (direction == Direction.LONG ? longScore : shortScore) / total;
-        double rawConf = dominantRatio * avgAgentConf * (1.0 - disagreement * 0.4);
-        // 弱信号惩罚（不拦截，只衰减）
+        // confidence = 方向占比为主，agent信心为辅，弱信号用减法惩罚（避免乘法级联衰减）
+        double rawConf = (direction == Direction.LONG ? longScore : shortScore) / total;
+        rawConf *= Math.clamp(0.5 + avgAgentConf, 0.70, 1.0);
+        // 弱信号惩罚（减法，总计上限-0.18，避免叠加过深）
         double minEdge = getMinEdge(qualityFlags);
         int minMoveBps = getMinMoveBps();
-        if (edge < minEdge) rawConf *= 0.6;
-        if (dominantMoveBps < minMoveBps) rawConf *= 0.7;
-        if (disagreement > 0.35) rawConf *= 0.5;
+        double totalPenalty = 0;
+        if (edge < minEdge) totalPenalty += 0.08;
+        if (dominantMoveBps < minMoveBps) totalPenalty += 0.05;
+        if (disagreement > 0.35) totalPenalty += 0.10;
+        rawConf -= Math.min(totalPenalty, 0.18);
         double confidence = Math.clamp(rawConf, 0.15, 1.0);
 
         double weightedScore = longScore > shortScore ? longScore : -shortScore;
@@ -162,7 +165,7 @@ public class HorizonJudge {
             entryLow = entryHigh = invalidation = tp1 = tp2 = null;
         }
 
-        int maxLeverage = getMaxLeverage(horizon);
+        int maxLeverage = getMaxLeverage(horizon, confidence, disagreement);
 
         return new HorizonForecast(horizon, direction, confidence, weightedScore, disagreement,
                 entryLow, entryHigh, invalidation, tp1, tp2, maxLeverage,
@@ -188,15 +191,27 @@ public class HorizonJudge {
     }
 
     public static int getMaxLeverage(String horizon) {
-        return 5;
+        return getMaxLeverage(horizon, 0.5, 0.2);
+    }
+
+    public static int getMaxLeverage(String horizon, double confidence, double disagreement) {
+        int baseLev = switch (horizon) {
+            case "0_10" -> 30;
+            case "10_20" -> 25;
+            case "20_30" -> 20;
+            default -> 20;
+        };
+        if (disagreement > 0.35) baseLev = Math.min(baseLev, 15);
+        if (confidence < 0.4) baseLev = (int) (baseLev * 0.6);
+        return Math.max(10, baseLev);
     }
 
     public static double getBasePositionPct(String horizon) {
         return switch (horizon) {
-            case "0_10" -> 0.08;
-            case "10_20" -> 0.10;
-            case "20_30" -> 0.12;
-            default -> 0.08;
+            case "0_10" -> 0.15;
+            case "10_20" -> 0.18;
+            case "20_30" -> 0.20;
+            default -> 0.15;
         };
     }
 

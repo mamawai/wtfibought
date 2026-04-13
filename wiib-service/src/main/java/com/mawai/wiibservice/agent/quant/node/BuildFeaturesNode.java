@@ -44,27 +44,50 @@ public class BuildFeaturesNode implements NodeAction {
     };
 
     @Override
-    @SuppressWarnings("unchecked")
     public Map<String, Object> apply(OverAllState state) {
-        long startMs = System.currentTimeMillis();
         String symbol = (String) state.value("target_symbol").orElse("BTCUSDT");
-        var klineMap = (Map<String, Map<String, String>>) state.value("kline_map").orElse(Map.of());
-        var spotKlineMap = (Map<String, Map<String, String>>) state.value("spot_kline_map").orElse(Map.of());
-        var tickerMap = (Map<String, String>) state.value("ticker_map").orElse(Map.of());
-        var spotTickerMap = (Map<String, String>) state.value("spot_ticker_map").orElse(Map.of());
-        var fundingRateMap = (Map<String, String>) state.value("funding_rate_map").orElse(Map.of());
-        var fundingRateHistMap = (Map<String, String>) state.value("funding_rate_hist_map").orElse(Map.of());
-        var orderbookMap = (Map<String, String>) state.value("orderbook_map").orElse(Map.of());
-        var spotOrderbookMap = (Map<String, String>) state.value("spot_orderbook_map").orElse(Map.of());
-        var oiHistMap = (Map<String, String>) state.value("oi_hist_map").orElse(Map.of());
-        var longShortRatioMap = (Map<String, String>) state.value("long_short_ratio_map").orElse(Map.of());
-        var forceOrdersMap = (Map<String, String>) state.value("force_orders_map").orElse(Map.of());
-        var topTraderPositionMap = (Map<String, String>) state.value("top_trader_position_map").orElse(Map.of());
-        var takerLongShortMap = (Map<String, String>) state.value("taker_long_short_map").orElse(Map.of());
-        String fearGreedData = (String) state.value("fear_greed_data").orElse("{}");
-        String newsData = (String) state.value("news_data").orElse("{}");
-        String dvolData = (String) state.value("dvol_data").orElse(null);
-        String bookSummaryData = (String) state.value("option_book_summary").orElse(null);
+        Map<String, Object> rawData = new HashMap<>();
+        rawData.put("kline_map", state.value("kline_map").orElse(Map.of()));
+        rawData.put("spot_kline_map", state.value("spot_kline_map").orElse(Map.of()));
+        rawData.put("ticker_map", state.value("ticker_map").orElse(Map.of()));
+        rawData.put("spot_ticker_map", state.value("spot_ticker_map").orElse(Map.of()));
+        rawData.put("funding_rate_map", state.value("funding_rate_map").orElse(Map.of()));
+        rawData.put("funding_rate_hist_map", state.value("funding_rate_hist_map").orElse(Map.of()));
+        rawData.put("orderbook_map", state.value("orderbook_map").orElse(Map.of()));
+        rawData.put("spot_orderbook_map", state.value("spot_orderbook_map").orElse(Map.of()));
+        rawData.put("oi_hist_map", state.value("oi_hist_map").orElse(Map.of()));
+        rawData.put("long_short_ratio_map", state.value("long_short_ratio_map").orElse(Map.of()));
+        rawData.put("force_orders_map", state.value("force_orders_map").orElse(Map.of()));
+        rawData.put("top_trader_position_map", state.value("top_trader_position_map").orElse(Map.of()));
+        rawData.put("taker_long_short_map", state.value("taker_long_short_map").orElse(Map.of()));
+        rawData.put("fear_greed_data", state.value("fear_greed_data").orElse("{}"));
+        rawData.put("news_data", state.value("news_data").orElse("{}"));
+        rawData.put("dvol_data", state.value("dvol_data").orElse(null));
+        rawData.put("option_book_summary", state.value("option_book_summary").orElse(null));
+        return buildFeatures(symbol, rawData);
+    }
+
+    /** 独立于 StateGraph 的特征构建入口，轻周期可直接调用 */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> buildFeatures(String symbol, Map<String, Object> rawData) {
+        long startMs = System.currentTimeMillis();
+        var klineMap = (Map<String, Map<String, String>>) rawData.getOrDefault("kline_map", Map.of());
+        var spotKlineMap = (Map<String, Map<String, String>>) rawData.getOrDefault("spot_kline_map", Map.of());
+        var tickerMap = (Map<String, String>) rawData.getOrDefault("ticker_map", Map.of());
+        var spotTickerMap = (Map<String, String>) rawData.getOrDefault("spot_ticker_map", Map.of());
+        var fundingRateMap = (Map<String, String>) rawData.getOrDefault("funding_rate_map", Map.of());
+        var fundingRateHistMap = (Map<String, String>) rawData.getOrDefault("funding_rate_hist_map", Map.of());
+        var orderbookMap = (Map<String, String>) rawData.getOrDefault("orderbook_map", Map.of());
+        var spotOrderbookMap = (Map<String, String>) rawData.getOrDefault("spot_orderbook_map", Map.of());
+        var oiHistMap = (Map<String, String>) rawData.getOrDefault("oi_hist_map", Map.of());
+        var longShortRatioMap = (Map<String, String>) rawData.getOrDefault("long_short_ratio_map", Map.of());
+        var forceOrdersMap = (Map<String, String>) rawData.getOrDefault("force_orders_map", Map.of());
+        var topTraderPositionMap = (Map<String, String>) rawData.getOrDefault("top_trader_position_map", Map.of());
+        var takerLongShortMap = (Map<String, String>) rawData.getOrDefault("taker_long_short_map", Map.of());
+        String fearGreedData = (String) rawData.getOrDefault("fear_greed_data", "{}");
+        String newsData = (String) rawData.getOrDefault("news_data", "{}");
+        String dvolData = (String) rawData.getOrDefault("dvol_data", null);
+        String bookSummaryData = (String) rawData.getOrDefault("option_book_summary", null);
 
         Map<String, String> rawKlines = klineMap.getOrDefault(symbol, Map.of());
         Map<String, String> rawSpotKlines = spotKlineMap.getOrDefault(symbol, Map.of());

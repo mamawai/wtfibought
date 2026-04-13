@@ -60,10 +60,10 @@ public class RegimeAgent implements FactorAgent {
                 conf2 = 0.65 * regimeConf;
             }
             case RANGE -> {
-                // 震荡市：弱均值回归
-                s0 = trendDir * 0.2;
-                s1 = trendDir * 0.15;
-                s2 = trendDir * 0.1;
+                // 震荡市：弱均值回归，但系数不能太低以致完全压死信号
+                s0 = trendDir * 0.3;
+                s1 = trendDir * 0.25;
+                s2 = trendDir * 0.2;
                 conf0 = 0.35 * regimeConf;
                 conf1 = 0.30 * regimeConf;
                 conf2 = 0.25 * regimeConf;
@@ -105,13 +105,17 @@ public class RegimeAgent implements FactorAgent {
                     reasons.add("TRANSITION_WEAKENING");
                 }
                 case "BREAKING_OUT" -> {
-                    // 即将突破向上：短线升权
-                    conf0 *= 1.2;
+                    // 即将突破向上：短线升权 + score放大
+                    s0 *= 1.3;
+                    conf0 *= 1.3;
+                    conf1 *= 1.1;
                     reasons.add("TRANSITION_BREAKING_OUT");
                 }
                 case "BREAKING_DOWN" -> {
-                    // 即将突破向下：短线升权
-                    conf0 *= 1.2;
+                    // 即将突破向下：短线升权 + score放大
+                    s0 *= 1.3;
+                    conf0 *= 1.3;
+                    conf1 *= 1.1;
                     reasons.add("TRANSITION_BREAKING_DOWN");
                 }
                 case "STRENGTHENING" -> {

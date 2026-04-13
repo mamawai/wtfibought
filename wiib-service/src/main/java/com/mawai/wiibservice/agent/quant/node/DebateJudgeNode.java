@@ -217,19 +217,21 @@ public class DebateJudgeNode implements NodeAction {
             Map<String, JSONObject> adjustMap = new HashMap<>();
             for (int i = 0; i < horizons.size(); i++) {
                 JSONObject h = horizons.getJSONObject(i);
-                adjustMap.put(h.getString("horizon"), h);
+                String rawHorizon = h.getString("horizon");
+                adjustMap.put(normalizeHorizon(rawHorizon), h);
             }
 
             List<HorizonForecast> adjusted = new ArrayList<>(3);
             for (HorizonForecast f : original) {
                 JSONObject adj = adjustMap.get(f.horizon());
                 if (adj == null || adj.getBooleanValue("approved", true)) {
-                    // approved: 检查是否仅下调confidence
+                    // approved: 允许小幅调整 confidence（上调不超过+0.10）
                     double newConf = adj != null ? adj.getDoubleValue("newConfidence") : f.confidence();
-                    if (newConf > 0 && newConf < f.confidence()) {
-                        log.info("[Q4.5.merge] {} conf下调 {}→{}",
-                                f.horizon(), fmt(f.confidence()), fmt(newConf));
-                        adjusted.add(withConfidence(f, newConf));
+                    double cappedConf = Math.min(newConf, f.confidence() + 0.10);
+                    if (cappedConf > 0 && Math.abs(cappedConf - f.confidence()) > 1e-6) {
+                        log.info("[Q4.5.merge] {} conf调整 {}→{}",
+                                f.horizon(), fmt(f.confidence()), fmt(cappedConf));
+                        adjusted.add(withConfidence(f, cappedConf));
                     } else {
                         adjusted.add(f);
                     }
@@ -242,9 +244,9 @@ public class DebateJudgeNode implements NodeAction {
                 double newConf = adj.getDoubleValue("newConfidence");
                 String reason = adj.getString("reason");
 
-                // NO_TRADE翻转时允许LLM提升置信度(cap 0.5)，其余只能下调
+                // NO_TRADE翻转时允许LLM提升置信度(cap 0.5)，其余允许小幅上调(+0.10)
                 if (f.direction() != Direction.NO_TRADE) {
-                    newConf = Math.min(newConf, f.confidence());
+                    newConf = Math.min(newConf, f.confidence() + 0.10);
                 } else {
                     newConf = Math.min(newConf, 0.5);
                 }
@@ -278,7 +280,7 @@ public class DebateJudgeNode implements NodeAction {
             Map<String, Integer[]> debateProbs = new HashMap<>();
             for (int i = 0; i < horizons.size(); i++) {
                 JSONObject h = horizons.getJSONObject(i);
-                String hz = h.getString("horizon");
+                String hz = normalizeHorizon(h.getString("horizon"));
                 int bullPct = h.getIntValue("bullPct", -1);
                 int bearPct = h.getIntValue("bearPct", -1);
                 int rangePct = h.getIntValue("rangePct", -1);
@@ -304,7 +306,12 @@ public class DebateJudgeNode implements NodeAction {
             return result;
         } catch (Exception e) {
             log.warn("[Q4.5] 辩论结果解析失败，保留原始裁决: {}", e.getMessage());
-            return Map.of();
+            // 返回默认debate_probs (均分)，避免下游缺失
+            Map<String, Integer[]> defaultProbs = new HashMap<>();
+            for (HorizonForecast f : original) {
+                defaultProbs.put(f.horizon(), new Integer[]{33, 34, 33});
+            }
+            return Map.of("debate_probs", defaultProbs);
         }
     }
 
@@ -423,6 +430,18 @@ public class DebateJudgeNode implements NodeAction {
             case "NO_TRADE" -> Direction.NO_TRADE;
             default -> fallback;
         };
+    }
+
+    /**
+     * 归一化 horizon 字符串：LLM 可能返回 "0-10min"/"0_10min"/"0_10" 等变体
+     */
+    private String normalizeHorizon(String raw) {
+        if (raw == null) return "0_10";
+        String s = raw.replaceAll("[^0-9_]", "");
+        if (s.startsWith("0")) return "0_10";
+        if (s.startsWith("10")) return "10_20";
+        if (s.startsWith("20")) return "20_30";
+        return raw;
     }
 
     private String rebuildDecision(List<HorizonForecast> forecasts) {

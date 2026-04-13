@@ -26,11 +26,18 @@ public class VolatilityAgent implements FactorAgent {
         }
 
         BigDecimal lastPrice = s.lastPrice();
+        BigDecimal atr5m = s.atr5m();
         if (lastPrice == null || lastPrice.signum() <= 0) {
             return List.of(
                     AgentVote.noTrade(name(), "0_10", "NO_PRICE"),
                     AgentVote.noTrade(name(), "10_20", "NO_PRICE"),
                     AgentVote.noTrade(name(), "20_30", "NO_PRICE"));
+        }
+        if (atr5m != null && atr5m.signum() == 0) {
+            return List.of(
+                    AgentVote.noTrade(name(), "0_10", "ATR_ZERO"),
+                    AgentVote.noTrade(name(), "10_20", "ATR_ZERO"),
+                    AgentVote.noTrade(name(), "20_30", "ATR_ZERO"));
         }
 
         List<String> reasons = new ArrayList<>();
@@ -113,9 +120,9 @@ public class VolatilityAgent implements FactorAgent {
         if (ind == null) return 30;
 
         BigDecimal atr = toBd(ind.get("atr14"));
-        if (atr == null) return 30;
+        if (atr == null || atr.signum() == 0) return 30;
 
-        double scaledAtr = atr.doubleValue() * Math.sqrt(periods);
+        double scaledAtr = atr.doubleValue() * Math.pow(periods, 0.6);
         return Math.max(5, (int) (scaledAtr / lastPrice.doubleValue() * 10000));
     }
 

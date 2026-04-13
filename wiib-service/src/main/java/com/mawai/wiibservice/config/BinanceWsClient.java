@@ -1,5 +1,6 @@
 package com.mawai.wiibservice.config;
 
+import com.mawai.wiibservice.agent.quant.PriceVolatilitySentinel;
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.CryptoOrderService;
 import com.mawai.wiibservice.service.DepthStreamCache;
@@ -42,6 +43,7 @@ public class BinanceWsClient implements SmartLifecycle {
     private final ForceOrderService forceOrderService;
     private final OrderFlowAggregator orderFlowAggregator;
     private final DepthStreamCache depthStreamCache;
+    private final PriceVolatilitySentinel priceVolatilitySentinel;
 
     private HttpClient httpClient;
     private ScheduledExecutorService scheduler;
@@ -224,6 +226,7 @@ public class BinanceWsClient implements SmartLifecycle {
             redisTemplate.opsForValue().set(REDIS_MARK_PRICE_KEY_PREFIX + symbol, markPrice);
             BigDecimal mp = new BigDecimal(markPrice);
             cacheService.putMarkPrice(symbol, mp);
+            priceVolatilitySentinel.onPriceTick(symbol, mp);
 
             broadcastService.broadcastFuturesQuote(symbol, "{\"mp\":\"" + markPrice + "\",\"fws\":" + isFuturesConnected() + "}");
 

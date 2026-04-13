@@ -46,9 +46,15 @@ public class CollectDataNode implements NodeAction {
 
     @Override
     public Map<String, Object> apply(OverAllState state) {
-        long startMs = System.currentTimeMillis();
         String symbol = (String) state.value("target_symbol").orElse("BTCUSDT");
         if (symbol.isBlank()) symbol = "BTCUSDT";
+        String preFetchedFearGreed = (String) state.value("fear_greed_data").orElse(null);
+        return collect(symbol, preFetchedFearGreed);
+    }
+
+    /** 独立于 StateGraph 的采集入口，轻周期可直接调用 */
+    public Map<String, Object> collect(String symbol, String preFetchedFearGreed) {
+        long startMs = System.currentTimeMillis();
         log.info("[Q1.0] collect_data开始 symbol={}", symbol);
 
         Map<String, Map<String, String>> klineMap = new HashMap<>();
@@ -67,7 +73,6 @@ public class CollectDataNode implements NodeAction {
         Map<String, String> takerLongShortMap = new HashMap<>();
 
         // FGI：全市场通用，调度器可能已预取
-        String preFetchedFearGreed = (String) state.value("fear_greed_data").orElse(null);
         boolean skipFearGreed = preFetchedFearGreed != null
                 && !preFetchedFearGreed.isBlank() && !"{}".equals(preFetchedFearGreed);
         String fearGreedData = skipFearGreed ? preFetchedFearGreed : "{}";
