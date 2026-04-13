@@ -75,7 +75,9 @@ public class QuantForecastScheduler {
             }
             if (forecastResult != null) {
                 String debateSummary = (String) state.value("debate_summary").orElse(null);
-                persistService.persist(forecastResult, debateSummary);
+                String rawSnapshotJson = (String) state.value("raw_snapshot_json").orElse(null);
+                String rawReportJson = (String) state.value("raw_report_json").orElse(null);
+                persistService.persist(forecastResult, debateSummary, rawSnapshotJson, rawReportJson);
 
                 Object report = state.value("report").orElse(null);
                 if (report instanceof CryptoAnalysisReport r) {

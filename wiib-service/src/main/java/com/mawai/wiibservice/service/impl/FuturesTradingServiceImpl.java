@@ -20,6 +20,7 @@ import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.FuturesPositionIndexService;
 import com.mawai.wiibservice.service.FuturesTradingService;
 import com.mawai.wiibservice.service.UserService;
+import com.mawai.wiibservice.task.AiTradingScheduler;
 import com.mawai.wiibservice.util.RedisLockUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -586,8 +587,33 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         wrapper.eq(FuturesOrder::getStatus, "FILLED")
                 .orderByDesc(FuturesOrder::getCreatedAt)
                 .last("LIMIT 20");
+        Long aiUserId = resolveAiUserId();
         return orderMapper.selectList(wrapper).stream()
-                .map(FuturesHelper::buildOrderResponse).toList();
+                .map(order -> {
+                    FuturesOrderResponse resp = FuturesHelper.buildOrderResponse(order);
+                    if (aiUserId != null && aiUserId.equals(order.getUserId())) {
+                        resp.setIsAiTrader(true);
+                    }
+                    return resp;
+                }).toList();
+    }
+
+    private volatile Long cachedAiUserId;
+
+    private Long resolveAiUserId() {
+        Long cached = cachedAiUserId;
+        if (cached != null) return cached;
+        try {
+            var scheduler = SpringUtils.getBean(AiTradingScheduler.class);
+            Long id = scheduler.getAiUserId();
+            if (id != null && id != 0) {
+                cachedAiUserId = id;
+                return id;
+            }
+            return null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ==================== 内部工具 ====================

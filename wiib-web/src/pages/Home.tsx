@@ -12,7 +12,7 @@ import { Skeleton } from '../components/ui/skeleton';
 import { useToast } from '../components/ui/use-toast';
 import {
   TrendingUp, TrendingDown, LineChart, RefreshCcw, Bell,
-  Settings, Gamepad2, List, DollarSign, ArrowRight, Target, Brain,
+  Settings, Gamepad2, List, DollarSign, ArrowRight, Target, Brain, Bot,
 } from 'lucide-react';
 import type { Stock, BuffStatus } from '../types';
 import { useDedupedEffect } from '../hooks/useDedupedEffect';
@@ -163,13 +163,14 @@ export function Home() {
       </Card>
 
       {/* ====== Quick Actions ====== */}
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+      <div className="grid grid-cols-4 md:grid-cols-7 gap-3">
         {[
           { icon: List, label: '股票', to: '/stocks', bg: 'bg-blue-100 dark:bg-blue-500/15', ic: 'text-blue-600 dark:text-blue-400' },
           { icon: DollarSign, label: 'CRYPTO', to: '/coin', bg: 'bg-amber-100 dark:bg-amber-500/15', ic: 'text-amber-600 dark:text-amber-400' },
           { icon: LineChart, label: '期权', to: '/options', bg: 'bg-violet-100 dark:bg-violet-500/15', ic: 'text-violet-600 dark:text-violet-400' },
           { icon: Target, label: '预测', to: '/prediction', bg: 'bg-orange-100 dark:bg-orange-500/15', ic: 'text-orange-600 dark:text-orange-400' },
           { icon: Brain, label: 'AI', to: '/ai', bg: 'bg-cyan-100 dark:bg-cyan-500/15', ic: 'text-cyan-600 dark:text-cyan-400' },
+          { icon: Bot, label: 'AI交易员', to: '/ai-trader', bg: 'bg-emerald-100 dark:bg-emerald-500/15', ic: 'text-emerald-600 dark:text-emerald-400' },
           { icon: Gamepad2, label: '游戏', to: '/games', bg: 'bg-pink-100 dark:bg-pink-500/15', ic: 'text-pink-600 dark:text-pink-400' },
         ].map(({ icon: Icon, label, to, bg, ic }) => (
           <button

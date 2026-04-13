@@ -24,15 +24,21 @@ public class QuantForecastPersistService {
 
     @Transactional
     public void persist(ForecastResult result) {
-        persist(result, null);
+        persist(result, null, null, null);
     }
 
     @Transactional
     public void persist(ForecastResult result, String debateSummary) {
+        persist(result, debateSummary, null, null);
+    }
+
+    @Transactional
+    public void persist(ForecastResult result, String debateSummary,
+                        String rawSnapshotJson, String rawReportJson) {
         if (result == null || result.cycleId() == null) return;
 
         try {
-            saveCycle(result, debateSummary);
+            saveCycle(result, debateSummary, rawSnapshotJson, rawReportJson);
             saveVotes(result.cycleId(), result.allVotes());
             saveHorizonForecasts(result.cycleId(), result.horizons());
             saveSignalDecisions(result.cycleId(), result.horizons(), result.riskStatus());
@@ -42,17 +48,23 @@ public class QuantForecastPersistService {
         }
     }
 
-    private void saveCycle(ForecastResult r, String debateSummary) {
+    private void saveCycle(ForecastResult r, String debateSummary,
+                           String rawSnapshotJson, String rawReportJson) {
         QuantForecastCycle cycle = new QuantForecastCycle();
         cycle.setCycleId(r.cycleId());
         cycle.setSymbol(r.symbol());
         cycle.setForecastTime(r.forecastTime());
         cycle.setOverallDecision(r.overallDecision());
         cycle.setRiskStatus(r.riskStatus());
-        if (r.snapshot() != null) {
+        // 优先使用预序列化的JSON（避免ForecastResult反序列化时复杂record丢失）
+        if (rawSnapshotJson != null && !rawSnapshotJson.isBlank()) {
+            cycle.setSnapshotJson(rawSnapshotJson);
+        } else if (r.snapshot() != null) {
             cycle.setSnapshotJson(JSONUtil.toJsonStr(r.snapshot()));
         }
-        if (r.report() != null) {
+        if (rawReportJson != null && !rawReportJson.isBlank()) {
+            cycle.setReportJson(rawReportJson);
+        } else if (r.report() != null) {
             cycle.setReportJson(JSONUtil.toJsonStr(r.report()));
         }
         if (debateSummary != null) {

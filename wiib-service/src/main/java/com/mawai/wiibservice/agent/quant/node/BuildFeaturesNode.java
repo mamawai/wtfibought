@@ -615,19 +615,26 @@ public class BuildFeaturesNode implements NodeAction {
     private List<NewsItem> parseNewsItems(String newsData) {
         if (newsData == null || newsData.isBlank() || "{}".equals(newsData)) return List.of();
         try {
-            JSONObject root = JSON.parseObject(newsData);
+            // byte模式解析，绕开fastjson2 char buffer扩容bug
+            JSONObject root = JSON.parseObject(newsData.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             JSONArray items = root.getJSONArray("Data");
             if (items == null || items.isEmpty()) return List.of();
             List<NewsItem> result = new ArrayList<>(items.size());
-            for (int i = 0; i < items.size(); i++) {
-                JSONObject item = items.getJSONObject(i);
-                if (item == null) continue;
-                result.add(new NewsItem(
-                        item.getString("TITLE"),
-                        item.getString("BODY"),
-                        item.getString("SOURCE_DATA_SOURCE_KEY"),
-                        item.getString("GUID")
-                ));
+            int batchSize = 10;
+            for (int batch = 0; batch * batchSize < items.size(); batch++) {
+                int start = batch * batchSize;
+                int end = Math.min(start + batchSize, items.size());
+                for (int i = start; i < end; i++) {
+                    JSONObject item = items.getJSONObject(i);
+                    if (item == null) continue;
+                    result.add(new NewsItem(
+                            item.getString("TITLE"),
+                            item.getString("BODY"),
+                            item.getString("SOURCE_DATA_SOURCE_KEY"),
+                            item.getString("GUID")
+                    ));
+                }
+                log.info("[Q2] 新闻第{}批解析完成 [{}-{})", batch + 1, start, end);
             }
             return result;
         } catch (Exception e) {

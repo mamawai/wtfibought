@@ -66,8 +66,8 @@ public class GenerateReportNode implements NodeAction {
         int avgConfidence = forecasts.isEmpty() ? 0
                 : (int) (forecasts.stream().mapToDouble(HorizonForecast::confidence).average().orElse(0) * 100);
         @SuppressWarnings("unchecked")
-        Map<String, Integer[]> debateProbs =
-                (Map<String, Integer[]>) state.value("debate_probs").orElse(Map.of());
+        Map<String, Object[]> debateProbs =
+                (Map<String, Object[]>) state.value("debate_probs").orElse(Map.of());
 
         // ===== Step1: 硬性报告（纯计算，零LLM） =====
         CryptoAnalysisReport hardReport = buildHardReport(
@@ -132,6 +132,11 @@ public class GenerateReportNode implements NodeAction {
         result.put("hard_report", hardReport);
         // 序列化为JSON字符串，避免框架deepCopy把record转成Map
         result.put("forecast_result", com.alibaba.fastjson2.JSON.toJSONString(forecastResult));
+        // 单独输出序列化后的JSON，避免ForecastResult反序列化时复杂record丢失
+        if (snapshot != null) {
+            result.put("raw_snapshot_json", com.alibaba.fastjson2.JSON.toJSONString(snapshot));
+        }
+        result.put("raw_report_json", com.alibaba.fastjson2.JSON.toJSONString(finalReport));
         return result;
     }
 
@@ -143,7 +148,7 @@ public class GenerateReportNode implements NodeAction {
                                                  String riskStatus,
                                                  FeatureSnapshot snapshot,
                                                  int avgConfidence,
-                                                 Map<String, Integer[]> debateProbs) {
+                                                 Map<String, Object[]> debateProbs) {
         CryptoAnalysisReport report = new CryptoAnalysisReport();
         report.setSummary(buildSummary(symbol, forecasts, overallDecision, riskStatus, snapshot));
         report.setAnalysisBasis(buildAnalysisBasis(forecasts, votes, overallDecision, riskStatus, snapshot));
@@ -391,7 +396,7 @@ public class GenerateReportNode implements NodeAction {
 
     private CryptoAnalysisReport.DirectionInfo buildDirectionInfo(List<HorizonForecast> forecasts,
                                                                     List<AgentVote> votes,
-                                                                    Map<String, Integer[]> debateProbs) {
+                                                                    Map<String, Object[]> debateProbs) {
         CryptoAnalysisReport.DirectionInfo direction = new CryptoAnalysisReport.DirectionInfo();
         direction.setUltraShort(formatDirectionWithProb(findForecast(forecasts, "0_10"), votes, "0_10", debateProbs));
         direction.setShortTerm(formatDirectionWithProb(findForecast(forecasts, "10_20"), votes, "10_20", debateProbs));
@@ -685,11 +690,14 @@ public class GenerateReportNode implements NodeAction {
      * 无辩论概率时回退到Agent投票加权计算。
      */
     private String formatDirectionWithProb(HorizonForecast forecast, List<AgentVote> allVotes,
-                                            String horizon, Map<String, Integer[]> debateProbs) {
+                                            String horizon, Map<String, Object[]> debateProbs) {
         // 辩论概率优先
         if (debateProbs != null && debateProbs.containsKey(horizon)) {
-            Integer[] probs = debateProbs.get(horizon);
-            int bullPct = probs[0], rangePct = probs[1], bearPct = probs[2];
+            // state序列化可能导致Integer[]变Object[]，安全取值
+            Object[] raw = (Object[]) debateProbs.get(horizon);
+            int bullPct = ((Number) raw[0]).intValue();
+            int rangePct = ((Number) raw[1]).intValue();
+            int bearPct = ((Number) raw[2]).intValue();
 
             // 确保与forecast方向一致：如果forecast有明确方向，概率中该方向必须最高
             if (forecast != null && forecast.direction() == Direction.LONG && bullPct <= bearPct) {

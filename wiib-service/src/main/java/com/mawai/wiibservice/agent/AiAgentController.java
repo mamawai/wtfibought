@@ -280,7 +280,9 @@ public class AiAgentController {
                 }
                 if (forecastResult != null) {
                     String debateSummary = (String) state.value("debate_summary").orElse(null);
-                    persistService.persist(forecastResult, debateSummary);
+                    String rawSnapshotJson = (String) state.value("raw_snapshot_json").orElse(null);
+                    String rawReportJson = (String) state.value("raw_report_json").orElse(null);
+                    persistService.persist(forecastResult, debateSummary, rawSnapshotJson, rawReportJson);
                 } else {
                     log.warn("[Quant] forecast_result为空或类型异常 type={}", fr != null ? fr.getClass().getName() : "null");
                 }

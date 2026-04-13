@@ -746,3 +746,28 @@ export interface ForceOrder {
   tradeTime: string;
   createdAt: string;
 }
+
+// ========== AI Trading 类型 ==========
+export interface AiTradingDashboard {
+  balance: number;
+  frozenBalance: number;
+  unrealizedPnl: number;
+  totalPnl: number;
+  positionCount: number;
+  todayTrades: number;
+  positions: FuturesPosition[];
+}
+
+export interface AiTradingDecision {
+  id: number;
+  cycleNo: number;
+  symbol: string;
+  action: string;
+  reasoning: string;
+  marketContext: string;
+  positionSnapshot: string;
+  executionResult: string | null;
+  balanceBefore: number;
+  balanceAfter: number;
+  createdAt: string;
+}

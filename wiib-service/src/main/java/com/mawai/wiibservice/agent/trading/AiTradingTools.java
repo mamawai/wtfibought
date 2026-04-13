@@ -1,0 +1,322 @@
+package com.mawai.wiibservice.agent.trading;
+
+import com.alibaba.fastjson2.JSON;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.mawai.wiibcommon.dto.*;
+import com.mawai.wiibcommon.entity.*;
+import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
+import com.mawai.wiibservice.mapper.QuantSignalDecisionMapper;
+import com.mawai.wiibservice.mapper.UserMapper;
+import com.mawai.wiibservice.mapper.FuturesPositionMapper;
+import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibservice.service.FuturesTradingService;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.List;
+
+@Slf4j
+public class AiTradingTools {
+
+    private static final int MAX_LEVERAGE = 20;
+    private static final BigDecimal MAX_POSITION_RATIO = new BigDecimal("0.30");
+    private static final int MAX_OPEN_POSITIONS = 3;
+
+    private final Long aiUserId;
+    private final String currentSymbol;
+    private final UserMapper userMapper;
+    private final FuturesTradingService futuresTradingService;
+    private final FuturesPositionMapper futuresPositionMapper;
+    private final QuantForecastCycleMapper cycleMapper;
+    private final QuantSignalDecisionMapper decisionMapper;
+    private final CacheService cacheService;
+
+    public AiTradingTools(Long aiUserId, String currentSymbol,
+                          UserMapper userMapper,
+                          FuturesTradingService futuresTradingService,
+                          FuturesPositionMapper futuresPositionMapper,
+                          QuantForecastCycleMapper cycleMapper,
+                          QuantSignalDecisionMapper decisionMapper,
+                          CacheService cacheService) {
+        this.aiUserId = aiUserId;
+        this.currentSymbol = currentSymbol;
+        this.userMapper = userMapper;
+        this.futuresTradingService = futuresTradingService;
+        this.futuresPositionMapper = futuresPositionMapper;
+        this.cycleMapper = cycleMapper;
+        this.decisionMapper = decisionMapper;
+        this.cacheService = cacheService;
+    }
+
+    // ==================== 只读工具 ====================
+
+    @Tool(description = "查询AI交易账户信息：可用余额、冻结余额、是否破产")
+    public String getAccountInfo() {
+        User user = userMapper.selectById(aiUserId);
+        if (user == null) return "AI账户不存在";
+        return JSON.toJSONString(new Object() {
+            public final BigDecimal balance = user.getBalance();
+            public final BigDecimal frozenBalance = user.getFrozenBalance();
+            public final boolean isBankrupt = Boolean.TRUE.equals(user.getIsBankrupt());
+        });
+    }
+
+    @Tool(description = "查询AI当前持仓列表，含未实现盈亏、强平价等")
+    public String getPositions(@ToolParam(description = "交易对，如BTCUSDT，传空查全部") String symbol) {
+        String s = (symbol != null && !symbol.isBlank()) ? symbol : null;
+        List<FuturesPositionDTO> positions = futuresTradingService.getUserPositions(aiUserId, s);
+        if (positions.isEmpty()) return "当前无持仓";
+        return JSON.toJSONString(positions);
+    }
+
+    @Tool(description = "查询AI最近的合约订单记录")
+    public String getRecentOrders(@ToolParam(description = "交易对，如BTCUSDT，传空查全部") String symbol) {
+        String s = (symbol != null && !symbol.isBlank()) ? symbol : null;
+        var page = futuresTradingService.getUserOrders(aiUserId, null, 1, 10, s);
+        if (page.getRecords().isEmpty()) return "无历史订单";
+        return JSON.toJSONString(page.getRecords());
+    }
+
+    @Tool(description = "查询指定交易对的最新量化分析结果：方向、置信度、杠杆建议、风控状态")
+    public String getLatestForecast(@ToolParam(description = "交易对，如BTCUSDT") String symbol) {
+        if (symbol == null || symbol.isBlank()) symbol = currentSymbol;
+        QuantForecastCycle cycle = cycleMapper.selectLatest(symbol);
+        if (cycle == null) return "暂无量化分析数据";
+
+        List<QuantSignalDecision> signals = decisionMapper.selectLatestBySymbol(symbol);
+        return JSON.toJSONString(new Object() {
+            public final String cycleId = cycle.getCycleId();
+            public final String forecastTime = cycle.getForecastTime() != null ? cycle.getForecastTime().toString() : null;
+            public final String overallDecision = cycle.getOverallDecision();
+            public final String riskStatus = cycle.getRiskStatus();
+            public final Object signalDecisions = signals;
+        });
+    }
+
+    @Tool(description = "查询指定交易对的当前价格（合约价和标记价）")
+    public String getMarketPrice(@ToolParam(description = "交易对，如BTCUSDT") String symbol) {
+        if (symbol == null || symbol.isBlank()) return "symbol不能为空";
+        BigDecimal futuresPrice = cacheService.getFuturesPrice(symbol);
+        BigDecimal markPrice = cacheService.getMarkPrice(symbol);
+        return JSON.toJSONString(new Object() {
+            public final String sym = symbol;
+            public final BigDecimal price = futuresPrice;
+            public final BigDecimal mark = markPrice;
+        });
+    }
+
+    @Tool(description = "查询指定交易对的市场微观数据快照：恐贪指数、资金费率、爆仓压力、大户持仓、盘口失衡、多周期涨跌幅、市场状态、波动率等。用于辅助判断市场情绪和微观结构。")
+    public String getMarketSnapshot(@ToolParam(description = "交易对，如BTCUSDT") String symbol) {
+        if (symbol == null || symbol.isBlank()) symbol = currentSymbol;
+        QuantForecastCycle cycle = cycleMapper.selectLatest(symbol);
+        if (cycle == null || cycle.getSnapshotJson() == null) return "暂无市场快照数据";
+        try {
+            var snap = JSON.parseObject(cycle.getSnapshotJson());
+            var result = new java.util.LinkedHashMap<String, Object>();
+            result.put("snapshotTime", snap.getString("snapshotTime"));
+            result.put("lastPrice", snap.get("lastPrice"));
+            result.put("spotLastPrice", snap.get("spotLastPrice"));
+            // 市场状态
+            result.put("regime", snap.getString("regime"));
+            result.put("regimeConfidence", snap.get("regimeConfidence"));
+            result.put("regimeTransition", snap.getString("regimeTransition"));
+            // 恐贪
+            result.put("fearGreedIndex", snap.get("fearGreedIndex"));
+            result.put("fearGreedLabel", snap.getString("fearGreedLabel"));
+            // 资金费率
+            result.put("fundingDeviation", snap.get("fundingDeviation"));
+            result.put("fundingRateTrend", snap.get("fundingRateTrend"));
+            result.put("fundingRateExtreme", snap.get("fundingRateExtreme"));
+            // 爆仓
+            result.put("liquidationPressure", snap.get("liquidationPressure"));
+            result.put("liquidationVolumeUsdt", snap.get("liquidationVolumeUsdt"));
+            // 大户/主动买卖
+            result.put("topTraderBias", snap.get("topTraderBias"));
+            result.put("takerBuySellPressure", snap.get("takerBuySellPressure"));
+            // 盘口
+            result.put("bidAskImbalance", snap.get("bidAskImbalance"));
+            result.put("oiChangeRate", snap.get("oiChangeRate"));
+            // 波动率
+            result.put("bollSqueeze", snap.get("bollSqueeze"));
+            result.put("atr5m", snap.get("atr5m"));
+            // 期权IV
+            result.put("dvolIndex", snap.get("dvolIndex"));
+            result.put("atmIv", snap.get("atmIv"));
+            // 多周期涨跌幅
+            result.put("priceChanges", snap.get("priceChanges"));
+            return JSON.toJSONString(result);
+        } catch (Exception e) {
+            log.warn("[AI-Trade] snapshotJson解析失败: {}", e.getMessage());
+            return "快照数据解析失败";
+        }
+    }
+
+    // ==================== 交易工具 ====================
+
+    @Tool(description = "开仓下单，支持市价和限价。必须设止损。杠杆上限20倍，单次保证金不超余额30%，最多3仓位。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
+    public String openPosition(
+            @ToolParam(description = "方向：LONG或SHORT") String side,
+            @ToolParam(description = "数量（币的数量，如0.01个BTC）") BigDecimal quantity,
+            @ToolParam(description = "杠杆倍数，1-20") Integer leverage,
+            @ToolParam(description = "订单类型：MARKET(市价，立即成交) 或 LIMIT(限价，挂单等待)，默认MARKET") String orderType,
+            @ToolParam(description = "限价价格，仅orderType=LIMIT时必填，市价单忽略此参数") BigDecimal limitPrice,
+            @ToolParam(description = "止损价格，必填") BigDecimal stopLossPrice,
+            @ToolParam(description = "止盈目标1价格，可选") BigDecimal tp1Price,
+            @ToolParam(description = "止盈目标2价格，可选，设置后止盈仓位自动按50%/50%分配") BigDecimal tp2Price) {
+
+        String symbol = currentSymbol;
+        if (!"LONG".equals(side) && !"SHORT".equals(side)) {
+            return "错误：side必须是LONG或SHORT";
+        }
+        if (quantity == null || quantity.compareTo(BigDecimal.ZERO) <= 0) {
+            return "错误：quantity必须大于0";
+        }
+        if (leverage == null || leverage < 1) leverage = 1;
+        if (leverage > MAX_LEVERAGE) {
+            return "错误：杠杆上限" + MAX_LEVERAGE + "倍，你传了" + leverage;
+        }
+        if (stopLossPrice == null || stopLossPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            return "错误：必须设置止损价格";
+        }
+
+        boolean isLimit = "LIMIT".equalsIgnoreCase(orderType);
+        if (isLimit && (limitPrice == null || limitPrice.compareTo(BigDecimal.ZERO) <= 0)) {
+            return "错误：限价单必须设置limitPrice";
+        }
+
+        // 持仓数检查
+        long openCount = futuresPositionMapper.selectCount(
+                new LambdaQueryWrapper<FuturesPosition>()
+                        .eq(FuturesPosition::getUserId, aiUserId)
+                        .eq(FuturesPosition::getStatus, "OPEN"));
+        if (openCount >= MAX_OPEN_POSITIONS) {
+            return "错误：已有" + openCount + "个持仓，上限" + MAX_OPEN_POSITIONS;
+        }
+
+        // 保证金比例检查
+        User user = userMapper.selectById(aiUserId);
+        if (user == null) return "错误：AI账户不存在";
+        BigDecimal price = isLimit ? limitPrice : cacheService.getFuturesPrice(symbol);
+        if (price == null) price = cacheService.getMarkPrice(symbol);
+        if (price == null) return "错误：无法获取" + symbol + "价格";
+
+        BigDecimal positionValue = price.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal margin = positionValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
+        BigDecimal maxMargin = user.getBalance().multiply(MAX_POSITION_RATIO);
+        if (margin.compareTo(maxMargin) > 0) {
+            return "错误：保证金" + margin + "超过余额30%上限" + maxMargin.setScale(2, RoundingMode.HALF_UP);
+        }
+
+        // 构造请求
+        FuturesOpenRequest req = new FuturesOpenRequest();
+        req.setSymbol(symbol);
+        req.setSide(side);
+        req.setQuantity(quantity);
+        req.setLeverage(leverage);
+        req.setOrderType(isLimit ? "LIMIT" : "MARKET");
+        if (isLimit) req.setLimitPrice(limitPrice);
+
+        // 止损
+        FuturesOpenRequest.StopLoss sl = new FuturesOpenRequest.StopLoss();
+        sl.setPrice(stopLossPrice);
+        sl.setQuantity(quantity);
+        req.setStopLosses(List.of(sl));
+
+        // 止盈
+        if (tp1Price != null && tp1Price.compareTo(BigDecimal.ZERO) > 0) {
+            if (tp2Price != null && tp2Price.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal half = quantity.divide(BigDecimal.valueOf(2), 8, RoundingMode.HALF_UP);
+                BigDecimal rest = quantity.subtract(half);
+                FuturesOpenRequest.TakeProfit tp1 = new FuturesOpenRequest.TakeProfit();
+                tp1.setPrice(tp1Price);
+                tp1.setQuantity(half);
+                FuturesOpenRequest.TakeProfit tp2 = new FuturesOpenRequest.TakeProfit();
+                tp2.setPrice(tp2Price);
+                tp2.setQuantity(rest);
+                req.setTakeProfits(List.of(tp1, tp2));
+            } else {
+                FuturesOpenRequest.TakeProfit tp1 = new FuturesOpenRequest.TakeProfit();
+                tp1.setPrice(tp1Price);
+                tp1.setQuantity(quantity);
+                req.setTakeProfits(List.of(tp1));
+            }
+        }
+
+        try {
+            FuturesOrderResponse resp = futuresTradingService.openPosition(aiUserId, req);
+            log.info("[AI-Trade] 开仓成功 {} {} {} qty={} lev={} sl={}", symbol, side, req.getOrderType(), quantity, leverage, stopLossPrice);
+            return "开仓成功：" + JSON.toJSONString(resp);
+        } catch (Exception e) {
+            log.warn("[AI-Trade] 开仓失败 {} {} : {}", symbol, side, e.getMessage());
+            return "开仓失败：" + e.getMessage();
+        }
+    }
+
+    @Tool(description = "市价平仓（全部或部分）")
+    public String closePosition(
+            @ToolParam(description = "仓位ID") Long positionId,
+            @ToolParam(description = "平仓数量") BigDecimal quantity) {
+        if (positionId == null) return "错误：positionId不能为空";
+        if (quantity == null || quantity.compareTo(BigDecimal.ZERO) <= 0) return "错误：quantity必须大于0";
+
+        FuturesCloseRequest req = new FuturesCloseRequest();
+        req.setPositionId(positionId);
+        req.setQuantity(quantity);
+        req.setOrderType("MARKET");
+
+        try {
+            FuturesOrderResponse resp = futuresTradingService.closePosition(aiUserId, req);
+            log.info("[AI-Trade] 平仓成功 posId={} qty={} pnl={}", positionId, quantity, resp.getRealizedPnl());
+            return "平仓成功：" + JSON.toJSONString(resp);
+        } catch (Exception e) {
+            log.warn("[AI-Trade] 平仓失败 posId={} : {}", positionId, e.getMessage());
+            return "平仓失败：" + e.getMessage();
+        }
+    }
+
+    @Tool(description = "市价加仓")
+    public String increasePosition(
+            @ToolParam(description = "仓位ID") Long positionId,
+            @ToolParam(description = "加仓数量") BigDecimal quantity) {
+        if (positionId == null) return "错误：positionId不能为空";
+        if (quantity == null || quantity.compareTo(BigDecimal.ZERO) <= 0) return "错误：quantity必须大于0";
+
+        FuturesIncreaseRequest req = new FuturesIncreaseRequest();
+        req.setPositionId(positionId);
+        req.setQuantity(quantity);
+        req.setOrderType("MARKET");
+
+        try {
+            FuturesOrderResponse resp = futuresTradingService.increasePosition(aiUserId, req);
+            log.info("[AI-Trade] 加仓成功 posId={} qty={}", positionId, quantity);
+            return "加仓成功：" + JSON.toJSONString(resp);
+        } catch (Exception e) {
+            log.warn("[AI-Trade] 加仓失败 posId={} : {}", positionId, e.getMessage());
+            return "加仓失败：" + e.getMessage();
+        }
+    }
+
+    @Tool(description = "追加保证金，降低强平风险")
+    public String addMargin(
+            @ToolParam(description = "仓位ID") Long positionId,
+            @ToolParam(description = "追加金额(USDT)") BigDecimal amount) {
+        if (positionId == null) return "错误：positionId不能为空";
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return "错误：amount必须大于0";
+
+        FuturesAddMarginRequest req = new FuturesAddMarginRequest();
+        req.setPositionId(positionId);
+        req.setAmount(amount);
+
+        try {
+            futuresTradingService.addMargin(aiUserId, req);
+            log.info("[AI-Trade] 追加保证金成功 posId={} amount={}", positionId, amount);
+            return "追加保证金成功：positionId=" + positionId + " amount=" + amount;
+        } catch (Exception e) {
+            log.warn("[AI-Trade] 追加保证金失败 posId={} : {}", positionId, e.getMessage());
+            return "追加保证金失败：" + e.getMessage();
+        }
+    }
+}

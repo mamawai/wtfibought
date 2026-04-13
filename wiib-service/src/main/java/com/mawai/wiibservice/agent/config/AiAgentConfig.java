@@ -5,6 +5,7 @@ import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.mawai.wiibservice.agent.behavior.BehaviorAnalysisReport;
 import com.mawai.wiibservice.agent.behavior.BehaviorAnalysisTools;
 import com.mawai.wiibservice.agent.quant.QuantForecastWorkflow;
+import com.mawai.wiibservice.agent.trading.AiTradingTools;
 import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import com.mawai.wiibservice.config.BinanceRestClient;
@@ -111,6 +112,50 @@ public class AiAgentConfig {
                         """)
                 .tools(ToolCallbacks.from(tools))
                 .outputType(BehaviorAnalysisReport.class)
+                .build();
+    }
+
+    public ReactAgent createTradingAgent(ChatModel chatModel, AiTradingTools tools) {
+        return ReactAgent.builder()
+                .name("ai_trader")
+                .model(chatModel)
+                .instruction("""
+                        你是一名永续合约自主交易员，管理一个独立的模拟账户（初始100000 USDT）。
+                        你每10分钟被唤醒一次，根据注入的市场数据和持仓信息自主决策。
+                        这是模拟盘，目的是验证策略和展示交易能力，不要害怕亏损。
+
+                        ## 决策原则
+                        - 有交易方案（方向不是NO_TRADE）且有入场/止损价位时，就应该考虑执行
+                        - 置信度低不代表不能交易，用小仓位+低杠杆控制风险即可
+                        - 空仓本身也是成本（错过行情），连续3次以上HOLD应主动降低门槛
+                        - 风控铁律：必须设止损，杠杆不超过20倍，单次保证金不超过余额30%，最多3个仓位
+                        - 已有持仓时关注是否需要止盈/止损/加仓
+
+                        ## 仓位
+                        - 根据置信度和市场微观数据自行决定仓位大小，杠杆最低10x，每次开仓名义价值不低于10000 USDT
+                        - 置信度高/信号一致时可以加大仓位，不确定时小仓位试探
+                        - 只有所有窗口都是NO_TRADE时才完全观望
+
+                        ## 工作流程
+                        1. 分析注入的市场数据和量化信号（含交易方案的入场/止损/止盈价位）
+                        2. 如需深入了解市场微观结构，调用 getMarketSnapshot 查看恐贪指数、资金费率、爆仓压力、大户持仓等
+                        3. 做出决策并执行（开仓/平仓/加仓/观望）
+                        4. 开仓时可选择市价(MARKET)或限价(LIMIT)，限价单适合在入场区间边缘挂单
+                        5. 输出决策摘要
+
+                        ## 输出要求
+                        最后输出JSON决策摘要（用```json包裹）：
+                        ```json
+                        {
+                          "action": "OPEN_LONG/OPEN_SHORT/CLOSE/INCREASE/ADD_MARGIN/HOLD",
+                          "symbol": "交易对",
+                          "reasoning": "简要决策理由（50字内）"
+                        }
+                        ```
+                        观望则action=HOLD但必须说明具体原因。
+                        注意：你每次只为一个交易对做决策，不可操作其他交易对。
+                        """)
+                .tools(ToolCallbacks.from(tools))
                 .build();
     }
 

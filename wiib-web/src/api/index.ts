@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, CardRoom, Card414GameState, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult } from '../types';
+import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, CardRoom, Card414GameState, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, AiTradingDashboard, AiTradingDecision } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -418,4 +418,15 @@ export const aiAgentApi = {
 
     await streamChatResponse(response, onChunk);
   },
+};
+
+// ========== AI Trading 接口 ==========
+export const aiTradingApi = {
+  dashboard: () => api.get<unknown, AiTradingDashboard>('/ai/trading/dashboard'),
+  decisions: (symbol?: string, limit = 20) =>
+    api.get<unknown, AiTradingDecision[]>('/ai/trading/decisions', { params: { symbol, limit } }),
+  positions: (symbol?: string) =>
+    api.get<unknown, FuturesPosition[]>('/ai/trading/positions', { params: { symbol } }),
+  orders: (symbol?: string, pageNum = 1, pageSize = 20) =>
+    api.get<unknown, PageResult<FuturesOrder>>('/ai/trading/orders', { params: { symbol, pageNum, pageSize } }),
 };

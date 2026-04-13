@@ -25,4 +25,5 @@ public class FuturesOrderResponse {
     private String status;
     private LocalDateTime expireAt;
     private LocalDateTime createdAt;
+    private Boolean isAiTrader;
 }
