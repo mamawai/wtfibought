@@ -159,6 +159,8 @@ export const adminApi = {
     api.post<unknown, string>('/admin/ai-agent/quant/trigger', null, { params: { symbol } }),
   triggerQuantVerification: (symbol: string) =>
     api.post<unknown, string>('/admin/ai-agent/quant/verify/trigger', null, { params: { symbol } }),
+  triggerAiTrader: (symbol?: string) =>
+    api.post<unknown, string>('/admin/ai-agent/trading/trigger', null, { params: { symbol } }),
 };
 
 // ========== 期权接口 ==========

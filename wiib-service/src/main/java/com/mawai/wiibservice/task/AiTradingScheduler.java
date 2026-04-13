@@ -12,7 +12,6 @@ import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.User;
-import com.mawai.wiibservice.agent.config.AiAgentConfig;
 import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibservice.agent.tool.CryptoIndicatorCalculator;
 import com.mawai.wiibservice.agent.trading.AiTradingTools;
@@ -22,6 +21,7 @@ import com.mawai.wiibservice.mapper.*;
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;
+import com.mawai.wiibservice.service.FuturesRiskService;
 import com.mawai.wiibservice.service.FuturesTradingService;
 import com.mawai.wiibservice.service.OrderFlowAggregator;
 import jakarta.annotation.PostConstruct;
@@ -37,6 +37,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatterBuilder;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -59,15 +60,17 @@ public class AiTradingScheduler {
     };
 
     private final AtomicLong aiUserId = new AtomicLong(0);
+    private final AtomicInteger cycleCounter = new AtomicInteger(0);
+    private final Set<String> runningSymbols = ConcurrentHashMap.newKeySet();
 
     private final UserMapper userMapper;
     private final FuturesTradingService futuresTradingService;
+    private final FuturesRiskService futuresRiskService;
     private final FuturesPositionMapper futuresPositionMapper;
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantSignalDecisionMapper decisionMapper;
     private final AiTradingDecisionMapper tradingDecisionMapper;
     private final CacheService cacheService;
-    private final AiAgentConfig aiAgentConfig;
     private final AiAgentRuntimeManager runtimeManager;
     private final BinanceRestClient binanceRestClient;
     private final ForceOrderService forceOrderService;
@@ -77,12 +80,12 @@ public class AiTradingScheduler {
 
     public AiTradingScheduler(UserMapper userMapper,
                               FuturesTradingService futuresTradingService,
+                              FuturesRiskService futuresRiskService,
                               FuturesPositionMapper futuresPositionMapper,
                               QuantForecastCycleMapper cycleMapper,
                               QuantSignalDecisionMapper decisionMapper,
                               AiTradingDecisionMapper tradingDecisionMapper,
                               CacheService cacheService,
-                              AiAgentConfig aiAgentConfig,
                               AiAgentRuntimeManager runtimeManager,
                               BinanceRestClient binanceRestClient,
                               ForceOrderService forceOrderService,
@@ -91,12 +94,12 @@ public class AiTradingScheduler {
                               DeribitClient deribitClient) {
         this.userMapper = userMapper;
         this.futuresTradingService = futuresTradingService;
+        this.futuresRiskService = futuresRiskService;
         this.futuresPositionMapper = futuresPositionMapper;
         this.cycleMapper = cycleMapper;
         this.decisionMapper = decisionMapper;
         this.tradingDecisionMapper = tradingDecisionMapper;
         this.cacheService = cacheService;
-        this.aiAgentConfig = aiAgentConfig;
         this.runtimeManager = runtimeManager;
         this.binanceRestClient = binanceRestClient;
         this.forceOrderService = forceOrderService;
@@ -126,6 +129,7 @@ public class AiTradingScheduler {
             aiUserId.set(ai.getId());
             log.info("[AI-Trader] 创建AI账户 id={} balance={}", ai.getId(), INITIAL_BALANCE);
         }
+        cycleCounter.set(tradingDecisionMapper.selectMaxCycleNo());
     }
 
     public Long getAiUserId() {
@@ -135,13 +139,28 @@ public class AiTradingScheduler {
     @Scheduled(cron = "0 */10 * * * *")
     public void tradingCycle() {
         if (aiUserId.get() == 0) return;
-        int cycleNo = tradingDecisionMapper.selectMaxCycleNo() + 1;
-        for (String symbol : QuantConstants.WATCH_SYMBOLS) {
+        triggerTradingCycle(QuantConstants.WATCH_SYMBOLS);
+    }
+
+    public int triggerTradingCycle(List<String> symbols) {
+        if (aiUserId.get() == 0) {
+            throw new IllegalStateException("AI交易员未初始化");
+        }
+        if (symbols == null || symbols.isEmpty()) {
+            throw new IllegalArgumentException("交易对不能为空");
+        }
+        int cycleNo = cycleCounter.incrementAndGet();
+        for (String symbol : symbols) {
             Thread.startVirtualThread(() -> runTradingCycle(symbol, cycleNo));
         }
+        return cycleNo;
     }
 
     private void runTradingCycle(String symbol, int cycleNo) {
+        if (!runningSymbols.add(symbol)) {
+            log.warn("[AI-Trader] {} 上一轮未完成，跳过", symbol);
+            return;
+        }
         long userId = aiUserId.get();
         log.info("[AI-Trader] 交易周期开始 symbol={}", symbol);
 
@@ -166,11 +185,9 @@ public class AiTradingScheduler {
                     recentDecisions, futuresPrice, markPrice, liveMarketData);
             log.info("[AI-Trader] prompt symbol={} len={}\n{}", symbol, userPrompt.length(), userPrompt);
 
-            AiTradingTools tools = new AiTradingTools(userId, userMapper, futuresTradingService,
-                    futuresPositionMapper, cycleMapper, decisionMapper, cacheService);
-            ReactAgent agent = aiAgentConfig.createTradingAgent(
-                    runtimeManager.current().chatChatModel(), tools);
-
+            AiTradingTools tools = new AiTradingTools(userId, symbol, userMapper, futuresTradingService,
+                    futuresRiskService, futuresPositionMapper, cycleMapper, decisionMapper, cacheService);
+            ReactAgent agent = runtimeManager.createTradingAgent(tools);
             StringBuilder response = new StringBuilder();
             agent.streamMessages(userPrompt, RunnableConfig.builder()
                             .threadId("ai-trader-" + symbol + "-" + cycleNo).build())
@@ -229,6 +246,8 @@ public class AiTradingScheduler {
             decision.setReasoning(reasoning);
             decision.setMarketContext(String.format("price=%s mark=%s", futuresPrice, markPrice));
             decision.setPositionSnapshot(positionSnapshot);
+            decision.setExecutionResult(fullResponse.length() > 4000
+                    ? fullResponse.substring(fullResponse.length() - 4000) : fullResponse);
             decision.setBalanceBefore(balanceBefore);
             decision.setBalanceAfter(balanceAfter);
             tradingDecisionMapper.insert(decision);
@@ -238,6 +257,8 @@ public class AiTradingScheduler {
 
         } catch (Exception e) {
             log.error("[AI-Trader] 交易周期异常 symbol={}", symbol, e);
+        } finally {
+            runningSymbols.remove(symbol);
         }
     }
 
@@ -254,6 +275,19 @@ public class AiTradingScheduler {
         if (user != null) {
             sb.append("- 可用余额: ").append(user.getBalance()).append(" USDT\n");
             sb.append("- 冻结余额: ").append(user.getFrozenBalance()).append(" USDT\n");
+            BigDecimal posMargin = BigDecimal.ZERO;
+            BigDecimal posUnpnl = BigDecimal.ZERO;
+            if (positions != null) {
+                for (Object p : positions) {
+                    if (p instanceof com.mawai.wiibcommon.dto.FuturesPositionDTO dto) {
+                        if (dto.getMargin() != null) posMargin = posMargin.add(dto.getMargin());
+                        if (dto.getUnrealizedPnl() != null) posUnpnl = posUnpnl.add(dto.getUnrealizedPnl());
+                    }
+                }
+            }
+            BigDecimal totalAsset = user.getBalance().add(user.getFrozenBalance()).add(posMargin).add(posUnpnl);
+            BigDecimal pnl = totalAsset.subtract(INITIAL_BALANCE);
+            sb.append("- 总资产: ").append(totalAsset).append(" USDT (累计盈亏: ").append(pnl).append(")\n");
         }
 
         sb.append("\n### 当前价格\n");
@@ -262,12 +296,13 @@ public class AiTradingScheduler {
 
         sb.append("\n### 当前持仓\n");
         if (positions == null || positions.isEmpty()) {
-            sb.append("空仓\n");
+            sb.append("⚠️ 空仓！你应该积极寻找开仓机会。\n");
         } else {
             sb.append(JSON.toJSONString(positions)).append("\n");
+            sb.append("→ 评估持仓是否需要：平仓止盈/止损、加仓、修改止盈止损价\n");
         }
 
-        sb.append("\n### 量化信号\n");
+        sb.append("\n### 量化分析报告\n");
         if (forecast != null) {
             sb.append("- 综合决策: ").append(forecast.getOverallDecision()).append("\n");
             sb.append("- 风控状态: ").append(forecast.getRiskStatus()).append("\n");
@@ -277,27 +312,33 @@ public class AiTradingScheduler {
             sb.append("暂无量化分析\n");
         }
 
-        if (liveMarketData != null && !liveMarketData.isBlank()) {
-            sb.append(liveMarketData).append("\n");
-        }
         if (signals != null && !signals.isEmpty()) {
-            sb.append("- 各时间窗口信号:\n");
+            sb.append("\n### 各时间窗口信号\n");
+            boolean hasDirection = false;
             for (Object sig : signals) {
                 if (sig instanceof QuantSignalDecision s) {
-                    sb.append(String.format("  [%s] 方向=%s 置信度=%.0f%% 建议杠杆≤%dx 仓位≤%.0f%%\n",
+                    sb.append(String.format("- [%s] 方向=%s 置信度=%.0f%% 建议杠杆≤%dx 仓位≤%.0f%%\n",
                             s.getHorizon(), s.getDirection(),
                             s.getConfidence().doubleValue() * 100,
                             s.getMaxLeverage(),
                             s.getMaxPositionPct().doubleValue() * 100));
+                    if (!"NO_TRADE".equals(s.getDirection())) hasDirection = true;
                 }
             }
+            if (hasDirection && (positions == null || positions.isEmpty())) {
+                sb.append("⚠️ 有方向性信号但你是空仓状态，应该开仓！\n");
+            }
+        }
+
+        if (liveMarketData != null && !liveMarketData.isBlank()) {
+            sb.append(liveMarketData).append("\n");
         }
 
         if (!recentDecisions.isEmpty()) {
             long holdCount = recentDecisions.stream().filter(d -> "HOLD".equals(d.getAction())).count();
             sb.append("\n### 最近").append(recentDecisions.size()).append("次决策");
-            if (holdCount >= 3) {
-                sb.append(" ⚠️ 连续").append(holdCount).append("次HOLD，审视是否过于保守");
+            if (holdCount >= 2) {
+                sb.append(" 🚨 已连续").append(holdCount).append("次HOLD！你过于保守，必须立即开仓交易！");
             }
             sb.append("\n");
             for (AiTradingDecision d : recentDecisions) {
@@ -306,7 +347,15 @@ public class AiTradingScheduler {
             }
         }
 
-        sb.append("\n根据以上信息做出交易决策。可调用工具执行交易或获取更多信息。");
+        sb.append("\n## 行动要求\n");
+        sb.append("1. 先调用 getMarketPrice 获取最新价格\n");
+        if (positions != null && !positions.isEmpty()) {
+            sb.append("2. 调用 getPositions 查看持仓最新状态\n");
+            sb.append("3. 决定：平仓/加仓/修改止盈止损/开反向仓位\n");
+        } else {
+            sb.append("2. 根据信号方向开仓（必须设止损+止盈）\n");
+        }
+        sb.append("4. 执行交易后输出JSON决策摘要\n");
         return sb.toString();
     }
 
@@ -367,7 +416,7 @@ public class AiTradingScheduler {
         String[] intervals = {"1m", "5m", "15m", "1h", "4h", "1d"};
         int[] limits = {120, 288, 192, 168, 180, 90};
         String[] spotIntervals = {"1m", "5m"};
-        int[] spotLimits = {10, 10};
+        int[] spotLimits = {120, 288};
 
         Map<String, String> klineData = new HashMap<>();
         Map<String, String> spotKlineData = new HashMap<>();

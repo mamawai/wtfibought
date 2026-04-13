@@ -1103,7 +1103,7 @@ ai_runtime_config 表          ai_model_assignment 表
 └──────────────────────┘
 ```
 
-- 4个功能（behavior/quant/chat/reflection）各自独立分配 API Key + Model
+- 5个功能（behavior/quant/chat/trading/reflection）各自独立分配 API Key + Model
 - 修改分配后调用 `refresh()` 重建 ChatModel，热生效
 - 启动时自动从 yml 迁移初始配置
 

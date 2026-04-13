@@ -9,6 +9,7 @@ import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibservice.agent.quant.memory.VerificationService;
 import com.mawai.wiibservice.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibservice.mapper.AiRuntimeConfigMapper;
+import com.mawai.wiibservice.task.AiTradingScheduler;
 import com.mawai.wiibservice.task.QuantForecastScheduler;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -29,6 +30,7 @@ public class AiAgentAdminController {
 
     private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final QuantForecastScheduler quantForecastScheduler;
+    private final AiTradingScheduler aiTradingScheduler;
     private final VerificationService verificationService;
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
@@ -195,6 +197,25 @@ public class AiAgentAdminController {
             });
         }
         return Result.ok("预测验证已触发: " + symbols);
+    }
+
+    @PostMapping("/trading/trigger")
+    @Operation(summary = "手动唤醒AI Trader决策")
+    public Result<String> triggerTrading(@RequestParam(required = false) String symbol) {
+        checkAdmin();
+        List<String> symbols;
+        if (symbol == null || symbol.isBlank()) {
+            symbols = QuantConstants.WATCH_SYMBOLS;
+        } else {
+            try {
+                symbols = List.of(QuantConstants.normalizeSymbol(symbol));
+            } catch (IllegalArgumentException e) {
+                return Result.fail("symbol格式错误: " + e.getMessage());
+            }
+        }
+        int cycleNo = aiTradingScheduler.triggerTradingCycle(symbols);
+        log.info("[Admin] 手动唤醒AI Trader决策 cycleNo={} symbols={}", cycleNo, symbols);
+        return Result.ok("AI Trader决策已触发: cycleNo=" + cycleNo + " symbols=" + symbols);
     }
 
     // ========== DTO ==========

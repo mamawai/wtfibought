@@ -6,6 +6,7 @@ import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.mawai.wiibcommon.entity.AiModelAssignment;
 import com.mawai.wiibcommon.entity.AiRuntimeConfig;
+import com.mawai.wiibservice.agent.trading.AiTradingTools;
 import com.mawai.wiibservice.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibservice.mapper.AiRuntimeConfigMapper;
 import jakarta.annotation.PostConstruct;
@@ -31,7 +32,7 @@ import java.util.stream.Collectors;
 @Component
 public class AiAgentRuntimeManager {
 
-    private static final List<String> FUNCTIONS = List.of("behavior", "quant", "chat", "reflection");
+    private static final List<String> FUNCTIONS = List.of("behavior", "quant", "chat", "trading", "reflection");
 
     private final AiAgentConfig aiAgentConfig;
     private final AiRuntimeConfigMapper configMapper;
@@ -80,7 +81,7 @@ public class AiAgentRuntimeManager {
     }
 
     /**
-     * 从DB读取所有配置和分配关系，重建4个独立ChatModel
+     * 从DB读取所有配置和分配关系，重建5个独立ChatModel
      */
     public void refresh() {
         synchronized (graphLock) {
@@ -92,6 +93,7 @@ public class AiAgentRuntimeManager {
                     buildFromAssignment(assignments, "behavior", configMap),
                     buildFromAssignment(assignments, "quant", configMap),
                     buildFromAssignment(assignments, "chat", configMap),
+                    buildFromAssignment(assignments, "trading", configMap),
                     buildFromAssignment(assignments, "reflection", configMap)
             ));
             quantGraph = null;
@@ -102,6 +104,10 @@ public class AiAgentRuntimeManager {
 
     public ReactAgent createBehaviorAgent(Consumer<String> onProgress) {
         return aiAgentConfig.createBehaviorAgent(current().behaviorChatModel(), onProgress);
+    }
+
+    public ReactAgent createTradingAgent(AiTradingTools tools) {
+        return aiAgentConfig.createTradingAgent(current().tradingChatModel(), tools);
     }
 
     public CompiledGraph createCryptoAnalysisGraph() throws Exception {

@@ -598,19 +598,11 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
                 }).toList();
     }
 
-    private volatile Long cachedAiUserId;
-
     private Long resolveAiUserId() {
-        Long cached = cachedAiUserId;
-        if (cached != null) return cached;
         try {
             var scheduler = SpringUtils.getBean(AiTradingScheduler.class);
             Long id = scheduler.getAiUserId();
-            if (id != null && id != 0) {
-                cachedAiUserId = id;
-                return id;
-            }
-            return null;
+            return (id != null && id != 0) ? id : null;
         } catch (Exception e) {
             return null;
         }

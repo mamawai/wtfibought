@@ -14,6 +14,7 @@ const FUNCTION_LABELS: Record<string, string> = {
   behavior: '行为分析',
   quant: '量化分析',
   chat: '追问对话',
+  trading: 'AI Trader',
   reflection: '反思验证',
 };
 
@@ -167,6 +168,19 @@ export function Admin() {
       toast('模型分配已保存并生效', 'success');
     } catch (e) {
       toast((e as Error).message || '保存失败', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleMessageAction = async (action: () => Promise<string>, name: string) => {
+    setActionLoading(name);
+    try {
+      const message = await action();
+      toast(message, 'success');
+      await fetchStatus();
+    } catch (e) {
+      toast((e as Error).message || '操作失败', 'error');
     } finally {
       setActionLoading(null);
     }
@@ -402,8 +416,7 @@ export function Admin() {
                   onClick={() => {
                     const sym = quantSymbol.trim();
                     if (!sym) return;
-                    handleAction(() => adminApi.triggerQuant(sym), 'triggerQuant');
-                    toast('量化分析已触发: ' + sym, 'success');
+                    void handleMessageAction(() => adminApi.triggerQuant(sym), 'triggerQuant');
                   }}
                   disabled={actionLoading !== null || !quantSymbol.trim()}
                 >
@@ -414,12 +427,20 @@ export function Admin() {
                   onClick={() => {
                     const sym = quantSymbol.trim();
                     if (!sym) return;
-                    handleAction(() => adminApi.triggerQuantVerification(sym), 'triggerQuantVerification');
-                    toast('预测验证已触发: ' + sym, 'success');
+                    void handleMessageAction(() => adminApi.triggerQuantVerification(sym), 'triggerQuantVerification');
                   }}
                   disabled={actionLoading !== null || !quantSymbol.trim()}
                 >
                   触发预测验证
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    void handleMessageAction(() => adminApi.triggerAiTrader(), 'triggerAiTrader');
+                  }}
+                  disabled={actionLoading !== null}
+                >
+                  唤醒AI Trader决策(全部币种)
                 </Button>
               </div>
             </CardContent>

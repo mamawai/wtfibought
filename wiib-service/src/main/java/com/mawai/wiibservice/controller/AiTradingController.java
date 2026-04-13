@@ -22,7 +22,7 @@ import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
+
 
 @Tag(name = "AI交易员面板")
 @RestController
@@ -48,10 +48,12 @@ public class AiTradingController {
 
         List<FuturesPositionDTO> positions = futuresTradingService.getUserPositions(aiId, null);
 
-        BigDecimal unrealizedPnl = positions.stream()
-                .map(FuturesPositionDTO::getUnrealizedPnl)
-                .filter(Objects::nonNull)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal unrealizedPnl = BigDecimal.ZERO;
+        BigDecimal positionMargin = BigDecimal.ZERO;
+        for (FuturesPositionDTO p : positions) {
+            if (p.getUnrealizedPnl() != null) unrealizedPnl = unrealizedPnl.add(p.getUnrealizedPnl());
+            if (p.getMargin() != null) positionMargin = positionMargin.add(p.getMargin());
+        }
 
         long todayTrades = futuresOrderMapper.selectCount(
                 new LambdaQueryWrapper<FuturesOrder>()
@@ -64,7 +66,8 @@ public class AiTradingController {
         data.put("frozenBalance", user.getFrozenBalance());
         data.put("unrealizedPnl", unrealizedPnl);
         data.put("totalPnl", user.getBalance().add(user.getFrozenBalance())
-                .add(unrealizedPnl).subtract(AiTradingScheduler.INITIAL_BALANCE));
+                .add(positionMargin).add(unrealizedPnl)
+                .subtract(AiTradingScheduler.INITIAL_BALANCE));
         data.put("positionCount", positions.size());
         data.put("todayTrades", todayTrades);
         data.put("positions", positions);

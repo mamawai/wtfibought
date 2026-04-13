@@ -9,6 +9,7 @@ import com.mawai.wiibservice.mapper.QuantSignalDecisionMapper;
 import com.mawai.wiibservice.mapper.UserMapper;
 import com.mawai.wiibservice.mapper.FuturesPositionMapper;
 import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibservice.service.FuturesRiskService;
 import com.mawai.wiibservice.service.FuturesTradingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
@@ -21,14 +22,18 @@ import java.util.List;
 @Slf4j
 public class AiTradingTools {
 
-    private static final int MAX_LEVERAGE = 20;
+    private static final int MAX_LEVERAGE = 50;
+    private static final int MIN_LEVERAGE = 20;
+    private static final BigDecimal MIN_POSITION_VALUE = new BigDecimal("10000");
     private static final BigDecimal MAX_POSITION_RATIO = new BigDecimal("0.30");
+    private static final BigDecimal MIN_MARGIN = new BigDecimal("1000");
     private static final int MAX_OPEN_POSITIONS = 3;
 
     private final Long aiUserId;
     private final String currentSymbol;
     private final UserMapper userMapper;
     private final FuturesTradingService futuresTradingService;
+    private final FuturesRiskService futuresRiskService;
     private final FuturesPositionMapper futuresPositionMapper;
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantSignalDecisionMapper decisionMapper;
@@ -37,6 +42,7 @@ public class AiTradingTools {
     public AiTradingTools(Long aiUserId, String currentSymbol,
                           UserMapper userMapper,
                           FuturesTradingService futuresTradingService,
+                          FuturesRiskService futuresRiskService,
                           FuturesPositionMapper futuresPositionMapper,
                           QuantForecastCycleMapper cycleMapper,
                           QuantSignalDecisionMapper decisionMapper,
@@ -45,6 +51,7 @@ public class AiTradingTools {
         this.currentSymbol = currentSymbol;
         this.userMapper = userMapper;
         this.futuresTradingService = futuresTradingService;
+        this.futuresRiskService = futuresRiskService;
         this.futuresPositionMapper = futuresPositionMapper;
         this.cycleMapper = cycleMapper;
         this.decisionMapper = decisionMapper;
@@ -156,11 +163,11 @@ public class AiTradingTools {
 
     // ==================== 交易工具 ====================
 
-    @Tool(description = "开仓下单，支持市价和限价。必须设止损。杠杆上限20倍，单次保证金不超余额30%，最多3仓位。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
+    @Tool(description = "开仓下单，支持市价和限价。必须设止损。杠杆20-50倍，单次保证金≥1000USDT且不超余额30%，最多3仓位。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
     public String openPosition(
             @ToolParam(description = "方向：LONG或SHORT") String side,
             @ToolParam(description = "数量（币的数量，如0.01个BTC）") BigDecimal quantity,
-            @ToolParam(description = "杠杆倍数，1-20") Integer leverage,
+            @ToolParam(description = "杠杆倍数，20-50") Integer leverage,
             @ToolParam(description = "订单类型：MARKET(市价，立即成交) 或 LIMIT(限价，挂单等待)，默认MARKET") String orderType,
             @ToolParam(description = "限价价格，仅orderType=LIMIT时必填，市价单忽略此参数") BigDecimal limitPrice,
             @ToolParam(description = "止损价格，必填") BigDecimal stopLossPrice,
@@ -174,7 +181,9 @@ public class AiTradingTools {
         if (quantity == null || quantity.compareTo(BigDecimal.ZERO) <= 0) {
             return "错误：quantity必须大于0";
         }
-        if (leverage == null || leverage < 1) leverage = 1;
+        if (leverage == null || leverage < MIN_LEVERAGE) {
+            return "错误：杠杆最低" + MIN_LEVERAGE + "倍，你传了" + leverage + "，请用20-50倍";
+        }
         if (leverage > MAX_LEVERAGE) {
             return "错误：杠杆上限" + MAX_LEVERAGE + "倍，你传了" + leverage;
         }
@@ -204,7 +213,13 @@ public class AiTradingTools {
         if (price == null) return "错误：无法获取" + symbol + "价格";
 
         BigDecimal positionValue = price.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
+        if (positionValue.compareTo(MIN_POSITION_VALUE) < 0) {
+            return "错误：名义价值" + positionValue + " USDT太小，最低" + MIN_POSITION_VALUE + " USDT，请加大仓位";
+        }
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
+        if (margin.compareTo(MIN_MARGIN) < 0 && user.getBalance().compareTo(MIN_MARGIN) >= 0) {
+            return "错误：保证金" + margin + " USDT低于最低要求" + MIN_MARGIN + " USDT，请加大仓位或降低杠杆";
+        }
         BigDecimal maxMargin = user.getBalance().multiply(MAX_POSITION_RATIO);
         if (margin.compareTo(maxMargin) > 0) {
             return "错误：保证金" + margin + "超过余额30%上限" + maxMargin.setScale(2, RoundingMode.HALF_UP);
@@ -317,6 +332,73 @@ public class AiTradingTools {
         } catch (Exception e) {
             log.warn("[AI-Trade] 追加保证金失败 posId={} : {}", positionId, e.getMessage());
             return "追加保证金失败：" + e.getMessage();
+        }
+    }
+
+    @Tool(description = "修改已有持仓的止损价格，可根据行情动态调整（移动止损、保本止损等）")
+    public String setStopLoss(
+            @ToolParam(description = "仓位ID") Long positionId,
+            @ToolParam(description = "新止损价格") BigDecimal stopLossPrice,
+            @ToolParam(description = "止损数量") BigDecimal quantity) {
+        if (positionId == null) return "错误：positionId不能为空";
+        if (stopLossPrice == null || stopLossPrice.compareTo(BigDecimal.ZERO) <= 0) return "错误：止损价格必须大于0";
+        if (quantity == null || quantity.compareTo(BigDecimal.ZERO) <= 0) return "错误：数量必须大于0";
+
+        FuturesStopLossRequest req = new FuturesStopLossRequest();
+        req.setPositionId(positionId);
+        FuturesStopLossRequest.StopLossItem item = new FuturesStopLossRequest.StopLossItem();
+        item.setPrice(stopLossPrice);
+        item.setQuantity(quantity);
+        req.setStopLosses(List.of(item));
+
+        try {
+            futuresRiskService.setStopLoss(aiUserId, req);
+            log.info("[AI-Trade] 修改止损成功 posId={} sl={} qty={}", positionId, stopLossPrice, quantity);
+            return "修改止损成功：positionId=" + positionId + " stopLoss=" + stopLossPrice;
+        } catch (Exception e) {
+            log.warn("[AI-Trade] 修改止损失败 posId={} : {}", positionId, e.getMessage());
+            return "修改止损失败：" + e.getMessage();
+        }
+    }
+
+    @Tool(description = "修改已有持仓的止盈价格，可根据行情动态调整")
+    public String setTakeProfit(
+            @ToolParam(description = "仓位ID") Long positionId,
+            @ToolParam(description = "新止盈价格") BigDecimal takeProfitPrice,
+            @ToolParam(description = "止盈数量") BigDecimal quantity) {
+        if (positionId == null) return "错误：positionId不能为空";
+        if (takeProfitPrice == null || takeProfitPrice.compareTo(BigDecimal.ZERO) <= 0) return "错误：止盈价格必须大于0";
+        if (quantity == null || quantity.compareTo(BigDecimal.ZERO) <= 0) return "错误：数量必须大于0";
+
+        FuturesTakeProfitRequest req = new FuturesTakeProfitRequest();
+        req.setPositionId(positionId);
+        FuturesTakeProfitRequest.TakeProfitItem item = new FuturesTakeProfitRequest.TakeProfitItem();
+        item.setPrice(takeProfitPrice);
+        item.setQuantity(quantity);
+        req.setTakeProfits(List.of(item));
+
+        try {
+            futuresRiskService.setTakeProfit(aiUserId, req);
+            log.info("[AI-Trade] 修改止盈成功 posId={} tp={} qty={}", positionId, takeProfitPrice, quantity);
+            return "修改止盈成功：positionId=" + positionId + " takeProfit=" + takeProfitPrice;
+        } catch (Exception e) {
+            log.warn("[AI-Trade] 修改止盈失败 posId={} : {}", positionId, e.getMessage());
+            return "修改止盈失败：" + e.getMessage();
+        }
+    }
+
+    @Tool(description = "撤销未成交的限价订单")
+    public String cancelOrder(
+            @ToolParam(description = "订单ID") Long orderId) {
+        if (orderId == null) return "错误：orderId不能为空";
+
+        try {
+            FuturesOrderResponse resp = futuresTradingService.cancelOrder(aiUserId, orderId);
+            log.info("[AI-Trade] 撤单成功 orderId={}", orderId);
+            return "撤单成功：" + JSON.toJSONString(resp);
+        } catch (Exception e) {
+            log.warn("[AI-Trade] 撤单失败 orderId={} : {}", orderId, e.getMessage());
+            return "撤单失败：" + e.getMessage();
         }
     }
 }
