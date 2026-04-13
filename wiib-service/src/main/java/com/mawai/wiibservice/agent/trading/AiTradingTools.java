@@ -23,11 +23,14 @@ import java.util.List;
 public class AiTradingTools {
 
     private static final int MAX_LEVERAGE = 50;
-    private static final int MIN_LEVERAGE = 20;
+    private static final int MIN_LEVERAGE = 5;
     private static final BigDecimal MIN_POSITION_VALUE = new BigDecimal("10000");
     private static final BigDecimal MAX_POSITION_RATIO = new BigDecimal("0.30");
     private static final BigDecimal MIN_MARGIN = new BigDecimal("1000");
     private static final int MAX_OPEN_POSITIONS = 3;
+    private static final BigDecimal SL_MIN_DISTANCE_PCT = new BigDecimal("0.002");  // 0.2%
+    private static final BigDecimal SL_MAX_DISTANCE_PCT = new BigDecimal("0.10");   // 10%
+    private static final int MAX_SAME_DIRECTION_POSITIONS = 2;
 
     private final Long aiUserId;
     private final String currentSymbol;
@@ -163,11 +166,11 @@ public class AiTradingTools {
 
     // ==================== 交易工具 ====================
 
-    @Tool(description = "开仓下单，支持市价和限价。必须设止损。杠杆20-50倍，单次保证金≥1000USDT且不超余额30%，最多3仓位。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
+    @Tool(description = "开仓下单，支持市价和限价。必须设止损。杠杆5-50倍，单次保证金≥1000USDT且不超余额30%，最多3仓位，同向最多2仓位。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
     public String openPosition(
             @ToolParam(description = "方向：LONG或SHORT") String side,
             @ToolParam(description = "数量（币的数量，如0.01个BTC）") BigDecimal quantity,
-            @ToolParam(description = "杠杆倍数，20-50") Integer leverage,
+            @ToolParam(description = "杠杆倍数，5-50") Integer leverage,
             @ToolParam(description = "订单类型：MARKET(市价，立即成交) 或 LIMIT(限价，挂单等待)，默认MARKET") String orderType,
             @ToolParam(description = "限价价格，仅orderType=LIMIT时必填，市价单忽略此参数") BigDecimal limitPrice,
             @ToolParam(description = "止损价格，必填") BigDecimal stopLossPrice,
@@ -182,7 +185,7 @@ public class AiTradingTools {
             return "错误：quantity必须大于0";
         }
         if (leverage == null || leverage < MIN_LEVERAGE) {
-            return "错误：杠杆最低" + MIN_LEVERAGE + "倍，你传了" + leverage + "，请用20-50倍";
+            return "错误：杠杆最低" + MIN_LEVERAGE + "倍，你传了" + leverage + "，请用5-50倍";
         }
         if (leverage > MAX_LEVERAGE) {
             return "错误：杠杆上限" + MAX_LEVERAGE + "倍，你传了" + leverage;
@@ -196,13 +199,21 @@ public class AiTradingTools {
             return "错误：限价单必须设置limitPrice";
         }
 
-        // 持仓数检查
-        long openCount = futuresPositionMapper.selectCount(
+        // 持仓数 + 同向检查（单次查询）
+        List<FuturesPosition> openPositions = futuresPositionMapper.selectList(
                 new LambdaQueryWrapper<FuturesPosition>()
                         .eq(FuturesPosition::getUserId, aiUserId)
                         .eq(FuturesPosition::getStatus, "OPEN"));
-        if (openCount >= MAX_OPEN_POSITIONS) {
-            return "错误：已有" + openCount + "个持仓，上限" + MAX_OPEN_POSITIONS;
+        if (openPositions.size() >= MAX_OPEN_POSITIONS) {
+            return "错误：已有" + openPositions.size() + "个持仓，上限" + MAX_OPEN_POSITIONS;
+        }
+
+        // 同向持仓限制
+        long sameDirectionCount = openPositions.stream()
+                .filter(p -> side.equals(p.getSide()))
+                .count();
+        if (sameDirectionCount >= MAX_SAME_DIRECTION_POSITIONS) {
+            return "警告：已有" + sameDirectionCount + "个" + side + "持仓（上限" + MAX_SAME_DIRECTION_POSITIONS + "），请考虑反向或不同标的";
         }
 
         // 保证金比例检查
@@ -211,6 +222,16 @@ public class AiTradingTools {
         BigDecimal price = isLimit ? limitPrice : cacheService.getFuturesPrice(symbol);
         if (price == null) price = cacheService.getMarkPrice(symbol);
         if (price == null) return "错误：无法获取" + symbol + "价格";
+
+        // 止损距离校验
+        BigDecimal slDistance = stopLossPrice.subtract(price).abs();
+        BigDecimal slPct = slDistance.divide(price, 6, RoundingMode.HALF_UP);
+        if (slPct.compareTo(SL_MIN_DISTANCE_PCT) < 0) {
+            return "错误：止损距当前价仅" + slPct.multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP) + "%，太近（噪音区，最低0.2%）";
+        }
+        if (slPct.compareTo(SL_MAX_DISTANCE_PCT) > 0) {
+            return "错误：止损距当前价" + slPct.multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP) + "%，太远（>10%），风险过大";
+        }
 
         BigDecimal positionValue = price.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
         if (positionValue.compareTo(MIN_POSITION_VALUE) < 0) {

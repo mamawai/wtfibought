@@ -40,7 +40,7 @@ public class MicrostructureAgent implements FactorAgent {
         double lsr = s.lsrExtreme();
 
         // === 各因子独立评分 ===
-        double bidAskScore = clamp(bia * 2.5);
+        double bidAskScore = clamp(bia * 1.8);
         // aggTrade 可用时用强度加权 delta，放大高活跃度下的信号
         double intensityBoost = tradeIntensity > 1.5 ? Math.min(1.3, 1.0 + (tradeIntensity - 1.5) * 0.2) : 1.0;
         double deltaScore = clamp(td * intensityBoost);

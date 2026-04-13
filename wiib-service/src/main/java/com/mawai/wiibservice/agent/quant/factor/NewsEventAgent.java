@@ -145,15 +145,21 @@ public class NewsEventAgent implements FactorAgent {
             }
 
             List<Map<String, Object>> votes = (List<Map<String, Object>>) root.get("votes");
-            if (votes == null || votes.size() != 3) {
+            if (votes == null || votes.size() < 3) {
                 return new EvaluateResult(defaultVotes("INVALID_FORMAT"), filteredNews);
             }
 
             List<AgentVote> result = new ArrayList<>(3);
-            for (Map<String, Object> v : votes) {
+            for (int i = 0; i < 3 && i < votes.size(); i++) {
+                Map<String, Object> v = votes.get(i);
                 String horizon = (String) v.get("horizon");
                 double score = clamp(toDouble(v.get("score")));
                 double conf = Math.clamp(toDouble(v.get("confidence")), 0, 1);
+
+                // 新闻时效衰减：远期窗口 confidence 递减（新闻效应短期最强）
+                if ("10_20".equals(horizon)) conf *= 0.85;
+                else if ("20_30".equals(horizon)) conf *= 0.7;
+
                 List<String> reasons = v.get("reasonCodes") instanceof List<?> l
                         ? l.stream().map(String::valueOf).toList() : List.of();
                 List<String> flags = v.get("riskFlags") instanceof List<?> l

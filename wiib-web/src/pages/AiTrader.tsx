@@ -7,6 +7,7 @@ import {
   Activity, BarChart3, ChevronDown, ChevronUp,
   Zap, Shield, Clock, ArrowUpRight,
 } from 'lucide-react';
+import { AiPnlChart } from '../components/AiPnlChart';
 import type { AiTradingDashboard, AiTradingDecision, FuturesPosition } from '../types';
 
 const ACTION_CFG: Record<string, { label: string; icon: typeof Zap; color: string; bg: string; ring: string }> = {
@@ -327,6 +328,20 @@ export function AiTrader() {
             sub={`${dashboard.positionCount} 仓 · 今日 ${dashboard.todayTrades} 笔`}
             icon={TrendingUp}
           />
+        </div>
+      )}
+
+      {/* ===== PnL Chart ===== */}
+      {decisions.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 px-1">
+            <BarChart3 className="w-4 h-4 text-primary" />
+            <span className="text-sm font-bold">收益走势</span>
+            <span className="text-[11px] text-muted-foreground">每周期余额快照</span>
+          </div>
+          <div className="neu-raised-sm rounded-xl p-3">
+            <AiPnlChart decisions={decisions} />
+          </div>
         </div>
       )}
 

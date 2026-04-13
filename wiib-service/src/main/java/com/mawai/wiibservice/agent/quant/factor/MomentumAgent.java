@@ -25,21 +25,22 @@ public class MomentumAgent implements FactorAgent {
         }
 
         List<String> qualityFlags = s.qualityFlags() != null ? s.qualityFlags() : List.of();
+        MarketRegime regime = s.regime() != null ? s.regime() : MarketRegime.RANGE;
 
         // 对3个时间尺度分别做动量分析
         // 0-10min 主要看 1m/5m
         TimeframePair pair0 = resolvePair(indicators, qualityFlags, "0_10", "1m", "5m");
-        double score0 = calcTimeframeScore(indicators, pair0.primary(), pair0.secondary());
+        double score0 = calcTimeframeScore(indicators, pair0.primary(), pair0.secondary(), regime);
         List<String> reasons0 = collectReasons(indicators, pair0);
 
         // 10-20min 主要看 5m/15m
         TimeframePair pair1 = resolvePair(indicators, qualityFlags, "10_20", "5m", "15m");
-        double score1 = calcTimeframeScore(indicators, pair1.primary(), pair1.secondary());
+        double score1 = calcTimeframeScore(indicators, pair1.primary(), pair1.secondary(), regime);
         List<String> reasons1 = collectReasons(indicators, pair1);
 
         // 20-30min 主要看 15m/1h
         TimeframePair pair2 = resolvePair(indicators, qualityFlags, "20_30", "15m", "1h");
-        double score2 = calcTimeframeScore(indicators, pair2.primary(), pair2.secondary());
+        double score2 = calcTimeframeScore(indicators, pair2.primary(), pair2.secondary(), regime);
         List<String> reasons2 = collectReasons(indicators, pair2);
 
         // 多周期一致性检查: 如果短中长方向一致，加分
@@ -66,34 +67,44 @@ public class MomentumAgent implements FactorAgent {
     }
 
     private double calcTimeframeScore(Map<String, Map<String, Object>> indicators,
-                                       String primary, String secondary) {
+                                       String primary, String secondary, MarketRegime regime) {
         double score = 0;
         Map<String, Object> p = indicators.get(primary);
 
-        if (p != null) score += singleTfScore(p) * 0.6;
+        if (p != null) score += singleTfScore(p, regime) * 0.6;
 
         // fallback导致primary==secondary时，不重复计权
         if (!primary.equals(secondary)) {
             Map<String, Object> sec = indicators.get(secondary);
-            if (sec != null) score += singleTfScore(sec) * 0.4;
+            if (sec != null) score += singleTfScore(sec, regime) * 0.4;
         }
 
         return clamp(score);
     }
 
     private double singleTfScore(Map<String, Object> ind) {
+        return singleTfScore(ind, MarketRegime.RANGE);
+    }
+
+    private double singleTfScore(Map<String, Object> ind, MarketRegime regime) {
         double score = 0;
 
         // 均线排列
         int maAlign = toInt(ind.get("ma_alignment"));
         score += maAlign * 0.25;
 
-        // RSI
+        // RSI — 阈值按 regime 动态调整
         BigDecimal rsi = toBd(ind.get("rsi14"));
         if (rsi != null) {
             double r = rsi.doubleValue();
-            if (r > 70) score -= 0.2;       // 超买偏空
-            else if (r < 30) score += 0.2;   // 超卖偏多
+            double obThresh = 70, osThresh = 30;
+            if (regime == MarketRegime.TREND_UP || regime == MarketRegime.TREND_DOWN) {
+                obThresh = 80; osThresh = 25; // 趋势市放宽超买超卖
+            } else if (regime == MarketRegime.RANGE) {
+                obThresh = 65; osThresh = 35; // 震荡市收紧
+            }
+            if (r > obThresh) score -= 0.2;
+            else if (r < osThresh) score += 0.2;
             else if (r > 55) score += 0.1;
             else if (r < 45) score -= 0.1;
         }
@@ -136,6 +147,7 @@ public class MomentumAgent implements FactorAgent {
             if (closeTrend.contains("rising") && highVol) score += 0.15;
             else if (closeTrend.contains("falling") && highVol) score -= 0.15;
             else if (closeTrend.contains("rising") && !highVol) score += 0.03; // 缩量涨，弱
+            else if (closeTrend.contains("falling") && !highVol) score -= 0.08; // 缩量跌，空头控盘
         }
 
         return score;
@@ -152,8 +164,8 @@ public class MomentumAgent implements FactorAgent {
         }
         if (bullCount >= 3) return 0.5;
         if (bearCount >= 3) return -0.5;
-        if (bullCount >= 2 && bearCount == 0) return 0.25;
-        if (bearCount >= 2 && bullCount == 0) return -0.25;
+        if (bullCount >= 2 && bullCount > bearCount) return 0.25;
+        if (bearCount >= 2 && bearCount > bullCount) return -0.25;
         return 0;
     }
 

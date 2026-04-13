@@ -34,11 +34,18 @@ public class RiskGate {
                                     BigDecimal atr5m, BigDecimal lastPrice,
                                     List<String> qualityFlags, int fearGreedIndex,
                                     double dvolIndex) {
+        return apply(forecasts, regime, atr5m, lastPrice, qualityFlags, fearGreedIndex, dvolIndex, null);
+    }
+
+    public static RiskResult apply(List<HorizonForecast> forecasts, MarketRegime regime,
+                                    BigDecimal atr5m, BigDecimal lastPrice,
+                                    List<String> qualityFlags, int fearGreedIndex,
+                                    double dvolIndex, String symbol) {
         if (forecasts == null || forecasts.isEmpty()) {
             return new RiskResult(List.of(), "NO_DATA");
         }
 
-        double volPenalty = calcVolatilityPenalty(atr5m, lastPrice);
+        double volPenalty = calcVolatilityPenalty(atr5m, lastPrice, symbol);
         double dataPenalty = calcDataPenalty(qualityFlags);
         double ivPenalty = calcIvPenalty(dvolIndex);
         List<HorizonForecast> clipped = new ArrayList<>(forecasts.size());
@@ -112,7 +119,7 @@ public class RiskGate {
         double effectiveConfidence = f.confidence() * confMultiplier;
         double agreementFactor = Math.max(0.60, 1.0 - f.disagreement());
         double adjustedPos = maxPos * effectiveConfidence * agreementFactor * volPenalty * dataPenalty * ivPenalty;
-        adjustedPos = Math.clamp(adjustedPos, 0.01, maxPos);
+        adjustedPos = Math.clamp(adjustedPos, 0.05, maxPos);
 
         if (volPenalty < 0.8) {
             actions.add("HIGH_VOL_PENALTY_" + f.horizon());
@@ -137,17 +144,24 @@ public class RiskGate {
 
     /**
      * 波动率惩罚因子：ATR占价格比例越大，仓位惩罚越重。
-     * atrPct < 0.3% → penalty=1.0（正常波动）
-     * atrPct 0.3%-1.0% → 线性衰减到0.5
-     * atrPct > 1.0% → penalty=0.3（极端波动）
+     * 阈值按币种差异化：BTC波动小用0.5%，ETH用0.7%，PAXG稳定用0.3%。
      */
-    private static double calcVolatilityPenalty(BigDecimal atr5m, BigDecimal lastPrice) {
+    private static double calcVolatilityPenalty(BigDecimal atr5m, BigDecimal lastPrice, String symbol) {
         if (atr5m == null || lastPrice == null || lastPrice.signum() == 0) return 1.0;
         double atrPct = atr5m.doubleValue() / lastPrice.doubleValue() * 100;
-        if (atrPct < 0.3) return 1.0;
-        if (atrPct > 1.0) return 0.3;
-        // 线性插值: 0.3% → 1.0, 1.0% → 0.5
-        return 1.0 - (atrPct - 0.3) / 0.7 * 0.5;
+
+        // 按币种设置正常波动阈值和极端阈值
+        double normalThreshold = 0.3;
+        double extremeThreshold = 1.0;
+        if (symbol != null) {
+            if (symbol.contains("BTC")) { normalThreshold = 0.5; extremeThreshold = 1.5; }
+            else if (symbol.contains("ETH")) { normalThreshold = 0.7; extremeThreshold = 2.0; }
+            else if (symbol.contains("PAXG")) { normalThreshold = 0.3; extremeThreshold = 0.8; }
+        }
+
+        if (atrPct < normalThreshold) return 1.0;
+        if (atrPct > extremeThreshold) return 0.3;
+        return 1.0 - (atrPct - normalThreshold) / (extremeThreshold - normalThreshold) * 0.5;
     }
 
     private static double calcDataPenalty(List<String> qualityFlags) {

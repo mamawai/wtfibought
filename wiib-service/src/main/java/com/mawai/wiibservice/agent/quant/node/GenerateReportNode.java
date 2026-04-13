@@ -64,7 +64,10 @@ public class GenerateReportNode implements NodeAction {
         String indicators = StateHelper.stateJson(state, "indicator_map");
         String priceChanges = StateHelper.stateJson(state, "price_change_map");
         int avgConfidence = forecasts.isEmpty() ? 0
-                : (int) (forecasts.stream().mapToDouble(HorizonForecast::confidence).average().orElse(0) * 100);
+                : (int) (forecasts.stream()
+                    .filter(f -> f.direction() != Direction.NO_TRADE)
+                    .mapToDouble(HorizonForecast::confidence)
+                    .max().orElse(forecasts.stream().mapToDouble(HorizonForecast::confidence).average().orElse(0)) * 100);
         @SuppressWarnings("unchecked")
         Map<String, Object[]> debateProbs =
                 (Map<String, Object[]>) state.value("debate_probs").orElse(Map.of());
