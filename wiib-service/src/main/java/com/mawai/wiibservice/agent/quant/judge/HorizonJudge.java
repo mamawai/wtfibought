@@ -42,6 +42,10 @@ public class HorizonJudge {
     }
 
     public HorizonForecast judge(List<AgentVote> allVotes, BigDecimal lastPrice, List<String> qualityFlags) {
+        return judge(allVotes, lastPrice, qualityFlags, null);
+    }
+
+    public HorizonForecast judge(List<AgentVote> allVotes, BigDecimal lastPrice, List<String> qualityFlags, MarketRegime regime) {
         List<AgentVote> filtered = allVotes.stream()
                 .filter(v -> horizon.equals(v.horizon()))
                 .filter(v -> !v.reasonCodes().contains("TIMEOUT")) // 超时票不参与裁决
@@ -145,18 +149,25 @@ public class HorizonJudge {
                     .divide(BigDecimal.valueOf(10000), 2, RoundingMode.HALF_UP);
             BigDecimal entryBuffer = volOffset.multiply(BigDecimal.valueOf(0.35)).setScale(2, RoundingMode.HALF_UP);
             BigDecimal stopOffset = volOffset.multiply(BigDecimal.valueOf(0.95)).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal tp1Offset = volOffset.multiply(BigDecimal.valueOf(1.10)).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal tp2Offset = volOffset.multiply(BigDecimal.valueOf(1.85)).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal tp1Offset = volOffset.multiply(BigDecimal.valueOf(0.80)).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal tp2Offset = volOffset.multiply(BigDecimal.valueOf(1.30)).setScale(2, RoundingMode.HALF_UP);
+
+            // 入场区间按 regime 差异化：趋势中允许追涨/追跌，区间中偏向回调入场
+            boolean isTrend = regime == MarketRegime.TREND_UP || regime == MarketRegime.TREND_DOWN;
+            // 趋势方向的入场buffer倍率：趋势中放宽到0.6，区间中保持0.4
+            BigDecimal trendSideFactor = BigDecimal.valueOf(isTrend ? 0.6 : 0.4);
+            // 回调方向的入场buffer倍率：趋势中收窄到0.2（不需要深回调），区间中保持1.0
+            BigDecimal pullbackFactor = BigDecimal.valueOf(isTrend ? 0.7 : 1.0);
 
             if (direction == Direction.LONG) {
-                entryLow = lastPrice.subtract(entryBuffer);
-                entryHigh = lastPrice.add(entryBuffer.multiply(BigDecimal.valueOf(0.4)).setScale(2, RoundingMode.HALF_UP));
+                entryLow = lastPrice.subtract(entryBuffer.multiply(pullbackFactor).setScale(2, RoundingMode.HALF_UP));
+                entryHigh = lastPrice.add(entryBuffer.multiply(trendSideFactor).setScale(2, RoundingMode.HALF_UP));
                 invalidation = entryLow.subtract(stopOffset);
                 tp1 = entryHigh.add(tp1Offset);
                 tp2 = entryHigh.add(tp2Offset);
             } else {
-                entryLow = lastPrice.subtract(entryBuffer.multiply(BigDecimal.valueOf(0.4)).setScale(2, RoundingMode.HALF_UP));
-                entryHigh = lastPrice.add(entryBuffer);
+                entryLow = lastPrice.subtract(entryBuffer.multiply(trendSideFactor).setScale(2, RoundingMode.HALF_UP));
+                entryHigh = lastPrice.add(entryBuffer.multiply(pullbackFactor).setScale(2, RoundingMode.HALF_UP));
                 invalidation = entryHigh.add(stopOffset);
                 tp1 = entryLow.subtract(tp1Offset);
                 tp2 = entryLow.subtract(tp2Offset);
@@ -203,7 +214,7 @@ public class HorizonJudge {
         };
         if (disagreement > 0.35) baseLev = Math.min(baseLev, 15);
         if (confidence < 0.4) baseLev = (int) (baseLev * 0.6);
-        return Math.max(10, baseLev);
+        return Math.max(5, baseLev);
     }
 
     public static double getBasePositionPct(String horizon) {

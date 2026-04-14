@@ -1,13 +1,19 @@
 package com.mawai.wiibservice.agent.quant;
 
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.constant.QuantConstants;
+import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibservice.task.AiTradingScheduler;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
@@ -16,32 +22,33 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 价格波动哨兵：监听 WS 实时 markPrice tick，当5分钟内价格变动超过 2×ATR-5m 时
+ * 价格波动哨兵：监听 WS 实时 markPrice tick，当5分钟内价格变动超过 1.3×ATR-5m 时
  * 触发「轻周期刷新 + AI交易」，捕捉异常波动中的交易机会。
  * <p>
- * ATR-5m 由量化管道（重周期/轻周期）计算后推送更新，避免 DB 查询。
+ * ATR-5m 由量化管道（重周期/轻周期）计算后推送更新；启动时从DB加载最近一次ATR。
  * 冷却期3分钟，防止高波动市场下过度触发。
  */
 @Slf4j
 @Component
 public class PriceVolatilitySentinel {
 
-    private static final double ATR_MULTIPLIER = 2.0;
+    private static final double ATR_MULTIPLIER = 1.3;
     private static final long COOLDOWN_MS = 3 * 60 * 1000L;
     private static final long WINDOW_MS = 5 * 60 * 1000L;
     private static final long SAMPLE_INTERVAL_MS = 1000L;
 
     /** 兜底固定阈值：ATR 尚未就绪时使用 */
     private static final Map<String, Double> FALLBACK_THRESHOLDS = Map.of(
-            "BTCUSDT", 0.008,
-            "ETHUSDT", 0.012,
-            "PAXGUSDT", 0.005
+            "BTCUSDT", 0.003,
+            "ETHUSDT", 0.005,
+            "PAXGUSDT", 0.002
     );
-    private static final double DEFAULT_FALLBACK = 0.01;
+    private static final double DEFAULT_FALLBACK = 0.004;
 
     private final QuantLightCycleService lightCycleService;
     private final AiTradingScheduler aiTradingScheduler;
     private final BinanceRestClient binanceRestClient;
+    private final QuantForecastCycleMapper cycleMapper;
 
     private final Map<String, Deque<PriceTick>> priceWindows = new ConcurrentHashMap<>();
     private final Map<String, BigDecimal> lastAtr5m = new ConcurrentHashMap<>();
@@ -53,10 +60,37 @@ public class PriceVolatilitySentinel {
 
     public PriceVolatilitySentinel(QuantLightCycleService lightCycleService,
                                    AiTradingScheduler aiTradingScheduler,
-                                   BinanceRestClient binanceRestClient) {
+                                   BinanceRestClient binanceRestClient,
+                                   QuantForecastCycleMapper cycleMapper) {
         this.lightCycleService = lightCycleService;
         this.aiTradingScheduler = aiTradingScheduler;
         this.binanceRestClient = binanceRestClient;
+        this.cycleMapper = cycleMapper;
+    }
+
+    @PostConstruct
+    void initAtrFromDb() {
+        for (String symbol : QuantConstants.WATCH_SYMBOLS) {
+            try {
+                QuantForecastCycle cycle = cycleMapper.selectLatest(symbol);
+                if (cycle == null || cycle.getSnapshotJson() == null) continue;
+                if (cycle.getForecastTime() != null
+                        && cycle.getForecastTime().isBefore(LocalDateTime.now().minusMinutes(30))) {
+                    log.info("[Sentinel] DB中ATR已过期，跳过 symbol={} forecastTime={}", symbol, cycle.getForecastTime());
+                    continue;
+                }
+                JSONObject snap = JSON.parseObject(cycle.getSnapshotJson());
+                Object atrVal = snap.get("atr5m");
+                if (atrVal == null) continue;
+                BigDecimal atr = new BigDecimal(atrVal.toString());
+                if (atr.compareTo(BigDecimal.ZERO) > 0) {
+                    lastAtr5m.put(symbol, atr);
+                    log.info("[Sentinel] 从DB加载ATR symbol={} atr5m={}", symbol, atr);
+                }
+            } catch (Exception e) {
+                log.warn("[Sentinel] 加载ATR失败 symbol={}: {}", symbol, e.getMessage());
+            }
+        }
     }
 
     /**

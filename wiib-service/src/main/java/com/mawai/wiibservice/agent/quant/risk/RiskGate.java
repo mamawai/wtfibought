@@ -12,9 +12,9 @@ import java.util.List;
  * 风控硬裁剪：纯程序化规则，对HorizonForecast做最终裁剪。
  * <p>
  * 规则：
- * - disagreement > 0.35 → 仓位压缩+杠杆限制（不直接降级NO_TRADE）
+ * - disagreement > 0.35 → 杠杆限制（仓位压缩由agreementFactor处理）
  * - regime = SHOCK → 杠杆cap到2x
- * - 仓位 = basePct × confidence × (1-disagreement) × volatilityPenalty
+ * - 仓位 = basePct × confidence × agreementFactor × envFactor（环境因子加法合并）
  */
 @Slf4j
 public class RiskGate {
@@ -95,30 +95,41 @@ public class RiskGate {
             actions.add("SQUEEZE_REDUCE_" + f.horizon());
         }
 
-        // 高分歧 → 仓位压缩 + 杠杆限制
+        // 高分歧 → 杠杆限制（仓位压缩已由 agreementFactor 处理，不再重复 ×0.5）
         if (highDisagreement) {
-            maxPos *= 0.5;
-            maxLev = Math.min(maxLev, 3);
-            confMultiplier *= 0.7;
+            maxLev = Math.min(maxLev, Math.max(5, maxLev / 2));
             actions.add("HIGH_DISAGREEMENT_PENALTY_" + f.horizon());
         }
 
-        // 恐惧贪婪极端值 → 逆向仓位惩罚
+        // 恐惧贪婪极端值 → regime感知惩罚
+        // TREND中：顺势FGI极端值是正常的，不惩罚；RANGE中：保留逆向逻辑；SHOCK中：加大惩罚
         if (fearGreedIndex >= 0) {
-            // 极度贪婪做多 / 极度恐惧做空 → 置信度打8折
+            boolean isTrend = regime == MarketRegime.TREND_UP || regime == MarketRegime.TREND_DOWN;
+            boolean isShock = regime == MarketRegime.SHOCK;
+            double fgiPenalty = isShock ? 0.70 : 0.85;
+
             if (fearGreedIndex >= 80 && f.direction() == Direction.LONG) {
-                confMultiplier *= 0.80;
-                actions.add("EXTREME_GREED_LONG_PENALTY_" + f.horizon());
+                // 极度贪婪做多：趋势上涨中不惩罚（贪婪是正常情绪），其他regime惩罚
+                if (!isTrend || regime != MarketRegime.TREND_UP) {
+                    confMultiplier *= fgiPenalty;
+                    actions.add("EXTREME_GREED_LONG_PENALTY_" + f.horizon());
+                }
             } else if (fearGreedIndex <= 20 && f.direction() == Direction.SHORT) {
-                confMultiplier *= 0.80;
-                actions.add("EXTREME_FEAR_SHORT_PENALTY_" + f.horizon());
+                // 极度恐惧做空：趋势下跌中不惩罚（恐惧是正常情绪），其他regime惩罚
+                if (!isTrend || regime != MarketRegime.TREND_DOWN) {
+                    confMultiplier *= fgiPenalty;
+                    actions.add("EXTREME_FEAR_SHORT_PENALTY_" + f.horizon());
+                }
             }
         }
 
-        // 动态仓位: basePct × confidence × (1-disagreement) × volatilityPenalty × ivPenalty × confMultiplier
+        // 动态仓位: basePct × confidence × (1-disagreement)，环境因子用加法惩罚避免级联衰减
         double effectiveConfidence = f.confidence() * confMultiplier;
         double agreementFactor = Math.max(0.60, 1.0 - f.disagreement());
-        double adjustedPos = maxPos * effectiveConfidence * agreementFactor * volPenalty * dataPenalty * ivPenalty;
+        // 环境惩罚：vol/data/iv 改为加法（它们高度相关，乘法会导致过度衰减）
+        double envPenalty = (1.0 - volPenalty) + (1.0 - dataPenalty) + (1.0 - ivPenalty);
+        double envFactor = Math.max(0.40, 1.0 - envPenalty);
+        double adjustedPos = maxPos * effectiveConfidence * agreementFactor * envFactor;
         adjustedPos = Math.clamp(adjustedPos, 0.05, maxPos);
 
         if (volPenalty < 0.8) {
@@ -131,8 +142,9 @@ public class RiskGate {
             actions.add("HIGH_IV_PENALTY_" + f.horizon());
         }
 
-        log.info("[Q5.clip] {} {} regime={} volPenalty={} dataPenalty={} ivPenalty={} qualityFlags={} → lev={} pos={}% ",
-                f.horizon(), f.direction(), regime, String.format("%.2f", volPenalty), String.format("%.2f", dataPenalty),
+        log.info("[Q5.clip] {} {} regime={} envFactor={} (vol={} data={} iv={}) qualityFlags={} → lev={} pos={}% ",
+                f.horizon(), f.direction(), regime, String.format("%.2f", envFactor),
+                String.format("%.2f", volPenalty), String.format("%.2f", dataPenalty),
                 String.format("%.2f", ivPenalty), qualityFlags,
                 maxLev, String.format("%.2f", adjustedPos * 100));
 

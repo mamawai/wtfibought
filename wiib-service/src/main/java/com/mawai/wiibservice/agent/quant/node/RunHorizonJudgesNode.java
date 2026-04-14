@@ -39,6 +39,7 @@ public class RunHorizonJudgesNode implements NodeAction {
         BigDecimal lastPrice = snapshot != null ? snapshot.lastPrice() : null;
         List<String> qualityFlags = snapshot != null ? snapshot.qualityFlags() : List.of();
         String symbol = snapshot != null ? snapshot.symbol() : "BTCUSDT";
+        MarketRegime regime = snapshot != null ? snapshot.regime() : null;
 
         // 查反思记忆中的agent准确率
         Map<String, Map<String, Double>> agentAccuracy = Map.of();
@@ -63,7 +64,7 @@ public class RunHorizonJudgesNode implements NodeAction {
             for (String horizon : HORIZONS) {
                 futures.add(executor.submit(() -> {
                     HorizonJudge judge = new HorizonJudge(horizon, finalAccuracy);
-                    return judge.judge(allVotes, lastPrice, qualityFlags);
+                    return judge.judge(allVotes, lastPrice, qualityFlags, regime);
                 }));
             }
             for (int i = 0; i < 3; i++) {

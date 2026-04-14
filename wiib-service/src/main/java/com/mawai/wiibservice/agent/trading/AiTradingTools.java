@@ -26,9 +26,10 @@ public class AiTradingTools {
     private static final int MIN_LEVERAGE = 5;
     private static final BigDecimal MIN_POSITION_VALUE = new BigDecimal("10000");
     private static final BigDecimal MAX_POSITION_RATIO = new BigDecimal("0.30");
-    private static final BigDecimal MIN_MARGIN = new BigDecimal("1000");
+    private static final BigDecimal MIN_MARGIN_FLOOR = new BigDecimal("200");
+    private static final BigDecimal MIN_MARGIN_RATIO = new BigDecimal("0.02"); // 余额的2%
     private static final int MAX_OPEN_POSITIONS = 3;
-    private static final BigDecimal SL_MIN_DISTANCE_PCT = new BigDecimal("0.002");  // 0.2%
+    private static final BigDecimal SL_MIN_DISTANCE_PCT = new BigDecimal("0.005");  // 0.5%
     private static final BigDecimal SL_MAX_DISTANCE_PCT = new BigDecimal("0.10");   // 10%
     private static final int MAX_SAME_DIRECTION_POSITIONS = 2;
 
@@ -166,7 +167,7 @@ public class AiTradingTools {
 
     // ==================== 交易工具 ====================
 
-    @Tool(description = "开仓下单，支持市价和限价。必须设止损。杠杆5-50倍，单次保证金≥1000USDT且不超余额30%，最多3仓位，同向最多2仓位。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
+    @Tool(description = "开仓下单，支持市价和限价。必须设止损。杠杆5-50倍，单次保证金≥余额2%（最低200USDT）且不超余额30%，最多3仓位，同向最多2仓位。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
     public String openPosition(
             @ToolParam(description = "方向：LONG或SHORT") String side,
             @ToolParam(description = "数量（币的数量，如0.01个BTC）") BigDecimal quantity,
@@ -175,7 +176,7 @@ public class AiTradingTools {
             @ToolParam(description = "限价价格，仅orderType=LIMIT时必填，市价单忽略此参数") BigDecimal limitPrice,
             @ToolParam(description = "止损价格，必填") BigDecimal stopLossPrice,
             @ToolParam(description = "止盈目标1价格，可选") BigDecimal tp1Price,
-            @ToolParam(description = "止盈目标2价格，可选，设置后止盈仓位自动按50%/50%分配") BigDecimal tp2Price) {
+            @ToolParam(description = "止盈目标2价格，可选，设置后止盈仓位自动按70%/30%分配（TP1占70%）") BigDecimal tp2Price) {
 
         String symbol = currentSymbol;
         if (!"LONG".equals(side) && !"SHORT".equals(side)) {
@@ -227,7 +228,7 @@ public class AiTradingTools {
         BigDecimal slDistance = stopLossPrice.subtract(price).abs();
         BigDecimal slPct = slDistance.divide(price, 6, RoundingMode.HALF_UP);
         if (slPct.compareTo(SL_MIN_DISTANCE_PCT) < 0) {
-            return "错误：止损距当前价仅" + slPct.multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP) + "%，太近（噪音区，最低0.2%）";
+            return "错误：止损距当前价仅" + slPct.multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP) + "%，太近（噪音区，最低0.5%）";
         }
         if (slPct.compareTo(SL_MAX_DISTANCE_PCT) > 0) {
             return "错误：止损距当前价" + slPct.multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP) + "%，太远（>10%），风险过大";
@@ -238,8 +239,11 @@ public class AiTradingTools {
             return "错误：名义价值" + positionValue + " USDT太小，最低" + MIN_POSITION_VALUE + " USDT，请加大仓位";
         }
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
-        if (margin.compareTo(MIN_MARGIN) < 0 && user.getBalance().compareTo(MIN_MARGIN) >= 0) {
-            return "错误：保证金" + margin + " USDT低于最低要求" + MIN_MARGIN + " USDT，请加大仓位或降低杠杆";
+        // 动态最低保证金：max(200, 余额×2%)
+        BigDecimal dynamicMinMargin = user.getBalance().multiply(MIN_MARGIN_RATIO)
+                .max(MIN_MARGIN_FLOOR).setScale(2, RoundingMode.HALF_UP);
+        if (margin.compareTo(dynamicMinMargin) < 0 && user.getBalance().compareTo(dynamicMinMargin) >= 0) {
+            return "错误：保证金" + margin + " USDT低于最低要求" + dynamicMinMargin + " USDT，请加大仓位或降低杠杆";
         }
         BigDecimal maxMargin = user.getBalance().multiply(MAX_POSITION_RATIO);
         if (margin.compareTo(maxMargin) > 0) {
@@ -261,17 +265,17 @@ public class AiTradingTools {
         sl.setQuantity(quantity);
         req.setStopLosses(List.of(sl));
 
-        // 止盈
+        // 止盈：TP1/TP2 按 70/30 分仓（TP1大头先锁利，TP2延伸试探）
         if (tp1Price != null && tp1Price.compareTo(BigDecimal.ZERO) > 0) {
             if (tp2Price != null && tp2Price.compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal half = quantity.divide(BigDecimal.valueOf(2), 8, RoundingMode.HALF_UP);
-                BigDecimal rest = quantity.subtract(half);
+                BigDecimal tp1Qty = quantity.multiply(BigDecimal.valueOf(0.7)).setScale(8, RoundingMode.HALF_UP);
+                BigDecimal tp2Qty = quantity.subtract(tp1Qty);
                 FuturesOpenRequest.TakeProfit tp1 = new FuturesOpenRequest.TakeProfit();
                 tp1.setPrice(tp1Price);
-                tp1.setQuantity(half);
+                tp1.setQuantity(tp1Qty);
                 FuturesOpenRequest.TakeProfit tp2 = new FuturesOpenRequest.TakeProfit();
                 tp2.setPrice(tp2Price);
-                tp2.setQuantity(rest);
+                tp2.setQuantity(tp2Qty);
                 req.setTakeProfits(List.of(tp1, tp2));
             } else {
                 FuturesOpenRequest.TakeProfit tp1 = new FuturesOpenRequest.TakeProfit();

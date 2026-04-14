@@ -26,8 +26,8 @@ import java.util.concurrent.*;
 /**
  * 轻周期服务：每10min刷新量化信号，零LLM调用。
  * <p>
- * 复用上一次重周期的 regime、news_votes、reportJson，
- * 仅重新采集市场数据 + 重算特征 + 跑4个纯代码Agent + Judge + RiskGate。
+ * 复用上一次重周期的 news_votes、reportJson、regimeConfidence、regimeTransition，
+ * regime使用实时数据重算。重新采集市场数据 + 重算特征 + 跑4个纯代码Agent + Judge + RiskGate。
  */
 @Slf4j
 @Service
@@ -136,10 +136,13 @@ public class QuantLightCycleService {
                 return;
             }
 
-            // 3. 注入缓存的 regime（跳过 LLM regime_review）
+            // 3. 使用最新数据计算的 regime（纯ADX/ATR计算，不需要LLM），
+            //    但保留缓存的 regimeTransition（需要LLM跨周期判断）和 regimeConfidence
             snapshot = snapshot.withRegimeReview(
-                    cache.regime(), snapshot.qualityFlags(),
+                    snapshot.regime(), snapshot.qualityFlags(),
                     cache.regimeConfidence(), cache.regimeTransition());
+            log.info("[LightCycle] 使用实时regime={} (缓存regime={})",
+                    snapshot.regime(), cache.regime());
 
             // 4. 跑4个纯代码Agent（并行）+ 合并缓存的 news votes
             List<AgentVote> allVotes = runPureAgents(snapshot);
@@ -148,7 +151,7 @@ public class QuantLightCycleService {
             // 5. 三个 HorizonJudge 并行裁决
             Map<String, Map<String, Double>> agentAccuracy = loadAgentAccuracy(symbol);
             List<HorizonForecast> forecasts = runJudges(allVotes, snapshot.lastPrice(),
-                    snapshot.qualityFlags(), agentAccuracy);
+                    snapshot.qualityFlags(), agentAccuracy, snapshot.regime());
 
             String overallDecision = ConsensusBuilder.buildDecision(forecasts);
             String riskStatus = ConsensusBuilder.buildRiskStatus(forecasts);
@@ -221,14 +224,15 @@ public class QuantLightCycleService {
 
     private List<HorizonForecast> runJudges(List<AgentVote> allVotes, BigDecimal lastPrice,
                                              List<String> qualityFlags,
-                                             Map<String, Map<String, Double>> agentAccuracy) {
+                                             Map<String, Map<String, Double>> agentAccuracy,
+                                             MarketRegime regime) {
         List<HorizonForecast> forecasts = new ArrayList<>(3);
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             List<Future<HorizonForecast>> futures = new ArrayList<>(3);
             for (String horizon : HORIZONS) {
                 futures.add(executor.submit(() -> {
                     HorizonJudge judge = new HorizonJudge(horizon, agentAccuracy);
-                    return judge.judge(allVotes, lastPrice, qualityFlags);
+                    return judge.judge(allVotes, lastPrice, qualityFlags, regime);
                 }));
             }
             for (int i = 0; i < 3; i++) {
