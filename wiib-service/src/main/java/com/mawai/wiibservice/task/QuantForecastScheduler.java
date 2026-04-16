@@ -20,6 +20,9 @@ import org.springframework.stereotype.Component;
 
 import com.mawai.wiibcommon.constant.QuantConstants;
 
+import com.mawai.wiibservice.agent.quant.domain.QuantCycleCompleteEvent;
+import org.springframework.context.ApplicationEventPublisher;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -36,8 +39,8 @@ public class QuantForecastScheduler {
     private final RedisMessageBroadcastService broadcastService;
     private final BinanceRestClient binanceRestClient;
     private final QuantLightCycleService lightCycleService;
-    private final AiTradingScheduler aiTradingScheduler;
     private final PriceVolatilitySentinel priceVolatilitySentinel;
+    private final ApplicationEventPublisher eventPublisher;
 
     /** 记录每个symbol最近一次重周期的完成时间 */
     private final Map<String, Instant> lastHeavyCycleTime = new ConcurrentHashMap<>();
@@ -121,14 +124,7 @@ public class QuantForecastScheduler {
                 }
 
                 log.info("定时预测完成 symbol={} decision={}", symbol, forecastResult.overallDecision());
-
-                // 重周期完成后立即触发AI交易
-                try {
-                    aiTradingScheduler.triggerTradingCycle(List.of(symbol));
-                    log.info("[Scheduler] 量化完成后触发AI交易 symbol={}", symbol);
-                } catch (Exception te) {
-                    log.warn("[Scheduler] 触发AI交易失败 symbol={}: {}", symbol, te.getMessage());
-                }
+                eventPublisher.publishEvent(new QuantCycleCompleteEvent(this, symbol, "heavy"));
             } else {
                 log.warn("定时预测无ForecastResult symbol={} type={}", symbol, fr != null ? fr.getClass().getName() : "null");
             }

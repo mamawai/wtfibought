@@ -94,6 +94,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         position.setEntryPrice(price);
         position.setMargin(margin);
         position.setFundingFeeTotal(BigDecimal.ZERO);
+        position.setMemo(request.getMemo());
         position.setStatus("OPEN");
 
         List<FuturesOpenRequest.StopLoss> stopLosses = request.getStopLosses();
@@ -531,6 +532,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         dto.setStatus(pos.getStatus());
         dto.setClosedPrice(pos.getClosedPrice());
         dto.setClosedPnl(pos.getClosedPnl());
+        dto.setMemo(pos.getMemo());
         dto.setCreatedAt(pos.getCreatedAt());
         dto.setUpdatedAt(pos.getUpdatedAt());
 

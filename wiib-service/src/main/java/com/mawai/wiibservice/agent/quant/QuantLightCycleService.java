@@ -8,12 +8,14 @@ import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import com.mawai.wiibservice.agent.quant.node.BuildFeaturesNode;
 import com.mawai.wiibservice.agent.quant.node.CollectDataNode;
 import com.mawai.wiibservice.agent.quant.risk.RiskGate;
+import com.mawai.wiibservice.agent.quant.domain.QuantCycleCompleteEvent;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
 import com.mawai.wiibservice.service.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;
 import com.mawai.wiibservice.service.OrderFlowAggregator;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -38,6 +40,7 @@ public class QuantLightCycleService {
     private final List<FactorAgent> pureAgents;
     private final MemoryService memoryService;
     private final QuantForecastPersistService persistService;
+    private final ApplicationEventPublisher eventPublisher;
 
     /** 波动哨兵，轻周期完成后更新ATR */
     private PriceVolatilitySentinel volatilitySentinel;
@@ -64,6 +67,7 @@ public class QuantLightCycleService {
                                    DepthStreamCache depthStreamCache,
                                    DeribitClient deribitClient,
                                    MemoryService memoryService,
+                                   ApplicationEventPublisher eventPublisher,
                                    @org.springframework.context.annotation.Lazy PriceVolatilitySentinel volatilitySentinel) {
         this.collectDataNode = new CollectDataNode(
                 binanceRestClient, forceOrderService, depthStreamCache, deribitClient);
@@ -76,6 +80,7 @@ public class QuantLightCycleService {
         );
         this.memoryService = memoryService;
         this.persistService = persistService;
+        this.eventPublisher = eventPublisher;
         this.volatilitySentinel = volatilitySentinel;
     }
 
@@ -173,8 +178,9 @@ public class QuantLightCycleService {
                     riskResult.forecasts(), overallDecision, riskStatus,
                     allVotes, snapshot, cache.reportJson());
 
-            // 8. 持久化（显式传入缓存的rawReportJson，避免二次序列化）
-            persistService.persist(forecastResult, null, null, cache.reportJson());
+            // 8. 持久化（显式用fastjson2序列化snapshot，避免hutool-json导致indicatorsByTimeframe丢失）
+            String snapshotJson = com.alibaba.fastjson2.JSON.toJSONString(snapshot);
+            persistService.persist(forecastResult, null, snapshotJson, cache.reportJson());
 
             // 9. 更新波动哨兵的ATR基准
             if (volatilitySentinel != null && snapshot.atr5m() != null) {
@@ -189,6 +195,7 @@ public class QuantLightCycleService {
             }
             log.info("[LightCycle] 轻周期完成 symbol={} decision={} cycleId={} 耗时{}ms",
                     symbol, overallDecision, cycleId, System.currentTimeMillis() - startMs);
+            eventPublisher.publishEvent(new QuantCycleCompleteEvent(this, symbol, "light"));
 
         } catch (Exception e) {
             log.error("[LightCycle] 轻周期异常 symbol={}", symbol, e);

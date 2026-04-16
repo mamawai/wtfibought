@@ -6,6 +6,7 @@ import com.mawai.wiibservice.agent.quant.domain.AgentVote;
 import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibservice.agent.quant.factor.FactorAgent;
 import com.mawai.wiibservice.agent.quant.factor.NewsEventAgent;
+import com.mawai.wiibservice.agent.quant.factor.ChartPatternAgent;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -17,8 +18,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 5个因子Agent并行执行节点。
- * 内部使用虚拟线程并行，纯Java Agent超时30s，LLM Agent超时60s。
+ * 6个因子Agent并行执行节点。
+ * 内部使用虚拟线程并行，纯Java Agent超时30s，LLM Agent超时60-200s。
  */
 @Slf4j
 public class RunFactorAgentsNode implements NodeAction {
@@ -46,6 +47,7 @@ public class RunFactorAgentsNode implements NodeAction {
             List<Future<List<AgentVote>>> normalFutures = new ArrayList<>();
             List<String> normalAgentNames = new ArrayList<>();
             Future<NewsEventAgent.EvaluateResult> newsFuture = null;
+            Future<List<AgentVote>> chartFuture = null;
 
             for (FactorAgent agent : agents) {
                 if (agent instanceof NewsEventAgent newsAgent) {
@@ -56,6 +58,14 @@ public class RunFactorAgentsNode implements NodeAction {
                                 newsAgent.name(), System.currentTimeMillis() - start,
                                 result.votes().size(), result.filteredNews().size());
                         return result;
+                    });
+                } else if (agent instanceof ChartPatternAgent chartAgent) {
+                    chartFuture = executor.submit(() -> {
+                        long start = System.currentTimeMillis();
+                        List<AgentVote> votes = chartAgent.evaluate(snapshot);
+                        log.info("[Q3.agent] {}完成 {}ms {}票",
+                                chartAgent.name(), System.currentTimeMillis() - start, votes.size());
+                        return votes;
                     });
                 } else {
                     normalAgentNames.add(agent.name());
@@ -92,6 +102,17 @@ public class RunFactorAgentsNode implements NodeAction {
                     allVotes.add(AgentVote.noTrade("news_event", "0_10", "TIMEOUT"));
                     allVotes.add(AgentVote.noTrade("news_event", "10_20", "TIMEOUT"));
                     allVotes.add(AgentVote.noTrade("news_event", "20_30", "TIMEOUT"));
+                }
+            }
+            // 收集 ChartPatternAgent 结果
+            if (chartFuture != null) {
+                try {
+                    allVotes.addAll(chartFuture.get(120, TimeUnit.SECONDS));
+                } catch (Exception e) {
+                    log.warn("[Q3] Agent[chart_pattern] 超时/异常: {}", e.getMessage());
+                    allVotes.add(AgentVote.noTrade("chart_pattern", "0_10", "TIMEOUT"));
+                    allVotes.add(AgentVote.noTrade("chart_pattern", "10_20", "TIMEOUT"));
+                    allVotes.add(AgentVote.noTrade("chart_pattern", "20_30", "TIMEOUT"));
                 }
             }
         }

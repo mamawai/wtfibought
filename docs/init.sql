@@ -576,6 +576,7 @@ CREATE TABLE IF NOT EXISTS futures_position (
     status VARCHAR(12) NOT NULL DEFAULT 'OPEN',
     closed_price DECIMAL(18,2),
     closed_pnl DECIMAL(18,2),
+    memo VARCHAR(32),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -594,6 +595,7 @@ COMMENT ON COLUMN futures_position.take_profits IS '止盈列表(JSONB)';
 COMMENT ON COLUMN futures_position.status IS '状态：OPEN/CLOSED/LIQUIDATED';
 COMMENT ON COLUMN futures_position.closed_price IS '平仓价';
 COMMENT ON COLUMN futures_position.closed_pnl IS '平仓盈亏';
+COMMENT ON COLUMN futures_position.memo IS 'AI策略标签：TREND/MEAN_REVERSION/BREAKOUT';
 
 CREATE INDEX idx_fp_user_status ON futures_position(user_id, status);
 CREATE INDEX idx_fp_symbol_status ON futures_position(symbol, status);

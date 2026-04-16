@@ -21,6 +21,7 @@ public class FuturesPositionDTO {
     private BigDecimal fundingFeeTotal;
     private List<FuturesStopLoss> stopLosses;
     private List<FuturesTakeProfit> takeProfits;
+    private String memo;
     private String status;
     private BigDecimal closedPrice;
     private BigDecimal closedPnl;

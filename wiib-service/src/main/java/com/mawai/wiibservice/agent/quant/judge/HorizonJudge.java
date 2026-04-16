@@ -22,13 +22,14 @@ public class HorizonJudge {
 
     private static final double EPSILON = 1e-9;
 
-    /** 初始权重表: agent → horizon → weight */
+    /** 初始权重表: agent → horizon → weight（每列总和=1.0） */
     private static final Map<String, Map<String, Double>> DEFAULT_WEIGHTS = Map.of(
-            "microstructure", Map.of("0_10", 0.35, "10_20", 0.15, "20_30", 0.05),
-            "momentum",       Map.of("0_10", 0.25, "10_20", 0.30, "20_30", 0.30),
-            "regime",         Map.of("0_10", 0.15, "10_20", 0.20, "20_30", 0.25),
-            "volatility",     Map.of("0_10", 0.15, "10_20", 0.15, "20_30", 0.15),
-            "news_event",     Map.of("0_10", 0.10, "10_20", 0.20, "20_30", 0.25)
+            "microstructure", Map.of("0_10", 0.32, "10_20", 0.13, "20_30", 0.04),
+            "momentum",       Map.of("0_10", 0.23, "10_20", 0.27, "20_30", 0.26),
+            "regime",         Map.of("0_10", 0.14, "10_20", 0.18, "20_30", 0.22),
+            "volatility",     Map.of("0_10", 0.14, "10_20", 0.14, "20_30", 0.13),
+            "news_event",     Map.of("0_10", 0.09, "10_20", 0.18, "20_30", 0.22),
+            "chart_pattern",  Map.of("0_10", 0.08, "10_20", 0.10, "20_30", 0.13)
     );
 
     private final String horizon;
@@ -124,14 +125,14 @@ public class HorizonJudge {
         // confidence = 方向占比为主，agent信心为辅，弱信号用减法惩罚（避免乘法级联衰减）
         double rawConf = (direction == Direction.LONG ? longScore : shortScore) / total;
         rawConf *= Math.clamp(0.5 + avgAgentConf, 0.70, 1.0);
-        // 弱信号惩罚（减法，总计上限-0.18，避免叠加过深）
+        // 弱信号惩罚（减法，总计上限-0.12，避免叠加过深）
         double minEdge = getMinEdge(qualityFlags);
         int minMoveBps = getMinMoveBps();
         double totalPenalty = 0;
-        if (edge < minEdge) totalPenalty += 0.08;
-        if (dominantMoveBps < minMoveBps) totalPenalty += 0.05;
-        if (disagreement > 0.35) totalPenalty += 0.10;
-        rawConf -= Math.min(totalPenalty, 0.18);
+        if (edge < minEdge) totalPenalty += 0.05;
+        if (dominantMoveBps < minMoveBps) totalPenalty += 0.03;
+        if (disagreement > 0.35) totalPenalty += 0.06;
+        rawConf -= Math.min(totalPenalty, 0.12);
         double confidence = Math.clamp(rawConf, 0.15, 1.0);
 
         double weightedScore = longScore > shortScore ? longScore : -shortScore;
@@ -207,22 +208,22 @@ public class HorizonJudge {
 
     public static int getMaxLeverage(String horizon, double confidence, double disagreement) {
         int baseLev = switch (horizon) {
-            case "0_10" -> 30;
-            case "10_20" -> 25;
-            case "20_30" -> 20;
-            default -> 20;
+            case "0_10" -> 35;
+            case "10_20" -> 30;
+            case "20_30" -> 25;
+            default -> 25;
         };
-        if (disagreement > 0.35) baseLev = Math.min(baseLev, 15);
-        if (confidence < 0.4) baseLev = (int) (baseLev * 0.6);
+        if (disagreement > 0.35) baseLev = Math.min(baseLev, 20);
+        if (confidence < 0.4) baseLev = (int) (baseLev * 0.7);
         return Math.max(5, baseLev);
     }
 
     public static double getBasePositionPct(String horizon) {
         return switch (horizon) {
-            case "0_10" -> 0.15;
-            case "10_20" -> 0.18;
-            case "20_30" -> 0.20;
-            default -> 0.15;
+            case "0_10" -> 0.20;
+            case "10_20" -> 0.25;
+            case "20_30" -> 0.30;
+            default -> 0.20;
         };
     }
 

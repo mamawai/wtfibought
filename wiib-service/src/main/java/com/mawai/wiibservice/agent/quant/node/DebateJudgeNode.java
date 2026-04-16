@@ -100,7 +100,7 @@ public class DebateJudgeNode implements NodeAction {
         }
 
         return """
-                你是加密货币量化系统的辩论裁决员。系统已通过5个因子Agent投票和3个区间裁决器得出以下结果。
+                你是加密货币量化系统的辩论裁决员。系统已通过6个因子Agent投票和3个区间裁决器得出以下结果。
                 你需要依次扮演3个角色完成辩论，然后给出最终裁决。
 
                 【系统裁决结果】
@@ -108,7 +108,7 @@ public class DebateJudgeNode implements NodeAction {
                 【系统决策】%s
                 【风控状态】%s
 
-                【15票投票详情（按区间）】
+                【15票投票详情（按区间，6个Agent×3个区间）】
                 %s
                 【各Agent投票方向汇总】
                 %s

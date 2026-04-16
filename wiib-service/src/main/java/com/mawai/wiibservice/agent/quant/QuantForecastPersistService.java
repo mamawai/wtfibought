@@ -1,6 +1,6 @@
 package com.mawai.wiibservice.agent.quant;
 
-import cn.hutool.json.JSONUtil;
+import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.entity.*;
 import com.mawai.wiibservice.agent.quant.domain.*;
 import com.mawai.wiibservice.mapper.*;
@@ -56,16 +56,15 @@ public class QuantForecastPersistService {
         cycle.setForecastTime(r.forecastTime());
         cycle.setOverallDecision(r.overallDecision());
         cycle.setRiskStatus(r.riskStatus());
-        // 优先使用预序列化的JSON（避免ForecastResult反序列化时复杂record丢失）
         if (rawSnapshotJson != null && !rawSnapshotJson.isBlank()) {
             cycle.setSnapshotJson(rawSnapshotJson);
         } else if (r.snapshot() != null) {
-            cycle.setSnapshotJson(JSONUtil.toJsonStr(r.snapshot()));
+            cycle.setSnapshotJson(JSON.toJSONString(r.snapshot()));
         }
         if (rawReportJson != null && !rawReportJson.isBlank()) {
             cycle.setReportJson(rawReportJson);
         } else if (r.report() != null) {
-            cycle.setReportJson(JSONUtil.toJsonStr(r.report()));
+            cycle.setReportJson(JSON.toJSONString(r.report()));
         }
         if (debateSummary != null) {
             cycle.setDebateJson(debateSummary);

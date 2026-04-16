@@ -1,0 +1,958 @@
+package com.mawai.wiibservice.agent.trading;
+
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
+import com.mawai.wiibcommon.dto.FuturesPositionDTO;
+import com.mawai.wiibcommon.entity.*;
+import lombok.extern.slf4j.Slf4j;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * 确定性交易执行器 V2 — 基于信号共振的多策略引擎。
+ * <p>
+ * 核心原则（来自freqtrade/binance-futures-bot开源策略研究）：
+ * 1. 高周期趋势过滤 — 1h MA方向是入场门槛，不做逆势交易
+ * 2. 多指标共振 — MACD+RSI+Volume+BB+多周期+微结构，至少3个确认才入场
+ * 3. 手续费意识 — TP必须覆盖往返手续费+最低盈利
+ * 4. 动态出场 — BB均值回归用BB中轨出场，趋势用纯追踪止损
+ * 5. 选择性交易 — 宁可不交易，也不做低质量信号的交易
+ * 6. 策略选择基于指标状态 — 而非仅靠regime标签
+ */
+@Slf4j
+public class DeterministicTradingExecutor {
+
+    public static final BigDecimal INITIAL_BALANCE = new BigDecimal("100000.00");
+
+    // ==================== 手续费 ====================
+    private static final double ROUND_TRIP_FEE_RATE = 0.0008; // 开仓0.04% + 平仓0.04%
+    private static final double MIN_PROFIT_AFTER_FEE_ATR = 0.5; // 扣除手续费后最低盈利0.5ATR
+
+    // ==================== 风控常量 ====================
+    private static final BigDecimal RISK_PER_TRADE = new BigDecimal("0.02");
+    private static final BigDecimal MAX_MARGIN_PCT = new BigDecimal("0.35");
+    private static final BigDecimal DAILY_LOSS_LIMIT_PCT = new BigDecimal("0.05");
+    private static final BigDecimal DRAWDOWN_THRESHOLD = new BigDecimal("0.85");
+
+    // ==================== 智能冷却（盈利后快，亏损后慢）====================
+    private static final int WIN_COOLDOWN_MINUTES = 5;
+    private static final int LOSS_COOLDOWN_MINUTES = 15;
+    private static final int CONSECUTIVE_LOSS_PAUSE_MINUTES = 30;
+    private static final int MAX_CONSECUTIVE_LOSSES = 3;
+
+    // ==================== 信号共振门槛 ====================
+    private static final int MIN_CONFLUENCE_SCORE = 3; // 6维评分，>=3才入场
+
+    // ==================== 策略A: EMA趋势跟踪 ====================
+    private static final double TREND_MIN_CONFIDENCE = 0.35;
+    private static final int TREND_MAX_LEVERAGE = 25;
+
+    // ==================== 策略B: BB均值回归 ====================
+    private static final int REVERT_MAX_LEVERAGE = 20;
+    private static final double REVERT_POSITION_SCALE = 0.6;
+    private static final double REVERT_BB_PB_LONG_MAX = 10.0;  // BB%B < 10% = 超卖（注意: bollPercentB返回0-100）
+    private static final double REVERT_BB_PB_SHORT_MIN = 90.0; // BB%B > 90% = 超买
+    private static final double REVERT_RSI_LONG_MAX = 35.0;
+    private static final double REVERT_RSI_SHORT_MIN = 65.0;
+    private static final int REVERT_MAX_HOLD_HOURS = 3;
+
+    // ==================== 策略C: BB压缩突破 ====================
+    private static final int BREAKOUT_MAX_LEVERAGE = 20;
+    private static final double BREAKOUT_VOLUME_MIN = 1.3; // 成交量>=1.3倍均量
+    private static final double BREAKOUT_POSITION_SCALE = 0.8;
+
+    // ==================== 持仓管理 ====================
+    private static final double REVERSAL_CONFIDENCE = 0.60;
+
+    public record ExecutionResult(String action, String reasoning, String executionLog) {}
+
+    // ==================== 丰富的市场上下文 ====================
+
+    private record MarketContext(
+            String regime, String regimeTransition,
+            BigDecimal atr5m, BigDecimal rsi5m,
+            BigDecimal price,
+            // 高周期趋势过滤
+            Integer maAlignment1h,   // 1h均线排列: +1=多头, -1=空头, 0=纠缠
+            Integer maAlignment15m,
+            Integer maAlignment5m,
+            // 5m MACD
+            String macdCross5m,      // "golden"=金叉, "death"=死叉, null=无
+            String macdHistTrend5m,  // "rising"/"falling"/"sideways"
+            // 5m 布林带
+            Double bollPb5m,         // BB%B: 0=下轨, 50=中轨, 100=上轨（bollPercentB返回0-100）
+            Double bollBandwidth5m,
+            boolean bollSqueeze,
+            // 5m 成交量 & 趋势
+            Double volumeRatio5m,    // >1 = 放量
+            String closeTrend5m,     // "rising"/"falling"/"sideways"
+            // 15m RSI
+            Double rsi15m,
+            // 微结构
+            Double bidAskImbalance,
+            Double takerPressure,
+            Double oiChangeRate,
+            Double fundingDeviation
+    ) {}
+
+    // ==================== 主入口 ====================
+
+    public static ExecutionResult execute(
+            String symbol, User user,
+            List<FuturesPositionDTO> symbolPositions,
+            QuantForecastCycle forecast,
+            List<QuantSignalDecision> signals,
+            List<AiTradingDecision> recentDecisions,
+            BigDecimal futuresPrice, BigDecimal markPrice,
+            BigDecimal totalEquity,
+            AiTradingTools tools) {
+
+        if (user == null || futuresPrice == null || futuresPrice.signum() <= 0) {
+            return new ExecutionResult("HOLD", "数据缺失", "");
+        }
+
+        SymbolProfile profile = SymbolProfile.of(symbol);
+        MarketContext ctx = parseMarketContext(forecast, futuresPrice);
+        log.info("[Executor] {} regime={} atr={} rsi5m={} maAlign1h={} macdCross={} bbPb={} vol={} squeeze={} equity={}",
+                symbol, ctx.regime, ctx.atr5m, ctx.rsi5m, ctx.maAlignment1h, ctx.macdCross5m,
+                ctx.bollPb5m, ctx.volumeRatio5m, ctx.bollSqueeze, totalEquity);
+
+        boolean hasPosition = symbolPositions != null && !symbolPositions.isEmpty();
+
+        if (hasPosition) {
+            return managePositions(symbolPositions, signals, ctx, profile, tools);
+        }
+        return evaluateEntry(symbol, user, totalEquity, forecast, signals, recentDecisions, ctx, profile, tools);
+    }
+
+    // ==================== 持仓管理（盯盘逻辑）====================
+
+    private static ExecutionResult managePositions(
+            List<FuturesPositionDTO> positions,
+            List<QuantSignalDecision> signals,
+            MarketContext ctx,
+            SymbolProfile profile,
+            AiTradingTools tools) {
+
+        StringBuilder execLog = new StringBuilder();
+        StringBuilder reasons = new StringBuilder();
+        String action = "HOLD";
+
+        for (FuturesPositionDTO pos : positions) {
+            if (!"OPEN".equals(pos.getStatus())) continue;
+            BigDecimal entryPrice = pos.getEntryPrice();
+            if (entryPrice == null || entryPrice.signum() <= 0) continue;
+
+            boolean isLong = "LONG".equals(pos.getSide());
+            BigDecimal currentPrice = ctx.price;
+            BigDecimal profit = isLong ? currentPrice.subtract(entryPrice) : entryPrice.subtract(currentPrice);
+
+            // ===== 1. SHOCK → 浮亏减仓保护 =====
+            if ("SHOCK".equals(ctx.regime)) {
+                if (profit.signum() < 0) {
+                    BigDecimal halfQty = pos.getQuantity().divide(BigDecimal.TWO, 8, RoundingMode.HALF_DOWN);
+                    if (halfQty.signum() > 0) {
+                        String closeResult = tools.closePosition(pos.getId(), halfQty);
+                        execLog.append("SHOCK减仓50%: ").append(closeResult).append("\n");
+                        reasons.append("regime=SHOCK+浮亏→减仓50%; ");
+                        action = "CLOSE";
+                    }
+                } else {
+                    reasons.append("regime=SHOCK+浮盈→持有观察; ");
+                }
+                continue;
+            }
+
+            // ===== 2. 高周期趋势反转 → 平仓（最重要的盯盘信号）=====
+            if (ctx.maAlignment1h != null && ctx.maAlignment1h != 0) {
+                boolean trendAgainst = (isLong && ctx.maAlignment1h < 0) || (!isLong && ctx.maAlignment1h > 0);
+                if (trendAgainst) {
+                    String closeResult = tools.closePosition(pos.getId(), pos.getQuantity());
+                    execLog.append("1h趋势反转平仓: ").append(closeResult).append("\n");
+                    reasons.append("1h MA方向(").append(ctx.maAlignment1h > 0 ? "多头" : "空头")
+                            .append(")与持仓(").append(pos.getSide()).append(")相反→平仓; ");
+                    action = "CLOSE";
+                    continue;
+                }
+            }
+
+            // ===== 3. 均值回归持仓 → BB中轨动态止盈（仅对MEAN_REVERSION仓位生效）=====
+            if ("MEAN_REVERSION".equals(pos.getMemo())
+                    && "RANGE".equals(ctx.regime) && ctx.bollPb5m != null) {
+                boolean reachedMid = (isLong && ctx.bollPb5m >= 45.0) || (!isLong && ctx.bollPb5m <= 55.0);
+                if (reachedMid && profit.signum() > 0) {
+                    String closeResult = tools.closePosition(pos.getId(), pos.getQuantity());
+                    execLog.append("BB中轨止盈: ").append(closeResult).append("\n");
+                    reasons.append(String.format("RANGE+BB%%B=%.2f→到达BB中轨→止盈; ", ctx.bollPb5m));
+                    action = "CLOSE";
+                    continue;
+                }
+            }
+
+            // ===== 4. 均值回归超时平仓（仅对MEAN_REVERSION仓位生效）=====
+            if ("MEAN_REVERSION".equals(pos.getMemo())
+                    && "RANGE".equals(ctx.regime) && pos.getCreatedAt() != null) {
+                long holdHours = Duration.between(pos.getCreatedAt(), LocalDateTime.now()).toHours();
+                if (holdHours >= REVERT_MAX_HOLD_HOURS) {
+                    String closeResult = tools.closePosition(pos.getId(), pos.getQuantity());
+                    execLog.append("均值回归超时平仓: ").append(closeResult).append("\n");
+                    reasons.append("RANGE持仓").append(holdHours).append("h>=")
+                            .append(REVERT_MAX_HOLD_HOURS).append("h→超时平仓; ");
+                    action = "CLOSE";
+                    continue;
+                }
+            }
+
+            // ===== 5. 信号强烈反转 → 平仓 =====
+            QuantSignalDecision bestSignal = findBestSignal(signals);
+            if (bestSignal != null && bestSignal.getConfidence() != null
+                    && bestSignal.getConfidence().doubleValue() >= REVERSAL_CONFIDENCE) {
+                boolean reversed = (isLong && "SHORT".equals(bestSignal.getDirection()))
+                        || (!isLong && "LONG".equals(bestSignal.getDirection()));
+                if (reversed) {
+                    String closeResult = tools.closePosition(pos.getId(), pos.getQuantity());
+                    execLog.append("信号反转平仓: ").append(closeResult).append("\n");
+                    reasons.append("信号反转(").append(bestSignal.getDirection())
+                            .append(" conf=").append(bestSignal.getConfidence()).append(")→平仓; ");
+                    action = "CLOSE";
+                    continue;
+                }
+            }
+
+            // ===== 6. ATR追踪止损 =====
+            if (ctx.atr5m != null && ctx.atr5m.signum() > 0) {
+                BigDecimal atr = ctx.atr5m;
+                BigDecimal currentSl = getCurrentStopLossPrice(pos);
+                BigDecimal trailGap = atr.multiply(BigDecimal.valueOf(profile.trailBreakevenAtr()));
+
+                BigDecimal lockThreshold = atr.multiply(BigDecimal.valueOf(profile.trailLockAtr()));
+                if (profit.compareTo(lockThreshold) >= 0) {
+                    BigDecimal slProfit = profit.subtract(trailGap);
+                    BigDecimal newSl = isLong ? entryPrice.add(slProfit) : entryPrice.subtract(slProfit);
+                    if (shouldMoveSl(currentSl, newSl, isLong)) {
+                        String r = tools.setStopLoss(pos.getId(), newSl, pos.getQuantity());
+                        execLog.append("追踪止损: ").append(r).append("\n");
+                        double profitAtr = profit.doubleValue() / atr.doubleValue();
+                        reasons.append(String.format("浮盈%.1fATR→SL=%s(追踪); ",
+                                profitAtr, fmtPrice(newSl)));
+                        action = "TRAILING_STOP";
+                    }
+                } else {
+                    BigDecimal breakevenThreshold = atr.multiply(BigDecimal.valueOf(profile.trailBreakevenAtr()));
+                    if (profit.compareTo(breakevenThreshold) >= 0) {
+                        if (shouldMoveSl(currentSl, entryPrice, isLong)) {
+                            String r = tools.setStopLoss(pos.getId(), entryPrice, pos.getQuantity());
+                            execLog.append("保本止损: ").append(r).append("\n");
+                            reasons.append("浮盈>=1ATR→SL=成本价; ");
+                            action = "TRAILING_STOP";
+                        }
+                    }
+                }
+            }
+
+            // ===== 7. 盯盘状态报告 =====
+            if (reasons.isEmpty()) {
+                String pnlStr = pos.getUnrealizedPnlPct() != null
+                        ? pos.getUnrealizedPnlPct().setScale(2, RoundingMode.HALF_UP) + "%" : "N/A";
+                String analysis = analyzePosition(ctx);
+                reasons.append(pos.getSide()).append(" pnl=").append(pnlStr)
+                        .append(" ").append(analysis).append("→持有; ");
+            }
+        }
+
+        if (reasons.isEmpty()) reasons.append("无活跃持仓");
+        return new ExecutionResult(action, reasons.toString().trim(), execLog.toString());
+    }
+
+    /** 分析当前市场状态（盯盘报告） */
+    private static String analyzePosition(MarketContext ctx) {
+        StringBuilder sb = new StringBuilder("[");
+        if (ctx.maAlignment1h != null) sb.append("1h趋势=").append(ctx.maAlignment1h > 0 ? "多" : ctx.maAlignment1h < 0 ? "空" : "平");
+        if (ctx.macdHistTrend5m != null) sb.append(" MACD=").append(ctx.macdHistTrend5m);
+        if (ctx.volumeRatio5m != null) sb.append(String.format(" Vol=%.1fx", ctx.volumeRatio5m));
+        if (ctx.bollPb5m != null) sb.append(String.format(" BB=%.0f%%", ctx.bollPb5m));
+        sb.append("]");
+        return sb.toString();
+    }
+
+    // ==================== 开仓评估（核心决策流程）====================
+
+    private static ExecutionResult evaluateEntry(
+            String symbol, User user, BigDecimal totalEquity,
+            QuantForecastCycle forecast,
+            List<QuantSignalDecision> signals,
+            List<AiTradingDecision> recentDecisions,
+            MarketContext ctx,
+            SymbolProfile profile,
+            AiTradingTools tools) {
+
+        // ===== 1. 风控检查（智能冷却、连续亏损、日亏损）=====
+        String riskCheck = checkRiskLimits(user, recentDecisions);
+        if (riskCheck != null) return hold(riskCheck);
+
+        // ===== 2. ATR必须可用 =====
+        if (ctx.atr5m == null || ctx.atr5m.signum() <= 0) {
+            return hold("ATR数据缺失→无法计算止损");
+        }
+
+        // ===== 3. 找信号（优先短周期0_10）=====
+        QuantSignalDecision bestSignal = findBestSignalWithPriority(signals);
+        if (bestSignal == null || "NO_TRADE".equals(bestSignal.getDirection())) {
+            return hold("无有效方向信号");
+        }
+        String side = bestSignal.getDirection();
+        boolean isLong = "LONG".equals(side);
+        double confidence = bestSignal.getConfidence() != null ? bestSignal.getConfidence().doubleValue() : 0;
+
+        // overallDecision=FLAT → 不交易
+        String overallDecision = forecast != null ? forecast.getOverallDecision() : "FLAT";
+        if ("FLAT".equals(overallDecision)) {
+            return hold("overallDecision=FLAT→观望");
+        }
+
+        // ===== 4. 高周期趋势过滤（最关键的门槛）=====
+        if (ctx.maAlignment1h != null && ctx.maAlignment1h != 0) {
+            boolean trendConflict = (isLong && ctx.maAlignment1h < 0) || (!isLong && ctx.maAlignment1h > 0);
+            if (trendConflict) {
+                return hold(String.format("趋势过滤: 信号=%s但1h MA=%s→不做逆势交易",
+                        side, ctx.maAlignment1h > 0 ? "多头排列" : "空头排列"));
+            }
+        }
+
+        // ===== 5. 信号共振评分（6维，需>=3）=====
+        int confluenceScore = calcConfluenceScore(ctx, isLong, signals);
+        if (confluenceScore < MIN_CONFLUENCE_SCORE) {
+            return hold(String.format("共振不足: score=%d/%d(需>=%d) %s",
+                    confluenceScore, 6, MIN_CONFLUENCE_SCORE,
+                    describeConfluence(ctx, isLong)));
+        }
+
+        // ===== 6. 策略选择（基于技术指标状态）=====
+        String strategy = selectStrategy(ctx, isLong);
+
+        // ===== 7. SHOCK/SQUEEZE仓位缩减 =====
+        double regimeScale = 1.0;
+        if ("SHOCK".equals(ctx.regime)) {
+            if (confidence < 0.60) {
+                return hold("regime=SHOCK且信号弱(conf=" + fmt(confidence) + "<0.60)→观望");
+            }
+            regimeScale = 0.5;
+        } else if ("SQUEEZE".equals(ctx.regime)) {
+            regimeScale = "BREAKOUT".equals(strategy) ? 0.8 : 0.6;
+        }
+
+        // ===== 8. 执行策略 =====
+        log.info("[Executor] 入场决策: {} strategy={} conf={} confluence={}/6 regime={} scale={}",
+                side, strategy, fmt(confidence), confluenceScore, ctx.regime, regimeScale);
+
+        return switch (strategy) {
+            case "MEAN_REVERSION" -> bbMeanReversion(symbol, user, totalEquity, bestSignal, ctx,
+                    confidence, side, isLong, regimeScale, profile, tools);
+            case "BREAKOUT" -> bbSqueezeBreakout(symbol, user, totalEquity, bestSignal, ctx,
+                    confidence, side, isLong, regimeScale, profile, tools);
+            default -> trendFollowing(symbol, user, totalEquity, bestSignal, ctx,
+                    confidence, side, isLong, regimeScale, profile, tools);
+        };
+    }
+
+    // ==================== 策略A: EMA趋势跟踪 ====================
+
+    private static ExecutionResult trendFollowing(
+            String symbol, User user, BigDecimal totalEquity,
+            QuantSignalDecision signal, MarketContext ctx,
+            double confidence, String side, boolean isLong,
+            double regimeScale, SymbolProfile profile, AiTradingTools tools) {
+
+        if (confidence < TREND_MIN_CONFIDENCE) {
+            return hold("趋势策略: conf=" + fmt(confidence) + "<" + TREND_MIN_CONFIDENCE);
+        }
+
+        BigDecimal atr = ctx.atr5m;
+        BigDecimal price = ctx.price;
+
+        // SL / TP1（TP1锁定50%利润，剩余靠追踪止损让利润奔跑）
+        BigDecimal slDistance = atr.multiply(BigDecimal.valueOf(profile.trendSlAtr()));
+        BigDecimal stopLoss = isLong ? price.subtract(slDistance) : price.add(slDistance);
+        BigDecimal tp1Distance = atr.multiply(BigDecimal.valueOf(profile.trendTpAtr()));
+        BigDecimal tp1 = isLong ? price.add(tp1Distance) : price.subtract(tp1Distance);
+
+        // 手续费R:R检查
+        String feeCheck = checkFeeAwareRR(price, atr, slDistance, tp1Distance);
+        if (feeCheck != null) return hold("趋势策略: " + feeCheck);
+
+        int leverage = Math.min(
+                signal.getMaxLeverage() != null ? signal.getMaxLeverage() : 10,
+                TREND_MAX_LEVERAGE);
+        BigDecimal quantity = calcQuantityByRisk(user, totalEquity, price, slDistance, leverage, regimeScale);
+        if (quantity == null) return hold("趋势策略: 仓位计算失败(余额不足或超限)");
+
+        if (isInDrawdown(totalEquity)) {
+            leverage = Math.max(5, leverage / 2);
+            quantity = quantity.divide(BigDecimal.TWO, 8, RoundingMode.HALF_DOWN);
+        }
+
+        String reason = String.format("趋势跟踪[%s] conf=%.2f regime=%s lev=%dx qty=%s SL=%s(%.1fATR) TP1=%s(%.1fATR)+追踪",
+                side, confidence, ctx.regime, leverage,
+                quantity.setScale(4, RoundingMode.HALF_UP).toPlainString(),
+                fmtPrice(stopLoss), profile.trendSlAtr(),
+                fmtPrice(tp1), profile.trendTpAtr());
+        if (isInDrawdown(totalEquity)) reason += " [回撤保护]";
+
+        // TP1锁定50%，不设TP2（靠managePositions的追踪止损管理剩余50%）
+        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, null, "TREND");
+        String action = result.startsWith("开仓成功") ? ("OPEN_" + side) : "HOLD";
+        if (!result.startsWith("开仓成功")) reason += " | 开仓失败: " + result;
+        return new ExecutionResult(action, reason, result);
+    }
+
+    // ==================== 策略B: BB均值回归 ====================
+
+    private static ExecutionResult bbMeanReversion(
+            String symbol, User user, BigDecimal totalEquity,
+            QuantSignalDecision signal, MarketContext ctx,
+            double confidence, String side, boolean isLong,
+            double regimeScale, SymbolProfile profile, AiTradingTools tools) {
+
+        // BB %B 极值验证
+        if (ctx.bollPb5m != null) {
+            if (isLong && ctx.bollPb5m > REVERT_BB_PB_LONG_MAX) {
+                return hold(String.format("BB回归: 做多但BB%%B=%.2f>%.2f→非超卖区", ctx.bollPb5m, REVERT_BB_PB_LONG_MAX));
+            }
+            if (!isLong && ctx.bollPb5m < REVERT_BB_PB_SHORT_MIN) {
+                return hold(String.format("BB回归: 做空但BB%%B=%.2f<%.2f→非超买区", ctx.bollPb5m, REVERT_BB_PB_SHORT_MIN));
+            }
+        }
+
+        // RSI极端验证
+        if (ctx.rsi5m != null) {
+            double rsi = ctx.rsi5m.doubleValue();
+            if (isLong && rsi >= REVERT_RSI_LONG_MAX) {
+                return hold("BB回归: 做多但RSI=" + fmt(rsi) + ">=" + REVERT_RSI_LONG_MAX + "→非超卖");
+            }
+            if (!isLong && rsi <= REVERT_RSI_SHORT_MIN) {
+                return hold("BB回归: 做空但RSI=" + fmt(rsi) + "<=" + REVERT_RSI_SHORT_MIN + "→非超买");
+            }
+        }
+
+        // MACD柱状图必须开始反转（确认动能转向）
+        if (ctx.macdHistTrend5m != null) {
+            String ht = ctx.macdHistTrend5m;
+            boolean histReversing = (isLong && (ht.startsWith("rising") || "mostly_up".equals(ht)))
+                    || (!isLong && (ht.startsWith("falling") || "mostly_down".equals(ht)));
+            if (!histReversing) {
+                return hold(String.format("BB回归: MACD柱状图=%s 未反转→等待确认",
+                        ctx.macdHistTrend5m));
+            }
+        }
+
+        BigDecimal atr = ctx.atr5m;
+        BigDecimal price = ctx.price;
+
+        // 动态TP：基于BB中轨距离（核心创新 — 替代固定ATR倍数）
+        double tpAtrMult = profile.revertTpMaxAtr();
+        if (ctx.bollPb5m != null && ctx.bollBandwidth5m != null
+                && ctx.bollBandwidth5m > 0 && atr.signum() > 0) {
+            double distToMidPct = Math.abs(ctx.bollPb5m - 50.0) / 100.0; // bollPb是0-100，转换为0-1比例
+            double bbWidthAbsolute = ctx.bollBandwidth5m / 100.0 * price.doubleValue(); // bandwidth是百分比，转换为绝对值
+            double distToMidAbsolute = distToMidPct * bbWidthAbsolute;
+            tpAtrMult = distToMidAbsolute / atr.doubleValue();
+            tpAtrMult = Math.clamp(tpAtrMult, profile.revertTpMinAtr(), profile.revertTpMaxAtr());
+        }
+
+        BigDecimal slDistance = atr.multiply(BigDecimal.valueOf(profile.revertSlAtr()));
+        BigDecimal stopLoss = isLong ? price.subtract(slDistance) : price.add(slDistance);
+        BigDecimal tpDistance = atr.multiply(BigDecimal.valueOf(tpAtrMult));
+        BigDecimal tp1 = isLong ? price.add(tpDistance) : price.subtract(tpDistance);
+
+        // 手续费R:R检查
+        String feeCheck = checkFeeAwareRR(price, atr, slDistance, tpDistance);
+        if (feeCheck != null) return hold("BB回归: " + feeCheck);
+
+        int leverage = Math.min(
+                signal.getMaxLeverage() != null ? signal.getMaxLeverage() : 10,
+                REVERT_MAX_LEVERAGE);
+        BigDecimal quantity = calcQuantityByRisk(user, totalEquity, price, slDistance, leverage,
+                REVERT_POSITION_SCALE * regimeScale);
+        if (quantity == null) return hold("BB回归: 仓位计算失败");
+
+        if (isInDrawdown(totalEquity)) {
+            leverage = Math.max(5, leverage / 2);
+            quantity = quantity.divide(BigDecimal.TWO, 8, RoundingMode.HALF_DOWN);
+        }
+
+        String reason = String.format(
+                "BB均值回归[%s] conf=%.2f RSI=%.1f BB%%B=%.2f lev=%dx qty=%s SL=%s TP=%s(%.1fATR→BB中轨) 最长%dh",
+                side, confidence, ctx.rsi5m != null ? ctx.rsi5m.doubleValue() : -1,
+                ctx.bollPb5m != null ? ctx.bollPb5m : -1,
+                leverage, quantity.setScale(4, RoundingMode.HALF_UP).toPlainString(),
+                fmtPrice(stopLoss), fmtPrice(tp1), tpAtrMult, REVERT_MAX_HOLD_HOURS);
+        if (isInDrawdown(totalEquity)) reason += " [回撤保护]";
+
+        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, null, "MEAN_REVERSION");
+        String action = result.startsWith("开仓成功") ? ("OPEN_" + side) : "HOLD";
+        if (!result.startsWith("开仓成功")) reason += " | 开仓失败: " + result;
+        return new ExecutionResult(action, reason, result);
+    }
+
+    // ==================== 策略C: BB压缩突破 ====================
+
+    private static ExecutionResult bbSqueezeBreakout(
+            String symbol, User user, BigDecimal totalEquity,
+            QuantSignalDecision signal, MarketContext ctx,
+            double confidence, String side, boolean isLong,
+            double regimeScale, SymbolProfile profile, AiTradingTools tools) {
+
+        if (!ctx.bollSqueeze) {
+            return hold("突破策略: 非BB squeeze状态");
+        }
+
+        // 成交量必须放大（假突破最大特征 = 缩量突破）
+        if (ctx.volumeRatio5m == null || ctx.volumeRatio5m < BREAKOUT_VOLUME_MIN) {
+            return hold(String.format("突破策略: 成交量不足(%.1fx<%.1fx均量)→假突破风险",
+                    ctx.volumeRatio5m != null ? ctx.volumeRatio5m : 0, BREAKOUT_VOLUME_MIN));
+        }
+
+        // BB%B确认价格已突破
+        if (ctx.bollPb5m != null) {
+            if (isLong && ctx.bollPb5m < 70.0) {
+                return hold(String.format("突破策略: 做多但BB%%B=%.2f<70→未突破上轨", ctx.bollPb5m));
+            }
+            if (!isLong && ctx.bollPb5m > 30.0) {
+                return hold(String.format("突破策略: 做空但BB%%B=%.2f>30→未突破下轨", ctx.bollPb5m));
+            }
+        }
+
+        BigDecimal atr = ctx.atr5m;
+        BigDecimal price = ctx.price;
+
+        BigDecimal slDistance = atr.multiply(BigDecimal.valueOf(profile.breakoutSlAtr()));
+        BigDecimal stopLoss = isLong ? price.subtract(slDistance) : price.add(slDistance);
+        BigDecimal tpDistance = atr.multiply(BigDecimal.valueOf(profile.breakoutTpAtr()));
+        BigDecimal tp1 = isLong ? price.add(tpDistance) : price.subtract(tpDistance);
+
+        String feeCheck = checkFeeAwareRR(price, atr, slDistance, tpDistance);
+        if (feeCheck != null) return hold("突破策略: " + feeCheck);
+
+        int leverage = Math.min(
+                signal.getMaxLeverage() != null ? signal.getMaxLeverage() : 10,
+                BREAKOUT_MAX_LEVERAGE);
+        BigDecimal quantity = calcQuantityByRisk(user, totalEquity, price, slDistance, leverage,
+                BREAKOUT_POSITION_SCALE * regimeScale);
+        if (quantity == null) return hold("突破策略: 仓位计算失败");
+
+        if (isInDrawdown(totalEquity)) {
+            leverage = Math.max(5, leverage / 2);
+            quantity = quantity.divide(BigDecimal.TWO, 8, RoundingMode.HALF_DOWN);
+        }
+
+        String reason = String.format(
+                "BB压缩突破[%s] conf=%.2f BB%%B=%.2f vol=%.1fx lev=%dx qty=%s SL=%s(%.1fATR) TP=%s(%.1fATR)+追踪",
+                side, confidence, ctx.bollPb5m != null ? ctx.bollPb5m : -1,
+                ctx.volumeRatio5m,
+                leverage, quantity.setScale(4, RoundingMode.HALF_UP).toPlainString(),
+                fmtPrice(stopLoss), profile.breakoutSlAtr(),
+                fmtPrice(tp1), profile.breakoutTpAtr());
+        if (isInDrawdown(totalEquity)) reason += " [回撤保护]";
+
+        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, null, "BREAKOUT");
+        String action = result.startsWith("开仓成功") ? ("OPEN_" + side) : "HOLD";
+        if (!result.startsWith("开仓成功")) reason += " | 开仓失败: " + result;
+        return new ExecutionResult(action, reason, result);
+    }
+
+    // ==================== 信号共振评分系统 ====================
+
+    /**
+     * 6维共振评分。需>=3才允许入场。
+     * 取代原来的"找最高confidence就交易"。
+     */
+    private static int calcConfluenceScore(MarketContext ctx, boolean isLong, List<QuantSignalDecision> signals) {
+        int score = 0;
+
+        // 1. MACD交叉方向
+        if (ctx.macdCross5m != null) {
+            if ((isLong && "golden".equals(ctx.macdCross5m))
+                    || (!isLong && "death".equals(ctx.macdCross5m))) {
+                score++;
+            }
+        }
+
+        // 2. MACD柱状图趋势（适配calculator输出: rising_N/mostly_up/falling_N/mostly_down）
+        if (ctx.macdHistTrend5m != null) {
+            String ht = ctx.macdHistTrend5m;
+            boolean histBullish = ht.startsWith("rising") || "mostly_up".equals(ht);
+            boolean histBearish = ht.startsWith("falling") || "mostly_down".equals(ht);
+            if ((isLong && histBullish) || (!isLong && histBearish)) {
+                score++;
+            }
+        }
+
+        // 3. RSI在安全区
+        if (ctx.rsi5m != null) {
+            double rsi = ctx.rsi5m.doubleValue();
+            if ((isLong && rsi < 70 && rsi > 20) || (!isLong && rsi > 30 && rsi < 80)) {
+                score++;
+            }
+        }
+
+        // 4. 成交量放大
+        if (ctx.volumeRatio5m != null && ctx.volumeRatio5m >= 1.0) {
+            score++;
+        }
+
+        // 5. 15m均线方向一致
+        if (ctx.maAlignment15m != null) {
+            if ((isLong && ctx.maAlignment15m >= 0) || (!isLong && ctx.maAlignment15m <= 0)) {
+                score++;
+            }
+        }
+
+        // 6. 微结构支持（盘口偏向 + 主动买卖压力）
+        double micro = 0;
+        if (ctx.bidAskImbalance != null) micro += ctx.bidAskImbalance;
+        if (ctx.takerPressure != null) micro += ctx.takerPressure;
+        if ((isLong && micro > 0.05) || (!isLong && micro < -0.05)) {
+            score++;
+        }
+
+        return score;
+    }
+
+    /** 描述共振评分细节（用于日志） */
+    private static String describeConfluence(MarketContext ctx, boolean isLong) {
+        StringBuilder sb = new StringBuilder("[");
+        sb.append("MACD交叉=").append(ctx.macdCross5m != null ? ctx.macdCross5m : "无");
+        sb.append(" MACD柱=").append(ctx.macdHistTrend5m != null ? ctx.macdHistTrend5m : "无");
+        sb.append(" RSI=").append(ctx.rsi5m != null ? fmt(ctx.rsi5m.doubleValue()) : "无");
+        sb.append(" Vol=").append(ctx.volumeRatio5m != null ? String.format("%.1f", ctx.volumeRatio5m) : "无");
+        sb.append(" MA15m=").append(ctx.maAlignment15m != null ? ctx.maAlignment15m : "无");
+        double micro = 0;
+        if (ctx.bidAskImbalance != null) micro += ctx.bidAskImbalance;
+        if (ctx.takerPressure != null) micro += ctx.takerPressure;
+        sb.append(String.format(" 微结构=%.2f", micro));
+        sb.append("]");
+        return sb.toString();
+    }
+
+    // ==================== 策略选择 ====================
+
+    /**
+     * 基于技术指标状态选择策略。
+     * 优先级: BB压缩突破 > BB均值回归 > EMA趋势跟踪
+     */
+    private static String selectStrategy(MarketContext ctx, boolean isLong) {
+        // 1. BB压缩 + 放量 → 突破策略
+        if (ctx.bollSqueeze && ctx.volumeRatio5m != null && ctx.volumeRatio5m >= BREAKOUT_VOLUME_MIN) {
+            return "BREAKOUT";
+        }
+        // 2. BB极值 + RSI极值 → 均值回归
+        if (ctx.bollPb5m != null && ctx.rsi5m != null) {
+            double pb = ctx.bollPb5m;
+            double rsi = ctx.rsi5m.doubleValue();
+            boolean longSetup = pb < REVERT_BB_PB_LONG_MAX && rsi < REVERT_RSI_LONG_MAX;
+            boolean shortSetup = pb > REVERT_BB_PB_SHORT_MIN && rsi > REVERT_RSI_SHORT_MIN;
+            if ((isLong && longSetup) || (!isLong && shortSetup)) {
+                return "MEAN_REVERSION";
+            }
+        }
+        // 3. 默认趋势跟踪
+        return "TREND";
+    }
+
+    // ==================== 手续费感知的R:R检查 ====================
+
+    /**
+     * 确保TP覆盖往返手续费+最低盈利。
+     * 往返手续费 = 名义价值 × 0.08%
+     */
+    private static String checkFeeAwareRR(BigDecimal price, BigDecimal atr,
+                                           BigDecimal slDistance, BigDecimal tpDistance) {
+        if (atr.signum() <= 0) return null;
+        double feeAbsolute = price.doubleValue() * ROUND_TRIP_FEE_RATE;
+        double feeInAtr = feeAbsolute / atr.doubleValue();
+        double tpInAtr = tpDistance.doubleValue() / atr.doubleValue();
+        double minTpRequired = feeInAtr + MIN_PROFIT_AFTER_FEE_ATR;
+
+        if (tpInAtr < minTpRequired) {
+            return String.format("R:R不划算: TP=%.1fATR < 手续费%.2fATR+最低利润%.1fATR=%.2fATR",
+                    tpInAtr, feeInAtr, MIN_PROFIT_AFTER_FEE_ATR, minTpRequired);
+        }
+        return null;
+    }
+
+    // ==================== 信号选择（优先短周期）====================
+
+    /**
+     * 优先选择0_10 horizon信号（最新鲜，与高频盯盘匹配）。
+     * fallback: 0_10 → 10_20 → 20_30。
+     */
+    private static QuantSignalDecision findBestSignalWithPriority(List<QuantSignalDecision> signals) {
+        if (signals == null || signals.isEmpty()) return null;
+
+        QuantSignalDecision sig010 = null, sig1020 = null, sig2030 = null;
+        for (QuantSignalDecision s : signals) {
+            if (s.getHorizon() == null) continue;
+            switch (s.getHorizon()) {
+                case "0_10" -> sig010 = s;
+                case "10_20" -> sig1020 = s;
+                case "20_30" -> sig2030 = s;
+            }
+        }
+
+        QuantSignalDecision primary = pickValid(sig010);
+        if (primary == null) primary = pickValid(sig1020);
+        if (primary == null) primary = pickValid(sig2030);
+        if (primary == null) return null;
+
+        // 多horizon方向一致 → 日志记录
+        List<QuantSignalDecision> all = new ArrayList<>();
+        if (sig010 != null) all.add(sig010);
+        if (sig1020 != null) all.add(sig1020);
+        if (sig2030 != null) all.add(sig2030);
+
+        QuantSignalDecision finalPrimary = primary;
+        long agree = all.stream()
+                .filter(s -> finalPrimary.getDirection().equals(s.getDirection()) && s.getConfidence() != null)
+                .count();
+        if (agree >= 2) {
+            log.info("[Executor] 多horizon一致({}个同方向{}), 入场信心增强", agree, primary.getDirection());
+        }
+
+        return primary;
+    }
+
+    private static QuantSignalDecision pickValid(QuantSignalDecision s) {
+        if (s == null) return null;
+        if (s.getDirection() == null || "NO_TRADE".equals(s.getDirection())) return null;
+        if (s.getConfidence() == null) return null;
+        return s;
+    }
+
+    /** 保留原始findBestSignal用于持仓管理的反转检测 */
+    private static QuantSignalDecision findBestSignal(List<QuantSignalDecision> signals) {
+        if (signals == null || signals.isEmpty()) return null;
+        QuantSignalDecision best = null;
+        for (QuantSignalDecision s : signals) {
+            if (s.getDirection() == null || "NO_TRADE".equals(s.getDirection())) continue;
+            if (s.getConfidence() == null) continue;
+            if (best == null || s.getConfidence().compareTo(best.getConfidence()) > 0) {
+                best = s;
+            }
+        }
+        return best;
+    }
+
+    // ==================== 市场状态解析（丰富版）====================
+
+    private static MarketContext parseMarketContext(QuantForecastCycle forecast, BigDecimal price) {
+        String regime = "RANGE";
+        String transition = null;
+        BigDecimal atr5m = null, rsi5m = null;
+        Integer maAlignment1h = null, maAlignment15m = null, maAlignment5m = null;
+        String macdCross5m = null, macdHistTrend5m = null;
+        Double bollPb5m = null, bollBandwidth5m = null, volumeRatio5m = null;
+        String closeTrend5m = null;
+        Double rsi15m = null;
+        Double bidAskImbalance = null, takerPressure = null, oiChangeRate = null;
+        Double fundingDeviation = null;
+        boolean bollSqueeze = false;
+
+        if (forecast != null && forecast.getSnapshotJson() != null) {
+            try {
+                JSONObject snap = JSON.parseObject(forecast.getSnapshotJson());
+                regime = snap.getString("regime");
+                if (regime == null || regime.isBlank()) regime = "RANGE";
+                transition = snap.getString("regimeTransition");
+                atr5m = snap.getBigDecimal("atr5m");
+                bollSqueeze = Boolean.TRUE.equals(snap.getBoolean("bollSqueeze"));
+
+                // 微结构数据
+                bidAskImbalance = snap.getDouble("bidAskImbalance");
+                takerPressure = snap.getDouble("takerBuySellPressure");
+                oiChangeRate = snap.getDouble("oiChangeRate");
+                fundingDeviation = snap.getDouble("fundingDeviation");
+
+                // 从indicatorsByTimeframe提取多周期技术指标
+                JSONObject indicators = snap.getJSONObject("indicatorsByTimeframe");
+                if (indicators != null) {
+                    // ---- 5m指标 ----
+                    JSONObject tf5m = indicators.getJSONObject("5m");
+                    if (tf5m != null) {
+                        rsi5m = tf5m.getBigDecimal("rsi14");
+                        macdCross5m = tf5m.getString("macd_cross");
+                        macdHistTrend5m = tf5m.getString("macd_hist_trend");
+                        maAlignment5m = tf5m.getInteger("ma_alignment");
+                        closeTrend5m = tf5m.getString("close_trend");
+                        bollPb5m = tf5m.getDouble("boll_pb");
+                        bollBandwidth5m = tf5m.getDouble("boll_bandwidth");
+                        volumeRatio5m = tf5m.getDouble("volume_ratio");
+                    }
+                    // ---- 15m指标 ----
+                    JSONObject tf15m = indicators.getJSONObject("15m");
+                    if (tf15m != null) {
+                        maAlignment15m = tf15m.getInteger("ma_alignment");
+                        BigDecimal rsi15mBd = tf15m.getBigDecimal("rsi14");
+                        if (rsi15mBd != null) rsi15m = rsi15mBd.doubleValue();
+                    }
+                    // ---- 1h指标（趋势过滤器的核心）----
+                    JSONObject tf1h = indicators.getJSONObject("1h");
+                    if (tf1h != null) {
+                        maAlignment1h = tf1h.getInteger("ma_alignment");
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[Executor] snapshotJson解析失败: {}", e.getMessage());
+            }
+        }
+
+        // ATR fallback
+        if (atr5m == null || atr5m.signum() <= 0) {
+            atr5m = price.multiply(new BigDecimal("0.003"));
+            log.info("[Executor] ATR缺失，使用价格0.3%估算: {}", atr5m);
+        }
+
+        return new MarketContext(regime, transition, atr5m, rsi5m, price,
+                maAlignment1h, maAlignment15m, maAlignment5m,
+                macdCross5m, macdHistTrend5m,
+                bollPb5m, bollBandwidth5m, bollSqueeze,
+                volumeRatio5m, closeTrend5m, rsi15m,
+                bidAskImbalance, takerPressure, oiChangeRate,
+                fundingDeviation);
+    }
+
+    // ==================== 仓位计算(风险预算法) ====================
+
+    /**
+     * 基于风险预算计算开仓数量。
+     * 核心: SL被触发时最大亏损 = 净值 * 2%
+     */
+    private static BigDecimal calcQuantityByRisk(User user, BigDecimal totalEquity,
+                                                  BigDecimal price,
+                                                  BigDecimal slDistance, int leverage,
+                                                  double scale) {
+        BigDecimal equity = totalEquity != null ? totalEquity : user.getBalance().add(user.getFrozenBalance());
+        BigDecimal maxLoss = equity.multiply(RISK_PER_TRADE).multiply(BigDecimal.valueOf(scale));
+
+        if (slDistance.signum() <= 0) return null;
+
+        BigDecimal quantity = maxLoss.divide(slDistance, 8, RoundingMode.HALF_DOWN);
+        if (quantity.signum() <= 0) return null;
+
+        BigDecimal margin = quantity.multiply(price)
+                .divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
+        BigDecimal maxMargin = user.getBalance().multiply(MAX_MARGIN_PCT);
+        if (margin.compareTo(maxMargin) > 0) {
+            quantity = maxMargin.multiply(BigDecimal.valueOf(leverage))
+                    .divide(price, 8, RoundingMode.HALF_DOWN);
+        }
+
+        return quantity.signum() > 0 ? quantity : null;
+    }
+
+    // ==================== 风控检查（智能冷却）====================
+
+    private static String checkRiskLimits(User user, List<AiTradingDecision> recentDecisions) {
+        if (recentDecisions == null || recentDecisions.isEmpty()) return null;
+
+        // 智能冷却: 盈利后5分钟，亏损后15分钟
+        for (AiTradingDecision d : recentDecisions) {
+            if (d.getAction() != null && !d.getAction().equals("HOLD")
+                    && !d.getAction().equals("TRAILING_STOP") && d.getCreatedAt() != null) {
+                long minutes = Duration.between(d.getCreatedAt(), LocalDateTime.now()).toMinutes();
+                boolean wasLoss = d.getBalanceBefore() != null && d.getBalanceAfter() != null
+                        && d.getBalanceAfter().compareTo(d.getBalanceBefore()) < 0;
+                int cooldown = wasLoss ? LOSS_COOLDOWN_MINUTES : WIN_COOLDOWN_MINUTES;
+                if (minutes < cooldown) {
+                    return String.format("冷却期: 上次%s(%s)%d分钟前, 需%d分钟",
+                            wasLoss ? "亏损" : "盈利", d.getAction(), minutes, cooldown);
+                }
+                break;
+            }
+        }
+
+        // 连续亏损暂停
+        int losses = countConsecutiveLosses(recentDecisions);
+        if (losses >= MAX_CONSECUTIVE_LOSSES) {
+            AiTradingDecision last = recentDecisions.getFirst();
+            if (last.getCreatedAt() != null) {
+                long minutes = Duration.between(last.getCreatedAt(), LocalDateTime.now()).toMinutes();
+                if (minutes < CONSECUTIVE_LOSS_PAUSE_MINUTES) {
+                    return "连续" + losses + "次亏损→暂停" + CONSECUTIVE_LOSS_PAUSE_MINUTES + "分钟(已过" + minutes + "分钟)";
+                }
+            }
+        }
+
+        // 日亏损上限
+        BigDecimal dailyLoss = calcDailyLoss(recentDecisions);
+        BigDecimal limit = user.getBalance().multiply(DAILY_LOSS_LIMIT_PCT);
+        if (dailyLoss.compareTo(limit) >= 0) {
+            return "日亏损=" + fmtPrice(dailyLoss) + ">=" + fmtPrice(limit);
+        }
+
+        return null;
+    }
+
+    private static boolean isInDrawdown(BigDecimal totalEquity) {
+        if (totalEquity == null) return false;
+        return totalEquity.compareTo(INITIAL_BALANCE.multiply(DRAWDOWN_THRESHOLD)) < 0;
+    }
+
+    // ==================== 工具方法 ====================
+
+    private static ExecutionResult hold(String reason) {
+        return new ExecutionResult("HOLD", reason, "");
+    }
+
+    private static BigDecimal getCurrentStopLossPrice(FuturesPositionDTO pos) {
+        if (pos.getStopLosses() == null || pos.getStopLosses().isEmpty()) return null;
+        return pos.getStopLosses().getFirst().getPrice();
+    }
+
+    private static boolean shouldMoveSl(BigDecimal currentSl, BigDecimal newSl, boolean isLong) {
+        if (currentSl == null || currentSl.signum() <= 0) return true;
+        return isLong ? newSl.compareTo(currentSl) > 0 : newSl.compareTo(currentSl) < 0;
+    }
+
+    private static int countConsecutiveLosses(List<AiTradingDecision> decisions) {
+        int count = 0;
+        for (AiTradingDecision d : decisions) {
+            if ("HOLD".equals(d.getAction()) || "TRAILING_STOP".equals(d.getAction())) continue;
+            if (d.getBalanceBefore() != null && d.getBalanceAfter() != null
+                    && d.getBalanceAfter().compareTo(d.getBalanceBefore()) < 0) {
+                count++;
+            } else {
+                break;
+            }
+        }
+        return count;
+    }
+
+    private static BigDecimal calcDailyLoss(List<AiTradingDecision> decisions) {
+        if (decisions == null) return BigDecimal.ZERO;
+        LocalDateTime todayStart = LocalDateTime.now().withHour(0).withMinute(0).withSecond(0);
+        BigDecimal loss = BigDecimal.ZERO;
+        for (AiTradingDecision d : decisions) {
+            if (d.getCreatedAt() == null || d.getCreatedAt().isBefore(todayStart)) break;
+            if ("HOLD".equals(d.getAction()) || "TRAILING_STOP".equals(d.getAction())) continue;
+            if (d.getBalanceBefore() != null && d.getBalanceAfter() != null) {
+                BigDecimal change = d.getBalanceAfter().subtract(d.getBalanceBefore());
+                if (change.signum() < 0) loss = loss.add(change.abs());
+            }
+        }
+        return loss;
+    }
+
+    private static String fmtPrice(BigDecimal p) {
+        if (p == null) return "-";
+        return p.setScale(2, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private static String fmt(double v) {
+        return String.format("%.2f", v);
+    }
+}

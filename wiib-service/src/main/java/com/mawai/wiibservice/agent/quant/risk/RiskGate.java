@@ -82,16 +82,16 @@ public class RiskGate {
         double maxPos = f.maxPositionPct();
         double confMultiplier = 1.0;
 
-        // SHOCK → 杠杆cap 2x, 仓位减半
+        // SHOCK → 杠杆cap 5x, 仓位减30%（允许交易但缩减规模）
         if (regime == MarketRegime.SHOCK) {
-            maxLev = Math.min(maxLev, 2);
-            maxPos *= 0.5;
+            maxLev = Math.min(maxLev, 5);
+            maxPos *= 0.7;
             actions.add("SHOCK_CAP_" + f.horizon());
         }
 
-        // SQUEEZE → 仓位减30%
+        // SQUEEZE → 仓位减15%（预留突破机会）
         if (regime == MarketRegime.SQUEEZE) {
-            maxPos *= 0.7;
+            maxPos *= 0.85;
             actions.add("SQUEEZE_REDUCE_" + f.horizon());
         }
 
@@ -106,7 +106,7 @@ public class RiskGate {
         if (fearGreedIndex >= 0) {
             boolean isTrend = regime == MarketRegime.TREND_UP || regime == MarketRegime.TREND_DOWN;
             boolean isShock = regime == MarketRegime.SHOCK;
-            double fgiPenalty = isShock ? 0.70 : 0.85;
+            double fgiPenalty = isShock ? 0.80 : 0.90;
 
             if (fearGreedIndex >= 80 && f.direction() == Direction.LONG) {
                 // 极度贪婪做多：趋势上涨中不惩罚（贪婪是正常情绪），其他regime惩罚
@@ -125,12 +125,12 @@ public class RiskGate {
 
         // 动态仓位: basePct × confidence × (1-disagreement)，环境因子用加法惩罚避免级联衰减
         double effectiveConfidence = f.confidence() * confMultiplier;
-        double agreementFactor = Math.max(0.60, 1.0 - f.disagreement());
+        double agreementFactor = Math.max(0.70, 1.0 - f.disagreement());
         // 环境惩罚：vol/data/iv 改为加法（它们高度相关，乘法会导致过度衰减）
         double envPenalty = (1.0 - volPenalty) + (1.0 - dataPenalty) + (1.0 - ivPenalty);
-        double envFactor = Math.max(0.40, 1.0 - envPenalty);
+        double envFactor = Math.max(0.55, 1.0 - envPenalty);
         double adjustedPos = maxPos * effectiveConfidence * agreementFactor * envFactor;
-        adjustedPos = Math.clamp(adjustedPos, 0.05, maxPos);
+        adjustedPos = Math.clamp(adjustedPos, 0.08, maxPos);
 
         if (volPenalty < 0.8) {
             actions.add("HIGH_VOL_PENALTY_" + f.horizon());

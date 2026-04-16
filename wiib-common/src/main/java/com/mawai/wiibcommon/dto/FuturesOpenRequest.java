@@ -13,6 +13,7 @@ public class FuturesOpenRequest {
     private Integer leverage;
     private String orderType; // MARKET/LIMIT
     private BigDecimal limitPrice; // 限价时必填
+    private String memo;
     private List<StopLoss> stopLosses;
     private List<TakeProfit> takeProfits;
 
