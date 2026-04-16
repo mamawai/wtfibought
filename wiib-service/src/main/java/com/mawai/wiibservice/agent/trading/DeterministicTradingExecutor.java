@@ -38,12 +38,7 @@ public class DeterministicTradingExecutor {
     private static final BigDecimal MAX_MARGIN_PCT = new BigDecimal("0.35");
     private static final BigDecimal DAILY_LOSS_LIMIT_PCT = new BigDecimal("0.05");
     private static final BigDecimal DRAWDOWN_THRESHOLD = new BigDecimal("0.85");
-
-    // ==================== 智能冷却（盈利后快，亏损后慢）====================
-    private static final int WIN_COOLDOWN_MINUTES = 5;
-    private static final int LOSS_COOLDOWN_MINUTES = 15;
-    private static final int CONSECUTIVE_LOSS_PAUSE_MINUTES = 30;
-    private static final int MAX_CONSECUTIVE_LOSSES = 3;
+    private static final BigDecimal DRAWDOWN_REDUCTION = new BigDecimal("0.7"); // 回撤时杠杆和仓位缩减到70%
 
     // ==================== 信号共振门槛 ====================
     private static final int MIN_CONFLUENCE_SCORE = 3; // 6维评分，>=3才入场
@@ -110,13 +105,30 @@ public class DeterministicTradingExecutor {
             List<AiTradingDecision> recentDecisions,
             BigDecimal futuresPrice, BigDecimal markPrice,
             BigDecimal totalEquity,
-            AiTradingTools tools) {
+            TradingOperations tools) {
+        return execute(symbol, user, symbolPositions, forecast, signals, recentDecisions,
+                futuresPrice, markPrice, totalEquity, tools, null);
+    }
+
+    /**
+     * 支持自定义 SymbolProfile 的重载入口（回测参数扫描用）。
+     */
+    public static ExecutionResult execute(
+            String symbol, User user,
+            List<FuturesPositionDTO> symbolPositions,
+            QuantForecastCycle forecast,
+            List<QuantSignalDecision> signals,
+            List<AiTradingDecision> recentDecisions,
+            BigDecimal futuresPrice, BigDecimal markPrice,
+            BigDecimal totalEquity,
+            TradingOperations tools,
+            SymbolProfile profileOverride) {
 
         if (user == null || futuresPrice == null || futuresPrice.signum() <= 0) {
             return new ExecutionResult("HOLD", "数据缺失", "");
         }
 
-        SymbolProfile profile = SymbolProfile.of(symbol);
+        SymbolProfile profile = profileOverride != null ? profileOverride : SymbolProfile.of(symbol);
         MarketContext ctx = parseMarketContext(forecast, futuresPrice);
         log.info("[Executor] {} regime={} atr={} rsi5m={} maAlign1h={} macdCross={} bbPb={} vol={} squeeze={} equity={}",
                 symbol, ctx.regime, ctx.atr5m, ctx.rsi5m, ctx.maAlignment1h, ctx.macdCross5m,
@@ -137,7 +149,7 @@ public class DeterministicTradingExecutor {
             List<QuantSignalDecision> signals,
             MarketContext ctx,
             SymbolProfile profile,
-            AiTradingTools tools) {
+            TradingOperations tools) {
 
         StringBuilder execLog = new StringBuilder();
         StringBuilder reasons = new StringBuilder();
@@ -289,7 +301,7 @@ public class DeterministicTradingExecutor {
             List<AiTradingDecision> recentDecisions,
             MarketContext ctx,
             SymbolProfile profile,
-            AiTradingTools tools) {
+            TradingOperations tools) {
 
         // ===== 1. 风控检查（智能冷却、连续亏损、日亏损）=====
         String riskCheck = checkRiskLimits(user, recentDecisions);
@@ -366,7 +378,7 @@ public class DeterministicTradingExecutor {
             String symbol, User user, BigDecimal totalEquity,
             QuantSignalDecision signal, MarketContext ctx,
             double confidence, String side, boolean isLong,
-            double regimeScale, SymbolProfile profile, AiTradingTools tools) {
+            double regimeScale, SymbolProfile profile, TradingOperations tools) {
 
         if (confidence < TREND_MIN_CONFIDENCE) {
             return hold("趋势策略: conf=" + fmt(confidence) + "<" + TREND_MIN_CONFIDENCE);
@@ -392,8 +404,8 @@ public class DeterministicTradingExecutor {
         if (quantity == null) return hold("趋势策略: 仓位计算失败(余额不足或超限)");
 
         if (isInDrawdown(totalEquity)) {
-            leverage = Math.max(5, leverage / 2);
-            quantity = quantity.divide(BigDecimal.TWO, 8, RoundingMode.HALF_DOWN);
+            leverage = Math.max(5, (int)(leverage * DRAWDOWN_REDUCTION.doubleValue()));
+            quantity = quantity.multiply(DRAWDOWN_REDUCTION).setScale(8, RoundingMode.HALF_DOWN);
         }
 
         String reason = String.format("趋势跟踪[%s] conf=%.2f regime=%s lev=%dx qty=%s SL=%s(%.1fATR) TP1=%s(%.1fATR)+追踪",
@@ -416,9 +428,9 @@ public class DeterministicTradingExecutor {
             String symbol, User user, BigDecimal totalEquity,
             QuantSignalDecision signal, MarketContext ctx,
             double confidence, String side, boolean isLong,
-            double regimeScale, SymbolProfile profile, AiTradingTools tools) {
+            double regimeScale, SymbolProfile profile, TradingOperations tools) {
 
-        // BB %B 极值验证
+        // BB %B 极值验证（硬性前提 — 必须在超买/超卖区）
         if (ctx.bollPb5m != null) {
             if (isLong && ctx.bollPb5m > REVERT_BB_PB_LONG_MAX) {
                 return hold(String.format("BB回归: 做多但BB%%B=%.2f>%.2f→非超卖区", ctx.bollPb5m, REVERT_BB_PB_LONG_MAX));
@@ -428,26 +440,26 @@ public class DeterministicTradingExecutor {
             }
         }
 
-        // RSI极端验证
+        // RSI 或 MACD柱反转至少满足一个（替代之前的全部AND要求）
+        boolean rsiConfirms = false;
+        boolean macdConfirms = false;
+
         if (ctx.rsi5m != null) {
             double rsi = ctx.rsi5m.doubleValue();
-            if (isLong && rsi >= REVERT_RSI_LONG_MAX) {
-                return hold("BB回归: 做多但RSI=" + fmt(rsi) + ">=" + REVERT_RSI_LONG_MAX + "→非超卖");
-            }
-            if (!isLong && rsi <= REVERT_RSI_SHORT_MIN) {
-                return hold("BB回归: 做空但RSI=" + fmt(rsi) + "<=" + REVERT_RSI_SHORT_MIN + "→非超买");
-            }
+            rsiConfirms = (isLong && rsi < REVERT_RSI_LONG_MAX)
+                       || (!isLong && rsi > REVERT_RSI_SHORT_MIN);
         }
 
-        // MACD柱状图必须开始反转（确认动能转向）
         if (ctx.macdHistTrend5m != null) {
             String ht = ctx.macdHistTrend5m;
-            boolean histReversing = (isLong && (ht.startsWith("rising") || "mostly_up".equals(ht)))
-                    || (!isLong && (ht.startsWith("falling") || "mostly_down".equals(ht)));
-            if (!histReversing) {
-                return hold(String.format("BB回归: MACD柱状图=%s 未反转→等待确认",
-                        ctx.macdHistTrend5m));
-            }
+            macdConfirms = (isLong && (ht.startsWith("rising") || "mostly_up".equals(ht)))
+                        || (!isLong && (ht.startsWith("falling") || "mostly_down".equals(ht)));
+        }
+
+        if (!rsiConfirms && !macdConfirms) {
+            return hold(String.format("BB回归: RSI(%.1f)和MACD(%s)均未确认反转",
+                    ctx.rsi5m != null ? ctx.rsi5m.doubleValue() : -1,
+                    ctx.macdHistTrend5m != null ? ctx.macdHistTrend5m : "null"));
         }
 
         BigDecimal atr = ctx.atr5m;
@@ -481,8 +493,8 @@ public class DeterministicTradingExecutor {
         if (quantity == null) return hold("BB回归: 仓位计算失败");
 
         if (isInDrawdown(totalEquity)) {
-            leverage = Math.max(5, leverage / 2);
-            quantity = quantity.divide(BigDecimal.TWO, 8, RoundingMode.HALF_DOWN);
+            leverage = Math.max(5, (int)(leverage * DRAWDOWN_REDUCTION.doubleValue()));
+            quantity = quantity.multiply(DRAWDOWN_REDUCTION).setScale(8, RoundingMode.HALF_DOWN);
         }
 
         String reason = String.format(
@@ -505,7 +517,7 @@ public class DeterministicTradingExecutor {
             String symbol, User user, BigDecimal totalEquity,
             QuantSignalDecision signal, MarketContext ctx,
             double confidence, String side, boolean isLong,
-            double regimeScale, SymbolProfile profile, AiTradingTools tools) {
+            double regimeScale, SymbolProfile profile, TradingOperations tools) {
 
         if (!ctx.bollSqueeze) {
             return hold("突破策略: 非BB squeeze状态");
@@ -546,8 +558,8 @@ public class DeterministicTradingExecutor {
         if (quantity == null) return hold("突破策略: 仓位计算失败");
 
         if (isInDrawdown(totalEquity)) {
-            leverage = Math.max(5, leverage / 2);
-            quantity = quantity.divide(BigDecimal.TWO, 8, RoundingMode.HALF_DOWN);
+            leverage = Math.max(5, (int)(leverage * DRAWDOWN_REDUCTION.doubleValue()));
+            quantity = quantity.multiply(DRAWDOWN_REDUCTION).setScale(8, RoundingMode.HALF_DOWN);
         }
 
         String reason = String.format(
@@ -650,12 +662,11 @@ public class DeterministicTradingExecutor {
         if (ctx.bollSqueeze && ctx.volumeRatio5m != null && ctx.volumeRatio5m >= BREAKOUT_VOLUME_MIN) {
             return "BREAKOUT";
         }
-        // 2. BB极值 + RSI极值 → 均值回归
-        if (ctx.bollPb5m != null && ctx.rsi5m != null) {
+        // 2. BB极值 → 均值回归（RSI/MACD确认在策略内部二选一检查）
+        if (ctx.bollPb5m != null) {
             double pb = ctx.bollPb5m;
-            double rsi = ctx.rsi5m.doubleValue();
-            boolean longSetup = pb < REVERT_BB_PB_LONG_MAX && rsi < REVERT_RSI_LONG_MAX;
-            boolean shortSetup = pb > REVERT_BB_PB_SHORT_MIN && rsi > REVERT_RSI_SHORT_MIN;
+            boolean longSetup = pb < REVERT_BB_PB_LONG_MAX;
+            boolean shortSetup = pb > REVERT_BB_PB_SHORT_MIN;
             if ((isLong && longSetup) || (!isLong && shortSetup)) {
                 return "MEAN_REVERSION";
             }
@@ -854,38 +865,10 @@ public class DeterministicTradingExecutor {
         return quantity.signum() > 0 ? quantity : null;
     }
 
-    // ==================== 风控检查（智能冷却）====================
+    // ==================== 风控检查（仅日亏损上限）====================
 
     private static String checkRiskLimits(User user, List<AiTradingDecision> recentDecisions) {
         if (recentDecisions == null || recentDecisions.isEmpty()) return null;
-
-        // 智能冷却: 盈利后5分钟，亏损后15分钟
-        for (AiTradingDecision d : recentDecisions) {
-            if (d.getAction() != null && !d.getAction().equals("HOLD")
-                    && !d.getAction().equals("TRAILING_STOP") && d.getCreatedAt() != null) {
-                long minutes = Duration.between(d.getCreatedAt(), LocalDateTime.now()).toMinutes();
-                boolean wasLoss = d.getBalanceBefore() != null && d.getBalanceAfter() != null
-                        && d.getBalanceAfter().compareTo(d.getBalanceBefore()) < 0;
-                int cooldown = wasLoss ? LOSS_COOLDOWN_MINUTES : WIN_COOLDOWN_MINUTES;
-                if (minutes < cooldown) {
-                    return String.format("冷却期: 上次%s(%s)%d分钟前, 需%d分钟",
-                            wasLoss ? "亏损" : "盈利", d.getAction(), minutes, cooldown);
-                }
-                break;
-            }
-        }
-
-        // 连续亏损暂停
-        int losses = countConsecutiveLosses(recentDecisions);
-        if (losses >= MAX_CONSECUTIVE_LOSSES) {
-            AiTradingDecision last = recentDecisions.getFirst();
-            if (last.getCreatedAt() != null) {
-                long minutes = Duration.between(last.getCreatedAt(), LocalDateTime.now()).toMinutes();
-                if (minutes < CONSECUTIVE_LOSS_PAUSE_MINUTES) {
-                    return "连续" + losses + "次亏损→暂停" + CONSECUTIVE_LOSS_PAUSE_MINUTES + "分钟(已过" + minutes + "分钟)";
-                }
-            }
-        }
 
         // 日亏损上限
         BigDecimal dailyLoss = calcDailyLoss(recentDecisions);
@@ -916,20 +899,6 @@ public class DeterministicTradingExecutor {
     private static boolean shouldMoveSl(BigDecimal currentSl, BigDecimal newSl, boolean isLong) {
         if (currentSl == null || currentSl.signum() <= 0) return true;
         return isLong ? newSl.compareTo(currentSl) > 0 : newSl.compareTo(currentSl) < 0;
-    }
-
-    private static int countConsecutiveLosses(List<AiTradingDecision> decisions) {
-        int count = 0;
-        for (AiTradingDecision d : decisions) {
-            if ("HOLD".equals(d.getAction()) || "TRAILING_STOP".equals(d.getAction())) continue;
-            if (d.getBalanceBefore() != null && d.getBalanceAfter() != null
-                    && d.getBalanceAfter().compareTo(d.getBalanceBefore()) < 0) {
-                count++;
-            } else {
-                break;
-            }
-        }
-        return count;
     }
 
     private static BigDecimal calcDailyLoss(List<AiTradingDecision> decisions) {

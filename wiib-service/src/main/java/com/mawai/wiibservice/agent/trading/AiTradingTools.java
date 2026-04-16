@@ -20,7 +20,7 @@ import java.math.RoundingMode;
 import java.util.List;
 
 @Slf4j
-public class AiTradingTools {
+public class AiTradingTools implements TradingOperations {
 
     private static final int MAX_LEVERAGE = 50;
     private static final int MIN_LEVERAGE = 5;
@@ -171,6 +171,7 @@ public class AiTradingTools {
         return openPosition(side, quantity, leverage, orderType, limitPrice, stopLossPrice, tp1Price, tp2Price, null);
     }
 
+    @Override
     @Tool(description = "开仓下单，支持市价和限价。必须设止损。杠杆5-50倍，单次保证金≥余额1%（最低100USDT）且不超余额35%，最多3仓位，同向最多2仓位。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
     public String openPosition(
             @ToolParam(description = "方向：LONG或SHORT") String side,
@@ -304,6 +305,7 @@ public class AiTradingTools {
         }
     }
 
+    @Override
     @Tool(description = "市价平仓（全部或部分）")
     public String closePosition(
             @ToolParam(description = "仓位ID") Long positionId,
@@ -369,6 +371,7 @@ public class AiTradingTools {
         }
     }
 
+    @Override
     @Tool(description = "修改已有持仓的止损价格，可根据行情动态调整（移动止损、保本止损等）")
     public String setStopLoss(
             @ToolParam(description = "仓位ID") Long positionId,
@@ -395,6 +398,7 @@ public class AiTradingTools {
         }
     }
 
+    @Override
     @Tool(description = "修改已有持仓的止盈价格，可根据行情动态调整")
     public String setTakeProfit(
             @ToolParam(description = "仓位ID") Long positionId,

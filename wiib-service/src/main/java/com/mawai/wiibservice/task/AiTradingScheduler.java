@@ -36,7 +36,7 @@ public class AiTradingScheduler {
     private final AtomicInteger cycleCounter = new AtomicInteger(0);
     private final Set<String> runningSymbols = ConcurrentHashMap.newKeySet();
     private final Map<String, Instant> lastEventTriggerTime = new ConcurrentHashMap<>();
-    private static final long EVENT_GUARD_SECONDS = 300; // 事件触发后5分钟内cron不重复执行
+    private static final long EVENT_GUARD_SECONDS = 30; // 30秒技术去重
 
     private final UserMapper userMapper;
     private final FuturesTradingService futuresTradingService;
