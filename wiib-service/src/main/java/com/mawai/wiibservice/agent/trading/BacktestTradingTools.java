@@ -340,6 +340,14 @@ public class BacktestTradingTools implements TradingOperations {
                 netPnl.toPlainString(), reason);
     }
 
+    private FuturesPositionDTO findPosition(Long positionId) {
+        if (positionId == null) return null;
+        for (FuturesPositionDTO p : openPositions) {
+            if (positionId.equals(p.getId())) return p;
+        }
+        return null;
+    }
+
     private int findOpenBarIndex(FuturesPositionDTO pos) {
         // 如果能从现有closedTrades中推算，就用；否则用当前bar（保守）
         // 开仓的bar index保存在createdAt的一个小技巧中不太好

@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +70,34 @@ public class BacktestController {
             log.error("[Backtest API] 参数扫描失败", e);
             return Result.fail("参数扫描失败: " + e.getMessage());
         }
+    }
+
+    @Operation(summary = "信号回放回测 — 基于数据库真实历史信号，和实盘100%等价")
+    @PostMapping("/replay")
+    public Result<Map<String, Object>> runReplay(
+            @RequestParam(defaultValue = "BTCUSDT") String symbol,
+            @RequestParam String from,
+            @RequestParam String to,
+            @RequestParam(defaultValue = "100000") BigDecimal initialBalance) {
+
+        log.info("[Backtest API] replay symbol={} from={} to={} balance={}",
+                symbol, from, to, initialBalance);
+
+        try {
+            LocalDateTime fromDt = parseDateTime(from);
+            LocalDateTime toDt = parseDateTime(to);
+            BacktestResult result = backtestRunner.runReplay(symbol, fromDt, toDt, initialBalance);
+            return Result.ok(toMap(result));
+        } catch (Exception e) {
+            log.error("[Backtest API] 回放失败", e);
+            return Result.fail("回放失败: " + e.getMessage());
+        }
+    }
+
+    /** 接受 "2026-04-01" 或 "2026-04-01T10:00:00" 两种格式 */
+    private LocalDateTime parseDateTime(String s) {
+        if (s.contains("T")) return LocalDateTime.parse(s);
+        return LocalDateTime.parse(s + "T00:00:00");
     }
 
     private Map<String, Object> toMap(BacktestResult r) {

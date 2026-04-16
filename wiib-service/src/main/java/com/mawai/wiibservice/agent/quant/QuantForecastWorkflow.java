@@ -54,14 +54,13 @@ public class QuantForecastWorkflow {
                                        LlmCallMode deepCallMode,
                                        LlmCallMode shallowCallMode) throws Exception {
 
-        // 6个因子Agent（NewsEventAgent和ChartPatternAgent用浅模型）
+        // 5个因子Agent（NewsEventAgent用浅模型）
         List<FactorAgent> agents = List.of(
                 new MicrostructureAgent(),
                 new MomentumAgent(),
                 new RegimeAgent(),
                 new VolatilityAgent(),
-                new NewsEventAgent(shallowChatClient, shallowCallMode),
-                new ChartPatternAgent(shallowChatClient, binanceRestClient, shallowCallMode)
+                new NewsEventAgent(shallowChatClient, shallowCallMode)
         );
 
         StateGraph workflow = new StateGraph(createKeyStrategyFactory())
