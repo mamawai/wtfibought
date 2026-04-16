@@ -1,14 +1,23 @@
 package com.mawai.wiibservice.agent.trading;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.mawai.wiibcommon.entity.QuantForecastCycle;
+import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibservice.agent.tool.CryptoIndicatorCalculator;
 import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
+import com.mawai.wiibservice.mapper.QuantSignalDecisionMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 回测执行服务 — 从 Binance 拉取历史K线并运行回测。
@@ -28,6 +37,8 @@ import java.util.List;
 public class BacktestRunner {
 
     private final BinanceRestClient binanceRestClient;
+    private final QuantForecastCycleMapper forecastCycleMapper;
+    private final QuantSignalDecisionMapper signalDecisionMapper;
 
     /** Binance klines API 每次最多1500根 */
     private static final int MAX_KLINES_PER_REQUEST = 1500;
@@ -123,11 +134,46 @@ public class BacktestRunner {
 
     public record ScanResult(double slAtr, double tpAtr, BacktestResult result) {
         @Override
-        public String toString() {
+        public @NonNull String toString() {
             return String.format("SL=%.1f TP=%.1f | return=%.2f%% WR=%.1f%% PF=%.2f trades=%d",
                     slAtr, tpAtr, result.returnPct() * 100, result.winRate() * 100,
                     result.profitFactor(), result.totalTrades());
         }
+    }
+
+    // ==================== 信号回放回测（真票回放）====================
+
+    /**
+     * 基于数据库中已持久化的历史信号回放。和实盘100%等价。
+     *
+     * @param symbol         交易对
+     * @param from           起始时间（含）
+     * @param to             结束时间（不含）
+     * @param initialBalance 初始资金
+     */
+    public BacktestResult runReplay(String symbol, LocalDateTime from, LocalDateTime to,
+                                    BigDecimal initialBalance) {
+        log.info("[Replay] 加载 {} 历史cycles [{} ~ {}]", symbol, from, to);
+
+        List<QuantForecastCycle> cycles =
+                forecastCycleMapper.selectBySymbolAndTimeRange(symbol, from, to);
+        if (cycles.isEmpty()) {
+            throw new IllegalStateException("该时间段内无历史cycle记录: " + symbol);
+        }
+
+        List<String> cycleIds = cycles.stream().map(QuantForecastCycle::getCycleId).toList();
+        LambdaQueryWrapper<QuantSignalDecision> q = new LambdaQueryWrapper<>();
+        q.in(QuantSignalDecision::getCycleId, cycleIds);
+        List<QuantSignalDecision> allSignals = signalDecisionMapper.selectList(q);
+
+        Map<String, List<QuantSignalDecision>> signalsByCycle = allSignals.stream()
+                .collect(Collectors.groupingBy(QuantSignalDecision::getCycleId));
+
+        log.info("[Replay] 加载完成 cycle={} signal={}", cycles.size(), allSignals.size());
+
+        SignalReplayBacktestEngine engine = new SignalReplayBacktestEngine(
+                symbol, cycles, signalsByCycle, initialBalance);
+        return engine.run();
     }
 
     // ==================== 数据加载 ====================

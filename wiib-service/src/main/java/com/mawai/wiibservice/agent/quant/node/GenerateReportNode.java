@@ -680,12 +680,11 @@ public class GenerateReportNode implements NodeAction {
 
     /** Agent权重表（与HorizonJudge一致） */
     private static final Map<String, Map<String, Double>> AGENT_WEIGHTS = Map.of(
-            "microstructure", Map.of("0_10", 0.32, "10_20", 0.13, "20_30", 0.04),
-            "momentum",       Map.of("0_10", 0.23, "10_20", 0.27, "20_30", 0.26),
-            "regime",         Map.of("0_10", 0.14, "10_20", 0.18, "20_30", 0.22),
-            "volatility",     Map.of("0_10", 0.14, "10_20", 0.14, "20_30", 0.13),
-            "news_event",     Map.of("0_10", 0.09, "10_20", 0.18, "20_30", 0.22),
-            "chart_pattern",  Map.of("0_10", 0.08, "10_20", 0.10, "20_30", 0.13)
+            "microstructure", Map.of("0_10", 0.35, "10_20", 0.14, "20_30", 0.05),
+            "momentum",       Map.of("0_10", 0.25, "10_20", 0.30, "20_30", 0.30),
+            "regime",         Map.of("0_10", 0.15, "10_20", 0.20, "20_30", 0.25),
+            "volatility",     Map.of("0_10", 0.15, "10_20", 0.16, "20_30", 0.15),
+            "news_event",     Map.of("0_10", 0.10, "10_20", 0.20, "20_30", 0.25)
     );
 
     /**

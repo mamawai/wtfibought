@@ -19,7 +19,6 @@ import org.springframework.ai.chat.client.ChatClient;
 
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 import static com.alibaba.cloud.ai.graph.StateGraph.END;
 import static com.alibaba.cloud.ai.graph.StateGraph.START;
@@ -54,14 +53,13 @@ public class QuantForecastWorkflow {
                                        LlmCallMode deepCallMode,
                                        LlmCallMode shallowCallMode) throws Exception {
 
-        // 6个因子Agent（NewsEventAgent和ChartPatternAgent用浅模型）
+        // 5个因子Agent（NewsEventAgent用浅模型）
         List<FactorAgent> agents = List.of(
                 new MicrostructureAgent(),
                 new MomentumAgent(),
                 new RegimeAgent(),
                 new VolatilityAgent(),
-                new NewsEventAgent(shallowChatClient, shallowCallMode),
-                new ChartPatternAgent(shallowChatClient, binanceRestClient, shallowCallMode)
+                new NewsEventAgent(shallowChatClient, shallowCallMode)
         );
 
         StateGraph workflow = new StateGraph(createKeyStrategyFactory())
