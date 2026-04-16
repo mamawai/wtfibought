@@ -3,6 +3,8 @@ package com.mawai.wiibservice.agent.trading;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
+import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
@@ -36,10 +38,13 @@ public class BacktestTradingTools implements TradingOperations {
     private final AtomicLong positionIdSeq = new AtomicLong(1);
 
     // 状态
+    @Getter
     private BigDecimal balance;
+    @Getter
     private BigDecimal frozenBalance = BigDecimal.ZERO;
     private final List<FuturesPositionDTO> openPositions = new ArrayList<>();
     private final List<ClosedTrade> closedTrades = new ArrayList<>();
+    @Setter
     private int currentBarIndex = 0;
     private final String symbol;
 
@@ -198,15 +203,8 @@ public class BacktestTradingTools implements TradingOperations {
     // ==================== 回测专用方法 ====================
 
     /** 当前K线价格（用于开仓/平仓的成交价） */
+    @Setter
     private BigDecimal currentPrice;
-
-    public void setCurrentPrice(BigDecimal price) {
-        this.currentPrice = price;
-    }
-
-    public void setCurrentBarIndex(int barIndex) {
-        this.currentBarIndex = barIndex;
-    }
 
     private BigDecimal getCurrentPrice() {
         return currentPrice;
@@ -340,6 +338,14 @@ public class BacktestTradingTools implements TradingOperations {
                 netPnl.toPlainString(), reason);
     }
 
+    private FuturesPositionDTO findPosition(Long positionId) {
+        if (positionId == null) return null;
+        for (FuturesPositionDTO p : openPositions) {
+            if (positionId.equals(p.getId())) return p;
+        }
+        return null;
+    }
+
     private int findOpenBarIndex(FuturesPositionDTO pos) {
         // 如果能从现有closedTrades中推算，就用；否则用当前bar（保守）
         // 开仓的bar index保存在createdAt的一个小技巧中不太好
@@ -357,14 +363,6 @@ public class BacktestTradingTools implements TradingOperations {
     }
 
     // ==================== 状态查询 ====================
-
-    public BigDecimal getBalance() {
-        return balance;
-    }
-
-    public BigDecimal getFrozenBalance() {
-        return frozenBalance;
-    }
 
     /**
      * 总权益 = 可用余额 + 冻结（保证金）+ 未实现盈亏。
