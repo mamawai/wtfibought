@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class PriceVolatilitySentinel {
 
     private static final double ATR_MULTIPLIER = 1.3;
-    private static final long COOLDOWN_MS = 3 * 60 * 1000L;
+    private static final long COOLDOWN_MS = 30 * 1000L; // 30秒技术防抖
     private static final long WINDOW_MS = 5 * 60 * 1000L;
     private static final long SAMPLE_INTERVAL_MS = 1000L;
 
