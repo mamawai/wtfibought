@@ -328,11 +328,19 @@ public class DeterministicTradingExecutor {
         }
 
         // ===== 4. 高周期趋势过滤（最关键的门槛）=====
+        // MR策略豁免条件：当BB%B在超买/超卖极值时，反趋势入场属于合理的均值回归setup，
+        // 不应被1h趋势过滤拦截（否则MR做空分支几乎永远打不出）
         if (ctx.maAlignment1h != null && ctx.maAlignment1h != 0) {
             boolean trendConflict = (isLong && ctx.maAlignment1h < 0) || (!isLong && ctx.maAlignment1h > 0);
-            if (trendConflict) {
+            boolean isMrSetup = ctx.bollPb5m != null &&
+                    ((isLong && ctx.bollPb5m < REVERT_BB_PB_LONG_MAX)
+                     || (!isLong && ctx.bollPb5m > REVERT_BB_PB_SHORT_MIN));
+            if (trendConflict && !isMrSetup) {
                 return hold(String.format("趋势过滤: 信号=%s但1h MA=%s→不做逆势交易",
                         side, ctx.maAlignment1h > 0 ? "多头排列" : "空头排列"));
+            }
+            if (trendConflict) {
+                log.info("[Executor] 1h逆势但BB%B={}处于极值→允许MR反转入场", ctx.bollPb5m);
             }
         }
 
@@ -720,7 +728,7 @@ public class DeterministicTradingExecutor {
         if (primary == null) primary = pickValid(sig2030);
         if (primary == null) return null;
 
-        // 多horizon方向一致 → 日志记录
+        // 多horizon方向一致 → 将一致性转换为confidence加成（替代原先"只打日志"的虚假确认）
         List<QuantSignalDecision> all = new ArrayList<>();
         if (sig010 != null) all.add(sig010);
         if (sig1020 != null) all.add(sig1020);
@@ -730,8 +738,13 @@ public class DeterministicTradingExecutor {
         long agree = all.stream()
                 .filter(s -> finalPrimary.getDirection().equals(s.getDirection()) && s.getConfidence() != null)
                 .count();
-        if (agree >= 2) {
-            log.info("[Executor] 多horizon一致({}个同方向{}), 入场信心增强", agree, primary.getDirection());
+        if (agree >= 2 && primary.getConfidence() != null) {
+            // 3个一致 ×1.15, 2个一致 ×1.08, clamp [0, 1]
+            double buff = agree >= 3 ? 1.15 : 1.08;
+            double boosted = Math.min(1.0, primary.getConfidence().doubleValue() * buff);
+            primary.setConfidence(BigDecimal.valueOf(boosted));
+            log.info("[Executor] 多horizon一致({}个同方向{}), confidence×{}→{}",
+                    agree, primary.getDirection(), buff, String.format("%.3f", boosted));
         }
 
         return primary;
