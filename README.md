@@ -16,6 +16,7 @@
 - 加密货币现货交易（BTC/USDT、PAXG/USDT、ETH/USDT），接入 Binance 实时行情，支持市价/限价单
 - 加密货币永续合约（最高 200 倍杠杆，逐仓保证金，多/空双向，分批止损/止盈，0.01%/8h 资金费率，自动强平）
 - BTC 5分钟涨跌预测（接入 Polymarket 真实盘口，Chainlink 价格源，动态手续费，自动结算）
+- AI交易员（测试阶段）：确定性多策略引擎自动执行永续合约交易，含EMA趋势跟踪、BB均值回归、BB压缩突破三种策略，信号共振评分入场，动态追踪止损出场
 
 **行情系统**
 - AI 每日生成 20 只股票的分时行情（1440 个价格点）
@@ -30,9 +31,13 @@
 
 **AI Agent 量化分析**
 - 多 Agent 加密货币量化预测系统（5因子Agent + 3区间裁决 + Bull vs Bear辩论）
-- 每30分钟自动生成 0-10/10-20/20-30min 三区间交易信号
+- 双周期调度：重周期每30分钟全链路（含4次LLM），轻周期每10分钟零LLM快速刷新
+- 波动哨兵：监听WS实时价格，5分钟波动超1.3×ATR时自动触发轻周期+交易
 - 历史预测自动验证（K线路径分析 + TP/SL触达检测 + 质量评级）
 - 离线反思学习闭环（LLM分析偏差 → 写入记忆 → 下次预测注入）
+- 回测系统：逐K线回放回测 + 真实信号回放回测，支持参数扫描
+- AI交易员（测试阶段）：基于量化信号的确定性自动交易
+- 支持 BTCUSDT / ETHUSDT / PAXGUSDT 多币种
 - DB驱动的API Key动态管理 + LLM异常自动降级
 - 详细设计文档：[docs/Quantitative analysis.md](docs/Quantitative%20analysis.md)
 
@@ -414,7 +419,9 @@ PUT  = K·e^(-rT)·N(-d2) - S·N(-d1)
 每小时  Futures 维护（过期限价单 + 孤儿 TRIGGERED 执行）
 每8h   永续合约资金费率扣除（00:00 / 08:00 / 16:00）
 每1s   Prediction 回合轮换检测（24/7，窗口切换时触发锁定+新回合+价格轮询）
-每30min 量化预测（采集→指标→Regime审核→5Agent投票→3Judge裁决→辩论→风控→报告）
+每30min 量化重周期（全链路：采集→指标→Regime审核→5Agent投票→3Judge裁决→辩论→风控→报告）
+每10min 量化轻周期（零LLM：复用新闻投票，重跑4纯代码Agent→Judge→RiskGate）
+每tick  波动哨兵监听（WS markPrice @1s，5min波动超1.3×ATR时触发轻周期+AI交易）
 每1h:05 预测验证+反思（批量验证历史预测→LLM反思→写入记忆）
 ```
 
@@ -451,6 +458,7 @@ PUT  = K·e^(-rT)·N(-d2) - S·N(-d1)
 | `/prediction` | BTC 5分钟涨跌预测（实时图表 + 买卖面板 + 交易动态） |
 | `/ai-agent` | AI量化分析（实时信号 + 历史预测 + 追问对话） |
 | `/ai-agent/verifications` | 量化预测验证（命中率统计 + 各周期验证详情） |
+| `/ai-trader` | AI交易员面板（测试阶段，实时持仓/决策历史/盈亏统计） |
 | `/ranking` | 排行榜 |
 | `/games` | 小游戏大厅 |
 | `/blackjack` | 21点小游戏 |
@@ -569,6 +577,7 @@ docker compose up -d --build
 | quant_signal_decision | 风控后最终信号 |
 | quant_forecast_verification | 预测验证（实际价格/路径分析/质量评级/中文摘要） |
 | quant_reflection_memory | 反思记忆（LLM教训 + agentAccuracy） |
+| ai_trading_decision | AI交易决策记录（action/reasoning/balanceBefore/balanceAfter/executionLog） |
 
 ## License
 

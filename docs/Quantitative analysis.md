@@ -8,7 +8,7 @@
 - `10-20min` 短线
 - `20-30min` 中短线
 
-系统只输出策略信号与风险建议，不自动下单。
+系统核心输出策略信号与风险建议，同时提供**轻周期快速刷新**（每10分钟零LLM复算）和**回测验证**能力。AI自动交易处于**测试阶段**，基于量化信号的确定性策略引擎独立运行。
 
 核心约束：
 
@@ -134,7 +134,9 @@ LLM 负责（主链路4处 + 离线1处）：
 ```mermaid
 flowchart TB
     subgraph ENTRY["1. 触发入口"]
-        E1["@Scheduled 30min"]
+        E1["@Scheduled 30min<br/>重周期（全链路+4次LLM）"]
+        E1b["@Scheduled 10min<br/>轻周期（零LLM复算）"]
+        E1c["波动哨兵<br/>WS tick 超1.3×ATR触发"]
         E2["REST API 手动触发"]
     end
 
@@ -170,6 +172,8 @@ flowchart TB
     end
 
     E1 --> F1
+    E1b --> F4
+    E1c --> F4
     E2 --> F1
 
     S1 --> F1
@@ -206,7 +210,29 @@ flowchart LR
 
 离线：`ReflectionTask`（⚡LLM）每小时自动验证历史预测+生成反思教训→写入记忆表
 
-### 4.3 因子 Agent 并行视图
+### 4.3 轻周期与波动哨兵
+
+**重周期 vs 轻周期**
+
+| 维度 | 重周期（30min） | 轻周期（10min） |
+|------|----------------|----------------|
+| LLM调用 | 4次（Regime审核+新闻+辩论+报告） | 0次 |
+| 新闻Agent | NewsEventAgent实时分析 | 复用重周期缓存的news_votes |
+| Regime | LLM多周期交叉审核 | 纯ADX/ATR规则计算，保留重周期的regimeConfidence/regimeTransition |
+| 耗时 | 12-30s | ~5-10s |
+| 触发 | `@Scheduled 30min` + 手动 | `@Scheduled 10min` + 波动哨兵 |
+
+**轻周期流程**：采集市场数据 → 重算特征 → 纯规则regime → 4个纯Java Agent并行投票 + 缓存news votes → 3 Judge并行裁决 → RiskGate → 落库 + 推送
+
+**波动哨兵（`PriceVolatilitySentinel`）**
+
+监听 Binance WS `markPrice@1s`，维护5分钟滚动价格窗口：
+- 当窗口内最高-最低价 / 中价 > 1.3 × ATR-5m 时触发
+- ATR由量化管道（重/轻周期）完成后更新；启动时从DB最近一次snapshot加载
+- 冷却期30秒，防止高波动市场过度触发
+- 触发后：先执行轻周期刷新信号 → 再驱动AI交易决策
+
+### 4.4 因子 Agent 并行视图
 
 5 个因子 Agent 封装在 `RunFactorAgentsNode` 内部，通过 Java 虚拟线程并行执行：
 
@@ -1047,7 +1073,7 @@ flowchart LR
 ```java
 @Scheduled(cron = "0 */30 * * * *")
 public void rollingForecast() {
-    for (String symbol : WATCH_LIST) {  // WATCH_LIST = List.of("BTCUSDT")
+    for (String symbol : WATCH_LIST) {  // WATCH_LIST = List.of("BTCUSDT", "ETHUSDT", "PAXGUSDT")
         Thread.startVirtualThread(() -> runForecast(symbol));
     }
 }
@@ -1082,7 +1108,25 @@ public void reflectAndLearn() {
 
 记忆在下次预测时通过 `MemoryService` 查询并注入到 RegimeReview / DebateJudge / GenerateReport 的 prompt 中。
 
-### 8.3 运行时配置管理
+### 8.3 轻周期调度与波动哨兵
+
+```java
+@Scheduled(cron = "0 */10 * * * *")
+public void lightRefresh() {
+    for (String symbol : WATCH_LIST) {
+        // 距上次重周期 < 3min 跳过；无重周期缓存跳过
+        lightCycleService.runLightRefresh(symbol, fearGreedData);
+    }
+}
+```
+
+`PriceVolatilitySentinel` 监听 WS `markPrice@1s`，5min窗口波动超 `1.3 × ATR-5m` 时触发：
+1. 先执行轻周期刷新信号（零LLM，~5-10s）
+2. 再驱动 `AiTradingScheduler` 执行交易决策
+
+冷却期30秒，ATR由量化管道完成后更新。
+
+### 8.4 运行时配置管理
 
 #### AiAgentRuntimeManager
 
@@ -1128,7 +1172,62 @@ ai_runtime_config 表          ai_model_assignment 表
 - 定时任务和手动触发两个入口都经过此方法，自动获得降级能力
 - quant 已经在用 default 时不做无意义重试
 
-### 8.4 第二阶段：在线校准（待实现）
+### 8.5 AI自动交易（测试阶段）
+
+`AiTradingScheduler` 监听 `QuantCycleCompleteEvent`，在每次量化周期完成后自动驱动交易：
+
+```
+QuantCycleCompleteEvent ──→ AiTradingScheduler.onQuantCycleComplete()
+                                      │
+                                      ▼
+                          DeterministicTradingExecutor.execute()
+                                      │
+                    ┌─────────────────┼─────────────────┐
+                    ▼                 ▼                 ▼
+              有持仓→持仓管理    无持仓→开仓评估    cron兜底(10min)
+                    │                 │
+              SHOCK减仓/趋势反转平仓  信号共振评分≥3才入场
+              均值回归BB中轨止盈     高周期趋势过滤
+              ATR追踪止损           三策略动态选择
+```
+
+**核心策略（`DeterministicTradingExecutor`）**：
+
+| 策略 | 触发条件 | 出场方式 | 杠杆上限 |
+|------|---------|---------|---------|
+| EMA趋势跟踪 | 默认策略，confidence≥0.35 | TP1锁定50%+追踪止损 | 25x |
+| BB均值回归 | BB%B超卖(<10%)或超买(>90%) + RSI/MACD确认 | BB中轨止盈/3h超时 | 20x |
+| BB压缩突破 | bollSqueeze + 成交量≥1.3x均量 + 价格突破BB | TP+追踪止损 | 20x |
+
+**风控规则**：
+- 单笔风险≤净值2%，最大保证金≤35%
+- 日亏损上限5%，净值回撤至85%时杠杆仓位缩减70%
+- 多horizon方向一致时confidence加成（2个一致×1.08，3个一致×1.15）
+
+### 8.6 回测系统
+
+**逐K线回测（`BacktestEngine`）**
+
+从Binance拉取历史5m K线，技术指标直接衍生简化信号（不走LLM），逐K线回放：
+- 5m基准周期，15m/1h由5m聚合
+- Regime判断：ATR变化率 + BB bandwidth + ADX
+- 完全复用 `DeterministicTradingExecutor`，通过 `TradingOperations` 接口注入模拟交易
+
+**信号回放回测（`SignalReplayBacktestEngine`）**
+
+读取数据库中真实产出的 `quant_forecast_cycle` + `quant_signal_decision`，按时间顺序回放给Executor：
+- 信号与实盘100%等价
+- 验证Executor在历史真实信号下的表现
+
+**API**
+
+```http
+POST /api/backtest/run?symbol=BTCUSDT&days=7&initialBalance=100000
+POST /api/backtest/scan?symbol=BTCUSDT&days=7        # 参数扫描
+POST /api/backtest/replay?symbol=BTCUSDT&from=2026-04-01&to=2026-04-07  # 信号回放
+```
+
+### 8.7 第二阶段：在线校准（待实现）
 
 每累计 100 条验证结果，或每 30 分钟，触发一次权重更新：
 
@@ -1178,6 +1277,7 @@ public record AgentWeightProfile(
 | `quant_signal_decision` | 风控后最终信号 |
 | `quant_forecast_verification` | 预测验证结果（实际价格对比） |
 | `quant_reflection_memory` | 反思记忆（LLM生成的教训） |
+| `ai_trading_decision` | AI交易决策记录（action/reasoning/executionLog/balance变化） |
 
 ### 10.2 Redis
 
@@ -1247,7 +1347,24 @@ POST   /api/admin/ai-agent/quant/trigger      手动触发量化分析
 POST   /api/admin/ai-agent/quant/verify/trigger 手动触发预测验证
 ```
 
-### 11.8 WebSocket 推送
+### 11.8 AI交易员接口（测试阶段）
+
+```http
+GET    /api/ai/trading/dashboard              AI交易员概览（余额/持仓/盈亏/今日交易数）
+GET    /api/ai/trading/decisions?symbol=&limit=20  AI决策历史
+GET    /api/ai/trading/positions?symbol=         AI当前持仓
+GET    /api/ai/trading/orders?symbol=&pageNum=1  AI历史订单
+```
+
+### 11.9 回测接口
+
+```http
+POST   /api/backtest/run?symbol=BTCUSDT&days=7&initialBalance=100000  逐K线回测
+POST   /api/backtest/scan?symbol=BTCUSDT&days=7                      参数扫描（多组SL/TP）
+POST   /api/backtest/replay?symbol=BTCUSDT&from=2026-04-01&to=2026-04-07  信号回放回测
+```
+
+### 11.10 WebSocket 推送
 
 前端订阅 STOMP topic `/topic/quant/BTCUSDT`，定时预测完成后自动推送 `CryptoAnalysisReport`。
 
@@ -1262,6 +1379,8 @@ wiib-service/src/main/java/com/mawai/wiibservice/agent/
 │   └── AiAgentRuntime.java                   ← 4个ChatModel的record
 ├── quant/
 ├── QuantForecastWorkflow.java              ← StateGraph 定义（8节点）
+├── QuantLightCycleService.java             ← 轻周期服务（每10min零LLM复算）
+├── PriceVolatilitySentinel.java            ← 波动哨兵（WS tick触发轻周期+交易）
 ├── CryptoAnalysisReport.java               ← 前端兼容输出格式
 ├── QuantForecastPersistService.java        ← 落库服务（含debate_json）
 ├── domain/
@@ -1303,14 +1422,28 @@ wiib-service/src/main/java/com/mawai/wiibservice/agent/
 └── tool/
     └── CryptoNewsTool.java                ← Spring AI Tool（读取新闻全文）
 
+├── trading/
+│   ├── DeterministicTradingExecutor.java     ← 确定性交易执行器V2（三策略+共振评分）
+│   ├── AiTradingTools.java                   ← 真实交易工具（对接FuturesTradingService）
+│   ├── TradingOperations.java                ← 交易操作接口（open/close/setStopLoss）
+│   ├── BacktestTradingTools.java             ← 回测模拟交易工具
+│   ├── SymbolProfile.java                    ← 币种差异化参数（BTC/ETH/PAXG）
+│   ├── BacktestEngine.java                   ← 逐K线回测引擎
+│   ├── SignalReplayBacktestEngine.java       ← 信号回放回测引擎
+│   ├── BacktestRunner.java                   ← 回测执行服务（拉历史K线+运行）
+│   └── BacktestResult.java                   ← 回测结果DTO（胜率/Sharpe/回撤等）
+
 wiib-service/src/main/java/com/mawai/wiibservice/controller/
-└── AiAgentAdminController.java                ← Admin管理（Key/分配/手动触发）
+├── AiAgentAdminController.java               ← Admin管理（Key/分配/手动触发）
+├── AiTradingController.java                  ← AI交易员面板（dashboard/持仓/决策/订单）
+└── BacktestController.java                   ← 回测API（run/scan/replay）
 
 wiib-service/src/main/java/com/mawai/wiibservice/agent/tool/
 └── CryptoIndicatorCalculator.java         ← 指标计算（复用，在 quant 包外）
 
 wiib-service/src/main/java/com/mawai/wiibservice/task/
-├── QuantForecastScheduler.java            ← 定时预测（每30分钟）
+├── QuantForecastScheduler.java            ← 定时预测（重周期30min + 轻周期10min）
+├── AiTradingScheduler.java                ← AI交易调度（监听QuantCycleCompleteEvent）
 └── ReflectionTask.java                    ← 验证+反思（每小时整点后5分）
 ```
 
@@ -1342,8 +1475,9 @@ wiib-service/src/main/java/com/mawai/wiibservice/task/
 
 ### 第一阶段（核心闭环）✅ 已完成
 
-- 每 30 分钟滚动预测
-- 单币种 BTCUSDT
+- 每 30 分钟滚动预测（重周期，全链路含4次LLM）
+- 每 10 分钟轻周期刷新（零LLM，复用新闻投票，重跑4纯Java Agent）
+- **多币种** BTCUSDT / ETHUSDT / PAXGUSDT
 - 4 个纯 Java 因子 Agent + 1 个 LLM 新闻 Agent
 - LLM Regime审核（多周期交叉验证 + 转换预警 + 历史记忆注入 + 期权IV信号）
 - 3 个 HorizonJudge（动态阈值）
@@ -1361,18 +1495,19 @@ wiib-service/src/main/java/com/mawai/wiibservice/task/
 - **实时行情WS**（aggTrade订单流聚合 + depth20快照缓存 + REST自动兜底）
 - **现货-合约联动分析**（基差/现货领先代理/现货盘口 纳入因子评分）
 - **期权IV定价增强**（Deribit DVOL/ATM IV/25d skew/term structure → RegimeAgent信号 + RiskGate惩罚）
+- **波动哨兵**（WS markPrice监听，5min超1.3×ATR自动触发轻周期+交易）
+- **回测系统**（逐K线回放 + 信号回放两种模式，支持参数扫描）
+- **AI自动交易（测试阶段）**（确定性多策略引擎：EMA趋势跟踪/BB均值回归/BB压缩突破，信号共振评分入场，动态追踪止损出场）
 
 ### 第二阶段（权重进化）
 
 - Agent 权重在线更新（基于验证结果按Agent×Horizon×Regime三维度调权）
 - 熔断机制（连续止损暂停对应区间）
-- 多币种扩展（ETHUSDT, PAXGUSDT）
 - 自适应阈值（从历史胜率统计学习edge/disagreement阈值）
+- AI自动交易正式化（当前为测试阶段）
 
 ### 第三阶段（增强）
 
-- 事件驱动重算（波动率突增、盘口异常等立即触发）
 - 滚动频率提升到每 5 分钟
 - 多模型路由（deepChatClient和shallowChatClient配置不同模型）
 - Dashboard 展示命中率和权重变化
-- 回测框架（基于历史数据+前视偏差防护）
