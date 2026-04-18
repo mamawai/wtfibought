@@ -18,7 +18,6 @@ import { VideoPoker } from './pages/VideoPoker';
 import { Games } from './pages/Games';
 import { Intro } from './pages/Intro';
 import { Me } from './pages/Me';
-import { Card414 } from './pages/Card414';
 import { Prediction } from './pages/Prediction';
 import { AiAgent } from './pages/AiAgent';
 import { AiTrader } from './pages/AiTrader';
@@ -49,7 +48,6 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/414" element={<Card414 />} />
         <Route
           path="/*"
           element={
