@@ -13,13 +13,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
- * Bull vs Bear辩论裁决节点。
- * 替代原MetaJudge+ConsistencyCheck，单次LLM调用中完成三角色辩论：
- * 1. Bull辩手：从投票和指标中构建做多论证
- * 2. Bear辩手：从投票和指标中构建做空论证
- * 3. Judge裁判：综合辩论+历史教训，审核系统裁决
+ * Bull vs Bear辩论裁决节点（3-call架构）。
+ * 替代原MetaJudge+ConsistencyCheck：
+ * 1. Bull辩手 ∥ Bear辩手：并行独立LLM调用，互不影响
+ * 2. Judge裁判：综合原始数据+双方论据+历史记忆，做最终裁决
  * <p>
  * 安全约束继承自MetaJudge：
  * - confidence只能下调不能上调
@@ -59,28 +61,68 @@ public class DebateJudgeNode implements NodeAction {
         if (forecasts.isEmpty()) return Map.of();
 
         try {
-            String prompt = buildDebatePrompt(forecasts, votes, snapshot,
+            String dataContext = buildDataContext(forecasts, votes, snapshot,
                     overallDecision, riskStatus, regimeTransition);
-            String response = callMode.call(chatClient, prompt);
-            log.info("[Q4.5.1] 辩论LLM返回 {}chars 耗时{}ms raw={}",
-                    response != null ? response.length() : 0, System.currentTimeMillis() - startMs,
-                    response != null && response.length() < 200 ? response : (response != null ? response.substring(0, 200) + "..." : "null"));
 
-            return applyDebateResult(forecasts, response, riskStatus, startMs);
+            String memoryContext = "暂无历史记忆";
+            if (memoryService != null) {
+                try {
+                    String regime = snapshot != null ? snapshot.regime().name() : "UNKNOWN";
+                    memoryContext = memoryService.buildMemoryContext(
+                            snapshot != null ? snapshot.symbol() : "BTCUSDT", regime);
+                } catch (Exception e) {
+                    log.warn("[Q4.5] 记忆查询失败: {}", e.getMessage());
+                }
+            }
+
+            // Phase 1: Bull & Bear 并行辩论（独立上下文，互不影响）
+            String bullArg;
+            String bearArg;
+            try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                CompletableFuture<String> bullCf = CompletableFuture
+                        .supplyAsync(() -> callMode.call(chatClient, buildBullPrompt(dataContext)), executor)
+                        .orTimeout(60, TimeUnit.SECONDS)
+                        .exceptionally(ex -> {
+                            log.warn("[Q4.5] Bull辩手调用失败: {}", ex.getMessage());
+                            return "Bull辩手未能提供论据";
+                        });
+                CompletableFuture<String> bearCf = CompletableFuture
+                        .supplyAsync(() -> callMode.call(chatClient, buildBearPrompt(dataContext)), executor)
+                        .orTimeout(60, TimeUnit.SECONDS)
+                        .exceptionally(ex -> {
+                            log.warn("[Q4.5] Bear辩手调用失败: {}", ex.getMessage());
+                            return "Bear辩手未能提供论据";
+                        });
+
+                CompletableFuture.allOf(bullCf, bearCf).join();
+                bullArg = bullCf.join();
+                bearArg = bearCf.join();
+            }
+            log.info("[Q4.5.1] Bull({}chars) Bear({}chars) 辩论完成 耗时{}ms",
+                    bullArg.length(), bearArg.length(), System.currentTimeMillis() - startMs);
+
+            // Phase 2: Judge 裁决（综合数据 + 双方论据 + 历史记忆）
+            String judgeResponse = callMode.call(chatClient,
+                    buildJudgePrompt(dataContext, memoryContext, bullArg, bearArg));
+            log.info("[Q4.5.2] Judge裁决 {}chars 总耗时{}ms",
+                    judgeResponse != null ? judgeResponse.length() : 0,
+                    System.currentTimeMillis() - startMs);
+
+            return applyDebateResult(forecasts, judgeResponse, bullArg, bearArg, riskStatus, startMs);
         } catch (Exception e) {
-            log.warn("[Q4.5] 辩论LLM失败，保留原始裁决: {}", e.getMessage());
+            log.warn("[Q4.5] 辩论流程失败，保留原始裁决: {}", e.getMessage());
             return Map.of();
         }
     }
 
     // ==================== Prompt构建 ====================
 
-    private String buildDebatePrompt(List<HorizonForecast> forecasts,
-                                      List<AgentVote> votes,
-                                      FeatureSnapshot snapshot,
-                                      String overallDecision,
-                                      String riskStatus,
-                                      String regimeTransition) {
+    private String buildDataContext(List<HorizonForecast> forecasts,
+                                     List<AgentVote> votes,
+                                     FeatureSnapshot snapshot,
+                                     String overallDecision,
+                                     String riskStatus,
+                                     String regimeTransition) {
         String forecastBlock = buildForecastBlock(forecasts);
         String voteBlock = buildVoteBlock(votes);
         String agentSummaryBlock = buildAgentSummaryBlock(votes);
@@ -88,57 +130,80 @@ public class DebateJudgeNode implements NodeAction {
         String microBlock = buildMicroBlock(snapshot);
         String qualityText = buildQualityText(snapshot);
 
-        // 记忆注入
-        String memoryContext = "暂无历史记忆";
-        if (memoryService != null) {
-            try {
-                memoryContext = memoryService.buildMemoryContext(
-                        snapshot != null ? snapshot.symbol() : "BTCUSDT", regime);
-            } catch (Exception e) {
-                log.warn("[Q4.5] 记忆查询失败: {}", e.getMessage());
-            }
-        }
-
         return """
-                你是加密货币量化系统的辩论裁决员。系统已通过6个因子Agent投票和3个区间裁决器得出以下结果。
-                你需要依次扮演3个角色完成辩论，然后给出最终裁决。
-
                 【系统裁决结果】
                 %s
                 【系统决策】%s
                 【风控状态】%s
 
-                【15票投票详情（按区间，6个Agent×3个区间）】
+                【投票详情（按区间，5个Agent×3个区间）】
                 %s
                 【各Agent投票方向汇总】
                 %s
                 【市场状态】%s
                 【Regime转换信号】%s
                 【微结构快照】%s
-                【数据质量】%s
+                【数据质量】%s""".formatted(
+                forecastBlock, overallDecision, riskStatus,
+                voteBlock, agentSummaryBlock,
+                regime, regimeTransition, microBlock, qualityText);
+    }
+
+    private String buildBullPrompt(String dataContext) {
+        return """
+                你是加密货币量化系统的做多辩手(Bull)。请基于以下数据，严格站在做多立场构建最强论据。
+
+                %s
+
+                要求：
+                - 你的唯一目标是论证"应该做多"，不要替对方辩护，不要自我质疑
+                - 引用具体的Agent投票数据（如"momentum在0-10给出LONG score=0.45"）
+                - 引用微结构信号（如"盘口买盘主导 bidAskImbalance=0.25"）
+                - 如果系统裁决是做空或NO_TRADE，论证为什么应该重新考虑做多
+                - 对每个区间(0-10/10-20/20-30min)分别分析做多理由
+                - 指出有利于多头的regime特征和转换信号
+
+                限300字，纯文字论述，不要返回JSON。""".formatted(dataContext);
+    }
+
+    private String buildBearPrompt(String dataContext) {
+        return """
+                你是加密货币量化系统的做空辩手(Bear)。请基于以下数据，严格站在做空/观望立场构建最强论据。
+
+                %s
+
+                要求：
+                - 你的唯一目标是论证"应该做空或观望"，不要替对方辩护，不要自我质疑
+                - 引用具体的Agent投票数据（如"volatility在0-10给出SHORT score=-0.30"）
+                - 引用微结构信号（如"tradeDelta为负=主动卖压"）
+                - 指出系统裁决中可能被忽略的风险
+                - 如果regime处于转换期(WEAKENING/BREAKING)，强调转换风险
+                - 对每个区间(0-10/10-20/20-30min)分别分析做空/观望理由
+                - 指出不利于多头的资金费率、持仓量、爆仓信号等
+
+                限300字，纯文字论述，不要返回JSON。""".formatted(dataContext);
+    }
+
+    private String buildJudgePrompt(String dataContext, String memoryContext,
+                                     String bullArgument, String bearArgument) {
+        return """
+                你是加密货币量化系统的裁判(Judge)。Bull辩手和Bear辩手已在完全隔离的环境中独立完成辩论。
+                请综合原始数据、双方论据和历史记忆，做出最终裁决。
+
+                ========== 原始数据 ==========
+                %s
 
                 【历史记忆】
                 %s
 
-                ===== 第一步：BULL（做多辩手）=====
-                你现在是Bull辩手。请站在做多立场，从以上所有数据中找出支持做多的最强证据。
-                - 引用具体的Agent投票数据（如"momentum在0-10给出LONG score=0.45"）
-                - 引用微结构信号（如"盘口买盘主导 bidAskImbalance=0.25"）
-                - 如果系统裁决是做空或NO_TRADE，论证为什么应该重新考虑做多
-                - 反驳可能的看空理由
-                限200字。
+                ========== 辩论论据 ==========
+                【Bull辩手（做多方）】
+                %s
 
-                ===== 第二步：BEAR（做空辩手）=====
-                你现在是Bear辩手。请站在做空立场，从以上所有数据中找出支持做空/观望的最强证据。
-                - 引用具体的Agent投票数据
-                - 引用微结构信号（如"tradeDelta为负=主动卖"）
-                - 指出系统裁决中可能被忽略的风险
-                - 如果regime处于转换期(WEAKENING/BREAKING)，强调转换风险
-                - 反驳Bull辩手的论点
-                限200字。
+                【Bear辩手（做空方）】
+                %s
 
-                ===== 第三步：JUDGE（裁判裁决）=====
-                你现在是裁判。综合Bull和Bear的论据，结合历史记忆中的反思教训，对系统裁决做最终审核。
+                ========== 裁决要求 ==========
 
                 审核维度：
                 1. 方向矛盾：各区间裁决方向是否与多数Agent投票一致？
@@ -150,27 +215,24 @@ public class DebateJudgeNode implements NodeAction {
                 7. 情绪极端：fearGreed<=20(极度恐惧)时做空要警惕反弹，>=80(极度贪婪)时做多要警惕回调
                 8. 爆仓信号：大量多头爆仓(liquidationPressure>0.5)可能是下跌末端，大量空头爆仓(<-0.5)可能是上涨末端
                 9. 聪明钱方向：topTraderBias与系统方向背离时需降低confidence
-                10. 期权IV信号：DVOL/ATM IV抬升但价格平静→隐含波动率定价上升，方向选择可能临近；skew极端→方向性押注集中
+                10. 期权IV信号：DVOL/ATM IV抬升但价格平静→隐含波动率定价上升；skew极端→方向性押注集中
 
                 裁决原则：
                 - 不要因为双方都有道理就默认NO_TRADE，要做出明确判断
+                - 综合评估Bull和Bear的论据强度，谁的证据更具体、更有数据支撑
                 - confidence只能下调不能上调（保守原则）
                 - 如果需要翻转方向，新confidence不得超过原始的50%%
                 - 如果Bull和Bear论据都很弱，维持系统原始裁决(approved=true)
                 - direction只能是LONG/SHORT/NO_TRADE
                 - 不修改entry/tp/sl价位
 
-                ===== 第四步：概率修正 =====
-                基于辩论中挖掘到的死数据之外的深层信息（如Agent未覆盖的跨维度共振、隐含的资金流向矛盾、
-                regime转换的二阶信号等），对每个区间给出你认为的真实概率分布。
-                这个概率应该反映辩论后的综合判断，而不是简单复述Agent投票的加权结果。
-                三个概率之和必须等于100。
+                概率修正：
+                基于辩论中挖掘到的深层信息（如跨维度共振、资金流向矛盾、regime转换二阶信号等），
+                对每个区间给出真实概率分布。三个概率之和必须等于100。
 
                 严格返回JSON（不要markdown包裹）：
                 {
-                  "bullArgument": "Bull辩手论据摘要(100字内)",
-                  "bearArgument": "Bear辩手论据摘要(100字内)",
-                  "judgeReasoning": "裁判推理过程(150字内)",
+                  "judgeReasoning": "裁判推理过程(200字内)",
                   "horizons": [
                     {"horizon":"0_10","approved":true,"newDirection":"LONG","newConfidence":0.65,"reason":"一句话",
                      "bullPct":45,"rangePct":35,"bearPct":20},
@@ -180,17 +242,15 @@ public class DebateJudgeNode implements NodeAction {
                      "bullPct":25,"rangePct":45,"bearPct":30}
                   ]
                 }
-                """.formatted(
-                forecastBlock, overallDecision, riskStatus,
-                voteBlock, agentSummaryBlock,
-                regime, regimeTransition, microBlock, qualityText,
-                memoryContext);
+                """.formatted(dataContext, memoryContext, bullArgument, bearArgument);
     }
 
     // ==================== 结果应用（继承MetaJudge全部安全逻辑）====================
 
     private Map<String, Object> applyDebateResult(List<HorizonForecast> original,
                                                     String llmResponse,
+                                                    String bullArg,
+                                                    String bearArg,
                                                     String originalRiskStatus,
                                                     long startMs) {
         if (llmResponse == null || llmResponse.isBlank()) return Map.of();
@@ -199,8 +259,6 @@ public class DebateJudgeNode implements NodeAction {
             String json = JsonUtils.extractJson(llmResponse);
             JSONObject root = JSON.parseObject(json);
 
-            String bullArg = root.getString("bullArgument");
-            String bearArg = root.getString("bearArgument");
             String judgeReasoning = root.getString("judgeReasoning");
             JSONArray horizons = root.getJSONArray("horizons");
 
