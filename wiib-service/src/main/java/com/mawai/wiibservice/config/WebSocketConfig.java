@@ -120,10 +120,6 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                     }
                 })
                 .withSockJS();
-
-        registry.addEndpoint("/ws/414")
-                .setAllowedOriginPatterns("*")
-                .withSockJS();
     }
 
     @Override

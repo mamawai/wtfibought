@@ -357,58 +357,6 @@ export interface CryptoOrder {
   createdAt: string;
 }
 
-// ========== 414扑克类型 ==========
-export interface CardSeat {
-  seat: number;
-  uuid: string;
-  nickname: string;
-  ready: boolean;
-  team: 'A' | 'B';
-}
-
-export interface CardRoom {
-  roomCode: string;
-  host: string;
-  status: 'WAITING' | 'PLAYING' | 'FINISHED';
-  seats: CardSeat[];
-  hunA?: string;
-  hunB?: string;
-  hunTeam?: string;
-}
-
-export interface Card414PlayInfo {
-  seat: number;
-  cards: string[];
-  type: string;
-}
-
-export interface Card414GameState {
-  round: number;
-  hunA: string;
-  hunB: string;
-  hunTeam: string;
-  hunRank: string;
-  turn: number;
-  hand: string[];
-  handCounts: number[];
-  lastPlay: Card414PlayInfo | null;
-  passCount: number;
-  finishOrder: number[];
-  state: string;
-  mySeat: number;
-  lightSeat: number;
-  chaRank?: string;
-  chaWaiters?: number[];
-  gouWaiters?: number[];
-  chaSeat?: number;
-}
-
-export interface Card414WsMessage {
-  type: string;
-  data: Record<string, unknown>;
-  timestamp: number;
-}
-
 // ========== 永续合约类型 ==========
 export interface FuturesSLItem { price: number; quantity: number }
 export interface FuturesTPItem { price: number; quantity: number }
