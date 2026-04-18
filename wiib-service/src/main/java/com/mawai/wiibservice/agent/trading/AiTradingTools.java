@@ -167,21 +167,20 @@ public class AiTradingTools implements TradingOperations {
 
     public String openPosition(String side, BigDecimal quantity, Integer leverage,
                                String orderType, BigDecimal limitPrice,
-                               BigDecimal stopLossPrice, BigDecimal tp1Price, BigDecimal tp2Price) {
-        return openPosition(side, quantity, leverage, orderType, limitPrice, stopLossPrice, tp1Price, tp2Price, null);
+                               BigDecimal stopLossPrice, BigDecimal takeProfitPrice) {
+        return openPosition(side, quantity, leverage, orderType, limitPrice, stopLossPrice, takeProfitPrice, null);
     }
 
     @Override
-    @Tool(description = "开仓下单，支持市价和限价。必须设止损。杠杆5-50倍，单次保证金≥余额1%（最低100USDT）且不超余额35%，最多3仓位，同向最多2仓位。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
+    @Tool(description = "开仓下单，支持市价和限价。必须设1个止损和1个止盈，各覆盖全部仓位。杠杆5-50倍，单次保证金≥余额1%（最低100USDT）且不超余额35%，最多3仓位，同向最多2仓位。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
     public String openPosition(
             @ToolParam(description = "方向：LONG或SHORT") String side,
             @ToolParam(description = "数量（币的数量，如0.01个BTC）") BigDecimal quantity,
             @ToolParam(description = "杠杆倍数，5-50") Integer leverage,
             @ToolParam(description = "订单类型：MARKET(市价，立即成交) 或 LIMIT(限价，挂单等待)，默认MARKET") String orderType,
             @ToolParam(description = "限价价格，仅orderType=LIMIT时必填，市价单忽略此参数") BigDecimal limitPrice,
-            @ToolParam(description = "止损价格，必填") BigDecimal stopLossPrice,
-            @ToolParam(description = "止盈目标1价格，可选") BigDecimal tp1Price,
-            @ToolParam(description = "止盈目标2价格，可选，设置后止盈仓位自动按70%/30%分配（TP1占70%）") BigDecimal tp2Price,
+            @ToolParam(description = "止损价格，必填，覆盖全部仓位") BigDecimal stopLossPrice,
+            @ToolParam(description = "止盈价格，必填，覆盖全部仓位") BigDecimal takeProfitPrice,
             @ToolParam(description = "策略标签，内部使用，LLM无需传递") String memo) {
 
         String symbol = currentSymbol;
@@ -199,6 +198,9 @@ public class AiTradingTools implements TradingOperations {
         }
         if (stopLossPrice == null || stopLossPrice.compareTo(BigDecimal.ZERO) <= 0) {
             return "错误：必须设置止损价格";
+        }
+        if (takeProfitPrice == null || takeProfitPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            return "错误：必须设置止盈价格";
         }
 
         boolean isLimit = "LIMIT".equalsIgnoreCase(orderType);
@@ -269,31 +271,17 @@ public class AiTradingTools implements TradingOperations {
         req.setMemo(memo);
         if (isLimit) req.setLimitPrice(limitPrice);
 
-        // 止损
+        // 止损：1个覆盖全部仓位
         FuturesOpenRequest.StopLoss sl = new FuturesOpenRequest.StopLoss();
         sl.setPrice(stopLossPrice);
         sl.setQuantity(quantity);
         req.setStopLosses(List.of(sl));
 
-        // 止盈：TP1/TP2 按 50/50 分仓（各平一半，平衡锁利与趋势跟踪）
-        if (tp1Price != null && tp1Price.compareTo(BigDecimal.ZERO) > 0) {
-            if (tp2Price != null && tp2Price.compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal tp1Qty = quantity.multiply(BigDecimal.valueOf(0.5)).setScale(8, RoundingMode.HALF_UP);
-                BigDecimal tp2Qty = quantity.subtract(tp1Qty);
-                FuturesOpenRequest.TakeProfit tp1 = new FuturesOpenRequest.TakeProfit();
-                tp1.setPrice(tp1Price);
-                tp1.setQuantity(tp1Qty);
-                FuturesOpenRequest.TakeProfit tp2 = new FuturesOpenRequest.TakeProfit();
-                tp2.setPrice(tp2Price);
-                tp2.setQuantity(tp2Qty);
-                req.setTakeProfits(List.of(tp1, tp2));
-            } else {
-                FuturesOpenRequest.TakeProfit tp1 = new FuturesOpenRequest.TakeProfit();
-                tp1.setPrice(tp1Price);
-                tp1.setQuantity(quantity);
-                req.setTakeProfits(List.of(tp1));
-            }
-        }
+        // 止盈：1个覆盖全部仓位
+        FuturesOpenRequest.TakeProfit tp = new FuturesOpenRequest.TakeProfit();
+        tp.setPrice(takeProfitPrice);
+        tp.setQuantity(quantity);
+        req.setTakeProfits(List.of(tp));
 
         try {
             FuturesOrderResponse resp = futuresTradingService.openPosition(aiUserId, req);

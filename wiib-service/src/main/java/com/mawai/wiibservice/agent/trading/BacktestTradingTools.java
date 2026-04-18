@@ -76,7 +76,7 @@ public class BacktestTradingTools implements TradingOperations {
     @Override
     public String openPosition(String side, BigDecimal quantity, Integer leverage,
                                 String orderType, BigDecimal limitPrice,
-                                BigDecimal stopLossPrice, BigDecimal tp1Price, BigDecimal tp2Price,
+                                BigDecimal stopLossPrice, BigDecimal takeProfitPrice,
                                 String memo) {
         if (quantity == null || quantity.signum() <= 0) {
             return "开仓失败: 数量无效";
@@ -127,18 +127,15 @@ public class BacktestTradingTools implements TradingOperations {
 
         // 设置止盈
         List<FuturesTakeProfit> tpList = new ArrayList<>();
-        if (tp1Price != null && tp1Price.signum() > 0) {
-            tpList.add(new FuturesTakeProfit("tp1-" + posId, tp1Price, quantity));
-        }
-        if (tp2Price != null && tp2Price.signum() > 0) {
-            tpList.add(new FuturesTakeProfit("tp2-" + posId, tp2Price, quantity));
+        if (takeProfitPrice != null && takeProfitPrice.signum() > 0) {
+            tpList.add(new FuturesTakeProfit("tp-" + posId, takeProfitPrice, quantity));
         }
         pos.setTakeProfits(tpList);
 
         openPositions.add(pos);
-        log.debug("[Backtest] 开仓成功 {} {} qty={} lev={} entry={} sl={} tp1={} memo={}",
+        log.debug("[Backtest] 开仓成功 {} {} qty={} lev={} entry={} sl={} tp={} memo={}",
                 side, symbol, quantity.toPlainString(), leverage, price.toPlainString(),
-                stopLossPrice, tp1Price, memo);
+                stopLossPrice, takeProfitPrice, memo);
 
         return "开仓成功|posId=" + posId + "|price=" + price.toPlainString();
     }

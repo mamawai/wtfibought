@@ -671,6 +671,16 @@ export interface AiModelAssignment {
   model: string;
 }
 
+export interface TradingRuntimeConfig {
+  lowVolTradingEnabled?: boolean;
+  drawdownSentinelEnabled?: boolean;
+  drawdownWindowMinutes?: number;
+  drawdownPnlPctDropThresholdPpt?: number;
+  drawdownProfitDrawdownThresholdPct?: number;
+  drawdownProfitDrawdownMinBase?: number;
+  drawdownCooldownMinutes?: number;
+}
+
 export interface LatestCryptoResult {
   status: 'ready' | 'pending';
   message?: string;

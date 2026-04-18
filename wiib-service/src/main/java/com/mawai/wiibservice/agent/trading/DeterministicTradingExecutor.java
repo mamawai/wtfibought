@@ -61,10 +61,23 @@ public class DeterministicTradingExecutor {
     private static final double BREAKOUT_VOLUME_MIN = 1.3; // 成交量>=1.3倍均量
     private static final double BREAKOUT_POSITION_SCALE = 0.8;
 
+    // ==================== 低波动小仓位模式 ====================
+    // 盘整期ATR过窄，SL会落入noise floor内被tools层拒。
+    // 策略：撑SL到noise floor，TP按同比例扩保持R:R，qty缩到60%试探性入场。
+    // 扩张倍数>3.0 → 极端横盘（如PAXG日内窄幅），放弃入场。
+    private static final double LOW_VOL_SL_EXPAND_MAX = 3.0;
+    private static final double LOW_VOL_POSITION_SCALE = 0.6;
+    /** 低波动小仓位交易开关（Admin运行时切换，重启恢复默认false保守档）。 */
+    public static volatile boolean LOW_VOL_TRADING_ENABLED = false;
+
     // ==================== 持仓管理 ====================
     private static final double REVERSAL_CONFIDENCE = 0.60;
 
     public record ExecutionResult(String action, String reasoning, String executionLog) {}
+
+    /** SL/TP低波动调整结果。positionScale<1表示小仓位模式；note用于日志标注。 */
+    private record SlTpAdjustment(BigDecimal slDistance, BigDecimal tpDistance,
+                                  double positionScale, String note) {}
 
     // ==================== 丰富的市场上下文 ====================
 
@@ -397,8 +410,22 @@ public class DeterministicTradingExecutor {
 
         // SL / TP1（TP1锁定50%利润，剩余靠追踪止损让利润奔跑）
         BigDecimal slDistance = atr.multiply(BigDecimal.valueOf(profile.trendSlAtr()));
-        BigDecimal stopLoss = isLong ? price.subtract(slDistance) : price.add(slDistance);
         BigDecimal tp1Distance = atr.multiply(BigDecimal.valueOf(profile.trendTpAtr()));
+
+        // 低波动判定：扩SL到noise floor。扩张>3.0放弃；开关关闭且需扩张则HOLD
+        SlTpAdjustment adj = adjustForNoiseFloor(slDistance, tp1Distance, price, profile);
+        if (adj == null) {
+            return hold(String.format("趋势策略: 极端低波动 ATR/price=%.3f%% 扩SL>%.1fx→放弃",
+                    atr.doubleValue() / price.doubleValue() * 100, LOW_VOL_SL_EXPAND_MAX));
+        }
+        boolean isLowVol = adj.positionScale() < 1.0;
+        if (isLowVol && !LOW_VOL_TRADING_ENABLED) {
+            return hold("趋势策略: " + adj.note() + " → HOLD(低波动交易开关已关)");
+        }
+        slDistance = adj.slDistance();
+        tp1Distance = adj.tpDistance();
+        double effectiveScale = regimeScale * adj.positionScale();
+        BigDecimal stopLoss = isLong ? price.subtract(slDistance) : price.add(slDistance);
         BigDecimal tp1 = isLong ? price.add(tp1Distance) : price.subtract(tp1Distance);
 
         // 手续费R:R检查
@@ -408,7 +435,7 @@ public class DeterministicTradingExecutor {
         int leverage = Math.min(
                 signal.getMaxLeverage() != null ? signal.getMaxLeverage() : 10,
                 TREND_MAX_LEVERAGE);
-        BigDecimal quantity = calcQuantityByRisk(user, totalEquity, price, slDistance, leverage, regimeScale);
+        BigDecimal quantity = calcQuantityByRisk(user, totalEquity, price, slDistance, leverage, effectiveScale);
         if (quantity == null) return hold("趋势策略: 仓位计算失败(余额不足或超限)");
 
         if (isInDrawdown(totalEquity)) {
@@ -416,15 +443,18 @@ public class DeterministicTradingExecutor {
             quantity = quantity.multiply(DRAWDOWN_REDUCTION).setScale(8, RoundingMode.HALF_DOWN);
         }
 
+        double actualSlAtrMult = slDistance.doubleValue() / atr.doubleValue();
+        double actualTpAtrMult = tp1Distance.doubleValue() / atr.doubleValue();
         String reason = String.format("趋势跟踪[%s] conf=%.2f regime=%s lev=%dx qty=%s SL=%s(%.1fATR) TP1=%s(%.1fATR)+追踪",
                 side, confidence, ctx.regime, leverage,
                 quantity.setScale(4, RoundingMode.HALF_UP).toPlainString(),
-                fmtPrice(stopLoss), profile.trendSlAtr(),
-                fmtPrice(tp1), profile.trendTpAtr());
+                fmtPrice(stopLoss), actualSlAtrMult,
+                fmtPrice(tp1), actualTpAtrMult);
+        if (adj.positionScale() < 1.0) reason += " [" + adj.note() + "]";
         if (isInDrawdown(totalEquity)) reason += " [回撤保护]";
 
         // TP1锁定50%，不设TP2（靠managePositions的追踪止损管理剩余50%）
-        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, null, "TREND");
+        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, "TREND");
         String action = result.startsWith("开仓成功") ? ("OPEN_" + side) : "HOLD";
         if (!result.startsWith("开仓成功")) reason += " | 开仓失败: " + result;
         return new ExecutionResult(action, reason, result);
@@ -485,8 +515,22 @@ public class DeterministicTradingExecutor {
         }
 
         BigDecimal slDistance = atr.multiply(BigDecimal.valueOf(profile.revertSlAtr()));
-        BigDecimal stopLoss = isLong ? price.subtract(slDistance) : price.add(slDistance);
         BigDecimal tpDistance = atr.multiply(BigDecimal.valueOf(tpAtrMult));
+
+        // 低波动判定：扩SL到noise floor。扩张>3.0放弃；开关关闭且需扩张则HOLD
+        SlTpAdjustment adj = adjustForNoiseFloor(slDistance, tpDistance, price, profile);
+        if (adj == null) {
+            return hold(String.format("BB回归: 极端低波动 ATR/price=%.3f%% 扩SL>%.1fx→放弃",
+                    atr.doubleValue() / price.doubleValue() * 100, LOW_VOL_SL_EXPAND_MAX));
+        }
+        boolean isLowVol = adj.positionScale() < 1.0;
+        if (isLowVol && !LOW_VOL_TRADING_ENABLED) {
+            return hold("BB回归: " + adj.note() + " → HOLD(低波动交易开关已关)");
+        }
+        slDistance = adj.slDistance();
+        tpDistance = adj.tpDistance();
+        double effectiveScale = REVERT_POSITION_SCALE * regimeScale * adj.positionScale();
+        BigDecimal stopLoss = isLong ? price.subtract(slDistance) : price.add(slDistance);
         BigDecimal tp1 = isLong ? price.add(tpDistance) : price.subtract(tpDistance);
 
         // 手续费R:R检查
@@ -497,7 +541,7 @@ public class DeterministicTradingExecutor {
                 signal.getMaxLeverage() != null ? signal.getMaxLeverage() : 10,
                 REVERT_MAX_LEVERAGE);
         BigDecimal quantity = calcQuantityByRisk(user, totalEquity, price, slDistance, leverage,
-                REVERT_POSITION_SCALE * regimeScale);
+                effectiveScale);
         if (quantity == null) return hold("BB回归: 仓位计算失败");
 
         if (isInDrawdown(totalEquity)) {
@@ -505,15 +549,17 @@ public class DeterministicTradingExecutor {
             quantity = quantity.multiply(DRAWDOWN_REDUCTION).setScale(8, RoundingMode.HALF_DOWN);
         }
 
+        double actualTpAtrMult = tpDistance.doubleValue() / atr.doubleValue();
         String reason = String.format(
                 "BB均值回归[%s] conf=%.2f RSI=%.1f BB%%B=%.2f lev=%dx qty=%s SL=%s TP=%s(%.1fATR→BB中轨) 最长%dh",
                 side, confidence, ctx.rsi5m != null ? ctx.rsi5m.doubleValue() : -1,
                 ctx.bollPb5m != null ? ctx.bollPb5m : -1,
                 leverage, quantity.setScale(4, RoundingMode.HALF_UP).toPlainString(),
-                fmtPrice(stopLoss), fmtPrice(tp1), tpAtrMult, REVERT_MAX_HOLD_HOURS);
+                fmtPrice(stopLoss), fmtPrice(tp1), actualTpAtrMult, REVERT_MAX_HOLD_HOURS);
+        if (isLowVol) reason += " [" + adj.note() + "]";
         if (isInDrawdown(totalEquity)) reason += " [回撤保护]";
 
-        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, null, "MEAN_REVERSION");
+        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, "MEAN_REVERSION");
         String action = result.startsWith("开仓成功") ? ("OPEN_" + side) : "HOLD";
         if (!result.startsWith("开仓成功")) reason += " | 开仓失败: " + result;
         return new ExecutionResult(action, reason, result);
@@ -551,8 +597,22 @@ public class DeterministicTradingExecutor {
         BigDecimal price = ctx.price;
 
         BigDecimal slDistance = atr.multiply(BigDecimal.valueOf(profile.breakoutSlAtr()));
-        BigDecimal stopLoss = isLong ? price.subtract(slDistance) : price.add(slDistance);
         BigDecimal tpDistance = atr.multiply(BigDecimal.valueOf(profile.breakoutTpAtr()));
+
+        // 低波动判定：扩SL到noise floor。扩张>3.0放弃；开关关闭且需扩张则HOLD
+        SlTpAdjustment adj = adjustForNoiseFloor(slDistance, tpDistance, price, profile);
+        if (adj == null) {
+            return hold(String.format("突破策略: 极端低波动 ATR/price=%.3f%% 扩SL>%.1fx→放弃",
+                    atr.doubleValue() / price.doubleValue() * 100, LOW_VOL_SL_EXPAND_MAX));
+        }
+        boolean isLowVol = adj.positionScale() < 1.0;
+        if (isLowVol && !LOW_VOL_TRADING_ENABLED) {
+            return hold("突破策略: " + adj.note() + " → HOLD(低波动交易开关已关)");
+        }
+        slDistance = adj.slDistance();
+        tpDistance = adj.tpDistance();
+        double effectiveScale = BREAKOUT_POSITION_SCALE * regimeScale * adj.positionScale();
+        BigDecimal stopLoss = isLong ? price.subtract(slDistance) : price.add(slDistance);
         BigDecimal tp1 = isLong ? price.add(tpDistance) : price.subtract(tpDistance);
 
         String feeCheck = checkFeeAwareRR(price, atr, slDistance, tpDistance);
@@ -562,7 +622,7 @@ public class DeterministicTradingExecutor {
                 signal.getMaxLeverage() != null ? signal.getMaxLeverage() : 10,
                 BREAKOUT_MAX_LEVERAGE);
         BigDecimal quantity = calcQuantityByRisk(user, totalEquity, price, slDistance, leverage,
-                BREAKOUT_POSITION_SCALE * regimeScale);
+                effectiveScale);
         if (quantity == null) return hold("突破策略: 仓位计算失败");
 
         if (isInDrawdown(totalEquity)) {
@@ -570,16 +630,19 @@ public class DeterministicTradingExecutor {
             quantity = quantity.multiply(DRAWDOWN_REDUCTION).setScale(8, RoundingMode.HALF_DOWN);
         }
 
+        double actualSlAtrMult = slDistance.doubleValue() / atr.doubleValue();
+        double actualTpAtrMult = tpDistance.doubleValue() / atr.doubleValue();
         String reason = String.format(
                 "BB压缩突破[%s] conf=%.2f BB%%B=%.2f vol=%.1fx lev=%dx qty=%s SL=%s(%.1fATR) TP=%s(%.1fATR)+追踪",
                 side, confidence, ctx.bollPb5m != null ? ctx.bollPb5m : -1,
                 ctx.volumeRatio5m,
                 leverage, quantity.setScale(4, RoundingMode.HALF_UP).toPlainString(),
-                fmtPrice(stopLoss), profile.breakoutSlAtr(),
-                fmtPrice(tp1), profile.breakoutTpAtr());
+                fmtPrice(stopLoss), actualSlAtrMult,
+                fmtPrice(tp1), actualTpAtrMult);
+        if (isLowVol) reason += " [" + adj.note() + "]";
         if (isInDrawdown(totalEquity)) reason += " [回撤保护]";
 
-        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, null, "BREAKOUT");
+        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, "BREAKOUT");
         String action = result.startsWith("开仓成功") ? ("OPEN_" + side) : "HOLD";
         if (!result.startsWith("开仓成功")) reason += " | 开仓失败: " + result;
         return new ExecutionResult(action, reason, result);
@@ -702,6 +765,31 @@ public class DeterministicTradingExecutor {
                     tpInAtr, feeInAtr, MIN_PROFIT_AFTER_FEE_ATR, minTpRequired);
         }
         return null;
+    }
+
+    // ==================== 低波动小仓位调整 ====================
+
+    /**
+     * 低波动期将SL撑到noise floor、TP同比例扩（保R:R）、仓位缩减到60%试探入场。
+     * 返回null = 扩张倍数超限（极端横盘），上游应HOLD。
+     * 正常波动 = positionScale=1.0 不调整。
+     */
+    private static SlTpAdjustment adjustForNoiseFloor(
+            BigDecimal slRaw, BigDecimal tpRaw, BigDecimal price, SymbolProfile profile) {
+        double rawSlDist = slRaw.doubleValue();
+        double minSlDist = profile.slMinPct() * price.doubleValue();
+        if (rawSlDist >= minSlDist) {
+            return new SlTpAdjustment(slRaw, tpRaw, 1.0, "正常波动");
+        }
+        double expandRatio = minSlDist / rawSlDist;
+        if (expandRatio > LOW_VOL_SL_EXPAND_MAX) {
+            return null;
+        }
+        BigDecimal ratio = BigDecimal.valueOf(expandRatio);
+        BigDecimal newSl = slRaw.multiply(ratio).setScale(8, RoundingMode.HALF_UP);
+        BigDecimal newTp = tpRaw.multiply(ratio).setScale(8, RoundingMode.HALF_UP);
+        return new SlTpAdjustment(newSl, newTp, LOW_VOL_POSITION_SCALE,
+                String.format("低波动小仓位(扩%.2fx)", expandRatio));
     }
 
     // ==================== 信号选择（优先短周期）====================

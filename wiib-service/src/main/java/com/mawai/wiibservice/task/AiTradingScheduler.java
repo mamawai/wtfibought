@@ -35,6 +35,7 @@ public class AiTradingScheduler {
     private final AtomicLong aiUserId = new AtomicLong(0);
     private final AtomicInteger cycleCounter = new AtomicInteger(0);
     private final Set<String> runningSymbols = ConcurrentHashMap.newKeySet();
+    /** 全局最近触发记录，由所有入口（事件/cron/手动/Sentinel）共享，用于跨入口防重。 */
     private final Map<String, Instant> lastEventTriggerTime = new ConcurrentHashMap<>();
     private static final long EVENT_GUARD_SECONDS = 30; // 30秒技术去重
 
@@ -134,11 +135,19 @@ public class AiTradingScheduler {
         return cycleNo;
     }
 
+    /** 查询symbol在最近 secondsAgo 秒内是否已被任何入口触发过，用于Sentinel跨源防重。 */
+    public boolean isRecentlyTriggered(String symbol, long secondsAgo) {
+        Instant last = lastEventTriggerTime.get(symbol);
+        return last != null && Instant.now().getEpochSecond() - last.getEpochSecond() < secondsAgo;
+    }
+
     private void runTradingCycle(String symbol, int cycleNo) {
         if (!runningSymbols.add(symbol)) {
             log.warn("[AI-Trader] {} 上一轮未完成，跳过", symbol);
             return;
         }
+        // 任何入口启动cycle时记录时间，跨入口防重共享
+        lastEventTriggerTime.put(symbol, Instant.now());
         long userId = aiUserId.get();
         log.info("[AI-Trader] 交易周期开始 symbol={} cycleNo={}", symbol, cycleNo);
 

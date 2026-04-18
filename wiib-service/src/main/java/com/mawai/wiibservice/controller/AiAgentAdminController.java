@@ -7,6 +7,8 @@ import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibservice.agent.quant.memory.VerificationService;
+import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
+import com.mawai.wiibservice.agent.trading.PositionDrawdownSentinel;
 import com.mawai.wiibservice.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibservice.mapper.AiRuntimeConfigMapper;
 import com.mawai.wiibservice.task.AiTradingScheduler;
@@ -218,6 +220,57 @@ public class AiAgentAdminController {
         return Result.ok("AI Trader决策已触发: cycleNo=" + cycleNo + " symbols=" + symbols);
     }
 
+    // ========== 交易运行时开关 ==========
+
+    @GetMapping("/trading-config")
+    @Operation(summary = "获取交易运行时开关")
+    public Result<TradingConfigResponse> getTradingConfig() {
+        checkAdmin();
+        return Result.ok(buildTradingConfigResponse());
+    }
+
+    @PostMapping("/trading-config")
+    @Operation(summary = "设置交易运行时开关")
+    public Result<TradingConfigResponse> setTradingConfig(@RequestBody TradingConfigRequest req) {
+        checkAdmin();
+        if (req.getLowVolTradingEnabled() != null) {
+            DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED = req.getLowVolTradingEnabled();
+            log.info("[Admin] 低波动交易开关更新为: {}", req.getLowVolTradingEnabled());
+        }
+        if (req.getDrawdownSentinelEnabled() != null) {
+            PositionDrawdownSentinel.ENABLED = req.getDrawdownSentinelEnabled();
+            log.info("[Admin] 回撤哨兵开关更新为: {}", req.getDrawdownSentinelEnabled());
+        }
+        if (req.getDrawdownWindowMinutes() != null && req.getDrawdownWindowMinutes() > 0) {
+            PositionDrawdownSentinel.WINDOW_MINUTES = req.getDrawdownWindowMinutes();
+        }
+        if (req.getDrawdownPnlPctDropThresholdPpt() != null && req.getDrawdownPnlPctDropThresholdPpt() >= 0) {
+            PositionDrawdownSentinel.PNL_PCT_DROP_THRESHOLD_PPT = req.getDrawdownPnlPctDropThresholdPpt();
+        }
+        if (req.getDrawdownProfitDrawdownThresholdPct() != null && req.getDrawdownProfitDrawdownThresholdPct() >= 0) {
+            PositionDrawdownSentinel.PROFIT_DRAWDOWN_THRESHOLD_PCT = req.getDrawdownProfitDrawdownThresholdPct();
+        }
+        if (req.getDrawdownProfitDrawdownMinBase() != null && req.getDrawdownProfitDrawdownMinBase() >= 0) {
+            PositionDrawdownSentinel.PROFIT_DRAWDOWN_MIN_BASE = req.getDrawdownProfitDrawdownMinBase();
+        }
+        if (req.getDrawdownCooldownMinutes() != null && req.getDrawdownCooldownMinutes() > 0) {
+            PositionDrawdownSentinel.COOLDOWN_MINUTES = req.getDrawdownCooldownMinutes();
+        }
+        return Result.ok(buildTradingConfigResponse());
+    }
+
+    private TradingConfigResponse buildTradingConfigResponse() {
+        TradingConfigResponse resp = new TradingConfigResponse();
+        resp.setLowVolTradingEnabled(DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED);
+        resp.setDrawdownSentinelEnabled(PositionDrawdownSentinel.ENABLED);
+        resp.setDrawdownWindowMinutes(PositionDrawdownSentinel.WINDOW_MINUTES);
+        resp.setDrawdownPnlPctDropThresholdPpt(PositionDrawdownSentinel.PNL_PCT_DROP_THRESHOLD_PPT);
+        resp.setDrawdownProfitDrawdownThresholdPct(PositionDrawdownSentinel.PROFIT_DRAWDOWN_THRESHOLD_PCT);
+        resp.setDrawdownProfitDrawdownMinBase(PositionDrawdownSentinel.PROFIT_DRAWDOWN_MIN_BASE);
+        resp.setDrawdownCooldownMinutes(PositionDrawdownSentinel.COOLDOWN_MINUTES);
+        return resp;
+    }
+
     // ========== DTO ==========
 
     @Data
@@ -234,6 +287,28 @@ public class AiAgentAdminController {
         private String functionName;
         private Long configId;
         private String model;
+    }
+
+    @Data
+    public static class TradingConfigRequest {
+        private Boolean lowVolTradingEnabled;
+        private Boolean drawdownSentinelEnabled;
+        private Integer drawdownWindowMinutes;
+        private Double drawdownPnlPctDropThresholdPpt;
+        private Double drawdownProfitDrawdownThresholdPct;
+        private Double drawdownProfitDrawdownMinBase;
+        private Integer drawdownCooldownMinutes;
+    }
+
+    @Data
+    public static class TradingConfigResponse {
+        private Boolean lowVolTradingEnabled;
+        private Boolean drawdownSentinelEnabled;
+        private Integer drawdownWindowMinutes;
+        private Double drawdownPnlPctDropThresholdPpt;
+        private Double drawdownProfitDrawdownThresholdPct;
+        private Double drawdownProfitDrawdownMinBase;
+        private Integer drawdownCooldownMinutes;
     }
 
 }

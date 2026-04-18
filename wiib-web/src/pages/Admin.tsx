@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useUserStore } from '../stores/userStore';
 import { adminApi, type TaskStatus } from '../api';
-import type { AiKeyConfig, AiModelAssignment } from '../types';
+import type { AiKeyConfig, AiModelAssignment, TradingRuntimeConfig } from '../types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
@@ -38,6 +38,10 @@ export function Admin() {
   // 模型分配
   const [assignmentsLoading, setAssignmentsLoading] = useState(false);
   const [assignmentsDraft, setAssignmentsDraft] = useState<AiModelAssignment[]>([]);
+
+  // 交易运行时开关
+  const [tradingConfig, setTradingConfig] = useState<TradingRuntimeConfig>({ lowVolTradingEnabled: false });
+  const [drawdownDraft, setDrawdownDraft] = useState<TradingRuntimeConfig>({});
 
   const fetchStatus = useCallback(async () => {
     setLoading(true);
@@ -76,14 +80,29 @@ export function Admin() {
     finally { setAssignmentsLoading(false); }
   }, []);
 
+  const fetchTradingConfig = useCallback(async () => {
+    try {
+      const c = await adminApi.getTradingConfig();
+      setTradingConfig(c);
+      setDrawdownDraft({
+        drawdownWindowMinutes: c.drawdownWindowMinutes,
+        drawdownPnlPctDropThresholdPpt: c.drawdownPnlPctDropThresholdPpt,
+        drawdownProfitDrawdownThresholdPct: c.drawdownProfitDrawdownThresholdPct,
+        drawdownProfitDrawdownMinBase: c.drawdownProfitDrawdownMinBase,
+        drawdownCooldownMinutes: c.drawdownCooldownMinutes,
+      });
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     if (user?.id === 1) {
       fetchStatus();
       fetchInterestRate();
       fetchAiKeys();
       fetchAssignments();
+      fetchTradingConfig();
     }
-  }, [user, fetchStatus, fetchInterestRate, fetchAiKeys, fetchAssignments]);
+  }, [user, fetchStatus, fetchInterestRate, fetchAiKeys, fetchAssignments, fetchTradingConfig]);
 
   if (!user || user.id !== 1) {
     return <Navigate to="/" replace />;
@@ -95,6 +114,45 @@ export function Admin() {
       await action();
       await fetchStatus();
     } catch { /* ignore */ }
+    finally { setActionLoading(null); }
+  };
+
+  const toggleLowVolTrading = async () => {
+    const next = !tradingConfig.lowVolTradingEnabled;
+    setActionLoading('toggleLowVol');
+    try {
+      const c = await adminApi.setTradingConfig({ lowVolTradingEnabled: next });
+      setTradingConfig(c);
+      toast(next ? '低波动小仓位模式：已开启' : '低波动小仓位模式：已关闭', 'success');
+    } catch { /* ignore */ }
+    finally { setActionLoading(null); }
+  };
+
+  const toggleDrawdownSentinel = async () => {
+    const next = !tradingConfig.drawdownSentinelEnabled;
+    setActionLoading('toggleDrawdown');
+    try {
+      const c = await adminApi.setTradingConfig({ drawdownSentinelEnabled: next });
+      setTradingConfig(c);
+      toast(next ? '持仓回撤哨兵：已开启' : '持仓回撤哨兵：已关闭', 'success');
+    } catch { /* ignore */ }
+    finally { setActionLoading(null); }
+  };
+
+  const saveDrawdownParams = async () => {
+    setActionLoading('saveDrawdown');
+    try {
+      const c = await adminApi.setTradingConfig(drawdownDraft);
+      setTradingConfig(c);
+      setDrawdownDraft({
+        drawdownWindowMinutes: c.drawdownWindowMinutes,
+        drawdownPnlPctDropThresholdPpt: c.drawdownPnlPctDropThresholdPpt,
+        drawdownProfitDrawdownThresholdPct: c.drawdownProfitDrawdownThresholdPct,
+        drawdownProfitDrawdownMinBase: c.drawdownProfitDrawdownMinBase,
+        drawdownCooldownMinutes: c.drawdownCooldownMinutes,
+      });
+      toast('回撤哨兵参数已保存', 'success');
+    } catch (e) { toast((e as Error).message || '保存失败', 'error'); }
     finally { setActionLoading(null); }
   };
 
@@ -441,6 +499,126 @@ export function Admin() {
                   disabled={actionLoading !== null}
                 >
                   唤醒AI Trader决策(全部币种)
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>交易运行时开关</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex-1">
+                  <div className="font-medium">低波动小仓位模式</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    开启：盘整期(ATR×SL倍数&lt;noise floor)时，扩SL到噪音下限（≤3.0x）、TP同比例扩、仓位×0.6试探入场<br/>
+                    关闭：低波动期直接HOLD（保守，默认）。重启后恢复关闭状态。
+                  </div>
+                  <div className="text-xs mt-2">
+                    当前状态：<Badge variant={tradingConfig.lowVolTradingEnabled ? 'default' : 'secondary'}>
+                      {tradingConfig.lowVolTradingEnabled ? '已开启（激进）' : '已关闭（保守）'}
+                    </Badge>
+                  </div>
+                </div>
+                <Button
+                  variant={tradingConfig.lowVolTradingEnabled ? 'default' : 'outline'}
+                  onClick={() => void toggleLowVolTrading()}
+                  disabled={actionLoading !== null}
+                >
+                  {tradingConfig.lowVolTradingEnabled ? '关闭' : '开启'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>持仓回撤哨兵 (唤醒AI Trader)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="font-medium">按持仓回撤唤醒</div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      每分钟扫描AI账户所有OPEN持仓，窗口内PnL急速恶化时唤醒AI Trader重新决策。<br/>
+                      <b>条件A</b>：PnL%下降 ≥ 阈值ppt（保证金权益角度）<br/>
+                      <b>条件B</b>：盈利金额回撤 ≥ 阈值%（仅在窗口最高盈利 &gt; 基线USDT时启用）<br/>
+                      任一条件满足即触发，日志会注明是A/B/A+B触发。同持仓触发后进入冷却期。
+                    </div>
+                    <div className="text-xs mt-2">
+                      当前状态：<Badge variant={tradingConfig.drawdownSentinelEnabled ? 'default' : 'secondary'}>
+                        {tradingConfig.drawdownSentinelEnabled ? '已开启' : '已关闭（默认）'}
+                      </Badge>
+                    </div>
+                  </div>
+                  <Button
+                    variant={tradingConfig.drawdownSentinelEnabled ? 'default' : 'outline'}
+                    onClick={() => void toggleDrawdownSentinel()}
+                    disabled={actionLoading !== null}
+                  >
+                    {tradingConfig.drawdownSentinelEnabled ? '关闭' : '开启'}
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-muted-foreground">窗口时长(分钟)</label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={drawdownDraft.drawdownWindowMinutes ?? ''}
+                      onChange={(e) => setDrawdownDraft({ ...drawdownDraft, drawdownWindowMinutes: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">冷却时长(分钟)</label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={drawdownDraft.drawdownCooldownMinutes ?? ''}
+                      onChange={(e) => setDrawdownDraft({ ...drawdownDraft, drawdownCooldownMinutes: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">A - PnL%下降阈值(ppt)</label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min={0}
+                      value={drawdownDraft.drawdownPnlPctDropThresholdPpt ?? ''}
+                      onChange={(e) => setDrawdownDraft({ ...drawdownDraft, drawdownPnlPctDropThresholdPpt: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">B - 盈利回撤阈值(%)</label>
+                    <Input
+                      type="number"
+                      step="1"
+                      min={0}
+                      value={drawdownDraft.drawdownProfitDrawdownThresholdPct ?? ''}
+                      onChange={(e) => setDrawdownDraft({ ...drawdownDraft, drawdownProfitDrawdownThresholdPct: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">B - 盈利基线(USDT)</label>
+                    <Input
+                      type="number"
+                      step="1"
+                      min={0}
+                      value={drawdownDraft.drawdownProfitDrawdownMinBase ?? ''}
+                      onChange={(e) => setDrawdownDraft({ ...drawdownDraft, drawdownProfitDrawdownMinBase: Number(e.target.value) })}
+                    />
+                  </div>
+                </div>
+
+                <Button
+                  onClick={() => void saveDrawdownParams()}
+                  disabled={actionLoading !== null}
+                >
+                  <Save className="w-4 h-4 mr-2" />保存参数
                 </Button>
               </div>
             </CardContent>

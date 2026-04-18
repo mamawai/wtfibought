@@ -12,13 +12,13 @@ import java.math.BigDecimal;
 public interface TradingOperations {
 
     /**
-     * 开仓。
+     * 开仓。必须设置1个止损+1个止盈，各覆盖全部仓位。
      *
      * @return 以"开仓成功"开头表示成功，否则为失败原因
      */
     String openPosition(String side, BigDecimal quantity, Integer leverage,
                         String orderType, BigDecimal limitPrice,
-                        BigDecimal stopLossPrice, BigDecimal tp1Price, BigDecimal tp2Price,
+                        BigDecimal stopLossPrice, BigDecimal takeProfitPrice,
                         String memo);
 
     /**

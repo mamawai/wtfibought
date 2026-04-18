@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, AiTradingDashboard, AiTradingDecision } from '../types';
+import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, AiTradingDashboard, AiTradingDecision, TradingRuntimeConfig } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -161,6 +161,11 @@ export const adminApi = {
     api.post<unknown, string>('/admin/ai-agent/quant/verify/trigger', null, { params: { symbol } }),
   triggerAiTrader: (symbol?: string) =>
     api.post<unknown, string>('/admin/ai-agent/trading/trigger', null, { params: { symbol } }),
+  // 交易运行时开关
+  getTradingConfig: () =>
+    api.get<unknown, TradingRuntimeConfig>('/admin/ai-agent/trading-config'),
+  setTradingConfig: (config: TradingRuntimeConfig) =>
+    api.post<unknown, TradingRuntimeConfig>('/admin/ai-agent/trading-config', config),
 };
 
 // ========== 期权接口 ==========
