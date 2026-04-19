@@ -19,10 +19,12 @@ public record SymbolProfile(
         double slMinPct,
         double slMaxPct
 ) {
+    // trailBreakevenAtr 1.0→2.0 防5m级浮盈<0.2%就被保本止损打掉
+    // trailLockAtr 2.0→3.0 让利润有追踪空间
     private static final SymbolProfile BTC = new SymbolProfile(
-            1.5, 3.0, 1.5, 1.5, 3.0, 2.0, 3.0, 1.0, 2.0, 0.005, 0.10);
+            1.5, 3.0, 1.5, 1.5, 3.0, 2.0, 3.0, 2.0, 3.0, 0.005, 0.10);
     private static final SymbolProfile ETH = new SymbolProfile(
-            1.5, 3.0, 1.5, 1.5, 3.0, 2.0, 3.0, 1.0, 2.0, 0.005, 0.10);
+            1.5, 3.0, 1.5, 1.5, 3.0, 2.0, 3.0, 2.0, 3.0, 0.005, 0.10);
     private static final SymbolProfile PAXG = new SymbolProfile(
             3.5, 6.0, 3.0, 2.5, 5.0, 4.0, 6.0, 2.0, 3.5, 0.002, 0.05);
 
