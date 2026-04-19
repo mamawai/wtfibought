@@ -29,6 +29,8 @@ public class AiTradingTools implements TradingOperations {
     private static final BigDecimal MIN_MARGIN_FLOOR = new BigDecimal("100");
     private static final BigDecimal MIN_MARGIN_RATIO = new BigDecimal("0.01"); // 余额的1%
     private static final int MAX_OPEN_POSITIONS = 3;
+    // 同向持仓上限3：仅3标的交易时2上限会漏掉高置信度(conf=1.0)信号，总仓位风险由MAX_OPEN_POSITIONS兜底
+    private static final int MAX_SAME_DIRECTION_POSITIONS = 3;
     // SL校验容差2bps：匹配执行器adjustForNoiseFloor，防价格漂移/BigDecimal精度误拒
     private static final BigDecimal SL_MIN_TOLERANCE = new BigDecimal("0.0002");
 
