@@ -681,6 +681,10 @@ export interface TradingRuntimeConfig {
   drawdownCooldownMinutes?: number;
 }
 
+export interface QuantRuntimeConfig {
+  debateJudgeEnabled?: boolean;
+}
+
 export interface LatestCryptoResult {
   status: 'ready' | 'pending';
   message?: string;

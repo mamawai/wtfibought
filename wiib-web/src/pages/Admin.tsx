@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useUserStore } from '../stores/userStore';
 import { adminApi, type TaskStatus } from '../api';
-import type { AiKeyConfig, AiModelAssignment, TradingRuntimeConfig } from '../types';
+import type { AiKeyConfig, AiModelAssignment, TradingRuntimeConfig, QuantRuntimeConfig } from '../types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
@@ -42,6 +42,9 @@ export function Admin() {
   // 交易运行时开关
   const [tradingConfig, setTradingConfig] = useState<TradingRuntimeConfig>({ lowVolTradingEnabled: false });
   const [drawdownDraft, setDrawdownDraft] = useState<TradingRuntimeConfig>({});
+
+  // 量化运行时开关
+  const [quantConfig, setQuantConfig] = useState<QuantRuntimeConfig>({ debateJudgeEnabled: true });
 
   const fetchStatus = useCallback(async () => {
     setLoading(true);
@@ -94,6 +97,13 @@ export function Admin() {
     } catch { /* ignore */ }
   }, []);
 
+  const fetchQuantConfig = useCallback(async () => {
+    try {
+      const c = await adminApi.getQuantConfig();
+      setQuantConfig(c);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     if (user?.id === 1) {
       fetchStatus();
@@ -101,8 +111,9 @@ export function Admin() {
       fetchAiKeys();
       fetchAssignments();
       fetchTradingConfig();
+      fetchQuantConfig();
     }
-  }, [user, fetchStatus, fetchInterestRate, fetchAiKeys, fetchAssignments, fetchTradingConfig]);
+  }, [user, fetchStatus, fetchInterestRate, fetchAiKeys, fetchAssignments, fetchTradingConfig, fetchQuantConfig]);
 
   if (!user || user.id !== 1) {
     return <Navigate to="/" replace />;
@@ -135,6 +146,17 @@ export function Admin() {
       const c = await adminApi.setTradingConfig({ drawdownSentinelEnabled: next });
       setTradingConfig(c);
       toast(next ? '持仓回撤哨兵：已开启' : '持仓回撤哨兵：已关闭', 'success');
+    } catch { /* ignore */ }
+    finally { setActionLoading(null); }
+  };
+
+  const toggleDebateJudge = async () => {
+    const next = !quantConfig.debateJudgeEnabled;
+    setActionLoading('toggleDebate');
+    try {
+      const c = await adminApi.setQuantConfig({ debateJudgeEnabled: next });
+      setQuantConfig(c);
+      toast(next ? 'Bull/Bear辩论裁决：已开启' : 'Bull/Bear辩论裁决：已关闭（省3次LLM调用）', 'success');
     } catch { /* ignore */ }
     finally { setActionLoading(null); }
   };
@@ -528,6 +550,35 @@ export function Admin() {
                   disabled={actionLoading !== null}
                 >
                   {tradingConfig.lowVolTradingEnabled ? '关闭' : '开启'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>量化运行时开关</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex-1">
+                  <div className="font-medium">Bull/Bear 辩论裁决 (Q4.5)</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    开启：每轮量化分析跑 Bull辩手 ∥ Bear辩手 + Judge裁判共3次LLM调用，对HorizonJudge裁决做二次审核与概率修正（默认）<br/>
+                    关闭：跳过辩论，保留原始forecasts，下发中性概率(33/34/33)。每轮省3-10s + 3次LLM成本，用于A/B对比胜率。重启恢复开启状态。
+                  </div>
+                  <div className="text-xs mt-2">
+                    当前状态：<Badge variant={quantConfig.debateJudgeEnabled ? 'default' : 'secondary'}>
+                      {quantConfig.debateJudgeEnabled ? '已开启（默认）' : '已关闭（A/B对照）'}
+                    </Badge>
+                  </div>
+                </div>
+                <Button
+                  variant={quantConfig.debateJudgeEnabled ? 'default' : 'outline'}
+                  onClick={() => void toggleDebateJudge()}
+                  disabled={actionLoading !== null}
+                >
+                  {quantConfig.debateJudgeEnabled ? '关闭' : '开启'}
                 </Button>
               </div>
             </CardContent>
