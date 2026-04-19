@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 确定性交易执行器 V2 — 基于信号共振的多策略引擎。
@@ -71,7 +72,14 @@ public class DeterministicTradingExecutor {
     public static volatile boolean LOW_VOL_TRADING_ENABLED = false;
 
     // ==================== 持仓管理 ====================
-    private static final double REVERSAL_CONFIDENCE = 0.60;
+    // 反转平仓置信度阈值：0.82要求强反转信号才平仓，防5m级噪音打掉浮盈
+    // 配合 REVERSAL_STREAK_REQUIRED 连续校验 + 手续费门槛使用
+    private static final double REVERSAL_CONFIDENCE = 0.82;
+    private static final int REVERSAL_STREAK_REQUIRED = 2;
+    private static final double REVERSAL_MIN_PROFIT_FEE_MULTIPLE = 3.0;
+    // 仓位反转信号连续次数：key=positionId，value=连续出现的反向信号周期数
+    // 仓位平仓/反转中断时自动清零
+    private static final ConcurrentHashMap<Long, Integer> REVERSAL_STREAK = new ConcurrentHashMap<>();
 
     public record ExecutionResult(String action, String reasoning, String executionLog) {}
 
@@ -233,20 +241,44 @@ public class DeterministicTradingExecutor {
                 }
             }
 
-            // ===== 5. 信号强烈反转 → 平仓 =====
+            // ===== 5. 信号强烈反转 → 平仓（需连续2次+浮盈够手续费门槛）=====
             QuantSignalDecision bestSignal = findBestSignal(signals);
-            if (bestSignal != null && bestSignal.getConfidence() != null
-                    && bestSignal.getConfidence().doubleValue() >= REVERSAL_CONFIDENCE) {
-                boolean reversed = (isLong && "SHORT".equals(bestSignal.getDirection()))
-                        || (!isLong && "LONG".equals(bestSignal.getDirection()));
-                if (reversed) {
-                    String closeResult = tools.closePosition(pos.getId(), pos.getQuantity());
-                    execLog.append("信号反转平仓: ").append(closeResult).append("\n");
-                    reasons.append("信号反转(").append(bestSignal.getDirection())
-                            .append(" conf=").append(bestSignal.getConfidence()).append(")→平仓; ");
-                    action = "CLOSE";
+            boolean isStrongReversal = bestSignal != null && bestSignal.getConfidence() != null
+                    && bestSignal.getConfidence().doubleValue() >= REVERSAL_CONFIDENCE
+                    && ((isLong && "SHORT".equals(bestSignal.getDirection()))
+                        || (!isLong && "LONG".equals(bestSignal.getDirection())));
+            if (isStrongReversal) {
+                int streak = REVERSAL_STREAK.merge(pos.getId(), 1, Integer::sum);
+                if (streak < REVERSAL_STREAK_REQUIRED) {
+                    reasons.append(String.format("反转信号streak=%d/%d→观察下个周期; ",
+                            streak, REVERSAL_STREAK_REQUIRED));
                     continue;
                 }
+                // 浮盈门槛：浮盈需>=3×往返手续费，否则让追踪止损接管（防吃手续费型平仓）
+                BigDecimal qty = pos.getQuantity();
+                BigDecimal roundTripFee = currentPrice.multiply(qty)
+                        .multiply(BigDecimal.valueOf(ROUND_TRIP_FEE_RATE));
+                BigDecimal profitAbs = profit.multiply(qty);
+                BigDecimal minProfit = roundTripFee.multiply(BigDecimal.valueOf(REVERSAL_MIN_PROFIT_FEE_MULTIPLE));
+                if (profitAbs.compareTo(minProfit) < 0) {
+                    reasons.append(String.format("反转streak=%d但浮盈%.2f<手续费×%.0f=%.2f→等追踪止损; ",
+                            streak, profitAbs.doubleValue(), REVERSAL_MIN_PROFIT_FEE_MULTIPLE,
+                            minProfit.doubleValue()));
+                    continue;
+                }
+                String closeResult = tools.closePosition(pos.getId(), qty);
+                REVERSAL_STREAK.remove(pos.getId());
+                execLog.append("信号反转平仓(streak=").append(streak)
+                        .append(",浮盈").append(profitAbs.setScale(2, RoundingMode.HALF_UP)).append("): ")
+                        .append(closeResult).append("\n");
+                reasons.append("信号反转(").append(bestSignal.getDirection())
+                        .append(" conf=").append(bestSignal.getConfidence())
+                        .append(" streak=").append(streak).append(")→平仓; ");
+                action = "CLOSE";
+                continue;
+            } else {
+                // 非反转信号：清零 streak，防历史反转误累积
+                REVERSAL_STREAK.remove(pos.getId());
             }
 
             // ===== 6. ATR追踪止损 =====
