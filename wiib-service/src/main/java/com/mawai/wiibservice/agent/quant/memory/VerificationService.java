@@ -196,13 +196,30 @@ public class VerificationService {
 
             int changeBps = calcChangeBps(entryPrice, priceAfter);
 
-            // [降级策略] 0_10: 完整TP/SL路径评级；10_20/20_30: 仅BPS方向评级（TP/SL基于T+0生成，对后段无效）
-            BigDecimal segTp1 = startMin == 0 ? f.getTp1() : null;
-            BigDecimal segSl = startMin == 0 ? f.getInvalidationPrice() : null;
+            // 分段TP/SL：0_10直接用；10_20/20_30按TP/SL相对priceAtForecast的偏移量平移到分段entryPrice上
+            BigDecimal segTp1, segSl;
+            if (startMin == 0) {
+                segTp1 = f.getTp1();
+                segSl = f.getInvalidationPrice();
+            } else if (f.getTp1() != null && f.getInvalidationPrice() != null) {
+                BigDecimal tpOffset = f.getTp1().subtract(priceAtForecast);
+                BigDecimal slOffset = f.getInvalidationPrice().subtract(priceAtForecast);
+                segTp1 = entryPrice.add(tpOffset);
+                segSl = entryPrice.add(slOffset);
+            } else {
+                segTp1 = null;
+                segSl = null;
+            }
             PathResult path = analyzePath(klines, entryPrice, f.getDirection(), segTp1, segSl);
 
             String tradeQuality = judgeQuality(f.getDirection(), changeBps, path);
-            boolean correct = !"BAD".equals(tradeQuality) && !"FLAT".equals(tradeQuality);
+            // LUCKY(方向对但SL先触)真交易必亏，不算correct；防反馈统计虚高导致权重失真
+            boolean correct;
+            if ("NO_TRADE".equals(f.getDirection())) {
+                correct = "GOOD".equals(tradeQuality); // 观望场景：波动<阈值才算对
+            } else {
+                correct = "GOOD".equals(tradeQuality) || "MARGINAL".equals(tradeQuality);
+            }
 
             QuantForecastVerification v = new QuantForecastVerification();
             v.setCycleId(cycle.getCycleId());
