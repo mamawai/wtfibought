@@ -31,6 +31,12 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class DebateJudgeNode implements NodeAction {
 
+    /**
+     * 辩论裁决运行时开关。true=启用3-call辩论；false=跳过辩论返回中性概率(33/34/33)保留原始forecasts。
+     * Admin可运行时切换做A/B测试：切到false观察胜率/成本是否显著改善。重启恢复默认true(保守档)。
+     */
+    public static volatile boolean ENABLED = true;
+
     private final ChatClient chatClient;
     private final LlmCallMode callMode;
     private final MemoryService memoryService;
@@ -47,6 +53,17 @@ public class DebateJudgeNode implements NodeAction {
         long startMs = System.currentTimeMillis();
         List<HorizonForecast> forecasts =
                 (List<HorizonForecast>) state.value("horizon_forecasts").orElse(List.of());
+
+        if (!ENABLED) {
+            // A/B测试：跳过3-call辩论，仅下发33/34/33中性概率；不修改forecasts/decision/risk_status
+            Map<String, Integer[]> defaultProbs = new HashMap<>();
+            for (HorizonForecast f : forecasts) {
+                defaultProbs.put(f.horizon(), new Integer[]{33, 34, 33});
+            }
+            log.info("[Q4.5.disabled] 辩论已禁用, 保留原始forecasts, 下发中性概率 forecasts={}", forecasts.size());
+            return Map.of("debate_probs", defaultProbs);
+        }
+
         List<AgentVote> votes =
                 (List<AgentVote>) state.value("agent_votes").orElse(List.of());
         FeatureSnapshot snapshot =

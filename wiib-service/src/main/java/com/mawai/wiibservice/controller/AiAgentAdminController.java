@@ -7,6 +7,7 @@ import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibservice.agent.quant.memory.VerificationService;
+import com.mawai.wiibservice.agent.quant.node.DebateJudgeNode;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
 import com.mawai.wiibservice.agent.trading.PositionDrawdownSentinel;
 import com.mawai.wiibservice.mapper.AiModelAssignmentMapper;
@@ -271,6 +272,32 @@ public class AiAgentAdminController {
         return resp;
     }
 
+    // ========== 量化运行时开关 ==========
+
+    @GetMapping("/quant-config")
+    @Operation(summary = "获取量化运行时开关")
+    public Result<QuantConfigResponse> getQuantConfig() {
+        checkAdmin();
+        return Result.ok(buildQuantConfigResponse());
+    }
+
+    @PostMapping("/quant-config")
+    @Operation(summary = "设置量化运行时开关")
+    public Result<QuantConfigResponse> setQuantConfig(@RequestBody QuantConfigRequest req) {
+        checkAdmin();
+        if (req.getDebateJudgeEnabled() != null) {
+            DebateJudgeNode.ENABLED = req.getDebateJudgeEnabled();
+            log.info("[Admin] 辩论裁决开关更新为: {}", req.getDebateJudgeEnabled());
+        }
+        return Result.ok(buildQuantConfigResponse());
+    }
+
+    private QuantConfigResponse buildQuantConfigResponse() {
+        QuantConfigResponse resp = new QuantConfigResponse();
+        resp.setDebateJudgeEnabled(DebateJudgeNode.ENABLED);
+        return resp;
+    }
+
     // ========== DTO ==========
 
     @Data
@@ -309,6 +336,16 @@ public class AiAgentAdminController {
         private Double drawdownProfitDrawdownThresholdPct;
         private Double drawdownProfitDrawdownMinBase;
         private Integer drawdownCooldownMinutes;
+    }
+
+    @Data
+    public static class QuantConfigRequest {
+        private Boolean debateJudgeEnabled;
+    }
+
+    @Data
+    public static class QuantConfigResponse {
+        private Boolean debateJudgeEnabled;
     }
 
 }
