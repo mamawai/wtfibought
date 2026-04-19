@@ -50,7 +50,7 @@ LLM 负责（主链路4处 + 离线1处）：
 
 设计原则：**计算在前，LLM做判断层面增强**——不替代任何数学计算，只在"需要综合研判"的节点介入。所有LLM节点失败时fallback到纯计算结果，不阻塞流程。
 
-**辩论机制（借鉴TradingAgents）**：DebateJudgeNode在单次LLM调用中要求模型依次扮演Bull辩手（做多论证）、Bear辩手（做空论证）和Judge裁判（综合裁决），通过对抗论证暴露线性投票无法发现的逻辑矛盾。
+**辩论机制（借鉴TradingAgents）**：DebateJudgeNode采用3-call并行架构——Bull辩手与Bear辩手各自独立LLM调用并行执行（互不影响），Judge裁判综合双方论据+历史记忆做最终裁决。通过对抗论证暴露线性投票无法发现的逻辑矛盾，支持运行时开关做A/B测试。
 
 **记忆系统**：系统会自动验证历史预测的正确性，通过离线LLM反思提取教训（如"RANGE regime下偏多倾向明显"），并将教训注入后续预测的LLM prompt，使系统从历史错误中学习。
 
@@ -134,7 +134,7 @@ LLM 负责（主链路4处 + 离线1处）：
 ```mermaid
 flowchart TB
     subgraph ENTRY["1. 触发入口"]
-        E1["@Scheduled 30min<br/>重周期（全链路+4次LLM）"]
+        E1["@Scheduled 30min<br/>重周期（全链路+6次LLM，辩论可开关）"]
         E1b["@Scheduled 10min<br/>轻周期（零LLM复算）"]
         E1c["波动哨兵<br/>WS tick 超1.3×ATR触发"]
         E2["REST API 手动触发"]
@@ -437,12 +437,12 @@ public class RunFactorAgentsNode implements NodeAction {
 | `RegimeReviewNode` | 是 | 浅 | `FeatureSnapshot` + 多周期指标 + 历史记忆 | 审核后的regime + 置信度 + 转换预警 | 2-4s |
 | `RunFactorAgentsNode` | 1/5 | 浅 | `FeatureSnapshot` | `List<AgentVote>` + `filteredNews` | 3-8s |
 | `RunHorizonJudgesNode` | 否 | - | `List<AgentVote>` + 权重 | 3 个 `HorizonForecast` + decision + riskStatus | <50ms |
-| `DebateJudgeNode` | 是 | **深** | `HorizonForecast[]` + `AgentVote[]` + `FeatureSnapshot` + 历史记忆 | 辩论裁决后的forecast + debate_summary | 3-6s |
+| `DebateJudgeNode` | 是 | **深** | `HorizonForecast[]` + `AgentVote[]` + `FeatureSnapshot` + 历史记忆 | 辩论裁决后的forecast + debate_summary + debate_probs | 5-12s（3-call并行，Bull∥Bear+Judge） |
 | `RiskGateNode` | 否 | - | `HorizonForecast[]` + regime | 裁剪后的 forecast + 合并后的 riskStatus | <10ms |
 | `GenerateReportNode` | 是 | 浅 | 结构化数据 + 辩论结论 + 命中率摘要 | `CryptoAnalysisReport` + `ForecastResult` | 3-6s |
 | `ReflectionTask`（离线） | 是 | 默认模型 | 历史验证结果批量 | 反思记忆写入DB + agentAccuracy | 每1h执行 |
 
-**单次完整链路总耗时：12-30s**（减少1次LLM调用，瓶颈在 Binance API 和 4次LLM 调用）。
+**单次完整链路总耗时：15-35s**（重周期含6次LLM调用：Regime审核+新闻+Bull辩论+Bear辩论+Judge裁决+报告；瓶颈在Binance API和LLM调用）。DebateJudge开关关闭时省3次调用，降至12-25s。
 
 ### 6.2 CollectDataNode
 
@@ -689,28 +689,30 @@ rawConf = dominantRatio × avgAgentConf × (1 - disagreement × 0.4)
 
 ### 6.7 DebateJudgeNode（LLM深模型）
 
-替代原有的 `MetaJudgeNode` + `ConsistencyCheckNode`，在单次LLM调用中完成Bull vs Bear辩论裁决。
+替代原有的 `MetaJudgeNode` + `ConsistencyCheckNode`，采用 **3-call并行架构**：
+1. **Bull辩手** ∥ **Bear辩手**：两个独立LLM调用并行执行，互不影响，各自在隔离环境中构建最强论据
+2. **Judge裁判**：综合原始数据 + 双方论据 + 历史记忆，做最终裁决
 
 **设计动机（借鉴 TradingAgents）：**
 - 原MetaJudge和ConsistencyCheck功能重叠（都在审核"裁决是否合理"），串联导致置信度被过度压缩
 - 线性投票+加权汇总无法暴露Agent之间的逻辑矛盾
+- 单次调用中三角色合并prompt容易互相干扰（Bull自我质疑、Bear替对方辩护）
 - TradingAgents通过Bull vs Bear对抗论证产生更鲁棒的结论
 
-**辩论流程（单次LLM调用，三角色合并prompt）：**
+**辩论流程（3次LLM调用）：**
 
-1. **Bull辩手**：站做多立场，从投票数据+微结构信号中找支持做多的证据，反驳看空理由
-2. **Bear辩手**：站做空立场，从投票数据+微结构信号中找支持做空的证据，反驳看多理由
-3. **Judge裁判**：综合辩论+历史记忆教训，审核系统裁决的9个维度：
-   - 方向矛盾：裁决方向是否与多数Agent投票一致
-   - 跨区间逻辑：0-10看多但10-20看空是否合理
-   - Regime适应：SQUEEZE/SHOCK下仓位和杠杆是否足够保守
-   - 微结构背离：做多但盘口卖压？做空但盘口买压？
-   - 转换风险：regime转换信号下是否需要更保守
-   - 历史教训：记忆中的偏差提示是否适用于当前场景
-   - 情绪极端：fearGreed≤20(极度恐惧)时做空要警惕反弹，≥80(极度贪婪)时做多要警惕回调
-   - 爆仓信号：大量多头爆仓(liquidationPressure>0.5)可能是下跌末端，大量空头爆仓(<-0.5)可能是上涨末端
-   - 聪明钱方向：topTraderBias与系统方向背离时需降低confidence
-   - 期权IV信号：DVOL/ATM IV抬升但价格平静→方向选择临近；skew极端→方向性押注集中
+```mermaid
+flowchart LR
+    A["原始数据+投票+微结构<br/>buildDataContext"] --> B["Bull辩手<br/>独立LLM调用"]
+    A --> C["Bear辩手<br/>独立LLM调用"]
+    B --> D["Judge裁判<br/>综合裁决"]
+    C --> D
+    M["历史记忆<br/>MemoryService"] --> D
+```
+
+- **Bull辩手**：站做多立场，从投票数据+微结构信号中找支持做多的证据，限300字
+- **Bear辩手**：站做空立场，从投票数据+微结构信号中找支持做空的证据，限300字
+- **Judge裁判**：综合辩论+历史记忆教训，审核系统裁决的10个维度（方向矛盾、跨区间逻辑、Regime适应、微结构背离、转换风险、历史教训、情绪极端、爆仓信号、聪明钱方向、期权IV信号），输出 `judgeReasoning` + 各区间 `approved/newDirection/newConfidence` + 概率修正 `bullPct/rangePct/bearPct`
 
 **关键原则**（来自TradingAgents Research Manager）：
 > 不要因为双方都有道理就默认NO_TRADE，要做出明确判断。
@@ -718,10 +720,8 @@ rawConf = dominantRatio × avgAgentConf × (1 - disagreement × 0.4)
 **输入：** 15票AgentVote + 3个HorizonForecast + FeatureSnapshot + overallDecision + riskStatus + regimeTransition + 历史记忆
 
 **输出：**
-- `bullArgument`：Bull辩手论据摘要
-- `bearArgument`：Bear辩手论据摘要
 - `judgeReasoning`：裁判推理过程
-- 每个区间的 `approved` / `newDirection` / `newConfidence`
+- 每个区间的 `approved` / `newDirection` / `newConfidence` / `bullPct` / `rangePct` / `bearPct`
 - `debate_summary`：辩论记录JSON（传递给GenerateReportNode + 落库）
 
 **安全约束：**
@@ -730,6 +730,12 @@ rawConf = dominantRatio × avgAgentConf × (1 - disagreement × 0.4)
 - NO_TRADE翻转为有方向时：允许LLM设置confidence（cap 0.5），仓位用HorizonJudge基准值的一半
 - LLM失败时透传原始裁决
 - 不修改entry/tp/sl价位
+
+**运行时开关（`ENABLED`）：**
+- `DebateJudgeNode.ENABLED`（默认 `true`）支持Admin页面实时切换
+- **开启**：每轮跑3次LLM调用（Bull ∥ Bear + Judge），对裁决做二次审核与概率修正
+- **关闭**：跳过辩论，保留原始forecasts，下发中性概率(33/34/33)。每轮省3-10s + 3次LLM成本，用于A/B对比胜率
+- 重启恢复默认 `true`（保守档）
 
 ### 6.8 RiskGateNode
 
@@ -785,11 +791,11 @@ positionPct = basePositionPct
 
 **分段验证策略：** 每个区间按实际时段独立验证：
 - `0_10`：用预测时价格作为入场价，完整 TP/SL 路径评级
-- `10_20`：用T+10min实际价格作为入场价，仅方向+BPS评级（TP/SL基于T+0生成，对后段无效）
-- `20_30`：用T+20min实际价格作为入场价，仅方向+BPS评级
+- `10_20`：用T+10min实际价格作为入场价，TP/SL按相对预测价的偏移量平移到分段entryPrice上重建，再做路径评级
+- `20_30`：用T+20min实际价格作为入场价，同上分段TP/SL重建后路径评级
 - `NO_TRADE`：同样验证，|实际变化| < 10bps 为正确
 
-**路径分析：** 遍历 K 线序列，逐根计算最大有利偏移（maxFavorableBps）、最大不利偏移（maxAdverseBps）、TP1/SL 谁先触达（tp1HitFirst，仅0_10区间）。
+**路径分析：** 遍历 K 线序列，逐根计算最大有利偏移（maxFavorableBps）、最大不利偏移（maxAdverseBps）、TP1/SL 谁先触达。
 
 **reversalSeverity（段内反转严重度）：** `maxAdverseBps / (maxAdverseBps + maxFavorableBps)`，范围 [0,1]。>0.40 时标记"段内反转风险显著"。NO_TRADE 为 null。
 
@@ -809,6 +815,11 @@ positionPct = basePositionPct
 | LONG | 实际价格上涨 > 2bps |
 | SHORT | 实际价格下跌 > 2bps |
 | NO_TRADE | \|实际变化\| < 10bps |
+
+**correct统计规则（防虚高）：**
+- `NO_TRADE`：仅 `GOOD` 算 correct（波动<阈值）
+- `LONG/SHORT`：`GOOD` 或 `MARGINAL` 算 correct
+- **`LUCKY` 不再算 correct**：方向对但SL先触达，真实交易中必亏，若计入correct会导致权重反馈统计失真
 
 验证结果写入 `quant_forecast_verification` 表，含 `result_summary` 中文摘要（如"预测看涨，实际上涨0.12%，方向正确，止盈先触达，评级优"）。
 
@@ -1126,6 +1137,13 @@ public void lightRefresh() {
 
 冷却期30秒，ATR由量化管道完成后更新。
 
+**持仓回撤哨兵（`PositionDrawdownSentinel`）**（见8.5节详细参数）
+
+独立组件，`@Scheduled(fixedDelay = 60_000)` 每分钟扫描AI账户OPEN持仓：
+- 维护各持仓的滚动PnL窗口（默认5分钟）
+- 当 PnL% 下降≥2.0个百分点 **或** 盈利回撤≥50%（基线>50USDT）时触发
+- 唤醒 `AiTradingScheduler` 重新决策，与波动哨兵共享30s跨入口冷却
+
 ### 8.4 运行时配置管理
 
 #### AiAgentRuntimeManager
@@ -1174,24 +1192,25 @@ ai_runtime_config 表          ai_model_assignment 表
 
 ### 8.5 AI自动交易（测试阶段）
 
-`AiTradingScheduler` 监听 `QuantCycleCompleteEvent`，在每次量化周期完成后自动驱动交易：
+`AiTradingScheduler` 监听 `QuantCycleCompleteEvent`，在每次量化周期完成后自动驱动交易。额外支持 **持仓回撤哨兵** 和 **cron兜底** 两种唤醒入口：
 
 ```
-QuantCycleCompleteEvent ──→ AiTradingScheduler.onQuantCycleComplete()
-                                      │
-                                      ▼
+QuantCycleCompleteEvent ──┬──→ AiTradingScheduler.onQuantCycleComplete()
+PriceVolatilitySentinel   ──┤         │
+PositionDrawdownSentinel  ──┘         ▼
                           DeterministicTradingExecutor.execute()
                                       │
                     ┌─────────────────┼─────────────────┐
                     ▼                 ▼                 ▼
               有持仓→持仓管理    无持仓→开仓评估    cron兜底(10min)
                     │                 │
-              SHOCK减仓/趋势反转平仓  信号共振评分≥3才入场
+              SHOCK减仓/信号反转平仓  信号共振评分≥regime-aware门槛才入场
               均值回归BB中轨止盈     高周期趋势过滤
               ATR追踪止损           三策略动态选择
+              低波动小仓位调整
 ```
 
-**核心策略（`DeterministicTradingExecutor`）**：
+#### 核心策略（`DeterministicTradingExecutor`）
 
 | 策略 | 触发条件 | 出场方式 | 杠杆上限 |
 |------|---------|---------|---------|
@@ -1199,7 +1218,90 @@ QuantCycleCompleteEvent ──→ AiTradingScheduler.onQuantCycleComplete()
 | BB均值回归 | BB%B超卖(<10%)或超买(>90%) + RSI/MACD确认 | BB中轨止盈/3h超时 | 20x |
 | BB压缩突破 | bollSqueeze + 成交量≥1.3x均量 + 价格突破BB | TP+追踪止损 | 20x |
 
-**风控规则**：
+#### 信号共振评分系统（6维，regime-aware自适应门槛）
+
+取代原"找最高confidence就交易"，需满足多维度共振才允许入场：
+
+| 维度 | 说明 |
+|------|------|
+| 1. 信号方向一致 | quant信号方向与策略方向一致 |
+| 2. 高周期趋势过滤 | 15m/1h EMA排列不逆势 |
+| 3. RSI在安全区 | **趋势市放宽**：TREND_UP/TREND_DOWN下RSI同方向即得分（超买/超卖在趋势中是正常现象）；震荡市维持原安全区规则 |
+| 4. MACD确认 | 金叉/死叉或HIST连续放大 |
+| 5. 成交量配合 | 突破策略需≥1.3x均量 |
+| 6. 基差不逆势 | 期现基差不与开仓方向冲突 |
+
+**自适应门槛（`getMinConfluenceScore`）：**
+
+| Regime | 门槛 | 原因 |
+|--------|------|------|
+| TREND_UP / TREND_DOWN | 3 | 趋势市标准 |
+| RANGE / SQUEEZE | 2 | 震荡/收缩市天然难满足MACD交叉+Vol+MA三项，放宽防漏掉高置信度信号 |
+| SHOCK | 4 | 极端波动期加严，减少噪音入场 |
+
+#### 低波动小仓位模式（`LOW_VOL_TRADING_ENABLED`）
+
+盘整期ATR过窄，原始SL会落入noise floor内被 `AiTradingTools` 层拒绝。
+
+**策略**：将SL撑到noise floor（按币种 `slMinPct` 计算），TP按同比例扩张保持R:R，仓位缩减到60%试探性入场。
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `LOW_VOL_SL_EXPAND_MAX` | 3.0 | 扩张倍数上限，>3.0视为极端横盘，放弃入场 |
+| `LOW_VOL_POSITION_SCALE` | 0.6 | 低波动期仓位缩减比例 |
+
+**Admin运行时开关**：`DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED`（默认 `false`，重启恢复默认）。开关关闭时，遇到需扩张SL的低波动信号直接HOLD。
+
+#### 反转平仓保护（P1回血）
+
+防止5m级噪音打掉浮盈：
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `REVERSAL_CONFIDENCE` | 0.82 | 反转平仓置信度阈值（从0.60提升到0.82），要求强反转信号才平仓 |
+| `REVERSAL_STREAK_REQUIRED` | 2 | 需连续2次出现反向强信号才触发平仓，防单次噪音 |
+| `REVERSAL_MIN_PROFIT_FEE_MULTIPLE` | 3.0 | 浮盈需≥3×往返手续费，否则让追踪止损接管（防吃手续费型平仓） |
+
+非反转信号周期自动清零streak，防历史误累积。
+
+#### 追踪止损参数（SymbolProfile）
+
+| 币种 | 保本触发ATR | 锁利触发ATR |
+|------|------------|------------|
+| BTC / ETH | 2.0（原1.0） | 3.0（原2.0） |
+| PAXG | 2.0 | 3.5 |
+
+延后触发防5m级浮盈<0.2%就被保本止损打掉，给利润更大追踪空间。
+
+#### SL校验容差（P0止血）
+
+`AiTradingTools` 层SL最小距离校验增加 **2bps容差**：匹配执行器 `adjustForNoiseFloor` 的扩SL操作，防cycle→tools之间价格漂移或BigDecimal精度损失导致误拒。
+
+#### 同向持仓上限
+
+- 总开仓上限：`MAX_OPEN_POSITIONS = 3`
+- 同向持仓上限：`MAX_SAME_DIRECTION_POSITIONS = 3`（从2提升到3，3标的交易时2上限会漏掉高置信度信号，总风险由MAX_OPEN_POSITIONS兜底）
+
+#### 持仓回撤哨兵（`PositionDrawdownSentinel`）
+
+独立组件，每分钟扫描AI账户OPEN持仓，窗口内PnL急速恶化时唤醒AI Trader重新决策。
+
+**双条件OR触发：**
+- **A. PnL% 下降 ≥ `PNL_PCT_DROP_THRESHOLD_PPT`**（默认2.0个百分点）
+- **B. 盈利金额回撤 ≥ `PROFIT_DRAWDOWN_THRESHOLD_PCT`**（默认50%，仅当窗口内最高盈利 > `PROFIT_DRAWDOWN_MIN_BASE` 才启用）
+
+| 可配参数 | 默认值 | 说明 |
+|---------|--------|------|
+| `ENABLED` | false | 总开关 |
+| `WINDOW_MINUTES` | 5 | 滚动窗口长度 |
+| `PNL_PCT_DROP_THRESHOLD_PPT` | 2.0 | PnL%下降阈值（百分点） |
+| `PROFIT_DRAWDOWN_THRESHOLD_PCT` | 50.0 | 盈利回撤百分比阈值 |
+| `PROFIT_DRAWDOWN_MIN_BASE` | 50.0 | 盈利回撤最低基线（USDT） |
+| `COOLDOWN_MINUTES` | 5 | 同持仓冷却期 |
+
+**跨入口防并发**：与 `PriceVolatilitySentinel` 共享30s冷却（`isRecentlyTriggered`），避免多入口重复触发同一symbol。
+
+#### 风控规则
 - 单笔风险≤净值2%，最大保证金≤35%
 - 日亏损上限5%，净值回撤至85%时杠杆仓位缩减70%
 - 多horizon方向一致时confidence加成（2个一致×1.08，3个一致×1.15）
@@ -1345,7 +1447,25 @@ POST   /api/admin/ai-agent/assignments        保存分配并刷新运行时
 
 POST   /api/admin/ai-agent/quant/trigger      手动触发量化分析
 POST   /api/admin/ai-agent/quant/verify/trigger 手动触发预测验证
+
+GET    /api/admin/ai-agent/trading-config     获取交易运行时开关（低波动交易/回撤哨兵参数）
+POST   /api/admin/ai-agent/trading-config     设置交易运行时开关
+
+GET    /api/admin/ai-agent/quant-config       获取量化运行时开关（辩论裁决开关）
+POST   /api/admin/ai-agent/quant-config       设置量化运行时开关
 ```
+
+**交易运行时开关（`TradingConfig`）**：
+- `lowVolTradingEnabled`：低波动小仓位模式开关
+- `drawdownSentinelEnabled`：持仓回撤哨兵总开关
+- `drawdownWindowMinutes`：回撤窗口长度
+- `drawdownPnlPctDropThresholdPpt`：PnL%下降阈值
+- `drawdownProfitDrawdownThresholdPct`：盈利回撤百分比阈值
+- `drawdownProfitDrawdownMinBase`：盈利回撤最低基线
+- `drawdownCooldownMinutes`：同持仓冷却期
+
+**量化运行时开关（`QuantConfig`）**：
+- `debateJudgeEnabled`：Bull/Bear辩论裁决开关（默认true）。关闭后跳过3-call辩论，保留原始forecasts，下发中性概率(33/34/33)，用于A/B测试对比胜率/成本。
 
 ### 11.8 AI交易员接口（测试阶段）
 
@@ -1432,6 +1552,7 @@ wiib-service/src/main/java/com/mawai/wiibservice/agent/
 │   ├── SignalReplayBacktestEngine.java       ← 信号回放回测引擎
 │   ├── BacktestRunner.java                   ← 回测执行服务（拉历史K线+运行）
 │   └── BacktestResult.java                   ← 回测结果DTO（胜率/Sharpe/回撤等）
+  │   └── PositionDrawdownSentinel.java         ← 持仓回撤哨兵（每分钟扫描，PnL恶化时唤醒AI Trader）
 
 wiib-service/src/main/java/com/mawai/wiibservice/controller/
 ├── AiAgentAdminController.java               ← Admin管理（Key/分配/手动触发）
@@ -1475,13 +1596,13 @@ wiib-service/src/main/java/com/mawai/wiibservice/task/
 
 ### 第一阶段（核心闭环）✅ 已完成
 
-- 每 30 分钟滚动预测（重周期，全链路含4次LLM）
+- 每 30 分钟滚动预测（重周期，全链路含6次LLM；辩论开关关闭时降至3次）
 - 每 10 分钟轻周期刷新（零LLM，复用新闻投票，重跑4纯Java Agent）
 - **多币种** BTCUSDT / ETHUSDT / PAXGUSDT
 - 4 个纯 Java 因子 Agent + 1 个 LLM 新闻 Agent
 - LLM Regime审核（多周期交叉验证 + 转换预警 + 历史记忆注入 + 期权IV信号）
 - 3 个 HorizonJudge（动态阈值）
-- **Bull vs Bear辩论裁决**（替代原MetaJudge+ConsistencyCheck，深模型 + 历史记忆注入 + NO_TRADE翻转）
+- **Bull vs Bear辩论裁决**（3-call并行架构替代原MetaJudge+ConsistencyCheck：Bull∥Bear独立辩论 + Judge综合裁决，深模型 + 历史记忆注入 + NO_TRADE翻转 + 运行时开关）
 - RiskGate + ConsensusBuilder（含 DVOL 仓位惩罚）
 - 两阶段 GenerateReport（+ 辩论结论 + 命中率摘要）
 - 落库 + API 查询 + SSE 推送
@@ -1497,7 +1618,7 @@ wiib-service/src/main/java/com/mawai/wiibservice/task/
 - **期权IV定价增强**（Deribit DVOL/ATM IV/25d skew/term structure → RegimeAgent信号 + RiskGate惩罚）
 - **波动哨兵**（WS markPrice监听，5min超1.3×ATR自动触发轻周期+交易）
 - **回测系统**（逐K线回放 + 信号回放两种模式，支持参数扫描）
-- **AI自动交易（测试阶段）**（确定性多策略引擎：EMA趋势跟踪/BB均值回归/BB压缩突破，信号共振评分入场，动态追踪止损出场）
+- **AI自动交易（测试阶段）**（确定性多策略引擎：EMA趋势跟踪/BB均值回归/BB压缩突破，信号共振评分regime-aware自适应门槛入场，动态追踪止损出场；低波动小仓位模式、持仓回撤哨兵、反转streak+手续费门槛、SL容差保护）
 
 ### 第二阶段（权重进化）
 
