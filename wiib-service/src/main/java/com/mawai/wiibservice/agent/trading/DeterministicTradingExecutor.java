@@ -389,11 +389,12 @@ public class DeterministicTradingExecutor {
             }
         }
 
-        // ===== 5. 信号共振评分（6维，需>=3）=====
+        // ===== 5. 信号共振评分（6维，regime自适应门槛）=====
         int confluenceScore = calcConfluenceScore(ctx, isLong, signals);
-        if (confluenceScore < MIN_CONFLUENCE_SCORE) {
-            return hold(String.format("共振不足: score=%d/%d(需>=%d) %s",
-                    confluenceScore, 6, MIN_CONFLUENCE_SCORE,
+        int minScore = getMinConfluenceScore(ctx.regime);
+        if (confluenceScore < minScore) {
+            return hold(String.format("共振不足: score=%d/%d(需>=%d, regime=%s) %s",
+                    confluenceScore, 6, minScore, ctx.regime,
                     describeConfluence(ctx, isLong)));
         }
 
@@ -683,6 +684,20 @@ public class DeterministicTradingExecutor {
     // ==================== 信号共振评分系统 ====================
 
     /**
+     * regime自适应共振门槛。震荡/收缩市放宽（天然难满足MACD交叉+Vol+MA三项），SHOCK期加严。
+     * 默认 {@link #MIN_CONFLUENCE_SCORE}=3。
+     */
+    private static int getMinConfluenceScore(String regime) {
+        if (regime == null) return MIN_CONFLUENCE_SCORE;
+        return switch (regime) {
+            case "TREND_UP", "TREND_DOWN" -> 3;
+            case "RANGE", "SQUEEZE" -> 2;
+            case "SHOCK" -> 4;
+            default -> MIN_CONFLUENCE_SCORE;
+        };
+    }
+
+    /**
      * 6维共振评分。需>=3才允许入场。
      * 取代原来的"找最高confidence就交易"。
      */
@@ -707,11 +722,16 @@ public class DeterministicTradingExecutor {
             }
         }
 
-        // 3. RSI在安全区
+        // 3. RSI在安全区（趋势市：RSI同方向即得分，超买/超卖在趋势中是正常现象）
         if (ctx.rsi5m != null) {
             double rsi = ctx.rsi5m.doubleValue();
-            if ((isLong && rsi < 70 && rsi > 20) || (!isLong && rsi > 30 && rsi < 80)) {
-                score++;
+            boolean isTrend = "TREND_UP".equals(ctx.regime) || "TREND_DOWN".equals(ctx.regime);
+            if (isTrend) {
+                if ((isLong && rsi > 50) || (!isLong && rsi < 50)) score++;
+            } else {
+                if ((isLong && rsi < 70 && rsi > 20) || (!isLong && rsi > 30 && rsi < 80)) {
+                    score++;
+                }
             }
         }
 
