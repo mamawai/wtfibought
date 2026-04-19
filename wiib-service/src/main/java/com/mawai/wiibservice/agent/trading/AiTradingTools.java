@@ -29,7 +29,8 @@ public class AiTradingTools implements TradingOperations {
     private static final BigDecimal MIN_MARGIN_FLOOR = new BigDecimal("100");
     private static final BigDecimal MIN_MARGIN_RATIO = new BigDecimal("0.01"); // 余额的1%
     private static final int MAX_OPEN_POSITIONS = 3;
-    private static final int MAX_SAME_DIRECTION_POSITIONS = 2;
+    // SL校验容差2bps：匹配执行器adjustForNoiseFloor，防价格漂移/BigDecimal精度误拒
+    private static final BigDecimal SL_MIN_TOLERANCE = new BigDecimal("0.0002");
 
     private final Long aiUserId;
     private final String currentSymbol;
@@ -238,7 +239,9 @@ public class AiTradingTools implements TradingOperations {
         BigDecimal slMaxPct = BigDecimal.valueOf(profile.slMaxPct());
         BigDecimal slDistance = stopLossPrice.subtract(price).abs();
         BigDecimal slPct = slDistance.divide(price, 6, RoundingMode.HALF_UP);
-        if (slPct.compareTo(slMinPct) < 0) {
+        // 2bps容差：执行器adjustForNoiseFloor已通过时，因cycle→tools间价格漂移/BigDecimal精度损失避免误拒
+        BigDecimal slMinWithTolerance = slMinPct.subtract(SL_MIN_TOLERANCE);
+        if (slPct.compareTo(slMinWithTolerance) < 0) {
             return "错误：止损距当前价仅" + slPct.multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP) + "%，太近（噪音区，最低" + slMinPct.multiply(BigDecimal.valueOf(100)).setScale(1, RoundingMode.HALF_UP) + "%）";
         }
         if (slPct.compareTo(slMaxPct) > 0) {
