@@ -1,5 +1,6 @@
 package com.mawai.wiibservice.agent.quant;
 
+import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibservice.agent.quant.domain.*;
 import com.mawai.wiibservice.agent.quant.factor.*;
 import com.mawai.wiibservice.agent.quant.judge.ConsensusBuilder;
@@ -60,6 +61,12 @@ public class QuantLightCycleService {
             Instant heavyCycleTime
     ) {}
 
+    /** 每个symbol最近一轮的forecast缓存（重/轻周期都写入），供方向修正用 */
+    private final Map<String, ForecastCache> forecastCacheBySymbol = new ConcurrentHashMap<>();
+
+    public record ForecastCache(List<HorizonForecast> forecasts) {}
+
+
     public QuantLightCycleService(BinanceRestClient binanceRestClient,
                                    ForceOrderService forceOrderService,
                                    OrderFlowAggregator orderFlowAggregator,
@@ -88,7 +95,8 @@ public class QuantLightCycleService {
      * 重周期完成后调用：缓存 news_votes、regime、reportJson 供轻周期复用
      */
     public void cacheFromHeavyCycle(String symbol, List<AgentVote> allVotes,
-                                     FeatureSnapshot snapshot, String reportJson) {
+                                     FeatureSnapshot snapshot, String reportJson,
+                                     List<HorizonForecast> forecasts) {
         List<AgentVote> newsVotes = allVotes.stream()
                 .filter(v -> "news_event".equals(v.agent()))
                 .toList();
@@ -96,8 +104,12 @@ public class QuantLightCycleService {
                 newsVotes, snapshot.regime(), snapshot.regimeConfidence(),
                 snapshot.regimeTransition(), reportJson, Instant.now()
         ));
-        log.info("[LightCycle] 缓存重周期数据 symbol={} newsVotes={} regime={} reportJson={}chars",
+        if (forecasts != null && !forecasts.isEmpty()) {
+            forecastCacheBySymbol.put(symbol, new ForecastCache(forecasts));
+        }
+        log.info("[LightCycle] 缓存重周期数据 symbol={} newsVotes={} regime={} forecasts={} reportJson={}chars",
                 symbol, newsVotes.size(), snapshot.regime(),
+                forecasts != null ? forecasts.size() : 0,
                 reportJson != null ? reportJson.length() : 0);
     }
 
@@ -158,14 +170,16 @@ public class QuantLightCycleService {
             List<HorizonForecast> forecasts = runJudges(allVotes, snapshot.lastPrice(),
                     snapshot.qualityFlags(), agentAccuracy, snapshot.regime());
 
-            String overallDecision = ConsensusBuilder.buildDecision(forecasts);
-            String riskStatus = ConsensusBuilder.buildRiskStatus(forecasts);
-
             // 6. RiskGate
             RiskGate.RiskResult riskResult = RiskGate.apply(
                     forecasts, snapshot.regime(), snapshot.atr5m(), snapshot.lastPrice(),
                     snapshot.qualityFlags(), snapshot.fearGreedIndex(), snapshot.dvolIndex(), symbol);
-            riskStatus = mergeRiskStatus(riskStatus, riskResult.riskStatus());
+
+            // 6.5 方向修正：用当前轮分析校验上一轮预测
+            ForecastCache previousForecast = forecastCacheBySymbol.get(symbol);
+            List<HorizonForecast> confirmedForecasts = applyDirectionConfirmation(riskResult.forecasts(), previousForecast, LocalDateTime.now());
+            String overallDecision = ConsensusBuilder.buildDecision(confirmedForecasts);
+            String riskStatus = mergeRiskStatus(ConsensusBuilder.buildRiskStatus(confirmedForecasts), riskResult.riskStatus());
 
             // 7. 构建 ForecastResult（复用重周期的 reportJson）
             String cycleId = "light-" + LocalDateTime.now().format(
@@ -175,11 +189,11 @@ public class QuantLightCycleService {
 
             ForecastResult forecastResult = new ForecastResult(
                     symbol, cycleId, LocalDateTime.now(),
-                    riskResult.forecasts(), overallDecision, riskStatus,
+                    confirmedForecasts, overallDecision, riskStatus,
                     allVotes, snapshot, cache.reportJson());
 
-            // 8. 持久化（显式用fastjson2序列化snapshot，避免hutool-json导致indicatorsByTimeframe丢失）
-            String snapshotJson = com.alibaba.fastjson2.JSON.toJSONString(snapshot);
+            // 8. 持久化
+            String snapshotJson = JSON.toJSONString(snapshot);
             persistService.persist(forecastResult, null, snapshotJson, cache.reportJson());
 
             // 9. 更新波动哨兵的ATR基准
@@ -187,7 +201,7 @@ public class QuantLightCycleService {
                 volatilitySentinel.updateAtr(symbol, snapshot.atr5m());
             }
 
-            for (HorizonForecast f : riskResult.forecasts()) {
+            for (HorizonForecast f : confirmedForecasts) {
                 log.info("[LightCycle.result] {} → {} conf={} pos={}%",
                         f.horizon(), f.direction(),
                         String.format("%.2f", f.confidence()),
@@ -196,12 +210,94 @@ public class QuantLightCycleService {
             log.info("[LightCycle] 轻周期完成 symbol={} decision={} cycleId={} 耗时{}ms",
                     symbol, overallDecision, cycleId, System.currentTimeMillis() - startMs);
             eventPublisher.publishEvent(new QuantCycleCompleteEvent(this, symbol, "light"));
+            // 更新forecast缓存供下一轮使用
+            forecastCacheBySymbol.put(symbol, new ForecastCache(confirmedForecasts));
 
         } catch (Exception e) {
             log.error("[LightCycle] 轻周期异常 symbol={}", symbol, e);
         } finally {
             runningSymbols.remove(symbol);
         }
+    }
+
+    /**
+     * 轻周期方向修正：用当前轮的分析结果校验上一轮的预测方向。
+     * 只有触发时间与最近整10分钟点位偏差 ≤ 2min 时才修正。
+     */
+    private List<HorizonForecast> applyDirectionConfirmation(List<HorizonForecast> currentForecasts,
+                                                             ForecastCache previous, LocalDateTime now) {
+        if (previous == null || previous.forecasts() == null || previous.forecasts().isEmpty()) {
+            return currentForecasts;
+        }
+
+        int minuteInCycle = now.getMinute() % 10;
+        int offset = Math.min(minuteInCycle, 10 - minuteInCycle);
+        if (offset > 2) {
+            log.debug("[LightCycle.confirm] offset={}min > 2, skip confirmation", offset);
+            return currentForecasts;
+        }
+
+        Map<String, HorizonForecast> prevByHorizon = new HashMap<>();
+        for (HorizonForecast f : previous.forecasts()) {
+            prevByHorizon.put(f.horizon(), f);
+        }
+
+        // 映射规则：靠近前整点 vs 靠近后整点
+        Map<String, String> horizonMapping = new HashMap<>();
+        if (minuteInCycle <= 2) {
+            horizonMapping.put("0_10", "10_20");
+            horizonMapping.put("10_20", "20_30");
+        } else {
+            horizonMapping.put("0_10", "20_30");
+        }
+
+        List<HorizonForecast> result = new ArrayList<>(currentForecasts.size());
+        for (HorizonForecast curr : currentForecasts) {
+            String mappedHorizon = horizonMapping.get(curr.horizon());
+            HorizonForecast prev = mappedHorizon != null ? prevByHorizon.get(mappedHorizon) : null;
+
+            if (prev == null || prev.direction() == Direction.NO_TRADE || curr.direction() == Direction.NO_TRADE) {
+                result.add(curr);
+                continue;
+            }
+
+            boolean sameDirection = curr.direction() == prev.direction();
+            Direction finalDir;
+            double finalConf;
+            HorizonForecast base;
+
+            if (sameDirection) {
+                finalDir = curr.direction();
+                finalConf = Math.min(1.0, curr.confidence() + prev.confidence() * 0.2);
+                base = curr;
+            } else if (curr.confidence() > prev.confidence()) {
+                finalDir = curr.direction();
+                finalConf = curr.confidence() - prev.confidence() * 0.3;
+                base = curr;
+            } else {
+                finalDir = prev.direction();
+                finalConf = prev.confidence() - curr.confidence() * 0.5;
+                base = prev;
+            }
+            finalConf = Math.clamp(finalConf, 0.1, 1.0);
+
+            log.info("[LightCycle.confirm] {} {} prev={}({}) curr={}({}) -> {}({}) offset={}min",
+                    curr.horizon(), mappedHorizon,
+                    prev.direction(), String.format("%.2f", prev.confidence()),
+                    curr.direction(), String.format("%.2f", curr.confidence()),
+                    finalDir, String.format("%.2f", finalConf), offset);
+
+            // weightedScore 符号必须跟 finalDir 一致（正=多头优势）。base 已按方向选，取绝对值再定符号。
+            double finalScore = finalDir == Direction.LONG
+                    ? Math.abs(base.weightedScore())
+                    : -Math.abs(base.weightedScore());
+            result.add(new HorizonForecast(
+                    curr.horizon(), finalDir, finalConf, finalScore,
+                    curr.disagreement(), base.entryLow(), base.entryHigh(),
+                    base.invalidationPrice(), base.tp1(), base.tp2(),
+                    curr.maxLeverage(), curr.maxPositionPct()));
+        }
+        return result;
     }
 
     private List<AgentVote> runPureAgents(FeatureSnapshot snapshot) {
