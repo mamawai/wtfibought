@@ -66,6 +66,10 @@ public class TradingConfig {
         private BigDecimal fundingRate = new BigDecimal("0.0001");
         /** 最大杠杆倍数 */
         private int maxLeverage = 250;
+        /** 开仓余额滑点容差（USDT），补偿前后端价格时间差 */
+        private BigDecimal balanceTolerance = new BigDecimal("0.05");
+        /** 仓位操作分布式锁超时时间（秒） */
+        private int lockTimeoutSeconds = 30;
     }
 
     /** 乐观锁最大重试次数 */

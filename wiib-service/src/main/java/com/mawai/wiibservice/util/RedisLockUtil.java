@@ -13,7 +13,7 @@ import java.util.function.Supplier;
 
 /**
  * Redis分布式锁工具类
- * 使用Redis实现的分布式锁，支持自动续期和安全释放
+ * 使用Redis实现的分布式锁，支持安全释放（Lua脚本保证只有持有者能释放）
  */
 @Slf4j
 @Component

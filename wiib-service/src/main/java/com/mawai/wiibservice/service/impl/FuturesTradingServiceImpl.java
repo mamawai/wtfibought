@@ -77,7 +77,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
 
         User user = userService.getById(userId);
         // 允许0.05 USDT的价格滑点容差，避免前后端价格时间差导致误报余额不足
-        BigDecimal tolerance = new BigDecimal("0.05");
+        BigDecimal tolerance = tradingConfig.getFutures().getBalanceTolerance();
         if (user.getBalance().add(tolerance).compareTo(totalCost) < 0) {
             throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
         }
@@ -221,7 +221,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     @Override
     public FuturesOrderResponse closePosition(Long userId, FuturesCloseRequest request) {
         String lockKey = "futures:pos:" + request.getPositionId();
-        String lockValue = redisLockUtil.tryLock(lockKey, 30);
+        String lockValue = redisLockUtil.tryLock(lockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
         if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
         try {
             return SpringUtils.getAopProxy(this).doClosePosition(userId, request);
@@ -383,7 +383,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
             throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
         }
         String lockKey = "futures:pos:" + request.getPositionId();
-        String lockValue = redisLockUtil.tryLock(lockKey, 30);
+        String lockValue = redisLockUtil.tryLock(lockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
         if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
         try {
             return SpringUtils.getAopProxy(this).doIncreasePosition(userId, request);
