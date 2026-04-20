@@ -1,0 +1,85 @@
+# ============================================================
+# WhatIfIBought - 后端服务 Dockerfile 模板
+# ============================================================
+# 使用方法:
+#   1. 复制本文件为 Dockerfile
+#      cp Dockerfile-example Dockerfile
+#   2. 构建镜像
+#      docker build -t wiib-service .
+#   3. 运行（推荐配合 docker-compose 使用）
+#      docker run -d -p 8081:8081 wiib-service
+#
+# JVM 内存参数可通过环境变量覆盖，无需修改本文件:
+#   docker run -e JAVA_XMX=2g -e JAVA_XMS=512m wiib-service
+# ============================================================
+
+# 基础镜像: Eclipse Temurin JRE 21 (Alpine 精简版，约 100MB)
+# 仅包含 JRE 运行时，不含 JDK 编译工具，体积更小更安全
+FROM eclipse-temurin:21-jre-alpine
+
+WORKDIR /app
+
+# 创建 heap dump 输出目录（JVM OOM 时自动生成 dump 文件到此目录）
+# 建议通过 docker-compose volumes 映射到宿主机，方便事后分析
+RUN mkdir -p /dumps\
+
+# 复制构建产物（需先执行 mvn clean package -DskipTests）
+COPY target/*.jar app.jar
+
+# 服务端口（需与 application.yml 中 server.port 一致）
+EXPOSE 8081
+
+# ============================================================
+# JVM 内存参数（环境变量，可在 docker-compose 或 docker run 中覆盖）
+# ============================================================
+# JAVA_XMS           - 初始堆大小（启动时立即分配）
+# JAVA_XMX           - 最大堆大小（Java 对象存储上限）
+# JAVA_MAX_DIRECT_MEM - 堆外直接内存（NIO/Netty 使用，WebSocket 较多时适当调大）
+# JAVA_CODE_CACHE    - JIT 编译代码缓存（Spring Boot 项目 128m 通常足够）
+# JAVA_METASPACE     - 类元数据空间（大量动态代理/反射时可能需要调大）
+#
+# ┌─────────────────────────────────────────────────────────┐
+# │ 机器规格参考（Xmx + 堆外 ≈ 容器 mem_limit 的 80%）     │
+# │                                                         │
+# │ 1C/2G  → XMS=256m  XMX=512m  DIRECT=128m  总需 ≈1G    │
+# │ 2C/4G  → XMS=512m  XMX=1g    DIRECT=256m  总需 ≈1.5G  │
+# │ 4C/8G  → XMS=512m  XMX=2g    DIRECT=512m  总需 ≈3G    │
+# │ 8C/16G → XMS=1g    XMX=4g    DIRECT=512m  总需 ≈5G    │
+# └─────────────────────────────────────────────────────────┘
+ENV JAVA_XMS=512m \
+    JAVA_XMX=1g \
+    JAVA_MAX_DIRECT_MEM=256m \
+    JAVA_CODE_CACHE=128m \
+    JAVA_METASPACE=256m
+
+# ============================================================
+# JVM 启动命令
+# ============================================================
+# 使用 sh -c 而非 exec form，以支持环境变量替换
+#
+# 各参数说明:
+#   -Xms / -Xmx              堆内存范围
+#   -XX:MaxDirectMemorySize   堆外直接内存上限
+#   -XX:ReservedCodeCacheSize JIT 代码缓存
+#   -XX:MaxMetaspaceSize      类元数据上限（防止泄漏导致无限增长）
+#   -XX:+UseG1GC              G1 垃圾回收器（低延迟，适合 Web 服务）
+#   -XX:+ExitOnOutOfMemoryError  OOM 时直接退出（让 Docker restart 重启，避免僵尸进程）
+#   -XX:+HeapDumpOnOutOfMemoryError  OOM 时自动生成 heap dump
+#   -XX:HeapDumpPath           dump 文件输出路径
+#   -Xlog:gc                  GC 日志（保留 3 个文件，每个 5MB，用于性能排查）
+#   ${JAVA_OPTS:-}            预留扩展口，可注入任意额外 JVM 参数
+#                             例: docker run -e JAVA_OPTS="-XX:+PrintFlagsFinal" wiib-service
+ENTRYPOINT ["sh", "-c", \
+    "java \
+    -Xms${JAVA_XMS} \
+    -Xmx${JAVA_XMX} \
+    -XX:MaxDirectMemorySize=${JAVA_MAX_DIRECT_MEM} \
+    -XX:ReservedCodeCacheSize=${JAVA_CODE_CACHE} \
+    -XX:MaxMetaspaceSize=${JAVA_METASPACE} \
+    -XX:+UseG1GC \
+    -XX:+ExitOnOutOfMemoryError \
+    -XX:+HeapDumpOnOutOfMemoryError \
+    -XX:HeapDumpPath=/dumps \
+    -Xlog:gc:file=/tmp/gc.log:time,uptime:filecount=3,filesize=5m \
+    ${JAVA_OPTS:-} \
+    -jar app.jar"]

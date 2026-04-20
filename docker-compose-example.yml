@@ -1,0 +1,143 @@
+# ============================================================
+# WhatIfIBought - Docker Compose 部署模板
+# ============================================================
+# 使用方法:
+#   1. 复制本文件为 docker-compose.yml
+#      cp docker-compose-example.yml docker-compose.yml
+#
+#   2. 创建 .env 文件，填写必要的环境变量（参考下方 .env 示例）
+#
+#   3. 构建并启动
+#      mvn clean package -DskipTests
+#      docker compose up -d --build
+#
+#   4. 查看日志
+#      docker compose logs -f wiib-service
+#
+# ─────────────────────────────────────────────────────────────
+# .env 文件示例（必填项）:
+# ─────────────────────────────────────────────────────────────
+#   # PostgreSQL
+#   PG_HOST=localhost
+#   PG_PORT=5432
+#   PG_DB=wiib
+#   PG_USER=postgres
+#   PG_PASSWORD=your_password
+#
+#   # Redis
+#   REDIS_HOST=localhost
+#   REDIS_PORT=6379
+#   REDIS_PASSWORD=
+#   REDIS_DB=0
+#
+#   # LinuxDo OAuth（https://connect.linux.do 申请）
+#   LINUXDO_REDIRECT_URI=https://your-domain.com/login
+#
+#   # 可选: 按机器规格覆盖 JVM/容器资源（不填则使用下方默认值）
+#   # JAVA_XMS=512m
+#   # JAVA_XMX=2g
+#   # MEM_LIMIT=3g
+#   # MEM_RESERVATION=1g
+#   # CPUS=3.5
+# ============================================================
+
+version: '3.8'
+
+services:
+  wiib-service:
+    build:
+      context: ./wiib-service
+      dockerfile: Dockerfile-example
+    container_name: wiib-service
+
+    # 退出后自动重启（手动 docker stop 除外）
+    restart: unless-stopped
+
+    ports:
+      # 仅绑定 127.0.0.1，通过 Nginx/Caddy 反代对外暴露
+      # 如需直接访问可改为 "8081:8081"（不推荐用于生产）
+      - "127.0.0.1:8081:8081"
+
+    volumes:
+      # 映射 heap dump 目录到宿主机，JVM OOM 时可在此目录找到 dump 文件
+      - ./dumps:/dumps
+
+    # 从 .env 文件加载环境变量
+    env_file:
+      - .env
+
+    environment:
+      # ── 基础配置 ──
+      TZ: Asia/Shanghai
+      SERVER_PORT: 8081
+
+      # ── 数据库（PostgreSQL）──
+      # 需要在 .env 中配置 PG_HOST / PG_PORT / PG_DB / PG_USER / PG_PASSWORD
+      # reWriteBatchedInserts=true 开启批量插入优化，提升写入性能
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${PG_HOST}:${PG_PORT}/${PG_DB}?reWriteBatchedInserts=true
+      SPRING_DATASOURCE_USERNAME: ${PG_USER}
+      SPRING_DATASOURCE_PASSWORD: ${PG_PASSWORD}
+
+      # ── 缓存（Redis）──
+      # 需要在 .env 中配置 REDIS_HOST / REDIS_PORT / REDIS_PASSWORD / REDIS_DB
+      SPRING_DATA_REDIS_HOST: ${REDIS_HOST}
+      SPRING_DATA_REDIS_PORT: ${REDIS_PORT}
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SPRING_DATA_REDIS_DATABASE: ${REDIS_DB}
+
+      # ── OAuth 回调地址 ──
+      # 必须与 LinuxDo OAuth 应用中配置的回调地址一致
+      LINUXDO_REDIRECT_URI: ${LINUXDO_REDIRECT_URI}
+
+      # ── JVM 内存参数 ──
+      # 可在 .env 中覆盖，不填则使用默认值
+      # 详细说明见 Dockerfile-example 中的注释
+      #
+      # ┌──────────────────────────────────────────────────────────────┐
+      # │ 机器规格推荐配置                                             │
+      # │                                                              │
+      # │ 规格     XMS    XMX    MEM_LIMIT  MEM_RESERVATION  CPUS     │
+      # │ 1C/2G    256m   512m   1g         256m             1        │
+      # │ 2C/4G    512m   1g     1536m      512m             2        │
+      # │ 4C/8G    512m   2g     3g         1g               3.5      │
+      # │ 8C/16G   1g     4g     5g         2g               7        │
+      # │                                                              │
+      # │ 原则: mem_limit > Xmx + 堆外(~800m)，留 20% 余量给 OS      │
+      # │       cpus 留 0.5~1 核给宿主机系统进程                       │
+      # └──────────────────────────────────────────────────────────────┘
+      JAVA_XMS: ${JAVA_XMS:-512m}
+      JAVA_XMX: ${JAVA_XMX:-1g}
+      JAVA_MAX_DIRECT_MEM: ${JAVA_MAX_DIRECT_MEM:-256m}
+      JAVA_CODE_CACHE: ${JAVA_CODE_CACHE:-128m}
+      JAVA_METASPACE: ${JAVA_METASPACE:-256m}
+
+    # ── 容器资源限制 ──
+    # mem_limit:       硬上限，超过此值容器会被 OOM Kill
+    # mem_reservation: 软预留，Docker 调度时保证的最低内存
+    # cpus:            CPU 核数上限（支持小数，如 1.5 = 一个半核）
+    mem_limit: ${MEM_LIMIT:-1536m}
+    mem_reservation: ${MEM_RESERVATION:-512m}
+    cpus: "${CPUS:-2}"
+
+    # ── 系统限制 ──
+    # nproc:  最大进程/线程数（虚拟线程场景建议 16384+）
+    # nofile: 最大文件描述符数（WebSocket 连接多时需要较大值）
+    ulimits:
+      nproc: 16384
+      nofile: 65536
+
+    # ── 日志配置 ──
+    # 限制单个日志文件 50MB，最多保留 3 个，防止磁盘写满
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+# ── 网络配置 ──
+# 使用外部网络，需先创建: docker network create wiib-network
+# 如果不需要与其他容器（如 Nginx）共享网络，可删除此段
+networks:
+  default:
+    name: wiib-network
+    external: true

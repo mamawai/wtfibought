@@ -40,6 +40,8 @@ dumps/
 
 ### Secrets ###
 .env
+*.yml
+Dockerfile*
 
 ### 本地部署脚本（含服务器信息）###
 deploy_script.txt
