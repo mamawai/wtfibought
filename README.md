@@ -1,129 +1,190 @@
+<div align="center">
+
 # WhatIfIBought
 
-虚拟股票模拟交易平台 —— "如果当初买了会怎样"
+**虚拟股票模拟交易平台 —— "如果当初买了会怎样"**
 
-用户通过 [LinuxDo](https://linux.do) OAuth 登录，使用虚拟资金在 AI 生成的行情中进行模拟股票/期权/永续合约交易，附带小游戏。
+[![Java](https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white)](https://openjdk.org/projects/jdk/21/)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4.1-6DB33F?logo=springboot&logoColor=white)](https://spring.io/projects/spring-boot)
+[![React](https://img.shields.io/badge/React-19.2-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-DC382D?logo=redis&logoColor=white)](https://redis.io/)
+[![Vite](https://img.shields.io/badge/Vite-7.2-646CFF?logo=vite&logoColor=white)](https://vite.dev/)
+[![TailwindCSS](https://img.shields.io/badge/TailwindCSS-4.1-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-线上地址: https://linuxdo.stockgame.icu
+用户通过 [LinuxDo](https://linux.do) OAuth 登录，使用虚拟资金在 AI 生成的行情中进行模拟股票 / 期权 / 永续合约交易，附带小游戏与 AI 量化分析系统。
+
+**线上地址：https://linuxdo.stockgame.icu**
+
+</div>
+
+---
 
 ## 功能概览
 
-**交易系统**
-- 市价单即时成交（±2%滑点保护）、限价单挂单等待触发
-- T+1 资金结算，0.05% 手续费
-- 杠杆交易（借款买入、计息、爆仓清算）
-- CALL/PUT 期权交易，Black-Scholes 定价，自动到期结算
-- 加密货币现货交易（BTC/USDT、PAXG/USDT、ETH/USDT），接入 Binance 实时行情，支持市价/限价单
-- 加密货币永续合约（最高 200 倍杠杆，逐仓保证金，多/空双向，分批止损/止盈，0.01%/8h 资金费率，自动强平）
-- BTC 5分钟涨跌预测（接入 Polymarket 真实盘口，Chainlink 价格源，动态手续费，自动结算）
-- AI交易员（测试阶段）：确定性多策略引擎自动执行永续合约交易，含EMA趋势跟踪、BB均值回归、BB压缩突破三种策略，信号共振评分(regime-aware自适应门槛)入场，动态追踪止损出场；支持低波动小仓位模式、持仓回撤哨兵自动唤醒、反转信号连续校验+手续费门槛保护
+### 交易系统
 
-**行情系统**
-- AI 每日生成 20 只股票的分时行情（1440 个价格点）
-- WebSocket(STOMP) 每 10 秒实时推送行情、资产变动、订单状态
-- Binance 双 WebSocket 流：现货价格（miniTicker ~1次/秒）+ 永续合约标记价格（markPrice @1s）
+- **股票交易** — 市价单即时成交（±2% 滑点保护）、限价单挂单触发，T+1 资金结算，0.05% 手续费
+- **杠杆交易** — 借款买入、每日计息、爆仓清算（最高 50 倍）
+- **期权交易** — CALL/PUT 期权，Black-Scholes 定价（手写实现），每日生成 5 档行权价期权链，自动到期结算
+- **加密货币现货** — BTC/USDT、ETH/USDT、PAXG/USDT，接入 Binance 实时行情，支持市价/限价单
+- **永续合约** — 最高 250 倍杠杆，逐仓保证金，多/空双向，分批止损/止盈（单仓最多 4+4），0.01%/8h 资金费率，自动强平
+- **BTC 5 分钟涨跌预测** — 接入 Polymarket 真实盘口 + Chainlink 价格源，动态手续费，5 分钟窗口自动结算
+- **AI 交易员**（测试阶段）— 确定性多策略引擎自动执行永续合约交易，含 EMA 趋势跟踪、BB 均值回归、BB 压缩突破三种策略
+
+### 行情系统
+
+- AI 每日生成 20 只股票的分时行情（1440 个价格点，GBM + Jump-Diffusion 模型）
+- WebSocket (STOMP) 每 10 秒实时推送行情、资产变动、订单状态
+- Binance 5 路 WebSocket：现货价格 / 永续标记价 / 强平事件 / 聚合成交 / 深度快照
+- Polymarket 2 路 WebSocket：Chainlink BTC 价格 + CLOB 盘口
 - TradingView 嵌入式 K 线图
 
-**游戏与社交**
+### AI Agent 量化分析
+
+- 多 Agent 加密货币量化预测系统（5 因子 Agent + 3 区间裁决 + Bull vs Bear 辩论）
+- 双周期调度：重周期每 30 分钟全链路（含 LLM），轻周期每 10 分钟零 LLM 快速刷新
+- 波动哨兵：监听 WS 实时价格，5 分钟波动超 1.3×ATR 时自动触发
+- 历史预测自动验证 + 离线反思学习闭环（LLM 分析偏差 → 写入记忆 → 下次预测注入）
+- 支持 BTCUSDT / ETHUSDT / PAXGUSDT 多币种
+- DB 驱动的 API Key 动态管理 + LLM 异常自动降级
+
+### 游戏与社交
+
 - 每日 Buff 抽奖（4 种稀有度：交易折扣 / 现金红包 / 赠送股票）
-- 小游戏（21 点、翻翻爆金币、视频扑克，积分可转为交易资金）
+- 21 点（Hit / Stand / Double / Split / Insurance / Forfeit，每日积分池 400,000）
+- 翻翻爆金币 Mines（5×5 格子藏 5 颗雷，最高约 8,949 倍）
+- 视频扑克 Video Poker
 - 总资产排行榜
 
-**AI Agent 量化分析**
-- 多 Agent 加密货币量化预测系统（5因子Agent + 3区间裁决 + Bull vs Bear辩论，3-call并行架构，支持运行时开关做A/B测试）
-- 双周期调度：重周期每30分钟全链路（含6次LLM，辩论裁决可开关），轻周期每10分钟零LLM快速刷新
-- 波动哨兵：监听WS实时价格，5分钟波动超1.3×ATR时自动触发轻周期+交易
-- 历史预测自动验证（K线路径分析 + 分段TP/SL按偏移重建 + 质量评级；LUCKY不再计入correct防统计虚高）
-- 离线反思学习闭环（LLM分析偏差 → 写入记忆 → 下次预测注入）
-- 回测系统：逐K线回放回测 + 真实信号回放回测，支持参数扫描
-- AI交易员（测试阶段）：基于量化信号的确定性自动交易，含低波动小仓位模式、持仓回撤哨兵、反转streak+手续费门槛、SL容差保护
-- 支持 BTCUSDT / ETHUSDT / PAXGUSDT 多币种
-- DB驱动的API Key动态管理 + LLM异常自动降级
-- 详细设计文档：[docs/Quantitative analysis.md](docs/Quantitative%20analysis.md)
+
+---
 
 ## 技术栈
 
-| 层 | 技术 |
-|---|------|
-| 后端 | Java 21（虚拟线程）+ Spring Boot 3.4 + MyBatis-Plus 3.5 + Spring AI Alibaba 1.1.2.0 |
-| 前端 | React 19 + TypeScript + Vite + TailwindCSS + Ant Design + ECharts |
-| 数据库 | PostgreSQL |
-| 缓存 | Caffeine（L1 本地热数据）+ Redis（L2 分布式，行情/会话/排行榜/牌局/分布式锁/限流） |
-| 实时通信 | STOMP over WebSocket + Redis Pub/Sub（多实例广播） |
-| 认证 | LinuxDo OAuth2 + Sa-Token（Redis 持久化会话） |
-| 状态管理 | Zustand（仅持久化 token，用户数据按需拉取） |
-| 部署 | Docker（eclipse-temurin:21-jre-alpine） |
+| 层级 | 技术 | 版本 |
+|------|------|------|
+| **后端框架** | Spring Boot | 3.4.1 |
+| **语言** | Java (Virtual Threads) | 21 |
+| **ORM** | MyBatis-Plus | 3.5.10 |
+| **AI 框架** | Spring AI Alibaba (StateGraph) | 1.1.2.0 |
+| **认证** | Sa-Token | 1.42.0 |
+| **数据库** | PostgreSQL + HikariCP | — |
+| **缓存** | Redis + Caffeine 双层缓存 | — |
+| **前端框架** | React + TypeScript | 19.2 / 5.9 |
+| **构建工具** | Vite | 7.2 |
+| **UI** | TailwindCSS + Ant Design + ECharts | 4.1 / 6.2 / 6.0 |
+| **实时通信** | WebSocket (STOMP + SockJS) | — |
+| **容器化** | Docker + Docker Compose | — |
 
-## 项目结构
+---
 
+## 系统架构
+
+```mermaid
+flowchart TD
+    subgraph CLIENT["Client - React 19"]
+        direction LR
+        C1[Stock] ~~~ C2[Crypto] ~~~ C3[Perpetual Contract] ~~~ C4[BTC Prediction] ~~~ C5[Blackjack / Mines]
+    end
+
+    NGINX["Nginx - SSL Reverse Proxy"]
+
+    subgraph BACKEND["Spring Boot 3.4.1 - Virtual Threads"]
+        direction TB
+
+        subgraph CTL["Controllers (21)"]
+            direction LR
+            CT1[Stock / Order] ~~~ CT2[Crypto / Futures] ~~~ CT3[Prediction / Option] ~~~ CT4[Games] ~~~ CT5[AiAgent / Admin]
+        end
+
+        subgraph SVC["Services (30+)"]
+            direction LR
+            STE["Trading Engine\nMarket/Limit · T+1 · Redis ZSet"]
+            ~~~ SQG["Quote Generator\nGBM+Jump · 1440pts · BS Pricing"]
+            ~~~ SAI["AI Agent Quant\n5-Factor Vote · Bull/Bear · Reflection"]
+            ~~~ SPC["Perpetual Contract\n250x · Isolated Margin · 4SL+4TP"]
+            ~~~ SBP["BTC Prediction\nPolymarket · 5min · Chainlink"]
+            ~~~ SDT["AI Trader\nEMA/BB · 2%/trade · 35%/pos"]
+        end
+
+        subgraph SCH["Scheduled Tasks (6)"]
+            direction LR
+            SC1["09:25 Quote Push"] ~~~ SC2["09:20 T+1 Settle"] ~~~ SC3["15:00 Option Settle"] ~~~ SC4["30min Quant Heavy"] ~~~ SC5["10min Quant Light"] ~~~ SC6["0/8/16h Funding Rate"]
+        end
+
+        subgraph WSC["WebSocket Clients (7)"]
+            direction LR
+            subgraph BNS["Binance (5)"]
+                direction LR
+                BW1[Spot miniTicker] ~~~ BW2[Futures markPrice@1s] ~~~ BW3[ForceOrder] ~~~ BW4[AggTrade] ~~~ BW5[Depth20@100ms]
+            end
+            subgraph PLY["Polymarket (2)"]
+                direction LR
+                PW1[LiveData / Chainlink BTC] ~~~ PW2[CLOB UP/DOWN bid/ask]
+            end
+        end
+
+        CTL --> SVC
+        SVC --> SCH
+        SVC --> WSC
+    end
+
+    subgraph DATALAYER["Data Layer"]
+        direction LR
+        subgraph PG["PostgreSQL (34 tables)"]
+            direction LR
+            PG1[Trade Records] ~~~ PG2[AI Predictions] ~~~ PG3[Game Data] ~~~ PG4[Asset Snapshots]
+        end
+        subgraph RD["Redis"]
+            direction LR
+            RD1[Quote Cache] ~~~ RD2[Limit Order ZSet] ~~~ RD3[Distributed Lock] ~~~ RD4[WS Broadcast] ~~~ RD5[Token Bucket] ~~~ RD6[Game Session]
+        end
+    end
+
+    CLIENT -->|REST / WebSocket| NGINX
+    NGINX --> BACKEND
+    BACKEND --> DATALAYER
 ```
-whatifibought/
-├── wiib-common/    # 公共模块（实体、DTO、枚举、工具类、限流切面）
-├── wiib-service/   # 业务服务（Spring Boot 主应用，全部后端逻辑）
-└── wiib-web/       # 前端（React SPA）
+
+---
+
+## AI 量化分析流水线
+
+```mermaid
+flowchart TD
+    Scheduler["QuantForecastScheduler\nHeavy Cycle: 30min / Light Cycle: 10min"]
+
+    Scheduler --> N1["① Collect Data\nK-line · Ticker · Funding Rate · Depth · OI · News"]
+    N1 --> N2["② Build Features\nEMA · RSI · MACD · BB · ATR"]
+    N2 --> N3["③ Regime Review ✦\nTrend / Range / Extreme"]
+
+    subgraph AGENTS["④ Agent Parallel Vote  (5 agents x 3 intervals)"]
+        direction LR
+        A1[Microstructure] ~~~ A2[Momentum] ~~~ A3[Market Regime] ~~~ A4[Volatility] ~~~ A5[News / Event ✦]
+    end
+
+    N3 --> AGENTS
+    AGENTS --> N5["⑤ Horizon Judges\nShort-term · Mid-term · Long-term"]
+    N5 --> N6["⑥ Debate Judge ✦\nBull vs Bear"]
+    N6 --> N7["⑦ Risk Gate\nRisk Filter + Position Sizing"]
+    N7 --> N8["⑧ Generate Report ✦\nStructured Analysis Report"]
+
+    subgraph OUTPUT["Output"]
+        direction LR
+        O1[Frontend /ai] ~~~ O2[AI Trader] ~~~ O3[Reflection Task / 1h]
+    end
+
+    N8 --> OUTPUT
 ```
 
-## 架构设计
+> ✦ = LLM call involved
 
-### AI 行情生成：GBM + Jump-Diffusion
-
-AI 不直接生成价格序列，而是输出宏观参数，由数学模型生成微观走势：
-
-```
-AI(LLM) → { openPrice, mu, sigma }  →  带跳跃的几何布朗运动  →  1440个价格点
-```
-
-1. **AI 生成三个参数**：开盘价（昨收±2%）、日收益率 mu（-0.05~0.05）、日波动率 sigma（按行业区分稳定/波动）
-2. **输入上下文**：股票基本面、公司信息、全局市场情绪（随机25-74）、个股情绪（随机5-94）、近10日涨跌趋势
-3. **GBM 公式**：`price[i] = price[i-1] * exp((mu - 0.5σ²)dt + σ√dt·z)`，z 截断在 [-4, 4]
-4. **跳跃叠加**：稳定行业 0-2 次、波动行业 0-5 次，幅度 ±2%~4%（上限±5%）
-5. **每日 21:00 预生成次日数据，9:10 加载到 Redis**
-
-这样 AI 负责"大方向"，GBM 负责"细节"，避免了 LLM 输出不稳定导致的异常价格。
-
-### Redis 数据结构设计
-
-| Key 模式 | 结构 | 用途 |
-|---|---|---|
-| `tick:{date}:{stockId}` | Hash（field=index, value=price） | 分时价格，O(1) 按 index 查询 |
-| `stock:daily:{date}:{stockId}` | Hash（open/high/low/last/prevClose） | 当日 OHLC 汇总 |
-| `kline:{stockId}` | Hash（field=date, value="o,h,l,c"） | K线日线缓存 |
-| `stock:static:{stockId}` | Hash | 股票静态数据，启动预热 |
-| `stock:ids:all` | Set | 全量股票 ID，用于遍历推送 |
-| `bj:session:{userId}` | String（序列化对象） | 21点牌局快照，TTL 4h |
-| `bj:pool:{date}` | String | 每日积分池余额（200万），TTL 24h |
-| `limiter:{type}:{userId}` | Hash | 令牌桶限流状态 |
-| `order:execute:{orderId}` | String（分布式锁） | 订单操作互斥，TTL 30s |
-| `market:price:{symbol}` | String | 加密货币现货价缓存（如 BTCUSDT） |
-| `market:markprice:{symbol}` | String | 永续合约标记价缓存 |
-| `crypto:limit:{buy\|sell}:{symbol}` | ZSet（score=limitPrice） | 加密货币限价单索引 |
-| `futures:liq:{long\|short}:{symbol}` | ZSet（score=强平价） | 永续合约强平价索引 |
-| `futures:sl:{long\|short}:{symbol}` | ZSet（score=止损价） | 永续合约止损价索引 |
-| `futures:tp:{long\|short}:{symbol}` | ZSet（score=止盈价） | 永续合约止盈价索引 |
-| `futures:limit:{side}:{symbol}` | ZSet（score=限价） | 永续合约限价单索引（open_long/open_short/close_long/close_short） |
-| `futures:pos:{positionId}` | String（分布式锁） | 永续合约仓位操作互斥 |
-| `mines:session:{userId}` | String（序列化对象） | Mines 牌局快照，TTL 2h |
-| `mines:lock:{userId}` | String（分布式锁） | Mines 操作互斥，TTL 20s |
-| `chainlink:price:btcusd` | String | Chainlink BTC/USD 实时价格 |
-| `prediction:buy:{ws}:{userId}` | String（分布式锁） | 预测买入互斥 |
-| `prediction:sell:{betId}` | String（分布式锁） | 预测卖出互斥 |
-| `prediction:settle:{ws}` | String（分布式锁） | 预测结算幂等，TTL 60s |
-
-分时数据选用 Hash 而非 List，因为实时行情需按 index O(1) 单点查价。
-
-### WebSocket 实时推送
-
-三层传输链路，支持多实例部署：
-
-```
-定时任务(10s) → QuotePushService → Redis Pub/Sub → 各实例 → SimpMessagingTemplate → STOMP → 前端
-```
-
-- **行情频道** `ws:broadcast:stock`：全量股票广播，STOMP 自动按客户端订阅过滤
-- **用户事件频道** `event:{type}:{userId}`：资产变动/持仓变化/订单状态，精准推送
-- 虚拟线程并发 + Semaphore(5) 限流，时间对齐到 10 秒整点
-
-### 加密货币实时行情推送链路
+---
+## 加密货币实时行情推送链路
 
 独立于AI模拟行情，接入 Binance 真实市场数据（当前支持 BTCUSDT、PAXGUSDT、ETHUSDT）：
 
@@ -167,120 +228,9 @@ writeRedisAndPush(symbol, price, ts) / writeFuturesMarkPrice(symbol, markPrice)
                 ▼
             forceClose() / batchTriggerStopLoss() / batchTriggerTakeProfit()
 ```
+---
 
-**数据源 — BinanceWsClient**
-- Spot 流订阅 `{symbol}@miniTicker`，Futures 流订阅 `{symbol}@markPrice@1s`
-- Java 21 原生 `java.net.http.WebSocket`，两条独立连接
-- 配置: `application.yml` → `binance.ws-url / futures-ws-url / symbols`
-
-**写入与广播 — writeRedisAndPush()**
-- `market:price:{symbol}` 缓存现货价 + Caffeine L1 热缓存
-- `market:markprice:{symbol}` 缓存标记价 + Caffeine L1 热缓存
-- Redis Pub/Sub `ws:broadcast:crypto` 广播（集群多实例扇出）
-- 虚拟线程异步触发现货限价单检查 + 永续合约强平/止损/止盈检查
-
-**STOMP 推送 — RedisMessageBroadcastService**
-- 监听 Redis 频道，解析 `symbol|json`，推到 `/topic/crypto/{symbol}`
-- 集群只需一个实例连 Binance WS，所有实例通过 Redis 同步
-
-**前端消费 — useCryptoStream + Coin.tsx**
-- `@stomp/stompjs` + `sockjs-client` 连 `/ws/quotes`，订阅 `/topic/crypto/{symbol}`
-- 3秒节流(trailing)，避免高频 re-render
-- tick 实时追加到 1D K线图：同分钟更新 close/high/low，跨分钟新增K线点
-
-**现货限价单事件驱动 — onPriceUpdate()**
-- 买单/卖单索引: `crypto:limit:{buy|sell}:{symbol}` (ZSet, score=limitPrice)
-- 每 tick O(logN) `rangeByScore` 匹配，启动时 `rebuildLimitOrderZSets()` 从 DB 重建
-
-**永续合约强平/止损/止盈事件驱动 — checkOnPriceUpdate()**
-- 强平索引: `futures:liq:{long|short}:{symbol}` (ZSet, score=liquidationPrice)
-- 止损索引: `futures:sl:{long|short}:{symbol}` (ZSet, score=stopLossPrice)
-- 止盈索引: `futures:tp:{long|short}:{symbol}` (ZSet, score=takeProfitPrice)
-- 标记价格穿过强平/止损价即触发，成交价穿过止盈价即触发
-- 启动时 `init()` 从 DB 重建全部索引
-
-**断线容灾**
-```
-Spot/Futures WS 独立断线检测
-WS断线 → 指数退避重连 {1,2,5,10,30}s + REST轮询兜底(5s)
-  Spot断线  → getTickerPrice() 轮询现货价
-  Futures断线 → getMarkPrice() 轮询标记价
-重连成功 → 停止轮询 + recoverMissedLimitOrders() / recoverMissedFutures() 拉最近高低价恢复
-```
-
-### 订单撮合引擎
-
-**市价单**：即时成交，从 Redis 读取最新价。买入扣余额加持仓，卖出创建 T+1 结算记录。
-
-**限价单**三阶段状态机：
-
-```
-PENDING  →  TRIGGERED  →  FILLED
-  ↓(每10s检测价格)  ↓(每10s批量执行)
-```
-
-三重并发防护：
-1. **Redis 分布式锁**（30s）：订单级互斥
-2. **数据库 CAS 乐观锁**：`casUpdateStatus(orderId, expected, new)`
-3. **Semaphore 限流**：虚拟线程并发上限
-
-事务与锁顺序：获取锁 → 开启事务 → 执行操作 → 提交事务 → 释放锁。成交后通过虚拟线程异步发布 Spring 事件触发 WebSocket 推送。
-
-### 永续合约交易引擎
-
-加密货币永续合约，逐仓保证金模式，支持多/空双向：
-
-**开仓**
-```
-1. 计算保证金 margin = (price × qty) / leverage
-2. 手续费 commission = positionValue × 0.1%
-3. 原子扣款 (margin + commission)
-4. 计算强平价并注册到 Redis ZSet 索引
-```
-
-**强平价公式**
-```
-维持保证金率 MMR = 0.5%
-
-LONG:  liqPrice = (entryPrice × qty - margin) / (qty × (1 - MMR))
-SHORT: liqPrice = (entryPrice × qty + margin) / (qty × (1 + MMR))
-```
-
-**仓位管理**
-- 加仓：加权计算新入场价，合并保证金，重算强平价
-- 追加保证金：增加保证金降低强平价，0 手续费
-- 部分平仓：保证金按比例返还，剩余止损/止盈保留
-
-**止损/止盈**
-- 单仓位最多 4 个止损 + 4 个止盈，支持分批平仓
-- 止损由标记价格触发（LONG: markPrice ≤ slPrice，SHORT: markPrice ≥ slPrice）
-- 止盈由成交价触发（LONG: currentPrice ≥ tpPrice，SHORT: currentPrice ≤ tpPrice）
-- Redis ZSet 索引 O(logN) rangeByScore 匹配
-
-**资金费率**
-```
-每 8 小时扣除：fee = entryPrice × qty × 0.01%
-优先扣余额 → 余额不足扣保证金（强平价变近）→ 保证金耗尽触发强平
-```
-
-**并发控制**
-- `futures:pos:{positionId}` 分布式锁：仓位级互斥
-- 数据库 CAS 乐观锁：状态机 OPEN → CLOSED/LIQUIDATED 不可逆
-- 虚拟线程异步处理强平/止损/止盈
-
-### 双层缓存架构
-
-Caffeine（L1 本地）+ Redis（L2 分布式），减少热数据的 Redis 往返：
-
-| 缓存 | 容量 | 内容 |
-|------|------|------|
-| `stockDailyCache` | 500 | 股票日内 OHLC（last/open/high/low/prevClose） |
-| `cryptoPriceCache` | 50 | 加密货币价格（`spot:{symbol}` / `mark:{symbol}` 区分现货/标记） |
-| `stockStaticCache` | 全量 | 股票静态数据（TTL 10min，启动预热） |
-
-加载策略：Caffeine 未命中 → Redis → DB。实时行情直接双写 Caffeine + Redis。
-
-### BTC 5分钟涨跌预测
+## BTC 5分钟涨跌预测
 
 接入 Polymarket 真实数据，复刻 BTC 5分钟涨跌预测市场。用户用余额买入 Up/Down 合约，5分钟窗口自动结算。
 
@@ -362,224 +312,266 @@ p=0.80 (80/20) → rate = 0.064%   ← 接近确定，费率降到下限0.1%
 p=0.95 (95/5)  → rate = 0.014%   ← 极端价格，费率降到下限0.1%
 ```
 
-**并发控制**
-- `prediction:buy:{windowStart}:{userId}` Redis 分布式锁：用户级买入互斥
-- `prediction:sell:{betId}` Redis 分布式锁：下注级卖出互斥
-- `prediction:settle:{windowStart}` Redis 分布式锁：结算幂等
-- CAS 原子操作：casLockRound (OPEN→LOCKED)、casSettleRound (LOCKED→SETTLED)、casSell (ACTIVE→SOLD)
 
-**WS 连接管理 — WsConnection**
-```
-三重 AtomicBoolean 防重复连接:
-  connected   — 是否已连接
-  connecting  — CAS入口锁, 防止多个connect()并发
-  reconnecting — CAS入口锁, 防止多个scheduleReconnect()并发
 
-close() → sendClose() + abort() 立即断连
-scheduleReconnect() → 指数退避 {1,2,5,10,30}s
-```
+---
 
-### 期权定价：Black-Scholes
-
-手写实现（无第三方库依赖）：
+## 项目结构
 
 ```
-d1 = (ln(S/K) + (r + 0.5σ²)T) / (σ√T)
-d2 = d1 - σ√T
-CALL = S·N(d1) - K·e^(-rT)·N(d2)
-PUT  = K·e^(-rT)·N(-d2) - S·N(-d1)
+whatifibought/
+├── pom.xml                          # Maven 父工程 (Java 21, Spring Boot 3.4.1)
+├── docker-compose-example.yml       # Docker Compose 部署模板
+├── example.env                      # 环境变量模板
+├── LICENSE                          # MIT License
+│
+├── wiib-common/                     # 公共模块
+│   ├── pom.xml
+│   └── src/main/java/
+│       └── com/mawai/wiibcommon/
+│           ├── entity/              # 公共实体类
+│           ├── annotation/          # @RateLimiter 等自定义注解
+│           └── aspect/              # 限流切面 (Redis Token Bucket)
+│
+├── wiib-service/                    # 后端服务模块
+│   ├── pom.xml
+│   ├── Dockerfile-example           # Docker 构建模板
+│   └── src/main/java/
+│       └── com/mawai/wiibservice/
+│           ├── controller/          # 21 个 REST 控制器
+│           ├── service/impl/        # 30+ 业务服务实现
+│           ├── mapper/              # 30+ MyBatis-Plus Mapper
+│           ├── config/              # 配置类 (WS/Redis/OAuth/Binance/Trading)
+│           ├── task/                # 6 个定时调度器
+│           ├── agent/               # AI Agent 子系统
+│           │   ├── quant/           # 量化分析 (8节点 StateGraph 流水线)
+│           │   ├── trading/         # 确定性交易执行器 (3策略)
+│           │   ├── behavior/        # 用户行为分析
+│           │   └── config/          # AI 运行时动态配置
+│           └── util/                # Redis 分布式锁 / 游戏锁
+│
+├── wiib-web/                        # 前端项目
+│   ├── package.json                 # React 19 + Vite 7.2
+│   ├── vite.config.ts               # 开发代理 + TailwindCSS
+│   └── src/
+│       ├── App.tsx                  # 路由定义 (22 个页面)
+│       ├── pages/                   # 页面组件
+│       ├── components/              # UI 组件 (shadcn/ui 风格)
+│       ├── hooks/                   # WebSocket Hooks (STOMP)
+│       ├── stores/                  # Zustand 状态管理
+│       └── api/                     # Axios API 封装
+│
+└── docs/
+    ├── init.sql                     # 数据库建表脚本 (34 张表)
+    └── init-data.sql                # 初始数据 (20 家虚拟公司)
 ```
 
-- 无风险利率 3%，CDF 使用 Abramowitz-Stegun 近似（精度 ~1.5e-7）
-- 每日生成 5 档行权价的期权链，年化波动率 = 日 sigma × √252
 
-### 限流：分布式令牌桶
+---
 
-基于 Redis Lua 脚本保证原子性：
+## 并发与数据一致性
 
-```lua
--- 补充令牌：tokens = min(capacity, tokens + elapsed * rate)
--- 消费令牌：tokens >= requested 则扣减返回1，否则返回0
-```
-
-通过 `@RateLimiter` 注解声明式使用，按用户维度限流。
-
-### 定时任务时间线
-
-```
-21:00  AI生成次日行情 + 新闻 + 期权链
-09:00  恢复破产用户
-09:10  加载当日数据到Redis
-09:25  启动行情推送(10s) / 限价单执行(10s) / 排行榜刷新(10min)
-09:30  开盘
-15:00  收盘，期权到期结算
-16:00  清理过期限价单
-17:00  杠杆计息 + 爆仓检查
-每小时  Crypto 维护（过期限价单 + 孤儿 TRIGGERED 执行）
-每小时  Futures 维护（过期限价单 + 孤儿 TRIGGERED 执行）
-每8h   永续合约资金费率扣除（00:00 / 08:00 / 16:00）
-每1s   Prediction 回合轮换检测（24/7，窗口切换时触发锁定+新回合+价格轮询）
-每30min  量化重周期（全链路：采集→指标→Regime审核→5Agent投票→3Judge裁决→辩论→风控→报告）
-每10min  量化轻周期（零LLM：复用新闻投票，重跑4纯代码Agent→Judge→RiskGate）
-每tick   波动哨兵监听（WS markPrice @1s，5min波动超1.3×ATR时触发轻周期+AI交易）
-每分钟   持仓回撤哨兵扫描（窗口内PnL%急速恶化或盈利大幅回撤时唤醒AI Trader）
-每1h:05  预测验证+反思（批量验证历史预测→LLM反思→写入记忆）
-```
-
-冷启动自愈：`@PostConstruct` 检查当前时间，如在交易时段则自动补启遗漏的周期任务。
-
-### 小游戏
-
-**21 点**：Hit / Stand / Double / Split / Insurance / Forfeit。
-
-- DB 管资金统计，Redis 管牌局过程态（序列化整个 Session 对象，TTL 4h）
-- 每日积分池 200 万：用户赢则池减少，用户输则池回血，池空则不能开新局
-- 积分可 1:1 转出为交易资金（仅超出初始值的部分，每日上限 10 万）
-- Redis 分布式锁串行化同一用户所有操作
-
-**翻翻爆金币（Mines）**：5×5 格子藏 5 颗雷，翻得越多倍率越高，随时可提现。
-
-- 倍率公式：`0.99 / P(k)`，P(k) = C(20,k) / C(25,k)，翻 3 格约 2×，翻 10 格约 17.5×，全翻约 52598×
-- 下注范围 100~50,000，SecureRandom 生成雷位置
-- 同 21 点架构：DB 存账目（mines_game），Redis 存游戏过程态（TTL 2h）
-- Redis 分布式锁 `mines:lock:{userId}` 串行化操作
-
-## 前端页面
-
-| 路由 | 功能 |
+| 机制 | 用途 |
 |------|------|
-| `/` | 首页仪表盘（涨跌榜、行情概览） |
-| `/stocks` | 股票列表 |
-| `/stock/:id` | 股票详情（分时图 + 交易面板） |
-| `/stock/:id/kline` | 日K线 |
-| `/portfolio` | 持仓与资产概览 |
-| `/options` | 期权交易 |
-| `/coin` | 加密货币选择（BTC / PAXG / ETH） |
-| `/coin/:symbol` | 加密货币详情（现货交易 + 永续合约 + TradingView K线） |
-| `/prediction` | BTC 5分钟涨跌预测（实时图表 + 买卖面板 + 交易动态） |
-| `/ai-agent` | AI量化分析（实时信号 + 历史预测 + 追问对话） |
-| `/ai-agent/verifications` | 量化预测验证（命中率统计 + 各周期验证详情） |
-| `/ai-trader` | AI交易员面板（测试阶段，实时持仓/决策历史/盈亏统计） |
-| `/ranking` | 排行榜 |
-| `/games` | 小游戏大厅 |
-| `/blackjack` | 21点小游戏 |
-| `/mines` | 翻翻爆金币 |
-| `/me` | 个人中心（主题切换、游戏入口、排行榜） |
-| `/admin` | 管理后台 |
+| **Virtual Threads (Java 21)** | 全局异步执行：WS 消息处理、限价单撮合、强平检查、批量任务 |
+| **Redis 分布式锁** | 订单级 / 仓位级 / 用户级互斥（TTL 30s），Lua 脚本安全释放 |
+| **数据库 CAS 乐观锁** | 状态机转换：PENDING→TRIGGERED→FILLED、OPEN→LOCKED→SETTLED |
+| **Redis ZSet 索引** | O(logN) rangeByScore 撮合限价单 / 强平价 / 止损止盈 |
+| **Redis Token Bucket** | @RateLimiter 注解 + Lua 原子令牌桶限流 |
+| **Semaphore** | 批量任务并发度控制（行情推送 5 并发、限价单处理可配置） |
+| **Redis Pub/Sub** | 多实例 WebSocket 消息广播（支持集群部署） |
+| **Caffeine L1 + Redis L2** | 双层缓存：热点价格数据、股票静态信息 |
+| **GameLockExecutor** | 游戏操作串行化：Redis 锁 + 可选 @Transactional |
 
-## 本地开发
+
+---
+
+## 部署教程
 
 ### 环境要求
 
-- JDK 21
-- Node.js 18+
-- PostgreSQL
-- Redis
+| 依赖 | 最低版本 | 说明 |
+|------|---------|------|
+| JDK | 21 | 需支持 Virtual Threads |
+| Node.js | 18+ | 前端构建 |
+| PostgreSQL | 14+ | 主数据库 |
+| Redis | 6+ | 缓存 / 分布式锁 / 消息广播 |
+| Maven | 3.9+ | 后端构建 |
+| Docker (可选) | 20+ | 容器化部署 |
 
-### 配置文件
+### 1. 克隆项目
 
-项目未提交 `application.yml` 配置文件，需自行创建：
+```bash
+git clone https://github.com/mamawai/whatifibought.git
+cd whatifibought
+```
 
-**wiib-common/src/main/resources/application.yml**（可留空）
+### 2. 初始化数据库
 
-**wiib-service/src/main/resources/application.yml** 需配置以下内容：
+```bash
+# 创建数据库
+psql -U postgres -c "CREATE DATABASE wiib;"
+
+# 执行建表脚本（34 张表）
+psql -U postgres -d wiib -f docs/init.sql
+
+# 导入初始数据（20 家虚拟公司 + 20 只股票）
+psql -U postgres -d wiib -f docs/init-data.sql
+```
+
+### 3. 配置环境变量
+
+```bash
+# 复制模板
+cp example.env .env
+```
+
+编辑 `.env` 文件，填写必要配置：
+
+```env
+# PostgreSQL
+PG_HOST=localhost
+PG_PORT=5432
+PG_DB=wiib
+PG_USER=postgres
+PG_PASSWORD=your_password
+
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DB=0
+
+# LinuxDo OAuth（https://connect.linux.do 申请）
+LINUXDO_REDIRECT_URI=https://your-domain.com/login
+```
+
+### 4. 后端配置
+
+```bash
+# 复制配置模板
+cp wiib-service/src/main/resources/application.example.yml \
+   wiib-service/src/main/resources/application.yml
+```
+
+编辑 `application.yml`，填写以下关键配置：
 
 ```yaml
-server:
-  port: 8080
-
 spring:
+  ai:
+    openai:
+      api-key: your-api-key        # OpenAI Compatible API Key
+      base-url: https://api.xxx.com # API 地址
+      chat:
+        options:
+          model: your-model         # 模型名称
   datasource:
-    url: jdbc:postgresql://localhost:5432/wiib
-    username: your_username
+    url: jdbc:postgresql://localhost:5432/wiib?reWriteBatchedInserts=true
+    username: postgres
     password: your_password
   data:
     redis:
       host: localhost
       port: 6379
+      password:
 
-# LinuxDo OAuth2
 linuxdo:
-  client-id: your_client_id
-  client-secret: your_client_secret
-  redirect-uri: http://localhost:3000/login
-
-# AI 行情生成
-ai:
-  model:
-    api-key: your_api_key
-    api-url: your_api_url
-    model-name: your_model_name
-
-# Sa-Token
-sa-token:
-  token-name: wiib-token
-  timeout: 604800
-  is-concurrent: true
+  client-id: your-client-id        # LinuxDo OAuth 应用 ID
+  client-secret: your-secret        # LinuxDo OAuth 密钥
+  redirect-uri: https://your-domain.com/login
 ```
 
-### 数据库初始化
+> **注意：** AI 配置仅在数据库 `ai_runtime_config` 表为空时作为种子值写入 DB。后续可通过管理后台动态管理 API Key，无需修改 yml。
 
-创建 `wiib` 数据库，执行建表脚本和初始数据脚本（20 家虚拟公司 + 20 只股票）。
 
-### 启动
+### 5. 构建后端
 
 ```bash
-# 后端
+# 在项目根目录执行
 mvn clean package -DskipTests
-java -jar wiib-service/target/wiib-service-*.jar
+```
 
-# 前端
+构建产物：`wiib-service/target/wiib-service-0.0.1-SNAPSHOT.jar`
+
+### 6. 构建前端
+
+```bash
 cd wiib-web
+
+# 安装依赖
 npm install
-npm run dev
-# 默认端口 3000，API 代理到 localhost:8080
+
+# 构建生产版本
+npm run build
 ```
 
-### Docker 部署
+构建产物：`wiib-web/dist/`
+
+> 开发模式：`npm run dev`（端口 3000，自动代理 `/api` 和 `/ws` 到后端 8080）
+
+### 7. 启动服务
+
+#### 方式一：直接运行
 
 ```bash
-mvn clean package -DskipTests
-docker compose up -d --build
+# 启动后端（端口 8080）
+java -jar wiib-service/target/wiib-service-0.0.1-SNAPSHOT.jar
+
+# 前端 dist 目录通过 Nginx 托管静态文件
 ```
 
-需确保 PostgreSQL 和 Redis 可达，具体连接信息在 `docker-compose.yml` 中配置。
+#### 方式二：Docker Compose
 
-## 数据库表
+```bash
+# 复制模板
+cp docker-compose-example.yml docker-compose.yml
+cp wiib-service/Dockerfile-example wiib-service/Dockerfile
 
-| 表 | 说明 |
-|---|------|
-| user | 用户（余额、冻结余额、杠杆借款、破产状态） |
-| company | 虚拟公司（20 家，覆盖各行业） |
-| stock | 股票（静态数据，实时价格从 Redis 获取） |
-| position | 持仓（用户-股票唯一约束，含冻结数量和平均成本） |
-| orders | 订单（市价/限价，BUY/SELL） |
-| price_tick_daily | 分时行情（每日 1440 个价格点，NUMERIC 数组） |
-| news | AI 生成的股票新闻 |
-| settlement | T+1 资金结算 |
-| option_contract | 期权合约（CALL/PUT，行权价/到期时间/波动率） |
-| option_position | 期权持仓 |
-| option_order | 期权订单 |
-| option_settlement | 期权结算记录 |
-| user_buff | 每日 Buff |
-| blackjack_account | 21 点积分账户 |
-| crypto_order | 加密货币订单（市价/限价，BUY/SELL） |
-| crypto_position | 加密货币持仓（用户-币种唯一约束） |
-| futures_position | 永续合约持仓（逐仓保证金、强平价、止损/止盈 JSONB） |
-| futures_order | 永续合约订单（开/平/加仓，市价/限价） |
-| mines_game | 翻翻爆金币游戏记录（下注/倍率/雷位/结算） |
-| prediction_round | 涨跌预测回合（window_start、start/end_price、outcome、状态机 OPEN→LOCKED→SETTLED） |
-| prediction_bet | 涨跌预测下注（side UP/DOWN、contracts、cost、payout、状态 ACTIVE/WON/LOST/DRAW/SOLD） |
-| ai_runtime_config | AI运行时配置（API Key、Base URL、Model，支持多套） |
-| ai_model_assignment | AI模型分配（behavior/quant/chat/reflection → config映射） |
-| quant_forecast_cycle | 量化预测周期（含snapshot/report/debate JSON） |
-| quant_agent_vote | 因子Agent投票（5agent × 3区间 = 15票/周期） |
-| quant_horizon_forecast | 区间裁决结果（方向/置信度/入场/止损/止盈） |
-| quant_signal_decision | 风控后最终信号 |
-| quant_forecast_verification | 预测验证（实际价格/路径分析/质量评级/中文摘要） |
-| quant_reflection_memory | 反思记忆（LLM教训 + agentAccuracy） |
-| ai_trading_decision | AI交易决策记录（action/reasoning/balanceBefore/balanceAfter/executionLog） |
+# 创建外部网络（首次）
+docker network create wiib-network
 
-## License
+# 构建并启动
+docker compose up -d --build
 
-MIT
+# 查看日志
+docker compose logs -f wiib-service
+```
+
+> Docker 部署默认端口 8081，JVM 参数可通过 `.env` 覆盖（详见 `Dockerfile-example` 注释）。
+
+### 8. Nginx 反向代理参考
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+
+    ssl_certificate     /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    # 前端静态文件
+    location / {
+        root /path/to/wiib-web/dist;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 后端 API
+    location /api/ {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # WebSocket
+    location /ws/ {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 86400s;
+    }
+}
+```
