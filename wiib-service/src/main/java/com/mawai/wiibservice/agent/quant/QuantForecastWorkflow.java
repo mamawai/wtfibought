@@ -5,6 +5,7 @@ import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.KeyStrategy;
 import com.alibaba.cloud.ai.graph.KeyStrategyFactory;
 import com.alibaba.cloud.ai.graph.StateGraph;
+import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
 import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.factor.*;
@@ -82,7 +83,13 @@ public class QuantForecastWorkflow {
         workflow.addEdge("risk_gate", "generate_report");
         workflow.addEdge("generate_report", END);
 
-        return workflow.compile(CompileConfig.builder().build());
+        // 显式传空 SaverConfig，禁用框架默认注册的 MemorySaver。
+        // 否则每跑一个节点会把整份 state 深拷贝 push 进 LinkedList，3 个固定 threadId 永不清理 → OOM。
+        // ⚠️ 若将来要加"工作流中断/断点恢复"能力，不能回到默认 MemorySaver（无容量上限）；
+        //    需注册带 LRU/TTL 的自定义 BaseCheckpointSaver，否则会退回本次修复前的泄漏状态。
+        return workflow.compile(CompileConfig.builder()
+                .saverConfig(SaverConfig.builder().build())
+                .build());
     }
 
     private static KeyStrategyFactory createKeyStrategyFactory() {
