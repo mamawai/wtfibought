@@ -1,0 +1,119 @@
+server:
+  port: 8080
+
+spring:
+  ai:
+    retry:
+      max-attempts: 10
+      backoff:
+        initial-interval: 1000
+        multiplier: 2
+        max-interval: 30000
+    # ai_runtime_config 没有配置时会读取这里的配置
+    openai:
+      api-key: ${AI_API_KEY:sk-xxx}
+      base-url: https://api.xxx.com
+      chat:
+        options:
+          model: xxx-xxx
+  application:
+    name: wiib-service
+  # 启用虚拟线程支持
+  threads:
+    virtual:
+      enabled: true
+  # 本地部署这里连接的是本地数据源 - docker部署docker-compose覆盖
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://localhost:5432/wiib?reWriteBatchedInserts=true
+    username:
+    password:
+    hikari:
+      pool-name: wiib-hikari
+      # 如果你是4core `4×2+1=9`，取整 10, 如果你是2core 用5
+      maximum-pool-size: 10
+      # HikariCP 官方建议 min=max，避免连接抖动
+      minimum-idle: 10
+      connection-timeout: 30000
+      idle-timeout: 300000
+      max-lifetime: 550000
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+      password:
+      timeout: 10000
+
+mybatis-plus:
+  mapper-locations: classpath:/mapper/**/*.xml
+
+# AI配置（多模型优先级重试）-- 每日生成行情的
+ai:
+  providers:
+    - name:
+      api-key:
+      base-url:
+      model: gpt-5.2
+      priority: 1
+      enabled: true
+      timeout: 60000
+      max-retries: 3
+      temperature: 0.85
+
+# LinuxDo OAuth配置
+linuxdo:
+  client-id:
+  client-secret:
+  redirect-uri:
+
+
+# 交易配置
+trading:
+  # 新用户初始余额
+  initial-balance: 100000
+  # 手续费率（0.05%）
+  commission-rate: 0.0005
+  # 市价单滑点保护（±2%）
+  slippage-limit: 0.02
+  # 限价单最长有效期（小时）
+  limit-order-max-hours: 24
+  # 乐观锁最大重试次数
+  optimistic-lock-max-retries: 3
+  # 限价单并发处理配置
+  limit-order-processing:
+    max-concurrency: 15
+    order-timeout-seconds: 6
+  # 是否启用交易时段限制（游戏模式可关闭）
+  trading-hours-enabled: true
+  # 交易时段（仅当trading-hours-enabled=true时生效）
+  trading-hours:
+    morning-start: "09:30"
+    morning-end: "11:30"
+    afternoon-start: "13:00"
+    afternoon-end: "15:00"
+
+# Binance行情配置
+binance:
+  ws-url: wss://stream.binance.com:9443/ws
+  futures-ws-url: wss://fstream.binance.com/ws
+  rest-base-url: https://api.binance.com
+  futures-rest-base-url: https://fapi.binance.com
+  symbols:
+    - BTCUSDT
+    - PAXGUSDT
+    - ETHUSDT
+  fallback-poll-interval: 5000
+
+# CoinDesk新闻API配置
+coindesk:
+  news-api-key:
+
+# WebSocket配置
+websocket:
+  # 最大连接数
+  max-connections: 10000
+  # 心跳间隔（秒）
+  heartbeat-interval: 15
+  # 是否强制认证
+  require-auth: false
