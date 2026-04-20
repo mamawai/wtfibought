@@ -156,11 +156,12 @@ public class DeterministicTradingExecutor {
                 ctx.bollPb5m, ctx.volumeRatio5m, ctx.bollSqueeze, totalEquity);
 
         boolean hasPosition = symbolPositions != null && !symbolPositions.isEmpty();
+        LocalDateTime forecastTime = forecast != null ? forecast.getForecastTime() : null;
 
         if (hasPosition) {
-            return managePositions(symbolPositions, signals, ctx, profile, tools);
+            return managePositions(symbolPositions, signals, ctx, profile, tools, forecastTime);
         }
-        return evaluateEntry(symbol, user, totalEquity, forecast, signals, recentDecisions, ctx, profile, tools);
+        return evaluateEntry(symbol, user, totalEquity, forecast, signals, recentDecisions, ctx, profile, tools, forecastTime);
     }
 
     // ==================== 持仓管理（盯盘逻辑）====================
@@ -170,7 +171,8 @@ public class DeterministicTradingExecutor {
             List<QuantSignalDecision> signals,
             MarketContext ctx,
             SymbolProfile profile,
-            TradingOperations tools) {
+            TradingOperations tools,
+            LocalDateTime forecastTime) {
 
         StringBuilder execLog = new StringBuilder();
         StringBuilder reasons = new StringBuilder();
@@ -242,7 +244,7 @@ public class DeterministicTradingExecutor {
             }
 
             // ===== 5. 信号强烈反转 → 平仓（需连续2次+浮盈够手续费门槛）=====
-            QuantSignalDecision bestSignal = findBestSignal(signals);
+            QuantSignalDecision bestSignal = findBestSignal(signals, forecastTime);
             boolean isStrongReversal = bestSignal != null && bestSignal.getConfidence() != null
                     && bestSignal.getConfidence().doubleValue() >= REVERSAL_CONFIDENCE
                     && ((isLong && "SHORT".equals(bestSignal.getDirection()))
@@ -346,7 +348,8 @@ public class DeterministicTradingExecutor {
             List<AiTradingDecision> recentDecisions,
             MarketContext ctx,
             SymbolProfile profile,
-            TradingOperations tools) {
+            TradingOperations tools,
+            LocalDateTime forecastTime) {
 
         // ===== 1. 风控检查（智能冷却、连续亏损、日亏损）=====
         String riskCheck = checkRiskLimits(user, recentDecisions);
@@ -357,8 +360,8 @@ public class DeterministicTradingExecutor {
             return hold("ATR数据缺失→无法计算止损");
         }
 
-        // ===== 3. 找信号（优先短周期0_10）=====
-        QuantSignalDecision bestSignal = findBestSignalWithPriority(signals);
+        // ===== 3. 找信号 =====
+        QuantSignalDecision bestSignal = findBestSignalWithPriority(signals, forecastTime);
         if (bestSignal == null || "NO_TRADE".equals(bestSignal.getDirection())) {
             return hold("无有效方向信号");
         }
@@ -847,11 +850,31 @@ public class DeterministicTradingExecutor {
     // ==================== 信号选择（优先短周期）====================
 
     /**
-     * 优先选择0_10 horizon信号（最新鲜，与高频盯盘匹配）。
-     * fallback: 0_10 → 10_20 → 20_30。
+     * 从未过期的 horizon 中按 confidence 最高选主信号。
+     * 过期判定：forecastTime + horizon结束分钟 ≤ now 即视为过期（AI Trader当前时间段及之后的horizon才参与选优）。
+     * 多 horizon 方向一致时叠加 confidence 加成。forecastTime=null 兼容回测（不过滤）。
      */
-    private static QuantSignalDecision findBestSignalWithPriority(List<QuantSignalDecision> signals) {
+    private static QuantSignalDecision findBestSignalWithPriority(List<QuantSignalDecision> signals, LocalDateTime forecastTime) {
         if (signals == null || signals.isEmpty()) return null;
+
+        // 过滤已过期的 horizon
+        if (forecastTime != null) {
+            LocalDateTime now = LocalDateTime.now();
+            signals = signals.stream().filter(s -> {
+                if (s.getHorizon() == null) return true;
+                int endMin = switch (s.getHorizon()) {
+                    case "0_10" -> 10;
+                    case "10_20" -> 20;
+                    case "20_30" -> 30;
+                    default -> 30;
+                };
+                boolean valid = forecastTime.plusMinutes(endMin).isAfter(now);
+                if (!valid) log.debug("[Executor] 跳过已过期horizon {} (forecast={} end={})",
+                        s.getHorizon(), forecastTime, forecastTime.plusMinutes(endMin));
+                return valid;
+            }).toList();
+            if (signals.isEmpty()) return null;
+        }
 
         QuantSignalDecision sig010 = null, sig1020 = null, sig2030 = null;
         for (QuantSignalDecision s : signals) {
@@ -863,9 +886,14 @@ public class DeterministicTradingExecutor {
             }
         }
 
-        QuantSignalDecision primary = pickValid(sig010);
-        if (primary == null) primary = pickValid(sig1020);
-        if (primary == null) primary = pickValid(sig2030);
+        QuantSignalDecision primary = null;
+        for (QuantSignalDecision s : new QuantSignalDecision[]{sig010, sig1020, sig2030}) {
+            QuantSignalDecision valid = pickValid(s);
+            if (valid != null && (primary == null
+                    || valid.getConfidence().compareTo(primary.getConfidence()) > 0)) {
+                primary = valid;
+            }
+        }
         if (primary == null) return null;
 
         // 多horizon方向一致 → 将一致性转换为confidence加成（替代原先"只打日志"的虚假确认）
@@ -898,8 +926,19 @@ public class DeterministicTradingExecutor {
     }
 
     /** 保留原始findBestSignal用于持仓管理的反转检测 */
-    private static QuantSignalDecision findBestSignal(List<QuantSignalDecision> signals) {
+    private static QuantSignalDecision findBestSignal(List<QuantSignalDecision> signals, LocalDateTime forecastTime) {
         if (signals == null || signals.isEmpty()) return null;
+        if (forecastTime != null) {
+            LocalDateTime now = LocalDateTime.now();
+            signals = signals.stream().filter(s -> {
+                if (s.getHorizon() == null) return true;
+                int endMin = switch (s.getHorizon()) {
+                    case "0_10" -> 10; case "10_20" -> 20; case "20_30" -> 30; default -> 30;
+                };
+                return forecastTime.plusMinutes(endMin).isAfter(now);
+            }).toList();
+            if (signals.isEmpty()) return null;
+        }
         QuantSignalDecision best = null;
         for (QuantSignalDecision s : signals) {
             if (s.getDirection() == null || "NO_TRADE".equals(s.getDirection())) continue;
