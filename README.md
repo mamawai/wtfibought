@@ -88,7 +88,7 @@
 flowchart TD
     subgraph CLIENT["Client - React 19"]
         direction LR
-        C1[Stock] ~~~ C2[Crypto] ~~~ C3[Perpetual Contract] ~~~ C4[BTC Prediction] ~~~ C5[Blackjack / Mines]
+        C1[Stock] --- C2[Crypto] --- C3[Perpetual Contract] --- C4[BTC Prediction] --- C5[Blackjack / Mines]
     end
 
     NGINX["Nginx - SSL Reverse Proxy"]
@@ -98,33 +98,33 @@ flowchart TD
 
         subgraph CTL["Controllers (21)"]
             direction LR
-            CT1[Stock / Order] ~~~ CT2[Crypto / Futures] ~~~ CT3[Prediction / Option] ~~~ CT4[Games] ~~~ CT5[AiAgent / Admin]
+            CT1[Stock / Order] --- CT2[Crypto / Futures] --- CT3[Prediction / Option] --- CT4[Games] --- CT5[AiAgent / Admin]
         end
 
         subgraph SVC["Services (30+)"]
             direction LR
             STE["Trading Engine\nMarket/Limit · T+1 · Redis ZSet"]
-            ~~~ SQG["Quote Generator\nGBM+Jump · 1440pts · BS Pricing"]
-            ~~~ SAI["AI Agent Quant\n5-Factor Vote · Bull/Bear · Reflection"]
-            ~~~ SPC["Perpetual Contract\n250x · Isolated Margin · 4SL+4TP"]
-            ~~~ SBP["BTC Prediction\nPolymarket · 5min · Chainlink"]
-            ~~~ SDT["AI Trader\nEMA/BB · 2%/trade · 35%/pos"]
+            --- SQG["Quote Generator\nGBM+Jump · 1440pts · BS Pricing"]
+            --- SAI["AI Agent Quant\n5-Factor Vote · Bull/Bear · Reflection"]
+            --- SPC["Perpetual Contract\n250x · Isolated Margin · 4SL+4TP"]
+            --- SBP["BTC Prediction\nPolymarket · 5min · Chainlink"]
+            --- SDT["AI Trader\nEMA/BB · 2%/trade · 35%/pos"]
         end
 
         subgraph SCH["Scheduled Tasks (6)"]
             direction LR
-            SC1["09:25 Quote Push"] ~~~ SC2["09:20 T+1 Settle"] ~~~ SC3["15:00 Option Settle"] ~~~ SC4["30min Quant Heavy"] ~~~ SC5["10min Quant Light"] ~~~ SC6["0/8/16h Funding Rate"]
+            SC1["09:25 Quote Push"] --- SC2["09:20 T+1 Settle"] --- SC3["15:00 Option Settle"] --- SC4["30min Quant Heavy"] --- SC5["10min Quant Light"] --- SC6["0/8/16h Funding Rate"]
         end
 
         subgraph WSC["WebSocket Clients (7)"]
             direction LR
             subgraph BNS["Binance (5)"]
                 direction LR
-                BW1[Spot miniTicker] ~~~ BW2[Futures markPrice@1s] ~~~ BW3[ForceOrder] ~~~ BW4[AggTrade] ~~~ BW5[Depth20@100ms]
+                BW1[Spot miniTicker] --- BW2[Futures markPrice@1s] --- BW3[ForceOrder] --- BW4[AggTrade] --- BW5[Depth20@100ms]
             end
             subgraph PLY["Polymarket (2)"]
                 direction LR
-                PW1[LiveData / Chainlink BTC] ~~~ PW2[CLOB UP/DOWN bid/ask]
+                PW1[LiveData / Chainlink BTC] --- PW2[CLOB UP/DOWN bid/ask]
             end
         end
 
@@ -137,11 +137,11 @@ flowchart TD
         direction LR
         subgraph PG["PostgreSQL (34 tables)"]
             direction LR
-            PG1[Trade Records] ~~~ PG2[AI Predictions] ~~~ PG3[Game Data] ~~~ PG4[Asset Snapshots]
+            PG1[Trade Records] --- PG2[AI Predictions] --- PG3[Game Data] --- PG4[Asset Snapshots]
         end
         subgraph RD["Redis"]
             direction LR
-            RD1[Quote Cache] ~~~ RD2[Limit Order ZSet] ~~~ RD3[Distributed Lock] ~~~ RD4[WS Broadcast] ~~~ RD5[Token Bucket] ~~~ RD6[Game Session]
+            RD1[Quote Cache] --- RD2[Limit Order ZSet] --- RD3[Distributed Lock] --- RD4[WS Broadcast] --- RD5[Token Bucket] --- RD6[Game Session]
         end
     end
 
