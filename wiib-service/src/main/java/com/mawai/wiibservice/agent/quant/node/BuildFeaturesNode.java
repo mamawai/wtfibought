@@ -654,7 +654,8 @@ public class BuildFeaturesNode implements NodeAction {
                             item.getString("TITLE"),
                             item.getString("BODY"),
                             item.getString("SOURCE_DATA_SOURCE_KEY"),
-                            item.getString("GUID")
+                            item.getString("GUID"),
+                            item.getLongValue("PUBLISHED_ON")
                     ));
                 }
                 log.info("[Q2] 新闻第{}批解析完成 [{}-{})", batch + 1, start, end);
