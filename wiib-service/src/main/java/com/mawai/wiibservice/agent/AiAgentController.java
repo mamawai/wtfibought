@@ -471,4 +471,21 @@ public class AiAgentController {
         return Result.ok(verificationService.recentVerificationResults(normalized, limit));
     }
 
+    @GetMapping("/quant/verifications/grouped")
+    @Operation(summary = "分组查询量化预测验证（重周期为主，轻周期挂载）")
+    public Result<VerificationService.GroupedVerificationSummary> groupedVerifications(
+            @RequestParam(defaultValue = "BTCUSDT") String symbol,
+            @RequestParam(defaultValue = "10") int limit) {
+        StpUtil.checkLogin();
+        String normalized;
+        try {
+            normalized = QuantConstants.normalizeSymbol(symbol);
+        } catch (IllegalArgumentException e) {
+            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
+        }
+        limit = Math.min(limit, 20);
+        return Result.ok(verificationService.groupedVerificationResults(normalized, limit));
+    }
+
+
 }

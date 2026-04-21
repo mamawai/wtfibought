@@ -56,6 +56,23 @@ public class VerificationService {
             List<VerificationCycleResult> cycles
     ) {}
 
+    /** 分组结果：重周期为主，轻周期挂载在重周期下 */
+    public record GroupedHeavyCycle(
+            VerificationCycleResult heavy,
+            List<VerificationCycleResult> lightCycles
+    ) {}
+
+    public record GroupedVerificationSummary(
+            int total,
+            int correct,
+            String accuracyRate,
+            int heavyTotal,
+            int heavyCorrect,
+            String heavyAccuracyRate,
+            List<GroupedHeavyCycle> groups
+    ) {}
+
+
     public int verifyPendingCycles(String symbol, int limit) {
         List<QuantForecastCycle> unverified = cycleMapper.selectUnverified(symbol, limit);
         if (unverified.isEmpty()) {
@@ -128,6 +145,116 @@ public class VerificationService {
         }
         String accuracyRate = total > 0 ? (correct * 100 / total) + "%" : "0%";
         return new VerificationSummary(total, correct, accuracyRate, result);
+    }
+
+
+    /**
+     * 分组查询：重周期为主，轻周期按时间归属到最近的前一个重周期下。
+     */
+    public GroupedVerificationSummary groupedVerificationResults(String symbol, int heavyLimit) {
+        int normalizedLimit = Math.clamp(heavyLimit, 1, 20);
+        // 拉足够多的验证记录（重+轻混合），按时间倒序
+        List<QuantForecastVerification> recent = verificationMapper.selectRecent(symbol, normalizedLimit * 12);
+        if (recent.isEmpty()) {
+            return new GroupedVerificationSummary(0, 0, "0%", 0, 0, "0%", List.of());
+        }
+
+        // 按cycleId分组
+        LinkedHashMap<String, List<QuantForecastVerification>> byCycle = new LinkedHashMap<>();
+        for (QuantForecastVerification item : recent) {
+            byCycle.computeIfAbsent(item.getCycleId(), k -> new ArrayList<>()).add(item);
+        }
+
+        // 查cycle元数据
+        List<String> cycleIds = List.copyOf(byCycle.keySet());
+        List<QuantForecastCycle> cycles = cycleMapper.selectList(new LambdaQueryWrapper<QuantForecastCycle>()
+                .in(QuantForecastCycle::getCycleId, cycleIds));
+        Map<String, QuantForecastCycle> cycleMap = new LinkedHashMap<>();
+        for (QuantForecastCycle c : cycles) {
+            cycleMap.put(c.getCycleId(), c);
+        }
+
+        // 分离重/轻周期，构建VerificationCycleResult
+        List<VerificationCycleResult> heavyResults = new ArrayList<>();
+        List<VerificationCycleResult> lightResults = new ArrayList<>();
+        for (String cid : cycleIds) {
+            List<QuantForecastVerification> items = byCycle.get(cid);
+            items.sort(java.util.Comparator.comparing(QuantForecastVerification::getHorizon));
+            QuantForecastCycle cycle = cycleMap.get(cid);
+            LocalDateTime verifiedAt = items.stream()
+                    .map(QuantForecastVerification::getVerifiedAt)
+                    .filter(java.util.Objects::nonNull)
+                    .max(LocalDateTime::compareTo).orElse(null);
+            VerificationCycleResult r = new VerificationCycleResult(
+                    cid, symbol,
+                    cycle != null ? cycle.getForecastTime() : null,
+                    cycle != null ? cycle.getOverallDecision() : null,
+                    cycle != null ? cycle.getRiskStatus() : null,
+                    verifiedAt, List.copyOf(items));
+            if (cid.startsWith("light-")) {
+                lightResults.add(r);
+            } else {
+                heavyResults.add(r);
+            }
+        }
+
+        // 按forecastTime倒序排列重周期，截取limit个
+        heavyResults.sort((a, b) -> {
+            if (a.forecastTime() == null || b.forecastTime() == null) return 0;
+            return b.forecastTime().compareTo(a.forecastTime());
+        });
+        if (heavyResults.size() > normalizedLimit) {
+            heavyResults = heavyResults.subList(0, normalizedLimit);
+        }
+
+        // 轻周期按forecastTime升序，方便归属
+        lightResults.sort((a, b) -> {
+            if (a.forecastTime() == null || b.forecastTime() == null) return 0;
+            return a.forecastTime().compareTo(b.forecastTime());
+        });
+
+        // 将轻周期归属到最近的前一个重周期（时间窗口内）
+        List<GroupedHeavyCycle> groups = new ArrayList<>();
+        int totalAll = 0, correctAll = 0;
+        int heavyTotal = 0, heavyCorrect = 0;
+        for (int i = 0; i < heavyResults.size(); i++) {
+            VerificationCycleResult heavy = heavyResults.get(i);
+            LocalDateTime heavyTime = heavy.forecastTime();
+            // 下一个重周期的时间作为上界（没有则无上界）
+            LocalDateTime nextHeavyTime = (i + 1 < heavyResults.size()) ? heavyResults.get(i + 1).forecastTime() : null;
+
+            List<VerificationCycleResult> attached = new ArrayList<>();
+            for (VerificationCycleResult light : lightResults) {
+                if (light.forecastTime() == null || heavyTime == null) continue;
+                // 轻周期时间必须在当前重周期之后
+                if (!light.forecastTime().isAfter(heavyTime)) continue;
+                // 如果有下一个重周期，轻周期时间必须在下一个重周期之前或相等
+                if (nextHeavyTime != null && light.forecastTime().isAfter(nextHeavyTime)) continue;
+                attached.add(light);
+            }
+
+            // 统计
+            for (QuantForecastVerification item : heavy.items()) {
+                totalAll++;
+                heavyTotal++;
+                if (item.getPredictionCorrect() != null && item.getPredictionCorrect()) {
+                    correctAll++;
+                    heavyCorrect++;
+                }
+            }
+            for (VerificationCycleResult light : attached) {
+                for (QuantForecastVerification item : light.items()) {
+                    totalAll++;
+                    if (item.getPredictionCorrect() != null && item.getPredictionCorrect()) correctAll++;
+                }
+            }
+            groups.add(new GroupedHeavyCycle(heavy, attached));
+        }
+
+        String accuracyRate = totalAll > 0 ? (correctAll * 100 / totalAll) + "%" : "0%";
+        String heavyAccuracyRate = heavyTotal > 0 ? (heavyCorrect * 100 / heavyTotal) + "%" : "0%";
+        return new GroupedVerificationSummary(totalAll, correctAll, accuracyRate,
+                heavyTotal, heavyCorrect, heavyAccuracyRate, groups);
     }
 
     /**

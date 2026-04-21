@@ -649,6 +649,22 @@ export interface QuantVerificationSummary {
   cycles: QuantVerificationCycleResult[];
 }
 
+export interface GroupedHeavyCycle {
+  heavy: QuantVerificationCycleResult;
+  lightCycles: QuantVerificationCycleResult[];
+}
+
+export interface GroupedVerificationSummary {
+  total: number;
+  correct: number;
+  accuracyRate: string;
+  heavyTotal: number;
+  heavyCorrect: number;
+  heavyAccuracyRate: string;
+  groups: GroupedHeavyCycle[];
+}
+
+
 export interface AiAgentRuntimeConfig {
   apiKey: string;
   baseUrl: string;

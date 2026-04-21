@@ -6,11 +6,82 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
-import { Loader2, CheckCircle2, ArrowLeft, RefreshCw } from 'lucide-react';
+import { Loader2, CheckCircle2, ArrowLeft, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import { parseRiskTags, translateRiskTag } from '../lib/utils';
-import type { QuantVerificationSummary } from '../types';
+import type { GroupedVerificationSummary, QuantVerificationCycleResult, QuantForecastVerificationItem } from '../types';
 
 const HORIZON_LABELS: Record<string, string> = { '0_10': '0-10min', '10_20': '10-20min', '20_30': '20-30min' };
+
+function formatTime(iso: string | null) {
+  if (!iso) return '-';
+  return new Date(iso).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function HorizonCard({ item }: { item: QuantForecastVerificationItem }) {
+  return (
+    <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold">{HORIZON_LABELS[item.horizon] || item.horizon}</span>
+        <Badge
+          variant={item.tradeQuality === 'GOOD' ? 'default' : item.tradeQuality === 'BAD' ? 'destructive' : 'outline'}
+          className="text-[10px]"
+        >
+          {item.tradeQuality}
+        </Badge>
+      </div>
+      <div className="text-xs text-muted-foreground space-y-1">
+        {item.resultSummary ? (
+          <div className="text-foreground">{item.resultSummary}</div>
+        ) : (
+          <>
+            <div>预测: <span className="font-semibold text-foreground">{item.predictedDirection}</span> · 置信 {(item.predictedConfidence * 100).toFixed(0)}%</div>
+            <div>实际: <span className={item.actualChangeBps >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>{item.actualChangeBps >= 0 ? '+' : ''}{item.actualChangeBps}bps</span></div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CycleHeader({ cycle, compact }: { cycle: QuantVerificationCycleResult; compact?: boolean }) {
+  return (
+    <div className={compact ? 'space-y-0.5' : 'space-y-1'}>
+      <div className="flex items-center gap-2 flex-wrap">
+        {!compact && <CardTitle className="text-sm">{cycle.symbol}</CardTitle>}
+        {cycle.overallDecision && (
+          <Badge variant="outline" className="text-xs">{cycle.overallDecision === 'FLAT' ? '观望' : cycle.overallDecision}</Badge>
+        )}
+        {cycle.riskStatus && cycle.riskStatus !== 'NORMAL' ? (
+          <div className="flex flex-wrap gap-1">
+            {parseRiskTags(cycle.riskStatus).map(tag => (
+              <Badge key={tag} variant="destructive" className="text-[10px]">{translateRiskTag(tag)}</Badge>
+            ))}
+          </div>
+        ) : cycle.riskStatus === 'NORMAL' ? (
+          <Badge variant="default" className="text-xs">正常</Badge>
+        ) : null}
+        <span className="text-[11px] text-muted-foreground ml-auto">
+          {compact ? '' : '预测 '}{formatTime(cycle.forecastTime)}
+        </span>
+      </div>
+      <div className="text-[11px] text-muted-foreground">
+        {cycle.cycleId}
+        {cycle.verifiedAt && ` · 验证于 ${formatTime(cycle.verifiedAt)}`}
+      </div>
+    </div>
+  );
+}
+
+function LightCycleItem({ cycle }: { cycle: QuantVerificationCycleResult }) {
+  return (
+    <div className="border rounded-lg p-3 bg-muted/10 space-y-2">
+      <CycleHeader cycle={cycle} compact />
+      <div className="grid gap-2 md:grid-cols-3">
+        {cycle.items.map(item => <HorizonCard key={item.id} item={item} />)}
+      </div>
+    </div>
+  );
+}
 
 export function QuantVerifications() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -20,12 +91,13 @@ export function QuantVerifications() {
   const paramSymbol = searchParams.get('symbol') || 'BTCUSDT';
   const [symbol, setSymbol] = useState(paramSymbol);
   const [loading, setLoading] = useState(false);
-  const [summary, setSummary] = useState<QuantVerificationSummary | null>(null);
+  const [summary, setSummary] = useState<GroupedVerificationSummary | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async (sym: string) => {
     setLoading(true);
     try {
-      const data = await aiAgentApi.verifications(sym, 10);
+      const data = await aiAgentApi.groupedVerifications(sym, 10);
       setSummary(data);
     } catch (e) {
       toast((e as Error).message || '加载预测验证失败', 'error');
@@ -42,6 +114,8 @@ export function QuantVerifications() {
     const normalized = symbol.trim().toUpperCase() || 'BTCUSDT';
     setSearchParams({ symbol: normalized });
   };
+
+  const toggle = (cycleId: string) => setExpanded(prev => ({ ...prev, [cycleId]: !prev[cycleId] }));
 
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-6 space-y-4">
@@ -74,81 +148,52 @@ export function QuantVerifications() {
         <div className="flex items-center justify-center py-16 gap-2 text-sm text-muted-foreground">
           <Loader2 className="w-4 h-4 animate-spin" /> 加载验证结果...
         </div>
-      ) : !summary || summary.cycles.length === 0 ? (
-        <div className="text-sm text-muted-foreground text-center py-16">
-          暂无已验证的预测结果
-        </div>
+      ) : !summary || summary.groups.length === 0 ? (
+        <div className="text-sm text-muted-foreground text-center py-16">暂无已验证的预测结果</div>
       ) : (
         <div className="space-y-4">
-          <div className="flex items-center gap-3 text-sm">
+          <div className="flex items-center gap-3 text-sm flex-wrap">
             <Badge variant="outline">总计 {summary.total} 条</Badge>
             <Badge variant="default">命中 {summary.correct} 条</Badge>
             <Badge variant={summary.correct / Math.max(summary.total, 1) >= 0.5 ? 'default' : 'destructive'}>
-              准确率 {summary.accuracyRate}
+              总准确率 {summary.accuracyRate}
             </Badge>
+            <Badge variant="outline">重周期 {summary.heavyTotal} 条 · {summary.heavyAccuracyRate}</Badge>
           </div>
-          {summary.cycles.map((cycle) => (
-            <Card key={cycle.cycleId} className="border-primary/20">
-              <CardHeader className="pb-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <CardTitle className="text-sm">{cycle.symbol}</CardTitle>
-                  {cycle.overallDecision && (
-                    <Badge variant="outline" className="text-xs">{cycle.overallDecision === 'FLAT' ? '观望' : cycle.overallDecision}</Badge>
-                  )}
-                  {cycle.riskStatus && cycle.riskStatus !== 'NORMAL' && (
-                    <div className="flex flex-wrap gap-1">
-                      {parseRiskTags(cycle.riskStatus).map(tag => (
-                        <Badge key={tag} variant="destructive" className="text-[10px]">{translateRiskTag(tag)}</Badge>
-                      ))}
+
+          {summary.groups.map(({ heavy, lightCycles }) => {
+            const isOpen = !!expanded[heavy.cycleId];
+            const hasLight = lightCycles.length > 0;
+            return (
+              <Card key={heavy.cycleId} className="border-primary/20">
+                <CardHeader className="pb-2">
+                  <CycleHeader cycle={heavy} />
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid gap-2 md:grid-cols-3">
+                    {heavy.items.map(item => <HorizonCard key={item.id} item={item} />)}
+                  </div>
+
+                  {hasLight && (
+                    <div>
+                      <button
+                        onClick={() => toggle(heavy.cycleId)}
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors py-1"
+                      >
+                        {isOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                        轻周期验证 ({lightCycles.length})
+                      </button>
+                      {isOpen && (
+                        <div className="space-y-2 mt-2 pl-2 border-l-2 border-muted">
+                          {lightCycles.map(lc => <LightCycleItem key={lc.cycleId} cycle={lc} />)}
+                        </div>
+                      )}
                     </div>
                   )}
-                  {cycle.riskStatus === 'NORMAL' && (
-                    <Badge variant="default" className="text-xs">正常</Badge>
-                  )}
-                  <span className="text-[11px] text-muted-foreground ml-auto">
-                    预测 {cycle.forecastTime ? new Date(cycle.forecastTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
-                  </span>
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  {cycle.cycleId}
-                  {cycle.verifiedAt && ` · 验证于 ${new Date(cycle.verifiedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-2 md:grid-cols-3">
-                  {cycle.items.map((item) => (
-                    <div key={item.id} className="rounded-lg border bg-muted/30 p-3 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold">{HORIZON_LABELS[item.horizon] || item.horizon}</span>
-                        <Badge
-                          variant={
-                            item.tradeQuality === 'GOOD'
-                              ? 'default'
-                              : item.tradeQuality === 'BAD'
-                              ? 'destructive'
-                              : 'outline'
-                          }
-                          className="text-[10px]"
-                        >
-                          {item.tradeQuality}
-                        </Badge>
-                      </div>
-                      <div className="text-xs text-muted-foreground space-y-1">
-                        {item.resultSummary ? (
-                          <div className="text-foreground">{item.resultSummary}</div>
-                        ) : (
-                          <>
-                            <div>预测: <span className="font-semibold text-foreground">{item.predictedDirection}</span> · 置信 {(item.predictedConfidence * 100).toFixed(0)}%</div>
-                            <div>实际: <span className={item.actualChangeBps >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>{item.actualChangeBps >= 0 ? '+' : ''}{item.actualChangeBps}bps</span></div>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>

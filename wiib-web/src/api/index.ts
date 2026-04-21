@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, AiTradingDashboard, AiTradingDecision, TradingRuntimeConfig, QuantRuntimeConfig } from '../types';
+import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, GroupedVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, AiTradingDashboard, AiTradingDecision, TradingRuntimeConfig, QuantRuntimeConfig } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -380,6 +380,7 @@ export const aiAgentApi = {
   latestSignals: (symbol?: string) => api.get<unknown, QuantLatestSignal>('/ai/quant/signals/latest', { params: { symbol: symbol || 'BTCUSDT' } }),
   forecasts: (symbol?: string, limit = 20) => api.get<unknown, QuantForecastCycle[]>('/ai/quant/forecasts', { params: { symbol: symbol || 'BTCUSDT', limit } }),
   verifications: (symbol?: string, limit = 10) => api.get<unknown, QuantVerificationSummary>('/ai/quant/verifications', { params: { symbol: symbol || 'BTCUSDT', limit } }),
+  groupedVerifications: (symbol?: string, limit = 10) => api.get<unknown, GroupedVerificationSummary>('/ai/quant/verifications/grouped', { params: { symbol: symbol || 'BTCUSDT', limit } }),
   chat: async (
     message: string,
     context: string,
