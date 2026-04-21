@@ -3,27 +3,25 @@ package com.mawai.wiibservice.agent.quant.memory;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
+import com.mawai.wiibcommon.entity.QuantForecastAdjustment;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantForecastVerification;
 import com.mawai.wiibcommon.entity.QuantHorizonForecast;
 import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibservice.mapper.QuantForecastAdjustmentMapper;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibservice.mapper.QuantForecastVerificationMapper;
 import com.mawai.wiibservice.mapper.QuantHorizonForecastMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 @Slf4j
 @Service
@@ -34,6 +32,7 @@ public class VerificationService {
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantForecastVerificationMapper verificationMapper;
     private final QuantHorizonForecastMapper horizonMapper;
+    private final QuantForecastAdjustmentMapper adjustmentMapper;
 
     private static final int NO_TRADE_THRESHOLD_BPS = 10;
     private static final BigDecimal HIGH_REVERSAL_SEVERITY = new BigDecimal("0.40");
@@ -46,6 +45,7 @@ public class VerificationService {
             String overallDecision,
             String riskStatus,
             LocalDateTime verifiedAt,
+            LocalDateTime createdAt,
             List<QuantForecastVerification> items
     ) {}
 
@@ -56,10 +56,11 @@ public class VerificationService {
             List<VerificationCycleResult> cycles
     ) {}
 
-    /** 分组结果：重周期为主，轻周期挂载在重周期下 */
+    /** 分组结果：重周期为主，轻周期挂载在重周期下；adjustments 为这些轻周期对本重周期的修正明细 */
     public record GroupedHeavyCycle(
             VerificationCycleResult heavy,
-            List<VerificationCycleResult> lightCycles
+            List<VerificationCycleResult> lightCycles,
+            List<QuantForecastAdjustment> adjustments
     ) {}
 
     public record GroupedVerificationSummary(
@@ -140,6 +141,7 @@ public class VerificationService {
                     cycle != null ? cycle.getOverallDecision() : null,
                     cycle != null ? cycle.getRiskStatus() : null,
                     verifiedAt,
+                    cycle != null ? cycle.getCreatedAt() : null,
                     List.copyOf(items)
             ));
         }
@@ -179,7 +181,7 @@ public class VerificationService {
         List<VerificationCycleResult> lightResults = new ArrayList<>();
         for (String cid : cycleIds) {
             List<QuantForecastVerification> items = byCycle.get(cid);
-            items.sort(java.util.Comparator.comparing(QuantForecastVerification::getHorizon));
+            items.sort(Comparator.comparing(QuantForecastVerification::getHorizon));
             QuantForecastCycle cycle = cycleMap.get(cid);
             LocalDateTime verifiedAt = items.stream()
                     .map(QuantForecastVerification::getVerifiedAt)
@@ -190,7 +192,9 @@ public class VerificationService {
                     cycle != null ? cycle.getForecastTime() : null,
                     cycle != null ? cycle.getOverallDecision() : null,
                     cycle != null ? cycle.getRiskStatus() : null,
-                    verifiedAt, List.copyOf(items));
+                    verifiedAt,
+                    cycle != null ? cycle.getCreatedAt() : null,
+                    List.copyOf(items));
             if (cid.startsWith("light-")) {
                 lightResults.add(r);
             } else {
@@ -198,40 +202,37 @@ public class VerificationService {
             }
         }
 
-        // 按forecastTime倒序排列重周期，截取limit个
+        // 按createdAt倒序排列重周期，截取limit个
         heavyResults.sort((a, b) -> {
-            if (a.forecastTime() == null || b.forecastTime() == null) return 0;
-            return b.forecastTime().compareTo(a.forecastTime());
+            if (a.createdAt() == null || b.createdAt() == null) return 0;
+            return b.createdAt().compareTo(a.createdAt());
         });
         if (heavyResults.size() > normalizedLimit) {
             heavyResults = heavyResults.subList(0, normalizedLimit);
         }
 
-        // 轻周期按forecastTime升序，方便归属
+        // 轻周期按createdAt升序，方便归属
         lightResults.sort((a, b) -> {
-            if (a.forecastTime() == null || b.forecastTime() == null) return 0;
-            return a.forecastTime().compareTo(b.forecastTime());
+            if (a.createdAt() == null || b.createdAt() == null) return 0;
+            return a.createdAt().compareTo(b.createdAt());
         });
 
-        // 将轻周期归属到最近的前一个重周期（时间窗口内）
+        // 批量查 adjustments：按 heavyCycleId 分组（前端用来在轻周期卡上显示徽章）
+        Map<String, List<QuantForecastAdjustment>> adjByHeavy = new HashMap<>();
+        if (!heavyResults.isEmpty()) {
+            List<String> heavyIds = heavyResults.stream().map(VerificationCycleResult::cycleId).toList();
+            List<QuantForecastAdjustment> allAdj = adjustmentMapper.selectByHeavyCycleIds(heavyIds);
+            for (QuantForecastAdjustment adj : allAdj) {
+                adjByHeavy.computeIfAbsent(adj.getHeavyCycleId(), k -> new ArrayList<>()).add(adj);
+            }
+        }
+
+        // 将轻周期归属到最近的前一个重周期（按 createdAt，窗口取整到下一个半点）
         List<GroupedHeavyCycle> groups = new ArrayList<>();
         int totalAll = 0, correctAll = 0;
         int heavyTotal = 0, heavyCorrect = 0;
-        for (int i = 0; i < heavyResults.size(); i++) {
-            VerificationCycleResult heavy = heavyResults.get(i);
-            LocalDateTime heavyTime = heavy.forecastTime();
-            // 下一个重周期的时间作为上界（没有则无上界）
-            LocalDateTime nextHeavyTime = (i + 1 < heavyResults.size()) ? heavyResults.get(i + 1).forecastTime() : null;
-
-            List<VerificationCycleResult> attached = new ArrayList<>();
-            for (VerificationCycleResult light : lightResults) {
-                if (light.forecastTime() == null || heavyTime == null) continue;
-                // 轻周期时间必须在当前重周期之后
-                if (!light.forecastTime().isAfter(heavyTime)) continue;
-                // 如果有下一个重周期，轻周期时间必须在下一个重周期之前或相等
-                if (nextHeavyTime != null && light.forecastTime().isAfter(nextHeavyTime)) continue;
-                attached.add(light);
-            }
+        for (VerificationCycleResult heavy : heavyResults) {
+            List<VerificationCycleResult> attached = getVerificationCycleResults(heavy, lightResults);
 
             // 统计
             for (QuantForecastVerification item : heavy.items()) {
@@ -248,7 +249,8 @@ public class VerificationService {
                     if (item.getPredictionCorrect() != null && item.getPredictionCorrect()) correctAll++;
                 }
             }
-            groups.add(new GroupedHeavyCycle(heavy, attached));
+            groups.add(new GroupedHeavyCycle(heavy, attached,
+                    adjByHeavy.getOrDefault(heavy.cycleId(), List.of())));
         }
 
         String accuracyRate = totalAll > 0 ? (correctAll * 100 / totalAll) + "%" : "0%";
@@ -257,10 +259,36 @@ public class VerificationService {
                 heavyTotal, heavyCorrect, heavyAccuracyRate, groups);
     }
 
+    private static List<VerificationCycleResult> getVerificationCycleResults(VerificationCycleResult heavy, List<VerificationCycleResult> lightResults) {
+        LocalDateTime heavyCreatedAt = heavy.createdAt();
+        // 窗口上界：createdAt 对齐到下一个半点（15:02 → 15:30，15:35 → 16:00）
+        LocalDateTime windowEnd = null;
+        if (heavyCreatedAt != null) {
+            LocalDateTime truncated = heavyCreatedAt.withSecond(0).withNano(0);
+            int minute = truncated.getMinute();
+            if (minute < 30) {
+                windowEnd = truncated.withMinute(30);
+            } else {
+                windowEnd = truncated.plusHours(1).withMinute(0);
+            }
+        }
+
+        List<VerificationCycleResult> attached = new ArrayList<>();
+        for (VerificationCycleResult light : lightResults) {
+            if (light.createdAt() == null || heavyCreatedAt == null) continue;
+            // 轻周期创建时间必须在重周期创建时间之后
+            if (!light.createdAt().isAfter(heavyCreatedAt)) continue;
+            // 轻周期创建时间必须在窗口内
+            if (light.createdAt().isAfter(windowEnd)) continue;
+            attached.add(light);
+        }
+        return attached;
+    }
+
     /**
      * 验证一个预测周期的所有区间裁决。
      * 按分段区间(0-10/10-20/20-30)各自拉取对应时段K线做路径分析。
-     *
+     * <p>
      * 验证策略：
      * - 0_10: 完整验证（方向+BPS+TP/SL触达判定）
      * - 10_20/20_30: 降级验证（仅方向+BPS），因TP/SL基于T+0价格生成，对后段无效

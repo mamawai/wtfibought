@@ -159,8 +159,9 @@ public class AiTradingScheduler {
             var positions = futuresTradingService.getUserPositions(userId, symbol);
             String positionSnapshot = JSON.toJSONString(positions);
 
-            var forecast = cycleMapper.selectLatest(symbol);
-            var signals = decisionMapper.selectLatestBySymbol(symbol);
+            // 交易决策只读最新重周期（含 LLM 信息）；轻周期通过 UPDATE 父重周期 forecast/signal 已将影响反映到这条记录
+            var forecast = cycleMapper.selectLatestHeavy(symbol);
+            var signals = decisionMapper.selectLatestHeavyBySymbol(symbol);
             List<AiTradingDecision> recentDecisions = tradingDecisionMapper.selectRecentBySymbol(symbol, 10);
 
             BigDecimal futuresPrice = cacheService.getFuturesPrice(symbol);

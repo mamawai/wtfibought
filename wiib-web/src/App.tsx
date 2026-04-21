@@ -23,6 +23,7 @@ import { AiAgent } from './pages/AiAgent';
 import { AiTrader } from './pages/AiTrader';
 import { ForceOrders } from './pages/ForceOrders';
 import { QuantVerifications } from './pages/QuantVerifications';
+import { QuantLightVerifications } from './pages/QuantLightVerifications';
 import { useUserStore } from './stores/userStore';
 import { useDedupedEffect } from './hooks/useDedupedEffect';
 
@@ -73,6 +74,7 @@ function App() {
                 <Route path="/ai" element={<RequireAuth><AiAgent /></RequireAuth>} />
                 <Route path="/ai-trader" element={<RequireAuth><AiTrader /></RequireAuth>} />
                 <Route path="/verifications" element={<RequireAuth><QuantVerifications /></RequireAuth>} />
+                <Route path="/verifications/light" element={<RequireAuth><QuantLightVerifications /></RequireAuth>} />
                 <Route path="/force-orders" element={<ForceOrders />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

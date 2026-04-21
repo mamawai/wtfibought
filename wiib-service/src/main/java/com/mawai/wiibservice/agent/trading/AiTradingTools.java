@@ -95,10 +95,11 @@ public class AiTradingTools implements TradingOperations {
     @Tool(description = "查询指定交易对的最新量化分析结果：方向、置信度、杠杆建议、风控状态")
     public String getLatestForecast(@ToolParam(description = "交易对，如BTCUSDT") String symbol) {
         if (symbol == null || symbol.isBlank()) symbol = currentSymbol;
-        QuantForecastCycle cycle = cycleMapper.selectLatest(symbol);
+        // 只读最新重周期（含 LLM），轻周期已通过 UPDATE 父重周期 forecast/signal 反映影响
+        QuantForecastCycle cycle = cycleMapper.selectLatestHeavy(symbol);
         if (cycle == null) return "暂无量化分析数据";
 
-        List<QuantSignalDecision> signals = decisionMapper.selectLatestBySymbol(symbol);
+        List<QuantSignalDecision> signals = decisionMapper.selectLatestHeavyBySymbol(symbol);
         return JSON.toJSONString(new Object() {
             public final String cycleId = cycle.getCycleId();
             public final String forecastTime = cycle.getForecastTime() != null ? cycle.getForecastTime().toString() : null;

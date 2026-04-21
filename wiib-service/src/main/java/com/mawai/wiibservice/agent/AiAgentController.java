@@ -194,7 +194,8 @@ public class AiAgentController {
             return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
         }
 
-        QuantForecastCycle cycle = cycleMapper.selectLatest(normalized);
+        // 前端展示与交易决策保持一致：只读最新重周期（含 LLM），轻周期修正已写入父重周期
+        QuantForecastCycle cycle = cycleMapper.selectLatestHeavy(normalized);
         if (cycle == null) {
             return Result.ok(Map.of("status", "pending", "message", "暂无分析报告，等待系统生成"));
         }
@@ -419,12 +420,12 @@ public class AiAgentController {
             return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
         }
 
-        QuantForecastCycle cycle = cycleMapper.selectLatest(normalized);
+        QuantForecastCycle cycle = cycleMapper.selectLatestHeavy(normalized);
         if (cycle == null) {
             return Result.fail("暂无预测数据");
         }
 
-        List<QuantSignalDecision> signals = decisionMapper.selectLatestBySymbol(normalized);
+        List<QuantSignalDecision> signals = decisionMapper.selectLatestHeavyBySymbol(normalized);
         Map<String, Object> data = Map.of(
                 "cycleId", cycle.getCycleId(),
                 "symbol", cycle.getSymbol(),

@@ -143,7 +143,8 @@ public class QuantForecastScheduler {
             List<AgentVote> allVotes = forecastResult.allVotes();
             FeatureSnapshot snapshot = forecastResult.snapshot();
             if (allVotes != null && snapshot != null) {
-                lightCycleService.cacheFromHeavyCycle(symbol, allVotes, snapshot, rawReportJson, forecastResult.horizons());
+                lightCycleService.cacheFromHeavyCycle(symbol, forecastResult.cycleId(), allVotes, snapshot,
+                        rawReportJson, forecastResult.horizons());
                 priceVolatilitySentinel.updateAtr(symbol, snapshot.atr5m());
             }
         } catch (Exception e) {
