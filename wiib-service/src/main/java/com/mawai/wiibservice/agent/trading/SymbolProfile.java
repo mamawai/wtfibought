@@ -17,16 +17,21 @@ public record SymbolProfile(
         double trailBreakevenAtr,
         double trailLockAtr,
         double slMinPct,
-        double slMaxPct
+        double slMaxPct,
+        double partialTpAtr,
+        double trailGapAtr
 ) {
-    // trailBreakevenAtr 1.0→2.0 防5m级浮盈<0.2%就被保本止损打掉
-    // trailLockAtr 2.0→3.0 让利润有追踪空间
+    // trailBreakevenAtr 2.0→1.0 让浮盈1ATR即保本（避免5m级冲1.9ATR回落打掉反而亏手续费）
+    // trailLockAtr 3.0→1.5 浮盈1.5ATR即启动追踪锁利（而非3ATR才追）
+    // partialTpAtr=1.5 分批止盈点，1.5ATR 平50%落袋
+    // trailGapAtr=0.8 追踪止损 gap，独立于 breakeven，防 trail 太松吃回利润
     private static final SymbolProfile BTC = new SymbolProfile(
-            1.5, 3.0, 1.5, 1.5, 3.0, 2.0, 3.0, 2.0, 3.0, 0.005, 0.10);
+            1.5, 3.0, 1.5, 1.5, 3.0, 2.0, 3.0, 1.0, 1.5, 0.005, 0.10, 1.5, 0.8);
     private static final SymbolProfile ETH = new SymbolProfile(
-            1.5, 3.0, 1.5, 1.5, 3.0, 2.0, 3.0, 2.0, 3.0, 0.005, 0.10);
+            1.5, 3.0, 1.5, 1.5, 3.0, 2.0, 3.0, 1.0, 1.5, 0.005, 0.10, 1.5, 0.8);
+    // PAXG 低波动：门槛按比例放宽
     private static final SymbolProfile PAXG = new SymbolProfile(
-            3.5, 6.0, 3.0, 2.5, 5.0, 4.0, 6.0, 2.0, 3.5, 0.002, 0.05);
+            3.5, 6.0, 3.0, 2.5, 5.0, 4.0, 6.0, 1.2, 2.0, 0.002, 0.05, 2.0, 1.2);
 
     private static final Map<String, SymbolProfile> PROFILES = Map.of(
             "BTCUSDT", BTC, "ETHUSDT", ETH, "PAXGUSDT", PAXG);

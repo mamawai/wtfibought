@@ -107,7 +107,8 @@ public class BacktestRunner {
                         sl, sl, tp, // revert SL/TPmin/TPmax
                         sl * 1.3, tp, // breakout SL/TP (略宽)
                         sl * 0.67, sl * 1.33, // trail breakeven/lock
-                        0.005, 0.10  // SL min/max pct
+                        0.005, 0.10, // SL min/max pct
+                        sl * 1.0, sl * 0.53 // partialTpAtr(≈1×SL)、trailGapAtr(≈0.8/1.5×SL)
                 );
 
                 try {
