@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 触发「轻周期刷新 + AI交易」，捕捉异常波动中的交易机会。
  * <p>
  * ATR-5m 由量化管道（重周期/轻周期）计算后推送更新；启动时从DB加载最近一次ATR。
- * 冷却期3分钟，防止高波动市场下过度触发。
+ * 冷却期30秒（仅技术防抖，业务节流由 ATR×1.3 阈值本身提供）。
  */
 @Slf4j
 @Component
