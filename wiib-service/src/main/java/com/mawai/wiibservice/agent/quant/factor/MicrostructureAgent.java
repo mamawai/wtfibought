@@ -100,7 +100,23 @@ public class MicrostructureAgent implements FactorAgent {
                 + Math.abs(fundingRaw) + Math.abs(lsr) + Math.abs(spotBia)
                 + Math.abs(spotLeadLag) + Math.min(1, Math.abs(basisBps) / 12.0)
                 + Math.abs(largeBias)) / 12.0;
-        double conf = Math.min(1.0, signalStrength * 1.5);
+
+        // 方向一致度：13 个带符号 Score 用统一"+多-空"语义（已消化 funding/basis/lsr 反向解读）
+        // coherence = |带符号和|/|绝对值和|，完全同向=1，完全对冲=0
+        // 避免"12 因子都活跃但多空对冲"时 conf 虚高
+        double scoreAbsSum = Math.abs(bidAskScore) + Math.abs(deltaScore) + Math.abs(largeBiasScore)
+                + Math.abs(oiScore) + Math.abs(liqScore) + Math.abs(topTraderScore)
+                + Math.abs(takerScore) + Math.abs(spotBookScore) + Math.abs(spotConfirmScore)
+                + Math.abs(leadLagScore) + Math.abs(fundingScore) + Math.abs(lsrScore)
+                + Math.abs(basisScore);
+        double scoreSignedSum = bidAskScore + deltaScore + largeBiasScore
+                + oiScore + liqScore + topTraderScore
+                + takerScore + spotBookScore + spotConfirmScore
+                + leadLagScore + fundingScore + lsrScore
+                + basisScore;
+        double coherence = scoreAbsSum > 1e-9 ? Math.abs(scoreSignedSum) / scoreAbsSum : 0;
+        // 对冲场景留底 40%（强对冲本身也有信息量——告诉 judge 这里分歧大）
+        double conf = Math.min(1.0, signalStrength * 1.5 * (0.4 + 0.6 * coherence));
 
         int volBps = s.atr1m() != null && lastPrice != null && lastPrice.signum() > 0
                 ? s.atr1m().multiply(BigDecimal.valueOf(10000))
@@ -124,11 +140,11 @@ public class MicrostructureAgent implements FactorAgent {
                 ? AgentVote.noTrade(name(), "20_30", "MICRO_TOO_WEAK")
                 : buildVote("20_30", raw2, conf2, volBps, flags2));
 
-        log.info("[Q3.micro] futBia={} spotBia={} td={} largeBias={} intensity={} oi={} liq={} topTrader={} taker={} basis={} spotLead={} funding={} lsr={} → scores[{},{},{}] conf={}",
+        log.info("[Q3.micro] futBia={} spotBia={} td={} largeBias={} intensity={} oi={} liq={} topTrader={} taker={} basis={} spotLead={} funding={} lsr={} → scores[{},{},{}] conf={} coherence={}",
                 fmt(bia), fmt(spotBia), fmt(td), fmt(largeBias), String.format("%.1f", tradeIntensity),
                 fmt(oi), fmt(liqPressure), fmt(topTrader), fmt(takerPressure),
                 fmt(basisBps / 10.0), fmt(spotLeadLag), fmt(fundingRaw), fmt(lsr),
-                fmt(raw0), fmt(raw1), fmt(raw2), String.format("%.2f", conf));
+                fmt(raw0), fmt(raw1), fmt(raw2), String.format("%.2f", conf), String.format("%.2f", coherence));
         return votes;
     }
 
