@@ -52,6 +52,7 @@ public class QuantForecastPersistService {
                            String rawSnapshotJson, String rawReportJson) {
         QuantForecastCycle cycle = new QuantForecastCycle();
         cycle.setCycleId(r.cycleId());
+        cycle.setParentCycleId(r.parentCycleId());   // 轻周期存父重周期 id；重周期为 null
         cycle.setSymbol(r.symbol());
         cycle.setForecastTime(r.forecastTime());
         cycle.setOverallDecision(r.overallDecision());

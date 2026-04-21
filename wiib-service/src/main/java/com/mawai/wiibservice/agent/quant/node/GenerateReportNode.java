@@ -126,7 +126,7 @@ public class GenerateReportNode implements NodeAction {
         ForecastResult forecastResult = new ForecastResult(symbol,
                 (String) state.value("cycle_id").orElse("unknown"),
                 snapshot != null ? snapshot.snapshotTime() : java.time.LocalDateTime.now(),
-                forecasts, overallDecision, riskStatus, votes, snapshot, finalReport);
+                forecasts, overallDecision, riskStatus, votes, snapshot, finalReport, null);
 
         log.info("[Q6.end] generate_report完成 总耗时{}ms", System.currentTimeMillis() - startMs);
 

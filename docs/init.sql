@@ -763,6 +763,7 @@ COMMENT ON TABLE user_asset_snapshot IS '用户资产每日快照';
 CREATE TABLE IF NOT EXISTS quant_forecast_cycle (
     id BIGSERIAL PRIMARY KEY,
     cycle_id VARCHAR(64) NOT NULL UNIQUE,
+    parent_cycle_id VARCHAR(64),
     symbol VARCHAR(20) NOT NULL,
     forecast_time TIMESTAMP NOT NULL,
     overall_decision VARCHAR(64) NOT NULL,
@@ -775,6 +776,7 @@ CREATE TABLE IF NOT EXISTS quant_forecast_cycle (
 
 COMMENT ON TABLE quant_forecast_cycle IS '量化预测周期主表';
 COMMENT ON COLUMN quant_forecast_cycle.cycle_id IS '周期唯一ID，格式 qf-yyyyMMdd-HHmmss-SYMBOL';
+COMMENT ON COLUMN quant_forecast_cycle.parent_cycle_id IS '父重周期ID（轻周期挂载用，重周期为NULL）';
 COMMENT ON COLUMN quant_forecast_cycle.symbol IS '交易对（如BTCUSDT）';
 COMMENT ON COLUMN quant_forecast_cycle.forecast_time IS '预测时刻';
 COMMENT ON COLUMN quant_forecast_cycle.overall_decision IS '总体决策（如PRIORITIZE_0_10_LONG）';
@@ -784,6 +786,7 @@ COMMENT ON COLUMN quant_forecast_cycle.report_json IS 'LLM生成的报告';
 COMMENT ON COLUMN quant_forecast_cycle.debate_json IS '辩论摘要';
 
 CREATE INDEX idx_qfc_symbol_time ON quant_forecast_cycle(symbol, forecast_time DESC);
+CREATE INDEX idx_qfc_parent ON quant_forecast_cycle(parent_cycle_id) WHERE parent_cycle_id IS NOT NULL;
 
 -- ============================================
 -- 量化预测：Agent投票表
