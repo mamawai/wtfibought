@@ -2,6 +2,7 @@ package com.mawai.wiibservice.agent.quant;
 
 import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.entity.QuantForecastAdjustment;
+import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibservice.agent.quant.domain.*;
 import com.mawai.wiibservice.agent.quant.factor.*;
 import com.mawai.wiibservice.agent.quant.judge.ConsensusBuilder;
@@ -21,6 +22,8 @@ import com.mawai.wiibservice.service.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;
 import com.mawai.wiibservice.service.OrderFlowAggregator;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
@@ -52,6 +55,11 @@ public class QuantLightCycleService {
     private final QuantSignalDecisionMapper signalDecisionMapper;
     private final QuantForecastCycleMapper forecastCycleMapper;
     private final QuantForecastAdjustmentMapper adjustmentMapper;
+
+    /** 浅LLM新闻刷新用：直接拉 news + runtime chatModel */
+    private final BinanceRestClient binanceRestClient;
+    private final AiAgentRuntimeManager runtimeManager;
+    private final LightNewsAgent lightNewsAgent = new LightNewsAgent();
 
     /** 波动哨兵，轻周期完成后更新ATR */
     private PriceVolatilitySentinel volatilitySentinel;
@@ -104,6 +112,7 @@ public class QuantLightCycleService {
                                    QuantSignalDecisionMapper signalDecisionMapper,
                                    QuantForecastCycleMapper forecastCycleMapper,
                                    QuantForecastAdjustmentMapper adjustmentMapper,
+                                   AiAgentRuntimeManager runtimeManager,
                                    @org.springframework.context.annotation.Lazy PriceVolatilitySentinel volatilitySentinel) {
         this.collectDataNode = new CollectDataNode(
                 binanceRestClient, forceOrderService, depthStreamCache, deribitClient);
@@ -121,6 +130,8 @@ public class QuantLightCycleService {
         this.signalDecisionMapper = signalDecisionMapper;
         this.forecastCycleMapper = forecastCycleMapper;
         this.adjustmentMapper = adjustmentMapper;
+        this.binanceRestClient = binanceRestClient;
+        this.runtimeManager = runtimeManager;
         this.volatilitySentinel = volatilitySentinel;
     }
 
@@ -197,9 +208,39 @@ public class QuantLightCycleService {
             log.info("[LightCycle] 使用实时regime={} (缓存regime={})",
                     snapshot.regime(), cache.regime());
 
-            // 4. 跑4个纯代码Agent（并行）+ 合并缓存的 news votes
+            // 4. 跑4个纯代码Agent（并行）+ news 票：按 dMin 决定是否调浅 LLM 刷新 news
+            //    dMin 0-2：重周期刚完 news 还新鲜 → 直接复用 cache
+            //    dMin 8-12 / 18-22：才能映射回父重周期，值得调 LLM 刷新对应 horizon
+            //    其他：不在映射窗口，轻周期跑归跑，news 票用 cache 即可
+            long dMinForNews = Duration.between(cache.heavyCycleTime(), Instant.now()).toMinutes();
+            int shiftForNews = dMinShift(dMinForNews);
+            List<String> activeHorizons = activeHorizonsForShift(shiftForNews);
+
+            List<AgentVote> newsVotes = cache.newsVotes();
+            if (shiftForNews >= 1 && !activeHorizons.isEmpty()) {
+                try {
+                    ChatModel chatModel = runtimeManager.current().quantChatModel();
+                    ChatClient.Builder builder = ChatClient.builder(chatModel);
+                    LightNewsAgent.Result r = lightNewsAgent.evaluate(
+                            symbol, snapshot,
+                            cache.heavyCycleTime().getEpochSecond(),
+                            activeHorizons, builder, LlmCallMode.STREAMING, binanceRestClient);
+                    if (!r.useCache() && r.votes() != null && !r.votes().isEmpty()) {
+                        // 用新票替换对应 horizon，其他 horizon 保留 cache（兼顾轻周期自身 forecast 完整性）
+                        newsVotes = mergeNewsVotes(cache.newsVotes(), r.votes(), activeHorizons);
+                        log.info("[LightCycle.news] symbol={} dMin={}min shift={} 刷新 {} 条 horizons={} status={}",
+                                symbol, dMinForNews, shiftForNews, r.votes().size(), activeHorizons, r.status());
+                    } else {
+                        log.info("[LightCycle.news] symbol={} dMin={}min 复用 cache status={}",
+                                symbol, dMinForNews, r.status());
+                    }
+                } catch (Exception e) {
+                    log.warn("[LightCycle.news] LightNewsAgent 异常，复用 cache symbol={}: {}", symbol, e.getMessage());
+                }
+            }
+
             List<AgentVote> allVotes = runPureAgents(snapshot);
-            allVotes.addAll(cache.newsVotes());
+            allVotes.addAll(newsVotes);
 
             // 5. 三个 HorizonJudge 并行裁决
             Map<String, Map<String, Double>> agentAccuracy = loadAgentAccuracy(symbol);
@@ -235,7 +276,8 @@ public class QuantLightCycleService {
             ForecastResult forecastResult = new ForecastResult(
                     symbol, cycleId, LocalDateTime.now(),
                     lightForecasts, overallDecision, riskStatus,
-                    allVotes, snapshot, cache.reportJson());
+                    allVotes, snapshot, cache.reportJson(),
+                    cache.heavyCycleId());  // 轻周期挂载的父重周期
 
             // 8. 持久化
             String snapshotJson = JSON.toJSONString(snapshot);
@@ -314,6 +356,40 @@ public class QuantLightCycleService {
         if (dMin >= 8 && dMin <= 12) return 1;
         if (dMin >= 18 && dMin <= 22) return 2;
         return -1;
+    }
+
+    /**
+     * 按 shift 决定 LightNewsAgent 需要产出哪些 horizon 的票。
+     * shift=0 重周期刚完，news 还新鲜 → 不调 LLM（空列表）
+     * shift=1 (dMin 8-12)  → [0_10, 10_20]（这两个 horizon 能映射回父重 10_20/20_30）
+     * shift=2 (dMin 18-22) → [0_10]        （只有 0_10 能映射回父重 20_30）
+     * 其他 shift<0：不在对齐窗口，也不调 LLM
+     */
+    private static List<String> activeHorizonsForShift(int shift) {
+        return switch (shift) {
+            case 1 -> List.of("0_10", "10_20");
+            case 2 -> List.of("0_10");
+            default -> List.of();
+        };
+    }
+
+    /**
+     * 合并 news 票：activeHorizons 中的 horizon 用 fresh 的，其他 horizon 保留 cache 的。
+     * 保证轻周期的三个 horizon 都有 news_event 票（不在 activeHorizons 的由 cache 兜底）。
+     */
+    private static List<AgentVote> mergeNewsVotes(List<AgentVote> cached, List<AgentVote> fresh,
+                                                   List<String> activeHorizons) {
+        List<AgentVote> merged = new ArrayList<>(3);
+        Map<String, AgentVote> freshByHorizon = new HashMap<>();
+        for (AgentVote v : fresh) freshByHorizon.put(v.horizon(), v);
+        for (AgentVote c : cached) {
+            if (activeHorizons.contains(c.horizon()) && freshByHorizon.containsKey(c.horizon())) {
+                merged.add(freshByHorizon.get(c.horizon()));
+            } else {
+                merged.add(c);
+            }
+        }
+        return merged;
     }
 
     private void applyHeavyCycleCorrection(String symbol, String lightCycleId,
