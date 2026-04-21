@@ -15,6 +15,9 @@ public class QuantForecastCycle {
 
     private String cycleId;
 
+    /** 父重周期ID。重周期为 null；轻周期存入时记录它挂载的重周期 cycle_id。 */
+    private String parentCycleId;
+
     private String symbol;
 
     private LocalDateTime forecastTime;
