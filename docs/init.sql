@@ -944,6 +944,38 @@ CREATE INDEX idx_qrm_symbol_time ON quant_reflection_memory(symbol, created_at D
 -- quant_forecast_cycle 增加辩论记录字段
 ALTER TABLE quant_forecast_cycle ADD COLUMN IF NOT EXISTS debate_json JSONB;
 
+-- ============================================
+-- 量化预测：轻周期修正记录表（轻周期对父重周期 forecast 的逐次修正明细）
+-- ============================================
+CREATE TABLE IF NOT EXISTS quant_forecast_adjustment (
+    id                      BIGSERIAL PRIMARY KEY,
+    light_cycle_id          VARCHAR(64)  NOT NULL,
+    heavy_cycle_id          VARCHAR(64)  NOT NULL,
+    symbol                  VARCHAR(20)  NOT NULL,
+    light_horizon           VARCHAR(8)   NOT NULL,
+    heavy_horizon           VARCHAR(8)   NOT NULL,
+    adjust_type             VARCHAR(32)  NOT NULL,
+    light_direction         VARCHAR(10)  NOT NULL,
+    light_confidence        NUMERIC(5,4) NOT NULL,
+    prev_heavy_direction    VARCHAR(10)  NOT NULL,
+    prev_heavy_confidence   NUMERIC(5,4) NOT NULL,
+    new_heavy_direction     VARCHAR(10)  NOT NULL,
+    new_heavy_confidence    NUMERIC(5,4) NOT NULL,
+    vote_count_after        INT          NOT NULL DEFAULT 0,
+    created_at              TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE quant_forecast_adjustment IS '轻周期对父重周期 forecast 的修正明细（0~3 条/轻周期）';
+COMMENT ON COLUMN quant_forecast_adjustment.light_cycle_id IS '触发修正的轻周期 cycleId（light- 前缀）';
+COMMENT ON COLUMN quant_forecast_adjustment.heavy_cycle_id IS '被修正的父重周期 cycleId';
+COMMENT ON COLUMN quant_forecast_adjustment.light_horizon IS '轻周期发出信号的 horizon';
+COMMENT ON COLUMN quant_forecast_adjustment.heavy_horizon IS 'dMin 映射后落在的父重周期 horizon';
+COMMENT ON COLUMN quant_forecast_adjustment.adjust_type IS 'SAME_DIR_BOOST 同向加成 / OPPO_WEAK_PENALTY 反向弱削弱 / OPPO_STRONG_PENALTY 反向强削弱 / FLIP 翻盘';
+COMMENT ON COLUMN quant_forecast_adjustment.vote_count_after IS '本次写入后该 heavyHorizon 累计连续反转票数（翻盘或清零后为 0）';
+
+CREATE INDEX idx_qfa_heavy_cycle ON quant_forecast_adjustment(heavy_cycle_id);
+CREATE INDEX idx_qfa_symbol_time ON quant_forecast_adjustment(symbol, created_at DESC);
+
 -- 爆仓记录（Binance WS @forceOrder 推送）
 CREATE TABLE IF NOT EXISTS force_order (
     id              BIGSERIAL       PRIMARY KEY,

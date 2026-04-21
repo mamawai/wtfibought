@@ -652,6 +652,26 @@ export interface QuantVerificationSummary {
 export interface GroupedHeavyCycle {
   heavy: QuantVerificationCycleResult;
   lightCycles: QuantVerificationCycleResult[];
+  adjustments?: QuantForecastAdjustment[];
+}
+
+/** 轻周期对父重周期 forecast 的修正明细（FLIP/SAME_DIR_BOOST/OPPO_WEAK_PENALTY/OPPO_STRONG_PENALTY） */
+export interface QuantForecastAdjustment {
+  id: number;
+  lightCycleId: string;
+  heavyCycleId: string;
+  symbol: string;
+  lightHorizon: string;
+  heavyHorizon: string;
+  adjustType: 'SAME_DIR_BOOST' | 'OPPO_WEAK_PENALTY' | 'OPPO_STRONG_PENALTY' | 'FLIP';
+  lightDirection: string;
+  lightConfidence: number;
+  prevHeavyDirection: string;
+  prevHeavyConfidence: number;
+  newHeavyDirection: string;
+  newHeavyConfidence: number;
+  voteCountAfter: number;
+  createdAt: string;
 }
 
 export interface GroupedVerificationSummary {

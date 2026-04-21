@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
-import { Loader2, CheckCircle2, ArrowLeft, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
+import { Loader2, CheckCircle2, ArrowLeft, RefreshCw, ExternalLink } from 'lucide-react';
 import { parseRiskTags, translateRiskTag } from '../lib/utils';
 import type { GroupedVerificationSummary, QuantVerificationCycleResult, QuantForecastVerificationItem } from '../types';
 
@@ -72,17 +72,6 @@ function CycleHeader({ cycle, compact }: { cycle: QuantVerificationCycleResult; 
   );
 }
 
-function LightCycleItem({ cycle }: { cycle: QuantVerificationCycleResult }) {
-  return (
-    <div className="border rounded-lg p-3 bg-muted/10 space-y-2">
-      <CycleHeader cycle={cycle} compact />
-      <div className="grid gap-2 md:grid-cols-3">
-        {cycle.items.map(item => <HorizonCard key={item.id} item={item} />)}
-      </div>
-    </div>
-  );
-}
-
 export function QuantVerifications() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -92,8 +81,6 @@ export function QuantVerifications() {
   const [symbol, setSymbol] = useState(paramSymbol);
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<GroupedVerificationSummary | null>(null);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-
   const load = useCallback(async (sym: string) => {
     setLoading(true);
     try {
@@ -114,8 +101,6 @@ export function QuantVerifications() {
     const normalized = symbol.trim().toUpperCase() || 'BTCUSDT';
     setSearchParams({ symbol: normalized });
   };
-
-  const toggle = (cycleId: string) => setExpanded(prev => ({ ...prev, [cycleId]: !prev[cycleId] }));
 
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-6 space-y-4">
@@ -161,8 +146,8 @@ export function QuantVerifications() {
             <Badge variant="outline">重周期 {summary.heavyTotal} 条 · {summary.heavyAccuracyRate}</Badge>
           </div>
 
-          {summary.groups.map(({ heavy, lightCycles }) => {
-            const isOpen = !!expanded[heavy.cycleId];
+          {summary.groups.map((group) => {
+            const { heavy, lightCycles } = group;
             const hasLight = lightCycles.length > 0;
             return (
               <Card key={heavy.cycleId} className="border-primary/20">
@@ -175,19 +160,18 @@ export function QuantVerifications() {
                   </div>
 
                   {hasLight && (
-                    <div>
-                      <button
-                        onClick={() => toggle(heavy.cycleId)}
-                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors py-1"
+                    <div className="flex items-center justify-end">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-[11px] px-2"
+                        onClick={() => navigate(
+                          `/verifications/light?symbol=${paramSymbol}&parentCycleId=${heavy.cycleId}`,
+                          { state: { group } }
+                        )}
                       >
-                        {isOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                        轻周期验证 ({lightCycles.length})
-                      </button>
-                      {isOpen && (
-                        <div className="space-y-2 mt-2 pl-2 border-l-2 border-muted">
-                          {lightCycles.map(lc => <LightCycleItem key={lc.cycleId} cycle={lc} />)}
-                        </div>
-                      )}
+                        <ExternalLink className="w-3 h-3 mr-1" /> 轻周期 ({lightCycles.length})
+                      </Button>
                     </div>
                   )}
                 </CardContent>
