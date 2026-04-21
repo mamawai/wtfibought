@@ -46,6 +46,7 @@ public class VerificationService {
             String riskStatus,
             LocalDateTime verifiedAt,
             LocalDateTime createdAt,
+            String parentCycleId,    // 轻周期的父重周期 cycleId；重周期为 null
             List<QuantForecastVerification> items
     ) {}
 
@@ -142,6 +143,7 @@ public class VerificationService {
                     cycle != null ? cycle.getRiskStatus() : null,
                     verifiedAt,
                     cycle != null ? cycle.getCreatedAt() : null,
+                    cycle != null ? cycle.getParentCycleId() : null,
                     List.copyOf(items)
             ));
         }
@@ -151,7 +153,7 @@ public class VerificationService {
 
 
     /**
-     * 分组查询：重周期为主，轻周期按时间归属到最近的前一个重周期下。
+     * 分组查询：重周期为主，轻周期按存入时记录的 parent_cycle_id 挂到对应重周期下。
      */
     public GroupedVerificationSummary groupedVerificationResults(String symbol, int heavyLimit) {
         int normalizedLimit = Math.clamp(heavyLimit, 1, 20);
@@ -194,6 +196,7 @@ public class VerificationService {
                     cycle != null ? cycle.getRiskStatus() : null,
                     verifiedAt,
                     cycle != null ? cycle.getCreatedAt() : null,
+                    cycle != null ? cycle.getParentCycleId() : null,
                     List.copyOf(items));
             if (cid.startsWith("light-")) {
                 lightResults.add(r);
@@ -260,27 +263,14 @@ public class VerificationService {
     }
 
     private static List<VerificationCycleResult> getVerificationCycleResults(VerificationCycleResult heavy, List<VerificationCycleResult> lightResults) {
-        LocalDateTime heavyCreatedAt = heavy.createdAt();
-        // 窗口上界：createdAt 对齐到下一个半点（15:02 → 15:30，15:35 → 16:00）
-        LocalDateTime windowEnd = null;
-        if (heavyCreatedAt != null) {
-            LocalDateTime truncated = heavyCreatedAt.withSecond(0).withNano(0);
-            int minute = truncated.getMinute();
-            if (minute < 30) {
-                windowEnd = truncated.withMinute(30);
-            } else {
-                windowEnd = truncated.plusHours(1).withMinute(0);
-            }
-        }
-
+        // 挂载靠字段：轻周期存入时写的 parent_cycle_id 就是它父重周期 cycleId
+        String heavyId = heavy.cycleId();
+        if (heavyId == null) return List.of();
         List<VerificationCycleResult> attached = new ArrayList<>();
         for (VerificationCycleResult light : lightResults) {
-            if (light.createdAt() == null || heavyCreatedAt == null) continue;
-            // 轻周期创建时间必须在重周期创建时间之后
-            if (!light.createdAt().isAfter(heavyCreatedAt)) continue;
-            // 轻周期创建时间必须在窗口内
-            if (light.createdAt().isAfter(windowEnd)) continue;
-            attached.add(light);
+            if (heavyId.equals(light.parentCycleId())) {
+                attached.add(light);
+            }
         }
         return attached;
     }
