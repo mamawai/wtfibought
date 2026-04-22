@@ -25,10 +25,11 @@ public record SymbolProfile(
     // trailLockAtr 3.0→1.5 浮盈1.5ATR即启动追踪锁利（而非3ATR才追）
     // partialTpAtr=1.5 分批止盈点，1.5ATR 平50%落袋
     // trailGapAtr=0.8 追踪止损 gap，独立于 breakeven，防 trail 太松吃回利润
+    // Phase 0A 止血：trendTpAtr / breakoutTpAtr 3.0→4.5（×1.5），剩余 50% 仓位追更远目标修正盈亏比（§2.3 A）
     private static final SymbolProfile BTC = new SymbolProfile(
-            1.5, 3.0, 1.5, 1.5, 3.0, 2.0, 3.0, 1.0, 1.5, 0.005, 0.10, 1.5, 0.8);
+            1.5, 4.5, 1.5, 1.5, 3.0, 2.0, 4.5, 1.0, 1.5, 0.005, 0.10, 1.5, 0.8);
     private static final SymbolProfile ETH = new SymbolProfile(
-            1.5, 3.0, 1.5, 1.5, 3.0, 2.0, 3.0, 1.0, 1.5, 0.005, 0.10, 1.5, 0.8);
+            1.5, 4.5, 1.5, 1.5, 3.0, 2.0, 4.5, 1.0, 1.5, 0.005, 0.10, 1.5, 0.8);
     // PAXG 低波动：门槛按比例放宽
     private static final SymbolProfile PAXG = new SymbolProfile(
             3.5, 6.0, 3.0, 2.5, 5.0, 4.0, 6.0, 1.2, 2.0, 0.002, 0.05, 2.0, 1.2);
