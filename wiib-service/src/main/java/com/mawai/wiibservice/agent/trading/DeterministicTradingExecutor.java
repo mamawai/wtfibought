@@ -45,7 +45,7 @@ public class DeterministicTradingExecutor {
 
     // ==================== 信号共振门槛 ====================
     // Phase 0A 止血：3→5，且删除 regime 降档，RANGE/SQUEEZE 不再放宽
-    private static final int MIN_CONFLUENCE_SCORE = 5; // 6维评分，>=5才入场
+    private static final int MIN_CONFLUENCE_SCORE = 6; // 7维评分，>=6才入场
 
     // ==================== 策略A: EMA趋势跟踪 ====================
     private static final double TREND_MIN_CONFIDENCE = 0.35;
@@ -126,6 +126,9 @@ public class DeterministicTradingExecutor {
             // 5m MACD
             String macdCross5m,      // "golden"=金叉, "death"=死叉, null=无
             String macdHistTrend5m,  // "rising"/"falling"/"sideways"
+            BigDecimal macdDif5m,    // MACD快线（DIF）
+            BigDecimal macdDea5m,    // MACD慢线（DEA/Signal）
+            BigDecimal ema20,        // EMA20，用于价格趋势确认
             // 5m 布林带
             Double bollPb5m,         // BB%B: 0=下轨, 50=中轨, 100=上轨（bollPercentB返回0-100）
             Double bollBandwidth5m,
@@ -478,7 +481,7 @@ public class DeterministicTradingExecutor {
         int confluenceScore = calcConfluenceScore(ctx, isLong, signals);
         if (confluenceScore < MIN_CONFLUENCE_SCORE) {
             return hold(String.format("共振不足: score=%d/%d(需>=%d, regime=%s) %s",
-                    confluenceScore, 6, MIN_CONFLUENCE_SCORE, ctx.regime,
+                    confluenceScore, 7, MIN_CONFLUENCE_SCORE, ctx.regime,
                     describeConfluence(ctx, isLong)));
         }
 
@@ -774,10 +777,15 @@ public class DeterministicTradingExecutor {
     private static int calcConfluenceScore(MarketContext ctx, boolean isLong, List<QuantSignalDecision> signals) {
         int score = 0;
 
-        // 1. MACD交叉方向
+        // 1. MACD方向（优先看交叉事件，没有则看DIF vs DEA当前位置）
         if (ctx.macdCross5m != null) {
             if ((isLong && "golden".equals(ctx.macdCross5m))
                     || (!isLong && "death".equals(ctx.macdCross5m))) {
+                score++;
+            }
+        } else if (ctx.macdDif5m != null && ctx.macdDea5m != null) {
+            if ((isLong && ctx.macdDif5m.compareTo(ctx.macdDea5m) > 0)
+                    || (!isLong && ctx.macdDif5m.compareTo(ctx.macdDea5m) < 0)) {
                 score++;
             }
         }
@@ -805,8 +813,8 @@ public class DeterministicTradingExecutor {
             }
         }
 
-        // 4. 成交量放大
-        if (ctx.volumeRatio5m != null && ctx.volumeRatio5m >= 1.0) {
+        // 4. 成交量放大（门槛1.2，过滤缩量信号）
+        if (ctx.volumeRatio5m != null && ctx.volumeRatio5m >= 1.2) {
             score++;
         }
 
@@ -817,12 +825,20 @@ public class DeterministicTradingExecutor {
             }
         }
 
-        // 6. 微结构支持（盘口偏向 + 主动买卖压力）
+        // 6. 微结构支持（盘口偏向 + 主动买卖压力，阈值收紧到±0.15）
         double micro = 0;
         if (ctx.bidAskImbalance != null) micro += ctx.bidAskImbalance;
         if (ctx.takerPressure != null) micro += ctx.takerPressure;
-        if ((isLong && micro > 0.05) || (!isLong && micro < -0.05)) {
+        if ((isLong && micro > 0.15) || (!isLong && micro < -0.15)) {
             score++;
+        }
+
+        // 7. 价格在EMA20上方/下方（趋势确认，中期均线过滤）
+        if (ctx.ema20 != null && ctx.price != null) {
+            if ((isLong && ctx.price.compareTo(ctx.ema20) > 0)
+                    || (!isLong && ctx.price.compareTo(ctx.ema20) < 0)) {
+                score++;
+            }
         }
 
         return score;
@@ -831,7 +847,15 @@ public class DeterministicTradingExecutor {
     /** 描述共振评分细节（用于日志） */
     private static String describeConfluence(MarketContext ctx, boolean isLong) {
         StringBuilder sb = new StringBuilder("[");
-        sb.append("MACD交叉=").append(ctx.macdCross5m != null ? ctx.macdCross5m : "无");
+        String macdState;
+        if (ctx.macdCross5m != null) {
+            macdState = ctx.macdCross5m;
+        } else if (ctx.macdDif5m != null && ctx.macdDea5m != null) {
+            macdState = ctx.macdDif5m.compareTo(ctx.macdDea5m) > 0 ? "above" : "below";
+        } else {
+            macdState = "无";
+        }
+        sb.append("MACD=").append(macdState);
         sb.append(" MACD柱=").append(ctx.macdHistTrend5m != null ? ctx.macdHistTrend5m : "无");
         sb.append(" RSI=").append(ctx.rsi5m != null ? fmt(ctx.rsi5m.doubleValue()) : "无");
         sb.append(" Vol=").append(ctx.volumeRatio5m != null ? String.format("%.1f", ctx.volumeRatio5m) : "无");
@@ -840,6 +864,7 @@ public class DeterministicTradingExecutor {
         if (ctx.bidAskImbalance != null) micro += ctx.bidAskImbalance;
         if (ctx.takerPressure != null) micro += ctx.takerPressure;
         sb.append(String.format(" 微结构=%.2f", micro));
+        sb.append(" EMA20=").append(ctx.ema20 != null ? ctx.ema20.setScale(2, RoundingMode.HALF_UP) : "无");
         sb.append("]");
         return sb.toString();
     }
@@ -1025,6 +1050,7 @@ public class DeterministicTradingExecutor {
         BigDecimal atr5m = null, rsi5m = null;
         Integer maAlignment1h = null, maAlignment15m = null, maAlignment5m = null;
         String macdCross5m = null, macdHistTrend5m = null;
+        BigDecimal macdDif5m = null, macdDea5m = null, ema20 = null;
         Double bollPb5m = null, bollBandwidth5m = null, volumeRatio5m = null;
         String closeTrend5m = null;
         Double rsi15m = null;
@@ -1056,6 +1082,12 @@ public class DeterministicTradingExecutor {
                         rsi5m = tf5m.getBigDecimal("rsi14");
                         macdCross5m = tf5m.getString("macd_cross");
                         macdHistTrend5m = tf5m.getString("macd_hist_trend");
+                        BigDecimal macdDif = tf5m.getBigDecimal("macd_dif");
+                        BigDecimal macdDea = tf5m.getBigDecimal("macd_dea");
+                        if (macdDif != null) macdDif5m = macdDif;
+                        if (macdDea != null) macdDea5m = macdDea;
+                        BigDecimal ema20Val = tf5m.getBigDecimal("ema20");
+                        if (ema20Val != null) ema20 = ema20Val;
                         maAlignment5m = tf5m.getInteger("ma_alignment");
                         closeTrend5m = tf5m.getString("close_trend");
                         bollPb5m = tf5m.getDouble("boll_pb");
@@ -1088,7 +1120,7 @@ public class DeterministicTradingExecutor {
 
         return new MarketContext(regime, transition, atr5m, rsi5m, price,
                 maAlignment1h, maAlignment15m, maAlignment5m,
-                macdCross5m, macdHistTrend5m,
+                macdCross5m, macdHistTrend5m, macdDif5m, macdDea5m, ema20,
                 bollPb5m, bollBandwidth5m, bollSqueeze,
                 volumeRatio5m, closeTrend5m, rsi15m,
                 bidAskImbalance, takerPressure, oiChangeRate,

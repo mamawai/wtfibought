@@ -236,11 +236,14 @@ public class BacktestEngine {
         tf5m.put("rsi14", getBd(ind5m, "rsi14"));
         tf5m.put("macd_cross", getStr(ind5m, "macd_cross"));
         tf5m.put("macd_hist_trend", getStr(ind5m, "macd_hist_trend"));
+        tf5m.put("macd_dif", getBd(ind5m, "macd_dif"));
+        tf5m.put("macd_dea", getBd(ind5m, "macd_dea"));
         tf5m.put("ma_alignment", getInt(ind5m, "ma_alignment"));
         tf5m.put("close_trend", getStr(ind5m, "close_trend"));
         tf5m.put("boll_pb", getDbl(ind5m, "boll_pb"));
         tf5m.put("boll_bandwidth", getDbl(ind5m, "boll_bandwidth"));
         tf5m.put("volume_ratio", getDbl(ind5m, "volume_ratio"));
+        tf5m.put("ema20", getBd(ind5m, "ema20"));
         indicators.put("5m", tf5m);
 
         // 15m
