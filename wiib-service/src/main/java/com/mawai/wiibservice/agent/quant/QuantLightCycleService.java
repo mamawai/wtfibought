@@ -36,7 +36,7 @@ import java.util.*;
 import java.util.concurrent.*;
 
 /**
- * 轻周期服务：每10min刷新量化信号，零LLM调用。
+ * 轻周期服务：每5min刷新量化信号（D10），零LLM调用（纯计算路径）。
  * <p>
  * 复用上一次重周期的 news_votes、reportJson、regimeConfidence、regimeTransition，
  * regime使用实时数据重算。重新采集市场数据 + 重算特征 + 跑4个纯代码Agent + Judge + RiskGate。
@@ -98,6 +98,13 @@ public class QuantLightCycleService {
     private final Map<String, Map<String, ReversalState>> reversalStateBySymbol = new ConcurrentHashMap<>();
 
     public record ReversalState(Direction reversalDir, int voteCount) {}
+
+    /**
+     * 轻周期 FLIP 翻盘开关（D8）。false=2 票累积达标时也不翻方向，仅记强罚；true=原 FLIP 行为。
+     * Phase 0A 默认关闭——消除"短周期噪音推翻长周期信号"的 whipsaw 亏损源；
+     * 同向加成(A)、反向弱罚(B)、反向强罚不累票(C1)、例行刷新、ATR 事件驱动全部保留。
+     */
+    public static volatile boolean LIGHT_CYCLE_FLIP_ENABLED = false;
 
 
     public QuantLightCycleService(BinanceRestClient binanceRestClient,
@@ -208,10 +215,10 @@ public class QuantLightCycleService {
             log.info("[LightCycle] 使用实时regime={} (缓存regime={})",
                     snapshot.regime(), cache.regime());
 
-            // 4. 跑4个纯代码Agent（并行）+ news 票：按 dMin 决定是否调浅 LLM 刷新 news
+            // 4. 跑4个纯代码Agent（并行）+ news 票：按 dMin 决定是否调浅 LLM 刷新 news（D10：heavy=20min / light=5min）
             //    dMin 0-2：重周期刚完 news 还新鲜 → 直接复用 cache
-            //    dMin 8-12 / 18-22：才能映射回父重周期，值得调 LLM 刷新对应 horizon
-            //    其他：不在映射窗口，轻周期跑归跑，news 票用 cache 即可
+            //    dMin 3-7 / 8-12 / 13-17：对应 shift=1/2/3，映射到父重周期 horizon，值得调 LLM 刷新
+            //    dMin ≥18：heavy 即将完成，轻周期跑归跑，news 票用 cache 即可
             long dMinForNews = Duration.between(cache.heavyCycleTime(), Instant.now()).toMinutes();
             int shiftForNews = dMinShift(dMinForNews);
             List<String> activeHorizons = activeHorizonsForShift(shiftForNews);
@@ -305,16 +312,17 @@ public class QuantLightCycleService {
         }
     }
 
-    // ===================== 父重周期修正（核心算法） =====================
+    // ===================== 父重周期修正（核心算法，D10：heavy=20min / light=5min） =====================
     //
     // 轻周期根据「距父重周期创建时间的分钟偏差 dMin」决定自己的每个 horizon 能影响父重周期的哪个 horizon。
-    // 只有 dMin ≤ 2min 内对齐的 horizon 才修正。不可映射的 horizon 放过（不写 adjustment）。
+    // light 每 5min 触发，dMin 落点集中在 5/10/15；heavy 边界 t=0 与 t=20 附近不修正。
     //
     // dMin 映射表（dMin = 轻周期当前时间 - 父重周期创建时间，分钟）：
-    //   dMin ∈ [0, 2] ：  0_10→0_10,  10_20→10_20, 20_30→20_30
-    //   dMin ∈ [8, 12]：  0_10→10_20, 10_20→20_30
-    //   dMin ∈ [18, 22]： 0_10→20_30
-    //   其他： 不修正（偏差>2min，重合度不够）
+    //   dMin ∈ [0, 2]   shift=0：不修正（heavy 刚完成，数据最新鲜）
+    //   dMin ∈ [3, 7]   shift=1：light.0_10→heavy.10_20, light.10_20→heavy.20_30（各重叠 5min）
+    //   dMin ∈ [8, 12]  shift=2：light.0_10→heavy.10_20, light.10_20→heavy.20_30（完全对齐）
+    //   dMin ∈ [13, 17] shift=3：light.0_10→heavy.20_30（仅此一条：light.10_20 已越过 heavy 末尾）
+    //   dMin ≥ 18       shift=-1：heavy 即将完成，跳过
     //
     // 三分支裁决（prev=父重周期当前 horizon forecast，light=本轮轻周期对应 horizon forecast）：
     //   A 同向         ：newConf = prev.conf + light.conf×0.2（加成），dir 不变，清票
@@ -322,19 +330,19 @@ public class QuantLightCycleService {
     //   C 反向强(l≥p) ：newConf = prev.conf - light.conf×0.5（重罚）
     //                    ├─ light.conf<0.5 → 不累票，清零（信号绝对值太弱，防噪音反转）
     //                    └─ light.conf≥0.5 → 累票
-    //                         ├─ 达 2 票 → 翻盘 FLIP：newDir=light.dir, newConf=light.conf×0.8（8 折保守）
+    //                         ├─ 达 2 票 → 翻盘 FLIP（D8 默认禁用，票数保留不翻向）
     //                         └─ <2 票 → OPPO_STRONG_PENALTY，dir 不变，票数留存
     //
-    // 为什么翻盘后 newConf = light.conf × 0.8：
+    // 为什么翻盘后 newConf = light.conf × 0.8（当 LIGHT_CYCLE_FLIP_ENABLED=true 时）：
     //   轻周期能翻盘说明信号强，但毕竟没 LLM 加持；8 折留安全边际，后续轻周期继续同向时可通过加成回升。
     //
     // 为什么不动 weightedScore / entryLow/High / tp / sl：
     //   这些字段关联历史快照，VerificationService 验证路径依赖原值。修正只改方向/置信度，保留快照完整性。
 
     private static final Map<String, Map<Integer, String>> D_MIN_HORIZON_MAP = Map.of(
-            "0_10",  Map.of(0, "0_10",  1, "10_20", 2, "20_30"),
-            "10_20", Map.of(0, "10_20", 1, "20_30"),
-            "20_30", Map.of(0, "20_30")
+            "0_10",  Map.of(1, "10_20", 2, "10_20", 3, "20_30"),
+            "10_20", Map.of(1, "20_30", 2, "20_30"),
+            "20_30", Map.of()  // heavy=20min 下 light.20_30 (t=dMin+25~dMin+35) 总是越过 heavy 末尾
     );
 
     /** adjust_type 枚举值（落库字符串），与前端 TS union 对齐 */
@@ -349,26 +357,28 @@ public class QuantLightCycleService {
     }
 
     /**
-     * 根据 dMin 返回 (shift 值)：0=同段,1=下一段,2=下下段，-1=不可修正。
+     * 根据 dMin 返回 shift 值（D10：heavy=20min / light=5min）：
+     *   0=heavy 刚完成不修正，1/2=中段对齐修正，3=尾段仅修正 20_30，-1=heavy 即将完成跳过。
      */
     private static int dMinShift(long dMin) {
         if (dMin >= 0 && dMin <= 2) return 0;
-        if (dMin >= 8 && dMin <= 12) return 1;
-        if (dMin >= 18 && dMin <= 22) return 2;
+        if (dMin >= 3 && dMin <= 7) return 1;
+        if (dMin >= 8 && dMin <= 12) return 2;
+        if (dMin >= 13 && dMin <= 17) return 3;
         return -1;
     }
 
     /**
      * 按 shift 决定 LightNewsAgent 需要产出哪些 horizon 的票。
-     * shift=0 重周期刚完，news 还新鲜 → 不调 LLM（空列表）
-     * shift=1 (dMin 8-12)  → [0_10, 10_20]（这两个 horizon 能映射回父重 10_20/20_30）
-     * shift=2 (dMin 18-22) → [0_10]        （只有 0_10 能映射回父重 20_30）
-     * 其他 shift<0：不在对齐窗口，也不调 LLM
+     * shift=0 / -1：不在修正窗口 → 空列表（不调 LLM）
+     * shift=1 (dMin 3-7)   → [0_10, 10_20]（分别映射回父重 10_20 / 20_30）
+     * shift=2 (dMin 8-12)  → [0_10, 10_20]（分别映射回父重 10_20 / 20_30）
+     * shift=3 (dMin 13-17) → [0_10]        （仅能映射回父重 20_30）
      */
     private static List<String> activeHorizonsForShift(int shift) {
         return switch (shift) {
-            case 1 -> List.of("0_10", "10_20");
-            case 2 -> List.of("0_10");
+            case 1, 2 -> List.of("0_10", "10_20");
+            case 3 -> List.of("0_10");
             default -> List.of();
         };
     }
@@ -408,8 +418,9 @@ public class QuantLightCycleService {
 
         long dMin = Duration.between(cache.heavyCycleTime(), Instant.now()).toMinutes();
         int shift = dMinShift(dMin);
-        if (shift < 0) {
-            log.info("[LightCycle.correct] dMin={}min 非对齐窗口，跳过修正 symbol={}", dMin, symbol);
+        if (shift <= 0) {
+            log.info("[LightCycle.correct] dMin={}min shift={} 非对齐窗口（0=heavy刚完，-1=heavy即将完），跳过修正 symbol={}",
+                    dMin, shift, symbol);
             return;
         }
 
@@ -467,14 +478,15 @@ public class QuantLightCycleService {
                     ReversalState current = voteMap.get(heavyH);
                     int nextCount = (current != null && current.reversalDir() == lightF.direction())
                             ? current.voteCount() + 1 : 1;
-                    if (nextCount >= 2) {
-                        // 翻盘
+                    if (LIGHT_CYCLE_FLIP_ENABLED && nextCount >= 2) {
+                        // 翻盘（D8 期间默认禁用；Admin 切开关可恢复）
                         newDir = lightF.direction();
                         newConf = Math.clamp(lightConf * 0.8, 0.1, 1.0);
                         adjustType = ADJ_FLIP;
                         voteAfter = 0;
                         voteMap.remove(heavyH);
                     } else {
+                        // D8 期间即使累计达标也不翻向，保持父重方向仅做强罚
                         newDir = prev.direction();
                         adjustType = ADJ_OPPO_STRONG_PENALTY;
                         voteAfter = nextCount;

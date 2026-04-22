@@ -33,9 +33,10 @@ public class DebateJudgeNode implements NodeAction {
 
     /**
      * 辩论裁决运行时开关。true=启用3-call辩论；false=跳过辩论返回中性概率(33/34/33)保留原始forecasts。
-     * Admin可运行时切换做A/B测试：切到false观察胜率/成本是否显著改善。重启恢复默认true(保守档)。
+     * Phase 0A D7-B：默认关闭——3次LLM调用省掉，confidence不再被辩论调整，规避方差注入。
+     * 类与workflow节点保留不动，Admin可运行时切回true做前后对比。
      */
-    public static volatile boolean ENABLED = true;
+    public static volatile boolean ENABLED = false;
 
     private final ChatClient chatClient;
     private final LlmCallMode callMode;
@@ -55,12 +56,12 @@ public class DebateJudgeNode implements NodeAction {
                 (List<HorizonForecast>) state.value("horizon_forecasts").orElse(List.of());
 
         if (!ENABLED) {
-            // A/B测试：跳过3-call辩论，仅下发33/34/33中性概率；不修改forecasts/decision/risk_status
+            // D7-B短路：跳过3-call辩论，下发33/34/33中性概率；forecasts/decision/risk_status原样透传
             Map<String, Integer[]> defaultProbs = new HashMap<>();
             for (HorizonForecast f : forecasts) {
                 defaultProbs.put(f.horizon(), new Integer[]{33, 34, 33});
             }
-            log.info("[Q4.5.disabled] 辩论已禁用, 保留原始forecasts, 下发中性概率 forecasts={}", forecasts.size());
+            log.info("[Q4.5.disabled] 辩论已禁用(D7-B), 保留原始forecasts, 下发中性概率 forecasts={}", forecasts.size());
             return Map.of("debate_probs", defaultProbs);
         }
 

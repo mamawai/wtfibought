@@ -31,18 +31,21 @@ public class DeterministicTradingExecutor {
     public static final BigDecimal INITIAL_BALANCE = new BigDecimal("100000.00");
 
     // ==================== 手续费 ====================
-    private static final double ROUND_TRIP_FEE_RATE = 0.0008; // 开仓0.04% + 平仓0.04%
+    // 0.0008 与模拟盘记账一致（开仓0.04% + 平仓0.04%）；真盘迁移时改 0.0010（Binance VIP0 taker 0.05% 往返）
+    private static final double ROUND_TRIP_FEE_RATE = 0.0008;
     private static final double MIN_PROFIT_AFTER_FEE_ATR = 0.5; // 扣除手续费后最低盈利0.5ATR
 
     // ==================== 风控常量 ====================
     private static final BigDecimal RISK_PER_TRADE = new BigDecimal("0.02");
-    private static final BigDecimal MAX_MARGIN_PCT = new BigDecimal("0.35");
+    // Phase 0A 止血：单笔保证金占余额上限 0.35 → 0.15，单笔最大亏损下降约 57%
+    private static final BigDecimal MAX_MARGIN_PCT = new BigDecimal("0.15");
     private static final BigDecimal DAILY_LOSS_LIMIT_PCT = new BigDecimal("0.05");
     private static final BigDecimal DRAWDOWN_THRESHOLD = new BigDecimal("0.85");
     private static final BigDecimal DRAWDOWN_REDUCTION = new BigDecimal("0.7"); // 回撤时杠杆和仓位缩减到70%
 
     // ==================== 信号共振门槛 ====================
-    private static final int MIN_CONFLUENCE_SCORE = 3; // 6维评分，>=3才入场
+    // Phase 0A 止血：3→5，且删除 regime 降档，RANGE/SQUEEZE 不再放宽
+    private static final int MIN_CONFLUENCE_SCORE = 5; // 6维评分，>=5才入场
 
     // ==================== 策略A: EMA趋势跟踪 ====================
     private static final double TREND_MIN_CONFIDENCE = 0.35;
@@ -68,7 +71,10 @@ public class DeterministicTradingExecutor {
     // 扩张倍数>3.0 → 极端横盘（如PAXG日内窄幅），放弃入场。
     private static final double LOW_VOL_SL_EXPAND_MAX = 3.0;
     private static final double LOW_VOL_POSITION_SCALE = 0.6;
-    /** 低波动小仓位交易开关（Admin运行时切换，重启恢复默认false保守档）。 */
+    /**
+     * 低波动小仓位交易开关（Admin运行时切换，重启恢复默认false保守档）。
+     * Phase 0A 期间严禁通过 Admin 端打开——SL 落噪音带是 §2.3 已确认的负 EV 机制。
+     */
     public static volatile boolean LOW_VOL_TRADING_ENABLED = false;
 
     // ==================== 持仓管理 ====================
@@ -76,7 +82,8 @@ public class DeterministicTradingExecutor {
     // 配合 REVERSAL_STREAK_REQUIRED 连续校验 + 手续费门槛使用
     private static final double REVERSAL_CONFIDENCE = 0.82;
     private static final int REVERSAL_STREAK_REQUIRED = 2;
-    private static final double REVERSAL_MIN_PROFIT_FEE_MULTIPLE = 3.0;
+    // Phase 0A 止血：3.0 → 5.0，反转平仓需更厚浮盈才触发，避免被噪音震出（§2.3 A）
+    private static final double REVERSAL_MIN_PROFIT_FEE_MULTIPLE = 5.0;
     // 仓位反转信号连续次数：key=positionId，value=连续出现的反向信号周期数
     // 仓位平仓/反转中断时自动清零
     private static final ConcurrentHashMap<Long, Integer> REVERSAL_STREAK = new ConcurrentHashMap<>();
@@ -467,12 +474,11 @@ public class DeterministicTradingExecutor {
             }
         }
 
-        // ===== 5. 信号共振评分（6维，regime自适应门槛）=====
+        // ===== 5. 信号共振评分（6维，统一门槛）=====
         int confluenceScore = calcConfluenceScore(ctx, isLong, signals);
-        int minScore = getMinConfluenceScore(ctx.regime);
-        if (confluenceScore < minScore) {
+        if (confluenceScore < MIN_CONFLUENCE_SCORE) {
             return hold(String.format("共振不足: score=%d/%d(需>=%d, regime=%s) %s",
-                    confluenceScore, 6, minScore, ctx.regime,
+                    confluenceScore, 6, MIN_CONFLUENCE_SCORE, ctx.regime,
                     describeConfluence(ctx, isLong)));
         }
 
@@ -762,21 +768,7 @@ public class DeterministicTradingExecutor {
     // ==================== 信号共振评分系统 ====================
 
     /**
-     * regime自适应共振门槛。震荡/收缩市放宽（天然难满足MACD交叉+Vol+MA三项），SHOCK期加严。
-     * 默认 {@link #MIN_CONFLUENCE_SCORE}=3。
-     */
-    private static int getMinConfluenceScore(String regime) {
-        if (regime == null) return MIN_CONFLUENCE_SCORE;
-        return switch (regime) {
-            case "TREND_UP", "TREND_DOWN" -> 3;
-            case "RANGE", "SQUEEZE" -> 2;
-            case "SHOCK" -> 4;
-            default -> MIN_CONFLUENCE_SCORE;
-        };
-    }
-
-    /**
-     * 6维共振评分。需>=3才允许入场。
+     * 6维共振评分。需>={@link #MIN_CONFLUENCE_SCORE}才允许入场。
      * 取代原来的"找最高confidence就交易"。
      */
     private static int calcConfluenceScore(MarketContext ctx, boolean isLong, List<QuantSignalDecision> signals) {

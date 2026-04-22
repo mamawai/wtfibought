@@ -45,7 +45,7 @@ public class QuantForecastScheduler {
     /** 记录每个symbol最近一次重周期的完成时间 */
     private final Map<String, Instant> lastHeavyCycleTime = new ConcurrentHashMap<>();
 
-    @Scheduled(cron = "0 */30 * * * *")
+    @Scheduled(cron = "0 */20 * * * *")
     public void rollingForecast() {
         String fearGreedData = fetchFearGreedOnce();
         for (String symbol : QuantConstants.WATCH_SYMBOLS) {
@@ -53,13 +53,13 @@ public class QuantForecastScheduler {
         }
     }
 
-    @Scheduled(cron = "0 */10 * * * *")
+    @Scheduled(cron = "0 */5 * * * *")
     public void lightRefresh() {
         String fearGreedData = fetchFearGreedOnce();
         for (String symbol : QuantConstants.WATCH_SYMBOLS) {
-            // 如果距离上次重周期不到3分钟，跳过（刚跑完重周期没必要立即轻刷）
+            // 距离上次重周期不到2分钟跳过：heavy 刚跑完轻周期修正没意义（D10：20/5min 下同步缩到 120s）
             Instant lastHeavy = lastHeavyCycleTime.get(symbol);
-            if (lastHeavy != null && Instant.now().getEpochSecond() - lastHeavy.getEpochSecond() < 180) {
+            if (lastHeavy != null && Instant.now().getEpochSecond() - lastHeavy.getEpochSecond() < 120) {
                 log.debug("[Scheduler] 轻周期跳过 symbol={} 距重周期仅{}s",
                         symbol, Instant.now().getEpochSecond() - lastHeavy.getEpochSecond());
                 continue;
