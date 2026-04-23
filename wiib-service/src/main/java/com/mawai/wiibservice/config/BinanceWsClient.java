@@ -19,8 +19,6 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.net.http.HttpClient;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -53,6 +51,7 @@ public class BinanceWsClient implements SmartLifecycle {
 
     private WsConnection spotWs;
     private WsConnection futuresWs;
+    private WsConnection futuresMiniTickWs;  // 2026-04-23起期货WS拆分为/public+/market+/private
     private WsConnection forceOrderWs;
     private WsConnection aggTradeWs;
     private WsConnection depthWs;
@@ -80,6 +79,10 @@ public class BinanceWsClient implements SmartLifecycle {
         futuresWs = new WsConnection("Futures", this::buildFuturesUrl, this::onFuturesMessage,
                 ws -> onFuturesConnected(), this::startFuturesFallbackPolling,
                 httpClient, scheduler, shutdown);
+        // Binance 2026-04-23起期货旧WS端点下线，miniTicker单独走/market
+        futuresMiniTickWs = new WsConnection("FuturesMiniTick", this::buildFuturesMiniTickUrl, this::onFuturesMessage,
+                ws -> log.info("FuturesMiniTick WS已连接"), () -> {},
+                httpClient, scheduler, shutdown);
         forceOrderWs = new WsConnection("ForceOrder", this::buildForceOrderUrl, this::onForceOrderMessage,
                 ws -> log.info("ForceOrder WS已连接"), () -> {},
                 httpClient, scheduler, shutdown);
@@ -93,6 +96,7 @@ public class BinanceWsClient implements SmartLifecycle {
         // 启动ws
         spotWs.connect();
         futuresWs.connect();
+        futuresMiniTickWs.connect();
         forceOrderWs.connect();
         aggTradeWs.connect();
         depthWs.connect();
@@ -105,6 +109,7 @@ public class BinanceWsClient implements SmartLifecycle {
         stopFuturesFallbackPolling();
         if (spotWs != null) spotWs.close();
         if (futuresWs != null) futuresWs.close();
+        if (futuresMiniTickWs != null) futuresMiniTickWs.close();
         if (forceOrderWs != null) forceOrderWs.close();
         if (aggTradeWs != null) aggTradeWs.close();
         if (depthWs != null) depthWs.close();
@@ -186,16 +191,20 @@ public class BinanceWsClient implements SmartLifecycle {
         });
     }
 
+    // Binance 2026-04-23起: markPrice走/market端点
     private String buildFuturesUrl() {
-        List<String> streams = new ArrayList<>();
-        for (String s : props.getSymbols()) {
-            String lower = s.toLowerCase();
-            streams.add(lower + "@markPrice@1s");
-            streams.add(lower + "@miniTicker");
-        }
-        String joined = String.join("/", streams);
-        String base = props.getFuturesWsUrl();
-        return base.replace("/ws", "/stream?streams=" + joined);
+        String streams = props.getSymbols().stream()
+                .map(s -> s.toLowerCase() + "@markPrice@1s")
+                .reduce((a, b) -> a + "/" + b).orElse("");
+        return props.getFuturesWsUrl().replace("/ws", "/market/stream?streams=" + streams);
+    }
+
+    // Binance 2026-04-23起: miniTicker走/market端点
+    private String buildFuturesMiniTickUrl() {
+        String streams = props.getSymbols().stream()
+                .map(s -> s.toLowerCase() + "@miniTicker")
+                .reduce((a, b) -> a + "/" + b).orElse("");
+        return props.getFuturesWsUrl().replace("/ws", "/market/stream?streams=" + streams);
     }
 
     private void onFuturesMessage(String raw) {
@@ -372,14 +381,15 @@ public class BinanceWsClient implements SmartLifecycle {
 
     // ── ForceOrder（全市场爆仓） ──
 
+    // @forceOrder 属于 /market 端点
     private String buildForceOrderUrl() {
         String streams = props.getSymbols().stream()
                 .map(s -> s.toLowerCase() + "@forceOrder")
                 .reduce((a, b) -> a + "/" + b).orElse("");
         if (props.getSymbols().size() == 1) {
-            return props.getFuturesWsUrl() + "/" + streams;
+            return props.getFuturesWsUrl().replace("/ws", "/market/ws/" + streams);
         }
-        return props.getFuturesWsUrl().replace("/ws", "/stream?streams=" + streams);
+        return props.getFuturesWsUrl().replace("/ws", "/market/stream?streams=" + streams);
     }
 
     private void onForceOrderMessage(String raw) {
@@ -443,14 +453,15 @@ public class BinanceWsClient implements SmartLifecycle {
 
     // ── AggTrade（逐笔成交流）──
 
+    // @aggTrade 属于 /market 端点
     private String buildAggTradeUrl() {
         String streams = props.getSymbols().stream()
                 .map(s -> s.toLowerCase() + "@aggTrade")
                 .reduce((a, b) -> a + "/" + b).orElse("");
         if (props.getSymbols().size() == 1) {
-            return props.getFuturesWsUrl() + "/" + streams;
+            return props.getFuturesWsUrl().replace("/ws", "/market/ws/" + streams);
         }
-        return props.getFuturesWsUrl().replace("/ws", "/stream?streams=" + streams);
+        return props.getFuturesWsUrl().replace("/ws", "/market/stream?streams=" + streams);
     }
 
     private void onAggTradeMessage(String raw) {
@@ -496,14 +507,15 @@ public class BinanceWsClient implements SmartLifecycle {
 
     // ── Depth（深度快照流）──
 
+    // @depth<levels> 属于 /public 端点
     private String buildDepthUrl() {
         String streams = props.getSymbols().stream()
                 .map(s -> s.toLowerCase() + "@depth20@100ms")
                 .reduce((a, b) -> a + "/" + b).orElse("");
         if (props.getSymbols().size() == 1) {
-            return props.getFuturesWsUrl() + "/" + streams;
+            return props.getFuturesWsUrl().replace("/ws", "/public/ws/" + streams);
         }
-        return props.getFuturesWsUrl().replace("/ws", "/stream?streams=" + streams);
+        return props.getFuturesWsUrl().replace("/ws", "/public/stream?streams=" + streams);
     }
 
     private void onDepthMessage(String raw) {
