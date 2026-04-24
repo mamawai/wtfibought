@@ -207,6 +207,11 @@ public class PredictionServiceImpl implements PredictionService {
 
     @Override
     public PredictionBetResponse sell(Long userId, Long betId) {
+        return sell(userId, betId, null);
+    }
+
+    @Override
+    public PredictionBetResponse sell(Long userId, Long betId, BigDecimal contracts) {
         String lockKey = "prediction:sell:" + betId;
         return redisLockUtil.executeWithLock(lockKey, 10, 3000, () -> {
             PredictionBetResponse response = transactionTemplate.execute(tx -> {
@@ -228,20 +233,51 @@ public class PredictionServiceImpl implements PredictionService {
                     throw new BizException(ErrorCode.PREDICTION_PRICE_UNAVAILABLE);
                 }
 
-                BigDecimal revenue = bet.getContracts().multiply(currentPrice).setScale(4, RoundingMode.HALF_UP);
+                BigDecimal sellContracts = contracts == null ? bet.getContracts() : contracts;
+                if (sellContracts.compareTo(BigDecimal.ZERO) <= 0 || sellContracts.compareTo(bet.getContracts()) > 0) {
+                    throw new BizException(ErrorCode.PARAM_ERROR);
+                }
+
+                BigDecimal revenue = sellContracts.multiply(currentPrice).setScale(4, RoundingMode.HALF_UP);
                 BigDecimal commission = revenue.multiply(calcFeeRate(currentPrice)).setScale(4, RoundingMode.HALF_UP);
                 BigDecimal netRevenue = revenue.subtract(commission);
 
-                int affected = betMapper.casSell(bet.getId(), netRevenue);
+                boolean fullSell = sellContracts.compareTo(bet.getContracts()) == 0;
+                int affected;
+                BigDecimal soldCost = bet.getCost();
+                if (fullSell) {
+                    affected = betMapper.casSell(bet.getId(), netRevenue);
+                } else {
+                    soldCost = bet.getCost().multiply(sellContracts)
+                            .divide(bet.getContracts(), 4, RoundingMode.HALF_UP);
+                    affected = betMapper.casPartialSell(bet.getId(), sellContracts, soldCost);
+                }
                 if (affected == 0) {
                     throw new BizException(ErrorCode.PREDICTION_BET_NOT_FOUND);
                 }
 
+                PredictionBet soldBet = null;
+                if (!fullSell) {
+                    soldBet = new PredictionBet();
+                    soldBet.setUserId(bet.getUserId());
+                    soldBet.setRoundId(bet.getRoundId());
+                    soldBet.setWindowStart(bet.getWindowStart());
+                    soldBet.setSide(bet.getSide());
+                    soldBet.setContracts(sellContracts);
+                    soldBet.setCost(soldCost);
+                    soldBet.setAvgPrice(soldCost.divide(sellContracts, 4, RoundingMode.HALF_UP));
+                    soldBet.setPayout(netRevenue);
+                    soldBet.setStatus("SOLD");
+                    betMapper.insert(soldBet);
+                }
+
                 userService.updateBalance(userId, netRevenue);
 
-                bet.setStatus("SOLD");
+                bet.setStatus(fullSell ? "SOLD" : "ACTIVE");
+                bet.setContracts(fullSell ? bet.getContracts() : bet.getContracts().subtract(sellContracts));
+                bet.setCost(fullSell ? bet.getCost() : bet.getCost().subtract(soldCost));
                 bet.setPayout(netRevenue);
-                return toBetResponse(bet);
+                return toBetResponse(fullSell ? bet : soldBet);
             });
 
             if (response == null) {

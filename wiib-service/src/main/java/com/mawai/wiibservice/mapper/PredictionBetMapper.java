@@ -20,6 +20,12 @@ public interface PredictionBetMapper extends BaseMapper<PredictionBet> {
             "WHERE id = #{id} AND status = 'ACTIVE'")
     int casSell(@Param("id") Long id, @Param("payout") BigDecimal payout);
 
+    @Update("UPDATE prediction_bet SET contracts = contracts - #{contracts}, cost = cost - #{cost}, updated_at = NOW() " +
+            "WHERE id = #{id} AND status = 'ACTIVE' AND contracts >= #{contracts} AND cost >= #{cost}")
+    int casPartialSell(@Param("id") Long id,
+                       @Param("contracts") BigDecimal contracts,
+                       @Param("cost") BigDecimal cost);
+
     /** 赢方结算: payout = contracts（每张合约值$1） */
     @Update("UPDATE prediction_bet SET status = 'WON', payout = contracts, updated_at = NOW() " +
             "WHERE round_id = #{roundId} AND side = #{side} AND status = 'ACTIVE'")

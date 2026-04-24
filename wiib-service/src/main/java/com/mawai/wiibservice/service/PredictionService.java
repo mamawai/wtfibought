@@ -3,6 +3,7 @@ package com.mawai.wiibservice.service;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.mawai.wiibcommon.dto.*;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -13,6 +14,8 @@ public interface PredictionService {
     PredictionBetResponse buy(Long userId, PredictionBuyRequest req);
 
     PredictionBetResponse sell(Long userId, Long betId);
+
+    PredictionBetResponse sell(Long userId, Long betId, BigDecimal contracts);
 
     IPage<PredictionBetResponse> getUserBets(Long userId, int pageNum, int pageSize);
 
