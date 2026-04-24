@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
  * 2. Judge裁判：综合原始数据+双方论据+历史记忆，做最终裁决
  * <p>
  * 安全约束继承自MetaJudge：
- * - confidence只能下调不能上调
+ * - confidence允许小幅上调（+0.10 cap）
  * - 方向翻转时cap到原始50%
  * - LLM失败fallback到原始裁决
  */
@@ -238,7 +238,7 @@ public class DebateJudgeNode implements NodeAction {
                 裁决原则：
                 - 不要因为双方都有道理就默认NO_TRADE，要做出明确判断
                 - 综合评估Bull和Bear的论据强度，谁的证据更具体、更有数据支撑
-                - confidence只能下调不能上调（保守原则）
+                - confidence允许小幅上调（+0.10 cap）
                 - 如果需要翻转方向，新confidence不得超过原始的50%%
                 - 如果Bull和Bear论据都很弱，维持系统原始裁决(approved=true)
                 - direction只能是LONG/SHORT/NO_TRADE

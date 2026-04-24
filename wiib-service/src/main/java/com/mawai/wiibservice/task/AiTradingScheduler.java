@@ -3,6 +3,7 @@ package com.mawai.wiibservice.task;
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.constant.QuantConstants;
+import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTradingDecision;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibservice.agent.trading.AiTradingTools;
@@ -154,6 +155,10 @@ public class AiTradingScheduler {
         try {
             User userBefore = userMapper.selectById(userId);
             var allPositionsBefore = futuresTradingService.getUserPositions(userId, null);
+            Set<Long> allOpenPositionIds = allPositionsBefore.stream()
+                    .map(FuturesPositionDTO::getId)
+                    .filter(Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
             BigDecimal equityBefore = calcTotalEquity(userBefore, allPositionsBefore);
 
             var positions = futuresTradingService.getUserPositions(userId, symbol);
@@ -174,7 +179,7 @@ public class AiTradingScheduler {
             DeterministicTradingExecutor.ExecutionResult result =
                     DeterministicTradingExecutor.execute(
                             symbol, userBefore, positions, forecast, signals,
-                            recentDecisions, futuresPrice, markPrice, equityBefore, tools);
+                            recentDecisions, futuresPrice, markPrice, equityBefore, tools, allOpenPositionIds);
 
             log.info("[AI-Trader] 决策完成 symbol={} action={} reasoning={}",
                     symbol, result.action(), result.reasoning());

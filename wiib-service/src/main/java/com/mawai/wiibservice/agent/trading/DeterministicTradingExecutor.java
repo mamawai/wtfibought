@@ -11,8 +11,12 @@ import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
  * 确定性交易执行器 V2 — 基于信号共振的多策略引擎。
@@ -156,8 +160,8 @@ public class DeterministicTradingExecutor {
             BigDecimal futuresPrice, BigDecimal markPrice,
             BigDecimal totalEquity,
             TradingOperations tools) {
-        return execute(symbol, user, symbolPositions, forecast, signals, recentDecisions,
-                futuresPrice, markPrice, totalEquity, tools, null);
+        return executeInternal(symbol, user, symbolPositions, forecast, signals, recentDecisions,
+                futuresPrice, markPrice, totalEquity, tools, null, null);
     }
 
     /**
@@ -173,6 +177,38 @@ public class DeterministicTradingExecutor {
             BigDecimal totalEquity,
             TradingOperations tools,
             SymbolProfile profileOverride) {
+        return executeInternal(symbol, user, symbolPositions, forecast, signals, recentDecisions,
+                futuresPrice, markPrice, totalEquity, tools, profileOverride, null);
+    }
+
+    /**
+     * 生产调度传入全量open仓位ID，清理全局仓位记忆时不误删其它symbol。
+     */
+    public static ExecutionResult execute(
+            String symbol, User user,
+            List<FuturesPositionDTO> symbolPositions,
+            QuantForecastCycle forecast,
+            List<QuantSignalDecision> signals,
+            List<AiTradingDecision> recentDecisions,
+            BigDecimal futuresPrice, BigDecimal markPrice,
+            BigDecimal totalEquity,
+            TradingOperations tools,
+            Collection<Long> allOpenPositionIds) {
+        return executeInternal(symbol, user, symbolPositions, forecast, signals, recentDecisions,
+                futuresPrice, markPrice, totalEquity, tools, null, allOpenPositionIds);
+    }
+
+    private static ExecutionResult executeInternal(
+            String symbol, User user,
+            List<FuturesPositionDTO> symbolPositions,
+            QuantForecastCycle forecast,
+            List<QuantSignalDecision> signals,
+            List<AiTradingDecision> recentDecisions,
+            BigDecimal futuresPrice, BigDecimal markPrice,
+            BigDecimal totalEquity,
+            TradingOperations tools,
+            SymbolProfile profileOverride,
+            Collection<Long> allOpenPositionIds) {
 
         if (user == null || futuresPrice == null || futuresPrice.signum() <= 0) {
             return new ExecutionResult("HOLD", "数据缺失", "");
@@ -186,11 +222,19 @@ public class DeterministicTradingExecutor {
 
         boolean hasPosition = symbolPositions != null && !symbolPositions.isEmpty();
         LocalDateTime forecastTime = forecast != null ? forecast.getForecastTime() : null;
+        if (allOpenPositionIds != null) {
+            cleanupPositionMemory(allOpenPositionIds);
+        }
 
         if (hasPosition) {
-            return managePositions(symbolPositions, signals, ctx, profile, tools, forecastTime);
+            return managePositions(symbolPositions, signals, ctx, profile, tools, forecastTime, allOpenPositionIds == null);
         }
         return evaluateEntry(symbol, user, totalEquity, forecast, signals, recentDecisions, ctx, profile, tools, forecastTime);
+    }
+
+    private static void cleanupPositionMemory(Collection<Long> livePositionIds) {
+        POSITION_PEAKS.keySet().removeIf(id -> !livePositionIds.contains(id));
+        REVERSAL_STREAK.keySet().removeIf(id -> !livePositionIds.contains(id));
     }
 
     // ==================== 持仓管理（盯盘逻辑）====================
@@ -201,11 +245,20 @@ public class DeterministicTradingExecutor {
             MarketContext ctx,
             SymbolProfile profile,
             TradingOperations tools,
-            LocalDateTime forecastTime) {
+            LocalDateTime forecastTime,
+            boolean cleanupFromCurrentPositions) {
 
         StringBuilder execLog = new StringBuilder();
         StringBuilder reasons = new StringBuilder();
         String action = "HOLD";
+
+        if (cleanupFromCurrentPositions) {
+            Set<Long> livePositionIds = positions.stream()
+                    .map(FuturesPositionDTO::getId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            cleanupPositionMemory(livePositionIds);
+        }
 
         for (FuturesPositionDTO pos : positions) {
             if (!"OPEN".equals(pos.getStatus())) {
@@ -1002,12 +1055,27 @@ public class DeterministicTradingExecutor {
             // 3个一致 ×1.15, 2个一致 ×1.08, clamp [0, 1]
             double buff = agree >= 3 ? 1.15 : 1.08;
             double boosted = Math.min(1.0, primary.getConfidence().doubleValue() * buff);
+            primary = copySignal(primary);
             primary.setConfidence(BigDecimal.valueOf(boosted));
             log.info("[Executor] 多horizon一致({}个同方向{}), confidence×{}→{}",
                     agree, primary.getDirection(), buff, String.format("%.3f", boosted));
         }
 
         return primary;
+    }
+
+    private static QuantSignalDecision copySignal(QuantSignalDecision source) {
+        QuantSignalDecision copy = new QuantSignalDecision();
+        copy.setId(source.getId());
+        copy.setCycleId(source.getCycleId());
+        copy.setHorizon(source.getHorizon());
+        copy.setDirection(source.getDirection());
+        copy.setConfidence(source.getConfidence());
+        copy.setMaxLeverage(source.getMaxLeverage());
+        copy.setMaxPositionPct(source.getMaxPositionPct());
+        copy.setRiskStatus(source.getRiskStatus());
+        copy.setCreatedAt(source.getCreatedAt());
+        return copy;
     }
 
     private static QuantSignalDecision pickValid(QuantSignalDecision s) {
