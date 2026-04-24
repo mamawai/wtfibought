@@ -237,6 +237,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
     };
     qtyAnimRef.current = requestAnimationFrame(tick);
   }, [quantity, qtyKey]);
+  useEffect(() => () => cancelAnimationFrame(qtyAnimRef.current), []);
   const [limitPrice, setLimitPrice] = useState('');
   const [leverage, setLeverage] = useState(1);
   const [submitting, setSubmitting] = useState(false);
