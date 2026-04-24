@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mawai.wiibcommon.entity.Settlement;
+import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibservice.mapper.SettlementMapper;
 import com.mawai.wiibservice.service.MarginAccountService;
 import com.mawai.wiibservice.service.SettlementService;
@@ -38,7 +39,6 @@ public class SettlementServiceImpl extends ServiceImpl<SettlementMapper, Settlem
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public void processSettlements() {
         LocalDateTime now = LocalDateTime.now();
         // 先查询最早的待结算记录
@@ -68,21 +68,30 @@ public class SettlementServiceImpl extends ServiceImpl<SettlementMapper, Settlem
         List<Settlement> pendingList = baseMapper.selectList(wrapper);
 
         for (Settlement s : pendingList) {
-            LambdaUpdateWrapper<Settlement> updateWrapper = new LambdaUpdateWrapper<>();
-            updateWrapper.eq(Settlement::getId, s.getId())
-                    .eq(Settlement::getStatus, "PENDING")
-                    .set(Settlement::getStatus, "SETTLED");
-
-            int affected = baseMapper.update(null, updateWrapper);
-            if (affected == 0) {
-                continue;
+            try {
+                SpringUtils.getAopProxy(this).processOneSettlement(s);
+            } catch (Exception e) {
+                log.error("结算失败 settlementId={}", s.getId(), e);
             }
-
-            marginAccountService.applyCashInflow(s.getUserId(), s.getAmount(), "SETTLEMENT");
-
-            log.info("结算完成 settlementId={} userId={} amount={}",
-                    s.getId(), s.getUserId(), s.getAmount());
         }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected void processOneSettlement(Settlement s) {
+        LambdaUpdateWrapper<Settlement> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(Settlement::getId, s.getId())
+                .eq(Settlement::getStatus, "PENDING")
+                .set(Settlement::getStatus, "SETTLED");
+
+        int affected = baseMapper.update(null, updateWrapper);
+        if (affected == 0) {
+            return;
+        }
+
+        marginAccountService.applyCashInflow(s.getUserId(), s.getAmount(), "SETTLEMENT");
+
+        log.info("结算完成 settlementId={} userId={} amount={}",
+                s.getId(), s.getUserId(), s.getAmount());
     }
 
     @Override

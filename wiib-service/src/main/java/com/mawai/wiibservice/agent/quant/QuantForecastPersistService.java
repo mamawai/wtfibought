@@ -45,6 +45,7 @@ public class QuantForecastPersistService {
             log.info("[Q7] 预测结果落库完成 cycleId={}", result.cycleId());
         } catch (Exception e) {
             log.error("[Q7] 预测结果落库失败 cycleId={}", result.cycleId(), e);
+            throw e;
         }
     }
 

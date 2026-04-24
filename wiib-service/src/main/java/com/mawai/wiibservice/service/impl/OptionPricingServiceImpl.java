@@ -37,6 +37,12 @@ public class OptionPricingServiceImpl implements OptionPricingService {
     public BigDecimal calculatePremium(String optionType, BigDecimal spotPrice, BigDecimal strike,
                                        LocalDateTime expireAt, BigDecimal sigma) {
         LocalDateTime now = LocalDateTime.now();
+        if (spotPrice == null || spotPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
+        }
+        if (sigma == null || sigma.compareTo(BigDecimal.ZERO) <= 0) {
+            return calculateIntrinsicValue(optionType, spotPrice, strike).setScale(4, RoundingMode.HALF_UP);
+        }
         if (!expireAt.isAfter(now) || Duration.between(now, expireAt).toMillis() <= 60_000L) {
             return calculateIntrinsicValue(optionType, spotPrice, strike).setScale(4, RoundingMode.HALF_UP);
         }
@@ -154,6 +160,9 @@ public class OptionPricingServiceImpl implements OptionPricingService {
                 price = new BigDecimal(stockStatic.getOrDefault("prevClose", "0"));
             }
         }
-        return price != null ? price : BigDecimal.ZERO;
+        if (price == null || price.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
+        }
+        return price;
     }
 }
