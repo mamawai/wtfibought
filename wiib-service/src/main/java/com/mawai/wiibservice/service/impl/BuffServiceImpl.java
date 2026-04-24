@@ -10,8 +10,10 @@ import com.mawai.wiibcommon.enums.BuffType;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.BuffDrawUtil;
+import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibservice.mapper.UserBuffMapper;
 import com.mawai.wiibservice.service.*;
+import com.mawai.wiibservice.util.RedisLockUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,6 +35,7 @@ public class BuffServiceImpl extends ServiceImpl<UserBuffMapper, UserBuff> imple
     private final StockService stockService;
     private final PositionService positionService;
     private final CacheService cacheService;
+    private final RedisLockUtil redisLockUtil;
 
     @Override
     public BuffStatusDTO getStatus(Long userId) {
@@ -61,8 +64,13 @@ public class BuffServiceImpl extends ServiceImpl<UserBuffMapper, UserBuff> imple
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public UserBuffDTO draw(Long userId) {
+        return redisLockUtil.executeWithLock("buff:draw:" + userId, 10, 3000,
+                () -> SpringUtils.getAopProxy(this).doDrawTransactional(userId));
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected UserBuffDTO doDrawTransactional(Long userId) {
         LocalDate today = LocalDate.now();
 
         // 检查今日是否已抽
@@ -117,9 +125,12 @@ public class BuffServiceImpl extends ServiceImpl<UserBuffMapper, UserBuff> imple
     }
 
     @Override
-    public BigDecimal getDiscountRate(Long buffId) {
+    public BigDecimal getDiscountRate(Long userId, Long buffId) {
         UserBuff buff = baseMapper.selectById(buffId);
         if (buff == null || buff.getIsUsed() || buff.getExpireAt().isBefore(LocalDateTime.now())) {
+            return null;
+        }
+        if (userId != null && !userId.equals(buff.getUserId())) {
             return null;
         }
         try {
