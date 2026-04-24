@@ -22,17 +22,7 @@ public class QuantForecastPersistService {
     private final QuantHorizonForecastMapper horizonMapper;
     private final QuantSignalDecisionMapper decisionMapper;
 
-    @Transactional
-    public void persist(ForecastResult result) {
-        persist(result, null, null, null);
-    }
-
-    @Transactional
-    public void persist(ForecastResult result, String debateSummary) {
-        persist(result, debateSummary, null, null);
-    }
-
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void persist(ForecastResult result, String debateSummary,
                         String rawSnapshotJson, String rawReportJson) {
         if (result == null || result.cycleId() == null) return;

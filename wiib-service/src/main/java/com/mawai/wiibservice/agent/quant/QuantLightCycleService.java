@@ -62,7 +62,7 @@ public class QuantLightCycleService {
     private final LightNewsAgent lightNewsAgent = new LightNewsAgent();
 
     /** 波动哨兵，轻周期完成后更新ATR */
-    private PriceVolatilitySentinel volatilitySentinel;
+    private final PriceVolatilitySentinel volatilitySentinel;
 
     /** 防止同一symbol轻周期并发执行 */
     private final Set<String> runningSymbols = ConcurrentHashMap.newKeySet();

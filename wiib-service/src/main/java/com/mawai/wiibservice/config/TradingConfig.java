@@ -141,13 +141,8 @@ public class TradingConfig {
         return amount.multiply(cryptoCommissionRate).setScale(2, RoundingMode.HALF_UP);
     }
 
-    public BigDecimal calculateFuturesCommission(BigDecimal amount, boolean isTaker) {
-        return calculateFuturesCommission(amount, false, isTaker);
-    }
-
     public BigDecimal calculateFuturesCommission(BigDecimal amount, boolean isClose, boolean isTaker) {
-        BigDecimal rate = isTaker ? futuresTakerCommissionRate
-                : (isClose ? futuresCloseCommissionRate : futuresOpenCommissionRate);
+        BigDecimal rate = isTaker ? futuresTakerCommissionRate : (isClose ? futuresCloseCommissionRate : futuresOpenCommissionRate);
         return amount.multiply(rate).setScale(2, RoundingMode.HALF_UP);
     }
 

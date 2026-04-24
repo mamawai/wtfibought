@@ -206,11 +206,6 @@ public class PredictionServiceImpl implements PredictionService {
     }
 
     @Override
-    public PredictionBetResponse sell(Long userId, Long betId) {
-        return sell(userId, betId, null);
-    }
-
-    @Override
     public PredictionBetResponse sell(Long userId, Long betId, BigDecimal contracts) {
         String lockKey = "prediction:sell:" + betId;
         return redisLockUtil.executeWithLock(lockKey, 10, 3000, () -> {
