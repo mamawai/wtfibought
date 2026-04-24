@@ -108,7 +108,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
             BigDecimal discountRate = null;
             if (request.getUseBuffId() != null) {
                 if (leverageMultiple > 1) throw new BizException(ErrorCode.DISCOUNT_NO_LEVERAGE);
-                discountRate = buffService.getDiscountRate(request.getUseBuffId());
+                discountRate = buffService.getDiscountRate(userId, request.getUseBuffId());
                 if (discountRate != null) {
                     amount = amount.multiply(discountRate).setScale(2, RoundingMode.HALF_UP);
                     commission = tradingConfig.calculateCryptoCommission(amount);

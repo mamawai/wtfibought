@@ -1,6 +1,8 @@
 package com.mawai.wiibservice.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.mawai.wiibcommon.entity.FuturesOrder;
+import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.Settlement;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
@@ -8,13 +10,17 @@ import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.mapper.CryptoOrderMapper;
+import com.mawai.wiibservice.mapper.CryptoPositionMapper;
+import com.mawai.wiibservice.mapper.FuturesOrderMapper;
 import com.mawai.wiibservice.mapper.FuturesPositionMapper;
 import com.mawai.wiibservice.mapper.OrderMapper;
 import com.mawai.wiibservice.mapper.PositionMapper;
 import com.mawai.wiibservice.mapper.SettlementMapper;
 import com.mawai.wiibservice.mapper.UserMapper;
 import com.mawai.wiibservice.service.BankruptcyService;
+import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.CryptoPositionService;
+import com.mawai.wiibservice.service.FuturesPositionIndexService;
 import com.mawai.wiibservice.service.PositionService;
 import com.mawai.wiibservice.service.SettlementService;
 import com.mawai.wiibservice.service.UserService;
@@ -44,7 +50,11 @@ public class BankruptcyServiceImpl implements BankruptcyService {
     private final SettlementService settlementService;
     private final TradingConfig tradingConfig;
     private final CryptoOrderMapper cryptoOrderMapper;
+    private final CryptoPositionMapper cryptoPositionMapper;
+    private final FuturesOrderMapper futuresOrderMapper;
     private final FuturesPositionMapper futuresPositionMapper;
+    private final CacheService cacheService;
+    private final FuturesPositionIndexService futuresPositionIndexService;
 
     @Value("${trading.initial-balance:100000}")
     private BigDecimal initialBalance;
@@ -147,6 +157,11 @@ public class BankruptcyServiceImpl implements BankruptcyService {
 
         orderMapper.cancelOpenOrdersByUserId(userId);
         positionMapper.deleteByUserId(userId);
+        cryptoOrderMapper.cancelOpenOrdersByUserId(userId);
+        cryptoPositionMapper.deleteByUserId(userId);
+        cleanupFuturesRedisIndexes(userId);
+        futuresOrderMapper.cancelOpenOrdersByUserId(userId);
+        futuresPositionMapper.closeOpenByUserId(userId, "LIQUIDATED");
         settlementMapper.deletePendingByUserId(userId);
 
         log.warn("用户爆仓 userId={} resetDate={}", userId, resetDate);
@@ -161,9 +176,31 @@ public class BankruptcyServiceImpl implements BankruptcyService {
 
         orderMapper.cancelOpenOrdersByUserId(userId);
         positionMapper.deleteByUserId(userId);
+        cryptoOrderMapper.cancelOpenOrdersByUserId(userId);
+        cryptoPositionMapper.deleteByUserId(userId);
+        cleanupFuturesRedisIndexes(userId);
+        futuresOrderMapper.cancelOpenOrdersByUserId(userId);
+        futuresPositionMapper.closeOpenByUserId(userId, "CLOSED");
         settlementMapper.deletePendingByUserId(userId);
 
         log.info("用户恢复初始资金 userId={} balance={}", userId, initialBalance);
+    }
+
+    private void cleanupFuturesRedisIndexes(Long userId) {
+        List<FuturesOrder> pendingOrders = futuresOrderMapper.selectList(new LambdaQueryWrapper<FuturesOrder>()
+                .eq(FuturesOrder::getUserId, userId)
+                .eq(FuturesOrder::getStatus, "PENDING")
+                .eq(FuturesOrder::getOrderType, "LIMIT"));
+        for (FuturesOrder order : pendingOrders) {
+            FuturesHelper.removeFromLimitZSet(order, cacheService);
+        }
+
+        List<FuturesPosition> openPositions = futuresPositionMapper.selectList(new LambdaQueryWrapper<FuturesPosition>()
+                .eq(FuturesPosition::getUserId, userId)
+                .eq(FuturesPosition::getStatus, "OPEN"));
+        for (FuturesPosition position : openPositions) {
+            futuresPositionIndexService.unregisterAll(position);
+        }
     }
 
     @Override
