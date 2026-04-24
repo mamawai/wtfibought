@@ -1055,27 +1055,12 @@ public class DeterministicTradingExecutor {
             // 3个一致 ×1.15, 2个一致 ×1.08, clamp [0, 1]
             double buff = agree >= 3 ? 1.15 : 1.08;
             double boosted = Math.min(1.0, primary.getConfidence().doubleValue() * buff);
-            primary = copySignal(primary);
             primary.setConfidence(BigDecimal.valueOf(boosted));
             log.info("[Executor] 多horizon一致({}个同方向{}), confidence×{}→{}",
                     agree, primary.getDirection(), buff, String.format("%.3f", boosted));
         }
 
         return primary;
-    }
-
-    private static QuantSignalDecision copySignal(QuantSignalDecision source) {
-        QuantSignalDecision copy = new QuantSignalDecision();
-        copy.setId(source.getId());
-        copy.setCycleId(source.getCycleId());
-        copy.setHorizon(source.getHorizon());
-        copy.setDirection(source.getDirection());
-        copy.setConfidence(source.getConfidence());
-        copy.setMaxLeverage(source.getMaxLeverage());
-        copy.setMaxPositionPct(source.getMaxPositionPct());
-        copy.setRiskStatus(source.getRiskStatus());
-        copy.setCreatedAt(source.getCreatedAt());
-        return copy;
     }
 
     private static QuantSignalDecision pickValid(QuantSignalDecision s) {

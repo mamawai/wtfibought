@@ -13,8 +13,6 @@ public interface PredictionService {
 
     PredictionBetResponse buy(Long userId, PredictionBuyRequest req);
 
-    PredictionBetResponse sell(Long userId, Long betId);
-
     PredictionBetResponse sell(Long userId, Long betId, BigDecimal contracts);
 
     IPage<PredictionBetResponse> getUserBets(Long userId, int pageNum, int pageSize);

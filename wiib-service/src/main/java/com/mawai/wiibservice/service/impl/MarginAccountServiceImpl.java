@@ -146,7 +146,7 @@ public class MarginAccountServiceImpl implements MarginAccountService {
             return;
         }
         if (days == 0) {
-            return;
+            days = 1;
         }
 
         BigDecimal dailyRate = tradingConfig.getMargin().getDailyInterestRate();
