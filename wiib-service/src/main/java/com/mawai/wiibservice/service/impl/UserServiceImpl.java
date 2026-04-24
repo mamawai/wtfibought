@@ -84,6 +84,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         for (FuturesPosition fp : futuresPositions) {
             BigDecimal markPrice = cacheService.getMarkPrice(fp.getSymbol());
             if (markPrice == null) markPrice = cacheService.getCryptoPrice(fp.getSymbol());
+            if (markPrice == null) {
+                // 行情短缺时保留保证金，跳过浮盈亏
+                futuresValue = futuresValue.add(fp.getMargin());
+                continue;
+            }
             BigDecimal unrealizedPnl = "LONG".equals(fp.getSide())
                     ? markPrice.subtract(fp.getEntryPrice()).multiply(fp.getQuantity())
                     : fp.getEntryPrice().subtract(markPrice).multiply(fp.getQuantity());
