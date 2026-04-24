@@ -45,11 +45,24 @@ public class QuantForecastScheduler {
     /** 记录每个symbol最近一次重周期的完成时间 */
     private final Map<String, Instant> lastHeavyCycleTime = new ConcurrentHashMap<>();
 
+    /** 同一symbol重/轻周期互斥，避免重复消耗和状态覆盖 */
+    private final Map<String, Boolean> runningSymbols = new ConcurrentHashMap<>();
+
     @Scheduled(cron = "0 */20 * * * *")
     public void rollingForecast() {
         String fearGreedData = fetchFearGreedOnce();
         for (String symbol : QuantConstants.WATCH_SYMBOLS) {
-            Thread.startVirtualThread(() -> runForecast(symbol, fearGreedData));
+            if (runningSymbols.putIfAbsent(symbol, true) != null) {
+                log.debug("[Scheduler] 重周期跳过 symbol={} 已在运行", symbol);
+                continue;
+            }
+            Thread.startVirtualThread(() -> {
+                try {
+                    runForecast(symbol, fearGreedData);
+                } finally {
+                    runningSymbols.remove(symbol);
+                }
+            });
         }
     }
 
@@ -57,18 +70,30 @@ public class QuantForecastScheduler {
     public void lightRefresh() {
         String fearGreedData = fetchFearGreedOnce();
         for (String symbol : QuantConstants.WATCH_SYMBOLS) {
+            if (runningSymbols.putIfAbsent(symbol, true) != null) {
+                log.debug("[Scheduler] 轻周期跳过 symbol={} 已在运行", symbol);
+                continue;
+            }
             // 距离上次重周期不到2分钟跳过：heavy 刚跑完轻周期修正没意义（D10：20/5min 下同步缩到 120s）
             Instant lastHeavy = lastHeavyCycleTime.get(symbol);
             if (lastHeavy != null && Instant.now().getEpochSecond() - lastHeavy.getEpochSecond() < 120) {
                 log.debug("[Scheduler] 轻周期跳过 symbol={} 距重周期仅{}s",
                         symbol, Instant.now().getEpochSecond() - lastHeavy.getEpochSecond());
+                runningSymbols.remove(symbol);
                 continue;
             }
             if (!lightCycleService.hasCacheFor(symbol)) {
                 log.debug("[Scheduler] 轻周期跳过 symbol={} 无重周期缓存", symbol);
+                runningSymbols.remove(symbol);
                 continue;
             }
-            Thread.startVirtualThread(() -> lightCycleService.runLightRefresh(symbol, fearGreedData));
+            Thread.startVirtualThread(() -> {
+                try {
+                    lightCycleService.runLightRefresh(symbol, fearGreedData);
+                } finally {
+                    runningSymbols.remove(symbol);
+                }
+            });
         }
     }
 
