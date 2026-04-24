@@ -361,7 +361,8 @@ export const futuresApi = {
 export const predictionApi = {
   current: () => api.get<unknown, PredictionRound>('/prediction/current'),
   buy: (data: PredictionBuyRequest) => api.post<unknown, PredictionBet>('/prediction/buy', data),
-  sell: (betId: number) => api.post<unknown, PredictionBet>(`/prediction/sell/${betId}`),
+  sell: (betId: number, contracts?: number) =>
+    api.post<unknown, PredictionBet>(`/prediction/sell/${betId}`, undefined, { params: contracts ? { contracts } : undefined }),
   bets: (pageNum = 1, pageSize = 10) =>
     api.get<unknown, PageResult<PredictionBet>>('/prediction/bets', { params: { pageNum, pageSize } }),
   rounds: (pageNum = 1, pageSize = 10) =>
@@ -373,7 +374,7 @@ export const predictionApi = {
 
 // ========== AI Agent 接口 ==========
 export const aiAgentApi = {
-  analyzeBehavior: (_onStep?: (message: string) => void) =>
+  analyzeBehavior: () =>
     api.post<unknown, BehaviorAnalysisReport>('/ai/analyze-behavior'),
   analyzeCrypto: (symbol?: string) => api.post<unknown, CryptoAnalysisReport>('/ai/analyze-crypto', symbol ? { symbol } : {}),
   latestCryptoReport: (symbol?: string) => api.get<unknown, LatestCryptoResult>('/ai/analyze-crypto/latest', { params: { symbol: symbol || 'BTCUSDT' } }),
