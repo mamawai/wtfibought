@@ -30,11 +30,14 @@ public class TradingConfig {
     /** crypto现货手续费率（默认0.1%，用于现货加密货币交易） */
     private BigDecimal cryptoCommissionRate = new BigDecimal("0.001");
 
-    /** 合约开仓手续费率（默认0.04%） */
-    private BigDecimal futuresOpenCommissionRate = new BigDecimal("0.0004");
+    /** 合约maker手续费率（默认0.02%，兼容旧配置名） */
+    private BigDecimal futuresOpenCommissionRate = new BigDecimal("0.0002");
 
-    /** 合约平仓手续费率（默认0.04%） */
-    private BigDecimal futuresCloseCommissionRate = new BigDecimal("0.0004");
+    /** 合约maker手续费率（默认0.02%，兼容旧配置名） */
+    private BigDecimal futuresCloseCommissionRate = new BigDecimal("0.0002");
+
+    /** 合约taker手续费率（默认0.04%，市价/强平成交） */
+    private BigDecimal futuresTakerCommissionRate = new BigDecimal("0.0004");
 
     /** 市价单滑点保护（默认±2%） */
     private BigDecimal slippageLimit = new BigDecimal("0.02");
@@ -138,8 +141,13 @@ public class TradingConfig {
         return amount.multiply(cryptoCommissionRate).setScale(2, RoundingMode.HALF_UP);
     }
 
-    public BigDecimal calculateFuturesCommission(BigDecimal amount, boolean isClose) {
-        BigDecimal rate = isClose ? futuresCloseCommissionRate : futuresOpenCommissionRate;
+    public BigDecimal calculateFuturesCommission(BigDecimal amount, boolean isTaker) {
+        return calculateFuturesCommission(amount, false, isTaker);
+    }
+
+    public BigDecimal calculateFuturesCommission(BigDecimal amount, boolean isClose, boolean isTaker) {
+        BigDecimal rate = isTaker ? futuresTakerCommissionRate
+                : (isClose ? futuresCloseCommissionRate : futuresOpenCommissionRate);
         return amount.multiply(rate).setScale(2, RoundingMode.HALF_UP);
     }
 
