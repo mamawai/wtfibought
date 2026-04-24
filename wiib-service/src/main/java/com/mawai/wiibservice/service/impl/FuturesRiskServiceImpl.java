@@ -150,7 +150,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
         BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), price, position.getQuantity());
         BigDecimal closeValue = price.multiply(position.getQuantity()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal commission = tradingConfig.calculateCryptoCommission(closeValue);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, true);
 
         BigDecimal returnAmount = position.getMargin().add(pnl).subtract(commission);
         returnAmount = returnAmount.max(BigDecimal.ZERO);
@@ -237,7 +237,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
         BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), price, totalCloseQty);
         BigDecimal closeValue = price.multiply(totalCloseQty).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal commission = tradingConfig.calculateCryptoCommission(closeValue);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, true);
 
         BigDecimal returnAmount;
         if (isFullClose) {
@@ -255,6 +255,12 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
             sls.removeIf(s -> idSet.contains(s.getId()));
             positionMapper.updateStopLosses(positionId, sls);
+            FuturesPosition updated = positionMapper.selectById(positionId);
+            if (updated != null && "OPEN".equals(updated.getStatus())) {
+                BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
+                        updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity());
+                positionIndexService.updateLiquidationPrice(updated.getId(), updated.getSymbol(), updated.getSide(), liqPrice);
+            }
         }
 
         if (returnAmount.compareTo(BigDecimal.ZERO) > 0) {
@@ -315,7 +321,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
         BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), price, totalCloseQty);
         BigDecimal closeValue = price.multiply(totalCloseQty).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal commission = tradingConfig.calculateCryptoCommission(closeValue);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, true);
 
         BigDecimal returnAmount;
         if (isFullClose) {
@@ -333,6 +339,12 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
             tps.removeIf(t -> idSet.contains(t.getId()));
             positionMapper.updateTakeProfits(positionId, tps);
+            FuturesPosition updated = positionMapper.selectById(positionId);
+            if (updated != null && "OPEN".equals(updated.getStatus())) {
+                BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
+                        updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity());
+                positionIndexService.updateLiquidationPrice(updated.getId(), updated.getSymbol(), updated.getSide(), liqPrice);
+            }
         }
 
         if (returnAmount.compareTo(BigDecimal.ZERO) > 0) {

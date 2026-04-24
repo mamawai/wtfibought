@@ -54,6 +54,10 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
     @Select("SELECT COUNT(*) FROM futures_order WHERE user_id = #{userId} AND status = 'FILLED'")
     long countFilledOrders(@Param("userId") Long userId);
 
+    @Update("UPDATE futures_order SET status = 'CANCELLED', updated_at = NOW() " +
+            "WHERE user_id = #{userId} AND status IN ('PENDING', 'TRIGGERED')")
+    int cancelOpenOrdersByUserId(@Param("userId") Long userId);
+
     @Select("SELECT COALESCE(AVG(leverage), 0) FROM futures_order " +
             "WHERE user_id = #{userId} AND status = 'FILLED' AND leverage IS NOT NULL")
     BigDecimal selectAvgLeverage(@Param("userId") Long userId);
