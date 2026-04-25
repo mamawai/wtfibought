@@ -9,7 +9,9 @@ import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibservice.agent.quant.CryptoAnalysisReport;
 import com.mawai.wiibservice.agent.quant.domain.*;
 import com.mawai.wiibservice.agent.quant.factor.NewsEventAgent;
+import com.mawai.wiibservice.agent.quant.judge.HorizonJudge;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
+import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.agent.quant.util.NewsRelevance;
 
 import lombok.extern.slf4j.Slf4j;
@@ -34,15 +36,22 @@ public class GenerateReportNode implements NodeAction {
     private final ChatClient chatClient;
     private final LlmCallMode callMode;
     private final MemoryService memoryService;
+    private final FactorWeightOverrideService weightOverrideService;
 
     public GenerateReportNode(ChatClient.Builder builder, LlmCallMode callMode) {
         this(builder, callMode, null);
     }
 
     public GenerateReportNode(ChatClient.Builder builder, LlmCallMode callMode, MemoryService memoryService) {
+        this(builder, callMode, memoryService, null);
+    }
+
+    public GenerateReportNode(ChatClient.Builder builder, LlmCallMode callMode, MemoryService memoryService,
+                              FactorWeightOverrideService weightOverrideService) {
         this.chatClient = builder.build();
         this.callMode = callMode;
         this.memoryService = memoryService;
+        this.weightOverrideService = weightOverrideService;
     }
 
     @Override
@@ -155,7 +164,8 @@ public class GenerateReportNode implements NodeAction {
         CryptoAnalysisReport report = new CryptoAnalysisReport();
         report.setSummary(buildSummary(symbol, forecasts, overallDecision, riskStatus, snapshot));
         report.setAnalysisBasis(buildAnalysisBasis(forecasts, votes, overallDecision, riskStatus, snapshot));
-        report.setDirection(buildDirectionInfo(forecasts, votes, debateProbs));
+        report.setDirection(buildDirectionInfo(forecasts, votes, debateProbs,
+                snapshot != null ? snapshot.regime() : null));
         report.setKeyLevels(buildKeyLevels(snapshot));
         report.setIndicators(buildIndicatorsSummary(snapshot));
         report.setImportantNews(buildImportantNews(snapshot, votes, filteredNews));
@@ -399,11 +409,12 @@ public class GenerateReportNode implements NodeAction {
 
     private CryptoAnalysisReport.DirectionInfo buildDirectionInfo(List<HorizonForecast> forecasts,
                                                                     List<AgentVote> votes,
-                                                                    Map<String, Object[]> debateProbs) {
+                                                                    Map<String, Object[]> debateProbs,
+                                                                    MarketRegime regime) {
         CryptoAnalysisReport.DirectionInfo direction = new CryptoAnalysisReport.DirectionInfo();
-        direction.setUltraShort(formatDirectionWithProb(findForecast(forecasts, "0_10"), votes, "0_10", debateProbs));
-        direction.setShortTerm(formatDirectionWithProb(findForecast(forecasts, "10_20"), votes, "10_20", debateProbs));
-        direction.setMid(formatDirectionWithProb(findForecast(forecasts, "20_30"), votes, "20_30", debateProbs));
+        direction.setUltraShort(formatDirectionWithProb(findForecast(forecasts, "0_10"), votes, "0_10", debateProbs, regime));
+        direction.setShortTerm(formatDirectionWithProb(findForecast(forecasts, "10_20"), votes, "10_20", debateProbs, regime));
+        direction.setMid(formatDirectionWithProb(findForecast(forecasts, "20_30"), votes, "20_30", debateProbs, regime));
         direction.setLongTerm("观望");
         return direction;
     }
@@ -678,22 +689,14 @@ public class GenerateReportNode implements NodeAction {
         };
     }
 
-    /** Agent权重表（与HorizonJudge一致） */
-    private static final Map<String, Map<String, Double>> AGENT_WEIGHTS = Map.of(
-            "microstructure", Map.of("0_10", 0.35, "10_20", 0.14, "20_30", 0.05),
-            "momentum",       Map.of("0_10", 0.25, "10_20", 0.30, "20_30", 0.30),
-            "regime",         Map.of("0_10", 0.15, "10_20", 0.20, "20_30", 0.25),
-            "volatility",     Map.of("0_10", 0.15, "10_20", 0.16, "20_30", 0.15),
-            "news_event",     Map.of("0_10", 0.10, "10_20", 0.20, "20_30", 0.25)
-    );
-
     /**
      * 概率分布格式的方向展示。
      * 辩论概率修正优先：DebateJudge挖掘死数据之外的深层信号后给出的概率。
      * 无辩论概率时回退到Agent投票加权计算。
      */
     private String formatDirectionWithProb(HorizonForecast forecast, List<AgentVote> allVotes,
-                                            String horizon, Map<String, Object[]> debateProbs) {
+                                            String horizon, Map<String, Object[]> debateProbs,
+                                            MarketRegime regime) {
         // 辩论概率优先
         if (debateProbs != null && debateProbs.containsKey(horizon)) {
             // state序列化可能导致Integer[]变Object[]，安全取值
@@ -730,7 +733,10 @@ public class GenerateReportNode implements NodeAction {
         double bullish = 0, bearish = 0;
         for (AgentVote v : allVotes) {
             if (!horizon.equals(v.horizon())) continue;
-            double w = AGENT_WEIGHTS.getOrDefault(v.agent(), Map.of()).getOrDefault(horizon, 0.1);
+            double w = HorizonJudge.baseWeight(v.agent(), horizon);
+            if (weightOverrideService != null) {
+                w = weightOverrideService.apply(v.agent(), horizon, regime, w);
+            }
             double contribution = w * Math.abs(v.score()) * Math.max(0.1, v.confidence());
             if (v.score() > 0.02) bullish += contribution;
             else if (v.score() < -0.02) bearish += contribution;

@@ -6,6 +6,7 @@ import com.mawai.wiibservice.agent.quant.domain.*;
 import com.mawai.wiibservice.agent.quant.judge.ConsensusBuilder;
 import com.mawai.wiibservice.agent.quant.judge.HorizonJudge;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
+import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
@@ -26,9 +27,14 @@ public class RunHorizonJudgesNode implements NodeAction {
 
     private static final String[] HORIZONS = {"0_10", "10_20", "20_30"};
     private final MemoryService memoryService;
+    private final FactorWeightOverrideService weightOverrideService;
 
     public RunHorizonJudgesNode() { this(null); }
-    public RunHorizonJudgesNode(MemoryService memoryService) { this.memoryService = memoryService; }
+    public RunHorizonJudgesNode(MemoryService memoryService) { this(memoryService, null); }
+    public RunHorizonJudgesNode(MemoryService memoryService, FactorWeightOverrideService weightOverrideService) {
+        this.memoryService = memoryService;
+        this.weightOverrideService = weightOverrideService;
+    }
 
     @Override
     @SuppressWarnings("unchecked")
@@ -63,7 +69,7 @@ public class RunHorizonJudgesNode implements NodeAction {
             List<Future<HorizonForecast>> futures = new ArrayList<>(3);
             for (String horizon : HORIZONS) {
                 futures.add(executor.submit(() -> {
-                    HorizonJudge judge = new HorizonJudge(horizon, finalAccuracy);
+                    HorizonJudge judge = new HorizonJudge(horizon, finalAccuracy, weightOverrideService);
                     return judge.judge(allVotes, lastPrice, qualityFlags, regime);
                 }));
             }

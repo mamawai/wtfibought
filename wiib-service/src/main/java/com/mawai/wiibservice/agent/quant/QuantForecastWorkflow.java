@@ -11,6 +11,7 @@ import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.factor.*;
 import com.mawai.wiibservice.agent.quant.node.*;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
+import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
 import com.mawai.wiibservice.service.DepthStreamCache;
@@ -51,6 +52,7 @@ public class QuantForecastWorkflow {
                                        OrderFlowAggregator orderFlowAggregator,
                                        DepthStreamCache depthStreamCache,
                                        DeribitClient deribitClient,
+                                       FactorWeightOverrideService weightOverrideService,
                                        LlmCallMode deepCallMode,
                                        LlmCallMode shallowCallMode) throws Exception {
 
@@ -68,10 +70,11 @@ public class QuantForecastWorkflow {
                 .addNode("build_features",     node_async(new BuildFeaturesNode(orderFlowAggregator)))
                 .addNode("regime_review",      node_async(new RegimeReviewNode(shallowChatClient, shallowCallMode, memoryService)))
                 .addNode("run_factors",        node_async(new RunFactorAgentsNode(agents)))
-                .addNode("run_judges",         node_async(new RunHorizonJudgesNode(memoryService)))
+                .addNode("run_judges",         node_async(new RunHorizonJudgesNode(memoryService, weightOverrideService)))
                 .addNode("debate_judge",       node_async(new DebateJudgeNode(deepChatClient, deepCallMode, memoryService)))
                 .addNode("risk_gate",          node_async(new RiskGateNode()))
-                .addNode("generate_report",    node_async(new GenerateReportNode(shallowChatClient, shallowCallMode, memoryService)));
+                .addNode("generate_report",    node_async(new GenerateReportNode(shallowChatClient, shallowCallMode,
+                        memoryService, weightOverrideService)));
 
         workflow.addEdge(START, "collect_data");
         workflow.addEdge("collect_data", "build_features");
@@ -123,11 +126,14 @@ public class QuantForecastWorkflow {
             s.put("price_change_map", new ReplaceStrategy());
             // RegimeReviewNode输出
             s.put("regime_confidence", new ReplaceStrategy());
+            s.put("regime_confidence_stddev", new ReplaceStrategy());
             s.put("regime_transition", new ReplaceStrategy());
             s.put("regime_transition_detail", new ReplaceStrategy());
             // RunFactorAgentsNode输出
             s.put("agent_votes", new ReplaceStrategy());
             s.put("filtered_news", new ReplaceStrategy());
+            s.put("news_confidence_stddev", new ReplaceStrategy());
+            s.put("news_low_confidence", new ReplaceStrategy());
             // RunHorizonJudgesNode输出
             s.put("horizon_forecasts", new ReplaceStrategy());
             s.put("overall_decision", new ReplaceStrategy());

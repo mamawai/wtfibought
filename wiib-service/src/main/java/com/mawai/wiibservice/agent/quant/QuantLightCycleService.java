@@ -12,6 +12,7 @@ import com.mawai.wiibservice.agent.quant.node.BuildFeaturesNode;
 import com.mawai.wiibservice.agent.quant.node.CollectDataNode;
 import com.mawai.wiibservice.agent.quant.risk.RiskGate;
 import com.mawai.wiibservice.agent.quant.domain.QuantCycleCompleteEvent;
+import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
 import com.mawai.wiibservice.mapper.QuantForecastAdjustmentMapper;
@@ -55,6 +56,7 @@ public class QuantLightCycleService {
     private final QuantSignalDecisionMapper signalDecisionMapper;
     private final QuantForecastCycleMapper forecastCycleMapper;
     private final QuantForecastAdjustmentMapper adjustmentMapper;
+    private final FactorWeightOverrideService weightOverrideService;
 
     /** 浅LLM新闻刷新用：直接拉 news + runtime chatModel */
     private final BinanceRestClient binanceRestClient;
@@ -120,6 +122,7 @@ public class QuantLightCycleService {
                                    QuantForecastCycleMapper forecastCycleMapper,
                                    QuantForecastAdjustmentMapper adjustmentMapper,
                                    AiAgentRuntimeManager runtimeManager,
+                                   FactorWeightOverrideService weightOverrideService,
                                    @org.springframework.context.annotation.Lazy PriceVolatilitySentinel volatilitySentinel) {
         this.collectDataNode = new CollectDataNode(
                 binanceRestClient, forceOrderService, depthStreamCache, deribitClient);
@@ -137,6 +140,7 @@ public class QuantLightCycleService {
         this.signalDecisionMapper = signalDecisionMapper;
         this.forecastCycleMapper = forecastCycleMapper;
         this.adjustmentMapper = adjustmentMapper;
+        this.weightOverrideService = weightOverrideService;
         this.binanceRestClient = binanceRestClient;
         this.runtimeManager = runtimeManager;
         this.volatilitySentinel = volatilitySentinel;
@@ -589,7 +593,7 @@ public class QuantLightCycleService {
             List<Future<HorizonForecast>> futures = new ArrayList<>(3);
             for (String horizon : HORIZONS) {
                 futures.add(executor.submit(() -> {
-                    HorizonJudge judge = new HorizonJudge(horizon, agentAccuracy);
+                    HorizonJudge judge = new HorizonJudge(horizon, agentAccuracy, weightOverrideService);
                     return judge.judge(allVotes, lastPrice, qualityFlags, regime);
                 }));
             }

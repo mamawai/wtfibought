@@ -109,6 +109,13 @@ binance:
 coindesk:
   news-api-key:
 
+# Sprint B1-3：agent+horizon+regime 静态调权。
+# 当前回放未证明收益，默认关闭；仅用于模拟盘观察或后续新规则实验。
+factor:
+  weight_override:
+    enabled: false
+    config: classpath:factor_weight_override.json
+
 # WebSocket配置
 websocket:
   # 最大连接数
