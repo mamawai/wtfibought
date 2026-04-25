@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTradingDecision;
 import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
 import com.mawai.wiibservice.agent.trading.AiTradingTools;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
 import com.mawai.wiibservice.agent.quant.domain.QuantCycleCompleteEvent;
@@ -48,6 +49,7 @@ public class AiTradingScheduler {
     private final QuantSignalDecisionMapper decisionMapper;
     private final AiTradingDecisionMapper tradingDecisionMapper;
     private final CacheService cacheService;
+    private final CircuitBreakerService circuitBreakerService;
 
     public AiTradingScheduler(UserMapper userMapper,
                               FuturesTradingService futuresTradingService,
@@ -56,7 +58,8 @@ public class AiTradingScheduler {
                               QuantForecastCycleMapper cycleMapper,
                               QuantSignalDecisionMapper decisionMapper,
                               AiTradingDecisionMapper tradingDecisionMapper,
-                              CacheService cacheService) {
+                              CacheService cacheService,
+                              CircuitBreakerService circuitBreakerService) {
         this.userMapper = userMapper;
         this.futuresTradingService = futuresTradingService;
         this.futuresRiskService = futuresRiskService;
@@ -65,6 +68,7 @@ public class AiTradingScheduler {
         this.decisionMapper = decisionMapper;
         this.tradingDecisionMapper = tradingDecisionMapper;
         this.cacheService = cacheService;
+        this.circuitBreakerService = circuitBreakerService;
     }
 
     @PostConstruct
@@ -173,7 +177,8 @@ public class AiTradingScheduler {
             BigDecimal markPrice = cacheService.getMarkPrice(symbol);
 
             AiTradingTools tools = new AiTradingTools(userId, symbol, userMapper, futuresTradingService,
-                    futuresRiskService, futuresPositionMapper, cycleMapper, decisionMapper, cacheService);
+                    futuresRiskService, futuresPositionMapper, cycleMapper, decisionMapper, cacheService,
+                    circuitBreakerService);
 
             // 确定性执行器决策
             DeterministicTradingExecutor.ExecutionResult result =

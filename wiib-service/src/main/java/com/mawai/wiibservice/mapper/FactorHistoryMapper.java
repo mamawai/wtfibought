@@ -10,6 +10,7 @@ import org.apache.ibatis.annotations.Select;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Mapper
 public interface FactorHistoryMapper extends BaseMapper<FactorHistory> {
@@ -70,4 +71,46 @@ public interface FactorHistoryMapper extends BaseMapper<FactorHistory> {
                                     @Param("factorValue") BigDecimal factorValue,
                                     @Param("from") LocalDateTime from,
                                     @Param("to") LocalDateTime to);
+
+    @Select("""
+            WITH scoped AS (
+                SELECT *
+                FROM factor_history
+                WHERE observed_at >= #{from}
+                  AND observed_at < #{to}
+            ),
+            agg AS (
+                SELECT
+                    symbol,
+                    factor_name,
+                    COUNT(*)::int AS samples,
+                    MIN(observed_at) AS first_observed_at,
+                    MAX(observed_at) AS latest_observed_at
+                FROM scoped
+                GROUP BY symbol, factor_name
+            ),
+            latest AS (
+                SELECT DISTINCT ON (symbol, factor_name)
+                    symbol,
+                    factor_name,
+                    factor_value,
+                    observed_at
+                FROM scoped
+                ORDER BY symbol, factor_name, observed_at DESC
+            )
+            SELECT
+                agg.symbol AS "symbol",
+                agg.factor_name AS "factorName",
+                agg.samples AS "samples",
+                agg.first_observed_at AS "firstObservedAt",
+                agg.latest_observed_at AS "latestObservedAt",
+                latest.factor_value AS "latestValue",
+                ROUND(EXTRACT(EPOCH FROM (NOW() - agg.latest_observed_at)) / 3600, 2) AS "latestAgeHours"
+            FROM agg
+            JOIN latest ON latest.symbol = agg.symbol
+                       AND latest.factor_name = agg.factor_name
+            ORDER BY agg.factor_name, agg.symbol
+            """)
+    List<Map<String, Object>> selectCoverage(@Param("from") LocalDateTime from,
+                                             @Param("to") LocalDateTime to);
 }

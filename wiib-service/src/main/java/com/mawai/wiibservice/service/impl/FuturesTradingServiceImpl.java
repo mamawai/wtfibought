@@ -19,6 +19,7 @@ import com.mawai.wiibservice.mapper.UserMapper;
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.FuturesPositionIndexService;
 import com.mawai.wiibservice.service.FuturesTradingService;
+import com.mawai.wiibservice.service.TradeAttributionService;
 import com.mawai.wiibservice.service.UserService;
 import com.mawai.wiibservice.task.AiTradingScheduler;
 import com.mawai.wiibservice.util.RedisLockUtil;
@@ -49,6 +50,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     private final RedisLockUtil redisLockUtil;
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
+    private final TradeAttributionService tradeAttributionService;
 
     // ==================== 开仓 ====================
 
@@ -299,6 +301,9 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setRealizedPnl(pnl);
         order.setStatus("FILLED");
         orderMapper.insert(order);
+        if (isFullClose) {
+            tradeAttributionService.recordExit(position, pnl, "UNKNOWN");
+        }
 
         log.info("futures市价平仓 userId={} posId={} qty={} price={} pnl={} return={}",
                 userId, position.getId(), closeQty, currentPrice, pnl, returnAmount);

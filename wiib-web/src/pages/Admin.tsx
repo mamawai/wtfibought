@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { useUserStore } from '../stores/userStore';
 import { adminApi, type TaskStatus } from '../api';
 import type { AiKeyConfig, AiModelAssignment, TradingRuntimeConfig, QuantRuntimeConfig } from '../types';
@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
 import { useToast } from '../components/ui/use-toast';
-import { Play, Square, RefreshCw, Database, Calendar, Clock, Plus, Trash2, Pencil, Save } from 'lucide-react';
+import { Play, Square, RefreshCw, Database, Calendar, Clock, Plus, Trash2, Pencil, Save, ShieldAlert } from 'lucide-react';
 
 const FUNCTION_LABELS: Record<string, string> = {
   behavior: '行为分析',
@@ -275,10 +275,19 @@ export function Admin() {
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">任务管理</h1>
-        <Button variant="outline" size="sm" onClick={fetchStatus} disabled={loading}>
-          <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
-          刷新
-        </Button>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/admin/sprint-c"
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium hover:bg-muted"
+          >
+            <ShieldAlert className="w-4 h-4" />
+            Sprint C
+          </Link>
+          <Button variant="outline" size="sm" onClick={fetchStatus} disabled={loading}>
+            <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
+            刷新
+          </Button>
+        </div>
       </div>
 
       {status && (

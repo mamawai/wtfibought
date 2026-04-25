@@ -719,6 +719,102 @@ export interface TradingRuntimeConfig {
 
 export interface QuantRuntimeConfig {
   debateJudgeEnabled?: boolean;
+  factorWeightOverrideEnabled?: boolean;
+}
+
+// ========== Sprint C Admin Dashboard ==========
+export interface SprintCBreakerStatus {
+  enabled: boolean;
+  anyActive: boolean;
+  level: 'NORMAL' | 'L1' | 'L2' | 'L3' | 'DISABLED' | string;
+  l1Reason: string | null;
+  l2Reason: string | null;
+  l3Reason: string | null;
+  peakEquity: string | null;
+}
+
+export interface SprintCTradeStats {
+  samples: number;
+  wins: number;
+  winRate: number | null;
+  avgPnl?: number | null;
+  ev?: number | null;
+  totalPnl: number | null;
+  avgHoldingMinutes: number | null;
+}
+
+export interface SprintCPathStats extends SprintCTradeStats {
+  path: 'BREAKOUT' | 'MR' | 'LEGACY_TREND' | string;
+  enabled: boolean;
+  disabledReason: string | null;
+  disabledAt: string | null;
+  consecutiveLossCount: number;
+}
+
+export interface SprintCAccount {
+  aiUserId: number;
+  todayOpenCount: number;
+  cumulative: SprintCTradeStats;
+  breaker: SprintCBreakerStatus;
+}
+
+export interface SprintCShadow5of7 {
+  samples: number;
+  longSamples: number;
+  shortSamples: number;
+  firstSeenAt: string | null;
+  latestSeenAt: string | null;
+  hypotheticalWinRate: number | null;
+  verificationStatus: string;
+}
+
+export interface SprintCFactorIrRow {
+  agent: string;
+  horizon: string;
+  regime: string;
+  samples: number;
+  meanAlignedReturnBps: number | null;
+  stdAlignedReturnBps: number | null;
+  ir: number | null;
+  winRate: number | null;
+  avgConfidence: number | null;
+  avgAbsScore: number | null;
+}
+
+export interface SprintCFactorCoverage {
+  factorName: string;
+  symbol: string;
+  frequency: string;
+  expectedSamples: number;
+  samples: number;
+  completeness: number;
+  latestObservedAt: string | null;
+  latestAgeHours: number | null;
+  latestValue: number | null;
+}
+
+export interface SprintCLlmVariance {
+  cycles: number;
+  lowConfidenceCycles: number;
+  lowConfidenceRate: number | null;
+  avgRegimeConfidence: number | null;
+  avgRegimeConfidenceStddev: number | null;
+  avgNewsConfidenceStddev: number | null;
+  transitionCycles: number;
+  highVarianceCycles: number;
+}
+
+export interface SprintCDashboard {
+  generatedAt: string;
+  days: number;
+  from: string;
+  to: string;
+  account: SprintCAccount;
+  pathStats: SprintCPathStats[];
+  shadow5of7: SprintCShadow5of7;
+  factorIrRanking: SprintCFactorIrRow[];
+  externalFactorCoverage: SprintCFactorCoverage[];
+  llmVariance: SprintCLlmVariance;
 }
 
 export interface LatestCryptoResult {

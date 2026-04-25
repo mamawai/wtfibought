@@ -12,6 +12,7 @@ import { CoinSelect } from './pages/CoinSelect';
 import { Ranking } from './pages/Ranking';
 import { Login } from './pages/Login';
 import { Admin } from './pages/Admin';
+import { AdminSprintC } from './pages/AdminSprintC';
 import { Blackjack } from './pages/Blackjack';
 import { Mines } from './pages/Mines';
 import { VideoPoker } from './pages/VideoPoker';
@@ -65,6 +66,7 @@ function App() {
                 <Route path="/coin/:symbol" element={<CoinRoute />} />
                 <Route path="/ranking" element={<Ranking />} />
                 <Route path="/admin" element={<Admin />} />
+                <Route path="/admin/sprint-c" element={<RequireAuth><AdminSprintC /></RequireAuth>} />
                 <Route path="/games" element={<Games />} />
                 <Route path="/me" element={<Me />} />
                 <Route path="/blackjack" element={<RequireAuth><Blackjack /></RequireAuth>} />

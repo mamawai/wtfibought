@@ -146,10 +146,19 @@ public class GenerateReportNode implements NodeAction {
         result.put("forecast_result", com.alibaba.fastjson2.JSON.toJSONString(forecastResult));
         // 单独输出序列化后的JSON，避免ForecastResult反序列化时复杂record丢失
         if (snapshot != null) {
-            result.put("raw_snapshot_json", com.alibaba.fastjson2.JSON.toJSONString(snapshot));
+            result.put("raw_snapshot_json", buildPersistSnapshotJson(snapshot, state));
         }
         result.put("raw_report_json", com.alibaba.fastjson2.JSON.toJSONString(finalReport));
         return result;
+    }
+
+    private String buildPersistSnapshotJson(FeatureSnapshot snapshot, OverAllState state) {
+        JSONObject obj = JSON.parseObject(JSON.toJSONString(snapshot));
+        // B1-4 方差值是工作流 state 指标；落入 snapshot_json 后 C3 看板才能跨重启/跨页面查询。
+        state.value("regime_confidence_stddev").ifPresent(v -> obj.put("regimeConfidenceStddev", v));
+        state.value("news_confidence_stddev").ifPresent(v -> obj.put("newsConfidenceStddev", v));
+        state.value("news_low_confidence").ifPresent(v -> obj.put("newsLowConfidence", v));
+        return obj.toJSONString();
     }
 
     private CryptoAnalysisReport buildHardReport(String symbol,
