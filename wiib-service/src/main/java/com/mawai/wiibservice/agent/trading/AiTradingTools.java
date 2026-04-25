@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.dto.*;
 import com.mawai.wiibcommon.entity.*;
+import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibservice.mapper.QuantSignalDecisionMapper;
 import com.mawai.wiibservice.mapper.UserMapper;
@@ -44,6 +45,7 @@ public class AiTradingTools implements TradingOperations {
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantSignalDecisionMapper decisionMapper;
     private final CacheService cacheService;
+    private final CircuitBreakerService circuitBreakerService;
 
     public AiTradingTools(Long aiUserId, String currentSymbol,
                           UserMapper userMapper,
@@ -52,7 +54,8 @@ public class AiTradingTools implements TradingOperations {
                           FuturesPositionMapper futuresPositionMapper,
                           QuantForecastCycleMapper cycleMapper,
                           QuantSignalDecisionMapper decisionMapper,
-                          CacheService cacheService) {
+                          CacheService cacheService,
+                          CircuitBreakerService circuitBreakerService) {
         this.aiUserId = aiUserId;
         this.currentSymbol = currentSymbol;
         this.userMapper = userMapper;
@@ -62,6 +65,7 @@ public class AiTradingTools implements TradingOperations {
         this.cycleMapper = cycleMapper;
         this.decisionMapper = decisionMapper;
         this.cacheService = cacheService;
+        this.circuitBreakerService = circuitBreakerService;
     }
 
     // ==================== 只读工具 ====================
@@ -211,6 +215,12 @@ public class AiTradingTools implements TradingOperations {
         boolean isLimit = "LIMIT".equalsIgnoreCase(orderType);
         if (isLimit && (limitPrice == null || limitPrice.compareTo(BigDecimal.ZERO) <= 0)) {
             return "错误：限价单必须设置limitPrice";
+        }
+
+        CircuitBreakerService.OpenDecision breaker = circuitBreakerService.allowOpen(aiUserId, memo);
+        if (!breaker.allowed()) {
+            log.warn("[AI-Trade] 开仓被熔断拦截 symbol={} memo={} reason={}", symbol, memo, breaker.reason());
+            return "错误：熔断中，" + breaker.reason();
         }
 
         // 持仓数 + 同向检查（单次查询）

@@ -15,6 +15,7 @@ import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.FuturesPositionIndexService;
 import com.mawai.wiibservice.service.FuturesRiskService;
 import com.mawai.wiibservice.service.FuturesSettlementService;
+import com.mawai.wiibservice.service.TradeAttributionService;
 import com.mawai.wiibservice.service.UserService;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +48,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
     private final FuturesRiskService riskService;
+    private final TradeAttributionService tradeAttributionService;
 
     @PostConstruct
     void init() {
@@ -258,6 +260,9 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         userMapper.atomicUpdateBalance(order.getUserId(), returnAmount);
         orderMapper.casUpdateToFilled(order.getId(), executePrice, closeValue, commission, null, pnl);
+        if (isFullClose) {
+            tradeAttributionService.recordExit(position, pnl, "UNKNOWN");
+        }
 
         log.info("futures限价平仓成交 orderId={} price={} feeType={} pnl={}",
                 order.getId(), executePrice, isTaker ? "TAKER" : "MAKER", pnl);
