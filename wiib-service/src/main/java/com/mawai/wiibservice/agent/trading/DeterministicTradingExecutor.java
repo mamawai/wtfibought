@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.agent.trading;
 
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.*;
@@ -16,6 +17,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 /**
@@ -34,6 +36,15 @@ public class DeterministicTradingExecutor {
 
     public static final BigDecimal INITIAL_BALANCE = new BigDecimal("100000.00");
 
+    private static final String PATH_BREAKOUT = "BREAKOUT";
+    private static final String PATH_MR = "MR";
+    private static final String PATH_LEGACY_TREND = "LEGACY_TREND";
+    private static final String PATH_SHADOW_5OF7 = "SHADOW_5OF7";
+    private static final String LEGACY_PATH_TREND = "TREND";
+    private static final String LEGACY_PATH_MR = "MEAN_REVERSION";
+    private static final long ENTRY_COOLDOWN_MS = 30 * 60 * 1000L;
+    private static final ConcurrentHashMap<String, Long> LAST_ENTRY_MS = new ConcurrentHashMap<>();
+
     // ==================== 手续费 ====================
     // 0.0008 与模拟盘记账一致（开仓0.04% + 平仓0.04%）；真盘迁移时改 0.0010（Binance VIP0 taker 0.05% 往返）
     private static final double ROUND_TRIP_FEE_RATE = 0.0008;
@@ -41,6 +52,9 @@ public class DeterministicTradingExecutor {
 
     // ==================== 风控常量 ====================
     private static final BigDecimal RISK_PER_TRADE = new BigDecimal("0.02");
+    private static final BigDecimal MIN_ENTRY_RR = new BigDecimal("1.2");
+    private static final AtomicLong RR_GUARD_TRIGGERED_COUNT = new AtomicLong();
+    private static final AtomicLong MARGIN_CAP_TRIGGERED_COUNT = new AtomicLong();
     // Phase 0A 止血：单笔保证金占余额上限 0.35 → 0.15，单笔最大亏损下降约 57%
     private static final BigDecimal MAX_MARGIN_PCT = new BigDecimal("0.15");
     private static final BigDecimal DAILY_LOSS_LIMIT_PCT = new BigDecimal("0.05");
@@ -80,12 +94,28 @@ public class DeterministicTradingExecutor {
      * Phase 0A 期间严禁通过 Admin 端打开——SL 落噪音带是 §2.3 已确认的负 EV 机制。
      */
     public static volatile boolean LOW_VOL_TRADING_ENABLED = false;
+    /**
+     * LEGACY_TREND 5/7 实盘开仓开关。
+     * false：默认保守，只允许 6/7 共振分数实盘开仓。
+     * true：放宽为 5/7 也可继续走开仓逻辑，需先观察 SHADOW_5OF7 样本质量后再手动开启。
+     */
+    public static volatile boolean LEGACY_THRESHOLD_5OF7_ENABLED = false;
+    /**
+     * LEGACY_TREND 5/7 影子样本开关。
+     * true：5/7 但未开启实盘时，只写 HOLD 决策和 [Strategy-SHADOW_5OF7] reasoning，不下单。
+     * false：5/7 直接按共振不足 HOLD，不额外保留候选交易样本。
+     */
+    public static volatile boolean LEGACY_5OF7_SHADOW_ENABLED = true;
 
     // ==================== 持仓管理 ====================
     // 反转平仓置信度阈值：0.82要求强反转信号才平仓，防5m级噪音打掉浮盈
     // 配合 REVERSAL_STREAK_REQUIRED 连续校验 + 手续费门槛使用
     private static final double REVERSAL_CONFIDENCE = 0.82;
     private static final int REVERSAL_STREAK_REQUIRED = 2;
+    private static final double TIME_STOP_MIN_R = 0.5;
+    private static final long TREND_TIME_STOP_MINUTES = 60;
+    private static final long REVERT_TIME_STOP_MINUTES = 60;
+    private static final long BREAKOUT_TIME_STOP_MINUTES = 25;
     // Phase 0A 止血：3.0 → 5.0，反转平仓需更厚浮盈才触发，避免被噪音震出（§2.3 A）
     private static final double REVERSAL_MIN_PROFIT_FEE_MULTIPLE = 5.0;
     // 仓位反转信号连续次数：key=positionId，value=连续出现的反向信号周期数
@@ -109,6 +139,14 @@ public class DeterministicTradingExecutor {
     public static BigDecimal getPositionMaxProfit(Long positionId) {
         PositionPeak p = POSITION_PEAKS.get(positionId);
         return p == null ? null : p.maxProfit();
+    }
+
+    public static long getRrGuardTriggeredCount() {
+        return RR_GUARD_TRIGGERED_COUNT.get();
+    }
+
+    public static long getMarginCapTriggeredCount() {
+        return MARGIN_CAP_TRIGGERED_COUNT.get();
     }
 
     public record ExecutionResult(String action, String reasoning, String executionLog) {}
@@ -146,7 +184,9 @@ public class DeterministicTradingExecutor {
             Double bidAskImbalance,
             Double takerPressure,
             Double oiChangeRate,
-            Double fundingDeviation
+            Double fundingDeviation,
+            // 数据质量标记（STALE_AGG_TRADE 等，从 snapshot.qualityFlags 解析）
+            List<String> qualityFlags
     ) {}
 
     // ==================== 主入口 ====================
@@ -312,8 +352,8 @@ public class DeterministicTradingExecutor {
                 }
             }
 
-            // ===== 3. 均值回归持仓 → BB中轨动态止盈（仅对MEAN_REVERSION仓位生效）=====
-            if ("MEAN_REVERSION".equals(pos.getMemo())
+            // ===== 3. 均值回归持仓 → BB中轨动态止盈（仅对MR仓位生效）=====
+            if (isMrPath(pos.getMemo())
                     && "RANGE".equals(ctx.regime) && ctx.bollPb5m != null) {
                 boolean reachedMid = (isLong && ctx.bollPb5m >= 45.0) || (!isLong && ctx.bollPb5m <= 55.0);
                 if (reachedMid && profit.signum() > 0) {
@@ -325,8 +365,8 @@ public class DeterministicTradingExecutor {
                 }
             }
 
-            // ===== 4. 均值回归超时平仓（仅对MEAN_REVERSION仓位生效）=====
-            if ("MEAN_REVERSION".equals(pos.getMemo())
+            // ===== 4. 均值回归超时平仓（仅对MR仓位生效）=====
+            if (isMrPath(pos.getMemo())
                     && "RANGE".equals(ctx.regime) && pos.getCreatedAt() != null) {
                 long holdHours = Duration.between(pos.getCreatedAt(), LocalDateTime.now()).toHours();
                 if (holdHours >= REVERT_MAX_HOLD_HOURS) {
@@ -339,7 +379,28 @@ public class DeterministicTradingExecutor {
                 }
             }
 
-            // ===== 5. 分批止盈（Peak 感知）=====
+            // ===== 5. 时间止损：持仓太久仍未达到0.5R，释放风险预算 =====
+            if (pos.getCreatedAt() != null) {
+                Long limitMinutes = timeStopLimitMinutes(pos.getMemo());
+                BigDecimal riskDistance = calcRiskDistance(pos, ctx, profile, isLong);
+                long holdingMinutes = Duration.between(pos.getCreatedAt(), LocalDateTime.now()).toMinutes();
+                if (limitMinutes != null && holdingMinutes > limitMinutes) {
+                    BigDecimal minProfit = riskDistance.multiply(BigDecimal.valueOf(TIME_STOP_MIN_R));
+                    if (profit.compareTo(minProfit) < 0) {
+                        String closeResult = tools.closePosition(pos.getId(), pos.getQuantity());
+                        log.info("[Executor] TIME_STOP_TRIGGERED memo={} holding={} profit={} minProfit={} riskDistance={} result={}",
+                                pos.getMemo(), holdingMinutes, profit.toPlainString(), minProfit.toPlainString(),
+                                riskDistance.toPlainString(), closeResult);
+                        execLog.append("时间止损: ").append(closeResult).append("\n");
+                        reasons.append(String.format("TIME_STOP memo=%s holding=%dmin profit=%s<0.5R=%s→平仓; ",
+                                pos.getMemo(), holdingMinutes, fmtPrice(profit), fmtPrice(minProfit)));
+                        action = "CLOSE";
+                        continue;
+                    }
+                }
+            }
+
+            // ===== 6. 分批止盈（Peak 感知）=====
             // 峰值浮盈到 partialTpAtr×ATR 先平 50% 落袋，剩余跟追踪止损跑大行情
             // partialTpDone=true 后不再重复分批
             if (ctx.atr5m != null && ctx.atr5m.signum() > 0) {
@@ -364,7 +425,7 @@ public class DeterministicTradingExecutor {
                 }
             }
 
-            // ===== 6. 信号反转 → 平仓（分级：有稳固浮盈放宽，无稳固浮盈严格）=====
+            // ===== 7. 信号反转 → 平仓（分级：有稳固浮盈放宽，无稳固浮盈严格）=====
             // 有浮盈(peak≥1ATR) → 反转信号一来果断跑，错过锁利比被噪音假平更致命
             // 无浮盈 → 严格门槛 0.82+streak=2+浮盈>=3×fee，防吃手续费型平仓
             PositionPeak peak = POSITION_PEAKS.get(pos.getId());
@@ -415,7 +476,7 @@ public class DeterministicTradingExecutor {
                 REVERSAL_STREAK.remove(pos.getId());
             }
 
-            // ===== 7. Peak 感知的 ATR 追踪止损 =====
+            // ===== 8. Peak 感知的 ATR 追踪止损 =====
             // 用历史峰值浮盈而非当前浮盈计算 SL：防两次 cycle 之间的峰值回撤丢失
             if (ctx.atr5m != null && ctx.atr5m.signum() > 0) {
                 BigDecimal atr = ctx.atr5m;
@@ -443,6 +504,9 @@ public class DeterministicTradingExecutor {
                     if (peakProfit.compareTo(breakevenThreshold) >= 0) {
                         if (shouldMoveSl(currentSl, entryPrice, isLong)) {
                             String r = tools.setStopLoss(pos.getId(), entryPrice, pos.getQuantity());
+                            log.info("[Executor] TRAIL_BREAKEVEN_MOVED posId={} entry={} new_sl={} peakAtr={} result={}",
+                                    pos.getId(), entryPrice.toPlainString(), entryPrice.toPlainString(),
+                                    String.format("%.2f", peakProfit.doubleValue() / atr.doubleValue()), r);
                             execLog.append("保本止损(peak): ").append(r).append("\n");
                             reasons.append(String.format("峰值浮盈%.1fATR→SL=成本价; ",
                                     peakProfit.doubleValue() / atr.doubleValue()));
@@ -452,7 +516,7 @@ public class DeterministicTradingExecutor {
                 }
             }
 
-            // ===== 8. 盯盘状态报告 =====
+            // ===== 9. 盯盘状态报告 =====
             if (reasons.isEmpty()) {
                 String pnlStr = pos.getUnrealizedPnlPct() != null
                         ? pos.getUnrealizedPnlPct().setScale(2, RoundingMode.HALF_UP) + "%" : "N/A";
@@ -489,6 +553,18 @@ public class DeterministicTradingExecutor {
             TradingOperations tools,
             LocalDateTime forecastTime) {
 
+        // ===== 0. 跨路径冷却：同 symbol 开仓后30min内不再开新仓，防 whipsaw =====
+        long nowMs = System.currentTimeMillis();
+        Long lastEntryMs = LAST_ENTRY_MS.get(symbol);
+        if (lastEntryMs != null) {
+            long remainingMs = ENTRY_COOLDOWN_MS - (nowMs - lastEntryMs);
+            if (remainingMs > 0) {
+                long remainingMinutes = (remainingMs + 59_999) / 60_000;
+                log.info("[Executor] COOLDOWN_HOLD symbol={} remaining={} min", symbol, remainingMinutes);
+                return hold("COOLDOWN_HOLD symbol=" + symbol + " remaining=" + remainingMinutes + " min");
+            }
+        }
+
         // ===== 1. 风控检查（智能冷却、连续亏损、日亏损）=====
         String riskCheck = checkRiskLimits(user, recentDecisions);
         if (riskCheck != null) return hold(riskCheck);
@@ -496,6 +572,12 @@ public class DeterministicTradingExecutor {
         // ===== 2. ATR必须可用 =====
         if (ctx.atr5m == null || ctx.atr5m.signum() <= 0) {
             return hold("ATR数据缺失→无法计算止损");
+        }
+
+        // ===== 2.5 数据新鲜度门：WS aggTrade 卡顿 >30s 即弃权 =====
+        if (ctx.qualityFlags.contains("STALE_AGG_TRADE")) {
+            log.info("[QualityFlag] STALE_AGG_TRADE detected symbol={}, abstain", symbol);
+            return hold("STALE_AGG_TRADE: aggTrade 数据 >30s 未更新→弃权");
         }
 
         // ===== 3. 找信号 =====
@@ -530,16 +612,29 @@ public class DeterministicTradingExecutor {
             }
         }
 
-        // ===== 5. 信号共振评分（6维，统一门槛）=====
+        // ===== 5. 策略选择（基于技术指标状态）=====
+        String strategy = selectStrategy(ctx, isLong);
+
+        // ===== 6. 信号共振评分（7维，LEGACY_TREND 支持5/7 shadow）=====
         int confluenceScore = calcConfluenceScore(ctx, isLong, signals);
         if (confluenceScore < MIN_CONFLUENCE_SCORE) {
-            return hold(String.format("共振不足: score=%d/%d(需>=%d, regime=%s) %s",
-                    confluenceScore, 7, MIN_CONFLUENCE_SCORE, ctx.regime,
-                    describeConfluence(ctx, isLong)));
+            boolean legacyFiveOfSeven = PATH_LEGACY_TREND.equals(strategy) && confluenceScore == 5;
+            if (legacyFiveOfSeven && LEGACY_THRESHOLD_5OF7_ENABLED) {
+                log.info("[Executor] LEGACY_5OF7_LIVE symbol={} side={} conf={} confluence=5/7",
+                        symbol, side, fmt(confidence));
+            } else if (legacyFiveOfSeven && LEGACY_5OF7_SHADOW_ENABLED) {
+                String reason = String.format("[Strategy-%s] 5/7 shadow only side=%s conf=%s regime=%s %s",
+                        PATH_SHADOW_5OF7, side, fmt(confidence), ctx.regime,
+                        describeConfluence(ctx, isLong));
+                log.info("[Executor] LEGACY_5OF7_SHADOW symbol={} side={} conf={} confluence=5/7",
+                        symbol, side, fmt(confidence));
+                return new ExecutionResult("HOLD", reason, "");
+            } else {
+                return hold(String.format("共振不足: score=%d/%d(需>=%d, regime=%s) %s",
+                        confluenceScore, 7, MIN_CONFLUENCE_SCORE, ctx.regime,
+                        describeConfluence(ctx, isLong)));
+            }
         }
-
-        // ===== 6. 策略选择（基于技术指标状态）=====
-        String strategy = selectStrategy(ctx, isLong);
 
         // ===== 7. SHOCK/SQUEEZE仓位缩减 =====
         double regimeScale = 1.0;
@@ -549,21 +644,29 @@ public class DeterministicTradingExecutor {
             }
             regimeScale = 0.5;
         } else if ("SQUEEZE".equals(ctx.regime)) {
-            regimeScale = "BREAKOUT".equals(strategy) ? 0.8 : 0.6;
+            regimeScale = PATH_BREAKOUT.equals(strategy) ? 0.8 : 0.6;
         }
 
         // ===== 8. 执行策略 =====
-        log.info("[Executor] 入场决策: {} strategy={} conf={} confluence={}/6 regime={} scale={}",
+        log.info("[Executor] 入场决策: {} strategy={} conf={} confluence={}/7 regime={} scale={}",
                 side, strategy, fmt(confidence), confluenceScore, ctx.regime, regimeScale);
 
-        return switch (strategy) {
-            case "MEAN_REVERSION" -> bbMeanReversion(symbol, user, totalEquity, bestSignal, ctx,
+        ExecutionResult inner = switch (strategy) {
+            case PATH_MR -> bbMeanReversion(symbol, user, totalEquity, bestSignal, ctx,
                     confidence, side, isLong, regimeScale, profile, tools);
-            case "BREAKOUT" -> bbSqueezeBreakout(symbol, user, totalEquity, bestSignal, ctx,
+            case PATH_BREAKOUT -> bbSqueezeBreakout(symbol, user, totalEquity, bestSignal, ctx,
                     confidence, side, isLong, regimeScale, profile, tools);
             default -> trendFollowing(symbol, user, totalEquity, bestSignal, ctx,
                     confidence, side, isLong, regimeScale, profile, tools);
         };
+        if (inner.action().startsWith("OPEN_")) {
+            LAST_ENTRY_MS.put(symbol, nowMs);
+        }
+        // A1-3: reasoning 前缀加策略路径标签，便于 trade_attribution 归因（v3 后 strategy 命名会统一）
+        return new ExecutionResult(
+                inner.action(),
+                "[Strategy-" + strategy + "] " + inner.reasoning(),
+                inner.executionLog());
     }
 
     // ==================== 策略A: EMA趋势跟踪 ====================
@@ -604,6 +707,8 @@ public class DeterministicTradingExecutor {
         // 手续费R:R检查
         String feeCheck = checkFeeAwareRR(price, atr, slDistance, tp1Distance);
         if (feeCheck != null) return hold("趋势策略: " + feeCheck);
+        String rrGuard = checkRiskRewardGuard(symbol, PATH_LEGACY_TREND, slDistance, tp1Distance);
+        if (rrGuard != null) return hold("趋势策略: " + rrGuard);
 
         int leverage = Math.min(
                 signal.getMaxLeverage() != null ? signal.getMaxLeverage() : 10,
@@ -627,7 +732,7 @@ public class DeterministicTradingExecutor {
         if (isInDrawdown(totalEquity)) reason += " [回撤保护]";
 
         // TP1锁定50%，不设TP2（靠managePositions的追踪止损管理剩余50%）
-        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, "TREND");
+        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, PATH_LEGACY_TREND);
         String action = result.startsWith("开仓成功") ? ("OPEN_" + side) : "HOLD";
         if (!result.startsWith("开仓成功")) reason += " | 开仓失败: " + result;
         return new ExecutionResult(action, reason, result);
@@ -709,6 +814,8 @@ public class DeterministicTradingExecutor {
         // 手续费R:R检查
         String feeCheck = checkFeeAwareRR(price, atr, slDistance, tpDistance);
         if (feeCheck != null) return hold("BB回归: " + feeCheck);
+        String rrGuard = checkRiskRewardGuard(symbol, PATH_MR, slDistance, tpDistance);
+        if (rrGuard != null) return hold("BB回归: " + rrGuard);
 
         int leverage = Math.min(
                 signal.getMaxLeverage() != null ? signal.getMaxLeverage() : 10,
@@ -732,7 +839,7 @@ public class DeterministicTradingExecutor {
         if (isLowVol) reason += " [" + adj.note() + "]";
         if (isInDrawdown(totalEquity)) reason += " [回撤保护]";
 
-        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, "MEAN_REVERSION");
+        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, PATH_MR);
         String action = result.startsWith("开仓成功") ? ("OPEN_" + side) : "HOLD";
         if (!result.startsWith("开仓成功")) reason += " | 开仓失败: " + result;
         return new ExecutionResult(action, reason, result);
@@ -790,6 +897,8 @@ public class DeterministicTradingExecutor {
 
         String feeCheck = checkFeeAwareRR(price, atr, slDistance, tpDistance);
         if (feeCheck != null) return hold("突破策略: " + feeCheck);
+        String rrGuard = checkRiskRewardGuard(symbol, PATH_BREAKOUT, slDistance, tpDistance);
+        if (rrGuard != null) return hold("突破策略: " + rrGuard);
 
         int leverage = Math.min(
                 signal.getMaxLeverage() != null ? signal.getMaxLeverage() : 10,
@@ -815,7 +924,7 @@ public class DeterministicTradingExecutor {
         if (isLowVol) reason += " [" + adj.note() + "]";
         if (isInDrawdown(totalEquity)) reason += " [回撤保护]";
 
-        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, "BREAKOUT");
+        String result = tools.openPosition(side, quantity, leverage, "MARKET", null, stopLoss, tp1, PATH_BREAKOUT);
         String action = result.startsWith("开仓成功") ? ("OPEN_" + side) : "HOLD";
         if (!result.startsWith("开仓成功")) reason += " | 开仓失败: " + result;
         return new ExecutionResult(action, reason, result);
@@ -824,7 +933,7 @@ public class DeterministicTradingExecutor {
     // ==================== 信号共振评分系统 ====================
 
     /**
-     * 6维共振评分。需>={@link #MIN_CONFLUENCE_SCORE}才允许入场。
+     * 7维共振评分。需>={@link #MIN_CONFLUENCE_SCORE}才允许入场。
      * 取代原来的"找最高confidence就交易"。
      */
     private static int calcConfluenceScore(MarketContext ctx, boolean isLong, List<QuantSignalDecision> signals) {
@@ -925,13 +1034,18 @@ public class DeterministicTradingExecutor {
     // ==================== 策略选择 ====================
 
     /**
-     * 基于技术指标状态选择策略。
-     * 优先级: BB压缩突破 > BB均值回归 > EMA趋势跟踪
+     * 按当前技术形态选择执行策略，优先级：
+     * BREAKOUT（BB压缩放量且方向已突破） > MR（BB极值回归） > LEGACY_TREND（默认趋势跟踪）。
+     * <p>
+     * BREAKOUT 路由必须方向一致：LONG 需 bollPb >= 70，SHORT 需 bollPb <= 30；
+     * 否则继续走 MR/TREND 判定，避免 squeeze+放量把反向 setup 错路由到突破策略。
      */
     private static String selectStrategy(MarketContext ctx, boolean isLong) {
-        // 1. BB压缩 + 放量 → 突破策略
-        if (ctx.bollSqueeze && ctx.volumeRatio5m != null && ctx.volumeRatio5m >= BREAKOUT_VOLUME_MIN) {
-            return "BREAKOUT";
+        // 1. BB压缩 + 放量 + 方向一致 → 突破策略
+        if (ctx.bollSqueeze && ctx.volumeRatio5m != null && ctx.volumeRatio5m >= BREAKOUT_VOLUME_MIN
+                && ctx.bollPb5m != null
+                && ((isLong && ctx.bollPb5m >= 70.0) || (!isLong && ctx.bollPb5m <= 30.0))) {
+            return PATH_BREAKOUT;
         }
         // 2. BB极值 → 均值回归（RSI/MACD确认在策略内部二选一检查）
         if (ctx.bollPb5m != null) {
@@ -939,11 +1053,11 @@ public class DeterministicTradingExecutor {
             boolean longSetup = pb < REVERT_BB_PB_LONG_MAX;
             boolean shortSetup = pb > REVERT_BB_PB_SHORT_MIN;
             if ((isLong && longSetup) || (!isLong && shortSetup)) {
-                return "MEAN_REVERSION";
+                return PATH_MR;
             }
         }
         // 3. 默认趋势跟踪
-        return "TREND";
+        return PATH_LEGACY_TREND;
     }
 
     // ==================== 手续费感知的R:R检查 ====================
@@ -965,6 +1079,19 @@ public class DeterministicTradingExecutor {
                     tpInAtr, feeInAtr, MIN_PROFIT_AFTER_FEE_ATR, minTpRequired);
         }
         return null;
+    }
+
+    private static String checkRiskRewardGuard(String symbol, String strategy,
+                                               BigDecimal slDistance, BigDecimal tpDistance) {
+        BigDecimal rr = tpDistance.divide(slDistance, 4, RoundingMode.HALF_UP);
+        if (rr.compareTo(MIN_ENTRY_RR) >= 0) {
+            return null;
+        }
+        long count = RR_GUARD_TRIGGERED_COUNT.incrementAndGet();
+        log.info("[Executor] RR_GUARD_TRIGGERED symbol={} strategy={} rr={} slDistance={} tpDistance={} count={}",
+                symbol, strategy, rr.toPlainString(), slDistance.toPlainString(), tpDistance.toPlainString(), count);
+        return "RR_GUARD rr=" + rr.setScale(2, RoundingMode.HALF_UP).toPlainString()
+                + " <" + MIN_ENTRY_RR.toPlainString() + " abstain";
     }
 
     // ==================== 低波动小仓位调整 ====================
@@ -1110,6 +1237,7 @@ public class DeterministicTradingExecutor {
         Double bidAskImbalance = null, takerPressure = null, oiChangeRate = null;
         Double fundingDeviation = null;
         boolean bollSqueeze = false;
+        List<String> qualityFlags = new ArrayList<>();
 
         if (forecast != null && forecast.getSnapshotJson() != null) {
             try {
@@ -1125,6 +1253,15 @@ public class DeterministicTradingExecutor {
                 takerPressure = snap.getDouble("takerBuySellPressure");
                 oiChangeRate = snap.getDouble("oiChangeRate");
                 fundingDeviation = snap.getDouble("fundingDeviation");
+
+                // 数据质量标记（STALE_AGG_TRADE 等）
+                JSONArray flagsArr = snap.getJSONArray("qualityFlags");
+                if (flagsArr != null) {
+                    for (int i = 0; i < flagsArr.size(); i++) {
+                        String flag = flagsArr.getString(i);
+                        if (flag != null && !flag.isBlank()) qualityFlags.add(flag);
+                    }
+                }
 
                 // 从indicatorsByTimeframe提取多周期技术指标
                 JSONObject indicators = snap.getJSONObject("indicatorsByTimeframe");
@@ -1177,7 +1314,7 @@ public class DeterministicTradingExecutor {
                 bollPb5m, bollBandwidth5m, bollSqueeze,
                 volumeRatio5m, closeTrend5m, rsi15m,
                 bidAskImbalance, takerPressure, oiChangeRate,
-                fundingDeviation);
+                fundingDeviation, qualityFlags);
     }
 
     // ==================== 仓位计算(风险预算法) ====================
@@ -1202,8 +1339,21 @@ public class DeterministicTradingExecutor {
                 .divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
         BigDecimal maxMargin = user.getBalance().multiply(MAX_MARGIN_PCT);
         if (margin.compareTo(maxMargin) > 0) {
-            quantity = maxMargin.multiply(BigDecimal.valueOf(leverage))
-                    .divide(price, 8, RoundingMode.HALF_DOWN);
+            BigDecimal reducedQuantity = quantity.multiply(BigDecimal.valueOf(0.5))
+                    .setScale(8, RoundingMode.HALF_DOWN);
+            BigDecimal reducedMargin = reducedQuantity.multiply(price)
+                    .divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
+            long count = MARGIN_CAP_TRIGGERED_COUNT.incrementAndGet();
+            if (reducedMargin.compareTo(maxMargin) > 0) {
+                log.info("[Executor] MARGIN_CAP_TRIGGERED action=hold margin={} maxMargin={} reducedMargin={} price={} leverage={} count={}",
+                        margin.toPlainString(), maxMargin.toPlainString(), reducedMargin.toPlainString(),
+                        price.toPlainString(), leverage, count);
+                return null;
+            }
+            log.info("[Executor] MARGIN_CAP_TRIGGERED action=reduce_half margin={} maxMargin={} reducedMargin={} price={} leverage={} count={}",
+                    margin.toPlainString(), maxMargin.toPlainString(), reducedMargin.toPlainString(),
+                    price.toPlainString(), leverage, count);
+            quantity = reducedQuantity;
         }
 
         return quantity.signum() > 0 ? quantity : null;
@@ -1243,6 +1393,45 @@ public class DeterministicTradingExecutor {
     private static boolean shouldMoveSl(BigDecimal currentSl, BigDecimal newSl, boolean isLong) {
         if (currentSl == null || currentSl.signum() <= 0) return true;
         return isLong ? newSl.compareTo(currentSl) > 0 : newSl.compareTo(currentSl) < 0;
+    }
+
+    private static Long timeStopLimitMinutes(String memo) {
+        return switch (normalizeStrategyPath(memo)) {
+            case PATH_BREAKOUT -> BREAKOUT_TIME_STOP_MINUTES;
+            case PATH_MR -> REVERT_TIME_STOP_MINUTES;
+            case PATH_LEGACY_TREND -> TREND_TIME_STOP_MINUTES;
+            default -> null;
+        };
+    }
+
+    private static boolean isMrPath(String memo) {
+        return PATH_MR.equals(normalizeStrategyPath(memo));
+    }
+
+    private static String normalizeStrategyPath(String memo) {
+        if (memo == null) return "";
+        // 只兼容改名前已存在的OPEN仓位；新开仓只写 MR / LEGACY_TREND / BREAKOUT。
+        if (LEGACY_PATH_MR.equals(memo)) return PATH_MR;
+        if (LEGACY_PATH_TREND.equals(memo)) return PATH_LEGACY_TREND;
+        return memo;
+    }
+
+    private static BigDecimal calcRiskDistance(
+            FuturesPositionDTO pos, MarketContext ctx, SymbolProfile profile, boolean isLong) {
+        BigDecimal entryPrice = pos.getEntryPrice();
+        BigDecimal currentSl = getCurrentStopLossPrice(pos);
+        if (currentSl != null && currentSl.signum() > 0) {
+            boolean slStillRiskSide = isLong ? currentSl.compareTo(entryPrice) < 0 : currentSl.compareTo(entryPrice) > 0;
+            if (slStillRiskSide) {
+                return entryPrice.subtract(currentSl).abs();
+            }
+        }
+        double slAtr = switch (normalizeStrategyPath(pos.getMemo())) {
+            case PATH_BREAKOUT -> profile.breakoutSlAtr();
+            case PATH_MR -> profile.revertSlAtr();
+            default -> profile.trendSlAtr();
+        };
+        return ctx.atr5m.multiply(BigDecimal.valueOf(slAtr));
     }
 
     private static BigDecimal calcDailyLoss(List<AiTradingDecision> decisions) {
