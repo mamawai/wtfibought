@@ -8,6 +8,7 @@ import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibservice.agent.quant.memory.VerificationService;
 import com.mawai.wiibservice.agent.quant.node.DebateJudgeNode;
+import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
 import com.mawai.wiibservice.agent.trading.PositionDrawdownSentinel;
 import com.mawai.wiibservice.mapper.AiModelAssignmentMapper;
@@ -299,12 +300,17 @@ public class AiAgentAdminController {
             DebateJudgeNode.ENABLED = req.getDebateJudgeEnabled();
             log.info("[Admin] 辩论裁决开关更新为: {}", req.getDebateJudgeEnabled());
         }
+        if (req.getFactorWeightOverrideEnabled() != null) {
+            FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED = req.getFactorWeightOverrideEnabled();
+            log.info("[Admin] 静态调权开关更新为: {}", req.getFactorWeightOverrideEnabled());
+        }
         return Result.ok(buildQuantConfigResponse());
     }
 
     private QuantConfigResponse buildQuantConfigResponse() {
         QuantConfigResponse resp = new QuantConfigResponse();
         resp.setDebateJudgeEnabled(DebateJudgeNode.ENABLED);
+        resp.setFactorWeightOverrideEnabled(FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED);
         return resp;
     }
 
@@ -355,11 +361,13 @@ public class AiAgentAdminController {
     @Data
     public static class QuantConfigRequest {
         private Boolean debateJudgeEnabled;
+        private Boolean factorWeightOverrideEnabled;
     }
 
     @Data
     public static class QuantConfigResponse {
         private Boolean debateJudgeEnabled;
+        private Boolean factorWeightOverrideEnabled;
     }
 
 }

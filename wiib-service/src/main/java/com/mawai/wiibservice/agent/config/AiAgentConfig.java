@@ -8,6 +8,7 @@ import com.mawai.wiibservice.agent.quant.QuantForecastWorkflow;
 import com.mawai.wiibservice.agent.trading.AiTradingTools;
 import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
+import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
 import com.mawai.wiibservice.mapper.*;
@@ -46,6 +47,7 @@ public class AiAgentConfig {
     private final OrderFlowAggregator orderFlowAggregator;
     private final DepthStreamCache depthStreamCache;
     private final DeribitClient deribitClient;
+    private final FactorWeightOverrideService weightOverrideService;
 
     public AiAgentConfig(UserMapper userMapper,
                          UserAssetSnapshotMapper snapshotMapper,
@@ -66,7 +68,8 @@ public class AiAgentConfig {
                          ForceOrderService forceOrderService,
                          OrderFlowAggregator orderFlowAggregator,
                          DepthStreamCache depthStreamCache,
-                         DeribitClient deribitClient) {
+                         DeribitClient deribitClient,
+                         FactorWeightOverrideService weightOverrideService) {
         this.userMapper = userMapper;
         this.snapshotMapper = snapshotMapper;
         this.positionMapper = positionMapper;
@@ -87,6 +90,7 @@ public class AiAgentConfig {
         this.orderFlowAggregator = orderFlowAggregator;
         this.depthStreamCache = depthStreamCache;
         this.deribitClient = deribitClient;
+        this.weightOverrideService = weightOverrideService;
     }
 
     public ReactAgent createBehaviorAgent(ChatModel chatModel, Consumer<String> onProgress) {
@@ -207,7 +211,7 @@ public class AiAgentConfig {
         ChatClient.Builder deepClient = ChatClient.builder(chatModel);
         ChatClient.Builder shallowClient = ChatClient.builder(chatModel);
         return QuantForecastWorkflow.build(deepClient, shallowClient, binanceRestClient, memoryService,
-                forceOrderService, orderFlowAggregator, depthStreamCache, deribitClient,
+                forceOrderService, orderFlowAggregator, depthStreamCache, deribitClient, weightOverrideService,
                 LlmCallMode.STREAMING, LlmCallMode.STREAMING);
     }
 }

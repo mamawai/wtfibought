@@ -23,9 +23,20 @@ import java.util.*;
 @Slf4j
 public class RegimeReviewNode implements NodeAction {
 
+    private static final int REVIEW_CALLS = 3;
+    private static final double LOW_CONFIDENCE_STDDEV = 0.15;
+
     private final ChatClient chatClient;
     private final LlmCallMode callMode;
     private final MemoryService memoryService;
+
+    private record ReviewCandidate(
+            MarketRegime regime,
+            double confidence,
+            String reasoning,
+            String transitionSignal,
+            String transitionDetail
+    ) {}
 
     public RegimeReviewNode(ChatClient.Builder builder, LlmCallMode callMode) {
         this(builder, callMode, null);
@@ -56,11 +67,22 @@ public class RegimeReviewNode implements NodeAction {
 
         try {
             String prompt = buildPrompt(snapshot, indicatorMap, priceChangeMap);
-            String response = callMode.call(chatClient, prompt);
-            log.info("[Q2.5.1] LLM返回 {}chars 耗时{}ms",
-                    response != null ? response.length() : 0, System.currentTimeMillis() - startMs);
+            List<ReviewCandidate> reviews = new ArrayList<>(REVIEW_CALLS);
+            for (int i = 1; i <= REVIEW_CALLS; i++) {
+                try {
+                    String response = callMode.call(chatClient, prompt);
+                    ReviewCandidate review = parseReview(response, ruleRegime);
+                    if (review != null) {
+                        reviews.add(review);
+                    }
+                    log.info("[Q2.5.1] LLM审核样本 {}/{} 返回 {}chars",
+                            i, REVIEW_CALLS, response != null ? response.length() : 0);
+                } catch (Exception e) {
+                    log.warn("[Q2.5] LLM regime审核样本 {}/{} 失败: {}", i, REVIEW_CALLS, e.getMessage());
+                }
+            }
 
-            return applyReview(snapshot, ruleRegime, response, startMs);
+            return applyReview(snapshot, ruleRegime, reviews, startMs);
         } catch (Exception e) {
             log.warn("[Q2.5] LLM regime审核失败，保留规则检测结果: {}", e.getMessage());
             return rebuildWithDefaults(snapshot);
@@ -171,33 +193,31 @@ public class RegimeReviewNode implements NodeAction {
     }
 
     private Map<String, Object> applyReview(FeatureSnapshot snapshot, MarketRegime ruleRegime,
-                                             String llmResponse, long startMs) {
-        if (llmResponse == null || llmResponse.isBlank()) {
+                                             List<ReviewCandidate> reviews, long startMs) {
+        if (reviews == null || reviews.isEmpty()) {
             return rebuildWithDefaults(snapshot);
         }
 
         try {
-            String json = JsonUtils.extractJson(llmResponse);
-            JSONObject root = JSON.parseObject(json);
-
-            String confirmedStr = root.getString("confirmedRegime");
-            double confidence = root.getDoubleValue("confidence");
-            String reasoning = root.getString("reasoning");
-            String transitionSignal = root.getString("transitionSignal");
-            String transitionDetail = root.getString("transitionDetail");
-
-            confidence = Math.max(0, Math.min(1, confidence));
+            double confidence = medianConfidence(reviews);
+            double confidenceStddev = confidenceStddev(reviews);
+            ReviewCandidate selected = selectMedianReview(reviews, confidence);
+            MarketRegime llmRegime = majorityRegime(reviews, selected.regime());
+            String transitionSignal = selected.transitionSignal();
             if (transitionSignal == null || transitionSignal.isBlank()) transitionSignal = "NONE";
 
-            MarketRegime llmRegime = parseRegime(confirmedStr, ruleRegime);
-            log.info("[Q2.5.2] LLM审核 rule={} llm={} conf={} transition={} reasoning={}",
-                    ruleRegime, llmRegime, String.format("%.2f", confidence), transitionSignal, reasoning);
+            boolean lowConfidence = confidenceStddev > LOW_CONFIDENCE_STDDEV || reviews.size() < REVIEW_CALLS;
+            log.info("[Q2.5.2] LLM审核 rule={} llm={} conf={} stddev={} lowConfidence={} transition={} reasoning={}",
+                    ruleRegime, llmRegime, String.format("%.2f", confidence),
+                    String.format("%.3f", confidenceStddev), lowConfidence,
+                    transitionSignal, selected.reasoning());
 
             Map<String, Object> result = new HashMap<>();
             result.put("regime_confidence", confidence);
+            result.put("regime_confidence_stddev", confidenceStddev);
             result.put("regime_transition", transitionSignal);
-            if (transitionDetail != null && !transitionDetail.isBlank()) {
-                result.put("regime_transition_detail", transitionDetail);
+            if (selected.transitionDetail() != null && !selected.transitionDetail().isBlank()) {
+                result.put("regime_transition_detail", selected.transitionDetail());
             }
 
             // 确定最终regime
@@ -212,8 +232,13 @@ public class RegimeReviewNode implements NodeAction {
                 }
             }
 
+            List<String> flags = new ArrayList<>(snapshot.qualityFlags() != null ? snapshot.qualityFlags() : List.of());
+            if (lowConfidence && !flags.contains("LOW_CONFIDENCE")) {
+                flags.add("LOW_CONFIDENCE");
+            }
+
             FeatureSnapshot updated = snapshot.withRegimeReview(
-                    finalRegime, snapshot.qualityFlags(), confidence, transitionSignal);
+                    finalRegime, List.copyOf(flags), confidence, transitionSignal);
             result.put("feature_snapshot", updated);
 
             log.info("[Q2.5.end] regime_review完成 总耗时{}ms", System.currentTimeMillis() - startMs);
@@ -222,6 +247,69 @@ public class RegimeReviewNode implements NodeAction {
             log.warn("[Q2.5] LLM输出解析失败，保留规则regime: {}", e.getMessage());
             return rebuildWithDefaults(snapshot);
         }
+    }
+
+    private ReviewCandidate parseReview(String llmResponse, MarketRegime ruleRegime) {
+        if (llmResponse == null || llmResponse.isBlank()) {
+            return null;
+        }
+
+        String json = JsonUtils.extractJson(llmResponse);
+        JSONObject root = JSON.parseObject(json);
+
+        String confirmedStr = root.getString("confirmedRegime");
+        double confidence = Math.max(0, Math.min(1, root.getDoubleValue("confidence")));
+        String transitionSignal = root.getString("transitionSignal");
+        if (transitionSignal == null || transitionSignal.isBlank()) transitionSignal = "NONE";
+
+        return new ReviewCandidate(
+                parseRegime(confirmedStr, ruleRegime),
+                confidence,
+                root.getString("reasoning"),
+                transitionSignal,
+                root.getString("transitionDetail"));
+    }
+
+    private double medianConfidence(List<ReviewCandidate> reviews) {
+        List<Double> values = reviews.stream()
+                .map(ReviewCandidate::confidence)
+                .sorted()
+                .toList();
+        return values.get(values.size() / 2);
+    }
+
+    private ReviewCandidate selectMedianReview(List<ReviewCandidate> reviews, double medianConfidence) {
+        ReviewCandidate selected = reviews.getFirst();
+        double bestDistance = Math.abs(selected.confidence() - medianConfidence);
+        for (ReviewCandidate review : reviews) {
+            double distance = Math.abs(review.confidence() - medianConfidence);
+            if (distance < bestDistance) {
+                selected = review;
+                bestDistance = distance;
+            }
+        }
+        return selected;
+    }
+
+    private MarketRegime majorityRegime(List<ReviewCandidate> reviews, MarketRegime fallback) {
+        Map<MarketRegime, Long> counts = reviews.stream()
+                .collect(java.util.stream.Collectors.groupingBy(ReviewCandidate::regime, java.util.stream.Collectors.counting()));
+        return counts.entrySet().stream()
+                .filter(e -> e.getValue() >= 2)
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElse(fallback);
+    }
+
+    private double confidenceStddev(List<ReviewCandidate> reviews) {
+        if (reviews.size() < 2) {
+            return 0;
+        }
+        double avg = reviews.stream().mapToDouble(ReviewCandidate::confidence).average().orElse(0);
+        double variance = reviews.stream()
+                .mapToDouble(r -> Math.pow(r.confidence() - avg, 2))
+                .average().orElse(0);
+        return Math.sqrt(variance);
     }
 
     private Map<String, Object> rebuildWithDefaults(FeatureSnapshot snapshot) {

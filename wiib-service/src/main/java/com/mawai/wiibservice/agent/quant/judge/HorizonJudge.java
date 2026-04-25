@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.agent.quant.judge;
 
 import com.mawai.wiibservice.agent.quant.domain.*;
+import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
@@ -33,12 +34,34 @@ public class HorizonJudge {
 
     private final String horizon;
     private final Map<String, Map<String, Double>> agentAccuracy;
+    private final FactorWeightOverrideService weightOverrideService;
+    private final Boolean weightOverrideEnabled;
+    private final boolean logResult;
 
     public HorizonJudge(String horizon) { this(horizon, Map.of()); }
 
     public HorizonJudge(String horizon, Map<String, Map<String, Double>> agentAccuracy) {
+        this(horizon, agentAccuracy, null);
+    }
+
+    public HorizonJudge(String horizon, Map<String, Map<String, Double>> agentAccuracy,
+                        FactorWeightOverrideService weightOverrideService) {
+        this(horizon, agentAccuracy, weightOverrideService, null);
+    }
+
+    public HorizonJudge(String horizon, Map<String, Map<String, Double>> agentAccuracy,
+                        FactorWeightOverrideService weightOverrideService, Boolean weightOverrideEnabled) {
+        this(horizon, agentAccuracy, weightOverrideService, weightOverrideEnabled, true);
+    }
+
+    public HorizonJudge(String horizon, Map<String, Map<String, Double>> agentAccuracy,
+                        FactorWeightOverrideService weightOverrideService, Boolean weightOverrideEnabled,
+                        boolean logResult) {
         this.horizon = horizon;
         this.agentAccuracy = agentAccuracy != null ? agentAccuracy : Map.of();
+        this.weightOverrideService = weightOverrideService;
+        this.weightOverrideEnabled = weightOverrideEnabled;
+        this.logResult = logResult;
     }
 
     public HorizonForecast judge(List<AgentVote> allVotes, BigDecimal lastPrice, List<String> qualityFlags) {
@@ -52,7 +75,9 @@ public class HorizonJudge {
                 .toList();
 
         if (filtered.isEmpty()) {
-            log.info("[Q4.judge] {} 无投票 → NO_TRADE", horizon);
+            if (logResult) {
+                log.info("[Q4.judge] {} 无投票 → NO_TRADE", horizon);
+            }
             return HorizonForecast.noTrade(horizon, 1.0);
         }
 
@@ -71,7 +96,7 @@ public class HorizonJudge {
         double confWeightDenom = 0;
 
         for (AgentVote vote : filtered) {
-            double weight = getWeight(vote.agent(), horizon);
+            double weight = getWeight(vote.agent(), horizon, regime);
 
             // 方向聚合：weight × |score|（不乘confidence，避免三重衰减）
             double directionalWeighted = weight * Math.abs(vote.score());
@@ -101,7 +126,9 @@ public class HorizonJudge {
         }
 
         if (longScore < EPSILON && shortScore < EPSILON) {
-            log.info("[Q4.judge] {} 全部弱信号/无效票 → NO_TRADE", horizon);
+            if (logResult) {
+                log.info("[Q4.judge] {} 全部弱信号/无效票 → NO_TRADE", horizon);
+            }
             return HorizonForecast.noTrade(horizon, 1.0);
         }
 
@@ -136,10 +163,12 @@ public class HorizonJudge {
 
         double weightedScore = longScore > shortScore ? longScore : -shortScore;
 
-        log.info("[Q4.judge] {} long={} short={} edge={} disagree={} domMoveBps={} avgConf={} → {} conf={}",
-                horizon, String.format("%.3f", longScore), String.format("%.3f", shortScore),
-                String.format("%.3f", edge), String.format("%.3f", disagreement), dominantMoveBps,
-                String.format("%.2f", avgAgentConf), direction, String.format("%.2f", confidence));
+        if (logResult) {
+            log.info("[Q4.judge] {} long={} short={} edge={} disagree={} domMoveBps={} avgConf={} → {} conf={}",
+                    horizon, String.format("%.3f", longScore), String.format("%.3f", shortScore),
+                    String.format("%.3f", edge), String.format("%.3f", disagreement), dominantMoveBps,
+                    String.format("%.2f", avgAgentConf), direction, String.format("%.2f", confidence));
+        }
 
         // 入场区间和止损止盈
         BigDecimal entryLow, entryHigh, invalidation, tp1, tp2;
@@ -188,9 +217,18 @@ public class HorizonJudge {
      * 准确率 > 0.5 时加权，< 0.5 时减权，范围[0.5x, 1.4x]。
      * 无准确率数据时使用基础权重。
      */
-    private double getWeight(String agent, String horizon) {
-        double base = DEFAULT_WEIGHTS.getOrDefault(agent, Map.of())
+    public static double baseWeight(String agent, String horizon) {
+        return DEFAULT_WEIGHTS.getOrDefault(agent, Map.of())
                 .getOrDefault(horizon, 0.1);
+    }
+
+    private double getWeight(String agent, String horizon, MarketRegime regime) {
+        double base = baseWeight(agent, horizon);
+        if (weightOverrideService != null) {
+            base = weightOverrideEnabled == null
+                    ? weightOverrideService.apply(agent, horizon, regime, base)
+                    : weightOverrideService.apply(agent, horizon, regime, base, weightOverrideEnabled);
+        }
         if (agentAccuracy.isEmpty()) return base;
         Map<String, Double> horizonAcc = agentAccuracy.get(agent);
         if (horizonAcc == null) return base;

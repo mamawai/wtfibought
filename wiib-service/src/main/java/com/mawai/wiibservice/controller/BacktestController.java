@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.controller;
 
 import com.mawai.wiibcommon.util.Result;
+import com.mawai.wiibservice.agent.quant.service.FactorWeightReplayService;
 import com.mawai.wiibservice.agent.trading.BacktestResult;
 import com.mawai.wiibservice.agent.trading.BacktestRunner;
 import io.swagger.v3.oas.annotations.Operation;
@@ -26,6 +27,7 @@ import java.util.Map;
 public class BacktestController {
 
     private final BacktestRunner backtestRunner;
+    private final FactorWeightReplayService factorWeightReplayService;
 
     @Operation(summary = "运行回测")
     @PostMapping("/run")
@@ -91,6 +93,27 @@ public class BacktestController {
         } catch (Exception e) {
             log.error("[Backtest API] 回放失败", e);
             return Result.fail("回放失败: " + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "B1-3 静态调权只读回放 — 重新计算历史AgentVote方向命中率")
+    @PostMapping("/factor-weight-replay")
+    public Result<FactorWeightReplayService.ReplayReport> runFactorWeightReplay(
+            @RequestParam(defaultValue = "BTCUSDT") String symbol,
+            @RequestParam String from,
+            @RequestParam String to) {
+
+        log.info("[Backtest API] factor-weight-replay symbol={} from={} to={}", symbol, from, to);
+
+        try {
+            LocalDateTime fromDt = parseDateTime(from);
+            LocalDateTime toDt = parseDateTime(to);
+            FactorWeightReplayService.ReplayReport report =
+                    factorWeightReplayService.replay(symbol, fromDt, toDt);
+            return Result.ok(report);
+        } catch (Exception e) {
+            log.error("[Backtest API] 静态调权回放失败", e);
+            return Result.fail("静态调权回放失败: " + e.getMessage());
         }
     }
 

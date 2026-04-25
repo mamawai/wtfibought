@@ -60,6 +60,7 @@ public class DeterministicTradingExecutor {
     private static final BigDecimal DAILY_LOSS_LIMIT_PCT = new BigDecimal("0.05");
     private static final BigDecimal DRAWDOWN_THRESHOLD = new BigDecimal("0.85");
     private static final BigDecimal DRAWDOWN_REDUCTION = new BigDecimal("0.7"); // 回撤时杠杆和仓位缩减到70%
+    private static final double LOW_CONFIDENCE_POSITION_SCALE = 0.5;
 
     // ==================== 信号共振门槛 ====================
     // Phase 0A 止血：3→5，且删除 regime 降档，RANGE/SQUEEZE 不再放宽
@@ -646,6 +647,12 @@ public class DeterministicTradingExecutor {
         } else if ("SQUEEZE".equals(ctx.regime)) {
             regimeScale = PATH_BREAKOUT.equals(strategy) ? 0.8 : 0.6;
         }
+        boolean lowConfidence = ctx.qualityFlags.contains("LOW_CONFIDENCE");
+        if (lowConfidence) {
+            regimeScale *= LOW_CONFIDENCE_POSITION_SCALE;
+            log.info("[Executor] LOW_CONFIDENCE detected symbol={} strategy={} positionScale={}x",
+                    symbol, strategy, LOW_CONFIDENCE_POSITION_SCALE);
+        }
 
         // ===== 8. 执行策略 =====
         log.info("[Executor] 入场决策: {} strategy={} conf={} confluence={}/7 regime={} scale={}",
@@ -665,7 +672,8 @@ public class DeterministicTradingExecutor {
         // A1-3: reasoning 前缀加策略路径标签，便于 trade_attribution 归因（v3 后 strategy 命名会统一）
         return new ExecutionResult(
                 inner.action(),
-                "[Strategy-" + strategy + "] " + inner.reasoning(),
+                "[Strategy-" + strategy + "] " + inner.reasoning()
+                        + (lowConfidence && inner.action().startsWith("OPEN_") ? " [LOW_CONFIDENCE仓位减半]" : ""),
                 inner.executionLog());
     }
 
