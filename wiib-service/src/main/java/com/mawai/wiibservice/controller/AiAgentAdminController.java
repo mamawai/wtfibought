@@ -238,6 +238,14 @@ public class AiAgentAdminController {
             DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED = req.getLowVolTradingEnabled();
             log.info("[Admin] 低波动交易开关更新为: {}", req.getLowVolTradingEnabled());
         }
+        if (req.getLegacyThreshold5of7Enabled() != null) {
+            DeterministicTradingExecutor.LEGACY_THRESHOLD_5OF7_ENABLED = req.getLegacyThreshold5of7Enabled();
+            log.info("[Admin] LEGACY 5/7实盘开关更新为: {}", req.getLegacyThreshold5of7Enabled());
+        }
+        if (req.getLegacy5of7ShadowEnabled() != null) {
+            DeterministicTradingExecutor.LEGACY_5OF7_SHADOW_ENABLED = req.getLegacy5of7ShadowEnabled();
+            log.info("[Admin] LEGACY 5/7 shadow开关更新为: {}", req.getLegacy5of7ShadowEnabled());
+        }
         if (req.getDrawdownSentinelEnabled() != null) {
             PositionDrawdownSentinel.ENABLED = req.getDrawdownSentinelEnabled();
             log.info("[Admin] 回撤哨兵开关更新为: {}", req.getDrawdownSentinelEnabled());
@@ -263,6 +271,8 @@ public class AiAgentAdminController {
     private TradingConfigResponse buildTradingConfigResponse() {
         TradingConfigResponse resp = new TradingConfigResponse();
         resp.setLowVolTradingEnabled(DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED);
+        resp.setLegacyThreshold5of7Enabled(DeterministicTradingExecutor.LEGACY_THRESHOLD_5OF7_ENABLED);
+        resp.setLegacy5of7ShadowEnabled(DeterministicTradingExecutor.LEGACY_5OF7_SHADOW_ENABLED);
         resp.setDrawdownSentinelEnabled(PositionDrawdownSentinel.ENABLED);
         resp.setDrawdownWindowMinutes(PositionDrawdownSentinel.WINDOW_MINUTES);
         resp.setDrawdownPnlPctDropThresholdPpt(PositionDrawdownSentinel.PNL_PCT_DROP_THRESHOLD_PPT);
@@ -319,6 +329,8 @@ public class AiAgentAdminController {
     @Data
     public static class TradingConfigRequest {
         private Boolean lowVolTradingEnabled;
+        private Boolean legacyThreshold5of7Enabled;
+        private Boolean legacy5of7ShadowEnabled;
         private Boolean drawdownSentinelEnabled;
         private Integer drawdownWindowMinutes;
         private Double drawdownPnlPctDropThresholdPpt;
@@ -330,6 +342,8 @@ public class AiAgentAdminController {
     @Data
     public static class TradingConfigResponse {
         private Boolean lowVolTradingEnabled;
+        private Boolean legacyThreshold5of7Enabled;
+        private Boolean legacy5of7ShadowEnabled;
         private Boolean drawdownSentinelEnabled;
         private Integer drawdownWindowMinutes;
         private Double drawdownPnlPctDropThresholdPpt;

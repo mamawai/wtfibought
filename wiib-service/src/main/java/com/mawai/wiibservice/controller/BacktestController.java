@@ -116,8 +116,8 @@ public class BacktestController {
         map.put("finalEquity", r.finalEquity());
 
         Map<String, Integer> byStrategy = new LinkedHashMap<>();
-        byStrategy.put("TREND", r.tradesByStrategy("TREND").size());
-        byStrategy.put("MEAN_REVERSION", r.tradesByStrategy("MEAN_REVERSION").size());
+        byStrategy.put("LEGACY_TREND", r.tradesByStrategy("LEGACY_TREND").size());
+        byStrategy.put("MR", r.tradesByStrategy("MR").size());
         byStrategy.put("BREAKOUT", r.tradesByStrategy("BREAKOUT").size());
         map.put("byStrategy", byStrategy);
 

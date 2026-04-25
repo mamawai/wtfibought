@@ -247,6 +247,13 @@ public class BuildFeaturesNode implements NodeAction {
         if (fearGreedIndex < 0) qualityFlags.add("NO_FEAR_GREED");
         if (!oiHistMap.containsKey(symbol)) qualityFlags.add("NO_OI_HISTORY");
         if (!aggTradeAvailable) qualityFlags.add("NO_AGG_TRADE");
+        // STALE_AGG_TRADE: deque 内有旧数据但 WS >30s 未更新（断流/卡顿），下游 executor 弃权
+        if (aggTradeAvailable) {
+            long lastUpdate = orderFlowAggregator.getLastUpdateMs(symbol);
+            if (lastUpdate > 0 && System.currentTimeMillis() - lastUpdate > 30_000) {
+                qualityFlags.add("STALE_AGG_TRADE");
+            }
+        }
         if (dvolIndex <= 0 && atmIv <= 0) qualityFlags.add("NO_OPTION_IV");
         if (atr5m == null) qualityFlags.add("NO_ATR_5M");
         if (bollBw == null) qualityFlags.add("NO_BOLL_5M");
