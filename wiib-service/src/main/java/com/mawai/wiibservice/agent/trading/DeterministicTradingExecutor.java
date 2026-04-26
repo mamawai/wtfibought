@@ -1130,29 +1130,24 @@ public class DeterministicTradingExecutor {
     // ==================== 信号选择（优先短周期）====================
 
     /**
-     * 从未过期的 horizon 中按 confidence 最高选主信号。
-     * 过期判定：forecastTime + horizon结束分钟 ≤ now 即视为过期（AI Trader当前时间段及之后的horizon才参与选优）。
-     * 多 horizon 方向一致时叠加 confidence 加成。forecastTime=null 兼容回测（不过滤）。
+     * 开仓只取当前 active horizon，避免 10_20/20_30 这种未来分段信号提前驱动入场。
+     * forecastTime=null 兼容回测：退回旧逻辑，从未过期/全部信号里按 confidence 选最高。
      */
     private static QuantSignalDecision findBestSignalWithPriority(List<QuantSignalDecision> signals, LocalDateTime forecastTime) {
         if (signals == null || signals.isEmpty()) return null;
 
-        // 过滤已过期的 horizon
+        // 实盘按 forecast 年龄锁定当前分段；0-10min 只用 0_10，10-20min 只用 10_20，20-30min 只用 20_30。
         if (forecastTime != null) {
-            LocalDateTime now = LocalDateTime.now();
-            signals = signals.stream().filter(s -> {
-                if (s.getHorizon() == null) return true;
-                int endMin = switch (s.getHorizon()) {
-                    case "0_10" -> 10;
-                    case "10_20" -> 20;
-                    case "20_30" -> 30;
-                    default -> 30;
-                };
-                boolean valid = forecastTime.plusMinutes(endMin).isAfter(now);
-                if (!valid) log.debug("[Executor] 跳过已过期horizon {} (forecast={} end={})",
-                        s.getHorizon(), forecastTime, forecastTime.plusMinutes(endMin));
-                return valid;
-            }).toList();
+            long ageMinutes = Duration.between(forecastTime, LocalDateTime.now()).toMinutes();
+            String activeHorizon = activeHorizon(ageMinutes);
+            if (activeHorizon == null) {
+                log.debug("[Executor] forecast已超过30min，跳过开仓信号 forecast={} age={}min",
+                        forecastTime, ageMinutes);
+                return null;
+            }
+            signals = signals.stream()
+                    .filter(s -> activeHorizon.equals(s.getHorizon()))
+                    .toList();
             if (signals.isEmpty()) return null;
         }
 
@@ -1196,6 +1191,14 @@ public class DeterministicTradingExecutor {
         }
 
         return primary;
+    }
+
+    /** forecast 生成后的当前可交易分段；负数兼容轻微时钟误差，按 0_10 处理。 */
+    private static String activeHorizon(long ageMinutes) {
+        if (ageMinutes < 10) return "0_10";
+        if (ageMinutes < 20) return "10_20";
+        if (ageMinutes < 30) return "20_30";
+        return null;
     }
 
     private static QuantSignalDecision pickValid(QuantSignalDecision s) {
