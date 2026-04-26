@@ -1056,9 +1056,30 @@ CREATE TABLE IF NOT EXISTS ai_model_assignment (
 );
 
 COMMENT ON TABLE ai_model_assignment IS 'AI模型分配（每个功能独立配置）';
-COMMENT ON COLUMN ai_model_assignment.function_name IS '功能名称：behavior/quant/chat/trading/reflection';
+COMMENT ON COLUMN ai_model_assignment.function_name IS '功能名称：behavior/quant/chat/reflection';
 COMMENT ON COLUMN ai_model_assignment.config_id IS '关联ai_runtime_config.id';
 COMMENT ON COLUMN ai_model_assignment.model IS '使用的模型名称';
+
+-- 旧版曾保留 trading 模型槽位；生产 AI Trader 已走确定性执行器。
+DELETE FROM ai_model_assignment WHERE function_name = 'trading';
+
+-- ============================================
+-- AI 运行时开关表（Admin 热切换，重启保持）
+-- ============================================
+CREATE TABLE IF NOT EXISTS ai_runtime_toggle (
+    toggle_key VARCHAR(128) PRIMARY KEY,
+    value_json TEXT NOT NULL,
+    updated_by BIGINT,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reason VARCHAR(256)
+);
+
+COMMENT ON TABLE ai_runtime_toggle IS 'AI运行时开关持久化配置';
+COMMENT ON COLUMN ai_runtime_toggle.toggle_key IS '开关键，如 quant.debate_judge.enabled';
+COMMENT ON COLUMN ai_runtime_toggle.value_json IS '开关值JSON，支持boolean/number等标量';
+COMMENT ON COLUMN ai_runtime_toggle.updated_by IS '最后修改人用户ID';
+COMMENT ON COLUMN ai_runtime_toggle.updated_at IS '最后修改时间';
+COMMENT ON COLUMN ai_runtime_toggle.reason IS '修改来源或原因';
 
 -- ============================================
 -- AI 交易员决策记忆表

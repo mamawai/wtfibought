@@ -29,8 +29,6 @@ public class RunHorizonJudgesNode implements NodeAction {
     private final MemoryService memoryService;
     private final FactorWeightOverrideService weightOverrideService;
 
-    public RunHorizonJudgesNode() { this(null); }
-    public RunHorizonJudgesNode(MemoryService memoryService) { this(memoryService, null); }
     public RunHorizonJudgesNode(MemoryService memoryService, FactorWeightOverrideService weightOverrideService) {
         this.memoryService = memoryService;
         this.weightOverrideService = weightOverrideService;

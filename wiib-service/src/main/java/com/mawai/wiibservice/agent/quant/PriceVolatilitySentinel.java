@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
+import com.mawai.wiibservice.agent.trading.TradingCycleSubmitResult;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibservice.task.AiTradingScheduler;
@@ -192,8 +193,9 @@ public class PriceVolatilitySentinel {
             }
 
             // 2. 触发AI交易决策（用刚刷新的信号）
-            aiTradingScheduler.triggerTradingCycle(List.of(symbol));
-            log.info("[Sentinel] AI交易已触发 symbol={} 总耗时{}ms", symbol, System.currentTimeMillis() - startMs);
+            TradingCycleSubmitResult result = aiTradingScheduler.submitTradingCycle(List.of(symbol));
+            log.info("[Sentinel] AI交易提交完成 symbol={} result={} 总耗时{}ms",
+                    symbol, result.items(), System.currentTimeMillis() - startMs);
 
         } catch (Exception e) {
             log.error("[Sentinel] 波动响应异常 symbol={}", symbol, e);

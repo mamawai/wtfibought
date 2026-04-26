@@ -14,7 +14,4 @@ final class StateHelper {
         }).orElse("无");
     }
 
-    static int stateInt(OverAllState state, String key) {
-        return ((Number) state.value(key).orElse(0)).intValue();
-    }
 }

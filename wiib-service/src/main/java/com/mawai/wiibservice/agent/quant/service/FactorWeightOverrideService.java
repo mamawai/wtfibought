@@ -5,6 +5,7 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibservice.agent.quant.domain.MarketRegime;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
@@ -47,20 +48,7 @@ public class FactorWeightOverrideService {
             String json = new String(configResource.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
             JSONObject root = JSON.parseObject(json);
             JSONArray rules = root.getJSONArray("rules");
-            Map<String, Double> loaded = new HashMap<>();
-            if (rules != null) {
-                for (Object item : rules) {
-                    JSONObject rule = (JSONObject) item;
-                    String agent = rule.getString("agent");
-                    String horizon = rule.getString("horizon");
-                    String regime = rule.getString("regime");
-                    Double multiplier = rule.getDouble("multiplier");
-                    if (agent == null || horizon == null || regime == null || multiplier == null) {
-                        throw new IllegalArgumentException("factor_weight_override rule字段不完整: " + rule);
-                    }
-                    loaded.put(key(agent, horizon, regime), multiplier);
-                }
-            }
+            Map<String, Double> loaded = getLoaded(rules);
             multipliers = Map.copyOf(loaded);
             log.info("[Q4.weightOverride] loaded enabled={} rules={}", enabled, multipliers.size());
         } catch (Exception e) {
@@ -69,6 +57,24 @@ public class FactorWeightOverrideService {
             }
             log.warn("[Q4.weightOverride] config加载失败，因开关关闭忽略: {}", e.getMessage());
         }
+    }
+
+    private static @NonNull Map<String, Double> getLoaded(JSONArray rules) {
+        Map<String, Double> loaded = new HashMap<>();
+        if (rules != null) {
+            for (Object item : rules) {
+                JSONObject rule = (JSONObject) item;
+                String agent = rule.getString("agent");
+                String horizon = rule.getString("horizon");
+                String regime = rule.getString("regime");
+                Double multiplier = rule.getDouble("multiplier");
+                if (agent == null || horizon == null || regime == null || multiplier == null) {
+                    throw new IllegalArgumentException("factor_weight_override rule字段不完整: " + rule);
+                }
+                loaded.put(key(agent, horizon, regime), multiplier);
+            }
+        }
+        return loaded;
     }
 
     /** 返回当前 runtime 调权开关状态，Admin 可热切换这个静态值。 */

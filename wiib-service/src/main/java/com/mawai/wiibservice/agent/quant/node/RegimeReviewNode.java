@@ -38,10 +38,6 @@ public class RegimeReviewNode implements NodeAction {
             String transitionDetail
     ) {}
 
-    public RegimeReviewNode(ChatClient.Builder builder, LlmCallMode callMode) {
-        this(builder, callMode, null);
-    }
-
     public RegimeReviewNode(ChatClient.Builder builder, LlmCallMode callMode, MemoryService memoryService) {
         this.chatClient = builder.build();
         this.callMode = callMode;

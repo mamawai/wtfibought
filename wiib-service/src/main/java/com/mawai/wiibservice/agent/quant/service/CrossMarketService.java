@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 
 @Slf4j
 @Service
@@ -56,7 +57,7 @@ public class CrossMarketService extends BaseRestTemplateConfig {
             quotes.put("GOLD", fetchQuote("GC=F"));
             quotes.put("US10Y", fetchQuote("^TNX"));
 
-            if (quotes.values().stream().anyMatch(q -> q == null)) {
+            if (quotes.values().stream().anyMatch(Objects::isNull)) {
                 log.warn("[B2.cross] NO_CROSS_MARKET reason=partial_quote_missing quotes={}", quotes.keySet());
                 return;
             }

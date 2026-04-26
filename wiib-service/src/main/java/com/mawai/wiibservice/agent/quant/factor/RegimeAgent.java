@@ -8,6 +8,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 市场状态因子 Agent。
+ * 将趋势、震荡、收缩、冲击等 regime 转成不同 horizon 的方向偏好，并结合 IV 和状态切换信号调整置信度。
+ */
 @Slf4j
 public class RegimeAgent implements FactorAgent {
 

@@ -28,8 +28,6 @@ public class BuildFeaturesNode implements NodeAction {
 
     private final OrderFlowAggregator orderFlowAggregator;
 
-    public BuildFeaturesNode() { this(null); }
-
     public BuildFeaturesNode(OrderFlowAggregator orderFlowAggregator) {
         this.orderFlowAggregator = orderFlowAggregator;
     }

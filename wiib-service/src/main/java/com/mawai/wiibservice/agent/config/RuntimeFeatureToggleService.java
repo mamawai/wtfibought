@@ -1,0 +1,204 @@
+package com.mawai.wiibservice.agent.config;
+
+import com.alibaba.fastjson2.JSON;
+import com.mawai.wiibcommon.entity.AiRuntimeToggle;
+import com.mawai.wiibservice.agent.quant.node.DebateJudgeNode;
+import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
+import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
+import com.mawai.wiibservice.agent.trading.PositionDrawdownSentinel;
+import com.mawai.wiibservice.mapper.AiRuntimeToggleMapper;
+import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.DependsOn;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
+
+@Slf4j
+@Service
+@DependsOn("factorWeightOverrideService")
+public class RuntimeFeatureToggleService {
+
+    public static final String QUANT_DEBATE_JUDGE_ENABLED = "quant.debate_judge.enabled";
+    public static final String QUANT_DEBATE_JUDGE_SHADOW_ENABLED = "quant.debate_judge.shadow_enabled";
+    public static final String QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED = "quant.factor_weight_override.enabled";
+
+    public static final String TRADING_LOW_VOL_ENABLED = "trading.low_vol.enabled";
+    public static final String TRADING_LEGACY_THRESHOLD_5OF7_ENABLED = "trading.legacy_threshold_5of7.enabled";
+    public static final String TRADING_LEGACY_5OF7_SHADOW_ENABLED = "trading.legacy_5of7_shadow.enabled";
+
+    public static final String DRAWDOWN_SENTINEL_ENABLED = "trading.drawdown_sentinel.enabled";
+    public static final String DRAWDOWN_SENTINEL_WINDOW_MINUTES = "trading.drawdown_sentinel.window_minutes";
+    public static final String DRAWDOWN_SENTINEL_PNL_PCT_DROP_THRESHOLD_PPT = "trading.drawdown_sentinel.pnl_pct_drop_threshold_ppt";
+    public static final String DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_THRESHOLD_PCT = "trading.drawdown_sentinel.profit_drawdown_threshold_pct";
+    public static final String DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_MIN_BASE = "trading.drawdown_sentinel.profit_drawdown_min_base";
+    public static final String DRAWDOWN_SENTINEL_COOLDOWN_MINUTES = "trading.drawdown_sentinel.cooldown_minutes";
+
+    private final AiRuntimeToggleMapper toggleMapper;
+    private final Map<String, ToggleBinding<?>> knownToggles;
+    private final Map<String, Object> currentValues = new ConcurrentHashMap<>();
+
+    public RuntimeFeatureToggleService(AiRuntimeToggleMapper toggleMapper) {
+        this.toggleMapper = toggleMapper;
+        this.knownToggles = buildKnownToggles();
+        knownToggles.forEach((key, binding) -> currentValues.put(key, binding.defaultValue()));
+    }
+
+    @PostConstruct
+    public void loadPersistedToggles() {
+        try {
+            int loaded = 0;
+            for (AiRuntimeToggle row : toggleMapper.selectList(null)) {
+                ToggleBinding<?> binding = knownToggles.get(row.getToggleKey());
+                if (binding == null) {
+                    continue;
+                }
+                Object value = parseValue(row.getValueJson(), binding.type());
+                currentValues.put(row.getToggleKey(), value);
+                applyBinding(binding, value);
+                loaded++;
+            }
+            log.info("[RuntimeToggle] 已加载持久化开关 count={}", loaded);
+        } catch (RuntimeException e) {
+            log.warn("[RuntimeToggle] 加载持久化开关失败，沿用代码默认值: {}", e.getMessage());
+        }
+    }
+
+    public <T> T get(String key, Class<T> type, T defaultValue) {
+        return convertValue(currentValues.getOrDefault(key, defaultValue), type);
+    }
+
+    public void set(String key, Object value, long operator, String reason) {
+        ToggleBinding<?> binding = knownToggles.get(key);
+        if (binding == null) {
+            throw new IllegalArgumentException("未知运行时开关: " + key);
+        }
+        Object normalized = convertValue(value, binding.type());
+
+        AiRuntimeToggle row = toggleMapper.selectById(key);
+        boolean insert = row == null;
+        if (insert) {
+            row = new AiRuntimeToggle();
+            row.setToggleKey(key);
+        }
+        row.setValueJson(JSON.toJSONString(normalized));
+        row.setUpdatedBy(operator);
+        row.setUpdatedAt(LocalDateTime.now());
+        row.setReason(reason);
+
+        if (insert) {
+            toggleMapper.insert(row);
+        } else {
+            toggleMapper.updateById(row);
+        }
+        currentValues.put(key, normalized);
+        applyBinding(binding, normalized);
+        log.info("[RuntimeToggle] key={} value={} operator={} reason={}", key, normalized, operator, reason);
+    }
+
+    public RuntimeToggleSnapshot snapshot() {
+        return new RuntimeToggleSnapshot(
+                get(QUANT_DEBATE_JUDGE_ENABLED, Boolean.class, DebateJudgeNode.ENABLED),
+                get(QUANT_DEBATE_JUDGE_SHADOW_ENABLED, Boolean.class, DebateJudgeNode.SHADOW_ENABLED),
+                get(QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED, Boolean.class,
+                        FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED),
+                new RuntimeToggleSnapshot.TradingToggles(
+                        get(TRADING_LOW_VOL_ENABLED, Boolean.class,
+                                DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED),
+                        get(TRADING_LEGACY_THRESHOLD_5OF7_ENABLED, Boolean.class,
+                                DeterministicTradingExecutor.LEGACY_THRESHOLD_5OF7_ENABLED),
+                        get(TRADING_LEGACY_5OF7_SHADOW_ENABLED, Boolean.class,
+                                DeterministicTradingExecutor.LEGACY_5OF7_SHADOW_ENABLED)
+                ),
+                new RuntimeToggleSnapshot.DrawdownSentinelToggles(
+                        get(DRAWDOWN_SENTINEL_ENABLED, Boolean.class, PositionDrawdownSentinel.ENABLED),
+                        get(DRAWDOWN_SENTINEL_WINDOW_MINUTES, Integer.class, PositionDrawdownSentinel.WINDOW_MINUTES),
+                        get(DRAWDOWN_SENTINEL_PNL_PCT_DROP_THRESHOLD_PPT, Double.class,
+                                PositionDrawdownSentinel.PNL_PCT_DROP_THRESHOLD_PPT),
+                        get(DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_THRESHOLD_PCT, Double.class,
+                                PositionDrawdownSentinel.PROFIT_DRAWDOWN_THRESHOLD_PCT),
+                        get(DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_MIN_BASE, Double.class,
+                                PositionDrawdownSentinel.PROFIT_DRAWDOWN_MIN_BASE),
+                        get(DRAWDOWN_SENTINEL_COOLDOWN_MINUTES, Integer.class,
+                                PositionDrawdownSentinel.COOLDOWN_MINUTES)
+                )
+        );
+    }
+
+    private Map<String, ToggleBinding<?>> buildKnownToggles() {
+        Map<String, ToggleBinding<?>> map = new HashMap<>();
+        bind(map, QUANT_DEBATE_JUDGE_ENABLED, Boolean.class, DebateJudgeNode.ENABLED,
+                v -> DebateJudgeNode.ENABLED = v);
+        bind(map, QUANT_DEBATE_JUDGE_SHADOW_ENABLED, Boolean.class, DebateJudgeNode.SHADOW_ENABLED,
+                v -> DebateJudgeNode.SHADOW_ENABLED = v);
+        bind(map, QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED, Boolean.class,
+                FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED,
+                v -> FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED = v);
+
+        bind(map, TRADING_LOW_VOL_ENABLED, Boolean.class, DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED,
+                v -> DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED = v);
+        bind(map, TRADING_LEGACY_THRESHOLD_5OF7_ENABLED, Boolean.class,
+                DeterministicTradingExecutor.LEGACY_THRESHOLD_5OF7_ENABLED,
+                v -> DeterministicTradingExecutor.LEGACY_THRESHOLD_5OF7_ENABLED = v);
+        bind(map, TRADING_LEGACY_5OF7_SHADOW_ENABLED, Boolean.class,
+                DeterministicTradingExecutor.LEGACY_5OF7_SHADOW_ENABLED,
+                v -> DeterministicTradingExecutor.LEGACY_5OF7_SHADOW_ENABLED = v);
+
+        bind(map, DRAWDOWN_SENTINEL_ENABLED, Boolean.class, PositionDrawdownSentinel.ENABLED,
+                v -> PositionDrawdownSentinel.ENABLED = v);
+        bind(map, DRAWDOWN_SENTINEL_WINDOW_MINUTES, Integer.class, PositionDrawdownSentinel.WINDOW_MINUTES,
+                v -> PositionDrawdownSentinel.WINDOW_MINUTES = v);
+        bind(map, DRAWDOWN_SENTINEL_PNL_PCT_DROP_THRESHOLD_PPT, Double.class,
+                PositionDrawdownSentinel.PNL_PCT_DROP_THRESHOLD_PPT,
+                v -> PositionDrawdownSentinel.PNL_PCT_DROP_THRESHOLD_PPT = v);
+        bind(map, DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_THRESHOLD_PCT, Double.class,
+                PositionDrawdownSentinel.PROFIT_DRAWDOWN_THRESHOLD_PCT,
+                v -> PositionDrawdownSentinel.PROFIT_DRAWDOWN_THRESHOLD_PCT = v);
+        bind(map, DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_MIN_BASE, Double.class,
+                PositionDrawdownSentinel.PROFIT_DRAWDOWN_MIN_BASE,
+                v -> PositionDrawdownSentinel.PROFIT_DRAWDOWN_MIN_BASE = v);
+        bind(map, DRAWDOWN_SENTINEL_COOLDOWN_MINUTES, Integer.class, PositionDrawdownSentinel.COOLDOWN_MINUTES,
+                v -> PositionDrawdownSentinel.COOLDOWN_MINUTES = v);
+        return Map.copyOf(map);
+    }
+
+    private static <T> void bind(Map<String, ToggleBinding<?>> map, String key, Class<T> type,
+                                 T defaultValue, Consumer<T> writer) {
+        map.put(key, new ToggleBinding<>(type, defaultValue, writer));
+    }
+
+    private static <T> void applyBinding(ToggleBinding<T> binding, Object value) {
+        binding.writer().accept(convertValue(value, binding.type()));
+    }
+
+    private static <T> T parseValue(String valueJson, Class<T> type) {
+        Object parsed = JSON.parse(valueJson);
+        return convertValue(parsed, type);
+    }
+
+    private static <T> T convertValue(Object value, Class<T> type) {
+        if (type.isInstance(value)) {
+            return type.cast(value);
+        }
+        if (value instanceof Number number) {
+            if (type == Integer.class) {
+                return type.cast(number.intValue());
+            }
+            if (type == Double.class) {
+                return type.cast(number.doubleValue());
+            }
+        }
+        throw new IllegalArgumentException("运行时开关类型不匹配: expected=" + type.getSimpleName()
+                + " actual=" + (value != null ? value.getClass().getSimpleName() : "null"));
+    }
+
+    private record ToggleBinding<T>(
+            Class<T> type,
+            T defaultValue,
+            Consumer<T> writer
+    ) {}
+}

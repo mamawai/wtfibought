@@ -9,6 +9,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 波动率因子 Agent。
+ * 不参与多空方向投票，主要估算各 horizon 的合理波动范围，并输出布林带、ATR 等风险标志。
+ */
 @Slf4j
 public class VolatilityAgent implements FactorAgent {
 

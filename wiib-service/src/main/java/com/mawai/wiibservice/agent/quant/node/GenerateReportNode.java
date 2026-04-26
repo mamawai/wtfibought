@@ -38,14 +38,6 @@ public class GenerateReportNode implements NodeAction {
     private final MemoryService memoryService;
     private final FactorWeightOverrideService weightOverrideService;
 
-    public GenerateReportNode(ChatClient.Builder builder, LlmCallMode callMode) {
-        this(builder, callMode, null);
-    }
-
-    public GenerateReportNode(ChatClient.Builder builder, LlmCallMode callMode, MemoryService memoryService) {
-        this(builder, callMode, memoryService, null);
-    }
-
     public GenerateReportNode(ChatClient.Builder builder, LlmCallMode callMode, MemoryService memoryService,
                               FactorWeightOverrideService weightOverrideService) {
         this.chatClient = builder.build();
