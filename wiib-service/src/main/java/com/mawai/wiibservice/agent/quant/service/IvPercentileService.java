@@ -53,6 +53,7 @@ public class IvPercentileService {
         }
     }
 
+    /** 拉取单个币种期权簿，取近月最接近现价的 call IV 作为 ATM IV 原值。 */
     public void collectOnce(String symbol) {
         String normalized = QuantConstants.normalizeSymbol(symbol);
         String currency = normalized.replace("USDT", "").replace("USDC", "");
@@ -90,6 +91,7 @@ public class IvPercentileService {
         }
     }
 
+    /** 从 Deribit bookSummary 中按到期日分组，选择近月且最接近现价的 call IV。 */
     private BigDecimal parseAtmIv(String bookSummaryJson) {
         if (bookSummaryJson == null || bookSummaryJson.isBlank()) {
             return null;
@@ -135,6 +137,7 @@ public class IvPercentileService {
         }
         List<OptionInfo> nearOptions = byExpiry.values().iterator().next();
         double currentSpot = spot;
+        // ATM 近似：在近月 call 里找 strike 离 underlying_price 最近的一档。
         return nearOptions.stream()
                 .min(Comparator.comparingDouble(o -> Math.abs(o.strike() - currentSpot)))
                 .map(o -> BigDecimal.valueOf(o.markIv()))

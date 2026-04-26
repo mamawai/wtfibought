@@ -13,6 +13,7 @@ import java.util.Map;
 @Mapper
 public interface TradeAttributionMapper extends BaseMapper<TradeAttribution> {
 
+    /** 查询用户某个时间点之后的已平仓归因记录，供 L1 日亏损计算使用。 */
     @Select("""
             SELECT ta.*
             FROM trade_attribution ta
@@ -25,6 +26,7 @@ public interface TradeAttributionMapper extends BaseMapper<TradeAttribution> {
     List<TradeAttribution> selectByUserSince(@Param("userId") Long userId,
                                              @Param("from") LocalDateTime from);
 
+    /** 查询用户最近 N 笔归因记录，供 L2 连亏熔断使用。 */
     @Select("""
             SELECT ta.*
             FROM trade_attribution ta
@@ -37,6 +39,7 @@ public interface TradeAttributionMapper extends BaseMapper<TradeAttribution> {
     List<TradeAttribution> selectLatestByUser(@Param("userId") Long userId,
                                               @Param("limit") int limit);
 
+    /** Admin 看板用：按策略路径统计近 N 天样本、胜率、EV 和平均持仓。 */
     @Select("""
             SELECT
                 ta.strategy_path AS "path",
@@ -57,6 +60,7 @@ public interface TradeAttributionMapper extends BaseMapper<TradeAttribution> {
     List<Map<String, Object>> selectPathStatsByUserSince(@Param("userId") Long userId,
                                                          @Param("from") LocalDateTime from);
 
+    /** Admin 看板用：统计用户全部归因记录的累计胜率、平均盈亏和总盈亏。 */
     @Select("""
             SELECT
                 COUNT(*)::int AS "samples",

@@ -44,6 +44,7 @@ public class OiPercentileService {
         }
     }
 
+    /** 补齐单个交易对最近 24 根 1h OI，并打印当前值在 30 天窗口内的分位。 */
     public void collectOnce(String symbol) {
         String normalized = QuantConstants.normalizeSymbol(symbol);
         try {
@@ -98,6 +99,7 @@ public class OiPercentileService {
         }
     }
 
+    /** 优先使用名义持仓额 sumOpenInterestValue，缺失时退到张数 sumOpenInterest。 */
     private BigDecimal readOiValue(JSONObject item) {
         BigDecimal value = item.getBigDecimal("sumOpenInterestValue");
         if (value != null && value.signum() > 0) {

@@ -47,6 +47,7 @@ public class CrossMarketService extends BaseRestTemplateConfig {
         collectOnce();
     }
 
+    /** 拉取 DXY/QQQ/黄金/10Y 四个代理市场，合成跨市场 risk-off 分数并落库。 */
     public void collectOnce() {
         try {
             Map<String, MarketQuote> quotes = new LinkedHashMap<>();
@@ -61,6 +62,7 @@ public class CrossMarketService extends BaseRestTemplateConfig {
             }
 
             double riskScore = calcRiskScore(quotes);
+            // 取四个市场里最早的 bar 时间，避免把部分休市旧数据伪装成最新数据。
             Instant observedInstant = quotes.values().stream()
                     .map(MarketQuote::observedAt)
                     .min(Instant::compareTo)
@@ -94,6 +96,7 @@ public class CrossMarketService extends BaseRestTemplateConfig {
         }
     }
 
+    /** 通过 Yahoo chart JSON 取 ticker 最近两个有效 close，返回最新价和单 bar 涨跌幅。 */
     private MarketQuote fetchQuote(String ticker) {
         String url = UriComponentsBuilder
                 .fromUriString(YAHOO_CHART_URL)
@@ -140,6 +143,7 @@ public class CrossMarketService extends BaseRestTemplateConfig {
         return new MarketQuote(ticker, latest, changePct, Instant.ofEpochSecond(latestTs));
     }
 
+    /** 合成 risk-off 分数：美元/利率上行加分，股票/黄金上行减分。 */
     private double calcRiskScore(Map<String, MarketQuote> quotes) {
         double dxy = quotes.get("DXY").changePct();
         double qqq = quotes.get("QQQ").changePct();

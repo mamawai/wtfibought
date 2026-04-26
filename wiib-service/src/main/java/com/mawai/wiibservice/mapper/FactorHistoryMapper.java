@@ -15,6 +15,7 @@ import java.util.Map;
 @Mapper
 public interface FactorHistoryMapper extends BaseMapper<FactorHistory> {
 
+    /** 外部因子按 symbol+factor+observed_at 幂等写入，重复采集时更新值和 metadata。 */
     @Insert("""
             INSERT INTO factor_history(symbol, factor_name, factor_value, observed_at, metadata_json)
             VALUES (
@@ -30,6 +31,7 @@ public interface FactorHistoryMapper extends BaseMapper<FactorHistory> {
             """)
     int upsert(FactorHistory entity);
 
+    /** 查询某个因子的最新观测值。 */
     @Select("""
             SELECT *
             FROM factor_history
@@ -41,6 +43,7 @@ public interface FactorHistoryMapper extends BaseMapper<FactorHistory> {
     FactorHistory selectLatest(@Param("symbol") String symbol,
                                @Param("factorName") String factorName);
 
+    /** 查询指定窗口内的因子时间序列，供回放和分位计算使用。 */
     @Select("""
             SELECT *
             FROM factor_history
@@ -55,6 +58,7 @@ public interface FactorHistoryMapper extends BaseMapper<FactorHistory> {
                                     @Param("from") LocalDateTime from,
                                     @Param("to") LocalDateTime to);
 
+    /** 计算当前因子值在历史窗口中的经验分位，返回 0-1。 */
     @Select("""
             SELECT COALESCE(AVG(
                 CASE WHEN factor_value <= #{factorValue} THEN 1.0 ELSE 0.0 END
@@ -72,6 +76,7 @@ public interface FactorHistoryMapper extends BaseMapper<FactorHistory> {
                                     @Param("from") LocalDateTime from,
                                     @Param("to") LocalDateTime to);
 
+    /** Admin 看板用：统计每个外部因子在窗口内的样本数、最新值和滞后小时数。 */
     @Select("""
             WITH scoped AS (
                 SELECT *

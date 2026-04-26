@@ -47,6 +47,7 @@ public class SprintCDashboardController {
     private final QuantForecastCycleMapper quantForecastCycleMapper;
     private final CircuitBreakerService circuitBreakerService;
 
+    /** Admin 接口只允许 1 号用户访问，沿用现有后台权限约定。 */
     private void checkAdmin() {
         long userId = StpUtil.getLoginIdAsLong();
         if (userId != 1L) {
@@ -54,6 +55,7 @@ public class SprintCDashboardController {
         }
     }
 
+    /** 聚合 Sprint C 看板所需的账户、路径、影子、外部因子与 LLM 方差数据。 */
     @GetMapping
     @Operation(summary = "Sprint C闭环与风控看板")
     public Result<Map<String, Object>> dashboard(@RequestParam(defaultValue = "7") int days) {
@@ -81,6 +83,7 @@ public class SprintCDashboardController {
         return Result.ok(data);
     }
 
+    /** 构建账户级指标：今日开仓、累计归因表现和当前熔断状态。 */
     private Map<String, Object> buildAccount(Long aiUserId) {
         Long todayOpenCount = futuresPositionMapper.selectCount(new LambdaQueryWrapper<FuturesPosition>()
                 .eq(FuturesPosition::getUserId, aiUserId)
@@ -94,6 +97,7 @@ public class SprintCDashboardController {
         return account;
     }
 
+    /** 构建三条实盘路径的近 N 天统计，并拼上启停状态。 */
     private List<Map<String, Object>> buildPathStats(Long aiUserId, LocalDateTime from) {
         Map<String, Map<String, Object>> statsByPath = tradeAttributionMapper.selectPathStatsByUserSince(aiUserId, from)
                 .stream()
@@ -128,6 +132,7 @@ public class SprintCDashboardController {
         return result;
     }
 
+    /** SHADOW_5OF7 当前只有样本和方向，没有虚拟平仓，所以胜率保持 null。 */
     private Map<String, Object> buildShadowStats() {
         Map<String, Object> stats = new LinkedHashMap<>(aiTradingDecisionMapper.selectShadow5of7Stats());
         stats.put("hypotheticalWinRate", null);
@@ -135,6 +140,7 @@ public class SprintCDashboardController {
         return stats;
     }
 
+    /** 按预期频率计算外部因子完整率，帮助判断 B2 shadow 数据是否够用。 */
     private List<Map<String, Object>> buildExternalFactorCoverage(LocalDateTime from, LocalDateTime to, int days) {
         Map<String, Map<String, Object>> actual = factorHistoryMapper.selectCoverage(from, to)
                 .stream()
@@ -162,6 +168,7 @@ public class SprintCDashboardController {
         return result;
     }
 
+    /** 看板展示的外部因子清单和期望采样频率。 */
     private List<FactorSpec> factorSpecs() {
         return List.of(
                 new FactorSpec("IV_PERCENTILE", "1h", 24, QuantConstants.WATCH_SYMBOLS),
@@ -172,20 +179,24 @@ public class SprintCDashboardController {
         );
     }
 
+    /** 计算完整率并限制到 0-1，避免超采样时显示超过 100%。 */
     private double completeness(int samples, int expected) {
         if (expected <= 0) return 0.0;
         double value = Math.min(1.0, (double) samples / expected);
         return Math.round(value * 10_000.0) / 10_000.0;
     }
 
+    /** 统一 Map key，避免 factorName 和 symbol 拼接冲突。 */
     private String factorKey(Object factorName, Object symbol) {
         return factorName + "|" + symbol;
     }
 
+    /** SQL 聚合结果转 int，null 或非数字按 0 处理。 */
     private int asInt(Object value) {
         return value instanceof Number number ? number.intValue() : 0;
     }
 
+    /** 看板窗口限制在 1-30 天，避免误传大窗口拖慢后台。 */
     private int normalizeDays(int days) {
         if (days < 1) return 7;
         if (days > 30) return 30;
