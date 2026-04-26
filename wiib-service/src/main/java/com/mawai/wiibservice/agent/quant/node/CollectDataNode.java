@@ -22,19 +22,12 @@ import java.util.concurrent.*;
 @Slf4j
 public class CollectDataNode implements NodeAction {
 
+    private static final long COLLECT_TIMEOUT_SECONDS = 10L;
+
     private final BinanceRestClient binanceRestClient;
     private final ForceOrderService forceOrderService;
     private final DepthStreamCache depthStreamCache;
     private final DeribitClient deribitClient;
-
-    public CollectDataNode(BinanceRestClient binanceRestClient, ForceOrderService forceOrderService) {
-        this(binanceRestClient, forceOrderService, null, null);
-    }
-
-    public CollectDataNode(BinanceRestClient binanceRestClient, ForceOrderService forceOrderService,
-                           DepthStreamCache depthStreamCache) {
-        this(binanceRestClient, forceOrderService, depthStreamCache, null);
-    }
 
     public CollectDataNode(BinanceRestClient binanceRestClient, ForceOrderService forceOrderService,
                            DepthStreamCache depthStreamCache, DeribitClient deribitClient) {
@@ -84,8 +77,11 @@ public class CollectDataNode implements NodeAction {
         String[] spotIntervals = {"1m", "5m"};
         int[] spotLimits = {120, 288};
 
-        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            String sym = symbol;
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(COLLECT_TIMEOUT_SECONDS);
+        // 不能用 try-with-resources：ExecutorService.close() 会等待任务结束，可能抵消整轮 deadline。
+        //noinspection resource
+        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+        try {
 
             // 并行采集全部数据（合约API）
             @SuppressWarnings("unchecked")
@@ -93,36 +89,36 @@ public class CollectDataNode implements NodeAction {
             for (int i = 0; i < 6; i++) {
                 int idx = i;
                 klineFutures[i] = executor.submit(
-                        () -> binanceRestClient.getFuturesKlines(sym, intervals[idx], limits[idx], null));
+                        () -> binanceRestClient.getFuturesKlines(symbol, intervals[idx], limits[idx], null));
             }
             @SuppressWarnings("unchecked")
             Future<String>[] spotKlineFutures = new Future[2];
             for (int i = 0; i < 2; i++) {
                 int idx = i;
                 spotKlineFutures[i] = executor.submit(
-                        () -> binanceRestClient.getKlines(sym, spotIntervals[idx], spotLimits[idx], null));
+                        () -> binanceRestClient.getKlines(symbol, spotIntervals[idx], spotLimits[idx], null));
             }
-            var tickerF = executor.submit(() -> binanceRestClient.getFutures24hTicker(sym));
-            var spotTickerF = executor.submit(() -> binanceRestClient.get24hTicker(sym));
-            var fundingF = executor.submit(() -> binanceRestClient.getFundingRate(sym));
-            var fundingHistF = executor.submit(() -> binanceRestClient.getFundingRateHistory(sym, 48));
+            var tickerF = executor.submit(() -> binanceRestClient.getFutures24hTicker(symbol));
+            var spotTickerF = executor.submit(() -> binanceRestClient.get24hTicker(symbol));
+            var fundingF = executor.submit(() -> binanceRestClient.getFundingRate(symbol));
+            var fundingHistF = executor.submit(() -> binanceRestClient.getFundingRateHistory(symbol, 48));
             var obF = executor.submit(() -> {
                 if (depthStreamCache != null) {
-                    String wsDepth = depthStreamCache.getFreshDepth(sym, 2000);
+                    String wsDepth = depthStreamCache.getFreshDepth(symbol, 2000);
                     if (wsDepth != null) return wsDepth;
                 }
-                return binanceRestClient.getFuturesOrderbook(sym, 20);
+                return binanceRestClient.getFuturesOrderbook(symbol, 20);
             });
-            var spotObF = executor.submit(() -> binanceRestClient.getOrderbook(sym, 20));
-            var oiF = executor.submit(() -> binanceRestClient.getOpenInterest(sym));
-            var oiHistF = executor.submit(() -> binanceRestClient.getOpenInterestHist(sym, "5m", 48));
-            var lsrF = executor.submit(() -> binanceRestClient.getLongShortRatio(sym));
-            var forceOrdersF = executor.submit(() -> buildForceOrdersJson(sym));
-            var topTraderF = executor.submit(() -> binanceRestClient.getTopTraderPositionRatio(sym, "5m", 24));
-            var takerLsrF = executor.submit(() -> binanceRestClient.getTakerLongShortRatio(sym, "5m", 24));
+            var spotObF = executor.submit(() -> binanceRestClient.getOrderbook(symbol, 20));
+            var oiF = executor.submit(() -> binanceRestClient.getOpenInterest(symbol));
+            var oiHistF = executor.submit(() -> binanceRestClient.getOpenInterestHist(symbol, "5m", 48));
+            var lsrF = executor.submit(() -> binanceRestClient.getLongShortRatio(symbol));
+            var forceOrdersF = executor.submit(() -> buildForceOrdersJson(symbol));
+            var topTraderF = executor.submit(() -> binanceRestClient.getTopTraderPositionRatio(symbol, "5m", 24));
+            var takerLsrF = executor.submit(() -> binanceRestClient.getTakerLongShortRatio(symbol, "5m", 24));
             var fearGreedF = skipFearGreed ? null
                     : executor.submit(() -> binanceRestClient.getFearGreedIndex(2));
-            String coin = sym.replace("USDT", "").replace("USDC", "");
+            String coin = symbol.replace("USDT", "").replace("USDC", "");
             var newsF = executor.submit(() -> binanceRestClient.getCryptoNews(coin, 30, "EN"));
 
             // Deribit 期权 IV 数据（并行采集，失败不影响主流程）
@@ -134,59 +130,53 @@ public class CollectDataNode implements NodeAction {
             // 收集K线
             Map<String, String> klines = new HashMap<>();
             for (int i = 0; i < 6; i++) {
-                try {
-                    String data = klineFutures[i].get(10, TimeUnit.SECONDS);
-                    if (data != null) klines.put(intervals[i], data);
-                } catch (Exception e) {
-            log.warn("[Q1] K线{}采集失败: {}", intervals[i], e.getMessage());
-                }
+                String data = safeGet(klineFutures[i], "K线" + intervals[i], deadlineNanos);
+                if (data != null) klines.put(intervals[i], data);
             }
-            klineMap.put(sym, klines);
+            klineMap.put(symbol, klines);
 
             Map<String, String> spotKlines = new HashMap<>();
             for (int i = 0; i < 2; i++) {
-                try {
-                    String data = spotKlineFutures[i].get(10, TimeUnit.SECONDS);
-                    if (data != null) spotKlines.put(spotIntervals[i], data);
-                } catch (Exception e) {
-                    log.warn("[Q1] 现货K线{}采集失败: {}", spotIntervals[i], e.getMessage());
-                }
+                String data = safeGet(spotKlineFutures[i], "现货K线" + spotIntervals[i], deadlineNanos);
+                if (data != null) spotKlines.put(spotIntervals[i], data);
             }
-            spotKlineMap.put(sym, spotKlines);
+            spotKlineMap.put(symbol, spotKlines);
 
             // 收集其他数据
-            tickerMap.put(sym, safeGet(tickerF, "ticker"));
-            putIfNotNull(spotTickerMap, sym, safeGet(spotTickerF, "spotTicker"));
-            putIfNotNull(fundingRateMap, sym, safeGet(fundingF, "funding"));
-            putIfNotNull(fundingRateHistMap, sym, safeGet(fundingHistF, "fundingRateHist"));
-            putIfNotNull(orderbookMap, sym, safeGet(obF, "orderbook"));
-            putIfNotNull(spotOrderbookMap, sym, safeGet(spotObF, "spotOrderbook"));
-            putIfNotNull(openInterestMap, sym, safeGet(oiF, "openInterest"));
-            putIfNotNull(openInterestHistMap, sym, safeGet(oiHistF, "openInterestHist"));
-            putIfNotNull(longShortRatioMap, sym, safeGet(lsrF, "longShortRatio"));
-            putIfNotNull(forceOrdersMap, sym, safeGet(forceOrdersF, "forceOrders"));
-            putIfNotNull(topTraderPositionMap, sym, safeGet(topTraderF, "topTraderPosition"));
-            putIfNotNull(takerLongShortMap, sym, safeGet(takerLsrF, "takerLongShort"));
+            tickerMap.put(symbol, safeGet(tickerF, "ticker", deadlineNanos));
+            putIfNotNull(spotTickerMap, symbol, safeGet(spotTickerF, "spotTicker", deadlineNanos));
+            putIfNotNull(fundingRateMap, symbol, safeGet(fundingF, "funding", deadlineNanos));
+            putIfNotNull(fundingRateHistMap, symbol, safeGet(fundingHistF, "fundingRateHist", deadlineNanos));
+            putIfNotNull(orderbookMap, symbol, safeGet(obF, "orderbook", deadlineNanos));
+            putIfNotNull(spotOrderbookMap, symbol, safeGet(spotObF, "spotOrderbook", deadlineNanos));
+            putIfNotNull(openInterestMap, symbol, safeGet(oiF, "openInterest", deadlineNanos));
+            putIfNotNull(openInterestHistMap, symbol, safeGet(oiHistF, "openInterestHist", deadlineNanos));
+            putIfNotNull(longShortRatioMap, symbol, safeGet(lsrF, "longShortRatio", deadlineNanos));
+            putIfNotNull(forceOrdersMap, symbol, safeGet(forceOrdersF, "forceOrders", deadlineNanos));
+            putIfNotNull(topTraderPositionMap, symbol, safeGet(topTraderF, "topTraderPosition", deadlineNanos));
+            putIfNotNull(takerLongShortMap, symbol, safeGet(takerLsrF, "takerLongShort", deadlineNanos));
 
             // 恐惧贪婪
             if (!skipFearGreed) {
-                String rawFearGreed = safeGet(fearGreedF, "fearGreed");
+                String rawFearGreed = safeGet(fearGreedF, "fearGreed", deadlineNanos);
                 if (rawFearGreed != null && !rawFearGreed.isBlank()) {
                     fearGreedData = rawFearGreed;
                 }
             }
 
             // 新闻
-            String rawNews = safeGet(newsF, "news");
+            String rawNews = safeGet(newsF, "news", deadlineNanos);
             if (rawNews != null && !rawNews.isBlank()) {
                 newsData = rawNews;
             }
 
             // Deribit IV
-            dvolData = dvolF != null ? safeGet(dvolF, "dvol") : null;
-            bookSummaryData = bookSummaryF != null ? safeGet(bookSummaryF, "bookSummary") : null;
+            dvolData = dvolF != null ? safeGet(dvolF, "dvol", deadlineNanos) : null;
+            bookSummaryData = bookSummaryF != null ? safeGet(bookSummaryF, "bookSummary", deadlineNanos) : null;
         } catch (Exception e) {
             log.warn("[Q1] collect_data采集异常: {}", e.getMessage());
+        } finally {
+            executor.shutdownNow();
         }
 
         // 判断数据可用性
@@ -230,11 +220,30 @@ public class CollectDataNode implements NodeAction {
         return result;
     }
 
-    private String safeGet(Future<String> f, String label) {
+    private String safeGet(Future<String> f, String label, long deadlineNanos) {
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        if (remainingNanos <= 0 && !f.isDone()) {
+            f.cancel(true);
+            log.warn("[Q1] {}采集超时，已取消", label);
+            return null;
+        }
         try {
-            return f.get(10, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            log.warn("[Q1] {}采集超时/失败: {}", label, e.getMessage());
+            return f.get(Math.max(remainingNanos, 0), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException e) {
+            f.cancel(true);
+            log.warn("[Q1] {}采集超时，已取消", label);
+            return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            f.cancel(true);
+            log.warn("[Q1] {}采集被中断，已取消", label);
+            return null;
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            log.warn("[Q1] {}采集失败: {}", label, cause.toString());
+            return null;
+        } catch (CancellationException e) {
+            log.warn("[Q1] {}采集已取消", label);
             return null;
         }
     }

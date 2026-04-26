@@ -1,12 +1,14 @@
 package com.mawai.wiibservice.agent.config;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.mawai.wiibcommon.entity.AiModelAssignment;
 import com.mawai.wiibcommon.entity.AiRuntimeConfig;
-import com.mawai.wiibservice.agent.trading.AiTradingTools;
+import com.mawai.wiibservice.agent.behavior.BehaviorAgentFactory;
+import com.mawai.wiibservice.agent.quant.QuantGraphFactory;
 import com.mawai.wiibservice.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibservice.mapper.AiRuntimeConfigMapper;
 import jakarta.annotation.PostConstruct;
@@ -32,9 +34,10 @@ import java.util.stream.Collectors;
 @Component
 public class AiAgentRuntimeManager {
 
-    private static final List<String> FUNCTIONS = List.of("behavior", "quant", "chat", "trading", "reflection");
+    private static final List<String> FUNCTIONS = List.of("behavior", "quant", "chat", "reflection");
 
-    private final AiAgentConfig aiAgentConfig;
+    private final BehaviorAgentFactory behaviorAgentFactory;
+    private final QuantGraphFactory quantGraphFactory;
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
     private final OpenAiChatModel prototypeChatModel;
@@ -46,14 +49,16 @@ public class AiAgentRuntimeManager {
     private volatile CompiledGraph quantGraph;
     private volatile CompiledGraph fallbackGraph;
 
-    public AiAgentRuntimeManager(AiAgentConfig aiAgentConfig,
+    public AiAgentRuntimeManager(BehaviorAgentFactory behaviorAgentFactory,
+                                 QuantGraphFactory quantGraphFactory,
                                  AiRuntimeConfigMapper configMapper,
                                  AiModelAssignmentMapper assignmentMapper,
                                  ChatModel chatModel,
                                  @Value("${spring.ai.openai.api-key:}") String ymlApiKey,
                                  @Value("${spring.ai.openai.base-url:}") String ymlBaseUrl,
                                  @Value("${spring.ai.openai.chat.options.model:}") String ymlModel) {
-        this.aiAgentConfig = aiAgentConfig;
+        this.behaviorAgentFactory = behaviorAgentFactory;
+        this.quantGraphFactory = quantGraphFactory;
         this.configMapper = configMapper;
         this.assignmentMapper = assignmentMapper;
         if (!(chatModel instanceof OpenAiChatModel openAiChatModel)) {
@@ -80,8 +85,12 @@ public class AiAgentRuntimeManager {
         return runtime;
     }
 
+    public static boolean isManagedFunction(String functionName) {
+        return FUNCTIONS.contains(functionName);
+    }
+
     /**
-     * 从DB读取所有配置和分配关系，重建5个独立ChatModel
+     * 从DB读取所有配置和分配关系，重建4个独立ChatModel
      */
     public void refresh() {
         synchronized (graphLock) {
@@ -93,7 +102,6 @@ public class AiAgentRuntimeManager {
                     buildFromAssignment(assignments, "behavior", configMap),
                     buildFromAssignment(assignments, "quant", configMap),
                     buildFromAssignment(assignments, "chat", configMap),
-                    buildFromAssignment(assignments, "trading", configMap),
                     buildFromAssignment(assignments, "reflection", configMap)
             ));
             quantGraph = null;
@@ -103,15 +111,11 @@ public class AiAgentRuntimeManager {
     }
 
     public ReactAgent createBehaviorAgent(Consumer<String> onProgress) {
-        return aiAgentConfig.createBehaviorAgent(current().behaviorChatModel(), onProgress);
-    }
-
-    public ReactAgent createTradingAgent(AiTradingTools tools) {
-        return aiAgentConfig.createTradingAgent(current().tradingChatModel(), tools);
+        return behaviorAgentFactory.create(current().behaviorChatModel(), onProgress);
     }
 
     public CompiledGraph createCryptoAnalysisGraph() throws Exception {
-        return aiAgentConfig.createCryptoAnalysisGraph(current().quantChatModel());
+        return quantGraphFactory.create(current().quantChatModel());
     }
 
     public CompiledGraph currentQuantGraph() throws Exception {
@@ -147,7 +151,7 @@ public class AiAgentRuntimeManager {
                 }
 
                 ChatModel fallbackModel = buildChatModel(defaultConfig.getApiKey(), defaultConfig.getBaseUrl(), model);
-                graph = aiAgentConfig.createCryptoAnalysisGraph(fallbackModel);
+                graph = quantGraphFactory.create(fallbackModel);
                 fallbackGraph = graph;
                 log.info("Fallback量化Graph已构建并缓存 configId={} model={}", defaultConfig.getId(), model);
             }
@@ -156,22 +160,14 @@ public class AiAgentRuntimeManager {
     }
 
     /**
-     * 量化调用统一入口
-     */
-    public Optional<OverAllState> invokeQuantWithFallback(String symbol, String threadId) throws Exception {
-        return invokeQuantWithFallback(symbol, threadId, null);
-    }
-
-    /**
      * 量化调用统一入口：支持传入额外初始状态（如共享的FGI数据）；LLM异常时自动降级到default配置重试
      */
     public Optional<OverAllState> invokeQuantWithFallback(String symbol, String threadId, Map<String, Object> extraState) throws Exception {
         try {
-            CompiledGraph graph = currentQuantGraph();
             Map<String, Object> initialState = new HashMap<>(Map.of("target_symbol", symbol));
             if (extraState != null) initialState.putAll(extraState);
-            return graph.invoke(initialState,
-                    RunnableConfig.builder().threadId(threadId).build());
+            return currentQuantGraph()
+                    .invoke(initialState, RunnableConfig.builder().threadId(threadId).build());
         } catch (RestClientException e) {
             log.warn("量化LLM异常，降级到default配置重试 symbol={}", symbol, e);
 
@@ -194,6 +190,7 @@ public class AiAgentRuntimeManager {
      */
     public boolean isConfigReferenced(Long configId) {
         return assignmentMapper.selectAll().stream()
+                .filter(a -> isManagedFunction(a.getFunctionName()))
                 .anyMatch(a -> configId.equals(a.getConfigId()));
     }
 
@@ -239,8 +236,16 @@ public class AiAgentRuntimeManager {
     }
 
     private void ensureAssignmentsExist() {
+        int removed = assignmentMapper.delete(new LambdaQueryWrapper<AiModelAssignment>()
+                .eq(AiModelAssignment::getFunctionName, "trading"));
+        if (removed > 0) {
+            log.info("已删除旧AI Trader模型分配 {} 条", removed);
+        }
+
         List<AiModelAssignment> existing = assignmentMapper.selectAll();
-        if (existing.size() >= FUNCTIONS.size()) {
+        java.util.Set<String> existingFunctions = existing.stream()
+                .map(AiModelAssignment::getFunctionName).collect(Collectors.toSet());
+        if (existingFunctions.containsAll(FUNCTIONS)) {
             return;
         }
 
@@ -252,9 +257,6 @@ public class AiAgentRuntimeManager {
         AiRuntimeConfig first = configs.getFirst();
         String defaultModel = first.getModel() != null && !first.getModel().isBlank()
                 ? first.getModel() : ymlModel;
-
-        java.util.Set<String> existingFunctions = existing.stream()
-                .map(AiModelAssignment::getFunctionName).collect(Collectors.toSet());
 
         for (String fn : FUNCTIONS) {
             if (existingFunctions.contains(fn)) continue;

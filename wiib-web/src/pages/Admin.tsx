@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useUserStore } from '../stores/userStore';
 import { adminApi, type TaskStatus } from '../api';
-import type { AiKeyConfig, AiModelAssignment, TradingRuntimeConfig, QuantRuntimeConfig } from '../types';
+import type { AiKeyConfig, AiModelAssignment, TradingRuntimeConfig, QuantRuntimeConfig, TradingCycleSubmitResult } from '../types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
@@ -14,9 +14,9 @@ const FUNCTION_LABELS: Record<string, string> = {
   behavior: '行为分析',
   quant: '量化分析',
   chat: '追问对话',
-  trading: 'AI Trader',
   reflection: '反思验证',
 };
+const MODEL_ASSIGNMENT_FUNCTIONS = new Set(Object.keys(FUNCTION_LABELS));
 
 export function Admin() {
   const { user } = useUserStore();
@@ -81,7 +81,7 @@ export function Admin() {
     setAssignmentsLoading(true);
     try {
       const list = await adminApi.listAssignments();
-      setAssignmentsDraft(list.map(a => ({ ...a })));
+      setAssignmentsDraft(list.filter(a => MODEL_ASSIGNMENT_FUNCTIONS.has(a.functionName)).map(a => ({ ...a })));
     } catch { /* ignore */ }
     finally { setAssignmentsLoading(false); }
   }, []);
@@ -138,6 +138,28 @@ export function Admin() {
       const c = await adminApi.setTradingConfig({ lowVolTradingEnabled: next });
       setTradingConfig(c);
       toast(next ? '低波动小仓位模式：已开启' : '低波动小仓位模式：已关闭', 'success');
+    } catch { /* ignore */ }
+    finally { setActionLoading(null); }
+  };
+
+  const toggleLegacyThreshold5of7 = async () => {
+    const next = !tradingConfig.legacyThreshold5of7Enabled;
+    setActionLoading('toggleLegacyThreshold5of7');
+    try {
+      const c = await adminApi.setTradingConfig({ legacyThreshold5of7Enabled: next });
+      setTradingConfig(c);
+      toast(next ? 'LEGACY 5/7 实盘阈值：已开启' : 'LEGACY 5/7 实盘阈值：已关闭', 'success');
+    } catch { /* ignore */ }
+    finally { setActionLoading(null); }
+  };
+
+  const toggleLegacy5of7Shadow = async () => {
+    const next = !tradingConfig.legacy5of7ShadowEnabled;
+    setActionLoading('toggleLegacy5of7Shadow');
+    try {
+      const c = await adminApi.setTradingConfig({ legacy5of7ShadowEnabled: next });
+      setTradingConfig(c);
+      toast(next ? 'LEGACY 5/7 影子样本：已开启' : 'LEGACY 5/7 影子样本：已关闭', 'success');
     } catch { /* ignore */ }
     finally { setActionLoading(null); }
   };
@@ -278,6 +300,19 @@ export function Admin() {
     } finally {
       setActionLoading(null);
     }
+  };
+
+  const formatTradingSubmitResult = (result: TradingCycleSubmitResult) => {
+    const submitted = result.items
+      .filter(item => item.status === 'SUBMITTED')
+      .map(item => item.symbol);
+    const skipped = result.items
+      .filter(item => item.status === 'SKIPPED')
+      .map(item => `${item.symbol}:${item.reason || 'SKIPPED'}`);
+    const parts = [`cycleNo=${result.cycleNo}`];
+    if (submitted.length > 0) parts.push(`已提交 ${submitted.join(', ')}`);
+    if (skipped.length > 0) parts.push(`已跳过 ${skipped.join(', ')}`);
+    return `AI Trader提交完成：${parts.join('；')}`;
   };
 
   const maskKey = (key: string) => {
@@ -539,7 +574,10 @@ export function Admin() {
                 <Button
                   variant="outline"
                   onClick={() => {
-                    void handleMessageAction(() => adminApi.triggerAiTrader(), 'triggerAiTrader');
+                    void handleMessageAction(
+                      async () => formatTradingSubmitResult(await adminApi.triggerAiTraderDetails()),
+                      'triggerAiTrader'
+                    );
                   }}
                   disabled={actionLoading !== null}
                 >
@@ -553,13 +591,13 @@ export function Admin() {
             <CardHeader>
               <CardTitle>交易运行时开关</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-5">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex-1">
                   <div className="font-medium">低波动小仓位模式</div>
                   <div className="text-xs text-muted-foreground mt-1">
                     开启：盘整期(ATR×SL倍数&lt;noise floor)时，扩SL到噪音下限（≤3.0x）、TP同比例扩、仓位×0.6试探入场<br/>
-                    关闭：低波动期直接HOLD（保守，默认）。重启后恢复关闭状态。
+                    关闭：低波动期直接HOLD（保守，默认）。重启后保持当前设置。
                   </div>
                   <div className="text-xs mt-2">
                     当前状态：<Badge variant={tradingConfig.lowVolTradingEnabled ? 'default' : 'secondary'}>
@@ -575,6 +613,50 @@ export function Admin() {
                   {tradingConfig.lowVolTradingEnabled ? '关闭' : '开启'}
                 </Button>
               </div>
+
+              <div className="flex items-center justify-between gap-4 border-t pt-4">
+                <div className="flex-1">
+                  <div className="font-medium">LEGACY 5/7 实盘阈值</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    开启：LEGACY_TREND 在 5/7 共振时也允许进入实盘开仓链路。<br/>
+                    关闭：只允许 6/7 共振实盘开仓（默认）。重启后保持当前设置。
+                  </div>
+                  <div className="text-xs mt-2">
+                    当前状态：<Badge variant={tradingConfig.legacyThreshold5of7Enabled ? 'default' : 'secondary'}>
+                      {tradingConfig.legacyThreshold5of7Enabled ? '已开启（激进）' : '已关闭（保守）'}
+                    </Badge>
+                  </div>
+                </div>
+                <Button
+                  variant={tradingConfig.legacyThreshold5of7Enabled ? 'default' : 'outline'}
+                  onClick={() => void toggleLegacyThreshold5of7()}
+                  disabled={actionLoading !== null}
+                >
+                  {tradingConfig.legacyThreshold5of7Enabled ? '关闭' : '开启'}
+                </Button>
+              </div>
+
+              <div className="flex items-center justify-between gap-4 border-t pt-4">
+                <div className="flex-1">
+                  <div className="font-medium">LEGACY 5/7 影子样本</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    开启：5/7 但实盘阈值关闭时，只记录 SHADOW_5OF7 决策，不下单。<br/>
+                    关闭：5/7 直接按共振不足 HOLD。实盘阈值开启时，此项不额外生效。
+                  </div>
+                  <div className="text-xs mt-2">
+                    当前状态：<Badge variant={tradingConfig.legacy5of7ShadowEnabled ? 'default' : 'secondary'}>
+                      {tradingConfig.legacy5of7ShadowEnabled ? '已开启（只观测）' : '已关闭'}
+                    </Badge>
+                  </div>
+                </div>
+                <Button
+                  variant={tradingConfig.legacy5of7ShadowEnabled ? 'default' : 'outline'}
+                  onClick={() => void toggleLegacy5of7Shadow()}
+                  disabled={actionLoading !== null}
+                >
+                  {tradingConfig.legacy5of7ShadowEnabled ? '关闭' : '开启'}
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
@@ -588,7 +670,7 @@ export function Admin() {
                   <div className="font-medium">Bull/Bear 辩论裁决 (Q4.5)</div>
                   <div className="text-xs text-muted-foreground mt-1">
                     开启：每轮量化分析跑 Bull辩手 ∥ Bear辩手 + Judge裁判共3次LLM调用，对HorizonJudge裁决做二次审核与概率修正。<br/>
-                    关闭：跳过正式辩论，保留原始forecasts。重启恢复关闭状态。
+                    关闭：跳过正式辩论，保留原始forecasts。重启后保持当前设置。
                   </div>
                   <div className="text-xs mt-2">
                     当前状态：<Badge variant={quantConfig.debateJudgeEnabled ? 'default' : 'secondary'}>
@@ -631,22 +713,23 @@ export function Admin() {
 
           <Card>
             <CardHeader>
-              <CardTitle>持仓回撤哨兵 (唤醒AI Trader)</CardTitle>
+              <CardTitle>持仓回撤哨兵 (主动平仓)</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex-1">
-                    <div className="font-medium">按持仓回撤唤醒</div>
+                    <div className="font-medium">按持仓回撤主动平仓</div>
                     <div className="text-xs text-muted-foreground mt-1">
-                      每分钟扫描AI账户所有OPEN持仓，窗口内PnL急速恶化时唤醒AI Trader重新决策。<br/>
+                      每分钟扫描AI账户所有OPEN持仓，窗口内PnL急速恶化时直接市价平仓。<br/>
                       <b>条件A</b>：PnL%下降 ≥ 阈值ppt（保证金权益角度）<br/>
                       <b>条件B</b>：盈利金额回撤 ≥ 阈值%（仅在窗口最高盈利 &gt; 基线USDT时启用）<br/>
-                      任一条件满足即触发，日志会注明是A/B/A+B触发。同持仓触发后进入冷却期。
+                      <b>条件C</b>：生命周期峰值浮盈达到ATR阈值后回撤到指定比例以下<br/>
+                      任一条件满足即平仓，日志会注明触发原因。同持仓平仓后进入冷却期。
                     </div>
                     <div className="text-xs mt-2">
                       当前状态：<Badge variant={tradingConfig.drawdownSentinelEnabled ? 'default' : 'secondary'}>
-                        {tradingConfig.drawdownSentinelEnabled ? '已开启' : '已关闭（默认）'}
+                        {tradingConfig.drawdownSentinelEnabled ? '已开启（默认）' : '已关闭'}
                       </Badge>
                     </div>
                   </div>

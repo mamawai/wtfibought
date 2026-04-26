@@ -709,6 +709,8 @@ export interface AiModelAssignment {
 
 export interface TradingRuntimeConfig {
   lowVolTradingEnabled?: boolean;
+  legacyThreshold5of7Enabled?: boolean;
+  legacy5of7ShadowEnabled?: boolean;
   drawdownSentinelEnabled?: boolean;
   drawdownWindowMinutes?: number;
   drawdownPnlPctDropThresholdPpt?: number;
@@ -721,6 +723,19 @@ export interface QuantRuntimeConfig {
   debateJudgeEnabled?: boolean;
   debateJudgeShadowEnabled?: boolean;
   factorWeightOverrideEnabled?: boolean;
+}
+
+export type SubmitStatus = 'SUBMITTED' | 'SKIPPED';
+
+export interface SymbolSubmitResult {
+  symbol: string;
+  status: SubmitStatus;
+  reason?: string | null;
+}
+
+export interface TradingCycleSubmitResult {
+  cycleNo: number;
+  items: SymbolSubmitResult[];
 }
 
 // ========== Sprint C Admin Dashboard ==========

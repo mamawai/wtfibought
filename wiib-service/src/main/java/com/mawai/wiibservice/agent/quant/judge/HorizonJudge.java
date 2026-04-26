@@ -38,12 +38,6 @@ public class HorizonJudge {
     private final Boolean weightOverrideEnabled;
     private final boolean logResult;
 
-    public HorizonJudge(String horizon) { this(horizon, Map.of()); }
-
-    public HorizonJudge(String horizon, Map<String, Map<String, Double>> agentAccuracy) {
-        this(horizon, agentAccuracy, null);
-    }
-
     public HorizonJudge(String horizon, Map<String, Map<String, Double>> agentAccuracy,
                         FactorWeightOverrideService weightOverrideService) {
         this(horizon, agentAccuracy, weightOverrideService, null);
@@ -62,10 +56,6 @@ public class HorizonJudge {
         this.weightOverrideService = weightOverrideService;
         this.weightOverrideEnabled = weightOverrideEnabled;
         this.logResult = logResult;
-    }
-
-    public HorizonForecast judge(List<AgentVote> allVotes, BigDecimal lastPrice, List<String> qualityFlags) {
-        return judge(allVotes, lastPrice, qualityFlags, null);
     }
 
     public HorizonForecast judge(List<AgentVote> allVotes, BigDecimal lastPrice, List<String> qualityFlags, MarketRegime regime) {

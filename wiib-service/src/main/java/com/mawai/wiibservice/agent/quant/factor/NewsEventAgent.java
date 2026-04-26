@@ -12,6 +12,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 重周期新闻事件 Agent。
+ * 先做 symbol 相关性过滤，再用 LLM 多次采样分析新闻影响，取 median 结果降低单次回答波动。
+ */
 @Slf4j
 public class NewsEventAgent implements FactorAgent {
 

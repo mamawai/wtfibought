@@ -6,11 +6,12 @@ import com.mawai.wiibcommon.entity.AiRuntimeConfig;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
+import com.mawai.wiibservice.agent.config.RuntimeFeatureToggleService;
+import com.mawai.wiibservice.agent.config.RuntimeToggleSnapshot;
 import com.mawai.wiibservice.agent.quant.memory.VerificationService;
-import com.mawai.wiibservice.agent.quant.node.DebateJudgeNode;
-import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
-import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
-import com.mawai.wiibservice.agent.trading.PositionDrawdownSentinel;
+import com.mawai.wiibservice.agent.trading.SubmitStatus;
+import com.mawai.wiibservice.agent.trading.SymbolSubmitResult;
+import com.mawai.wiibservice.agent.trading.TradingCycleSubmitResult;
 import com.mawai.wiibservice.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibservice.mapper.AiRuntimeConfigMapper;
 import com.mawai.wiibservice.task.AiTradingScheduler;
@@ -23,6 +24,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Slf4j
@@ -36,6 +38,7 @@ public class AiAgentAdminController {
     private final QuantForecastScheduler quantForecastScheduler;
     private final AiTradingScheduler aiTradingScheduler;
     private final VerificationService verificationService;
+    private final RuntimeFeatureToggleService runtimeFeatureToggleService;
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
 
@@ -124,7 +127,9 @@ public class AiAgentAdminController {
     @Operation(summary = "获取模型分配")
     public Result<List<AiModelAssignment>> listAssignments() {
         checkAdmin();
-        return Result.ok(assignmentMapper.selectAll());
+        return Result.ok(assignmentMapper.selectAll().stream()
+                .filter(a -> AiAgentRuntimeManager.isManagedFunction(a.getFunctionName()))
+                .toList());
     }
 
     @PostMapping("/assignments")
@@ -132,8 +137,13 @@ public class AiAgentAdminController {
     public Result<Void> saveAssignments(@RequestBody List<AssignmentRequest> assignments) {
         checkAdmin();
         for (AssignmentRequest req : assignments) {
-            if (req.getFunctionName() == null || req.getConfigId() == null
-                    || req.getModel() == null || req.getModel().isBlank()) {
+            if (req.getFunctionName() == null) {
+                return Result.fail("参数不完整: " + req.getFunctionName());
+            }
+            if (!AiAgentRuntimeManager.isManagedFunction(req.getFunctionName())) {
+                continue;
+            }
+            if (req.getConfigId() == null || req.getModel() == null || req.getModel().isBlank()) {
                 return Result.fail("参数不完整: " + req.getFunctionName());
             }
             // 校验configId存在
@@ -208,18 +218,57 @@ public class AiAgentAdminController {
     public Result<String> triggerTrading(@RequestParam(required = false) String symbol) {
         checkAdmin();
         List<String> symbols;
+        try {
+            symbols = resolveTradingSymbols(symbol);
+        } catch (IllegalArgumentException e) {
+            return Result.fail("symbol格式错误: " + e.getMessage());
+        }
+        TradingCycleSubmitResult result = aiTradingScheduler.submitTradingCycle(symbols);
+        log.info("[Admin] 手动提交AI Trader决策 result={}", result);
+        return Result.ok(formatTradingSubmitMessage(result));
+    }
+
+    @PostMapping("/trading/trigger-details")
+    @Operation(summary = "手动唤醒AI Trader决策并返回提交详情")
+    public Result<TradingCycleSubmitResult> triggerTradingDetails(@RequestParam(required = false) String symbol) {
+        checkAdmin();
+        List<String> symbols;
+        try {
+            symbols = resolveTradingSymbols(symbol);
+        } catch (IllegalArgumentException e) {
+            return Result.fail("symbol格式错误: " + e.getMessage());
+        }
+        TradingCycleSubmitResult result = aiTradingScheduler.submitTradingCycle(symbols);
+        log.info("[Admin] 手动提交AI Trader决策详情 result={}", result);
+        return Result.ok(result);
+    }
+
+    private List<String> resolveTradingSymbols(String symbol) {
         if (symbol == null || symbol.isBlank()) {
-            symbols = QuantConstants.WATCH_SYMBOLS;
-        } else {
-            try {
-                symbols = List.of(QuantConstants.normalizeSymbol(symbol));
-            } catch (IllegalArgumentException e) {
-                return Result.fail("symbol格式错误: " + e.getMessage());
+            return QuantConstants.WATCH_SYMBOLS;
+        }
+        return List.of(QuantConstants.normalizeSymbol(symbol));
+    }
+
+    private String formatTradingSubmitMessage(TradingCycleSubmitResult result) {
+        List<String> submitted = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
+        for (SymbolSubmitResult item : result.items()) {
+            if (item.status() == SubmitStatus.SUBMITTED) {
+                submitted.add(item.symbol());
+            } else {
+                skipped.add(item.symbol() + "(" + item.reason() + ")");
             }
         }
-        int cycleNo = aiTradingScheduler.triggerTradingCycle(symbols);
-        log.info("[Admin] 手动唤醒AI Trader决策 cycleNo={} symbols={}", cycleNo, symbols);
-        return Result.ok("AI Trader决策已触发: cycleNo=" + cycleNo + " symbols=" + symbols);
+        StringBuilder message = new StringBuilder("AI Trader提交完成: cycleNo=")
+                .append(result.cycleNo());
+        if (!submitted.isEmpty()) {
+            message.append(" submitted=").append(submitted);
+        }
+        if (!skipped.isEmpty()) {
+            message.append(" skipped=").append(skipped);
+        }
+        return message.toString();
     }
 
     // ========== 交易运行时开关 ==========
@@ -235,51 +284,84 @@ public class AiAgentAdminController {
     @Operation(summary = "设置交易运行时开关")
     public Result<TradingConfigResponse> setTradingConfig(@RequestBody TradingConfigRequest req) {
         checkAdmin();
+        Result<TradingConfigResponse> invalid = validateTradingConfigRequest(req);
+        if (invalid != null) {
+            return invalid;
+        }
+        long operator = StpUtil.getLoginIdAsLong();
         if (req.getLowVolTradingEnabled() != null) {
-            DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED = req.getLowVolTradingEnabled();
-            log.info("[Admin] 低波动交易开关更新为: {}", req.getLowVolTradingEnabled());
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_LOW_VOL_ENABLED,
+                    req.getLowVolTradingEnabled(), operator, "admin trading-config");
         }
         if (req.getLegacyThreshold5of7Enabled() != null) {
-            DeterministicTradingExecutor.LEGACY_THRESHOLD_5OF7_ENABLED = req.getLegacyThreshold5of7Enabled();
-            log.info("[Admin] LEGACY 5/7实盘开关更新为: {}", req.getLegacyThreshold5of7Enabled());
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_LEGACY_THRESHOLD_5OF7_ENABLED,
+                    req.getLegacyThreshold5of7Enabled(), operator, "admin trading-config");
         }
         if (req.getLegacy5of7ShadowEnabled() != null) {
-            DeterministicTradingExecutor.LEGACY_5OF7_SHADOW_ENABLED = req.getLegacy5of7ShadowEnabled();
-            log.info("[Admin] LEGACY 5/7 shadow开关更新为: {}", req.getLegacy5of7ShadowEnabled());
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_LEGACY_5OF7_SHADOW_ENABLED,
+                    req.getLegacy5of7ShadowEnabled(), operator, "admin trading-config");
         }
         if (req.getDrawdownSentinelEnabled() != null) {
-            PositionDrawdownSentinel.ENABLED = req.getDrawdownSentinelEnabled();
-            log.info("[Admin] 回撤哨兵开关更新为: {}", req.getDrawdownSentinelEnabled());
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_ENABLED,
+                    req.getDrawdownSentinelEnabled(), operator, "admin trading-config");
         }
-        if (req.getDrawdownWindowMinutes() != null && req.getDrawdownWindowMinutes() > 0) {
-            PositionDrawdownSentinel.WINDOW_MINUTES = req.getDrawdownWindowMinutes();
+        if (req.getDrawdownWindowMinutes() != null) {
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_WINDOW_MINUTES,
+                    req.getDrawdownWindowMinutes(), operator, "admin trading-config");
         }
-        if (req.getDrawdownPnlPctDropThresholdPpt() != null && req.getDrawdownPnlPctDropThresholdPpt() >= 0) {
-            PositionDrawdownSentinel.PNL_PCT_DROP_THRESHOLD_PPT = req.getDrawdownPnlPctDropThresholdPpt();
+        if (req.getDrawdownPnlPctDropThresholdPpt() != null) {
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_PNL_PCT_DROP_THRESHOLD_PPT,
+                    req.getDrawdownPnlPctDropThresholdPpt(), operator, "admin trading-config");
         }
-        if (req.getDrawdownProfitDrawdownThresholdPct() != null && req.getDrawdownProfitDrawdownThresholdPct() >= 0) {
-            PositionDrawdownSentinel.PROFIT_DRAWDOWN_THRESHOLD_PCT = req.getDrawdownProfitDrawdownThresholdPct();
+        if (req.getDrawdownProfitDrawdownThresholdPct() != null) {
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_THRESHOLD_PCT,
+                    req.getDrawdownProfitDrawdownThresholdPct(), operator, "admin trading-config");
         }
-        if (req.getDrawdownProfitDrawdownMinBase() != null && req.getDrawdownProfitDrawdownMinBase() >= 0) {
-            PositionDrawdownSentinel.PROFIT_DRAWDOWN_MIN_BASE = req.getDrawdownProfitDrawdownMinBase();
+        if (req.getDrawdownProfitDrawdownMinBase() != null) {
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_MIN_BASE,
+                    req.getDrawdownProfitDrawdownMinBase(), operator, "admin trading-config");
         }
-        if (req.getDrawdownCooldownMinutes() != null && req.getDrawdownCooldownMinutes() > 0) {
-            PositionDrawdownSentinel.COOLDOWN_MINUTES = req.getDrawdownCooldownMinutes();
+        if (req.getDrawdownCooldownMinutes() != null) {
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_COOLDOWN_MINUTES,
+                    req.getDrawdownCooldownMinutes(), operator, "admin trading-config");
         }
         return Result.ok(buildTradingConfigResponse());
     }
 
+    private Result<TradingConfigResponse> validateTradingConfigRequest(TradingConfigRequest req) {
+        if (req.getDrawdownWindowMinutes() != null && req.getDrawdownWindowMinutes() <= 0) {
+            return Result.fail("drawdownWindowMinutes必须为正整数");
+        }
+        if (req.getDrawdownCooldownMinutes() != null && req.getDrawdownCooldownMinutes() <= 0) {
+            return Result.fail("drawdownCooldownMinutes必须为正整数");
+        }
+        if (req.getDrawdownPnlPctDropThresholdPpt() != null && req.getDrawdownPnlPctDropThresholdPpt() < 0) {
+            return Result.fail("drawdownPnlPctDropThresholdPpt不能小于0");
+        }
+        if (req.getDrawdownProfitDrawdownThresholdPct() != null
+                && req.getDrawdownProfitDrawdownThresholdPct() < 0) {
+            return Result.fail("drawdownProfitDrawdownThresholdPct不能小于0");
+        }
+        if (req.getDrawdownProfitDrawdownMinBase() != null && req.getDrawdownProfitDrawdownMinBase() < 0) {
+            return Result.fail("drawdownProfitDrawdownMinBase不能小于0");
+        }
+        return null;
+    }
+
     private TradingConfigResponse buildTradingConfigResponse() {
+        RuntimeToggleSnapshot snapshot = runtimeFeatureToggleService.snapshot();
+        RuntimeToggleSnapshot.TradingToggles trading = snapshot.trading();
+        RuntimeToggleSnapshot.DrawdownSentinelToggles drawdown = snapshot.drawdown();
         TradingConfigResponse resp = new TradingConfigResponse();
-        resp.setLowVolTradingEnabled(DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED);
-        resp.setLegacyThreshold5of7Enabled(DeterministicTradingExecutor.LEGACY_THRESHOLD_5OF7_ENABLED);
-        resp.setLegacy5of7ShadowEnabled(DeterministicTradingExecutor.LEGACY_5OF7_SHADOW_ENABLED);
-        resp.setDrawdownSentinelEnabled(PositionDrawdownSentinel.ENABLED);
-        resp.setDrawdownWindowMinutes(PositionDrawdownSentinel.WINDOW_MINUTES);
-        resp.setDrawdownPnlPctDropThresholdPpt(PositionDrawdownSentinel.PNL_PCT_DROP_THRESHOLD_PPT);
-        resp.setDrawdownProfitDrawdownThresholdPct(PositionDrawdownSentinel.PROFIT_DRAWDOWN_THRESHOLD_PCT);
-        resp.setDrawdownProfitDrawdownMinBase(PositionDrawdownSentinel.PROFIT_DRAWDOWN_MIN_BASE);
-        resp.setDrawdownCooldownMinutes(PositionDrawdownSentinel.COOLDOWN_MINUTES);
+        resp.setLowVolTradingEnabled(trading.lowVolTradingEnabled());
+        resp.setLegacyThreshold5of7Enabled(trading.legacyThreshold5of7Enabled());
+        resp.setLegacy5of7ShadowEnabled(trading.legacy5of7ShadowEnabled());
+        resp.setDrawdownSentinelEnabled(drawdown.enabled());
+        resp.setDrawdownWindowMinutes(drawdown.windowMinutes());
+        resp.setDrawdownPnlPctDropThresholdPpt(drawdown.pnlPctDropThresholdPpt());
+        resp.setDrawdownProfitDrawdownThresholdPct(drawdown.profitDrawdownThresholdPct());
+        resp.setDrawdownProfitDrawdownMinBase(drawdown.profitDrawdownMinBase());
+        resp.setDrawdownCooldownMinutes(drawdown.cooldownMinutes());
         return resp;
     }
 
@@ -296,26 +378,28 @@ public class AiAgentAdminController {
     @Operation(summary = "设置量化运行时开关")
     public Result<QuantConfigResponse> setQuantConfig(@RequestBody QuantConfigRequest req) {
         checkAdmin();
+        long operator = StpUtil.getLoginIdAsLong();
         if (req.getDebateJudgeEnabled() != null) {
-            DebateJudgeNode.ENABLED = req.getDebateJudgeEnabled();
-            log.info("[Admin] 辩论裁决开关更新为: {}", req.getDebateJudgeEnabled());
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.QUANT_DEBATE_JUDGE_ENABLED,
+                    req.getDebateJudgeEnabled(), operator, "admin quant-config");
         }
         if (req.getDebateJudgeShadowEnabled() != null) {
-            DebateJudgeNode.SHADOW_ENABLED = req.getDebateJudgeShadowEnabled();
-            log.info("[Admin] 辩论影子模式开关更新为: {}", req.getDebateJudgeShadowEnabled());
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.QUANT_DEBATE_JUDGE_SHADOW_ENABLED,
+                    req.getDebateJudgeShadowEnabled(), operator, "admin quant-config");
         }
         if (req.getFactorWeightOverrideEnabled() != null) {
-            FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED = req.getFactorWeightOverrideEnabled();
-            log.info("[Admin] 静态调权开关更新为: {}", req.getFactorWeightOverrideEnabled());
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED,
+                    req.getFactorWeightOverrideEnabled(), operator, "admin quant-config");
         }
         return Result.ok(buildQuantConfigResponse());
     }
 
     private QuantConfigResponse buildQuantConfigResponse() {
+        RuntimeToggleSnapshot snapshot = runtimeFeatureToggleService.snapshot();
         QuantConfigResponse resp = new QuantConfigResponse();
-        resp.setDebateJudgeEnabled(DebateJudgeNode.ENABLED);
-        resp.setDebateJudgeShadowEnabled(DebateJudgeNode.SHADOW_ENABLED);
-        resp.setFactorWeightOverrideEnabled(FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED);
+        resp.setDebateJudgeEnabled(snapshot.debateJudgeEnabled());
+        resp.setDebateJudgeShadowEnabled(snapshot.debateJudgeShadowEnabled());
+        resp.setFactorWeightOverrideEnabled(snapshot.factorWeightOverrideEnabled());
         return resp;
     }
 

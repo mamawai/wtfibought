@@ -53,6 +53,7 @@ public class SignalReplayBacktestEngine {
         }
 
         BacktestTradingTools tools = new BacktestTradingTools(initialBalance, symbol);
+        TradingExecutionState executionState = new TradingExecutionState();
         BacktestResult result = new BacktestResult(initialBalance);
         User mockUser = createMockUser(initialBalance);
 
@@ -91,7 +92,8 @@ public class SignalReplayBacktestEngine {
             DeterministicTradingExecutor.ExecutionResult exec =
                     DeterministicTradingExecutor.execute(
                             symbol, mockUser, positions, cycle, signals,
-                            new ArrayList<>(recentDecisions), price, price, equity, tools);
+                            new ArrayList<>(recentDecisions), price, price, equity, tools,
+                            executionState, TradingRuntimeToggles.fromStaticFields());
 
             if (exec.action() != null && exec.action().startsWith("OPEN_")) {
                 tools.markOpenBarIndex(index);

@@ -78,6 +78,7 @@ public class BacktestEngine {
         }
 
         BacktestTradingTools tools = new BacktestTradingTools(initialBalance, symbol);
+        TradingExecutionState executionState = new TradingExecutionState();
         BacktestResult result = new BacktestResult(initialBalance);
         User mockUser = createMockUser(initialBalance);
 
@@ -126,7 +127,7 @@ public class BacktestEngine {
                     DeterministicTradingExecutor.execute(
                             symbol, mockUser, positions, forecast, signals,
                             recentDecisions, close, close, equity, tools,
-                            profileOverride);
+                            profileOverride, executionState, TradingRuntimeToggles.fromStaticFields());
 
             // 7. 标记开仓bar index（如果开了新仓）
             if (execResult.action().startsWith("OPEN_")) {
