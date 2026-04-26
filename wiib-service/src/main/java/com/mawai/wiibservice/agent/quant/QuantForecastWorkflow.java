@@ -142,6 +142,11 @@ public class QuantForecastWorkflow {
             // DebateJudgeNode输出
             s.put("debate_summary", new ReplaceStrategy());
             s.put("debate_probs", new ReplaceStrategy());
+            s.put("debate_shadow_summary", new ReplaceStrategy());
+            s.put("debate_shadow_probs", new ReplaceStrategy());
+            s.put("debate_shadow_forecasts", new ReplaceStrategy());
+            s.put("debate_shadow_decision", new ReplaceStrategy());
+            s.put("debate_shadow_risk_status", new ReplaceStrategy());
             // GenerateReportNode输出
             s.put("report", new ReplaceStrategy());
             s.put("hard_report", new ReplaceStrategy());

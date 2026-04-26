@@ -44,7 +44,10 @@ export function Admin() {
   const [drawdownDraft, setDrawdownDraft] = useState<TradingRuntimeConfig>({});
 
   // 量化运行时开关
-  const [quantConfig, setQuantConfig] = useState<QuantRuntimeConfig>({ debateJudgeEnabled: true });
+  const [quantConfig, setQuantConfig] = useState<QuantRuntimeConfig>({
+    debateJudgeEnabled: false,
+    debateJudgeShadowEnabled: false,
+  });
 
   const fetchStatus = useCallback(async () => {
     setLoading(true);
@@ -157,6 +160,17 @@ export function Admin() {
       const c = await adminApi.setQuantConfig({ debateJudgeEnabled: next });
       setQuantConfig(c);
       toast(next ? 'Bull/Bear辩论裁决：已开启' : 'Bull/Bear辩论裁决：已关闭（省3次LLM调用）', 'success');
+    } catch { /* ignore */ }
+    finally { setActionLoading(null); }
+  };
+
+  const toggleDebateShadow = async () => {
+    const next = !quantConfig.debateJudgeShadowEnabled;
+    setActionLoading('toggleDebateShadow');
+    try {
+      const c = await adminApi.setQuantConfig({ debateJudgeShadowEnabled: next });
+      setQuantConfig(c);
+      toast(next ? 'Bull/Bear辩论影子模式：已开启' : 'Bull/Bear辩论影子模式：已关闭', 'success');
     } catch { /* ignore */ }
     finally { setActionLoading(null); }
   };
@@ -568,17 +582,17 @@ export function Admin() {
             <CardHeader>
               <CardTitle>量化运行时开关</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-5">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex-1">
                   <div className="font-medium">Bull/Bear 辩论裁决 (Q4.5)</div>
                   <div className="text-xs text-muted-foreground mt-1">
-                    开启：每轮量化分析跑 Bull辩手 ∥ Bear辩手 + Judge裁判共3次LLM调用，对HorizonJudge裁决做二次审核与概率修正（默认）<br/>
-                    关闭：跳过辩论，保留原始forecasts，下发中性概率(33/34/33)。每轮省3-10s + 3次LLM成本，用于A/B对比胜率。重启恢复开启状态。
+                    开启：每轮量化分析跑 Bull辩手 ∥ Bear辩手 + Judge裁判共3次LLM调用，对HorizonJudge裁决做二次审核与概率修正。<br/>
+                    关闭：跳过正式辩论，保留原始forecasts。重启恢复关闭状态。
                   </div>
                   <div className="text-xs mt-2">
                     当前状态：<Badge variant={quantConfig.debateJudgeEnabled ? 'default' : 'secondary'}>
-                      {quantConfig.debateJudgeEnabled ? '已开启（默认）' : '已关闭（A/B对照）'}
+                      {quantConfig.debateJudgeEnabled ? '已开启' : '已关闭（默认）'}
                     </Badge>
                   </div>
                 </div>
@@ -588,6 +602,28 @@ export function Admin() {
                   disabled={actionLoading !== null}
                 >
                   {quantConfig.debateJudgeEnabled ? '关闭' : '开启'}
+                </Button>
+              </div>
+
+              <div className="flex items-center justify-between gap-4 border-t pt-4">
+                <div className="flex-1">
+                  <div className="font-medium">Bull/Bear 辩论影子模式</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    开启：正式辩论关闭时仍跑3次LLM，只写 shadow 结果到 debate_json，不影响forecast、报告概率和交易。<br/>
+                    正式辩论已开启时，shadow 不额外生效，避免重复调用。
+                  </div>
+                  <div className="text-xs mt-2">
+                    当前状态：<Badge variant={quantConfig.debateJudgeShadowEnabled ? 'default' : 'secondary'}>
+                      {quantConfig.debateJudgeShadowEnabled ? '已开启（只观测）' : '已关闭（默认）'}
+                    </Badge>
+                  </div>
+                </div>
+                <Button
+                  variant={quantConfig.debateJudgeShadowEnabled ? 'default' : 'outline'}
+                  onClick={() => void toggleDebateShadow()}
+                  disabled={actionLoading !== null || quantConfig.debateJudgeEnabled}
+                >
+                  {quantConfig.debateJudgeShadowEnabled ? '关闭' : '开启'}
                 </Button>
               </div>
             </CardContent>
