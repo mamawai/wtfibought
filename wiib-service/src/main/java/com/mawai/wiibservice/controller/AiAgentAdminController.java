@@ -300,6 +300,10 @@ public class AiAgentAdminController {
             DebateJudgeNode.ENABLED = req.getDebateJudgeEnabled();
             log.info("[Admin] 辩论裁决开关更新为: {}", req.getDebateJudgeEnabled());
         }
+        if (req.getDebateJudgeShadowEnabled() != null) {
+            DebateJudgeNode.SHADOW_ENABLED = req.getDebateJudgeShadowEnabled();
+            log.info("[Admin] 辩论影子模式开关更新为: {}", req.getDebateJudgeShadowEnabled());
+        }
         if (req.getFactorWeightOverrideEnabled() != null) {
             FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED = req.getFactorWeightOverrideEnabled();
             log.info("[Admin] 静态调权开关更新为: {}", req.getFactorWeightOverrideEnabled());
@@ -310,6 +314,7 @@ public class AiAgentAdminController {
     private QuantConfigResponse buildQuantConfigResponse() {
         QuantConfigResponse resp = new QuantConfigResponse();
         resp.setDebateJudgeEnabled(DebateJudgeNode.ENABLED);
+        resp.setDebateJudgeShadowEnabled(DebateJudgeNode.SHADOW_ENABLED);
         resp.setFactorWeightOverrideEnabled(FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED);
         return resp;
     }
@@ -361,12 +366,14 @@ public class AiAgentAdminController {
     @Data
     public static class QuantConfigRequest {
         private Boolean debateJudgeEnabled;
+        private Boolean debateJudgeShadowEnabled;
         private Boolean factorWeightOverrideEnabled;
     }
 
     @Data
     public static class QuantConfigResponse {
         private Boolean debateJudgeEnabled;
+        private Boolean debateJudgeShadowEnabled;
         private Boolean factorWeightOverrideEnabled;
     }
 
