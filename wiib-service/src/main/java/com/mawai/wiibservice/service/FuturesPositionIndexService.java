@@ -24,5 +24,5 @@ public interface FuturesPositionIndexService {
 
     void unregisterTakeProfits(Long positionId, String symbol, String side, List<FuturesTakeProfit> takeProfits);
 
-    BigDecimal calcStaticLiqPrice(String side, BigDecimal entryPrice, BigDecimal margin, BigDecimal quantity);
+    BigDecimal calcStaticLiqPrice(String side, BigDecimal entryPrice, BigDecimal margin, BigDecimal quantity, Integer leverage);
 }

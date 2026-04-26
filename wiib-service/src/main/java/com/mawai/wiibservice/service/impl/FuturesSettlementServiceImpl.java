@@ -208,7 +208,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         positionMapper.atomicIncreasePosition(position.getId(), newEntryPrice, addQty, addMargin);
 
         BigDecimal newMargin = position.getMargin().add(addMargin);
-        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), newEntryPrice, newMargin, newQty);
+        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), newEntryPrice, newMargin,
+                newQty, position.getLeverage());
         positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
 
         orderMapper.casUpdateToFilled(order.getId(), executePrice, addValue, commission, addMargin, null);
@@ -418,7 +419,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         affected = positionMapper.atomicDeductFundingFee(pos.getId(), fee);
         if (affected > 0) {
             BigDecimal newMargin = pos.getMargin().subtract(fee);
-            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(pos.getSide(), pos.getEntryPrice(), newMargin, pos.getQuantity());
+            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(pos.getSide(), pos.getEntryPrice(),
+                    newMargin, pos.getQuantity(), pos.getLeverage());
             positionIndexService.updateLiquidationPrice(pos.getId(), pos.getSymbol(), pos.getSide(), liqPrice);
             return true;
         }

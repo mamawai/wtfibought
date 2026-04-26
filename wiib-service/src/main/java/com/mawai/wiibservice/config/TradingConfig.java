@@ -63,16 +63,27 @@ public class TradingConfig {
 
     @Data
     public static class Futures {
-        /** 维持保证金率（默认0.5%） */
+        /** 1-125x 维持保证金率。 */
         private BigDecimal maintenanceMarginRate = new BigDecimal("0.005");
+        /** 126-199x 维持保证金率。 */
+        private BigDecimal highLeverageMaintenanceMarginRate = new BigDecimal("0.0025");
+        /** 200-250x 维持保证金率。 */
+        private BigDecimal ultraHighLeverageMaintenanceMarginRate = new BigDecimal("0.001");
         /** 资金费率（默认0.01%/8h） */
         private BigDecimal fundingRate = new BigDecimal("0.0001");
-        /** 最大杠杆倍数 */
+        /** 最大杠杆倍数；模拟盘保留250x，偏游戏性。 */
         private int maxLeverage = 250;
         /** 开仓余额滑点容差（USDT），补偿前后端价格时间差 */
         private BigDecimal balanceTolerance = new BigDecimal("0.05");
         /** 仓位操作分布式锁超时时间（秒） */
         private int lockTimeoutSeconds = 30;
+
+        public BigDecimal maintenanceMarginRateForLeverage(Integer leverage) {
+            int lv = leverage != null && leverage > 0 ? leverage : 1;
+            if (lv >= 200) return ultraHighLeverageMaintenanceMarginRate;
+            if (lv >= 126) return highLeverageMaintenanceMarginRate;
+            return maintenanceMarginRate;
+        }
     }
 
     /** 乐观锁最大重试次数 */

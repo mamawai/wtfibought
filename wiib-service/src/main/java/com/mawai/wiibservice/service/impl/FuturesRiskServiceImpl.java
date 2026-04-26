@@ -197,7 +197,8 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         BigDecimal unrealizedPnl = calculatePnl(position.getSide(), position.getEntryPrice(), currentPrice, position.getQuantity());
         BigDecimal effectiveMargin = position.getMargin().add(unrealizedPnl);
         BigDecimal positionValue = currentPrice.multiply(position.getQuantity());
-        BigDecimal maintenanceMargin = positionValue.multiply(tradingConfig.getFutures().getMaintenanceMarginRate());
+        BigDecimal maintenanceMargin = positionValue.multiply(
+                tradingConfig.getFutures().maintenanceMarginRateForLeverage(position.getLeverage()));
 
         if (effectiveMargin.compareTo(maintenanceMargin) <= 0) {
             SpringUtils.getAopProxy(this).forceClose(positionId, currentPrice);
@@ -261,7 +262,8 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
             FuturesPosition updated = positionMapper.selectById(positionId);
             if (updated != null && "OPEN".equals(updated.getStatus())) {
                 BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
-                        updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity());
+                        updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity(),
+                        updated.getLeverage());
                 positionIndexService.updateLiquidationPrice(updated.getId(), updated.getSymbol(), updated.getSide(), liqPrice);
             }
         }
@@ -348,7 +350,8 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
             FuturesPosition updated = positionMapper.selectById(positionId);
             if (updated != null && "OPEN".equals(updated.getStatus())) {
                 BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
-                        updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity());
+                        updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity(),
+                        updated.getLeverage());
                 positionIndexService.updateLiquidationPrice(updated.getId(), updated.getSymbol(), updated.getSide(), liqPrice);
             }
         }
