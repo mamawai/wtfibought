@@ -655,7 +655,7 @@ export interface GroupedHeavyCycle {
   adjustments?: QuantForecastAdjustment[];
 }
 
-/** 轻周期对父重周期 forecast 的修正明细（FLIP/SAME_DIR_BOOST/OPPO_WEAK_PENALTY/OPPO_STRONG_PENALTY） */
+/** 轻周期对父重周期 forecast 的修正明细（FLIP 为历史兼容，新强反向使用 LIGHT_VETO） */
 export interface QuantForecastAdjustment {
   id: number;
   lightCycleId: string;
@@ -663,7 +663,7 @@ export interface QuantForecastAdjustment {
   symbol: string;
   lightHorizon: string;
   heavyHorizon: string;
-  adjustType: 'SAME_DIR_BOOST' | 'OPPO_WEAK_PENALTY' | 'OPPO_STRONG_PENALTY' | 'FLIP';
+  adjustType: 'SAME_DIR_BOOST' | 'OPPO_WEAK_PENALTY' | 'OPPO_STRONG_PENALTY' | 'LIGHT_VETO' | 'FLIP';
   lightDirection: string;
   lightConfidence: number;
   prevHeavyDirection: string;
@@ -719,6 +719,7 @@ export interface TradingRuntimeConfig {
 
 export interface QuantRuntimeConfig {
   debateJudgeEnabled?: boolean;
+  debateJudgeShadowEnabled?: boolean;
   factorWeightOverrideEnabled?: boolean;
 }
 

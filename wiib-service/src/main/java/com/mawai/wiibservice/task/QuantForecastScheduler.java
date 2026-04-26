@@ -45,7 +45,7 @@ public class QuantForecastScheduler {
     /** 记录每个symbol最近一次重周期的完成时间 */
     private final Map<String, Instant> lastHeavyCycleTime = new ConcurrentHashMap<>();
 
-    @Scheduled(cron = "0 */20 * * * *")
+    @Scheduled(cron = "0 */30 * * * *")
     public void rollingForecast() {
         String fearGreedData = fetchFearGreedOnce();
         for (String symbol : QuantConstants.WATCH_SYMBOLS) {
@@ -57,7 +57,7 @@ public class QuantForecastScheduler {
     public void lightRefresh() {
         String fearGreedData = fetchFearGreedOnce();
         for (String symbol : QuantConstants.WATCH_SYMBOLS) {
-            // 距离上次重周期不到2分钟跳过：heavy 刚跑完轻周期修正没意义（D10：20/5min 下同步缩到 120s）
+            // 距离上次重周期不到2分钟跳过：heavy 刚跑完轻周期修正没意义，等下一轮 5min light 再修。
             Instant lastHeavy = lastHeavyCycleTime.get(symbol);
             if (lastHeavy != null && Instant.now().getEpochSecond() - lastHeavy.getEpochSecond() < 120) {
                 log.debug("[Scheduler] 轻周期跳过 symbol={} 距重周期仅{}s",
@@ -110,6 +110,9 @@ public class QuantForecastScheduler {
             }
             if (forecastResult != null) {
                 String debateSummary = (String) state.value("debate_summary").orElse(null);
+                if (debateSummary == null) {
+                    debateSummary = (String) state.value("debate_shadow_summary").orElse(null);
+                }
                 String rawSnapshotJson = (String) state.value("raw_snapshot_json").orElse(null);
                 String rawReportJson = (String) state.value("raw_report_json").orElse(null);
                 persistService.persist(forecastResult, debateSummary, rawSnapshotJson, rawReportJson);

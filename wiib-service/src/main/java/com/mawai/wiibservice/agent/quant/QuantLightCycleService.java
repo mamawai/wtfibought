@@ -79,7 +79,8 @@ public class QuantLightCycleService {
             double regimeConfidence,
             String regimeTransition,
             String reportJson,
-            Instant heavyCycleTime
+            Instant heavyCycleTime,
+            LocalDateTime heavyWindowStart
     ) {}
 
     /**
@@ -94,20 +95,12 @@ public class QuantLightCycleService {
 
     /**
      * 反转票内存状态：symbol → heavyHorizon(0_10/10_20/20_30) → ReversalState。
-     * 连续反向强信号累票，达 2 票翻盘；方向回同向/轻conf<0.5/新重周期来 → 清零。
-     * 服务重启丢失——最多多跑一轮才能翻盘，可接受（重周期本身就 30 min 一个）。
+     * 连续反向强信号累票，达 2 票否决旧方向；方向回同向/轻conf<0.5/新重周期来 → 清零。
+     * 服务重启丢失——最多多跑一轮才能否决，可接受（重周期本身就 30 min 一个）。
      */
     private final Map<String, Map<String, ReversalState>> reversalStateBySymbol = new ConcurrentHashMap<>();
 
     public record ReversalState(Direction reversalDir, int voteCount) {}
-
-    /**
-     * 轻周期 FLIP 翻盘开关（D8）。false=2 票累积达标时也不翻方向，仅记强罚；true=原 FLIP 行为。
-     * Phase 0A 默认关闭——消除"短周期噪音推翻长周期信号"的 whipsaw 亏损源；
-     * 同向加成(A)、反向弱罚(B)、反向强罚不累票(C1)、例行刷新、ATR 事件驱动全部保留。
-     */
-    public static volatile boolean LIGHT_CYCLE_FLIP_ENABLED = false;
-
 
     public QuantLightCycleService(BinanceRestClient binanceRestClient,
                                    ForceOrderService forceOrderService,
@@ -158,7 +151,8 @@ public class QuantLightCycleService {
                 .toList();
         cacheBySymbol.put(symbol, new HeavyCycleCache(
                 heavyCycleId, newsVotes, snapshot.regime(), snapshot.regimeConfidence(),
-                snapshot.regimeTransition(), reportJson, Instant.now()
+                snapshot.regimeTransition(), reportJson, Instant.now(),
+                halfHourWindowStart(snapshot.snapshotTime() != null ? snapshot.snapshotTime() : LocalDateTime.now())
         ));
         if (forecasts != null && !forecasts.isEmpty()) {
             forecastCacheBySymbol.put(symbol, new ForecastCache(forecasts));
@@ -184,6 +178,7 @@ public class QuantLightCycleService {
             return;
         }
         long startMs = System.currentTimeMillis();
+        LocalDateTime lightCycleStart = LocalDateTime.now();
         HeavyCycleCache cache = cacheBySymbol.get(symbol);
         if (cache == null) {
             runningSymbols.remove(symbol);
@@ -219,16 +214,13 @@ public class QuantLightCycleService {
             log.info("[LightCycle] 使用实时regime={} (缓存regime={})",
                     snapshot.regime(), cache.regime());
 
-            // 4. 跑4个纯代码Agent（并行）+ news 票：按 dMin 决定是否调浅 LLM 刷新 news（D10：heavy=20min / light=5min）
-            //    dMin 0-2：重周期刚完 news 还新鲜 → 直接复用 cache
-            //    dMin 3-7 / 8-12 / 13-17：对应 shift=1/2/3，映射到父重周期 horizon，值得调 LLM 刷新
-            //    dMin ≥18：heavy 即将完成，轻周期跑归跑，news 票用 cache 即可
-            long dMinForNews = Duration.between(cache.heavyCycleTime(), Instant.now()).toMinutes();
-            int shiftForNews = dMinShift(dMinForNews);
-            List<String> activeHorizons = activeHorizonsForShift(shiftForNews);
+            // 4. 跑4个纯代码Agent（并行）+ news 票：只在 10min 墙钟边界附近刷新 news。
+            //    重周期按半小时窗口归属，不能用实际完成时间做锚点；12:05 这种跨段窗口不修。
+            Long lightOffsetMin = lightOffsetInHeavyWindow(lightCycleStart, cache.heavyWindowStart());
+            List<String> activeHorizons = activeLightHorizonsForOffset(lightOffsetMin);
 
             List<AgentVote> newsVotes = cache.newsVotes();
-            if (shiftForNews >= 1 && !activeHorizons.isEmpty()) {
+            if (!activeHorizons.isEmpty()) {
                 try {
                     ChatModel chatModel = runtimeManager.current().quantChatModel();
                     ChatClient.Builder builder = ChatClient.builder(chatModel);
@@ -239,11 +231,11 @@ public class QuantLightCycleService {
                     if (!r.useCache() && r.votes() != null && !r.votes().isEmpty()) {
                         // 用新票替换对应 horizon，其他 horizon 保留 cache（兼顾轻周期自身 forecast 完整性）
                         newsVotes = mergeNewsVotes(cache.newsVotes(), r.votes(), activeHorizons);
-                        log.info("[LightCycle.news] symbol={} dMin={}min shift={} 刷新 {} 条 horizons={} status={}",
-                                symbol, dMinForNews, shiftForNews, r.votes().size(), activeHorizons, r.status());
+                        log.info("[LightCycle.news] symbol={} offset={}min 刷新 {} 条 horizons={} status={}",
+                                symbol, lightOffsetMin, r.votes().size(), activeHorizons, r.status());
                     } else {
-                        log.info("[LightCycle.news] symbol={} dMin={}min 复用 cache status={}",
-                                symbol, dMinForNews, r.status());
+                        log.info("[LightCycle.news] symbol={} offset={}min 复用 cache status={}",
+                                symbol, lightOffsetMin, r.status());
                     }
                 } catch (Exception e) {
                     log.warn("[LightCycle.news] LightNewsAgent 异常，复用 cache symbol={}: {}", symbol, e.getMessage());
@@ -271,7 +263,7 @@ public class QuantLightCycleService {
                     + "-" + Integer.toHexString(ThreadLocalRandom.current().nextInt(0x1000, 0xFFFF))
                     + "-" + symbol;
             try {
-                applyHeavyCycleCorrection(symbol, lightCycleIdPreview, lightForecasts, cache);
+                applyHeavyCycleCorrection(symbol, lightCycleIdPreview, lightForecasts, cache, lightCycleStart);
             } catch (Exception e) {
                 // 修正失败不阻断轻周期自己的落库与事件发布——交易链路仍然用父重周期上一次快照
                 log.error("[LightCycle.correct] 父重周期修正失败 symbol={}", symbol, e);
@@ -285,7 +277,7 @@ public class QuantLightCycleService {
             String cycleId = lightCycleIdPreview;
 
             ForecastResult forecastResult = new ForecastResult(
-                    symbol, cycleId, LocalDateTime.now(),
+                    symbol, cycleId, lightCycleStart,
                     lightForecasts, overallDecision, riskStatus,
                     allVotes, snapshot, cache.reportJson(),
                     cache.heavyCycleId());  // 轻周期挂载的父重周期
@@ -316,17 +308,11 @@ public class QuantLightCycleService {
         }
     }
 
-    // ===================== 父重周期修正（核心算法，D10：heavy=20min / light=5min） =====================
+    // ===================== 父重周期修正（核心算法：heavy=30min / light=5min） =====================
     //
-    // 轻周期根据「距父重周期创建时间的分钟偏差 dMin」决定自己的每个 horizon 能影响父重周期的哪个 horizon。
-    // light 每 5min 触发，dMin 落点集中在 5/10/15；heavy 边界 t=0 与 t=20 附近不修正。
-    //
-    // dMin 映射表（dMin = 轻周期当前时间 - 父重周期创建时间，分钟）：
-    //   dMin ∈ [0, 2]   shift=0：不修正（heavy 刚完成，数据最新鲜）
-    //   dMin ∈ [3, 7]   shift=1：light.0_10→heavy.10_20, light.10_20→heavy.20_30（各重叠 5min）
-    //   dMin ∈ [8, 12]  shift=2：light.0_10→heavy.10_20, light.10_20→heavy.20_30（完全对齐）
-    //   dMin ∈ [13, 17] shift=3：light.0_10→heavy.20_30（仅此一条：light.10_20 已越过 heavy 末尾）
-    //   dMin ≥ 18       shift=-1：heavy 即将完成，跳过
+    // 轻周期根据「light horizon 起点是否贴近半小时墙钟窗口内的 0/10/20/30 边界」决定修正目标。
+    // 重周期实际完成时间不做锚点：12:03:40 完成的重周期仍归属 12:00-12:30。
+    // 例：12:05 的 05-15 跨 0_10/10_20，不修；12:08 的 08-18 近似修 10_20。
     //
     // 三分支裁决（prev=父重周期当前 horizon forecast，light=本轮轻周期对应 horizon forecast）：
     //   A 同向         ：newConf = prev.conf + light.conf×0.2（加成），dir 不变，清票
@@ -334,57 +320,97 @@ public class QuantLightCycleService {
     //   C 反向强(l≥p) ：newConf = prev.conf - light.conf×0.5（重罚）
     //                    ├─ light.conf<0.5 → 不累票，清零（信号绝对值太弱，防噪音反转）
     //                    └─ light.conf≥0.5 → 累票
-    //                         ├─ 达 2 票 → 翻盘 FLIP（D8 默认禁用，票数保留不翻向）
+    //                         ├─ 达 2 票 → LIGHT_VETO：置 NO_TRADE，否决旧方向但不直接反向
     //                         └─ <2 票 → OPPO_STRONG_PENALTY，dir 不变，票数留存
     //
-    // 为什么翻盘后 newConf = light.conf × 0.8（当 LIGHT_CYCLE_FLIP_ENABLED=true 时）：
-    //   轻周期能翻盘说明信号强，但毕竟没 LLM 加持；8 折留安全边际，后续轻周期继续同向时可通过加成回升。
+    // 为什么 veto 而不是 flip：
+    //   轻周期能证明旧方向危险，但不应直接给出反方向；真正反向交给下一轮重周期确认。
     //
     // 为什么不动 weightedScore / entryLow/High / tp / sl：
     //   这些字段关联历史快照，VerificationService 验证路径依赖原值。修正只改方向/置信度，保留快照完整性。
 
-    private static final Map<String, Map<Integer, String>> D_MIN_HORIZON_MAP = Map.of(
-            "0_10",  Map.of(1, "10_20", 2, "10_20", 3, "20_30"),
-            "10_20", Map.of(1, "20_30", 2, "20_30"),
-            "20_30", Map.of()  // heavy=20min 下 light.20_30 (t=dMin+25~dMin+35) 总是越过 heavy 末尾
-    );
+    private static final int HORIZON_WINDOW_MINUTES = 10;
+    private static final int HEAVY_WINDOW_MINUTES = 30;
+    private static final int HORIZON_ALIGN_TOLERANCE_MINUTES = 2;
+    private static final String[] HORIZONS = {"0_10", "10_20", "20_30"};
 
     /** adjust_type 枚举值（落库字符串），与前端 TS union 对齐 */
     private static final String ADJ_SAME_DIR_BOOST = "SAME_DIR_BOOST";
     private static final String ADJ_OPPO_WEAK_PENALTY = "OPPO_WEAK_PENALTY";
     private static final String ADJ_OPPO_STRONG_PENALTY = "OPPO_STRONG_PENALTY";
-    private static final String ADJ_FLIP = "FLIP";
+    private static final String ADJ_LIGHT_VETO = "LIGHT_VETO";
 
     /** confidence 统一 4 位小数落库（与 DB NUMERIC(5,4) 精度对齐） */
     private static BigDecimal toConf4(double v) {
         return BigDecimal.valueOf(v).setScale(4, java.math.RoundingMode.HALF_UP);
     }
 
-    /**
-     * 根据 dMin 返回 shift 值（D10：heavy=20min / light=5min）：
-     *   0=heavy 刚完成不修正，1/2=中段对齐修正，3=尾段仅修正 20_30，-1=heavy 即将完成跳过。
-     */
-    private static int dMinShift(long dMin) {
-        if (dMin >= 0 && dMin <= 2) return 0;
-        if (dMin >= 3 && dMin <= 7) return 1;
-        if (dMin >= 8 && dMin <= 12) return 2;
-        if (dMin >= 13 && dMin <= 17) return 3;
-        return -1;
+    /** 需要让 LightNewsAgent 刷新的 light horizons；无映射则复用重周期 cache。 */
+    private static List<String> activeLightHorizonsForOffset(Long lightOffsetMin) {
+        if (lightOffsetMin == null) return List.of();
+        List<String> active = new ArrayList<>(3);
+        for (String lightH : HORIZONS) {
+            if (mapLightToHeavyHorizon(lightH, lightOffsetMin) != null) {
+                active.add(lightH);
+            }
+        }
+        return active;
+    }
+
+    /** 将 light horizon 的起点映射到父重周期 0_10 / 10_20 / 20_30。 */
+    private static String mapLightToHeavyHorizon(String lightHorizon, long lightOffsetMin) {
+        int lightStart = horizonStartMinute(lightHorizon);
+        if (lightStart < 0) return null;
+        Integer heavyStart = alignedHeavyStartMinute(lightOffsetMin + lightStart);
+        if (heavyStart == null) return null;
+        return switch (heavyStart) {
+            case 0 -> "0_10";
+            case 10 -> "10_20";
+            case 20 -> "20_30";
+            default -> null;
+        };
+    }
+
+    /** 只接受贴近 10min 边界的起点；05/15/25 这种中点返回 null。 */
+    private static Integer alignedHeavyStartMinute(long minuteOffset) {
+        if (minuteOffset < 0) return null;
+        long mod = minuteOffset % HORIZON_WINDOW_MINUTES;
+        long alignedStart;
+        if (mod <= HORIZON_ALIGN_TOLERANCE_MINUTES) {
+            alignedStart = minuteOffset - mod;
+        } else if (mod >= HORIZON_WINDOW_MINUTES - HORIZON_ALIGN_TOLERANCE_MINUTES) {
+            alignedStart = minuteOffset + (HORIZON_WINDOW_MINUTES - mod);
+        } else {
+            return null;
+        }
+        if (alignedStart < 0 || alignedStart >= HEAVY_WINDOW_MINUTES) return null;
+        return (int) alignedStart;
+    }
+
+    /** horizon 名称转父重周期内起点分钟。 */
+    private static int horizonStartMinute(String horizon) {
+        return switch (horizon) {
+            case "0_10" -> 0;
+            case "10_20" -> 10;
+            case "20_30" -> 20;
+            default -> -1;
+        };
+    }
+
+    /** 半小时墙钟窗口起点：12:03/12:29 → 12:00，12:30/12:59 → 12:30。 */
+    private static LocalDateTime halfHourWindowStart(LocalDateTime time) {
+        int startMinute = time.getMinute() < HEAVY_WINDOW_MINUTES ? 0 : HEAVY_WINDOW_MINUTES;
+        return time.withMinute(startMinute).withSecond(0).withNano(0);
     }
 
     /**
-     * 按 shift 决定 LightNewsAgent 需要产出哪些 horizon 的票。
-     * shift=0 / -1：不在修正窗口 → 空列表（不调 LLM）
-     * shift=1 (dMin 3-7)   → [0_10, 10_20]（分别映射回父重 10_20 / 20_30）
-     * shift=2 (dMin 8-12)  → [0_10, 10_20]（分别映射回父重 10_20 / 20_30）
-     * shift=3 (dMin 13-17) → [0_10]        （仅能映射回父重 20_30）
+     * 轻周期在父重周期半小时窗口内的分钟偏移。
+     * 不在同一半小时窗口说明父缓存已过窗口，不允许用新窗口轻周期修旧父周期。
      */
-    private static List<String> activeHorizonsForShift(int shift) {
-        return switch (shift) {
-            case 1, 2 -> List.of("0_10", "10_20");
-            case 3 -> List.of("0_10");
-            default -> List.of();
-        };
+    private static Long lightOffsetInHeavyWindow(LocalDateTime lightCycleStart, LocalDateTime heavyWindowStart) {
+        if (lightCycleStart == null || heavyWindowStart == null) return null;
+        if (!halfHourWindowStart(lightCycleStart).equals(heavyWindowStart)) return null;
+        return Duration.between(heavyWindowStart, lightCycleStart).toMinutes();
     }
 
     /**
@@ -408,7 +434,8 @@ public class QuantLightCycleService {
 
     private void applyHeavyCycleCorrection(String symbol, String lightCycleId,
                                            List<HorizonForecast> lightForecasts,
-                                           HeavyCycleCache cache) {
+                                           HeavyCycleCache cache,
+                                           LocalDateTime lightCycleStart) {
         String heavyCycleId = cache.heavyCycleId();
         if (heavyCycleId == null) {
             log.warn("[LightCycle.correct] heavyCycleId 缺失，跳过父重周期修正 symbol={}", symbol);
@@ -420,11 +447,11 @@ public class QuantLightCycleService {
             return;
         }
 
-        long dMin = Duration.between(cache.heavyCycleTime(), Instant.now()).toMinutes();
-        int shift = dMinShift(dMin);
-        if (shift <= 0) {
-            log.info("[LightCycle.correct] dMin={}min shift={} 非对齐窗口（0=heavy刚完，-1=heavy即将完），跳过修正 symbol={}",
-                    dMin, shift, symbol);
+        Long lightOffsetMin = lightOffsetInHeavyWindow(lightCycleStart, cache.heavyWindowStart());
+        List<String> activeLightHorizons = activeLightHorizonsForOffset(lightOffsetMin);
+        if (activeLightHorizons.isEmpty()) {
+            log.info("[LightCycle.correct] lightStart={} heavyWindow={} offset={}min 未贴近 10min 边界，跳过父重修正 symbol={}",
+                    lightCycleStart, cache.heavyWindowStart(), lightOffsetMin, symbol);
             return;
         }
 
@@ -437,10 +464,10 @@ public class QuantLightCycleService {
                 symbol, k -> new ConcurrentHashMap<>());
 
         Map<String, HorizonForecast> newHeavyByHorizon = new HashMap<>(heavyByHorizon);
+        boolean vetoApplied = false;
 
-        for (String lightH : HORIZONS) {
-            Map<Integer, String> dim = D_MIN_HORIZON_MAP.get(lightH);
-            String heavyH = dim == null ? null : dim.get(shift);
+        for (String lightH : activeLightHorizons) {
+            String heavyH = mapLightToHeavyHorizon(lightH, lightOffsetMin);
             if (heavyH == null) continue;
 
             HorizonForecast lightF = lightByHorizon.get(lightH);
@@ -482,15 +509,14 @@ public class QuantLightCycleService {
                     ReversalState current = voteMap.get(heavyH);
                     int nextCount = (current != null && current.reversalDir() == lightF.direction())
                             ? current.voteCount() + 1 : 1;
-                    if (LIGHT_CYCLE_FLIP_ENABLED && nextCount >= 2) {
-                        // 翻盘（D8 期间默认禁用；Admin 切开关可恢复）
-                        newDir = lightF.direction();
-                        newConf = Math.clamp(lightConf * 0.8, 0.1, 1.0);
-                        adjustType = ADJ_FLIP;
+                    if (nextCount >= 2) {
+                        // 轻周期只否决旧方向，不直接给反方向；下一轮重周期负责重新定性
+                        newDir = Direction.NO_TRADE;
+                        newConf = 0.1;
+                        adjustType = ADJ_LIGHT_VETO;
                         voteAfter = 0;
                         voteMap.remove(heavyH);
                     } else {
-                        // D8 期间即使累计达标也不翻向，保持父重方向仅做强罚
                         newDir = prev.direction();
                         adjustType = ADJ_OPPO_STRONG_PENALTY;
                         voteAfter = nextCount;
@@ -520,15 +546,20 @@ public class QuantLightCycleService {
                 adj.setNewHeavyConfidence(newConfBd);
                 adj.setVoteCountAfter(voteAfter);
                 adjustmentMapper.insert(adj);
+                if (ADJ_LIGHT_VETO.equals(adjustType)) {
+                    vetoApplied = true;
+                }
             } catch (Exception e) {
                 log.error("[LightCycle.correct] 持久化失败 heavyCycleId={} heavyH={}", heavyCycleId, heavyH, e);
                 continue;
             }
 
             // ===== 内存缓存同步（weightedScore 符号跟 dir 走，其他字段保留 prev） =====
-            double newScore = newDir == Direction.LONG
-                    ? Math.abs(prev.weightedScore())
-                    : -Math.abs(prev.weightedScore());
+            double newScore = switch (newDir) {
+                case LONG -> Math.abs(prev.weightedScore());
+                case SHORT -> -Math.abs(prev.weightedScore());
+                case NO_TRADE -> 0;
+            };
             HorizonForecast updated = new HorizonForecast(
                     prev.horizon(), newDir, newConf, newScore,
                     prev.disagreement(), prev.entryLow(), prev.entryHigh(),
@@ -536,11 +567,11 @@ public class QuantLightCycleService {
                     prev.maxLeverage(), prev.maxPositionPct());
             newHeavyByHorizon.put(heavyH, updated);
 
-            log.info("[LightCycle.correct] heavy={} lightH={}→heavyH={} type={} light={}({}) prev={}({}) → new={}({}) vote={} dMin={}min",
+            log.info("[LightCycle.correct] heavy={} lightH={}→heavyH={} type={} light={}({}) prev={}({}) → new={}({}) vote={} offset={}min",
                     heavyCycleId, lightH, heavyH, adjustType,
                     lightF.direction(), String.format("%.2f", lightConf),
                     prev.direction(), String.format("%.2f", prevConf),
-                    newDir, String.format("%.2f", newConf), voteAfter, dMin);
+                    newDir, String.format("%.2f", newConf), voteAfter, lightOffsetMin);
         }
 
         // 写回 forecastCacheBySymbol（语义：父重周期「当前最新」快照，供下一个轻周期继续 diff）
@@ -551,6 +582,9 @@ public class QuantLightCycleService {
         try {
             String newOverall = ConsensusBuilder.buildDecision(newHeavyList);
             String newRisk = ConsensusBuilder.buildRiskStatus(newHeavyList);
+            if (vetoApplied) {
+                newRisk = mergeRiskStatus(newRisk, ADJ_LIGHT_VETO);
+            }
             forecastCycleMapper.updateDecisionAndRisk(heavyCycleId, newOverall, newRisk);
             log.info("[LightCycle.correct] 重算重周期 cycle decision={} risk={} heavyCycleId={}",
                     newOverall, newRisk, heavyCycleId);
@@ -581,8 +615,6 @@ public class QuantLightCycleService {
         }
         return allVotes;
     }
-
-    private static final String[] HORIZONS = {"0_10", "10_20", "20_30"};
 
     private List<HorizonForecast> runJudges(List<AgentVote> allVotes, BigDecimal lastPrice,
                                              List<String> qualityFlags,
