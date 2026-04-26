@@ -82,10 +82,6 @@ public class MomentumAgent implements FactorAgent {
         return clamp(score);
     }
 
-    private double singleTfScore(Map<String, Object> ind) {
-        return singleTfScore(ind, MarketRegime.RANGE);
-    }
-
     private double singleTfScore(Map<String, Object> ind, MarketRegime regime) {
         double score = 0;
 
@@ -217,7 +213,7 @@ public class MomentumAgent implements FactorAgent {
                     primaryPresent ? primary : fallback(indicators, "5m", "1h", "4h"),
                     secondaryPresent ? secondary : fallback(indicators, "4h", "5m", "1d"),
                     true);
-            default -> new TimeframePair(horizon, primary, secondary, !primaryPresent || !secondaryPresent);
+            default -> new TimeframePair(horizon, primary, secondary, true);
         };
     }
 
@@ -259,5 +255,5 @@ public class MomentumAgent implements FactorAgent {
         return null;
     }
 
-    private static double clamp(double v) { return Math.max(-1, Math.min(1, v)); }
+    private static double clamp(double v) { return Math.clamp(v, -1, 1); }
 }

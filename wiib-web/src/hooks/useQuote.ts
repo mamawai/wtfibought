@@ -1,6 +1,5 @@
-import { Client } from '@stomp/stompjs';
-import SockJS from 'sockjs-client';
 import { useEffect, useState } from 'react';
+import { subscribe } from './stompClient';
 import type { Quote, DayTick } from '../types';
 
 interface UseQuoteResult {
@@ -14,7 +13,6 @@ export function useQuote(stockCode: string | undefined, initialTicks?: DayTick[]
   const [quote, setQuote] = useState<Quote | null>(null);
   const [realtimeTicks, setRealtimeTicks] = useState<DayTick[]>([]);
 
-  // 初始化历史数据
   useEffect(() => {
     if (initialTicks && initialTicks.length > 0) {
       setRealtimeTicks([...initialTicks].slice(0, MAX_TICKS));
@@ -26,37 +24,18 @@ export function useQuote(stockCode: string | undefined, initialTicks?: DayTick[]
   useEffect(() => {
     if (!stockCode) return;
 
-    const client = new Client({
-      webSocketFactory: () => new SockJS('/ws/quotes'),
-      reconnectDelay: 5000,
-      onConnect: () => {
-        console.log('行情WebSocket已连接');
-        client.subscribe(`/topic/quote/${stockCode}`, (msg) => {
-          const data: Quote = JSON.parse(msg.body);
-          setQuote(data);
-
-          // 直接追加到末尾（按顺序填充下一个槽位）
-          setRealtimeTicks((prev) => {
-            if (prev.length >= MAX_TICKS) {
-              return prev;
-            }
-            return [...prev, { time: '', price: data.price }];
-          });
+    const unsub = subscribe(`/topic/quote/${stockCode}`, (msg) => {
+      try {
+        const data: Quote = JSON.parse(msg.body);
+        setQuote(data);
+        setRealtimeTicks((prev) => {
+          if (prev.length >= MAX_TICKS) return prev;
+          return [...prev, { time: '', price: data.price }];
         });
-      },
-      onDisconnect: () => {
-        console.log('行情WebSocket已断开');
-      },
-      onStompError: (frame) => {
-        console.error('STOMP错误:', frame);
-      },
+      } catch { /* ignore */ }
     });
 
-    client.activate();
-
-    return () => {
-      client.deactivate();
-    };
+    return unsub;
   }, [stockCode]);
 
   return { quote, realtimeTicks };

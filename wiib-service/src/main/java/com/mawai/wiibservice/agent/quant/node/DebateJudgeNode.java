@@ -508,10 +508,6 @@ public class DebateJudgeNode implements NodeAction {
         return defaultProbs;
     }
 
-    private Map<String, Object> buildDebateSummaryOnly(String bull, String bear, String judge) {
-        return buildDebateSummaryOnly(bull, bear, judge, false);
-    }
-
     private Map<String, Object> buildDebateSummaryOnly(String bull, String bear, String judge, boolean shadowMode) {
         Map<String, Object> result = new HashMap<>();
         String key = shadowMode ? "debate_shadow_summary" : "debate_summary";

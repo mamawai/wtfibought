@@ -26,6 +26,11 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => {
     const { code, msg, data } = res.data;
+    if (code === 401) {
+      localStorage.removeItem('wiib-user');
+      window.location.href = '/login';
+      return Promise.reject(new Error(msg || '未登录'));
+    }
     if (code !== 0) {
       return Promise.reject(new Error(msg || '请求失败'));
     }

@@ -77,7 +77,7 @@ public class GenerateReportNode implements NodeAction {
                     .filter(f -> f.direction() != Direction.NO_TRADE)
                     .mapToDouble(HorizonForecast::confidence)
                     .max().orElse(forecasts.stream().mapToDouble(HorizonForecast::confidence).average().orElse(0)) * 100);
-        @SuppressWarnings("unchecked")
+
         Map<String, Object[]> debateProbs =
                 (Map<String, Object[]>) state.value("debate_probs").orElse(Map.of());
 
@@ -341,20 +341,6 @@ public class GenerateReportNode implements NodeAction {
     private String getOrDefault(JSONObject obj, String key, String defaultValue) {
         String val = obj.getString(key);
         return (val != null && !val.isBlank()) ? val : defaultValue;
-    }
-
-    /**
-     * LLM 可能返回 importantNews 为字符串数组而非对象数组，统一归一化为对象数组。
-     */
-    private void normalizeImportantNews(JSONObject obj) {
-        JSONArray arr = obj.getJSONArray("importantNews");
-        if (arr == null || arr.isEmpty()) return;
-        for (int i = 0; i < arr.size(); i++) {
-            Object item = arr.get(i);
-            if (item instanceof String s) {
-                arr.set(i, new JSONObject(Map.of("title", s, "sentiment", "", "summary", s)));
-            }
-        }
     }
 
     private String buildVoteSummary(List<AgentVote> votes) {
@@ -681,10 +667,6 @@ public class GenerateReportNode implements NodeAction {
             }
         }
         return null;
-    }
-
-    private String formatDirectionCn(HorizonForecast forecast) {
-        return forecast == null ? "观望" : formatDirectionCn(forecast.direction());
     }
 
     private String formatDirectionCn(Direction direction) {
