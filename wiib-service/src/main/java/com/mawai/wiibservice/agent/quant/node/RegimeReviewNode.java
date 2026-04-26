@@ -24,6 +24,7 @@ import java.util.*;
 public class RegimeReviewNode implements NodeAction {
 
     private static final int REVIEW_CALLS = 3;
+    private static final long REVIEW_TOTAL_TIMEOUT_MS = 30_000L;
     private static final double LOW_CONFIDENCE_STDDEV = 0.15;
 
     private final ChatClient chatClient;
@@ -62,25 +63,61 @@ public class RegimeReviewNode implements NodeAction {
 
         try {
             String prompt = buildPrompt(snapshot, indicatorMap, priceChangeMap);
-            List<ReviewCandidate> reviews = new ArrayList<>(REVIEW_CALLS);
-            for (int i = 1; i <= REVIEW_CALLS; i++) {
-                try {
-                    String response = callMode.call(chatClient, prompt);
-                    ReviewCandidate review = parseReview(response, ruleRegime);
-                    if (review != null) {
-                        reviews.add(review);
-                    }
-                    log.info("[Q2.5.1] LLM审核样本 {}/{} 返回 {}chars",
-                            i, REVIEW_CALLS, response != null ? response.length() : 0);
-                } catch (Exception e) {
-                    log.warn("[Q2.5] LLM regime审核样本 {}/{} 失败: {}", i, REVIEW_CALLS, e.getMessage());
-                }
-            }
+            List<ReviewCandidate> reviews = runReviewCalls(prompt, ruleRegime);
 
             return applyReview(snapshot, ruleRegime, reviews, startMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("[Q2.5] LLM regime审核被中断，保留规则检测结果");
+            return rebuildWithDefaults(snapshot);
         } catch (Exception e) {
             log.warn("[Q2.5] LLM regime审核失败，保留规则检测结果: {}", e.getMessage());
             return rebuildWithDefaults(snapshot);
+        }
+    }
+
+    private List<ReviewCandidate> runReviewCalls(String prompt, MarketRegime ruleRegime) throws InterruptedException {
+        List<ReviewCandidate> reviews = Collections.synchronizedList(new ArrayList<>(REVIEW_CALLS));
+        List<Thread> workers = new ArrayList<>(REVIEW_CALLS);
+
+        for (int i = 1; i <= REVIEW_CALLS; i++) {
+            int sampleNo = i;
+            Thread worker = Thread.ofVirtual()
+                    .name("regime-review-" + sampleNo)
+                    .start(() -> runReviewSample(sampleNo, prompt, ruleRegime, reviews));
+            workers.add(worker);
+        }
+
+        long deadline = System.currentTimeMillis() + REVIEW_TOTAL_TIMEOUT_MS;
+        for (Thread worker : workers) {
+            long remainingMs = deadline - System.currentTimeMillis();
+            if (remainingMs <= 0) break;
+            worker.join(remainingMs);
+        }
+
+        for (int i = 0; i < workers.size(); i++) {
+            Thread worker = workers.get(i);
+            if (worker.isAlive()) {
+                worker.interrupt();
+                log.warn("[Q2.5] LLM regime审核样本 {}/{} 超时取消", i + 1, REVIEW_CALLS);
+            }
+        }
+
+        return List.copyOf(reviews);
+    }
+
+    private void runReviewSample(int sampleNo, String prompt, MarketRegime ruleRegime,
+                                 List<ReviewCandidate> reviews) {
+        try {
+            String response = callMode.call(chatClient, prompt);
+            ReviewCandidate review = parseReview(response, ruleRegime);
+            if (review != null) {
+                reviews.add(review);
+            }
+            log.info("[Q2.5.1] LLM审核样本 {}/{} 返回 {}chars",
+                    sampleNo, REVIEW_CALLS, response != null ? response.length() : 0);
+        } catch (Exception e) {
+            log.warn("[Q2.5] LLM regime审核样本 {}/{} 失败: {}", sampleNo, REVIEW_CALLS, e.getMessage());
         }
     }
 

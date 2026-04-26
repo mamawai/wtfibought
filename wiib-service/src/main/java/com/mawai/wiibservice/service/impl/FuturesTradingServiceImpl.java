@@ -61,7 +61,10 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         getAndValidateUser(userId);
 
         BigDecimal price = getPrice(request.getSymbol());
-        int leverage = normalizeLeverage(request.getLeverage(), tradingConfig.getFutures().getMaxLeverage());
+        int requestedLeverage = request.getLeverage() != null ? request.getLeverage() : 1;
+        int leverage = normalizeLeverage(request.getLeverage(),
+                tradingConfig.getFutures().getMaxLeverage(),
+                tradingConfig.getFutures().maintenanceMarginRateForLeverage(requestedLeverage));
 
         if ("MARKET".equals(request.getOrderType())) {
             return executeMarketOpen(userId, request, price, leverage);
@@ -402,7 +405,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         if (affected2 == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
 
         BigDecimal newMargin = position.getMargin().add(amount);
-        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), position.getEntryPrice(), newMargin, position.getQuantity());
+        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), position.getEntryPrice(),
+                newMargin, position.getQuantity(), position.getLeverage());
         positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
 
         log.info("futures追加保证金 userId={} posId={} amount={}", userId, request.getPositionId(), amount);
@@ -463,7 +467,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         if (affected2 == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
 
         BigDecimal newMargin = position.getMargin().add(addMargin);
-        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), newEntryPrice, newMargin, newQty);
+        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), newEntryPrice, newMargin,
+                newQty, position.getLeverage());
         positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
 
         FuturesOrder order = new FuturesOrder();
@@ -589,10 +594,12 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         BigDecimal effectiveMargin = pos.getMargin().add(unrealizedPnl);
         dto.setEffectiveMargin(effectiveMargin);
 
-        BigDecimal maintenanceMargin = positionValue.multiply(tradingConfig.getFutures().getMaintenanceMarginRate());
+        BigDecimal maintenanceMargin = positionValue.multiply(
+                tradingConfig.getFutures().maintenanceMarginRateForLeverage(pos.getLeverage()));
         dto.setMaintenanceMargin(maintenanceMargin);
 
-        BigDecimal liquidationPrice = positionIndexService.calcStaticLiqPrice(pos.getSide(), pos.getEntryPrice(), pos.getMargin(), pos.getQuantity());
+        BigDecimal liquidationPrice = positionIndexService.calcStaticLiqPrice(pos.getSide(), pos.getEntryPrice(),
+                pos.getMargin(), pos.getQuantity(), pos.getLeverage());
         dto.setLiquidationPrice(liquidationPrice);
 
         BigDecimal entryValue = pos.getEntryPrice().multiply(pos.getQuantity());

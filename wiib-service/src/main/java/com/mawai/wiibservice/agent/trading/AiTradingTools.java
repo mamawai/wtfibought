@@ -181,7 +181,7 @@ public class AiTradingTools implements TradingOperations {
     }
 
     @Override
-    @Tool(description = "开仓下单，支持市价和限价。必须设1个止损和1个止盈，各覆盖全部仓位。杠杆5-50倍，单次保证金≥余额1%（最低100USDT）且不超余额35%，最多3仓位，同向最多2仓位。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
+    @Tool(description = "开仓下单，支持市价和限价。必须设1个止损和1个止盈，各覆盖全部仓位。杠杆5-50倍，单次保证金≥余额1%（最低100USDT）且不超余额35%，最多2个持仓。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
     public String openPosition(
             @ToolParam(description = "方向：LONG或SHORT") String side,
             @ToolParam(description = "数量（币的数量，如0.01个BTC）") BigDecimal quantity,
@@ -267,7 +267,7 @@ public class AiTradingTools implements TradingOperations {
             return "错误：名义价值" + positionValue + " USDT太小，最低" + MIN_POSITION_VALUE + " USDT，请加大仓位";
         }
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
-        // 动态最低保证金：max(200, 余额×2%)
+        // 动态最低保证金：max(100, 余额×1%)
         BigDecimal dynamicMinMargin = user.getBalance().multiply(MIN_MARGIN_RATIO)
                 .max(MIN_MARGIN_FLOOR).setScale(2, RoundingMode.HALF_UP);
         if (margin.compareTo(dynamicMinMargin) < 0 && user.getBalance().compareTo(dynamicMinMargin) >= 0) {
@@ -275,7 +275,7 @@ public class AiTradingTools implements TradingOperations {
         }
         BigDecimal maxMargin = user.getBalance().multiply(MAX_POSITION_RATIO);
         if (margin.compareTo(maxMargin) > 0) {
-            return "错误：保证金" + margin + "超过余额30%上限" + maxMargin.setScale(2, RoundingMode.HALF_UP);
+            return "错误：保证金" + margin + "超过余额35%上限" + maxMargin.setScale(2, RoundingMode.HALF_UP);
         }
 
         // 构造请求
