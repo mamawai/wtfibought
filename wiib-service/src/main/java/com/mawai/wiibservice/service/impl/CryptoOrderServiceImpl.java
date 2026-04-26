@@ -185,7 +185,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
 
     @Transactional(rollbackFor = Exception.class)
     protected CryptoOrderResponse doCancelOrder(Long userId, Long orderId) {
-        User user = getAndValidateUser(userId);
+        getAndValidateUser(userId);
         CryptoOrder order = baseMapper.selectById(orderId);
         if (order == null || !order.getUserId().equals(userId)) throw new BizException(ErrorCode.ORDER_NOT_FOUND);
         if (!OrderStatus.PENDING.getCode().equals(order.getStatus())) throw new BizException(ErrorCode.ORDER_CANNOT_CANCEL);

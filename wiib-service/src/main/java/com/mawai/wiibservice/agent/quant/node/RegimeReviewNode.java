@@ -49,7 +49,6 @@ public class RegimeReviewNode implements NodeAction {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public Map<String, Object> apply(OverAllState state) {
         long startMs = System.currentTimeMillis();
         FeatureSnapshot snapshot =
@@ -224,7 +223,7 @@ public class RegimeReviewNode implements NodeAction {
             MarketRegime finalRegime = llmRegime;
             if (llmRegime != ruleRegime) {
                 // 安全约束：SHOCK只能由规则触发（ATR突增是客观事实），LLM不能凭空升级为SHOCK
-                if (llmRegime == MarketRegime.SHOCK && ruleRegime != MarketRegime.SHOCK) {
+                if (llmRegime == MarketRegime.SHOCK) {
                     log.info("[Q2.5.2] LLM建议SHOCK但规则未检测到ATR突增，忽略修正");
                     finalRegime = ruleRegime;
                 } else {
@@ -258,7 +257,7 @@ public class RegimeReviewNode implements NodeAction {
         JSONObject root = JSON.parseObject(json);
 
         String confirmedStr = root.getString("confirmedRegime");
-        double confidence = Math.max(0, Math.min(1, root.getDoubleValue("confidence")));
+        double confidence = Math.clamp(root.getDoubleValue("confidence"), 0, 1);
         String transitionSignal = root.getString("transitionSignal");
         if (transitionSignal == null || transitionSignal.isBlank()) transitionSignal = "NONE";
 
@@ -348,13 +347,12 @@ public class RegimeReviewNode implements NodeAction {
 
     private void appendIfPresent(StringBuilder sb, Map<String, Object> map, String key, String label) {
         Object v = map.get(key);
-        if (v == null) return;
-        if (v instanceof BigDecimal bd) {
-            sb.append(label).append("=").append(bd.setScale(2, RoundingMode.HALF_UP)).append(" ");
-        } else if (v instanceof Number n) {
-            sb.append(label).append("=").append(String.format("%.2f", n.doubleValue())).append(" ");
-        } else {
-            sb.append(label).append("=").append(v).append(" ");
+        switch (v) {
+            case null -> {
+            }
+            case BigDecimal bd -> sb.append(label).append("=").append(bd.setScale(2, RoundingMode.HALF_UP)).append(" ");
+            case Number n -> sb.append(label).append("=").append(String.format("%.2f", n.doubleValue())).append(" ");
+            default -> sb.append(label).append("=").append(v).append(" ");
         }
     }
 }

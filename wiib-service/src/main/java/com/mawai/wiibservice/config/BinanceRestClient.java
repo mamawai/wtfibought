@@ -265,7 +265,7 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
                 .queryParam("api_key", coinDeskProperties.getNewsApiKey());
         try {
             URI uri = builder.build().toUri();
-            log.info("CryptoNews API: {}", uri);
+            log.info("CryptoNews API: symbol={}, limit={}", symbol, limit);
             return restTemplate.getForObject(uri, String.class);
         } catch (Exception e) {
             log.warn("getCryptoNews failed: {}", e.getMessage());
@@ -281,7 +281,7 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
                 .queryParam("api_key", coinDeskProperties.getNewsApiKey());
         try {
             URI uri = builder.build().toUri();
-            log.info("Article detail API: {}", uri);
+            log.info("Article detail API: sourceKey={}, guid={}", sourceKey, guid);
             return restTemplate.getForObject(uri, String.class);
         } catch (Exception e) {
             log.warn("getArticleDetail failed: {}", e.getMessage());

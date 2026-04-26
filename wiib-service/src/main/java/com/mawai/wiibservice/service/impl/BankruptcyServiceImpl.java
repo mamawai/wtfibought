@@ -1,8 +1,11 @@
 package com.mawai.wiibservice.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.mawai.wiibcommon.dto.OptionPositionDTO;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
+import com.mawai.wiibcommon.entity.OptionPosition;
+import com.mawai.wiibcommon.entity.PredictionBet;
 import com.mawai.wiibcommon.entity.Settlement;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
@@ -13,14 +16,18 @@ import com.mawai.wiibservice.mapper.CryptoOrderMapper;
 import com.mawai.wiibservice.mapper.CryptoPositionMapper;
 import com.mawai.wiibservice.mapper.FuturesOrderMapper;
 import com.mawai.wiibservice.mapper.FuturesPositionMapper;
+import com.mawai.wiibservice.mapper.OptionOrderMapper;
+import com.mawai.wiibservice.mapper.OptionPositionMapper;
 import com.mawai.wiibservice.mapper.OrderMapper;
 import com.mawai.wiibservice.mapper.PositionMapper;
+import com.mawai.wiibservice.mapper.PredictionBetMapper;
 import com.mawai.wiibservice.mapper.SettlementMapper;
 import com.mawai.wiibservice.mapper.UserMapper;
 import com.mawai.wiibservice.service.BankruptcyService;
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.CryptoPositionService;
 import com.mawai.wiibservice.service.FuturesPositionIndexService;
+import com.mawai.wiibservice.service.OptionPositionService;
 import com.mawai.wiibservice.service.PositionService;
 import com.mawai.wiibservice.service.SettlementService;
 import com.mawai.wiibservice.service.UserService;
@@ -55,6 +62,10 @@ public class BankruptcyServiceImpl implements BankruptcyService {
     private final FuturesPositionMapper futuresPositionMapper;
     private final CacheService cacheService;
     private final FuturesPositionIndexService futuresPositionIndexService;
+    private final OptionOrderMapper optionOrderMapper;
+    private final OptionPositionMapper optionPositionMapper;
+    private final OptionPositionService optionPositionService;
+    private final PredictionBetMapper predictionBetMapper;
 
     @Value("${trading.initial-balance:100000}")
     private BigDecimal initialBalance;
@@ -131,6 +142,13 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         BigDecimal futuresMargin = futuresPositionMapper.sumOpenMargin(userId);
         marketValue = marketValue.add(futuresMargin);
 
+        // 期权持仓市值
+        for (OptionPositionDTO op : optionPositionService.getUserPositions(userId)) {
+            marketValue = marketValue.add(op.getMarketValue());
+        }
+
+        // 预测按立刻卖出价估值, 无bid视为不可变现
+        marketValue = marketValue.add(calculatePredictionMarketValue(userId));
         BigDecimal pendingSettlement = settlementService.getPendingSettlements(userId).stream()
                 .map(Settlement::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -164,6 +182,12 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         futuresPositionMapper.closeOpenByUserId(userId, "LIQUIDATED");
         settlementMapper.deletePendingByUserId(userId);
 
+        // 期权: 取消挂单 + 清空持仓
+        optionOrderMapper.cancelPendingOrdersByUserId(userId);
+        optionPositionMapper.delete(new LambdaQueryWrapper<OptionPosition>()
+                .eq(OptionPosition::getUserId, userId));
+        // 预测: 取消活跃投注, 爆仓不退款
+        predictionBetMapper.cancelActiveByUserId(userId);
         log.warn("用户爆仓 userId={} resetDate={}", userId, resetDate);
     }
 
@@ -183,7 +207,30 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         futuresPositionMapper.closeOpenByUserId(userId, "CLOSED");
         settlementMapper.deletePendingByUserId(userId);
 
+        // 期权: 取消挂单 + 清空持仓
+        optionOrderMapper.cancelPendingOrdersByUserId(userId);
+        optionPositionMapper.delete(new LambdaQueryWrapper<OptionPosition>()
+                .eq(OptionPosition::getUserId, userId));
+        // 预测: 取消残留活跃投注(防御性, 正常流程 liquidateUser 已清理)
+        predictionBetMapper.cancelActiveByUserId(userId);
         log.info("用户恢复初始资金 userId={} balance={}", userId, initialBalance);
+    }
+
+    private BigDecimal calculatePredictionMarketValue(Long userId) {
+        List<PredictionBet> activeBets = predictionBetMapper.selectList(
+                new LambdaQueryWrapper<PredictionBet>()
+                        .eq(PredictionBet::getUserId, userId)
+                        .eq(PredictionBet::getStatus, "ACTIVE"));
+
+        BigDecimal total = BigDecimal.ZERO;
+        for (PredictionBet bet : activeBets) {
+            BigDecimal bid = cacheService.getPredictionBid(bet.getSide());
+            if (bid == null || bid.compareTo(BigDecimal.ZERO) <= 0 || bet.getContracts() == null) {
+                continue;
+            }
+            total = total.add(bet.getContracts().multiply(bid));
+        }
+        return total;
     }
 
     private void cleanupFuturesRedisIndexes(Long userId) {

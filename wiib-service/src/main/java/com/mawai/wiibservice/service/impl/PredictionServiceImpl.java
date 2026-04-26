@@ -361,6 +361,7 @@ public class PredictionServiceImpl implements PredictionService {
                     settled++;
                     realizedPnl = realizedPnl.add(bet.getPayout().subtract(bet.getCost()));
                 }
+                case "CANCELLED" -> realizedPnl = realizedPnl.subtract(bet.getCost());
                 case "ACTIVE" -> {
                     active++;
                     activeCost = activeCost.add(bet.getCost());

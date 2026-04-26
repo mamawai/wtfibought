@@ -730,7 +730,7 @@ COMMENT ON COLUMN prediction_bet.cost IS '购买成本';
 COMMENT ON COLUMN prediction_bet.avg_price IS '平均买入价';
 COMMENT ON COLUMN prediction_bet.payout IS '结算赔付';
 COMMENT ON COLUMN prediction_bet.window_start IS '窗口起始时间戳(秒)';
-COMMENT ON COLUMN prediction_bet.status IS '状态：ACTIVE/WON/LOST/DRAW/SOLD';
+COMMENT ON COLUMN prediction_bet.status IS '状态：ACTIVE/WON/LOST/DRAW/SOLD/CANCELLED';
 
 CREATE INDEX idx_pred_bet_round ON prediction_bet(round_id, status);
 CREATE INDEX idx_pred_bet_user ON prediction_bet(user_id, created_at DESC);
