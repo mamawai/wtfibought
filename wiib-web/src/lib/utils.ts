@@ -28,6 +28,7 @@ const RISK_LABEL: Record<string, string> = {
   HIGH_DISAGREEMENT: 'agent分歧大',
   PARTIAL_DATA: '数据不全',
   CAUTIOUS: '谨慎',
+  LIGHT_VETO: '轻周期否决',
 };
 
 export function translateRiskTag(tag: string): string {
