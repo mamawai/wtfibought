@@ -42,6 +42,7 @@ public class CircuitBreakerService {
     @Value("${circuit.breaker.enabled:${CIRCUIT_BREAKER_ENABLED:true}}")
     private boolean enabled;
 
+    /** 开仓前统一入口：账户熔断优先，其次检查单路径是否已被禁用。 */
     public OpenDecision allowOpen(Long userId, String strategyPath) {
         if (!enabled) return OpenDecision.permit();
 
@@ -67,6 +68,7 @@ public class CircuitBreakerService {
         return OpenDecision.permit();
     }
 
+    /** Admin 看板查询当前熔断状态；查询时顺手刷新一次 L3 回撤。 */
     public BreakerStatus status(Long userId) {
         if (!enabled) {
             return new BreakerStatus(false, false, "DISABLED", null, null, null, null);
@@ -81,6 +83,7 @@ public class CircuitBreakerService {
         return new BreakerStatus(true, !"NORMAL".equals(level), level, l1, l2, l3, cacheService.get(peakKey(userId)));
     }
 
+    /** 平仓归因落库后调用，刷新 L1 日亏损、L2 连亏和 L3 回撤状态。 */
     public void onTradeClosed(FuturesPosition position) {
         if (!enabled || position == null || position.getUserId() == null) return;
 
@@ -89,6 +92,7 @@ public class CircuitBreakerService {
         refreshDrawdownBreaker(position.getUserId());
     }
 
+    /** L1：统计今天已平仓亏损额，超过初始权益 3% 后熔断到明天零点。 */
     private void refreshDailyLossBreaker(Long userId) {
         LocalDateTime todayStart = LocalDate.now().atStartOfDay();
         List<TradeAttribution> rows = tradeAttributionMapper.selectByUserSince(userId, todayStart);
@@ -106,6 +110,7 @@ public class CircuitBreakerService {
         log.warn("[CircuitBreaker] L1 triggered userId={} {}", userId, reason);
     }
 
+    /** L2：最近 3 笔全为亏损时冷却 4 小时。 */
     private void refreshLossStreakBreaker(Long userId) {
         List<TradeAttribution> rows = tradeAttributionMapper.selectLatestByUser(userId, L2_LOSS_STREAK);
         if (rows.size() < L2_LOSS_STREAK) return;
@@ -118,6 +123,7 @@ public class CircuitBreakerService {
         log.warn("[CircuitBreaker] L2 triggered userId={} {}", userId, reason);
     }
 
+    /** L3：用当前权益维护峰值，回撤超过 8% 后进入人工解除状态。 */
     private void refreshDrawdownBreaker(Long userId) {
         BigDecimal equity = calcTotalEquity(userId);
         String peakRaw = cacheService.get(peakKey(userId));
@@ -135,6 +141,7 @@ public class CircuitBreakerService {
         log.warn("[CircuitBreaker] L3 triggered userId={} {}", userId, reason);
     }
 
+    /** 计算账户权益：现金余额 + 冻结余额 + 开仓保证金 + 按最新 mark/期货价估算的未实现盈亏。 */
     private BigDecimal calcTotalEquity(Long userId) {
         User user = userMapper.selectById(userId);
         BigDecimal equity = user != null ? user.getBalance().add(user.getFrozenBalance()) : BigDecimal.ZERO;
@@ -150,6 +157,7 @@ public class CircuitBreakerService {
         return equity;
     }
 
+    /** 按方向计算单仓未实现盈亏，只用于熔断权益估算。 */
     private BigDecimal calcPnl(FuturesPosition position, BigDecimal price) {
         BigDecimal pnl = "LONG".equals(position.getSide())
                 ? price.subtract(position.getEntryPrice()).multiply(position.getQuantity())
@@ -157,26 +165,32 @@ public class CircuitBreakerService {
         return pnl.setScale(2, RoundingMode.HALF_UP);
     }
 
+    /** L1 Redis key 带日期，便于自然日自动恢复。 */
     private String l1Key(Long userId) {
         return "circuit:breaker:l1:" + userId + ":" + LocalDate.now();
     }
 
+    /** L2 Redis key 不带日期，靠 4h TTL 自动恢复。 */
     private String l2Key(Long userId) {
         return "circuit:breaker:l2:" + userId;
     }
 
+    /** L3 Redis key 无 TTL，需要人工清理。 */
     private String l3Key(Long userId) {
         return "circuit:breaker:l3:" + userId;
     }
 
+    /** 账户权益峰值 key，供 L3 回撤计算使用。 */
     private String peakKey(Long userId) {
         return "circuit:breaker:peak:" + userId;
     }
 
+    /** 金额日志统一保留 2 位，方便人工核对。 */
     private String fmt(BigDecimal value) {
         return value.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 
+    /** 兼容旧 memo 和新 [Strategy-X] 标签，只返回三条实盘路径。 */
     private String normalizeStrategyPath(String raw) {
         if (raw == null || raw.isBlank()) return null;
         String path = extractStrategyTag(raw.trim());
@@ -188,6 +202,7 @@ public class CircuitBreakerService {
         };
     }
 
+    /** 从 memo 中抽取 [Strategy-X] 的 X；没有标签时按旧字符串处理。 */
     private String extractStrategyTag(String raw) {
         int start = raw.indexOf("[Strategy-");
         if (start < 0) return raw;

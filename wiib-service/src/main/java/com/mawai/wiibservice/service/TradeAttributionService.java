@@ -40,6 +40,7 @@ public class TradeAttributionService {
     @Value("${trade.attribution.enabled:${TRADE_ATTRIBUTION_ENABLED:true}}")
     private boolean enabled;
 
+    /** 全平后写交易归因；失败只记日志，不能影响真实平仓流程。 */
     public void recordExit(FuturesPosition position, BigDecimal pnl, String exitReason) {
         if (!enabled || position == null) return;
 
@@ -78,6 +79,7 @@ public class TradeAttributionService {
         }
     }
 
+    /** 每小时聚合近 7 天路径表现到 Redis，供轻量看板/告警读取。 */
     @Scheduled(cron = "0 0 * * * *")
     public void aggregatePathStats() {
         if (!enabled) return;
@@ -104,6 +106,7 @@ public class TradeAttributionService {
         log.info("[TradeAttr] hourly stats refreshed rows={}", rows.size());
     }
 
+    /** 检查单路径最近连续亏损笔数，达到阈值后落库禁用该路径。 */
     public void checkConsecutiveLoss(String strategyPath) {
         List<TradeAttribution> rows = tradeAttributionMapper.selectList(new LambdaQueryWrapper<TradeAttribution>()
                 .select(TradeAttribution::getPnl)
@@ -140,6 +143,7 @@ public class TradeAttributionService {
         }
     }
 
+    /** 保存入场时能从 futures_position 还原的关键上下文，后续可补更细因子。 */
     private String buildEntryFactorsJson(FuturesPosition position, String strategyPath) {
         Map<String, Object> factors = new LinkedHashMap<>();
         factors.put("strategyPath", strategyPath);
@@ -155,6 +159,7 @@ public class TradeAttributionService {
         return JSON.toJSONString(factors);
     }
 
+    /** 计算路径基础统计：样本、胜率、EV、总盈亏和简化 sharpe。 */
     private Map<String, Object> calcStats(String path, List<BigDecimal> pnlList) {
         int samples = pnlList.size();
         double total = pnlList.stream().mapToDouble(BigDecimal::doubleValue).sum();
@@ -177,6 +182,7 @@ public class TradeAttributionService {
         return stats;
     }
 
+    /** 统一策略路径命名，兼容旧 TREND/MEAN_REVERSION memo。 */
     private String normalizeStrategyPath(String raw) {
         if (raw == null || raw.isBlank()) return null;
         String path = extractStrategyTag(raw.trim());
@@ -188,6 +194,7 @@ public class TradeAttributionService {
         };
     }
 
+    /** 从 memo 中抽取 [Strategy-X] 的 X；没有标签时按旧字符串处理。 */
     private String extractStrategyTag(String raw) {
         int start = raw.indexOf("[Strategy-");
         if (start < 0) return raw;
@@ -195,6 +202,7 @@ public class TradeAttributionService {
         return end > start ? raw.substring(start + "[Strategy-".length(), end) : raw;
     }
 
+    /** exitReason 只保留可枚举值；TP/SL 自动平仓拿不到来源时允许 UNKNOWN。 */
     private String normalizeExitReason(String reason) {
         if (reason == null || reason.isBlank()) return "UNKNOWN";
         String r = reason.trim().toUpperCase();

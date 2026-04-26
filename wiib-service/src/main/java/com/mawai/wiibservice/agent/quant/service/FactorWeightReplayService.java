@@ -45,6 +45,7 @@ public class FactorWeightReplayService {
     private final QuantForecastVerificationMapper verificationMapper;
     private final FactorWeightOverrideService weightOverrideService;
 
+    /** 使用历史 cycle/vote/verification 只读回放，对比调权前后的方向命中率。 */
     public ReplayReport replay(String symbol, LocalDateTime from, LocalDateTime to) {
         List<QuantForecastCycle> cycles = cycleMapper.selectBySymbolAndTimeRange(symbol, from, to);
         if (cycles.isEmpty()) {
@@ -116,6 +117,7 @@ public class FactorWeightReplayService {
         return report;
     }
 
+    /** 分块加载 AgentVote，避免大窗口 IN 条件过长。 */
     private Map<String, List<AgentVote>> loadVotes(List<String> cycleIds) {
         List<QuantAgentVote> rows = new ArrayList<>();
         for (List<String> chunk : chunks(cycleIds)) {
@@ -129,6 +131,7 @@ public class FactorWeightReplayService {
         return result;
     }
 
+    /** 分块加载后验验证结果，用 cycleId+horizon 作为匹配 key。 */
     private Map<String, QuantForecastVerification> loadVerifications(String symbol, List<String> cycleIds) {
         List<QuantForecastVerification> rows = new ArrayList<>();
         for (List<String> chunk : chunks(cycleIds)) {
@@ -143,6 +146,7 @@ public class FactorWeightReplayService {
         return result;
     }
 
+    /** 把持久化 vote 行还原成 HorizonJudge 使用的领域对象。 */
     private AgentVote toAgentVote(QuantAgentVote row) {
         return new AgentVote(row.getAgent(), row.getHorizon(), parseDirection(row.getDirection()),
                 decimal(row.getScore()), decimal(row.getConfidence()),
@@ -151,6 +155,7 @@ public class FactorWeightReplayService {
                 splitCodes(row.getReasonCodes()), splitCodes(row.getRiskFlags()));
     }
 
+    /** 从 cycle snapshot 取 lastPrice/regime/qualityFlags，缺失时回退为空上下文。 */
     private CycleContext parseCycleContext(QuantForecastCycle cycle) {
         if (cycle.getSnapshotJson() == null || cycle.getSnapshotJson().isBlank()) {
             return new CycleContext(null, List.of(), null);
@@ -170,6 +175,7 @@ public class FactorWeightReplayService {
         }
     }
 
+    /** 单个样本对比 baseline 和 override 是否交易、是否命中、方向是否改变。 */
     private SampleResult evaluateSample(Direction baseline, Direction override, int actualChangeBps) {
         boolean baselineTrade = baseline == Direction.LONG || baseline == Direction.SHORT;
         boolean overrideTrade = override == Direction.LONG || override == Direction.SHORT;
@@ -179,26 +185,31 @@ public class FactorWeightReplayService {
         return new SampleResult(baselineTrade, overrideTrade, baselineCorrect, overrideCorrect, changed);
     }
 
+    /** 判断方向是否命中；NO_TRADE 只有实际波动小于阈值才算正确。 */
     private boolean isCorrect(Direction direction, int actualChangeBps) {
         return (direction == Direction.LONG && actualChangeBps > 0)
                 || (direction == Direction.SHORT && actualChangeBps < 0)
                 || (direction == Direction.NO_TRADE && Math.abs(actualChangeBps) < NO_TRADE_THRESHOLD_BPS);
     }
 
+    /** 字符串方向转枚举，未知值按 NO_TRADE 处理。 */
     private Direction parseDirection(String raw) {
         if ("LONG".equals(raw)) return Direction.LONG;
         if ("SHORT".equals(raw)) return Direction.SHORT;
         return Direction.NO_TRADE;
     }
 
+    /** snapshot 中的 regime 字符串转枚举，空值保持 null。 */
     private MarketRegime parseRegime(String raw) {
         return raw == null || raw.isBlank() ? null : MarketRegime.valueOf(raw);
     }
 
+    /** BigDecimal 转 double，空值按 0 进入回放。 */
     private double decimal(BigDecimal value) {
         return value != null ? value.doubleValue() : 0;
     }
 
+    /** reason/risk 逗号串转去空格列表。 */
     private List<String> splitCodes(String raw) {
         if (raw == null || raw.isBlank()) {
             return List.of();
@@ -209,6 +220,7 @@ public class FactorWeightReplayService {
                 .toList();
     }
 
+    /** 把 cycleId 分块，控制一次查询的 IN 参数数量。 */
     private List<List<String>> chunks(List<String> values) {
         List<List<String>> chunks = new ArrayList<>();
         for (int i = 0; i < values.size(); i += QUERY_CHUNK_SIZE) {
@@ -217,6 +229,7 @@ public class FactorWeightReplayService {
         return chunks;
     }
 
+    /** cycleId+horizon 组合 key。 */
     private String key(String cycleId, String horizon) {
         return cycleId + "|" + horizon;
     }
@@ -270,6 +283,7 @@ public class FactorWeightReplayService {
             this.bucket = bucket;
         }
 
+        /** 累加单个样本的 baseline/override 对比结果。 */
         private void add(SampleResult sample) {
             samples++;
             if (sample.baselineTrade()) baselineTrades++;
@@ -281,6 +295,7 @@ public class FactorWeightReplayService {
             if (sample.baselineCorrect() && !sample.overrideCorrect()) worsenedSamples++;
         }
 
+        /** 输出当前 bucket 的命中率、差值和改变方向统计。 */
         private ReplayMetrics toMetrics() {
             double baselineHitRate = rate(baselineCorrect, samples);
             double overrideHitRate = rate(overrideCorrect, samples);
@@ -290,10 +305,12 @@ public class FactorWeightReplayService {
                     changedDirections, improvedSamples, worsenedSamples);
         }
 
+        /** 计算命中率并保留 4 位小数。 */
         private static double rate(int numerator, int denominator) {
             return denominator == 0 ? 0 : round4((double) numerator / denominator);
         }
 
+        /** 回放报告统一 4 位小数，便于人工比较。 */
         private static double round4(double value) {
             return Math.round(value * 10000.0) / 10000.0;
         }

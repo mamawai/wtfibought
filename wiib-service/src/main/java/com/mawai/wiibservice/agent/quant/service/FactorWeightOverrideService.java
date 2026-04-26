@@ -35,6 +35,7 @@ public class FactorWeightOverrideService {
         this.configResource = configResource;
     }
 
+    /** 启动时加载调权规则；开关关闭时配置错误只告警，不阻塞应用启动。 */
     @PostConstruct
     public void load() {
         FACTOR_WEIGHT_OVERRIDE_ENABLED = enabled;
@@ -70,14 +71,17 @@ public class FactorWeightOverrideService {
         }
     }
 
+    /** 返回当前 runtime 调权开关状态，Admin 可热切换这个静态值。 */
     public boolean isEnabled() {
         return FACTOR_WEIGHT_OVERRIDE_ENABLED;
     }
 
+    /** 按当前开关决定是否应用 agent+horizon+regime 倍率。 */
     public double apply(String agent, String horizon, MarketRegime regime, double baseWeight) {
         return apply(agent, horizon, regime, baseWeight, FACTOR_WEIGHT_OVERRIDE_ENABLED);
     }
 
+    /** 回放专用入口：允许显式指定是否启用 override，方便 baseline/override 对比。 */
     public double apply(String agent, String horizon, MarketRegime regime, double baseWeight, boolean overrideEnabled) {
         if (!overrideEnabled || regime == null) {
             return baseWeight;
@@ -86,6 +90,7 @@ public class FactorWeightOverrideService {
         return multiplier == null ? baseWeight : baseWeight * multiplier;
     }
 
+    /** 返回纯倍率值，主要用于日志/报告展示。 */
     public double multiplier(String agent, String horizon, MarketRegime regime) {
         if (!FACTOR_WEIGHT_OVERRIDE_ENABLED || regime == null) {
             return 1.0;
@@ -93,6 +98,7 @@ public class FactorWeightOverrideService {
         return multipliers.getOrDefault(key(agent, horizon, regime.name()), 1.0);
     }
 
+    /** 三元组规则 key，必须和 JSON 配置字段保持一致。 */
     private static String key(String agent, String horizon, String regime) {
         return agent + "|" + horizon + "|" + regime;
     }

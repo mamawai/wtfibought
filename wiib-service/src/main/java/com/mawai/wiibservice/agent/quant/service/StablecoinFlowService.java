@@ -43,6 +43,7 @@ public class StablecoinFlowService extends BaseRestTemplateConfig {
         collectOnce();
     }
 
+    /** 拉取 DeFiLlama 全市场稳定币供给，计算最近两期 USD 供给差值并落库。 */
     public void collectOnce() {
         try {
             String raw = restTemplate.getForObject(STABLECOIN_CHART_URL, String.class);
@@ -91,6 +92,7 @@ public class StablecoinFlowService extends BaseRestTemplateConfig {
         }
     }
 
+    /** 读取 DeFiLlama totalCirculatingUSD.peggedUSD，缺字段时交给上层降级。 */
     private BigDecimal readPeggedUsd(JSONObject point) {
         JSONObject total = point.getJSONObject("totalCirculatingUSD");
         return total != null ? total.getBigDecimal("peggedUSD") : null;
