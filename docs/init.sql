@@ -758,6 +758,28 @@ CREATE TABLE IF NOT EXISTS user_asset_snapshot (
 COMMENT ON TABLE user_asset_snapshot IS '用户资产每日快照';
 
 -- ============================================
+-- 外部因子时间序列表（shadow 采集原值）
+-- ============================================
+CREATE TABLE IF NOT EXISTS factor_history (
+    id BIGSERIAL PRIMARY KEY,
+    symbol VARCHAR(16) NOT NULL,
+    factor_name VARCHAR(64) NOT NULL,
+    factor_value DECIMAL(28,10),
+    observed_at TIMESTAMP NOT NULL,
+    metadata_json JSONB,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_factor_observation UNIQUE (symbol, factor_name, observed_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_factor_hist_symbol_factor_time
+    ON factor_history(symbol, factor_name, observed_at DESC);
+
+COMMENT ON TABLE factor_history IS '外部因子时间序列原值，shadow 采集供 B3 启用权重时计算分位';
+COMMENT ON COLUMN factor_history.factor_value IS '外部因子原值，DECIMAL(28,10) 防 OI/资金流大额溢出';
+COMMENT ON COLUMN factor_history.observed_at IS '数据观测时刻（非入库时刻，跨市场数据需考虑时区）';
+COMMENT ON COLUMN factor_history.metadata_json IS '可放原始 API response、stale 标记、source 名等';
+
+-- ============================================
 -- 量化预测：预测周期主表
 -- ============================================
 CREATE TABLE IF NOT EXISTS quant_forecast_cycle (
@@ -972,9 +994,9 @@ COMMENT ON TABLE quant_forecast_adjustment IS '轻周期对父重周期 forecast
 COMMENT ON COLUMN quant_forecast_adjustment.light_cycle_id IS '触发修正的轻周期 cycleId（light- 前缀）';
 COMMENT ON COLUMN quant_forecast_adjustment.heavy_cycle_id IS '被修正的父重周期 cycleId';
 COMMENT ON COLUMN quant_forecast_adjustment.light_horizon IS '轻周期发出信号的 horizon';
-COMMENT ON COLUMN quant_forecast_adjustment.heavy_horizon IS 'dMin 映射后落在的父重周期 horizon';
-COMMENT ON COLUMN quant_forecast_adjustment.adjust_type IS 'SAME_DIR_BOOST 同向加成 / OPPO_WEAK_PENALTY 反向弱削弱 / OPPO_STRONG_PENALTY 反向强削弱 / FLIP 翻盘';
-COMMENT ON COLUMN quant_forecast_adjustment.vote_count_after IS '本次写入后该 heavyHorizon 累计连续反转票数（翻盘或清零后为 0）';
+COMMENT ON COLUMN quant_forecast_adjustment.heavy_horizon IS '按半小时墙钟窗口映射后落在的父重周期 horizon';
+COMMENT ON COLUMN quant_forecast_adjustment.adjust_type IS 'SAME_DIR_BOOST 同向加成 / OPPO_WEAK_PENALTY 反向弱削弱 / OPPO_STRONG_PENALTY 反向强削弱 / LIGHT_VETO 轻周期否决 / FLIP 历史翻盘';
+COMMENT ON COLUMN quant_forecast_adjustment.vote_count_after IS '本次写入后该 heavyHorizon 累计连续反转票数（否决旧方向或清零后为 0）';
 
 CREATE INDEX idx_qfa_heavy_cycle ON quant_forecast_adjustment(heavy_cycle_id);
 CREATE INDEX idx_qfa_symbol_time ON quant_forecast_adjustment(symbol, created_at DESC);
@@ -1069,6 +1091,66 @@ COMMENT ON COLUMN ai_trading_decision.balance_after IS '操作后余额';
 CREATE INDEX idx_atd_symbol_time ON ai_trading_decision(symbol, created_at DESC);
 CREATE INDEX idx_atd_cycle ON ai_trading_decision(cycle_no);
 
+
+-- ============================================
+-- 交易归因表（真实平仓后写入）
+-- ============================================
+CREATE TABLE IF NOT EXISTS trade_attribution (
+    id BIGSERIAL PRIMARY KEY,
+    position_id BIGINT NOT NULL,
+    symbol VARCHAR(16) NOT NULL,
+    strategy_path VARCHAR(32) NOT NULL,
+    entry_time TIMESTAMP NOT NULL,
+    exit_time TIMESTAMP,
+    entry_factors_json JSONB,
+    pnl DECIMAL(18,8),
+    holding_minutes INT,
+    exit_reason VARCHAR(32),
+    CONSTRAINT ck_trade_attr_strategy_path
+        CHECK (strategy_path IN ('BREAKOUT', 'MR', 'LEGACY_TREND')),
+    CONSTRAINT ck_trade_attr_exit_reason
+        CHECK (exit_reason IS NULL OR exit_reason IN (
+            'TP', 'TRAILING', 'SL', 'TIMEOUT', 'REVERSAL', 'MANUAL', 'UNKNOWN'
+        ))
+);
+
+CREATE INDEX IF NOT EXISTS idx_trade_attr_path_time
+    ON trade_attribution(strategy_path, entry_time);
+
+CREATE INDEX IF NOT EXISTS idx_trade_attr_position
+    ON trade_attribution(position_id);
+
+COMMENT ON TABLE trade_attribution IS '交易归因，每平仓写一行；SHADOW_5OF7 不入此表';
+COMMENT ON COLUMN trade_attribution.position_id IS '关联 futures_position.id，保持 NOT NULL';
+COMMENT ON COLUMN trade_attribution.strategy_path IS '路径标签：BREAKOUT / MR / LEGACY_TREND';
+COMMENT ON COLUMN trade_attribution.entry_factors_json IS '入场时关键因子快照，best-effort JSON';
+COMMENT ON COLUMN trade_attribution.exit_reason IS 'best-effort 回填，自动触发场景允许 UNKNOWN';
+
+-- ============================================
+-- 策略路径状态表（自动禁用/人工解除持久化）
+-- ============================================
+CREATE TABLE IF NOT EXISTS strategy_path_status (
+    path VARCHAR(32) PRIMARY KEY,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    disabled_reason VARCHAR(256),
+    disabled_at TIMESTAMP,
+    consecutive_loss_count INT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_strategy_path_status_path
+        CHECK (path IN ('BREAKOUT', 'MR', 'LEGACY_TREND'))
+);
+
+COMMENT ON TABLE strategy_path_status IS '策略路径运行状态，自动禁用/人工解除均落库；不含 SHADOW_5OF7';
+COMMENT ON COLUMN strategy_path_status.path IS '实盘路径：BREAKOUT / MR / LEGACY_TREND';
+COMMENT ON COLUMN strategy_path_status.enabled IS 'false 表示该路径暂停开新仓';
+COMMENT ON COLUMN strategy_path_status.disabled_reason IS '自动禁用或人工禁用原因';
+COMMENT ON COLUMN strategy_path_status.consecutive_loss_count IS '路径级连续亏损计数';
+
+INSERT INTO strategy_path_status (path, enabled) VALUES
+    ('BREAKOUT', TRUE),
+    ('MR', TRUE),
+    ('LEGACY_TREND', TRUE)
+ON CONFLICT (path) DO NOTHING;
 
 -- ============================================
 -- Phase 0A 每日观察指标（由 Phase0aStatsCollectionTask 自动聚合）
