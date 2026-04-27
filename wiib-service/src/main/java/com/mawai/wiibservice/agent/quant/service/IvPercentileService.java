@@ -24,6 +24,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+/**
+ * ATM IV 历史 shadow 采集器。
+ *
+ * <p>每小时从 Deribit 期权簿取近月最接近现价的 call mark_iv，作为 ATM IV 原值写入
+ * {@code factor_history}。用于后续计算 30 天 IV 分位，当前不直接影响预测和开仓。</p>
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor

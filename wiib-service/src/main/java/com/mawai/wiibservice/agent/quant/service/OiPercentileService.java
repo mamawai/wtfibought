@@ -19,6 +19,12 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Map;
 
+/**
+ * OI 历史 shadow 采集器。
+ *
+ * <p>每小时从 Binance 补最近 24 根 1h 未平仓量，写入 {@code factor_history}，逐步形成 30 天窗口。
+ * 用于判断当前杠杆仓位是否拥挤；当前主链路仍使用实时 OI 变化，本类不直接开仓。</p>
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor

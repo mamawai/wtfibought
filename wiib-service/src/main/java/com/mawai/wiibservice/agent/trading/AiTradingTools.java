@@ -26,13 +26,13 @@ public class AiTradingTools implements TradingOperations {
     private static final int MAX_LEVERAGE = 50;
     private static final int MIN_LEVERAGE = 5;
     private static final BigDecimal MIN_POSITION_VALUE = new BigDecimal("5000");
+    // 工具层兜底上限：确定性执行器更严（15%），这里保留给手动/LLM工具调用防越界。
     private static final BigDecimal MAX_POSITION_RATIO = new BigDecimal("0.35");
     private static final BigDecimal MIN_MARGIN_FLOOR = new BigDecimal("100");
     private static final BigDecimal MIN_MARGIN_RATIO = new BigDecimal("0.01"); // 余额的1%
-    // Phase 0A 止血：3 → 2（仅交易 BTC+ETH 两个标的，2 已足够；同时限制全局风险暴露）
-    private static final int MAX_OPEN_POSITIONS = 2;
-    // 同向持仓上限：MAX_OPEN_POSITIONS=2 已是硬上限，该值仅作兜底（若未来扩标的可独立提升）
-    private static final int MAX_SAME_DIRECTION_POSITIONS = 3;
+    // 虚拟盘观察档：允许同币种同方向多次开仓，风险由每单SL距离反推仓位 + 保证金上限控制。
+    private static final int MAX_OPEN_POSITIONS = 6;
+    private static final int MAX_SAME_DIRECTION_POSITIONS = 6;
     // SL校验容差2bps：匹配执行器adjustForNoiseFloor，防价格漂移/BigDecimal精度误拒
     private static final BigDecimal SL_MIN_TOLERANCE = new BigDecimal("0.0002");
 
@@ -181,7 +181,7 @@ public class AiTradingTools implements TradingOperations {
     }
 
     @Override
-    @Tool(description = "开仓下单，支持市价和限价。必须设1个止损和1个止盈，各覆盖全部仓位。杠杆5-50倍，单次保证金≥余额1%（最低100USDT）且不超余额35%，最多2个持仓。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
+    @Tool(description = "开仓下单，支持市价和限价。必须设1个止损和1个止盈，各覆盖全部仓位。杠杆5-50倍，单次保证金≥余额1%（最低100USDT）且不超余额35%，最多6个持仓。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
     public String openPosition(
             @ToolParam(description = "方向：LONG或SHORT") String side,
             @ToolParam(description = "数量（币的数量，如0.01个BTC）") BigDecimal quantity,
