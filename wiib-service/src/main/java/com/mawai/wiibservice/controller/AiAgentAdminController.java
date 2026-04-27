@@ -9,6 +9,7 @@ import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibservice.agent.config.RuntimeFeatureToggleService;
 import com.mawai.wiibservice.agent.config.RuntimeToggleSnapshot;
 import com.mawai.wiibservice.agent.quant.memory.VerificationService;
+import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
 import com.mawai.wiibservice.agent.trading.SubmitStatus;
 import com.mawai.wiibservice.agent.trading.SymbolSubmitResult;
 import com.mawai.wiibservice.agent.trading.TradingCycleSubmitResult;
@@ -39,6 +40,7 @@ public class AiAgentAdminController {
     private final AiTradingScheduler aiTradingScheduler;
     private final VerificationService verificationService;
     private final RuntimeFeatureToggleService runtimeFeatureToggleService;
+    private final CircuitBreakerService circuitBreakerService;
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
 
@@ -325,6 +327,26 @@ public class AiAgentAdminController {
             runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_COOLDOWN_MINUTES,
                     req.getDrawdownCooldownMinutes(), operator, "admin trading-config");
         }
+        if (req.getCircuitBreakerEnabled() != null) {
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.CIRCUIT_BREAKER_ENABLED,
+                    req.getCircuitBreakerEnabled(), operator, "admin trading-config");
+        }
+        if (req.getCircuitBreakerL1DailyNetLossPct() != null) {
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.CIRCUIT_BREAKER_L1_DAILY_NET_LOSS_PCT,
+                    req.getCircuitBreakerL1DailyNetLossPct(), operator, "admin trading-config");
+        }
+        if (req.getCircuitBreakerL2LossStreak() != null) {
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.CIRCUIT_BREAKER_L2_LOSS_STREAK,
+                    req.getCircuitBreakerL2LossStreak(), operator, "admin trading-config");
+        }
+        if (req.getCircuitBreakerL2CooldownHours() != null) {
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.CIRCUIT_BREAKER_L2_COOLDOWN_HOURS,
+                    req.getCircuitBreakerL2CooldownHours(), operator, "admin trading-config");
+        }
+        if (req.getCircuitBreakerL3DrawdownPct() != null) {
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.CIRCUIT_BREAKER_L3_DRAWDOWN_PCT,
+                    req.getCircuitBreakerL3DrawdownPct(), operator, "admin trading-config");
+        }
         return Result.ok(buildTradingConfigResponse());
     }
 
@@ -345,13 +367,32 @@ public class AiAgentAdminController {
         if (req.getDrawdownProfitDrawdownMinBase() != null && req.getDrawdownProfitDrawdownMinBase() < 0) {
             return Result.fail("drawdownProfitDrawdownMinBase不能小于0");
         }
+        if (req.getCircuitBreakerL1DailyNetLossPct() != null
+                && !isPercentInRange(req.getCircuitBreakerL1DailyNetLossPct())) {
+            return Result.fail("circuitBreakerL1DailyNetLossPct必须在0到100之间");
+        }
+        if (req.getCircuitBreakerL2LossStreak() != null && req.getCircuitBreakerL2LossStreak() <= 0) {
+            return Result.fail("circuitBreakerL2LossStreak必须为正整数");
+        }
+        if (req.getCircuitBreakerL2CooldownHours() != null && req.getCircuitBreakerL2CooldownHours() <= 0) {
+            return Result.fail("circuitBreakerL2CooldownHours必须为正整数");
+        }
+        if (req.getCircuitBreakerL3DrawdownPct() != null
+                && !isPercentInRange(req.getCircuitBreakerL3DrawdownPct())) {
+            return Result.fail("circuitBreakerL3DrawdownPct必须在0到100之间");
+        }
         return null;
+    }
+
+    private boolean isPercentInRange(Double value) {
+        return value != null && value > 0 && value <= 100;
     }
 
     private TradingConfigResponse buildTradingConfigResponse() {
         RuntimeToggleSnapshot snapshot = runtimeFeatureToggleService.snapshot();
         RuntimeToggleSnapshot.TradingToggles trading = snapshot.trading();
         RuntimeToggleSnapshot.DrawdownSentinelToggles drawdown = snapshot.drawdown();
+        RuntimeToggleSnapshot.CircuitBreakerToggles breaker = snapshot.circuitBreaker();
         TradingConfigResponse resp = new TradingConfigResponse();
         resp.setLowVolTradingEnabled(trading.lowVolTradingEnabled());
         resp.setLegacyThreshold5of7Enabled(trading.legacyThreshold5of7Enabled());
@@ -362,6 +403,13 @@ public class AiAgentAdminController {
         resp.setDrawdownProfitDrawdownThresholdPct(drawdown.profitDrawdownThresholdPct());
         resp.setDrawdownProfitDrawdownMinBase(drawdown.profitDrawdownMinBase());
         resp.setDrawdownCooldownMinutes(drawdown.cooldownMinutes());
+        resp.setCircuitBreakerEnabled(circuitBreakerService.isEffectiveEnabled());
+        resp.setCircuitBreakerRuntimeEnabled(breaker.enabled());
+        resp.setCircuitBreakerPropertyEnabled(circuitBreakerService.isPropertyEnabled());
+        resp.setCircuitBreakerL1DailyNetLossPct(breaker.l1DailyNetLossPct());
+        resp.setCircuitBreakerL2LossStreak(breaker.l2LossStreak());
+        resp.setCircuitBreakerL2CooldownHours(breaker.l2CooldownHours());
+        resp.setCircuitBreakerL3DrawdownPct(breaker.l3DrawdownPct());
         return resp;
     }
 
@@ -432,6 +480,11 @@ public class AiAgentAdminController {
         private Double drawdownProfitDrawdownThresholdPct;
         private Double drawdownProfitDrawdownMinBase;
         private Integer drawdownCooldownMinutes;
+        private Boolean circuitBreakerEnabled;
+        private Double circuitBreakerL1DailyNetLossPct;
+        private Integer circuitBreakerL2LossStreak;
+        private Integer circuitBreakerL2CooldownHours;
+        private Double circuitBreakerL3DrawdownPct;
     }
 
     @Data
@@ -445,6 +498,13 @@ public class AiAgentAdminController {
         private Double drawdownProfitDrawdownThresholdPct;
         private Double drawdownProfitDrawdownMinBase;
         private Integer drawdownCooldownMinutes;
+        private Boolean circuitBreakerEnabled;
+        private Boolean circuitBreakerRuntimeEnabled;
+        private Boolean circuitBreakerPropertyEnabled;
+        private Double circuitBreakerL1DailyNetLossPct;
+        private Integer circuitBreakerL2LossStreak;
+        private Integer circuitBreakerL2CooldownHours;
+        private Double circuitBreakerL3DrawdownPct;
     }
 
     @Data

@@ -5,7 +5,8 @@ public record RuntimeToggleSnapshot(
         boolean debateJudgeShadowEnabled,
         boolean factorWeightOverrideEnabled,
         TradingToggles trading,
-        DrawdownSentinelToggles drawdown
+        DrawdownSentinelToggles drawdown,
+        CircuitBreakerToggles circuitBreaker
 ) {
     public record TradingToggles(
             boolean lowVolTradingEnabled,
@@ -20,5 +21,13 @@ public record RuntimeToggleSnapshot(
             double profitDrawdownThresholdPct,
             double profitDrawdownMinBase,
             int cooldownMinutes
+    ) {}
+
+    public record CircuitBreakerToggles(
+            boolean enabled,
+            double l1DailyNetLossPct,
+            int l2LossStreak,
+            int l2CooldownHours,
+            double l3DrawdownPct
     ) {}
 }

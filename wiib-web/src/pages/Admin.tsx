@@ -42,6 +42,7 @@ export function Admin() {
   // 交易运行时开关
   const [tradingConfig, setTradingConfig] = useState<TradingRuntimeConfig>({ lowVolTradingEnabled: false });
   const [drawdownDraft, setDrawdownDraft] = useState<TradingRuntimeConfig>({});
+  const [circuitBreakerDraft, setCircuitBreakerDraft] = useState<TradingRuntimeConfig>({});
 
   // 量化运行时开关
   const [quantConfig, setQuantConfig] = useState<QuantRuntimeConfig>({
@@ -96,6 +97,12 @@ export function Admin() {
         drawdownProfitDrawdownThresholdPct: c.drawdownProfitDrawdownThresholdPct,
         drawdownProfitDrawdownMinBase: c.drawdownProfitDrawdownMinBase,
         drawdownCooldownMinutes: c.drawdownCooldownMinutes,
+      });
+      setCircuitBreakerDraft({
+        circuitBreakerL1DailyNetLossPct: c.circuitBreakerL1DailyNetLossPct,
+        circuitBreakerL2LossStreak: c.circuitBreakerL2LossStreak,
+        circuitBreakerL2CooldownHours: c.circuitBreakerL2CooldownHours,
+        circuitBreakerL3DrawdownPct: c.circuitBreakerL3DrawdownPct,
       });
     } catch { /* ignore */ }
   }, []);
@@ -175,6 +182,23 @@ export function Admin() {
     finally { setActionLoading(null); }
   };
 
+  const toggleCircuitBreaker = async () => {
+    const runtimeEnabled = tradingConfig.circuitBreakerRuntimeEnabled ?? tradingConfig.circuitBreakerEnabled;
+    const next = !runtimeEnabled;
+    setActionLoading('toggleCircuitBreaker');
+    try {
+      const c = await adminApi.setTradingConfig({ circuitBreakerEnabled: next });
+      setTradingConfig(c);
+      toast(
+        next && c.circuitBreakerPropertyEnabled === false
+          ? '账户三级熔断 runtime 已开启，但环境总开关关闭，当前未生效'
+          : next ? '账户三级熔断：已开启' : '账户三级熔断：已关闭',
+        'success'
+      );
+    } catch { /* ignore */ }
+    finally { setActionLoading(null); }
+  };
+
   const toggleDebateJudge = async () => {
     const next = !quantConfig.debateJudgeEnabled;
     setActionLoading('toggleDebate');
@@ -210,6 +234,22 @@ export function Admin() {
         drawdownCooldownMinutes: c.drawdownCooldownMinutes,
       });
       toast('回撤哨兵参数已保存', 'success');
+    } catch (e) { toast((e as Error).message || '保存失败', 'error'); }
+    finally { setActionLoading(null); }
+  };
+
+  const saveCircuitBreakerParams = async () => {
+    setActionLoading('saveCircuitBreaker');
+    try {
+      const c = await adminApi.setTradingConfig(circuitBreakerDraft);
+      setTradingConfig(c);
+      setCircuitBreakerDraft({
+        circuitBreakerL1DailyNetLossPct: c.circuitBreakerL1DailyNetLossPct,
+        circuitBreakerL2LossStreak: c.circuitBreakerL2LossStreak,
+        circuitBreakerL2CooldownHours: c.circuitBreakerL2CooldownHours,
+        circuitBreakerL3DrawdownPct: c.circuitBreakerL3DrawdownPct,
+      });
+      toast('账户熔断参数已保存', 'success');
     } catch (e) { toast((e as Error).message || '保存失败', 'error'); }
     finally { setActionLoading(null); }
   };
@@ -651,6 +691,112 @@ export function Admin() {
                   {tradingConfig.legacy5of7ShadowEnabled ? '关闭' : '开启'}
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldAlert className="h-5 w-5" /> 账户三级熔断
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex-1">
+                  <div className="font-medium">开仓前账户总闸</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    L1看当日净亏损，L2看最近连续亏损，L3看账户权益从峰值的回撤；实际生效需要环境总开关和运行时开关都开启。
+                  </div>
+                  <div className="text-xs mt-2">
+                    当前状态：<Badge variant={tradingConfig.circuitBreakerEnabled ? 'default' : 'secondary'}>
+                      {tradingConfig.circuitBreakerEnabled ? '已生效' : '未生效'}
+                    </Badge>
+                    <Badge variant={tradingConfig.circuitBreakerRuntimeEnabled ? 'outline' : 'secondary'} className="ml-2">
+                      runtime {tradingConfig.circuitBreakerRuntimeEnabled ? '开' : '关'}
+                    </Badge>
+                    <Badge variant={tradingConfig.circuitBreakerPropertyEnabled ? 'outline' : 'destructive'} className="ml-2">
+                      env {tradingConfig.circuitBreakerPropertyEnabled ? '开' : '关'}
+                    </Badge>
+                  </div>
+                </div>
+                <Button
+                  variant={tradingConfig.circuitBreakerRuntimeEnabled ? 'default' : 'outline'}
+                  onClick={() => void toggleCircuitBreaker()}
+                  disabled={actionLoading !== null}
+                >
+                  {tradingConfig.circuitBreakerRuntimeEnabled ? '关闭运行时' : '开启运行时'}
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 border-t pt-4">
+                <div>
+                  <label className="text-xs text-muted-foreground">L1 日净亏损阈值(%)</label>
+                  <Input
+                    type="number"
+                    step="0.5"
+                    min={0.1}
+                    max={100}
+                    value={circuitBreakerDraft.circuitBreakerL1DailyNetLossPct ?? ''}
+                    onChange={(e) => setCircuitBreakerDraft({
+                      ...circuitBreakerDraft,
+                      circuitBreakerL1DailyNetLossPct: Number(e.target.value),
+                    })}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">L3 峰值回撤阈值(%)</label>
+                  <Input
+                    type="number"
+                    step="1"
+                    min={0.1}
+                    max={100}
+                    value={circuitBreakerDraft.circuitBreakerL3DrawdownPct ?? ''}
+                    onChange={(e) => setCircuitBreakerDraft({
+                      ...circuitBreakerDraft,
+                      circuitBreakerL3DrawdownPct: Number(e.target.value),
+                    })}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">L2 连亏笔数</label>
+                  <Input
+                    type="number"
+                    step="1"
+                    min={1}
+                    value={circuitBreakerDraft.circuitBreakerL2LossStreak ?? ''}
+                    onChange={(e) => setCircuitBreakerDraft({
+                      ...circuitBreakerDraft,
+                      circuitBreakerL2LossStreak: Number(e.target.value),
+                    })}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">L2 冷却时长(小时)</label>
+                  <Input
+                    type="number"
+                    step="1"
+                    min={1}
+                    value={circuitBreakerDraft.circuitBreakerL2CooldownHours ?? ''}
+                    onChange={(e) => setCircuitBreakerDraft({
+                      ...circuitBreakerDraft,
+                      circuitBreakerL2CooldownHours: Number(e.target.value),
+                    })}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">默认 L1 10%</Badge>
+                <Badge variant="outline">默认 L2 4连亏 / 2h</Badge>
+                <Badge variant="outline">默认 L3 30%</Badge>
+              </div>
+
+              <Button
+                onClick={() => void saveCircuitBreakerParams()}
+                disabled={actionLoading !== null}
+              >
+                <Save className="w-4 h-4 mr-2" />保存熔断参数
+              </Button>
             </CardContent>
           </Card>
 

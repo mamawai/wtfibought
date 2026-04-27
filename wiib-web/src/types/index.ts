@@ -718,6 +718,14 @@ export interface TradingRuntimeConfig {
   drawdownProfitDrawdownThresholdPct?: number;
   drawdownProfitDrawdownMinBase?: number;
   drawdownCooldownMinutes?: number;
+  /** 实际生效状态：环境 kill switch 和 runtime 开关都开才为 true。 */
+  circuitBreakerEnabled?: boolean;
+  circuitBreakerRuntimeEnabled?: boolean;
+  circuitBreakerPropertyEnabled?: boolean;
+  circuitBreakerL1DailyNetLossPct?: number;
+  circuitBreakerL2LossStreak?: number;
+  circuitBreakerL2CooldownHours?: number;
+  circuitBreakerL3DrawdownPct?: number;
 }
 
 export interface QuantRuntimeConfig {

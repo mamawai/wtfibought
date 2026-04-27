@@ -2,6 +2,7 @@ package com.mawai.wiibservice.agent.config;
 
 import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.entity.AiRuntimeToggle;
+import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
 import com.mawai.wiibservice.agent.quant.node.DebateJudgeNode;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
@@ -37,6 +38,12 @@ public class RuntimeFeatureToggleService {
     public static final String DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_THRESHOLD_PCT = "trading.drawdown_sentinel.profit_drawdown_threshold_pct";
     public static final String DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_MIN_BASE = "trading.drawdown_sentinel.profit_drawdown_min_base";
     public static final String DRAWDOWN_SENTINEL_COOLDOWN_MINUTES = "trading.drawdown_sentinel.cooldown_minutes";
+
+    public static final String CIRCUIT_BREAKER_ENABLED = "trading.circuit_breaker.enabled";
+    public static final String CIRCUIT_BREAKER_L1_DAILY_NET_LOSS_PCT = "trading.circuit_breaker.l1_daily_net_loss_pct";
+    public static final String CIRCUIT_BREAKER_L2_LOSS_STREAK = "trading.circuit_breaker.l2_loss_streak";
+    public static final String CIRCUIT_BREAKER_L2_COOLDOWN_HOURS = "trading.circuit_breaker.l2_cooldown_hours";
+    public static final String CIRCUIT_BREAKER_L3_DRAWDOWN_PCT = "trading.circuit_breaker.l3_drawdown_pct";
 
     private final AiRuntimeToggleMapper toggleMapper;
     private final Map<String, ToggleBinding<?>> knownToggles;
@@ -125,6 +132,17 @@ public class RuntimeFeatureToggleService {
                                 PositionDrawdownSentinel.PROFIT_DRAWDOWN_MIN_BASE),
                         get(DRAWDOWN_SENTINEL_COOLDOWN_MINUTES, Integer.class,
                                 PositionDrawdownSentinel.COOLDOWN_MINUTES)
+                ),
+                new RuntimeToggleSnapshot.CircuitBreakerToggles(
+                        get(CIRCUIT_BREAKER_ENABLED, Boolean.class, CircuitBreakerService.ENABLED),
+                        get(CIRCUIT_BREAKER_L1_DAILY_NET_LOSS_PCT, Double.class,
+                                CircuitBreakerService.L1_DAILY_NET_LOSS_PCT),
+                        get(CIRCUIT_BREAKER_L2_LOSS_STREAK, Integer.class,
+                                CircuitBreakerService.L2_LOSS_STREAK),
+                        get(CIRCUIT_BREAKER_L2_COOLDOWN_HOURS, Integer.class,
+                                CircuitBreakerService.L2_COOLDOWN_HOURS),
+                        get(CIRCUIT_BREAKER_L3_DRAWDOWN_PCT, Double.class,
+                                CircuitBreakerService.L3_DRAWDOWN_PCT)
                 )
         );
     }
@@ -163,6 +181,18 @@ public class RuntimeFeatureToggleService {
                 v -> PositionDrawdownSentinel.PROFIT_DRAWDOWN_MIN_BASE = v);
         bind(map, DRAWDOWN_SENTINEL_COOLDOWN_MINUTES, Integer.class, PositionDrawdownSentinel.COOLDOWN_MINUTES,
                 v -> PositionDrawdownSentinel.COOLDOWN_MINUTES = v);
+
+        bind(map, CIRCUIT_BREAKER_ENABLED, Boolean.class, CircuitBreakerService.ENABLED,
+                v -> CircuitBreakerService.ENABLED = v);
+        bind(map, CIRCUIT_BREAKER_L1_DAILY_NET_LOSS_PCT, Double.class,
+                CircuitBreakerService.L1_DAILY_NET_LOSS_PCT,
+                v -> CircuitBreakerService.L1_DAILY_NET_LOSS_PCT = v);
+        bind(map, CIRCUIT_BREAKER_L2_LOSS_STREAK, Integer.class, CircuitBreakerService.L2_LOSS_STREAK,
+                v -> CircuitBreakerService.L2_LOSS_STREAK = v);
+        bind(map, CIRCUIT_BREAKER_L2_COOLDOWN_HOURS, Integer.class, CircuitBreakerService.L2_COOLDOWN_HOURS,
+                v -> CircuitBreakerService.L2_COOLDOWN_HOURS = v);
+        bind(map, CIRCUIT_BREAKER_L3_DRAWDOWN_PCT, Double.class, CircuitBreakerService.L3_DRAWDOWN_PCT,
+                v -> CircuitBreakerService.L3_DRAWDOWN_PCT = v);
         return Map.copyOf(map);
     }
 
