@@ -1,4 +1,4 @@
-import { Activity } from 'lucide-react';
+import { Activity, Bot } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Skeleton } from './ui/skeleton';
 
@@ -12,6 +12,7 @@ export interface TradeItem {
   unit: string;
   filledAmount?: number;
   createdAt: string;
+  isAi?: boolean;
 }
 
 interface Props {
@@ -61,6 +62,11 @@ export function LatestTradesCard({ trades, loading }: Props) {
                     <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${tone === 'buy' ? 'bg-gain/10 text-gain' : 'bg-loss/10 text-loss'}`}>
                       {sideLabel}
                     </span>
+                    {t.isAi && (
+                      <span title="AI交易员" className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 shrink-0">
+                        <Bot className="w-3 h-3" />
+                      </span>
+                    )}
                     <span className="font-medium truncate">{t.name}</span>
                     <span className="text-muted-foreground text-xs">{t.quantity}{t.unit}</span>
                   </div>

@@ -450,6 +450,7 @@ export interface FuturesOrder {
   status: string;
   expireAt?: string;
   createdAt: string;
+  isAiTrader?: boolean;
 }
 
 // ========== BTC 5min 涨跌预测 ==========

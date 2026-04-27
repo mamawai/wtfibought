@@ -322,21 +322,21 @@ export function Admin() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-bold">任务管理</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <Link
             to="/admin/sprint-c"
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium hover:bg-muted"
+            className="inline-flex h-8 items-center gap-1 rounded-md border bg-background px-2 text-xs font-medium hover:bg-muted"
           >
-            <ShieldAlert className="w-4 h-4" />
+            <ShieldAlert className="w-3.5 h-3.5" />
             Sprint C
           </Link>
           <Link
             to="/admin/graph-obs"
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium hover:bg-muted"
+            className="inline-flex h-8 items-center gap-1 rounded-md border bg-background px-2 text-xs font-medium hover:bg-muted"
           >
-            <Activity className="w-4 h-4" />
+            <Activity className="w-3.5 h-3.5" />
             Graph 观测
           </Link>
           <Button variant="outline" size="sm" onClick={fetchStatus} disabled={loading}>
@@ -474,10 +474,10 @@ export function Admin() {
             <CardContent className="space-y-3">
               <div className="text-xs text-muted-foreground">每个功能独立选择 API Key 和模型，保存后立即生效。</div>
               {assignmentsDraft.map(a => (
-                <div key={a.functionName} className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
+                <div key={a.functionName} className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3 p-3 rounded-lg border bg-muted/30">
                   <span className="text-sm font-bold min-w-[5rem]">{FUNCTION_LABELS[a.functionName] || a.functionName}</span>
                   <select
-                    className="flex-1 h-9 rounded-md border bg-background px-3 text-sm"
+                    className="w-full md:flex-1 h-9 rounded-md border bg-background px-3 text-sm"
                     value={a.configId || ''}
                     onChange={e => updateDraft(a.functionName, 'configId', Number(e.target.value))}
                   >
@@ -487,7 +487,7 @@ export function Admin() {
                     ))}
                   </select>
                   <Input
-                    className="flex-1"
+                    className="w-full md:flex-1"
                     value={a.model || ''}
                     onChange={e => updateDraft(a.functionName, 'model', e.target.value)}
                     placeholder="模型名，如 gpt-4o"
@@ -541,55 +541,42 @@ export function Admin() {
                 <Calendar className="w-5 h-5" /> 手动触发
               </CardTitle>
             </CardHeader>
-            <CardContent className="flex flex-wrap gap-3">
-              <Button variant="outline" onClick={() => handleAction(adminApi.expireOrders, 'expire')} disabled={actionLoading !== null}>处理过期订单</Button>
-              <Button variant="outline" onClick={() => handleAction(adminApi.bankruptcyCheck, 'bankruptcyCheck')} disabled={actionLoading !== null}>执行爆仓检查</Button>
-              <Button variant="outline" onClick={() => handleAction(adminApi.accrueInterest, 'accrueInterest')} disabled={actionLoading !== null}>手动计息</Button>
-              <div className="flex items-center gap-2">
-                <Input type="number" value={generateOffset} onChange={e => setGenerateOffset(Number(e.target.value) || 0)} className="w-20 h-9" />
-                <Button variant="outline" onClick={() => handleAction(() => adminApi.generateData(generateOffset), 'generate')} disabled={actionLoading !== null}>
-                  生成行情(偏移{generateOffset >= 0 ? '+' : ''}{generateOffset}天)
-                </Button>
+            <CardContent className="space-y-4">
+              {/* 股票行情 */}
+              <div>
+                <div className="text-xs text-muted-foreground mb-2">股票行情</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="col-span-2 flex gap-2">
+                    <Input type="number" value={generateOffset} onChange={e => setGenerateOffset(Number(e.target.value) || 0)} className="w-20 h-9 shrink-0" />
+                    <Button variant="outline" className="flex-1 h-9 text-xs" onClick={() => handleAction(() => adminApi.generateData(generateOffset), 'generate')} disabled={actionLoading !== null}>
+                      生成行情(偏移{generateOffset >= 0 ? '+' : ''}{generateOffset}天)
+                    </Button>
+                  </div>
+                  <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(adminApi.loadRedis, 'loadRedis')} disabled={actionLoading !== null}>加载行情到Redis</Button>
+                  <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(async () => adminApi.refreshStockCache(), 'refreshStockCache')} disabled={actionLoading !== null}>重建汇总缓存</Button>
+                </div>
               </div>
-              <Button variant="outline" onClick={() => handleAction(adminApi.loadRedis, 'loadRedis')} disabled={actionLoading !== null}>加载今日行情到Redis</Button>
-              <Button variant="outline" onClick={() => handleAction(async () => adminApi.refreshStockCache(), 'refreshStockCache')} disabled={actionLoading !== null}>按ticks重建今日汇总缓存</Button>
-              <Button variant="outline" onClick={() => handleAction(adminApi.assetSnapshot, 'assetSnapshot')} disabled={actionLoading !== null}>资产快照</Button>
-              <div className="flex items-center gap-2">
-                <Input value={quantSymbol} onChange={e => setQuantSymbol(e.target.value.toUpperCase())} placeholder="币种，如 BTCUSDT" className="w-40 h-9" />
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    const sym = quantSymbol.trim();
-                    if (!sym) return;
-                    void handleMessageAction(() => adminApi.triggerQuant(sym), 'triggerQuant');
-                  }}
-                  disabled={actionLoading !== null || !quantSymbol.trim()}
-                >
-                  触发量化分析
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    const sym = quantSymbol.trim();
-                    if (!sym) return;
-                    void handleMessageAction(() => adminApi.triggerQuantVerification(sym), 'triggerQuantVerification');
-                  }}
-                  disabled={actionLoading !== null || !quantSymbol.trim()}
-                >
-                  触发预测验证
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    void handleMessageAction(
-                      async () => formatTradingSubmitResult(await adminApi.triggerAiTraderDetails()),
-                      'triggerAiTrader'
-                    );
-                  }}
-                  disabled={actionLoading !== null}
-                >
-                  唤醒AI Trader决策(全部币种)
-                </Button>
+              {/* 结算与风控 */}
+              <div>
+                <div className="text-xs text-muted-foreground mb-2">结算与风控</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(adminApi.expireOrders, 'expire')} disabled={actionLoading !== null}>处理过期订单</Button>
+                  <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(adminApi.bankruptcyCheck, 'bankruptcyCheck')} disabled={actionLoading !== null}>执行爆仓检查</Button>
+                  <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(adminApi.accrueInterest, 'accrueInterest')} disabled={actionLoading !== null}>手动计息</Button>
+                  <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(adminApi.assetSnapshot, 'assetSnapshot')} disabled={actionLoading !== null}>资产快照</Button>
+                </div>
+              </div>
+              {/* AI 量化 */}
+              <div>
+                <div className="text-xs text-muted-foreground mb-2">AI 量化</div>
+                <div className="space-y-2">
+                  <Input value={quantSymbol} onChange={e => setQuantSymbol(e.target.value.toUpperCase())} placeholder="币种，如 BTCUSDT" className="h-9" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button variant="outline" className="h-9 text-xs" onClick={() => { const sym = quantSymbol.trim(); if (sym) void handleMessageAction(() => adminApi.triggerQuant(sym), 'triggerQuant'); }} disabled={actionLoading !== null || !quantSymbol.trim()}>触发量化分析</Button>
+                    <Button variant="outline" className="h-9 text-xs" onClick={() => { const sym = quantSymbol.trim(); if (sym) void handleMessageAction(() => adminApi.triggerQuantVerification(sym), 'triggerQuantVerification'); }} disabled={actionLoading !== null || !quantSymbol.trim()}>触发预测验证</Button>
+                  </div>
+                  <Button variant="outline" className="w-full h-9 text-xs" onClick={() => { void handleMessageAction(async () => formatTradingSubmitResult(await adminApi.triggerAiTraderDetails()), 'triggerAiTrader'); }} disabled={actionLoading !== null}>唤醒AI Trader决策(全部币种)</Button>
+                </div>
               </div>
             </CardContent>
           </Card>
