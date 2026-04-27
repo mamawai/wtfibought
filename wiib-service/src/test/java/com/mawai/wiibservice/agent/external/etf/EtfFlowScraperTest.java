@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.agent.quant.service;
+package com.mawai.wiibservice.agent.external.etf;
 
 import org.junit.jupiter.api.Test;
 

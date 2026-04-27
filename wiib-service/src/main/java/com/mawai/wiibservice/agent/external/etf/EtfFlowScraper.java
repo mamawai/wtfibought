@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.agent.quant.service;
+package com.mawai.wiibservice.agent.external.etf;
 
 import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.entity.FactorHistory;
@@ -39,7 +39,7 @@ public class EtfFlowScraper {
 
     private final FactorHistoryMapper factorHistoryMapper;
 
-    @Value("${factor.btc_etf_flow.enabled:true}")
+    @Value("${factor.btc_etf_flow.enabled:false}")
     private boolean enabled;
 
     /** 北京时间早 8 点：美股盘后数据通常已更新；失败只记录，不影响主流程。 */
