@@ -251,17 +251,15 @@ public class AiTradingScheduler {
         }
     }
 
-    private BigDecimal calcTotalEquity(User user, List<?> allPositions) {
+    private BigDecimal calcTotalEquity(User user, List<FuturesPositionDTO> allPositions) {
         BigDecimal balance = user != null ? user.getBalance() : BigDecimal.ZERO;
         BigDecimal frozen = user != null ? user.getFrozenBalance() : BigDecimal.ZERO;
         BigDecimal margin = BigDecimal.ZERO;
         BigDecimal unpnl = BigDecimal.ZERO;
         if (allPositions != null) {
-            for (Object p : allPositions) {
-                if (p instanceof com.mawai.wiibcommon.dto.FuturesPositionDTO dto) {
-                    if (dto.getMargin() != null) margin = margin.add(dto.getMargin());
-                    if (dto.getUnrealizedPnl() != null) unpnl = unpnl.add(dto.getUnrealizedPnl());
-                }
+            for (FuturesPositionDTO dto : allPositions) {
+                if (dto.getMargin() != null) margin = margin.add(dto.getMargin());
+                if (dto.getUnrealizedPnl() != null) unpnl = unpnl.add(dto.getUnrealizedPnl());
             }
         }
         return balance.add(frozen).add(margin).add(unpnl);

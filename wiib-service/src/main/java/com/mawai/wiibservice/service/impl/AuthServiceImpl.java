@@ -69,9 +69,6 @@ public class AuthServiceImpl implements AuthService {
             // 2. 用token获取用户信息
             LinuxDoUserInfo userInfo = getUserInfo(accessToken);
 
-            if (userInfo.getId() == null) {
-                throw new BizException("获取用户信息失败: id为空");
-            }
             String linuxDoId = String.valueOf(userInfo.getId());
             String username = userInfo.getUsername();
             String avatar = userInfo.getAvatarUrl();
