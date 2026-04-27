@@ -151,6 +151,7 @@ public class QuantForecastWorkflow {
             s.put("overall_decision", new ReplaceStrategy());
             s.put("risk_status", new ReplaceStrategy());
             s.put("cycle_id", new ReplaceStrategy());
+            s.put("memory_weight_adjustments", new ReplaceStrategy());
             // DebateJudgeNode输出
             s.put("debate_summary", new ReplaceStrategy());
             s.put("debate_probs", new ReplaceStrategy());

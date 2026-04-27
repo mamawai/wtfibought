@@ -8,6 +8,7 @@ import com.mawai.wiibservice.agent.quant.factor.*;
 import com.mawai.wiibservice.agent.quant.judge.ConsensusBuilder;
 import com.mawai.wiibservice.agent.quant.judge.HorizonJudge;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
+import com.mawai.wiibservice.agent.quant.memory.AgentPerformanceMemoryService.AgentStat;
 import com.mawai.wiibservice.agent.quant.node.BuildFeaturesNode;
 import com.mawai.wiibservice.agent.quant.node.CollectDataNode;
 import com.mawai.wiibservice.agent.quant.risk.RiskGate;
@@ -246,9 +247,10 @@ public class QuantLightCycleService {
             allVotes.addAll(newsVotes);
 
             // 5. 三个 HorizonJudge 并行裁决
-            Map<String, Map<String, Double>> agentAccuracy = loadAgentAccuracy(symbol);
+            // 轻周期也用记忆调权，但调权明细只在重周期 snapshot_json 持久化
+            Map<String, Map<String, AgentStat>> agentStats = loadAgentStats(symbol, snapshot.regime());
             List<HorizonForecast> forecasts = runJudges(allVotes, snapshot.lastPrice(),
-                    snapshot.qualityFlags(), agentAccuracy, snapshot.regime());
+                    snapshot.qualityFlags(), agentStats, snapshot.regime());
 
             // 6. RiskGate
             RiskGate.RiskResult riskResult = RiskGate.apply(
@@ -618,14 +620,14 @@ public class QuantLightCycleService {
 
     private List<HorizonForecast> runJudges(List<AgentVote> allVotes, BigDecimal lastPrice,
                                              List<String> qualityFlags,
-                                             Map<String, Map<String, Double>> agentAccuracy,
+                                             Map<String, Map<String, AgentStat>> agentStats,
                                              MarketRegime regime) {
         List<HorizonForecast> forecasts = new ArrayList<>(3);
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             List<Future<HorizonForecast>> futures = new ArrayList<>(3);
             for (String horizon : HORIZONS) {
                 futures.add(executor.submit(() -> {
-                    HorizonJudge judge = new HorizonJudge(horizon, agentAccuracy, weightOverrideService);
+                    HorizonJudge judge = new HorizonJudge(horizon, agentStats, weightOverrideService);
                     return judge.judge(allVotes, lastPrice, qualityFlags, regime);
                 }));
             }
@@ -641,9 +643,9 @@ public class QuantLightCycleService {
         return forecasts;
     }
 
-    private Map<String, Map<String, Double>> loadAgentAccuracy(String symbol) {
+    private Map<String, Map<String, AgentStat>> loadAgentStats(String symbol, MarketRegime regime) {
         try {
-            return memoryService.getAgentAccuracy(symbol);
+            return memoryService.getAgentFullStats(symbol, regime != null ? regime.name() : null);
         } catch (Exception e) {
             log.warn("[LightCycle] agent准确率查询失败: {}", e.getMessage());
             return Map.of();

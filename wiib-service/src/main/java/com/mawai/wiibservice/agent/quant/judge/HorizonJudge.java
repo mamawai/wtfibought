@@ -1,11 +1,13 @@
 package com.mawai.wiibservice.agent.quant.judge;
 
 import com.mawai.wiibservice.agent.quant.domain.*;
+import com.mawai.wiibservice.agent.quant.memory.AgentPerformanceMemoryService.AgentStat;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -32,33 +34,45 @@ public class HorizonJudge {
             "news_event",     Map.of("0_10", 0.10, "10_20", 0.20, "20_30", 0.25)
     );
 
+    /** 单个 agent 的调权明细，供日志和 snapshot_json 展示 */
+    public record WeightAdjustment(String horizon, String agent, double baseWeight, double finalWeight,
+                                   double memoryMultiplier, double accuracy, int sampleCount) {}
+
     private final String horizon;
-    private final Map<String, Map<String, Double>> agentAccuracy;
+    private final Map<String, Map<String, AgentStat>> agentStats;
     private final FactorWeightOverrideService weightOverrideService;
     private final Boolean weightOverrideEnabled;
     private final boolean logResult;
+    /** judge() 执行后填充，调用方通过 getWeightAdjustments() 取 */
+    private final List<WeightAdjustment> weightAdjustments = new ArrayList<>();
 
-    public HorizonJudge(String horizon, Map<String, Map<String, Double>> agentAccuracy,
+    public HorizonJudge(String horizon, Map<String, Map<String, AgentStat>> agentStats,
                         FactorWeightOverrideService weightOverrideService) {
-        this(horizon, agentAccuracy, weightOverrideService, null);
+        this(horizon, agentStats, weightOverrideService, null, true);
     }
 
-    public HorizonJudge(String horizon, Map<String, Map<String, Double>> agentAccuracy,
+    public HorizonJudge(String horizon, Map<String, Map<String, AgentStat>> agentStats,
                         FactorWeightOverrideService weightOverrideService, Boolean weightOverrideEnabled) {
-        this(horizon, agentAccuracy, weightOverrideService, weightOverrideEnabled, true);
+        this(horizon, agentStats, weightOverrideService, weightOverrideEnabled, true);
     }
 
-    public HorizonJudge(String horizon, Map<String, Map<String, Double>> agentAccuracy,
+    public HorizonJudge(String horizon, Map<String, Map<String, AgentStat>> agentStats,
                         FactorWeightOverrideService weightOverrideService, Boolean weightOverrideEnabled,
                         boolean logResult) {
         this.horizon = horizon;
-        this.agentAccuracy = agentAccuracy != null ? agentAccuracy : Map.of();
+        this.agentStats = agentStats != null ? agentStats : Map.of();
         this.weightOverrideService = weightOverrideService;
         this.weightOverrideEnabled = weightOverrideEnabled;
         this.logResult = logResult;
     }
 
+    /** judge() 执行后可取，只含实际被记忆调权的 agent（multiplier != 1.0） */
+    public List<WeightAdjustment> getWeightAdjustments() {
+        return List.copyOf(weightAdjustments);
+    }
+
     public HorizonForecast judge(List<AgentVote> allVotes, BigDecimal lastPrice, List<String> qualityFlags, MarketRegime regime) {
+        weightAdjustments.clear();
         List<AgentVote> filtered = allVotes.stream()
                 .filter(v -> horizon.equals(v.horizon()))
                 .filter(v -> !v.reasonCodes().contains("TIMEOUT")) // 超时票不参与裁决
@@ -84,6 +98,7 @@ public class HorizonJudge {
         // confidence加权均值，作为独立参考
         double confWeightedSum = 0;
         double confWeightDenom = 0;
+
 
         for (AgentVote vote : filtered) {
             double weight = getWeight(vote.agent(), horizon, regime);
@@ -112,6 +127,19 @@ public class HorizonJudge {
                 double volatilityWeighted = weight * Math.max(vote.confidence(), 0.35);
                 totalVolWeighted += volatilityWeighted * vote.volatilityBps();
                 totalVolWeightSum += volatilityWeighted;
+            }
+        }
+
+        // 调权明细日志
+        if (logResult && !weightAdjustments.isEmpty()) {
+            for (WeightAdjustment adj : weightAdjustments) {
+                log.info("[Q4.memory] {} agent={} base={} →{} (×{} acc={} n={})",
+                        horizon, adj.agent(),
+                        String.format("%.3f", adj.baseWeight()),
+                        String.format("%.3f", adj.finalWeight()),
+                        String.format("%.2f", adj.memoryMultiplier()),
+                        String.format("%.3f", adj.accuracy()),
+                        adj.sampleCount());
             }
         }
 
@@ -203,9 +231,8 @@ public class HorizonJudge {
     }
 
     /**
-     * 获取agent权重：基础权重 × 准确率修正。
-     * 准确率 > 0.5 时加权，< 0.5 时减权，范围[0.5x, 1.4x]。
-     * 无准确率数据时使用基础权重。
+     * 获取agent权重：基础权重 × 程序统计准确率修正。
+     * 只做保守live调权，避免短样本记忆直接把方向拉偏。
      */
     public static double baseWeight(String agent, String horizon) {
         return DEFAULT_WEIGHTS.getOrDefault(agent, Map.of())
@@ -219,14 +246,33 @@ public class HorizonJudge {
                     ? weightOverrideService.apply(agent, horizon, regime, base)
                     : weightOverrideService.apply(agent, horizon, regime, base, weightOverrideEnabled);
         }
-        if (agentAccuracy.isEmpty()) return base;
-        Map<String, Double> horizonAcc = agentAccuracy.get(agent);
-        if (horizonAcc == null) return base;
-        Double acc = horizonAcc.get(horizon);
-        if (acc == null) return base;
-        // acc=0.5→1.0x, acc=0.8→1.24x, acc=0.3→0.68x, 范围[0.5, 1.4]
-        double multiplier = Math.clamp(0.2 + acc * 1.6, 0.5, 1.4);
-        return base * multiplier;
+        // 记忆调权：从 agentStats 取完整统计
+        AgentStat stat = lookupStat(agent, horizon);
+        if (stat == null) return base;
+        double multiplier = accuracyMultiplier(stat.accuracy());
+        double finalWeight = base * multiplier;
+        // 收集调权明细（只记录实际调了的）
+        if (Math.abs(multiplier - 1.0) > 0.001) {
+            weightAdjustments.add(new WeightAdjustment(horizon, 
+                    agent, base, finalWeight, multiplier, stat.accuracy(), stat.sampleCount()));
+        }
+        return finalWeight;
+    }
+
+    private AgentStat lookupStat(String agent, String horizon) {
+        Map<String, AgentStat> horizons = agentStats.get(agent);
+        return horizons != null ? horizons.get(horizon) : null;
+    }
+
+    private double accuracyMultiplier(double accuracy) {
+        double acc = Math.clamp(accuracy, 0.0, 1.0);
+        if (acc >= 0.58) {
+            return Math.clamp(1.0 + (acc - 0.58) / 0.22 * 0.20, 1.0, 1.20);
+        }
+        if (acc <= 0.45) {
+            return Math.clamp(1.0 - (0.45 - acc) / 0.25 * 0.20, 0.80, 1.0);
+        }
+        return 1.0;
     }
 
     public static int getMaxLeverage(String horizon) {

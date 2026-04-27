@@ -172,20 +172,12 @@ public class ReflectionTask {
                 {
                   "overallAccuracy": 0.65,
                   "biases": ["偏差描述"],
-                  "agentAccuracy": {
-                    "microstructure": {"0_10": 0.7, "10_20": 0.5, "20_30": 0.4},
-                    "momentum": {"0_10": 0.6, "10_20": 0.65, "20_30": 0.6},
-                    "regime": {"0_10": 0.5, "10_20": 0.55, "20_30": 0.6},
-                    "news_event": {"0_10": 0.5, "10_20": 0.5, "20_30": 0.5}
-                  },
                   "lessons": [
                     {"tag": "标签如RANGE_BULLISH_BIAS", "lesson": "具体教训，50字内"}
                   ]
                 }
 
-                说明：agentAccuracy是你对每个agent在各区间预测贡献质量的评估(0-1)，
-                基于验证结果和agent投票方向与实际走势的一致性来判断。
-                如果数据不足以判断某个agent，用0.5（中性）。
+                说明：只输出可解释的biases和lessons；各agent准确率由程序基于验证样本统计，不需要你主观打分。
                 """);
         return sb.toString();
     }
@@ -242,12 +234,6 @@ public class ReflectionTask {
                 if (text != null) allLessons.append(text).append(" ");
             }
 
-            // agentAccuracy存入reflectionText，供MemoryService解析
-            JSONObject agentAccuracy = root.getJSONObject("agentAccuracy");
-            if (agentAccuracy != null) {
-                allLessons.append("\n[AGENT_ACCURACY]").append(agentAccuracy.toJSONString());
-            }
-
             QuantReflectionMemory memory = new QuantReflectionMemory();
             memory.setSymbol(symbol);
             memory.setCycleId(latest.getCycleId());
@@ -260,8 +246,8 @@ public class ReflectionTask {
             memory.setLessonTags(!allTags.isEmpty() ? allTags.substring(0, allTags.length() - 1) : null);
             reflectionMapper.insert(memory);
 
-            log.info("[Reflect] 反思记忆写入成功 symbol={} tags={} hasAgentAccuracy={}",
-                    symbol, memory.getLessonTags(), agentAccuracy != null);
+            log.info("[Reflect] 反思记忆写入成功 symbol={} tags={}",
+                    symbol, memory.getLessonTags());
         } catch (Exception e) {
             log.warn("[Reflect] 反思结果解析失败: {}", e.getMessage());
         }
