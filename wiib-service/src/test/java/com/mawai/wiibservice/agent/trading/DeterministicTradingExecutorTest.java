@@ -181,6 +181,7 @@ class DeterministicTradingExecutorTest {
                   "bollSqueeze": %s,
                   "bidAskImbalance": %s,
                   "takerBuySellPressure": 0,
+                  "lsrExtreme": 0,
                   "qualityFlags": [%s],
                   "indicatorsByTimeframe": {
                     "5m": {
