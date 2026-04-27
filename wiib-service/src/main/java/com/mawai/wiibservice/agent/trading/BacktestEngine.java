@@ -228,6 +228,7 @@ public class BacktestEngine {
         snap.put("takerBuySellPressure", null);
         snap.put("oiChangeRate", null);
         snap.put("fundingDeviation", null);
+        snap.put("lsrExtreme", null);
 
         // indicatorsByTimeframe
         JSONObject indicators = new JSONObject();

@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
  * <p>
  * 核心原则（来自freqtrade/binance-futures-bot开源策略研究）：
  * 1. 高周期趋势过滤 — 1h MA方向是入场门槛，不做逆势交易
- * 2. 多指标共振 — MACD+RSI+Volume+BB+多周期+微结构，至少3个确认才入场
+ * 2. 多指标共振 — MACD+RSI+Volume+多周期+微结构+EMA+多空比拥挤，正常6/7，虚拟盘5/7观察档
  * 3. 手续费意识 — TP必须覆盖往返手续费+最低盈利
  * 4. 动态出场 — BB均值回归用BB中轨出场，趋势用纯追踪止损
  * 5. 选择性交易 — 宁可不交易，也不做低质量信号的交易
@@ -63,7 +63,8 @@ public class DeterministicTradingExecutor {
 
     // ==================== 信号共振门槛 ====================
     // Phase 0A 止血：3→5，且删除 regime 降档，RANGE/SQUEEZE 不再放宽
-    private static final int MIN_CONFLUENCE_SCORE = 6; // 7维评分，>=6才入场
+    private static final int CONFLUENCE_DIMENSIONS = 7;
+    private static final int MIN_CONFLUENCE_SCORE = 6; // MACD合并后仍保持7维；>=6才入场，虚拟盘5/7由开关放行
 
     // ==================== 策略A: EMA趋势跟踪 ====================
     private static final double TREND_MIN_CONFIDENCE = 0.35;
@@ -95,7 +96,7 @@ public class DeterministicTradingExecutor {
     public static volatile boolean LOW_VOL_TRADING_ENABLED = true;
     /**
      * LEGACY_TREND 5/7 实盘开仓开关。
-     * 虚拟盘默认观察档：放宽为 5/7 也可继续走开仓逻辑，用实盘链路观察触发频率。
+     * MACD合并后补入多空比拥挤维度，仍保持 5/7 观察档。
      * 真盘迁移前必须改回 false 或通过 runtime toggle 关闭。
      */
     public static volatile boolean LEGACY_THRESHOLD_5OF7_ENABLED = true;
@@ -114,14 +115,6 @@ public class DeterministicTradingExecutor {
     private static final double PROTECTIVE_PARTIAL_PROGRESS = 0.70;
     private static final double WATCH_PROFIT_PROGRESS = 0.50;
     private static final BigDecimal PROTECTIVE_PARTIAL_CLOSE_RATIO = new BigDecimal("0.50");
-
-    public static long getRrGuardTriggeredCount() {
-        return RR_GUARD_TRIGGERED_COUNT.get();
-    }
-
-    public static long getMarginCapTriggeredCount() {
-        return MARGIN_CAP_TRIGGERED_COUNT.get();
-    }
 
     public record ExecutionResult(String action, String reasoning, String executionLog) {}
 
@@ -159,6 +152,7 @@ public class DeterministicTradingExecutor {
             Double takerPressure,
             Double oiChangeRate,
             Double fundingDeviation,
+            Double lsrExtreme,
             // 数据质量标记（STALE_AGG_TRADE 等，从 snapshot.qualityFlags 解析）
             List<String> qualityFlags
     ) {}
@@ -499,7 +493,7 @@ public class DeterministicTradingExecutor {
                 return new ExecutionResult("HOLD", reason, "");
             } else {
                 return hold(String.format("共振不足: score=%d/%d(需>=%d, regime=%s) %s",
-                        confluenceScore, 7, MIN_CONFLUENCE_SCORE, ctx.regime,
+                        confluenceScore, CONFLUENCE_DIMENSIONS, MIN_CONFLUENCE_SCORE, ctx.regime,
                         describeConfluence(ctx, isLong)));
             }
         }
@@ -522,8 +516,8 @@ public class DeterministicTradingExecutor {
         }
 
         // ===== 8. 执行策略 =====
-        log.info("[Executor] 入场决策: {} strategy={} conf={} confluence={}/7 regime={} scale={}",
-                side, strategy, fmt(confidence), confluenceScore, ctx.regime, regimeScale);
+        log.info("[Executor] 入场决策: {} strategy={} conf={} confluence={}/{} regime={} scale={}",
+                side, strategy, fmt(confidence), confluenceScore, CONFLUENCE_DIMENSIONS, ctx.regime, regimeScale);
 
         ExecutionResult inner = switch (strategy) {
             case PATH_MR -> bbMeanReversion(symbol, user, totalEquity, bestSignal, ctx,
@@ -817,30 +811,12 @@ public class DeterministicTradingExecutor {
     private static int calcConfluenceScore(MarketContext ctx, boolean isLong, List<QuantSignalDecision> signals) {
         int score = 0;
 
-        // 1. MACD方向（优先看交叉事件，没有则看DIF vs DEA当前位置）
-        if (ctx.macdCross5m != null) {
-            if ((isLong && "golden".equals(ctx.macdCross5m))
-                    || (!isLong && "death".equals(ctx.macdCross5m))) {
-                score++;
-            }
-        } else if (ctx.macdDif5m != null && ctx.macdDea5m != null) {
-            if ((isLong && ctx.macdDif5m.compareTo(ctx.macdDea5m) > 0)
-                    || (!isLong && ctx.macdDif5m.compareTo(ctx.macdDea5m) < 0)) {
-                score++;
-            }
+        // 1. MACD综合确认：交叉同向，或快慢线同向且柱趋势不反向；柱趋势强同向也可给分。
+        if (macdSupports(ctx, isLong)) {
+            score++;
         }
 
-        // 2. MACD柱状图趋势（适配calculator输出: rising_N/mostly_up/falling_N/mostly_down）
-        if (ctx.macdHistTrend5m != null) {
-            String ht = ctx.macdHistTrend5m;
-            boolean histBullish = ht.startsWith("rising") || "mostly_up".equals(ht);
-            boolean histBearish = ht.startsWith("falling") || "mostly_down".equals(ht);
-            if ((isLong && histBullish) || (!isLong && histBearish)) {
-                score++;
-            }
-        }
-
-        // 3. RSI在安全区（趋势市：RSI同方向即得分，超买/超卖在趋势中是正常现象）
+        // 2. RSI在安全区（趋势市：RSI同方向即得分，超买/超卖在趋势中是正常现象）
         if (ctx.rsi5m != null) {
             double rsi = ctx.rsi5m.doubleValue();
             boolean isTrend = "TREND_UP".equals(ctx.regime) || "TREND_DOWN".equals(ctx.regime);
@@ -853,19 +829,19 @@ public class DeterministicTradingExecutor {
             }
         }
 
-        // 4. 成交量放大（门槛1.2，过滤缩量信号）
+        // 3. 成交量放大（门槛1.2，过滤缩量信号）
         if (ctx.volumeRatio5m != null && ctx.volumeRatio5m >= 1.2) {
             score++;
         }
 
-        // 5. 15m均线方向一致
+        // 4. 15m均线方向一致
         if (ctx.maAlignment15m != null) {
             if ((isLong && ctx.maAlignment15m >= 0) || (!isLong && ctx.maAlignment15m <= 0)) {
                 score++;
             }
         }
 
-        // 6. 微结构支持（盘口偏向 + 主动买卖压力，阈值收紧到±0.15）
+        // 5. 微结构支持（盘口偏向 + 主动买卖压力，阈值收紧到±0.15）
         double micro = 0;
         if (ctx.bidAskImbalance != null) micro += ctx.bidAskImbalance;
         if (ctx.takerPressure != null) micro += ctx.takerPressure;
@@ -873,7 +849,7 @@ public class DeterministicTradingExecutor {
             score++;
         }
 
-        // 7. 价格在EMA20上方/下方（趋势确认，中期均线过滤）
+        // 6. 价格在EMA20上方/下方（趋势确认，中期均线过滤）
         if (ctx.ema20 != null && ctx.price != null) {
             if ((isLong && ctx.price.compareTo(ctx.ema20) > 0)
                     || (!isLong && ctx.price.compareTo(ctx.ema20) < 0)) {
@@ -881,7 +857,39 @@ public class DeterministicTradingExecutor {
             }
         }
 
+        // 7. 多空比拥挤反向确认。做多避开多头拥挤，做空避开空头拥挤。
+        if (ctx.lsrExtreme != null) {
+            if ((isLong && ctx.lsrExtreme <= 0.2) || (!isLong && ctx.lsrExtreme >= -0.2)) {
+                score++;
+            }
+        }
+
         return score;
+    }
+
+    private static boolean macdSupports(MarketContext ctx, boolean isLong) {
+        if ("golden".equals(ctx.macdCross5m)) return isLong;
+        if ("death".equals(ctx.macdCross5m)) return !isLong;
+
+        boolean histBullish = isMacdHistBullish(ctx.macdHistTrend5m);
+        boolean histBearish = isMacdHistBearish(ctx.macdHistTrend5m);
+
+        if (ctx.macdDif5m != null && ctx.macdDea5m != null) {
+            int cmp = ctx.macdDif5m.compareTo(ctx.macdDea5m);
+            if (isLong && cmp > 0) return !histBearish;
+            if (!isLong && cmp < 0) return !histBullish;
+        }
+
+        // 没有快慢线同向时，允许柱趋势独立提供宽松确认，避免只等金叉/死叉。
+        return isLong ? histBullish : histBearish;
+    }
+
+    private static boolean isMacdHistBullish(String trend) {
+        return trend != null && (trend.startsWith("rising") || "mostly_up".equals(trend));
+    }
+
+    private static boolean isMacdHistBearish(String trend) {
+        return trend != null && (trend.startsWith("falling") || "mostly_down".equals(trend));
     }
 
     /** 描述共振评分细节（用于日志） */
@@ -897,6 +905,7 @@ public class DeterministicTradingExecutor {
         }
         sb.append("MACD=").append(macdState);
         sb.append(" MACD柱=").append(ctx.macdHistTrend5m != null ? ctx.macdHistTrend5m : "无");
+        sb.append(" MACD确认=").append(macdSupports(ctx, isLong) ? "Y" : "N");
         sb.append(" RSI=").append(ctx.rsi5m != null ? fmt(ctx.rsi5m.doubleValue()) : "无");
         sb.append(" Vol=").append(ctx.volumeRatio5m != null ? String.format("%.1f", ctx.volumeRatio5m) : "无");
         sb.append(" MA15m=").append(ctx.maAlignment15m != null ? ctx.maAlignment15m : "无");
@@ -905,6 +914,7 @@ public class DeterministicTradingExecutor {
         if (ctx.takerPressure != null) micro += ctx.takerPressure;
         sb.append(String.format(" 微结构=%.2f", micro));
         sb.append(" EMA20=").append(ctx.ema20 != null ? ctx.ema20.setScale(2, RoundingMode.HALF_UP) : "无");
+        sb.append(" LSR=").append(ctx.lsrExtreme != null ? String.format("%.2f", ctx.lsrExtreme) : "无");
         sb.append("]");
         return sb.toString();
     }
@@ -1130,7 +1140,7 @@ public class DeterministicTradingExecutor {
         String closeTrend5m = null;
         Double rsi15m = null;
         Double bidAskImbalance = null, takerPressure = null, oiChangeRate = null;
-        Double fundingDeviation = null;
+        Double fundingDeviation = null, lsrExtreme = null;
         boolean bollSqueeze = false;
         List<String> qualityFlags = new ArrayList<>();
 
@@ -1148,6 +1158,7 @@ public class DeterministicTradingExecutor {
                 takerPressure = snap.getDouble("takerBuySellPressure");
                 oiChangeRate = snap.getDouble("oiChangeRate");
                 fundingDeviation = snap.getDouble("fundingDeviation");
+                lsrExtreme = snap.getDouble("lsrExtreme");
 
                 // 数据质量标记（STALE_AGG_TRADE 等）
                 JSONArray flagsArr = snap.getJSONArray("qualityFlags");
@@ -1209,7 +1220,7 @@ public class DeterministicTradingExecutor {
                 bollPb5m, bollBandwidth5m, bollSqueeze,
                 volumeRatio5m, closeTrend5m, rsi15m,
                 bidAskImbalance, takerPressure, oiChangeRate,
-                fundingDeviation, qualityFlags);
+                fundingDeviation, lsrExtreme, qualityFlags);
     }
 
     // ==================== 仓位计算(风险预算法) ====================
