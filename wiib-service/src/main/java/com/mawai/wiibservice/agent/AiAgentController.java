@@ -1,22 +1,19 @@
 package com.mawai.wiibservice.agent;
 
 import cn.dev33.satoken.stp.StpUtil;
-import com.alibaba.cloud.ai.graph.OverAllState;
-import com.alibaba.cloud.ai.graph.RunnableConfig;
-import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.mawai.wiibcommon.annotation.RateLimiter;
 import com.mawai.wiibcommon.constant.RateLimiterType;
 import com.mawai.wiibcommon.enums.ErrorCode;
-import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibservice.agent.behavior.BehaviorAnalysisReport;
+import com.mawai.wiibservice.agent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibservice.agent.quant.CryptoAnalysisReport;
-import com.mawai.wiibservice.agent.quant.QuantForecastPersistService;
+import com.mawai.wiibservice.agent.quant.QuantForecastFacade;
+import com.mawai.wiibservice.agent.quant.QuantForecastRunResult;
 import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
-import com.mawai.wiibservice.agent.quant.domain.ForecastResult;
 import com.mawai.wiibservice.agent.quant.memory.VerificationService;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
@@ -31,8 +28,6 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Message;
 import org.springframework.web.bind.annotation.*;
 
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -40,7 +35,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
@@ -50,23 +44,22 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class AiAgentController {
 
     private final AiAgentRuntimeManager aiAgentRuntimeManager;
-    private final QuantForecastPersistService persistService;
+    private final BehaviorAnalysisService behaviorAnalysisService;
+    private final QuantForecastFacade quantForecastFacade;
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantSignalDecisionMapper decisionMapper;
     private final VerificationService verificationService;
     private final ExecutorService chatStreamExecutor = Executors.newVirtualThreadPerTaskExecutor();
-    private static final Semaphore BEHAVIOR_SEMAPHORE = new Semaphore(10);
-    private static final long BEHAVIOR_COOLDOWN_MS = 300_000;
-    private final Map<Long, BehaviorAnalysisReport> behaviorReportCache = new java.util.concurrent.ConcurrentHashMap<>();
-    private final Map<Long, Long> behaviorLastTime = new java.util.concurrent.ConcurrentHashMap<>();
 
     public AiAgentController(AiAgentRuntimeManager aiAgentRuntimeManager,
-                             QuantForecastPersistService persistService,
+                             BehaviorAnalysisService behaviorAnalysisService,
+                             QuantForecastFacade quantForecastFacade,
                              QuantForecastCycleMapper cycleMapper,
                              QuantSignalDecisionMapper decisionMapper,
                              VerificationService verificationService) {
         this.aiAgentRuntimeManager = aiAgentRuntimeManager;
-        this.persistService = persistService;
+        this.behaviorAnalysisService = behaviorAnalysisService;
+        this.quantForecastFacade = quantForecastFacade;
         this.cycleMapper = cycleMapper;
         this.decisionMapper = decisionMapper;
         this.verificationService = verificationService;
@@ -94,88 +87,7 @@ public class AiAgentController {
     @Operation(summary = "用户行为分析")
     public Result<BehaviorAnalysisReport> analyzeBehavior() {
         long userId = StpUtil.getLoginIdAsLong();
-
-        Long lastTime = behaviorLastTime.get(userId);
-        if (lastTime != null && System.currentTimeMillis() - lastTime < BEHAVIOR_COOLDOWN_MS) {
-            BehaviorAnalysisReport cached = behaviorReportCache.get(userId);
-            if (cached != null) return Result.ok(cached);
-        }
-
-        if (!BEHAVIOR_SEMAPHORE.tryAcquire()) {
-            BehaviorAnalysisReport cached = behaviorReportCache.get(userId);
-            return cached != null ? Result.ok(cached) : Result.fail("当前分析人数已满，请稍后再试");
-        }
-        try {
-            Result<BehaviorAnalysisReport> result = doAnalyzeBehavior(userId);
-            if (result.getCode() == 0 && result.getData() != null) {
-                behaviorReportCache.put(userId, result.getData());
-                behaviorLastTime.put(userId, System.currentTimeMillis());
-            }
-            return result;
-        } finally {
-            BEHAVIOR_SEMAPHORE.release();
-        }
-    }
-
-    private Result<BehaviorAnalysisReport> doAnalyzeBehavior(long userId) {
-        log.info("用户{}请求行为分析", userId);
-
-        ReactAgent agent = aiAgentRuntimeManager.createBehaviorAgent(step -> log.info("用户{} 工具调用: {}", userId, step));
-
-        String text;
-        try {
-            text = collectBehaviorAnalysisResponse(agent, userId);
-        } catch (Exception e) {
-            log.error("行为分析执行失败 userId={}", userId, e);
-            return Result.fail("分析执行失败: " + e.getMessage());
-        }
-
-        BehaviorAnalysisReport report;
-        try {
-            report = JSON.parseObject(JsonUtils.extractJson(text), BehaviorAnalysisReport.class);
-        } catch (Exception e) {
-            log.error("行为分析报告解析失败 userId={}", userId, e);
-            return Result.fail("分析结果解析失败");
-        }
-
-        if (!report.isValid()) {
-            log.error("行为分析关键字段缺失 userId={}", userId);
-            return Result.fail("分析结果不完整，请重试");
-        }
-
-        log.info("用户{} 行为分析完成", userId);
-        return Result.ok(report);
-    }
-
-    private String collectBehaviorAnalysisResponse(ReactAgent agent, long userId) {
-        String prompt = "分析用户#" + userId + "的全部行为数据，用户ID为" + userId;
-        StringBuilder assistantChunks = new StringBuilder();
-
-        try {
-            agent.streamMessages(prompt, RunnableConfig.builder().threadId("behavior-" + userId).build())
-                    .doOnNext(message -> appendBehaviorResponse(message, assistantChunks))
-                    .blockLast();
-        } catch (Exception e) {
-            throw new RuntimeException("行为分析流式执行失败: " + e.getMessage(), e);
-        }
-
-        String finalText = assistantChunks.toString();
-        if (finalText.isBlank()) {
-            throw new IllegalStateException("行为分析未返回有效内容");
-        }
-        log.info("用户{} 行为分析完成, responseLength={}", userId, finalText.length());
-        return finalText;
-    }
-
-    private void appendBehaviorResponse(Message message, StringBuilder assistantChunks) {
-        if (!(message instanceof AssistantMessage assistant)) {
-            return;
-        }
-        String text = assistant.getText();
-        if (text == null || text.isBlank()) {
-            return;
-        }
-        assistantChunks.append(text);
+        return behaviorAnalysisService.analyze(userId);
     }
 
     @PreDestroy
@@ -251,48 +163,30 @@ public class AiAgentController {
         log.info("[Quant] 工作流开始 userId={} symbol={}", userId, symbol);
 
         try {
-            Optional<OverAllState> result = aiAgentRuntimeManager.invokeQuantWithFallback(
-                    symbol, "crypto-" + userId);
-
-            if (result.isEmpty()) {
+            QuantForecastRunResult result = quantForecastFacade.run(symbol, "crypto-" + userId, null);
+            if (!result.graphReturned()) {
                 log.warn("[Quant] 工作流无结果 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs);
                 return Result.fail("分析无结果");
             }
 
-            OverAllState state = result.get();
-            boolean dataAvailable = (boolean) state.value("data_available").orElse(true);
-            if (!dataAvailable) {
+            if (!result.dataAvailable()) {
                 log.warn("[Quant] 行情采集失败 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs);
                 return Result.fail("行情数据采集失败，请稍后重试");
             }
 
-            Object report = state.value("report").orElse(null);
-            if (report instanceof CryptoAnalysisReport r) {
-                if (!r.isValid()) {
-                    log.error("[Quant] 报告关键字段缺失 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs);
-                    return Result.fail("分析结果不完整，请重试");
-                }
-                Object fr = state.value("forecast_result").orElse(null);
-                ForecastResult forecastResult = null;
-                if (fr instanceof String frJson) {
-                    forecastResult = JSON.parseObject(frJson, ForecastResult.class);
-                } else if (fr instanceof ForecastResult frObj) {
-                    forecastResult = frObj;
-                }
-                if (forecastResult != null) {
-                    String debateSummary = (String) state.value("debate_summary").orElse(null);
-                    String rawSnapshotJson = (String) state.value("raw_snapshot_json").orElse(null);
-                    String rawReportJson = (String) state.value("raw_report_json").orElse(null);
-                    persistService.persist(forecastResult, debateSummary, rawSnapshotJson, rawReportJson);
-                } else {
-                    log.warn("[Quant] forecast_result为空或类型异常 type={}", fr != null ? fr.getClass().getName() : "null");
-                }
-                log.info("[Quant] 工作流完成 userId={} symbol={} confidence={} summary={} 总耗时{}ms",
-                        userId, symbol, r.getConfidence(), r.getSummary(), System.currentTimeMillis() - startMs);
-                return Result.ok(r);
+            CryptoAnalysisReport report = result.report();
+            if (report == null) {
+                log.error("[Quant] 报告格式错误 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs);
+                return Result.fail("分析结果格式错误");
             }
-            log.error("[Quant] 报告格式错误 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs);
-            return Result.fail("分析结果格式错误");
+            if (!result.reportValid()) {
+                log.error("[Quant] 报告关键字段缺失 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs);
+                return Result.fail("分析结果不完整，请重试");
+            }
+
+            log.info("[Quant] 工作流完成 userId={} symbol={} confidence={} summary={} 总耗时{}ms",
+                    userId, symbol, report.getConfidence(), report.getSummary(), System.currentTimeMillis() - startMs);
+            return Result.ok(report);
         } catch (Exception e) {
             log.error("[Quant] 工作流异常 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs, e);
             return Result.fail("分析失败，请稍后重试");

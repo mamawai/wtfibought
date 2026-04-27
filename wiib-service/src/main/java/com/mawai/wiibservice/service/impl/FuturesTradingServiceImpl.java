@@ -19,6 +19,7 @@ import com.mawai.wiibservice.mapper.UserMapper;
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.FuturesPositionIndexService;
 import com.mawai.wiibservice.service.FuturesTradingService;
+import com.mawai.wiibservice.service.TradeAttributionService;
 import com.mawai.wiibservice.service.UserService;
 import com.mawai.wiibservice.task.AiTradingScheduler;
 import com.mawai.wiibservice.util.RedisLockUtil;
@@ -32,6 +33,7 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import static com.mawai.wiibservice.service.impl.FuturesHelper.*;
 
@@ -48,6 +50,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     private final RedisLockUtil redisLockUtil;
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
+    private final TradeAttributionService tradeAttributionService;
 
     // ==================== 开仓 ====================
 
@@ -58,13 +61,17 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         getAndValidateUser(userId);
 
         BigDecimal price = getPrice(request.getSymbol());
-        int leverage = normalizeLeverage(request.getLeverage(), tradingConfig.getFutures().getMaxLeverage());
+        int requestedLeverage = request.getLeverage() != null ? request.getLeverage() : 1;
+        int leverage = normalizeLeverage(request.getLeverage(),
+                tradingConfig.getFutures().getMaxLeverage(),
+                tradingConfig.getFutures().maintenanceMarginRateForLeverage(requestedLeverage));
 
         if ("MARKET".equals(request.getOrderType())) {
             return executeMarketOpen(userId, request, price, leverage);
         } else {
-            tradingConfig.validateLimitPrice(request.getLimitPrice(), price);
-            return createLimitOpenOrder(userId, request, leverage);
+            BigDecimal markPrice = getMarkPrice(request.getSymbol());
+            tradingConfig.validateLimitPrice(request.getLimitPrice(), markPrice);
+            return createLimitOpenOrder(userId, request, leverage, markPrice);
         }
     }
 
@@ -72,7 +79,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         BigDecimal quantity = request.getQuantity();
         BigDecimal positionValue = price.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
-        BigDecimal commission = tradingConfig.calculateCryptoCommission(positionValue);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false, true);
         BigDecimal totalCost = margin.add(commission);
 
         User user = userService.getById(userId);
@@ -151,12 +158,15 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         return buildOrderResponse(order);
     }
 
-    private FuturesOrderResponse createLimitOpenOrder(Long userId, FuturesOpenRequest request, int leverage) {
+    private FuturesOrderResponse createLimitOpenOrder(Long userId, FuturesOpenRequest request, int leverage,
+                                                       BigDecimal markPrice) {
         BigDecimal limitPrice = request.getLimitPrice();
         BigDecimal quantity = request.getQuantity();
         BigDecimal positionValue = limitPrice.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
-        BigDecimal commission = tradingConfig.calculateCryptoCommission(positionValue);
+        String orderSide = "LONG".equals(request.getSide()) ? "OPEN_LONG" : "OPEN_SHORT";
+        boolean isTaker = isLimitTaker(orderSide, limitPrice, markPrice);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false, isTaker);
         BigDecimal frozenAmount = margin.add(commission);
 
         int affected = userMapper.atomicFreezeBalance(userId, frozenAmount);
@@ -167,12 +177,13 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         FuturesOrder order = new FuturesOrder();
         order.setUserId(userId);
         order.setSymbol(request.getSymbol());
-        order.setOrderSide("LONG".equals(request.getSide()) ? "OPEN_LONG" : "OPEN_SHORT");
+        order.setOrderSide(orderSide);
         order.setOrderType("LIMIT");
         order.setQuantity(quantity);
         order.setLeverage(leverage);
         order.setLimitPrice(limitPrice);
         order.setFrozenAmount(frozenAmount);
+        order.setCommission(commission);
         order.setStatus("PENDING");
         order.setExpireAt(expireAt);
 
@@ -210,8 +221,9 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
 
         addToLimitZSet(order, cacheService);
 
-        log.info("futures限价开仓单 userId={} {} side={} qty={} limit={} frozen={}",
-                userId, request.getSymbol(), request.getSide(), quantity, limitPrice, frozenAmount);
+        log.info("futures限价开仓单 userId={} {} side={} qty={} limit={} mark={} feeType={} frozen={}",
+                userId, request.getSymbol(), request.getSide(), quantity, limitPrice, markPrice,
+                isTaker ? "TAKER" : "MAKER", frozenAmount);
 
         return buildOrderResponse(order);
     }
@@ -242,8 +254,9 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         if ("MARKET".equals(request.getOrderType())) {
             return executeMarketClose(userId, position, closeQty);
         } else {
-            tradingConfig.validateLimitPrice(request.getLimitPrice(), getPrice(position.getSymbol()));
-            return createLimitCloseOrder(userId, position, closeQty, request.getLimitPrice());
+            BigDecimal markPrice = getMarkPrice(position.getSymbol());
+            tradingConfig.validateLimitPrice(request.getLimitPrice(), markPrice);
+            return createLimitCloseOrder(userId, position, closeQty, request.getLimitPrice(), markPrice);
         }
     }
 
@@ -251,7 +264,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         BigDecimal currentPrice = getPrice(position.getSymbol());
         BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), currentPrice, closeQty);
         BigDecimal closeValue = currentPrice.multiply(closeQty).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal commission = tradingConfig.calculateCryptoCommission(closeValue);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, true);
 
         boolean isFullClose = closeQty.compareTo(position.getQuantity()) == 0;
 
@@ -291,6 +304,9 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setRealizedPnl(pnl);
         order.setStatus("FILLED");
         orderMapper.insert(order);
+        if (isFullClose) {
+            tradeAttributionService.recordExit(position, pnl, "UNKNOWN");
+        }
 
         log.info("futures市价平仓 userId={} posId={} qty={} price={} pnl={} return={}",
                 userId, position.getId(), closeQty, currentPrice, pnl, returnAmount);
@@ -299,26 +315,46 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     }
 
     private FuturesOrderResponse createLimitCloseOrder(Long userId, FuturesPosition position,
-                                                        BigDecimal closeQty, BigDecimal limitPrice) {
+                                                        BigDecimal closeQty, BigDecimal limitPrice,
+                                                        BigDecimal markPrice) {
+        BigDecimal pendingCloseQty = orderMapper.selectList(new LambdaQueryWrapper<FuturesOrder>()
+                        .eq(FuturesOrder::getUserId, userId)
+                        .eq(FuturesOrder::getPositionId, position.getId())
+                        .eq(FuturesOrder::getStatus, "PENDING")
+                        .in(FuturesOrder::getOrderSide, "CLOSE_LONG", "CLOSE_SHORT"))
+                .stream()
+                .map(FuturesOrder::getQuantity)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal availableCloseQty = position.getQuantity().subtract(pendingCloseQty);
+        if (closeQty.compareTo(availableCloseQty) > 0) {
+            throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
+        }
+
         LocalDateTime expireAt = LocalDateTime.now().plusHours(tradingConfig.getLimitOrderMaxHours());
+        String orderSide = "LONG".equals(position.getSide()) ? "CLOSE_LONG" : "CLOSE_SHORT";
+        boolean isTaker = isLimitTaker(orderSide, limitPrice, markPrice);
+        BigDecimal closeValue = limitPrice.multiply(closeQty).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, isTaker);
 
         FuturesOrder order = new FuturesOrder();
         order.setUserId(userId);
         order.setPositionId(position.getId());
         order.setSymbol(position.getSymbol());
-        order.setOrderSide("LONG".equals(position.getSide()) ? "CLOSE_LONG" : "CLOSE_SHORT");
+        order.setOrderSide(orderSide);
         order.setOrderType("LIMIT");
         order.setQuantity(closeQty);
         order.setLeverage(position.getLeverage());
         order.setLimitPrice(limitPrice);
+        order.setCommission(commission);
         order.setStatus("PENDING");
         order.setExpireAt(expireAt);
         orderMapper.insert(order);
 
         addToLimitZSet(order, cacheService);
 
-        log.info("futures限价平仓单 userId={} posId={} qty={} limit={}",
-                userId, position.getId(), closeQty, limitPrice);
+        log.info("futures限价平仓单 userId={} posId={} qty={} limit={} mark={} feeType={}",
+                userId, position.getId(), closeQty, limitPrice, markPrice, isTaker ? "TAKER" : "MAKER");
 
         return buildOrderResponse(order);
     }
@@ -369,7 +405,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         if (affected2 == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
 
         BigDecimal newMargin = position.getMargin().add(amount);
-        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), position.getEntryPrice(), newMargin, position.getQuantity());
+        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), position.getEntryPrice(),
+                newMargin, position.getQuantity(), position.getLeverage());
         positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
 
         log.info("futures追加保证金 userId={} posId={} amount={}", userId, request.getPositionId(), amount);
@@ -400,9 +437,9 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         if ("MARKET".equals(request.getOrderType())) {
             return executeMarketIncrease(userId, position, request.getQuantity());
         } else if ("LIMIT".equals(request.getOrderType())) {
-            BigDecimal currentPrice = getPrice(position.getSymbol());
-            tradingConfig.validateLimitPrice(request.getLimitPrice(), currentPrice);
-            return createLimitIncreaseOrder(userId, position, request.getQuantity(), request.getLimitPrice());
+            BigDecimal markPrice = getMarkPrice(position.getSymbol());
+            tradingConfig.validateLimitPrice(request.getLimitPrice(), markPrice);
+            return createLimitIncreaseOrder(userId, position, request.getQuantity(), request.getLimitPrice(), markPrice);
         } else {
             throw new BizException(ErrorCode.PARAM_ERROR);
         }
@@ -414,7 +451,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
 
         BigDecimal addValue = price.multiply(addQty).setScale(2, RoundingMode.HALF_UP);
         BigDecimal addMargin = addValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
-        BigDecimal commission = tradingConfig.calculateCryptoCommission(addValue);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(addValue, false, true);
         BigDecimal totalCost = addMargin.add(commission);
 
         int affected = userMapper.atomicUpdateBalance(userId, totalCost.negate());
@@ -430,7 +467,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         if (affected2 == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
 
         BigDecimal newMargin = position.getMargin().add(addMargin);
-        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), newEntryPrice, newMargin, newQty);
+        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), newEntryPrice, newMargin,
+                newQty, position.getLeverage());
         positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
 
         FuturesOrder order = new FuturesOrder();
@@ -455,11 +493,14 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     }
 
     private FuturesOrderResponse createLimitIncreaseOrder(Long userId, FuturesPosition position,
-                                                           BigDecimal addQty, BigDecimal limitPrice) {
+                                                           BigDecimal addQty, BigDecimal limitPrice,
+                                                           BigDecimal markPrice) {
         int leverage = position.getLeverage();
         BigDecimal addValue = limitPrice.multiply(addQty).setScale(2, RoundingMode.HALF_UP);
         BigDecimal addMargin = addValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
-        BigDecimal commission = tradingConfig.calculateCryptoCommission(addValue);
+        String orderSide = "LONG".equals(position.getSide()) ? "INCREASE_LONG" : "INCREASE_SHORT";
+        boolean isTaker = isLimitTaker(orderSide, limitPrice, markPrice);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(addValue, false, isTaker);
         BigDecimal frozenAmount = addMargin.add(commission);
 
         int affected = userMapper.atomicFreezeBalance(userId, frozenAmount);
@@ -471,20 +512,21 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setUserId(userId);
         order.setPositionId(position.getId());
         order.setSymbol(position.getSymbol());
-        order.setOrderSide("LONG".equals(position.getSide()) ? "INCREASE_LONG" : "INCREASE_SHORT");
+        order.setOrderSide(orderSide);
         order.setOrderType("LIMIT");
         order.setQuantity(addQty);
         order.setLeverage(leverage);
         order.setLimitPrice(limitPrice);
         order.setFrozenAmount(frozenAmount);
+        order.setCommission(commission);
         order.setStatus("PENDING");
         order.setExpireAt(expireAt);
         orderMapper.insert(order);
 
         addToLimitZSet(order, cacheService);
 
-        log.info("futures限价加仓单 userId={} posId={} addQty={} limit={} frozen={}",
-                userId, position.getId(), addQty, limitPrice, frozenAmount);
+        log.info("futures限价加仓单 userId={} posId={} addQty={} limit={} mark={} feeType={} frozen={}",
+                userId, position.getId(), addQty, limitPrice, markPrice, isTaker ? "TAKER" : "MAKER", frozenAmount);
 
         return buildOrderResponse(order);
     }
@@ -552,10 +594,12 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         BigDecimal effectiveMargin = pos.getMargin().add(unrealizedPnl);
         dto.setEffectiveMargin(effectiveMargin);
 
-        BigDecimal maintenanceMargin = positionValue.multiply(tradingConfig.getFutures().getMaintenanceMarginRate());
+        BigDecimal maintenanceMargin = positionValue.multiply(
+                tradingConfig.getFutures().maintenanceMarginRateForLeverage(pos.getLeverage()));
         dto.setMaintenanceMargin(maintenanceMargin);
 
-        BigDecimal liquidationPrice = positionIndexService.calcStaticLiqPrice(pos.getSide(), pos.getEntryPrice(), pos.getMargin(), pos.getQuantity());
+        BigDecimal liquidationPrice = positionIndexService.calcStaticLiqPrice(pos.getSide(), pos.getEntryPrice(),
+                pos.getMargin(), pos.getQuantity(), pos.getLeverage());
         dto.setLiquidationPrice(liquidationPrice);
 
         BigDecimal entryValue = pos.getEntryPrice().multiply(pos.getQuantity());
@@ -624,6 +668,15 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         BigDecimal mp = cacheService.getMarkPrice(symbol);
         if (mp != null) return mp;
         return getPrice(symbol);
+    }
+
+    private boolean isLimitTaker(String orderSide, BigDecimal limitPrice, BigDecimal markPrice) {
+        boolean buy = switch (orderSide) {
+            case "OPEN_LONG", "INCREASE_LONG", "CLOSE_SHORT" -> true;
+            case "OPEN_SHORT", "INCREASE_SHORT", "CLOSE_LONG" -> false;
+            default -> throw new IllegalArgumentException("Invalid orderSide: " + orderSide);
+        };
+        return buy ? limitPrice.compareTo(markPrice) >= 0 : limitPrice.compareTo(markPrice) <= 0;
     }
 
     FuturesPosition getUserPosition(Long userId, Long positionId) {

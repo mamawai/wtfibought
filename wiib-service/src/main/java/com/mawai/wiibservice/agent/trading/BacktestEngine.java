@@ -78,6 +78,7 @@ public class BacktestEngine {
         }
 
         BacktestTradingTools tools = new BacktestTradingTools(initialBalance, symbol);
+        TradingExecutionState executionState = new TradingExecutionState();
         BacktestResult result = new BacktestResult(initialBalance);
         User mockUser = createMockUser(initialBalance);
 
@@ -126,7 +127,7 @@ public class BacktestEngine {
                     DeterministicTradingExecutor.execute(
                             symbol, mockUser, positions, forecast, signals,
                             recentDecisions, close, close, equity, tools,
-                            profileOverride);
+                            profileOverride, executionState, TradingRuntimeToggles.fromStaticFields());
 
             // 7. 标记开仓bar index（如果开了新仓）
             if (execResult.action().startsWith("OPEN_")) {
@@ -227,6 +228,7 @@ public class BacktestEngine {
         snap.put("takerBuySellPressure", null);
         snap.put("oiChangeRate", null);
         snap.put("fundingDeviation", null);
+        snap.put("lsrExtreme", null);
 
         // indicatorsByTimeframe
         JSONObject indicators = new JSONObject();
@@ -236,11 +238,14 @@ public class BacktestEngine {
         tf5m.put("rsi14", getBd(ind5m, "rsi14"));
         tf5m.put("macd_cross", getStr(ind5m, "macd_cross"));
         tf5m.put("macd_hist_trend", getStr(ind5m, "macd_hist_trend"));
+        tf5m.put("macd_dif", getBd(ind5m, "macd_dif"));
+        tf5m.put("macd_dea", getBd(ind5m, "macd_dea"));
         tf5m.put("ma_alignment", getInt(ind5m, "ma_alignment"));
         tf5m.put("close_trend", getStr(ind5m, "close_trend"));
         tf5m.put("boll_pb", getDbl(ind5m, "boll_pb"));
         tf5m.put("boll_bandwidth", getDbl(ind5m, "boll_bandwidth"));
         tf5m.put("volume_ratio", getDbl(ind5m, "volume_ratio"));
+        tf5m.put("ema20", getBd(ind5m, "ema20"));
         indicators.put("5m", tf5m);
 
         // 15m

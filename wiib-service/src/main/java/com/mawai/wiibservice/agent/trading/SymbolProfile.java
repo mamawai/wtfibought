@@ -21,14 +21,12 @@ public record SymbolProfile(
         double partialTpAtr,
         double trailGapAtr
 ) {
-    // trailBreakevenAtr 2.0→1.0 让浮盈1ATR即保本（避免5m级冲1.9ATR回落打掉反而亏手续费）
-    // trailLockAtr 3.0→1.5 浮盈1.5ATR即启动追踪锁利（而非3ATR才追）
-    // partialTpAtr=1.5 分批止盈点，1.5ATR 平50%落袋
-    // trailGapAtr=0.8 追踪止损 gap，独立于 breakeven，防 trail 太松吃回利润
+    // BTC/ETH 虚拟盘观察档：SL 扛住 5m 正常波动，靠缩小仓位控制单笔亏损。
+    // 盯盘不再早保本/早追踪，TP 需要给足空间，优先等完整止盈。
     private static final SymbolProfile BTC = new SymbolProfile(
-            1.5, 3.0, 1.5, 1.5, 3.0, 2.0, 3.0, 1.0, 1.5, 0.005, 0.10, 1.5, 0.8);
+            2.6, 5.2, 2.4, 3.2, 4.2, 2.8, 5.8, 0.5, 1.5, 0.008, 0.12, 1.5, 0.8);
     private static final SymbolProfile ETH = new SymbolProfile(
-            1.5, 3.0, 1.5, 1.5, 3.0, 2.0, 3.0, 1.0, 1.5, 0.005, 0.10, 1.5, 0.8);
+            2.6, 5.2, 2.4, 3.2, 4.2, 2.8, 5.8, 0.5, 1.5, 0.008, 0.12, 1.5, 0.8);
     // PAXG 低波动：门槛按比例放宽
     private static final SymbolProfile PAXG = new SymbolProfile(
             3.5, 6.0, 3.0, 2.5, 5.0, 4.0, 6.0, 1.2, 2.0, 0.002, 0.05, 2.0, 1.2);

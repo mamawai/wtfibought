@@ -114,7 +114,7 @@ public class RedisLockUtil {
      *
      * @param key      锁的key
      * @param supplier 要执行的操作
-     * @throws RuntimeException 如果获取锁失败
+     * @throws LockAcquisitionException 如果获取锁失败
      */
     public <T> void executeWithLock(String key, Supplier<T> supplier) {
         executeWithLock(key, DEFAULT_LOCK_TIMEOUT, DEFAULT_WAIT_TIMEOUT, supplier);
@@ -126,7 +126,7 @@ public class RedisLockUtil {
     public <T> T executeWithLock(String key, long lockTimeout, long waitTimeout, Supplier<T> supplier) {
         String lockValue = tryLockWithWait(key, lockTimeout, waitTimeout);
         if (lockValue == null) {
-            throw new RuntimeException("获取锁失败: " + key);
+            throw new LockAcquisitionException(key);
         }
 
         try {
@@ -146,4 +146,3 @@ public class RedisLockUtil {
         });
     }
 }
-

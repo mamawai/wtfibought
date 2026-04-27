@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.dto.*;
 import com.mawai.wiibcommon.entity.*;
+import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibservice.mapper.QuantSignalDecisionMapper;
 import com.mawai.wiibservice.mapper.UserMapper;
@@ -25,12 +26,13 @@ public class AiTradingTools implements TradingOperations {
     private static final int MAX_LEVERAGE = 50;
     private static final int MIN_LEVERAGE = 5;
     private static final BigDecimal MIN_POSITION_VALUE = new BigDecimal("5000");
+    // 工具层兜底上限：确定性执行器更严（15%），这里保留给手动/LLM工具调用防越界。
     private static final BigDecimal MAX_POSITION_RATIO = new BigDecimal("0.35");
     private static final BigDecimal MIN_MARGIN_FLOOR = new BigDecimal("100");
     private static final BigDecimal MIN_MARGIN_RATIO = new BigDecimal("0.01"); // 余额的1%
-    private static final int MAX_OPEN_POSITIONS = 3;
-    // 同向持仓上限3：仅3标的交易时2上限会漏掉高置信度(conf=1.0)信号，总仓位风险由MAX_OPEN_POSITIONS兜底
-    private static final int MAX_SAME_DIRECTION_POSITIONS = 3;
+    // 虚拟盘观察档：允许同币种同方向多次开仓，风险由每单SL距离反推仓位 + 保证金上限控制。
+    private static final int MAX_OPEN_POSITIONS = 6;
+    private static final int MAX_SAME_DIRECTION_POSITIONS = 6;
     // SL校验容差2bps：匹配执行器adjustForNoiseFloor，防价格漂移/BigDecimal精度误拒
     private static final BigDecimal SL_MIN_TOLERANCE = new BigDecimal("0.0002");
 
@@ -43,6 +45,7 @@ public class AiTradingTools implements TradingOperations {
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantSignalDecisionMapper decisionMapper;
     private final CacheService cacheService;
+    private final CircuitBreakerService circuitBreakerService;
 
     public AiTradingTools(Long aiUserId, String currentSymbol,
                           UserMapper userMapper,
@@ -51,7 +54,8 @@ public class AiTradingTools implements TradingOperations {
                           FuturesPositionMapper futuresPositionMapper,
                           QuantForecastCycleMapper cycleMapper,
                           QuantSignalDecisionMapper decisionMapper,
-                          CacheService cacheService) {
+                          CacheService cacheService,
+                          CircuitBreakerService circuitBreakerService) {
         this.aiUserId = aiUserId;
         this.currentSymbol = currentSymbol;
         this.userMapper = userMapper;
@@ -61,6 +65,7 @@ public class AiTradingTools implements TradingOperations {
         this.cycleMapper = cycleMapper;
         this.decisionMapper = decisionMapper;
         this.cacheService = cacheService;
+        this.circuitBreakerService = circuitBreakerService;
     }
 
     // ==================== 只读工具 ====================
@@ -176,7 +181,7 @@ public class AiTradingTools implements TradingOperations {
     }
 
     @Override
-    @Tool(description = "开仓下单，支持市价和限价。必须设1个止损和1个止盈，各覆盖全部仓位。杠杆5-50倍，单次保证金≥余额1%（最低100USDT）且不超余额35%，最多3仓位，同向最多2仓位。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
+    @Tool(description = "开仓下单，支持市价和限价。必须设1个止损和1个止盈，各覆盖全部仓位。杠杆5-50倍，单次保证金≥余额1%（最低100USDT）且不超余额35%，最多6个持仓。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
     public String openPosition(
             @ToolParam(description = "方向：LONG或SHORT") String side,
             @ToolParam(description = "数量（币的数量，如0.01个BTC）") BigDecimal quantity,
@@ -210,6 +215,12 @@ public class AiTradingTools implements TradingOperations {
         boolean isLimit = "LIMIT".equalsIgnoreCase(orderType);
         if (isLimit && (limitPrice == null || limitPrice.compareTo(BigDecimal.ZERO) <= 0)) {
             return "错误：限价单必须设置limitPrice";
+        }
+
+        CircuitBreakerService.OpenDecision breaker = circuitBreakerService.allowOpen(aiUserId, memo);
+        if (!breaker.allowed()) {
+            log.warn("[AI-Trade] 开仓被熔断拦截 symbol={} memo={} reason={}", symbol, memo, breaker.reason());
+            return "错误：熔断中，" + breaker.reason();
         }
 
         // 持仓数 + 同向检查（单次查询）
@@ -256,7 +267,7 @@ public class AiTradingTools implements TradingOperations {
             return "错误：名义价值" + positionValue + " USDT太小，最低" + MIN_POSITION_VALUE + " USDT，请加大仓位";
         }
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
-        // 动态最低保证金：max(200, 余额×2%)
+        // 动态最低保证金：max(100, 余额×1%)
         BigDecimal dynamicMinMargin = user.getBalance().multiply(MIN_MARGIN_RATIO)
                 .max(MIN_MARGIN_FLOOR).setScale(2, RoundingMode.HALF_UP);
         if (margin.compareTo(dynamicMinMargin) < 0 && user.getBalance().compareTo(dynamicMinMargin) >= 0) {
@@ -264,7 +275,7 @@ public class AiTradingTools implements TradingOperations {
         }
         BigDecimal maxMargin = user.getBalance().multiply(MAX_POSITION_RATIO);
         if (margin.compareTo(maxMargin) > 0) {
-            return "错误：保证金" + margin + "超过余额30%上限" + maxMargin.setScale(2, RoundingMode.HALF_UP);
+            return "错误：保证金" + margin + "超过余额35%上限" + maxMargin.setScale(2, RoundingMode.HALF_UP);
         }
 
         // 构造请求

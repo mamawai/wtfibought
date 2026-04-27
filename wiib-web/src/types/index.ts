@@ -450,6 +450,7 @@ export interface FuturesOrder {
   status: string;
   expireAt?: string;
   createdAt: string;
+  isAiTrader?: boolean;
 }
 
 // ========== BTC 5min 涨跌预测 ==========
@@ -655,7 +656,7 @@ export interface GroupedHeavyCycle {
   adjustments?: QuantForecastAdjustment[];
 }
 
-/** 轻周期对父重周期 forecast 的修正明细（FLIP/SAME_DIR_BOOST/OPPO_WEAK_PENALTY/OPPO_STRONG_PENALTY） */
+/** 轻周期对父重周期 forecast 的修正明细（FLIP 为历史兼容，新强反向使用 LIGHT_VETO） */
 export interface QuantForecastAdjustment {
   id: number;
   lightCycleId: string;
@@ -663,7 +664,7 @@ export interface QuantForecastAdjustment {
   symbol: string;
   lightHorizon: string;
   heavyHorizon: string;
-  adjustType: 'SAME_DIR_BOOST' | 'OPPO_WEAK_PENALTY' | 'OPPO_STRONG_PENALTY' | 'FLIP';
+  adjustType: 'SAME_DIR_BOOST' | 'OPPO_WEAK_PENALTY' | 'OPPO_STRONG_PENALTY' | 'LIGHT_VETO' | 'FLIP';
   lightDirection: string;
   lightConfidence: number;
   prevHeavyDirection: string;
@@ -709,6 +710,8 @@ export interface AiModelAssignment {
 
 export interface TradingRuntimeConfig {
   lowVolTradingEnabled?: boolean;
+  legacyThreshold5of7Enabled?: boolean;
+  legacy5of7ShadowEnabled?: boolean;
   drawdownSentinelEnabled?: boolean;
   drawdownWindowMinutes?: number;
   drawdownPnlPctDropThresholdPpt?: number;
@@ -719,6 +722,116 @@ export interface TradingRuntimeConfig {
 
 export interface QuantRuntimeConfig {
   debateJudgeEnabled?: boolean;
+  debateJudgeShadowEnabled?: boolean;
+  factorWeightOverrideEnabled?: boolean;
+}
+
+export type SubmitStatus = 'SUBMITTED' | 'SKIPPED';
+
+export interface SymbolSubmitResult {
+  symbol: string;
+  status: SubmitStatus;
+  reason?: string | null;
+}
+
+export interface TradingCycleSubmitResult {
+  cycleNo: number;
+  items: SymbolSubmitResult[];
+}
+
+// ========== Sprint C Admin Dashboard ==========
+export interface SprintCBreakerStatus {
+  enabled: boolean;
+  anyActive: boolean;
+  level: 'NORMAL' | 'L1' | 'L2' | 'L3' | 'DISABLED' | string;
+  l1Reason: string | null;
+  l2Reason: string | null;
+  l3Reason: string | null;
+  peakEquity: string | null;
+}
+
+export interface SprintCTradeStats {
+  samples: number;
+  wins: number;
+  winRate: number | null;
+  avgPnl?: number | null;
+  ev?: number | null;
+  totalPnl: number | null;
+  avgHoldingMinutes: number | null;
+}
+
+export interface SprintCPathStats extends SprintCTradeStats {
+  path: 'BREAKOUT' | 'MR' | 'LEGACY_TREND' | string;
+  enabled: boolean;
+  disabledReason: string | null;
+  disabledAt: string | null;
+  consecutiveLossCount: number;
+}
+
+export interface SprintCAccount {
+  aiUserId: number;
+  todayOpenCount: number;
+  cumulative: SprintCTradeStats;
+  breaker: SprintCBreakerStatus;
+}
+
+export interface SprintCShadow5of7 {
+  samples: number;
+  longSamples: number;
+  shortSamples: number;
+  firstSeenAt: string | null;
+  latestSeenAt: string | null;
+  hypotheticalWinRate: number | null;
+  verificationStatus: string;
+}
+
+export interface SprintCFactorIrRow {
+  agent: string;
+  horizon: string;
+  regime: string;
+  samples: number;
+  meanAlignedReturnBps: number | null;
+  stdAlignedReturnBps: number | null;
+  ir: number | null;
+  winRate: number | null;
+  avgConfidence: number | null;
+  avgAbsScore: number | null;
+}
+
+export interface SprintCFactorCoverage {
+  factorName: string;
+  symbol: string;
+  frequency: string;
+  expectedSamples: number;
+  samples: number;
+  completeness: number;
+  latestObservedAt: string | null;
+  latestAgeHours: number | null;
+  latestValue: number | null;
+}
+
+export interface SprintCLlmVariance {
+  cycles: number;
+  lowConfidenceCycles: number;
+  lowConfidenceRate: number | null;
+  avgRegimeConfidence: number | null;
+  avgRegimeConfidenceStddev: number | null;
+  avgNewsConfidenceStddev: number | null;
+  transitionCycles: number;
+  highVarianceCycles: number;
+}
+
+export interface SprintCDashboard {
+  generatedAt: string;
+  days: number;
+  from: string;
+  to: string;
+  account: SprintCAccount;
+  pathStats: SprintCPathStats[];
+  shadow5of7: SprintCShadow5of7;
+  factorIrRanking: SprintCFactorIrRow[];
+  externalFactorCoverage: SprintCFactorCoverage[];
+  llmVariance: SprintCLlmVariance;
 }
 
 export interface LatestCryptoResult {
@@ -768,4 +881,13 @@ export interface AiTradingDecision {
   balanceBefore: number;
   balanceAfter: number;
   createdAt: string;
+}
+
+// ========== Graph 观测 ==========
+export interface GraphNodeMetric {
+  node: string;
+  successCount: number;
+  errorCount: number;
+  meanMs: number;
+  maxMs: number;
 }

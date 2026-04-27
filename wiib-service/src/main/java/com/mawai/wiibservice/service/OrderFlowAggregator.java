@@ -20,6 +20,9 @@ public class OrderFlowAggregator {
     private final ConcurrentHashMap<String, ConcurrentLinkedDeque<long[]>> buffers = new ConcurrentHashMap<>();
     // long[]: [0]=timestamp, [1]=priceE2(price*100整数), [2]=qtyE8(qty*1e8整数), [3]=isBuyerMaker(0/1)
 
+    // 每个 symbol 最近一次 onAggTrade 时间戳。WS 卡顿>30s 时 BuildFeaturesNode 注入 STALE_AGG_TRADE
+    private final ConcurrentHashMap<String, Long> lastUpdateMs = new ConcurrentHashMap<>();
+
     /**
      * WS aggTrade 回调，高频调用，零分配热路径。
      * isBuyerMaker=true → taker 是卖方（主动卖）
@@ -27,6 +30,12 @@ public class OrderFlowAggregator {
     public void onAggTrade(String symbol, double price, double qty, boolean isBuyerMaker, long timestamp) {
         buffers.computeIfAbsent(symbol, k -> new ConcurrentLinkedDeque<>())
                 .addLast(new long[]{timestamp, (long) (price * 100), (long) (qty * 1e8), isBuyerMaker ? 1 : 0});
+        lastUpdateMs.put(symbol, timestamp);
+    }
+
+    /** 最近一次 onAggTrade 时间戳；从未收到返回 0 */
+    public long getLastUpdateMs(String symbol) {
+        return lastUpdateMs.getOrDefault(symbol, 0L);
     }
 
     /**

@@ -108,7 +108,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
             BigDecimal discountRate = null;
             if (request.getUseBuffId() != null) {
                 if (leverageMultiple > 1) throw new BizException(ErrorCode.DISCOUNT_NO_LEVERAGE);
-                discountRate = buffService.getDiscountRate(request.getUseBuffId());
+                discountRate = buffService.getDiscountRate(userId, request.getUseBuffId());
                 if (discountRate != null) {
                     amount = amount.multiply(discountRate).setScale(2, RoundingMode.HALF_UP);
                     commission = tradingConfig.calculateCryptoCommission(amount);
@@ -185,7 +185,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
 
     @Transactional(rollbackFor = Exception.class)
     protected CryptoOrderResponse doCancelOrder(Long userId, Long orderId) {
-        User user = getAndValidateUser(userId);
+        getAndValidateUser(userId);
         CryptoOrder order = baseMapper.selectById(orderId);
         if (order == null || !order.getUserId().equals(userId)) throw new BizException(ErrorCode.ORDER_NOT_FOUND);
         if (!OrderStatus.PENDING.getCode().equals(order.getStatus())) throw new BizException(ErrorCode.ORDER_CANNOT_CANCEL);

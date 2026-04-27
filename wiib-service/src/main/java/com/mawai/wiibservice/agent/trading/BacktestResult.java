@@ -12,6 +12,10 @@ import java.util.List;
  */
 public class BacktestResult {
 
+    private static final String PATH_BREAKOUT = "BREAKOUT";
+    private static final String PATH_MR = "MR";
+    private static final String PATH_LEGACY_TREND = "LEGACY_TREND";
+
     // ==================== 交易记录 ====================
 
     /**
@@ -21,7 +25,7 @@ public class BacktestResult {
             int barIndex,           // 开仓所在K线索引
             int closeBarIndex,      // 平仓所在K线索引
             String side,            // "LONG" / "SHORT"
-            String strategy,        // "TREND" / "MEAN_REVERSION" / "BREAKOUT"
+            String strategy,        // "LEGACY_TREND" / "MR" / "BREAKOUT"
             BigDecimal entryPrice,
             BigDecimal exitPrice,
             BigDecimal quantity,
@@ -159,9 +163,9 @@ public class BacktestResult {
                 Max Drawdown: %.2f%%
                 Avg Hold: %.1f bars
                 --- By Strategy ---
-                TREND:          %d trades
-                MEAN_REVERSION: %d trades
-                BREAKOUT:       %d trades
+                LEGACY_TREND: %d trades
+                MR:           %d trades
+                BREAKOUT:     %d trades
                 ============================""",
                 equityCurve.size(),
                 initialEquity.toPlainString(), finalEquity().toPlainString(), returnPct() * 100,
@@ -170,9 +174,10 @@ public class BacktestResult {
                 profitFactor(), sharpeRatio(),
                 maxDrawdownPct() * 100,
                 avgHoldBars(),
-                tradesByStrategy("TREND").size(),
-                tradesByStrategy("MEAN_REVERSION").size(),
-                tradesByStrategy("BREAKOUT").size()
+                tradesByStrategy(PATH_LEGACY_TREND).size(),
+                tradesByStrategy(PATH_MR).size(),
+                tradesByStrategy(PATH_BREAKOUT).size()
         );
     }
+
 }

@@ -672,6 +672,7 @@ public class BlackjackServiceImpl implements BlackjackService {
             if (granted < totalNet) {
                 long cut = totalNet - granted;
                 totalPayout -= cut;
+                applyPoolCapToResults(results, cut);
                 totalNet = granted;
             }
         } else {
@@ -973,6 +974,31 @@ public class BlackjackServiceImpl implements BlackjackService {
         dto.setPayout(payout);
         dto.setNet(net);
         return dto;
+    }
+
+    private void applyPoolCapToResults(List<HandResultDTO> results, long cut) {
+        long positiveNet = results.stream()
+                .filter(r -> r.getNet() > 0)
+                .mapToLong(HandResultDTO::getNet)
+                .sum();
+        if (cut <= 0 || positiveNet <= 0) return;
+
+        long remainingCut = cut;
+        for (HandResultDTO result : results) {
+            if (result.getNet() <= 0) continue;
+            long handCut = Math.min(remainingCut,
+                    cut * result.getNet() / positiveNet);
+            remainingCut -= handCut;
+            result.setPayout(result.getPayout() - handCut);
+            result.setNet(result.getNet() - handCut);
+        }
+        for (HandResultDTO result : results) {
+            if (remainingCut <= 0) break;
+            if (result.getNet() <= 0) continue;
+            result.setPayout(result.getPayout() - 1);
+            result.setNet(result.getNet() - 1);
+            remainingCut--;
+        }
     }
 
     // ==================== 规则与工具 ====================

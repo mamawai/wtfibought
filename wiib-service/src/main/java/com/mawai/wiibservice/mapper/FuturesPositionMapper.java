@@ -83,4 +83,8 @@ public interface FuturesPositionMapper extends BaseMapper<FuturesPosition> {
 
     @Select("SELECT COUNT(*) FROM futures_position WHERE user_id = #{userId} AND status = 'LIQUIDATED'")
     int countLiquidatedPositions(@Param("userId") Long userId);
+
+    @Update("UPDATE futures_position SET status = #{status}, updated_at = NOW() " +
+            "WHERE user_id = #{userId} AND status = 'OPEN'")
+    int closeOpenByUserId(@Param("userId") Long userId, @Param("status") String status);
 }

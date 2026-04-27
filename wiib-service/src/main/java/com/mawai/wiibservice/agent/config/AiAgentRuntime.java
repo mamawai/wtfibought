@@ -6,7 +6,6 @@ public record AiAgentRuntime(
         ChatModel behaviorChatModel,
         ChatModel quantChatModel,
         ChatModel chatChatModel,
-        ChatModel tradingChatModel,
         ChatModel reflectionChatModel
 ) {
 }

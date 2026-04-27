@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.math.BigDecimal;
 
 @Tag(name = "BTC 5min涨跌预测")
 @RestController
@@ -36,9 +37,10 @@ public class PredictionController {
 
     @PostMapping("/sell/{betId}")
     @Operation(summary = "卖出合约（按当前Polymarket价格）")
-    public Result<PredictionBetResponse> sell(@PathVariable Long betId) {
+    public Result<PredictionBetResponse> sell(@PathVariable Long betId,
+                                              @RequestParam(required = false) BigDecimal contracts) {
         Long userId = StpUtil.getLoginIdAsLong();
-        return Result.ok(predictionService.sell(userId, betId));
+        return Result.ok(predictionService.sell(userId, betId, contracts));
     }
 
     @GetMapping("/bets")

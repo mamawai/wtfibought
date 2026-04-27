@@ -9,7 +9,6 @@ import com.mawai.wiibcommon.constant.RateLimiterType;
 import com.mawai.wiibcommon.dto.OrderResponse;
 import com.mawai.wiibcommon.dto.OrderRequest;
 import com.mawai.wiibcommon.entity.Order;
-import com.mawai.wiibcommon.entity.Position;
 import com.mawai.wiibcommon.entity.Settlement;
 import com.mawai.wiibcommon.entity.Stock;
 import com.mawai.wiibcommon.entity.User;
@@ -20,10 +19,8 @@ import com.mawai.wiibcommon.enums.OrderType;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibservice.config.TradingConfig;
-import com.mawai.wiibservice.mapper.CryptoOrderMapper;
 import com.mawai.wiibservice.mapper.OrderMapper;
 import com.mawai.wiibservice.service.CacheService;
-import com.mawai.wiibservice.service.CryptoPositionService;
 import com.mawai.wiibservice.service.MarginAccountService;
 import com.mawai.wiibservice.service.OrderService;
 import com.mawai.wiibservice.service.PositionService;
@@ -76,8 +73,6 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     private final RedisLockUtil redisLockUtil;
     private final MarginAccountService marginAccountService;
     private final BuffService buffService;
-    private final CryptoPositionService cryptoPositionService;
-    private final CryptoOrderMapper cryptoOrderMapper;
 
     private static final int TRIGGERED_ORDER_BATCH_SIZE = 200;
 
@@ -120,7 +115,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 if (leverageMultiple > 1) {
                     throw new BizException(ErrorCode.DISCOUNT_NO_LEVERAGE);
                 }
-                discountRate = buffService.getDiscountRate(request.getUseBuffId());
+                discountRate = buffService.getDiscountRate(userId, request.getUseBuffId());
                 if (discountRate != null) {
                     amount = amount.multiply(discountRate).setScale(2, RoundingMode.HALF_UP);
                     commission = tradingConfig.calculateCommission(amount);

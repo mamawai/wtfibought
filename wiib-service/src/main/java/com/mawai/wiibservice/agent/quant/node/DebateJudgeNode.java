@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
  * 2. Judge裁判：综合原始数据+双方论据+历史记忆，做最终裁决
  * <p>
  * 安全约束继承自MetaJudge：
- * - confidence只能下调不能上调
+ * - confidence允许小幅上调（+0.10 cap）
  * - 方向翻转时cap到原始50%
  * - LLM失败fallback到原始裁决
  */
@@ -33,9 +33,15 @@ public class DebateJudgeNode implements NodeAction {
 
     /**
      * 辩论裁决运行时开关。true=启用3-call辩论；false=跳过辩论返回中性概率(33/34/33)保留原始forecasts。
-     * Admin可运行时切换做A/B测试：切到false观察胜率/成本是否显著改善。重启恢复默认true(保守档)。
+     * Phase 0A D7-B：默认关闭——3次LLM调用省掉，confidence不再被辩论调整，规避方差注入。
+     * 类与workflow节点保留不动，Admin可运行时切回true做前后对比。
      */
-    public static volatile boolean ENABLED = true;
+    public static volatile boolean ENABLED = false;
+    /**
+     * 辩论影子模式。true=正式辩论关闭时仍跑 Bull/Bear/Judge，但只写 debate_shadow_*。
+     * shadow 不覆盖 horizon_forecasts / overall_decision / risk_status，也不下发 debate_probs，避免影响正式报告与交易链路。
+     */
+    public static volatile boolean SHADOW_ENABLED = false;
 
     private final ChatClient chatClient;
     private final LlmCallMode callMode;
@@ -54,13 +60,11 @@ public class DebateJudgeNode implements NodeAction {
         List<HorizonForecast> forecasts =
                 (List<HorizonForecast>) state.value("horizon_forecasts").orElse(List.of());
 
-        if (!ENABLED) {
-            // A/B测试：跳过3-call辩论，仅下发33/34/33中性概率；不修改forecasts/decision/risk_status
-            Map<String, Integer[]> defaultProbs = new HashMap<>();
-            for (HorizonForecast f : forecasts) {
-                defaultProbs.put(f.horizon(), new Integer[]{33, 34, 33});
-            }
-            log.info("[Q4.5.disabled] 辩论已禁用, 保留原始forecasts, 下发中性概率 forecasts={}", forecasts.size());
+        boolean shadowMode = !ENABLED && SHADOW_ENABLED;
+        if (!ENABLED && !SHADOW_ENABLED) {
+            // D7-B短路：跳过3-call辩论，下发33/34/33中性概率；forecasts/decision/risk_status原样透传
+            Map<String, Integer[]> defaultProbs = buildDefaultProbs(forecasts);
+            log.info("[Q4.5.disabled] 辩论已禁用(D7-B), 保留原始forecasts, 下发中性概率 forecasts={}", forecasts.size());
             return Map.of("debate_probs", defaultProbs);
         }
 
@@ -72,8 +76,8 @@ public class DebateJudgeNode implements NodeAction {
         String riskStatus = (String) state.value("risk_status").orElse("UNKNOWN");
         String regimeTransition = (String) state.value("regime_transition").orElse("NONE");
 
-        log.info("[Q4.5.0] debate_judge开始 forecasts={} votes={} decision={}",
-                forecasts.size(), votes.size(), overallDecision);
+        log.info("[Q4.5.0] debate_judge开始 mode={} forecasts={} votes={} decision={}",
+                shadowMode ? "SHADOW" : "LIVE", forecasts.size(), votes.size(), overallDecision);
 
         if (forecasts.isEmpty()) return Map.of();
 
@@ -125,9 +129,10 @@ public class DebateJudgeNode implements NodeAction {
                     judgeResponse != null ? judgeResponse.length() : 0,
                     System.currentTimeMillis() - startMs);
 
-            return applyDebateResult(forecasts, judgeResponse, bullArg, bearArg, riskStatus, startMs);
+            return applyDebateResult(forecasts, judgeResponse, bullArg, bearArg, riskStatus, startMs, shadowMode);
         } catch (Exception e) {
             log.warn("[Q4.5] 辩论流程失败，保留原始裁决: {}", e.getMessage());
+            if (shadowMode) return Map.of("debate_probs", buildDefaultProbs(forecasts));
             return Map.of();
         }
     }
@@ -237,7 +242,7 @@ public class DebateJudgeNode implements NodeAction {
                 裁决原则：
                 - 不要因为双方都有道理就默认NO_TRADE，要做出明确判断
                 - 综合评估Bull和Bear的论据强度，谁的证据更具体、更有数据支撑
-                - confidence只能下调不能上调（保守原则）
+                - confidence允许小幅上调（+0.10 cap）
                 - 如果需要翻转方向，新confidence不得超过原始的50%%
                 - 如果Bull和Bear论据都很弱，维持系统原始裁决(approved=true)
                 - direction只能是LONG/SHORT/NO_TRADE
@@ -269,8 +274,11 @@ public class DebateJudgeNode implements NodeAction {
                                                     String bullArg,
                                                     String bearArg,
                                                     String originalRiskStatus,
-                                                    long startMs) {
-        if (llmResponse == null || llmResponse.isBlank()) return Map.of();
+                                                    long startMs,
+                                                    boolean shadowMode) {
+        if (llmResponse == null || llmResponse.isBlank()) {
+            return shadowMode ? Map.of("debate_probs", buildDefaultProbs(original)) : Map.of();
+        }
 
         try {
             String json = JsonUtils.extractJson(llmResponse);
@@ -285,7 +293,9 @@ public class DebateJudgeNode implements NodeAction {
             if (horizons == null || horizons.size() != 3) {
                 log.warn("[Q4.5] horizons数组异常(size={}), 保留原始",
                         horizons != null ? horizons.size() : 0);
-                return buildDebateSummaryOnly(bullArg, bearArg, judgeReasoning);
+                Map<String, Object> fallback = buildDebateSummaryOnly(bullArg, bearArg, judgeReasoning, shadowMode);
+                if (shadowMode) fallback.put("debate_probs", buildDefaultProbs(original));
+                return fallback;
             }
 
             // 应用调整（逻辑继承自MetaJudge.applyAdjustments）
@@ -344,13 +354,6 @@ public class DebateJudgeNode implements NodeAction {
                 }
             }
 
-            // 构建输出
-            Map<String, Object> result = new HashMap<>();
-            result.put("horizon_forecasts", adjusted);
-            result.put("overall_decision", rebuildDecision(adjusted));
-            result.put("risk_status", rebuildRiskStatus(adjusted, originalRiskStatus));
-            result.put("debate_summary", buildDebateSummaryJson(bullArg, bearArg, judgeReasoning));
-
             // 解析辩论概率修正 → 传递给报告层
             Map<String, Integer[]> debateProbs = new HashMap<>();
             for (int i = 0; i < horizons.size(); i++) {
@@ -372,20 +375,45 @@ public class DebateJudgeNode implements NodeAction {
                             hz, bullPct, rangePct, bearPct);
                 }
             }
+
+            String rebuiltDecision = rebuildDecision(adjusted);
+            String rebuiltRiskStatus = rebuildRiskStatus(adjusted, originalRiskStatus);
+
+            // shadow 只输出影子字段，不影响正式 forecast/report/trading 链路
+            Map<String, Object> result = new HashMap<>();
+            if (shadowMode) {
+                // 正式报告保持 D7-B disabled 原行为；shadow 概率只写 debate_shadow_probs。
+                result.put("debate_probs", buildDefaultProbs(original));
+                result.put("debate_shadow_forecasts", adjusted);
+                result.put("debate_shadow_decision", rebuiltDecision);
+                result.put("debate_shadow_risk_status", rebuiltRiskStatus);
+                result.put("debate_shadow_summary", buildShadowSummaryJson(
+                        bullArg, bearArg, judgeReasoning, adjusted, rebuiltDecision, rebuiltRiskStatus, debateProbs));
+                if (!debateProbs.isEmpty()) {
+                    result.put("debate_shadow_probs", debateProbs);
+                }
+                log.info("[Q4.5.shadow] 辩论影子裁决完成 shadowDecision={} 耗时{}ms",
+                        rebuiltDecision, System.currentTimeMillis() - startMs);
+                return result;
+            }
+
+            // live 模式才允许覆盖正式字段
+            result.put("horizon_forecasts", adjusted);
+            result.put("overall_decision", rebuiltDecision);
+            result.put("risk_status", rebuiltRiskStatus);
+            result.put("debate_summary", buildDebateSummaryJson(bullArg, bearArg, judgeReasoning));
             if (!debateProbs.isEmpty()) {
                 result.put("debate_probs", debateProbs);
             }
 
             log.info("[Q4.5.end] 辩论裁决完成 decision={} 耗时{}ms",
-                    result.get("overall_decision"), System.currentTimeMillis() - startMs);
+                    rebuiltDecision, System.currentTimeMillis() - startMs);
             return result;
         } catch (Exception e) {
             log.warn("[Q4.5] 辩论结果解析失败，保留原始裁决: {}", e.getMessage());
+            if (shadowMode) return Map.of("debate_probs", buildDefaultProbs(original));
             // 返回默认debate_probs (均分)，避免下游缺失
-            Map<String, Integer[]> defaultProbs = new HashMap<>();
-            for (HorizonForecast f : original) {
-                defaultProbs.put(f.horizon(), new Integer[]{33, 34, 33});
-            }
+            Map<String, Integer[]> defaultProbs = buildDefaultProbs(original);
             return Map.of("debate_probs", defaultProbs);
         }
     }
@@ -471,10 +499,54 @@ public class DebateJudgeNode implements NodeAction {
         return obj.toJSONString();
     }
 
-    private Map<String, Object> buildDebateSummaryOnly(String bull, String bear, String judge) {
+    /** disabled/live-fallback 的正式报告概率，保持原 D7-B 中性行为。 */
+    private Map<String, Integer[]> buildDefaultProbs(List<HorizonForecast> forecasts) {
+        Map<String, Integer[]> defaultProbs = new HashMap<>();
+        for (HorizonForecast f : forecasts) {
+            defaultProbs.put(f.horizon(), new Integer[]{33, 34, 33});
+        }
+        return defaultProbs;
+    }
+
+    private Map<String, Object> buildDebateSummaryOnly(String bull, String bear, String judge, boolean shadowMode) {
         Map<String, Object> result = new HashMap<>();
-        result.put("debate_summary", buildDebateSummaryJson(bull, bear, judge));
+        String key = shadowMode ? "debate_shadow_summary" : "debate_summary";
+        result.put(key, shadowMode
+                ? buildShadowSummaryJson(bull, bear, judge, List.of(), "UNKNOWN", "UNKNOWN", Map.of())
+                : buildDebateSummaryJson(bull, bear, judge));
         return result;
+    }
+
+    /** shadow 落库摘要：带影子方向/概率，便于后续和 verification 对账。 */
+    private String buildShadowSummaryJson(String bull, String bear, String judge,
+                                          List<HorizonForecast> shadowForecasts,
+                                          String shadowDecision,
+                                          String shadowRiskStatus,
+                                          Map<String, Integer[]> shadowProbs) {
+        JSONObject obj = new JSONObject();
+        obj.put("mode", "SHADOW");
+        obj.put("bullArgument", bull != null ? bull : "");
+        obj.put("bearArgument", bear != null ? bear : "");
+        obj.put("judgeReasoning", judge != null ? judge : "");
+        obj.put("shadowDecision", shadowDecision);
+        obj.put("shadowRiskStatus", shadowRiskStatus);
+
+        JSONArray arr = new JSONArray();
+        for (HorizonForecast f : shadowForecasts) {
+            JSONObject h = new JSONObject();
+            h.put("horizon", f.horizon());
+            h.put("direction", f.direction().name());
+            h.put("confidence", f.confidence());
+            Integer[] probs = shadowProbs != null ? shadowProbs.get(f.horizon()) : null;
+            if (probs != null && probs.length >= 3) {
+                h.put("bullPct", probs[0]);
+                h.put("rangePct", probs[1]);
+                h.put("bearPct", probs[2]);
+            }
+            arr.add(h);
+        }
+        obj.put("shadowHorizons", arr);
+        return obj.toJSONString();
     }
 
     private HorizonForecast withConfidence(HorizonForecast f, double newConf) {

@@ -8,6 +8,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 微观结构因子 Agent。
+ * 组合盘口失衡、主动成交、OI、爆仓、资金费率、现货/合约联动等短线信号，给三个 horizon 输出交易方向。
+ */
 @Slf4j
 public class MicrostructureAgent implements FactorAgent {
 

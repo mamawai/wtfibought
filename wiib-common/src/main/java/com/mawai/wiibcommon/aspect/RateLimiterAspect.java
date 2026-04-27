@@ -69,8 +69,7 @@ public class RateLimiterAspect {
         } catch (RateLimitException e) {
             throw e;
         } catch (Exception e) {
-            log.error("Rate limiter execution failed", e);
-            throw new RateLimitException("系统异常，请稍后再试");
+            log.error("Rate limiter execution failed, fail open", e);
         }
 
         return joinPoint.proceed();
