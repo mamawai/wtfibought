@@ -881,3 +881,12 @@ export interface AiTradingDecision {
   balanceAfter: number;
   createdAt: string;
 }
+
+// ========== Graph 观测 ==========
+export interface GraphNodeMetric {
+  node: string;
+  successCount: number;
+  errorCount: number;
+  meanMs: number;
+  maxMs: number;
+}

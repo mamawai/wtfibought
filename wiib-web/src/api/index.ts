@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, GroupedVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, AiTradingDashboard, AiTradingDecision, TradingRuntimeConfig, QuantRuntimeConfig, TradingCycleSubmitResult, SprintCDashboard } from '../types';
+import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, GroupedVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, AiTradingDashboard, AiTradingDecision, TradingRuntimeConfig, QuantRuntimeConfig, TradingCycleSubmitResult, SprintCDashboard, GraphNodeMetric } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -432,4 +432,9 @@ export const aiTradingApi = {
     api.get<unknown, FuturesPosition[]>('/ai/trading/positions', { params: { symbol } }),
   orders: (symbol?: string, pageNum = 1, pageSize = 20) =>
     api.get<unknown, PageResult<FuturesOrder>>('/ai/trading/orders', { params: { symbol, pageNum, pageSize } }),
+};
+
+// ========== Graph 观测接口 ==========
+export const graphObsApi = {
+  metrics: () => api.get<unknown, GraphNodeMetric[]>('/admin/graph-obs/metrics'),
 };

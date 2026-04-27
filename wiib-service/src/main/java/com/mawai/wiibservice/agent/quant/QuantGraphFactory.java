@@ -9,8 +9,10 @@ import com.mawai.wiibservice.config.DeribitClient;
 import com.mawai.wiibservice.service.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;
 import com.mawai.wiibservice.service.OrderFlowAggregator;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -23,6 +25,7 @@ public class QuantGraphFactory {
     private final DepthStreamCache depthStreamCache;
     private final DeribitClient deribitClient;
     private final FactorWeightOverrideService weightOverrideService;
+    private final ObjectProvider<MeterRegistry> meterRegistryProvider;
 
     public QuantGraphFactory(BinanceRestClient binanceRestClient,
                              MemoryService memoryService,
@@ -30,7 +33,8 @@ public class QuantGraphFactory {
                              OrderFlowAggregator orderFlowAggregator,
                              DepthStreamCache depthStreamCache,
                              DeribitClient deribitClient,
-                             FactorWeightOverrideService weightOverrideService) {
+                             FactorWeightOverrideService weightOverrideService,
+                             ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.binanceRestClient = binanceRestClient;
         this.memoryService = memoryService;
         this.forceOrderService = forceOrderService;
@@ -38,6 +42,7 @@ public class QuantGraphFactory {
         this.depthStreamCache = depthStreamCache;
         this.deribitClient = deribitClient;
         this.weightOverrideService = weightOverrideService;
+        this.meterRegistryProvider = meterRegistryProvider;
     }
 
     public CompiledGraph create(ChatModel chatModel) throws Exception {
@@ -46,6 +51,6 @@ public class QuantGraphFactory {
         ChatClient.Builder shallowClient = ChatClient.builder(chatModel);
         return QuantForecastWorkflow.build(deepClient, shallowClient, binanceRestClient, memoryService,
                 forceOrderService, orderFlowAggregator, depthStreamCache, deribitClient, weightOverrideService,
-                LlmCallMode.STREAMING, LlmCallMode.STREAMING);
+                LlmCallMode.STREAMING, LlmCallMode.STREAMING, meterRegistryProvider.getIfAvailable());
     }
 }

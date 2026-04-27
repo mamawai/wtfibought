@@ -13,6 +13,7 @@ import { Ranking } from './pages/Ranking';
 import { Login } from './pages/Login';
 import { Admin } from './pages/Admin';
 import { AdminSprintC } from './pages/AdminSprintC';
+import { GraphObs } from './pages/GraphObs';
 import { Blackjack } from './pages/Blackjack';
 import { Mines } from './pages/Mines';
 import { VideoPoker } from './pages/VideoPoker';
@@ -67,6 +68,7 @@ function App() {
                 <Route path="/ranking" element={<Ranking />} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="/admin/sprint-c" element={<RequireAuth><AdminSprintC /></RequireAuth>} />
+                <Route path="/admin/graph-obs" element={<RequireAuth><GraphObs /></RequireAuth>} />
                 <Route path="/games" element={<Games />} />
                 <Route path="/me" element={<Me />} />
                 <Route path="/blackjack" element={<RequireAuth><Blackjack /></RequireAuth>} />
