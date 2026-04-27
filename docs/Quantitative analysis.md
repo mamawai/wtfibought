@@ -370,7 +370,9 @@ agent, horizon, direction, score, confidence, reasonCodes, riskFlags
 5. edge 不足、预期移动不足、分歧过高时，主要通过 confidence 惩罚表达不确定性。
 6. 根据 confidence、disagreement、质量标记裁剪最大杠杆和最大仓位。
 
-`FactorWeightOverrideService` 会在基础权重后应用运行时权重覆盖。之后还会叠加 `MemoryService.getAgentAccuracy(symbol)` 的历史准确率修正，避免长期低效的 agent 继续拿同等权重。
+`FactorWeightOverrideService` 会在基础权重后应用运行时权重覆盖。之后还会叠加 `MemoryService.getAgentAccuracy(symbol, regime)` 的程序统计准确率修正，避免长期低效的 agent 继续拿同等权重。
+
+这层准确率不再来自 LLM 反思主观打分，而是由 `AgentPerformanceMemoryService` 从 `quant_agent_vote + quant_forecast_verification + quant_forecast_cycle` 聚合真实验证样本。只统计 `|actual_change_bps| >= 10` 的有效波动样本；样本 `< 20` 不调权，live 倍率限制在 `0.8x ~ 1.2x`。
 
 ### 10.1 ConsensusBuilder
 
@@ -669,12 +671,13 @@ flowchart TD
 
 系统会验证历史预测并生成可复用记忆：
 
-- `VerificationTask / ReflectionTask` 周期性验证历史 forecast。
-- `MemoryService` 提供 agent accuracy 和历史表现摘要。
+- `ReflectionTask` 周期性验证历史 forecast，并生成可读 lesson。
+- `AgentPerformanceMemoryService` 用真实验证样本统计 agent accuracy。
+- `MemoryService` 提供统计准确率和历史表现摘要。
 - `RegimeReviewNode`、`DebateJudgeNode`、`GenerateReportNode` 可注入记忆摘要。
 - `HorizonJudge` 会读取 agent 历史准确率，修正 agent 权重。
 
-这套记忆的定位是“慢变量校准”，不是让模型短线追涨杀跌。
+这套记忆的定位是“慢变量校准”，不是让模型短线追涨杀跌。LLM 反思只做提示和解释，不再直接给 agent 打分调权。
 
 ## 20. 阅读代码时的边界
 

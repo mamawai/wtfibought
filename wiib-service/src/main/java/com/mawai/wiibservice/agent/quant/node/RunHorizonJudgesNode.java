@@ -5,6 +5,8 @@ import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.mawai.wiibservice.agent.quant.domain.*;
 import com.mawai.wiibservice.agent.quant.judge.ConsensusBuilder;
 import com.mawai.wiibservice.agent.quant.judge.HorizonJudge;
+import com.mawai.wiibservice.agent.quant.judge.HorizonJudge.WeightAdjustment;
+import com.mawai.wiibservice.agent.quant.memory.AgentPerformanceMemoryService.AgentStat;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import lombok.extern.slf4j.Slf4j;
@@ -45,35 +47,39 @@ public class RunHorizonJudgesNode implements NodeAction {
         String symbol = snapshot != null ? snapshot.symbol() : "BTCUSDT";
         MarketRegime regime = snapshot != null ? snapshot.regime() : null;
 
-        // 查反思记忆中的agent准确率
-        Map<String, Map<String, Double>> agentAccuracy = Map.of();
+        // 加载完整统计（含 sample_count），供调权可见性
+        Map<String, Map<String, AgentStat>> agentStats = Map.of();
         if (memoryService != null) {
             try {
-                agentAccuracy = memoryService.getAgentAccuracy(symbol);
-                if (!agentAccuracy.isEmpty()) {
-                    log.info("[Q4.0] 加载agent准确率 agents={}", agentAccuracy.keySet());
+                agentStats = memoryService.getAgentFullStats(symbol, regime != null ? regime.name() : null);
+                if (!agentStats.isEmpty()) {
+                    log.info("[Q4.0] 加载agent统计 agents={}", agentStats.keySet());
                 }
             } catch (Exception e) {
-                log.warn("[Q4.0] agent准确率查询失败: {}", e.getMessage());
+                log.warn("[Q4.0] agent统计查询失败: {}", e.getMessage());
             }
         }
 
         log.info("[Q4.0] run_judges开始 共{}票 qualityFlags={}", allVotes.size(), qualityFlags);
 
         List<HorizonForecast> forecasts = new ArrayList<>(3);
-        Map<String, Map<String, Double>> finalAccuracy = agentAccuracy;
+        // 收集所有 horizon 的调权明细
+        List<WeightAdjustment> allAdjustments = Collections.synchronizedList(new ArrayList<>());
+        Map<String, Map<String, AgentStat>> finalStats = agentStats;
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             List<Future<HorizonForecast>> futures = new ArrayList<>(3);
-            for (String horizon : HORIZONS) {
-                futures.add(executor.submit(() -> {
-                    HorizonJudge judge = new HorizonJudge(horizon, finalAccuracy, weightOverrideService);
-                    return judge.judge(allVotes, lastPrice, qualityFlags, regime);
-                }));
+            // judge 实例需在主线程可见，用于取 adjustments
+            HorizonJudge[] judges = new HorizonJudge[3];
+            for (int i = 0; i < 3; i++) {
+                judges[i] = new HorizonJudge(HORIZONS[i], finalStats, weightOverrideService);
+                HorizonJudge judge = judges[i];
+                futures.add(executor.submit(() -> judge.judge(allVotes, lastPrice, qualityFlags, regime)));
             }
             for (int i = 0; i < 3; i++) {
                 try {
                     forecasts.add(futures.get(i).get(5, TimeUnit.SECONDS));
+                    allAdjustments.addAll(judges[i].getWeightAdjustments());
                 } catch (Exception e) {
                     log.warn("[Q4] Judge[{}]裁决失败: {}", HORIZONS[i], e.getMessage());
                     forecasts.add(HorizonForecast.noTrade(HORIZONS[i], 1.0));
@@ -94,14 +100,39 @@ public class RunHorizonJudgesNode implements NodeAction {
                 + "-" + Integer.toHexString(ThreadLocalRandom.current().nextInt(0x1000, 0xFFFF))
                 + "-" + symbol;
 
-        log.info("[Q4.end] run_judges完成 decision={} riskStatus={} cycleId={} 耗时{}ms",
-                overallDecision, riskStatus, cycleId, System.currentTimeMillis() - startMs);
+        log.info("[Q4.end] run_judges完成 decision={} riskStatus={} cycleId={} adjustments={} 耗时{}ms",
+                overallDecision, riskStatus, cycleId, allAdjustments.size(),
+                System.currentTimeMillis() - startMs);
 
         Map<String, Object> result = new HashMap<>();
         result.put("horizon_forecasts", forecasts);
         result.put("overall_decision", overallDecision);
         result.put("risk_status", riskStatus);
         result.put("cycle_id", cycleId);
+        // 调权摘要写入 state，GenerateReportNode 落到 snapshot_json
+        if (!allAdjustments.isEmpty()) {
+            result.put("memory_weight_adjustments", buildAdjustmentSummary(allAdjustments));
+        }
         return result;
     }
+
+    /** 构建可序列化的调权摘要列表，落入 snapshot_json */
+    private List<Map<String, Object>> buildAdjustmentSummary(List<WeightAdjustment> adjustments) {
+        List<Map<String, Object>> list = new ArrayList<>(adjustments.size());
+        for (WeightAdjustment adj : adjustments) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("horizon", adj.horizon());
+            item.put("agent", adj.agent());
+            item.put("base", round3(adj.baseWeight()));
+            item.put("final", round3(adj.finalWeight()));
+            item.put("multiplier", round2(adj.memoryMultiplier()));
+            item.put("accuracy", round3(adj.accuracy()));
+            item.put("samples", adj.sampleCount());
+            list.add(item);
+        }
+        return list;
+    }
+
+    private double round2(double v) { return Math.round(v * 100.0) / 100.0; }
+    private double round3(double v) { return Math.round(v * 1000.0) / 1000.0; }
 }
