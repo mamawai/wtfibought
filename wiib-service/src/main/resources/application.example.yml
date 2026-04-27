@@ -112,6 +112,9 @@ coindesk:
 # Sprint B1-3：agent+horizon+regime 静态调权。
 # 当前回放未证明收益，默认关闭；仅用于模拟盘观察或后续新规则实验。
 factor:
+  # 日频 BTC ETF flow 只做 shadow 研究，默认不爬 Farside，不进入开仓决策
+  btc_etf_flow:
+    enabled: false
   weight_override:
     enabled: false
     config: classpath:factor_weight_override.json
