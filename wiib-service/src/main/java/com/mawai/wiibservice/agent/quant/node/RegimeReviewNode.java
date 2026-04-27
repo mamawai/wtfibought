@@ -2,15 +2,15 @@ package com.mawai.wiibservice.agent.quant.node;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.domain.MarketRegime;
+import com.mawai.wiibservice.agent.quant.domain.output.RegimeReviewResponse;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.converter.BeanOutputConverter;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -26,6 +26,8 @@ public class RegimeReviewNode implements NodeAction {
     private static final int REVIEW_CALLS = 3;
     private static final long REVIEW_TOTAL_TIMEOUT_MS = 30_000L;
     private static final double LOW_CONFIDENCE_STDDEV = 0.15;
+    private static final BeanOutputConverter<RegimeReviewResponse> REVIEW_CONVERTER =
+            new BeanOutputConverter<>(RegimeReviewResponse.class);
 
     private final ChatClient chatClient;
     private final LlmCallMode callMode;
@@ -287,19 +289,19 @@ public class RegimeReviewNode implements NodeAction {
         }
 
         String json = JsonUtils.extractJson(llmResponse);
-        JSONObject root = JSON.parseObject(json);
+        RegimeReviewResponse response = REVIEW_CONVERTER.convert(json);
 
-        String confirmedStr = root.getString("confirmedRegime");
-        double confidence = Math.clamp(root.getDoubleValue("confidence"), 0, 1);
-        String transitionSignal = root.getString("transitionSignal");
+        String confirmedStr = response.confirmedRegime();
+        double confidence = Math.clamp(response.confidence(), 0, 1);
+        String transitionSignal = response.transitionSignal();
         if (transitionSignal == null || transitionSignal.isBlank()) transitionSignal = "NONE";
 
         return new ReviewCandidate(
                 parseRegime(confirmedStr, ruleRegime),
                 confidence,
-                root.getString("reasoning"),
+                response.reasoning(),
                 transitionSignal,
-                root.getString("transitionDetail"));
+                response.transitionDetail());
     }
 
     private double medianConfidence(List<ReviewCandidate> reviews) {

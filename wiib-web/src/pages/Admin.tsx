@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
 import { useToast } from '../components/ui/use-toast';
-import { Play, Square, RefreshCw, Database, Calendar, Clock, Plus, Trash2, Pencil, Save, ShieldAlert } from 'lucide-react';
+import { Play, Square, RefreshCw, Database, Calendar, Clock, Plus, Trash2, Pencil, Save, ShieldAlert, Activity } from 'lucide-react';
 
 const FUNCTION_LABELS: Record<string, string> = {
   behavior: '行为分析',
@@ -331,6 +331,13 @@ export function Admin() {
           >
             <ShieldAlert className="w-4 h-4" />
             Sprint C
+          </Link>
+          <Link
+            to="/admin/graph-obs"
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium hover:bg-muted"
+          >
+            <Activity className="w-4 h-4" />
+            Graph 观测
           </Link>
           <Button variant="outline" size="sm" onClick={fetchStatus} disabled={loading}>
             <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />

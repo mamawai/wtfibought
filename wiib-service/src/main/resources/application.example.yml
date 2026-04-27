@@ -48,6 +48,15 @@ spring:
 mybatis-plus:
   mapper-locations: classpath:/mapper/**/*.xml
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  metrics:
+    tags:
+      application: wiib-service
+
 # AI配置（多模型优先级重试）-- 每日生成行情的
 ai:
   providers:

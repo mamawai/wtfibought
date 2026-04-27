@@ -5,18 +5,21 @@ import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.KeyStrategy;
 import com.alibaba.cloud.ai.graph.KeyStrategyFactory;
 import com.alibaba.cloud.ai.graph.StateGraph;
+import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
 import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.factor.*;
 import com.mawai.wiibservice.agent.quant.node.*;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
+import com.mawai.wiibservice.agent.quant.observe.NodeObservationWrapper;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
 import com.mawai.wiibservice.service.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;
 import com.mawai.wiibservice.service.OrderFlowAggregator;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.ai.chat.client.ChatClient;
 
 import java.util.HashMap;
@@ -54,7 +57,8 @@ public class QuantForecastWorkflow {
                                        DeribitClient deribitClient,
                                        FactorWeightOverrideService weightOverrideService,
                                        LlmCallMode deepCallMode,
-                                       LlmCallMode shallowCallMode) throws Exception {
+                                       LlmCallMode shallowCallMode,
+                                       MeterRegistry meterRegistry) throws Exception {
 
         // 5个因子Agent（NewsEventAgent用浅模型）
         List<FactorAgent> agents = List.of(
@@ -66,15 +70,23 @@ public class QuantForecastWorkflow {
         );
 
         StateGraph workflow = new StateGraph(createKeyStrategyFactory())
-                .addNode("collect_data",       node_async(new CollectDataNode(binanceRestClient, forceOrderService, depthStreamCache, deribitClient)))
-                .addNode("build_features",     node_async(new BuildFeaturesNode(orderFlowAggregator)))
-                .addNode("regime_review",      node_async(new RegimeReviewNode(shallowChatClient, shallowCallMode, memoryService)))
-                .addNode("run_factors",        node_async(new RunFactorAgentsNode(agents)))
-                .addNode("run_judges",         node_async(new RunHorizonJudgesNode(memoryService, weightOverrideService)))
-                .addNode("debate_judge",       node_async(new DebateJudgeNode(deepChatClient, deepCallMode, memoryService)))
-                .addNode("risk_gate",          node_async(new RiskGateNode()))
-                .addNode("generate_report",    node_async(new GenerateReportNode(shallowChatClient, shallowCallMode,
-                        memoryService, weightOverrideService)));
+                .addNode("collect_data",       node_async(observed("collect_data",
+                        new CollectDataNode(binanceRestClient, forceOrderService, depthStreamCache, deribitClient), meterRegistry)))
+                .addNode("build_features",     node_async(observed("build_features",
+                        new BuildFeaturesNode(orderFlowAggregator), meterRegistry)))
+                .addNode("regime_review",      node_async(observed("regime_review",
+                        new RegimeReviewNode(shallowChatClient, shallowCallMode, memoryService), meterRegistry)))
+                .addNode("run_factors",        node_async(observed("run_factors",
+                        new RunFactorAgentsNode(agents), meterRegistry)))
+                .addNode("run_judges",         node_async(observed("run_judges",
+                        new RunHorizonJudgesNode(memoryService, weightOverrideService), meterRegistry)))
+                .addNode("debate_judge",       node_async(observed("debate_judge",
+                        new DebateJudgeNode(deepChatClient, deepCallMode, memoryService), meterRegistry)))
+                .addNode("risk_gate",          node_async(observed("risk_gate",
+                        new RiskGateNode(), meterRegistry)))
+                .addNode("generate_report",    node_async(observed("generate_report",
+                        new GenerateReportNode(shallowChatClient, shallowCallMode,
+                                memoryService, weightOverrideService), meterRegistry)));
 
         workflow.addEdge(START, "collect_data");
         workflow.addEdge("collect_data", "build_features");
@@ -153,5 +165,9 @@ public class QuantForecastWorkflow {
             s.put("forecast_result", new ReplaceStrategy());
             return s;
         };
+    }
+
+    private static NodeAction observed(String nodeName, NodeAction delegate, MeterRegistry meterRegistry) {
+        return NodeObservationWrapper.wrap(nodeName, delegate, meterRegistry);
     }
 }
