@@ -28,10 +28,11 @@ import java.util.List;
 public class CircuitBreakerService {
 
     private static final BigDecimal INITIAL_EQUITY = new BigDecimal("100000.00");
-    private static final BigDecimal L1_DAILY_LOSS_PCT = new BigDecimal("0.03");
-    private static final BigDecimal L3_DRAWDOWN_PCT = new BigDecimal("0.08");
-    private static final int L2_LOSS_STREAK = 3;
-    private static final Duration L2_COOLDOWN = Duration.ofHours(4);
+    public static volatile boolean ENABLED = true;
+    public static volatile double L1_DAILY_NET_LOSS_PCT = 10.0;
+    public static volatile int L2_LOSS_STREAK = 4;
+    public static volatile int L2_COOLDOWN_HOURS = 2;
+    public static volatile double L3_DRAWDOWN_PCT = 30.0;
 
     private final CacheService cacheService;
     private final UserMapper userMapper;
@@ -40,12 +41,14 @@ public class CircuitBreakerService {
     private final StrategyPathStatusMapper strategyPathStatusMapper;
 
     @Value("${circuit.breaker.enabled:${CIRCUIT_BREAKER_ENABLED:true}}")
-    private boolean enabled;
+    private boolean propertyEnabled;
 
     /** 开仓前统一入口：账户熔断优先，其次检查单路径是否已被禁用。 */
     public OpenDecision allowOpen(Long userId, String strategyPath) {
-        if (!enabled) return OpenDecision.permit();
+        if (!isEnabled()) return OpenDecision.permit();
 
+        refreshDailyLossBreaker(userId);
+        syncLossStreakBreaker(userId);
         refreshDrawdownBreaker(userId);
 
         String l3 = cacheService.get(l3Key(userId));
@@ -68,12 +71,14 @@ public class CircuitBreakerService {
         return OpenDecision.permit();
     }
 
-    /** Admin 看板查询当前熔断状态；查询时顺手刷新一次 L3 回撤。 */
+    /** Admin 看板查询当前熔断状态；查询时顺手同步状态，避免调参后旧状态卡住。 */
     public BreakerStatus status(Long userId) {
-        if (!enabled) {
+        if (!isEnabled()) {
             return new BreakerStatus(false, false, "DISABLED", null, null, null, null);
         }
 
+        refreshDailyLossBreaker(userId);
+        syncLossStreakBreaker(userId);
         refreshDrawdownBreaker(userId);
 
         String l1 = cacheService.get(l1Key(userId));
@@ -85,60 +90,92 @@ public class CircuitBreakerService {
 
     /** 平仓归因落库后调用，刷新 L1 日亏损、L2 连亏和 L3 回撤状态。 */
     public void onTradeClosed(FuturesPosition position) {
-        if (!enabled || position == null || position.getUserId() == null) return;
+        if (!isEnabled() || position == null || position.getUserId() == null) return;
 
         refreshDailyLossBreaker(position.getUserId());
         refreshLossStreakBreaker(position.getUserId());
         refreshDrawdownBreaker(position.getUserId());
     }
 
-    /** L1：统计今天已平仓亏损额，超过初始权益 3% 后熔断到明天零点。 */
+    /** L1：统计今天已平仓净盈亏，净亏损超过阈值后熔断到明天零点。 */
     private void refreshDailyLossBreaker(Long userId) {
         LocalDateTime todayStart = LocalDate.now().atStartOfDay();
         List<TradeAttribution> rows = tradeAttributionMapper.selectByUserSince(userId, todayStart);
 
-        BigDecimal dailyLoss = rows.stream()
+        BigDecimal dailyNetPnl = rows.stream()
                 .map(TradeAttribution::getPnl)
-                .filter(pnl -> pnl.compareTo(BigDecimal.ZERO) < 0)
-                .map(BigDecimal::abs)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal limit = INITIAL_EQUITY.multiply(L1_DAILY_LOSS_PCT);
-        if (dailyLoss.compareTo(limit) < 0) return;
+        BigDecimal limit = INITIAL_EQUITY.multiply(pctRatio(L1_DAILY_NET_LOSS_PCT));
+        String key = l1Key(userId);
+        if (dailyNetPnl.compareTo(limit.negate()) > 0) {
+            cacheService.delete(key);
+            return;
+        }
 
-        String reason = "todayLoss=" + fmt(dailyLoss) + " >= " + fmt(limit);
-        cacheService.set(l1Key(userId), reason, Duration.between(LocalDateTime.now(), LocalDate.now().plusDays(1).atStartOfDay()));
-        log.warn("[CircuitBreaker] L1 triggered userId={} {}", userId, reason);
+        String reason = "todayNetPnl=" + fmt(dailyNetPnl) + " <= -" + fmt(limit)
+                + " (" + fmtPct(L1_DAILY_NET_LOSS_PCT) + "%)";
+        boolean alreadyActive = cacheService.get(key) != null;
+        cacheService.set(key, reason, Duration.between(LocalDateTime.now(), LocalDate.now().plusDays(1).atStartOfDay()));
+        if (!alreadyActive) log.warn("[CircuitBreaker] L1 triggered userId={} {}", userId, reason);
     }
 
-    /** L2：最近 3 笔全为亏损时冷却 4 小时。 */
+    /** L2：最近 N 笔全为亏损时冷却指定小时；只在平仓后刷新，避免查询开仓时不断续期。 */
     private void refreshLossStreakBreaker(Long userId) {
-        List<TradeAttribution> rows = tradeAttributionMapper.selectLatestByUser(userId, L2_LOSS_STREAK);
-        if (rows.size() < L2_LOSS_STREAK) return;
+        refreshLossStreakBreaker(userId, true);
+    }
+
+    /** 查询路径只同步已有 L2 状态，不在冷却结束后凭旧连亏重新触发。 */
+    private void syncLossStreakBreaker(Long userId) {
+        refreshLossStreakBreaker(userId, false);
+    }
+
+    private void refreshLossStreakBreaker(Long userId, boolean triggerWhenAbsent) {
+        int lossStreak = Math.max(1, L2_LOSS_STREAK);
+        List<TradeAttribution> rows = tradeAttributionMapper.selectLatestByUser(userId, lossStreak);
+        String key = l2Key(userId);
+        if (rows.size() < lossStreak) {
+            cacheService.delete(key);
+            return;
+        }
 
         boolean allLoss = rows.stream().allMatch(row -> row.getPnl().compareTo(BigDecimal.ZERO) < 0);
-        if (!allLoss) return;
+        if (!allLoss) {
+            cacheService.delete(key);
+            return;
+        }
+        if (!triggerWhenAbsent) return;
 
-        String reason = "consecutiveLoss=" + L2_LOSS_STREAK + ", cooldown=4h";
-        cacheService.set(l2Key(userId), reason, L2_COOLDOWN);
-        log.warn("[CircuitBreaker] L2 triggered userId={} {}", userId, reason);
+        int cooldownHours = Math.max(1, L2_COOLDOWN_HOURS);
+        String reason = "consecutiveLoss=" + lossStreak + ", cooldown=" + cooldownHours + "h";
+        boolean alreadyActive = cacheService.get(key) != null;
+        cacheService.set(key, reason, Duration.ofHours(cooldownHours));
+        if (!alreadyActive) log.warn("[CircuitBreaker] L2 triggered userId={} {}", userId, reason);
     }
 
-    /** L3：用当前权益维护峰值，回撤超过 8% 后进入人工解除状态。 */
+    /** L3：用当前权益维护峰值，回撤超过阈值后停开仓；权益重回触发线上方时自动清掉旧状态。 */
     private void refreshDrawdownBreaker(Long userId) {
         BigDecimal equity = calcTotalEquity(userId);
         String peakRaw = cacheService.get(peakKey(userId));
         BigDecimal peak = peakRaw != null ? new BigDecimal(peakRaw) : INITIAL_EQUITY;
         if (equity.compareTo(peak) > 0) {
             cacheService.set(peakKey(userId), equity.toPlainString());
+            cacheService.delete(l3Key(userId));
             return;
         }
 
-        BigDecimal floor = peak.multiply(BigDecimal.ONE.subtract(L3_DRAWDOWN_PCT));
-        if (equity.compareTo(floor) > 0) return;
+        BigDecimal floor = peak.multiply(BigDecimal.ONE.subtract(pctRatio(L3_DRAWDOWN_PCT)));
+        String key = l3Key(userId);
+        if (equity.compareTo(floor) > 0) {
+            cacheService.delete(key);
+            return;
+        }
 
-        String reason = "equity=" + fmt(equity) + " <= peak(" + fmt(peak) + ")*0.92";
-        cacheService.set(l3Key(userId), reason);
-        log.warn("[CircuitBreaker] L3 triggered userId={} {}", userId, reason);
+        String reason = "equity=" + fmt(equity) + " <= peak(" + fmt(peak) + ")*"
+                + fmt(BigDecimal.ONE.subtract(pctRatio(L3_DRAWDOWN_PCT)))
+                + " (" + fmtPct(L3_DRAWDOWN_PCT) + "% drawdown)";
+        boolean alreadyActive = cacheService.get(key) != null;
+        cacheService.set(key, reason);
+        if (!alreadyActive) log.warn("[CircuitBreaker] L3 triggered userId={} {}", userId, reason);
     }
 
     /** 计算账户权益：现金余额 + 冻结余额 + 开仓保证金 + 按最新 mark/期货价估算的未实现盈亏。 */
@@ -170,12 +207,12 @@ public class CircuitBreakerService {
         return "circuit:breaker:l1:" + userId + ":" + LocalDate.now();
     }
 
-    /** L2 Redis key 不带日期，靠 4h TTL 自动恢复。 */
+    /** L2 Redis key 不带日期，靠配置化 TTL 自动恢复。 */
     private String l2Key(Long userId) {
         return "circuit:breaker:l2:" + userId;
     }
 
-    /** L3 Redis key 无 TTL，需要人工清理。 */
+    /** L3 Redis key 无 TTL；开仓/看板刷新时满足恢复条件会清理。 */
     private String l3Key(Long userId) {
         return "circuit:breaker:l3:" + userId;
     }
@@ -188,6 +225,27 @@ public class CircuitBreakerService {
     /** 金额日志统一保留 2 位，方便人工核对。 */
     private String fmt(BigDecimal value) {
         return value.setScale(2, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private boolean isEnabled() {
+        return propertyEnabled && ENABLED;
+    }
+
+    public boolean isEffectiveEnabled() {
+        return isEnabled();
+    }
+
+    public boolean isPropertyEnabled() {
+        return propertyEnabled;
+    }
+
+    private BigDecimal pctRatio(double pct) {
+        return BigDecimal.valueOf(Math.max(0.0, pct))
+                .divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP);
+    }
+
+    private String fmtPct(double pct) {
+        return BigDecimal.valueOf(pct).setScale(2, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString();
     }
 
     /** 兼容旧 memo 和新 [Strategy-X] 标签，只返回三条实盘路径。 */
