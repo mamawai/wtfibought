@@ -2,15 +2,15 @@ package com.mawai.wiibservice.agent.quant.node;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.domain.MarketRegime;
+import com.mawai.wiibservice.agent.quant.domain.output.RegimeReviewResponse;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.converter.BeanOutputConverter;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -23,13 +23,23 @@ import java.util.*;
 @Slf4j
 public class RegimeReviewNode implements NodeAction {
 
+    private static final int REVIEW_CALLS = 3;
+    private static final long REVIEW_TOTAL_TIMEOUT_MS = 30_000L;
+    private static final double LOW_CONFIDENCE_STDDEV = 0.15;
+    private static final BeanOutputConverter<RegimeReviewResponse> REVIEW_CONVERTER =
+            new BeanOutputConverter<>(RegimeReviewResponse.class);
+
     private final ChatClient chatClient;
     private final LlmCallMode callMode;
     private final MemoryService memoryService;
 
-    public RegimeReviewNode(ChatClient.Builder builder, LlmCallMode callMode) {
-        this(builder, callMode, null);
-    }
+    private record ReviewCandidate(
+            MarketRegime regime,
+            double confidence,
+            String reasoning,
+            String transitionSignal,
+            String transitionDetail
+    ) {}
 
     public RegimeReviewNode(ChatClient.Builder builder, LlmCallMode callMode, MemoryService memoryService) {
         this.chatClient = builder.build();
@@ -38,7 +48,6 @@ public class RegimeReviewNode implements NodeAction {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public Map<String, Object> apply(OverAllState state) {
         long startMs = System.currentTimeMillis();
         FeatureSnapshot snapshot =
@@ -56,14 +65,61 @@ public class RegimeReviewNode implements NodeAction {
 
         try {
             String prompt = buildPrompt(snapshot, indicatorMap, priceChangeMap);
-            String response = callMode.call(chatClient, prompt);
-            log.info("[Q2.5.1] LLM返回 {}chars 耗时{}ms",
-                    response != null ? response.length() : 0, System.currentTimeMillis() - startMs);
+            List<ReviewCandidate> reviews = runReviewCalls(prompt, ruleRegime);
 
-            return applyReview(snapshot, ruleRegime, response, startMs);
+            return applyReview(snapshot, ruleRegime, reviews, startMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("[Q2.5] LLM regime审核被中断，保留规则检测结果");
+            return rebuildWithDefaults(snapshot);
         } catch (Exception e) {
             log.warn("[Q2.5] LLM regime审核失败，保留规则检测结果: {}", e.getMessage());
             return rebuildWithDefaults(snapshot);
+        }
+    }
+
+    private List<ReviewCandidate> runReviewCalls(String prompt, MarketRegime ruleRegime) throws InterruptedException {
+        List<ReviewCandidate> reviews = Collections.synchronizedList(new ArrayList<>(REVIEW_CALLS));
+        List<Thread> workers = new ArrayList<>(REVIEW_CALLS);
+
+        for (int i = 1; i <= REVIEW_CALLS; i++) {
+            int sampleNo = i;
+            Thread worker = Thread.ofVirtual()
+                    .name("regime-review-" + sampleNo)
+                    .start(() -> runReviewSample(sampleNo, prompt, ruleRegime, reviews));
+            workers.add(worker);
+        }
+
+        long deadline = System.currentTimeMillis() + REVIEW_TOTAL_TIMEOUT_MS;
+        for (Thread worker : workers) {
+            long remainingMs = deadline - System.currentTimeMillis();
+            if (remainingMs <= 0) break;
+            worker.join(remainingMs);
+        }
+
+        for (int i = 0; i < workers.size(); i++) {
+            Thread worker = workers.get(i);
+            if (worker.isAlive()) {
+                worker.interrupt();
+                log.warn("[Q2.5] LLM regime审核样本 {}/{} 超时取消", i + 1, REVIEW_CALLS);
+            }
+        }
+
+        return List.copyOf(reviews);
+    }
+
+    private void runReviewSample(int sampleNo, String prompt, MarketRegime ruleRegime,
+                                 List<ReviewCandidate> reviews) {
+        try {
+            String response = callMode.call(chatClient, prompt);
+            ReviewCandidate review = parseReview(response, ruleRegime);
+            if (review != null) {
+                reviews.add(review);
+            }
+            log.info("[Q2.5.1] LLM审核样本 {}/{} 返回 {}chars",
+                    sampleNo, REVIEW_CALLS, response != null ? response.length() : 0);
+        } catch (Exception e) {
+            log.warn("[Q2.5] LLM regime审核样本 {}/{} 失败: {}", sampleNo, REVIEW_CALLS, e.getMessage());
         }
     }
 
@@ -171,40 +227,38 @@ public class RegimeReviewNode implements NodeAction {
     }
 
     private Map<String, Object> applyReview(FeatureSnapshot snapshot, MarketRegime ruleRegime,
-                                             String llmResponse, long startMs) {
-        if (llmResponse == null || llmResponse.isBlank()) {
+                                             List<ReviewCandidate> reviews, long startMs) {
+        if (reviews == null || reviews.isEmpty()) {
             return rebuildWithDefaults(snapshot);
         }
 
         try {
-            String json = JsonUtils.extractJson(llmResponse);
-            JSONObject root = JSON.parseObject(json);
-
-            String confirmedStr = root.getString("confirmedRegime");
-            double confidence = root.getDoubleValue("confidence");
-            String reasoning = root.getString("reasoning");
-            String transitionSignal = root.getString("transitionSignal");
-            String transitionDetail = root.getString("transitionDetail");
-
-            confidence = Math.max(0, Math.min(1, confidence));
+            double confidence = medianConfidence(reviews);
+            double confidenceStddev = confidenceStddev(reviews);
+            ReviewCandidate selected = selectMedianReview(reviews, confidence);
+            MarketRegime llmRegime = majorityRegime(reviews, selected.regime());
+            String transitionSignal = selected.transitionSignal();
             if (transitionSignal == null || transitionSignal.isBlank()) transitionSignal = "NONE";
 
-            MarketRegime llmRegime = parseRegime(confirmedStr, ruleRegime);
-            log.info("[Q2.5.2] LLM审核 rule={} llm={} conf={} transition={} reasoning={}",
-                    ruleRegime, llmRegime, String.format("%.2f", confidence), transitionSignal, reasoning);
+            boolean lowConfidence = confidenceStddev > LOW_CONFIDENCE_STDDEV || reviews.size() < REVIEW_CALLS;
+            log.info("[Q2.5.2] LLM审核 rule={} llm={} conf={} stddev={} lowConfidence={} transition={} reasoning={}",
+                    ruleRegime, llmRegime, String.format("%.2f", confidence),
+                    String.format("%.3f", confidenceStddev), lowConfidence,
+                    transitionSignal, selected.reasoning());
 
             Map<String, Object> result = new HashMap<>();
             result.put("regime_confidence", confidence);
+            result.put("regime_confidence_stddev", confidenceStddev);
             result.put("regime_transition", transitionSignal);
-            if (transitionDetail != null && !transitionDetail.isBlank()) {
-                result.put("regime_transition_detail", transitionDetail);
+            if (selected.transitionDetail() != null && !selected.transitionDetail().isBlank()) {
+                result.put("regime_transition_detail", selected.transitionDetail());
             }
 
             // 确定最终regime
             MarketRegime finalRegime = llmRegime;
             if (llmRegime != ruleRegime) {
                 // 安全约束：SHOCK只能由规则触发（ATR突增是客观事实），LLM不能凭空升级为SHOCK
-                if (llmRegime == MarketRegime.SHOCK && ruleRegime != MarketRegime.SHOCK) {
+                if (llmRegime == MarketRegime.SHOCK) {
                     log.info("[Q2.5.2] LLM建议SHOCK但规则未检测到ATR突增，忽略修正");
                     finalRegime = ruleRegime;
                 } else {
@@ -212,8 +266,13 @@ public class RegimeReviewNode implements NodeAction {
                 }
             }
 
+            List<String> flags = new ArrayList<>(snapshot.qualityFlags() != null ? snapshot.qualityFlags() : List.of());
+            if (lowConfidence && !flags.contains("LOW_CONFIDENCE")) {
+                flags.add("LOW_CONFIDENCE");
+            }
+
             FeatureSnapshot updated = snapshot.withRegimeReview(
-                    finalRegime, snapshot.qualityFlags(), confidence, transitionSignal);
+                    finalRegime, List.copyOf(flags), confidence, transitionSignal);
             result.put("feature_snapshot", updated);
 
             log.info("[Q2.5.end] regime_review完成 总耗时{}ms", System.currentTimeMillis() - startMs);
@@ -222,6 +281,69 @@ public class RegimeReviewNode implements NodeAction {
             log.warn("[Q2.5] LLM输出解析失败，保留规则regime: {}", e.getMessage());
             return rebuildWithDefaults(snapshot);
         }
+    }
+
+    private ReviewCandidate parseReview(String llmResponse, MarketRegime ruleRegime) {
+        if (llmResponse == null || llmResponse.isBlank()) {
+            return null;
+        }
+
+        String json = JsonUtils.extractJson(llmResponse);
+        RegimeReviewResponse response = REVIEW_CONVERTER.convert(json);
+
+        String confirmedStr = response.confirmedRegime();
+        double confidence = Math.clamp(response.confidence(), 0, 1);
+        String transitionSignal = response.transitionSignal();
+        if (transitionSignal == null || transitionSignal.isBlank()) transitionSignal = "NONE";
+
+        return new ReviewCandidate(
+                parseRegime(confirmedStr, ruleRegime),
+                confidence,
+                response.reasoning(),
+                transitionSignal,
+                response.transitionDetail());
+    }
+
+    private double medianConfidence(List<ReviewCandidate> reviews) {
+        List<Double> values = reviews.stream()
+                .map(ReviewCandidate::confidence)
+                .sorted()
+                .toList();
+        return values.get(values.size() / 2);
+    }
+
+    private ReviewCandidate selectMedianReview(List<ReviewCandidate> reviews, double medianConfidence) {
+        ReviewCandidate selected = reviews.getFirst();
+        double bestDistance = Math.abs(selected.confidence() - medianConfidence);
+        for (ReviewCandidate review : reviews) {
+            double distance = Math.abs(review.confidence() - medianConfidence);
+            if (distance < bestDistance) {
+                selected = review;
+                bestDistance = distance;
+            }
+        }
+        return selected;
+    }
+
+    private MarketRegime majorityRegime(List<ReviewCandidate> reviews, MarketRegime fallback) {
+        Map<MarketRegime, Long> counts = reviews.stream()
+                .collect(java.util.stream.Collectors.groupingBy(ReviewCandidate::regime, java.util.stream.Collectors.counting()));
+        return counts.entrySet().stream()
+                .filter(e -> e.getValue() >= 2)
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElse(fallback);
+    }
+
+    private double confidenceStddev(List<ReviewCandidate> reviews) {
+        if (reviews.size() < 2) {
+            return 0;
+        }
+        double avg = reviews.stream().mapToDouble(ReviewCandidate::confidence).average().orElse(0);
+        double variance = reviews.stream()
+                .mapToDouble(r -> Math.pow(r.confidence() - avg, 2))
+                .average().orElse(0);
+        return Math.sqrt(variance);
     }
 
     private Map<String, Object> rebuildWithDefaults(FeatureSnapshot snapshot) {
@@ -260,13 +382,12 @@ public class RegimeReviewNode implements NodeAction {
 
     private void appendIfPresent(StringBuilder sb, Map<String, Object> map, String key, String label) {
         Object v = map.get(key);
-        if (v == null) return;
-        if (v instanceof BigDecimal bd) {
-            sb.append(label).append("=").append(bd.setScale(2, RoundingMode.HALF_UP)).append(" ");
-        } else if (v instanceof Number n) {
-            sb.append(label).append("=").append(String.format("%.2f", n.doubleValue())).append(" ");
-        } else {
-            sb.append(label).append("=").append(v).append(" ");
+        switch (v) {
+            case null -> {
+            }
+            case BigDecimal bd -> sb.append(label).append("=").append(bd.setScale(2, RoundingMode.HALF_UP)).append(" ");
+            case Number n -> sb.append(label).append("=").append(String.format("%.2f", n.doubleValue())).append(" ");
+            default -> sb.append(label).append("=").append(v).append(" ");
         }
     }
 }

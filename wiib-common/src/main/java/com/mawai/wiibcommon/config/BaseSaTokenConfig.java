@@ -19,7 +19,6 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Sa-Token 基础配置类
@@ -64,11 +63,7 @@ public abstract class BaseSaTokenConfig implements WebMvcConfigurer {
             public void doReplaced(String loginType, Object loginId, String tokenValue) {
                 // 被顶下线时删除旧token
                 try {
-                    String prefix = "satoken:login:token:";
-                    Set<String> keys = stringRedisTemplate.keys(prefix + tokenValue);
-                    if (!keys.isEmpty()) {
-                        stringRedisTemplate.delete(keys);
-                    }
+                    stringRedisTemplate.delete("satoken:login:token:" + tokenValue);
                 } catch (Exception e) {
                     System.err.println("删除被顶下线的token失败: " + e.getMessage());
                 }

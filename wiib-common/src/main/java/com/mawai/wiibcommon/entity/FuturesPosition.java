@@ -38,7 +38,7 @@ public class FuturesPosition {
     @TableField(typeHandler = FuturesTakeProfitListTypeHandler.class)
     private List<FuturesTakeProfit> takeProfits;
 
-    private String memo; // AI策略标签: TREND/MEAN_REVERSION/BREAKOUT
+    private String memo; // AI策略标签: LEGACY_TREND/MR/BREAKOUT
 
     private String status; // OPEN持仓 CLOSED已平仓 LIQUIDATED已强平
 

@@ -16,6 +16,7 @@ import com.mawai.wiibservice.mapper.UserMapper;
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.FuturesPositionIndexService;
 import com.mawai.wiibservice.service.FuturesRiskService;
+import com.mawai.wiibservice.service.TradeAttributionService;
 import com.mawai.wiibservice.util.RedisLockUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +41,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
     private final RedisLockUtil redisLockUtil;
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
+    private final TradeAttributionService tradeAttributionService;
 
     // ==================== 设置止损 ====================
 
@@ -150,7 +152,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
         BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), price, position.getQuantity());
         BigDecimal closeValue = price.multiply(position.getQuantity()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal commission = tradingConfig.calculateCryptoCommission(closeValue);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, true);
 
         BigDecimal returnAmount = position.getMargin().add(pnl).subtract(commission);
         returnAmount = returnAmount.max(BigDecimal.ZERO);
@@ -178,6 +180,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         order.setRealizedPnl(pnl);
         order.setStatus("LIQUIDATED");
         orderMapper.insert(order);
+        tradeAttributionService.recordExit(position, pnl, "UNKNOWN");
 
         log.warn("futures强制平仓 posId={} userId={} price={} pnl={}", positionId, position.getUserId(), price, pnl);
     }
@@ -194,7 +197,8 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         BigDecimal unrealizedPnl = calculatePnl(position.getSide(), position.getEntryPrice(), currentPrice, position.getQuantity());
         BigDecimal effectiveMargin = position.getMargin().add(unrealizedPnl);
         BigDecimal positionValue = currentPrice.multiply(position.getQuantity());
-        BigDecimal maintenanceMargin = positionValue.multiply(tradingConfig.getFutures().getMaintenanceMarginRate());
+        BigDecimal maintenanceMargin = positionValue.multiply(
+                tradingConfig.getFutures().maintenanceMarginRateForLeverage(position.getLeverage()));
 
         if (effectiveMargin.compareTo(maintenanceMargin) <= 0) {
             SpringUtils.getAopProxy(this).forceClose(positionId, currentPrice);
@@ -237,7 +241,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
         BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), price, totalCloseQty);
         BigDecimal closeValue = price.multiply(totalCloseQty).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal commission = tradingConfig.calculateCryptoCommission(closeValue);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, true);
 
         BigDecimal returnAmount;
         if (isFullClose) {
@@ -255,6 +259,13 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
             sls.removeIf(s -> idSet.contains(s.getId()));
             positionMapper.updateStopLosses(positionId, sls);
+            FuturesPosition updated = positionMapper.selectById(positionId);
+            if (updated != null && "OPEN".equals(updated.getStatus())) {
+                BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
+                        updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity(),
+                        updated.getLeverage());
+                positionIndexService.updateLiquidationPrice(updated.getId(), updated.getSymbol(), updated.getSide(), liqPrice);
+            }
         }
 
         if (returnAmount.compareTo(BigDecimal.ZERO) > 0) {
@@ -275,6 +286,9 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         order.setRealizedPnl(pnl);
         order.setStatus("STOP_LOSS");
         orderMapper.insert(order);
+        if (isFullClose) {
+            tradeAttributionService.recordExit(position, pnl, "SL");
+        }
 
         log.info("futures批量止损平仓 posId={} slIds={} qty={} price={} pnl={}", positionId, slIds, totalCloseQty, price, pnl);
     }
@@ -315,7 +329,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
         BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), price, totalCloseQty);
         BigDecimal closeValue = price.multiply(totalCloseQty).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal commission = tradingConfig.calculateCryptoCommission(closeValue);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, true);
 
         BigDecimal returnAmount;
         if (isFullClose) {
@@ -333,6 +347,13 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
             tps.removeIf(t -> idSet.contains(t.getId()));
             positionMapper.updateTakeProfits(positionId, tps);
+            FuturesPosition updated = positionMapper.selectById(positionId);
+            if (updated != null && "OPEN".equals(updated.getStatus())) {
+                BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
+                        updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity(),
+                        updated.getLeverage());
+                positionIndexService.updateLiquidationPrice(updated.getId(), updated.getSymbol(), updated.getSide(), liqPrice);
+            }
         }
 
         if (returnAmount.compareTo(BigDecimal.ZERO) > 0) {
@@ -353,6 +374,9 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         order.setRealizedPnl(pnl);
         order.setStatus("TAKE_PROFIT");
         orderMapper.insert(order);
+        if (isFullClose) {
+            tradeAttributionService.recordExit(position, pnl, "TP");
+        }
 
         log.info("futures批量止盈平仓 posId={} tpIds={} qty={} price={} pnl={}", positionId, tpIds, totalCloseQty, price, pnl);
     }

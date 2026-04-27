@@ -169,4 +169,3 @@ public class MarginAccountServiceImpl implements MarginAccountService {
                 userId, principal, days, dailyRate, interestDelta);
     }
 }
-

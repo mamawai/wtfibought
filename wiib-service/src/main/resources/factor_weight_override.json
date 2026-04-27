@@ -1,0 +1,12 @@
+{
+  "version": "20260426-b1-3-20_30-only",
+  "rules": [
+    {"agent": "regime", "horizon": "20_30", "regime": "SHOCK", "multiplier": 1.15, "note": "B1-2 white, v2 shrink"},
+    {"agent": "news_event", "horizon": "20_30", "regime": "SHOCK", "multiplier": 1.05, "note": "B1-2 white, v2 shrink"},
+    {"agent": "microstructure", "horizon": "20_30", "regime": "SHOCK", "multiplier": 1.05, "note": "B1-2 white, v2 shrink"},
+
+    {"agent": "momentum", "horizon": "20_30", "regime": "RANGE", "multiplier": 0.90, "note": "B1-2 black, v2 protect 20_30"},
+    {"agent": "momentum", "horizon": "20_30", "regime": "SQUEEZE", "multiplier": 0.95, "note": "B1-2 black, v2 protect 20_30"},
+    {"agent": "microstructure", "horizon": "20_30", "regime": "RANGE", "multiplier": 0.95, "note": "B1-2 black, v2 protect 20_30"}
+  ]
+}

@@ -232,9 +232,7 @@ export function AiAgent() {
     setBehaviorLoading(true);
     setSteps([]);
     try {
-      const report = await aiAgentApi.analyzeBehavior((step) => {
-        setSteps(prev => [...prev, step]);
-      }) as unknown as BehaviorAnalysisReport;
+      const report = await aiAgentApi.analyzeBehavior() as unknown as BehaviorAnalysisReport;
       setBehaviorReport(report);
       toast('分析完成', 'success');
     } catch (e: unknown) {

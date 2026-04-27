@@ -3,10 +3,18 @@ package com.mawai.wiibservice.task;
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.constant.QuantConstants;
+import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTradingDecision;
 import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibservice.agent.config.RuntimeFeatureToggleService;
+import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
 import com.mawai.wiibservice.agent.trading.AiTradingTools;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
+import com.mawai.wiibservice.agent.trading.SubmitStatus;
+import com.mawai.wiibservice.agent.trading.SymbolSubmitResult;
+import com.mawai.wiibservice.agent.trading.TradingCycleSubmitResult;
+import com.mawai.wiibservice.agent.trading.TradingExecutionState;
+import com.mawai.wiibservice.agent.trading.TradingRuntimeToggles;
 import com.mawai.wiibservice.agent.quant.domain.QuantCycleCompleteEvent;
 import com.mawai.wiibservice.mapper.*;
 import com.mawai.wiibservice.service.CacheService;
@@ -47,6 +55,9 @@ public class AiTradingScheduler {
     private final QuantSignalDecisionMapper decisionMapper;
     private final AiTradingDecisionMapper tradingDecisionMapper;
     private final CacheService cacheService;
+    private final CircuitBreakerService circuitBreakerService;
+    private final TradingExecutionState tradingExecutionState;
+    private final RuntimeFeatureToggleService runtimeFeatureToggleService;
 
     public AiTradingScheduler(UserMapper userMapper,
                               FuturesTradingService futuresTradingService,
@@ -55,7 +66,10 @@ public class AiTradingScheduler {
                               QuantForecastCycleMapper cycleMapper,
                               QuantSignalDecisionMapper decisionMapper,
                               AiTradingDecisionMapper tradingDecisionMapper,
-                              CacheService cacheService) {
+                              CacheService cacheService,
+                              CircuitBreakerService circuitBreakerService,
+                              TradingExecutionState tradingExecutionState,
+                              RuntimeFeatureToggleService runtimeFeatureToggleService) {
         this.userMapper = userMapper;
         this.futuresTradingService = futuresTradingService;
         this.futuresRiskService = futuresRiskService;
@@ -64,6 +78,9 @@ public class AiTradingScheduler {
         this.decisionMapper = decisionMapper;
         this.tradingDecisionMapper = tradingDecisionMapper;
         this.cacheService = cacheService;
+        this.circuitBreakerService = circuitBreakerService;
+        this.tradingExecutionState = tradingExecutionState;
+        this.runtimeFeatureToggleService = runtimeFeatureToggleService;
     }
 
     @PostConstruct
@@ -98,30 +115,32 @@ public class AiTradingScheduler {
     public void onQuantCycleComplete(QuantCycleCompleteEvent event) {
         if (aiUserId.get() == 0) return;
         String symbol = event.getSymbol();
-        lastEventTriggerTime.put(symbol, Instant.now());
-        int cycleNo = cycleCounter.incrementAndGet();
-        log.info("[AI-Trader] 量化{}周期完成→触发交易 symbol={} cycleNo={}",
-                event.getCycleType(), symbol, cycleNo);
-        Thread.startVirtualThread(() -> runTradingCycle(symbol, cycleNo));
+        TradingCycleSubmitResult result = submitTradingCycle(List.of(symbol));
+        log.info("[AI-Trader] 量化{}周期完成→提交交易 symbol={} cycleNo={} items={}",
+                event.getCycleType(), symbol, result.cycleNo(), result.items());
     }
 
     @Scheduled(cron = "0 */10 * * * *") // 兜底：量化分析失败时仍按计划执行（盯盘持仓管理）
     public void tradingCycle() {
         if (aiUserId.get() == 0) return;
         for (String symbol : QuantConstants.WATCH_SYMBOLS) {
-            Instant lastEvent = lastEventTriggerTime.get(symbol);
-            if (lastEvent != null
-                    && Instant.now().getEpochSecond() - lastEvent.getEpochSecond() < EVENT_GUARD_SECONDS) {
-                log.debug("[AI-Trader] {} 近期已由事件触发，cron跳过", symbol);
-                continue;
+            TradingCycleSubmitResult result = submitTradingCycle(List.of(symbol));
+            SymbolSubmitResult item = result.items().get(0);
+            if (item.status() == SubmitStatus.SUBMITTED) {
+                log.info("[AI-Trader] cron兜底提交 symbol={} cycleNo={}", symbol, result.cycleNo());
+            } else {
+                log.debug("[AI-Trader] cron兜底跳过 symbol={} reason={}", symbol, item.reason());
             }
-            int cycleNo = cycleCounter.incrementAndGet();
-            log.info("[AI-Trader] cron兜底触发 symbol={} cycleNo={}", symbol, cycleNo);
-            Thread.startVirtualThread(() -> runTradingCycle(symbol, cycleNo));
         }
     }
 
+    /** @deprecated 新调用使用 {@link #submitTradingCycle(List)} 获取每个symbol的提交结果。 */
+    @Deprecated(forRemoval = false)
     public int triggerTradingCycle(List<String> symbols) {
+        return submitTradingCycle(symbols).cycleNo();
+    }
+
+    public TradingCycleSubmitResult submitTradingCycle(List<String> symbols) {
         if (aiUserId.get() == 0) {
             throw new IllegalStateException("AI交易员未初始化");
         }
@@ -129,10 +148,26 @@ public class AiTradingScheduler {
             throw new IllegalArgumentException("交易对不能为空");
         }
         int cycleNo = cycleCounter.incrementAndGet();
+        Instant now = Instant.now();
+        List<SymbolSubmitResult> items = new ArrayList<>(symbols.size());
         for (String symbol : symbols) {
-            Thread.startVirtualThread(() -> runTradingCycle(symbol, cycleNo));
+            items.add(submitSymbol(symbol, cycleNo, now));
         }
-        return cycleNo;
+        return new TradingCycleSubmitResult(cycleNo, List.copyOf(items));
+    }
+
+    private SymbolSubmitResult submitSymbol(String symbol, int cycleNo, Instant now) {
+        if (runningSymbols.contains(symbol)) {
+            return new SymbolSubmitResult(symbol, SubmitStatus.SKIPPED, "RUNNING");
+        }
+        Instant lastEvent = lastEventTriggerTime.get(symbol);
+        if (lastEvent != null && now.getEpochSecond() - lastEvent.getEpochSecond() < EVENT_GUARD_SECONDS) {
+            return new SymbolSubmitResult(symbol, SubmitStatus.SKIPPED, "RECENTLY_TRIGGERED");
+        }
+        // 提交时同步记录，确保事件、cron、手动、哨兵入口共享同一防重窗口。
+        lastEventTriggerTime.put(symbol, now);
+        Thread.startVirtualThread(() -> runTradingCycle(symbol, cycleNo));
+        return new SymbolSubmitResult(symbol, SubmitStatus.SUBMITTED, null);
     }
 
     /** 查询symbol在最近 secondsAgo 秒内是否已被任何入口触发过，用于Sentinel跨源防重。 */
@@ -146,14 +181,16 @@ public class AiTradingScheduler {
             log.warn("[AI-Trader] {} 上一轮未完成，跳过", symbol);
             return;
         }
-        // 任何入口启动cycle时记录时间，跨入口防重共享
-        lastEventTriggerTime.put(symbol, Instant.now());
         long userId = aiUserId.get();
         log.info("[AI-Trader] 交易周期开始 symbol={} cycleNo={}", symbol, cycleNo);
 
         try {
             User userBefore = userMapper.selectById(userId);
             var allPositionsBefore = futuresTradingService.getUserPositions(userId, null);
+            Set<Long> allOpenPositionIds = allPositionsBefore.stream()
+                    .map(FuturesPositionDTO::getId)
+                    .filter(Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
             BigDecimal equityBefore = calcTotalEquity(userBefore, allPositionsBefore);
 
             var positions = futuresTradingService.getUserPositions(userId, symbol);
@@ -168,13 +205,20 @@ public class AiTradingScheduler {
             BigDecimal markPrice = cacheService.getMarkPrice(symbol);
 
             AiTradingTools tools = new AiTradingTools(userId, symbol, userMapper, futuresTradingService,
-                    futuresRiskService, futuresPositionMapper, cycleMapper, decisionMapper, cacheService);
+                    futuresRiskService, futuresPositionMapper, cycleMapper, decisionMapper, cacheService,
+                    circuitBreakerService);
 
             // 确定性执行器决策
+            var tradingToggles = runtimeFeatureToggleService.snapshot().trading();
+            TradingRuntimeToggles executorToggles = new TradingRuntimeToggles(
+                    tradingToggles.lowVolTradingEnabled(),
+                    tradingToggles.legacyThreshold5of7Enabled(),
+                    tradingToggles.legacy5of7ShadowEnabled());
             DeterministicTradingExecutor.ExecutionResult result =
                     DeterministicTradingExecutor.execute(
                             symbol, userBefore, positions, forecast, signals,
-                            recentDecisions, futuresPrice, markPrice, equityBefore, tools);
+                            recentDecisions, futuresPrice, markPrice, equityBefore, tools,
+                            allOpenPositionIds, tradingExecutionState, executorToggles);
 
             log.info("[AI-Trader] 决策完成 symbol={} action={} reasoning={}",
                     symbol, result.action(), result.reasoning());
@@ -207,17 +251,15 @@ public class AiTradingScheduler {
         }
     }
 
-    private BigDecimal calcTotalEquity(User user, List<?> allPositions) {
+    private BigDecimal calcTotalEquity(User user, List<FuturesPositionDTO> allPositions) {
         BigDecimal balance = user != null ? user.getBalance() : BigDecimal.ZERO;
         BigDecimal frozen = user != null ? user.getFrozenBalance() : BigDecimal.ZERO;
         BigDecimal margin = BigDecimal.ZERO;
         BigDecimal unpnl = BigDecimal.ZERO;
         if (allPositions != null) {
-            for (Object p : allPositions) {
-                if (p instanceof com.mawai.wiibcommon.dto.FuturesPositionDTO dto) {
-                    if (dto.getMargin() != null) margin = margin.add(dto.getMargin());
-                    if (dto.getUnrealizedPnl() != null) unpnl = unpnl.add(dto.getUnrealizedPnl());
-                }
+            for (FuturesPositionDTO dto : allPositions) {
+                if (dto.getMargin() != null) margin = margin.add(dto.getMargin());
+                if (dto.getUnrealizedPnl() != null) unpnl = unpnl.add(dto.getUnrealizedPnl());
             }
         }
         return balance.add(frozen).add(margin).add(unpnl);

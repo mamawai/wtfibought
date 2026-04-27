@@ -8,6 +8,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 动量因子 Agent。
+ * 基于多周期均线、RSI、MACD、KDJ 和量价关系，分别给 0-10、10-20、20-30 分钟窗口输出方向评分。
+ */
 @Slf4j
 public class MomentumAgent implements FactorAgent {
 
@@ -80,10 +84,6 @@ public class MomentumAgent implements FactorAgent {
         }
 
         return clamp(score);
-    }
-
-    private double singleTfScore(Map<String, Object> ind) {
-        return singleTfScore(ind, MarketRegime.RANGE);
     }
 
     private double singleTfScore(Map<String, Object> ind, MarketRegime regime) {
@@ -217,7 +217,7 @@ public class MomentumAgent implements FactorAgent {
                     primaryPresent ? primary : fallback(indicators, "5m", "1h", "4h"),
                     secondaryPresent ? secondary : fallback(indicators, "4h", "5m", "1d"),
                     true);
-            default -> new TimeframePair(horizon, primary, secondary, !primaryPresent || !secondaryPresent);
+            default -> new TimeframePair(horizon, primary, secondary, true);
         };
     }
 
@@ -259,5 +259,5 @@ public class MomentumAgent implements FactorAgent {
         return null;
     }
 
-    private static double clamp(double v) { return Math.max(-1, Math.min(1, v)); }
+    private static double clamp(double v) { return Math.clamp(v, -1, 1); }
 }

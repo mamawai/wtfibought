@@ -26,10 +26,10 @@ public class QuantForecastAdjustment {
     /** 轻周期发出修正的 horizon（0_10/10_20/20_30） */
     private String lightHorizon;
 
-    /** 被修正的重周期 horizon（按 dMin 映射后落在哪段） */
+    /** 被修正的重周期 horizon（按半小时墙钟窗口映射后落在哪段） */
     private String heavyHorizon;
 
-    /** SAME_DIR_BOOST / OPPO_WEAK_PENALTY / OPPO_STRONG_PENALTY / FLIP */
+    /** SAME_DIR_BOOST / OPPO_WEAK_PENALTY / OPPO_STRONG_PENALTY / LIGHT_VETO / FLIP(历史兼容) */
     private String adjustType;
 
     private String lightDirection;
@@ -44,7 +44,7 @@ public class QuantForecastAdjustment {
 
     private BigDecimal newHeavyConfidence;
 
-    /** 本次写入后该 heavyHorizon 的连续反转票数（翻盘时清零回 0） */
+    /** 本次写入后该 heavyHorizon 的连续反转票数（否决旧方向时清零回 0） */
     private Integer voteCountAfter;
 
     @TableField(fill = FieldFill.INSERT)

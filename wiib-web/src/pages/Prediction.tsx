@@ -273,6 +273,11 @@ export function Prediction() {
     }, false);
   }, [priceHistory, round?.startPrice, isDark]);
 
+  useEffect(() => () => {
+    chartInst.current?.dispose();
+    chartInst.current = null;
+  }, []);
+
   useEffect(() => {
     const handleResize = () => chartInst.current?.resize();
     window.addEventListener('resize', handleResize);
@@ -311,10 +316,21 @@ export function Prediction() {
     if (target <= 0) { toast('请输入卖出份数', 'error'); return; }
     const activeBets = bets.filter(b => b.status === 'ACTIVE' && b.side === side);
     if (activeBets.length === 0) { toast('暂无持仓', 'error'); return; }
+    const available = activeBets.reduce((sum, b) => sum + parseFloat(String(b.contracts ?? 0)), 0);
+    if (target > available + 1e-8) {
+      toast(`最多可卖出 ${available.toFixed(2)} 份`, 'error');
+      return;
+    }
     setSubmitting(true);
     try {
+      let remaining = target;
       for (const bet of activeBets) {
-        await predictionApi.sell(bet.id);
+        if (remaining <= 0) break;
+        const betContracts = parseFloat(String(bet.contracts ?? 0));
+        const sellContracts = Math.min(remaining, betContracts);
+        if (sellContracts <= 0) continue;
+        await predictionApi.sell(bet.id, sellContracts);
+        remaining -= sellContracts;
       }
       toast(`卖出 ${side === 'UP' ? '看涨' : '看跌'} 成功`, 'success');
       setShares('');

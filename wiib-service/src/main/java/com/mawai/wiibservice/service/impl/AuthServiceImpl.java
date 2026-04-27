@@ -14,6 +14,7 @@ import com.mawai.wiibservice.service.UserService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -68,9 +69,6 @@ public class AuthServiceImpl implements AuthService {
             // 2. 用token获取用户信息
             LinuxDoUserInfo userInfo = getUserInfo(accessToken);
 
-            if (userInfo.getId() == null) {
-                throw new BizException("获取用户信息失败: id为空");
-            }
             String linuxDoId = String.valueOf(userInfo.getId());
             String username = userInfo.getUsername();
             String avatar = userInfo.getAvatarUrl();
@@ -84,7 +82,13 @@ public class AuthServiceImpl implements AuthService {
                 user.setUsername(username);
                 user.setAvatar(avatar);
                 user.setBalance(initialBalance);
-                userService.save(user);
+                try {
+                    userService.save(user);
+                } catch (DuplicateKeyException e) {
+                    // 并发回调抢先创建，重查后继续登录
+                    user = userService.findByLinuxDoId(linuxDoId);
+                    if (user == null) throw e;
+                }
                 log.info("新用户注册: {} LinuxDoId={}", username, linuxDoId);
             } else {
                 // 更新用户信息

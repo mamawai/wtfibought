@@ -26,7 +26,8 @@ const SYMBOL_MAP: Record<string, { label: string; emoji: string }> = {
 };
 const SYMBOLS = ['ALL', 'BTCUSDT', 'ETHUSDT', 'PAXGUSDT'] as const;
 
-function fmt$(n: number, compact = false) {
+function fmt$(n?: number | null, compact = false) {
+  if (n == null || !Number.isFinite(n)) return '-';
   if (compact) {
     if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(2) + 'M';
     if (Math.abs(n) >= 1e4) return (n / 1e3).toFixed(1) + 'K';
@@ -42,6 +43,17 @@ function fmtTime(t: string) {
 
 function fmtPct(n: number) {
   return (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+}
+
+function futuresMmrByLeverage(leverage?: number | null): number {
+  const lv = leverage != null && leverage > 0 ? leverage : 1;
+  if (lv >= 200) return 0.001;
+  if (lv >= 126) return 0.0025;
+  return 0.005;
+}
+
+function fmtRate(rate: number) {
+  return `${(rate * 100).toFixed(2)}%`;
 }
 
 /* ========== Stat Card ========== */
@@ -103,7 +115,7 @@ function PositionCard({ p }: { p: FuturesPosition }) {
               </span>
             </div>
             <div className="text-[11px] text-muted-foreground mt-0.5">
-              {p.quantity} @ {p.entryPrice.toLocaleString()}
+              {p.quantity} @ {fmt$(p.entryPrice)}
             </div>
           </div>
         </div>
@@ -118,11 +130,12 @@ function PositionCard({ p }: { p: FuturesPosition }) {
       </div>
 
       {/* detail grid */}
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         {[
-          { label: '现价', value: p.currentPrice.toLocaleString() },
+          { label: '现价', value: fmt$(p.currentPrice) },
           { label: '保证金', value: fmt$(p.margin) },
-          { label: '强平价', value: p.liquidationPrice.toLocaleString(), warn: true },
+          { label: '强平价', value: fmt$(p.liquidationPrice), warn: true },
+          { label: 'MMR', value: fmtRate(futuresMmrByLeverage(p.leverage)) },
           { label: '仓位价值', value: fmt$(p.positionValue, true) },
         ].map(item => (
           <div key={item.label} className="neu-inset rounded-lg px-2 py-1.5 text-center">

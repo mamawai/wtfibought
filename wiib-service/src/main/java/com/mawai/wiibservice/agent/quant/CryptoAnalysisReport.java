@@ -2,7 +2,6 @@ package com.mawai.wiibservice.agent.quant;
 
 import lombok.Data;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 @Data

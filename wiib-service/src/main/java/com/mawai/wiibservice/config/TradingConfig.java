@@ -30,11 +30,14 @@ public class TradingConfig {
     /** crypto现货手续费率（默认0.1%，用于现货加密货币交易） */
     private BigDecimal cryptoCommissionRate = new BigDecimal("0.001");
 
-    /** 合约开仓手续费率（默认0.04%） */
-    private BigDecimal futuresOpenCommissionRate = new BigDecimal("0.0004");
+    /** 合约maker手续费率（默认0.02%，兼容旧配置名） */
+    private BigDecimal futuresOpenCommissionRate = new BigDecimal("0.0002");
 
-    /** 合约平仓手续费率（默认0.04%） */
-    private BigDecimal futuresCloseCommissionRate = new BigDecimal("0.0004");
+    /** 合约maker手续费率（默认0.02%，兼容旧配置名） */
+    private BigDecimal futuresCloseCommissionRate = new BigDecimal("0.0002");
+
+    /** 合约taker手续费率（默认0.04%，市价/强平成交） */
+    private BigDecimal futuresTakerCommissionRate = new BigDecimal("0.0004");
 
     /** 市价单滑点保护（默认±2%） */
     private BigDecimal slippageLimit = new BigDecimal("0.02");
@@ -60,16 +63,27 @@ public class TradingConfig {
 
     @Data
     public static class Futures {
-        /** 维持保证金率（默认0.5%） */
+        /** 1-125x 维持保证金率。 */
         private BigDecimal maintenanceMarginRate = new BigDecimal("0.005");
+        /** 126-199x 维持保证金率。 */
+        private BigDecimal highLeverageMaintenanceMarginRate = new BigDecimal("0.0025");
+        /** 200-250x 维持保证金率。 */
+        private BigDecimal ultraHighLeverageMaintenanceMarginRate = new BigDecimal("0.001");
         /** 资金费率（默认0.01%/8h） */
         private BigDecimal fundingRate = new BigDecimal("0.0001");
-        /** 最大杠杆倍数 */
+        /** 最大杠杆倍数；模拟盘保留250x，偏游戏性。 */
         private int maxLeverage = 250;
         /** 开仓余额滑点容差（USDT），补偿前后端价格时间差 */
         private BigDecimal balanceTolerance = new BigDecimal("0.05");
         /** 仓位操作分布式锁超时时间（秒） */
         private int lockTimeoutSeconds = 30;
+
+        public BigDecimal maintenanceMarginRateForLeverage(Integer leverage) {
+            int lv = leverage != null && leverage > 0 ? leverage : 1;
+            if (lv >= 200) return ultraHighLeverageMaintenanceMarginRate;
+            if (lv >= 126) return highLeverageMaintenanceMarginRate;
+            return maintenanceMarginRate;
+        }
     }
 
     /** 乐观锁最大重试次数 */
@@ -138,8 +152,8 @@ public class TradingConfig {
         return amount.multiply(cryptoCommissionRate).setScale(2, RoundingMode.HALF_UP);
     }
 
-    public BigDecimal calculateFuturesCommission(BigDecimal amount, boolean isClose) {
-        BigDecimal rate = isClose ? futuresCloseCommissionRate : futuresOpenCommissionRate;
+    public BigDecimal calculateFuturesCommission(BigDecimal amount, boolean isClose, boolean isTaker) {
+        BigDecimal rate = isTaker ? futuresTakerCommissionRate : (isClose ? futuresCloseCommissionRate : futuresOpenCommissionRate);
         return amount.multiply(rate).setScale(2, RoundingMode.HALF_UP);
     }
 

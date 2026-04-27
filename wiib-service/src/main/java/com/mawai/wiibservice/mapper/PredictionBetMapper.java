@@ -12,13 +12,19 @@ import java.math.BigDecimal;
 @Mapper
 public interface PredictionBetMapper extends BaseMapper<PredictionBet> {
 
-    @Select("SELECT COALESCE(SUM(COALESCE(payout, 0) - cost), 0) FROM prediction_bet WHERE user_id = #{userId} AND status IN ('WON', 'LOST', 'DRAW', 'SOLD')")
+    @Select("SELECT COALESCE(SUM(COALESCE(payout, 0) - cost), 0) FROM prediction_bet WHERE user_id = #{userId} AND status IN ('WON', 'LOST', 'DRAW', 'SOLD', 'CANCELLED')")
     BigDecimal sumRealizedProfit(@Param("userId") Long userId);
 
     /** CAS卖出: 仅ACTIVE→SOLD，返回affected行数防并发 */
     @Update("UPDATE prediction_bet SET status = 'SOLD', payout = #{payout}, updated_at = NOW() " +
             "WHERE id = #{id} AND status = 'ACTIVE'")
     int casSell(@Param("id") Long id, @Param("payout") BigDecimal payout);
+
+    @Update("UPDATE prediction_bet SET contracts = contracts - #{contracts}, cost = cost - #{cost}, updated_at = NOW() " +
+            "WHERE id = #{id} AND status = 'ACTIVE' AND contracts >= #{contracts} AND cost >= #{cost}")
+    int casPartialSell(@Param("id") Long id,
+                       @Param("contracts") BigDecimal contracts,
+                       @Param("cost") BigDecimal cost);
 
     /** 赢方结算: payout = contracts（每张合约值$1） */
     @Update("UPDATE prediction_bet SET status = 'WON', payout = contracts, updated_at = NOW() " +
@@ -35,7 +41,7 @@ public interface PredictionBetMapper extends BaseMapper<PredictionBet> {
             "WHERE round_id = #{roundId} AND status = 'ACTIVE'")
     int settleDraw(@Param("roundId") Long roundId);
 
-    @Select("SELECT COUNT(*) FROM prediction_bet WHERE user_id = #{userId} AND status IN ('WON', 'LOST', 'DRAW', 'SOLD')")
+    @Select("SELECT COUNT(*) FROM prediction_bet WHERE user_id = #{userId} AND status IN ('WON', 'LOST', 'DRAW', 'SOLD', 'CANCELLED')")
     int countSettledBets(@Param("userId") Long userId);
 
     @Select("""
@@ -51,6 +57,11 @@ public interface PredictionBetMapper extends BaseMapper<PredictionBet> {
             WHERE user_id = #{userId}
             """)
     BigDecimal selectWinRate(@Param("userId") Long userId);
+
+    /** 破产清算: 取消活跃投注, 不退款 */
+    @Update("UPDATE prediction_bet SET status = 'CANCELLED', payout = 0, updated_at = NOW() " +
+            "WHERE user_id = #{userId} AND status = 'ACTIVE'")
+    int cancelActiveByUserId(@Param("userId") Long userId);
 
     @Select("""
             SELECT CASE

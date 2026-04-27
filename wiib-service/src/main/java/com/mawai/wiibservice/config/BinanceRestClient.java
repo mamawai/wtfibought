@@ -19,6 +19,7 @@ import java.net.URI;
 public class BinanceRestClient extends BaseRestTemplateConfig {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final int LONG_SHORT_RATIO_5M_LIMIT = 288; // 5m * 288 = 24h，用于LSR滚动百分位
     private final RestTemplate restTemplate;
     private final BinanceProperties props;
     private final CoinDeskProperties coinDeskProperties;
@@ -242,7 +243,7 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
                 .fromUriString(baseUrl + "/futures/data/globalLongShortAccountRatio")
                 .queryParam("symbol", symbol)
                 .queryParam("period", "5m")
-                .queryParam("limit", 24)
+                .queryParam("limit", LONG_SHORT_RATIO_5M_LIMIT)
                 .build().toUri();
         try {
             log.info("Binance REST longShortRatio: {}", uri);
@@ -265,7 +266,7 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
                 .queryParam("api_key", coinDeskProperties.getNewsApiKey());
         try {
             URI uri = builder.build().toUri();
-            log.info("CryptoNews API: {}", uri);
+            log.info("CryptoNews API: symbol={}, limit={}", symbol, limit);
             return restTemplate.getForObject(uri, String.class);
         } catch (Exception e) {
             log.warn("getCryptoNews failed: {}", e.getMessage());
@@ -281,7 +282,7 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
                 .queryParam("api_key", coinDeskProperties.getNewsApiKey());
         try {
             URI uri = builder.build().toUri();
-            log.info("Article detail API: {}", uri);
+            log.info("Article detail API: sourceKey={}, guid={}", sourceKey, guid);
             return restTemplate.getForObject(uri, String.class);
         } catch (Exception e) {
             log.warn("getArticleDetail failed: {}", e.getMessage());

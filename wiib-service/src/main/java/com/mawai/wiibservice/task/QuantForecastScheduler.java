@@ -1,12 +1,9 @@
 package com.mawai.wiibservice.task;
 
 import cn.hutool.json.JSONUtil;
-import com.alibaba.cloud.ai.graph.OverAllState;
-import com.alibaba.fastjson2.JSON;
-import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
-import com.mawai.wiibservice.agent.quant.CryptoAnalysisReport;
 import com.mawai.wiibservice.agent.quant.PriceVolatilitySentinel;
-import com.mawai.wiibservice.agent.quant.QuantForecastPersistService;
+import com.mawai.wiibservice.agent.quant.QuantForecastFacade;
+import com.mawai.wiibservice.agent.quant.QuantForecastRunResult;
 import com.mawai.wiibservice.agent.quant.QuantLightCycleService;
 import com.mawai.wiibservice.agent.quant.domain.AgentVote;
 import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
@@ -26,7 +23,6 @@ import org.springframework.context.ApplicationEventPublisher;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
@@ -34,8 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class QuantForecastScheduler {
 
-    private final AiAgentRuntimeManager aiAgentRuntimeManager;
-    private final QuantForecastPersistService persistService;
+    private final QuantForecastFacade quantForecastFacade;
     private final RedisMessageBroadcastService broadcastService;
     private final BinanceRestClient binanceRestClient;
     private final QuantLightCycleService lightCycleService;
@@ -53,13 +48,13 @@ public class QuantForecastScheduler {
         }
     }
 
-    @Scheduled(cron = "0 */10 * * * *")
+    @Scheduled(cron = "0 */5 * * * *")
     public void lightRefresh() {
         String fearGreedData = fetchFearGreedOnce();
         for (String symbol : QuantConstants.WATCH_SYMBOLS) {
-            // 如果距离上次重周期不到3分钟，跳过（刚跑完重周期没必要立即轻刷）
+            // 距离上次重周期不到2分钟跳过：heavy 刚跑完轻周期修正没意义，等下一轮 5min light 再修。
             Instant lastHeavy = lastHeavyCycleTime.get(symbol);
-            if (lastHeavy != null && Instant.now().getEpochSecond() - lastHeavy.getEpochSecond() < 180) {
+            if (lastHeavy != null && Instant.now().getEpochSecond() - lastHeavy.getEpochSecond() < 120) {
                 log.debug("[Scheduler] 轻周期跳过 symbol={} 距重周期仅{}s",
                         symbol, Instant.now().getEpochSecond() - lastHeavy.getEpochSecond());
                 continue;
@@ -85,48 +80,31 @@ public class QuantForecastScheduler {
     private void runForecast(String symbol, String fearGreedData) {
         log.info("定时预测开始 symbol={}", symbol);
         try {
-            Optional<OverAllState> result = aiAgentRuntimeManager.invokeQuantWithFallback(
-                    symbol, "scheduled-" + symbol,
-                    Map.of("fear_greed_data", fearGreedData));
-
-            if (result.isEmpty()) {
+            QuantForecastRunResult result = quantForecastFacade.run(symbol, "scheduled-" + symbol, Map.of("fear_greed_data", fearGreedData));
+            if (!result.graphReturned()) {
                 log.warn("定时预测无结果 symbol={}", symbol);
                 return;
             }
 
-            OverAllState state = result.get();
-            boolean dataAvailable = (boolean) state.value("data_available").orElse(true);
-            if (!dataAvailable) {
+            if (!result.dataAvailable()) {
                 log.warn("定时预测数据采集失败 symbol={}", symbol);
                 return;
             }
 
-            Object fr = state.value("forecast_result").orElse(null);
-            ForecastResult forecastResult = null;
-            if (fr instanceof String frJson) {
-                forecastResult = JSON.parseObject(frJson, ForecastResult.class);
-            } else if (fr instanceof ForecastResult frObj) {
-                forecastResult = frObj;
-            }
+            ForecastResult forecastResult = result.forecastResult();
             if (forecastResult != null) {
-                String debateSummary = (String) state.value("debate_summary").orElse(null);
-                String rawSnapshotJson = (String) state.value("raw_snapshot_json").orElse(null);
-                String rawReportJson = (String) state.value("raw_report_json").orElse(null);
-                persistService.persist(forecastResult, debateSummary, rawSnapshotJson, rawReportJson);
-
                 // ★ 缓存供轻周期复用
-                cacheForLightCycle(symbol, state, forecastResult, rawReportJson);
+                cacheForLightCycle(symbol, forecastResult, result.rawReportJson());
                 lastHeavyCycleTime.put(symbol, Instant.now());
 
-                Object report = state.value("report").orElse(null);
-                if (report instanceof CryptoAnalysisReport r) {
-                    broadcastService.broadcastQuantSignal(symbol, JSONUtil.toJsonStr(r));
+                if (result.report() != null) {
+                    broadcastService.broadcastQuantSignal(symbol, JSONUtil.toJsonStr(result.report()));
                 }
 
                 log.info("定时预测完成 symbol={} decision={}", symbol, forecastResult.overallDecision());
                 eventPublisher.publishEvent(new QuantCycleCompleteEvent(this, symbol, "heavy"));
             } else {
-                log.warn("定时预测无ForecastResult symbol={} type={}", symbol, fr != null ? fr.getClass().getName() : "null");
+                log.warn("定时预测无ForecastResult symbol={}", symbol);
             }
         } catch (Exception e) {
             log.error("定时预测异常 symbol={}", symbol, e);
@@ -137,8 +115,7 @@ public class QuantForecastScheduler {
         runForecast(symbol, "{}");
     }
 
-    private void cacheForLightCycle(String symbol, OverAllState state,
-                                     ForecastResult forecastResult, String rawReportJson) {
+    private void cacheForLightCycle(String symbol, ForecastResult forecastResult, String rawReportJson) {
         try {
             List<AgentVote> allVotes = forecastResult.allVotes();
             FeatureSnapshot snapshot = forecastResult.snapshot();

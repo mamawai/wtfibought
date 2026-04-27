@@ -12,8 +12,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 重周期新闻事件 Agent。
+ * 先做 symbol 相关性过滤，再用 LLM 多次采样分析新闻影响，取 median 结果降低单次回答波动。
+ */
 @Slf4j
 public class NewsEventAgent implements FactorAgent {
+
+    private static final int NEWS_CALLS = 3;
+    private static final double LOW_CONFIDENCE_STDDEV = 0.15;
+    private static final List<String> HORIZONS = List.of("0_10", "10_20", "20_30");
 
     private final ChatClient chatClient;
     private final LlmCallMode callMode;
@@ -26,7 +34,16 @@ public class NewsEventAgent implements FactorAgent {
     @Override
     public String name() { return "news_event"; }
 
-    public record EvaluateResult(List<AgentVote> votes, List<FilteredNewsItem> filteredNews) {}
+    public record EvaluateResult(
+            List<AgentVote> votes,
+            List<FilteredNewsItem> filteredNews,
+            double confidenceStddev,
+            boolean lowConfidence
+    ) {
+        public EvaluateResult(List<AgentVote> votes, List<FilteredNewsItem> filteredNews) {
+            this(votes, filteredNews, 0, false);
+        }
+    }
 
     public EvaluateResult evaluateWithNews(FeatureSnapshot snapshot) {
         List<NewsItem> allNewsItems = snapshot.newsItems();
@@ -44,9 +61,14 @@ public class NewsEventAgent implements FactorAgent {
         int baseVolBps = estimateVolBps(snapshot);
         try {
             String prompt = buildPrompt(snapshot.symbol(), preFiltered);
-            String response = callMode.call(chatClient, prompt);
-            log.info("[Q3.news] LLM返回 {}chars", response != null ? response.length() : 0);
-            return parseResponse(response, baseVolBps);
+            List<EvaluateResult> samples = new ArrayList<>(NEWS_CALLS);
+            for (int i = 1; i <= NEWS_CALLS; i++) {
+                String response = callMode.call(chatClient, prompt);
+                log.info("[Q3.news] LLM样本 {}/{} 返回 {}chars",
+                        i, NEWS_CALLS, response != null ? response.length() : 0);
+                samples.add(parseResponse(response, baseVolBps));
+            }
+            return medianResult(samples, baseVolBps);
         } catch (Exception e) {
             log.warn("[Q3.news] LLM调用失败: {}", e.getMessage());
             return new EvaluateResult(
@@ -177,6 +199,104 @@ public class NewsEventAgent implements FactorAgent {
             log.warn("[Q3.news] 解析失败: {}", e.getMessage());
             return new EvaluateResult(defaultVotes("PARSE_ERROR"), List.of());
         }
+    }
+
+    private EvaluateResult medianResult(List<EvaluateResult> samples, int baseVolBps) {
+        List<AgentVote> merged = new ArrayList<>(3);
+        double maxStddev = 0;
+        boolean lowConfidence = false;
+
+        for (String horizon : HORIZONS) {
+            List<AgentVote> votes = samples.stream()
+                    .map(sample -> findVote(sample.votes(), horizon))
+                    .toList();
+            double medianScore = median(votes.stream().mapToDouble(AgentVote::score).sorted().toArray());
+            double medianConf = median(votes.stream().mapToDouble(AgentVote::confidence).sorted().toArray());
+            double scoreStddev = stddev(votes.stream().mapToDouble(AgentVote::score).toArray());
+            double confStddev = stddev(votes.stream().mapToDouble(AgentVote::confidence).toArray());
+            double horizonStddev = Math.max(scoreStddev, confStddev);
+            maxStddev = Math.max(maxStddev, horizonStddev);
+            if (horizonStddev > LOW_CONFIDENCE_STDDEV) {
+                lowConfidence = true;
+            }
+
+            AgentVote source = nearestVote(votes, medianScore, medianConf);
+            List<String> flags = new ArrayList<>(source.riskFlags());
+            if (horizonStddev > LOW_CONFIDENCE_STDDEV && !flags.contains("LOW_CONFIDENCE")) {
+                flags.add("LOW_CONFIDENCE");
+            }
+            Direction dir = Math.abs(medianScore) < 0.05 ? Direction.NO_TRADE
+                    : (medianScore > 0 ? Direction.LONG : Direction.SHORT);
+            int moveBps = (int) (Math.abs(medianScore) * baseVolBps * 0.5);
+            merged.add(new AgentVote(name(), horizon, dir, medianScore, medianConf,
+                    moveBps, baseVolBps, source.reasonCodes(), List.copyOf(flags)));
+        }
+
+        EvaluateResult newsSource = medianNewsSource(samples);
+        log.info("[Q3.news] 3次median完成 maxStddev={} lowConfidence={}",
+                String.format("%.3f", maxStddev), lowConfidence);
+        return new EvaluateResult(merged, newsSource.filteredNews(), maxStddev, lowConfidence);
+    }
+
+    private AgentVote findVote(List<AgentVote> votes, String horizon) {
+        return votes.stream()
+                .filter(v -> horizon.equals(v.horizon()))
+                .findFirst()
+                .orElse(AgentVote.noTrade(name(), horizon, "MISSING_LLM_VOTE"));
+    }
+
+    private AgentVote nearestVote(List<AgentVote> votes, double score, double confidence) {
+        AgentVote selected = votes.getFirst();
+        double bestDistance = Math.abs(selected.score() - score) + Math.abs(selected.confidence() - confidence);
+        for (AgentVote vote : votes) {
+            double distance = Math.abs(vote.score() - score) + Math.abs(vote.confidence() - confidence);
+            if (distance < bestDistance) {
+                selected = vote;
+                bestDistance = distance;
+            }
+        }
+        return selected;
+    }
+
+    private EvaluateResult medianNewsSource(List<EvaluateResult> samples) {
+        double[] avgConfidence = samples.stream()
+                .mapToDouble(sample -> sample.votes().stream().mapToDouble(AgentVote::confidence).average().orElse(0))
+                .sorted()
+                .toArray();
+        double median = median(avgConfidence);
+        EvaluateResult selected = samples.getFirst();
+        double bestDistance = Math.abs(selected.votes().stream().mapToDouble(AgentVote::confidence).average().orElse(0) - median);
+        for (EvaluateResult sample : samples) {
+            double distance = Math.abs(sample.votes().stream().mapToDouble(AgentVote::confidence).average().orElse(0) - median);
+            if (distance < bestDistance) {
+                selected = sample;
+                bestDistance = distance;
+            }
+        }
+        return selected;
+    }
+
+    private static double median(double[] sortedValues) {
+        if (sortedValues.length == 0) {
+            return 0;
+        }
+        return sortedValues[sortedValues.length / 2];
+    }
+
+    private static double stddev(double[] values) {
+        if (values.length < 2) {
+            return 0;
+        }
+        double avg = 0;
+        for (double value : values) {
+            avg += value;
+        }
+        avg /= values.length;
+        double variance = 0;
+        for (double value : values) {
+            variance += Math.pow(value - avg, 2);
+        }
+        return Math.sqrt(variance / values.length);
     }
 
     private List<AgentVote> defaultVotes(String reason) {

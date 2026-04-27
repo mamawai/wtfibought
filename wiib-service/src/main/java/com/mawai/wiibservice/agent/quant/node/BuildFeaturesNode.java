@@ -28,8 +28,6 @@ public class BuildFeaturesNode implements NodeAction {
 
     private final OrderFlowAggregator orderFlowAggregator;
 
-    public BuildFeaturesNode() { this(null); }
-
     public BuildFeaturesNode(OrderFlowAggregator orderFlowAggregator) {
         this.orderFlowAggregator = orderFlowAggregator;
     }
@@ -247,6 +245,13 @@ public class BuildFeaturesNode implements NodeAction {
         if (fearGreedIndex < 0) qualityFlags.add("NO_FEAR_GREED");
         if (!oiHistMap.containsKey(symbol)) qualityFlags.add("NO_OI_HISTORY");
         if (!aggTradeAvailable) qualityFlags.add("NO_AGG_TRADE");
+        // STALE_AGG_TRADE: deque 内有旧数据但 WS >30s 未更新（断流/卡顿），下游 executor 弃权
+        if (aggTradeAvailable) {
+            long lastUpdate = orderFlowAggregator.getLastUpdateMs(symbol);
+            if (lastUpdate > 0 && System.currentTimeMillis() - lastUpdate > 30_000) {
+                qualityFlags.add("STALE_AGG_TRADE");
+            }
+        }
         if (dvolIndex <= 0 && atmIv <= 0) qualityFlags.add("NO_OPTION_IV");
         if (atr5m == null) qualityFlags.add("NO_ATR_5M");
         if (bollBw == null) qualityFlags.add("NO_BOLL_5M");
@@ -404,13 +409,29 @@ public class BuildFeaturesNode implements NodeAction {
         try {
             JSONArray arr = JSON.parseArray(lsrJson);
             if (arr == null || arr.isEmpty()) return 0;
-            // 取最新一条
-            JSONObject latest = arr.getJSONObject(arr.size() - 1);
-            double ratio = latest.getDoubleValue("longShortRatio");
-            // ratio>2 极端多头, <0.5 极端空头
-            if (ratio > 2.0) return 1.0;
-            if (ratio < 0.5) return -1.0;
-            return (ratio - 1.0); // 归一化
+
+            List<Double> ratios = new ArrayList<>(arr.size());
+            for (int i = 0; i < arr.size(); i++) {
+                JSONObject item = arr.getJSONObject(i);
+                if (item == null) continue;
+                Double ratio = item.getDouble("longShortRatio");
+                if (ratio != null && Double.isFinite(ratio) && ratio > 0) {
+                    ratios.add(ratio);
+                }
+            }
+            if (ratios.size() < 2) return 0;
+
+            // 多空比各币种长期中枢不同，用窗口内百分位判断拥挤，避免固定阈值误判。
+            double latestRatio = ratios.get(ratios.size() - 1);
+            int less = 0;
+            int equal = 0;
+            for (double ratio : ratios) {
+                int cmp = Double.compare(ratio, latestRatio);
+                if (cmp < 0) less++;
+                if (cmp == 0) equal++;
+            }
+            double percentile = (less + equal * 0.5) / ratios.size();
+            return Math.clamp((percentile - 0.5) * 2.0, -1.0, 1.0);
         } catch (Exception e) { return 0; }
     }
 

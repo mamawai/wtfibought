@@ -27,11 +27,11 @@ import java.util.*;
  * <tr><td>macd_dif / macd_dea</td><td>MACD快线/慢线</td>
  * <td>DIF&gt;DEA金叉看涨，DIF&lt;DEA死叉看跌</td></tr>
  * <tr><td>macd_hist</td><td>MACD柱状图</td>
- * <td>正值柱看涨，负值柱看跌。HIST放大=趋势加速，缩小=趋势减弱</td></tr>
+ * <td>正值柱看涨，负值柱看跌。HIST上升=动能改善，下降=动能恶化</td></tr>
  * <tr><td>macd_cross</td><td>MACD交叉信号</td>
  * <td>golden=刚发生金叉，death=刚发生死叉</td></tr>
  * <tr><td>macd_hist_trend</td><td>MACD柱状图趋势</td>
- * <td>rising_5=连续5期放大(趋势加速)，falling_5=连续5期缩小(趋势放缓)</td></tr>
+ * <td>rising_5=连续5期动能改善，falling_5=连续5期动能恶化</td></tr>
  * <tr><td>boll_upper / boll_mid / boll_lower</td><td>布林带上/中/下轨</td>
  * <td>上轨阻力，下轨支撑，中轨=动态均线。价格触上轨回落概率大</td></tr>
  * <tr><td>boll_pb</td><td>布林带百分比</td>
@@ -89,6 +89,7 @@ public class CryptoIndicatorCalculator {
         r.put("ma25", ma(closes, 25));
         if (size >= 99) r.put("ma99", ma(closes, 99));
         r.put("ema12", ema(closes, 12));
+        r.put("ema20", ema(closes, 20));
         r.put("ema26", ema(closes, 26));
 
         // 均线排列: 1=多头(ma7>ma25>ma99), -1=空头, 0=纠缠
@@ -319,7 +320,7 @@ public class CryptoIndicatorCalculator {
         r.put("macd_dea", dea);
         r.put("macd_hist", hist);
 
-        // MACD柱状图趋势: 连续放大or缩小
+        // MACD柱状图趋势: 连续动能改善or恶化（数值变化方向，非视觉长度）
         int histLen = Math.min(deaSeries.size(), difSeries.size());
         if (histLen >= 3) {
             List<BigDecimal> histSeries = new ArrayList<>();

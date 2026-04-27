@@ -11,7 +11,7 @@ public interface BuffService {
 
     UserBuffDTO draw(Long userId);
 
-    BigDecimal getDiscountRate(Long buffId);
+    BigDecimal getDiscountRate(Long userId, Long buffId);
 
     void markUsed(Long buffId);
 }

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, GroupedVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, AiTradingDashboard, AiTradingDecision, TradingRuntimeConfig, QuantRuntimeConfig } from '../types';
+import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, GroupedVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, AiTradingDashboard, AiTradingDecision, TradingRuntimeConfig, QuantRuntimeConfig, TradingCycleSubmitResult, SprintCDashboard, GraphNodeMetric } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -26,6 +26,11 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => {
     const { code, msg, data } = res.data;
+    if (code === 401) {
+      localStorage.removeItem('wiib-user');
+      window.location.href = '/login';
+      return Promise.reject(new Error(msg || '未登录'));
+    }
     if (code !== 0) {
       return Promise.reject(new Error(msg || '请求失败'));
     }
@@ -161,6 +166,8 @@ export const adminApi = {
     api.post<unknown, string>('/admin/ai-agent/quant/verify/trigger', null, { params: { symbol } }),
   triggerAiTrader: (symbol?: string) =>
     api.post<unknown, string>('/admin/ai-agent/trading/trigger', null, { params: { symbol } }),
+  triggerAiTraderDetails: (symbol?: string) =>
+    api.post<unknown, TradingCycleSubmitResult>('/admin/ai-agent/trading/trigger-details', null, { params: { symbol } }),
   // 交易运行时开关
   getTradingConfig: () =>
     api.get<unknown, TradingRuntimeConfig>('/admin/ai-agent/trading-config'),
@@ -171,6 +178,8 @@ export const adminApi = {
     api.get<unknown, QuantRuntimeConfig>('/admin/ai-agent/quant-config'),
   setQuantConfig: (config: QuantRuntimeConfig) =>
     api.post<unknown, QuantRuntimeConfig>('/admin/ai-agent/quant-config', config),
+  sprintCDashboard: (days = 7) =>
+    api.get<unknown, SprintCDashboard>('/admin/sprint-c-dashboard', { params: { days } }),
 };
 
 // ========== 期权接口 ==========
@@ -361,7 +370,8 @@ export const futuresApi = {
 export const predictionApi = {
   current: () => api.get<unknown, PredictionRound>('/prediction/current'),
   buy: (data: PredictionBuyRequest) => api.post<unknown, PredictionBet>('/prediction/buy', data),
-  sell: (betId: number) => api.post<unknown, PredictionBet>(`/prediction/sell/${betId}`),
+  sell: (betId: number, contracts?: number) =>
+    api.post<unknown, PredictionBet>(`/prediction/sell/${betId}`, undefined, { params: contracts ? { contracts } : undefined }),
   bets: (pageNum = 1, pageSize = 10) =>
     api.get<unknown, PageResult<PredictionBet>>('/prediction/bets', { params: { pageNum, pageSize } }),
   rounds: (pageNum = 1, pageSize = 10) =>
@@ -373,7 +383,7 @@ export const predictionApi = {
 
 // ========== AI Agent 接口 ==========
 export const aiAgentApi = {
-  analyzeBehavior: (_onStep?: (message: string) => void) =>
+  analyzeBehavior: () =>
     api.post<unknown, BehaviorAnalysisReport>('/ai/analyze-behavior'),
   analyzeCrypto: (symbol?: string) => api.post<unknown, CryptoAnalysisReport>('/ai/analyze-crypto', symbol ? { symbol } : {}),
   latestCryptoReport: (symbol?: string) => api.get<unknown, LatestCryptoResult>('/ai/analyze-crypto/latest', { params: { symbol: symbol || 'BTCUSDT' } }),
@@ -422,4 +432,9 @@ export const aiTradingApi = {
     api.get<unknown, FuturesPosition[]>('/ai/trading/positions', { params: { symbol } }),
   orders: (symbol?: string, pageNum = 1, pageSize = 20) =>
     api.get<unknown, PageResult<FuturesOrder>>('/ai/trading/orders', { params: { symbol, pageNum, pageSize } }),
+};
+
+// ========== Graph 观测接口 ==========
+export const graphObsApi = {
+  metrics: () => api.get<unknown, GraphNodeMetric[]>('/admin/graph-obs/metrics'),
 };

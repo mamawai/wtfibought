@@ -30,7 +30,7 @@ public class PredictionBet {
 
     private BigDecimal payout;
 
-    /** ACTIVE/WON/LOST/DRAW/SOLD */
+    /** ACTIVE/WON/LOST/DRAW/SOLD/CANCELLED */
     private String status;
 
     @TableField(fill = FieldFill.INSERT)

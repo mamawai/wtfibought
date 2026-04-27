@@ -15,6 +15,7 @@ import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.FuturesPositionIndexService;
 import com.mawai.wiibservice.service.FuturesRiskService;
 import com.mawai.wiibservice.service.FuturesSettlementService;
+import com.mawai.wiibservice.service.TradeAttributionService;
 import com.mawai.wiibservice.service.UserService;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +48,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
     private final FuturesRiskService riskService;
+    private final TradeAttributionService tradeAttributionService;
 
     @PostConstruct
     void init() {
@@ -62,32 +64,28 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         String closeLongKey = LIMIT_CLOSE_LONG_PREFIX + symbol;
         String closeShortKey = LIMIT_CLOSE_SHORT_PREFIX + symbol;
 
-        Set<String> openLongHits = cacheService.zRangeByScore(openLongKey, price.doubleValue(), Double.MAX_VALUE);
-        Set<String> openShortHits = cacheService.zRangeByScore(openShortKey, 0, price.doubleValue());
-        Set<String> closeLongHits = cacheService.zRangeByScore(closeLongKey, 0, price.doubleValue());
-        Set<String> closeShortHits = cacheService.zRangeByScore(closeShortKey, price.doubleValue(), Double.MAX_VALUE);
+        Map<String, Double> openLongHits = cacheService.zRangeByScoreAndRemove(openLongKey, price.doubleValue(), Double.MAX_VALUE);
+        Map<String, Double> openShortHits = cacheService.zRangeByScoreAndRemove(openShortKey, 0, price.doubleValue());
+        Map<String, Double> closeLongHits = cacheService.zRangeByScoreAndRemove(closeLongKey, 0, price.doubleValue());
+        Map<String, Double> closeShortHits = cacheService.zRangeByScoreAndRemove(closeShortKey, price.doubleValue(), Double.MAX_VALUE);
 
         if (openLongHits != null && !openLongHits.isEmpty()) {
-            cacheService.zRemove(openLongKey, openLongHits.toArray());
-            for (String id : openLongHits) {
+            for (String id : openLongHits.keySet()) {
                 Thread.startVirtualThread(() -> triggerLimitOrder(Long.parseLong(id), price));
             }
         }
         if (openShortHits != null && !openShortHits.isEmpty()) {
-            cacheService.zRemove(openShortKey, openShortHits.toArray());
-            for (String id : openShortHits) {
+            for (String id : openShortHits.keySet()) {
                 Thread.startVirtualThread(() -> triggerLimitOrder(Long.parseLong(id), price));
             }
         }
         if (closeLongHits != null && !closeLongHits.isEmpty()) {
-            cacheService.zRemove(closeLongKey, closeLongHits.toArray());
-            for (String id : closeLongHits) {
+            for (String id : closeLongHits.keySet()) {
                 Thread.startVirtualThread(() -> triggerLimitOrder(Long.parseLong(id), price));
             }
         }
         if (closeShortHits != null && !closeShortHits.isEmpty()) {
-            cacheService.zRemove(closeShortKey, closeShortHits.toArray());
-            for (String id : closeShortHits) {
+            for (String id : closeShortHits.keySet()) {
                 Thread.startVirtualThread(() -> triggerLimitOrder(Long.parseLong(id), price));
             }
         }
@@ -142,7 +140,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         BigDecimal quantity = order.getQuantity();
         BigDecimal positionValue = executePrice.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(order.getLeverage()), 2, RoundingMode.CEILING);
-        BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false);
+        boolean isTaker = isLimitTaker(order, false);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false, isTaker);
         BigDecimal actualCost = margin.add(commission);
 
         BigDecimal frozenAmount = order.getFrozenAmount();
@@ -172,7 +171,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         positionIndexService.registerPositionIndex(position);
 
-        log.info("futures限价开仓成交 orderId={} price={} margin={}", order.getId(), executePrice, margin);
+        log.info("futures限价开仓成交 orderId={} price={} feeType={} margin={}",
+                order.getId(), executePrice, isTaker ? "TAKER" : "MAKER", margin);
     }
 
     private void processTriggeredIncreaseOrder(FuturesOrder order, BigDecimal executePrice) {
@@ -189,7 +189,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         int leverage = position.getLeverage();
         BigDecimal addValue = executePrice.multiply(addQty).setScale(2, RoundingMode.HALF_UP);
         BigDecimal addMargin = addValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
-        BigDecimal commission = tradingConfig.calculateFuturesCommission(addValue, false);
+        boolean isTaker = isLimitTaker(order, false);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(addValue, false, isTaker);
         BigDecimal actualCost = addMargin.add(commission);
 
         BigDecimal frozenAmount = order.getFrozenAmount();
@@ -207,12 +208,14 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         positionMapper.atomicIncreasePosition(position.getId(), newEntryPrice, addQty, addMargin);
 
         BigDecimal newMargin = position.getMargin().add(addMargin);
-        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), newEntryPrice, newMargin, newQty);
+        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), newEntryPrice, newMargin,
+                newQty, position.getLeverage());
         positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
 
         orderMapper.casUpdateToFilled(order.getId(), executePrice, addValue, commission, addMargin, null);
 
-        log.info("futures限价加仓成交 orderId={} posId={} price={} addMargin={}", order.getId(), position.getId(), executePrice, addMargin);
+        log.info("futures限价加仓成交 orderId={} posId={} price={} feeType={} addMargin={}",
+                order.getId(), position.getId(), executePrice, isTaker ? "TAKER" : "MAKER", addMargin);
     }
 
     private void processTriggeredCloseOrder(FuturesOrder order, BigDecimal executePrice) {
@@ -225,7 +228,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         BigDecimal closeQty = order.getQuantity();
         BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), executePrice, closeQty);
         BigDecimal closeValue = executePrice.multiply(closeQty).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true);
+        boolean isTaker = isLimitTaker(order, true);
+        BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, isTaker);
 
         boolean isFullClose = closeQty.compareTo(position.getQuantity()) == 0;
 
@@ -233,7 +237,12 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         if (isFullClose) {
             returnAmount = position.getMargin().add(pnl).subtract(commission);
             returnAmount = returnAmount.max(BigDecimal.ZERO);
-            positionMapper.casClosePosition(position.getId(), "CLOSED", executePrice, pnl);
+            int affected = positionMapper.casClosePosition(position.getId(), "CLOSED", executePrice, pnl);
+            if (affected == 0) {
+                // 仓位已被并发平掉，订单取消，禁止重复返款
+                orderMapper.casUpdateStatus(order.getId(), "TRIGGERED", "CANCELLED");
+                return;
+            }
 
             positionIndexService.unregisterAll(position);
         } else {
@@ -242,13 +251,22 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
                     .divide(position.getQuantity(), 2, RoundingMode.HALF_UP);
             returnAmount = marginReturn.add(pnl).subtract(commission);
             returnAmount = returnAmount.max(BigDecimal.ZERO);
-            positionMapper.atomicPartialClose(position.getId(), closeQty, marginReturn);
+            int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginReturn);
+            if (affected == 0) {
+                // 可平数量不足或已关闭，订单取消，禁止重复返款
+                orderMapper.casUpdateStatus(order.getId(), "TRIGGERED", "CANCELLED");
+                return;
+            }
         }
 
         userMapper.atomicUpdateBalance(order.getUserId(), returnAmount);
         orderMapper.casUpdateToFilled(order.getId(), executePrice, closeValue, commission, null, pnl);
+        if (isFullClose) {
+            tradeAttributionService.recordExit(position, pnl, "UNKNOWN");
+        }
 
-        log.info("futures限价平仓成交 orderId={} price={} pnl={}", order.getId(), executePrice, pnl);
+        log.info("futures限价平仓成交 orderId={} price={} feeType={} pnl={}",
+                order.getId(), executePrice, isTaker ? "TAKER" : "MAKER", pnl);
     }
 
     // ==================== 恢复限价单 ====================
@@ -370,30 +388,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         for (FuturesPosition pos : positions) {
             try {
-                BigDecimal entryValue = pos.getEntryPrice().multiply(pos.getQuantity());
-                BigDecimal fee = entryValue.multiply(tradingConfig.getFutures().getFundingRate())
-                        .setScale(2, RoundingMode.HALF_UP);
-
-                int affected = userMapper.atomicUpdateBalance(pos.getUserId(), fee.negate());
-                if (affected > 0) {
-                    positionMapper.atomicAddFundingFeeTotal(pos.getId(), fee);
-                    successCount++;
-                    continue;
-                }
-
-                affected = positionMapper.atomicDeductFundingFee(pos.getId(), fee);
-                if (affected > 0) {
-                    BigDecimal newMargin = pos.getMargin().subtract(fee);
-                    BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(pos.getSide(), pos.getEntryPrice(), newMargin, pos.getQuantity());
-                    positionIndexService.updateLiquidationPrice(pos.getId(), pos.getSymbol(), pos.getSide(), liqPrice);
-                    successCount++;
-                    continue;
-                }
-
-                affected = positionMapper.atomicDeductFundingFeePartial(pos.getId());
-                if (affected > 0) {
-                    BigDecimal mp = getMarkPrice(pos.getSymbol());
-                    riskService.checkAndLiquidate(pos.getId(), mp);
+                boolean success = SpringUtils.getAopProxy(this).chargeFundingFeeOne(pos);
+                if (success) {
                     successCount++;
                 } else {
                     failCount++;
@@ -405,6 +401,37 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         }
 
         log.info("futures资金费率扣除完成 成功{} 失败{}", successCount, failCount);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected boolean chargeFundingFeeOne(FuturesPosition pos) {
+        BigDecimal entryValue = pos.getEntryPrice().multiply(pos.getQuantity());
+        BigDecimal fee = entryValue.multiply(tradingConfig.getFutures().getFundingRate())
+                .setScale(2, RoundingMode.HALF_UP);
+
+        int affected = userMapper.atomicUpdateBalance(pos.getUserId(), fee.negate());
+        if (affected > 0) {
+            int added = positionMapper.atomicAddFundingFeeTotal(pos.getId(), fee);
+            if (added == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
+            return true;
+        }
+
+        affected = positionMapper.atomicDeductFundingFee(pos.getId(), fee);
+        if (affected > 0) {
+            BigDecimal newMargin = pos.getMargin().subtract(fee);
+            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(pos.getSide(), pos.getEntryPrice(),
+                    newMargin, pos.getQuantity(), pos.getLeverage());
+            positionIndexService.updateLiquidationPrice(pos.getId(), pos.getSymbol(), pos.getSide(), liqPrice);
+            return true;
+        }
+
+        affected = positionMapper.atomicDeductFundingFeePartial(pos.getId());
+        if (affected > 0) {
+            BigDecimal mp = getMarkPrice(pos.getSymbol());
+            riskService.checkAndLiquidate(pos.getId(), mp);
+            return true;
+        }
+        return false;
     }
 
     // ==================== ZSet索引重建 ====================
@@ -429,5 +456,21 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         BigDecimal price = cacheService.getFuturesPrice(symbol);
         if (price == null) throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
         return price;
+    }
+
+    private boolean isLimitTaker(FuturesOrder order, boolean isClose) {
+        if (!"LIMIT".equals(order.getOrderType())) return true;
+        if (order.getCommission() == null || order.getLimitPrice() == null || order.getQuantity() == null) {
+            // 兼容旧挂单：历史限价单没有预估手续费，按maker处理
+            return false;
+        }
+
+        BigDecimal baseAmount = order.getLimitPrice().multiply(order.getQuantity()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal makerCommission = tradingConfig.calculateFuturesCommission(baseAmount, isClose, false);
+        BigDecimal takerCommission = tradingConfig.calculateFuturesCommission(baseAmount, isClose, true);
+        if (makerCommission.compareTo(takerCommission) == 0) {
+            return false;
+        }
+        return order.getCommission().compareTo(takerCommission) == 0;
     }
 }

@@ -134,8 +134,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
                     switch (accessor.getCommand()) {
                         case CONNECT:
-                            connectedSessions.add(sessionId);
-                            connectionCount.incrementAndGet();
+                            if (connectedSessions.add(sessionId)) {
+                                connectionCount.incrementAndGet();
+                            }
                             log.info("WebSocket连接: sessionId={}, 连接数={}", sessionId, connectionCount.get());
                             String token = (String) accessor.getSessionAttributes().get("token");
                             if (token != null) {

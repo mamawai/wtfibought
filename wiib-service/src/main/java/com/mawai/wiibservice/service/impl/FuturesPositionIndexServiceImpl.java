@@ -61,7 +61,8 @@ public class FuturesPositionIndexServiceImpl implements FuturesPositionIndexServ
         stringRedisTemplate.executePipelined((RedisCallback<Object>) connection -> {
             StringRedisConnection conn = (StringRedisConnection) connection;
             // 始终注册LIQ
-            BigDecimal liqPrice = calcStaticLiqPrice(side, position.getEntryPrice(), position.getMargin(), position.getQuantity());
+            BigDecimal liqPrice = calcStaticLiqPrice(side, position.getEntryPrice(), position.getMargin(),
+                    position.getQuantity(), position.getLeverage());
             String liqKey = "LONG".equals(side) ? LIQ_LONG_PREFIX + symbol : LIQ_SHORT_PREFIX + symbol;
             conn.zAdd(liqKey, liqPrice.doubleValue(), positionId.toString());
 
@@ -188,8 +189,10 @@ public class FuturesPositionIndexServiceImpl implements FuturesPositionIndexServ
      *   entryPrice * qty + margin = liqPrice * qty * (1 + mmr) </br>
      *   liqPrice = (entryPrice * qty + margin) / (qty * (1 + mmr))
      */
-    public BigDecimal calcStaticLiqPrice(String side, BigDecimal entryPrice, BigDecimal margin, BigDecimal quantity) {
-        BigDecimal mmr = tradingConfig.getFutures().getMaintenanceMarginRate();
+    @Override
+    public BigDecimal calcStaticLiqPrice(String side, BigDecimal entryPrice, BigDecimal margin, BigDecimal quantity,
+                                         Integer leverage) {
+        BigDecimal mmr = tradingConfig.getFutures().maintenanceMarginRateForLeverage(leverage);
         BigDecimal num;
         BigDecimal den;
         if ("LONG".equals(side)) {

@@ -1,6 +1,5 @@
-import { Client } from '@stomp/stompjs';
-import SockJS from 'sockjs-client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { subscribe } from './stompClient';
 import type { PredictionRound, PredictionBetLive } from '../types';
 
 export interface PredictionStream {
@@ -24,7 +23,6 @@ export function usePredictionStream(): PredictionStream {
   const [downBid, setDownBid] = useState<number | null>(null);
   const [downAsk, setDownAsk] = useState<number | null>(null);
   const [activities, setActivities] = useState<PredictionBetLive[]>([]);
-  const clientRef = useRef<Client | null>(null);
   const queueRef = useRef<PredictionBetLive[]>([]);
 
   const enqueue = useCallback((a: PredictionBetLive) => {
@@ -43,48 +41,31 @@ export function usePredictionStream(): PredictionStream {
   }, []);
 
   useEffect(() => {
-    const client = new Client({
-      webSocketFactory: () => new SockJS('/ws/quotes'),
-      reconnectDelay: 5000,
-      onConnect: () => {
-        client.subscribe('/topic/prediction/price', (msg) => {
-          try {
-            const d = JSON.parse(msg.body);
-            if (d.price) setBtcPrice(parseFloat(d.price));
-          } catch { /* ignore */ }
-        });
+    const unsubs = [
+      subscribe('/topic/prediction/price', (msg) => {
+        try {
+          const d = JSON.parse(msg.body);
+          if (d.price) setBtcPrice(parseFloat(d.price));
+        } catch { /* ignore */ }
+      }),
+      subscribe('/topic/prediction/round', (msg) => {
+        try { setRound(JSON.parse(msg.body)); } catch { /* ignore */ }
+      }),
+      subscribe('/topic/prediction/activity', (msg) => {
+        try { enqueue(JSON.parse(msg.body)); } catch { /* ignore */ }
+      }),
+      subscribe('/topic/prediction/market', (msg) => {
+        try {
+          const d = JSON.parse(msg.body);
+          setUpBid(d.upBid != null ? parseFloat(d.upBid) : null);
+          setUpAsk(d.upAsk != null ? parseFloat(d.upAsk) : null);
+          setDownBid(d.downBid != null ? parseFloat(d.downBid) : null);
+          setDownAsk(d.downAsk != null ? parseFloat(d.downAsk) : null);
+        } catch { /* ignore */ }
+      }),
+    ];
 
-        client.subscribe('/topic/prediction/round', (msg) => {
-          try {
-            setRound(JSON.parse(msg.body));
-          } catch { /* ignore */ }
-        });
-
-        client.subscribe('/topic/prediction/activity', (msg) => {
-          try {
-            enqueue(JSON.parse(msg.body));
-          } catch { /* ignore */ }
-        });
-
-        client.subscribe('/topic/prediction/market', (msg) => {
-          try {
-            const d = JSON.parse(msg.body);
-            setUpBid(d.upBid != null ? parseFloat(d.upBid) : null);
-            setUpAsk(d.upAsk != null ? parseFloat(d.upAsk) : null);
-            setDownBid(d.downBid != null ? parseFloat(d.downBid) : null);
-            setDownAsk(d.downAsk != null ? parseFloat(d.downAsk) : null);
-          } catch { /* ignore */ }
-        });
-      },
-    });
-
-    clientRef.current = client;
-    client.activate();
-
-    return () => {
-      client.deactivate();
-      clientRef.current = null;
-    };
+    return () => unsubs.forEach(fn => fn());
   }, [enqueue]);
 
   return { btcPrice, round, upBid, upAsk, downBid, downAsk, activities };

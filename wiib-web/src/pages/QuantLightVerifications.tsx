@@ -19,6 +19,7 @@ function formatTime(iso: string | null) {
 // 轻周期修正徽章样式：颜色对应「对重周期的影响强度」
 const ADJUST_BADGE: Record<QuantForecastAdjustment['adjustType'], { text: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
   FLIP: { text: '⇄ 翻盘', variant: 'destructive' },
+  LIGHT_VETO: { text: '⊘ 否决', variant: 'destructive' },
   SAME_DIR_BOOST: { text: '↑ 加成', variant: 'default' },
   OPPO_STRONG_PENALTY: { text: '↓ 强削', variant: 'secondary' },
   OPPO_WEAK_PENALTY: { text: '↓ 轻削', variant: 'outline' },

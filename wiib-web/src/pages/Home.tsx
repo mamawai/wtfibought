@@ -71,7 +71,7 @@ export function Home() {
       .then(([so, co, fo]) => {
         const si: TradeItem[] = so.map(o => ({ id: `s-${o.orderId}`, orderSide: o.orderSide, sideTone: o.orderSide === 'BUY' ? 'buy' as const : 'sell' as const, name: o.stockName, quantity: o.quantity, unit: '股', filledAmount: o.filledAmount, createdAt: o.createdAt }));
         const ci: TradeItem[] = co.map(o => ({ id: `c-${o.orderId}`, orderSide: o.orderSide, sideTone: o.orderSide === 'BUY' ? 'buy' as const : 'sell' as const, name: o.symbol.replace('USDT', ''), quantity: o.quantity, unit: o.symbol.replace('USDT', ''), filledAmount: o.filledAmount, createdAt: o.createdAt }));
-        const fi: TradeItem[] = fo.map(o => { const s = FUTURES_SIDE_MAP[o.orderSide] ?? { label: o.orderSide, tone: 'buy' as const }; const b = o.symbol.replace('USDT', ''); return { id: `f-${o.orderId}`, orderSide: o.orderSide, sideLabel: s.label, sideTone: s.tone, name: `${b} 合约`, quantity: o.quantity, unit: b, filledAmount: o.filledAmount, createdAt: o.createdAt }; });
+        const fi: TradeItem[] = fo.map(o => { const s = FUTURES_SIDE_MAP[o.orderSide] ?? { label: o.orderSide, tone: 'buy' as const }; const b = o.symbol.replace('USDT', ''); return { id: `f-${o.orderId}`, orderSide: o.orderSide, sideLabel: s.label, sideTone: s.tone, name: `${b} 合约`, quantity: o.quantity, unit: b, filledAmount: o.filledAmount, createdAt: o.createdAt, isAi: o.isAiTrader === true }; });
         setLatestTrades([...si, ...ci, ...fi].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 20));
       }).finally(() => setTradesLoading(false));
   }, [refreshNonce]);

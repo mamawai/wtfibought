@@ -21,6 +21,8 @@ interface SLTPRow { price: string; quantity: string }
 
 const COMMISSION_RATE = 0.001;
 const FUTURES_COMMISSION_RATE = 0.0004;
+const FUTURES_MAX_LEVERAGE = 250;
+const FUTURES_LEVERAGE_OPTIONS = [1, 10, 25, 50, 100, 250];
 const POSITION_PCTS = [0.25, 0.5, 0.75, 1];
 interface TabConfig {
   label: string;
@@ -59,7 +61,8 @@ function formatTime(ts: number, interval: string): string {
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
 }
 
-function formatPrice(n: number): string {
+function formatPrice(n?: number | null): string {
+  if (n == null || !Number.isFinite(n)) return '-';
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
@@ -76,6 +79,23 @@ function getStepPrecision(step: number): number {
   const i = s.indexOf('.');
   return i >= 0 ? s.length - i - 1 : 0;
 }
+
+function futuresMmrByLeverage(leverage: number): number {
+  if (leverage >= 200) return 0.001;
+  if (leverage >= 126) return 0.0025;
+  return 0.005;
+}
+
+function futuresMmrTierLabel(leverage: number): string {
+  if (leverage >= 200) return '200-250x';
+  if (leverage >= 126) return '126-199x';
+  return '1-125x';
+}
+
+function formatRate(rate: number): string {
+  return `${(rate * 100).toFixed(2)}%`;
+}
+
 function calcMaxIncreaseQty(balance: number, price: number, leverage: number, step: number): number {
   if (balance <= 0 || price <= 0 || leverage <= 0 || step <= 0) return 0;
   const precision = getStepPrecision(step);
@@ -99,7 +119,7 @@ function calcMaxIncreaseQty(balance: number, price: number, leverage: number, st
 }
 
 function estimateLiqPrice(side: 'LONG' | 'SHORT', price: number, leverage: number): number {
-  const mmr = 0.005;
+  const mmr = futuresMmrByLeverage(leverage);
   if (side === 'LONG') return price * (1 - 1 / leverage) / (1 - mmr);
   return price * (1 + 1 / leverage) / (1 + mmr);
 }
@@ -237,6 +257,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
     };
     qtyAnimRef.current = requestAnimationFrame(tick);
   }, [quantity, qtyKey]);
+  useEffect(() => () => cancelAnimationFrame(qtyAnimRef.current), []);
   const [limitPrice, setLimitPrice] = useState('');
   const [leverage, setLeverage] = useState(1);
   const [submitting, setSubmitting] = useState(false);
@@ -964,7 +985,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                   <div className="px-2 py-0.5 rounded bg-primary/10 text-primary text-xs font-bold tabular-nums">{futuresLeverage}x</div>
                 </div>
                 <div className="flex gap-1.5">
-                  {[1, 10, 25, 50, 100, 250].map(lv => (
+                  {FUTURES_LEVERAGE_OPTIONS.map(lv => (
                     <button key={lv} onClick={() => setFuturesLeverage(lv)} className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all border ${futuresLeverage === lv ? 'bg-primary border-primary text-primary-foreground shadow-sm' : 'bg-transparent border-border/60 text-muted-foreground hover:text-foreground hover:border-border'}`}>
                       {lv}x
                     </button>
@@ -972,11 +993,15 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                 </div>
                 <div className="pt-1">
                   <input
-                    type="range" min={1} max={250}
+                    type="range" min={1} max={FUTURES_MAX_LEVERAGE}
                     value={futuresLeverage}
                     onChange={e => setFuturesLeverage(Number(e.target.value))}
                     className="w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md transition-all"
                   />
+                </div>
+                <div className="text-[10px] text-muted-foreground leading-relaxed">
+                  当前档位 {futuresMmrTierLabel(futuresLeverage)}，MMR {formatRate(futuresMmrByLeverage(futuresLeverage))}
+                  <span className="hidden sm:inline"> · 1-125x 0.50% · 126-199x 0.25% · 200-250x 0.10%</span>
                 </div>
               </div>
 
@@ -1021,6 +1046,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               {parseFloat(quantity) > 0 && futuresPriceForCalc > 0 && (() => {
                 const qty = parseFloat(quantity);
                 const { positionValue, margin, commission, totalCost } = calcFuturesOpenEstimate(qty, futuresPriceForCalc, futuresLeverage);
+                const liquidationPrice = estimateLiqPrice(futuresSide, futuresPriceForCalc, futuresLeverage);
+                const mmr = futuresMmrByLeverage(futuresLeverage);
                 return (
                   <div className="space-y-1.5 p-3 rounded-lg bg-accent/30 border border-border/50">
                     <div className="flex justify-between text-xs">
@@ -1034,6 +1061,14 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                     <div className="flex justify-between text-xs">
                       <span className="text-muted-foreground">手续费 (0.04%)</span>
                       <span className="font-mono">${formatPrice(commission)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">预估强平价</span>
+                      <span className="font-mono text-yellow-500">${formatPrice(liquidationPrice)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">维持保证金率</span>
+                      <span className="font-mono">{futuresMmrTierLabel(futuresLeverage)} / {formatRate(mmr)}</span>
                     </div>
                     <div className="flex justify-between text-xs font-medium pt-1.5 border-t border-border/50">
                       <span className="text-muted-foreground">合计需要</span>
@@ -1283,6 +1318,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                     <div>强平 <span className="text-yellow-500 font-mono">${formatPrice(pos.liquidationPrice)}</span></div>
                     <div>保证金 <span className="text-foreground font-mono">${formatPrice(pos.margin)}</span></div>
                     <div>资金费 <span className="font-mono">${formatPrice(pos.fundingFeeTotal)}</span></div>
+                    <div>MMR <span className="text-foreground font-mono">{formatRate(futuresMmrByLeverage(pos.leverage))}</span></div>
                   </div>
                   {/* 操作按钮 */}
                   <div className="flex flex-wrap gap-1.5 pt-1">
