@@ -24,6 +24,12 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * 跨市场风险 shadow 采集器。
+ *
+ * <p>每 5 分钟读取 Yahoo 的 DXY、QQQ、黄金、10 年美债数据，合成一个 risk-off 分数写入
+ * {@code factor_history}。当前只做外部背景因子沉淀，不直接进入 ai-agent 预测和 ai-trader 开仓。</p>
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor

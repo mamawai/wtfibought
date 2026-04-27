@@ -20,6 +20,12 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
 
+/**
+ * 稳定币供给 shadow 采集器。
+ *
+ * <p>定时读取 DeFiLlama 全市场稳定币供应，计算最近两期 USD 供应差值并写入 {@code factor_history}。
+ * 这是慢速资金背景因子，只用于后续研究和回放，当前不参与分钟级开仓。</p>
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor

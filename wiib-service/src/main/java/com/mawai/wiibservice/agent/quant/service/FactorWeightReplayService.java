@@ -29,7 +29,10 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * B1-3 调权回放：历史 AgentVote 重新进 HorizonJudge，只读验证方向命中率。
+ * FactorAgent 调权离线回放服务。
+ *
+ * <p>读取历史 cycle、AgentVote 和 verification，重新跑 HorizonJudge，对比调权前后的方向命中率。
+ * 只做只读评估，不写交易决策，也不触发 ai-trader 开仓。</p>
  */
 @Slf4j
 @Service

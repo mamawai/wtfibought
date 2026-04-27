@@ -381,7 +381,7 @@ agent, horizon, direction, score, confidence, reasonCodes, riskFlags
 - 三个区间全是 `NO_TRADE` 时输出 `FLAT`。
 - 风险状态按 `ALL_NO_TRADE / HIGH_DISAGREEMENT / CAUTIOUS / NORMAL` 汇总。
 
-AI-Trader 会把 `overallDecision=FLAT` 作为不开仓门槛。因此 `ConsensusBuilder` 不是展示层工具，它会影响交易是否继续进入执行器开仓逻辑。
+当前 AI-Trader 不再把 `overallDecision=FLAT` 当硬性不开仓门槛。执行器会记录这个状态，但实际是否开仓主要看 active horizon 信号、本地 7 维共振、趋势过滤、R:R、手续费和仓位风控。
 
 ## 11. DebateJudge
 
@@ -622,29 +622,28 @@ flowchart TD
 
 开仓前的关键门槛：
 
-- 同 symbol 开仓后 30 分钟冷却。
+- 同 symbol 开仓冷静期当前为 0；已有持仓会先盯盘，盯盘结果为 HOLD 时仍可继续评估新开仓。
 - 日亏损限制。
 - ATR 必须可用。
 - `STALE_AGG_TRADE` 直接弃权。
 - 只读取当前 active horizon，避免提前使用未来区间信号。
-- `overallDecision=FLAT` 不交易。
+- `overallDecision=FLAT` 只记录，不再硬拦截。
 - 1h MA 趋势过滤，MR 极值 setup 可豁免。
 - 7 维共振评分默认需要 `>= 6`。
-- `LEGACY_TREND` 的 5/7 可以通过 runtime toggle 做 shadow 或 live。
+- 5/7 live 开关当前覆盖 `BREAKOUT / MR / LEGACY_TREND` 三条路径，旧 key 名仍叫 `legacy_threshold_5of7`。
 - `SHOCK / SQUEEZE / LOW_CONFIDENCE` 会缩仓。
-- 低波动小仓位模式默认关闭。
+- 低波动小仓位模式默认开启。
+- 总持仓上限和同向持仓上限当前都是 6，用于虚拟盘观察多仓触发频率。
 - 手续费感知 R:R 和最小 R:R 都必须通过。
 
-持仓管理包含：
+当前持仓管理更接近“低干预盯盘”：
 
-- `SHOCK` 浮亏减仓。
-- 1h 趋势反转平仓。
-- MR 到 BB 中轨止盈。
-- MR 超时平仓。
-- 不同路径的 time stop。
-- 分批止盈。
-- 反转信号平仓。
-- ATR trailing / breakeven。
+- 开仓时先把 SL/TP 设置好，持仓后优先等 TP 或 SL。
+- `SHOCK`、1h 逆风等情况主要写 reasoning，不直接砍仓。
+- 盈利走到目标 50%–70% 只观察，不盲目平半。
+- 盈利走到目标 70% 以上，并且出现反向高置信信号、市场确认、连续 2 次确认时，才保护性平 50%。
+- 保护性平半后同步剩余仓位的 SL/TP 数量。
+- 已移除执行器内的 MR 中轨全平、MR 超时、time stop、普通反转全平、固定 ATR 分批止盈、trailing / breakeven 改 SL。
 
 因此当前交易策略更接近“量化信号过滤后的趋势/均值回归/突破三路径确定性执行器”，不是文档化的五策略组合。
 
@@ -661,6 +660,8 @@ flowchart TD
 - `trading.legacy_threshold_5of7.enabled`
 - `trading.legacy_5of7_shadow.enabled`
 - drawdown sentinel enabled/window/drop/cooldown 等参数
+
+注意：`trading.legacy_threshold_5of7.enabled` 保留旧名字，但当前代码语义已经从“只给 LEGACY_TREND 放宽”变成“三条策略路径都可用 5/7 live”。`trading.low_vol.enabled` 当前默认开启。
 
 `FactorWeightOverrideService` 默认加载 classpath 下的 `factor_weight_override.json`，但实际是否应用由 runtime toggle 决定。当前默认保守，权重覆盖开关不开时不会影响线上裁决。
 
