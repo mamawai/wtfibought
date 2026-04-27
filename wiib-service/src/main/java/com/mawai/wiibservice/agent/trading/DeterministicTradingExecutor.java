@@ -95,10 +95,10 @@ public class DeterministicTradingExecutor {
     public static volatile boolean LOW_VOL_TRADING_ENABLED = false;
     /**
      * LEGACY_TREND 5/7 实盘开仓开关。
-     * false：默认保守，只允许 6/7 共振分数实盘开仓。
-     * true：放宽为 5/7 也可继续走开仓逻辑，需先观察 SHADOW_5OF7 样本质量后再手动开启。
+     * 虚拟盘默认观察档：放宽为 5/7 也可继续走开仓逻辑，用实盘链路观察触发频率。
+     * 真盘迁移前必须改回 false 或通过 runtime toggle 关闭。
      */
-    public static volatile boolean LEGACY_THRESHOLD_5OF7_ENABLED = false;
+    public static volatile boolean LEGACY_THRESHOLD_5OF7_ENABLED = true;
     /**
      * LEGACY_TREND 5/7 影子样本开关。
      * true：5/7 但未开启实盘时，只写 HOLD 决策和 [Strategy-SHADOW_5OF7] reasoning，不下单。
