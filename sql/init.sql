@@ -995,7 +995,7 @@ COMMENT ON COLUMN quant_forecast_adjustment.light_cycle_id IS '触发修正的�
 COMMENT ON COLUMN quant_forecast_adjustment.heavy_cycle_id IS '被修正的父重周期 cycleId';
 COMMENT ON COLUMN quant_forecast_adjustment.light_horizon IS '轻周期发出信号的 horizon';
 COMMENT ON COLUMN quant_forecast_adjustment.heavy_horizon IS '按半小时墙钟窗口映射后落在的父重周期 horizon';
-COMMENT ON COLUMN quant_forecast_adjustment.adjust_type IS 'SAME_DIR_BOOST 同向加成 / OPPO_WEAK_PENALTY 反向弱削弱 / OPPO_STRONG_PENALTY 反向强削弱 / LIGHT_VETO 轻周期否决 / FLIP 历史翻盘';
+COMMENT ON COLUMN quant_forecast_adjustment.adjust_type IS 'SAME_DIR_BOOST 同向加成 / OPPO_WEAK_PENALTY 反向弱削弱 / OPPO_STRONG_PENALTY 反向强削弱 / LIGHT_VETO：连续强反向后否决父方向为 NO_TRADE';
 COMMENT ON COLUMN quant_forecast_adjustment.vote_count_after IS '本次写入后该 heavyHorizon 累计连续反转票数（否决旧方向或清零后为 0）';
 
 CREATE INDEX idx_qfa_heavy_cycle ON quant_forecast_adjustment(heavy_cycle_id);

@@ -33,22 +33,24 @@
 - **加密货币现货** — BTC/USDT、ETH/USDT、PAXG/USDT，接入 Binance 实时行情，支持市价/限价单
 - **永续合约** — 最高 250 倍杠杆，逐仓保证金，多/空双向，分批止损/止盈（单仓最多 4+4），0.01%/8h 资金费率，自动强平
 - **BTC 5 分钟涨跌预测** — 接入 Polymarket 真实盘口 + Chainlink 价格源，动态手续费，5 分钟窗口自动结算
-- **AI 交易员**（测试阶段）— 确定性多策略引擎自动执行永续合约交易，含 EMA 趋势跟踪、BB 均值回归、BB 压缩突破三种策略
+- **AI 交易员**（测试阶段）— 确定性多策略引擎自动执行永续合约交易，含 EMA 趋势跟踪、BB 均值回归、BB 压缩突破三种策略；7 维共振正常 6/7 入场，虚拟盘默认开启 5/7 观察放行
 
 ### 行情系统
 
 - AI 每日生成 20 只股票的分时行情（1440 个价格点，GBM + Jump-Diffusion 模型）
 - WebSocket (STOMP) 每 10 秒实时推送行情、资产变动、订单状态
-- Binance 5 路 WebSocket：现货价格 / 永续标记价 / 强平事件 / 聚合成交 / 深度快照
+- Binance 6 路 WebSocket：现货价格 / 永续标记价 / 永续 miniTicker / 强平事件 / 聚合成交 / 深度快照
 - Polymarket 2 路 WebSocket：Chainlink BTC 价格 + CLOB 盘口
 - TradingView 嵌入式 K 线图
 
 ### AI Agent 量化分析
 
 - 多 Agent 加密货币量化预测系统（5 因子 Agent + 3 区间裁决 + Bull vs Bear 辩论）
-- 双周期调度：重周期每 30 分钟全链路（含 LLM），轻周期每 10 分钟零 LLM 快速刷新
+- 双周期调度：重周期每 30 分钟全链路（含 LLM），轻周期每 5 分钟零 LLM 快速刷新
 - 波动哨兵：监听 WS 实时价格，5 分钟波动超 1.3×ATR 时自动触发
-- 历史预测自动验证 + 离线反思学习闭环（LLM 分析偏差 → 写入记忆 → 下次预测注入）
+- 历史预测自动验证 + 记忆调权：按 symbol / regime / horizon 统计 Agent 命中率，动态调整 HorizonJudge 权重，并把调权明细写入 `snapshot_json.memoryWeightAdjustments`
+- Graph Observation：8 个 StateGraph 节点记录耗时 / 失败率，支持 Prometheus 指标与 Admin 查询
+- 微结构特征：资金费率、OI、主动买卖、盘口、24h 滚动百分位 LSR 多空比拥挤度
 - 支持 BTCUSDT / ETHUSDT / PAXGUSDT 多币种
 - DB 驱动的 API Key 动态管理 + LLM 异常自动降级
 
@@ -96,26 +98,26 @@ flowchart TD
     subgraph BACKEND["Spring Boot 3.4.1 - Virtual Threads"]
         direction TB
 
-        subgraph CTL["Controllers (21)"]
+        subgraph CTL["Controllers (24)"]
             direction LR
             CT1["Stock / Order"] ~~~ CT2["Crypto / Futures"] ~~~ CT3["Prediction / Option"] ~~~ CT4["Games"] ~~~ CT5["AiAgent / Admin"]
         end
 
         subgraph SVC["Services (30+)"]
             direction LR
-            STE["Trading Engine\nMarket/Limit · T+1 · Redis ZSet"] ~~~ SQG["Quote Generator\nGBM+Jump · 1440pts · BS Pricing"] ~~~ SAI["AI Agent Quant\n5-Factor Vote · Bull/Bear · Reflection"] ~~~ SPC["Perpetual Contract\n250x · Isolated Margin · 4SL+4TP"] ~~~ SBP["BTC Prediction\nPolymarket · 5min · Chainlink"] ~~~ SDT["AI Trader\nEMA/BB · 2%/trade · 35%/pos"]
+            STE["Trading Engine\nMarket/Limit · T+1 · Redis ZSet"] ~~~ SQG["Quote Generator\nGBM+Jump · 1440pts · BS Pricing"] ~~~ SAI["AI Agent Quant\n5-Factor Vote · Memory Weight · Graph Obs"] ~~~ SPC["Perpetual Contract\n250x · Isolated Margin · 4SL+4TP"] ~~~ SBP["BTC Prediction\nPolymarket · 5min · Chainlink"] ~~~ SDT["AI Trader\n7-Dim Confluence · 6/7 · 5/7 Trial"]
         end
 
-        subgraph SCH["Scheduled Tasks (6)"]
+        subgraph SCH["Scheduled Tasks"]
             direction LR
-            SC1["09:25 Quote Push"] ~~~ SC2["09:20 T+1 Settle"] ~~~ SC3["15:00 Option Settle"] ~~~ SC4["30min Quant Heavy"] ~~~ SC5["10min Quant Light"] ~~~ SC6["0/8/16h Funding Rate"]
+            SC1["09:25 Quote Push"] ~~~ SC2["09:20 T+1 Settle"] ~~~ SC3["15:00 Option Settle"] ~~~ SC4["30min Quant Heavy"] ~~~ SC5["5min Quant Light"] ~~~ SC6["0/8/16h Funding Rate"]
         end
 
-        subgraph WSC["WebSocket Clients (7)"]
+        subgraph WSC["WebSocket Clients (8)"]
             direction LR
-            subgraph BNS["Binance (5)"]
+            subgraph BNS["Binance (6)"]
                 direction LR
-                BW1["Spot miniTicker"] ~~~ BW2["Futures markPrice@1s"] ~~~ BW3["ForceOrder"] ~~~ BW4["AggTrade"] ~~~ BW5["Depth20@100ms"]
+                BW1["Spot miniTicker"] ~~~ BW2["Futures markPrice@1s"] ~~~ BW3["Futures miniTicker"] ~~~ BW4["ForceOrder"] ~~~ BW5["AggTrade"] ~~~ BW6["Depth20@100ms"]
             end
             subgraph PLY["Polymarket (2)"]
                 direction LR
@@ -130,7 +132,7 @@ flowchart TD
 
     subgraph DATALAYER["Data Layer"]
         direction LR
-        subgraph PG["PostgreSQL (34 tables)"]
+        subgraph PG["PostgreSQL (39 tables)"]
             direction LR
             PG1["Trade Records"] ~~~ PG2["AI Predictions"] ~~~ PG3["Game Data"] ~~~ PG4["Asset Snapshots"]
         end
@@ -151,10 +153,10 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    Scheduler["QuantForecastScheduler\nHeavy Cycle: 30min / Light Cycle: 10min"]
+    Scheduler["QuantForecastScheduler\nHeavy Cycle: 30min / Light Cycle: 5min"]
 
-    Scheduler --> N1["① Collect Data\nK-line · Ticker · Funding Rate · Depth · OI · News"]
-    N1 --> N2["② Build Features\nEMA · RSI · MACD · BB · ATR"]
+    Scheduler --> N1["① Collect Data\nK-line · Ticker · Funding Rate · Depth · OI · LSR · News"]
+    N1 --> N2["② Build Features\nEMA · RSI · MACD · BB · ATR · LSR Percentile"]
     N2 --> N3["③ Regime Review ✦\nTrend / Range / Extreme"]
 
     subgraph AGENTS["④ Agent Parallel Vote  (5 agents x 3 intervals)"]
@@ -163,20 +165,39 @@ flowchart TD
     end
 
     N3 --> AGENTS
-    AGENTS --> N5["⑤ Horizon Judges\nShort-term · Mid-term · Long-term"]
+    AGENTS --> N5["⑤ Horizon Judges\nShort-term · Mid-term · Long-term · Memory Weight"]
     N5 --> N6["⑥ Debate Judge ✦\nBull vs Bear"]
     N6 --> N7["⑦ Risk Gate\nRisk Filter + Position Sizing"]
     N7 --> N8["⑧ Generate Report ✦\nStructured Analysis Report"]
 
     subgraph OUTPUT["Output"]
         direction LR
-        O1[Frontend /ai] ~~~ O2[AI Trader] ~~~ O3[Reflection Task / 1h]
+        O1[Frontend /ai] ~~~ O2[AI Trader] ~~~ O3[Verification / Memory] ~~~ O4[Graph Obs]
     end
 
     N8 --> OUTPUT
 ```
 
 > ✦ = LLM call involved
+
+**Graph 观测**
+
+- 本地日志：每个节点输出 `[GRAPH_OBS] node=... duration=...ms status=...`
+- Prometheus：`/actuator/prometheus` 暴露 `wiib_graph_node_duration_seconds_*` 与 `wiib_graph_node_errors_total`
+- Admin API：`GET /api/admin/graph-obs/metrics` 返回 8 个节点的成功次数、失败次数、平均耗时、最大耗时
+
+**AI Trader 开仓共振**
+
+当前确定性执行器使用 7 维共振评分：
+
+```
+MACD综合确认 / RSI / 成交量 / 15m均线方向 / 微结构 / EMA20方向 / 多空比拥挤反向确认
+```
+
+- 正常路径：`score >= 6/7` 才允许开仓
+- 虚拟盘观察：`score == 5/7` 默认放行，可通过 `trading.legacy_threshold_5of7.enabled` 运行时开关关闭
+- LSR 多空比：Binance `globalLongShortAccountRatio` 拉取 5m × 288 条，按 24h 窗口滚动百分位映射到 `[-1, 1]`，用于判断散户拥挤方向
+- 出场：主要依赖止盈 / 止损；盈利接近目标后只在强反转连续确认时保护性平半
 
 ---
 ## 加密货币实时行情推送链路
@@ -333,17 +354,19 @@ whatifibought/
 │   ├── Dockerfile-example           # Docker 构建模板
 │   └── src/main/java/
 │       └── com/mawai/wiibservice/
-│           ├── controller/          # 21 个 REST 控制器
+│           ├── controller/          # 24 个 REST 控制器
 │           ├── service/impl/        # 30+ 业务服务实现
 │           ├── mapper/              # 30+ MyBatis-Plus Mapper
 │           ├── config/              # 配置类 (WS/Redis/OAuth/Binance/Trading)
-│           ├── task/                # 6 个定时调度器
+│           ├── task/                # 定时调度器 (行情/结算/量化/交易/反思)
 │           ├── agent/               # AI Agent 子系统
 │           │   ├── quant/           # 量化分析 (8节点 StateGraph 流水线)
+│           │   │   └── observe/     # Graph节点耗时 / 异常观测包装器
 │           │   ├── trading/         # 确定性交易执行器 (3策略)
+│           │   ├── external/etf/    # ETF资金流采集（独立隔离，默认低权重/可关闭）
 │           │   ├── behavior/        # 用户行为分析
 │           │   └── config/          # AI 运行时动态配置
-│           └── util/                # Redis 分布式锁 / 游戏锁
+│           └── util/                # Redis 分布式锁 / 游戏锁 / 锁失败异常
 │
 ├── wiib-web/                        # 前端项目
 │   ├── package.json                 # React 19 + Vite 7.2
@@ -356,9 +379,14 @@ whatifibought/
 │       ├── stores/                  # Zustand 状态管理
 │       └── api/                     # Axios API 封装
 │
+├── sql/
+│   ├── init.sql                     # 数据库建表脚本 (39 张表)
+│   └── init-data.sql                # 初始数据 (20 家虚拟公司)
+│
 └── docs/
-    ├── init.sql                     # 数据库建表脚本 (34 张表)
-    └── init-data.sql                # 初始数据 (20 家虚拟公司)
+    ├── ai-architecture-overview.md  # AI架构说明
+    ├── data-and-signal-deep-dive.md # 数据源与信号说明
+    └── Quantitative analysis.md     # 量化分析说明
 ```
 
 
@@ -372,11 +400,12 @@ whatifibought/
 | **Redis 分布式锁** | 订单级 / 仓位级 / 用户级互斥（TTL 30s），Lua 脚本安全释放 |
 | **数据库 CAS 乐观锁** | 状态机转换：PENDING→TRIGGERED→FILLED、OPEN→LOCKED→SETTLED |
 | **Redis ZSet 索引** | O(logN) rangeByScore 撮合限价单 / 强平价 / 止损止盈 |
-| **Redis Token Bucket** | @RateLimiter 注解 + Lua 原子令牌桶限流 |
+| **Redis Token Bucket** | @RateLimiter 注解 + Lua 原子令牌桶限流；Redis/Lua 基础设施异常时 fail-open，真实超限仍拒绝 |
 | **Semaphore** | 批量任务并发度控制（行情推送 5 并发、限价单处理可配置） |
 | **Redis Pub/Sub** | 多实例 WebSocket 消息广播（支持集群部署） |
 | **Caffeine L1 + Redis L2** | 双层缓存：热点价格数据、股票静态信息 |
-| **GameLockExecutor** | 游戏操作串行化：Redis 锁 + 可选 @Transactional |
+| **GameLockExecutor** | 游戏操作串行化：Redis 锁 + 可选 @Transactional；锁获取失败通过 LockAcquisitionException 转业务并发错误 |
+| **Micrometer Observation** | StateGraph 8 节点耗时 / 失败率指标，支持 Prometheus 与 Admin API 查询 |
 
 
 ---
@@ -407,11 +436,11 @@ cd whatifibought
 # 创建数据库
 psql -U postgres -c "CREATE DATABASE wiib;"
 
-# 执行建表脚本（34 张表）
-psql -U postgres -d wiib -f docs/init.sql
+# 执行建表脚本（39 张表）
+psql -U postgres -d wiib -f sql/init.sql
 
 # 导入初始数据（20 家虚拟公司 + 20 只股票）
-psql -U postgres -d wiib -f docs/init-data.sql
+psql -U postgres -d wiib -f sql/init-data.sql
 ```
 
 ### 3. 配置环境变量

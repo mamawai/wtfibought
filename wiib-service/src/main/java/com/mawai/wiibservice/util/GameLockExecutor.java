@@ -35,13 +35,8 @@ public class GameLockExecutor {
             return redisLockUtil.executeWithLock(lockKey, LOCK_TIMEOUT_SECONDS, LOCK_WAIT_MILLIS, () ->
                     transactionTemplate.execute(status -> supplier.get())
             );
-        } catch (BizException ex) {
-            throw ex;
-        } catch (RuntimeException ex) {
-            if (ex.getMessage() != null && ex.getMessage().contains("获取锁失败")) {
-                throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
-            }
-            throw ex;
+        } catch (LockAcquisitionException ex) {
+            throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
         }
     }
 
@@ -52,13 +47,8 @@ public class GameLockExecutor {
         String lockKey = lockKeyPrefix + userId;
         try {
             return redisLockUtil.executeWithLock(lockKey, LOCK_TIMEOUT_SECONDS, LOCK_WAIT_MILLIS, supplier);
-        } catch (BizException ex) {
-            throw ex;
-        } catch (RuntimeException ex) {
-            if (ex.getMessage() != null && ex.getMessage().contains("获取锁失败")) {
-                throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
-            }
-            throw ex;
+        } catch (LockAcquisitionException ex) {
+            throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
         }
     }
 
