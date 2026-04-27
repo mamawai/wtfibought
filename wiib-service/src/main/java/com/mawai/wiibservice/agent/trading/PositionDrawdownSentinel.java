@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentLinkedDeque;
  * C. 峰值浮盈 ≥ {@link #PEAK_ATR_THRESHOLD}×ATR 且 当前浮盈 ≤ peak×{@link #PEAK_DRAWDOWN_RATIO}
  *    （基于生产 TradingExecutionState 的 peak 记忆，A/B 看 5min 窗口，C 看整个持仓生命周期）
  * <p>
- * 默认开启；参数/开关通过 Admin 运行时切换，重启恢复默认。
+ * 默认关闭；参数/开关通过 Admin 运行时切换，重启恢复默认。
  * 跨入口 30s 冷却由 {@link AiTradingScheduler#isRecentlyTriggered} 提供，防 cycle/sentinel 双重 close。
  */
 @Slf4j
@@ -35,8 +35,8 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 public class PositionDrawdownSentinel {
 
     // ==================== Admin 可配参数（volatile，重启恢复默认） ====================
-    // 本版本起默认开启：主动平仓机制，防浮盈被吃回去
-    public static volatile boolean ENABLED = true;
+    // 默认关闭：主动平仓容易抢在TP/SL前全平，观察期先让主盯盘逻辑接管。
+    public static volatile boolean ENABLED = false;
     public static volatile int WINDOW_MINUTES = 5;
     public static volatile double PNL_PCT_DROP_THRESHOLD_PPT = 2.0;
     public static volatile double PROFIT_DRAWDOWN_THRESHOLD_PCT = 50.0;
