@@ -5,16 +5,16 @@ import { useUserStore } from '../stores/userStore';
 import { Typewriter } from '../components/ui/typewriter';
 import { Loader2, Globe, BarChart3, Wallet, LineChart } from 'lucide-react';
 
-const LINUXDO_CONFIG = {
-  clientId: 'toCFytIO9bCHpbUbFKM1mTgvy1ax8tG2',
-  authorizeUrl: 'https://connect.linux.do/oauth2/authorize',
-  redirectUri: 'https://linuxdo.stockgame.icu/login',
-};
 // const LINUXDO_CONFIG = {
-//   clientId: 'NIrMpQ09Jgzjb7r1ZgU3QYnuejk8Z3qS',
+//   clientId: 'toCFytIO9bCHpbUbFKM1mTgvy1ax8tG2',
 //   authorizeUrl: 'https://connect.linux.do/oauth2/authorize',
-//   redirectUri: 'http://localhost:3000/login',
+//   redirectUri: 'https://linuxdo.stockgame.icu/login',
 // };
+const LINUXDO_CONFIG = {
+  clientId: 'NIrMpQ09Jgzjb7r1ZgU3QYnuejk8Z3qS',
+  authorizeUrl: 'https://connect.linux.do/oauth2/authorize',
+  redirectUri: 'http://localhost:3000/login',
+};
 
 // 定制化新粗野主义商标组件：时光机+涨幅趋势
 function ProjectLogo({ className, ...props }: React.SVGProps<SVGSVGElement>) {

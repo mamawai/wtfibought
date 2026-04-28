@@ -125,6 +125,29 @@ public class CacheService {
         return polymarketClosePriceMap.get(windowStart);
     }
 
+    // ==================== Polymarket官方回合时间 ====================
+
+    public record PredictionOfficialWindow(
+            long windowStart,
+            long startTimeMs,
+            long endTimeMs,
+            long referenceNowMs,
+            long referenceLocalTimeMs
+    ) {}
+
+    private final ConcurrentHashMap<Long, PredictionOfficialWindow> predictionOfficialWindowMap = new ConcurrentHashMap<>();
+
+    public void putPredictionOfficialWindow(long windowStart, long startTimeMs, long endTimeMs,
+                                            long referenceNowMs, long referenceLocalTimeMs) {
+        predictionOfficialWindowMap.put(windowStart,
+                new PredictionOfficialWindow(windowStart, startTimeMs, endTimeMs, referenceNowMs, referenceLocalTimeMs));
+        predictionOfficialWindowMap.keySet().removeIf(k -> k < windowStart - 600);
+    }
+
+    public PredictionOfficialWindow getPredictionOfficialWindow(long windowStart) {
+        return predictionOfficialWindowMap.get(windowStart);
+    }
+
     // ==================== BTC价格历史（纯内存，ConcurrentLinkedDeque） ====================
 
     private static final long PRICE_HISTORY_TTL_MS = 360_000;

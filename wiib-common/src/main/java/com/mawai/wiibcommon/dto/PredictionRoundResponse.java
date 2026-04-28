@@ -18,4 +18,12 @@ public class PredictionRoundResponse {
     private BigDecimal downPrice;
     private String status;
     private int remainingSeconds;
+    /** 后端生成响应的时间，用于前端校正本机时钟 */
+    private Long serverTimeMs;
+    /** Gamma响应头Date校正后的Polymarket当前时间 */
+    private Long officialNowTimeMs;
+    /** Polymarket Gamma返回的官方回合开始时间 */
+    private Long officialStartTimeMs;
+    /** Polymarket Gamma返回的官方回合结束时间 */
+    private Long officialEndTimeMs;
 }
