@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.*;
 
 /**
@@ -68,6 +69,13 @@ public class SignalReplayBacktestEngine {
         int index = 0;
         for (QuantForecastCycle cycle : cycles) {
             index++;
+            // 回测时间推进：使用 cycle 的 forecastTime
+            if (cycle.getForecastTime() != null) {
+                long mockNowMs = cycle.getForecastTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+                executionState.setMockNowMs(mockNowMs);
+            } else {
+                executionState.setMockNowMs(null);
+            }
             BigDecimal price = extractLastPrice(cycle);
             if (price == null || price.signum() <= 0) {
                 skipped++;

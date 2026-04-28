@@ -47,6 +47,7 @@ public class BacktestTradingTools implements TradingOperations {
     @Setter
     private int currentBarIndex = 0;
     private final String symbol;
+    private static final int MAX_SYMBOL_POSITIONS = 3;
 
     /**
      * 已平仓交易记录，用于生成 BacktestResult.Trade。
@@ -95,6 +96,21 @@ public class BacktestTradingTools implements TradingOperations {
         BigDecimal totalCost = margin.add(openFee);
         if (totalCost.compareTo(balance) > 0) {
             return "开仓失败: 余额不足 需要" + totalCost.toPlainString() + " 可用" + balance.toPlainString();
+        }
+
+        // symbol 级别限制
+        List<FuturesPositionDTO> currentSymbolOpen = openPositions.stream()
+                .filter(p -> "OPEN".equals(p.getStatus()))
+                .toList();
+        if (!currentSymbolOpen.isEmpty()) {
+            boolean hasOpposite = currentSymbolOpen.stream()
+                    .anyMatch(p -> !side.equals(p.getSide()));
+            if (hasOpposite) {
+                return "开仓失败: " + symbol + "已有" + currentSymbolOpen.getFirst().getSide() + "持仓，暂不允许开反向新仓";
+            }
+        }
+        if (currentSymbolOpen.size() >= MAX_SYMBOL_POSITIONS) {
+            return "开仓失败: " + symbol + "已有" + currentSymbolOpen.size() + "个持仓，上限" + MAX_SYMBOL_POSITIONS;
         }
 
         // 扣除保证金和手续费

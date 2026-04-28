@@ -10,7 +10,9 @@ import lombok.extern.slf4j.Slf4j;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -41,8 +43,8 @@ public class DeterministicTradingExecutor {
     private static final String PATH_SHADOW_5OF7 = "SHADOW_5OF7";
     private static final String LEGACY_PATH_TREND = "TREND";
     private static final String LEGACY_PATH_MR = "MEAN_REVERSION";
-    // 虚拟盘观察开仓频率：取消同币种开仓冷静期，频率交给信号/风控/持仓上限控制。
-    private static final long ENTRY_COOLDOWN_MS = 0;
+    // 同 symbol 开仓冷静期 10 分钟
+    private static final long ENTRY_COOLDOWN_MS = 10 * 60 * 1000L;
 
     // ==================== 手续费 ====================
     // 0.0008 与模拟盘记账一致（开仓0.04% + 平仓0.04%）；真盘迁移时改 0.0010（Binance VIP0 taker 0.05% 往返）
@@ -277,6 +279,7 @@ public class DeterministicTradingExecutor {
         StringBuilder execLog = new StringBuilder();
         StringBuilder reasons = new StringBuilder();
         String action = "HOLD";
+        LocalDateTime now = currentDateTime(state);
 
         if (cleanupFromCurrentPositions) {
             Set<Long> livePositionIds = positions.stream()
@@ -331,7 +334,7 @@ public class DeterministicTradingExecutor {
                                 targetProgress.multiply(BigDecimal.valueOf(100)).doubleValue()));
                     }
                     if (targetProgress.compareTo(BigDecimal.valueOf(PROTECTIVE_PARTIAL_PROGRESS)) >= 0) {
-                        QuantSignalDecision bestSignal = findBestSignal(signals, forecastTime);
+                        QuantSignalDecision bestSignal = findBestSignal(signals, forecastTime, now);
                         boolean strongReversal = isStrongReversalSignal(bestSignal, ctx, isLong);
                         if (strongReversal) {
                             int streak = state.incrementReversalStreak(pos.getId());
@@ -417,8 +420,9 @@ public class DeterministicTradingExecutor {
             TradingRuntimeToggles toggles,
             LocalDateTime forecastTime) {
 
-        // ===== 0. 跨路径冷却：同 symbol 开仓后30min内不再开新仓，防 whipsaw =====
-        long nowMs = System.currentTimeMillis();
+        // ===== 0. 跨路径冷却：同 symbol 开仓后10min内不再开新仓 =====
+        long nowMs = currentTimeMillis(state);
+        LocalDateTime now = currentDateTime(nowMs);
         Long lastEntryMs = state.getLastEntryMs(symbol);
         if (ENTRY_COOLDOWN_MS > 0 && lastEntryMs != null) {
             long remainingMs = ENTRY_COOLDOWN_MS - (nowMs - lastEntryMs);
@@ -430,7 +434,7 @@ public class DeterministicTradingExecutor {
         }
 
         // ===== 1. 风控检查（智能冷却、连续亏损、日亏损）=====
-        String riskCheck = checkRiskLimits(user, recentDecisions);
+        String riskCheck = checkRiskLimits(user, recentDecisions, now);
         if (riskCheck != null) return hold(riskCheck);
 
         // ===== 2. ATR必须可用 =====
@@ -445,7 +449,7 @@ public class DeterministicTradingExecutor {
         }
 
         // ===== 3. 找信号 =====
-        QuantSignalDecision bestSignal = findBestSignalWithPriority(signals, forecastTime);
+        QuantSignalDecision bestSignal = findBestSignalWithPriority(signals, forecastTime, now);
         if (bestSignal == null || "NO_TRADE".equals(bestSignal.getDirection())) {
             return hold("无有效方向信号");
         }
@@ -1013,12 +1017,14 @@ public class DeterministicTradingExecutor {
      * 开仓只取当前 active horizon，避免 10_20/20_30 这种未来分段信号提前驱动入场。
      * forecastTime=null 兼容回测：退回旧逻辑，从未过期/全部信号里按 confidence 选最高。
      */
-    private static QuantSignalDecision findBestSignalWithPriority(List<QuantSignalDecision> signals, LocalDateTime forecastTime) {
+    private static QuantSignalDecision findBestSignalWithPriority(List<QuantSignalDecision> signals,
+                                                                  LocalDateTime forecastTime,
+                                                                  LocalDateTime now) {
         if (signals == null || signals.isEmpty()) return null;
 
         // 实盘按 forecast 年龄锁定当前分段；0-10min 只用 0_10，10-20min 只用 10_20，20-30min 只用 20_30。
         if (forecastTime != null) {
-            long ageMinutes = Duration.between(forecastTime, LocalDateTime.now()).toMinutes();
+            long ageMinutes = Duration.between(forecastTime, now).toMinutes();
             String activeHorizon = activeHorizon(ageMinutes);
             if (activeHorizon == null) {
                 log.debug("[Executor] forecast已超过30min，跳过开仓信号 forecast={} age={}min",
@@ -1103,10 +1109,11 @@ public class DeterministicTradingExecutor {
     }
 
     /** 保留原始findBestSignal用于持仓管理的反转检测 */
-    private static QuantSignalDecision findBestSignal(List<QuantSignalDecision> signals, LocalDateTime forecastTime) {
+    private static QuantSignalDecision findBestSignal(List<QuantSignalDecision> signals,
+                                                      LocalDateTime forecastTime,
+                                                      LocalDateTime now) {
         if (signals == null || signals.isEmpty()) return null;
         if (forecastTime != null) {
-            LocalDateTime now = LocalDateTime.now();
             signals = signals.stream().filter(s -> {
                 if (s.getHorizon() == null) return true;
                 int endMin = switch (s.getHorizon()) {
@@ -1268,11 +1275,11 @@ public class DeterministicTradingExecutor {
 
     // ==================== 风控检查（仅日亏损上限）====================
 
-    private static String checkRiskLimits(User user, List<AiTradingDecision> recentDecisions) {
+    private static String checkRiskLimits(User user, List<AiTradingDecision> recentDecisions, LocalDateTime now) {
         if (recentDecisions == null || recentDecisions.isEmpty()) return null;
 
         // 日亏损上限
-        BigDecimal dailyLoss = calcDailyLoss(recentDecisions);
+        BigDecimal dailyLoss = calcDailyLoss(recentDecisions, now);
         BigDecimal limit = user.getBalance().multiply(DAILY_LOSS_LIMIT_PCT);
         if (dailyLoss.compareTo(limit) >= 0) {
             return "日亏损=" + fmtPrice(dailyLoss) + ">=" + fmtPrice(limit);
@@ -1372,6 +1379,19 @@ public class DeterministicTradingExecutor {
         return result != null && (result.startsWith("开仓成功") || result.startsWith("平仓成功"));
     }
 
+    private static long currentTimeMillis(TradingExecutionState state) {
+        Long mockNowMs = state != null ? state.getMockNowMs() : null;
+        return mockNowMs != null ? mockNowMs : System.currentTimeMillis();
+    }
+
+    private static LocalDateTime currentDateTime(TradingExecutionState state) {
+        return currentDateTime(currentTimeMillis(state));
+    }
+
+    private static LocalDateTime currentDateTime(long epochMs) {
+        return LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMs), ZoneId.systemDefault());
+    }
+
     private static String normalizeStrategyPath(String memo) {
         if (memo == null) return "";
         // 只兼容改名前已存在的OPEN仓位；新开仓只写 MR / LEGACY_TREND / BREAKOUT。
@@ -1380,9 +1400,9 @@ public class DeterministicTradingExecutor {
         return memo;
     }
 
-    private static BigDecimal calcDailyLoss(List<AiTradingDecision> decisions) {
+    private static BigDecimal calcDailyLoss(List<AiTradingDecision> decisions, LocalDateTime now) {
         if (decisions == null) return BigDecimal.ZERO;
-        LocalDateTime todayStart = LocalDateTime.now().withHour(0).withMinute(0).withSecond(0);
+        LocalDateTime todayStart = now.withHour(0).withMinute(0).withSecond(0);
         BigDecimal loss = BigDecimal.ZERO;
         for (AiTradingDecision d : decisions) {
             if (d.getCreatedAt() == null || d.getCreatedAt().isBefore(todayStart)) break;
