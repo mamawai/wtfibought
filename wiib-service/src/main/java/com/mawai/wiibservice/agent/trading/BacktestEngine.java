@@ -11,7 +11,9 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -87,7 +89,14 @@ public class BacktestEngine {
         log.info("[Backtest] 开始回测 {} | K线数={} | 初始资金={}",
                 symbol, klines5m.size(), initialBalance.toPlainString());
 
+        long baseTimeMs = System.currentTimeMillis();
         for (int i = MIN_KLINES_FOR_INDICATOR; i < klines5m.size(); i++) {
+            // 回测时间推进：每根 bar 5 分钟
+            long mockNowMs = baseTimeMs + (i - MIN_KLINES_FOR_INDICATOR) * 5L * 60_000L;
+            executionState.setMockNowMs(mockNowMs);
+            LocalDateTime mockNow = LocalDateTime.ofInstant(
+                    Instant.ofEpochMilli(mockNowMs), ZoneId.systemDefault());
+
             BigDecimal[] bar = klines5m.get(i);
             BigDecimal high = bar[0];
             BigDecimal low = bar[1];
@@ -109,7 +118,7 @@ public class BacktestEngine {
                     ? CryptoIndicatorCalculator.calcAll(klines1h) : Collections.emptyMap();
 
             // 3. 构建 snapshotJson（与 parseMarketContext 格式对齐）
-            QuantForecastCycle forecast = buildForecast(indicators5m, indicators15m, indicators1h, close);
+            QuantForecastCycle forecast = buildForecast(indicators5m, indicators15m, indicators1h, close, mockNow);
 
             // 4. 从指标衍生简化信号
             List<QuantSignalDecision> signals = deriveSignals(indicators5m, indicators15m, indicators1h);
@@ -141,7 +150,7 @@ public class BacktestEngine {
             decision.setExecutionResult(execResult.executionLog());
             decision.setBalanceBefore(equity);
             decision.setBalanceAfter(tools.getTotalEquity());
-            decision.setCreatedAt(LocalDateTime.now());
+            decision.setCreatedAt(mockNow);
             recentDecisions.addFirst(decision);
             if (recentDecisions.size() > 20) {
                 recentDecisions.removeLast();
@@ -207,7 +216,8 @@ public class BacktestEngine {
     private QuantForecastCycle buildForecast(Map<String, Object> ind5m,
                                              Map<String, Object> ind15m,
                                              Map<String, Object> ind1h,
-                                             BigDecimal currentPrice) {
+                                             BigDecimal currentPrice,
+                                             LocalDateTime forecastTime) {
         JSONObject snap = new JSONObject();
 
         // regime 判断
@@ -266,7 +276,7 @@ public class BacktestEngine {
         forecast.setSymbol(symbol);
         forecast.setSnapshotJson(snap.toJSONString());
         forecast.setOverallDecision(regime); // 非FLAT
-        forecast.setForecastTime(LocalDateTime.now());
+        forecast.setForecastTime(forecastTime);
         return forecast;
     }
 

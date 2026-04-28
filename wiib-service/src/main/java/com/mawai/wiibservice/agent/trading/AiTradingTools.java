@@ -18,6 +18,8 @@ import org.springframework.ai.tool.annotation.ToolParam;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Slf4j
@@ -32,7 +34,8 @@ public class AiTradingTools implements TradingOperations {
     private static final BigDecimal MIN_MARGIN_RATIO = new BigDecimal("0.01"); // 余额的1%
     // 虚拟盘观察档：允许同币种同方向多次开仓，风险由每单SL距离反推仓位 + 保证金上限控制。
     private static final int MAX_OPEN_POSITIONS = 6;
-    private static final int MAX_SAME_DIRECTION_POSITIONS = 6;
+    private static final int MAX_SYMBOL_POSITIONS = 3;
+    private static final int ENTRY_COOLDOWN_MINUTES = 10;
     // SL校验容差2bps：匹配执行器adjustForNoiseFloor，防价格漂移/BigDecimal精度误拒
     private static final BigDecimal SL_MIN_TOLERANCE = new BigDecimal("0.0002");
 
@@ -181,7 +184,7 @@ public class AiTradingTools implements TradingOperations {
     }
 
     @Override
-    @Tool(description = "开仓下单，支持市价和限价。必须设1个止损和1个止盈，各覆盖全部仓位。杠杆5-50倍，单次保证金≥余额1%（最低100USDT）且不超余额35%，最多6个持仓。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
+    @Tool(description = "开仓下单，支持市价和限价。必须设1个止损和1个止盈，各覆盖全部仓位。杠杆5-50倍，单次保证金≥余额1%（最低100USDT）且不超余额35%，全局最多6个持仓，每个symbol最多3个持仓，同symbol开仓间隔≥10分钟，有持仓时不可开反向新仓。限价单会挂单等待成交。注意：交易对由系统自动绑定，无需指定。")
     public String openPosition(
             @ToolParam(description = "方向：LONG或SHORT") String side,
             @ToolParam(description = "数量（币的数量，如0.01个BTC）") BigDecimal quantity,
@@ -232,12 +235,38 @@ public class AiTradingTools implements TradingOperations {
             return "错误：已有" + openPositions.size() + "个持仓，上限" + MAX_OPEN_POSITIONS;
         }
 
-        // 同向持仓限制
-        long sameDirectionCount = openPositions.stream()
-                .filter(p -> side.equals(p.getSide()))
-                .count();
-        if (sameDirectionCount >= MAX_SAME_DIRECTION_POSITIONS) {
-            return "警告：已有" + sameDirectionCount + "个" + side + "持仓（上限" + MAX_SAME_DIRECTION_POSITIONS + "），请考虑反向或不同标的";
+        // ===== symbol 级别限制 =====
+        List<FuturesPosition> symbolOpenPositions = openPositions.stream()
+                .filter(p -> symbol.equals(p.getSymbol()))
+                .toList();
+
+        // 3. 有持仓时禁止开反向新仓
+        if (!symbolOpenPositions.isEmpty()) {
+            boolean hasOpposite = symbolOpenPositions.stream()
+                    .anyMatch(p -> !side.equals(p.getSide()));
+            if (hasOpposite) {
+                String existingSide = symbolOpenPositions.getFirst().getSide();
+                return "错误：" + symbol + "已有" + existingSide + "持仓，暂不允许开反向新仓，请先平仓";
+            }
+        }
+
+        // 1. 每个 symbol 持仓最多 3 个
+        if (symbolOpenPositions.size() >= MAX_SYMBOL_POSITIONS) {
+            return "错误：" + symbol + "已有" + symbolOpenPositions.size() + "个持仓，上限" + MAX_SYMBOL_POSITIONS;
+        }
+
+        // 2. 每个 symbol 开仓间隔至少 10 分钟
+        FuturesPosition lastPosition = futuresPositionMapper.selectOne(
+                new LambdaQueryWrapper<FuturesPosition>()
+                        .eq(FuturesPosition::getUserId, aiUserId)
+                        .eq(FuturesPosition::getSymbol, symbol)
+                        .orderByDesc(FuturesPosition::getCreatedAt)
+                        .last("LIMIT 1"));
+        if (lastPosition != null && lastPosition.getCreatedAt() != null) {
+            long minutesSinceLast = Duration.between(lastPosition.getCreatedAt(), LocalDateTime.now()).toMinutes();
+            if (minutesSinceLast < ENTRY_COOLDOWN_MINUTES) {
+                return "错误：" + symbol + "距上次开仓仅" + minutesSinceLast + "分钟，需间隔" + ENTRY_COOLDOWN_MINUTES + "分钟";
+            }
         }
 
         // 保证金比例检查

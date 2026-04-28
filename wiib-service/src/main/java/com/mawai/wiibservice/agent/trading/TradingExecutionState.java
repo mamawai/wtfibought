@@ -1,5 +1,7 @@
 package com.mawai.wiibservice.agent.trading;
 
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -16,6 +18,11 @@ public class TradingExecutionState {
     private final ConcurrentHashMap<String, Long> lastEntryMs = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Integer> reversalStreak = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, PositionPeak> positionPeaks = new ConcurrentHashMap<>();
+
+    // 回测用：覆盖当前时间（毫秒），为 null 时回退到 System.currentTimeMillis()
+    @Getter
+    @Setter
+    private volatile Long mockNowMs;
 
     public record PositionPeak(BigDecimal maxProfit, boolean partialTpDone) {
         PositionPeak withMaxProfit(BigDecimal p) {
