@@ -11,6 +11,14 @@ import org.springframework.ai.chat.client.ChatClient;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 重周期新闻事件 Agent。
@@ -20,6 +28,7 @@ import java.util.Map;
 public class NewsEventAgent implements FactorAgent {
 
     private static final int NEWS_CALLS = 3;
+    private static final long NEWS_SAMPLE_TIMEOUT_SECONDS = 90;
     private static final double LOW_CONFIDENCE_STDDEV = 0.15;
     private static final List<String> HORIZONS = List.of("0_10", "10_20", "20_30");
 
@@ -61,12 +70,16 @@ public class NewsEventAgent implements FactorAgent {
         int baseVolBps = estimateVolBps(snapshot);
         try {
             String prompt = buildPrompt(snapshot.symbol(), preFiltered);
-            List<EvaluateResult> samples = new ArrayList<>(NEWS_CALLS);
-            for (int i = 1; i <= NEWS_CALLS; i++) {
-                String response = callMode.call(chatClient, prompt);
-                log.info("[Q3.news] LLM样本 {}/{} 返回 {}chars",
-                        i, NEWS_CALLS, response != null ? response.length() : 0);
-                samples.add(parseResponse(response, baseVolBps));
+            List<EvaluateResult> samples = runParallelSamples(prompt, baseVolBps);
+            if (samples.isEmpty()) {
+                return new EvaluateResult(
+                        List.of(AgentVote.noTrade(name(), "0_10", "LLM_ERROR"),
+                                AgentVote.noTrade(name(), "10_20", "LLM_ERROR"),
+                                AgentVote.noTrade(name(), "20_30", "LLM_ERROR")),
+                        List.of());
+            }
+            if (samples.size() < NEWS_CALLS) {
+                log.warn("[Q3.news] LLM样本部分失败 success={}/{}", samples.size(), NEWS_CALLS);
             }
             return medianResult(samples, baseVolBps);
         } catch (Exception e) {
@@ -82,6 +95,80 @@ public class NewsEventAgent implements FactorAgent {
     @Override
     public List<AgentVote> evaluate(FeatureSnapshot snapshot) {
         return evaluateWithNews(snapshot).votes();
+    }
+
+    private List<EvaluateResult> runParallelSamples(String prompt, int baseVolBps) throws InterruptedException {
+        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+        boolean forceShutdown = false;
+        try {
+            List<CompletableFuture<EvaluateResult>> futures = new ArrayList<>(NEWS_CALLS);
+            for (int i = 1; i <= NEWS_CALLS; i++) {
+                int sampleNo = i;
+                futures.add(CompletableFuture.supplyAsync(
+                        () -> callSample(sampleNo, prompt, baseVolBps), executor));
+            }
+
+            try {
+                CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
+                        .get(NEWS_SAMPLE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                forceShutdown = true;
+                log.warn("[Q3.news] LLM样本共享超时{}s", NEWS_SAMPLE_TIMEOUT_SECONDS);
+            } catch (ExecutionException e) {
+                // 单个样本失败不放大成整个新闻因子失败，下面逐个收集成功样本。
+                log.warn("[Q3.news] LLM样本存在失败: {}", unwrap(e).getMessage());
+            }
+
+            List<EvaluateResult> samples = new ArrayList<>(NEWS_CALLS);
+            for (int i = 0; i < futures.size(); i++) {
+                CompletableFuture<EvaluateResult> future = futures.get(i);
+                if (!future.isDone()) {
+                    future.cancel(true);
+                    log.warn("[Q3.news] LLM样本 {}/{} 超时{}s",
+                            i + 1, NEWS_CALLS, NEWS_SAMPLE_TIMEOUT_SECONDS);
+                    continue;
+                }
+
+                try {
+                    samples.add(future.join());
+                } catch (CompletionException e) {
+                    Throwable cause = unwrap(e);
+                    log.warn("[Q3.news] LLM样本 {}/{} 失败: {}",
+                            i + 1, NEWS_CALLS, cause.getMessage());
+                } catch (CancellationException e) {
+                    log.warn("[Q3.news] LLM样本 {}/{} 已取消", i + 1, NEWS_CALLS);
+                }
+            }
+            return samples;
+        } catch (InterruptedException e) {
+            forceShutdown = true;
+            Thread.currentThread().interrupt();
+            throw e;
+        } finally {
+            // CompletableFuture.cancel 不保证中断底层调用；共享超时时主动打断虚拟线程。
+            if (forceShutdown) {
+                executor.shutdownNow();
+            } else {
+                executor.shutdown();
+            }
+        }
+    }
+
+    private EvaluateResult callSample(int sampleNo, String prompt, int baseVolBps) {
+        long startMs = System.currentTimeMillis();
+        String response = callMode.call(chatClient, prompt);
+        log.info("[Q3.news] LLM样本 {}/{} 返回 {}chars 耗时{}ms",
+                sampleNo, NEWS_CALLS, response != null ? response.length() : 0,
+                System.currentTimeMillis() - startMs);
+        return parseResponse(response, baseVolBps);
+    }
+
+    private static Throwable unwrap(Throwable throwable) {
+        if ((throwable instanceof CompletionException || throwable instanceof ExecutionException)
+                && throwable.getCause() != null) {
+            return throwable.getCause();
+        }
+        return throwable;
     }
 
     private String buildPrompt(String symbol, List<NewsItem> newsItems) {
