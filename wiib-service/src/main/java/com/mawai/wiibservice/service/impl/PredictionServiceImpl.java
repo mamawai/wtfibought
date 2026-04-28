@@ -86,7 +86,7 @@ public class PredictionServiceImpl implements PredictionService {
             resp.setUpPrice(upPrice);
             resp.setDownPrice(downPrice);
             resp.setStatus("OPEN");
-            resp.setRemainingSeconds(remainingSeconds());
+            fillOfficialTime(resp);
             return resp;
         }
 
@@ -98,8 +98,28 @@ public class PredictionServiceImpl implements PredictionService {
         resp.setUpPrice(upPrice);
         resp.setDownPrice(downPrice);
         resp.setStatus(round.getStatus());
-        resp.setRemainingSeconds(remainingSeconds());
+        fillOfficialTime(resp);
         return resp;
+    }
+
+    private void fillOfficialTime(PredictionRoundResponse resp) {
+        long serverNowMs = System.currentTimeMillis();
+        resp.setServerTimeMs(serverNowMs);
+
+        CacheService.PredictionOfficialWindow official =
+                cacheService.getPredictionOfficialWindow(resp.getWindowStart());
+        if (official != null) {
+            long officialNowMs = official.referenceNowMs()
+                    + Math.max(0, serverNowMs - official.referenceLocalTimeMs());
+            resp.setOfficialNowTimeMs(officialNowMs);
+            resp.setOfficialStartTimeMs(official.startTimeMs());
+            resp.setOfficialEndTimeMs(official.endTimeMs());
+            long remainingMs = Math.max(0, official.endTimeMs() - officialNowMs);
+            resp.setRemainingSeconds((int) Math.ceil(remainingMs / 1000.0));
+            return;
+        }
+
+        resp.setRemainingSeconds(remainingSeconds());
     }
 
     private PredictionBetResponse toBetResponse(PredictionBet bet) {
@@ -558,6 +578,14 @@ public class PredictionServiceImpl implements PredictionService {
         if (resp.getDownPrice() != null) sb.append(",\"downPrice\":\"").append(resp.getDownPrice()).append("\"");
         sb.append(",\"status\":\"").append(resp.getStatus()).append("\"");
         sb.append(",\"remainingSeconds\":").append(resp.getRemainingSeconds());
+        if (resp.getServerTimeMs() != null) sb.append(",\"serverTimeMs\":").append(resp.getServerTimeMs());
+        if (resp.getOfficialNowTimeMs() != null) sb.append(",\"officialNowTimeMs\":").append(resp.getOfficialNowTimeMs());
+        if (resp.getOfficialStartTimeMs() != null) {
+            sb.append(",\"officialStartTimeMs\":").append(resp.getOfficialStartTimeMs());
+        }
+        if (resp.getOfficialEndTimeMs() != null) {
+            sb.append(",\"officialEndTimeMs\":").append(resp.getOfficialEndTimeMs());
+        }
         sb.append("}");
         return sb.toString();
     }

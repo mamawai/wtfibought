@@ -140,6 +140,7 @@ export function Prediction() {
   const [rounds, setRounds] = useState<PredictionRound[]>([]);
   const [roundsPage, setRoundsPage] = useState(1);
   const [roundsTotalPages, setRoundsTotalPages] = useState(1);
+  const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0);
 
   const [priceHistory, setPriceHistory] = useState<{ time: number; price: number }[]>([]);
   const chartRef = useRef<HTMLDivElement>(null);
@@ -147,7 +148,14 @@ export function Prediction() {
 
   const fetchRound = useCallback(async () => {
     try {
+      const sentAt = Date.now();
       const r = await predictionApi.current() as unknown as PredictionRound;
+      const receivedAt = Date.now();
+      const clockSourceMs = r.officialNowTimeMs ?? r.serverTimeMs;
+      if (clockSourceMs != null) {
+        const midpoint = sentAt + (receivedAt - sentAt) / 2;
+        setServerClockOffsetMs(clockSourceMs - midpoint);
+      }
       setRound(r);
     } catch { /* ignore */ }
   }, []);
@@ -181,28 +189,35 @@ export function Prediction() {
 
   useEffect(() => {
     if (!wsRound) return;
-    const curWs = Math.floor(Date.now() / 1000 / WINDOW_SECONDS) * WINDOW_SECONDS;
+    const clockSourceMs = wsRound.officialNowTimeMs ?? wsRound.serverTimeMs;
+    if (clockSourceMs != null) {
+      setServerClockOffsetMs(clockSourceMs - Date.now());
+    }
+    const calibratedNow = Date.now() + serverClockOffsetMs;
+    const curWs = round?.windowStart ?? Math.floor(calibratedNow / 1000 / WINDOW_SECONDS) * WINDOW_SECONDS;
     if (wsRound.windowStart && wsRound.windowStart < curWs) {
       // 旧回合结算推送，不覆盖当前回合，只刷新数据
       if (wsRound.status === 'SETTLED') { fetchBets(); fetchUser(); }
       return;
     }
     setRound(prev => ({ ...prev, ...wsRound } as PredictionRound));
-  }, [wsRound, fetchBets, fetchUser]);
+  }, [wsRound, fetchBets, fetchUser, round?.windowStart, serverClockOffsetMs]);
 
   useEffect(() => {
     const tick = () => {
-      const now = Math.floor(Date.now() / 1000);
-      const remaining = WINDOW_SECONDS - (now % WINDOW_SECONDS);
-      setCountdown(remaining);
-      if (remaining === WINDOW_SECONDS) {
+      const calibratedNowMs = Date.now() + serverClockOffsetMs;
+      const remaining = round?.officialEndTimeMs
+        ? Math.max(0, Math.ceil((round.officialEndTimeMs - calibratedNowMs) / 1000))
+        : WINDOW_SECONDS - (Math.floor(calibratedNowMs / 1000) % WINDOW_SECONDS);
+      setCountdown(Math.min(WINDOW_SECONDS, remaining));
+      if (remaining === 0 || remaining === WINDOW_SECONDS) {
         fetchRound();
       }
     };
     tick();
     const iv = setInterval(tick, 1000);
     return () => clearInterval(iv);
-  }, [fetchRound]);
+  }, [fetchRound, round?.officialEndTimeMs, serverClockOffsetMs]);
 
   useEffect(() => {
     if (btcPrice != null) {
@@ -384,7 +399,7 @@ export function Prediction() {
               <div>
                 <h1 className="text-base font-bold leading-tight">BTC 5分钟涨跌预测</h1>
                 <span className="text-[10px] text-muted-foreground font-mono">
-                  5min &middot; {round?.windowStart ?? Math.floor(Date.now() / 1000 / WINDOW_SECONDS) * WINDOW_SECONDS}
+                  5min &middot; {round?.windowStart ?? Math.floor((Date.now() + serverClockOffsetMs) / 1000 / WINDOW_SECONDS) * WINDOW_SECONDS}
                 </span>
               </div>
             </div>

@@ -118,10 +118,16 @@ public class WsConnection {
 
         @Override
         public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+            if (wsRef.get() != webSocket) return null;
             if (shutdown.get()) return null;
             buffer.append(data);
             if (last) {
-                try { messageHandler.accept(buffer.toString()); }
+                String message = buffer.toString();
+                try {
+                    if (!"PONG".equalsIgnoreCase(message) && !"ping".equalsIgnoreCase(message)) {
+                        messageHandler.accept(message);
+                    }
+                }
                 catch (Exception e) { log.warn("{} WS消息处理失败: {}", name, e.getMessage()); }
                 buffer.setLength(0);
             }
@@ -131,6 +137,7 @@ public class WsConnection {
 
         @Override
         public CompletionStage<?> onPing(WebSocket webSocket, ByteBuffer message) {
+            if (wsRef.get() != webSocket) return null;
             webSocket.sendPong(message);
             webSocket.request(1);
             return null;
@@ -138,6 +145,7 @@ public class WsConnection {
 
         @Override
         public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+            if (wsRef.get() != webSocket) return null;
             log.warn("{} WS关闭: code={} reason={}", name, statusCode, reason);
             WsConnection.this.scheduleReconnect();
             return null;
@@ -145,6 +153,7 @@ public class WsConnection {
 
         @Override
         public void onError(WebSocket webSocket, Throwable error) {
+            if (wsRef.get() != webSocket) return;
             log.error("{} WS错误: {}", name, error.getMessage());
             WsConnection.this.scheduleReconnect();
         }

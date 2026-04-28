@@ -465,6 +465,10 @@ export interface PredictionRound {
   downPrice?: string;
   status: string;
   remainingSeconds: number;
+  serverTimeMs?: number;
+  officialNowTimeMs?: number;
+  officialStartTimeMs?: number;
+  officialEndTimeMs?: number;
 }
 
 export interface PredictionBet {
