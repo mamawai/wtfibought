@@ -70,6 +70,7 @@ public class SignalReplayBacktestEngine {
         for (QuantForecastCycle cycle : cycles) {
             index++;
             // 回测时间推进：使用 cycle 的 forecastTime
+            LocalDateTime mockNow = cycle.getForecastTime();
             if (cycle.getForecastTime() != null) {
                 long mockNowMs = cycle.getForecastTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
                 executionState.setMockNowMs(mockNowMs);
@@ -83,6 +84,7 @@ public class SignalReplayBacktestEngine {
             }
 
             // 1. 按当前cycle价格刷一次tick，触发任何挂单SL/TP（简化：high=low=close=price）
+            tools.setCurrentTime(mockNow);
             tools.tickBar(price, price, price, index);
 
             // 2. 取该cycle的3个horizon信号
@@ -92,6 +94,7 @@ public class SignalReplayBacktestEngine {
             syncMockUser(mockUser, tools);
             tools.setCurrentPrice(price);
             tools.setCurrentBarIndex(index);
+            tools.setCurrentTime(mockNow);
 
             List<FuturesPositionDTO> positions = tools.getOpenPositions(symbol);
             BigDecimal equity = tools.getTotalEquity();

@@ -158,7 +158,7 @@ public class PositionDrawdownSentinel {
 
             if (!conditionA && !conditionB && !conditionC) continue;
 
-            // 跨入口冷却：其他入口刚触发过 cycle → 让 managePositions 先处理，避免双重 close
+            // 跨入口冷却：其他入口刚触发过 cycle → 让 ExitDecisionEngine 先处理，避免双重 close
             if (aiTradingScheduler.isRecentlyTriggered(p.getSymbol(), CROSS_SOURCE_GUARD_SECONDS)) {
                 log.info("[DrawdownSentinel] {} 触发条件达标但30s内已有其他入口触发cycle→跳过 positionId={}",
                         p.getSymbol(), p.getId());

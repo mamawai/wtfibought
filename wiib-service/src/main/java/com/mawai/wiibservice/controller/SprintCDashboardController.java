@@ -16,8 +16,11 @@ import com.mawai.wiibservice.mapper.TradeAttributionMapper;
 import com.mawai.wiibservice.task.AiTradingScheduler;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -83,6 +86,52 @@ public class SprintCDashboardController {
         return Result.ok(data);
     }
 
+    @PostMapping("/path-status")
+    @Operation(summary = "手动启用/禁用策略路径")
+    public Result<Void> setPathStatus(@RequestBody PathStatusRequest req) {
+        checkAdmin();
+        if (req == null || req.getPath() == null || req.getPath().isBlank()) {
+            return Result.fail("path不能为空");
+        }
+        String path = req.getPath().trim().toUpperCase();
+        if (!STRATEGY_PATHS.contains(path)) {
+            return Result.fail("path只允许 BREAKOUT / MR / LEGACY_TREND");
+        }
+        if (req.getEnabled() == null) {
+            return Result.fail("enabled不能为空");
+        }
+
+        StrategyPathStatus status = strategyPathStatusMapper.selectById(path);
+        if (status == null) {
+            status = new StrategyPathStatus();
+            status.setPath(path);
+        }
+        status.setEnabled(req.getEnabled());
+        status.setUpdatedAt(LocalDateTime.now());
+        if (Boolean.TRUE.equals(req.getEnabled())) {
+            // 人工恢复要清掉自动禁用痕迹，避免看板继续显示旧连亏状态。
+            status.setDisabledReason(null);
+            status.setDisabledAt(null);
+            status.setConsecutiveLossCount(0);
+        } else {
+            String reason = req.getReason() != null && !req.getReason().isBlank()
+                    ? req.getReason().trim()
+                    : "人工禁用";
+            status.setDisabledReason(reason);
+            status.setDisabledAt(LocalDateTime.now());
+            if (status.getConsecutiveLossCount() == null) {
+                status.setConsecutiveLossCount(0);
+            }
+        }
+
+        if (strategyPathStatusMapper.selectById(path) == null) {
+            strategyPathStatusMapper.insert(status);
+        } else {
+            strategyPathStatusMapper.updateById(status);
+        }
+        return Result.ok(null);
+    }
+
     /** 构建账户级指标：今日开仓、累计归因表现和当前熔断状态。 */
     private Map<String, Object> buildAccount(Long aiUserId) {
         Long todayOpenCount = futuresPositionMapper.selectCount(new LambdaQueryWrapper<FuturesPosition>()
@@ -130,6 +179,13 @@ public class SprintCDashboardController {
             result.add(row);
         }
         return result;
+    }
+
+    @Data
+    public static class PathStatusRequest {
+        private String path;
+        private Boolean enabled;
+        private String reason;
     }
 
     /** SHADOW_5OF7 当前只有样本和方向，没有虚拟平仓，所以胜率保持 null。 */

@@ -7,6 +7,7 @@ import {
   Brain,
   Database,
   Gauge,
+  Power,
   RefreshCcw,
   Route,
   ShieldAlert,
@@ -124,7 +125,11 @@ function MetricTile({ label, value, sub, icon, tone = 'neutral' }: {
   );
 }
 
-function PathCard({ path }: { path: SprintCPathStats }) {
+function PathCard({ path, busy, onToggle }: {
+  path: SprintCPathStats;
+  busy: boolean;
+  onToggle: (path: SprintCPathStats) => void;
+}) {
   const pnl = toNumber(path.totalPnl);
   const tone = !path.enabled ? 'bad' : pnl !== null && pnl > 0 ? 'good' : pnl !== null && pnl < 0 ? 'warn' : 'neutral';
   return (
@@ -139,12 +144,29 @@ function PathCard({ path }: { path: SprintCPathStats }) {
           <div className="text-sm font-black">{PATH_LABEL[path.path] || path.path}</div>
           <div className="mt-0.5 text-[11px] font-bold text-muted-foreground">{path.path}</div>
         </div>
-        <span className={cn(
-          'rounded-md border px-2 py-1 text-[11px] font-black',
-          path.enabled ? 'border-gain/30 text-gain' : 'border-loss/30 text-loss',
-        )}>
-          {path.enabled ? '启用' : '禁用'}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className={cn(
+            'rounded-md border px-2 py-1 text-[11px] font-black',
+            path.enabled ? 'border-gain/30 text-gain' : 'border-loss/30 text-loss',
+          )}>
+            {path.enabled ? '启用' : '禁用'}
+          </span>
+          <button
+            type="button"
+            onClick={() => onToggle(path)}
+            disabled={busy}
+            className={cn(
+              'inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+              path.enabled
+                ? 'border-loss/30 text-loss hover:bg-loss/10'
+                : 'border-gain/30 text-gain hover:bg-gain/10',
+            )}
+            aria-label={`${path.enabled ? '禁用' : '启用'}${PATH_LABEL[path.path] || path.path}`}
+            title={path.enabled ? '禁用路径' : '启用路径'}
+          >
+            <Power className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
         <MiniStat label="7天胜率" value={fmtPct(path.winRate)} />
@@ -263,6 +285,7 @@ export function AdminSprintC() {
   const [days, setDays] = useState<(typeof DAY_OPTIONS)[number]>(7);
   const [data, setData] = useState<SprintCDashboard | null>(null);
   const [loading, setLoading] = useState(false);
+  const [togglingPath, setTogglingPath] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -280,6 +303,23 @@ export function AdminSprintC() {
       void load();
     }
   }, [user, load]);
+
+  const togglePath = useCallback(async (path: SprintCPathStats) => {
+    const nextEnabled = !path.enabled;
+    if (!nextEnabled && !window.confirm(`确认禁用 ${PATH_LABEL[path.path] || path.path}？`)) {
+      return;
+    }
+    setTogglingPath(path.path);
+    try {
+      await adminApi.setSprintCPathStatus(path.path, nextEnabled, nextEnabled ? undefined : '人工禁用');
+      toast(`${PATH_LABEL[path.path] || path.path} 已${nextEnabled ? '启用' : '禁用'}`, 'success');
+      await load();
+    } catch (e) {
+      toast((e as Error).message || '路径状态更新失败', 'error');
+    } finally {
+      setTogglingPath(null);
+    }
+  }, [load, toast]);
 
   const accountTone = useMemo(() => {
     const winRate = toNumber(data?.account.cumulative.winRate);
@@ -380,7 +420,14 @@ export function AdminSprintC() {
             <Panel>
               <PanelTitle icon={<Route className="h-4 w-4" />} title="路径归因" />
               <div className="grid gap-3 p-3 md:grid-cols-3">
-                {data.pathStats.map(path => <PathCard key={path.path} path={path} />)}
+                {data.pathStats.map(path => (
+                  <PathCard
+                    key={path.path}
+                    path={path}
+                    busy={togglingPath === path.path}
+                    onToggle={togglePath}
+                  />
+                ))}
               </div>
             </Panel>
 

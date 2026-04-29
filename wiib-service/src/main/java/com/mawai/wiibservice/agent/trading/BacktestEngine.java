@@ -103,6 +103,7 @@ public class BacktestEngine {
             BigDecimal close = bar[2];
 
             // 1. 先检查SL/TP触发（用本根K线的high/low）
+            tools.setCurrentTime(mockNow);
             tools.tickBar(high, low, close, i);
 
             // 2. 计算多周期技术指标
@@ -126,6 +127,7 @@ public class BacktestEngine {
             // 5. 准备调用参数
             tools.setCurrentPrice(close);
             tools.setCurrentBarIndex(i);
+            tools.setCurrentTime(mockNow);
             syncMockUser(mockUser, tools);
 
             List<FuturesPositionDTO> positions = tools.getOpenPositions(symbol);

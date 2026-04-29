@@ -43,8 +43,16 @@ public class CircuitBreakerService {
     @Value("${circuit.breaker.enabled:${CIRCUIT_BREAKER_ENABLED:true}}")
     private boolean propertyEnabled;
 
-    /** 开仓前统一入口：账户熔断优先，其次检查单路径是否已被禁用。 */
+    /** 开仓前统一入口：路径禁用独立生效；熔断开关只控制账户级 L1/L2/L3。 */
     public OpenDecision allowOpen(Long userId, String strategyPath) {
+        String path = normalizeStrategyPath(strategyPath);
+        if (path != null) {
+            StrategyPathStatus status = strategyPathStatusMapper.selectById(path);
+            if (status != null && Boolean.FALSE.equals(status.getEnabled())) {
+                return OpenDecision.reject("路径已禁用 path=" + path + " reason=" + status.getDisabledReason());
+            }
+        }
+
         if (!isEnabled()) return OpenDecision.permit();
 
         refreshDailyLossBreaker(userId);
@@ -59,14 +67,6 @@ public class CircuitBreakerService {
 
         String l2 = cacheService.get(l2Key(userId));
         if (l2 != null) return OpenDecision.reject("L2连亏冷却: " + l2);
-
-        String path = normalizeStrategyPath(strategyPath);
-        if (path != null) {
-            StrategyPathStatus status = strategyPathStatusMapper.selectById(path);
-            if (status != null && Boolean.FALSE.equals(status.getEnabled())) {
-                return OpenDecision.reject("路径已禁用 path=" + path + " reason=" + status.getDisabledReason());
-            }
-        }
 
         return OpenDecision.permit();
     }
