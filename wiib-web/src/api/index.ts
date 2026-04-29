@@ -180,6 +180,8 @@ export const adminApi = {
     api.post<unknown, QuantRuntimeConfig>('/admin/ai-agent/quant-config', config),
   sprintCDashboard: (days = 7) =>
     api.get<unknown, SprintCDashboard>('/admin/sprint-c-dashboard', { params: { days } }),
+  setSprintCPathStatus: (path: string, enabled: boolean, reason?: string) =>
+    api.post<unknown, void>('/admin/sprint-c-dashboard/path-status', { path, enabled, reason }),
 };
 
 // ========== 期权接口 ==========

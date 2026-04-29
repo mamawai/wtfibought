@@ -46,6 +46,8 @@ public class BacktestTradingTools implements TradingOperations {
     private final List<ClosedTrade> closedTrades = new ArrayList<>();
     @Setter
     private int currentBarIndex = 0;
+    @Setter
+    private LocalDateTime currentTime;
     private final String symbol;
     private static final int MAX_SYMBOL_POSITIONS = 3;
 
@@ -131,8 +133,10 @@ public class BacktestTradingTools implements TradingOperations {
         pos.setFundingFeeTotal(BigDecimal.ZERO);
         pos.setMemo(memo);
         pos.setStatus("OPEN");
-        pos.setCreatedAt(LocalDateTime.now());
-        pos.setUpdatedAt(LocalDateTime.now());
+        // 回测必须使用推进后的模拟时间，否则 TIME_EXIT 会把刚开的仓误判为超时。
+        LocalDateTime now = currentTime != null ? currentTime : LocalDateTime.now();
+        pos.setCreatedAt(now);
+        pos.setUpdatedAt(now);
 
         // 设置止损
         List<FuturesStopLoss> slList = new ArrayList<>();
