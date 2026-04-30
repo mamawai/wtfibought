@@ -17,7 +17,6 @@ final class TradingDecisionSupport {
     static final String PATH_BREAKOUT = "BREAKOUT";
     static final String PATH_MR = "MR";
     static final String PATH_LEGACY_TREND = "LEGACY_TREND";
-    static final String PATH_SHADOW_5OF7 = "SHADOW_5OF7";
     private static final String LEGACY_PATH_TREND = "TREND";
     private static final String LEGACY_PATH_MR = "MEAN_REVERSION";
 
@@ -42,7 +41,8 @@ final class TradingDecisionSupport {
     }
 
     /**
-     * 开仓只取当前 active horizon，避免 10_20/20_30 未来分段提前驱动入场。
+     * 开仓只取当前 active horizon，避免 10_20/20_30 未来分段提前驱动入场。<br>
+     * 每段只在最后1分钟停止新开仓，避免临近过期信号驱动入场。<br>
      * forecastTime=null 兼容回测：退回旧逻辑，从全部信号里按 confidence 选最高。
      */
     static QuantSignalDecision findBestSignalWithPriority(List<QuantSignalDecision> signals,
@@ -204,6 +204,9 @@ final class TradingDecisionSupport {
     }
 
     private static String activeHorizon(long ageMinutes) {
+        if (ageMinutes < 0) return null;
+        long phaseMinute = ageMinutes % 10;
+        if (phaseMinute >= 9) return null;
         if (ageMinutes < 10) return "0_10";
         if (ageMinutes < 20) return "10_20";
         if (ageMinutes < 30) return "20_30";
