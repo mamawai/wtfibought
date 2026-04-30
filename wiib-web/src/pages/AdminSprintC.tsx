@@ -6,7 +6,6 @@ import {
   BarChart3,
   Brain,
   Database,
-  Gauge,
   Power,
   RefreshCcw,
   Route,
@@ -407,13 +406,6 @@ export function AdminSprintC() {
               icon={<ShieldAlert className="h-4 w-4" />}
               tone={data.account.breaker.anyActive ? 'bad' : data.account.breaker.enabled ? 'good' : 'warn'}
             />
-            <MetricTile
-              label="5/7 Shadow"
-              value={String(data.shadow5of7.samples ?? 0)}
-              sub={`LONG ${data.shadow5of7.longSamples ?? 0} / SHORT ${data.shadow5of7.shortSamples ?? 0}`}
-              icon={<Gauge className="h-4 w-4" />}
-              tone="neutral"
-            />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[1.4fr_0.9fr]">
@@ -452,14 +444,11 @@ export function AdminSprintC() {
                     <span className="font-mono">{data.account.breaker.peakEquity || '-'}</span>
                   </div>
                 </div>
-                <div className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-warning">
-                  Shadow 胜率未计算：当前只落 reasoning，没有 shadow 后验表。
-                </div>
               </div>
             </Panel>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+          <div className="grid gap-4">
             <Panel>
               <PanelTitle icon={<Brain className="h-4 w-4" />} title="LLM 方差代理" />
               <div className="grid grid-cols-2 gap-3 p-3 md:grid-cols-4">
@@ -471,16 +460,6 @@ export function AdminSprintC() {
                 <MiniStat label="Regime Std" value={fmtNumber(data.llmVariance.avgRegimeConfidenceStddev, 3)} />
                 <MiniStat label="News Std" value={fmtNumber(data.llmVariance.avgNewsConfidenceStddev, 3)} />
                 <MiniStat label="Transition" value={String(data.llmVariance.transitionCycles ?? 0)} />
-              </div>
-            </Panel>
-
-            <Panel>
-              <PanelTitle icon={<Database className="h-4 w-4" />} title="Shadow 样本" />
-              <div className="grid grid-cols-2 gap-3 p-3">
-                <MiniStat label="累计样本" value={String(data.shadow5of7.samples ?? 0)} />
-                <MiniStat label="假设胜率" value={fmtPct(data.shadow5of7.hypotheticalWinRate)} />
-                <MiniStat label="最早" value={fmtTime(data.shadow5of7.firstSeenAt)} />
-                <MiniStat label="最新" value={fmtTime(data.shadow5of7.latestSeenAt)} />
               </div>
             </Panel>
           </div>

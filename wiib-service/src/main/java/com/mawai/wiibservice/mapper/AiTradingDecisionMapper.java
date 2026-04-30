@@ -7,7 +7,6 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
-import java.util.Map;
 
 @Mapper
 public interface AiTradingDecisionMapper extends BaseMapper<AiTradingDecision> {
@@ -20,16 +19,4 @@ public interface AiTradingDecisionMapper extends BaseMapper<AiTradingDecision> {
 
     @Select("SELECT * FROM ai_trading_decision ORDER BY created_at DESC LIMIT #{limit}")
     List<AiTradingDecision> selectRecent(@Param("limit") int limit);
-
-    @Select("""
-            SELECT
-                COUNT(*)::int AS "samples",
-                COUNT(*) FILTER (WHERE reasoning LIKE '%side=LONG%')::int AS "longSamples",
-                COUNT(*) FILTER (WHERE reasoning LIKE '%side=SHORT%')::int AS "shortSamples",
-                MIN(created_at) AS "firstSeenAt",
-                MAX(created_at) AS "latestSeenAt"
-            FROM ai_trading_decision
-            WHERE reasoning LIKE '%[Strategy-SHADOW_5OF7]%'
-            """)
-    Map<String, Object> selectShadow5of7Stats();
 }

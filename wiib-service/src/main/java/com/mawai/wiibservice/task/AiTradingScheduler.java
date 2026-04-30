@@ -211,9 +211,7 @@ public class AiTradingScheduler {
             // 确定性执行器决策
             var tradingToggles = runtimeFeatureToggleService.snapshot().trading();
             TradingRuntimeToggles executorToggles = new TradingRuntimeToggles(
-                    tradingToggles.lowVolTradingEnabled(),
-                    tradingToggles.legacyThreshold5of7Enabled(),
-                    tradingToggles.legacy5of7ShadowEnabled());
+                    tradingToggles.lowVolTradingEnabled());
             DeterministicTradingExecutor.ExecutionResult result =
                     DeterministicTradingExecutor.execute(
                             symbol, userBefore, positions, forecast, signals,

@@ -7,7 +7,6 @@ import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.StrategyPathStatus;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
-import com.mawai.wiibservice.mapper.AiTradingDecisionMapper;
 import com.mawai.wiibservice.mapper.FactorHistoryMapper;
 import com.mawai.wiibservice.mapper.FuturesPositionMapper;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
@@ -45,7 +44,6 @@ public class SprintCDashboardController {
     private final FuturesPositionMapper futuresPositionMapper;
     private final TradeAttributionMapper tradeAttributionMapper;
     private final StrategyPathStatusMapper strategyPathStatusMapper;
-    private final AiTradingDecisionMapper aiTradingDecisionMapper;
     private final FactorHistoryMapper factorHistoryMapper;
     private final QuantForecastCycleMapper quantForecastCycleMapper;
     private final CircuitBreakerService circuitBreakerService;
@@ -79,7 +77,6 @@ public class SprintCDashboardController {
         data.put("to", now);
         data.put("account", buildAccount(aiUserId));
         data.put("pathStats", buildPathStats(aiUserId, from));
-        data.put("shadow5of7", buildShadowStats());
         data.put("factorIrRanking", quantForecastCycleMapper.selectAgentIrRanking(windowDays, 12));
         data.put("externalFactorCoverage", buildExternalFactorCoverage(from, now, windowDays));
         data.put("llmVariance", quantForecastCycleMapper.selectLlmVarianceSummary(windowDays));
@@ -188,14 +185,6 @@ public class SprintCDashboardController {
         private String reason;
     }
 
-    /** SHADOW_5OF7 当前只有样本和方向，没有虚拟平仓，所以胜率保持 null。 */
-    private Map<String, Object> buildShadowStats() {
-        Map<String, Object> stats = new LinkedHashMap<>(aiTradingDecisionMapper.selectShadow5of7Stats());
-        stats.put("hypotheticalWinRate", null);
-        stats.put("verificationStatus", "NO_EXIT_VERIFICATION");
-        return stats;
-    }
-
     /** 按预期频率计算外部因子完整率，帮助判断 B2 shadow 数据是否够用。 */
     private List<Map<String, Object>> buildExternalFactorCoverage(LocalDateTime from, LocalDateTime to, int days) {
         Map<String, Map<String, Object>> actual = factorHistoryMapper.selectCoverage(from, to)
@@ -255,8 +244,7 @@ public class SprintCDashboardController {
     /** 看板窗口限制在 1-30 天，避免误传大窗口拖慢后台。 */
     private int normalizeDays(int days) {
         if (days < 1) return 7;
-        if (days > 30) return 30;
-        return days;
+        return Math.min(days, 30);
     }
 
     private record FactorSpec(String factorName, String frequency, int expectedPerDay, List<String> symbols) {}

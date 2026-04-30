@@ -714,8 +714,6 @@ export interface AiModelAssignment {
 
 export interface TradingRuntimeConfig {
   lowVolTradingEnabled?: boolean;
-  legacyThreshold5of7Enabled?: boolean;
-  legacy5of7ShadowEnabled?: boolean;
   drawdownSentinelEnabled?: boolean;
   drawdownWindowMinutes?: number;
   drawdownPnlPctDropThresholdPpt?: number;
@@ -787,16 +785,6 @@ export interface SprintCAccount {
   breaker: SprintCBreakerStatus;
 }
 
-export interface SprintCShadow5of7 {
-  samples: number;
-  longSamples: number;
-  shortSamples: number;
-  firstSeenAt: string | null;
-  latestSeenAt: string | null;
-  hypotheticalWinRate: number | null;
-  verificationStatus: string;
-}
-
 export interface SprintCFactorIrRow {
   agent: string;
   horizon: string;
@@ -840,7 +828,6 @@ export interface SprintCDashboard {
   to: string;
   account: SprintCAccount;
   pathStats: SprintCPathStats[];
-  shadow5of7: SprintCShadow5of7;
   factorIrRanking: SprintCFactorIrRow[];
   externalFactorCoverage: SprintCFactorCoverage[];
   llmVariance: SprintCLlmVariance;

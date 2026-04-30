@@ -149,28 +149,6 @@ export function Admin() {
     finally { setActionLoading(null); }
   };
 
-  const toggleLegacyThreshold5of7 = async () => {
-    const next = !tradingConfig.legacyThreshold5of7Enabled;
-    setActionLoading('toggleLegacyThreshold5of7');
-    try {
-      const c = await adminApi.setTradingConfig({ legacyThreshold5of7Enabled: next });
-      setTradingConfig(c);
-      toast(next ? 'LEGACY 5/7 实盘阈值：已开启' : 'LEGACY 5/7 实盘阈值：已关闭', 'success');
-    } catch { /* ignore */ }
-    finally { setActionLoading(null); }
-  };
-
-  const toggleLegacy5of7Shadow = async () => {
-    const next = !tradingConfig.legacy5of7ShadowEnabled;
-    setActionLoading('toggleLegacy5of7Shadow');
-    try {
-      const c = await adminApi.setTradingConfig({ legacy5of7ShadowEnabled: next });
-      setTradingConfig(c);
-      toast(next ? 'LEGACY 5/7 影子样本：已开启' : 'LEGACY 5/7 影子样本：已关闭', 'success');
-    } catch { /* ignore */ }
-    finally { setActionLoading(null); }
-  };
-
   const toggleDrawdownSentinel = async () => {
     const next = !tradingConfig.drawdownSentinelEnabled;
     setActionLoading('toggleDrawdown');
@@ -648,49 +626,6 @@ export function Admin() {
                 </Button>
               </div>
 
-              <div className="flex items-center justify-between gap-4 border-t pt-4">
-                <div className="flex-1">
-                  <div className="font-medium">LEGACY 5/7 实盘阈值</div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    开启：LEGACY_TREND 在 5/7 共振时也允许进入实盘开仓链路。<br/>
-                    关闭：只允许 6/7 共振实盘开仓（默认）。重启后保持当前设置。
-                  </div>
-                  <div className="text-xs mt-2">
-                    当前状态：<Badge variant={tradingConfig.legacyThreshold5of7Enabled ? 'default' : 'secondary'}>
-                      {tradingConfig.legacyThreshold5of7Enabled ? '已开启（激进）' : '已关闭（保守）'}
-                    </Badge>
-                  </div>
-                </div>
-                <Button
-                  variant={tradingConfig.legacyThreshold5of7Enabled ? 'default' : 'outline'}
-                  onClick={() => void toggleLegacyThreshold5of7()}
-                  disabled={actionLoading !== null}
-                >
-                  {tradingConfig.legacyThreshold5of7Enabled ? '关闭' : '开启'}
-                </Button>
-              </div>
-
-              <div className="flex items-center justify-between gap-4 border-t pt-4">
-                <div className="flex-1">
-                  <div className="font-medium">LEGACY 5/7 影子样本</div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    开启：5/7 但实盘阈值关闭时，只记录 SHADOW_5OF7 决策，不下单。<br/>
-                    关闭：5/7 直接按共振不足 HOLD。实盘阈值开启时，此项不额外生效。
-                  </div>
-                  <div className="text-xs mt-2">
-                    当前状态：<Badge variant={tradingConfig.legacy5of7ShadowEnabled ? 'default' : 'secondary'}>
-                      {tradingConfig.legacy5of7ShadowEnabled ? '已开启（只观测）' : '已关闭'}
-                    </Badge>
-                  </div>
-                </div>
-                <Button
-                  variant={tradingConfig.legacy5of7ShadowEnabled ? 'default' : 'outline'}
-                  onClick={() => void toggleLegacy5of7Shadow()}
-                  disabled={actionLoading !== null}
-                >
-                  {tradingConfig.legacy5of7ShadowEnabled ? '关闭' : '开启'}
-                </Button>
-              </div>
             </CardContent>
           </Card>
 

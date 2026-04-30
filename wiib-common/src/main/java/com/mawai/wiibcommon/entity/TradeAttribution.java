@@ -21,7 +21,7 @@ public class TradeAttribution {
 
     private String symbol;
 
-    /** BREAKOUT / MR / LEGACY_TREND；SHADOW_5OF7 不入本表。 */
+    /** BREAKOUT / MR / LEGACY_TREND。 */
     private String strategyPath;
 
     private LocalDateTime entryTime;

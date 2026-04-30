@@ -29,8 +29,6 @@ public class RuntimeFeatureToggleService {
     public static final String QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED = "quant.factor_weight_override.enabled";
 
     public static final String TRADING_LOW_VOL_ENABLED = "trading.low_vol.enabled";
-    public static final String TRADING_LEGACY_THRESHOLD_5OF7_ENABLED = "trading.legacy_threshold_5of7.enabled";
-    public static final String TRADING_LEGACY_5OF7_SHADOW_ENABLED = "trading.legacy_5of7_shadow.enabled";
 
     public static final String DRAWDOWN_SENTINEL_ENABLED = "trading.drawdown_sentinel.enabled";
     public static final String DRAWDOWN_SENTINEL_WINDOW_MINUTES = "trading.drawdown_sentinel.window_minutes";
@@ -115,11 +113,7 @@ public class RuntimeFeatureToggleService {
                         FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED),
                 new RuntimeToggleSnapshot.TradingToggles(
                         get(TRADING_LOW_VOL_ENABLED, Boolean.class,
-                                DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED),
-                        get(TRADING_LEGACY_THRESHOLD_5OF7_ENABLED, Boolean.class,
-                                DeterministicTradingExecutor.LEGACY_THRESHOLD_5OF7_ENABLED),
-                        get(TRADING_LEGACY_5OF7_SHADOW_ENABLED, Boolean.class,
-                                DeterministicTradingExecutor.LEGACY_5OF7_SHADOW_ENABLED)
+                                DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED)
                 ),
                 new RuntimeToggleSnapshot.DrawdownSentinelToggles(
                         get(DRAWDOWN_SENTINEL_ENABLED, Boolean.class, PositionDrawdownSentinel.ENABLED),
@@ -159,12 +153,6 @@ public class RuntimeFeatureToggleService {
 
         bind(map, TRADING_LOW_VOL_ENABLED, Boolean.class, DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED,
                 v -> DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED = v);
-        bind(map, TRADING_LEGACY_THRESHOLD_5OF7_ENABLED, Boolean.class,
-                DeterministicTradingExecutor.LEGACY_THRESHOLD_5OF7_ENABLED,
-                v -> DeterministicTradingExecutor.LEGACY_THRESHOLD_5OF7_ENABLED = v);
-        bind(map, TRADING_LEGACY_5OF7_SHADOW_ENABLED, Boolean.class,
-                DeterministicTradingExecutor.LEGACY_5OF7_SHADOW_ENABLED,
-                v -> DeterministicTradingExecutor.LEGACY_5OF7_SHADOW_ENABLED = v);
 
         bind(map, DRAWDOWN_SENTINEL_ENABLED, Boolean.class, PositionDrawdownSentinel.ENABLED,
                 v -> PositionDrawdownSentinel.ENABLED = v);

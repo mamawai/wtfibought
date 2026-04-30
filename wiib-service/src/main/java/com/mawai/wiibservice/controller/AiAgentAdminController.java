@@ -140,7 +140,7 @@ public class AiAgentAdminController {
         checkAdmin();
         for (AssignmentRequest req : assignments) {
             if (req.getFunctionName() == null) {
-                return Result.fail("参数不完整: " + req.getFunctionName());
+                return Result.fail("参数不完整: " + null);
             }
             if (!AiAgentRuntimeManager.isManagedFunction(req.getFunctionName())) {
                 continue;
@@ -295,14 +295,6 @@ public class AiAgentAdminController {
             runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_LOW_VOL_ENABLED,
                     req.getLowVolTradingEnabled(), operator, "admin trading-config");
         }
-        if (req.getLegacyThreshold5of7Enabled() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_LEGACY_THRESHOLD_5OF7_ENABLED,
-                    req.getLegacyThreshold5of7Enabled(), operator, "admin trading-config");
-        }
-        if (req.getLegacy5of7ShadowEnabled() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_LEGACY_5OF7_SHADOW_ENABLED,
-                    req.getLegacy5of7ShadowEnabled(), operator, "admin trading-config");
-        }
         if (req.getDrawdownSentinelEnabled() != null) {
             runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_ENABLED,
                     req.getDrawdownSentinelEnabled(), operator, "admin trading-config");
@@ -395,8 +387,6 @@ public class AiAgentAdminController {
         RuntimeToggleSnapshot.CircuitBreakerToggles breaker = snapshot.circuitBreaker();
         TradingConfigResponse resp = new TradingConfigResponse();
         resp.setLowVolTradingEnabled(trading.lowVolTradingEnabled());
-        resp.setLegacyThreshold5of7Enabled(trading.legacyThreshold5of7Enabled());
-        resp.setLegacy5of7ShadowEnabled(trading.legacy5of7ShadowEnabled());
         resp.setDrawdownSentinelEnabled(drawdown.enabled());
         resp.setDrawdownWindowMinutes(drawdown.windowMinutes());
         resp.setDrawdownPnlPctDropThresholdPpt(drawdown.pnlPctDropThresholdPpt());
@@ -472,8 +462,6 @@ public class AiAgentAdminController {
     @Data
     public static class TradingConfigRequest {
         private Boolean lowVolTradingEnabled;
-        private Boolean legacyThreshold5of7Enabled;
-        private Boolean legacy5of7ShadowEnabled;
         private Boolean drawdownSentinelEnabled;
         private Integer drawdownWindowMinutes;
         private Double drawdownPnlPctDropThresholdPpt;
@@ -490,8 +478,6 @@ public class AiAgentAdminController {
     @Data
     public static class TradingConfigResponse {
         private Boolean lowVolTradingEnabled;
-        private Boolean legacyThreshold5of7Enabled;
-        private Boolean legacy5of7ShadowEnabled;
         private Boolean drawdownSentinelEnabled;
         private Integer drawdownWindowMinutes;
         private Double drawdownPnlPctDropThresholdPpt;
