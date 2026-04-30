@@ -11,7 +11,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.PATH_BREAKOUT;
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.PATH_LEGACY_TREND;
@@ -35,33 +34,29 @@ final class EntryDecisionEngine {
             new MeanReversionEntryStrategy(),
             new TrendContinuationEntryStrategy()
     );
+    private static final EntryConfluenceGate BREAKOUT_CONFLUENCE_GATE = new BreakoutConfluenceGate();
+    private static final EntryConfluenceGate MR_CONFLUENCE_GATE = new MeanReversionConfluenceGate();
+    private static final EntryConfluenceGate TREND_CONFLUENCE_GATE = new TrendConfluenceGate();
+    private static final EntryRiskSizingService RISK_SIZING_SERVICE = new EntryRiskSizingService();
+    // 最终择优权重：只改变候选排序，不回写策略原始 score。
+    // LEGACY_TREND 在近期归因里明显负 EV，压到 0.7；MR 样本不足但未证伪，给 0.9 留位。
+    private static final double BREAKOUT_SELECTION_WEIGHT = 1.0;
+    private static final double TREND_SELECTION_WEIGHT = 0.7;
+    private static final double MR_SELECTION_WEIGHT = 0.9;
 
     // 同 symbol 开仓后的最短等待时间，避免短时间重复追单。
     private static final long ENTRY_COOLDOWN_MS = 10 * 60 * 1000L;
-    // 单次开平仓往返手续费估算比例，用于过滤扣费后不划算的入场。
-    private static final double ROUND_TRIP_FEE_RATE = 0.0008;
-    // 扣除手续费后，TP 至少还要留下的 ATR 利润空间。
-    private static final double MIN_PROFIT_AFTER_FEE_ATR = 0.5;
-    // 单笔交易允许承担的账户权益风险比例。
-    private static final BigDecimal RISK_PER_TRADE = new BigDecimal("0.02");
-    // 开仓最低盈亏比要求：MR 胜率型策略单独放宽，仍保留手续费后利润检查。
-    private static final BigDecimal DEFAULT_MIN_ENTRY_RR = new BigDecimal("1.2");
-    private static final BigDecimal MR_MIN_ENTRY_RR = new BigDecimal("1.0");
-    private static final AtomicLong RR_GUARD_TRIGGERED_COUNT = new AtomicLong();
-    private static final AtomicLong MARGIN_CAP_TRIGGERED_COUNT = new AtomicLong();
-    // 单笔仓位最多占用可用余额的保证金比例。
-    private static final BigDecimal MAX_MARGIN_PCT = new BigDecimal("0.15");
-    // 账户权益低于初始资金该比例时，认为进入回撤保护状态。
-    private static final BigDecimal DRAWDOWN_THRESHOLD = new BigDecimal("0.85");
-    private static final BigDecimal DRAWDOWN_REDUCTION = new BigDecimal("0.7");
-    private static final double LOW_CONFIDENCE_POSITION_SCALE = 0.5;
-    private static final double LOW_VOL_SL_EXPAND_MAX = 3.0;
-    private static final double LOW_VOL_POSITION_SCALE = 0.6;
 
-    private record SlTpAdjustment(BigDecimal slDistance, BigDecimal tpDistance,
-                                  double positionScale, String note) {
-    }
-
+    /**
+     * 开仓主流程。
+     *
+     * <p>职责边界：这里只负责编排，不写具体策略规则。流程顺序必须谨慎：
+     * 先做冷却、数据质量、方向信号和风险状态硬过滤，再收集策略候选，
+     * 再做二层共振过滤、FLAT 特殊覆盖、候选择优，最后进入风控仓位和下单。</p>
+     *
+     * <p>返回 OPEN_xxx 表示实际发出开仓并且交易层确认成功；其它情况返回 HOLD，
+     * reason 里会带上最早挡住开仓的业务原因，方便排查是信号、策略、风控还是下单失败。</p>
+     */
     DeterministicTradingExecutor.ExecutionResult evaluate(TradingDecisionContext decision) {
         String symbol = decision.symbol();
         User user = decision.user();
@@ -129,9 +124,10 @@ final class EntryDecisionEngine {
         }
 
         EntryStrategyCandidate best = chooseBest(candidates);
-        log.info("[EntryDecision] 入场候选择优 symbol={} side={} best={} score={} riskStatus={} candidates={} rejects={}",
-                symbol, side, best.path(), fmt(best.score()), mergedRiskStatus,
-                candidates.stream().map(c -> c.path() + ":" + fmt(c.score())).toList(),
+        log.info("[EntryDecision] 入场候选择优 symbol={} side={} best={} score={} weightedScore={} riskStatus={} candidates={} rejects={}",
+                symbol, side, best.path(), fmt(best.score()), fmt(selectionScore(best)), mergedRiskStatus,
+                candidates.stream().map(c -> c.path() + ":" + fmt(c.score())
+                        + "->" + fmt(selectionScore(c))).toList(),
                 summarizeRejects(candidateSet.rejects()));
 
         DeterministicTradingExecutor.ExecutionResult inner = openCandidate(
@@ -149,6 +145,12 @@ final class EntryDecisionEngine {
                 inner.executionLog());
     }
 
+    /**
+     * 执行三条入场路径的第一层筛选。
+     *
+     * <p>每个 EntryStrategy 只判断自己是否能产出候选，不负责共振、择优、仓位和下单。
+     * 通过的候选进入下一层；拒绝原因保留下来，最终没有候选时给用户/日志看。</p>
+     */
     private CandidateSet collectCandidates(EntryStrategyContext context) {
         List<EntryStrategyCandidate> candidates = new ArrayList<>();
         List<String> rejects = new ArrayList<>();
@@ -163,12 +165,18 @@ final class EntryDecisionEngine {
         return new CandidateSet(candidates, rejects);
     }
 
+    /**
+     * 对第一层候选做二层共振过滤。
+     *
+     * <p>这里不重新打策略分，只确认候选旁证是否足够。每个策略路径会进入自己的
+     * EntryConfluenceGate，命中项不足时把共振命中摘要写入 rejects，避免单点信号直接开仓。</p>
+     */
     private CandidateSet applyStrategyConfluenceGates(String symbol, EntryStrategyContext context, CandidateSet input) {
         List<EntryStrategyCandidate> candidates = new ArrayList<>();
         List<String> rejects = new ArrayList<>(input.rejects());
 
         for (EntryStrategyCandidate candidate : input.candidates()) {
-            ConfluenceGate gate = confluenceGate(candidate.path(), context);
+            ConfluenceGateResult gate = confluenceGate(candidate.path(), context);
             if (gate.passed()) {
                 log.info("[EntryDecision] ENTRY_GATE_PASS symbol={} strategy={} side={} conf={} confluence={}/{} hits={}",
                         symbol, candidate.path(), context.side(), fmt(context.confidence()),
@@ -182,205 +190,99 @@ final class EntryDecisionEngine {
         return new CandidateSet(candidates, rejects);
     }
 
+    /**
+     * 从已通过初筛和细筛的候选中选择最终执行路径。
+     *
+     * <p>优先级先看加权后的 selectionScore；同分再按 pathPriority 打破平手。
+     * 这个方法假设调用前 candidates 非空，空列表代表上游逻辑漏检，直接抛异常更容易暴露问题。</p>
+     */
     private EntryStrategyCandidate chooseBest(List<EntryStrategyCandidate> candidates) {
         return candidates.stream()
-                .max(Comparator.comparingDouble(EntryStrategyCandidate::score)
+                .max(Comparator.comparingDouble(this::selectionScore)
                         .thenComparingInt(c -> pathPriority(c.path())))
                 .orElseThrow();
     }
 
+    /**
+     * 最终择优分。
+     *
+     * <p>策略内部 score 表示“这个策略自己有多满足”；这里乘路径权重，表达业务上对三类路径的偏好。
+     * 例如原始分相近时，突破更容易被选中，MR 需要明显更高的原始分才能反超。</p>
+     */
+    private double selectionScore(EntryStrategyCandidate candidate) {
+        return candidate.score() * pathSelectionWeight(candidate.path());
+    }
+
+    /**
+     * 把策略候选转换成真实开仓请求。
+     *
+     * <p>这里集中处理交易前最后一层现实约束：低波动止损底线、管理端开关、行情环境缩放、
+     * 低置信度缩放、手续费后利润、最低盈亏比、最大杠杆、按风险算仓位、回撤保护和下单结果。
+     * 任一约束不满足都返回 HOLD，并保留具体原因。</p>
+     */
     private DeterministicTradingExecutor.ExecutionResult openCandidate(
             String symbol, User user, BigDecimal totalEquity,
             QuantSignalDecision signal, MarketContext ctx,
             EntryStrategyCandidate candidate, double riskScale, String riskStatus,
             SymbolProfile profile, TradingOperations tools, TradingRuntimeToggles toggles) {
 
-        SlTpAdjustment adj = adjustForNoiseFloor(candidate.slDistance(), candidate.tpDistance(), ctx.price, profile);
-        if (adj == null) {
-            return hold(String.format("%s: 极端低波动 ATR/price=%.3f%% 扩SL>%.1fx→放弃",
-                    candidate.label(), ctx.atr5m.doubleValue() / ctx.price.doubleValue() * 100, LOW_VOL_SL_EXPAND_MAX));
-        }
-        boolean isLowVol = adj.positionScale() < 1.0;
-        if (isLowVol && !toggles.lowVolTradingEnabled()) {
-            return hold(candidate.label() + ": " + adj.note() + " → HOLD(低波动交易被管理端关闭)");
+        EntryRiskSizingService.SizingResult sizing = RISK_SIZING_SERVICE.buildPlan(
+                symbol, user, totalEquity, signal, ctx, candidate, riskScale, profile, tools, toggles);
+        if (sizing.rejectReason() != null) {
+            return hold(sizing.rejectReason());
         }
 
-        double regimeScale = pathRegimeScale(candidate.path(), ctx, signal);
-        if (regimeScale <= 0) {
-            return hold(candidate.label() + ": regime=" + ctx.regime + "且信号弱→观望");
-        }
-
-        double effectiveScale = candidate.positionScale() * regimeScale * riskScale * adj.positionScale();
-        if (ctx.qualityFlags.contains("LOW_CONFIDENCE")) {
-            effectiveScale *= LOW_CONFIDENCE_POSITION_SCALE;
-        }
-        effectiveScale = Math.clamp(effectiveScale, 0.05, 1.0);
-
-        BigDecimal slDistance = adj.slDistance();
-        BigDecimal tpDistance = adj.tpDistance();
-        BigDecimal price = ctx.price;
-        BigDecimal stopLoss = candidate.isLong() ? price.subtract(slDistance) : price.add(slDistance);
-        BigDecimal tp = candidate.isLong() ? price.add(tpDistance) : price.subtract(tpDistance);
-
-        String feeCheck = checkFeeAwareRR(price, ctx.atr5m, slDistance, tpDistance);
-        if (feeCheck != null) return hold(candidate.label() + ": " + feeCheck);
-        String rrGuard = checkRiskRewardGuard(symbol, candidate.path(), slDistance, tpDistance);
-        if (rrGuard != null) return hold(candidate.label() + ": " + rrGuard);
-
-        int leverage = Math.min(signal.getMaxLeverage() != null ? signal.getMaxLeverage() : 10,
-                candidate.maxLeverage());
-        BigDecimal quantity = calcQuantityByRisk(user, totalEquity, price, slDistance, leverage,
-                effectiveScale, signal.getMaxPositionPct());
-        if (quantity == null) return hold(candidate.label() + ": 仓位计算失败(余额不足或超限)");
-
-        if (isInDrawdown(totalEquity)) {
-            leverage = Math.max(5, (int) (leverage * DRAWDOWN_REDUCTION.doubleValue()));
-            quantity = quantity.multiply(DRAWDOWN_REDUCTION).setScale(8, RoundingMode.HALF_DOWN);
-        }
-
-        String reason = buildOpenReason(candidate, ctx, leverage, quantity, stopLoss, tp,
-                slDistance, tpDistance, effectiveScale, riskStatus, isLowVol ? adj.note() : null, totalEquity);
-        String result = tools.openPosition(candidate.side(), quantity, leverage, "MARKET", null,
-                stopLoss, tp, candidate.path());
+        EntryRiskSizingService.EntryOrderPlan plan = sizing.plan();
+        String reason = buildOpenReason(candidate, ctx, plan, riskStatus);
+        String result = tools.openPosition(candidate.side(), plan.quantity(), plan.leverage(), "MARKET", null,
+                plan.stopLoss(), plan.takeProfit(), candidate.path());
         String action = result.startsWith("开仓成功") ? ("OPEN_" + candidate.side()) : "HOLD";
         if (!result.startsWith("开仓成功")) reason += " | 开仓失败: " + result;
         return new DeterministicTradingExecutor.ExecutionResult(action, reason, result);
     }
 
+    /**
+     * 生成开仓说明。
+     *
+     * <p>这个 reason 会进入执行结果和日志，必须同时包含策略解释、杠杆、数量、SL/TP、
+     * 实际 ATR 倍数、最终仓位缩放、风险状态和特殊保护标记，方便事后复盘。</p>
+     */
     private String buildOpenReason(EntryStrategyCandidate candidate, MarketContext ctx,
-                                   int leverage, BigDecimal quantity,
-                                   BigDecimal stopLoss, BigDecimal tp,
-                                   BigDecimal slDistance, BigDecimal tpDistance,
-                                   double effectiveScale, String riskStatus,
-                                   String lowVolNote, BigDecimal totalEquity) {
-        double actualSlAtrMult = slDistance.doubleValue() / ctx.atr5m.doubleValue();
-        double actualTpAtrMult = tpDistance.doubleValue() / ctx.atr5m.doubleValue();
+                                   EntryRiskSizingService.EntryOrderPlan plan,
+                                   String riskStatus) {
+        double actualSlAtrMult = plan.slDistance().doubleValue() / ctx.atr5m.doubleValue();
+        double actualTpAtrMult = plan.tpDistance().doubleValue() / ctx.atr5m.doubleValue();
         String reason = String.format(
                 "%s lev=%dx qty=%s SL=%s(%.1fATR) TP=%s(%.1fATR) scale=%.2f riskStatus=%s | %s",
-                candidate.reason(), leverage,
-                quantity.setScale(4, RoundingMode.HALF_UP).toPlainString(),
-                fmtPrice(stopLoss), actualSlAtrMult, fmtPrice(tp), actualTpAtrMult,
-                effectiveScale, riskStatus, candidate.label());
-        if (lowVolNote != null) reason += " [" + lowVolNote + "]";
-        if (isInDrawdown(totalEquity)) reason += " [回撤保护]";
+                candidate.reason(), plan.leverage(),
+                plan.quantity().setScale(4, RoundingMode.HALF_UP).toPlainString(),
+                fmtPrice(plan.stopLoss()), actualSlAtrMult, fmtPrice(plan.takeProfit()), actualTpAtrMult,
+                plan.effectiveScale(), riskStatus, candidate.label());
+        if (plan.lowVolNote() != null) reason += " [" + plan.lowVolNote() + "]";
+        if (plan.inDrawdown()) reason += " [回撤保护]";
         return reason;
     }
 
-    private ConfluenceGate confluenceGate(String path, EntryStrategyContext context) {
+    /**
+     * 根据策略 path 派发到对应的二层共振门。
+     *
+     * <p>未知 path 默认放行，保持向后兼容；正常路径只会来自 TradingDecisionSupport 定义的三个常量。</p>
+     */
+    private ConfluenceGateResult confluenceGate(String path, EntryStrategyContext context) {
         return switch (path) {
-            case PATH_BREAKOUT -> breakoutConfluenceGate(context);
-            case PATH_MR -> meanReversionConfluenceGate(context);
-            case PATH_LEGACY_TREND -> trendConfluenceGate(context);
-            default -> new ConfluenceGate(1, 1, 1, List.of("未知策略放行"));
+            case PATH_BREAKOUT -> BREAKOUT_CONFLUENCE_GATE.evaluate(context);
+            case PATH_MR -> MR_CONFLUENCE_GATE.evaluate(context);
+            case PATH_LEGACY_TREND -> TREND_CONFLUENCE_GATE.evaluate(context);
+            default -> new ConfluenceGateResult(1, 1, 1, List.of("未知策略放行"));
         };
     }
 
-    private ConfluenceGate trendConfluenceGate(EntryStrategyContext context) {
-        MarketContext ctx = context.market();
-        boolean isLong = context.isLong();
-        List<String> hits = new ArrayList<>();
-        addHit(hits, EntryStrategySupport.regimeSupports(ctx, isLong)
-                || EntryStrategySupport.directionAligns(ctx.maAlignment1h, isLong), "大级别方向");
-        addHit(hits, EntryStrategySupport.directionAligns(ctx.maAlignment15m, isLong)
-                || EntryStrategySupport.directionAligns(ctx.maAlignment5m, isLong)
-                || EntryStrategySupport.priceAboveEmaSupports(ctx, isLong), "中短线结构");
-        addHit(hits, EntryStrategySupport.macdSupports(ctx, isLong)
-                || EntryStrategySupport.closeTrendSupports(ctx.closeTrend5m, isLong), "动能同向");
-        addHit(hits, volumeAtLeast(ctx, 1.20), "量能有效");
-        addHit(hits, !EntryStrategySupport.microAgainst(ctx, isLong, 0.30), "微结构未强反向");
-        addHit(hits, rsiTrendHealthy(ctx, isLong), "RSI健康");
-        return new ConfluenceGate(hits.size(), 6, 4, hits);
-    }
-
-    private ConfluenceGate meanReversionConfluenceGate(EntryStrategyContext context) {
-        MarketContext ctx = context.market();
-        boolean isLong = context.isLong();
-        List<String> hits = new ArrayList<>();
-        boolean deepGateStretch = bollStretchedForMeanReversion(ctx, isLong)
-                && rsiStretchedForMeanReversion(ctx, isLong);
-        int reversalVotes = reversalVoteCount(ctx, isLong);
-        addHit(hits, bollStretchedForMeanReversion(ctx, isLong), "BB%B深度偏离");
-        addHit(hits, rsiStretchedForMeanReversion(ctx, isLong), "RSI有效拉伸");
-        addHit(hits, "RANGE".equals(ctx.regime) || "SQUEEZE".equals(ctx.regime)
-                || "WEAKENING".equals(ctx.regimeTransition), "环境适合回归");
-        addHit(hits, reversalVotes >= 2 || (deepGateStretch && reversalVotes >= 1), "反转票足够");
-        addHit(hits, !EntryStrategySupport.microAgainst(ctx, isLong, 0.30), "微结构未强反向");
-        addHit(hits, !hardTrendAgainst(ctx, isLong)
-                || (deepGateStretch && "WEAKENING".equals(ctx.regimeTransition)), "无强趋势推进");
-        return new ConfluenceGate(hits.size(), 6, 4, hits);
-    }
-
-    private ConfluenceGate breakoutConfluenceGate(EntryStrategyContext context) {
-        MarketContext ctx = context.market();
-        boolean isLong = context.isLong();
-        List<String> hits = new ArrayList<>();
-        addHit(hits, bollNearBreakoutBand(ctx, isLong), "强突破位置");
-        addHit(hits, volumeAtLeast(ctx, 1.25), "量能放大");
-        addHit(hits, EntryStrategySupport.closeTrendSupports(ctx.closeTrend5m, isLong)
-                || EntryStrategySupport.macdSupports(ctx, isLong), "突破动能同向");
-        addHit(hits, ctx.bollSqueeze || volumeAtLeast(ctx, 1.45), "压缩/释放环境");
-        addHit(hits, ctx.maAlignment15m != null
-                && !EntryStrategySupport.directionConflicts(ctx.maAlignment15m, isLong), "中周期不反向");
-        addHit(hits, !EntryStrategySupport.microAgainst(ctx, isLong, 0.30), "微结构未强反向");
-        return new ConfluenceGate(hits.size(), 6, 4, hits);
-    }
-
-    private void addHit(List<String> hits, boolean condition, String label) {
-        if (condition) hits.add(label);
-    }
-
-    private boolean volumeAtLeast(MarketContext ctx, double threshold) {
-        return ctx.volumeRatio5m != null && ctx.volumeRatio5m >= threshold;
-    }
-
-    private boolean rsiTrendHealthy(MarketContext ctx, boolean isLong) {
-        if (ctx.rsi5m == null) return false;
-        double rsi = ctx.rsi5m.doubleValue();
-        return isLong ? rsi >= 42.0 && rsi < 78.0 : rsi > 22.0 && rsi <= 58.0;
-    }
-
-    private boolean bollStretchedForMeanReversion(MarketContext ctx, boolean isLong) {
-        if (ctx.bollPb5m == null) return false;
-        return isLong ? ctx.bollPb5m <= 18.0 : ctx.bollPb5m >= 82.0;
-    }
-
-    private boolean rsiStretchedForMeanReversion(MarketContext ctx, boolean isLong) {
-        if (ctx.rsi5m == null) return false;
-        double rsi = ctx.rsi5m.doubleValue();
-        return isLong ? rsi <= 42.0 : rsi >= 58.0;
-    }
-
-    private boolean bollNearBreakoutBand(MarketContext ctx, boolean isLong) {
-        if (ctx.bollPb5m == null) return false;
-        return isLong ? ctx.bollPb5m >= 90.0 : ctx.bollPb5m <= 10.0;
-    }
-
-    private boolean hardTrendAgainst(MarketContext ctx, boolean isLong) {
-        return EntryStrategySupport.directionConflicts(ctx.maAlignment1h, isLong)
-                && EntryStrategySupport.directionConflicts(ctx.maAlignment15m, isLong)
-                && EntryStrategySupport.isMacdHistAgainst(ctx.macdHistTrend5m, isLong);
-    }
-
-    private int reversalVoteCount(MarketContext ctx, boolean isLong) {
-        int votes = 0;
-        if (EntryStrategySupport.macdSupports(ctx, isLong)) votes++;
-        if (EntryStrategySupport.closeTrendSupports(ctx.closeTrend5m, isLong)) votes++;
-        if (EntryStrategySupport.microSupports(ctx, isLong)) votes++;
-        if ("WEAKENING".equals(ctx.regimeTransition)) votes++;
-        return votes;
-    }
-
-    private double pathRegimeScale(String path, MarketContext ctx, QuantSignalDecision signal) {
-        double confidence = signal.getConfidence() != null ? signal.getConfidence().doubleValue() : 0;
-        if ("SHOCK".equals(ctx.regime)) {
-            return confidence >= 0.70 ? 0.50 : 0.0;
-        }
-        if ("SQUEEZE".equals(ctx.regime)) {
-            return PATH_BREAKOUT.equals(path) ? 0.85 : 0.65;
-        }
-        return 1.0;
-    }
-
+    /**
+     * 合并预测周期和方向信号上的风险状态。
+     *
+     * <p>两个来源都可能给出风险标签。这里做去重合并，保持原始标签文本，
+     * 后续 statusContains 和 riskStatusScale 会基于这些标签决定禁开或缩仓。</p>
+     */
     private String mergeRiskStatus(QuantForecastCycle forecast, QuantSignalDecision signal) {
         List<String> parts = new ArrayList<>();
         addRiskParts(parts, forecast != null ? forecast.getRiskStatus() : null);
@@ -388,6 +290,9 @@ final class EntryDecisionEngine {
         return parts.isEmpty() ? "NORMAL" : String.join(",", parts);
     }
 
+    /**
+     * 把逗号分隔的风险标签追加到 parts，并去掉空白和重复项。
+     */
     private void addRiskParts(List<String> parts, String riskStatus) {
         if (riskStatus == null || riskStatus.isBlank()) return;
         for (String raw : riskStatus.split(",")) {
@@ -396,6 +301,11 @@ final class EntryDecisionEngine {
         }
     }
 
+    /**
+     * 判断风险状态中是否包含指定标签。
+     *
+     * <p>按逗号切分后做精确匹配，避免 HIGH_VOL_PENALTY 这类长标签被短词误伤。</p>
+     */
     private boolean statusContains(String riskStatus, String expected) {
         if (riskStatus == null || riskStatus.isBlank()) return false;
         for (String token : riskStatus.split(",")) {
@@ -404,6 +314,11 @@ final class EntryDecisionEngine {
         return false;
     }
 
+    /**
+     * 根据风险标签计算仓位缩放系数。
+     *
+     * <p>多个风险可以叠乘，表达“不是完全禁止，但要更小仓位试错”。硬禁止标签已在 evaluate 前置处理。</p>
+     */
     private double riskStatusScale(String riskStatus) {
         double scale = 1.0;
         if (statusContains(riskStatus, "HIGH_DISAGREEMENT")) scale *= 0.60;
@@ -414,107 +329,22 @@ final class EntryDecisionEngine {
         return scale;
     }
 
-    private String checkFeeAwareRR(BigDecimal price, BigDecimal atr,
-                                   BigDecimal slDistance, BigDecimal tpDistance) {
-        if (atr.signum() <= 0) return null;
-        double feeAbsolute = price.doubleValue() * ROUND_TRIP_FEE_RATE;
-        double feeInAtr = feeAbsolute / atr.doubleValue();
-        double tpInAtr = tpDistance.doubleValue() / atr.doubleValue();
-        double minTpRequired = feeInAtr + MIN_PROFIT_AFTER_FEE_ATR;
-
-        if (tpInAtr < minTpRequired) {
-            return String.format("R:R不划算: TP=%.1fATR < 手续费%.2fATR+最低利润%.1fATR=%.2fATR",
-                    tpInAtr, feeInAtr, MIN_PROFIT_AFTER_FEE_ATR, minTpRequired);
-        }
-        return null;
-    }
-
-    private String checkRiskRewardGuard(String symbol, String strategy,
-                                        BigDecimal slDistance, BigDecimal tpDistance) {
-        BigDecimal minEntryRr = PATH_MR.equals(strategy) ? MR_MIN_ENTRY_RR : DEFAULT_MIN_ENTRY_RR;
-        BigDecimal rr = tpDistance.divide(slDistance, 4, RoundingMode.HALF_UP);
-        if (rr.compareTo(minEntryRr) >= 0) {
-            return null;
-        }
-        long count = RR_GUARD_TRIGGERED_COUNT.incrementAndGet();
-        log.info("[EntryDecision] RR_GUARD_TRIGGERED symbol={} strategy={} rr={} slDistance={} tpDistance={} count={}",
-                symbol, strategy, rr.toPlainString(), slDistance.toPlainString(), tpDistance.toPlainString(), count);
-        return "RR_GUARD rr=" + rr.setScale(2, RoundingMode.HALF_UP).toPlainString()
-                + " <" + minEntryRr.toPlainString() + " abstain";
-    }
-
-    private SlTpAdjustment adjustForNoiseFloor(
-            BigDecimal slRaw, BigDecimal tpRaw, BigDecimal price, SymbolProfile profile) {
-        double rawSlDist = slRaw.doubleValue();
-        double minSlDist = profile.slMinPct() * price.doubleValue();
-        if (rawSlDist >= minSlDist) {
-            return new SlTpAdjustment(slRaw, tpRaw, 1.0, "正常波动");
-        }
-        double expandRatio = minSlDist / rawSlDist;
-        if (expandRatio > LOW_VOL_SL_EXPAND_MAX) {
-            return null;
-        }
-        BigDecimal ratio = BigDecimal.valueOf(expandRatio);
-        BigDecimal newSl = slRaw.multiply(ratio).setScale(8, RoundingMode.HALF_UP);
-        BigDecimal newTp = tpRaw.multiply(ratio).setScale(8, RoundingMode.HALF_UP);
-        return new SlTpAdjustment(newSl, newTp, LOW_VOL_POSITION_SCALE,
-                String.format("低波动小仓位(扩%.2fx)", expandRatio));
-    }
-
-    private BigDecimal calcQuantityByRisk(User user, BigDecimal totalEquity,
-                                          BigDecimal price,
-                                          BigDecimal slDistance, int leverage,
-                                          double scale,
-                                          BigDecimal maxPositionPct) {
-        BigDecimal balance = user.getBalance() != null ? user.getBalance() : BigDecimal.ZERO;
-        BigDecimal frozen = user.getFrozenBalance() != null ? user.getFrozenBalance() : BigDecimal.ZERO;
-        BigDecimal equity = totalEquity != null ? totalEquity : balance.add(frozen);
-        BigDecimal quantity = equity.multiply(RISK_PER_TRADE)
-                .multiply(BigDecimal.valueOf(scale))
-                .divide(slDistance, 8, RoundingMode.HALF_DOWN);
-        if (quantity.signum() <= 0) return null;
-
-        if (maxPositionPct != null && maxPositionPct.signum() > 0) {
-            BigDecimal maxPctQuantity = equity.multiply(maxPositionPct).divide(price, 8, RoundingMode.DOWN);
-            if (maxPctQuantity.signum() <= 0) return null;
-            if (quantity.compareTo(maxPctQuantity) > 0) quantity = maxPctQuantity;
-        }
-
-        BigDecimal margin = quantity.multiply(price)
-                .divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
-        BigDecimal maxMargin = balance.multiply(MAX_MARGIN_PCT);
-        if (margin.compareTo(maxMargin) > 0) {
-            BigDecimal marginBudget = maxMargin.subtract(new BigDecimal("0.01")).max(BigDecimal.ZERO);
-            BigDecimal maxMarginQuantity = marginBudget.multiply(BigDecimal.valueOf(leverage))
-                    .divide(price, 8, RoundingMode.DOWN);
-            BigDecimal cappedMargin = maxMarginQuantity.multiply(price)
-                    .divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
-            long count = MARGIN_CAP_TRIGGERED_COUNT.incrementAndGet();
-            if (maxMarginQuantity.signum() <= 0 || cappedMargin.compareTo(maxMargin) > 0) {
-                log.info("[EntryDecision] MARGIN_CAP_TRIGGERED action=hold margin={} maxMargin={} reducedMargin={} price={} leverage={} count={}",
-                        margin.toPlainString(), maxMargin.toPlainString(), cappedMargin.toPlainString(),
-                        price.toPlainString(), leverage, count);
-                return null;
-            }
-            log.info("[EntryDecision] MARGIN_CAP_TRIGGERED action=cap_to_max_margin margin={} maxMargin={} cappedMargin={} price={} leverage={} count={}",
-                    margin.toPlainString(), maxMargin.toPlainString(), cappedMargin.toPlainString(),
-                    price.toPlainString(), leverage, count);
-            quantity = maxMarginQuantity;
-        }
-
-        return quantity.signum() > 0 ? quantity : null;
-    }
-
-    private boolean isInDrawdown(BigDecimal totalEquity) {
-        if (totalEquity == null) return false;
-        return totalEquity.compareTo(DeterministicTradingExecutor.INITIAL_BALANCE.multiply(DRAWDOWN_THRESHOLD)) < 0;
-    }
-
+    /**
+     * 压缩拒绝原因，避免 HOLD reason 过长。
+     *
+     * <p>只展示前 4 条，保留足够排查信息，同时不让日志和接口返回被长文本淹没。</p>
+     */
     private String summarizeRejects(List<String> rejects) {
         if (rejects.isEmpty()) return "无";
         return String.join("; ", rejects.stream().limit(4).toList());
     }
 
+    /**
+     * 同分候选的路径优先级。
+     *
+     * <p>只在加权择优分相同的时候生效：突破优先，其次趋势延续，最后均值回归。
+     * 这是择优的稳定性规则，不参与策略本身打分。</p>
+     */
     private int pathPriority(String path) {
         return switch (path) {
             case PATH_BREAKOUT -> 3;
@@ -524,17 +354,21 @@ final class EntryDecisionEngine {
         };
     }
 
+    /**
+     * 最终择优时的路径权重。
+     *
+     * <p>权重越高，同样原始 score 下越容易胜出。未知路径保持 1.0，避免老数据或新路径被意外压低。</p>
+     */
+    private double pathSelectionWeight(String path) {
+        return switch (path) {
+            case PATH_BREAKOUT -> BREAKOUT_SELECTION_WEIGHT;
+            case PATH_LEGACY_TREND -> TREND_SELECTION_WEIGHT;
+            case PATH_MR -> MR_SELECTION_WEIGHT;
+            default -> 1.0;
+        };
+    }
+
     private record CandidateSet(List<EntryStrategyCandidate> candidates, List<String> rejects) {
     }
 
-    private record ConfluenceGate(int score, int total, int required, List<String> hits) {
-
-        boolean passed() {
-            return score >= required;
-        }
-
-        String hitSummary() {
-            return hits.isEmpty() ? "无" : String.join("/", hits);
-        }
-    }
 }
