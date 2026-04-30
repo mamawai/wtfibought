@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 @TableName("strategy_path_status")
 public class StrategyPathStatus {
 
-    /** BREAKOUT / MR / LEGACY_TREND；SHADOW_5OF7 不入本表。 */
+    /** BREAKOUT / MR / LEGACY_TREND。 */
     @TableId
     private String path;
 

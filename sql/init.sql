@@ -1141,7 +1141,7 @@ CREATE INDEX IF NOT EXISTS idx_trade_attr_path_time
 CREATE INDEX IF NOT EXISTS idx_trade_attr_position
     ON trade_attribution(position_id);
 
-COMMENT ON TABLE trade_attribution IS '交易归因，每平仓写一行；SHADOW_5OF7 不入此表';
+COMMENT ON TABLE trade_attribution IS '交易归因，每平仓写一行';
 COMMENT ON COLUMN trade_attribution.position_id IS '关联 futures_position.id，保持 NOT NULL';
 COMMENT ON COLUMN trade_attribution.strategy_path IS '路径标签：BREAKOUT / MR / LEGACY_TREND';
 COMMENT ON COLUMN trade_attribution.entry_factors_json IS '入场时关键因子快照，best-effort JSON';
@@ -1161,7 +1161,7 @@ CREATE TABLE IF NOT EXISTS strategy_path_status (
         CHECK (path IN ('BREAKOUT', 'MR', 'LEGACY_TREND'))
 );
 
-COMMENT ON TABLE strategy_path_status IS '策略路径运行状态，自动禁用/人工解除均落库；不含 SHADOW_5OF7';
+COMMENT ON TABLE strategy_path_status IS '策略路径运行状态，自动禁用/人工解除均落库';
 COMMENT ON COLUMN strategy_path_status.path IS '实盘路径：BREAKOUT / MR / LEGACY_TREND';
 COMMENT ON COLUMN strategy_path_status.enabled IS 'false 表示该路径暂停开新仓';
 COMMENT ON COLUMN strategy_path_status.disabled_reason IS '自动禁用或人工禁用原因';

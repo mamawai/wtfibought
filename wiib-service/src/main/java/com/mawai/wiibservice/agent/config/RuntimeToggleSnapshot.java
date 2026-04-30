@@ -7,11 +7,9 @@ public record RuntimeToggleSnapshot(
         TradingToggles trading,
         DrawdownSentinelToggles drawdown,
         CircuitBreakerToggles circuitBreaker
-) {
+    ) {
     public record TradingToggles(
-            boolean lowVolTradingEnabled,
-            boolean legacyThreshold5of7Enabled,
-            boolean legacy5of7ShadowEnabled
+            boolean lowVolTradingEnabled
     ) {}
 
     public record DrawdownSentinelToggles(

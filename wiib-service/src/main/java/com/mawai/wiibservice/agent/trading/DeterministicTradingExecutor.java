@@ -25,14 +25,6 @@ public class DeterministicTradingExecutor {
      * 低波动小仓位交易开关（Admin运行时切换）。
      */
     public static volatile boolean LOW_VOL_TRADING_ENABLED = true;
-    /**
-     * LEGACY_TREND 5/7 实盘开仓开关。
-     */
-    public static volatile boolean LEGACY_THRESHOLD_5OF7_ENABLED = true;
-    /**
-     * LEGACY_TREND 5/7 影子样本开关。
-     */
-    public static volatile boolean LEGACY_5OF7_SHADOW_ENABLED = true;
 
     private static final EntryDecisionEngine ENTRY_ENGINE = new EntryDecisionEngine();
     private static final ExitDecisionEngine EXIT_ENGINE = new ExitDecisionEngine();
