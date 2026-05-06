@@ -33,7 +33,7 @@
 - **加密货币现货** — BTC/USDT、ETH/USDT、PAXG/USDT，接入 Binance 实时行情，支持市价/限价单
 - **永续合约** — 最高 250 倍杠杆，逐仓保证金，多/空双向，分批止损/止盈（单仓最多 4+4），0.01%/8h 资金费率，自动强平
 - **BTC 5 分钟涨跌预测** — 接入 Polymarket 真实盘口 + Chainlink 价格源，动态手续费，5 分钟窗口自动结算
-- **AI 交易员**（测试阶段）— 确定性多策略引擎自动执行永续合约交易，含 EMA 趋势跟踪、BB 均值回归、BB 压缩突破三种策略；7 维共振正常 6/7 入场，虚拟盘默认开启 5/7 观察放行
+- **AI 交易员**（测试阶段）— 确定性多策略引擎自动执行永续合约交易，含趋势延续、BB 均值回归、BB 压缩/释放突破三种策略；每条策略独立一层场景门槛，并统一通过 4/6 共振闸门入场
 
 ### 行情系统
 
@@ -105,7 +105,7 @@ flowchart TD
 
         subgraph SVC["Services (30+)"]
             direction LR
-            STE["Trading Engine\nMarket/Limit · T+1 · Redis ZSet"] ~~~ SQG["Quote Generator\nGBM+Jump · 1440pts · BS Pricing"] ~~~ SAI["AI Agent Quant\n5-Factor Vote · Memory Weight · Graph Obs"] ~~~ SPC["Perpetual Contract\n250x · Isolated Margin · 4SL+4TP"] ~~~ SBP["BTC Prediction\nPolymarket · 5min · Chainlink"] ~~~ SDT["AI Trader\n7-Dim Confluence · 6/7 · 5/7 Trial"]
+            STE["Trading Engine\nMarket/Limit · T+1 · Redis ZSet"] ~~~ SQG["Quote Generator\nGBM+Jump · 1440pts · BS Pricing"] ~~~ SAI["AI Agent Quant\n5-Factor Vote · Memory Weight · Graph Obs"] ~~~ SPC["Perpetual Contract\n250x · Isolated Margin · 4SL+4TP"] ~~~ SBP["BTC Prediction\nPolymarket · 5min · Chainlink"] ~~~ SDT["AI Trader\nStrategy Gates · 4/6 Confluence"]
         end
 
         subgraph SCH["Scheduled Tasks"]
@@ -188,14 +188,15 @@ flowchart TD
 
 **AI Trader 开仓共振**
 
-当前确定性执行器使用 7 维共振评分：
+当前确定性执行器先由三条策略识别入场场景，再用各自的 6 项共振闸门确认开仓质量。
 
 ```
-MACD综合确认 / RSI / 成交量 / 15m均线方向 / 微结构 / EMA20方向 / 多空比拥挤反向确认
+趋势延续：regime / 周期趋势 / 动能 / EMA / 量能或微结构 / RSI
+均值回归：BB%B偏离 / RSI拉伸 / 环境 / 反转迹象 / 微结构 / 无强趋势推进
+突破：squeeze / 贴近轨道 / 量能 / 收盘趋势 / MACD / 中短线支撑
 ```
 
-- 正常路径：`score >= 6/7` 才允许开仓
-- 虚拟盘观察：`score == 5/7` 默认放行，可通过 `trading.legacy_threshold_5of7.enabled` 运行时开关关闭
+- 二层闸门：每条策略 `score >= 4/6` 才允许进入择优和下单链路
 - LSR 多空比：Binance `globalLongShortAccountRatio` 拉取 5m × 288 条，按 24h 窗口滚动百分位映射到 `[-1, 1]`，用于判断散户拥挤方向
 - 出场：主要依赖止盈 / 止损；盈利接近目标后只在强反转连续确认时保护性平半
 
