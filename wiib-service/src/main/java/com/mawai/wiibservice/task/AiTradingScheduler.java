@@ -8,8 +8,8 @@ import com.mawai.wiibcommon.entity.AiTradingDecision;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibservice.agent.config.RuntimeFeatureToggleService;
 import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
-import com.mawai.wiibservice.agent.trading.AiTradingTools;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
+import com.mawai.wiibservice.agent.trading.FuturesTradingOperationsAdapter;
 import com.mawai.wiibservice.agent.trading.SubmitStatus;
 import com.mawai.wiibservice.agent.trading.SymbolSubmitResult;
 import com.mawai.wiibservice.agent.trading.TradingCycleSubmitResult;
@@ -125,7 +125,7 @@ public class AiTradingScheduler {
         if (aiUserId.get() == 0) return;
         for (String symbol : QuantConstants.WATCH_SYMBOLS) {
             TradingCycleSubmitResult result = submitTradingCycle(List.of(symbol));
-            SymbolSubmitResult item = result.items().get(0);
+            SymbolSubmitResult item = result.items().getFirst();
             if (item.status() == SubmitStatus.SUBMITTED) {
                 log.info("[AI-Trader] cron兜底提交 symbol={} cycleNo={}", symbol, result.cycleNo());
             } else {
@@ -204,9 +204,9 @@ public class AiTradingScheduler {
             BigDecimal futuresPrice = cacheService.getFuturesPrice(symbol);
             BigDecimal markPrice = cacheService.getMarkPrice(symbol);
 
-            AiTradingTools tools = new AiTradingTools(userId, symbol, userMapper, futuresTradingService,
-                    futuresRiskService, futuresPositionMapper, cycleMapper, decisionMapper, cacheService,
-                    circuitBreakerService);
+            FuturesTradingOperationsAdapter tools = new FuturesTradingOperationsAdapter(userId, symbol,
+                    userMapper, futuresTradingService, futuresRiskService, futuresPositionMapper,
+                    cacheService, circuitBreakerService);
 
             // 确定性执行器决策
             var tradingToggles = runtimeFeatureToggleService.snapshot().trading();
