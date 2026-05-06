@@ -25,8 +25,8 @@ import java.util.*;
  *       →Executor。信号和实盘100%等价，适合验证Executor规则变更对实盘的影响。</li>
  * </ul>
  *
- * <p><b>简化精度说明（MVP版）</b>：只在每个cycle时间点按 snapshot.lastPrice 做SL/TP判定，
- * 不做cycle之间（5min区间内）的tick级检查。如果SL在cycle中间被打到，这里会漏检。后续可扩展为拉取1m K线补全。
+ * <p><b>精度说明</b>：优先使用 snapshot 中可用的 high/low 字段检查SL/TP；
+ * 历史快照缺失区间高低点时退回 close-only 判定，保持向后兼容。
  */
 @Slf4j
 public class SignalReplayBacktestEngine {
@@ -77,15 +77,16 @@ public class SignalReplayBacktestEngine {
             } else {
                 executionState.setMockNowMs(null);
             }
-            BigDecimal price = extractLastPrice(cycle);
-            if (price == null || price.signum() <= 0) {
+            PriceBar bar = extractPriceBar(cycle);
+            if (bar == null || bar.close() == null || bar.close().signum() <= 0) {
                 skipped++;
                 continue;
             }
+            BigDecimal price = bar.close();
 
-            // 1. 按当前cycle价格刷一次tick，触发任何挂单SL/TP（简化：high=low=close=price）
+            // 1. 优先用区间高低点触发挂单；旧快照缺字段时 high/low 回落到 close。
             tools.setCurrentTime(mockNow);
-            tools.tickBar(price, price, price, index);
+            tools.tickBar(bar.high(), bar.low(), price, index);
 
             // 2. 取该cycle的3个horizon信号
             List<QuantSignalDecision> signals = signalsByCycleId.getOrDefault(cycle.getCycleId(), List.of());
@@ -146,19 +147,46 @@ public class SignalReplayBacktestEngine {
         return result;
     }
 
-    /** 从 cycle.snapshotJson 提取 lastPrice（FeatureSnapshot序列化后的key） */
-    private BigDecimal extractLastPrice(QuantForecastCycle cycle) {
+    /** 从 cycle.snapshotJson 提取 close/high/low；旧数据没有 high/low 时用 close 兼容。 */
+    PriceBar extractPriceBar(QuantForecastCycle cycle) {
         String json = cycle.getSnapshotJson();
         if (json == null || json.isBlank()) return null;
         try {
             JSONObject snap = JSON.parseObject(json);
             BigDecimal p = snap.getBigDecimal("lastPrice");
             if (p == null) p = snap.getBigDecimal("price");
-            return p;
+            if (p == null) return null;
+            BigDecimal high = firstNonNull(
+                    snap.getBigDecimal("high"),
+                    snap.getBigDecimal("barHigh"),
+                    snap.getBigDecimal("highPrice"),
+                    snap.getBigDecimal("lastHigh"));
+            BigDecimal low = firstNonNull(
+                    snap.getBigDecimal("low"),
+                    snap.getBigDecimal("barLow"),
+                    snap.getBigDecimal("lowPrice"),
+                    snap.getBigDecimal("lastLow"));
+            if (high == null || high.signum() <= 0) high = p;
+            if (low == null || low.signum() <= 0) low = p;
+            if (high.compareTo(low) < 0) {
+                BigDecimal tmp = high;
+                high = low;
+                low = tmp;
+            }
+            if (high.compareTo(p) < 0) high = p;
+            if (low.compareTo(p) > 0) low = p;
+            return new PriceBar(high, low, p);
         } catch (Exception e) {
             log.warn("[Replay] snapshotJson解析失败 cycleId={}: {}", cycle.getCycleId(), e.getMessage());
             return null;
         }
+    }
+
+    private BigDecimal firstNonNull(BigDecimal... values) {
+        for (BigDecimal value : values) {
+            if (value != null) return value;
+        }
+        return null;
     }
 
     private User createMockUser(BigDecimal balance) {
@@ -185,4 +213,6 @@ public class SignalReplayBacktestEngine {
             tools.closePosition(pos.getId(), pos.getQuantity());
         }
     }
+
+    record PriceBar(BigDecimal high, BigDecimal low, BigDecimal close) {}
 }

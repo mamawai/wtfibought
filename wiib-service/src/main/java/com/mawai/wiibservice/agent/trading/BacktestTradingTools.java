@@ -40,6 +40,7 @@ public class BacktestTradingTools implements TradingOperations {
     // 状态
     @Getter
     private BigDecimal balance;
+    private BigDecimal peakEquity;
     @Getter
     private BigDecimal frozenBalance = BigDecimal.ZERO;
     private final List<FuturesPositionDTO> openPositions = new ArrayList<>();
@@ -71,10 +72,16 @@ public class BacktestTradingTools implements TradingOperations {
 
     public BacktestTradingTools(BigDecimal initialBalance, String symbol) {
         this.balance = initialBalance;
+        this.peakEquity = initialBalance;
         this.symbol = symbol;
     }
 
     // ==================== TradingOperations 实现 ====================
+
+    @Override
+    public BigDecimal peakEquity() {
+        return peakEquity;
+    }
 
     @Override
     public String openPosition(String side, BigDecimal quantity, Integer leverage,
@@ -389,7 +396,11 @@ public class BacktestTradingTools implements TradingOperations {
                 .filter(p -> "OPEN".equals(p.getStatus()))
                 .map(p -> p.getUnrealizedPnl() != null ? p.getUnrealizedPnl() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        return balance.add(frozenBalance).add(unrealized);
+        BigDecimal equity = balance.add(frozenBalance).add(unrealized);
+        if (peakEquity == null || equity.compareTo(peakEquity) > 0) {
+            peakEquity = equity;
+        }
+        return equity;
     }
 
     public List<FuturesPositionDTO> getOpenPositions() {

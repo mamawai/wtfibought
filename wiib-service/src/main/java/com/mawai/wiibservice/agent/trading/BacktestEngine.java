@@ -119,7 +119,8 @@ public class BacktestEngine {
                     ? CryptoIndicatorCalculator.calcAll(klines1h) : Collections.emptyMap();
 
             // 3. 构建 snapshotJson（与 parseMarketContext 格式对齐）
-            QuantForecastCycle forecast = buildForecast(indicators5m, indicators15m, indicators1h, close, mockNow);
+            QuantForecastCycle forecast = buildForecast(indicators5m, indicators15m, indicators1h,
+                    high, low, close, mockNow);
 
             // 4. 从指标衍生简化信号
             List<QuantSignalDecision> signals = deriveSignals(indicators5m, indicators15m, indicators1h);
@@ -218,9 +219,14 @@ public class BacktestEngine {
     private QuantForecastCycle buildForecast(Map<String, Object> ind5m,
                                              Map<String, Object> ind15m,
                                              Map<String, Object> ind1h,
+                                             BigDecimal high,
+                                             BigDecimal low,
                                              BigDecimal currentPrice,
                                              LocalDateTime forecastTime) {
         JSONObject snap = new JSONObject();
+        snap.put("barHigh", high);
+        snap.put("barLow", low);
+        snap.put("lastPrice", currentPrice);
 
         // regime 判断
         String regime = determineRegime(ind5m);

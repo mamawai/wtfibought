@@ -131,6 +131,8 @@ public class BuildFeaturesNode implements NodeAction {
 
         // 3. 最新价格
         BigDecimal lastPrice = extractLastPrice(tickerMap.get(symbol), closesByInterval);
+        BigDecimal barHigh = extractLatestKlineField(parsedKlines, "5m", 0);
+        BigDecimal barLow = extractLatestKlineField(parsedKlines, "5m", 1);
         BigDecimal spotLastPrice = extractLastPrice(spotTickerMap.get(symbol), spotClosesByInterval);
 
         // 3.5 现货-合约联动
@@ -263,7 +265,7 @@ public class BuildFeaturesNode implements NodeAction {
         List<NewsItem> newsItems = parseNewsItems(newsData);
         if (newsItems.isEmpty()) qualityFlags.add("NO_NEWS");
 
-        FeatureSnapshot snapshot = new FeatureSnapshot(symbol, LocalDateTime.now(), lastPrice, spotLastPrice,
+        FeatureSnapshot snapshot = new FeatureSnapshot(symbol, LocalDateTime.now(), lastPrice, barHigh, barLow, spotLastPrice,
                 indicatorsByTf, priceChanges,
                 spotBidAskImbalance, spotPriceChange5m, spotPerpBasisBps, spotLeadLagScore,
                 bidAskImbalance, tradeDelta, tradeIntensity, largeTradeBias, oiChangeRate,
@@ -296,6 +298,17 @@ public class BuildFeaturesNode implements NodeAction {
         // fallback: 最新1m close
         List<BigDecimal> c1m = closes.get("1m");
         return (c1m != null && !c1m.isEmpty()) ? c1m.getLast() : null;
+    }
+
+    private BigDecimal extractLatestKlineField(Map<String, List<BigDecimal[]>> parsedKlines,
+                                               String interval, int index) {
+        List<BigDecimal[]> klines = parsedKlines.get(interval);
+        if ((klines == null || klines.isEmpty()) && !"1m".equals(interval)) {
+            klines = parsedKlines.get("1m");
+        }
+        if (klines == null || klines.isEmpty()) return null;
+        BigDecimal[] latest = klines.getLast();
+        return latest.length > index ? latest[index] : null;
     }
 
     private BigDecimal calcRecentPctChange(List<BigDecimal> closes, int bars) {
