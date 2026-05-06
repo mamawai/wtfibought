@@ -11,25 +11,122 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class DeterministicTradingExecutorTest {
 
     @Test
-    void fiveOfSevenAllowsBreakoutEntry() {
+    void strongBreakoutCanOverrideFlatEntry() {
         StubTools tools = new StubTools();
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(breakoutSnapshot(List.of()), "FLAT"),
-                List.of(signal("0_10", "LONG", "0.55")),
+                List.of(signal("0_10", "LONG", "0.65")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true, true, true));
+                new TradingRuntimeToggles(true));
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         assertThat(tools.openCount).isEqualTo(1);
-        assertThat(result.reasoning()).contains("overallDecision=FLAT仅记录");
+        assertThat(result.reasoning()).contains("overallDecision=FLAT强突破覆盖");
+    }
+
+    @Test
+    void upperHalfBandDoesNotCountAsBreakout() {
+        StubTools tools = new StubTools();
+
+        DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
+                "BTCUSDT", user(), List.of(), forecast(weakBreakoutSnapshot(List.of()), "FLAT"),
+                List.of(signal("0_10", "LONG", "0.65")),
+                List.of(), price("100000"), price("100000"), price("100000"),
+                tools, new TradingExecutionState(),
+                new TradingRuntimeToggles(true));
+
+        assertThat(result.action()).isEqualTo("HOLD");
+        assertThat(tools.openCount).isZero();
+        assertThat(result.reasoning()).contains("未接近上轨突破");
+    }
+
+    @Test
+    void nonSqueezeBreakoutWithoutDirectionalMomentumIsRejected() {
+        StubTools tools = new StubTools();
+
+        DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
+                "BTCUSDT", user(), List.of(), forecast(nonSqueezeNoMomentumBreakoutSnapshot(List.of()), "LONG"),
+                List.of(signal("0_10", "LONG", "0.75")),
+                List.of(), price("100000"), price("100000"), price("100000"),
+                tools, new TradingExecutionState(),
+                new TradingRuntimeToggles(true));
+
+        assertThat(result.action()).isEqualTo("HOLD");
+        assertThat(tools.openCount).isZero();
+        assertThat(result.reasoning()).contains("突破动能不足");
+    }
+
+    @Test
+    void nonSqueezeBreakoutWithDirectionalMomentumCanOpen() {
+        StubTools tools = new StubTools();
+
+        DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
+                "BTCUSDT", user(), List.of(), forecast(nonSqueezeMomentumBreakoutSnapshot(List.of()), "LONG"),
+                List.of(signal("0_10", "LONG", "0.75")),
+                List.of(), price("100000"), price("100000"), price("100000"),
+                tools, new TradingExecutionState(),
+                new TradingRuntimeToggles(true));
+
+        assertThat(result.action()).isEqualTo("OPEN_LONG");
+        assertThat(tools.openCount).isEqualTo(1);
+        assertThat(result.reasoning()).contains("[Strategy-BREAKOUT]");
+    }
+
+    @Test
+    void lightMeanReversionStretchIsRejected() {
+        StubTools tools = new StubTools();
+
+        DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
+                "BTCUSDT", user(), List.of(), forecast(lightMeanReversionSnapshot(List.of()), "LONG"),
+                List.of(signal("0_10", "LONG", "0.60")),
+                List.of(), price("100000"), price("100000"), price("100000"),
+                tools, new TradingExecutionState(),
+                new TradingRuntimeToggles(true));
+
+        assertThat(result.action()).isEqualTo("HOLD");
+        assertThat(tools.openCount).isZero();
+        assertThat(result.reasoning()).contains("做多BB%B=24.00>20.00");
+    }
+
+    @Test
+    void meanReversionRequiresTwoVotesWithoutDeepStretch() {
+        StubTools tools = new StubTools();
+
+        DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
+                "BTCUSDT", user(), List.of(), forecast(oneVoteMeanReversionSnapshot(List.of()), "LONG"),
+                List.of(signal("0_10", "LONG", "0.65")),
+                List.of(), price("100000"), price("100000"), price("100000"),
+                tools, new TradingExecutionState(),
+                new TradingRuntimeToggles(true));
+
+        assertThat(result.action()).isEqualTo("HOLD");
+        assertThat(tools.openCount).isZero();
+        assertThat(result.reasoning()).contains("反转确认不足 votes=1");
+    }
+
+    @Test
+    void deepMeanReversionWithWeakeningCanOpenAgainstOldTrend() {
+        StubTools tools = new StubTools();
+
+        DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
+                "BTCUSDT", user(), List.of(), forecast(deepWeakeningMeanReversionSnapshot(List.of()), "LONG"),
+                List.of(signal("0_10", "LONG", "0.65")),
+                List.of(), price("100000"), price("100000"), price("100000"),
+                tools, new TradingExecutionState(),
+                new TradingRuntimeToggles(true));
+
+        assertThat(result.action()).isEqualTo("OPEN_LONG");
+        assertThat(tools.openCount).isEqualTo(1);
+        assertThat(result.reasoning()).contains("[Strategy-MR]");
     }
 
     @Test
@@ -42,7 +139,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.60")),
                 List.of(), price("100100"), price("100100"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true, true, true));
+                new TradingRuntimeToggles(true));
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         assertThat(tools.openCount).isEqualTo(1);
@@ -63,12 +160,74 @@ class DeterministicTradingExecutorTest {
                 List.of(sig010, sig1020, sig2030),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true, true, true));
+                new TradingRuntimeToggles(true));
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         assertThat(sig010.getConfidence()).isEqualByComparingTo("0.75");
         assertThat(sig1020.getConfidence()).isEqualByComparingTo("0.70");
         assertThat(sig2030.getConfidence()).isEqualByComparingTo("0.68");
+    }
+
+    @Test
+    void activeHorizonOnlyBlocksLastMinuteOfEachWindow() {
+        LocalDateTime forecastTime = LocalDateTime.of(2026, 1, 1, 9, 0);
+        List<QuantSignalDecision> signals = List.of(signal("0_10", "LONG", "0.70"));
+
+        assertThat(TradingDecisionSupport.findBestSignalWithPriority(
+                signals, forecastTime, forecastTime.plusMinutes(8))).isNotNull();
+        assertThat(TradingDecisionSupport.findBestSignalWithPriority(
+                signals, forecastTime, forecastTime.plusMinutes(9))).isNull();
+    }
+
+    @Test
+    void maxPositionPctCapsEntryQuantity() {
+        StubTools tools = new StubTools();
+        QuantSignalDecision sig = signal("0_10", "LONG", "0.75");
+        sig.setMaxPositionPct(price("0.01"));
+
+        DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
+                "BTCUSDT", user(), List.of(), forecast(trendSnapshot(List.of()), "LONG"),
+                List.of(sig),
+                List.of(), price("100000"), price("100000"), price("100000"),
+                tools, new TradingExecutionState(),
+                new TradingRuntimeToggles(true));
+
+        assertThat(result.action()).isEqualTo("OPEN_LONG");
+        assertThat(tools.lastOpenQty).isEqualByComparingTo("0.01000000");
+    }
+
+    @Test
+    void trendConfluenceGateAllowsEntryWithoutLegacySwitches() {
+        StubTools tools = new StubTools();
+
+        DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
+                "BTCUSDT", user(), List.of(), forecast(trendConfluenceSnapshot(List.of()), "LONG"),
+                List.of(signal("0_10", "LONG", "0.75")),
+                List.of(), price("100000"), price("100000"), price("100000"),
+                tools, new TradingExecutionState(),
+                new TradingRuntimeToggles(true));
+
+        assertThat(result.action()).isEqualTo("OPEN_LONG");
+        assertThat(tools.openCount).isEqualTo(1);
+        assertThat(result.reasoning()).contains("[Strategy-LEGACY_TREND]");
+    }
+
+    @Test
+    void allNoTradeRiskStatusBlocksEntry() {
+        StubTools tools = new StubTools();
+        QuantSignalDecision sig = signal("0_10", "LONG", "0.75");
+        sig.setRiskStatus("ALL_NO_TRADE");
+
+        DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
+                "BTCUSDT", user(), List.of(), forecast(trendSnapshot(List.of()), "LONG"),
+                List.of(sig),
+                List.of(), price("100000"), price("100000"), price("100000"),
+                tools, new TradingExecutionState(),
+                new TradingRuntimeToggles(true));
+
+        assertThat(result.action()).isEqualTo("HOLD");
+        assertThat(tools.openCount).isZero();
+        assertThat(result.reasoning()).contains("ALL_NO_TRADE");
     }
 
     @Test
@@ -81,7 +240,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "SHORT", "0.85")),
                 List.of(), price("104200"), price("104200"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true, true, true));
+                new TradingRuntimeToggles(true));
 
         assertThat(result.action()).isEqualTo("TIGHTEN_SL");
         assertThat(tools.lastSlPrice).isGreaterThan(price("100000"));
@@ -99,7 +258,7 @@ class DeterministicTradingExecutorTest {
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast, signals,
                 List.of(), price("104200"), price("104200"), price("100000"),
-                tools, state, new TradingRuntimeToggles(true, true, true));
+                tools, state, new TradingRuntimeToggles(true));
 
         assertThat(result.action()).isEqualTo("EXIT_FULL_RISK");
         assertThat(tools.closeCount).isEqualTo(1);
@@ -116,13 +275,13 @@ class DeterministicTradingExecutorTest {
                 "BTCUSDT", user(), List.of(pos), forecast(trendSnapshot(List.of("STALE_AGG_TRADE")), "LONG"),
                 List.of(signal("0_10", "LONG", "0.60")),
                 List.of(), price("104000"), price("104000"), price("100000"),
-                tools, state, new TradingRuntimeToggles(true, true, true));
+                tools, state, new TradingRuntimeToggles(true));
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast(softBearSnapshot(List.of()), "LONG"),
                 List.of(signal("0_10", "SHORT", "0.70")),
                 List.of(), price("102800"), price("102800"), price("100000"),
-                tools, state, new TradingRuntimeToggles(true, true, true));
+                tools, state, new TradingRuntimeToggles(true));
 
         assertThat(result.action()).isEqualTo("EXIT_PARTIAL_PROTECT");
         assertThat(tools.closeCount).isEqualTo(1);
@@ -142,7 +301,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "SHORT", "0.70")),
                 List.of(), price("100200"), price("100200"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true, true, true));
+                new TradingRuntimeToggles(true));
 
         assertThat(result.action()).isEqualTo("TIME_EXIT");
         assertThat(tools.closeCount).isEqualTo(1);
@@ -161,6 +320,26 @@ class DeterministicTradingExecutorTest {
 
         assertThat(result).startsWith("开仓成功");
         assertThat(tools.getOpenPositions("BTCUSDT").getFirst().getCreatedAt()).isEqualTo(mockNow);
+    }
+
+    @Test
+    void replayPriceBarRangeIncludesClose() {
+        SignalReplayBacktestEngine engine = new SignalReplayBacktestEngine(
+                "BTCUSDT", List.of(), Map.of(), price("100000"));
+        QuantForecastCycle closeAboveHigh = forecast("""
+                {"lastPrice":100,"barHigh":98,"barLow":95}
+                """, "LONG");
+        QuantForecastCycle closeBelowLow = forecast("""
+                {"lastPrice":90,"barHigh":98,"barLow":95}
+                """, "LONG");
+
+        SignalReplayBacktestEngine.PriceBar highClamped = engine.extractPriceBar(closeAboveHigh);
+        SignalReplayBacktestEngine.PriceBar lowClamped = engine.extractPriceBar(closeBelowLow);
+
+        assertThat(highClamped.high()).isEqualByComparingTo("100");
+        assertThat(highClamped.low()).isEqualByComparingTo("95");
+        assertThat(lowClamped.high()).isEqualByComparingTo("98");
+        assertThat(lowClamped.low()).isEqualByComparingTo("90");
     }
 
     private static User user() {
@@ -206,12 +385,47 @@ class DeterministicTradingExecutorTest {
 
     private static String breakoutSnapshot(List<String> flags) {
         return snapshot("SQUEEZE", true, "400", "55", 1, 1,
+                "golden", "rising_3", null, "98", "1.4", "rising", "0.00", flags);
+    }
+
+    private static String weakBreakoutSnapshot(List<String> flags) {
+        return snapshot("SQUEEZE", true, "400", "55", 1, 1,
                 "golden", "rising_3", null, "75", "1.4", "rising", "0.00", flags);
+    }
+
+    private static String nonSqueezeNoMomentumBreakoutSnapshot(List<String> flags) {
+        return snapshot("RANGE", false, "400", "78", 0, 1,
+                "death", "flat", "99900", "92", "1.4", "flat", "0.00", flags);
+    }
+
+    private static String nonSqueezeMomentumBreakoutSnapshot(List<String> flags) {
+        return snapshot("RANGE", false, "400", "55", 0, 1,
+                "golden", "rising_3", "99900", "92", "1.4", "flat", "0.00", flags);
+    }
+
+    private static String lightMeanReversionSnapshot(List<String> flags) {
+        return snapshot("RANGE", false, "400", "43", 0, 0,
+                "death", "flat", null, "24", "1.0", "flat", "0.00", flags);
+    }
+
+    private static String oneVoteMeanReversionSnapshot(List<String> flags) {
+        return snapshot("RANGE", false, "400", "42", 0, 0,
+                "golden", "flat", null, "18", "1.0", "flat", "0.00", flags);
+    }
+
+    private static String deepWeakeningMeanReversionSnapshot(List<String> flags) {
+        return snapshot("RANGE", "WEAKENING", false, "400", "38", -1, -1,
+                null, "falling_3", null, "15", "1.0", "falling", "0.00", flags);
     }
 
     private static String trendSnapshot(List<String> flags) {
         return snapshot("TREND_UP", false, "400", "55", 1, 1,
                 "golden", "rising_3", "99900", "60", "1.4", "rising", "0.30", flags);
+    }
+
+    private static String trendConfluenceSnapshot(List<String> flags) {
+        return snapshot("TREND_UP", false, "400", "55", 1, 1,
+                "golden", "rising_3", "99900", "60", "1.0", "rising", "0.00", flags);
     }
 
     private static String strongBearSnapshot(List<String> flags) {
@@ -233,10 +447,19 @@ class DeterministicTradingExecutorTest {
                                    int ma1h, int ma15m, String macdCross, String macdHist,
                                    String ema20, String bollPb, String volumeRatio,
                                    String closeTrend, String micro, List<String> flags) {
+        return snapshot(regime, null, squeeze, atr, rsi, ma1h, ma15m, macdCross, macdHist,
+                ema20, bollPb, volumeRatio, closeTrend, micro, flags);
+    }
+
+    private static String snapshot(String regime, String transition, boolean squeeze, String atr, String rsi,
+                                   int ma1h, int ma15m, String macdCross, String macdHist,
+                                   String ema20, String bollPb, String volumeRatio,
+                                   String closeTrend, String micro, List<String> flags) {
         String flagsJson = flags.stream().map(f -> "\"" + f + "\"").reduce((a, b) -> a + "," + b).orElse("");
         return """
                 {
                   "regime": "%s",
+                  "regimeTransition": %s,
                   "atr5m": %s,
                   "bollSqueeze": %s,
                   "bidAskImbalance": %s,
@@ -261,7 +484,8 @@ class DeterministicTradingExecutorTest {
                     "1h": {"ma_alignment": %d}
                   }
                 }
-                """.formatted(regime, atr, squeeze, micro, flagsJson, rsi,
+                """.formatted(regime, transition == null ? "null" : "\"" + transition + "\"",
+                atr, squeeze, micro, flagsJson, rsi,
                 macdCross == null ? "null" : "\"" + macdCross + "\"", macdHist,
                 ema20 == null ? "null" : ema20, closeTrend, bollPb, volumeRatio, ma15m, ma1h);
     }
@@ -273,6 +497,7 @@ class DeterministicTradingExecutorTest {
     private static class StubTools implements TradingOperations {
         int openCount;
         int closeCount;
+        BigDecimal lastOpenQty;
         BigDecimal lastCloseQty;
         BigDecimal lastSlPrice;
         BigDecimal lastSlQty;
@@ -283,6 +508,7 @@ class DeterministicTradingExecutorTest {
                                    BigDecimal limitPrice, BigDecimal stopLossPrice,
                                    BigDecimal takeProfitPrice, String memo) {
             openCount++;
+            lastOpenQty = quantity;
             return "开仓成功|test";
         }
 
