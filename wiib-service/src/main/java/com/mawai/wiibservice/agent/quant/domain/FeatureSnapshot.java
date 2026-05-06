@@ -9,6 +9,8 @@ public record FeatureSnapshot(
         String symbol,
         LocalDateTime snapshotTime,
         BigDecimal lastPrice,
+        BigDecimal barHigh,
+        BigDecimal barLow,
         BigDecimal spotLastPrice,
 
         // 多周期技术指标: timeframe → indicatorName → value
@@ -75,7 +77,7 @@ public record FeatureSnapshot(
 ) {
     public FeatureSnapshot withRegimeReview(MarketRegime newRegime, List<String> newFlags,
                                             double confidence, String transition) {
-        return new FeatureSnapshot(symbol, snapshotTime, lastPrice, spotLastPrice,
+        return new FeatureSnapshot(symbol, snapshotTime, lastPrice, barHigh, barLow, spotLastPrice,
                 indicatorsByTimeframe, priceChanges,
                 spotBidAskImbalance, spotPriceChange5m, spotPerpBasisBps, spotLeadLagScore,
                 bidAskImbalance, tradeDelta, tradeIntensity, largeTradeBias, oiChangeRate,

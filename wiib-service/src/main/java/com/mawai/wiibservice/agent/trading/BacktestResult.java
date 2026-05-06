@@ -35,6 +35,23 @@ public class BacktestResult {
             String exitReason       // "SL" / "TP" / "SIGNAL_CLOSE" / "TRAILING_STOP" / "TIMEOUT" / "MANUAL"
     ) {}
 
+    /**
+     * 单策略路径统计，便于判断哪条路径真实贡献收益/回撤。
+     */
+    public record StrategyStats(
+            String strategy,
+            int trades,
+            int wins,
+            int losses,
+            double winRate,
+            BigDecimal netPnl,
+            BigDecimal ev,
+            double profitFactor,
+            double maxDrawdownPct,
+            double avgHoldBars,
+            int maxConsecutiveLosses
+    ) {}
+
     private final List<Trade> trades = new ArrayList<>();
     private final List<BigDecimal> equityCurve = new ArrayList<>();
     private final BigDecimal initialEquity;
@@ -141,6 +158,18 @@ public class BacktestResult {
         return trades.stream().filter(t -> strategy.equals(t.strategy)).toList();
     }
 
+    public StrategyStats statsByStrategy(String strategy) {
+        return calcStrategyStats(strategy, tradesByStrategy(strategy));
+    }
+
+    public List<StrategyStats> allStrategyStats() {
+        return List.of(
+                statsByStrategy(PATH_LEGACY_TREND),
+                statsByStrategy(PATH_MR),
+                statsByStrategy(PATH_BREAKOUT)
+        );
+    }
+
     public List<Trade> getTrades() {
         return List.copyOf(trades);
     }
@@ -163,9 +192,9 @@ public class BacktestResult {
                 Max Drawdown: %.2f%%
                 Avg Hold: %.1f bars
                 --- By Strategy ---
-                LEGACY_TREND: %d trades
-                MR:           %d trades
-                BREAKOUT:     %d trades
+                %s
+                %s
+                %s
                 ============================""",
                 equityCurve.size(),
                 initialEquity.toPlainString(), finalEquity().toPlainString(), returnPct() * 100,
@@ -174,10 +203,83 @@ public class BacktestResult {
                 profitFactor(), sharpeRatio(),
                 maxDrawdownPct() * 100,
                 avgHoldBars(),
-                tradesByStrategy(PATH_LEGACY_TREND).size(),
-                tradesByStrategy(PATH_MR).size(),
-                tradesByStrategy(PATH_BREAKOUT).size()
+                formatStrategyStats(statsByStrategy(PATH_LEGACY_TREND)),
+                formatStrategyStats(statsByStrategy(PATH_MR)),
+                formatStrategyStats(statsByStrategy(PATH_BREAKOUT))
         );
+    }
+
+    private StrategyStats calcStrategyStats(String strategy, List<Trade> rows) {
+        int samples = rows.size();
+        int wins = (int) rows.stream().filter(t -> t.pnl.signum() > 0).count();
+        int losses = (int) rows.stream().filter(t -> t.pnl.signum() < 0).count();
+        BigDecimal net = rows.stream().map(Trade::pnl).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal ev = samples == 0
+                ? BigDecimal.ZERO
+                : net.divide(BigDecimal.valueOf(samples), 8, RoundingMode.HALF_UP);
+        double avgHold = samples == 0
+                ? 0
+                : rows.stream().mapToInt(t -> t.closeBarIndex - t.barIndex).average().orElse(0);
+        return new StrategyStats(
+                strategy,
+                samples,
+                wins,
+                losses,
+                samples == 0 ? 0 : (double) wins / samples,
+                net,
+                ev,
+                profitFactor(rows),
+                pathDrawdownPct(rows),
+                avgHold,
+                maxConsecutiveLosses(rows)
+        );
+    }
+
+    private double profitFactor(List<Trade> rows) {
+        BigDecimal totalWin = rows.stream()
+                .map(Trade::pnl).filter(p -> p.signum() > 0)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalLoss = rows.stream()
+                .map(Trade::pnl).filter(p -> p.signum() < 0)
+                .reduce(BigDecimal.ZERO, BigDecimal::add).abs();
+        if (totalLoss.signum() == 0) return totalWin.signum() > 0 ? Double.MAX_VALUE : 0;
+        return totalWin.divide(totalLoss, 4, RoundingMode.HALF_UP).doubleValue();
+    }
+
+    private double pathDrawdownPct(List<Trade> rows) {
+        if (rows.isEmpty()) return 0;
+        BigDecimal equity = initialEquity;
+        BigDecimal peak = equity;
+        BigDecimal maxDd = BigDecimal.ZERO;
+        for (Trade trade : rows) {
+            equity = equity.add(trade.pnl());
+            if (equity.compareTo(peak) > 0) peak = equity;
+            BigDecimal dd = peak.subtract(equity);
+            if (dd.compareTo(maxDd) > 0) maxDd = dd;
+        }
+        if (peak.signum() == 0) return 0;
+        return maxDd.divide(peak, 6, RoundingMode.HALF_UP).doubleValue();
+    }
+
+    private int maxConsecutiveLosses(List<Trade> rows) {
+        int current = 0;
+        int max = 0;
+        for (Trade trade : rows) {
+            if (trade.pnl().signum() < 0) {
+                current++;
+                max = Math.max(max, current);
+            } else {
+                current = 0;
+            }
+        }
+        return max;
+    }
+
+    private String formatStrategyStats(StrategyStats s) {
+        return String.format("%-13s trades=%d WR=%.1f%% EV=%s PF=%.2f MaxDD=%.2f%% MaxLossStreak=%d",
+                s.strategy(), s.trades(), s.winRate() * 100,
+                s.ev().setScale(2, RoundingMode.HALF_UP).toPlainString(),
+                s.profitFactor(), s.maxDrawdownPct() * 100, s.maxConsecutiveLosses());
     }
 
 }

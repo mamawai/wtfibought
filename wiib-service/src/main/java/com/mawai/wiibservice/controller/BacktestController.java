@@ -138,10 +138,21 @@ public class BacktestController {
         map.put("returnPct", r.returnPct());
         map.put("finalEquity", r.finalEquity());
 
-        Map<String, Integer> byStrategy = new LinkedHashMap<>();
-        byStrategy.put("LEGACY_TREND", r.tradesByStrategy("LEGACY_TREND").size());
-        byStrategy.put("MR", r.tradesByStrategy("MR").size());
-        byStrategy.put("BREAKOUT", r.tradesByStrategy("BREAKOUT").size());
+        Map<String, Object> byStrategy = new LinkedHashMap<>();
+        for (BacktestResult.StrategyStats stats : r.allStrategyStats()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("trades", stats.trades());
+            item.put("wins", stats.wins());
+            item.put("losses", stats.losses());
+            item.put("winRate", stats.winRate());
+            item.put("netPnl", stats.netPnl());
+            item.put("ev", stats.ev());
+            item.put("profitFactor", stats.profitFactor());
+            item.put("maxDrawdownPct", stats.maxDrawdownPct());
+            item.put("avgHoldBars", stats.avgHoldBars());
+            item.put("maxConsecutiveLosses", stats.maxConsecutiveLosses());
+            byStrategy.put(stats.strategy(), item);
+        }
         map.put("byStrategy", byStrategy);
 
         return map;
