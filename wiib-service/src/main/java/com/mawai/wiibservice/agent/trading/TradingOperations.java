@@ -6,10 +6,17 @@ import java.math.BigDecimal;
  * 交易操作抽象接口。
  * <p>
  * DeterministicTradingExecutor 通过此接口执行交易，
- * 生产环境使用 {@link AiTradingTools}（真实下单），
+ * 生产环境使用 {@link FuturesTradingOperationsAdapter}（真实下单），
  * 回测环境使用 {@link BacktestTradingTools}（模拟撮合）。
  */
 public interface TradingOperations {
+
+    /**
+     * 当前账户峰值权益。生产环境来自熔断服务；回测环境可自行维护。
+     */
+    default BigDecimal peakEquity() {
+        return null;
+    }
 
     /**
      * 开仓。必须设置1个止损+1个止盈，各覆盖全部仓位。
