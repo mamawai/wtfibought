@@ -40,6 +40,10 @@ final class ExitDecisionEngine {
     private static final String ACTION_EXIT_FULL_RISK = "EXIT_FULL_RISK";
     // 时间退出动作，持仓太久且没有有效推进时全平。
     private static final String ACTION_TIME_EXIT = "TIME_EXIT";
+    // 均值回归到位后的软止盈动作。
+    private static final String ACTION_MEAN_EXIT = "MEAN_EXIT";
+    // 突破失败后的快速退出动作。
+    private static final String ACTION_BREAKOUT_FAIL_EXIT = "BREAKOUT_FAIL_EXIT";
 
     // 判定强反向信号所需的最低信号置信度。
     private static final double STRONG_REVERSAL_CONFIDENCE = 0.82;
@@ -112,9 +116,26 @@ final class ExitDecisionEngine {
             double peakDrawdown = calcPeakDrawdown(positionId, profit, state);
             BigDecimal peakProgress = calcPeakProgress(positionId, targetDistance, state);
             long holdMinutes = holdingMinutes(pos, now);
+            String path = TradingDecisionSupport.normalizeStrategyPath(pos.getMemo());
 
             if (positionId == null) {
                 reasons.append(pos.getSide()).append(" 缺少positionId→只观察; ");
+                continue;
+            }
+
+            if (shouldExitFailedBreakout(path, profit, holdMinutes, ctx, isLong)) {
+                FullCloseResult result = closeFull(tools, state, pos, ACTION_BREAKOUT_FAIL_EXIT,
+                        "突破失败", risk, execLog);
+                action = mergeAction(action, result.action());
+                reasons.append(result.reason());
+                continue;
+            }
+
+            if (shouldMeanReversionExit(path, profit, targetProgress, ctx, isLong)) {
+                FullCloseResult result = closeFull(tools, state, pos, ACTION_MEAN_EXIT,
+                        "均值回归到位", risk, execLog);
+                action = mergeAction(action, result.action());
+                reasons.append(result.reason());
                 continue;
             }
 
@@ -135,7 +156,7 @@ final class ExitDecisionEngine {
             }
 
             TradingExecutionState.PositionPeak peak = state.getPositionPeak(positionId);
-            if (shouldPartialProtect(targetProgress, peakProgress, peakDrawdown, risk, peak)) {
+            if (shouldPartialProtect(path, targetProgress, peakProgress, peakDrawdown, risk, peak)) {
                 String closeResult = closePartial(tools, state, pos, targetProgress, peakDrawdown, risk, execLog);
                 if (closeResult != null) {
                     action = mergeAction(action, ACTION_EXIT_PARTIAL_PROTECT);
@@ -144,7 +165,7 @@ final class ExitDecisionEngine {
                 }
             }
 
-            if (shouldTimeExit(holdMinutes, targetProgress, risk)) {
+            if (shouldTimeExit(path, holdMinutes, targetProgress, risk)) {
                 FullCloseResult result = closeFull(tools, state, pos, ACTION_TIME_EXIT,
                         "持仓僵持超时", risk, execLog);
                 action = mergeAction(action, result.action());
@@ -152,8 +173,8 @@ final class ExitDecisionEngine {
                 continue;
             }
 
-            if (shouldTightenStop(targetProgress, risk)) {
-                String tightenResult = tightenStopLoss(tools, pos, profit, ctx, isLong, risk, execLog);
+            if (shouldTightenStop(path, targetProgress, risk)) {
+                String tightenResult = tightenStopLoss(tools, pos, profit, ctx, profile, path, isLong, risk, execLog);
                 if (tightenResult != null) {
                     action = mergeAction(action, ACTION_TIGHTEN_SL);
                     reasons.append(tightenResult);
@@ -252,11 +273,13 @@ final class ExitDecisionEngine {
         return new PositionRisk(marketVotes + signalVotes, strongReversal, String.join(",", reasons));
     }
 
-    private boolean shouldPartialProtect(BigDecimal targetProgress,
+    private boolean shouldPartialProtect(String path,
+                                         BigDecimal targetProgress,
                                          BigDecimal peakProgress,
                                          double peakDrawdown,
                                          PositionRisk risk,
                                          TradingExecutionState.PositionPeak peak) {
+        if (TradingDecisionSupport.PATH_MR.equals(path)) return false;
         if (peak == null || peak.partialTpDone()) return false;
         if (targetProgress == null || peakProgress == null) return false;
         return targetProgress.compareTo(BigDecimal.valueOf(PARTIAL_PROTECT_PROGRESS)) >= 0
@@ -265,21 +288,59 @@ final class ExitDecisionEngine {
                 && risk.riskVotes() >= 2;
     }
 
-    private boolean shouldTimeExit(long holdMinutes, BigDecimal targetProgress, PositionRisk risk) {
+    private boolean shouldTimeExit(String path, long holdMinutes, BigDecimal targetProgress, PositionRisk risk) {
         BigDecimal progress = targetProgress != null ? targetProgress : BigDecimal.ZERO;
-        boolean normalTimeout = holdMinutes >= TIME_EXIT_MINUTES
+        long normalMinutes = switch (path) {
+            case TradingDecisionSupport.PATH_MR -> 45;
+            case TradingDecisionSupport.PATH_BREAKOUT -> 60;
+            default -> TIME_EXIT_MINUTES;
+        };
+        long extendedMinutes = switch (path) {
+            case TradingDecisionSupport.PATH_MR -> 90;
+            case TradingDecisionSupport.PATH_BREAKOUT -> 120;
+            default -> EXTENDED_TIME_EXIT_MINUTES;
+        };
+        boolean normalTimeout = holdMinutes >= normalMinutes
                 && progress.compareTo(new BigDecimal("0.20")) < 0
                 && risk.riskVotes() >= 3;
-        boolean extendedTimeout = holdMinutes >= EXTENDED_TIME_EXIT_MINUTES
+        boolean extendedTimeout = holdMinutes >= extendedMinutes
                 && progress.compareTo(new BigDecimal("0.35")) < 0
                 && risk.riskVotes() >= 2;
         return normalTimeout || extendedTimeout;
     }
 
-    private boolean shouldTightenStop(BigDecimal targetProgress, PositionRisk risk) {
-        return targetProgress != null
-                && targetProgress.compareTo(BigDecimal.valueOf(TIGHTEN_SL_PROGRESS)) >= 0
-                && risk.riskVotes() >= 2;
+    private boolean shouldTightenStop(String path, BigDecimal targetProgress, PositionRisk risk) {
+        if (targetProgress == null) return false;
+        double progressThreshold = switch (path) {
+            case TradingDecisionSupport.PATH_BREAKOUT -> 0.25;
+            case TradingDecisionSupport.PATH_MR -> 0.45;
+            default -> TIGHTEN_SL_PROGRESS;
+        };
+        int riskThreshold = TradingDecisionSupport.PATH_LEGACY_TREND.equals(path) ? 1 : 2;
+        return targetProgress.compareTo(BigDecimal.valueOf(progressThreshold)) >= 0
+                && risk.riskVotes() >= riskThreshold;
+    }
+
+    private boolean shouldMeanReversionExit(String path, BigDecimal profit,
+                                            BigDecimal targetProgress, MarketContext ctx, boolean isLong) {
+        if (!TradingDecisionSupport.PATH_MR.equals(path)) return false;
+        if (profit == null || profit.signum() <= 0) return false;
+        if (targetProgress != null && targetProgress.compareTo(new BigDecimal("0.70")) >= 0) return true;
+        if (ctx.bollPb5m == null) return false;
+        return isLong ? ctx.bollPb5m >= 45.0 : ctx.bollPb5m <= 55.0;
+    }
+
+    private boolean shouldExitFailedBreakout(String path, BigDecimal profit,
+                                             long holdMinutes, MarketContext ctx, boolean isLong) {
+        if (!TradingDecisionSupport.PATH_BREAKOUT.equals(path)) return false;
+        if (holdMinutes < 5 || profit == null || profit.signum() > 0) return false;
+        if (ctx.bollPb5m != null) {
+            if (isLong && ctx.bollPb5m < 60.0) return true;
+            if (!isLong && ctx.bollPb5m > 40.0) return true;
+        }
+        return isMacdHistAgainst(ctx.macdHistTrend5m, isLong)
+                || (ctx.closeTrend5m != null
+                && (isLong ? ctx.closeTrend5m.contains("falling") : ctx.closeTrend5m.contains("rising")));
     }
 
     private String closePartial(TradingOperations tools,
@@ -316,10 +377,13 @@ final class ExitDecisionEngine {
                                    FuturesPositionDTO pos,
                                    BigDecimal profit,
                                    MarketContext ctx,
+                                   SymbolProfile profile,
+                                   String path,
                                    boolean isLong,
                                    PositionRisk risk,
                                    StringBuilder execLog) {
-        BigDecimal candidate = calcProtectiveStop(pos.getEntryPrice(), profit, ctx, isLong);
+        BigDecimal candidate = calcProtectiveStop(pos.getEntryPrice(), profit, ctx, profile, path, isLong);
+        if (candidate == null) return null;
         BigDecimal currentSl = getCurrentStopLossPrice(pos);
         if (!improvesStop(currentSl, candidate, isLong)) {
             return null;
@@ -397,11 +461,29 @@ final class ExitDecisionEngine {
         return Math.max(0, minutes);
     }
 
-    private BigDecimal calcProtectiveStop(BigDecimal entry, BigDecimal profit, MarketContext ctx, boolean isLong) {
-        BigDecimal lockByProfit = profit.multiply(new BigDecimal("0.20")).max(BigDecimal.ZERO);
-        BigDecimal lockByAtr = ctx.atr5m.multiply(new BigDecimal("0.15"));
-        BigDecimal lock = lockByProfit.min(lockByAtr).setScale(8, RoundingMode.HALF_UP);
-        return isLong ? entry.add(lock) : entry.subtract(lock);
+    private BigDecimal calcProtectiveStop(BigDecimal entry, BigDecimal profit, MarketContext ctx,
+                                          SymbolProfile profile, String path, boolean isLong) {
+        if (entry == null || profit == null || ctx.atr5m == null || ctx.atr5m.signum() <= 0) return null;
+        if (TradingDecisionSupport.PATH_MR.equals(path)) {
+            BigDecimal lockByProfit = profit.multiply(new BigDecimal("0.35")).max(BigDecimal.ZERO);
+            BigDecimal lockByAtr = ctx.atr5m.multiply(new BigDecimal("0.25"));
+            BigDecimal lock = lockByProfit.min(lockByAtr).setScale(8, RoundingMode.HALF_UP);
+            return isLong ? entry.add(lock) : entry.subtract(lock);
+        }
+
+        BigDecimal profitAtr = profit.divide(ctx.atr5m, 6, RoundingMode.HALF_UP);
+        if (profitAtr.doubleValue() < profile.trailBreakevenAtr()) return null;
+
+        BigDecimal trailGap = ctx.atr5m.multiply(BigDecimal.valueOf(profile.trailGapAtr()));
+        BigDecimal rawTrail = isLong ? ctx.price.subtract(trailGap) : ctx.price.add(trailGap);
+        double lockAtrMult = Math.min(profile.trailLockAtr(), Math.max(0.20, profitAtr.doubleValue() * 0.45));
+        BigDecimal lockByAtr = ctx.atr5m.multiply(BigDecimal.valueOf(lockAtrMult));
+        BigDecimal lockStop = isLong ? entry.add(lockByAtr) : entry.subtract(lockByAtr);
+        BigDecimal maxValid = isLong
+                ? ctx.price.subtract(ctx.atr5m.multiply(new BigDecimal("0.10")))
+                : ctx.price.add(ctx.atr5m.multiply(new BigDecimal("0.10")));
+        BigDecimal candidate = isLong ? rawTrail.max(lockStop) : rawTrail.min(lockStop);
+        return isLong ? candidate.min(maxValid) : candidate.max(maxValid);
     }
 
     private boolean improvesStop(BigDecimal currentSl, BigDecimal candidate, boolean isLong) {
@@ -439,6 +521,8 @@ final class ExitDecisionEngine {
     private int actionRank(String action) {
         return switch (action) {
             case ACTION_EXIT_FULL_RISK -> 4;
+            case ACTION_BREAKOUT_FAIL_EXIT -> 4;
+            case ACTION_MEAN_EXIT -> 3;
             case ACTION_TIME_EXIT -> 3;
             case ACTION_EXIT_PARTIAL_PROTECT -> 2;
             case ACTION_TIGHTEN_SL -> 1;
