@@ -295,29 +295,9 @@ public class AiAgentAdminController {
             runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_LOW_VOL_ENABLED,
                     req.getLowVolTradingEnabled(), operator, "admin trading-config");
         }
-        if (req.getDrawdownSentinelEnabled() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_ENABLED,
-                    req.getDrawdownSentinelEnabled(), operator, "admin trading-config");
-        }
-        if (req.getDrawdownWindowMinutes() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_WINDOW_MINUTES,
-                    req.getDrawdownWindowMinutes(), operator, "admin trading-config");
-        }
-        if (req.getDrawdownPnlPctDropThresholdPpt() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_PNL_PCT_DROP_THRESHOLD_PPT,
-                    req.getDrawdownPnlPctDropThresholdPpt(), operator, "admin trading-config");
-        }
-        if (req.getDrawdownProfitDrawdownThresholdPct() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_THRESHOLD_PCT,
-                    req.getDrawdownProfitDrawdownThresholdPct(), operator, "admin trading-config");
-        }
-        if (req.getDrawdownProfitDrawdownMinBase() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_MIN_BASE,
-                    req.getDrawdownProfitDrawdownMinBase(), operator, "admin trading-config");
-        }
-        if (req.getDrawdownCooldownMinutes() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.DRAWDOWN_SENTINEL_COOLDOWN_MINUTES,
-                    req.getDrawdownCooldownMinutes(), operator, "admin trading-config");
+        if (req.getPlaybookExitEnabled() != null) {
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_PLAYBOOK_EXIT_ENABLED,
+                    req.getPlaybookExitEnabled(), operator, "admin trading-config");
         }
         if (req.getCircuitBreakerEnabled() != null) {
             runtimeFeatureToggleService.set(RuntimeFeatureToggleService.CIRCUIT_BREAKER_ENABLED,
@@ -343,22 +323,6 @@ public class AiAgentAdminController {
     }
 
     private Result<TradingConfigResponse> validateTradingConfigRequest(TradingConfigRequest req) {
-        if (req.getDrawdownWindowMinutes() != null && req.getDrawdownWindowMinutes() <= 0) {
-            return Result.fail("drawdownWindowMinutes必须为正整数");
-        }
-        if (req.getDrawdownCooldownMinutes() != null && req.getDrawdownCooldownMinutes() <= 0) {
-            return Result.fail("drawdownCooldownMinutes必须为正整数");
-        }
-        if (req.getDrawdownPnlPctDropThresholdPpt() != null && req.getDrawdownPnlPctDropThresholdPpt() < 0) {
-            return Result.fail("drawdownPnlPctDropThresholdPpt不能小于0");
-        }
-        if (req.getDrawdownProfitDrawdownThresholdPct() != null
-                && req.getDrawdownProfitDrawdownThresholdPct() < 0) {
-            return Result.fail("drawdownProfitDrawdownThresholdPct不能小于0");
-        }
-        if (req.getDrawdownProfitDrawdownMinBase() != null && req.getDrawdownProfitDrawdownMinBase() < 0) {
-            return Result.fail("drawdownProfitDrawdownMinBase不能小于0");
-        }
         if (req.getCircuitBreakerL1DailyNetLossPct() != null
                 && !isPercentInRange(req.getCircuitBreakerL1DailyNetLossPct())) {
             return Result.fail("circuitBreakerL1DailyNetLossPct必须在0到100之间");
@@ -383,16 +347,10 @@ public class AiAgentAdminController {
     private TradingConfigResponse buildTradingConfigResponse() {
         RuntimeToggleSnapshot snapshot = runtimeFeatureToggleService.snapshot();
         RuntimeToggleSnapshot.TradingToggles trading = snapshot.trading();
-        RuntimeToggleSnapshot.DrawdownSentinelToggles drawdown = snapshot.drawdown();
         RuntimeToggleSnapshot.CircuitBreakerToggles breaker = snapshot.circuitBreaker();
         TradingConfigResponse resp = new TradingConfigResponse();
         resp.setLowVolTradingEnabled(trading.lowVolTradingEnabled());
-        resp.setDrawdownSentinelEnabled(drawdown.enabled());
-        resp.setDrawdownWindowMinutes(drawdown.windowMinutes());
-        resp.setDrawdownPnlPctDropThresholdPpt(drawdown.pnlPctDropThresholdPpt());
-        resp.setDrawdownProfitDrawdownThresholdPct(drawdown.profitDrawdownThresholdPct());
-        resp.setDrawdownProfitDrawdownMinBase(drawdown.profitDrawdownMinBase());
-        resp.setDrawdownCooldownMinutes(drawdown.cooldownMinutes());
+        resp.setPlaybookExitEnabled(trading.playbookExitEnabled());
         resp.setCircuitBreakerEnabled(circuitBreakerService.isEffectiveEnabled());
         resp.setCircuitBreakerRuntimeEnabled(breaker.enabled());
         resp.setCircuitBreakerPropertyEnabled(circuitBreakerService.isPropertyEnabled());
@@ -462,12 +420,7 @@ public class AiAgentAdminController {
     @Data
     public static class TradingConfigRequest {
         private Boolean lowVolTradingEnabled;
-        private Boolean drawdownSentinelEnabled;
-        private Integer drawdownWindowMinutes;
-        private Double drawdownPnlPctDropThresholdPpt;
-        private Double drawdownProfitDrawdownThresholdPct;
-        private Double drawdownProfitDrawdownMinBase;
-        private Integer drawdownCooldownMinutes;
+        private Boolean playbookExitEnabled;
         private Boolean circuitBreakerEnabled;
         private Double circuitBreakerL1DailyNetLossPct;
         private Integer circuitBreakerL2LossStreak;
@@ -478,12 +431,7 @@ public class AiAgentAdminController {
     @Data
     public static class TradingConfigResponse {
         private Boolean lowVolTradingEnabled;
-        private Boolean drawdownSentinelEnabled;
-        private Integer drawdownWindowMinutes;
-        private Double drawdownPnlPctDropThresholdPpt;
-        private Double drawdownProfitDrawdownThresholdPct;
-        private Double drawdownProfitDrawdownMinBase;
-        private Integer drawdownCooldownMinutes;
+        private Boolean playbookExitEnabled;
         private Boolean circuitBreakerEnabled;
         private Boolean circuitBreakerRuntimeEnabled;
         private Boolean circuitBreakerPropertyEnabled;

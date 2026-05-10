@@ -43,7 +43,7 @@ public class AiTradingScheduler {
     private final AtomicLong aiUserId = new AtomicLong(0);
     private final AtomicInteger cycleCounter = new AtomicInteger(0);
     private final Set<String> runningSymbols = ConcurrentHashMap.newKeySet();
-    /** 全局最近触发记录，由所有入口（事件/cron/手动/Sentinel）共享，用于跨入口防重。 */
+    /** 全局最近触发记录，由所有入口（事件/cron/手动/波动哨兵）共享，用于跨入口防重。 */
     private final Map<String, Instant> lastEventTriggerTime = new ConcurrentHashMap<>();
     private static final long EVENT_GUARD_SECONDS = 30; // 30秒技术去重
 
@@ -134,12 +134,6 @@ public class AiTradingScheduler {
         }
     }
 
-    /** @deprecated 新调用使用 {@link #submitTradingCycle(List)} 获取每个symbol的提交结果。 */
-    @Deprecated(forRemoval = false)
-    public int triggerTradingCycle(List<String> symbols) {
-        return submitTradingCycle(symbols).cycleNo();
-    }
-
     public TradingCycleSubmitResult submitTradingCycle(List<String> symbols) {
         if (aiUserId.get() == 0) {
             throw new IllegalStateException("AI交易员未初始化");
@@ -164,16 +158,10 @@ public class AiTradingScheduler {
         if (lastEvent != null && now.getEpochSecond() - lastEvent.getEpochSecond() < EVENT_GUARD_SECONDS) {
             return new SymbolSubmitResult(symbol, SubmitStatus.SKIPPED, "RECENTLY_TRIGGERED");
         }
-        // 提交时同步记录，确保事件、cron、手动、哨兵入口共享同一防重窗口。
+        // 提交时同步记录，确保事件、cron、手动、波动哨兵入口共享同一防重窗口。
         lastEventTriggerTime.put(symbol, now);
         Thread.startVirtualThread(() -> runTradingCycle(symbol, cycleNo));
         return new SymbolSubmitResult(symbol, SubmitStatus.SUBMITTED, null);
-    }
-
-    /** 查询symbol在最近 secondsAgo 秒内是否已被任何入口触发过，用于Sentinel跨源防重。 */
-    public boolean isRecentlyTriggered(String symbol, long secondsAgo) {
-        Instant last = lastEventTriggerTime.get(symbol);
-        return last != null && Instant.now().getEpochSecond() - last.getEpochSecond() < secondsAgo;
     }
 
     private void runTradingCycle(String symbol, int cycleNo) {
@@ -211,12 +199,15 @@ public class AiTradingScheduler {
             // 确定性执行器决策
             var tradingToggles = runtimeFeatureToggleService.snapshot().trading();
             TradingRuntimeToggles executorToggles = new TradingRuntimeToggles(
-                    tradingToggles.lowVolTradingEnabled());
+                    tradingToggles.lowVolTradingEnabled(),
+                    tradingToggles.playbookExitEnabled()
+            );
             DeterministicTradingExecutor.ExecutionResult result =
                     DeterministicTradingExecutor.execute(
                             symbol, userBefore, positions, forecast, signals,
                             recentDecisions, futuresPrice, markPrice, equityBefore, tools,
-                            allOpenPositionIds, tradingExecutionState, executorToggles);
+                            allOpenPositionIds, tradingExecutionState, executorToggles
+                    );
 
             log.info("[AI-Trader] 决策完成 symbol={} action={} reasoning={}",
                     symbol, result.action(), result.reasoning());

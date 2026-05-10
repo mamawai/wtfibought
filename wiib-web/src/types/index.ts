@@ -714,12 +714,7 @@ export interface AiModelAssignment {
 
 export interface TradingRuntimeConfig {
   lowVolTradingEnabled?: boolean;
-  drawdownSentinelEnabled?: boolean;
-  drawdownWindowMinutes?: number;
-  drawdownPnlPctDropThresholdPpt?: number;
-  drawdownProfitDrawdownThresholdPct?: number;
-  drawdownProfitDrawdownMinBase?: number;
-  drawdownCooldownMinutes?: number;
+  playbookExitEnabled?: boolean;
   /** 实际生效状态：环境 kill switch 和 runtime 开关都开才为 true。 */
   circuitBreakerEnabled?: boolean;
   circuitBreakerRuntimeEnabled?: boolean;

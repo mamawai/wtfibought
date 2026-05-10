@@ -40,8 +40,10 @@ export function Admin() {
   const [assignmentsDraft, setAssignmentsDraft] = useState<AiModelAssignment[]>([]);
 
   // 交易运行时开关
-  const [tradingConfig, setTradingConfig] = useState<TradingRuntimeConfig>({ lowVolTradingEnabled: false });
-  const [drawdownDraft, setDrawdownDraft] = useState<TradingRuntimeConfig>({});
+  const [tradingConfig, setTradingConfig] = useState<TradingRuntimeConfig>({
+    lowVolTradingEnabled: false,
+    playbookExitEnabled: false,
+  });
   const [circuitBreakerDraft, setCircuitBreakerDraft] = useState<TradingRuntimeConfig>({});
 
   // 量化运行时开关
@@ -91,13 +93,6 @@ export function Admin() {
     try {
       const c = await adminApi.getTradingConfig();
       setTradingConfig(c);
-      setDrawdownDraft({
-        drawdownWindowMinutes: c.drawdownWindowMinutes,
-        drawdownPnlPctDropThresholdPpt: c.drawdownPnlPctDropThresholdPpt,
-        drawdownProfitDrawdownThresholdPct: c.drawdownProfitDrawdownThresholdPct,
-        drawdownProfitDrawdownMinBase: c.drawdownProfitDrawdownMinBase,
-        drawdownCooldownMinutes: c.drawdownCooldownMinutes,
-      });
       setCircuitBreakerDraft({
         circuitBreakerL1DailyNetLossPct: c.circuitBreakerL1DailyNetLossPct,
         circuitBreakerL2LossStreak: c.circuitBreakerL2LossStreak,
@@ -149,13 +144,13 @@ export function Admin() {
     finally { setActionLoading(null); }
   };
 
-  const toggleDrawdownSentinel = async () => {
-    const next = !tradingConfig.drawdownSentinelEnabled;
-    setActionLoading('toggleDrawdown');
+  const togglePlaybookExit = async () => {
+    const next = !tradingConfig.playbookExitEnabled;
+    setActionLoading('togglePlaybookExit');
     try {
-      const c = await adminApi.setTradingConfig({ drawdownSentinelEnabled: next });
+      const c = await adminApi.setTradingConfig({ playbookExitEnabled: next });
       setTradingConfig(c);
-      toast(next ? '持仓回撤哨兵：已开启' : '持仓回撤哨兵：已关闭', 'success');
+      toast(next ? 'Playbook平仓灰度开关：已开启' : 'Playbook平仓灰度开关：已关闭', 'success');
     } catch { /* ignore */ }
     finally { setActionLoading(null); }
   };
@@ -196,23 +191,6 @@ export function Admin() {
       setQuantConfig(c);
       toast(next ? 'Bull/Bear辩论影子模式：已开启' : 'Bull/Bear辩论影子模式：已关闭', 'success');
     } catch { /* ignore */ }
-    finally { setActionLoading(null); }
-  };
-
-  const saveDrawdownParams = async () => {
-    setActionLoading('saveDrawdown');
-    try {
-      const c = await adminApi.setTradingConfig(drawdownDraft);
-      setTradingConfig(c);
-      setDrawdownDraft({
-        drawdownWindowMinutes: c.drawdownWindowMinutes,
-        drawdownPnlPctDropThresholdPpt: c.drawdownPnlPctDropThresholdPpt,
-        drawdownProfitDrawdownThresholdPct: c.drawdownProfitDrawdownThresholdPct,
-        drawdownProfitDrawdownMinBase: c.drawdownProfitDrawdownMinBase,
-        drawdownCooldownMinutes: c.drawdownCooldownMinutes,
-      });
-      toast('回撤哨兵参数已保存', 'success');
-    } catch (e) { toast((e as Error).message || '保存失败', 'error'); }
     finally { setActionLoading(null); }
   };
 
@@ -626,6 +604,27 @@ export function Admin() {
                 </Button>
               </div>
 
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex-1">
+                  <div className="font-medium">Playbook平仓引擎</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    开启：灰度使用按路径拆分的Playbook退出逻辑；关闭：继续使用旧ExitDecisionEngine（默认）。
+                  </div>
+                  <div className="text-xs mt-2">
+                    当前状态：<Badge variant={tradingConfig.playbookExitEnabled ? 'default' : 'secondary'}>
+                      {tradingConfig.playbookExitEnabled ? '已开启（灰度）' : '已关闭（旧引擎）'}
+                    </Badge>
+                  </div>
+                </div>
+                <Button
+                  variant={tradingConfig.playbookExitEnabled ? 'default' : 'outline'}
+                  onClick={() => void togglePlaybookExit()}
+                  disabled={actionLoading !== null}
+                >
+                  {tradingConfig.playbookExitEnabled ? '关闭' : '开启'}
+                </Button>
+              </div>
+
             </CardContent>
           </Card>
 
@@ -781,98 +780,6 @@ export function Admin() {
                   disabled={actionLoading !== null || quantConfig.debateJudgeEnabled}
                 >
                   {quantConfig.debateJudgeShadowEnabled ? '关闭' : '开启'}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>持仓回撤哨兵 (主动平仓)</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex-1">
-                    <div className="font-medium">按持仓回撤主动平仓</div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      每分钟扫描AI账户所有OPEN持仓，窗口内PnL急速恶化时直接市价平仓。<br/>
-                      <b>条件A</b>：PnL%下降 ≥ 阈值ppt（保证金权益角度）<br/>
-                      <b>条件B</b>：盈利金额回撤 ≥ 阈值%（仅在窗口最高盈利 &gt; 基线USDT时启用）<br/>
-                      <b>条件C</b>：生命周期峰值浮盈达到ATR阈值后回撤到指定比例以下<br/>
-                      任一条件满足即平仓，日志会注明触发原因。同持仓平仓后进入冷却期。
-                    </div>
-                    <div className="text-xs mt-2">
-                      当前状态：<Badge variant={tradingConfig.drawdownSentinelEnabled ? 'default' : 'secondary'}>
-                        {tradingConfig.drawdownSentinelEnabled ? '已开启（默认）' : '已关闭'}
-                      </Badge>
-                    </div>
-                  </div>
-                  <Button
-                    variant={tradingConfig.drawdownSentinelEnabled ? 'default' : 'outline'}
-                    onClick={() => void toggleDrawdownSentinel()}
-                    disabled={actionLoading !== null}
-                  >
-                    {tradingConfig.drawdownSentinelEnabled ? '关闭' : '开启'}
-                  </Button>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-muted-foreground">窗口时长(分钟)</label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={drawdownDraft.drawdownWindowMinutes ?? ''}
-                      onChange={(e) => setDrawdownDraft({ ...drawdownDraft, drawdownWindowMinutes: Number(e.target.value) })}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">冷却时长(分钟)</label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={drawdownDraft.drawdownCooldownMinutes ?? ''}
-                      onChange={(e) => setDrawdownDraft({ ...drawdownDraft, drawdownCooldownMinutes: Number(e.target.value) })}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">A - PnL%下降阈值(ppt)</label>
-                    <Input
-                      type="number"
-                      step="0.1"
-                      min={0}
-                      value={drawdownDraft.drawdownPnlPctDropThresholdPpt ?? ''}
-                      onChange={(e) => setDrawdownDraft({ ...drawdownDraft, drawdownPnlPctDropThresholdPpt: Number(e.target.value) })}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">B - 盈利回撤阈值(%)</label>
-                    <Input
-                      type="number"
-                      step="1"
-                      min={0}
-                      value={drawdownDraft.drawdownProfitDrawdownThresholdPct ?? ''}
-                      onChange={(e) => setDrawdownDraft({ ...drawdownDraft, drawdownProfitDrawdownThresholdPct: Number(e.target.value) })}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">B - 盈利基线(USDT)</label>
-                    <Input
-                      type="number"
-                      step="1"
-                      min={0}
-                      value={drawdownDraft.drawdownProfitDrawdownMinBase ?? ''}
-                      onChange={(e) => setDrawdownDraft({ ...drawdownDraft, drawdownProfitDrawdownMinBase: Number(e.target.value) })}
-                    />
-                  </div>
-                </div>
-
-                <Button
-                  onClick={() => void saveDrawdownParams()}
-                  disabled={actionLoading !== null}
-                >
-                  <Save className="w-4 h-4 mr-2" />保存参数
                 </Button>
               </div>
             </CardContent>
