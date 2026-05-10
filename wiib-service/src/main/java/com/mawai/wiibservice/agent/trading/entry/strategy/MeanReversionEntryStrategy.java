@@ -1,10 +1,20 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.entry.strategy;
+
+import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyResult;
+
+import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyContext;
+
+import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyCandidate;
+
+import com.mawai.wiibservice.agent.trading.SymbolProfile;
+
+import com.mawai.wiibservice.agent.trading.MarketContext;
 
 import java.math.BigDecimal;
 
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.PATH_MR;
 
-final class MeanReversionEntryStrategy implements EntryStrategy {
+public final class MeanReversionEntryStrategy implements EntryStrategy {
 
     private static final int MAX_LEVERAGE = 20;
     private static final double POSITION_SCALE = 0.55;

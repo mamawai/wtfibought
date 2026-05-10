@@ -1,9 +1,15 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.entry.confluence;
+
+import com.mawai.wiibservice.agent.trading.entry.strategy.EntryStrategySupport;
+
+import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyContext;
+
+import com.mawai.wiibservice.agent.trading.MarketContext;
 
 import java.util.ArrayList;
 import java.util.List;
 
-final class BreakoutConfluenceGate implements EntryConfluenceGate {
+public final class BreakoutConfluenceGate implements EntryConfluenceGate {
 
     @Override
     public ConfluenceGateResult evaluate(EntryStrategyContext context) {

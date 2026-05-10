@@ -1,5 +1,23 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.entry;
 
+import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
+import com.mawai.wiibservice.agent.trading.MarketContext;
+import com.mawai.wiibservice.agent.trading.SymbolProfile;
+import com.mawai.wiibservice.agent.trading.TradingDecisionContext;
+import com.mawai.wiibservice.agent.trading.TradingExecutionState;
+import com.mawai.wiibservice.agent.trading.TradingRuntimeToggles;
+import com.mawai.wiibservice.agent.trading.entry.confluence.BreakoutConfluenceGate;
+import com.mawai.wiibservice.agent.trading.entry.confluence.ConfluenceGateResult;
+import com.mawai.wiibservice.agent.trading.entry.confluence.EntryConfluenceGate;
+import com.mawai.wiibservice.agent.trading.entry.confluence.MeanReversionConfluenceGate;
+import com.mawai.wiibservice.agent.trading.entry.confluence.TrendConfluenceGate;
+import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyCandidate;
+import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyContext;
+import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyResult;
+import com.mawai.wiibservice.agent.trading.entry.strategy.BreakoutEntryStrategy;
+import com.mawai.wiibservice.agent.trading.entry.strategy.EntryStrategy;
+import com.mawai.wiibservice.agent.trading.entry.strategy.MeanReversionEntryStrategy;
+import com.mawai.wiibservice.agent.trading.entry.strategy.TrendContinuationEntryStrategy;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlanFactory;
 import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
@@ -31,7 +49,7 @@ import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.hold;
  * 策略细节在 EntryStrategy 实现里，当前类只做上下文校验、候选收集、择优和下单。
  */
 @Slf4j
-final class EntryDecisionEngine {
+public final class EntryDecisionEngine {
 
     private static final List<EntryStrategy> STRATEGIES = List.of(
             new BreakoutEntryStrategy(),
@@ -61,7 +79,7 @@ final class EntryDecisionEngine {
      * <p>返回 OPEN_xxx 表示实际发出开仓并且交易层确认成功；其它情况返回 HOLD，
      * reason 里会带上最早挡住开仓的业务原因，方便排查是信号、策略、风控还是下单失败。</p>
      */
-    DeterministicTradingExecutor.ExecutionResult evaluate(TradingDecisionContext decision) {
+    public DeterministicTradingExecutor.ExecutionResult evaluate(TradingDecisionContext decision) {
         String symbol = decision.symbol();
         User user = decision.user();
         MarketContext ctx = decision.market();
