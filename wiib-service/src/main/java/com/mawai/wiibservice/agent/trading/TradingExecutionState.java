@@ -18,6 +18,7 @@ public class TradingExecutionState {
     private final ConcurrentHashMap<String, Long> lastEntryMs = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Integer> reversalStreak = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, PositionPeak> positionPeaks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, ExitPlan> exitPlans = new ConcurrentHashMap<>();
 
     // 回测用：覆盖当前时间（毫秒），为 null 时回退到 System.currentTimeMillis()
     @Getter
@@ -45,11 +46,28 @@ public class TradingExecutionState {
     public void cleanupPositionMemory(Collection<Long> livePositionIds) {
         positionPeaks.keySet().removeIf(id -> !livePositionIds.contains(id));
         reversalStreak.keySet().removeIf(id -> !livePositionIds.contains(id));
+        exitPlans.keySet().removeIf(id -> !livePositionIds.contains(id));
     }
 
     public void clearPosition(Long positionId) {
         positionPeaks.remove(positionId);
         reversalStreak.remove(positionId);
+        exitPlans.remove(positionId);
+    }
+
+    public ExitPlan getExitPlan(Long positionId) {
+        return exitPlans.get(positionId);
+    }
+
+    public void putExitPlan(Long positionId, ExitPlan plan) {
+        if (positionId == null || plan == null) {
+            return;
+        }
+        exitPlans.put(positionId, plan);
+    }
+
+    public ExitPlan removeExitPlan(Long positionId) {
+        return exitPlans.remove(positionId);
     }
 
     public void recordPositiveProfit(Long positionId, BigDecimal profit) {

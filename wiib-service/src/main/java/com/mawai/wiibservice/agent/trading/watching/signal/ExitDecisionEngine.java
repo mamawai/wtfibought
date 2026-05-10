@@ -1,7 +1,14 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.watching.signal;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
+import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
+import com.mawai.wiibservice.agent.trading.MarketContext;
+import com.mawai.wiibservice.agent.trading.SymbolProfile;
+import com.mawai.wiibservice.agent.trading.TradingDecisionContext;
+import com.mawai.wiibservice.agent.trading.TradingDecisionSupport;
+import com.mawai.wiibservice.agent.trading.TradingExecutionState;
+import com.mawai.wiibservice.agent.trading.TradingOperations;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -9,26 +16,28 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.calcCurrentTargetProgress;
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.calcTargetDistance;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.currentDateTime;
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.findBestSignal;
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.fmtPrice;
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.getCurrentStopLossPrice;
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.getCurrentTakeProfitPrice;
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.isTradeSuccess;
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.isUpdateSuccess;
+import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.prepareExitEvaluation;
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.syncRemainingRiskOrders;
 
 /**
- * 平仓/持仓保护判断引擎。
+ * 旧版信号退出引擎。
+ *
+ * <p>这是 Playbook 之前的持仓保护逻辑：不区分入场剧本，只基于当前信号、行情风险票、
+ * 盈利进度、峰值回撤和持仓时间做软退出。</p>
+ *
  * 硬 SL/TP 仍交给 futures 风控服务；这里处理信号反转、浮盈回撤、时间僵持等软退出。
  */
-final class ExitDecisionEngine {
+@Deprecated
+public final class ExitDecisionEngine {
 
     // 默认动作，表示不做主动平仓或改 SL。
     private static final String ACTION_HOLD = "HOLD";
@@ -66,29 +75,23 @@ final class ExitDecisionEngine {
     // 保护性平半时关闭的仓位比例。
     private static final BigDecimal PARTIAL_CLOSE_RATIO = new BigDecimal("0.50");
 
-    DeterministicTradingExecutor.ExecutionResult evaluate(
+    public DeterministicTradingExecutor.ExecutionResult evaluate(
             TradingDecisionContext decision,
             boolean cleanupFromCurrentPositions) {
 
-        List<FuturesPositionDTO> positions = decision.symbolPositions();
-        TradingExecutionState state = decision.state();
+        TradingDecisionSupport.ExitEvaluationContext prepared = prepareExitEvaluation(decision, cleanupFromCurrentPositions);
+        List<FuturesPositionDTO> positions = prepared.positions();
+        TradingExecutionState state = prepared.state();
         MarketContext ctx = decision.market();
         SymbolProfile profile = decision.profile();
         TradingOperations tools = decision.tools();
-        LocalDateTime now = currentDateTime(state);
-
-        if (cleanupFromCurrentPositions) {
-            Set<Long> livePositionIds = positions.stream()
-                    .map(FuturesPositionDTO::getId)
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toSet());
-            state.cleanupPositionMemory(livePositionIds);
-        }
+        LocalDateTime now = prepared.now();
 
         StringBuilder execLog = new StringBuilder();
         StringBuilder reasons = new StringBuilder();
         String action = ACTION_HOLD;
 
+        // 多仓位逐个看，真实动作可以累积；最终 action 用优先级最高的那个对外表达。
         for (FuturesPositionDTO pos : positions) {
             Long positionId = pos.getId();
             if (!"OPEN".equals(pos.getStatus())) {
@@ -113,6 +116,7 @@ final class ExitDecisionEngine {
             BigDecimal targetProgress = calcCurrentTargetProgress(pos, profit, ctx, profile);
             BigDecimal targetDistance = calcTargetDistance(pos, ctx, profile);
             BigDecimal stopDistance = calcStopDistance(pos, ctx, profile);
+            // peak 系列只记录正浮盈，服务于“赚过但回吐明显”时的保护性平半。
             double peakDrawdown = calcPeakDrawdown(positionId, profit, state);
             BigDecimal peakProgress = calcPeakProgress(positionId, targetDistance, state);
             long holdMinutes = holdingMinutes(pos, now);
@@ -123,6 +127,7 @@ final class ExitDecisionEngine {
                 continue;
             }
 
+            // 退出优先级从“策略已失败/风险很高”到“保护利润/收紧止损”，越靠前越强。
             if (shouldExitFailedBreakout(path, profit, holdMinutes, ctx, isLong)) {
                 FullCloseResult result = closeFull(tools, state, pos, ACTION_BREAKOUT_FAIL_EXIT,
                         "突破失败", risk, execLog);

@@ -11,33 +11,61 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
-final class TradingDecisionSupport {
+public final class TradingDecisionSupport {
 
-    static final String PATH_BREAKOUT = "BREAKOUT";
-    static final String PATH_MR = "MR";
-    static final String PATH_LEGACY_TREND = "LEGACY_TREND";
+    public static final String PATH_BREAKOUT = "BREAKOUT";
+    public static final String PATH_MR = "MR";
+    public static final String PATH_LEGACY_TREND = "LEGACY_TREND";
     private static final String LEGACY_PATH_TREND = "TREND";
     private static final String LEGACY_PATH_MR = "MEAN_REVERSION";
 
     private TradingDecisionSupport() {
     }
 
-    static DeterministicTradingExecutor.ExecutionResult hold(String reason) {
+    public static DeterministicTradingExecutor.ExecutionResult hold(String reason) {
         return new DeterministicTradingExecutor.ExecutionResult("HOLD", reason, "");
     }
 
-    static long currentTimeMillis(TradingExecutionState state) {
+    public static long currentTimeMillis(TradingExecutionState state) {
         Long mockNowMs = state != null ? state.getMockNowMs() : null;
         return mockNowMs != null ? mockNowMs : System.currentTimeMillis();
     }
 
-    static LocalDateTime currentDateTime(TradingExecutionState state) {
+    public static LocalDateTime currentDateTime(TradingExecutionState state) {
         return currentDateTime(currentTimeMillis(state));
     }
 
-    static LocalDateTime currentDateTime(long epochMs) {
+    public static LocalDateTime currentDateTime(long epochMs) {
         return LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMs), ZoneId.systemDefault());
+    }
+
+    public record ExitEvaluationContext(List<FuturesPositionDTO> positions,
+                                        TradingExecutionState state,
+                                        LocalDateTime now) {
+    }
+
+    /**
+     * 退出引擎共用准备：取当前时间、清理已消失仓位的旧记忆、补齐缺失的 ExitPlan。
+     *
+     * <p>生产入口已传全账户 OPEN 仓位 ID，外层会全局清理；旧入口/回测只知道当前 symbol，
+     * 这里才按当前 positions 局部清理，避免误删其它 symbol 的持仓记忆。</p>
+     */
+    public static ExitEvaluationContext prepareExitEvaluation(TradingDecisionContext decision, boolean cleanupFromCurrentPositions) {
+        TradingExecutionState state = decision.state();
+        List<FuturesPositionDTO> positions = decision.symbolPositions() != null ? decision.symbolPositions() : List.of();
+        LocalDateTime now = currentDateTime(state);
+
+        if (cleanupFromCurrentPositions) {
+            List<Long> livePositionIds = positions.stream()
+                    .map(FuturesPositionDTO::getId)
+                    .filter(Objects::nonNull)
+                    .toList();
+            state.cleanupPositionMemory(livePositionIds);
+        }
+        ExitPlanRecovery.ensureRecoveredPlans(decision, now);
+        return new ExitEvaluationContext(positions, state, now);
     }
 
     /**
@@ -45,7 +73,7 @@ final class TradingDecisionSupport {
      * 每段只在最后1分钟停止新开仓，避免临近过期信号驱动入场。<br>
      * forecastTime=null 兼容回测：退回旧逻辑，从全部信号里按 confidence 选最高。
      */
-    static QuantSignalDecision findBestSignalWithPriority(List<QuantSignalDecision> signals,
+    public static QuantSignalDecision findBestSignalWithPriority(List<QuantSignalDecision> signals,
                                                           LocalDateTime forecastTime,
                                                           LocalDateTime now) {
         if (signals == null || signals.isEmpty()) return null;
@@ -101,7 +129,7 @@ final class TradingDecisionSupport {
     }
 
     /** 持仓管理看仍未过期的最高置信度信号，用于反向风险判断。 */
-    static QuantSignalDecision findBestSignal(List<QuantSignalDecision> signals,
+    public static QuantSignalDecision findBestSignal(List<QuantSignalDecision> signals,
                                               LocalDateTime forecastTime,
                                               LocalDateTime now) {
         if (signals == null || signals.isEmpty()) return null;
@@ -129,17 +157,17 @@ final class TradingDecisionSupport {
         return best;
     }
 
-    static BigDecimal getCurrentStopLossPrice(FuturesPositionDTO pos) {
+    public static BigDecimal getCurrentStopLossPrice(FuturesPositionDTO pos) {
         if (pos.getStopLosses() == null || pos.getStopLosses().isEmpty()) return null;
         return pos.getStopLosses().getFirst().getPrice();
     }
 
-    static BigDecimal getCurrentTakeProfitPrice(FuturesPositionDTO pos) {
+    public static BigDecimal getCurrentTakeProfitPrice(FuturesPositionDTO pos) {
         if (pos.getTakeProfits() == null || pos.getTakeProfits().isEmpty()) return null;
         return pos.getTakeProfits().getFirst().getPrice();
     }
 
-    static BigDecimal calcCurrentTargetProgress(
+    public static BigDecimal calcCurrentTargetProgress(
             FuturesPositionDTO pos, BigDecimal profit, MarketContext ctx, SymbolProfile profile) {
         BigDecimal targetDistance = calcTargetDistance(pos, ctx, profile);
         if (targetDistance == null || targetDistance.signum() <= 0 || profit.signum() <= 0) {
@@ -148,7 +176,7 @@ final class TradingDecisionSupport {
         return profit.divide(targetDistance, 4, RoundingMode.HALF_UP);
     }
 
-    static BigDecimal calcTargetDistance(FuturesPositionDTO pos, MarketContext ctx, SymbolProfile profile) {
+    public static BigDecimal calcTargetDistance(FuturesPositionDTO pos, MarketContext ctx, SymbolProfile profile) {
         BigDecimal entry = pos.getEntryPrice();
         BigDecimal tp = getCurrentTakeProfitPrice(pos);
         BigDecimal targetDistance = tp != null && entry != null ? tp.subtract(entry).abs() : null;
@@ -163,7 +191,7 @@ final class TradingDecisionSupport {
         return targetDistance;
     }
 
-    static String syncRemainingRiskOrders(
+    public static String syncRemainingRiskOrders(
             TradingOperations tools, Long positionId, BigDecimal currentSl, BigDecimal currentTp, BigDecimal remainingQty) {
         StringBuilder log = new StringBuilder();
         if (currentSl != null && currentSl.signum() > 0) {
@@ -179,27 +207,27 @@ final class TradingDecisionSupport {
         return log.toString();
     }
 
-    static boolean isTradeSuccess(String result) {
+    public static boolean isTradeSuccess(String result) {
         return result != null && (result.startsWith("开仓成功") || result.startsWith("平仓成功"));
     }
 
-    static boolean isUpdateSuccess(String result) {
+    public static boolean isUpdateSuccess(String result) {
         return result != null && result.contains("成功") && !result.contains("失败");
     }
 
-    static String normalizeStrategyPath(String memo) {
+    public static String normalizeStrategyPath(String memo) {
         if (memo == null) return "";
         if (LEGACY_PATH_MR.equals(memo)) return PATH_MR;
         if (LEGACY_PATH_TREND.equals(memo)) return PATH_LEGACY_TREND;
         return memo;
     }
 
-    static String fmtPrice(BigDecimal p) {
+    public static String fmtPrice(BigDecimal p) {
         if (p == null) return "-";
         return p.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 
-    static String fmt(double v) {
+    public static String fmt(double v) {
         return String.format("%.2f", v);
     }
 
