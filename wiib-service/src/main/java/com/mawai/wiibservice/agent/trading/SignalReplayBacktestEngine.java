@@ -49,9 +49,16 @@ public class SignalReplayBacktestEngine {
     }
 
     public BacktestResult run() {
+        return run(TradingRuntimeToggles.fromStaticFields());
+    }
+
+    public BacktestResult run(TradingRuntimeToggles toggles) {
         if (cycles == null || cycles.isEmpty()) {
             throw new IllegalArgumentException("cycles为空，无可回放的历史数据");
         }
+        TradingRuntimeToggles runtimeToggles = toggles != null
+                ? toggles
+                : TradingRuntimeToggles.fromStaticFields();
 
         BacktestTradingTools tools = new BacktestTradingTools(initialBalance, symbol);
         TradingExecutionState executionState = new TradingExecutionState();
@@ -105,7 +112,7 @@ public class SignalReplayBacktestEngine {
                     DeterministicTradingExecutor.execute(
                             symbol, mockUser, positions, cycle, signals,
                             new ArrayList<>(recentDecisions), price, price, equity, tools,
-                            executionState, TradingRuntimeToggles.fromStaticFields());
+                            executionState, runtimeToggles);
 
             if (exec.action() != null && exec.action().startsWith("OPEN_")) {
                 tools.markOpenBarIndex(index);
@@ -140,7 +147,7 @@ public class SignalReplayBacktestEngine {
             result.addTrade(new BacktestResult.Trade(
                     ct.openBarIndex(), ct.closeBarIndex(), ct.side(), ct.strategy(),
                     ct.entryPrice(), ct.exitPrice(), ct.quantity(), ct.leverage(),
-                    ct.pnl(), ct.fee(), ct.exitReason()));
+                    ct.pnl(), ct.fee(), ct.rMultiple(), ct.exitReason()));
         }
 
         log.info("[Replay] 回放完成 skipped={}条(缺lastPrice)\n{}", skipped, result);

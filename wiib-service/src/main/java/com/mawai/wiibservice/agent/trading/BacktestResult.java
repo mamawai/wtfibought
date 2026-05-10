@@ -32,6 +32,7 @@ public class BacktestResult {
             int leverage,
             BigDecimal pnl,         // 已扣手续费
             BigDecimal fee,         // 总手续费
+            BigDecimal rMultiple,   // 以开仓初始风险为基准；缺失风险时为 null
             String exitReason       // "SL" / "TP" / "SIGNAL_CLOSE" / "TRAILING_STOP" / "TIMEOUT" / "MANUAL"
     ) {}
 
@@ -46,6 +47,7 @@ public class BacktestResult {
             double winRate,
             BigDecimal netPnl,
             BigDecimal ev,
+            double avgR,
             double profitFactor,
             double maxDrawdownPct,
             double avgHoldBars,
@@ -107,6 +109,10 @@ public class BacktestResult {
 
     public BigDecimal totalFees() {
         return trades.stream().map(Trade::fee).reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    public double avgR() {
+        return avgR(trades);
     }
 
     /**
@@ -190,7 +196,7 @@ public class BacktestResult {
                 Net Profit: %s | Fees: %s
                 Profit Factor: %.2f | Sharpe: %.3f
                 Max Drawdown: %.2f%%
-                Avg Hold: %.1f bars
+                Avg Hold: %.1f bars | Avg R: %.2f
                 --- By Strategy ---
                 %s
                 %s
@@ -203,6 +209,7 @@ public class BacktestResult {
                 profitFactor(), sharpeRatio(),
                 maxDrawdownPct() * 100,
                 avgHoldBars(),
+                avgR(),
                 formatStrategyStats(statsByStrategy(PATH_LEGACY_TREND)),
                 formatStrategyStats(statsByStrategy(PATH_MR)),
                 formatStrategyStats(statsByStrategy(PATH_BREAKOUT))
@@ -228,6 +235,7 @@ public class BacktestResult {
                 samples == 0 ? 0 : (double) wins / samples,
                 net,
                 ev,
+                avgR(rows),
                 profitFactor(rows),
                 pathDrawdownPct(rows),
                 avgHold,
@@ -275,11 +283,20 @@ public class BacktestResult {
         return max;
     }
 
+    private double avgR(List<Trade> rows) {
+        return rows.stream()
+                .map(Trade::rMultiple)
+                .filter(v -> v != null)
+                .mapToDouble(BigDecimal::doubleValue)
+                .average()
+                .orElse(0);
+    }
+
     private String formatStrategyStats(StrategyStats s) {
-        return String.format("%-13s trades=%d WR=%.1f%% EV=%s PF=%.2f MaxDD=%.2f%% MaxLossStreak=%d",
+        return String.format("%-13s trades=%d WR=%.1f%% EV=%s AvgR=%.2f PF=%.2f MaxDD=%.2f%% MaxLossStreak=%d",
                 s.strategy(), s.trades(), s.winRate() * 100,
                 s.ev().setScale(2, RoundingMode.HALF_UP).toPlainString(),
-                s.profitFactor(), s.maxDrawdownPct() * 100, s.maxConsecutiveLosses());
+                s.avgR(), s.profitFactor(), s.maxDrawdownPct() * 100, s.maxConsecutiveLosses());
     }
 
 }

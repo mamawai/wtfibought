@@ -74,10 +74,20 @@ public class BacktestEngine {
      * 运行回测。
      */
     public BacktestResult run() {
+        return run(TradingRuntimeToggles.fromStaticFields());
+    }
+
+    /**
+     * 使用指定退出引擎开关运行回测，便于同一段历史数据做新旧引擎对照。
+     */
+    public BacktestResult run(TradingRuntimeToggles toggles) {
         if (klines5m.size() < MIN_KLINES_FOR_INDICATOR) {
             throw new IllegalArgumentException(
                     "K线数量不足: " + klines5m.size() + " < " + MIN_KLINES_FOR_INDICATOR);
         }
+        TradingRuntimeToggles runtimeToggles = toggles != null
+                ? toggles
+                : TradingRuntimeToggles.fromStaticFields();
 
         BacktestTradingTools tools = new BacktestTradingTools(initialBalance, symbol);
         TradingExecutionState executionState = new TradingExecutionState();
@@ -139,7 +149,7 @@ public class BacktestEngine {
                     DeterministicTradingExecutor.execute(
                             symbol, mockUser, positions, forecast, signals,
                             recentDecisions, close, close, equity, tools,
-                            profileOverride, executionState, TradingRuntimeToggles.fromStaticFields());
+                            profileOverride, executionState, runtimeToggles);
 
             // 7. 标记开仓bar index（如果开了新仓）
             if (execResult.action().startsWith("OPEN_")) {
@@ -178,7 +188,7 @@ public class BacktestEngine {
             result.addTrade(new BacktestResult.Trade(
                     ct.openBarIndex(), ct.closeBarIndex(), ct.side(), ct.strategy(),
                     ct.entryPrice(), ct.exitPrice(), ct.quantity(), ct.leverage(),
-                    ct.pnl(), ct.fee(), ct.exitReason()
+                    ct.pnl(), ct.fee(), ct.rMultiple(), ct.exitReason()
             ));
         }
 
@@ -260,9 +270,11 @@ public class BacktestEngine {
         tf5m.put("macd_dea", getBd(ind5m, "macd_dea"));
         tf5m.put("ma_alignment", getInt(ind5m, "ma_alignment"));
         tf5m.put("close_trend", getStr(ind5m, "close_trend"));
+        tf5m.put("close_trend_recent_3_closed", getStr(ind5m, "close_trend_recent_3_closed"));
         tf5m.put("boll_pb", getDbl(ind5m, "boll_pb"));
         tf5m.put("boll_bandwidth", getDbl(ind5m, "boll_bandwidth"));
         tf5m.put("volume_ratio", getDbl(ind5m, "volume_ratio"));
+        tf5m.put("volume_ratio_recent_5_closed", ind5m.get("volume_ratio_recent_5_closed"));
         tf5m.put("ema20", getBd(ind5m, "ema20"));
         indicators.put("5m", tf5m);
 
