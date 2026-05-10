@@ -1,6 +1,6 @@
 package com.mawai.wiibservice.agent.trading.entry.strategy;
 
-import com.mawai.wiibservice.agent.trading.MarketContext;
+import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
 
 /**
  * 入场策略共享的方向/动能判断。

@@ -1,8 +1,8 @@
 package com.mawai.wiibservice.agent.trading.entry.confluence;
 
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
-import com.mawai.wiibservice.agent.trading.MarketContext;
-import com.mawai.wiibservice.agent.trading.SymbolProfile;
+import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
+import com.mawai.wiibservice.agent.trading.runtime.SymbolProfile;
 import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyContext;
 import org.junit.jupiter.api.Test;
 

@@ -1,4 +1,6 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.runtime;
+
+import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
 
 /**
  * 执行器本轮可见的交易运行时开关快照。

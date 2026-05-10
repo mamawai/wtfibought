@@ -4,10 +4,10 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPath;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
-import com.mawai.wiibservice.agent.trading.MarketContext;
-import com.mawai.wiibservice.agent.trading.TradingDecisionContext;
-import com.mawai.wiibservice.agent.trading.TradingDecisionSupport;
-import com.mawai.wiibservice.agent.trading.TradingExecutionState;
+import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
+import com.mawai.wiibservice.agent.trading.runtime.TradingDecisionContext;
+import com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport;
+import com.mawai.wiibservice.agent.trading.runtime.TradingExecutionState;
 import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
 
 import java.math.BigDecimal;
@@ -20,11 +20,11 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.getCurrentStopLossPrice;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.getCurrentTakeProfitPrice;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.isTradeSuccess;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.isUpdateSuccess;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.prepareExitEvaluation;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.getCurrentStopLossPrice;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.getCurrentTakeProfitPrice;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.isTradeSuccess;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.isUpdateSuccess;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.prepareExitEvaluation;
 
 /**
  * Playbook 版持仓退出引擎。

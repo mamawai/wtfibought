@@ -6,12 +6,12 @@ import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyContext;
 
 import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyCandidate;
 
-import com.mawai.wiibservice.agent.trading.MarketContext;
-import com.mawai.wiibservice.agent.trading.SymbolProfile;
+import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
+import com.mawai.wiibservice.agent.trading.runtime.SymbolProfile;
 
 import java.math.BigDecimal;
 
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.PATH_BREAKOUT;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_BREAKOUT;
 
 public final class BreakoutEntryStrategy implements EntryStrategy {
 

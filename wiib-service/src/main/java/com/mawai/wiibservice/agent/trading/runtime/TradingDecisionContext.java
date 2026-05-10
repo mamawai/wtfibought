@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.runtime;
 
 import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
 

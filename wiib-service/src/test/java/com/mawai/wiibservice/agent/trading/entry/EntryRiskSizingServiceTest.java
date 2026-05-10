@@ -3,18 +3,18 @@ package com.mawai.wiibservice.agent.trading.entry;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.User;
-import com.mawai.wiibservice.agent.trading.MarketContext;
-import com.mawai.wiibservice.agent.trading.SymbolProfile;
-import com.mawai.wiibservice.agent.trading.TradingRuntimeToggles;
+import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
+import com.mawai.wiibservice.agent.trading.runtime.SymbolProfile;
+import com.mawai.wiibservice.agent.trading.runtime.TradingRuntimeToggles;
 import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyCandidate;
 import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.PATH_BREAKOUT;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.PATH_LEGACY_TREND;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.PATH_MR;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_BREAKOUT;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_LEGACY_TREND;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_MR;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class EntryRiskSizingServiceTest {

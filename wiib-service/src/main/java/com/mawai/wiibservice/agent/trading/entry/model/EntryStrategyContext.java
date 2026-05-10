@@ -1,8 +1,8 @@
 package com.mawai.wiibservice.agent.trading.entry.model;
 
-import com.mawai.wiibservice.agent.trading.SymbolProfile;
+import com.mawai.wiibservice.agent.trading.runtime.SymbolProfile;
 
-import com.mawai.wiibservice.agent.trading.MarketContext;
+import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
 
 public record EntryStrategyContext(
         MarketContext market,
