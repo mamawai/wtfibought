@@ -7,8 +7,8 @@ import com.mawai.wiibcommon.entity.AiTradingDecision;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.User;
-import com.mawai.wiibservice.agent.trading.watching.playbook.PlaybookExitEngine;
-import com.mawai.wiibservice.agent.trading.watching.signal.ExitDecisionEngine;
+import com.mawai.wiibservice.agent.trading.exit.playbook.PlaybookExitEngine;
+import com.mawai.wiibservice.agent.trading.exit.signal.ExitDecisionEngine;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;

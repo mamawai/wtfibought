@@ -1,6 +1,6 @@
-package com.mawai.wiibservice.agent.trading.watching.playbook;
+package com.mawai.wiibservice.agent.trading.exit.playbook;
 
-import com.mawai.wiibservice.agent.trading.ExitPath;
+import com.mawai.wiibservice.agent.trading.exit.model.ExitPath;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

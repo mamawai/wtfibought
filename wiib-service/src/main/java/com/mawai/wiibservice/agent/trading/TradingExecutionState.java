@@ -1,5 +1,6 @@
 package com.mawai.wiibservice.agent.trading;
 
+import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.stereotype.Component;

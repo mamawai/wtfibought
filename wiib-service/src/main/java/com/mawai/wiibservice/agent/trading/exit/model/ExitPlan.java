@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.exit.model;
 
 import java.math.BigDecimal;
 import java.time.Duration;

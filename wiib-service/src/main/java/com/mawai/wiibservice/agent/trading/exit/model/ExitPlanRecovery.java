@@ -1,6 +1,9 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.exit.model;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
+import com.mawai.wiibservice.agent.trading.MarketContext;
+import com.mawai.wiibservice.agent.trading.SymbolProfile;
+import com.mawai.wiibservice.agent.trading.TradingDecisionContext;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;

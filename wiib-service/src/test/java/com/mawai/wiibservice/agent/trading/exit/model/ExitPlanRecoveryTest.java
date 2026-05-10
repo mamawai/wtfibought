@@ -1,8 +1,10 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.exit.model;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
+import com.mawai.wiibservice.agent.trading.MarketContext;
+import com.mawai.wiibservice.agent.trading.SymbolProfile;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
