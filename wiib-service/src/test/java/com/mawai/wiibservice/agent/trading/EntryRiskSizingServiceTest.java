@@ -3,6 +3,7 @@ package com.mawai.wiibservice.agent.trading;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

@@ -1,5 +1,7 @@
 package com.mawai.wiibservice.agent.trading;
 
+import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
+
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.User;
 import lombok.extern.slf4j.Slf4j;

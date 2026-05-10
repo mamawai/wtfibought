@@ -2,9 +2,9 @@ package com.mawai.wiibservice.controller;
 
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightReplayService;
-import com.mawai.wiibservice.agent.trading.BacktestComparisonResult;
-import com.mawai.wiibservice.agent.trading.BacktestResult;
-import com.mawai.wiibservice.agent.trading.BacktestRunner;
+import com.mawai.wiibservice.agent.trading.backtest.BacktestComparisonResult;
+import com.mawai.wiibservice.agent.trading.backtest.BacktestResult;
+import com.mawai.wiibservice.agent.trading.backtest.BacktestRunner;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;

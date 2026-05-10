@@ -8,7 +8,7 @@ import com.mawai.wiibservice.agent.trading.SymbolProfile;
 import com.mawai.wiibservice.agent.trading.TradingDecisionContext;
 import com.mawai.wiibservice.agent.trading.TradingDecisionSupport;
 import com.mawai.wiibservice.agent.trading.TradingExecutionState;
-import com.mawai.wiibservice.agent.trading.TradingOperations;
+import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;

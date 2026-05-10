@@ -4,7 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
-import com.mawai.wiibservice.agent.trading.TradingCycleSubmitResult;
+import com.mawai.wiibservice.agent.trading.submit.TradingCycleSubmitResult;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibservice.task.AiTradingScheduler;

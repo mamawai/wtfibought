@@ -1,4 +1,6 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.ops;
+
+import com.mawai.wiibservice.agent.trading.backtest.BacktestTradingTools;
 
 import java.math.BigDecimal;
 import java.util.regex.Matcher;
@@ -17,7 +19,7 @@ public interface TradingOperations {
     Pattern POSITION_ID_JSON_PATTERN = Pattern.compile("\"positionId\"\\s*:\\s*(\\d+)");
 
     record OpenResult(boolean success, Long positionId, String message) {
-        static OpenResult fromMessage(String message) {
+        public static OpenResult fromMessage(String message) {
             boolean success = message != null && message.startsWith("开仓成功");
             return new OpenResult(success, success ? parsePositionId(message) : null, message);
         }

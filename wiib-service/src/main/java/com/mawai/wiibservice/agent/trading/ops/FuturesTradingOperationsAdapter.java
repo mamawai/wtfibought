@@ -1,4 +1,6 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.ops;
+
+import com.mawai.wiibservice.agent.trading.SymbolProfile;
 
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;

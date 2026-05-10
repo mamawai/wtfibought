@@ -1,4 +1,10 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.backtest;
+
+import com.mawai.wiibservice.agent.trading.TradingRuntimeToggles;
+
+import com.mawai.wiibservice.agent.trading.TradingExecutionState;
+
+import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
@@ -155,7 +161,7 @@ public class SignalReplayBacktestEngine {
     }
 
     /** 从 cycle.snapshotJson 提取 close/high/low；旧数据没有 high/low 时用 close 兼容。 */
-    PriceBar extractPriceBar(QuantForecastCycle cycle) {
+    public PriceBar extractPriceBar(QuantForecastCycle cycle) {
         String json = cycle.getSnapshotJson();
         if (json == null || json.isBlank()) return null;
         try {
@@ -221,5 +227,5 @@ public class SignalReplayBacktestEngine {
         }
     }
 
-    record PriceBar(BigDecimal high, BigDecimal low, BigDecimal close) {}
+    public record PriceBar(BigDecimal high, BigDecimal low, BigDecimal close) {}
 }
