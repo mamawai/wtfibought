@@ -84,6 +84,34 @@ public class BacktestRunner {
     }
 
     /**
+     * 同一份 K 线历史数据分别跑 legacy / playbook exit，用于灰度前识别系统性早平、晚出。
+     */
+    public BacktestComparisonResult compareBacktest(String symbol, int days, BigDecimal initialBalance) {
+        return compareBacktest(symbol, days, initialBalance, null);
+    }
+
+    public BacktestComparisonResult compareBacktest(String symbol, int days, BigDecimal initialBalance,
+                                                    SymbolProfile profileOverride) {
+        log.info("[BacktestCompare] 开始加载 {} 历史K线，{}天", symbol, days);
+
+        List<BigDecimal[]> klines = loadHistoricalKlines(symbol, days);
+        if (klines.size() < 200) {
+            throw new IllegalStateException("K线数据不足: " + klines.size() + " (需要至少200根)");
+        }
+
+        BacktestEngine legacyEngine = new BacktestEngine(symbol, klines, initialBalance);
+        BacktestEngine playbookEngine = new BacktestEngine(symbol, klines, initialBalance);
+        if (profileOverride != null) {
+            legacyEngine.withProfile(profileOverride);
+            playbookEngine.withProfile(profileOverride);
+        }
+
+        BacktestResult legacy = legacyEngine.run(legacyToggles());
+        BacktestResult playbook = playbookEngine.run(playbookToggles());
+        return BacktestComparisonResult.compare(symbol, "KLINE", legacy, playbook);
+    }
+
+    /**
      * 参数扫描：对指定参数组合批量回测。
      */
     public List<ScanResult> parameterScan(String symbol, int days, BigDecimal initialBalance) {
@@ -114,7 +142,8 @@ public class BacktestRunner {
                 try {
                     BacktestEngine engine = new BacktestEngine(symbol, klines, initialBalance)
                             .withProfile(profile);
-                    BacktestResult result = engine.run();
+                    // 参数扫描的变量是入场 SL/TP ATR；Playbook 会用 hard TP 覆盖趋势/突破 TP，固定走 legacy 语义。
+                    BacktestResult result = engine.run(legacyToggles());
 
                     results.add(new ScanResult(sl, tp, result));
                     log.info("[Scan] SL={} TP={} | trades={} winRate={}% PF={} return={}%",
@@ -175,6 +204,42 @@ public class BacktestRunner {
         SignalReplayBacktestEngine engine = new SignalReplayBacktestEngine(
                 symbol, cycles, signalsByCycle, initialBalance);
         return engine.run();
+    }
+
+    /**
+     * 基于线上真实历史信号的新旧退出引擎对比；优先用于正式灰度前验收。
+     */
+    public BacktestComparisonResult compareReplay(String symbol, LocalDateTime from, LocalDateTime to,
+                                                  BigDecimal initialBalance) {
+        log.info("[ReplayCompare] 加载 {} 历史cycles [{} ~ {}]", symbol, from, to);
+
+        List<QuantForecastCycle> cycles =
+                forecastCycleMapper.selectBySymbolAndTimeRange(symbol, from, to);
+        if (cycles.isEmpty()) {
+            throw new IllegalStateException("该时间段内无历史cycle记录: " + symbol);
+        }
+
+        List<String> cycleIds = cycles.stream().map(QuantForecastCycle::getCycleId).toList();
+        LambdaQueryWrapper<QuantSignalDecision> q = new LambdaQueryWrapper<>();
+        q.in(QuantSignalDecision::getCycleId, cycleIds);
+        List<QuantSignalDecision> allSignals = signalDecisionMapper.selectList(q);
+
+        Map<String, List<QuantSignalDecision>> signalsByCycle = allSignals.stream()
+                .collect(Collectors.groupingBy(QuantSignalDecision::getCycleId));
+
+        BacktestResult legacy = new SignalReplayBacktestEngine(
+                symbol, cycles, signalsByCycle, initialBalance).run(legacyToggles());
+        BacktestResult playbook = new SignalReplayBacktestEngine(
+                symbol, cycles, signalsByCycle, initialBalance).run(playbookToggles());
+        return BacktestComparisonResult.compare(symbol, "REPLAY", legacy, playbook);
+    }
+
+    private TradingRuntimeToggles legacyToggles() {
+        return new TradingRuntimeToggles(DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED, false);
+    }
+
+    private TradingRuntimeToggles playbookToggles() {
+        return new TradingRuntimeToggles(DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED, true);
     }
 
     // ==================== 数据加载 ====================

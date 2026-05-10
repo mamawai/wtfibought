@@ -2,6 +2,7 @@ package com.mawai.wiibservice.controller;
 
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightReplayService;
+import com.mawai.wiibservice.agent.trading.BacktestComparisonResult;
 import com.mawai.wiibservice.agent.trading.BacktestResult;
 import com.mawai.wiibservice.agent.trading.BacktestRunner;
 import io.swagger.v3.oas.annotations.Operation;
@@ -74,6 +75,24 @@ public class BacktestController {
         }
     }
 
+    @Operation(summary = "新旧退出引擎 K 线回测对比")
+    @PostMapping("/compare")
+    public Result<Map<String, Object>> compareBacktest(
+            @RequestParam(defaultValue = "BTCUSDT") String symbol,
+            @RequestParam(defaultValue = "7") int days,
+            @RequestParam(defaultValue = "100000") BigDecimal initialBalance) {
+
+        log.info("[Backtest API] compare symbol={} days={} balance={}", symbol, days, initialBalance);
+
+        try {
+            BacktestComparisonResult report = backtestRunner.compareBacktest(symbol, days, initialBalance);
+            return Result.ok(toMap(report));
+        } catch (Exception e) {
+            log.error("[Backtest API] 新旧引擎K线对比失败", e);
+            return Result.fail("新旧引擎K线对比失败: " + e.getMessage());
+        }
+    }
+
     @Operation(summary = "信号回放回测 — 基于数据库真实历史信号，和实盘100%等价")
     @PostMapping("/replay")
     public Result<Map<String, Object>> runReplay(
@@ -93,6 +112,29 @@ public class BacktestController {
         } catch (Exception e) {
             log.error("[Backtest API] 回放失败", e);
             return Result.fail("回放失败: " + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "新旧退出引擎信号回放对比 — 基于数据库真实历史信号")
+    @PostMapping("/replay/compare")
+    public Result<Map<String, Object>> compareReplay(
+            @RequestParam(defaultValue = "BTCUSDT") String symbol,
+            @RequestParam String from,
+            @RequestParam String to,
+            @RequestParam(defaultValue = "100000") BigDecimal initialBalance) {
+
+        log.info("[Backtest API] replay compare symbol={} from={} to={} balance={}",
+                symbol, from, to, initialBalance);
+
+        try {
+            LocalDateTime fromDt = parseDateTime(from);
+            LocalDateTime toDt = parseDateTime(to);
+            BacktestComparisonResult report =
+                    backtestRunner.compareReplay(symbol, fromDt, toDt, initialBalance);
+            return Result.ok(toMap(report));
+        } catch (Exception e) {
+            log.error("[Backtest API] 新旧引擎信号回放对比失败", e);
+            return Result.fail("新旧引擎信号回放对比失败: " + e.getMessage());
         }
     }
 
@@ -135,6 +177,7 @@ public class BacktestController {
         map.put("sharpeRatio", r.sharpeRatio());
         map.put("maxDrawdownPct", r.maxDrawdownPct());
         map.put("avgHoldBars", r.avgHoldBars());
+        map.put("avgR", r.avgR());
         map.put("returnPct", r.returnPct());
         map.put("finalEquity", r.finalEquity());
 
@@ -147,6 +190,7 @@ public class BacktestController {
             item.put("winRate", stats.winRate());
             item.put("netPnl", stats.netPnl());
             item.put("ev", stats.ev());
+            item.put("avgR", stats.avgR());
             item.put("profitFactor", stats.profitFactor());
             item.put("maxDrawdownPct", stats.maxDrawdownPct());
             item.put("avgHoldBars", stats.avgHoldBars());
@@ -155,6 +199,88 @@ public class BacktestController {
         }
         map.put("byStrategy", byStrategy);
 
+        return map;
+    }
+
+    private Map<String, Object> toMap(BacktestComparisonResult r) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("symbol", r.symbol());
+        map.put("mode", r.mode());
+        map.put("legacy", toMap(r.legacy()));
+        map.put("playbook", toMap(r.playbook()));
+        map.put("overallDelta", toMap(r.overallDelta()));
+        map.put("tradeDiffSummary", toMap(r.tradeDiffSummary()));
+        map.put("strategyDeltas", r.strategyDeltas().stream().map(this::toMap).toList());
+        map.put("tradeDiffs", r.tradeDiffs().stream().map(this::toMap).toList());
+        return map;
+    }
+
+    private Map<String, Object> toMap(BacktestComparisonResult.OverallDelta d) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("totalTradesDelta", d.totalTradesDelta());
+        map.put("netProfitDelta", d.netProfitDelta());
+        map.put("returnPctDelta", d.returnPctDelta());
+        map.put("winRateDelta", d.winRateDelta());
+        map.put("avgRDelta", d.avgRDelta());
+        map.put("maxDrawdownPctDelta", d.maxDrawdownPctDelta());
+        map.put("avgHoldBarsDelta", d.avgHoldBarsDelta());
+        return map;
+    }
+
+    private Map<String, Object> toMap(BacktestComparisonResult.StrategyDelta d) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("strategy", d.strategy());
+        map.put("legacyTrades", d.legacyTrades());
+        map.put("playbookTrades", d.playbookTrades());
+        map.put("tradesDelta", d.tradesDelta());
+        map.put("netPnlDelta", d.netPnlDelta());
+        map.put("winRateDelta", d.winRateDelta());
+        map.put("avgRDelta", d.avgRDelta());
+        map.put("maxDrawdownPctDelta", d.maxDrawdownPctDelta());
+        map.put("avgHoldBarsDelta", d.avgHoldBarsDelta());
+        map.put("legacyLosses", d.legacyLosses());
+        map.put("playbookLosses", d.playbookLosses());
+        map.put("lossesDelta", d.lossesDelta());
+        return map;
+    }
+
+    private Map<String, Object> toMap(BacktestComparisonResult.TradeDiffSummary s) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("matchedTrades", s.matchedTrades());
+        map.put("legacyOnlyTrades", s.legacyOnlyTrades());
+        map.put("playbookOnlyTrades", s.playbookOnlyTrades());
+        map.put("playbookEarlierTrades", s.playbookEarlierTrades());
+        map.put("playbookLaterTrades", s.playbookLaterTrades());
+        map.put("sameCloseBarTrades", s.sameCloseBarTrades());
+        map.put("avgCloseBarDelta", s.avgCloseBarDelta());
+        map.put("avgPnlDelta", s.avgPnlDelta());
+        map.put("legacyBreakoutLosingTrades", s.legacyBreakoutLosingTrades());
+        map.put("playbookBreakoutLosingTrades", s.playbookBreakoutLosingTrades());
+        map.put("breakoutLosingPnlDelta", s.breakoutLosingPnlDelta());
+        map.put("breakoutRunnerImprovedTrades", s.breakoutRunnerImprovedTrades());
+        map.put("mrAvgHoldBarsDelta", s.mrAvgHoldBarsDelta());
+        map.put("trendAvgHoldBarsDelta", s.trendAvgHoldBarsDelta());
+        return map;
+    }
+
+    private Map<String, Object> toMap(BacktestComparisonResult.TradeDiff d) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("status", d.status());
+        map.put("matchKey", d.matchKey());
+        map.put("strategy", d.strategy());
+        map.put("side", d.side());
+        map.put("entryBarIndex", d.entryBarIndex());
+        map.put("legacyCloseBarIndex", d.legacyCloseBarIndex());
+        map.put("playbookCloseBarIndex", d.playbookCloseBarIndex());
+        map.put("closeBarDelta", d.closeBarDelta());
+        map.put("legacyPnl", d.legacyPnl());
+        map.put("playbookPnl", d.playbookPnl());
+        map.put("pnlDelta", d.pnlDelta());
+        map.put("legacyR", d.legacyR());
+        map.put("playbookR", d.playbookR());
+        map.put("rDelta", d.rDelta());
+        map.put("legacyExitReason", d.legacyExitReason());
+        map.put("playbookExitReason", d.playbookExitReason());
         return map;
     }
 }
