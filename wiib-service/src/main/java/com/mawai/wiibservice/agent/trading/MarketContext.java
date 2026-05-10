@@ -15,58 +15,62 @@ import java.util.List;
  * 只在执行器入口解析一次，开仓/平仓引擎共享同一份上下文。
  */
 @Slf4j
-final class MarketContext {
+public final class MarketContext {
 
     // 当前市场状态，用来区分趋势、震荡、挤压和冲击环境。
-    final String regime;
+    public final String regime;
     // 市场状态切换信息，用于后续识别 regime 变化风险。
-    final String regimeTransition;
+    public final String regimeTransition;
     // 5m ATR，作为 SL/TP 距离、盈利进度和低波动判断的基础。
-    final BigDecimal atr5m;
+    public final BigDecimal atr5m;
     // 5m RSI，用于共振评分和均值回归反转确认。
-    final BigDecimal rsi5m;
+    public final BigDecimal rsi5m;
     // 当前标记/成交参考价，用于计算止损、止盈、盈亏和仓位数量。
-    final BigDecimal price;
+    public final BigDecimal price;
     // 1h 均线排列方向，用于大级别趋势过滤和持仓风险投票。
-    final Integer maAlignment1h;
+    public final Integer maAlignment1h;
     // 15m 均线排列方向，用于入场共振和中级别反向风险投票。
-    final Integer maAlignment15m;
+    public final Integer maAlignment15m;
     // 5m 均线排列方向，用于短线持仓反向风险投票。
-    final Integer maAlignment5m;
+    public final Integer maAlignment5m;
     // 5m MACD 金叉/死叉状态，用于方向确认和反向风险识别。
-    final String macdCross5m;
+    public final String macdCross5m;
     // 5m MACD 柱趋势，用于判断动能是否支持当前方向。
-    final String macdHistTrend5m;
+    public final String macdHistTrend5m;
     // 5m MACD DIF 值，用于无交叉信号时补充判断多空动能。
-    final BigDecimal macdDif5m;
+    public final BigDecimal macdDif5m;
     // 5m MACD DEA 值，用于和 DIF 比较判断动能方向。
-    final BigDecimal macdDea5m;
+    public final BigDecimal macdDea5m;
     // 5m EMA20，用于共振评分里判断价格是否站在短期均线同侧。
-    final BigDecimal ema20;
+    public final BigDecimal ema20;
     // 5m 布林 %B，用于识别突破位置和均值回归极值区。
-    final Double bollPb5m;
+    public final Double bollPb5m;
     // 5m 布林带宽，用于估算均值回归到中轨的目标空间。
-    final Double bollBandwidth5m;
+    public final Double bollBandwidth5m;
     // 是否处于布林挤压状态，是突破路径的前置条件。
-    final boolean bollSqueeze;
+    public final boolean bollSqueeze;
     // 5m 成交量相对均量倍数，用于突破确认和共振评分。
-    final Double volumeRatio5m;
+    public final Double volumeRatio5m;
+    // 近5根已闭合5m K线量比，时间从早到晚；突破衰竭只看这个窗口，不看当前未闭合K。
+    public final List<Double> volumeRatioClosedSeries5m;
     // 5m 收盘价趋势，用于持仓期间判断价格是否反向推进。
-    final String closeTrend5m;
+    public final String closeTrend5m;
+    // 近3根已闭合5m K线收盘趋势；MR 失效只看闭合窗口，不看当前未闭合K。
+    public final String closeTrendClosed3_5m;
     // 15m RSI，当前作为中周期指标保留，便于后续风控扩展。
-    final Double rsi15m;
+    public final Double rsi15m;
     // 买卖盘不平衡度，用于微结构方向判断。
-    final Double bidAskImbalance;
+    public final Double bidAskImbalance;
     // 主动买卖压力，用于和买卖盘不平衡一起形成微结构票。
-    final Double takerPressure;
+    public final Double takerPressure;
     // 持仓量变化率，当前解析保留，后续可用于杠杆拥挤风险。
-    final Double oiChangeRate;
+    public final Double oiChangeRate;
     // 资金费率偏离度，当前解析保留，后续可用于拥挤和反转风险。
-    final Double fundingDeviation;
+    public final Double fundingDeviation;
     // 多空比极值，用于识别单边拥挤和共振扣分风险。
-    final Double lsrExtreme;
+    public final Double lsrExtreme;
     // 数据质量标记，如 LOW_CONFIDENCE、STALE_AGG_TRADE，会影响开仓和退出。
-    final List<String> qualityFlags;
+    public final List<String> qualityFlags;
 
     private MarketContext(String regime, String regimeTransition,
                           BigDecimal atr5m, BigDecimal rsi5m, BigDecimal price,
@@ -74,7 +78,8 @@ final class MarketContext {
                           String macdCross5m, String macdHistTrend5m,
                           BigDecimal macdDif5m, BigDecimal macdDea5m, BigDecimal ema20,
                           Double bollPb5m, Double bollBandwidth5m, boolean bollSqueeze,
-                          Double volumeRatio5m, String closeTrend5m, Double rsi15m,
+                          Double volumeRatio5m, List<Double> volumeRatioClosedSeries5m,
+                          String closeTrend5m, String closeTrendClosed3_5m, Double rsi15m,
                           Double bidAskImbalance, Double takerPressure, Double oiChangeRate,
                           Double fundingDeviation, Double lsrExtreme, List<String> qualityFlags) {
         this.regime = regime;
@@ -94,7 +99,10 @@ final class MarketContext {
         this.bollBandwidth5m = bollBandwidth5m;
         this.bollSqueeze = bollSqueeze;
         this.volumeRatio5m = volumeRatio5m;
+        this.volumeRatioClosedSeries5m = volumeRatioClosedSeries5m != null
+                ? volumeRatioClosedSeries5m : List.of();
         this.closeTrend5m = closeTrend5m;
+        this.closeTrendClosed3_5m = closeTrendClosed3_5m;
         this.rsi15m = rsi15m;
         this.bidAskImbalance = bidAskImbalance;
         this.takerPressure = takerPressure;
@@ -104,7 +112,7 @@ final class MarketContext {
         this.qualityFlags = qualityFlags;
     }
 
-    static MarketContext parse(QuantForecastCycle forecast, BigDecimal price) {
+    public static MarketContext parse(QuantForecastCycle forecast, BigDecimal price) {
         String regime = "RANGE";
         String transition = null;
         BigDecimal atr5m = null, rsi5m = null;
@@ -112,7 +120,8 @@ final class MarketContext {
         String macdCross5m = null, macdHistTrend5m = null;
         BigDecimal macdDif5m = null, macdDea5m = null, ema20 = null;
         Double bollPb5m = null, bollBandwidth5m = null, volumeRatio5m = null;
-        String closeTrend5m = null;
+        List<Double> volumeRatioClosedSeries5m = new ArrayList<>();
+        String closeTrend5m = null, closeTrendClosed3_5m = null;
         Double rsi15m = null;
         Double bidAskImbalance = null, takerPressure = null, oiChangeRate = null;
         Double fundingDeviation = null, lsrExtreme = null;
@@ -157,9 +166,17 @@ final class MarketContext {
                         if (ema20Val != null) ema20 = ema20Val;
                         maAlignment5m = tf5m.getInteger("ma_alignment");
                         closeTrend5m = tf5m.getString("close_trend");
+                        closeTrendClosed3_5m = tf5m.getString("close_trend_recent_3_closed");
                         bollPb5m = tf5m.getDouble("boll_pb");
                         bollBandwidth5m = tf5m.getDouble("boll_bandwidth");
                         volumeRatio5m = tf5m.getDouble("volume_ratio");
+                        JSONArray closedVolumeRatios = tf5m.getJSONArray("volume_ratio_recent_5_closed");
+                        if (closedVolumeRatios != null) {
+                            for (int i = 0; i < closedVolumeRatios.size(); i++) {
+                                Double value = closedVolumeRatios.getDouble(i);
+                                if (value != null) volumeRatioClosedSeries5m.add(value);
+                            }
+                        }
                     }
                     JSONObject tf15m = indicators.getJSONObject("15m");
                     if (tf15m != null) {
@@ -186,7 +203,7 @@ final class MarketContext {
                 maAlignment1h, maAlignment15m, maAlignment5m,
                 macdCross5m, macdHistTrend5m, macdDif5m, macdDea5m, ema20,
                 bollPb5m, bollBandwidth5m, bollSqueeze,
-                volumeRatio5m, closeTrend5m, rsi15m,
+                volumeRatio5m, volumeRatioClosedSeries5m, closeTrend5m, closeTrendClosed3_5m, rsi15m,
                 bidAskImbalance, takerPressure, oiChangeRate,
                 fundingDeviation, lsrExtreme, qualityFlags);
     }

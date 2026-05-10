@@ -11,7 +11,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -45,6 +47,7 @@ public class BacktestTradingTools implements TradingOperations {
     private BigDecimal frozenBalance = BigDecimal.ZERO;
     private final List<FuturesPositionDTO> openPositions = new ArrayList<>();
     private final List<ClosedTrade> closedTrades = new ArrayList<>();
+    private final Map<Long, BigDecimal> initialRiskPerUnitByPosition = new HashMap<>();
     @Setter
     private int currentBarIndex = 0;
     @Setter
@@ -67,6 +70,7 @@ public class BacktestTradingTools implements TradingOperations {
             int leverage,
             BigDecimal pnl,
             BigDecimal fee,
+            BigDecimal rMultiple,
             String exitReason
     ) {}
 
@@ -88,14 +92,23 @@ public class BacktestTradingTools implements TradingOperations {
                                 String orderType, BigDecimal limitPrice,
                                 BigDecimal stopLossPrice, BigDecimal takeProfitPrice,
                                 String memo) {
+        return openPositionWithResult(side, quantity, leverage, orderType, limitPrice,
+                stopLossPrice, takeProfitPrice, memo).message();
+    }
+
+    @Override
+    public OpenResult openPositionWithResult(String side, BigDecimal quantity, Integer leverage,
+                                             String orderType, BigDecimal limitPrice,
+                                             BigDecimal stopLossPrice, BigDecimal takeProfitPrice,
+                                             String memo) {
         if (quantity == null || quantity.signum() <= 0) {
-            return "开仓失败: 数量无效";
+            return OpenResult.fromMessage("开仓失败: 数量无效");
         }
 
         // 用当前价格计算保证金和手续费
         BigDecimal price = getCurrentPrice();
         if (price == null || price.signum() <= 0) {
-            return "开仓失败: 价格无效";
+            return OpenResult.fromMessage("开仓失败: 价格无效");
         }
 
         BigDecimal notional = quantity.multiply(price);
@@ -104,7 +117,7 @@ public class BacktestTradingTools implements TradingOperations {
 
         BigDecimal totalCost = margin.add(openFee);
         if (totalCost.compareTo(balance) > 0) {
-            return "开仓失败: 余额不足 需要" + totalCost.toPlainString() + " 可用" + balance.toPlainString();
+            return OpenResult.fromMessage("开仓失败: 余额不足 需要" + totalCost.toPlainString() + " 可用" + balance.toPlainString());
         }
 
         // symbol 级别限制
@@ -115,11 +128,11 @@ public class BacktestTradingTools implements TradingOperations {
             boolean hasOpposite = currentSymbolOpen.stream()
                     .anyMatch(p -> !side.equals(p.getSide()));
             if (hasOpposite) {
-                return "开仓失败: " + symbol + "已有" + currentSymbolOpen.getFirst().getSide() + "持仓，暂不允许开反向新仓";
+                return OpenResult.fromMessage("开仓失败: " + symbol + "已有" + currentSymbolOpen.getFirst().getSide() + "持仓，暂不允许开反向新仓");
             }
         }
         if (currentSymbolOpen.size() >= MAX_SYMBOL_POSITIONS) {
-            return "开仓失败: " + symbol + "已有" + currentSymbolOpen.size() + "个持仓，上限" + MAX_SYMBOL_POSITIONS;
+            return OpenResult.fromMessage("开仓失败: " + symbol + "已有" + currentSymbolOpen.size() + "个持仓，上限" + MAX_SYMBOL_POSITIONS);
         }
 
         // 扣除保证金和手续费
@@ -158,13 +171,14 @@ public class BacktestTradingTools implements TradingOperations {
             tpList.add(new FuturesTakeProfit("tp-" + posId, takeProfitPrice, quantity));
         }
         pos.setTakeProfits(tpList);
+        initialRiskPerUnitByPosition.put(posId, initialRiskPerUnit(price, stopLossPrice));
 
         openPositions.add(pos);
         log.debug("[Backtest] 开仓成功 {} {} qty={} lev={} entry={} sl={} tp={} memo={}",
                 side, symbol, quantity.toPlainString(), leverage, price.toPlainString(),
                 stopLossPrice, takeProfitPrice, memo);
 
-        return "开仓成功|posId=" + posId + "|price=" + price.toPlainString();
+        return new OpenResult(true, posId, "开仓成功|posId=" + posId + "|price=" + price.toPlainString());
     }
 
     @Override
@@ -317,6 +331,7 @@ public class BacktestTradingTools implements TradingOperations {
         BigDecimal openFeeAlloc = openNotional.multiply(OPEN_FEE_RATE).setScale(8, RoundingMode.HALF_UP);
         BigDecimal totalFeeForRecord = openFeeAlloc.add(closeFee);
         BigDecimal netPnl = rawPnl.subtract(closeFee);
+        BigDecimal rMultiple = calcRMultiple(pos, exitPrice);
 
         // 释放保证金
         BigDecimal marginRelease;
@@ -343,6 +358,7 @@ public class BacktestTradingTools implements TradingOperations {
                 pos.getLeverage(),
                 netPnl,
                 totalFeeForRecord,
+                rMultiple,
                 reason
         ));
 
@@ -351,6 +367,7 @@ public class BacktestTradingTools implements TradingOperations {
             pos.setClosedPrice(exitPrice);
             pos.setClosedPnl(netPnl);
             openPositions.remove(pos);
+            initialRiskPerUnitByPosition.remove(pos.getId());
         } else {
             pos.setQuantity(pos.getQuantity().subtract(closeQty));
             pos.setMargin(pos.getMargin().subtract(marginRelease));
@@ -384,6 +401,23 @@ public class BacktestTradingTools implements TradingOperations {
                 ? currentPrice.subtract(pos.getEntryPrice())
                 : pos.getEntryPrice().subtract(currentPrice);
         return priceDiff.multiply(pos.getQuantity());
+    }
+
+    private BigDecimal initialRiskPerUnit(BigDecimal entryPrice, BigDecimal stopLossPrice) {
+        if (entryPrice == null || stopLossPrice == null) return null;
+        BigDecimal risk = entryPrice.subtract(stopLossPrice).abs();
+        return risk.signum() > 0 ? risk : null;
+    }
+
+    private BigDecimal calcRMultiple(FuturesPositionDTO pos, BigDecimal exitPrice) {
+        BigDecimal risk = initialRiskPerUnitByPosition.get(pos.getId());
+        if (risk == null || risk.signum() <= 0 || exitPrice == null || pos.getEntryPrice() == null) {
+            return null;
+        }
+        BigDecimal priceDiff = "LONG".equals(pos.getSide())
+                ? exitPrice.subtract(pos.getEntryPrice())
+                : pos.getEntryPrice().subtract(exitPrice);
+        return priceDiff.divide(risk, 8, RoundingMode.HALF_UP);
     }
 
     // ==================== 状态查询 ====================

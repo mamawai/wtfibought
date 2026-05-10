@@ -86,36 +86,45 @@ public class FuturesTradingOperationsAdapter implements TradingOperations {
                                String orderType, BigDecimal limitPrice,
                                BigDecimal stopLossPrice, BigDecimal takeProfitPrice,
                                String memo) {
+        return openPositionWithResult(side, quantity, leverage, orderType, limitPrice,
+                stopLossPrice, takeProfitPrice, memo).message();
+    }
+
+    @Override
+    public OpenResult openPositionWithResult(String side, BigDecimal quantity, Integer leverage,
+                                             String orderType, BigDecimal limitPrice,
+                                             BigDecimal stopLossPrice, BigDecimal takeProfitPrice,
+                                             String memo) {
 
         String symbol = currentSymbol;
         if (!"LONG".equals(side) && !"SHORT".equals(side)) {
-            return "错误：side必须是LONG或SHORT";
+            return OpenResult.fromMessage("错误：side必须是LONG或SHORT");
         }
         if (quantity == null || quantity.compareTo(BigDecimal.ZERO) <= 0) {
-            return "错误：quantity必须大于0";
+            return OpenResult.fromMessage("错误：quantity必须大于0");
         }
         if (leverage == null || leverage < MIN_LEVERAGE) {
-            return "错误：杠杆最低" + MIN_LEVERAGE + "倍，你传了" + leverage + "，请用5-50倍";
+            return OpenResult.fromMessage("错误：杠杆最低" + MIN_LEVERAGE + "倍，你传了" + leverage + "，请用5-50倍");
         }
         if (leverage > MAX_LEVERAGE) {
-            return "错误：杠杆上限" + MAX_LEVERAGE + "倍，你传了" + leverage;
+            return OpenResult.fromMessage("错误：杠杆上限" + MAX_LEVERAGE + "倍，你传了" + leverage);
         }
         if (stopLossPrice == null || stopLossPrice.compareTo(BigDecimal.ZERO) <= 0) {
-            return "错误：必须设置止损价格";
+            return OpenResult.fromMessage("错误：必须设置止损价格");
         }
         if (takeProfitPrice == null || takeProfitPrice.compareTo(BigDecimal.ZERO) <= 0) {
-            return "错误：必须设置止盈价格";
+            return OpenResult.fromMessage("错误：必须设置止盈价格");
         }
 
         boolean isLimit = "LIMIT".equalsIgnoreCase(orderType);
         if (isLimit && (limitPrice == null || limitPrice.compareTo(BigDecimal.ZERO) <= 0)) {
-            return "错误：限价单必须设置limitPrice";
+            return OpenResult.fromMessage("错误：限价单必须设置limitPrice");
         }
 
         CircuitBreakerService.OpenDecision breaker = circuitBreakerService.allowOpen(aiUserId, memo);
         if (!breaker.allowed()) {
             log.warn("[AI-Trade] 开仓被熔断拦截 symbol={} memo={} reason={}", symbol, memo, breaker.reason());
-            return "错误：熔断中，" + breaker.reason();
+            return OpenResult.fromMessage("错误：熔断中，" + breaker.reason());
         }
 
         List<FuturesPosition> openPositions = futuresPositionMapper.selectList(
@@ -123,7 +132,7 @@ public class FuturesTradingOperationsAdapter implements TradingOperations {
                         .eq(FuturesPosition::getUserId, aiUserId)
                         .eq(FuturesPosition::getStatus, "OPEN"));
         if (openPositions.size() >= MAX_OPEN_POSITIONS) {
-            return "错误：已有" + openPositions.size() + "个持仓，上限" + MAX_OPEN_POSITIONS;
+            return OpenResult.fromMessage("错误：已有" + openPositions.size() + "个持仓，上限" + MAX_OPEN_POSITIONS);
         }
 
         List<FuturesPosition> symbolOpenPositions = openPositions.stream()
@@ -134,11 +143,11 @@ public class FuturesTradingOperationsAdapter implements TradingOperations {
                     .anyMatch(p -> !side.equals(p.getSide()));
             if (hasOpposite) {
                 String existingSide = symbolOpenPositions.getFirst().getSide();
-                return "错误：" + symbol + "已有" + existingSide + "持仓，暂不允许开反向新仓，请先平仓";
+                return OpenResult.fromMessage("错误：" + symbol + "已有" + existingSide + "持仓，暂不允许开反向新仓，请先平仓");
             }
         }
         if (symbolOpenPositions.size() >= MAX_SYMBOL_POSITIONS) {
-            return "错误：" + symbol + "已有" + symbolOpenPositions.size() + "个持仓，上限" + MAX_SYMBOL_POSITIONS;
+            return OpenResult.fromMessage("错误：" + symbol + "已有" + symbolOpenPositions.size() + "个持仓，上限" + MAX_SYMBOL_POSITIONS);
         }
 
         FuturesPosition lastPosition = futuresPositionMapper.selectOne(
@@ -150,15 +159,15 @@ public class FuturesTradingOperationsAdapter implements TradingOperations {
         if (lastPosition != null && lastPosition.getCreatedAt() != null) {
             long minutesSinceLast = Duration.between(lastPosition.getCreatedAt(), LocalDateTime.now()).toMinutes();
             if (minutesSinceLast < ENTRY_COOLDOWN_MINUTES) {
-                return "错误：" + symbol + "距上次开仓仅" + minutesSinceLast + "分钟，需间隔" + ENTRY_COOLDOWN_MINUTES + "分钟";
+                return OpenResult.fromMessage("错误：" + symbol + "距上次开仓仅" + minutesSinceLast + "分钟，需间隔" + ENTRY_COOLDOWN_MINUTES + "分钟");
             }
         }
 
         User user = userMapper.selectById(aiUserId);
-        if (user == null) return "错误：AI账户不存在";
+        if (user == null) return OpenResult.fromMessage("错误：AI账户不存在");
         BigDecimal price = isLimit ? limitPrice : cacheService.getFuturesPrice(symbol);
         if (price == null) price = cacheService.getMarkPrice(symbol);
-        if (price == null) return "错误：无法获取" + symbol + "价格";
+        if (price == null) return OpenResult.fromMessage("错误：无法获取" + symbol + "价格");
 
         SymbolProfile profile = SymbolProfile.of(symbol);
         BigDecimal slMinPct = BigDecimal.valueOf(profile.slMinPct());
@@ -167,27 +176,27 @@ public class FuturesTradingOperationsAdapter implements TradingOperations {
         BigDecimal slPct = slDistance.divide(price, 6, RoundingMode.HALF_UP);
         BigDecimal slMinWithTolerance = slMinPct.subtract(SL_MIN_TOLERANCE);
         if (slPct.compareTo(slMinWithTolerance) < 0) {
-            return "错误：止损距当前价仅" + slPct.multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP)
-                    + "%，太近（噪音区，最低" + slMinPct.multiply(BigDecimal.valueOf(100)).setScale(1, RoundingMode.HALF_UP) + "%）";
+            return OpenResult.fromMessage("错误：止损距当前价仅" + slPct.multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP)
+                    + "%，太近（噪音区，最低" + slMinPct.multiply(BigDecimal.valueOf(100)).setScale(1, RoundingMode.HALF_UP) + "%）");
         }
         if (slPct.compareTo(slMaxPct) > 0) {
-            return "错误：止损距当前价" + slPct.multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP)
-                    + "%，太远（>" + slMaxPct.multiply(BigDecimal.valueOf(100)).setScale(0, RoundingMode.HALF_UP) + "%），风险过大";
+            return OpenResult.fromMessage("错误：止损距当前价" + slPct.multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP)
+                    + "%，太远（>" + slMaxPct.multiply(BigDecimal.valueOf(100)).setScale(0, RoundingMode.HALF_UP) + "%），风险过大");
         }
 
         BigDecimal positionValue = price.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
         if (positionValue.compareTo(MIN_POSITION_VALUE) < 0) {
-            return "错误：名义价值" + positionValue + " USDT太小，最低" + MIN_POSITION_VALUE + " USDT，请加大仓位";
+            return OpenResult.fromMessage("错误：名义价值" + positionValue + " USDT太小，最低" + MIN_POSITION_VALUE + " USDT，请加大仓位");
         }
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
         BigDecimal dynamicMinMargin = user.getBalance().multiply(MIN_MARGIN_RATIO)
                 .max(MIN_MARGIN_FLOOR).setScale(2, RoundingMode.HALF_UP);
         if (margin.compareTo(dynamicMinMargin) < 0 && user.getBalance().compareTo(dynamicMinMargin) >= 0) {
-            return "错误：保证金" + margin + " USDT低于最低要求" + dynamicMinMargin + " USDT，请加大仓位或降低杠杆";
+            return OpenResult.fromMessage("错误：保证金" + margin + " USDT低于最低要求" + dynamicMinMargin + " USDT，请加大仓位或降低杠杆");
         }
         BigDecimal maxMargin = user.getBalance().multiply(MAX_POSITION_RATIO);
         if (margin.compareTo(maxMargin) > 0) {
-            return "错误：保证金" + margin + "超过余额35%上限" + maxMargin.setScale(2, RoundingMode.HALF_UP);
+            return OpenResult.fromMessage("错误：保证金" + margin + "超过余额35%上限" + maxMargin.setScale(2, RoundingMode.HALF_UP));
         }
 
         FuturesOpenRequest req = new FuturesOpenRequest();
@@ -213,10 +222,11 @@ public class FuturesTradingOperationsAdapter implements TradingOperations {
             FuturesOrderResponse resp = futuresTradingService.openPosition(aiUserId, req);
             log.info("[AI-Trade] 开仓成功 {} {} {} qty={} lev={} sl={}",
                     symbol, side, req.getOrderType(), quantity, leverage, stopLossPrice);
-            return "开仓成功：" + JSON.toJSONString(resp);
+            return new OpenResult(true, resp != null ? resp.getPositionId() : null,
+                    "开仓成功：" + JSON.toJSONString(resp));
         } catch (Exception e) {
             log.warn("[AI-Trade] 开仓失败 {} {} : {}", symbol, side, e.getMessage());
-            return "开仓失败：" + e.getMessage();
+            return OpenResult.fromMessage("开仓失败：" + e.getMessage());
         }
     }
 

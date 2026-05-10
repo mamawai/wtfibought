@@ -112,10 +112,12 @@ final class EntryDecisionEngine {
         boolean overallFlat = decision.forecast() != null && "FLAT".equals(decision.forecast().getOverallDecision());
         if (overallFlat) {
             candidates = candidates.stream()
-                    .filter(c -> PATH_BREAKOUT.equals(c.path()) && c.score() >= BreakoutEntryStrategy.STRONG_FLAT_SCORE)
+                    // FLAT不是禁止交易：横盘放行MR机会；突破必须足够强；趋势延续缺方向背景先挡掉。
+                    .filter(c -> PATH_MR.equals(c.path())
+                            || (PATH_BREAKOUT.equals(c.path()) && c.score() >= BreakoutEntryStrategy.STRONG_FLAT_SCORE))
                     .toList();
             if (candidates.isEmpty()) {
-                return hold("overallDecision=FLAT，仅强突破可覆盖；候选拒绝=" + summarizeRejects(candidateSet.rejects()));
+                return hold("overallDecision=FLAT，仅MR/强突破可覆盖；候选拒绝=" + summarizeRejects(candidateSet.rejects()));
             }
         }
 
@@ -133,16 +135,26 @@ final class EntryDecisionEngine {
         DeterministicTradingExecutor.ExecutionResult inner = openCandidate(
                 symbol, user, decision.totalEquity(), bestSignal, ctx, best,
                 riskStatusScale(mergedRiskStatus), mergedRiskStatus,
-                decision.profile(), decision.tools(), decision.toggles());
+                decision.profile(), decision.tools(), decision.toggles(), state, now);
         if (inner.action().startsWith("OPEN_")) {
             state.markEntry(symbol, nowMs);
         }
         return new DeterministicTradingExecutor.ExecutionResult(
                 inner.action(),
                 "[Strategy-" + best.path() + "] " + inner.reasoning()
-                        + (overallFlat ? " [overallDecision=FLAT强突破覆盖]" : "")
+                        + (overallFlat ? flatOverrideReason(best.path()) : "")
                         + (ctx.qualityFlags.contains("LOW_CONFIDENCE") ? " [LOW_CONFIDENCE仓位减半]" : ""),
                 inner.executionLog());
+    }
+
+    private String flatOverrideReason(String path) {
+        if (PATH_MR.equals(path)) {
+            return " [overallDecision=FLAT MR覆盖]";
+        }
+        if (PATH_BREAKOUT.equals(path)) {
+            return " [overallDecision=FLAT强突破覆盖]";
+        }
+        return " [overallDecision=FLAT覆盖]";
     }
 
     /**
@@ -224,7 +236,8 @@ final class EntryDecisionEngine {
             String symbol, User user, BigDecimal totalEquity,
             QuantSignalDecision signal, MarketContext ctx,
             EntryStrategyCandidate candidate, double riskScale, String riskStatus,
-            SymbolProfile profile, TradingOperations tools, TradingRuntimeToggles toggles) {
+            SymbolProfile profile, TradingOperations tools, TradingRuntimeToggles toggles,
+            TradingExecutionState state, LocalDateTime now) {
 
         EntryRiskSizingService.SizingResult sizing = RISK_SIZING_SERVICE.buildPlan(
                 symbol, user, totalEquity, signal, ctx, candidate, riskScale, profile, tools, toggles);
@@ -234,11 +247,37 @@ final class EntryDecisionEngine {
 
         EntryRiskSizingService.EntryOrderPlan plan = sizing.plan();
         String reason = buildOpenReason(candidate, ctx, plan, riskStatus);
+        if (toggles.playbookExitEnabled()) {
+            TradingOperations.OpenResult result = tools.openPositionWithResult(candidate.side(), plan.quantity(),
+                    plan.leverage(), "MARKET", null, plan.stopLoss(), plan.takeProfit(), candidate.path());
+            if (result.success() && result.positionId() != null) {
+                storeExitPlan(state, result.positionId(), candidate, ctx, plan, now);
+            }
+            String action = result.success() ? ("OPEN_" + candidate.side()) : "HOLD";
+            if (!result.success()) reason += " | 开仓失败: " + result.message();
+            return new DeterministicTradingExecutor.ExecutionResult(action, reason, result.message());
+        }
+
         String result = tools.openPosition(candidate.side(), plan.quantity(), plan.leverage(), "MARKET", null,
                 plan.stopLoss(), plan.takeProfit(), candidate.path());
         String action = result.startsWith("开仓成功") ? ("OPEN_" + candidate.side()) : "HOLD";
         if (!result.startsWith("开仓成功")) reason += " | 开仓失败: " + result;
         return new DeterministicTradingExecutor.ExecutionResult(action, reason, result);
+    }
+
+    private void storeExitPlan(TradingExecutionState state, Long positionId, EntryStrategyCandidate candidate,
+                               MarketContext ctx, EntryRiskSizingService.EntryOrderPlan plan, LocalDateTime now) {
+        try {
+            ExitPlan exitPlan = ExitPlanFactory.fromEntry(
+                    candidate.path(), candidate.side(), ctx.price, plan.stopLoss(), ctx.atr5m,
+                    ctx.bollPb5m, ctx.rsi5m != null ? ctx.rsi5m.doubleValue() : null,
+                    ctx.maAlignment1h, ctx.maAlignment15m, now);
+            state.putExitPlan(positionId, exitPlan);
+        } catch (IllegalArgumentException e) {
+            // 开仓已成功，不能因为内存计划失败影响交易结果；后续 Step5 会做退化恢复。
+            log.warn("[EntryDecision] ExitPlan写入失败 positionId={} path={} reason={}",
+                    positionId, candidate.path(), e.getMessage());
+        }
     }
 
     /**
