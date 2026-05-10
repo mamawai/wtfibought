@@ -3,11 +3,11 @@ package com.mawai.wiibservice.agent.trading.exit.signal;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
-import com.mawai.wiibservice.agent.trading.MarketContext;
-import com.mawai.wiibservice.agent.trading.SymbolProfile;
-import com.mawai.wiibservice.agent.trading.TradingDecisionContext;
-import com.mawai.wiibservice.agent.trading.TradingDecisionSupport;
-import com.mawai.wiibservice.agent.trading.TradingExecutionState;
+import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
+import com.mawai.wiibservice.agent.trading.runtime.SymbolProfile;
+import com.mawai.wiibservice.agent.trading.runtime.TradingDecisionContext;
+import com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport;
+import com.mawai.wiibservice.agent.trading.runtime.TradingExecutionState;
 import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
 
 import java.math.BigDecimal;
@@ -17,16 +17,16 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.calcCurrentTargetProgress;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.calcTargetDistance;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.findBestSignal;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.fmtPrice;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.getCurrentStopLossPrice;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.getCurrentTakeProfitPrice;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.isTradeSuccess;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.isUpdateSuccess;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.prepareExitEvaluation;
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.syncRemainingRiskOrders;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.calcCurrentTargetProgress;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.calcTargetDistance;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.findBestSignal;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.fmtPrice;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.getCurrentStopLossPrice;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.getCurrentTakeProfitPrice;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.isTradeSuccess;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.isUpdateSuccess;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.prepareExitEvaluation;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.syncRemainingRiskOrders;
 
 /**
  * 旧版信号退出引擎。

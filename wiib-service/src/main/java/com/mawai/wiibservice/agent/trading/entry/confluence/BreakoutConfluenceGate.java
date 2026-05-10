@@ -4,7 +4,7 @@ import com.mawai.wiibservice.agent.trading.entry.strategy.EntryStrategySupport;
 
 import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyContext;
 
-import com.mawai.wiibservice.agent.trading.MarketContext;
+import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
 
 import java.util.ArrayList;
 import java.util.List;

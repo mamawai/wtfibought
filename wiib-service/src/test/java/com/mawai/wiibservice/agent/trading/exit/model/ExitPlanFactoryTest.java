@@ -1,6 +1,6 @@
 package com.mawai.wiibservice.agent.trading.exit.model;
 
-import com.mawai.wiibservice.agent.trading.TradingExecutionState;
+import com.mawai.wiibservice.agent.trading.runtime.TradingExecutionState;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

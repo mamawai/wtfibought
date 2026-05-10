@@ -3,15 +3,15 @@ package com.mawai.wiibservice.agent.trading.exit.playbook;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPath;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
-import com.mawai.wiibservice.agent.trading.MarketContext;
-import com.mawai.wiibservice.agent.trading.TradingDecisionContext;
+import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
+import com.mawai.wiibservice.agent.trading.runtime.TradingDecisionContext;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.LocalDateTime;
 
-import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.getCurrentStopLossPrice;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.getCurrentStopLossPrice;
 
 /**
  * 趋势仓位的退出剧本。

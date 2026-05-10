@@ -1,8 +1,8 @@
 package com.mawai.wiibservice.agent.trading.backtest;
 
-import com.mawai.wiibservice.agent.trading.TradingRuntimeToggles;
+import com.mawai.wiibservice.agent.trading.runtime.TradingRuntimeToggles;
 
-import com.mawai.wiibservice.agent.trading.SymbolProfile;
+import com.mawai.wiibservice.agent.trading.runtime.SymbolProfile;
 
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
 

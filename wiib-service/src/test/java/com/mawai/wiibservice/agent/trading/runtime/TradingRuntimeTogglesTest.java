@@ -1,5 +1,6 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.runtime;
 
+import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
