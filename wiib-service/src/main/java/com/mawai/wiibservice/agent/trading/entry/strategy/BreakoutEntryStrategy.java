@@ -1,12 +1,21 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.entry.strategy;
+
+import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyResult;
+
+import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyContext;
+
+import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyCandidate;
+
+import com.mawai.wiibservice.agent.trading.MarketContext;
+import com.mawai.wiibservice.agent.trading.SymbolProfile;
 
 import java.math.BigDecimal;
 
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.PATH_BREAKOUT;
 
-final class BreakoutEntryStrategy implements EntryStrategy {
+public final class BreakoutEntryStrategy implements EntryStrategy {
 
-    static final double STRONG_FLAT_SCORE = 6.0;
+    public static final double STRONG_FLAT_SCORE = 6.0;
 
     private static final int MAX_LEVERAGE = 20;
     private static final double VOLUME_MIN = 1.15;

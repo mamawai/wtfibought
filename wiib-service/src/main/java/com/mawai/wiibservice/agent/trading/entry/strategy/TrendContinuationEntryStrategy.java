@@ -1,4 +1,13 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.entry.strategy;
+
+import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyResult;
+
+import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyContext;
+
+import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyCandidate;
+
+import com.mawai.wiibservice.agent.trading.MarketContext;
+import com.mawai.wiibservice.agent.trading.SymbolProfile;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -6,7 +15,7 @@ import java.util.List;
 
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.PATH_LEGACY_TREND;
 
-final class TrendContinuationEntryStrategy implements EntryStrategy {
+public final class TrendContinuationEntryStrategy implements EntryStrategy {
 
     private static final double MIN_CONFIDENCE = 0.45;
     private static final int MAX_LEVERAGE = 25;

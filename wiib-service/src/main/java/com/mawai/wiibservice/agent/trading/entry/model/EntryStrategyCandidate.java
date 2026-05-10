@@ -1,8 +1,8 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.entry.model;
 
 import java.math.BigDecimal;
 
-record EntryStrategyCandidate(
+public record EntryStrategyCandidate(
         String path,
         String label,
         String side,
