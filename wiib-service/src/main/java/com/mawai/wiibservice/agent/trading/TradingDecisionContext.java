@@ -1,5 +1,7 @@
 package com.mawai.wiibservice.agent.trading;
 
+import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
+
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTradingDecision;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;

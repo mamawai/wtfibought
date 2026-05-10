@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.backtest;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
