@@ -6,7 +6,6 @@ import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
 import com.mawai.wiibservice.agent.quant.node.DebateJudgeNode;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
-import com.mawai.wiibservice.agent.trading.PositionDrawdownSentinel;
 import com.mawai.wiibservice.mapper.AiRuntimeToggleMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -29,13 +28,7 @@ public class RuntimeFeatureToggleService {
     public static final String QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED = "quant.factor_weight_override.enabled";
 
     public static final String TRADING_LOW_VOL_ENABLED = "trading.low_vol.enabled";
-
-    public static final String DRAWDOWN_SENTINEL_ENABLED = "trading.drawdown_sentinel.enabled";
-    public static final String DRAWDOWN_SENTINEL_WINDOW_MINUTES = "trading.drawdown_sentinel.window_minutes";
-    public static final String DRAWDOWN_SENTINEL_PNL_PCT_DROP_THRESHOLD_PPT = "trading.drawdown_sentinel.pnl_pct_drop_threshold_ppt";
-    public static final String DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_THRESHOLD_PCT = "trading.drawdown_sentinel.profit_drawdown_threshold_pct";
-    public static final String DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_MIN_BASE = "trading.drawdown_sentinel.profit_drawdown_min_base";
-    public static final String DRAWDOWN_SENTINEL_COOLDOWN_MINUTES = "trading.drawdown_sentinel.cooldown_minutes";
+    public static final String TRADING_PLAYBOOK_EXIT_ENABLED = "trading.playbook_exit.enabled";
 
     public static final String CIRCUIT_BREAKER_ENABLED = "trading.circuit_breaker.enabled";
     public static final String CIRCUIT_BREAKER_L1_DAILY_NET_LOSS_PCT = "trading.circuit_breaker.l1_daily_net_loss_pct";
@@ -113,19 +106,9 @@ public class RuntimeFeatureToggleService {
                         FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED),
                 new RuntimeToggleSnapshot.TradingToggles(
                         get(TRADING_LOW_VOL_ENABLED, Boolean.class,
-                                DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED)
-                ),
-                new RuntimeToggleSnapshot.DrawdownSentinelToggles(
-                        get(DRAWDOWN_SENTINEL_ENABLED, Boolean.class, PositionDrawdownSentinel.ENABLED),
-                        get(DRAWDOWN_SENTINEL_WINDOW_MINUTES, Integer.class, PositionDrawdownSentinel.WINDOW_MINUTES),
-                        get(DRAWDOWN_SENTINEL_PNL_PCT_DROP_THRESHOLD_PPT, Double.class,
-                                PositionDrawdownSentinel.PNL_PCT_DROP_THRESHOLD_PPT),
-                        get(DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_THRESHOLD_PCT, Double.class,
-                                PositionDrawdownSentinel.PROFIT_DRAWDOWN_THRESHOLD_PCT),
-                        get(DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_MIN_BASE, Double.class,
-                                PositionDrawdownSentinel.PROFIT_DRAWDOWN_MIN_BASE),
-                        get(DRAWDOWN_SENTINEL_COOLDOWN_MINUTES, Integer.class,
-                                PositionDrawdownSentinel.COOLDOWN_MINUTES)
+                                DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED),
+                        get(TRADING_PLAYBOOK_EXIT_ENABLED, Boolean.class,
+                                DeterministicTradingExecutor.PLAYBOOK_EXIT_ENABLED)
                 ),
                 new RuntimeToggleSnapshot.CircuitBreakerToggles(
                         get(CIRCUIT_BREAKER_ENABLED, Boolean.class, CircuitBreakerService.ENABLED),
@@ -153,22 +136,8 @@ public class RuntimeFeatureToggleService {
 
         bind(map, TRADING_LOW_VOL_ENABLED, Boolean.class, DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED,
                 v -> DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED = v);
-
-        bind(map, DRAWDOWN_SENTINEL_ENABLED, Boolean.class, PositionDrawdownSentinel.ENABLED,
-                v -> PositionDrawdownSentinel.ENABLED = v);
-        bind(map, DRAWDOWN_SENTINEL_WINDOW_MINUTES, Integer.class, PositionDrawdownSentinel.WINDOW_MINUTES,
-                v -> PositionDrawdownSentinel.WINDOW_MINUTES = v);
-        bind(map, DRAWDOWN_SENTINEL_PNL_PCT_DROP_THRESHOLD_PPT, Double.class,
-                PositionDrawdownSentinel.PNL_PCT_DROP_THRESHOLD_PPT,
-                v -> PositionDrawdownSentinel.PNL_PCT_DROP_THRESHOLD_PPT = v);
-        bind(map, DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_THRESHOLD_PCT, Double.class,
-                PositionDrawdownSentinel.PROFIT_DRAWDOWN_THRESHOLD_PCT,
-                v -> PositionDrawdownSentinel.PROFIT_DRAWDOWN_THRESHOLD_PCT = v);
-        bind(map, DRAWDOWN_SENTINEL_PROFIT_DRAWDOWN_MIN_BASE, Double.class,
-                PositionDrawdownSentinel.PROFIT_DRAWDOWN_MIN_BASE,
-                v -> PositionDrawdownSentinel.PROFIT_DRAWDOWN_MIN_BASE = v);
-        bind(map, DRAWDOWN_SENTINEL_COOLDOWN_MINUTES, Integer.class, PositionDrawdownSentinel.COOLDOWN_MINUTES,
-                v -> PositionDrawdownSentinel.COOLDOWN_MINUTES = v);
+        bind(map, TRADING_PLAYBOOK_EXIT_ENABLED, Boolean.class, DeterministicTradingExecutor.PLAYBOOK_EXIT_ENABLED,
+                v -> DeterministicTradingExecutor.PLAYBOOK_EXIT_ENABLED = v);
 
         bind(map, CIRCUIT_BREAKER_ENABLED, Boolean.class, CircuitBreakerService.ENABLED,
                 v -> CircuitBreakerService.ENABLED = v);
