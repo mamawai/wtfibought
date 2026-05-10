@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.agent.trading.watching.signal;
+package com.mawai.wiibservice.agent.trading.exit.signal;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;

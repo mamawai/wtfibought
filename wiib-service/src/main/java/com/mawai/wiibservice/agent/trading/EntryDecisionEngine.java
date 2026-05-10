@@ -1,5 +1,7 @@
 package com.mawai.wiibservice.agent.trading;
 
+import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
+import com.mawai.wiibservice.agent.trading.exit.model.ExitPlanFactory;
 import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
 
 import com.mawai.wiibcommon.entity.QuantForecastCycle;

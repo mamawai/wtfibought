@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.agent.trading;
+package com.mawai.wiibservice.agent.trading.exit.model;
 
 public enum ExitPath {
     BREAKOUT,

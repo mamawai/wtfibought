@@ -1,5 +1,6 @@
 package com.mawai.wiibservice.agent.trading;
 
+import com.mawai.wiibservice.agent.trading.exit.model.ExitPlanRecovery;
 import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;

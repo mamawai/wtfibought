@@ -1,9 +1,10 @@
-package com.mawai.wiibservice.agent.trading.watching.playbook;
+package com.mawai.wiibservice.agent.trading.exit.playbook;
 
 import com.mawai.wiibservice.agent.trading.backtest.BacktestTradingTools;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
-import com.mawai.wiibservice.agent.trading.ExitPlan;
-import com.mawai.wiibservice.agent.trading.ExitPlanFactory;
+import com.mawai.wiibservice.agent.trading.exit.model.ExitPath;
+import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
+import com.mawai.wiibservice.agent.trading.exit.model.ExitPlanFactory;
 import com.mawai.wiibservice.agent.trading.MarketContext;
 import com.mawai.wiibservice.agent.trading.SymbolProfile;
 import com.mawai.wiibservice.agent.trading.TradingDecisionContext;
@@ -377,8 +378,8 @@ class PlaybookExitEngineTest {
 
     private static final class BlockingBreakoutPlaybook implements ExitPlaybook {
         @Override
-        public com.mawai.wiibservice.agent.trading.ExitPath path() {
-            return com.mawai.wiibservice.agent.trading.ExitPath.BREAKOUT;
+        public ExitPath path() {
+            return ExitPath.BREAKOUT;
         }
 
         @Override
