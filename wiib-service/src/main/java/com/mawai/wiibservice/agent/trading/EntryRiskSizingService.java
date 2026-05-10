@@ -9,6 +9,7 @@ import java.math.RoundingMode;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.PATH_BREAKOUT;
+import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.PATH_LEGACY_TREND;
 import static com.mawai.wiibservice.agent.trading.TradingDecisionSupport.PATH_MR;
 
 /**
@@ -76,7 +77,7 @@ final class EntryRiskSizingService {
         effectiveScale = Math.clamp(effectiveScale, 0.05, 1.0);
 
         BigDecimal slDistance = adj.slDistance();
-        BigDecimal tpDistance = adj.tpDistance();
+        BigDecimal tpDistance = applyPlaybookHardTp(candidate.path(), slDistance, adj.tpDistance(), profile, toggles);
         BigDecimal price = ctx.price;
         BigDecimal stopLoss = candidate.isLong() ? price.subtract(slDistance) : price.add(slDistance);
         BigDecimal takeProfit = candidate.isLong() ? price.add(tpDistance) : price.subtract(tpDistance);
@@ -160,6 +161,23 @@ final class EntryRiskSizingService {
                 symbol, strategy, rr.toPlainString(), slDistance.toPlainString(), tpDistance.toPlainString(), count);
         return "RR_GUARD rr=" + rr.setScale(2, RoundingMode.HALF_UP).toPlainString()
                 + " <" + minEntryRr.toPlainString() + " abstain";
+    }
+
+    private BigDecimal applyPlaybookHardTp(String path, BigDecimal slDistance, BigDecimal fallbackTpDistance,
+                                           SymbolProfile profile, TradingRuntimeToggles toggles) {
+        if (toggles == null || !toggles.playbookExitEnabled()) {
+            return fallbackTpDistance;
+        }
+        double hardTpR = switch (path) {
+            case PATH_BREAKOUT -> profile.breakoutHardTpR();
+            case PATH_LEGACY_TREND -> profile.trendHardTpR();
+            default -> 0.0;
+        };
+        if (hardTpR <= 0.0) {
+            return fallbackTpDistance;
+        }
+        // 硬TP是新退出引擎的兜底单，必须按最终SL距离算R，低波动扩SL后也保持5R。
+        return slDistance.multiply(BigDecimal.valueOf(hardTpR)).setScale(8, RoundingMode.HALF_UP);
     }
 
     /**
