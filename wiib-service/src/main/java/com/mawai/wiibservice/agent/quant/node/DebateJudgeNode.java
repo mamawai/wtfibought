@@ -2,15 +2,17 @@ package com.mawai.wiibservice.agent.quant.node;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
-import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibservice.agent.quant.domain.*;
+import com.mawai.wiibservice.agent.quant.domain.output.DebateHorizonResponse;
+import com.mawai.wiibservice.agent.quant.domain.output.DebateJudgeResponse;
 import com.mawai.wiibservice.agent.quant.judge.HorizonJudge;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.converter.BeanOutputConverter;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -42,6 +44,9 @@ public class DebateJudgeNode implements NodeAction {
      * shadow 不覆盖 horizon_forecasts / overall_decision / risk_status，也不下发 debate_probs，避免影响正式报告与交易链路。
      */
     public static volatile boolean SHADOW_ENABLED = false;
+
+    private static final BeanOutputConverter<DebateJudgeResponse> JUDGE_CONVERTER =
+            new BeanOutputConverter<>(DebateJudgeResponse.class);
 
     private final ChatClient chatClient;
     private final LlmCallMode callMode;
@@ -282,10 +287,10 @@ public class DebateJudgeNode implements NodeAction {
 
         try {
             String json = JsonUtils.extractJson(llmResponse);
-            JSONObject root = JSON.parseObject(json);
+            DebateJudgeResponse output = JUDGE_CONVERTER.convert(json);
 
-            String judgeReasoning = root.getString("judgeReasoning");
-            JSONArray horizons = root.getJSONArray("horizons");
+            String judgeReasoning = output.judgeReasoning();
+            List<DebateHorizonResponse> horizons = output.horizons();
 
             log.info("[Q4.5.debate] Bull: {} | Bear: {} | Judge: {}",
                     truncate(bullArg, 80), truncate(bearArg, 80), truncate(judgeReasoning, 80));
@@ -299,19 +304,21 @@ public class DebateJudgeNode implements NodeAction {
             }
 
             // 应用调整（逻辑继承自MetaJudge.applyAdjustments）
-            Map<String, JSONObject> adjustMap = new HashMap<>();
-            for (int i = 0; i < horizons.size(); i++) {
-                JSONObject h = horizons.getJSONObject(i);
-                String rawHorizon = h.getString("horizon");
-                adjustMap.put(normalizeHorizon(rawHorizon), h);
+            Map<String, DebateHorizonResponse> adjustMap = new HashMap<>();
+            for (DebateHorizonResponse h : horizons) {
+                adjustMap.put(normalizeHorizon(h.horizon()), h);
             }
 
             List<HorizonForecast> adjusted = new ArrayList<>(3);
             for (HorizonForecast f : original) {
-                JSONObject adj = adjustMap.get(f.horizon());
-                if (adj == null || adj.getBooleanValue("approved", true)) {
+                DebateHorizonResponse adj = adjustMap.get(f.horizon());
+                // approved 缺省视作 true（保留原 getBooleanValue("approved", true) 语义）
+                boolean approved = adj == null || adj.approved() == null || adj.approved();
+                if (approved) {
                     // approved: 允许小幅调整 confidence（上调不超过+0.10）
-                    double newConf = adj != null ? adj.getDoubleValue("newConfidence") : f.confidence();
+                    // newConfidence 缺失时用 f.confidence 兜底，cap 后差异为 0 不会触发调整，等价原 0.0 兜底行为
+                    double newConf = (adj != null && adj.newConfidence() != null)
+                            ? adj.newConfidence() : f.confidence();
                     double cappedConf = Math.min(newConf, f.confidence() + 0.10);
                     if (cappedConf > 0 && Math.abs(cappedConf - f.confidence()) > 1e-6) {
                         log.info("[Q4.5.merge] {} conf调整 {}→{}",
@@ -324,10 +331,9 @@ public class DebateJudgeNode implements NodeAction {
                 }
 
                 // 未approved，应用调整
-                String newDirStr = adj.getString("newDirection");
-                Direction newDir = parseDirection(newDirStr, f.direction());
-                double newConf = adj.getDoubleValue("newConfidence");
-                String reason = adj.getString("reason");
+                Direction newDir = parseDirection(adj.newDirection(), f.direction());
+                double newConf = adj.newConfidence() != null ? adj.newConfidence() : 0.0;
+                String reason = adj.reason();
 
                 // NO_TRADE翻转时允许LLM提升置信度(cap 0.5)，其余允许小幅上调(+0.10)
                 if (f.direction() != Direction.NO_TRADE) {
@@ -356,12 +362,16 @@ public class DebateJudgeNode implements NodeAction {
 
             // 解析辩论概率修正 → 传递给报告层
             Map<String, Integer[]> debateProbs = new HashMap<>();
-            for (int i = 0; i < horizons.size(); i++) {
-                JSONObject h = horizons.getJSONObject(i);
-                String hz = normalizeHorizon(h.getString("horizon"));
-                int bullPct = h.getIntValue("bullPct", -1);
-                int bearPct = h.getIntValue("bearPct", -1);
-                int rangePct = h.getIntValue("rangePct", -1);
+            for (DebateHorizonResponse h : horizons) {
+                String hz = normalizeHorizon(h.horizon());
+                Integer bullPctBox = h.bullPct();
+                Integer bearPctBox = h.bearPct();
+                Integer rangePctBox = h.rangePct();
+                // 任一字段缺失即跳过（保留原 getIntValue("...", -1) 哨兵语义）
+                if (bullPctBox == null || bearPctBox == null || rangePctBox == null) continue;
+                int bullPct = bullPctBox;
+                int bearPct = bearPctBox;
+                int rangePct = rangePctBox;
                 if (bullPct >= 0 && bearPct >= 0 && rangePct >= 0
                         && Math.abs(bullPct + bearPct + rangePct - 100) <= 3) {
                     // 归一化到100

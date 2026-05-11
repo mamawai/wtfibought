@@ -9,10 +9,13 @@ import com.mawai.wiibservice.agent.quant.domain.Direction;
 import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.domain.NewsItem;
+import com.mawai.wiibservice.agent.quant.domain.output.LightNewsResponse;
+import com.mawai.wiibservice.agent.quant.domain.output.LightNewsVoteResponse;
 import com.mawai.wiibservice.agent.quant.util.NewsRelevance;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.converter.BeanOutputConverter;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -22,7 +25,6 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 轻周期新闻刷新 Agent（浅LLM）。
@@ -36,6 +38,8 @@ public class LightNewsAgent {
     private static final String AGENT_NAME = "news_event";
     private static final DateTimeFormatter TIME_FMT =
             DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault());
+    private static final BeanOutputConverter<LightNewsResponse> LIGHT_NEWS_CONVERTER =
+            new BeanOutputConverter<>(LightNewsResponse.class);
 
     public record Result(List<AgentVote> votes, boolean useCache, String status) {
         public static Result useCache(String status) {
@@ -195,30 +199,26 @@ public class LightNewsAgent {
                         votesTemplate, items.size());
     }
 
-    @SuppressWarnings("unchecked")
     private static List<AgentVote> parseVotes(String response, FeatureSnapshot snapshot,
                                               List<String> activeHorizons) {
         try {
             String json = JsonUtils.extractJson(response);
-            Map<String, Object> root = JSON.parseObject(json, Map.class);
-            List<Map<String, Object>> votes = (List<Map<String, Object>>) root.get("votes");
+            List<LightNewsVoteResponse> votes = LIGHT_NEWS_CONVERTER.convert(json).votes();
             if (votes == null || votes.isEmpty()) return List.of();
 
             int baseVolBps = estimateVolBps(snapshot);
             List<AgentVote> result = new ArrayList<>(activeHorizons.size());
-            for (Map<String, Object> v : votes) {
-                String horizon = String.valueOf(v.get("horizon"));
+            for (LightNewsVoteResponse v : votes) {
+                String horizon = v.horizon();
                 if (!activeHorizons.contains(horizon)) continue;
-                double score = Math.clamp(toDouble(v.get("score")), -1, 1);
-                double conf = Math.clamp(toDouble(v.get("confidence")), 0, 1);
+                double score = Math.clamp(v.score(), -1, 1);
+                double conf = Math.clamp(v.confidence(), 0, 1);
                 // 时效衰减：与 NewsEventAgent 一致（新闻效应短期最强）
                 if ("10_20".equals(horizon)) conf *= 0.85;
                 else if ("20_30".equals(horizon)) conf *= 0.70;
 
-                List<String> reasons = v.get("reasonCodes") instanceof List<?> l
-                        ? l.stream().map(String::valueOf).toList() : List.of();
-                List<String> flags = v.get("riskFlags") instanceof List<?> l
-                        ? l.stream().map(String::valueOf).toList() : List.of();
+                List<String> reasons = nonBlankList(v.reasonCodes());
+                List<String> flags = nonBlankList(v.riskFlags());
 
                 Direction dir = Math.abs(score) < 0.05 ? Direction.NO_TRADE
                         : (score > 0 ? Direction.LONG : Direction.SHORT);
@@ -233,6 +233,15 @@ public class LightNewsAgent {
         }
     }
 
+    private static List<String> nonBlankList(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        return values.stream()
+                .filter(value -> value != null && !value.isBlank())
+                .toList();
+    }
+
     private static int estimateVolBps(FeatureSnapshot snapshot) {
         BigDecimal lastPrice = snapshot.lastPrice();
         BigDecimal atr = snapshot.atr5m() != null ? snapshot.atr5m() : snapshot.atr1m();
@@ -243,8 +252,4 @@ public class LightNewsAgent {
         return 30;
     }
 
-    private static double toDouble(Object v) {
-        if (v instanceof Number n) return n.doubleValue();
-        return 0;
-    }
 }

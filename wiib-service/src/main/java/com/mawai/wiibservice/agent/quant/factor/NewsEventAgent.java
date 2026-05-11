@@ -2,15 +2,17 @@ package com.mawai.wiibservice.agent.quant.factor;
 
 import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibservice.agent.quant.domain.*;
+import com.mawai.wiibservice.agent.quant.domain.output.NewsEventFilteredNewsResponse;
+import com.mawai.wiibservice.agent.quant.domain.output.NewsEventResponse;
+import com.mawai.wiibservice.agent.quant.domain.output.NewsEventVoteResponse;
 import com.mawai.wiibservice.agent.quant.util.NewsRelevance;
 
-import com.alibaba.fastjson2.JSON;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.converter.BeanOutputConverter;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -31,6 +33,8 @@ public class NewsEventAgent implements FactorAgent {
     private static final long NEWS_SAMPLE_TIMEOUT_SECONDS = 90;
     private static final double LOW_CONFIDENCE_STDDEV = 0.15;
     private static final List<String> HORIZONS = List.of("0_10", "10_20", "20_30");
+    private static final BeanOutputConverter<NewsEventResponse> NEWS_EVENT_CONVERTER =
+            new BeanOutputConverter<>(NewsEventResponse.class);
 
     private final ChatClient chatClient;
     private final LlmCallMode callMode;
@@ -208,7 +212,7 @@ public class NewsEventAgent implements FactorAgent {
                 严格返回以下JSON（不要markdown包裹）：
                 {
                   "filteredNews": [
-                    {"index":1,"title":"标题","sentiment":"bullish/bearish/neutral","impact":"high/medium/low","reason":"一句话说明影响逻辑"}
+                    {"title":"标题","sentiment":"bullish/bearish/neutral","impact":"high/medium/low","reason":"一句话说明影响逻辑"}
                   ],
                   "votes": [
                     {"horizon":"0_10","score":0.0,"confidence":0.0,"reasonCodes":[],"riskFlags":[]},
@@ -226,7 +230,6 @@ public class NewsEventAgent implements FactorAgent {
                 """.formatted(symbol, newsText.toString(), symbol, symbol);
     }
 
-    @SuppressWarnings("unchecked")
     private EvaluateResult parseResponse(String response, int baseVolBps) {
         if (response == null || response.isBlank()) {
             return new EvaluateResult(defaultVotes("PARSE_ERROR"), List.of());
@@ -234,45 +237,27 @@ public class NewsEventAgent implements FactorAgent {
 
         try {
             String json = JsonUtils.extractJson(response);
-            Map<String, Object> root = JSON.parseObject(json, Map.class);
+            NewsEventResponse output = NEWS_EVENT_CONVERTER.convert(json);
+            List<FilteredNewsItem> filteredNews = toFilteredNews(output.filteredNews());
 
-            List<FilteredNewsItem> filteredNews = List.of();
-            List<Map<String, Object>> filtered = (List<Map<String, Object>>) root.get("filteredNews");
-            if (filtered != null && !filtered.isEmpty()) {
-                List<FilteredNewsItem> items = new ArrayList<>(filtered.size());
-                for (Map<String, Object> item : filtered) {
-                    items.add(new FilteredNewsItem(
-                            String.valueOf(item.getOrDefault("title", "")),
-                            String.valueOf(item.getOrDefault("sentiment", "neutral")),
-                            String.valueOf(item.getOrDefault("impact", "low")),
-                            String.valueOf(item.getOrDefault("reason", ""))
-                    ));
-                }
-                filteredNews = List.copyOf(items);
-                log.info("[Q3.news] LLM筛选出{}条有效新闻: {}", items.size(),
-                        items.stream().map(i -> i.sentiment() + ":" + i.title()).toList());
-            }
-
-            List<Map<String, Object>> votes = (List<Map<String, Object>>) root.get("votes");
+            List<NewsEventVoteResponse> votes = output.votes();
             if (votes == null || votes.size() < 3) {
                 return new EvaluateResult(defaultVotes("INVALID_FORMAT"), filteredNews);
             }
 
             List<AgentVote> result = new ArrayList<>(3);
             for (int i = 0; i < 3 && i < votes.size(); i++) {
-                Map<String, Object> v = votes.get(i);
-                String horizon = (String) v.get("horizon");
-                double score = clamp(toDouble(v.get("score")));
-                double conf = Math.clamp(toDouble(v.get("confidence")), 0, 1);
+                NewsEventVoteResponse v = votes.get(i);
+                String horizon = v.horizon();
+                double score = clamp(v.score());
+                double conf = Math.clamp(v.confidence(), 0, 1);
 
                 // 新闻时效衰减：远期窗口 confidence 递减（新闻效应短期最强）
                 if ("10_20".equals(horizon)) conf *= 0.85;
                 else if ("20_30".equals(horizon)) conf *= 0.7;
 
-                List<String> reasons = v.get("reasonCodes") instanceof List<?> l
-                        ? l.stream().map(String::valueOf).toList() : List.of();
-                List<String> flags = v.get("riskFlags") instanceof List<?> l
-                        ? l.stream().map(String::valueOf).toList() : List.of();
+                List<String> reasons = nonBlankList(v.reasonCodes());
+                List<String> flags = nonBlankList(v.riskFlags());
 
                 Direction dir = Math.abs(score) < 0.05 ? Direction.NO_TRADE
                         : (score > 0 ? Direction.LONG : Direction.SHORT);
@@ -286,6 +271,37 @@ public class NewsEventAgent implements FactorAgent {
             log.warn("[Q3.news] 解析失败: {}", e.getMessage());
             return new EvaluateResult(defaultVotes("PARSE_ERROR"), List.of());
         }
+    }
+
+    private List<FilteredNewsItem> toFilteredNews(List<NewsEventFilteredNewsResponse> filtered) {
+        if (filtered == null || filtered.isEmpty()) {
+            return List.of();
+        }
+        List<FilteredNewsItem> items = new ArrayList<>(filtered.size());
+        for (NewsEventFilteredNewsResponse item : filtered) {
+            items.add(new FilteredNewsItem(
+                    blankToDefault(item.title(), ""),
+                    blankToDefault(item.sentiment(), "neutral"),
+                    blankToDefault(item.impact(), "low"),
+                    blankToDefault(item.reason(), "")
+            ));
+        }
+        log.info("[Q3.news] LLM筛选出{}条有效新闻: {}", items.size(),
+                items.stream().map(i -> i.sentiment() + ":" + i.title()).toList());
+        return List.copyOf(items);
+    }
+
+    private static String blankToDefault(String value, String defaultValue) {
+        return value != null && !value.isBlank() ? value : defaultValue;
+    }
+
+    private static List<String> nonBlankList(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        return values.stream()
+                .filter(value -> value != null && !value.isBlank())
+                .toList();
     }
 
     private EvaluateResult medianResult(List<EvaluateResult> samples, int baseVolBps) {
@@ -403,11 +419,6 @@ public class NewsEventAgent implements FactorAgent {
                     .divide(lastPrice, 0, java.math.RoundingMode.HALF_UP).intValue();
         }
         return 30;
-    }
-
-    private static double toDouble(Object v) {
-        if (v instanceof Number n) return n.doubleValue();
-        return 0;
     }
 
     public record FilteredNewsItem(String title, String sentiment, String impact, String reason) {}

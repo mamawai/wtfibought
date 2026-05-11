@@ -9,13 +9,15 @@ import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
+import com.mawai.wiibservice.agent.quant.domain.output.ReflectionLessonResponse;
+import com.mawai.wiibservice.agent.quant.domain.output.ReflectionResponse;
 import com.mawai.wiibservice.agent.quant.memory.VerificationService;
 import com.mawai.wiibservice.mapper.*;
 import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -24,6 +26,9 @@ import java.util.List;
 @Slf4j
 @Component
 public class ReflectionTask {
+
+    private static final BeanOutputConverter<ReflectionResponse> REFLECTION_CONVERTER =
+            new BeanOutputConverter<>(ReflectionResponse.class);
 
     private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final QuantForecastCycleMapper cycleMapper;
@@ -163,21 +168,19 @@ public class ReflectionTask {
         sb.append("""
                 请分析：
                 1. 哪些情况下预测准确/不准确？（按方向、区间维度分析）
-                2. 是否存在系统性偏差？（如总是偏多/偏空）
+                2. 是否存在系统性偏差？（如总是偏多/偏空，作为一条 lesson 写入，tag 用 *_BIAS 形式）
                 3. confidence高时准确率是否更高？
                 4. 各个agent（microstructure/momentum/regime/volatility/news_event）在不同区间的贡献质量如何？
                 5. 给出2-3条改进建议
 
                 严格返回JSON（不要markdown包裹）：
                 {
-                  "overallAccuracy": 0.65,
-                  "biases": ["偏差描述"],
                   "lessons": [
                     {"tag": "标签如RANGE_BULLISH_BIAS", "lesson": "具体教训，50字内"}
                   ]
                 }
 
-                说明：只输出可解释的biases和lessons；各agent准确率由程序基于验证样本统计，不需要你主观打分。
+                说明：只输出可解释的 lessons；各 agent 准确率与整体命中率已由程序统计，不需要你主观再报。
                 """);
         return sb.toString();
     }
@@ -208,8 +211,7 @@ public class ReflectionTask {
     private void saveReflection(String llmResponse, List<QuantForecastVerification> verifications, String symbol) {
         try {
             String json = JsonUtils.extractJson(llmResponse);
-            JSONObject root = JSON.parseObject(json);
-            JSONArray lessons = root.getJSONArray("lessons");
+            List<ReflectionLessonResponse> lessons = REFLECTION_CONVERTER.convert(json).lessons();
             if (lessons == null || lessons.isEmpty()) return;
 
             QuantForecastVerification latest = verifications.getFirst();
@@ -226,12 +228,11 @@ public class ReflectionTask {
 
             StringBuilder allTags = new StringBuilder();
             StringBuilder allLessons = new StringBuilder();
-            for (int i = 0; i < lessons.size(); i++) {
-                JSONObject lesson = lessons.getJSONObject(i);
-                String tag = lesson.getString("tag");
-                String text = lesson.getString("lesson");
-                if (tag != null) allTags.append(tag).append(",");
-                if (text != null) allLessons.append(text).append(" ");
+            for (ReflectionLessonResponse lesson : lessons) {
+                String tag = lesson.tag();
+                String text = lesson.lesson();
+                if (tag != null && !tag.isBlank()) allTags.append(tag).append(",");
+                if (text != null && !text.isBlank()) allLessons.append(text).append(" ");
             }
 
             QuantReflectionMemory memory = new QuantReflectionMemory();

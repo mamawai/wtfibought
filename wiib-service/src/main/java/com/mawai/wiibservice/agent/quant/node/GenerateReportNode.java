@@ -3,11 +3,11 @@ package com.mawai.wiibservice.agent.quant.node;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibservice.agent.quant.CryptoAnalysisReport;
 import com.mawai.wiibservice.agent.quant.domain.*;
+import com.mawai.wiibservice.agent.quant.domain.output.GenerateReportResponse;
 import com.mawai.wiibservice.agent.quant.factor.NewsEventAgent;
 import com.mawai.wiibservice.agent.quant.judge.HorizonJudge;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
@@ -16,6 +16,7 @@ import com.mawai.wiibservice.agent.quant.util.NewsRelevance;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.converter.BeanOutputConverter;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -32,6 +33,9 @@ import java.util.Map;
  */
 @Slf4j
 public class GenerateReportNode implements NodeAction {
+
+    private static final BeanOutputConverter<GenerateReportResponse> REPORT_CONVERTER =
+            new BeanOutputConverter<>(GenerateReportResponse.class);
 
     private final ChatClient chatClient;
     private final LlmCallMode callMode;
@@ -294,28 +298,13 @@ public class GenerateReportNode implements NodeAction {
 
         try {
             String json = JsonUtils.extractJson(llmResponse);
-            JSONObject obj = JSON.parseObject(json);
+            GenerateReportResponse output = REPORT_CONVERTER.convert(json);
 
-            merged.setReasoning(getOrDefault(obj, "reasoning", null));
-            merged.setSummary(getOrDefault(obj, "summary", hardReport.getSummary()));
-            merged.setAnalysisBasis(getOrDefault(obj, "analysisBasis", hardReport.getAnalysisBasis()));
-            merged.setIndicators(getOrDefault(obj, "indicators", hardReport.getIndicators()));
-
-            JSONArray warnings = obj.getJSONArray("riskWarnings");
-            if (warnings != null && !warnings.isEmpty()) {
-                List<String> llmWarnings = new ArrayList<>();
-                for (int i = 0; i < warnings.size(); i++) {
-                    String w = warnings.getString(i);
-                    if (w != null && !w.isBlank()) llmWarnings.add(w);
-                }
-                if (!llmWarnings.isEmpty()) {
-                    merged.setRiskWarnings(llmWarnings);
-                } else {
-                    merged.setRiskWarnings(hardReport.getRiskWarnings());
-                }
-            } else {
-                merged.setRiskWarnings(hardReport.getRiskWarnings());
-            }
+            merged.setReasoning(blankToDefault(output.reasoning(), null));
+            merged.setSummary(blankToDefault(output.summary(), hardReport.getSummary()));
+            merged.setAnalysisBasis(blankToDefault(output.analysisBasis(), hardReport.getAnalysisBasis()));
+            merged.setIndicators(blankToDefault(output.indicators(), hardReport.getIndicators()));
+            merged.setRiskWarnings(nonBlankWarnings(output.riskWarnings(), hardReport.getRiskWarnings()));
         } catch (Exception e) {
             log.warn("[Q6.merge] LLM输出解析失败，文本字段回退硬性报告: {}", e.getMessage());
             copyTextFields(merged, hardReport);
@@ -331,9 +320,21 @@ public class GenerateReportNode implements NodeAction {
         target.setReasoning(source.getReasoning());
     }
 
-    private String getOrDefault(JSONObject obj, String key, String defaultValue) {
-        String val = obj.getString(key);
-        return (val != null && !val.isBlank()) ? val : defaultValue;
+    private String blankToDefault(String value, String defaultValue) {
+        return value != null && !value.isBlank() ? value : defaultValue;
+    }
+
+    private List<String> nonBlankWarnings(List<String> warnings, List<String> fallback) {
+        if (warnings == null || warnings.isEmpty()) {
+            return fallback;
+        }
+        List<String> cleaned = new ArrayList<>();
+        for (String warning : warnings) {
+            if (warning != null && !warning.isBlank()) {
+                cleaned.add(warning);
+            }
+        }
+        return cleaned.isEmpty() ? fallback : cleaned;
     }
 
     private String buildVoteSummary(List<AgentVote> votes) {
