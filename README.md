@@ -195,8 +195,8 @@ flowchart TB
 
 开仓关键过滤：
 
-- 同 symbol 内存冷却 10 分钟。
-- DB 层同 symbol 最近开仓冷却 10 分钟。
+- 同 symbol 内存冷却 20 分钟。
+- DB 层同 symbol 最近开仓冷却 20 分钟。
 - `STALE_AGG_TRADE` 弃权。
 - 只消费当前 active horizon，且每个 10 分钟段最后 1 分钟不新开仓。
 - `ALL_NO_TRADE / NO_DATA` 禁开。

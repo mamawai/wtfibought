@@ -40,7 +40,7 @@ public class FuturesTradingOperationsAdapter implements TradingOperations {
     private static final BigDecimal MIN_MARGIN_RATIO = new BigDecimal("0.01");
     private static final int MAX_OPEN_POSITIONS = 6;
     private static final int MAX_SYMBOL_POSITIONS = 3;
-    private static final int ENTRY_COOLDOWN_MINUTES = 10;
+    private static final int ENTRY_COOLDOWN_MINUTES = 20;
     private static final BigDecimal SL_MIN_TOLERANCE = new BigDecimal("0.0002");
 
     private final Long aiUserId;

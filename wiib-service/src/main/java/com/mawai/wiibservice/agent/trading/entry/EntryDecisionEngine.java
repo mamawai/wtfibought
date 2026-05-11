@@ -67,7 +67,7 @@ public final class EntryDecisionEngine {
     private static final double MR_SELECTION_WEIGHT = 0.9;
 
     // 同 symbol 开仓后的最短等待时间，避免短时间重复追单。
-    private static final long ENTRY_COOLDOWN_MS = 10 * 60 * 1000L;
+    private static final long ENTRY_COOLDOWN_MS = 20 * 60 * 1000L;
 
     /**
      * 开仓主流程。
@@ -85,7 +85,7 @@ public final class EntryDecisionEngine {
         MarketContext ctx = decision.market();
         TradingExecutionState state = decision.state();
 
-        // 10min 开仓冷却
+        // 20min 开仓冷却
         long nowMs = currentTimeMillis(state);
         Long lastEntryMs = state.getLastEntryMs(symbol);
         if (ENTRY_COOLDOWN_MS > 0 && lastEntryMs != null) {
