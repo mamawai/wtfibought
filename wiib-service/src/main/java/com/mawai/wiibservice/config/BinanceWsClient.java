@@ -75,23 +75,24 @@ public class BinanceWsClient implements SmartLifecycle {
 
         spotWs = new WsConnection("Spot", this::buildSpotUrl, this::onSpotMessage,
                 ws -> onSpotConnected(), this::startFallbackPolling,
-                httpClient, scheduler, shutdown);
+                httpClient, scheduler, shutdown, 90);
         futuresWs = new WsConnection("Futures", this::buildFuturesUrl, this::onFuturesMessage,
                 ws -> onFuturesConnected(), this::startFuturesFallbackPolling,
-                httpClient, scheduler, shutdown);
+                httpClient, scheduler, shutdown, 90);
         // Binance 2026-04-23起期货旧WS端点下线，miniTicker单独走/market
         futuresMiniTickWs = new WsConnection("FuturesMiniTick", this::buildFuturesMiniTickUrl, this::onFuturesMessage,
                 ws -> log.info("FuturesMiniTick WS已连接"), () -> {},
-                httpClient, scheduler, shutdown);
+                httpClient, scheduler, shutdown, 90);
+        // forceOrder是稀疏事件流（爆仓发生时才推），不设静默阈值
         forceOrderWs = new WsConnection("ForceOrder", this::buildForceOrderUrl, this::onForceOrderMessage,
                 ws -> log.info("ForceOrder WS已连接"), () -> {},
-                httpClient, scheduler, shutdown);
+                httpClient, scheduler, shutdown, 0);
         aggTradeWs = new WsConnection("AggTrade", this::buildAggTradeUrl, this::onAggTradeMessage,
                 ws -> log.info("AggTrade WS已连接"), () -> {},
-                httpClient, scheduler, shutdown);
+                httpClient, scheduler, shutdown, 60);
         depthWs = new WsConnection("Depth", this::buildDepthUrl, this::onDepthMessage,
                 ws -> log.info("Depth WS已连接"), () -> {},
-                httpClient, scheduler, shutdown);
+                httpClient, scheduler, shutdown, 60);
 
         // 启动ws
         spotWs.connect();
@@ -484,12 +485,7 @@ public class BinanceWsClient implements SmartLifecycle {
         // 时间戳
         int tIdx = raw.indexOf("\"T\":", sIdx);
         long ts = System.currentTimeMillis();
-        if (tIdx >= 0) {
-            int tStart = tIdx + 4;
-            int tEnd = raw.indexOf(',', tStart);
-            if (tEnd < 0) tEnd = raw.indexOf('}', tStart);
-            if (tEnd > tStart) ts = Long.parseLong(raw.substring(tStart, tEnd).trim());
-        }
+        ts = getEventTime(raw, tIdx, ts);
 
         try {
             double price = Double.parseDouble(priceStr);
@@ -547,17 +543,22 @@ public class BinanceWsClient implements SmartLifecycle {
         // 解析交易所事件时间 E，用于 freshness 判定
         int eIdx = depthJson.indexOf("\"E\":");
         long eventTime = System.currentTimeMillis();
+        eventTime = getEventTime(depthJson, eIdx, eventTime);
+
+        // 转换字段名: WS用 "b"/"a"，REST用 "bids"/"asks"，统一为 REST 格式
+        depthJson = depthJson.replace("\"b\":", "\"bids\":").replace("\"a\":", "\"asks\":");
+
+        depthStreamCache.onDepthUpdate(symbol, depthJson, eventTime);
+    }
+
+    private long getEventTime(String depthJson, int eIdx, long eventTime) {
         if (eIdx >= 0) {
             int eStart = eIdx + 4;
             int eEnd = depthJson.indexOf(',', eStart);
             if (eEnd < 0) eEnd = depthJson.indexOf('}', eStart);
             if (eEnd > eStart) eventTime = Long.parseLong(depthJson.substring(eStart, eEnd).trim());
         }
-
-        // 转换字段名: WS用 "b"/"a"，REST用 "bids"/"asks"，统一为 REST 格式
-        depthJson = depthJson.replace("\"b\":", "\"bids\":").replace("\"a\":", "\"asks\":");
-
-        depthStreamCache.onDepthUpdate(symbol, depthJson, eventTime);
+        return eventTime;
     }
 
 }
