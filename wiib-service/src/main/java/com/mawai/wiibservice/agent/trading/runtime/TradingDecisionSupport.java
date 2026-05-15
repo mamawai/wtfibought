@@ -174,7 +174,7 @@ public final class TradingDecisionSupport {
     public static BigDecimal calcCurrentTargetProgress(
             FuturesPositionDTO pos, BigDecimal profit, MarketContext ctx, SymbolProfile profile) {
         BigDecimal targetDistance = calcTargetDistance(pos, ctx, profile);
-        if (targetDistance == null || targetDistance.signum() <= 0 || profit.signum() <= 0) {
+        if (targetDistance.signum() <= 0 || profit.signum() <= 0) {
             return null;
         }
         return profit.divide(targetDistance, 4, RoundingMode.HALF_UP);

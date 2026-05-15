@@ -2,12 +2,7 @@ package com.mawai.wiibservice.agent.trading.backtest;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * 同一段历史数据的新旧退出引擎对比。
@@ -327,7 +322,7 @@ public record BacktestComparisonResult(
         if (matched.isEmpty()) return BigDecimal.ZERO;
         BigDecimal total = matched.stream()
                 .map(TradeDiff::pnlDelta)
-                .filter(v -> v != null)
+                .filter(Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return total.divide(BigDecimal.valueOf(matched.size()), 8, RoundingMode.HALF_UP);
     }
@@ -359,7 +354,7 @@ public record BacktestComparisonResult(
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         double avgR = rows.stream()
                 .map(BacktestResult.Trade::rMultiple)
-                .filter(v -> v != null)
+                .filter(Objects::nonNull)
                 .mapToDouble(BigDecimal::doubleValue)
                 .average()
                 .orElse(0);

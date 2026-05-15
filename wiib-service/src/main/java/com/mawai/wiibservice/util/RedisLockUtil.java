@@ -31,6 +31,9 @@ public class RedisLockUtil {
     /** 默认获取锁等待时间（毫秒） */
     private static final long DEFAULT_WAIT_TIMEOUT = 5000;
 
+    /** 获取锁失败后的重试间隔（毫秒） */
+    private static final long RETRY_INTERVAL_MILLIS = 50;
+
     /** Lua脚本：安全释放锁（只有持有者才能释放） */
     private static final String UNLOCK_SCRIPT =
             "if redis.call('get', KEYS[1]) == ARGV[1] then " +
@@ -66,6 +69,7 @@ public class RedisLockUtil {
      * @param waitTimeout 等待超时时间（毫秒）
      * @return 锁的value，null表示获取失败
      */
+    @SuppressWarnings("BusyWait")
     public String tryLockWithWait(String key, long lockTimeout, long waitTimeout) {
         long startTime = System.currentTimeMillis();
         String lockValue;
@@ -76,7 +80,8 @@ public class RedisLockUtil {
                 return null;
             }
             try {
-                Thread.sleep(50); // 短暂休眠后重试
+                // 短暂休眠后重试
+                Thread.sleep(RETRY_INTERVAL_MILLIS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return null;
@@ -116,8 +121,9 @@ public class RedisLockUtil {
      * @param supplier 要执行的操作
      * @throws LockAcquisitionException 如果获取锁失败
      */
-    public <T> void executeWithLock(String key, Supplier<T> supplier) {
-        executeWithLock(key, DEFAULT_LOCK_TIMEOUT, DEFAULT_WAIT_TIMEOUT, supplier);
+    @SuppressWarnings("UnusedReturnValue")
+    public <T> T executeWithLock(String key, Supplier<T> supplier) {
+        return executeWithLock(key, DEFAULT_LOCK_TIMEOUT, DEFAULT_WAIT_TIMEOUT, supplier);
     }
 
     /**

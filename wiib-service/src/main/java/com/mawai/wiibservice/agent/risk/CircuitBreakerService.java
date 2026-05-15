@@ -10,6 +10,7 @@ import com.mawai.wiibservice.mapper.StrategyPathStatusMapper;
 import com.mawai.wiibservice.mapper.TradeAttributionMapper;
 import com.mawai.wiibservice.mapper.UserMapper;
 import com.mawai.wiibservice.service.CacheService;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -40,6 +41,7 @@ public class CircuitBreakerService {
     private final TradeAttributionMapper tradeAttributionMapper;
     private final StrategyPathStatusMapper strategyPathStatusMapper;
 
+    @Getter
     @Value("${circuit.breaker.enabled:${CIRCUIT_BREAKER_ENABLED:true}}")
     private boolean propertyEnabled;
 
@@ -233,10 +235,6 @@ public class CircuitBreakerService {
 
     public boolean isEffectiveEnabled() {
         return isEnabled();
-    }
-
-    public boolean isPropertyEnabled() {
-        return propertyEnabled;
     }
 
     private BigDecimal pctRatio(double pct) {

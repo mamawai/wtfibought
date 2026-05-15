@@ -1,7 +1,6 @@
 package com.mawai.wiibservice.config;
 
 import cn.dev33.satoken.stp.StpUtil;
-import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,6 +10,8 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
 import org.springframework.http.server.ServletServerHttpRequest;
+import org.springframework.lang.NonNull;
+import org.springframework.lang.Nullable;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.simp.config.ChannelRegistration;
@@ -29,6 +30,7 @@ import org.springframework.web.socket.server.HandshakeInterceptor;
 import org.springframework.context.event.EventListener;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -78,8 +80,10 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 .setAllowedOriginPatterns("*")
                 .addInterceptors(new HandshakeInterceptor() {
                     @Override
-                    public boolean beforeHandshake(ServerHttpRequest request, ServerHttpResponse response,
-                                                   WebSocketHandler wsHandler, Map<String, Object> attributes) {
+                    public boolean beforeHandshake(@NonNull ServerHttpRequest request,
+                                                   @NonNull ServerHttpResponse response,
+                                                   @NonNull WebSocketHandler wsHandler,
+                                                   @NonNull Map<String, Object> attributes) {
                         if (connectionCount.get() >= maxConnections) {
                             log.warn("WebSocket连接数已达上限: {}", maxConnections);
                             return false;
@@ -115,8 +119,10 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                     }
 
                     @Override
-                    public void afterHandshake(ServerHttpRequest request, ServerHttpResponse response,
-                                               WebSocketHandler wsHandler, Exception exception) {
+                    public void afterHandshake(@NonNull ServerHttpRequest request,
+                                               @NonNull ServerHttpResponse response,
+                                               @NonNull WebSocketHandler wsHandler,
+                                               @Nullable Exception exception) {
                     }
                 })
                 .withSockJS();
@@ -138,7 +144,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                                 connectionCount.incrementAndGet();
                             }
                             log.info("WebSocket连接: sessionId={}, 连接数={}", sessionId, connectionCount.get());
-                            String token = (String) accessor.getSessionAttributes().get("token");
+                            String token = (String) Objects.requireNonNull(accessor.getSessionAttributes()).get("token");
                             if (token != null) {
                                 accessor.setUser(() -> sessionId);
                             }
@@ -159,10 +165,6 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 return message;
             }
         });
-    }
-
-    public static int getConnectionCount() {
-        return connectionCount.get();
     }
 
     @EventListener
