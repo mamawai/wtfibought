@@ -48,3 +48,6 @@ deploy_script.txt
 
  ### 个人计划 / 调试笔记 ###
 docs/*.md
+
+###
+export-md
