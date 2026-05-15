@@ -97,7 +97,7 @@ public class RiskGate {
 
         // 高分歧 → 杠杆限制（仓位压缩已由 agreementFactor 处理，不再重复 ×0.5）
         if (highDisagreement) {
-            maxLev = Math.min(maxLev, Math.max(5, maxLev / 2));
+            maxLev = Math.clamp(maxLev / 2, 5, maxLev);
             actions.add("HIGH_DISAGREEMENT_PENALTY_" + f.horizon());
         }
 
@@ -168,7 +168,7 @@ public class RiskGate {
         if (symbol != null) {
             if (symbol.contains("BTC")) { normalThreshold = 0.5; extremeThreshold = 1.5; }
             else if (symbol.contains("ETH")) { normalThreshold = 0.7; extremeThreshold = 2.0; }
-            else if (symbol.contains("PAXG")) { normalThreshold = 0.3; extremeThreshold = 0.8; }
+            else if (symbol.contains("PAXG")) {extremeThreshold = 0.8; }
         }
 
         if (atrPct < normalThreshold) return 1.0;

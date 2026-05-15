@@ -43,7 +43,7 @@ public final class BreakoutConfluenceGate implements EntryConfluenceGate {
     }
 
     private boolean middleTimeframeNotAgainst(MarketContext ctx, boolean isLong) {
-        return ctx.maAlignment15m == null || !EntryStrategySupport.directionConflicts(ctx.maAlignment15m, isLong);
+        return !EntryStrategySupport.directionConflicts(ctx.maAlignment15m, isLong);
     }
 
     private boolean emaSameSide(MarketContext ctx, boolean isLong) {

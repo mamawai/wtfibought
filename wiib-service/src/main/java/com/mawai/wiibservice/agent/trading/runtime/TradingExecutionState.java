@@ -91,8 +91,8 @@ public class TradingExecutionState {
         positionPeaks.computeIfPresent(positionId, (k, v) -> v.withPartialTpDone());
     }
 
-    public int incrementReversalStreak(Long positionId) {
-        return reversalStreak.merge(positionId, 1, Integer::sum);
+    public void incrementReversalStreak(Long positionId) {
+        reversalStreak.merge(positionId, 1, Integer::sum);
     }
 
     public void clearReversalStreak(Long positionId) {

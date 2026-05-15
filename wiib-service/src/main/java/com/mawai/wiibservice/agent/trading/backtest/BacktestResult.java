@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 回测结果统计。
@@ -180,10 +181,6 @@ public class BacktestResult {
         return List.copyOf(trades);
     }
 
-    public List<BigDecimal> getEquityCurve() {
-        return List.copyOf(equityCurve);
-    }
-
     // ==================== 报告输出 ====================
 
     @Override
@@ -286,7 +283,7 @@ public class BacktestResult {
     private double avgR(List<Trade> rows) {
         return rows.stream()
                 .map(Trade::rMultiple)
-                .filter(v -> v != null)
+                .filter(Objects::nonNull)
                 .mapToDouble(BigDecimal::doubleValue)
                 .average()
                 .orElse(0);

@@ -283,17 +283,15 @@ public class HorizonJudge {
         int baseLev = switch (horizon) {
             case "0_10" -> 35;
             case "10_20" -> 30;
-            case "20_30" -> 25;
             default -> 25;
         };
-        if (disagreement > 0.35) baseLev = Math.min(baseLev, 20);
+        if (disagreement > 0.35) baseLev = 20;
         if (confidence < 0.4) baseLev = (int) (baseLev * 0.7);
         return Math.max(5, baseLev);
     }
 
     public static double getBasePositionPct(String horizon) {
         return switch (horizon) {
-            case "0_10" -> 0.20;
             case "10_20" -> 0.25;
             case "20_30" -> 0.30;
             default -> 0.20;

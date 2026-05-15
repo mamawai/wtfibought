@@ -133,8 +133,7 @@ public class BehaviorAnalysisReport {
         if (tradeBehavior.getPrediction() == null
                 || tradeBehavior.getPrediction().getNetProfit() == null
                 || tradeBehavior.getPrediction().getWinRate() == null) return false;
-        if (riskProfile == null || suggestions == null) return false;
+        return riskProfile != null && suggestions != null;
         // gameBehavior 为可选，不参与校验
-        return true;
     }
 }
