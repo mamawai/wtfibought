@@ -19,13 +19,15 @@ public final class MeanReversionEntryStrategy implements EntryStrategy {
     private static final int MAX_LEVERAGE = 20;
     private static final double POSITION_SCALE = 0.55;
     private static final double MIN_CONFIDENCE = 0.45;
-    private static final double MIN_SCORE = 4.0;
-    private static final double BB_PB_LONG_MAX = 20.0;
-    private static final double BB_PB_SHORT_MIN = 80.0;
+    // 实盘 4 天 0 单：BB%B 20/80 + RSI 44/56 + 非深度偏离 2 票确认 太严，BTC/ETH 横盘中很少同时满足。
+    // 整体放宽一档：BB%B 25/75、RSI 48/52、非深度偏离 1 票即可；深度偏离/hardTrendAgainst 铁律保持不动。
+    private static final double MIN_SCORE = 3.6;
+    private static final double BB_PB_LONG_MAX = 25.0;
+    private static final double BB_PB_SHORT_MIN = 75.0;
     private static final double BB_PB_LONG_STRONG = 15.0;
     private static final double BB_PB_SHORT_STRONG = 85.0;
-    private static final double RSI_LONG_MAX = 44.0;
-    private static final double RSI_SHORT_MIN = 56.0;
+    private static final double RSI_LONG_MAX = 48.0;
+    private static final double RSI_SHORT_MIN = 52.0;
     private static final double RSI_LONG_STRONG = 38.0;
     private static final double RSI_SHORT_STRONG = 62.0;
 
@@ -68,7 +70,7 @@ public final class MeanReversionEntryStrategy implements EntryStrategy {
             return EntryStrategyResult.reject(PATH_MR,
                     "深度偏离但无反转确认 RSI=" + fmt(ctx.rsi5m.doubleValue()) + " MACD=" + ctx.macdHistTrend5m);
         }
-        if (!deepStretch && reversalVotes < 2) {
+        if (!deepStretch && reversalVotes < 1) {
             return EntryStrategyResult.reject(PATH_MR,
                     "反转确认不足 votes=" + reversalVotes + " RSI=" + fmt(ctx.rsi5m.doubleValue())
                             + " MACD=" + ctx.macdHistTrend5m);

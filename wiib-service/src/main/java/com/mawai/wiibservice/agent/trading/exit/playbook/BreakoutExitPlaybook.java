@@ -23,11 +23,13 @@ final class BreakoutExitPlaybook implements ExitPlaybook {
 
     private static final BigDecimal BREAKEVEN_R = BigDecimal.ONE;
     private static final BigDecimal BREAKEVEN_LOCK_R = new BigDecimal("0.10");
-    private static final BigDecimal FAIL_TO_PROGRESS_R = new BigDecimal("0.50");
+    // 早期失效门槛放松：原 15min/0.5R 在横盘行情会把绝大多数突破单全部打掉（实盘 8/8 单全部触发）。
+    // 改为 30min/0.3R 给突破真正发酵时间，硬 SL 仍兜底单笔风险。
+    private static final BigDecimal FAIL_TO_PROGRESS_R = new BigDecimal("0.30");
     private static final BigDecimal PARTIAL_R = new BigDecimal("2.00");
     private static final int PARTIAL_R_MILESTONE = 200;
     private static final BigDecimal PARTIAL_CLOSE_RATIO = new BigDecimal("0.30");
-    private static final long FAIL_TO_PROGRESS_MINUTES = 15;
+    private static final long FAIL_TO_PROGRESS_MINUTES = 30;
     private static final int VOLUME_EXHAUSTION_MIN_BARS = 3;
     private static final double VOLUME_EXHAUSTION_RATIO = 0.8;
     private static final BigDecimal CHANDELIER_ATR_MULT = new BigDecimal("2.5");
@@ -71,7 +73,7 @@ final class BreakoutExitPlaybook implements ExitPlaybook {
         // 保本前先验证突破是否还有效，避免失败突破拖成被动硬止损。
         if (!plan.breakevenDone()) {
             ExitPlaybookDecision invalid = evaluateEarlyInvalidation(
-                    ctx, plan, profitR, holdMinutes, isLong, decision.indicatorExitShielded());
+                    ctx, plan, holdMinutes, isLong, decision.indicatorExitShielded());
             if (invalid.actionable()) {
                 return invalid;
             }
@@ -103,21 +105,21 @@ final class BreakoutExitPlaybook implements ExitPlaybook {
         return ExitPlaybookDecision.hold("BREAKOUT_HOLD");
     }
 
-    private ExitPlaybookDecision evaluateEarlyInvalidation(MarketContext ctx, ExitPlan plan,
-                                                           BigDecimal profitR, long holdMinutes,
+    private ExitPlaybookDecision evaluateEarlyInvalidation(MarketContext ctx, ExitPlan plan, long holdMinutes,
                                                            boolean isLong, boolean indicatorShielded) {
         if (!indicatorShielded && ctx.bollPb5m != null) {
-            if (isLong && ctx.bollPb5m < 60.0) {
+            // BB%B 回中阈值放宽 60/40→55/45，给突破后的正常回踩留 5pt 缓冲，避免短暂回中就被打掉。
+            if (isLong && ctx.bollPb5m < 55.0) {
                 return ExitPlaybookDecision.closeFull("BREAKOUT_BB_RETURN_NEUTRAL");
             }
-            if (!isLong && ctx.bollPb5m > 40.0) {
+            if (!isLong && ctx.bollPb5m > 45.0) {
                 return ExitPlaybookDecision.closeFull("BREAKOUT_BB_RETURN_NEUTRAL");
             }
         }
         if (!plan.recovered()
                 && holdMinutes >= FAIL_TO_PROGRESS_MINUTES
                 && plan.highestProfitR() < FAIL_TO_PROGRESS_R.doubleValue()) {
-            return ExitPlaybookDecision.closeFull("BREAKOUT_NO_0_5R_IN_15M");
+            return ExitPlaybookDecision.closeFull("BREAKOUT_NO_PROGRESS_IN_TIME");
         }
         if (!indicatorShielded && volumeExhausted(ctx, plan, holdMinutes)) {
             return ExitPlaybookDecision.closeFull("BREAKOUT_VOLUME_EXHAUSTION");

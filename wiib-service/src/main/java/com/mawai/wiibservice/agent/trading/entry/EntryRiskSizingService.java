@@ -34,7 +34,10 @@ final class EntryRiskSizingService {
     // 扣除手续费后，TP 至少还要留下的 ATR 利润空间。
     private static final double MIN_PROFIT_AFTER_FEE_ATR = 0.5;
     // 单笔交易允许承担的账户权益风险比例。
-    private static final BigDecimal RISK_PER_TRADE = new BigDecimal("0.02");
+    // 实盘观察：原 2% 配合 maxPositionPct 截断后实际只用了 ~0.15%（单笔最大亏损 100-200 USD/100k 账户）。
+    // 改为 1% 配合 maxPositionPct 不再截断 risk-based，单笔最大亏损约 500-1000 USD（账户 0.5-1%），
+    // 既让仓位真正生效，又避免单笔风险过大。
+    private static final BigDecimal RISK_PER_TRADE = new BigDecimal("0.01");
     // 开仓最低盈亏比要求：MR 胜率型策略单独放宽，仍保留手续费后利润检查。
     private static final BigDecimal DEFAULT_MIN_ENTRY_RR = new BigDecimal("1.2");
     private static final BigDecimal MR_MIN_ENTRY_RR = new BigDecimal("1.0");
@@ -100,7 +103,7 @@ final class EntryRiskSizingService {
         if (liquidationCheck != null) return SizingResult.reject(candidate.label() + ": " + liquidationCheck);
 
         BigDecimal quantity = calcQuantityByRisk(user, totalEquity, price, slDistance, leverage,
-                effectiveScale, signal.getMaxPositionPct());
+                effectiveScale);
         if (quantity == null) {
             return SizingResult.reject(candidate.label() + ": 仓位计算失败(余额不足或超限)");
         }
@@ -244,12 +247,14 @@ final class EntryRiskSizingService {
      * 按单笔风险预算计算下单数量。
      *
      * <p>有效止损距离 = 止损距离 + 预估平仓手续费距离，避免 SL 触发时真实亏损超过预算。</p>
+     *
+     * <p>{@code maxPositionPct} 入参当前不参与截断，保留入参以维持调用方签名和未来恢复空间，
+     * 信号侧风险偏好已在 RiskGate 阶段通过 confidence/disagreement/env 衰减进 effectiveScale。
+     * 终极仓位上限只走 MAX_MARGIN_PCT。</p>
      */
     private BigDecimal calcQuantityByRisk(User user, BigDecimal totalEquity,
-                                          BigDecimal price,
-                                          BigDecimal slDistance, int leverage,
-                                          double scale,
-                                          BigDecimal maxPositionPct) {
+                                          BigDecimal price, BigDecimal slDistance,
+                                          int leverage, double scale) {
         BigDecimal balance = user.getBalance() != null ? user.getBalance() : BigDecimal.ZERO;
         BigDecimal frozen = user.getFrozenBalance() != null ? user.getFrozenBalance() : BigDecimal.ZERO;
         BigDecimal equity = totalEquity != null ? totalEquity : balance.add(frozen);
@@ -259,11 +264,10 @@ final class EntryRiskSizingService {
                 .divide(effectiveSlDistance, 8, RoundingMode.HALF_DOWN);
         if (quantity.signum() <= 0) return null;
 
-        if (maxPositionPct != null && maxPositionPct.signum() > 0) {
-            BigDecimal maxPctQuantity = equity.multiply(maxPositionPct).divide(price, 8, RoundingMode.DOWN);
-            if (maxPctQuantity.signum() <= 0) return null;
-            if (quantity.compareTo(maxPctQuantity) > 0) quantity = maxPctQuantity;
-        }
+        // 信号侧 maxPositionPct 不再截断 risk-based quantity：
+        // 信号的"风险偏好"已通过 confidence/disagreement/env 在 RiskGate 阶段衰减过 maxPos；
+        // 这里再叠一层会让 risk-based 算出的合理仓位被压死（实盘 risk 预算只用了 8%）。
+        // 终极上限交给下方 MAX_MARGIN_PCT 兜底，避免单笔吃太多保证金。
 
         BigDecimal margin = quantity.multiply(price)
                 .divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
