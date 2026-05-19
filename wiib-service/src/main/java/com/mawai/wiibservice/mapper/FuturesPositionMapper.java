@@ -11,6 +11,7 @@ import org.apache.ibatis.annotations.Update;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 @Mapper
 public interface FuturesPositionMapper extends BaseMapper<FuturesPosition> {
@@ -48,6 +49,11 @@ public interface FuturesPositionMapper extends BaseMapper<FuturesPosition> {
     /** 查询用户所有OPEN仓位的保证金总和 */
     @Select("SELECT COALESCE(SUM(margin), 0) FROM futures_position WHERE user_id = #{userId} AND status = 'OPEN'")
     BigDecimal sumOpenMargin(@Param("userId") Long userId);
+
+    /** 排行榜硬实力：资金费已从余额或保证金扣过，这里按仓位历史累计扣回 */
+    @Select("SELECT user_id, COALESCE(SUM(COALESCE(funding_fee_total, 0)), 0) AS amount " +
+            "FROM futures_position GROUP BY user_id")
+    List<Map<String, Object>> sumFundingFeeTotalAll();
 
     /** 仅累加资金费率记录(从余额扣费时用，不动margin) */
     @Update("UPDATE futures_position SET funding_fee_total = funding_fee_total + #{fee}, updated_at = NOW() " +

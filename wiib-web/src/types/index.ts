@@ -133,6 +133,8 @@ export interface RankingItem {
   avatar?: string;
   totalAssets: number;
   profitPct: number;
+  hardcoreProfit: number;
+  buffProfit: number;
 }
 
 // ========== 期权相关类型 ==========

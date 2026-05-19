@@ -8,12 +8,34 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
 
 @Mapper
 public interface PredictionBetMapper extends BaseMapper<PredictionBet> {
 
     @Select("SELECT COALESCE(SUM(COALESCE(payout, 0) - cost), 0) FROM prediction_bet WHERE user_id = #{userId} AND status IN ('WON', 'LOST', 'DRAW', 'SOLD', 'CANCELLED')")
     BigDecimal sumRealizedProfit(@Param("userId") Long userId);
+
+    /** 排行榜硬实力：payout已扣卖出手续费；买入手续费未落库，按cost和avg_price重算扣回 */
+    @Select("""
+            SELECT user_id,
+                   COALESCE(SUM(
+                       COALESCE(payout, 0)
+                       - cost
+                       - ROUND(cost * (
+                           CASE
+                               WHEN 0.25 * POWER(avg_price * (1 - avg_price), 2) < 0.001 THEN 0.001
+                               WHEN 0.25 * POWER(avg_price * (1 - avg_price), 2) > 0.02 THEN 0.02
+                               ELSE 0.25 * POWER(avg_price * (1 - avg_price), 2)
+                           END
+                       ), 4)
+                   ), 0) AS amount
+            FROM prediction_bet
+            WHERE status IN ('WON', 'LOST', 'DRAW', 'SOLD', 'CANCELLED')
+            GROUP BY user_id
+            """)
+    List<Map<String, Object>> sumRealizedProfitAfterBuyFeeAll();
 
     /** CAS卖出: 仅ACTIVE→SOLD，返回affected行数防并发 */
     @Update("UPDATE prediction_bet SET status = 'SOLD', payout = #{payout}, updated_at = NOW() " +

@@ -9,6 +9,7 @@ import org.apache.ibatis.annotations.Update;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 @Mapper
 public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
@@ -46,6 +47,16 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
     @Select("SELECT COALESCE(SUM(realized_pnl - COALESCE(commission, 0)), 0) FROM futures_order " +
             "WHERE user_id = #{userId} AND realized_pnl IS NOT NULL")
     BigDecimal sumRealizedPnl(@Param("userId") Long userId);
+
+    /** 排行榜硬实力：所有最终成交单都扣手续费，开仓/加仓单realized_pnl为空只贡献-fee */
+    @Select("""
+            SELECT user_id,
+                   COALESCE(SUM(COALESCE(realized_pnl, 0) - COALESCE(commission, 0)), 0) AS amount
+            FROM futures_order
+            WHERE status IN ('FILLED', 'STOP_LOSS', 'TAKE_PROFIT', 'LIQUIDATED')
+            GROUP BY user_id
+            """)
+    List<Map<String, Object>> sumNetPnlAfterCommissionAll();
 
     @Select("SELECT * FROM futures_order WHERE user_id = #{userId} AND status = 'FILLED' " +
             "ORDER BY updated_at DESC LIMIT #{limit}")
