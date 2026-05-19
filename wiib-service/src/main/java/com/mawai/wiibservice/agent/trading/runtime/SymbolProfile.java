@@ -49,9 +49,13 @@ public record SymbolProfile(
     private static final SymbolProfile PAXG = new SymbolProfile(
             3.5, 6.0, 3.0, 2.5, 5.0, 4.0, 6.0, 1.2, 2.0, 0.002, 0.05, 2.0, 1.2,
             DEFAULT_PLAYBOOK_HARD_TP_R, DEFAULT_PLAYBOOK_HARD_TP_R);
+    // DOGE 高波动 meme 币：SL 比例下限放宽到 1%，止损/止盈 ATR 略放大避免被噪声打掉
+    private static final SymbolProfile DOGE = new SymbolProfile(
+            2.8, 5.5, 2.6, 3.0, 4.0, 3.0, 5.5, 0.6, 1.6, 0.010, 0.15, 1.6, 0.9,
+            DEFAULT_PLAYBOOK_HARD_TP_R, DEFAULT_PLAYBOOK_HARD_TP_R);
 
     private static final Map<String, SymbolProfile> PROFILES = Map.of(
-            "BTCUSDT", BTC, "ETHUSDT", ETH, "PAXGUSDT", PAXG);
+            "BTCUSDT", BTC, "ETHUSDT", ETH, "PAXGUSDT", PAXG, "DOGEUSDT", DOGE);
 
     public static SymbolProfile of(String symbol) {
         return PROFILES.getOrDefault(symbol, BTC);

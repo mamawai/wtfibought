@@ -25,6 +25,8 @@ import java.util.List;
 @RequiredArgsConstructor
 public class FuturesPositionIndexServiceImpl implements FuturesPositionIndexService {
 
+    private static final int PRICE_SCALE = 8;
+
     private final FuturesPositionMapper positionMapper;
     private final CacheService cacheService;
     private final TradingConfig tradingConfig;
@@ -202,6 +204,6 @@ public class FuturesPositionIndexServiceImpl implements FuturesPositionIndexServ
             num = entryPrice.multiply(quantity).add(margin);
             den = quantity.multiply(BigDecimal.ONE.add(mmr));
         }
-        return num.divide(den, 2, RoundingMode.HALF_UP);
+        return num.divide(den, PRICE_SCALE, RoundingMode.HALF_UP);
     }
 }

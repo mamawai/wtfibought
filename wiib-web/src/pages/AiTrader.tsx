@@ -8,6 +8,7 @@ import {
   Zap, Shield, Clock, ArrowUpRight,
 } from 'lucide-react';
 import { AiPnlChart } from '../components/AiPnlChart';
+import { formatCoinPrice } from '../lib/coinConfig';
 import type { AiTradingDashboard, AiTradingDecision, FuturesPosition } from '../types';
 
 const ACTION_CFG: Record<string, { label: string; icon: typeof Zap; color: string; bg: string; ring: string }> = {
@@ -27,8 +28,9 @@ const SYMBOL_MAP: Record<string, { label: string; emoji: string }> = {
   BTCUSDT:  { label: 'BTC',  emoji: '₿' },
   ETHUSDT:  { label: 'ETH',  emoji: 'Ξ' },
   PAXGUSDT: { label: 'PAXG', emoji: '🥇' },
+  DOGEUSDT: { label: 'DOGE', emoji: 'Ð' },
 };
-const SYMBOLS = ['ALL', 'BTCUSDT', 'ETHUSDT', 'PAXGUSDT'] as const;
+const SYMBOLS = ['ALL', 'BTCUSDT', 'ETHUSDT', 'PAXGUSDT', 'DOGEUSDT'] as const;
 
 function fmt$(n?: number | null, compact = false) {
   if (n == null || !Number.isFinite(n)) return '-';
@@ -93,6 +95,7 @@ function PositionCard({ p }: { p: FuturesPosition }) {
   const isLong = p.side === 'LONG';
   const pnlUp = p.unrealizedPnl >= 0;
   const sym = SYMBOL_MAP[p.symbol] || { label: p.symbol, emoji: '' };
+  const fmtSymbolPrice = (value?: number | null) => formatCoinPrice(p.symbol, value);
 
   return (
     <div className={cn(
@@ -119,7 +122,7 @@ function PositionCard({ p }: { p: FuturesPosition }) {
               </span>
             </div>
             <div className="text-[11px] text-muted-foreground mt-0.5">
-              {p.quantity} @ {fmt$(p.entryPrice)}
+              {p.quantity} @ {fmtSymbolPrice(p.entryPrice)}
             </div>
           </div>
         </div>
@@ -136,9 +139,9 @@ function PositionCard({ p }: { p: FuturesPosition }) {
       {/* detail grid */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         {[
-          { label: '现价', value: fmt$(p.currentPrice) },
+          { label: '现价', value: fmtSymbolPrice(p.currentPrice) },
           { label: '保证金', value: fmt$(p.margin) },
-          { label: '强平价', value: fmt$(p.liquidationPrice), warn: true },
+          { label: '强平价', value: fmtSymbolPrice(p.liquidationPrice), warn: true },
           { label: 'MMR', value: fmtRate(futuresMmrByLeverage(p.leverage)) },
           { label: '仓位价值', value: fmt$(p.positionValue, true) },
         ].map(item => (

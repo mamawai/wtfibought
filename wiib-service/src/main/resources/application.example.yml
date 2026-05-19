@@ -112,6 +112,7 @@ binance:
     - BTCUSDT
     - PAXGUSDT
     - ETHUSDT
+    - DOGEUSDT
   fallback-poll-interval: 5000
 
 # CoinDesk新闻API配置

@@ -14,7 +14,7 @@ import { Skeleton } from '../components/ui/skeleton';
 import { FuturesActionButton } from '../components/FuturesActionButton';
 import { TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Loader2, X, RefreshCw, Sparkles, Wallet, Warehouse, Scale, HelpCircle, Plus, Flame } from 'lucide-react';
 import TradingViewWidget from '../components/TradingViewWidget';
-import { COIN_MAP, getCoin, DEFAULT_SYMBOL } from '../lib/coinConfig';
+import { COIN_MAP, getCoin, DEFAULT_SYMBOL, formatCoinPrice, getCoinPriceDecimals } from '../lib/coinConfig';
 import type { CryptoOrder, CryptoPosition, PageResult, UserBuff, FuturesPosition, FuturesOrder, FuturesSLItem, FuturesTPItem } from '../types';
 
 interface SLTPRow { price: string; quantity: string }
@@ -61,9 +61,9 @@ function formatTime(ts: number, interval: string): string {
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
 }
 
-function formatPrice(n?: number | null): string {
+function formatPrice(n?: number | null, decimals = 2): string {
   if (n == null || !Number.isFinite(n)) return '-';
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
 function roundHalfUp2(n: number): number {
@@ -210,6 +210,10 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const cfg = getCoin(symbol);
   const Icon = cfg.icon;
   const MIN_QTY = cfg.minQty;
+  const PRICE_DECIMALS = getCoinPriceDecimals(symbol);
+  const PRICE_STEP = Number((1 / 10 ** PRICE_DECIMALS).toFixed(PRICE_DECIMALS));
+  const PRICE_STEP_TEXT = PRICE_STEP.toFixed(PRICE_DECIMALS);
+  const fmtPrice = useCallback((n?: number | null) => formatCoinPrice(symbol, n), [symbol]);
   const navigate = useNavigate();
   const { toast } = useToast();
   const user = useUserStore(s => s.user);
@@ -391,12 +395,12 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
         backgroundColor: 'transparent',
         grid: { left: 8, right: 8, top: 16, bottom: 32, containLabel: true },
         xAxis: { type: 'time', min: isDay ? now - 12 * 3600_000 : undefined, max: isDay ? now + 12 * 3600_000 : undefined, axisLine: { lineStyle: { color: '#333' } }, axisTick: { show: false }, axisLabel: { fontSize: 10, color: '#888', hideOverlap: true, formatter: (val: number) => formatTime(val, tab.interval) }, splitLine: { show: false } },
-        yAxis: { type: 'value', scale: true, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { fontSize: 10, color: '#888', formatter: (v: number) => formatPrice(v) }, splitLine: { lineStyle: { color: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.12)', type: 'dashed' } } },
+        yAxis: { type: 'value', scale: true, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { fontSize: 10, color: '#888', formatter: (v: number) => fmtPrice(v) }, splitLine: { lineStyle: { color: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.12)', type: 'dashed' } } },
         series: [
           { type: 'line', data: seriesData, smooth: 0.2, showSymbol: false, lineStyle: { width: 1.5, color: lineColor }, areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: areaStart }, { offset: 1, color: areaEnd }]) } },
           ...(withEffect && seriesData.length > 0 ? [{ type: 'effectScatter', data: [seriesData[seriesData.length - 1]], symbolSize: 8, rippleEffect: { brushType: 'fill', scale: 5, period: 4, number: 2 }, itemStyle: { color: lineColor, shadowBlur: 6, shadowColor: lineColor }, z: 10 }] : []),
         ],
-        tooltip: { trigger: 'axis', backgroundColor: 'rgba(20,20,20,0.9)', borderColor: '#333', textStyle: { color: '#fff', fontSize: 12 }, formatter: (params: unknown) => { const arr = params as { value: [number, number] }[]; const p = arr[0]; if (!p || p.value[1] == null) return ''; return `<div style="padding:4px 0"><div style="color:#888;margin-bottom:4px">${formatTime(p.value[0], tab.interval)}</div><div style="font-size:16px;font-weight:bold">$${formatPrice(p.value[1])}</div></div>`; } },
+        tooltip: { trigger: 'axis', backgroundColor: 'rgba(20,20,20,0.9)', borderColor: '#333', textStyle: { color: '#fff', fontSize: 12 }, formatter: (params: unknown) => { const arr = params as { value: [number, number] }[]; const p = arr[0]; if (!p || p.value[1] == null) return ''; return `<div style="padding:4px 0"><div style="color:#888;margin-bottom:4px">${formatTime(p.value[0], tab.interval)}</div><div style="font-size:16px;font-weight:bold">$${fmtPrice(p.value[1])}</div></div>`; } },
         dataZoom: [{ type: 'inside', start: 0, end: 100, minValueSpan: 20 }],
       });
       readyRef.current = true;
@@ -408,7 +412,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
         ],
       });
     }
-  }, []);
+  }, [fmtPrice, isDark]);
 
   // 1D 渲染
   useEffect(() => {
@@ -808,7 +812,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                 <div className="flex flex-col items-start sm:items-end">
                   <div className="flex items-baseline gap-2">
                     <span className="text-2xl sm:text-3xl font-black tracking-tight font-mono" style={{ color: 'var(--color-foreground)' }}>
-                      ${formatPrice(currentPrice)}
+                      ${fmtPrice(currentPrice)}
                     </span>
                   </div>
                   {cfg.unitLabel && usdCny > 0 && currentPrice > 0 && (
@@ -818,7 +822,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                   )}
                   <div className={`flex items-center gap-1.5 text-sm font-bold mt-2 px-2.5 py-1 rounded-lg neu-flat ${isUp ? 'bg-gain/10 text-gain' : 'bg-loss/10 text-loss'}`}>
                     {isUp ? <TrendingUp className="w-4 h-4 stroke-[3px]" /> : <TrendingDown className="w-4 h-4 stroke-[3px]" />}
-                    <span>{isUp ? '+' : ''}{formatPrice(change)}</span>
+                    <span>{isUp ? '+' : ''}{fmtPrice(change)}</span>
                     <span>({isUp ? '+' : ''}{changePct.toFixed(2)}%)</span>
                   </div>
                 </div>
@@ -908,8 +912,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs font-bold text-muted-foreground pt-1">
-                  <span>均价 <span className="text-foreground font-mono">${formatPrice(position.avgCost)}</span></span>
-                  <span>现价 <span className="text-foreground font-mono">${formatPrice(currentPrice)}</span></span>
+                  <span>均价 <span className="text-foreground font-mono">${fmtPrice(position.avgCost)}</span></span>
+                  <span>现价 <span className="text-foreground font-mono">${fmtPrice(currentPrice)}</span></span>
                   <span>市值 <span className="text-foreground font-mono">${formatPrice(currentPrice * position.quantity)}</span></span>
                   {position.frozenQuantity > 0 && <span>冻结 <span className="text-warning font-mono">{position.frozenQuantity}</span></span>}
                   {position.totalDiscount > 0 && <span>已省 <span className="text-warning font-mono">${formatPrice(position.totalDiscount)}</span></span>}
@@ -966,7 +970,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               {futuresOrderType === 'LIMIT' && (
                 <div className="space-y-1.5">
                   <label className="text-xs text-muted-foreground">限价 (USDT)</label>
-                  <Input type="number" placeholder="输入限价" value={limitPrice} onChange={e => setLimitPrice(e.target.value)} step="0.01" min="0" />
+                  <Input type="number" placeholder="输入限价" value={limitPrice} onChange={e => setLimitPrice(e.target.value)} step={PRICE_STEP_TEXT} min="0" />
                   {parseFloat(limitPrice) > 0 && currentPrice > 0 && (
                     (futuresSide === 'LONG' && parseFloat(limitPrice) >= currentPrice) ||
                     (futuresSide === 'SHORT' && parseFloat(limitPrice) <= currentPrice)
@@ -1064,7 +1068,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                     </div>
                     <div className="flex justify-between text-xs">
                       <span className="text-muted-foreground">预估强平价</span>
-                      <span className="font-mono text-yellow-500">${formatPrice(liquidationPrice)}</span>
+                      <span className="font-mono text-yellow-500">${fmtPrice(liquidationPrice)}</span>
                     </div>
                     <div className="flex justify-between text-xs">
                       <span className="text-muted-foreground">维持保证金率</span>
@@ -1091,7 +1095,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                   {openSlEnabled && (
                     <SLTPEditor rows={openSlRows} onChange={setOpenSlRows} label="止损" posQty={qtyNum * futuresLeverage} minQty={MIN_QTY}
                       currentPrice={futuresPriceForCalc || currentPrice} side={futuresSide}
-                      liquidationPrice={estimateLiqPrice(futuresSide, futuresPriceForCalc || currentPrice, futuresLeverage)} />
+                      liquidationPrice={estimateLiqPrice(futuresSide, futuresPriceForCalc || currentPrice, futuresLeverage)}
+                      minPriceStep={PRICE_STEP} priceFormatter={fmtPrice} />
                   )}
                 </div>
                 <div className="space-y-1.5">
@@ -1104,7 +1109,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                   </div>
                   {openTpEnabled && (
                     <SLTPEditor rows={openTpRows} onChange={setOpenTpRows} label="止盈" posQty={qtyNum * futuresLeverage} minQty={MIN_QTY}
-                      currentPrice={futuresPriceForCalc || currentPrice} side={futuresSide} />
+                      currentPrice={futuresPriceForCalc || currentPrice} side={futuresSide}
+                      minPriceStep={PRICE_STEP} priceFormatter={fmtPrice} />
                   )}
                 </div>
               </div>
@@ -1129,7 +1135,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
           {orderType === 'LIMIT' && (
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-muted-foreground">限价 (USDT)</label>
-              <Input type="number" placeholder="输入限价" value={limitPrice} onChange={e => setLimitPrice(e.target.value)} step="0.01" min="0" />
+              <Input type="number" placeholder="输入限价" value={limitPrice} onChange={e => setLimitPrice(e.target.value)} step={PRICE_STEP_TEXT} min="0" />
             </div>
           )}
 
@@ -1312,10 +1318,10 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                     </div>
                   </div>
                   {/* 价格轴 */}
-                  <PositionPriceBar pos={pos} currentPrice={currentPrice} />
+                  <PositionPriceBar pos={pos} currentPrice={currentPrice} priceFormatter={fmtPrice} />
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-                    <div>开仓 <span className="text-foreground font-mono">${formatPrice(pos.entryPrice)}</span></div>
-                    <div>强平 <span className="text-yellow-500 font-mono">${formatPrice(pos.liquidationPrice)}</span></div>
+                    <div>开仓 <span className="text-foreground font-mono">${fmtPrice(pos.entryPrice)}</span></div>
+                    <div>强平 <span className="text-yellow-500 font-mono">${fmtPrice(pos.liquidationPrice)}</span></div>
                     <div>保证金 <span className="text-foreground font-mono">${formatPrice(pos.margin)}</span></div>
                     <div>资金费 <span className="font-mono">${formatPrice(pos.fundingFeeTotal)}</span></div>
                     <div>MMR <span className="text-foreground font-mono">{formatRate(futuresMmrByLeverage(pos.leverage))}</span></div>
@@ -1342,7 +1348,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                           </div>
                           {posCloseOrderType === 'LIMIT' && (
                             <>
-                              <Input type="number" placeholder="限价 (USDT)" value={posCloseLimitPrice} onChange={e => setPosCloseLimitPrice(e.target.value)} step="0.01" className="h-8 text-xs" />
+                              <Input type="number" placeholder="限价 (USDT)" value={posCloseLimitPrice} onChange={e => setPosCloseLimitPrice(e.target.value)} step={PRICE_STEP_TEXT} className="h-8 text-xs" />
                               {parseFloat(posCloseLimitPrice) > 0 && currentPrice > 0 && (
                                 (pos.side === 'LONG' && parseFloat(posCloseLimitPrice) <= currentPrice) ||
                                 (pos.side === 'SHORT' && parseFloat(posCloseLimitPrice) >= currentPrice)
@@ -1385,7 +1391,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                           </div>
                           {posIncreaseOrderType === 'LIMIT' && (
                             <>
-                              <Input type="number" placeholder="限价 (USDT)" value={posIncreaseLimitPrice} onChange={e => setPosIncreaseLimitPrice(e.target.value)} step="0.01" className="h-8 text-xs" />
+                              <Input type="number" placeholder="限价 (USDT)" value={posIncreaseLimitPrice} onChange={e => setPosIncreaseLimitPrice(e.target.value)} step={PRICE_STEP_TEXT} className="h-8 text-xs" />
                               {parseFloat(posIncreaseLimitPrice) > 0 && currentPrice > 0 && (
                                 (pos.side === 'LONG' && parseFloat(posIncreaseLimitPrice) >= currentPrice) ||
                                 (pos.side === 'SHORT' && parseFloat(posIncreaseLimitPrice) <= currentPrice)
@@ -1437,7 +1443,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                               止损 <HelpTip text="触发价达到时自动市价平仓，可分多档，总量不超过持仓" />
                             </div>
                             <SLTPEditor rows={posSlRows} onChange={setPosSlRows} label="止损" posQty={pos.quantity} minQty={MIN_QTY}
-                              currentPrice={currentPrice} side={pos.side} liquidationPrice={pos.liquidationPrice} />
+                              currentPrice={currentPrice} side={pos.side} liquidationPrice={pos.liquidationPrice}
+                              minPriceStep={PRICE_STEP} priceFormatter={fmtPrice} />
                             <Button size="sm" className="w-full h-8 text-xs" onClick={() => handleSetStopLoss(pos.id)} disabled={submitting}>
                               {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : '保存止损'}
                             </Button>
@@ -1447,7 +1454,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                               止盈 <HelpTip text="触发价达到时自动市价平仓，可分多档，总量不超过持仓" />
                             </div>
                             <SLTPEditor rows={posTpRows} onChange={setPosTpRows} label="止盈" posQty={pos.quantity} minQty={MIN_QTY}
-                              currentPrice={currentPrice} side={pos.side} liquidationPrice={pos.liquidationPrice} />
+                              currentPrice={currentPrice} side={pos.side} liquidationPrice={pos.liquidationPrice}
+                              minPriceStep={PRICE_STEP} priceFormatter={fmtPrice} />
                             <Button size="sm" className="w-full h-8 text-xs" onClick={() => handleSetTakeProfit(pos.id)} disabled={submitting}>
                               {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : '保存止盈'}
                             </Button>
@@ -1527,8 +1535,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                             <td className="px-2 py-2.5">{o.orderType === 'MARKET' ? '市价' : '限价'}</td>
                             <td className="px-2 py-2.5 text-right font-mono">{o.quantity}</td>
                             <td className="px-2 py-2.5 text-right font-mono">{o.leverage}x</td>
-                            <td className="px-2 py-2.5 text-right font-mono">{o.limitPrice != null ? formatPrice(o.limitPrice) : '-'}</td>
-                            <td className="px-2 py-2.5 text-right font-mono">{o.filledPrice != null ? formatPrice(o.filledPrice) : '-'}</td>
+                            <td className="px-2 py-2.5 text-right font-mono">{o.limitPrice != null ? fmtPrice(o.limitPrice) : '-'}</td>
+                            <td className="px-2 py-2.5 text-right font-mono">{o.filledPrice != null ? fmtPrice(o.filledPrice) : '-'}</td>
                             <td className={`px-2 py-2.5 text-right font-mono ${hasPnl ? (o.realizedPnl! > 0 ? 'text-green-500' : 'text-red-500') : ''}`}>
                               {hasPnl ? `${o.realizedPnl! > 0 ? '+' : ''}${formatPrice(o.realizedPnl!)}` : '-'}
                             </td>
@@ -1593,8 +1601,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                             <td className={`px-2 py-2.5 font-medium ${isBuy ? 'text-green-500' : 'text-red-500'}`}>{isBuy ? '买入' : '卖出'}</td>
                             <td className="px-2 py-2.5">{o.orderType === 'MARKET' ? '市价' : '限价'}{o.leverage > 1 ? ` ${o.leverage}x` : ''}</td>
                             <td className="px-2 py-2.5 text-right font-mono">{o.quantity}</td>
-                            <td className="px-2 py-2.5 text-right font-mono">{o.limitPrice != null ? formatPrice(o.limitPrice) : '-'}</td>
-                            <td className="px-2 py-2.5 text-right font-mono">{o.triggerPrice != null ? formatPrice(o.triggerPrice) : '-'}</td>
+                            <td className="px-2 py-2.5 text-right font-mono">{o.limitPrice != null ? fmtPrice(o.limitPrice) : '-'}</td>
+                            <td className="px-2 py-2.5 text-right font-mono">{o.triggerPrice != null ? fmtPrice(o.triggerPrice) : '-'}</td>
                             <td className="px-2 py-2.5 text-right font-mono">{o.filledAmount != null ? formatPrice(o.filledAmount) : '-'}</td>
                             <td className="px-2 py-2.5 text-center"><Badge variant={st.variant}>{st.label}</Badge></td>
                             <td className="px-4 py-2.5 text-center">
@@ -1654,7 +1662,7 @@ function HelpTip({ text }: { text: string }) {
   );
 }
 
-function SLTPEditor({ rows, onChange, label, posQty, minQty, currentPrice, side, liquidationPrice }: {
+function SLTPEditor({ rows, onChange, label, posQty, minQty, currentPrice, side, liquidationPrice, minPriceStep = 0.01, priceFormatter = formatPrice }: {
   rows: SLTPRow[];
   onChange: (rows: SLTPRow[]) => void;
   label: string;
@@ -1663,6 +1671,8 @@ function SLTPEditor({ rows, onChange, label, posQty, minQty, currentPrice, side,
   currentPrice: number;
   side: 'LONG' | 'SHORT';
   liquidationPrice?: number;
+  minPriceStep?: number;
+  priceFormatter?: (value?: number | null) => string;
 }) {
   const isSL = label === '止损';
   const dragging = useRef(false);
@@ -1688,7 +1698,9 @@ function SLTPEditor({ rows, onChange, label, posQty, minQty, currentPrice, side,
     }
   }
 
-  const priceStep = currentPrice >= 10000 ? 10 : currentPrice >= 1000 ? 1 : currentPrice >= 100 ? 0.1 : 0.01;
+  const priceStep = currentPrice >= 10000 ? 10 : currentPrice >= 1000 ? 1 : currentPrice >= 100 ? 0.1 : minPriceStep;
+  const priceStepPrecision = getStepPrecision(priceStep);
+  const inputPriceStepText = minPriceStep.toFixed(getStepPrecision(minPriceStep));
   rangeMin = Math.round(rangeMin / priceStep) * priceStep;
   rangeMax = Math.round(rangeMax / priceStep) * priceStep;
 
@@ -1720,7 +1732,7 @@ function SLTPEditor({ rows, onChange, label, posQty, minQty, currentPrice, side,
               <span className="text-[10px] text-muted-foreground w-3 shrink-0">{i + 1}</span>
               <Input type="number" placeholder={`${label}价`} value={row.price}
                 onChange={e => { const n = [...rows]; n[i] = { ...n[i], price: e.target.value }; onChange(n); }}
-                step="0.01" className="flex-1 h-8 text-xs" />
+                step={inputPriceStepText} className="flex-1 h-8 text-xs" />
               <Input type="number" placeholder="数量" value={row.quantity}
                 onChange={e => { const n = [...rows]; n[i] = { ...n[i], quantity: e.target.value }; onChange(n); }}
                 step={String(minQty)} className="w-24 h-8 text-xs" />
@@ -1733,7 +1745,7 @@ function SLTPEditor({ rows, onChange, label, posQty, minQty, currentPrice, side,
             {showSlider && rowMin < rowMax && (
               <div className="flex items-center gap-1">
                 <span className="text-[9px] text-muted-foreground shrink-0 font-mono">
-                  {isSL && ((side === 'LONG' && i === 0) || (side === 'SHORT' && i === rows.length - 1)) ? '强平' : formatPrice(rowMin)}
+                  {isSL && ((side === 'LONG' && i === 0) || (side === 'SHORT' && i === rows.length - 1)) ? '强平' : priceFormatter(rowMin)}
                 </span>
                 <input
                   type="range" min={rowMin} max={rowMax} step={priceStep} value={sliderVal}
@@ -1743,13 +1755,13 @@ function SLTPEditor({ rows, onChange, label, posQty, minQty, currentPrice, side,
                     if (!dragging.current) return;
                     const val = Number(e.target.value);
                     const n = [...rows];
-                    n[i] = { ...n[i], price: val % 1 === 0 ? String(val) : val.toFixed(2) };
+                    n[i] = { ...n[i], price: val % 1 === 0 ? String(val) : val.toFixed(priceStepPrecision) };
                     onChange(n);
                   }}
                   className="flex-1 h-1.5 cursor-pointer"
                   style={{ accentColor: isSL ? '#eab308' : '#3b82f6' }}
                 />
-                <span className="text-[9px] text-muted-foreground shrink-0 font-mono">{formatPrice(rowMax)}</span>
+                <span className="text-[9px] text-muted-foreground shrink-0 font-mono">{priceFormatter(rowMax)}</span>
               </div>
             )}
           </div>
@@ -1769,7 +1781,11 @@ function SLTPEditor({ rows, onChange, label, posQty, minQty, currentPrice, side,
   );
 }
 
-function PositionPriceBar({ pos, currentPrice }: { pos: FuturesPosition; currentPrice: number }) {
+function PositionPriceBar({ pos, currentPrice, priceFormatter = formatPrice }: {
+  pos: FuturesPosition;
+  currentPrice: number;
+  priceFormatter?: (value?: number | null) => string;
+}) {
   const sls = pos.stopLosses?.map(s => s.price) ?? [];
   const tps = pos.takeProfits?.map(t => t.price) ?? [];
   const all = [pos.entryPrice, pos.markPrice, currentPrice, pos.liquidationPrice, ...sls, ...tps].filter(p => p > 0);
@@ -1808,7 +1824,7 @@ function PositionPriceBar({ pos, currentPrice }: { pos: FuturesPosition; current
             />
           </div>
           <span className={`text-[10px] font-mono shrink-0 tabular-nums ${r.anim ? 'font-semibold' : ''}`} style={{ color: r.color, minWidth: 58, textAlign: 'right' }}>
-            {r.price >= 1000 ? formatPrice(r.price) : r.price.toFixed(2)}
+            {priceFormatter(r.price)}
           </span>
         </div>
       ))}

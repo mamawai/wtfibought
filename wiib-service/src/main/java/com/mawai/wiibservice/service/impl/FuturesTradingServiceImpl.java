@@ -42,6 +42,8 @@ import static com.mawai.wiibservice.service.impl.FuturesHelper.*;
 @RequiredArgsConstructor
 public class FuturesTradingServiceImpl implements FuturesTradingService {
 
+    private static final int PRICE_SCALE = 8;
+
     private final UserService userService;
     private final UserMapper userMapper;
     private final FuturesPositionMapper positionMapper;
@@ -461,7 +463,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         BigDecimal newQty = oldQty.add(addQty);
         BigDecimal newEntryPrice = position.getEntryPrice().multiply(oldQty)
                 .add(price.multiply(addQty))
-                .divide(newQty, 2, RoundingMode.HALF_UP);
+                .divide(newQty, PRICE_SCALE, RoundingMode.HALF_UP);
 
         int affected2 = positionMapper.atomicIncreasePosition(position.getId(), newEntryPrice, addQty, addMargin);
         if (affected2 == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);

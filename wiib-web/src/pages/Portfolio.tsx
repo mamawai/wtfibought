@@ -35,7 +35,7 @@ import {
 } from 'lucide-react';
 import type { Position, Order, Settlement, CryptoPosition, FuturesPosition, OptionPosition, PredictionPnl, AssetSnapshot, CategoryAverages } from '../types';
 import { useDedupedEffect } from '../hooks/useDedupedEffect';
-import { getCoin } from '../lib/coinConfig';
+import { formatCoinPrice, getCoin } from '../lib/coinConfig';
 
 interface CryptoRow extends CryptoPosition {
   currentPrice: number;
@@ -683,6 +683,7 @@ export function Portfolio() {
                     {cryptoRows.map((c) => {
                       const coin = getCoin(c.symbol);
                       const Icon = coin.icon;
+                      const fmtCryptoPrice = (value?: number | null) => formatCoinPrice(c.symbol, value);
                       const up = c.profit >= 0;
                       return (
                         <button
@@ -707,8 +708,8 @@ export function Portfolio() {
                                 <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
                                   <span>持有 {c.quantity}{coin.unitLabel && <span className={`${coin.colorClass}/60 ml-0.5`}>约合 {(c.quantity * coin.unitFactor!).toFixed(1)} {coin.unitLabel}</span>}</span>
                                   <span className="text-border">·</span>
-                                  <span>均价 {fmt(c.avgCost)}</span>
-                                  {c.currentPrice > 0 && (<><span className="text-border">·</span><span>现价 {fmt(c.currentPrice)}</span></>)}
+                                  <span>均价 {fmtCryptoPrice(c.avgCost)}</span>
+                                  {c.currentPrice > 0 && (<><span className="text-border">·</span><span>现价 {fmtCryptoPrice(c.currentPrice)}</span></>)}
                                 </div>
                               </div>
                             </div>
@@ -778,7 +779,7 @@ export function Portfolio() {
                                 <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
                                   <span>数量 {f.quantity}</span>
                                   <span className="text-border">·</span>
-                                  <span>开仓 {fmt(f.entryPrice)}</span>
+                                  <span>开仓 {formatCoinPrice(f.symbol, f.entryPrice)}</span>
                                   <span className="text-border">·</span>
                                   <span>保证金 {fmt(f.margin)}</span>
                                 </div>

@@ -40,6 +40,8 @@ import static com.mawai.wiibservice.service.impl.FuturesHelper.*;
 @RequiredArgsConstructor
 public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
+    private static final int PRICE_SCALE = 8;
+
     private final UserService userService;
     private final UserMapper userMapper;
     private final FuturesPositionMapper positionMapper;
@@ -203,7 +205,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         BigDecimal newQty = oldQty.add(addQty);
         BigDecimal newEntryPrice = position.getEntryPrice().multiply(oldQty)
                 .add(executePrice.multiply(addQty))
-                .divide(newQty, 2, RoundingMode.HALF_UP);
+                .divide(newQty, PRICE_SCALE, RoundingMode.HALF_UP);
 
         positionMapper.atomicIncreasePosition(position.getId(), newEntryPrice, addQty, addMargin);
 

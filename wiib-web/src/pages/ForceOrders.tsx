@@ -7,8 +7,9 @@ import { Skeleton } from '../components/ui/skeleton';
 import { cn } from '../lib/utils';
 import { AlertTriangle, ChevronLeft, ChevronRight, Flame, RefreshCw } from 'lucide-react';
 import type { ForceOrder, PageResult } from '../types';
+import { formatCoinPrice } from '../lib/coinConfig';
 
-const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'PAXGUSDT'] as const;
+const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'PAXGUSDT', 'DOGEUSDT'] as const;
 const PAGE_SIZE = 20;
 
 function formatDateTime(ts: string): string {
@@ -23,8 +24,8 @@ function formatDateTime(ts: string): string {
   });
 }
 
-function formatPrice(value: number): string {
-  return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function formatPrice(symbol: string, value: number): string {
+  return formatCoinPrice(symbol, value);
 }
 
 function formatQty(value: number): string {
@@ -200,8 +201,8 @@ export function ForceOrders() {
                             {sideLabel(order.side)}
                           </Badge>
                         </td>
-                        <td className="px-4 py-3 text-right font-mono font-bold">{formatPrice(order.price)}</td>
-                        <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatPrice(order.avgPrice)}</td>
+                        <td className="px-4 py-3 text-right font-mono font-bold">{formatPrice(order.symbol, order.price)}</td>
+                        <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatPrice(order.symbol, order.avgPrice)}</td>
                         <td className="px-4 py-3 text-right font-mono">{formatQty(order.quantity)}</td>
                         <td className="px-5 py-3 text-right font-mono font-bold">${formatAmount(order.amount)}</td>
                       </tr>
@@ -232,11 +233,11 @@ export function ForceOrders() {
                     <div className="grid grid-cols-2 gap-3 text-xs">
                       <div className="space-y-1">
                         <div className="text-muted-foreground">成交价</div>
-                        <div className="font-mono font-bold">{formatPrice(order.price)}</div>
+                        <div className="font-mono font-bold">{formatPrice(order.symbol, order.price)}</div>
                       </div>
                       <div className="space-y-1">
                         <div className="text-muted-foreground">均价</div>
-                        <div className="font-mono">{formatPrice(order.avgPrice)}</div>
+                        <div className="font-mono">{formatPrice(order.symbol, order.avgPrice)}</div>
                       </div>
                       <div className="space-y-1">
                         <div className="text-muted-foreground">数量</div>

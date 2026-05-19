@@ -8,6 +8,7 @@ export interface CoinCfg {
   tvSymbol: string;
   futuresTvSymbol: string;
   minQty: number;
+  priceDecimals?: number;
   icon: LucideIcon;
   colorClass: string;
   bgClass: string;
@@ -25,6 +26,13 @@ const Eth: LucideIcon = forwardRef<SVGSVGElement, LucideProps>(({ className, ...
          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...rest}>
       <path d="M12 2L4.5 12.5 12 16.5l7.5-4L12 2z" />
       <path d="M4.5 12.5L12 22l7.5-9.5L12 16.5 4.5 12.5z" />
+    </svg>
+));
+
+// DOGE 用真实柴犬+金币 PNG（dogecoin.com 官方 logo），不响应 currentColor
+const Doge: LucideIcon = forwardRef<SVGSVGElement, LucideProps>(({ className, ...rest }, ref) => (
+    <svg ref={ref} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className={className} {...rest}>
+      <image href="/coin-icons/doge.png" x="0" y="0" width="24" height="24" preserveAspectRatio="xMidYMid meet" />
     </svg>
 ));
 
@@ -48,6 +56,12 @@ export const COIN_MAP: Record<string, CoinCfg> = {
     colorClass: 'text-indigo-400', bgClass: 'bg-indigo-500/10', hoverBgClass: 'hover:bg-indigo-500/20', gradientClass: 'from-indigo-500/5',
     chartColor: '#818cf8', desc: '以太坊 / USDT 模拟交易',
   },
+  DOGEUSDT: {
+    symbol: 'DOGEUSDT', name: 'DOGE', pair: 'DOGE / USDT', tvSymbol: 'BINANCE:DOGEUSDT', futuresTvSymbol: 'BINANCE:DOGEUSDT',
+    minQty: 1, priceDecimals: 5, icon: Doge,
+    colorClass: 'text-amber-500', bgClass: 'bg-amber-500/10', hoverBgClass: 'hover:bg-amber-500/20', gradientClass: 'from-amber-500/5',
+    chartColor: '#f59e0b', desc: '狗狗币 / USDT 模拟交易',
+  },
 };
 
 export const COIN_LIST = Object.values(COIN_MAP);
@@ -55,4 +69,14 @@ export const DEFAULT_SYMBOL = 'BTCUSDT';
 
 export function getCoin(symbol?: string): CoinCfg {
   return COIN_MAP[symbol ?? ''] ?? COIN_MAP[DEFAULT_SYMBOL];
+}
+
+export function getCoinPriceDecimals(symbol?: string): number {
+  return getCoin(symbol).priceDecimals ?? 2;
+}
+
+export function formatCoinPrice(symbol: string | undefined, value?: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '-';
+  const decimals = getCoinPriceDecimals(symbol);
+  return value.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
