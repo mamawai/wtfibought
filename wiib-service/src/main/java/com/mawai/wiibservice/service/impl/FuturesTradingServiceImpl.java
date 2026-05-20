@@ -409,12 +409,23 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     // ==================== 追加保证金 ====================
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public void addMargin(Long userId, FuturesAddMarginRequest request) {
+        String lockKey = "futures:pos:" + request.getPositionId();
+        String lockValue = redisLockUtil.tryLock(lockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
+        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
+        try {
+            SpringUtils.getAopProxy(this).doAddMargin(userId, request);
+        } finally {
+            redisLockUtil.unlock(lockKey, lockValue);
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected void doAddMargin(Long userId, FuturesAddMarginRequest request) {
         FuturesPosition position = getUserPosition(userId, request.getPositionId());
 
         BigDecimal amount = request.getAmount();
-        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BizException(ErrorCode.PARAM_ERROR);
         }
 

@@ -145,13 +145,28 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
     // ==================== 强制平仓 ====================
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public void forceClose(Long positionId, BigDecimal price) {
+        String lockKey = "futures:pos:" + positionId;
+        String lockValue = redisLockUtil.tryLock(lockKey, 30);
+        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
+        try {
+            SpringUtils.getAopProxy(this).doForceClose(positionId, price);
+        } finally {
+            redisLockUtil.unlock(lockKey, lockValue);
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected void doForceClose(Long positionId, BigDecimal price) {
         FuturesPosition position = positionMapper.selectById(positionId);
         if (position == null || !"OPEN".equals(position.getStatus())) {
             return;
         }
 
+        forceCloseInCurrentTransaction(position, price);
+    }
+
+    private void forceCloseInCurrentTransaction(FuturesPosition position, BigDecimal price) {
         BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), price, position.getQuantity());
         BigDecimal closeValue = price.multiply(position.getQuantity()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, true);
@@ -159,7 +174,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         BigDecimal returnAmount = position.getMargin().add(pnl).subtract(commission);
         returnAmount = returnAmount.max(BigDecimal.ZERO);
 
-        int affected = positionMapper.casClosePosition(positionId, "LIQUIDATED", price, pnl);
+        int affected = positionMapper.casClosePosition(position.getId(), "LIQUIDATED", price, pnl);
         if (affected == 0) return;
 
         positionIndexService.unregisterAll(position);
@@ -170,7 +185,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
         FuturesOrder order = new FuturesOrder();
         order.setUserId(position.getUserId());
-        order.setPositionId(positionId);
+        order.setPositionId(position.getId());
         order.setSymbol(position.getSymbol());
         order.setOrderSide("LONG".equals(position.getSide()) ? "CLOSE_LONG" : "CLOSE_SHORT");
         order.setOrderType("MARKET");
@@ -184,13 +199,25 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         orderMapper.insert(order);
         tradeAttributionService.recordExit(position, pnl, "UNKNOWN");
 
-        log.warn("futures强制平仓 posId={} userId={} price={} pnl={}", positionId, position.getUserId(), price, pnl);
+        log.warn("futures强制平仓 posId={} userId={} price={} pnl={}", position.getId(), position.getUserId(), price, pnl);
     }
 
     // ==================== 检查并强平 ====================
 
     @Override
     public void checkAndLiquidate(Long positionId, BigDecimal currentPrice) {
+        String lockKey = "futures:pos:" + positionId;
+        String lockValue = redisLockUtil.tryLock(lockKey, 30);
+        if (lockValue == null) return;
+        try {
+            SpringUtils.getAopProxy(this).doCheckAndLiquidate(positionId, currentPrice);
+        } finally {
+            redisLockUtil.unlock(lockKey, lockValue);
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected void doCheckAndLiquidate(Long positionId, BigDecimal currentPrice) {
         FuturesPosition position = positionMapper.selectById(positionId);
         if (position == null || !"OPEN".equals(position.getStatus())) {
             return;
@@ -209,7 +236,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         }
 
         if (effectiveMargin.compareTo(maintenanceMargin) <= 0) {
-            SpringUtils.getAopProxy(this).forceClose(positionId, currentPrice);
+            forceCloseInCurrentTransaction(position, currentPrice);
         }
     }
 

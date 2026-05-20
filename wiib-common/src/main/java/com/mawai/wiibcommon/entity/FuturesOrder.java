@@ -50,7 +50,7 @@ public class FuturesOrder {
     @TableField(typeHandler = FuturesTakeProfitListTypeHandler.class)
     private List<FuturesTakeProfit> takeProfits; // 止盈
 
-    private String status; // PENDING待触发 TRIGGERED已触发 FILLED已成交 CANCELLED已取消 EXPIRED已过期 LIQUIDATED强平
+    private String status; // PENDING待触发 TRIGGERED已触发 PROCESSING处理中 FILLED已成交 CANCELLED已取消 EXPIRED已过期 LIQUIDATED强平
 
     private LocalDateTime expireAt; // 限价单过期时间
 

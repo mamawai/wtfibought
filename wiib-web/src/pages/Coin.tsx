@@ -185,6 +185,7 @@ const ORDER_STATUS_FILTERS = [
 const FUTURES_ORDER_FILTERS = [
   { label: '全部', value: '' },
   { label: '待成交', value: 'PENDING' },
+  { label: '处理中', value: 'PROCESSING' },
   { label: '已成交', value: 'FILLED' },
   { label: '已取消', value: 'CANCELLED' },
 ];
@@ -201,6 +202,7 @@ const FUTURES_SIDE_MAP: Record<string, { label: string; color: string }> = {
 const STATUS_MAP: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning' }> = {
   PENDING: { label: '待成交', variant: 'warning' },
   TRIGGERED: { label: '已触发', variant: 'default' },
+  PROCESSING: { label: '处理中', variant: 'warning' },
   SETTLING: { label: '结算中', variant: 'warning' },
   FILLED: { label: '已成交', variant: 'success' },
   CANCELLED: { label: '已取消', variant: 'secondary' },

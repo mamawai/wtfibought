@@ -30,7 +30,7 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
             "margin_amount = #{marginAmount}, " +
             "realized_pnl = #{realizedPnl}, " +
             "updated_at = NOW() " +
-            "WHERE id = #{orderId} AND status = 'TRIGGERED'")
+            "WHERE id = #{orderId} AND status = 'PROCESSING'")
     int casUpdateToFilled(@Param("orderId") Long orderId,
                           @Param("filledPrice") BigDecimal filledPrice,
                           @Param("filledAmount") BigDecimal filledAmount,
@@ -42,6 +42,11 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
     @Update("UPDATE futures_order SET status = 'TRIGGERED', filled_price = #{triggerPrice}, updated_at = NOW() " +
             "WHERE id = #{orderId} AND status = 'PENDING'")
     int casUpdateToTriggered(@Param("orderId") Long orderId, @Param("triggerPrice") BigDecimal triggerPrice);
+
+    /** 抢占TRIGGERED订单处理权，避免补偿任务与实时触发重复成交 */
+    @Update("UPDATE futures_order SET status = 'PROCESSING', updated_at = NOW() " +
+            "WHERE id = #{orderId} AND status = 'TRIGGERED'")
+    int casMarkProcessing(@Param("orderId") Long orderId);
 
     /** 用户所有已平仓单的已实现盈亏（已扣手续费） */
     @Select("SELECT COALESCE(SUM(realized_pnl - COALESCE(commission, 0)), 0) FROM futures_order " +
@@ -66,7 +71,7 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
     long countFilledOrders(@Param("userId") Long userId);
 
     @Update("UPDATE futures_order SET status = 'CANCELLED', updated_at = NOW() " +
-            "WHERE user_id = #{userId} AND status IN ('PENDING', 'TRIGGERED')")
+            "WHERE user_id = #{userId} AND status IN ('PENDING', 'TRIGGERED', 'PROCESSING')")
     int cancelOpenOrdersByUserId(@Param("userId") Long userId);
 
     @Select("SELECT COALESCE(AVG(leverage), 0) FROM futures_order " +

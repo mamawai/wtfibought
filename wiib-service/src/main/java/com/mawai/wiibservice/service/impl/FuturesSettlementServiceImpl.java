@@ -7,6 +7,7 @@ import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.SpringUtils;
+import com.mawai.wiibservice.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.mapper.FuturesOrderMapper;
 import com.mawai.wiibservice.mapper.FuturesPositionMapper;
@@ -17,6 +18,7 @@ import com.mawai.wiibservice.service.FuturesRiskService;
 import com.mawai.wiibservice.service.FuturesSettlementService;
 import com.mawai.wiibservice.service.TradeAttributionService;
 import com.mawai.wiibservice.service.UserService;
+import com.mawai.wiibservice.util.RedisLockUtil;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,10 +49,14 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final FuturesPositionMapper positionMapper;
     private final FuturesOrderMapper orderMapper;
     private final TradingConfig tradingConfig;
+    private final FuturesLeverageBracketRegistry bracketRegistry;
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
     private final FuturesRiskService riskService;
     private final TradeAttributionService tradeAttributionService;
+    private final RedisLockUtil redisLockUtil;
+
+    protected record FundingFeeChargeResult(boolean success, boolean checkLiquidation) {}
 
     @PostConstruct
     void init() {
@@ -116,13 +122,39 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         return false;
     }
 
-    @Transactional(rollbackFor = Exception.class)
     protected void processTriggeredOrder(FuturesOrder order) {
+        if (order == null || !"TRIGGERED".equals(order.getStatus())) return;
+
+        if (!order.getOrderSide().startsWith("OPEN")) {
+            String lockKey = "futures:pos:" + order.getPositionId();
+            String lockValue = redisLockUtil.tryLock(lockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
+            if (lockValue == null) {
+                log.info("futures限价成交跳过，仓位处理中 orderId={} posId={}", order.getId(), order.getPositionId());
+                return;
+            }
+            try {
+                SpringUtils.getAopProxy(this).doProcessTriggeredOrder(order);
+            } finally {
+                redisLockUtil.unlock(lockKey, lockValue);
+            }
+            return;
+        }
+
+        SpringUtils.getAopProxy(this).doProcessTriggeredOrder(order);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected void doProcessTriggeredOrder(FuturesOrder order) {
         if (!"TRIGGERED".equals(order.getStatus())) return;
+
+        // 先抢占订单处理权，再做资金/仓位副作用；否则实时触发和补偿扫描可能重复成交。
+        int processing = orderMapper.casMarkProcessing(order.getId());
+        if (processing == 0) return;
+        order.setStatus("PROCESSING");
 
         User user = userService.getById(order.getUserId());
         if (user != null && Boolean.TRUE.equals(user.getIsBankrupt())) {
-            orderMapper.casUpdateStatus(order.getId(), "TRIGGERED", "CANCELLED");
+            orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
             return;
         }
 
@@ -141,13 +173,18 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private void processTriggeredOpenOrder(FuturesOrder order, BigDecimal executePrice) {
         BigDecimal quantity = order.getQuantity();
         BigDecimal positionValue = executePrice.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
+        if (!isLeverageAllowed(order.getSymbol(), order.getLeverage(), positionValue)) {
+            cancelTriggeredOrderAndRefund(order, "leverage_not_allowed");
+            return;
+        }
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(order.getLeverage()), 2, RoundingMode.CEILING);
         boolean isTaker = isLimitTaker(order, false);
         BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false, isTaker);
         BigDecimal actualCost = margin.add(commission);
 
         BigDecimal frozenAmount = order.getFrozenAmount();
-        userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
+        int deducted = userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
+        if (deducted == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
         if (actualCost.compareTo(frozenAmount) < 0) {
             BigDecimal refund = frozenAmount.subtract(actualCost);
             userMapper.atomicUpdateBalance(order.getUserId(), refund);
@@ -169,7 +206,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         positionMapper.insert(position);
 
-        orderMapper.casUpdateToFilled(order.getId(), executePrice, positionValue, commission, margin, null);
+        int filled = orderMapper.casUpdateToFilled(order.getId(), executePrice, positionValue, commission, margin, null);
+        if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
 
         positionIndexService.registerPositionIndex(position);
 
@@ -180,15 +218,17 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private void processTriggeredIncreaseOrder(FuturesOrder order, BigDecimal executePrice) {
         FuturesPosition position = positionMapper.selectById(order.getPositionId());
         if (position == null || !"OPEN".equals(position.getStatus())) {
-            orderMapper.casUpdateStatus(order.getId(), "TRIGGERED", "CANCELLED");
-            BigDecimal frozenAmount = order.getFrozenAmount();
-            userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
-            userMapper.atomicUpdateBalance(order.getUserId(), frozenAmount);
+            cancelTriggeredOrderAndRefund(order, "position_closed");
             return;
         }
 
         BigDecimal addQty = order.getQuantity();
         int leverage = position.getLeverage();
+        BigDecimal newNotional = executePrice.multiply(position.getQuantity().add(addQty));
+        if (!isLeverageAllowed(order.getSymbol(), leverage, newNotional)) {
+            cancelTriggeredOrderAndRefund(order, "leverage_not_allowed");
+            return;
+        }
         BigDecimal addValue = executePrice.multiply(addQty).setScale(2, RoundingMode.HALF_UP);
         BigDecimal addMargin = addValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
         boolean isTaker = isLimitTaker(order, false);
@@ -196,7 +236,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         BigDecimal actualCost = addMargin.add(commission);
 
         BigDecimal frozenAmount = order.getFrozenAmount();
-        userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
+        int deducted = userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
+        if (deducted == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
         if (actualCost.compareTo(frozenAmount) < 0) {
             userMapper.atomicUpdateBalance(order.getUserId(), frozenAmount.subtract(actualCost));
         }
@@ -214,7 +255,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
                 newQty);
         positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
 
-        orderMapper.casUpdateToFilled(order.getId(), executePrice, addValue, commission, addMargin, null);
+        int filled = orderMapper.casUpdateToFilled(order.getId(), executePrice, addValue, commission, addMargin, null);
+        if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
 
         log.info("futures限价加仓成交 orderId={} posId={} price={} feeType={} addMargin={}",
                 order.getId(), position.getId(), executePrice, isTaker ? "TAKER" : "MAKER", addMargin);
@@ -223,7 +265,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private void processTriggeredCloseOrder(FuturesOrder order, BigDecimal executePrice) {
         FuturesPosition position = positionMapper.selectById(order.getPositionId());
         if (position == null || !"OPEN".equals(position.getStatus())) {
-            orderMapper.casUpdateStatus(order.getId(), "TRIGGERED", "CANCELLED");
+            orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
             return;
         }
 
@@ -242,7 +284,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             int affected = positionMapper.casClosePosition(position.getId(), "CLOSED", executePrice, pnl);
             if (affected == 0) {
                 // 仓位已被并发平掉，订单取消，禁止重复返款
-                orderMapper.casUpdateStatus(order.getId(), "TRIGGERED", "CANCELLED");
+                orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
                 return;
             }
 
@@ -256,19 +298,47 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginReturn);
             if (affected == 0) {
                 // 可平数量不足或已关闭，订单取消，禁止重复返款
-                orderMapper.casUpdateStatus(order.getId(), "TRIGGERED", "CANCELLED");
+                orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
                 return;
             }
+
+            // 限价部分平仓成交后 qty/margin 已变，刷新强平索引。
+            BigDecimal newQty = position.getQuantity().subtract(closeQty);
+            BigDecimal newMargin = position.getMargin().subtract(marginReturn);
+            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
+                    position.getSymbol(), position.getSide(), position.getEntryPrice(), newMargin, newQty);
+            positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
         }
 
         userMapper.atomicUpdateBalance(order.getUserId(), returnAmount);
-        orderMapper.casUpdateToFilled(order.getId(), executePrice, closeValue, commission, null, pnl);
+        int filled = orderMapper.casUpdateToFilled(order.getId(), executePrice, closeValue, commission, null, pnl);
+        if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
         if (isFullClose) {
             tradeAttributionService.recordExit(position, pnl, "UNKNOWN");
         }
 
         log.info("futures限价平仓成交 orderId={} price={} feeType={} pnl={}",
                 order.getId(), executePrice, isTaker ? "TAKER" : "MAKER", pnl);
+    }
+
+    private boolean isLeverageAllowed(String symbol, int leverage, BigDecimal notional) {
+        int maxAllowed = bracketRegistry.getEffectiveMaxLeverage(symbol, notional);
+        return leverage <= maxAllowed;
+    }
+
+    private void cancelTriggeredOrderAndRefund(FuturesOrder order, String reason) {
+        int affected = orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
+        if (affected == 0) return;
+
+        BigDecimal frozenAmount = order.getFrozenAmount();
+        if (frozenAmount != null && frozenAmount.compareTo(BigDecimal.ZERO) > 0) {
+            int deducted = userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
+            // 异常状态：cancel 前 frozen 必然存在，扣不到说明数据被并发改动，整事务回滚避免余额凭空增加
+            if (deducted == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
+            userMapper.atomicUpdateBalance(order.getUserId(), frozenAmount);
+        }
+        log.info("futures限价单触发后取消 orderId={} reason={} refund={}",
+                order.getId(), reason, frozenAmount);
     }
 
     // ==================== 恢复限价单 ====================
@@ -405,8 +475,37 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         log.info("futures资金费率扣除完成 成功{} 失败{}", successCount, failCount);
     }
 
-    @Transactional(rollbackFor = Exception.class)
     protected boolean chargeFundingFeeOne(FuturesPosition pos) {
+        String lockKey = "futures:pos:" + pos.getId();
+        String lockValue = redisLockUtil.tryLock(lockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
+        if (lockValue == null) {
+            log.info("futures资金费跳过，仓位处理中 posId={}", pos.getId());
+            return false;
+        }
+
+        FundingFeeChargeResult result;
+        try {
+            result = SpringUtils.getAopProxy(this).doChargeFundingFeeOne(pos.getId());
+        } finally {
+            redisLockUtil.unlock(lockKey, lockValue);
+        }
+
+        if (result.checkLiquidation()) {
+            FuturesPosition latest = positionMapper.selectById(pos.getId());
+            if (latest != null && "OPEN".equals(latest.getStatus())) {
+                riskService.checkAndLiquidate(latest.getId(), getMarkPrice(latest.getSymbol()));
+            }
+        }
+        return result.success();
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected FundingFeeChargeResult doChargeFundingFeeOne(Long positionId) {
+        FuturesPosition pos = positionMapper.selectById(positionId);
+        if (pos == null || !"OPEN".equals(pos.getStatus())) {
+            return new FundingFeeChargeResult(false, false);
+        }
+
         BigDecimal entryValue = pos.getEntryPrice().multiply(pos.getQuantity());
         BigDecimal fee = entryValue.multiply(tradingConfig.getFutures().getFundingRate())
                 .setScale(2, RoundingMode.HALF_UP);
@@ -415,7 +514,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         if (affected > 0) {
             int added = positionMapper.atomicAddFundingFeeTotal(pos.getId(), fee);
             if (added == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
-            return true;
+            return new FundingFeeChargeResult(true, false);
         }
 
         affected = positionMapper.atomicDeductFundingFee(pos.getId(), fee);
@@ -424,16 +523,21 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(pos.getSymbol(), pos.getSide(), pos.getEntryPrice(),
                     newMargin, pos.getQuantity());
             positionIndexService.updateLiquidationPrice(pos.getId(), pos.getSymbol(), pos.getSide(), liqPrice);
-            return true;
+            return new FundingFeeChargeResult(true, false);
         }
 
         affected = positionMapper.atomicDeductFundingFeePartial(pos.getId());
         if (affected > 0) {
-            BigDecimal mp = getMarkPrice(pos.getSymbol());
-            riskService.checkAndLiquidate(pos.getId(), mp);
-            return true;
+            FuturesPosition updated = positionMapper.selectById(pos.getId());
+            if (updated != null && "OPEN".equals(updated.getStatus())) {
+                BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
+                        updated.getSymbol(), updated.getSide(), updated.getEntryPrice(),
+                        updated.getMargin(), updated.getQuantity());
+                positionIndexService.updateLiquidationPrice(updated.getId(), updated.getSymbol(), updated.getSide(), liqPrice);
+            }
+            return new FundingFeeChargeResult(true, true);
         }
-        return false;
+        return new FundingFeeChargeResult(false, false);
     }
 
     // ==================== ZSet索引重建 ====================
