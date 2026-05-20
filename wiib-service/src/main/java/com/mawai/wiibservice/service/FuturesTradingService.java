@@ -15,6 +15,8 @@ public interface FuturesTradingService {
 
     void addMargin(Long userId, FuturesAddMarginRequest request);
 
+    void reduceMargin(Long userId, FuturesReduceMarginRequest request);
+
     FuturesOrderResponse increasePosition(Long userId, FuturesIncreaseRequest request);
 
     List<FuturesPositionDTO> getUserPositions(Long userId, String symbol);

@@ -56,6 +56,14 @@ public class FuturesController {
         return Result.ok();
     }
 
+    /** 减少逐仓保证金 */
+    @PostMapping("/margin/reduce")
+    public Result<Void> reduceMargin(@RequestBody FuturesReduceMarginRequest request) {
+        Long userId = StpUtil.getLoginIdAsLong();
+        futuresTradingService.reduceMargin(userId, request);
+        return Result.ok();
+    }
+
     /** 加仓 */
     @PostMapping("/increase")
     public Result<FuturesOrderResponse> increase(@RequestBody FuturesIncreaseRequest request) {

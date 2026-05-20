@@ -443,6 +443,62 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         log.info("futures追加保证金 userId={} posId={} amount={}", userId, request.getPositionId(), amount);
     }
 
+    // ==================== 减少保证金 ====================
+
+    @Override
+    public void reduceMargin(Long userId, FuturesReduceMarginRequest request) {
+        String lockKey = "futures:pos:" + request.getPositionId();
+        String lockValue = redisLockUtil.tryLock(lockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
+        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
+        try {
+            SpringUtils.getAopProxy(this).doReduceMargin(userId, request);
+        } finally {
+            redisLockUtil.unlock(lockKey, lockValue);
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected void doReduceMargin(Long userId, FuturesReduceMarginRequest request) {
+        FuturesPosition position = getUserPosition(userId, request.getPositionId());
+
+        BigDecimal amount = request.getAmount();
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BizException(ErrorCode.PARAM_ERROR);
+        }
+
+        BigDecimal newMargin = position.getMargin().subtract(amount);
+        if (newMargin.compareTo(BigDecimal.ZERO) < 0) {
+            throw new BizException(ErrorCode.FUTURES_MARGIN_TOO_LOW);
+        }
+
+        BigDecimal markPrice = getMarkPrice(position.getSymbol());
+        BigDecimal unrealizedPnl = calculatePnl(position.getSide(), position.getEntryPrice(), markPrice, position.getQuantity());
+        BigDecimal markNotional = markPrice.multiply(position.getQuantity());
+        BigDecimal maintenanceMargin = bracketRegistry.calcMaintenanceMargin(position.getSymbol(), markNotional);
+        BigDecimal markIM = markNotional.divide(BigDecimal.valueOf(position.getLeverage()), 2, RoundingMode.CEILING);
+        // Binance 完整公式两条独立约束（min 取严）
+        // (1) 减后承诺金 ≥ MM：仓位本身要有兜底，未实现盈利不可顶替
+        if (newMargin.compareTo(maintenanceMargin) < 0) {
+            throw new BizException(ErrorCode.FUTURES_MARGIN_TOO_LOW);
+        }
+        // (2) 减后净值 ≥ markIM：防偷偷降杠杆
+        if (newMargin.add(unrealizedPnl).compareTo(markIM) < 0) {
+            throw new BizException(ErrorCode.FUTURES_MARGIN_TOO_LOW);
+        }
+
+        int affected = positionMapper.atomicReduceMargin(position.getId(), amount);
+        if (affected == 0) throw new BizException(ErrorCode.FUTURES_MARGIN_TOO_LOW);
+
+        int credited = userMapper.atomicUpdateBalance(userId, amount);
+        if (credited == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
+
+        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSymbol(), position.getSide(),
+                position.getEntryPrice(), newMargin, position.getQuantity());
+        positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
+
+        log.info("futures减少保证金 userId={} posId={} amount={}", userId, request.getPositionId(), amount);
+    }
+
     // ==================== 加仓 ====================
 
     @Override

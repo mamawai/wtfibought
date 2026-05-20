@@ -395,6 +395,11 @@ export interface FuturesIncreaseRequest {
   limitPrice?: number;
 }
 
+export interface FuturesReduceMarginRequest {
+  positionId: number;
+  amount: number;
+}
+
 export interface FuturesBracket {
   tier: number;
   notionalFloor: number;

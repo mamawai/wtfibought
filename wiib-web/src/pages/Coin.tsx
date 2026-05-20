@@ -23,7 +23,7 @@ const COMMISSION_RATE = 0.001;
 const FUTURES_COMMISSION_RATE = 0.0004;
 const FUTURES_LEVERAGE_OPTIONS = [1, 10, 25, 50, 75, 100, 150];
 const POSITION_PCTS = [0.25, 0.5, 0.75, 1];
-type PosActionType = 'close' | 'increase' | 'margin' | 'stoploss';
+type PosActionType = 'close' | 'increase' | 'margin' | 'reduceMargin' | 'stoploss';
 interface TabConfig {
   label: string;
   interval: string;
@@ -723,6 +723,22 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
     } finally { setSubmitting(false); }
   };
 
+  // 合约减少保证金
+  const handleReduceMargin = async (positionId: number) => {
+    const amt = parseFloat(posMarginAmt);
+    if (!amt || amt <= 0) { toast('请输入有效金额', 'error'); return; }
+    setSubmitting(true);
+    try {
+      await futuresApi.reduceMargin({ positionId, amount: amt });
+      toast('减少保证金成功', 'success');
+      setPosAction(null);
+      fetchFuturesPositions();
+      fetchUser();
+    } catch (e: unknown) {
+      toast((e as Error).message || '减少保证金失败', 'error');
+    } finally { setSubmitting(false); }
+  };
+
   // 合约设置止损
   const handleSetStopLoss = async (positionId: number) => {
     const items = posSlRows.filter(r => parseFloat(r.price) > 0 && parseFloat(r.quantity) > 0)
@@ -1364,6 +1380,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                     <Button size="sm" variant={isActive && posAction.type === 'close' ? 'default' : 'outline'} className="h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'close', pos)}>平仓</Button>
                     <Button size="sm" variant={isActive && posAction.type === 'increase' ? 'default' : 'outline'} className="h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'increase', pos)}>加仓</Button>
                     <Button size="sm" variant={isActive && posAction.type === 'margin' ? 'default' : 'outline'} className="h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'margin', pos)}>+保证金</Button>
+                    <Button size="sm" variant={isActive && posAction.type === 'reduceMargin' ? 'default' : 'outline'} className="h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'reduceMargin', pos)}>-保证金</Button>
                     <Button size="sm" variant={isActive && posAction.type === 'stoploss' ? 'default' : 'outline'} className="h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'stoploss', pos)}>止损/盈</Button>
                   </div>
                   {/* 内联操作面板 */}
@@ -1465,6 +1482,16 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                           {user && <div className="text-[11px] text-muted-foreground">可用余额 {formatPrice(user.balance)} USDT</div>}
                           <Button size="sm" className="w-full h-8 text-xs" onClick={() => handleAddMargin(pos.id)} disabled={submitting}>
                             {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : '确认追加'}
+                          </Button>
+                        </>
+                      )}
+                      {/* -保证金 */}
+                      {posAction.type === 'reduceMargin' && (
+                        <>
+                          <Input type="number" placeholder="减少金额 (USDT)" value={posMarginAmt} onChange={e => setPosMarginAmt(e.target.value)} step="0.01" min="0" max={pos.margin} className="h-8 text-xs" />
+                          <div className="text-[11px] text-muted-foreground">当前保证金 {formatPrice(pos.margin)} USDT</div>
+                          <Button size="sm" className="w-full h-8 text-xs" onClick={() => handleReduceMargin(pos.id)} disabled={submitting}>
+                            {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : '确认减少'}
                           </Button>
                         </>
                       )}

@@ -86,6 +86,7 @@ public enum ErrorCode {
     FUTURES_POSITION_CLOSED(1755, "仓位已关闭"),
     FUTURES_LIQUIDATED(1756, "仓位已强平"),
     FUTURES_SYMBOL_NOT_CONFIGURED(1759, "永续合约该币种未配置档位"),
+    FUTURES_MARGIN_TOO_LOW(1760, "减少后保证金不足"),
 
     // 414扑克错误码 1800+
     CARD_ROOM_NOT_FOUND(1800, "房间不存在"),

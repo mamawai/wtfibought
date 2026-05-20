@@ -21,6 +21,11 @@ public interface FuturesPositionMapper extends BaseMapper<FuturesPosition> {
             "WHERE id = #{positionId} AND status = 'OPEN'")
     int atomicAddMargin(@Param("positionId") Long positionId, @Param("amount") BigDecimal amount);
 
+    /** 原子减少保证金 */
+    @Update("UPDATE futures_position SET margin = margin - #{amount}, updated_at = NOW() " +
+            "WHERE id = #{positionId} AND status = 'OPEN' AND margin >= #{amount}")
+    int atomicReduceMargin(@Param("positionId") Long positionId, @Param("amount") BigDecimal amount);
+
     /** 原子扣除资金费率（足够扣） */
     @Update("UPDATE futures_position SET margin = margin - #{fee}, funding_fee_total = funding_fee_total + #{fee}, updated_at = NOW() " +
             "WHERE id = #{positionId} AND status = 'OPEN' AND margin >= #{fee}")
