@@ -85,6 +85,7 @@ public enum ErrorCode {
     FUTURES_SPLIT_LIMIT(1758, "分拆目标最多4个"),
     FUTURES_POSITION_CLOSED(1755, "仓位已关闭"),
     FUTURES_LIQUIDATED(1756, "仓位已强平"),
+    FUTURES_SYMBOL_NOT_CONFIGURED(1759, "永续合约该币种未配置档位"),
 
     // 414扑克错误码 1800+
     CARD_ROOM_NOT_FOUND(1800, "房间不存在"),

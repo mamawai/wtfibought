@@ -15,15 +15,15 @@ import { FuturesActionButton } from '../components/FuturesActionButton';
 import { TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Loader2, X, RefreshCw, Sparkles, Wallet, Warehouse, Scale, HelpCircle, Plus, Flame } from 'lucide-react';
 import TradingViewWidget from '../components/TradingViewWidget';
 import { COIN_MAP, getCoin, DEFAULT_SYMBOL, formatCoinPrice, getCoinPriceDecimals } from '../lib/coinConfig';
-import type { CryptoOrder, CryptoPosition, PageResult, UserBuff, FuturesPosition, FuturesOrder, FuturesSLItem, FuturesTPItem } from '../types';
+import type { CryptoOrder, CryptoPosition, PageResult, UserBuff, FuturesPosition, FuturesOrder, FuturesSLItem, FuturesTPItem, FuturesBracket } from '../types';
 
 interface SLTPRow { price: string; quantity: string }
 
 const COMMISSION_RATE = 0.001;
 const FUTURES_COMMISSION_RATE = 0.0004;
-const FUTURES_MAX_LEVERAGE = 250;
-const FUTURES_LEVERAGE_OPTIONS = [1, 10, 25, 50, 100, 250];
+const FUTURES_LEVERAGE_OPTIONS = [1, 10, 25, 50, 75, 100, 150];
 const POSITION_PCTS = [0.25, 0.5, 0.75, 1];
+type PosActionType = 'close' | 'increase' | 'margin' | 'stoploss';
 interface TabConfig {
   label: string;
   interval: string;
@@ -80,16 +80,32 @@ function getStepPrecision(step: number): number {
   return i >= 0 ? s.length - i - 1 : 0;
 }
 
-function futuresMmrByLeverage(leverage: number): number {
-  if (leverage >= 200) return 0.001;
-  if (leverage >= 126) return 0.0025;
-  return 0.005;
+function findFuturesBracket(brackets: FuturesBracket[] | undefined, notional: number): FuturesBracket | null {
+  if (!brackets || brackets.length === 0) return null;
+  return brackets.find(b => notional >= b.notionalFloor && notional < b.notionalCap) ?? brackets[brackets.length - 1];
 }
 
-function futuresMmrTierLabel(leverage: number): string {
-  if (leverage >= 200) return '200-250x';
-  if (leverage >= 126) return '126-199x';
-  return '1-125x';
+function calcLiqPriceByBracket(side: 'LONG' | 'SHORT', notional: number, margin: number, quantity: number, bracket: FuturesBracket): number {
+  if (side === 'LONG') return (notional - margin - bracket.maintAmount) / (quantity * (1 - bracket.mmr));
+  return (notional + margin + bracket.maintAmount) / (quantity * (1 + bracket.mmr));
+}
+
+function estimateFuturesLiqPrice(brackets: FuturesBracket[] | undefined, side: 'LONG' | 'SHORT', entryPrice: number, margin: number, quantity: number): { price: number; bracket: FuturesBracket } | null {
+  if (!brackets || brackets.length === 0) return null;
+  const notional = entryPrice * quantity;
+  const entryBracket = findFuturesBracket(brackets, notional)!;
+  const entryBracketPrice = calcLiqPriceByBracket(side, notional, margin, quantity, entryBracket);
+  for (let i = 0; i < brackets.length; i++) {
+    const bracket = brackets[i];
+    const price = calcLiqPriceByBracket(side, notional, margin, quantity, bracket);
+    const liqNotional = price * quantity;
+    const last = i === brackets.length - 1;
+    if (liqNotional >= bracket.notionalFloor && (last || liqNotional < bracket.notionalCap)) {
+      return { price, bracket };
+    }
+  }
+  // 全档位无落点（保证金极大致负强平价）：取开仓档位算出值，调用方需判断负值显示 N/A
+  return { price: entryBracketPrice, bracket: entryBracket };
 }
 
 function formatRate(rate: number): string {
@@ -116,12 +132,6 @@ function calcMaxIncreaseQty(balance: number, price: number, leverage: number, st
     }
   }
   return best;
-}
-
-function estimateLiqPrice(side: 'LONG' | 'SHORT', price: number, leverage: number): number {
-  const mmr = futuresMmrByLeverage(leverage);
-  if (side === 'LONG') return price * (1 - 1 / leverage) / (1 - mmr);
-  return price * (1 + 1 / leverage) / (1 + mmr);
 }
 
 function calcFuturesOpenEstimate(marginQty: number, price: number, leverage: number) {
@@ -213,6 +223,10 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const PRICE_DECIMALS = getCoinPriceDecimals(symbol);
   const PRICE_STEP = Number((1 / 10 ** PRICE_DECIMALS).toFixed(PRICE_DECIMALS));
   const PRICE_STEP_TEXT = PRICE_STEP.toFixed(PRICE_DECIMALS);
+  const [futuresBracketsMap, setFuturesBracketsMap] = useState<Record<string, FuturesBracket[]>>({});
+  const symbolBrackets = futuresBracketsMap[symbol];
+  const symbolMaxLeverage = symbolBrackets?.[0]?.maxLeverage ?? 0;
+  const futuresLeverageOptions = FUTURES_LEVERAGE_OPTIONS.filter(lv => lv <= symbolMaxLeverage);
   const fmtPrice = useCallback((n?: number | null) => formatCoinPrice(symbol, n), [symbol]);
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -287,7 +301,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const [openSlRows, setOpenSlRows] = useState<SLTPRow[]>([{ price: '', quantity: '' }]);
   const [openTpEnabled, setOpenTpEnabled] = useState(false);
   const [openTpRows, setOpenTpRows] = useState<SLTPRow[]>([{ price: '', quantity: '' }]);
-  const [posAction, setPosAction] = useState<{ id: number; type: 'close' | 'increase' | 'margin' | 'stoploss' } | null>(null);
+  const [posAction, setPosAction] = useState<{ id: number; type: PosActionType } | null>(null);
   const [posCloseOrderType, setPosCloseOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET');
   const [posCloseLimitPrice, setPosCloseLimitPrice] = useState('');
   const [posCloseQty, setPosCloseQty] = useState('');
@@ -297,6 +311,16 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const [posMarginAmt, setPosMarginAmt] = useState('');
   const [posSlRows, setPosSlRows] = useState<SLTPRow[]>([]);
   const [posTpRows, setPosTpRows] = useState<SLTPRow[]>([]);
+
+  useEffect(() => {
+    futuresApi.brackets()
+      .then(setFuturesBracketsMap)
+      .catch(() => toast('合约档位数据加载失败，请刷新页面重试', 'error'));
+  }, [toast]);
+
+  useEffect(() => {
+    if (symbolMaxLeverage > 0) setFuturesLeverage(lv => Math.min(lv, symbolMaxLeverage));
+  }, [symbolMaxLeverage]);
 
   // 订单列表状态
   const [orderFilter, setOrderFilter] = useState('');
@@ -764,6 +788,12 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const qtyNum = parseFloat(quantity) || 0;
   const priceForCalc = orderType === 'LIMIT' ? (parseFloat(limitPrice) || 0) : currentPrice;
   const futuresPriceForCalc = futuresOrderType === 'LIMIT' ? (parseFloat(limitPrice) || 0) : currentPrice;
+  const openFuturesEstimate = qtyNum > 0 && futuresPriceForCalc > 0
+    ? calcFuturesOpenEstimate(qtyNum, futuresPriceForCalc, futuresLeverage)
+    : null;
+  const openFuturesLiqPrice = openFuturesEstimate
+    ? estimateFuturesLiqPrice(symbolBrackets, futuresSide, futuresPriceForCalc, openFuturesEstimate.margin, openFuturesEstimate.orderQty)?.price
+    : undefined;
   const discountRate = useBuff && discountBuff && orderType === 'MARKET' ? Number(discountBuff.buffType.match(/DISCOUNT_(\d+)/)?.[1] ?? 100) / 100 : 1;
   const leveragedQty = side === 'BUY' && orderType === 'MARKET' && leverage > 1 ? qtyNum * leverage : qtyNum;
   const estimatedAmount = leveragedQty * priceForCalc;
@@ -989,7 +1019,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                   <div className="px-2 py-0.5 rounded bg-primary/10 text-primary text-xs font-bold tabular-nums">{futuresLeverage}x</div>
                 </div>
                 <div className="flex gap-1.5">
-                  {FUTURES_LEVERAGE_OPTIONS.map(lv => (
+                  {futuresLeverageOptions.map(lv => (
                     <button key={lv} onClick={() => setFuturesLeverage(lv)} className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all border ${futuresLeverage === lv ? 'bg-primary border-primary text-primary-foreground shadow-sm' : 'bg-transparent border-border/60 text-muted-foreground hover:text-foreground hover:border-border'}`}>
                       {lv}x
                     </button>
@@ -997,15 +1027,14 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                 </div>
                 <div className="pt-1">
                   <input
-                    type="range" min={1} max={FUTURES_MAX_LEVERAGE}
+                    type="range" min={1} max={symbolMaxLeverage}
                     value={futuresLeverage}
                     onChange={e => setFuturesLeverage(Number(e.target.value))}
                     className="w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md transition-all"
                   />
                 </div>
                 <div className="text-[10px] text-muted-foreground leading-relaxed">
-                  当前档位 {futuresMmrTierLabel(futuresLeverage)}，MMR {formatRate(futuresMmrByLeverage(futuresLeverage))}
-                  <span className="hidden sm:inline"> · 1-125x 0.50% · 126-199x 0.25% · 200-250x 0.10%</span>
+                  当前币种最高 {symbolMaxLeverage}x，实际 MMR 按仓位名义价值档位计算
                 </div>
               </div>
 
@@ -1049,9 +1078,10 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               {/* 预估信息 */}
               {parseFloat(quantity) > 0 && futuresPriceForCalc > 0 && (() => {
                 const qty = parseFloat(quantity);
-                const { positionValue, margin, commission, totalCost } = calcFuturesOpenEstimate(qty, futuresPriceForCalc, futuresLeverage);
-                const liquidationPrice = estimateLiqPrice(futuresSide, futuresPriceForCalc, futuresLeverage);
-                const mmr = futuresMmrByLeverage(futuresLeverage);
+                const { orderQty, positionValue, margin, commission, totalCost } = calcFuturesOpenEstimate(qty, futuresPriceForCalc, futuresLeverage);
+                const liq = estimateFuturesLiqPrice(symbolBrackets, futuresSide, futuresPriceForCalc, margin, orderQty);
+                const liqPriceText = liq && liq.price > 0 ? `$${fmtPrice(liq.price)}` : '—';
+                const mmrText = liq ? `档位 ${liq.bracket.tier} / ${formatRate(liq.bracket.mmr)}` : '—';
                 return (
                   <div className="space-y-1.5 p-3 rounded-lg bg-accent/30 border border-border/50">
                     <div className="flex justify-between text-xs">
@@ -1068,11 +1098,11 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                     </div>
                     <div className="flex justify-between text-xs">
                       <span className="text-muted-foreground">预估强平价</span>
-                      <span className="font-mono text-yellow-500">${fmtPrice(liquidationPrice)}</span>
+                      <span className="font-mono text-yellow-500">{liqPriceText}</span>
                     </div>
                     <div className="flex justify-between text-xs">
                       <span className="text-muted-foreground">维持保证金率</span>
-                      <span className="font-mono">{futuresMmrTierLabel(futuresLeverage)} / {formatRate(mmr)}</span>
+                      <span className="font-mono">{mmrText}</span>
                     </div>
                     <div className="flex justify-between text-xs font-medium pt-1.5 border-t border-border/50">
                       <span className="text-muted-foreground">合计需要</span>
@@ -1095,7 +1125,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                   {openSlEnabled && (
                     <SLTPEditor rows={openSlRows} onChange={setOpenSlRows} label="止损" posQty={qtyNum * futuresLeverage} minQty={MIN_QTY}
                       currentPrice={futuresPriceForCalc || currentPrice} side={futuresSide}
-                      liquidationPrice={estimateLiqPrice(futuresSide, futuresPriceForCalc || currentPrice, futuresLeverage)}
+                      liquidationPrice={openFuturesLiqPrice}
                       minPriceStep={PRICE_STEP} priceFormatter={fmtPrice} />
                   )}
                 </div>
@@ -1299,6 +1329,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               const isPnlUp = pos.unrealizedPnl >= 0;
               const isLong = pos.side === 'LONG';
               const isActive = posAction?.id === pos.id;
+              const currentBracket = findFuturesBracket(futuresBracketsMap[pos.symbol], pos.positionValue);
               return (
                 <div key={pos.id} className={`p-4 rounded-2xl bg-card neu-raised space-y-3 transition-all relative overflow-hidden`}>
                   <div className={`absolute top-0 bottom-0 left-0 w-2.5 border-r border-border ${isLong ? 'bg-gain' : 'bg-loss'}`} />
@@ -1324,7 +1355,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                     <div>强平 <span className="text-yellow-500 font-mono">${fmtPrice(pos.liquidationPrice)}</span></div>
                     <div>保证金 <span className="text-foreground font-mono">${formatPrice(pos.margin)}</span></div>
                     <div>资金费 <span className="font-mono">${formatPrice(pos.fundingFeeTotal)}</span></div>
-                    <div>MMR <span className="text-foreground font-mono">{formatRate(futuresMmrByLeverage(pos.leverage))}</span></div>
+                    <div>MMR <span className="text-foreground font-mono">{currentBracket ? `档位 ${currentBracket.tier} / ${formatRate(currentBracket.mmr)}` : '—'}</span></div>
                   </div>
                   {/* 操作按钮 */}
                   <div className="flex flex-wrap gap-1.5 pt-1">

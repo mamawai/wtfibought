@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.dto.*;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibservice.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibservice.service.ForceOrderService;
 import com.mawai.wiibservice.service.FuturesRiskService;
 import com.mawai.wiibservice.service.FuturesTradingService;
@@ -13,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/futures")
@@ -23,6 +25,7 @@ public class FuturesController {
     private final FuturesRiskService futuresRiskService;
     private final ForceOrderService forceOrderService;
     private final BinanceRestClient binanceRestClient;
+    private final FuturesLeverageBracketRegistry bracketRegistry;
 
     /** 开仓 */
     @PostMapping("/open")
@@ -117,5 +120,12 @@ public class FuturesController {
             @RequestParam(defaultValue = "500") int limit,
             @RequestParam(required = false) Long endTime) {
         return binanceRestClient.getFuturesKlinesLight(symbol, interval, limit, endTime);
+    }
+
+    /** 永续合约档位表：前端预估强平价/MMR 用，避免与后端两份硬编码 */
+    @GetMapping("/brackets")
+    public Result<Map<String, List<FuturesLeverageBracketRegistry.Bracket>>> brackets() {
+        StpUtil.checkLogin();
+        return Result.ok(bracketRegistry.getAllBrackets());
     }
 }

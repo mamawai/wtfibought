@@ -395,6 +395,15 @@ export interface FuturesIncreaseRequest {
   limitPrice?: number;
 }
 
+export interface FuturesBracket {
+  tier: number;
+  notionalFloor: number;
+  notionalCap: number;
+  maxLeverage: number;
+  mmr: number;
+  maintAmount: number;
+}
+
 export interface FuturesStopLossRequest {
   positionId: number;
   stopLosses: FuturesSLItem[];

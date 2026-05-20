@@ -12,6 +12,7 @@ import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.SpringUtils;
+import com.mawai.wiibservice.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.mapper.FuturesOrderMapper;
 import com.mawai.wiibservice.mapper.FuturesPositionMapper;
@@ -53,6 +54,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
     private final TradeAttributionService tradeAttributionService;
+    private final FuturesLeverageBracketRegistry bracketRegistry;
 
     // ==================== 开仓 ====================
 
@@ -63,17 +65,26 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         getAndValidateUser(userId);
 
         BigDecimal price = getPrice(request.getSymbol());
-        int requestedLeverage = request.getLeverage() != null ? request.getLeverage() : 1;
-        int leverage = normalizeLeverage(request.getLeverage(),
-                tradingConfig.getFutures().getMaxLeverage(),
-                tradingConfig.getFutures().maintenanceMarginRateForLeverage(requestedLeverage));
+        int leverage = normalizeLeverage(request.getLeverage(), tradingConfig.getFutures().getMaxLeverage());
 
         if ("MARKET".equals(request.getOrderType())) {
+            // BTC/ETH 等已配置档位的 symbol 按 Binance 档位二次校验杠杆（按 notional 取档）
+            validateLeverageByBracket(request.getSymbol(), leverage, price.multiply(request.getQuantity()));
             return executeMarketOpen(userId, request, price, leverage);
         } else {
             BigDecimal markPrice = getMarkPrice(request.getSymbol());
             tradingConfig.validateLimitPrice(request.getLimitPrice(), markPrice);
+            validateLeverageByBracket(request.getSymbol(), leverage, request.getLimitPrice().multiply(request.getQuantity()));
             return createLimitOpenOrder(userId, request, leverage, markPrice);
+        }
+    }
+
+    /** 按 notional 取档校验 leverage 不超过该档最大值；未配置 symbol 抛 FUTURES_SYMBOL_NOT_CONFIGURED。 */
+    private void validateLeverageByBracket(String symbol, int leverage, BigDecimal notional) {
+        int maxAllowed = bracketRegistry.getEffectiveMaxLeverage(symbol, notional);
+        if (leverage > maxAllowed) {
+            throw new BizException(ErrorCode.FUTURES_INVALID_LEVERAGE.getCode(),
+                    symbol + " 当前仓位档位最大支持 " + maxAllowed + "x，请求 " + leverage + "x 超限");
         }
     }
 
@@ -288,6 +299,13 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
 
             int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginReturn);
             if (affected == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
+
+            // 部分平仓改了 qty/margin，强平索引必须同步。
+            BigDecimal newQty = position.getQuantity().subtract(closeQty);
+            BigDecimal newMargin = position.getMargin().subtract(marginReturn);
+            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
+                    position.getSymbol(), position.getSide(), position.getEntryPrice(), newMargin, newQty);
+            positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
         }
 
         userMapper.atomicUpdateBalance(userId, returnAmount);
@@ -407,8 +425,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         if (affected2 == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
 
         BigDecimal newMargin = position.getMargin().add(amount);
-        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), position.getEntryPrice(),
-                newMargin, position.getQuantity(), position.getLeverage());
+        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSymbol(), position.getSide(), position.getEntryPrice(),
+                newMargin, position.getQuantity());
         positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
 
         log.info("futures追加保证金 userId={} posId={} amount={}", userId, request.getPositionId(), amount);
@@ -456,11 +474,15 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         BigDecimal commission = tradingConfig.calculateFuturesCommission(addValue, false, true);
         BigDecimal totalCost = addMargin.add(commission);
 
+        BigDecimal oldQty = position.getQuantity();
+        BigDecimal newQty = oldQty.add(addQty);
+        // 加仓后 notional 跨档校验：按当前价×总持仓评估市值（对齐 Binance 实操），超档直接拒
+        BigDecimal newNotional = price.multiply(newQty);
+        validateLeverageByBracket(position.getSymbol(), leverage, newNotional);
+
         int affected = userMapper.atomicUpdateBalance(userId, totalCost.negate());
         if (affected == 0) throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
 
-        BigDecimal oldQty = position.getQuantity();
-        BigDecimal newQty = oldQty.add(addQty);
         BigDecimal newEntryPrice = position.getEntryPrice().multiply(oldQty)
                 .add(price.multiply(addQty))
                 .divide(newQty, PRICE_SCALE, RoundingMode.HALF_UP);
@@ -469,8 +491,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         if (affected2 == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
 
         BigDecimal newMargin = position.getMargin().add(addMargin);
-        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSide(), newEntryPrice, newMargin,
-                newQty, position.getLeverage());
+        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSymbol(), position.getSide(), newEntryPrice, newMargin,
+                newQty);
         positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
 
         FuturesOrder order = new FuturesOrder();
@@ -499,6 +521,11 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
                                                            BigDecimal markPrice) {
         int leverage = position.getLeverage();
         BigDecimal addValue = limitPrice.multiply(addQty).setScale(2, RoundingMode.HALF_UP);
+
+        // 限价加仓挂单时即按当前 markPrice×总持仓评估市值校验档位（对齐 Binance 实操），避免成交时才拒单造成 PENDING 残留
+        BigDecimal newNotional = markPrice.multiply(position.getQuantity().add(addQty));
+        validateLeverageByBracket(position.getSymbol(), leverage, newNotional);
+
         BigDecimal addMargin = addValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
         String orderSide = "LONG".equals(position.getSide()) ? "INCREASE_LONG" : "INCREASE_SHORT";
         boolean isTaker = isLimitTaker(orderSide, limitPrice, markPrice);
@@ -596,12 +623,12 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         BigDecimal effectiveMargin = pos.getMargin().add(unrealizedPnl);
         dto.setEffectiveMargin(effectiveMargin);
 
-        BigDecimal maintenanceMargin = positionValue.multiply(
-                tradingConfig.getFutures().maintenanceMarginRateForLeverage(pos.getLeverage()));
+        BigDecimal maintenanceMargin = bracketRegistry.calcMaintenanceMargin(
+                pos.getSymbol(), positionValue);
         dto.setMaintenanceMargin(maintenanceMargin);
 
-        BigDecimal liquidationPrice = positionIndexService.calcStaticLiqPrice(pos.getSide(), pos.getEntryPrice(),
-                pos.getMargin(), pos.getQuantity(), pos.getLeverage());
+        BigDecimal liquidationPrice = positionIndexService.calcStaticLiqPrice(pos.getSymbol(), pos.getSide(), pos.getEntryPrice(),
+                pos.getMargin(), pos.getQuantity());
         dto.setLiquidationPrice(liquidationPrice);
 
         BigDecimal entryValue = pos.getEntryPrice().multiply(pos.getQuantity());

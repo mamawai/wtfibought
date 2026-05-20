@@ -79,15 +79,9 @@ final class FuturesHelper {
         }
     }
 
-    static int normalizeLeverage(Integer leverage, int maxLeverage, BigDecimal maintenanceMarginRate) {
+    static int normalizeLeverage(Integer leverage, int maxLeverage) {
         if (leverage == null || leverage < 1) return 1;
         if (leverage > maxLeverage) throw new BizException(ErrorCode.FUTURES_INVALID_LEVERAGE);
-        if (maintenanceMarginRate != null && maintenanceMarginRate.signum() > 0) {
-            BigDecimal initialMarginRate = BigDecimal.ONE.divide(BigDecimal.valueOf(leverage), 12, RoundingMode.HALF_UP);
-            if (initialMarginRate.compareTo(maintenanceMarginRate) <= 0) {
-                throw new BizException(ErrorCode.FUTURES_INVALID_LEVERAGE);
-            }
-        }
         return leverage;
     }
 

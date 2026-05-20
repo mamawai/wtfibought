@@ -9,6 +9,7 @@ import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.SpringUtils;
+import com.mawai.wiibservice.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.mapper.FuturesOrderMapper;
 import com.mawai.wiibservice.mapper.FuturesPositionMapper;
@@ -42,6 +43,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
     private final TradeAttributionService tradeAttributionService;
+    private final FuturesLeverageBracketRegistry bracketRegistry;
 
     // ==================== 设置止损 ====================
 
@@ -197,8 +199,14 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         BigDecimal unrealizedPnl = calculatePnl(position.getSide(), position.getEntryPrice(), currentPrice, position.getQuantity());
         BigDecimal effectiveMargin = position.getMargin().add(unrealizedPnl);
         BigDecimal positionValue = currentPrice.multiply(position.getQuantity());
-        BigDecimal maintenanceMargin = positionValue.multiply(
-                tradingConfig.getFutures().maintenanceMarginRateForLeverage(position.getLeverage()));
+        BigDecimal maintenanceMargin;
+        try {
+            maintenanceMargin = bracketRegistry.calcMaintenanceMargin(position.getSymbol(), positionValue);
+        } catch (BizException e) {
+            // 未配置档位的 symbol 跳过本次强平判定，避免吞错导致仓位卡死，运维需关注此告警
+            log.error("强平判定跳过 posId={} symbol={} reason={}", positionId, position.getSymbol(), e.getMessage());
+            return;
+        }
 
         if (effectiveMargin.compareTo(maintenanceMargin) <= 0) {
             SpringUtils.getAopProxy(this).forceClose(positionId, currentPrice);
@@ -262,8 +270,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
             FuturesPosition updated = positionMapper.selectById(positionId);
             if (updated != null && "OPEN".equals(updated.getStatus())) {
                 BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
-                        updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity(),
-                        updated.getLeverage());
+                        updated.getSymbol(), updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity());
                 positionIndexService.updateLiquidationPrice(updated.getId(), updated.getSymbol(), updated.getSide(), liqPrice);
             }
         }
@@ -350,8 +357,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
             FuturesPosition updated = positionMapper.selectById(positionId);
             if (updated != null && "OPEN".equals(updated.getStatus())) {
                 BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
-                        updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity(),
-                        updated.getLeverage());
+                        updated.getSymbol(), updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity());
                 positionIndexService.updateLiquidationPrice(updated.getId(), updated.getSymbol(), updated.getSide(), liqPrice);
             }
         }
