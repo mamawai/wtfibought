@@ -191,7 +191,7 @@ public class RegimeAgent implements FactorAgent {
 
     private int estimateVolBps(FeatureSnapshot s) {
         BigDecimal lastPrice = s.lastPrice();
-        BigDecimal atr = s.atr5m() != null ? s.atr5m() : s.atr1m();
+        BigDecimal atr = s.atr() != null ? s.atr() : s.atr1m();
         if (atr != null && lastPrice != null && lastPrice.signum() > 0) {
             return atr.multiply(BigDecimal.valueOf(10000))
                     .divide(lastPrice, 0, java.math.RoundingMode.HALF_UP).intValue();

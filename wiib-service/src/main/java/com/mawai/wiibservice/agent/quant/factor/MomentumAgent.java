@@ -54,8 +54,8 @@ public class MomentumAgent implements FactorAgent {
         score2 += consistency * 0.25;
 
         BigDecimal lastPrice = s.lastPrice();
-        int volBps = s.atr5m() != null && lastPrice != null && lastPrice.signum() > 0
-                ? s.atr5m().multiply(BigDecimal.valueOf(10000))
+        int volBps = s.atr() != null && lastPrice != null && lastPrice.signum() > 0
+                ? s.atr().multiply(BigDecimal.valueOf(10000))
                     .divide(lastPrice, 0, java.math.RoundingMode.HALF_UP).intValue()
                 : 30;
 

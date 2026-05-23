@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.agent.trading.exit.playbook;
 
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlanFactory;
 import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
 import com.mawai.wiibservice.agent.trading.runtime.SymbolProfile;
@@ -251,7 +252,7 @@ class TrendExitPlaybookTest {
         QuantForecastCycle forecast = new QuantForecastCycle();
         forecast.setSnapshotJson("""
                 {
-                  "atr5m": 400,
+                  "atr": 400,
                   "indicatorsByTimeframe": {
                     "5m": {
                       "ema20": %s,
@@ -263,7 +264,7 @@ class TrendExitPlaybookTest {
                   }
                 }
                 """.formatted(ema20, macdCross, macdDif, macdDea, ma1h));
-        MarketContext market = MarketContext.parse(forecast, bd(price));
+        MarketContext market = MarketContext.parse(forecast, bd(price), KlineInterval.M5);
         return new TradingDecisionContext("BTCUSDT", null, List.of(), forecast, List.of(), List.of(),
                 bd(price), bd(price), bd("100000"), null, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), SymbolProfile.of("BTCUSDT"), market, LocalDateTime.now());

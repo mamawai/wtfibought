@@ -35,26 +35,26 @@ public final class MeanReversionConfluenceGate implements EntryConfluenceGate {
     }
 
     private boolean bollStretchedForMeanReversion(MarketContext ctx, boolean isLong) {
-        if (ctx.bollPb5m == null) return false;
-        return isLong ? ctx.bollPb5m <= 18.0 : ctx.bollPb5m >= 82.0;
+        if (ctx.bollPb == null) return false;
+        return isLong ? ctx.bollPb <= 18.0 : ctx.bollPb >= 82.0;
     }
 
     private boolean rsiStretchedForMeanReversion(MarketContext ctx, boolean isLong) {
-        if (ctx.rsi5m == null) return false;
-        double rsi = ctx.rsi5m.doubleValue();
+        if (ctx.rsi == null) return false;
+        double rsi = ctx.rsi.doubleValue();
         return isLong ? rsi <= 42.0 : rsi >= 58.0;
     }
 
     private boolean hardTrendAgainst(MarketContext ctx, boolean isLong) {
         return EntryStrategySupport.directionConflicts(ctx.maAlignment1h, isLong)
                 && EntryStrategySupport.directionConflicts(ctx.maAlignment15m, isLong)
-                && EntryStrategySupport.isMacdHistAgainst(ctx.macdHistTrend5m, isLong);
+                && EntryStrategySupport.isMacdHistAgainst(ctx.macdHistTrend, isLong);
     }
 
     private int reversalVoteCount(MarketContext ctx, boolean isLong) {
         int votes = 0;
         if (EntryStrategySupport.macdSupports(ctx, isLong)) votes++;
-        if (EntryStrategySupport.closeTrendSupports(ctx.closeTrend5m, isLong)) votes++;
+        if (EntryStrategySupport.closeTrendSupports(ctx.closeTrend, isLong)) votes++;
         if (EntryStrategySupport.microSupports(ctx, isLong)) votes++;
         if ("WEAKENING".equals(ctx.regimeTransition)) votes++;
         return votes;

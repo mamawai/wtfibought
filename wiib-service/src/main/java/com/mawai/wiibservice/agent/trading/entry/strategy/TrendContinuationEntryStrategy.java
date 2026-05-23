@@ -35,8 +35,8 @@ public final class TrendContinuationEntryStrategy implements EntryStrategy {
         if ("SHOCK".equals(ctx.regime) && input.confidence() < 0.70) {
             return EntryStrategyResult.reject(PATH_LEGACY_TREND, "SHOCK下趋势信号不够强");
         }
-        if (ctx.rsi5m != null) {
-            double rsi = ctx.rsi5m.doubleValue();
+        if (ctx.rsi != null) {
+            double rsi = ctx.rsi.doubleValue();
             if (isLong && rsi >= RSI_LONG_MAX) {
                 return EntryStrategyResult.reject(PATH_LEGACY_TREND, "做多RSI过热=" + fmt(rsi));
             }
@@ -50,7 +50,7 @@ public final class TrendContinuationEntryStrategy implements EntryStrategy {
         }
         boolean hardTrendAgainst = EntryStrategySupport.directionConflicts(ctx.maAlignment1h, isLong)
                 && EntryStrategySupport.directionConflicts(ctx.maAlignment15m, isLong)
-                && EntryStrategySupport.isMacdHistAgainst(ctx.macdHistTrend5m, isLong);
+                && EntryStrategySupport.isMacdHistAgainst(ctx.macdHistTrend, isLong);
         if (hardTrendAgainst) {
             return EntryStrategyResult.reject(PATH_LEGACY_TREND, "1h/15m/MACD强反向");
         }
@@ -77,7 +77,7 @@ public final class TrendContinuationEntryStrategy implements EntryStrategy {
             score += 1.0;
             parts.add("MACD同向");
         }
-        if (EntryStrategySupport.closeTrendSupports(ctx.closeTrend5m, isLong)) {
+        if (EntryStrategySupport.closeTrendSupports(ctx.closeTrend, isLong)) {
             score += 0.7;
             parts.add("收盘趋势同向");
         }
@@ -85,7 +85,7 @@ public final class TrendContinuationEntryStrategy implements EntryStrategy {
             score += 0.6;
             parts.add("EMA20同侧");
         }
-        if (ctx.volumeRatio5m != null && ctx.volumeRatio5m >= 1.2) {
+        if (ctx.volumeRatio != null && ctx.volumeRatio >= 1.2) {
             score += 0.4;
             parts.add("量能可用");
         }
@@ -101,7 +101,7 @@ public final class TrendContinuationEntryStrategy implements EntryStrategy {
                 || EntryStrategySupport.directionAligns(ctx.maAlignment1h, isLong)
                 || EntryStrategySupport.directionAligns(ctx.maAlignment15m, isLong)
                 || EntryStrategySupport.macdSupports(ctx, isLong)
-                || EntryStrategySupport.closeTrendSupports(ctx.closeTrend5m, isLong);
+                || EntryStrategySupport.closeTrendSupports(ctx.closeTrend, isLong);
         if (!hasTrendBackbone) {
             return EntryStrategyResult.reject(PATH_LEGACY_TREND, "趋势和动能证据不足");
         }
@@ -110,8 +110,8 @@ public final class TrendContinuationEntryStrategy implements EntryStrategy {
         }
 
         SymbolProfile profile = input.profile();
-        BigDecimal slDistance = ctx.atr5m.multiply(BigDecimal.valueOf(profile.trendSlAtr()));
-        BigDecimal tpDistance = ctx.atr5m.multiply(BigDecimal.valueOf(profile.trendTpAtr()));
+        BigDecimal slDistance = ctx.atr.multiply(BigDecimal.valueOf(profile.trendSlAtr()));
+        BigDecimal tpDistance = ctx.atr.multiply(BigDecimal.valueOf(profile.trendTpAtr()));
         return EntryStrategyResult.accept(new EntryStrategyCandidate(
                 PATH_LEGACY_TREND, "趋势延续", input.side(), isLong, score, slDistance, tpDistance,
                 MAX_LEVERAGE, 1.0,
@@ -124,8 +124,8 @@ public final class TrendContinuationEntryStrategy implements EntryStrategy {
     }
 
     private boolean isRsiTrendHealthy(MarketContext ctx, boolean isLong) {
-        if (ctx.rsi5m == null) return false;
-        double rsi = ctx.rsi5m.doubleValue();
+        if (ctx.rsi == null) return false;
+        double rsi = ctx.rsi.doubleValue();
         return isLong ? rsi >= 42.0 && rsi < 78.0 : rsi > 22.0 && rsi <= 58.0;
     }
 }

@@ -36,14 +36,14 @@ public final class EntryStrategySupport {
     }
 
     public static boolean macdSupports(MarketContext ctx, boolean isLong) {
-        if ("golden".equals(ctx.macdCross5m)) return isLong;
-        if ("death".equals(ctx.macdCross5m)) return !isLong;
+        if ("golden".equals(ctx.macdCross)) return isLong;
+        if ("death".equals(ctx.macdCross)) return !isLong;
 
-        boolean histBullish = isMacdHistBullish(ctx.macdHistTrend5m);
-        boolean histBearish = isMacdHistBearish(ctx.macdHistTrend5m);
+        boolean histBullish = isMacdHistBullish(ctx.macdHistTrend);
+        boolean histBearish = isMacdHistBearish(ctx.macdHistTrend);
 
-        if (ctx.macdDif5m != null && ctx.macdDea5m != null) {
-            int cmp = ctx.macdDif5m.compareTo(ctx.macdDea5m);
+        if (ctx.macdDif != null && ctx.macdDea != null) {
+            int cmp = ctx.macdDif.compareTo(ctx.macdDea);
             if (isLong && cmp > 0) return !histBearish;
             if (!isLong && cmp < 0) return !histBullish;
         }

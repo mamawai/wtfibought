@@ -4,6 +4,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.mawai.wiibcommon.entity.AiModelAssignment;
 import com.mawai.wiibcommon.entity.AiRuntimeConfig;
 import com.mawai.wiibcommon.constant.QuantConstants;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibservice.agent.config.RuntimeFeatureToggleService;
@@ -15,6 +16,7 @@ import com.mawai.wiibservice.agent.trading.submit.SymbolSubmitResult;
 import com.mawai.wiibservice.agent.trading.submit.TradingCycleSubmitResult;
 import com.mawai.wiibservice.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibservice.mapper.AiRuntimeConfigMapper;
+import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.task.AiTradingScheduler;
 import com.mawai.wiibservice.task.QuantForecastScheduler;
 import io.swagger.v3.oas.annotations.Operation;
@@ -35,6 +37,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class AiAgentAdminController {
 
+    private static final List<KlineInterval> SUPPORTED_DECISION_INTERVALS = List.of(
+            KlineInterval.M1, KlineInterval.M3, KlineInterval.M5, KlineInterval.M15);
+
     private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final QuantForecastScheduler quantForecastScheduler;
     private final AiTradingScheduler aiTradingScheduler;
@@ -43,6 +48,7 @@ public class AiAgentAdminController {
     private final CircuitBreakerService circuitBreakerService;
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
+    private final TradingConfig tradingConfig;
 
     private void checkAdmin() {
         long userId = StpUtil.getLoginIdAsLong();
@@ -299,6 +305,16 @@ public class AiAgentAdminController {
             runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_PLAYBOOK_EXIT_ENABLED,
                     req.getPlaybookExitEnabled(), operator, "admin trading-config");
         }
+        if (req.getDecisionInterval() != null) {
+            KlineInterval interval = KlineInterval.valueOf(req.getDecisionInterval().trim().toUpperCase());
+            if (!SUPPORTED_DECISION_INTERVALS.contains(interval)) {
+                return Result.fail("decisionInterval必须是M1/M3/M5/M15之一，H1当前不支持回测聚合");
+            }
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_DECISION_INTERVAL,
+                    interval.name(), operator, "admin trading-config");
+            // 重周期 Graph 节点持有构造参数，切换周期后要重建缓存图才会立即生效。
+            aiAgentRuntimeManager.refresh();
+        }
         if (req.getCircuitBreakerEnabled() != null) {
             runtimeFeatureToggleService.set(RuntimeFeatureToggleService.CIRCUIT_BREAKER_ENABLED,
                     req.getCircuitBreakerEnabled(), operator, "admin trading-config");
@@ -337,6 +353,16 @@ public class AiAgentAdminController {
                 && !isPercentInRange(req.getCircuitBreakerL3DrawdownPct())) {
             return Result.fail("circuitBreakerL3DrawdownPct必须在0到100之间");
         }
+        if (req.getDecisionInterval() != null) {
+            try {
+                KlineInterval interval = KlineInterval.valueOf(req.getDecisionInterval().trim().toUpperCase());
+                if (!SUPPORTED_DECISION_INTERVALS.contains(interval)) {
+                    return Result.fail("decisionInterval必须是M1/M3/M5/M15之一，H1当前不支持回测聚合");
+                }
+            } catch (RuntimeException e) {
+                return Result.fail("decisionInterval必须是M1/M3/M5/M15之一");
+            }
+        }
         return null;
     }
 
@@ -349,6 +375,10 @@ public class AiAgentAdminController {
         RuntimeToggleSnapshot.TradingToggles trading = snapshot.trading();
         RuntimeToggleSnapshot.CircuitBreakerToggles breaker = snapshot.circuitBreaker();
         TradingConfigResponse resp = new TradingConfigResponse();
+        KlineInterval decisionInterval = tradingConfig.getDecisionInterval();
+        resp.setDecisionInterval(decisionInterval.name());
+        resp.setDecisionIntervalCode(decisionInterval.getCode());
+        resp.setSupportedDecisionIntervals(SUPPORTED_DECISION_INTERVALS.stream().map(Enum::name).toList());
         resp.setLowVolTradingEnabled(trading.lowVolTradingEnabled());
         resp.setPlaybookExitEnabled(trading.playbookExitEnabled());
         resp.setCircuitBreakerEnabled(circuitBreakerService.isEffectiveEnabled());
@@ -419,6 +449,7 @@ public class AiAgentAdminController {
 
     @Data
     public static class TradingConfigRequest {
+        private String decisionInterval;
         private Boolean lowVolTradingEnabled;
         private Boolean playbookExitEnabled;
         private Boolean circuitBreakerEnabled;
@@ -430,6 +461,9 @@ public class AiAgentAdminController {
 
     @Data
     public static class TradingConfigResponse {
+        private String decisionInterval;
+        private String decisionIntervalCode;
+        private List<String> supportedDecisionIntervals;
         private Boolean lowVolTradingEnabled;
         private Boolean playbookExitEnabled;
         private Boolean circuitBreakerEnabled;

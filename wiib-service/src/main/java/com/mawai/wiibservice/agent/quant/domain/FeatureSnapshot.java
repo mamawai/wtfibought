@@ -52,7 +52,7 @@ public record FeatureSnapshot(
 
         // 波动率
         BigDecimal atr1m,
-        BigDecimal atr5m,
+        BigDecimal atr,
         BigDecimal bollBandwidth,
         boolean bollSqueeze,
 
@@ -84,7 +84,7 @@ public record FeatureSnapshot(
                 fundingDeviation, fundingRateTrend, fundingRateExtreme, lsrExtreme,
                 liquidationPressure, liquidationVolumeUsdt,
                 topTraderBias, takerBuySellPressure, fearGreedIndex, fearGreedLabel,
-                atr1m, atr5m, bollBandwidth, bollSqueeze,
+                atr1m, atr, bollBandwidth, bollSqueeze,
                 dvolIndex, atmIv, ivSkew25d, ivTermSlope,
                 newRegime, newsItems, newFlags, confidence, transition);
     }

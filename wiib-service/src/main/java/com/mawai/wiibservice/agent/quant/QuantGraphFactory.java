@@ -6,6 +6,7 @@ import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
+import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.service.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;
 import com.mawai.wiibservice.service.OrderFlowAggregator;
@@ -26,6 +27,7 @@ public class QuantGraphFactory {
     private final DeribitClient deribitClient;
     private final FactorWeightOverrideService weightOverrideService;
     private final ObjectProvider<MeterRegistry> meterRegistryProvider;
+    private final TradingConfig tradingConfig;
 
     public QuantGraphFactory(BinanceRestClient binanceRestClient,
                              MemoryService memoryService,
@@ -34,7 +36,8 @@ public class QuantGraphFactory {
                              DepthStreamCache depthStreamCache,
                              DeribitClient deribitClient,
                              FactorWeightOverrideService weightOverrideService,
-                             ObjectProvider<MeterRegistry> meterRegistryProvider) {
+                             ObjectProvider<MeterRegistry> meterRegistryProvider,
+                             TradingConfig tradingConfig) {
         this.binanceRestClient = binanceRestClient;
         this.memoryService = memoryService;
         this.forceOrderService = forceOrderService;
@@ -43,6 +46,7 @@ public class QuantGraphFactory {
         this.deribitClient = deribitClient;
         this.weightOverrideService = weightOverrideService;
         this.meterRegistryProvider = meterRegistryProvider;
+        this.tradingConfig = tradingConfig;
     }
 
     public CompiledGraph create(ChatModel chatModel) throws Exception {
@@ -51,6 +55,7 @@ public class QuantGraphFactory {
         ChatClient.Builder shallowClient = ChatClient.builder(chatModel);
         return QuantForecastWorkflow.build(deepClient, shallowClient, binanceRestClient, memoryService,
                 forceOrderService, orderFlowAggregator, depthStreamCache, deribitClient, weightOverrideService,
-                LlmCallMode.STREAMING, LlmCallMode.STREAMING, meterRegistryProvider.getIfAvailable());
+                LlmCallMode.STREAMING, LlmCallMode.STREAMING, meterRegistryProvider.getIfAvailable(),
+                tradingConfig.getDecisionInterval());
     }
 }

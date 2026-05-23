@@ -4,6 +4,7 @@ import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.entity.ForceOrder;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
 import com.mawai.wiibservice.service.DepthStreamCache;
@@ -17,7 +18,7 @@ import java.util.concurrent.*;
 
 /**
  * 数据采集节点：合并CollectMarketNode + CollectNewsNode。
- * 内部虚拟线程并行采集K线(6周期)、ticker、funding、orderbook、OI、LSR、新闻。
+ * 内部虚拟线程并行采集K线(7周期)、ticker、funding、orderbook、OI、LSR、新闻。
  */
 @Slf4j
 public class CollectDataNode implements NodeAction {
@@ -72,8 +73,16 @@ public class CollectDataNode implements NodeAction {
         String newsData = "{}";
         String dvolData = null;
         String bookSummaryData = null;
-        String[] intervals = {"1m", "5m", "15m", "1h", "4h", "1d"};
-        int[] limits = {120, 288, 192, 168, 180, 90};
+        String[] intervals = {"1m", "3m", "5m", "15m", "1h", "4h", "1d"};
+        int[] limits = {
+                historyLimit("1m"),
+                historyLimit("3m"),
+                historyLimit("5m"),
+                historyLimit("15m"),
+                historyLimit("1h"),
+                180,
+                90
+        };
         String[] spotIntervals = {"1m", "5m"};
         int[] spotLimits = {120, 288};
 
@@ -85,8 +94,8 @@ public class CollectDataNode implements NodeAction {
 
             // 并行采集全部数据（合约API）
             @SuppressWarnings("unchecked")
-            Future<String>[] klineFutures = new Future[6];
-            for (int i = 0; i < 6; i++) {
+            Future<String>[] klineFutures = new Future[intervals.length];
+            for (int i = 0; i < intervals.length; i++) {
                 int idx = i;
                 klineFutures[i] = executor.submit(
                         () -> binanceRestClient.getFuturesKlines(symbol, intervals[idx], limits[idx], null));
@@ -129,7 +138,7 @@ public class CollectDataNode implements NodeAction {
 
             // 收集K线
             Map<String, String> klines = new HashMap<>();
-            for (int i = 0; i < 6; i++) {
+            for (int i = 0; i < intervals.length; i++) {
                 String data = safeGet(klineFutures[i], "K线" + intervals[i], deadlineNanos);
                 if (data != null) klines.put(intervals[i], data);
             }
@@ -250,6 +259,10 @@ public class CollectDataNode implements NodeAction {
 
     private void putIfNotNull(Map<String, String> map, String key, String value) {
         if (value != null) map.put(key, value);
+    }
+
+    private static int historyLimit(String intervalCode) {
+        return KlineInterval.fromCode(intervalCode).getHistoryLimit();
     }
 
     private String buildForceOrdersJson(String symbol) {

@@ -14,6 +14,7 @@ import com.mawai.wiibcommon.entity.AiTradingDecision;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.agent.tool.CryptoIndicatorCalculator;
 import lombok.extern.slf4j.Slf4j;
 
@@ -33,15 +34,15 @@ import java.util.Map;
  * <b>设计思想</b>：
  * <ul>
  *   <li>不改动 DeterministicTradingExecutor 任何代码，通过 {@link TradingOperations} 接口注入模拟交易</li>
- *   <li>多周期指标：5m K线是基准周期，15m/1h 由5m K线聚合而来</li>
+ *   <li>多周期指标：主决策周期K线是基准周期，15m/1h 由基准K线聚合而来</li>
  *   <li>信号生成：回测不使用LLM，而是从技术指标直接衍生简化信号（方向+置信度+杠杆）</li>
  *   <li>Regime判断：基于ATR变化率 + BB bandwidth + ADX确定 RANGE/SHOCK/SQUEEZE/TREND</li>
  * </ul>
  *
  * <h3>使用示例</h3>
  * <pre>{@code
- * List<BigDecimal[]> klines5m = loadHistorical5mKlines("BTCUSDT");
- * BacktestEngine engine = new BacktestEngine("BTCUSDT", klines5m, new BigDecimal("100000"));
+ * List<BigDecimal[]> klines = loadHistoricalKlines("BTCUSDT", KlineInterval.M5);
+ * BacktestEngine engine = new BacktestEngine("BTCUSDT", klines, new BigDecimal("100000"), KlineInterval.M5);
  * BacktestResult result = engine.run();
  * System.out.println(result);
  * }</pre>
@@ -52,22 +53,24 @@ public class BacktestEngine {
     /** 指标计算所需最少K线数（CryptoIndicatorCalculator内部需要≥30根） */
     private static final int MIN_KLINES_FOR_INDICATOR = 100;
 
-    /** 15m K线由3根5m K线聚合 */
-    private static final int BARS_PER_15M = 3;
-    /** 1h K线由12根5m K线聚合 */
-    private static final int BARS_PER_1H = 12;
-
     private final String symbol;
-    private final List<BigDecimal[]> klines5m; // [high, low, close, volume]
+    private final List<BigDecimal[]> baseKlines; // [high, low, close, volume]
     private final BigDecimal initialBalance;
+    private final KlineInterval baseInterval;
 
     // 可调参数（用于参数扫描）
     private SymbolProfile profileOverride;
 
-    public BacktestEngine(String symbol, List<BigDecimal[]> klines5m, BigDecimal initialBalance) {
+    public BacktestEngine(String symbol, List<BigDecimal[]> baseKlines, BigDecimal initialBalance) {
+        this(symbol, baseKlines, initialBalance, KlineInterval.M5);
+    }
+
+    public BacktestEngine(String symbol, List<BigDecimal[]> baseKlines, BigDecimal initialBalance,
+                          KlineInterval baseInterval) {
         this.symbol = symbol;
-        this.klines5m = klines5m;
+        this.baseKlines = baseKlines;
         this.initialBalance = initialBalance;
+        this.baseInterval = baseInterval != null ? baseInterval : KlineInterval.M5;
     }
 
     /**
@@ -89,13 +92,15 @@ public class BacktestEngine {
      * 使用指定退出引擎开关运行回测，便于同一段历史数据做新旧引擎对照。
      */
     public BacktestResult run(TradingRuntimeToggles toggles) {
-        if (klines5m.size() < MIN_KLINES_FOR_INDICATOR) {
+        if (baseKlines.size() < MIN_KLINES_FOR_INDICATOR) {
             throw new IllegalArgumentException(
-                    "K线数量不足: " + klines5m.size() + " < " + MIN_KLINES_FOR_INDICATOR);
+                    "K线数量不足: " + baseKlines.size() + " < " + MIN_KLINES_FOR_INDICATOR);
         }
         TradingRuntimeToggles runtimeToggles = toggles != null
                 ? toggles
                 : TradingRuntimeToggles.fromStaticFields();
+        int barsPer15m = baseInterval.aggregateRatioTo(KlineInterval.M15);
+        int barsPer1h = baseInterval.aggregateRatioTo(KlineInterval.H1);
 
         BacktestTradingTools tools = new BacktestTradingTools(initialBalance, symbol);
         TradingExecutionState executionState = new TradingExecutionState();
@@ -104,18 +109,19 @@ public class BacktestEngine {
 
         List<AiTradingDecision> recentDecisions = new ArrayList<>();
 
-        log.info("[Backtest] 开始回测 {} | K线数={} | 初始资金={}",
-                symbol, klines5m.size(), initialBalance.toPlainString());
+        log.info("[Backtest] 开始回测 {} | baseInterval={} | K线数={} | 初始资金={}",
+                symbol, baseInterval.getCode(), baseKlines.size(), initialBalance.toPlainString());
 
         long baseTimeMs = System.currentTimeMillis();
-        for (int i = MIN_KLINES_FOR_INDICATOR; i < klines5m.size(); i++) {
-            // 回测时间推进：每根 bar 5 分钟
-            long mockNowMs = baseTimeMs + (i - MIN_KLINES_FOR_INDICATOR) * 5L * 60_000L;
+        for (int i = MIN_KLINES_FOR_INDICATOR; i < baseKlines.size(); i++) {
+            // 回测时间按主决策周期推进，保证 M3/M5 切换后持仓时长一致。
+            long mockNowMs = baseTimeMs
+                    + (i - MIN_KLINES_FOR_INDICATOR) * (long) baseInterval.getMinutes() * 60_000L;
             executionState.setMockNowMs(mockNowMs);
             LocalDateTime mockNow = LocalDateTime.ofInstant(
                     Instant.ofEpochMilli(mockNowMs), ZoneId.systemDefault());
 
-            BigDecimal[] bar = klines5m.get(i);
+            BigDecimal[] bar = baseKlines.get(i);
             BigDecimal high = bar[0];
             BigDecimal low = bar[1];
             BigDecimal close = bar[2];
@@ -125,23 +131,23 @@ public class BacktestEngine {
             tools.tickBar(high, low, close, i);
 
             // 2. 计算多周期技术指标
-            List<BigDecimal[]> window5m = klines5m.subList(0, i + 1);
-            Map<String, Object> indicators5m = CryptoIndicatorCalculator.calcAll(window5m);
+            List<BigDecimal[]> baseWindow = baseKlines.subList(0, i + 1);
+            Map<String, Object> indicatorsPrimary = CryptoIndicatorCalculator.calcAll(baseWindow);
 
-            List<BigDecimal[]> klines15m = aggregate(window5m, BARS_PER_15M);
+            List<BigDecimal[]> klines15m = aggregate(baseWindow, barsPer15m);
             Map<String, Object> indicators15m = klines15m.size() >= 30
                     ? CryptoIndicatorCalculator.calcAll(klines15m) : Collections.emptyMap();
 
-            List<BigDecimal[]> klines1h = aggregate(window5m, BARS_PER_1H);
+            List<BigDecimal[]> klines1h = aggregate(baseWindow, barsPer1h);
             Map<String, Object> indicators1h = klines1h.size() >= 30
                     ? CryptoIndicatorCalculator.calcAll(klines1h) : Collections.emptyMap();
 
             // 3. 构建 snapshotJson（与 parseMarketContext 格式对齐）
-            QuantForecastCycle forecast = buildForecast(indicators5m, indicators15m, indicators1h,
+            QuantForecastCycle forecast = buildForecast(indicatorsPrimary, indicators15m, indicators1h,
                     high, low, close, mockNow);
 
             // 4. 从指标衍生简化信号
-            List<QuantSignalDecision> signals = deriveSignals(indicators5m, indicators15m, indicators1h);
+            List<QuantSignalDecision> signals = deriveSignals(indicatorsPrimary, indicators15m, indicators1h);
 
             // 5. 准备调用参数
             tools.setCurrentPrice(close);
@@ -157,7 +163,8 @@ public class BacktestEngine {
                     DeterministicTradingExecutor.execute(
                             symbol, mockUser, positions, forecast, signals,
                             recentDecisions, close, close, equity, tools,
-                            profileOverride, executionState, runtimeToggles);
+                            profileOverride, executionState, runtimeToggles,
+                            baseInterval);
 
             // 7. 标记开仓bar index（如果开了新仓）
             if (execResult.action().startsWith("OPEN_")) {
@@ -183,7 +190,7 @@ public class BacktestEngine {
             // 每500根K线输出进度
             if (i % 500 == 0) {
                 log.info("[Backtest] 进度 {}/{} | 权益={} | 持仓={}",
-                        i, klines5m.size(), tools.getTotalEquity().toPlainString(),
+                        i, baseKlines.size(), tools.getTotalEquity().toPlainString(),
                         tools.getOpenPositions(symbol).size());
             }
         }
@@ -207,7 +214,7 @@ public class BacktestEngine {
     // ==================== K线聚合 ====================
 
     /**
-     * 将5m K线聚合为更高周期。
+     * 将基准周期 K 线聚合为更高周期。
      * [high, low, close, volume, takerBuyVol] → 取period根合并为一根。
      */
     private static List<BigDecimal[]> aggregate(List<BigDecimal[]> base, int period) {
@@ -234,7 +241,7 @@ public class BacktestEngine {
 
     // ==================== 构建 QuantForecastCycle ====================
 
-    private QuantForecastCycle buildForecast(Map<String, Object> ind5m,
+    private QuantForecastCycle buildForecast(Map<String, Object> indPrimary,
                                              Map<String, Object> ind15m,
                                              Map<String, Object> ind1h,
                                              BigDecimal high,
@@ -247,16 +254,16 @@ public class BacktestEngine {
         snap.put("lastPrice", currentPrice);
 
         // regime 判断
-        String regime = determineRegime(ind5m);
+        String regime = determineRegime(indPrimary);
         snap.put("regime", regime);
         snap.put("regimeTransition", null);
 
         // ATR
-        BigDecimal atr = getBd(ind5m, "atr14");
-        snap.put("atr5m", atr);
+        BigDecimal atr = getBd(indPrimary, "atr14");
+        snap.put("atr", atr);
 
         // BB squeeze
-        boolean squeeze = isBollSqueeze(ind5m);
+        boolean squeeze = isBollSqueeze(indPrimary);
         snap.put("bollSqueeze", squeeze);
 
         // 微结构（回测中无盘口数据，置null让执行器忽略）
@@ -269,33 +276,24 @@ public class BacktestEngine {
         // indicatorsByTimeframe
         JSONObject indicators = new JSONObject();
 
-        // 5m
-        JSONObject tf5m = new JSONObject();
-        tf5m.put("rsi14", getBd(ind5m, "rsi14"));
-        tf5m.put("macd_cross", getStr(ind5m, "macd_cross"));
-        tf5m.put("macd_hist_trend", getStr(ind5m, "macd_hist_trend"));
-        tf5m.put("macd_dif", getBd(ind5m, "macd_dif"));
-        tf5m.put("macd_dea", getBd(ind5m, "macd_dea"));
-        tf5m.put("ma_alignment", getInt(ind5m, "ma_alignment"));
-        tf5m.put("close_trend", getStr(ind5m, "close_trend"));
-        tf5m.put("close_trend_recent_3_closed", getStr(ind5m, "close_trend_recent_3_closed"));
-        tf5m.put("boll_pb", getDbl(ind5m, "boll_pb"));
-        tf5m.put("boll_bandwidth", getDbl(ind5m, "boll_bandwidth"));
-        tf5m.put("volume_ratio", getDbl(ind5m, "volume_ratio"));
-        tf5m.put("volume_ratio_recent_5_closed", ind5m.get("volume_ratio_recent_5_closed"));
-        tf5m.put("ema20", getBd(ind5m, "ema20"));
-        indicators.put("5m", tf5m);
+        JSONObject primaryTf = new JSONObject();
+        primaryTf.put("rsi14", getBd(indPrimary, "rsi14"));
+        primaryTf.put("macd_cross", getStr(indPrimary, "macd_cross"));
+        primaryTf.put("macd_hist_trend", getStr(indPrimary, "macd_hist_trend"));
+        primaryTf.put("macd_dif", getBd(indPrimary, "macd_dif"));
+        primaryTf.put("macd_dea", getBd(indPrimary, "macd_dea"));
+        primaryTf.put("ma_alignment", getInt(indPrimary, "ma_alignment"));
+        primaryTf.put("close_trend", getStr(indPrimary, "close_trend"));
+        primaryTf.put("close_trend_recent_3_closed", getStr(indPrimary, "close_trend_recent_3_closed"));
+        primaryTf.put("boll_pb", getDbl(indPrimary, "boll_pb"));
+        primaryTf.put("boll_bandwidth", getDbl(indPrimary, "boll_bandwidth"));
+        primaryTf.put("volume_ratio", getDbl(indPrimary, "volume_ratio"));
+        primaryTf.put("volume_ratio_recent_5_closed", indPrimary.get("volume_ratio_recent_5_closed"));
+        primaryTf.put("ema20", getBd(indPrimary, "ema20"));
+        indicators.put(baseInterval.getCode(), primaryTf);
 
-        // 15m
-        JSONObject tf15m = new JSONObject();
-        tf15m.put("ma_alignment", getInt(ind15m, "ma_alignment"));
-        tf15m.put("rsi14", getBd(ind15m, "rsi14"));
-        indicators.put("15m", tf15m);
-
-        // 1h
-        JSONObject tf1h = new JSONObject();
-        tf1h.put("ma_alignment", getInt(ind1h, "ma_alignment"));
-        indicators.put("1h", tf1h);
+        putAuxiliaryTimeframe(indicators, KlineInterval.M15.getCode(), ind15m);
+        putAuxiliaryTimeframe(indicators, KlineInterval.H1.getCode(), ind1h);
 
         snap.put("indicatorsByTimeframe", indicators);
 
@@ -353,7 +351,7 @@ public class BacktestEngine {
      * <h4>置信度计算</h4>
      * 每个支持因素加权累加（类似confluence但用于信号层）。
      */
-    private List<QuantSignalDecision> deriveSignals(Map<String, Object> ind5m,
+    private List<QuantSignalDecision> deriveSignals(Map<String, Object> indPrimary,
                                                      Map<String, Object> ind15m,
                                                      Map<String, Object> ind1h) {
         // 方向投票
@@ -373,20 +371,20 @@ public class BacktestEngine {
             else if (ma15m < 0) shortVotes++;
         }
 
-        // 5m MACD交叉
-        String macdCross = getStr(ind5m, "macd_cross");
+        // 主周期 MACD交叉
+        String macdCross = getStr(indPrimary, "macd_cross");
         if ("golden".equals(macdCross)) longVotes++;
         else if ("death".equals(macdCross)) shortVotes++;
 
-        // 5m MACD柱状图趋势
-        String histTrend = getStr(ind5m, "macd_hist_trend");
+        // 主周期 MACD柱状图趋势
+        String histTrend = getStr(indPrimary, "macd_hist_trend");
         if (histTrend != null) {
             if (histTrend.startsWith("rising") || "mostly_up".equals(histTrend)) longVotes++;
             else if (histTrend.startsWith("falling") || "mostly_down".equals(histTrend)) shortVotes++;
         }
 
         // RSI偏向
-        BigDecimal rsi = getBd(ind5m, "rsi14");
+        BigDecimal rsi = getBd(indPrimary, "rsi14");
         if (rsi != null) {
             double r = rsi.doubleValue();
             if (r < 40) longVotes++;
@@ -394,10 +392,10 @@ public class BacktestEngine {
         }
 
         // 成交量确认
-        Double volRatio = getDbl(ind5m, "volume_ratio");
+        Double volRatio = getDbl(indPrimary, "volume_ratio");
         if (volRatio != null && volRatio >= 1.2) {
             // 放量时看close trend决定加给哪边
-            String closeTrend = getStr(ind5m, "close_trend");
+            String closeTrend = getStr(indPrimary, "close_trend");
             if (closeTrend != null && (closeTrend.startsWith("rising") || "mostly_up".equals(closeTrend))) {
                 longVotes++;
             } else if (closeTrend != null && (closeTrend.startsWith("falling") || "mostly_down".equals(closeTrend))) {
@@ -430,7 +428,7 @@ public class BacktestEngine {
 
         // 杠杆根据ADX和MA对齐强度
         int maxLeverage = 20;
-        BigDecimal adx = getBd(ind5m, "adx");
+        BigDecimal adx = getBd(indPrimary, "adx");
         if (adx != null && adx.doubleValue() > 30 && ma1h != null && ma1h != 0) {
             maxLeverage = 30;
         }
@@ -447,6 +445,16 @@ public class BacktestEngine {
         signal.setMaxPositionPct(new BigDecimal("0.25"));
         signal.setCreatedAt(LocalDateTime.now());
         return signal;
+    }
+
+    private static void putAuxiliaryTimeframe(JSONObject indicators, String code, Map<String, Object> ind) {
+        JSONObject tf = indicators.getJSONObject(code);
+        if (tf == null) {
+            tf = new JSONObject();
+            indicators.put(code, tf);
+        }
+        tf.put("ma_alignment", getInt(ind, "ma_alignment"));
+        tf.put("rsi14", getBd(ind, "rsi14"));
     }
 
     // ==================== 辅助方法 ====================

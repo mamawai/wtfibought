@@ -122,7 +122,7 @@ public class QuantForecastScheduler {
             if (allVotes != null && snapshot != null) {
                 lightCycleService.cacheFromHeavyCycle(symbol, forecastResult.cycleId(), allVotes, snapshot,
                         rawReportJson, forecastResult.horizons());
-                priceVolatilitySentinel.updateAtr(symbol, snapshot.atr5m());
+                priceVolatilitySentinel.updateAtr(symbol, snapshot.atr());
             }
         } catch (Exception e) {
             log.warn("[Scheduler] 缓存轻周期数据失败 symbol={}: {}", symbol, e.getMessage());

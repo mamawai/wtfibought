@@ -30,11 +30,11 @@ public final class BreakoutConfluenceGate implements EntryConfluenceGate {
     }
 
     private boolean volumeAtLeast(MarketContext ctx, double threshold) {
-        return ctx.volumeRatio5m != null && ctx.volumeRatio5m >= threshold;
+        return ctx.volumeRatio != null && ctx.volumeRatio >= threshold;
     }
 
     private boolean directionalMomentum(MarketContext ctx, boolean isLong) {
-        return EntryStrategySupport.closeTrendSupports(ctx.closeTrend5m, isLong)
+        return EntryStrategySupport.closeTrendSupports(ctx.closeTrend, isLong)
                 || EntryStrategySupport.macdSupports(ctx, isLong);
     }
 

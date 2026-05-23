@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTradingDecision;
 import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.agent.config.RuntimeFeatureToggleService;
 import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
@@ -16,6 +17,7 @@ import com.mawai.wiibservice.agent.trading.submit.TradingCycleSubmitResult;
 import com.mawai.wiibservice.agent.trading.runtime.TradingExecutionState;
 import com.mawai.wiibservice.agent.trading.runtime.TradingRuntimeToggles;
 import com.mawai.wiibservice.agent.quant.domain.QuantCycleCompleteEvent;
+import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.mapper.*;
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.FuturesRiskService;
@@ -58,6 +60,7 @@ public class AiTradingScheduler {
     private final CircuitBreakerService circuitBreakerService;
     private final TradingExecutionState tradingExecutionState;
     private final RuntimeFeatureToggleService runtimeFeatureToggleService;
+    private final TradingConfig tradingConfig;
 
     public AiTradingScheduler(UserMapper userMapper,
                               FuturesTradingService futuresTradingService,
@@ -69,7 +72,8 @@ public class AiTradingScheduler {
                               CacheService cacheService,
                               CircuitBreakerService circuitBreakerService,
                               TradingExecutionState tradingExecutionState,
-                              RuntimeFeatureToggleService runtimeFeatureToggleService) {
+                              RuntimeFeatureToggleService runtimeFeatureToggleService,
+                              TradingConfig tradingConfig) {
         this.userMapper = userMapper;
         this.futuresTradingService = futuresTradingService;
         this.futuresRiskService = futuresRiskService;
@@ -81,6 +85,7 @@ public class AiTradingScheduler {
         this.circuitBreakerService = circuitBreakerService;
         this.tradingExecutionState = tradingExecutionState;
         this.runtimeFeatureToggleService = runtimeFeatureToggleService;
+        this.tradingConfig = tradingConfig;
     }
 
     @PostConstruct
@@ -206,7 +211,8 @@ public class AiTradingScheduler {
                     DeterministicTradingExecutor.execute(
                             symbol, userBefore, positions, forecast, signals,
                             recentDecisions, futuresPrice, markPrice, equityBefore, tools,
-                            allOpenPositionIds, tradingExecutionState, executorToggles
+                            allOpenPositionIds, tradingExecutionState, executorToggles,
+                            tradingConfig.getDecisionInterval()
                     );
 
             log.info("[AI-Trader] 决策完成 symbol={} action={} reasoning={}",

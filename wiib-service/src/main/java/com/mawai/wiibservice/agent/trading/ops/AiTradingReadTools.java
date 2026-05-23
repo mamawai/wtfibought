@@ -130,7 +130,7 @@ public class AiTradingReadTools {
             result.put("bidAskImbalance", snap.get("bidAskImbalance"));
             result.put("oiChangeRate", snap.get("oiChangeRate"));
             result.put("bollSqueeze", snap.get("bollSqueeze"));
-            result.put("atr5m", snap.get("atr5m"));
+            result.put("atr", snap.get("atr"));
             result.put("dvolIndex", snap.get("dvolIndex"));
             result.put("atmIv", snap.get("atmIv"));
             result.put("priceChanges", snap.get("priceChanges"));

@@ -16,6 +16,7 @@ import com.mawai.wiibservice.agent.quant.domain.QuantCycleCompleteEvent;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
+import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.mapper.QuantForecastAdjustmentMapper;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibservice.mapper.QuantHorizonForecastMapper;
@@ -117,10 +118,12 @@ public class QuantLightCycleService {
                                    QuantForecastAdjustmentMapper adjustmentMapper,
                                    AiAgentRuntimeManager runtimeManager,
                                    FactorWeightOverrideService weightOverrideService,
+                                   TradingConfig tradingConfig,
                                    @org.springframework.context.annotation.Lazy PriceVolatilitySentinel volatilitySentinel) {
         this.collectDataNode = new CollectDataNode(
                 binanceRestClient, forceOrderService, depthStreamCache, deribitClient);
-        this.buildFeaturesNode = new BuildFeaturesNode(orderFlowAggregator);
+        // 轻周期常驻运行，admin 运行期切换主周期后必须读取 TradingConfig 最新值。
+        this.buildFeaturesNode = new BuildFeaturesNode(orderFlowAggregator, tradingConfig::getDecisionInterval);
         this.pureAgents = List.of(
                 new MicrostructureAgent(),
                 new MomentumAgent(),
@@ -254,7 +257,7 @@ public class QuantLightCycleService {
 
             // 6. RiskGate
             RiskGate.RiskResult riskResult = RiskGate.apply(
-                    forecasts, snapshot.regime(), snapshot.atr5m(), snapshot.lastPrice(),
+                    forecasts, snapshot.regime(), snapshot.atr(), snapshot.lastPrice(),
                     snapshot.qualityFlags(), snapshot.fearGreedIndex(), snapshot.dvolIndex(), symbol);
 
             // 6.5 关键改动：轻周期不再自我修正，而是「修正父重周期」
@@ -289,8 +292,8 @@ public class QuantLightCycleService {
             persistService.persist(forecastResult, null, snapshotJson, cache.reportJson());
 
             // 9. 更新波动哨兵的ATR基准
-            if (volatilitySentinel != null && snapshot.atr5m() != null) {
-                volatilitySentinel.updateAtr(symbol, snapshot.atr5m());
+            if (volatilitySentinel != null && snapshot.atr() != null) {
+                volatilitySentinel.updateAtr(symbol, snapshot.atr());
             }
 
             for (HorizonForecast f : lightForecasts) {

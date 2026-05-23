@@ -79,6 +79,8 @@ linuxdo:
 
 # 交易配置
 trading:
+  # 合约 AI 主决策周期：M1/M3/M5/M15/H1（影响 K 线采集 / 指标计算 / 回测聚合系数）
+  decision-interval: M5
   # 新用户初始余额
   initial-balance: 100000
   # 手续费率（0.05%）

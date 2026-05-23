@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.agent.trading;
 
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPath;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlanFactory;
 import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
@@ -38,7 +39,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.65")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         assertThat(tools.openCount).isEqualTo(1);
@@ -54,7 +55,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.65")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         assertThat(tools.openCount).isEqualTo(1);
@@ -71,7 +72,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.65")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("HOLD");
         assertThat(tools.openCount).isZero();
@@ -87,7 +88,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("HOLD");
         assertThat(tools.openCount).isZero();
@@ -103,7 +104,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.65")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("HOLD");
         assertThat(tools.openCount).isZero();
@@ -119,7 +120,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("HOLD");
         assertThat(tools.openCount).isZero();
@@ -135,7 +136,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         assertThat(tools.openCount).isEqualTo(1);
@@ -151,7 +152,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("HOLD");
         assertThat(tools.openCount).isZero();
@@ -168,7 +169,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.60")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("HOLD");
         assertThat(tools.openCount).isZero();
@@ -184,7 +185,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.65")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("HOLD");
         assertThat(tools.openCount).isZero();
@@ -200,7 +201,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.65")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         assertThat(tools.openCount).isEqualTo(1);
@@ -217,7 +218,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.60")),
                 List.of(), price("100100"), price("100100"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         assertThat(tools.openCount).isEqualTo(1);
@@ -238,7 +239,7 @@ class DeterministicTradingExecutorTest {
                 List.of(sig010, sig1020, sig2030),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         assertThat(sig010.getConfidence()).isEqualByComparingTo("0.75");
@@ -268,7 +269,7 @@ class DeterministicTradingExecutorTest {
                 List.of(sig),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         assertThat(tools.lastOpenQty).isEqualByComparingTo("0.01000000");
@@ -284,7 +285,7 @@ class DeterministicTradingExecutorTest {
                 "BTCUSDT", user(), List.of(), forecast(breakoutSnapshot(List.of()), "LONG"),
                 List.of(signal("0_10", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
-                tools, state, new TradingRuntimeToggles(true, true));
+                tools, state, new TradingRuntimeToggles(true, true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         ExitPlan plan = state.getExitPlan(77L);
@@ -311,7 +312,7 @@ class DeterministicTradingExecutorTest {
                 "BTCUSDT", user(), List.of(), forecast(breakoutSnapshot(List.of()), "LONG"),
                 List.of(signal("0_10", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
-                tools, state, new TradingRuntimeToggles(true, true));
+                tools, state, new TradingRuntimeToggles(true, true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("HOLD");
         assertThat(state.getExitPlan(77L)).isNull();
@@ -327,7 +328,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         assertThat(tools.openCount).isEqualTo(1);
@@ -345,7 +346,7 @@ class DeterministicTradingExecutorTest {
                 List.of(sig),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("HOLD");
         assertThat(tools.openCount).isZero();
@@ -362,7 +363,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "SHORT", "0.85")),
                 List.of(), price("104200"), price("104200"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("TIGHTEN_SL");
         assertThat(tools.lastSlPrice).isGreaterThan(price("100000"));
@@ -380,7 +381,7 @@ class DeterministicTradingExecutorTest {
                 "BTCUSDT", user(), List.of(pos), forecast(trendSnapshot(List.of()), "LONG"),
                 List.of(signal("0_10", "LONG", "0.60")),
                 List.of(), price("100100"), price("100100"), price("100000"),
-                tools, state, new TradingRuntimeToggles(true, true));
+                tools, state, new TradingRuntimeToggles(true, true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         assertThat(result.reasoning()).contains("TREND");
@@ -402,7 +403,7 @@ class DeterministicTradingExecutorTest {
                 "BTCUSDT", user(), List.of(pos), forecast(trendSnapshot(List.of()), "LONG"),
                 List.of(signal("0_10", "LONG", "0.60")),
                 List.of(), price("100100"), price("100100"), price("100000"),
-                tools, state, new TradingRuntimeToggles(true, true));
+                tools, state, new TradingRuntimeToggles(true, true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("HOLD");
         assertThat(result.reasoning()).contains("缺positionId");
@@ -425,7 +426,7 @@ class DeterministicTradingExecutorTest {
                 "BTCUSDT", user(), List.of(pos), forecast(failedBreakoutSnapshot(List.of()), "LONG"),
                 List.of(signal("0_10", "LONG", "0.75")),
                 List.of(), price("100100"), price("100100"), price("100000"),
-                tools, state, new TradingRuntimeToggles(true, true));
+                tools, state, new TradingRuntimeToggles(true, true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("PLAYBOOK_EXIT_FULL");
         assertThat(result.reasoning()).contains("BREAKOUT_BB_RETURN_NEUTRAL");
@@ -450,7 +451,7 @@ class DeterministicTradingExecutorTest {
                 "BTCUSDT", user(), List.of(pos), forecast(failedBreakoutSnapshot(List.of()), "LONG"),
                 List.of(signal("0_10", "LONG", "0.75")),
                 List.of(), price("100100"), price("100100"), price("100000"),
-                tools, state, new TradingRuntimeToggles(true, true));
+                tools, state, new TradingRuntimeToggles(true, true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("HOLD");
         assertThat(result.reasoning()).contains("全平失败");
@@ -471,7 +472,7 @@ class DeterministicTradingExecutorTest {
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast, signals,
                 List.of(), price("104200"), price("104200"), price("100000"),
-                tools, state, new TradingRuntimeToggles(true));
+                tools, state, new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("EXIT_FULL_RISK");
         assertThat(tools.closeCount).isEqualTo(1);
@@ -488,7 +489,7 @@ class DeterministicTradingExecutorTest {
                 "BTCUSDT", user(), List.of(pos), forecast(trendSnapshot(List.of()), "LONG"),
                 List.of(signal("0_10", "LONG", "0.60")),
                 List.of(), price("100100"), price("100100"), price("100000"),
-                tools, state, new TradingRuntimeToggles(true));
+                tools, state, new TradingRuntimeToggles(true), KlineInterval.M5);
 
         ExitPlan plan = state.getExitPlan(1L);
         assertThat(plan).isNotNull();
@@ -507,13 +508,13 @@ class DeterministicTradingExecutorTest {
                 "BTCUSDT", user(), List.of(pos), forecast(trendSnapshot(List.of("STALE_AGG_TRADE")), "LONG"),
                 List.of(signal("0_10", "LONG", "0.60")),
                 List.of(), price("104000"), price("104000"), price("100000"),
-                tools, state, new TradingRuntimeToggles(true));
+                tools, state, new TradingRuntimeToggles(true), KlineInterval.M5);
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast(softBearSnapshot(List.of()), "LONG"),
                 List.of(signal("0_10", "SHORT", "0.70")),
                 List.of(), price("102800"), price("102800"), price("100000"),
-                tools, state, new TradingRuntimeToggles(true));
+                tools, state, new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("EXIT_PARTIAL_PROTECT");
         assertThat(tools.closeCount).isEqualTo(1);
@@ -533,7 +534,7 @@ class DeterministicTradingExecutorTest {
                 List.of(signal("0_10", "SHORT", "0.70")),
                 List.of(), price("100200"), price("100200"), price("100000"),
                 tools, new TradingExecutionState(),
-                new TradingRuntimeToggles(true));
+                new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("TIME_EXIT");
         assertThat(tools.closeCount).isEqualTo(1);
@@ -720,7 +721,7 @@ class DeterministicTradingExecutorTest {
                 {
                   "regime": "%s",
                   "regimeTransition": %s,
-                  "atr5m": %s,
+                  "atr": %s,
                   "bollSqueeze": %s,
                   "bidAskImbalance": %s,
                   "takerBuySellPressure": 0,

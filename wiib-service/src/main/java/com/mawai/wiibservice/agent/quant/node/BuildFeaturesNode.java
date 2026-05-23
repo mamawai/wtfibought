@@ -5,6 +5,7 @@ import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibservice.agent.quant.domain.MarketRegime;
 import com.mawai.wiibservice.agent.quant.domain.NewsItem;
@@ -18,6 +19,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatterBuilder;
 import java.util.*;
+import java.util.function.Supplier;
 
 /**
  * 特征工程节点：从原始市场数据构建FeatureSnapshot。
@@ -27,9 +29,15 @@ import java.util.*;
 public class BuildFeaturesNode implements NodeAction {
 
     private final OrderFlowAggregator orderFlowAggregator;
+    private final Supplier<KlineInterval> decisionIntervalSupplier;
 
-    public BuildFeaturesNode(OrderFlowAggregator orderFlowAggregator) {
+    public BuildFeaturesNode(OrderFlowAggregator orderFlowAggregator, KlineInterval decisionInterval) {
+        this(orderFlowAggregator, () -> decisionInterval);
+    }
+
+    public BuildFeaturesNode(OrderFlowAggregator orderFlowAggregator, Supplier<KlineInterval> decisionIntervalSupplier) {
         this.orderFlowAggregator = orderFlowAggregator;
+        this.decisionIntervalSupplier = decisionIntervalSupplier;
     }
 
     private static final java.time.format.DateTimeFormatter DERIBIT_EXPIRY_FMT =
@@ -130,9 +138,11 @@ public class BuildFeaturesNode implements NodeAction {
         }
 
         // 3. 最新价格
+        KlineInterval decisionInterval = decisionIntervalSupplier.get();
+        String primaryTf = decisionInterval.getCode();
         BigDecimal lastPrice = extractLastPrice(tickerMap.get(symbol), closesByInterval);
-        BigDecimal barHigh = extractLatestKlineField(parsedKlines, "5m", 0);
-        BigDecimal barLow = extractLatestKlineField(parsedKlines, "5m", 1);
+        BigDecimal barHigh = extractLatestKlineField(parsedKlines, primaryTf, 0);
+        BigDecimal barLow = extractLatestKlineField(parsedKlines, primaryTf, 1);
         BigDecimal spotLastPrice = extractLastPrice(spotTickerMap.get(symbol), spotClosesByInterval);
 
         // 3.5 现货-合约联动
@@ -208,14 +218,14 @@ public class BuildFeaturesNode implements NodeAction {
 
         // 5. 波动率特征
         BigDecimal atr1m = extractAtr(indicatorsByTf, "1m");
-        BigDecimal atr5m = extractAtr(indicatorsByTf, "5m");
-        BigDecimal bollBw = extractBollBandwidth(indicatorsByTf, "5m");
+        BigDecimal atr = extractAtr(indicatorsByTf, primaryTf);
+        BigDecimal bollBw = extractBollBandwidth(indicatorsByTf, primaryTf);
         boolean bollSqueeze = bollBw != null && bollBw.doubleValue() < 1.5;
 
         // 6. Regime
         MarketRegime regime = detectRegime(indicatorsByTf, bollBw, parsedKlines);
-        log.info("[Q2.3] 波动率 atr1m={} atr5m={} bollBw={} squeeze={} regime={}",
-                atr1m, atr5m, bollBw, bollSqueeze, regime);
+        log.info("[Q2.3] 波动率 atr1m={} atr={} bollBw={} squeeze={} regime={}",
+                atr1m, atr, bollBw, bollSqueeze, regime);
 
         // 6.5 期权 IV 特征（Deribit）
         double dvolIndex = parseDvol(dvolData);
@@ -255,8 +265,8 @@ public class BuildFeaturesNode implements NodeAction {
             }
         }
         if (dvolIndex <= 0 && atmIv <= 0) qualityFlags.add("NO_OPTION_IV");
-        if (atr5m == null) qualityFlags.add("NO_ATR_5M");
-        if (bollBw == null) qualityFlags.add("NO_BOLL_5M");
+        if (atr == null) qualityFlags.add("NO_ATR");
+        if (bollBw == null) qualityFlags.add("NO_BOLL");
         if (qualityFlags.stream().anyMatch(flag -> flag.startsWith("MISSING_TF_"))) {
             qualityFlags.add("PARTIAL_KLINE_DATA");
         }
@@ -273,7 +283,7 @@ public class BuildFeaturesNode implements NodeAction {
                 liquidationPressure, liquidationVolumeUsdt,
                 topTraderBias, takerBuySellPressure,
                 fearGreedIndex, fearGreedLabel,
-                atr1m, atr5m, bollBw, bollSqueeze,
+                atr1m, atr, bollBw, bollSqueeze,
                 dvolIndex, atmIv, ivSkew25d, ivTermSlope,
                 regime, newsItems, qualityFlags,
                 0.5, "NONE");
@@ -476,6 +486,7 @@ public class BuildFeaturesNode implements NodeAction {
     private MarketRegime detectRegime(Map<String, Map<String, Object>> indicators,
                                       BigDecimal bollBw,
                                       Map<String, List<BigDecimal[]>> parsedKlines) {
+        // Regime 用固定 15m/5m 中短周期视角，不跟随主决策周期切换。
         Map<String, Object> ind = indicators.getOrDefault("15m", indicators.get("5m"));
         if (ind == null) return MarketRegime.RANGE;
 
@@ -484,7 +495,7 @@ public class BuildFeaturesNode implements NodeAction {
         BigDecimal minusDi = toBd(ind.get("minus_di"));
         double adxVal = adx != null ? adx.doubleValue() : 15;
 
-        // SHOCK: ATR突增 > 2倍历史均值（用5m K线计算近期ATR vs 长期ATR）
+        // SHOCK 固定用 5m 窗口比较近期/长期 ATR，保持 30min 冲击识别口径。
         if (isAtrSpike(parsedKlines)) {
             return MarketRegime.SHOCK;
         }
@@ -505,7 +516,7 @@ public class BuildFeaturesNode implements NodeAction {
     }
 
     /**
-     * ATR突增检测：比较近6根K线平均真实波幅 vs 前60根平均真实波幅。
+     * ATR突增检测：固定用 5m K线，比较近6根平均真实波幅 vs 前60根平均真实波幅。
      * 如果近期 > 2倍长期，判定为SHOCK。
      */
     private boolean isAtrSpike(Map<String, List<BigDecimal[]>> parsedKlines) {
@@ -543,7 +554,7 @@ public class BuildFeaturesNode implements NodeAction {
     private void addMissingTimeframeFlags(List<String> qualityFlags,
                                           Map<String, String> rawKlines,
                                           Map<String, Map<String, Object>> indicatorsByTf) {
-        for (String timeframe : List.of("1m", "5m", "15m", "1h", "4h", "1d")) {
+        for (String timeframe : List.of("1m", "3m", "5m", "15m", "1h", "4h", "1d")) {
             if (!rawKlines.containsKey(timeframe)) {
                 qualityFlags.add("MISSING_TF_" + timeframe.toUpperCase());
                 continue;

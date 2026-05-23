@@ -413,7 +413,7 @@ public class NewsEventAgent implements FactorAgent {
 
     private static int estimateVolBps(FeatureSnapshot snapshot) {
         java.math.BigDecimal lastPrice = snapshot.lastPrice();
-        java.math.BigDecimal atr = snapshot.atr5m() != null ? snapshot.atr5m() : snapshot.atr1m();
+        java.math.BigDecimal atr = snapshot.atr() != null ? snapshot.atr() : snapshot.atr1m();
         if (atr != null && lastPrice != null && lastPrice.signum() > 0) {
             return atr.multiply(java.math.BigDecimal.valueOf(10000))
                     .divide(lastPrice, 0, java.math.RoundingMode.HALF_UP).intValue();

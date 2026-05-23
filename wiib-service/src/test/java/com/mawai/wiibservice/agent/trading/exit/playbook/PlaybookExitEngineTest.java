@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.agent.trading.exit.playbook;
 
 import com.mawai.wiibservice.agent.trading.backtest.BacktestTradingTools;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPath;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
@@ -278,7 +279,7 @@ class PlaybookExitEngineTest {
         forecast.setForecastTime(forecastTime);
         forecast.setSnapshotJson("""
                 {
-                  "atr5m": 400,
+                  "atr": 400,
                   "qualityFlags": [%s],
                   "indicatorsByTimeframe": {
                     "5m": {
@@ -295,7 +296,7 @@ class PlaybookExitEngineTest {
                   }
                 }
                 """.formatted(qualityFlagsJson, bollPb, rsi, closeTrendClosed3, ma15m, ma1h));
-        MarketContext market = MarketContext.parse(forecast, bd(price));
+        MarketContext market = MarketContext.parse(forecast, bd(price), KlineInterval.M5);
         return new TradingDecisionContext("BTCUSDT", null, List.of(position), forecast, List.of(), List.of(),
                 bd(price), bd(price), bd("100000"), tools, state,
                 new TradingRuntimeToggles(true, true), SymbolProfile.of("BTCUSDT"), market, forecastTime);

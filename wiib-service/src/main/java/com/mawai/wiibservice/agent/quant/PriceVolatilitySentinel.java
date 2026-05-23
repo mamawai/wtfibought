@@ -81,12 +81,12 @@ public class PriceVolatilitySentinel {
                     continue;
                 }
                 JSONObject snap = JSON.parseObject(cycle.getSnapshotJson());
-                Object atrVal = snap.get("atr5m");
+                Object atrVal = snap.get("atr");
                 if (atrVal == null) continue;
                 BigDecimal atr = new BigDecimal(atrVal.toString());
                 if (atr.compareTo(BigDecimal.ZERO) > 0) {
                     lastAtr5m.put(symbol, atr);
-                    log.info("[Sentinel] 从DB加载ATR symbol={} atr5m={}", symbol, atr);
+                    log.info("[Sentinel] 从DB加载ATR symbol={} atr={}", symbol, atr);
                 }
             } catch (Exception e) {
                 log.warn("[Sentinel] 加载ATR失败 symbol={}: {}", symbol, e.getMessage());
@@ -97,10 +97,10 @@ public class PriceVolatilitySentinel {
     /**
      * 由量化管道（重/轻周期）完成后调用，更新 ATR-5m 基准
      */
-    public void updateAtr(String symbol, BigDecimal atr5m) {
-        if (atr5m != null && atr5m.compareTo(BigDecimal.ZERO) > 0) {
-            lastAtr5m.put(symbol, atr5m);
-            log.debug("[Sentinel] ATR更新 symbol={} atr5m={}", symbol, atr5m);
+    public void updateAtr(String symbol, BigDecimal atr) {
+        if (atr != null && atr.compareTo(BigDecimal.ZERO) > 0) {
+            lastAtr5m.put(symbol, atr);
+            log.debug("[Sentinel] ATR更新 symbol={} atr={}", symbol, atr);
         }
     }
 

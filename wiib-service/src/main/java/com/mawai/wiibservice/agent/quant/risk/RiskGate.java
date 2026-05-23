@@ -26,26 +26,26 @@ public class RiskGate {
      *
      * @param forecasts      原始裁决结果
      * @param regime         当前市场状态
-     * @param atr5m          5m ATR，用于波动率惩罚
+     * @param atr          5m ATR，用于波动率惩罚
      * @param lastPrice      最新价，用于计算波动率百分比
      * @return 裁剪后的forecasts + 风控状态
      */
     public static RiskResult apply(List<HorizonForecast> forecasts, MarketRegime regime,
-                                    BigDecimal atr5m, BigDecimal lastPrice,
+                                    BigDecimal atr, BigDecimal lastPrice,
                                     List<String> qualityFlags, int fearGreedIndex,
                                     double dvolIndex) {
-        return apply(forecasts, regime, atr5m, lastPrice, qualityFlags, fearGreedIndex, dvolIndex, null);
+        return apply(forecasts, regime, atr, lastPrice, qualityFlags, fearGreedIndex, dvolIndex, null);
     }
 
     public static RiskResult apply(List<HorizonForecast> forecasts, MarketRegime regime,
-                                    BigDecimal atr5m, BigDecimal lastPrice,
+                                    BigDecimal atr, BigDecimal lastPrice,
                                     List<String> qualityFlags, int fearGreedIndex,
                                     double dvolIndex, String symbol) {
         if (forecasts == null || forecasts.isEmpty()) {
             return new RiskResult(List.of(), "NO_DATA");
         }
 
-        double volPenalty = calcVolatilityPenalty(atr5m, lastPrice, symbol);
+        double volPenalty = calcVolatilityPenalty(atr, lastPrice, symbol);
         double dataPenalty = calcDataPenalty(qualityFlags);
         double ivPenalty = calcIvPenalty(dvolIndex);
         List<HorizonForecast> clipped = new ArrayList<>(forecasts.size());
@@ -160,9 +160,9 @@ public class RiskGate {
      * 波动率惩罚因子：ATR占价格比例越大，仓位惩罚越重。
      * 阈值按币种差异化：BTC波动小用0.5%，ETH用0.7%，PAXG稳定用0.3%。
      */
-    private static double calcVolatilityPenalty(BigDecimal atr5m, BigDecimal lastPrice, String symbol) {
-        if (atr5m == null || lastPrice == null || lastPrice.signum() == 0) return 1.0;
-        double atrPct = atr5m.doubleValue() / lastPrice.doubleValue() * 100;
+    private static double calcVolatilityPenalty(BigDecimal atr, BigDecimal lastPrice, String symbol) {
+        if (atr == null || lastPrice == null || lastPrice.signum() == 0) return 1.0;
+        double atrPct = atr.doubleValue() / lastPrice.doubleValue() * 100;
 
         // 按币种设置正常波动阈值和极端阈值
         double normalThreshold = 0.3;
@@ -184,8 +184,8 @@ public class RiskGate {
         }
         if (qualityFlags.stream().anyMatch(flag ->
                 flag.equals("PARTIAL_KLINE_DATA")
-                        || flag.equals("NO_ATR_5M")
-                        || flag.equals("NO_BOLL_5M")
+                        || flag.equals("NO_ATR")
+                        || flag.equals("NO_BOLL")
                         || flag.equals("MISSING_TF_5M")
                         || flag.equals("MISSING_TF_15M"))) {
             return 0.80;

@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.agent.trading.runtime;
 
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -13,7 +14,7 @@ class MarketContextTest {
     void parsesClosedVolumeRatioSeriesAndSkipsNulls() {
         QuantForecastCycle forecast = forecast("""
                 {
-                  "atr5m": 100,
+                  "atr": 100,
                   "indicatorsByTimeframe": {
                     "5m": {
                       "volume_ratio": 1.2,
@@ -24,27 +25,27 @@ class MarketContextTest {
                 }
                 """);
 
-        MarketContext ctx = MarketContext.parse(forecast, new BigDecimal("100000"));
+        MarketContext ctx = MarketContext.parse(forecast, new BigDecimal("100000"), KlineInterval.M5);
 
-        assertThat(ctx.volumeRatioClosedSeries5m).containsExactly(0.7, 0.9);
-        assertThat(ctx.closeTrendClosed3_5m).isEqualTo("falling_3");
+        assertThat(ctx.volumeRatioClosedSeries).containsExactly(0.7, 0.9);
+        assertThat(ctx.closeTrendClosed3).isEqualTo("falling_3");
     }
 
     @Test
     void oldSnapshotDefaultsClosedVolumeRatioSeriesToEmptyList() {
         QuantForecastCycle forecast = forecast("""
                 {
-                  "atr5m": 100,
+                  "atr": 100,
                   "indicatorsByTimeframe": {
                     "5m": {"volume_ratio": 1.2}
                   }
                 }
                 """);
 
-        MarketContext ctx = MarketContext.parse(forecast, new BigDecimal("100000"));
+        MarketContext ctx = MarketContext.parse(forecast, new BigDecimal("100000"), KlineInterval.M5);
 
-        assertThat(ctx.volumeRatioClosedSeries5m).isEmpty();
-        assertThat(ctx.closeTrendClosed3_5m).isNull();
+        assertThat(ctx.volumeRatioClosedSeries).isEmpty();
+        assertThat(ctx.closeTrendClosed3).isNull();
     }
 
     private static QuantForecastCycle forecast(String snapshotJson) {

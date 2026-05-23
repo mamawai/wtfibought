@@ -107,12 +107,12 @@ final class BreakoutExitPlaybook implements ExitPlaybook {
 
     private ExitPlaybookDecision evaluateEarlyInvalidation(MarketContext ctx, ExitPlan plan, long holdMinutes,
                                                            boolean isLong, boolean indicatorShielded) {
-        if (!indicatorShielded && ctx.bollPb5m != null) {
+        if (!indicatorShielded && ctx.bollPb != null) {
             // BB%B 回中阈值放宽 60/40→55/45，给突破后的正常回踩留 5pt 缓冲，避免短暂回中就被打掉。
-            if (isLong && ctx.bollPb5m < 55.0) {
+            if (isLong && ctx.bollPb < 55.0) {
                 return ExitPlaybookDecision.closeFull("BREAKOUT_BB_RETURN_NEUTRAL");
             }
-            if (!isLong && ctx.bollPb5m > 45.0) {
+            if (!isLong && ctx.bollPb > 45.0) {
                 return ExitPlaybookDecision.closeFull("BREAKOUT_BB_RETURN_NEUTRAL");
             }
         }
@@ -131,12 +131,12 @@ final class BreakoutExitPlaybook implements ExitPlaybook {
         if (plan.recovered() || holdMinutes < FAIL_TO_PROGRESS_MINUTES) {
             return false;
         }
-        if (ctx.volumeRatioClosedSeries5m.size() < VOLUME_EXHAUSTION_MIN_BARS) {
+        if (ctx.volumeRatioClosedSeries.size() < VOLUME_EXHAUSTION_MIN_BARS) {
             return false;
         }
-        int start = ctx.volumeRatioClosedSeries5m.size() - VOLUME_EXHAUSTION_MIN_BARS;
-        for (int i = start; i < ctx.volumeRatioClosedSeries5m.size(); i++) {
-            Double ratio = ctx.volumeRatioClosedSeries5m.get(i);
+        int start = ctx.volumeRatioClosedSeries.size() - VOLUME_EXHAUSTION_MIN_BARS;
+        for (int i = start; i < ctx.volumeRatioClosedSeries.size(); i++) {
+            Double ratio = ctx.volumeRatioClosedSeries.get(i);
             if (ratio == null || ratio >= VOLUME_EXHAUSTION_RATIO) {
                 return false;
             }

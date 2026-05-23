@@ -13,6 +13,7 @@ import com.mawai.wiibcommon.entity.AiTradingDecision;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.agent.trading.exit.playbook.PlaybookExitEngine;
 import com.mawai.wiibservice.agent.trading.exit.signal.ExitDecisionEngine;
 import lombok.extern.slf4j.Slf4j;
@@ -70,9 +71,10 @@ public class DeterministicTradingExecutor {
             BigDecimal totalEquity,
             TradingOperations tools,
             TradingExecutionState state,
-            TradingRuntimeToggles toggles) {
+            TradingRuntimeToggles toggles,
+            KlineInterval decisionInterval) {
         return executeInternal(symbol, user, symbolPositions, forecast, signals, recentDecisions,
-                futuresPrice, markPrice, totalEquity, tools, state, toggles, null, null);
+                futuresPrice, markPrice, totalEquity, tools, state, toggles, null, null, decisionInterval);
     }
 
     /**
@@ -89,9 +91,10 @@ public class DeterministicTradingExecutor {
             TradingOperations tools,
             SymbolProfile profileOverride,
             TradingExecutionState state,
-            TradingRuntimeToggles toggles) {
+            TradingRuntimeToggles toggles,
+            KlineInterval decisionInterval) {
         return executeInternal(symbol, user, symbolPositions, forecast, signals, recentDecisions,
-                futuresPrice, markPrice, totalEquity, tools, state, toggles, profileOverride, null);
+                futuresPrice, markPrice, totalEquity, tools, state, toggles, profileOverride, null, decisionInterval);
     }
 
     /**
@@ -108,9 +111,10 @@ public class DeterministicTradingExecutor {
             TradingOperations tools,
             Collection<Long> allOpenPositionIds,
             TradingExecutionState state,
-            TradingRuntimeToggles toggles) {
+            TradingRuntimeToggles toggles,
+            KlineInterval decisionInterval) {
         return executeInternal(symbol, user, symbolPositions, forecast, signals, recentDecisions,
-                futuresPrice, markPrice, totalEquity, tools, state, toggles, null, allOpenPositionIds);
+                futuresPrice, markPrice, totalEquity, tools, state, toggles, null, allOpenPositionIds, decisionInterval);
     }
 
     private static ExecutionResult executeInternal(
@@ -125,7 +129,8 @@ public class DeterministicTradingExecutor {
             TradingExecutionState state,
             TradingRuntimeToggles toggles,
             SymbolProfile profileOverride,
-            Collection<Long> allOpenPositionIds) {
+            Collection<Long> allOpenPositionIds,
+            KlineInterval decisionInterval) {
 
         if (user == null || futuresPrice == null || futuresPrice.signum() <= 0 || tools == null) {
             return new ExecutionResult("HOLD", "数据缺失", "");
@@ -135,12 +140,12 @@ public class DeterministicTradingExecutor {
         TradingRuntimeToggles runtimeToggles = toggles != null ? toggles : TradingRuntimeToggles.fromStaticFields();
         List<FuturesPositionDTO> positions = symbolPositions != null ? symbolPositions : List.of();
         SymbolProfile profile = profileOverride != null ? profileOverride : SymbolProfile.of(symbol);
-        MarketContext market = MarketContext.parse(forecast, futuresPrice);
+        MarketContext market = MarketContext.parse(forecast, futuresPrice, decisionInterval);
         LocalDateTime forecastTime = forecast != null ? forecast.getForecastTime() : null;
 
-        log.info("[Executor] {} regime={} atr={} rsi5m={} maAlign1h={} macdCross={} bbPb={} vol={} squeeze={} equity={}",
-                symbol, market.regime, market.atr5m, market.rsi5m, market.maAlignment1h, market.macdCross5m,
-                market.bollPb5m, market.volumeRatio5m, market.bollSqueeze, totalEquity);
+        log.info("[Executor] {} regime={} atr={} rsi={} maAlign1h={} macdCross={} bbPb={} vol={} squeeze={} equity={}",
+                symbol, market.regime, market.atr, market.rsi, market.maAlignment1h, market.macdCross,
+                market.bollPb, market.volumeRatio, market.bollSqueeze, totalEquity);
 
         if (allOpenPositionIds != null) {
             executionState.cleanupPositionMemory(allOpenPositionIds);

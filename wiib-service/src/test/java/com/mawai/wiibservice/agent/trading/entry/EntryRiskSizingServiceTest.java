@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.agent.trading.entry;
 
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
@@ -71,13 +72,13 @@ class EntryRiskSizingServiceTest {
         forecast.setSnapshotJson("""
                 {
                   "regime": "TREND",
-                  "atr5m": 1,
+                  "atr": 1,
                   "indicatorsByTimeframe": {
                     "5m": {"rsi14": 55, "volume_ratio": 1.2}
                   }
                 }
                 """);
-        return MarketContext.parse(forecast, bd("100"));
+        return MarketContext.parse(forecast, bd("100"), KlineInterval.M5);
     }
 
     private static SymbolProfile profile() {

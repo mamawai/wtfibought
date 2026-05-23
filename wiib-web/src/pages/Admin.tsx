@@ -7,6 +7,7 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
+import { Select } from '../components/ui/select';
 import { useToast } from '../components/ui/use-toast';
 import { Play, Square, RefreshCw, Database, Calendar, Clock, Plus, Trash2, Pencil, Save, ShieldAlert, Activity } from 'lucide-react';
 
@@ -17,6 +18,13 @@ const FUNCTION_LABELS: Record<string, string> = {
   reflection: '反思验证',
 };
 const MODEL_ASSIGNMENT_FUNCTIONS = new Set(Object.keys(FUNCTION_LABELS));
+const DECISION_INTERVAL_LABELS: Record<string, string> = {
+  M1: '1m',
+  M3: '3m',
+  M5: '5m',
+  M15: '15m',
+  H1: '1h',
+};
 
 export function Admin() {
   const { user } = useUserStore();
@@ -41,6 +49,7 @@ export function Admin() {
 
   // 交易运行时开关
   const [tradingConfig, setTradingConfig] = useState<TradingRuntimeConfig>({
+    decisionInterval: 'M5',
     lowVolTradingEnabled: false,
     playbookExitEnabled: false,
   });
@@ -152,6 +161,17 @@ export function Admin() {
       setTradingConfig(c);
       toast(next ? 'Playbook平仓灰度开关：已开启' : 'Playbook平仓灰度开关：已关闭', 'success');
     } catch { /* ignore */ }
+    finally { setActionLoading(null); }
+  };
+
+  const changeDecisionInterval = async (decisionInterval: string) => {
+    if (!decisionInterval || decisionInterval === tradingConfig.decisionInterval) return;
+    setActionLoading('decisionInterval');
+    try {
+      const c = await adminApi.setTradingConfig({ decisionInterval });
+      setTradingConfig(c);
+      toast(`主决策周期：${DECISION_INTERVAL_LABELS[c.decisionInterval || decisionInterval] || decisionInterval}`, 'success');
+    } catch (e) { toast((e as Error).message || '切换失败', 'error'); }
     finally { setActionLoading(null); }
   };
 
@@ -582,6 +602,32 @@ export function Admin() {
               <CardTitle>交易运行时开关</CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex-1">
+                  <div className="font-medium">主决策周期</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    当前行情特征、AI Trader 执行器和 K 线回测使用的主周期。
+                  </div>
+                  <div className="text-xs mt-2">
+                    当前周期：<Badge variant="outline">
+                      {DECISION_INTERVAL_LABELS[tradingConfig.decisionInterval || ''] || tradingConfig.decisionIntervalCode || 'M5'}
+                    </Badge>
+                  </div>
+                </div>
+                <Select
+                  className="h-9 w-28 rounded-md px-3 text-xs"
+                  value={tradingConfig.decisionInterval || 'M5'}
+                  onChange={e => void changeDecisionInterval(e.target.value)}
+                  disabled={actionLoading !== null}
+                >
+                  {(tradingConfig.supportedDecisionIntervals?.length
+                    ? tradingConfig.supportedDecisionIntervals
+                    : ['M1', 'M3', 'M5', 'M15']).map(iv => (
+                    <option key={iv} value={iv}>{DECISION_INTERVAL_LABELS[iv] || iv}</option>
+                  ))}
+                </Select>
+              </div>
+
               <div className="flex items-center justify-between gap-4">
                 <div className="flex-1">
                   <div className="font-medium">低波动小仓位模式</div>

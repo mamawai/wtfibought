@@ -134,26 +134,26 @@ final class TrendExitPlaybook implements ExitPlaybook {
 
     private boolean macdReversed(MarketContext ctx, boolean isLong) {
         // TREND 只认交叉或 DIF/DEA 已反向；不把柱子短暂回落当结构坏，避免趋势回踩被过早打掉。
-        if (ctx.macdCross5m != null) {
-            if (isLong && "death".equalsIgnoreCase(ctx.macdCross5m)) {
+        if (ctx.macdCross != null) {
+            if (isLong && "death".equalsIgnoreCase(ctx.macdCross)) {
                 return true;
             }
-            if (!isLong && "golden".equalsIgnoreCase(ctx.macdCross5m)) {
+            if (!isLong && "golden".equalsIgnoreCase(ctx.macdCross)) {
                 return true;
             }
         }
-        if (ctx.macdDif5m == null || ctx.macdDea5m == null) {
+        if (ctx.macdDif == null || ctx.macdDea == null) {
             return false;
         }
         return isLong
-                ? ctx.macdDif5m.compareTo(ctx.macdDea5m) < 0
-                : ctx.macdDif5m.compareTo(ctx.macdDea5m) > 0;
+                ? ctx.macdDif.compareTo(ctx.macdDea) < 0
+                : ctx.macdDif.compareTo(ctx.macdDea) > 0;
     }
 
     private BigDecimal atrTrailStop(MarketContext ctx, ExitPlan plan, boolean isLong) {
         BigDecimal atr = plan.atrAtEntry();
         if (atr == null || atr.signum() <= 0) {
-            atr = ctx.atr5m;
+            atr = ctx.atr;
         }
         if (atr == null || atr.signum() <= 0) {
             return null;

@@ -9,8 +9,10 @@ import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.agent.tool.CryptoIndicatorCalculator;
 import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibservice.mapper.QuantSignalDecisionMapper;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +47,7 @@ public class BacktestRunner {
     private final BinanceRestClient binanceRestClient;
     private final QuantForecastCycleMapper forecastCycleMapper;
     private final QuantSignalDecisionMapper signalDecisionMapper;
+    private final TradingConfig tradingConfig;
 
     /** Binance klines API 每次最多1500根 */
     private static final int MAX_KLINES_PER_REQUEST = 1500;
@@ -72,16 +75,18 @@ public class BacktestRunner {
      */
     public BacktestResult runBacktest(String symbol, int days, BigDecimal initialBalance,
                                        SymbolProfile profileOverride) {
-        log.info("[BacktestRunner] 开始加载 {} 历史K线，{}天", symbol, days);
+        KlineInterval decisionInterval = decisionInterval();
+        log.info("[BacktestRunner] 开始加载 {} 历史K线，{}天 interval={}",
+                symbol, days, decisionInterval.getCode());
 
-        List<BigDecimal[]> klines = loadHistoricalKlines(symbol, days);
-        log.info("[BacktestRunner] 加载完成，共{}根5m K线", klines.size());
+        List<BigDecimal[]> klines = loadHistoricalKlines(symbol, days, decisionInterval);
+        log.info("[BacktestRunner] 加载完成，共{}根{} K线", klines.size(), decisionInterval.getCode());
 
         if (klines.size() < 200) {
             throw new IllegalStateException("K线数据不足: " + klines.size() + " (需要至少200根)");
         }
 
-        BacktestEngine engine = new BacktestEngine(symbol, klines, initialBalance);
+        BacktestEngine engine = new BacktestEngine(symbol, klines, initialBalance, decisionInterval);
         if (profileOverride != null) {
             engine.withProfile(profileOverride);
         }
@@ -98,15 +103,17 @@ public class BacktestRunner {
 
     public BacktestComparisonResult compareBacktest(String symbol, int days, BigDecimal initialBalance,
                                                     SymbolProfile profileOverride) {
-        log.info("[BacktestCompare] 开始加载 {} 历史K线，{}天", symbol, days);
+        KlineInterval decisionInterval = decisionInterval();
+        log.info("[BacktestCompare] 开始加载 {} 历史K线，{}天 interval={}",
+                symbol, days, decisionInterval.getCode());
 
-        List<BigDecimal[]> klines = loadHistoricalKlines(symbol, days);
+        List<BigDecimal[]> klines = loadHistoricalKlines(symbol, days, decisionInterval);
         if (klines.size() < 200) {
             throw new IllegalStateException("K线数据不足: " + klines.size() + " (需要至少200根)");
         }
 
-        BacktestEngine legacyEngine = new BacktestEngine(symbol, klines, initialBalance);
-        BacktestEngine playbookEngine = new BacktestEngine(symbol, klines, initialBalance);
+        BacktestEngine legacyEngine = new BacktestEngine(symbol, klines, initialBalance, decisionInterval);
+        BacktestEngine playbookEngine = new BacktestEngine(symbol, klines, initialBalance, decisionInterval);
         if (profileOverride != null) {
             legacyEngine.withProfile(profileOverride);
             playbookEngine.withProfile(profileOverride);
@@ -121,9 +128,11 @@ public class BacktestRunner {
      * 参数扫描：对指定参数组合批量回测。
      */
     public List<ScanResult> parameterScan(String symbol, int days, BigDecimal initialBalance) {
-        log.info("[BacktestRunner] 开始参数扫描 {} {}天", symbol, days);
+        KlineInterval decisionInterval = decisionInterval();
+        log.info("[BacktestRunner] 开始参数扫描 {} {}天 interval={}",
+                symbol, days, decisionInterval.getCode());
 
-        List<BigDecimal[]> klines = loadHistoricalKlines(symbol, days);
+        List<BigDecimal[]> klines = loadHistoricalKlines(symbol, days, decisionInterval);
         log.info("[BacktestRunner] K线加载完成，共{}根", klines.size());
 
         // SL/TP ATR倍数网格
@@ -146,7 +155,7 @@ public class BacktestRunner {
                 );
 
                 try {
-                    BacktestEngine engine = new BacktestEngine(symbol, klines, initialBalance)
+                    BacktestEngine engine = new BacktestEngine(symbol, klines, initialBalance, decisionInterval)
                             .withProfile(profile);
                     // 参数扫描的变量是入场 SL/TP ATR；Playbook 会用 hard TP 覆盖趋势/突破 TP，固定走 legacy 语义。
                     BacktestResult result = engine.run(legacyToggles());
@@ -251,11 +260,10 @@ public class BacktestRunner {
     // ==================== 数据加载 ====================
 
     /**
-     * 从 Binance 分页加载历史5m K线。
-     * 5m K线: 每天288根，每次最多1500根(约5.2天)。
+     * 从 Binance 分页加载主决策周期历史 K 线。
      */
-    private List<BigDecimal[]> loadHistoricalKlines(String symbol, int days) {
-        int totalBars = days * 288; // 每天288根5m K线
+    private List<BigDecimal[]> loadHistoricalKlines(String symbol, int days, KlineInterval interval) {
+        int totalBars = days * (24 * 60 / interval.getMinutes());
         List<BigDecimal[]> allKlines = new ArrayList<>(totalBars);
 
         Long endTime = null; // null = 从当前时间开始向前加载
@@ -263,7 +271,7 @@ public class BacktestRunner {
 
         while (remaining > 0) {
             int batch = Math.min(remaining, MAX_KLINES_PER_REQUEST);
-            String json = binanceRestClient.getFuturesKlines(symbol, "5m", batch, endTime);
+            String json = binanceRestClient.getFuturesKlines(symbol, interval.getCode(), batch, endTime);
             List<BigDecimal[]> parsed = CryptoIndicatorCalculator.parseKlines(json);
 
             if (parsed.isEmpty()) break;
@@ -284,6 +292,11 @@ public class BacktestRunner {
         }
 
         return allKlines;
+    }
+
+    private KlineInterval decisionInterval() {
+        KlineInterval interval = tradingConfig.getDecisionInterval();
+        return interval != null ? interval : KlineInterval.M5;
     }
 
     /**

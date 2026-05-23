@@ -190,7 +190,7 @@ public final class TradingDecisionSupport {
                 case PATH_MR -> profile.revertTpMaxAtr();
                 default -> profile.trendTpAtr();
             };
-            targetDistance = ctx.atr5m.multiply(BigDecimal.valueOf(tpAtr));
+            targetDistance = ctx.atr.multiply(BigDecimal.valueOf(tpAtr));
         }
         return targetDistance;
     }

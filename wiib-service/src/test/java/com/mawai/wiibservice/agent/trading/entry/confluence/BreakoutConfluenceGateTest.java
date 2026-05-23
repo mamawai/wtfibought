@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.agent.trading.entry.confluence;
 
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
 import com.mawai.wiibservice.agent.trading.runtime.SymbolProfile;
 import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyContext;
@@ -57,7 +58,7 @@ class BreakoutConfluenceGateTest {
         QuantForecastCycle forecast = new QuantForecastCycle();
         forecast.setSnapshotJson("""
                 {
-                  "atr5m": 400,
+                  "atr": 400,
                   "bollSqueeze": %s,
                   "bidAskImbalance": %s,
                   "takerBuySellPressure": 0,
@@ -76,7 +77,7 @@ class BreakoutConfluenceGateTest {
                 }
                 """.formatted(squeeze, micro, bollPb, volumeRatio, closeTrend,
                 macdCross, macdDif, macdDea, ema20, ma15m));
-        MarketContext market = MarketContext.parse(forecast, new BigDecimal("100000"));
+        MarketContext market = MarketContext.parse(forecast, new BigDecimal("100000"), KlineInterval.M5);
         return new EntryStrategyContext(market, SymbolProfile.of("BTCUSDT"), "LONG", true, 0.65);
     }
 }

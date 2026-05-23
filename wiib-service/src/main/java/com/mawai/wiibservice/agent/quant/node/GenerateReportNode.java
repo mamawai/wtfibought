@@ -415,7 +415,7 @@ public class GenerateReportNode implements NodeAction {
 
         BigDecimal lastPrice = snapshot != null ? snapshot.lastPrice() : null;
         BigDecimal baseStep = snapshot != null
-                ? (snapshot.atr5m() != null ? snapshot.atr5m() : snapshot.atr1m())
+                ? (snapshot.atr() != null ? snapshot.atr() : snapshot.atr1m())
                 : null;
 
         if (lastPrice == null || lastPrice.signum() <= 0) {
@@ -858,8 +858,8 @@ public class GenerateReportNode implements NodeAction {
                 && snapshot.qualityFlags() != null
                 && snapshot.qualityFlags().stream().anyMatch(flag ->
                 flag.equals("PARTIAL_KLINE_DATA")
-                        || flag.equals("NO_ATR_5M")
-                        || flag.equals("NO_BOLL_5M")
+                        || flag.equals("NO_ATR")
+                        || flag.equals("NO_BOLL")
                         || flag.startsWith("MISSING_TF_")
                         || flag.startsWith("INSUFFICIENT_BARS_"));
     }

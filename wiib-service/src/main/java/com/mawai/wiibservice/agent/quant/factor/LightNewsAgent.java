@@ -162,7 +162,7 @@ public class LightNewsAgent {
         }
 
         long dMin = (Instant.now().getEpochSecond() - heavyCycleEpochSec) / 60;
-        String atrStr = snapshot.atr5m() != null ? snapshot.atr5m().toPlainString() : "N/A";
+        String atrStr = snapshot.atr() != null ? snapshot.atr().toPlainString() : "N/A";
         String priceStr = snapshot.lastPrice() != null ? snapshot.lastPrice().toPlainString() : "N/A";
 
         return """
@@ -244,7 +244,7 @@ public class LightNewsAgent {
 
     private static int estimateVolBps(FeatureSnapshot snapshot) {
         BigDecimal lastPrice = snapshot.lastPrice();
-        BigDecimal atr = snapshot.atr5m() != null ? snapshot.atr5m() : snapshot.atr1m();
+        BigDecimal atr = snapshot.atr() != null ? snapshot.atr() : snapshot.atr1m();
         if (atr != null && lastPrice != null && lastPrice.signum() > 0) {
             return atr.multiply(BigDecimal.valueOf(10000))
                     .divide(lastPrice, 0, RoundingMode.HALF_UP).intValue();

@@ -8,6 +8,7 @@ import com.alibaba.cloud.ai.graph.StateGraph;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.factor.*;
 import com.mawai.wiibservice.agent.quant.node.*;
@@ -46,6 +47,7 @@ public class QuantForecastWorkflow {
      * @param memoryService     记忆查询服务（可为null，无记忆时跳过注入）
      * @param deepCallMode      深模型调用策略
      * @param shallowCallMode   浅模型调用策略
+     * @param decisionInterval  主决策周期：影响 BuildFeaturesNode 取哪个 timeframe 作为主决策指标
      */
     public static CompiledGraph build(ChatClient.Builder deepChatClient,
                                        ChatClient.Builder shallowChatClient,
@@ -58,7 +60,8 @@ public class QuantForecastWorkflow {
                                        FactorWeightOverrideService weightOverrideService,
                                        LlmCallMode deepCallMode,
                                        LlmCallMode shallowCallMode,
-                                       MeterRegistry meterRegistry) throws Exception {
+                                       MeterRegistry meterRegistry,
+                                       KlineInterval decisionInterval) throws Exception {
 
         // 5个因子Agent（NewsEventAgent用浅模型）
         List<FactorAgent> agents = List.of(
@@ -73,7 +76,7 @@ public class QuantForecastWorkflow {
                 .addNode("collect_data",       node_async(observed("collect_data",
                         new CollectDataNode(binanceRestClient, forceOrderService, depthStreamCache, deribitClient), meterRegistry)))
                 .addNode("build_features",     node_async(observed("build_features",
-                        new BuildFeaturesNode(orderFlowAggregator), meterRegistry)))
+                        new BuildFeaturesNode(orderFlowAggregator, decisionInterval), meterRegistry)))
                 .addNode("regime_review",      node_async(observed("regime_review",
                         new RegimeReviewNode(shallowChatClient, shallowCallMode, memoryService), meterRegistry)))
                 .addNode("run_factors",        node_async(observed("run_factors",

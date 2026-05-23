@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.agent.trading.exit.model;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
@@ -80,11 +81,11 @@ class ExitPlanRecoveryTest {
         forecast.setSnapshotJson("""
                 {
                   "regime": "TREND",
-                  "atr5m": %s,
+                  "atr": %s,
                   "indicatorsByTimeframe": {"5m": {"volume_ratio": 1.0}}
                 }
                 """.formatted(atr));
-        return MarketContext.parse(forecast, bd("100000"));
+        return MarketContext.parse(forecast, bd("100000"), KlineInterval.M5);
     }
 
     private static BigDecimal bd(String value) {

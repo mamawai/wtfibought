@@ -43,42 +43,42 @@ public final class MeanReversionEntryStrategy implements EntryStrategy {
         if ("SHOCK".equals(ctx.regime)) {
             return EntryStrategyResult.reject(PATH_MR, "SHOCK环境不做均值回归");
         }
-        if (ctx.bollPb5m == null) {
+        if (ctx.bollPb == null) {
             return EntryStrategyResult.reject(PATH_MR, "缺BB%B");
         }
-        if (isLong && ctx.bollPb5m > BB_PB_LONG_MAX) {
+        if (isLong && ctx.bollPb > BB_PB_LONG_MAX) {
             return EntryStrategyResult.reject(PATH_MR,
-                    String.format("做多BB%%B=%.2f>%.2f", ctx.bollPb5m, BB_PB_LONG_MAX));
+                    String.format("做多BB%%B=%.2f>%.2f", ctx.bollPb, BB_PB_LONG_MAX));
         }
-        if (!isLong && ctx.bollPb5m < BB_PB_SHORT_MIN) {
+        if (!isLong && ctx.bollPb < BB_PB_SHORT_MIN) {
             return EntryStrategyResult.reject(PATH_MR,
-                    String.format("做空BB%%B=%.2f<%.2f", ctx.bollPb5m, BB_PB_SHORT_MIN));
+                    String.format("做空BB%%B=%.2f<%.2f", ctx.bollPb, BB_PB_SHORT_MIN));
         }
 
         boolean rsiConfirms = false;
-        if (ctx.rsi5m != null) {
-            double rsi = ctx.rsi5m.doubleValue();
+        if (ctx.rsi != null) {
+            double rsi = ctx.rsi.doubleValue();
             rsiConfirms = (isLong && rsi <= RSI_LONG_MAX) || (!isLong && rsi >= RSI_SHORT_MIN);
         }
         if (!rsiConfirms) {
             return EntryStrategyResult.reject(PATH_MR,
-                    "RSI未拉伸=" + (ctx.rsi5m != null ? fmt(ctx.rsi5m.doubleValue()) : "无"));
+                    "RSI未拉伸=" + (ctx.rsi != null ? fmt(ctx.rsi.doubleValue()) : "无"));
         }
         boolean deepStretch = isDeepStretch(ctx, isLong);
         int reversalVotes = reversalVoteCount(ctx, isLong);
         if (deepStretch && reversalVotes < 1) {
             return EntryStrategyResult.reject(PATH_MR,
-                    "深度偏离但无反转确认 RSI=" + fmt(ctx.rsi5m.doubleValue()) + " MACD=" + ctx.macdHistTrend5m);
+                    "深度偏离但无反转确认 RSI=" + fmt(ctx.rsi.doubleValue()) + " MACD=" + ctx.macdHistTrend);
         }
         if (!deepStretch && reversalVotes < 1) {
             return EntryStrategyResult.reject(PATH_MR,
-                    "反转确认不足 votes=" + reversalVotes + " RSI=" + fmt(ctx.rsi5m.doubleValue())
-                            + " MACD=" + ctx.macdHistTrend5m);
+                    "反转确认不足 votes=" + reversalVotes + " RSI=" + fmt(ctx.rsi.doubleValue())
+                            + " MACD=" + ctx.macdHistTrend);
         }
 
         boolean hardTrendAgainst = EntryStrategySupport.directionConflicts(ctx.maAlignment1h, isLong)
                 && EntryStrategySupport.directionConflicts(ctx.maAlignment15m, isLong)
-                && EntryStrategySupport.isMacdHistAgainst(ctx.macdHistTrend5m, isLong);
+                && EntryStrategySupport.isMacdHistAgainst(ctx.macdHistTrend, isLong);
         if (hardTrendAgainst && (!"WEAKENING".equals(ctx.regimeTransition) || !deepStretch)) {
             return EntryStrategyResult.reject(PATH_MR, "1h/15m强趋势仍在推进，禁止逆势MR");
         }
@@ -93,24 +93,24 @@ public final class MeanReversionEntryStrategy implements EntryStrategy {
 
         double scale = POSITION_SCALE;
         if (EntryStrategySupport.directionConflicts(ctx.maAlignment1h, isLong)) scale *= 0.70;
-        BigDecimal slDistance = ctx.atr5m.multiply(BigDecimal.valueOf(profile.revertSlAtr()));
-        BigDecimal tpDistance = ctx.atr5m.multiply(BigDecimal.valueOf(tpAtrMult));
+        BigDecimal slDistance = ctx.atr.multiply(BigDecimal.valueOf(profile.revertSlAtr()));
+        BigDecimal tpDistance = ctx.atr.multiply(BigDecimal.valueOf(tpAtrMult));
         return EntryStrategyResult.accept(new EntryStrategyCandidate(
                 PATH_MR, "均值回归", input.side(), isLong, score, slDistance, tpDistance,
                 MAX_LEVERAGE, scale,
                 String.format("均值回归[%s] conf=%.2f score=%.2f RSI=%.1f BB%%B=%.2f",
                         input.side(), input.confidence(), score,
-                        ctx.rsi5m.doubleValue(),
-                        ctx.bollPb5m)));
+                        ctx.rsi.doubleValue(),
+                        ctx.bollPb)));
     }
 
     private static double getTpAtrMult(SymbolProfile profile, MarketContext ctx) {
         double tpAtrMult = profile.revertTpMaxAtr();
-        if (ctx.bollBandwidth5m != null && ctx.bollBandwidth5m > 0 && ctx.atr5m.signum() > 0) {
-            double distToMidPct = Math.abs(ctx.bollPb5m - 50.0) / 100.0;
-            double bbWidthAbsolute = ctx.bollBandwidth5m / 100.0 * ctx.price.doubleValue();
+        if (ctx.bollBandwidth != null && ctx.bollBandwidth > 0 && ctx.atr.signum() > 0) {
+            double distToMidPct = Math.abs(ctx.bollPb - 50.0) / 100.0;
+            double bbWidthAbsolute = ctx.bollBandwidth / 100.0 * ctx.price.doubleValue();
             double distToMidAbsolute = distToMidPct * bbWidthAbsolute;
-            tpAtrMult = distToMidAbsolute / ctx.atr5m.doubleValue();
+            tpAtrMult = distToMidAbsolute / ctx.atr.doubleValue();
             tpAtrMult = Math.clamp(tpAtrMult, profile.revertTpMinAtr(), profile.revertTpMaxAtr());
         }
         return tpAtrMult;
@@ -120,12 +120,12 @@ public final class MeanReversionEntryStrategy implements EntryStrategy {
         double score = input.confidence() * 3.0;
         // 按第一层阈值到深度阈值归一化，避免收紧门槛后分数整体被压死。
         double pbExtreme = isLong
-                ? (BB_PB_LONG_MAX - ctx.bollPb5m) / (BB_PB_LONG_MAX - BB_PB_LONG_STRONG)
-                : (ctx.bollPb5m - BB_PB_SHORT_MIN) / (BB_PB_SHORT_STRONG - BB_PB_SHORT_MIN);
+                ? (BB_PB_LONG_MAX - ctx.bollPb) / (BB_PB_LONG_MAX - BB_PB_LONG_STRONG)
+                : (ctx.bollPb - BB_PB_SHORT_MIN) / (BB_PB_SHORT_STRONG - BB_PB_SHORT_MIN);
         score += Math.clamp(pbExtreme, 0.0, 1.0) * 1.5;
         double rsiStretch = isLong
-                ? (RSI_LONG_MAX - ctx.rsi5m.doubleValue()) / (RSI_LONG_MAX - RSI_LONG_STRONG)
-                : (ctx.rsi5m.doubleValue() - RSI_SHORT_MIN) / (RSI_SHORT_STRONG - RSI_SHORT_MIN);
+                ? (RSI_LONG_MAX - ctx.rsi.doubleValue()) / (RSI_LONG_MAX - RSI_LONG_STRONG)
+                : (ctx.rsi.doubleValue() - RSI_SHORT_MIN) / (RSI_SHORT_STRONG - RSI_SHORT_MIN);
         score += Math.clamp(rsiStretch, 0.0, 1.0);
         score += Math.min(1.2, reversalVoteCount(ctx, isLong) * 0.4);
         score += "RANGE".equals(ctx.regime) ? 1.0 : 0;
@@ -138,14 +138,14 @@ public final class MeanReversionEntryStrategy implements EntryStrategy {
 
     private static boolean isDeepStretch(MarketContext ctx, boolean isLong) {
         return isLong
-                ? ctx.bollPb5m <= BB_PB_LONG_STRONG && ctx.rsi5m.doubleValue() <= RSI_LONG_STRONG
-                : ctx.bollPb5m >= BB_PB_SHORT_STRONG && ctx.rsi5m.doubleValue() >= RSI_SHORT_STRONG;
+                ? ctx.bollPb <= BB_PB_LONG_STRONG && ctx.rsi.doubleValue() <= RSI_LONG_STRONG
+                : ctx.bollPb >= BB_PB_SHORT_STRONG && ctx.rsi.doubleValue() >= RSI_SHORT_STRONG;
     }
 
     private static int reversalVoteCount(MarketContext ctx, boolean isLong) {
         int votes = 0;
         if (EntryStrategySupport.macdSupports(ctx, isLong)) votes++;
-        if (EntryStrategySupport.closeTrendSupports(ctx.closeTrend5m, isLong)) votes++;
+        if (EntryStrategySupport.closeTrendSupports(ctx.closeTrend, isLong)) votes++;
         if (EntryStrategySupport.microSupports(ctx, isLong)) votes++;
         if ("WEAKENING".equals(ctx.regimeTransition)) votes++;
         return votes;

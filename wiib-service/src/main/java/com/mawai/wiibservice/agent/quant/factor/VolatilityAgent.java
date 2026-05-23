@@ -30,14 +30,14 @@ public class VolatilityAgent implements FactorAgent {
         }
 
         BigDecimal lastPrice = s.lastPrice();
-        BigDecimal atr5m = s.atr5m();
+        BigDecimal atr = s.atr();
         if (lastPrice == null || lastPrice.signum() <= 0) {
             return List.of(
                     AgentVote.noTrade(name(), "0_10", "NO_PRICE"),
                     AgentVote.noTrade(name(), "10_20", "NO_PRICE"),
                     AgentVote.noTrade(name(), "20_30", "NO_PRICE"));
         }
-        if (atr5m != null && atr5m.signum() == 0) {
+        if (atr != null && atr.signum() == 0) {
             return List.of(
                     AgentVote.noTrade(name(), "0_10", "ATR_ZERO"),
                     AgentVote.noTrade(name(), "10_20", "ATR_ZERO"),
@@ -53,7 +53,7 @@ public class VolatilityAgent implements FactorAgent {
         // ATR趋势（加速/减速）
         analyzeAtrTrend(indicators, reasons);
 
-        // 波动率估计(基点) — 这是本agent的核心输出
+        // 波动率估计是 horizon 风控口径：1m 看最近 10min，5m 固定估 10-30min。
         int vol0 = estimateVolBps(s, "1m", 10);    // 0-10min: 1m ATR × sqrt(10)
         int vol1 = estimateVolBps(s, "5m", 4);     // 10-20min: 5m ATR × sqrt(4)
         int vol2 = estimateVolBps(s, "5m", 6);     // 20-30min: 5m ATR × sqrt(6)
@@ -72,6 +72,7 @@ public class VolatilityAgent implements FactorAgent {
 
     private void analyzeVolState(Map<String, Map<String, Object>> indicators,
                                   List<String> reasons, List<String> riskFlags) {
+        // 固定 5m 布林带状态，描述短窗拥挤/扩张，不随主决策周期切换。
         Map<String, Object> ind5m = indicators.get("5m");
         if (ind5m != null) {
             BigDecimal pb = toBd(ind5m.get("boll_pb"));
@@ -102,14 +103,15 @@ public class VolatilityAgent implements FactorAgent {
     private void analyzeAtrTrend(Map<String, Map<String, Object>> indicators,
                                   List<String> reasons) {
         Map<String, Object> ind1m = indicators.get("1m");
+        // 固定 1m vs 5m 比较，用来判断短波动加速/减速。
         Map<String, Object> ind5m = indicators.get("5m");
 
         BigDecimal atr1m = ind1m != null ? toBd(ind1m.get("atr14")) : null;
-        BigDecimal atr5m = ind5m != null ? toBd(ind5m.get("atr14")) : null;
+        BigDecimal atr = ind5m != null ? toBd(ind5m.get("atr14")) : null;
 
-        if (atr1m != null && atr5m != null && atr5m.signum() > 0) {
+        if (atr1m != null && atr != null && atr.signum() > 0) {
             double ratio = atr1m.multiply(BigDecimal.valueOf(5))
-                    .divide(atr5m, 4, RoundingMode.HALF_UP).doubleValue();
+                    .divide(atr, 4, RoundingMode.HALF_UP).doubleValue();
             if (ratio > 1.5) reasons.add("ATR_ACCELERATING");
             else if (ratio < 0.6) reasons.add("ATR_DECELERATING");
         }

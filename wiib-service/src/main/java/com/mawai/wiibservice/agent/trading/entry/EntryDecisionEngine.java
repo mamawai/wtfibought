@@ -98,7 +98,7 @@ public final class EntryDecisionEngine {
         }
 
         // ATR 无效则无法计算 SL/TP，直接放弃开仓
-        if (ctx.atr5m == null || ctx.atr5m.signum() <= 0) {
+        if (ctx.atr == null || ctx.atr.signum() <= 0) {
             return hold("ATR数据缺失→无法计算止损");
         }
         // 实时成交流过期，跳过开仓
@@ -291,8 +291,8 @@ public final class EntryDecisionEngine {
                                MarketContext ctx, EntryRiskSizingService.EntryOrderPlan plan, LocalDateTime now) {
         try {
             ExitPlan exitPlan = ExitPlanFactory.fromEntry(
-                    candidate.path(), candidate.side(), ctx.price, plan.stopLoss(), ctx.atr5m,
-                    ctx.bollPb5m, ctx.rsi5m != null ? ctx.rsi5m.doubleValue() : null,
+                    candidate.path(), candidate.side(), ctx.price, plan.stopLoss(), ctx.atr,
+                    ctx.bollPb, ctx.rsi != null ? ctx.rsi.doubleValue() : null,
                     ctx.maAlignment1h, ctx.maAlignment15m, now);
             state.putExitPlan(positionId, exitPlan);
         } catch (IllegalArgumentException e) {
@@ -311,8 +311,8 @@ public final class EntryDecisionEngine {
     private String buildOpenReason(EntryStrategyCandidate candidate, MarketContext ctx,
                                    EntryRiskSizingService.EntryOrderPlan plan,
                                    String riskStatus) {
-        double actualSlAtrMult = plan.slDistance().doubleValue() / ctx.atr5m.doubleValue();
-        double actualTpAtrMult = plan.tpDistance().doubleValue() / ctx.atr5m.doubleValue();
+        double actualSlAtrMult = plan.slDistance().doubleValue() / ctx.atr.doubleValue();
+        double actualTpAtrMult = plan.tpDistance().doubleValue() / ctx.atr.doubleValue();
         String reason = String.format(
                 "%s lev=%dx qty=%s SL=%s(%.1fATR) TP=%s(%.1fATR) scale=%.2f riskStatus=%s | %s",
                 candidate.reason(), plan.leverage(),

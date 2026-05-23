@@ -19,10 +19,10 @@ public final class TrendConfluenceGate implements EntryConfluenceGate {
         addHit(hits, EntryStrategySupport.regimeSupports(ctx, isLong)
                 || EntryStrategySupport.directionAligns(ctx.maAlignment1h, isLong), "大级别方向");
         addHit(hits, EntryStrategySupport.directionAligns(ctx.maAlignment15m, isLong)
-                || EntryStrategySupport.directionAligns(ctx.maAlignment5m, isLong)
+                || EntryStrategySupport.directionAligns(ctx.maAlignment, isLong)
                 || EntryStrategySupport.priceAboveEmaSupports(ctx, isLong), "中短线结构");
         addHit(hits, EntryStrategySupport.macdSupports(ctx, isLong)
-                || EntryStrategySupport.closeTrendSupports(ctx.closeTrend5m, isLong), "动能同向");
+                || EntryStrategySupport.closeTrendSupports(ctx.closeTrend, isLong), "动能同向");
         addHit(hits, volumeAtLeast(ctx, 1.20), "量能有效");
         addHit(hits, !EntryStrategySupport.microAgainst(ctx, isLong, 0.30), "微结构未强反向");
         addHit(hits, rsiTrendHealthy(ctx, isLong), "RSI健康");
@@ -34,12 +34,12 @@ public final class TrendConfluenceGate implements EntryConfluenceGate {
     }
 
     private boolean volumeAtLeast(MarketContext ctx, double threshold) {
-        return ctx.volumeRatio5m != null && ctx.volumeRatio5m >= threshold;
+        return ctx.volumeRatio != null && ctx.volumeRatio >= threshold;
     }
 
     private boolean rsiTrendHealthy(MarketContext ctx, boolean isLong) {
-        if (ctx.rsi5m == null) return false;
-        double rsi = ctx.rsi5m.doubleValue();
+        if (ctx.rsi == null) return false;
+        double rsi = ctx.rsi.doubleValue();
         return isLong ? rsi >= 42.0 && rsi < 78.0 : rsi > 22.0 && rsi <= 58.0;
     }
 }

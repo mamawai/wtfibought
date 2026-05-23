@@ -45,7 +45,7 @@ public final class ExitPlanRecovery {
             return null;
         }
         BigDecimal entry = pos.getEntryPrice();
-        BigDecimal atr = ctx.atr5m;
+        BigDecimal atr = ctx.atr;
         if (entry == null || entry.signum() <= 0 || atr == null || atr.signum() <= 0) {
             return null;
         }

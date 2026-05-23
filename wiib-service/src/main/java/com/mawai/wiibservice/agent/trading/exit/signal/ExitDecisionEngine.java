@@ -221,20 +221,20 @@ public final class ExitDecisionEngine {
             marketVotes++;
             reasons.add("15m反向");
         }
-        if (ctx.maAlignment5m != null && ((isLong && ctx.maAlignment5m < 0) || (!isLong && ctx.maAlignment5m > 0))) {
+        if (ctx.maAlignment != null && ((isLong && ctx.maAlignment < 0) || (!isLong && ctx.maAlignment > 0))) {
             marketVotes++;
             reasons.add("5m反向");
         }
-        if (("death".equals(ctx.macdCross5m) && isLong) || ("golden".equals(ctx.macdCross5m) && !isLong)) {
+        if (("death".equals(ctx.macdCross) && isLong) || ("golden".equals(ctx.macdCross) && !isLong)) {
             marketVotes++;
             reasons.add("MACD交叉反向");
         }
-        if (isMacdHistAgainst(ctx.macdHistTrend5m, isLong)) {
+        if (isMacdHistAgainst(ctx.macdHistTrend, isLong)) {
             marketVotes++;
             reasons.add("MACD柱反向");
         }
-        if (ctx.closeTrend5m != null) {
-            boolean closeAgainst = isLong ? ctx.closeTrend5m.contains("falling") : ctx.closeTrend5m.contains("rising");
+        if (ctx.closeTrend != null) {
+            boolean closeAgainst = isLong ? ctx.closeTrend.contains("falling") : ctx.closeTrend.contains("rising");
             if (closeAgainst) {
                 marketVotes++;
                 reasons.add("收盘趋势反向");
@@ -331,21 +331,21 @@ public final class ExitDecisionEngine {
         if (!TradingDecisionSupport.PATH_MR.equals(path)) return false;
         if (profit == null || profit.signum() <= 0) return false;
         if (targetProgress != null && targetProgress.compareTo(new BigDecimal("0.70")) >= 0) return true;
-        if (ctx.bollPb5m == null) return false;
-        return isLong ? ctx.bollPb5m >= 45.0 : ctx.bollPb5m <= 55.0;
+        if (ctx.bollPb == null) return false;
+        return isLong ? ctx.bollPb >= 45.0 : ctx.bollPb <= 55.0;
     }
 
     private boolean shouldExitFailedBreakout(String path, BigDecimal profit,
                                              long holdMinutes, MarketContext ctx, boolean isLong) {
         if (!TradingDecisionSupport.PATH_BREAKOUT.equals(path)) return false;
         if (holdMinutes < 5 || profit == null || profit.signum() > 0) return false;
-        if (ctx.bollPb5m != null) {
-            if (isLong && ctx.bollPb5m < 60.0) return true;
-            if (!isLong && ctx.bollPb5m > 40.0) return true;
+        if (ctx.bollPb != null) {
+            if (isLong && ctx.bollPb < 60.0) return true;
+            if (!isLong && ctx.bollPb > 40.0) return true;
         }
-        return isMacdHistAgainst(ctx.macdHistTrend5m, isLong)
-                || (ctx.closeTrend5m != null
-                && (isLong ? ctx.closeTrend5m.contains("falling") : ctx.closeTrend5m.contains("rising")));
+        return isMacdHistAgainst(ctx.macdHistTrend, isLong)
+                || (ctx.closeTrend != null
+                && (isLong ? ctx.closeTrend.contains("falling") : ctx.closeTrend.contains("rising")));
     }
 
     private String closePartial(TradingOperations tools,
@@ -434,7 +434,7 @@ public final class ExitDecisionEngine {
             case TradingDecisionSupport.PATH_MR -> profile.revertSlAtr();
             default -> profile.trendSlAtr();
         };
-        return ctx.atr5m.multiply(BigDecimal.valueOf(slAtr));
+        return ctx.atr.multiply(BigDecimal.valueOf(slAtr));
     }
 
     private boolean isLossNearStop(BigDecimal profit, BigDecimal stopDistance) {
@@ -468,25 +468,25 @@ public final class ExitDecisionEngine {
 
     private BigDecimal calcProtectiveStop(BigDecimal entry, BigDecimal profit, MarketContext ctx,
                                           SymbolProfile profile, String path, boolean isLong) {
-        if (entry == null || profit == null || ctx.atr5m == null || ctx.atr5m.signum() <= 0) return null;
+        if (entry == null || profit == null || ctx.atr == null || ctx.atr.signum() <= 0) return null;
         if (TradingDecisionSupport.PATH_MR.equals(path)) {
             BigDecimal lockByProfit = profit.multiply(new BigDecimal("0.35")).max(BigDecimal.ZERO);
-            BigDecimal lockByAtr = ctx.atr5m.multiply(new BigDecimal("0.25"));
+            BigDecimal lockByAtr = ctx.atr.multiply(new BigDecimal("0.25"));
             BigDecimal lock = lockByProfit.min(lockByAtr).setScale(8, RoundingMode.HALF_UP);
             return isLong ? entry.add(lock) : entry.subtract(lock);
         }
 
-        BigDecimal profitAtr = profit.divide(ctx.atr5m, 6, RoundingMode.HALF_UP);
+        BigDecimal profitAtr = profit.divide(ctx.atr, 6, RoundingMode.HALF_UP);
         if (profitAtr.doubleValue() < profile.trailBreakevenAtr()) return null;
 
-        BigDecimal trailGap = ctx.atr5m.multiply(BigDecimal.valueOf(profile.trailGapAtr()));
+        BigDecimal trailGap = ctx.atr.multiply(BigDecimal.valueOf(profile.trailGapAtr()));
         BigDecimal rawTrail = isLong ? ctx.price.subtract(trailGap) : ctx.price.add(trailGap);
         double lockAtrMult = Math.min(profile.trailLockAtr(), Math.max(0.20, profitAtr.doubleValue() * 0.45));
-        BigDecimal lockByAtr = ctx.atr5m.multiply(BigDecimal.valueOf(lockAtrMult));
+        BigDecimal lockByAtr = ctx.atr.multiply(BigDecimal.valueOf(lockAtrMult));
         BigDecimal lockStop = isLong ? entry.add(lockByAtr) : entry.subtract(lockByAtr);
         BigDecimal maxValid = isLong
-                ? ctx.price.subtract(ctx.atr5m.multiply(new BigDecimal("0.10")))
-                : ctx.price.add(ctx.atr5m.multiply(new BigDecimal("0.10")));
+                ? ctx.price.subtract(ctx.atr.multiply(new BigDecimal("0.10")))
+                : ctx.price.add(ctx.atr.multiply(new BigDecimal("0.10")));
         BigDecimal candidate = isLong ? rawTrail.max(lockStop) : rawTrail.min(lockStop);
         return isLong ? candidate.min(maxValid) : candidate.max(maxValid);
     }
@@ -507,9 +507,9 @@ public final class ExitDecisionEngine {
     private String analyzePosition(MarketContext ctx) {
         StringBuilder sb = new StringBuilder("[");
         if (ctx.maAlignment1h != null) sb.append("1h趋势=").append(ctx.maAlignment1h > 0 ? "多" : ctx.maAlignment1h < 0 ? "空" : "平");
-        if (ctx.macdHistTrend5m != null) sb.append(" MACD=").append(ctx.macdHistTrend5m);
-        if (ctx.volumeRatio5m != null) sb.append(String.format(" Vol=%.1fx", ctx.volumeRatio5m));
-        if (ctx.bollPb5m != null) sb.append(String.format(" BB=%.0f%%", ctx.bollPb5m));
+        if (ctx.macdHistTrend != null) sb.append(" MACD=").append(ctx.macdHistTrend);
+        if (ctx.volumeRatio != null) sb.append(String.format(" Vol=%.1fx", ctx.volumeRatio));
+        if (ctx.bollPb != null) sb.append(String.format(" BB=%.0f%%", ctx.bollPb));
         sb.append("]");
         return sb.toString();
     }

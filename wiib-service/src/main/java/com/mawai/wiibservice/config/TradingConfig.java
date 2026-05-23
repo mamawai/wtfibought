@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.config;
 
 import com.mawai.wiibcommon.enums.ErrorCode;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibcommon.exception.BizException;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -20,6 +21,9 @@ import java.time.LocalTime;
 @Configuration
 @ConfigurationProperties(prefix = "trading")
 public class TradingConfig {
+
+    /** 合约 AI 主决策周期：影响 K 线采集、指标计算、回测聚合系数 */
+    private KlineInterval decisionInterval = KlineInterval.M5;
 
     /** 手续费率（默认0.05%） */
     private BigDecimal commissionRate = new BigDecimal("0.0005");

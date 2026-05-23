@@ -221,7 +221,7 @@ public class RegimeReviewNode implements NodeAction {
                 snapshot.lastPrice() != null ? snapshot.lastPrice().toPlainString() : "未知",
                 indicatorBlock.toString(), priceBlock.toString(), microText, ivText,
                 snapshot.bollSqueeze() ? "是" : "否",
-                snapshot.atr5m() != null ? snapshot.atr5m().toPlainString() : "无",
+                snapshot.atr() != null ? snapshot.atr().toPlainString() : "无",
                 qualityText,
                 buildMemoryBlock(snapshot));
     }

@@ -13,6 +13,7 @@ import com.mawai.wiibcommon.entity.AiTradingDecision;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibcommon.enums.KlineInterval;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
@@ -114,11 +115,13 @@ public class SignalReplayBacktestEngine {
             BigDecimal equity = tools.getTotalEquity();
 
             // 4. 调用Executor
+            // 信号重放回测当前基于 5m K线快照，主决策周期固定 M5；切换主决策周期需先扩展快照生成流程。
             DeterministicTradingExecutor.ExecutionResult exec =
                     DeterministicTradingExecutor.execute(
                             symbol, mockUser, positions, cycle, signals,
                             new ArrayList<>(recentDecisions), price, price, equity, tools,
-                            executionState, runtimeToggles);
+                            executionState, runtimeToggles,
+                            KlineInterval.M5);
 
             if (exec.action() != null && exec.action().startsWith("OPEN_")) {
                 tools.markOpenBarIndex(index);

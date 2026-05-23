@@ -68,7 +68,7 @@ final class EntryRiskSizingService {
         SlTpAdjustment adj = adjustForNoiseFloor(candidate.slDistance(), candidate.tpDistance(), ctx.price, profile);
         if (adj == null) {
             return SizingResult.reject(String.format("%s: 极端低波动 ATR/price=%.3f%% 扩SL>%.1fx→放弃",
-                    candidate.label(), ctx.atr5m.doubleValue() / ctx.price.doubleValue() * 100, LOW_VOL_SL_EXPAND_MAX));
+                    candidate.label(), ctx.atr.doubleValue() / ctx.price.doubleValue() * 100, LOW_VOL_SL_EXPAND_MAX));
         }
         boolean isLowVol = adj.positionScale() < 1.0;
         if (isLowVol && !toggles.lowVolTradingEnabled()) {
@@ -92,7 +92,7 @@ final class EntryRiskSizingService {
         BigDecimal stopLoss = candidate.isLong() ? price.subtract(slDistance) : price.add(slDistance);
         BigDecimal takeProfit = candidate.isLong() ? price.add(tpDistance) : price.subtract(tpDistance);
 
-        String feeCheck = checkFeeAwareRR(price, ctx.atr5m, tpDistance);
+        String feeCheck = checkFeeAwareRR(price, ctx.atr, tpDistance);
         if (feeCheck != null) return SizingResult.reject(candidate.label() + ": " + feeCheck);
         String rrGuard = checkRiskRewardGuard(symbol, candidate.path(), slDistance, tpDistance);
         if (rrGuard != null) return SizingResult.reject(candidate.label() + ": " + rrGuard);

@@ -30,27 +30,27 @@ public final class BreakoutEntryStrategy implements EntryStrategy {
         MarketContext ctx = input.market();
         boolean isLong = input.isLong();
 
-        if (ctx.volumeRatio5m == null || ctx.volumeRatio5m < VOLUME_MIN) {
+        if (ctx.volumeRatio == null || ctx.volumeRatio < VOLUME_MIN) {
             return EntryStrategyResult.reject(PATH_BREAKOUT,
-                    String.format("成交量不足 %.1fx<%.1fx", ctx.volumeRatio5m != null ? ctx.volumeRatio5m : 0, VOLUME_MIN));
+                    String.format("成交量不足 %.1fx<%.1fx", ctx.volumeRatio != null ? ctx.volumeRatio : 0, VOLUME_MIN));
         }
-        if (ctx.bollPb5m == null) {
+        if (ctx.bollPb == null) {
             return EntryStrategyResult.reject(PATH_BREAKOUT, "缺BB%B");
         }
-        if (isLong && ctx.bollPb5m < BB_PB_LONG_MIN) {
+        if (isLong && ctx.bollPb < BB_PB_LONG_MIN) {
             return EntryStrategyResult.reject(PATH_BREAKOUT,
-                    String.format("做多BB%%B=%.2f<%.0f，未接近上轨突破", ctx.bollPb5m, BB_PB_LONG_MIN));
+                    String.format("做多BB%%B=%.2f<%.0f，未接近上轨突破", ctx.bollPb, BB_PB_LONG_MIN));
         }
-        if (!isLong && ctx.bollPb5m > BB_PB_SHORT_MAX) {
+        if (!isLong && ctx.bollPb > BB_PB_SHORT_MAX) {
             return EntryStrategyResult.reject(PATH_BREAKOUT,
-                    String.format("做空BB%%B=%.2f>%.0f，未接近下轨突破", ctx.bollPb5m, BB_PB_SHORT_MAX));
+                    String.format("做空BB%%B=%.2f>%.0f，未接近下轨突破", ctx.bollPb, BB_PB_SHORT_MAX));
         }
 
-        boolean directionalMomentum = EntryStrategySupport.closeTrendSupports(ctx.closeTrend5m, isLong)
+        boolean directionalMomentum = EntryStrategySupport.closeTrendSupports(ctx.closeTrend, isLong)
                 || EntryStrategySupport.macdSupports(ctx, isLong);
         if (!ctx.bollSqueeze && !directionalMomentum) {
             return EntryStrategyResult.reject(PATH_BREAKOUT,
-                    "突破动能不足 closeTrend=" + ctx.closeTrend5m + " macd=" + ctx.macdHistTrend5m);
+                    "突破动能不足 closeTrend=" + ctx.closeTrend + " macd=" + ctx.macdHistTrend);
         }
         if (EntryStrategySupport.microAgainst(ctx, isLong, 0.35)) {
             return EntryStrategyResult.reject(PATH_BREAKOUT, "微结构明显反向");
@@ -58,11 +58,11 @@ public final class BreakoutEntryStrategy implements EntryStrategy {
 
         double score = input.confidence() * 2.6;
         score += ctx.bollSqueeze ? 0.8 : 0.4;
-        score += ctx.volumeRatio5m >= VOLUME_STRONG_MIN
-                ? Math.min(1.5, (ctx.volumeRatio5m - VOLUME_STRONG_MIN) / 0.5 + 0.7)
+        score += ctx.volumeRatio >= VOLUME_STRONG_MIN
+                ? Math.min(1.5, (ctx.volumeRatio - VOLUME_STRONG_MIN) / 0.5 + 0.7)
                 : 0.3;
-        score += Math.min(1.2, Math.abs(ctx.bollPb5m - 50.0) / 50.0);
-        if (EntryStrategySupport.closeTrendSupports(ctx.closeTrend5m, isLong)) score += 0.8;
+        score += Math.min(1.2, Math.abs(ctx.bollPb - 50.0) / 50.0);
+        if (EntryStrategySupport.closeTrendSupports(ctx.closeTrend, isLong)) score += 0.8;
         if (EntryStrategySupport.macdSupports(ctx, isLong)) score += 0.8;
         if (EntryStrategySupport.directionAligns(ctx.maAlignment15m, isLong)) score += 0.5;
         if (EntryStrategySupport.priceAboveEmaSupports(ctx, isLong)) score += 0.4;
@@ -72,13 +72,13 @@ public final class BreakoutEntryStrategy implements EntryStrategy {
         }
 
         SymbolProfile profile = input.profile();
-        BigDecimal slDistance = ctx.atr5m.multiply(BigDecimal.valueOf(profile.breakoutSlAtr()));
-        BigDecimal tpDistance = ctx.atr5m.multiply(BigDecimal.valueOf(profile.breakoutTpAtr()));
+        BigDecimal slDistance = ctx.atr.multiply(BigDecimal.valueOf(profile.breakoutSlAtr()));
+        BigDecimal tpDistance = ctx.atr.multiply(BigDecimal.valueOf(profile.breakoutTpAtr()));
         return EntryStrategyResult.accept(new EntryStrategyCandidate(
                 PATH_BREAKOUT, "压缩/释放突破", input.side(), isLong, score, slDistance, tpDistance,
                 MAX_LEVERAGE, POSITION_SCALE,
                 String.format("压缩/释放突破[%s] conf=%.2f score=%.2f BB%%B=%.2f vol=%.1fx",
-                        input.side(), input.confidence(), score, ctx.bollPb5m, ctx.volumeRatio5m)));
+                        input.side(), input.confidence(), score, ctx.bollPb, ctx.volumeRatio)));
     }
 
     private String fmt(double value) {

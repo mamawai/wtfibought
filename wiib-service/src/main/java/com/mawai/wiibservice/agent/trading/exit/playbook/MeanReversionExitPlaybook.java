@@ -106,21 +106,21 @@ final class MeanReversionExitPlaybook implements ExitPlaybook {
     }
 
     private boolean bollMoreExtremeThanEntry(MarketContext ctx, ExitPlan plan, boolean isLong) {
-        if (plan.recovered() || ctx.bollPb5m == null || plan.entryBollPb() == null) {
+        if (plan.recovered() || ctx.bollPb == null || plan.entryBollPb() == null) {
             return false;
         }
         return isLong
-                ? ctx.bollPb5m <= plan.entryBollPb() - BOLL_EXTREME_STEP
-                : ctx.bollPb5m >= plan.entryBollPb() + BOLL_EXTREME_STEP;
+                ? ctx.bollPb <= plan.entryBollPb() - BOLL_EXTREME_STEP
+                : ctx.bollPb >= plan.entryBollPb() + BOLL_EXTREME_STEP;
     }
 
     private boolean closedClosesContinueAgainst(MarketContext ctx, boolean isLong) {
-        if (ctx.closeTrendClosed3_5m == null) {
+        if (ctx.closeTrendClosed3 == null) {
             return false;
         }
         return isLong
-                ? "falling_3".equals(ctx.closeTrendClosed3_5m)
-                : "rising_3".equals(ctx.closeTrendClosed3_5m);
+                ? "falling_3".equals(ctx.closeTrendClosed3)
+                : "rising_3".equals(ctx.closeTrendClosed3);
     }
 
     private boolean newHigherTimeframeTrendAgainst(MarketContext ctx, ExitPlan plan, boolean isLong) {
@@ -136,27 +136,27 @@ final class MeanReversionExitPlaybook implements ExitPlaybook {
     }
 
     private boolean meanReached(MarketContext ctx) {
-        if (ctx.bollPb5m != null && ctx.bollPb5m >= NEUTRAL_LOW && ctx.bollPb5m <= NEUTRAL_HIGH) {
+        if (ctx.bollPb != null && ctx.bollPb >= NEUTRAL_LOW && ctx.bollPb <= NEUTRAL_HIGH) {
             return true;
         }
-        if (ctx.rsi5m == null) {
+        if (ctx.rsi == null) {
             return false;
         }
-        double rsi = ctx.rsi5m.doubleValue();
+        double rsi = ctx.rsi.doubleValue();
         return rsi >= NEUTRAL_LOW && rsi <= NEUTRAL_HIGH;
     }
 
     private Double midlineProgress(MarketContext ctx, ExitPlan plan, boolean isLong) {
-        if (plan.recovered() || ctx.bollPb5m == null || plan.entryBollPb() == null) {
+        if (plan.recovered() || ctx.bollPb == null || plan.entryBollPb() == null) {
             return null;
         }
         double entryPb = plan.entryBollPb();
         if (isLong) {
             if (entryPb >= 50.0) return null;
-            return Math.clamp((ctx.bollPb5m - entryPb) / (50.0 - entryPb), 0.0, 1.0);
+            return Math.clamp((ctx.bollPb - entryPb) / (50.0 - entryPb), 0.0, 1.0);
         }
         if (entryPb <= 50.0) return null;
-        return Math.clamp((entryPb - ctx.bollPb5m) / (entryPb - 50.0), 0.0, 1.0);
+        return Math.clamp((entryPb - ctx.bollPb) / (entryPb - 50.0), 0.0, 1.0);
     }
 
     private boolean hasMeaningfulReversion(Double midlineProgress, ExitPlan plan) {
