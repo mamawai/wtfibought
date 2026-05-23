@@ -732,6 +732,8 @@ export interface TradingRuntimeConfig {
   decisionInterval?: string;
   decisionIntervalCode?: string;
   supportedDecisionIntervals?: string[];
+  entryEnabledStrategies?: string[];
+  supportedEntryStrategies?: string[];
   lowVolTradingEnabled?: boolean;
   playbookExitEnabled?: boolean;
   /** 实际生效状态：环境 kill switch 和 runtime 开关都开才为 true。 */

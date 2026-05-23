@@ -7,7 +7,9 @@ import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
 import com.mawai.wiibservice.agent.quant.node.DebateJudgeNode;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
+import com.mawai.wiibservice.agent.trading.entry.EntryDecisionEngine;
 import com.mawai.wiibservice.config.TradingConfig;
+import com.mawai.wiibservice.config.TradingEntryProperties;
 import com.mawai.wiibservice.mapper.AiRuntimeToggleMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -32,6 +34,7 @@ public class RuntimeFeatureToggleService {
     public static final String TRADING_LOW_VOL_ENABLED = "trading.low_vol.enabled";
     public static final String TRADING_PLAYBOOK_EXIT_ENABLED = "trading.playbook_exit.enabled";
     public static final String TRADING_DECISION_INTERVAL = "trading.decision_interval";
+    public static final String TRADING_ENTRY_ENABLED_STRATEGIES = "trading.entry.enabled_strategies";
 
     public static final String CIRCUIT_BREAKER_ENABLED = "trading.circuit_breaker.enabled";
     public static final String CIRCUIT_BREAKER_L1_DAILY_NET_LOSS_PCT = "trading.circuit_breaker.l1_daily_net_loss_pct";
@@ -41,14 +44,21 @@ public class RuntimeFeatureToggleService {
 
     private final AiRuntimeToggleMapper toggleMapper;
     private final TradingConfig tradingConfig;
+    private final TradingEntryProperties tradingEntryProperties;
     private final Map<String, ToggleBinding<?>> knownToggles;
     private final Map<String, Object> currentValues = new ConcurrentHashMap<>();
 
-    public RuntimeFeatureToggleService(AiRuntimeToggleMapper toggleMapper, TradingConfig tradingConfig) {
+    public RuntimeFeatureToggleService(AiRuntimeToggleMapper toggleMapper,
+                                       TradingConfig tradingConfig,
+                                       TradingEntryProperties tradingEntryProperties) {
         this.toggleMapper = toggleMapper;
         this.tradingConfig = tradingConfig;
+        this.tradingEntryProperties = tradingEntryProperties;
         this.knownToggles = buildKnownToggles();
-        knownToggles.forEach((key, binding) -> currentValues.put(key, binding.defaultValue()));
+        knownToggles.forEach((key, binding) -> {
+            currentValues.put(key, binding.defaultValue());
+            applyBinding(binding, binding.defaultValue());
+        });
     }
 
     @PostConstruct
@@ -113,7 +123,8 @@ public class RuntimeFeatureToggleService {
                         get(TRADING_LOW_VOL_ENABLED, Boolean.class,
                                 DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED),
                         get(TRADING_PLAYBOOK_EXIT_ENABLED, Boolean.class,
-                                DeterministicTradingExecutor.PLAYBOOK_EXIT_ENABLED)
+                                DeterministicTradingExecutor.PLAYBOOK_EXIT_ENABLED),
+                        EntryDecisionEngine.enabledStrategyPaths()
                 ),
                 new RuntimeToggleSnapshot.CircuitBreakerToggles(
                         get(CIRCUIT_BREAKER_ENABLED, Boolean.class, CircuitBreakerService.ENABLED),
@@ -145,6 +156,10 @@ public class RuntimeFeatureToggleService {
                 v -> DeterministicTradingExecutor.PLAYBOOK_EXIT_ENABLED = v);
         bind(map, TRADING_DECISION_INTERVAL, String.class, tradingConfig.getDecisionInterval().name(),
                 v -> tradingConfig.setDecisionInterval(parseDecisionInterval(v)));
+        bind(map, TRADING_ENTRY_ENABLED_STRATEGIES, String.class,
+                String.join(",", EntryDecisionEngine.normalizeEnabledStrategyPaths(
+                        tradingEntryProperties.getEnabledStrategies())),
+                v -> applyEnabledEntryStrategies(v));
 
         bind(map, CIRCUIT_BREAKER_ENABLED, Boolean.class, CircuitBreakerService.ENABLED,
                 v -> CircuitBreakerService.ENABLED = v);
@@ -180,6 +195,12 @@ public class RuntimeFeatureToggleService {
             throw new IllegalArgumentException("H1 当前不支持作为主决策周期");
         }
         return interval;
+    }
+
+    private void applyEnabledEntryStrategies(String value) {
+        var enabledStrategies = EntryDecisionEngine.parseEnabledStrategyPaths(value);
+        tradingEntryProperties.setEnabledStrategies(enabledStrategies);
+        EntryDecisionEngine.setEnabledStrategyPaths(enabledStrategies);
     }
 
     private static <T> T convertValue(Object value, Class<T> type) {

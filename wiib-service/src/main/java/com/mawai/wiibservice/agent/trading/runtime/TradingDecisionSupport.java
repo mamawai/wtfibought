@@ -22,6 +22,7 @@ public final class TradingDecisionSupport {
     public static final String PATH_BREAKOUT = "BREAKOUT";
     public static final String PATH_MR = "MR";
     public static final String PATH_LEGACY_TREND = "LEGACY_TREND";
+    public static final String PATH_MA_SLOPE = "MA_SLOPE";
     private static final String LEGACY_PATH_TREND = "TREND";
     private static final String LEGACY_PATH_MR = "MEAN_REVERSION";
 
@@ -80,6 +81,22 @@ public final class TradingDecisionSupport {
     public static QuantSignalDecision findBestSignalWithPriority(List<QuantSignalDecision> signals,
                                                           LocalDateTime forecastTime,
                                                           LocalDateTime now) {
+        return findSignalWithPriority(signals, forecastTime, now, false);
+    }
+
+    /**
+     * 开仓参考信号：保留 active horizon 和 confidence 优先级，但 NO_TRADE 只做仓位缩放，不再硬禁开。
+     */
+    public static QuantSignalDecision findReferenceSignalWithPriority(List<QuantSignalDecision> signals,
+                                                                      LocalDateTime forecastTime,
+                                                                      LocalDateTime now) {
+        return findSignalWithPriority(signals, forecastTime, now, true);
+    }
+
+    private static QuantSignalDecision findSignalWithPriority(List<QuantSignalDecision> signals,
+                                                              LocalDateTime forecastTime,
+                                                              LocalDateTime now,
+                                                              boolean allowNoTradeDirection) {
         if (signals == null || signals.isEmpty()) return null;
 
         if (forecastTime != null) {
@@ -106,7 +123,7 @@ public final class TradingDecisionSupport {
 
         QuantSignalDecision primary = null;
         for (QuantSignalDecision s : new QuantSignalDecision[]{sig010, sig1020, sig2030}) {
-            QuantSignalDecision valid = pickValid(s);
+            QuantSignalDecision valid = pickValid(s, allowNoTradeDirection);
             if (valid != null && (primary == null
                     || valid.getConfidence().compareTo(primary.getConfidence()) > 0)) {
                 primary = valid;
@@ -120,8 +137,11 @@ public final class TradingDecisionSupport {
         if (sig2030 != null) all.add(sig2030);
 
         QuantSignalDecision finalPrimary = primary;
+        String primaryDirection = finalPrimary.getDirection();
         long agree = all.stream()
-                .filter(s -> finalPrimary.getDirection().equals(s.getDirection()) && s.getConfidence() != null)
+                .filter(s -> primaryDirection != null
+                        && primaryDirection.equals(s.getDirection())
+                        && s.getConfidence() != null)
                 .count();
         if (agree >= 2 && primary.getConfidence() != null) {
             double buff = agree >= 3 ? 1.15 : 1.08;
@@ -245,9 +265,9 @@ public final class TradingDecisionSupport {
         return null;
     }
 
-    private static QuantSignalDecision pickValid(QuantSignalDecision s) {
+    private static QuantSignalDecision pickValid(QuantSignalDecision s, boolean allowNoTradeDirection) {
         if (s == null) return null;
-        if (s.getDirection() == null || "NO_TRADE".equals(s.getDirection())) return null;
+        if (!allowNoTradeDirection && (s.getDirection() == null || "NO_TRADE".equals(s.getDirection()))) return null;
         if (s.getConfidence() == null) return null;
         return s;
     }

@@ -38,7 +38,7 @@ class PlaybookExitEngineTest {
         StubTools tools = new StubTools();
 
         DeterministicTradingExecutor.ExecutionResult result = engine.evaluate(
-                context("100100", "55", "42", "sideways", 1, 1, now.minusMinutes(1),
+                context("100100", "54", "42", "sideways", 1, 1, now.minusMinutes(1),
                         position("LONG", "100000", "99000", "105000", "1"), state, tools),
                 true);
 
@@ -58,7 +58,7 @@ class PlaybookExitEngineTest {
         tools.closeSuccess = false;
 
         DeterministicTradingExecutor.ExecutionResult result = engine.evaluate(
-                context("100100", "55", "42", "sideways", 1, 1, now.minusMinutes(1),
+                context("100100", "54", "42", "sideways", 1, 1, now.minusMinutes(1),
                         position("LONG", "100000", "99000", "105000", "1"), state, tools),
                 true);
 

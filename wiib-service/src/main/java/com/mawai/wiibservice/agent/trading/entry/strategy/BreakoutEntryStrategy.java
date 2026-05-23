@@ -26,6 +26,11 @@ public final class BreakoutEntryStrategy implements EntryStrategy {
     private static final double BB_PB_SHORT_MAX = 12.0;
 
     @Override
+    public String path() {
+        return PATH_BREAKOUT;
+    }
+
+    @Override
     public EntryStrategyResult build(EntryStrategyContext input) {
         MarketContext ctx = input.market();
         boolean isLong = input.isLong();

@@ -24,6 +24,11 @@ public final class TrendContinuationEntryStrategy implements EntryStrategy {
     private static final double RSI_SHORT_MIN = 22.0;
 
     @Override
+    public String path() {
+        return PATH_LEGACY_TREND;
+    }
+
+    @Override
     public EntryStrategyResult build(EntryStrategyContext input) {
         MarketContext ctx = input.market();
         boolean isLong = input.isLong();

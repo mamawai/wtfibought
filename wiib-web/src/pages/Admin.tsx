@@ -25,6 +25,12 @@ const DECISION_INTERVAL_LABELS: Record<string, string> = {
   M15: '15m',
   H1: '1h',
 };
+const ENTRY_STRATEGY_LABELS: Record<string, string> = {
+  BREAKOUT: '突破',
+  MR: '均值回归',
+  LEGACY_TREND: '趋势延续',
+  MA_SLOPE: 'MA Slope',
+};
 
 export function Admin() {
   const { user } = useUserStore();
@@ -50,6 +56,7 @@ export function Admin() {
   // 交易运行时开关
   const [tradingConfig, setTradingConfig] = useState<TradingRuntimeConfig>({
     decisionInterval: 'M5',
+    entryEnabledStrategies: ['BREAKOUT', 'MR', 'LEGACY_TREND'],
     lowVolTradingEnabled: false,
     playbookExitEnabled: false,
   });
@@ -172,6 +179,20 @@ export function Admin() {
       setTradingConfig(c);
       toast(`主决策周期：${DECISION_INTERVAL_LABELS[c.decisionInterval || decisionInterval] || decisionInterval}`, 'success');
     } catch (e) { toast((e as Error).message || '切换失败', 'error'); }
+    finally { setActionLoading(null); }
+  };
+
+  const toggleEntryStrategy = async (strategy: string) => {
+    const enabled = tradingConfig.entryEnabledStrategies ?? ['BREAKOUT', 'MR', 'LEGACY_TREND'];
+    const next = enabled.includes(strategy)
+      ? enabled.filter(item => item !== strategy)
+      : [...enabled, strategy];
+    setActionLoading(`entryStrategy:${strategy}`);
+    try {
+      const c = await adminApi.setTradingConfig({ entryEnabledStrategies: next });
+      setTradingConfig(c);
+      toast('入场策略池已更新', 'success');
+    } catch (e) { toast((e as Error).message || '保存失败', 'error'); }
     finally { setActionLoading(null); }
   };
 
@@ -626,6 +647,44 @@ export function Admin() {
                     <option key={iv} value={iv}>{DECISION_INTERVAL_LABELS[iv] || iv}</option>
                   ))}
                 </Select>
+              </div>
+
+              <div className="flex items-center justify-between gap-4 border-t pt-4">
+                <div className="flex-1">
+                  <div className="font-medium">入场策略池</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    当前 AI Trader 开仓候选来源；全部关闭时只会 HOLD。
+                  </div>
+                  <div className="text-xs mt-2 flex flex-wrap gap-1.5">
+                    {(tradingConfig.entryEnabledStrategies?.length
+                      ? tradingConfig.entryEnabledStrategies
+                      : ['未启用']).map(strategy => (
+                      <Badge key={strategy} variant={strategy === '未启用' ? 'secondary' : 'outline'}>
+                        {ENTRY_STRATEGY_LABELS[strategy] || strategy}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-wrap justify-end gap-1.5 max-w-[14rem]">
+                  {(tradingConfig.supportedEntryStrategies?.length
+                    ? tradingConfig.supportedEntryStrategies
+                    : ['BREAKOUT', 'MR', 'LEGACY_TREND']).map(strategy => {
+                    const checked = (tradingConfig.entryEnabledStrategies ?? []).includes(strategy);
+                    return (
+                      <button
+                        key={strategy}
+                        type="button"
+                        className={`h-8 rounded-md border px-2 text-xs font-medium transition-colors ${
+                          checked ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:bg-muted'
+                        }`}
+                        onClick={() => void toggleEntryStrategy(strategy)}
+                        disabled={actionLoading !== null}
+                      >
+                        {ENTRY_STRATEGY_LABELS[strategy] || strategy}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="flex items-center justify-between gap-4">

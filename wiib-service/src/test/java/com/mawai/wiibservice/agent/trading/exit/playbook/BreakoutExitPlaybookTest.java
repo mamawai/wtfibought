@@ -25,9 +25,10 @@ class BreakoutExitPlaybookTest {
 
     @Test
     void exitsFailedBreakoutWhenBollReturnsNeutralBeforeBreakeven() {
+        // bollPb=54 落到新阈值（<55）触发 BB_RETURN_NEUTRAL。
         LocalDateTime entryAt = LocalDateTime.of(2026, 5, 7, 1, 0);
         ExitPlaybookDecision decision = playbook.evaluate(
-                context("100100", "55", "1", "100000", List.of()),
+                context("100100", "54", "1", "100000", List.of()),
                 position("LONG", "100000", "99000", "1"),
                 plan("LONG", entryAt),
                 entryAt.plusMinutes(6));
@@ -62,12 +63,13 @@ class BreakoutExitPlaybookTest {
 
     @Test
     void exitsWhenRecentClosedVolumeRatiosAllExhausted() {
+        // FAIL_TO_PROGRESS_MINUTES 由 15 放到 30，volume exhaustion 同样按此门槛门控，所以 hold 至少 30min 才生效。
         LocalDateTime entryAt = LocalDateTime.of(2026, 5, 7, 1, 0);
         ExitPlaybookDecision decision = playbook.evaluate(
                 context("100600", "88", "1.2", "100000", List.of(1.1, 0.7, 0.6, 0.5)),
                 position("LONG", "100000", "99000", "1"),
                 plan("LONG", entryAt),
-                entryAt.plusMinutes(16));
+                entryAt.plusMinutes(31));
 
         assertThat(decision.action()).isEqualTo(ExitPlaybookDecision.Action.CLOSE_FULL);
         assertThat(decision.reason()).isEqualTo("BREAKOUT_VOLUME_EXHAUSTION");

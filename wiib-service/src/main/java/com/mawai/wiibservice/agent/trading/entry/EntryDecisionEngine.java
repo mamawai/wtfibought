@@ -31,15 +31,21 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.function.Supplier;
 
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_BREAKOUT;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_LEGACY_TREND;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_MA_SLOPE;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_MR;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.currentDateTime;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.currentTimeMillis;
-import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.findBestSignalWithPriority;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.findReferenceSignalWithPriority;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.fmt;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.fmtPrice;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.hold;
@@ -51,11 +57,18 @@ import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport
 @Slf4j
 public final class EntryDecisionEngine {
 
-    private static final List<EntryStrategy> STRATEGIES = List.of(
+    private static final List<EntryStrategy> ALL_STRATEGIES = List.of(
             new BreakoutEntryStrategy(),
             new MeanReversionEntryStrategy(),
             new TrendContinuationEntryStrategy()
     );
+    private static final List<String> DEFAULT_ENABLED_STRATEGY_PATHS = List.of(
+            PATH_BREAKOUT,
+            PATH_MR,
+            PATH_LEGACY_TREND
+    );
+    private static volatile List<String> enabledStrategyPaths = DEFAULT_ENABLED_STRATEGY_PATHS;
+
     private static final EntryConfluenceGate BREAKOUT_CONFLUENCE_GATE = new BreakoutConfluenceGate();
     private static final EntryConfluenceGate MR_CONFLUENCE_GATE = new MeanReversionConfluenceGate();
     private static final EntryConfluenceGate TREND_CONFLUENCE_GATE = new TrendConfluenceGate();
@@ -65,9 +78,38 @@ public final class EntryDecisionEngine {
     private static final double BREAKOUT_SELECTION_WEIGHT = 1.0;
     private static final double TREND_SELECTION_WEIGHT = 0.7;
     private static final double MR_SELECTION_WEIGHT = 0.9;
+    private static final double MA_SLOPE_SELECTION_WEIGHT = 0.95;
 
     // 同 symbol 开仓后的最短等待时间，避免短时间重复追单。
     private static final long ENTRY_COOLDOWN_MS = 20 * 60 * 1000L;
+
+    private final List<EntryStrategy> allStrategies;
+    private final Supplier<List<String>> enabledStrategyPathsSupplier;
+
+    public EntryDecisionEngine() {
+        this(ALL_STRATEGIES, EntryDecisionEngine::enabledStrategyPaths);
+    }
+
+    EntryDecisionEngine(List<EntryStrategy> allStrategies, List<String> enabledStrategyPaths) {
+        this(allStrategies, () -> enabledStrategyPaths);
+    }
+
+    private EntryDecisionEngine(List<EntryStrategy> allStrategies, Supplier<List<String>> enabledStrategyPathsSupplier) {
+        this.allStrategies = List.copyOf(allStrategies);
+        this.enabledStrategyPathsSupplier = enabledStrategyPathsSupplier;
+    }
+
+    public static void setEnabledStrategyPaths(Collection<String> paths) {
+        enabledStrategyPaths = normalizeEnabledStrategyPaths(paths);
+    }
+
+    public static List<String> enabledStrategyPaths() {
+        return enabledStrategyPaths;
+    }
+
+    public static List<String> defaultEnabledStrategyPaths() {
+        return DEFAULT_ENABLED_STRATEGY_PATHS;
+    }
 
     /**
      * 开仓主流程。
@@ -108,27 +150,23 @@ public final class EntryDecisionEngine {
         }
 
         LocalDateTime now = currentDateTime(nowMs);
-        // 选择当前时间窗口生效的方向信号
-        QuantSignalDecision bestSignal = findBestSignalWithPriority(decision.signals(), decision.forecastTime(), now);
-        if (bestSignal == null || "NO_TRADE".equals(bestSignal.getDirection())) {
-            return hold("无有效方向信号");
+        // referenceSignal 只提供风控参数和方向缩放，NO_TRADE 不再作为策略候选硬入口。
+        QuantSignalDecision referenceSignal = findReferenceSignalWithPriority(decision.signals(), decision.forecastTime(), now);
+        if (referenceSignal == null) {
+            return hold("无可用referenceSignal");
         }
 
-        String side = bestSignal.getDirection();
-        boolean isLong = "LONG".equals(side);
-        if (!isLong && !"SHORT".equals(side)) {
-            return hold("方向信号非法: " + side);
-        }
-        double confidence = bestSignal.getConfidence() != null ? bestSignal.getConfidence().doubleValue() : 0;
+        String referenceDirection = referenceSignal.getDirection();
+        double confidence = referenceSignal.getConfidence() != null ? referenceSignal.getConfidence().doubleValue() : 0;
 
-        String mergedRiskStatus = mergeRiskStatus(decision.forecast(), bestSignal);
+        String mergedRiskStatus = mergeRiskStatus(decision.forecast(), referenceSignal);
         if (statusContains(mergedRiskStatus, "ALL_NO_TRADE") || statusContains(mergedRiskStatus, "NO_DATA")) {
             return hold("riskStatus=" + mergedRiskStatus + "→禁止开仓");
         }
 
-        EntryStrategyContext strategyContext = new EntryStrategyContext(ctx, decision.profile(), side, isLong, confidence);
         // 第一层由各策略识别场景；这里做二层共振，避免单点信号直接开仓。
-        CandidateSet candidateSet = applyStrategyConfluenceGates(symbol, strategyContext, collectCandidates(strategyContext));
+        CandidateSet candidateSet = applyStrategyConfluenceGates(
+                symbol, decision, confidence, collectCandidates(decision, confidence, referenceDirection));
         List<EntryStrategyCandidate> candidates = candidateSet.candidates();
 
         boolean overallFlat = decision.forecast() != null && "FLAT".equals(decision.forecast().getOverallDecision());
@@ -148,15 +186,18 @@ public final class EntryDecisionEngine {
         }
 
         EntryStrategyCandidate best = chooseBest(candidates);
-        log.info("[EntryDecision] 入场候选择优 symbol={} side={} best={} score={} weightedScore={} riskStatus={} candidates={} rejects={}",
-                symbol, side, best.path(), fmt(best.score()), fmt(selectionScore(best)), mergedRiskStatus,
+        double directionRiskScale = directionRiskScale(best.side(), referenceDirection);
+        double effectiveRiskScale = riskStatusScale(mergedRiskStatus) * directionRiskScale;
+        log.info("[EntryDecision] 入场候选择优 symbol={} referenceDirection={} side={} best={} score={} weightedScore={} riskStatus={} directionScale={} candidates={} rejects={}",
+                symbol, referenceDirection, best.side(), best.path(), fmt(best.score()), fmt(selectionScore(best)),
+                mergedRiskStatus, fmt(directionRiskScale),
                 candidates.stream().map(c -> c.path() + ":" + fmt(c.score())
                         + "->" + fmt(selectionScore(c))).toList(),
                 summarizeRejects(candidateSet.rejects()));
 
         DeterministicTradingExecutor.ExecutionResult inner = openCandidate(
-                symbol, user, decision.totalEquity(), bestSignal, ctx, best,
-                riskStatusScale(mergedRiskStatus), mergedRiskStatus,
+                symbol, user, decision.totalEquity(), referenceSignal, ctx, best,
+                effectiveRiskScale, mergedRiskStatus,
                 decision.profile(), decision.tools(), decision.toggles(), state, now);
         if (inner.action().startsWith("OPEN_")) {
             state.markEntry(symbol, nowMs);
@@ -180,23 +221,126 @@ public final class EntryDecisionEngine {
     }
 
     /**
-     * 执行三条入场路径的第一层筛选。
+     * 执行启用策略池的第一层筛选。
      *
-     * <p>每个 EntryStrategy 只判断自己是否能产出候选，不负责共振、择优、仓位和下单。
-     * 通过的候选进入下一层；拒绝原因保留下来，最终没有候选时给用户/日志看。</p>
+     * <p>方向接收型老策略每轮 LONG/SHORT 各跑一次；方向自治型策略只跑一次，
+     * 但候选必须自带真实 side。这里不做共振、择优、仓位和下单。</p>
      */
-    private CandidateSet collectCandidates(EntryStrategyContext context) {
+    private CandidateSet collectCandidates(TradingDecisionContext decision, double confidence, String referenceDirection) {
         List<EntryStrategyCandidate> candidates = new ArrayList<>();
         List<String> rejects = new ArrayList<>();
-        for (EntryStrategy strategy : STRATEGIES) {
-            EntryStrategyResult result = strategy.build(context);
-            if (result.candidate() != null) {
-                candidates.add(result.candidate());
-            } else if (result.rejectReason() != null) {
-                rejects.add(result.rejectReason());
+
+        ActiveStrategySet activeStrategySet = activeStrategySet();
+        rejects.addAll(activeStrategySet.rejects());
+        if (activeStrategySet.strategies().isEmpty()) {
+            rejects.add("无启用入场策略");
+            return new CandidateSet(candidates, rejects);
+        }
+
+        for (EntryStrategy strategy : activeStrategySet.strategies()) {
+            if (strategy.kind() == EntryStrategy.StrategyKind.DIRECTION_AUTONOMOUS) {
+                collectFromStrategy(strategy,
+                        new EntryStrategyContext(decision.market(), decision.profile(), "AUTO", false, confidence),
+                        candidates, rejects);
+                continue;
+            }
+            for (String side : receiverDispatchSides(referenceDirection)) {
+                collectFromStrategy(strategy,
+                        contextForSide(decision, side, confidence),
+                        candidates, rejects);
             }
         }
         return new CandidateSet(candidates, rejects);
+    }
+
+    private ActiveStrategySet activeStrategySet() {
+        List<String> enabledPaths = normalizeEnabledStrategyPaths(enabledStrategyPathsSupplier.get());
+        List<EntryStrategy> active = new ArrayList<>();
+        List<String> rejects = new ArrayList<>();
+        if (enabledPaths.isEmpty()) {
+            return new ActiveStrategySet(active, rejects);
+        }
+
+        for (String enabledPath : enabledPaths) {
+            EntryStrategy strategy = findStrategy(enabledPath);
+            if (strategy == null) {
+                rejects.add("未注册策略: " + enabledPath);
+                continue;
+            }
+            active.add(strategy);
+        }
+        return new ActiveStrategySet(active, rejects);
+    }
+
+    private EntryStrategy findStrategy(String path) {
+        for (EntryStrategy strategy : allStrategies) {
+            if (path.equals(strategy.path())) {
+                return strategy;
+            }
+        }
+        return null;
+    }
+
+    private List<String> receiverDispatchSides(String referenceDirection) {
+        return "SHORT".equals(referenceDirection != null ? referenceDirection.trim().toUpperCase(Locale.ROOT) : null)
+                ? List.of("SHORT", "LONG")
+                : List.of("LONG", "SHORT");
+    }
+
+    private EntryStrategyContext contextForSide(TradingDecisionContext decision, String side, double confidence) {
+        return new EntryStrategyContext(decision.market(), decision.profile(), side, "LONG".equals(side), confidence);
+    }
+
+    public static List<String> normalizeEnabledStrategyPaths(Collection<String> paths) {
+        if (paths == null) {
+            return DEFAULT_ENABLED_STRATEGY_PATHS;
+        }
+        Set<String> normalized = new LinkedHashSet<>();
+        for (String raw : paths) {
+            String path = normalizeStrategyPathToken(raw);
+            if (!path.isBlank()) {
+                normalized.add(path);
+            }
+        }
+        return List.copyOf(normalized);
+    }
+
+    public static List<String> parseEnabledStrategyPaths(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        return normalizeEnabledStrategyPaths(List.of(raw.split(",")));
+    }
+
+    private static String normalizeStrategyPathToken(String raw) {
+        if (raw == null) return "";
+        String value = raw.trim().toUpperCase(Locale.ROOT);
+        return switch (value) {
+            case "PATH_BREAKOUT" -> PATH_BREAKOUT;
+            case "PATH_MR", "MEAN_REVERSION" -> PATH_MR;
+            case "PATH_LEGACY_TREND", "TREND" -> PATH_LEGACY_TREND;
+            case "PATH_MA_SLOPE" -> PATH_MA_SLOPE;
+            default -> value;
+        };
+    }
+
+    private boolean isTradableSide(String side) {
+        return "LONG".equals(side) || "SHORT".equals(side);
+    }
+
+    private void collectFromStrategy(EntryStrategy strategy, EntryStrategyContext context,
+                                     List<EntryStrategyCandidate> candidates, List<String> rejects) {
+        EntryStrategyResult result = strategy.build(context);
+        EntryStrategyCandidate candidate = result.candidate();
+        if (candidate != null) {
+            if (isTradableSide(candidate.side())) {
+                candidates.add(candidate);
+            } else {
+                rejects.add(strategy.path() + ": 候选方向非法 side=" + candidate.side());
+            }
+        } else if (result.rejectReason() != null) {
+            rejects.add(result.rejectReason());
+        }
     }
 
     /**
@@ -205,15 +349,17 @@ public final class EntryDecisionEngine {
      * <p>这里不重新打策略分，只确认候选旁证是否足够。每个策略路径会进入自己的
      * EntryConfluenceGate，命中项不足时把共振命中摘要写入 rejects，避免单点信号直接开仓。</p>
      */
-    private CandidateSet applyStrategyConfluenceGates(String symbol, EntryStrategyContext context, CandidateSet input) {
+    private CandidateSet applyStrategyConfluenceGates(
+            String symbol, TradingDecisionContext decision, double confidence, CandidateSet input) {
         List<EntryStrategyCandidate> candidates = new ArrayList<>();
         List<String> rejects = new ArrayList<>(input.rejects());
 
         for (EntryStrategyCandidate candidate : input.candidates()) {
-            ConfluenceGateResult gate = confluenceGate(candidate.path(), context);
+            EntryStrategyContext gateContext = contextForSide(decision, candidate.side(), confidence);
+            ConfluenceGateResult gate = confluenceGate(candidate.path(), gateContext);
             if (gate.passed()) {
                 log.info("[EntryDecision] ENTRY_GATE_PASS symbol={} strategy={} side={} conf={} confluence={}/{} hits={}",
-                        symbol, candidate.path(), context.side(), fmt(context.confidence()),
+                        symbol, candidate.path(), gateContext.side(), fmt(gateContext.confidence()),
                         gate.score(), gate.total(), gate.hitSummary());
                 candidates.add(candidate);
                 continue;
@@ -327,7 +473,7 @@ public final class EntryDecisionEngine {
     /**
      * 根据策略 path 派发到对应的二层共振门。
      *
-     * <p>未知 path 默认放行，保持向后兼容；正常路径只会来自 TradingDecisionSupport 定义的三个常量。</p>
+     * <p>未知 path 默认放行，给方向自治新策略预留接入口；老三策略继续走原共振门。</p>
      */
     private ConfluenceGateResult confluenceGate(String path, EntryStrategyContext context) {
         return switch (path) {
@@ -391,6 +537,23 @@ public final class EntryDecisionEngine {
     }
 
     /**
+     * referenceDirection 只影响仓位大小，不再参与候选择优。
+     */
+    private double directionRiskScale(String candidateSide, String referenceDirection) {
+        if (!isTradableSide(candidateSide) || referenceDirection == null || referenceDirection.isBlank()) {
+            return 1.0;
+        }
+        String normalizedReference = referenceDirection.trim().toUpperCase(Locale.ROOT);
+        if ("NO_TRADE".equals(normalizedReference)) {
+            return 0.85;
+        }
+        if (!isTradableSide(normalizedReference)) {
+            return 1.0;
+        }
+        return normalizedReference.equals(candidateSide) ? 1.0 : 0.85;
+    }
+
+    /**
      * 压缩拒绝原因，避免 HOLD reason 过长。
      *
      * <p>只展示前 4 条，保留足够排查信息，同时不让日志和接口返回被长文本淹没。</p>
@@ -408,7 +571,8 @@ public final class EntryDecisionEngine {
      */
     private int pathPriority(String path) {
         return switch (path) {
-            case PATH_BREAKOUT -> 3;
+            case PATH_BREAKOUT -> 4;
+            case PATH_MA_SLOPE -> 3;
             case PATH_LEGACY_TREND -> 2;
             case PATH_MR -> 1;
             default -> 0;
@@ -425,8 +589,12 @@ public final class EntryDecisionEngine {
             case PATH_BREAKOUT -> BREAKOUT_SELECTION_WEIGHT;
             case PATH_LEGACY_TREND -> TREND_SELECTION_WEIGHT;
             case PATH_MR -> MR_SELECTION_WEIGHT;
+            case PATH_MA_SLOPE -> MA_SLOPE_SELECTION_WEIGHT;
             default -> 1.0;
         };
+    }
+
+    private record ActiveStrategySet(List<EntryStrategy> strategies, List<String> rejects) {
     }
 
     private record CandidateSet(List<EntryStrategyCandidate> candidates, List<String> rejects) {

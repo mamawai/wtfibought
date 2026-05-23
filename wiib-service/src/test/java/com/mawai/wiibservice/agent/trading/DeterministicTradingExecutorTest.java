@@ -112,7 +112,7 @@ class DeterministicTradingExecutorTest {
     }
 
     @Test
-    void nonSqueezeBreakoutWithoutDirectionalMomentumIsRejected() {
+    void oppositeMeanReversionCanOverrideWeakReferenceDirection() {
         StubTools tools = new StubTools();
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
@@ -122,9 +122,10 @@ class DeterministicTradingExecutorTest {
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
 
-        assertThat(result.action()).isEqualTo("HOLD");
-        assertThat(tools.openCount).isZero();
-        assertThat(result.reasoning()).contains("突破动能不足");
+        assertThat(result.action()).isEqualTo("OPEN_SHORT");
+        assertThat(tools.openCount).isEqualTo(1);
+        assertThat(result.reasoning()).contains("[Strategy-MR]");
+        assertThat(result.reasoning()).contains("scale=0.47");
     }
 
     @Test
@@ -173,11 +174,11 @@ class DeterministicTradingExecutorTest {
 
         assertThat(result.action()).isEqualTo("HOLD");
         assertThat(tools.openCount).isZero();
-        assertThat(result.reasoning()).contains("做多BB%B=24.00>20.00");
+        assertThat(result.reasoning()).contains("做多BB%B=26.00>25.00");
     }
 
     @Test
-    void meanReversionRequiresTwoVotesWithoutDeepStretch() {
+    void meanReversionRejectsZeroVotesWithoutDeepStretch() {
         StubTools tools = new StubTools();
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
@@ -189,7 +190,7 @@ class DeterministicTradingExecutorTest {
 
         assertThat(result.action()).isEqualTo("HOLD");
         assertThat(tools.openCount).isZero();
-        assertThat(result.reasoning()).contains("反转确认不足 votes=1");
+        assertThat(result.reasoning()).contains("反转确认不足 votes=0");
     }
 
     @Test
@@ -259,7 +260,9 @@ class DeterministicTradingExecutorTest {
     }
 
     @Test
-    void maxPositionPctCapsEntryQuantity() {
+    void maxPositionPctNoLongerCapsEntryQuantity() {
+        // 业务上 maxPositionPct 不再做硬截断（EntryRiskSizingService 注释：risk-based qty 已远小于 maxPos）。
+        // 这里反向守门：signal 给出极小 maxPositionPct 也不应把 qty 砍到那个上限。
         StubTools tools = new StubTools();
         QuantSignalDecision sig = signal("0_10", "LONG", "0.75");
         sig.setMaxPositionPct(price("0.01"));
@@ -272,7 +275,8 @@ class DeterministicTradingExecutorTest {
                 new TradingRuntimeToggles(true), KlineInterval.M5);
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
-        assertThat(tools.lastOpenQty).isEqualByComparingTo("0.01000000");
+        // 0.01 的 maxPositionPct 上限不应再被遵守；qty 必须明显大于这个上限。
+        assertThat(tools.lastOpenQty).isGreaterThan(price("0.01"));
     }
 
     @Test
@@ -640,8 +644,9 @@ class DeterministicTradingExecutorTest {
     }
 
     private static String failedBreakoutSnapshot(List<String> flags) {
+        // bollPb=54 触发 BreakoutExitPlaybook 新阈值（BB_RETURN_NEUTRAL 在 <55 触发）。
         return snapshot("SQUEEZE", true, "400", "55", 1, 1,
-                "golden", "rising_3", null, "55", "1.4", "rising", "0.00", flags);
+                "golden", "rising_3", null, "54", "1.4", "rising", "0.00", flags);
     }
 
     private static String nonSqueezeNoMomentumBreakoutSnapshot(List<String> flags) {
@@ -665,13 +670,17 @@ class DeterministicTradingExecutorTest {
     }
 
     private static String lightMeanReversionSnapshot(List<String> flags) {
+        // bollPb=26 触发新阈值（BB_PB_LONG_MAX=25）下的第一道 BB%B 拒因，守"轻偏离应拒"语义。
         return snapshot("RANGE", false, "400", "43", 0, 0,
-                "death", "flat", null, "24", "1.0", "flat", "0.00", flags);
+                "death", "flat", null, "26", "1.0", "flat", "0.00", flags);
     }
 
     private static String oneVoteMeanReversionSnapshot(List<String> flags) {
-        return snapshot("RANGE", false, "400", "42", 0, 0,
-                "golden", "flat", null, "18", "1.0", "flat", "0.00", flags);
+        // 浅偏离 + RSI 浅拉伸；MACD 全部翻空（macdDif<macdDea + hist=flat + 无金叉）→ 0 票。
+        // 守"非深度偏离 + 0 票 → 拒"的下限，正好对齐新阈值 votes<1 reject。
+        return snapshot("RANGE", null, false, "400", "42", 0, 0,
+                null, "flat", 1, 2,
+                null, "18", "1.0", "flat", "0.00", flags);
     }
 
     private static String deepWeakeningMeanReversionSnapshot(List<String> flags) {
@@ -716,6 +725,15 @@ class DeterministicTradingExecutorTest {
                                    int ma1h, int ma15m, String macdCross, String macdHist,
                                    String ema20, String bollPb, String volumeRatio,
                                    String closeTrend, String micro, List<String> flags) {
+        return snapshot(regime, transition, squeeze, atr, rsi, ma1h, ma15m, macdCross, macdHist,
+                2, 1, ema20, bollPb, volumeRatio, closeTrend, micro, flags);
+    }
+
+    private static String snapshot(String regime, String transition, boolean squeeze, String atr, String rsi,
+                                   int ma1h, int ma15m, String macdCross, String macdHist,
+                                   int macdDif, int macdDea,
+                                   String ema20, String bollPb, String volumeRatio,
+                                   String closeTrend, String micro, List<String> flags) {
         String flagsJson = flags.stream().map(f -> "\"" + f + "\"").reduce((a, b) -> a + "," + b).orElse("");
         return """
                 {
@@ -732,8 +750,8 @@ class DeterministicTradingExecutorTest {
                       "rsi14": %s,
                       "macd_cross": %s,
                       "macd_hist_trend": "%s",
-                      "macd_dif": 2,
-                      "macd_dea": 1,
+                      "macd_dif": %d,
+                      "macd_dea": %d,
                       "ema20": %s,
                       "ma_alignment": 1,
                       "close_trend": "%s",
@@ -748,6 +766,7 @@ class DeterministicTradingExecutorTest {
                 """.formatted(regime, transition == null ? "null" : "\"" + transition + "\"",
                 atr, squeeze, micro, flagsJson, rsi,
                 macdCross == null ? "null" : "\"" + macdCross + "\"", macdHist,
+                macdDif, macdDea,
                 ema20 == null ? "null" : ema20, closeTrend, bollPb, volumeRatio, ma15m, ma1h);
     }
 

@@ -32,6 +32,11 @@ public final class MeanReversionEntryStrategy implements EntryStrategy {
     private static final double RSI_SHORT_STRONG = 62.0;
 
     @Override
+    public String path() {
+        return PATH_MR;
+    }
+
+    @Override
     public EntryStrategyResult build(EntryStrategyContext input) {
         MarketContext ctx = input.market();
         boolean isLong = input.isLong();
