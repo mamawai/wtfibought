@@ -1,8 +1,11 @@
 package com.mawai.wiibservice.agent.trading.backtest;
 
+import com.mawai.wiibcommon.enums.KlineInterval;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
@@ -19,6 +22,56 @@ class BacktestComparisonResultTest {
         assertThat(result.avgR()).isEqualTo(0.25);
         assertThat(result.statsByStrategy("BREAKOUT").avgR()).isEqualTo(0.25);
         assertThat(result.statsByStrategy("MR").avgR()).isZero();
+    }
+
+    @Test
+    void backtestResultIncludesMaSlopeStatsAndEquityCurve() {
+        BacktestResult result = new BacktestResult(bd("100000"));
+        result.addTrade(trade("MA_SLOPE", "LONG", 10, 16, "120", "1.2", "SIGNAL_CLOSE"));
+        result.recordEquity(bd("100120"));
+
+        assertThat(result.allStrategyStats())
+                .extracting(BacktestResult.StrategyStats::strategy)
+                .contains("MA_SLOPE");
+        assertThat(result.statsByStrategy("MA_SLOPE").trades()).isEqualTo(1);
+        assertThat(result.getEquityCurve()).containsExactly(bd("100000"), bd("100120"));
+    }
+
+    @Test
+    void backtestTradingToolsRecordsReasonAwareCloseAndRoundTripFeePnl() {
+        BacktestTradingTools tools = new BacktestTradingTools(bd("10000"), "BTCUSDT");
+        tools.setCurrentPrice(bd("100"));
+        tools.setCurrentBarIndex(10);
+
+        assertThat(tools.openPositionWithResult("LONG", bd("1"), 10,
+                "MARKET", null, bd("90"), bd("120"), "MA_SLOPE").success()).isTrue();
+        tools.markOpenBarIndex(10);
+
+        tools.setCurrentBarIndex(12);
+        tools.setCurrentPrice(bd("110"));
+        tools.closePositionWithReason(1L, bd("1"), "MA_SLOPE_SIGNAL_REVERSE state=STRONG_DOWN");
+
+        BacktestTradingTools.ClosedTrade trade = tools.getClosedTrades().getFirst();
+        assertThat(trade.exitReason()).isEqualTo("MA_SLOPE_SIGNAL_REVERSE");
+        assertThat(trade.pnl()).isEqualByComparingTo("9.91600000");
+        assertThat(trade.fee()).isEqualByComparingTo("0.08400000");
+    }
+
+    @Test
+    void aggregateAlignsHigherTimeframeToExchangeOpenTime() {
+        List<BigDecimal[]> bars = new ArrayList<>();
+        for (int minute = 6; minute < 51; minute += 3) {
+            bars.add(kline(minute));
+        }
+
+        List<BigDecimal[]> aggregated = BacktestEngine.aggregate(bars, 5, KlineInterval.M15);
+
+        assertThat(aggregated).hasSize(2);
+        assertThat(aggregated.getFirst()[5]).isEqualByComparingTo("900000");
+        assertThat(aggregated.getFirst()[6]).isEqualByComparingTo("1799999");
+        assertThat(aggregated.getFirst()[2]).isEqualByComparingTo("27");
+        assertThat(aggregated.get(1)[5]).isEqualByComparingTo("1800000");
+        assertThat(aggregated.get(1)[2]).isEqualByComparingTo("42");
     }
 
     @Test
@@ -102,6 +155,21 @@ class BacktestComparisonResultTest {
                 rMultiple != null ? bd(rMultiple) : null,
                 reason
         );
+    }
+
+    private static BigDecimal[] kline(int minute) {
+        BigDecimal price = bd(String.valueOf(minute));
+        BigDecimal openTime = BigDecimal.valueOf(minute * 60_000L);
+        BigDecimal closeTime = BigDecimal.valueOf((minute + 3) * 60_000L - 1);
+        return new BigDecimal[]{
+                price.add(BigDecimal.ONE),
+                price.subtract(BigDecimal.ONE),
+                price,
+                BigDecimal.ONE,
+                BigDecimal.ZERO,
+                openTime,
+                closeTime
+        };
     }
 
     private static BigDecimal bd(String value) {

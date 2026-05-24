@@ -234,7 +234,7 @@ public final class PlaybookExitEngine {
                                                                    ExitPlan plan,
                                                                    ExitPlaybookDecision decision,
                                                                    boolean indicatorShielded) {
-        String result = tools.closePosition(pos.getId(), pos.getQuantity());
+        String result = tools.closePositionWithReason(pos.getId(), pos.getQuantity(), decision.reason());
         String execLog = "Playbook全平: " + result + "\n";
         if (isTradeSuccess(result)) {
             state.clearPosition(pos.getId());
@@ -276,7 +276,7 @@ public final class PlaybookExitEngine {
                     "");
         }
 
-        String closeResult = tools.closePosition(pos.getId(), closeQty);
+        String closeResult = tools.closePositionWithReason(pos.getId(), closeQty, decision.reason());
         StringBuilder execLog = new StringBuilder("Playbook部分平仓: ").append(closeResult).append("\n");
         if (!isTradeSuccess(closeResult)) {
             return new DeterministicTradingExecutor.ExecutionResult(

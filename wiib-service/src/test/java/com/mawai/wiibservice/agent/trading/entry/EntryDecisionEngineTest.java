@@ -1,5 +1,6 @@
 package com.mawai.wiibservice.agent.trading.entry;
 
+import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.User;
@@ -25,6 +26,7 @@ import java.util.List;
 
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_BREAKOUT;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_LEGACY_TREND;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_MA_SLOPE;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class EntryDecisionEngineTest {
@@ -127,6 +129,66 @@ class EntryDecisionEngineTest {
         assertThat(tools.lastSide).isEqualTo("LONG");
     }
 
+    @Test
+    void maSlopeCandidateCanOpenEvenWhenExistingMaSlopePositionIsOpen() {
+        StubTools tools = new StubTools();
+        AutoEntryStrategy auto = new AutoEntryStrategy(PATH_MA_SLOPE);
+        EntryDecisionEngine engine = new EntryDecisionEngine(List.of(auto), List.of(PATH_MA_SLOPE));
+
+        DeterministicTradingExecutor.ExecutionResult result = engine.evaluate(
+                decision(trendSnapshot(), signal("LONG", "0.75"), tools,
+                        List.of(openPosition(PATH_MA_SLOPE, "LONG", bd("99800")))));
+
+        assertThat(result.action()).isEqualTo("OPEN_LONG");
+        assertThat(auto.calls).isEqualTo(1);
+        assertThat(tools.openCount).isEqualTo(1);
+    }
+
+    @Test
+    void maSlopeCandidateRejectsNearDuplicateSameSideScaleIn() {
+        StubTools tools = new StubTools();
+        AutoEntryStrategy auto = new AutoEntryStrategy(PATH_MA_SLOPE);
+        EntryDecisionEngine engine = new EntryDecisionEngine(List.of(auto), List.of(PATH_MA_SLOPE));
+
+        DeterministicTradingExecutor.ExecutionResult result = engine.evaluate(
+                decision(trendSnapshot(), signal("LONG", "0.75"), tools,
+                        List.of(openPosition(PATH_MA_SLOPE, "LONG", bd("99950")))));
+
+        assertThat(result.action()).isEqualTo("HOLD");
+        assertThat(result.reasoning()).contains("同向加仓距离不足");
+        assertThat(auto.calls).isEqualTo(1);
+        assertThat(tools.openCount).isZero();
+    }
+
+    @Test
+    void maSlopeCandidateCanOpenOppositeSideWhenExistingMaSlopePositionIsOpen() {
+        StubTools tools = new StubTools();
+        AutoEntryStrategy auto = new AutoEntryStrategy(PATH_MA_SLOPE, 20, "SHORT");
+        EntryDecisionEngine engine = new EntryDecisionEngine(List.of(auto), List.of(PATH_MA_SLOPE));
+
+        DeterministicTradingExecutor.ExecutionResult result = engine.evaluate(
+                decision(trendSnapshot(), signal("NO_TRADE", "0.75"), tools,
+                        List.of(openPosition(PATH_MA_SLOPE, "LONG", bd("100000")))));
+
+        assertThat(result.action()).isEqualTo("OPEN_SHORT");
+        assertThat(auto.calls).isEqualTo(1);
+        assertThat(tools.openCount).isEqualTo(1);
+        assertThat(tools.lastSide).isEqualTo("SHORT");
+    }
+
+    @Test
+    void maSlopeUsesOwnLeverageCapInsteadOfReferenceSignalCap() {
+        StubTools tools = new StubTools();
+        AutoEntryStrategy auto = new AutoEntryStrategy(PATH_MA_SLOPE, 20);
+        EntryDecisionEngine engine = new EntryDecisionEngine(List.of(auto), List.of(PATH_MA_SLOPE));
+
+        DeterministicTradingExecutor.ExecutionResult result = engine.evaluate(
+                decision(trendSnapshot(), signal("NO_TRADE", "0.75"), tools));
+
+        assertThat(result.action()).isEqualTo("OPEN_LONG");
+        assertThat(tools.lastLeverage).isEqualTo(20);
+    }
+
     private static EntryDecisionEngine engine(List<String> enabledStrategies) {
         return new EntryDecisionEngine(List.of(
                 new BreakoutEntryStrategy(),
@@ -136,12 +198,17 @@ class EntryDecisionEngineTest {
     }
 
     private static TradingDecisionContext decision(String snapshot, QuantSignalDecision signal, StubTools tools) {
+        return decision(snapshot, signal, tools, List.of());
+    }
+
+    private static TradingDecisionContext decision(String snapshot, QuantSignalDecision signal, StubTools tools,
+                                                   List<FuturesPositionDTO> positions) {
         QuantForecastCycle forecast = forecast(snapshot);
         MarketContext market = MarketContext.parse(forecast, bd("100000"), KlineInterval.M5);
         return new TradingDecisionContext(
                 "BTCUSDT",
                 user(),
-                List.of(),
+                positions,
                 forecast,
                 List.of(signal),
                 List.of(),
@@ -154,6 +221,25 @@ class EntryDecisionEngineTest {
                 profile(),
                 market,
                 null);
+    }
+
+    private static FuturesPositionDTO openPosition(String memo) {
+        return openPosition(memo, "LONG");
+    }
+
+    private static FuturesPositionDTO openPosition(String memo, String side) {
+        return openPosition(memo, side, null);
+    }
+
+    private static FuturesPositionDTO openPosition(String memo, String side, BigDecimal entryPrice) {
+        FuturesPositionDTO position = new FuturesPositionDTO();
+        position.setId(1L);
+        position.setSymbol("BTCUSDT");
+        position.setStatus("OPEN");
+        position.setSide(side);
+        position.setEntryPrice(entryPrice);
+        position.setMemo(memo);
+        return position;
     }
 
     private static QuantForecastCycle forecast(String snapshot) {
@@ -223,9 +309,30 @@ class EntryDecisionEngineTest {
     }
 
     private static final class AutoEntryStrategy implements EntryStrategy {
+        private final String path;
+        private final int maxLeverage;
+        private final String side;
         int calls;
         String lastSymbol;
         KlineInterval lastInterval;
+
+        private AutoEntryStrategy() {
+            this("AUTO_TEST");
+        }
+
+        private AutoEntryStrategy(String path) {
+            this(path, 10);
+        }
+
+        private AutoEntryStrategy(String path, int maxLeverage) {
+            this(path, maxLeverage, "LONG");
+        }
+
+        private AutoEntryStrategy(String path, int maxLeverage, String side) {
+            this.path = path;
+            this.maxLeverage = maxLeverage;
+            this.side = side;
+        }
 
         @Override
         public StrategyKind kind() {
@@ -234,7 +341,7 @@ class EntryDecisionEngineTest {
 
         @Override
         public String path() {
-            return "AUTO_TEST";
+            return path;
         }
 
         @Override
@@ -244,15 +351,16 @@ class EntryDecisionEngineTest {
             lastInterval = input.decisionInterval();
             BigDecimal atr = input.market().atr;
             return EntryStrategyResult.accept(new EntryStrategyCandidate(
-                    path(), "自动方向测试", "LONG", true, 10.0,
+                    path(), "自动方向测试", side, true, 10.0,
                     atr.multiply(bd("2")), atr.multiply(bd("3")),
-                    10, 1.0, "auto-test"));
+                    maxLeverage, 1.0, "auto-test"));
         }
     }
 
     private static class StubTools implements TradingOperations {
         int openCount;
         String lastSide;
+        Integer lastLeverage;
 
         @Override
         public String openPosition(String side, BigDecimal quantity, Integer leverage, String orderType,
@@ -260,6 +368,7 @@ class EntryDecisionEngineTest {
                                    BigDecimal takeProfitPrice, String memo) {
             openCount++;
             lastSide = side;
+            lastLeverage = leverage;
             return "开仓成功|posId=1";
         }
 

@@ -32,8 +32,8 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
     private static final BigDecimal TIME_PROGRESS_R = new BigDecimal("0.50");
     private static final long TIME_LIMIT_MINUTES = 90;
     private static final BigDecimal ATR_TRAIL_MULT = new BigDecimal("2.0");
-    private static final BigDecimal EARLY_FAIL_R = new BigDecimal("0.30");
-    private static final long EARLY_FAIL_MINUTES = 30;
+    private static final BigDecimal EARLY_FAIL_R = BigDecimal.ZERO;
+    private static final long EARLY_FAIL_MINUTES = 60;
     // 入场要求 0.03 ATR；退出用 -0.005/+0.005 迟滞，避免 0 附近抖动来回平仓。
     private static final double MA7_EXIT_SLOPE_ATR = -0.005;
     private static final int EXTINGUISH_STREAK_THRESHOLD = 2;
@@ -77,12 +77,17 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
         }
 
         MaState current = hasSignalData(ctx) ? MaSlopeStateClassifier.classifyPrimary(ctx) : null;
-        if (!decision.indicatorExitShielded() && current != null && current.stronglyAgainst(isLong)) {
+        MaState confirm = hasConfirmSignalData(ctx) ? MaSlopeStateClassifier.classifyConfirm(ctx) : null;
+        boolean higherTrendStillSupports = higherTrendStillSupports(confirm, isLong);
+
+        if (!decision.indicatorExitShielded() && current != null && current.stronglyAgainst(isLong)
+                && !higherTrendStillSupports) {
             clearStreak(decision, position);
             return ExitPlaybookDecision.closeFull("MA_SLOPE_SIGNAL_REVERSE state=" + current.state());
         }
 
-        ExitPlaybookDecision extinguish = evaluateExtinguish(decision, position, breakevenDone, current, isLong, ctx);
+        ExitPlaybookDecision extinguish = evaluateExtinguish(
+                decision, position, breakevenDone, current, higherTrendStillSupports, isLong, ctx);
         if (extinguish.actionable() || extinguish.entryEvaluationBlocked()) {
             return extinguish;
         }
@@ -93,9 +98,10 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
                 && !plan.recovered()
                 && holdMinutes >= EARLY_FAIL_MINUTES
                 && profitR.compareTo(EARLY_FAIL_R) < 0
-                && !signalStillStrong(decision, current, isLong)) {
+                && !signalStillStrong(decision, current, isLong)
+                && !higherTrendStillSupports) {
             clearStreak(decision, position);
-            return ExitPlaybookDecision.closeFull("MA_SLOPE_NO_PROGRESS_IN_30M");
+            return ExitPlaybookDecision.closeFull("MA_SLOPE_NO_PROGRESS_IN_60M");
         }
 
         if (profitR.compareTo(PARTIAL_R) >= 0 && !plan.isPartialDoneAtR(PARTIAL_R_MILESTONE)) {
@@ -119,7 +125,8 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
 
         if (!plan.recovered()
                 && holdMinutes >= TIME_LIMIT_MINUTES
-                && plan.highestProfitR() < TIME_PROGRESS_R.doubleValue()) {
+                && plan.highestProfitR() < TIME_PROGRESS_R.doubleValue()
+                && !higherTrendStillSupports) {
             clearStreak(decision, position);
             return ExitPlaybookDecision.closeFull("MA_SLOPE_NO_0_5R_IN_90M");
         }
@@ -131,11 +138,16 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
                                                     FuturesPositionDTO position,
                                                     boolean breakevenDone,
                                                     MaState current,
+                                                    boolean higherTrendStillSupports,
                                                     boolean isLong,
                                                     MarketContext ctx) {
         if (decision.indicatorExitShielded()) {
             clearStreak(decision, position);
             return ExitPlaybookDecision.hold("MA_SLOPE_SIGNAL_SHIELDED");
+        }
+        if (higherTrendStillSupports) {
+            clearStreak(decision, position);
+            return ExitPlaybookDecision.hold("MA_SLOPE_PULLBACK_WITH_HIGHER_TREND");
         }
         if (!breakevenDone || current == null
                 || !current.extinguishingAgainstPosition(isLong, MA7_EXIT_SLOPE_ATR)) {
@@ -162,6 +174,17 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
                 && ctx.atrClosed != null && ctx.atrClosed.signum() > 0
                 && ctx.ma7SeriesClosed.size() >= MIN_SERIES_SIZE_WITH_PREVIOUS_CONFIRM
                 && ctx.ma25SeriesClosed.size() >= MIN_SERIES_SIZE_WITH_PREVIOUS_CONFIRM;
+    }
+
+    private boolean hasConfirmSignalData(MarketContext ctx) {
+        return ctx != null
+                && ctx.confirmAtr != null && ctx.confirmAtr.signum() > 0
+                && ctx.confirmMa7SeriesClosed.size() >= MIN_SERIES_SIZE_WITH_PREVIOUS_CONFIRM
+                && ctx.confirmMa25SeriesClosed.size() >= MIN_SERIES_SIZE_WITH_PREVIOUS_CONFIRM;
+    }
+
+    private boolean higherTrendStillSupports(MaState confirm, boolean isLong) {
+        return confirm != null && confirm.sameBroadDirection(isLong);
     }
 
     private boolean syncBreakevenDoneIfProtected(ExitPlan plan, FuturesPositionDTO position, boolean isLong) {

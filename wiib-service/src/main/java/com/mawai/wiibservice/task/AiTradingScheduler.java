@@ -198,8 +198,7 @@ public class AiTradingScheduler {
             BigDecimal markPrice = cacheService.getMarkPrice(symbol);
 
             FuturesTradingOperationsAdapter tools = new FuturesTradingOperationsAdapter(userId, symbol,
-                    userMapper, futuresTradingService, futuresRiskService, futuresPositionMapper,
-                    cacheService, circuitBreakerService);
+                    userMapper, futuresTradingService, futuresRiskService, cacheService, circuitBreakerService);
 
             // 确定性执行器决策
             var tradingToggles = runtimeFeatureToggleService.snapshot().trading();

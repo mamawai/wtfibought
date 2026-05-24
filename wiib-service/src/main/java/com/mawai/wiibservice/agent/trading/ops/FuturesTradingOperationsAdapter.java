@@ -3,16 +3,13 @@ package com.mawai.wiibservice.agent.trading.ops;
 import com.mawai.wiibservice.agent.trading.runtime.SymbolProfile;
 
 import com.alibaba.fastjson2.JSON;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesStopLossRequest;
 import com.mawai.wiibcommon.dto.FuturesTakeProfitRequest;
-import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
-import com.mawai.wiibservice.mapper.FuturesPositionMapper;
 import com.mawai.wiibservice.mapper.UserMapper;
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.FuturesRiskService;
@@ -21,8 +18,6 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.Duration;
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -38,9 +33,6 @@ public class FuturesTradingOperationsAdapter implements TradingOperations {
     private static final BigDecimal MAX_POSITION_RATIO = new BigDecimal("0.35");
     private static final BigDecimal MIN_MARGIN_FLOOR = new BigDecimal("100");
     private static final BigDecimal MIN_MARGIN_RATIO = new BigDecimal("0.01");
-    private static final int MAX_OPEN_POSITIONS = 6;
-    private static final int MAX_SYMBOL_POSITIONS = 3;
-    private static final int ENTRY_COOLDOWN_MINUTES = 20;
     private static final BigDecimal SL_MIN_TOLERANCE = new BigDecimal("0.0002");
 
     private final Long aiUserId;
@@ -48,7 +40,6 @@ public class FuturesTradingOperationsAdapter implements TradingOperations {
     private final UserMapper userMapper;
     private final FuturesTradingService futuresTradingService;
     private final FuturesRiskService futuresRiskService;
-    private final FuturesPositionMapper futuresPositionMapper;
     private final CacheService cacheService;
     private final CircuitBreakerService circuitBreakerService;
 
@@ -56,7 +47,6 @@ public class FuturesTradingOperationsAdapter implements TradingOperations {
                                            UserMapper userMapper,
                                            FuturesTradingService futuresTradingService,
                                            FuturesRiskService futuresRiskService,
-                                           FuturesPositionMapper futuresPositionMapper,
                                            CacheService cacheService,
                                            CircuitBreakerService circuitBreakerService) {
         this.aiUserId = aiUserId;
@@ -64,7 +54,6 @@ public class FuturesTradingOperationsAdapter implements TradingOperations {
         this.userMapper = userMapper;
         this.futuresTradingService = futuresTradingService;
         this.futuresRiskService = futuresRiskService;
-        this.futuresPositionMapper = futuresPositionMapper;
         this.cacheService = cacheService;
         this.circuitBreakerService = circuitBreakerService;
     }
@@ -127,42 +116,6 @@ public class FuturesTradingOperationsAdapter implements TradingOperations {
         if (!breaker.allowed()) {
             log.warn("[AI-Trade] 开仓被熔断拦截 symbol={} memo={} reason={}", symbol, memo, breaker.reason());
             return OpenResult.fromMessage("错误：熔断中，" + breaker.reason());
-        }
-
-        List<FuturesPosition> openPositions = futuresPositionMapper.selectList(
-                new LambdaQueryWrapper<FuturesPosition>()
-                        .eq(FuturesPosition::getUserId, aiUserId)
-                        .eq(FuturesPosition::getStatus, "OPEN"));
-        if (openPositions.size() >= MAX_OPEN_POSITIONS) {
-            return OpenResult.fromMessage("错误：已有" + openPositions.size() + "个持仓，上限" + MAX_OPEN_POSITIONS);
-        }
-
-        List<FuturesPosition> symbolOpenPositions = openPositions.stream()
-                .filter(p -> symbol.equals(p.getSymbol()))
-                .toList();
-        if (!symbolOpenPositions.isEmpty()) {
-            boolean hasOpposite = symbolOpenPositions.stream()
-                    .anyMatch(p -> !side.equals(p.getSide()));
-            if (hasOpposite) {
-                String existingSide = symbolOpenPositions.getFirst().getSide();
-                return OpenResult.fromMessage("错误：" + symbol + "已有" + existingSide + "持仓，暂不允许开反向新仓，请先平仓");
-            }
-        }
-        if (symbolOpenPositions.size() >= MAX_SYMBOL_POSITIONS) {
-            return OpenResult.fromMessage("错误：" + symbol + "已有" + symbolOpenPositions.size() + "个持仓，上限" + MAX_SYMBOL_POSITIONS);
-        }
-
-        FuturesPosition lastPosition = futuresPositionMapper.selectOne(
-                new LambdaQueryWrapper<FuturesPosition>()
-                        .eq(FuturesPosition::getUserId, aiUserId)
-                        .eq(FuturesPosition::getSymbol, symbol)
-                        .orderByDesc(FuturesPosition::getCreatedAt)
-                        .last("LIMIT 1"));
-        if (lastPosition != null && lastPosition.getCreatedAt() != null) {
-            long minutesSinceLast = Duration.between(lastPosition.getCreatedAt(), LocalDateTime.now()).toMinutes();
-            if (minutesSinceLast < ENTRY_COOLDOWN_MINUTES) {
-                return OpenResult.fromMessage("错误：" + symbol + "距上次开仓仅" + minutesSinceLast + "分钟，需间隔" + ENTRY_COOLDOWN_MINUTES + "分钟");
-            }
         }
 
         User user = userMapper.selectById(aiUserId);

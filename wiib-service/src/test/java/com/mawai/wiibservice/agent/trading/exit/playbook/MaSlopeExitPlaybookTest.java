@@ -62,6 +62,21 @@ class MaSlopeExitPlaybookTest {
     }
 
     @Test
+    void longHoldsPrimaryReverseWhenHigherTrendStillSupports() {
+        LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
+        ExitPlaybookDecision decision = playbook.evaluate(
+                signalContextWithConfirm("100500", "10",
+                        downMa7(), downMa25(), upMa7(), upMa25(),
+                        false, new TradingExecutionState()),
+                position("LONG", "100000", "99000", "1"),
+                plan("LONG", entryAt),
+                entryAt.plusMinutes(12));
+
+        assertThat(decision.action()).isEqualTo(ExitPlaybookDecision.Action.HOLD);
+        assertThat(decision.reason()).isEqualTo("MA_SLOPE_HOLD");
+    }
+
+    @Test
     void extinguishAfterBreakevenRequiresTwoConsecutiveSignals() {
         LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
         TradingExecutionState state = new TradingExecutionState();
@@ -108,6 +123,26 @@ class MaSlopeExitPlaybookTest {
     }
 
     @Test
+    void extinguishIsSuppressedWhenHigherTrendStillSupports() {
+        LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
+        TradingExecutionState state = new TradingExecutionState();
+        ExitPlan plan = plan("LONG", entryAt);
+        plan.markBreakevenDone();
+        FuturesPositionDTO position = position("LONG", "100000", "100000", "1");
+
+        ExitPlaybookDecision decision = playbook.evaluate(
+                signalContextWithConfirm("100500", "10",
+                        extinguishingLongMa7(), risingMa25(),
+                        extinguishingLongMa7(), risingMa25(),
+                        false, state),
+                position, plan, entryAt.plusMinutes(20));
+
+        assertThat(decision.action()).isEqualTo(ExitPlaybookDecision.Action.HOLD);
+        assertThat(decision.reason()).isEqualTo("MA_SLOPE_HOLD");
+        assertThat(state.getReversalStreak(1L)).isZero();
+    }
+
+    @Test
     void extinguishBeforeBreakevenDoesNotClose() {
         LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
         TradingExecutionState state = new TradingExecutionState();
@@ -123,17 +158,17 @@ class MaSlopeExitPlaybookTest {
     }
 
     @Test
-    void earlyFailureClosesBeforeBreakevenAfterThirtyMinutesWithoutProgress() {
+    void earlyFailureClosesBeforeBreakevenAfterSixtyMinutesStillNegative() {
         LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
 
         ExitPlaybookDecision decision = playbook.evaluate(
-                priceContext("100200", "400", false),
+                priceContext("99900", "400", false),
                 position("LONG", "100000", "99000", "1"),
                 plan("LONG", entryAt),
-                entryAt.plusMinutes(30));
+                entryAt.plusMinutes(60));
 
         assertThat(decision.action()).isEqualTo(ExitPlaybookDecision.Action.CLOSE_FULL);
-        assertThat(decision.reason()).isEqualTo("MA_SLOPE_NO_PROGRESS_IN_30M");
+        assertThat(decision.reason()).isEqualTo("MA_SLOPE_NO_PROGRESS_IN_60M");
     }
 
     @Test
@@ -144,7 +179,23 @@ class MaSlopeExitPlaybookTest {
                 signalContext("100200", "10", upMa7(), upMa25(), false, new TradingExecutionState()),
                 position("LONG", "100000", "99000", "1"),
                 plan("LONG", entryAt),
-                entryAt.plusMinutes(30));
+                entryAt.plusMinutes(60));
+
+        assertThat(decision.action()).isEqualTo(ExitPlaybookDecision.Action.HOLD);
+        assertThat(decision.reason()).isEqualTo("MA_SLOPE_HOLD");
+    }
+
+    @Test
+    void earlyFailureDoesNotCloseWhenHigherTrendStillSupports() {
+        LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
+
+        ExitPlaybookDecision decision = playbook.evaluate(
+                signalContextWithConfirm("99900", "400",
+                        List.of(), List.of(), upMa7(), upMa25(),
+                        false, new TradingExecutionState()),
+                position("LONG", "100000", "99000", "1"),
+                plan("LONG", entryAt),
+                entryAt.plusMinutes(60));
 
         assertThat(decision.action()).isEqualTo(ExitPlaybookDecision.Action.HOLD);
         assertThat(decision.reason()).isEqualTo("MA_SLOPE_HOLD");
@@ -216,6 +267,22 @@ class MaSlopeExitPlaybookTest {
     }
 
     @Test
+    void timeLimitDoesNotCloseWhenHigherTrendStillSupports() {
+        LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
+
+        ExitPlaybookDecision decision = playbook.evaluate(
+                signalContextWithConfirm("100300", "400",
+                        List.of(), List.of(), upMa7(), upMa25(),
+                        false, new TradingExecutionState()),
+                position("LONG", "100000", "99000", "1"),
+                plan("LONG", entryAt),
+                entryAt.plusMinutes(91));
+
+        assertThat(decision.action()).isEqualTo(ExitPlaybookDecision.Action.HOLD);
+        assertThat(decision.reason()).isEqualTo("MA_SLOPE_HOLD");
+    }
+
+    @Test
     void indicatorShieldSuppressesSignalExitButKeepsPriceProtection() {
         LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
 
@@ -237,7 +304,7 @@ class MaSlopeExitPlaybookTest {
     }
 
     private static TradingDecisionContext priceContext(String price, String atr, boolean shielded) {
-        return context(price, atr, List.of(), List.of(), shielded, new TradingExecutionState());
+        return context(price, atr, List.of(), List.of(), List.of(), List.of(), shielded, new TradingExecutionState());
     }
 
     private static TradingDecisionContext signalContext(String price, String atr,
@@ -245,12 +312,24 @@ class MaSlopeExitPlaybookTest {
                                                         List<BigDecimal> ma25,
                                                         boolean shielded,
                                                         TradingExecutionState state) {
-        return context(price, atr, ma7, ma25, shielded, state);
+        return context(price, atr, ma7, ma25, List.of(), List.of(), shielded, state);
+    }
+
+    private static TradingDecisionContext signalContextWithConfirm(String price, String atr,
+                                                                   List<BigDecimal> ma7,
+                                                                   List<BigDecimal> ma25,
+                                                                   List<BigDecimal> confirmMa7,
+                                                                   List<BigDecimal> confirmMa25,
+                                                                   boolean shielded,
+                                                                   TradingExecutionState state) {
+        return context(price, atr, ma7, ma25, confirmMa7, confirmMa25, shielded, state);
     }
 
     private static TradingDecisionContext context(String price, String atr,
                                                   List<BigDecimal> ma7,
                                                   List<BigDecimal> ma25,
+                                                  List<BigDecimal> confirmMa7,
+                                                  List<BigDecimal> confirmMa25,
                                                   boolean shielded,
                                                   TradingExecutionState state) {
         QuantForecastCycle forecast = new QuantForecastCycle();
@@ -262,10 +341,15 @@ class MaSlopeExitPlaybookTest {
                       "atr14_closed": %s,
                       "ma7_series_closed": %s,
                       "ma25_series_closed": %s
+                    },
+                    "15m": {
+                      "atr14_closed": %s,
+                      "ma7_series_closed": %s,
+                      "ma25_series_closed": %s
                     }
                   }
                 }
-                """.formatted(atr, atr, array(ma7), array(ma25)));
+                """.formatted(atr, atr, array(ma7), array(ma25), atr, array(confirmMa7), array(confirmMa25)));
         MarketContext market = MarketContext.parse(forecast, bd(price), KlineInterval.M5);
         return new TradingDecisionContext("BTCUSDT", null, List.of(), forecast, List.of(), List.of(),
                 bd(price), bd(price), bd("100000"), null, state,

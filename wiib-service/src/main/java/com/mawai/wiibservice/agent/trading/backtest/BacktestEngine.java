@@ -16,6 +16,9 @@ import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.agent.tool.CryptoIndicatorCalculator;
+import com.mawai.wiibservice.agent.trading.maslope.MaSlopeStateClassifier;
+import com.mawai.wiibservice.agent.trading.maslope.MaSlopeStateClassifier.MaState;
+import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
@@ -112,16 +115,15 @@ public class BacktestEngine {
         log.info("[Backtest] 开始回测 {} | baseInterval={} | K线数={} | 初始资金={}",
                 symbol, baseInterval.getCode(), baseKlines.size(), initialBalance.toPlainString());
 
-        long baseTimeMs = System.currentTimeMillis();
+        long fallbackBaseTimeMs = System.currentTimeMillis();
         for (int i = MIN_KLINES_FOR_INDICATOR; i < baseKlines.size(); i++) {
-            // 回测时间按主决策周期推进，保证 M3/M5 切换后持仓时长一致。
-            long mockNowMs = baseTimeMs
-                    + (i - MIN_KLINES_FOR_INDICATOR) * (long) baseInterval.getMinutes() * 60_000L;
+            BigDecimal[] bar = baseKlines.get(i);
+            // 用交易所K线 closeTime 作为信号成交时间；无时间字段的旧测试数据才退回等间隔模拟时间。
+            long mockNowMs = klineCloseTimeMs(bar, i, fallbackBaseTimeMs);
             executionState.setMockNowMs(mockNowMs);
             LocalDateTime mockNow = LocalDateTime.ofInstant(
                     Instant.ofEpochMilli(mockNowMs), ZoneId.systemDefault());
 
-            BigDecimal[] bar = baseKlines.get(i);
             BigDecimal high = bar[0];
             BigDecimal low = bar[1];
             BigDecimal close = bar[2];
@@ -134,11 +136,11 @@ public class BacktestEngine {
             List<BigDecimal[]> baseWindow = baseKlines.subList(0, i + 1);
             Map<String, Object> indicatorsPrimary = CryptoIndicatorCalculator.calcAll(baseWindow, true);
 
-            List<BigDecimal[]> klines15m = aggregate(baseWindow, barsPer15m);
+            List<BigDecimal[]> klines15m = aggregate(baseWindow, barsPer15m, KlineInterval.M15);
             Map<String, Object> indicators15m = klines15m.size() >= 30
                     ? CryptoIndicatorCalculator.calcAll(klines15m, true) : Collections.emptyMap();
 
-            List<BigDecimal[]> klines1h = aggregate(baseWindow, barsPer1h);
+            List<BigDecimal[]> klines1h = aggregate(baseWindow, barsPer1h, KlineInterval.H1);
             Map<String, Object> indicators1h = klines1h.size() >= 30
                     ? CryptoIndicatorCalculator.calcAll(klines1h, true) : Collections.emptyMap();
 
@@ -168,7 +170,7 @@ public class BacktestEngine {
 
             // 7. 标记开仓bar index（如果开了新仓）
             if (execResult.action().startsWith("OPEN_")) {
-                tools.markOpenBarIndex(i);
+                tools.markOpenBarIndex(i, entryDiagnosticsJson(forecast, close));
             }
 
             // 8. 记录决策
@@ -197,11 +199,14 @@ public class BacktestEngine {
 
         // 强制平掉剩余仓位
         forceCloseAll(tools);
+        // 强平发生在最后一根K线之后，必须补记一次权益，否则 finalEquity 会停在强平前的浮盈亏状态。
+        result.recordEquity(tools.getTotalEquity());
 
         // 汇总交易记录
         for (BacktestTradingTools.ClosedTrade ct : tools.getClosedTrades()) {
             result.addTrade(new BacktestResult.Trade(
-                    ct.openBarIndex(), ct.closeBarIndex(), ct.side(), ct.strategy(),
+                    ct.openBarIndex(), ct.closeBarIndex(), ct.openTime(), ct.closeTime(),
+                    ct.entryDiagnosticsJson(), ct.side(), ct.strategy(),
                     ct.entryPrice(), ct.exitPrice(), ct.quantity(), ct.leverage(),
                     ct.pnl(), ct.fee(), ct.rMultiple(), ct.exitReason()
             ));
@@ -211,13 +216,94 @@ public class BacktestEngine {
         return result;
     }
 
+    private String entryDiagnosticsJson(QuantForecastCycle forecast, BigDecimal price) {
+        try {
+            MarketContext ctx = MarketContext.parse(forecast, price, baseInterval);
+            MaState primary = MaSlopeStateClassifier.classifyPrimary(ctx);
+            MaState previous = MaSlopeStateClassifier.classifyPreviousPrimary(ctx);
+            MaState confirm = MaSlopeStateClassifier.classifyConfirm(ctx);
+
+            JSONObject json = new JSONObject();
+            json.put("decisionInterval", baseInterval.getCode());
+            json.put("price", price);
+            json.put("regime", ctx.regime);
+            json.put("adx", ctx.adx);
+            json.put("macdCross", ctx.macdCross);
+            json.put("macdHistTrend", ctx.macdHistTrend);
+            json.put("closeTrend", ctx.closeTrend);
+            json.put("closeTrendClosed3", ctx.closeTrendClosed3);
+            json.put("closeTail", tail(ctx.closeSeriesClosed, 9));
+            json.put("closePositionClosed", ctx.closePositionClosed);
+            json.put("rangeAtrClosed", ctx.rangeAtrClosed);
+            json.put("closeBreakoutHigh10Closed", ctx.closeBreakoutHigh10Closed);
+            json.put("closeBreakdownLow10Closed", ctx.closeBreakdownLow10Closed);
+            json.put("volumeRatioClosedAvg", ctx.volumeRatioClosedSeries.stream()
+                    .filter(v -> v != null && Double.isFinite(v))
+                    .mapToDouble(Double::doubleValue)
+                    .average()
+                    .orElse(0.0));
+            json.put("maAlignment", ctx.maAlignment);
+            json.put("maAlignment15m", ctx.maAlignment15m);
+            json.put("maAlignment1h", ctx.maAlignment1h);
+            json.put("primaryMa7Tail", tail(ctx.ma7SeriesClosed, 9));
+            json.put("primaryMa25Tail", tail(ctx.ma25SeriesClosed, 9));
+            json.put("confirmMa7Tail", tail(ctx.confirmMa7SeriesClosed, 9));
+            json.put("confirmMa25Tail", tail(ctx.confirmMa25SeriesClosed, 9));
+            putState(json, "primary", primary);
+            putState(json, "previousPrimary", previous);
+            putState(json, "confirm", confirm);
+            return json.toJSONString();
+        } catch (Exception e) {
+            JSONObject json = new JSONObject();
+            json.put("error", e.getMessage());
+            return json.toJSONString();
+        }
+    }
+
+    private void putState(JSONObject json, String prefix, MaState state) {
+        if (state == null) return;
+        json.put(prefix + "State", state.state().name());
+        json.put(prefix + "Ma7SlopeAtr", state.ma7SlopeAtr());
+        json.put(prefix + "Ma7PrevSlopeAtr", state.ma7PrevSlopeAtr());
+        json.put(prefix + "Ma25SlopeAtr", state.ma25SlopeAtr());
+        json.put(prefix + "SpreadAtr", state.spreadAtr());
+        json.put(prefix + "SpreadDeltaAtr", state.spreadDeltaAtr());
+        json.put(prefix + "PriceDistanceAtr", state.priceDistanceAtr());
+    }
+
+    private List<BigDecimal> tail(List<BigDecimal> values, int limit) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        int from = Math.max(0, values.size() - limit);
+        return values.subList(from, values.size());
+    }
+
+    private long klineCloseTimeMs(BigDecimal[] bar, int index, long fallbackBaseTimeMs) {
+        if (bar != null && bar.length > 6 && bar[6] != null && bar[6].signum() > 0) {
+            return bar[6].longValue();
+        }
+        if (bar != null && bar.length > 5 && bar[5] != null && bar[5].signum() > 0) {
+            return bar[5].longValue() + (long) baseInterval.getMinutes() * 60_000L - 1;
+        }
+        return fallbackBaseTimeMs
+                + (index - MIN_KLINES_FOR_INDICATOR) * (long) baseInterval.getMinutes() * 60_000L;
+    }
+
     // ==================== K线聚合 ====================
 
     /**
      * 将基准周期 K 线聚合为更高周期。
      * [high, low, close, volume, takerBuyVol, openTime, closeTime] → 取period根合并为一根。
      */
-    private static List<BigDecimal[]> aggregate(List<BigDecimal[]> base, int period) {
+    static List<BigDecimal[]> aggregate(List<BigDecimal[]> base, int period, KlineInterval targetInterval) {
+        if (hasKlineTimestamps(base)) {
+            return aggregateByExchangeTime(base, period, targetInterval);
+        }
+        return aggregateByCount(base, period);
+    }
+
+    private static List<BigDecimal[]> aggregateByCount(List<BigDecimal[]> base, int period) {
         List<BigDecimal[]> result = new ArrayList<>();
         int totalBars = base.size() / period;
         for (int i = 0; i < totalBars; i++) {
@@ -244,6 +330,77 @@ public class BacktestEngine {
             }
         }
         return result;
+    }
+
+    private static List<BigDecimal[]> aggregateByExchangeTime(List<BigDecimal[]> base, int period,
+                                                              KlineInterval targetInterval) {
+        List<BigDecimal[]> result = new ArrayList<>();
+        long targetMs = targetInterval.getMinutes() * 60_000L;
+        Bucket bucket = null;
+        Long currentBucketStart = null;
+
+        for (BigDecimal[] bar : base) {
+            long openTime = bar[5].longValue();
+            long bucketStart = Math.floorDiv(openTime, targetMs) * targetMs;
+            if (currentBucketStart == null || bucketStart != currentBucketStart) {
+                addFullBucket(result, bucket, period);
+                bucket = new Bucket(bar);
+                currentBucketStart = bucketStart;
+                continue;
+            }
+            bucket.add(bar);
+        }
+        addFullBucket(result, bucket, period);
+        return result;
+    }
+
+    private static boolean hasKlineTimestamps(List<BigDecimal[]> base) {
+        return base != null && !base.isEmpty() && base.getFirst().length > 6
+                && base.getFirst()[5] != null && base.getFirst()[6] != null;
+    }
+
+    private static void addFullBucket(List<BigDecimal[]> result, Bucket bucket, int period) {
+        if (bucket != null && bucket.count == period) {
+            result.add(bucket.toKline());
+        }
+    }
+
+    private static final class Bucket {
+        private BigDecimal high;
+        private BigDecimal low;
+        private BigDecimal close;
+        private BigDecimal volume;
+        private BigDecimal takerBuyVol;
+        private final BigDecimal openTime;
+        private BigDecimal closeTime;
+        private int count;
+
+        private Bucket(BigDecimal[] first) {
+            high = first[0];
+            low = first[1];
+            close = first[2];
+            volume = first[3];
+            takerBuyVol = first.length > 4 ? first[4] : BigDecimal.ZERO;
+            openTime = first[5];
+            closeTime = first[6];
+            count = 1;
+        }
+
+        private void add(BigDecimal[] bar) {
+            if (bar[0].compareTo(high) > 0) high = bar[0];
+            if (bar[1].compareTo(low) < 0) low = bar[1];
+            close = bar[2];
+            volume = volume.add(bar[3]);
+            if (bar.length > 4 && bar[4] != null) {
+                takerBuyVol = takerBuyVol.add(bar[4]);
+            }
+            closeTime = bar[6];
+            count++;
+        }
+
+        private BigDecimal[] toKline() {
+            return new BigDecimal[]{high, low, close, volume, takerBuyVol, openTime, closeTime};
+        }
     }
 
     // ==================== 构建 QuantForecastCycle ====================
@@ -293,6 +450,11 @@ public class BacktestEngine {
         primaryTf.put("ma_alignment", getInt(indPrimary, "ma_alignment"));
         primaryTf.put("close_trend", getStr(indPrimary, "close_trend"));
         primaryTf.put("close_trend_recent_3_closed", getStr(indPrimary, "close_trend_recent_3_closed"));
+        primaryTf.put("close_series_closed", indPrimary.get("close_series_closed"));
+        primaryTf.put("close_position_closed", getDbl(indPrimary, "close_position_closed"));
+        primaryTf.put("range_atr_closed", getDbl(indPrimary, "range_atr_closed"));
+        primaryTf.put("close_breakout_high_10_closed", indPrimary.get("close_breakout_high_10_closed"));
+        primaryTf.put("close_breakdown_low_10_closed", indPrimary.get("close_breakdown_low_10_closed"));
         primaryTf.put("boll_pb", getDbl(indPrimary, "boll_pb"));
         primaryTf.put("boll_bandwidth", getDbl(indPrimary, "boll_bandwidth"));
         primaryTf.put("volume_ratio", getDbl(indPrimary, "volume_ratio"));
@@ -513,7 +675,7 @@ public class BacktestEngine {
     private void forceCloseAll(BacktestTradingTools tools) {
         List<FuturesPositionDTO> remaining = new ArrayList<>(tools.getOpenPositions(symbol));
         for (FuturesPositionDTO pos : remaining) {
-            tools.closePosition(pos.getId(), pos.getQuantity());
+            tools.closePositionWithReason(pos.getId(), pos.getQuantity(), "FORCE_CLOSE");
         }
     }
 

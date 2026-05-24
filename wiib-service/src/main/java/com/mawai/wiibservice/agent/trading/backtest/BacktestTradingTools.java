@@ -50,12 +50,12 @@ public class BacktestTradingTools implements TradingOperations {
     private final List<FuturesPositionDTO> openPositions = new ArrayList<>();
     private final List<ClosedTrade> closedTrades = new ArrayList<>();
     private final Map<Long, BigDecimal> initialRiskPerUnitByPosition = new HashMap<>();
+    private final Map<Long, String> entryDiagnosticsJsonByPosition = new HashMap<>();
     @Setter
     private int currentBarIndex = 0;
     @Setter
     private LocalDateTime currentTime;
     private final String symbol;
-    private static final int MAX_SYMBOL_POSITIONS = 3;
 
     /**
      * 已平仓交易记录，用于生成 BacktestResult.Trade。
@@ -64,6 +64,9 @@ public class BacktestTradingTools implements TradingOperations {
             long positionId,
             int openBarIndex,
             int closeBarIndex,
+            LocalDateTime openTime,
+            LocalDateTime closeTime,
+            String entryDiagnosticsJson,
             String side,
             String strategy,
             BigDecimal entryPrice,
@@ -122,21 +125,6 @@ public class BacktestTradingTools implements TradingOperations {
             return OpenResult.fromMessage("开仓失败: 余额不足 需要" + totalCost.toPlainString() + " 可用" + balance.toPlainString());
         }
 
-        // symbol 级别限制
-        List<FuturesPositionDTO> currentSymbolOpen = openPositions.stream()
-                .filter(p -> "OPEN".equals(p.getStatus()))
-                .toList();
-        if (!currentSymbolOpen.isEmpty()) {
-            boolean hasOpposite = currentSymbolOpen.stream()
-                    .anyMatch(p -> !side.equals(p.getSide()));
-            if (hasOpposite) {
-                return OpenResult.fromMessage("开仓失败: " + symbol + "已有" + currentSymbolOpen.getFirst().getSide() + "持仓，暂不允许开反向新仓");
-            }
-        }
-        if (currentSymbolOpen.size() >= MAX_SYMBOL_POSITIONS) {
-            return OpenResult.fromMessage("开仓失败: " + symbol + "已有" + currentSymbolOpen.size() + "个持仓，上限" + MAX_SYMBOL_POSITIONS);
-        }
-
         // 扣除保证金和手续费
         balance = balance.subtract(totalCost);
         frozenBalance = frozenBalance.add(margin);
@@ -185,6 +173,11 @@ public class BacktestTradingTools implements TradingOperations {
 
     @Override
     public String closePosition(Long positionId, BigDecimal quantity) {
+        return closePositionWithReason(positionId, quantity, "SIGNAL_CLOSE");
+    }
+
+    @Override
+    public String closePositionWithReason(Long positionId, BigDecimal quantity, String reason) {
         FuturesPositionDTO pos = findPosition(positionId);
         if (pos == null) {
             return "平仓失败: 仓位不存在 id=" + positionId;
@@ -196,7 +189,7 @@ public class BacktestTradingTools implements TradingOperations {
         }
 
         BigDecimal exitPrice = getCurrentPrice();
-        doClose(pos, closeQty, exitPrice, "SIGNAL_CLOSE");
+        doClose(pos, closeQty, exitPrice, normalizeExitReason(reason));
 
         return "平仓成功|posId=" + positionId;
     }
@@ -332,7 +325,8 @@ public class BacktestTradingTools implements TradingOperations {
         BigDecimal openNotional = closeQty.multiply(pos.getEntryPrice());
         BigDecimal openFeeAlloc = openNotional.multiply(OPEN_FEE_RATE).setScale(8, RoundingMode.HALF_UP);
         BigDecimal totalFeeForRecord = openFeeAlloc.add(closeFee);
-        BigDecimal netPnl = rawPnl.subtract(closeFee);
+        BigDecimal cashPnl = rawPnl.subtract(closeFee);
+        BigDecimal netPnl = rawPnl.subtract(totalFeeForRecord);
         BigDecimal rMultiple = calcRMultiple(pos, exitPrice);
 
         // 释放保证金
@@ -345,13 +339,17 @@ public class BacktestTradingTools implements TradingOperations {
         }
 
         frozenBalance = frozenBalance.subtract(marginRelease);
-        balance = balance.add(marginRelease).add(netPnl);
+        // 开仓手续费已在 openPosition 扣过，余额这里只加回保证金和扣平仓费后的现金盈亏。
+        balance = balance.add(marginRelease).add(cashPnl);
 
         // 记录平仓
         closedTrades.add(new ClosedTrade(
                 pos.getId(),
                 findOpenBarIndex(pos),
                 currentBarIndex,
+                pos.getCreatedAt(),
+                currentTime,
+                entryDiagnosticsJsonByPosition.get(pos.getId()),
                 pos.getSide(),
                 pos.getMemo() != null ? pos.getMemo() : "UNKNOWN",
                 pos.getEntryPrice(),
@@ -370,6 +368,7 @@ public class BacktestTradingTools implements TradingOperations {
             pos.setClosedPnl(netPnl);
             openPositions.remove(pos);
             initialRiskPerUnitByPosition.remove(pos.getId());
+            entryDiagnosticsJsonByPosition.remove(pos.getId());
         } else {
             pos.setQuantity(pos.getQuantity().subtract(closeQty));
             pos.setMargin(pos.getMargin().subtract(marginRelease));
@@ -422,6 +421,15 @@ public class BacktestTradingTools implements TradingOperations {
         return priceDiff.divide(risk, 8, RoundingMode.HALF_UP);
     }
 
+    private String normalizeExitReason(String reason) {
+        if (reason == null || reason.isBlank()) {
+            return "SIGNAL_CLOSE";
+        }
+        String trimmed = reason.trim();
+        int space = trimmed.indexOf(' ');
+        return space > 0 ? trimmed.substring(0, space) : trimmed;
+    }
+
     // ==================== 状态查询 ====================
 
     /**
@@ -464,9 +472,16 @@ public class BacktestTradingTools implements TradingOperations {
      * 利用 FuturesPositionDTO.fundingFeeTotal 字段临时存储开仓bar index。
      */
     public void markOpenBarIndex(int barIndex) {
+        markOpenBarIndex(barIndex, null);
+    }
+
+    public void markOpenBarIndex(int barIndex, String entryDiagnosticsJson) {
         if (!openPositions.isEmpty()) {
             FuturesPositionDTO lastOpened = openPositions.getLast();
             lastOpened.setFundingFeeTotal(BigDecimal.valueOf(barIndex));
+            if (entryDiagnosticsJson != null && !entryDiagnosticsJson.isBlank()) {
+                entryDiagnosticsJsonByPosition.put(lastOpened.getId(), entryDiagnosticsJson);
+            }
         }
     }
 }

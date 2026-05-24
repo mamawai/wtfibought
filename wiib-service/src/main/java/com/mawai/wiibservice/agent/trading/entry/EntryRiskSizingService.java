@@ -46,6 +46,8 @@ final class EntryRiskSizingService {
     private static final AtomicLong MARGIN_CAP_TRIGGERED_COUNT = new AtomicLong();
     // 单笔仓位最多占用可用余额的保证金比例。
     private static final BigDecimal MAX_MARGIN_PCT = new BigDecimal("0.15");
+    private static final BigDecimal MASLOPE_MAX_MARGIN_PCT = BigDecimal.ONE;
+    private static final BigDecimal MASLOPE_MIN_MARGIN = new BigDecimal("400");
     // 账户权益低于峰值权益该比例时，认为进入回撤保护状态。
     private static final BigDecimal DRAWDOWN_THRESHOLD = new BigDecimal("0.85");
     private static final BigDecimal DRAWDOWN_REDUCTION = new BigDecimal("0.7");
@@ -98,12 +100,11 @@ final class EntryRiskSizingService {
         String rrGuard = checkRiskRewardGuard(symbol, candidate.path(), slDistance, tpDistance);
         if (rrGuard != null) return SizingResult.reject(candidate.label() + ": " + rrGuard);
 
-        int leverage = Math.min(signal.getMaxLeverage() != null ? signal.getMaxLeverage() : 10,
-                candidate.maxLeverage());
+        int leverage = leverageFor(candidate, signal);
         String liquidationCheck = checkLiquidationBuffer(candidate.isLong(), price, slDistance, leverage);
         if (liquidationCheck != null) return SizingResult.reject(candidate.label() + ": " + liquidationCheck);
 
-        BigDecimal quantity = calcQuantityByRisk(user, totalEquity, price, slDistance, leverage,
+        BigDecimal quantity = calcQuantityByRisk(candidate.path(), user, totalEquity, price, slDistance, leverage,
                 effectiveScale);
         if (quantity == null) {
             return SizingResult.reject(candidate.label() + ": 仓位计算失败(余额不足或超限)");
@@ -111,7 +112,7 @@ final class EntryRiskSizingService {
 
         BigDecimal drawdownReferenceEquity = drawdownReferenceEquity(totalEquity, tools);
         boolean inDrawdown = isInDrawdown(totalEquity, drawdownReferenceEquity);
-        if (inDrawdown) {
+        if (inDrawdown && !PATH_MA_SLOPE.equals(candidate.path())) {
             leverage = Math.max(5, (int) (leverage * DRAWDOWN_REDUCTION.doubleValue()));
             quantity = quantity.multiply(DRAWDOWN_REDUCTION).setScale(8, RoundingMode.HALF_DOWN);
         }
@@ -160,6 +161,14 @@ final class EntryRiskSizingService {
             return ctx.atrClosed;
         }
         return ctx.atr;
+    }
+
+    private int leverageFor(EntryStrategyCandidate candidate, QuantSignalDecision signal) {
+        if (PATH_MA_SLOPE.equals(candidate.path())) {
+            return candidate.maxLeverage();
+        }
+        return Math.min(signal.getMaxLeverage() != null ? signal.getMaxLeverage() : 10,
+                candidate.maxLeverage());
     }
 
     /**
@@ -260,7 +269,7 @@ final class EntryRiskSizingService {
      * 信号侧风险偏好已在 RiskGate 阶段通过 confidence/disagreement/env 衰减进 effectiveScale。
      * 终极仓位上限只走 MAX_MARGIN_PCT。</p>
      */
-    private BigDecimal calcQuantityByRisk(User user, BigDecimal totalEquity,
+    private BigDecimal calcQuantityByRisk(String path, User user, BigDecimal totalEquity,
                                           BigDecimal price, BigDecimal slDistance,
                                           int leverage, double scale) {
         BigDecimal balance = user.getBalance() != null ? user.getBalance() : BigDecimal.ZERO;
@@ -279,7 +288,17 @@ final class EntryRiskSizingService {
 
         BigDecimal margin = quantity.multiply(price)
                 .divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
-        BigDecimal maxMargin = balance.multiply(MAX_MARGIN_PCT);
+        BigDecimal maxMarginPct = PATH_MA_SLOPE.equals(path) ? MASLOPE_MAX_MARGIN_PCT : MAX_MARGIN_PCT;
+        BigDecimal maxMargin = balance.multiply(maxMarginPct);
+        if (PATH_MA_SLOPE.equals(path)) {
+            if (balance.compareTo(MASLOPE_MIN_MARGIN) < 0
+                    || maxMargin.compareTo(MASLOPE_MIN_MARGIN) < 0) {
+                return null;
+            }
+            // 本轮实验按用户指定固定保证金，不让风险预算把小本金回测仓位压变形。
+            return MASLOPE_MIN_MARGIN.multiply(BigDecimal.valueOf(leverage))
+                    .divide(price, 8, RoundingMode.DOWN);
+        }
         if (margin.compareTo(maxMargin) > 0) {
             BigDecimal marginBudget = maxMargin.subtract(new BigDecimal("0.01")).max(BigDecimal.ZERO);
             BigDecimal maxMarginQuantity = marginBudget.multiply(BigDecimal.valueOf(leverage))
@@ -308,18 +327,17 @@ final class EntryRiskSizingService {
      * <p>生产环境优先使用熔断服务维护的 peak equity；没有峰值时退回初始资金和当前权益中的较大值。</p>
      */
     private BigDecimal drawdownReferenceEquity(BigDecimal totalEquity, TradingOperations tools) {
-        BigDecimal reference = DeterministicTradingExecutor.INITIAL_BALANCE;
-        if (totalEquity != null && totalEquity.compareTo(reference) > 0) {
-            reference = totalEquity;
-        }
         try {
             BigDecimal peakEquity = tools != null ? tools.peakEquity() : null;
-            if (peakEquity != null && peakEquity.compareTo(reference) > 0) {
-                reference = peakEquity;
+            if (peakEquity != null && peakEquity.signum() > 0) {
+                return peakEquity;
             }
         } catch (Exception e) {
             log.warn("[EntryDecision] peakEquity读取失败，使用本地基准 totalEquity={}", totalEquity, e);
         }
+        BigDecimal reference = totalEquity != null && totalEquity.signum() > 0
+                ? totalEquity
+                : DeterministicTradingExecutor.INITIAL_BALANCE;
         return reference;
     }
 

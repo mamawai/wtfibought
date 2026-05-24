@@ -78,6 +78,13 @@ public interface TradingOperations {
     String closePosition(Long positionId, BigDecimal quantity);
 
     /**
+     * 带业务原因的平仓。生产实现默认忽略 reason，回测实现用它拆分主动退出来源。
+     */
+    default String closePositionWithReason(Long positionId, BigDecimal quantity, String reason) {
+        return closePosition(positionId, quantity);
+    }
+
+    /**
      * 修改止损。
      */
     String setStopLoss(Long positionId, BigDecimal stopLossPrice, BigDecimal quantity);

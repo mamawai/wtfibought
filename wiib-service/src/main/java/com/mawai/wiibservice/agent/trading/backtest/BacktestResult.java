@@ -2,6 +2,7 @@ package com.mawai.wiibservice.agent.trading.backtest;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -16,6 +17,7 @@ public class BacktestResult {
     private static final String PATH_BREAKOUT = "BREAKOUT";
     private static final String PATH_MR = "MR";
     private static final String PATH_LEGACY_TREND = "LEGACY_TREND";
+    private static final String PATH_MA_SLOPE = "MA_SLOPE";
 
     // ==================== 交易记录 ====================
 
@@ -25,8 +27,11 @@ public class BacktestResult {
     public record Trade(
             int barIndex,           // 开仓所在K线索引
             int closeBarIndex,      // 平仓所在K线索引
+            LocalDateTime openTime,
+            LocalDateTime closeTime,
+            String entryDiagnosticsJson,
             String side,            // "LONG" / "SHORT"
-            String strategy,        // "LEGACY_TREND" / "MR" / "BREAKOUT"
+            String strategy,        // "LEGACY_TREND" / "MR" / "BREAKOUT" / "MA_SLOPE"
             BigDecimal entryPrice,
             BigDecimal exitPrice,
             BigDecimal quantity,
@@ -35,7 +40,41 @@ public class BacktestResult {
             BigDecimal fee,         // 总手续费
             BigDecimal rMultiple,   // 以开仓初始风险为基准；缺失风险时为 null
             String exitReason       // "SL" / "TP" / "SIGNAL_CLOSE" / "TRAILING_STOP" / "TIMEOUT" / "MANUAL"
-    ) {}
+    ) {
+        public Trade(int barIndex,
+                     int closeBarIndex,
+                     String side,
+                     String strategy,
+                     BigDecimal entryPrice,
+                     BigDecimal exitPrice,
+                     BigDecimal quantity,
+                     int leverage,
+                     BigDecimal pnl,
+                     BigDecimal fee,
+                     BigDecimal rMultiple,
+                     String exitReason) {
+            this(barIndex, closeBarIndex, null, null, null, side, strategy, entryPrice, exitPrice,
+                    quantity, leverage, pnl, fee, rMultiple, exitReason);
+        }
+
+        public Trade(int barIndex,
+                     int closeBarIndex,
+                     LocalDateTime openTime,
+                     LocalDateTime closeTime,
+                     String side,
+                     String strategy,
+                     BigDecimal entryPrice,
+                     BigDecimal exitPrice,
+                     BigDecimal quantity,
+                     int leverage,
+                     BigDecimal pnl,
+                     BigDecimal fee,
+                     BigDecimal rMultiple,
+                     String exitReason) {
+            this(barIndex, closeBarIndex, openTime, closeTime, null, side, strategy, entryPrice, exitPrice,
+                    quantity, leverage, pnl, fee, rMultiple, exitReason);
+        }
+    }
 
     /**
      * 单策略路径统计，便于判断哪条路径真实贡献收益/回撤。
@@ -173,12 +212,17 @@ public class BacktestResult {
         return List.of(
                 statsByStrategy(PATH_LEGACY_TREND),
                 statsByStrategy(PATH_MR),
-                statsByStrategy(PATH_BREAKOUT)
+                statsByStrategy(PATH_BREAKOUT),
+                statsByStrategy(PATH_MA_SLOPE)
         );
     }
 
     public List<Trade> getTrades() {
         return List.copyOf(trades);
+    }
+
+    public List<BigDecimal> getEquityCurve() {
+        return List.copyOf(equityCurve);
     }
 
     // ==================== 报告输出 ====================
@@ -198,6 +242,7 @@ public class BacktestResult {
                 %s
                 %s
                 %s
+                %s
                 ============================""",
                 equityCurve.size(),
                 initialEquity.toPlainString(), finalEquity().toPlainString(), returnPct() * 100,
@@ -209,7 +254,8 @@ public class BacktestResult {
                 avgR(),
                 formatStrategyStats(statsByStrategy(PATH_LEGACY_TREND)),
                 formatStrategyStats(statsByStrategy(PATH_MR)),
-                formatStrategyStats(statsByStrategy(PATH_BREAKOUT))
+                formatStrategyStats(statsByStrategy(PATH_BREAKOUT)),
+                formatStrategyStats(statsByStrategy(PATH_MA_SLOPE))
         );
     }
 

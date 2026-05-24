@@ -158,10 +158,12 @@ public class CryptoIndicatorCalculator {
 
         // --- ATR (Wilder/RMA 平滑) ---
         r.put("atr14", atr(highs, lows, closes, 14));
+        BigDecimal atrClosedForStructure = null;
         List<BigDecimal> atrClosedSeries = atrSeriesClosed(
                 highs, lows, closes, 14, MASLOPE_ATR_MEAN_RECENT + 1, lastClosed);
         if (!atrClosedSeries.isEmpty()) {
             BigDecimal atrClosed = atrClosedSeries.getLast();
+            atrClosedForStructure = atrClosed;
             r.put("atr_series_closed", atrClosedSeries);
             r.put("atr14_closed", atrClosed);
             BigDecimal atrMean30 = tailMeanExcludingLast(atrClosedSeries, MASLOPE_ATR_MEAN_RECENT);
@@ -211,7 +213,47 @@ public class CryptoIndicatorCalculator {
         r.put("close_trend", trendSummary(closes, 5));
         // 最近 3 根"已收盘"的趋势，避免当前未收盘 bar 噪音影响判断
         r.put("close_trend_recent_3_closed", closedTrendSummary(closes, 3, lastClosed));
+        r.put("close_series_closed", closedSeries(closes, MASLOPE_MA_SERIES_RECENT, lastClosed));
+        r.putAll(closedKlineStructure(highs, lows, closes, atrClosedForStructure, 10, lastClosed));
 
+        return r;
+    }
+
+    private static Map<String, Object> closedKlineStructure(List<BigDecimal> highs,
+                                                            List<BigDecimal> lows,
+                                                            List<BigDecimal> closes,
+                                                            BigDecimal atrClosed,
+                                                            int breakoutLookback,
+                                                            boolean lastClosed) {
+        int size = Math.min(highs.size(), Math.min(lows.size(), closes.size()));
+        int closedIndex = closedEndExclusive(size, lastClosed) - 1;
+        if (closedIndex < 1) {
+            return Map.of();
+        }
+
+        Map<String, Object> r = new LinkedHashMap<>();
+        BigDecimal high = highs.get(closedIndex);
+        BigDecimal low = lows.get(closedIndex);
+        BigDecimal close = closes.get(closedIndex);
+        BigDecimal range = high.subtract(low);
+        if (range.signum() > 0) {
+            BigDecimal closePosition = close.subtract(low)
+                    .divide(range, 4, RoundingMode.HALF_UP);
+            r.put("close_position_closed", closePosition);
+            if (atrClosed != null && atrClosed.signum() > 0) {
+                r.put("range_atr_closed", range.divide(atrClosed, 4, RoundingMode.HALF_UP));
+            }
+        }
+
+        int start = Math.max(0, closedIndex - breakoutLookback);
+        BigDecimal prevHigh = highs.get(start);
+        BigDecimal prevLow = lows.get(start);
+        for (int i = start + 1; i < closedIndex; i++) {
+            if (highs.get(i).compareTo(prevHigh) > 0) prevHigh = highs.get(i);
+            if (lows.get(i).compareTo(prevLow) < 0) prevLow = lows.get(i);
+        }
+        r.put("close_breakout_high_10_closed", close.compareTo(prevHigh) > 0);
+        r.put("close_breakdown_low_10_closed", close.compareTo(prevLow) < 0);
         return r;
     }
 
@@ -368,6 +410,18 @@ public class CryptoIndicatorCalculator {
             result.add(sum.divide(BigDecimal.valueOf(period), SCALE, RoundingMode.HALF_UP));
         }
         return result;
+    }
+
+    static List<BigDecimal> closedSeries(List<BigDecimal> data, int recent, boolean lastClosed) {
+        if (data == null || recent <= 0) {
+            return List.of();
+        }
+        int closedSize = closedEndExclusive(data.size(), lastClosed);
+        if (closedSize <= 0) {
+            return List.of();
+        }
+        int start = Math.max(0, closedSize - recent);
+        return new ArrayList<>(data.subList(start, closedSize));
     }
 
     /**

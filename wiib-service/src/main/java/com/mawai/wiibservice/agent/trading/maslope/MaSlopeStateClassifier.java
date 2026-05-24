@@ -188,6 +188,17 @@ public final class MaSlopeStateClassifier {
             return state == MaSignalState.STRONG_DOWN || state == MaSignalState.DOWN_ACCELERATING;
         }
 
+        public boolean sameBroadDirection(boolean positionLong) {
+            if (positionLong) {
+                return state == MaSignalState.STRONG_UP
+                        || state == MaSignalState.UP_ACCELERATING
+                        || state == MaSignalState.UP_DECELERATING;
+            }
+            return state == MaSignalState.STRONG_DOWN
+                    || state == MaSignalState.DOWN_ACCELERATING
+                    || state == MaSignalState.DOWN_DECELERATING;
+        }
+
         public boolean extinguishingAgainstPosition(boolean positionLong, double exitSlopeAtr) {
             if (positionLong) {
                 return (state == MaSignalState.UP_DECELERATING

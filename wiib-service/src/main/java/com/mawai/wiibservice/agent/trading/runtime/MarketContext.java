@@ -86,6 +86,13 @@ public final class MarketContext {
     public final String closeTrend;
     // 近 3 根已闭合主决策周期 K 线收盘趋势；MR 失效只看闭合窗口。
     public final String closeTrendClosed3;
+    // 最近闭合收盘价序列，用于判断是否回踩 MA7/MA25 后重新站回趋势侧。
+    public final List<BigDecimal> closeSeriesClosed;
+    // 最近闭合 K 线的收盘位置和波动结构；MaSlope 用来区分真突破和假斜率。
+    public final Double closePositionClosed;
+    public final Double rangeAtrClosed;
+    public final boolean closeBreakoutHigh10Closed;
+    public final boolean closeBreakdownLow10Closed;
     // 15m RSI，当前作为中周期指标保留，便于后续风控扩展。
     public final Double rsi15m;
     // 买卖盘不平衡度，用于微结构方向判断。
@@ -121,7 +128,11 @@ public final class MarketContext {
                           Double bollPb, Double bollBandwidth, boolean bollSqueeze,
                           boolean bollExpanding5,
                           Double volumeRatio, List<Double> volumeRatioClosedSeries,
-                          String closeTrend, String closeTrendClosed3, Double rsi15m,
+                          String closeTrend, String closeTrendClosed3,
+                          List<BigDecimal> closeSeriesClosed,
+                          Double closePositionClosed, Double rangeAtrClosed,
+                          boolean closeBreakoutHigh10Closed, boolean closeBreakdownLow10Closed,
+                          Double rsi15m,
                           Double bidAskImbalance, Double takerPressure, Double oiChangeRate,
                           Double fundingDeviation, Double fundingRateExtreme,
                           Double lsrExtreme, List<String> qualityFlags) {
@@ -166,6 +177,11 @@ public final class MarketContext {
                 ? volumeRatioClosedSeries : List.of();
         this.closeTrend = closeTrend;
         this.closeTrendClosed3 = closeTrendClosed3;
+        this.closeSeriesClosed = closeSeriesClosed != null ? closeSeriesClosed : List.of();
+        this.closePositionClosed = closePositionClosed;
+        this.rangeAtrClosed = rangeAtrClosed;
+        this.closeBreakoutHigh10Closed = closeBreakoutHigh10Closed;
+        this.closeBreakdownLow10Closed = closeBreakdownLow10Closed;
         this.rsi15m = rsi15m;
         this.bidAskImbalance = bidAskImbalance;
         this.takerPressure = takerPressure;
@@ -195,12 +211,15 @@ public final class MarketContext {
         String macdCross = null, macdHistTrend = null;
         BigDecimal macdDif = null, macdDea = null, ema20 = null;
         Double bollPb = null, bollBandwidth = null, volumeRatio = null;
+        Double closePositionClosed = null, rangeAtrClosed = null;
         List<Double> volumeRatioClosedSeries = new ArrayList<>();
+        List<BigDecimal> closeSeriesClosed = List.of();
         String closeTrend = null, closeTrendClosed3 = null;
         Double rsi15m = null;
         Double bidAskImbalance = null, takerPressure = null, oiChangeRate = null;
         Double fundingDeviation = null, fundingRateExtreme = null, lsrExtreme = null;
         boolean bollSqueeze = false, bollExpanding5 = false;
+        boolean closeBreakoutHigh10Closed = false, closeBreakdownLow10Closed = false;
         List<String> qualityFlags = new ArrayList<>();
 
         if (forecast != null && forecast.getSnapshotJson() != null) {
@@ -257,6 +276,13 @@ public final class MarketContext {
                         atrSpikeRatio = finiteDouble(primary, "atr_spike_ratio");
                         closeTrend = primary.getString("close_trend");
                         closeTrendClosed3 = primary.getString("close_trend_recent_3_closed");
+                        closeSeriesClosed = readBigDecimalList(primary, "close_series_closed");
+                        closePositionClosed = finiteDouble(primary, "close_position_closed");
+                        rangeAtrClosed = finiteDouble(primary, "range_atr_closed");
+                        closeBreakoutHigh10Closed = Boolean.TRUE.equals(
+                                primary.getBoolean("close_breakout_high_10_closed"));
+                        closeBreakdownLow10Closed = Boolean.TRUE.equals(
+                                primary.getBoolean("close_breakdown_low_10_closed"));
                         bollPb = finiteDouble(primary, "boll_pb");
                         bollBandwidth = finiteDouble(primary, "boll_bandwidth");
                         bollExpanding5 = Boolean.TRUE.equals(primary.getBoolean("boll_expanding_5"));
@@ -311,7 +337,10 @@ public final class MarketContext {
                 adx, plusDi, minusDi, atrMean30Closed, atrSpikeRatio,
                 macdCross, macdHistTrend, macdDif, macdDea, ema20,
                 bollPb, bollBandwidth, bollSqueeze, bollExpanding5,
-                volumeRatio, volumeRatioClosedSeries, closeTrend, closeTrendClosed3, rsi15m,
+                volumeRatio, volumeRatioClosedSeries, closeTrend, closeTrendClosed3,
+                closeSeriesClosed,
+                closePositionClosed, rangeAtrClosed,
+                closeBreakoutHigh10Closed, closeBreakdownLow10Closed, rsi15m,
                 bidAskImbalance, takerPressure, oiChangeRate,
                 fundingDeviation, fundingRateExtreme, lsrExtreme, qualityFlags);
     }

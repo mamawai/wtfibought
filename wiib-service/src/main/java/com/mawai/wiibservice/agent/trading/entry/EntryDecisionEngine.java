@@ -23,6 +23,7 @@ import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlanFactory;
 import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
 
+import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.User;
@@ -50,6 +51,7 @@ import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.fmt;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.fmtPrice;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.hold;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.normalizeStrategyPath;
 
 /**
  * 开仓判断编排器。
@@ -81,9 +83,8 @@ public final class EntryDecisionEngine {
     private static final double TREND_SELECTION_WEIGHT = 0.7;
     private static final double MR_SELECTION_WEIGHT = 0.9;
     private static final double MA_SLOPE_SELECTION_WEIGHT = 0.85;
-
-    // 同 symbol 开仓后的最短等待时间，避免短时间重复追单。
-    private static final long ENTRY_COOLDOWN_MS = 20 * 60 * 1000L;
+    // 不是冷却：只挡同一波信号的近距离重复下注，价格顺势走开后允许继续加仓。
+    private static final BigDecimal MA_SLOPE_SCALE_IN_MIN_STEP_ATR = new BigDecimal("0.30");
 
     private final List<EntryStrategy> allStrategies;
     private final Supplier<List<String>> enabledStrategyPathsSupplier;
@@ -117,7 +118,7 @@ public final class EntryDecisionEngine {
      * 开仓主流程。
      *
      * <p>职责边界：这里只负责编排，不写具体策略规则。流程顺序必须谨慎：
-     * 先做冷却、数据质量、方向信号和风险状态硬过滤，再收集策略候选，
+     * 先做数据质量、方向信号和风险状态硬过滤，再收集策略候选，
      * 再做二层共振过滤、FLAT 特殊覆盖、候选择优，最后进入风控仓位和下单。</p>
      *
      * <p>返回 OPEN_xxx 表示实际发出开仓并且交易层确认成功；其它情况返回 HOLD，
@@ -129,17 +130,7 @@ public final class EntryDecisionEngine {
         MarketContext ctx = decision.market();
         TradingExecutionState state = decision.state();
 
-        // 20min 开仓冷却
         long nowMs = currentTimeMillis(state);
-        Long lastEntryMs = state.getLastEntryMs(symbol);
-        if (ENTRY_COOLDOWN_MS > 0 && lastEntryMs != null) {
-            long remainingMs = ENTRY_COOLDOWN_MS - (nowMs - lastEntryMs);
-            if (remainingMs > 0) {
-                long remainingMinutes = (remainingMs + 59_999) / 60_000;
-                log.info("[EntryDecision] COOLDOWN_HOLD symbol={} remaining={} min", symbol, remainingMinutes);
-                return hold("COOLDOWN_HOLD symbol=" + symbol + " remaining=" + remainingMinutes + " min");
-            }
-        }
 
         // ATR 无效则无法计算 SL/TP，直接放弃开仓
         if (ctx.atr == null || ctx.atr.signum() <= 0) {
@@ -170,6 +161,7 @@ public final class EntryDecisionEngine {
         CandidateSet candidateSet = applyStrategyConfluenceGates(
                 symbol, decision, confidence, collectCandidates(decision, confidence, referenceDirection));
         List<EntryStrategyCandidate> candidates = candidateSet.candidates();
+        List<String> rejects = new ArrayList<>(candidateSet.rejects());
 
         boolean overallFlat = decision.forecast() != null && "FLAT".equals(decision.forecast().getOverallDecision());
         if (overallFlat) {
@@ -179,12 +171,14 @@ public final class EntryDecisionEngine {
                             || (PATH_BREAKOUT.equals(c.path()) && c.score() >= BreakoutEntryStrategy.STRONG_FLAT_SCORE))
                     .toList();
             if (candidates.isEmpty()) {
-                return hold("overallDecision=FLAT，仅MR/强突破可覆盖；候选拒绝=" + summarizeRejects(candidateSet.rejects()));
+                return hold("overallDecision=FLAT，仅MR/强突破可覆盖；候选拒绝=" + summarizeRejects(rejects));
             }
         }
 
+        candidates = filterPositionAwareEntryQuality(decision, candidates, rejects);
+
         if (candidates.isEmpty()) {
-            return hold("无合格策略候选: " + summarizeRejects(candidateSet.rejects()));
+            return hold("无合格策略候选: " + summarizeRejects(rejects));
         }
 
         EntryStrategyCandidate best = chooseBest(candidates);
@@ -195,7 +189,7 @@ public final class EntryDecisionEngine {
                 mergedRiskStatus, fmt(directionRiskScale),
                 candidates.stream().map(c -> c.path() + ":" + fmt(c.score())
                         + "->" + fmt(selectionScore(c))).toList(),
-                summarizeRejects(candidateSet.rejects()));
+                summarizeRejects(rejects));
 
         DeterministicTradingExecutor.ExecutionResult inner = openCandidate(
                 symbol, user, decision.totalEquity(), referenceSignal, ctx, best,
@@ -491,6 +485,80 @@ public final class EntryDecisionEngine {
             case PATH_MA_SLOPE -> new ConfluenceGateResult(1, 1, 1, List.of("MaSlope内置确认放行"));
             default -> new ConfluenceGateResult(1, 1, 1, List.of("未知策略放行"));
         };
+    }
+
+    private List<EntryStrategyCandidate> filterPositionAwareEntryQuality(
+            TradingDecisionContext decision, List<EntryStrategyCandidate> candidates, List<String> rejects) {
+        if (candidates.isEmpty()) {
+            return candidates;
+        }
+        List<EntryStrategyCandidate> accepted = new ArrayList<>();
+        for (EntryStrategyCandidate candidate : candidates) {
+            String reject = maSlopeScaleInQualityReject(decision, candidate);
+            if (reject == null) {
+                accepted.add(candidate);
+            } else {
+                rejects.add(reject);
+            }
+        }
+        return accepted;
+    }
+
+    private String maSlopeScaleInQualityReject(TradingDecisionContext decision, EntryStrategyCandidate candidate) {
+        if (!PATH_MA_SLOPE.equals(candidate.path())
+                || decision.symbolPositions() == null || decision.symbolPositions().isEmpty()
+                || decision.market() == null || decision.market().price == null
+                || !hasPositiveAtrForScaleIn(decision.market())) {
+            return null;
+        }
+
+        BigDecimal currentPrice = decision.market().price;
+        BigDecimal requiredStep = atrForScaleIn(decision.market()).multiply(MA_SLOPE_SCALE_IN_MIN_STEP_ATR);
+        BigDecimal anchorEntry = null;
+        boolean candidateLong = "LONG".equals(candidate.side());
+        for (FuturesPositionDTO position : decision.symbolPositions()) {
+            if (!isOpenMaSlopePosition(position) || !candidate.side().equals(position.getSide())
+                    || position.getEntryPrice() == null || position.getEntryPrice().signum() <= 0) {
+                continue;
+            }
+            BigDecimal entry = position.getEntryPrice();
+            if (anchorEntry == null) {
+                anchorEntry = entry;
+            } else if (candidateLong && entry.compareTo(anchorEntry) > 0) {
+                anchorEntry = entry;
+            } else if (!candidateLong && entry.compareTo(anchorEntry) < 0) {
+                anchorEntry = entry;
+            }
+        }
+        if (anchorEntry == null) {
+            return null;
+        }
+
+        BigDecimal favorableMove = candidateLong
+                ? currentPrice.subtract(anchorEntry)
+                : anchorEntry.subtract(currentPrice);
+        if (favorableMove.compareTo(requiredStep) >= 0) {
+            return null;
+        }
+        return "MA_SLOPE: 同向加仓距离不足 move=" + fmt(favorableMove.doubleValue())
+                + " < " + fmt(requiredStep.doubleValue()) + "(0.30ATR)";
+    }
+
+    private boolean isOpenMaSlopePosition(FuturesPositionDTO position) {
+        return position != null
+                && "OPEN".equals(position.getStatus())
+                && PATH_MA_SLOPE.equals(normalizeStrategyPath(position.getMemo()));
+    }
+
+    private boolean hasPositiveAtrForScaleIn(MarketContext ctx) {
+        return atrForScaleIn(ctx).signum() > 0;
+    }
+
+    private BigDecimal atrForScaleIn(MarketContext ctx) {
+        if (ctx.atrClosed != null && ctx.atrClosed.signum() > 0) {
+            return ctx.atrClosed;
+        }
+        return ctx.atr != null ? ctx.atr : BigDecimal.ZERO;
     }
 
     /**
