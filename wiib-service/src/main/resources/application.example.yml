@@ -117,6 +117,19 @@ binance:
     - DOGEUSDT
   fallback-poll-interval: 5000
 
+# Binance USDT-M 合约 Testnet 模拟交易（仅交易；行情仍走上方主网 binance.*）
+# api-key/secret-key 在 https://testnet.binancefuture.com/
+binance-testnet:
+  rest-base-url: https://demo-fapi.binance.com
+  api-key:
+  secret-key:
+  recv-window: 5000
+  connect-timeout: 5000
+  read-timeout: 10000
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+
 # CoinDesk新闻API配置
 coindesk:
   news-api-key:
