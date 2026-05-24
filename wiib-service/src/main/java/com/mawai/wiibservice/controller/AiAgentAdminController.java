@@ -33,6 +33,7 @@ import java.util.List;
 
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_BREAKOUT;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_LEGACY_TREND;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_MA_SLOPE;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_MR;
 
 @Slf4j
@@ -45,7 +46,7 @@ public class AiAgentAdminController {
     private static final List<KlineInterval> SUPPORTED_DECISION_INTERVALS = List.of(
             KlineInterval.M1, KlineInterval.M3, KlineInterval.M5, KlineInterval.M15);
     private static final List<String> SUPPORTED_ENTRY_STRATEGIES = List.of(
-            PATH_BREAKOUT, PATH_MR, PATH_LEGACY_TREND);
+            PATH_BREAKOUT, PATH_MR, PATH_LEGACY_TREND, PATH_MA_SLOPE);
 
     private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final QuantForecastScheduler quantForecastScheduler;
@@ -381,7 +382,7 @@ public class AiAgentAdminController {
                     req.getEntryEnabledStrategies());
             for (String strategy : enabledStrategies) {
                 if (!SUPPORTED_ENTRY_STRATEGIES.contains(strategy)) {
-                    return Result.fail("entryEnabledStrategies必须是BREAKOUT/MR/LEGACY_TREND之一");
+                    return Result.fail("entryEnabledStrategies必须是BREAKOUT/MR/LEGACY_TREND/MA_SLOPE之一");
                 }
             }
         }

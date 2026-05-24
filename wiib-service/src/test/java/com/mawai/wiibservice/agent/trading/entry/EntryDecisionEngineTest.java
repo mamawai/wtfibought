@@ -122,6 +122,8 @@ class EntryDecisionEngineTest {
 
         assertThat(result.action()).isEqualTo("OPEN_LONG");
         assertThat(auto.calls).isEqualTo(1);
+        assertThat(auto.lastSymbol).isEqualTo("BTCUSDT");
+        assertThat(auto.lastInterval).isEqualTo(KlineInterval.M5);
         assertThat(tools.lastSide).isEqualTo("LONG");
     }
 
@@ -222,6 +224,8 @@ class EntryDecisionEngineTest {
 
     private static final class AutoEntryStrategy implements EntryStrategy {
         int calls;
+        String lastSymbol;
+        KlineInterval lastInterval;
 
         @Override
         public StrategyKind kind() {
@@ -236,6 +240,8 @@ class EntryDecisionEngineTest {
         @Override
         public EntryStrategyResult build(EntryStrategyContext input) {
             calls++;
+            lastSymbol = input.symbol();
+            lastInterval = input.decisionInterval();
             BigDecimal atr = input.market().atr;
             return EntryStrategyResult.accept(new EntryStrategyCandidate(
                     path(), "自动方向测试", "LONG", true, 10.0,

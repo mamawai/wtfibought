@@ -62,6 +62,19 @@ class ExitPlanRecoveryTest {
         assertThat(plan.initialSL()).isEqualByComparingTo("101040.0");
     }
 
+    @Test
+    void recoversMaSlopeAsIndependentTrendRiskPath() {
+        ExitPlan plan = ExitPlanRecovery.recover(
+                position("LONG", "100000", "99990", "MA_SLOPE", LocalDateTime.now()),
+                market("400"), SymbolProfile.of("BTCUSDT"), LocalDateTime.now());
+
+        assertThat(plan).isNotNull();
+        assertThat(plan.path()).isEqualTo(ExitPath.MA_SLOPE);
+        assertThat(plan.breakevenDone()).isTrue();
+        assertThat(plan.riskPerUnit()).isEqualByComparingTo("1040.0");
+        assertThat(plan.initialSL()).isEqualByComparingTo("98960.0");
+    }
+
     private static FuturesPositionDTO position(String side, String entry, String sl, String memo,
                                                LocalDateTime createdAt) {
         FuturesPositionDTO pos = new FuturesPositionDTO();

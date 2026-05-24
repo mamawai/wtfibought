@@ -18,6 +18,7 @@ public class TradingExecutionState {
 
     private final ConcurrentHashMap<String, Long> lastEntryMs = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Integer> reversalStreak = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, String> reversalStreakSignalKey = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, PositionPeak> positionPeaks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, ExitPlan> exitPlans = new ConcurrentHashMap<>();
 
@@ -47,12 +48,14 @@ public class TradingExecutionState {
     public void cleanupPositionMemory(Collection<Long> livePositionIds) {
         positionPeaks.keySet().removeIf(id -> !livePositionIds.contains(id));
         reversalStreak.keySet().removeIf(id -> !livePositionIds.contains(id));
+        reversalStreakSignalKey.keySet().removeIf(id -> !livePositionIds.contains(id));
         exitPlans.keySet().removeIf(id -> !livePositionIds.contains(id));
     }
 
     public void clearPosition(Long positionId) {
         positionPeaks.remove(positionId);
         reversalStreak.remove(positionId);
+        reversalStreakSignalKey.remove(positionId);
         exitPlans.remove(positionId);
     }
 
@@ -95,7 +98,43 @@ public class TradingExecutionState {
         reversalStreak.merge(positionId, 1, Integer::sum);
     }
 
+    public int incrementAndGetReversalStreak(Long positionId) {
+        if (positionId == null) {
+            return 0;
+        }
+        return reversalStreak.merge(positionId, 1, Integer::sum);
+    }
+
+    public int recordReversalStreakOnSignal(Long positionId, String signalKey) {
+        if (positionId == null) {
+            return 0;
+        }
+        if (signalKey == null || signalKey.isBlank()) {
+            return incrementAndGetReversalStreak(positionId);
+        }
+        String normalizedKey = signalKey.trim();
+        Integer current = reversalStreak.get(positionId);
+        String previousKey = reversalStreakSignalKey.get(positionId);
+        if (normalizedKey.equals(previousKey)) {
+            if (current != null) {
+                return current;
+            }
+            reversalStreak.put(positionId, 1);
+            return 1;
+        }
+        reversalStreakSignalKey.put(positionId, normalizedKey);
+        return reversalStreak.merge(positionId, 1, Integer::sum);
+    }
+
+    public int getReversalStreak(Long positionId) {
+        if (positionId == null) {
+            return 0;
+        }
+        return reversalStreak.getOrDefault(positionId, 0);
+    }
+
     public void clearReversalStreak(Long positionId) {
         reversalStreak.remove(positionId);
+        reversalStreakSignalKey.remove(positionId);
     }
 }

@@ -132,15 +132,15 @@ public class BacktestEngine {
 
             // 2. 计算多周期技术指标
             List<BigDecimal[]> baseWindow = baseKlines.subList(0, i + 1);
-            Map<String, Object> indicatorsPrimary = CryptoIndicatorCalculator.calcAll(baseWindow);
+            Map<String, Object> indicatorsPrimary = CryptoIndicatorCalculator.calcAll(baseWindow, true);
 
             List<BigDecimal[]> klines15m = aggregate(baseWindow, barsPer15m);
             Map<String, Object> indicators15m = klines15m.size() >= 30
-                    ? CryptoIndicatorCalculator.calcAll(klines15m) : Collections.emptyMap();
+                    ? CryptoIndicatorCalculator.calcAll(klines15m, true) : Collections.emptyMap();
 
             List<BigDecimal[]> klines1h = aggregate(baseWindow, barsPer1h);
             Map<String, Object> indicators1h = klines1h.size() >= 30
-                    ? CryptoIndicatorCalculator.calcAll(klines1h) : Collections.emptyMap();
+                    ? CryptoIndicatorCalculator.calcAll(klines1h, true) : Collections.emptyMap();
 
             // 3. 构建 snapshotJson（与 parseMarketContext 格式对齐）
             QuantForecastCycle forecast = buildForecast(indicatorsPrimary, indicators15m, indicators1h,
@@ -215,7 +215,7 @@ public class BacktestEngine {
 
     /**
      * 将基准周期 K 线聚合为更高周期。
-     * [high, low, close, volume, takerBuyVol] → 取period根合并为一根。
+     * [high, low, close, volume, takerBuyVol, openTime, closeTime] → 取period根合并为一根。
      */
     private static List<BigDecimal[]> aggregate(List<BigDecimal[]> base, int period) {
         List<BigDecimal[]> result = new ArrayList<>();
@@ -227,6 +227,9 @@ public class BacktestEngine {
             BigDecimal close = base.get(start + period - 1)[2];
             BigDecimal volume = BigDecimal.ZERO;
             BigDecimal takerBuyVol = BigDecimal.ZERO;
+            BigDecimal openTime = base.get(start).length > 5 ? base.get(start)[5] : null;
+            BigDecimal closeTime = base.get(start + period - 1).length > 6
+                    ? base.get(start + period - 1)[6] : null;
             for (int j = start; j < start + period; j++) {
                 BigDecimal[] bar = base.get(j);
                 if (bar[0].compareTo(high) > 0) high = bar[0];
@@ -234,7 +237,11 @@ public class BacktestEngine {
                 volume = volume.add(bar[3]);
                 if (bar.length > 4) takerBuyVol = takerBuyVol.add(bar[4]);
             }
-            result.add(new BigDecimal[]{high, low, close, volume, takerBuyVol});
+            if (openTime != null && closeTime != null) {
+                result.add(new BigDecimal[]{high, low, close, volume, takerBuyVol, openTime, closeTime});
+            } else {
+                result.add(new BigDecimal[]{high, low, close, volume, takerBuyVol});
+            }
         }
         return result;
     }
@@ -271,6 +278,7 @@ public class BacktestEngine {
         snap.put("takerBuySellPressure", null);
         snap.put("oiChangeRate", null);
         snap.put("fundingDeviation", null);
+        snap.put("fundingRateExtreme", null);
         snap.put("lsrExtreme", null);
 
         // indicatorsByTimeframe
@@ -290,6 +298,20 @@ public class BacktestEngine {
         primaryTf.put("volume_ratio", getDbl(indPrimary, "volume_ratio"));
         primaryTf.put("volume_ratio_recent_5_closed", indPrimary.get("volume_ratio_recent_5_closed"));
         primaryTf.put("ema20", getBd(indPrimary, "ema20"));
+        primaryTf.put("ma7", getBd(indPrimary, "ma7"));
+        primaryTf.put("ma25", getBd(indPrimary, "ma25"));
+        primaryTf.put("ma7_series_closed", indPrimary.get("ma7_series_closed"));
+        primaryTf.put("ma25_series_closed", indPrimary.get("ma25_series_closed"));
+        primaryTf.put("atr_series_closed", indPrimary.get("atr_series_closed"));
+        primaryTf.put("adx", getBd(indPrimary, "adx"));
+        primaryTf.put("plus_di", getBd(indPrimary, "plus_di"));
+        primaryTf.put("minus_di", getBd(indPrimary, "minus_di"));
+        primaryTf.put("atr14", getBd(indPrimary, "atr14"));
+        primaryTf.put("atr14_closed", getBd(indPrimary, "atr14_closed"));
+        primaryTf.put("atr_mean_30_closed", getBd(indPrimary, "atr_mean_30_closed"));
+        primaryTf.put("atr_spike_ratio", getDbl(indPrimary, "atr_spike_ratio"));
+        primaryTf.put("last_closed_bar_key", getStr(indPrimary, "last_closed_bar_key"));
+        primaryTf.put("boll_expanding_5", indPrimary.get("boll_expanding_5"));
         indicators.put(baseInterval.getCode(), primaryTf);
 
         putAuxiliaryTimeframe(indicators, KlineInterval.M15.getCode(), ind15m);
@@ -455,6 +477,17 @@ public class BacktestEngine {
         }
         tf.put("ma_alignment", getInt(ind, "ma_alignment"));
         tf.put("rsi14", getBd(ind, "rsi14"));
+        tf.put("ma7", getBd(ind, "ma7"));
+        tf.put("ma25", getBd(ind, "ma25"));
+        tf.put("ma7_series_closed", ind.get("ma7_series_closed"));
+        tf.put("ma25_series_closed", ind.get("ma25_series_closed"));
+        tf.put("atr_series_closed", ind.get("atr_series_closed"));
+        tf.put("atr14", getBd(ind, "atr14"));
+        tf.put("atr14_closed", getBd(ind, "atr14_closed"));
+        tf.put("last_closed_bar_key", getStr(ind, "last_closed_bar_key"));
+        tf.put("adx", getBd(ind, "adx"));
+        tf.put("plus_di", getBd(ind, "plus_di"));
+        tf.put("minus_di", getBd(ind, "minus_di"));
     }
 
     // ==================== 辅助方法 ====================

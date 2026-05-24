@@ -15,6 +15,7 @@ import java.math.BigDecimal;
 
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_BREAKOUT;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_LEGACY_TREND;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_MA_SLOPE;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_MR;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -32,16 +33,20 @@ class EntryRiskSizingServiceTest {
     }
 
     @Test
-    void usesFiveRiskHardTpForBreakoutAndTrendWhenEnabled() {
+    void usesFiveRiskHardTpForBreakoutTrendAndMaSlopeWhenEnabled() {
         EntryRiskSizingService.EntryOrderPlan breakout = buildPlan(PATH_BREAKOUT, bd("2"), bd("3"),
                 new TradingRuntimeToggles(true, true));
         EntryRiskSizingService.EntryOrderPlan trend = buildPlan(PATH_LEGACY_TREND, bd("2"), bd("3"),
+                new TradingRuntimeToggles(true, true));
+        EntryRiskSizingService.EntryOrderPlan maSlope = buildPlan(PATH_MA_SLOPE, bd("2"), bd("3"),
                 new TradingRuntimeToggles(true, true));
 
         assertThat(breakout.tpDistance()).isEqualByComparingTo("10");
         assertThat(breakout.takeProfit()).isEqualByComparingTo("110");
         assertThat(trend.tpDistance()).isEqualByComparingTo("10");
         assertThat(trend.takeProfit()).isEqualByComparingTo("110");
+        assertThat(maSlope.tpDistance()).isEqualByComparingTo("10");
+        assertThat(maSlope.takeProfit()).isEqualByComparingTo("110");
     }
 
     @Test

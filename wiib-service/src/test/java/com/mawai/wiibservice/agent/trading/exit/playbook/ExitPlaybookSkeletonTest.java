@@ -15,10 +15,11 @@ class ExitPlaybookSkeletonTest {
         List<ExitPlaybook> playbooks = List.of(
                 new BreakoutExitPlaybook(),
                 new TrendExitPlaybook(),
-                new MeanReversionExitPlaybook());
+                new MeanReversionExitPlaybook(),
+                new MaSlopeExitPlaybook());
 
         assertThat(playbooks).extracting(ExitPlaybook::path)
-                .containsExactly(ExitPath.BREAKOUT, ExitPath.TREND, ExitPath.MR);
+                .containsExactly(ExitPath.BREAKOUT, ExitPath.TREND, ExitPath.MR, ExitPath.MA_SLOPE);
         assertThat(playbooks)
                 .allSatisfy(playbook -> {
                     ExitPlaybookDecision decision = playbook.evaluate(null, null, null, null);

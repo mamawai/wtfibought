@@ -20,6 +20,7 @@ class ExitPlanFactoryTest {
         assertThat(ExitPlanFactory.mapPath("MEAN_REVERSION")).isEqualTo(ExitPath.MR);
         assertThat(ExitPlanFactory.mapPath("LEGACY_TREND")).isEqualTo(ExitPath.TREND);
         assertThat(ExitPlanFactory.mapPath("TREND")).isEqualTo(ExitPath.TREND);
+        assertThat(ExitPlanFactory.mapPath("MA_SLOPE")).isEqualTo(ExitPath.MA_SLOPE);
         assertThat(ExitPlanFactory.mapPath("UNKNOWN")).isEqualTo(ExitPath.TREND);
         assertThat(ExitPlanFactory.mapPath(null)).isEqualTo(ExitPath.TREND);
     }
@@ -40,6 +41,16 @@ class ExitPlanFactoryTest {
         assertThat(trend.path()).isEqualTo(ExitPath.TREND);
         assertThat(trend.riskPerUnit()).isEqualByComparingTo("6");
         assertThat(trend.timeLimit()).isEqualTo(Duration.ofMinutes(90));
+    }
+
+    @Test
+    void maSlopeUsesOwnExitPathAndTrendTimeLimit() {
+        ExitPlan plan = ExitPlanFactory.fromEntry(
+                "MA_SLOPE", "LONG", bd("100"), bd("95"), bd("2.5"),
+                72.0, 61.0, 1, 1, LocalDateTime.of(2026, 5, 7, 10, 0));
+
+        assertThat(plan.path()).isEqualTo(ExitPath.MA_SLOPE);
+        assertThat(plan.timeLimit()).isEqualTo(Duration.ofMinutes(90));
     }
 
     @Test

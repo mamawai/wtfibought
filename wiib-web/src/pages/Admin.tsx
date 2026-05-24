@@ -668,7 +668,7 @@ export function Admin() {
                 <div className="flex flex-wrap justify-end gap-1.5 max-w-[14rem]">
                   {(tradingConfig.supportedEntryStrategies?.length
                     ? tradingConfig.supportedEntryStrategies
-                    : ['BREAKOUT', 'MR', 'LEGACY_TREND']).map(strategy => {
+                    : ['BREAKOUT', 'MR', 'LEGACY_TREND', 'MA_SLOPE']).map(strategy => {
                     const checked = (tradingConfig.entryEnabledStrategies ?? []).includes(strategy);
                     return (
                       <button

@@ -96,7 +96,7 @@ public final class ExitPlanRecovery {
         return switch (path) {
             case BREAKOUT -> profile.breakoutSlAtr();
             case MR -> profile.revertSlAtr();
-            case TREND -> profile.trendSlAtr();
+            case TREND, MA_SLOPE -> profile.trendSlAtr();
         };
     }
 

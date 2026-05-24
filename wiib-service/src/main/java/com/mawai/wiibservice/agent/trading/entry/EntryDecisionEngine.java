@@ -16,6 +16,7 @@ import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyContext;
 import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyResult;
 import com.mawai.wiibservice.agent.trading.entry.strategy.BreakoutEntryStrategy;
 import com.mawai.wiibservice.agent.trading.entry.strategy.EntryStrategy;
+import com.mawai.wiibservice.agent.trading.entry.strategy.MaSlopeEntryStrategy;
 import com.mawai.wiibservice.agent.trading.entry.strategy.MeanReversionEntryStrategy;
 import com.mawai.wiibservice.agent.trading.entry.strategy.TrendContinuationEntryStrategy;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
@@ -60,7 +61,8 @@ public final class EntryDecisionEngine {
     private static final List<EntryStrategy> ALL_STRATEGIES = List.of(
             new BreakoutEntryStrategy(),
             new MeanReversionEntryStrategy(),
-            new TrendContinuationEntryStrategy()
+            new TrendContinuationEntryStrategy(),
+            new MaSlopeEntryStrategy()
     );
     private static final List<String> DEFAULT_ENABLED_STRATEGY_PATHS = List.of(
             PATH_BREAKOUT,
@@ -78,7 +80,7 @@ public final class EntryDecisionEngine {
     private static final double BREAKOUT_SELECTION_WEIGHT = 1.0;
     private static final double TREND_SELECTION_WEIGHT = 0.7;
     private static final double MR_SELECTION_WEIGHT = 0.9;
-    private static final double MA_SLOPE_SELECTION_WEIGHT = 0.95;
+    private static final double MA_SLOPE_SELECTION_WEIGHT = 0.85;
 
     // 同 symbol 开仓后的最短等待时间，避免短时间重复追单。
     private static final long ENTRY_COOLDOWN_MS = 20 * 60 * 1000L;
@@ -240,7 +242,8 @@ public final class EntryDecisionEngine {
         for (EntryStrategy strategy : activeStrategySet.strategies()) {
             if (strategy.kind() == EntryStrategy.StrategyKind.DIRECTION_AUTONOMOUS) {
                 collectFromStrategy(strategy,
-                        new EntryStrategyContext(decision.market(), decision.profile(), "AUTO", false, confidence),
+                        new EntryStrategyContext(decision.symbol(), decision.market().decisionInterval,
+                                decision.market(), decision.profile(), "AUTO", false, confidence),
                         candidates, rejects);
                 continue;
             }
@@ -288,7 +291,8 @@ public final class EntryDecisionEngine {
     }
 
     private EntryStrategyContext contextForSide(TradingDecisionContext decision, String side, double confidence) {
-        return new EntryStrategyContext(decision.market(), decision.profile(), side, "LONG".equals(side), confidence);
+        return new EntryStrategyContext(decision.symbol(), decision.market().decisionInterval,
+                decision.market(), decision.profile(), side, "LONG".equals(side), confidence);
     }
 
     public static List<String> normalizeEnabledStrategyPaths(Collection<String> paths) {
@@ -436,8 +440,10 @@ public final class EntryDecisionEngine {
     private void storeExitPlan(TradingExecutionState state, Long positionId, EntryStrategyCandidate candidate,
                                MarketContext ctx, EntryRiskSizingService.EntryOrderPlan plan, LocalDateTime now) {
         try {
+            BigDecimal atrAtEntry = PATH_MA_SLOPE.equals(candidate.path())
+                    && ctx.atrClosed != null && ctx.atrClosed.signum() > 0 ? ctx.atrClosed : ctx.atr;
             ExitPlan exitPlan = ExitPlanFactory.fromEntry(
-                    candidate.path(), candidate.side(), ctx.price, plan.stopLoss(), ctx.atr,
+                    candidate.path(), candidate.side(), ctx.price, plan.stopLoss(), atrAtEntry,
                     ctx.bollPb, ctx.rsi != null ? ctx.rsi.doubleValue() : null,
                     ctx.maAlignment1h, ctx.maAlignment15m, now);
             state.putExitPlan(positionId, exitPlan);
@@ -457,8 +463,10 @@ public final class EntryDecisionEngine {
     private String buildOpenReason(EntryStrategyCandidate candidate, MarketContext ctx,
                                    EntryRiskSizingService.EntryOrderPlan plan,
                                    String riskStatus) {
-        double actualSlAtrMult = plan.slDistance().doubleValue() / ctx.atr.doubleValue();
-        double actualTpAtrMult = plan.tpDistance().doubleValue() / ctx.atr.doubleValue();
+        BigDecimal atrForReason = PATH_MA_SLOPE.equals(candidate.path())
+                && ctx.atrClosed != null && ctx.atrClosed.signum() > 0 ? ctx.atrClosed : ctx.atr;
+        double actualSlAtrMult = plan.slDistance().doubleValue() / atrForReason.doubleValue();
+        double actualTpAtrMult = plan.tpDistance().doubleValue() / atrForReason.doubleValue();
         String reason = String.format(
                 "%s lev=%dx qty=%s SL=%s(%.1fATR) TP=%s(%.1fATR) scale=%.2f riskStatus=%s | %s",
                 candidate.reason(), plan.leverage(),
@@ -480,6 +488,7 @@ public final class EntryDecisionEngine {
             case PATH_BREAKOUT -> BREAKOUT_CONFLUENCE_GATE.evaluate(context);
             case PATH_MR -> MR_CONFLUENCE_GATE.evaluate(context);
             case PATH_LEGACY_TREND -> TREND_CONFLUENCE_GATE.evaluate(context);
+            case PATH_MA_SLOPE -> new ConfluenceGateResult(1, 1, 1, List.of("MaSlope内置确认放行"));
             default -> new ConfluenceGateResult(1, 1, 1, List.of("未知策略放行"));
         };
     }

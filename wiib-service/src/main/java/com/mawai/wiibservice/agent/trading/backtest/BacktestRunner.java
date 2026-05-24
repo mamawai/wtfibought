@@ -280,8 +280,7 @@ public class BacktestRunner {
 
             // 下一批：用第一根K线的时间作为endTime
             // Binance klines JSON: [[openTime, open, high, low, close, volume, closeTime, ...], ...]
-            // parseKlines只取了 [high, low, close, volume, takerBuy]
-            // 需要从原始JSON中提取openTime来做分页
+            // 分页仍直接读原始JSON第一根openTime，避免依赖指标数组字段顺序。
             endTime = extractFirstOpenTime(json);
             if (endTime == null) break;
             endTime -= 1; // 避免重复

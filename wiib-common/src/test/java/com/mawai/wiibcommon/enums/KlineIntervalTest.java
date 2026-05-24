@@ -37,4 +37,9 @@ class KlineIntervalTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("未知周期");
     }
+
+    @Test
+    void h1KeepsEnoughHistoryForMaSlopeM15Confirm() {
+        assertThat(KlineInterval.H1.getHistoryLimit()).isEqualTo(72);
+    }
 }

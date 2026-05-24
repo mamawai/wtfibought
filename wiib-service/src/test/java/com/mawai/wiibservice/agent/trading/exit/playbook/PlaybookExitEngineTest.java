@@ -204,6 +204,22 @@ class PlaybookExitEngineTest {
     }
 
     @Test
+    void maSlopePathIsRegisteredInDefaultEngine() {
+        LocalDateTime now = LocalDateTime.of(2026, 5, 7, 4, 0);
+        TradingExecutionState state = stateAt(now);
+        state.putExitPlan(1L, maSlopePlan(now.minusMinutes(10)));
+
+        DeterministicTradingExecutor.ExecutionResult result = engine.evaluate(
+                context("100400", "60", "55", "sideways", 1, 1, now.minusMinutes(1),
+                        position("LONG", "100000", "99000", "105000", "1"), state, new StubTools()),
+                true);
+
+        assertThat(result.action()).isEqualTo("HOLD");
+        assertThat(result.reasoning()).contains("MA_SLOPE");
+        assertThat(result.reasoning()).doesNotContain("无Playbook");
+    }
+
+    @Test
     void mrHalfPathClosesHalfMovesStopAndMarksMrState() {
         LocalDateTime now = LocalDateTime.of(2026, 5, 7, 4, 0);
         TradingExecutionState state = stateAt(now);
@@ -333,6 +349,11 @@ class PlaybookExitEngineTest {
     private static ExitPlan mrPlan(LocalDateTime createdAt) {
         return ExitPlanFactory.fromEntry("MR", "LONG", bd("100000"), bd("99000"),
                 bd("400"), 10.0, 38.0, 0, 0, createdAt);
+    }
+
+    private static ExitPlan maSlopePlan(LocalDateTime createdAt) {
+        return ExitPlanFactory.fromEntry("MA_SLOPE", "LONG", bd("100000"), bd("99000"),
+                bd("400"), 60.0, 55.0, 1, 1, createdAt);
     }
 
     private static BigDecimal bd(String value) {

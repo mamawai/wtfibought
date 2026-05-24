@@ -15,13 +15,13 @@ public enum KlineInterval {
     M3("3m", 3, 480),
     M5("5m", 5, 288),
     M15("15m", 15, 96),
-    H1("1h", 60, 24);
+    H1("1h", 60, 72);
 
     /** Binance API 字符串 */
     private final String code;
     /** 每根 K 线的分钟数（聚合系数用） */
     private final int minutes;
-    /** 拉取根数（统一保持 24h 决策窗口） */
+    /** 默认拉取根数；短周期约 24h，1h 保留 72h 供确认周期计算。 */
     private final int historyLimit;
 
     /**

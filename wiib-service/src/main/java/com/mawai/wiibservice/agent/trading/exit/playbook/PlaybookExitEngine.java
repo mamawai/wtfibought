@@ -75,7 +75,8 @@ public final class PlaybookExitEngine {
         this(List.of(
                 new BreakoutExitPlaybook(),
                 new TrendExitPlaybook(),
-                new MeanReversionExitPlaybook()));
+                new MeanReversionExitPlaybook(),
+                new MaSlopeExitPlaybook()));
     }
 
     PlaybookExitEngine(Collection<ExitPlaybook> playbooks) {

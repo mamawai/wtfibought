@@ -22,12 +22,13 @@ public final class ExitPlanFactory {
             case "BREAKOUT" -> ExitPath.BREAKOUT;
             case "MR", "MEAN_REVERSION" -> ExitPath.MR;
             case "TREND", "LEGACY_TREND" -> ExitPath.TREND;
+            case "MA_SLOPE" -> ExitPath.MA_SLOPE;
             default -> ExitPath.TREND;
         };
     }
 
     static Duration timeLimitFor(ExitPath path) {
-        return path == ExitPath.TREND ? TREND_TIME_LIMIT : FAST_TIME_LIMIT;
+        return path == ExitPath.TREND || path == ExitPath.MA_SLOPE ? TREND_TIME_LIMIT : FAST_TIME_LIMIT;
     }
 
     public static ExitPlan fromEntry(String rawPath,

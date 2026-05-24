@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_BREAKOUT;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_LEGACY_TREND;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_MA_SLOPE;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_MR;
 
 /**
@@ -92,7 +93,7 @@ final class EntryRiskSizingService {
         BigDecimal stopLoss = candidate.isLong() ? price.subtract(slDistance) : price.add(slDistance);
         BigDecimal takeProfit = candidate.isLong() ? price.add(tpDistance) : price.subtract(tpDistance);
 
-        String feeCheck = checkFeeAwareRR(price, ctx.atr, tpDistance);
+        String feeCheck = checkFeeAwareRR(price, atrForRiskUnit(candidate.path(), ctx), tpDistance);
         if (feeCheck != null) return SizingResult.reject(candidate.label() + ": " + feeCheck);
         String rrGuard = checkRiskRewardGuard(symbol, candidate.path(), slDistance, tpDistance);
         if (rrGuard != null) return SizingResult.reject(candidate.label() + ": " + rrGuard);
@@ -154,6 +155,13 @@ final class EntryRiskSizingService {
         return null;
     }
 
+    private BigDecimal atrForRiskUnit(String path, MarketContext ctx) {
+        if (PATH_MA_SLOPE.equals(path) && ctx.atrClosed != null && ctx.atrClosed.signum() > 0) {
+            return ctx.atrClosed;
+        }
+        return ctx.atr;
+    }
+
     /**
      * 最低入场盈亏比保护。
      *
@@ -180,7 +188,7 @@ final class EntryRiskSizingService {
         }
         double hardTpR = switch (path) {
             case PATH_BREAKOUT -> profile.breakoutHardTpR();
-            case PATH_LEGACY_TREND -> profile.trendHardTpR();
+            case PATH_LEGACY_TREND, PATH_MA_SLOPE -> profile.trendHardTpR();
             default -> 0.0;
         };
         if (hardTpR <= 0.0) {

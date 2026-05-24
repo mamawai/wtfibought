@@ -8,6 +8,8 @@ import com.mawai.wiibservice.agent.quant.node.DebateJudgeNode;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
 import com.mawai.wiibservice.agent.trading.entry.EntryDecisionEngine;
+import com.mawai.wiibservice.agent.trading.entry.strategy.MaSlopeEntryStrategy;
+import com.mawai.wiibservice.config.MaSlopeProperties;
 import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.config.TradingEntryProperties;
 import com.mawai.wiibservice.mapper.AiRuntimeToggleMapper;
@@ -50,10 +52,12 @@ public class RuntimeFeatureToggleService {
 
     public RuntimeFeatureToggleService(AiRuntimeToggleMapper toggleMapper,
                                        TradingConfig tradingConfig,
-                                       TradingEntryProperties tradingEntryProperties) {
+                                       TradingEntryProperties tradingEntryProperties,
+                                       MaSlopeProperties maSlopeProperties) {
         this.toggleMapper = toggleMapper;
         this.tradingConfig = tradingConfig;
         this.tradingEntryProperties = tradingEntryProperties;
+        MaSlopeEntryStrategy.setEnabledSymbols(maSlopeProperties.getEnabledSymbols());
         this.knownToggles = buildKnownToggles();
         knownToggles.forEach((key, binding) -> {
             currentValues.put(key, binding.defaultValue());

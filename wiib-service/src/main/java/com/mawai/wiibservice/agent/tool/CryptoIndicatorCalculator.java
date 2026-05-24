@@ -74,6 +74,8 @@ public class CryptoIndicatorCalculator {
 
     /** 多数内部序列的默认小数位；最终输出会按字段语义单独收敛精度。 */
     private static final int SCALE = 8;
+    private static final int MASLOPE_MA_SERIES_RECENT = 12;
+    private static final int MASLOPE_ATR_MEAN_RECENT = 30;
 
     // ==================== 1. 综合计算入口 ====================
 
@@ -88,6 +90,13 @@ public class CryptoIndicatorCalculator {
      * @return 指标字段 Map（字段定义见类级 Javadoc 表格）；输入不足时只含一个 {@code error} 字段
      */
     public static Map<String, Object> calcAll(List<BigDecimal[]> klines) {
+        return calcAll(klines, false);
+    }
+
+    /**
+     * @param lastClosed true 表示传入序列末根已经收盘（回测）；false 表示末根可能仍在跳动（实盘快照）
+     */
+    public static Map<String, Object> calcAll(List<BigDecimal[]> klines, boolean lastClosed) {
         if (klines == null || klines.size() < 30) return Map.of("error", "K线数据不足");
 
         // 把 K 线拆成四条并列序列，后续每个指标只挑自己需要的那几条。
@@ -108,6 +117,8 @@ public class CryptoIndicatorCalculator {
         // --- 均线 (MA / EMA) ---
         r.put("ma7", ma(closes, 7));
         r.put("ma25", ma(closes, 25));
+        r.put("ma7_series_closed", maSeriesClosed(closes, 7, MASLOPE_MA_SERIES_RECENT, lastClosed));
+        r.put("ma25_series_closed", maSeriesClosed(closes, 25, MASLOPE_MA_SERIES_RECENT, lastClosed));
         if (size >= 99) r.put("ma99", ma(closes, 99));
         r.put("ema12", ema(closes, 12));
         r.put("ema20", ema(closes, 20));
@@ -138,9 +149,31 @@ public class CryptoIndicatorCalculator {
             r.put("boll_pb", bollPercentB(curClose, boll.get("upper"), boll.get("lower")));
             r.put("boll_bandwidth", bollBandwidth(boll.get("upper"), boll.get("lower"), boll.get("mid")));
         }
+        List<BigDecimal> bollBandwidthClosed = bollBandwidthSeriesClosed(closes, 20, 2, 6, lastClosed);
+        r.put("boll_bandwidth_series_closed", bollBandwidthClosed);
+        if (bollBandwidthClosed.size() >= 6) {
+            r.put("boll_expanding_5",
+                    bollBandwidthClosed.getLast().compareTo(bollBandwidthClosed.getFirst()) > 0);
+        }
 
         // --- ATR (Wilder/RMA 平滑) ---
         r.put("atr14", atr(highs, lows, closes, 14));
+        List<BigDecimal> atrClosedSeries = atrSeriesClosed(
+                highs, lows, closes, 14, MASLOPE_ATR_MEAN_RECENT + 1, lastClosed);
+        if (!atrClosedSeries.isEmpty()) {
+            BigDecimal atrClosed = atrClosedSeries.getLast();
+            r.put("atr_series_closed", atrClosedSeries);
+            r.put("atr14_closed", atrClosed);
+            BigDecimal atrMean30 = tailMeanExcludingLast(atrClosedSeries, MASLOPE_ATR_MEAN_RECENT);
+            if (atrMean30 != null && atrMean30.signum() > 0) {
+                r.put("atr_mean_30_closed", atrMean30);
+                r.put("atr_spike_ratio", atrClosed.divide(atrMean30, 4, RoundingMode.HALF_UP));
+            }
+        }
+        String lastClosedBarKey = lastClosedBarKey(klines, lastClosed);
+        if (lastClosedBarKey != null) {
+            r.put("last_closed_bar_key", lastClosedBarKey);
+        }
 
         // --- KDJ 随机指标 ---
         Map<String, BigDecimal> kdj = kdj(highs, lows, closes, 9, 3, 3);
@@ -172,14 +205,29 @@ public class CryptoIndicatorCalculator {
         r.put("volume_ma20", ma(volumes, Math.min(20, size)));
         r.put("volume_ratio", volumeRatio(volumes, 20));
         // 最近 5 根"已收盘"的量比序列，下游用于判断量能持续性（放量突破 / 量能衰减）
-        r.put("volume_ratio_recent_5_closed", closedVolumeRatioSeries(volumes, 20, 5));
+        r.put("volume_ratio_recent_5_closed", closedVolumeRatioSeries(volumes, 20, 5, lastClosed));
 
         // --- 价格动量摘要 ---
         r.put("close_trend", trendSummary(closes, 5));
         // 最近 3 根"已收盘"的趋势，避免当前未收盘 bar 噪音影响判断
-        r.put("close_trend_recent_3_closed", closedTrendSummary(closes, 3));
+        r.put("close_trend_recent_3_closed", closedTrendSummary(closes, 3, lastClosed));
 
         return r;
+    }
+
+    private static String lastClosedBarKey(List<BigDecimal[]> klines, boolean lastClosed) {
+        int closedIndex = closedEndExclusive(klines != null ? klines.size() : 0, lastClosed) - 1;
+        if (closedIndex < 0) {
+            return null;
+        }
+        BigDecimal[] kline = klines.get(closedIndex);
+        if (kline.length > 6 && kline[6] != null) {
+            return kline[6].toPlainString();
+        }
+        if (kline.length > 5 && kline[5] != null) {
+            return kline[5].toPlainString();
+        }
+        return null;
     }
 
     // ==================== 2. 价格变化 ====================
@@ -241,10 +289,15 @@ public class CryptoIndicatorCalculator {
      * @return 输入为 null 或长度不足 {@code lookback + 2}（1 根未收盘 + lookback+1 根已收盘才够比较）时返回 {@code "unknown"}
      */
     static String closedTrendSummary(List<BigDecimal> series, int lookback) {
-        if (series == null || series.size() < lookback + 2) {
+        return closedTrendSummary(series, lookback, false);
+    }
+
+    static String closedTrendSummary(List<BigDecimal> series, int lookback, boolean lastClosed) {
+        int closedSize = closedEndExclusive(series != null ? series.size() : 0, lastClosed);
+        if (series == null || closedSize < lookback + 1) {
             return "unknown";
         }
-        return trendSummary(series.subList(0, series.size() - 1), lookback);
+        return trendSummary(series.subList(0, closedSize), lookback);
     }
 
     // ==================== 4. 均线排列 ====================
@@ -286,6 +339,35 @@ public class CryptoIndicatorCalculator {
         BigDecimal sum = BigDecimal.ZERO;
         for (int i = data.size() - period; i < data.size(); i++) sum = sum.add(data.get(i));
         return sum.divide(BigDecimal.valueOf(period), SCALE, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * 最近 {@code recent} 根已收盘 bar 的 MA 序列。
+     *
+     * <p>最后一根 K 线通常还在跳动，MaSlope 用闭合序列判断斜率，避免一根未收盘插针把方向打反。</p>
+     */
+    static List<BigDecimal> maSeriesClosed(List<BigDecimal> data, int period, int recent) {
+        return maSeriesClosed(data, period, recent, false);
+    }
+
+    static List<BigDecimal> maSeriesClosed(List<BigDecimal> data, int period, int recent, boolean lastClosed) {
+        if (data == null || period <= 0 || recent <= 0) {
+            return List.of();
+        }
+        int closedSize = closedEndExclusive(data.size(), lastClosed);
+        if (closedSize < period) {
+            return List.of();
+        }
+        int start = Math.max(period - 1, closedSize - recent);
+        List<BigDecimal> result = new ArrayList<>();
+        for (int i = start; i < closedSize; i++) {
+            BigDecimal sum = BigDecimal.ZERO;
+            for (int j = i - period + 1; j <= i; j++) {
+                sum = sum.add(data.get(j));
+            }
+            result.add(sum.divide(BigDecimal.valueOf(period), SCALE, RoundingMode.HALF_UP));
+        }
+        return result;
     }
 
     /**
@@ -559,6 +641,34 @@ public class CryptoIndicatorCalculator {
                 .multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP);
     }
 
+    /**
+     * 最近 {@code recent} 根已收盘 bar 的布林带宽序列。
+     * MaSlope 只用它判断“最近 5 根是否扩张”，所以这里排除最后未收盘 bar。
+     */
+    static List<BigDecimal> bollBandwidthSeriesClosed(List<BigDecimal> closes, int period, int mult, int recent) {
+        return bollBandwidthSeriesClosed(closes, period, mult, recent, false);
+    }
+
+    static List<BigDecimal> bollBandwidthSeriesClosed(List<BigDecimal> closes, int period, int mult, int recent,
+                                                      boolean lastClosed) {
+        if (closes == null || period <= 0 || recent <= 0) {
+            return List.of();
+        }
+        int closedSize = closedEndExclusive(closes.size(), lastClosed);
+        if (closedSize < period) {
+            return List.of();
+        }
+        int start = Math.max(period - 1, closedSize - recent);
+        List<BigDecimal> result = new ArrayList<>();
+        for (int i = start; i < closedSize; i++) {
+            Map<String, BigDecimal> band = boll(closes.subList(0, i + 1), period, mult);
+            if (!band.isEmpty()) {
+                result.add(bollBandwidth(band.get("upper"), band.get("lower"), band.get("mid")));
+            }
+        }
+        return result;
+    }
+
     // ==================== 9. ATR (Wilder/RMA) ====================
 
     /**
@@ -588,6 +698,72 @@ public class CryptoIndicatorCalculator {
         // 再用 RMA 平滑 TR 序列，取最后一个值
         List<BigDecimal> atrSeries = rmaSeries(trs, period);
         return atrSeries.isEmpty() ? null : atrSeries.getLast();
+    }
+
+    /**
+     * 最近 {@code recent} 个已收盘 ATR 值。
+     * ATR 本身用 Wilder/RMA，序列末端排除当前未收盘 K 线。
+     */
+    static List<BigDecimal> atrSeriesClosed(List<BigDecimal> highs, List<BigDecimal> lows,
+                                            List<BigDecimal> closes, int period, int recent) {
+        return atrSeriesClosed(highs, lows, closes, period, recent, false);
+    }
+
+    static List<BigDecimal> atrSeriesClosed(List<BigDecimal> highs, List<BigDecimal> lows,
+                                            List<BigDecimal> closes, int period, int recent,
+                                            boolean lastClosed) {
+        if (highs == null || lows == null || closes == null || period <= 0 || recent <= 0) {
+            return List.of();
+        }
+        int size = Math.min(highs.size(), Math.min(lows.size(), closes.size()));
+        int closedSize = closedEndExclusive(size, lastClosed);
+        if (closedSize < period + 1) {
+            return List.of();
+        }
+        List<BigDecimal> trs = new ArrayList<>();
+        for (int i = 1; i < closedSize; i++) {
+            BigDecimal hl = highs.get(i).subtract(lows.get(i)).abs();
+            BigDecimal hc = highs.get(i).subtract(closes.get(i - 1)).abs();
+            BigDecimal lc = lows.get(i).subtract(closes.get(i - 1)).abs();
+            trs.add(hl.max(hc).max(lc));
+        }
+        List<BigDecimal> atrSeries = rmaSeries(trs, period);
+        if (atrSeries.isEmpty()) {
+            return List.of();
+        }
+        int start = Math.max(0, atrSeries.size() - recent);
+        return new ArrayList<>(atrSeries.subList(start, atrSeries.size()));
+    }
+
+    static BigDecimal tailMean(List<BigDecimal> series, int recent) {
+        if (series == null || recent <= 0 || series.size() < recent) {
+            return null;
+        }
+        BigDecimal sum = BigDecimal.ZERO;
+        for (int i = series.size() - recent; i < series.size(); i++) {
+            BigDecimal value = series.get(i);
+            if (value == null) {
+                return null;
+            }
+            sum = sum.add(value);
+        }
+        return sum.divide(BigDecimal.valueOf(recent), SCALE, RoundingMode.HALF_UP);
+    }
+
+    static BigDecimal tailMeanExcludingLast(List<BigDecimal> series, int recent) {
+        if (series == null || recent <= 0 || series.size() < recent + 1) {
+            return null;
+        }
+        BigDecimal sum = BigDecimal.ZERO;
+        int endExclusive = series.size() - 1;
+        for (int i = endExclusive - recent; i < endExclusive; i++) {
+            BigDecimal value = series.get(i);
+            if (value == null) {
+                return null;
+            }
+            sum = sum.add(value);
+        }
+        return sum.divide(BigDecimal.valueOf(recent), SCALE, RoundingMode.HALF_UP);
     }
 
     // ==================== 10. KDJ (随机指标) ====================
@@ -814,11 +990,16 @@ public class CryptoIndicatorCalculator {
      * @return 参数非法、样本不足、或所有 bar 的均量都为 0 时返回空 List
      */
     static List<BigDecimal> closedVolumeRatioSeries(List<BigDecimal> volumes, int period, int recent) {
-        if (volumes == null || period <= 0 || recent <= 0 || volumes.size() <= period) {
+        return closedVolumeRatioSeries(volumes, period, recent, false);
+    }
+
+    static List<BigDecimal> closedVolumeRatioSeries(List<BigDecimal> volumes, int period, int recent,
+                                                    boolean lastClosed) {
+        if (volumes == null || period <= 0 || recent <= 0) {
             return List.of();
         }
-        // 去掉最后一根未收盘 bar；closedSize 是"已收盘 bar 的个数"
-        int closedSize = volumes.size() - 1;
+        // 实盘去掉最后一根未收盘 bar；回测末根本身已闭合。
+        int closedSize = closedEndExclusive(volumes.size(), lastClosed);
         if (closedSize < period) {
             return List.of();
         }
@@ -844,6 +1025,10 @@ public class CryptoIndicatorCalculator {
         return result;
     }
 
+    private static int closedEndExclusive(int size, boolean lastClosed) {
+        return Math.max(0, lastClosed ? size : size - 1);
+    }
+
     // ==================== 14. K 线解析 ====================
 
     /**
@@ -856,13 +1041,14 @@ public class CryptoIndicatorCalculator {
      * [9] takerBuyBaseVol   [10] takerBuyQuoteVol   [11] ignore
      * </pre>
      *
-     * <p>本方法只抽取下游会用到的 5 个字段，按以下顺序组成 BigDecimal 数组：</p>
+     * <p>本方法抽取下游会用到的字段，按以下顺序组成 BigDecimal 数组：</p>
      * <pre>
      * [0] High  [1] Low  [2] Close  [3] Volume  [4] TakerBuyBaseAssetVolume
+     * [5] OpenTime  [6] CloseTime
      * </pre>
      *
-     * <p>注意：{@link #calcAll} 只用前 4 个字段（H/L/C/V），
-     * TakerBuy 字段由 {@link #takerBuyRatio} 单独消费。</p>
+     * <p>注意：{@link #calcAll} 的指标计算只用前 4 个字段（H/L/C/V），时间字段仅用于
+     * MaSlope 退出端按闭合 K 线计数；TakerBuy 字段由 {@link #takerBuyRatio} 单独消费。</p>
      */
     public static List<BigDecimal[]> parseKlines(String json) {
         if (json == null || json.isBlank()) return List.of();
@@ -877,7 +1063,9 @@ public class CryptoIndicatorCalculator {
                     new BigDecimal(k.getString(3)),  // [1] Low
                     new BigDecimal(k.getString(4)),  // [2] Close
                     new BigDecimal(k.getString(5)),  // [3] Volume
-                    takerBuyVol                      // [4] TakerBuyBaseAssetVolume
+                    takerBuyVol,                     // [4] TakerBuyBaseAssetVolume
+                    new BigDecimal(k.getString(0)),  // [5] OpenTime
+                    new BigDecimal(k.getString(6))   // [6] CloseTime
             });
         }
         return result;
