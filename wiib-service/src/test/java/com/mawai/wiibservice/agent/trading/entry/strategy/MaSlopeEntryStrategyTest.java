@@ -39,7 +39,7 @@ class MaSlopeEntryStrategyTest {
         EntryStrategyCandidate candidate = result.candidate();
         assertThat(candidate.path()).isEqualTo(PATH_MA_SLOPE);
         assertThat(candidate.side()).isEqualTo("LONG");
-        assertThat(candidate.maxLeverage()).isEqualTo(20);
+        assertThat(candidate.maxLeverage()).isEqualTo(50);
         assertThat(candidate.positionScale()).isEqualTo(0.75);
         assertThat(candidate.reason()).contains("state=UP_ACCELERATING", "confirm=UP_ACCELERATING");
     }
@@ -374,9 +374,9 @@ class MaSlopeEntryStrategyTest {
     @Test
     void acceptsM15WhenOneHourConfirmDataIsAvailable() {
         MarketContext ctx = m15MarketContext(
-                upMa7(), upMa25(),
-                upMa7(), upMa25(),
-                "110");
+                acceleratingUpMa7(), upMa25(),
+                acceleratingUpMa7(), upMa25(),
+                "114");
 
         EntryStrategyResult result = strategy.build(context("BTCUSDT", KlineInterval.M15, ctx));
 
@@ -616,6 +616,9 @@ class MaSlopeEntryStrategyTest {
                       "ma_alignment": 1,
                       "close_trend": "rising_5",
                       "close_trend_recent_3_closed": "rising_3",
+                      "close_position_closed": 0.80,
+                      "range_atr_closed": 0.80,
+                      "close_breakout_high_10_closed": true,
                       "boll_expanding_5": true,
                       "volume_ratio_recent_5_closed": [1.2, 1.3, 1.4, 1.3, 1.2]
                     },
@@ -676,6 +679,10 @@ class MaSlopeEntryStrategyTest {
 
     private static List<BigDecimal> upMa7() {
         return bdList("100", "101", "102", "103", "104", "105", "106", "107", "108");
+    }
+
+    private static List<BigDecimal> acceleratingUpMa7() {
+        return bdList("100", "101", "102", "103", "104", "105.5", "107.5", "110", "113");
     }
 
     private static List<BigDecimal> upMa25() {

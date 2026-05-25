@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 单轮交易判断使用的市场快照。
@@ -345,6 +346,80 @@ public final class MarketContext {
                 fundingDeviation, fundingRateExtreme, lsrExtreme, qualityFlags);
     }
 
+    /**
+     * MaSlope 独立 K 线通道专用入口。
+     *
+     * <p>这里只接收 K 线计算出的技术指标，不接收 forecast / signal / riskStatus，
+     * 避免独立策略被上游 AI 预测结果污染。</p>
+     */
+    public static MarketContext fromKlineIndicators(KlineInterval decisionInterval,
+                                                    BigDecimal price,
+                                                    Map<String, Object> primary,
+                                                    Map<String, Object> tf15m,
+                                                    Map<String, Object> tf1h) {
+        KlineInterval interval = decisionInterval != null ? decisionInterval : KlineInterval.M5;
+        Map<String, Object> primaryMap = primary != null ? primary : Map.of();
+        Map<String, Object> tf15mMap = tf15m != null ? tf15m : Map.of();
+        Map<String, Object> tf1hMap = tf1h != null ? tf1h : Map.of();
+        Map<String, Object> confirmMap = KlineInterval.M15 == interval ? tf1hMap : tf15mMap;
+
+        BigDecimal atr = mapBigDecimal(primaryMap, "atr14");
+        BigDecimal atrClosed = mapBigDecimal(primaryMap, "atr14_closed");
+        BigDecimal rsi = mapBigDecimal(primaryMap, "rsi14");
+        BigDecimal resolvedPrice = price != null ? price : mapBigDecimal(primaryMap, "close");
+
+        BigDecimal rsi15mBd = mapBigDecimal(tf15mMap, "rsi14");
+        Double rsi15m = rsi15mBd != null ? rsi15mBd.doubleValue() : null;
+        Double bollBandwidth = finiteDouble(primaryMap, "boll_bandwidth");
+        boolean bollSqueeze = bollBandwidth != null && bollBandwidth < 1.5;
+
+        return new MarketContext(
+                interval, klineRegime(primaryMap), null,
+                atr, atrClosed, false,
+                rsi, resolvedPrice,
+                mapInteger(tf1hMap, "ma_alignment"),
+                mapInteger(tf15mMap, "ma_alignment"),
+                mapInteger(primaryMap, "ma_alignment"),
+                mapBigDecimal(primaryMap, "ma7"),
+                mapBigDecimal(primaryMap, "ma25"),
+                readBigDecimalList(primaryMap, "ma7_series_closed"),
+                readBigDecimalList(primaryMap, "ma25_series_closed"),
+                readBigDecimalList(primaryMap, "atr_series_closed"),
+                mapString(primaryMap, "last_closed_bar_key"),
+                mapBigDecimal(confirmMap, "ma7"),
+                mapBigDecimal(confirmMap, "ma25"),
+                readBigDecimalList(confirmMap, "ma7_series_closed"),
+                readBigDecimalList(confirmMap, "ma25_series_closed"),
+                mapBigDecimal(confirmMap, "atr14_closed"),
+                finiteDouble(primaryMap, "adx"),
+                finiteDouble(primaryMap, "plus_di"),
+                finiteDouble(primaryMap, "minus_di"),
+                mapBigDecimal(primaryMap, "atr_mean_30_closed"),
+                finiteDouble(primaryMap, "atr_spike_ratio"),
+                mapString(primaryMap, "macd_cross"),
+                mapString(primaryMap, "macd_hist_trend"),
+                mapBigDecimal(primaryMap, "macd_dif"),
+                mapBigDecimal(primaryMap, "macd_dea"),
+                mapBigDecimal(primaryMap, "ema20"),
+                finiteDouble(primaryMap, "boll_pb"),
+                bollBandwidth,
+                bollSqueeze,
+                Boolean.TRUE.equals(mapBoolean(primaryMap, "boll_expanding_5")),
+                finiteDouble(primaryMap, "volume_ratio"),
+                readDoubleList(primaryMap, "volume_ratio_recent_5_closed"),
+                mapString(primaryMap, "close_trend"),
+                mapString(primaryMap, "close_trend_recent_3_closed"),
+                readBigDecimalList(primaryMap, "close_series_closed"),
+                finiteDouble(primaryMap, "close_position_closed"),
+                finiteDouble(primaryMap, "range_atr_closed"),
+                Boolean.TRUE.equals(mapBoolean(primaryMap, "close_breakout_high_10_closed")),
+                Boolean.TRUE.equals(mapBoolean(primaryMap, "close_breakdown_low_10_closed")),
+                rsi15m,
+                null, null, null,
+                null, null, null,
+                List.of());
+    }
+
     private static String confirmTimeframeCode(KlineInterval decisionInterval) {
         return decisionInterval == KlineInterval.M15 ? KlineInterval.H1.getCode() : KlineInterval.M15.getCode();
     }
@@ -353,6 +428,71 @@ public final class MarketContext {
         if (obj == null) return null;
         Double value = obj.getDouble(key);
         return value != null && Double.isFinite(value) ? value : null;
+    }
+
+    private static Double finiteDouble(Map<String, Object> obj, String key) {
+        Object value = obj != null ? obj.get(key) : null;
+        Double result = switch (value) {
+            case null -> null;
+            case BigDecimal bd -> bd.doubleValue();
+            case Number n -> n.doubleValue();
+            case String s when !s.isBlank() -> {
+                try {
+                    yield Double.parseDouble(s.trim());
+                } catch (NumberFormatException ignored) {
+                    yield null;
+                }
+            }
+            default -> null;
+        };
+        return result != null && Double.isFinite(result) ? result : null;
+    }
+
+    private static BigDecimal mapBigDecimal(Map<String, Object> obj, String key) {
+        Object value = obj != null ? obj.get(key) : null;
+        return switch (value) {
+            case null -> null;
+            case BigDecimal bd -> bd;
+            case Number n -> BigDecimal.valueOf(n.doubleValue());
+            case String s when !s.isBlank() -> {
+                try {
+                    yield new BigDecimal(s.trim());
+                } catch (NumberFormatException ignored) {
+                    yield null;
+                }
+            }
+            default -> null;
+        };
+    }
+
+    private static Integer mapInteger(Map<String, Object> obj, String key) {
+        Object value = obj != null ? obj.get(key) : null;
+        return switch (value) {
+            case null -> null;
+            case Number n -> n.intValue();
+            case String s when !s.isBlank() -> {
+                try {
+                    yield Integer.parseInt(s.trim());
+                } catch (NumberFormatException ignored) {
+                    yield null;
+                }
+            }
+            default -> null;
+        };
+    }
+
+    private static String mapString(Map<String, Object> obj, String key) {
+        Object value = obj != null ? obj.get(key) : null;
+        return value != null ? String.valueOf(value) : null;
+    }
+
+    private static Boolean mapBoolean(Map<String, Object> obj, String key) {
+        Object value = obj != null ? obj.get(key) : null;
+        return switch (value) {
+            case Boolean b -> b;
+            case String s when !s.isBlank() -> Boolean.parseBoolean(s.trim());
+            default -> null;
+        };
     }
 
     private static List<BigDecimal> readBigDecimalList(JSONObject obj, String key) {
@@ -368,5 +508,69 @@ public final class MarketContext {
             }
         }
         return result;
+    }
+
+    private static List<BigDecimal> readBigDecimalList(Map<String, Object> obj, String key) {
+        Object value = obj != null ? obj.get(key) : null;
+        if (!(value instanceof Iterable<?> values)) {
+            return List.of();
+        }
+        List<BigDecimal> result = new ArrayList<>();
+        for (Object item : values) {
+            BigDecimal bd = switch (item) {
+                case null -> null;
+                case BigDecimal v -> v;
+                case Number n -> BigDecimal.valueOf(n.doubleValue());
+                case String s when !s.isBlank() -> {
+                    try {
+                        yield new BigDecimal(s.trim());
+                    } catch (NumberFormatException ignored) {
+                        yield null;
+                    }
+                }
+                default -> null;
+            };
+            if (bd != null) {
+                result.add(bd);
+            }
+        }
+        return result;
+    }
+
+    private static List<Double> readDoubleList(Map<String, Object> obj, String key) {
+        Object value = obj != null ? obj.get(key) : null;
+        if (!(value instanceof Iterable<?> values)) {
+            return List.of();
+        }
+        List<Double> result = new ArrayList<>();
+        for (Object item : values) {
+            Double d = switch (item) {
+                case null -> null;
+                case BigDecimal v -> v.doubleValue();
+                case Number n -> n.doubleValue();
+                case String s when !s.isBlank() -> {
+                    try {
+                        yield Double.parseDouble(s.trim());
+                    } catch (NumberFormatException ignored) {
+                        yield null;
+                    }
+                }
+                default -> null;
+            };
+            if (d != null && Double.isFinite(d)) {
+                result.add(d);
+            }
+        }
+        return result;
+    }
+
+    private static String klineRegime(Map<String, Object> primary) {
+        Double bandwidth = finiteDouble(primary, "boll_bandwidth");
+        Double adx = finiteDouble(primary, "adx");
+        Integer maAlign = mapInteger(primary, "ma_alignment");
+        if (bandwidth != null && bandwidth > 8.0) return "SHOCK";
+        if (bandwidth != null && bandwidth < 1.5) return "SQUEEZE";
+        if (adx != null && adx > 25.0 && maAlign != null && maAlign != 0) return "TREND";
+        return "RANGE";
     }
 }

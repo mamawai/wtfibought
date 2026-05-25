@@ -203,6 +203,11 @@ class EntryDecisionEngineTest {
 
     private static TradingDecisionContext decision(String snapshot, QuantSignalDecision signal, StubTools tools,
                                                    List<FuturesPositionDTO> positions) {
+        return decision(snapshot, signal, tools, positions, new TradingExecutionState());
+    }
+
+    private static TradingDecisionContext decision(String snapshot, QuantSignalDecision signal, StubTools tools,
+                                                   List<FuturesPositionDTO> positions, TradingExecutionState state) {
         QuantForecastCycle forecast = forecast(snapshot);
         MarketContext market = MarketContext.parse(forecast, bd("100000"), KlineInterval.M5);
         return new TradingDecisionContext(
@@ -216,7 +221,7 @@ class EntryDecisionEngineTest {
                 bd("100000"),
                 bd("100000"),
                 tools,
-                new TradingExecutionState(),
+                state,
                 new TradingRuntimeToggles(true, false),
                 profile(),
                 market,
