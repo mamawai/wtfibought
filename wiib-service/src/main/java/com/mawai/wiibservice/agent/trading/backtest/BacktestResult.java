@@ -39,7 +39,12 @@ public class BacktestResult {
             BigDecimal pnl,         // 已扣手续费
             BigDecimal fee,         // 总手续费
             BigDecimal rMultiple,   // 以开仓初始风险为基准；缺失风险时为 null
-            String exitReason       // "SL" / "TP" / "SIGNAL_CLOSE" / "TRAILING_STOP" / "TIMEOUT" / "MANUAL"
+            String exitReason,      // "SL" / "TP" / "SIGNAL_CLOSE" / "TRAILING_STOP" / "TIMEOUT" / "MANUAL"
+            String entryMode,
+            Integer failScoreAtExit,
+            BigDecimal maxFavorableR,
+            BigDecimal maxAdverseR,
+            boolean wasLateContinuation
     ) {
         public Trade(int barIndex,
                      int closeBarIndex,
@@ -54,7 +59,7 @@ public class BacktestResult {
                      BigDecimal rMultiple,
                      String exitReason) {
             this(barIndex, closeBarIndex, null, null, null, side, strategy, entryPrice, exitPrice,
-                    quantity, leverage, pnl, fee, rMultiple, exitReason);
+                    quantity, leverage, pnl, fee, rMultiple, exitReason, null, null, null, null, false);
         }
 
         public Trade(int barIndex,
@@ -72,7 +77,27 @@ public class BacktestResult {
                      BigDecimal rMultiple,
                      String exitReason) {
             this(barIndex, closeBarIndex, openTime, closeTime, null, side, strategy, entryPrice, exitPrice,
-                    quantity, leverage, pnl, fee, rMultiple, exitReason);
+                    quantity, leverage, pnl, fee, rMultiple, exitReason, null, null, null, null, false);
+        }
+
+        public Trade(int barIndex,
+                     int closeBarIndex,
+                     LocalDateTime openTime,
+                     LocalDateTime closeTime,
+                     String entryDiagnosticsJson,
+                     String side,
+                     String strategy,
+                     BigDecimal entryPrice,
+                     BigDecimal exitPrice,
+                     BigDecimal quantity,
+                     int leverage,
+                     BigDecimal pnl,
+                     BigDecimal fee,
+                     BigDecimal rMultiple,
+                     String exitReason) {
+            this(barIndex, closeBarIndex, openTime, closeTime, entryDiagnosticsJson, side, strategy,
+                    entryPrice, exitPrice, quantity, leverage, pnl, fee, rMultiple, exitReason,
+                    null, null, null, null, false);
         }
     }
 

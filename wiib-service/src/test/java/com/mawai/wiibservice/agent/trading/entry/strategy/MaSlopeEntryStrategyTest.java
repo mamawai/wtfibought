@@ -41,7 +41,9 @@ class MaSlopeEntryStrategyTest {
         assertThat(candidate.side()).isEqualTo("LONG");
         assertThat(candidate.maxLeverage()).isEqualTo(50);
         assertThat(candidate.positionScale()).isEqualTo(0.75);
-        assertThat(candidate.reason()).contains("state=UP_ACCELERATING", "confirm=UP_ACCELERATING");
+        assertThat(candidate.entryMode()).isEqualTo("LAUNCH");
+        assertThat(candidate.wasLateContinuation()).isFalse();
+        assertThat(candidate.reason()).contains("entryMode=LAUNCH", "state=UP_ACCELERATING", "confirm=UP_ACCELERATING");
     }
 
     @Test
@@ -121,7 +123,8 @@ class MaSlopeEntryStrategyTest {
         EntryStrategyCandidate candidate = result.candidate();
         assertThat(candidate.side()).isEqualTo("LONG");
         assertThat(candidate.positionScale()).isEqualTo(0.50);
-        assertThat(candidate.reason()).contains("mode=EARLY_MA25_LAG", "state=UP_DECELERATING");
+        assertThat(candidate.entryMode()).isEqualTo("LAUNCH");
+        assertThat(candidate.reason()).contains("entryMode=LAUNCH", "mode=EARLY_MA25_LAG", "state=UP_DECELERATING");
     }
 
     @Test
@@ -240,7 +243,7 @@ class MaSlopeEntryStrategyTest {
     }
 
     @Test
-    void rejectsBtcM3WhenOneHourAlreadyTrending() {
+    void rejectsBtcM3UntilSeparateEdgeCalibration() {
         MarketContext ctx = marketContext(
                 upMa7(), upMa25(),
                 upMa7(), upMa25(),
@@ -249,7 +252,7 @@ class MaSlopeEntryStrategyTest {
         EntryStrategyResult result = strategy.build(context("BTCUSDT", KlineInterval.M3, ctx));
 
         assertThat(result.candidate()).isNull();
-        assertThat(result.rejectReason()).contains("MASLOPE_3M_1H_ALREADY_TRENDING");
+        assertThat(result.rejectReason()).contains("MASLOPE_3M_BTC_NO_EDGE");
     }
 
     @Test
@@ -272,6 +275,29 @@ class MaSlopeEntryStrategyTest {
         assertThat(result.rejectReason()).isNull();
         assertThat(result.candidate()).isNotNull();
         assertThat(result.candidate().reason()).contains("mode=PRIMARY_KLINE");
+    }
+
+    @Test
+    void acceptsPullbackReclaimEntryModeAfterMa7Retest() {
+        MarketContext ctx = marketContext(
+                pullbackReclaimMa7(), pullbackUpMa25(),
+                upMa7(), upMa25(),
+                "128",
+                "TREND_UP",
+                "golden",
+                "rising_5",
+                "2",
+                "1",
+                "rising_5",
+                "30",
+                true);
+
+        EntryStrategyResult result = strategy.build(context("BTCUSDT", ctx));
+
+        assertThat(result.rejectReason()).isNull();
+        assertThat(result.candidate()).isNotNull();
+        assertThat(result.candidate().entryMode()).isEqualTo("PULLBACK_RECLAIM");
+        assertThat(result.candidate().wasLateContinuation()).isFalse();
     }
 
     @Test
@@ -301,12 +327,38 @@ class MaSlopeEntryStrategyTest {
         MarketContext ctx = marketContext(
                 upMa7(), upMa25(),
                 upMa7(), upMa25(),
-                "200");
+                "200",
+                "TREND_UP",
+                "golden",
+                "rising_5",
+                "2",
+                "1",
+                "rising_5",
+                "26",
+                true,
+                List.of(1.2, 1.3, 1.4, 1.3, 1.2),
+                false,
+                false);
 
         EntryStrategyResult result = strategy.build(context("BTCUSDT", ctx));
 
         assertThat(result.candidate()).isNull();
-        assertThat(result.rejectReason()).contains("MASLOPE_TOO_EXTENDED");
+        assertThat(result.rejectReason()).contains("MASLOPE_LATE_CHASE_REJECT");
+    }
+
+    @Test
+    void acceptsLateContinuationOnlyWithStructureVolumeAndHealthyClose() {
+        MarketContext ctx = marketContext(
+                upMa7(), upMa25(),
+                upMa7(), upMa25(),
+                "200");
+
+        EntryStrategyResult result = strategy.build(context("BTCUSDT", ctx));
+
+        assertThat(result.rejectReason()).isNull();
+        assertThat(result.candidate()).isNotNull();
+        assertThat(result.candidate().entryMode()).isEqualTo("LATE_CONTINUATION");
+        assertThat(result.candidate().wasLateContinuation()).isTrue();
     }
 
     @Test

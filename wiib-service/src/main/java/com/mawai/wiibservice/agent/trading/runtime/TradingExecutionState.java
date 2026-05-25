@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.Collection;
+import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -19,6 +20,9 @@ public class TradingExecutionState {
     private final ConcurrentHashMap<String, Long> lastEntryMs = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Integer> reversalStreak = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, String> reversalStreakSignalKey = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Integer> fastFailStreak = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, String> fastFailStreakSignalKey = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Integer> maSlopeFastFailStreak = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, PositionPeak> positionPeaks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, ExitPlan> exitPlans = new ConcurrentHashMap<>();
 
@@ -49,6 +53,8 @@ public class TradingExecutionState {
         positionPeaks.keySet().removeIf(id -> !livePositionIds.contains(id));
         reversalStreak.keySet().removeIf(id -> !livePositionIds.contains(id));
         reversalStreakSignalKey.keySet().removeIf(id -> !livePositionIds.contains(id));
+        fastFailStreak.keySet().removeIf(id -> !livePositionIds.contains(id));
+        fastFailStreakSignalKey.keySet().removeIf(id -> !livePositionIds.contains(id));
         exitPlans.keySet().removeIf(id -> !livePositionIds.contains(id));
     }
 
@@ -56,6 +62,8 @@ public class TradingExecutionState {
         positionPeaks.remove(positionId);
         reversalStreak.remove(positionId);
         reversalStreakSignalKey.remove(positionId);
+        fastFailStreak.remove(positionId);
+        fastFailStreakSignalKey.remove(positionId);
         exitPlans.remove(positionId);
     }
 
@@ -136,5 +144,68 @@ public class TradingExecutionState {
     public void clearReversalStreak(Long positionId) {
         reversalStreak.remove(positionId);
         reversalStreakSignalKey.remove(positionId);
+    }
+
+    public int recordFastFailStreakOnSignal(Long positionId, String signalKey) {
+        if (positionId == null) {
+            return 0;
+        }
+        if (signalKey == null || signalKey.isBlank()) {
+            return fastFailStreak.merge(positionId, 1, Integer::sum);
+        }
+        String normalizedKey = signalKey.trim();
+        Integer current = fastFailStreak.get(positionId);
+        String previousKey = fastFailStreakSignalKey.get(positionId);
+        if (normalizedKey.equals(previousKey)) {
+            if (current != null) {
+                return current;
+            }
+            fastFailStreak.put(positionId, 1);
+            return 1;
+        }
+        fastFailStreakSignalKey.put(positionId, normalizedKey);
+        return fastFailStreak.merge(positionId, 1, Integer::sum);
+    }
+
+    public int getFastFailStreak(Long positionId) {
+        if (positionId == null) {
+            return 0;
+        }
+        return fastFailStreak.getOrDefault(positionId, 0);
+    }
+
+    public void clearFastFailStreak(Long positionId) {
+        fastFailStreak.remove(positionId);
+        fastFailStreakSignalKey.remove(positionId);
+    }
+
+    public int recordMaSlopeFastFail(String symbol, String side) {
+        String key = maSlopeWaveKey(symbol, side);
+        if (key == null) {
+            return 0;
+        }
+        return maSlopeFastFailStreak.merge(key, 1, Integer::sum);
+    }
+
+    public int getMaSlopeFastFailStreak(String symbol, String side) {
+        String key = maSlopeWaveKey(symbol, side);
+        if (key == null) {
+            return 0;
+        }
+        return maSlopeFastFailStreak.getOrDefault(key, 0);
+    }
+
+    public void clearMaSlopeFastFailStreak(String symbol, String side) {
+        String key = maSlopeWaveKey(symbol, side);
+        if (key != null) {
+            maSlopeFastFailStreak.remove(key);
+        }
+    }
+
+    private String maSlopeWaveKey(String symbol, String side) {
+        if (symbol == null || symbol.isBlank() || side == null || side.isBlank()) {
+            return null;
+        }
+        return symbol.trim().toUpperCase(Locale.ROOT) + "|" + side.trim().toUpperCase(Locale.ROOT);
     }
 }

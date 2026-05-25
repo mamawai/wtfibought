@@ -21,6 +21,8 @@ import com.mawai.wiibservice.agent.trading.entry.strategy.MeanReversionEntryStra
 import com.mawai.wiibservice.agent.trading.entry.strategy.TrendContinuationEntryStrategy;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlanFactory;
+import com.mawai.wiibservice.agent.trading.maslope.MaSlopeStateClassifier;
+import com.mawai.wiibservice.agent.trading.maslope.MaSlopeStateClassifier.MaState;
 import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
@@ -50,6 +52,7 @@ import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.findReferenceSignalWithPriority;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.fmt;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.fmtPrice;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.getCurrentStopLossPrice;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.hold;
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.normalizeStrategyPath;
 
@@ -83,9 +86,7 @@ public final class EntryDecisionEngine {
     private static final double TREND_SELECTION_WEIGHT = 0.7;
     private static final double MR_SELECTION_WEIGHT = 0.9;
     private static final double MA_SLOPE_SELECTION_WEIGHT = 0.85;
-    // 不是冷却：只挡同一波信号的近距离重复下注，价格顺势走开后允许继续加仓。
-    private static final BigDecimal MA_SLOPE_SCALE_IN_MIN_STEP_ATR = new BigDecimal("0.30");
-
+    private static final int MA_SLOPE_FAILED_WAVE_LAUNCH_LIMIT = 2;
     private final List<EntryStrategy> allStrategies;
     private final Supplier<List<String>> enabledStrategyPathsSupplier;
 
@@ -197,6 +198,9 @@ public final class EntryDecisionEngine {
                 decision.profile(), decision.tools(), decision.toggles(), state, now);
         if (inner.action().startsWith("OPEN_")) {
             state.markEntry(symbol, nowMs);
+            if (PATH_MA_SLOPE.equals(best.path()) && !"LAUNCH".equals(best.entryMode())) {
+                state.clearMaSlopeFastFailStreak(symbol, best.side());
+            }
         }
         return new DeterministicTradingExecutor.ExecutionResult(
                 inner.action(),
@@ -436,10 +440,20 @@ public final class EntryDecisionEngine {
         try {
             BigDecimal atrAtEntry = PATH_MA_SLOPE.equals(candidate.path())
                     && ctx.atrClosed != null && ctx.atrClosed.signum() > 0 ? ctx.atrClosed : ctx.atr;
-            ExitPlan exitPlan = ExitPlanFactory.fromEntry(
-                    candidate.path(), candidate.side(), ctx.price, plan.stopLoss(), atrAtEntry,
-                    ctx.bollPb, ctx.rsi != null ? ctx.rsi.doubleValue() : null,
-                    ctx.maAlignment1h, ctx.maAlignment15m, now);
+            ExitPlan exitPlan;
+            if (PATH_MA_SLOPE.equals(candidate.path())) {
+                MaState entryState = MaSlopeStateClassifier.classifyPrimary(ctx);
+                exitPlan = ExitPlanFactory.fromMaSlopeEntry(
+                        candidate.side(), ctx.price, plan.stopLoss(), atrAtEntry,
+                        ctx.bollPb, ctx.rsi != null ? ctx.rsi.doubleValue() : null,
+                        ctx.maAlignment1h, ctx.maAlignment15m,
+                        entryState.ma7SlopeAtr(), candidate.entryMode(), candidate.wasLateContinuation(), now);
+            } else {
+                exitPlan = ExitPlanFactory.fromEntry(
+                        candidate.path(), candidate.side(), ctx.price, plan.stopLoss(), atrAtEntry,
+                        ctx.bollPb, ctx.rsi != null ? ctx.rsi.doubleValue() : null,
+                        ctx.maAlignment1h, ctx.maAlignment15m, now);
+            }
             state.putExitPlan(positionId, exitPlan);
         } catch (IllegalArgumentException e) {
             // 开仓已成功，不能因为内存计划失败影响交易结果；后续 Step5 会做退化恢复。
@@ -494,7 +508,10 @@ public final class EntryDecisionEngine {
         }
         List<EntryStrategyCandidate> accepted = new ArrayList<>();
         for (EntryStrategyCandidate candidate : candidates) {
-            String reject = maSlopeScaleInQualityReject(decision, candidate);
+            String reject = maSlopeFailedWaveReject(decision, candidate);
+            if (reject == null) {
+                reject = maSlopeScaleInQualityReject(decision, candidate);
+            }
             if (reject == null) {
                 accepted.add(candidate);
             } else {
@@ -504,44 +521,50 @@ public final class EntryDecisionEngine {
         return accepted;
     }
 
+    private String maSlopeFailedWaveReject(TradingDecisionContext decision, EntryStrategyCandidate candidate) {
+        if (!PATH_MA_SLOPE.equals(candidate.path()) || decision.state() == null) {
+            return null;
+        }
+        int fastFails = decision.state().getMaSlopeFastFailStreak(decision.symbol(), candidate.side());
+        if (fastFails < MA_SLOPE_FAILED_WAVE_LAUNCH_LIMIT || !"LAUNCH".equals(candidate.entryMode())) {
+            return null;
+        }
+        return "MA_SLOPE: MASLOPE_FAILED_WAVE_LAUNCH_REJECT side=" + candidate.side()
+                + " fastFails=" + fastFails;
+    }
+
     private String maSlopeScaleInQualityReject(TradingDecisionContext decision, EntryStrategyCandidate candidate) {
         if (!PATH_MA_SLOPE.equals(candidate.path())
                 || decision.symbolPositions() == null || decision.symbolPositions().isEmpty()
                 || decision.market() == null || decision.market().price == null
-                || !hasPositiveAtrForScaleIn(decision.market())) {
+                || decision.market().price.signum() <= 0) {
             return null;
         }
 
-        BigDecimal currentPrice = decision.market().price;
-        BigDecimal requiredStep = atrForScaleIn(decision.market()).multiply(MA_SLOPE_SCALE_IN_MIN_STEP_ATR);
-        BigDecimal anchorEntry = null;
         boolean candidateLong = "LONG".equals(candidate.side());
+        boolean hasSameSideMaSlope = false;
+        boolean hasProtectedSameSideMaSlope = false;
         for (FuturesPositionDTO position : decision.symbolPositions()) {
             if (!isOpenMaSlopePosition(position) || !candidate.side().equals(position.getSide())
                     || position.getEntryPrice() == null || position.getEntryPrice().signum() <= 0) {
                 continue;
             }
-            BigDecimal entry = position.getEntryPrice();
-            if (anchorEntry == null) {
-                anchorEntry = entry;
-            } else if (candidateLong && entry.compareTo(anchorEntry) > 0) {
-                anchorEntry = entry;
-            } else if (!candidateLong && entry.compareTo(anchorEntry) < 0) {
-                anchorEntry = entry;
-            }
+            hasSameSideMaSlope = true;
+            hasProtectedSameSideMaSlope |= isBreakevenProtected(decision.state(), position, candidateLong);
         }
-        if (anchorEntry == null) {
+        if (!hasSameSideMaSlope) {
             return null;
         }
 
-        BigDecimal favorableMove = candidateLong
-                ? currentPrice.subtract(anchorEntry)
-                : anchorEntry.subtract(currentPrice);
-        if (favorableMove.compareTo(requiredStep) >= 0) {
+        boolean pullbackReclaim = MaSlopeEntryStrategy.pullbackReclaimSupports(decision.market(), candidateLong);
+        if ("PULLBACK_RECLAIM".equals(candidate.entryMode())
+                || (hasProtectedSameSideMaSlope && pullbackReclaim)) {
             return null;
         }
-        return "MA_SLOPE: 同向加仓距离不足 move=" + fmt(favorableMove.doubleValue())
-                + " < " + fmt(requiredStep.doubleValue()) + "(0.30ATR)";
+        return "MA_SLOPE: MASLOPE_SAME_WAVE_REJECT side=" + candidate.side()
+                + " entryMode=" + candidate.entryMode()
+                + " protected=" + hasProtectedSameSideMaSlope
+                + " pullback=" + pullbackReclaim;
     }
 
     private boolean isOpenMaSlopePosition(FuturesPositionDTO position) {
@@ -550,15 +573,19 @@ public final class EntryDecisionEngine {
                 && PATH_MA_SLOPE.equals(normalizeStrategyPath(position.getMemo()));
     }
 
-    private boolean hasPositiveAtrForScaleIn(MarketContext ctx) {
-        return atrForScaleIn(ctx).signum() > 0;
-    }
-
-    private BigDecimal atrForScaleIn(MarketContext ctx) {
-        if (ctx.atrClosed != null && ctx.atrClosed.signum() > 0) {
-            return ctx.atrClosed;
+    private boolean isBreakevenProtected(TradingExecutionState state, FuturesPositionDTO position, boolean isLong) {
+        if (position == null || position.getEntryPrice() == null) {
+            return false;
         }
-        return ctx.atr != null ? ctx.atr : BigDecimal.ZERO;
+        ExitPlan plan = state != null && position.getId() != null ? state.getExitPlan(position.getId()) : null;
+        if (plan != null && plan.breakevenDone()) {
+            return true;
+        }
+        BigDecimal stop = getCurrentStopLossPrice(position);
+        if (stop == null || stop.signum() <= 0) {
+            return false;
+        }
+        return isLong ? stop.compareTo(position.getEntryPrice()) >= 0 : stop.compareTo(position.getEntryPrice()) <= 0;
     }
 
     /**

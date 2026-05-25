@@ -158,6 +158,75 @@ class MaSlopeExitPlaybookTest {
     }
 
     @Test
+    void fastFailClosesLongBeforeHardStopWhenDeepLossAndScoreEnough() {
+        LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
+
+        ExitPlaybookDecision decision = playbook.evaluate(
+                signalContext("99500", "10", downMa7(), downMa25(),
+                        false, new TradingExecutionState()),
+                position("LONG", "100000", "99000", "1"),
+                plan("LONG", entryAt),
+                entryAt.plusMinutes(12));
+
+        assertThat(decision.action()).isEqualTo(ExitPlaybookDecision.Action.CLOSE_FULL);
+        assertThat(decision.reason()).contains("MA_SLOPE_FAST_FAIL", "threshold=2", "r=-0.50");
+    }
+
+    @Test
+    void fastFailClosesShortBeforeHardStopWhenDeepLossAndScoreEnough() {
+        LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
+
+        ExitPlaybookDecision decision = playbook.evaluate(
+                signalContext("100500", "10", upMa7(), upMa25(),
+                        false, new TradingExecutionState()),
+                position("SHORT", "100000", "101000", "1"),
+                plan("SHORT", entryAt),
+                entryAt.plusMinutes(12));
+
+        assertThat(decision.action()).isEqualTo(ExitPlaybookDecision.Action.CLOSE_FULL);
+        assertThat(decision.reason()).contains("MA_SLOPE_FAST_FAIL", "threshold=2", "r=-0.50");
+    }
+
+    @Test
+    void fastFailRaisesThresholdWhenHigherTimeframeStillSupports() {
+        LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
+
+        ExitPlaybookDecision decision = playbook.evaluate(
+                signalContextWithConfirm("99500", "10",
+                        downMa7(), downMa25(), upMa7(), upMa25(),
+                        false, new TradingExecutionState()),
+                position("LONG", "100000", "99000", "1"),
+                plan("LONG", entryAt),
+                entryAt.plusMinutes(12));
+
+        assertThat(decision.action()).isEqualTo(ExitPlaybookDecision.Action.HOLD);
+        assertThat(decision.reason()).isEqualTo("MA_SLOPE_HOLD");
+    }
+
+    @Test
+    void shallowFastFailRequiresTwoClosedBars() {
+        LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
+        TradingExecutionState state = new TradingExecutionState();
+        ExitPlan plan = plan("LONG", entryAt);
+        FuturesPositionDTO position = position("LONG", "100000", "99000", "1");
+        TradingDecisionContext firstBar = failureContext("99700", "10",
+                downMa7(), downMa25(), List.of(), List.of(), false, state);
+        TradingDecisionContext secondBar = failureContext("99700", "10",
+                downMa7NextBar(), downMa25NextBar(), List.of(), List.of(), false, state);
+
+        ExitPlaybookDecision first = playbook.evaluate(firstBar, position, plan, entryAt.plusMinutes(12));
+        ExitPlaybookDecision sameBarAgain = playbook.evaluate(firstBar, position, plan, entryAt.plusMinutes(13));
+        ExitPlaybookDecision second = playbook.evaluate(secondBar, position, plan, entryAt.plusMinutes(16));
+
+        assertThat(first.action()).isEqualTo(ExitPlaybookDecision.Action.HOLD);
+        assertThat(first.reason()).contains("MA_SLOPE_FAST_FAIL_WAIT", "threshold=4", "streak=1");
+        assertThat(sameBarAgain.action()).isEqualTo(ExitPlaybookDecision.Action.HOLD);
+        assertThat(sameBarAgain.reason()).contains("streak=1");
+        assertThat(second.action()).isEqualTo(ExitPlaybookDecision.Action.CLOSE_FULL);
+        assertThat(second.reason()).contains("MA_SLOPE_FAST_FAIL", "streak=2");
+    }
+
+    @Test
     void earlyFailureClosesBeforeBreakevenAfterSixtyMinutesStillNegative() {
         LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
 
@@ -325,6 +394,45 @@ class MaSlopeExitPlaybookTest {
         return context(price, atr, ma7, ma25, confirmMa7, confirmMa25, shielded, state);
     }
 
+    private static TradingDecisionContext failureContext(String price, String atr,
+                                                         List<BigDecimal> ma7,
+                                                         List<BigDecimal> ma25,
+                                                         List<BigDecimal> confirmMa7,
+                                                         List<BigDecimal> confirmMa25,
+                                                         boolean shielded,
+                                                         TradingExecutionState state) {
+        QuantForecastCycle forecast = new QuantForecastCycle();
+        forecast.setSnapshotJson("""
+                {
+                  "atr": %s,
+                  "indicatorsByTimeframe": {
+                    "5m": {
+                      "atr14_closed": %s,
+                      "ma7_series_closed": %s,
+                      "ma25_series_closed": %s,
+                      "macd_cross": "death",
+                      "macd_dif": -1,
+                      "macd_dea": 1,
+                      "plus_di": 10,
+                      "minus_di": 30,
+                      "close_trend_recent_3_closed": "falling_3"
+                    },
+                    "15m": {
+                      "atr14_closed": %s,
+                      "ma7_series_closed": %s,
+                      "ma25_series_closed": %s
+                    },
+                    "1h": {"ma_alignment": 1}
+                  }
+                }
+                """.formatted(atr, atr, array(ma7), array(ma25), atr, array(confirmMa7), array(confirmMa25)));
+        MarketContext market = MarketContext.parse(forecast, bd(price), KlineInterval.M5);
+        return new TradingDecisionContext("BTCUSDT", null, List.of(), forecast, List.of(), List.of(),
+                bd(price), bd(price), bd("100000"), null, state,
+                new TradingRuntimeToggles(true, true), SymbolProfile.of("BTCUSDT"), market,
+                LocalDateTime.of(2026, 5, 24, 1, 0), shielded);
+    }
+
     private static TradingDecisionContext context(String price, String atr,
                                                   List<BigDecimal> ma7,
                                                   List<BigDecimal> ma25,
@@ -378,8 +486,16 @@ class MaSlopeExitPlaybookTest {
         return bdList("108", "107", "106", "105", "104", "103", "102", "101", "100");
     }
 
+    private static List<BigDecimal> downMa7NextBar() {
+        return bdList("107", "106", "105", "104", "103", "102", "101", "100", "99");
+    }
+
     private static List<BigDecimal> downMa25() {
         return bdList("109.5", "109", "108.5", "108", "107.5", "107", "106.5", "106", "105.5");
+    }
+
+    private static List<BigDecimal> downMa25NextBar() {
+        return bdList("109", "108.5", "108", "107.5", "107", "106.5", "106", "105.5", "105");
     }
 
     private static List<BigDecimal> extinguishingLongMa7() {

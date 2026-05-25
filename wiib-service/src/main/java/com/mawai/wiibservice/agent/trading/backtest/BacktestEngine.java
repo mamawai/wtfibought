@@ -208,7 +208,9 @@ public class BacktestEngine {
                     ct.openBarIndex(), ct.closeBarIndex(), ct.openTime(), ct.closeTime(),
                     ct.entryDiagnosticsJson(), ct.side(), ct.strategy(),
                     ct.entryPrice(), ct.exitPrice(), ct.quantity(), ct.leverage(),
-                    ct.pnl(), ct.fee(), ct.rMultiple(), ct.exitReason()
+                    ct.pnl(), ct.fee(), ct.rMultiple(), ct.exitReason(),
+                    ct.entryMode(), ct.failScoreAtExit(), ct.maxFavorableR(), ct.maxAdverseR(),
+                    ct.wasLateContinuation()
             ));
         }
 

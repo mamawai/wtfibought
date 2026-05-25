@@ -311,6 +311,11 @@ class MaSlopeKlineBacktestIT {
         row.put("fee", trade.fee());
         row.put("rMultiple", trade.rMultiple());
         row.put("exitReason", trade.exitReason());
+        row.put("entryMode", trade.entryMode());
+        row.put("failScoreAtExit", trade.failScoreAtExit());
+        row.put("maxFavorableR", trade.maxFavorableR());
+        row.put("maxAdverseR", trade.maxAdverseR());
+        row.put("wasLateContinuation", trade.wasLateContinuation());
         if (trade.entryDiagnosticsJson() != null && !trade.entryDiagnosticsJson().isBlank()) {
             row.put("entryDiagnostics", JSON.parseObject(trade.entryDiagnosticsJson()));
         }

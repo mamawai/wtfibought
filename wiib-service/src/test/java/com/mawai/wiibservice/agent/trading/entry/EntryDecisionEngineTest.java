@@ -130,9 +130,9 @@ class EntryDecisionEngineTest {
     }
 
     @Test
-    void maSlopeCandidateCanOpenEvenWhenExistingMaSlopePositionIsOpen() {
+    void maSlopeCandidateCanOpenSameSideOnlyOnPullbackReclaim() {
         StubTools tools = new StubTools();
-        AutoEntryStrategy auto = new AutoEntryStrategy(PATH_MA_SLOPE);
+        AutoEntryStrategy auto = new AutoEntryStrategy(PATH_MA_SLOPE, 10, "LONG", "PULLBACK_RECLAIM");
         EntryDecisionEngine engine = new EntryDecisionEngine(List.of(auto), List.of(PATH_MA_SLOPE));
 
         DeterministicTradingExecutor.ExecutionResult result = engine.evaluate(
@@ -155,9 +155,42 @@ class EntryDecisionEngineTest {
                         List.of(openPosition(PATH_MA_SLOPE, "LONG", bd("99950")))));
 
         assertThat(result.action()).isEqualTo("HOLD");
-        assertThat(result.reasoning()).contains("同向加仓距离不足");
+        assertThat(result.reasoning()).contains("MASLOPE_SAME_WAVE_REJECT");
         assertThat(auto.calls).isEqualTo(1);
         assertThat(tools.openCount).isZero();
+    }
+
+    @Test
+    void maSlopeLaunchRejectsAfterRepeatedFastFailWave() {
+        StubTools tools = new StubTools();
+        AutoEntryStrategy auto = new AutoEntryStrategy(PATH_MA_SLOPE, 10, "LONG", "LAUNCH");
+        EntryDecisionEngine engine = new EntryDecisionEngine(List.of(auto), List.of(PATH_MA_SLOPE));
+        TradingExecutionState state = new TradingExecutionState();
+        state.recordMaSlopeFastFail("BTCUSDT", "LONG");
+        state.recordMaSlopeFastFail("BTCUSDT", "LONG");
+
+        DeterministicTradingExecutor.ExecutionResult result = engine.evaluate(
+                decision(trendSnapshot(), signal("LONG", "0.75"), tools, List.of(), state));
+
+        assertThat(result.action()).isEqualTo("HOLD");
+        assertThat(result.reasoning()).contains("MASLOPE_FAILED_WAVE_LAUNCH_REJECT");
+        assertThat(tools.openCount).isZero();
+    }
+
+    @Test
+    void maSlopePullbackCanResetRepeatedFastFailWave() {
+        StubTools tools = new StubTools();
+        AutoEntryStrategy auto = new AutoEntryStrategy(PATH_MA_SLOPE, 10, "LONG", "PULLBACK_RECLAIM");
+        EntryDecisionEngine engine = new EntryDecisionEngine(List.of(auto), List.of(PATH_MA_SLOPE));
+        TradingExecutionState state = new TradingExecutionState();
+        state.recordMaSlopeFastFail("BTCUSDT", "LONG");
+        state.recordMaSlopeFastFail("BTCUSDT", "LONG");
+
+        DeterministicTradingExecutor.ExecutionResult result = engine.evaluate(
+                decision(trendSnapshot(), signal("LONG", "0.75"), tools, List.of(), state));
+
+        assertThat(result.action()).isEqualTo("OPEN_LONG");
+        assertThat(state.getMaSlopeFastFailStreak("BTCUSDT", "LONG")).isZero();
     }
 
     @Test
@@ -317,6 +350,7 @@ class EntryDecisionEngineTest {
         private final String path;
         private final int maxLeverage;
         private final String side;
+        private final String entryMode;
         int calls;
         String lastSymbol;
         KlineInterval lastInterval;
@@ -334,9 +368,14 @@ class EntryDecisionEngineTest {
         }
 
         private AutoEntryStrategy(String path, int maxLeverage, String side) {
+            this(path, maxLeverage, side, null);
+        }
+
+        private AutoEntryStrategy(String path, int maxLeverage, String side, String entryMode) {
             this.path = path;
             this.maxLeverage = maxLeverage;
             this.side = side;
+            this.entryMode = entryMode;
         }
 
         @Override
@@ -356,9 +395,10 @@ class EntryDecisionEngineTest {
             lastInterval = input.decisionInterval();
             BigDecimal atr = input.market().atr;
             return EntryStrategyResult.accept(new EntryStrategyCandidate(
-                    path(), "自动方向测试", side, true, 10.0,
+                    path(), "自动方向测试", side, "LONG".equals(side), 10.0,
                     atr.multiply(bd("2")), atr.multiply(bd("3")),
-                    maxLeverage, 1.0, "auto-test"));
+                    maxLeverage, 1.0, "auto-test", entryMode,
+                    "LATE_CONTINUATION".equals(entryMode)));
         }
     }
 

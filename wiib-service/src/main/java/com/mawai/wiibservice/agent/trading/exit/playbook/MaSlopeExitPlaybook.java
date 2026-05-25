@@ -3,6 +3,8 @@ package com.mawai.wiibservice.agent.trading.exit.playbook;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPath;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
+import com.mawai.wiibservice.agent.trading.maslope.MaSlopeFailureEvaluator;
+import com.mawai.wiibservice.agent.trading.maslope.MaSlopeFailureEvaluator.FailureScore;
 import com.mawai.wiibservice.agent.trading.maslope.MaSlopeStateClassifier;
 import com.mawai.wiibservice.agent.trading.maslope.MaSlopeStateClassifier.MaState;
 import com.mawai.wiibservice.agent.trading.runtime.MarketContext;
@@ -32,6 +34,10 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
     private static final BigDecimal TIME_PROGRESS_R = new BigDecimal("0.50");
     private static final long TIME_LIMIT_MINUTES = 90;
     private static final BigDecimal ATR_TRAIL_MULT = new BigDecimal("2.0");
+    private static final BigDecimal FAST_FAIL_DEEP_R = new BigDecimal("-0.45");
+    private static final int FAST_FAIL_DEEP_SCORE = 2;
+    private static final int FAST_FAIL_SHALLOW_SCORE = 3;
+    private static final int FAST_FAIL_STREAK_THRESHOLD = 2;
     private static final BigDecimal EARLY_FAIL_R = BigDecimal.ZERO;
     private static final long EARLY_FAIL_MINUTES = 60;
     // 入场要求 0.03 ATR；退出用 -0.005/+0.005 迟滞，避免 0 附近抖动来回平仓。
@@ -80,9 +86,21 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
         MaState confirm = hasConfirmSignalData(ctx) ? MaSlopeStateClassifier.classifyConfirm(ctx) : null;
         boolean higherTrendStillSupports = higherTrendStillSupports(confirm, isLong);
 
+        ExitPlaybookDecision fastFail = evaluateFastFail(
+                decision, position, plan, breakevenDone, current, confirm, profitR, isLong, ctx);
+        if (fastFail.actionable() || fastFail.entryEvaluationBlocked()) {
+            return fastFail;
+        }
+        boolean fastFailWaiting = fastFail.reason() != null
+                && fastFail.reason().startsWith("MA_SLOPE_FAST_FAIL_WAIT");
+        if (fastFailWaiting) {
+            return fastFail;
+        }
+
         if (!decision.indicatorExitShielded() && current != null && current.stronglyAgainst(isLong)
                 && !higherTrendStillSupports) {
             clearStreak(decision, position);
+            clearFastFailStreak(decision, position);
             return ExitPlaybookDecision.closeFull("MA_SLOPE_SIGNAL_REVERSE state=" + current.state());
         }
 
@@ -101,6 +119,7 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
                 && !signalStillStrong(decision, current, isLong)
                 && !higherTrendStillSupports) {
             clearStreak(decision, position);
+            clearFastFailStreak(decision, position);
             return ExitPlaybookDecision.closeFull("MA_SLOPE_NO_PROGRESS_IN_60M");
         }
 
@@ -128,10 +147,71 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
                 && plan.highestProfitR() < TIME_PROGRESS_R.doubleValue()
                 && !higherTrendStillSupports) {
             clearStreak(decision, position);
+            clearFastFailStreak(decision, position);
             return ExitPlaybookDecision.closeFull("MA_SLOPE_NO_0_5R_IN_90M");
         }
 
         return extinguishWaiting ? extinguish : ExitPlaybookDecision.hold("MA_SLOPE_HOLD");
+    }
+
+    private ExitPlaybookDecision evaluateFastFail(TradingDecisionContext decision,
+                                                  FuturesPositionDTO position,
+                                                  ExitPlan plan,
+                                                  boolean breakevenDone,
+                                                  MaState current,
+                                                  MaState confirm,
+                                                  BigDecimal profitR,
+                                                  boolean isLong,
+                                                  MarketContext ctx) {
+        if (decision.indicatorExitShielded() || breakevenDone || current == null) {
+            clearFastFailStreak(decision, position);
+            return ExitPlaybookDecision.hold("MA_SLOPE_FAST_FAIL_VALID");
+        }
+
+        FailureScore failure = MaSlopeFailureEvaluator.score(ctx, current, isLong, plan.entryMa7SlopeAtr());
+        boolean higherTrendAddsThreshold = higherTrendStillSupports(confirm, isLong)
+                || EntryStrategySupportForExit.directionAligns(ctx.maAlignment1h, isLong);
+        if (profitR.compareTo(FAST_FAIL_DEEP_R) <= 0) {
+            int threshold = FAST_FAIL_DEEP_SCORE + (higherTrendAddsThreshold ? 1 : 0);
+            if (failure.score() >= threshold) {
+                clearFastFailStreak(decision, position);
+                return ExitPlaybookDecision.closeFull(fastFailReason(
+                        "MA_SLOPE_FAST_FAIL", failure, threshold, profitR, 0));
+            }
+            clearFastFailStreak(decision, position);
+            return ExitPlaybookDecision.hold("MA_SLOPE_FAST_FAIL_VALID");
+        }
+
+        if (profitR.compareTo(BigDecimal.ZERO) < 0) {
+            int threshold = FAST_FAIL_SHALLOW_SCORE + (higherTrendAddsThreshold ? 1 : 0);
+            if (failure.score() >= threshold) {
+                TradingExecutionState state = decision.state();
+                if (state == null || position.getId() == null) {
+                    return ExitPlaybookDecision.holdBlocked("MA_SLOPE_FAST_FAIL_STREAK_STATE_MISSING");
+                }
+                int streak = state.recordFastFailStreakOnSignal(position.getId(),
+                        signalKey(ctx, current) + ":fastFail:" + failure.score());
+                if (streak >= FAST_FAIL_STREAK_THRESHOLD) {
+                    return ExitPlaybookDecision.closeFull(fastFailReason(
+                            "MA_SLOPE_FAST_FAIL", failure, threshold, profitR, streak));
+                }
+                return ExitPlaybookDecision.hold(fastFailReason(
+                        "MA_SLOPE_FAST_FAIL_WAIT", failure, threshold, profitR, streak));
+            }
+        }
+
+        clearFastFailStreak(decision, position);
+        return ExitPlaybookDecision.hold("MA_SLOPE_FAST_FAIL_VALID");
+    }
+
+    private String fastFailReason(String prefix,
+                                  FailureScore failure,
+                                  int threshold,
+                                  BigDecimal profitR,
+                                  int streak) {
+        String reason = String.format(Locale.US, "%s score=%d threshold=%d r=%.2f reasons=%s",
+                prefix, failure.score(), threshold, profitR.doubleValue(), failure.reasonText());
+        return streak > 0 ? reason + " streak=" + streak : reason;
     }
 
     private ExitPlaybookDecision evaluateExtinguish(TradingDecisionContext decision,
@@ -231,6 +311,12 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
         }
     }
 
+    private void clearFastFailStreak(TradingDecisionContext decision, FuturesPositionDTO position) {
+        if (decision != null && decision.state() != null && position != null && position.getId() != null) {
+            decision.state().clearFastFailStreak(position.getId());
+        }
+    }
+
     private BigDecimal atrTrailStop(MarketContext ctx, boolean isLong) {
         BigDecimal atr = ctx.atrClosed;
         if (atr == null || atr.signum() <= 0) {
@@ -260,5 +346,15 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
             return 0;
         }
         return Math.max(0, Duration.between(createdAt, now).toMinutes());
+    }
+
+    private static final class EntryStrategySupportForExit {
+        private EntryStrategySupportForExit() {
+        }
+
+        private static boolean directionAligns(Integer alignment, boolean isLong) {
+            if (alignment == null) return false;
+            return isLong ? alignment > 0 : alignment < 0;
+        }
     }
 }

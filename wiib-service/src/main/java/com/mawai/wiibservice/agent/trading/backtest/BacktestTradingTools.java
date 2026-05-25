@@ -1,5 +1,7 @@
 package com.mawai.wiibservice.agent.trading.backtest;
 
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
@@ -51,6 +53,11 @@ public class BacktestTradingTools implements TradingOperations {
     private final List<ClosedTrade> closedTrades = new ArrayList<>();
     private final Map<Long, BigDecimal> initialRiskPerUnitByPosition = new HashMap<>();
     private final Map<Long, String> entryDiagnosticsJsonByPosition = new HashMap<>();
+    private final Map<Long, String> entryModeByPosition = new HashMap<>();
+    private final Map<Long, Boolean> lateContinuationByPosition = new HashMap<>();
+    private final Map<Long, Integer> latestFailScoreByPosition = new HashMap<>();
+    private final Map<Long, BigDecimal> maxFavorableRByPosition = new HashMap<>();
+    private final Map<Long, BigDecimal> maxAdverseRByPosition = new HashMap<>();
     @Setter
     private int currentBarIndex = 0;
     @Setter
@@ -76,7 +83,12 @@ public class BacktestTradingTools implements TradingOperations {
             BigDecimal pnl,
             BigDecimal fee,
             BigDecimal rMultiple,
-            String exitReason
+            String exitReason,
+            String entryMode,
+            Integer failScoreAtExit,
+            BigDecimal maxFavorableR,
+            BigDecimal maxAdverseR,
+            boolean wasLateContinuation
     ) {}
 
     public BacktestTradingTools(BigDecimal initialBalance, String symbol) {
@@ -162,6 +174,8 @@ public class BacktestTradingTools implements TradingOperations {
         }
         pos.setTakeProfits(tpList);
         initialRiskPerUnitByPosition.put(posId, initialRiskPerUnit(price, stopLossPrice));
+        maxFavorableRByPosition.put(posId, BigDecimal.ZERO);
+        maxAdverseRByPosition.put(posId, BigDecimal.ZERO);
 
         openPositions.add(pos);
         log.debug("[Backtest] 开仓成功 {} {} qty={} lev={} entry={} sl={} tp={} memo={}",
@@ -258,6 +272,7 @@ public class BacktestTradingTools implements TradingOperations {
         List<FuturesPositionDTO> posSnapshot = new ArrayList<>(openPositions);
         for (FuturesPositionDTO pos : posSnapshot) {
             if (!"OPEN".equals(pos.getStatus())) continue;
+            recordExcursion(pos, high, low);
             checkSlTpTrigger(pos, high, low);
         }
 
@@ -359,7 +374,12 @@ public class BacktestTradingTools implements TradingOperations {
                 netPnl,
                 totalFeeForRecord,
                 rMultiple,
-                reason
+                reason,
+                entryModeByPosition.get(pos.getId()),
+                latestFailScoreByPosition.get(pos.getId()),
+                maxFavorableRByPosition.get(pos.getId()),
+                maxAdverseRByPosition.get(pos.getId()),
+                Boolean.TRUE.equals(lateContinuationByPosition.get(pos.getId()))
         ));
 
         if (isFullClose) {
@@ -369,6 +389,11 @@ public class BacktestTradingTools implements TradingOperations {
             openPositions.remove(pos);
             initialRiskPerUnitByPosition.remove(pos.getId());
             entryDiagnosticsJsonByPosition.remove(pos.getId());
+            entryModeByPosition.remove(pos.getId());
+            lateContinuationByPosition.remove(pos.getId());
+            latestFailScoreByPosition.remove(pos.getId());
+            maxFavorableRByPosition.remove(pos.getId());
+            maxAdverseRByPosition.remove(pos.getId());
         } else {
             pos.setQuantity(pos.getQuantity().subtract(closeQty));
             pos.setMargin(pos.getMargin().subtract(marginRelease));
@@ -419,6 +444,24 @@ public class BacktestTradingTools implements TradingOperations {
                 ? exitPrice.subtract(pos.getEntryPrice())
                 : pos.getEntryPrice().subtract(exitPrice);
         return priceDiff.divide(risk, 8, RoundingMode.HALF_UP);
+    }
+
+    private void recordExcursion(FuturesPositionDTO pos, BigDecimal high, BigDecimal low) {
+        BigDecimal risk = initialRiskPerUnitByPosition.get(pos.getId());
+        if (risk == null || risk.signum() <= 0 || high == null || low == null || pos.getEntryPrice() == null) {
+            return;
+        }
+        boolean isLong = "LONG".equals(pos.getSide());
+        BigDecimal favorable = isLong
+                ? high.subtract(pos.getEntryPrice())
+                : pos.getEntryPrice().subtract(low);
+        BigDecimal adverse = isLong
+                ? low.subtract(pos.getEntryPrice())
+                : pos.getEntryPrice().subtract(high);
+        BigDecimal favorableR = favorable.divide(risk, 8, RoundingMode.HALF_UP).max(BigDecimal.ZERO);
+        BigDecimal adverseR = adverse.divide(risk, 8, RoundingMode.HALF_UP).min(BigDecimal.ZERO);
+        maxFavorableRByPosition.merge(pos.getId(), favorableR, BigDecimal::max);
+        maxAdverseRByPosition.merge(pos.getId(), adverseR, BigDecimal::min);
     }
 
     private String normalizeExitReason(String reason) {
@@ -481,7 +524,30 @@ public class BacktestTradingTools implements TradingOperations {
             lastOpened.setFundingFeeTotal(BigDecimal.valueOf(barIndex));
             if (entryDiagnosticsJson != null && !entryDiagnosticsJson.isBlank()) {
                 entryDiagnosticsJsonByPosition.put(lastOpened.getId(), entryDiagnosticsJson);
+                rememberEntryDiagnostics(lastOpened.getId(), entryDiagnosticsJson);
             }
+        }
+    }
+
+    public void recordExitSignalDiagnostics(Long positionId, Integer failScoreAtExit) {
+        if (positionId != null && failScoreAtExit != null) {
+            latestFailScoreByPosition.put(positionId, failScoreAtExit);
+        }
+    }
+
+    private void rememberEntryDiagnostics(Long positionId, String entryDiagnosticsJson) {
+        try {
+            JSONObject json = JSON.parseObject(entryDiagnosticsJson);
+            String entryMode = json.getString("entryMode");
+            if (entryMode != null && !entryMode.isBlank()) {
+                entryModeByPosition.put(positionId, entryMode);
+            }
+            Boolean late = json.getBoolean("wasLateContinuation");
+            if (late != null) {
+                lateContinuationByPosition.put(positionId, late);
+            }
+        } catch (Exception ignored) {
+            // 诊断 JSON 只用于报告，解析失败不影响回测交易。
         }
     }
 }

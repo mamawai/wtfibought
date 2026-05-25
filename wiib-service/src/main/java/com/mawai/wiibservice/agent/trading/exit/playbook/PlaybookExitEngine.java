@@ -237,6 +237,13 @@ public final class PlaybookExitEngine {
         String result = tools.closePositionWithReason(pos.getId(), pos.getQuantity(), decision.reason());
         String execLog = "Playbook全平: " + result + "\n";
         if (isTradeSuccess(result)) {
+            if (plan.path() == ExitPath.MA_SLOPE) {
+                if (decision.reason() != null && decision.reason().startsWith("MA_SLOPE_FAST_FAIL")) {
+                    state.recordMaSlopeFastFail(pos.getSymbol(), pos.getSide());
+                } else {
+                    state.clearMaSlopeFastFailStreak(pos.getSymbol(), pos.getSide());
+                }
+            }
             state.clearPosition(pos.getId());
             return new DeterministicTradingExecutor.ExecutionResult(
                     ACTION_EXIT_FULL,
@@ -292,6 +299,9 @@ public final class PlaybookExitEngine {
             plan.markMrMidlineHalfDone();
         }
         state.clearReversalStreak(pos.getId());
+        if (plan.path() == ExitPath.MA_SLOPE) {
+            state.clearMaSlopeFastFailStreak(pos.getSymbol(), pos.getSide());
+        }
 
         BigDecimal slToSync = decision.stopLossPrice() != null
                 ? decision.stopLossPrice() : getCurrentStopLossPrice(pos);

@@ -6,9 +6,11 @@ import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
 import com.mawai.wiibservice.agent.trading.entry.model.EntryStrategyCandidate;
+import com.mawai.wiibservice.agent.trading.entry.strategy.MaSlopeEntryStrategy;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlan;
 import com.mawai.wiibservice.agent.trading.exit.model.ExitPlanFactory;
 import com.mawai.wiibservice.agent.trading.exit.playbook.PlaybookExitEngine;
+import com.mawai.wiibservice.agent.trading.maslope.MaSlopeFailureEvaluator;
 import com.mawai.wiibservice.agent.trading.maslope.MaSlopeKlineStrategy;
 import com.mawai.wiibservice.agent.trading.maslope.MaSlopeStateClassifier;
 import com.mawai.wiibservice.agent.trading.maslope.MaSlopeStateClassifier.MaState;
@@ -28,6 +30,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_MA_SLOPE;
+import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.getCurrentStopLossPrice;
 
 /**
  * 纯 K 线 MaSlope 回测引擎。
@@ -39,13 +42,13 @@ import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport
 public final class MaSlopeKlineBacktestEngine {
 
     private static final int MIN_KLINES_FOR_INDICATOR = 240;
-    private static final BigDecimal SAME_SIDE_SCALE_IN_STEP_ATR = new BigDecimal("0.30");
     private static final double ROUND_TRIP_FEE_RATE = 0.0008;
     private static final double MIN_PROFIT_AFTER_FEE_ATR = 0.5;
     private static final BigDecimal DEFAULT_MIN_ENTRY_RR = new BigDecimal("1.2");
     private static final double LOW_VOL_SL_EXPAND_MAX = 3.0;
     private static final double MAINTENANCE_MARGIN_RATE = 0.005;
     private static final double MAX_SL_TO_LIQ_DISTANCE_RATIO = 0.80;
+    private static final int FAILED_WAVE_LAUNCH_LIMIT = 2;
 
     private final String symbol;
     private final List<BigDecimal[]> baseKlines;
@@ -138,6 +141,7 @@ public final class MaSlopeKlineBacktestEngine {
                 continue;
             }
 
+            recordExitSignalDiagnostics(tools, state, market);
             tools.tickBar(high, low, close, i);
             tools.setCurrentPrice(close);
             tools.setCurrentBarIndex(i);
@@ -161,7 +165,9 @@ public final class MaSlopeKlineBacktestEngine {
                     ct.openBarIndex(), ct.closeBarIndex(), ct.openTime(), ct.closeTime(),
                     ct.entryDiagnosticsJson(), ct.side(), ct.strategy(),
                     ct.entryPrice(), ct.exitPrice(), ct.quantity(), ct.leverage(),
-                    ct.pnl(), ct.fee(), ct.rMultiple(), ct.exitReason()
+                    ct.pnl(), ct.fee(), ct.rMultiple(), ct.exitReason(),
+                    ct.entryMode(), ct.failScoreAtExit(), ct.maxFavorableR(), ct.maxAdverseR(),
+                    ct.wasLateContinuation()
             ));
         }
         log.info("[MaSlopeKlineBacktest] done symbol={} trades={} equity={} pnl={}",
@@ -191,8 +197,11 @@ public final class MaSlopeKlineBacktestEngine {
         if (liquidationUnsafe(candidate.isLong(), price, slTp.slDistance())) {
             return;
         }
-        String scaleInReject = sameSideScaleInReject(tools.getOpenPositions(symbol), candidate, price,
-                evaluation.market().atrClosed);
+        if (failedWaveLaunchReject(candidate, state)) {
+            return;
+        }
+        String scaleInReject = sameSideScaleInReject(
+                tools.getOpenPositions(symbol), candidate, evaluation.market(), state);
         if (scaleInReject != null) {
             return;
         }
@@ -215,11 +224,16 @@ public final class MaSlopeKlineBacktestEngine {
             return;
         }
         tools.markOpenBarIndex(barIndex, entryDiagnosticsJson(evaluation, price));
-        ExitPlan plan = ExitPlanFactory.fromEntry(PATH_MA_SLOPE, candidate.side(), price, stopLoss,
+        MaState entryState = MaSlopeStateClassifier.classifyPrimary(evaluation.market());
+        ExitPlan plan = ExitPlanFactory.fromMaSlopeEntry(candidate.side(), price, stopLoss,
                 evaluation.market().atrClosed, evaluation.market().bollPb,
                 evaluation.market().rsi != null ? evaluation.market().rsi.doubleValue() : null,
-                evaluation.market().maAlignment1h, evaluation.market().maAlignment15m, now);
+                evaluation.market().maAlignment1h, evaluation.market().maAlignment15m,
+                entryState.ma7SlopeAtr(), candidate.entryMode(), candidate.wasLateContinuation(), now);
         state.putExitPlan(open.positionId(), plan);
+        if (!"LAUNCH".equals(candidate.entryMode())) {
+            state.clearMaSlopeFastFailStreak(symbol, candidate.side());
+        }
     }
 
     private SlTpPlan slTpPlan(EntryStrategyCandidate candidate, BigDecimal price, MarketContext market) {
@@ -286,12 +300,14 @@ public final class MaSlopeKlineBacktestEngine {
 
     private String sameSideScaleInReject(List<FuturesPositionDTO> positions,
                                          EntryStrategyCandidate candidate,
-                                         BigDecimal price,
-                                         BigDecimal atr) {
-        if (positions == null || positions.isEmpty() || atr == null || atr.signum() <= 0) {
+                                         MarketContext market,
+                                         TradingExecutionState state) {
+        if (positions == null || positions.isEmpty() || market == null || market.price == null) {
             return null;
         }
-        BigDecimal anchor = null;
+        boolean hasSameSide = false;
+        boolean hasProtectedSameSide = false;
+        boolean candidateLong = candidate.isLong();
         for (FuturesPositionDTO position : positions) {
             if (position == null || !"OPEN".equals(position.getStatus())
                     || !candidate.side().equals(position.getSide())
@@ -299,20 +315,38 @@ public final class MaSlopeKlineBacktestEngine {
                     || position.getEntryPrice() == null) {
                 continue;
             }
-            if (anchor == null) {
-                anchor = position.getEntryPrice();
-            } else if (candidate.isLong()) {
-                anchor = anchor.max(position.getEntryPrice());
-            } else {
-                anchor = anchor.min(position.getEntryPrice());
-            }
+            hasSameSide = true;
+            hasProtectedSameSide |= isBreakevenProtected(state, position, candidateLong);
         }
-        if (anchor == null) {
+        if (!hasSameSide) {
             return null;
         }
-        BigDecimal favorableMove = candidate.isLong() ? price.subtract(anchor) : anchor.subtract(price);
-        BigDecimal required = atr.multiply(SAME_SIDE_SCALE_IN_STEP_ATR);
-        return favorableMove.compareTo(required) >= 0 ? null : "SAME_SIDE_TOO_CLOSE";
+
+        boolean pullbackReclaim = MaSlopeEntryStrategy.pullbackReclaimSupports(market, candidateLong);
+        if ("PULLBACK_RECLAIM".equals(candidate.entryMode())
+                || (hasProtectedSameSide && pullbackReclaim)) {
+            return null;
+        }
+        return "MASLOPE_SAME_WAVE_REJECT";
+    }
+
+    private boolean failedWaveLaunchReject(EntryStrategyCandidate candidate, TradingExecutionState state) {
+        if (candidate == null || state == null || !"LAUNCH".equals(candidate.entryMode())) {
+            return false;
+        }
+        return state.getMaSlopeFastFailStreak(symbol, candidate.side()) >= FAILED_WAVE_LAUNCH_LIMIT;
+    }
+
+    private boolean isBreakevenProtected(TradingExecutionState state, FuturesPositionDTO position, boolean isLong) {
+        ExitPlan plan = state != null && position.getId() != null ? state.getExitPlan(position.getId()) : null;
+        if (plan != null && plan.breakevenDone()) {
+            return true;
+        }
+        BigDecimal stop = getCurrentStopLossPrice(position);
+        if (stop == null || stop.signum() <= 0 || position.getEntryPrice() == null) {
+            return false;
+        }
+        return isLong ? stop.compareTo(position.getEntryPrice()) >= 0 : stop.compareTo(position.getEntryPrice()) <= 0;
     }
 
     private TradingDecisionContext decisionContext(User user,
@@ -326,6 +360,26 @@ public final class MaSlopeKlineBacktestEngine {
                 profile, market, now, false);
     }
 
+    private void recordExitSignalDiagnostics(BacktestTradingTools tools,
+                                             TradingExecutionState state,
+                                             MarketContext market) {
+        if (tools == null || market == null) {
+            return;
+        }
+        MaState current = MaSlopeStateClassifier.classifyPrimary(market);
+        for (FuturesPositionDTO position : tools.getOpenPositions(symbol)) {
+            if (position == null || position.getId() == null || !PATH_MA_SLOPE.equals(position.getMemo())) {
+                continue;
+            }
+            boolean isLong = "LONG".equals(position.getSide());
+            ExitPlan plan = state != null ? state.getExitPlan(position.getId()) : null;
+            Double entrySlope = plan != null ? plan.entryMa7SlopeAtr() : null;
+            MaSlopeFailureEvaluator.FailureScore score =
+                    MaSlopeFailureEvaluator.score(market, current, isLong, entrySlope);
+            tools.recordExitSignalDiagnostics(position.getId(), score.score());
+        }
+    }
+
     private String entryDiagnosticsJson(MaSlopeKlineStrategy.Evaluation evaluation, BigDecimal price) {
         MarketContext ctx = evaluation.market();
         MaState primary = MaSlopeStateClassifier.classifyPrimary(ctx);
@@ -334,12 +388,21 @@ public final class MaSlopeKlineBacktestEngine {
 
         JSONObject json = new JSONObject();
         json.put("mode", "KLINE_ONLY");
+        json.put("entryMode", evaluation.candidate() != null ? evaluation.candidate().entryMode() : null);
+        json.put("wasLateContinuation", evaluation.candidate() != null
+                && evaluation.candidate().wasLateContinuation());
+        json.put("positionScale", evaluation.candidate() != null
+                ? evaluation.candidate().positionScale() : null);
         json.put("decisionInterval", baseInterval.getCode());
         json.put("price", price);
         json.put("regime", ctx.regime);
         json.put("adx", ctx.adx);
         json.put("macdCross", ctx.macdCross);
         json.put("macdHistTrend", ctx.macdHistTrend);
+        json.put("macdDif", ctx.macdDif);
+        json.put("macdDea", ctx.macdDea);
+        json.put("macdHist", evaluation.primaryIndicators().get("macd_hist"));
+        json.put("macdAboveZero", macdAboveZero(ctx));
         json.put("closeTrend", ctx.closeTrend);
         json.put("closeTrendClosed3", ctx.closeTrendClosed3);
         json.put("maAlignment15m", ctx.maAlignment15m);
@@ -365,6 +428,12 @@ public final class MaSlopeKlineBacktestEngine {
         json.put("closeBreakoutHigh10Closed", ctx.closeBreakoutHigh10Closed);
         json.put("closeBreakdownLow10Closed", ctx.closeBreakdownLow10Closed);
         return json.toJSONString();
+    }
+
+    private boolean macdAboveZero(MarketContext ctx) {
+        return ctx != null
+                && ctx.macdDif != null && ctx.macdDif.signum() > 0
+                && ctx.macdDea != null && ctx.macdDea.signum() > 0;
     }
 
     private User createMockUser(BigDecimal balance) {

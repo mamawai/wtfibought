@@ -35,9 +35,11 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
 
     private static final int MAX_LEVERAGE = 50;
     private static final double MA25_EARLY_LAG_TOLERANCE_ATR = 0.02;
-    private static final double PRICE_DISTANCE_SOFT_ATR = 3.50;
-    private static final double PRICE_DISTANCE_LATE_CHASE_ATR = 4.75;
-    private static final double PRICE_DISTANCE_HARD_ATR = 5.00;
+    private static final double PRICE_DISTANCE_LAUNCH_ATR = 2.50;
+    private static final double PRICE_DISTANCE_PULLBACK_ATR = 3.50;
+    private static final double PRICE_DISTANCE_FORCE_CONFIRM_ATR = 4.50;
+    private static final double LATE_STRUCTURE_MIN_VOLUME = 1.00;
+    private static final double LATE_STRUCTURE_MAX_RANGE_ATR = 1.00;
     private static final double FUNDING_EXTREME = 0.60;
     private static final double SCORE_MIN = 0.45;
     private static final double SCORE_MAX = 1.20;
@@ -105,8 +107,8 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
 
         MaState prevTrigger = MaSlopeStateClassifier.classifyPreviousPrimary(ctx);
         boolean isLong = trigger.hasCandidate() ? trigger.isLong() : earlyDirection;
-        EntryMode mode = entryMode(trigger, prevTrigger, isLong);
-        if (mode == null) {
+        EntryMode triggerMode = entryMode(trigger, prevTrigger, isLong);
+        if (triggerMode == null) {
             return EntryStrategyResult.reject(PATH_MA_SLOPE,
                     "MASLOPE_NEED_2BAR_CONFIRM prev=" + prevTrigger.state()
                             + " curr=" + trigger.state());
@@ -118,20 +120,26 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
             return EntryStrategyResult.reject(PATH_MA_SLOPE,
                     "MASLOPE_CONFIRM_AGAINST state=" + trigger.state() + " confirm=" + confirm.state());
         }
-        mode = confirmMode(mode, confirm, isLong);
-        if (mode == null) {
+        triggerMode = confirmMode(triggerMode, confirm, isLong);
+        if (triggerMode == null) {
             return EntryStrategyResult.reject(PATH_MA_SLOPE,
                     "MASLOPE_CONFIRM_NOT_SUPPORT state=" + trigger.state() + " confirm=" + confirm.state());
         }
 
-        String hardReject = hardGate(symbol, ctx, trigger, prevTrigger, confirm, interval, isLong, mode);
+        EntryQualityDecision entryQuality = entryQuality(ctx, trigger, isLong);
+        if (entryQuality.rejectReason() != null) {
+            return EntryStrategyResult.reject(PATH_MA_SLOPE, entryQuality.rejectReason());
+        }
+
+        String hardReject = hardGate(symbol, ctx, trigger, prevTrigger, confirm,
+                interval, isLong, triggerMode, entryQuality.mode());
         if (hardReject != null) {
             return EntryStrategyResult.reject(PATH_MA_SLOPE, hardReject);
         }
 
-        double score = score(ctx, trigger, confirm, isLong, mode);
-        double positionScale = positionScale(trigger, confirm, isLong, mode);
-        if (trigger.priceDistanceAtr() > PRICE_DISTANCE_SOFT_ATR) {
+        double score = score(ctx, trigger, confirm, isLong, triggerMode, entryQuality.mode());
+        double positionScale = positionScale(trigger, confirm, isLong, triggerMode, entryQuality.mode());
+        if (entryQuality.mode() == EntryQualityMode.LATE_CONTINUATION) {
             positionScale *= 0.80;
         }
 
@@ -149,7 +157,9 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
                 tpDistance,
                 MAX_LEVERAGE,
                 positionScale,
-                reason(trigger, confirm, ctx, isLong, mode, score)));
+                reason(trigger, confirm, ctx, isLong, triggerMode, entryQuality.mode(), score),
+                entryQuality.mode().name(),
+                entryQuality.mode() == EntryQualityMode.LATE_CONTINUATION));
     }
 
     private static boolean hasMaSlopeData(MarketContext ctx) {
@@ -183,7 +193,8 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
 
     private static String hardGate(String symbol, MarketContext ctx,
                                    MaState trigger, MaState prevTrigger, MaState confirm,
-                                   KlineInterval interval, boolean isLong, EntryMode mode) {
+                                   KlineInterval interval, boolean isLong,
+                                   EntryMode triggerMode, EntryQualityMode entryMode) {
         if (ctx.qualityFlags.contains("STALE_AGG_TRADE")) {
             return "MASLOPE_STALE_AGG_TRADE";
         }
@@ -191,12 +202,15 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
         if (ctx.adx < adxThreshold) {
             return "MASLOPE_ADX_WEAK adx=" + fmt(ctx.adx) + "<" + fmt(adxThreshold);
         }
-        if (mode.isEarly() && ctx.adx < adxThreshold + 2.0) {
+        if (triggerMode.isEarly() && ctx.adx < adxThreshold + 2.0) {
             return "MASLOPE_EARLY_ADX_NOT_STRONG adx=" + fmt(ctx.adx) + "<" + fmt(adxThreshold + 2.0);
         }
         if (interval == KlineInterval.M3) {
             if (ctx.maAlignment1h == null) {
                 return "MASLOPE_3M_1H_MISSING";
+            }
+            if ("BTCUSDT".equals(symbol)) {
+                return "MASLOPE_3M_BTC_NO_EDGE";
             }
             boolean oneHourAligned = EntryStrategySupport.directionAligns(ctx.maAlignment1h, isLong);
             boolean oneHourNeutral = ctx.maAlignment1h == 0;
@@ -207,32 +221,25 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
                 if (!"ETHUSDT".equals(symbol)) {
                     return "MASLOPE_3M_1H_ALREADY_TRENDING";
                 }
-                if (!m3TrendContinuationQuality(symbol, ctx, trigger, confirm, isLong, mode)) {
+                if (!m3TrendContinuationQuality(symbol, ctx, trigger, confirm, isLong, triggerMode)) {
                     return "MASLOPE_3M_TREND_CONTINUATION_WEAK";
                 }
             }
         }
-        if (mode == EntryMode.CONFIRMED && isLong && trigger.ma25SlopeAtr() < MA25_SLOPE_MIN_ATR) {
+        if (triggerMode == EntryMode.CONFIRMED && isLong && trigger.ma25SlopeAtr() < MA25_SLOPE_MIN_ATR) {
             return "MASLOPE_MA25_FLAT_OR_AGAINST";
         }
-        if (mode == EntryMode.CONFIRMED && !isLong && trigger.ma25SlopeAtr() > -MA25_SLOPE_MIN_ATR) {
+        if (triggerMode == EntryMode.CONFIRMED && !isLong && trigger.ma25SlopeAtr() > -MA25_SLOPE_MIN_ATR) {
             return "MASLOPE_MA25_FLAT_OR_AGAINST";
         }
-        if (mode.isEarly() && ma25MateriallyAgainst(trigger, isLong)) {
+        if (triggerMode.isEarly() && ma25MateriallyAgainst(trigger, isLong)) {
             return "MASLOPE_EARLY_MA25_AGAINST";
-        }
-        if (trigger.priceDistanceAtr() > PRICE_DISTANCE_HARD_ATR) {
-            return "MASLOPE_TOO_EXTENDED distanceAtr=" + fmt(trigger.priceDistanceAtr());
-        }
-        if (trigger.priceDistanceAtr() > PRICE_DISTANCE_LATE_CHASE_ATR
-                && !veryStrongKlineContinuation(ctx, isLong)) {
-            return "MASLOPE_LATE_CHASE_WITHOUT_FORCE distanceAtr=" + fmt(trigger.priceDistanceAtr());
         }
         double atrSpikeThreshold = atrSpikeRejectThreshold(interval);
         if (ctx.atrSpikeRatio > atrSpikeThreshold) {
             return "MASLOPE_ATR_SPIKE ratio=" + fmt(ctx.atrSpikeRatio) + ">" + fmt(atrSpikeThreshold);
         }
-        if (mode.isEarly() && EntryStrategySupport.directionConflicts(ctx.maAlignment1h, isLong)) {
+        if (triggerMode.isEarly() && EntryStrategySupport.directionConflicts(ctx.maAlignment1h, isLong)) {
             return "MASLOPE_EARLY_1H_CONFLICT";
         }
         if (EntryStrategySupport.directionConflicts(ctx.maAlignment1h, isLong) && macdAgainst(ctx, isLong)) {
@@ -251,10 +258,34 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
             return "MASLOPE_SQUEEZE_BREAKOUT_NOT_CONFIRMED";
         }
         // 3m 均线刚转强但 K 线没持续确认时，很容易变成假启动。
-        if (mode.isEarly() && !strongKlineSupports(ctx, isLong)) {
+        if (triggerMode.isEarly() && !strongKlineSupports(ctx, isLong)) {
             return "MASLOPE_EARLY_KLINE_NOT_STRONG";
         }
         return null;
+    }
+
+    private static EntryQualityDecision entryQuality(MarketContext ctx, MaState trigger, boolean isLong) {
+        double distance = trigger.priceDistanceAtr();
+        boolean pullbackReclaim = pullbackReclaimSupports(ctx, isLong);
+        boolean lateStructure = lateStructureBreakoutQuality(ctx, isLong);
+
+        if (distance <= PRICE_DISTANCE_LAUNCH_ATR) {
+            return EntryQualityDecision.accept(EntryQualityMode.LAUNCH);
+        }
+        if (distance <= PRICE_DISTANCE_PULLBACK_ATR && pullbackReclaim) {
+            return EntryQualityDecision.accept(EntryQualityMode.PULLBACK_RECLAIM);
+        }
+        if (distance > PRICE_DISTANCE_PULLBACK_ATR) {
+            boolean forceRequiredPassed = distance <= PRICE_DISTANCE_FORCE_CONFIRM_ATR
+                    || lateStructureBreakoutForce(ctx, isLong);
+            if (forceRequiredPassed && (pullbackReclaim || lateStructure)) {
+                return EntryQualityDecision.accept(EntryQualityMode.LATE_CONTINUATION);
+            }
+        }
+        return EntryQualityDecision.reject(
+                "MASLOPE_LATE_CHASE_REJECT distanceAtr=" + fmt(distance)
+                        + " pullback=" + pullbackReclaim
+                        + " structure=" + lateStructure);
     }
 
     private static boolean klineSupports(MarketContext ctx, boolean isLong) {
@@ -268,12 +299,6 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
                 && EntryStrategySupport.priceAboveEmaSupports(ctx, isLong)
                 && diSupports(ctx, isLong)
                 && EntryStrategySupport.macdSupports(ctx, isLong);
-    }
-
-    private static boolean veryStrongKlineContinuation(MarketContext ctx, boolean isLong) {
-        return ctx.adx != null && ctx.adx >= 35.0
-                && avg(ctx.volumeRatioClosedSeries) >= 0.80
-                && strongKlineSupports(ctx, isLong);
     }
 
     private static boolean compressedBreakoutQuality(MarketContext ctx, MaState confirm, boolean isLong) {
@@ -338,7 +363,7 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
         return isLong ? ctx.closeBreakoutHigh10Closed : ctx.closeBreakdownLow10Closed;
     }
 
-    private static boolean pullbackReclaimSupports(MarketContext ctx, boolean isLong) {
+    public static boolean pullbackReclaimSupports(MarketContext ctx, boolean isLong) {
         if (!isPositive(ctx.atrClosed) || ctx.closeSeriesClosed.size() < 4
                 || ctx.ma7SeriesClosed.size() < 4 || !closedCandlePositionSupports(ctx, isLong)) {
             return false;
@@ -365,6 +390,18 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
             }
         }
         return false;
+    }
+
+    private static boolean lateStructureBreakoutQuality(MarketContext ctx, boolean isLong) {
+        return lateStructureBreakoutForce(ctx, isLong)
+                && rangeWithin(ctx, LATE_STRUCTURE_MAX_RANGE_ATR)
+                && strongKlineSupports(ctx, isLong);
+    }
+
+    private static boolean lateStructureBreakoutForce(MarketContext ctx, boolean isLong) {
+        return structureBreakoutSupports(ctx, isLong)
+                && avg(ctx.volumeRatioClosedSeries) >= LATE_STRUCTURE_MIN_VOLUME
+                && closedCandlePositionSupports(ctx, isLong);
     }
 
     private static boolean highForceTrendContinuation(MarketContext ctx) {
@@ -396,7 +433,7 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
     }
 
     private static double score(MarketContext ctx, MaState trigger, MaState confirm,
-                                boolean isLong, EntryMode mode) {
+                                boolean isLong, EntryMode triggerMode, EntryQualityMode entryMode) {
         double score = trigger.baseConfidence();
         if (confirm.sameStrongDirection(isLong)) score *= 1.12;
         if (EntryStrategySupport.directionAligns(ctx.maAlignment1h, isLong)) score *= 1.08;
@@ -407,6 +444,7 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
         else if (EntryStrategySupport.closeTrendSupports(ctx.closeTrend, isLong)) score *= 1.04;
         if (diSupports(ctx, isLong)) score *= 1.04;
         if (EntryStrategySupport.priceAboveEmaSupports(ctx, isLong)) score *= 1.03;
+        if (macdWaterlineSupports(ctx, isLong) && macdFreshReclaim(ctx, isLong)) score *= 1.03;
 
         double avgClosedVol = avg(ctx.volumeRatioClosedSeries);
         if (avgClosedVol >= 1.50) {
@@ -417,15 +455,19 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
 
         if (ctx.bollExpanding5) score *= 1.05;
         if (EntryStrategySupport.microSupports(ctx, isLong)) score *= 1.03;
-        if (trigger.priceDistanceAtr() > PRICE_DISTANCE_SOFT_ATR) score *= 0.85;
+        if (entryMode == EntryQualityMode.LATE_CONTINUATION) score *= 0.85;
         if (isFundingCrowded(ctx.fundingRateExtreme, isLong)) score *= 0.92;
-        if (mode.isEarly()) score *= 0.90;
+        if (triggerMode.isEarly()) score *= 0.90;
         return Math.clamp(score, SCORE_MIN, SCORE_MAX);
     }
 
-    private static double positionScale(MaState trigger, MaState confirm, boolean isLong, EntryMode mode) {
-        if (mode == EntryMode.EARLY_MA25_LAG) {
+    private static double positionScale(MaState trigger, MaState confirm, boolean isLong,
+                                        EntryMode triggerMode, EntryQualityMode entryMode) {
+        if (triggerMode == EntryMode.EARLY_MA25_LAG) {
             return 0.50;
+        }
+        if (entryMode == EntryQualityMode.LATE_CONTINUATION) {
+            return 0.60;
         }
         return trigger.isAccelerating() && confirm.sameStrongDirection(isLong) ? 0.75 : 0.65;
     }
@@ -439,6 +481,29 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
             if (!isLong && cmp > 0) return true;
         }
         return EntryStrategySupport.isMacdHistAgainst(ctx.macdHistTrend, isLong);
+    }
+
+    private static boolean macdWaterlineSupports(MarketContext ctx, boolean isLong) {
+        if (ctx.macdDif == null || ctx.macdDea == null) {
+            return false;
+        }
+        int cmp = ctx.macdDif.compareTo(ctx.macdDea);
+        if (isLong) {
+            return cmp > 0 && ctx.macdDif.signum() > 0 && ctx.macdDea.signum() > 0;
+        }
+        return cmp < 0 && ctx.macdDif.signum() < 0 && ctx.macdDea.signum() < 0;
+    }
+
+    private static boolean macdFreshReclaim(MarketContext ctx, boolean isLong) {
+        if (isLong && "golden".equals(ctx.macdCross)) {
+            return true;
+        }
+        if (!isLong && "death".equals(ctx.macdCross)) {
+            return true;
+        }
+        return isLong
+                ? EntryStrategySupport.isMacdHistBullish(ctx.macdHistTrend)
+                : EntryStrategySupport.isMacdHistBearish(ctx.macdHistTrend);
     }
 
     private static boolean isFundingCrowded(Double fundingRateExtreme, boolean isLong) {
@@ -518,13 +583,14 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
     }
 
     private static String reason(MaState trigger, MaState confirm, MarketContext ctx,
-                                 boolean isLong, EntryMode mode, double score) {
+                                 boolean isLong, EntryMode triggerMode,
+                                 EntryQualityMode entryMode, double score) {
         return String.format(Locale.US,
-                "均线斜率趋势[%s] mode=%s state=%s confirm=%s ma7SlopeAtr=%.2f ma7PrevSlopeAtr=%.2f "
+                "均线斜率趋势[%s] entryMode=%s mode=%s state=%s confirm=%s ma7SlopeAtr=%.2f ma7PrevSlopeAtr=%.2f "
                         + "ma25SlopeAtr=%.2f spreadAtr=%.2f spreadDeltaAtr=%.2f adx=%.2f "
                         + "priceDistanceAtr=%.2f atrSpikeRatio=%.2f score=%.2f",
                 isLong ? "LONG" : "SHORT",
-                mode, trigger.state(), confirm.state(),
+                entryMode, triggerMode, trigger.state(), confirm.state(),
                 trigger.ma7SlopeAtr(), trigger.ma7PrevSlopeAtr(),
                 trigger.ma25SlopeAtr(), trigger.spreadAtr(), trigger.spreadDeltaAtr(),
                 ctx.adx != null ? ctx.adx : 0.0,
@@ -544,6 +610,22 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
 
         boolean isEarly() {
             return this != CONFIRMED;
+        }
+    }
+
+    private enum EntryQualityMode {
+        LAUNCH,
+        PULLBACK_RECLAIM,
+        LATE_CONTINUATION
+    }
+
+    private record EntryQualityDecision(EntryQualityMode mode, String rejectReason) {
+        static EntryQualityDecision accept(EntryQualityMode mode) {
+            return new EntryQualityDecision(mode, null);
+        }
+
+        static EntryQualityDecision reject(String reason) {
+            return new EntryQualityDecision(null, reason);
         }
     }
 }

@@ -46,6 +46,28 @@ public final class ExitPlanFactory {
         return new ExitPlan(
                 path, side, entryPrice, initialSL, riskPerUnit, timeLimitFor(path), createdAt, atrAtEntry,
                 entryBollPb, entryRsi, entryMa1h, entryMa15m,
+                null, null, false,
+                false, Set.of(), false, 0.0, false);
+    }
+
+    public static ExitPlan fromMaSlopeEntry(String side,
+                                            BigDecimal entryPrice,
+                                            BigDecimal initialSL,
+                                            BigDecimal atrAtEntry,
+                                            Double entryBollPb,
+                                            Double entryRsi,
+                                            Integer entryMa1h,
+                                            Integer entryMa15m,
+                                            Double entryMa7SlopeAtr,
+                                            String entryMode,
+                                            boolean entryLateContinuation,
+                                            LocalDateTime createdAt) {
+        BigDecimal riskPerUnit = calcRiskPerUnit(entryPrice, initialSL);
+        return new ExitPlan(
+                ExitPath.MA_SLOPE, side, entryPrice, initialSL, riskPerUnit,
+                timeLimitFor(ExitPath.MA_SLOPE), createdAt, atrAtEntry,
+                entryBollPb, entryRsi, entryMa1h, entryMa15m,
+                entryMa7SlopeAtr, entryMode, entryLateContinuation,
                 false, Set.of(), false, 0.0, false);
     }
 
@@ -63,6 +85,7 @@ public final class ExitPlanFactory {
         return new ExitPlan(
                 path, side, entryPrice, initialSL, riskPerUnit, timeLimitFor(path), createdAt, atrAtEntry,
                 null, null, null, null,
+                null, null, false,
                 breakevenDone, Set.of(), false, 0.0, true);
     }
 

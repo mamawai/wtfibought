@@ -25,6 +25,9 @@ public final class ExitPlan {
     private final Double entryRsi;
     private final Integer entryMa1h;
     private final Integer entryMa15m;
+    private final Double entryMa7SlopeAtr;
+    private final String entryMode;
+    private final boolean entryLateContinuation;
     private final boolean recovered;
 
     private volatile boolean breakevenDone;
@@ -44,6 +47,9 @@ public final class ExitPlan {
              Double entryRsi,
              Integer entryMa1h,
              Integer entryMa15m,
+             Double entryMa7SlopeAtr,
+             String entryMode,
+             boolean entryLateContinuation,
              boolean breakevenDone,
              Set<Integer> partialDoneAtR,
              boolean mrMidlineHalfDone,
@@ -61,6 +67,9 @@ public final class ExitPlan {
         this.entryRsi = entryRsi;
         this.entryMa1h = entryMa1h;
         this.entryMa15m = entryMa15m;
+        this.entryMa7SlopeAtr = entryMa7SlopeAtr;
+        this.entryMode = entryMode;
+        this.entryLateContinuation = entryLateContinuation;
         this.breakevenDone = breakevenDone;
         this.partialDoneAtR = ConcurrentHashMap.newKeySet();
         if (partialDoneAtR != null) {
@@ -117,6 +126,18 @@ public final class ExitPlan {
 
     public Integer entryMa15m() {
         return entryMa15m;
+    }
+
+    public Double entryMa7SlopeAtr() {
+        return entryMa7SlopeAtr;
+    }
+
+    public String entryMode() {
+        return entryMode;
+    }
+
+    public boolean entryLateContinuation() {
+        return entryLateContinuation;
     }
 
     public boolean breakevenDone() {

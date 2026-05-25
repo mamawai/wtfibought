@@ -154,9 +154,12 @@ public class SignalReplayBacktestEngine {
         // 聚合交易明细
         for (BacktestTradingTools.ClosedTrade ct : tools.getClosedTrades()) {
             result.addTrade(new BacktestResult.Trade(
-                    ct.openBarIndex(), ct.closeBarIndex(), ct.side(), ct.strategy(),
+                    ct.openBarIndex(), ct.closeBarIndex(), ct.openTime(), ct.closeTime(),
+                    ct.entryDiagnosticsJson(), ct.side(), ct.strategy(),
                     ct.entryPrice(), ct.exitPrice(), ct.quantity(), ct.leverage(),
-                    ct.pnl(), ct.fee(), ct.rMultiple(), ct.exitReason()));
+                    ct.pnl(), ct.fee(), ct.rMultiple(), ct.exitReason(),
+                    ct.entryMode(), ct.failScoreAtExit(), ct.maxFavorableR(), ct.maxAdverseR(),
+                    ct.wasLateContinuation()));
         }
 
         log.info("[Replay] 回放完成 skipped={}条(缺lastPrice)\n{}", skipped, result);
