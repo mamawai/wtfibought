@@ -26,7 +26,8 @@ import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport
  */
 final class MaSlopeExitPlaybook implements ExitPlaybook {
 
-    private static final BigDecimal BREAKEVEN_R = BigDecimal.ONE;
+    // 60d ETH 回测：4 笔 MFE≥0.5R 被 FastFail 误杀，保本门槛从 1R 提前到 0.5R 锁住"擦肩盈利"。
+    private static final BigDecimal BREAKEVEN_R = new BigDecimal("0.50");
     private static final BigDecimal TRAIL_R = new BigDecimal("2.00");
     private static final BigDecimal PARTIAL_R = new BigDecimal("3.00");
     private static final int PARTIAL_R_MILESTONE = 300;
@@ -40,6 +41,11 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
     private static final int FAST_FAIL_STREAK_THRESHOLD = 2;
     private static final BigDecimal EARLY_FAIL_R = BigDecimal.ZERO;
     private static final long EARLY_FAIL_MINUTES = 60;
+    // 60d ETH 回测：A 类 13 笔"开仓即反向"亏损，主周期前 3 根（9 分钟）内 MAE 已到 -0.2R 但 MFE<0.15R 时早平。
+    private static final long EARLY_KILL_MINUTES = 9;
+    private static final double EARLY_KILL_MFE_R = 0.15;
+    private static final BigDecimal EARLY_KILL_MAE_R = new BigDecimal("-0.20");
+    private static final int EARLY_KILL_SCORE = 2;
     // 入场要求 0.03 ATR；退出用 -0.005/+0.005 迟滞，避免 0 附近抖动来回平仓。
     private static final double MA7_EXIT_SLOPE_ATR = -0.005;
     private static final int EXTINGUISH_STREAK_THRESHOLD = 2;
@@ -85,6 +91,14 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
         MaState current = hasSignalData(ctx) ? MaSlopeStateClassifier.classifyPrimary(ctx) : null;
         MaState confirm = hasConfirmSignalData(ctx) ? MaSlopeStateClassifier.classifyConfirm(ctx) : null;
         boolean higherTrendStillSupports = higherTrendStillSupports(confirm, isLong);
+
+        // 开仓后 9 分钟内若 MAE 已到 -0.20R 且全程 MFE<0.15R，主周期失败分≥2 直接早平，
+        // 避免 A 类"开仓即反向"硬扛到 FastFail 评估窗口。
+        ExitPlaybookDecision earlyKill = evaluateEarlyKill(
+                decision, breakevenDone, holdMinutes, plan, current, profitR, isLong, ctx);
+        if (earlyKill.actionable() || earlyKill.entryEvaluationBlocked()) {
+            return earlyKill;
+        }
 
         ExitPlaybookDecision fastFail = evaluateFastFail(
                 decision, position, plan, breakevenDone, current, confirm, profitR, isLong, ctx);
@@ -152,6 +166,35 @@ final class MaSlopeExitPlaybook implements ExitPlaybook {
         }
 
         return extinguishWaiting ? extinguish : ExitPlaybookDecision.hold("MA_SLOPE_HOLD");
+    }
+
+    private ExitPlaybookDecision evaluateEarlyKill(TradingDecisionContext decision,
+                                                   boolean breakevenDone,
+                                                   long holdMinutes,
+                                                   ExitPlan plan,
+                                                   MaState current,
+                                                   BigDecimal profitR,
+                                                   boolean isLong,
+                                                   MarketContext ctx) {
+        if (decision.indicatorExitShielded() || breakevenDone || current == null) {
+            return ExitPlaybookDecision.hold("MA_SLOPE_EARLY_KILL_VALID");
+        }
+        if (holdMinutes > EARLY_KILL_MINUTES) {
+            return ExitPlaybookDecision.hold("MA_SLOPE_EARLY_KILL_WINDOW_PASSED");
+        }
+        if (plan.highestProfitR() >= EARLY_KILL_MFE_R) {
+            return ExitPlaybookDecision.hold("MA_SLOPE_EARLY_KILL_MFE_OK");
+        }
+        if (profitR.compareTo(EARLY_KILL_MAE_R) > 0) {
+            return ExitPlaybookDecision.hold("MA_SLOPE_EARLY_KILL_MAE_OK");
+        }
+        FailureScore failure = MaSlopeFailureEvaluator.score(ctx, current, isLong, plan.entryMa7SlopeAtr());
+        if (failure.score() < EARLY_KILL_SCORE) {
+            return ExitPlaybookDecision.hold("MA_SLOPE_EARLY_KILL_SCORE_OK score=" + failure.score());
+        }
+        return ExitPlaybookDecision.closeFull(String.format(Locale.US,
+                "MA_SLOPE_EARLY_KILL score=%d r=%.2f mfe=%.2f reasons=%s",
+                failure.score(), profitR.doubleValue(), plan.highestProfitR(), failure.reasonText()));
     }
 
     private ExitPlaybookDecision evaluateFastFail(TradingDecisionContext decision,

@@ -4,7 +4,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -121,6 +123,7 @@ public class BacktestResult {
 
     private final List<Trade> trades = new ArrayList<>();
     private final List<BigDecimal> equityCurve = new ArrayList<>();
+    private final Map<String, Integer> rejectCounts = new LinkedHashMap<>();
     private final BigDecimal initialEquity;
 
     public BacktestResult(BigDecimal initialEquity) {
@@ -134,6 +137,25 @@ public class BacktestResult {
 
     public void recordEquity(BigDecimal equity) {
         equityCurve.add(equity);
+    }
+
+    /** 累加一次入场被拒，key 取拒因前缀（剥掉 "PATH: " 后按首空格切分），便于报告聚合。 */
+    public void recordRejectReason(String rejectReason) {
+        if (rejectReason == null || rejectReason.isBlank()) {
+            return;
+        }
+        String body = rejectReason;
+        int colon = body.indexOf(": ");
+        if (colon >= 0) {
+            body = body.substring(colon + 2);
+        }
+        int sp = body.indexOf(' ');
+        String key = sp > 0 ? body.substring(0, sp) : body;
+        rejectCounts.merge(key, 1, Integer::sum);
+    }
+
+    public Map<String, Integer> getRejectCounts() {
+        return rejectCounts;
     }
 
     // ==================== 汇总指标 ====================

@@ -198,6 +198,7 @@ class MaSlopeKlineBacktestIT {
         json.put("maxConsecutiveLosses", maxConsecutiveLosses(result.getTrades()));
         json.put("strategyStats", strategyStats(result));
         json.put("exitReasonStats", exitReasonStats(result.getTrades()));
+        json.put("rejectStats", rejectStats(result));
         json.put("equityCurve", result.getEquityCurve());
         json.put("positions", positions(result.getTrades()));
         json.put("trades", trades(result.getTrades()));
@@ -226,6 +227,19 @@ class MaSlopeKlineBacktestIT {
             row.put("maxConsecutiveLosses", stat.maxConsecutiveLosses());
             rows.add(row);
         }
+        return rows;
+    }
+
+    private JSONArray rejectStats(BacktestResult result) {
+        JSONArray rows = new JSONArray();
+        result.getRejectCounts().entrySet().stream()
+                .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
+                .forEach(e -> {
+                    JSONObject row = new JSONObject();
+                    row.put("rejectReason", e.getKey());
+                    row.put("count", e.getValue());
+                    rows.add(row);
+                });
         return rows;
     }
 

@@ -52,7 +52,7 @@ class MaSlopeExitPlaybookTest {
     void longClosesFullWhenMaSlopeTurnsStrongDown() {
         LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
         ExitPlaybookDecision decision = playbook.evaluate(
-                signalContext("100500", "10", downMa7(), downMa25(), false, new TradingExecutionState()),
+                signalContext("100400", "10", downMa7(), downMa25(), false, new TradingExecutionState()),
                 position("LONG", "100000", "99000", "1"),
                 plan("LONG", entryAt),
                 entryAt.plusMinutes(12));
@@ -65,7 +65,7 @@ class MaSlopeExitPlaybookTest {
     void longHoldsPrimaryReverseWhenHigherTrendStillSupports() {
         LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
         ExitPlaybookDecision decision = playbook.evaluate(
-                signalContextWithConfirm("100500", "10",
+                signalContextWithConfirm("100400", "10",
                         downMa7(), downMa25(), upMa7(), upMa25(),
                         false, new TradingExecutionState()),
                 position("LONG", "100000", "99000", "1"),
@@ -148,7 +148,7 @@ class MaSlopeExitPlaybookTest {
         TradingExecutionState state = new TradingExecutionState();
 
         ExitPlaybookDecision decision = playbook.evaluate(
-                signalContext("100500", "10", extinguishingLongMa7(), risingMa25(), false, state),
+                signalContext("100400", "10", extinguishingLongMa7(), risingMa25(), false, state),
                 position("LONG", "100000", "99000", "1"),
                 plan("LONG", entryAt),
                 entryAt.plusMinutes(20));
@@ -356,7 +356,7 @@ class MaSlopeExitPlaybookTest {
         LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
 
         ExitPlaybookDecision signalOnly = playbook.evaluate(
-                signalContext("100500", "10", downMa7(), downMa25(), true, new TradingExecutionState()),
+                signalContext("100400", "10", downMa7(), downMa25(), true, new TradingExecutionState()),
                 position("LONG", "100000", "99000", "1"),
                 plan("LONG", entryAt),
                 entryAt.plusMinutes(12));

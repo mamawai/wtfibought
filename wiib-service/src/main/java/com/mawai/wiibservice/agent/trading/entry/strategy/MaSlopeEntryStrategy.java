@@ -34,12 +34,10 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
     private static volatile Set<String> enabledSymbols = DEFAULT_ENABLED_SYMBOLS;
 
     private static final int MAX_LEVERAGE = 50;
-    private static final double MA25_EARLY_LAG_TOLERANCE_ATR = 0.02;
+    // 60d ETH 回测：MA25 接近 0 的早进信号几乎全亏，容忍度收到 0。
+    private static final double MA25_EARLY_LAG_TOLERANCE_ATR = 0.0;
     private static final double PRICE_DISTANCE_LAUNCH_ATR = 2.50;
     private static final double PRICE_DISTANCE_PULLBACK_ATR = 3.50;
-    private static final double PRICE_DISTANCE_FORCE_CONFIRM_ATR = 4.50;
-    private static final double LATE_STRUCTURE_MIN_VOLUME = 1.00;
-    private static final double LATE_STRUCTURE_MAX_RANGE_ATR = 1.00;
     private static final double FUNDING_EXTREME = 0.60;
     private static final double SCORE_MIN = 0.45;
     private static final double SCORE_MAX = 1.20;
@@ -267,7 +265,6 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
     private static EntryQualityDecision entryQuality(MarketContext ctx, MaState trigger, boolean isLong) {
         double distance = trigger.priceDistanceAtr();
         boolean pullbackReclaim = pullbackReclaimSupports(ctx, isLong);
-        boolean lateStructure = lateStructureBreakoutQuality(ctx, isLong);
 
         if (distance <= PRICE_DISTANCE_LAUNCH_ATR) {
             return EntryQualityDecision.accept(EntryQualityMode.LAUNCH);
@@ -275,17 +272,10 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
         if (distance <= PRICE_DISTANCE_PULLBACK_ATR && pullbackReclaim) {
             return EntryQualityDecision.accept(EntryQualityMode.PULLBACK_RECLAIM);
         }
-        if (distance > PRICE_DISTANCE_PULLBACK_ATR) {
-            boolean forceRequiredPassed = distance <= PRICE_DISTANCE_FORCE_CONFIRM_ATR
-                    || lateStructureBreakoutForce(ctx, isLong);
-            if (forceRequiredPassed && (pullbackReclaim || lateStructure)) {
-                return EntryQualityDecision.accept(EntryQualityMode.LATE_CONTINUATION);
-            }
-        }
+        // LATE_CONTINUATION 在 60d ETH 回测里 6 笔 0 胜（净亏 278U），超 PULLBACK 距离一律拒绝。
         return EntryQualityDecision.reject(
                 "MASLOPE_LATE_CHASE_REJECT distanceAtr=" + fmt(distance)
-                        + " pullback=" + pullbackReclaim
-                        + " structure=" + lateStructure);
+                        + " pullback=" + pullbackReclaim);
     }
 
     private static boolean klineSupports(MarketContext ctx, boolean isLong) {
@@ -390,18 +380,6 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
             }
         }
         return false;
-    }
-
-    private static boolean lateStructureBreakoutQuality(MarketContext ctx, boolean isLong) {
-        return lateStructureBreakoutForce(ctx, isLong)
-                && rangeWithin(ctx, LATE_STRUCTURE_MAX_RANGE_ATR)
-                && strongKlineSupports(ctx, isLong);
-    }
-
-    private static boolean lateStructureBreakoutForce(MarketContext ctx, boolean isLong) {
-        return structureBreakoutSupports(ctx, isLong)
-                && avg(ctx.volumeRatioClosedSeries) >= LATE_STRUCTURE_MIN_VOLUME
-                && closedCandlePositionSupports(ctx, isLong);
     }
 
     private static boolean highForceTrendContinuation(MarketContext ctx) {

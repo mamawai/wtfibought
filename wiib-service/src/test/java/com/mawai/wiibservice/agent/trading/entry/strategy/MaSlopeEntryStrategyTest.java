@@ -111,7 +111,8 @@ class MaSlopeEntryStrategyTest {
     }
 
     @Test
-    void acceptsEarlyMa25LagWhenMa7AcceleratesAndMa25OnlySlightlyLags() {
+    void rejectsEarlyMa25LagWhenMa25SlopeIsBelowZero() {
+        // 60d ETH 回测：MA25 容忍度从 0.02 收到 0；MA25 斜率为负的早进信号一律拒。
         MarketContext ctx = marketContext(
                 upMa7(), slightlyLaggingMa25BelowPrice(),
                 upMa7(), upMa25(),
@@ -119,12 +120,8 @@ class MaSlopeEntryStrategyTest {
 
         EntryStrategyResult result = strategy.build(context("BTCUSDT", ctx));
 
-        assertThat(result.rejectReason()).isNull();
-        EntryStrategyCandidate candidate = result.candidate();
-        assertThat(candidate.side()).isEqualTo("LONG");
-        assertThat(candidate.positionScale()).isEqualTo(0.50);
-        assertThat(candidate.entryMode()).isEqualTo("LAUNCH");
-        assertThat(candidate.reason()).contains("entryMode=LAUNCH", "mode=EARLY_MA25_LAG", "state=UP_DECELERATING");
+        assertThat(result.candidate()).isNull();
+        assertThat(result.rejectReason()).contains("MASLOPE_NO_STRONG_STATE");
     }
 
     @Test
@@ -143,7 +140,8 @@ class MaSlopeEntryStrategyTest {
         EntryStrategyResult result = strategy.build(context("BTCUSDT", ctx));
 
         assertThat(result.candidate()).isNull();
-        assertThat(result.rejectReason()).contains("MASLOPE_KLINE_NOT_SUPPORT");
+        // 新阈值下连 candidate 都没有；保留断言 reject 即可，具体拒因走 NO_STRONG_STATE 分支。
+        assertThat(result.rejectReason()).contains("MASLOPE_NO_STRONG_STATE");
     }
 
     @Test
@@ -347,7 +345,8 @@ class MaSlopeEntryStrategyTest {
     }
 
     @Test
-    void acceptsLateContinuationOnlyWithStructureVolumeAndHealthyClose() {
+    void rejectsLateContinuationEvenWithStructureVolumeAndHealthyClose() {
+        // 60d ETH 回测：LATE_CONTINUATION 6 笔 0 胜（净亏 278U），模式已关，超 PULLBACK 距离一律拒。
         MarketContext ctx = marketContext(
                 upMa7(), upMa25(),
                 upMa7(), upMa25(),
@@ -355,10 +354,8 @@ class MaSlopeEntryStrategyTest {
 
         EntryStrategyResult result = strategy.build(context("BTCUSDT", ctx));
 
-        assertThat(result.rejectReason()).isNull();
-        assertThat(result.candidate()).isNotNull();
-        assertThat(result.candidate().entryMode()).isEqualTo("LATE_CONTINUATION");
-        assertThat(result.candidate().wasLateContinuation()).isTrue();
+        assertThat(result.candidate()).isNull();
+        assertThat(result.rejectReason()).contains("MASLOPE_LATE_CHASE_REJECT");
     }
 
     @Test

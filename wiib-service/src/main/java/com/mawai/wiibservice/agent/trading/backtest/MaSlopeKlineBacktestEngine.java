@@ -134,11 +134,17 @@ public final class MaSlopeKlineBacktestEngine {
             if (market == null) {
                 if (inTradingWindow(nowMs)) {
                     result.recordEquity(tools.getTotalEquity());
+                    if (!evaluation.accepted()) {
+                        result.recordRejectReason(evaluation.rejectReason());
+                    }
                 }
                 continue;
             }
             if (!inTradingWindow(nowMs)) {
                 continue;
+            }
+            if (!evaluation.accepted()) {
+                result.recordRejectReason(evaluation.rejectReason());
             }
 
             recordExitSignalDiagnostics(tools, state, market);
