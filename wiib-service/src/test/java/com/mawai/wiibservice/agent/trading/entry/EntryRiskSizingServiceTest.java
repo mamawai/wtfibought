@@ -58,11 +58,30 @@ class EntryRiskSizingServiceTest {
         assertThat(plan.takeProfit()).isEqualByComparingTo("103");
     }
 
+    @Test
+    void maSlopeKeepsTrendMarginFixedButScalesMacdProbeMargin() {
+        EntryRiskSizingService.EntryOrderPlan launch = buildPlan(PATH_MA_SLOPE, bd("2"), bd("3"),
+                new TradingRuntimeToggles(true, true), 0.30, "LAUNCH");
+        EntryRiskSizingService.EntryOrderPlan reclaim = buildPlan(PATH_MA_SLOPE, bd("2"), bd("3"),
+                new TradingRuntimeToggles(true, true), 0.30, "MACD_RECLAIM");
+
+        assertThat(launch.quantity()).isEqualByComparingTo("40.00000000");
+        assertThat(reclaim.quantity()).isEqualByComparingTo("12.00000000");
+        assertThat(reclaim.effectiveScale()).isEqualTo(0.30);
+    }
+
     private EntryRiskSizingService.EntryOrderPlan buildPlan(String path, BigDecimal slDistance, BigDecimal tpDistance,
                                                             TradingRuntimeToggles toggles) {
+        return buildPlan(path, slDistance, tpDistance, toggles, 1.0, null);
+    }
+
+    private EntryRiskSizingService.EntryOrderPlan buildPlan(String path, BigDecimal slDistance, BigDecimal tpDistance,
+                                                            TradingRuntimeToggles toggles,
+                                                            double positionScale,
+                                                            String entryMode) {
         EntryStrategyCandidate candidate = new EntryStrategyCandidate(
                 path, path, "LONG", true, 6.0, slDistance, tpDistance,
-                10, 1.0, "test");
+                10, positionScale, "test", entryMode, false);
 
         EntryRiskSizingService.SizingResult result = service.buildPlan(
                 "BTCUSDT", user(), bd("100000"), signal(), market(),

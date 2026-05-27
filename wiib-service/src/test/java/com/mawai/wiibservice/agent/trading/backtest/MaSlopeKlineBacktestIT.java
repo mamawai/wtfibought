@@ -199,6 +199,7 @@ class MaSlopeKlineBacktestIT {
         json.put("strategyStats", strategyStats(result));
         json.put("exitReasonStats", exitReasonStats(result.getTrades()));
         json.put("rejectStats", rejectStats(result));
+        json.put("shadowOpportunityStats", shadowOpportunityStats(result));
         json.put("equityCurve", result.getEquityCurve());
         json.put("positions", positions(result.getTrades()));
         json.put("trades", trades(result.getTrades()));
@@ -238,6 +239,32 @@ class MaSlopeKlineBacktestIT {
                     JSONObject row = new JSONObject();
                     row.put("rejectReason", e.getKey());
                     row.put("count", e.getValue());
+                    rows.add(row);
+                });
+        return rows;
+    }
+
+    private JSONArray shadowOpportunityStats(BacktestResult result) {
+        JSONArray rows = new JSONArray();
+        result.getShadowOpportunityStats().values().stream()
+                .sorted((a, b) -> {
+                    int count = Integer.compare(b.count(), a.count());
+                    if (count != 0) return count;
+                    return Double.compare(b.halfRRate(), a.halfRRate());
+                })
+                .forEach(stat -> {
+                    JSONObject row = new JSONObject();
+                    row.put("rejectReason", stat.rejectReason());
+                    row.put("side", stat.side());
+                    row.put("count", stat.count());
+                    row.put("reachedHalfR", stat.reachedHalfR());
+                    row.put("reachedHalfRRatePct", pct(stat.halfRRate()));
+                    row.put("heldAboveMinusQuarterR", stat.heldQuarterR());
+                    row.put("heldAboveMinusQuarterRRatePct", pct(stat.heldQuarterRRate()));
+                    row.put("cleanHalfR", stat.cleanHalfR());
+                    row.put("cleanHalfRRatePct", pct(stat.cleanHalfRRate()));
+                    row.put("avgMaxFavorableR", round(stat.avgMaxFavorableR()));
+                    row.put("avgMaxAdverseR", round(stat.avgMaxAdverseR()));
                     rows.add(row);
                 });
         return rows;

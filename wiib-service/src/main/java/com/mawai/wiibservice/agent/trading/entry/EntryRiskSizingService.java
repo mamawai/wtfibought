@@ -104,7 +104,7 @@ final class EntryRiskSizingService {
         String liquidationCheck = checkLiquidationBuffer(candidate.isLong(), price, slDistance, leverage);
         if (liquidationCheck != null) return SizingResult.reject(candidate.label() + ": " + liquidationCheck);
 
-        BigDecimal quantity = calcQuantityByRisk(candidate.path(), user, totalEquity, price, slDistance, leverage,
+        BigDecimal quantity = calcQuantityByRisk(candidate, user, totalEquity, price, slDistance, leverage,
                 effectiveScale);
         if (quantity == null) {
             return SizingResult.reject(candidate.label() + ": 仓位计算失败(余额不足或超限)");
@@ -269,9 +269,10 @@ final class EntryRiskSizingService {
      * 信号侧风险偏好已在 RiskGate 阶段通过 confidence/disagreement/env 衰减进 effectiveScale。
      * 终极仓位上限只走 MAX_MARGIN_PCT。</p>
      */
-    private BigDecimal calcQuantityByRisk(String path, User user, BigDecimal totalEquity,
+    private BigDecimal calcQuantityByRisk(EntryStrategyCandidate candidate, User user, BigDecimal totalEquity,
                                           BigDecimal price, BigDecimal slDistance,
                                           int leverage, double scale) {
+        String path = candidate.path();
         BigDecimal balance = user.getBalance() != null ? user.getBalance() : BigDecimal.ZERO;
         BigDecimal frozen = user.getFrozenBalance() != null ? user.getFrozenBalance() : BigDecimal.ZERO;
         BigDecimal equity = totalEquity != null ? totalEquity : balance.add(frozen);
@@ -295,8 +296,9 @@ final class EntryRiskSizingService {
                     || maxMargin.compareTo(MASLOPE_MIN_MARGIN) < 0) {
                 return null;
             }
-            // 本轮实验按用户指定固定保证金，不让风险预算把小本金回测仓位压变形。
-            return MASLOPE_MIN_MARGIN.multiply(BigDecimal.valueOf(leverage))
+            // 主趋势仍按用户指定 400U 压力口径；MACD 早启动是试仓，不混同满仓趋势单。
+            BigDecimal marginBudget = maSlopeMarginBudget(candidate.entryMode(), scale);
+            return marginBudget.multiply(BigDecimal.valueOf(leverage))
                     .divide(price, 8, RoundingMode.DOWN);
         }
         if (margin.compareTo(maxMargin) > 0) {
@@ -319,6 +321,19 @@ final class EntryRiskSizingService {
         }
 
         return quantity.signum() > 0 ? quantity : null;
+    }
+
+    private BigDecimal maSlopeMarginBudget(String entryMode, double scale) {
+        if (!usesScaledMaSlopeMargin(entryMode)) {
+            return MASLOPE_MIN_MARGIN;
+        }
+        double clamped = Math.clamp(scale, 0.05, 1.0);
+        return MASLOPE_MIN_MARGIN.multiply(BigDecimal.valueOf(clamped))
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private boolean usesScaledMaSlopeMargin(String entryMode) {
+        return "MACD_RECLAIM".equals(entryMode);
     }
 
     /**

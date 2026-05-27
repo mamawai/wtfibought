@@ -274,6 +274,38 @@ class PlaybookExitEngineTest {
         assertThat(evaluation.entryEvaluationAllowed()).isFalse();
     }
 
+    @Test
+    void maSlopeEarlyKillCountsAsFailedWaveForNextLaunch() {
+        LocalDateTime now = LocalDateTime.of(2026, 5, 7, 4, 0);
+        TradingExecutionState state = stateAt(now);
+        state.putExitPlan(1L, maSlopePlan(now.minusMinutes(3)));
+        PlaybookExitEngine engine = new PlaybookExitEngine(List.of(new EarlyKillMaSlopePlaybook()));
+
+        PlaybookExitEngine.PlaybookEvaluation evaluation = engine.evaluateDetailed(
+                context("99700", "55", "42", "falling_3", 0, 0, now.minusMinutes(1),
+                        position("LONG", "100000", "99000", "105000", "1"), state, new StubTools()),
+                true);
+
+        assertThat(evaluation.result().action()).isEqualTo("PLAYBOOK_EXIT_FULL");
+        assertThat(state.getMaSlopeFastFailStreak("BTCUSDT", "LONG")).isEqualTo(1);
+    }
+
+    @Test
+    void maSlopeNonFailureExitClearsFailedWaveStreak() {
+        LocalDateTime now = LocalDateTime.of(2026, 5, 7, 4, 0);
+        TradingExecutionState state = stateAt(now);
+        state.recordMaSlopeFastFail("BTCUSDT", "LONG");
+        state.putExitPlan(1L, maSlopePlan(now.minusMinutes(30)));
+        PlaybookExitEngine engine = new PlaybookExitEngine(List.of(new CleanMaSlopePlaybook()));
+
+        engine.evaluateDetailed(
+                context("101000", "55", "42", "rising_3", 0, 0, now.minusMinutes(1),
+                        position("LONG", "100000", "99000", "105000", "1"), state, new StubTools()),
+                true);
+
+        assertThat(state.getMaSlopeFastFailStreak("BTCUSDT", "LONG")).isZero();
+    }
+
     private static TradingDecisionContext context(String price, String bollPb, String rsi,
                                                   String closeTrendClosed3, int ma1h, int ma15m,
                                                   LocalDateTime forecastTime,
@@ -321,6 +353,7 @@ class PlaybookExitEngineTest {
     private static FuturesPositionDTO position(String side, String entry, String sl, String tp, String quantity) {
         FuturesPositionDTO pos = new FuturesPositionDTO();
         pos.setId(1L);
+        pos.setSymbol("BTCUSDT");
         pos.setSide(side);
         pos.setEntryPrice(bd(entry));
         pos.setQuantity(bd(quantity));
@@ -410,6 +443,36 @@ class PlaybookExitEngineTest {
                                              ExitPlan plan,
                                              LocalDateTime now) {
             return ExitPlaybookDecision.holdBlocked("mock-blocked");
+        }
+    }
+
+    private static final class EarlyKillMaSlopePlaybook implements ExitPlaybook {
+        @Override
+        public ExitPath path() {
+            return ExitPath.MA_SLOPE;
+        }
+
+        @Override
+        public ExitPlaybookDecision evaluate(TradingDecisionContext decision,
+                                             FuturesPositionDTO position,
+                                             ExitPlan plan,
+                                             LocalDateTime now) {
+            return ExitPlaybookDecision.closeFull("MA_SLOPE_EARLY_KILL score=3 r=-0.30");
+        }
+    }
+
+    private static final class CleanMaSlopePlaybook implements ExitPlaybook {
+        @Override
+        public ExitPath path() {
+            return ExitPath.MA_SLOPE;
+        }
+
+        @Override
+        public ExitPlaybookDecision evaluate(TradingDecisionContext decision,
+                                             FuturesPositionDTO position,
+                                             ExitPlan plan,
+                                             LocalDateTime now) {
+            return ExitPlaybookDecision.closeFull("MA_SLOPE_SIGNAL_REVERSE state=DOWN_ACCELERATING");
         }
     }
 }

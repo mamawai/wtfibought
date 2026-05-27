@@ -124,6 +124,7 @@ public class BacktestResult {
     private final List<Trade> trades = new ArrayList<>();
     private final List<BigDecimal> equityCurve = new ArrayList<>();
     private final Map<String, Integer> rejectCounts = new LinkedHashMap<>();
+    private final Map<String, ShadowOpportunityStats> shadowOpportunityStats = new LinkedHashMap<>();
     private final BigDecimal initialEquity;
 
     public BacktestResult(BigDecimal initialEquity) {
@@ -144,18 +145,117 @@ public class BacktestResult {
         if (rejectReason == null || rejectReason.isBlank()) {
             return;
         }
+        String key = rejectKey(rejectReason);
+        if (key != null) {
+            rejectCounts.merge(key, 1, Integer::sum);
+        }
+    }
+
+    public void recordShadowOpportunity(String rejectReason, boolean isLong, double maxFavorableR, double maxAdverseR) {
+        String reasonKey = rejectKey(rejectReason);
+        if (reasonKey == null || !Double.isFinite(maxFavorableR) || !Double.isFinite(maxAdverseR)) {
+            return;
+        }
+        String key = reasonKey + "|" + (isLong ? "LONG" : "SHORT");
+        shadowOpportunityStats
+                .computeIfAbsent(key, ignored -> new ShadowOpportunityStats(reasonKey, isLong))
+                .record(maxFavorableR, maxAdverseR);
+    }
+
+    public Map<String, ShadowOpportunityStats> getShadowOpportunityStats() {
+        return shadowOpportunityStats;
+    }
+
+    public static String rejectKey(String rejectReason) {
+        if (rejectReason == null || rejectReason.isBlank()) {
+            return null;
+        }
         String body = rejectReason;
         int colon = body.indexOf(": ");
         if (colon >= 0) {
             body = body.substring(colon + 2);
         }
         int sp = body.indexOf(' ');
-        String key = sp > 0 ? body.substring(0, sp) : body;
-        rejectCounts.merge(key, 1, Integer::sum);
+        return sp > 0 ? body.substring(0, sp) : body;
     }
 
     public Map<String, Integer> getRejectCounts() {
         return rejectCounts;
+    }
+
+    public static final class ShadowOpportunityStats {
+        private final String rejectReason;
+        private final boolean isLong;
+        private int count;
+        private int reachedHalfR;
+        private int heldQuarterR;
+        private int cleanHalfR;
+        private double totalMaxFavorableR;
+        private double totalMaxAdverseR;
+
+        private ShadowOpportunityStats(String rejectReason, boolean isLong) {
+            this.rejectReason = rejectReason;
+            this.isLong = isLong;
+        }
+
+        private void record(double maxFavorableR, double maxAdverseR) {
+            count++;
+            totalMaxFavorableR += maxFavorableR;
+            totalMaxAdverseR += maxAdverseR;
+            if (maxFavorableR >= 0.50) {
+                reachedHalfR++;
+            }
+            if (maxAdverseR > -0.25) {
+                heldQuarterR++;
+            }
+            if (maxFavorableR >= 0.50 && maxAdverseR > -0.25) {
+                cleanHalfR++;
+            }
+        }
+
+        public String rejectReason() {
+            return rejectReason;
+        }
+
+        public String side() {
+            return isLong ? "LONG" : "SHORT";
+        }
+
+        public int count() {
+            return count;
+        }
+
+        public int reachedHalfR() {
+            return reachedHalfR;
+        }
+
+        public int heldQuarterR() {
+            return heldQuarterR;
+        }
+
+        public int cleanHalfR() {
+            return cleanHalfR;
+        }
+
+        public double halfRRate() {
+            return count == 0 ? 0.0 : (double) reachedHalfR / count;
+        }
+
+        public double heldQuarterRRate() {
+            return count == 0 ? 0.0 : (double) heldQuarterR / count;
+        }
+
+        public double cleanHalfRRate() {
+            return count == 0 ? 0.0 : (double) cleanHalfR / count;
+        }
+
+        public double avgMaxFavorableR() {
+            return count == 0 ? 0.0 : totalMaxFavorableR / count;
+        }
+
+        public double avgMaxAdverseR() {
+            return count == 0 ? 0.0 : totalMaxAdverseR / count;
+        }
     }
 
     // ==================== 汇总指标 ====================

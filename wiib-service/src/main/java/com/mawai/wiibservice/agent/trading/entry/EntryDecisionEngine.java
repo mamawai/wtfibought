@@ -526,11 +526,17 @@ public final class EntryDecisionEngine {
             return null;
         }
         int fastFails = decision.state().getMaSlopeFastFailStreak(decision.symbol(), candidate.side());
-        if (fastFails < MA_SLOPE_FAILED_WAVE_LAUNCH_LIMIT || !"LAUNCH".equals(candidate.entryMode())) {
+        if (fastFails < MA_SLOPE_FAILED_WAVE_LAUNCH_LIMIT
+                || !maSlopeFailedWaveLimitedMode(candidate.entryMode())) {
             return null;
         }
         return "MA_SLOPE: MASLOPE_FAILED_WAVE_LAUNCH_REJECT side=" + candidate.side()
                 + " fastFails=" + fastFails;
+    }
+
+    private boolean maSlopeFailedWaveLimitedMode(String entryMode) {
+        return "LAUNCH".equals(entryMode)
+                || "MACD_RECLAIM".equals(entryMode);
     }
 
     private String maSlopeScaleInQualityReject(TradingDecisionContext decision, EntryStrategyCandidate candidate) {

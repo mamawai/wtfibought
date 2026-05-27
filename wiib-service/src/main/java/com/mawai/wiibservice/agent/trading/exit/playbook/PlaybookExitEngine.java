@@ -238,7 +238,7 @@ public final class PlaybookExitEngine {
         String execLog = "Playbook全平: " + result + "\n";
         if (isTradeSuccess(result)) {
             if (plan.path() == ExitPath.MA_SLOPE) {
-                if (decision.reason() != null && decision.reason().startsWith("MA_SLOPE_FAST_FAIL")) {
+                if (isMaSlopeFailedWaveExit(decision.reason())) {
                     state.recordMaSlopeFastFail(pos.getSymbol(), pos.getSide());
                 } else {
                     state.clearMaSlopeFastFailStreak(pos.getSymbol(), pos.getSide());
@@ -254,6 +254,12 @@ public final class PlaybookExitEngine {
                 ACTION_HOLD,
                 formatReason(plan, decision.reason(), indicatorShielded) + "→全平失败，继续等硬SL/TP",
                 execLog);
+    }
+
+    private boolean isMaSlopeFailedWaveExit(String reason) {
+        return reason != null
+                && (reason.startsWith("MA_SLOPE_FAST_FAIL")
+                || reason.startsWith("MA_SLOPE_EARLY_KILL"));
     }
 
     /**

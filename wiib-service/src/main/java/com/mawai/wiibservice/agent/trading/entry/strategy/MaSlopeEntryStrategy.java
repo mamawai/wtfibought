@@ -17,6 +17,7 @@ import java.util.Locale;
 import java.util.Set;
 
 import static com.mawai.wiibservice.agent.trading.maslope.MaSlopeStateClassifier.MA25_SLOPE_MIN_ATR;
+import static com.mawai.wiibservice.agent.trading.maslope.MaSlopeStateClassifier.MA7_SLOPE_MIN_ATR;
 import static com.mawai.wiibservice.agent.trading.maslope.MaSlopeStateClassifier.MA7_SLOPE_STRONG_ATR;
 import static com.mawai.wiibservice.agent.trading.maslope.MaSlopeStateClassifier.MIN_SERIES_SIZE;
 import static com.mawai.wiibservice.agent.trading.maslope.MaSlopeStateClassifier.MIN_SERIES_SIZE_WITH_PREVIOUS_CONFIRM;
@@ -34,10 +35,12 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
     private static volatile Set<String> enabledSymbols = DEFAULT_ENABLED_SYMBOLS;
 
     private static final int MAX_LEVERAGE = 50;
-    // 60d ETH 回测：MA25 接近 0 的早进信号几乎全亏，容忍度收到 0。
     private static final double MA25_EARLY_LAG_TOLERANCE_ATR = 0.0;
     private static final double PRICE_DISTANCE_LAUNCH_ATR = 2.50;
     private static final double PRICE_DISTANCE_PULLBACK_ATR = 3.50;
+    private static final double MACD_RECLAIM_MAX_DISTANCE_ATR = 2.60;
+    private static final double MACD_RECLAIM_MAX_RANGE_ATR = 1.60;
+    private static final double MACD_RECLAIM_MIN_VOLUME = 0.95;
     private static final double FUNDING_EXTREME = 0.60;
     private static final double SCORE_MIN = 0.45;
     private static final double SCORE_MAX = 1.20;
@@ -97,15 +100,20 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
         }
 
         MaState trigger = MaSlopeStateClassifier.classifyPrimary(ctx);
-        Boolean earlyDirection = earlyCandidateDirection(trigger);
+        MaState prevTrigger = MaSlopeStateClassifier.classifyPreviousPrimary(ctx);
+        Boolean maSlopeEarlyDirection = earlyCandidateDirection(trigger);
+        Boolean macdEarlyDirection = macdEarlyDirection(ctx, trigger, prevTrigger);
+        Boolean earlyDirection = maSlopeEarlyDirection != null ? maSlopeEarlyDirection
+                : macdEarlyDirection;
         if (!trigger.hasCandidate() && earlyDirection == null) {
             return EntryStrategyResult.reject(PATH_MA_SLOPE,
                     "MASLOPE_NO_STRONG_STATE state=" + trigger.state());
         }
 
-        MaState prevTrigger = MaSlopeStateClassifier.classifyPreviousPrimary(ctx);
         boolean isLong = trigger.hasCandidate() ? trigger.isLong() : earlyDirection;
-        EntryMode triggerMode = entryMode(trigger, prevTrigger, isLong);
+        boolean macdEarlyOnly = !trigger.hasCandidate()
+                && macdEarlyDirection != null && macdEarlyDirection == isLong;
+        EntryMode triggerMode = entryMode(trigger, prevTrigger, isLong, macdEarlyOnly);
         if (triggerMode == null) {
             return EntryStrategyResult.reject(PATH_MA_SLOPE,
                     "MASLOPE_NEED_2BAR_CONFIRM prev=" + prevTrigger.state()
@@ -124,7 +132,7 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
                     "MASLOPE_CONFIRM_NOT_SUPPORT state=" + trigger.state() + " confirm=" + confirm.state());
         }
 
-        EntryQualityDecision entryQuality = entryQuality(ctx, trigger, isLong);
+        EntryQualityDecision entryQuality = entryQuality(ctx, trigger, isLong, triggerMode);
         if (entryQuality.rejectReason() != null) {
             return EntryStrategyResult.reject(PATH_MA_SLOPE, entryQuality.rejectReason());
         }
@@ -207,16 +215,20 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
             if (ctx.maAlignment1h == null) {
                 return "MASLOPE_3M_1H_MISSING";
             }
-            if ("BTCUSDT".equals(symbol)) {
-                return "MASLOPE_3M_BTC_NO_EDGE";
-            }
             boolean oneHourAligned = EntryStrategySupport.directionAligns(ctx.maAlignment1h, isLong);
             boolean oneHourNeutral = ctx.maAlignment1h == 0;
             if (!oneHourNeutral && !oneHourAligned) {
                 return "MASLOPE_3M_1H_AGAINST";
             }
+            if ("BTCUSDT".equals(symbol)
+                    && !m3TrendContinuationQuality(symbol, ctx, trigger, confirm, isLong, triggerMode)) {
+                return "MASLOPE_3M_BTC_EDGE_WEAK";
+            }
+            if ("BTCUSDT".equals(symbol) && entryMode == EntryQualityMode.PULLBACK_RECLAIM) {
+                return "MASLOPE_3M_BTC_PULLBACK_NO_EDGE";
+            }
             if (oneHourAligned) {
-                if (!"ETHUSDT".equals(symbol)) {
+                if (!"ETHUSDT".equals(symbol) && !"BTCUSDT".equals(symbol)) {
                     return "MASLOPE_3M_1H_ALREADY_TRENDING";
                 }
                 if (!m3TrendContinuationQuality(symbol, ctx, trigger, confirm, isLong, triggerMode)) {
@@ -262,17 +274,29 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
         return null;
     }
 
-    private static EntryQualityDecision entryQuality(MarketContext ctx, MaState trigger, boolean isLong) {
+    private static EntryQualityDecision entryQuality(MarketContext ctx,
+                                                     MaState trigger,
+                                                     boolean isLong,
+                                                     EntryMode triggerMode) {
         double distance = trigger.priceDistanceAtr();
         boolean pullbackReclaim = pullbackReclaimSupports(ctx, isLong);
 
+        if (triggerMode == EntryMode.MACD_EARLY) {
+            if (distance <= MACD_RECLAIM_MAX_DISTANCE_ATR
+                    && closedCandlePositionSupports(ctx, isLong)
+                    && rangeWithin(ctx, MACD_RECLAIM_MAX_RANGE_ATR)) {
+                return EntryQualityDecision.accept(EntryQualityMode.MACD_RECLAIM);
+            }
+            return EntryQualityDecision.reject(
+                    "MASLOPE_MACD_RECLAIM_REJECT distanceAtr=" + fmt(distance)
+                            + " rangeAtr=" + fmt(ctx.rangeAtrClosed != null ? ctx.rangeAtrClosed : 0.0));
+        }
         if (distance <= PRICE_DISTANCE_LAUNCH_ATR) {
             return EntryQualityDecision.accept(EntryQualityMode.LAUNCH);
         }
         if (distance <= PRICE_DISTANCE_PULLBACK_ATR && pullbackReclaim) {
             return EntryQualityDecision.accept(EntryQualityMode.PULLBACK_RECLAIM);
         }
-        // LATE_CONTINUATION 在 60d ETH 回测里 6 笔 0 胜（净亏 278U），超 PULLBACK 距离一律拒绝。
         return EntryQualityDecision.reject(
                 "MASLOPE_LATE_CHASE_REJECT distanceAtr=" + fmt(distance)
                         + " pullback=" + pullbackReclaim);
@@ -434,6 +458,7 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
         if (ctx.bollExpanding5) score *= 1.05;
         if (EntryStrategySupport.microSupports(ctx, isLong)) score *= 1.03;
         if (entryMode == EntryQualityMode.LATE_CONTINUATION) score *= 0.85;
+        if (entryMode == EntryQualityMode.MACD_RECLAIM) score *= 0.90;
         if (isFundingCrowded(ctx.fundingRateExtreme, isLong)) score *= 0.92;
         if (triggerMode.isEarly()) score *= 0.90;
         return Math.clamp(score, SCORE_MIN, SCORE_MAX);
@@ -443,6 +468,9 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
                                         EntryMode triggerMode, EntryQualityMode entryMode) {
         if (triggerMode == EntryMode.EARLY_MA25_LAG) {
             return 0.50;
+        }
+        if (triggerMode == EntryMode.MACD_EARLY) {
+            return confirm.sameStrongDirection(isLong) ? 0.45 : 0.35;
         }
         if (entryMode == EntryQualityMode.LATE_CONTINUATION) {
             return 0.60;
@@ -531,7 +559,67 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
         return null;
     }
 
-    private static EntryMode entryMode(MaState trigger, MaState prevTrigger, boolean isLong) {
+    private static Boolean macdEarlyDirection(MarketContext ctx, MaState trigger, MaState prevTrigger) {
+        boolean longOk = macdEarlySupports(ctx, trigger, prevTrigger, true);
+        boolean shortOk = macdEarlySupports(ctx, trigger, prevTrigger, false);
+        if (longOk == shortOk) {
+            return null;
+        }
+        return longOk;
+    }
+
+    private static boolean macdEarlySupports(MarketContext ctx,
+                                             MaState trigger,
+                                             MaState prevTrigger,
+                                             boolean isLong) {
+        if (!macdFreshCrossSupports(ctx, isLong)
+                || macdAgainst(ctx, isLong)
+                || !klineSupports(ctx, isLong)
+                || avg(ctx.volumeRatioClosedSeries) < MACD_RECLAIM_MIN_VOLUME
+                || trigger.priceDistanceAtr() > MACD_RECLAIM_MAX_DISTANCE_ATR
+                || !rangeWithin(ctx, MACD_RECLAIM_MAX_RANGE_ATR)
+                || !closedCandlePositionSupports(ctx, isLong)
+                || (ctx.bollSqueeze && !ctx.bollExpanding5)) {
+            return false;
+        }
+        if (prevTrigger.stronglyAgainst(isLong)) {
+            return false;
+        }
+        if (isLong) {
+            return trigger.ma7SlopeAtr() >= MA7_SLOPE_MIN_ATR
+                    && trigger.spreadAtr() >= -0.05
+                    && trigger.spreadDeltaAtr() >= 0.0
+                    && trigger.ma25SlopeAtr() >= -MA25_EARLY_LAG_TOLERANCE_ATR;
+        }
+        return trigger.ma7SlopeAtr() <= -MA7_SLOPE_MIN_ATR
+                && trigger.spreadAtr() <= 0.05
+                && trigger.spreadDeltaAtr() <= 0.0
+                && trigger.ma25SlopeAtr() <= MA25_EARLY_LAG_TOLERANCE_ATR;
+    }
+
+    private static boolean macdFreshCrossSupports(MarketContext ctx, boolean isLong) {
+        if (!macdFreshCrossBasic(ctx, isLong)) {
+            return false;
+        }
+        // 水上/水下金叉优先；普通刚交叉必须有结构突破确认，避免在零轴附近反复试错。
+        return macdWaterlineSupports(ctx, isLong) || structureBreakoutSupports(ctx, isLong);
+    }
+
+    private static boolean macdFreshCrossBasic(MarketContext ctx, boolean isLong) {
+        boolean fresh = isLong ? "golden".equals(ctx.macdCross) : "death".equals(ctx.macdCross);
+        if (!fresh || ctx.macdDif == null || ctx.macdDea == null) {
+            return false;
+        }
+        return isLong
+                ? EntryStrategySupport.isMacdHistBullish(ctx.macdHistTrend)
+                : EntryStrategySupport.isMacdHistBearish(ctx.macdHistTrend);
+    }
+
+    private static EntryMode entryMode(MaState trigger, MaState prevTrigger, boolean isLong,
+                                       boolean macdEarlyOnly) {
+        if (macdEarlyOnly) {
+            return EntryMode.MACD_EARLY;
+        }
         if (trigger.hasCandidate() && prevTrigger.sameStrongDirection(isLong)) {
             return EntryMode.CONFIRMED;
         }
@@ -548,6 +636,9 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
     }
 
     private static EntryMode confirmMode(EntryMode mode, MaState confirm, boolean isLong) {
+        if (mode == EntryMode.MACD_EARLY && confirm.sameBroadDirection(isLong)) {
+            return mode;
+        }
         if (confirm.sameStrongDirection(isLong)) {
             return mode;
         }
@@ -584,7 +675,8 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
     private enum EntryMode {
         CONFIRMED,
         PRIMARY_KLINE,
-        EARLY_MA25_LAG;
+        EARLY_MA25_LAG,
+        MACD_EARLY;
 
         boolean isEarly() {
             return this != CONFIRMED;
@@ -594,6 +686,7 @@ public final class MaSlopeEntryStrategy implements EntryStrategy {
     private enum EntryQualityMode {
         LAUNCH,
         PULLBACK_RECLAIM,
+        MACD_RECLAIM,
         LATE_CONTINUATION
     }
 

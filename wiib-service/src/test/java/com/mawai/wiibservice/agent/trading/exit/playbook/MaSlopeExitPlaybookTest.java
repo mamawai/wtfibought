@@ -32,20 +32,20 @@ class MaSlopeExitPlaybookTest {
     }
 
     @Test
-    void oneRiskMovesStopToBreakevenBeforeSignalExit() {
+    void halfRiskLocksSmallProfitBeforeSignalExit() {
         LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
         ExitPlan plan = plan("LONG", entryAt);
 
         ExitPlaybookDecision decision = playbook.evaluate(
-                priceContext("101000", "400", false),
+                priceContext("100500", "400", false),
                 position("LONG", "100000", "99000", "1"),
                 plan,
                 entryAt.plusMinutes(10));
 
         assertThat(decision.action()).isEqualTo(ExitPlaybookDecision.Action.MOVE_STOP);
-        assertThat(decision.stopLossPrice()).isEqualByComparingTo("100000");
+        assertThat(decision.stopLossPrice()).isEqualByComparingTo("100100.00");
         assertThat(decision.markBreakevenDone()).isTrue();
-        assertThat(decision.reason()).isEqualTo("MA_SLOPE_BREAKEVEN_1R");
+        assertThat(decision.reason()).isEqualTo("MA_SLOPE_BREAKEVEN_0_5R_LOCK_0_1R");
     }
 
     @Test
@@ -227,6 +227,21 @@ class MaSlopeExitPlaybookTest {
     }
 
     @Test
+    void earlyKillRequiresThreeFailureVotesInFirstNineMinutes() {
+        LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
+
+        ExitPlaybookDecision decision = playbook.evaluate(
+                failureContext("99750", "10", downMa7(), downMa25(), List.of(), List.of(),
+                        false, new TradingExecutionState()),
+                position("LONG", "100000", "99000", "1"),
+                plan("LONG", entryAt),
+                entryAt.plusMinutes(6));
+
+        assertThat(decision.action()).isEqualTo(ExitPlaybookDecision.Action.CLOSE_FULL);
+        assertThat(decision.reason()).contains("MA_SLOPE_EARLY_KILL", "score=");
+    }
+
+    @Test
     void earlyFailureClosesBeforeBreakevenAfterSixtyMinutesStillNegative() {
         LocalDateTime entryAt = LocalDateTime.of(2026, 5, 24, 1, 0);
 
@@ -369,7 +384,7 @@ class MaSlopeExitPlaybookTest {
         assertThat(signalOnly.action()).isEqualTo(ExitPlaybookDecision.Action.HOLD);
         assertThat(signalOnly.reason()).isEqualTo("MA_SLOPE_HOLD");
         assertThat(breakeven.action()).isEqualTo(ExitPlaybookDecision.Action.MOVE_STOP);
-        assertThat(breakeven.reason()).isEqualTo("MA_SLOPE_BREAKEVEN_1R");
+        assertThat(breakeven.reason()).isEqualTo("MA_SLOPE_BREAKEVEN_0_5R_LOCK_0_1R");
     }
 
     private static TradingDecisionContext priceContext(String price, String atr, boolean shielded) {

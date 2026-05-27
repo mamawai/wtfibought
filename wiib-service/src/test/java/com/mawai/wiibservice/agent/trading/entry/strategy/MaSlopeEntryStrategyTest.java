@@ -241,7 +241,7 @@ class MaSlopeEntryStrategyTest {
     }
 
     @Test
-    void rejectsBtcM3UntilSeparateEdgeCalibration() {
+    void acceptsBtcM3WhenStrictContinuationQualityPasses() {
         MarketContext ctx = marketContext(
                 upMa7(), upMa25(),
                 upMa7(), upMa25(),
@@ -249,8 +249,9 @@ class MaSlopeEntryStrategyTest {
 
         EntryStrategyResult result = strategy.build(context("BTCUSDT", KlineInterval.M3, ctx));
 
-        assertThat(result.candidate()).isNull();
-        assertThat(result.rejectReason()).contains("MASLOPE_3M_BTC_NO_EDGE");
+        assertThat(result.rejectReason()).isNull();
+        assertThat(result.candidate()).isNotNull();
+        assertThat(result.candidate().side()).isEqualTo("LONG");
     }
 
     @Test
@@ -276,6 +277,27 @@ class MaSlopeEntryStrategyTest {
     }
 
     @Test
+    void rejectsBtcM3PullbackUntilSeparateEdgeExists() {
+        MarketContext ctx = marketContext(
+                pullbackReclaimMa7(), pullbackUpMa25(),
+                upMa7(), upMa25(),
+                "128",
+                "TREND_UP",
+                "golden",
+                "rising_5",
+                "2",
+                "1",
+                "rising_5",
+                "30",
+                true);
+
+        EntryStrategyResult result = strategy.build(context("BTCUSDT", KlineInterval.M3, ctx));
+
+        assertThat(result.candidate()).isNull();
+        assertThat(result.rejectReason()).contains("MASLOPE_3M_BTC_PULLBACK_NO_EDGE");
+    }
+
+    @Test
     void acceptsPullbackReclaimEntryModeAfterMa7Retest() {
         MarketContext ctx = marketContext(
                 pullbackReclaimMa7(), pullbackUpMa25(),
@@ -296,6 +318,28 @@ class MaSlopeEntryStrategyTest {
         assertThat(result.candidate()).isNotNull();
         assertThat(result.candidate().entryMode()).isEqualTo("PULLBACK_RECLAIM");
         assertThat(result.candidate().wasLateContinuation()).isFalse();
+    }
+
+    @Test
+    void acceptsMacdReclaimWhenFreshCrossStartsBeforeMaSlopeCandidate() {
+        MarketContext ctx = marketContext(
+                macdEarlyMa7(), macdEarlyMa25(),
+                slowingButStillAboveMa7(), slowUpMa25(),
+                "104",
+                "TREND_UP",
+                "golden",
+                "rising_5",
+                "2",
+                "1",
+                "rising_5");
+
+        EntryStrategyResult result = strategy.build(context("BTCUSDT", ctx));
+
+        assertThat(result.rejectReason()).isNull();
+        assertThat(result.candidate()).isNotNull();
+        assertThat(result.candidate().side()).isEqualTo("LONG");
+        assertThat(result.candidate().entryMode()).isEqualTo("MACD_RECLAIM");
+        assertThat(result.candidate().reason()).contains("mode=MACD_EARLY");
     }
 
     @Test
@@ -756,6 +800,14 @@ class MaSlopeEntryStrategyTest {
 
     private static List<BigDecimal> pullbackUpMa25() {
         return bdList("100.0", "100.2", "100.4", "100.6", "100.8", "101.0", "101.2", "101.4", "101.6");
+    }
+
+    private static List<BigDecimal> macdEarlyMa7() {
+        return bdList("100.0", "100.4", "100.8", "101.2", "101.6", "102.0", "102.4", "102.8", "103.2");
+    }
+
+    private static List<BigDecimal> macdEarlyMa25() {
+        return bdList("100.0", "100.3", "100.6", "100.9", "101.2", "101.5", "101.8", "102.1", "102.4");
     }
 
     private static List<BigDecimal> downMa7() {
