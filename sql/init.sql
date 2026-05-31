@@ -1172,3 +1172,20 @@ INSERT INTO strategy_path_status (path, enabled) VALUES
     ('MR', TRUE),
     ('LEGACY_TREND', TRUE)
 ON CONFLICT (path) DO NOTHING;
+
+-- ============ kline_history：回测/评估用 1m 基础 K 线落库（research，可复现） ============
+CREATE TABLE IF NOT EXISTS kline_history (
+    id            BIGSERIAL PRIMARY KEY,
+    symbol        VARCHAR(32)   NOT NULL,
+    interval_code VARCHAR(8)    NOT NULL,
+    open_time     BIGINT        NOT NULL,
+    close_time    BIGINT        NOT NULL,
+    open          NUMERIC(20,8) NOT NULL,
+    high          NUMERIC(20,8) NOT NULL,
+    low           NUMERIC(20,8) NOT NULL,
+    close         NUMERIC(20,8) NOT NULL,
+    volume        NUMERIC(30,8) NOT NULL,
+    created_at    TIMESTAMP     NOT NULL DEFAULT NOW(),
+    CONSTRAINT uk_kline_symbol_interval_opentime UNIQUE (symbol, interval_code, open_time)
+);
+CREATE INDEX IF NOT EXISTS idx_kline_symbol_time ON kline_history (symbol, interval_code, open_time);
