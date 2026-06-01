@@ -397,6 +397,28 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         }
     }
 
+    /**
+     * 资金费率历史·带 endTime 向前翻页重载（research 回填用；limit 上限 1000）。
+     * 原 2 参方法(limit≤100、无 endTime)保留不动——本重载 additive，不动 live 调用点。
+     */
+    public String getFundingRateHistory(String symbol, int limit, long endTime) {
+        String baseUrl = props.getFuturesRestBaseUrl();
+        if (baseUrl == null || baseUrl.isBlank()) return null;
+        URI uri = UriComponentsBuilder
+                .fromUriString(baseUrl + "/fapi/v1/fundingRate")
+                .queryParam("symbol", symbol)
+                .queryParam("endTime", endTime)
+                .queryParam("limit", Math.min(limit, 1000))
+                .build().toUri();
+        try {
+            log.info("Binance REST fundingRateHistory(endTime): {}", uri);
+            return restTemplate.getForObject(uri, String.class);
+        } catch (Exception e) {
+            log.warn("获取{}资金费率历史(endTime)失败: {}", symbol, e.getMessage());
+            return null;
+        }
+    }
+
     private BigDecimal[] getHighLow(String json) throws JsonProcessingException {
         if (json == null || json.isBlank()) return null;
         JsonNode root = MAPPER.readTree(json);

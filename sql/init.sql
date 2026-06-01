@@ -1189,3 +1189,16 @@ CREATE TABLE IF NOT EXISTS kline_history (
     CONSTRAINT uk_kline_symbol_interval_opentime UNIQUE (symbol, interval_code, open_time)
 );
 CREATE INDEX IF NOT EXISTS idx_kline_symbol_time ON kline_history (symbol, interval_code, open_time);
+
+-- ============ market_series_history：研究/评估用链下时点序列落库（research，可复现） ============
+-- 资金费率(8h)/恐惧贪婪(日级)等单值序列；通用单表，series_code 区分；全市场序列(如 F&G)用 symbol='GLOBAL'。
+CREATE TABLE IF NOT EXISTS market_series_history (
+    id            BIGSERIAL      PRIMARY KEY,
+    symbol        VARCHAR(32)    NOT NULL,
+    series_code   VARCHAR(24)    NOT NULL,
+    ts            BIGINT         NOT NULL,
+    value         NUMERIC(30,12) NOT NULL,
+    created_at    TIMESTAMP      NOT NULL DEFAULT NOW(),
+    CONSTRAINT uk_mkt_series_symbol_code_ts UNIQUE (symbol, series_code, ts)
+);
+CREATE INDEX IF NOT EXISTS idx_mkt_series_symbol_code_ts ON market_series_history (symbol, series_code, ts);

@@ -19,7 +19,8 @@ public final class EwmaMomentumForecaster implements Forecaster {
     }
 
     @Override
-    public Forecast forecast(List<KlineBar> historyUpToNow) {
+    public Forecast forecast(ResearchFeatures features) {
+        List<KlineBar> historyUpToNow = features.barsUpToNow();   // 纯价格腿：只取 bars，忽略链下字段
         if (historyUpToNow == null || historyUpToNow.size() < slow) return Forecast.flat();
         List<BigDecimal> closes = historyUpToNow.stream().map(KlineBar::close).toList();
         BigDecimal ef = Ema.ema(closes, fast);

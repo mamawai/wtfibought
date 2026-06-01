@@ -1,13 +1,9 @@
 package com.mawai.wiibservice.agent.research.forecast;
 
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
-
-import java.util.List;
-
-/** 可插拔预测器。入参是决策点"当下及以前"的 bars（point-in-time，绝不含未来）。 */
+/** 可插拔预测器。入参 {@link ResearchFeatures} 含决策点"当下及以前"的 bars（point-in-time，绝不含未来）+ 对齐的链下值。 */
 public interface Forecaster {
 
-    Forecast forecast(List<KlineBar> historyUpToNow);
+    Forecast forecast(ResearchFeatures features);
 
     String name();
 }
