@@ -34,17 +34,20 @@ public class ResearchEvalService {
     private static final int LABEL_PURGE_HBARS = 1; // 标签前视=1 个 H-bar（决策周期=horizon）
     private static final BigDecimal NEUTRAL_FUNDING = BigDecimal.ZERO;            // 链下缺口中性：资金费=0
     private static final BigDecimal NEUTRAL_FEAR_GREED = BigDecimal.valueOf(50);  // 恐惧贪婪=50（中性）
+    private static final BigDecimal NEUTRAL_ONCHAIN = BigDecimal.ZERO;            // 链上缺口中性：ETF 流入/稳定币差=0
 
     private final KlineHistoryStore store;
     private final MarketSeriesStore seriesStore;
 
-    /** 一窗多预测器同框评估。链下序列(funding/fng)随 1m 一起按 [fromMs,toMs) 加载，逐决策点 as-of 对齐。 */
+    /** 一窗多预测器同框评估。链下/链上序列(funding/fng/etf/stablecoin)随 1m 一起按 [fromMs,toMs) 加载，逐决策点 as-of 对齐。 */
     public ComparisonReport evaluate(String symbol, ForecastHorizon horizon, long fromMs, long toMs,
                                      List<Forecaster> forecasters, EvalParams params) {
         List<KlineBar> oneMin = store.load(symbol, "1m", fromMs, toMs);
         List<MarketSeriesPoint> funding = seriesStore.load(symbol, SeriesCode.FUNDING, fromMs, toMs);
         List<MarketSeriesPoint> fearGreed = seriesStore.load(MarketSeriesStore.GLOBAL, SeriesCode.FEAR_GREED, fromMs, toMs);
-        ComparisonReport report = evaluateBars(symbol, horizon, oneMin, funding, fearGreed, forecasters, params);
+        List<MarketSeriesPoint> etfFlow = seriesStore.load(symbol, SeriesCode.ETF_FLOW, fromMs, toMs);            // 仅 BTC 有；其他 symbol 空→中性
+        List<MarketSeriesPoint> stablecoin = seriesStore.load(symbol, SeriesCode.STABLECOIN_DELTA, fromMs, toMs);
+        ComparisonReport report = evaluateBars(symbol, horizon, oneMin, funding, fearGreed, etfFlow, stablecoin, forecasters, params);
         writeReport(report);
         return report;
     }
@@ -52,11 +55,13 @@ public class ResearchEvalService {
     /**
      * 纯核心（无 DB，可单测）：聚合→walk-forward 取样本外→逐决策点装配 point-in-time 特征→
      * 每预测器模拟收益+指标→buy&hold 基准算一次→多策略同框报告。
-     * fundingSeries/fearGreedSeries 须按 ts 升序（store.load 已保证）；可为空→全程中性。
+     * 各序列须按 ts 升序（store.load 已保证）；可为空→该因子全程中性。
      */
     public static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
                                                 List<MarketSeriesPoint> fundingSeries,
                                                 List<MarketSeriesPoint> fearGreedSeries,
+                                                List<MarketSeriesPoint> etfFlowSeries,
+                                                List<MarketSeriesPoint> stablecoinSeries,
                                                 List<Forecaster> forecasters, EvalParams params) {
         List<KlineBar> hbars = KlineAggregator.aggregate(oneMin, horizon.millis());
         int points = Math.max(0, hbars.size() - 1); // 每个决策点 i 需要 i+1 算实现收益
@@ -73,7 +78,9 @@ public class ResearchEvalService {
                 long ti = hbars.get(i).closeTime();                           // 决策"当下"=该 H-bar 收盘时刻
                 double funding = SeriesAligner.asOf(fundingSeries, ti, NEUTRAL_FUNDING).doubleValue();
                 int fng = SeriesAligner.asOf(fearGreedSeries, ti, NEUTRAL_FEAR_GREED).intValue();
-                featuresPerPoint.add(new ResearchFeatures(hbars.subList(0, i + 1), funding, fng)); // 绝不含未来
+                double etf = SeriesAligner.asOf(etfFlowSeries, ti, NEUTRAL_ONCHAIN).doubleValue();
+                double stablecoin = SeriesAligner.asOf(stablecoinSeries, ti, NEUTRAL_ONCHAIN).doubleValue();
+                featuresPerPoint.add(new ResearchFeatures(hbars.subList(0, i + 1), funding, fng, etf, stablecoin)); // 绝不含未来
                 BigDecimal entry = hbars.get(i).close();
                 BigDecimal next = hbars.get(i + 1).close();
                 rawReturns.add(entry.signum() == 0 ? BigDecimal.ZERO

@@ -16,9 +16,12 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -54,23 +57,11 @@ public class EtfFlowScraper {
     /** 拉取 Farside 最新 BTC ETF 净流入，并按日期去重写入 factor_history。 */
     public void collectOnce() {
         try {
-            EtfFlowPoint point = parseLatest(fetchDocument());
-            LocalDateTime observedAt = point.date().atStartOfDay();
+            List<EtfFlowPoint> all = parseAll(fetchDocument());
+            EtfFlowPoint point = all.get(all.size() - 1);   // 升序末尾 = 最新一日
+            factorHistoryMapper.upsert(toRow(point));
 
-            FactorHistory row = new FactorHistory();
-            row.setSymbol(SYMBOL);
-            row.setFactorName(FACTOR_NAME);
-            row.setFactorValue(point.totalFlowUsdMillion());
-            row.setObservedAt(observedAt);
-            row.setMetadataJson(JSON.toJSONString(Map.of(
-                    "source", "Farside",
-                    "url", FARSIDE_URL,
-                    "unit", "USD_million",
-                    "flowDate", point.date().toString()
-            )));
-            factorHistoryMapper.upsert(row);
-
-            long staleDays = java.time.temporal.ChronoUnit.DAYS.between(point.date(), LocalDate.now());
+            long staleDays = ChronoUnit.DAYS.between(point.date(), LocalDate.now());
             if (staleDays > 4) {
                 log.warn("[B2.etf] STALE_ETF_FLOW latestDate={} staleDays={}", point.date(), staleDays);
             }
@@ -81,20 +72,46 @@ public class EtfFlowScraper {
         }
     }
 
-    /** 测试入口：用固定 HTML 样本验证 Farside 表结构解析没有漂移。 */
+    /**
+     * 全历史回填：Farside all-data 页本身含全部历史日行，逐行幂等 upsert（measure-first，喂回测评估）。
+     * 与 collectOnce 同源同解析，绝不会漂移；失败只记录返回 0。
+     */
+    public int backfillHistory() {
+        try {
+            List<EtfFlowPoint> all = parseAll(fetchDocument());
+            for (EtfFlowPoint p : all) {
+                factorHistoryMapper.upsert(toRow(p));
+            }
+            log.info("[B2.etf] BTC_ETF_FLOW 全历史回填 行数={} 区间=[{}, {}]",
+                    all.size(), all.get(0).date(), all.get(all.size() - 1).date());
+            return all.size();
+        } catch (Exception e) {
+            log.warn("[B2.etf] BACKFILL_ETF_FLOW_FAILED reason={}", e.getMessage());
+            return 0;
+        }
+    }
+
+    /** 测试入口：用固定 HTML 样本验证 Farside 表结构解析没漂移（取最新一行）。 */
     public EtfFlowPoint parseLatest(String html) {
+        List<EtfFlowPoint> all = parseAll(html);
+        return all.get(all.size() - 1);   // parseAll 升序且非空（空表已抛异常）
+    }
+
+    /** 解析整张 ETF 全历史表 → 每个日期行一个点，按日期升序（回填用）。 */
+    public List<EtfFlowPoint> parseAll(String html) {
         if (html == null || html.isBlank()) {
             throw new IllegalArgumentException("empty html");
         }
-        return parseLatest(Jsoup.parse(html));
+        return parseAll(Jsoup.parse(html));
     }
 
-    /** 从已解析的页面里寻找包含 Date/Total 的 ETF 表，并返回最新日期。 */
-    private EtfFlowPoint parseLatest(Document doc) {
+    /** 从已解析的页面里寻找含 Date/Total 的 ETF 表，返回其全部日行（升序）。 */
+    private List<EtfFlowPoint> parseAll(Document doc) {
         for (Element table : doc.select("table")) {
-            EtfFlowPoint point = parseTable(table);
-            if (point != null) {
-                return point;
+            List<EtfFlowPoint> points = parseTable(table);
+            if (!points.isEmpty()) {
+                points.sort(Comparator.comparing(EtfFlowPoint::date));
+                return points;
             }
         }
         throw new IllegalStateException("Farside ETF table not found");
@@ -110,11 +127,11 @@ public class EtfFlowScraper {
                 .get();
     }
 
-    /** 定位表头中的 Date 和 Total 列，避免 ETF 明细列顺序变化影响解析。 */
-    private EtfFlowPoint parseTable(Element table) {
+    /** 定位表头中的 Date 和 Total 列，避免明细列顺序变化影响解析；返回该表所有可解析日行。 */
+    private List<EtfFlowPoint> parseTable(Element table) {
         Elements rows = table.select("tr");
         if (rows.isEmpty()) {
-            return null;
+            return List.of();
         }
         int dateIdx = -1;
         int totalIdx = -1;
@@ -132,12 +149,12 @@ public class EtfFlowScraper {
                 return parseRowsAfterHeader(rows, r + 1, dateIdx, totalIdx);
             }
         }
-        return null;
+        return List.of();
     }
 
-    /** 从表头之后逐行解析日期和 Total，取日期最新的一行作为因子值。 */
-    private EtfFlowPoint parseRowsAfterHeader(Elements rows, int startRow, int dateIdx, int totalIdx) {
-        EtfFlowPoint latest = null;
+    /** 从表头之后逐行解析 (日期, Total)，收集所有有效行；底部 "Total" 汇总行因日期列非日期被跳过。 */
+    private List<EtfFlowPoint> parseRowsAfterHeader(Elements rows, int startRow, int dateIdx, int totalIdx) {
+        List<EtfFlowPoint> points = new ArrayList<>();
         for (int r = startRow; r < rows.size(); r++) {
             Elements cells = rows.get(r).select("th,td");
             if (cells.size() <= Math.max(dateIdx, totalIdx)) {
@@ -148,11 +165,25 @@ public class EtfFlowScraper {
             if (date == null || total == null) {
                 continue;
             }
-            if (latest == null || date.isAfter(latest.date())) {
-                latest = new EtfFlowPoint(date, total);
-            }
+            points.add(new EtfFlowPoint(date, total));
         }
-        return latest;
+        return points;
+    }
+
+    /** 把一个 ETF 流入点映射成 factor_history 行（BTC_ETF_FLOW / BTCUSDT / observed=当日 0 点）。 */
+    private FactorHistory toRow(EtfFlowPoint point) {
+        FactorHistory row = new FactorHistory();
+        row.setSymbol(SYMBOL);
+        row.setFactorName(FACTOR_NAME);
+        row.setFactorValue(point.totalFlowUsdMillion());
+        row.setObservedAt(point.date().atStartOfDay());
+        row.setMetadataJson(JSON.toJSONString(Map.of(
+                "source", "Farside",
+                "url", FARSIDE_URL,
+                "unit", "USD_million",
+                "flowDate", point.date().toString()
+        )));
+        return row;
     }
 
     /** 解析 Farside 的英文日期格式，例如 24 Apr 2026。 */

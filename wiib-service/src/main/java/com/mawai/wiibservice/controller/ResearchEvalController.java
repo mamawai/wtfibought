@@ -1,6 +1,8 @@
 package com.mawai.wiibservice.controller;
 
 import com.mawai.wiibcommon.util.Result;
+import com.mawai.wiibservice.agent.external.etf.EtfFlowScraper;
+import com.mawai.wiibservice.agent.quant.service.StablecoinFlowService;
 import com.mawai.wiibservice.agent.research.ForecastHorizon;
 import com.mawai.wiibservice.agent.research.eval.ComparisonReport;
 import com.mawai.wiibservice.agent.research.eval.EvalParams;
@@ -26,6 +28,8 @@ public class ResearchEvalController {
 
     private final KlineHistoryStore store;
     private final MarketSeriesStore seriesStore;
+    private final EtfFlowScraper etfFlowScraper;
+    private final StablecoinFlowService stablecoinFlowService;
     private final ResearchEvalService evalService;
 
     /** 回填 1m K 线：最近 fromDays 天。 */
@@ -48,6 +52,14 @@ public class ResearchEvalController {
         return Result.ok(String.format("funding=%d, fearGreed=%d", funding, fng));
     }
 
+    /** 回填链上序列全历史：BTC ETF 净流入(Farside) + 稳定币供给差(DeFiLlama)；均一次拉全历史，无需 symbol/days。 */
+    @PostMapping("/backfill-onchain")
+    public Result<String> backfillOnchain() {
+        int etf = etfFlowScraper.backfillHistory();
+        int stablecoin = stablecoinFlowService.backfillHistory();
+        return Result.ok(String.format("etfFlow=%d, stablecoin=%d", etf, stablecoin));
+    }
+
     /** 跑一次样本外评估：EWMA 基线 vs 多因子，同框出 ComparisonReport（四线）。 */
     @PostMapping("/run")
     public Result<ComparisonReport> run(@RequestParam(defaultValue = "BTCUSDT") String symbol,
@@ -56,7 +68,10 @@ public class ResearchEvalController {
         long now = System.currentTimeMillis();
         long from = now - fromDays * 24L * 3600_000L;
         List<Forecaster> forecasters = List.of(
-                new EwmaMomentumForecaster(12, 26), MultiFactorForecaster.defaults());
+                new EwmaMomentumForecaster(12, 26),     // 价格基线
+                MultiFactorForecaster.defaults(),       // 原 3 腿（趋势+资金费+恐惧贪婪）
+                MultiFactorForecaster.onChainOnly(),    // 纯链上 2 腿（ETF+稳定币）：测独立 edge
+                MultiFactorForecaster.allFactors());    // 全 5 腿：测链上叠加的边际增益
         ComparisonReport report = evalService.evaluate(
                 symbol, ForecastHorizon.fromHours(horizonHours), from, now, forecasters, EvalParams.defaults());
         return Result.ok(report);

@@ -3,34 +3,36 @@ package com.mawai.wiibservice.agent.research.series;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.mawai.wiibcommon.entity.MarketSeriesHistory;
+import com.mawai.wiibcommon.entity.FactorHistory;
 import com.mawai.wiibservice.config.BinanceRestClient;
-import com.mawai.wiibservice.mapper.MarketSeriesMapper;
+import com.mawai.wiibservice.mapper.FactorHistoryMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 链下时点序列落库 / 加载。资金费走 fundingRate（endTime 向前翻页），F&G 走 alternative.me（一次拉全）；幂等批插。
- * backfill/load 是 DB+网络 I/O，不做单测；其正确性在端到端任务(T8)验证。解析为纯静态函数，单测覆盖。
+ * 链下时点序列落库 / 加载——统一复用 live 的 factor_history 表（Slice3 融合，废弃 Slice2 自建的 market_series_history）。
+ * 资金费走 fundingRate（endTime 向前翻页），F&G 走 alternative.me（一次拉全）；按 factor_history 唯一键幂等 upsert。
+ * backfill/load 是 DB+网络 I/O，不做单测（端到端验证）；解析与时间转换为纯静态函数，单测覆盖。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class MarketSeriesStore extends ServiceImpl<MarketSeriesMapper, MarketSeriesHistory> {
+public class MarketSeriesStore {
 
     /** 全市场序列(F&G)的 symbol 占位。 */
     public static final String GLOBAL = "GLOBAL";
     private static final int FUNDING_PAGE = 1000;   // /fapi/v1/fundingRate 单页上限
-    private static final int FLUSH = 3000;          // 攒够多少行落一次库
 
     private final BinanceRestClient binanceRestClient;
+    private final FactorHistoryMapper factorHistoryMapper;
 
     /** 解析资金费率历史 JSON → 时点序列（每条对象: fundingTime(ms) + fundingRate）。 */
     public static List<MarketSeriesPoint> parseFundingRateHistory(String json) {
@@ -63,62 +65,61 @@ public class MarketSeriesStore extends ServiceImpl<MarketSeriesMapper, MarketSer
         return out;
     }
 
-    /** 回填资金费率 [fromMs, toMs)：endTime 向前翻页直到越过 fromMs。返回写入行数。幂等。 */
+    /** 回填资金费率 [fromMs, toMs)：endTime 向前翻页直到越过 fromMs。返回处理行数。幂等(upsert)。 */
     public int backfillFunding(String symbol, long fromMs, long toMs) {
         long cursor = toMs;
         int total = 0;
-        List<MarketSeriesHistory> buffer = new ArrayList<>(FLUSH);
         while (cursor > fromMs) {
-            String json = binanceRestClient.getFundingRateHistory(symbol, FUNDING_PAGE, cursor);
-            List<MarketSeriesPoint> pts = parseFundingRateHistory(json);
+            List<MarketSeriesPoint> pts = parseFundingRateHistory(
+                    binanceRestClient.getFundingRateHistory(symbol, FUNDING_PAGE, cursor));
             if (pts.isEmpty()) break;
             long oldest = pts.get(0).ts();
             for (MarketSeriesPoint p : pts) {
                 if (p.ts() < fromMs) continue;
-                buffer.add(toEntity(symbol, SeriesCode.FUNDING, p));
-            }
-            if (buffer.size() >= FLUSH) {
-                total += baseMapper.batchInsertIgnore(buffer);
-                buffer.clear();
+                factorHistoryMapper.upsert(toFactor(symbol, SeriesCode.FUNDING, p, "binance/fundingRate"));
+                total++;
             }
             if (oldest <= fromMs) break;
             cursor = oldest - 1;   // 下一页：比本页最老一条再早 1ms
         }
-        if (!buffer.isEmpty()) total += baseMapper.batchInsertIgnore(buffer);
         log.info("backfillFunding {} [{}, {}) 行数={}", symbol, fromMs, toMs, total);
         return total;
     }
 
-    /** 回填恐惧贪婪（全市场, symbol=GLOBAL）：一次拉 limit 条（0=全部历史）。返回写入行数。幂等。 */
+    /** 回填恐惧贪婪（全市场, symbol=GLOBAL）：一次拉 limit 条（0=全部历史）。返回处理行数。幂等(upsert)。 */
     public int backfillFearGreed(int limit) {
         List<MarketSeriesPoint> pts = parseFearGreed(binanceRestClient.getFearGreedIndex(limit));
-        if (pts.isEmpty()) return 0;
-        List<MarketSeriesHistory> rows = new ArrayList<>(pts.size());
-        for (MarketSeriesPoint p : pts) rows.add(toEntity(GLOBAL, SeriesCode.FEAR_GREED, p));
-        int total = baseMapper.batchInsertIgnore(rows);
-        log.info("backfillFearGreed limit={} 行数={}", limit, total);
-        return total;
+        for (MarketSeriesPoint p : pts) {
+            factorHistoryMapper.upsert(toFactor(GLOBAL, SeriesCode.FEAR_GREED, p, "alternative.me/fng"));
+        }
+        log.info("backfillFearGreed limit={} 行数={}", limit, pts.size());
+        return pts.size();
     }
 
-    /** 加载 [fromMs, toMs) 的某序列，按 ts 升序。 */
+    /** 加载 [fromMs, toMs) 的某序列，按 ts 升序。复用 factor_history.selectRange（与原 market_series 的 load 同语义：左闭右开、时间升序）。 */
     public List<MarketSeriesPoint> load(String symbol, SeriesCode code, long fromMs, long toMs) {
-        List<MarketSeriesHistory> rows = baseMapper.selectList(new LambdaQueryWrapper<MarketSeriesHistory>()
-                .eq(MarketSeriesHistory::getSymbol, symbol)
-                .eq(MarketSeriesHistory::getSeriesCode, code.name())
-                .ge(MarketSeriesHistory::getTs, fromMs)
-                .lt(MarketSeriesHistory::getTs, toMs)
-                .orderByAsc(MarketSeriesHistory::getTs));
+        List<FactorHistory> rows = factorHistoryMapper.selectRange(symbol, code.factorName(), toLdt(fromMs), toLdt(toMs));
         List<MarketSeriesPoint> out = new ArrayList<>(rows.size());
-        for (MarketSeriesHistory r : rows) out.add(new MarketSeriesPoint(r.getTs(), r.getValue()));
+        for (FactorHistory r : rows) out.add(new MarketSeriesPoint(toMs(r.getObservedAt()), r.getFactorValue()));
         return out;
     }
 
-    private static MarketSeriesHistory toEntity(String symbol, SeriesCode code, MarketSeriesPoint p) {
-        MarketSeriesHistory e = new MarketSeriesHistory();
+    private static FactorHistory toFactor(String symbol, SeriesCode code, MarketSeriesPoint p, String source) {
+        FactorHistory e = new FactorHistory();
         e.setSymbol(symbol);
-        e.setSeriesCode(code.name());
-        e.setTs(p.ts());
-        e.setValue(p.value());
+        e.setFactorName(code.factorName());
+        e.setFactorValue(p.value());
+        e.setObservedAt(toLdt(p.ts()));
+        e.setMetadataJson("{\"source\":\"" + source + "\"}");
         return e;
+    }
+
+    /** research 用 epoch ms、factor_history 用 UTC LocalDateTime —— 统一按 UTC 互转（时区错会让 as-of 偏移）。 */
+    static LocalDateTime toLdt(long ms) {
+        return LocalDateTime.ofInstant(Instant.ofEpochMilli(ms), ZoneOffset.UTC);
+    }
+
+    static long toMs(LocalDateTime ldt) {
+        return ldt.toInstant(ZoneOffset.UTC).toEpochMilli();
     }
 }

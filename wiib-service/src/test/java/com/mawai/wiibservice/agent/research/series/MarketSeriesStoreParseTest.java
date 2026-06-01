@@ -2,6 +2,7 @@ package com.mawai.wiibservice.agent.research.series;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -45,5 +46,13 @@ class MarketSeriesStoreParseTest {
         assertThat(MarketSeriesStore.parseFundingRateHistory(null)).isEmpty();
         assertThat(MarketSeriesStore.parseFearGreed("")).isEmpty();
         assertThat(MarketSeriesStore.parseFearGreed("{}")).isEmpty();   // 无 data 数组
+    }
+
+    @Test
+    void epochMillisRoundTripsThroughUtc() {
+        // factor_history 存 UTC LocalDateTime、research 用 epoch ms —— 互转必须无损且按 UTC（时区错会让 as-of 偏移）
+        long ms = 1700000000000L;
+        assertThat(MarketSeriesStore.toMs(MarketSeriesStore.toLdt(ms))).isEqualTo(ms);
+        assertThat(MarketSeriesStore.toLdt(0L)).isEqualTo(LocalDateTime.of(1970, 1, 1, 0, 0, 0));
     }
 }

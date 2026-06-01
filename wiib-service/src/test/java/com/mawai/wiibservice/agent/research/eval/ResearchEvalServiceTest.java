@@ -24,7 +24,7 @@ class ResearchEvalServiceTest {
         List<Forecaster> fcs = List.of(new EwmaMomentumForecaster(2, 4), MultiFactorForecaster.defaults());
 
         ComparisonReport r = ResearchEvalService.evaluateBars(
-                "BTCUSDT", ForecastHorizon.H6, oneMin, List.of(), List.of(), fcs, params);
+                "BTCUSDT", ForecastHorizon.H6, oneMin, List.of(), List.of(), List.of(), List.of(), fcs, params);
 
         assertThat(r).isNotNull();
         assertThat(r.symbol()).isEqualTo("BTCUSDT");
@@ -52,7 +52,7 @@ class ResearchEvalServiceTest {
         List<MarketSeriesPoint> fearGreed = List.of(new MarketSeriesPoint(0L, BigDecimal.valueOf(95)));   // 极贪→偏空
 
         ComparisonReport r = ResearchEvalService.evaluateBars(
-                "BTCUSDT", ForecastHorizon.H6, oneMin, funding, fearGreed,
+                "BTCUSDT", ForecastHorizon.H6, oneMin, funding, fearGreed, List.of(), List.of(),
                 List.of(new EwmaMomentumForecaster(2, 4), MultiFactorForecaster.defaults()), params);
 
         StrategyLine ewma = r.strategies().get(0);
@@ -60,6 +60,24 @@ class ResearchEvalServiceTest {
         // 上涨中：EWMA 顺势做多→收益>0；MultiFactor 被 off-chain 压成做空→收益<0
         assertThat(ewma.strategyReturn().doubleValue()).isGreaterThan(0);
         assertThat(multi.strategyReturn().doubleValue()).isLessThan(0);
+    }
+
+    @Test
+    void onChainSeriesAreAsOfAlignedAndDriveOnChainForecaster() {
+        // 上涨样本 + 全程 ETF 净流入 + 稳定币铸币 → onChainOnly 应顺势做多 → 收益>0。
+        // 证明 etfFlow/stablecoin 序列经 SeriesAligner as-of 真装配进了预测（链上"穿过尺子"）。
+        EvalParams params = new EvalParams(1.5, 0.94, 5, 0, 30, 100, 0.95, 42L);
+        List<KlineBar> oneMin = uptrend1m(40 * 360);
+        List<MarketSeriesPoint> etf = List.of(new MarketSeriesPoint(0L, BigDecimal.valueOf(150)));               // 净流入→偏多
+        List<MarketSeriesPoint> stablecoin = List.of(new MarketSeriesPoint(0L, BigDecimal.valueOf(500_000_000L))); // 铸币→偏多
+
+        ComparisonReport r = ResearchEvalService.evaluateBars(
+                "BTCUSDT", ForecastHorizon.H6, oneMin, List.of(), List.of(), etf, stablecoin,
+                List.of(MultiFactorForecaster.onChainOnly()), params);
+
+        StrategyLine oc = r.strategies().get(0);
+        assertThat(oc.name()).isEqualTo("onchain_etf_stablecoin");
+        assertThat(oc.strategyReturn().doubleValue()).isGreaterThan(0);   // 上涨中做多→正收益
     }
 
     /** 生成 count 根 1m bar，价格每根 +0.1，时间从 0 起每根 +60_000ms。 */
