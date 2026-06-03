@@ -121,7 +121,7 @@ public class StablecoinFlowService extends BaseRestTemplateConfig {
         return out;
     }
 
-    /** 把一个供给差点映射成 factor_history 行（对指定 symbol；observed=本期 date，UTC）。 */
+    /** 把一个供给差点映射成 factor_history 行；observedAt 存 DeFiLlama 原始日期，research 读取时再保守 T+1 可用。 */
     private FactorHistory toRow(String symbol, StablecoinPoint p) {
         FactorHistory row = new FactorHistory();
         row.setSymbol(symbol);

@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -19,7 +20,7 @@ import java.util.List;
 
 /**
  * 链下时点序列落库 / 加载——统一复用 live 的 factor_history 表（Slice3 融合，废弃 Slice2 自建的 market_series_history）。
- * 资金费走 fundingRate（endTime 向前翻页），F&G 走 alternative.me（一次拉全）；按 factor_history 唯一键幂等 upsert。
+ * 资金费走 fundingRate（startTime/endTime 正向翻页），F&G 走 alternative.me（一次拉全）；按 factor_history 唯一键幂等 upsert。
  * backfill/load 是 DB+网络 I/O，不做单测（端到端验证）；解析与时间转换为纯静态函数，单测覆盖。
  */
 @Slf4j
@@ -30,6 +31,7 @@ public class MarketSeriesStore {
     /** 全市场序列(F&G)的 symbol 占位。 */
     public static final String GLOBAL = "GLOBAL";
     private static final int FUNDING_PAGE = 1000;   // /fapi/v1/fundingRate 单页上限
+    private static final long DAILY_FACTOR_AVAILABILITY_LAG_MS = Duration.ofDays(1).toMillis();
 
     private final BinanceRestClient binanceRestClient;
     private final FactorHistoryMapper factorHistoryMapper;
@@ -65,22 +67,24 @@ public class MarketSeriesStore {
         return out;
     }
 
-    /** 回填资金费率 [fromMs, toMs)：endTime 向前翻页直到越过 fromMs。返回处理行数。幂等(upsert)。 */
+    /** 回填资金费率 [fromMs, toMs)：startTime/endTime 正向翻页。返回处理行数。幂等(upsert)。 */
     public int backfillFunding(String symbol, long fromMs, long toMs) {
-        long cursor = toMs;
+        long cursor = fromMs;
         int total = 0;
-        while (cursor > fromMs) {
+        while (cursor < toMs) {
             List<MarketSeriesPoint> pts = parseFundingRateHistory(
-                    binanceRestClient.getFundingRateHistory(symbol, FUNDING_PAGE, cursor));
+                    binanceRestClient.getFundingRateHistory(symbol, FUNDING_PAGE, cursor, toMs));
             if (pts.isEmpty()) break;
-            long oldest = pts.get(0).ts();
+            long newest = Long.MIN_VALUE;
             for (MarketSeriesPoint p : pts) {
-                if (p.ts() < fromMs) continue;
-                factorHistoryMapper.upsert(toFactor(symbol, SeriesCode.FUNDING, p, "binance/fundingRate"));
-                total++;
+                newest = Math.max(newest, p.ts());
+                if (p.ts() >= fromMs && p.ts() < toMs) {
+                    factorHistoryMapper.upsert(toFactor(symbol, SeriesCode.FUNDING, p, "binance/fundingRate"));
+                    total++;
+                }
             }
-            if (oldest <= fromMs) break;
-            cursor = oldest - 1;   // 下一页：比本页最老一条再早 1ms
+            if (newest <= cursor || pts.size() < FUNDING_PAGE) break;
+            cursor = newest + 1;   // 下一页从本页最新 funding 之后开始，避免重复写同一时点
         }
         log.info("backfillFunding {} [{}, {}) 行数={}", symbol, fromMs, toMs, total);
         return total;
@@ -96,12 +100,28 @@ public class MarketSeriesStore {
         return pts.size();
     }
 
-    /** 加载 [fromMs, toMs) 的某序列，按 ts 升序。复用 factor_history.selectRange（与原 market_series 的 load 同语义：左闭右开、时间升序）。 */
+    /**
+     * 加载 [fromMs, toMs) 的某序列，按 ts 升序。
+     * factor_history.observed_at 仍存数据自身日期；research 返回的 ts 是"策略可用时间"，日级慢因子保守 T+1，避免当天 00:00 偷看当天数据。
+     */
     public List<MarketSeriesPoint> load(String symbol, SeriesCode code, long fromMs, long toMs) {
-        List<FactorHistory> rows = factorHistoryMapper.selectRange(symbol, code.factorName(), toLdt(fromMs), toLdt(toMs));
+        long lagMs = availabilityLagMs(code);
+        List<FactorHistory> rows = factorHistoryMapper.selectRange(symbol, code.factorName(), toLdt(fromMs - lagMs), toLdt(toMs));
         List<MarketSeriesPoint> out = new ArrayList<>(rows.size());
-        for (FactorHistory r : rows) out.add(new MarketSeriesPoint(toMs(r.getObservedAt()), r.getFactorValue()));
+        for (FactorHistory r : rows) {
+            long availableAt = toMs(r.getObservedAt()) + lagMs;
+            if (availableAt >= fromMs && availableAt < toMs) {
+                out.add(new MarketSeriesPoint(availableAt, r.getFactorValue()));
+            }
+        }
         return out;
+    }
+
+    private static long availabilityLagMs(SeriesCode code) {
+        return switch (code) {
+            case FUNDING -> 0L;
+            case FEAR_GREED, ETF_FLOW, STABLECOIN_DELTA -> DAILY_FACTOR_AVAILABILITY_LAG_MS;
+        };
     }
 
     private static FactorHistory toFactor(String symbol, SeriesCode code, MarketSeriesPoint p, String source) {

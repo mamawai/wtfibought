@@ -170,7 +170,7 @@ public class EtfFlowScraper {
         return points;
     }
 
-    /** 把一个 ETF 流入点映射成 factor_history 行（BTC_ETF_FLOW / BTCUSDT / observed=当日 0 点）。 */
+    /** 把一个 ETF 流入点映射成 factor_history 行；observedAt 存原始流入日期，research 读取时再保守 T+1 可用。 */
     private FactorHistory toRow(EtfFlowPoint point) {
         FactorHistory row = new FactorHistory();
         row.setSymbol(SYMBOL);
