@@ -7,6 +7,7 @@ import com.mawai.wiibservice.agent.research.ForecastHorizon;
 import com.mawai.wiibservice.agent.research.eval.ComparisonReport;
 import com.mawai.wiibservice.agent.research.eval.EvalParams;
 import com.mawai.wiibservice.agent.research.eval.ResearchEvalService;
+import com.mawai.wiibservice.agent.research.forecast.ContinuousFactorForecaster;
 import com.mawai.wiibservice.agent.research.forecast.EwmaMomentumForecaster;
 import com.mawai.wiibservice.agent.research.forecast.Forecaster;
 import com.mawai.wiibservice.agent.research.forecast.MultiFactorForecaster;
@@ -71,7 +72,8 @@ public class ResearchEvalController {
                 new EwmaMomentumForecaster(12, 26),     // 价格基线
                 MultiFactorForecaster.defaults(),       // 原 3 腿（趋势+资金费+恐惧贪婪）
                 MultiFactorForecaster.onChainOnly(),    // 纯链上 2 腿（ETF+稳定币）：测独立 edge
-                MultiFactorForecaster.allFactors());    // 全 5 腿：测链上叠加的边际增益
+                MultiFactorForecaster.allFactors(),     // 全 5 腿：测链上叠加的边际增益
+                ContinuousFactorForecaster.defaults());  // 训练窗学习连续因子方向（样本外检验）
         ComparisonReport report = evalService.evaluate(
                 symbol, ForecastHorizon.fromHours(horizonHours), from, now, forecasters, EvalParams.defaults());
         return Result.ok(report);

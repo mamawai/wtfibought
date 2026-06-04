@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.agent.research.eval;
 
 import com.mawai.wiibservice.agent.research.ForecastHorizon;
+import com.mawai.wiibservice.agent.research.factor.ContinuousFactorVector;
 import com.mawai.wiibservice.agent.research.forecast.EwmaMomentumForecaster;
 import com.mawai.wiibservice.agent.research.forecast.Forecast;
 import com.mawai.wiibservice.agent.research.forecast.Forecaster;
@@ -128,6 +129,56 @@ class ResearchEvalServiceTest {
     }
 
     @Test
+    void evaluateBarsPassesContinuousFactorVectorIntoForecastFeatures() {
+        EvalParams params = new EvalParams(1.5, 0.94, 2, 0, 30, 50, 0.95, 42L);
+        CapturingFactorForecaster fc = new CapturingFactorForecaster();
+
+        ResearchEvalService.evaluateBars(
+                "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360),
+                List.of(), List.of(), List.of(), List.of(), List.of(fc), params);
+
+        assertThat(fc.factors).isNotEmpty();
+        ContinuousFactorVector v = fc.factors.get(0);
+        assertThat(v.riskAdjustedMomentum()).isGreaterThan(0.0);
+        assertThat(v.shortReversal()).isLessThan(0.0);
+        assertThat(v.amihudIlliquidity()).isGreaterThan(0.0);
+        assertThat(v.residualMomentum()).isZero(); // 单标的评估未接 benchmark，残差腿先中性。
+    }
+
+    @Test
+    void evaluateBarsUsesBenchmarkReturnsForResidualMomentum() {
+        EvalParams params = new EvalParams(1.5, 0.94, 2, 0, 30, 50, 0.95, 42L);
+        CapturingFactorForecaster fc = new CapturingFactorForecaster();
+
+        ResearchEvalService.evaluateBars(
+                "ETHUSDT", ForecastHorizon.H6, uptrend1m(40 * 360), flat1m(40 * 360, 100.0),
+                List.of(), List.of(), List.of(), List.of(), List.of(fc), params);
+
+        assertThat(fc.factors).isNotEmpty();
+        assertThat(fc.factors.get(0).residualMomentum()).isGreaterThan(0.0);
+    }
+
+    @Test
+    void benchmarkFutureRowsDoNotChangeCurrentResidualMomentum() {
+        EvalParams params = new EvalParams(1.5, 0.94, 2, 0, 30, 50, 0.95, 42L);
+        List<KlineBar> asset = uptrend1m(40 * 360);
+        List<KlineBar> benchmark = flat1m(40 * 360, 100.0);
+        List<KlineBar> changedFuture = replaceFromMinute(benchmark, 35 * 360, 10_000.0);
+        CapturingFactorForecaster base = new CapturingFactorForecaster();
+        CapturingFactorForecaster changed = new CapturingFactorForecaster();
+
+        ResearchEvalService.evaluateBars(
+                "ETHUSDT", ForecastHorizon.H6, asset, benchmark,
+                List.of(), List.of(), List.of(), List.of(), List.of(base), params);
+        ResearchEvalService.evaluateBars(
+                "ETHUSDT", ForecastHorizon.H6, asset, changedFuture,
+                List.of(), List.of(), List.of(), List.of(), List.of(changed), params);
+
+        assertThat(changed.factors.get(0).residualMomentum())
+                .isCloseTo(base.factors.get(0).residualMomentum(), within(1e-12));
+    }
+
+    @Test
     void featureLookbackWindowMatchesFullHistoryOnWavyFixture() {
         // 回归守卫：同一批 bar 跑 W=256(默认) 与 W=MAX(全历史)，逐策略逐期收益在现有研究口径下保持一致。
         // 决策点须 >256 才让窗口对晚期点真正生效：320 个 6h 桶 → 319 决策点，样本外块覆盖到 i≥256。
@@ -195,6 +246,27 @@ class ResearchEvalServiceTest {
         return bars;
     }
 
+    static List<KlineBar> flat1m(int count, double price) {
+        List<KlineBar> bars = new ArrayList<>(count);
+        BigDecimal p = BigDecimal.valueOf(price);
+        for (int i = 0; i < count; i++) {
+            long t = i * 60_000L;
+            bars.add(new KlineBar(t, t + 59_999L, p, p, p, p, BigDecimal.ONE));
+        }
+        return bars;
+    }
+
+    static List<KlineBar> replaceFromMinute(List<KlineBar> source, int startMinute, double price) {
+        List<KlineBar> out = new ArrayList<>(source.size());
+        BigDecimal p = BigDecimal.valueOf(price);
+        for (int i = 0; i < source.size(); i++) {
+            KlineBar b = source.get(i);
+            out.add(i < startMinute ? b : new KlineBar(
+                    b.openTime(), b.closeTime(), p, p, p, p, b.volume()));
+        }
+        return out;
+    }
+
     static List<KlineBar> pathHitsLowerThenClosesUp() {
         List<KlineBar> bars = new ArrayList<>(5 * 360);
         appendBucket(bars, 0, 100.0, 100.0);
@@ -259,6 +331,21 @@ class ResearchEvalServiceTest {
         private static long lastCloseTime(ResearchFeatures features) {
             List<KlineBar> bars = features.barsUpToNow();
             return bars.get(bars.size() - 1).closeTime();
+        }
+    }
+
+    private static final class CapturingFactorForecaster implements Forecaster {
+        private final List<ContinuousFactorVector> factors = new ArrayList<>();
+
+        @Override
+        public Forecast forecast(ResearchFeatures features) {
+            factors.add(features.continuousFactors());
+            return Forecast.flat();
+        }
+
+        @Override
+        public String name() {
+            return "capture_factors";
         }
     }
 }

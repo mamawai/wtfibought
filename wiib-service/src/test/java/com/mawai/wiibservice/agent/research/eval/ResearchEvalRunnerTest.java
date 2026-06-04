@@ -3,6 +3,7 @@ package com.mawai.wiibservice.agent.research.eval;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONWriter;
 import com.mawai.wiibservice.agent.research.ForecastHorizon;
+import com.mawai.wiibservice.agent.research.forecast.ContinuousFactorForecaster;
 import com.mawai.wiibservice.agent.research.forecast.EwmaMomentumForecaster;
 import com.mawai.wiibservice.agent.research.forecast.Forecaster;
 import com.mawai.wiibservice.agent.research.forecast.MultiFactorForecaster;
@@ -106,6 +107,9 @@ class ResearchEvalRunnerTest {
     private EvalRunResult runOne(Connection connection, String symbol, ForecastHorizon horizon,
                                  long fromMs, long toMs, EvalParams params, Path runDir, String interval) throws Exception {
         List<KlineBar> oneMin = loadKlines(connection, symbol, interval, fromMs, toMs);
+        List<KlineBar> benchmarkOneMin = "BTCUSDT".equalsIgnoreCase(symbol)
+                ? List.of()
+                : loadOptionalKlines(connection, "BTCUSDT", interval, fromMs, toMs);
         List<MarketSeriesPoint> funding = loadSeries(connection, symbol, SeriesCode.FUNDING, fromMs, toMs);
         List<MarketSeriesPoint> fearGreed = loadSeries(connection, MarketSeriesStore.GLOBAL, SeriesCode.FEAR_GREED, fromMs, toMs);
         List<MarketSeriesPoint> etfFlow = loadSeries(connection, symbol, SeriesCode.ETF_FLOW, fromMs, toMs);
@@ -115,10 +119,11 @@ class ResearchEvalRunnerTest {
                 new EwmaMomentumForecaster(12, 26),
                 MultiFactorForecaster.defaults(),
                 MultiFactorForecaster.onChainOnly(),
-                MultiFactorForecaster.allFactors());
+                MultiFactorForecaster.allFactors(),
+                ContinuousFactorForecaster.defaults());
 
         ComparisonReport report = ResearchEvalService.evaluateBars(
-                symbol, horizon, oneMin, funding, fearGreed, etfFlow, stablecoin, forecasters, params);
+                symbol, horizon, oneMin, benchmarkOneMin, funding, fearGreed, etfFlow, stablecoin, forecasters, params);
         Path reportFile = writeReport(report, toMs, runDir);
         return new EvalRunResult(
                 symbol,
@@ -133,6 +138,16 @@ class ResearchEvalRunnerTest {
                 report.testPoints(),
                 report.summary(),
                 reportFile.toString());
+    }
+
+    private List<KlineBar> loadOptionalKlines(Connection connection, String symbol, String interval,
+                                             long fromMs, long toMs) throws Exception {
+        try {
+            return loadKlines(connection, symbol, interval, fromMs, toMs);
+        } catch (IllegalStateException e) {
+            System.out.println("[research.evalRun] optional benchmark missing: " + e.getMessage());
+            return List.of();
+        }
     }
 
     private List<KlineBar> loadKlines(Connection connection, String symbol, String interval, long fromMs, long toMs) throws Exception {

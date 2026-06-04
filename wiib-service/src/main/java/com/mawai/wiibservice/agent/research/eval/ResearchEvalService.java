@@ -2,6 +2,10 @@ package com.mawai.wiibservice.agent.research.eval;
 
 import com.mawai.wiibservice.agent.research.ForecastHorizon;
 import com.mawai.wiibservice.agent.research.benchmark.BenchmarkCalculator;
+import com.mawai.wiibservice.agent.research.factor.ContinuousFactorBuilder;
+import com.mawai.wiibservice.agent.research.factor.ContinuousFactorParams;
+import com.mawai.wiibservice.agent.research.factor.ContinuousFactorVector;
+import com.mawai.wiibservice.agent.research.factor.FactorMath;
 import com.mawai.wiibservice.agent.research.forecast.Forecaster;
 import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
 import com.mawai.wiibservice.agent.research.forecast.TrainingSample;
@@ -43,6 +47,9 @@ public class ResearchEvalService {
     // 特征/波动率回看窗：每点只喂最近 W 根，杜绝 forecast 每次对整段历史重算指标（O(points²)→O(points·W)）。
     // W=256 精确覆盖 ma_alignment 的 MA99；EMA26/EWMA 波动率是种子衰减后的可控近似，用回归测试守住现有研究口径。
     private static final int FEATURE_LOOKBACK_BARS = 256;
+    private static final String BENCHMARK_SYMBOL = "BTCUSDT";
+    private static final ContinuousFactorParams CONTINUOUS_FACTOR_PARAMS = ContinuousFactorParams.defaults();
+    private static final double[] EMPTY_BENCHMARK_RETURNS = new double[0];
 
     private final KlineHistoryStore store;
     private final MarketSeriesStore seriesStore;
@@ -51,11 +58,15 @@ public class ResearchEvalService {
     public ComparisonReport evaluate(String symbol, ForecastHorizon horizon, long fromMs, long toMs,
                                      List<Forecaster> forecasters, EvalParams params) {
         List<KlineBar> oneMin = store.load(symbol, "1m", fromMs, toMs);
+        List<KlineBar> benchmarkOneMin = BENCHMARK_SYMBOL.equalsIgnoreCase(symbol)
+                ? List.of()
+                : store.load(BENCHMARK_SYMBOL, "1m", fromMs, toMs);
         List<MarketSeriesPoint> funding = seriesStore.load(symbol, SeriesCode.FUNDING, fromMs, toMs);
         List<MarketSeriesPoint> fearGreed = seriesStore.load(MarketSeriesStore.GLOBAL, SeriesCode.FEAR_GREED, fromMs, toMs);
         List<MarketSeriesPoint> etfFlow = seriesStore.load(symbol, SeriesCode.ETF_FLOW, fromMs, toMs);            // 仅 BTC 有；其他 symbol 空→中性
         List<MarketSeriesPoint> stablecoin = seriesStore.load(symbol, SeriesCode.STABLECOIN_DELTA, fromMs, toMs);
-        ComparisonReport report = evaluateBars(symbol, horizon, oneMin, funding, fearGreed, etfFlow, stablecoin, forecasters, params);
+        ComparisonReport report = evaluateBars(symbol, horizon, oneMin, benchmarkOneMin,
+                funding, fearGreed, etfFlow, stablecoin, forecasters, params);
         writeReport(report);
         return report;
     }
@@ -71,7 +82,19 @@ public class ResearchEvalService {
                                                 List<MarketSeriesPoint> etfFlowSeries,
                                                 List<MarketSeriesPoint> stablecoinSeries,
                                                 List<Forecaster> forecasters, EvalParams params) {
-        return evaluateBars(symbol, horizon, oneMin, fundingSeries, fearGreedSeries, etfFlowSeries,
+        return evaluateBars(symbol, horizon, oneMin, List.of(), fundingSeries, fearGreedSeries, etfFlowSeries,
+                stablecoinSeries, forecasters, params, FEATURE_LOOKBACK_BARS);
+    }
+
+    /** 同上；benchmarkOneMin 用于残差动量，传空则残差腿中性。 */
+    public static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
+                                                List<KlineBar> benchmarkOneMin,
+                                                List<MarketSeriesPoint> fundingSeries,
+                                                List<MarketSeriesPoint> fearGreedSeries,
+                                                List<MarketSeriesPoint> etfFlowSeries,
+                                                List<MarketSeriesPoint> stablecoinSeries,
+                                                List<Forecaster> forecasters, EvalParams params) {
+        return evaluateBars(symbol, horizon, oneMin, benchmarkOneMin, fundingSeries, fearGreedSeries, etfFlowSeries,
                 stablecoinSeries, forecasters, params, FEATURE_LOOKBACK_BARS);
     }
 
@@ -82,8 +105,27 @@ public class ResearchEvalService {
                                          List<MarketSeriesPoint> etfFlowSeries,
                                          List<MarketSeriesPoint> stablecoinSeries,
                                          List<Forecaster> forecasters, EvalParams params, int featureLookbackBars) {
+        return evaluateBars(symbol, horizon, oneMin, List.of(), fundingSeries, fearGreedSeries, etfFlowSeries,
+                stablecoinSeries, forecasters, params, featureLookbackBars);
+    }
+
+    /** 同上；带 benchmark 的测试/runner 入口。 */
+    static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
+                                         List<KlineBar> benchmarkOneMin,
+                                         List<MarketSeriesPoint> fundingSeries,
+                                         List<MarketSeriesPoint> fearGreedSeries,
+                                         List<MarketSeriesPoint> etfFlowSeries,
+                                         List<MarketSeriesPoint> stablecoinSeries,
+                                         List<Forecaster> forecasters, EvalParams params, int featureLookbackBars) {
         List<KlineBar> hbars = KlineAggregator.aggregate(oneMin, horizon.millis());
+        List<KlineBar> benchmarkHbars = KlineAggregator.aggregate(benchmarkOneMin, horizon.millis());
         int points = Math.max(0, hbars.size() - 1); // 每个决策点 i 需要 i+1 算实现收益
+        double[] closes = closes(hbars);
+        double[] volumes = volumes(hbars);
+        double[] assetReturns = logReturns(closes);
+        double[] benchmarkReturns = benchmarkReturns(hbars, benchmarkHbars);
+        double[] effectiveBenchmarkReturns = benchmarkReturns.length == 0 ? EMPTY_BENCHMARK_RETURNS : benchmarkReturns;
+        double[] fundingByHbar = new double[hbars.size()];
 
         List<WalkForwardWindow> wins = WalkForwardEvaluator.windows(
                 points, params.testSize(), LABEL_PURGE_HBARS, params.embargoBars(), params.minTrain());
@@ -98,8 +140,13 @@ public class ResearchEvalService {
             int fng = SeriesAligner.asOf(fearGreedSeries, ti, NEUTRAL_FEAR_GREED).intValue();
             double etf = SeriesAligner.asOf(etfFlowSeries, ti, NEUTRAL_ONCHAIN).doubleValue();
             double stablecoin = SeriesAligner.asOf(stablecoinSeries, ti, NEUTRAL_ONCHAIN).doubleValue();
+            fundingByHbar[i] = funding;
+            ContinuousFactorVector continuousFactors = ContinuousFactorBuilder.build(
+                    closes, volumes, fundingByHbar, assetReturns, effectiveBenchmarkReturns,
+                    i + 1, CONTINUOUS_FACTOR_PARAMS);
             int lookbackFrom = Math.max(0, i + 1 - featureLookbackBars); // 回看窗起点：晚期点恒 W 根，早期点不足则从 0（暖机语义不变）
-            ResearchFeatures features = new ResearchFeatures(hbars.subList(lookbackFrom, i + 1), funding, fng, etf, stablecoin); // 绝不含未来
+            ResearchFeatures features = new ResearchFeatures(
+                    hbars.subList(lookbackFrom, i + 1), funding, fng, etf, stablecoin, continuousFactors); // 绝不含未来
             BigDecimal entry = hbars.get(i).close();
             List<KlineBar> path = pathBars(oneMin, ti, horizon.millis());
             double sigma = VolatilityEstimator.ewmaVolatility(hbars.subList(lookbackFrom, i + 1), params.lambda());
@@ -152,6 +199,52 @@ public class ResearchEvalService {
         }
 
         return new ComparisonReport(symbol, horizon.hours(), hbars.size(), testPointCount, buyHold, lines);
+    }
+
+    private static double[] closes(List<KlineBar> bars) {
+        double[] out = new double[bars.size()];
+        for (int i = 0; i < bars.size(); i++) out[i] = value(bars.get(i).close());
+        return out;
+    }
+
+    private static double[] volumes(List<KlineBar> bars) {
+        double[] out = new double[bars.size()];
+        for (int i = 0; i < bars.size(); i++) out[i] = value(bars.get(i).volume());
+        return out;
+    }
+
+    private static double[] logReturns(double[] closes) {
+        double[] out = new double[closes.length];
+        for (int i = 1; i < closes.length; i++) out[i] = FactorMath.logReturn(closes[i], closes[i - 1]);
+        return out;
+    }
+
+    private static double[] benchmarkReturns(List<KlineBar> assetHbars, List<KlineBar> benchmarkHbars) {
+        if (assetHbars == null || assetHbars.isEmpty() || benchmarkHbars == null || benchmarkHbars.isEmpty()) {
+            return EMPTY_BENCHMARK_RETURNS;
+        }
+        double[] out = new double[assetHbars.size()];
+        int j = 0;
+        Double previousBenchmarkClose = null;
+        for (int i = 0; i < assetHbars.size(); i++) {
+            long decisionTime = assetHbars.get(i).closeTime();
+            while (j + 1 < benchmarkHbars.size() && benchmarkHbars.get(j + 1).closeTime() <= decisionTime) {
+                j++;
+            }
+            if (benchmarkHbars.get(j).closeTime() > decisionTime) {
+                continue;
+            }
+            double close = value(benchmarkHbars.get(j).close());
+            if (previousBenchmarkClose != null) {
+                out[i] = FactorMath.logReturn(close, previousBenchmarkClose);
+            }
+            previousBenchmarkClose = close;
+        }
+        return out;
+    }
+
+    private static double value(BigDecimal v) {
+        return v == null ? 0.0 : v.doubleValue();
     }
 
     /**
