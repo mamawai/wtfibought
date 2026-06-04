@@ -112,6 +112,20 @@ class ResearchEvalServiceTest {
     }
 
     @Test
+    void compoundReturnKeepsReportScaleBounded() {
+        List<BigDecimal> returns = new ArrayList<>();
+        for (int i = 0; i < 2_000; i++) {
+            returns.add(new BigDecimal("0.001"));
+        }
+
+        BigDecimal compounded = ResearchEvalService.compound(returns);
+
+        assertThat(compounded.scale()).isLessThanOrEqualTo(10);
+        assertThat(compounded.toPlainString()).hasSizeLessThan(24);
+        assertThat(compounded.doubleValue()).isCloseTo(Math.pow(1.001, 2_000) - 1.0, within(1e-9));
+    }
+
+    @Test
     void evaluateBarsFitsForecasterOnEachTrainWindowBeforeForecastingTestWindow() {
         EvalParams params = new EvalParams(1.5, 0.94, 2, 0, 2, 50, 0.95, 42L);
         RecordingFitForecaster fc = new RecordingFitForecaster();

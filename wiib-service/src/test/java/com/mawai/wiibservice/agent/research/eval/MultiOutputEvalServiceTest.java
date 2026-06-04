@@ -1,0 +1,108 @@
+package com.mawai.wiibservice.agent.research.eval;
+
+import com.mawai.wiibservice.agent.research.ForecastHorizon;
+import com.mawai.wiibservice.agent.research.forecast.MarketRegime;
+import com.mawai.wiibservice.agent.research.forecast.QuantCoreForecaster;
+import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import org.junit.jupiter.api.Test;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/** A3.3 多输出评估编排：三输出收集一致 + 方向尺子复用 + regime/vol 接线 sanity（合成数据，离线）。 */
+class MultiOutputEvalServiceTest {
+
+    @Test
+    void producesAllThreeOutputsWithConsistentTestPoints() {
+        EvalParams params = new EvalParams(1.5, 0.94, 2, 0, 2, 100, 0.95, 42L);
+
+        MultiOutputReport r = MultiOutputEvalService.evaluateBars(
+                "BTCUSDT", ForecastHorizon.H6, uptrend1m(8 * 360),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
+
+        assertThat(r.symbol()).isEqualTo("BTCUSDT");
+        assertThat(r.horizonHours()).isEqualTo(6);
+        assertThat(r.testPoints()).isGreaterThan(0);
+        assertThat(r.volScore().n()).isEqualTo(r.testPoints());
+        assertThat(r.volBaselines()).containsKeys("randomWalk", "prevEwma", "rolling30", "constant");
+        assertThat(r.volBaselines().values()).allSatisfy(b -> assertThat(b.n()).isEqualTo(r.testPoints()));
+        assertThat(r.regimeScore().n()).isEqualTo(r.testPoints());
+        assertThat(r.directionMetrics().periods()).isEqualTo(r.testPoints());
+    }
+
+    @Test
+    void directionLegPopulatesBuyHoldAndNaivePercentile() {
+        EvalParams params = new EvalParams(1.5, 0.94, 2, 0, 2, 100, 0.95, 42L);
+
+        MultiOutputReport r = MultiOutputEvalService.evaluateBars(
+                "BTCUSDT", ForecastHorizon.H6, uptrend1m(8 * 360),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
+
+        assertThat(r.buyAndHoldReturn().doubleValue()).isGreaterThan(0); // 上行趋势
+        assertThat(r.directionNaivePercentile()).isBetween(0.0, 1.0);
+    }
+
+    @Test
+    void strongUptrendRegimeAccuracyIsHigh() {
+        EvalParams params = new EvalParams(1.5, 0.94, 5, 0, 30, 100, 0.95, 42L);
+
+        MultiOutputReport r = MultiOutputEvalService.evaluateBars(
+                "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
+
+        // 持续上涨：regime 预测(ADX 高→UP) 与事后标签(平滑路径 directionality≫q→UP) 大量吻合
+        assertThat(r.regimeScore().accuracy()).isGreaterThan(0.5);
+    }
+
+    @Test
+    void volScoresComputedForModelAndNaive() {
+        EvalParams params = new EvalParams(1.5, 0.94, 5, 0, 30, 100, 0.95, 42L);
+
+        MultiOutputReport r = MultiOutputEvalService.evaluateBars(
+                "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
+
+        assertThat(r.volScore().n()).isGreaterThan(0);
+        assertThat(r.volScore().qlike()).isGreaterThanOrEqualTo(0.0);
+        assertThat(r.volScore().mse()).isGreaterThanOrEqualTo(0.0);
+    }
+
+    @Test
+    void reportCarriesRegimeDistributionsSummingToTestPoints() {
+        EvalParams params = new EvalParams(1.5, 0.94, 5, 0, 30, 100, 0.95, 42L);
+
+        MultiOutputReport r = MultiOutputEvalService.evaluateBars(
+                "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
+
+        // 分布是诊断 regime 塌缩的直接证据：各类计数之和必等于样本外点数
+        Map<MarketRegime, Integer> actual = r.actualRegimeCounts();
+        Map<MarketRegime, Integer> predicted = r.predictedRegimeCounts();
+        assertThat(actual.values().stream().mapToInt(Integer::intValue).sum()).isEqualTo(r.testPoints());
+        assertThat(predicted.values().stream().mapToInt(Integer::intValue).sum()).isEqualTo(r.testPoints());
+    }
+
+    static List<KlineBar> uptrend1m(int count) {
+        List<KlineBar> bars = new ArrayList<>(count);
+        double price = 100.0;
+        for (int i = 0; i < count; i++) {
+            long t = i * 60_000L;
+            BigDecimal o = BigDecimal.valueOf(price);
+            BigDecimal c = BigDecimal.valueOf(price + 0.1);
+            BigDecimal hi = BigDecimal.valueOf(price + 0.15);
+            BigDecimal lo = BigDecimal.valueOf(price - 0.05);
+            bars.add(new KlineBar(t, t + 59_999L, o, hi, lo, c, BigDecimal.ONE));
+            price += 0.1;
+        }
+        return bars;
+    }
+}
