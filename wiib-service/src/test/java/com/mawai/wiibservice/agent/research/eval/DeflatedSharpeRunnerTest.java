@@ -18,10 +18,13 @@ import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,6 +58,17 @@ class DeflatedSharpeRunnerTest {
     private record ReportCandidate(Path path, ComparisonReport report, FileTime modifiedTime) {
         String cellKey() {
             return report.symbol() + "|" + report.horizonHours();
+        }
+    }
+
+    /** multi-*.json 的轻量投影：只取 DSR 所需字段，避开 MultiOutputReport 里枚举键 Map 等无关结构的反序列化。 */
+    private record MultiReportView(String symbol, int horizonHours, String forecasterName,
+                                   double directionNaivePercentile, ReturnSeries directionReturnSeries) {
+    }
+
+    private record MultiCandidate(Path path, MultiReportView view, FileTime modifiedTime) {
+        String legKey() {
+            return view.symbol() + "|" + view.horizonHours() + "|" + directionLegName(view.forecasterName());
         }
     }
 
@@ -166,6 +180,48 @@ class DeflatedSharpeRunnerTest {
         System.out.println("==================================================");
     }
 
+    @Test
+    void loadTrialsReadsMultiReportsDedupedByDirectionLeg(@TempDir Path dir) throws Exception {
+        ReturnSeries all5 = new ReturnSeries("all5", List.of(bd(0.01), bd(-0.005), bd(0.02), bd(0.0)), 1460);
+        ReturnSeries fixed3 = new ReturnSeries("fixed3", List.of(bd(0.001), bd(0.0), bd(-0.001), bd(0.002)), 1460);
+        // 同一 cell 的 dir=all5 配两条不同 vol 腿 → 必须去重成一条试验，否则 N 与 Sharpe 方差被重复污染
+        writeMultiReport(dir.resolve("multi-BTCUSDT-5m-6h-all5-ewma.json"),
+                "quant_core[vol=ewma,regime=adx_atr_current,dir=multi_factor_all5]", all5,
+                Instant.parse("2026-01-01T00:00:00Z"));
+        writeMultiReport(dir.resolve("multi-BTCUSDT-5m-6h-all5-clim.json"),
+                "quant_core[vol=climatology,regime=adx_atr_current,dir=multi_factor_all5]", all5,
+                Instant.parse("2026-01-02T00:00:00Z"));
+        writeMultiReport(dir.resolve("multi-BTCUSDT-5m-6h-fixed3.json"),
+                "quant_core[vol=ewma,regime=adx_atr_current,dir=multi_factor_trend_funding_fng]", fixed3,
+                Instant.parse("2026-01-01T06:00:00Z"));
+
+        LoadedTrials loaded = loadTrials(dir);
+
+        assertThat(loaded.jsonFiles()).isEqualTo(3);
+        assertThat(loaded.reportsUsed()).isEqualTo(2);                 // all5 去重后 1 条 + fixed3 1 条
+        assertThat(loaded.ignoredDuplicateReports()).isEqualTo(1);     // 被去重的那条 all5
+        assertThat(loaded.trials()).extracting(Trial::name)
+                .containsExactlyInAnyOrder("multi_factor_all5", "multi_factor_trend_funding_fng");
+    }
+
+    private static BigDecimal bd(double v) {
+        return BigDecimal.valueOf(v);
+    }
+
+    /** 写一份只含 DSR 所需字段的 multi-*.json（投影解析忽略其余字段）。 */
+    private static void writeMultiReport(Path file, String forecasterName, ReturnSeries series, Instant modifiedTime)
+            throws IOException {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("symbol", "BTCUSDT");
+        m.put("horizonHours", 6);
+        m.put("forecasterName", forecasterName);
+        m.put("directionNaivePercentile", 1.0);
+        m.put("directionReturnSeries", series);
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, JSON.toJSONString(m), StandardCharsets.UTF_8);
+        Files.setLastModifiedTime(file, FileTime.from(modifiedTime));
+    }
+
     private static Path resolveInputDir() throws IOException {
         return resolveInputDir(System.getProperty("dsr.dir"), System.getProperty("dsr.runId"),
                 ResearchEvalArtifacts.baseDir());
@@ -211,7 +267,7 @@ class DeflatedSharpeRunnerTest {
         return left.getFileName().toString().compareTo(right.getFileName().toString());
     }
 
-    /** 读目录下报告 JSON → 每个 cell 只取最新报告 → 摊平为试验；每条用 periodReturns 现算 per-period 矩。 */
+    /** 读目录下报告 JSON → ComparisonReport 每 cell 取最新、摊平为试验；multi-*.json 按 (cell×方向腿) 去重各出一条试验。 */
     private static LoadedTrials loadTrials(Path dir) throws Exception {
         List<Trial> trials = new ArrayList<>();
         if (!Files.isDirectory(dir)) {
@@ -223,11 +279,30 @@ class DeflatedSharpeRunnerTest {
         }
 
         Map<String, ReportCandidate> latestByCell = new TreeMap<>();
-        int validReports = 0;
+        int comparisonValid = 0;
+        // multi-*.json：同一方向腿会配多条 vol/regime 腿重复落盘，按 (cell×方向腿) 只计最新一条，避免污染 DSR 的 N 与方差
+        Map<String, MultiCandidate> latestMultiByLeg = new TreeMap<>();
+        int multiValid = 0;
         for (Path p : jsons) {
-            ComparisonReport report = JSON.parseObject(Files.readString(p, StandardCharsets.UTF_8), ComparisonReport.class);
+            String json = Files.readString(p, StandardCharsets.UTF_8);
+            if (isMultiReport(p)) {
+                MultiReportView view = JSON.parseObject(json, MultiReportView.class); // 轻量投影，忽略 vol/regime 等无关字段
+                if (view == null || view.symbol() == null || view.directionReturnSeries() == null
+                        || view.directionReturnSeries().periodReturns() == null) {
+                    continue;
+                }
+                multiValid++;
+                MultiCandidate candidate = new MultiCandidate(p, view, Files.getLastModifiedTime(p));
+                MultiCandidate current = latestMultiByLeg.get(candidate.legKey());
+                if (current == null || compareMtime(candidate.modifiedTime(), candidate.path(),
+                        current.modifiedTime(), current.path()) > 0) {
+                    latestMultiByLeg.put(candidate.legKey(), candidate);
+                }
+                continue;
+            }
+            ComparisonReport report = JSON.parseObject(json, ComparisonReport.class);
             if (report == null || report.symbol() == null || report.strategies() == null) continue; // 跳过非报告 JSON
-            validReports++;
+            comparisonValid++;
             ReportCandidate candidate = new ReportCandidate(p, report, Files.getLastModifiedTime(p));
             ReportCandidate current = latestByCell.get(candidate.cellKey());
             if (current == null || compareReportCandidate(candidate, current) > 0) {
@@ -250,8 +325,39 @@ class DeflatedSharpeRunnerTest {
                         r.length, s.metrics().annualizedSharpe(), s.naivePercentile(), stats));
             }
         }
-        return new LoadedTrials(dir, jsons.size(), validReports, latestByCell.size(),
-                validReports - latestByCell.size(), trials);
+        // multi 报告：每个去重后的方向腿一条试验；年化 Sharpe 由 per-period 矩回推（与 RiskAdjustedMetrics 同口径）
+        for (MultiCandidate candidate : latestMultiByLeg.values()) {
+            MultiReportView v = candidate.view();
+            double[] r = v.directionReturnSeries().periodReturns().stream()
+                    .mapToDouble(BigDecimal::doubleValue).toArray();
+            SharpeStats stats = SharpeStats.of(r);
+            double annualized = stats.sharpe() * Math.sqrt(Math.max(1, v.directionReturnSeries().periodsPerYear()));
+            trials.add(new Trial(v.symbol(), v.horizonHours(), directionLegName(v.forecasterName()),
+                    r.length, annualized, v.directionNaivePercentile(), stats));
+        }
+        int validReports = comparisonValid + multiValid;
+        int reportsUsed = latestByCell.size() + latestMultiByLeg.size();
+        return new LoadedTrials(dir, jsons.size(), validReports, reportsUsed,
+                validReports - reportsUsed, trials);
+    }
+
+    private static final Pattern DIRECTION_LEG = Pattern.compile("dir=([^\\]]+)");
+
+    private static boolean isMultiReport(Path p) {
+        return p.getFileName().toString().startsWith("multi-");
+    }
+
+    /** 从 quant_core[...,dir=NAME] 抽出方向腿名；同名方向腿（不同 vol/regime 配对）视为同一条试验。 */
+    private static String directionLegName(String forecasterName) {
+        if (forecasterName == null) return "unknown";
+        Matcher m = DIRECTION_LEG.matcher(forecasterName);
+        return m.find() ? m.group(1) : forecasterName;
+    }
+
+    private static int compareMtime(FileTime leftTime, Path leftPath, FileTime rightTime, Path rightPath) {
+        int byTime = leftTime.compareTo(rightTime);
+        if (byTime != 0) return byTime;
+        return leftPath.getFileName().toString().compareTo(rightPath.getFileName().toString());
     }
 
     private static int compareReportCandidate(ReportCandidate left, ReportCandidate right) {

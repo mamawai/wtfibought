@@ -41,6 +41,8 @@ public final class MultiOutputEvalService {
     /** QLIKE loss-diff 的 Newey-West 最小滞后；实际会至少覆盖一个 horizon 的重叠长度。 */
     private static final int VOL_LOSS_DIFF_MIN_LAG = 5;
     private static final int VOL_CALIBRATION_BUCKETS = 5;
+    /** vol 跑赢基准的 DM/Newey-West 单侧显著性门槛；与 summary 里"显著/不显著"同口径。 */
+    private static final double VOL_SIGNIFICANCE_ALPHA = 0.05;
     private static final int PROGRESS_BAR_WIDTH = 24;
     private static final int PROGRESS_TARGET_UPDATES = 20;
 
@@ -239,11 +241,12 @@ public final class MultiOutputEvalService {
                 bestBaselineSigma = e.getValue();
             }
         }
-        boolean volBeatsAllBaselines = volScore.qlike() < bestBaselineQlike;
         ForecastAccuracyComparison volQlikeVsBestBaseline = ForecastAccuracyComparison.compareLosses(
                 VolForecastScore.qlikeLosses(predSigmaArr, realizedArr),
                 VolForecastScore.qlikeLosses(bestBaselineSigma, realizedArr),
                 volLossDiffMaxLag);
+        // 跑赢全部基准 = 对最难基准(min QLIKE)的 QLIKE 优势在 DM/Newey-West 下显著；裸点估计更低不算（打平/噪声不算赢）。
+        boolean volBeatsAllBaselines = volQlikeVsBestBaseline.modelBetterAt(VOL_SIGNIFICANCE_ALPHA);
         VolCalibrationReport volCalibration = VolCalibrationReport.evaluate(
                 predSigmaArr, realizedArr, VOL_CALIBRATION_BUCKETS);
         VolatilityRiskSummary volRiskSummary = VolatilityRiskSummary.from(volContexts);
@@ -261,6 +264,7 @@ public final class MultiOutputEvalService {
                 ResearchEvalService.minutes(a.decisionBarMillis()), points, positions.size(),
                 dirMetrics, dirReturn, buyHold, dirReturn.compareTo(buyHold) > 0,
                 naivePct, naivePct >= params.naivePercentileThreshold(), directionPathSummary,
+                series,
                 volScore, volBaselines, bestBaselineName, volQlikeVsBestBaseline, volCalibration, volRiskSummary,
                 volBeatsAllBaselines,
                 regimeScore,

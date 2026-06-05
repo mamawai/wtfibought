@@ -12,6 +12,7 @@ import java.util.Map;
  * - naiveAccuracy    = 默认相邻 persistence；也可显式传入 point-in-time 可知的 naive 预测。
  * - beatsNaive       = accuracy &gt; naiveAccuracy
  * - balancedAccuracy = 各 actual 出现类的召回率均值（macro recall），防止 RANGING 多数类抬高 accuracy
+ * - beatsBalancedChance = balancedAccuracy &gt; 1/出现类别数（无技能基准）：regime 是否真有跨类技能的诚实判决
  * - macroF1          = 各 actual 出现类的 F1 均值
  * - confusionMatrix  = 行 actual、列 predicted；四类补齐 0，便于报告直接诊断类别塌缩
  */
@@ -32,6 +33,35 @@ public record RegimeClassificationScore(double accuracy, double naiveAccuracy, b
     public RegimeClassificationScore(double accuracy, double naiveAccuracy, boolean beatsNaive,
                                      double balancedAccuracy, double macroF1, int n) {
         this(accuracy, naiveAccuracy, beatsNaive, balancedAccuracy, macroF1, n, Map.of());
+    }
+
+    /**
+     * balanced accuracy 的无技能基准 = 1/实际出现类别数：任何恒定/单类预测都只能到这个水平。
+     * 多数类抬高的裸 accuracy 在此无效——4 类齐全时基准=0.25，正是 RANGING 多数下"看似高其实瞎猜"的照妖镜。
+     * 无混淆矩阵（旧构造/空样本）→ 0。
+     */
+    public double balancedChanceLevel() {
+        int present = presentActualClasses();
+        return present <= 0 ? 0.0 : 1.0 / present;
+    }
+
+    /** 是否真有跨类技能：balanced accuracy 严格高于无技能基准。这才是 regime 的诚实判决，而非裸 accuracy vs persistence。 */
+    public boolean beatsBalancedChance() {
+        return n > 0 && balancedAccuracy > balancedChanceLevel();
+    }
+
+    private int presentActualClasses() {
+        int present = 0;
+        for (Map<MarketRegime, Integer> row : confusionMatrix.values()) {
+            int sum = 0;
+            for (int count : row.values()) {
+                sum += count;
+            }
+            if (sum > 0) {
+                present++;
+            }
+        }
+        return present;
     }
 
     public static RegimeClassificationScore evaluate(MarketRegime[] predicted, MarketRegime[] actual) {

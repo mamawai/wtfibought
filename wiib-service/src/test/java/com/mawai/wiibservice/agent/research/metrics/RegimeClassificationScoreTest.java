@@ -134,6 +134,37 @@ class RegimeClassificationScoreTest {
     }
 
     @Test
+    void balancedChanceLevelIsInverseOfPresentActualClasses() {
+        // actual 出现 3 类(UP/RANGE/DOWN) → 无技能基准=1/3；SHOCK 未出现不计入
+        MarketRegime[] actual = {UP, UP, RANGE, DOWN};
+        RegimeClassificationScore s = RegimeClassificationScore.evaluate(actual, actual);
+
+        assertThat(s.balancedChanceLevel()).isCloseTo(1.0 / 3.0, within(1e-9));
+        assertThat(s.beatsBalancedChance()).isTrue(); // 完美预测 balAcc=1 > 1/3
+    }
+
+    @Test
+    void predictingMajorityOnlyHasNoBalancedSkillEvenWhenPlainAccuracyHigh() {
+        // 9 RANGING + 1 UP 全预测 RANGING：裸 accuracy=0.9，但 balAcc=0.5=chance(1/2) → 无跨类技能
+        MarketRegime[] actual = {RANGE, RANGE, RANGE, RANGE, RANGE, RANGE, RANGE, RANGE, RANGE, UP};
+        MarketRegime[] predicted = {RANGE, RANGE, RANGE, RANGE, RANGE, RANGE, RANGE, RANGE, RANGE, RANGE};
+
+        RegimeClassificationScore s = RegimeClassificationScore.evaluate(predicted, actual);
+
+        assertThat(s.accuracy()).isCloseTo(0.9, within(1e-9));
+        assertThat(s.balancedChanceLevel()).isCloseTo(0.5, within(1e-9));
+        assertThat(s.beatsBalancedChance()).isFalse();
+    }
+
+    @Test
+    void emptyHasNoBalancedSkill() {
+        RegimeClassificationScore s = RegimeClassificationScore.evaluate(new MarketRegime[0], new MarketRegime[0]);
+
+        assertThat(s.balancedChanceLevel()).isZero();
+        assertThat(s.beatsBalancedChance()).isFalse();
+    }
+
+    @Test
     void mismatchedLengthsRejected() {
         assertThatThrownBy(() -> RegimeClassificationScore.evaluate(
                 new MarketRegime[]{UP}, new MarketRegime[]{UP, DOWN}))
