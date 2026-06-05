@@ -7,12 +7,14 @@ import com.mawai.wiibservice.agent.research.factor.ContinuousFactorParams;
 import com.mawai.wiibservice.agent.research.factor.ContinuousFactorVector;
 import com.mawai.wiibservice.agent.research.factor.FactorMath;
 import com.mawai.wiibservice.agent.research.forecast.Forecaster;
+import com.mawai.wiibservice.agent.research.forecast.HorizonScaledVolForecaster;
 import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
 import com.mawai.wiibservice.agent.research.forecast.TrainingSample;
 import com.mawai.wiibservice.agent.research.kline.KlineAggregator;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import com.mawai.wiibservice.agent.research.label.BarrierLabel;
+import com.mawai.wiibservice.agent.research.label.RegimeLabeler;
 import com.mawai.wiibservice.agent.research.label.TripleBarrierLabeler;
 import com.mawai.wiibservice.agent.research.metrics.ReturnSeries;
 import com.mawai.wiibservice.agent.research.metrics.RiskAdjustedMetrics;
@@ -29,27 +31,29 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-/** 评估编排：从库加载 1m + 链下序列 → 调纯核心 evaluateBars（多策略同框）→ 写 target/ JSON。 */
+/** 评估编排：从库加载底层 K线 + 链下序列 → 聚合 5m/15m 决策 bar → 调纯核心 evaluateBars → 写 target/ JSON。 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ResearchEvalService {
 
-    static final int LABEL_PURGE_HBARS = 1; // 标签前视=1 个 H-bar（决策周期=horizon）
     private static final BigDecimal NEUTRAL_FUNDING = BigDecimal.ZERO;            // 链下缺口中性：资金费=0
     private static final BigDecimal NEUTRAL_FEAR_GREED = BigDecimal.valueOf(50);  // 恐惧贪婪=50（中性）
     private static final BigDecimal NEUTRAL_ONCHAIN = BigDecimal.ZERO;            // 链上缺口中性：ETF 流入/稳定币差=0
 
-    // 特征/波动率回看窗：每点只喂最近 W 根，杜绝 forecast 每次对整段历史重算指标（O(points²)→O(points·W)）。
-    // W=256 精确覆盖 ma_alignment 的 MA99；EMA26/EWMA 波动率是种子衰减后的可控近似，用回归测试守住现有研究口径。
-    static final int FEATURE_LOOKBACK_BARS = 256;
+    // 默认每 5m 出一个预测；6/12/24h 只作为未来持仓验证窗口，不是 K线粒度。
+    static final long FEATURE_BAR_MILLIS = 5 * 60_000L;
+    static final long FIFTEEN_MINUTE_BAR_MILLIS = 15 * 60_000L;
+    private static final long FEATURE_LOOKBACK_MILLIS = Duration.ofHours(48).toMillis();
+    // 默认 5m 回看 48h；15m runner 会通过 featureLookbackBars(decisionBarMillis) 换算成 192 根。
+    static final int FEATURE_LOOKBACK_BARS = barsForDuration(FEATURE_LOOKBACK_MILLIS, FEATURE_BAR_MILLIS);
     private static final String BENCHMARK_SYMBOL = "BTCUSDT";
-    private static final ContinuousFactorParams CONTINUOUS_FACTOR_PARAMS = ContinuousFactorParams.defaults();
     private static final double[] EMPTY_BENCHMARK_RETURNS = new double[0];
     private static final MathContext COMPOUND_CONTEXT = new MathContext(18, RoundingMode.HALF_UP);
     private static final int REPORT_RETURN_SCALE = 10;
@@ -120,27 +124,46 @@ public class ResearchEvalService {
                                          List<MarketSeriesPoint> etfFlowSeries,
                                          List<MarketSeriesPoint> stablecoinSeries,
                                          List<Forecaster> forecasters, EvalParams params, int featureLookbackBars) {
+        return evaluateBars(symbol, horizon, oneMin, benchmarkOneMin, fundingSeries, fearGreedSeries,
+                etfFlowSeries, stablecoinSeries, forecasters, params, featureLookbackBars, FEATURE_BAR_MILLIS);
+    }
+
+    /** 同上；decisionBarMillis 只允许 5m/15m，horizon 仍固定为未来 6/12/24h。 */
+    static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
+                                         List<KlineBar> benchmarkOneMin,
+                                         List<MarketSeriesPoint> fundingSeries,
+                                         List<MarketSeriesPoint> fearGreedSeries,
+                                         List<MarketSeriesPoint> etfFlowSeries,
+                                         List<MarketSeriesPoint> stablecoinSeries,
+                                         List<Forecaster> forecasters, EvalParams params,
+                                         int featureLookbackBars, long decisionBarMillis) {
         AssembledPoints assembled = assemblePoints(horizon, oneMin, benchmarkOneMin,
-                fundingSeries, fearGreedSeries, etfFlowSeries, stablecoinSeries, params, featureLookbackBars);
-        List<KlineBar> hbars = assembled.hbars();
+                fundingSeries, fearGreedSeries, etfFlowSeries, stablecoinSeries,
+                params, featureLookbackBars, decisionBarMillis);
+        List<KlineBar> decisionBars = assembled.decisionBars();
         int points = assembled.points();
         List<ResearchFeatures> featuresByPoint = assembled.featuresByPoint();
         List<BigDecimal> longBarrierReturnsByPoint = assembled.longBarrierReturnsByPoint();
         List<TrainingSample> samplesByPoint = assembled.samplesByPoint();
 
         List<WalkForwardWindow> wins = WalkForwardEvaluator.windows(
-                points, params.testSize(), LABEL_PURGE_HBARS, params.embargoBars(), params.minTrain());
+                points, params.testSize(), assembled.horizonDecisionBars(), params.embargoBars(), params.minTrain());
 
-        int firstTest = -1, lastTestExclusive = -1, testPointCount = 0;
+        int firstDecisionBarIndex = -1, lastExitBarIndex = -1, testPointCount = 0;
         for (WalkForwardWindow w : wins) {
-            if (firstTest < 0) firstTest = w.testStart();
-            lastTestExclusive = w.testEnd() + 1; // 含最后一个 test 决策点的下一根 close
+            if (firstDecisionBarIndex < 0) {
+                firstDecisionBarIndex = assembled.decisionBarIndexes().get(w.testStart());
+            }
+            int lastTestPoint = w.testEnd() - 1;
+            lastExitBarIndex = Math.max(lastExitBarIndex,
+                    assembled.decisionBarIndexes().get(lastTestPoint) + assembled.horizonDecisionBars());
             testPointCount += w.testSize();
         }
 
-        // ---- buy&hold：市场基准、与策略无关，算一次 ----
-        BigDecimal buyHold = (firstTest >= 0 && lastTestExclusive <= hbars.size())
-                ? BenchmarkCalculator.buyAndHoldReturn(hbars.subList(firstTest, lastTestExclusive))
+        // ---- buy&hold：从首个 OOS 决策 close 持有到最后一个 OOS 信号的 horizon 退出点 ----
+        BigDecimal buyHold = (firstDecisionBarIndex >= 0 && lastExitBarIndex < assembled.decisionIntervalBars().size())
+                ? BenchmarkCalculator.buyAndHoldReturn(
+                assembled.decisionIntervalBars().subList(firstDecisionBarIndex, lastExitBarIndex + 1))
                 : BigDecimal.ZERO;
 
         // ---- 每预测器一条 StrategyLine（naive 分位依赖各自 positions，逐策略算） ----
@@ -169,12 +192,13 @@ public class ResearchEvalService {
                     stratReturn.compareTo(buyHold) > 0, naivePct, naivePct >= params.naivePercentileThreshold(), series));
         }
 
-        return new ComparisonReport(symbol, horizon.hours(), hbars.size(), testPointCount, buyHold, lines);
+        return new ComparisonReport(symbol, horizon.hours(), minutes(assembled.decisionBarMillis()),
+                points, testPointCount, buyHold, lines);
     }
 
     /**
      * 逐决策点 point-in-time 装配（单/多输出评估共用，保证同一份无泄漏口径）：
-     * 聚合 H-bars → 每点 as-of 链下 + continuous 因子（绝不含未来）+ 三隔栏 long 目标。
+     * 1m → 5m feature bars；按 horizon 间隔采决策点；每点 as-of 链下 + continuous 因子（绝不含未来）+ 未来路径目标。
      */
     static AssembledPoints assemblePoints(ForecastHorizon horizon, List<KlineBar> oneMin,
                                           List<KlineBar> benchmarkOneMin,
@@ -183,46 +207,143 @@ public class ResearchEvalService {
                                           List<MarketSeriesPoint> etfFlowSeries,
                                           List<MarketSeriesPoint> stablecoinSeries,
                                           EvalParams params, int featureLookbackBars) {
-        List<KlineBar> hbars = KlineAggregator.aggregate(oneMin, horizon.millis());
-        List<KlineBar> benchmarkHbars = KlineAggregator.aggregate(benchmarkOneMin, horizon.millis());
-        int points = Math.max(0, hbars.size() - 1); // 每个决策点 i 需要 i+1 算实现收益
-        double[] closes = closes(hbars);
-        double[] volumes = volumes(hbars);
+        return assemblePoints(horizon, oneMin, benchmarkOneMin, fundingSeries, fearGreedSeries,
+                etfFlowSeries, stablecoinSeries, params, featureLookbackBars, FEATURE_BAR_MILLIS);
+    }
+
+    static AssembledPoints assemblePoints(ForecastHorizon horizon, List<KlineBar> oneMin,
+                                          List<KlineBar> benchmarkOneMin,
+                                          List<MarketSeriesPoint> fundingSeries,
+                                          List<MarketSeriesPoint> fearGreedSeries,
+                                          List<MarketSeriesPoint> etfFlowSeries,
+                                          List<MarketSeriesPoint> stablecoinSeries,
+                                          EvalParams params, int featureLookbackBars,
+                                          long decisionBarMillis) {
+        validateDecisionBarMillis(decisionBarMillis);
+        List<KlineBar> featureBars = KlineAggregator.aggregate(oneMin, decisionBarMillis);
+        List<KlineBar> benchmarkFeatureBars = KlineAggregator.aggregate(benchmarkOneMin, decisionBarMillis);
+        int horizonFeatureBars = horizonDecisionBars(horizon, decisionBarMillis);
+        List<Integer> decisionFeatureIndexes = decisionFeatureIndexes(featureBars.size(), horizonFeatureBars);
+        int points = decisionFeatureIndexes.size();
+        List<KlineBar> decisionBars = decisionBars(featureBars, decisionFeatureIndexes);
+        double[] closes = closes(featureBars);
+        double[] volumes = volumes(featureBars);
         double[] assetReturns = logReturns(closes);
-        double[] benchmarkReturns = benchmarkReturns(hbars, benchmarkHbars);
+        double[] benchmarkReturns = benchmarkReturns(featureBars, benchmarkFeatureBars);
         double[] effectiveBenchmarkReturns = benchmarkReturns.length == 0 ? EMPTY_BENCHMARK_RETURNS : benchmarkReturns;
-        double[] fundingByHbar = new double[hbars.size()];
+        double[] fundingByFeatureBar = fundingByFeatureBar(featureBars, fundingSeries);
+        ContinuousFactorParams continuousFactorParams = ContinuousFactorParams.forBarMillis(decisionBarMillis);
 
         // ---- 装配每个决策点的 point-in-time 特征 + 三隔栏训练目标；后面按 window 只把 train 交给 fit ----
         List<ResearchFeatures> featuresByPoint = new ArrayList<>(points);
         List<BigDecimal> longBarrierReturnsByPoint = new ArrayList<>(points);
+        List<HorizonPathOutcome> pathOutcomesByPoint = new ArrayList<>(points);
         List<TrainingSample> samplesByPoint = new ArrayList<>(points);
-        for (int i = 0; i < points; i++) {
-            long ti = hbars.get(i).closeTime();                           // 决策"当下"=该 H-bar 收盘时刻
-            double funding = SeriesAligner.asOf(fundingSeries, ti, NEUTRAL_FUNDING).doubleValue();
+        for (int point = 0; point < points; point++) {
+            int featureIndex = decisionFeatureIndexes.get(point);
+            KlineBar decisionBar = featureBars.get(featureIndex);
+            KlineBar exitBar = featureBars.get(featureIndex + horizonFeatureBars);
+            long ti = decisionBar.closeTime();                             // 决策"当下"=该 5m bar 收盘时刻
+            double funding = fundingByFeatureBar[featureIndex];
             int fng = SeriesAligner.asOf(fearGreedSeries, ti, NEUTRAL_FEAR_GREED).intValue();
             double etf = SeriesAligner.asOf(etfFlowSeries, ti, NEUTRAL_ONCHAIN).doubleValue();
             double stablecoin = SeriesAligner.asOf(stablecoinSeries, ti, NEUTRAL_ONCHAIN).doubleValue();
-            fundingByHbar[i] = funding;
             ContinuousFactorVector continuousFactors = ContinuousFactorBuilder.build(
-                    closes, volumes, fundingByHbar, assetReturns, effectiveBenchmarkReturns,
-                    i + 1, CONTINUOUS_FACTOR_PARAMS);
-            int lookbackFrom = Math.max(0, i + 1 - featureLookbackBars); // 回看窗起点：晚期点恒 W 根，早期点不足则从 0（暖机语义不变）
+                    closes, volumes, fundingByFeatureBar, assetReturns, effectiveBenchmarkReturns,
+                    featureIndex + 1, continuousFactorParams);
+            int lookbackFrom = Math.max(0, featureIndex + 1 - featureLookbackBars); // 回看窗起点：晚期点恒 W 根，早期点不足则从 0（暖机语义不变）
             ResearchFeatures features = new ResearchFeatures(
-                    hbars.subList(lookbackFrom, i + 1), funding, fng, etf, stablecoin, continuousFactors); // 绝不含未来
-            BigDecimal entry = hbars.get(i).close();
+                    featureBars.subList(lookbackFrom, featureIndex + 1),
+                    funding, fng, etf, stablecoin, continuousFactors); // 绝不含未来
+            BigDecimal entry = decisionBar.close();
             List<KlineBar> path = pathBars(oneMin, ti, horizon.millis());
-            double sigma = VolatilityEstimator.ewmaVolatility(hbars.subList(lookbackFrom, i + 1), params.lambda());
+            double sigma = HorizonScaledVolForecaster.scale(
+                    VolatilityEstimator.ewmaVolatility(features.barsUpToNow(), params.lambda()), features, horizon);
             BarrierLabel label = sigma > 0
                     ? TripleBarrierLabeler.label(entry, params.k(), sigma, path)
                     : BarrierLabel.VERTICAL;
-            BigDecimal fallbackClose = path.isEmpty() ? hbars.get(i + 1).close() : path.get(path.size() - 1).close();
+            BigDecimal fallbackClose = path.isEmpty() ? exitBar.close() : path.get(path.size() - 1).close();
             BigDecimal longReturn = longReturn(entry, fallbackClose, label, params.k(), sigma);
+            HorizonPathOutcome pathOutcome = HorizonPathOutcome.from(entry, fallbackClose, path);
+            double realizedForwardReturn = FactorMath.logReturn(exitBar.close().doubleValue(), entry.doubleValue());
+            var realizedRegime = RegimeLabeler.label(path, sigma);
             featuresByPoint.add(features);
             longBarrierReturnsByPoint.add(longReturn);
-            samplesByPoint.add(new TrainingSample(features, longReturn));
+            pathOutcomesByPoint.add(pathOutcome);
+            samplesByPoint.add(new TrainingSample(features, longReturn, realizedForwardReturn, realizedRegime));
         }
-        return new AssembledPoints(hbars, points, featuresByPoint, longBarrierReturnsByPoint, samplesByPoint);
+        return new AssembledPoints(featureBars, decisionBars, List.copyOf(decisionFeatureIndexes),
+                horizonFeatureBars, decisionBarMillis, points, featuresByPoint,
+                longBarrierReturnsByPoint, pathOutcomesByPoint, samplesByPoint);
+    }
+
+    static int horizonDecisionBars(ForecastHorizon horizon, long decisionBarMillis) {
+        long millis = horizon.millis();
+        if (millis % decisionBarMillis != 0) {
+            throw new IllegalArgumentException("horizon 必须能被决策K线整除: horizon=" + horizon
+                    + " decisionBarMillis=" + decisionBarMillis);
+        }
+        return Math.toIntExact(millis / decisionBarMillis);
+    }
+
+    private static List<Integer> decisionFeatureIndexes(int featureBars, int horizonFeatureBars) {
+        List<Integer> out = new ArrayList<>();
+        // 每根 5m/15m bar 都是一个可预测点；horizon 只限制必须有足够未来路径可验证。
+        for (int i = 0; i + horizonFeatureBars < featureBars; i++) {
+            out.add(i);
+        }
+        return out;
+    }
+
+    private static List<KlineBar> decisionBars(List<KlineBar> featureBars,
+                                               List<Integer> decisionIndexes) {
+        if (decisionIndexes.isEmpty()) return List.of();
+        List<KlineBar> out = new ArrayList<>(decisionIndexes.size());
+        for (int index : decisionIndexes) {
+            out.add(featureBars.get(index));
+        }
+        return out;
+    }
+
+    static long parseDecisionBarMillis(String raw) {
+        String value = raw == null || raw.isBlank() ? "5m" : raw.trim().toLowerCase();
+        long millis = switch (value) {
+            case "5", "5m", "5min", "m5" -> FEATURE_BAR_MILLIS;
+            case "15", "15m", "15min", "m15" -> FIFTEEN_MINUTE_BAR_MILLIS;
+            default -> throw new IllegalArgumentException("decision interval 只支持 5m/15m: " + raw);
+        };
+        validateDecisionBarMillis(millis);
+        return millis;
+    }
+
+    private static void validateDecisionBarMillis(long decisionBarMillis) {
+        if (decisionBarMillis != FEATURE_BAR_MILLIS && decisionBarMillis != FIFTEEN_MINUTE_BAR_MILLIS) {
+            throw new IllegalArgumentException("决策K线只支持 5m/15m: " + decisionBarMillis + "ms");
+        }
+    }
+
+    static int minutes(long millis) {
+        return Math.toIntExact(millis / 60_000L);
+    }
+
+    static int featureLookbackBars(long decisionBarMillis) {
+        validateDecisionBarMillis(decisionBarMillis);
+        return barsForDuration(FEATURE_LOOKBACK_MILLIS, decisionBarMillis);
+    }
+
+    static int barsForDuration(long durationMillis, long barMillis) {
+        if (durationMillis <= 0L || barMillis <= 0L) {
+            throw new IllegalArgumentException("durationMillis/barMillis 必须为正");
+        }
+        return Math.max(1, Math.toIntExact((durationMillis + barMillis - 1L) / barMillis));
+    }
+
+    private static double[] fundingByFeatureBar(List<KlineBar> featureBars, List<MarketSeriesPoint> fundingSeries) {
+        double[] out = new double[featureBars.size()];
+        for (int i = 0; i < featureBars.size(); i++) {
+            out[i] = SeriesAligner.asOf(fundingSeries, featureBars.get(i).closeTime(), NEUTRAL_FUNDING).doubleValue();
+        }
+        return out;
     }
 
     private static double[] closes(List<KlineBar> bars) {
@@ -272,7 +393,7 @@ public class ResearchEvalService {
     }
 
     /**
-     * 决策在 H-bar 收盘后发生，三隔栏必须只看之后 1 个 horizon 内的 1m 路径。
+     * 决策在 5m/15m bar 收盘后发生，三隔栏必须只看之后 1 个 horizon 内的底层路径。
      * 用二分定位首根 openTime > decisionCloseTime，避免长历史每个决策点都全表扫描。
      */
     static List<KlineBar> pathBars(List<KlineBar> oneMin, long decisionCloseTime, long horizonMillis) {

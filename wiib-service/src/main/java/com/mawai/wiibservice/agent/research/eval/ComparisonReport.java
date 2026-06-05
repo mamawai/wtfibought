@@ -12,7 +12,8 @@ import java.util.List;
 public record ComparisonReport(
         String symbol,
         int horizonHours,
-        int totalHbars,
+        int decisionBarMinutes,
+        int totalDecisionBars,
         int testPoints,
         BigDecimal buyAndHoldReturn,
         List<StrategyLine> strategies
@@ -24,8 +25,8 @@ public record ComparisonReport(
     /** 人眼可比的多线摘要：buy&hold 基准一行 + 每策略一行。 */
     public String summary() {
         StringBuilder sb = new StringBuilder(String.format(
-                "[%s %dh] 样本外 %d 点 | buy&hold=%.4f",
-                symbol, horizonHours, testPoints, buyAndHoldReturn.doubleValue()));
+                "[%s %dm→%dh] 样本外 %d 点 | buy&hold=%.4f",
+                symbol, decisionBarMinutes, horizonHours, testPoints, buyAndHoldReturn.doubleValue()));
         for (StrategyLine s : strategies) {
             sb.append(String.format(
                     " || %s: 收益=%.4f 年化Sharpe=%.2f Calmar=%.2f MaxDD=%.2f%% 命中=%.1f%% vs B&H=%s naive分位=%.1f%%(%s)",

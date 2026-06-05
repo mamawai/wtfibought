@@ -36,6 +36,19 @@ class RegimeClassificationScoreTest {
     }
 
     @Test
+    void explicitNaiveCanSkipUnknownWarmupPoints() {
+        MarketRegime[] actual = {UP, DOWN, DOWN, RANGE};
+        MarketRegime[] predicted = {UP, DOWN, UP, RANGE};
+        MarketRegime[] pointInTimeNaive = {null, UP, DOWN, RANGE};
+
+        RegimeClassificationScore s = RegimeClassificationScore.evaluate(predicted, actual, pointInTimeNaive);
+
+        // naive 只评估后三个已知点：i1✗ i2✓ i3✓ → 2/3。
+        assertThat(s.naiveAccuracy()).isCloseTo(2.0 / 3.0, within(1e-9));
+        assertThat(s.accuracy()).isCloseTo(0.75, within(1e-9));
+    }
+
+    @Test
     void beatsNaiveWhenMoreAccurate() {
         MarketRegime[] actual = {UP, UP, UP, DOWN};
         RegimeClassificationScore s = RegimeClassificationScore.evaluate(actual, actual); // 完美预测 acc=1 > naive 2/3
@@ -124,6 +137,13 @@ class RegimeClassificationScoreTest {
     void mismatchedLengthsRejected() {
         assertThatThrownBy(() -> RegimeClassificationScore.evaluate(
                 new MarketRegime[]{UP}, new MarketRegime[]{UP, DOWN}))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void explicitNaiveLengthMismatchRejected() {
+        assertThatThrownBy(() -> RegimeClassificationScore.evaluate(
+                new MarketRegime[]{UP}, new MarketRegime[]{UP}, new MarketRegime[]{UP, DOWN}))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

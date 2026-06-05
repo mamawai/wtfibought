@@ -35,4 +35,13 @@ public record ResearchFeatures(List<KlineBar> barsUpToNow, double fundingRate, i
     public static ResearchFeatures of(List<KlineBar> barsUpToNow, double fundingRate, int fearGreed) {
         return new ResearchFeatures(barsUpToNow, fundingRate, fearGreed, 0.0, 0.0);
     }
+
+    /** 由最近两根 bar 的 openTime 推断特征周期；测试桩时间缺失时返回 0，由调用方按“不缩放”处理。 */
+    public long inferredBarMillis() {
+        if (barsUpToNow == null || barsUpToNow.size() < 2) return 0L;
+        KlineBar last = barsUpToNow.get(barsUpToNow.size() - 1);
+        KlineBar prev = barsUpToNow.get(barsUpToNow.size() - 2);
+        long interval = last.openTime() - prev.openTime();
+        return interval > 0 ? interval : 0L;
+    }
 }

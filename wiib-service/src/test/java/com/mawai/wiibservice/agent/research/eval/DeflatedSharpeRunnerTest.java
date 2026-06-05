@@ -274,6 +274,6 @@ class DeflatedSharpeRunnerTest {
         ReturnSeries series = new ReturnSeries(strategy, periodReturns, 365);
         StrategyLine line = new StrategyLine(strategy, RiskAdjustedMetrics.from(series), BigDecimal.ZERO,
                 false, 0.5, false, series);
-        return new ComparisonReport(symbol, horizon, 100, periodReturns.size(), BigDecimal.ZERO, List.of(line));
+        return new ComparisonReport(symbol, horizon, 5, 100, periodReturns.size(), BigDecimal.ZERO, List.of(line));
     }
 }

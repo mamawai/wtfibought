@@ -26,13 +26,22 @@ class MultiOutputEvalServiceTest {
                 QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
 
         assertThat(r.symbol()).isEqualTo("BTCUSDT");
+        assertThat(r.forecasterName()).contains("quant_core");
         assertThat(r.horizonHours()).isEqualTo(6);
         assertThat(r.testPoints()).isGreaterThan(0);
         assertThat(r.volScore().n()).isEqualTo(r.testPoints());
-        assertThat(r.volBaselines()).containsKeys("randomWalk", "prevEwma", "rolling30", "constant");
+        assertThat(r.volBaselines()).containsKeys("randomWalk", "prevEwma", "rolling3d", "constant");
         assertThat(r.volBaselines().values()).allSatisfy(b -> assertThat(b.n()).isEqualTo(r.testPoints()));
+        assertThat(r.bestVolBaselineName()).isNotBlank();
+        assertThat(r.volQlikeVsBestBaseline().n()).isEqualTo(r.testPoints());
+        assertThat(r.volQlikeVsBestBaseline().pValue()).isBetween(0.0, 1.0);
+        assertThat(r.volCalibration().n()).isEqualTo(r.testPoints());
+        assertThat(r.volCalibration().buckets()).isNotEmpty();
+        assertThat(r.volRiskSummary().n()).isEqualTo(r.testPoints());
+        assertThat(r.volRiskSummary().llmContext()).contains("vol_context_summary");
         assertThat(r.regimeScore().n()).isEqualTo(r.testPoints());
         assertThat(r.directionMetrics().periods()).isEqualTo(r.testPoints());
+        assertThat(r.directionPathSummary().tradedPoints()).isBetween(0, r.testPoints());
     }
 
     @Test
@@ -89,6 +98,16 @@ class MultiOutputEvalServiceTest {
         Map<MarketRegime, Integer> predicted = r.predictedRegimeCounts();
         assertThat(actual.values().stream().mapToInt(Integer::intValue).sum()).isEqualTo(r.testPoints());
         assertThat(predicted.values().stream().mapToInt(Integer::intValue).sum()).isEqualTo(r.testPoints());
+    }
+
+    @Test
+    void volBaselinesOnlyUseCompletedHorizonReturns() {
+        List<Integer> decisionIndexes = List.of(0, 1, 2, 3, 4, 5, 6);
+
+        assertThat(MultiOutputEvalService.knownRealizedReturnEndExclusive(decisionIndexes, 0, 3)).isZero();
+        assertThat(MultiOutputEvalService.knownRealizedReturnEndExclusive(decisionIndexes, 2, 3)).isZero();
+        assertThat(MultiOutputEvalService.knownRealizedReturnEndExclusive(decisionIndexes, 3, 3)).isEqualTo(1);
+        assertThat(MultiOutputEvalService.knownRealizedReturnEndExclusive(decisionIndexes, 5, 3)).isEqualTo(3);
     }
 
     static List<KlineBar> uptrend1m(int count) {

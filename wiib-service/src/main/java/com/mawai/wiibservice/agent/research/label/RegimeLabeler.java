@@ -22,8 +22,8 @@ public final class RegimeLabeler {
     private RegimeLabeler() {
     }
 
-    // 默认 q=1.5：5m 全历史 q 扫描定（BTC/ETH×6/12/24h trend≈8-11%、跨格稳定，约 top-decile 最有方向的路径）。
-    public static final double DEFAULT_DIRECTIONALITY_THRESHOLD = 1.5;
+    // q-scan(BTC/ETH×6/12/24h, 5m决策)显示 1.25 的趋势占比更稳(约14-17%)，更适合作 future-regime 训练标签。
+    public static final double DEFAULT_DIRECTIONALITY_THRESHOLD = 1.25;
     public static final double DEFAULT_SHOCK_VOL_MULTIPLE = 3.0;
 
     public static MarketRegime label(List<KlineBar> futurePath, double baselineSigma) {

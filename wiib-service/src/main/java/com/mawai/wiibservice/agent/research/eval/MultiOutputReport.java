@@ -1,8 +1,11 @@
 package com.mawai.wiibservice.agent.research.eval;
 
 import com.mawai.wiibservice.agent.research.forecast.MarketRegime;
+import com.mawai.wiibservice.agent.research.forecast.VolatilityRiskSummary;
+import com.mawai.wiibservice.agent.research.metrics.ForecastAccuracyComparison;
 import com.mawai.wiibservice.agent.research.metrics.RegimeClassificationScore;
 import com.mawai.wiibservice.agent.research.metrics.RiskAdjustedMetrics;
+import com.mawai.wiibservice.agent.research.metrics.VolCalibrationReport;
 import com.mawai.wiibservice.agent.research.metrics.VolForecastScore;
 
 import java.math.BigDecimal;
@@ -16,9 +19,11 @@ import java.util.Map;
  * - regime：accuracy/balanced accuracy/macro F1 + persistence 朴素（封装在 {@link RegimeClassificationScore}）。
  */
 public record MultiOutputReport(
+        String forecasterName,
         String symbol,
         int horizonHours,
-        int totalHbars,
+        int decisionBarMinutes,
+        int totalDecisionBars,
         int testPoints,
         // 方向腿
         RiskAdjustedMetrics directionMetrics,
@@ -27,9 +32,14 @@ public record MultiOutputReport(
         boolean directionBeatsBuyHold,
         double directionNaivePercentile,
         boolean directionBeatsNaive,
+        DirectionPathSummary directionPathSummary,
         // 波动率腿：model vs 多基准（名→分数），verdict 以最难基准为准
         VolForecastScore volScore,
         Map<String, VolForecastScore> volBaselines,
+        String bestVolBaselineName,
+        ForecastAccuracyComparison volQlikeVsBestBaseline,
+        VolCalibrationReport volCalibration,
+        VolatilityRiskSummary volRiskSummary,
         boolean volBeatsAllBaselines,
         // regime 腿
         RegimeClassificationScore regimeScore,
@@ -38,14 +48,23 @@ public record MultiOutputReport(
 ) {
     public String summary() {
         return String.format(
-                "[%s %dh] 样本外 %d 点%n"
+                "[%s %s %dm→%dh] 样本外 %d 点%n"
                         + "  方向: 收益=%.4f B&H=%.4f(%s) naive分位=%.1f%%(%s) Sharpe=%.2f%n"
-                        + "  波动: QLIKE=%.4f MSE=%.6f | 基准QLIKE[%s] → %s%n"
+                        + "  路径: traded=%d avgDir=%.1fbps avgMFE=%.1fbps avgMAE=%.1fbps%n"
+                        + "  波动: QLIKE=%.4f MSE=%.6f | 基准QLIKE[%s] | best=%s p=%.3f(%s) | 校准ratio=%.2f buckets[%s] | ctx median=%dbps p90=%dbps elevated+=%.1f%% stressed=%.1f%% → %s%n"
                         + "  regime: 准确率=%.1f%% balAcc=%.1f%% macroF1=%.1f%% vs persistence=%.1f%%(%s)",
-                symbol, horizonHours, testPoints,
+                symbol, forecasterName, decisionBarMinutes, horizonHours, testPoints,
                 directionReturn.doubleValue(), buyAndHoldReturn.doubleValue(), directionBeatsBuyHold ? "跑赢" : "跑输",
                 directionNaivePercentile * 100, directionBeatsNaive ? "显著" : "不显著", directionMetrics.annualizedSharpe(),
-                volScore.qlike(), volScore.mse(), fmtVolBaselines(), volBeatsAllBaselines ? "跑赢全部基准" : "未跑赢全部基准",
+                directionPathSummary.tradedPoints(), directionPathSummary.avgDirectionalChangeBps(),
+                directionPathSummary.avgMaxFavorableBps(), directionPathSummary.avgMaxAdverseBps(),
+                volScore.qlike(), volScore.mse(), fmtVolBaselines(),
+                bestVolBaselineName, volQlikeVsBestBaseline.pValue(),
+                volQlikeVsBestBaseline.modelBetterAt(0.05) ? "显著" : "不显著",
+                volCalibration.realizedToPredictedRatio(), fmtCalibrationBuckets(),
+                volRiskSummary.medianExpectedMoveBps(), volRiskSummary.p90ExpectedMoveBps(),
+                volRiskSummary.elevatedOrStressedShare() * 100.0, volRiskSummary.stressedShare() * 100.0,
+                volBeatsAllBaselines ? "跑赢全部基准" : "未跑赢全部基准",
                 regimeScore.accuracy() * 100, regimeScore.balancedAccuracy() * 100, regimeScore.macroF1() * 100,
                 regimeScore.naiveAccuracy() * 100, regimeScore.beatsNaive() ? "跑赢" : "跑平/输")
                 + String.format("%n  regime分布 actual[%s] pred[%s]",
@@ -58,6 +77,16 @@ public record MultiOutputReport(
         for (Map.Entry<String, VolForecastScore> e : volBaselines.entrySet()) {
             if (sb.length() > 0) sb.append(' ');
             sb.append(e.getKey()).append('=').append(String.format("%.2f", e.getValue().qlike()));
+        }
+        return sb.toString();
+    }
+
+    /** 校准分桶 ratio：>1 低估波动，<1 高估波动。 */
+    private String fmtCalibrationBuckets() {
+        StringBuilder sb = new StringBuilder();
+        for (VolCalibrationReport.Bucket b : volCalibration.buckets()) {
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(b.bucketIndex()).append('=').append(String.format("%.2f", b.realizedToPredictedRatio()));
         }
         return sb.toString();
     }

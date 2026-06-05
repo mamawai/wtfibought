@@ -7,9 +7,9 @@ import java.util.EnumMap;
 import java.util.Map;
 
 /**
- * regime 分类评分：模型准确率 vs persistence 朴素基准（"预测下期=上期实际"，regime 有持续性故是强基准）。
+ * regime 分类评分：模型准确率 vs persistence 朴素基准。
  * - accuracy         = #{predicted[i]==actual[i]} / n
- * - naiveAccuracy    = #{actual[i]==actual[i-1]} / (n-1)（i≥1）
+ * - naiveAccuracy    = 默认相邻 persistence；也可显式传入 point-in-time 可知的 naive 预测。
  * - beatsNaive       = accuracy &gt; naiveAccuracy
  * - balancedAccuracy = 各 actual 出现类的召回率均值（macro recall），防止 RANGING 多数类抬高 accuracy
  * - macroF1          = 各 actual 出现类的 F1 均值
@@ -35,6 +35,32 @@ public record RegimeClassificationScore(double accuracy, double naiveAccuracy, b
     }
 
     public static RegimeClassificationScore evaluate(MarketRegime[] predicted, MarketRegime[] actual) {
+        validateLengths(predicted, actual);
+        return evaluate(predicted, actual, adjacentPersistence(actual));
+    }
+
+    public static RegimeClassificationScore evaluate(MarketRegime[] predicted, MarketRegime[] actual,
+                                                     MarketRegime[] naivePredicted) {
+        validateLengths(predicted, actual);
+        if (naivePredicted == null) {
+            throw new IllegalArgumentException("朴素基准预测序列不能为空");
+        }
+        if (naivePredicted.length != actual.length) {
+            throw new IllegalArgumentException("朴素基准与实际长度不一致: "
+                    + naivePredicted.length + " vs " + actual.length);
+        }
+        int n = predicted.length;
+        if (n == 0) return new RegimeClassificationScore(0, 0, false, 0, 0, 0);
+        int[][] confusion = confusion(predicted, actual);
+        int correct = 0;
+        for (int c = 0; c < confusion.length; c++) correct += confusion[c][c];
+        double accuracy = (double) correct / n;
+        double naiveAccuracy = naiveAccuracy(naivePredicted, actual);
+        return new RegimeClassificationScore(accuracy, naiveAccuracy, accuracy > naiveAccuracy,
+                balancedAccuracy(confusion), macroF1(confusion), n, toConfusionMap(confusion));
+    }
+
+    private static void validateLengths(MarketRegime[] predicted, MarketRegime[] actual) {
         if (predicted == null || actual == null) {
             throw new IllegalArgumentException("预测/实际序列不能为空");
         }
@@ -42,25 +68,39 @@ public record RegimeClassificationScore(double accuracy, double naiveAccuracy, b
             throw new IllegalArgumentException("预测与实际长度不一致: "
                     + predicted.length + " vs " + actual.length);
         }
-        int n = predicted.length;
-        if (n == 0) return new RegimeClassificationScore(0, 0, false, 0, 0, 0);
+    }
+
+    private static MarketRegime[] adjacentPersistence(MarketRegime[] actual) {
+        int n = actual.length;
+        MarketRegime[] out = new MarketRegime[n];
+        for (int i = 1; i < n; i++) {
+            out[i] = actual[i - 1];
+        }
+        return out;
+    }
+
+    private static int[][] confusion(MarketRegime[] predicted, MarketRegime[] actual) {
         int[][] confusion = new int[MarketRegime.values().length][MarketRegime.values().length];
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < predicted.length; i++) {
             confusion[indexOf(actual[i])][indexOf(predicted[i])]++;
         }
+        return confusion;
+    }
+
+    private static double naiveAccuracy(MarketRegime[] naivePredicted, MarketRegime[] actual) {
+        int n = 0;
         int correct = 0;
-        for (int c = 0; c < confusion.length; c++) correct += confusion[c][c];
-        double accuracy = (double) correct / n;
-        double naiveAccuracy = 0.0;
-        if (n >= 2) {
-            int naiveCorrect = 0;
-            for (int i = 1; i < n; i++) {
-                if (actual[i] == actual[i - 1]) naiveCorrect++;
+        for (int i = 0; i < actual.length; i++) {
+            MarketRegime naive = naivePredicted[i];
+            if (naive == null) {
+                continue;
             }
-            naiveAccuracy = (double) naiveCorrect / (n - 1);
+            n++;
+            if (naive == actual[i]) {
+                correct++;
+            }
         }
-        return new RegimeClassificationScore(accuracy, naiveAccuracy, accuracy > naiveAccuracy,
-                balancedAccuracy(confusion), macroF1(confusion), n, toConfusionMap(confusion));
+        return n == 0 ? 0.0 : (double) correct / n;
     }
 
     private static Map<MarketRegime, Map<MarketRegime, Integer>> toConfusionMap(int[][] confusion) {

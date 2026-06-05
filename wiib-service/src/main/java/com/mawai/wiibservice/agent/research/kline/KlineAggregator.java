@@ -4,7 +4,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
-/** 把 1 分钟 bars 聚合到任意 N 小时 bars，按 epoch 边界对齐（可复现）。 */
+/** 把底层 bars 聚合到 5m/15m 等固定周期，按 epoch 边界对齐（可复现）。 */
 public final class KlineAggregator {
 
     private KlineAggregator() {

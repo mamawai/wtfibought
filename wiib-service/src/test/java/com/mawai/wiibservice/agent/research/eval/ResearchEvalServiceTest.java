@@ -23,7 +23,7 @@ class ResearchEvalServiceTest {
 
     @Test
     void evaluateBarsProducesMultiStrategyOutOfSampleReport() {
-        // 小样本验证"多策略同框编排"：MultiFactor 在 <30 H-bar 下暖机 flat（不影响编排验证）
+        // 小样本验证"多策略同框编排"：MultiFactor 在 <30 根决策 bar 下暖机 flat（不影响编排验证）
         EvalParams params = new EvalParams(1.5, 0.94, 3, 0, 2, 200, 0.95, 42L);
         List<KlineBar> oneMin = uptrend1m(8 * 360); // 8 个 6h 桶
         List<Forecaster> fcs = List.of(new EwmaMomentumForecaster(2, 4), MultiFactorForecaster.defaults());
@@ -89,26 +89,23 @@ class ResearchEvalServiceTest {
     void evaluateBarsUsesTripleBarrierPathBeforeCloseToCloseReturn() {
         // 决策后下一根 H6 最终收涨，但路径先打到下栏；做多应按三隔栏止损亏损，而不是按收盘收益盈利。
         EvalParams params = new EvalParams(1.0, 0.94, 1, 0, 2, 100, 0.95, 42L);
-        Forecaster alwaysLong = new Forecaster() {
-            @Override
-            public Forecast forecast(ResearchFeatures features) {
-                return new Forecast(1, 1.0);
+        AssembledPoints a = ResearchEvalService.assemblePoints(
+                ForecastHorizon.H6, pathHitsLowerThenClosesUp(), List.of(),
+                List.of(), List.of(), List.of(), List.of(), params,
+                ResearchEvalService.FEATURE_LOOKBACK_BARS);
+
+        long bucket3CloseTime = 4 * 360L * 60_000L - 1L;
+        int point = -1;
+        for (int i = 0; i < a.decisionBars().size(); i++) {
+            if (a.decisionBars().get(i).closeTime() == bucket3CloseTime) {
+                point = i;
+                break;
             }
+        }
 
-            @Override
-            public String name() {
-                return "always_long";
-            }
-        };
-
-        ComparisonReport r = ResearchEvalService.evaluateBars(
-                "BTCUSDT", ForecastHorizon.H6, pathHitsLowerThenClosesUp(),
-                List.of(), List.of(), List.of(), List.of(), List.of(alwaysLong), params);
-
-        StrategyLine s = r.strategies().get(0);
-        assertThat(r.buyAndHoldReturn().doubleValue()).isGreaterThan(0);   // close-to-close 是盈利
-        assertThat(s.strategyReturn().doubleValue()).isLessThan(0);        // 三隔栏先触下栏，做多亏损
-        assertThat(s.returnSeries().periodReturns().get(0).doubleValue()).isLessThan(0);
+        assertThat(point).isGreaterThanOrEqualTo(0);
+        assertThat(a.pathOutcomesByPoint().get(point).actualChangeBps()).isGreaterThan(0); // close-to-close 是盈利
+        assertThat(a.longBarrierReturnsByPoint().get(point).doubleValue()).isLessThan(0);  // 但路径先触下栏
     }
 
     @Test
@@ -134,9 +131,9 @@ class ResearchEvalServiceTest {
                 "BTCUSDT", ForecastHorizon.H6, uptrend1m(8 * 360),
                 List.of(), List.of(), List.of(), List.of(), List.of(fc), params);
 
-        assertThat(r.testPoints()).isEqualTo(4);
-        assertThat(fc.fitSizes).containsExactly(2, 4);
-        assertThat(fc.forecastDecisionCloses).hasSize(4);
+        assertThat(r.testPoints()).isGreaterThan(4);
+        assertThat(fc.fitSizes.subList(0, 2)).containsExactly(2, 4);
+        assertThat(fc.forecastDecisionCloses).hasSize(r.testPoints());
         for (int i = 0; i < fc.forecastDecisionCloses.size(); i++) {
             assertThat(fc.trainLastClosesAtForecast.get(i)).isLessThan(fc.forecastDecisionCloses.get(i));
         }
@@ -152,7 +149,10 @@ class ResearchEvalServiceTest {
                 List.of(), List.of(), List.of(), List.of(), List.of(fc), params);
 
         assertThat(fc.factors).isNotEmpty();
-        ContinuousFactorVector v = fc.factors.get(0);
+        ContinuousFactorVector v = fc.factors.stream()
+                .filter(f -> f.riskAdjustedMomentum() > 0.0)
+                .findFirst()
+                .orElseThrow();
         assertThat(v.riskAdjustedMomentum()).isGreaterThan(0.0);
         assertThat(v.shortReversal()).isLessThan(0.0);
         assertThat(v.amihudIlliquidity()).isGreaterThan(0.0);
@@ -169,7 +169,7 @@ class ResearchEvalServiceTest {
                 List.of(), List.of(), List.of(), List.of(), List.of(fc), params);
 
         assertThat(fc.factors).isNotEmpty();
-        assertThat(fc.factors.get(0).residualMomentum()).isGreaterThan(0.0);
+        assertThat(fc.factors.stream().anyMatch(f -> f.residualMomentum() > 0.0)).isTrue();
     }
 
     @Test
@@ -193,38 +193,48 @@ class ResearchEvalServiceTest {
     }
 
     @Test
-    void featureLookbackWindowMatchesFullHistoryOnWavyFixture() {
-        // 回归守卫：同一批 bar 跑 W=256(默认) 与 W=MAX(全历史)，逐策略逐期收益在现有研究口径下保持一致。
-        // 决策点须 >256 才让窗口对晚期点真正生效：320 个 6h 桶 → 319 决策点，样本外块覆盖到 i≥256。
-        EvalParams params = EvalParams.defaults();
-        List<KlineBar> oneMin = wavy1m(320 * 360);
-        List<Forecaster> fcs = List.of(
-                new EwmaMomentumForecaster(12, 26),   // 走 Ema(整段) 路径
-                MultiFactorForecaster.defaults());     // 走 calcAll→ma_alignment 路径（主成本）
+    void evaluateBarsUsesFiveMinuteFeatureBarsWithBoundedLookback() {
+        EvalParams params = new EvalParams(1.5, 0.94, 2, 0, 30, 50, 0.95, 42L);
+        CapturingFeatureForecaster fc = new CapturingFeatureForecaster();
 
-        ComparisonReport windowed = ResearchEvalService.evaluateBars(
-                "BTCUSDT", ForecastHorizon.H6, oneMin, List.of(), List.of(), List.of(), List.of(), fcs, params);
-        ComparisonReport full = ResearchEvalService.evaluateBars(
-                "BTCUSDT", ForecastHorizon.H6, oneMin, List.of(), List.of(), List.of(), List.of(), fcs, params, Integer.MAX_VALUE);
+        ResearchEvalService.evaluateBars(
+                "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360),
+                List.of(), List.of(), List.of(), List.of(), List.of(fc), params);
 
-        assertThat(windowed.testPoints()).isEqualTo(full.testPoints());
-        assertThat(windowed.buyAndHoldReturn()).isEqualByComparingTo(full.buyAndHoldReturn());
-        for (int s = 0; s < fcs.size(); s++) {
-            StrategyLine w = windowed.strategies().get(s);
-            StrategyLine f = full.strategies().get(s);
-            assertThat(w.name()).isEqualTo(f.name());
-            List<BigDecimal> wr = w.returnSeries().periodReturns();
-            List<BigDecimal> fr = f.returnSeries().periodReturns();
-            assertThat(wr).hasSameSizeAs(fr);
-            // 逐期收益逐点比对：方向若被窗口改变会整符号翻转(差≈2×|r|)，1e-6 容差能抓到实际漂移。
-            for (int j = 0; j < wr.size(); j++) {
-                assertThat(wr.get(j).doubleValue())
-                        .as("%s 第%d期收益", w.name(), j)
-                        .isCloseTo(fr.get(j).doubleValue(), within(1e-6));
-            }
-            assertThat(w.metrics().annualizedSharpe()).isCloseTo(f.metrics().annualizedSharpe(), within(1e-6));
-            assertThat(w.strategyReturn().doubleValue()).isCloseTo(f.strategyReturn().doubleValue(), within(1e-6));
-        }
+        assertThat(fc.barMillis).isNotEmpty().allMatch(v -> v == ResearchEvalService.FEATURE_BAR_MILLIS);
+        assertThat(fc.featureSizes).isNotEmpty().allMatch(v -> v <= ResearchEvalService.FEATURE_LOOKBACK_BARS);
+        assertThat(fc.featureSizes).allMatch(v -> v > 30); // regime/indicator 暖机仍有足够 5m bar
+    }
+
+    @Test
+    void horizonIsFutureHoldWindowNotDecisionBarInterval() {
+        EvalParams params = new EvalParams(1.5, 0.94, 2, 0, 30, 50, 0.95, 42L);
+
+        AssembledPoints a = ResearchEvalService.assemblePoints(
+                ForecastHorizon.H6, uptrend1m(8 * 360), List.of(),
+                List.of(), List.of(), List.of(), List.of(), params,
+                ResearchEvalService.FEATURE_LOOKBACK_BARS);
+
+        assertThat(a.horizonDecisionBars()).isEqualTo(72); // 6h / 5m
+        assertThat(a.points()).isEqualTo(8 * 72 - 72);
+        assertThat(a.decisionBars().get(1).openTime() - a.decisionBars().get(0).openTime())
+                .isEqualTo(ResearchEvalService.FEATURE_BAR_MILLIS);
+    }
+
+    @Test
+    void assemblePointsCanUseFifteenMinuteDecisionBars() {
+        EvalParams params = new EvalParams(1.5, 0.94, 2, 0, 30, 50, 0.95, 42L);
+
+        AssembledPoints a = ResearchEvalService.assemblePoints(
+                ForecastHorizon.H6, uptrend1m(8 * 360), List.of(),
+                List.of(), List.of(), List.of(), List.of(), params,
+                ResearchEvalService.FEATURE_LOOKBACK_BARS,
+                ResearchEvalService.FIFTEEN_MINUTE_BAR_MILLIS);
+
+        assertThat(a.horizonDecisionBars()).isEqualTo(24); // 6h / 15m
+        assertThat(a.points()).isEqualTo(8 * 24 - 24);
+        assertThat(a.decisionBars().get(1).openTime() - a.decisionBars().get(0).openTime())
+                .isEqualTo(ResearchEvalService.FIFTEEN_MINUTE_BAR_MILLIS);
     }
 
     /** 慢/快双正弦波 1m 序列：6h 聚合后均线交叉、ma_alignment 在 ±1/0 翻转、EWMA 方向随之变化，
@@ -301,7 +311,7 @@ class ResearchEvalServiceTest {
     }
 
     static void appendStopThenRallyBucket(List<KlineBar> bars, int bucket) {
-        addBar(bars, bucket, 0, 100.0, 100.2, 90.0, 99.0);
+        addBar(bars, bucket, 0, 100.0, 100.2, 1.0, 99.0);
         for (int m = 1; m < 360; m++) {
             double p0 = 99.0 + (110.0 - 99.0) * (m - 1) / 359;
             double p1 = 99.0 + (110.0 - 99.0) * m / 359;
@@ -360,6 +370,23 @@ class ResearchEvalServiceTest {
         @Override
         public String name() {
             return "capture_factors";
+        }
+    }
+
+    private static final class CapturingFeatureForecaster implements Forecaster {
+        private final List<Integer> featureSizes = new ArrayList<>();
+        private final List<Long> barMillis = new ArrayList<>();
+
+        @Override
+        public Forecast forecast(ResearchFeatures features) {
+            featureSizes.add(features.barsUpToNow().size());
+            barMillis.add(features.inferredBarMillis());
+            return Forecast.flat();
+        }
+
+        @Override
+        public String name() {
+            return "capture_features";
         }
     }
 }

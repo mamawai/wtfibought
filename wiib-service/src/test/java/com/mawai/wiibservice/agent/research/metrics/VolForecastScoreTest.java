@@ -43,6 +43,15 @@ class VolForecastScoreTest {
     }
 
     @Test
+    void qlikeLossesExposePerPointLossForComparison() {
+        double[] losses = VolForecastScore.qlikeLosses(new double[]{0.01, 0.02}, new double[]{0.01, -0.04});
+
+        assertThat(losses).hasSize(2);
+        assertThat(losses[0]).isCloseTo(0.0, within(1e-9));
+        assertThat(losses[1]).isGreaterThan(0.0);
+    }
+
+    @Test
     void mismatchedLengthsRejected() {
         assertThatThrownBy(() -> VolForecastScore.evaluate(new double[]{0.01}, new double[]{0.01, 0.02}))
                 .isInstanceOf(IllegalArgumentException.class);

@@ -6,6 +6,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
 import java.util.Random;
+import java.util.function.IntConsumer;
 
 /** 双基准：buy&hold 净收益 + 随机入场（排列检验）分位。 */
 public final class BenchmarkCalculator {
@@ -30,6 +31,12 @@ public final class BenchmarkCalculator {
      */
     public static double permutationPercentile(List<Integer> positions, List<BigDecimal> periodReturns,
                                                int iterations, long seed) {
+        return permutationPercentile(positions, periodReturns, iterations, seed, null);
+    }
+
+    /** 同上；progress 回传已完成迭代数，给长窗口本地 runner 做进度输出。 */
+    public static double permutationPercentile(List<Integer> positions, List<BigDecimal> periodReturns,
+                                               int iterations, long seed, IntConsumer progress) {
         int n = positions.size();
         if (n == 0 || iterations <= 0) return 0.0;
         double[] rr = new double[n];
@@ -53,6 +60,9 @@ public final class BenchmarkCalculator {
             double ret = 0;
             for (int i = 0; i < n; i++) ret += p[i] * rr[i];
             if (ret < real) lessCount++;
+            if (progress != null) {
+                progress.accept(it + 1);
+            }
         }
         return (double) lessCount / iterations;
     }

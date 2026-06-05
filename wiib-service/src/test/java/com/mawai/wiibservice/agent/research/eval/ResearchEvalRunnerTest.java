@@ -41,6 +41,7 @@ import java.util.List;
 class ResearchEvalRunnerTest {
 
     private static final String DEFAULT_INTERVAL = "1m";
+    private static final String DEFAULT_DECISION_INTERVAL = "5m";
     private static final long ONE_MINUTE_MS = Duration.ofMinutes(1).toMillis();
     private static final long DAILY_FACTOR_AVAILABILITY_LAG_MS = Duration.ofDays(1).toMillis();
     private static final int LOGIN_TIMEOUT_SECONDS = 15;
@@ -81,8 +82,9 @@ class ResearchEvalRunnerTest {
                     idx++;
                     long startMs = System.currentTimeMillis();
                     System.out.println("[research.evalRun] (" + idx + "/" + total + ") start "
-                            + symbol + " " + horizon.hours() + "h ...");
-                    EvalRunResult result = runOne(connection, symbol, horizon, effectiveFromMs, effectiveToMs, params, runDir, cfg.interval());
+                            + symbol + " " + cfg.decisionBarMinutes() + "m→" + horizon.hours() + "h ...");
+                    EvalRunResult result = runOne(connection, symbol, horizon, effectiveFromMs, effectiveToMs,
+                            params, runDir, cfg.interval(), cfg.decisionBarMillis());
                     results.add(result);
                     long elapsedSec = (System.currentTimeMillis() - startMs) / 1000;
                     System.out.println("[research.evalRun] (" + idx + "/" + total + ") done "
@@ -105,7 +107,8 @@ class ResearchEvalRunnerTest {
     }
 
     private EvalRunResult runOne(Connection connection, String symbol, ForecastHorizon horizon,
-                                 long fromMs, long toMs, EvalParams params, Path runDir, String interval) throws Exception {
+                                 long fromMs, long toMs, EvalParams params, Path runDir, String interval,
+                                 long decisionBarMillis) throws Exception {
         List<KlineBar> oneMin = loadKlines(connection, symbol, interval, fromMs, toMs);
         List<KlineBar> benchmarkOneMin = "BTCUSDT".equalsIgnoreCase(symbol)
                 ? List.of()
@@ -123,11 +126,13 @@ class ResearchEvalRunnerTest {
                 ContinuousFactorForecaster.defaults());
 
         ComparisonReport report = ResearchEvalService.evaluateBars(
-                symbol, horizon, oneMin, benchmarkOneMin, funding, fearGreed, etfFlow, stablecoin, forecasters, params);
+                symbol, horizon, oneMin, benchmarkOneMin, funding, fearGreed, etfFlow, stablecoin,
+                forecasters, params, ResearchEvalService.featureLookbackBars(decisionBarMillis), decisionBarMillis);
         Path reportFile = writeReport(report, toMs, runDir);
         return new EvalRunResult(
                 symbol,
                 horizon.hours(),
+                report.decisionBarMinutes(),
                 Instant.ofEpochMilli(fromMs).toString(),
                 Instant.ofEpochMilli(toMs).toString(),
                 oneMin.size(),
@@ -247,8 +252,9 @@ class ResearchEvalRunnerTest {
 
     private Path writeReport(ComparisonReport report, long toMs, Path runDir) throws Exception {
         Files.createDirectories(runDir);
-        Path file = runDir.resolve(String.format("%s-%dh-%s.json",
-                report.symbol(), report.horizonHours(), FILE_STAMP.format(Instant.ofEpochMilli(toMs))));
+        Path file = runDir.resolve(String.format("%s-%dm-%dh-%s.json",
+                report.symbol(), report.decisionBarMinutes(), report.horizonHours(),
+                FILE_STAMP.format(Instant.ofEpochMilli(toMs))));
         Files.writeString(file, JSON.toJSONString(report, JSONWriter.Feature.PrettyFormat), StandardCharsets.UTF_8);
         return file;
     }
@@ -266,6 +272,8 @@ class ResearchEvalRunnerTest {
                 splitSymbols(propertyOrEnv("eval.symbols", "EVAL_SYMBOLS", "BTCUSDT,ETHUSDT")),
                 splitHorizons(propertyOrEnv("eval.horizons", "EVAL_HORIZONS", "6,12,24")),
                 propertyOrEnv("eval.interval", "EVAL_INTERVAL", DEFAULT_INTERVAL),
+                ResearchEvalService.parseDecisionBarMillis(
+                        propertyOrEnv("eval.decisionInterval", "EVAL_DECISION_INTERVAL", DEFAULT_DECISION_INTERVAL)),
                 from == null ? null : from.toEpochMilli(),
                 to.toEpochMilli(),
                 Integer.getInteger("eval.days", 365),
@@ -339,6 +347,7 @@ class ResearchEvalRunnerTest {
             List<String> symbols,
             List<ForecastHorizon> horizons,
             String interval,
+            long decisionBarMillis,
             Long fromMs,
             long toMs,
             int days,
@@ -347,7 +356,12 @@ class ResearchEvalRunnerTest {
             String dbPassword
     ) {
         EvalRunConfig masked() {
-            return new EvalRunConfig(symbols, horizons, interval, fromMs, toMs, days, maskJdbcUrl(jdbcUrl), dbUser, "***");
+            return new EvalRunConfig(symbols, horizons, interval, decisionBarMillis, fromMs, toMs,
+                    days, maskJdbcUrl(jdbcUrl), dbUser, "***");
+        }
+
+        int decisionBarMinutes() {
+            return ResearchEvalService.minutes(decisionBarMillis);
         }
 
         private static String maskJdbcUrl(String jdbcUrl) {
@@ -359,6 +373,7 @@ class ResearchEvalRunnerTest {
     private record EvalRunResult(
             String symbol,
             int horizonHours,
+            int decisionBarMinutes,
             String from,
             String to,
             int klineRows,

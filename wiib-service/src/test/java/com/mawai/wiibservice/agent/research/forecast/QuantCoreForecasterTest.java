@@ -11,7 +11,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** A3.2 量化核心：三腿接线（vol=EWMA / regime=分类器 / direction=注入）+ horizon 透传 + fit 转发方向腿。 */
+/** A3.2 量化核心：三腿接线（vol 可注入 / regime=分类器 / direction=注入）+ horizon 透传 + fit 转发。 */
 class QuantCoreForecasterTest {
 
     @Test
@@ -32,6 +32,78 @@ class QuantCoreForecasterTest {
 
         assertThat(f.direction().direction()).isEqualTo(1);
         assertThat(f.direction().confidence()).isEqualTo(0.5);
+    }
+
+    @Test
+    void injectedVolLegIsUsed() {
+        QuantCoreForecaster fc = new QuantCoreForecaster(
+                ForecastHorizon.H6, 0.94, new StubVol(0.123), new StubDir(Forecast.flat()));
+
+        MultiOutputForecast f = fc.forecast(ResearchFeatures.ofBars(uptrend(40)));
+
+        assertThat(f.expectedVolatility()).isEqualTo(0.123);
+    }
+
+    @Test
+    void bucketCalibratedEwmaFactoryKeepsVariantVisibleInName() {
+        QuantCoreForecaster fc = QuantCoreForecaster.bucketCalibratedEwma(ForecastHorizon.H6);
+
+        assertThat(fc.name()).contains("bucket_calibrated").contains("ewma_vol");
+    }
+
+    @Test
+    void varianceShrinkageEwmaFactoryKeepsVariantVisibleInName() {
+        QuantCoreForecaster fc = QuantCoreForecaster.varianceShrinkageEwma(ForecastHorizon.H6);
+
+        assertThat(fc.name()).contains("variance_shrinkage").contains("horizon_scaled").contains("ewma_vol");
+    }
+
+    @Test
+    void climatologyVolFactoryKeepsVariantVisibleInName() {
+        QuantCoreForecaster fc = QuantCoreForecaster.climatologyVol(ForecastHorizon.H6);
+
+        assertThat(fc.name()).contains("climatology_vol").contains("horizon_scaled").contains("ewma_vol");
+    }
+
+    @Test
+    void allFactorDirectionFactoryKeepsDirectionVariantVisibleInName() {
+        QuantCoreForecaster fc = QuantCoreForecaster.allFactorDirection(ForecastHorizon.H6);
+
+        assertThat(fc.name()).contains("multi_factor_all5");
+        assertThat(QuantCoreForecaster.defaults(ForecastHorizon.H6).name())
+                .contains("multi_factor_trend_funding_fng");
+    }
+
+    @Test
+    void climatologyVolFactoryAllowsInjectedDirectionLeg() {
+        QuantCoreForecaster fc = QuantCoreForecaster.climatologyVol(
+                ForecastHorizon.H6, new StubDir(new Forecast(1, 0.7)));
+
+        assertThat(fc.name()).contains("climatology_vol").contains("stubdir");
+        assertThat(fc.forecast(ResearchFeatures.ofBars(uptrend(40))).direction().direction()).isEqualTo(1);
+    }
+
+    @Test
+    void trailingShapeRegimeFactoryKeepsVariantVisibleInName() {
+        QuantCoreForecaster fc = QuantCoreForecaster.trailingShapeRegime(ForecastHorizon.H6);
+
+        assertThat(fc.name()).contains("trailing_shape_transition").contains("regime=");
+    }
+
+    @Test
+    void varianceShrinkageTrailingShapeFactoryKeepsBothVariantsVisibleInName() {
+        QuantCoreForecaster fc = QuantCoreForecaster.varianceShrinkageTrailingShapeRegime(
+                ForecastHorizon.H6, 5 * 60_000L);
+
+        assertThat(fc.name()).contains("variance_shrinkage").contains("trailing_shape_transition");
+    }
+
+    @Test
+    void climatologyTrailingShapeFactoryKeepsBothVariantsVisibleInName() {
+        QuantCoreForecaster fc = QuantCoreForecaster.climatologyTrailingShapeRegime(
+                ForecastHorizon.H6, 5 * 60_000L);
+
+        assertThat(fc.name()).contains("climatology_vol").contains("trailing_shape_transition");
     }
 
     @Test
@@ -59,6 +131,26 @@ class QuantCoreForecasterTest {
         assertThat(trained.forecast(ResearchFeatures.ofBars(uptrend(40))).direction().direction()).isEqualTo(1); // 训练后 LONG
     }
 
+    @Test
+    void fitDelegatesToVolLeg() {
+        QuantCoreForecaster fc = new QuantCoreForecaster(
+                ForecastHorizon.H6, 0.94, new FitTrackingVol(), new StubDir(Forecast.flat()));
+
+        assertThat(fc.forecast(ResearchFeatures.ofBars(uptrend(40))).expectedVolatility()).isEqualTo(0.01);
+        MultiOutputForecaster trained = fc.fit(List.of());
+        assertThat(trained.forecast(ResearchFeatures.ofBars(uptrend(40))).expectedVolatility()).isEqualTo(0.02);
+    }
+
+    @Test
+    void fitDelegatesToRegimeLeg() {
+        QuantCoreForecaster fc = new QuantCoreForecaster(
+                ForecastHorizon.H6, 0.94, new StubVol(0.01), new FitTrackingRegime(), new StubDir(Forecast.flat()));
+
+        assertThat(fc.forecast(ResearchFeatures.ofBars(uptrend(40))).regime()).isEqualTo(MarketRegime.RANGING);
+        MultiOutputForecaster trained = fc.fit(List.of());
+        assertThat(trained.forecast(ResearchFeatures.ofBars(uptrend(40))).regime()).isEqualTo(MarketRegime.SHOCK);
+    }
+
     static List<KlineBar> uptrend(int n) {
         List<KlineBar> out = new ArrayList<>();
         for (int i = 0; i < n; i++) {
@@ -78,6 +170,66 @@ class QuantCoreForecasterTest {
         @Override
         public String name() {
             return "stubdir";
+        }
+    }
+
+    private record StubVol(double sigma) implements VolForecaster {
+        @Override
+        public double forecastSigma(ResearchFeatures features) {
+            return sigma;
+        }
+
+        @Override
+        public String name() {
+            return "stubvol";
+        }
+    }
+
+    private record StubRegime(RegimeVerdict out) implements RegimeForecaster {
+        @Override
+        public RegimeVerdict forecastRegime(ResearchFeatures features) {
+            return out;
+        }
+
+        @Override
+        public String name() {
+            return "stubregime";
+        }
+    }
+
+    /** vol 腿桩：未训练 0.01，fit 后 0.02，验证 QuantCore 把 fit 转发给 vol 腿。 */
+    private record FitTrackingVol() implements VolForecaster {
+        @Override
+        public VolForecaster fit(List<TrainingSample> trainSamples) {
+            return new StubVol(0.02);
+        }
+
+        @Override
+        public double forecastSigma(ResearchFeatures features) {
+            return 0.01;
+        }
+
+        @Override
+        public String name() {
+            return "fittrackvol";
+        }
+    }
+
+    /** regime 腿桩：未训练 RANGING，fit 后 SHOCK，验证 QuantCore 把 fit 转发给 regime 腿。 */
+    private record FitTrackingRegime() implements RegimeForecaster {
+        @Override
+        public RegimeForecaster fit(List<TrainingSample> trainSamples) {
+            return new StubRegime(new RegimeVerdict(MarketRegime.SHOCK, 0.9));
+        }
+
+        @Override
+        public RegimeVerdict forecastRegime(ResearchFeatures features) {
+            return new RegimeVerdict(MarketRegime.RANGING, 0.1);
+        }
+
+        @Override
+        public String name() {
+            return "fittrackregime";
         }
     }
 

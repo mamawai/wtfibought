@@ -2,7 +2,7 @@ package com.mawai.wiibservice.agent.research.eval;
 
 /**
  * 评估可配置参数（spec §5.3 默认值，评审可改）。
- * embargoBars 单位=决策点（H-bar）；本刀决策周期=horizon，故标签前视=1 个 H-bar。
+ * embargoBars 单位=5m/15m 决策点；horizon 只决定未来持仓验证窗口和 purge 长度。
  */
 public record EvalParams(
         double k,                          // 三隔栏栏宽倍数（不网格寻优）
@@ -15,6 +15,7 @@ public record EvalParams(
         long seed                          // 随机种子（可复现）
 ) {
     public static EvalParams defaults() {
-        return new EvalParams(1.5, 0.94, 50, 1, 100, 1000, 0.95, 42L);
+        // 默认按 5m 决策点：testSize=576≈2天，minTrain=2016≈7天；horizon purge 由评估器按 6/12/24h 自动补。
+        return new EvalParams(1.5, 0.94, 576, 12, 2016, 1000, 0.95, 42L);
     }
 }

@@ -3,12 +3,18 @@ package com.mawai.wiibservice.agent.research.eval;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONWriter;
 import com.mawai.wiibservice.agent.research.ForecastHorizon;
+import com.mawai.wiibservice.agent.research.forecast.ContinuousFactorForecaster;
+import com.mawai.wiibservice.agent.research.forecast.Forecaster;
+import com.mawai.wiibservice.agent.research.forecast.HorizonScaledVolForecaster;
 import com.mawai.wiibservice.agent.research.forecast.MarketRegime;
+import com.mawai.wiibservice.agent.research.forecast.MultiFactorForecaster;
 import com.mawai.wiibservice.agent.research.forecast.MultiOutputForecaster;
 import com.mawai.wiibservice.agent.research.forecast.QuantCoreForecaster;
+import com.mawai.wiibservice.agent.research.forecast.TrainingSample;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
 import com.mawai.wiibservice.agent.research.label.RegimeLabeler;
 import com.mawai.wiibservice.agent.research.metrics.RegimeClassificationScore;
+import com.mawai.wiibservice.agent.research.metrics.RegimeFeatureDiagnostics;
 import com.mawai.wiibservice.agent.research.series.MarketSeriesPoint;
 import com.mawai.wiibservice.agent.research.series.MarketSeriesStore;
 import com.mawai.wiibservice.agent.research.series.SeriesCode;
@@ -35,23 +41,31 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 多输出量化核心本地判决 runner：不启 Spring，直连本地 DB 读历史，调 {@link MultiOutputEvalService} 出
  * vol/regime/direction 三件一等输出的样本外判决（量化核心 alone，作 A4 LLM 增量的对照基线）。
- * 与 {@link ResearchEvalRunnerTest} 同构、共用 kline_history/factor_history 同一份无前视加载口径，但每个
- * (symbol,horizon) 只跑一个 {@link QuantCoreForecaster#defaults}，收三输出而非多策略方向对比。
+ * 与 {@link ResearchEvalRunnerTest} 同构、共用 kline_history/factor_history 同一份无前视加载口径；
+ * 每个 (symbol,horizon) 默认跑 raw EWMA + 两条 regime 腿候选，收三输出而非多策略方向对比。
  * 显式 -DmultiOutputEvalRun=true 才执行（避免普通测试误跑长任务）；库密码走 -Deval.db.password/WIIB_DB_PASSWORD，不入代码、打印掩码。
  */
 class MultiOutputEvalRunnerTest {
 
     private static final String DEFAULT_INTERVAL = "1m";
+    private static final String DEFAULT_DECISION_INTERVAL = "5m";
     private static final long ONE_MINUTE_MS = Duration.ofMinutes(1).toMillis();
     private static final long DAILY_FACTOR_AVAILABILITY_LAG_MS = Duration.ofDays(1).toMillis();
     private static final int LOGIN_TIMEOUT_SECONDS = 15;
     private static final int QUERY_TIMEOUT_SECONDS = 180;
     private static final int FETCH_SIZE = 10_000;
+    private static final long PROGRESS_PRINT_INTERVAL_MS = 10_000L;
     private static final DateTimeFormatter FILE_STAMP =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss").withZone(ZoneOffset.UTC);
 
@@ -69,13 +83,16 @@ class MultiOutputEvalRunnerTest {
 
         DriverManager.setLoginTimeout(LOGIN_TIMEOUT_SECONDS);
         List<EvalRunResult> results = new ArrayList<>();
-        int total = cfg.symbols().size() * cfg.horizons().size();
-        int idx = 0;
-        try (Connection connection = DriverManager.getConnection(cfg.jdbcUrl(), cfg.dbUser(), cfg.dbPassword())) {
-            connection.setAutoCommit(false);
-            configureSession(connection);
-
-            for (String symbol : cfg.symbols()) {
+        int total = 0;
+        for (String ignored : cfg.symbols()) {
+            for (ForecastHorizon horizon : cfg.horizons()) {
+                total += forecastersFor(horizon, cfg.decisionBarMillis(),
+                        cfg.volCandidates(), cfg.directionCandidates()).size();
+            }
+        }
+        AtomicInteger idx = new AtomicInteger();
+        for (String symbol : cfg.symbols()) {
+            try (Connection connection = openConnection(cfg)) {
                 long latestOpenTime = latestKlineOpenTime(connection, symbol, cfg.interval());
                 long effectiveToMs = Math.min(cfg.toMs(), latestOpenTime + ONE_MINUTE_MS);
                 long effectiveFromMs = cfg.fromMs() != null
@@ -83,19 +100,8 @@ class MultiOutputEvalRunnerTest {
                         : effectiveToMs - Duration.ofDays(cfg.days()).toMillis();
                 System.out.println("[multiOutput.evalRun] " + symbol + " window=["
                         + Instant.ofEpochMilli(effectiveFromMs) + ", " + Instant.ofEpochMilli(effectiveToMs) + ")");
-                for (ForecastHorizon horizon : cfg.horizons()) {
-                    idx++;
-                    long startMs = System.currentTimeMillis();
-                    System.out.println("[multiOutput.evalRun] (" + idx + "/" + total + ") start "
-                            + symbol + " " + horizon.hours() + "h ...");
-                    EvalRunResult result = runOne(connection, symbol, horizon, effectiveFromMs, effectiveToMs, params, runDir, cfg.interval());
-                    results.add(result);
-                    long elapsedSec = (System.currentTimeMillis() - startMs) / 1000;
-                    System.out.println("[multiOutput.evalRun] (" + idx + "/" + total + ") done "
-                            + symbol + " " + horizon.hours() + "h | " + elapsedSec + "s | testPoints=" + result.testPoints());
-                    System.out.println(result.summary());
-                    System.out.println("    report=" + result.reportFile());
-                }
+                results.addAll(runSymbolHorizons(cfg, symbol, effectiveFromMs, effectiveToMs,
+                        params, runDir, idx, total));
             }
         }
 
@@ -108,6 +114,73 @@ class MultiOutputEvalRunnerTest {
         System.out.println("===============================================================");
         System.out.println(JSON.toJSONString(results, JSONWriter.Feature.PrettyFormat));
         System.out.println();
+    }
+
+    private List<EvalRunResult> runSymbolHorizons(EvalRunConfig cfg, String symbol, long fromMs, long toMs,
+                                                  EvalParams params, Path runDir,
+                                                  AtomicInteger idx, int total) throws Exception {
+        if (!cfg.parallelHorizons() || cfg.horizons().size() <= 1) {
+            List<EvalRunResult> out = new ArrayList<>();
+            for (ForecastHorizon horizon : cfg.horizons()) {
+                out.addAll(runHorizon(cfg, symbol, horizon, fromMs, toMs, params, runDir, idx, total));
+            }
+            return out;
+        }
+
+        int threads = Math.min(3, cfg.horizons().size());
+        System.out.println("[multiOutput.evalRun] parallel horizons enabled: symbol=" + symbol
+                + " threads=" + threads);
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<List<EvalRunResult>>> futures = new ArrayList<>();
+            for (ForecastHorizon horizon : cfg.horizons()) {
+                futures.add(executor.submit(() -> runHorizon(cfg, symbol, horizon, fromMs, toMs, params,
+                        runDir, idx, total)));
+            }
+            List<EvalRunResult> out = new ArrayList<>();
+            for (Future<List<EvalRunResult>> future : futures) {
+                out.addAll(future.get());
+            }
+            return out;
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof Exception exception) {
+                throw exception;
+            }
+            throw e;
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private List<EvalRunResult> runHorizon(EvalRunConfig cfg, String symbol, ForecastHorizon horizon,
+                                           long fromMs, long toMs, EvalParams params, Path runDir,
+                                           AtomicInteger idx, int total) throws Exception {
+        List<EvalRunResult> out = new ArrayList<>();
+        try (Connection connection = openConnection(cfg)) {
+            for (MultiOutputForecaster forecaster : forecastersFor(
+                    horizon, cfg.decisionBarMillis(), cfg.volCandidates(), cfg.directionCandidates())) {
+                int runIndex = idx.incrementAndGet();
+                long startMs = System.currentTimeMillis();
+                System.out.println("[multiOutput.evalRun] (" + runIndex + "/" + total + ") start "
+                        + symbol + " " + cfg.decisionBarMinutes() + "m→"
+                        + horizon.hours() + "h " + forecaster.name() + " ...");
+                EvalProgress progress = consoleProgress(runIndex, total,
+                        symbol + " " + cfg.decisionBarMinutes() + "m->" + horizon.hours()
+                                + "h " + shortForecasterName(forecaster.name()),
+                        startMs);
+                EvalRunResult result = runOne(connection, symbol, horizon, forecaster,
+                        fromMs, toMs, params, runDir, cfg.interval(), cfg.decisionBarMillis(), progress);
+                out.add(result);
+                long elapsedSec = (System.currentTimeMillis() - startMs) / 1000;
+                System.out.println("[multiOutput.evalRun] (" + runIndex + "/" + total + ") done "
+                        + symbol + " " + horizon.hours() + "h " + forecaster.name()
+                        + " | " + elapsedSec + "s | testPoints=" + result.testPoints());
+                System.out.println(result.summary());
+                System.out.println("    report=" + result.reportFile());
+            }
+        }
+        return out;
     }
 
     /** 待扫描的 directionality 阈值 q（保守端→激进端）；SHOCK 永远优先于 q。 */
@@ -146,7 +219,8 @@ class MultiOutputEvalRunnerTest {
                         + Instant.ofEpochMilli(effectiveFromMs) + ", " + Instant.ofEpochMilli(effectiveToMs) + ")");
                 for (ForecastHorizon horizon : cfg.horizons()) {
                     long startMs = System.currentTimeMillis();
-                    QScanCell cell = sampleCell(connection, symbol, horizon, effectiveFromMs, effectiveToMs, params, cfg.interval());
+                    QScanCell cell = sampleCell(connection, symbol, horizon, effectiveFromMs, effectiveToMs,
+                            params, cfg.interval(), cfg.decisionBarMillis());
                     cells.add(cell);
                     System.out.println("[regimeQScan] sampled " + symbol + " " + horizon.hours() + "h | OOS="
                             + cell.n() + " | " + (System.currentTimeMillis() - startMs) / 1000 + "s");
@@ -160,9 +234,67 @@ class MultiOutputEvalRunnerTest {
         printStabilityTables(cells);
     }
 
-    /** 复用 eval 同一份装配+OOS 样本，逐样本外点采 (directionality, shock, netSign, 预测regime)。 */
-    private QScanCell sampleCell(Connection connection, String symbol, ForecastHorizon horizon,
-                                 long fromMs, long toMs, EvalParams params, String interval) throws Exception {
+    /**
+     * regime 特征可分性诊断：复用 eval 同一份 OOS 样本，把现有 point-in-time 特征按未来 actual regime 分组。
+     * 这一步不训练模型，只看哪条腿有组间分离度，避免继续在无信号特征上调阈值。
+     */
+    @Test
+    void runRegimeFeatureDiagnostics() throws Exception {
+        Assumptions.assumeTrue(Boolean.getBoolean("regimeFeatureDiagnostics"),
+                "skip: add -DregimeFeatureDiagnostics=true to run regime feature diagnostics");
+
+        EvalRunConfig cfg = loadConfig();
+        EvalParams params = EvalParams.defaults();
+        Path runDir = ResearchEvalArtifacts.runDir();
+        System.out.println("[regimeFeatureDiag] config=" + JSON.toJSONString(cfg.masked(), JSONWriter.Feature.PrettyFormat));
+        System.out.println("[regimeFeatureDiag] params=" + JSON.toJSONString(params, JSONWriter.Feature.PrettyFormat));
+        System.out.println("[regimeFeatureDiag] reportDir=" + runDir);
+
+        DriverManager.setLoginTimeout(LOGIN_TIMEOUT_SECONDS);
+        List<RegimeFeatureRunResult> results = new ArrayList<>();
+        try (Connection connection = DriverManager.getConnection(cfg.jdbcUrl(), cfg.dbUser(), cfg.dbPassword())) {
+            connection.setAutoCommit(false);
+            configureSession(connection);
+            for (String symbol : cfg.symbols()) {
+                long latestOpenTime = latestKlineOpenTime(connection, symbol, cfg.interval());
+                long effectiveToMs = Math.min(cfg.toMs(), latestOpenTime + ONE_MINUTE_MS);
+                long effectiveFromMs = cfg.fromMs() != null
+                        ? cfg.fromMs()
+                        : effectiveToMs - Duration.ofDays(cfg.days()).toMillis();
+                for (ForecastHorizon horizon : cfg.horizons()) {
+                    long startMs = System.currentTimeMillis();
+                    RegimeFeatureDiagnostics.Report report = diagnoseRegimeFeatures(
+                            connection, symbol, horizon, effectiveFromMs, effectiveToMs,
+                            params, cfg.interval(), cfg.decisionBarMillis());
+                    Path file = writeRegimeFeatureReport(symbol, horizon, report, effectiveToMs,
+                            cfg.decisionBarMinutes(), runDir);
+                    RegimeFeatureRunResult result = new RegimeFeatureRunResult(
+                            symbol, horizon.hours(), cfg.decisionBarMinutes(),
+                            Instant.ofEpochMilli(effectiveFromMs).toString(),
+                            Instant.ofEpochMilli(effectiveToMs).toString(),
+                            report.n(), report.classCounts(), report.topFeatures(10), file.toString());
+                    results.add(result);
+                    long elapsedSec = (System.currentTimeMillis() - startMs) / 1000;
+                    System.out.println("[regimeFeatureDiag] done " + symbol + " " + horizon.hours()
+                            + "h | " + elapsedSec + "s | OOS=" + report.n() + " | report=" + file);
+                    printRegimeFeatureReport(report, 8);
+                }
+            }
+        }
+
+        System.out.println();
+        System.out.println("========== Regime Feature Diagnostics ==========");
+        System.out.println(JSON.toJSONString(results, JSONWriter.Feature.PrettyFormat));
+        System.out.println("================================================");
+        System.out.println();
+    }
+
+    /** 采样 OOS test 点：保持和 MultiOutputEvalService 相同 train/test 切分，只把 test 样本交给诊断。 */
+    private RegimeFeatureDiagnostics.Report diagnoseRegimeFeatures(Connection connection, String symbol,
+                                                                   ForecastHorizon horizon,
+                                                                   long fromMs, long toMs,
+                                                                   EvalParams params, String interval,
+                                                                   long decisionBarMillis) throws Exception {
         List<KlineBar> oneMin = loadKlines(connection, symbol, interval, fromMs, toMs);
         List<KlineBar> benchmarkOneMin = "BTCUSDT".equalsIgnoreCase(symbol)
                 ? List.of()
@@ -173,8 +305,37 @@ class MultiOutputEvalRunnerTest {
         List<MarketSeriesPoint> stablecoin = loadSeries(connection, symbol, SeriesCode.STABLECOIN_DELTA, fromMs, toMs);
 
         AssembledPoints a = ResearchEvalService.assemblePoints(horizon, oneMin, benchmarkOneMin,
-                funding, fearGreed, etfFlow, stablecoin, params, ResearchEvalService.FEATURE_LOOKBACK_BARS);
-        List<KlineBar> hbars = a.hbars();
+                funding, fearGreed, etfFlow, stablecoin, params,
+                ResearchEvalService.featureLookbackBars(decisionBarMillis), decisionBarMillis);
+        List<WalkForwardWindow> wins = WalkForwardEvaluator.windows(
+                a.points(), params.testSize(), a.horizonDecisionBars(),
+                params.embargoBars(), params.minTrain());
+        List<TrainingSample> oosSamples = new ArrayList<>();
+        for (WalkForwardWindow w : wins) {
+            for (int i = w.testStart(); i < w.testEnd(); i++) {
+                oosSamples.add(a.samplesByPoint().get(i));
+            }
+        }
+        return RegimeFeatureDiagnostics.evaluate(oosSamples);
+    }
+
+    /** 复用 eval 同一份装配+OOS 样本，逐样本外点采 (directionality, shock, netSign, 预测regime)。 */
+    private QScanCell sampleCell(Connection connection, String symbol, ForecastHorizon horizon,
+                                 long fromMs, long toMs, EvalParams params, String interval,
+                                 long decisionBarMillis) throws Exception {
+        List<KlineBar> oneMin = loadKlines(connection, symbol, interval, fromMs, toMs);
+        List<KlineBar> benchmarkOneMin = "BTCUSDT".equalsIgnoreCase(symbol)
+                ? List.of()
+                : loadOptionalKlines(connection, "BTCUSDT", interval, fromMs, toMs);
+        List<MarketSeriesPoint> funding = loadSeries(connection, symbol, SeriesCode.FUNDING, fromMs, toMs);
+        List<MarketSeriesPoint> fearGreed = loadSeries(connection, MarketSeriesStore.GLOBAL, SeriesCode.FEAR_GREED, fromMs, toMs);
+        List<MarketSeriesPoint> etfFlow = loadSeries(connection, symbol, SeriesCode.ETF_FLOW, fromMs, toMs);
+        List<MarketSeriesPoint> stablecoin = loadSeries(connection, symbol, SeriesCode.STABLECOIN_DELTA, fromMs, toMs);
+
+        AssembledPoints a = ResearchEvalService.assemblePoints(horizon, oneMin, benchmarkOneMin,
+                funding, fearGreed, etfFlow, stablecoin, params,
+                ResearchEvalService.featureLookbackBars(decisionBarMillis), decisionBarMillis);
+        List<KlineBar> decisionBars = a.decisionBars();
         int points = a.points();
         double lambda = params.lambda();
 
@@ -183,9 +344,11 @@ class MultiOutputEvalRunnerTest {
         boolean[] shock = new boolean[points];
         int[] sign = new int[points];
         for (int i = 0; i < points; i++) {
-            int lookbackFrom = Math.max(0, i + 1 - ResearchEvalService.FEATURE_LOOKBACK_BARS);
-            double baselineSigma = VolatilityEstimator.ewmaVolatility(hbars.subList(lookbackFrom, i + 1), lambda);
-            List<KlineBar> futurePath = ResearchEvalService.pathBars(oneMin, hbars.get(i).closeTime(), horizon.millis());
+            double baselineSigma = HorizonScaledVolForecaster.scale(
+                    VolatilityEstimator.ewmaVolatility(a.featuresByPoint().get(i).barsUpToNow(), lambda),
+                    a.featuresByPoint().get(i), horizon);
+            List<KlineBar> futurePath = ResearchEvalService.pathBars(
+                    oneMin, decisionBars.get(i).closeTime(), horizon.millis());
             double realizedVol = VolatilityEstimator.realizedVolatility(futurePath);
             double netReturn = futurePath.size() >= 2
                     ? Math.log(futurePath.get(futurePath.size() - 1).close().doubleValue() / futurePath.get(0).close().doubleValue())
@@ -197,7 +360,7 @@ class MultiOutputEvalRunnerTest {
 
         // ---- 同 eval 的 walk-forward：逐窗 fit、逐 test 点取预测 regime（与 MultiOutputEvalService 镜像，OOS 样本一致）----
         List<WalkForwardWindow> wins = WalkForwardEvaluator.windows(
-                points, params.testSize(), ResearchEvalService.LABEL_PURGE_HBARS, params.embargoBars(), params.minTrain());
+                points, params.testSize(), a.horizonDecisionBars(), params.embargoBars(), params.minTrain());
         MultiOutputForecaster base = QuantCoreForecaster.defaults(horizon);
         List<Double> dirOos = new ArrayList<>();
         List<Boolean> shockOos = new ArrayList<>();
@@ -319,25 +482,72 @@ class MultiOutputEvalRunnerTest {
         return total > 0 ? 100.0 * part / total : 0.0;
     }
 
+    private List<MultiOutputForecaster> forecastersFor(ForecastHorizon horizon, long decisionBarMillis,
+                                                       VolCandidateMode volCandidates,
+                                                       DirectionCandidateMode directionCandidates) {
+        List<MultiOutputForecaster> out = new ArrayList<>();
+        for (Forecaster direction : directionForecasters(directionCandidates)) {
+            if (volCandidates.includeRaw()) {
+                out.add(QuantCoreForecaster.defaults(horizon, direction));
+                out.add(QuantCoreForecaster.trailingShapeRegime(horizon, decisionBarMillis, direction));
+            }
+            if (volCandidates.includeShrinkage()) {
+                out.add(QuantCoreForecaster.varianceShrinkageEwma(horizon, direction));
+                out.add(QuantCoreForecaster.varianceShrinkageTrailingShapeRegime(horizon, decisionBarMillis, direction));
+            }
+            if (volCandidates.includeClimatology()) {
+                out.add(QuantCoreForecaster.climatologyVol(horizon, direction));
+                out.add(QuantCoreForecaster.climatologyTrailingShapeRegime(horizon, decisionBarMillis, direction));
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    private List<Forecaster> directionForecasters(DirectionCandidateMode directionCandidates) {
+        List<Forecaster> out = new ArrayList<>();
+        if (directionCandidates.includeFixed()) {
+            out.add(MultiFactorForecaster.defaults());
+        }
+        if (directionCandidates.includeAll5()) {
+            out.add(MultiFactorForecaster.allFactors());
+        }
+        if (directionCandidates.includeContinuous()) {
+            out.add(ContinuousFactorForecaster.defaults());
+        }
+        return List.copyOf(out);
+    }
+
     private EvalRunResult runOne(Connection connection, String symbol, ForecastHorizon horizon,
-                                 long fromMs, long toMs, EvalParams params, Path runDir, String interval) throws Exception {
+                                 MultiOutputForecaster forecaster,
+                                 long fromMs, long toMs, EvalParams params, Path runDir, String interval,
+                                 long decisionBarMillis, EvalProgress progress) throws Exception {
+        progress.update("load-klines", 0, 5);
         List<KlineBar> oneMin = loadKlines(connection, symbol, interval, fromMs, toMs);
+        progress.update("load-klines", 1, 5);
         List<KlineBar> benchmarkOneMin = "BTCUSDT".equalsIgnoreCase(symbol)
                 ? List.of()
                 : loadOptionalKlines(connection, "BTCUSDT", interval, fromMs, toMs);
+        progress.update("load-benchmark", 2, 5);
         List<MarketSeriesPoint> funding = loadSeries(connection, symbol, SeriesCode.FUNDING, fromMs, toMs);
+        progress.update("load-funding", 3, 5);
         List<MarketSeriesPoint> fearGreed = loadSeries(connection, MarketSeriesStore.GLOBAL, SeriesCode.FEAR_GREED, fromMs, toMs);
         List<MarketSeriesPoint> etfFlow = loadSeries(connection, symbol, SeriesCode.ETF_FLOW, fromMs, toMs);
         List<MarketSeriesPoint> stablecoin = loadSeries(connection, symbol, SeriesCode.STABLECOIN_DELTA, fromMs, toMs);
+        progress.update("load-series", 5, 5);
 
-        // 量化核心 alone：每个 (symbol,horizon) 单个 forecaster，三输出各自对基准判决。
+        // 量化核心 alone：每个 (symbol,horizon,forecaster) 三输出各自对基准判决。
         MultiOutputReport report = MultiOutputEvalService.evaluateBars(
                 symbol, horizon, oneMin, benchmarkOneMin, funding, fearGreed, etfFlow, stablecoin,
-                QuantCoreForecaster.defaults(horizon), params);
+                forecaster, params, ResearchEvalService.featureLookbackBars(decisionBarMillis), decisionBarMillis,
+                progress);
+        progress.update("write-report", 0, 1);
         Path reportFile = writeReport(report, toMs, runDir);
+        progress.update("write-report", 1, 1);
         return new EvalRunResult(
+                report.forecasterName(),
                 symbol,
                 horizon.hours(),
+                report.decisionBarMinutes(),
                 Instant.ofEpochMilli(fromMs).toString(),
                 Instant.ofEpochMilli(toMs).toString(),
                 oneMin.size(),
@@ -352,11 +562,26 @@ class MultiOutputEvalRunnerTest {
                 report.directionNaivePercentile(),
                 report.directionBeatsNaive(),
                 report.directionMetrics().annualizedSharpe(),
+                report.directionPathSummary().tradedPoints(),
+                report.directionPathSummary().avgDirectionalChangeBps(),
+                report.directionPathSummary().avgMaxFavorableBps(),
+                report.directionPathSummary().avgMaxAdverseBps(),
                 report.volScore().qlike(),
                 report.volBaselines().values().stream().mapToDouble(s -> s.qlike()).min().orElse(Double.NaN),
+                report.bestVolBaselineName(),
+                report.volQlikeVsBestBaseline().meanLossDiff(),
+                report.volQlikeVsBestBaseline().pValue(),
+                report.volCalibration().realizedToPredictedRatio(),
+                report.volRiskSummary().medianExpectedMoveBps(),
+                report.volRiskSummary().p90ExpectedMoveBps(),
+                report.volRiskSummary().elevatedOrStressedShare(),
+                report.volRiskSummary().stressedShare(),
+                report.volRiskSummary().llmContext(),
                 report.volBeatsAllBaselines(),
                 report.regimeScore().accuracy(),
                 report.regimeScore().naiveAccuracy(),
+                report.regimeScore().balancedAccuracy(),
+                report.regimeScore().macroF1(),
                 report.regimeScore().beatsNaive(),
                 report.summary(),
                 reportFile.toString());
@@ -470,10 +695,88 @@ class MultiOutputEvalRunnerTest {
     private Path writeReport(MultiOutputReport report, long toMs, Path runDir) throws Exception {
         Files.createDirectories(runDir);
         // multi- 前缀：与 ResearchEvalRunnerTest 的方向多策略报告同目录但不撞名。
-        Path file = runDir.resolve(String.format("multi-%s-%dh-%s.json",
-                report.symbol(), report.horizonHours(), FILE_STAMP.format(Instant.ofEpochMilli(toMs))));
+        Path file = runDir.resolve(String.format("multi-%s-%dm-%dh-%s-%s.json",
+                report.symbol(), report.decisionBarMinutes(), report.horizonHours(), sanitize(report.forecasterName()),
+                FILE_STAMP.format(Instant.ofEpochMilli(toMs))));
         Files.writeString(file, JSON.toJSONString(report, JSONWriter.Feature.PrettyFormat), StandardCharsets.UTF_8);
         return file;
+    }
+
+    private Path writeRegimeFeatureReport(String symbol, ForecastHorizon horizon,
+                                          RegimeFeatureDiagnostics.Report report,
+                                          long toMs, int decisionBarMinutes, Path runDir) throws Exception {
+        Files.createDirectories(runDir);
+        Path file = runDir.resolve(String.format("regime-features-%s-%dm-%dh-%s.json",
+                symbol, decisionBarMinutes, horizon.hours(), FILE_STAMP.format(Instant.ofEpochMilli(toMs))));
+        Files.writeString(file, JSON.toJSONString(report, JSONWriter.Feature.PrettyFormat), StandardCharsets.UTF_8);
+        return file;
+    }
+
+    private void printRegimeFeatureReport(RegimeFeatureDiagnostics.Report report, int topN) {
+        System.out.println("    classCounts=" + report.classCounts());
+        System.out.println("    top features by etaSquared:");
+        for (RegimeFeatureDiagnostics.FeatureReport f : report.topFeatures(topN)) {
+            System.out.printf("      %-34s eta=%.4f n=%d | R=%s U=%s D=%s S=%s%n",
+                    f.name(), f.etaSquared(), f.n(),
+                    fmtStat(f, MarketRegime.RANGING),
+                    fmtStat(f, MarketRegime.TRENDING_UP),
+                    fmtStat(f, MarketRegime.TRENDING_DOWN),
+                    fmtStat(f, MarketRegime.SHOCK));
+        }
+    }
+
+    private String fmtStat(RegimeFeatureDiagnostics.FeatureReport f, MarketRegime regime) {
+        RegimeFeatureDiagnostics.GroupStats s = f.byRegime().get(regime);
+        if (s == null || s.n() == 0) {
+            return "-";
+        }
+        return String.format("n=%d,p50=%.4g", s.n(), s.p50());
+    }
+
+    private EvalProgress consoleProgress(int runIndex, int totalRuns, String label, long startedAtMs) {
+        return new EvalProgress() {
+            private String lastStage = "";
+            private int lastBucket = -1;
+            private long lastPrintedAt = 0L;
+
+            @Override
+            public void update(String stage, int done, int total) {
+                long now = System.currentTimeMillis();
+                int safeTotal = Math.max(0, total);
+                int safeDone = safeTotal > 0 ? Math.max(0, Math.min(done, safeTotal)) : Math.max(0, done);
+                int bucket = safeTotal > 0 ? (int) Math.floor((double) safeDone * 20.0 / safeTotal) : safeDone;
+                boolean stageChanged = !stage.equals(lastStage);
+                boolean finished = safeTotal > 0 && safeDone >= safeTotal;
+                boolean due = now - lastPrintedAt >= PROGRESS_PRINT_INTERVAL_MS;
+                if (!stageChanged && !finished && bucket == lastBucket && !due) {
+                    return;
+                }
+                lastStage = stage;
+                lastBucket = bucket;
+                lastPrintedAt = now;
+                double pct = safeTotal > 0 ? 100.0 * safeDone / safeTotal : 0.0;
+                long elapsedSec = (now - startedAtMs) / 1000;
+                System.out.printf("[multiOutput.progress] (%d/%d) %-44s | %-16s [%s] %6.2f%% %d/%d elapsed=%ds%n",
+                        runIndex, totalRuns, label, stage,
+                        MultiOutputEvalService.progressBar(safeDone, safeTotal),
+                        pct, safeDone, safeTotal, elapsedSec);
+                System.out.flush();
+            }
+        };
+    }
+
+    private String shortForecasterName(String name) {
+        if (name != null && name.contains("trailing_shape_transition")) {
+            return "trailing_shape";
+        }
+        if (name != null && name.contains("adx_atr_current")) {
+            return "adx_atr";
+        }
+        return name == null ? "unknown" : sanitize(name);
+    }
+
+    private String sanitize(String raw) {
+        return raw == null ? "unknown" : raw.replaceAll("[^A-Za-z0-9._-]+", "_");
     }
 
     private void configureSession(Connection connection) throws Exception {
@@ -489,13 +792,18 @@ class MultiOutputEvalRunnerTest {
                 splitSymbols(propertyOrEnv("eval.symbols", "EVAL_SYMBOLS", "BTCUSDT,ETHUSDT")),
                 splitHorizons(propertyOrEnv("eval.horizons", "EVAL_HORIZONS", "6,12,24")),
                 propertyOrEnv("eval.interval", "EVAL_INTERVAL", DEFAULT_INTERVAL),
+                ResearchEvalService.parseDecisionBarMillis(
+                        propertyOrEnv("eval.decisionInterval", "EVAL_DECISION_INTERVAL", DEFAULT_DECISION_INTERVAL)),
                 from == null ? null : from.toEpochMilli(),
                 to.toEpochMilli(),
                 Integer.getInteger("eval.days", 365),
                 propertyOrEnv("eval.db.url", "WIIB_DB_URL",
                         "jdbc:postgresql://localhost:5432/wiib?reWriteBatchedInserts=true"),
                 propertyOrEnv("eval.db.user", "WIIB_DB_USER", "mawai"),
-                propertyOrEnv("eval.db.password", "WIIB_DB_PASSWORD", "")
+                propertyOrEnv("eval.db.password", "WIIB_DB_PASSWORD", ""),
+                VolCandidateMode.parse(propertyOrEnv("eval.volCandidates", "EVAL_VOL_CANDIDATES", "raw")),
+                DirectionCandidateMode.parse(propertyOrEnv("eval.directionCandidates", "EVAL_DIRECTION_CANDIDATES", "fixed")),
+                booleanPropertyOrEnv("eval.parallelHorizons", "EVAL_PARALLEL_HORIZONS", false)
         );
     }
 
@@ -543,6 +851,18 @@ class MultiOutputEvalRunnerTest {
         return envValue != null ? envValue : defaultValue;
     }
 
+    private boolean booleanPropertyOrEnv(String property, String env, boolean defaultValue) {
+        String raw = propertyOrEnv(property, env, null);
+        return raw == null ? defaultValue : Boolean.parseBoolean(raw);
+    }
+
+    private Connection openConnection(EvalRunConfig cfg) throws Exception {
+        Connection connection = DriverManager.getConnection(cfg.jdbcUrl(), cfg.dbUser(), cfg.dbPassword());
+        connection.setAutoCommit(false);
+        configureSession(connection);
+        return connection;
+    }
+
     private static long availabilityLagMs(SeriesCode code) {
         return switch (code) {
             case FUNDING -> 0L;
@@ -562,15 +882,24 @@ class MultiOutputEvalRunnerTest {
             List<String> symbols,
             List<ForecastHorizon> horizons,
             String interval,
+            long decisionBarMillis,
             Long fromMs,
             long toMs,
             int days,
             String jdbcUrl,
             String dbUser,
-            String dbPassword
+            String dbPassword,
+            VolCandidateMode volCandidates,
+            DirectionCandidateMode directionCandidates,
+            boolean parallelHorizons
     ) {
         EvalRunConfig masked() {
-            return new EvalRunConfig(symbols, horizons, interval, fromMs, toMs, days, maskJdbcUrl(jdbcUrl), dbUser, "***");
+            return new EvalRunConfig(symbols, horizons, interval, decisionBarMillis, fromMs, toMs,
+                    days, maskJdbcUrl(jdbcUrl), dbUser, "***", volCandidates, directionCandidates, parallelHorizons);
+        }
+
+        int decisionBarMinutes() {
+            return ResearchEvalService.minutes(decisionBarMillis);
         }
 
         private static String maskJdbcUrl(String jdbcUrl) {
@@ -579,9 +908,77 @@ class MultiOutputEvalRunnerTest {
         }
     }
 
+    private enum VolCandidateMode {
+        RAW,
+        SHRINKAGE,
+        CLIMATOLOGY,
+        EXTENDED;
+
+        static VolCandidateMode parse(String raw) {
+            String value = raw == null || raw.isBlank()
+                    ? "raw"
+                    : raw.trim().toLowerCase(Locale.ROOT);
+            return switch (value) {
+                case "raw" -> RAW;
+                case "shrinkage", "variance_shrinkage" -> SHRINKAGE;
+                case "climatology", "constant" -> CLIMATOLOGY;
+                case "extended", "all" -> EXTENDED;
+                default -> throw new IllegalArgumentException(
+                        "eval.volCandidates 只支持 raw|shrinkage|climatology|extended，实际=" + raw);
+            };
+        }
+
+        boolean includeRaw() {
+            return this == RAW || this == EXTENDED;
+        }
+
+        boolean includeShrinkage() {
+            return this == SHRINKAGE || this == EXTENDED;
+        }
+
+        boolean includeClimatology() {
+            return this == CLIMATOLOGY || this == EXTENDED;
+        }
+    }
+
+    private enum DirectionCandidateMode {
+        FIXED,
+        ALL5,
+        CONTINUOUS,
+        EXTENDED;
+
+        static DirectionCandidateMode parse(String raw) {
+            String value = raw == null || raw.isBlank()
+                    ? "fixed"
+                    : raw.trim().toLowerCase(Locale.ROOT);
+            return switch (value) {
+                case "fixed", "default", "multi_factor" -> FIXED;
+                case "all5", "recommended", "best" -> ALL5;
+                case "continuous", "continuous_factor" -> CONTINUOUS;
+                case "extended", "all", "scan" -> EXTENDED;
+                default -> throw new IllegalArgumentException(
+                        "eval.directionCandidates 只支持 fixed|all5|continuous|extended，实际=" + raw);
+            };
+        }
+
+        boolean includeFixed() {
+            return this == FIXED || this == EXTENDED;
+        }
+
+        boolean includeAll5() {
+            return this == ALL5 || this == EXTENDED;
+        }
+
+        boolean includeContinuous() {
+            return this == CONTINUOUS || this == EXTENDED;
+        }
+    }
+
     private record EvalRunResult(
+            String forecasterName,
             String symbol,
             int horizonHours,
+            int decisionBarMinutes,
             String from,
             String to,
             int klineRows,
@@ -597,15 +994,42 @@ class MultiOutputEvalRunnerTest {
             double directionNaivePercentile,
             boolean directionBeatsNaive,
             double directionSharpe,
+            int directionTradedPoints,
+            double directionAvgChangeBps,
+            double directionAvgMfeBps,
+            double directionAvgMaeBps,
             // 波动率腿判决（model QLIKE vs 多基准，beatsAll 以最难基准为准）
             double volQlike,
             double volBestBaselineQlike,
+            String volBestBaselineName,
+            double volBestBaselineMeanLossDiff,
+            double volBestBaselinePValue,
+            double volCalibrationRatio,
+            int volMedianExpectedMoveBps,
+            int volP90ExpectedMoveBps,
+            double volElevatedOrStressedShare,
+            double volStressedShare,
+            String volRiskLlmContext,
             boolean volBeatsAllBaselines,
             // regime 腿判决（vs persistence）
             double regimeAccuracy,
             double regimeNaiveAccuracy,
+            double regimeBalancedAccuracy,
+            double regimeMacroF1,
             boolean regimeBeatsNaive,
             String summary,
+            String reportFile
+    ) {}
+
+    private record RegimeFeatureRunResult(
+            String symbol,
+            int horizonHours,
+            int decisionBarMinutes,
+            String from,
+            String to,
+            int oosSamples,
+            Map<MarketRegime, Integer> classCounts,
+            List<RegimeFeatureDiagnostics.FeatureReport> topFeatures,
             String reportFile
     ) {}
 

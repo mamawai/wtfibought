@@ -15,6 +15,8 @@ class MultiOutputForecastTest {
 
         assertThat(f.horizon()).isEqualTo(ForecastHorizon.H6);
         assertThat(f.expectedVolatility()).isZero();
+        assertThat(f.volatilityContext().riskTier()).isEqualTo(VolatilityRiskTier.UNKNOWN);
+        assertThat(f.volatilityContext().riskFlags()).contains("VOL_HISTORY_SHORT");
         assertThat(f.regime()).isEqualTo(MarketRegime.RANGING);
         assertThat(f.regimeConfidence()).isZero();
         assertThat(f.direction().direction()).isZero();
@@ -25,6 +27,13 @@ class MultiOutputForecastTest {
     void rejectsNegativeVolatility() {
         assertThatThrownBy(() -> new MultiOutputForecast(
                 ForecastHorizon.H6, -0.01, MarketRegime.RANGING, 0.5, Forecast.flat()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rejectsNonFiniteVolatility() {
+        assertThatThrownBy(() -> new MultiOutputForecast(
+                ForecastHorizon.H6, Double.NaN, MarketRegime.RANGING, 0.5, Forecast.flat()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -48,6 +57,15 @@ class MultiOutputForecastTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new MultiOutputForecast(
                 ForecastHorizon.H6, 0.01, MarketRegime.RANGING, 0.5, null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rejectsMismatchedVolatilityContext() {
+        VolatilityRiskContext context = VolatilityRiskContext.from(ForecastHorizon.H12, 0.01, java.util.List.of());
+
+        assertThatThrownBy(() -> new MultiOutputForecast(
+                ForecastHorizon.H6, 0.01, context, MarketRegime.RANGING, 0.5, Forecast.flat()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
