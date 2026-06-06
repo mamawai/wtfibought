@@ -59,7 +59,6 @@ public class CollectDataNode implements NodeAction {
         Map<String, String> fundingRateHistMap = new HashMap<>();
         Map<String, String> orderbookMap = new HashMap<>();
         Map<String, String> spotOrderbookMap = new HashMap<>();
-        Map<String, String> openInterestMap = new HashMap<>();
         Map<String, String> openInterestHistMap = new HashMap<>();
         Map<String, String> longShortRatioMap = new HashMap<>();
         Map<String, String> forceOrdersMap = new HashMap<>();
@@ -119,7 +118,6 @@ public class CollectDataNode implements NodeAction {
                 return binanceRestClient.getFuturesOrderbook(symbol, 20);
             });
             var spotObF = executor.submit(() -> binanceRestClient.getOrderbook(symbol, 20));
-            var oiF = executor.submit(() -> binanceRestClient.getOpenInterest(symbol));
             var oiHistF = executor.submit(() -> binanceRestClient.getOpenInterestHist(symbol, "5m", 48));
             var lsrF = executor.submit(() -> binanceRestClient.getLongShortRatio(symbol));
             var forceOrdersF = executor.submit(() -> buildForceOrdersJson(symbol));
@@ -158,7 +156,6 @@ public class CollectDataNode implements NodeAction {
             putIfNotNull(fundingRateHistMap, symbol, safeGet(fundingHistF, "fundingRateHist", deadlineNanos));
             putIfNotNull(orderbookMap, symbol, safeGet(obF, "orderbook", deadlineNanos));
             putIfNotNull(spotOrderbookMap, symbol, safeGet(spotObF, "spotOrderbook", deadlineNanos));
-            putIfNotNull(openInterestMap, symbol, safeGet(oiF, "openInterest", deadlineNanos));
             putIfNotNull(openInterestHistMap, symbol, safeGet(oiHistF, "openInterestHist", deadlineNanos));
             putIfNotNull(longShortRatioMap, symbol, safeGet(lsrF, "longShortRatio", deadlineNanos));
             putIfNotNull(forceOrdersMap, symbol, safeGet(forceOrdersF, "forceOrders", deadlineNanos));
@@ -193,14 +190,13 @@ public class CollectDataNode implements NodeAction {
         String ticker = tickerMap.get(symbol);
         boolean klineOk = kline != null && kline.values().stream().anyMatch(v -> v != null && !v.isBlank());
         boolean dataAvailable = klineOk && ticker != null && !ticker.isBlank();
-        log.info("[Q1.1] collect_data完成 symbol={} futuresKlines={} spotKlines={} dataAvailable={} ticker={} spotTicker={} funding={} fundingHist={} ob={} spotOb={} oi={} oiHist={} lsr={} forceOrders={} topTrader={} takerLsr={} fearGreed={}chars news={}chars 耗时{}ms",
+        log.info("[Q1.1] collect_data完成 symbol={} futuresKlines={} spotKlines={} dataAvailable={} ticker={} spotTicker={} funding={} fundingHist={} ob={} spotOb={} oiHist={} lsr={} forceOrders={} topTrader={} takerLsr={} fearGreed={}chars news={}chars 耗时{}ms",
                 symbol, kline != null ? kline.size() : 0,
                 spotKlineMap.getOrDefault(symbol, Map.of()).size(),
                 dataAvailable,
                 ticker != null, spotTickerMap.containsKey(symbol),
                 fundingRateMap.containsKey(symbol), fundingRateHistMap.containsKey(symbol),
                 orderbookMap.containsKey(symbol), spotOrderbookMap.containsKey(symbol),
-                openInterestMap.containsKey(symbol),
                 openInterestHistMap.containsKey(symbol), longShortRatioMap.containsKey(symbol),
                 forceOrdersMap.containsKey(symbol), topTraderPositionMap.containsKey(symbol),
                 takerLongShortMap.containsKey(symbol), fearGreedData.length(), newsData.length(),
@@ -215,7 +211,6 @@ public class CollectDataNode implements NodeAction {
         result.put("funding_rate_hist_map", fundingRateHistMap);
         result.put("orderbook_map", orderbookMap);
         result.put("spot_orderbook_map", spotOrderbookMap);
-        result.put("open_interest_map", openInterestMap);
         result.put("oi_hist_map", openInterestHistMap);
         result.put("long_short_ratio_map", longShortRatioMap);
         result.put("force_orders_map", forceOrdersMap);

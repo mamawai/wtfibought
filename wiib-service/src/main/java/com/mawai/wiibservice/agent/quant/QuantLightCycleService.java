@@ -14,6 +14,7 @@ import com.mawai.wiibservice.agent.quant.node.CollectDataNode;
 import com.mawai.wiibservice.agent.quant.risk.RiskGate;
 import com.mawai.wiibservice.agent.quant.domain.QuantCycleCompleteEvent;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
+import com.mawai.wiibservice.agent.quant.service.MacroContextService;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
 import com.mawai.wiibservice.config.TradingConfig;
@@ -42,7 +43,7 @@ import java.util.concurrent.*;
  * 轻周期服务：每5min刷新量化信号（D10），零LLM调用（纯计算路径）。
  * <p>
  * 复用上一次重周期的 news_votes、reportJson、regimeConfidence、regimeTransition，
- * regime使用实时数据重算。重新采集市场数据 + 重算特征 + 跑4个纯代码Agent + Judge + RiskGate。
+ * regime使用实时数据重算。重新采集市场数据 + 重算特征 + 跑4个纯代码Agent + news票 + Judge + RiskGate。
  */
 @Slf4j
 @Service
@@ -59,6 +60,7 @@ public class QuantLightCycleService {
     private final QuantForecastCycleMapper forecastCycleMapper;
     private final QuantForecastAdjustmentMapper adjustmentMapper;
     private final FactorWeightOverrideService weightOverrideService;
+    private final MacroContextService macroContextService;
 
     /** 浅LLM新闻刷新用：直接拉 news + runtime chatModel */
     private final BinanceRestClient binanceRestClient;
@@ -118,6 +120,7 @@ public class QuantLightCycleService {
                                    QuantForecastAdjustmentMapper adjustmentMapper,
                                    AiAgentRuntimeManager runtimeManager,
                                    FactorWeightOverrideService weightOverrideService,
+                                   MacroContextService macroContextService,
                                    TradingConfig tradingConfig,
                                    @org.springframework.context.annotation.Lazy PriceVolatilitySentinel volatilitySentinel) {
         this.collectDataNode = new CollectDataNode(
@@ -140,6 +143,7 @@ public class QuantLightCycleService {
         this.weightOverrideService = weightOverrideService;
         this.binanceRestClient = binanceRestClient;
         this.runtimeManager = runtimeManager;
+        this.macroContextService = macroContextService;
         this.volatilitySentinel = volatilitySentinel;
     }
 
@@ -256,9 +260,12 @@ public class QuantLightCycleService {
                     snapshot.qualityFlags(), agentStats, snapshot.regime());
 
             // 6. RiskGate
+            MacroContext macroContext = macroContextService != null
+                    ? macroContextService.get(symbol) : MacroContext.neutral(symbol);
             RiskGate.RiskResult riskResult = RiskGate.apply(
                     forecasts, snapshot.regime(), snapshot.atr(), snapshot.lastPrice(),
-                    snapshot.qualityFlags(), snapshot.fearGreedIndex(), snapshot.dvolIndex(), symbol);
+                    snapshot.qualityFlags(), snapshot.fearGreedIndex(), snapshot.dvolIndex(),
+                    symbol, macroContext.toRiskHint());
 
             // 6.5 关键改动：轻周期不再自我修正，而是「修正父重周期」
             //     AI-Trader 读的是最新重周期的 forecast/signal，轻周期通过 UPDATE 父重周期表反映影响
@@ -284,7 +291,7 @@ public class QuantLightCycleService {
             ForecastResult forecastResult = new ForecastResult(
                     symbol, cycleId, lightCycleStart,
                     lightForecasts, overallDecision, riskStatus,
-                    allVotes, snapshot, cache.reportJson(),
+                    allVotes, snapshot, macroContext, cache.reportJson(),
                     cache.heavyCycleId());  // 轻周期挂载的父重周期
 
             // 8. 持久化

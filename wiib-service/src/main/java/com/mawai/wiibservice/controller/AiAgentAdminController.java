@@ -434,13 +434,13 @@ public class AiAgentAdminController {
             runtimeFeatureToggleService.set(RuntimeFeatureToggleService.QUANT_DEBATE_JUDGE_ENABLED,
                     req.getDebateJudgeEnabled(), operator, "admin quant-config");
         }
-        if (req.getDebateJudgeShadowEnabled() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.QUANT_DEBATE_JUDGE_SHADOW_ENABLED,
-                    req.getDebateJudgeShadowEnabled(), operator, "admin quant-config");
-        }
         if (req.getFactorWeightOverrideEnabled() != null) {
             runtimeFeatureToggleService.set(RuntimeFeatureToggleService.QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED,
                     req.getFactorWeightOverrideEnabled(), operator, "admin quant-config");
+        }
+        if (req.getMacroRiskEnabled() != null) {
+            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.QUANT_MACRO_RISK_ENABLED,
+                    req.getMacroRiskEnabled(), operator, "admin quant-config");
         }
         return Result.ok(buildQuantConfigResponse());
     }
@@ -449,8 +449,8 @@ public class AiAgentAdminController {
         RuntimeToggleSnapshot snapshot = runtimeFeatureToggleService.snapshot();
         QuantConfigResponse resp = new QuantConfigResponse();
         resp.setDebateJudgeEnabled(snapshot.debateJudgeEnabled());
-        resp.setDebateJudgeShadowEnabled(snapshot.debateJudgeShadowEnabled());
         resp.setFactorWeightOverrideEnabled(snapshot.factorWeightOverrideEnabled());
+        resp.setMacroRiskEnabled(snapshot.macroRiskEnabled());
         return resp;
     }
 
@@ -506,15 +506,15 @@ public class AiAgentAdminController {
     @Data
     public static class QuantConfigRequest {
         private Boolean debateJudgeEnabled;
-        private Boolean debateJudgeShadowEnabled;
         private Boolean factorWeightOverrideEnabled;
+        private Boolean macroRiskEnabled;
     }
 
     @Data
     public static class QuantConfigResponse {
         private Boolean debateJudgeEnabled;
-        private Boolean debateJudgeShadowEnabled;
         private Boolean factorWeightOverrideEnabled;
+        private Boolean macroRiskEnabled;
     }
 
 }

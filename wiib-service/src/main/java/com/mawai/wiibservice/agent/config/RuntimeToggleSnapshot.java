@@ -4,8 +4,8 @@ import java.util.List;
 
 public record RuntimeToggleSnapshot(
         boolean debateJudgeEnabled,
-        boolean debateJudgeShadowEnabled,
         boolean factorWeightOverrideEnabled,
+        boolean macroRiskEnabled,
         TradingToggles trading,
         CircuitBreakerToggles circuitBreaker
     ) {

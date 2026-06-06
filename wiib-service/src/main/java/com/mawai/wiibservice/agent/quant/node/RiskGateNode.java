@@ -38,8 +38,11 @@ public class RiskGateNode implements NodeAction {
                 regime, forecasts.size(), qualityFlags, fearGreedIndex, String.format("%.0f", dvolIndex), upstreamRiskStatus);
 
         String symbol = snapshot != null ? snapshot.symbol() : null;
+        MacroContext macroContext = (MacroContext) state.value("macro_context").orElse(null);
+        MacroRiskHint macroRiskHint = macroContext != null ? macroContext.toRiskHint() : MacroRiskHint.neutral();
 
-        RiskGate.RiskResult result = RiskGate.apply(forecasts, regime, atr, lastPrice, qualityFlags, fearGreedIndex, dvolIndex, symbol);
+        RiskGate.RiskResult result = RiskGate.apply(forecasts, regime, atr, lastPrice, qualityFlags,
+                fearGreedIndex, dvolIndex, symbol, macroRiskHint);
         String mergedRiskStatus = mergeRiskStatus(upstreamRiskStatus, result.riskStatus());
 
         for (HorizonForecast f : result.forecasts()) {

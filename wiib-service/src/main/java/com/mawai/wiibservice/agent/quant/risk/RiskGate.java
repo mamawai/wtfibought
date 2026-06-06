@@ -20,6 +20,7 @@ import java.util.List;
 public class RiskGate {
 
     private static final double MAX_DISAGREEMENT = 0.35;
+    public static volatile boolean MACRO_RISK_ENABLED = false;
 
     /**
      * 对全部HorizonForecast做风控裁剪。
@@ -41,6 +42,14 @@ public class RiskGate {
                                     BigDecimal atr, BigDecimal lastPrice,
                                     List<String> qualityFlags, int fearGreedIndex,
                                     double dvolIndex, String symbol) {
+        return apply(forecasts, regime, atr, lastPrice, qualityFlags, fearGreedIndex, dvolIndex, symbol,
+                MacroRiskHint.neutral());
+    }
+
+    public static RiskResult apply(List<HorizonForecast> forecasts, MarketRegime regime,
+                                    BigDecimal atr, BigDecimal lastPrice,
+                                    List<String> qualityFlags, int fearGreedIndex,
+                                    double dvolIndex, String symbol, MacroRiskHint macroRiskHint) {
         if (forecasts == null || forecasts.isEmpty()) {
             return new RiskResult(List.of(), "NO_DATA");
         }
@@ -48,11 +57,14 @@ public class RiskGate {
         double volPenalty = calcVolatilityPenalty(atr, lastPrice, symbol);
         double dataPenalty = calcDataPenalty(qualityFlags);
         double ivPenalty = calcIvPenalty(dvolIndex);
+        MacroRiskHint effectiveMacro = MACRO_RISK_ENABLED && macroRiskHint != null
+                ? macroRiskHint : MacroRiskHint.neutral();
         List<HorizonForecast> clipped = new ArrayList<>(forecasts.size());
         List<String> riskActions = new ArrayList<>();
 
         for (HorizonForecast f : forecasts) {
-            HorizonForecast result = clipSingle(f, regime, volPenalty, dataPenalty, ivPenalty, qualityFlags, fearGreedIndex, riskActions);
+            HorizonForecast result = clipSingle(f, regime, volPenalty, dataPenalty, ivPenalty,
+                    effectiveMacro, qualityFlags, fearGreedIndex, riskActions);
             clipped.add(result);
         }
 
@@ -70,6 +82,7 @@ public class RiskGate {
                                                double volPenalty,
                                                double dataPenalty,
                                                double ivPenalty,
+                                               MacroRiskHint macroRiskHint,
                                                List<String> qualityFlags,
                                                int fearGreedIndex,
                                                List<String> actions) {
@@ -99,6 +112,20 @@ public class RiskGate {
         if (highDisagreement) {
             maxLev = Math.clamp(maxLev / 2, 5, maxLev);
             actions.add("HIGH_DISAGREEMENT_PENALTY_" + f.horizon());
+        }
+
+        if (macroRiskHint != null && !macroRiskHint.neutralHint()) {
+            double budget = Math.clamp(macroRiskHint.budgetMultiplier(), 0.0, 1.0);
+            maxPos *= budget;
+            actions.add("MACRO_BUDGET_" + f.horizon());
+            if (macroRiskHint.macroStressed()) {
+                maxLev = Math.max(5, (int) Math.floor(maxLev * 0.8));
+                actions.add("MACRO_STRESSED_" + f.horizon());
+            }
+            if (macroRiskHint.macroShock()) {
+                maxLev = Math.min(maxLev, 5);
+                actions.add("MACRO_SHOCK_" + f.horizon());
+            }
         }
 
         // 恐惧贪婪极端值 → regime感知惩罚
@@ -144,10 +171,10 @@ public class RiskGate {
             actions.add("HIGH_IV_PENALTY_" + f.horizon());
         }
 
-        log.info("[Q5.clip] {} {} regime={} envFactor={} (vol={} data={} iv={}) qualityFlags={} → lev={} pos={}% ",
+        log.info("[Q5.clip] {} {} regime={} envFactor={} (vol={} data={} iv={} macro={}) qualityFlags={} → lev={} pos={}% ",
                 f.horizon(), f.direction(), regime, String.format("%.2f", envFactor),
                 String.format("%.2f", volPenalty), String.format("%.2f", dataPenalty),
-                String.format("%.2f", ivPenalty), qualityFlags,
+                String.format("%.2f", ivPenalty), macroRiskHint, qualityFlags,
                 maxLev, String.format("%.2f", adjustedPos * 100));
 
         return new HorizonForecast(

@@ -2,7 +2,6 @@ package com.mawai.wiibservice.agent.quant.node;
 
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
-import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibservice.agent.quant.domain.*;
@@ -39,12 +38,6 @@ public class DebateJudgeNode implements NodeAction {
      * 类与workflow节点保留不动，Admin可运行时切回true做前后对比。
      */
     public static volatile boolean ENABLED = false;
-    /**
-     * 辩论影子模式。true=正式辩论关闭时仍跑 Bull/Bear/Judge，但只写 debate_shadow_*。
-     * shadow 不覆盖 horizon_forecasts / overall_decision / risk_status，也不下发 debate_probs，避免影响正式报告与交易链路。
-     */
-    public static volatile boolean SHADOW_ENABLED = false;
-
     private static final BeanOutputConverter<DebateJudgeResponse> JUDGE_CONVERTER =
             new BeanOutputConverter<>(DebateJudgeResponse.class);
 
@@ -65,8 +58,7 @@ public class DebateJudgeNode implements NodeAction {
         List<HorizonForecast> forecasts =
                 (List<HorizonForecast>) state.value("horizon_forecasts").orElse(List.of());
 
-        boolean shadowMode = !ENABLED && SHADOW_ENABLED;
-        if (!ENABLED && !SHADOW_ENABLED) {
+        if (!ENABLED) {
             // D7-B短路：跳过3-call辩论，下发33/34/33中性概率；forecasts/decision/risk_status原样透传
             Map<String, Integer[]> defaultProbs = buildDefaultProbs(forecasts);
             log.info("[Q4.5.disabled] 辩论已禁用(D7-B), 保留原始forecasts, 下发中性概率 forecasts={}", forecasts.size());
@@ -80,15 +72,16 @@ public class DebateJudgeNode implements NodeAction {
         String overallDecision = (String) state.value("overall_decision").orElse("FLAT");
         String riskStatus = (String) state.value("risk_status").orElse("UNKNOWN");
         String regimeTransition = (String) state.value("regime_transition").orElse("NONE");
+        MacroContext macroContext = (MacroContext) state.value("macro_context").orElse(null);
 
-        log.info("[Q4.5.0] debate_judge开始 mode={} forecasts={} votes={} decision={}",
-                shadowMode ? "SHADOW" : "LIVE", forecasts.size(), votes.size(), overallDecision);
+        log.info("[Q4.5.0] debate_judge开始 mode=LIVE forecasts={} votes={} decision={}",
+                forecasts.size(), votes.size(), overallDecision);
 
         if (forecasts.isEmpty()) return Map.of();
 
         try {
             String dataContext = buildDataContext(forecasts, votes, snapshot,
-                    overallDecision, riskStatus, regimeTransition);
+                    overallDecision, riskStatus, regimeTransition, macroContext);
 
             String memoryContext = "暂无历史记忆";
             if (memoryService != null) {
@@ -134,10 +127,9 @@ public class DebateJudgeNode implements NodeAction {
                     judgeResponse != null ? judgeResponse.length() : 0,
                     System.currentTimeMillis() - startMs);
 
-            return applyDebateResult(forecasts, judgeResponse, bullArg, bearArg, riskStatus, startMs, shadowMode);
+            return applyDebateResult(forecasts, judgeResponse, bullArg, bearArg, riskStatus, startMs);
         } catch (Exception e) {
             log.warn("[Q4.5] 辩论流程失败，保留原始裁决: {}", e.getMessage());
-            if (shadowMode) return Map.of("debate_probs", buildDefaultProbs(forecasts));
             return Map.of();
         }
     }
@@ -149,13 +141,16 @@ public class DebateJudgeNode implements NodeAction {
                                      FeatureSnapshot snapshot,
                                      String overallDecision,
                                      String riskStatus,
-                                     String regimeTransition) {
+                                     String regimeTransition,
+                                     MacroContext macroContext) {
         String forecastBlock = buildForecastBlock(forecasts);
         String voteBlock = buildVoteBlock(votes);
         String agentSummaryBlock = buildAgentSummaryBlock(votes);
         String regime = snapshot != null ? snapshot.regime().name() : "UNKNOWN";
         String microBlock = buildMicroBlock(snapshot);
         String qualityText = buildQualityText(snapshot);
+        String macroBlock = macroContext != null && !macroContext.toDebateBlock().isBlank()
+                ? macroContext.toDebateBlock() : "无";
 
         return """
                 【系统裁决结果】
@@ -169,11 +164,12 @@ public class DebateJudgeNode implements NodeAction {
                 %s
                 【市场状态】%s
                 【Regime转换信号】%s
+                【宏观上下文】%s
                 【微结构快照】%s
                 【数据质量】%s""".formatted(
                 forecastBlock, overallDecision, riskStatus,
                 voteBlock, agentSummaryBlock,
-                regime, regimeTransition, microBlock, qualityText);
+                regime, regimeTransition, macroBlock, microBlock, qualityText);
     }
 
     private String buildBullPrompt(String dataContext) {
@@ -279,10 +275,9 @@ public class DebateJudgeNode implements NodeAction {
                                                     String bullArg,
                                                     String bearArg,
                                                     String originalRiskStatus,
-                                                    long startMs,
-                                                    boolean shadowMode) {
+                                                    long startMs) {
         if (llmResponse == null || llmResponse.isBlank()) {
-            return shadowMode ? Map.of("debate_probs", buildDefaultProbs(original)) : Map.of();
+            return Map.of();
         }
 
         try {
@@ -298,9 +293,7 @@ public class DebateJudgeNode implements NodeAction {
             if (horizons == null || horizons.size() != 3) {
                 log.warn("[Q4.5] horizons数组异常(size={}), 保留原始",
                         horizons != null ? horizons.size() : 0);
-                Map<String, Object> fallback = buildDebateSummaryOnly(bullArg, bearArg, judgeReasoning, shadowMode);
-                if (shadowMode) fallback.put("debate_probs", buildDefaultProbs(original));
-                return fallback;
+                return buildDebateSummaryOnly(bullArg, bearArg, judgeReasoning);
             }
 
             // 应用调整（逻辑继承自MetaJudge.applyAdjustments）
@@ -389,25 +382,7 @@ public class DebateJudgeNode implements NodeAction {
             String rebuiltDecision = rebuildDecision(adjusted);
             String rebuiltRiskStatus = rebuildRiskStatus(adjusted, originalRiskStatus);
 
-            // shadow 只输出影子字段，不影响正式 forecast/report/trading 链路
             Map<String, Object> result = new HashMap<>();
-            if (shadowMode) {
-                // 正式报告保持 D7-B disabled 原行为；shadow 概率只写 debate_shadow_probs。
-                result.put("debate_probs", buildDefaultProbs(original));
-                result.put("debate_shadow_forecasts", adjusted);
-                result.put("debate_shadow_decision", rebuiltDecision);
-                result.put("debate_shadow_risk_status", rebuiltRiskStatus);
-                result.put("debate_shadow_summary", buildShadowSummaryJson(
-                        bullArg, bearArg, judgeReasoning, adjusted, rebuiltDecision, rebuiltRiskStatus, debateProbs));
-                if (!debateProbs.isEmpty()) {
-                    result.put("debate_shadow_probs", debateProbs);
-                }
-                log.info("[Q4.5.shadow] 辩论影子裁决完成 shadowDecision={} 耗时{}ms",
-                        rebuiltDecision, System.currentTimeMillis() - startMs);
-                return result;
-            }
-
-            // live 模式才允许覆盖正式字段
             result.put("horizon_forecasts", adjusted);
             result.put("overall_decision", rebuiltDecision);
             result.put("risk_status", rebuiltRiskStatus);
@@ -421,7 +396,6 @@ public class DebateJudgeNode implements NodeAction {
             return result;
         } catch (Exception e) {
             log.warn("[Q4.5] 辩论结果解析失败，保留原始裁决: {}", e.getMessage());
-            if (shadowMode) return Map.of("debate_probs", buildDefaultProbs(original));
             // 返回默认debate_probs (均分)，避免下游缺失
             Map<String, Integer[]> defaultProbs = buildDefaultProbs(original);
             return Map.of("debate_probs", defaultProbs);
@@ -518,45 +492,10 @@ public class DebateJudgeNode implements NodeAction {
         return defaultProbs;
     }
 
-    private Map<String, Object> buildDebateSummaryOnly(String bull, String bear, String judge, boolean shadowMode) {
+    private Map<String, Object> buildDebateSummaryOnly(String bull, String bear, String judge) {
         Map<String, Object> result = new HashMap<>();
-        String key = shadowMode ? "debate_shadow_summary" : "debate_summary";
-        result.put(key, shadowMode
-                ? buildShadowSummaryJson(bull, bear, judge, List.of(), "UNKNOWN", "UNKNOWN", Map.of())
-                : buildDebateSummaryJson(bull, bear, judge));
+        result.put("debate_summary", buildDebateSummaryJson(bull, bear, judge));
         return result;
-    }
-
-    /** shadow 落库摘要：带影子方向/概率，便于后续和 verification 对账。 */
-    private String buildShadowSummaryJson(String bull, String bear, String judge,
-                                          List<HorizonForecast> shadowForecasts,
-                                          String shadowDecision,
-                                          String shadowRiskStatus,
-                                          Map<String, Integer[]> shadowProbs) {
-        JSONObject obj = new JSONObject();
-        obj.put("mode", "SHADOW");
-        obj.put("bullArgument", bull != null ? bull : "");
-        obj.put("bearArgument", bear != null ? bear : "");
-        obj.put("judgeReasoning", judge != null ? judge : "");
-        obj.put("shadowDecision", shadowDecision);
-        obj.put("shadowRiskStatus", shadowRiskStatus);
-
-        JSONArray arr = new JSONArray();
-        for (HorizonForecast f : shadowForecasts) {
-            JSONObject h = new JSONObject();
-            h.put("horizon", f.horizon());
-            h.put("direction", f.direction().name());
-            h.put("confidence", f.confidence());
-            Integer[] probs = shadowProbs != null ? shadowProbs.get(f.horizon()) : null;
-            if (probs != null && probs.length >= 3) {
-                h.put("bullPct", probs[0]);
-                h.put("rangePct", probs[1]);
-                h.put("bearPct", probs[2]);
-            }
-            arr.add(h);
-        }
-        obj.put("shadowHorizons", arr);
-        return obj.toJSONString();
     }
 
     private HorizonForecast withConfidence(HorizonForecast f, double newConf) {

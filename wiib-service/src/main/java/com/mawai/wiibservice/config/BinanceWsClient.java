@@ -1,5 +1,8 @@
 package com.mawai.wiibservice.config;
 
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
+import com.mawai.wiibservice.agent.research.kline.KlineBar;
 import com.mawai.wiibservice.agent.quant.PriceVolatilitySentinel;
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.CryptoOrderService;
@@ -7,6 +10,7 @@ import com.mawai.wiibservice.service.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;
 import com.mawai.wiibservice.service.FuturesLiquidationService;
 import com.mawai.wiibservice.service.FuturesSettlementService;
+import com.mawai.wiibservice.service.KlineStreamCache;
 import com.mawai.wiibservice.service.OrderFlowAggregator;
 import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
 import jakarta.annotation.PostConstruct;
@@ -42,6 +46,7 @@ public class BinanceWsClient implements SmartLifecycle {
     private final OrderFlowAggregator orderFlowAggregator;
     private final DepthStreamCache depthStreamCache;
     private final PriceVolatilitySentinel priceVolatilitySentinel;
+    private final KlineStreamCache klineStreamCache;
 
     private HttpClient httpClient;
     private ScheduledExecutorService scheduler;
@@ -55,6 +60,7 @@ public class BinanceWsClient implements SmartLifecycle {
     private WsConnection forceOrderWs;
     private WsConnection aggTradeWs;
     private WsConnection depthWs;
+    private WsConnection klineWs;
 
     private static final String REDIS_KEY_PREFIX = "market:price:";
     private static final String REDIS_MARK_PRICE_KEY_PREFIX = "market:markprice:";
@@ -93,6 +99,9 @@ public class BinanceWsClient implements SmartLifecycle {
         depthWs = new WsConnection("Depth", this::buildDepthUrl, this::onDepthMessage,
                 ws -> log.info("Depth WS已连接"), () -> {},
                 httpClient, scheduler, shutdown, 60);
+        klineWs = new WsConnection("Kline5m", this::buildKlineUrl, this::onKlineMessage,
+                ws -> log.info("Kline5m WS已连接"), () -> {},
+                httpClient, scheduler, shutdown, 360);
 
         // 启动ws
         spotWs.connect();
@@ -101,6 +110,7 @@ public class BinanceWsClient implements SmartLifecycle {
         forceOrderWs.connect();
         aggTradeWs.connect();
         depthWs.connect();
+        klineWs.connect();
     }
 
     @Override
@@ -114,6 +124,7 @@ public class BinanceWsClient implements SmartLifecycle {
         if (forceOrderWs != null) forceOrderWs.close();
         if (aggTradeWs != null) aggTradeWs.close();
         if (depthWs != null) depthWs.close();
+        if (klineWs != null) klineWs.close();
         if (scheduler != null) scheduler.shutdownNow();
         if (httpClient != null) httpClient.close();
     }
@@ -514,6 +525,16 @@ public class BinanceWsClient implements SmartLifecycle {
         return props.getFuturesWsUrl().replace("/ws", "/public/stream?streams=" + streams);
     }
 
+    private String buildKlineUrl() {
+        String streams = props.getSymbols().stream()
+                .map(s -> s.toLowerCase() + "@kline_5m")
+                .reduce((a, b) -> a + "/" + b).orElse("");
+        if (props.getSymbols().size() == 1) {
+            return props.getFuturesWsUrl().replace("/ws", "/market/ws/" + streams);
+        }
+        return props.getFuturesWsUrl().replace("/ws", "/market/stream?streams=" + streams);
+    }
+
     private void onDepthMessage(String raw) {
         // depth20@100ms 推送的是完整 top20 快照，格式和 REST /fapi/v1/depth 一致
         // 组合流: {"stream":"btcusdt@depth20@100ms","data":{"e":"depthUpdate","E":...,"s":"BTCUSDT","b":[...],"a":[...]}}
@@ -559,6 +580,40 @@ public class BinanceWsClient implements SmartLifecycle {
             if (eEnd > eStart) eventTime = Long.parseLong(depthJson.substring(eStart, eEnd).trim());
         }
         return eventTime;
+    }
+
+    private void onKlineMessage(String raw) {
+        try {
+            JSONObject root = JSON.parseObject(raw);
+            JSONObject data = root.getJSONObject("data");
+            if (data == null) {
+                data = root;
+            }
+            JSONObject k = data.getJSONObject("k");
+            if (k == null || !k.getBooleanValue("x")) {
+                return;
+            }
+            String symbol = data.getString("s");
+            if (symbol == null || symbol.isBlank()) {
+                symbol = k.getString("s");
+            }
+            String interval = k.getString("i");
+            if (symbol == null || interval == null) {
+                return;
+            }
+            KlineBar bar = new KlineBar(
+                    k.getLongValue("t"),
+                    k.getLongValue("T"),
+                    new BigDecimal(k.getString("o")),
+                    new BigDecimal(k.getString("h")),
+                    new BigDecimal(k.getString("l")),
+                    new BigDecimal(k.getString("c")),
+                    new BigDecimal(k.getString("v"))
+            );
+            klineStreamCache.onClosedBar(symbol, interval, bar);
+        } catch (Exception e) {
+            log.warn("[KlineWS] 解析失败: {}", e.getMessage());
+        }
     }
 
 }

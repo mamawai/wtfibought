@@ -66,6 +66,8 @@ public class GenerateReportNode implements NodeAction {
         String riskStatus = (String) state.value("risk_status").orElse("UNKNOWN");
         FeatureSnapshot snapshot =
                 (FeatureSnapshot) state.value("feature_snapshot").orElse(null);
+        MacroContext macroContext =
+                (MacroContext) state.value("macro_context").orElse(null);
         String indicators = StateHelper.stateJson(state, "indicator_map");
         String priceChanges = StateHelper.stateJson(state, "price_change_map");
         int avgConfidence = forecasts.isEmpty() ? 0
@@ -79,7 +81,8 @@ public class GenerateReportNode implements NodeAction {
 
         // ===== Step1: 硬性报告（纯计算，零LLM） =====
         CryptoAnalysisReport hardReport = buildHardReport(
-                symbol, forecasts, votes, filteredNews, overallDecision, riskStatus, snapshot, avgConfidence, debateProbs);
+                symbol, forecasts, votes, filteredNews, overallDecision, riskStatus,
+                snapshot, macroContext, avgConfidence, debateProbs);
         log.info("[Q6.1] 硬性报告构建完成 dirs=[{}/{}/{}] confidence={} positions={} news={} warnings={}",
                 hardReport.getDirection().getUltraShort(), hardReport.getDirection().getShortTerm(),
                 hardReport.getDirection().getMid(), hardReport.getConfidence(),
@@ -131,7 +134,7 @@ public class GenerateReportNode implements NodeAction {
         ForecastResult forecastResult = new ForecastResult(symbol,
                 (String) state.value("cycle_id").orElse("unknown"),
                 snapshot != null ? snapshot.snapshotTime() : java.time.LocalDateTime.now(),
-                forecasts, overallDecision, riskStatus, votes, snapshot, finalReport, null);
+                forecasts, overallDecision, riskStatus, votes, snapshot, macroContext, finalReport, null);
 
         log.info("[Q6.end] generate_report完成 总耗时{}ms", System.currentTimeMillis() - startMs);
 
@@ -155,6 +158,7 @@ public class GenerateReportNode implements NodeAction {
         state.value("news_confidence_stddev").ifPresent(v -> obj.put("newsConfidenceStddev", v));
         state.value("news_low_confidence").ifPresent(v -> obj.put("newsLowConfidence", v));
         state.value("memory_weight_adjustments").ifPresent(v -> obj.put("memoryWeightAdjustments", v));
+        state.value("macro_context").ifPresent(v -> obj.put("macroContext", v));
         return obj.toJSONString();
     }
 
@@ -165,6 +169,7 @@ public class GenerateReportNode implements NodeAction {
                                                  String overallDecision,
                                                  String riskStatus,
                                                  FeatureSnapshot snapshot,
+                                                 MacroContext macroContext,
                                                  int avgConfidence,
                                                  Map<String, Object[]> debateProbs) {
         CryptoAnalysisReport report = new CryptoAnalysisReport();
@@ -178,6 +183,7 @@ public class GenerateReportNode implements NodeAction {
         report.setPositionAdvice(buildPositionAdvice(forecasts));
         report.setRiskWarnings(buildRiskWarnings(forecasts, riskStatus, snapshot));
         report.setConfidence(calculateConfidence(forecasts, avgConfidence));
+        report.setMacroContext(macroContext != null ? macroContext.toReportBlock() : "宏观上下文预热中，暂不介入交易。");
         return report;
     }
 
@@ -235,6 +241,7 @@ public class GenerateReportNode implements NodeAction {
                 【系统置信度】%d%%
                 【风控状态】%s
                 【市场状态】%s
+                【宏观上下文】%s
                 【数据质量】%s
 
                 【Agent投票详情】
@@ -276,7 +283,7 @@ public class GenerateReportNode implements NodeAction {
                 """.formatted(
                 directionBlock, posBlock.toString(),
                 hardReport.getKeyLevels().getSupport(), hardReport.getKeyLevels().getResistance(),
-                hardReport.getConfidence(), riskStatus, regimeText, qualityText,
+                hardReport.getConfidence(), riskStatus, regimeText, hardReport.getMacroContext(), qualityText,
                 voteSummary, indicators, priceChanges, newsBlock.toString(),
                 formatDebateSummary(debateSummary),
                 memorySummary != null ? memorySummary : "");
@@ -290,6 +297,7 @@ public class GenerateReportNode implements NodeAction {
         merged.setPositionAdvice(hardReport.getPositionAdvice());
         merged.setImportantNews(hardReport.getImportantNews());
         merged.setConfidence(hardReport.getConfidence());
+        merged.setMacroContext(hardReport.getMacroContext());
 
         if (llmResponse == null || llmResponse.isBlank()) {
             copyTextFields(merged, hardReport);

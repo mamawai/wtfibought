@@ -15,6 +15,7 @@ import com.mawai.wiibservice.agent.quant.node.*;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import com.mawai.wiibservice.agent.quant.observe.NodeObservationWrapper;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
+import com.mawai.wiibservice.agent.quant.service.MacroContextService;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
 import com.mawai.wiibservice.service.DepthStreamCache;
@@ -31,11 +32,11 @@ import static com.alibaba.cloud.ai.graph.StateGraph.START;
 import static com.alibaba.cloud.ai.graph.action.AsyncNodeAction.node_async;
 
 /**
- * 量化预测工作流：8节点线性串联。
+ * 量化预测工作流：9节点线性串联。
  * <pre>
- * START → collect_data → build_features → regime_review → run_factors → run_judges → debate_judge → risk_gate → generate_report → END
- *              ↑                             ↑LLM浅            ↑              ↑          ↑LLM深                         ↑LLM浅
- *        内部并行采集                    Regime审核     内部5Agent并行   内部3Judge并行  辩论裁决                      报告生成
+ * START → collect_data → build_features → macro_context → regime_review → run_factors → run_judges → debate_judge → risk_gate → generate_report → END
+ *              ↑                             ↑宏观6-24h        ↑LLM浅            ↑              ↑          ↑LLM深                         ↑LLM浅
+ *        内部并行采集                    三腿上下文层       Regime审核     内部5Agent并行   内部3Judge并行  辩论裁决                      报告生成
  * </pre>
  */
 public class QuantForecastWorkflow {
@@ -58,12 +59,13 @@ public class QuantForecastWorkflow {
                                        DepthStreamCache depthStreamCache,
                                        DeribitClient deribitClient,
                                        FactorWeightOverrideService weightOverrideService,
+                                       MacroContextService macroContextService,
                                        LlmCallMode deepCallMode,
                                        LlmCallMode shallowCallMode,
                                        MeterRegistry meterRegistry,
                                        KlineInterval decisionInterval) throws Exception {
 
-        // 5个因子Agent（NewsEventAgent用浅模型）
+        // 5个日内因子Agent；6-24h research 三腿已移到 MacroContext，不再参与方向投票。
         List<FactorAgent> agents = List.of(
                 new MicrostructureAgent(),
                 new MomentumAgent(),
@@ -77,6 +79,8 @@ public class QuantForecastWorkflow {
                         new CollectDataNode(binanceRestClient, forceOrderService, depthStreamCache, deribitClient), meterRegistry)))
                 .addNode("build_features",     node_async(observed("build_features",
                         new BuildFeaturesNode(orderFlowAggregator, decisionInterval), meterRegistry)))
+                .addNode("macro_context",      node_async(observed("macro_context",
+                        new MacroContextNode(macroContextService), meterRegistry)))
                 .addNode("regime_review",      node_async(observed("regime_review",
                         new RegimeReviewNode(shallowChatClient, shallowCallMode, memoryService), meterRegistry)))
                 .addNode("run_factors",        node_async(observed("run_factors",
@@ -93,7 +97,8 @@ public class QuantForecastWorkflow {
 
         workflow.addEdge(START, "collect_data");
         workflow.addEdge("collect_data", "build_features");
-        workflow.addEdge("build_features", "regime_review");
+        workflow.addEdge("build_features", "macro_context");
+        workflow.addEdge("macro_context", "regime_review");
         workflow.addEdge("regime_review", "run_factors");
         workflow.addEdge("run_factors", "run_judges");
         workflow.addEdge("run_judges", "debate_judge");
@@ -124,7 +129,6 @@ public class QuantForecastWorkflow {
             s.put("funding_rate_hist_map", new ReplaceStrategy());
             s.put("orderbook_map", new ReplaceStrategy());
             s.put("spot_orderbook_map", new ReplaceStrategy());
-            s.put("open_interest_map", new ReplaceStrategy());
             s.put("oi_hist_map", new ReplaceStrategy());
             s.put("long_short_ratio_map", new ReplaceStrategy());
             s.put("force_orders_map", new ReplaceStrategy());
@@ -137,6 +141,7 @@ public class QuantForecastWorkflow {
             s.put("option_book_summary", new ReplaceStrategy());
             // BuildFeaturesNode输出
             s.put("feature_snapshot", new ReplaceStrategy());
+            s.put("macro_context", new ReplaceStrategy());
             s.put("indicator_map", new ReplaceStrategy());
             s.put("price_change_map", new ReplaceStrategy());
             // RegimeReviewNode输出
@@ -158,11 +163,6 @@ public class QuantForecastWorkflow {
             // DebateJudgeNode输出
             s.put("debate_summary", new ReplaceStrategy());
             s.put("debate_probs", new ReplaceStrategy());
-            s.put("debate_shadow_summary", new ReplaceStrategy());
-            s.put("debate_shadow_probs", new ReplaceStrategy());
-            s.put("debate_shadow_forecasts", new ReplaceStrategy());
-            s.put("debate_shadow_decision", new ReplaceStrategy());
-            s.put("debate_shadow_risk_status", new ReplaceStrategy());
             // GenerateReportNode输出
             s.put("report", new ReplaceStrategy());
             s.put("hard_report", new ReplaceStrategy());

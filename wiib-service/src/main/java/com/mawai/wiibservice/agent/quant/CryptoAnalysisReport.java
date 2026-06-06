@@ -18,6 +18,7 @@ public class CryptoAnalysisReport {
     private List<String> riskWarnings;
     private int confidence;
     private DebateSummary debateSummary;
+    private String macroContext;
 
     @Data
     public static class DirectionInfo {

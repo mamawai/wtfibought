@@ -25,7 +25,7 @@ public class HorizonJudge {
 
     private static final double EPSILON = 1e-9;
 
-    /** 初始权重表: agent → horizon → weight（每列总和=1.0，按比例从原chart_pattern位置均摊 */
+    /** 初始权重表: agent → horizon → weight（每列总和=1.0）。 */
     private static final Map<String, Map<String, Double>> DEFAULT_WEIGHTS = Map.of(
             "microstructure", Map.of("0_10", 0.35, "10_20", 0.14, "20_30", 0.05),
             "momentum",       Map.of("0_10", 0.25, "10_20", 0.30, "20_30", 0.30),

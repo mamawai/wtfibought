@@ -4,6 +4,7 @@ import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.mawai.wiibservice.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
+import com.mawai.wiibservice.agent.quant.service.MacroContextService;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
 import com.mawai.wiibservice.config.TradingConfig;
@@ -26,6 +27,7 @@ public class QuantGraphFactory {
     private final DepthStreamCache depthStreamCache;
     private final DeribitClient deribitClient;
     private final FactorWeightOverrideService weightOverrideService;
+    private final MacroContextService macroContextService;
     private final ObjectProvider<MeterRegistry> meterRegistryProvider;
     private final TradingConfig tradingConfig;
 
@@ -36,6 +38,7 @@ public class QuantGraphFactory {
                              DepthStreamCache depthStreamCache,
                              DeribitClient deribitClient,
                              FactorWeightOverrideService weightOverrideService,
+                             MacroContextService macroContextService,
                              ObjectProvider<MeterRegistry> meterRegistryProvider,
                              TradingConfig tradingConfig) {
         this.binanceRestClient = binanceRestClient;
@@ -45,6 +48,7 @@ public class QuantGraphFactory {
         this.depthStreamCache = depthStreamCache;
         this.deribitClient = deribitClient;
         this.weightOverrideService = weightOverrideService;
+        this.macroContextService = macroContextService;
         this.meterRegistryProvider = meterRegistryProvider;
         this.tradingConfig = tradingConfig;
     }
@@ -55,7 +59,7 @@ public class QuantGraphFactory {
         ChatClient.Builder shallowClient = ChatClient.builder(chatModel);
         return QuantForecastWorkflow.build(deepClient, shallowClient, binanceRestClient, memoryService,
                 forceOrderService, orderFlowAggregator, depthStreamCache, deribitClient, weightOverrideService,
-                LlmCallMode.STREAMING, LlmCallMode.STREAMING, meterRegistryProvider.getIfAvailable(),
+                macroContextService, LlmCallMode.STREAMING, LlmCallMode.STREAMING, meterRegistryProvider.getIfAvailable(),
                 tradingConfig.getDecisionInterval());
     }
 }

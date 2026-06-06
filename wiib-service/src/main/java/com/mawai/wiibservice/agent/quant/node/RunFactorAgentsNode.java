@@ -17,7 +17,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 6个因子Agent并行执行节点。
+ * 5个因子Agent并行执行节点。
  * 内部使用虚拟线程并行，纯Java Agent超时30s，LLM Agent超时60-200s。
  */
 @Slf4j

@@ -5,6 +5,7 @@ import com.mawai.wiibcommon.entity.AiRuntimeToggle;
 import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
 import com.mawai.wiibservice.agent.quant.node.DebateJudgeNode;
+import com.mawai.wiibservice.agent.quant.risk.RiskGate;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
 import com.mawai.wiibservice.agent.trading.entry.EntryDecisionEngine;
@@ -30,8 +31,8 @@ import java.util.function.Consumer;
 public class RuntimeFeatureToggleService {
 
     public static final String QUANT_DEBATE_JUDGE_ENABLED = "quant.debate_judge.enabled";
-    public static final String QUANT_DEBATE_JUDGE_SHADOW_ENABLED = "quant.debate_judge.shadow_enabled";
     public static final String QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED = "quant.factor_weight_override.enabled";
+    public static final String QUANT_MACRO_RISK_ENABLED = "quant.macro_risk.enabled";
 
     public static final String TRADING_LOW_VOL_ENABLED = "trading.low_vol.enabled";
     public static final String TRADING_PLAYBOOK_EXIT_ENABLED = "trading.playbook_exit.enabled";
@@ -120,9 +121,9 @@ public class RuntimeFeatureToggleService {
     public RuntimeToggleSnapshot snapshot() {
         return new RuntimeToggleSnapshot(
                 get(QUANT_DEBATE_JUDGE_ENABLED, Boolean.class, DebateJudgeNode.ENABLED),
-                get(QUANT_DEBATE_JUDGE_SHADOW_ENABLED, Boolean.class, DebateJudgeNode.SHADOW_ENABLED),
                 get(QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED, Boolean.class,
                         FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED),
+                get(QUANT_MACRO_RISK_ENABLED, Boolean.class, RiskGate.MACRO_RISK_ENABLED),
                 new RuntimeToggleSnapshot.TradingToggles(
                         get(TRADING_LOW_VOL_ENABLED, Boolean.class,
                                 DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED),
@@ -148,11 +149,11 @@ public class RuntimeFeatureToggleService {
         Map<String, ToggleBinding<?>> map = new HashMap<>();
         bind(map, QUANT_DEBATE_JUDGE_ENABLED, Boolean.class, DebateJudgeNode.ENABLED,
                 v -> DebateJudgeNode.ENABLED = v);
-        bind(map, QUANT_DEBATE_JUDGE_SHADOW_ENABLED, Boolean.class, DebateJudgeNode.SHADOW_ENABLED,
-                v -> DebateJudgeNode.SHADOW_ENABLED = v);
         bind(map, QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED, Boolean.class,
                 FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED,
                 v -> FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED = v);
+        bind(map, QUANT_MACRO_RISK_ENABLED, Boolean.class, RiskGate.MACRO_RISK_ENABLED,
+                v -> RiskGate.MACRO_RISK_ENABLED = v);
 
         bind(map, TRADING_LOW_VOL_ENABLED, Boolean.class, DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED,
                 v -> DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED = v);

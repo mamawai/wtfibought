@@ -12,6 +12,7 @@ public record ForecastResult(
         String riskStatus,
         List<AgentVote> allVotes,
         FeatureSnapshot snapshot,    // 快照，用于事后验证
+        MacroContext macroContext,
         Object report,
         String parentCycleId         // 轻周期挂载的父重周期 cycleId；重周期为 null
 ) {}

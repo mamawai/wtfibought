@@ -75,6 +75,22 @@ public record FeatureSnapshot(
         double regimeConfidence,
         String regimeTransition
 ) {
+    public FeatureSnapshot {
+        indicatorsByTimeframe = indicatorsByTimeframe == null ? Map.of() : Map.copyOf(indicatorsByTimeframe);
+        priceChanges = priceChanges == null ? Map.of() : Map.copyOf(priceChanges);
+        newsItems = newsItems == null ? List.of() : List.copyOf(newsItems);
+        qualityFlags = qualityFlags == null ? List.of() : List.copyOf(qualityFlags);
+        if (regime == null) {
+            regime = MarketRegime.RANGE;
+        }
+        if (fearGreedLabel == null) {
+            fearGreedLabel = "UNKNOWN";
+        }
+        if (regimeTransition == null) {
+            regimeTransition = "NONE";
+        }
+    }
+
     public FeatureSnapshot withRegimeReview(MarketRegime newRegime, List<String> newFlags,
                                             double confidence, String transition) {
         return new FeatureSnapshot(symbol, snapshotTime, lastPrice, barHigh, barLow, spotLastPrice,
