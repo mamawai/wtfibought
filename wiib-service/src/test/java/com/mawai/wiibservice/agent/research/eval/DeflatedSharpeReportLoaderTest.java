@@ -1,11 +1,9 @@
 package com.mawai.wiibservice.agent.research.eval;
 
 import com.alibaba.fastjson2.JSON;
-import com.mawai.wiibservice.agent.research.metrics.DeflatedSharpe;
 import com.mawai.wiibservice.agent.research.metrics.ReturnSeries;
 import com.mawai.wiibservice.agent.research.metrics.RiskAdjustedMetrics;
 import com.mawai.wiibservice.agent.research.metrics.SharpeStats;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -30,14 +28,10 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * DSR 多重比较重判 runner（gated -DdsrRun=true，不启 Spring/DB、零重跑）：
- * 默认读 target/research-eval/runs/<最新run>/*.json（兼容旧平铺目录）→ 对每个 (symbol×horizon×strategy) 试验算 Deflated Sharpe，
- * 回答"试了 N 组配置后，最好那条 Sharpe 还显不显著"。复用 ResearchEvalRunner 的 gated 惯例。
- * 核心数学已被 NormalDistribution/SharpeStats/DeflatedSharpe 单测覆盖；此处端到端验证读取+编排。
+ * DSR 报告读取与去重规则单测。
+ * 核心数学由 NormalDistribution/SharpeStats/DeflatedSharpe 单测覆盖，这里只保留本地 JSON 编排校验。
  */
-class DeflatedSharpeRunnerTest {
-
-    private static final double SIGNIFICANCE = 0.95; // 与 spec naive 门槛同口径
+class DeflatedSharpeReportLoaderTest {
 
     /** 一个被搜过的配置：一条 (cell, 预测器) 的样本外收益。 */
     private record Trial(String symbol, int horizon, String name, int t,
@@ -113,74 +107,6 @@ class DeflatedSharpeRunnerTest {
     }
 
     @Test
-    void deflatedSharpeAcrossAllReports() throws Exception {
-        Assumptions.assumeTrue(Boolean.getBoolean("dsrRun"),
-                "skip: add -DdsrRun=true to run DSR multiple-comparison reframe");
-
-        LoadedTrials loaded = loadTrials(resolveInputDir());
-        List<Trial> trials = loaded.trials();
-        assertThat(trials).as("应从已落地报告读到试验: " + loaded.inputDir()).isNotEmpty();
-
-        // —— 主口径 N=全体试验数：跨所有 cell 的 per-period Sharpe 方差 → SR0 → 每条 DSR ——
-        int n = trials.size();
-        SharpeStats[] all = trials.stream().map(Trial::stats).toArray(SharpeStats[]::new);
-        double v = DeflatedSharpe.varianceOfSharpes(all);
-        double sr0 = DeflatedSharpe.expectedMaxSharpe(v, n);
-
-        List<Trial> ranked = trials.stream()
-                .sorted(Comparator.comparingDouble((Trial t) -> t.stats().sharpe()).reversed())
-                .toList();
-
-        System.out.println();
-        System.out.println("========== Deflated Sharpe 多重比较重判 ==========");
-        System.out.printf("输入目录=%s | JSON文件=%d | 有效报告=%d | 使用报告=%d | 忽略重复cell报告=%d%n",
-                loaded.inputDir(), loaded.jsonFiles(), loaded.validReports(), loaded.reportsUsed(),
-                loaded.ignoredDuplicateReports());
-        System.out.printf("试验数 N=%d | Sharpe方差 V=%.6f | 期望最大Sharpe SR0(每期)=%.4f | 显著门槛 DSR≥%.2f%n",
-                n, v, sr0, SIGNIFICANCE);
-        System.out.println("(per-period 口径；N=全部 cell，跨周期、相关且不等长——标准 DSR 简化，方向正确不夸大)");
-        System.out.println("--------------------------------------------------");
-        System.out.printf("%-36s %5s %9s %10s %7s %10s %s%n",
-                "cell/strategy", "T", "SR/期", "年化Sharpe", "naive%", "DSR(N=" + n + ")", "判定");
-        for (Trial tr : ranked) {
-            double dsr = DeflatedSharpe.deflatedSharpe(tr.stats(), sr0);
-            assertThat(dsr).as(tr.label()).isBetween(0.0, 1.0);
-            System.out.printf("%-36s %5d %9.4f %10.2f %7.1f %10.3f %s%n",
-                    tr.label(), tr.t(), tr.stats().sharpe(), tr.annualizedSharpe(),
-                    tr.naivePercentile() * 100, dsr, dsr >= SIGNIFICANCE ? "显著" : "不显著");
-        }
-
-        // —— 敏感性：族内 N=4（同一 cell 的 4 预测器各自做 DSR）——
-        System.out.println("--------------------------------------------------");
-        System.out.println("族内敏感性 N=4 (每 cell 的 4 预测器):");
-        Map<String, List<Trial>> byCell = new TreeMap<>();
-        for (Trial tr : trials) byCell.computeIfAbsent(tr.cell(), k -> new ArrayList<>()).add(tr);
-        for (Map.Entry<String, List<Trial>> e : byCell.entrySet()) {
-            SharpeStats[] fam = e.getValue().stream().map(Trial::stats).toArray(SharpeStats[]::new);
-            double sr0f = DeflatedSharpe.expectedMaxSharpe(DeflatedSharpe.varianceOfSharpes(fam), fam.length);
-            for (Trial tr : e.getValue()) {
-                double dsrF = DeflatedSharpe.deflatedSharpe(tr.stats(), sr0f);
-                System.out.printf("  %-36s SR0(N=%d)=%.4f DSR=%.3f %s%n",
-                        tr.label(), fam.length, sr0f, dsrF, dsrF >= SIGNIFICANCE ? "显著" : "不显著");
-            }
-        }
-
-        // —— 点名候选：BTC-6h onchain_etf_stablecoin（前评估里 Sharpe1.42 / naive94.4% 最接近过线）——
-        trials.stream()
-                .filter(tr -> "BTCUSDT".equals(tr.symbol()) && tr.horizon() == 6
-                        && "onchain_etf_stablecoin".equals(tr.name()))
-                .findFirst()
-                .ifPresent(tr -> {
-                    double dsr = DeflatedSharpe.deflatedSharpe(tr.stats(), sr0);
-                    System.out.println("--------------------------------------------------");
-                    System.out.printf("候选 %s：naive分位=%.1f%%，但 DSR(N=%d)=%.3f → %s%n",
-                            tr.label(), tr.naivePercentile() * 100, n, dsr,
-                            dsr >= SIGNIFICANCE ? "扛住多重检验" : "扛不住多重检验(多看了N组,单条naive门槛失效)");
-                });
-        System.out.println("==================================================");
-    }
-
-    @Test
     void loadTrialsReadsMultiReportsDedupedByDirectionLeg(@TempDir Path dir) throws Exception {
         ReturnSeries all5 = new ReturnSeries("all5", List.of(bd(0.01), bd(-0.005), bd(0.02), bd(0.0)), 1460);
         ReturnSeries fixed3 = new ReturnSeries("fixed3", List.of(bd(0.001), bd(0.0), bd(-0.001), bd(0.002)), 1460);
@@ -244,8 +170,8 @@ class DeflatedSharpeRunnerTest {
         }
         try (Stream<Path> dirs = Files.list(runsDir)) {
             return dirs.filter(Files::isDirectory)
-                    .filter(DeflatedSharpeRunnerTest::hasJson)
-                    .max(DeflatedSharpeRunnerTest::compareRunDir);
+                    .filter(DeflatedSharpeReportLoaderTest::hasJson)
+                    .max(DeflatedSharpeReportLoaderTest::compareRunDir);
         }
     }
 
