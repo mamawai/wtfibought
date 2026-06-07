@@ -33,7 +33,7 @@ public class ResearchEvalController {
     private final StablecoinFlowService stablecoinFlowService;
     private final ResearchEvalService evalService;
 
-    /** 回填 1m K 线：最近 fromDays 天。 */
+    /** 回填默认 5m K 线：最近 fromDays 天。 */
     @PostMapping("/backfill")
     public Result<Integer> backfill(@RequestParam(defaultValue = "BTCUSDT") String symbol,
                                     @RequestParam(defaultValue = "180") int fromDays) {

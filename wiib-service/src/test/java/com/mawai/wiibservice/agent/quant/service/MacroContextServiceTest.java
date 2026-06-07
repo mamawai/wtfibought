@@ -23,12 +23,12 @@ import static org.mockito.Mockito.when;
 class MacroContextServiceTest {
 
     @Test
-    void loadsOneMinuteHistoryAndAggregatesToOneHourMacroLegs() {
+    void loadsFiveMinuteHistoryAsMacroLegFeatures() {
         KlineHistoryStore store = mock(KlineHistoryStore.class);
         long now = System.currentTimeMillis();
-        when(store.latestOpenTime(eq("BTCUSDT"), eq("1m"))).thenReturn(now - 60_000L);
-        when(store.load(eq("BTCUSDT"), eq("1m"), anyLong(), anyLong()))
-                .thenReturn(oneMinuteBars(now, 31));
+        when(store.latestOpenTime(eq("BTCUSDT"), eq("5m"))).thenReturn(now - 5 * 60_000L);
+        when(store.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong()))
+                .thenReturn(fiveMinuteBars(now, 31));
 
         MacroContextService service = new MacroContextService(store);
         service.refreshIfStale("BTCUSDT");
@@ -39,16 +39,16 @@ class MacroContextServiceTest {
         assertThat(context.legs().values())
                 .extracting(MacroContext.Leg::volTier)
                 .doesNotContain(VolatilityRiskTier.UNKNOWN);
-        verify(store).load(eq("BTCUSDT"), eq("1m"), anyLong(), anyLong());
+        verify(store).load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong());
     }
 
     @Test
     void backfillsRecentTailWhenDbIsStaleButNotCold() {
         KlineHistoryStore store = mock(KlineHistoryStore.class);
         long now = System.currentTimeMillis();
-        when(store.latestOpenTime(eq("BTCUSDT"), eq("1m"))).thenReturn(now - 30 * 60_000L);
-        when(store.load(eq("BTCUSDT"), eq("1m"), anyLong(), anyLong()))
-                .thenReturn(oneMinuteBars(now, 31));
+        when(store.latestOpenTime(eq("BTCUSDT"), eq("5m"))).thenReturn(now - 30 * 60_000L);
+        when(store.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong()))
+                .thenReturn(fiveMinuteBars(now, 31));
 
         MacroContextService service = new MacroContextService(store);
         service.refreshIfStale("BTCUSDT");
@@ -60,9 +60,9 @@ class MacroContextServiceTest {
     void klineCloseEventSkipsRefreshWhenMacroContextIsFresh() throws InterruptedException {
         KlineHistoryStore store = mock(KlineHistoryStore.class);
         long now = System.currentTimeMillis();
-        when(store.latestOpenTime(eq("BTCUSDT"), eq("1m"))).thenReturn(now - 60_000L);
-        when(store.load(eq("BTCUSDT"), eq("1m"), anyLong(), anyLong()))
-                .thenReturn(oneMinuteBars(now, 31));
+        when(store.latestOpenTime(eq("BTCUSDT"), eq("5m"))).thenReturn(now - 5 * 60_000L);
+        when(store.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong()))
+                .thenReturn(fiveMinuteBars(now, 31));
 
         MacroContextService service = new MacroContextService(store);
         service.refreshIfStale("BTCUSDT");
@@ -75,15 +75,15 @@ class MacroContextServiceTest {
         verifyNoInteractions(store);
     }
 
-    private static List<KlineBar> oneMinuteBars(long now, int days) {
-        int count = days * 24 * 60;
-        long start = now - count * 60_000L;
+    private static List<KlineBar> fiveMinuteBars(long now, int days) {
+        int count = days * 24 * 12;
+        long start = now - count * 5 * 60_000L;
         return java.util.stream.IntStream.range(0, count)
                 .mapToObj(i -> {
-                    long openTime = start + i * 60_000L;
+                    long openTime = start + i * 5 * 60_000L;
                     BigDecimal open = BigDecimal.valueOf(100.0 + i * 0.001);
                     BigDecimal close = open.add(BigDecimal.valueOf(Math.sin(i / 20.0) * 0.05));
-                    return new KlineBar(openTime, openTime + 59_999L,
+                    return new KlineBar(openTime, openTime + 5 * 60_000L - 1,
                             open, open.add(BigDecimal.valueOf(0.2)), open.subtract(BigDecimal.valueOf(0.2)),
                             close, BigDecimal.TEN);
                 })

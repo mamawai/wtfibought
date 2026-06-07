@@ -1173,7 +1173,7 @@ INSERT INTO strategy_path_status (path, enabled) VALUES
     ('LEGACY_TREND', TRUE)
 ON CONFLICT (path) DO NOTHING;
 
--- ============ kline_history：回测/评估用 1m 基础 K 线落库（research，可复现） ============
+-- ============ kline_history：回测/评估用 5m 基础 K 线落库（research，可复现） ============
 CREATE TABLE IF NOT EXISTS kline_history (
     id            BIGSERIAL PRIMARY KEY,
     symbol        VARCHAR(32)   NOT NULL,

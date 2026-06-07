@@ -167,6 +167,8 @@ public class QuantForecastWorkflow {
             s.put("report", new ReplaceStrategy());
             s.put("hard_report", new ReplaceStrategy());
             s.put("forecast_result", new ReplaceStrategy());
+            s.put("raw_snapshot_json", new ReplaceStrategy());
+            s.put("raw_report_json", new ReplaceStrategy());
             return s;
         };
     }

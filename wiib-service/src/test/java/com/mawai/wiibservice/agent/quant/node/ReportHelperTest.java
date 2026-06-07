@@ -7,6 +7,7 @@ import com.mawai.wiibservice.agent.quant.CryptoAnalysisReport;
 import com.mawai.wiibservice.agent.quant.domain.AgentVote;
 import com.mawai.wiibservice.agent.quant.domain.Direction;
 import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
+import com.mawai.wiibservice.agent.quant.domain.ForecastResult;
 import com.mawai.wiibservice.agent.quant.domain.HorizonForecast;
 import com.mawai.wiibservice.agent.quant.domain.MarketRegime;
 import com.mawai.wiibservice.agent.quant.factor.NewsEventAgent;
@@ -124,6 +125,29 @@ class ReportHelperTest {
         assertThat(obj.getBoolean("newsLowConfidence")).isTrue();
         assertThat(obj.getJSONObject("memoryWeightAdjustments").getDoubleValue("momentum")).isEqualTo(0.2);
         assertThat(obj.getJSONObject("macroContext").getString("status")).isEqualTo("neutral");
+    }
+
+    @Test
+    void forecastResultJsonRoundTripKeepsSnapshotForLightCycleCache() {
+        List<HorizonForecast> horizons = List.of(new HorizonForecast("0_10", Direction.LONG,
+                0.72, 0.5, 0.2, BigDecimal.valueOf(100), BigDecimal.valueOf(101),
+                BigDecimal.valueOf(99), BigDecimal.valueOf(103), BigDecimal.valueOf(105),
+                3, 0.08));
+        List<AgentVote> votes = List.of(new AgentVote("momentum", "0_10", Direction.LONG,
+                0.7, 0.8, 20, 30, List.of("ORDERFLOW"), List.of()));
+        ForecastResult original = new ForecastResult("BTCUSDT", "cycle-1",
+                LocalDateTime.of(2026, 1, 1, 0, 30),
+                horizons, "LONG", "NORMAL", votes, snapshot(), null, hardReport(), null);
+
+        ForecastResult parsed = JSON.parseObject(JSON.toJSONString(original), ForecastResult.class);
+
+        assertThat(parsed.snapshot()).isNotNull();
+        assertThat(parsed.snapshot().symbol()).isEqualTo("BTCUSDT");
+        assertThat(parsed.snapshot().lastPrice()).isEqualByComparingTo("100");
+        assertThat(parsed.snapshot().qualityFlags()).contains("PARTIAL_KLINE_DATA");
+        assertThat(parsed.horizons()).hasSize(1);
+        assertThat(parsed.allVotes()).hasSize(1);
+        assertThat(parsed.report()).isNotNull();
     }
 
     private CryptoAnalysisReport hardReport() {

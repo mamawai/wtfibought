@@ -37,7 +37,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-/** 评估编排：从库加载底层 K线 + 链下序列 → 聚合 5m/15m 决策 bar → 调纯核心 evaluateBars → 写 target/ JSON。 */
+/** 评估编排：从库加载基础 K线 + 链下序列 → 聚合 5m/15m 决策 bar → 调纯核心 evaluateBars → 写 target/ JSON。 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -47,6 +47,7 @@ public class ResearchEvalService {
     private static final BigDecimal NEUTRAL_FEAR_GREED = BigDecimal.valueOf(50);  // 恐惧贪婪=50（中性）
     private static final BigDecimal NEUTRAL_ONCHAIN = BigDecimal.ZERO;            // 链上缺口中性：ETF 流入/稳定币差=0
 
+    private static final String KLINE_INTERVAL = KlineHistoryStore.DEFAULT_INTERVAL;
     // 默认每 5m 出一个预测；6/12/24h 只作为未来持仓验证窗口，不是 K线粒度。
     static final long FEATURE_BAR_MILLIS = 5 * 60_000L;
     static final long FIFTEEN_MINUTE_BAR_MILLIS = 15 * 60_000L;
@@ -61,18 +62,18 @@ public class ResearchEvalService {
     private final KlineHistoryStore store;
     private final MarketSeriesStore seriesStore;
 
-    /** 一窗多预测器同框评估。链下/链上序列(funding/fng/etf/stablecoin)随 1m 一起按 [fromMs,toMs) 加载，逐决策点 as-of 对齐。 */
+    /** 一窗多预测器同框评估。链下/链上序列(funding/fng/etf/stablecoin)随基础 K 线按 [fromMs,toMs) 加载，逐决策点 as-of 对齐。 */
     public ComparisonReport evaluate(String symbol, ForecastHorizon horizon, long fromMs, long toMs,
                                      List<Forecaster> forecasters, EvalParams params) {
-        List<KlineBar> oneMin = store.load(symbol, "1m", fromMs, toMs);
-        List<KlineBar> benchmarkOneMin = BENCHMARK_SYMBOL.equalsIgnoreCase(symbol)
+        List<KlineBar> baseBars = store.load(symbol, KLINE_INTERVAL, fromMs, toMs);
+        List<KlineBar> benchmarkBaseBars = BENCHMARK_SYMBOL.equalsIgnoreCase(symbol)
                 ? List.of()
-                : store.load(BENCHMARK_SYMBOL, "1m", fromMs, toMs);
+                : store.load(BENCHMARK_SYMBOL, KLINE_INTERVAL, fromMs, toMs);
         List<MarketSeriesPoint> funding = seriesStore.load(symbol, SeriesCode.FUNDING, fromMs, toMs);
         List<MarketSeriesPoint> fearGreed = seriesStore.load(MarketSeriesStore.GLOBAL, SeriesCode.FEAR_GREED, fromMs, toMs);
         List<MarketSeriesPoint> etfFlow = seriesStore.load(symbol, SeriesCode.ETF_FLOW, fromMs, toMs);            // 仅 BTC 有；其他 symbol 空→中性
         List<MarketSeriesPoint> stablecoin = seriesStore.load(symbol, SeriesCode.STABLECOIN_DELTA, fromMs, toMs);
-        ComparisonReport report = evaluateBars(symbol, horizon, oneMin, benchmarkOneMin,
+        ComparisonReport report = evaluateBars(symbol, horizon, baseBars, benchmarkBaseBars,
                 funding, fearGreed, etfFlow, stablecoin, forecasters, params);
         writeReport(report);
         return report;
@@ -198,7 +199,7 @@ public class ResearchEvalService {
 
     /**
      * 逐决策点 point-in-time 装配（单/多输出评估共用，保证同一份无泄漏口径）：
-     * 1m → 5m feature bars；按 horizon 间隔采决策点；每点 as-of 链下 + continuous 因子（绝不含未来）+ 未来路径目标。
+     * 基础 K 线 → 5m/15m feature bars；按 horizon 间隔采决策点；每点 as-of 链下 + continuous 因子（绝不含未来）+ 未来路径目标。
      */
     static AssembledPoints assemblePoints(ForecastHorizon horizon, List<KlineBar> oneMin,
                                           List<KlineBar> benchmarkOneMin,

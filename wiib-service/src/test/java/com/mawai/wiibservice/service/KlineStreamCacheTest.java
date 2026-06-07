@@ -2,6 +2,7 @@ package com.mawai.wiibservice.service;
 
 import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 
@@ -17,7 +18,8 @@ class KlineStreamCacheTest {
     @Test
     void storesLatestClosedBarAndPublishesEvent() {
         ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
-        KlineStreamCache cache = new KlineStreamCache(publisher);
+        KlineHistoryStore historyStore = mock(KlineHistoryStore.class);
+        KlineStreamCache cache = new KlineStreamCache(publisher, historyStore);
         KlineBar bar = new KlineBar(1L, 2L, BigDecimal.ONE, BigDecimal.TEN,
                 BigDecimal.ZERO, BigDecimal.valueOf(5), BigDecimal.TEN);
 
@@ -25,6 +27,7 @@ class KlineStreamCacheTest {
 
         assertThat(cache.latestClosed("BTCUSDT", "5m")).contains(bar);
         assertThat(cache.lastClosedMs("BTCUSDT", "5m")).isEqualTo(2L);
+        verify(historyStore).saveClosedBar("BTCUSDT", "5m", bar);
         verify(publisher).publishEvent(any(KlineClosedEvent.class));
     }
 }
