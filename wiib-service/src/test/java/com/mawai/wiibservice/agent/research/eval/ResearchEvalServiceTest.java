@@ -5,11 +5,13 @@ import com.mawai.wiibservice.agent.research.factor.ContinuousFactorVector;
 import com.mawai.wiibservice.agent.research.forecast.EwmaMomentumForecaster;
 import com.mawai.wiibservice.agent.research.forecast.Forecast;
 import com.mawai.wiibservice.agent.research.forecast.Forecaster;
+import com.mawai.wiibservice.agent.research.forecast.HorizonScaledVolForecaster;
 import com.mawai.wiibservice.agent.research.forecast.MultiFactorForecaster;
 import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
 import com.mawai.wiibservice.agent.research.forecast.TrainingSample;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
 import com.mawai.wiibservice.agent.research.series.MarketSeriesPoint;
+import com.mawai.wiibservice.agent.research.stats.VolatilityEstimator;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -17,6 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.within;
 
 class ResearchEvalServiceTest {
@@ -219,6 +222,20 @@ class ResearchEvalServiceTest {
         assertThat(a.points()).isEqualTo(8 * 72 - 72);
         assertThat(a.decisionBars().get(1).openTime() - a.decisionBars().get(0).openTime())
                 .isEqualTo(ResearchEvalService.FEATURE_BAR_MILLIS);
+        assertThat(a.baselineSigmaByPoint()).hasSize(a.points());
+        double expectedSigma = HorizonScaledVolForecaster.scale(
+                VolatilityEstimator.ewmaVolatility(
+                        a.featuresByPoint().get(0).barsUpToNow(), params.lambda()),
+                a.featuresByPoint().get(0), ForecastHorizon.H6);
+        assertThat(a.baselineSigmaByPoint()[0]).isCloseTo(expectedSigma, within(1e-12));
+    }
+
+    @Test
+    void horizonDecisionBarsRequiresHorizonGreaterThanDecisionInterval() {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> ResearchEvalService.horizonDecisionBars(
+                        ForecastHorizon.H6, ForecastHorizon.H6.millis()))
+                .withMessageContaining("horizon 必须大于决策间隔");
     }
 
     @Test

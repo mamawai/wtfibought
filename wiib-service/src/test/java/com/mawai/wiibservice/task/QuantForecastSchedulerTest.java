@@ -5,13 +5,11 @@ import com.mawai.wiibservice.agent.quant.QuantForecastFacade;
 import com.mawai.wiibservice.agent.quant.QuantForecastRunResult;
 import com.mawai.wiibservice.agent.quant.domain.ForecastResult;
 import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
-import com.mawai.wiibservice.agent.quant.domain.QuantCycleCompleteEvent;
 import com.mawai.wiibservice.agent.quant.domain.QuantForecastRequestEvent;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
 import org.junit.jupiter.api.Test;
-import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -19,7 +17,6 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -37,8 +34,7 @@ class QuantForecastSchedulerTest {
         doAnswer(invocation -> {
             enteredRun.countDown();
             releaseRun.await(2, TimeUnit.SECONDS);
-            return new com.mawai.wiibservice.agent.quant.QuantForecastRunResult(
-                    false, false, null, null, null, null, null);
+            return QuantForecastRunResult.graphFailed();
         }).when(facade).run(anyString(), anyString(), org.mockito.ArgumentMatchers.<Map<String, Object>>any());
 
         QuantForecastScheduler scheduler = new QuantForecastScheduler(
@@ -46,7 +42,6 @@ class QuantForecastSchedulerTest {
                 mock(RedisMessageBroadcastService.class),
                 binanceRestClient,
                 mock(PriceVolatilitySentinel.class),
-                mock(ApplicationEventPublisher.class),
                 new FakeKlineHistoryStore());
 
         long closeTime = System.currentTimeMillis();
@@ -61,16 +56,15 @@ class QuantForecastSchedulerTest {
     }
 
     @Test
-    void sentinelRequestPublishesCompleteEventAndPreventsWatchdogDuplicate() throws Exception {
+    void sentinelRequestRunsForecastAndPreventsWatchdogDuplicate() throws Exception {
         BinanceRestClient binanceRestClient = mock(BinanceRestClient.class);
         QuantForecastFacade facade = mock(QuantForecastFacade.class);
-        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         FakeKlineHistoryStore store = new FakeKlineHistoryStore();
         long closeTime = System.currentTimeMillis();
         store.latestCloseTime = closeTime;
         store.latestOpenTime = closeTime - KlineHistoryStore.DEFAULT_BAR_MILLIS + 1;
 
-        doAnswer(invocation -> new QuantForecastRunResult(true, true, null,
+        doAnswer(invocation -> QuantForecastRunResult.completed(null,
                 new ForecastResult("BTCUSDT", "cycle-1", LocalDateTime.now(),
                         List.of(), "FLAT", "NORMAL", List.of(), null, null, null, null),
                 null, null, null))
@@ -81,17 +75,12 @@ class QuantForecastSchedulerTest {
                 mock(RedisMessageBroadcastService.class),
                 binanceRestClient,
                 mock(PriceVolatilitySentinel.class),
-                eventPublisher,
                 store);
 
         scheduler.onForecastRequest(new QuantForecastRequestEvent(this, "btcusdt", 0L, "sentinel", true));
 
         verify(facade, timeout(1000).times(1))
                 .run(anyString(), anyString(), org.mockito.ArgumentMatchers.<Map<String, Object>>any());
-        verify(eventPublisher, timeout(1000)).publishEvent(argThat(event ->
-                event instanceof QuantCycleCompleteEvent complete
-                        && "BTCUSDT".equals(complete.getSymbol())
-                        && "research".equals(complete.getCycleType())));
 
         scheduler.watchdogFallback();
 

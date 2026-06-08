@@ -162,27 +162,37 @@ public class AiAgentRuntimeManager {
     /**
      * 量化调用统一入口：支持传入额外初始状态（如共享的FGI数据）；LLM异常时自动降级到default配置重试
      */
-    public Optional<OverAllState> invokeQuantWithFallback(String symbol, String threadId, Map<String, Object> extraState) throws Exception {
+    public Optional<OverAllState> invokeQuantWithFallback(String symbol, String threadId, Map<String, Object> extraState) {
+        Map<String, Object> initialState = buildInitialQuantState(symbol, extraState);
+        RunnableConfig config = RunnableConfig.builder().threadId(threadId).build();
         try {
-            Map<String, Object> initialState = new HashMap<>(Map.of("target_symbol", symbol));
-            if (extraState != null) initialState.putAll(extraState);
-            return currentQuantGraph()
-                    .invoke(initialState, RunnableConfig.builder().threadId(threadId).build());
+            return currentQuantGraph().invoke(initialState, config);
         } catch (RestClientException e) {
+            // 只对模型/provider HTTP层异常切fallback；节点逻辑异常不换模型掩盖。
             log.warn("量化LLM异常，降级到default配置重试 symbol={}", symbol, e);
 
-            CompiledGraph fb;
             try {
-                fb = currentFallbackGraph();
-            } catch (IllegalStateException noFallback) {
+                // fallback graph 使用 default 模型/API Key 重新跑完整量化workflow，不做断点续跑。
+                return currentFallbackGraph().invoke(initialState, config);
+            } catch (Exception fallbackError) {
+                e.addSuppressed(fallbackError);
+                log.warn("量化fallback不可用或执行失败 symbol={} msg={}",
+                        symbol, fallbackError.toString(), fallbackError);
                 throw e;
             }
-
-            Map<String, Object> initialState = new HashMap<>(Map.of("target_symbol", symbol));
-            if (extraState != null) initialState.putAll(extraState);
-            return fb.invoke(initialState,
-                    RunnableConfig.builder().threadId(threadId).build());
+        } catch (Exception e) {
+            throw new IllegalStateException("量化Graph执行失败 symbol=" + symbol, e);
         }
+    }
+
+    private static Map<String, Object> buildInitialQuantState(String symbol, Map<String, Object> extraState) {
+        Map<String, Object> initialState = new HashMap<>();
+        if (extraState != null) {
+            initialState.putAll(extraState);
+        }
+        // symbol 参数是权威来源，防止 extraState 误覆盖 target_symbol。
+        initialState.put("target_symbol", symbol);
+        return initialState;
     }
 
     /**

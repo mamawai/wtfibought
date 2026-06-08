@@ -5,7 +5,6 @@ import com.mawai.wiibservice.agent.research.benchmark.BenchmarkCalculator;
 import com.mawai.wiibservice.agent.research.forecast.MarketRegime;
 import com.mawai.wiibservice.agent.research.forecast.MultiOutputForecast;
 import com.mawai.wiibservice.agent.research.forecast.MultiOutputForecaster;
-import com.mawai.wiibservice.agent.research.forecast.HorizonScaledVolForecaster;
 import com.mawai.wiibservice.agent.research.forecast.VolatilityRiskContext;
 import com.mawai.wiibservice.agent.research.forecast.VolatilityRiskSummary;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
@@ -17,7 +16,6 @@ import com.mawai.wiibservice.agent.research.metrics.VolForecastScore;
 import com.mawai.wiibservice.agent.research.metrics.ForecastAccuracyComparison;
 import com.mawai.wiibservice.agent.research.metrics.VolCalibrationReport;
 import com.mawai.wiibservice.agent.research.series.MarketSeriesPoint;
-import com.mawai.wiibservice.agent.research.stats.VolatilityEstimator;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -102,7 +100,7 @@ public final class MultiOutputEvalService {
         evalProgress.update("assemble", 1, 1);
         List<KlineBar> decisionBars = a.decisionBars();
         int points = a.points();
-        double lambda = params.lambda();
+        double[] baselineSigmaByPoint = a.baselineSigmaByPoint();
         int rollingVolWindow = ResearchEvalService.barsForDuration(ROLLING_VOL_LOOKBACK_MILLIS, a.decisionBarMillis());
         int volLossDiffMaxLag = Math.max(VOL_LOSS_DIFF_MIN_LAG, a.horizonDecisionBars());
 
@@ -134,8 +132,8 @@ public final class MultiOutputEvalService {
                 constCount++;
             }
             constSigmaByPoint[i] = constCount > 0 ? Math.sqrt(constSumSq / constCount) : 0.0;
-            double baselineSigma = horizonEwmaSigma(a.featuresByPoint().get(i), horizon, lambda);
-            prevEwmaSigmaByPoint[i] = i >= 1 ? horizonEwmaSigma(a.featuresByPoint().get(i - 1), horizon, lambda) : 0.0;
+            double baselineSigma = baselineSigmaByPoint[i];
+            prevEwmaSigmaByPoint[i] = i >= 1 ? baselineSigmaByPoint[i - 1] : 0.0;
             rollingSigmaByPoint[i] = rollingSigma(realizedReturnSqPrefix, knownReturnEnd, rollingVolWindow);
             MarketRegime sampleRegime = a.samplesByPoint().get(i).realizedRegime();
             if (sampleRegime != null) {
@@ -276,13 +274,6 @@ public final class MultiOutputEvalService {
         Map<MarketRegime, Integer> counts = new EnumMap<>(MarketRegime.class);
         for (MarketRegime r : regimes) counts.merge(r, 1, Integer::sum);
         return counts;
-    }
-
-    private static double horizonEwmaSigma(com.mawai.wiibservice.agent.research.forecast.ResearchFeatures features,
-                                           ForecastHorizon horizon,
-                                           double lambda) {
-        return HorizonScaledVolForecaster.scale(
-                VolatilityEstimator.ewmaVolatility(features.barsUpToNow(), lambda), features, horizon);
     }
 
     private static double[] squaredPrefix(double[] values) {

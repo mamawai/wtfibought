@@ -8,7 +8,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
-import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -28,13 +27,13 @@ public class KlineStreamCache {
         if (symbol == null || symbol.isBlank() || interval == null || interval.isBlank() || bar == null) {
             return;
         }
-        String normalizedSymbol = symbol.toUpperCase(Locale.ROOT);
-        String normalizedInterval = interval.toLowerCase(Locale.ROOT);
-        latestByKey.put(key(normalizedSymbol, normalizedInterval), new ClosedBar(bar, System.currentTimeMillis()));
-        persistDefaultInterval(normalizedSymbol, normalizedInterval, bar);
-        eventPublisher.publishEvent(new KlineClosedEvent(this, normalizedSymbol, normalizedInterval, bar.closeTime()));
-        log.debug("[KlineWS] closed symbol={} interval={} closeTime={}",
-                normalizedSymbol, normalizedInterval, bar.closeTime());
+        latestByKey.put(key(symbol, interval), new ClosedBar(bar, System.currentTimeMillis()));
+        if (KlineHistoryStore.DEFAULT_INTERVAL.equals(interval)) {
+            // 异步落库，不占WS回调线程；下游预测管线经HTTP采集(秒级)后才读historyStore，无竞态
+            Thread.startVirtualThread(() -> persistDefaultInterval(symbol, interval, bar));
+        }
+        eventPublisher.publishEvent(new KlineClosedEvent(this, symbol, interval, bar.closeTime()));
+        log.info("[KlineWS] closed symbol={} interval={} closeTime={}", symbol, interval, bar.closeTime());
     }
 
     public Optional<KlineBar> latestClosed(String symbol, String interval) {
@@ -59,8 +58,8 @@ public class KlineStreamCache {
     }
 
     private static String key(String symbol, String interval) {
-        String s = symbol == null ? "" : symbol.toUpperCase(Locale.ROOT);
-        String i = interval == null ? "" : interval.toLowerCase(Locale.ROOT);
+        String s = symbol == null ? "" : symbol;
+        String i = interval == null ? "" : interval;
         return s + ":" + i;
     }
 }

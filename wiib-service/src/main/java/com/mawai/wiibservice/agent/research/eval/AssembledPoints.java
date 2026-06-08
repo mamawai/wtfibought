@@ -15,6 +15,7 @@ import java.util.List;
  * longBarrierReturnsByPoint[i] = 三隔栏 long 目标；
  * pathOutcomesByPoint[i] = 未来 horizon 的 1m 路径验证结果；
  * samplesByPoint[i] = features + 三隔栏收益 + 未来 horizon 原始收益（后两者只给训练窗 fit 用）。
+ * baselineSigmaByPoint[i] = 决策当下的 EWMA horizon σ，复用给标签与 vol 基准，避免重复扫回看窗。
  */
 record AssembledPoints(
         List<KlineBar> decisionIntervalBars,
@@ -26,6 +27,7 @@ record AssembledPoints(
         List<ResearchFeatures> featuresByPoint,
         List<BigDecimal> longBarrierReturnsByPoint,
         List<HorizonPathOutcome> pathOutcomesByPoint,
-        List<TrainingSample> samplesByPoint
+        List<TrainingSample> samplesByPoint,
+        double[] baselineSigmaByPoint
 ) {
 }

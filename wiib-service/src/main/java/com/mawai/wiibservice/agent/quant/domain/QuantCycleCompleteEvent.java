@@ -7,7 +7,7 @@ import org.springframework.context.ApplicationEvent;
 public class QuantCycleCompleteEvent extends ApplicationEvent {
 
     private final String symbol;
-    private final String cycleType; // 当前主链路使用 "research"，保留字段兼容旧事件消费者。
+    private final String cycleType; // 兼容旧交易事件入口；research 不作为交易触发信号。
 
     public QuantCycleCompleteEvent(Object source, String symbol, String cycleType) {
         super(source);

@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.agent.research.forecast;
 
 import com.mawai.wiibservice.agent.research.ForecastHorizon;
+import com.mawai.wiibservice.agent.research.factor.FactorMath;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
 
 import java.util.ArrayList;
@@ -59,7 +60,7 @@ public record VolatilityRiskContext(
             tier = VolatilityRiskTier.UNKNOWN;
             flags.add("VOL_HISTORY_SHORT");
         } else {
-            percentile = percentileRank(expectedVolatility, absReturns);
+            percentile = FactorMath.percentileRank(expectedVolatility, absReturns);
             tier = tier(percentile);
             if (tier == VolatilityRiskTier.ELEVATED) {
                 flags.add("VOL_ELEVATED");
@@ -88,7 +89,7 @@ public record VolatilityRiskContext(
         for (int i = horizonBars; i < bars.size(); i++) {
             double start = bars.get(i - horizonBars).close().doubleValue();
             double end = bars.get(i).close().doubleValue();
-            out[i - horizonBars] = start > 0.0 && end > 0.0 ? Math.abs(Math.log(end / start)) : 0.0;
+            out[i - horizonBars] = Math.abs(FactorMath.logReturn(end, start));
         }
         return out;
     }
@@ -98,20 +99,7 @@ public record VolatilityRiskContext(
         KlineBar last = bars.get(bars.size() - 1);
         KlineBar prev = bars.get(bars.size() - 2);
         long interval = last.openTime() - prev.openTime();
-        return interval > 0L ? interval : 0L;
-    }
-
-    private static double percentileRank(double current, double[] window) {
-        int less = 0;
-        int equal = 0;
-        for (double v : window) {
-            if (v < current) {
-                less++;
-            } else if (v == current) {
-                equal++;
-            }
-        }
-        return (less + 0.5 * equal) / window.length;
+        return Math.max(interval, 0L);
     }
 
     private static VolatilityRiskTier tier(double percentile) {

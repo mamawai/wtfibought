@@ -17,12 +17,11 @@ import org.springframework.stereotype.Component;
 
 import com.mawai.wiibcommon.constant.QuantConstants;
 
-import com.mawai.wiibservice.agent.quant.domain.QuantCycleCompleteEvent;
 import org.springframework.context.event.EventListener;
-import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
@@ -34,12 +33,11 @@ public class QuantForecastScheduler {
     private final RedisMessageBroadcastService broadcastService;
     private final BinanceRestClient binanceRestClient;
     private final PriceVolatilitySentinel priceVolatilitySentinel;
-    private final ApplicationEventPublisher eventPublisher;
     private final KlineHistoryStore historyStore;
 
     /** 每个 symbol 最近成功处理的 5m closeTime。 */
     private final Map<String, Long> lastForecastedCloseTime = new ConcurrentHashMap<>();
-    private final java.util.Set<String> runningForecastKeys = ConcurrentHashMap.newKeySet();
+    private final Set<String> runningForecastKeys = ConcurrentHashMap.newKeySet();
 
     /**
      * 主触发：5m KlineClosedEvent → 跑完整 H6/H12/H24 forecast pipeline。
@@ -47,11 +45,8 @@ public class QuantForecastScheduler {
      */
     @EventListener
     public void onKlineClosed(KlineClosedEvent event) {
-        if (event == null || !"5m".equalsIgnoreCase(event.interval())) {
-            return;
-        }
-        String symbol = normalizeSymbol(event.symbol());
-        triggerForecast(symbol, event.closeTime(), fetchFearGreedOnce(), "kline_close", false);
+        if (event == null || !"5m".equalsIgnoreCase(event.interval())) return;
+        triggerForecast(event.symbol(), event.closeTime(), fetchFearGreedOnce(), "kline_close", false);
     }
 
     @EventListener
@@ -100,28 +95,22 @@ public class QuantForecastScheduler {
     }
 
     private long resolveCloseTime(String symbol, long requestedCloseTime) {
-        if (requestedCloseTime > 0) {
-            return requestedCloseTime;
-        }
+        if (requestedCloseTime > 0) return requestedCloseTime;
         Long latestClose = historyStore.latestCloseTime(symbol, KlineHistoryStore.DEFAULT_INTERVAL);
         return latestClose != null ? latestClose : System.currentTimeMillis();
     }
 
     private void triggerForecast(String symbol, long closeTime, String fearGreedData, String source, boolean force) {
         String normalized = normalizeSymbol(symbol);
-        if (closeTime <= 0) {
-            closeTime = resolveCloseTime(normalized, closeTime);
-        }
+        closeTime = resolveCloseTime(normalized, closeTime);
         long lastDone = lastForecastedCloseTime.getOrDefault(normalized, 0L);
         if (!force && lastDone >= closeTime) {
-            log.debug("[Scheduler] 已处理 closeTime 跳过 source={} symbol={} closeTime={}",
-                    source, normalized, closeTime);
+            log.info("[Scheduler] 已处理 closeTime 跳过 source={} symbol={} closeTime={}", source, normalized, closeTime);
             return;
         }
         String runningKey = normalized + ":" + closeTime;
         if (!runningForecastKeys.add(runningKey)) {
-            log.debug("[Scheduler] closeTime处理中跳过 source={} symbol={} closeTime={}",
-                    source, normalized, closeTime);
+            log.info("[Scheduler] closeTime处理中跳过 source={} symbol={} closeTime={}", source, normalized, closeTime);
             return;
         }
         long finalCloseTime = closeTime;
@@ -134,58 +123,50 @@ public class QuantForecastScheduler {
         });
     }
 
-    private boolean runForecast(String symbol, String fearGreedData, long closeTime, String source) {
-        String normalized = normalizeSymbol(symbol);
-        log.info("预测开始 symbol={} closeTime={}", normalized, closeTime);
+    private void runForecast(String symbol, String fearGreedData, long closeTime, String source) {
+        log.info("预测开始 symbol={} closeTime={}", symbol, closeTime);
         try {
-            QuantForecastRunResult result = quantForecastFacade.run(normalized,
-                    source + "-" + normalized + "-" + closeTime,
+            QuantForecastRunResult result = quantForecastFacade.run(symbol,
+                    source + "-" + symbol + "-" + closeTime,
                     Map.of("fear_greed_data", fearGreedData,
                             "kline_close_time", closeTime,
                             "forecast_source", source));
             if (!result.graphReturned()) {
-                log.warn("预测无结果 symbol={}", normalized);
-                return false;
+                log.warn("预测无结果 symbol={}", symbol);
+                return;
             }
 
             if (!result.dataAvailable()) {
-                log.warn("预测数据采集失败 symbol={}", normalized);
-                return false;
+                log.warn("预测数据采集失败 symbol={}", symbol);
+                return;
             }
 
             ForecastResult forecastResult = result.forecastResult();
             if (forecastResult != null) {
                 // 更新哨兵 ATR 缓存
                 if (forecastResult.snapshot() != null) {
-                    priceVolatilitySentinel.updateAtr(normalized, forecastResult.snapshot().atr());
+                    priceVolatilitySentinel.updateAtr(symbol, forecastResult.snapshot().atr());
                 }
 
                 if (result.report() != null) {
-                    broadcastService.broadcastQuantSignal(normalized, JSONUtil.toJsonStr(result.report()));
+                    broadcastService.broadcastQuantSignal(symbol, JSONUtil.toJsonStr(result.report()));
                 }
 
-                log.info("预测完成 symbol={} decision={}", normalized, forecastResult.overallDecision());
-                lastForecastedCloseTime.merge(normalized, closeTime, Math::max);
-                try {
-                    eventPublisher.publishEvent(new QuantCycleCompleteEvent(this, normalized, "research"));
-                } catch (Exception eventError) {
-                    log.warn("预测完成事件发布异常 symbol={} msg={}", normalized, eventError.toString());
-                }
-                return true;
+                log.info("预测完成 symbol={} decision={}", symbol, forecastResult.overallDecision());
+                // research 完成只标记 forecast 幂等，不发布交易触发事件。
+                lastForecastedCloseTime.merge(symbol, closeTime, Math::max);
             } else {
-                log.warn("预测无ForecastResult symbol={}", normalized);
-                return false;
+                log.warn("预测无ForecastResult symbol={}", symbol);
             }
         } catch (Exception e) {
-            log.error("预测异常 symbol={}", normalized, e);
-            return false;
+            log.error("预测异常 symbol={}", symbol, e);
         }
     }
 
+    //  manual trigger
     public void runForecast(String symbol) {
-        String normalized = normalizeSymbol(symbol);
-        Long latestClose = historyStore.latestCloseTime(normalized, KlineHistoryStore.DEFAULT_INTERVAL);
-        triggerForecast(normalized, latestClose != null ? latestClose : System.currentTimeMillis(),
+        Long latestClose = historyStore.latestCloseTime(symbol, KlineHistoryStore.DEFAULT_INTERVAL);
+        triggerForecast(symbol, latestClose != null ? latestClose : System.currentTimeMillis(),
                 "{}", "manual", true);
     }
 

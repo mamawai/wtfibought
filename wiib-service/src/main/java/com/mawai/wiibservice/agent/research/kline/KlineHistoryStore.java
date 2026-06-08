@@ -51,24 +51,18 @@ public class KlineHistoryStore extends ServiceImpl<KlineHistoryMapper, KlineHist
 
     /** 回填 [fromMs, toMs) 的默认 5m K 线。endTime 向前翻页直到越过 fromMs。返回新增/尝试写入行数。 */
     public int backfill(String symbol, long fromMs, long toMs) {
-        return backfill(symbol, DEFAULT_INTERVAL, fromMs, toMs);
-    }
-
-    /** 显式 interval 回填保留给离线研究；live 主口径默认只用 5m。 */
-    public int backfill(String symbol, String intervalCode, long fromMs, long toMs) {
         String normalizedSymbol = normalizeSymbol(symbol);
-        String normalizedInterval = normalizeInterval(intervalCode);
         long cursor = toMs;
         int total = 0;
         List<KlineHistory> buffer = new ArrayList<>(FLUSH);
         while (cursor > fromMs) {
-            String json = binanceRestClient.getFuturesKlines(normalizedSymbol, normalizedInterval, PAGE, cursor);
+            String json = binanceRestClient.getFuturesKlines(normalizedSymbol, DEFAULT_INTERVAL, PAGE, cursor);
             List<KlineBar> bars = parseRawFuturesKlines(json);
             if (bars.isEmpty()) break;
-            long oldest = bars.get(0).openTime();
+            long oldest = bars.getFirst().openTime();
             for (KlineBar b : bars) {
                 if (b.openTime() < fromMs || b.closeTime() >= toMs) continue; // 只落闭合K线，跳过当前未收完bar
-                buffer.add(toEntity(normalizedSymbol, normalizedInterval, b));
+                buffer.add(toEntity(normalizedSymbol, DEFAULT_INTERVAL, b));
             }
             if (buffer.size() >= FLUSH) {
                 total += baseMapper.batchInsertIgnore(buffer);
@@ -78,18 +72,20 @@ public class KlineHistoryStore extends ServiceImpl<KlineHistoryMapper, KlineHist
             cursor = oldest - 1;   // 下一页：比本页最老 bar 再早 1ms
         }
         if (!buffer.isEmpty()) total += baseMapper.batchInsertIgnore(buffer);
-        log.info("backfill {} {} [{}, {}) 行数={}", normalizedSymbol, normalizedInterval, fromMs, toMs, total);
+        log.info("backfill {} {} [{}, {}) 行数={}", normalizedSymbol, DEFAULT_INTERVAL, fromMs, toMs, total);
         return total;
     }
 
-    /** 实时闭合 K 线落库；调用方先写库再发事件，下游才能读到最新 5m。 */
-    public int saveClosedBar(String symbol, String intervalCode, KlineBar bar) {
+    /**
+     * 实时闭合 K 线落库；调用方先写库再发事件，下游才能读到最新 5m。
+     */
+    public void saveClosedBar(String symbol, String intervalCode, KlineBar bar) {
         if (bar == null) {
-            return 0;
+            return;
         }
         String normalizedSymbol = normalizeSymbol(symbol);
         String normalizedInterval = normalizeInterval(intervalCode);
-        return baseMapper.batchInsertIgnore(List.of(toEntity(normalizedSymbol, normalizedInterval, bar)));
+        baseMapper.batchInsertIgnore(List.of(toEntity(normalizedSymbol, normalizedInterval, bar)));
     }
 
     /** 加载 [fromMs, toMs) 的指定周期 K 线，按 openTime 升序。 */
@@ -119,9 +115,9 @@ public class KlineHistoryStore extends ServiceImpl<KlineHistoryMapper, KlineHist
 
     public Long latestCloseTime(String symbol, String intervalCode) {
         KlineHistory row = baseMapper.selectOne(new LambdaQueryWrapper<KlineHistory>()
-                .eq(KlineHistory::getSymbol, normalizeSymbol(symbol))
-                .eq(KlineHistory::getIntervalCode, normalizeInterval(intervalCode))
-                .orderByDesc(KlineHistory::getCloseTime)
+                .eq(KlineHistory::getSymbol, symbol)
+                .eq(KlineHistory::getIntervalCode, intervalCode)
+                .orderByDesc(KlineHistory::getOpenTime)   // 走唯一索引(symbol,interval_code,open_time)，免filesort
                 .last("LIMIT 1"));
         return row != null ? row.getCloseTime() : null;
     }

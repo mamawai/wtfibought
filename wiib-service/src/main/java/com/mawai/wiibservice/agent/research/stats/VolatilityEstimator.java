@@ -1,5 +1,6 @@
 package com.mawai.wiibservice.agent.research.stats;
 
+import com.mawai.wiibservice.agent.research.factor.FactorMath;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
 
 import java.util.List;
@@ -21,7 +22,7 @@ public final class VolatilityEstimator {
         double prevClose = bars.get(0).close().doubleValue();
         for (int i = 1; i < bars.size(); i++) {
             double c = bars.get(i).close().doubleValue();
-            double r = Math.log(c / prevClose);
+            double r = FactorMath.logReturn(c, prevClose);
             prevClose = c;
             if (!seeded) {
                 var = r * r;
@@ -44,7 +45,7 @@ public final class VolatilityEstimator {
         double prevClose = bars.get(0).close().doubleValue();
         for (int i = 1; i < bars.size(); i++) {
             double c = bars.get(i).close().doubleValue();
-            double r = Math.log(c / prevClose);
+            double r = FactorMath.logReturn(c, prevClose);
             prevClose = c;
             sumSq += r * r;
         }
@@ -64,7 +65,7 @@ public final class VolatilityEstimator {
         double prevClose = bars.get(bars.size() - use - 1).close().doubleValue();
         for (int i = bars.size() - use; i < bars.size(); i++) {
             double c = bars.get(i).close().doubleValue();
-            double r = Math.log(c / prevClose);
+            double r = FactorMath.logReturn(c, prevClose);
             prevClose = c;
             sumSq += r * r;
         }

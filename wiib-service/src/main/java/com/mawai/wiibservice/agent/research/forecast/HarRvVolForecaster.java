@@ -1,5 +1,6 @@
 package com.mawai.wiibservice.agent.research.forecast;
 
+import com.mawai.wiibservice.agent.research.factor.FactorMath;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
 
 import java.time.Duration;
@@ -109,10 +110,10 @@ public final class HarRvVolForecaster implements VolForecaster {
     private static double[] realizedVariance(List<KlineBar> bars) {
         if (bars == null || bars.size() < 2) return new double[0];
         double[] out = new double[bars.size() - 1];
-        double prev = bars.get(0).close().doubleValue();
+        double prev = bars.getFirst().close().doubleValue();
         for (int i = 1; i < bars.size(); i++) {
             double close = bars.get(i).close().doubleValue();
-            double r = Math.log(close / prev);
+            double r = FactorMath.logReturn(close, prev);
             out[i - 1] = r * r;
             prev = close;
         }

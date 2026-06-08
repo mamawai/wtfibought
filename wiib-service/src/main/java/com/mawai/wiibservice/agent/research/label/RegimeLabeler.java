@@ -1,5 +1,6 @@
 package com.mawai.wiibservice.agent.research.label;
 
+import com.mawai.wiibservice.agent.research.factor.FactorMath;
 import com.mawai.wiibservice.agent.research.forecast.MarketRegime;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
 import com.mawai.wiibservice.agent.research.stats.VolatilityEstimator;
@@ -44,9 +45,9 @@ public final class RegimeLabeler {
             return MarketRegime.RANGING; // 路径全平：无收益、无方向
         }
         // 趋势：路径效率 = 净对数收益 / 整段已实现波动。高=同向净走，低=来回抵消。与 baseline 无关、bar 数稳健。
-        double first = futurePath.get(0).close().doubleValue();
-        double last = futurePath.get(futurePath.size() - 1).close().doubleValue();
-        double netReturn = Math.log(last / first);
+        double first = futurePath.getFirst().close().doubleValue();
+        double last = futurePath.getLast().close().doubleValue();
+        double netReturn = FactorMath.logReturn(last, first);
         double directionality = Math.abs(netReturn) / realizedVol;
         if (directionality >= directionalityThreshold) {
             return netReturn >= 0 ? MarketRegime.TRENDING_UP : MarketRegime.TRENDING_DOWN;

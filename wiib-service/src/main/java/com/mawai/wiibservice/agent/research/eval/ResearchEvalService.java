@@ -240,6 +240,7 @@ public class ResearchEvalService {
         List<BigDecimal> longBarrierReturnsByPoint = new ArrayList<>(points);
         List<HorizonPathOutcome> pathOutcomesByPoint = new ArrayList<>(points);
         List<TrainingSample> samplesByPoint = new ArrayList<>(points);
+        double[] baselineSigmaByPoint = new double[points];
         for (int point = 0; point < points; point++) {
             int featureIndex = decisionFeatureIndexes.get(point);
             KlineBar decisionBar = featureBars.get(featureIndex);
@@ -260,6 +261,7 @@ public class ResearchEvalService {
             List<KlineBar> path = pathBars(oneMin, ti, horizon.millis());
             double sigma = HorizonScaledVolForecaster.scale(
                     VolatilityEstimator.ewmaVolatility(features.barsUpToNow(), params.lambda()), features, horizon);
+            baselineSigmaByPoint[point] = sigma;
             BarrierLabel label = sigma > 0
                     ? TripleBarrierLabeler.label(entry, params.k(), sigma, path)
                     : BarrierLabel.VERTICAL;
@@ -275,11 +277,15 @@ public class ResearchEvalService {
         }
         return new AssembledPoints(featureBars, decisionBars, List.copyOf(decisionFeatureIndexes),
                 horizonFeatureBars, decisionBarMillis, points, featuresByPoint,
-                longBarrierReturnsByPoint, pathOutcomesByPoint, samplesByPoint);
+                longBarrierReturnsByPoint, pathOutcomesByPoint, samplesByPoint, baselineSigmaByPoint);
     }
 
     static int horizonDecisionBars(ForecastHorizon horizon, long decisionBarMillis) {
         long millis = horizon.millis();
+        if (millis <= decisionBarMillis) {
+            throw new IllegalArgumentException("horizon 必须大于决策间隔: " + horizon
+                    + " vs " + decisionBarMillis + "ms");
+        }
         if (millis % decisionBarMillis != 0) {
             throw new IllegalArgumentException("horizon 必须能被决策K线整除: horizon=" + horizon
                     + " decisionBarMillis=" + decisionBarMillis);

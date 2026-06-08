@@ -43,11 +43,10 @@ class KlineStreamCacheTest {
         }
 
         @Override
-        public int saveClosedBar(String symbol, String intervalCode, KlineBar bar) {
+        public void saveClosedBar(String symbol, String intervalCode, KlineBar bar) {
             savedSymbol = symbol;
             savedInterval = intervalCode;
             savedBar = bar;
-            return 1;
         }
     }
 }

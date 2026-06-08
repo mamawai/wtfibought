@@ -44,9 +44,19 @@ class SeriesAlignerTest {
     }
 
     @Test
+    void asOfPointReturnsTimestampAndValue() {
+        MarketSeriesPoint point = SeriesAligner.asOfPoint(series(), 250L);
+
+        assertThat(point).isNotNull();
+        assertThat(point.ts()).isEqualTo(200L);
+        assertThat(point.value()).isEqualByComparingTo("20");
+    }
+
+    @Test
     void beforeFirstPointReturnsNeutral() {
         // 决策点早于首点：无任何已发布数据 → 中性默认
         assertThat(SeriesAligner.asOf(series(), 50L, NEUTRAL)).isEqualByComparingTo("50");
+        assertThat(SeriesAligner.asOfPoint(series(), 50L)).isNull();
     }
 
     @Test

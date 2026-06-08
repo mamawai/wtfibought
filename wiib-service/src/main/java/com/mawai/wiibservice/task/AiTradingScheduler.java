@@ -119,6 +119,10 @@ public class AiTradingScheduler {
     @EventListener
     public void onQuantCycleComplete(QuantCycleCompleteEvent event) {
         if (aiUserId.get() == 0) return;
+        if ("research".equalsIgnoreCase(event.getCycleType())) {
+            log.debug("[AI-Trader] research分析完成不触发交易 symbol={}", event.getSymbol());
+            return;
+        }
         String symbol = event.getSymbol();
         TradingCycleSubmitResult result = submitTradingCycle(List.of(symbol));
         log.info("[AI-Trader] 量化{}周期完成→提交交易 symbol={} cycleNo={} items={}",

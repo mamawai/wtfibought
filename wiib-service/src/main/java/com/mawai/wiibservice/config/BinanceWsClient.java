@@ -582,6 +582,7 @@ public class BinanceWsClient implements SmartLifecycle {
         return eventTime;
     }
 
+    // ── Kline ──
     private void onKlineMessage(String raw) {
         try {
             JSONObject root = JSON.parseObject(raw);

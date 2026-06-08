@@ -17,7 +17,16 @@ public final class SeriesAligner {
      * ts == asOfTs 算"已发布/已知"（合法，非泄漏）；无满足点（序列空 / asOfTs 早于首点）→ neutralDefault。
      */
     public static BigDecimal asOf(List<MarketSeriesPoint> series, long asOfTs, BigDecimal neutralDefault) {
-        if (series == null || series.isEmpty()) return neutralDefault;
+        MarketSeriesPoint point = asOfPoint(series, asOfTs);
+        return point == null ? neutralDefault : point.value();
+    }
+
+    /**
+     * as-of：返回 ts ≤ asOfTs 的最近原始点；无满足点返回 null。
+     * 调用方需要观测时间判断 stale 时用这个，避免先找 value 再线性扫一遍时间戳。
+     */
+    public static MarketSeriesPoint asOfPoint(List<MarketSeriesPoint> series, long asOfTs) {
+        if (series == null || series.isEmpty()) return null;
         // 二分找最大的 ts ≤ asOfTs（floor）；序列升序，绝不返回 ts > asOfTs 的未来值
         int lo = 0, hi = series.size() - 1, ans = -1;
         while (lo <= hi) {
@@ -29,6 +38,6 @@ public final class SeriesAligner {
                 hi = mid - 1;
             }
         }
-        return ans < 0 ? neutralDefault : series.get(ans).value();
+        return ans < 0 ? null : series.get(ans);
     }
 }

@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.agent.research.metrics;
 
 import com.mawai.wiibservice.agent.research.factor.ContinuousFactorVector;
+import com.mawai.wiibservice.agent.research.factor.FactorMath;
 import com.mawai.wiibservice.agent.research.forecast.MarketRegime;
 import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
 import com.mawai.wiibservice.agent.research.forecast.TrainingSample;
@@ -85,11 +86,15 @@ public final class RegimeFeatureDiagnostics {
         }
         int lookbackBars = barsForTrailingLookback(bars);
         List<KlineBar> window = bars.subList(Math.max(0, bars.size() - lookbackBars), bars.size());
-        double netReturn = logReturn(window.get(window.size() - 1), window.get(0));
-        double realizedVol = realizedVol(window);
+        double netReturn = FactorMath.logReturn(
+                window.get(window.size() - 1).close().doubleValue(),
+                window.get(0).close().doubleValue());
+        double realizedVol = VolatilityEstimator.realizedVolatility(window);
         double directionality = realizedVol > 0.0 ? Math.abs(netReturn) / realizedVol : 0.0;
         double signedDirectionality = Math.copySign(directionality, netReturn);
-        double lastAbsReturn = Math.abs(logReturn(bars.get(bars.size() - 1), bars.get(bars.size() - 2)));
+        double lastAbsReturn = Math.abs(FactorMath.logReturn(
+                bars.get(bars.size() - 1).close().doubleValue(),
+                bars.get(bars.size() - 2).close().doubleValue()));
         double sigma = VolatilityEstimator.ewmaVolatility(bars, 0.94);
         double lastShockRatio = sigma > 0.0 ? lastAbsReturn / sigma : 0.0;
 
@@ -150,7 +155,7 @@ public final class RegimeFeatureDiagnostics {
     private static double percentile(double[] sorted, double p) {
         if (sorted.length == 0) return 0.0;
         if (sorted.length == 1) return sorted[0];
-        double pos = Math.max(0.0, Math.min(1.0, p)) * (sorted.length - 1);
+        double pos = Math.clamp(p, 0.0, 1.0) * (sorted.length - 1);
         int lo = (int) Math.floor(pos);
         int hi = (int) Math.ceil(pos);
         if (lo == hi) return sorted[lo];
@@ -174,21 +179,6 @@ public final class RegimeFeatureDiagnostics {
         if (Double.isFinite(value)) {
             out.add(new NamedValue(name, value));
         }
-    }
-
-    private static double logReturn(KlineBar last, KlineBar first) {
-        double c = last.close().doubleValue();
-        double p = first.close().doubleValue();
-        return c > 0.0 && p > 0.0 ? Math.log(c / p) : 0.0;
-    }
-
-    private static double realizedVol(List<KlineBar> bars) {
-        double sumSq = 0.0;
-        for (int i = 1; i < bars.size(); i++) {
-            double r = logReturn(bars.get(i), bars.get(i - 1));
-            sumSq += r * r;
-        }
-        return Math.sqrt(sumSq);
     }
 
     private static double square(double value) {
@@ -218,7 +208,7 @@ public final class RegimeFeatureDiagnostics {
 
     public record Report(int n, Map<MarketRegime, Integer> classCounts, List<FeatureReport> features) {
         public List<FeatureReport> topFeatures(int limit) {
-            return features.subList(0, Math.min(Math.max(0, limit), features.size()));
+            return features.subList(0, Math.clamp(limit, 0, features.size()));
         }
     }
 

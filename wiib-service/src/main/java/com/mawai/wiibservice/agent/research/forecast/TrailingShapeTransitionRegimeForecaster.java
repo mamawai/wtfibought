@@ -1,5 +1,6 @@
 package com.mawai.wiibservice.agent.research.forecast;
 
+import com.mawai.wiibservice.agent.research.factor.FactorMath;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
 import com.mawai.wiibservice.agent.research.stats.VolatilityEstimator;
 
@@ -152,42 +153,25 @@ public final class TrailingShapeTransitionRegimeForecaster implements RegimeFore
         }
         List<KlineBar> window = bars.subList(bars.size() - lookbackBars, bars.size());
         double baselineSigma = VolatilityEstimator.ewmaVolatility(bars, 0.94);
-        double lastAbsReturn = absReturn(window.get(window.size() - 1), window.get(window.size() - 2));
+        double lastAbsReturn = Math.abs(FactorMath.logReturn(
+                window.get(window.size() - 1).close().doubleValue(),
+                window.get(window.size() - 2).close().doubleValue()));
         if (baselineSigma > 0.0 && lastAbsReturn > shockMultiple * baselineSigma) {
             return MarketRegime.SHOCK;
         }
 
-        double realizedVol = realizedVol(window);
+        double realizedVol = VolatilityEstimator.realizedVolatility(window);
         if (realizedVol <= 0.0) {
             return MarketRegime.RANGING;
         }
         double first = window.get(0).close().doubleValue();
         double last = window.get(window.size() - 1).close().doubleValue();
-        double netReturn = first > 0.0 && last > 0.0 ? Math.log(last / first) : 0.0;
+        double netReturn = FactorMath.logReturn(last, first);
         double directionality = Math.abs(netReturn) / realizedVol;
         if (directionality >= directionalityThreshold) {
             return netReturn >= 0.0 ? MarketRegime.TRENDING_UP : MarketRegime.TRENDING_DOWN;
         }
         return MarketRegime.RANGING;
-    }
-
-    private static double absReturn(KlineBar current, KlineBar previous) {
-        double c = current.close().doubleValue();
-        double p = previous.close().doubleValue();
-        return c > 0.0 && p > 0.0 ? Math.abs(Math.log(c / p)) : 0.0;
-    }
-
-    private static double realizedVol(List<KlineBar> bars) {
-        double sumSq = 0.0;
-        for (int i = 1; i < bars.size(); i++) {
-            double c = bars.get(i).close().doubleValue();
-            double p = bars.get(i - 1).close().doubleValue();
-            if (c > 0.0 && p > 0.0) {
-                double r = Math.log(c / p);
-                sumSq += r * r;
-            }
-        }
-        return Math.sqrt(sumSq);
     }
 
     private static MarketRegime bestRegime(int[] counts) {

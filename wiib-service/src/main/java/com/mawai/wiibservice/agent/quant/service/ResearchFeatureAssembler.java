@@ -25,7 +25,7 @@ import java.util.List;
  * 按 point-in-time 对齐到决策 K线 closeTime，缺数据写中性值+quality flag。
  *
  * <p>与回测路径 {@code ResearchEvalService.assemblePoints()} 的关键区别：
- * live 直接读 {@code factor_history}，再用 {@link SeriesAligner#asOf(List, long, BigDecimal)}
+ * live 直接读 {@code factor_history}，再用 {@link SeriesAligner#asOfPoint(List, long)}
  * 按 {@code observed_at <= decisionTime} 做 point-in-time floor join。</p>
  */
 @Slf4j
@@ -40,6 +40,12 @@ public class ResearchFeatureAssembler {
     /** ETF/稳定币缺口中性=0：无净流入/供给变化信号 */
     static final BigDecimal NEUTRAL_EXTERNAL = BigDecimal.ZERO;
 
+    /** funding 8h 一次，查 3 天足够容忍短断档，也避免拿太旧持仓成本。 */
+    private static final Duration FUNDING_LOOKBACK = Duration.ofDays(3);
+    /** FNG 日级且更新稳定，查 7 天即可区分 missing 与短暂延迟。 */
+    private static final Duration FNG_LOOKBACK = Duration.ofDays(7);
+    /** ETF/稳定币日级但源更杂，查 10 天容忍周末/源站延迟，stale 仍单独打标。 */
+    private static final Duration EXTERNAL_FLOW_LOOKBACK = Duration.ofDays(10);
     /** 日级因子超过此阈值视为过期（2天未更新），标记 STALE */
     private static final Duration DAILY_STALE_THRESHOLD = Duration.ofDays(2);
     /** 资金费超过此阈值视为过期（16h=2个funding周期+缓冲），标记 STALE */
@@ -70,7 +76,7 @@ public class ResearchFeatureAssembler {
                     List.of("FEATURE_BARS_EMPTY"));
         }
 
-        long decisionTime = bars5m.get(bars5m.size() - 1).closeTime();
+        long decisionTime = bars5m.getLast().closeTime();
         List<String> qualityFlags = new ArrayList<>();
 
         double fundingRate = alignFunding(symbol, decisionTime, qualityFlags);
@@ -92,7 +98,7 @@ public class ResearchFeatureAssembler {
 
     private double alignFunding(String symbol, long decisionTime, List<String> flags) {
         AlignedFactor aligned = align(symbol, SeriesCode.FUNDING.factorName(), decisionTime,
-                Duration.ofDays(3), NEUTRAL_FUNDING);
+                FUNDING_LOOKBACK, NEUTRAL_FUNDING);
         if (aligned.missing()) {
             flags.add("FUNDING_MISSING");
             return NEUTRAL_FUNDING.doubleValue();
@@ -105,7 +111,7 @@ public class ResearchFeatureAssembler {
 
     private int alignFearGreed(long decisionTime, List<String> flags) {
         AlignedFactor aligned = align(MarketSeriesStore.GLOBAL, SeriesCode.FEAR_GREED.factorName(), decisionTime,
-                Duration.ofDays(7), NEUTRAL_FEAR_GREED);
+                FNG_LOOKBACK, NEUTRAL_FEAR_GREED);
         if (aligned.missing()) {
             flags.add("FNG_MISSING");
             return NEUTRAL_FEAR_GREED.intValue();
@@ -118,7 +124,7 @@ public class ResearchFeatureAssembler {
 
     private double alignEtfFlow(String symbol, long decisionTime, List<String> flags) {
         AlignedFactor aligned = align(symbol, SeriesCode.ETF_FLOW.factorName(), decisionTime,
-                Duration.ofDays(10), NEUTRAL_EXTERNAL);
+                EXTERNAL_FLOW_LOOKBACK, NEUTRAL_EXTERNAL);
         if (aligned.missing()) {
             flags.add("ETF_MISSING");
             return NEUTRAL_EXTERNAL.doubleValue();
@@ -131,7 +137,7 @@ public class ResearchFeatureAssembler {
 
     private double alignStablecoinDelta(String symbol, long decisionTime, List<String> flags) {
         AlignedFactor aligned = align(symbol, SeriesCode.STABLECOIN_DELTA.factorName(), decisionTime,
-                Duration.ofDays(10), NEUTRAL_EXTERNAL);
+                EXTERNAL_FLOW_LOOKBACK, NEUTRAL_EXTERNAL);
         if (aligned.missing()) {
             flags.add("STABLECOIN_MISSING");
             return NEUTRAL_EXTERNAL.doubleValue();
@@ -144,12 +150,13 @@ public class ResearchFeatureAssembler {
 
     private AlignedFactor align(String symbol, String factorName, long decisionTime,
                                 Duration lookback, BigDecimal neutralDefault) {
+        // selectRange 是 observed_at < to；+1ns 让同一毫秒的观测点合法进入 as-of。
         LocalDateTime to = LocalDateTime.ofInstant(Instant.ofEpochMilli(decisionTime), ZoneOffset.UTC)
                 .plusNanos(1);
         LocalDateTime from = to.minus(lookback);
         List<FactorHistory> rows = factorHistoryMapper.selectRange(symbol, factorName, from, to);
         if (rows == null || rows.isEmpty()) {
-            return new AlignedFactor(neutralDefault, Instant.EPOCH.toEpochMilli(), true);
+            return AlignedFactor.missing(neutralDefault);
         }
 
         List<MarketSeriesPoint> series = rows.stream()
@@ -157,19 +164,11 @@ public class ResearchFeatureAssembler {
                 .map(row -> new MarketSeriesPoint(toEpochMs(row.getObservedAt()), row.getFactorValue()))
                 .toList();
         if (series.isEmpty()) {
-            return new AlignedFactor(neutralDefault, Instant.EPOCH.toEpochMilli(), true);
+            return AlignedFactor.missing(neutralDefault);
         }
 
-        BigDecimal value = SeriesAligner.asOf(series, decisionTime, neutralDefault);
-        long observedMs = Instant.EPOCH.toEpochMilli();
-        for (MarketSeriesPoint point : series) {
-            if (point.ts() <= decisionTime) {
-                observedMs = point.ts();
-            } else {
-                break;
-            }
-        }
-        return new AlignedFactor(value, observedMs, observedMs == Instant.EPOCH.toEpochMilli());
+        MarketSeriesPoint point = SeriesAligner.asOfPoint(series, decisionTime);
+        return point == null ? AlignedFactor.missing(neutralDefault) : AlignedFactor.observed(point);
     }
 
     /** UTC LocalDateTime → epoch ms（与 MarketSeriesStore.toMs 同口径） */
@@ -178,5 +177,13 @@ public class ResearchFeatureAssembler {
         return ldt.toInstant(ZoneOffset.UTC).toEpochMilli();
     }
 
-    private record AlignedFactor(BigDecimal value, long observedMs, boolean missing) {}
+    private record AlignedFactor(BigDecimal value, long observedMs, boolean missing) {
+        private static AlignedFactor missing(BigDecimal neutralDefault) {
+            return new AlignedFactor(neutralDefault, Instant.EPOCH.toEpochMilli(), true);
+        }
+
+        private static AlignedFactor observed(MarketSeriesPoint point) {
+            return new AlignedFactor(point.value(), point.ts(), false);
+        }
+    }
 }

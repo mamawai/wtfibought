@@ -9,8 +9,10 @@ import com.mawai.wiibservice.agent.research.kline.KlineBar;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -29,9 +31,8 @@ class MacroContextServiceTest {
         store.loadBars = fiveMinuteBars(now, 31);
 
         MacroContextService service = new MacroContextService(store, assembler);
-        service.refreshIfStale("BTCUSDT");
 
-        MacroContext context = service.get("BTCUSDT");
+        MacroContext context = service.computeNow("BTCUSDT", now);
         assertThat(context.stale()).isFalse();
         assertThat(context.legs()).containsKeys(ForecastHorizon.H6, ForecastHorizon.H12, ForecastHorizon.H24);
         assertThat(context.legs().values())
@@ -51,7 +52,7 @@ class MacroContextServiceTest {
         store.loadBars = fiveMinuteBars(now, 31);
 
         MacroContextService service = new MacroContextService(store, assembler);
-        service.refreshIfStale("BTCUSDT");
+        service.computeNow("BTCUSDT", now);
 
         assertThat(store.backfillCalls).isEqualTo(1);
     }
@@ -65,14 +66,27 @@ class MacroContextServiceTest {
         store.loadBars = fiveMinuteBars(now, 31);
 
         MacroContextService service = new MacroContextService(store, assembler);
-        service.refreshIfStale("BTCUSDT");
-        assertThat(service.get("BTCUSDT").stale()).isFalse();
+        assertThat(service.computeNow("BTCUSDT", now).stale()).isFalse();
 
         store.clearCalls();
         service.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", now));
         Thread.sleep(100);
 
         assertThat(store.totalCalls()).isZero();
+    }
+
+    @Test
+    void lightRefreshSchedulesLongBackfillWhenHistoryIsCold() throws InterruptedException {
+        FakeKlineHistoryStore store = new FakeKlineHistoryStore();
+        store.backfillEntered = new CountDownLatch(1);
+        ResearchFeatureAssembler assembler = stubAssembler();
+        long now = System.currentTimeMillis();
+
+        MacroContextService service = new MacroContextService(store, assembler);
+        service.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", now));
+
+        assertThat(store.backfillEntered.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(store.backfillCalls).isEqualTo(1);
     }
 
     @Test
@@ -97,7 +111,7 @@ class MacroContextServiceTest {
 
         MacroContextService service = new MacroContextService(store, assembler);
 
-        assertThat(service.get("BTCUSDT").stale()).isTrue();
+        service.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", now));
         assertThat(store.firstLoadEntered.await(1, TimeUnit.SECONDS)).isTrue();
 
         MacroContext sync = service.computeNow("BTCUSDT", syncCloseTime);
@@ -106,9 +120,17 @@ class MacroContextServiceTest {
         store.releaseFirstLoad.countDown();
         Thread.sleep(200);
 
-        MacroContext cached = service.get("BTCUSDT");
+        MacroContext cached = cachedContext(service, "BTCUSDT");
         assertThat(cached.qualityFlags()).contains("SYNC_NEW");
         assertThat(cached.qualityFlags()).doesNotContain("BACKGROUND_OLD");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static MacroContext cachedContext(MacroContextService service, String symbol) throws Exception {
+        Field field = MacroContextService.class.getDeclaredField("cache");
+        field.setAccessible(true);
+        Map<String, MacroContext> cache = (Map<String, MacroContext>) field.get(service);
+        return cache.get(symbol);
     }
 
     /** 返回中性外生因子的 assembler（测试不关心外生因子具体值，只验证 research core 能跑通） */
@@ -143,6 +165,7 @@ class MacroContextServiceTest {
         private List<KlineBar> secondLoadBars;
         private CountDownLatch firstLoadEntered;
         private CountDownLatch releaseFirstLoad;
+        private CountDownLatch backfillEntered;
         private int loadCalls;
         private int backfillCalls;
         private int latestOpenTimeCalls;
@@ -184,6 +207,9 @@ class MacroContextServiceTest {
         @Override
         public int backfill(String symbol, long fromMs, long toMs) {
             backfillCalls++;
+            if (backfillEntered != null) {
+                backfillEntered.countDown();
+            }
             return 1;
         }
 
