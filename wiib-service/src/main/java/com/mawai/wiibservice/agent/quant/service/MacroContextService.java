@@ -41,7 +41,9 @@ public class MacroContextService {
     private final KlineHistoryStore historyStore;
     private final ResearchFeatureAssembler featureAssembler;
     private final Map<String, MacroContext> cache = new ConcurrentHashMap<>();
-    private final Set<String> recomputing = ConcurrentHashMap.newKeySet();
+    private final Map<String, Long> cacheAsOfTime = new ConcurrentHashMap<>();
+    private final Set<String> backgroundRefreshes = ConcurrentHashMap.newKeySet();
+    private final Map<String, Object> syncLocks = new ConcurrentHashMap<>();
 
     @PostConstruct
     public void warmup() {
@@ -70,7 +72,7 @@ public class MacroContextService {
         if (current != null && !expired(current)) {
             return;
         }
-        recompute(normalized, System.currentTimeMillis(), false);
+        recomputeInBackground(normalized, System.currentTimeMillis(), false);
     }
 
     /**
@@ -80,7 +82,12 @@ public class MacroContextService {
     public MacroContext computeNow(String symbol, long decisionCloseTime) {
         String normalized = normalize(symbol);
         long toTime = decisionCloseTime > 0 ? decisionCloseTime + 1 : System.currentTimeMillis();
-        MacroContext context = recompute(normalized, toTime, true);
+        Object lock = syncLocks.computeIfAbsent(normalized, ignored -> new Object());
+        MacroContext context;
+        synchronized (lock) {
+            // 主链路按本轮 closeTime 同步计算；后台 TTL 刷新不能把它挡回旧缓存。
+            context = recomputeInternal(normalized, toTime, true);
+        }
         return context != null ? context : cache.getOrDefault(normalized, MacroContext.neutral(normalized));
     }
 
@@ -99,13 +106,21 @@ public class MacroContextService {
 
     private void refreshAsync(String symbol, boolean allowLongBackfill) {
         String normalized = normalize(symbol);
-        Thread.startVirtualThread(() -> recompute(normalized, System.currentTimeMillis(), allowLongBackfill));
+        Thread.startVirtualThread(() -> recomputeInBackground(normalized, System.currentTimeMillis(), allowLongBackfill));
     }
 
-    private MacroContext recompute(String symbol, long toTime, boolean allowLongBackfill) {
-        if (!recomputing.add(symbol)) {
+    private MacroContext recomputeInBackground(String symbol, long toTime, boolean allowLongBackfill) {
+        if (!backgroundRefreshes.add(symbol)) {
             return cache.get(symbol);
         }
+        try {
+            return recomputeInternal(symbol, toTime, allowLongBackfill);
+        } finally {
+            backgroundRefreshes.remove(symbol);
+        }
+    }
+
+    private MacroContext recomputeInternal(String symbol, long toTime, boolean allowLongBackfill) {
         long startMs = System.currentTimeMillis();
         boolean scheduleLongBackfill = false;
         try {
@@ -113,6 +128,7 @@ public class MacroContextService {
                 scheduleLongBackfill = !allowLongBackfill;
                 MacroContext neutral = MacroContext.neutral(symbol);
                 cache.putIfAbsent(symbol, neutral);
+                cacheAsOfTime.putIfAbsent(symbol, 0L);
                 return cache.get(symbol);
             }
             long from = toTime - HISTORY.toMillis();
@@ -120,7 +136,7 @@ public class MacroContextService {
             if (bars5m.size() < MIN_HISTORY_BARS) {
                 MacroContext shortHistory = new MacroContext(symbol, Instant.now(), Map.of(), true,
                         List.of("MACRO_HISTORY_SHORT"));
-                cache.put(symbol, shortHistory);
+                updateCacheIfCurrent(symbol, toTime, shortHistory);
                 log.warn("[MacroContext] history short symbol={} bars5m={} required={}",
                         symbol, bars5m.size(), MIN_HISTORY_BARS);
                 return shortHistory;
@@ -149,21 +165,33 @@ public class MacroContextService {
                         direction.confidence()));
             }
             MacroContext context = new MacroContext(symbol, Instant.now(), legs, false, qualityFlags);
-            cache.put(symbol, context);
+            updateCacheIfCurrent(symbol, toTime, context);
             log.info("[MacroContext] refreshed symbol={} bars5m={} risk={} cost={}ms",
                     symbol, bars5m.size(), context.toRiskHint(), System.currentTimeMillis() - startMs);
             return context;
         } catch (Exception e) {
             MacroContext neutral = MacroContext.neutral(symbol);
             cache.putIfAbsent(symbol, neutral);
+            cacheAsOfTime.putIfAbsent(symbol, 0L);
             log.warn("[MacroContext] refresh failed symbol={} msg={}", symbol, e.toString());
             return cache.get(symbol);
         } finally {
-            recomputing.remove(symbol);
             if (scheduleLongBackfill) {
                 refreshAsync(symbol, true);
             }
         }
+    }
+
+    private void updateCacheIfCurrent(String symbol, long toTime, MacroContext context) {
+        cacheAsOfTime.compute(symbol, (ignored, previousToTime) -> {
+            if (previousToTime == null || toTime >= previousToTime) {
+                cache.put(symbol, context);
+                return toTime;
+            }
+            log.debug("[MacroContext] skip stale cache write symbol={} toTime={} cachedToTime={}",
+                    symbol, toTime, previousToTime);
+            return previousToTime;
+        });
     }
 
     private boolean ensureHistoryReady(String symbol, long now, boolean allowLongBackfill) {

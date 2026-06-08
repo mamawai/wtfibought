@@ -6,6 +6,7 @@ import com.mawai.wiibservice.agent.quant.QuantForecastFacade;
 import com.mawai.wiibservice.agent.quant.QuantForecastRunResult;
 import com.mawai.wiibservice.agent.quant.domain.ForecastResult;
 import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
+import com.mawai.wiibservice.agent.quant.domain.QuantForecastRequestEvent;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
@@ -50,7 +51,17 @@ public class QuantForecastScheduler {
             return;
         }
         String symbol = normalizeSymbol(event.symbol());
-        triggerForecast(symbol, event.closeTime(), fetchFearGreedOnce(), "kline_close");
+        triggerForecast(symbol, event.closeTime(), fetchFearGreedOnce(), "kline_close", false);
+    }
+
+    @EventListener
+    public void onForecastRequest(QuantForecastRequestEvent event) {
+        if (event == null) {
+            return;
+        }
+        String symbol = normalizeSymbol(event.getSymbol());
+        long closeTime = resolveCloseTime(symbol, event.getCloseTime());
+        triggerForecast(symbol, closeTime, fetchFearGreedOnce(), event.getRequestSource(), event.isForce());
     }
 
     /**
@@ -73,7 +84,7 @@ public class QuantForecastScheduler {
                 latestClose = historyStore.latestCloseTime(normalized, KlineHistoryStore.DEFAULT_INTERVAL);
             }
             if (latestClose != null && latestClose > lastForecastedCloseTime.getOrDefault(normalized, 0L)) {
-                triggerForecast(normalized, latestClose, fearGreedData, "watchdog");
+                triggerForecast(normalized, latestClose, fearGreedData, "watchdog", false);
             }
         }
     }
@@ -88,13 +99,21 @@ public class QuantForecastScheduler {
         }
     }
 
-    private void triggerForecast(String symbol, long closeTime, String fearGreedData, String source) {
+    private long resolveCloseTime(String symbol, long requestedCloseTime) {
+        if (requestedCloseTime > 0) {
+            return requestedCloseTime;
+        }
+        Long latestClose = historyStore.latestCloseTime(symbol, KlineHistoryStore.DEFAULT_INTERVAL);
+        return latestClose != null ? latestClose : System.currentTimeMillis();
+    }
+
+    private void triggerForecast(String symbol, long closeTime, String fearGreedData, String source, boolean force) {
         String normalized = normalizeSymbol(symbol);
         if (closeTime <= 0) {
-            closeTime = System.currentTimeMillis();
+            closeTime = resolveCloseTime(normalized, closeTime);
         }
         long lastDone = lastForecastedCloseTime.getOrDefault(normalized, 0L);
-        if (lastDone >= closeTime) {
+        if (!force && lastDone >= closeTime) {
             log.debug("[Scheduler] 已处理 closeTime 跳过 source={} symbol={} closeTime={}",
                     source, normalized, closeTime);
             return;
@@ -108,22 +127,22 @@ public class QuantForecastScheduler {
         long finalCloseTime = closeTime;
         Thread.startVirtualThread(() -> {
             try {
-                if (runForecast(normalized, fearGreedData, finalCloseTime)) {
-                    lastForecastedCloseTime.merge(normalized, finalCloseTime, Math::max);
-                }
+                runForecast(normalized, fearGreedData, finalCloseTime, source);
             } finally {
                 runningForecastKeys.remove(runningKey);
             }
         });
     }
 
-    private boolean runForecast(String symbol, String fearGreedData, long closeTime) {
+    private boolean runForecast(String symbol, String fearGreedData, long closeTime, String source) {
         String normalized = normalizeSymbol(symbol);
         log.info("预测开始 symbol={} closeTime={}", normalized, closeTime);
         try {
             QuantForecastRunResult result = quantForecastFacade.run(normalized,
-                    "scheduled-" + normalized + "-" + closeTime,
-                    Map.of("fear_greed_data", fearGreedData, "kline_close_time", closeTime));
+                    source + "-" + normalized + "-" + closeTime,
+                    Map.of("fear_greed_data", fearGreedData,
+                            "kline_close_time", closeTime,
+                            "forecast_source", source));
             if (!result.graphReturned()) {
                 log.warn("预测无结果 symbol={}", normalized);
                 return false;
@@ -146,7 +165,12 @@ public class QuantForecastScheduler {
                 }
 
                 log.info("预测完成 symbol={} decision={}", normalized, forecastResult.overallDecision());
-                eventPublisher.publishEvent(new QuantCycleCompleteEvent(this, normalized, "research"));
+                lastForecastedCloseTime.merge(normalized, closeTime, Math::max);
+                try {
+                    eventPublisher.publishEvent(new QuantCycleCompleteEvent(this, normalized, "research"));
+                } catch (Exception eventError) {
+                    log.warn("预测完成事件发布异常 symbol={} msg={}", normalized, eventError.toString());
+                }
                 return true;
             } else {
                 log.warn("预测无ForecastResult symbol={}", normalized);
@@ -162,7 +186,7 @@ public class QuantForecastScheduler {
         String normalized = normalizeSymbol(symbol);
         Long latestClose = historyStore.latestCloseTime(normalized, KlineHistoryStore.DEFAULT_INTERVAL);
         triggerForecast(normalized, latestClose != null ? latestClose : System.currentTimeMillis(),
-                "{}", "manual");
+                "{}", "manual", true);
     }
 
     private static String normalizeSymbol(String symbol) {

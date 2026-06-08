@@ -2,17 +2,24 @@ package com.mawai.wiibservice.task;
 
 import com.mawai.wiibservice.agent.quant.PriceVolatilitySentinel;
 import com.mawai.wiibservice.agent.quant.QuantForecastFacade;
+import com.mawai.wiibservice.agent.quant.QuantForecastRunResult;
+import com.mawai.wiibservice.agent.quant.domain.ForecastResult;
 import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
+import com.mawai.wiibservice.agent.quant.domain.QuantCycleCompleteEvent;
+import com.mawai.wiibservice.agent.quant.domain.QuantForecastRequestEvent;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -53,9 +60,66 @@ class QuantForecastSchedulerTest {
                 .run(anyString(), anyString(), org.mockito.ArgumentMatchers.<Map<String, Object>>any());
     }
 
+    @Test
+    void sentinelRequestPublishesCompleteEventAndPreventsWatchdogDuplicate() throws Exception {
+        BinanceRestClient binanceRestClient = mock(BinanceRestClient.class);
+        QuantForecastFacade facade = mock(QuantForecastFacade.class);
+        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        FakeKlineHistoryStore store = new FakeKlineHistoryStore();
+        long closeTime = System.currentTimeMillis();
+        store.latestCloseTime = closeTime;
+        store.latestOpenTime = closeTime - KlineHistoryStore.DEFAULT_BAR_MILLIS + 1;
+
+        doAnswer(invocation -> new QuantForecastRunResult(true, true, null,
+                new ForecastResult("BTCUSDT", "cycle-1", LocalDateTime.now(),
+                        List.of(), "FLAT", "NORMAL", List.of(), null, null, null, null),
+                null, null, null))
+                .when(facade).run(anyString(), anyString(), org.mockito.ArgumentMatchers.<Map<String, Object>>any());
+
+        QuantForecastScheduler scheduler = new QuantForecastScheduler(
+                facade,
+                mock(RedisMessageBroadcastService.class),
+                binanceRestClient,
+                mock(PriceVolatilitySentinel.class),
+                eventPublisher,
+                store);
+
+        scheduler.onForecastRequest(new QuantForecastRequestEvent(this, "btcusdt", 0L, "sentinel", true));
+
+        verify(facade, timeout(1000).times(1))
+                .run(anyString(), anyString(), org.mockito.ArgumentMatchers.<Map<String, Object>>any());
+        verify(eventPublisher, timeout(1000)).publishEvent(argThat(event ->
+                event instanceof QuantCycleCompleteEvent complete
+                        && "BTCUSDT".equals(complete.getSymbol())
+                        && "research".equals(complete.getCycleType())));
+
+        scheduler.watchdogFallback();
+
+        verify(facade, timeout(300).times(1))
+                .run(anyString(), anyString(), org.mockito.ArgumentMatchers.<Map<String, Object>>any());
+    }
+
     private static final class FakeKlineHistoryStore extends KlineHistoryStore {
+        private Long latestCloseTime;
+        private Long latestOpenTime;
+
         private FakeKlineHistoryStore() {
             super(null);
+        }
+
+        @Override
+        public Long latestCloseTime(String symbol, String intervalCode) {
+            return "BTCUSDT".equals(symbol) ? latestCloseTime : null;
+        }
+
+        @Override
+        public Long latestOpenTime(String symbol, String intervalCode) {
+            return "BTCUSDT".equals(symbol) ? latestOpenTime : null;
+        }
+
+        @Override
+        public int backfill(String symbol, long fromMs, long toMs) {
+            return 0;
         }
     }
 }

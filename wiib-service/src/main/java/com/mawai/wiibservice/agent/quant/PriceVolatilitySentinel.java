@@ -4,18 +4,17 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
-import com.mawai.wiibservice.agent.trading.submit.TradingCycleSubmitResult;
+import com.mawai.wiibservice.agent.quant.domain.QuantForecastRequestEvent;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
-import com.mawai.wiibservice.task.AiTradingScheduler;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.Deque;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
@@ -23,7 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 价格波动哨兵：监听 WS 实时 markPrice tick，当5分钟内价格变动超过 1.3×ATR-5m 时
- * 触发完整 H6/H12/H24 重评估 + AI交易，捕捉异常波动中的交易机会。
+ * 请求完整 H6/H12/H24 重评估，捕捉异常波动中的交易机会。
  * <p>
  * ATR-5m 由量化管道计算后推送更新；启动时从DB加载最近一次ATR。
  * 冷却期30秒（仅技术防抖，业务节流由 ATR×1.3 阈值本身提供）。
@@ -45,8 +44,7 @@ public class PriceVolatilitySentinel {
     );
     private static final double DEFAULT_FALLBACK = 0.004;
 
-    private final QuantForecastFacade quantForecastFacade;
-    private final AiTradingScheduler aiTradingScheduler;
+    private final ApplicationEventPublisher eventPublisher;
     private final QuantForecastCycleMapper cycleMapper;
 
     private final Map<String, Deque<PriceTick>> priceWindows = new ConcurrentHashMap<>();
@@ -57,11 +55,9 @@ public class PriceVolatilitySentinel {
 
     record PriceTick(long timestampMs, BigDecimal price) {}
 
-    public PriceVolatilitySentinel(QuantForecastFacade quantForecastFacade,
-                                   AiTradingScheduler aiTradingScheduler,
+    public PriceVolatilitySentinel(ApplicationEventPublisher eventPublisher,
                                    QuantForecastCycleMapper cycleMapper) {
-        this.quantForecastFacade = quantForecastFacade;
-        this.aiTradingScheduler = aiTradingScheduler;
+        this.eventPublisher = eventPublisher;
         this.cycleMapper = cycleMapper;
     }
 
@@ -179,15 +175,10 @@ public class PriceVolatilitySentinel {
     private void executeVolatilityResponse(String symbol) {
         long startMs = System.currentTimeMillis();
         try {
-            // 1. 触发完整 H6/H12/H24 重评估（替代旧轻周期刷新）
-            quantForecastFacade.run(symbol, "sentinel-" + symbol, Map.of());
-            log.info("[Sentinel] 波动重评估完成 symbol={} 耗时{}ms", symbol, System.currentTimeMillis() - startMs);
-
-            // 2. 触发AI交易决策
-            TradingCycleSubmitResult result = aiTradingScheduler.submitTradingCycle(List.of(symbol));
-            log.info("[Sentinel] AI交易提交完成 symbol={} result={} 总耗时{}ms",
-                    symbol, result.items(), System.currentTimeMillis() - startMs);
-
+            // 哨兵只发布请求；预测落库、ATR更新、完成事件和AI交易由Scheduler统一出口处理。
+            eventPublisher.publishEvent(new QuantForecastRequestEvent(this, symbol, 0L, "sentinel", true));
+            log.info("[Sentinel] 波动重评估请求已发布 symbol={} 耗时{}ms",
+                    symbol, System.currentTimeMillis() - startMs);
         } catch (Exception e) {
             log.error("[Sentinel] 波动响应异常 symbol={}", symbol, e);
         }

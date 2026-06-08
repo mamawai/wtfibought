@@ -11,6 +11,9 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.mawai.wiibservice.agent.quant.service.ResearchFeatureAssembler.AssemblyResult;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -72,6 +75,42 @@ class MacroContextServiceTest {
         assertThat(store.totalCalls()).isZero();
     }
 
+    @Test
+    void computeNowBypassesBackgroundRefreshAndKeepsNewestCache() throws Exception {
+        FakeKlineHistoryStore store = new FakeKlineHistoryStore();
+        long now = System.currentTimeMillis();
+        long syncCloseTime = now + 20 * 60_000L;
+        store.latestOpenTime = syncCloseTime;
+        store.firstLoadEntered = new CountDownLatch(1);
+        store.releaseFirstLoad = new CountDownLatch(1);
+        store.firstLoadBars = fiveMinuteBars(now, 31);
+        store.secondLoadBars = fiveMinuteBars(syncCloseTime, 31);
+
+        AtomicInteger assemblyCalls = new AtomicInteger();
+        ResearchFeatureAssembler assembler = new ResearchFeatureAssembler(null) {
+            @Override
+            public AssemblyResult assemble(String symbol, List<KlineBar> bars5m) {
+                String flag = assemblyCalls.getAndIncrement() == 0 ? "SYNC_NEW" : "BACKGROUND_OLD";
+                return new AssemblyResult(ResearchFeatures.ofBars(bars5m), List.of(flag));
+            }
+        };
+
+        MacroContextService service = new MacroContextService(store, assembler);
+
+        assertThat(service.get("BTCUSDT").stale()).isTrue();
+        assertThat(store.firstLoadEntered.await(1, TimeUnit.SECONDS)).isTrue();
+
+        MacroContext sync = service.computeNow("BTCUSDT", syncCloseTime);
+        assertThat(sync.qualityFlags()).contains("SYNC_NEW");
+
+        store.releaseFirstLoad.countDown();
+        Thread.sleep(200);
+
+        MacroContext cached = service.get("BTCUSDT");
+        assertThat(cached.qualityFlags()).contains("SYNC_NEW");
+        assertThat(cached.qualityFlags()).doesNotContain("BACKGROUND_OLD");
+    }
+
     /** 返回中性外生因子的 assembler（测试不关心外生因子具体值，只验证 research core 能跑通） */
     private static ResearchFeatureAssembler stubAssembler() {
         return new ResearchFeatureAssembler(null) {
@@ -100,6 +139,10 @@ class MacroContextServiceTest {
     private static final class FakeKlineHistoryStore extends KlineHistoryStore {
         private Long latestOpenTime;
         private List<KlineBar> loadBars = List.of();
+        private List<KlineBar> firstLoadBars;
+        private List<KlineBar> secondLoadBars;
+        private CountDownLatch firstLoadEntered;
+        private CountDownLatch releaseFirstLoad;
         private int loadCalls;
         private int backfillCalls;
         private int latestOpenTimeCalls;
@@ -115,6 +158,20 @@ class MacroContextServiceTest {
             loadCalls++;
             lastLoadSymbol = symbol;
             lastLoadInterval = intervalCode;
+            if (loadCalls == 1 && firstLoadEntered != null && releaseFirstLoad != null) {
+                firstLoadEntered.countDown();
+                try {
+                    releaseFirstLoad.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            if (loadCalls == 1 && firstLoadBars != null) {
+                return firstLoadBars;
+            }
+            if (loadCalls == 2 && secondLoadBars != null) {
+                return secondLoadBars;
+            }
             return loadBars;
         }
 

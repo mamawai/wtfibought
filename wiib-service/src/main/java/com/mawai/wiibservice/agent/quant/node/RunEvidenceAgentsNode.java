@@ -6,6 +6,7 @@ import com.mawai.wiibservice.agent.quant.domain.AgentVote;
 import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibservice.agent.quant.domain.MacroContext;
 import com.mawai.wiibservice.agent.quant.factor.FactorAgent;
+import com.mawai.wiibservice.agent.quant.factor.FactorEvaluationContext;
 import com.mawai.wiibservice.agent.quant.factor.NewsEventAgent;
 import lombok.extern.slf4j.Slf4j;
 
@@ -52,6 +53,9 @@ public class RunEvidenceAgentsNode implements NodeAction {
         List<NewsEventAgent.FilteredNewsItem> filteredNews = List.of();
         double newsConfidenceStddev = 0;
         boolean newsLowConfidence = false;
+        MacroContext research = (MacroContext) state.value("research_forecast")
+                .orElse(state.value("macro_context").orElse(null));
+        FactorEvaluationContext agentContext = new FactorEvaluationContext(research);
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             List<Future<List<AgentVote>>> normalFutures = new ArrayList<>();
@@ -72,7 +76,7 @@ public class RunEvidenceAgentsNode implements NodeAction {
                     normalAgentNames.add(agent.name());
                     normalFutures.add(executor.submit(() -> {
                         long start = System.currentTimeMillis();
-                        List<AgentVote> votes = agent.evaluate(snapshot);
+                        List<AgentVote> votes = agent.evaluate(snapshot, agentContext);
                         log.info("[Q4.agent] {}完成 {}ms {}票",
                                 agent.name(), System.currentTimeMillis() - start, votes.size());
                         return votes;
@@ -110,8 +114,6 @@ public class RunEvidenceAgentsNode implements NodeAction {
         }
 
         FeatureSnapshot outputSnapshot = snapshot;
-        MacroContext research = (MacroContext) state.value("research_forecast")
-                .orElse(state.value("macro_context").orElse(null));
         if (allVotes.stream().anyMatch(v -> v.riskFlags().contains("LOW_CONFIDENCE"))
                 || (research != null && !research.qualityFlags().isEmpty())) {
             List<String> flags = new ArrayList<>(snapshot.qualityFlags() != null ? snapshot.qualityFlags() : List.of());

@@ -14,4 +14,8 @@ public interface FactorAgent {
     String name();
 
     List<AgentVote> evaluate(FeatureSnapshot snapshot);
+
+    default List<AgentVote> evaluate(FeatureSnapshot snapshot, FactorEvaluationContext context) {
+        return evaluate(snapshot);
+    }
 }
