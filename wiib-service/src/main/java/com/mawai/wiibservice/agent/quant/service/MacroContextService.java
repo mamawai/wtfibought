@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +39,7 @@ public class MacroContextService {
     private static final Duration MAX_SYNC_TAIL = Duration.ofHours(6);
 
     private final KlineHistoryStore historyStore;
+    private final ResearchFeatureAssembler featureAssembler;
     private final Map<String, MacroContext> cache = new ConcurrentHashMap<>();
     private final Set<String> recomputing = ConcurrentHashMap.newKeySet();
 
@@ -68,7 +70,18 @@ public class MacroContextService {
         if (current != null && !expired(current)) {
             return;
         }
-        recompute(normalized, false);
+        recompute(normalized, System.currentTimeMillis(), false);
+    }
+
+    /**
+     * live workflow 主入口：按本轮 5m closeTime 同步计算 H6/H12/H24。
+     * 这里不走 TTL，避免主链路拿到 30min 旧 research 结果。
+     */
+    public MacroContext computeNow(String symbol, long decisionCloseTime) {
+        String normalized = normalize(symbol);
+        long toTime = decisionCloseTime > 0 ? decisionCloseTime + 1 : System.currentTimeMillis();
+        MacroContext context = recompute(normalized, toTime, true);
+        return context != null ? context : cache.getOrDefault(normalized, MacroContext.neutral(normalized));
     }
 
     @EventListener
@@ -86,34 +99,40 @@ public class MacroContextService {
 
     private void refreshAsync(String symbol, boolean allowLongBackfill) {
         String normalized = normalize(symbol);
-        Thread.startVirtualThread(() -> recompute(normalized, allowLongBackfill));
+        Thread.startVirtualThread(() -> recompute(normalized, System.currentTimeMillis(), allowLongBackfill));
     }
 
-    private void recompute(String symbol, boolean allowLongBackfill) {
+    private MacroContext recompute(String symbol, long toTime, boolean allowLongBackfill) {
         if (!recomputing.add(symbol)) {
-            return;
+            return cache.get(symbol);
         }
         long startMs = System.currentTimeMillis();
         boolean scheduleLongBackfill = false;
         try {
-            long now = System.currentTimeMillis();
-            if (!ensureHistoryReady(symbol, now, allowLongBackfill)) {
+            if (!ensureHistoryReady(symbol, toTime, allowLongBackfill)) {
                 scheduleLongBackfill = !allowLongBackfill;
-                cache.putIfAbsent(symbol, MacroContext.neutral(symbol));
-                return;
+                MacroContext neutral = MacroContext.neutral(symbol);
+                cache.putIfAbsent(symbol, neutral);
+                return cache.get(symbol);
             }
-            long from = now - HISTORY.toMillis();
-            List<KlineBar> bars5m = historyStore.load(symbol, INTERVAL_5M, from, now);
+            long from = toTime - HISTORY.toMillis();
+            List<KlineBar> bars5m = historyStore.load(symbol, INTERVAL_5M, from, toTime);
             if (bars5m.size() < MIN_HISTORY_BARS) {
-                cache.put(symbol, new MacroContext(symbol, Instant.now(), Map.of(), true,
-                        List.of("MACRO_HISTORY_SHORT")));
+                MacroContext shortHistory = new MacroContext(symbol, Instant.now(), Map.of(), true,
+                        List.of("MACRO_HISTORY_SHORT"));
+                cache.put(symbol, shortHistory);
                 log.warn("[MacroContext] history short symbol={} bars5m={} required={}",
                         symbol, bars5m.size(), MIN_HISTORY_BARS);
-                return;
+                return shortHistory;
             }
 
             // 5m 是当前决策粒度；H6/H12/H24 只改变预测窗口，不再先压成 1h。
-            ResearchFeatures features = new ResearchFeatures(bars5m, 0.0, 50, 0.0, 0.0);
+            // 外生因子(funding/FGI/ETF/stablecoin)按最新bar closeTime 对齐，缺数据自动fallback中性+flag
+            ResearchFeatureAssembler.AssemblyResult assembled = featureAssembler.assemble(symbol, bars5m);
+            ResearchFeatures features = assembled.features();
+            List<String> qualityFlags = new ArrayList<>();
+            qualityFlags.addAll(assembled.qualityFlags());
+
             Map<ForecastHorizon, MacroContext.Leg> legs = new EnumMap<>(ForecastHorizon.class);
             for (ForecastHorizon horizon : ForecastHorizon.values()) {
                 MultiOutputForecast forecast = QuantCoreForecaster.defaults(horizon).forecast(features);
@@ -129,13 +148,16 @@ public class MacroContextService {
                         direction.direction(),
                         direction.confidence()));
             }
-            MacroContext context = new MacroContext(symbol, Instant.now(), legs, false, List.of());
+            MacroContext context = new MacroContext(symbol, Instant.now(), legs, false, qualityFlags);
             cache.put(symbol, context);
             log.info("[MacroContext] refreshed symbol={} bars5m={} risk={} cost={}ms",
                     symbol, bars5m.size(), context.toRiskHint(), System.currentTimeMillis() - startMs);
+            return context;
         } catch (Exception e) {
-            cache.putIfAbsent(symbol, MacroContext.neutral(symbol));
+            MacroContext neutral = MacroContext.neutral(symbol);
+            cache.putIfAbsent(symbol, neutral);
             log.warn("[MacroContext] refresh failed symbol={} msg={}", symbol, e.toString());
+            return cache.get(symbol);
         } finally {
             recomputing.remove(symbol);
             if (scheduleLongBackfill) {

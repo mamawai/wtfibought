@@ -93,7 +93,7 @@ public class MemoryService {
         return agentPerformanceMemoryService.loadAccuracy(symbol, regime);
     }
 
-    /** 返回含 sample_count 的完整统计，供 HorizonJudge 调权可见性使用 */
+    /** 返回含 sample_count 的完整统计，供 ConsensusJudge 调权可见性使用 */
     public Map<String, Map<String, AgentPerformanceMemoryService.AgentStat>> getAgentFullStats(
             String symbol, String regime) {
         return agentPerformanceMemoryService.loadFullStats(symbol, regime);

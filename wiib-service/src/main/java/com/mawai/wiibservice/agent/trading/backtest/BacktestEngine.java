@@ -524,7 +524,7 @@ public class BacktestEngine {
     /**
      * 从技术指标衍生简化信号。
      * <p>
-     * 在真实交易中，6个AI Agent投票 → HorizonJudge加权 → QuantSignalDecision。
+     * 在真实交易中，research 主票 + evidence agents → ConsensusJudge → RiskGate → QuantSignalDecision。
      * 回测中跳过Agent，直接用指标规则产生方向+置信度。
      *
      * <h4>方向决定规则</h4>
@@ -624,7 +624,7 @@ public class BacktestEngine {
 
     private QuantSignalDecision makeSignal(String direction, double confidence, int maxLeverage) {
         QuantSignalDecision signal = new QuantSignalDecision();
-        signal.setHorizon("0_10");
+        signal.setHorizon("H6");
         signal.setDirection(direction);
         signal.setConfidence(BigDecimal.valueOf(confidence).setScale(4, RoundingMode.HALF_UP));
         signal.setMaxLeverage(maxLeverage);

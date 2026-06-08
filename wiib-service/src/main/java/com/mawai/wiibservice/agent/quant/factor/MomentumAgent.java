@@ -10,7 +10,7 @@ import java.util.Map;
 
 /**
  * 动量因子 Agent。
- * 基于多周期均线、RSI、MACD、KDJ 和量价关系，分别给 0-10、10-20、20-30 分钟窗口输出方向评分。
+ * 基于多周期均线、RSI、MACD、KDJ 和量价关系，给 H6/H12 输出趋势辅助，H24 低权重背景。
  */
 @Slf4j
 public class MomentumAgent implements FactorAgent {
@@ -23,27 +23,27 @@ public class MomentumAgent implements FactorAgent {
         Map<String, Map<String, Object>> indicators = s.indicatorsByTimeframe();
         if (indicators == null || indicators.isEmpty()) {
             return List.of(
-                    AgentVote.noTrade(name(), "0_10", "NO_DATA"),
-                    AgentVote.noTrade(name(), "10_20", "NO_DATA"),
-                    AgentVote.noTrade(name(), "20_30", "NO_DATA"));
+                    AgentVote.noTrade(name(), "H6", "NO_DATA"),
+                    AgentVote.noTrade(name(), "H12", "NO_DATA"),
+                    AgentVote.noTrade(name(), "H24", "NO_DATA"));
         }
 
         List<String> qualityFlags = s.qualityFlags() != null ? s.qualityFlags() : List.of();
         MarketRegime regime = s.regime() != null ? s.regime() : MarketRegime.RANGE;
 
         // 对3个时间尺度分别做动量分析
-        // 0-10min 主要看 1m/5m
-        TimeframePair pair0 = resolvePair(indicators, qualityFlags, "0_10", "1m", "5m");
+        // H6 主要看 5m/15m
+        TimeframePair pair0 = resolvePair(indicators, qualityFlags, "H6", "5m", "15m");
         double score0 = calcTimeframeScore(indicators, pair0.primary(), pair0.secondary(), regime);
         List<String> reasons0 = collectReasons(indicators, pair0);
 
-        // 10-20min 主要看 5m/15m
-        TimeframePair pair1 = resolvePair(indicators, qualityFlags, "10_20", "5m", "15m");
+        // H12 主要看 15m/1h
+        TimeframePair pair1 = resolvePair(indicators, qualityFlags, "H12", "15m", "1h");
         double score1 = calcTimeframeScore(indicators, pair1.primary(), pair1.secondary(), regime);
         List<String> reasons1 = collectReasons(indicators, pair1);
 
-        // 20-30min 主要看 15m/1h
-        TimeframePair pair2 = resolvePair(indicators, qualityFlags, "20_30", "15m", "1h");
+        // H24 主要看 1h/4h，权重低于 research 主票
+        TimeframePair pair2 = resolvePair(indicators, qualityFlags, "H24", "1h", "4h");
         double score2 = calcTimeframeScore(indicators, pair2.primary(), pair2.secondary(), regime);
         List<String> reasons2 = collectReasons(indicators, pair2);
 
@@ -65,9 +65,9 @@ public class MomentumAgent implements FactorAgent {
                 reasons0, reasons1, reasons2);
 
         return List.of(
-                buildVote("0_10", score0, volBps, reasons0, pair0.fallbackUsed(), qualityFlags),
-                buildVote("10_20", score1, volBps, reasons1, pair1.fallbackUsed(), qualityFlags),
-                buildVote("20_30", score2, volBps, reasons2, pair2.fallbackUsed(), qualityFlags));
+                buildVote("H6", score0, volBps, reasons0, pair0.fallbackUsed(), qualityFlags),
+                buildVote("H12", score1, volBps, reasons1, pair1.fallbackUsed(), qualityFlags),
+                buildVote("H24", score2 * 0.55, volBps, reasons2, pair2.fallbackUsed(), qualityFlags));
     }
 
     private double calcTimeframeScore(Map<String, Map<String, Object>> indicators,
@@ -205,17 +205,17 @@ public class MomentumAgent implements FactorAgent {
         }
 
         return switch (horizon) {
-            case "0_10" -> new TimeframePair(horizon,
+            case "H6" -> new TimeframePair(horizon,
                     primaryPresent ? primary : fallback(indicators, "5m", "15m", "1h"),
-                    secondaryPresent ? secondary : fallback(indicators, "5m", "15m", "1h"),
+                    secondaryPresent ? secondary : fallback(indicators, "15m", "1h", "4h"),
                     true);
-            case "10_20" -> new TimeframePair(horizon,
-                    primaryPresent ? primary : fallback(indicators, "1m", "15m", "1h"),
-                    secondaryPresent ? secondary : fallback(indicators, "1h", "5m", "4h"),
+            case "H12" -> new TimeframePair(horizon,
+                    primaryPresent ? primary : fallback(indicators, "15m", "1h", "5m"),
+                    secondaryPresent ? secondary : fallback(indicators, "1h", "4h", "5m"),
                     true);
-            case "20_30" -> new TimeframePair(horizon,
-                    primaryPresent ? primary : fallback(indicators, "5m", "1h", "4h"),
-                    secondaryPresent ? secondary : fallback(indicators, "4h", "5m", "1d"),
+            case "H24" -> new TimeframePair(horizon,
+                    primaryPresent ? primary : fallback(indicators, "1h", "4h", "15m"),
+                    secondaryPresent ? secondary : fallback(indicators, "4h", "1h", "1d"),
                     true);
             default -> new TimeframePair(horizon, primary, secondary, true);
         };

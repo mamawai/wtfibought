@@ -28,7 +28,7 @@ import java.util.*;
  * <p>与 {@link BacktestEngine} 的区别：
  * <ul>
  *   <li>{@code BacktestEngine}：K线→简化公式派生信号→Executor。信号和实盘不一致，参数优化结论不可用。</li>
- *   <li>{@code SignalReplayBacktestEngine}：直接读DB里的真实历史信号（已经过LLM+HorizonJudge+RiskGate）
+ *   <li>{@code SignalReplayBacktestEngine}：直接读DB里的真实历史信号（已经过ConsensusJudge+DebateJudge+RiskGate）
  *       →Executor。信号和实盘100%等价，适合验证Executor规则变更对实盘的影响。</li>
  * </ul>
  *

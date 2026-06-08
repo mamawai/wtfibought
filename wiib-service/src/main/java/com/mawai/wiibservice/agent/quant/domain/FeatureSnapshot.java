@@ -71,7 +71,7 @@ public record FeatureSnapshot(
         // 数据质量
         List<String> qualityFlags,
 
-        // regime审核结果（RegimeReviewNode产出）
+        // research baseline / DebateJudge 产出的 regime 状态
         double regimeConfidence,
         String regimeTransition
 ) {

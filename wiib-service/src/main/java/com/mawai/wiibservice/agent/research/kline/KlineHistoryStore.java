@@ -117,6 +117,15 @@ public class KlineHistoryStore extends ServiceImpl<KlineHistoryMapper, KlineHist
         return row != null ? row.getOpenTime() : null;
     }
 
+    public Long latestCloseTime(String symbol, String intervalCode) {
+        KlineHistory row = baseMapper.selectOne(new LambdaQueryWrapper<KlineHistory>()
+                .eq(KlineHistory::getSymbol, normalizeSymbol(symbol))
+                .eq(KlineHistory::getIntervalCode, normalizeInterval(intervalCode))
+                .orderByDesc(KlineHistory::getCloseTime)
+                .last("LIMIT 1"));
+        return row != null ? row.getCloseTime() : null;
+    }
+
     private static KlineHistory toEntity(String symbol, String intervalCode, KlineBar b) {
         KlineHistory e = new KlineHistory();
         e.setSymbol(symbol);

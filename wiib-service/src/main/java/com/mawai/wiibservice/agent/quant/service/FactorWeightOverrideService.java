@@ -19,7 +19,7 @@ import java.util.Map;
  * FactorAgent 静态调权服务。
  *
  * <p>启动时加载 {@code factor_weight_override.json}，按 agent + horizon + regime 返回权重乘数。
- * 只改 HorizonJudge 聚合权重，不改各 Agent 内部子因子；默认关闭，回放验证通过前不应影响实盘。</p>
+ * 只改 evidence 聚合权重，不改各 Agent 内部子因子；默认关闭，回放验证通过前不应影响实盘。</p>
  */
 @Slf4j
 @Service

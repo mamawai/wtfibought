@@ -25,6 +25,8 @@ public final class TradingDecisionSupport {
     public static final String PATH_MA_SLOPE = "MA_SLOPE";
     private static final String LEGACY_PATH_TREND = "TREND";
     private static final String LEGACY_PATH_MR = "MEAN_REVERSION";
+    private static final long ALLOWED_CLOCK_SKEW_MINUTES = 5;
+    private static final double STRONG_BACKGROUND_CONFIDENCE = 0.68;
 
     private TradingDecisionSupport() {
     }
@@ -74,9 +76,17 @@ public final class TradingDecisionSupport {
     }
 
     /**
-     * 开仓只取当前 active horizon，避免 10_20/20_30 未来分段提前驱动入场。<br>
-     * 每段只在最后1分钟停止新开仓，避免临近过期信号驱动入场。<br>
-     * forecastTime=null 兼容回测：退回旧逻辑，从全部信号里按 confidence 选最高。
+     * 开仓主信号：H6 作为主要执行方向，H12/H24 用于背景确认和仓位缩放。
+     * <p>
+     * 逻辑：
+     * <ul>
+     *   <li>H6 是主执行方向——驱动开仓/平仓决策</li>
+     *   <li>H6 与 H12/H24 同向 → 正常仓位</li>
+     *   <li>H6 与 H12 反向 → 降仓位，仍允许入场</li>
+     *   <li>H6 与 H24 反向 → 大幅降仓位，接近禁止新开仓</li>
+     *   <li>H6 无方向但 H12+H24 同向强信号 → 允许保守入场</li>
+     *   <li>H24 不单独触发入场</li>
+     * </ul>
      */
     public static QuantSignalDecision findBestSignalWithPriority(List<QuantSignalDecision> signals,
                                                           LocalDateTime forecastTime,
@@ -85,7 +95,7 @@ public final class TradingDecisionSupport {
     }
 
     /**
-     * 开仓参考信号：保留 active horizon 和 confidence 优先级，但 NO_TRADE 只做仓位缩放，不再硬禁开。
+     * 开仓参考信号：NO_TRADE 不硬禁开仓，只缩放仓位。
      */
     public static QuantSignalDecision findReferenceSignalWithPriority(List<QuantSignalDecision> signals,
                                                                       LocalDateTime forecastTime,
@@ -99,81 +109,86 @@ public final class TradingDecisionSupport {
                                                               boolean allowNoTradeDirection) {
         if (signals == null || signals.isEmpty()) return null;
 
-        if (forecastTime != null) {
-            long ageMinutes = Duration.between(forecastTime, now).toMinutes();
-            String activeHorizon = activeHorizon(ageMinutes);
-            if (activeHorizon == null) return null;
-            signals = signals.stream()
-                    .filter(s -> activeHorizon.equals(s.getHorizon()))
-                    .toList();
-            if (signals.isEmpty()) return null;
-        }
+        long ageMinutes = forecastAgeMinutes(forecastTime, now);
+        if (ageMinutes < -ALLOWED_CLOCK_SKEW_MINUTES) return null;
 
-        QuantSignalDecision sig010 = null, sig1020 = null, sig2030 = null;
+        QuantSignalDecision sigH6 = null, sigH12 = null, sigH24 = null;
         for (QuantSignalDecision s : signals) {
             if (s.getHorizon() == null) continue;
             switch (s.getHorizon()) {
-                case "0_10" -> sig010 = s;
-                case "10_20" -> sig1020 = s;
-                case "20_30" -> sig2030 = s;
-                default -> {
-                }
+                case "H6" -> sigH6 = horizonFresh(s, ageMinutes) ? s : null;
+                case "H12" -> sigH12 = horizonFresh(s, ageMinutes) ? s : null;
+                case "H24" -> sigH24 = horizonFresh(s, ageMinutes) ? s : null;
+                // 旧 0_10/10_20/20_30 属已下线短线系统，交易入口不再消费
+                default -> {}
             }
         }
 
-        QuantSignalDecision primary = null;
-        for (QuantSignalDecision s : new QuantSignalDecision[]{sig010, sig1020, sig2030}) {
-            QuantSignalDecision valid = pickValid(s, allowNoTradeDirection);
-            if (valid != null && (primary == null
-                    || valid.getConfidence().compareTo(primary.getConfidence()) > 0)) {
-                primary = valid;
+        // H6 为主执行方向
+        QuantSignalDecision primary = copyIfValid(sigH6, allowNoTradeDirection, false);
+        boolean backgroundFallback = false;
+
+        // H6 无方向但 H12+H24 同向强信号 → 保守入场（仓位降低）
+        if (primary == null && sigH12 != null && sigH24 != null) {
+            QuantSignalDecision validH12 = copyIfValid(sigH12, false, true);
+            QuantSignalDecision validH24 = copyIfValid(sigH24, false, true);
+            if (validH12 != null && validH24 != null
+                    && validH12.getDirection() != null
+                    && validH12.getDirection().equals(validH24.getDirection())) {
+                primary = validH12;
+                backgroundFallback = true;
             }
         }
+
         if (primary == null) return null;
 
-        List<QuantSignalDecision> all = new ArrayList<>();
-        if (sig010 != null) all.add(sig010);
-        if (sig1020 != null) all.add(sig1020);
-        if (sig2030 != null) all.add(sig2030);
+        // 背景确认：H12/H24 方向一致性影响仓位缩放
+        double positionMultiplier = backgroundFallback ? 0.50 : 1.0;
+        if (primary.getDirection() != null && !"NO_TRADE".equals(primary.getDirection())) {
+            String h6Dir = primary.getDirection();
+            String h12Dir = sigH12 != null ? sigH12.getDirection() : null;
+            String h24Dir = sigH24 != null ? sigH24.getDirection() : null;
 
-        QuantSignalDecision finalPrimary = primary;
-        String primaryDirection = finalPrimary.getDirection();
-        long agree = all.stream()
-                .filter(s -> primaryDirection != null
-                        && primaryDirection.equals(s.getDirection())
-                        && s.getConfidence() != null)
-                .count();
-        if (agree >= 2 && primary.getConfidence() != null) {
-            double buff = agree >= 3 ? 1.15 : 1.08;
-            double boosted = Math.min(1.0, primary.getConfidence().doubleValue() * buff);
-            primary = copySignalWithConfidence(primary, BigDecimal.valueOf(boosted));
+            // H6 vs H12 反向 → 降仓位
+            if (!backgroundFallback && h6Dir != null && h12Dir != null && !h6Dir.equals(h12Dir)
+                    && !"NO_TRADE".equals(h12Dir)) {
+                positionMultiplier *= 0.65;
+            }
+            // H6 vs H24 反向 → 大幅降仓位
+            if (!backgroundFallback && h6Dir != null && h24Dir != null && !h6Dir.equals(h24Dir)
+                    && !"NO_TRADE".equals(h24Dir)) {
+                positionMultiplier *= 0.55;
+            }
+            // H12+H24 都同向确认 → 强化
+            if (!backgroundFallback && h12Dir != null && h24Dir != null && h12Dir.equals(h6Dir) && h24Dir.equals(h6Dir)) {
+                double boosted = Math.min(1.0, primary.getConfidence().doubleValue() * 1.10);
+                primary = copySignalWithConfidence(primary, BigDecimal.valueOf(boosted));
+            }
+        }
+
+        // 仓位缩放注入到 maxPositionPct
+        if (Math.abs(positionMultiplier - 1.0) > 0.01 && primary.getMaxPositionPct() != null) {
+            double adjustedPos = primary.getMaxPositionPct().doubleValue() * positionMultiplier;
+            primary.setMaxPositionPct(BigDecimal.valueOf(Math.clamp(adjustedPos, 0.0, 1.0)));
         }
 
         return primary;
     }
 
-    /** 持仓管理看仍未过期的最高置信度信号，用于反向风险判断。 */
+    /** 持仓管理：按 horizon 自身有效期取仍可用的最高置信度方向信号。 */
     public static QuantSignalDecision findBestSignal(List<QuantSignalDecision> signals,
                                               LocalDateTime forecastTime,
                                               LocalDateTime now) {
         if (signals == null || signals.isEmpty()) return null;
-        if (forecastTime != null) {
-            signals = signals.stream().filter(s -> {
-                if (s.getHorizon() == null) return true;
-                int endMin = switch (s.getHorizon()) {
-                    case "0_10" -> 10;
-                    case "10_20" -> 20;
-                    case "20_30" -> 30;
-                    default -> 30;
-                };
-                return forecastTime.plusMinutes(endMin).isAfter(now);
-            }).toList();
-            if (signals.isEmpty()) return null;
-        }
+        long ageMinutes = forecastAgeMinutes(forecastTime, now);
+        if (ageMinutes < -ALLOWED_CLOCK_SKEW_MINUTES) return null;
         QuantSignalDecision best = null;
         for (QuantSignalDecision s : signals) {
+            if (s.getHorizon() == null) continue;
             if (s.getDirection() == null || "NO_TRADE".equals(s.getDirection())) continue;
             if (s.getConfidence() == null) continue;
+            if (!horizonFresh(s, ageMinutes)) continue;
+            if ("H24".equals(s.getHorizon()) && !strongDirectional(s)) continue;
             if (best == null || s.getConfidence().compareTo(best.getConfidence()) > 0) {
                 best = s;
             }
@@ -255,21 +270,50 @@ public final class TradingDecisionSupport {
         return String.format("%.2f", v);
     }
 
-    private static String activeHorizon(long ageMinutes) {
-        if (ageMinutes < 0) return null;
-        long phaseMinute = ageMinutes % 10;
-        if (phaseMinute >= 9) return null;
-        if (ageMinutes < 10) return "0_10";
-        if (ageMinutes < 20) return "10_20";
-        if (ageMinutes < 30) return "20_30";
-        return null;
-    }
-
     private static QuantSignalDecision pickValid(QuantSignalDecision s, boolean allowNoTradeDirection) {
         if (s == null) return null;
         if (!allowNoTradeDirection && (s.getDirection() == null || "NO_TRADE".equals(s.getDirection()))) return null;
         if (s.getConfidence() == null) return null;
         return s;
+    }
+
+    private static QuantSignalDecision copyIfValid(QuantSignalDecision s, boolean allowNoTradeDirection,
+                                                   boolean requireStrongDirectional) {
+        if (pickValid(s, allowNoTradeDirection) == null) return null;
+        if (requireStrongDirectional && !strongDirectional(s)) return null;
+        return copySignalWithConfidence(s, s.getConfidence());
+    }
+
+    private static boolean strongDirectional(QuantSignalDecision s) {
+        return s != null
+                && s.getDirection() != null
+                && !"NO_TRADE".equals(s.getDirection())
+                && s.getConfidence() != null
+                && s.getConfidence().doubleValue() >= STRONG_BACKGROUND_CONFIDENCE;
+    }
+
+    private static long forecastAgeMinutes(LocalDateTime forecastTime, LocalDateTime now) {
+        if (forecastTime == null || now == null) {
+            return 0;
+        }
+        return Duration.between(forecastTime, now).toMinutes();
+    }
+
+    private static boolean horizonFresh(QuantSignalDecision s, long ageMinutes) {
+        return s != null && horizonFresh(s.getHorizon(), ageMinutes);
+    }
+
+    private static boolean horizonFresh(String horizon, long ageMinutes) {
+        if (horizon == null || ageMinutes < -ALLOWED_CLOCK_SKEW_MINUTES) {
+            return false;
+        }
+        long maxMinutes = switch (horizon) {
+            case "H6" -> 6 * 60L;
+            case "H12" -> 12 * 60L;
+            case "H24" -> 24 * 60L;
+            default -> 0L;
+        };
+        return maxMinutes > 0 && ageMinutes <= maxMinutes;
     }
 
     private static QuantSignalDecision copySignalWithConfidence(QuantSignalDecision source, BigDecimal confidence) {

@@ -25,24 +25,24 @@ class ReportHelperTest {
     @Test
     void hardReportBuilderBuildsStructuredReportWithoutLlm() {
         List<HorizonForecast> forecasts = List.of(
-                new HorizonForecast("0_10", Direction.LONG, 0.72, 0.5, 0.2,
+                new HorizonForecast("H6", Direction.LONG, 0.72, 0.5, 0.2,
                         BigDecimal.valueOf(100), BigDecimal.valueOf(101), BigDecimal.valueOf(99),
                         BigDecimal.valueOf(103), BigDecimal.valueOf(105), 3, 0.08),
-                HorizonForecast.noTrade("10_20", 0.4),
-                HorizonForecast.noTrade("20_30", 0.5)
+                HorizonForecast.noTrade("H12", 0.4),
+                HorizonForecast.noTrade("H24", 0.5)
         );
         List<AgentVote> votes = List.of(
-                new AgentVote("momentum", "0_10", Direction.LONG, 0.7, 0.8, 20, 30, List.of(), List.of()),
-                new AgentVote("news_event", "0_10", Direction.LONG, 0.2, 0.7, 10, 20, List.of(), List.of())
+                new AgentVote("momentum", "H6", Direction.LONG, 0.7, 0.8, 20, 30, List.of(), List.of()),
+                new AgentVote("news_event", "H6", Direction.LONG, 0.2, 0.7, 10, 20, List.of(), List.of())
         );
         List<NewsEventAgent.FilteredNewsItem> news = List.of(
                 new NewsEventAgent.FilteredNewsItem("ETF inflow", "bullish", "HIGH", "资金流入"));
 
         CryptoAnalysisReport report = new ReportHardReportBuilder(null).build(
                 "BTCUSDT", forecasts, votes, news, "LONG", "NORMAL", snapshot(), null,
-                Map.of("0_10", new Object[]{55, 30, 15}));
+                Map.of("H6", new Object[]{55, 30, 15}));
 
-        assertThat(report.getSummary()).contains("当前优先关注0-10min做多");
+        assertThat(report.getSummary()).contains("当前优先关注H6(6h)做多");
         assertThat(report.getAnalysisBasis()).contains("结构化裁决结果为LONG");
         assertThat(report.getDirection().getUltraShort()).isEqualTo("做多(55%) 震荡(30%) 偏空(15%)");
         assertThat(report.getDirection().getLongTerm()).isEqualTo("观望");
@@ -57,7 +57,7 @@ class ReportHelperTest {
     @Test
     void promptBuilderKeepsStructuredBlocksAndFormatsContext() {
         CryptoAnalysisReport hardReport = hardReport();
-        List<AgentVote> votes = List.of(new AgentVote("momentum", "0_10", Direction.LONG,
+        List<AgentVote> votes = List.of(new AgentVote("momentum", "H6", Direction.LONG,
                 0.7, 0.8, 20, 30, List.of("ORDERFLOW"), List.of("SPREAD_WIDE")));
         List<NewsEventAgent.FilteredNewsItem> news = List.of(
                 new NewsEventAgent.FilteredNewsItem("ETF inflow", "bullish", "HIGH", "资金流入"));
@@ -69,9 +69,9 @@ class ReportHelperTest {
 
         assertThat(prompt)
                 .contains("【方向裁决（不可修改）】")
-                .contains("超短线(0-10min): 做多(60%)")
-                .contains("0-10min: LONG 入场=100 - 101 止损=99 止盈=103 / 105 风险收益比=1:2")
-                .contains("momentum[0_10]: LONG score=0.70 conf=0.80 reasons=[ORDERFLOW] flags=[SPREAD_WIDE]")
+                .contains("短周期(H6/6h): 做多(60%)")
+                .contains("H6(6h): 方向=LONG 具体入场/止损/止盈由交易执行层生成")
+                .contains("momentum[H6]: LONG score=0.70 conf=0.80 reasons=[ORDERFLOW] flags=[SPREAD_WIDE]")
                 .contains("- [bullish/HIGH] ETF inflow → 资金流入")
                 .contains("Bull论据: 多头")
                 .contains("历史命中率偏低");
@@ -128,12 +128,12 @@ class ReportHelperTest {
     }
 
     @Test
-    void forecastResultJsonRoundTripKeepsSnapshotForLightCycleCache() {
-        List<HorizonForecast> horizons = List.of(new HorizonForecast("0_10", Direction.LONG,
+    void forecastResultJsonRoundTripKeepsSnapshotForResearchForecast() {
+        List<HorizonForecast> horizons = List.of(new HorizonForecast("H6", Direction.LONG,
                 0.72, 0.5, 0.2, BigDecimal.valueOf(100), BigDecimal.valueOf(101),
                 BigDecimal.valueOf(99), BigDecimal.valueOf(103), BigDecimal.valueOf(105),
                 3, 0.08));
-        List<AgentVote> votes = List.of(new AgentVote("momentum", "0_10", Direction.LONG,
+        List<AgentVote> votes = List.of(new AgentVote("momentum", "H6", Direction.LONG,
                 0.7, 0.8, 20, 30, List.of("ORDERFLOW"), List.of()));
         ForecastResult original = new ForecastResult("BTCUSDT", "cycle-1",
                 LocalDateTime.of(2026, 1, 1, 0, 30),
@@ -173,7 +173,7 @@ class ReportHelperTest {
         report.setKeyLevels(keyLevels);
 
         CryptoAnalysisReport.PositionAdvice advice = new CryptoAnalysisReport.PositionAdvice();
-        advice.setPeriod("0-10min");
+        advice.setPeriod("H6(6h)");
         advice.setType("LONG");
         advice.setEntry("100 - 101");
         advice.setStopLoss("99");

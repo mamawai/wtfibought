@@ -8,7 +8,6 @@ import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantForecastVerification;
 import com.mawai.wiibcommon.entity.QuantHorizonForecast;
 import com.mawai.wiibservice.config.BinanceRestClient;
-import com.mawai.wiibservice.mapper.QuantForecastAdjustmentMapper;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibservice.mapper.QuantForecastVerificationMapper;
 import com.mawai.wiibservice.mapper.QuantHorizonForecastMapper;
@@ -31,7 +30,6 @@ public class VerificationService {
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantForecastVerificationMapper verificationMapper;
     private final QuantHorizonForecastMapper horizonMapper;
-    private final QuantForecastAdjustmentMapper adjustmentMapper;
 
     private static final int NO_TRADE_THRESHOLD_BPS = 10;
     private static final BigDecimal HIGH_REVERSAL_SEVERITY = new BigDecimal("0.40");
@@ -45,7 +43,7 @@ public class VerificationService {
             String riskStatus,
             LocalDateTime verifiedAt,
             LocalDateTime createdAt,
-            String parentCycleId,    // 轻周期的父重周期 cycleId；重周期为 null
+            String parentCycleId,    // 旧轻周期兼容字段；新 research 主链路为 null
             List<QuantForecastVerification> items
     ) {}
 
@@ -56,7 +54,7 @@ public class VerificationService {
             List<VerificationCycleResult> cycles
     ) {}
 
-    /** 分组结果：重周期为主，轻周期挂载在重周期下；adjustments 为这些轻周期对本重周期的修正明细 */
+    /** 分组结果：保留 lightCycles/adjustments 字段兼容前端；新 research 主链路下二者恒为空。 */
     public record GroupedHeavyCycle(
             VerificationCycleResult heavy,
             List<VerificationCycleResult> lightCycles,
@@ -151,9 +149,7 @@ public class VerificationService {
     }
 
 
-    /**
-     * 分组查询：重周期为主，轻周期按存入时记录的 parent_cycle_id 挂到对应重周期下。
-     */
+    /** 分组查询：新 research 主链路不再挂载轻周期，按正式 cycle 直接返回。 */
     public GroupedVerificationSummary groupedVerificationResults(String symbol, int heavyLimit) {
         int normalizedLimit = Math.clamp(heavyLimit, 1, 20);
         // 拉足够多的验证记录（重+轻混合），按时间倒序
@@ -177,9 +173,8 @@ public class VerificationService {
             cycleMap.put(c.getCycleId(), c);
         }
 
-        // 分离重/轻周期，构建VerificationCycleResult
+        // 旧 light- 记录只作为历史遗留跳过，不再做父子归属。
         List<VerificationCycleResult> heavyResults = new ArrayList<>();
-        List<VerificationCycleResult> lightResults = new ArrayList<>();
         for (String cid : cycleIds) {
             List<QuantForecastVerification> items = byCycle.get(cid);
             items.sort(Comparator.comparing(QuantForecastVerification::getHorizon));
@@ -198,13 +193,12 @@ public class VerificationService {
                     cycle != null ? cycle.getParentCycleId() : null,
                     List.copyOf(items));
             if (cid.startsWith("light-")) {
-                lightResults.add(r);
-            } else {
-                heavyResults.add(r);
+                continue; // 轻周期已下线，跳过所有 light cycle 记录
             }
+            heavyResults.add(r);
         }
 
-        // 按createdAt倒序排列重周期，截取limit个
+        // 按createdAt倒序排列正式 cycle，截取limit个。
         heavyResults.sort((a, b) -> {
             if (a.createdAt() == null || b.createdAt() == null) return 0;
             return b.createdAt().compareTo(a.createdAt());
@@ -213,29 +207,11 @@ public class VerificationService {
             heavyResults = heavyResults.subList(0, normalizedLimit);
         }
 
-        // 轻周期按createdAt升序，方便归属
-        lightResults.sort((a, b) -> {
-            if (a.createdAt() == null || b.createdAt() == null) return 0;
-            return a.createdAt().compareTo(b.createdAt());
-        });
-
-        // 批量查 adjustments：按 heavyCycleId 分组（前端用来在轻周期卡上显示徽章）
-        Map<String, List<QuantForecastAdjustment>> adjByHeavy = new HashMap<>();
-        if (!heavyResults.isEmpty()) {
-            List<String> heavyIds = heavyResults.stream().map(VerificationCycleResult::cycleId).toList();
-            List<QuantForecastAdjustment> allAdj = adjustmentMapper.selectByHeavyCycleIds(heavyIds);
-            for (QuantForecastAdjustment adj : allAdj) {
-                adjByHeavy.computeIfAbsent(adj.getHeavyCycleId(), k -> new ArrayList<>()).add(adj);
-            }
-        }
-
-        // 将轻周期归属到最近的前一个重周期（按 createdAt，窗口取整到下一个半点）
+        // 轻周期已下线：不再归属到正式 cycle，也不再读取 adjustment 表。
         List<GroupedHeavyCycle> groups = new ArrayList<>();
         int totalAll = 0, correctAll = 0;
         int heavyTotal = 0, heavyCorrect = 0;
         for (VerificationCycleResult heavy : heavyResults) {
-            List<VerificationCycleResult> attached = getVerificationCycleResults(heavy, lightResults);
-
             // 统计
             for (QuantForecastVerification item : heavy.items()) {
                 totalAll++;
@@ -245,14 +221,7 @@ public class VerificationService {
                     heavyCorrect++;
                 }
             }
-            for (VerificationCycleResult light : attached) {
-                for (QuantForecastVerification item : light.items()) {
-                    totalAll++;
-                    if (item.getPredictionCorrect() != null && item.getPredictionCorrect()) correctAll++;
-                }
-            }
-            groups.add(new GroupedHeavyCycle(heavy, attached,
-                    adjByHeavy.getOrDefault(heavy.cycleId(), List.of())));
+            groups.add(new GroupedHeavyCycle(heavy, List.of(), List.of()));
         }
 
         String accuracyRate = totalAll > 0 ? (correctAll * 100 / totalAll) + "%" : "0%";
@@ -261,26 +230,10 @@ public class VerificationService {
                 heavyTotal, heavyCorrect, heavyAccuracyRate, groups);
     }
 
-    private static List<VerificationCycleResult> getVerificationCycleResults(VerificationCycleResult heavy, List<VerificationCycleResult> lightResults) {
-        // 挂载靠字段：轻周期存入时写的 parent_cycle_id 就是它父重周期 cycleId
-        String heavyId = heavy.cycleId();
-        if (heavyId == null) return List.of();
-        List<VerificationCycleResult> attached = new ArrayList<>();
-        for (VerificationCycleResult light : lightResults) {
-            if (heavyId.equals(light.parentCycleId())) {
-                attached.add(light);
-            }
-        }
-        return attached;
-    }
-
     /**
-     * 验证一个预测周期的所有区间裁决。
-     * 按分段区间(0-10/10-20/20-30)各自拉取对应时段K线做路径分析。
-     * <p>
-     * 验证策略：
-     * - 0_10: 完整验证（方向+BPS+TP/SL触达判定）
-     * - 10_20/20_30: 降级验证（仅方向+BPS），因TP/SL基于T+0价格生成，对后段无效
+     * 验证一个预测周期的所有 horizon 裁决。
+     * H6/H12/H24 都从 forecastTime 起算，到各自 horizon 结束时验证方向和路径表现。
+     * 新预测层不再生成 entry/tp/sl，这些字段存在时才做触达判定，默认只评估方向+BPS。
      */
     public int verifyCycle(QuantForecastCycle cycle, List<QuantHorizonForecast> forecasts) {
         if (cycle == null || forecasts == null) return 0;
@@ -316,7 +269,7 @@ public class VerificationService {
                 continue;
             }
 
-            // 分段入场价：0_10用预测时价格，10_20/20_30用分段起点实际价格
+            // 新 H6/H12/H24 预测都以 forecastTime 为决策点；旧分段 horizon 仍按历史语义兼容。
             BigDecimal entryPrice;
             if (startMin == 0) {
                 entryPrice = priceAtForecast;
@@ -340,7 +293,7 @@ public class VerificationService {
 
             int changeBps = calcChangeBps(entryPrice, priceAfter);
 
-            // 分段TP/SL：0_10直接用；10_20/20_30按TP/SL相对priceAtForecast的偏移量平移到分段entryPrice上
+            // 新架构通常不再有 TP/SL；旧分段数据存在价位时才保留原触达判定。
             BigDecimal segTp1, segSl;
             if (startMin == 0) {
                 segTp1 = f.getTp1();
@@ -551,6 +504,7 @@ public class VerificationService {
 
     private int horizonStartMinutes(String horizon) {
         return switch (horizon) {
+            case "H6", "H12", "H24" -> 0;
             case "0_10" -> 0;
             case "10_20" -> 10;
             case "20_30" -> 20;
@@ -560,6 +514,9 @@ public class VerificationService {
 
     private int horizonEndMinutes(String horizon) {
         return switch (horizon) {
+            case "H6" -> 6 * 60;
+            case "H12" -> 12 * 60;
+            case "H24" -> 24 * 60;
             case "0_10" -> 10;
             case "10_20" -> 20;
             case "20_30" -> 30;

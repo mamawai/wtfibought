@@ -7,7 +7,8 @@ import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibservice.agent.quant.domain.*;
 import com.mawai.wiibservice.agent.quant.domain.output.DebateHorizonResponse;
 import com.mawai.wiibservice.agent.quant.domain.output.DebateJudgeResponse;
-import com.mawai.wiibservice.agent.quant.judge.HorizonJudge;
+import com.mawai.wiibservice.agent.quant.judge.ConsensusForecast;
+import com.mawai.wiibservice.agent.quant.judge.HorizonDecisionPolicy;
 import com.mawai.wiibservice.agent.quant.memory.MemoryService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -32,12 +33,6 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class DebateJudgeNode implements NodeAction {
 
-    /**
-     * 辩论裁决运行时开关。true=启用3-call辩论；false=跳过辩论返回中性概率(33/34/33)保留原始forecasts。
-     * Phase 0A D7-B：默认关闭——3次LLM调用省掉，confidence不再被辩论调整，规避方差注入。
-     * 类与workflow节点保留不动，Admin可运行时切回true做前后对比。
-     */
-    public static volatile boolean ENABLED = false;
     private static final BeanOutputConverter<DebateJudgeResponse> JUDGE_CONVERTER =
             new BeanOutputConverter<>(DebateJudgeResponse.class);
 
@@ -57,13 +52,6 @@ public class DebateJudgeNode implements NodeAction {
         long startMs = System.currentTimeMillis();
         List<HorizonForecast> forecasts =
                 (List<HorizonForecast>) state.value("horizon_forecasts").orElse(List.of());
-
-        if (!ENABLED) {
-            // D7-B短路：跳过3-call辩论，下发33/34/33中性概率；forecasts/decision/risk_status原样透传
-            Map<String, Integer[]> defaultProbs = buildDefaultProbs(forecasts);
-            log.info("[Q4.5.disabled] 辩论已禁用(D7-B), 保留原始forecasts, 下发中性概率 forecasts={}", forecasts.size());
-            return Map.of("debate_probs", defaultProbs);
-        }
 
         List<AgentVote> votes =
                 (List<AgentVote>) state.value("agent_votes").orElse(List.of());
@@ -180,10 +168,10 @@ public class DebateJudgeNode implements NodeAction {
 
                 要求：
                 - 你的唯一目标是论证"应该做多"，不要替对方辩护，不要自我质疑
-                - 引用具体的Agent投票数据（如"momentum在0-10给出LONG score=0.45"）
+                - 引用具体的Agent投票数据（如"momentum在H6给出LONG score=0.45"）
                 - 引用微结构信号（如"盘口买盘主导 bidAskImbalance=0.25"）
                 - 如果系统裁决是做空或NO_TRADE，论证为什么应该重新考虑做多
-                - 对每个区间(0-10/10-20/20-30min)分别分析做多理由
+                - 对每个区间(H6/H12/H24)分别分析做多理由
                 - 指出有利于多头的regime特征和转换信号
 
                 限300字，纯文字论述，不要返回JSON。""".formatted(dataContext);
@@ -197,11 +185,11 @@ public class DebateJudgeNode implements NodeAction {
 
                 要求：
                 - 你的唯一目标是论证"应该做空或观望"，不要替对方辩护，不要自我质疑
-                - 引用具体的Agent投票数据（如"volatility在0-10给出SHORT score=-0.30"）
+                - 引用具体的Agent投票数据（如"volatility在H6给出SHORT score=-0.30"）
                 - 引用微结构信号（如"tradeDelta为负=主动卖压"）
                 - 指出系统裁决中可能被忽略的风险
                 - 如果regime处于转换期(WEAKENING/BREAKING)，强调转换风险
-                - 对每个区间(0-10/10-20/20-30min)分别分析做空/观望理由
+                - 对每个区间(H6/H12/H24)分别分析做空/观望理由
                 - 指出不利于多头的资金费率、持仓量、爆仓信号等
 
                 限300字，纯文字论述，不要返回JSON。""".formatted(dataContext);
@@ -230,8 +218,8 @@ public class DebateJudgeNode implements NodeAction {
 
                 审核维度：
                 1. 方向矛盾：各区间裁决方向是否与多数Agent投票一致？
-                2. 跨区间逻辑：0-10看多但10-20看空是否合理？
-                3. Regime适应：SQUEEZE/SHOCK下仓位和杠杆是否足够保守？
+                2. 跨区间逻辑：H6看多但H12/H24看空是否合理？长周期背景是否支持短周期方向？
+                3. Regime适应：SQUEEZE/SHOCK下方向和置信度是否足够保守？
                 4. 微结构背离：做多但盘口卖压(bid<0)？做空但盘口买压(bid>0)？
                 5. 转换风险：regime转换信号下是否需要更保守？
                 6. 历史教训：记忆中的偏差提示是否适用于当前场景？
@@ -247,7 +235,7 @@ public class DebateJudgeNode implements NodeAction {
                 - 如果需要翻转方向，新confidence不得超过原始的50%%
                 - 如果Bull和Bear论据都很弱，维持系统原始裁决(approved=true)
                 - direction只能是LONG/SHORT/NO_TRADE
-                - 不修改entry/tp/sl价位
+                - 不生成entry/tp/sl/leverage/position；仓位和杠杆由后续RiskGate生成
 
                 概率修正：
                 基于辩论中挖掘到的深层信息（如跨维度共振、资金流向矛盾、regime转换二阶信号等），
@@ -257,11 +245,11 @@ public class DebateJudgeNode implements NodeAction {
                 {
                   "judgeReasoning": "裁判推理过程(200字内)",
                   "horizons": [
-                    {"horizon":"0_10","approved":true,"newDirection":"LONG","newConfidence":0.65,"reason":"一句话",
+                    {"horizon":"H6","approved":true,"newDirection":"LONG","newConfidence":0.65,"reason":"一句话",
                      "bullPct":45,"rangePct":35,"bearPct":20},
-                    {"horizon":"10_20","approved":true,"newDirection":"NO_TRADE","newConfidence":0,"reason":"一句话",
+                    {"horizon":"H12","approved":true,"newDirection":"NO_TRADE","newConfidence":0,"reason":"一句话",
                      "bullPct":30,"rangePct":40,"bearPct":30},
-                    {"horizon":"20_30","approved":false,"newDirection":"NO_TRADE","newConfidence":0,"reason":"一句话",
+                    {"horizon":"H24","approved":false,"newDirection":"NO_TRADE","newConfidence":0,"reason":"一句话",
                      "bullPct":25,"rangePct":45,"bearPct":30}
                   ]
                 }
@@ -379,7 +367,7 @@ public class DebateJudgeNode implements NodeAction {
                 }
             }
 
-            String rebuiltDecision = rebuildDecision(adjusted);
+            String rebuiltDecision = HorizonDecisionPolicy.overallDecision(toConsensus(adjusted));
             String rebuiltRiskStatus = rebuildRiskStatus(adjusted, originalRiskStatus);
 
             Map<String, Object> result = new HashMap<>();
@@ -420,7 +408,7 @@ public class DebateJudgeNode implements NodeAction {
 
     private String buildVoteBlock(List<AgentVote> votes) {
         StringBuilder sb = new StringBuilder();
-        for (String horizon : List.of("0_10", "10_20", "20_30")) {
+        for (String horizon : List.of("H6", "H12", "H24")) {
             sb.append("--- ").append(fmtHorizon(horizon)).append(" ---\n");
             for (AgentVote v : votes) {
                 if (!horizon.equals(v.horizon())) continue;
@@ -507,15 +495,10 @@ public class DebateJudgeNode implements NodeAction {
 
     private HorizonForecast rebuildForecast(HorizonForecast f, Direction newDir, double newConf) {
         double newScore = newDir == Direction.LONG ? Math.abs(f.weightedScore()) : -Math.abs(f.weightedScore());
-        // NO_TRADE原始仓位为0，翻转后用基准值的一半（来源统一在HorizonJudge）
-        int maxLev = f.maxLeverage();
-        double maxPos = f.maxPositionPct();
-        if (maxLev <= 0 || maxPos <= 0) {
-            maxLev = Math.max(1, (HorizonJudge.getMaxLeverage(f.horizon()) + 1) / 2);
-            maxPos = HorizonJudge.getBasePositionPct(f.horizon()) * 0.5;
-        }
+        // 预测层不产 sizing：leverage/position 占位 0，统一由 RiskGate 按 research 基准生成；
+        // 翻转更保守已通过压低后的 newConf 传导。
         return new HorizonForecast(f.horizon(), newDir, newConf, newScore, f.disagreement(),
-                null, null, null, null, null, maxLev, maxPos);
+                null, null, null, null, null, 0, 0);
     }
 
     private Direction parseDirection(String str, Direction fallback) {
@@ -529,49 +512,48 @@ public class DebateJudgeNode implements NodeAction {
     }
 
     /**
-     * 归一化 horizon 字符串：LLM 可能返回 "0-10min"/"0_10min"/"0_10" 等变体
+     * 归一化 horizon 字符串：主格式是 H6/H12/H24；旧格式只做历史兼容。
      */
     private String normalizeHorizon(String raw) {
-        if (raw == null) return "0_10";
-        String s = raw.replaceAll("[^0-9_]", "");
-        if (s.startsWith("0")) return "0_10";
-        if (s.startsWith("10")) return "10_20";
-        if (s.startsWith("20")) return "20_30";
+        if (raw == null) return "H6";
+        String s = raw.toUpperCase().replaceAll("[^H0-9]", "");
+        if (s.contains("H6")) return "H6";
+        if (s.contains("H12")) return "H12";
+        if (s.contains("H24")) return "H24";
+        // 旧格式兼容
+        if (raw.contains("0_10") || raw.startsWith("0")) return "H6";
+        if (raw.contains("10_20") || raw.startsWith("10")) return "H12";
+        if (raw.contains("20_30") || raw.startsWith("20")) return "H24";
         return raw;
     }
 
-    private String rebuildDecision(List<HorizonForecast> forecasts) {
-        HorizonForecast best = null;
-        for (HorizonForecast f : forecasts) {
-            if (f.direction() == Direction.NO_TRADE) continue;
-            if (best == null || f.confidence() > best.confidence()) best = f;
-        }
-        return best == null ? "FLAT" : "PRIORITIZE_" + best.horizon() + "_" + best.direction().name();
+    /** 把 debate 调整后的 HorizonForecast 投影成 ConsensusForecast，供 HorizonDecisionPolicy 复用同口径决策。 */
+    private static List<ConsensusForecast> toConsensus(List<HorizonForecast> forecasts) {
+        return forecasts.stream()
+                .map(f -> new ConsensusForecast(f.horizon(), f.direction(), f.confidence(), f.disagreement()))
+                .toList();
     }
 
     private String rebuildRiskStatus(List<HorizonForecast> adjusted, String original) {
-        long noTradeCount = adjusted.stream().filter(f -> f.direction() == Direction.NO_TRADE).count();
-        double maxDisagree = adjusted.stream().mapToDouble(HorizonForecast::disagreement).max().orElse(0);
-
+        // 基础风险档复用 HorizonDecisionPolicy（与 ConsensusJudge 同口径），再合并上游 risk_status 不丢状态。
+        String base = HorizonDecisionPolicy.overallRiskStatus(toConsensus(adjusted));
         LinkedHashSet<String> parts = new LinkedHashSet<>();
         if (original != null) {
             for (String p : original.split(",")) {
                 if (!p.isBlank()) parts.add(p.trim());
             }
         }
-        if (noTradeCount == adjusted.size()) parts.add("ALL_NO_TRADE");
-        else if (maxDisagree >= 0.35) parts.add("HIGH_DISAGREEMENT");
-
+        parts.add(base);
         if (parts.size() > 1) { parts.remove("NORMAL"); parts.remove("UNKNOWN"); }
         return parts.isEmpty() ? "NORMAL" : String.join(",", parts);
     }
 
     private String fmtHorizon(String h) {
-        return switch (h) { case "0_10" -> "0-10min"; case "10_20" -> "10-20min"; case "20_30" -> "20-30min"; default -> h; };
+        return switch (h) { case "H6" -> "H6(6h)"; case "H12" -> "H12(12h)"; case "H24" -> "H24(24h)"; default -> h; };
     }
 
     private String fmtHorizonShort(String h) {
-        return switch (h) { case "0_10" -> "0-10"; case "10_20" -> "10-20"; case "20_30" -> "20-30"; default -> h; };
+        return switch (h) { case "H6" -> "H6"; case "H12" -> "H12"; case "H24" -> "H24"; default -> h; };
     }
 
     private String fmt(double v) { return String.format("%.2f", v); }

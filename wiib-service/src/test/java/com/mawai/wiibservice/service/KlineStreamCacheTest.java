@@ -7,18 +7,18 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 
 class KlineStreamCacheTest {
 
     @Test
     void storesLatestClosedBarAndPublishesEvent() {
-        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
-        KlineHistoryStore historyStore = mock(KlineHistoryStore.class);
+        List<Object> events = new ArrayList<>();
+        ApplicationEventPublisher publisher = events::add;
+        FakeKlineHistoryStore historyStore = new FakeKlineHistoryStore();
         KlineStreamCache cache = new KlineStreamCache(publisher, historyStore);
         KlineBar bar = new KlineBar(1L, 2L, BigDecimal.ONE, BigDecimal.TEN,
                 BigDecimal.ZERO, BigDecimal.valueOf(5), BigDecimal.TEN);
@@ -27,7 +27,27 @@ class KlineStreamCacheTest {
 
         assertThat(cache.latestClosed("BTCUSDT", "5m")).contains(bar);
         assertThat(cache.lastClosedMs("BTCUSDT", "5m")).isEqualTo(2L);
-        verify(historyStore).saveClosedBar("BTCUSDT", "5m", bar);
-        verify(publisher).publishEvent(any(KlineClosedEvent.class));
+        assertThat(historyStore.savedSymbol).isEqualTo("BTCUSDT");
+        assertThat(historyStore.savedInterval).isEqualTo("5m");
+        assertThat(historyStore.savedBar).isEqualTo(bar);
+        assertThat(events).singleElement().isInstanceOf(KlineClosedEvent.class);
+    }
+
+    private static final class FakeKlineHistoryStore extends KlineHistoryStore {
+        private String savedSymbol;
+        private String savedInterval;
+        private KlineBar savedBar;
+
+        private FakeKlineHistoryStore() {
+            super(null);
+        }
+
+        @Override
+        public int saveClosedBar(String symbol, String intervalCode, KlineBar bar) {
+            savedSymbol = symbol;
+            savedInterval = intervalCode;
+            savedBar = bar;
+            return 1;
+        }
     }
 }

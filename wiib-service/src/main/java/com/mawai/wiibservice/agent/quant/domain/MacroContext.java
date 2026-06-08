@@ -90,15 +90,15 @@ public record MacroContext(
         if (stale || qualityFlags.contains("MACRO_CONTEXT_NEUTRAL")) {
             return "";
         }
-        return "宏观6-24h | vol: %s | regime: %s"
-                .formatted(volSummary(), regimeSummary());
+        return "research H6/H12/H24 | vol: %s | regime: %s | direction: %s"
+                .formatted(volSummary(), regimeSummary(), directionSummary());
     }
 
     public String toReportBlock() {
         if (stale || qualityFlags.contains("MACRO_CONTEXT_NEUTRAL")) {
             return "宏观上下文预热中，暂不介入交易。";
         }
-        return "宏观6-24h | vol: %s | regime: %s | direction: %s"
+        return "research H6/H12/H24 | vol: %s | regime: %s | direction: %s"
                 .formatted(volSummary(), regimeSummary(), directionSummary());
     }
 

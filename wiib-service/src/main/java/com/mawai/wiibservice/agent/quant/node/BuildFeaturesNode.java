@@ -29,7 +29,7 @@ public class BuildFeaturesNode implements NodeAction {
         return builder.apply(state);
     }
 
-    /** 独立于 StateGraph 的特征构建入口，轻周期可直接调用 */
+    /** 独立于 StateGraph 的特征构建入口，供测试和工具复用。 */
     public Map<String, Object> buildFeatures(String symbol, Map<String, Object> rawData) {
         return builder.buildFeatures(symbol, rawData);
     }

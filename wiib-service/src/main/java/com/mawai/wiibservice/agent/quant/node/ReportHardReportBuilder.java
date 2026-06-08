@@ -9,7 +9,7 @@ import com.mawai.wiibservice.agent.quant.domain.MacroContext;
 import com.mawai.wiibservice.agent.quant.domain.MarketRegime;
 import com.mawai.wiibservice.agent.quant.domain.NewsItem;
 import com.mawai.wiibservice.agent.quant.factor.NewsEventAgent;
-import com.mawai.wiibservice.agent.quant.judge.HorizonJudge;
+import com.mawai.wiibservice.agent.quant.judge.ConsensusJudge;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.agent.quant.util.NewsRelevance;
 
@@ -99,9 +99,9 @@ final class ReportHardReportBuilder {
                                                                   Map<String, Object[]> debateProbs,
                                                                   MarketRegime regime) {
         CryptoAnalysisReport.DirectionInfo direction = new CryptoAnalysisReport.DirectionInfo();
-        direction.setUltraShort(formatDirectionWithProb(findForecast(forecasts, "0_10"), votes, "0_10", debateProbs, regime));
-        direction.setShortTerm(formatDirectionWithProb(findForecast(forecasts, "10_20"), votes, "10_20", debateProbs, regime));
-        direction.setMid(formatDirectionWithProb(findForecast(forecasts, "20_30"), votes, "20_30", debateProbs, regime));
+        direction.setUltraShort(formatDirectionWithProb(findForecast(forecasts, "H6"), votes, "H6", debateProbs, regime));
+        direction.setShortTerm(formatDirectionWithProb(findForecast(forecasts, "H12"), votes, "H12", debateProbs, regime));
+        direction.setMid(formatDirectionWithProb(findForecast(forecasts, "H24"), votes, "H24", debateProbs, regime));
         direction.setLongTerm("观望");
         return direction;
     }
@@ -264,7 +264,7 @@ final class ReportHardReportBuilder {
 
     private List<CryptoAnalysisReport.PositionAdvice> buildPositionAdvice(List<HorizonForecast> forecasts) {
         List<CryptoAnalysisReport.PositionAdvice> adviceList = new ArrayList<>();
-        for (String horizon : List.of("0_10", "10_20", "20_30")) {
+        for (String horizon : List.of("H6", "H12", "H24")) {
             HorizonForecast forecast = findForecast(forecasts, horizon);
             CryptoAnalysisReport.PositionAdvice advice = new CryptoAnalysisReport.PositionAdvice();
             advice.setPeriod(formatHorizon(horizon));
@@ -428,7 +428,7 @@ final class ReportHardReportBuilder {
         double bullish = 0, bearish = 0;
         for (AgentVote v : allVotes) {
             if (!horizon.equals(v.horizon())) continue;
-            double w = HorizonJudge.baseWeight(v.agent(), horizon);
+            double w = ConsensusJudge.baseEvidenceWeight(v.agent(), horizon);
             if (weightOverrideService != null) {
                 w = weightOverrideService.apply(v.agent(), horizon, regime, w);
             }
@@ -488,9 +488,9 @@ final class ReportHardReportBuilder {
 
     private String formatHorizon(String horizon) {
         return switch (horizon) {
-            case "0_10" -> "0-10min";
-            case "10_20" -> "10-20min";
-            case "20_30" -> "20-30min";
+            case "H6" -> "H6(6h)";
+            case "H12" -> "H12(12h)";
+            case "H24" -> "H24(24h)";
             default -> horizon;
         };
     }

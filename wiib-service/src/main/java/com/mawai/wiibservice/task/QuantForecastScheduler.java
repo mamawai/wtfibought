@@ -4,11 +4,9 @@ import cn.hutool.json.JSONUtil;
 import com.mawai.wiibservice.agent.quant.PriceVolatilitySentinel;
 import com.mawai.wiibservice.agent.quant.QuantForecastFacade;
 import com.mawai.wiibservice.agent.quant.QuantForecastRunResult;
-import com.mawai.wiibservice.agent.quant.QuantLightCycleService;
-import com.mawai.wiibservice.agent.quant.domain.AgentVote;
-import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibservice.agent.quant.domain.ForecastResult;
 import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
+import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
 import lombok.RequiredArgsConstructor;
@@ -23,8 +21,6 @@ import org.springframework.context.event.EventListener;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.Duration;
-import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -33,43 +29,53 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class QuantForecastScheduler {
 
-    private static final Duration LIGHT_TRIGGER_DEDUP_WINDOW = Duration.ofSeconds(60);
-
     private final QuantForecastFacade quantForecastFacade;
     private final RedisMessageBroadcastService broadcastService;
     private final BinanceRestClient binanceRestClient;
-    private final QuantLightCycleService lightCycleService;
     private final PriceVolatilitySentinel priceVolatilitySentinel;
     private final ApplicationEventPublisher eventPublisher;
+    private final KlineHistoryStore historyStore;
 
-    /** 记录每个symbol最近一次重周期的完成时间 */
-    private final Map<String, Instant> lastHeavyCycleTime = new ConcurrentHashMap<>();
+    /** 每个 symbol 最近成功处理的 5m closeTime。 */
+    private final Map<String, Long> lastForecastedCloseTime = new ConcurrentHashMap<>();
+    private final java.util.Set<String> runningForecastKeys = ConcurrentHashMap.newKeySet();
 
-    /** 记录每个symbol最近一次轻周期触发时间，防 cron 与 5m 收盘事件同分钟重复触发 */
-    private final Map<String, Instant> lastLightCycleTriggerTime = new ConcurrentHashMap<>();
-
-    @Scheduled(cron = "0 */30 * * * *")
-    public void rollingForecast() {
-        String fearGreedData = fetchFearGreedOnce();
-        for (String symbol : QuantConstants.WATCH_SYMBOLS) {
-            Thread.startVirtualThread(() -> runForecast(symbol, fearGreedData));
-        }
-    }
-
-    @Scheduled(cron = "0 */5 * * * *")
-    public void lightRefresh() {
-        String fearGreedData = fetchFearGreedOnce();
-        for (String symbol : QuantConstants.WATCH_SYMBOLS) {
-            triggerLightRefresh(symbol, fearGreedData, "cron");
-        }
-    }
-
+    /**
+     * 主触发：5m KlineClosedEvent → 跑完整 H6/H12/H24 forecast pipeline。
+     * 旧 30min cron rollingForecast 废弃，改为事件驱动。
+     */
     @EventListener
     public void onKlineClosed(KlineClosedEvent event) {
         if (event == null || !"5m".equalsIgnoreCase(event.interval())) {
             return;
         }
-        triggerLightRefresh(event.symbol(), fetchFearGreedOnce(), "kline_close");
+        String symbol = normalizeSymbol(event.symbol());
+        triggerForecast(symbol, event.closeTime(), fetchFearGreedOnce(), "kline_close");
+    }
+
+    /**
+     * 兜底 cron：每 5 分钟检查是否有新闭合 bar 未处理，防止 WS 落后。
+     * 旧 lightRefresh cron 废弃——不再有重/轻周期分离。
+     */
+    @Scheduled(cron = "0 */5 * * * *")
+    public void watchdogFallback() {
+        String fearGreedData = fetchFearGreedOnce();
+        for (String symbol : QuantConstants.WATCH_SYMBOLS) {
+            String normalized = normalizeSymbol(symbol);
+            long now = System.currentTimeMillis();
+            Long latestClose = historyStore.latestCloseTime(normalized, KlineHistoryStore.DEFAULT_INTERVAL);
+            if (latestClose == null || now - latestClose > Duration.ofMinutes(10).toMillis()) {
+                Long latestOpen = historyStore.latestOpenTime(normalized, KlineHistoryStore.DEFAULT_INTERVAL);
+                long from = latestOpen != null
+                        ? latestOpen + KlineHistoryStore.DEFAULT_BAR_MILLIS
+                        : now - Duration.ofDays(1).toMillis();
+                historyStore.backfill(normalized, Math.max(0, from), now);
+                latestClose = historyStore.latestCloseTime(normalized, KlineHistoryStore.DEFAULT_INTERVAL);
+            }
+            if (latestClose != null && latestClose > lastForecastedCloseTime.getOrDefault(normalized, 0L)) {
+                triggerForecast(normalized, latestClose, fearGreedData, "watchdog");
+            }
+        }
     }
 
     private String fetchFearGreedOnce() {
@@ -82,93 +88,81 @@ public class QuantForecastScheduler {
         }
     }
 
-    private void runForecast(String symbol, String fearGreedData) {
+    private void triggerForecast(String symbol, long closeTime, String fearGreedData, String source) {
         String normalized = normalizeSymbol(symbol);
-        log.info("定时预测开始 symbol={}", normalized);
+        if (closeTime <= 0) {
+            closeTime = System.currentTimeMillis();
+        }
+        long lastDone = lastForecastedCloseTime.getOrDefault(normalized, 0L);
+        if (lastDone >= closeTime) {
+            log.debug("[Scheduler] 已处理 closeTime 跳过 source={} symbol={} closeTime={}",
+                    source, normalized, closeTime);
+            return;
+        }
+        String runningKey = normalized + ":" + closeTime;
+        if (!runningForecastKeys.add(runningKey)) {
+            log.debug("[Scheduler] closeTime处理中跳过 source={} symbol={} closeTime={}",
+                    source, normalized, closeTime);
+            return;
+        }
+        long finalCloseTime = closeTime;
+        Thread.startVirtualThread(() -> {
+            try {
+                if (runForecast(normalized, fearGreedData, finalCloseTime)) {
+                    lastForecastedCloseTime.merge(normalized, finalCloseTime, Math::max);
+                }
+            } finally {
+                runningForecastKeys.remove(runningKey);
+            }
+        });
+    }
+
+    private boolean runForecast(String symbol, String fearGreedData, long closeTime) {
+        String normalized = normalizeSymbol(symbol);
+        log.info("预测开始 symbol={} closeTime={}", normalized, closeTime);
         try {
-            QuantForecastRunResult result = quantForecastFacade.run(normalized, "scheduled-" + normalized, Map.of("fear_greed_data", fearGreedData));
+            QuantForecastRunResult result = quantForecastFacade.run(normalized,
+                    "scheduled-" + normalized + "-" + closeTime,
+                    Map.of("fear_greed_data", fearGreedData, "kline_close_time", closeTime));
             if (!result.graphReturned()) {
-                log.warn("定时预测无结果 symbol={}", normalized);
-                return;
+                log.warn("预测无结果 symbol={}", normalized);
+                return false;
             }
 
             if (!result.dataAvailable()) {
-                log.warn("定时预测数据采集失败 symbol={}", normalized);
-                return;
+                log.warn("预测数据采集失败 symbol={}", normalized);
+                return false;
             }
 
             ForecastResult forecastResult = result.forecastResult();
             if (forecastResult != null) {
-                // ★ 缓存供轻周期复用
-                cacheForLightCycle(normalized, forecastResult, result.rawReportJson());
-                lastHeavyCycleTime.put(normalized, Instant.now());
+                // 更新哨兵 ATR 缓存
+                if (forecastResult.snapshot() != null) {
+                    priceVolatilitySentinel.updateAtr(normalized, forecastResult.snapshot().atr());
+                }
 
                 if (result.report() != null) {
                     broadcastService.broadcastQuantSignal(normalized, JSONUtil.toJsonStr(result.report()));
                 }
 
-                log.info("定时预测完成 symbol={} decision={}", normalized, forecastResult.overallDecision());
-                eventPublisher.publishEvent(new QuantCycleCompleteEvent(this, normalized, "heavy"));
+                log.info("预测完成 symbol={} decision={}", normalized, forecastResult.overallDecision());
+                eventPublisher.publishEvent(new QuantCycleCompleteEvent(this, normalized, "research"));
+                return true;
             } else {
-                log.warn("定时预测无ForecastResult symbol={}", normalized);
+                log.warn("预测无ForecastResult symbol={}", normalized);
+                return false;
             }
         } catch (Exception e) {
-            log.error("定时预测异常 symbol={}", normalized, e);
+            log.error("预测异常 symbol={}", normalized, e);
+            return false;
         }
     }
 
     public void runForecast(String symbol) {
-        runForecast(symbol, "{}");
-    }
-
-    private void triggerLightRefresh(String symbol, String fearGreedData, String source) {
         String normalized = normalizeSymbol(symbol);
-        Instant now = Instant.now();
-        // 距离上次重周期不到2分钟跳过：heavy 刚跑完轻周期修正没意义，等下一轮 5min light 再修。
-        Instant lastHeavy = lastHeavyCycleTime.get(normalized);
-        if (lastHeavy != null && now.getEpochSecond() - lastHeavy.getEpochSecond() < 120) {
-            log.debug("[Scheduler] 轻周期跳过 source={} symbol={} 距重周期仅{}s",
-                    source, normalized, now.getEpochSecond() - lastHeavy.getEpochSecond());
-            return;
-        }
-        if (!lightCycleService.hasCacheFor(normalized)) {
-            log.debug("[Scheduler] 轻周期跳过 source={} symbol={} 无重周期缓存", source, normalized);
-            return;
-        }
-        boolean accepted = markLightTriggerIfDue(normalized, now);
-        if (!accepted) {
-            log.debug("[Scheduler] 轻周期跳过 source={} symbol={} 触发间隔小于{}s",
-                    source, normalized, LIGHT_TRIGGER_DEDUP_WINDOW.toSeconds());
-            return;
-        }
-        Thread.startVirtualThread(() -> lightCycleService.runLightRefresh(normalized, fearGreedData));
-    }
-
-    private boolean markLightTriggerIfDue(String symbol, Instant now) {
-        boolean[] accepted = {false};
-        lastLightCycleTriggerTime.compute(symbol, (key, previous) -> {
-            if (previous != null
-                    && Duration.between(previous, now).compareTo(LIGHT_TRIGGER_DEDUP_WINDOW) < 0) {
-                return previous;
-            }
-            accepted[0] = true;
-            return now;
-        });
-        return accepted[0];
-    }
-
-    private void cacheForLightCycle(String symbol, ForecastResult forecastResult, String rawReportJson) {
-        try {
-            List<AgentVote> allVotes = forecastResult.allVotes();
-            FeatureSnapshot snapshot = forecastResult.snapshot();
-            if (allVotes != null && snapshot != null) {
-                lightCycleService.cacheFromHeavyCycle(symbol, forecastResult.cycleId(), allVotes, snapshot,
-                        rawReportJson, forecastResult.horizons());
-                priceVolatilitySentinel.updateAtr(symbol, snapshot.atr());
-            }
-        } catch (Exception e) {
-            log.warn("[Scheduler] 缓存轻周期数据失败 symbol={}: {}", symbol, e.getMessage());
-        }
+        Long latestClose = historyStore.latestCloseTime(normalized, KlineHistoryStore.DEFAULT_INTERVAL);
+        triggerForecast(normalized, latestClose != null ? latestClose : System.currentTimeMillis(),
+                "{}", "manual");
     }
 
     private static String normalizeSymbol(String symbol) {

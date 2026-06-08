@@ -24,24 +24,24 @@ public class VolatilityAgent implements FactorAgent {
         Map<String, Map<String, Object>> indicators = s.indicatorsByTimeframe();
         if (indicators == null || indicators.isEmpty()) {
             return List.of(
-                    AgentVote.noTrade(name(), "0_10", "NO_DATA"),
-                    AgentVote.noTrade(name(), "10_20", "NO_DATA"),
-                    AgentVote.noTrade(name(), "20_30", "NO_DATA"));
+                    AgentVote.noTrade(name(), "H6", "NO_DATA"),
+                    AgentVote.noTrade(name(), "H12", "NO_DATA"),
+                    AgentVote.noTrade(name(), "H24", "NO_DATA"));
         }
 
         BigDecimal lastPrice = s.lastPrice();
         BigDecimal atr = s.atr();
         if (lastPrice == null || lastPrice.signum() <= 0) {
             return List.of(
-                    AgentVote.noTrade(name(), "0_10", "NO_PRICE"),
-                    AgentVote.noTrade(name(), "10_20", "NO_PRICE"),
-                    AgentVote.noTrade(name(), "20_30", "NO_PRICE"));
+                    AgentVote.noTrade(name(), "H6", "NO_PRICE"),
+                    AgentVote.noTrade(name(), "H12", "NO_PRICE"),
+                    AgentVote.noTrade(name(), "H24", "NO_PRICE"));
         }
         if (atr != null && atr.signum() == 0) {
             return List.of(
-                    AgentVote.noTrade(name(), "0_10", "ATR_ZERO"),
-                    AgentVote.noTrade(name(), "10_20", "ATR_ZERO"),
-                    AgentVote.noTrade(name(), "20_30", "ATR_ZERO"));
+                    AgentVote.noTrade(name(), "H6", "ATR_ZERO"),
+                    AgentVote.noTrade(name(), "H12", "ATR_ZERO"),
+                    AgentVote.noTrade(name(), "H24", "ATR_ZERO"));
         }
 
         List<String> reasons = new ArrayList<>();
@@ -53,10 +53,10 @@ public class VolatilityAgent implements FactorAgent {
         // ATR趋势（加速/减速）
         analyzeAtrTrend(indicators, reasons);
 
-        // 波动率估计是 horizon 风控口径：1m 看最近 10min，5m 固定估 10-30min。
-        int vol0 = estimateVolBps(s, "1m", 10);    // 0-10min: 1m ATR × sqrt(10)
-        int vol1 = estimateVolBps(s, "5m", 4);     // 10-20min: 5m ATR × sqrt(4)
-        int vol2 = estimateVolBps(s, "5m", 6);     // 20-30min: 5m ATR × sqrt(6)
+        // 波动率 evidence 只做风险刻画，不给方向；5m ATR 按 H6/H12/H24 近似缩放。
+        int vol0 = estimateVolBps(s, "5m", 72);     // H6: 72 根 5m
+        int vol1 = estimateVolBps(s, "5m", 144);    // H12
+        int vol2 = estimateVolBps(s, "5m", 288);    // H24
 
         // 波动率agent不给方向，只提供volatilityBps和风险标志
         double conf = 0.3 + Math.min(0.4, riskFlags.size() * 0.1);
@@ -65,9 +65,9 @@ public class VolatilityAgent implements FactorAgent {
                 vol0, vol1, vol2, reasons, riskFlags);
 
         return List.of(
-                buildVote("0_10", conf, vol0, 0.45, reasons, riskFlags),
-                buildVote("10_20", conf, vol1, 0.60, reasons, riskFlags),
-                buildVote("20_30", conf, vol2, 0.75, reasons, riskFlags));
+                buildVote("H6", conf, vol0, 1.00, reasons, riskFlags),
+                buildVote("H12", conf, vol1, 1.00, reasons, riskFlags),
+                buildVote("H24", conf, vol2, 1.00, reasons, riskFlags));
     }
 
     private void analyzeVolState(Map<String, Map<String, Object>> indicators,

@@ -26,7 +26,7 @@ public class AgentPerformanceMemoryService {
     /** agent + horizon 维度的完整统计 */
     public record AgentStat(double accuracy, int sampleCount, double avgEdgeBps, double badRate) {}
 
-    /** 只返回 accuracy（向后兼容，轻周期等只需 accuracy 的场景） */
+    /** 只返回 accuracy（向后兼容部分只需 accuracy 的调用方） */
     public Map<String, Map<String, Double>> loadAccuracy(String symbol, String regime) {
         Map<String, Map<String, AgentStat>> full = loadFullStats(symbol, regime);
         Map<String, Map<String, Double>> result = new HashMap<>();
@@ -38,7 +38,7 @@ public class AgentPerformanceMemoryService {
         return Map.copyOf(result);
     }
 
-    /** 返回含 sample_count 的完整统计，供 HorizonJudge 调权可见性使用 */
+    /** 返回含 sample_count 的完整统计，供 ConsensusJudge 调权可见性使用 */
     public Map<String, Map<String, AgentStat>> loadFullStats(String symbol, String regime) {
         List<Map<String, Object>> rows =
                 voteMapper.selectAgentPerformanceStats(symbol, normalizeRegime(regime), LOOKBACK_DAYS);

@@ -30,7 +30,18 @@ public class RiskGateNode implements NodeAction {
         MarketRegime regime = snapshot != null ? snapshot.regime() : MarketRegime.RANGE;
         var atr = snapshot != null ? snapshot.atr() : null;
         var lastPrice = snapshot != null ? snapshot.lastPrice() : null;
-        var qualityFlags = snapshot != null ? snapshot.qualityFlags() : List.<String>of();
+        MacroContext macroContext = (MacroContext) state.value("research_forecast")
+                .orElse(state.value("macro_context").orElse(null));
+        java.util.ArrayList<String> mergedQualityFlags = new java.util.ArrayList<>(
+                snapshot != null && snapshot.qualityFlags() != null ? snapshot.qualityFlags() : List.of());
+        if (macroContext != null) {
+            for (String flag : macroContext.qualityFlags()) {
+                if (!mergedQualityFlags.contains(flag)) {
+                    mergedQualityFlags.add(flag);
+                }
+            }
+        }
+        var qualityFlags = List.copyOf(mergedQualityFlags);
         int fearGreedIndex = snapshot != null ? snapshot.fearGreedIndex() : -1;
         double dvolIndex = snapshot != null ? snapshot.dvolIndex() : 0;
 
@@ -38,11 +49,8 @@ public class RiskGateNode implements NodeAction {
                 regime, forecasts.size(), qualityFlags, fearGreedIndex, String.format("%.0f", dvolIndex), upstreamRiskStatus);
 
         String symbol = snapshot != null ? snapshot.symbol() : null;
-        MacroContext macroContext = (MacroContext) state.value("macro_context").orElse(null);
-        MacroRiskHint macroRiskHint = macroContext != null ? macroContext.toRiskHint() : MacroRiskHint.neutral();
-
         RiskGate.RiskResult result = RiskGate.apply(forecasts, regime, atr, lastPrice, qualityFlags,
-                fearGreedIndex, dvolIndex, symbol, macroRiskHint);
+                fearGreedIndex, dvolIndex, symbol, macroContext);
         String mergedRiskStatus = mergeRiskStatus(upstreamRiskStatus, result.riskStatus());
 
         for (HorizonForecast f : result.forecasts()) {

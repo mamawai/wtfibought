@@ -4,6 +4,7 @@ import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.mawai.wiibservice.agent.quant.domain.AgentVote;
 import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
+import com.mawai.wiibservice.agent.quant.domain.MacroContext;
 import com.mawai.wiibservice.agent.quant.factor.FactorAgent;
 import com.mawai.wiibservice.agent.quant.factor.NewsEventAgent;
 import lombok.extern.slf4j.Slf4j;
@@ -17,28 +18,36 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 5个因子Agent并行执行节点。
- * 内部使用虚拟线程并行，纯Java Agent超时30s，LLM Agent超时60-200s。
+ * Evidence Agents 并行执行节点：替代旧 run_factors。
+ *
+ * <p>与旧节点的关键区别：
+ * <ul>
+ *   <li>各 Agent 直接输出 H6/H12/H24 evidence，不再做 0_10/10_20/20_30 机械换标签</li>
+ *   <li>输出 key 仍是 {@code agent_votes}（兼容持久化），但语义变为"evidence 辅助票"</li>
+ * </ul>
  */
 @Slf4j
-public class RunFactorAgentsNode implements NodeAction {
+public class RunEvidenceAgentsNode implements NodeAction {
+
+    private static final List<String> HORIZONS = List.of("H6", "H12", "H24");
 
     private final List<FactorAgent> agents;
 
-    public RunFactorAgentsNode(List<FactorAgent> agents) {
+    public RunEvidenceAgentsNode(List<FactorAgent> agents) {
         this.agents = agents;
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public Map<String, Object> apply(OverAllState state) {
         long startMs = System.currentTimeMillis();
         FeatureSnapshot snapshot = (FeatureSnapshot) state.value("feature_snapshot").orElse(null);
         if (snapshot == null) {
-            log.error("[Q3] feature_snapshot为空");
+            log.error("[Q4] feature_snapshot为空");
             return Map.of("agent_votes", List.of());
         }
 
-        log.info("[Q3.0] run_factors开始 agents={} symbol={}", agents.size(), snapshot.symbol());
+        log.info("[Q4.0] run_evidence_agents开始 agents={} symbol={}", agents.size(), snapshot.symbol());
         List<AgentVote> allVotes = new ArrayList<>();
         List<NewsEventAgent.FilteredNewsItem> filteredNews = List.of();
         double newsConfidenceStddev = 0;
@@ -54,7 +63,7 @@ public class RunFactorAgentsNode implements NodeAction {
                     newsFuture = executor.submit(() -> {
                         long start = System.currentTimeMillis();
                         NewsEventAgent.EvaluateResult result = newsAgent.evaluateWithNews(snapshot);
-                        log.info("[Q3.agent] {}完成 {}ms {}票 {}条新闻",
+                        log.info("[Q4.agent] {}完成 {}ms {}票 {}条新闻",
                                 newsAgent.name(), System.currentTimeMillis() - start,
                                 result.votes().size(), result.filteredNews().size());
                         return result;
@@ -64,7 +73,7 @@ public class RunFactorAgentsNode implements NodeAction {
                     normalFutures.add(executor.submit(() -> {
                         long start = System.currentTimeMillis();
                         List<AgentVote> votes = agent.evaluate(snapshot);
-                        log.info("[Q3.agent] {}完成 {}ms {}票",
+                        log.info("[Q4.agent] {}完成 {}ms {}票",
                                 agent.name(), System.currentTimeMillis() - start, votes.size());
                         return votes;
                     }));
@@ -74,16 +83,16 @@ public class RunFactorAgentsNode implements NodeAction {
             for (int i = 0; i < normalFutures.size(); i++) {
                 String name = normalAgentNames.get(i);
                 try {
-                    allVotes.addAll(normalFutures.get(i).get(30, TimeUnit.SECONDS));
+                    List<AgentVote> raw = normalFutures.get(i).get(30, TimeUnit.SECONDS);
+                    allVotes.addAll(raw);
                 } catch (Exception e) {
-                    log.warn("[Q3] Agent[{}] 超时/异常: {}", name, e.getMessage());
-                    allVotes.add(AgentVote.noTrade(name, "0_10", "TIMEOUT"));
-                    allVotes.add(AgentVote.noTrade(name, "10_20", "TIMEOUT"));
-                    allVotes.add(AgentVote.noTrade(name, "20_30", "TIMEOUT"));
+                    log.warn("[Q4] Agent[{}] 超时/异常: {}", name, e.getMessage());
+                    for (String h : HORIZONS) {
+                        allVotes.add(AgentVote.noTrade(name, h, "TIMEOUT"));
+                    }
                 }
             }
 
-            // 收集 NewsEventAgent 结果
             if (newsFuture != null) {
                 try {
                     NewsEventAgent.EvaluateResult newsResult = newsFuture.get(200, TimeUnit.SECONDS);
@@ -92,25 +101,35 @@ public class RunFactorAgentsNode implements NodeAction {
                     newsConfidenceStddev = newsResult.confidenceStddev();
                     newsLowConfidence = newsResult.lowConfidence();
                 } catch (Exception e) {
-                    log.warn("[Q3] Agent[news_event] 超时/异常: {}", e.getMessage());
-                    allVotes.add(AgentVote.noTrade("news_event", "0_10", "TIMEOUT"));
-                    allVotes.add(AgentVote.noTrade("news_event", "10_20", "TIMEOUT"));
-                    allVotes.add(AgentVote.noTrade("news_event", "20_30", "TIMEOUT"));
+                    log.warn("[Q4] Agent[news_event] 超时/异常: {}", e.getMessage());
+                    for (String h : HORIZONS) {
+                        allVotes.add(AgentVote.noTrade("news_event", h, "TIMEOUT"));
+                    }
                 }
             }
         }
 
         FeatureSnapshot outputSnapshot = snapshot;
-        if (allVotes.stream().anyMatch(v -> v.riskFlags().contains("LOW_CONFIDENCE"))) {
+        MacroContext research = (MacroContext) state.value("research_forecast")
+                .orElse(state.value("macro_context").orElse(null));
+        if (allVotes.stream().anyMatch(v -> v.riskFlags().contains("LOW_CONFIDENCE"))
+                || (research != null && !research.qualityFlags().isEmpty())) {
             List<String> flags = new ArrayList<>(snapshot.qualityFlags() != null ? snapshot.qualityFlags() : List.of());
             if (!flags.contains("LOW_CONFIDENCE")) {
                 flags.add("LOW_CONFIDENCE");
+            }
+            if (research != null) {
+                for (String flag : research.qualityFlags()) {
+                    if (!flags.contains(flag)) {
+                        flags.add(flag);
+                    }
+                }
             }
             outputSnapshot = snapshot.withRegimeReview(snapshot.regime(), List.copyOf(flags),
                     snapshot.regimeConfidence(), snapshot.regimeTransition());
         }
 
-        log.info("[Q3.end] run_factors完成 共{}票 LLM筛选新闻={}条 耗时{}ms",
+        log.info("[Q4.end] run_evidence_agents完成 共{}票 LLM筛选新闻={}条 耗时{}ms",
                 allVotes.size(), filteredNews.size(), System.currentTimeMillis() - startMs);
 
         Map<String, Object> result = new HashMap<>();

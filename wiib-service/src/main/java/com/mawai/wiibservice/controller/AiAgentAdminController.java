@@ -320,7 +320,7 @@ public class AiAgentAdminController {
             }
             runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_DECISION_INTERVAL,
                     interval.name(), operator, "admin trading-config");
-            // 重周期 Graph 节点持有构造参数，切换周期后要重建缓存图才会立即生效。
+            // Graph 节点持有构造参数，切换周期后要重建缓存图才会立即生效。
             aiAgentRuntimeManager.refresh();
         }
         if (req.getEntryEnabledStrategies() != null) {
@@ -430,17 +430,9 @@ public class AiAgentAdminController {
     public Result<QuantConfigResponse> setQuantConfig(@RequestBody QuantConfigRequest req) {
         checkAdmin();
         long operator = StpUtil.getLoginIdAsLong();
-        if (req.getDebateJudgeEnabled() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.QUANT_DEBATE_JUDGE_ENABLED,
-                    req.getDebateJudgeEnabled(), operator, "admin quant-config");
-        }
         if (req.getFactorWeightOverrideEnabled() != null) {
             runtimeFeatureToggleService.set(RuntimeFeatureToggleService.QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED,
                     req.getFactorWeightOverrideEnabled(), operator, "admin quant-config");
-        }
-        if (req.getMacroRiskEnabled() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.QUANT_MACRO_RISK_ENABLED,
-                    req.getMacroRiskEnabled(), operator, "admin quant-config");
         }
         return Result.ok(buildQuantConfigResponse());
     }

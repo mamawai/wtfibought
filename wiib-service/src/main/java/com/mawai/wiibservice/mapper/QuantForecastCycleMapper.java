@@ -5,7 +5,6 @@ import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
-import org.apache.ibatis.annotations.Update;
 
 import java.util.List;
 import java.util.Map;
@@ -17,9 +16,8 @@ public interface QuantForecastCycleMapper extends BaseMapper<QuantForecastCycle>
     QuantForecastCycle selectLatest(@Param("symbol") String symbol);
 
     /**
-     * AI-Trader 专用：只读最新重周期 cycle。
-     * 轻周期也会写 cycle 表（cycleId 以 light- 前缀），但交易决策应基于含 LLM 的重周期，
-     * 轻周期的影响已通过 UPDATE 父重周期 forecast/signal 反映。
+     * AI-Trader 专用：读取最新正式 research cycle。
+     * 方法名保留 Heavy 是兼容旧调用方；过滤 light 前缀只用于跳过历史遗留轻周期记录。
      */
     @Select("SELECT * FROM quant_forecast_cycle WHERE symbol = #{symbol} AND cycle_id NOT LIKE 'light-%' " +
             "ORDER BY forecast_time DESC LIMIT 1")
@@ -28,11 +26,33 @@ public interface QuantForecastCycleMapper extends BaseMapper<QuantForecastCycle>
     @Select("SELECT * FROM quant_forecast_cycle WHERE symbol = #{symbol} ORDER BY forecast_time DESC LIMIT #{limit}")
     List<QuantForecastCycle> selectRecent(@Param("symbol") String symbol, @Param("limit") int limit);
 
-    @Select("SELECT c.* FROM quant_forecast_cycle c " +
-            "WHERE c.symbol = #{symbol} " +
-            "AND c.forecast_time < NOW() - INTERVAL '35 minutes' " +
-            "AND NOT EXISTS (SELECT 1 FROM quant_forecast_verification v WHERE v.cycle_id = c.cycle_id) " +
-            "ORDER BY c.forecast_time DESC LIMIT #{limit}")
+    @Select("""
+            SELECT c.*
+            FROM quant_forecast_cycle c
+            WHERE c.symbol = #{symbol}
+              AND EXISTS (
+                  SELECT 1
+                  FROM quant_horizon_forecast h
+                  WHERE h.cycle_id = c.cycle_id
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM quant_forecast_verification v
+                        WHERE v.cycle_id = h.cycle_id
+                          AND v.horizon = h.horizon
+                    )
+                    AND NOW() >= c.forecast_time + CASE h.horizon
+                        WHEN 'H6' THEN INTERVAL '6 hours'
+                        WHEN 'H12' THEN INTERVAL '12 hours'
+                        WHEN 'H24' THEN INTERVAL '24 hours'
+                        WHEN '0_10' THEN INTERVAL '10 minutes'
+                        WHEN '10_20' THEN INTERVAL '20 minutes'
+                        WHEN '20_30' THEN INTERVAL '30 minutes'
+                        ELSE INTERVAL '100 years'
+                    END
+              )
+            ORDER BY c.forecast_time DESC
+            LIMIT #{limit}
+            """)
     List<QuantForecastCycle> selectUnverified(@Param("symbol") String symbol, @Param("limit") int limit);
 
     @Select("SELECT * FROM quant_forecast_cycle " +
@@ -41,16 +61,6 @@ public interface QuantForecastCycleMapper extends BaseMapper<QuantForecastCycle>
     List<QuantForecastCycle> selectBySymbolAndTimeRange(@Param("symbol") String symbol,
                                                         @Param("from") java.time.LocalDateTime from,
                                                         @Param("to") java.time.LocalDateTime to);
-
-    /**
-     * 轻周期修正父重周期各 horizon forecast 之后，基于新 forecast 重算 overallDecision/riskStatus 回写。
-     * AI-Trader 会读这两个字段，不同步回写会出现 FLAT 锁死或方向不一致。
-     */
-    @Update("UPDATE quant_forecast_cycle SET overall_decision = #{overallDecision}, risk_status = #{riskStatus} " +
-            "WHERE cycle_id = #{cycleId}")
-    int updateDecisionAndRisk(@Param("cycleId") String cycleId,
-                              @Param("overallDecision") String overallDecision,
-                              @Param("riskStatus") String riskStatus);
 
     @Select("""
             WITH base AS (

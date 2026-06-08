@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MacroContextTest {
 
     @Test
-    void debateBlockExcludesDirectionButReportContainsIt() {
+    void debateAndReportBlocksExposeResearchThreeLegs() {
         MacroContext context = new MacroContext("BTCUSDT", Instant.now(), Map.of(
                 ForecastHorizon.H6, new MacroContext.Leg(VolatilityRiskTier.NORMAL, 1.0, 120, 0.5,
                         MarketRegime.TRENDING_UP, 0.7, 1, 0.8),
@@ -26,9 +26,9 @@ class MacroContextTest {
         assertThat(context.toDebateBlock())
                 .contains("vol:")
                 .contains("regime:")
-                .doesNotContain("direction")
-                .doesNotContain("LONG")
-                .doesNotContain("SHORT");
+                .contains("direction")
+                .contains("LONG")
+                .contains("SHORT");
         assertThat(context.toReportBlock())
                 .contains("direction")
                 .contains("LONG")

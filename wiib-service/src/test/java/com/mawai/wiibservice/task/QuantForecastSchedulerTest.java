@@ -2,41 +2,60 @@ package com.mawai.wiibservice.task;
 
 import com.mawai.wiibservice.agent.quant.PriceVolatilitySentinel;
 import com.mawai.wiibservice.agent.quant.QuantForecastFacade;
-import com.mawai.wiibservice.agent.quant.QuantLightCycleService;
 import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
+import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.after;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 class QuantForecastSchedulerTest {
 
     @Test
-    void deduplicatesLightRefreshTriggersWithinWindow() {
+    void deduplicatesSameKlineCloseTimeWhileRunning() throws Exception {
         BinanceRestClient binanceRestClient = mock(BinanceRestClient.class);
-        QuantLightCycleService lightCycleService = mock(QuantLightCycleService.class);
-        when(binanceRestClient.getFearGreedIndex(2)).thenReturn("{}");
-        when(lightCycleService.hasCacheFor("BTCUSDT")).thenReturn(true);
+        QuantForecastFacade facade = mock(QuantForecastFacade.class);
+        CountDownLatch enteredRun = new CountDownLatch(1);
+        CountDownLatch releaseRun = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            enteredRun.countDown();
+            releaseRun.await(2, TimeUnit.SECONDS);
+            return new com.mawai.wiibservice.agent.quant.QuantForecastRunResult(
+                    false, false, null, null, null, null, null);
+        }).when(facade).run(anyString(), anyString(), org.mockito.ArgumentMatchers.<Map<String, Object>>any());
 
         QuantForecastScheduler scheduler = new QuantForecastScheduler(
-                mock(QuantForecastFacade.class),
+                facade,
                 mock(RedisMessageBroadcastService.class),
                 binanceRestClient,
-                lightCycleService,
                 mock(PriceVolatilitySentinel.class),
-                mock(ApplicationEventPublisher.class));
+                mock(ApplicationEventPublisher.class),
+                new FakeKlineHistoryStore());
 
         long closeTime = System.currentTimeMillis();
         scheduler.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", closeTime));
-        scheduler.onKlineClosed(new KlineClosedEvent(this, "btcusdt", "5m", closeTime + 1));
+        org.assertj.core.api.Assertions.assertThat(enteredRun.await(1, TimeUnit.SECONDS)).isTrue();
 
-        verify(lightCycleService, after(500).times(1)).runLightRefresh(eq("BTCUSDT"), anyString());
+        scheduler.onKlineClosed(new KlineClosedEvent(this, "btcusdt", "5m", closeTime));
+        releaseRun.countDown();
+
+        verify(facade, timeout(1000).times(1))
+                .run(anyString(), anyString(), org.mockito.ArgumentMatchers.<Map<String, Object>>any());
+    }
+
+    private static final class FakeKlineHistoryStore extends KlineHistoryStore {
+        private FakeKlineHistoryStore() {
+            super(null);
+        }
     }
 }

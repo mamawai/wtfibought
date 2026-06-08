@@ -10,7 +10,7 @@ import java.util.Map;
 
 /**
  * 微观结构因子 Agent。
- * 组合盘口失衡、主动成交、OI、爆仓、资金费率、现货/合约联动等短线信号，给三个 horizon 输出交易方向。
+ * 微观结构只作为 H6 入场质量 evidence；H12 低权重参考，H24 不给方向。
  */
 @Slf4j
 public class MicrostructureAgent implements FactorAgent {
@@ -75,8 +75,8 @@ public class MicrostructureAgent implements FactorAgent {
         // 多空比（反向：极端多头→空头信号）
         double lsrScore = clamp(-lsr);
 
-        // === 0-10min: 盘口+taker主导，衍生品情绪权重低 ===
-        List<String> flags0 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "0_10");
+        // === H6: 盘口+taker主导，判断本轮入场质量 ===
+        List<String> flags0 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "H6");
         addSentimentFlags(flags0, fundDev, lsr);
         addCrossMarketFlags(flags0, spotBia, spotPrice5mBps, price5mBps, basisBps, spotLeadLag);
         double raw0 = 0.17 * bidAskScore + 0.11 * deltaScore + 0.03 * largeBiasScore + 0.10 * oiScore
@@ -84,8 +84,8 @@ public class MicrostructureAgent implements FactorAgent {
                      + 0.08 * spotBookScore + 0.06 * spotConfirmScore + 0.04 * leadLagScore
                      + 0.03 * fundingScore + 0.05 * lsrScore + 0.05 * basisScore;
 
-        // === 10-20min: OI+大户升权，资金费率权重提升 ===
-        List<String> flags1 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "10_20");
+        // === H12: 只保留衍生品情绪/大户方向的弱辅助，不主导方向 ===
+        List<String> flags1 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "H12");
         addSentimentFlags(flags1, fundDev, lsr);
         addCrossMarketFlags(flags1, spotBia, spotPrice5mBps, price5mBps, basisBps, spotLeadLag);
         double raw1 = 0.05 * bidAskScore + 0.03 * deltaScore + 0.02 * largeBiasScore + 0.13 * oiScore
@@ -127,28 +127,17 @@ public class MicrostructureAgent implements FactorAgent {
                     .divide(lastPrice, 0, java.math.RoundingMode.HALF_UP).intValue()
                 : 20;
 
-        // === 20-30min: 衍生品情绪+OI/大户主导，盘口信号衰减 ===
-        List<String> flags2 = buildFlags(bia, td, oi, price5mBps, liqPressure, liqVol, topTrader, takerPressure, "20_30");
-        addSentimentFlags(flags2, fundDev, lsr);
-        addCrossMarketFlags(flags2, spotBia, spotPrice5mBps, price5mBps, basisBps, spotLeadLag);
-        double raw2 = 0.03 * bidAskScore + 0.02 * deltaScore + 0.02 * largeBiasScore + 0.15 * oiScore
-                     + 0.16 * liqScore + 0.12 * topTraderScore + 0.14 * takerScore
-                     + 0.04 * spotBookScore + 0.05 * spotConfirmScore + 0.03 * leadLagScore
-                     + 0.10 * fundingScore + 0.07 * lsrScore + 0.07 * basisScore;
-        double conf2 = conf * 0.35;
-
         List<AgentVote> votes = new ArrayList<>(3);
-        votes.add(buildVote("0_10", raw0, conf, volBps, flags0));
-        votes.add(buildVote("10_20", raw1, conf * 0.6, volBps, flags1));
-        votes.add(conf2 < 0.12
-                ? AgentVote.noTrade(name(), "20_30", "MICRO_TOO_WEAK")
-                : buildVote("20_30", raw2, conf2, volBps, flags2));
+        votes.add(buildVote("H6", raw0, conf, volBps, flags0));
+        votes.add(buildVote("H12", raw1 * 0.45, conf * 0.35, volBps, flags1));
+        votes.add(new AgentVote(name(), "H24", Direction.NO_TRADE, 0, 0.10,
+                0, volBps, List.of("MICRO_H24_NO_DIRECTION"), List.copyOf(flags1)));
 
-        log.info("[Q3.micro] futBia={} spotBia={} td={} largeBias={} intensity={} oi={} liq={} topTrader={} taker={} basis={} spotLead={} funding={} lsr={} → scores[{},{},{}] conf={} coherence={}",
+        log.info("[Q3.micro] futBia={} spotBia={} td={} largeBias={} intensity={} oi={} liq={} topTrader={} taker={} basis={} spotLead={} funding={} lsr={} → scores[H6={},H12={}] conf={} coherence={}",
                 fmt(bia), fmt(spotBia), fmt(td), fmt(largeBias), String.format("%.1f", tradeIntensity),
                 fmt(oi), fmt(liqPressure), fmt(topTrader), fmt(takerPressure),
                 fmt(basisBps / 10.0), fmt(spotLeadLag), fmt(fundingRaw), fmt(lsr),
-                fmt(raw0), fmt(raw1), fmt(raw2), String.format("%.2f", conf), String.format("%.2f", coherence));
+                fmt(raw0), fmt(raw1 * 0.45), String.format("%.2f", conf), String.format("%.2f", coherence));
         return votes;
     }
 
@@ -199,8 +188,8 @@ public class MicrostructureAgent implements FactorAgent {
             else flags.add("OI_DOWN_PRICE_DOWN");
         }
         if (liqVol > 500_000) flags.add(liqPressure > 0 ? "HEAVY_LONG_LIQ" : "HEAVY_SHORT_LIQ");
-        // 10-20min: 大户和taker信号更相关
-        if ("10_20".equals(horizon)) {
+        // H12: 大户和taker信号更相关
+        if ("H12".equals(horizon)) {
             if (Math.abs(topTrader) > 0.3) flags.add(topTrader > 0 ? "TOP_ADDING_LONG" : "TOP_ADDING_SHORT");
             if (Math.abs(takerPressure) > 0.3) flags.add(takerPressure > 0 ? "TAKER_BUY_SURGE" : "TAKER_SELL_SURGE");
         } else {

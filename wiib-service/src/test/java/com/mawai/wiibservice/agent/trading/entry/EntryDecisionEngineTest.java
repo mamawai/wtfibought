@@ -290,7 +290,7 @@ class EntryDecisionEngineTest {
 
     private static QuantSignalDecision signal(String direction, String confidence) {
         QuantSignalDecision signal = new QuantSignalDecision();
-        signal.setHorizon("0_10");
+        signal.setHorizon("H6");
         signal.setDirection(direction);
         signal.setConfidence(bd(confidence));
         signal.setMaxLeverage(10);

@@ -2,13 +2,12 @@ package com.mawai.wiibservice.agent.quant.service;
 
 import com.mawai.wiibservice.agent.quant.domain.AgentVote;
 import com.mawai.wiibservice.agent.quant.domain.Direction;
-import com.mawai.wiibservice.agent.quant.domain.HorizonForecast;
 import com.mawai.wiibservice.agent.quant.domain.MarketRegime;
-import com.mawai.wiibservice.agent.quant.judge.HorizonJudge;
+import com.mawai.wiibservice.agent.quant.judge.ConsensusForecast;
+import com.mawai.wiibservice.agent.quant.judge.ConsensusJudge;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ByteArrayResource;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -21,36 +20,36 @@ class FactorWeightOverrideServiceTest {
     @Test
     void disabledKeepsBaseWeight() {
         FactorWeightOverrideService service = service(false, """
-                {"rules":[{"agent":"regime","horizon":"20_30","regime":"SHOCK","multiplier":1.5}]}
+                {"rules":[{"agent":"regime","horizon":"H24","regime":"SHOCK","multiplier":1.5}]}
                 """);
 
-        assertEquals(0.25, service.apply("regime", "20_30", MarketRegime.SHOCK, 0.25), 1e-9);
+        assertEquals(0.25, service.apply("regime", "H24", MarketRegime.SHOCK, 0.25), 1e-9);
     }
 
     @Test
     void enabledAppliesMatchingRegimeMultiplierOnly() {
         FactorWeightOverrideService service = service(true, """
-                {"rules":[{"agent":"momentum","horizon":"0_10","regime":"SHOCK","multiplier":0.0}]}
+                {"rules":[{"agent":"momentum","horizon":"H6","regime":"SHOCK","multiplier":0.0}]}
                 """);
 
-        assertEquals(0.0, service.apply("momentum", "0_10", MarketRegime.SHOCK, 0.25), 1e-9);
-        assertEquals(0.25, service.apply("momentum", "0_10", MarketRegime.RANGE, 0.25), 1e-9);
+        assertEquals(0.0, service.apply("momentum", "H6", MarketRegime.SHOCK, 0.25), 1e-9);
+        assertEquals(0.25, service.apply("momentum", "H6", MarketRegime.RANGE, 0.25), 1e-9);
     }
 
     @Test
-    void horizonJudgeCanReplayBaselineAndOverrideWithoutChangingGlobalSwitch() {
+    void consensusJudgeCanReplayBaselineAndOverrideWithoutChangingGlobalSwitch() {
         FactorWeightOverrideService service = service(false, """
-                {"rules":[{"agent":"momentum","horizon":"0_10","regime":"SHOCK","multiplier":0.0}]}
+                {"rules":[{"agent":"momentum","horizon":"H6","regime":"SHOCK","multiplier":0.0}]}
                 """);
         List<AgentVote> votes = List.of(
-                new AgentVote("momentum", "0_10", Direction.LONG, 0.8, 0.7, 20, 20, List.of(), List.of()),
-                new AgentVote("regime", "0_10", Direction.SHORT, -0.3, 0.7, 20, 20, List.of(), List.of())
+                new AgentVote("momentum", "H6", Direction.LONG, 0.8, 0.7, 20, 20, List.of(), List.of()),
+                new AgentVote("regime", "H6", Direction.SHORT, -0.3, 0.7, 20, 20, List.of(), List.of())
         );
 
-        HorizonForecast baseline = new HorizonJudge("0_10", Map.of(), service, false)
-                .judge(votes, BigDecimal.valueOf(100), List.of(), MarketRegime.SHOCK);
-        HorizonForecast override = new HorizonJudge("0_10", Map.of(), service, true)
-                .judge(votes, BigDecimal.valueOf(100), List.of(), MarketRegime.SHOCK);
+        ConsensusForecast baseline = new ConsensusJudge("H6", 1, 0.20, Map.of(), service,
+                MarketRegime.SHOCK, false).judge(votes);
+        ConsensusForecast override = new ConsensusJudge("H6", 1, 0.20, Map.of(), service,
+                MarketRegime.SHOCK, true).judge(votes);
 
         assertEquals(Direction.LONG, baseline.direction());
         assertEquals(Direction.SHORT, override.direction());

@@ -20,19 +20,16 @@ final class ReportPromptBuilder {
                  FeatureSnapshot snapshot,
                  String debateSummary,
                  String memorySummary) {
-        String directionBlock = "超短线(0-10min): %s\n短线(10-20min): %s\n中短线(20-30min): %s\n长线: 观望"
+        String directionBlock = "短周期(H6/6h): %s\n中周期(H12/12h): %s\n长周期(H24/24h): %s\n超长线: 观望"
                 .formatted(hardReport.getDirection().getUltraShort(),
                         hardReport.getDirection().getShortTerm(),
                         hardReport.getDirection().getMid());
 
         StringBuilder posBlock = new StringBuilder();
         for (CryptoAnalysisReport.PositionAdvice pa : hardReport.getPositionAdvice()) {
-            posBlock.append(pa.getPeriod()).append(": ").append(pa.getType());
+            posBlock.append(pa.getPeriod()).append(": 方向=").append(pa.getType());
             if (!"NO_TRADE".equals(pa.getType())) {
-                posBlock.append(" 入场=").append(pa.getEntry())
-                        .append(" 止损=").append(pa.getStopLoss())
-                        .append(" 止盈=").append(pa.getTakeProfit())
-                        .append(" 风险收益比=").append(pa.getRiskReward());
+                posBlock.append(" 具体入场/止损/止盈由交易执行层生成");
             }
             posBlock.append("\n");
         }
@@ -57,7 +54,7 @@ final class ReportPromptBuilder {
                 【方向裁决（不可修改）】
                 %s
 
-                【入场建议（不可修改）】
+                【方向与风控约束（不可修改；具体入场/止损/止盈由交易执行层生成）】
                 %s
                 【关键价位】
                 支撑: %s  阻力: %s
@@ -91,9 +88,8 @@ final class ReportPromptBuilder {
                 5. riskWarnings: 风险提示列表
 
                 约束：
-                - 方向判断、价位、入场建议已由量化系统确定，你只能解释不能修改
+                - 方向判断和风控约束已由量化系统确定，你只能解释不能修改
                 - 如果裁决是观望/NO_TRADE，必须写观望
-                - longTerm只能写"观望"
                 - 不能新增系统未给出的概率、胜率或极端判断
 
                 严格返回JSON（不要markdown包裹）：

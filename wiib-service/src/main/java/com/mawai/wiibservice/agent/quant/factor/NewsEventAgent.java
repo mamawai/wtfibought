@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * 重周期新闻事件 Agent。
+ * 新闻事件 evidence Agent。
  * 先做 symbol 相关性过滤，再用 LLM 多次采样分析新闻影响，取 median 结果降低单次回答波动。
  */
 @Slf4j
@@ -32,7 +32,7 @@ public class NewsEventAgent implements FactorAgent {
     private static final int NEWS_CALLS = 3;
     private static final long NEWS_SAMPLE_TIMEOUT_SECONDS = 90;
     private static final double LOW_CONFIDENCE_STDDEV = 0.15;
-    private static final List<String> HORIZONS = List.of("0_10", "10_20", "20_30");
+    private static final List<String> HORIZONS = List.of("H6", "H12", "H24");
     private static final BeanOutputConverter<NewsEventResponse> NEWS_EVENT_CONVERTER =
             new BeanOutputConverter<>(NewsEventResponse.class);
 
@@ -65,9 +65,9 @@ public class NewsEventAgent implements FactorAgent {
                 allNewsItems != null ? allNewsItems.size() : 0, preFiltered.size());
         if (preFiltered.isEmpty()) {
             return new EvaluateResult(
-                    List.of(AgentVote.noTrade(name(), "0_10", "NO_NEWS"),
-                            AgentVote.noTrade(name(), "10_20", "NO_NEWS"),
-                            AgentVote.noTrade(name(), "20_30", "NO_NEWS")),
+                    List.of(AgentVote.noTrade(name(), "H6", "NO_NEWS"),
+                            AgentVote.noTrade(name(), "H12", "NO_NEWS"),
+                            AgentVote.noTrade(name(), "H24", "NO_NEWS")),
                     List.of());
         }
 
@@ -77,9 +77,9 @@ public class NewsEventAgent implements FactorAgent {
             List<EvaluateResult> samples = runParallelSamples(prompt, baseVolBps);
             if (samples.isEmpty()) {
                 return new EvaluateResult(
-                        List.of(AgentVote.noTrade(name(), "0_10", "LLM_ERROR"),
-                                AgentVote.noTrade(name(), "10_20", "LLM_ERROR"),
-                                AgentVote.noTrade(name(), "20_30", "LLM_ERROR")),
+                        List.of(AgentVote.noTrade(name(), "H6", "LLM_ERROR"),
+                                AgentVote.noTrade(name(), "H12", "LLM_ERROR"),
+                                AgentVote.noTrade(name(), "H24", "LLM_ERROR")),
                         List.of());
             }
             if (samples.size() < NEWS_CALLS) {
@@ -89,9 +89,9 @@ public class NewsEventAgent implements FactorAgent {
         } catch (Exception e) {
             log.warn("[Q3.news] LLM调用失败: {}", e.getMessage());
             return new EvaluateResult(
-                    List.of(AgentVote.noTrade(name(), "0_10", "LLM_ERROR"),
-                            AgentVote.noTrade(name(), "10_20", "LLM_ERROR"),
-                            AgentVote.noTrade(name(), "20_30", "LLM_ERROR")),
+                    List.of(AgentVote.noTrade(name(), "H6", "LLM_ERROR"),
+                            AgentVote.noTrade(name(), "H12", "LLM_ERROR"),
+                            AgentVote.noTrade(name(), "H24", "LLM_ERROR")),
                     List.of());
         }
     }
@@ -205,7 +205,7 @@ public class NewsEventAgent implements FactorAgent {
 
                 【第二步：分析】
                 对筛选出的新闻，综合判断整体情绪和对三个时间区间的影响。
-                - 新闻对超短线(0-10min)影响最小，对短线(10-30min)影响较大
+                - 事件新闻可跨周期影响：H6 看即时风险，H12 看延续性，H24 看背景冲击
                 - 重大事件（监管、黑客、ETF、宏观政策）影响更大
                 - 普通行情新闻影响很小，score接近0
 
@@ -215,9 +215,9 @@ public class NewsEventAgent implements FactorAgent {
                     {"title":"标题","sentiment":"bullish/bearish/neutral","impact":"high/medium/low","reason":"一句话说明影响逻辑"}
                   ],
                   "votes": [
-                    {"horizon":"0_10","score":0.0,"confidence":0.0,"reasonCodes":[],"riskFlags":[]},
-                    {"horizon":"10_20","score":0.0,"confidence":0.0,"reasonCodes":[],"riskFlags":[]},
-                    {"horizon":"20_30","score":0.0,"confidence":0.0,"reasonCodes":[],"riskFlags":[]}
+                    {"horizon":"H6","score":0.0,"confidence":0.0,"reasonCodes":[],"riskFlags":[]},
+                    {"horizon":"H12","score":0.0,"confidence":0.0,"reasonCodes":[],"riskFlags":[]},
+                    {"horizon":"H24","score":0.0,"confidence":0.0,"reasonCodes":[],"riskFlags":[]}
                   ]
                 }
 
@@ -248,13 +248,13 @@ public class NewsEventAgent implements FactorAgent {
             List<AgentVote> result = new ArrayList<>(3);
             for (int i = 0; i < 3 && i < votes.size(); i++) {
                 NewsEventVoteResponse v = votes.get(i);
-                String horizon = v.horizon();
+                String horizon = normalizeHorizon(v.horizon());
                 double score = clamp(v.score());
                 double conf = Math.clamp(v.confidence(), 0, 1);
 
                 // 新闻时效衰减：远期窗口 confidence 递减（新闻效应短期最强）
-                if ("10_20".equals(horizon)) conf *= 0.85;
-                else if ("20_30".equals(horizon)) conf *= 0.7;
+                if ("H12".equals(horizon)) conf *= 0.90;
+                else if ("H24".equals(horizon)) conf *= 0.75;
 
                 List<String> reasons = nonBlankList(v.reasonCodes());
                 List<String> flags = nonBlankList(v.riskFlags());
@@ -404,9 +404,17 @@ public class NewsEventAgent implements FactorAgent {
 
     private List<AgentVote> defaultVotes(String reason) {
         return List.of(
-                AgentVote.noTrade(name(), "0_10", reason),
-                AgentVote.noTrade(name(), "10_20", reason),
-                AgentVote.noTrade(name(), "20_30", reason));
+                AgentVote.noTrade(name(), "H6", reason),
+                AgentVote.noTrade(name(), "H12", reason),
+                AgentVote.noTrade(name(), "H24", reason));
+    }
+
+    private static String normalizeHorizon(String raw) {
+        if (raw == null || raw.isBlank()) return "H6";
+        String s = raw.toUpperCase();
+        if (s.contains("H24") || s.contains("20_30") || s.startsWith("20")) return "H24";
+        if (s.contains("H12") || s.contains("10_20") || s.startsWith("10")) return "H12";
+        return "H6";
     }
 
     private static double clamp(double v) { return Math.clamp(v, -1, 1); }

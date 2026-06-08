@@ -46,7 +46,7 @@ public class CollectDataNode implements NodeAction {
         return collect(symbol, preFetchedFearGreed);
     }
 
-    /** 独立于 StateGraph 的采集入口，轻周期可直接调用 */
+    /** 独立于 StateGraph 的采集入口，供测试和工具复用。 */
     public Map<String, Object> collect(String symbol, String preFetchedFearGreed) {
         long startMs = System.currentTimeMillis();
         log.info("[Q1.0] collect_data开始 symbol={}", symbol);

@@ -7,14 +7,16 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.QuantAgentVote;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantForecastVerification;
+import com.mawai.wiibcommon.entity.QuantHorizonForecast;
 import com.mawai.wiibservice.agent.quant.domain.AgentVote;
 import com.mawai.wiibservice.agent.quant.domain.Direction;
-import com.mawai.wiibservice.agent.quant.domain.HorizonForecast;
 import com.mawai.wiibservice.agent.quant.domain.MarketRegime;
-import com.mawai.wiibservice.agent.quant.judge.HorizonJudge;
+import com.mawai.wiibservice.agent.quant.judge.ConsensusForecast;
+import com.mawai.wiibservice.agent.quant.judge.ConsensusJudge;
 import com.mawai.wiibservice.mapper.QuantAgentVoteMapper;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibservice.mapper.QuantForecastVerificationMapper;
+import com.mawai.wiibservice.mapper.QuantHorizonForecastMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,7 +33,7 @@ import java.util.stream.Collectors;
 /**
  * FactorAgent 调权离线回放服务。
  *
- * <p>读取历史 cycle、AgentVote 和 verification，重新跑 HorizonJudge，对比调权前后的方向命中率。
+ * <p>读取历史 cycle、AgentVote、forecast 和 verification，重新跑 ConsensusJudge，对比调权前后的方向命中率。
  * 只做只读评估，不写交易决策，也不触发 ai-trader 开仓。</p>
  */
 @Slf4j
@@ -39,13 +41,14 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class FactorWeightReplayService {
 
-    private static final String[] HORIZONS = {"0_10", "10_20", "20_30"};
+    private static final String[] HORIZONS = {"H6", "H12", "H24"};
     private static final int QUERY_CHUNK_SIZE = 500;
     private static final int NO_TRADE_THRESHOLD_BPS = 10;
 
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantAgentVoteMapper voteMapper;
     private final QuantForecastVerificationMapper verificationMapper;
+    private final QuantHorizonForecastMapper horizonMapper;
     private final FactorWeightOverrideService weightOverrideService;
 
     /** 使用历史 cycle/vote/verification 只读回放，对比调权前后的方向命中率。 */
@@ -58,6 +61,7 @@ public class FactorWeightReplayService {
         List<String> cycleIds = cycles.stream().map(QuantForecastCycle::getCycleId).toList();
         Map<String, List<AgentVote>> votesByCycle = loadVotes(cycleIds);
         Map<String, QuantForecastVerification> verificationByCycleHorizon = loadVerifications(symbol, cycleIds);
+        Map<String, QuantHorizonForecast> forecastByCycleHorizon = loadForecasts(cycleIds);
 
         ReplayAccumulator all = new ReplayAccumulator("ALL");
         Map<String, ReplayAccumulator> byHorizon = new LinkedHashMap<>();
@@ -85,13 +89,23 @@ public class FactorWeightReplayService {
                     skippedNoVerification++;
                     continue;
                 }
+                QuantHorizonForecast sourceForecast = forecastByCycleHorizon.get(key(cycle.getCycleId(), horizon));
+                if (sourceForecast == null) {
+                    skippedNoVerification++;
+                    continue;
+                }
 
-                HorizonForecast baseline = new HorizonJudge(horizon, Map.of(),
-                        weightOverrideService, false, false)
-                        .judge(votes, ctx.lastPrice(), ctx.qualityFlags(), ctx.regime());
-                HorizonForecast override = new HorizonJudge(horizon, Map.of(),
-                        weightOverrideService, true, false)
-                        .judge(votes, ctx.lastPrice(), ctx.qualityFlags(), ctx.regime());
+                List<AgentVote> horizonVotes = votes.stream()
+                        .filter(v -> horizon.equals(v.horizon()))
+                        .toList();
+                int researchDirectionSign = directionSign(parseDirection(sourceForecast.getDirection()));
+                double researchConfidence = decimal(sourceForecast.getConfidence());
+                ConsensusForecast baseline = new ConsensusJudge(horizon, researchDirectionSign, researchConfidence,
+                        Map.of(), weightOverrideService, ctx.regime(), false)
+                        .judge(horizonVotes);
+                ConsensusForecast override = new ConsensusJudge(horizon, researchDirectionSign, researchConfidence,
+                        Map.of(), weightOverrideService, ctx.regime(), true)
+                        .judge(horizonVotes);
 
                 SampleResult sample = evaluateSample(baseline.direction(), override.direction(),
                         verification.getActualChangeBps());
@@ -149,7 +163,21 @@ public class FactorWeightReplayService {
         return result;
     }
 
-    /** 把持久化 vote 行还原成 HorizonJudge 使用的领域对象。 */
+    /** 分块加载原始 horizon forecast，作为 research 主票锚点。 */
+    private Map<String, QuantHorizonForecast> loadForecasts(List<String> cycleIds) {
+        List<QuantHorizonForecast> rows = new ArrayList<>();
+        for (List<String> chunk : chunks(cycleIds)) {
+            rows.addAll(horizonMapper.selectList(new LambdaQueryWrapper<QuantHorizonForecast>()
+                    .in(QuantHorizonForecast::getCycleId, chunk)));
+        }
+        Map<String, QuantHorizonForecast> result = new LinkedHashMap<>();
+        for (QuantHorizonForecast row : rows) {
+            result.put(key(row.getCycleId(), row.getHorizon()), row);
+        }
+        return result;
+    }
+
+    /** 把持久化 vote 行还原成 ConsensusJudge 使用的领域对象。 */
     private AgentVote toAgentVote(QuantAgentVote row) {
         return new AgentVote(row.getAgent(), row.getHorizon(), parseDirection(row.getDirection()),
                 decimal(row.getScore()), decimal(row.getConfidence()),
@@ -200,6 +228,14 @@ public class FactorWeightReplayService {
         if ("LONG".equals(raw)) return Direction.LONG;
         if ("SHORT".equals(raw)) return Direction.SHORT;
         return Direction.NO_TRADE;
+    }
+
+    private int directionSign(Direction direction) {
+        return switch (direction) {
+            case LONG -> 1;
+            case SHORT -> -1;
+            case NO_TRADE -> 0;
+        };
     }
 
     /** snapshot 中的 regime 字符串转枚举，空值保持 null。 */

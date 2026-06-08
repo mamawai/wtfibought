@@ -36,7 +36,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(breakoutSnapshot(List.of()), "FLAT"),
-                List.of(signal("0_10", "LONG", "0.65")),
+                List.of(signal("H6", "LONG", "0.65")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -52,7 +52,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(deepWeakeningMeanReversionSnapshot(List.of()), "FLAT"),
-                List.of(signal("0_10", "LONG", "0.65")),
+                List.of(signal("H6", "LONG", "0.65")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -69,7 +69,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(ordinaryBreakoutSnapshot(List.of()), "FLAT"),
-                List.of(signal("0_10", "LONG", "0.65")),
+                List.of(signal("H6", "LONG", "0.65")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -85,7 +85,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(trendConfluenceSnapshot(List.of()), "FLAT"),
-                List.of(signal("0_10", "LONG", "0.75")),
+                List.of(signal("H6", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -101,7 +101,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(weakBreakoutSnapshot(List.of()), "FLAT"),
-                List.of(signal("0_10", "LONG", "0.65")),
+                List.of(signal("H6", "LONG", "0.65")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -117,7 +117,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(nonSqueezeNoMomentumBreakoutSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.75")),
+                List.of(signal("H6", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -134,7 +134,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(nonSqueezeMomentumBreakoutSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.75")),
+                List.of(signal("H6", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -150,7 +150,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(oppositeMicroBreakoutSnapshot(List.of()), "FLAT"),
-                List.of(signal("0_10", "LONG", "0.75")),
+                List.of(signal("H6", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -167,7 +167,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(lightMeanReversionSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.60")),
+                List.of(signal("H6", "LONG", "0.60")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -183,7 +183,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(oneVoteMeanReversionSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.65")),
+                List.of(signal("H6", "LONG", "0.65")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -199,7 +199,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(deepWeakeningMeanReversionSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.65")),
+                List.of(signal("H6", "LONG", "0.65")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -216,7 +216,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast(trendSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.60")),
+                List.of(signal("H6", "LONG", "0.60")),
                 List.of(), price("100100"), price("100100"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -229,9 +229,9 @@ class DeterministicTradingExecutorTest {
     @Test
     void multiHorizonBoostDoesNotMutateOriginalSignals() {
         StubTools tools = new StubTools();
-        QuantSignalDecision sig010 = signal("0_10", "LONG", "0.75");
-        QuantSignalDecision sig1020 = signal("10_20", "LONG", "0.70");
-        QuantSignalDecision sig2030 = signal("20_30", "LONG", "0.68");
+        QuantSignalDecision sig010 = signal("H6", "LONG", "0.75");
+        QuantSignalDecision sig1020 = signal("H12", "LONG", "0.70");
+        QuantSignalDecision sig2030 = signal("H24", "LONG", "0.68");
         QuantForecastCycle forecast = forecast(trendSnapshot(List.of()), "LONG");
         forecast.setForecastTime(null);
 
@@ -249,14 +249,32 @@ class DeterministicTradingExecutorTest {
     }
 
     @Test
-    void activeHorizonOnlyBlocksLastMinuteOfEachWindow() {
+    void h6SignalExpiresAfterItsOwnHorizonWindow() {
         LocalDateTime forecastTime = LocalDateTime.of(2026, 1, 1, 9, 0);
-        List<QuantSignalDecision> signals = List.of(signal("0_10", "LONG", "0.70"));
+        List<QuantSignalDecision> signals = List.of(signal("H6", "LONG", "0.70"));
 
         assertThat(TradingDecisionSupport.findBestSignalWithPriority(
-                signals, forecastTime, forecastTime.plusMinutes(8))).isNotNull();
+                signals, forecastTime, forecastTime.plusHours(6))).isNotNull();
         assertThat(TradingDecisionSupport.findBestSignalWithPriority(
-                signals, forecastTime, forecastTime.plusMinutes(9))).isNull();
+                signals, forecastTime, forecastTime.plusHours(6).plusMinutes(1))).isNull();
+    }
+
+    @Test
+    void h12H24FallbackRequiresStrongSameDirectionPair() {
+        LocalDateTime forecastTime = LocalDateTime.of(2026, 1, 1, 9, 0);
+
+        assertThat(TradingDecisionSupport.findBestSignalWithPriority(
+                List.of(signal("H12", "LONG", "0.70"), signal("H24", "LONG", "0.69")),
+                forecastTime, forecastTime.plusMinutes(5)))
+                .extracting(QuantSignalDecision::getHorizon)
+                .isEqualTo("H12");
+
+        assertThat(TradingDecisionSupport.findBestSignalWithPriority(
+                List.of(signal("H12", "LONG", "0.70"), signal("H24", "LONG", "0.67")),
+                forecastTime, forecastTime.plusMinutes(5))).isNull();
+        assertThat(TradingDecisionSupport.findBestSignalWithPriority(
+                List.of(signal("H24", "LONG", "0.90")),
+                forecastTime, forecastTime.plusMinutes(5))).isNull();
     }
 
     @Test
@@ -264,7 +282,7 @@ class DeterministicTradingExecutorTest {
         // 业务上 maxPositionPct 不再做硬截断（EntryRiskSizingService 注释：risk-based qty 已远小于 maxPos）。
         // 这里反向守门：signal 给出极小 maxPositionPct 也不应把 qty 砍到那个上限。
         StubTools tools = new StubTools();
-        QuantSignalDecision sig = signal("0_10", "LONG", "0.75");
+        QuantSignalDecision sig = signal("H6", "LONG", "0.75");
         sig.setMaxPositionPct(price("0.01"));
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
@@ -287,7 +305,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(breakoutSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.75")),
+                List.of(signal("H6", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, state, new TradingRuntimeToggles(true, true), KlineInterval.M5);
 
@@ -314,7 +332,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(breakoutSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.75")),
+                List.of(signal("H6", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, state, new TradingRuntimeToggles(true, true), KlineInterval.M5);
 
@@ -329,7 +347,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(), forecast(trendConfluenceSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.75")),
+                List.of(signal("H6", "LONG", "0.75")),
                 List.of(), price("100000"), price("100000"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -342,7 +360,7 @@ class DeterministicTradingExecutorTest {
     @Test
     void allNoTradeRiskStatusBlocksEntry() {
         StubTools tools = new StubTools();
-        QuantSignalDecision sig = signal("0_10", "LONG", "0.75");
+        QuantSignalDecision sig = signal("H6", "LONG", "0.75");
         sig.setRiskStatus("ALL_NO_TRADE");
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
@@ -364,7 +382,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast(trendSnapshot(List.of("STALE_AGG_TRADE")), "LONG"),
-                List.of(signal("0_10", "SHORT", "0.85")),
+                List.of(signal("H6", "SHORT", "0.85")),
                 List.of(), price("104200"), price("104200"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);
@@ -383,7 +401,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast(trendSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.60")),
+                List.of(signal("H6", "LONG", "0.60")),
                 List.of(), price("100100"), price("100100"), price("100000"),
                 tools, state, new TradingRuntimeToggles(true, true), KlineInterval.M5);
 
@@ -405,7 +423,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast(trendSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.60")),
+                List.of(signal("H6", "LONG", "0.60")),
                 List.of(), price("100100"), price("100100"), price("100000"),
                 tools, state, new TradingRuntimeToggles(true, true), KlineInterval.M5);
 
@@ -428,7 +446,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast(failedBreakoutSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.75")),
+                List.of(signal("H6", "LONG", "0.75")),
                 List.of(), price("100100"), price("100100"), price("100000"),
                 tools, state, new TradingRuntimeToggles(true, true), KlineInterval.M5);
 
@@ -453,7 +471,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast(failedBreakoutSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.75")),
+                List.of(signal("H6", "LONG", "0.75")),
                 List.of(), price("100100"), price("100100"), price("100000"),
                 tools, state, new TradingRuntimeToggles(true, true), KlineInterval.M5);
 
@@ -471,7 +489,7 @@ class DeterministicTradingExecutorTest {
         TradingExecutionState state = new TradingExecutionState();
         FuturesPositionDTO pos = position("LONG", "100000", "99200", "105200", "1");
         QuantForecastCycle forecast = forecast(strongBearSnapshot(List.of("STALE_AGG_TRADE")), "LONG");
-        List<QuantSignalDecision> signals = List.of(signal("0_10", "SHORT", "0.85"));
+        List<QuantSignalDecision> signals = List.of(signal("H6", "SHORT", "0.85"));
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast, signals,
@@ -491,7 +509,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast(trendSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "LONG", "0.60")),
+                List.of(signal("H6", "LONG", "0.60")),
                 List.of(), price("100100"), price("100100"), price("100000"),
                 tools, state, new TradingRuntimeToggles(true), KlineInterval.M5);
 
@@ -510,13 +528,13 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast(trendSnapshot(List.of("STALE_AGG_TRADE")), "LONG"),
-                List.of(signal("0_10", "LONG", "0.60")),
+                List.of(signal("H6", "LONG", "0.60")),
                 List.of(), price("104000"), price("104000"), price("100000"),
                 tools, state, new TradingRuntimeToggles(true), KlineInterval.M5);
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast(softBearSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "SHORT", "0.70")),
+                List.of(signal("H6", "SHORT", "0.70")),
                 List.of(), price("102800"), price("102800"), price("100000"),
                 tools, state, new TradingRuntimeToggles(true), KlineInterval.M5);
 
@@ -535,7 +553,7 @@ class DeterministicTradingExecutorTest {
 
         DeterministicTradingExecutor.ExecutionResult result = DeterministicTradingExecutor.execute(
                 "BTCUSDT", user(), List.of(pos), forecast(timeExitBearSnapshot(List.of()), "LONG"),
-                List.of(signal("0_10", "SHORT", "0.70")),
+                List.of(signal("H6", "SHORT", "0.70")),
                 List.of(), price("100200"), price("100200"), price("100000"),
                 tools, new TradingExecutionState(),
                 new TradingRuntimeToggles(true), KlineInterval.M5);

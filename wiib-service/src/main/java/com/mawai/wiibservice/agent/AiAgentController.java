@@ -106,7 +106,7 @@ public class AiAgentController {
             return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
         }
 
-        // 前端展示与交易决策保持一致：只读最新重周期（含 LLM），轻周期修正已写入父重周期
+        // 前端展示与交易决策保持一致：只读最新正式 research cycle。
         QuantForecastCycle cycle = cycleMapper.selectLatestHeavy(normalized);
         if (cycle == null) {
             return Result.ok(Map.of("status", "pending", "message", "暂无分析报告，等待系统生成"));
@@ -367,7 +367,7 @@ public class AiAgentController {
     }
 
     @GetMapping("/quant/verifications/grouped")
-    @Operation(summary = "分组查询量化预测验证（重周期为主，轻周期挂载）")
+    @Operation(summary = "分组查询量化预测验证（research 主周期）")
     public Result<VerificationService.GroupedVerificationSummary> groupedVerifications(
             @RequestParam(defaultValue = "BTCUSDT") String symbol,
             @RequestParam(defaultValue = "10") int limit) {

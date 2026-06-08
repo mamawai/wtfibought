@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.agent.quant.risk;
 
 import com.mawai.wiibservice.agent.quant.domain.*;
+import com.mawai.wiibservice.agent.research.ForecastHorizon;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
@@ -20,7 +21,6 @@ import java.util.List;
 public class RiskGate {
 
     private static final double MAX_DISAGREEMENT = 0.35;
-    public static volatile boolean MACRO_RISK_ENABLED = false;
 
     /**
      * 对全部HorizonForecast做风控裁剪。
@@ -50,6 +50,24 @@ public class RiskGate {
                                     BigDecimal atr, BigDecimal lastPrice,
                                     List<String> qualityFlags, int fearGreedIndex,
                                     double dvolIndex, String symbol, MacroRiskHint macroRiskHint) {
+        return applyInternal(forecasts, regime, atr, lastPrice, qualityFlags, fearGreedIndex,
+                dvolIndex, symbol, macroRiskHint, null);
+    }
+
+    public static RiskResult apply(List<HorizonForecast> forecasts, MarketRegime regime,
+                                    BigDecimal atr, BigDecimal lastPrice,
+                                    List<String> qualityFlags, int fearGreedIndex,
+                                    double dvolIndex, String symbol, MacroContext researchForecast) {
+        MacroRiskHint hint = researchForecast != null ? researchForecast.toRiskHint() : MacroRiskHint.neutral();
+        return applyInternal(forecasts, regime, atr, lastPrice, qualityFlags, fearGreedIndex,
+                dvolIndex, symbol, hint, researchForecast);
+    }
+
+    private static RiskResult applyInternal(List<HorizonForecast> forecasts, MarketRegime regime,
+                                    BigDecimal atr, BigDecimal lastPrice,
+                                    List<String> qualityFlags, int fearGreedIndex,
+                                    double dvolIndex, String symbol, MacroRiskHint macroRiskHint,
+                                    MacroContext researchForecast) {
         if (forecasts == null || forecasts.isEmpty()) {
             return new RiskResult(List.of(), "NO_DATA");
         }
@@ -57,14 +75,19 @@ public class RiskGate {
         double volPenalty = calcVolatilityPenalty(atr, lastPrice, symbol);
         double dataPenalty = calcDataPenalty(qualityFlags);
         double ivPenalty = calcIvPenalty(dvolIndex);
-        MacroRiskHint effectiveMacro = MACRO_RISK_ENABLED && macroRiskHint != null
+        // 有完整 researchForecast 时按每个 horizon leg 处理，避免全局 hint 重复压缩。
+        MacroRiskHint effectiveMacro = researchForecast == null && macroRiskHint != null
                 ? macroRiskHint : MacroRiskHint.neutral();
         List<HorizonForecast> clipped = new ArrayList<>(forecasts.size());
         List<String> riskActions = new ArrayList<>();
 
         for (HorizonForecast f : forecasts) {
-            HorizonForecast result = clipSingle(f, regime, volPenalty, dataPenalty, ivPenalty,
-                    effectiveMacro, qualityFlags, fearGreedIndex, riskActions);
+            MacroContext.Leg researchLeg = researchLeg(researchForecast, f.horizon());
+            MarketRegime effectiveRegime = researchLeg != null
+                    ? mapResearchRegime(researchLeg.regime())
+                    : regime;
+            HorizonForecast result = clipSingle(f, effectiveRegime, volPenalty, dataPenalty, ivPenalty,
+                    effectiveMacro, researchLeg, qualityFlags, fearGreedIndex, riskActions);
             clipped.add(result);
         }
 
@@ -83,6 +106,7 @@ public class RiskGate {
                                                double dataPenalty,
                                                double ivPenalty,
                                                MacroRiskHint macroRiskHint,
+                                               MacroContext.Leg researchLeg,
                                                List<String> qualityFlags,
                                                int fearGreedIndex,
                                                List<String> actions) {
@@ -91,9 +115,20 @@ public class RiskGate {
         // 分歧过大 → 仓位压缩，不直接降级NO_TRADE
         boolean highDisagreement = f.disagreement() > MAX_DISAGREEMENT;
 
-        int maxLev = f.maxLeverage();
-        double maxPos = f.maxPositionPct();
+        // 新架构：ConsensusJudge 不再产出 leverage/position，由 RiskGate 首次生成
+        int maxLev = f.maxLeverage() > 0 ? f.maxLeverage() : generateBaseLeverage(f.horizon(), researchLeg, regime);
+        double maxPos = f.maxPositionPct() > 0 ? f.maxPositionPct() : generateBasePositionPct(f.horizon(), researchLeg, regime);
         double confMultiplier = 1.0;
+
+        if (researchLeg != null) {
+            double budget = Math.clamp(researchLeg.riskBudgetHint(), 0.0, 1.0);
+            maxPos *= budget;
+            actions.add("RESEARCH_BUDGET_" + f.horizon());
+            if (researchLeg.trailingPercentile() >= 0.90) {
+                maxPos *= 0.85;
+                actions.add("RESEARCH_TRAILING_EXTREME_" + f.horizon());
+            }
+        }
 
         // SHOCK → 杠杆cap 5x, 仓位减30%（允许交易但缩减规模）
         if (regime == MarketRegime.SHOCK) {
@@ -108,9 +143,10 @@ public class RiskGate {
             actions.add("SQUEEZE_REDUCE_" + f.horizon());
         }
 
-        // 高分歧 → 杠杆限制（仓位压缩已由 agreementFactor 处理，不再重复 ×0.5）
+        // 高分歧 → 杠杆砍半（仓位压缩已由 agreementFactor 处理，不再重复 ×0.5）。
+        // 下界取 1：基准杠杆在 STRESSED/SHOCK 下可能已被压到 <5，旧的 clamp(.,5,maxLev) 会下界>上界抛异常。
         if (highDisagreement) {
-            maxLev = Math.clamp(maxLev / 2, 5, maxLev);
+            maxLev = Math.max(1, maxLev / 2);
             actions.add("HIGH_DISAGREEMENT_PENALTY_" + f.horizon());
         }
 
@@ -174,7 +210,7 @@ public class RiskGate {
         log.info("[Q5.clip] {} {} regime={} envFactor={} (vol={} data={} iv={} macro={}) qualityFlags={} → lev={} pos={}% ",
                 f.horizon(), f.direction(), regime, String.format("%.2f", envFactor),
                 String.format("%.2f", volPenalty), String.format("%.2f", dataPenalty),
-                String.format("%.2f", ivPenalty), macroRiskHint, qualityFlags,
+                String.format("%.2f", ivPenalty), researchLeg != null ? researchLeg.volTier() : macroRiskHint, qualityFlags,
                 maxLev, String.format("%.2f", adjustedPos * 100));
 
         return new HorizonForecast(
@@ -245,4 +281,91 @@ public class RiskGate {
     }
 
     public record RiskResult(List<HorizonForecast> forecasts, String riskStatus) {}
+
+    /** 新架构基准杠杆：按 horizon 长周期保守，H6=20x, H12=15x, H24=10x */
+    static int generateBaseLeverage(String horizon, MacroContext.Leg researchLeg, MarketRegime regime) {
+        int base = switch (horizon) {
+            case "H6" -> 20;
+            case "H12" -> 15;
+            case "H24" -> 10;
+            default -> 10;
+        };
+        if (researchLeg != null) {
+            base = switch (researchLeg.volTier()) {
+                case QUIET, NORMAL -> base;
+                case ELEVATED -> Math.max(5, (int) Math.floor(base * 0.75));
+                case STRESSED -> Math.max(3, (int) Math.floor(base * 0.50));
+                case UNKNOWN -> Math.max(5, (int) Math.floor(base * 0.80));
+            };
+            int expectedMove = researchLeg.expectedMoveBps();
+            int threshold = switch (horizon) {
+                case "H6" -> 350;
+                case "H12" -> 500;
+                case "H24" -> 750;
+                default -> 400;
+            };
+            if (expectedMove >= threshold) {
+                base = Math.max(3, (int) Math.floor(base * 0.75));
+            }
+        }
+        if (regime == MarketRegime.SHOCK) {
+            base = Math.min(base, 5);
+        }
+        return Math.max(1, base);
+    }
+
+    /** 新架构基准仓位比例：H6主执行，H12/H24只在确认/背景场景里被交易层消费。 */
+    static double generateBasePositionPct(String horizon, MacroContext.Leg researchLeg, MarketRegime regime) {
+        double base = switch (horizon) {
+            case "H6" -> 0.20;
+            case "H12" -> 0.16;
+            case "H24" -> 0.10;
+            default -> 0.12;
+        };
+        if (researchLeg != null) {
+            base *= switch (researchLeg.volTier()) {
+                case QUIET -> 1.05;
+                case NORMAL -> 1.0;
+                case ELEVATED -> 0.75;
+                case STRESSED -> 0.45;
+                case UNKNOWN -> 0.80;
+            };
+            if (researchLeg.expectedMoveBps() > 0) {
+                double movePenalty = Math.clamp(1.0 - researchLeg.expectedMoveBps() / 2000.0, 0.55, 1.0);
+                base *= movePenalty;
+            }
+        }
+        if (regime == MarketRegime.SHOCK) {
+            base *= 0.55;
+        } else if (regime == MarketRegime.RANGE && "H24".equals(horizon)) {
+            base *= 0.75;
+        }
+        return Math.clamp(base, 0.0, 1.0);
+    }
+
+    private static MacroContext.Leg researchLeg(MacroContext context, String horizon) {
+        if (context == null || horizon == null) {
+            return null;
+        }
+        try {
+            ForecastHorizon forecastHorizon = ForecastHorizon.fromHours(Integer.parseInt(horizon.substring(1)));
+            return context.legs().get(forecastHorizon);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static MarketRegime mapResearchRegime(
+            com.mawai.wiibservice.agent.research.forecast.MarketRegime regime) {
+        if (regime == null) {
+            return MarketRegime.RANGE;
+        }
+        return switch (regime) {
+            case TRENDING_UP -> MarketRegime.TREND_UP;
+            case TRENDING_DOWN -> MarketRegime.TREND_DOWN;
+            case RANGING -> MarketRegime.RANGE;
+            case SHOCK -> MarketRegime.SHOCK;
+        };
+    }
+
 }

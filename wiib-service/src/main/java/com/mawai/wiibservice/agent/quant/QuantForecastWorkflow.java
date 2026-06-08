@@ -32,12 +32,18 @@ import static com.alibaba.cloud.ai.graph.StateGraph.START;
 import static com.alibaba.cloud.ai.graph.action.AsyncNodeAction.node_async;
 
 /**
- * 量化预测工作流：9节点线性串联。
+ * 量化预测工作流：8节点线性串联（重构后）。
  * <pre>
- * START → collect_data → build_features → macro_context → regime_review → run_factors → run_judges → debate_judge → risk_gate → generate_report → END
- *              ↑                             ↑宏观6-24h        ↑LLM浅            ↑              ↑          ↑LLM深                         ↑LLM浅
- *        内部并行采集                    三腿上下文层       Regime审核     内部5Agent并行   内部3Judge并行  辩论裁决                      报告生成
+ * START → collect_data → build_features → research_forecast → run_evidence_agents → consensus_judge → debate_judge → risk_gate → generate_report → END
+ *              ↑                             ↑H6/H12/H24主预测     ↑Evidence辅助            ↑融合裁决        ↑LLM深裁     ↑硬风控     ↑LLM浅
+ *        内部并行采集                    替代MacroContext+RegimeReview   horizon重映射→H6/H12/H24   research主票+evidence
  * </pre>
+ *
+ * 已移除节点：
+ * - macro_context（被 ResearchForecastNode 替代）
+ * - regime_review（LLM审视regime能力并入 DebateJudgeNode）
+ * - run_factors（被 RunEvidenceAgentsNode 替代，输出 horizon 重映射为 H6/H12/H24）
+ * - run_judges（被 ConsensusJudgeNode 替代，不再产出 entry/tp/sl/leverage）
  */
 public class QuantForecastWorkflow {
 
@@ -79,14 +85,13 @@ public class QuantForecastWorkflow {
                         new CollectDataNode(binanceRestClient, forceOrderService, depthStreamCache, deribitClient), meterRegistry)))
                 .addNode("build_features",     node_async(observed("build_features",
                         new BuildFeaturesNode(orderFlowAggregator, decisionInterval), meterRegistry)))
-                .addNode("macro_context",      node_async(observed("macro_context",
-                        new MacroContextNode(macroContextService), meterRegistry)))
-                .addNode("regime_review",      node_async(observed("regime_review",
-                        new RegimeReviewNode(shallowChatClient, shallowCallMode, memoryService), meterRegistry)))
-                .addNode("run_factors",        node_async(observed("run_factors",
-                        new RunFactorAgentsNode(agents), meterRegistry)))
-                .addNode("run_judges",         node_async(observed("run_judges",
-                        new RunHorizonJudgesNode(memoryService, weightOverrideService), meterRegistry)))
+                .addNode("research_forecast", node_async(observed("research_forecast",
+                        new ResearchForecastNode(macroContextService), meterRegistry)))
+                // regime_review 已移除——LLM审视regime能力并入 DebateJudgeNode
+                .addNode("run_evidence_agents", node_async(observed("run_evidence_agents",
+                        new RunEvidenceAgentsNode(agents), meterRegistry)))
+                .addNode("consensus_judge",   node_async(observed("consensus_judge",
+                        new ConsensusJudgeNode(memoryService, weightOverrideService), meterRegistry)))
                 .addNode("debate_judge",       node_async(observed("debate_judge",
                         new DebateJudgeNode(deepChatClient, deepCallMode, memoryService), meterRegistry)))
                 .addNode("risk_gate",          node_async(observed("risk_gate",
@@ -97,11 +102,10 @@ public class QuantForecastWorkflow {
 
         workflow.addEdge(START, "collect_data");
         workflow.addEdge("collect_data", "build_features");
-        workflow.addEdge("build_features", "macro_context");
-        workflow.addEdge("macro_context", "regime_review");
-        workflow.addEdge("regime_review", "run_factors");
-        workflow.addEdge("run_factors", "run_judges");
-        workflow.addEdge("run_judges", "debate_judge");
+        workflow.addEdge("build_features", "research_forecast");
+        workflow.addEdge("research_forecast", "run_evidence_agents");
+        workflow.addEdge("run_evidence_agents", "consensus_judge");
+        workflow.addEdge("consensus_judge", "debate_judge");
         workflow.addEdge("debate_judge", "risk_gate");
         workflow.addEdge("risk_gate", "generate_report");
         workflow.addEdge("generate_report", END);
@@ -141,21 +145,23 @@ public class QuantForecastWorkflow {
             s.put("option_book_summary", new ReplaceStrategy());
             // BuildFeaturesNode输出
             s.put("feature_snapshot", new ReplaceStrategy());
+            s.put("research_forecast", new ReplaceStrategy());
             s.put("macro_context", new ReplaceStrategy());
             s.put("indicator_map", new ReplaceStrategy());
             s.put("price_change_map", new ReplaceStrategy());
-            // RegimeReviewNode输出
+            // ResearchForecastNode / DebateJudgeNode 输出
             s.put("regime_confidence", new ReplaceStrategy());
             s.put("regime_confidence_stddev", new ReplaceStrategy());
             s.put("regime_transition", new ReplaceStrategy());
             s.put("regime_transition_detail", new ReplaceStrategy());
-            // RunFactorAgentsNode输出
+            // RunEvidenceAgentsNode输出
             s.put("agent_votes", new ReplaceStrategy());
             s.put("filtered_news", new ReplaceStrategy());
             s.put("news_confidence_stddev", new ReplaceStrategy());
             s.put("news_low_confidence", new ReplaceStrategy());
-            // RunHorizonJudgesNode输出
+            // ConsensusJudgeNode输出
             s.put("horizon_forecasts", new ReplaceStrategy());
+            s.put("consensus_forecasts", new ReplaceStrategy()); // ConsensusJudgeNode 新 key
             s.put("overall_decision", new ReplaceStrategy());
             s.put("risk_status", new ReplaceStrategy());
             s.put("cycle_id", new ReplaceStrategy());

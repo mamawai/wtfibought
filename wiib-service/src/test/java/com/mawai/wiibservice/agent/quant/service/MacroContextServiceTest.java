@@ -3,6 +3,7 @@ package com.mawai.wiibservice.agent.quant.service;
 import com.mawai.wiibservice.agent.quant.domain.MacroContext;
 import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
 import com.mawai.wiibservice.agent.research.ForecastHorizon;
+import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
 import com.mawai.wiibservice.agent.research.forecast.VolatilityRiskTier;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
@@ -11,26 +12,20 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.util.List;
 
+import static com.mawai.wiibservice.agent.quant.service.ResearchFeatureAssembler.AssemblyResult;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.clearInvocations;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
 
 class MacroContextServiceTest {
 
     @Test
     void loadsFiveMinuteHistoryAsMacroLegFeatures() {
-        KlineHistoryStore store = mock(KlineHistoryStore.class);
+        FakeKlineHistoryStore store = new FakeKlineHistoryStore();
+        ResearchFeatureAssembler assembler = stubAssembler();
         long now = System.currentTimeMillis();
-        when(store.latestOpenTime(eq("BTCUSDT"), eq("5m"))).thenReturn(now - 5 * 60_000L);
-        when(store.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong()))
-                .thenReturn(fiveMinuteBars(now, 31));
+        store.latestOpenTime = now - 5 * 60_000L;
+        store.loadBars = fiveMinuteBars(now, 31);
 
-        MacroContextService service = new MacroContextService(store);
+        MacroContextService service = new MacroContextService(store, assembler);
         service.refreshIfStale("BTCUSDT");
 
         MacroContext context = service.get("BTCUSDT");
@@ -39,40 +34,52 @@ class MacroContextServiceTest {
         assertThat(context.legs().values())
                 .extracting(MacroContext.Leg::volTier)
                 .doesNotContain(VolatilityRiskTier.UNKNOWN);
-        verify(store).load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong());
+        assertThat(store.loadCalls).isEqualTo(1);
+        assertThat(store.lastLoadSymbol).isEqualTo("BTCUSDT");
+        assertThat(store.lastLoadInterval).isEqualTo("5m");
     }
 
     @Test
     void backfillsRecentTailWhenDbIsStaleButNotCold() {
-        KlineHistoryStore store = mock(KlineHistoryStore.class);
+        FakeKlineHistoryStore store = new FakeKlineHistoryStore();
+        ResearchFeatureAssembler assembler = stubAssembler();
         long now = System.currentTimeMillis();
-        when(store.latestOpenTime(eq("BTCUSDT"), eq("5m"))).thenReturn(now - 30 * 60_000L);
-        when(store.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong()))
-                .thenReturn(fiveMinuteBars(now, 31));
+        store.latestOpenTime = now - 30 * 60_000L;
+        store.loadBars = fiveMinuteBars(now, 31);
 
-        MacroContextService service = new MacroContextService(store);
+        MacroContextService service = new MacroContextService(store, assembler);
         service.refreshIfStale("BTCUSDT");
 
-        verify(store).backfill(eq("BTCUSDT"), anyLong(), anyLong());
+        assertThat(store.backfillCalls).isEqualTo(1);
     }
 
     @Test
     void klineCloseEventSkipsRefreshWhenMacroContextIsFresh() throws InterruptedException {
-        KlineHistoryStore store = mock(KlineHistoryStore.class);
+        FakeKlineHistoryStore store = new FakeKlineHistoryStore();
+        ResearchFeatureAssembler assembler = stubAssembler();
         long now = System.currentTimeMillis();
-        when(store.latestOpenTime(eq("BTCUSDT"), eq("5m"))).thenReturn(now - 5 * 60_000L);
-        when(store.load(eq("BTCUSDT"), eq("5m"), anyLong(), anyLong()))
-                .thenReturn(fiveMinuteBars(now, 31));
+        store.latestOpenTime = now - 5 * 60_000L;
+        store.loadBars = fiveMinuteBars(now, 31);
 
-        MacroContextService service = new MacroContextService(store);
+        MacroContextService service = new MacroContextService(store, assembler);
         service.refreshIfStale("BTCUSDT");
         assertThat(service.get("BTCUSDT").stale()).isFalse();
 
-        clearInvocations(store);
+        store.clearCalls();
         service.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", now));
         Thread.sleep(100);
 
-        verifyNoInteractions(store);
+        assertThat(store.totalCalls()).isZero();
+    }
+
+    /** 返回中性外生因子的 assembler（测试不关心外生因子具体值，只验证 research core 能跑通） */
+    private static ResearchFeatureAssembler stubAssembler() {
+        return new ResearchFeatureAssembler(null) {
+            @Override
+            public AssemblyResult assemble(String symbol, List<KlineBar> bars5m) {
+                return new AssemblyResult(ResearchFeatures.ofBars(bars5m), List.of());
+            }
+        };
     }
 
     private static List<KlineBar> fiveMinuteBars(long now, int days) {
@@ -88,5 +95,49 @@ class MacroContextServiceTest {
                             close, BigDecimal.TEN);
                 })
                 .toList();
+    }
+
+    private static final class FakeKlineHistoryStore extends KlineHistoryStore {
+        private Long latestOpenTime;
+        private List<KlineBar> loadBars = List.of();
+        private int loadCalls;
+        private int backfillCalls;
+        private int latestOpenTimeCalls;
+        private String lastLoadSymbol;
+        private String lastLoadInterval;
+
+        private FakeKlineHistoryStore() {
+            super(null);
+        }
+
+        @Override
+        public List<KlineBar> load(String symbol, String intervalCode, long fromMs, long toMs) {
+            loadCalls++;
+            lastLoadSymbol = symbol;
+            lastLoadInterval = intervalCode;
+            return loadBars;
+        }
+
+        @Override
+        public Long latestOpenTime(String symbol, String intervalCode) {
+            latestOpenTimeCalls++;
+            return latestOpenTime;
+        }
+
+        @Override
+        public int backfill(String symbol, long fromMs, long toMs) {
+            backfillCalls++;
+            return 1;
+        }
+
+        private void clearCalls() {
+            loadCalls = 0;
+            backfillCalls = 0;
+            latestOpenTimeCalls = 0;
+        }
+
+        private int totalCalls() {
+            return loadCalls + backfillCalls + latestOpenTimeCalls;
+        }
     }
 }

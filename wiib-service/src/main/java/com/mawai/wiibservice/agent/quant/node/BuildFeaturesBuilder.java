@@ -71,7 +71,7 @@ final class BuildFeaturesBuilder {
         return buildFeatures(symbol, rawData);
     }
 
-    /** 独立于 StateGraph 的特征构建入口，轻周期可直接调用 */
+    /** 独立于 StateGraph 的特征构建入口，供测试和工具复用。 */
     @SuppressWarnings("unchecked")
     public Map<String, Object> buildFeatures(String symbol, Map<String, Object> rawData) {
         long startMs = System.currentTimeMillis();

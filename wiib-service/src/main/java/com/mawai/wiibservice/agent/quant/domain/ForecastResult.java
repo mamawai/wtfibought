@@ -14,5 +14,5 @@ public record ForecastResult(
         FeatureSnapshot snapshot,    // 快照，用于事后验证
         MacroContext macroContext,
         Object report,
-        String parentCycleId         // 轻周期挂载的父重周期 cycleId；重周期为 null
+        String parentCycleId         // 旧轻周期兼容字段；新 research 主链路始终为 null
 ) {}
