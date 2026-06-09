@@ -154,6 +154,38 @@ class MultiOutputEvalServiceTest {
         assertThat(summary).contains("次:准确率="); // 裸准确率/persistence 降级为次要口径
     }
 
+    @Test
+    void volQlikeTruthUsesPathRealizedVarianceNotSingleHorizonReturn() {
+        // 振荡序列：每 H6(72 根)净收益恰为 0 → 旧口径(单根 horizon收益²)真值塌到 floor → QLIKE 爆炸(~20)；
+        // 逐 bar 仍有真实区间 → 新口径(GK 路径已实现方差)真值正常 → QLIKE 落在 O(1) 内。
+        // 用 qlike<2 判别真值口径是否已切换（旧口径在此序列必 >>2）。
+        EvalParams params = new EvalParams(1.5, 0.94, 2, 0, 2, 100, 0.95, 42L);
+
+        MultiOutputReport r = MultiOutputEvalService.evaluateBars(
+                "BTCUSDT", ForecastHorizon.H6, oscillating5m(160),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
+
+        assertThat(r.testPoints()).isGreaterThan(0);
+        assertThat(r.volScore().qlike()).isFinite();
+        assertThat(r.volScore().qlike()).isLessThan(2.0);
+    }
+
+    /** 5m 间隔、收盘 100/101 交替的振荡序列：H6 净收益=0 但逐 bar 有区间。 */
+    static List<KlineBar> oscillating5m(int n) {
+        List<KlineBar> bars = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            long t = i * 300_000L;
+            double open = (i == 0) ? 100.0 : ((i - 1) % 2 == 0 ? 100.0 : 101.0); // = 上一根 close
+            double close = (i % 2 == 0) ? 100.0 : 101.0;
+            double hi = Math.max(open, close) + 0.5;   // 真实高低 → GK 路径RV>0
+            double lo = Math.min(open, close) - 0.5;
+            bars.add(new KlineBar(t, t + 299_999L, BigDecimal.valueOf(open), BigDecimal.valueOf(hi),
+                    BigDecimal.valueOf(lo), BigDecimal.valueOf(close), BigDecimal.ONE));
+        }
+        return bars;
+    }
+
     static List<KlineBar> uptrend1m(int count) {
         List<KlineBar> bars = new ArrayList<>(count);
         double price = 100.0;

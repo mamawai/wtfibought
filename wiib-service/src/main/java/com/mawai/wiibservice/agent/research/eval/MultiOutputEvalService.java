@@ -16,6 +16,7 @@ import com.mawai.wiibservice.agent.research.metrics.VolForecastScore;
 import com.mawai.wiibservice.agent.research.metrics.ForecastAccuracyComparison;
 import com.mawai.wiibservice.agent.research.metrics.VolCalibrationReport;
 import com.mawai.wiibservice.agent.research.series.MarketSeriesPoint;
+import com.mawai.wiibservice.agent.research.stats.RealizedVarianceSeries;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -101,6 +102,11 @@ public final class MultiOutputEvalService {
         List<KlineBar> decisionBars = a.decisionBars();
         int points = a.points();
         double[] baselineSigmaByPoint = a.baselineSigmaByPoint();
+        // QLIKE 真值：horizon 路径内 GK 已实现方差（用上 OHLC，远胜单根 horizon收益²的极噪代理）。
+        // 仅作评估真值；rw/rolling/climatology 基准仍按各自 construction（与此真值同 horizon 方差量纲）。
+        double[] gkPathVarByPoint = RealizedVarianceSeries.horizonSums(
+                RealizedVarianceSeries.perBarGarmanKlass(a.decisionIntervalBars()),
+                a.decisionBarIndexes(), a.horizonDecisionBars());
         int rollingVolWindow = ResearchEvalService.barsForDuration(ROLLING_VOL_LOOKBACK_MILLIS, a.decisionBarMillis());
         int volLossDiffMaxLag = Math.max(VOL_LOSS_DIFF_MIN_LAG, a.horizonDecisionBars());
 
@@ -188,7 +194,7 @@ public final class MultiOutputEvalService {
                 pathOutcomes.add(a.pathOutcomesByPoint().get(i));
                 predSigma.add(f.expectedVolatility());
                 volContexts.add(f.volatilityContext());
-                realizedForVol.add(realizedReturnByPoint[i]);
+                realizedForVol.add(Math.sqrt(gkPathVarByPoint[i])); // 真值=√(GK 路径RV)；VolForecastScore 内部再平方回方差
                 rwSigmaForVol.add(rwSigmaByPoint[i]);
                 prevEwmaForVol.add(prevEwmaSigmaByPoint[i]);
                 rollingForVol.add(rollingSigmaByPoint[i]);

@@ -118,11 +118,12 @@ public class ConsensusJudge {
         for (AgentVote vote : evidenceVotes) {
             double weight = getEvidenceWeight(vote.agent());
 
+            double score = weight * Math.abs(vote.score());
             if (vote.score() > EPSILON) {
-                longScore += weight * Math.abs(vote.score());
+                longScore += score;
                 longConfSum += weight * vote.confidence();
             } else if (vote.score() < -EPSILON) {
-                shortScore += weight * Math.abs(vote.score());
+                shortScore += score;
                 shortConfSum += weight * vote.confidence();
             }
             // score==0 的票（风险标记类）不参与方向聚合
