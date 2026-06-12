@@ -1022,6 +1022,30 @@ COMMENT ON COLUMN force_order.amount IS '爆仓金额(avg_price * quantity)';
 
 CREATE INDEX idx_fo_symbol_time ON force_order(symbol, trade_time DESC);
 
+-- 策略运行时信号记录（实盘信号复盘）
+CREATE TABLE IF NOT EXISTS strategy_signal (
+    id                BIGSERIAL       PRIMARY KEY,
+    strategy_id       VARCHAR(32)     NOT NULL,
+    symbol            VARCHAR(20)     NOT NULL,
+    side              VARCHAR(8)      NOT NULL,
+    mode              VARCHAR(8)      NOT NULL DEFAULT 'LIVE',
+    entry_ref_price   DECIMAL(20,8)   NOT NULL,
+    stop_loss         DECIMAL(20,8)   NOT NULL,
+    take_profit       DECIMAL(20,8)   NOT NULL,
+    score             DECIMAL(10,4),
+    reason            VARCHAR(512),
+    leg_tags          VARCHAR(512),
+    bar_close_time    BIGINT          NOT NULL,
+    created_at        TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_strategy_signal UNIQUE (strategy_id, symbol, bar_close_time)
+);
+COMMENT ON TABLE strategy_signal IS '策略实盘信号记录';
+COMMENT ON COLUMN strategy_signal.mode IS 'LIVE；保留字段用于兼容与审计';
+COMMENT ON COLUMN strategy_signal.entry_ref_price IS '信号参考价(确认bar收盘)';
+COMMENT ON COLUMN strategy_signal.leg_tags IS 'live确认腿判定，如liq_cascade=PASS';
+
+CREATE INDEX idx_strategy_signal_symbol_time ON strategy_signal(symbol, bar_close_time DESC);
+
 -- ============================================
 -- AI 运行时配置表（API Key 管理，支持多条）
 -- ============================================

@@ -104,6 +104,14 @@ trading:
     afternoon-start: "13:00"
     afternoon-end: "15:00"
 
+# 插拔式策略实盘信号运行时：默认关闭；启用后读取实时流并记录 LIVE 信号
+strategy:
+  runtime:
+    enabled: false
+    enabled-ids: FIBO
+    liquidation-window-minutes: 30
+    liquidation-threshold-usdt: 500000
+
 # Binance行情配置
 binance:
   ws-url: wss://stream.binance.com:9443/ws

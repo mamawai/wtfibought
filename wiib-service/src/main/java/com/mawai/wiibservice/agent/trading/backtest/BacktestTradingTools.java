@@ -38,8 +38,9 @@ import java.util.concurrent.atomic.AtomicLong;
 @Slf4j
 public class BacktestTradingTools implements TradingOperations {
 
-    private static final BigDecimal OPEN_FEE_RATE = new BigDecimal("0.0004");
-    private static final BigDecimal CLOSE_FEE_RATE = new BigDecimal("0.0004");
+    private static final BigDecimal OPEN_FEE_RATE = new BigDecimal("0.0004");   // taker 万4
+    private static final BigDecimal CLOSE_FEE_RATE = new BigDecimal("0.0004");  // taker 万4
+    private static final BigDecimal MAKER_FEE_RATE = new BigDecimal("0.0002");  // maker 万2：limit 进场 + TP 挂单出场走这个
 
     private final AtomicLong positionIdSeq = new AtomicLong(1);
 
@@ -58,6 +59,9 @@ public class BacktestTradingTools implements TradingOperations {
     private final Map<Long, Integer> latestFailScoreByPosition = new HashMap<>();
     private final Map<Long, BigDecimal> maxFavorableRByPosition = new HashMap<>();
     private final Map<Long, BigDecimal> maxAdverseRByPosition = new HashMap<>();
+    private final Map<Long, BigDecimal> openFeeRateByPosition = new HashMap<>();  // 开仓实际费率(maker/taker)，平仓算总费用时复用
+    private final Map<Long, ScaleOut> scaleOutByPosition = new HashMap<>();       // 分批止盈挂单：价到触发价部分平仓(maker)
+    private BigDecimal fillEpsilon = BigDecimal.ZERO;  // maker fill 摩擦：要价格穿过挂单价 ε(相对)才算成交；0=触及即成交(原行为，向后兼容)
     @Setter
     private int currentBarIndex = 0;
     @Setter
@@ -91,6 +95,9 @@ public class BacktestTradingTools implements TradingOperations {
             boolean wasLateContinuation
     ) {}
 
+    /** 分批止盈挂单：triggerPrice 触发价、scaleQty 落袋数量(剩余仓止损不动)。 */
+    private record ScaleOut(BigDecimal triggerPrice, BigDecimal scaleQty) {}
+
     public BacktestTradingTools(BigDecimal initialBalance, String symbol) {
         this.balance = initialBalance;
         this.peakEquity = initialBalance;
@@ -122,15 +129,18 @@ public class BacktestTradingTools implements TradingOperations {
             return OpenResult.fromMessage("开仓失败: 数量无效");
         }
 
-        // 用当前价格计算保证金和手续费
-        BigDecimal price = getCurrentPrice();
+        // LIMIT 单成交于挂单价(limitPrice)走 maker；MARKET 单成交于当前价走 taker。
+        boolean isLimit = "LIMIT".equals(orderType);
+        BigDecimal price = isLimit && limitPrice != null && limitPrice.signum() > 0
+                ? limitPrice : getCurrentPrice();
         if (price == null || price.signum() <= 0) {
             return OpenResult.fromMessage("开仓失败: 价格无效");
         }
 
+        BigDecimal openFeeRate = isLimit ? MAKER_FEE_RATE : OPEN_FEE_RATE;
         BigDecimal notional = quantity.multiply(price);
         BigDecimal margin = notional.divide(BigDecimal.valueOf(leverage), 8, RoundingMode.CEILING);
-        BigDecimal openFee = notional.multiply(OPEN_FEE_RATE).setScale(8, RoundingMode.HALF_UP);
+        BigDecimal openFee = notional.multiply(openFeeRate).setScale(8, RoundingMode.HALF_UP);
 
         BigDecimal totalCost = margin.add(openFee);
         if (totalCost.compareTo(balance) > 0) {
@@ -176,6 +186,7 @@ public class BacktestTradingTools implements TradingOperations {
         initialRiskPerUnitByPosition.put(posId, initialRiskPerUnit(price, stopLossPrice));
         maxFavorableRByPosition.put(posId, BigDecimal.ZERO);
         maxAdverseRByPosition.put(posId, BigDecimal.ZERO);
+        openFeeRateByPosition.put(posId, openFeeRate);
 
         openPositions.add(pos);
         log.debug("[Backtest] 开仓成功 {} {} qty={} lev={} entry={} sl={} tp={} memo={}",
@@ -247,6 +258,28 @@ public class BacktestTradingTools implements TradingOperations {
         return "止盈修改成功";
     }
 
+    /** maker fill 摩擦(相对，如 0.0002=2bp)：>0 模拟"价格要真穿过挂单价才成交"，仅压力测试用；默认 0 行为不变。 */
+    public void setFillEpsilon(BigDecimal eps) {
+        this.fillEpsilon = eps == null || eps.signum() < 0 ? BigDecimal.ZERO : eps;
+    }
+
+    /** 挂单价叠加 fill 摩擦：up=true 上沿×(1+ε)、false 下沿×(1-ε)；ε=0 返回原价(原行为)。 */
+    private BigDecimal withEps(BigDecimal price, boolean up) {
+        if (fillEpsilon.signum() == 0) return price;
+        return up ? price.multiply(BigDecimal.ONE.add(fillEpsilon))
+                : price.multiply(BigDecimal.ONE.subtract(fillEpsilon));
+    }
+
+    @Override
+    public void setScaleOut(Long positionId, BigDecimal triggerPrice, double fraction) {
+        if (positionId == null || triggerPrice == null || fraction <= 0) return;
+        FuturesPositionDTO pos = findPosition(positionId);
+        if (pos == null) return;
+        BigDecimal scaleQty = pos.getQuantity().multiply(BigDecimal.valueOf(fraction));   // 比例→绝对量(注册时全仓)
+        if (scaleQty.signum() <= 0) return;
+        scaleOutByPosition.put(positionId, new ScaleOut(triggerPrice, scaleQty));
+    }
+
     // ==================== 回测专用方法 ====================
 
     /** 当前K线价格（用于开仓/平仓的成交价） */
@@ -307,12 +340,27 @@ public class BacktestTradingTools implements TradingOperations {
             }
         }
 
+        // 分批止盈：盘中触及触发价 → 部分平仓(maker)，一次性；剩余仓 SL 不动、拉到 TP（无移动保本）
+        ScaleOut so = scaleOutByPosition.get(pos.getId());
+        if (so != null) {
+            // fill 摩擦：要价格穿过触发价 ε 才成交(做多需 high≥trigger×(1+ε))；成交价仍是 trigger(maker 不偏)。
+            boolean soTriggered = isLong
+                    ? high.compareTo(withEps(so.triggerPrice(), true)) >= 0
+                    : low.compareTo(withEps(so.triggerPrice(), false)) <= 0;
+            if (soTriggered) {
+                doClose(pos, so.scaleQty().min(pos.getQuantity()), so.triggerPrice(), "SCALE");
+                scaleOutByPosition.remove(pos.getId());                 // 一次性；剩余仓SL不动，拉到TP
+            }
+        }
+        if (!"OPEN".equals(pos.getStatus())) return;                    // 分批已全平则不再判TP
+
         // 检查止盈
         if (pos.getTakeProfits() != null && !pos.getTakeProfits().isEmpty()) {
             FuturesTakeProfit tp = pos.getTakeProfits().getFirst();
+            // fill 摩擦：TP 也是 maker 挂单，要穿过 ε 才成交；成交价仍是 TP 价。
             boolean tpTriggered = isLong
-                    ? high.compareTo(tp.getPrice()) >= 0
-                    : low.compareTo(tp.getPrice()) <= 0;
+                    ? high.compareTo(withEps(tp.getPrice(), true)) >= 0
+                    : low.compareTo(withEps(tp.getPrice(), false)) <= 0;
             if (tpTriggered) {
                 doClose(pos, pos.getQuantity(), tp.getPrice(), "TP");
             }
@@ -326,8 +374,10 @@ public class BacktestTradingTools implements TradingOperations {
         boolean isLong = "LONG".equals(pos.getSide());
         boolean isFullClose = closeQty.compareTo(pos.getQuantity()) >= 0;
 
+        // TP 是挂单被动成交走 maker；分批止盈(SCALE)同为被动落袋走 maker；SL/强平/信号平仓是市价走 taker。
+        BigDecimal closeFeeRate = ("TP".equals(reason) || "SCALE".equals(reason)) ? MAKER_FEE_RATE : CLOSE_FEE_RATE;
         BigDecimal notional = closeQty.multiply(exitPrice);
-        BigDecimal closeFee = notional.multiply(CLOSE_FEE_RATE).setScale(8, RoundingMode.HALF_UP);
+        BigDecimal closeFee = notional.multiply(closeFeeRate).setScale(8, RoundingMode.HALF_UP);
 
         // 计算PnL
         BigDecimal priceDiff = isLong
@@ -336,9 +386,10 @@ public class BacktestTradingTools implements TradingOperations {
         BigDecimal rawPnl = priceDiff.multiply(closeQty);
 
         // 手续费：仅从PnL扣除平仓费（开仓费已在openPosition时扣除）
-        // 但记录总手续费用于报表统计
+        // 但记录总手续费用于报表统计；开仓费率用开仓时实际记录的(maker/taker)
+        BigDecimal openRate = openFeeRateByPosition.getOrDefault(pos.getId(), OPEN_FEE_RATE);
         BigDecimal openNotional = closeQty.multiply(pos.getEntryPrice());
-        BigDecimal openFeeAlloc = openNotional.multiply(OPEN_FEE_RATE).setScale(8, RoundingMode.HALF_UP);
+        BigDecimal openFeeAlloc = openNotional.multiply(openRate).setScale(8, RoundingMode.HALF_UP);
         BigDecimal totalFeeForRecord = openFeeAlloc.add(closeFee);
         BigDecimal cashPnl = rawPnl.subtract(closeFee);
         BigDecimal netPnl = rawPnl.subtract(totalFeeForRecord);
@@ -394,6 +445,8 @@ public class BacktestTradingTools implements TradingOperations {
             latestFailScoreByPosition.remove(pos.getId());
             maxFavorableRByPosition.remove(pos.getId());
             maxAdverseRByPosition.remove(pos.getId());
+            openFeeRateByPosition.remove(pos.getId());
+            scaleOutByPosition.remove(pos.getId());
         } else {
             pos.setQuantity(pos.getQuantity().subtract(closeQty));
             pos.setMargin(pos.getMargin().subtract(marginRelease));

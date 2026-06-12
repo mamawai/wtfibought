@@ -27,13 +27,15 @@ public class KlineStreamCache {
         if (symbol == null || symbol.isBlank() || interval == null || interval.isBlank() || bar == null) {
             return;
         }
-        latestByKey.put(key(symbol, interval), new ClosedBar(bar, System.currentTimeMillis()));
-        if (KlineHistoryStore.DEFAULT_INTERVAL.equals(interval)) {
+        String normalizedSymbol = normalizeSymbol(symbol);
+        String normalizedInterval = normalizeInterval(interval);
+        latestByKey.put(key(normalizedSymbol, normalizedInterval), new ClosedBar(bar, System.currentTimeMillis()));
+        if (KlineHistoryStore.DEFAULT_INTERVAL.equals(normalizedInterval)) {
             // 异步落库，不占WS回调线程；下游预测管线经HTTP采集(秒级)后才读historyStore，无竞态
-            Thread.startVirtualThread(() -> persistDefaultInterval(symbol, interval, bar));
+            Thread.startVirtualThread(() -> persistDefaultInterval(normalizedSymbol, normalizedInterval, bar));
         }
-        eventPublisher.publishEvent(new KlineClosedEvent(this, symbol, interval, bar.closeTime()));
-        log.info("[KlineWS] closed symbol={} interval={} closeTime={}", symbol, interval, bar.closeTime());
+        eventPublisher.publishEvent(new KlineClosedEvent(this, normalizedSymbol, normalizedInterval, bar.closeTime(), bar));
+        log.info("[KlineWS] closed symbol={} interval={} closeTime={}", normalizedSymbol, normalizedInterval, bar.closeTime());
     }
 
     public Optional<KlineBar> latestClosed(String symbol, String interval) {
@@ -58,8 +60,16 @@ public class KlineStreamCache {
     }
 
     private static String key(String symbol, String interval) {
-        String s = symbol == null ? "" : symbol;
-        String i = interval == null ? "" : interval;
+        String s = normalizeSymbol(symbol);
+        String i = normalizeInterval(interval);
         return s + ":" + i;
+    }
+
+    private static String normalizeSymbol(String symbol) {
+        return symbol == null ? "" : symbol.trim().toUpperCase();
+    }
+
+    private static String normalizeInterval(String interval) {
+        return interval == null ? "" : interval.trim().toLowerCase();
     }
 }
