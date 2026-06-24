@@ -75,6 +75,7 @@ export function Layout({ children }: Props) {
               <HeaderNavItem to="/ai" label="AI" />
               <HeaderNavItem to="/ranking" label="排行" />
               <HeaderNavItem to="/games" label="游戏" />
+              <HeaderNavItem to="/testnet" label="模拟盘" />
             </nav>
 
             {/* Actions */}

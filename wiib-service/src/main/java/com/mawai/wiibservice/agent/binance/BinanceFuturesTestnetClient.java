@@ -9,6 +9,8 @@ import com.mawai.wiibservice.agent.binance.model.PositionModeResponse;
 import com.mawai.wiibservice.agent.binance.model.PositionRisk;
 import com.mawai.wiibservice.agent.binance.model.SetLeverageResponse;
 import com.mawai.wiibservice.agent.binance.model.SimpleAck;
+import com.mawai.wiibservice.agent.binance.model.UserTrade;
+import com.mawai.wiibservice.agent.binance.model.IncomeRecord;
 import com.mawai.wiibservice.config.BaseRestTemplateConfig;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -285,5 +287,48 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
         if (value == null) return;
         if (value instanceof String s && s.isBlank()) return;
         params.put(key, value);
+    }
+
+    // ==================== 历史查询（监测看板数据源）====================
+
+    /** GET /fapi/v1/userTrades 账户成交明细（symbol 必填；窗口≤7天；fromId 增量游标；limit≤1000）。 */
+    public List<UserTrade> getUserTrades(String symbol, Long startTime, Long endTime, Long fromId, Integer limit) {
+        ensureSymbolAllowed(symbol);
+        LinkedHashMap<String, Object> params = new LinkedHashMap<>();
+        params.put("symbol", symbol);
+        putIfNotNull(params, "startTime", startTime);
+        putIfNotNull(params, "endTime", endTime);
+        putIfNotNull(params, "fromId", fromId);
+        putIfNotNull(params, "limit", limit);
+        String json = signedRequest(HttpMethod.GET, "/fapi/v1/userTrades", params);
+        return JSON.parseArray(json, UserTrade.class);
+    }
+
+    /** GET /fapi/v1/allOrders 所有订单含 FILLED/CANCELED/EXPIRED 终态（symbol 必填；limit≤1000）。 */
+    public List<OrderResponse> getAllOrders(String symbol, Long startTime, Long endTime, Long orderId, Integer limit) {
+        ensureSymbolAllowed(symbol);
+        LinkedHashMap<String, Object> params = new LinkedHashMap<>();
+        params.put("symbol", symbol);
+        putIfNotNull(params, "orderId", orderId);
+        putIfNotNull(params, "startTime", startTime);
+        putIfNotNull(params, "endTime", endTime);
+        putIfNotNull(params, "limit", limit);
+        String json = signedRequest(HttpMethod.GET, "/fapi/v1/allOrders", params);
+        return JSON.parseArray(json, OrderResponse.class);
+    }
+
+    /** GET /fapi/v1/income 损益流水（symbol 可选；窗口默认7天、可设≤200天；limit≤1000）。 */
+    public List<IncomeRecord> getIncome(String symbol, String incomeType, Long startTime, Long endTime, Integer limit) {
+        LinkedHashMap<String, Object> params = new LinkedHashMap<>();
+        if (symbol != null) {
+            ensureSymbolAllowed(symbol);
+            params.put("symbol", symbol);
+        }
+        putIfNotNull(params, "incomeType", incomeType);
+        putIfNotNull(params, "startTime", startTime);
+        putIfNotNull(params, "endTime", endTime);
+        putIfNotNull(params, "limit", limit);
+        String json = signedRequest(HttpMethod.GET, "/fapi/v1/income", params);
+        return JSON.parseArray(json, IncomeRecord.class);
     }
 }

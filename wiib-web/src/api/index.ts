@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats } from '../types/testnet';
 import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, GroupedVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, AiTradingDashboard, AiTradingDecision, TradingRuntimeConfig, QuantRuntimeConfig, TradingCycleSubmitResult, SprintCDashboard, GraphNodeMetric } from '../types';
 
 const api = axios.create({
@@ -436,6 +437,19 @@ export const aiTradingApi = {
     api.get<unknown, FuturesPosition[]>('/ai/trading/positions', { params: { symbol } }),
   orders: (symbol?: string, pageNum = 1, pageSize = 20) =>
     api.get<unknown, PageResult<FuturesOrder>>('/ai/trading/orders', { params: { symbol, pageNum, pageSize } }),
+};
+
+// ========== Testnet 模拟盘监测 ==========
+export const testnetApi = {
+  overview: () => api.get<unknown, TnOverview>('/testnet/overview'),
+  trades: (symbol?: string, days = 30) =>
+    api.get<unknown, TnTrade[]>('/testnet/trades', { params: { symbol, days } }),
+  dailyGrid: (symbol?: string, days = 90) =>
+    api.get<unknown, TnDailyCell[]>('/testnet/daily-grid', { params: { symbol, days } }),
+  equity: (symbol?: string, days = 90) =>
+    api.get<unknown, TnEquityPoint[]>('/testnet/equity', { params: { symbol, days } }),
+  fillStats: (symbol?: string, days = 30) =>
+    api.get<unknown, TnFillStats>('/testnet/fill-stats', { params: { symbol, days } }),
 };
 
 // ========== Graph 观测接口 ==========

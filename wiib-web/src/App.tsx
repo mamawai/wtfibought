@@ -23,6 +23,7 @@ import { Me } from './pages/Me';
 import { Prediction } from './pages/Prediction';
 import { AiAgent } from './pages/AiAgent';
 import { AiTrader } from './pages/AiTrader';
+import { TestnetMonitor } from './pages/TestnetMonitor';
 import { ForceOrders } from './pages/ForceOrders';
 import { QuantVerifications } from './pages/QuantVerifications';
 import { QuantLightVerifications } from './pages/QuantLightVerifications';
@@ -77,6 +78,7 @@ function App() {
                 <Route path="/prediction" element={<RequireAuth><Prediction /></RequireAuth>} />
                 <Route path="/ai" element={<RequireAuth><AiAgent /></RequireAuth>} />
                 <Route path="/ai-trader" element={<RequireAuth><AiTrader /></RequireAuth>} />
+                <Route path="/testnet" element={<RequireAuth><TestnetMonitor /></RequireAuth>} />
                 <Route path="/verifications" element={<RequireAuth><QuantVerifications /></RequireAuth>} />
                 <Route path="/verifications/light" element={<RequireAuth><QuantLightVerifications /></RequireAuth>} />
                 <Route path="/force-orders" element={<ForceOrders />} />
