@@ -111,6 +111,12 @@ strategy:
     enabled-ids: FIBO
     liquidation-window-minutes: 30
     liquidation-threshold-usdt: 500000
+  execution:
+    enabled: false           # 实盘执行总开关(Binance Testnet)；默认关
+    symbols: ETHUSDT         # 执行白名单(逗号分隔)
+    fixed-margin-usdt: 50    # 每仓固定保证金 USDT(P0 固定小仓)
+    leverage: 20
+    order-timeout-bars: 12   # 挂单超时(5m 根数，对齐 FiboParams)
 
 # Binance行情配置
 binance:

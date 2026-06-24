@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
+import com.mawai.wiibservice.agent.strategy.execution.TestnetExecutionService;
 import com.mawai.wiibservice.service.ForceOrderService;
 import com.mawai.wiibservice.service.KlineStreamCache;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +17,7 @@ import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -39,6 +41,7 @@ public class StrategyRuntime {
     private final KlineHistoryStore klineHistoryStore;
     private final StrategySignalRecorder recorder;
     private final ForceOrderService forceOrderService;
+    private final TestnetExecutionService executionService;
     private final ConcurrentMap<String, WindowedMarketView> views = new ConcurrentHashMap<>();
 
     @Value("${strategy.runtime.enabled:false}")
@@ -73,8 +76,14 @@ public class StrategyRuntime {
                     klineStreamCache.latestClosed(symbol, KlineHistoryStore.DEFAULT_INTERVAL).ifPresent(view::append);
                 }
                 for (TradingStrategySpi strategy : enabledStrategiesFor(symbol)) {
-                    strategy.onBarClosed(symbol, view)
-                            .ifPresent(signal -> recorder.record(signal, legTags(symbol, signal.isLong())));
+                    Optional<StrategySignal> signal = strategy.onBarClosed(symbol, view);
+                    if (signal.isPresent()) {
+                        recorder.record(signal.get(), legTags(symbol, signal.get().isLong()));
+                        executionService.onSignal(symbol, signal.get(), strategy);   // 实盘执行(默认关)
+                    } else {
+                        executionService.noSignal(symbol);                           // 腿失效，撤挂单
+                    }
+                    executionService.tick(symbol, view.nowMs());                     // 成交/超时/平仓轮询
                 }
             }
         } catch (Exception e) {
