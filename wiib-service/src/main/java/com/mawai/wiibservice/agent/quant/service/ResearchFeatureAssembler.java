@@ -15,7 +15,9 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -50,6 +52,8 @@ public class ResearchFeatureAssembler {
     private static final Duration DAILY_STALE_THRESHOLD = Duration.ofDays(2);
     /** 资金费超过此阈值视为过期（16h=2个funding周期+缓冲），标记 STALE */
     private static final Duration FUNDING_STALE_THRESHOLD = Duration.ofHours(16);
+    /** BTC ETF flow 是美股交易日口径；Farside 会提前展示美东当天占位空行。 */
+    private static final ZoneId ETF_FLOW_ZONE = ZoneId.of("America/New_York");
 
     private final FactorHistoryMapper factorHistoryMapper;
 
@@ -123,8 +127,8 @@ public class ResearchFeatureAssembler {
     }
 
     private double alignEtfFlow(String symbol, long decisionTime, List<String> flags) {
-        AlignedFactor aligned = align(symbol, SeriesCode.ETF_FLOW.factorName(), decisionTime,
-                EXTERNAL_FLOW_LOOKBACK, NEUTRAL_EXTERNAL);
+        AlignedFactor aligned = alignBeforeObservedDate(symbol, SeriesCode.ETF_FLOW.factorName(),
+                latestFinalizedEtfFlowExclusiveDate(decisionTime), EXTERNAL_FLOW_LOOKBACK, NEUTRAL_EXTERNAL);
         if (aligned.missing()) {
             flags.add("ETF_MISSING");
             return NEUTRAL_EXTERNAL.doubleValue();
@@ -169,6 +173,33 @@ public class ResearchFeatureAssembler {
 
         MarketSeriesPoint point = SeriesAligner.asOfPoint(series, decisionTime);
         return point == null ? AlignedFactor.missing(neutralDefault) : AlignedFactor.observed(point);
+    }
+
+    private AlignedFactor alignBeforeObservedDate(String symbol, String factorName, LocalDate exclusiveDate,
+                                                  Duration lookback, BigDecimal neutralDefault) {
+        // ETF 行的 observed_at 存 flowDate 的 UTC 00:00；用日期上界排除美东当天占位行。
+        LocalDateTime to = exclusiveDate.atStartOfDay();
+        LocalDateTime from = to.minus(lookback);
+        long asOfTime = toEpochMs(to) - 1;
+        List<FactorHistory> rows = factorHistoryMapper.selectRange(symbol, factorName, from, to);
+        if (rows == null || rows.isEmpty()) {
+            return AlignedFactor.missing(neutralDefault);
+        }
+
+        List<MarketSeriesPoint> series = rows.stream()
+                .filter(row -> row.getObservedAt() != null && row.getFactorValue() != null)
+                .map(row -> new MarketSeriesPoint(toEpochMs(row.getObservedAt()), row.getFactorValue()))
+                .toList();
+        if (series.isEmpty()) {
+            return AlignedFactor.missing(neutralDefault);
+        }
+
+        MarketSeriesPoint point = SeriesAligner.asOfPoint(series, asOfTime);
+        return point == null ? AlignedFactor.missing(neutralDefault) : AlignedFactor.observed(point);
+    }
+
+    private static LocalDate latestFinalizedEtfFlowExclusiveDate(long decisionTime) {
+        return Instant.ofEpochMilli(decisionTime).atZone(ETF_FLOW_ZONE).toLocalDate();
     }
 
     /** UTC LocalDateTime → epoch ms（与 MarketSeriesStore.toMs 同口径） */

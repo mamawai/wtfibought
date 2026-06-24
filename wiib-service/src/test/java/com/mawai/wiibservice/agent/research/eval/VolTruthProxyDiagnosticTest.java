@@ -28,12 +28,13 @@ class VolTruthProxyDiagnosticTest {
         assertThat(r.truths()).extracting(TruthBlock::truth)
                 .containsExactly("singleR2", "pathRvClose", "pathRvGk");
         for (TruthBlock b : r.truths()) {
-            assertThat(b.qlikeByForecaster()).containsKeys("har_rv", "ewma", "climatology", "lag1_ewma");
+            assertThat(b.qlikeByForecaster()).containsKeys(
+                    "har_gk", "ewma", "climatology", "lag1_ewma");
             assertThat(b.dm()).hasSize(5);
         }
-        // 同一预测(har_rv)在不同真值下 QLIKE 必不同 → 证明"换真值"确实改变了测量本身
-        double singleR2 = r.truths().get(0).qlikeByForecaster().get("har_rv");
-        double pathClose = r.truths().get(1).qlikeByForecaster().get("har_rv");
+        // 同一预测(har_gk)在不同真值下 QLIKE 必不同 → 证明"换真值"确实改变了测量本身
+        double singleR2 = r.truths().get(0).qlikeByForecaster().get("har_gk");
+        double pathClose = r.truths().get(1).qlikeByForecaster().get("har_gk");
         assertThat(singleR2).isNotNaN();
         assertThat(pathClose).isNotNaN();
         assertThat(Math.abs(singleR2 - pathClose)).isGreaterThan(1e-9);

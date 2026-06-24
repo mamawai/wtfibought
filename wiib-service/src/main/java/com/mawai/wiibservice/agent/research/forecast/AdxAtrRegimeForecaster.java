@@ -8,7 +8,7 @@ public final class AdxAtrRegimeForecaster implements RegimeForecaster {
 
     @Override
     public RegimeVerdict forecastRegime(ResearchFeatures features) {
-        return RegimeClassifier.classify(IndicatorAdapter.indicators(features == null ? null : features.barsUpToNow()));
+        return RegimeClassifier.classify(IndicatorAdapter.researchIndicators(features == null ? null : features.barsUpToNow()));
     }
 
     @Override

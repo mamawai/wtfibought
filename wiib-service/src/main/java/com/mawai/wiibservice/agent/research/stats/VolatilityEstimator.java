@@ -35,6 +35,32 @@ public final class VolatilityEstimator {
     }
 
     /**
+     * 与 {@link #ewmaVolatility(List, double)} 同口径，但直接吃预先对齐的 log return 数组。
+     * returns[i] 表示 close[i]/close[i-1]，所以窗口 [barStart, endExclusive) 对应 return 索引 [barStart+1, endExclusive)。
+     */
+    public static double ewmaVolatility(double[] returns, int endExclusive, int lookbackBars, double lambda) {
+        if (returns == null || endExclusive < 2 || lookbackBars < 2) return 0.0;
+        int end = Math.min(endExclusive, returns.length);
+        int start = Math.max(1, end - lookbackBars + 1);
+        if (start >= end) return 0.0;
+        double var = 0.0;
+        boolean seeded = false;
+        for (int i = start; i < end; i++) {
+            double r = returns[i];
+            if (!Double.isFinite(r)) {
+                r = 0.0;
+            }
+            if (!seeded) {
+                var = r * r;
+                seeded = true;
+            } else {
+                var = lambda * var + (1 - lambda) * r * r;
+            }
+        }
+        return Math.sqrt(var);
+    }
+
+    /**
      * 已实现波动率（horizon 口径）= sqrt(Σ rᵢ²)，rᵢ = ln(close_i / close_{i-1})。
      * 与 {@link #ewmaVolatility}（per-bar 分数波动率）不同：这里把整段路径的逐 bar 平方收益累加再开方，
      * 量纲 = 该路径所跨越「整段」的波动，可与单期 baseline σ 同口径比较（如 RegimeLabeler 的 SHOCK 判定）。

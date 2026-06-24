@@ -13,7 +13,9 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +34,8 @@ public class MarketSeriesStore {
     public static final String GLOBAL = "GLOBAL";
     private static final int FUNDING_PAGE = 1000;   // /fapi/v1/fundingRate 单页上限
     private static final long DAILY_FACTOR_AVAILABILITY_LAG_MS = Duration.ofDays(1).toMillis();
+    private static final long ETF_FLOW_QUERY_LOOKBACK_MS = Duration.ofDays(2).toMillis();
+    private static final ZoneId ETF_FLOW_ZONE = ZoneId.of("America/New_York");
 
     private final BinanceRestClient binanceRestClient;
     private final FactorHistoryMapper factorHistoryMapper;
@@ -102,19 +106,35 @@ public class MarketSeriesStore {
 
     /**
      * 加载 [fromMs, toMs) 的某序列，按 ts 升序。
-     * factor_history.observed_at 仍存数据自身日期；research 返回的 ts 是"策略可用时间"，日级慢因子保守 T+1，避免当天 00:00 偷看当天数据。
+     * factor_history.observed_at 仍存数据自身日期；research 返回的 ts 是"策略可用时间"。
+     * 日级慢因子保守 T+1；ETF flow 按美东下一自然日 00:00 可用，避免 UTC 00:00 提前偷看美股当天占位行。
      */
     public List<MarketSeriesPoint> load(String symbol, SeriesCode code, long fromMs, long toMs) {
-        long lagMs = availabilityLagMs(code);
-        List<FactorHistory> rows = factorHistoryMapper.selectRange(symbol, code.factorName(), toLdt(fromMs - lagMs), toLdt(toMs));
+        long queryLookbackMs = queryLookbackMs(code);
+        List<FactorHistory> rows = factorHistoryMapper.selectRange(symbol, code.factorName(), toLdt(fromMs - queryLookbackMs), toLdt(toMs));
         List<MarketSeriesPoint> out = new ArrayList<>(rows.size());
         for (FactorHistory r : rows) {
-            long availableAt = toMs(r.getObservedAt()) + lagMs;
+            if (r.getObservedAt() == null || r.getFactorValue() == null) {
+                continue;
+            }
+            long availableAt = availableAtMs(code, r.getObservedAt());
             if (availableAt >= fromMs && availableAt < toMs) {
                 out.add(new MarketSeriesPoint(availableAt, r.getFactorValue()));
             }
         }
         return out;
+    }
+
+    private static long queryLookbackMs(SeriesCode code) {
+        return code == SeriesCode.ETF_FLOW ? ETF_FLOW_QUERY_LOOKBACK_MS : availabilityLagMs(code);
+    }
+
+    private static long availableAtMs(SeriesCode code, LocalDateTime observedAt) {
+        if (code == SeriesCode.ETF_FLOW) {
+            LocalDate flowDate = observedAt.toLocalDate();
+            return flowDate.plusDays(1).atStartOfDay(ETF_FLOW_ZONE).toInstant().toEpochMilli();
+        }
+        return toMs(observedAt) + availabilityLagMs(code);
     }
 
     private static long availabilityLagMs(SeriesCode code) {

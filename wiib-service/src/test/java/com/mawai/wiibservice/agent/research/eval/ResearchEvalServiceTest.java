@@ -45,6 +45,17 @@ class ResearchEvalServiceTest {
         for (StrategyLine s : r.strategies()) {
             assertThat(s.metrics().periods()).isEqualTo(r.testPoints()); // 每策略 periods 与 test 点数一致
             assertThat(s.naivePercentile()).isBetween(0.0, 1.0);
+            assertThat(s.nonOverlapPeriods()).isBetween(1, r.testPoints());
+            assertThat(s.nonOverlapHitRate()).isBetween(0.0, 1.0);
+            assertThat(s.nonOverlapActiveHitRate()).isBetween(0.0, 1.0);
+            assertThat(s.nonOverlapNaivePercentile()).isBetween(0.0, 1.0);
+            assertThat(Double.isFinite(s.nonOverlapSharpe())).isTrue();
+            assertThat(s.beatBuyAndHoldByNonOverlap())
+                    .isEqualTo(s.nonOverlapReturn().compareTo(r.buyAndHoldReturn()) > 0);
+            assertThat(s.beatNonOverlapNaive())
+                    .isEqualTo(s.nonOverlapNaivePercentile() >= params.naivePercentileThreshold());
+            assertThat(s.exposure()).isBetween(0.0, 1.0);
+            assertThat(s.turnover()).isBetween(0.0, 1.0);
         }
         assertThat(r.summary()).contains("BTCUSDT").contains("buy&hold");
     }
@@ -252,6 +263,36 @@ class ResearchEvalServiceTest {
         assertThat(a.points()).isEqualTo(8 * 24 - 24);
         assertThat(a.decisionBars().get(1).openTime() - a.decisionBars().get(0).openTime())
                 .isEqualTo(ResearchEvalService.FIFTEEN_MINUTE_BAR_MILLIS);
+    }
+
+    @Test
+    void costBpsErodesStrategyReturnsButKeepsNaivePercentile() {
+        // 上涨趋势 + 顺势 EWMA → 全程活跃做多；20bps/笔成本必须单调侵蚀双口径收益。
+        List<KlineBar> oneMin = uptrend1m(8 * 360);
+        List<Forecaster> fcs = List.of(new EwmaMomentumForecaster(2, 4));
+        EvalParams free = new EvalParams(1.5, 0.94, 3, 0, 2, 200, 0.95, 42L);
+        EvalParams costly = new EvalParams(1.5, 0.94, 3, 0, 2, 200, 0.95, 42L, 20.0);
+
+        ComparisonReport rFree = ResearchEvalService.evaluateBars(
+                "BTCUSDT", ForecastHorizon.H6, oneMin, List.of(), List.of(), List.of(), List.of(), fcs, free);
+        ComparisonReport rCost = ResearchEvalService.evaluateBars(
+                "BTCUSDT", ForecastHorizon.H6, oneMin, List.of(), List.of(), List.of(), List.of(), fcs, costly);
+
+        StrategyLine sFree = rFree.strategies().get(0);
+        StrategyLine sCost = rCost.strategies().get(0);
+        assertThat(sFree.exposure()).isGreaterThan(0.0); // 有活跃信号成本才有意义
+        assertThat(sCost.strategyReturn()).isLessThan(sFree.strategyReturn());
+        assertThat(sCost.nonOverlapReturn()).isLessThan(sFree.nonOverlapReturn());
+        // 排列分位按 gross 收益：成本只依赖持仓次数、对洗牌不变 → 分位与无成本一致
+        assertThat(sCost.naivePercentile()).isEqualTo(sFree.naivePercentile());
+        assertThat(rCost.buyAndHoldReturn()).isEqualByComparingTo(rFree.buyAndHoldReturn());
+    }
+
+    @Test
+    void negativeCostBpsIsRejected() {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new EvalParams(1.5, 0.94, 3, 0, 2, 200, 0.95, 42L, -1.0))
+                .withMessageContaining("costBps");
     }
 
     /** 慢/快双正弦波 1m 序列：6h 聚合后均线交叉、ma_alignment 在 ±1/0 翻转、EWMA 方向随之变化，

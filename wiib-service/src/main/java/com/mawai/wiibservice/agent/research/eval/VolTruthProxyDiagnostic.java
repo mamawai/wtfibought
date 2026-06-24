@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * vol 真值代理诊断：同一套 vol 预测(EWMA/HAR-RV)，在三种"已实现方差真值"下并排算 QLIKE + Diebold-Mariano。
+ * vol 真值代理诊断：同一套 vol 预测(EWMA/HAR-GK)，在三种"已实现方差真值"下并排算 QLIKE + Diebold-Mariano。
  * - singleR2 ：现状真值=单根 (horizon 收益)²，1 个观测、最噪。
  * - pathRvClose：horizon 路径内 Σ 5m close-to-close r²，72/144/288 个观测。
  * - pathRvGk ：horizon 路径内 Σ Garman-Klass 单 bar 方差（用上 OHLC 高低价）。
@@ -29,7 +29,7 @@ public final class VolTruthProxyDiagnostic {
     }
 
     /**
-     * 主入口：assemble(vol-only 价格)→walk-forward 取 OOS 点→收 HAR-RV/EWMA σ + 三真值→各真值下 QLIKE+DM。
+     * 主入口：assemble(vol-only 价格)→walk-forward 取 OOS 点→收 HAR-GK/EWMA σ + 三真值→各真值下 QLIKE+DM。
      * 链下/benchmark 全传空：vol 预测只读价格(barsUpToNow)，不受影响，保持诊断轻量。
      */
     public static VolTruthProxyReport run(String symbol, ForecastHorizon horizon,
@@ -53,14 +53,14 @@ public final class VolTruthProxyDiagnostic {
         }
         double[] climSigma = expandingClimatologySigma(realizedFwd, a.decisionBarIndexes(), a.horizonDecisionBars());
 
-        // HAR-RV horizon-scaled（无状态，逐点直接预测，天然 OOS）
-        VolForecaster har = new HorizonScaledVolForecaster(
-                HarRvVolForecaster.defaults(QuantCoreForecaster.DEFAULT_VOL_LAMBDA, a.decisionBarMillis()), horizon);
+        // HAR-GK horizon-scaled（无状态，逐点直接预测，天然 OOS）；close-return HAR 已删除，只保留这一个 HAR 口径。
+        VolForecaster harGk = new HorizonScaledVolForecaster(
+                HarRvVolForecaster.gkDefaults(QuantCoreForecaster.DEFAULT_VOL_LAMBDA, a.decisionBarMillis()), horizon);
 
         // walk-forward OOS 点（与生产同切分）逐点收集
         List<WalkForwardWindow> wins = WalkForwardEvaluator.windows(
                 points, params.testSize(), a.horizonDecisionBars(), params.embargoBars(), params.minTrain());
-        List<Double> harList = new ArrayList<>();
+        List<Double> harGkList = new ArrayList<>();
         List<Double> ewmaList = new ArrayList<>();
         List<Double> climList = new ArrayList<>();
         List<Double> lag1List = new ArrayList<>();
@@ -69,7 +69,7 @@ public final class VolTruthProxyDiagnostic {
         List<Double> sqrtPathGkList = new ArrayList<>();
         for (WalkForwardWindow w : wins) {
             for (int i = w.testStart(); i < w.testEnd(); i++) {
-                harList.add(har.forecastSigma(a.featuresByPoint().get(i)));
+                harGkList.add(harGk.forecastSigma(a.featuresByPoint().get(i)));
                 ewmaList.add(baselineSigma[i]);
                 climList.add(climSigma[i]);
                 lag1List.add(i >= 1 ? baselineSigma[i - 1] : 0.0);
@@ -80,7 +80,7 @@ public final class VolTruthProxyDiagnostic {
         }
 
         Map<String, double[]> sigma = new LinkedHashMap<>();
-        sigma.put("har_rv", toArray(harList));
+        sigma.put("har_gk", toArray(harGkList));
         sigma.put("ewma", toArray(ewmaList));
         sigma.put("climatology", toArray(climList));
         sigma.put("lag1_ewma", toArray(lag1List));
@@ -112,10 +112,10 @@ public final class VolTruthProxyDiagnostic {
         return out;
     }
 
-    /** model→baseline 对比对（顺序即报告顺序）。 */
+    /** model→baseline 对比对（顺序即报告顺序）。climatology 是评估基线，不再作为可选 forecaster。 */
     private static final String[][] DM_PAIRS = {
-            {"har_rv", "ewma"}, {"har_rv", "climatology"}, {"ewma", "climatology"},
-            {"har_rv", "lag1_ewma"}, {"ewma", "lag1_ewma"}};
+            {"har_gk", "ewma"}, {"har_gk", "climatology"}, {"ewma", "climatology"},
+            {"har_gk", "lag1_ewma"}, {"ewma", "lag1_ewma"}};
 
     /** 单一真值口径下：各预测器 QLIKE + 各 model/baseline 对的 DM。realizedArg=√真值方差（VolForecastScore 内部再平方）。 */
     private static TruthBlock truthBlock(String truth, double[] realizedArg,

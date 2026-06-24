@@ -81,6 +81,27 @@ class ResearchFeatureAssemblerTest {
     }
 
     @Test
+    void etfFlowIgnoresCurrentNewYorkDateAtSingaporeMorning() {
+        FactorHistoryMapper mapper = mock(FactorHistoryMapper.class);
+        ResearchFeatureAssembler assembler = new ResearchFeatureAssembler(mapper);
+        LocalDateTime decision = LocalDateTime.of(2026, 6, 10, 0, 5); // SG 08:05, NY 6/9 20:05
+
+        when(mapper.selectRange(eq("BTCUSDT"), eq(SeriesCode.ETF_FLOW.factorName()), any(), any()))
+                .thenReturn(List.of(
+                        row(LocalDateTime.of(2026, 6, 8, 0, 0), "-91.4"),
+                        row(LocalDateTime.of(2026, 6, 9, 0, 0), "0.0")));
+
+        ResearchFeatureAssembler.AssemblyResult result =
+                assembler.assemble("BTCUSDT", List.of(bar(toMs(decision))));
+
+        assertThat(result.features().etfFlow()).isCloseTo(-91.4, within(1e-10));
+
+        ArgumentCaptor<LocalDateTime> toCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(mapper).selectRange(eq("BTCUSDT"), eq(SeriesCode.ETF_FLOW.factorName()), any(), toCaptor.capture());
+        assertThat(toCaptor.getValue()).isEqualTo(LocalDateTime.of(2026, 6, 9, 0, 0));
+    }
+
+    @Test
     void emptyBarsReturnNeutralFeaturesWithoutQueryingFactors() {
         FactorHistoryMapper mapper = mock(FactorHistoryMapper.class);
         ResearchFeatureAssembler assembler = new ResearchFeatureAssembler(mapper);

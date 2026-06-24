@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -32,9 +33,52 @@ class EtfFlowScraperTest {
         assertEquals(new BigDecimal("111.7"), points.get(1).totalFlowUsdMillion());
     }
 
+    @Test
+    void parseLatestFinalizedSkipsCurrentNewYorkPlaceholderRow() {
+        EtfFlowScraper scraper = new EtfFlowScraper(null);
+        EtfFlowScraper.EtfFlowPoint rawLatest = scraper.parseLatest(currentNewYorkDayPlaceholderHtml());
+        EtfFlowScraper.EtfFlowPoint point = scraper.parseLatestFinalized(
+                currentNewYorkDayPlaceholderHtml(), LocalDate.of(2026, 6, 10));
+
+        assertEquals(LocalDate.of(2026, 6, 9), rawLatest.date());
+        assertEquals(new BigDecimal("0.0"), rawLatest.totalFlowUsdMillion());
+        assertEquals(LocalDate.of(2026, 6, 8), point.date());
+        assertEquals(new BigDecimal("-91.4"), point.totalFlowUsdMillion());
+    }
+
     private String sampleHtml() throws Exception {
         return new String(
                 getClass().getResourceAsStream("/farside/sample-20260424.html").readAllBytes(),
                 StandardCharsets.UTF_8);
+    }
+
+    private String currentNewYorkDayPlaceholderHtml() {
+        return """
+                <!doctype html>
+                <html lang="en">
+                <body>
+                <table>
+                    <tr>
+                        <th>Date</th>
+                        <th>IBIT</th>
+                        <th>FBTC</th>
+                        <th>Total</th>
+                    </tr>
+                    <tr>
+                        <td>08 Jun 2026</td>
+                        <td>(232.9)</td>
+                        <td>59.4</td>
+                        <td>(91.4)</td>
+                    </tr>
+                    <tr>
+                        <td>09 Jun 2026</td>
+                        <td>-</td>
+                        <td>0.0</td>
+                        <td>0.0</td>
+                    </tr>
+                </table>
+                </body>
+                </html>
+                """;
     }
 }

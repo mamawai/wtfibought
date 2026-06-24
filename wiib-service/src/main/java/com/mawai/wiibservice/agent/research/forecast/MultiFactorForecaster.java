@@ -71,7 +71,7 @@ public final class MultiFactorForecaster implements Forecaster {
     private Double legSignal(Leg leg, ResearchFeatures f) {
         return switch (leg) {
             case TREND -> {
-                Map<String, Object> ind = IndicatorAdapter.indicators(f.barsUpToNow());
+                Map<String, Object> ind = IndicatorAdapter.researchIndicators(f.barsUpToNow());
                 Object align = ind.get("ma_alignment");
                 yield align == null ? null : (double) ((Number) align).intValue();   // -1/0/+1 多均线排列
             }

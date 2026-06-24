@@ -8,6 +8,8 @@ import com.mawai.wiibservice.agent.research.factor.ContinuousFactorVector;
 import com.mawai.wiibservice.agent.research.factor.FactorMath;
 import com.mawai.wiibservice.agent.research.forecast.Forecaster;
 import com.mawai.wiibservice.agent.research.forecast.HorizonScaledVolForecaster;
+import com.mawai.wiibservice.agent.research.forecast.IndicatorAdapter;
+import com.mawai.wiibservice.agent.research.forecast.MarketRegime;
 import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
 import com.mawai.wiibservice.agent.research.forecast.TrainingSample;
 import com.mawai.wiibservice.agent.research.kline.KlineAggregator;
@@ -131,17 +133,26 @@ public class ResearchEvalService {
 
     /** 同上；decisionBarMillis 只允许 5m/15m，horizon 仍固定为未来 6/12/24h。 */
     static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
-                                         List<KlineBar> benchmarkOneMin,
-                                         List<MarketSeriesPoint> fundingSeries,
-                                         List<MarketSeriesPoint> fearGreedSeries,
-                                         List<MarketSeriesPoint> etfFlowSeries,
-                                         List<MarketSeriesPoint> stablecoinSeries,
-                                         List<Forecaster> forecasters, EvalParams params,
-                                         int featureLookbackBars, long decisionBarMillis) {
-        AssembledPoints assembled = assemblePoints(horizon, oneMin, benchmarkOneMin,
-                fundingSeries, fearGreedSeries, etfFlowSeries, stablecoinSeries,
-                params, featureLookbackBars, decisionBarMillis);
-        List<KlineBar> decisionBars = assembled.decisionBars();
+                                          List<KlineBar> benchmarkOneMin,
+                                          List<MarketSeriesPoint> fundingSeries,
+                                          List<MarketSeriesPoint> fearGreedSeries,
+                                          List<MarketSeriesPoint> etfFlowSeries,
+                                          List<MarketSeriesPoint> stablecoinSeries,
+                                          List<Forecaster> forecasters, EvalParams params,
+                                          int featureLookbackBars, long decisionBarMillis) {
+        try {
+            AssembledPoints assembled = assemblePoints(horizon, oneMin, benchmarkOneMin,
+                    fundingSeries, fearGreedSeries, etfFlowSeries, stablecoinSeries,
+                    params, featureLookbackBars, decisionBarMillis);
+            return evaluateAssembled(symbol, horizon, assembled, forecasters, params);
+        } finally {
+            IndicatorAdapter.clearThreadCache();
+        }
+    }
+
+    /** 已装配样本上的纯评估核心；手动诊断 runner 复用它，避免 assemble/fit 逻辑分叉。 */
+    static ComparisonReport evaluateAssembled(String symbol, ForecastHorizon horizon, AssembledPoints assembled,
+                                              List<Forecaster> forecasters, EvalParams params) {
         int points = assembled.points();
         List<ResearchFeatures> featuresByPoint = assembled.featuresByPoint();
         List<BigDecimal> longBarrierReturnsByPoint = assembled.longBarrierReturnsByPoint();
@@ -168,29 +179,102 @@ public class ResearchEvalService {
                 : BigDecimal.ZERO;
 
         // ---- 每预测器一条 StrategyLine（naive 分位依赖各自 positions，逐策略算） ----
+        BigDecimal costRate = params.costRate();
+        boolean hasCost = costRate.signum() > 0;
         List<StrategyLine> lines = new ArrayList<>(forecasters.size());
         for (Forecaster fc : forecasters) {
             List<Integer> positions = new ArrayList<>(testPointCount);
             List<BigDecimal> posReturns = new ArrayList<>(testPointCount);
             List<BigDecimal> testLongReturns = new ArrayList<>(testPointCount);
+            // 非重叠口径：信号持有 horizonDecisionBars 期间不重复开仓
+            List<BigDecimal> nonOverlapReturns = new ArrayList<>(testPointCount);
+            List<Integer> nonOverlapPositions = new ArrayList<>(testPointCount);
+            List<BigDecimal> nonOverlapLongReturns = new ArrayList<>(testPointCount);
+            int nextNonOverlapBarIndex = Integer.MIN_VALUE;
+            int nonOverlapHits = 0;
+            int nonOverlapActive = 0;
+            int nonOverlapActiveHits = 0;
+            int activeCount = 0;
+            int positionChanges = 0;
+            int previousDirection = 0;
+            boolean hasPrevious = false;
+
             for (WalkForwardWindow w : wins) {
                 // 每个窗口单独 fit；训练样本只来自 testStart 之前，且中间已有 purge+embargo 间隔。
                 Forecaster trained = fc.fit(List.copyOf(samplesByPoint.subList(w.trainStart(), w.trainEnd())));
                 for (int i = w.testStart(); i < w.testEnd(); i++) {
                     BigDecimal longReturn = longBarrierReturnsByPoint.get(i);
                     int dir = trained.forecast(featuresByPoint.get(i)).direction();
-                    positions.add(dir);
+                    // 归一化：只关心多(+1)/空(-1)/平(0)
+                    int normDir = Integer.compare(dir, 0);
+                    positions.add(normDir);
                     testLongReturns.add(longReturn);
-                    posReturns.add(longReturn.multiply(BigDecimal.valueOf(dir)));
+                    BigDecimal posReturn = longReturn.multiply(BigDecimal.valueOf(normDir));
+                    // 每个非 flat 信号 = 一笔独立往返交易，扣一次成本（与本尺子的逐信号模拟语义一致）
+                    if (hasCost && normDir != 0) {
+                        posReturn = posReturn.subtract(costRate);
+                    }
+                    posReturns.add(posReturn);
+
+                    // 方向统计
+                    if (normDir != 0) {
+                        activeCount++;
+                    }
+                    if (hasPrevious && normDir != previousDirection) {
+                        positionChanges++;
+                    }
+                    previousDirection = normDir;
+                    hasPrevious = true;
+
+                    // 非重叠采样：当前 bar 已走出上一信号的持有窗口后才计入
+                    int decisionBarIndex = assembled.decisionBarIndexes().get(i);
+                    if (decisionBarIndex >= nextNonOverlapBarIndex) {
+                        nonOverlapReturns.add(posReturn);
+                        nonOverlapPositions.add(normDir);
+                        nonOverlapLongReturns.add(longReturn);
+                        if (posReturn.signum() > 0) {
+                            nonOverlapHits++;
+                        }
+                        if (normDir != 0) {
+                            nonOverlapActive++;
+                            if (posReturn.signum() > 0) {
+                                nonOverlapActiveHits++;
+                            }
+                        }
+                        nextNonOverlapBarIndex = decisionBarIndex + assembled.horizonDecisionBars();
+                    }
                 }
             }
+            int totalPoints = positions.size();
+            double exposure = totalPoints > 0 ? (double) activeCount / totalPoints : 0.0;
+            double turnover = totalPoints > 1 ? (double) positionChanges / (totalPoints - 1) : 0.0;
+
             ReturnSeries series = new ReturnSeries(fc.name(), posReturns, horizon.periodsPerYear());
             RiskAdjustedMetrics metrics = RiskAdjustedMetrics.from(series);
             double naivePct = positions.isEmpty() ? 0.0
                     : BenchmarkCalculator.permutationPercentile(positions, testLongReturns, params.iterations(), params.seed());
             BigDecimal stratReturn = compound(posReturns);
+
+            BigDecimal nonOverlapReturn = nonOverlapReturns.isEmpty()
+                    ? BigDecimal.ZERO
+                    : compound(nonOverlapReturns);
+            double nonOverlapSharpe = nonOverlapReturns.isEmpty()
+                    ? 0.0
+                    : RiskAdjustedMetrics.from(new ReturnSeries(
+                            fc.name() + "_non_overlap", nonOverlapReturns, horizon.periodsPerYear()))
+                    .annualizedSharpe();
+            double nonOverlapNaivePct = nonOverlapPositions.isEmpty() ? 0.0
+                    : BenchmarkCalculator.permutationPercentile(
+                    nonOverlapPositions, nonOverlapLongReturns, params.iterations(), params.seed());
+
             lines.add(new StrategyLine(fc.name(), metrics, stratReturn,
-                    stratReturn.compareTo(buyHold) > 0, naivePct, naivePct >= params.naivePercentileThreshold(), series));
+                    stratReturn.compareTo(buyHold) > 0, naivePct, naivePct >= params.naivePercentileThreshold(), series,
+                    nonOverlapReturn, nonOverlapSharpe, nonOverlapReturns.size(),
+                    nonOverlapReturns.isEmpty() ? 0.0 : (double) nonOverlapHits / nonOverlapReturns.size(),
+                    nonOverlapActive == 0 ? 0.0 : (double) nonOverlapActiveHits / nonOverlapActive,
+                    nonOverlapReturn.compareTo(buyHold) > 0,
+                    nonOverlapNaivePct, nonOverlapNaivePct >= params.naivePercentileThreshold(),
+                    exposure, turnover));
         }
 
         return new ComparisonReport(symbol, horizon.hours(), minutes(assembled.decisionBarMillis()),
@@ -234,6 +318,8 @@ public class ResearchEvalService {
         double[] effectiveBenchmarkReturns = benchmarkReturns.length == 0 ? EMPTY_BENCHMARK_RETURNS : benchmarkReturns;
         double[] fundingByFeatureBar = fundingByFeatureBar(featureBars, fundingSeries);
         ContinuousFactorParams continuousFactorParams = ContinuousFactorParams.forBarMillis(decisionBarMillis);
+        ContinuousFactorVector[] continuousFactorsByEnd = ContinuousFactorBuilder.buildSeries(
+                closes, volumes, fundingByFeatureBar, assetReturns, effectiveBenchmarkReturns, continuousFactorParams);
 
         // ---- 装配每个决策点的 point-in-time 特征 + 三隔栏训练目标；后面按 window 只把 train 交给 fit ----
         List<ResearchFeatures> featuresByPoint = new ArrayList<>(points);
@@ -241,6 +327,8 @@ public class ResearchEvalService {
         List<HorizonPathOutcome> pathOutcomesByPoint = new ArrayList<>(points);
         List<TrainingSample> samplesByPoint = new ArrayList<>(points);
         double[] baselineSigmaByPoint = new double[points];
+        int pathStartCursor = 0;
+        int pathEndCursor = 0;
         for (int point = 0; point < points; point++) {
             int featureIndex = decisionFeatureIndexes.get(point);
             KlineBar decisionBar = featureBars.get(featureIndex);
@@ -250,26 +338,31 @@ public class ResearchEvalService {
             int fng = SeriesAligner.asOf(fearGreedSeries, ti, NEUTRAL_FEAR_GREED).intValue();
             double etf = SeriesAligner.asOf(etfFlowSeries, ti, NEUTRAL_ONCHAIN).doubleValue();
             double stablecoin = SeriesAligner.asOf(stablecoinSeries, ti, NEUTRAL_ONCHAIN).doubleValue();
-            ContinuousFactorVector continuousFactors = ContinuousFactorBuilder.build(
-                    closes, volumes, fundingByFeatureBar, assetReturns, effectiveBenchmarkReturns,
-                    featureIndex + 1, continuousFactorParams);
+            ContinuousFactorVector continuousFactors = continuousFactorsByEnd[featureIndex + 1];
             int lookbackFrom = Math.max(0, featureIndex + 1 - featureLookbackBars); // 回看窗起点：晚期点恒 W 根，早期点不足则从 0（暖机语义不变）
             ResearchFeatures features = new ResearchFeatures(
                     featureBars.subList(lookbackFrom, featureIndex + 1),
                     funding, fng, etf, stablecoin, continuousFactors); // 绝不含未来
             BigDecimal entry = decisionBar.close();
-            List<KlineBar> path = pathBars(oneMin, ti, horizon.millis());
             double sigma = HorizonScaledVolForecaster.scale(
-                    VolatilityEstimator.ewmaVolatility(features.barsUpToNow(), params.lambda()), features, horizon);
+                    VolatilityEstimator.ewmaVolatility(assetReturns, featureIndex + 1,
+                            featureLookbackBars, params.lambda()), features, horizon);
             baselineSigmaByPoint[point] = sigma;
-            BarrierLabel label = sigma > 0
-                    ? TripleBarrierLabeler.label(entry, params.k(), sigma, path)
-                    : BarrierLabel.VERTICAL;
-            BigDecimal fallbackClose = path.isEmpty() ? exitBar.close() : path.get(path.size() - 1).close();
-            BigDecimal longReturn = longReturn(entry, fallbackClose, label, params.k(), sigma);
-            HorizonPathOutcome pathOutcome = HorizonPathOutcome.from(entry, fallbackClose, path);
+            while (pathStartCursor < oneMin.size() && oneMin.get(pathStartCursor).openTime() <= ti) {
+                pathStartCursor++;
+            }
+            if (pathEndCursor < pathStartCursor) {
+                pathEndCursor = pathStartCursor;
+            }
+            long pathEndTime = ti + horizon.millis();
+            while (pathEndCursor < oneMin.size() && oneMin.get(pathEndCursor).openTime() <= pathEndTime) {
+                pathEndCursor++;
+            }
+            PathStats path = pathStats(oneMin, pathStartCursor, pathEndCursor, entry, exitBar.close(), params.k(), sigma);
+            BigDecimal longReturn = longReturn(entry, path.fallbackClose(), path.label(), params.k(), sigma);
+            HorizonPathOutcome pathOutcome = path.outcome();
             double realizedForwardReturn = FactorMath.logReturn(exitBar.close().doubleValue(), entry.doubleValue());
-            var realizedRegime = RegimeLabeler.label(path, sigma);
+            MarketRegime realizedRegime = path.regime();
             featuresByPoint.add(features);
             longBarrierReturnsByPoint.add(longReturn);
             pathOutcomesByPoint.add(pathOutcome);
@@ -397,6 +490,87 @@ public class ResearchEvalService {
 
     private static double value(BigDecimal v) {
         return v == null ? 0.0 : v.doubleValue();
+    }
+
+    private record PathStats(BarrierLabel label, BigDecimal fallbackClose,
+                             HorizonPathOutcome outcome, MarketRegime regime) {
+    }
+
+    /**
+     * 单遍扫描 1m 路径同时产出 三隔栏标签 + 路径极值 + regime 标签（性能内联，长历史不三次扫路径）。
+     * 语义铁律：栏位判定必须与 {@link TripleBarrierLabeler#label}、regime 判定必须与 {@link RegimeLabeler#label}
+     * 完全一致——改任何一边都要同步另一边（有分叉就是标签口径漂移）。
+     */
+    private static PathStats pathStats(List<KlineBar> bars, int startInclusive, int endExclusive,
+                                       BigDecimal entry, BigDecimal emptyFallbackClose,
+                                       double k, double sigma) {
+        BigDecimal close = emptyFallbackClose;
+        BigDecimal high = emptyFallbackClose;
+        BigDecimal low = emptyFallbackClose;
+        BarrierLabel label = BarrierLabel.VERTICAL;
+
+        if (bars == null || startInclusive >= endExclusive || entry == null || entry.signum() <= 0) {
+            return new PathStats(label, close, HorizonPathOutcome.fromStats(entry, close, high, low), MarketRegime.RANGING);
+        }
+
+        BigDecimal upper = sigma > 0.0 ? entry.multiply(BigDecimal.valueOf(1.0 + k * sigma)) : null;
+        BigDecimal lower = sigma > 0.0 ? entry.multiply(BigDecimal.valueOf(1.0 - k * sigma)) : null;
+        double firstClose = 0.0;
+        double lastClose = 0.0;
+        double prevClose = 0.0;
+        double sumSq = 0.0;
+        int count = 0;
+
+        for (int i = startInclusive; i < endExclusive; i++) {
+            KlineBar b = bars.get(i);
+            close = b.close();
+            if (count == 0) {
+                high = b.high();
+                low = b.low();
+                firstClose = close.doubleValue();
+            } else {
+                if (b.high().compareTo(high) > 0) high = b.high();
+                if (b.low().compareTo(low) < 0) low = b.low();
+                double c = close.doubleValue();
+                double r = FactorMath.logReturn(c, prevClose);
+                sumSq += r * r;
+            }
+            lastClose = close.doubleValue();
+            prevClose = lastClose;
+            count++;
+
+            // 三隔栏只关心先触发哪一边；路径统计仍继续扫完整段，供 outcome/regime 使用。
+            if (label == BarrierLabel.VERTICAL && upper != null && lower != null) {
+                boolean upHit = b.high().compareTo(upper) >= 0;
+                boolean lowHit = b.low().compareTo(lower) <= 0;
+                if (upHit && lowHit) {
+                    label = b.close().compareTo(entry) >= 0 ? BarrierLabel.UPPER : BarrierLabel.LOWER;
+                } else if (upHit) {
+                    label = BarrierLabel.UPPER;
+                } else if (lowHit) {
+                    label = BarrierLabel.LOWER;
+                }
+            }
+        }
+
+        double realizedVol = count < 2 ? 0.0 : Math.sqrt(sumSq);
+        MarketRegime regime = labelRegime(realizedVol, firstClose, lastClose, sigma);
+        return new PathStats(label, close, HorizonPathOutcome.fromStats(entry, close, high, low), regime);
+    }
+
+    private static MarketRegime labelRegime(double realizedVol, double firstClose, double lastClose, double baselineSigma) {
+        if (baselineSigma > 0.0 && realizedVol > RegimeLabeler.DEFAULT_SHOCK_VOL_MULTIPLE * baselineSigma) {
+            return MarketRegime.SHOCK;
+        }
+        if (realizedVol <= 0.0) {
+            return MarketRegime.RANGING;
+        }
+        double netReturn = FactorMath.logReturn(lastClose, firstClose);
+        double directionality = Math.abs(netReturn) / realizedVol;
+        if (directionality >= RegimeLabeler.DEFAULT_DIRECTIONALITY_THRESHOLD) {
+            return netReturn >= 0.0 ? MarketRegime.TRENDING_UP : MarketRegime.TRENDING_DOWN;
+        }
+        return MarketRegime.RANGING;
     }
 
     /**

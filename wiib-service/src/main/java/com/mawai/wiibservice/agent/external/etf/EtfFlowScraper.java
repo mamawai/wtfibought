@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.temporal.ChronoUnit;
@@ -35,6 +36,7 @@ public class EtfFlowScraper {
     private static final String FARSIDE_URL = "https://farside.co.uk/bitcoin-etf-flow-all-data/";
     private static final String BROWSER_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36";
+    private static final ZoneId FARSIDE_MARKET_ZONE = ZoneId.of("America/New_York");
     private static final DateTimeFormatter DATE_FMT = new DateTimeFormatterBuilder()
             .parseCaseInsensitive()
             .appendPattern("d MMM yyyy")
@@ -45,8 +47,8 @@ public class EtfFlowScraper {
     @Value("${factor.btc_etf_flow.enabled:false}")
     private boolean enabled;
 
-    /** 北京时间早 8 点：美股盘后数据通常已更新；失败只记录，不影响主流程。 */
-    @Scheduled(cron = "0 0 8 * * *")
+    /** 东八区早 8 点：美东当天 Farside 行可能仍是占位，落库时只取美东今天之前的数据。 */
+    @Scheduled(cron = "0 0 8 * * *", zone = "Asia/Singapore")
     public void collectDaily() {
         if (!enabled) {
             return;
@@ -57,11 +59,16 @@ public class EtfFlowScraper {
     /** 拉取 Farside 最新 BTC ETF 净流入，并按日期去重写入 factor_history。 */
     public void collectOnce() {
         try {
-            List<EtfFlowPoint> all = parseAll(fetchDocument());
-            EtfFlowPoint point = all.get(all.size() - 1);   // 升序末尾 = 最新一日
+            LocalDate sourceToday = LocalDate.now(FARSIDE_MARKET_ZONE);
+            List<EtfFlowPoint> all = finalizedPoints(parseAll(fetchDocument()), sourceToday);
+            if (all.isEmpty()) {
+                log.warn("[B2.etf] NO_ETF_FLOW reason=no_finalized_rows sourceToday={}", sourceToday);
+                return;
+            }
+            EtfFlowPoint point = all.get(all.size() - 1);   // 升序末尾 = 最新已完结日
             factorHistoryMapper.upsert(toRow(point));
 
-            long staleDays = ChronoUnit.DAYS.between(point.date(), LocalDate.now());
+            long staleDays = ChronoUnit.DAYS.between(point.date(), sourceToday);
             if (staleDays > 4) {
                 log.warn("[B2.etf] STALE_ETF_FLOW latestDate={} staleDays={}", point.date(), staleDays);
             }
@@ -78,12 +85,17 @@ public class EtfFlowScraper {
      */
     public int backfillHistory() {
         try {
-            List<EtfFlowPoint> all = parseAll(fetchDocument());
+            LocalDate sourceToday = LocalDate.now(FARSIDE_MARKET_ZONE);
+            List<EtfFlowPoint> all = finalizedPoints(parseAll(fetchDocument()), sourceToday);
+            if (all.isEmpty()) {
+                log.warn("[B2.etf] BACKFILL_ETF_FLOW_FAILED reason=no_finalized_rows sourceToday={}", sourceToday);
+                return 0;
+            }
             for (EtfFlowPoint p : all) {
                 factorHistoryMapper.upsert(toRow(p));
             }
-            log.info("[B2.etf] BTC_ETF_FLOW 全历史回填 行数={} 区间=[{}, {}]",
-                    all.size(), all.get(0).date(), all.get(all.size() - 1).date());
+            log.info("[B2.etf] BTC_ETF_FLOW 全历史回填 行数={} 区间=[{}, {}] sourceToday={}",
+                    all.size(), all.get(0).date(), all.get(all.size() - 1).date(), sourceToday);
             return all.size();
         } catch (Exception e) {
             log.warn("[B2.etf] BACKFILL_ETF_FLOW_FAILED reason={}", e.getMessage());
@@ -95,6 +107,15 @@ public class EtfFlowScraper {
     public EtfFlowPoint parseLatest(String html) {
         List<EtfFlowPoint> all = parseAll(html);
         return all.get(all.size() - 1);   // parseAll 升序且非空（空表已抛异常）
+    }
+
+    /** 测试入口：按美东源日期过滤，跳过 Farside 当前交易日占位空行。 */
+    EtfFlowPoint parseLatestFinalized(String html, LocalDate sourceToday) {
+        List<EtfFlowPoint> all = finalizedPoints(parseAll(html), sourceToday);
+        if (all.isEmpty()) {
+            throw new IllegalStateException("Farside ETF finalized rows not found");
+        }
+        return all.get(all.size() - 1);
     }
 
     /** 解析整张 ETF 全历史表 → 每个日期行一个点，按日期升序（回填用）。 */
@@ -115,6 +136,23 @@ public class EtfFlowScraper {
             }
         }
         throw new IllegalStateException("Farside ETF table not found");
+    }
+
+    /** Farside 会提前放出美东当天空行；只有 flowDate < 美东今天 才视作已完结。 */
+    private List<EtfFlowPoint> finalizedPoints(List<EtfFlowPoint> points, LocalDate sourceToday) {
+        if (points == null || points.isEmpty()) {
+            return List.of();
+        }
+        return points.stream()
+                .filter(p -> p.date() != null && p.date().isBefore(sourceToday))
+                .filter(p -> !looksLikeRecentPlaceholder(p, sourceToday))
+                .toList();
+    }
+
+    private boolean looksLikeRecentPlaceholder(EtfFlowPoint point, LocalDate sourceToday) {
+        return BigDecimal.ZERO.compareTo(point.totalFlowUsdMillion()) == 0
+                && !point.hasFundFlowDetail()
+                && !point.date().isBefore(sourceToday.minusDays(3));
     }
 
     /** 带浏览器请求头抓页面；Farside 对无 UA 的脚本请求会返回 403。 */
@@ -165,9 +203,22 @@ public class EtfFlowScraper {
             if (date == null || total == null) {
                 continue;
             }
-            points.add(new EtfFlowPoint(date, total));
+            points.add(new EtfFlowPoint(date, total, hasFundFlowDetail(cells, dateIdx, totalIdx)));
         }
         return points;
+    }
+
+    private boolean hasFundFlowDetail(Elements cells, int dateIdx, int totalIdx) {
+        for (int i = 0; i < cells.size(); i++) {
+            if (i == dateIdx || i == totalIdx) {
+                continue;
+            }
+            BigDecimal value = parseMoney(cells.get(i).text());
+            if (value != null && BigDecimal.ZERO.compareTo(value) != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 把一个 ETF 流入点映射成 factor_history 行；observedAt 存原始流入日期，research 读取时再保守 T+1 可用。 */
@@ -220,5 +271,9 @@ public class EtfFlowScraper {
         return text == null ? "" : text.replace('\u00a0', ' ').trim();
     }
 
-    public record EtfFlowPoint(LocalDate date, BigDecimal totalFlowUsdMillion) {}
+    public record EtfFlowPoint(LocalDate date, BigDecimal totalFlowUsdMillion, boolean hasFundFlowDetail) {
+        public EtfFlowPoint(LocalDate date, BigDecimal totalFlowUsdMillion) {
+            this(date, totalFlowUsdMillion, true);
+        }
+    }
 }

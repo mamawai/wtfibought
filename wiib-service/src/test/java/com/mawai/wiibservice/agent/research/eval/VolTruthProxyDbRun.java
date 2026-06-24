@@ -97,23 +97,25 @@ class VolTruthProxyDbRun {
     }
 
     private static void printReport(VolTruthProxyReport r) {
-        String[] fc = {"har_rv", "ewma", "climatology", "lag1_ewma"};
+        List<String> fc = new ArrayList<>(r.truths().get(0).qlikeByForecaster().keySet());
         StringBuilder sb = new StringBuilder();
         sb.append(String.format("%n==== VolTruthProxy %s H%d | oos=%d ====%n", r.symbol(), r.horizonHours(), r.oosPoints()));
         sb.append("QLIKE (越低越好):\n");
-        sb.append(String.format("  %-13s %12s %12s %12s %12s%n", "truth", fc[0], fc[1], fc[2], fc[3]));
+        sb.append(String.format("  %-13s", "truth"));
+        for (String f : fc) sb.append(String.format(" %12s", f));
+        sb.append('\n');
         for (TruthBlock b : r.truths()) {
-            sb.append(String.format("  %-13s %12.6f %12.6f %12.6f %12.6f%n", b.truth(),
-                    b.qlikeByForecaster().get(fc[0]), b.qlikeByForecaster().get(fc[1]),
-                    b.qlikeByForecaster().get(fc[2]), b.qlikeByForecaster().get(fc[3])));
+            sb.append(String.format("  %-13s", b.truth()));
+            for (String f : fc) sb.append(String.format(" %12.6f", b.qlikeByForecaster().get(f)));
+            sb.append('\n');
         }
         sb.append("\nDM (lossDiff>0 且 p<=.05 → model 显著胜 baseline):\n");
-        sb.append(String.format("  %-22s %-26s %-26s %-26s%n", "pair",
+        sb.append(String.format("  %-24s %-26s %-26s %-26s%n", "pair",
                 r.truths().get(0).truth(), r.truths().get(1).truth(), r.truths().get(2).truth()));
         int pairs = r.truths().get(0).dm().size();
         for (int p = 0; p < pairs; p++) {
             DmRow d0 = r.truths().get(0).dm().get(p);
-            StringBuilder line = new StringBuilder(String.format("  %-22s", d0.model() + " vs " + d0.baseline()));
+            StringBuilder line = new StringBuilder(String.format("  %-24s", d0.model() + " vs " + d0.baseline()));
             for (TruthBlock b : r.truths()) {
                 DmRow d = b.dm().get(p);
                 line.append(String.format(" %s p=%.4f%-5s", fmtDiff(d.meanLossDiff()), d.pValue(),

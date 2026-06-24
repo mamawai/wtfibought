@@ -45,24 +45,10 @@ class QuantCoreForecasterTest {
     }
 
     @Test
-    void bucketCalibratedEwmaFactoryKeepsVariantVisibleInName() {
-        QuantCoreForecaster fc = QuantCoreForecaster.bucketCalibratedEwma(ForecastHorizon.H6);
+    void harGkFactoryKeepsOnlyHarVariantVisibleInName() {
+        QuantCoreForecaster fc = QuantCoreForecaster.harRvGk(ForecastHorizon.H6);
 
-        assertThat(fc.name()).contains("bucket_calibrated").contains("ewma_vol");
-    }
-
-    @Test
-    void varianceShrinkageEwmaFactoryKeepsVariantVisibleInName() {
-        QuantCoreForecaster fc = QuantCoreForecaster.varianceShrinkageEwma(ForecastHorizon.H6);
-
-        assertThat(fc.name()).contains("variance_shrinkage").contains("horizon_scaled").contains("ewma_vol");
-    }
-
-    @Test
-    void climatologyVolFactoryKeepsVariantVisibleInName() {
-        QuantCoreForecaster fc = QuantCoreForecaster.climatologyVol(ForecastHorizon.H6);
-
-        assertThat(fc.name()).contains("climatology_vol").contains("horizon_scaled").contains("ewma_vol");
+        assertThat(fc.name()).contains("har_rv_gk");
     }
 
     @Test
@@ -75,35 +61,10 @@ class QuantCoreForecasterTest {
     }
 
     @Test
-    void climatologyVolFactoryAllowsInjectedDirectionLeg() {
-        QuantCoreForecaster fc = QuantCoreForecaster.climatologyVol(
-                ForecastHorizon.H6, new StubDir(new Forecast(1, 0.7)));
-
-        assertThat(fc.name()).contains("climatology_vol").contains("stubdir");
-        assertThat(fc.forecast(ResearchFeatures.ofBars(uptrend(40))).direction().direction()).isEqualTo(1);
-    }
-
-    @Test
     void trailingShapeRegimeFactoryKeepsVariantVisibleInName() {
         QuantCoreForecaster fc = QuantCoreForecaster.trailingShapeRegime(ForecastHorizon.H6);
 
         assertThat(fc.name()).contains("trailing_shape_transition").contains("regime=");
-    }
-
-    @Test
-    void varianceShrinkageTrailingShapeFactoryKeepsBothVariantsVisibleInName() {
-        QuantCoreForecaster fc = QuantCoreForecaster.varianceShrinkageTrailingShapeRegime(
-                ForecastHorizon.H6, 5 * 60_000L);
-
-        assertThat(fc.name()).contains("variance_shrinkage").contains("trailing_shape_transition");
-    }
-
-    @Test
-    void climatologyTrailingShapeFactoryKeepsBothVariantsVisibleInName() {
-        QuantCoreForecaster fc = QuantCoreForecaster.climatologyTrailingShapeRegime(
-                ForecastHorizon.H6, 5 * 60_000L);
-
-        assertThat(fc.name()).contains("climatology_vol").contains("trailing_shape_transition");
     }
 
     @Test

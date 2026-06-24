@@ -219,6 +219,70 @@ public class CryptoIndicatorCalculator {
         return r;
     }
 
+    /**
+     * research 离线回测用轻量快照：只算方向/regime 当前真正读取的字段。
+     * 避免每个历史决策点都跑 KDJ/OBV/量能/结构等 live 全量指标，数值口径仍复用本类同一套算法。
+     */
+    public static Map<String, Object> calcResearchSnapshot(List<BigDecimal[]> klines, boolean lastClosed) {
+        if (klines == null || klines.size() < 30) return Map.of("error", "K线数据不足");
+
+        List<BigDecimal> closes = new ArrayList<>(klines.size());
+        List<BigDecimal> highs = new ArrayList<>(klines.size());
+        List<BigDecimal> lows = new ArrayList<>(klines.size());
+        for (BigDecimal[] k : klines) {
+            highs.add(k[0]);
+            lows.add(k[1]);
+            closes.add(k[2]);
+        }
+
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("ma_alignment", maAlignment(closes));
+
+        List<BigDecimal> rsiSeries = rsiSeries(closes, 14);
+        if (!rsiSeries.isEmpty()) {
+            r.put("rsi14", rsiSeries.getLast());
+        }
+
+        Map<String, Object> macdResult = macdFull(closes, 12, 26, 9);
+        copyIfPresent(macdResult, r, "macd_hist");
+        copyIfPresent(macdResult, r, "macd_hist_trend");
+
+        Map<String, BigDecimal> boll = boll(closes, 20, 2);
+        if (!boll.isEmpty()) {
+            r.put("boll_pb", bollPercentB(closes.getLast(), boll.get("upper"), boll.get("lower")));
+        }
+
+        BigDecimal atr14 = atr(highs, lows, closes, 14);
+        if (atr14 != null) {
+            r.put("atr14", atr14);
+        }
+        List<BigDecimal> atrClosedSeries = atrSeriesClosed(highs, lows, closes, 14,
+                MASLOPE_ATR_MEAN_RECENT + 1, lastClosed);
+        if (!atrClosedSeries.isEmpty()) {
+            BigDecimal atrClosed = atrClosedSeries.getLast();
+            r.put("atr14_closed", atrClosed);
+            BigDecimal atrMean30 = tailMeanExcludingLast(atrClosedSeries, MASLOPE_ATR_MEAN_RECENT);
+            if (atrMean30 != null && atrMean30.signum() > 0) {
+                r.put("atr_mean_30_closed", atrMean30);
+                r.put("atr_spike_ratio", atrClosed.divide(atrMean30, 4, RoundingMode.HALF_UP));
+            }
+        }
+
+        Map<String, BigDecimal> adxResult = adx(highs, lows, closes, 14);
+        if (!adxResult.isEmpty()) {
+            r.put("adx", adxResult.get("adx"));
+            r.put("plus_di", adxResult.get("plus_di"));
+            r.put("minus_di", adxResult.get("minus_di"));
+        }
+        return r;
+    }
+
+    private static void copyIfPresent(Map<String, Object> source, Map<String, Object> target, String key) {
+        if (source.containsKey(key)) {
+            target.put(key, source.get(key));
+        }
+    }
+
     private static Map<String, Object> closedKlineStructure(List<BigDecimal> highs,
                                                             List<BigDecimal> lows,
                                                             List<BigDecimal> closes,

@@ -93,6 +93,30 @@ class MarketSeriesStoreParseTest {
     }
 
     @Test
+    void loadUsesNewYorkMidnightAvailabilityForEtfFlow() {
+        FactorHistoryMapper mapper = mock(FactorHistoryMapper.class);
+        MarketSeriesStore store = new MarketSeriesStore(null, mapper);
+        long from = MarketSeriesStore.toMs(LocalDateTime.of(2026, 6, 10, 0, 0));
+        long to = MarketSeriesStore.toMs(LocalDateTime.of(2026, 6, 11, 0, 0));
+
+        when(mapper.selectRange(
+                "BTCUSDT",
+                SeriesCode.ETF_FLOW.factorName(),
+                LocalDateTime.of(2026, 6, 8, 0, 0),
+                LocalDateTime.of(2026, 6, 11, 0, 0)))
+                .thenReturn(List.of(
+                        row(LocalDateTime.of(2026, 6, 9, 0, 0), "0.0"),
+                        row(LocalDateTime.of(2026, 6, 10, 0, 0), "999.0")));
+
+        List<MarketSeriesPoint> pts = store.load("BTCUSDT", SeriesCode.ETF_FLOW, from, to);
+
+        // 6/9 ETF flow 要到纽约 6/10 00:00（夏令时 UTC 04:00）才进入策略可见序列。
+        assertThat(pts).hasSize(1);
+        assertThat(pts.get(0).ts()).isEqualTo(MarketSeriesStore.toMs(LocalDateTime.of(2026, 6, 10, 4, 0)));
+        assertThat(pts.get(0).value()).isEqualByComparingTo("0.0");
+    }
+
+    @Test
     void loadKeepsFundingAtObservedTimestamp() {
         FactorHistoryMapper mapper = mock(FactorHistoryMapper.class);
         MarketSeriesStore store = new MarketSeriesStore(null, mapper);

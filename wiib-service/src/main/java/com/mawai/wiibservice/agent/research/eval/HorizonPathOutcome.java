@@ -43,6 +43,19 @@ public record HorizonPathOutcome(int actualChangeBps, int maxUpBps, int maxDownB
                 Math.max(0, -bps(entry, low)));
     }
 
+    static HorizonPathOutcome fromStats(BigDecimal entry, BigDecimal close, BigDecimal high, BigDecimal low) {
+        if (entry == null || entry.signum() <= 0) {
+            return new HorizonPathOutcome(0, 0, 0);
+        }
+        BigDecimal safeClose = close != null ? close : entry;
+        BigDecimal safeHigh = high != null ? high : safeClose;
+        BigDecimal safeLow = low != null ? low : safeClose;
+        return new HorizonPathOutcome(
+                bps(entry, safeClose),
+                Math.max(0, bps(entry, safeHigh)),
+                Math.max(0, -bps(entry, safeLow)));
+    }
+
     private static int bps(BigDecimal from, BigDecimal to) {
         if (from == null || to == null || from.signum() == 0) return 0;
         return to.subtract(from)

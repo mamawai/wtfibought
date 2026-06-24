@@ -31,8 +31,24 @@ class IndicatorAdapterTest {
     }
 
     @Test
+    void researchIndicatorsMatchFullCalcForConsumedFieldsOnly() {
+        List<KlineBar> bars = uptrend(120);
+        Map<String, Object> light = IndicatorAdapter.researchIndicators(bars);
+        Map<String, Object> full = CryptoIndicatorCalculator.calcAll(IndicatorAdapter.toCalcInput(bars), true);
+
+        assertThat(light).doesNotContainKey("error")
+                .containsKeys("ma_alignment", "rsi14", "macd_hist", "macd_hist_trend",
+                        "boll_pb", "atr14", "atr_spike_ratio", "adx", "plus_di", "minus_di")
+                .doesNotContainKeys("kdj_k", "obv", "volume_ratio");
+        for (String key : light.keySet()) {
+            assertThat(light.get(key)).as(key).isEqualTo(full.get(key));
+        }
+    }
+
+    @Test
     void belowThirtyBarsReturnsEmpty() {
         assertThat(IndicatorAdapter.indicators(uptrend(29))).isEmpty();
+        assertThat(IndicatorAdapter.researchIndicators(uptrend(29))).isEmpty();
         assertThat(IndicatorAdapter.indicators(List.of())).isEmpty();
         assertThat(IndicatorAdapter.indicators(null)).isEmpty();
     }

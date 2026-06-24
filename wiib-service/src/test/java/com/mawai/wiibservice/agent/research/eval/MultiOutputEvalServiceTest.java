@@ -55,6 +55,11 @@ class MultiOutputEvalServiceTest {
 
         assertThat(r.buyAndHoldReturn().doubleValue()).isGreaterThan(0); // 上行趋势
         assertThat(r.directionNaivePercentile()).isBetween(0.0, 1.0);
+        // 非重叠主口径：horizon 内不重复开仓 → 点数远小于重叠口径、且分位/收益正常落位
+        assertThat(r.directionNonOverlapPeriods()).isBetween(1, r.testPoints());
+        assertThat(r.directionNonOverlapNaivePercentile()).isBetween(0.0, 1.0);
+        assertThat(r.directionNonOverlapReturn()).isNotNull();
+        assertThat(r.summary()).contains("非重叠主口径", "重叠诊断");
     }
 
     @Test
@@ -98,6 +103,30 @@ class MultiOutputEvalServiceTest {
         Map<MarketRegime, Integer> predicted = r.predictedRegimeCounts();
         assertThat(actual.values().stream().mapToInt(Integer::intValue).sum()).isEqualTo(r.testPoints());
         assertThat(predicted.values().stream().mapToInt(Integer::intValue).sum()).isEqualTo(r.testPoints());
+    }
+
+    @Test
+    void costBpsErodesDirectionLegButNotVolOrRegime() {
+        EvalParams free = new EvalParams(1.5, 0.94, 2, 0, 2, 100, 0.95, 42L);
+        EvalParams costly = new EvalParams(1.5, 0.94, 2, 0, 2, 100, 0.95, 42L, 20.0);
+        List<KlineBar> bars = uptrend1m(8 * 360);
+
+        MultiOutputReport rFree = MultiOutputEvalService.evaluateBars(
+                "BTCUSDT", ForecastHorizon.H6, bars,
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                QuantCoreForecaster.defaults(ForecastHorizon.H6), free);
+        MultiOutputReport rCost = MultiOutputEvalService.evaluateBars(
+                "BTCUSDT", ForecastHorizon.H6, bars,
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                QuantCoreForecaster.defaults(ForecastHorizon.H6), costly);
+
+        // 成本只打方向腿；vol/regime 判决与排列分位（gross、洗牌不变）必须纹丝不动
+        assertThat(rFree.directionPathSummary().tradedPoints()).isGreaterThan(0);
+        assertThat(rCost.directionReturn()).isLessThan(rFree.directionReturn());
+        assertThat(rCost.directionNonOverlapReturn()).isLessThan(rFree.directionNonOverlapReturn());
+        assertThat(rCost.directionNaivePercentile()).isEqualTo(rFree.directionNaivePercentile());
+        assertThat(rCost.volScore().qlike()).isEqualTo(rFree.volScore().qlike());
+        assertThat(rCost.regimeScore().accuracy()).isEqualTo(rFree.regimeScore().accuracy());
     }
 
     @Test

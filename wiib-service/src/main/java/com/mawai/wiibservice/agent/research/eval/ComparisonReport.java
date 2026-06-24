@@ -22,18 +22,23 @@ public record ComparisonReport(
         return JSON.toJSONString(this);
     }
 
-    /** 人眼可比的多线摘要：buy&hold 基准一行 + 每策略一行。 */
+    /** 人眼可比的多线摘要：buy&hold 基准一行 + 每策略一行（双口径：重叠/非重叠）。 */
     public String summary() {
         StringBuilder sb = new StringBuilder(String.format(
                 "[%s %dm→%dh] 样本外 %d 点 | buy&hold=%.4f",
                 symbol, decisionBarMinutes, horizonHours, testPoints, buyAndHoldReturn.doubleValue()));
         for (StrategyLine s : strategies) {
             sb.append(String.format(
-                    " || %s: 收益=%.4f 年化Sharpe=%.2f Calmar=%.2f MaxDD=%.2f%% 命中=%.1f%% vs B&H=%s naive分位=%.1f%%(%s)",
-                    s.name(), s.strategyReturn().doubleValue(), s.metrics().annualizedSharpe(),
-                    s.metrics().calmar(), s.metrics().maxDrawdown() * 100, s.metrics().hitRate() * 100,
-                    s.beatBuyAndHold() ? "跑赢" : "跑输",
-                    s.naivePercentile() * 100, s.beatNaive() ? "显著" : "不显著"));
+                    " || %s: 非重叠收益=%.4f 非重叠Sharpe=%.2f 命中=%.1f%% active命中=%.1f%% 非重叠naive=%.1f%%(%s) vs B&H=%s 敞口=%.0f%% 换手=%.0f%% | 重叠诊断收益=%.4f Sharpe=%.2f naive=%.1f%%",
+                    s.name(),
+                    s.nonOverlapReturn().doubleValue(), s.nonOverlapSharpe(),
+                    s.nonOverlapHitRate() * 100, s.nonOverlapActiveHitRate() * 100,
+                    s.nonOverlapNaivePercentile() * 100,
+                    s.beatNonOverlapNaive() ? "显著" : "不显著",
+                    s.beatBuyAndHoldByNonOverlap() ? "跑赢" : "跑输",
+                    s.exposure() * 100, s.turnover() * 100,
+                    s.strategyReturn().doubleValue(), s.metrics().annualizedSharpe(),
+                    s.naivePercentile() * 100));
         }
         return sb.toString();
     }

@@ -1,14 +1,17 @@
 package com.mawai.wiibservice.agent.research.forecast;
 
-import com.mawai.wiibservice.agent.research.factor.FactorMath;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibservice.agent.research.stats.RealizedVarianceSeries;
 
 import java.time.Duration;
 import java.util.List;
 
 /**
- * log-HAR-RV 波动率预测腿：用短/中/长三个真实时间窗口的 realized variance 均值回归下一期 log(RV)。
+ * log-HAR-GK 波动率预测腿：用短/中/长三个真实时间窗口的 Garman-Klass realized variance 均值回归下一期 log(RV)。
  * 只读 features.barsUpToNow；样本不足或 OLS 病态时退回 fallback，避免为了一个模型牺牲评估稳定性。
+ * GK 口径的动机不只是效率（≈7 倍）：close r² 在静止 5m bar 频繁踩 VAR_FLOOR（log 值 -27.6），
+ * 撑大 log 残差方差 → lognormal 回转修正 exp(0.5·residVar) 爆炸（ETH H6 实测 h21 桶 pred σ≈1104bps）；
+ * GK 在真实 K 线上恒 &gt;0（high&gt;low），因此 close-return HAR 不再保留。
  */
 public final class HarRvVolForecaster implements VolForecaster {
 
@@ -42,11 +45,11 @@ public final class HarRvVolForecaster implements VolForecaster {
     }
 
     /** 默认按 5m 决策 bar：1h / 6h / 24h；fallback 用现有 EWMA 默认口径。 */
-    public static HarRvVolForecaster defaults(double fallbackLambda) {
-        return defaults(fallbackLambda, DEFAULT_BAR_MILLIS);
+    public static HarRvVolForecaster gkDefaults(double fallbackLambda) {
+        return gkDefaults(fallbackLambda, DEFAULT_BAR_MILLIS);
     }
 
-    public static HarRvVolForecaster defaults(double fallbackLambda, long barMillis) {
+    public static HarRvVolForecaster gkDefaults(double fallbackLambda, long barMillis) {
         return new HarRvVolForecaster(
                 bars(Duration.ofHours(1), barMillis),
                 bars(Duration.ofHours(6), barMillis),
@@ -95,7 +98,7 @@ public final class HarRvVolForecaster implements VolForecaster {
 
     @Override
     public String name() {
-        return "har_rv_log(" + shortWindow + "," + mediumWindow + "," + longWindow + ")";
+        return "har_rv_gk(" + shortWindow + "," + mediumWindow + "," + longWindow + ")";
     }
 
     private double[] featuresFor(double[] rv, int endExclusive) {
@@ -107,17 +110,9 @@ public final class HarRvVolForecaster implements VolForecaster {
         };
     }
 
-    private static double[] realizedVariance(List<KlineBar> bars) {
+    private double[] realizedVariance(List<KlineBar> bars) {
         if (bars == null || bars.size() < 2) return new double[0];
-        double[] out = new double[bars.size() - 1];
-        double prev = bars.getFirst().close().doubleValue();
-        for (int i = 1; i < bars.size(); i++) {
-            double close = bars.get(i).close().doubleValue();
-            double r = FactorMath.logReturn(close, prev);
-            out[i - 1] = r * r;
-            prev = close;
-        }
-        return out;
+        return RealizedVarianceSeries.perBarGarmanKlass(bars);
     }
 
     private static int bars(Duration duration, long barMillis) {
