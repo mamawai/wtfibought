@@ -3,7 +3,7 @@ package com.mawai.wiibservice.agent.strategy.fibo;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
 import com.mawai.wiibservice.agent.strategy.core.StrategySignal;
 import com.mawai.wiibservice.agent.strategy.core.WindowedMarketView;
-import com.mawai.wiibservice.agent.trading.backtest.BacktestTradingTools;
+import com.mawai.wiibservice.agent.strategy.backtest.BacktestTradingTools;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

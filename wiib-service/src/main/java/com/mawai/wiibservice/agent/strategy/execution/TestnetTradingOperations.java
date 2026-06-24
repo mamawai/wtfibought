@@ -1,6 +1,6 @@
 package com.mawai.wiibservice.agent.strategy.execution;
 
-import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
+import com.mawai.wiibservice.agent.strategy.core.TradingOperations;
 
 import java.math.BigDecimal;
 

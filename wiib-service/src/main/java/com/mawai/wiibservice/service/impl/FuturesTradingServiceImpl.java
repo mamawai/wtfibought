@@ -20,9 +20,7 @@ import com.mawai.wiibservice.mapper.UserMapper;
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.FuturesPositionIndexService;
 import com.mawai.wiibservice.service.FuturesTradingService;
-import com.mawai.wiibservice.service.TradeAttributionService;
 import com.mawai.wiibservice.service.UserService;
-import com.mawai.wiibservice.task.AiTradingScheduler;
 import com.mawai.wiibservice.util.RedisLockUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,7 +51,6 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     private final RedisLockUtil redisLockUtil;
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
-    private final TradeAttributionService tradeAttributionService;
     private final FuturesLeverageBracketRegistry bracketRegistry;
 
     // ==================== 开仓 ====================
@@ -324,9 +321,6 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setRealizedPnl(pnl);
         order.setStatus("FILLED");
         orderMapper.insert(order);
-        if (isFullClose) {
-            tradeAttributionService.recordExit(position, pnl, "UNKNOWN");
-        }
 
         log.info("futures市价平仓 userId={} posId={} qty={} price={} pnl={} return={}",
                 userId, position.getId(), closeQty, currentPrice, pnl, returnAmount);
@@ -729,25 +723,9 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         wrapper.eq(FuturesOrder::getStatus, "FILLED")
                 .orderByDesc(FuturesOrder::getCreatedAt)
                 .last("LIMIT 20");
-        Long aiUserId = resolveAiUserId();
         return orderMapper.selectList(wrapper).stream()
-                .map(order -> {
-                    FuturesOrderResponse resp = FuturesHelper.buildOrderResponse(order);
-                    if (aiUserId != null && aiUserId.equals(order.getUserId())) {
-                        resp.setIsAiTrader(true);
-                    }
-                    return resp;
-                }).toList();
-    }
-
-    private Long resolveAiUserId() {
-        try {
-            var scheduler = SpringUtils.getBean(AiTradingScheduler.class);
-            Long id = scheduler.getAiUserId();
-            return (id != null && id != 0) ? id : null;
-        } catch (Exception e) {
-            return null;
-        }
+                .map(FuturesHelper::buildOrderResponse)
+                .toList();
     }
 
     // ==================== 内部工具 ====================

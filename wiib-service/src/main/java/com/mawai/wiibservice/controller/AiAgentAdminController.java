@@ -4,21 +4,13 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.mawai.wiibcommon.entity.AiModelAssignment;
 import com.mawai.wiibcommon.entity.AiRuntimeConfig;
 import com.mawai.wiibcommon.constant.QuantConstants;
-import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibservice.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibservice.agent.config.RuntimeFeatureToggleService;
 import com.mawai.wiibservice.agent.config.RuntimeToggleSnapshot;
 import com.mawai.wiibservice.agent.quant.memory.VerificationService;
-import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
-import com.mawai.wiibservice.agent.trading.entry.EntryDecisionEngine;
-import com.mawai.wiibservice.agent.trading.submit.SubmitStatus;
-import com.mawai.wiibservice.agent.trading.submit.SymbolSubmitResult;
-import com.mawai.wiibservice.agent.trading.submit.TradingCycleSubmitResult;
 import com.mawai.wiibservice.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibservice.mapper.AiRuntimeConfigMapper;
-import com.mawai.wiibservice.config.TradingConfig;
-import com.mawai.wiibservice.task.AiTradingScheduler;
 import com.mawai.wiibservice.task.QuantForecastScheduler;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -28,13 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
-
-import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_BREAKOUT;
-import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_LEGACY_TREND;
-import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_MA_SLOPE;
-import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport.PATH_MR;
 
 @Slf4j
 @Tag(name = "AI Agent管理")
@@ -43,20 +29,12 @@ import static com.mawai.wiibservice.agent.trading.runtime.TradingDecisionSupport
 @RequiredArgsConstructor
 public class AiAgentAdminController {
 
-    private static final List<KlineInterval> SUPPORTED_DECISION_INTERVALS = List.of(
-            KlineInterval.M1, KlineInterval.M3, KlineInterval.M5, KlineInterval.M15);
-    private static final List<String> SUPPORTED_ENTRY_STRATEGIES = List.of(
-            PATH_BREAKOUT, PATH_MR, PATH_LEGACY_TREND, PATH_MA_SLOPE);
-
     private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final QuantForecastScheduler quantForecastScheduler;
-    private final AiTradingScheduler aiTradingScheduler;
     private final VerificationService verificationService;
     private final RuntimeFeatureToggleService runtimeFeatureToggleService;
-    private final CircuitBreakerService circuitBreakerService;
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
-    private final TradingConfig tradingConfig;
 
     private void checkAdmin() {
         long userId = StpUtil.getLoginIdAsLong();
@@ -229,193 +207,6 @@ public class AiAgentAdminController {
         return Result.ok("预测验证已触发: " + symbols);
     }
 
-    @PostMapping("/trading/trigger")
-    @Operation(summary = "手动唤醒AI Trader决策")
-    public Result<String> triggerTrading(@RequestParam(required = false) String symbol) {
-        checkAdmin();
-        List<String> symbols;
-        try {
-            symbols = resolveTradingSymbols(symbol);
-        } catch (IllegalArgumentException e) {
-            return Result.fail("symbol格式错误: " + e.getMessage());
-        }
-        TradingCycleSubmitResult result = aiTradingScheduler.submitTradingCycle(symbols);
-        log.info("[Admin] 手动提交AI Trader决策 result={}", result);
-        return Result.ok(formatTradingSubmitMessage(result));
-    }
-
-    @PostMapping("/trading/trigger-details")
-    @Operation(summary = "手动唤醒AI Trader决策并返回提交详情")
-    public Result<TradingCycleSubmitResult> triggerTradingDetails(@RequestParam(required = false) String symbol) {
-        checkAdmin();
-        List<String> symbols;
-        try {
-            symbols = resolveTradingSymbols(symbol);
-        } catch (IllegalArgumentException e) {
-            return Result.fail("symbol格式错误: " + e.getMessage());
-        }
-        TradingCycleSubmitResult result = aiTradingScheduler.submitTradingCycle(symbols);
-        log.info("[Admin] 手动提交AI Trader决策详情 result={}", result);
-        return Result.ok(result);
-    }
-
-    private List<String> resolveTradingSymbols(String symbol) {
-        if (symbol == null || symbol.isBlank()) {
-            return QuantConstants.WATCH_SYMBOLS;
-        }
-        return List.of(QuantConstants.normalizeSymbol(symbol));
-    }
-
-    private String formatTradingSubmitMessage(TradingCycleSubmitResult result) {
-        List<String> submitted = new ArrayList<>();
-        List<String> skipped = new ArrayList<>();
-        for (SymbolSubmitResult item : result.items()) {
-            if (item.status() == SubmitStatus.SUBMITTED) {
-                submitted.add(item.symbol());
-            } else {
-                skipped.add(item.symbol() + "(" + item.reason() + ")");
-            }
-        }
-        StringBuilder message = new StringBuilder("AI Trader提交完成: cycleNo=")
-                .append(result.cycleNo());
-        if (!submitted.isEmpty()) {
-            message.append(" submitted=").append(submitted);
-        }
-        if (!skipped.isEmpty()) {
-            message.append(" skipped=").append(skipped);
-        }
-        return message.toString();
-    }
-
-    // ========== 交易运行时开关 ==========
-
-    @GetMapping("/trading-config")
-    @Operation(summary = "获取交易运行时开关")
-    public Result<TradingConfigResponse> getTradingConfig() {
-        checkAdmin();
-        return Result.ok(buildTradingConfigResponse());
-    }
-
-    @PostMapping("/trading-config")
-    @Operation(summary = "设置交易运行时开关")
-    public Result<TradingConfigResponse> setTradingConfig(@RequestBody TradingConfigRequest req) {
-        checkAdmin();
-        Result<TradingConfigResponse> invalid = validateTradingConfigRequest(req);
-        if (invalid != null) {
-            return invalid;
-        }
-        long operator = StpUtil.getLoginIdAsLong();
-        if (req.getLowVolTradingEnabled() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_LOW_VOL_ENABLED,
-                    req.getLowVolTradingEnabled(), operator, "admin trading-config");
-        }
-        if (req.getPlaybookExitEnabled() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_PLAYBOOK_EXIT_ENABLED,
-                    req.getPlaybookExitEnabled(), operator, "admin trading-config");
-        }
-        if (req.getDecisionInterval() != null) {
-            KlineInterval interval = KlineInterval.valueOf(req.getDecisionInterval().trim().toUpperCase());
-            if (!SUPPORTED_DECISION_INTERVALS.contains(interval)) {
-                return Result.fail("decisionInterval必须是M1/M3/M5/M15之一，H1当前不支持回测聚合");
-            }
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_DECISION_INTERVAL,
-                    interval.name(), operator, "admin trading-config");
-            // Graph 节点持有构造参数，切换周期后要重建缓存图才会立即生效。
-            aiAgentRuntimeManager.refresh();
-        }
-        if (req.getEntryEnabledStrategies() != null) {
-            List<String> enabledStrategies = EntryDecisionEngine.normalizeEnabledStrategyPaths(
-                    req.getEntryEnabledStrategies());
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.TRADING_ENTRY_ENABLED_STRATEGIES,
-                    String.join(",", enabledStrategies), operator, "admin trading-config");
-        }
-        if (req.getCircuitBreakerEnabled() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.CIRCUIT_BREAKER_ENABLED,
-                    req.getCircuitBreakerEnabled(), operator, "admin trading-config");
-        }
-        if (req.getCircuitBreakerL1DailyNetLossPct() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.CIRCUIT_BREAKER_L1_DAILY_NET_LOSS_PCT,
-                    req.getCircuitBreakerL1DailyNetLossPct(), operator, "admin trading-config");
-        }
-        if (req.getCircuitBreakerL2LossStreak() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.CIRCUIT_BREAKER_L2_LOSS_STREAK,
-                    req.getCircuitBreakerL2LossStreak(), operator, "admin trading-config");
-        }
-        if (req.getCircuitBreakerL2CooldownHours() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.CIRCUIT_BREAKER_L2_COOLDOWN_HOURS,
-                    req.getCircuitBreakerL2CooldownHours(), operator, "admin trading-config");
-        }
-        if (req.getCircuitBreakerL3DrawdownPct() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.CIRCUIT_BREAKER_L3_DRAWDOWN_PCT,
-                    req.getCircuitBreakerL3DrawdownPct(), operator, "admin trading-config");
-        }
-        return Result.ok(buildTradingConfigResponse());
-    }
-
-    private Result<TradingConfigResponse> validateTradingConfigRequest(TradingConfigRequest req) {
-        if (req.getCircuitBreakerL1DailyNetLossPct() != null
-                && !isPercentInRange(req.getCircuitBreakerL1DailyNetLossPct())) {
-            return Result.fail("circuitBreakerL1DailyNetLossPct必须在0到100之间");
-        }
-        if (req.getCircuitBreakerL2LossStreak() != null && req.getCircuitBreakerL2LossStreak() <= 0) {
-            return Result.fail("circuitBreakerL2LossStreak必须为正整数");
-        }
-        if (req.getCircuitBreakerL2CooldownHours() != null && req.getCircuitBreakerL2CooldownHours() <= 0) {
-            return Result.fail("circuitBreakerL2CooldownHours必须为正整数");
-        }
-        if (req.getCircuitBreakerL3DrawdownPct() != null
-                && !isPercentInRange(req.getCircuitBreakerL3DrawdownPct())) {
-            return Result.fail("circuitBreakerL3DrawdownPct必须在0到100之间");
-        }
-        if (req.getDecisionInterval() != null) {
-            try {
-                KlineInterval interval = KlineInterval.valueOf(req.getDecisionInterval().trim().toUpperCase());
-                if (!SUPPORTED_DECISION_INTERVALS.contains(interval)) {
-                    return Result.fail("decisionInterval必须是M1/M3/M5/M15之一，H1当前不支持回测聚合");
-                }
-            } catch (RuntimeException e) {
-                return Result.fail("decisionInterval必须是M1/M3/M5/M15之一");
-            }
-        }
-        if (req.getEntryEnabledStrategies() != null) {
-            List<String> enabledStrategies = EntryDecisionEngine.normalizeEnabledStrategyPaths(
-                    req.getEntryEnabledStrategies());
-            for (String strategy : enabledStrategies) {
-                if (!SUPPORTED_ENTRY_STRATEGIES.contains(strategy)) {
-                    return Result.fail("entryEnabledStrategies必须是BREAKOUT/MR/LEGACY_TREND/MA_SLOPE之一");
-                }
-            }
-        }
-        return null;
-    }
-
-    private boolean isPercentInRange(Double value) {
-        return value != null && value > 0 && value <= 100;
-    }
-
-    private TradingConfigResponse buildTradingConfigResponse() {
-        RuntimeToggleSnapshot snapshot = runtimeFeatureToggleService.snapshot();
-        RuntimeToggleSnapshot.TradingToggles trading = snapshot.trading();
-        RuntimeToggleSnapshot.CircuitBreakerToggles breaker = snapshot.circuitBreaker();
-        TradingConfigResponse resp = new TradingConfigResponse();
-        KlineInterval decisionInterval = tradingConfig.getDecisionInterval();
-        resp.setDecisionInterval(decisionInterval.name());
-        resp.setDecisionIntervalCode(decisionInterval.getCode());
-        resp.setSupportedDecisionIntervals(SUPPORTED_DECISION_INTERVALS.stream().map(Enum::name).toList());
-        resp.setEntryEnabledStrategies(trading.entryEnabledStrategies());
-        resp.setSupportedEntryStrategies(SUPPORTED_ENTRY_STRATEGIES);
-        resp.setLowVolTradingEnabled(trading.lowVolTradingEnabled());
-        resp.setPlaybookExitEnabled(trading.playbookExitEnabled());
-        resp.setCircuitBreakerEnabled(circuitBreakerService.isEffectiveEnabled());
-        resp.setCircuitBreakerRuntimeEnabled(breaker.enabled());
-        resp.setCircuitBreakerPropertyEnabled(circuitBreakerService.isPropertyEnabled());
-        resp.setCircuitBreakerL1DailyNetLossPct(breaker.l1DailyNetLossPct());
-        resp.setCircuitBreakerL2LossStreak(breaker.l2LossStreak());
-        resp.setCircuitBreakerL2CooldownHours(breaker.l2CooldownHours());
-        resp.setCircuitBreakerL3DrawdownPct(breaker.l3DrawdownPct());
-        return resp;
-    }
-
     // ========== 量化运行时开关 ==========
 
     @GetMapping("/quant-config")
@@ -462,37 +253,6 @@ public class AiAgentAdminController {
         private String functionName;
         private Long configId;
         private String model;
-    }
-
-    @Data
-    public static class TradingConfigRequest {
-        private String decisionInterval;
-        private List<String> entryEnabledStrategies;
-        private Boolean lowVolTradingEnabled;
-        private Boolean playbookExitEnabled;
-        private Boolean circuitBreakerEnabled;
-        private Double circuitBreakerL1DailyNetLossPct;
-        private Integer circuitBreakerL2LossStreak;
-        private Integer circuitBreakerL2CooldownHours;
-        private Double circuitBreakerL3DrawdownPct;
-    }
-
-    @Data
-    public static class TradingConfigResponse {
-        private String decisionInterval;
-        private String decisionIntervalCode;
-        private List<String> supportedDecisionIntervals;
-        private List<String> entryEnabledStrategies;
-        private List<String> supportedEntryStrategies;
-        private Boolean lowVolTradingEnabled;
-        private Boolean playbookExitEnabled;
-        private Boolean circuitBreakerEnabled;
-        private Boolean circuitBreakerRuntimeEnabled;
-        private Boolean circuitBreakerPropertyEnabled;
-        private Double circuitBreakerL1DailyNetLossPct;
-        private Integer circuitBreakerL2LossStreak;
-        private Integer circuitBreakerL2CooldownHours;
-        private Double circuitBreakerL3DrawdownPct;
     }
 
     @Data

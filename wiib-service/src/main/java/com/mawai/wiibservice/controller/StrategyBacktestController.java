@@ -8,7 +8,7 @@ import com.mawai.wiibservice.agent.strategy.backtest.StrategyKlineBacktestEngine
 import com.mawai.wiibservice.agent.strategy.core.WindowedMarketView;
 import com.mawai.wiibservice.agent.strategy.fibo.FiboParams;
 import com.mawai.wiibservice.agent.strategy.fibo.FiboRetracementStrategy;
-import com.mawai.wiibservice.agent.trading.backtest.BacktestResult;
+import com.mawai.wiibservice.agent.strategy.backtest.BacktestResult;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;

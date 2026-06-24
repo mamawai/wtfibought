@@ -16,7 +16,6 @@ import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.FuturesPositionIndexService;
 import com.mawai.wiibservice.service.FuturesRiskService;
 import com.mawai.wiibservice.service.FuturesSettlementService;
-import com.mawai.wiibservice.service.TradeAttributionService;
 import com.mawai.wiibservice.service.UserService;
 import com.mawai.wiibservice.util.RedisLockUtil;
 import jakarta.annotation.PostConstruct;
@@ -53,7 +52,6 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
     private final FuturesRiskService riskService;
-    private final TradeAttributionService tradeAttributionService;
     private final RedisLockUtil redisLockUtil;
 
     protected record FundingFeeChargeResult(boolean success, boolean checkLiquidation) {}
@@ -313,9 +311,6 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         userMapper.atomicUpdateBalance(order.getUserId(), returnAmount);
         int filled = orderMapper.casUpdateToFilled(order.getId(), executePrice, closeValue, commission, null, pnl);
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
-        if (isFullClose) {
-            tradeAttributionService.recordExit(position, pnl, "UNKNOWN");
-        }
 
         log.info("futures限价平仓成交 orderId={} price={} feeType={} pnl={}",
                 order.getId(), executePrice, isTaker ? "TAKER" : "MAKER", pnl);

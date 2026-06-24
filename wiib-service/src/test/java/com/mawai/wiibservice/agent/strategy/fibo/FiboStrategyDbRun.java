@@ -4,7 +4,7 @@ import com.mawai.wiibservice.agent.research.kline.KlineBar;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import com.mawai.wiibservice.agent.strategy.backtest.StrategyKlineBacktestEngine;
 import com.mawai.wiibservice.agent.strategy.core.WindowedMarketView;
-import com.mawai.wiibservice.agent.trading.backtest.BacktestResult;
+import com.mawai.wiibservice.agent.strategy.backtest.BacktestResult;
 import com.mawai.wiibservice.config.BinanceProperties;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.CoinDeskProperties;

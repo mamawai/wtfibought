@@ -1,8 +1,8 @@
-package com.mawai.wiibservice.agent.trading.backtest;
+package com.mawai.wiibservice.agent.strategy.backtest;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
-import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
+import com.mawai.wiibservice.agent.strategy.core.TradingOperations;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;

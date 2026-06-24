@@ -6,9 +6,7 @@ import com.mawai.wiibservice.agent.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibservice.agent.strategy.core.StrategySignal;
 import com.mawai.wiibservice.agent.strategy.core.TradingStrategySpi;
 import com.mawai.wiibservice.agent.strategy.core.WindowedMarketView;
-import com.mawai.wiibservice.agent.trading.backtest.BacktestResult;
-import com.mawai.wiibservice.agent.trading.backtest.BacktestTradingTools;
-import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
+import com.mawai.wiibservice.agent.strategy.core.TradingOperations;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;

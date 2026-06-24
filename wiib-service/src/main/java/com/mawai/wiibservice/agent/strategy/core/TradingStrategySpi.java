@@ -1,7 +1,7 @@
 package com.mawai.wiibservice.agent.strategy.core;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
-import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
+import com.mawai.wiibservice.agent.strategy.core.TradingOperations;
 
 import java.math.BigDecimal;
 import java.util.List;

@@ -28,8 +28,8 @@ WhatIfIBought 是一个偏实验性质的模拟交易系统：
 
 - 股票和期权使用系统生成的虚拟行情。
 - 加密货币现货、永续合约、强平流、盘口和 BTC 预测接入 Binance / Polymarket 等真实外部数据。
-- AI Agent 负责结构化量化预测，不直接下单。
-- AI Trader 是确定性执行器，读取量化信号后用本地规则开仓和平仓。
+- AI Agent 负责结构化量化预测，只产出预测落库，不直接下单。
+- 策略模块（Fibonacci 等）独立运行，读取行情自行在 Binance Testnet 执行交易。
 
 主动 AI 量化/交易标的当前是：
 
@@ -38,7 +38,7 @@ WhatIfIBought 是一个偏实验性质的模拟交易系统：
 | 主动轮询 `WATCH_SYMBOLS` | `BTCUSDT`, `ETHUSDT` |
 | API 白名单 `ALLOWED_SYMBOLS` | `BTCUSDT`, `ETHUSDT`, `PAXGUSDT` |
 
-PAXG 仍允许查询历史和残留仓位，但不在主动重周期、轻周期和 AI-Trader 调度清单里。
+PAXG 仍允许查询历史和残留仓位，但不在主动重周期和轻周期清单里。
 
 ---
 
@@ -52,13 +52,13 @@ PAXG 仍允许查询历史和残留仓位，但不在主动重周期、轻周期
 - 加密货币现货：BTC/USDT、ETH/USDT、PAXG/USDT，接入 Binance 实时行情，支持市价/限价单。
 - 永续合约：逐仓保证金，多/空双向，用户侧最高 250x，分批止损/止盈单仓最多 4+4，0.01%/8h 资金费率，自动强平。
 - BTC 5 分钟涨跌预测：接入 Polymarket 盘口和 Chainlink BTC 价格，5 分钟窗口自动结算。
-- AI Trader：测试阶段，AI 账户只允许确定性执行器交易；真实开仓适配器把 AI 杠杆限制在 5x 到 50x，并带熔断、仓位数、冷却和 SL/TP 距离硬拦截。
+- 策略实盘：Fibonacci 等策略由 5m K 线驱动，信号经执行层下单到 Binance Testnet（默认关闭，仅白名单 symbol）。
 
 ### AI 量化分析
 
 - 30 分钟重周期：完整 8 节点 StateGraph。
 - 5 分钟轻周期：复用最近 heavy 缓存，重新采集行情和纯 Java 因子，贴近边界时可调用轻量新闻模型。
-- 价格波动哨兵：监听 mark price，5 分钟窗口波动超过动态阈值时触发 light refresh 和 AI-Trader。
+- 价格波动哨兵：监听 mark price，5 分钟窗口波动超过动态阈值时触发 light refresh。
 - 5 个 FactorAgent：microstructure、momentum、regime、volatility、news_event。
 - 3 个 horizon：`0_10`、`10_20`、`20_30`。
 - DebateJudge：代码存在，但 live/shadow 默认关闭。
@@ -118,7 +118,6 @@ flowchart TD
     WS["WebSocket Clients<br/>Binance + Polymarket"]
     GEN["Virtual Stock Generator<br/>daily quotes + options"]
     QUANT["AI Quant<br/>30min heavy + 5min light"]
-    TRADER["AI Trader<br/>Deterministic Executor"]
     GAME["Games<br/>Blackjack / Mines / Video Poker"]
 
     UI <-->|REST / STOMP| API
@@ -128,8 +127,6 @@ flowchart TD
     GEN --> API
     API --> QUANT
     QUANT --> DB
-    QUANT --> TRADER
-    TRADER --> API
     API --> GAME
 ```
 
@@ -160,91 +157,7 @@ flowchart TB
 - `NewsEventAgent`：3 次。
 - `GenerateReportNode`：1 次。
 
-light cycle 不完整重跑 Graph。它会重新采集、重建特征、跑纯 Java 因子、复用或局部刷新新闻票，然后修正父 heavy。AI-Trader 读取 latest heavy，因此 light 通过回写父 heavy 的 forecast/signal 生效。
-
----
-
-## AI Trader 链路
-
-```mermaid
-flowchart TB
-    EVT["QuantCycleCompleteEvent<br/>or 10min fallback cron"]
-    SCH["AiTradingScheduler"]
-    EX["DeterministicTradingExecutor"]
-    POS{"当前 symbol 有持仓?"}
-    EXIT["PlaybookExitEngine<br/>default enabled"]
-    ENTRY["EntryDecisionEngine"]
-    OPS["FuturesTradingOperationsAdapter<br/>hard guards"]
-    DB[("futures_position<br/>ai_trading_decision<br/>trade_attribution")]
-
-    EVT --> SCH --> EX --> POS
-    POS -->|yes| EXIT
-    EXIT -->|clean hold only| ENTRY
-    POS -->|no| ENTRY
-    ENTRY --> OPS --> DB
-    EXIT --> DB
-```
-
-### 开仓路径
-
-| 路径 | 实现 | 当前含义 |
-|---|---|---|
-| `BREAKOUT` | `BreakoutEntryStrategy` | 量能 + 布林边界突破 + 动能/微结构确认 |
-| `MR` | `MeanReversionEntryStrategy` | BB%B 与 RSI 极值后的均值回归 |
-| `LEGACY_TREND` | `TrendContinuationEntryStrategy` | 趋势延续兜底，择优权重低于突破 |
-
-开仓关键过滤：
-
-- 同 symbol 内存冷却 20 分钟。
-- DB 层同 symbol 最近开仓冷却 20 分钟。
-- `STALE_AGG_TRADE` 弃权。
-- 只消费当前 active horizon，且每个 10 分钟段最后 1 分钟不新开仓。
-- `ALL_NO_TRADE / NO_DATA` 禁开。
-- 各策略二层共振门：BREAKOUT 3/5，MR 4/6，TREND 4/6。
-- `overallDecision=FLAT` 只允许 MR 或强突破覆盖。
-- 低波动扩 SL 小仓位、手续费后利润、最低 RR、强平缓冲、保证金上限和回撤保护。
-
-### 平仓 Playbook
-
-`trading.playbook_exit.enabled` 默认 `true`。
-
-| Exit path | 实现 | 核心动作 |
-|---|---|---|
-| `BREAKOUT` | `BreakoutExitPlaybook` | 1R 锁盈、失败突破全平、2R 平 30%、吊灯止损 |
-| `MR` | `MeanReversionExitPlaybook` | 更极端/反向闭合 K/新高周期反向全平，中轨平半，均值区全平 |
-| `TREND` | `TrendExitPlaybook` | 1R 保本，3R 平 30%，2R 后 ATR trail，90 分钟无进展全平 |
-
-Playbook 只有 `HoldKind.CLEAN` 才允许同一轮继续做开仓评估。预测过期、`STALE_AGG_TRADE` 或 `LOW_CONFIDENCE` 会触发指标护盾，阻止指标驱动退出和本轮加仓。
-
----
-
-## 风控与归因
-
-`FuturesTradingOperationsAdapter` 是 AI 真实开仓前最后硬闸：
-
-| 拦截 | 当前规则 |
-|---|---|
-| AI 杠杆 | 5x 到 50x |
-| 总 OPEN 仓位 | 最多 6 个 |
-| 同 symbol 仓位 | 最多 3 个 |
-| 同 symbol 反向仓 | 禁止 |
-| 最低名义价值 | 5000 USDT |
-| 最低保证金 | `max(100, balance * 1%)` |
-| 工具层保证金上限 | balance 的 35% |
-| 执行器保证金上限 | balance 的 15% |
-| SL 距离 | 按 `SymbolProfile.slMinPct/slMaxPct` 校验 |
-| 熔断 | `CircuitBreakerService#allowOpen` |
-
-`CircuitBreakerService` 默认阈值：
-
-| 层级 | 默认 | 触发 |
-|---|---:|---|
-| L1 | 10% | 当日已归因净亏损达到初始权益 100000 的 10% |
-| L2 | 4 笔 | 最近 4 笔归因交易全亏，冷却 2 小时 |
-| L3 | 30% | 当前权益低于 peak 的 70% |
-| 路径禁用 | 5 笔 | 单策略路径连续亏损 5 笔后禁用 |
-
-`TradeAttributionService` 在全平后写 `trade_attribution`，并刷新路径状态和熔断状态。路径禁用独立于账户级熔断开关。
+light cycle 不完整重跑 Graph。它会重新采集、重建特征、跑纯 Java 因子、复用或局部刷新新闻票，然后修正父 heavy。下游读取 latest heavy，因此 light 通过回写父 heavy 的 forecast/signal 生效。
 
 ---
 
@@ -257,15 +170,7 @@ AI 管理后台通过 `RuntimeFeatureToggleService` 持久化开关到 `ai_runti
 | `quant.debate_judge.enabled` | `false` |
 | `quant.debate_judge.shadow_enabled` | `false` |
 | `quant.factor_weight_override.enabled` | `false` |
-| `trading.low_vol.enabled` | `true` |
-| `trading.playbook_exit.enabled` | `true` |
-| `trading.circuit_breaker.enabled` | `true` |
-| `trading.circuit_breaker.l1_daily_net_loss_pct` | `10.0` |
-| `trading.circuit_breaker.l2_loss_streak` | `4` |
-| `trading.circuit_breaker.l2_cooldown_hours` | `2` |
-| `trading.circuit_breaker.l3_drawdown_pct` | `30.0` |
-
-交易退出由 Playbook 出场、固定止损止盈、熔断和路径归因共同控制。
+说明：交易相关开关随 AI Trader 退出已移除，当前仅保留量化分析开关。
 
 ---
 
@@ -377,8 +282,7 @@ whatifibought/
 
 | 文档 | 内容 |
 |---|---|
-| `docs/ai-architecture-overview.md` | AI 架构、重/轻周期、Trader、运行时开关总览 |
-| `docs/ai-trader-entry-exit-engine-flow.md` | 开仓、仓位计算、Playbook 退出完整流程 |
+| `docs/ai-architecture-overview.md` | AI 架构、重/轻周期、运行时开关总览 |
 | `docs/data-and-signal-deep-dive.md` | 数据源、FeatureSnapshot、FactorAgent、HorizonJudge、RiskGate |
 | `docs/Quantitative analysis.md` | 量化系统端到端主文档 |
 | `docs/spring-ai-alibaba-capability-scan.md` | 当前 Spring AI Alibaba 使用现状和未接入能力边界 |
@@ -541,6 +445,5 @@ Docker 模板默认把后端绑定到 `127.0.0.1:8081`，建议通过 Nginx 或 
 
 - README 只写当前代码已经落地的事实。
 - AI 量化细节以 `docs/Quantitative analysis.md` 和 `docs/data-and-signal-deep-dive.md` 为准。
-- AI Trader 细节以 `docs/ai-trader-entry-exit-engine-flow.md` 为准。
 - 外部 Spring AI Alibaba 能力没有接入前，只能放在 capability scan 里，不能写成已使用。
 - 改运行时开关、交易风控、Graph 节点、数据源时，需要同步 README 和对应 docs。

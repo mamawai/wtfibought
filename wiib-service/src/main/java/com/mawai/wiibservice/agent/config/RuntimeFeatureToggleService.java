@@ -2,15 +2,7 @@ package com.mawai.wiibservice.agent.config;
 
 import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.entity.AiRuntimeToggle;
-import com.mawai.wiibcommon.enums.KlineInterval;
-import com.mawai.wiibservice.agent.risk.CircuitBreakerService;
 import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
-import com.mawai.wiibservice.agent.trading.DeterministicTradingExecutor;
-import com.mawai.wiibservice.agent.trading.entry.EntryDecisionEngine;
-import com.mawai.wiibservice.agent.trading.entry.strategy.MaSlopeEntryStrategy;
-import com.mawai.wiibservice.config.MaSlopeProperties;
-import com.mawai.wiibservice.config.TradingConfig;
-import com.mawai.wiibservice.config.TradingEntryProperties;
 import com.mawai.wiibservice.mapper.AiRuntimeToggleMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -30,31 +22,12 @@ public class RuntimeFeatureToggleService {
 
     public static final String QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED = "quant.factor_weight_override.enabled";
 
-    public static final String TRADING_LOW_VOL_ENABLED = "trading.low_vol.enabled";
-    public static final String TRADING_PLAYBOOK_EXIT_ENABLED = "trading.playbook_exit.enabled";
-    public static final String TRADING_DECISION_INTERVAL = "trading.decision_interval";
-    public static final String TRADING_ENTRY_ENABLED_STRATEGIES = "trading.entry.enabled_strategies";
-
-    public static final String CIRCUIT_BREAKER_ENABLED = "trading.circuit_breaker.enabled";
-    public static final String CIRCUIT_BREAKER_L1_DAILY_NET_LOSS_PCT = "trading.circuit_breaker.l1_daily_net_loss_pct";
-    public static final String CIRCUIT_BREAKER_L2_LOSS_STREAK = "trading.circuit_breaker.l2_loss_streak";
-    public static final String CIRCUIT_BREAKER_L2_COOLDOWN_HOURS = "trading.circuit_breaker.l2_cooldown_hours";
-    public static final String CIRCUIT_BREAKER_L3_DRAWDOWN_PCT = "trading.circuit_breaker.l3_drawdown_pct";
-
     private final AiRuntimeToggleMapper toggleMapper;
-    private final TradingConfig tradingConfig;
-    private final TradingEntryProperties tradingEntryProperties;
     private final Map<String, ToggleBinding<?>> knownToggles;
     private final Map<String, Object> currentValues = new ConcurrentHashMap<>();
 
-    public RuntimeFeatureToggleService(AiRuntimeToggleMapper toggleMapper,
-                                       TradingConfig tradingConfig,
-                                       TradingEntryProperties tradingEntryProperties,
-                                       MaSlopeProperties maSlopeProperties) {
+    public RuntimeFeatureToggleService(AiRuntimeToggleMapper toggleMapper) {
         this.toggleMapper = toggleMapper;
-        this.tradingConfig = tradingConfig;
-        this.tradingEntryProperties = tradingEntryProperties;
-        MaSlopeEntryStrategy.setEnabledSymbols(maSlopeProperties.getEnabledSymbols());
         this.knownToggles = buildKnownToggles();
         knownToggles.forEach((key, binding) -> {
             currentValues.put(key, binding.defaultValue());
@@ -119,25 +92,7 @@ public class RuntimeFeatureToggleService {
                 true,  // debate_judge 强制启用（只读诊断）
                 get(QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED, Boolean.class,
                         FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED),
-                true,  // macro_risk 强制启用（只读诊断）
-                new RuntimeToggleSnapshot.TradingToggles(
-                        get(TRADING_LOW_VOL_ENABLED, Boolean.class,
-                                DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED),
-                        get(TRADING_PLAYBOOK_EXIT_ENABLED, Boolean.class,
-                                DeterministicTradingExecutor.PLAYBOOK_EXIT_ENABLED),
-                        EntryDecisionEngine.enabledStrategyPaths()
-                ),
-                new RuntimeToggleSnapshot.CircuitBreakerToggles(
-                        get(CIRCUIT_BREAKER_ENABLED, Boolean.class, CircuitBreakerService.ENABLED),
-                        get(CIRCUIT_BREAKER_L1_DAILY_NET_LOSS_PCT, Double.class,
-                                CircuitBreakerService.L1_DAILY_NET_LOSS_PCT),
-                        get(CIRCUIT_BREAKER_L2_LOSS_STREAK, Integer.class,
-                                CircuitBreakerService.L2_LOSS_STREAK),
-                        get(CIRCUIT_BREAKER_L2_COOLDOWN_HOURS, Integer.class,
-                                CircuitBreakerService.L2_COOLDOWN_HOURS),
-                        get(CIRCUIT_BREAKER_L3_DRAWDOWN_PCT, Double.class,
-                                CircuitBreakerService.L3_DRAWDOWN_PCT)
-                )
+                true   // macro_risk 强制启用（只读诊断）
         );
     }
 
@@ -146,29 +101,6 @@ public class RuntimeFeatureToggleService {
         bind(map, QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED, Boolean.class,
                 FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED,
                 v -> FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED = v);
-
-        bind(map, TRADING_LOW_VOL_ENABLED, Boolean.class, DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED,
-                v -> DeterministicTradingExecutor.LOW_VOL_TRADING_ENABLED = v);
-        bind(map, TRADING_PLAYBOOK_EXIT_ENABLED, Boolean.class, DeterministicTradingExecutor.PLAYBOOK_EXIT_ENABLED,
-                v -> DeterministicTradingExecutor.PLAYBOOK_EXIT_ENABLED = v);
-        bind(map, TRADING_DECISION_INTERVAL, String.class, tradingConfig.getDecisionInterval().name(),
-                v -> tradingConfig.setDecisionInterval(parseDecisionInterval(v)));
-        bind(map, TRADING_ENTRY_ENABLED_STRATEGIES, String.class,
-                String.join(",", EntryDecisionEngine.normalizeEnabledStrategyPaths(
-                        tradingEntryProperties.getEnabledStrategies())),
-                v -> applyEnabledEntryStrategies(v));
-
-        bind(map, CIRCUIT_BREAKER_ENABLED, Boolean.class, CircuitBreakerService.ENABLED,
-                v -> CircuitBreakerService.ENABLED = v);
-        bind(map, CIRCUIT_BREAKER_L1_DAILY_NET_LOSS_PCT, Double.class,
-                CircuitBreakerService.L1_DAILY_NET_LOSS_PCT,
-                v -> CircuitBreakerService.L1_DAILY_NET_LOSS_PCT = v);
-        bind(map, CIRCUIT_BREAKER_L2_LOSS_STREAK, Integer.class, CircuitBreakerService.L2_LOSS_STREAK,
-                v -> CircuitBreakerService.L2_LOSS_STREAK = v);
-        bind(map, CIRCUIT_BREAKER_L2_COOLDOWN_HOURS, Integer.class, CircuitBreakerService.L2_COOLDOWN_HOURS,
-                v -> CircuitBreakerService.L2_COOLDOWN_HOURS = v);
-        bind(map, CIRCUIT_BREAKER_L3_DRAWDOWN_PCT, Double.class, CircuitBreakerService.L3_DRAWDOWN_PCT,
-                v -> CircuitBreakerService.L3_DRAWDOWN_PCT = v);
         return Map.copyOf(map);
     }
 
@@ -184,20 +116,6 @@ public class RuntimeFeatureToggleService {
     private static <T> T parseValue(String valueJson, Class<T> type) {
         Object parsed = JSON.parse(valueJson);
         return convertValue(parsed, type);
-    }
-
-    private static KlineInterval parseDecisionInterval(String value) {
-        KlineInterval interval = KlineInterval.valueOf(value);
-        if (interval == KlineInterval.H1) {
-            throw new IllegalArgumentException("H1 当前不支持作为主决策周期");
-        }
-        return interval;
-    }
-
-    private void applyEnabledEntryStrategies(String value) {
-        var enabledStrategies = EntryDecisionEngine.parseEnabledStrategyPaths(value);
-        tradingEntryProperties.setEnabledStrategies(enabledStrategies);
-        EntryDecisionEngine.setEnabledStrategyPaths(enabledStrategies);
     }
 
     private static <T> T convertValue(Object value, Class<T> type) {

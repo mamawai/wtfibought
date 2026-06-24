@@ -5,8 +5,7 @@ import com.mawai.wiibservice.agent.strategy.core.StrategyMarketView;
 import com.mawai.wiibservice.agent.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibservice.agent.strategy.core.StrategySignal;
 import com.mawai.wiibservice.agent.strategy.core.TradingStrategySpi;
-import com.mawai.wiibservice.agent.trading.backtest.BacktestResult;
-import com.mawai.wiibservice.agent.trading.ops.TradingOperations;
+import com.mawai.wiibservice.agent.strategy.core.TradingOperations;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

@@ -1,6 +1,4 @@
-package com.mawai.wiibservice.agent.trading.ops;
-
-import com.mawai.wiibservice.agent.trading.backtest.BacktestTradingTools;
+package com.mawai.wiibservice.agent.strategy.core;
 
 import java.math.BigDecimal;
 import java.util.regex.Matcher;
@@ -9,9 +7,8 @@ import java.util.regex.Pattern;
 /**
  * 交易操作抽象接口。
  * <p>
- * DeterministicTradingExecutor 通过此接口执行交易，
- * 生产环境使用 {@link FuturesTradingOperationsAdapter}（真实下单），
- * 回测环境使用 {@link BacktestTradingTools}（模拟撮合）。
+ * 策略通过此接口表达开平仓/止损止盈意图；回测环境用 BacktestTradingTools 内存撮合实现，
+ * 实盘执行层（testnet）按需翻译成交易所条件单。
  */
 public interface TradingOperations {
 

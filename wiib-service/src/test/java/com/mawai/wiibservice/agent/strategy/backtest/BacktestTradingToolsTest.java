@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.agent.trading.backtest;
+package com.mawai.wiibservice.agent.strategy.backtest;
 
 import org.junit.jupiter.api.Test;
 
