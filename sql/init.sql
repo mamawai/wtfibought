@@ -909,6 +909,38 @@ CREATE INDEX idx_qsd_cycle ON quant_signal_decision(cycle_id);
 CREATE INDEX idx_qsd_horizon_time ON quant_signal_decision(horizon, created_at DESC);
 
 -- ============================================
+-- 量化预测：research 三腿原始预测（vol/regime/direction），供事后对账
+-- ============================================
+CREATE TABLE IF NOT EXISTS quant_research_forecast (
+    id BIGSERIAL PRIMARY KEY,
+    cycle_id VARCHAR(64) NOT NULL,
+    horizon VARCHAR(8) NOT NULL,
+    expected_move_bps INT NOT NULL DEFAULT 0,
+    vol_tier VARCHAR(16),
+    trailing_percentile DECIMAL(6,4),
+    risk_budget_hint DECIMAL(6,4),
+    regime VARCHAR(16),
+    regime_confidence DECIMAL(6,4),
+    direction_sign INT NOT NULL DEFAULT 0,
+    direction_confidence DECIMAL(6,4),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE quant_research_forecast IS 'research 三腿原始预测(vol/regime/direction)，供事后对账';
+COMMENT ON COLUMN quant_research_forecast.cycle_id IS '关联预测周期ID';
+COMMENT ON COLUMN quant_research_forecast.horizon IS 'H6/H12/H24';
+COMMENT ON COLUMN quant_research_forecast.expected_move_bps IS 'vol腿：预期波动bps';
+COMMENT ON COLUMN quant_research_forecast.vol_tier IS 'vol腿：波动状态档';
+COMMENT ON COLUMN quant_research_forecast.trailing_percentile IS 'vol腿：历史分位';
+COMMENT ON COLUMN quant_research_forecast.risk_budget_hint IS 'vol腿：风险预算0-1';
+COMMENT ON COLUMN quant_research_forecast.regime IS 'regime腿：市场状态';
+COMMENT ON COLUMN quant_research_forecast.regime_confidence IS 'regime腿：状态置信';
+COMMENT ON COLUMN quant_research_forecast.direction_sign IS 'direction腿：方向 -1/0/1';
+COMMENT ON COLUMN quant_research_forecast.direction_confidence IS 'direction腿：方向置信';
+
+CREATE INDEX idx_qrf_cycle ON quant_research_forecast(cycle_id);
+
+-- ============================================
 -- 量化预测：预测验证表（事后对比实际价格）
 -- ============================================
 CREATE TABLE IF NOT EXISTS quant_forecast_verification (

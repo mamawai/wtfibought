@@ -21,6 +21,7 @@ public class QuantForecastPersistService {
     private final QuantAgentVoteMapper voteMapper;
     private final QuantHorizonForecastMapper horizonMapper;
     private final QuantSignalDecisionMapper decisionMapper;
+    private final QuantResearchForecastMapper researchForecastMapper;
 
     @Transactional(rollbackFor = Exception.class)
     public void persist(ForecastResult result, String debateSummary,
@@ -32,6 +33,7 @@ public class QuantForecastPersistService {
             saveVotes(result.cycleId(), result.allVotes());
             saveHorizonForecasts(result.cycleId(), result.horizons());
             saveSignalDecisions(result.cycleId(), result.horizons(), result.riskStatus());
+            saveResearchForecast(result.cycleId(), result.macroContext());
             log.info("[Q7] 预测结果落库完成 cycleId={}", result.cycleId());
         } catch (Exception e) {
             log.error("[Q7] 预测结果落库失败 cycleId={}", result.cycleId(), e);
@@ -115,6 +117,26 @@ public class QuantForecastPersistService {
             entity.setMaxPositionPct(BigDecimal.valueOf(f.maxPositionPct()));
             entity.setRiskStatus(riskStatus);
             decisionMapper.insert(entity);
+        }
+    }
+
+    /** 落库 research 三腿原始预测(vol/regime/direction)，每 horizon 一行，供事后对账。 */
+    private void saveResearchForecast(String cycleId, MacroContext macro) {
+        if (macro == null) return;
+        for (var e : macro.legs().entrySet()) {
+            MacroContext.Leg leg = e.getValue();
+            QuantResearchForecast entity = new QuantResearchForecast();
+            entity.setCycleId(cycleId);
+            entity.setHorizon(e.getKey().name());
+            entity.setExpectedMoveBps(leg.expectedMoveBps());
+            entity.setVolTier(leg.volTier().name());
+            entity.setTrailingPercentile(BigDecimal.valueOf(leg.trailingPercentile()));
+            entity.setRiskBudgetHint(BigDecimal.valueOf(leg.riskBudgetHint()));
+            entity.setRegime(leg.regime().name());
+            entity.setRegimeConfidence(BigDecimal.valueOf(leg.regimeConfidence()));
+            entity.setDirectionSign(leg.directionSign());
+            entity.setDirectionConfidence(BigDecimal.valueOf(leg.directionConfidence()));
+            researchForecastMapper.insert(entity);
         }
     }
 }
