@@ -32,6 +32,9 @@ public class CacheService {
     // L1: 加密货币价格（spot/mark 用 key 前缀区分）
     private final Cache<String, BigDecimal> cryptoPriceCache = Caffeine.newBuilder().maximumSize(50).build();
 
+    // prediction 缓存改 Redis 后端（feed 写 sim 读跨进程），窗口/盘口数据靠 TTL 自动清理
+    private static final Duration PREDICTION_TTL = Duration.ofMinutes(20);
+
     // ==================== 实时行情 ====================
 
     /**
@@ -103,26 +106,22 @@ public class CacheService {
 
     // ==================== Polymarket openPrice ====================
 
-    private final ConcurrentHashMap<Long, BigDecimal> polymarketOpenPriceMap = new ConcurrentHashMap<>();
-
     public void putPolymarketOpenPrice(long windowStart, BigDecimal price) {
-        polymarketOpenPriceMap.put(windowStart, price);
-        polymarketOpenPriceMap.keySet().removeIf(k -> k < windowStart - 600);
+        stringRedisTemplate.opsForValue().set("prediction:openprice:" + windowStart, price.toPlainString(), PREDICTION_TTL);
     }
 
     public BigDecimal getPolymarketOpenPrice(long windowStart) {
-        return polymarketOpenPriceMap.get(windowStart);
+        String v = stringRedisTemplate.opsForValue().get("prediction:openprice:" + windowStart);
+        return v != null ? new BigDecimal(v) : null;
     }
 
-    private final ConcurrentHashMap<Long, BigDecimal> polymarketClosePriceMap = new ConcurrentHashMap<>();
-
     public void putPolymarketClosePrice(long windowStart, BigDecimal price) {
-        polymarketClosePriceMap.put(windowStart, price);
-        polymarketClosePriceMap.keySet().removeIf(k -> k < windowStart - 600);
+        stringRedisTemplate.opsForValue().set("prediction:closeprice:" + windowStart, price.toPlainString(), PREDICTION_TTL);
     }
 
     public BigDecimal getPolymarketClosePrice(long windowStart) {
-        return polymarketClosePriceMap.get(windowStart);
+        String v = stringRedisTemplate.opsForValue().get("prediction:closeprice:" + windowStart);
+        return v != null ? new BigDecimal(v) : null;
     }
 
     // ==================== Polymarket官方回合时间 ====================
@@ -181,26 +180,26 @@ public class CacheService {
     // ==================== Polymarket UP/DOWN 价格 ====================
 
     public void putPredictionBid(String side, BigDecimal bid) {
-        cryptoPriceCache.put("prediction:" + side + ":bid", bid);
+        stringRedisTemplate.opsForValue().set("prediction:" + side + ":bid", bid.toPlainString(), PREDICTION_TTL);
     }
 
     public BigDecimal getPredictionBid(String side) {
-        return cryptoPriceCache.getIfPresent("prediction:" + side + ":bid");
+        String v = stringRedisTemplate.opsForValue().get("prediction:" + side + ":bid");
+        return v != null ? new BigDecimal(v) : null;
     }
 
     public void putPredictionAsk(String side, BigDecimal ask) {
-        cryptoPriceCache.put("prediction:" + side + ":ask", ask);
+        stringRedisTemplate.opsForValue().set("prediction:" + side + ":ask", ask.toPlainString(), PREDICTION_TTL);
     }
 
     public BigDecimal getPredictionAsk(String side) {
-        return cryptoPriceCache.getIfPresent("prediction:" + side + ":ask");
+        String v = stringRedisTemplate.opsForValue().get("prediction:" + side + ":ask");
+        return v != null ? new BigDecimal(v) : null;
     }
 
     public void clearPredictionPrices() {
-        cryptoPriceCache.invalidate("prediction:UP:bid");
-        cryptoPriceCache.invalidate("prediction:UP:ask");
-        cryptoPriceCache.invalidate("prediction:DOWN:bid");
-        cryptoPriceCache.invalidate("prediction:DOWN:ask");
+        stringRedisTemplate.delete(java.util.List.of(
+                "prediction:UP:bid", "prediction:UP:ask", "prediction:DOWN:bid", "prediction:DOWN:ask"));
     }
 
     // ==================== 加密货币价格 ====================
