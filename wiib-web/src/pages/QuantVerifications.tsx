@@ -20,14 +20,17 @@ function formatTime(iso: string | null) {
 function HorizonCard({ item }: { item: QuantForecastVerificationItem }) {
   return (
     <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-1">
         <span className="text-xs font-bold">{HORIZON_LABELS[item.horizon] || item.horizon}</span>
-        <Badge
-          variant={item.tradeQuality === 'GOOD' ? 'default' : item.tradeQuality === 'BAD' ? 'destructive' : 'outline'}
-          className="text-[10px]"
-        >
-          {item.tradeQuality}
-        </Badge>
+        <div className="flex items-center gap-1">
+          {/* 纯方向命中——第三步纠正的主口径，不掺路径/盈亏 */}
+          {item.directionHit != null && (
+            <Badge variant={item.directionHit ? 'default' : 'destructive'} className="text-[10px]">
+              方向{item.directionHit ? '✓' : '✗'}
+            </Badge>
+          )}
+          <Badge variant="outline" className="text-[10px]">{item.tradeQuality}</Badge>
+        </div>
       </div>
       <div className="text-xs text-muted-foreground space-y-1">
         {item.resultSummary ? (
@@ -37,6 +40,21 @@ function HorizonCard({ item }: { item: QuantForecastVerificationItem }) {
             <div>预测: <span className="font-semibold text-foreground">{item.predictedDirection}</span> · 置信 {(item.predictedConfidence * 100).toFixed(0)}%</div>
             <div>实际: <span className={item.actualChangeBps >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>{item.actualChangeBps >= 0 ? '+' : ''}{item.actualChangeBps}bps</span></div>
           </>
+        )}
+        {/* vol 档对账——agent 唯一被验证 skilled 的腿 */}
+        {item.predictedVolState && (
+          <div className="flex items-center gap-1.5 pt-1 border-t border-border/40 flex-wrap">
+            <span>波动:</span>
+            <span className="font-semibold text-foreground">{item.predictedVolState}</span>
+            <span>→</span>
+            <span className="font-semibold text-foreground">{item.actualVolState}</span>
+            {item.volStateHit != null && (
+              <Badge variant={item.volStateHit ? 'default' : 'secondary'} className="text-[9px] px-1 py-0">
+                {item.volStateHit ? '命中' : '偏差'}
+              </Badge>
+            )}
+            {item.actualAbsMoveBps != null && <span className="ml-auto text-foreground">{item.actualAbsMoveBps}bps</span>}
+          </div>
         )}
       </div>
     </div>

@@ -649,6 +649,12 @@ export interface QuantForecastVerificationItem {
   predictionCorrect: boolean;
   tradeQuality: string;
   resultSummary: string | null;
+  // 第三步对账：纯方向命中 + vol-state 档对账（老记录可能为 null）
+  directionHit: boolean | null;
+  predictedVolState: string | null;
+  actualVolState: string | null;
+  volStateHit: boolean | null;
+  actualAbsMoveBps: number | null;
   verifiedAt: string;
   createdAt: string;
 }
