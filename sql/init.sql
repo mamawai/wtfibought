@@ -960,6 +960,12 @@ CREATE TABLE IF NOT EXISTS quant_forecast_verification (
     trade_quality VARCHAR(10),
     result_summary VARCHAR(500),
     reversal_severity DECIMAL(6,4),
+    -- 第三步对账新增：纯方向口径 + vol-state 对账(与 direction 路径口径并存)
+    direction_hit BOOLEAN,
+    predicted_vol_state VARCHAR(8),
+    actual_vol_state VARCHAR(8),
+    vol_state_hit BOOLEAN,
+    actual_abs_move_bps INT,
     verified_at TIMESTAMP NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -969,6 +975,11 @@ COMMENT ON COLUMN quant_forecast_verification.cycle_id IS '关联预测周期ID'
 COMMENT ON COLUMN quant_forecast_verification.actual_change_bps IS '实际价格变化（基点）';
 COMMENT ON COLUMN quant_forecast_verification.prediction_correct IS '预测方向是否正确';
 COMMENT ON COLUMN quant_forecast_verification.reversal_severity IS '段内反转严重度[0,1]，NULL=NO_TRADE不适用';
+COMMENT ON COLUMN quant_forecast_verification.direction_hit IS '纯方向命中：预测涨跌==实际涨跌，不掺路径/盈亏';
+COMMENT ON COLUMN quant_forecast_verification.predicted_vol_state IS 'vol预测档 LOW/MID/HIGH(3档tercile)';
+COMMENT ON COLUMN quant_forecast_verification.actual_vol_state IS 'vol实际档 LOW/MID/HIGH';
+COMMENT ON COLUMN quant_forecast_verification.vol_state_hit IS 'vol档命中；NULL=历史不足不判';
+COMMENT ON COLUMN quant_forecast_verification.actual_abs_move_bps IS '实际|horizon对数收益|×10000';
 
 CREATE INDEX idx_qfv_symbol_time ON quant_forecast_verification(symbol, verified_at DESC);
 CREATE INDEX idx_qfv_cycle_id ON quant_forecast_verification(cycle_id);

@@ -43,6 +43,15 @@ public class QuantForecastVerification {
 
     private BigDecimal reversalSeverity;
 
+    // ---- 纯方向口径：只看方向猜对没，不掺路径/盈亏 ----
+    private Boolean directionHit;           // 预测涨跌 == 实际涨跌
+
+    // ---- vol-state 对账：3档 tercile，与给LLM的5档 riskTier 是两套尺子，各司其职 ----
+    private String predictedVolState;       // 预测波动档 LOW/MID/HIGH
+    private String actualVolState;          // 实际波动档
+    private Boolean volStateHit;            // 档命中；null=历史不足，不判
+    private Integer actualAbsMoveBps;       // 实际 |horizon对数收益| × 10000
+
     private LocalDateTime verifiedAt;
 
     @TableField(fill = FieldFill.INSERT)

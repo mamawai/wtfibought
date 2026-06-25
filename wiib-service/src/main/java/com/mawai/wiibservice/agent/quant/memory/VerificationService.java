@@ -7,10 +7,19 @@ import com.mawai.wiibcommon.entity.QuantForecastAdjustment;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantForecastVerification;
 import com.mawai.wiibcommon.entity.QuantHorizonForecast;
+import com.mawai.wiibcommon.entity.QuantResearchForecast;
+import com.mawai.wiibservice.agent.research.ForecastHorizon;
+import com.mawai.wiibservice.agent.research.factor.FactorMath;
+import com.mawai.wiibservice.agent.research.forecast.VolState;
+import com.mawai.wiibservice.agent.research.forecast.VolStateClassifier;
+import com.mawai.wiibservice.agent.research.forecast.VolatilityRiskContext;
+import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibservice.mapper.QuantForecastVerificationMapper;
 import com.mawai.wiibservice.mapper.QuantHorizonForecastMapper;
+import com.mawai.wiibservice.mapper.QuantResearchForecastMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -30,10 +39,14 @@ public class VerificationService {
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantForecastVerificationMapper verificationMapper;
     private final QuantHorizonForecastMapper horizonMapper;
+    private final KlineHistoryStore klineHistoryStore;                  // vol 对账：本地重建历史分布
+    private final QuantResearchForecastMapper researchForecastMapper;   // vol 对账：读 research 三腿预测
 
     private static final int NO_TRADE_THRESHOLD_BPS = 10;
     private static final BigDecimal HIGH_REVERSAL_SEVERITY = new BigDecimal("0.40");
     private static final ZoneId SYSTEM_ZONE = ZoneId.systemDefault();
+    private static final int VOL_HISTORY_DAYS = 90;   // 重建历史分布窗口，与 MacroContextService 同
+    private static final int MIN_VOL_HISTORY = 100;    // 历史样本下限，不足不判档(防 classifier 退化全 MID 假命中)
 
     public record VerificationCycleResult(
             String cycleId,
@@ -47,6 +60,7 @@ public class VerificationService {
             List<QuantForecastVerification> items
     ) {}
 
+    /** total/correct/accuracyRate 为纯方向命中口径(directionHit)；trade_quality 等细节见 cycles 内 items。 */
     public record VerificationSummary(
             int total,
             int correct,
@@ -61,6 +75,7 @@ public class VerificationService {
             List<QuantForecastAdjustment> adjustments
     ) {}
 
+    /** total/correct/accuracyRate/heavy* 均为纯方向命中口径(directionHit)。 */
     public record GroupedVerificationSummary(
             int total,
             int correct,
@@ -129,8 +144,10 @@ public class VerificationService {
                     .max(LocalDateTime::compareTo)
                     .orElse(null);
             for (QuantForecastVerification item : items) {
+                // 纯方向口径：未回填 directionHit 的历史记录不计入分母
+                if (item.getDirectionHit() == null) continue;
                 total++;
-                if (item.getPredictionCorrect() != null && item.getPredictionCorrect()) correct++;
+                if (item.getDirectionHit()) correct++;
             }
             result.add(new VerificationCycleResult(
                     cycleId,
@@ -214,9 +231,10 @@ public class VerificationService {
         for (VerificationCycleResult heavy : heavyResults) {
             // 统计
             for (QuantForecastVerification item : heavy.items()) {
+                if (item.getDirectionHit() == null) continue; // 纯方向口径，未回填的不计入
                 totalAll++;
                 heavyTotal++;
-                if (item.getPredictionCorrect() != null && item.getPredictionCorrect()) {
+                if (item.getDirectionHit()) {
                     correctAll++;
                     heavyCorrect++;
                 }
@@ -255,6 +273,9 @@ public class VerificationService {
         }
 
         LocalDateTime now = LocalDateTime.now(SYSTEM_ZONE);
+        // vol-state 对账：cycle 级备一次 90天5m历史 + research 三腿预测(老 cycle 无 research → 自动跳过)
+        List<KlineBar> volHistoryBars = loadVolHistory(cycle.getSymbol(), forecastTime);
+        Map<String, QuantResearchForecast> researchByHorizon = loadResearchForecasts(cycle.getCycleId());
         int verified = 0;
         for (QuantHorizonForecast f : forecasts) {
             if (verifiedHorizons.contains(f.getHorizon())) continue;
@@ -343,9 +364,15 @@ public class VerificationService {
 
             v.setTp1HitFirst(path.tp1HitFirst);
             v.setPredictionCorrect(correct);
+            v.setDirectionHit(judgeDirectionHit(f.getDirection(), changeBps)); // 纯方向口径，与 correct(掺路径)并存
             v.setTradeQuality(tradeQuality);
             v.setResultSummary(buildResultSummary(f.getDirection(), changeBps, tradeQuality, path, reversalSeverity));
             v.setVerifiedAt(LocalDateTime.now(SYSTEM_ZONE));
+            // vol-state 对账(防御式)：有 research 预测 + 有本地历史才做，否则 vol 字段留 null
+            QuantResearchForecast research = researchByHorizon.get(f.getHorizon());
+            if (research != null && !volHistoryBars.isEmpty()) {
+                fillVolStateReconciliation(v, research, volHistoryBars, f.getHorizon(), entryPrice, priceAfter);
+            }
             verificationMapper.insert(v);
             verified++;
 
@@ -356,6 +383,75 @@ public class VerificationService {
         }
         log.info("[Verify] cycle={} 验证完成 {}/{}", cycle.getCycleId(), verified, forecasts.size());
         return verified;
+    }
+
+    // ==================== vol-state 对账 ====================
+
+    /** 加载 forecastTime 往前 90 天 5m 历史(本地 store)，重建 vol 分布用；失败/缺数据返回空。 */
+    private List<KlineBar> loadVolHistory(String symbol, LocalDateTime forecastTime) {
+        try {
+            long toMs = forecastTime.atZone(SYSTEM_ZONE).toInstant().toEpochMilli();
+            long fromMs = toMs - (long) VOL_HISTORY_DAYS * 86_400_000L;
+            return klineHistoryStore.load(symbol, KlineHistoryStore.DEFAULT_INTERVAL, fromMs, toMs);
+        } catch (Exception e) {
+            log.warn("[Verify] vol 历史加载失败 symbol={}: {}", symbol, e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 读该 cycle 的 research 三腿预测，按 horizon 索引；老 cycle 无记录返回空 map。 */
+    private Map<String, QuantResearchForecast> loadResearchForecasts(String cycleId) {
+        Map<String, QuantResearchForecast> map = new HashMap<>();
+        try {
+            for (QuantResearchForecast r : researchForecastMapper.selectByCycleId(cycleId)) {
+                map.put(r.getHorizon(), r);
+            }
+        } catch (Exception e) {
+            log.warn("[Verify] research 预测加载失败 cycle={}: {}", cycleId, e.getMessage());
+        }
+        return map;
+    }
+
+    /**
+     * vol-state 对账：预测 σ 与实际 |horizon收益| 丢进【同一】历史分布各自定档，比是否同档。
+     * actualAbsMoveBps 不依赖历史总能记；档(predicted/actual/hit)历史不足则留 null，防 classifier 退化全 MID 假命中。
+     * 全程防御：任何异常降级跳过，绝不拖垮 direction 对账落库。
+     */
+    private void fillVolStateReconciliation(QuantForecastVerification v, QuantResearchForecast research,
+                                            List<KlineBar> historyBars, String horizonName,
+                                            BigDecimal entryPrice, BigDecimal priceAfter) {
+        try {
+            // 实际 |horizon 对数收益|，与历史分布同口径；不依赖历史，总能记
+            double actualSigma = Math.abs(FactorMath.logReturn(priceAfter.doubleValue(), entryPrice.doubleValue()));
+            v.setActualAbsMoveBps((int) Math.round(actualSigma * 10_000.0));
+
+            double[] absHist = VolatilityRiskContext.absoluteHorizonReturns(historyBars, ForecastHorizon.valueOf(horizonName));
+            double predSigma = research.getExpectedMoveBps() / 10_000.0;
+            VolStateOutcome outcome = classifyVolOutcome(absHist, predSigma, actualSigma, MIN_VOL_HISTORY);
+            v.setPredictedVolState(outcome.predictedState());
+            v.setActualVolState(outcome.actualState());
+            v.setVolStateHit(outcome.hit());
+        } catch (Exception e) {
+            log.warn("[Verify] vol-state 对账失败(降级跳过) cycle={} horizon={}: {}",
+                    v.getCycleId(), horizonName, e.getMessage());
+        }
+    }
+
+    /** vol 档判定结果(纯函数产物)：历史不足时三者全 null。 */
+    record VolStateOutcome(String predictedState, String actualState, Boolean hit) {}
+
+    /**
+     * 纯函数：预测σ与实际σ在【同一】历史分布各自定档，比是否同档。
+     * 历史不足(<minHistory)→全 null：不判，防 classifier 退化全 MID 假命中。
+     */
+    static VolStateOutcome classifyVolOutcome(double[] absHist, double predSigma, double actualSigma, int minHistory) {
+        if (absHist == null || absHist.length < minHistory) {
+            return new VolStateOutcome(null, null, null);
+        }
+        VolStateClassifier classifier = VolStateClassifier.fromHistory(absHist);
+        VolState pred = classifier.classify(predSigma);
+        VolState actual = classifier.classify(actualSigma);
+        return new VolStateOutcome(pred.name(), actual.name(), pred == actual);
     }
 
     // ==================== 路径分析 ====================
@@ -444,6 +540,20 @@ public class VerificationService {
         // 无TP/SL时，看有利偏移幅度
         if (path.maxFavorableBps > 5) return "GOOD";
         return "MARGINAL";
+    }
+
+    /**
+     * 纯方向命中：只问"方向猜对没"，不掺路径/盈亏(与 tradeQuality/predictionCorrect 并存)。
+     * LONG&涨 / SHORT&跌 → true；NO_TRADE 够静(|bps|<阈值) → true；价格未动或方向错 → false。
+     * 抽 static 纯函数：让统计、子步④单测、SQL 回填同一口径对齐。
+     */
+    static boolean judgeDirectionHit(String direction, int changeBps) {
+        if ("NO_TRADE".equals(direction)) {
+            return Math.abs(changeBps) < NO_TRADE_THRESHOLD_BPS;
+        }
+        if ("LONG".equals(direction)) return changeBps > 0;
+        if ("SHORT".equals(direction)) return changeBps < 0;
+        return false;
     }
 
     // ==================== 数据获取 ====================

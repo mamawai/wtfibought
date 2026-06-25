@@ -78,7 +78,11 @@ public record VolatilityRiskContext(
                 riskBudgetHint, flags, llmLine(horizon, expectedMoveBps, percentile, tier, riskBudgetHint, flags));
     }
 
-    private static double[] absoluteHorizonReturns(List<KlineBar> bars, ForecastHorizon horizon) {
+    /**
+     * 历史每点的 |horizon 对数收益|，作 vol 分位/档判定的分布。
+     * public：对账侧({@code VerificationService})复用，保证 point-in-time 历史口径与预测侧同一真相源。
+     */
+    public static double[] absoluteHorizonReturns(List<KlineBar> bars, ForecastHorizon horizon) {
         if (bars == null || bars.size() < 2) return new double[0];
         long barMillis = inferredBarMillis(bars);
         if (barMillis <= 0L || horizon == null) return new double[0];
