@@ -3,13 +3,9 @@ package com.mawai.wiibservice.config;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
-import com.mawai.wiibservice.agent.quant.PriceVolatilitySentinel;
 import com.mawai.wiibservice.service.CacheService;
-import com.mawai.wiibservice.service.CryptoOrderService;
 import com.mawai.wiibservice.service.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;
-import com.mawai.wiibservice.service.FuturesLiquidationService;
-import com.mawai.wiibservice.service.FuturesSettlementService;
 import com.mawai.wiibservice.service.KlineStreamCache;
 import com.mawai.wiibservice.service.OrderFlowAggregator;
 import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
@@ -38,14 +34,10 @@ public class BinanceWsClient implements SmartLifecycle {
     private final StringRedisTemplate redisTemplate;
     private final RedisMessageBroadcastService broadcastService;
     private final BinanceRestClient restClient;
-    private final CryptoOrderService cryptoOrderService;
-    private final FuturesLiquidationService futuresLiquidationService;
-    private final FuturesSettlementService futuresSettlementService;
     private final CacheService cacheService;
     private final ForceOrderService forceOrderService;
     private final OrderFlowAggregator orderFlowAggregator;
     private final DepthStreamCache depthStreamCache;
-    private final PriceVolatilitySentinel priceVolatilitySentinel;
     private final KlineStreamCache klineStreamCache;
 
     private HttpClient httpClient;
@@ -186,11 +178,8 @@ public class BinanceWsClient implements SmartLifecycle {
                 + ",\"ws\":" + isConnected() + "}";
         broadcastService.broadcastCryptoQuote(symbol, msg);
 
-        // 虚拟线程跑业务逻辑，不阻塞WS接收线程
-        Thread.startVirtualThread(() -> {
-            try { cryptoOrderService.onPriceUpdate(symbol, bd); }
-            catch (Exception e) { log.warn("crypto限价单检查异常 {}: {}", symbol, e.getMessage()); }
-        });
+        // 价格事件发 Redis，sim 侧 MatchPriceConsumer 订阅后触发现货限价单撮合（解耦：不再进程内直调）
+        publishMatchPrice("{\"symbol\":\"" + symbol + "\",\"type\":\"spot\",\"price\":\"" + price + "\"}");
     }
 
     // ── Futures ──
@@ -245,33 +234,24 @@ public class BinanceWsClient implements SmartLifecycle {
             if (pIdx < 0) return;
             String markPrice = extractQuoted(raw, pIdx + 5);
             redisTemplate.opsForValue().set(REDIS_MARK_PRICE_KEY_PREFIX + symbol, markPrice);
-            BigDecimal mp = new BigDecimal(markPrice);
-            cacheService.putMarkPrice(symbol, mp);
-            priceVolatilitySentinel.onPriceTick(symbol, mp);
+            cacheService.putMarkPrice(symbol, new BigDecimal(markPrice));
 
             broadcastService.broadcastFuturesQuote(symbol, "{\"mp\":\"" + markPrice + "\",\"fws\":" + isFuturesConnected() + "}");
 
-            String futuresPrice = redisTemplate.opsForValue().get(REDIS_FUTURES_PRICE_KEY_PREFIX + symbol);
-            final BigDecimal finalCp = futuresPrice != null ? new BigDecimal(futuresPrice) : mp;
-            Thread.startVirtualThread(() -> {
-                try { futuresLiquidationService.checkOnPriceUpdate(symbol, mp, finalCp); }
-                catch (Exception e) { log.warn("futures强平检查异常 {}: {}", symbol, e.getMessage()); }
-            });
+            // markPrice 事件发 Redis：sim 侧消费做强平、quant 侧消费喂哨兵（解耦：不再进程内直调，currentPrice 由 sim 自己读 KV）
+            publishMatchPrice("{\"symbol\":\"" + symbol + "\",\"type\":\"markprice\",\"price\":\"" + markPrice + "\"}");
         } else {
             // miniTicker: "c" 是最新价
             int cIdx = raw.indexOf("\"c\":\"", sIdx);
             if (cIdx < 0) return;
             String price = extractQuoted(raw, cIdx + 5);
             redisTemplate.opsForValue().set(REDIS_FUTURES_PRICE_KEY_PREFIX + symbol, price);
-            BigDecimal bd = new BigDecimal(price);
-            cacheService.putFuturesPrice(symbol, bd);
+            cacheService.putFuturesPrice(symbol, new BigDecimal(price));
 
             broadcastService.broadcastFuturesQuote(symbol, "{\"fp\":\"" + price + "\",\"fws\":" + isFuturesConnected() + "}");
 
-            Thread.startVirtualThread(() -> {
-                try { futuresSettlementService.onPriceUpdate(symbol, bd); }
-                catch (Exception e) { log.warn("futures限价单检查异常 {}: {}", symbol, e.getMessage()); }
-            });
+            // futures 价格事件发 Redis：sim 侧消费做合约限价单结算（解耦：不再进程内直调）
+            publishMatchPrice("{\"symbol\":\"" + symbol + "\",\"type\":\"futures\",\"price\":\"" + price + "\"}");
         }
     }
 
@@ -353,7 +333,9 @@ public class BinanceWsClient implements SmartLifecycle {
             for (String symbol : props.getSymbols()) {
                 BigDecimal[] lowHigh = restClient.getRecentHighLow(symbol);
                 if (lowHigh != null) {
-                    cryptoOrderService.recoverLimitOrders(symbol, lowHigh[0], lowHigh[1]);
+                    // 发恢复事件，sim 侧按区间高低价补触发限价单（解耦：撮合不在 feed）
+                    publishMatchPrice("{\"symbol\":\"" + symbol + "\",\"type\":\"spot-recover\",\"low\":\""
+                            + lowHigh[0].toPlainString() + "\",\"high\":\"" + lowHigh[1].toPlainString() + "\"}");
                 }
             }
         } catch (Exception e) {
@@ -366,7 +348,8 @@ public class BinanceWsClient implements SmartLifecycle {
             for (String symbol : props.getSymbols()) {
                 BigDecimal[] futuresLowHigh = restClient.getRecentFuturesHighLow(symbol);
                 if (futuresLowHigh != null) {
-                    futuresSettlementService.recoverLimitOrders(symbol, futuresLowHigh[0], futuresLowHigh[1]);
+                    publishMatchPrice("{\"symbol\":\"" + symbol + "\",\"type\":\"futures-recover\",\"low\":\""
+                            + futuresLowHigh[0].toPlainString() + "\",\"high\":\"" + futuresLowHigh[1].toPlainString() + "\"}");
                 }
             }
         } catch (Exception e) {
@@ -382,8 +365,9 @@ public class BinanceWsClient implements SmartLifecycle {
                 if (markLowHigh != null) {
                     BigDecimal futuresLow = futuresLowHigh != null ? futuresLowHigh[0] : markLowHigh[0];
                     BigDecimal futuresHigh = futuresLowHigh != null ? futuresLowHigh[1] : markLowHigh[1];
-                    futuresLiquidationService.checkOnPriceUpdate(symbol, markLowHigh[0], futuresLow);
-                    futuresLiquidationService.checkOnPriceUpdate(symbol, markLowHigh[1], futuresHigh);
+                    publishMatchPrice("{\"symbol\":\"" + symbol + "\",\"type\":\"liq-recover\",\"markLow\":\""
+                            + markLowHigh[0].toPlainString() + "\",\"markHigh\":\"" + markLowHigh[1].toPlainString()
+                            + "\",\"futLow\":\"" + futuresLow.toPlainString() + "\",\"futHigh\":\"" + futuresHigh.toPlainString() + "\"}");
                 }
             }
         } catch (Exception e) {
@@ -449,6 +433,15 @@ public class BinanceWsClient implements SmartLifecycle {
     }
 
     // ── 工具 ──
+
+    /** 发撮合价格事件到 Redis，sim 侧 MatchPriceConsumer 订阅消费。发送失败降级不阻断行情。 */
+    private void publishMatchPrice(String json) {
+        try {
+            redisTemplate.convertAndSend(MarketStreamChannels.PRICE, json);
+        } catch (Exception e) {
+            log.warn("[MatchPrice] 发送失败: {}", e.toString());
+        }
+    }
 
     private static String extractQuoted(String raw, int start) {
         int end = raw.indexOf('"', start);
