@@ -17,6 +17,7 @@
 
     <modules>
             <module>wiib-common</module>
+            <module>wiib-feed</module>
             <module>wiib-service</module>
     </modules>
 

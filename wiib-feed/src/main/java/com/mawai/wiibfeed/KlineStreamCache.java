@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.service;
+package com.mawai.wiibfeed;
 
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.MarketStreamChannels;

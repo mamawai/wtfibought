@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.config;
+package com.mawai.wiibfeed;
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 
@@ -9,7 +9,6 @@ import com.mawai.wiibcommon.market.MarketStreamChannels;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.market.DepthStreamCache;
 import com.mawai.wiibcommon.market.ForceOrderService;
-import com.mawai.wiibservice.service.KlineStreamCache;
 import com.mawai.wiibcommon.market.OrderFlowAggregator;
 import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import jakarta.annotation.PostConstruct;

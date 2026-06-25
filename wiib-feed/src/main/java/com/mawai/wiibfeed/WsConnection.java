@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.config;
+package com.mawai.wiibfeed;
 
 import lombok.extern.slf4j.Slf4j;
 
