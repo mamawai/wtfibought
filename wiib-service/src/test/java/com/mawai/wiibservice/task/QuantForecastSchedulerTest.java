@@ -8,7 +8,7 @@ import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
 import com.mawai.wiibservice.agent.quant.domain.QuantForecastRequestEvent;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibcommon.market.BinanceRestClient;
-import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
+import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
@@ -39,7 +39,7 @@ class QuantForecastSchedulerTest {
 
         QuantForecastScheduler scheduler = new QuantForecastScheduler(
                 facade,
-                mock(RedisMessageBroadcastService.class),
+                mock(MarketBroadcaster.class),
                 binanceRestClient,
                 mock(PriceVolatilitySentinel.class),
                 new FakeKlineHistoryStore());
@@ -72,7 +72,7 @@ class QuantForecastSchedulerTest {
 
         QuantForecastScheduler scheduler = new QuantForecastScheduler(
                 facade,
-                mock(RedisMessageBroadcastService.class),
+                mock(MarketBroadcaster.class),
                 binanceRestClient,
                 mock(PriceVolatilitySentinel.class),
                 store);

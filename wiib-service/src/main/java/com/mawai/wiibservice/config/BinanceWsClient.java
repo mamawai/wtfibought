@@ -11,7 +11,7 @@ import com.mawai.wiibcommon.market.DepthStreamCache;
 import com.mawai.wiibcommon.market.ForceOrderService;
 import com.mawai.wiibservice.service.KlineStreamCache;
 import com.mawai.wiibcommon.market.OrderFlowAggregator;
-import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
+import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,7 +35,7 @@ public class BinanceWsClient implements SmartLifecycle {
 
     private final BinanceProperties props;
     private final StringRedisTemplate redisTemplate;
-    private final RedisMessageBroadcastService broadcastService;
+    private final MarketBroadcaster broadcastService;
     private final BinanceRestClient restClient;
     private final CacheService cacheService;
     private final ForceOrderService forceOrderService;

@@ -1,4 +1,5 @@
 package com.mawai.wiibservice.service.impl;
+import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 
 import cn.hutool.json.JSONObject;
 import com.mawai.wiibservice.service.MarketDataService;
@@ -54,7 +55,7 @@ public class QuotePushServiceImpl implements QuotePushService {
 
     private final MarketDataService marketDataService;
     private final StockCacheService stockCacheService;
-    private final RedisMessageBroadcastService broadcastService;
+    private final MarketBroadcaster broadcastService;
 
     /**
      * 推送单个股票行情

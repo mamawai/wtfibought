@@ -9,7 +9,7 @@ import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
 import com.mawai.wiibservice.agent.quant.domain.QuantForecastRequestEvent;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibcommon.market.BinanceRestClient;
-import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
+import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -30,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class QuantForecastScheduler {
 
     private final QuantForecastFacade quantForecastFacade;
-    private final RedisMessageBroadcastService broadcastService;
+    private final MarketBroadcaster broadcastService;
     private final BinanceRestClient binanceRestClient;
     private final PriceVolatilitySentinel priceVolatilitySentinel;
     private final KlineHistoryStore historyStore;

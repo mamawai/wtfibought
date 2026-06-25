@@ -1,4 +1,5 @@
 package com.mawai.wiibservice.service.impl;
+import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
@@ -39,7 +40,7 @@ public class PredictionServiceImpl implements PredictionService {
     private final UserService userService;
     private final CacheService cacheService;
     private final RedisLockUtil redisLockUtil;
-    private final RedisMessageBroadcastService broadcastService;
+    private final MarketBroadcaster broadcastService;
     private final TransactionTemplate transactionTemplate;
 
     private static final BigDecimal FEE_RATE = new BigDecimal("0.25");

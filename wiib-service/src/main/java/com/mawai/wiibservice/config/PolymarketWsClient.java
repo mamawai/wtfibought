@@ -5,7 +5,7 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.market.PredictionStreamChannels;
 import com.mawai.wiibcommon.cache.CacheService;
-import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
+import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -112,7 +112,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RequiredArgsConstructor
 public class PolymarketWsClient implements SmartLifecycle {
 
-    private final RedisMessageBroadcastService broadcastService;
+    private final MarketBroadcaster broadcastService;
     private final CacheService cacheService;
     private final StringRedisTemplate redisTemplate;
 
