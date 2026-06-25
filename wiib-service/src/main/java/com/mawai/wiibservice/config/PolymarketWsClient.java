@@ -4,12 +4,13 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibservice.service.CacheService;
-import com.mawai.wiibservice.service.PredictionService;
 import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.SmartLifecycle;
+import org.springframework.data.redis.connection.stream.StreamRecords;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -23,6 +24,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -93,13 +96,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *     <li>
  *         {@link #pollOpenPrice(long)} 负责当前回合开盘价：
  *         每 5 秒查一次 Polymarket crypto-price API，最多 12 次；
- *         成功后写缓存并调用 {@code predictionService.syncOpenPrice()} 回填 DB。
+ *         成功后写缓存并发 {@code syncopen} 事件，由 sim 回填 DB。
  *     </li>
  *     <li>
  *         {@link #pollClosePrice(long)} 负责上一回合收盘价：
  *         先等 60 秒，再每 10 秒查一次，最多 6 次；
- *         API 返回 {@code completed=true} 且有 closePrice 后，写缓存并调用
- *         {@code predictionService.settlePreviousRound()} 结算上一回合。
+ *         API 返回 {@code completed=true} 且有 closePrice 后，写缓存并发
+ *         {@code settle} 事件，由 sim 结算上一回合。
  *     </li>
  * </ol>
  */
@@ -110,7 +113,7 @@ public class PolymarketWsClient implements SmartLifecycle {
 
     private final RedisMessageBroadcastService broadcastService;
     private final CacheService cacheService;
-    private final PredictionService predictionService;
+    private final StringRedisTemplate redisTemplate;
 
     private HttpClient httpClient;
     private ScheduledExecutorService scheduler;
@@ -130,6 +133,7 @@ public class PolymarketWsClient implements SmartLifecycle {
     private static final int WINDOW_SECONDS = 300;
     private static final int WS_PING_SECONDS = 10;
     private static final String CHAINLINK_REDIS_KEY = "chainlink:price:btcusd";
+    private static final long ROUND_STREAM_MAXLEN = 1_000L;
 
     @PostConstruct
     public void init() {
@@ -222,16 +226,16 @@ public class PolymarketWsClient implements SmartLifecycle {
             currentUpAssetId = null;
             currentDownAssetId = null;
 
-            // 立即锁定上一轮 OPEN→LOCKED，禁止sell
-            predictionService.lockRound(prevWindowStart);
+            // 发事件：锁定上一轮 OPEN→LOCKED，禁止sell（sim 消费触发）
+            publishRoundEvent("lock", prevWindowStart);
 
             // 关闭旧的 CLOB WS，清除旧盘口价格并通知前端
             clobWs.close();
             cacheService.clearPredictionPrices();
             broadcastPriceUpdate();
 
-            // 创建新回合（startPrice可能为null，等openPrice回填）
-            predictionService.createNewRound();
+            // 发事件：创建新回合（startPrice可能为null，等openPrice回填）
+            publishRoundEvent("create", windowStart);
             Thread.startVirtualThread(() -> pollMarketAssets(windowStart));
 
             // 独立线程轮询openPrice: 每5s查一次，最多12次，有数据即停
@@ -243,12 +247,26 @@ public class PolymarketWsClient implements SmartLifecycle {
         }
     }
 
+    /** 回合事件发 Redis Stream（feed→sim）。顺序敏感(lock→create→settle)，Stream 保 FIFO；sim 侧 PredictionRoundConsumer 消费触发账本。 */
+    private void publishRoundEvent(String type, long windowStart) {
+        try {
+            Map<String, String> fields = new LinkedHashMap<>();
+            fields.put("type", type);
+            fields.put("windowStart", Long.toString(windowStart));
+            var ops = redisTemplate.opsForStream();
+            ops.add(StreamRecords.newRecord().in(PredictionStreamChannels.ROUND_STREAM).ofMap(fields));
+            ops.trim(PredictionStreamChannels.ROUND_STREAM, ROUND_STREAM_MAXLEN, true);  // 近似裁剪，防无限增长
+        } catch (Exception e) {
+            log.error("[PredictionRound] 写 Stream 失败 type={} windowStart={} msg={}", type, windowStart, e.toString());
+        }
+    }
+
     private void prepareCurrentMarket(long windowStart) {
         try {
             if (windowStart == currentWindowStart()) {
                 lastSubscribedSlug = eventSlug(windowStart);
             }
-            predictionService.createNewRound();
+            publishRoundEvent("create", windowStart);
             pollMarketAssets(windowStart);
             Thread.startVirtualThread(() -> pollOpenPrice(windowStart));
         } catch (Exception e) {
@@ -277,7 +295,7 @@ public class PolymarketWsClient implements SmartLifecycle {
         if (market == null) return false;
         syncOfficialWindowTime(windowStart, event, market, snapshot);
         // 官方时间拿到后再推一次round，避免前端初次请求早于Gamma缓存导致倒计时仍走本机取模。
-        predictionService.createNewRound();
+        publishRoundEvent("create", windowStart);
 
         JSONArray outcomes = parseJsonArrayField(market, "outcomes");
         JSONArray tokenIds = parseJsonArrayField(market, "clobTokenIds");
@@ -438,7 +456,7 @@ public class PolymarketWsClient implements SmartLifecycle {
             BigDecimal openPrice = json.getBigDecimal("openPrice");
             if (openPrice != null) {
                 cacheService.putPolymarketOpenPrice(windowStart, openPrice);
-                predictionService.syncOpenPrice();
+                publishRoundEvent("syncopen", windowStart);
                 log.info("openPrice获取成功: windowStart={}, price={}, 第{}次", windowStart, openPrice, i + 1);
                 return;
             }
@@ -463,7 +481,7 @@ public class PolymarketWsClient implements SmartLifecycle {
             BigDecimal closePrice = json.getBigDecimal("closePrice");
             if (closePrice != null) {
                 cacheService.putPolymarketClosePrice(prevWindowStart, closePrice);
-                predictionService.settlePreviousRound();
+                publishRoundEvent("settle", prevWindowStart);
                 log.info("closePrice获取并结算成功: windowStart={}, price={}, 第{}次", prevWindowStart, closePrice, i + 1);
                 return;
             }
@@ -497,11 +515,8 @@ public class PolymarketWsClient implements SmartLifecycle {
 
         long now = System.currentTimeMillis();
         String priceStr = value.toPlainString();
-        // redis
-        cacheService.set(CHAINLINK_REDIS_KEY, priceStr);
-        // caffeine
-        cacheService.putChainlinkPrice("btcusd", value);
-        cacheService.addBtcPricePoint(now, value);
+        cacheService.set(CHAINLINK_REDIS_KEY, priceStr);   // Redis KV：页面实时价
+        cacheService.addBtcPricePoint(now, value);          // Redis ZSet：折线图历史
 
         String json = "{\"price\":\"" + priceStr + "\",\"ts\":" + now + "}";
         broadcastService.broadcastPrediction("price", json);

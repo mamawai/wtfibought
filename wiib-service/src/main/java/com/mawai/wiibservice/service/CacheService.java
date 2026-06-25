@@ -1,5 +1,6 @@
 package com.mawai.wiibservice.service;
 
+import com.alibaba.fastjson2.JSON;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.RequiredArgsConstructor;
@@ -12,8 +13,6 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -134,47 +133,44 @@ public class CacheService {
             long referenceLocalTimeMs
     ) {}
 
-    private final ConcurrentHashMap<Long, PredictionOfficialWindow> predictionOfficialWindowMap = new ConcurrentHashMap<>();
-
+    // feed 写 sim 读：官方回合时间存 Redis（JSON），TTL 自动清理旧窗口
     public void putPredictionOfficialWindow(long windowStart, long startTimeMs, long endTimeMs,
                                             long referenceNowMs, long referenceLocalTimeMs) {
-        predictionOfficialWindowMap.put(windowStart,
-                new PredictionOfficialWindow(windowStart, startTimeMs, endTimeMs, referenceNowMs, referenceLocalTimeMs));
-        predictionOfficialWindowMap.keySet().removeIf(k -> k < windowStart - 600);
+        PredictionOfficialWindow w = new PredictionOfficialWindow(
+                windowStart, startTimeMs, endTimeMs, referenceNowMs, referenceLocalTimeMs);
+        stringRedisTemplate.opsForValue().set("prediction:window:" + windowStart, JSON.toJSONString(w), PREDICTION_TTL);
     }
 
     public PredictionOfficialWindow getPredictionOfficialWindow(long windowStart) {
-        return predictionOfficialWindowMap.get(windowStart);
+        String v = stringRedisTemplate.opsForValue().get("prediction:window:" + windowStart);
+        return v != null ? JSON.parseObject(v, PredictionOfficialWindow.class) : null;
     }
 
-    // ==================== BTC价格历史（纯内存，ConcurrentLinkedDeque） ====================
+    // ==================== BTC价格历史（feed 写 sim 读，Redis ZSet：score=ts，member=ts:price 保唯一） ====================
 
     private static final long PRICE_HISTORY_TTL_MS = 360_000;
-    private final ConcurrentLinkedDeque<long[]> btcPriceDeque = new ConcurrentLinkedDeque<>();
+    private static final String BTC_PRICE_HISTORY_KEY = "prediction:btcprice:history";
 
-    /** ts=毫秒时间戳, price缩放为 long（×100去小数） */
+    /** chainlink BTC 价格点入 ZSet，按 score 裁掉 6 分钟外的旧点 */
     public void addBtcPricePoint(long timestampMs, BigDecimal price) {
-        btcPriceDeque.addLast(new long[]{timestampMs, price.movePointRight(2).longValue()});
-        long cutoff = timestampMs - PRICE_HISTORY_TTL_MS;
-        while (!btcPriceDeque.isEmpty() && btcPriceDeque.peekFirst()[0] < cutoff) {
-            btcPriceDeque.pollFirst();
-        }
+        ZSetOperations<String, String> zset = stringRedisTemplate.opsForZSet();
+        zset.add(BTC_PRICE_HISTORY_KEY, timestampMs + ":" + price.toPlainString(), timestampMs);
+        zset.removeRangeByScore(BTC_PRICE_HISTORY_KEY, 0, timestampMs - PRICE_HISTORY_TTL_MS);
     }
 
     public List<Map<String, Object>> getBtcPriceHistory(long fromMs) {
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (long[] e : btcPriceDeque) {
-            if (e[0] >= fromMs) {
-                result.add(Map.of("time", e[0], "price", BigDecimal.valueOf(e[1], 2).toPlainString()));
-            }
+        Set<ZSetOperations.TypedTuple<String>> tuples =
+                stringRedisTemplate.opsForZSet().rangeByScoreWithScores(BTC_PRICE_HISTORY_KEY, fromMs, Double.MAX_VALUE);
+        if (tuples == null || tuples.isEmpty()) return List.of();
+        List<Map<String, Object>> result = new ArrayList<>(tuples.size());
+        for (ZSetOperations.TypedTuple<String> t : tuples) {
+            String member = t.getValue();
+            if (member == null || t.getScore() == null) continue;
+            // member=ts:price，价格纯数字不含冒号，取第一个冒号后即价格
+            result.add(Map.of("time", t.getScore().longValue(),
+                    "price", member.substring(member.indexOf(':') + 1)));
         }
         return result;
-    }
-
-    // ==================== Chainlink价格（Prediction用） ====================
-
-    public void putChainlinkPrice(String symbol, BigDecimal price) {
-        cryptoPriceCache.put("chainlink:" + symbol, price);
     }
 
     // ==================== Polymarket UP/DOWN 价格 ====================
