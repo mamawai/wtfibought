@@ -695,10 +695,36 @@ export function AiAgent() {
                 </CardContent>
               </Card>
 
-              {/* 趋势 */}
+              {/* ⑤ 波动画像（主腿）——vol 经样本外验证唯一 skilled，视觉置于方向之上 */}
+              {cryptoReport.volProfile && cryptoReport.volProfile.length > 0 && (
+                <Card className="border-l-4 border-l-amber-500">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      波动画像
+                      <span className="text-[10px] font-normal text-muted-foreground">（核心可靠信号）</span>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {cryptoReport.volProfile.map(vp => (
+                      <div key={vp.horizon} className="flex items-center gap-2 text-xs flex-wrap">
+                        <span className="font-bold w-10">{vp.horizon}</span>
+                        <Badge variant="outline" className="text-[10px]">{vp.volState}</Badge>
+                        <span className="text-muted-foreground">预期 <span className="font-semibold text-foreground">{vp.expectedMoveBps}bps</span></span>
+                        <span className="text-muted-foreground">分位 <span className="font-semibold text-foreground">{(vp.trailingPercentile * 100).toFixed(0)}%</span></span>
+                        <span className="text-muted-foreground ml-auto">风险预算 <span className="font-semibold text-foreground">{(vp.riskBudgetHint * 100).toFixed(0)}%</span></span>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* 趋势（弱 edge，仅供参考） */}
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">方向判断</CardTitle>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    方向判断
+                    <span className="text-[10px] font-normal text-muted-foreground">（弱 edge · 仅供参考）</span>
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="flex flex-wrap gap-2">
                   <Badge variant="outline" className="text-xs">

@@ -19,6 +19,7 @@ public class CryptoAnalysisReport {
     private int confidence;
     private DebateSummary debateSummary;
     private String macroContext;
+    private List<VolProfile> volProfile;  // 波动画像（主腿，vol 经样本外验证唯一 skilled）
 
     @Data
     public static class DirectionInfo {
@@ -56,6 +57,16 @@ public class CryptoAnalysisReport {
         private String bullArgument;
         private String bearArgument;
         private String judgeReasoning;
+    }
+
+    /** 波动画像：每 horizon 一项，agent 唯一被验证 skilled 的腿。 */
+    @Data
+    public static class VolProfile {
+        private String horizon;             // H6/H12/H24
+        private String volState;            // 波动状态档
+        private int expectedMoveBps;        // 预期波动 bps
+        private double trailingPercentile;  // 历史分位 0-1
+        private double riskBudgetHint;      // 风险预算 0-1
     }
 
     public boolean isValid() {

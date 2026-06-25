@@ -603,6 +603,8 @@ export interface CryptoAnalysisReport {
   confidence: number;
   debateSummary?: { bullArgument: string; bearArgument: string; judgeReasoning: string };
   reasoning?: string;
+  // ⑤ 波动画像（主腿，vol 经样本外验证唯一 skilled）
+  volProfile?: { horizon: string; volState: string; expectedMoveBps: number; trailingPercentile: number; riskBudgetHint: number }[];
 }
 
 export interface QuantSignalDecision {

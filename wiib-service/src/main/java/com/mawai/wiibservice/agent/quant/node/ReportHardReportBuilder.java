@@ -7,6 +7,7 @@ import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibservice.agent.quant.domain.HorizonForecast;
 import com.mawai.wiibservice.agent.quant.domain.MacroContext;
 import com.mawai.wiibservice.agent.quant.domain.MarketRegime;
+import com.mawai.wiibservice.agent.research.ForecastHorizon;
 import com.mawai.wiibservice.agent.quant.domain.NewsItem;
 import com.mawai.wiibservice.agent.quant.factor.NewsEventAgent;
 import com.mawai.wiibservice.agent.quant.judge.ConsensusJudge;
@@ -49,6 +50,7 @@ final class ReportHardReportBuilder {
         report.setRiskWarnings(buildRiskWarnings(forecasts, riskStatus, snapshot));
         report.setConfidence(calculateConfidence(forecasts, calculateAvgConfidence(forecasts)));
         report.setMacroContext(macroContext != null ? macroContext.toReportBlock() : "宏观上下文预热中，暂不介入交易。");
+        report.setVolProfile(buildVolProfile(macroContext));
         return report;
     }
 
@@ -92,6 +94,24 @@ final class ReportHardReportBuilder {
         return "结构化裁决结果为%s，优先区间=%s%s，置信度=%.0f%%，分歧度=%.2f，当前市场状态=%s，新闻偏向=%s%s。"
                 .formatted(overallDecision, formatHorizon(best.horizon()), formatDirectionCn(best.direction()),
                         best.confidence() * 100, best.disagreement(), regimeText, newsBias, qualityText);
+    }
+
+    /** 从 MacroContext 提取波动画像（vol 主腿，agent 唯一被验证 skilled）。 */
+    private List<CryptoAnalysisReport.VolProfile> buildVolProfile(MacroContext macroContext) {
+        if (macroContext == null) return List.of();
+        List<CryptoAnalysisReport.VolProfile> list = new ArrayList<>();
+        for (ForecastHorizon h : List.of(ForecastHorizon.H6, ForecastHorizon.H12, ForecastHorizon.H24)) {
+            MacroContext.Leg leg = macroContext.legs().get(h);
+            if (leg == null) continue;
+            CryptoAnalysisReport.VolProfile vp = new CryptoAnalysisReport.VolProfile();
+            vp.setHorizon(h.name());
+            vp.setVolState(leg.volTier().name());
+            vp.setExpectedMoveBps(leg.expectedMoveBps());
+            vp.setTrailingPercentile(leg.trailingPercentile());
+            vp.setRiskBudgetHint(leg.riskBudgetHint());
+            list.add(vp);
+        }
+        return list;
     }
 
     private CryptoAnalysisReport.DirectionInfo buildDirectionInfo(List<HorizonForecast> forecasts,
