@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 直连本地 postgres 读 BTC 5m → 跑 vol 真值代理诊断 → 打印三真值并排 QLIKE/DM 决策表。不启 Spring app。
  *
  * 跑法（先 1 年子集验证，再全历史）：
- *   mvn -pl wiib-service -am test -Dtest=VolTruthProxyDbRun -DskipTests=false \
+ *   mvn -pl wiib-quant -am test -Dtest=VolTruthProxyDbRun -DskipTests=false \
  *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false \
  *       -Dvol.diag.symbol=BTCUSDT -Dvol.diag.days=365 -Dvol.diag.horizon=24
  */

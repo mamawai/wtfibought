@@ -34,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 显式 -Dtest=DirectionResearchDbRun 时，直连 Postgres 读 kline/factor_history，绕开 Spring Boot/Redis。
  *
  * 跑法：
- *   mvn -pl wiib-service -am -DskipTests=false -Dtest=DirectionResearchDbRun \
+ *   mvn -pl wiib-quant -am -DskipTests=false -Dtest=DirectionResearchDbRun \
  *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false \
  *       -Ddirection.diag.toDate=2026-06-02 test
  */

@@ -1,0 +1,168 @@
+server:
+  port: 8080
+
+spring:
+  ai:
+    retry:
+      max-attempts: 10
+      backoff:
+        initial-interval: 1000
+        multiplier: 2
+        max-interval: 30000
+    # ai_runtime_config 没有配置时会读取这里的配置
+    openai:
+      api-key: ${AI_API_KEY:sk-xxx}
+      base-url: https://api.xxx.com
+      chat:
+        options:
+          model: xxx-xxx
+  application:
+    name: wiib-sim
+  # 启用虚拟线程支持
+  threads:
+    virtual:
+      enabled: true
+  # 本地部署这里连接的是本地数据源 - docker部署docker-compose覆盖
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://localhost:5432/wiib?reWriteBatchedInserts=true
+    username:
+    password:
+    hikari:
+      pool-name: wiib-hikari
+      # 如果你是4core `4×2+1=9`，取整 10, 如果你是2core 用5
+      maximum-pool-size: 10
+      # HikariCP 官方建议 min=max，避免连接抖动
+      minimum-idle: 10
+      connection-timeout: 30000
+      idle-timeout: 300000
+      max-lifetime: 550000
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+      password:
+      timeout: 10000
+
+mybatis-plus:
+  mapper-locations: classpath:/mapper/**/*.xml
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  metrics:
+    tags:
+      application: wiib-sim
+
+# AI配置（多模型优先级重试）-- 每日生成行情的
+ai:
+  providers:
+    - name:
+      api-key:
+      base-url:
+      model: gpt-5.2
+      priority: 1
+      enabled: true
+      timeout: 60000
+      max-retries: 3
+      temperature: 0.85
+
+# LinuxDo OAuth配置
+linuxdo:
+  client-id:
+  client-secret:
+  redirect-uri:
+
+
+# 交易配置
+trading:
+  # 合约 AI 主决策周期：M1/M3/M5/M15/H1（影响 K 线采集 / 指标计算 / 回测聚合系数）
+  decision-interval: M5
+  # 新用户初始余额
+  initial-balance: 100000
+  # 手续费率（0.05%）
+  commission-rate: 0.0005
+  # 市价单滑点保护（±2%）
+  slippage-limit: 0.02
+  # 限价单最长有效期（小时）
+  limit-order-max-hours: 24
+  # 乐观锁最大重试次数
+  optimistic-lock-max-retries: 3
+  # 限价单并发处理配置
+  limit-order-processing:
+    max-concurrency: 15
+    order-timeout-seconds: 6
+  # 是否启用交易时段限制（游戏模式可关闭）
+  trading-hours-enabled: true
+  # 交易时段（仅当trading-hours-enabled=true时生效）
+  trading-hours:
+    morning-start: "09:30"
+    morning-end: "11:30"
+    afternoon-start: "13:00"
+    afternoon-end: "15:00"
+
+# 插拔式策略实盘信号运行时：默认关闭；启用后读取实时流并记录 LIVE 信号
+strategy:
+  runtime:
+    enabled: false
+    enabled-ids: FIBO
+    liquidation-window-minutes: 30
+    liquidation-threshold-usdt: 500000
+  execution:
+    enabled: false           # 实盘执行总开关(Binance Testnet)；默认关
+    symbols: ETHUSDT         # 执行白名单(逗号分隔)
+    fixed-margin-usdt: 50    # 每仓固定保证金 USDT(P0 固定小仓)
+    leverage: 20
+    order-timeout-bars: 12   # 挂单超时(5m 根数，对齐 FiboParams)
+
+# Binance行情配置
+binance:
+  ws-url: wss://stream.binance.com:9443/ws
+  futures-ws-url: wss://fstream.binance.com/ws
+  rest-base-url: https://api.binance.com
+  futures-rest-base-url: https://fapi.binance.com
+  symbols:
+    - BTCUSDT
+    - PAXGUSDT
+    - ETHUSDT
+    - DOGEUSDT
+  fallback-poll-interval: 5000
+
+# Binance USDT-M 合约 Testnet 模拟交易（仅交易；行情仍走上方主网 binance.*）
+# api-key/secret-key 在 https://testnet.binancefuture.com/
+binance-testnet:
+  rest-base-url: https://demo-fapi.binance.com
+  api-key:
+  secret-key:
+  recv-window: 5000
+  connect-timeout: 5000
+  read-timeout: 10000
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+
+# CoinDesk新闻API配置
+coindesk:
+  news-api-key:
+
+# Sprint B1-3：agent+horizon+regime 静态调权。
+# 当前回放未证明收益，默认关闭；仅用于模拟盘观察或后续新规则实验。
+factor:
+  # 日频 BTC ETF flow 只做 shadow 研究，默认不爬 Farside，不进入开仓决策
+  btc_etf_flow:
+    enabled: false
+  weight_override:
+    enabled: false
+    config: classpath:factor_weight_override.json
+
+# WebSocket配置
+websocket:
+  # 最大连接数
+  max-connections: 10000
+  # 心跳间隔（秒）
+  heartbeat-interval: 15
+  # 是否强制认证
+  require-auth: false

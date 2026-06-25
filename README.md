@@ -241,10 +241,10 @@ whatifibought/
 │       ├── entity/
 │       ├── handler/
 │       └── util/
-├── wiib-service/
+├── wiib-sim/
 │   ├── pom.xml
 │   ├── Dockerfile-example
-│   └── src/main/java/com/mawai/wiibservice/
+│   └── src/main/java/com/mawai/wiibsim/
 │       ├── controller/
 │       ├── service/
 │       ├── mapper/
@@ -358,8 +358,8 @@ LINUXDO_REDIRECT_URI=https://your-domain.com/login
 ### 4. 后端配置
 
 ```bash
-cp wiib-service/src/main/resources/application.example.yml \
-   wiib-service/src/main/resources/application.yml
+cp wiib-sim/src/main/resources/application.example.yml \
+   wiib-sim/src/main/resources/application.yml
 ```
 
 关键配置：
@@ -400,7 +400,7 @@ mvn clean package -DskipTests
 产物：
 
 ```text
-wiib-service/target/wiib-service-0.0.1-SNAPSHOT.jar
+wiib-sim/target/wiib-sim-0.0.1-SNAPSHOT.jar
 ```
 
 ### 6. 构建前端
@@ -424,17 +424,17 @@ Vite 默认端口 3000，代理 `/api` 和 `/ws` 到后端。
 直接运行：
 
 ```bash
-java -jar wiib-service/target/wiib-service-0.0.1-SNAPSHOT.jar
+java -jar wiib-sim/target/wiib-sim-0.0.1-SNAPSHOT.jar
 ```
 
 Docker Compose：
 
 ```bash
 cp docker-compose-example.yml docker-compose.yml
-cp wiib-service/Dockerfile-example wiib-service/Dockerfile
+cp wiib-sim/Dockerfile-example wiib-sim/Dockerfile
 docker network create wiib-network
 docker compose up -d --build
-docker compose logs -f wiib-service
+docker compose logs -f wiib-sim
 ```
 
 Docker 模板默认把后端绑定到 `127.0.0.1:8081`，建议通过 Nginx 或 Caddy 反代对外暴露。

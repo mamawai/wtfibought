@@ -12,7 +12,7 @@
 #      docker compose up -d --build
 #
 #   4. 查看日志
-#      docker compose logs -f wiib-service
+#      docker compose logs -f wiib-sim
 #
 # ─────────────────────────────────────────────────────────────
 # .env 文件示例（必填项）:
@@ -44,11 +44,11 @@
 version: '3.8'
 
 services:
-  wiib-service:
+  wiib-sim:
     build:
-      context: ./wiib-service
+      context: ./wiib-sim
       dockerfile: Dockerfile-example
-    container_name: wiib-service
+    container_name: wiib-sim
 
     # 退出后自动重启（手动 docker stop 除外）
     restart: unless-stopped
