@@ -11,7 +11,7 @@ import com.mawai.wiibservice.agent.research.forecast.ContinuousFactorForecaster;
 import com.mawai.wiibservice.agent.research.forecast.EwmaMomentumForecaster;
 import com.mawai.wiibservice.agent.research.forecast.Forecaster;
 import com.mawai.wiibservice.agent.research.forecast.MultiFactorForecaster;
-import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
+import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibservice.agent.research.series.MarketSeriesStore;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.PostMapping;

@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * Binance USDT-M 合约 Testnet 配置。
- * 与主网行情配置 {@link com.mawai.wiibservice.config.BinanceProperties} 完全隔离：
+ * 与主网行情配置 {@link com.mawai.wiibcommon.config.BinanceProperties} 完全隔离：
  * 行情走主网真实数据，仅交易走 Testnet 模拟环境。
  */
 @Data

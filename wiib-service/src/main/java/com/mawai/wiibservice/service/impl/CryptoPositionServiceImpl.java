@@ -5,7 +5,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mawai.wiibcommon.entity.CryptoPosition;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
-import com.mawai.wiibservice.config.BinanceProperties;
+import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibservice.mapper.CryptoPositionMapper;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibservice.service.CryptoPositionService;

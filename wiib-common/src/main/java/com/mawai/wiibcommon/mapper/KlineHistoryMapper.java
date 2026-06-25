@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.mapper;
+package com.mawai.wiibcommon.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.mawai.wiibcommon.entity.KlineHistory;

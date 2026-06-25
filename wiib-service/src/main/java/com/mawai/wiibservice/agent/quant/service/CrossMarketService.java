@@ -5,7 +5,7 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.entity.FactorHistory;
-import com.mawai.wiibservice.config.BaseRestTemplateConfig;
+import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
 import com.mawai.wiibservice.mapper.FactorHistoryMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

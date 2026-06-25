@@ -11,7 +11,7 @@ import com.mawai.wiibservice.agent.binance.model.SetLeverageResponse;
 import com.mawai.wiibservice.agent.binance.model.SimpleAck;
 import com.mawai.wiibservice.agent.binance.model.UserTrade;
 import com.mawai.wiibservice.agent.binance.model.IncomeRecord;
-import com.mawai.wiibservice.config.BaseRestTemplateConfig;
+import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
@@ -30,7 +30,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Binance USDT-M 合约 Testnet 客户端：仅交易，行情走主网 {@link com.mawai.wiibservice.config.BinanceRestClient}。
+ * Binance USDT-M 合约 Testnet 客户端：仅交易，行情走主网 {@link com.mawai.wiibcommon.market.BinanceRestClient}。
  * 未配置 api-key/secret-key 时不抛错（允许零配置启动），但任何 SIGNED 调用会即时报错。
  */
 @Slf4j

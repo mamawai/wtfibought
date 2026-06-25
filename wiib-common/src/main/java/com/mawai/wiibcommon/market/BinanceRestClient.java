@@ -1,4 +1,7 @@
-package com.mawai.wiibservice.config;
+package com.mawai.wiibcommon.market;
+import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
+import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.config.CoinDeskProperties;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;

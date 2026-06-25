@@ -2,7 +2,7 @@ package com.mawai.wiibservice.controller;
 
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.market.KlineBar;
-import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
+import com.mawai.wiibcommon.market.KlineHistoryStore;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

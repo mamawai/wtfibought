@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.config;
+package com.mawai.wiibcommon.config;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;

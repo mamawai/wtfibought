@@ -2,8 +2,8 @@ package com.mawai.wiibservice.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
-import com.mawai.wiibservice.config.BinanceProperties;
-import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.MarketStreamChannels;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;

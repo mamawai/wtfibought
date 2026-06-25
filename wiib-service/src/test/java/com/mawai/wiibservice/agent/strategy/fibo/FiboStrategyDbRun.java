@@ -1,13 +1,13 @@
 package com.mawai.wiibservice.agent.strategy.fibo;
 
 import com.mawai.wiibcommon.market.KlineBar;
-import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
+import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibservice.agent.strategy.backtest.StrategyKlineBacktestEngine;
 import com.mawai.wiibservice.agent.strategy.core.WindowedMarketView;
 import com.mawai.wiibservice.agent.strategy.backtest.BacktestResult;
-import com.mawai.wiibservice.config.BinanceProperties;
-import com.mawai.wiibservice.config.BinanceRestClient;
-import com.mawai.wiibservice.config.CoinDeskProperties;
+import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.market.BinanceRestClient;
+import com.mawai.wiibcommon.config.CoinDeskProperties;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 

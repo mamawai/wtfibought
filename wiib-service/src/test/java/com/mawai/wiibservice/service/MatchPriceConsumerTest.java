@@ -1,7 +1,7 @@
 package com.mawai.wiibservice.service;
 
-import com.mawai.wiibservice.config.BinanceProperties;
-import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.core.StringRedisTemplate;

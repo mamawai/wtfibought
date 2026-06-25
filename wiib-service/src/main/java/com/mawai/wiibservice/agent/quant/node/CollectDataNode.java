@@ -5,10 +5,10 @@ import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibcommon.enums.KlineInterval;
-import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
 import com.mawai.wiibcommon.market.DepthStreamCache;
-import com.mawai.wiibservice.service.ForceOrderService;
+import com.mawai.wiibcommon.market.ForceOrderService;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.HashMap;

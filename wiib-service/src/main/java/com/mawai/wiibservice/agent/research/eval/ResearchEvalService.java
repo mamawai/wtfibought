@@ -14,7 +14,7 @@ import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
 import com.mawai.wiibservice.agent.research.forecast.TrainingSample;
 import com.mawai.wiibservice.agent.research.kline.KlineAggregator;
 import com.mawai.wiibcommon.market.KlineBar;
-import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
+import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibservice.agent.research.label.BarrierLabel;
 import com.mawai.wiibservice.agent.research.label.RegimeLabeler;
 import com.mawai.wiibservice.agent.research.label.TripleBarrierLabeler;

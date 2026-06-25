@@ -2,7 +2,7 @@ package com.mawai.wiibservice.service;
 
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.MarketStreamChannels;
-import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
+import com.mawai.wiibcommon.market.KlineHistoryStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.stream.StreamRecords;

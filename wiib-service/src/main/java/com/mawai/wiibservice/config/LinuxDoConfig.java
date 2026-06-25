@@ -1,4 +1,5 @@
 package com.mawai.wiibservice.config;
+import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
 
 import lombok.Getter;
 import org.springframework.beans.factory.annotation.Value;

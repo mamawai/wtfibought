@@ -6,7 +6,7 @@ import com.mawai.wiibservice.agent.research.ForecastHorizon;
 import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
 import com.mawai.wiibservice.agent.research.forecast.VolatilityRiskTier;
 import com.mawai.wiibcommon.market.KlineBar;
-import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
+import com.mawai.wiibcommon.market.KlineHistoryStore;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;

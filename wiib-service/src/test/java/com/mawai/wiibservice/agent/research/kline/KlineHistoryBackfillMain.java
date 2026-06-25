@@ -1,9 +1,10 @@
 package com.mawai.wiibservice.agent.research.kline;
+import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibcommon.market.KlineBar;
 
-import com.mawai.wiibservice.config.BinanceProperties;
-import com.mawai.wiibservice.config.BinanceRestClient;
-import com.mawai.wiibservice.config.CoinDeskProperties;
+import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibcommon.market.BinanceRestClient;
+import com.mawai.wiibcommon.config.CoinDeskProperties;
 
 import java.sql.Connection;
 import java.sql.DriverManager;

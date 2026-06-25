@@ -1,6 +1,6 @@
 package com.mawai.wiibservice.agent.quant.tool;
 
-import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;

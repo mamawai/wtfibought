@@ -6,8 +6,8 @@ import com.mawai.wiibservice.agent.quant.QuantForecastRunResult;
 import com.mawai.wiibservice.agent.quant.domain.ForecastResult;
 import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
 import com.mawai.wiibservice.agent.quant.domain.QuantForecastRequestEvent;
-import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
-import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibcommon.market.KlineHistoryStore;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibservice.service.impl.RedisMessageBroadcastService;
 import org.junit.jupiter.api.Test;
 

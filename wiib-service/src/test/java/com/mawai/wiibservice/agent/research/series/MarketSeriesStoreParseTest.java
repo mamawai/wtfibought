@@ -1,7 +1,7 @@
 package com.mawai.wiibservice.agent.research.series;
 
 import com.mawai.wiibcommon.entity.FactorHistory;
-import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibservice.mapper.FactorHistoryMapper;
 import org.junit.jupiter.api.Test;
 

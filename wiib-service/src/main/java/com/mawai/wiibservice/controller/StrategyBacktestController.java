@@ -3,7 +3,7 @@ package com.mawai.wiibservice.controller;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.market.KlineBar;
-import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
+import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibservice.agent.strategy.backtest.StrategyKlineBacktestEngine;
 import com.mawai.wiibservice.agent.strategy.core.WindowedMarketView;
 import com.mawai.wiibservice.agent.strategy.fibo.FiboParams;

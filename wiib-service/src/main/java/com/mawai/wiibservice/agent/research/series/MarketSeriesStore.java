@@ -4,7 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.entity.FactorHistory;
-import com.mawai.wiibservice.config.BinanceRestClient;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibservice.mapper.FactorHistoryMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

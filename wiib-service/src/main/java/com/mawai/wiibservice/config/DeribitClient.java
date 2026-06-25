@@ -1,4 +1,5 @@
 package com.mawai.wiibservice.config;
+import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

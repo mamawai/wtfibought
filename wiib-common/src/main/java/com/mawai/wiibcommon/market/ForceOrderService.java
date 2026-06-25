@@ -1,10 +1,10 @@
-package com.mawai.wiibservice.service;
+package com.mawai.wiibcommon.market;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.mawai.wiibcommon.entity.ForceOrder;
-import com.mawai.wiibservice.mapper.ForceOrderMapper;
+import com.mawai.wiibcommon.mapper.ForceOrderMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
