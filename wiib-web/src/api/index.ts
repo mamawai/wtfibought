@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats } from '../types/testnet';
-import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, GroupedVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, AiTradingDashboard, AiTradingDecision, TradingRuntimeConfig, QuantRuntimeConfig, TradingCycleSubmitResult, SprintCDashboard, GraphNodeMetric } from '../types';
+import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, GroupedVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, QuantRuntimeConfig, GraphNodeMetric } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -165,24 +165,11 @@ export const adminApi = {
     api.post<unknown, string>('/admin/ai-agent/quant/trigger', null, { params: { symbol } }),
   triggerQuantVerification: (symbol: string) =>
     api.post<unknown, string>('/admin/ai-agent/quant/verify/trigger', null, { params: { symbol } }),
-  triggerAiTrader: (symbol?: string) =>
-    api.post<unknown, string>('/admin/ai-agent/trading/trigger', null, { params: { symbol } }),
-  triggerAiTraderDetails: (symbol?: string) =>
-    api.post<unknown, TradingCycleSubmitResult>('/admin/ai-agent/trading/trigger-details', null, { params: { symbol } }),
-  // 交易运行时开关
-  getTradingConfig: () =>
-    api.get<unknown, TradingRuntimeConfig>('/admin/ai-agent/trading-config'),
-  setTradingConfig: (config: TradingRuntimeConfig) =>
-    api.post<unknown, TradingRuntimeConfig>('/admin/ai-agent/trading-config', config),
   // 量化运行时开关
   getQuantConfig: () =>
     api.get<unknown, QuantRuntimeConfig>('/admin/ai-agent/quant-config'),
   setQuantConfig: (config: QuantRuntimeConfig) =>
     api.post<unknown, QuantRuntimeConfig>('/admin/ai-agent/quant-config', config),
-  sprintCDashboard: (days = 7) =>
-    api.get<unknown, SprintCDashboard>('/admin/sprint-c-dashboard', { params: { days } }),
-  setSprintCPathStatus: (path: string, enabled: boolean, reason?: string) =>
-    api.post<unknown, void>('/admin/sprint-c-dashboard/path-status', { path, enabled, reason }),
 };
 
 // ========== 期权接口 ==========
@@ -426,17 +413,6 @@ export const aiAgentApi = {
 
     await streamChatResponse(response, onChunk);
   },
-};
-
-// ========== AI Trading 接口 ==========
-export const aiTradingApi = {
-  dashboard: () => api.get<unknown, AiTradingDashboard>('/ai/trading/dashboard'),
-  decisions: (symbol?: string, limit = 20) =>
-    api.get<unknown, AiTradingDecision[]>('/ai/trading/decisions', { params: { symbol, limit } }),
-  positions: (symbol?: string) =>
-    api.get<unknown, FuturesPosition[]>('/ai/trading/positions', { params: { symbol } }),
-  orders: (symbol?: string, pageNum = 1, pageSize = 20) =>
-    api.get<unknown, PageResult<FuturesOrder>>('/ai/trading/orders', { params: { symbol, pageNum, pageSize } }),
 };
 
 // ========== Testnet 模拟盘监测 ==========

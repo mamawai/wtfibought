@@ -3,7 +3,6 @@ package com.mawai.wiibservice.agent.quant.memory;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
-import com.mawai.wiibcommon.entity.QuantForecastAdjustment;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantForecastVerification;
 import com.mawai.wiibcommon.entity.QuantHorizonForecast;
@@ -68,11 +67,9 @@ public class VerificationService {
             List<VerificationCycleResult> cycles
     ) {}
 
-    /** 分组结果：保留 lightCycles/adjustments 字段兼容前端；新 research 主链路下二者恒为空。 */
+    /** 分组结果：轻周期已下线，只保留正式 cycle。 */
     public record GroupedHeavyCycle(
-            VerificationCycleResult heavy,
-            List<VerificationCycleResult> lightCycles,
-            List<QuantForecastAdjustment> adjustments
+            VerificationCycleResult heavy
     ) {}
 
     /** total/correct/accuracyRate/heavy* 均为纯方向命中口径(directionHit)。 */
@@ -239,7 +236,7 @@ public class VerificationService {
                     heavyCorrect++;
                 }
             }
-            groups.add(new GroupedHeavyCycle(heavy, List.of(), List.of()));
+            groups.add(new GroupedHeavyCycle(heavy));
         }
 
         String accuracyRate = totalAll > 0 ? (correctAll * 100 / totalAll) + "%" : "0%";

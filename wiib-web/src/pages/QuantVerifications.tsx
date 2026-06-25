@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
-import { Loader2, CheckCircle2, ArrowLeft, RefreshCw, ExternalLink } from 'lucide-react';
+import { Loader2, CheckCircle2, ArrowLeft, RefreshCw } from 'lucide-react';
 import { parseRiskTags, translateRiskTag } from '../lib/utils';
 import type { GroupedVerificationSummary, QuantVerificationCycleResult, QuantForecastVerificationItem } from '../types';
 
@@ -147,8 +147,7 @@ export function QuantVerifications() {
           </div>
 
           {summary.groups.map((group) => {
-            const { heavy, lightCycles } = group;
-            const hasLight = lightCycles.length > 0;
+            const { heavy } = group;
             return (
               <Card key={heavy.cycleId} className="border-primary/20">
                 <CardHeader className="pb-2">
@@ -158,22 +157,6 @@ export function QuantVerifications() {
                   <div className="grid gap-2 md:grid-cols-3">
                     {heavy.items.map(item => <HorizonCard key={item.id} item={item} />)}
                   </div>
-
-                  {hasLight && (
-                    <div className="flex items-center justify-end">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-6 text-[11px] px-2"
-                        onClick={() => navigate(
-                          `/verifications/light?symbol=${paramSymbol}&parentCycleId=${heavy.cycleId}`,
-                          { state: { group } }
-                        )}
-                      >
-                        <ExternalLink className="w-3 h-3 mr-1" /> 轻周期 ({lightCycles.length})
-                      </Button>
-                    </div>
-                  )}
                 </CardContent>
               </Card>
             );

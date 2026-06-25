@@ -12,7 +12,6 @@ import { CoinSelect } from './pages/CoinSelect';
 import { Ranking } from './pages/Ranking';
 import { Login } from './pages/Login';
 import { Admin } from './pages/Admin';
-import { AdminSprintC } from './pages/AdminSprintC';
 import { GraphObs } from './pages/GraphObs';
 import { Blackjack } from './pages/Blackjack';
 import { Mines } from './pages/Mines';
@@ -22,11 +21,9 @@ import { Intro } from './pages/Intro';
 import { Me } from './pages/Me';
 import { Prediction } from './pages/Prediction';
 import { AiAgent } from './pages/AiAgent';
-import { AiTrader } from './pages/AiTrader';
 import { TestnetMonitor } from './pages/TestnetMonitor';
 import { ForceOrders } from './pages/ForceOrders';
 import { QuantVerifications } from './pages/QuantVerifications';
-import { QuantLightVerifications } from './pages/QuantLightVerifications';
 import { useUserStore } from './stores/userStore';
 import { useDedupedEffect } from './hooks/useDedupedEffect';
 
@@ -68,7 +65,6 @@ function App() {
                 <Route path="/coin/:symbol" element={<CoinRoute />} />
                 <Route path="/ranking" element={<Ranking />} />
                 <Route path="/admin" element={<Admin />} />
-                <Route path="/admin/sprint-c" element={<RequireAuth><AdminSprintC /></RequireAuth>} />
                 <Route path="/admin/graph-obs" element={<RequireAuth><GraphObs /></RequireAuth>} />
                 <Route path="/games" element={<Games />} />
                 <Route path="/me" element={<Me />} />
@@ -77,10 +73,8 @@ function App() {
                 <Route path="/videopoker" element={<RequireAuth><VideoPoker /></RequireAuth>} />
                 <Route path="/prediction" element={<RequireAuth><Prediction /></RequireAuth>} />
                 <Route path="/ai" element={<RequireAuth><AiAgent /></RequireAuth>} />
-                <Route path="/ai-trader" element={<RequireAuth><AiTrader /></RequireAuth>} />
                 <Route path="/testnet" element={<RequireAuth><TestnetMonitor /></RequireAuth>} />
                 <Route path="/verifications" element={<RequireAuth><QuantVerifications /></RequireAuth>} />
-                <Route path="/verifications/light" element={<RequireAuth><QuantLightVerifications /></RequireAuth>} />
                 <Route path="/force-orders" element={<ForceOrders />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

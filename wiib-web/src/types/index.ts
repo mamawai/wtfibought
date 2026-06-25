@@ -672,27 +672,6 @@ export interface QuantVerificationSummary {
 
 export interface GroupedHeavyCycle {
   heavy: QuantVerificationCycleResult;
-  lightCycles: QuantVerificationCycleResult[];
-  adjustments?: QuantForecastAdjustment[];
-}
-
-/** 轻周期对父重周期 forecast 的修正明细（FLIP 为历史兼容，新强反向使用 LIGHT_VETO） */
-export interface QuantForecastAdjustment {
-  id: number;
-  lightCycleId: string;
-  heavyCycleId: string;
-  symbol: string;
-  lightHorizon: string;
-  heavyHorizon: string;
-  adjustType: 'SAME_DIR_BOOST' | 'OPPO_WEAK_PENALTY' | 'OPPO_STRONG_PENALTY' | 'LIGHT_VETO' | 'FLIP';
-  lightDirection: string;
-  lightConfidence: number;
-  prevHeavyDirection: string;
-  prevHeavyConfidence: number;
-  newHeavyDirection: string;
-  newHeavyConfidence: number;
-  voteCountAfter: number;
-  createdAt: string;
 }
 
 export interface GroupedVerificationSummary {
@@ -728,125 +707,10 @@ export interface AiModelAssignment {
   model: string;
 }
 
-export interface TradingRuntimeConfig {
-  decisionInterval?: string;
-  decisionIntervalCode?: string;
-  supportedDecisionIntervals?: string[];
-  entryEnabledStrategies?: string[];
-  supportedEntryStrategies?: string[];
-  lowVolTradingEnabled?: boolean;
-  playbookExitEnabled?: boolean;
-  /** 实际生效状态：环境 kill switch 和 runtime 开关都开才为 true。 */
-  circuitBreakerEnabled?: boolean;
-  circuitBreakerRuntimeEnabled?: boolean;
-  circuitBreakerPropertyEnabled?: boolean;
-  circuitBreakerL1DailyNetLossPct?: number;
-  circuitBreakerL2LossStreak?: number;
-  circuitBreakerL2CooldownHours?: number;
-  circuitBreakerL3DrawdownPct?: number;
-}
-
 export interface QuantRuntimeConfig {
   debateJudgeEnabled?: boolean;
   debateJudgeShadowEnabled?: boolean;
   factorWeightOverrideEnabled?: boolean;
-}
-
-export type SubmitStatus = 'SUBMITTED' | 'SKIPPED';
-
-export interface SymbolSubmitResult {
-  symbol: string;
-  status: SubmitStatus;
-  reason?: string | null;
-}
-
-export interface TradingCycleSubmitResult {
-  cycleNo: number;
-  items: SymbolSubmitResult[];
-}
-
-// ========== Sprint C Admin Dashboard ==========
-export interface SprintCBreakerStatus {
-  enabled: boolean;
-  anyActive: boolean;
-  level: 'NORMAL' | 'L1' | 'L2' | 'L3' | 'DISABLED' | string;
-  l1Reason: string | null;
-  l2Reason: string | null;
-  l3Reason: string | null;
-  peakEquity: string | null;
-}
-
-export interface SprintCTradeStats {
-  samples: number;
-  wins: number;
-  winRate: number | null;
-  avgPnl?: number | null;
-  ev?: number | null;
-  totalPnl: number | null;
-  avgHoldingMinutes: number | null;
-}
-
-export interface SprintCPathStats extends SprintCTradeStats {
-  path: 'BREAKOUT' | 'MR' | 'LEGACY_TREND' | string;
-  enabled: boolean;
-  disabledReason: string | null;
-  disabledAt: string | null;
-  consecutiveLossCount: number;
-}
-
-export interface SprintCAccount {
-  aiUserId: number;
-  todayOpenCount: number;
-  cumulative: SprintCTradeStats;
-  breaker: SprintCBreakerStatus;
-}
-
-export interface SprintCFactorIrRow {
-  agent: string;
-  horizon: string;
-  regime: string;
-  samples: number;
-  meanAlignedReturnBps: number | null;
-  stdAlignedReturnBps: number | null;
-  ir: number | null;
-  winRate: number | null;
-  avgConfidence: number | null;
-  avgAbsScore: number | null;
-}
-
-export interface SprintCFactorCoverage {
-  factorName: string;
-  symbol: string;
-  frequency: string;
-  expectedSamples: number;
-  samples: number;
-  completeness: number;
-  latestObservedAt: string | null;
-  latestAgeHours: number | null;
-  latestValue: number | null;
-}
-
-export interface SprintCLlmVariance {
-  cycles: number;
-  lowConfidenceCycles: number;
-  lowConfidenceRate: number | null;
-  avgRegimeConfidence: number | null;
-  avgRegimeConfidenceStddev: number | null;
-  avgNewsConfidenceStddev: number | null;
-  transitionCycles: number;
-  highVarianceCycles: number;
-}
-
-export interface SprintCDashboard {
-  generatedAt: string;
-  days: number;
-  from: string;
-  to: string;
-  account: SprintCAccount;
-  pathStats: SprintCPathStats[];
-  factorIrRanking: SprintCFactorIrRow[];
-  externalFactorCoverage: SprintCFactorCoverage[];
-  llmVariance: SprintCLlmVariance;
 }
 
 export interface LatestCryptoResult {
@@ -870,31 +734,6 @@ export interface ForceOrder {
   amount: number;
   status: string;
   tradeTime: string;
-  createdAt: string;
-}
-
-// ========== AI Trading 类型 ==========
-export interface AiTradingDashboard {
-  balance: number;
-  frozenBalance: number;
-  unrealizedPnl: number;
-  totalPnl: number;
-  positionCount: number;
-  todayTrades: number;
-  positions: FuturesPosition[];
-}
-
-export interface AiTradingDecision {
-  id: number;
-  cycleNo: number;
-  symbol: string;
-  action: string;
-  reasoning: string;
-  marketContext: string;
-  positionSnapshot: string;
-  executionResult: string | null;
-  balanceBefore: number;
-  balanceAfter: number;
   createdAt: string;
 }
 

@@ -2,14 +2,14 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useUserStore } from '../stores/userStore';
 import { adminApi, type TaskStatus } from '../api';
-import type { AiKeyConfig, AiModelAssignment, TradingRuntimeConfig, QuantRuntimeConfig, TradingCycleSubmitResult } from '../types';
+import type { AiKeyConfig, AiModelAssignment, QuantRuntimeConfig } from '../types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
 import { Select } from '../components/ui/select';
 import { useToast } from '../components/ui/use-toast';
-import { Play, Square, RefreshCw, Database, Calendar, Clock, Plus, Trash2, Pencil, Save, ShieldAlert, Activity } from 'lucide-react';
+import { Play, Square, RefreshCw, Database, Calendar, Clock, Plus, Trash2, Pencil, Save, Activity } from 'lucide-react';
 
 const FUNCTION_LABELS: Record<string, string> = {
   behavior: '行为分析',
@@ -18,19 +18,6 @@ const FUNCTION_LABELS: Record<string, string> = {
   reflection: '反思验证',
 };
 const MODEL_ASSIGNMENT_FUNCTIONS = new Set(Object.keys(FUNCTION_LABELS));
-const DECISION_INTERVAL_LABELS: Record<string, string> = {
-  M1: '1m',
-  M3: '3m',
-  M5: '5m',
-  M15: '15m',
-  H1: '1h',
-};
-const ENTRY_STRATEGY_LABELS: Record<string, string> = {
-  BREAKOUT: '突破',
-  MR: '均值回归',
-  LEGACY_TREND: '趋势延续',
-  MA_SLOPE: 'MA Slope',
-};
 
 export function Admin() {
   const { user } = useUserStore();
@@ -52,15 +39,6 @@ export function Admin() {
   // 模型分配
   const [assignmentsLoading, setAssignmentsLoading] = useState(false);
   const [assignmentsDraft, setAssignmentsDraft] = useState<AiModelAssignment[]>([]);
-
-  // 交易运行时开关
-  const [tradingConfig, setTradingConfig] = useState<TradingRuntimeConfig>({
-    decisionInterval: 'M5',
-    entryEnabledStrategies: ['BREAKOUT', 'MR', 'LEGACY_TREND'],
-    lowVolTradingEnabled: false,
-    playbookExitEnabled: false,
-  });
-  const [circuitBreakerDraft, setCircuitBreakerDraft] = useState<TradingRuntimeConfig>({});
 
   // 量化运行时开关
   const [quantConfig, setQuantConfig] = useState<QuantRuntimeConfig>({
@@ -105,19 +83,6 @@ export function Admin() {
     finally { setAssignmentsLoading(false); }
   }, []);
 
-  const fetchTradingConfig = useCallback(async () => {
-    try {
-      const c = await adminApi.getTradingConfig();
-      setTradingConfig(c);
-      setCircuitBreakerDraft({
-        circuitBreakerL1DailyNetLossPct: c.circuitBreakerL1DailyNetLossPct,
-        circuitBreakerL2LossStreak: c.circuitBreakerL2LossStreak,
-        circuitBreakerL2CooldownHours: c.circuitBreakerL2CooldownHours,
-        circuitBreakerL3DrawdownPct: c.circuitBreakerL3DrawdownPct,
-      });
-    } catch { /* ignore */ }
-  }, []);
-
   const fetchQuantConfig = useCallback(async () => {
     try {
       const c = await adminApi.getQuantConfig();
@@ -131,10 +96,9 @@ export function Admin() {
       fetchInterestRate();
       fetchAiKeys();
       fetchAssignments();
-      fetchTradingConfig();
       fetchQuantConfig();
     }
-  }, [user, fetchStatus, fetchInterestRate, fetchAiKeys, fetchAssignments, fetchTradingConfig, fetchQuantConfig]);
+  }, [user, fetchStatus, fetchInterestRate, fetchAiKeys, fetchAssignments, fetchQuantConfig]);
 
   if (!user || user.id !== 1) {
     return <Navigate to="/" replace />;
@@ -145,70 +109,6 @@ export function Admin() {
     try {
       await action();
       await fetchStatus();
-    } catch { /* ignore */ }
-    finally { setActionLoading(null); }
-  };
-
-  const toggleLowVolTrading = async () => {
-    const next = !tradingConfig.lowVolTradingEnabled;
-    setActionLoading('toggleLowVol');
-    try {
-      const c = await adminApi.setTradingConfig({ lowVolTradingEnabled: next });
-      setTradingConfig(c);
-      toast(next ? '低波动小仓位模式：已开启' : '低波动小仓位模式：已关闭', 'success');
-    } catch { /* ignore */ }
-    finally { setActionLoading(null); }
-  };
-
-  const togglePlaybookExit = async () => {
-    const next = !tradingConfig.playbookExitEnabled;
-    setActionLoading('togglePlaybookExit');
-    try {
-      const c = await adminApi.setTradingConfig({ playbookExitEnabled: next });
-      setTradingConfig(c);
-      toast(next ? 'Playbook平仓灰度开关：已开启' : 'Playbook平仓灰度开关：已关闭', 'success');
-    } catch { /* ignore */ }
-    finally { setActionLoading(null); }
-  };
-
-  const changeDecisionInterval = async (decisionInterval: string) => {
-    if (!decisionInterval || decisionInterval === tradingConfig.decisionInterval) return;
-    setActionLoading('decisionInterval');
-    try {
-      const c = await adminApi.setTradingConfig({ decisionInterval });
-      setTradingConfig(c);
-      toast(`主决策周期：${DECISION_INTERVAL_LABELS[c.decisionInterval || decisionInterval] || decisionInterval}`, 'success');
-    } catch (e) { toast((e as Error).message || '切换失败', 'error'); }
-    finally { setActionLoading(null); }
-  };
-
-  const toggleEntryStrategy = async (strategy: string) => {
-    const enabled = tradingConfig.entryEnabledStrategies ?? ['BREAKOUT', 'MR', 'LEGACY_TREND'];
-    const next = enabled.includes(strategy)
-      ? enabled.filter(item => item !== strategy)
-      : [...enabled, strategy];
-    setActionLoading(`entryStrategy:${strategy}`);
-    try {
-      const c = await adminApi.setTradingConfig({ entryEnabledStrategies: next });
-      setTradingConfig(c);
-      toast('入场策略池已更新', 'success');
-    } catch (e) { toast((e as Error).message || '保存失败', 'error'); }
-    finally { setActionLoading(null); }
-  };
-
-  const toggleCircuitBreaker = async () => {
-    const runtimeEnabled = tradingConfig.circuitBreakerRuntimeEnabled ?? tradingConfig.circuitBreakerEnabled;
-    const next = !runtimeEnabled;
-    setActionLoading('toggleCircuitBreaker');
-    try {
-      const c = await adminApi.setTradingConfig({ circuitBreakerEnabled: next });
-      setTradingConfig(c);
-      toast(
-        next && c.circuitBreakerPropertyEnabled === false
-          ? '账户三级熔断 runtime 已开启，但环境总开关关闭，当前未生效'
-          : next ? '账户三级熔断：已开启' : '账户三级熔断：已关闭',
-        'success'
-      );
     } catch { /* ignore */ }
     finally { setActionLoading(null); }
   };
@@ -232,22 +132,6 @@ export function Admin() {
       setQuantConfig(c);
       toast(next ? 'Bull/Bear辩论影子模式：已开启' : 'Bull/Bear辩论影子模式：已关闭', 'success');
     } catch { /* ignore */ }
-    finally { setActionLoading(null); }
-  };
-
-  const saveCircuitBreakerParams = async () => {
-    setActionLoading('saveCircuitBreaker');
-    try {
-      const c = await adminApi.setTradingConfig(circuitBreakerDraft);
-      setTradingConfig(c);
-      setCircuitBreakerDraft({
-        circuitBreakerL1DailyNetLossPct: c.circuitBreakerL1DailyNetLossPct,
-        circuitBreakerL2LossStreak: c.circuitBreakerL2LossStreak,
-        circuitBreakerL2CooldownHours: c.circuitBreakerL2CooldownHours,
-        circuitBreakerL3DrawdownPct: c.circuitBreakerL3DrawdownPct,
-      });
-      toast('账户熔断参数已保存', 'success');
-    } catch (e) { toast((e as Error).message || '保存失败', 'error'); }
     finally { setActionLoading(null); }
   };
 
@@ -339,19 +223,6 @@ export function Admin() {
     }
   };
 
-  const formatTradingSubmitResult = (result: TradingCycleSubmitResult) => {
-    const submitted = result.items
-      .filter(item => item.status === 'SUBMITTED')
-      .map(item => item.symbol);
-    const skipped = result.items
-      .filter(item => item.status === 'SKIPPED')
-      .map(item => `${item.symbol}:${item.reason || 'SKIPPED'}`);
-    const parts = [`cycleNo=${result.cycleNo}`];
-    if (submitted.length > 0) parts.push(`已提交 ${submitted.join(', ')}`);
-    if (skipped.length > 0) parts.push(`已跳过 ${skipped.join(', ')}`);
-    return `AI Trader提交完成：${parts.join('；')}`;
-  };
-
   const maskKey = (key: string) => {
     if (key.length <= 8) return '****';
     return key.slice(0, 4) + '****' + key.slice(-4);
@@ -362,13 +233,6 @@ export function Admin() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-bold">任务管理</h1>
         <div className="flex items-center gap-1.5">
-          <Link
-            to="/admin/sprint-c"
-            className="inline-flex h-8 items-center gap-1 rounded-md border bg-background px-2 text-xs font-medium hover:bg-muted"
-          >
-            <ShieldAlert className="w-3.5 h-3.5" />
-            Sprint C
-          </Link>
           <Link
             to="/admin/graph-obs"
             className="inline-flex h-8 items-center gap-1 rounded-md border bg-background px-2 text-xs font-medium hover:bg-muted"
@@ -612,232 +476,11 @@ export function Admin() {
                     <Button variant="outline" className="h-9 text-xs" onClick={() => { const sym = quantSymbol.trim(); if (sym) void handleMessageAction(() => adminApi.triggerQuant(sym), 'triggerQuant'); }} disabled={actionLoading !== null || !quantSymbol.trim()}>触发量化分析</Button>
                     <Button variant="outline" className="h-9 text-xs" onClick={() => { const sym = quantSymbol.trim(); if (sym) void handleMessageAction(() => adminApi.triggerQuantVerification(sym), 'triggerQuantVerification'); }} disabled={actionLoading !== null || !quantSymbol.trim()}>触发预测验证</Button>
                   </div>
-                  <Button variant="outline" className="w-full h-9 text-xs" onClick={() => { void handleMessageAction(async () => formatTradingSubmitResult(await adminApi.triggerAiTraderDetails()), 'triggerAiTrader'); }} disabled={actionLoading !== null}>唤醒AI Trader决策(全部币种)</Button>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>交易运行时开关</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1">
-                  <div className="font-medium">主决策周期</div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    当前行情特征、AI Trader 执行器和 K 线回测使用的主周期。
-                  </div>
-                  <div className="text-xs mt-2">
-                    当前周期：<Badge variant="outline">
-                      {DECISION_INTERVAL_LABELS[tradingConfig.decisionInterval || ''] || tradingConfig.decisionIntervalCode || 'M5'}
-                    </Badge>
-                  </div>
-                </div>
-                <Select
-                  className="h-9 w-28 rounded-md px-3 text-xs"
-                  value={tradingConfig.decisionInterval || 'M5'}
-                  onChange={e => void changeDecisionInterval(e.target.value)}
-                  disabled={actionLoading !== null}
-                >
-                  {(tradingConfig.supportedDecisionIntervals?.length
-                    ? tradingConfig.supportedDecisionIntervals
-                    : ['M1', 'M3', 'M5', 'M15']).map(iv => (
-                    <option key={iv} value={iv}>{DECISION_INTERVAL_LABELS[iv] || iv}</option>
-                  ))}
-                </Select>
-              </div>
-
-              <div className="flex items-center justify-between gap-4 border-t pt-4">
-                <div className="flex-1">
-                  <div className="font-medium">入场策略池</div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    当前 AI Trader 开仓候选来源；全部关闭时只会 HOLD。
-                  </div>
-                  <div className="text-xs mt-2 flex flex-wrap gap-1.5">
-                    {(tradingConfig.entryEnabledStrategies?.length
-                      ? tradingConfig.entryEnabledStrategies
-                      : ['未启用']).map(strategy => (
-                      <Badge key={strategy} variant={strategy === '未启用' ? 'secondary' : 'outline'}>
-                        {ENTRY_STRATEGY_LABELS[strategy] || strategy}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-wrap justify-end gap-1.5 max-w-[14rem]">
-                  {(tradingConfig.supportedEntryStrategies?.length
-                    ? tradingConfig.supportedEntryStrategies
-                    : ['BREAKOUT', 'MR', 'LEGACY_TREND', 'MA_SLOPE']).map(strategy => {
-                    const checked = (tradingConfig.entryEnabledStrategies ?? []).includes(strategy);
-                    return (
-                      <button
-                        key={strategy}
-                        type="button"
-                        className={`h-8 rounded-md border px-2 text-xs font-medium transition-colors ${
-                          checked ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:bg-muted'
-                        }`}
-                        onClick={() => void toggleEntryStrategy(strategy)}
-                        disabled={actionLoading !== null}
-                      >
-                        {ENTRY_STRATEGY_LABELS[strategy] || strategy}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1">
-                  <div className="font-medium">低波动小仓位模式</div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    开启：盘整期(ATR×SL倍数&lt;noise floor)时，扩SL到噪音下限（≤3.0x）、TP同比例扩、仓位×0.6试探入场<br/>
-                    关闭：低波动期直接HOLD（保守，默认）。重启后保持当前设置。
-                  </div>
-                  <div className="text-xs mt-2">
-                    当前状态：<Badge variant={tradingConfig.lowVolTradingEnabled ? 'default' : 'secondary'}>
-                      {tradingConfig.lowVolTradingEnabled ? '已开启（激进）' : '已关闭（保守）'}
-                    </Badge>
-                  </div>
-                </div>
-                <Button
-                  variant={tradingConfig.lowVolTradingEnabled ? 'default' : 'outline'}
-                  onClick={() => void toggleLowVolTrading()}
-                  disabled={actionLoading !== null}
-                >
-                  {tradingConfig.lowVolTradingEnabled ? '关闭' : '开启'}
-                </Button>
-              </div>
-
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1">
-                  <div className="font-medium">Playbook平仓引擎</div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    开启：灰度使用按路径拆分的Playbook退出逻辑；关闭：继续使用旧ExitDecisionEngine（默认）。
-                  </div>
-                  <div className="text-xs mt-2">
-                    当前状态：<Badge variant={tradingConfig.playbookExitEnabled ? 'default' : 'secondary'}>
-                      {tradingConfig.playbookExitEnabled ? '已开启（灰度）' : '已关闭（旧引擎）'}
-                    </Badge>
-                  </div>
-                </div>
-                <Button
-                  variant={tradingConfig.playbookExitEnabled ? 'default' : 'outline'}
-                  onClick={() => void togglePlaybookExit()}
-                  disabled={actionLoading !== null}
-                >
-                  {tradingConfig.playbookExitEnabled ? '关闭' : '开启'}
-                </Button>
-              </div>
-
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ShieldAlert className="h-5 w-5" /> 账户三级熔断
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1">
-                  <div className="font-medium">开仓前账户总闸</div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    L1看当日净亏损，L2看最近连续亏损，L3看账户权益从峰值的回撤；实际生效需要环境总开关和运行时开关都开启。
-                  </div>
-                  <div className="text-xs mt-2">
-                    当前状态：<Badge variant={tradingConfig.circuitBreakerEnabled ? 'default' : 'secondary'}>
-                      {tradingConfig.circuitBreakerEnabled ? '已生效' : '未生效'}
-                    </Badge>
-                    <Badge variant={tradingConfig.circuitBreakerRuntimeEnabled ? 'outline' : 'secondary'} className="ml-2">
-                      runtime {tradingConfig.circuitBreakerRuntimeEnabled ? '开' : '关'}
-                    </Badge>
-                    <Badge variant={tradingConfig.circuitBreakerPropertyEnabled ? 'outline' : 'destructive'} className="ml-2">
-                      env {tradingConfig.circuitBreakerPropertyEnabled ? '开' : '关'}
-                    </Badge>
-                  </div>
-                </div>
-                <Button
-                  variant={tradingConfig.circuitBreakerRuntimeEnabled ? 'default' : 'outline'}
-                  onClick={() => void toggleCircuitBreaker()}
-                  disabled={actionLoading !== null}
-                >
-                  {tradingConfig.circuitBreakerRuntimeEnabled ? '关闭运行时' : '开启运行时'}
-                </Button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 border-t pt-4">
-                <div>
-                  <label className="text-xs text-muted-foreground">L1 日净亏损阈值(%)</label>
-                  <Input
-                    type="number"
-                    step="0.5"
-                    min={0.1}
-                    max={100}
-                    value={circuitBreakerDraft.circuitBreakerL1DailyNetLossPct ?? ''}
-                    onChange={(e) => setCircuitBreakerDraft({
-                      ...circuitBreakerDraft,
-                      circuitBreakerL1DailyNetLossPct: Number(e.target.value),
-                    })}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground">L3 峰值回撤阈值(%)</label>
-                  <Input
-                    type="number"
-                    step="1"
-                    min={0.1}
-                    max={100}
-                    value={circuitBreakerDraft.circuitBreakerL3DrawdownPct ?? ''}
-                    onChange={(e) => setCircuitBreakerDraft({
-                      ...circuitBreakerDraft,
-                      circuitBreakerL3DrawdownPct: Number(e.target.value),
-                    })}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground">L2 连亏笔数</label>
-                  <Input
-                    type="number"
-                    step="1"
-                    min={1}
-                    value={circuitBreakerDraft.circuitBreakerL2LossStreak ?? ''}
-                    onChange={(e) => setCircuitBreakerDraft({
-                      ...circuitBreakerDraft,
-                      circuitBreakerL2LossStreak: Number(e.target.value),
-                    })}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground">L2 冷却时长(小时)</label>
-                  <Input
-                    type="number"
-                    step="1"
-                    min={1}
-                    value={circuitBreakerDraft.circuitBreakerL2CooldownHours ?? ''}
-                    onChange={(e) => setCircuitBreakerDraft({
-                      ...circuitBreakerDraft,
-                      circuitBreakerL2CooldownHours: Number(e.target.value),
-                    })}
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">默认 L1 10%</Badge>
-                <Badge variant="outline">默认 L2 4连亏 / 2h</Badge>
-                <Badge variant="outline">默认 L3 30%</Badge>
-              </div>
-
-              <Button
-                onClick={() => void saveCircuitBreakerParams()}
-                disabled={actionLoading !== null}
-              >
-                <Save className="w-4 h-4 mr-2" />保存熔断参数
-              </Button>
-            </CardContent>
-          </Card>
 
           <Card>
             <CardHeader>
