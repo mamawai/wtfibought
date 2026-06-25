@@ -25,6 +25,7 @@ public class SaTokenConfig extends BaseSaTokenConfig {
         paths.add("/api/invite/**");
         paths.add("/linuxdo/**");
         paths.add("/ws/**");
+        paths.add("/internal/**");   // internal API 走 InternalApiFilter 的 token 校验，不走用户登录
         return paths;
     }
 }

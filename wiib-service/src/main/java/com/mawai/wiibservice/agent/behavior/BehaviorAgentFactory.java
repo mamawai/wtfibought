@@ -1,20 +1,7 @@
 package com.mawai.wiibservice.agent.behavior;
 
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
-import com.mawai.wiibservice.mapper.BlackjackAccountMapper;
-import com.mawai.wiibservice.mapper.CryptoOrderMapper;
-import com.mawai.wiibservice.mapper.FuturesOrderMapper;
-import com.mawai.wiibservice.mapper.FuturesPositionMapper;
-import com.mawai.wiibservice.mapper.MinesGameMapper;
-import com.mawai.wiibservice.mapper.OptionOrderMapper;
-import com.mawai.wiibservice.mapper.OrderMapper;
-import com.mawai.wiibservice.mapper.PositionMapper;
-import com.mawai.wiibservice.mapper.PredictionBetMapper;
-import com.mawai.wiibservice.mapper.UserAssetSnapshotMapper;
-import com.mawai.wiibservice.mapper.UserMapper;
-import com.mawai.wiibservice.mapper.VideoPokerGameMapper;
-import com.mawai.wiibservice.service.CryptoPositionService;
-import com.mawai.wiibservice.service.UserService;
+import com.mawai.wiibservice.agent.SimInternalClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.stereotype.Component;
@@ -24,58 +11,14 @@ import java.util.function.Consumer;
 @Component
 public class BehaviorAgentFactory {
 
-    private final UserMapper userMapper;
-    private final UserAssetSnapshotMapper snapshotMapper;
-    private final PositionMapper positionMapper;
-    private final OrderMapper orderMapper;
-    private final CryptoOrderMapper cryptoOrderMapper;
-    private final CryptoPositionService cryptoPositionService;
-    private final FuturesOrderMapper futuresOrderMapper;
-    private final FuturesPositionMapper futuresPositionMapper;
-    private final OptionOrderMapper optionOrderMapper;
-    private final PredictionBetMapper predictionBetMapper;
-    private final BlackjackAccountMapper blackjackAccountMapper;
-    private final MinesGameMapper minesGameMapper;
-    private final VideoPokerGameMapper videoPokerGameMapper;
-    private final UserService userService;
+    private final SimInternalClient simClient;
 
-    public BehaviorAgentFactory(UserMapper userMapper,
-                                UserAssetSnapshotMapper snapshotMapper,
-                                PositionMapper positionMapper,
-                                OrderMapper orderMapper,
-                                CryptoOrderMapper cryptoOrderMapper,
-                                CryptoPositionService cryptoPositionService,
-                                FuturesOrderMapper futuresOrderMapper,
-                                FuturesPositionMapper futuresPositionMapper,
-                                OptionOrderMapper optionOrderMapper,
-                                PredictionBetMapper predictionBetMapper,
-                                BlackjackAccountMapper blackjackAccountMapper,
-                                MinesGameMapper minesGameMapper,
-                                VideoPokerGameMapper videoPokerGameMapper,
-                                UserService userService) {
-        this.userMapper = userMapper;
-        this.snapshotMapper = snapshotMapper;
-        this.positionMapper = positionMapper;
-        this.orderMapper = orderMapper;
-        this.cryptoOrderMapper = cryptoOrderMapper;
-        this.cryptoPositionService = cryptoPositionService;
-        this.futuresOrderMapper = futuresOrderMapper;
-        this.futuresPositionMapper = futuresPositionMapper;
-        this.optionOrderMapper = optionOrderMapper;
-        this.predictionBetMapper = predictionBetMapper;
-        this.blackjackAccountMapper = blackjackAccountMapper;
-        this.minesGameMapper = minesGameMapper;
-        this.videoPokerGameMapper = videoPokerGameMapper;
-        this.userService = userService;
+    public BehaviorAgentFactory(SimInternalClient simClient) {
+        this.simClient = simClient;
     }
 
     public ReactAgent create(ChatModel chatModel, Consumer<String> onProgress) {
-        BehaviorAnalysisTools tools = new BehaviorAnalysisTools(
-                userMapper, snapshotMapper, positionMapper, orderMapper,
-                cryptoOrderMapper, cryptoPositionService, futuresOrderMapper,
-                futuresPositionMapper, optionOrderMapper, predictionBetMapper,
-                blackjackAccountMapper, minesGameMapper, videoPokerGameMapper,
-                userService, onProgress);
+        BehaviorAnalysisTools tools = new BehaviorAnalysisTools(simClient, onProgress);
 
         return ReactAgent.builder()
                 .name("behavior_analyst")
