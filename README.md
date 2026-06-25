@@ -24,12 +24,12 @@
 
 ## 当前定位
 
-WhatIfIBought 是一个偏实验性质的模拟交易系统：
+WhatIfIBought 是一个偏实验性质的模拟交易系统，后端按业务域拆成 **3 个独立进程**（feed 数据上游 / sim 真人模拟交易 / quant 量化研究）+ wiib-common 共享层，经 Redis 行情总线和共享 PostgreSQL 协作，故障隔离：
 
 - 股票和期权使用系统生成的虚拟行情。
-- 加密货币现货、永续合约、强平流、盘口和 BTC 预测接入 Binance / Polymarket 等真实外部数据。
-- AI Agent 负责结构化量化预测，只产出预测落库，不直接下单。
-- 策略模块（Fibonacci 等）独立运行，读取行情自行在 Binance Testnet 执行交易。
+- 加密货币现货、永续合约、强平流、盘口和 BTC 预测接入 Binance / Polymarket 等真实外部数据，由 **wiib-feed** 统一接入并写入 Redis。
+- **wiib-sim** 负责真人模拟交易（撮合 / 账本在自研模拟盘 DB）+ 游戏 + BTC 预测，对外提供 Web / WS。
+- **wiib-quant** 的 AI Agent 负责结构化量化预测，只产出预测落库、不碰模拟盘账本；Fibonacci 等策略读取行情自行在 Binance Testnet 执行。
 
 主动 AI 量化/交易标的当前是：
 
@@ -112,22 +112,23 @@ PAXG 仍允许查询历史和残留仓位，但不在主动重周期和轻周期
 ```mermaid
 flowchart TD
     UI["React Web<br/>Stocks / Coin / Futures / Prediction / AI / Games"]
-    API["Spring Boot API<br/>Controllers + Services"]
-    DB[("PostgreSQL<br/>business + quant + ai runtime")]
-    REDIS[("Redis<br/>lock + cache + zset + pub/sub")]
-    WS["WebSocket Clients<br/>Binance + Polymarket"]
-    GEN["Virtual Stock Generator<br/>daily quotes + options"]
-    QUANT["AI Quant<br/>30min heavy + 5min light"]
-    GAME["Games<br/>Blackjack / Mines / Video Poker"]
+    EXC["Binance / Polymarket / Deribit<br/>外部行情源"]
+    FEED["wiib-feed :8081<br/>交易所 WS/REST 接入"]
+    SIM["wiib-sim :8080<br/>真人模拟交易 + 游戏 + 预测<br/>账本 = 自研模拟盘"]
+    QUANT["wiib-quant :8082<br/>AI 量化分析 + 策略研究"]
+    DB[("PostgreSQL<br/>共享 business + quant + ai runtime")]
+    REDIS[("Redis 行情总线<br/>KV + Pub/Sub + Stream<br/>+ lock + zset")]
+    TESTNET["Binance Testnet<br/>策略实盘账本"]
 
-    UI <-->|REST / STOMP| API
-    API --> DB
-    API --> REDIS
-    WS --> API
-    GEN --> API
-    API --> QUANT
+    EXC -->|WS / REST| FEED
+    FEED -->|写行情| REDIS
+    UI <-->|REST / STOMP| SIM
+    REDIS -->|消费行情| SIM
+    REDIS -->|消费行情| QUANT
+    SIM --> DB
     QUANT --> DB
-    API --> GAME
+    SIM <-->|internal API| QUANT
+    QUANT -->|策略下单| TESTNET
 ```
 
 ---
@@ -179,13 +180,17 @@ AI 管理后台通过 `RuntimeFeatureToggleService` 持久化开关到 `ai_runti
 ### Binance
 
 ```text
-Binance WS
-  -> spot miniTicker        -> Caffeine + Redis spot price -> /topic/crypto/{symbol}
-  -> futures markPrice@1s   -> Caffeine + Redis mark price -> /topic/futures/{symbol}
-  -> futures miniTicker     -> futures latest price
-  -> forceOrder             -> force_order table
-  -> aggTrade               -> OrderFlowAggregator
-  -> depth20@100ms          -> DepthStreamCache
+wiib-feed（上游进程）  交易所 WS → Redis
+  -> spot miniTicker        -> Redis 价格 KV + Pub/Sub(feed:price)
+  -> futures markPrice@1s   -> Redis mark price KV + Pub/Sub
+  -> forceOrder             -> force_order 表(DB, 天然跨进程)
+  -> aggTrade               -> Redis Stream(orderflow, quant 读侧聚合)
+  -> depth20@100ms          -> Redis KV(DepthStreamCache)
+  -> K 线收盘                -> Redis Stream(stream:kline:closed)
+
+wiib-sim / wiib-quant（消费进程）  从 Redis 消费 feed 写入的行情
+  sim:   MatchPriceConsumer(撮合/强平) · PredictionRoundConsumer
+  quant: KlineStreamConsumer(驱动预测/策略) · SentinelPriceConsumer(波动哨兵)
 ```
 
 价格更新同时触发现货限价单、永续强平、止损、止盈检查。
@@ -218,62 +223,45 @@ clamp: 0.1% 到 2%
 
 ## 项目结构
 
+后端按业务域拆成 **4 个 Maven module / 3 个独立进程**（+ 共享层），经 Redis 行情总线和共享 PostgreSQL 协作，故障隔离（一个进程崩不连累其他）。
+
 ```text
-whatifibought/
+whatifibought/                        # Maven 多 module 聚合 reactor
 ├── pom.xml
 ├── README.md
-├── example.env
 ├── docker-compose-example.yml
-├── sql/
-│   ├── init.sql
-│   └── init-data.sql
-├── docs/
-│   ├── ai-architecture-overview.md
-│   ├── ai-trader-entry-exit-engine-flow.md
-│   ├── data-and-signal-deep-dive.md
-│   ├── Quantitative analysis.md
-│   └── spring-ai-alibaba-capability-scan.md
-├── wiib-common/
-│   ├── pom.xml
+├── sql/                              # init.sql + init-data.sql
+├── docs/                             # AI 架构 / 量化 / 数据信号深度文档
+├── wiib-common/                      # 共享层：被 feed/quant/sim 共同依赖，让三者互不直接依赖
 │   └── src/main/java/com/mawai/wiibcommon/
-│       ├── constant/
-│       ├── dto/
-│       ├── entity/
-│       ├── handler/
-│       └── util/
-├── wiib-sim/
-│   ├── pom.xml
+│       ├── market/                   # 行情通道 / Depth·OrderFlow 缓存 / BinanceRestClient / KlineBar / Stream channels
+│       ├── broadcast/                # MarketBroadcaster 行情发布器
+│       ├── cache/                    # CacheService
+│       ├── config/                   # Redis / MyBatis / Binance 等基础设施配置
+│       ├── mapper/                   # ForceOrder / KlineHistory 共享 mapper
+│       └── entity/ dto/ enums/ constant/ util/ annotation/ aspect/ exception/ handler/
+├── wiib-feed/                        # ① 数据流上游进程（:8081）
+│   └── src/main/java/com/mawai/wiibfeed/
+│       ├── BinanceWsClient.java      # 交易所 7 路 WS → Redis（KV / Pub-Sub / Stream）
+│       ├── PolymarketWsClient.java   # Polymarket BTC 预测流
+│       ├── WsConnection.java
+│       └── KlineStreamCache.java     # K 线收盘 → Redis Stream
+├── wiib-quant/                       # ② 量化 + 策略研究进程（:8082，只分析不碰模拟盘账本）
+│   └── src/main/java/com/mawai/wiibquant/
+│       ├── agent/
+│       │   ├── quant/                # 重(30min)/轻(5min)周期 StateGraph + 因子 / 裁判 / 记忆
+│       │   ├── research/             # 回测 / 因子 / 预测 / 样本外评估
+│       │   ├── strategy/             # Fibonacci 等策略 + Binance Testnet 执行
+│       │   ├── binance/ behavior/ external/ tool/ config/
+│       │   └── SimInternalClient.java # quant → sim internal API（读用户行为数据）
+│       └── controller/ task/ mapper/ config/   # 5 quant controller / Scheduler / quant mapper / DeribitClient
+├── wiib-sim/                         # ③ 真人模拟交易进程（:8080，账本=自研模拟盘 DB）
 │   ├── Dockerfile-example
 │   └── src/main/java/com/mawai/wiibsim/
-│       ├── controller/
-│       ├── service/
-│       ├── mapper/
-│       ├── config/
-│       ├── task/
-│       └── agent/
-│           ├── quant/
-│           ├── risk/
-│           ├── tool/
-│           ├── trading/
-│           │   ├── backtest/
-│           │   ├── entry/
-│           │   ├── exit/
-│           │   ├── ops/
-│           │   ├── runtime/
-│           │   └── submit/
-│           ├── behavior/
-│           ├── config/
-│           └── external/
-└── wiib-web/
-    ├── package.json
-    ├── vite.config.ts
-    └── src/
-        ├── App.tsx
-        ├── pages/
-        ├── components/
-        ├── hooks/
-        ├── stores/
-        └── api/
+│       └── controller/ service/ mapper/ config/ task/ dto/ util/
+│                                     # 交易 / 游戏 / 预测 / 结算 + BehaviorDataController（internal API 供 quant 调）
+└── wiib-web/                         # React 前端
+    └── src/                          # App.tsx / pages/ components/ hooks/ stores/ api/
 ```
 
 ---
@@ -400,7 +388,9 @@ mvn clean package -DskipTests
 产物：
 
 ```text
-wiib-sim/target/wiib-sim-0.0.1-SNAPSHOT.jar
+wiib-feed/target/wiib-feed-0.0.1-SNAPSHOT.jar     # :8081 数据上游
+wiib-quant/target/wiib-quant-0.0.1-SNAPSHOT.jar   # :8082 量化策略
+wiib-sim/target/wiib-sim-0.0.1-SNAPSHOT.jar       # :8080 模拟交易（对外）
 ```
 
 ### 6. 构建前端
@@ -421,10 +411,12 @@ Vite 默认端口 3000，代理 `/api` 和 `/ws` 到后端。
 
 ### 7. 启动
 
-直接运行：
+三个进程分别启动，共享同一 PostgreSQL + Redis（建议先起 feed，再起 sim/quant）：
 
 ```bash
-java -jar wiib-sim/target/wiib-sim-0.0.1-SNAPSHOT.jar
+java -jar wiib-feed/target/wiib-feed-0.0.1-SNAPSHOT.jar    # :8081 数据上游：交易所 WS → Redis
+java -jar wiib-quant/target/wiib-quant-0.0.1-SNAPSHOT.jar  # :8082 量化分析 + 策略
+java -jar wiib-sim/target/wiib-sim-0.0.1-SNAPSHOT.jar      # :8080 模拟交易（对外，前端连这个）
 ```
 
 Docker Compose：
@@ -437,7 +429,7 @@ docker compose up -d --build
 docker compose logs -f wiib-sim
 ```
 
-Docker 模板默认把后端绑定到 `127.0.0.1:8081`，建议通过 Nginx 或 Caddy 反代对外暴露。
+> 注：当前 `docker-compose.yml` 仅编排 `wiib-sim`；`wiib-feed` / `wiib-quant` 的服务定义待补，目前需手动 `java -jar` 启动。对外只暴露 sim（:8080），建议经 Nginx / Caddy 反代。
 
 ---
 
