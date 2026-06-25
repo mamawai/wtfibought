@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.mawai</groupId>
+        <artifactId>whatifibought</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+    <artifactId>wiib-quant</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>wiib-quant</name>
+    <description>量化 + 策略研究：AI 量化分析(只预测不交易) + 策略下单 Binance Testnet；行情从 Redis 消费 feed</description>
+    <packaging>jar</packaging>
+
+    <properties>
+        <java.version>21</java.version>
+    </properties>
+
+    <dependencies>
+        <!-- 共享层：行情通道/缓存/REST客户端/entity/mapper/基础设施config 全在这（传递 web/redis/aop/sa-token/mybatis-plus/fastjson2/caffeine） -->
+        <dependency>
+            <groupId>com.mawai</groupId>
+            <artifactId>wiib-common</artifactId>
+        </dependency>
+
+        <!-- Spring AI Alibaba Agent Framework（StateGraph 量化工作流核心） -->
+        <dependency>
+            <groupId>com.alibaba.cloud.ai</groupId>
+            <artifactId>spring-ai-alibaba-agent-framework</artifactId>
+            <version>1.1.2.0</version>
+        </dependency>
+
+        <!-- Spring AI OpenAI Starter（接入 OpenAI Compatible API） -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+            <version>1.1.2</version>
+        </dependency>
+
+        <!-- WebFlux：LLM API 调用（spring-ai openai 底层 WebClient） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
+        </dependency>
+
+        <!-- jsoup：CryptoNewsTool 新闻爬虫解析（common 无，显式补） -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.22.1</version>
+        </dependency>
+
+        <!-- fastjson2：agent 域重度使用(54 处)，BOM 管版本 -->
+        <dependency>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
+        </dependency>
+
+        <!-- Caffeine L1 本地缓存（agent 热缓存） -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
+        <!-- PostgreSQL：quant mapper 落库（forecast/factor/strategy 等） -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+        </dependency>
+
+        <!-- 本地观测：Graph 节点耗时/异常指标 + Prometheus 导出 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

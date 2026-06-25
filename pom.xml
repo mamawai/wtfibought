@@ -18,6 +18,7 @@
     <modules>
             <module>wiib-common</module>
             <module>wiib-feed</module>
+            <module>wiib-quant</module>
             <module>wiib-service</module>
     </modules>
 

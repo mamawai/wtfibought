@@ -83,12 +83,6 @@
             <artifactId>fastjson2</artifactId>
         </dependency>
 
-        <dependency>
-            <groupId>org.jsoup</groupId>
-            <artifactId>jsoup</artifactId>
-            <version>1.22.1</version>
-        </dependency>
-
         <!-- Caffeine L1 本地缓存 -->
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
@@ -102,19 +96,6 @@
             <version>3.1.0</version>
         </dependency>
 
-        <!-- Spring AI Alibaba Agent Framework（含Graph） -->
-        <dependency>
-            <groupId>com.alibaba.cloud.ai</groupId>
-            <artifactId>spring-ai-alibaba-agent-framework</artifactId>
-            <version>1.1.2.0</version>
-        </dependency>
-
-        <!-- Spring AI OpenAI Starter（用于接入 OpenAI Compatible API） -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-openai</artifactId>
-            <version>1.1.2</version>
-        </dependency>
     </dependencies>
 
     <build>
