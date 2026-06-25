@@ -8,7 +8,7 @@ import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibservice.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibservice.mapper.FuturesPositionMapper;
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibservice.service.FuturesPositionIndexService;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;

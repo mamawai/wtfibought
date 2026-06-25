@@ -18,9 +18,9 @@ import com.mawai.wiibservice.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibservice.agent.quant.service.MacroContextService;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
-import com.mawai.wiibservice.service.DepthStreamCache;
+import com.mawai.wiibcommon.market.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;
-import com.mawai.wiibservice.service.OrderFlowAggregator;
+import com.mawai.wiibcommon.market.OrderFlowAggregator;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.ai.chat.client.ChatClient;
 

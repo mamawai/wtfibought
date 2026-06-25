@@ -60,6 +60,12 @@
             <artifactId>fastjson2</artifactId>
         </dependency>
 
+        <!-- Caffeine L1 本地缓存（CacheService 共享缓存用） -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
         <!-- Jackson JSON -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>

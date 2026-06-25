@@ -9,7 +9,7 @@ import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibservice.mapper.BlackjackAccountMapper;
 import com.mawai.wiibservice.mapper.BlackjackConvertLogMapper;
 import com.mawai.wiibservice.service.BlackjackService;
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibservice.service.UserService;
 import com.mawai.wiibservice.util.GameLockExecutor;
 import lombok.Data;

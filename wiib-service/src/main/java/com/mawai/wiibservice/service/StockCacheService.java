@@ -1,4 +1,5 @@
 package com.mawai.wiibservice.service;
+import com.mawai.wiibcommon.cache.CacheService;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;

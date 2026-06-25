@@ -7,7 +7,7 @@ import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.config.DeribitClient;
-import com.mawai.wiibservice.service.DepthStreamCache;
+import com.mawai.wiibcommon.market.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;
 import lombok.extern.slf4j.Slf4j;
 

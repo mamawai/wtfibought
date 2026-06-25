@@ -18,7 +18,7 @@ import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.mapper.CryptoOrderMapper;
 import com.mawai.wiibservice.service.BuffService;
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibservice.service.CryptoOrderService;
 import com.mawai.wiibservice.service.CryptoPositionService;
 import com.mawai.wiibservice.service.MarginAccountService;

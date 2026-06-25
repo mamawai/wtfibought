@@ -1,4 +1,5 @@
 package com.mawai.wiibservice.service.impl;
+import com.mawai.wiibcommon.cache.CacheService;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;

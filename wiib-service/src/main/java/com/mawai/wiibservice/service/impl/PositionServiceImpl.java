@@ -9,7 +9,7 @@ import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibservice.mapper.PositionMapper;
 import com.mawai.wiibservice.mapper.StockMapper;
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibservice.service.PositionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

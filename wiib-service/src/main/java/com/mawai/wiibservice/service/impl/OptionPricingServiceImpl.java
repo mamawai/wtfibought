@@ -5,7 +5,7 @@ import com.mawai.wiibcommon.entity.OptionContract;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibservice.config.TradingConfig;
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibservice.service.OptionContractService;
 import com.mawai.wiibservice.service.OptionPricingService;
 import com.mawai.wiibservice.service.StockCacheService;

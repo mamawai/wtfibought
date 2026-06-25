@@ -2,7 +2,7 @@ package com.mawai.wiibservice.controller;
 
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibservice.config.BinanceRestClient;
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;

@@ -20,7 +20,7 @@ import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.mapper.OrderMapper;
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibservice.service.MarginAccountService;
 import com.mawai.wiibservice.service.OrderService;
 import com.mawai.wiibservice.service.PositionService;

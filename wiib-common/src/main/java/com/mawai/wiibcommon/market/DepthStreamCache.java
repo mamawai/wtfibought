@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.service;
+package com.mawai.wiibcommon.market;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

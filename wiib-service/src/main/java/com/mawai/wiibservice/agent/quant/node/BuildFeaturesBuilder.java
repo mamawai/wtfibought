@@ -9,7 +9,7 @@ import com.mawai.wiibservice.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibservice.agent.quant.domain.MarketRegime;
 import com.mawai.wiibservice.agent.quant.domain.NewsItem;
 import com.mawai.wiibservice.agent.tool.CryptoIndicatorCalculator;
-import com.mawai.wiibservice.service.OrderFlowAggregator;
+import com.mawai.wiibcommon.market.OrderFlowAggregator;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;

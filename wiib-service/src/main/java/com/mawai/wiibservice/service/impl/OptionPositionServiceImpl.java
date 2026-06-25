@@ -7,7 +7,7 @@ import com.mawai.wiibcommon.entity.OptionContract;
 import com.mawai.wiibcommon.entity.OptionPosition;
 import com.mawai.wiibservice.mapper.OptionContractMapper;
 import com.mawai.wiibservice.mapper.OptionPositionMapper;
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibservice.service.OptionPositionService;
 import com.mawai.wiibservice.service.OptionPricingService;
 import com.mawai.wiibservice.service.StockCacheService;

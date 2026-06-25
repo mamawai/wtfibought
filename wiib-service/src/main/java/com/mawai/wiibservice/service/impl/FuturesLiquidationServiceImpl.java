@@ -1,6 +1,6 @@
 package com.mawai.wiibservice.service.impl;
 
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibservice.service.FuturesLiquidationService;
 import com.mawai.wiibservice.service.FuturesRiskService;
 import lombok.RequiredArgsConstructor;

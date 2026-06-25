@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.service;
+package com.mawai.wiibcommon.cache;
 
 import com.alibaba.fastjson2.JSON;
 import com.github.benmanes.caffeine.cache.Cache;

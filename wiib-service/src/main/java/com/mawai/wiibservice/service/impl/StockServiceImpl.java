@@ -10,7 +10,7 @@ import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibservice.mapper.CompanyMapper;
 import com.mawai.wiibservice.mapper.StockMapper;
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibservice.service.StockCacheService;
 import com.mawai.wiibservice.service.StockService;
 import lombok.RequiredArgsConstructor;

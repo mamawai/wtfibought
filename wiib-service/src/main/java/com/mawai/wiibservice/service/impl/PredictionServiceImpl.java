@@ -11,7 +11,7 @@ import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibservice.mapper.PredictionBetMapper;
 import com.mawai.wiibservice.mapper.PredictionRoundMapper;
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibservice.service.PredictionService;
 import com.mawai.wiibservice.service.UserService;
 import com.mawai.wiibservice.util.RedisLockUtil;

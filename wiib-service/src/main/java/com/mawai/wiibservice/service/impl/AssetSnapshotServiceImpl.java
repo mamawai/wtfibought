@@ -1,4 +1,5 @@
 package com.mawai.wiibservice.service.impl;
+import com.mawai.wiibcommon.cache.CacheService;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.github.benmanes.caffeine.cache.Cache;

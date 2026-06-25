@@ -1,4 +1,5 @@
 package com.mawai.wiibservice.service;
+import com.mawai.wiibcommon.market.OrderFlowAggregator;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Range;

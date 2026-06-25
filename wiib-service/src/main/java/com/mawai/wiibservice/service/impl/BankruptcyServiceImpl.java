@@ -24,7 +24,7 @@ import com.mawai.wiibservice.mapper.PredictionBetMapper;
 import com.mawai.wiibservice.mapper.SettlementMapper;
 import com.mawai.wiibservice.mapper.UserMapper;
 import com.mawai.wiibservice.service.BankruptcyService;
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibservice.service.CryptoPositionService;
 import com.mawai.wiibservice.service.FuturesPositionIndexService;
 import com.mawai.wiibservice.service.OptionPositionService;

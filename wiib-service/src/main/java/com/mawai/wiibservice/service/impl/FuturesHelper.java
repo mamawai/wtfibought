@@ -5,7 +5,7 @@ import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;

@@ -14,7 +14,7 @@ import com.mawai.wiibservice.config.TradingConfig;
 import com.mawai.wiibservice.mapper.FuturesOrderMapper;
 import com.mawai.wiibservice.mapper.FuturesPositionMapper;
 import com.mawai.wiibservice.mapper.UserMapper;
-import com.mawai.wiibservice.service.CacheService;
+import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibservice.service.FuturesPositionIndexService;
 import com.mawai.wiibservice.service.FuturesRiskService;
 import com.mawai.wiibservice.util.RedisLockUtil;

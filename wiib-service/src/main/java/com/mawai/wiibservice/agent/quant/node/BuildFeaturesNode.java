@@ -3,7 +3,7 @@ package com.mawai.wiibservice.agent.quant.node;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.mawai.wiibcommon.enums.KlineInterval;
-import com.mawai.wiibservice.service.OrderFlowAggregator;
+import com.mawai.wiibcommon.market.OrderFlowAggregator;
 
 import java.util.Map;
 import java.util.function.Supplier;
