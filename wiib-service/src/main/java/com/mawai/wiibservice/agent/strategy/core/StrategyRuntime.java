@@ -6,7 +6,6 @@ import com.mawai.wiibservice.agent.research.kline.KlineBar;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import com.mawai.wiibservice.agent.strategy.execution.TestnetExecutionService;
 import com.mawai.wiibservice.service.ForceOrderService;
-import com.mawai.wiibservice.service.KlineStreamCache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -37,7 +36,6 @@ public class StrategyRuntime {
     private static final int SEED_BARS = 12_000;
 
     private final List<TradingStrategySpi> strategies;
-    private final KlineStreamCache klineStreamCache;
     private final KlineHistoryStore klineHistoryStore;
     private final StrategySignalRecorder recorder;
     private final ForceOrderService forceOrderService;
@@ -70,10 +68,9 @@ public class StrategyRuntime {
         try {
             WindowedMarketView view = views.computeIfAbsent(symbol, this::seedView);
             synchronized (view) {
+                // 事件已携带收盘 bar（KlineStreamConsumer republish 时重建），不再回查进程内缓存
                 if (eventBar != null) {
                     view.append(eventBar);
-                } else {
-                    klineStreamCache.latestClosed(symbol, KlineHistoryStore.DEFAULT_INTERVAL).ifPresent(view::append);
                 }
                 for (TradingStrategySpi strategy : enabledStrategiesFor(symbol)) {
                     Optional<StrategySignal> signal = strategy.onBarClosed(symbol, view);

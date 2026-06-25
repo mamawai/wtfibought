@@ -1,27 +1,28 @@
 package com.mawai.wiibservice.service;
 
-import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
 import com.mawai.wiibservice.agent.research.kline.KlineBar;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.redis.connection.stream.StreamRecords;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class KlineStreamCache {
 
-    private final ApplicationEventPublisher eventPublisher;
-    private final KlineHistoryStore historyStore;
-    private final ConcurrentMap<String, ClosedBar> latestByKey = new ConcurrentHashMap<>();
+    /** K线收盘 Stream key（feed→quant 跨进程通道）。收盘驱动预测/策略，必须 at-least-once，故用 Stream+消费组而非会丢的 Pub/Sub。 */
+    public static final String CLOSED_STREAM_KEY = "stream:kline:closed";
+    /** Stream 近似上限，防无限增长；约覆盖多日数据，足够 consumer 重启回溯。 */
+    private static final long STREAM_MAXLEN = 10_000L;
 
-    public record ClosedBar(KlineBar bar, long receivedMs) {}
+    private final KlineHistoryStore historyStore;
+    private final StringRedisTemplate redisTemplate;
 
     public void onClosedBar(String symbol, String interval, KlineBar bar) {
         if (symbol == null || symbol.isBlank() || interval == null || interval.isBlank() || bar == null) {
@@ -29,23 +30,13 @@ public class KlineStreamCache {
         }
         String normalizedSymbol = normalizeSymbol(symbol);
         String normalizedInterval = normalizeInterval(interval);
-        latestByKey.put(key(normalizedSymbol, normalizedInterval), new ClosedBar(bar, System.currentTimeMillis()));
         if (KlineHistoryStore.DEFAULT_INTERVAL.equals(normalizedInterval)) {
             // 异步落库，不占WS回调线程；下游预测管线经HTTP采集(秒级)后才读historyStore，无竞态
             Thread.startVirtualThread(() -> persistDefaultInterval(normalizedSymbol, normalizedInterval, bar));
         }
-        eventPublisher.publishEvent(new KlineClosedEvent(this, normalizedSymbol, normalizedInterval, bar.closeTime(), bar));
+        // 收盘 → Redis Stream（唯一实时通道）：quant 侧 KlineStreamConsumer 消费后 republish 本地事件，触发预测/策略
+        publishToStream(normalizedSymbol, normalizedInterval, bar);
         log.info("[KlineWS] closed symbol={} interval={} closeTime={}", normalizedSymbol, normalizedInterval, bar.closeTime());
-    }
-
-    public Optional<KlineBar> latestClosed(String symbol, String interval) {
-        ClosedBar closed = latestByKey.get(key(symbol, interval));
-        return closed == null ? Optional.empty() : Optional.of(closed.bar());
-    }
-
-    public long lastClosedMs(String symbol, String interval) {
-        ClosedBar closed = latestByKey.get(key(symbol, interval));
-        return closed == null ? 0L : closed.bar().closeTime();
     }
 
     private void persistDefaultInterval(String symbol, String interval, KlineBar bar) {
@@ -59,10 +50,30 @@ public class KlineStreamCache {
         }
     }
 
-    private static String key(String symbol, String interval) {
-        String s = normalizeSymbol(symbol);
-        String i = normalizeInterval(interval);
-        return s + ":" + i;
+    /**
+     * 把收盘 bar 写入 Redis Stream——quant（含独立部署后）获取实时收盘的唯一通道。
+     * 失败仅 log error 不阻断：K线已落库（历史不丢），丢的仅本次实时触发，下一根 5m 后自然恢复。
+     * 字段契约（消费端 KlineStreamConsumer 按此重建 KlineBar）：
+     * symbol/interval/openTime/closeTime/open/high/low/close/volume，全部 String。
+     */
+    private void publishToStream(String symbol, String interval, KlineBar bar) {
+        try {
+            Map<String, String> fields = new LinkedHashMap<>();
+            fields.put("symbol", symbol);
+            fields.put("interval", interval);
+            fields.put("openTime", Long.toString(bar.openTime()));
+            fields.put("closeTime", Long.toString(bar.closeTime()));
+            fields.put("open", bar.open().toPlainString());
+            fields.put("high", bar.high().toPlainString());
+            fields.put("low", bar.low().toPlainString());
+            fields.put("close", bar.close().toPlainString());
+            fields.put("volume", bar.volume().toPlainString());
+            var ops = redisTemplate.opsForStream();
+            ops.add(StreamRecords.newRecord().in(CLOSED_STREAM_KEY).ofMap(fields));
+            ops.trim(CLOSED_STREAM_KEY, STREAM_MAXLEN, true);  // 近似裁剪，防 Stream 无限增长
+        } catch (Exception e) {
+            log.error("[KlineStream] 写 Stream 失败 symbol={} closeTime={} msg={}", symbol, bar.closeTime(), e.toString());
+        }
     }
 
     private static String normalizeSymbol(String symbol) {
