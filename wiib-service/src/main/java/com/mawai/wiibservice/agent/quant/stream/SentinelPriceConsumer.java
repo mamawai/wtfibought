@@ -3,7 +3,7 @@ package com.mawai.wiibservice.agent.quant.stream;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibservice.agent.quant.PriceVolatilitySentinel;
-import com.mawai.wiibservice.config.MarketStreamChannels;
+import com.mawai.wiibcommon.market.MarketStreamChannels;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

@@ -1,6 +1,6 @@
 package com.mawai.wiibservice.agent.strategy.fibo;
 
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibservice.agent.strategy.core.StrategySignal;
 import com.mawai.wiibservice.agent.strategy.core.WindowedMarketView;
 import com.mawai.wiibservice.agent.strategy.backtest.BacktestTradingTools;

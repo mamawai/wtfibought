@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.service;
 
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
+import com.mawai.wiibcommon.market.MarketStreamChannels;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.stream.MapRecord;
@@ -41,7 +42,7 @@ class KlineStreamCacheTest {
         assertThat(historyStore.savedBar).isEqualTo(bar);
         // onClosedBar 不发 Spring 事件，改写 Redis Stream（事件由 KlineStreamConsumer republish）
         verify(streamOps).add(any(MapRecord.class));
-        verify(streamOps).trim(eq(KlineStreamCache.CLOSED_STREAM_KEY), anyLong(), anyBoolean());
+        verify(streamOps).trim(eq(MarketStreamChannels.KLINE_CLOSED_STREAM), anyLong(), anyBoolean());
     }
 
     private static final class FakeKlineHistoryStore extends KlineHistoryStore {

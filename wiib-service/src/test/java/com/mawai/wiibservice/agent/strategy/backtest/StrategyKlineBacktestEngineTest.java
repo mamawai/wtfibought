@@ -1,6 +1,6 @@
 package com.mawai.wiibservice.agent.strategy.backtest;
 
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibservice.agent.strategy.core.StrategyMarketView;
 import com.mawai.wiibservice.agent.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibservice.agent.strategy.core.StrategySignal;

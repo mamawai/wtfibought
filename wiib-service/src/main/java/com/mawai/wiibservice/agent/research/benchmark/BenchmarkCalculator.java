@@ -1,6 +1,6 @@
 package com.mawai.wiibservice.agent.research.benchmark;
 
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;

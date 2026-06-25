@@ -6,7 +6,7 @@ import com.mawai.wiibservice.agent.research.forecast.EwmaMomentumForecaster;
 import com.mawai.wiibservice.agent.research.forecast.Forecaster;
 import com.mawai.wiibservice.agent.research.forecast.IndicatorAdapter;
 import com.mawai.wiibservice.agent.research.forecast.MultiFactorForecaster;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibservice.agent.research.series.MarketSeriesPoint;
 import com.mawai.wiibservice.agent.research.series.SeriesCode;
 import org.junit.jupiter.api.Assumptions;

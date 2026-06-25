@@ -1,6 +1,7 @@
 package com.mawai.wiibservice.service;
 
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
+import com.mawai.wiibcommon.market.MarketStreamChannels;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,8 +17,6 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class KlineStreamCache {
 
-    /** K线收盘 Stream key（feed→quant 跨进程通道）。收盘驱动预测/策略，必须 at-least-once，故用 Stream+消费组而非会丢的 Pub/Sub。 */
-    public static final String CLOSED_STREAM_KEY = "stream:kline:closed";
     /** Stream 近似上限，防无限增长；约覆盖多日数据，足够 consumer 重启回溯。 */
     private static final long STREAM_MAXLEN = 10_000L;
 
@@ -69,8 +68,8 @@ public class KlineStreamCache {
             fields.put("close", bar.close().toPlainString());
             fields.put("volume", bar.volume().toPlainString());
             var ops = redisTemplate.opsForStream();
-            ops.add(StreamRecords.newRecord().in(CLOSED_STREAM_KEY).ofMap(fields));
-            ops.trim(CLOSED_STREAM_KEY, STREAM_MAXLEN, true);  // 近似裁剪，防 Stream 无限增长
+            ops.add(StreamRecords.newRecord().in(MarketStreamChannels.KLINE_CLOSED_STREAM).ofMap(fields));
+            ops.trim(MarketStreamChannels.KLINE_CLOSED_STREAM, STREAM_MAXLEN, true);  // 近似裁剪，防 Stream 无限增长
         } catch (Exception e) {
             log.error("[KlineStream] 写 Stream 失败 symbol={} closeTime={} msg={}", symbol, bar.closeTime(), e.toString());
         }

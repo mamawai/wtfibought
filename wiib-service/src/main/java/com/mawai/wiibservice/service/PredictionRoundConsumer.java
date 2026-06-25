@@ -1,6 +1,6 @@
 package com.mawai.wiibservice.service;
 
-import com.mawai.wiibservice.config.PredictionStreamChannels;
+import com.mawai.wiibcommon.market.PredictionStreamChannels;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;

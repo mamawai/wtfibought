@@ -9,7 +9,7 @@ import com.mawai.wiibservice.agent.research.forecast.HorizonScaledVolForecaster;
 import com.mawai.wiibservice.agent.research.forecast.MultiFactorForecaster;
 import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
 import com.mawai.wiibservice.agent.research.forecast.TrainingSample;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibservice.agent.research.series.MarketSeriesPoint;
 import com.mawai.wiibservice.agent.research.stats.VolatilityEstimator;
 import org.junit.jupiter.api.Test;

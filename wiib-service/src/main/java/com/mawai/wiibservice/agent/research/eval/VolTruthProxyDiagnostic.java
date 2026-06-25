@@ -5,7 +5,7 @@ import com.mawai.wiibservice.agent.research.forecast.HarRvVolForecaster;
 import com.mawai.wiibservice.agent.research.forecast.HorizonScaledVolForecaster;
 import com.mawai.wiibservice.agent.research.forecast.QuantCoreForecaster;
 import com.mawai.wiibservice.agent.research.forecast.VolForecaster;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibservice.agent.research.metrics.ForecastAccuracyComparison;
 import com.mawai.wiibservice.agent.research.metrics.VolForecastScore;
 import com.mawai.wiibservice.agent.research.stats.RealizedVarianceSeries;

@@ -2,7 +2,8 @@ package com.mawai.wiibservice.config;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
+import com.mawai.wiibcommon.market.MarketStreamChannels;
 import com.mawai.wiibservice.service.CacheService;
 import com.mawai.wiibservice.service.DepthStreamCache;
 import com.mawai.wiibservice.service.ForceOrderService;

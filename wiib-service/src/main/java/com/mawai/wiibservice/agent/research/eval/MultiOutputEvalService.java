@@ -8,7 +8,7 @@ import com.mawai.wiibservice.agent.research.forecast.MultiOutputForecast;
 import com.mawai.wiibservice.agent.research.forecast.MultiOutputForecaster;
 import com.mawai.wiibservice.agent.research.forecast.VolatilityRiskContext;
 import com.mawai.wiibservice.agent.research.forecast.VolatilityRiskSummary;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibservice.agent.research.label.RegimeLabeler;
 import com.mawai.wiibservice.agent.research.metrics.RegimeClassificationScore;
 import com.mawai.wiibservice.agent.research.metrics.ReturnSeries;

@@ -4,7 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibservice.config.BinanceProperties;
 import com.mawai.wiibservice.config.BinanceRestClient;
-import com.mawai.wiibservice.config.MarketStreamChannels;
+import com.mawai.wiibcommon.market.MarketStreamChannels;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

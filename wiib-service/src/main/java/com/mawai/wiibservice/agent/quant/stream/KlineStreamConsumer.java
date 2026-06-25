@@ -1,8 +1,8 @@
 package com.mawai.wiibservice.agent.quant.stream;
 
 import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
-import com.mawai.wiibservice.service.KlineStreamCache;
+import com.mawai.wiibcommon.market.KlineBar;
+import com.mawai.wiibcommon.market.MarketStreamChannels;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -64,11 +64,11 @@ public class KlineStreamConsumer {
         container = StreamMessageListenerContainer.create(connectionFactory, options);
         subscription = container.receiveAutoAck(
                 Consumer.from(GROUP, consumerName),
-                StreamOffset.create(KlineStreamCache.CLOSED_STREAM_KEY, ReadOffset.lastConsumed()),
+                StreamOffset.create(MarketStreamChannels.KLINE_CLOSED_STREAM, ReadOffset.lastConsumed()),
                 this::onMessage);
         container.start();
         log.info("[KlineStream] 消费者启动 group={} consumer={} stream={}",
-                GROUP, consumerName, KlineStreamCache.CLOSED_STREAM_KEY);
+                GROUP, consumerName, MarketStreamChannels.KLINE_CLOSED_STREAM);
     }
 
     /**
@@ -80,7 +80,7 @@ public class KlineStreamConsumer {
             redisTemplate.execute((RedisConnection conn) -> {
                 try {
                     conn.streamCommands().xGroupCreate(
-                            KlineStreamCache.CLOSED_STREAM_KEY.getBytes(StandardCharsets.UTF_8),
+                            MarketStreamChannels.KLINE_CLOSED_STREAM.getBytes(StandardCharsets.UTF_8),
                             GROUP, ReadOffset.latest(), true);
                 } catch (Exception e) {
                     log.debug("[KlineStream] 消费组已存在/建组跳过: {}", e.getMessage());

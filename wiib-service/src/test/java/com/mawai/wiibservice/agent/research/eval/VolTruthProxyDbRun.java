@@ -4,7 +4,7 @@ import com.mawai.wiibservice.agent.research.ForecastHorizon;
 import com.mawai.wiibservice.agent.research.eval.VolTruthProxyDiagnostic.DmRow;
 import com.mawai.wiibservice.agent.research.eval.VolTruthProxyDiagnostic.TruthBlock;
 import com.mawai.wiibservice.agent.research.eval.VolTruthProxyDiagnostic.VolTruthProxyReport;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 

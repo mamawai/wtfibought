@@ -13,7 +13,7 @@ import com.mawai.wiibservice.agent.research.forecast.MarketRegime;
 import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
 import com.mawai.wiibservice.agent.research.forecast.TrainingSample;
 import com.mawai.wiibservice.agent.research.kline.KlineAggregator;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import com.mawai.wiibservice.agent.research.label.BarrierLabel;
 import com.mawai.wiibservice.agent.research.label.RegimeLabeler;

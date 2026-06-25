@@ -7,7 +7,7 @@ import com.mawai.wiibservice.agent.research.ForecastHorizon;
 import com.mawai.wiibservice.agent.research.forecast.MultiOutputForecast;
 import com.mawai.wiibservice.agent.research.forecast.QuantCoreForecaster;
 import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;

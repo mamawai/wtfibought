@@ -2,7 +2,7 @@ package com.mawai.wiibservice.agent.quant.service;
 
 import com.mawai.wiibcommon.entity.FactorHistory;
 import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibservice.agent.research.series.MarketSeriesStore;
 import com.mawai.wiibservice.agent.research.series.SeriesCode;
 import com.mawai.wiibservice.mapper.FactorHistoryMapper;

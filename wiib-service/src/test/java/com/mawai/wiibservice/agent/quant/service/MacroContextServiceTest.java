@@ -5,7 +5,7 @@ import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
 import com.mawai.wiibservice.agent.research.ForecastHorizon;
 import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
 import com.mawai.wiibservice.agent.research.forecast.VolatilityRiskTier;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import org.junit.jupiter.api.Test;
 

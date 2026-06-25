@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.config;
+package com.mawai.wiibcommon.market;
 
 /**
  * 行情流 Redis 通道契约（feed 发布 → sim/quant 订阅）。
@@ -19,4 +19,10 @@ public final class MarketStreamChannels {
      * sim（MatchPriceConsumer）订阅做撮合/强平/结算；quant（SentinelPriceConsumer）只取 markprice 喂哨兵。
      */
     public static final String PRICE = "feed:price";
+
+    /**
+     * K线收盘 Redis Stream key（feed 写 → quant 消费组消费）。
+     * 收盘驱动预测/策略，丢一根少一次触发，必须 at-least-once，故用 Stream+消费组而非会丢的 Pub/Sub。
+     */
+    public static final String KLINE_CLOSED_STREAM = "stream:kline:closed";
 }

@@ -1,7 +1,7 @@
 package com.mawai.wiibservice.agent.research.label;
 
 import com.mawai.wiibservice.agent.research.forecast.MarketRegime;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

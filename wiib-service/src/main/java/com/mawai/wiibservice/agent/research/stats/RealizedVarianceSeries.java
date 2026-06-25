@@ -1,7 +1,7 @@
 package com.mawai.wiibservice.agent.research.stats;
 
 import com.mawai.wiibservice.agent.research.factor.FactorMath;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 
 import java.util.List;
 

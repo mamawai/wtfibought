@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.config;
+package com.mawai.wiibcommon.market;
 
 /**
  * 预测回合事件 Stream 契约（feed↔sim 跨进程）。

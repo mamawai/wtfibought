@@ -2,7 +2,7 @@ package com.mawai.wiibservice.agent.strategy.core;
 
 import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import com.mawai.wiibservice.agent.strategy.execution.TestnetExecutionService;
 import com.mawai.wiibservice.service.ForceOrderService;

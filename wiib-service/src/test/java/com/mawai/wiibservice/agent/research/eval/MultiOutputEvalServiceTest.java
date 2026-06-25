@@ -3,7 +3,7 @@ package com.mawai.wiibservice.agent.research.eval;
 import com.mawai.wiibservice.agent.research.ForecastHorizon;
 import com.mawai.wiibservice.agent.research.forecast.MarketRegime;
 import com.mawai.wiibservice.agent.research.forecast.QuantCoreForecaster;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

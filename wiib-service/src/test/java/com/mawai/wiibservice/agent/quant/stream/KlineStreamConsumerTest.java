@@ -1,7 +1,7 @@
 package com.mawai.wiibservice.agent.quant.stream;
 
+import com.mawai.wiibcommon.market.MarketStreamChannels;
 import com.mawai.wiibservice.agent.quant.domain.KlineClosedEvent;
-import com.mawai.wiibservice.service.KlineStreamCache;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -37,7 +37,7 @@ class KlineStreamConsumerTest {
         fields.put("close", "5");
         fields.put("volume", "10");
         MapRecord<String, String, String> record =
-                StreamRecords.newRecord().in(KlineStreamCache.CLOSED_STREAM_KEY).ofMap(fields);
+                StreamRecords.newRecord().in(MarketStreamChannels.KLINE_CLOSED_STREAM).ofMap(fields);
 
         consumer.onMessage(record);
 

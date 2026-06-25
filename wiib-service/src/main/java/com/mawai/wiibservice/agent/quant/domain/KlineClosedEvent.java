@@ -1,6 +1,6 @@
 package com.mawai.wiibservice.agent.quant.domain;
 
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 
 public record KlineClosedEvent(Object source, String symbol, String interval, long closeTime, KlineBar bar) {
 

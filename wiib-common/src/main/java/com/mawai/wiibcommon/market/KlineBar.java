@@ -1,9 +1,9 @@
-package com.mawai.wiibservice.agent.research.kline;
+package com.mawai.wiibcommon.market;
 
 import java.math.BigDecimal;
 
 /**
- * research 层统一的 typed OHLCV bar。
+ * 统一的 typed OHLCV bar（行情共享层，feed 写 / quant 读共用）。
  * 时间为毫秒 epoch；价格/量为 BigDecimal（与全仓口径一致）。
  */
 public record KlineBar(

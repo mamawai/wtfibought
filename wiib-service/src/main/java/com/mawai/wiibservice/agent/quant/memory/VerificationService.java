@@ -12,7 +12,7 @@ import com.mawai.wiibservice.agent.research.factor.FactorMath;
 import com.mawai.wiibservice.agent.research.forecast.VolState;
 import com.mawai.wiibservice.agent.research.forecast.VolStateClassifier;
 import com.mawai.wiibservice.agent.research.forecast.VolatilityRiskContext;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibservice.agent.research.kline.KlineHistoryStore;
 import com.mawai.wiibservice.config.BinanceRestClient;
 import com.mawai.wiibservice.mapper.QuantForecastCycleMapper;

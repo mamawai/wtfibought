@@ -1,4 +1,5 @@
 package com.mawai.wiibservice.agent.research.kline;
+import com.mawai.wiibcommon.market.KlineBar;
 
 import org.junit.jupiter.api.Test;
 

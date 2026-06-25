@@ -3,7 +3,7 @@ package com.mawai.wiibservice.agent.research.eval;
 
 import com.mawai.wiibservice.agent.research.forecast.ResearchFeatures;
 import com.mawai.wiibservice.agent.research.forecast.TrainingSample;
-import com.mawai.wiibservice.agent.research.kline.KlineBar;
+import com.mawai.wiibcommon.market.KlineBar;
 
 import java.math.BigDecimal;
 import java.util.List;

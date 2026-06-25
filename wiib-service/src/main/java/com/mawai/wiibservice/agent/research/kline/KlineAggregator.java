@@ -1,5 +1,7 @@
 package com.mawai.wiibservice.agent.research.kline;
 
+import com.mawai.wiibcommon.market.KlineBar;
+
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
