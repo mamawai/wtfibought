@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.config;
+package com.mawai.wiibcommon.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

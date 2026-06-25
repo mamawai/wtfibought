@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.config;
+package com.mawai.wiibcommon.config;
 
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.ObjectMapper;

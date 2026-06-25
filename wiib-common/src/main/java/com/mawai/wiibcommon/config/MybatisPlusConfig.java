@@ -1,4 +1,4 @@
-package com.mawai.wiibservice.config;
+package com.mawai.wiibcommon.config;
 
 import com.baomidou.mybatisplus.annotation.DbType;
 import com.baomidou.mybatisplus.core.handlers.MetaObjectHandler;
