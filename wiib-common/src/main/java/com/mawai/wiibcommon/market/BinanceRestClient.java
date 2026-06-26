@@ -57,15 +57,7 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
     public String getKlinesLight(String symbol, String interval, int limit, Long endTime) {
         String raw = getKlines(symbol, interval, limit, endTime);
         try {
-            JSONArray root = JSON.parseArray(raw);
-            JSONArray result = new JSONArray(root.size());
-            for (int i = 0; i < root.size(); i++) {
-                JSONArray kline = root.getJSONArray(i);
-                JSONArray slim = new JSONArray(5);
-                for (int j = 0; j <= 4; j++) slim.add(kline.get(j));
-                result.add(slim);
-            }
-            return result.toJSONString();
+            return getSlimKlines(raw);
         } catch (Exception e) {
             log.warn("klines精简失败，返回原始数据", e);
             return raw;
@@ -75,19 +67,23 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
     public String getFuturesKlinesLight(String symbol, String interval, int limit, Long endTime) {
         String raw = getFuturesKlines(symbol, interval, limit, endTime);
         try {
-            JSONArray root = JSON.parseArray(raw);
-            JSONArray result = new JSONArray(root.size());
-            for (int i = 0; i < root.size(); i++) {
-                JSONArray kline = root.getJSONArray(i);
-                JSONArray slim = new JSONArray(5);
-                for (int j = 0; j <= 4; j++) slim.add(kline.get(j));
-                result.add(slim);
-            }
-            return result.toJSONString();
+            return getSlimKlines(raw);
         } catch (Exception e) {
             log.warn("futures klines精简失败，返回原始数据", e);
             return raw;
         }
+    }
+
+    private String getSlimKlines(String raw) {
+        JSONArray root = JSON.parseArray(raw);
+        JSONArray result = new JSONArray(root.size());
+        for (int i = 0; i < root.size(); i++) {
+            JSONArray kline = root.getJSONArray(i);
+            JSONArray slim = new JSONArray(5);
+            for (int j = 0; j <= 4; j++) slim.add(kline.get(j));
+            result.add(slim);
+        }
+        return result.toJSONString();
     }
 
     /**

@@ -40,9 +40,16 @@ public class WsBroadcastRelay implements MessageListener {
 
     @Override
     public void onMessage(@NonNull Message message, byte[] pattern) {
+        // 回调线程内同步解码成不可变值再交棒（别跨线程读容器 Message）。
+        // convertAndSend 可能因慢客户端阻塞，甩虚拟线程跑，避免占住共享的 redis-sub- 池线程。
+        String channel = new String(message.getChannel(), StandardCharsets.UTF_8);
+        String payload = new String(message.getBody(), StandardCharsets.UTF_8);
+        Thread.startVirtualThread(() -> relay(channel, payload));
+    }
+
+    // try/catch 必须在虚拟线程体内：throw 与 catch 同线程，log.error 才抓得到 convertAndSend 的异常。
+    private void relay(String channel, String payload) {
         try {
-            String channel = new String(message.getChannel(), StandardCharsets.UTF_8);
-            String payload = new String(message.getBody(), StandardCharsets.UTF_8);
             int sep = payload.indexOf('|');
             if (sep <= 0) {
                 log.warn("无效广播消息格式: {}", payload);

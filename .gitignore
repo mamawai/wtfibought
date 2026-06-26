@@ -48,6 +48,7 @@ deploy_script.txt
 
  ### 个人计划 / 调试笔记 ###
 docs/*.md
-
+docs/superpowers/plans/*.md
+docs/superpowers/specs/*.md
 ###
 export-md
