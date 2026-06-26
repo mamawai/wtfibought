@@ -2,25 +2,25 @@ package com.mawai.wiibquant.agent.config;
 
 import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.entity.AiRuntimeToggle;
-import com.mawai.wiibquant.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibquant.mapper.AiRuntimeToggleMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
+/**
+ * 运行时开关服务：DB 持久化的功能开关框架。
+ *
+ * <p>原 factor_weight_override 开关已随"调权死回路"一并移除，当前无注册开关；
+ * 保留本框架供后续开关接入。snapshot() 的 debate/macro 为只读诊断恒真。</p>
+ */
 @Slf4j
 @Service
-@DependsOn("factorWeightOverrideService")
 public class RuntimeFeatureToggleService {
-
-    public static final String QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED = "quant.factor_weight_override.enabled";
 
     private final AiRuntimeToggleMapper toggleMapper;
     private final Map<String, ToggleBinding<?>> knownToggles;
@@ -90,23 +90,13 @@ public class RuntimeFeatureToggleService {
     public RuntimeToggleSnapshot snapshot() {
         return new RuntimeToggleSnapshot(
                 true,  // debate_judge 强制启用（只读诊断）
-                get(QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED, Boolean.class,
-                        FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED),
                 true   // macro_risk 强制启用（只读诊断）
         );
     }
 
     private Map<String, ToggleBinding<?>> buildKnownToggles() {
-        Map<String, ToggleBinding<?>> map = new HashMap<>();
-        bind(map, QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED, Boolean.class,
-                FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED,
-                v -> FactorWeightOverrideService.FACTOR_WEIGHT_OVERRIDE_ENABLED = v);
-        return Map.copyOf(map);
-    }
-
-    private static <T> void bind(Map<String, ToggleBinding<?>> map, String key, Class<T> type,
-                                 T defaultValue, Consumer<T> writer) {
-        map.put(key, new ToggleBinding<>(type, defaultValue, writer));
+        // 当前无注册开关（factor_weight_override 已移除）；保留空 map 供后续接入。
+        return Map.of();
     }
 
     private static <T> void applyBinding(ToggleBinding<T> binding, Object value) {

@@ -8,7 +8,6 @@ import com.mawai.wiibquant.agent.quant.CryptoAnalysisReport;
 import com.mawai.wiibquant.agent.quant.domain.*;
 import com.mawai.wiibquant.agent.quant.factor.NewsEventAgent;
 import com.mawai.wiibquant.agent.quant.memory.MemoryService;
-import com.mawai.wiibquant.agent.quant.service.FactorWeightOverrideService;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -33,12 +32,11 @@ public class GenerateReportNode implements NodeAction {
     private final LlmCallMode callMode;
     private final MemoryService memoryService;
 
-    public GenerateReportNode(ChatClient.Builder builder, LlmCallMode callMode, MemoryService memoryService,
-                              FactorWeightOverrideService weightOverrideService) {
+    public GenerateReportNode(ChatClient.Builder builder, LlmCallMode callMode, MemoryService memoryService) {
         this.chatClient = builder.build();
         this.callMode = callMode;
         this.memoryService = memoryService;
-        this.hardReportBuilder = new ReportHardReportBuilder(weightOverrideService);
+        this.hardReportBuilder = new ReportHardReportBuilder();
     }
 
     @Override

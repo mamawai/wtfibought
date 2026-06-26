@@ -11,7 +11,6 @@ import com.mawai.wiibquant.agent.research.ForecastHorizon;
 import com.mawai.wiibquant.agent.quant.domain.NewsItem;
 import com.mawai.wiibquant.agent.quant.factor.NewsEventAgent;
 import com.mawai.wiibquant.agent.quant.judge.ConsensusJudge;
-import com.mawai.wiibquant.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibquant.agent.quant.util.NewsRelevance;
 
 import java.math.BigDecimal;
@@ -22,12 +21,6 @@ import java.util.List;
 import java.util.Map;
 
 final class ReportHardReportBuilder {
-
-    private final FactorWeightOverrideService weightOverrideService;
-
-    ReportHardReportBuilder(FactorWeightOverrideService weightOverrideService) {
-        this.weightOverrideService = weightOverrideService;
-    }
 
     CryptoAnalysisReport build(String symbol,
                                List<HorizonForecast> forecasts,
@@ -449,9 +442,6 @@ final class ReportHardReportBuilder {
         for (AgentVote v : allVotes) {
             if (!horizon.equals(v.horizon())) continue;
             double w = ConsensusJudge.baseEvidenceWeight(v.agent(), horizon);
-            if (weightOverrideService != null) {
-                w = weightOverrideService.apply(v.agent(), horizon, regime, w);
-            }
             double contribution = w * Math.abs(v.score()) * Math.max(0.1, v.confidence());
             if (v.score() > 0.02) bullish += contribution;
             else if (v.score() < -0.02) bearish += contribution;

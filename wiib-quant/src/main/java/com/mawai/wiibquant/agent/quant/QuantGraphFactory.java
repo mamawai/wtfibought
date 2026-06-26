@@ -3,7 +3,6 @@ package com.mawai.wiibquant.agent.quant;
 import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.mawai.wiibquant.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibquant.agent.quant.memory.MemoryService;
-import com.mawai.wiibquant.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibquant.agent.quant.service.MacroContextService;
 import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibcommon.market.BinanceRestClient;
@@ -27,7 +26,6 @@ public class QuantGraphFactory {
     private final OrderFlowAggregator orderFlowAggregator;
     private final DepthStreamCache depthStreamCache;
     private final DeribitClient deribitClient;
-    private final FactorWeightOverrideService weightOverrideService;
     private final MacroContextService macroContextService;
     private final ObjectProvider<MeterRegistry> meterRegistryProvider;
     // 主决策周期：原属 sim 的 TradingConfig，quant 拆出后只需这一个字段，直接读 yml trading.decision-interval（默认 M5）
@@ -39,7 +37,6 @@ public class QuantGraphFactory {
                              OrderFlowAggregator orderFlowAggregator,
                              DepthStreamCache depthStreamCache,
                              DeribitClient deribitClient,
-                             FactorWeightOverrideService weightOverrideService,
                              MacroContextService macroContextService,
                              ObjectProvider<MeterRegistry> meterRegistryProvider,
                              @Value("${trading.decision-interval:M5}") KlineInterval decisionInterval) {
@@ -49,7 +46,6 @@ public class QuantGraphFactory {
         this.orderFlowAggregator = orderFlowAggregator;
         this.depthStreamCache = depthStreamCache;
         this.deribitClient = deribitClient;
-        this.weightOverrideService = weightOverrideService;
         this.macroContextService = macroContextService;
         this.meterRegistryProvider = meterRegistryProvider;
         this.decisionInterval = decisionInterval;
@@ -60,7 +56,7 @@ public class QuantGraphFactory {
         ChatClient.Builder deepClient = ChatClient.builder(chatModel);
         ChatClient.Builder shallowClient = ChatClient.builder(chatModel);
         return QuantForecastWorkflow.build(deepClient, shallowClient, binanceRestClient, memoryService,
-                forceOrderService, orderFlowAggregator, depthStreamCache, deribitClient, weightOverrideService,
+                forceOrderService, orderFlowAggregator, depthStreamCache, deribitClient,
                 macroContextService, LlmCallMode.STREAMING, LlmCallMode.STREAMING, meterRegistryProvider.getIfAvailable(),
                 decisionInterval);
     }

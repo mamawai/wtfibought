@@ -14,7 +14,6 @@ import com.mawai.wiibquant.agent.quant.factor.*;
 import com.mawai.wiibquant.agent.quant.node.*;
 import com.mawai.wiibquant.agent.quant.memory.MemoryService;
 import com.mawai.wiibquant.agent.quant.observe.NodeObservationWrapper;
-import com.mawai.wiibquant.agent.quant.service.FactorWeightOverrideService;
 import com.mawai.wiibquant.agent.quant.service.MacroContextService;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibquant.config.DeribitClient;
@@ -64,7 +63,6 @@ public class QuantForecastWorkflow {
                                        OrderFlowAggregator orderFlowAggregator,
                                        DepthStreamCache depthStreamCache,
                                        DeribitClient deribitClient,
-                                       FactorWeightOverrideService weightOverrideService,
                                        MacroContextService macroContextService,
                                        LlmCallMode deepCallMode,
                                        LlmCallMode shallowCallMode,
@@ -91,14 +89,13 @@ public class QuantForecastWorkflow {
                 .addNode("run_evidence_agents", node_async(observed("run_evidence_agents",
                         new RunEvidenceAgentsNode(agents), meterRegistry)))
                 .addNode("consensus_judge",   node_async(observed("consensus_judge",
-                        new ConsensusJudgeNode(memoryService, weightOverrideService), meterRegistry)))
+                        new ConsensusJudgeNode(), meterRegistry)))
                 .addNode("debate_judge",       node_async(observed("debate_judge",
                         new DebateJudgeNode(deepChatClient, deepCallMode, memoryService), meterRegistry)))
                 .addNode("risk_gate",          node_async(observed("risk_gate",
                         new RiskGateNode(), meterRegistry)))
                 .addNode("generate_report",    node_async(observed("generate_report",
-                        new GenerateReportNode(shallowChatClient, shallowCallMode,
-                                memoryService, weightOverrideService), meterRegistry)));
+                        new GenerateReportNode(shallowChatClient, shallowCallMode, memoryService), meterRegistry)));
 
         workflow.addEdge(START, "collect_data");
         workflow.addEdge("collect_data", "build_features");
@@ -165,7 +162,6 @@ public class QuantForecastWorkflow {
             s.put("overall_decision", new ReplaceStrategy());
             s.put("risk_status", new ReplaceStrategy());
             s.put("cycle_id", new ReplaceStrategy());
-            s.put("memory_weight_adjustments", new ReplaceStrategy());
             // DebateJudgeNode输出
             s.put("debate_summary", new ReplaceStrategy());
             s.put("debate_probs", new ReplaceStrategy());

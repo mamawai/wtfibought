@@ -220,11 +220,7 @@ public class AiAgentAdminController {
     @Operation(summary = "设置量化运行时开关")
     public Result<QuantConfigResponse> setQuantConfig(@RequestBody QuantConfigRequest req) {
         checkAdmin();
-        long operator = StpUtil.getLoginIdAsLong();
-        if (req.getFactorWeightOverrideEnabled() != null) {
-            runtimeFeatureToggleService.set(RuntimeFeatureToggleService.QUANT_FACTOR_WEIGHT_OVERRIDE_ENABLED,
-                    req.getFactorWeightOverrideEnabled(), operator, "admin quant-config");
-        }
+        // factor_weight_override 开关已随"调权死回路"移除；debate/macro 为只读诊断恒真，本接口当前无可写开关。
         return Result.ok(buildQuantConfigResponse());
     }
 
@@ -232,7 +228,6 @@ public class AiAgentAdminController {
         RuntimeToggleSnapshot snapshot = runtimeFeatureToggleService.snapshot();
         QuantConfigResponse resp = new QuantConfigResponse();
         resp.setDebateJudgeEnabled(snapshot.debateJudgeEnabled());
-        resp.setFactorWeightOverrideEnabled(snapshot.factorWeightOverrideEnabled());
         resp.setMacroRiskEnabled(snapshot.macroRiskEnabled());
         return resp;
     }
@@ -258,14 +253,12 @@ public class AiAgentAdminController {
     @Data
     public static class QuantConfigRequest {
         private Boolean debateJudgeEnabled;
-        private Boolean factorWeightOverrideEnabled;
         private Boolean macroRiskEnabled;
     }
 
     @Data
     public static class QuantConfigResponse {
         private Boolean debateJudgeEnabled;
-        private Boolean factorWeightOverrideEnabled;
         private Boolean macroRiskEnabled;
     }
 

@@ -38,7 +38,7 @@ class ReportHelperTest {
         List<NewsEventAgent.FilteredNewsItem> news = List.of(
                 new NewsEventAgent.FilteredNewsItem("ETF inflow", "bullish", "HIGH", "资金流入"));
 
-        CryptoAnalysisReport report = new ReportHardReportBuilder(null).build(
+        CryptoAnalysisReport report = new ReportHardReportBuilder().build(
                 "BTCUSDT", forecasts, votes, news, "LONG", "NORMAL", snapshot(), null,
                 Map.of("H6", new Object[]{55, 30, 15}));
 
@@ -112,7 +112,6 @@ class ReportHelperTest {
                 "regime_confidence_stddev", 0.12,
                 "news_confidence_stddev", 0.34,
                 "news_low_confidence", true,
-                "memory_weight_adjustments", Map.of("momentum", 0.2),
                 "macro_context", Map.of("status", "neutral")
         ));
 
@@ -123,7 +122,6 @@ class ReportHelperTest {
         assertThat(obj.getDoubleValue("regimeConfidenceStddev")).isEqualTo(0.12);
         assertThat(obj.getDoubleValue("newsConfidenceStddev")).isEqualTo(0.34);
         assertThat(obj.getBoolean("newsLowConfidence")).isTrue();
-        assertThat(obj.getJSONObject("memoryWeightAdjustments").getDoubleValue("momentum")).isEqualTo(0.2);
         assertThat(obj.getJSONObject("macroContext").getString("status")).isEqualTo("neutral");
     }
 

@@ -8,7 +8,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -16,7 +15,6 @@ public class MemoryService {
 
     private final QuantForecastVerificationMapper verificationMapper;
     private final QuantReflectionMemoryMapper reflectionMapper;
-    private final AgentPerformanceMemoryService agentPerformanceMemoryService;
 
     /**
      * 组装完整的记忆上下文，供LLM prompt注入
@@ -79,24 +77,6 @@ public class MemoryService {
         Double acc24h = verificationMapper.selectAccuracyRate(symbol, 24);
         if (acc24h == null) return "";
         return String.format("最近24h预测命中率: %.0f%%", acc24h * 100);
-    }
-
-    public Map<String, Map<String, Double>> getAgentAccuracy(String symbol) {
-        return getAgentAccuracy(symbol, null);
-    }
-
-    /**
-     * 返回 agent → horizon → accuracy(0-1)。
-     * 现在只用真实验证样本统计，不再使用LLM反思里的主观agentAccuracy。
-     */
-    public Map<String, Map<String, Double>> getAgentAccuracy(String symbol, String regime) {
-        return agentPerformanceMemoryService.loadAccuracy(symbol, regime);
-    }
-
-    /** 返回含 sample_count 的完整统计，供 ConsensusJudge 调权可见性使用 */
-    public Map<String, Map<String, AgentPerformanceMemoryService.AgentStat>> getAgentFullStats(
-            String symbol, String regime) {
-        return agentPerformanceMemoryService.loadFullStats(symbol, regime);
     }
 
     private String truncate(String text, int maxLen) {

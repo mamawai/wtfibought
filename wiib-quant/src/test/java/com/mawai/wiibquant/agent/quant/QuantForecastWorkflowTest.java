@@ -38,7 +38,6 @@ class QuantForecastWorkflowTest {
                 "overall_decision",
                 "risk_status",
                 "cycle_id",
-                "memory_weight_adjustments",
                 "debate_summary",
                 "debate_probs",
                 "report",

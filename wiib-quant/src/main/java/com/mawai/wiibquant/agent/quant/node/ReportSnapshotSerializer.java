@@ -13,7 +13,6 @@ final class ReportSnapshotSerializer {
         state.value("regime_confidence_stddev").ifPresent(v -> obj.put("regimeConfidenceStddev", v));
         state.value("news_confidence_stddev").ifPresent(v -> obj.put("newsConfidenceStddev", v));
         state.value("news_low_confidence").ifPresent(v -> obj.put("newsLowConfidence", v));
-        state.value("memory_weight_adjustments").ifPresent(v -> obj.put("memoryWeightAdjustments", v));
         state.value("macro_context").ifPresent(v -> obj.put("macroContext", v));
         return obj.toJSONString();
     }
