@@ -34,8 +34,7 @@ final class ReportHardReportBuilder {
         CryptoAnalysisReport report = new CryptoAnalysisReport();
         report.setSummary(buildSummary(symbol, forecasts, overallDecision, riskStatus, snapshot));
         report.setAnalysisBasis(buildAnalysisBasis(forecasts, votes, overallDecision, riskStatus, snapshot));
-        report.setDirection(buildDirectionInfo(forecasts, votes, debateProbs,
-                snapshot != null ? snapshot.regime() : null));
+        report.setDirection(buildDirectionInfo(forecasts, votes, debateProbs));
         report.setKeyLevels(buildKeyLevels(snapshot));
         report.setIndicators(buildIndicatorsSummary(snapshot));
         report.setImportantNews(buildImportantNews(snapshot, votes, filteredNews));
@@ -109,12 +108,11 @@ final class ReportHardReportBuilder {
 
     private CryptoAnalysisReport.DirectionInfo buildDirectionInfo(List<HorizonForecast> forecasts,
                                                                   List<AgentVote> votes,
-                                                                  Map<String, Object[]> debateProbs,
-                                                                  MarketRegime regime) {
+                                                                  Map<String, Object[]> debateProbs) {
         CryptoAnalysisReport.DirectionInfo direction = new CryptoAnalysisReport.DirectionInfo();
-        direction.setUltraShort(formatDirectionWithProb(findForecast(forecasts, "H6"), votes, "H6", debateProbs, regime));
-        direction.setShortTerm(formatDirectionWithProb(findForecast(forecasts, "H12"), votes, "H12", debateProbs, regime));
-        direction.setMid(formatDirectionWithProb(findForecast(forecasts, "H24"), votes, "H24", debateProbs, regime));
+        direction.setUltraShort(formatDirectionWithProb(findForecast(forecasts, "H6"), votes, "H6", debateProbs));
+        direction.setShortTerm(formatDirectionWithProb(findForecast(forecasts, "H12"), votes, "H12", debateProbs));
+        direction.setMid(formatDirectionWithProb(findForecast(forecasts, "H24"), votes, "H24", debateProbs));
         direction.setLongTerm("观望");
         return direction;
     }
@@ -403,8 +401,7 @@ final class ReportHardReportBuilder {
      * 无辩论概率时回退到Agent投票加权计算。
      */
     private String formatDirectionWithProb(HorizonForecast forecast, List<AgentVote> allVotes,
-                                           String horizon, Map<String, Object[]> debateProbs,
-                                           MarketRegime regime) {
+                                           String horizon, Map<String, Object[]> debateProbs) {
         // 辩论概率优先
         if (debateProbs != null && debateProbs.containsKey(horizon)) {
             // state序列化可能导致Integer[]变Object[]，安全取值
