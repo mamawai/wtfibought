@@ -7,11 +7,11 @@ import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** T2: 验证 limit 进场 maker、TP 出场 maker、SL 出场 taker、market 进场仍 taker。 */
+/** T2: 验证 limit 进场 maker，TP/SCALE/SL 触发式平仓 taker，market 进场仍 taker。 */
 class BacktestTradingToolsTest {
 
     private static final BigDecimal MAKER = new BigDecimal("0.0002");
-    private static final BigDecimal TAKER = new BigDecimal("0.0004");
+    private static final BigDecimal TAKER = new BigDecimal("0.0005");
 
     private BacktestTradingTools tools() {
         BacktestTradingTools t = new BacktestTradingTools(new BigDecimal("100000"), "BTCUSDT");
@@ -21,7 +21,7 @@ class BacktestTradingToolsTest {
     }
 
     @Test
-    void limitEntryUsesLimitPriceAndMakerFee_tpExitMaker() {
+    void limitEntryUsesLimitPriceAndMakerFee_tpExitTaker() {
         BacktestTradingTools t = tools();
         t.setCurrentPrice(new BigDecimal("100"));   // 现价100，但limit挂95
         var r = t.openPositionWithResult("LONG", BigDecimal.ONE, 5, "LIMIT",
@@ -33,9 +33,9 @@ class BacktestTradingToolsTest {
         t.tickBar(new BigDecimal("111"), new BigDecimal("100"), new BigDecimal("110"), 1); // high≥110 → TP
         var trade = t.getClosedTrades().getFirst();
         assertThat(trade.exitReason()).isEqualTo("TP");
-        // fee = openMaker(95×万2) + closeMaker(110×万2)
+        // fee = openMaker(95×万2) + closeTaker(110×万5)
         assertThat(trade.fee()).isEqualByComparingTo(
-                new BigDecimal("95").multiply(MAKER).add(new BigDecimal("110").multiply(MAKER)));
+                new BigDecimal("95").multiply(MAKER).add(new BigDecimal("110").multiply(TAKER)));
     }
 
     @Test
@@ -49,7 +49,7 @@ class BacktestTradingToolsTest {
         t.tickBar(new BigDecimal("96"), new BigDecimal("89"), new BigDecimal("90"), 1); // low≤90 → SL
         var trade = t.getClosedTrades().getFirst();
         assertThat(trade.exitReason()).isEqualTo("SL");
-        // fee = openMaker(95×万2) + closeTaker(90×万4)
+        // fee = openMaker(95×万2) + closeTaker(90×万5)
         assertThat(trade.fee()).isEqualByComparingTo(
                 new BigDecimal("95").multiply(MAKER).add(new BigDecimal("90").multiply(TAKER)));
     }
@@ -65,7 +65,7 @@ class BacktestTradingToolsTest {
         t.setCurrentBarIndex(1);
         t.tickBar(new BigDecimal("96"), new BigDecimal("89"), new BigDecimal("90"), 1); // SL
         var trade = t.getClosedTrades().getFirst();
-        // fee = openTaker(100×万4) + closeTaker(90×万4)
+        // fee = openTaker(100×万5) + closeTaker(90×万5)
         assertThat(trade.fee()).isEqualByComparingTo(
                 new BigDecimal("100").multiply(TAKER).add(new BigDecimal("90").multiply(TAKER)));
     }
@@ -73,7 +73,7 @@ class BacktestTradingToolsTest {
     // ---- ST1: 盘中分批止盈 scale-out ----
 
     @Test
-    void scaleOutPartialClosesAtTriggerWithMakerFee() {
+    void scaleOutPartialClosesAtTriggerWithTakerFee() {
         BacktestTradingTools t = tools();
         t.setCurrentPrice(new BigDecimal("100"));
         Long posId = t.openPositionWithResult("LONG", new BigDecimal("2"), 5, "MARKET",
@@ -87,9 +87,9 @@ class BacktestTradingToolsTest {
         assertThat(trade.exitReason()).isEqualTo("SCALE");
         assertThat(trade.exitPrice()).isEqualByComparingTo("110");
         assertThat(trade.quantity()).isEqualByComparingTo("1");
-        // 落袋走 maker：openTaker(100×万4 on 1) + closeMaker(110×万2 on 1)
+        // 触发式落袋走 taker：openTaker(100×万5 on 1) + closeTaker(110×万5 on 1)
         assertThat(trade.fee()).isEqualByComparingTo(
-                new BigDecimal("100").multiply(TAKER).add(new BigDecimal("110").multiply(MAKER)));
+                new BigDecimal("100").multiply(TAKER).add(new BigDecimal("110").multiply(TAKER)));
         var pos = t.getOpenPositions("BTCUSDT").getFirst();
         assertThat(pos.getStatus()).isEqualTo("OPEN");
         assertThat(pos.getQuantity()).isEqualByComparingTo("1");                // 剩余仓续存

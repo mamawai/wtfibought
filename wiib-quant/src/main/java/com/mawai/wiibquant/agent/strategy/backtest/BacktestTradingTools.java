@@ -29,18 +29,18 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <h3>模拟精度</h3>
  * <ul>
- *   <li>手续费：开仓 0.04% + 平仓 0.04% = 0.08% 往返</li>
- *   <li>SL/TP：按K线 high/low 判断是否穿越</li>
- *   <li>滑点：SL/TP 成交价取挂单价（保守假设无滑点）</li>
+ *   <li>手续费：LIMIT 开仓 maker；MARKET 开仓、触发式 TP/SL/SCALE 平仓 taker</li>
+ *   <li>SL/TP/SCALE：按K线 high/low 判断是否穿越</li>
+ *   <li>滑点：触发后成交价暂取触发价（不模拟市价滑点）</li>
  *   <li>保证金：quantity × price / leverage</li>
  * </ul>
  */
 @Slf4j
 public class BacktestTradingTools implements TradingOperations {
 
-    private static final BigDecimal OPEN_FEE_RATE = new BigDecimal("0.0004");   // taker 万4
-    private static final BigDecimal CLOSE_FEE_RATE = new BigDecimal("0.0004");  // taker 万4
-    private static final BigDecimal MAKER_FEE_RATE = new BigDecimal("0.0002");  // maker 万2：limit 进场 + TP 挂单出场走这个
+    private static final BigDecimal OPEN_FEE_RATE = new BigDecimal("0.0005");   // taker 万5
+    private static final BigDecimal CLOSE_FEE_RATE = new BigDecimal("0.0005");  // taker 万5
+    private static final BigDecimal MAKER_FEE_RATE = new BigDecimal("0.0002");  // maker 万2：limit 进场
 
     private final AtomicLong positionIdSeq = new AtomicLong(1);
 
@@ -60,8 +60,8 @@ public class BacktestTradingTools implements TradingOperations {
     private final Map<Long, BigDecimal> maxFavorableRByPosition = new HashMap<>();
     private final Map<Long, BigDecimal> maxAdverseRByPosition = new HashMap<>();
     private final Map<Long, BigDecimal> openFeeRateByPosition = new HashMap<>();  // 开仓实际费率(maker/taker)，平仓算总费用时复用
-    private final Map<Long, ScaleOut> scaleOutByPosition = new HashMap<>();       // 分批止盈挂单：价到触发价部分平仓(maker)
-    private BigDecimal fillEpsilon = BigDecimal.ZERO;  // maker fill 摩擦：要价格穿过挂单价 ε(相对)才算成交；0=触及即成交(原行为，向后兼容)
+    private final Map<Long, ScaleOut> scaleOutByPosition = new HashMap<>();       // 触发式止盈：价到触发价后市价平仓(taker)
+
     @Setter
     private int currentBarIndex = 0;
     @Setter
@@ -258,16 +258,9 @@ public class BacktestTradingTools implements TradingOperations {
         return "止盈修改成功";
     }
 
-    /** maker fill 摩擦(相对，如 0.0002=2bp)：>0 模拟"价格要真穿过挂单价才成交"，仅压力测试用；默认 0 行为不变。 */
+    /** 兼容旧调用；maker 入场 fill 摩擦已在 StrategyKlineBacktestEngine.limitTouched 内处理。 */
     public void setFillEpsilon(BigDecimal eps) {
-        this.fillEpsilon = eps == null || eps.signum() < 0 ? BigDecimal.ZERO : eps;
-    }
-
-    /** 挂单价叠加 fill 摩擦：up=true 上沿×(1+ε)、false 下沿×(1-ε)；ε=0 返回原价(原行为)。 */
-    private BigDecimal withEps(BigDecimal price, boolean up) {
-        if (fillEpsilon.signum() == 0) return price;
-        return up ? price.multiply(BigDecimal.ONE.add(fillEpsilon))
-                : price.multiply(BigDecimal.ONE.subtract(fillEpsilon));
+        // no-op
     }
 
     @Override
@@ -340,13 +333,13 @@ public class BacktestTradingTools implements TradingOperations {
             }
         }
 
-        // 分批止盈：盘中触及触发价 → 部分平仓(maker)，一次性；剩余仓 SL 不动、拉到 TP（无移动保本）
+        // 分批止盈：盘中触及触发价 → 触发式市价部分平仓(taker)，一次性；剩余仓 SL 不动、拉到 TP（无移动保本）
         ScaleOut so = scaleOutByPosition.get(pos.getId());
         if (so != null) {
-            // fill 摩擦：要价格穿过触发价 ε 才成交(做多需 high≥trigger×(1+ε))；成交价仍是 trigger(maker 不偏)。
+            // 触发式平仓不排 maker 队列；触及触发价即按触发价模拟成交。
             boolean soTriggered = isLong
-                    ? high.compareTo(withEps(so.triggerPrice(), true)) >= 0
-                    : low.compareTo(withEps(so.triggerPrice(), false)) <= 0;
+                    ? high.compareTo(so.triggerPrice()) >= 0
+                    : low.compareTo(so.triggerPrice()) <= 0;
             if (soTriggered) {
                 doClose(pos, so.scaleQty().min(pos.getQuantity()), so.triggerPrice(), "SCALE");
                 scaleOutByPosition.remove(pos.getId());                 // 一次性；剩余仓SL不动，拉到TP
@@ -357,10 +350,10 @@ public class BacktestTradingTools implements TradingOperations {
         // 检查止盈
         if (pos.getTakeProfits() != null && !pos.getTakeProfits().isEmpty()) {
             FuturesTakeProfit tp = pos.getTakeProfits().getFirst();
-            // fill 摩擦：TP 也是 maker 挂单，要穿过 ε 才成交；成交价仍是 TP 价。
+            // TP 条件市价单：触及触发价即按触发价模拟成交。
             boolean tpTriggered = isLong
-                    ? high.compareTo(withEps(tp.getPrice(), true)) >= 0
-                    : low.compareTo(withEps(tp.getPrice(), false)) <= 0;
+                    ? high.compareTo(tp.getPrice()) >= 0
+                    : low.compareTo(tp.getPrice()) <= 0;
             if (tpTriggered) {
                 doClose(pos, pos.getQuantity(), tp.getPrice(), "TP");
             }
@@ -374,8 +367,8 @@ public class BacktestTradingTools implements TradingOperations {
         boolean isLong = "LONG".equals(pos.getSide());
         boolean isFullClose = closeQty.compareTo(pos.getQuantity()) >= 0;
 
-        // TP 是挂单被动成交走 maker；分批止盈(SCALE)同为被动落袋走 maker；SL/强平/信号平仓是市价走 taker。
-        BigDecimal closeFeeRate = ("TP".equals(reason) || "SCALE".equals(reason)) ? MAKER_FEE_RATE : CLOSE_FEE_RATE;
+        // 当前执行用条件市价平仓：TP/SCALE/SL/强平/信号平仓统一按 taker。
+        BigDecimal closeFeeRate = CLOSE_FEE_RATE;
         BigDecimal notional = closeQty.multiply(exitPrice);
         BigDecimal closeFee = notional.multiply(closeFeeRate).setScale(8, RoundingMode.HALF_UP);
 

@@ -37,7 +37,7 @@ public final class StrategyKlineBacktestEngine {
     private final Long tradingStartMs;
     private final Long tradingEndMs;
     private BigDecimal fillEpsilon = BigDecimal.ZERO;  // maker fill 摩擦，由 -Dbacktest.fillEpsilonBp 注入，默认0=原"触及即成交"
-    private boolean takerEntry = false;  // true=进场改 taker(触及即成交、无 fill 摩擦、走 taker 费)，出场仍 maker；-Dbacktest.takerEntry 注入
+    private boolean takerEntry = false;  // true=进场改 taker(触及即成交、无 fill 摩擦、走 taker 费)；-Dbacktest.takerEntry 注入
     private double fixedMarginUsdt = 0.0; // >0=固定每仓保证金(名义=保证金×命令行杠杆)，绕过风险定量与15%上限；-Dbacktest.fixedMarginUsdt 注入
     private double marginPctOfEquity = 0.0; // >0=每仓保证金=权益×此比例(复利/全仓口径，名义=保证金×杠杆)；-Dbacktest.marginPctOfEquity 注入
 
@@ -56,7 +56,7 @@ public final class StrategyKlineBacktestEngine {
 
     public BacktestResult run() {
         BacktestTradingTools tools = new BacktestTradingTools(initialBalance, symbol);
-        // fill 摩擦压力测试：默认 0(原行为)；>0 时进场/分批/TP 的 maker 单需价格穿过挂单价 ε 才成交。
+        // fill 摩擦压力测试：默认 0(原行为)；>0 时 maker 限价进场需价格穿过挂单价 ε 才成交。
         this.fillEpsilon = BigDecimal.valueOf(
                 Double.parseDouble(System.getProperty("backtest.fillEpsilonBp", "0")) / 10_000.0);
         tools.setFillEpsilon(fillEpsilon);

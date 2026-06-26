@@ -471,9 +471,9 @@ class FiboStrategyDbRun {
     }
 
     /**
-     * fill 成本梯度：固定"全关纯收割"(关趋势门+关BOS, 全仓 0.5R)，扫 maker fill 摩擦 0/0.5/1/1.5/2bp，6 年汇总。
+     * fill 成本梯度：固定"全关纯收割"(关趋势门+关BOS, 全仓 0.5R)，扫 maker 入场 fill 摩擦 0/0.5/1/1.5/2bp，6 年汇总。
      * 全关收割是 4000+ 笔/6年的高频，fill 成本是命门——看 0 摩擦下的 +119%/+185% 能扛住几 bp。
-     * fillEpsilonBp 经 System property 注入引擎(进场 maker 限价 + 出场 maker scaleOut 都需价格穿过 ε 才成交；SL 走 taker 不受影响)。
+     * fillEpsilonBp 经 System property 注入引擎；当前只影响 maker 限价进场，触发式 TP/SL/SCALE 平仓按 taker。
      * 档位可 -Dfibo.bt.epsBps 覆盖；收割 R 可 -Dfibo.bt.scaleR 改。
      */
     @Test
