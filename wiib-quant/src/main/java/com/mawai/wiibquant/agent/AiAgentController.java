@@ -127,16 +127,36 @@ public class AiAgentController {
 
         try {
             CryptoAnalysisReport report = JSON.parseObject(cycle.getReportJson(), CryptoAnalysisReport.class);
-            return Result.ok(Map.of(
-                    "status", "ready",
-                    "forecastTime", cycle.getForecastTime().toString(),
-                    "cycleId", cycle.getCycleId(),
-                    "overallDecision", cycle.getOverallDecision(),
-                    "riskStatus", cycle.getRiskStatus(),
-                    "report", report));
+            // Step 7a：简报产物（脆弱度/信号面板/弱lean）单独从 briefing_json 暴露，不污染 report 契约
+            Object briefing = parseBriefing(cycle.getBriefingJson());
+            Map<String, Object> data = new HashMap<>();
+            data.put("status", "ready");
+            data.put("schemaVersion", 2);
+            data.put("forecastTime", cycle.getForecastTime().toString());
+            data.put("cycleId", cycle.getCycleId());
+            data.put("overallDecision", cycle.getOverallDecision());
+            data.put("riskStatus", cycle.getRiskStatus());
+            data.put("report", report);
+            data.put("briefing", briefing); // 旧 cycle 无 briefing_json 时为 null，前端按存在性渲染
+            data.put("advisory", "本简报为研究展示，非交易建议");
+            return Result.ok(data);
         } catch (Exception e) {
             log.error("报告JSON解析失败 cycleId={}", cycle.getCycleId(), e);
             return Result.fail("报告数据异常");
+        }
+    }
+
+    private Object parseBriefing(String json) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            // 透传为 JSONObject 给前端：嵌套 List<record>(signals/weakLeans) 做 typed 反序列化时
+            // fastjson2 会丢元素泛型，透传无此问题且前端只认 JSON 结构。
+            return JSON.parseObject(json);
+        } catch (Exception e) {
+            log.warn("briefing_json 解析失败: {}", e.getMessage());
+            return null;
         }
     }
 

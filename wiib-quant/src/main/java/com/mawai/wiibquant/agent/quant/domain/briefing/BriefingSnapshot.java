@@ -11,6 +11,10 @@ import java.util.List;
  *
  * <p>Step 7 展示 / Step 4b revision diff 的单一读取源。三者均为确定性/已落库产物，
  * 一起读写避免散列。</p>
+ *
+ * <p><b>读取注意</b>：序列化（落库）无损；但嵌套 {@code List<record>}（signals/weakLeans）做 typed
+ * 反序列化时 fastjson2 会丢元素泛型（变 {@code List<JSONObject>}）。故读取侧（endpoint/4b）走
+ * JSONObject 透传或字段取值，不做 {@code parseObject(json, BriefingSnapshot.class)}。</p>
  */
 public record BriefingSnapshot(
         FragilityScore fragility,
