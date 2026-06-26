@@ -34,6 +34,7 @@ class QuantForecastWorkflowTest {
                 "filtered_news",
                 "news_confidence_stddev",
                 "news_low_confidence",
+                "signal_panel",
                 "horizon_forecasts",
                 "overall_decision",
                 "risk_status",

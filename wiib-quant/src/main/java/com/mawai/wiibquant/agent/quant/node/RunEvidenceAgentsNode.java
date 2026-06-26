@@ -8,6 +8,7 @@ import com.mawai.wiibquant.agent.quant.domain.MacroContext;
 import com.mawai.wiibquant.agent.quant.factor.FactorAgent;
 import com.mawai.wiibquant.agent.quant.factor.FactorEvaluationContext;
 import com.mawai.wiibquant.agent.quant.factor.NewsEventAgent;
+import com.mawai.wiibquant.agent.quant.signal.SignalExtractor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -140,6 +141,8 @@ public class RunEvidenceAgentsNode implements NodeAction {
         result.put("feature_snapshot", outputSnapshot);
         result.put("news_confidence_stddev", newsConfidenceStddev);
         result.put("news_low_confidence", newsLowConfidence);
+        // 信号面板：把上面的 evidence 票 + 新闻重组为可读信号（一等展示产物，喂叙事/脆弱度）
+        result.put("signal_panel", new SignalExtractor().extract(allVotes, filteredNews));
         return result;
     }
 }

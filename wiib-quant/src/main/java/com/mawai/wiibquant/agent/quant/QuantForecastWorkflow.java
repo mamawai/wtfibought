@@ -156,6 +156,7 @@ public class QuantForecastWorkflow {
             s.put("filtered_news", new ReplaceStrategy());
             s.put("news_confidence_stddev", new ReplaceStrategy());
             s.put("news_low_confidence", new ReplaceStrategy());
+            s.put("signal_panel", new ReplaceStrategy());
             // ConsensusJudgeNode输出
             s.put("horizon_forecasts", new ReplaceStrategy());
             s.put("consensus_forecasts", new ReplaceStrategy()); // ConsensusJudgeNode 新 key
