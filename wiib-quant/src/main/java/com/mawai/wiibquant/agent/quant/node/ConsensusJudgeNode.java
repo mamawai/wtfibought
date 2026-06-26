@@ -3,10 +3,14 @@ package com.mawai.wiibquant.agent.quant.node;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.mawai.wiibquant.agent.quant.domain.AgentVote;
+import com.mawai.wiibquant.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibquant.agent.quant.domain.HorizonForecast;
 import com.mawai.wiibquant.agent.quant.domain.MacroContext;
+import com.mawai.wiibquant.agent.quant.domain.fragility.FragilityScore;
+import com.mawai.wiibquant.agent.quant.domain.signal.SignalPanel;
 import com.mawai.wiibquant.agent.quant.judge.ConsensusForecast;
 import com.mawai.wiibquant.agent.quant.judge.ConsensusJudge;
+import com.mawai.wiibquant.agent.quant.judge.FragilityScorer;
 import com.mawai.wiibquant.agent.quant.judge.HorizonDecisionPolicy;
 import com.mawai.wiibquant.agent.research.ForecastHorizon;
 import lombok.extern.slf4j.Slf4j;
@@ -45,6 +49,16 @@ public class ConsensusJudgeNode implements NodeAction {
         String symbol = (String) state.value("target_symbol").orElse("BTCUSDT");
 
         log.info("[Q5.0] consensus_judge开始 evidenceVotes={}", evidenceVotes.size());
+
+        // 脆弱度合成（确定性，简报头条）：读 snapshot + 信号面板，与方向裁决并列产出，互不依赖
+        FeatureSnapshot snapshot = (FeatureSnapshot) state.value("feature_snapshot").orElse(null);
+        SignalPanel signalPanel = (SignalPanel) state.value("signal_panel").orElse(SignalPanel.empty());
+        FragilityScore fragility = new FragilityScorer().score(snapshot, signalPanel);
+        log.info("[Q5.fragility] {} score={} level={} crowd={} delev={} vol={} dir={}",
+                symbol, fragility.score(), fragility.level(),
+                String.format("%.2f", fragility.crowding()),
+                String.format("%.2f", fragility.deleveraging()),
+                String.format("%.2f", fragility.volState()), fragility.direction());
 
         List<ConsensusForecast> forecasts = new ArrayList<>(3);
 
@@ -97,6 +111,7 @@ public class ConsensusJudgeNode implements NodeAction {
 
         Map<String, Object> result = new HashMap<>();
         result.put("consensus_forecasts", forecasts);
+        result.put("fragility_score", fragility);
 
         // 向后兼容：同时写 horizon_forecasts（旧 key），entry/tp/sl=null占位
         List<HorizonForecast> legacyForecasts = forecasts.stream()

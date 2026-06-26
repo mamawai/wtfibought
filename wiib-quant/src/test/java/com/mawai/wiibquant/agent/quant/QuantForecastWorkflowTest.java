@@ -39,6 +39,7 @@ class QuantForecastWorkflowTest {
                 "overall_decision",
                 "risk_status",
                 "cycle_id",
+                "fragility_score",
                 "debate_summary",
                 "debate_probs",
                 "report",
