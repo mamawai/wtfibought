@@ -5,6 +5,7 @@ import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibquant.agent.quant.domain.*;
+import com.mawai.wiibquant.agent.quant.domain.debate.WeakLean;
 import com.mawai.wiibquant.agent.quant.domain.output.DebateHorizonResponse;
 import com.mawai.wiibquant.agent.quant.domain.output.DebateJudgeResponse;
 import com.mawai.wiibquant.agent.quant.judge.ConsensusForecast;
@@ -241,16 +242,24 @@ public class DebateJudgeNode implements NodeAction {
                 基于辩论中挖掘到的深层信息（如跨维度共振、资金流向矛盾、regime转换二阶信号等），
                 对每个区间给出真实概率分布。三个概率之和必须等于100。
 
+                弱方向 lean 与失效条件（每区间必填）：
+                - newDirection 在此同时视作"低置信弱 lean"，非硬核预测；信号矛盾时给 NO_TRADE = 无方向态（大方承认看不清，不硬挤方向）
+                - consequence：一句话后果叙事，"若X兑现 → 未来Yh可能Z"
+                - invalidation：一句话反事实失效条件，必须可证伪，"若A则本 lean 作废"
+
                 严格返回JSON（不要markdown包裹）：
                 {
                   "judgeReasoning": "裁判推理过程(200字内)",
                   "horizons": [
                     {"horizon":"H6","approved":true,"newDirection":"LONG","newConfidence":0.65,"reason":"一句话",
-                     "bullPct":45,"rangePct":35,"bearPct":20},
+                     "bullPct":45,"rangePct":35,"bearPct":20,
+                     "consequence":"若多头拥挤兑现，12h内或快速回落","invalidation":"funding回正且OI回落则本lean作废"},
                     {"horizon":"H12","approved":true,"newDirection":"NO_TRADE","newConfidence":0,"reason":"一句话",
-                     "bullPct":30,"rangePct":40,"bearPct":30},
+                     "bullPct":30,"rangePct":40,"bearPct":30,
+                     "consequence":"信号分歧，方向不明","invalidation":"出现单边放量突破则重估"},
                     {"horizon":"H24","approved":false,"newDirection":"NO_TRADE","newConfidence":0,"reason":"一句话",
-                     "bullPct":25,"rangePct":45,"bearPct":30}
+                     "bullPct":25,"rangePct":45,"bearPct":30,
+                     "consequence":"宏观背景偏空但未确认","invalidation":"站稳关键阻力则转中性"}
                   ]
                 }
                 """.formatted(dataContext, memoryContext, bullArgument, bearArgument);
@@ -370,11 +379,19 @@ public class DebateJudgeNode implements NodeAction {
             String rebuiltDecision = HorizonDecisionPolicy.overallDecision(toConsensus(adjusted));
             String rebuiltRiskStatus = rebuildRiskStatus(adjusted, originalRiskStatus);
 
+            // Step 3：弱 lean 简报产物（展示层，与方向裁决解耦；下游暂不消费，Step 7 总装上简报）
+            List<WeakLean> weakLeans = new ArrayList<>(horizons.size());
+            for (DebateHorizonResponse h : horizons) {
+                weakLeans.add(WeakLean.from(normalizeHorizon(h.horizon()), h.newDirection(),
+                        h.bullPct(), h.rangePct(), h.bearPct(), h.consequence(), h.invalidation()));
+            }
+
             Map<String, Object> result = new HashMap<>();
             result.put("horizon_forecasts", adjusted);
             result.put("overall_decision", rebuiltDecision);
             result.put("risk_status", rebuiltRiskStatus);
             result.put("debate_summary", buildDebateSummaryJson(bullArg, bearArg, judgeReasoning));
+            result.put("weak_leans", weakLeans);
             if (!debateProbs.isEmpty()) {
                 result.put("debate_probs", debateProbs);
             }

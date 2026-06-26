@@ -42,6 +42,7 @@ class QuantForecastWorkflowTest {
                 "fragility_score",
                 "debate_summary",
                 "debate_probs",
+                "weak_leans",
                 "report",
                 "hard_report",
                 "forecast_result",

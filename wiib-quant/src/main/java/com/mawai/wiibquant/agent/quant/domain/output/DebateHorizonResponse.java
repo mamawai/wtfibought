@@ -8,6 +8,8 @@ public record DebateHorizonResponse(
         String reason,
         Integer bullPct,
         Integer rangePct,
-        Integer bearPct
+        Integer bearPct,
+        String consequence,
+        String invalidation
 ) {
 }
