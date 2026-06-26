@@ -3,6 +3,7 @@ package com.mawai.wiibquant.agent.quant;
 import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.entity.*;
 import com.mawai.wiibquant.agent.quant.domain.*;
+import com.mawai.wiibquant.agent.quant.domain.briefing.BriefingSnapshot;
 import com.mawai.wiibquant.mapper.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -63,6 +64,9 @@ public class QuantForecastPersistService {
         if (debateSummary != null) {
             cycle.setDebateJson(debateSummary);
         }
+        // 简报产物（脆弱度+信号面板+弱lean）合并落 briefing_json，供 Step7 展示 / 4b revision diff
+        BriefingSnapshot briefing = BriefingSnapshot.of(r.fragility(), r.signalPanel(), r.weakLeans());
+        cycle.setBriefingJson(JSON.toJSONString(briefing));
         cycleMapper.insert(cycle);
     }
 

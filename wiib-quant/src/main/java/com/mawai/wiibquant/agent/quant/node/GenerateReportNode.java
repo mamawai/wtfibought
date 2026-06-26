@@ -6,6 +6,9 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibquant.agent.quant.CryptoAnalysisReport;
 import com.mawai.wiibquant.agent.quant.domain.*;
+import com.mawai.wiibquant.agent.quant.domain.debate.WeakLean;
+import com.mawai.wiibquant.agent.quant.domain.fragility.FragilityScore;
+import com.mawai.wiibquant.agent.quant.domain.signal.SignalPanel;
 import com.mawai.wiibquant.agent.quant.factor.NewsEventAgent;
 import com.mawai.wiibquant.agent.quant.memory.MemoryService;
 
@@ -114,10 +117,16 @@ public class GenerateReportNode implements NodeAction {
                 finalReport.getSummary(),
                 finalReport.getReasoning() != null ? finalReport.getReasoning().length() : 0);
 
+        // 4a：把展示产物（脆弱度/信号面板/弱lean）带进 ForecastResult → 落 briefing_json
+        FragilityScore fragility = (FragilityScore) state.value("fragility_score").orElse(null);
+        SignalPanel signalPanel = (SignalPanel) state.value("signal_panel").orElse(SignalPanel.empty());
+        List<WeakLean> weakLeans = (List<WeakLean>) state.value("weak_leans").orElse(List.of());
+
         ForecastResult forecastResult = new ForecastResult(symbol,
                 (String) state.value("cycle_id").orElse("unknown"),
                 snapshot != null ? snapshot.snapshotTime() : java.time.LocalDateTime.now(),
-                forecasts, overallDecision, riskStatus, votes, snapshot, macroContext, finalReport, null);
+                forecasts, overallDecision, riskStatus, votes, snapshot, macroContext, finalReport,
+                fragility, signalPanel, weakLeans, null);
 
         log.info("[Q6.end] generate_report完成 总耗时{}ms", System.currentTimeMillis() - startMs);
 

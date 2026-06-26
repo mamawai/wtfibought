@@ -98,6 +98,6 @@ class QuantForecastFacadeTest {
         return new ForecastResult("BTCUSDT", "cycle-1",
                 LocalDateTime.of(2026, 6, 8, 12, 0),
                 List.of(), "FLAT", "NORMAL", List.of(),
-                null, null, null, null);
+                null, null, null, null, null, null, null);
     }
 }

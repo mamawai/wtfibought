@@ -66,7 +66,7 @@ class QuantForecastSchedulerTest {
 
         doAnswer(invocation -> QuantForecastRunResult.completed(null,
                 new ForecastResult("BTCUSDT", "cycle-1", LocalDateTime.now(),
-                        List.of(), "FLAT", "NORMAL", List.of(), null, null, null, null),
+                        List.of(), "FLAT", "NORMAL", List.of(), null, null, null, null, null, null, null),
                 null, null, null))
                 .when(facade).run(anyString(), anyString(), org.mockito.ArgumentMatchers.<Map<String, Object>>any());
 

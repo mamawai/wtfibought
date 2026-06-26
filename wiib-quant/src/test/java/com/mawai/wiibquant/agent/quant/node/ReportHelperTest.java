@@ -135,7 +135,7 @@ class ReportHelperTest {
                 0.7, 0.8, 20, 30, List.of("ORDERFLOW"), List.of()));
         ForecastResult original = new ForecastResult("BTCUSDT", "cycle-1",
                 LocalDateTime.of(2026, 1, 1, 0, 30),
-                horizons, "LONG", "NORMAL", votes, snapshot(), null, hardReport(), null);
+                horizons, "LONG", "NORMAL", votes, snapshot(), null, hardReport(), null, null, null, null);
 
         ForecastResult parsed = JSON.parseObject(JSON.toJSONString(original), ForecastResult.class);
 

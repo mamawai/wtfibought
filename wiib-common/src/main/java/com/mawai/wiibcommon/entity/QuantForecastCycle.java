@@ -35,6 +35,9 @@ public class QuantForecastCycle {
     @TableField(typeHandler = JsonbStringTypeHandler.class)
     private String debateJson;
 
+    @TableField(typeHandler = JsonbStringTypeHandler.class)
+    private String briefingJson;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 }
