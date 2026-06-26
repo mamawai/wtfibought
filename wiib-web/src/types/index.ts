@@ -607,6 +607,42 @@ export interface CryptoAnalysisReport {
   volProfile?: { horizon: string; volState: string; expectedMoveBps: number; trailingPercentile: number; riskBudgetHint: number }[];
 }
 
+// ===== 简报产物（briefing_json，Step 7）=====
+export interface BriefingFragility {
+  score: number;        // 0-100
+  level: string;        // LOW/ELEVATED/HIGH/EXTREME
+  crowding: number;     // 0-1
+  deleveraging: number; // 0-1
+  volState: number;     // 0-1
+  direction: string;    // UP/DOWN/NEUTRAL 脆弱方向
+  headline: string;
+}
+
+export interface BriefingSignal {
+  code: string;
+  label: string;
+  lean: string;         // BULLISH/BEARISH/NEUTRAL/RISK
+  group: string;        // MOMENTUM/MICROSTRUCTURE/POSITIONING/VOLATILITY/NEWS
+  sourceAgent: string;
+  evidence?: string | null;
+}
+
+export interface BriefingWeakLean {
+  horizon: string;
+  lean: string;         // LONG/SHORT/NO_TRADE(无方向态)
+  bullPct: number;
+  rangePct: number;
+  bearPct: number;
+  consequence?: string | null;
+  invalidation?: string | null;
+}
+
+export interface Briefing {
+  fragility: BriefingFragility;
+  signalPanel: { signals: BriefingSignal[] };
+  weakLeans: BriefingWeakLean[];
+}
+
 export interface QuantSignalDecision {
   horizon: string;
   direction: string;
@@ -729,6 +765,9 @@ export interface LatestCryptoResult {
   overallDecision?: string;
   riskStatus?: string;
   report?: CryptoAnalysisReport;
+  briefing?: Briefing | null;   // Step 7：脆弱度+信号面板+弱lean；旧 cycle 为 null
+  advisory?: string;            // 降级标注：非交易建议
+  schemaVersion?: number;       // 契约版本
   lastForecastTime?: string;
 }
 

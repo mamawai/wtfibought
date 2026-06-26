@@ -7,7 +7,6 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
-import { Select } from '../components/ui/select';
 import { useToast } from '../components/ui/use-toast';
 import { Play, Square, RefreshCw, Database, Calendar, Clock, Plus, Trash2, Pencil, Save, Activity } from 'lucide-react';
 

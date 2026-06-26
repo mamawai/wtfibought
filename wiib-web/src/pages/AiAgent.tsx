@@ -10,7 +10,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { Loader2, Brain, TrendingUp, TrendingDown, User, AlertTriangle, CheckCircle2, BarChart3, Zap, ArrowUpCircle, ArrowDownCircle, MinusCircle, Target, ShieldAlert, ChevronDown, ChevronUp, FileText, Radio, Clock, History } from 'lucide-react';
-import type { BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle } from '../types';
+import type { BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, Briefing, BriefingFragility, BriefingSignal, BriefingWeakLean } from '../types';
 
 type Tab = 'behavior' | 'crypto';
 
@@ -54,6 +54,127 @@ function DirectionBadge({ direction }: { direction: string }) {
     <Badge variant={isLong ? 'default' : isShort ? 'destructive' : 'outline'} className="text-xs">
       {isLong ? '做多' : isShort ? '做空' : '观望'}
     </Badge>
+  );
+}
+
+// ===== 简报展示组件（Step 7b）=====
+const FRAGILITY_COLORS: Record<string, { border: string; badge: string }> = {
+  LOW: { border: 'border-l-green-500', badge: 'bg-green-500/15 text-green-600' },
+  ELEVATED: { border: 'border-l-amber-500', badge: 'bg-amber-500/15 text-amber-600' },
+  HIGH: { border: 'border-l-orange-500', badge: 'bg-orange-500/15 text-orange-600' },
+  EXTREME: { border: 'border-l-red-500', badge: 'bg-red-500/15 text-red-600' },
+};
+const FRAGILITY_LEVEL_CN: Record<string, string> = { LOW: '平稳', ELEVATED: '偏脆', HIGH: '脆弱', EXTREME: '极脆' };
+const FRAGILE_DIR_CN: Record<string, string> = { UP: '上行脆弱', DOWN: '下行脆弱', NEUTRAL: '方向不明' };
+
+function FragilityLeg({ label, value }: { label: string; value: number }) {
+  const pct = Math.round((value || 0) * 100);
+  const color = pct >= 67 ? 'bg-red-500' : pct >= 34 ? 'bg-amber-500' : 'bg-green-500';
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="w-14 text-muted-foreground shrink-0">{label}</span>
+      <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="font-mono tabular-nums w-8 text-right">{pct}</span>
+    </div>
+  );
+}
+
+function FragilityHeadlineCard({ fragility }: { fragility: BriefingFragility }) {
+  const c = FRAGILITY_COLORS[fragility.level] || FRAGILITY_COLORS.LOW;
+  return (
+    <Card className={`border-l-4 ${c.border}`}>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <AlertTriangle className="w-5 h-5 text-muted-foreground" />
+          <span className="text-base font-bold">市场脆弱度</span>
+          <Badge className={`${c.badge} border-0`}>{FRAGILITY_LEVEL_CN[fragility.level] || fragility.level} {fragility.score}</Badge>
+          <Badge variant="outline" className="text-[10px]">{FRAGILE_DIR_CN[fragility.direction] || fragility.direction}</Badge>
+        </div>
+        <p className="text-sm font-medium leading-relaxed">{fragility.headline}</p>
+        <div className="space-y-1.5">
+          <FragilityLeg label="持仓拥挤" value={fragility.crowding} />
+          <FragilityLeg label="去杠杆" value={fragility.deleveraging} />
+          <FragilityLeg label="波动状态" value={fragility.volState} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+const SIGNAL_GROUP_CN: Record<string, string> = {
+  MOMENTUM: '趋势动量', MICROSTRUCTURE: '盘口微结构', POSITIONING: '持仓情绪',
+  VOLATILITY: '波动状态', NEWS: '新闻事件',
+};
+const SIGNAL_LEAN_COLOR: Record<string, string> = {
+  BULLISH: 'text-green-600 border-green-500/30 bg-green-500/5',
+  BEARISH: 'text-red-600 border-red-500/30 bg-red-500/5',
+  NEUTRAL: 'text-muted-foreground border-border bg-muted/30',
+  RISK: 'text-amber-600 border-amber-500/30 bg-amber-500/5',
+};
+const SIGNAL_GROUP_ORDER = ['POSITIONING', 'VOLATILITY', 'MOMENTUM', 'MICROSTRUCTURE', 'NEWS'];
+
+function SignalPanelCard({ signals }: { signals: BriefingSignal[] }) {
+  if (!signals || signals.length === 0) return null;
+  const grouped = SIGNAL_GROUP_ORDER
+    .map(g => ({ group: g, items: signals.filter(s => s.group === g) }))
+    .filter(g => g.items.length > 0);
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <BarChart3 className="w-4 h-4" /> 信号面板
+          <span className="text-[10px] font-normal text-muted-foreground">（拥挤/资金费/清算/微结构）</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {grouped.map(({ group, items }) => (
+          <div key={group}>
+            <p className="text-xs font-semibold text-muted-foreground mb-1.5">{SIGNAL_GROUP_CN[group] || group}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {items.map((s, i) => (
+                <span key={i} className={`text-[11px] px-2 py-0.5 rounded border ${SIGNAL_LEAN_COLOR[s.lean] || SIGNAL_LEAN_COLOR.NEUTRAL}`} title={s.evidence || s.code}>
+                  {s.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+const WEAK_LEAN_CN: Record<string, string> = { LONG: '偏多', SHORT: '偏空', NO_TRADE: '看不清' };
+
+function WeakLeanBriefCard({ leans }: { leans: BriefingWeakLean[] }) {
+  if (!leans || leans.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          方向研判
+          <Badge variant="outline" className="text-[10px] font-normal">低置信·非硬核预测</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {leans.map((wl, i) => {
+          const leanColor = wl.lean === 'LONG' ? 'text-green-600' : wl.lean === 'SHORT' ? 'text-red-600' : 'text-muted-foreground';
+          return (
+            <div key={i} className="text-xs space-y-1 pb-2 border-b last:border-b-0 last:pb-0">
+              <div className="flex items-center gap-2">
+                <span className="font-bold w-9">{wl.horizon}</span>
+                <span className={`font-semibold ${leanColor}`}>{WEAK_LEAN_CN[wl.lean] || wl.lean}</span>
+                <span className="text-muted-foreground ml-auto tabular-nums">涨{wl.bullPct}/震{wl.rangePct}/跌{wl.bearPct}</span>
+              </div>
+              {wl.consequence && <p className="text-muted-foreground leading-relaxed">后果：{wl.consequence}</p>}
+              {wl.invalidation && <p className="text-amber-600/80 leading-relaxed">失效：{wl.invalidation}</p>}
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -147,6 +268,8 @@ export function AiAgent() {
   const [steps, setSteps] = useState<string[]>([]);
   const [behaviorReport, setBehaviorReport] = useState<BehaviorAnalysisReport | null>(null);
   const [cryptoReport, setCryptoReport] = useState<CryptoAnalysisReport | null>(null);
+  const [cryptoBriefing, setCryptoBriefing] = useState<Briefing | null>(null);
+  const [cryptoAdvisory, setCryptoAdvisory] = useState<string | null>(null);
   const [cryptoForecastTime, setCryptoForecastTime] = useState<string | null>(null);
   const [reportSymbol, setReportSymbol] = useState('BTCUSDT');
   const [cryptoPending, setCryptoPending] = useState(false);
@@ -213,6 +336,8 @@ export function AiAgent() {
           try {
             const report: CryptoAnalysisReport = JSON.parse(msg.body);
             setCryptoReport(report);
+            setCryptoBriefing(null); // WS 仅推 report，简报靠 REST 拉取
+            setCryptoAdvisory(null);
             setCryptoForecastTime(new Date().toISOString());
             setReportSymbol(wsSymbol);
             setCryptoPending(false);
@@ -248,6 +373,8 @@ export function AiAgent() {
       const result = await aiAgentApi.latestCryptoReport(s);
       if (result.status === 'ready' && result.report) {
         setCryptoReport(result.report);
+        setCryptoBriefing(result.briefing ?? null);
+        setCryptoAdvisory(result.advisory ?? null);
         setCryptoForecastTime(result.forecastTime || null);
         setReportSymbol(s);
         setCryptoPending(false);
@@ -270,6 +397,8 @@ export function AiAgent() {
     stopChatStream();
     setChatMessages([]);
     setCryptoReport(null);
+    setCryptoBriefing(null);
+    setCryptoAdvisory(null);
     setCryptoForecastTime(null);
     setCryptoPending(false);
     stopPolling();
@@ -278,6 +407,8 @@ export function AiAgent() {
       const result = await aiAgentApi.latestCryptoReport(symbol);
       if (result.status === 'ready' && result.report) {
         setCryptoReport(result.report);
+        setCryptoBriefing(result.briefing ?? null);
+        setCryptoAdvisory(result.advisory ?? null);
         setCryptoForecastTime(result.forecastTime || null);
         setReportSymbol(symbol);
         loadSignalData(symbol);
@@ -307,6 +438,8 @@ export function AiAgent() {
         const report: CryptoAnalysisReport = JSON.parse(item.reportJson);
         stopChatStream();
         setCryptoReport(report);
+        setCryptoBriefing(null); // 历史只有 reportJson，简报快照暂不回放（Step 5）
+        setCryptoAdvisory(null);
         setCryptoForecastTime(item.forecastTime);
         setReportSymbol(item.symbol);
         setChatMessages([]);
@@ -674,6 +807,9 @@ export function AiAgent() {
                 </div>
               )}
 
+              {/* 市场脆弱度头条（Step 7 新头条） */}
+              {cryptoBriefing && <FragilityHeadlineCard fragility={cryptoBriefing.fragility} />}
+
               {/* 总结 + 置信度 */}
               <Card className="border-l-4 border-l-primary">
                 <CardContent className="p-4">
@@ -718,29 +854,28 @@ export function AiAgent() {
                 </Card>
               )}
 
-              {/* 趋势（弱 edge，仅供参考） */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    方向判断
-                    <span className="text-[10px] font-normal text-muted-foreground">（弱 edge · 仅供参考）</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="flex flex-wrap gap-2">
-                  <Badge variant="outline" className="text-xs">
-                    超短线: {cryptoReport.direction.ultraShort}
-                  </Badge>
-                  <Badge variant="outline" className="text-xs">
-                    短线: {cryptoReport.direction.shortTerm}
-                  </Badge>
-                  <Badge variant="outline" className="text-xs">
-                    中线: {cryptoReport.direction.mid}
-                  </Badge>
-                  <Badge variant="outline" className="text-xs">
-                    长线: {cryptoReport.direction.longTerm}
-                  </Badge>
-                </CardContent>
-              </Card>
+              {/* 信号面板（支柱①） */}
+              {cryptoBriefing && <SignalPanelCard signals={cryptoBriefing.signalPanel.signals} />}
+
+              {/* 方向研判：有简报用弱 lean（带后果/失效条件），否则回退旧方向判断（弱 edge） */}
+              {cryptoBriefing ? (
+                <WeakLeanBriefCard leans={cryptoBriefing.weakLeans} />
+              ) : (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      方向判断
+                      <span className="text-[10px] font-normal text-muted-foreground">（弱 edge · 仅供参考）</span>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="flex flex-wrap gap-2">
+                    <Badge variant="outline" className="text-xs">超短线: {cryptoReport.direction.ultraShort}</Badge>
+                    <Badge variant="outline" className="text-xs">短线: {cryptoReport.direction.shortTerm}</Badge>
+                    <Badge variant="outline" className="text-xs">中线: {cryptoReport.direction.mid}</Badge>
+                    <Badge variant="outline" className="text-xs">长线: {cryptoReport.direction.longTerm}</Badge>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* 预测依据 */}
               {cryptoReport.analysisBasis && (
@@ -871,6 +1006,11 @@ export function AiAgent() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
+                    {cryptoAdvisory && (
+                      <div className="text-[11px] text-amber-600 bg-amber-500/10 rounded px-2 py-1.5 flex items-center gap-1.5">
+                        <ShieldAlert className="w-3.5 h-3.5 shrink-0" /> {cryptoAdvisory}
+                      </div>
+                    )}
                     {cryptoReport.positionAdvice.map((advice, i) => {
                       const isLong = advice.type === 'LONG';
                       return (
