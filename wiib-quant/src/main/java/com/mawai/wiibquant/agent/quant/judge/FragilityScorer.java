@@ -52,7 +52,8 @@ public class FragilityScorer {
 
     /** 拥挤度：funding / 多空比 / 大户 / taker / 恐贪极端度 等权平均，越一边倒越脆。 */
     private double crowding(FeatureSnapshot s) {
-        double fearGreedExtreme = Math.abs(s.fearGreedIndex() - 50) / 50.0;
+        // 恐贪无数据时 calcFearGreed 返回 -1（哨兵），当中性处理（extreme=0），不能误当满格拥挤
+        double fearGreedExtreme = s.fearGreedIndex() < 0 ? 0 : Math.abs(s.fearGreedIndex() - 50) / 50.0;
         return mean(
                 clamp01(Math.abs(s.fundingDeviation())),
                 clamp01(Math.abs(s.lsrExtreme())),

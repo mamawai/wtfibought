@@ -76,6 +76,16 @@ class FragilityScorerTest {
         assertThat(f.volState()).isEqualTo(0.9);
     }
 
+    @Test
+    void missingFearGreedDoesNotInflateCrowding() {
+        // fearGreed=-1（采集失败哨兵）不能被当成满格拥挤
+        FragilityScore f = scorer.score(
+                snapshot(0, 0, 0, 0, -1, 0, 0, 0, null, BigDecimal.valueOf(50000), 0, false, MarketRegime.RANGE),
+                SignalPanel.empty());
+
+        assertThat(f.crowding()).isZero();
+    }
+
     private static SignalPanel positioning(SignalLean lean) {
         return new SignalPanel(List.of(
                 new Signal("HIGH_FUNDING", "x", lean, SignalGroup.POSITIONING, "microstructure")));

@@ -808,7 +808,7 @@ export function AiAgent() {
               )}
 
               {/* 市场脆弱度头条（Step 7 新头条） */}
-              {cryptoBriefing && <FragilityHeadlineCard fragility={cryptoBriefing.fragility} />}
+              {cryptoBriefing?.fragility && <FragilityHeadlineCard fragility={cryptoBriefing.fragility} />}
 
               {/* 总结 + 置信度 */}
               <Card className="border-l-4 border-l-primary">
