@@ -82,3 +82,35 @@ export interface TnFillStats {
   avgFillSeconds: number; // 平均挂单→成交时长（秒）
   makerConfirmed: number; // 成交价=挂单价的笔数（零滑点验证）
 }
+
+/* ========== 手动交易（接口自检，仅 admin） ========== */
+
+/** 手动下单请求。type=MARKET 忽略 price；type=LIMIT 时 price 必填。 */
+export interface TnManualOrderReq {
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  type: 'MARKET' | 'LIMIT';
+  quantity: number;
+  price?: number;
+  leverage?: number;
+  timeInForce?: string;
+  reduceOnly?: boolean;
+}
+
+/** 下单/平仓返回（OrderResponse 子集，结果框展示用）。 */
+export interface TnOrderResult {
+  orderId: number;
+  symbol: string;
+  side: string;
+  type: string;
+  status: string;
+  avgPrice: number;
+  origQty: number;
+  price: number;
+}
+
+/** 撤单确认（SimpleAck）。 */
+export interface TnAck {
+  code: number;
+  msg: string;
+}

@@ -1,13 +1,14 @@
-import { useState, useEffect, useCallback, useMemo, type ElementType } from 'react';
+import { useState, useEffect, useCallback, useMemo, type ElementType, type ReactNode } from 'react';
 import { testnetApi } from '../api';
 import { useToast } from '../components/ui/use-toast';
+import { useUserStore } from '../stores/userStore';
 import { cn } from '../lib/utils';
 import { formatCoinPrice } from '../lib/coinConfig';
 import { EquityChart } from '../components/EquityChart';
 import { DailyGrid } from '../components/DailyGrid';
 import {
   Activity, RefreshCcw, Wallet, TrendingUp, BarChart3, Target,
-  Clock, CheckCircle2, ListChecks, Layers, Gauge,
+  Clock, CheckCircle2, ListChecks, Layers, Gauge, Wrench, ChevronDown,
 } from 'lucide-react';
 import type {
   TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats, TnPosition, TnOpenOrder,
@@ -155,9 +156,154 @@ function SectionTitle({ icon: Icon, title, hint }: { icon: ElementType; title: s
   );
 }
 
+/* ========== 手动交易面板（接口自检，仅 admin 可见，后端二次门控） ========== */
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10px] text-muted-foreground font-medium">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function ManualTradePanel({ onDone }: { onDone: () => void }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [symbol, setSymbol] = useState('BTCUSDT');
+  const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
+  const [type, setType] = useState<'MARKET' | 'LIMIT'>('MARKET');
+  const [quantity, setQuantity] = useState('0.002');
+  const [price, setPrice] = useState('');
+  const [leverage, setLeverage] = useState('20');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // 统一跑请求：成功展示返回摘要并刷新看板，失败展示错误原文（含 Binance/权限/校验）。
+  const run = (label: string, fn: () => Promise<string>) => {
+    setBusy(label);
+    setResult(null);
+    fn()
+      .then((text) => { setResult({ ok: true, text }); onDone(); })
+      .catch((e) => { const msg = (e as Error).message || '操作失败'; setResult({ ok: false, text: msg }); toast(msg, 'error'); })
+      .finally(() => setBusy(null));
+  };
+
+  const submitOrder = () => {
+    const qty = Number(quantity);
+    if (!qty || qty <= 0) { toast('数量必须 > 0', 'error'); return; }
+    if (type === 'LIMIT' && (!Number(price) || Number(price) <= 0)) { toast('LIMIT 需填价格', 'error'); return; }
+    run('order', async () => {
+      const r = await testnetApi.manualOrder({
+        symbol, side, type, quantity: qty,
+        price: type === 'LIMIT' ? Number(price) : undefined,
+        leverage: leverage ? Number(leverage) : undefined,
+      });
+      return `#${r.orderId} ${r.status}${r.avgPrice ? ` @ ${r.avgPrice}` : ''}（${r.side} ${r.type} ${r.origQty}）`;
+    });
+  };
+
+  const submitClose = () => run('close', async () => {
+    const r = await testnetApi.manualClose(symbol);
+    return `平仓 #${r.orderId} ${r.status}${r.avgPrice ? ` @ ${r.avgPrice}` : ''}`;
+  });
+
+  const submitCancelAll = () => run('cancel', async () => {
+    await testnetApi.manualCancelAll(symbol);
+    return `已撤 ${symbol} 全部挂单`;
+  });
+
+  const inputCls = 'neu-inset rounded-lg px-2.5 py-1.5 text-xs tabular-nums w-24 bg-transparent outline-none';
+
+  return (
+    <div className="neu-raised-sm rounded-xl overflow-hidden">
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-4 py-3 text-sm font-bold">
+        <Wrench className="w-4 h-4 text-warning" />
+        接口自检 · 手动交易
+        <span className="text-[11px] font-normal text-muted-foreground">仅管理员 · 直连 testnet</span>
+        <ChevronDown className={cn('w-4 h-4 ml-auto transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div className="px-4 pb-4 space-y-3 border-t border-border/40 pt-3">
+          {/* 行1：symbol / 方向 / 类型 */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div className="flex gap-1">
+              {(['BTCUSDT', 'ETHUSDT'] as const).map((s) => (
+                <button key={s} onClick={() => setSymbol(s)}
+                  className={cn('text-[11px] font-bold px-2.5 py-1 rounded-lg transition-all',
+                    symbol === s ? 'neu-inset text-primary' : 'neu-flat text-muted-foreground hover:text-foreground')}>
+                  {s.replace('USDT', '')}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-1">
+              {(['BUY', 'SELL'] as const).map((s) => (
+                <button key={s} onClick={() => setSide(s)}
+                  className={cn('text-[11px] font-bold px-2.5 py-1 rounded-lg transition-all',
+                    side === s ? (s === 'BUY' ? 'neu-inset text-gain' : 'neu-inset text-loss') : 'neu-flat text-muted-foreground')}>
+                  {s === 'BUY' ? '买/多' : '卖/空'}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-1">
+              {(['MARKET', 'LIMIT'] as const).map((t) => (
+                <button key={t} onClick={() => setType(t)}
+                  className={cn('text-[11px] font-bold px-2.5 py-1 rounded-lg transition-all',
+                    type === t ? 'neu-inset text-primary' : 'neu-flat text-muted-foreground hover:text-foreground')}>
+                  {t === 'MARKET' ? '市价' : '限价'}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* 行2：数量 / 限价(仅 LIMIT) / 杠杆 */}
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="数量(张)">
+              <input value={quantity} onChange={(e) => setQuantity(e.target.value)} inputMode="decimal" className={inputCls} placeholder="0.002" />
+            </Field>
+            {type === 'LIMIT' && (
+              <Field label="限价">
+                <input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" className={inputCls} placeholder="挂单价" />
+              </Field>
+            )}
+            <Field label="杠杆">
+              <input value={leverage} onChange={(e) => setLeverage(e.target.value)} inputMode="numeric" className={cn(inputCls, 'w-16')} placeholder="20" />
+            </Field>
+          </div>
+          {/* 行3：操作按钮 */}
+          <div className="flex flex-wrap gap-2">
+            <button onClick={submitOrder} disabled={busy !== null}
+              className="neu-btn-sm px-3 py-1.5 rounded-lg text-xs font-bold text-primary disabled:opacity-50">
+              {busy === 'order' ? '提交中…' : '下单'}
+            </button>
+            <button onClick={submitClose} disabled={busy !== null}
+              className="neu-btn-sm px-3 py-1.5 rounded-lg text-xs font-bold text-loss disabled:opacity-50">
+              {busy === 'close' ? '平仓中…' : '市价平仓'}
+            </button>
+            <button onClick={submitCancelAll} disabled={busy !== null}
+              className="neu-btn-sm px-3 py-1.5 rounded-lg text-xs font-bold text-muted-foreground disabled:opacity-50">
+              {busy === 'cancel' ? '撤单中…' : '撤挂单'}
+            </button>
+          </div>
+          {/* 结果框 */}
+          {result && (
+            <div className={cn('neu-inset rounded-lg px-3 py-2 text-[11px] font-mono break-all',
+              result.ok ? 'text-gain' : 'text-loss')}>
+              {result.ok ? '✓ ' : '✗ '}{result.text}
+            </div>
+          )}
+          <div className="text-[10px] text-muted-foreground/70 leading-relaxed">
+            数量为币本位张数(如 BTC 0.002)。需先在 application.yml 配置 binance-testnet 的 api-key/secret-key；
+            手动测试建议关闭自动执行(strategy.execution.enabled=false)，避免两套状态机冲突。
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ========== Main ========== */
 export function TestnetMonitor() {
   const { toast } = useToast();
+  const user = useUserStore((s) => s.user);
   const [overview, setOverview] = useState<TnOverview | null>(null);
   const [trades, setTrades] = useState<TnTrade[]>([]);
   const [daily, setDaily] = useState<TnDailyCell[]>([]);
@@ -235,6 +381,9 @@ export function TestnetMonitor() {
           </button>
         </div>
       </div>
+
+      {/* 接口自检面板（仅 admin=1 可见；后端再做一次 admin 门控） */}
+      {user?.id === 1 && <ManualTradePanel onDone={load} />}
 
       {/* 空态提示 */}
       {isEmpty && (

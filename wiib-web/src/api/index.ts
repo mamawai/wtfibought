@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats } from '../types/testnet';
+import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats, TnManualOrderReq, TnOrderResult, TnAck } from '../types/testnet';
 import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, GroupedVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, QuantRuntimeConfig, GraphNodeMetric } from '../types';
 
 const api = axios.create({
@@ -187,11 +187,6 @@ export const optionApi = {
   // 获取订单
   orders: (status?: string, pageNum = 1, pageSize = 10) =>
     api.get<unknown, PageResult<OptionOrder>>('/option/orders', { params: { status, pageNum, pageSize } }),
-  // 手动触发到期期权结算
-  processExpirySettlement: () => api.post<unknown, void>('/option/settlement/process'),
-  // 生成期权链（管理接口）
-  generateChain: (stockId: number, steps = 5) =>
-    api.post<unknown, unknown>(`/option/generate-chain/${stockId}`, null, { params: { steps } }),
 };
 
 // ========== Buff接口 ==========
@@ -426,6 +421,13 @@ export const testnetApi = {
     api.get<unknown, TnEquityPoint[]>('/testnet/equity', { params: { symbol, days } }),
   fillStats: (symbol?: string, days = 30) =>
     api.get<unknown, TnFillStats>('/testnet/fill-stats', { params: { symbol, days } }),
+  // 手动交易（接口自检，后端 admin 门控）
+  manualOrder: (req: TnManualOrderReq) =>
+    api.post<unknown, TnOrderResult>('/testnet/manual/order', req),
+  manualClose: (symbol: string) =>
+    api.post<unknown, TnOrderResult>('/testnet/manual/close', null, { params: { symbol } }),
+  manualCancelAll: (symbol: string) =>
+    api.post<unknown, TnAck>('/testnet/manual/cancel-all', null, { params: { symbol } }),
 };
 
 // ========== Graph 观测接口 ==========
