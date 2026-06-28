@@ -23,6 +23,7 @@ public class MarketBroadcaster {
     public static final String PREDICTION_CHANNEL = CHANNEL_PREFIX + "prediction";
     public static final String QUANT_CHANNEL = CHANNEL_PREFIX + "quant";
     public static final String FUTURES_CHANNEL = CHANNEL_PREFIX + "futures";
+    public static final String KLINE_CHANNEL = CHANNEL_PREFIX + "kline";
 
     public void broadcastStockQuote(String stockCode, String message) {
         publish(STOCK_CHANNEL, stockCode, message);
@@ -34,6 +35,11 @@ public class MarketBroadcaster {
 
     public void broadcastFuturesQuote(String symbol, String message) {
         publish(FUTURES_CHANNEL, symbol, message);
+    }
+
+    /** 实时 K 线（含未收盘的当前根）：o/h/l/c/v/q/i/x，前端蜡烛图 + 成交量柱状图用。 */
+    public void broadcastKline(String symbol, String message) {
+        publish(KLINE_CHANNEL, symbol, message);
     }
 
     /** @param topic price/round/activity */

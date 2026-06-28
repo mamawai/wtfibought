@@ -12,6 +12,7 @@ import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
 import { FuturesActionButton } from '../components/FuturesActionButton';
+import { CandleChart } from '../components/CandleChart';
 import { TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Loader2, X, RefreshCw, Sparkles, Wallet, Warehouse, Scale, HelpCircle, Plus, Flame } from 'lucide-react';
 import TradingViewWidget from '../components/TradingViewWidget';
 import { COIN_MAP, getCoin, DEFAULT_SYMBOL, formatCoinPrice, getCoinPriceDecimals } from '../lib/coinConfig';
@@ -903,9 +904,19 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
           </div>
         </CardHeader>
         <CardContent className="p-2 relative">
-          {loading && activeTab < TABS.length && points.length === 0 && <Skeleton className="absolute inset-0 z-10 m-2" style={{ height: 300 }} />}
-          <div ref={chartRef1D} className="w-full" style={{ height: 300, display: activeTab === 0 ? 'block' : 'none' }} />
-          <div ref={chartRef7D} className="w-full" style={{ height: 300, display: activeTab === 1 ? 'block' : 'none' }} />
+          {/* 合约：实时蜡烛图 + 成交量柱 + 悬停气泡（1D→5m, 7D→15m）；覆盖在最上层 */}
+          {isFuturesMode && activeTab < TABS.length && (
+            <div style={{ height: 360 }}>
+              <CandleChart symbol={symbol} interval={activeTab === 0 ? '5m' : '15m'} limit={activeTab === 0 ? 288 : 672} />
+            </div>
+          )}
+          {/* 现货：折线（echarts 实例常驻，合约时整块隐藏避免重建） */}
+          <div style={{ display: isFuturesMode ? 'none' : 'block' }}>
+            {loading && activeTab < TABS.length && points.length === 0 && <Skeleton className="absolute inset-0 z-10 m-2" style={{ height: 300 }} />}
+            <div ref={chartRef1D} className="w-full" style={{ height: 300, display: activeTab === 0 ? 'block' : 'none' }} />
+            <div ref={chartRef7D} className="w-full" style={{ height: 300, display: activeTab === 1 ? 'block' : 'none' }} />
+          </div>
+          {/* 高级：TradingView（合约/现货各自 symbol） */}
           {activeTab === 2 && <div style={{ height: 500 }}><TradingViewWidget symbol={orderType === 'FUTURES' ? cfg.futuresTvSymbol : cfg.tvSymbol} label={cfg.name} /></div>}
         </CardContent>
       </Card>
@@ -987,11 +998,9 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
             )}
           </div>
           <div className="flex rounded-xl bg-card overflow-hidden neu-raised">
-            {(['FUTURES', 'MARKET', 'LIMIT'] as const).map((t, idx) => (
-              <button key={t} onClick={() => setOrderType(t)} className={`px-4 py-2.5 text-xs font-bold transition-colors ${idx !== 2 ? 'border-r border-border' : ''} ${orderType === t ? 'bg-foreground text-background' : 'bg-card text-foreground hover:bg-surface-hover'}`}>
-                {t === 'MARKET' ? '市价' : t === 'LIMIT' ? '限价' : '合约'}
-              </button>
-            ))}
+            <button onClick={() => setOrderType('FUTURES')} className={`px-5 py-2.5 text-xs font-bold border-r border-border transition-colors ${orderType === 'FUTURES' ? 'bg-foreground text-background' : 'bg-card text-foreground hover:bg-surface-hover'}`}>合约</button>
+            {/* 现货：从合约切过来默认市价；已在现货则保留当前市价/限价选择 */}
+            <button onClick={() => { if (orderType === 'FUTURES') setOrderType('MARKET'); }} className={`px-5 py-2.5 text-xs font-bold transition-colors ${orderType !== 'FUTURES' ? 'bg-foreground text-background' : 'bg-card text-foreground hover:bg-surface-hover'}`}>现货</button>
           </div>
           <Link
             to="/force-orders"
@@ -1179,6 +1188,13 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
           {/* 现货面板（原有逻辑） */}
           {orderType !== 'FUTURES' && (
             <>
+          {/* 执行方式：市价/限价（仅现货，样式对齐合约面板） */}
+          <div className="flex items-center gap-2">
+            <div className="flex rounded-lg overflow-hidden neu-raised-sm">
+              <button onClick={() => setOrderType('MARKET')} className={`px-4 py-1.5 text-xs font-bold transition-colors ${orderType === 'MARKET' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-surface-hover'}`}>市价</button>
+              <button onClick={() => setOrderType('LIMIT')} className={`px-4 py-1.5 text-xs font-bold border-l border-border transition-colors ${orderType === 'LIMIT' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-surface-hover'}`}>限价</button>
+            </div>
+          </div>
           {/* 限价输入 */}
           {orderType === 'LIMIT' && (
             <div className="space-y-1.5">

@@ -32,7 +32,7 @@ public class WsBroadcastRelay implements MessageListener {
         for (String ch : new String[]{
                 MarketBroadcaster.STOCK_CHANNEL, MarketBroadcaster.CRYPTO_CHANNEL,
                 MarketBroadcaster.FUTURES_CHANNEL, MarketBroadcaster.PREDICTION_CHANNEL,
-                MarketBroadcaster.QUANT_CHANNEL}) {
+                MarketBroadcaster.QUANT_CHANNEL, MarketBroadcaster.KLINE_CHANNEL}) {
             redisMessageListenerContainer.addMessageListener(this, new ChannelTopic(ch));
         }
         log.info("已订阅 Redis 广播频道，中继到本地 WebSocket");
@@ -60,6 +60,7 @@ public class WsBroadcastRelay implements MessageListener {
             switch (channel) {
                 case MarketBroadcaster.CRYPTO_CHANNEL -> messagingTemplate.convertAndSend("/topic/crypto/" + code, json);
                 case MarketBroadcaster.FUTURES_CHANNEL -> messagingTemplate.convertAndSend("/topic/futures/" + code, json);
+                case MarketBroadcaster.KLINE_CHANNEL -> messagingTemplate.convertAndSend("/topic/kline/" + code, json);
                 case MarketBroadcaster.PREDICTION_CHANNEL -> messagingTemplate.convertAndSend("/topic/prediction/" + code, json);
                 case MarketBroadcaster.QUANT_CHANNEL -> messagingTemplate.convertAndSend("/topic/quant/" + code, json);
                 default -> messagingTemplate.convertAndSend("/topic/quote/" + code, json);
