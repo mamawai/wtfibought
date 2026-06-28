@@ -73,7 +73,7 @@ public final class StrategyKlineBacktestEngine {
             long nowMs = bar.closeTime();
             if (tradingEndMs != null && nowMs >= tradingEndMs) break;
 
-            tools.setCurrentTime(LocalDateTime.ofInstant(Instant.ofEpochMilli(nowMs), ZoneId.systemDefault()));
+            tools.setCurrentTime(LocalDateTime.ofInstant(Instant.ofEpochMilli(nowMs), ZoneId.of("UTC")));
             tools.setCurrentBarIndex(i);
 
             if (pending != null) {
@@ -89,7 +89,7 @@ public final class StrategyKlineBacktestEngine {
                 pendingLimit = null;
             }
 
-            tools.tickBar(bar.high(), bar.low(), bar.close(), i);
+            tools.tickBar(bar.open(), bar.high(), bar.low(), bar.close(), i);
             view.append(bar);
             strategy.onOpenPositionBarClosed(symbol, view, tools.getOpenPositions(symbol), tools);
 

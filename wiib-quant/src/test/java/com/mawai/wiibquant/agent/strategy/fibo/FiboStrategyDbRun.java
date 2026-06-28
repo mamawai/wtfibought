@@ -801,6 +801,12 @@ class FiboStrategyDbRun {
         double epsBp = Double.parseDouble(System.getProperty("fibo.bt.epsBp", "1"));
         String fixedMargin = System.getProperty("backtest.fixedMarginUsdt", "0");
         String marginPct = System.getProperty("backtest.marginPctOfEquity", "0");
+        // 回测窗口：默认 2021→now(全样本)；-Dfibo.bt.fromDate / -Dfibo.bt.toDate 自定义(yyyy-MM-dd, toDate 含当日)
+        String fromDate = System.getProperty("fibo.bt.fromDate", "").trim();
+        String toDate = System.getProperty("fibo.bt.toDate", "").trim();
+        long startMs = fromDate.isBlank() ? yearStartUtc(2021)
+                : LocalDate.parse(fromDate).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
+        long endMs = toDate.isBlank() ? yearStartUtc(2027) : inclusiveDateEndUtc(toDate);
         FiboParams p = mrParams(entryFib, slFib, scaleR);
 
         Connection con;
@@ -817,20 +823,24 @@ class FiboStrategyDbRun {
         String saved = System.getProperty("backtest.fillEpsilonBp");
         System.setProperty("backtest.fillEpsilonBp", String.valueOf(epsBp));
         try (con) {
-            System.out.printf("%n#### Fibo 实盘模拟(e%.3f/sl%.3f/%.1fR 全关, balance=%s lev=%d 固定保证金=%sU 保证金%%=%s fill=%.1fbp, 连续2021-now) ####%n",
-                    entryFib, slFib, scaleR, balance.toPlainString(), leverage, fixedMargin, marginPct, epsBp);
+            System.out.printf("%n#### Fibo 实盘模拟(e%.3f/sl%.3f/%.1fR 全关, balance=%s lev=%d 固定保证金=%sU 保证金%%=%s fill=%.1fbp, 窗口[%s, %s)) ####%n",
+                    entryFib, slFib, scaleR, balance.toPlainString(), leverage, fixedMargin, marginPct, epsBp,
+                    Instant.ofEpochMilli(startMs), Instant.ofEpochMilli(endMs));
             for (String symbol : symbols) {
                 Long latestClose = latestCloseTime(con, symbol);
                 assertThat(latestClose).as(symbol + " latest close").isNotNull();
-                SegResult sr = runWindow(con, symbol, p, yearStartUtc(2021), yearStartUtc(2027),
+                SegResult sr = runWindow(con, symbol, p, startMs, endMs,
                         balance, leverage, latestClose);
                 if (sr == null) { System.out.printf("%s: 无数据%n", symbol); continue; }
                 BacktestResult r = sr.r();
                 System.out.printf("%n== %s ==%n", symbol);
+                System.out.printf("窗口实际止于 %s（min(toDate, 最新close)）%n",
+                        Instant.ofEpochMilli(Math.min(endMs, latestClose + 1)));
                 System.out.printf("trades=%d winRate=%.1f%% 最终权益=%.2fU 净盈亏=%.2fU 收益率=%.1f%% maxDD=%.1f%%%n",
                         r.totalTrades(), r.winRate() * 100,
                         r.finalEquity().doubleValue(), r.netProfit().doubleValue(),
                         r.returnPct() * 100, r.maxDrawdownPct() * 100);
+                printTradeLedger(r, balance);
             }
         } finally {
             if (saved == null) System.clearProperty("backtest.fillEpsilonBp");
@@ -1146,8 +1156,35 @@ class FiboStrategyDbRun {
         return total == 0 ? 0.0 : 100.0 * a / total;
     }
 
-    private static void printRecentTrades(List<BacktestResult.Trade> trades, int limit) {
-        if (trades.isEmpty()) return;
+    /**
+     * 逐笔台账：开/平时间、方向、进出价、数量、盈亏(已扣费)、手续费、R、平仓原因、累计权益。
+     * 累计权益从初始余额起逐笔累加 pnl，与 finalEquity 收口一致。ASCII 表头避免控制台中文乱码。
+     */
+    private static void printTradeLedger(BacktestResult r, BigDecimal initialBalance) {
+        List<BacktestResult.Trade> trades = r.getTrades();
+        if (trades.isEmpty()) { System.out.println("(no trades)"); return; }
+        System.out.printf("--- trade ledger (%d) ---%n", trades.size());
+        System.out.printf("%-4s %-19s %-19s %-5s %12s %12s %12s %10s %8s %7s %-10s %12s%n",
+                "#", "open", "close", "side", "entry", "exit", "qty", "pnl", "fee", "R", "reason", "equity");
+        BigDecimal eq = initialBalance;
+        int n = 0;
+        for (BacktestResult.Trade t : trades) {
+            eq = eq.add(t.pnl());
+            System.out.printf("%-4d %-19s %-19s %-5s %12s %12s %12s %10s %8s %7s %-10s %12s%n",
+                    ++n, t.openTime(), t.closeTime(), t.side(),
+                    scale(t.entryPrice()), scale(t.exitPrice()), scale(t.quantity()),
+                    money(t.pnl()), money(t.fee()),
+                    t.rMultiple() == null ? "-" : t.rMultiple().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString(),
+                    t.exitReason(), money(eq));
+        }
+    }
+
+    /** 金额统一保留 2 位，台账列对齐。 */
+    private static String money(BigDecimal v) {
+        return v == null ? "-" : v.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private static void printRecentTrades(List<BacktestResult.Trade> trades, int limit) {        if (trades.isEmpty()) return;
         int from = Math.max(0, trades.size() - limit);
         System.out.printf("recent trades (last %d):%n", trades.size() - from);
         System.out.printf("%-20s %-5s %12s %12s %12s %8s %-12s%n",

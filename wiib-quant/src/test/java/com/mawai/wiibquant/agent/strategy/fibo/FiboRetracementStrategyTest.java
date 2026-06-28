@@ -95,7 +95,7 @@ class FiboRetracementStrategyTest {
         strategy.onPositionOpened(SYM, sig, posId, new BigDecimal("150"), null, tools);
 
         tools.setCurrentBarIndex(1);
-        tools.tickBar(new BigDecimal("160"), new BigDecimal("150"), new BigDecimal("158"), 1); // 价到 +1R
+        tools.tickBar(new BigDecimal("152"), new BigDecimal("160"), new BigDecimal("150"), new BigDecimal("158"), 1); // 价到 +1R
 
         var trade = tools.getClosedTrades().getFirst();
         assertEquals("SCALE", trade.exitReason());

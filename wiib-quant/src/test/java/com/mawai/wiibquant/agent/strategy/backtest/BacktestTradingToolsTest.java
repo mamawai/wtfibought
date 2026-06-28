@@ -30,7 +30,7 @@ class BacktestTradingToolsTest {
         assertThat(t.getOpenPositions("BTCUSDT").getFirst().getEntryPrice()).isEqualByComparingTo("95");
 
         t.setCurrentBarIndex(1);
-        t.tickBar(new BigDecimal("111"), new BigDecimal("100"), new BigDecimal("110"), 1); // high≥110 → TP
+        t.tickBar(new BigDecimal("105"), new BigDecimal("111"), new BigDecimal("100"), new BigDecimal("110"), 1); // high≥110 → TP
         var trade = t.getClosedTrades().getFirst();
         assertThat(trade.exitReason()).isEqualTo("TP");
         // fee = openMaker(95×万2) + closeTaker(110×万5)
@@ -46,7 +46,7 @@ class BacktestTradingToolsTest {
                 new BigDecimal("95"), new BigDecimal("90"), new BigDecimal("110"), "FIBO");
 
         t.setCurrentBarIndex(1);
-        t.tickBar(new BigDecimal("96"), new BigDecimal("89"), new BigDecimal("90"), 1); // low≤90 → SL
+        t.tickBar(new BigDecimal("95"), new BigDecimal("96"), new BigDecimal("89"), new BigDecimal("90"), 1); // low≤90 → SL
         var trade = t.getClosedTrades().getFirst();
         assertThat(trade.exitReason()).isEqualTo("SL");
         // fee = openMaker(95×万2) + closeTaker(90×万5)
@@ -63,7 +63,7 @@ class BacktestTradingToolsTest {
         assertThat(t.getOpenPositions("BTCUSDT").getFirst().getEntryPrice()).isEqualByComparingTo("100");
 
         t.setCurrentBarIndex(1);
-        t.tickBar(new BigDecimal("96"), new BigDecimal("89"), new BigDecimal("90"), 1); // SL
+        t.tickBar(new BigDecimal("95"), new BigDecimal("96"), new BigDecimal("89"), new BigDecimal("90"), 1); // SL
         var trade = t.getClosedTrades().getFirst();
         // fee = openTaker(100×万5) + closeTaker(90×万5)
         assertThat(trade.fee()).isEqualByComparingTo(
@@ -81,7 +81,7 @@ class BacktestTradingToolsTest {
         t.setScaleOut(posId, new BigDecimal("110"), 0.5);   // +1R 落袋 1/2 仓
 
         t.setCurrentBarIndex(1);
-        t.tickBar(new BigDecimal("110"), new BigDecimal("100"), new BigDecimal("108"), 1); // high≥110 触发
+        t.tickBar(new BigDecimal("102"), new BigDecimal("110"), new BigDecimal("100"), new BigDecimal("108"), 1); // high≥110 触发
 
         var trade = t.getClosedTrades().getFirst();
         assertThat(trade.exitReason()).isEqualTo("SCALE");
@@ -104,9 +104,9 @@ class BacktestTradingToolsTest {
         t.setScaleOut(posId, new BigDecimal("110"), 0.5);
 
         t.setCurrentBarIndex(1);
-        t.tickBar(new BigDecimal("110"), new BigDecimal("105"), new BigDecimal("108"), 1);
+        t.tickBar(new BigDecimal("106"), new BigDecimal("110"), new BigDecimal("105"), new BigDecimal("108"), 1);
         t.setCurrentBarIndex(2);
-        t.tickBar(new BigDecimal("112"), new BigDecimal("106"), new BigDecimal("109"), 2); // 再触不应二次落袋
+        t.tickBar(new BigDecimal("108"), new BigDecimal("112"), new BigDecimal("106"), new BigDecimal("109"), 2); // 再触不应二次落袋
 
         assertThat(t.getClosedTrades()).hasSize(1);
         assertThat(t.getOpenPositions("BTCUSDT").getFirst().getQuantity()).isEqualByComparingTo("1");
@@ -121,7 +121,7 @@ class BacktestTradingToolsTest {
         t.setScaleOut(posId, new BigDecimal("110"), 0.5);
 
         t.setCurrentBarIndex(1);
-        t.tickBar(new BigDecimal("109"), new BigDecimal("100"), new BigDecimal("105"), 1); // high<110
+        t.tickBar(new BigDecimal("104"), new BigDecimal("109"), new BigDecimal("100"), new BigDecimal("105"), 1); // high<110
 
         assertThat(t.getClosedTrades()).isEmpty();
         assertThat(t.getOpenPositions("BTCUSDT").getFirst().getQuantity()).isEqualByComparingTo("2");

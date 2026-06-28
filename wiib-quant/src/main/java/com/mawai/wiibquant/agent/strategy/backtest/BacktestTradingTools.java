@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 回测用模拟交易工具。
  * <p>
  * 实现 {@link TradingOperations}，在内存中模拟开仓/平仓/止损止盈触发。
- * BacktestEngine 每根K线调用 {@link #tickBar(BigDecimal, BigDecimal, BigDecimal, int)}
+ * BacktestEngine 每根K线调用 {@link #tickBar(BigDecimal, BigDecimal, BigDecimal, BigDecimal, int)}
  * 来检查是否触发了挂单（SL/TP）。
  *
  * <h3>模拟精度</h3>
@@ -284,22 +284,31 @@ public class BacktestTradingTools implements TradingOperations {
     }
 
     /**
-     * 每根K线调用一次，检查是否触发 SL/TP。
+     * 每根K线调用一次，按涨跌方向还原盘中路径检查 SL/TP。
+     * <p>路径假设：阳线(收≥开) 开→低→高→收(先探低再冲高)，阴线 开→高→低→收(先冲高再杀低)——
+     * 单根只有 OHLC 无 tick，此为业界标准的盘中次序近似。限价单在路径上首次穿过挂单价处成交，
+     * 之后只用"成交点之后"的那截判平仓，避免拿成交前的极值造出同根假平仓。
      *
+     * @param open  本根K线开盘价
      * @param high  本根K线最高价
      * @param low   本根K线最低价
      * @param close 本根K线收盘价
      * @param barIndex 当前K线序号
      */
-    public void tickBar(BigDecimal high, BigDecimal low, BigDecimal close, int barIndex) {
+    public void tickBar(BigDecimal open, BigDecimal high, BigDecimal low, BigDecimal close, int barIndex) {
         this.currentPrice = close;
         this.currentBarIndex = barIndex;
+
+        // 阳线先探低后冲高、阴线先冲高后杀低，得到 开→中1→中2→收 四点盘中路径。
+        boolean bullish = close.compareTo(open) >= 0;
+        BigDecimal[] path = bullish
+                ? new BigDecimal[]{open, low, high, close}
+                : new BigDecimal[]{open, high, low, close};
 
         List<FuturesPositionDTO> posSnapshot = new ArrayList<>(openPositions);
         for (FuturesPositionDTO pos : posSnapshot) {
             if (!"OPEN".equals(pos.getStatus())) continue;
-            recordExcursion(pos, high, low);
-            checkSlTpTrigger(pos, high, low);
+            walkBarPath(pos, path);
         }
 
         // 更新所有仓位的当前价格和未实现盈亏
@@ -309,6 +318,30 @@ public class BacktestTradingTools implements TradingOperations {
             pos.setMarkPrice(close);
             BigDecimal pnl = calcUnrealizedPnl(pos, close);
             pos.setUnrealizedPnl(pnl);
+        }
+    }
+
+    /**
+     * 沿盘中路径逐段判平仓。本根新开的仓：先在路径上定位成交点(首次穿过 entryPrice)，只对成交点
+     * 之后的路径判 SL/TP；旧仓整根都在成交之后，全程判。逐段用该段局部 high/low 复用
+     * {@link #checkSlTpTrigger}——段内单调，SL 与 TP 必在 entry 两侧、单段至多触一侧，
+     * 故"先后"由分段顺序决定，原"同根 SL 一律优先"退化为同段内兜底。
+     */
+    private void walkBarPath(FuturesPositionDTO pos, BigDecimal[] path) {
+        boolean armed = findOpenBarIndex(pos) != currentBarIndex;   // 旧仓全程已成交；本根新仓待定位成交点
+        BigDecimal entry = pos.getEntryPrice();
+        for (int i = 0; i + 1 < path.length; i++) {
+            BigDecimal p = path[i], q = path[i + 1];
+            BigDecimal segLow = p.min(q), segHigh = p.max(q);
+            if (!armed) {
+                if (entry.compareTo(segLow) < 0 || entry.compareTo(segHigh) > 0) continue;  // 本段未触及成交价
+                armed = true;
+                // 成交点之后只剩 entry→q 这截：按行进方向把成交点设为该段的局部边界
+                if (q.compareTo(p) >= 0) segLow = entry; else segHigh = entry;
+            }
+            recordExcursion(pos, segHigh, segLow);
+            checkSlTpTrigger(pos, segHigh, segLow);
+            if (!"OPEN".equals(pos.getStatus())) return;            // 已全平，停止后续段
         }
     }
 
