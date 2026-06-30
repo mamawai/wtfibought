@@ -25,6 +25,16 @@ public final class FiboRetracementStrategy implements TradingStrategySpi {
 
     private static final String ID = "FIBO";
 
+    // 高周期趋势过滤（trendFilterOn 开启时生效）：1h 收盘 vs SMA200。
+    // 周期与 MA 长度刻意写死成常量、不进 FiboParams，从根上断"调趋势参数凑回测"的过拟合。
+    private static final long TREND_TF_MILLIS = 60 * 60_000L;   // 趋势判定周期 1h（高于 15m 找腿周期）
+    private static final int TREND_SMA_PERIOD = 200;            // 趋势判定 SMA 长度（最 conventional 的趋势线）
+    private static final int TREND_FAST_SMA_PERIOD = 50;        // T1 多头排列用的快线（50/200 金叉是最 conventional 的排列）
+
+    // 多周期Fib汇合（mtfConfluenceOn 开启时生效）：中期回撤带写死 [0.382,0.786]，不暴露成可调参。
+    private static final double MTF_BAND_SHALLOW = 0.382;       // 中期回撤带浅端
+    private static final double MTF_BAND_DEEP = 0.786;          // 中期回撤带深端
+
     private final FiboParams params;
     private final List<String> symbols;
     private final StrategyRiskPolicy riskPolicy = StrategyRiskPolicy.defaults();
@@ -88,12 +98,28 @@ public final class FiboRetracementStrategy implements TradingStrategySpi {
             return Optional.empty();
         }
 
+        // 高周期趋势闸：开启时仅放行与 1h 趋势同向的腿（可叠 T1 多头排列 / T2 斜率），逆势腿不挂单。
+        // 周期/MA/斜率回看全写死成常量、无可调参，过拟合面最小；砍掉的是结构性最差的逆势单，非随机减量。
+        // 腿的失效/超时/消费生命周期已在上面处理完，这里只拦下单、不污染状态。
+        if (params.trendFilterOn()) {
+            List<KlineBar> htf = view.closedBars(TREND_TF_MILLIS, TREND_SMA_PERIOD + 1);
+            if (!trendGate(htf, leg.upLeg(), params.trendAlignOn())) {
+                return Optional.empty();
+            }
+        }
+
         // 挂单价 = entryFib 回撤位；现价已穿过则放弃（保证 maker 被动成交）
         BigDecimal limit = grid.retracement(params.entryFib());
         boolean alreadyPassed = leg.upLeg()
                 ? last.close().compareTo(limit) <= 0
                 : last.close().compareTo(limit) >= 0;
         if (alreadyPassed) return Optional.empty();
+
+        // 多周期汇合闸：开启时，短期入场位须落在中期(1h/4h)推动腿的 [0.382,0.786] 回撤带内、且方向一致才放行。
+        // 提质(只接中短共振区)+ 降频(共振才进)，正面打"薄 edge 被手续费吃"那个病。
+        if (params.mtfConfluenceOn() && !legInMtfConfluence(leg, limit, view)) {
+            return Optional.empty();
+        }
 
         BigDecimal stop = bufferedStop(grid, params.slFibRatio(), slBuffer(atr), leg.upLeg());
         BigDecimal risk = limit.subtract(stop).abs();
@@ -217,6 +243,76 @@ public final class FiboRetracementStrategy implements TradingStrategySpi {
     private double lastAtr(List<KlineBar> bars) {
         double[] atr = SwingDetector.atrSeries(bars, params.atrPeriod());
         return atr[atr.length - 1];
+    }
+
+    /** 末 period 根收盘 SMA。 */
+    private static double smaClose(List<KlineBar> bars, int period) {
+        return avgClose(bars, bars.size() - period, bars.size());
+    }
+
+    /** 收盘均值，区间 [from, toExcl)。 */
+    private static double avgClose(List<KlineBar> bars, int from, int toExcl) {
+        double sum = 0.0;
+        for (int i = from; i < toExcl; i++) {
+            sum += bars.get(i).close().doubleValue();
+        }
+        return sum / (toExcl - from);
+    }
+
+    /**
+     * 趋势闸：基础顺势（1h close vs SMA200，腿向须同向）+ 可选 T1 均线多头排列，全过才放行。
+     * 纯函数（吃 htf bars + 开关），无可调参泄漏；不足 SMA200 根保守判否。
+     */
+    static boolean trendGate(List<KlineBar> htf, boolean wantUp, boolean alignOn) {
+        if (htf.size() < TREND_SMA_PERIOD) return false;
+        boolean htfUp = htf.getLast().close().doubleValue() > smaClose(htf, TREND_SMA_PERIOD);
+        if (wantUp != htfUp) return false;                                          // 基础：腿向 = 1h 趋势向
+        if (alignOn && !maAligned(htf, wantUp)) return false;                       // T1 均线多头排列
+        return true;
+    }
+
+    /**
+     * T1 高周期均线多头排列：1h SMA50>SMA200 且 close>SMA50（wantUp）；空头对称；不足 200 根保守判否。
+     * 比"close>SMA200"更严——要求快线在慢线上、价在快线上，过滤"刚站上慢线但还没走出结构"的弱趋势。
+     */
+    static boolean maAligned(List<KlineBar> htf, boolean wantUp) {
+        if (htf.size() < TREND_SMA_PERIOD) return false;
+        double smaFast = smaClose(htf, TREND_FAST_SMA_PERIOD);
+        double smaSlow = smaClose(htf, TREND_SMA_PERIOD);
+        double close = htf.getLast().close().doubleValue();
+        return wantUp ? (smaFast > smaSlow && close > smaFast)
+                      : (smaFast < smaSlow && close < smaFast);
+    }
+
+    /**
+     * 短期入场位是否落在中期(mtfTfMillis)推动腿的 [0.382,0.786] 回撤带内、且中短期方向一致。
+     * 复用 latestConfirmedLeg 在中期K线上找腿；中期无腿/方向不一致/不在带内 → 不放行。
+     */
+    private boolean legInMtfConfluence(Leg shortLeg, BigDecimal entryLimit, StrategyMarketView view) {
+        List<KlineBar> mtf = view.closedBars(params.mtfTfMillis(), params.swingLookbackBars());
+        if (mtf.size() <= params.atrPeriod() + 2) return false;          // 中期历史不足，保守不放行
+        Optional<Leg> medOpt = latestConfirmedLeg(mtf, lastAtr(mtf));
+        if (medOpt.isEmpty()) return false;
+        Leg med = medOpt.get();
+        if (med.upLeg() != shortLeg.upLeg()) return false;              // 中短期方向须一致
+        FiboLevels.FiboGrid medGrid = new FiboLevels.FiboGrid(med.startPrice(), med.endPrice(), med.upLeg());
+        BigDecimal a = medGrid.retracement(MTF_BAND_SHALLOW);
+        BigDecimal b = medGrid.retracement(MTF_BAND_DEEP);
+        BigDecimal lo = a.min(b), hi = a.max(b);
+        return entryLimit.compareTo(lo) >= 0 && entryLimit.compareTo(hi) <= 0;   // 入场位落在中期回撤带内
+    }
+
+    /** T5 吊灯止损价：做多 = 入场后最高价 − k×ATR；做空 = 入场后最低价 + k×ATR。 */
+    static BigDecimal chandelierStop(BigDecimal extremeSinceEntry, double atr, double k, boolean isLong) {
+        BigDecimal off = BigDecimal.valueOf(atr * k);
+        return (isLong ? extremeSinceEntry.subtract(off) : extremeSinceEntry.add(off))
+                .setScale(8, RoundingMode.HALF_UP);
+    }
+
+    /** 止损只收紧不放松（ratchet）：做多取更高者，做空取更低者；current 为空直接用候选。 */
+    static BigDecimal ratchetStop(BigDecimal current, BigDecimal candidate, boolean isLong) {
+        if (current == null) return candidate;
+        return isLong ? current.max(candidate) : current.min(candidate);
     }
 
     private BigDecimal slBuffer(double atr) {

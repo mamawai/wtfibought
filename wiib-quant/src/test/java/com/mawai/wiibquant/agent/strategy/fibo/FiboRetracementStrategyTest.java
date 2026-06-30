@@ -33,7 +33,10 @@ class FiboRetracementStrategyTest {
                 0.1, 1.0,              // slBufferAtrMult, tpExtensionRatio
                 100_000, 500,          // orderTimeoutBars(极大), swingLookbackBars
                 false, 0.5, 1.0,       // scaleOutOn, scaleOutFraction, scaleOutAtR
-                0.0);                  // tpRMultiple(0=用延伸位)
+                0.0,                   // tpRMultiple(0=用延伸位)
+                false,                 // trendFilterOn(测试保持方向无关纯回踩)
+                false, 3_600_000L,     // mtfConfluenceOn=false, mtfTfMillis
+                false);                // trendAlignOn
     }
 
     @Test
@@ -103,6 +106,92 @@ class FiboRetracementStrategyTest {
         assertEquals(0, trade.quantity().compareTo(new BigDecimal("1")), "落袋量=0.5×2=1");
         assertEquals(0, tools.getOpenPositions(SYM).getFirst().getQuantity().compareTo(new BigDecimal("1")),
                 "剩余仓续存");
+    }
+
+    // ---- T1: 高周期均线多头排列门 (maAligned) ----
+
+    @Test
+    void maAlignedTrueForRisingSeriesUpLegOnly() {
+        List<KlineBar> htf = buildHtf(220, true);   // 单调上行
+        assertTrue(FiboRetracementStrategy.maAligned(htf, true), "上行序列应判为多头排列(放行做多腿)");
+        assertFalse(FiboRetracementStrategy.maAligned(htf, false), "上行序列不应判为空头排列");
+    }
+
+    @Test
+    void maAlignedTrueForFallingSeriesDownLegOnly() {
+        List<KlineBar> htf = buildHtf(220, false);  // 单调下行
+        assertTrue(FiboRetracementStrategy.maAligned(htf, false), "下行序列应判为空头排列(放行做空腿)");
+        assertFalse(FiboRetracementStrategy.maAligned(htf, true), "下行序列不应判为多头排列");
+    }
+
+    @Test
+    void maAlignedFalseWhenInsufficientBars() {
+        List<KlineBar> htf = buildHtf(150, true);   // <200 根，算不出 SMA200
+        assertFalse(FiboRetracementStrategy.maAligned(htf, true), "不足200根应保守判否");
+        assertFalse(FiboRetracementStrategy.maAligned(htf, false), "不足200根应保守判否");
+    }
+
+    // ---- 趋势闸组合 (trendGate = 基础顺势 + 可选T1 均线多头排列) ----
+
+    @Test
+    void trendGateBaseRespectsDirection() {
+        List<KlineBar> up = buildHtf(230, true);
+        assertTrue(FiboRetracementStrategy.trendGate(up, true, false), "上行+做多腿: 基础门放行");
+        assertFalse(FiboRetracementStrategy.trendGate(up, false, false), "上行+做空腿: 基础门拦截");
+    }
+
+    @Test
+    void trendGateAlignPassesInCleanTrend() {
+        List<KlineBar> up = buildHtf(230, true);
+        assertTrue(FiboRetracementStrategy.trendGate(up, true, true), "干净上行: T1 放行做多");
+        List<KlineBar> down = buildHtf(230, false);
+        assertTrue(FiboRetracementStrategy.trendGate(down, false, true), "干净下行: T1 放行做空");
+        assertFalse(FiboRetracementStrategy.trendGate(down, true, true), "下行+做多腿: 拦截");
+    }
+
+    /** 构造 n 根 1h bar：rising=单调上行收盘、否则单调下行。 */
+    private static List<KlineBar> buildHtf(int n, boolean rising) {
+        List<KlineBar> bars = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            double c = rising ? 100 + i : 100 + (n - i);
+            long t = i * 3_600_000L;
+            bars.add(new KlineBar(t, t + 3_600_000L - 1,
+                    BigDecimal.valueOf(c), BigDecimal.valueOf(c + 1),
+                    BigDecimal.valueOf(c - 1), BigDecimal.valueOf(c), BigDecimal.ONE));
+        }
+        return bars;
+    }
+
+    // ---- T5: ATR 吊灯移动止损 (chandelierStop + ratchetStop) ----
+
+    @Test
+    void chandelierStopLongIsHighMinusKAtr() {
+        BigDecimal stop = FiboRetracementStrategy.chandelierStop(new BigDecimal("200"), 10.0, 3.0, true);
+        assertEquals(0, stop.compareTo(new BigDecimal("170")), "做多吊灯=最高200 − 3×10 = 170");
+    }
+
+    @Test
+    void chandelierStopShortIsLowPlusKAtr() {
+        BigDecimal stop = FiboRetracementStrategy.chandelierStop(new BigDecimal("100"), 10.0, 3.0, false);
+        assertEquals(0, stop.compareTo(new BigDecimal("130")), "做空吊灯=最低100 + 3×10 = 130");
+    }
+
+    @Test
+    void ratchetStopLongOnlyTightensUp() {
+        // 做多：更高的候选收紧、更低的候选忽略
+        assertEquals(0, FiboRetracementStrategy.ratchetStop(new BigDecimal("170"), new BigDecimal("180"), true)
+                .compareTo(new BigDecimal("180")), "更高候选→收紧到180");
+        assertEquals(0, FiboRetracementStrategy.ratchetStop(new BigDecimal("170"), new BigDecimal("160"), true)
+                .compareTo(new BigDecimal("170")), "更低候选→不放松，保持170");
+    }
+
+    @Test
+    void ratchetStopShortOnlyTightensDown() {
+        // 做空：更低的候选收紧、更高的候选忽略
+        assertEquals(0, FiboRetracementStrategy.ratchetStop(new BigDecimal("130"), new BigDecimal("120"), false)
+                .compareTo(new BigDecimal("120")), "更低候选→收紧到120");
+        assertEquals(0, FiboRetracementStrategy.ratchetStop(new BigDecimal("130"), new BigDecimal("140"), false)
+                .compareTo(new BigDecimal("130")), "更高候选→不放松，保持130");
     }
 
     // ---- helpers ----
