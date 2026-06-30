@@ -162,38 +162,6 @@ class FiboRetracementStrategyTest {
         return bars;
     }
 
-    // ---- T5: ATR 吊灯移动止损 (chandelierStop + ratchetStop) ----
-
-    @Test
-    void chandelierStopLongIsHighMinusKAtr() {
-        BigDecimal stop = FiboRetracementStrategy.chandelierStop(new BigDecimal("200"), 10.0, 3.0, true);
-        assertEquals(0, stop.compareTo(new BigDecimal("170")), "做多吊灯=最高200 − 3×10 = 170");
-    }
-
-    @Test
-    void chandelierStopShortIsLowPlusKAtr() {
-        BigDecimal stop = FiboRetracementStrategy.chandelierStop(new BigDecimal("100"), 10.0, 3.0, false);
-        assertEquals(0, stop.compareTo(new BigDecimal("130")), "做空吊灯=最低100 + 3×10 = 130");
-    }
-
-    @Test
-    void ratchetStopLongOnlyTightensUp() {
-        // 做多：更高的候选收紧、更低的候选忽略
-        assertEquals(0, FiboRetracementStrategy.ratchetStop(new BigDecimal("170"), new BigDecimal("180"), true)
-                .compareTo(new BigDecimal("180")), "更高候选→收紧到180");
-        assertEquals(0, FiboRetracementStrategy.ratchetStop(new BigDecimal("170"), new BigDecimal("160"), true)
-                .compareTo(new BigDecimal("170")), "更低候选→不放松，保持170");
-    }
-
-    @Test
-    void ratchetStopShortOnlyTightensDown() {
-        // 做空：更低的候选收紧、更高的候选忽略
-        assertEquals(0, FiboRetracementStrategy.ratchetStop(new BigDecimal("130"), new BigDecimal("120"), false)
-                .compareTo(new BigDecimal("120")), "更低候选→收紧到120");
-        assertEquals(0, FiboRetracementStrategy.ratchetStop(new BigDecimal("130"), new BigDecimal("140"), false)
-                .compareTo(new BigDecimal("130")), "更高候选→不放松，保持130");
-    }
-
     // ---- helpers ----
 
     /** 喂 count 根递增5m(每根+step)，形成上行推动段；信号收进 sink。 */

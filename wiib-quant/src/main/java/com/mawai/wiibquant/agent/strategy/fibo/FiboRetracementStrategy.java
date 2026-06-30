@@ -302,19 +302,6 @@ public final class FiboRetracementStrategy implements TradingStrategySpi {
         return entryLimit.compareTo(lo) >= 0 && entryLimit.compareTo(hi) <= 0;   // 入场位落在中期回撤带内
     }
 
-    /** T5 吊灯止损价：做多 = 入场后最高价 − k×ATR；做空 = 入场后最低价 + k×ATR。 */
-    static BigDecimal chandelierStop(BigDecimal extremeSinceEntry, double atr, double k, boolean isLong) {
-        BigDecimal off = BigDecimal.valueOf(atr * k);
-        return (isLong ? extremeSinceEntry.subtract(off) : extremeSinceEntry.add(off))
-                .setScale(8, RoundingMode.HALF_UP);
-    }
-
-    /** 止损只收紧不放松（ratchet）：做多取更高者，做空取更低者；current 为空直接用候选。 */
-    static BigDecimal ratchetStop(BigDecimal current, BigDecimal candidate, boolean isLong) {
-        if (current == null) return candidate;
-        return isLong ? current.max(candidate) : current.min(candidate);
-    }
-
     private BigDecimal slBuffer(double atr) {
         double raw = Double.isFinite(atr) && atr > 0.0 ? atr * params.slBufferAtrMult() : 0.0;
         return BigDecimal.valueOf(raw).setScale(8, RoundingMode.HALF_UP);
