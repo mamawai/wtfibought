@@ -42,7 +42,7 @@ public record FiboParams(
                 0.0,
                 true,                 // trendFilterOn=true：只做与 1h SMA200 同向的腿(四币消融验证为改善)
                 false, 3_600_000L,    // mtfConfluenceOn=false(消融证明无效)；mtfTfMillis 备用
-                false);               // trendAlignOn 默认关（基线=当前生产；Round1 消融用 withTrendAlign(true) 开）
+                true);                // trendAlignOn=true：T1 均线多头排列门(四币样本外+毛收益一致改善，已采纳为默认)
     }
 
     /** 消融：开/关分批止盈，其余不动。 */
