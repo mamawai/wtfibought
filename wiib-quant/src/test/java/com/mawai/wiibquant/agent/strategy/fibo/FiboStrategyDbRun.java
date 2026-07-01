@@ -257,25 +257,18 @@ class FiboStrategyDbRun {
     }
 
     /**
-     * Round3 MTF 共振消融：基线=T1 vs T1+多周期Fib汇合(中期 1h / 4h)。
-     * 攻"手续费吃 edge"——只接"短期入场位 ∩ 中期[0.382,0.786]回撤带 + 同向"，降频提质，让净收益盖过费。
-     * 同口径(1%/四币/训练21-23/验证24-26)。判据：验证段四币 vaPF 都≥T1 且降频；目标净 PF 过 1。
+     * 亏损归因：导出 T1(默认) 在验证段 2024-26 四币的每一笔开平仓，CSV 一行一笔，供按小时/方向/出场/ R/时长聚合。
+     * 不下结论、只吐数据；分析在外部 awk/脚本做。
      *
-     * 跑法：mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#runRound3Mtf -DskipTests=false \
-     *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false \
-     *       -Dfibo.bt.symbols=BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT  （加 takerFeeRate=0 makerFeeRate=0 看毛）
+     * 跑法：mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#dumpT1Trades -DskipTests=false \
+     *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false -Dfibo.bt.symbols=BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT
      */
     @Test
-    void runRound3Mtf() throws Exception {
+    void dumpT1Trades() throws Exception {
         List<String> symbols = symbols();
         int leverage = Integer.getInteger("fibo.bt.leverage", 5);
         BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        FiboParams t1 = FiboParams.defaults().withTrendAlign(true);
-        List<ParamCase> cases = List.of(
-                new ParamCase("T1(base)", t1),
-                new ParamCase("T1+mtf1h", t1.withMtfConfluence(true, 60 * 60_000L)),
-                new ParamCase("T1+mtf4h", t1.withMtfConfluence(true, 4 * 60 * 60_000L)));
-        long trainStart = yearStartUtc(2021), trainEnd = yearStartUtc(2024);
+        FiboParams t1 = FiboParams.defaults();           // 已含 T1
         long valStart = yearStartUtc(2024), valEnd = yearStartUtc(2027);
 
         Connection con;
@@ -289,17 +282,22 @@ class FiboStrategyDbRun {
             return;
         }
         try (con) {
-            System.out.printf("%n==== Fibo Round3 MTF共振消融 (基线=T1, 每笔1%%, 训练21-23/验证24-26) lev=%d ====%n", leverage);
-            System.out.printf("判据: 验证段四币 vaPF 都≥T1 且降频；目标净 PF 过 1%n");
-            System.out.printf("%-10s %-10s %8s %7s %8s %7s %8s%n",
-                    "symbol", "case", "trTrades", "trPF", "vaTrades", "vaPF", "vaRet%");
+            System.out.println("TRADEHDR,symbol,hourUTC,dow,side,pnl,fee,r,exitReason,holdBars,mfeR,maeR");
             for (String symbol : symbols) {
                 Long latest = latestCloseTime(con, symbol);
-                if (latest == null) { System.out.printf("%-10s (无数据)%n", symbol); continue; }
-                for (ParamCase c : cases) {
-                    SegResult tr = runWindow(con, symbol, c.params(), trainStart, trainEnd, balance, leverage, latest);
-                    SegResult va = runWindow(con, symbol, c.params(), valStart, valEnd, balance, leverage, latest);
-                    printRound1Row(symbol, c.label(), tr, va);
+                if (latest == null) continue;
+                SegResult s = runWindow(con, symbol, t1, valStart, valEnd, balance, leverage, latest);
+                if (s == null) continue;
+                for (BacktestResult.Trade t : s.r().getTrades()) {
+                    int hold = t.closeBarIndex() - t.barIndex();
+                    String r = t.rMultiple() == null ? "NaN" : String.format(Locale.ROOT, "%.3f", t.rMultiple().doubleValue());
+                    String mfe = t.maxFavorableR() == null ? "NaN" : String.format(Locale.ROOT, "%.3f", t.maxFavorableR().doubleValue());
+                    String mae = t.maxAdverseR() == null ? "NaN" : String.format(Locale.ROOT, "%.3f", t.maxAdverseR().doubleValue());
+                    System.out.printf(Locale.ROOT, "TRADE,%s,%d,%s,%s,%.4f,%.4f,%s,%s,%d,%s,%s%n",
+                            symbol,
+                            t.openTime() == null ? -1 : t.openTime().getHour(),
+                            t.openTime() == null ? "?" : t.openTime().getDayOfWeek().toString().substring(0, 3),
+                            t.side(), t.pnl().doubleValue(), t.fee().doubleValue(), r, t.exitReason(), hold, mfe, mae);
                 }
             }
         }
