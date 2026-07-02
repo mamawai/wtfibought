@@ -11,7 +11,11 @@ import com.mawai.wiibcommon.config.CoinDeskProperties;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.math.BigDecimal;
+import java.net.HttpURLConnection;
+import java.net.URI;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -20,12 +24,14 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.zip.ZipInputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -622,6 +628,83 @@ class FiboStrategyDbRun {
                         latest == null ? "-" : Instant.ofEpochMilli(latest));
             }
         }
+    }
+
+    /**
+     * 手动回填(公开数据仓)：从 data.binance.vision 拉月度 5m 合约K线 ZIP 幂等入库——
+     * fapi 地域受限(451)时的替代通道，无频控无地域限制。月份区间 [-Dfibo.bt.visionFrom=2020-12, 当月]；
+     * 某月 DB 已近满(≥99%)则跳过下载；2025+ 文件时间戳可能为微秒，统一归一到毫秒。
+     *
+     * 跑法：mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#backfillVision -DskipTests=false \
+     *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false \
+     *       -Dfibo.bt.symbols=BNBUSDT,XRPUSDT,ADAUSDT -Dfibo.bt.visionFrom=2020-12
+     */
+    @Test
+    void backfillVision() throws Exception {
+        List<String> symbols = symbols();
+        YearMonth from = YearMonth.parse(System.getProperty("fibo.bt.visionFrom", "2020-12"));
+        YearMonth to = YearMonth.now(ZoneOffset.UTC);
+
+        Connection con;
+        try {
+            con = DriverManager.getConnection(
+                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
+                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
+                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
+        } catch (Exception e) {
+            Assumptions.abort("本地 postgres 不可达，跳过回填: " + e.getMessage());
+            return;
+        }
+        try (con) {
+            System.out.printf("%n#### vision 月度5m回填 [%s, %s] symbols=%s ####%n", from, to, symbols);
+            for (String symbol : symbols) {
+                int added = 0, skipped = 0, missing = 0;
+                for (YearMonth ym = from; !ym.isAfter(to); ym = ym.plusMonths(1)) {
+                    long mStart = ym.atDay(1).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
+                    long mEnd = ym.plusMonths(1).atDay(1).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
+                    long expected = (mEnd - mStart) / 300_000L;
+                    if (countBars(con, symbol, mStart, mEnd) >= expected * 99 / 100) { skipped++; continue; }
+                    List<KlineBar> bars = downloadVisionMonth(symbol, ym);
+                    if (bars == null) { missing++; continue; }   // 404=该月无文件(未上市/未发布)
+                    added += insertIgnore(con, symbol, bars);
+                }
+                Long latest = latestCloseTime(con, symbol);
+                System.out.printf("%-10s 写入=%d 月满跳过=%d 无文件=%d 最新close=%s%n",
+                        symbol, added, skipped, missing,
+                        latest == null ? "-" : Instant.ofEpochMilli(latest));
+            }
+        }
+    }
+
+    /** 下载并解析一个 vision 月度 5m ZIP；404 → null。CSV 头行自动跳过。 */
+    private static List<KlineBar> downloadVisionMonth(String symbol, YearMonth ym) throws Exception {
+        String url = String.format("https://data.binance.vision/data/futures/um/monthly/klines/%s/5m/%s-5m-%s.zip",
+                symbol, symbol, ym);
+        HttpURLConnection c = (HttpURLConnection) URI.create(url).toURL().openConnection();
+        c.setConnectTimeout(15_000);
+        c.setReadTimeout(120_000);
+        int code = c.getResponseCode();
+        if (code == 404) { c.disconnect(); return null; }
+        if (code != 200) throw new IllegalStateException("HTTP " + code + " " + url);
+        List<KlineBar> out = new ArrayList<>();
+        try (ZipInputStream zis = new ZipInputStream(c.getInputStream())) {
+            if (zis.getNextEntry() == null) return out;
+            BufferedReader br = new BufferedReader(new InputStreamReader(zis));
+            String line;
+            while ((line = br.readLine()) != null) {
+                if (line.isEmpty() || !Character.isDigit(line.charAt(0))) continue;   // 跳过头行
+                String[] f = line.split(",");
+                out.add(new KlineBar(normMs(Long.parseLong(f[0])), normMs(Long.parseLong(f[6])),
+                        new BigDecimal(f[1]), new BigDecimal(f[2]), new BigDecimal(f[3]),
+                        new BigDecimal(f[4]), new BigDecimal(f[5])));
+            }
+        }
+        return out;
+    }
+
+    /** vision 2025+ 文件时间戳为微秒(16位)；>1e14 即除以 1000 归一到毫秒。 */
+    private static long normMs(long ts) {
+        return ts > 100_000_000_000_000L ? ts / 1000 : ts;
     }
 
     /** endTime 向前翻页拉 5m，只收已闭合 bar(对齐 KlineHistoryStore.backfill)；返回尝试写入根数。 */
