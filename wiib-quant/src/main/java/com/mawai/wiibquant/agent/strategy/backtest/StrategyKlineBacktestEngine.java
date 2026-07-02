@@ -91,7 +91,6 @@ public final class StrategyKlineBacktestEngine {
 
             tools.tickBar(bar.open(), bar.high(), bar.low(), bar.close(), i);
             view.append(bar);
-            strategy.onOpenPositionBarClosed(symbol, view, tools.getOpenPositions(symbol), tools);
 
             Optional<StrategySignal> signal = strategy.onBarClosed(symbol, view);
             boolean canTrade = inTradingWindow(nowMs, i)

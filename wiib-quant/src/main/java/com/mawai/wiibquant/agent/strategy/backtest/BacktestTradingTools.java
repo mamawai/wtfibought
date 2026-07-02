@@ -29,8 +29,8 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <h3>模拟精度</h3>
  * <ul>
- *   <li>手续费：LIMIT 开仓 maker；MARKET 开仓、触发式 TP/SL/SCALE 平仓 taker</li>
- *   <li>SL/TP/SCALE：按K线 high/low 判断是否穿越</li>
+ *   <li>手续费：LIMIT 开仓 maker；MARKET 开仓 taker；TP 挂 maker 限价，SL/强平/信号平仓触发式市价 taker</li>
+ *   <li>SL/TP：按K线 high/low 判断是否穿越</li>
  *   <li>滑点：触发后成交价暂取触发价（不模拟市价滑点）</li>
  *   <li>保证金：quantity × price / leverage</li>
  * </ul>
@@ -38,9 +38,14 @@ import java.util.concurrent.atomic.AtomicLong;
 @Slf4j
 public class BacktestTradingTools implements TradingOperations {
 
-    private static final BigDecimal OPEN_FEE_RATE = new BigDecimal("0.0005");   // taker 万5
-    private static final BigDecimal CLOSE_FEE_RATE = new BigDecimal("0.0005");  // taker 万5
-    private static final BigDecimal MAKER_FEE_RATE = new BigDecimal("0.0002");  // maker 万2：limit 进场
+    // 费率默认 taker 万5 / maker 万2；可 -Dbacktest.takerFeeRate / -Dbacktest.makerFeeRate 覆盖
+    // （置 0 测毛收益，诊断 edge 是否被手续费吃掉）。
+    private static final BigDecimal OPEN_FEE_RATE = new BigDecimal(System.getProperty("backtest.takerFeeRate", "0.0005"));   // taker 万5
+    private static final BigDecimal CLOSE_FEE_RATE = new BigDecimal(System.getProperty("backtest.takerFeeRate", "0.0005"));  // taker 万5
+    private static final BigDecimal MAKER_FEE_RATE = new BigDecimal(System.getProperty("backtest.makerFeeRate", "0.0002"));  // maker 万2：limit 进场
+    // 出场滑点(bp)：SL/TP/trailing/强平 均为触发式市价，成交比触发价更差。-Dbacktest.slippageBps 注入，默认0=原行为。
+    private static final BigDecimal EXIT_SLIPPAGE = BigDecimal.valueOf(
+            Double.parseDouble(System.getProperty("backtest.slippageBps", "0")) / 10_000.0);
 
     private final AtomicLong positionIdSeq = new AtomicLong(1);
 
@@ -60,7 +65,6 @@ public class BacktestTradingTools implements TradingOperations {
     private final Map<Long, BigDecimal> maxFavorableRByPosition = new HashMap<>();
     private final Map<Long, BigDecimal> maxAdverseRByPosition = new HashMap<>();
     private final Map<Long, BigDecimal> openFeeRateByPosition = new HashMap<>();  // 开仓实际费率(maker/taker)，平仓算总费用时复用
-    private final Map<Long, ScaleOut> scaleOutByPosition = new HashMap<>();       // 触发式止盈：价到触发价后市价平仓(taker)
 
     @Setter
     private int currentBarIndex = 0;
@@ -94,9 +98,6 @@ public class BacktestTradingTools implements TradingOperations {
             BigDecimal maxAdverseR,
             boolean wasLateContinuation
     ) {}
-
-    /** 分批止盈挂单：triggerPrice 触发价、scaleQty 落袋数量(剩余仓止损不动)。 */
-    private record ScaleOut(BigDecimal triggerPrice, BigDecimal scaleQty) {}
 
     public BacktestTradingTools(BigDecimal initialBalance, String symbol) {
         this.balance = initialBalance;
@@ -263,16 +264,6 @@ public class BacktestTradingTools implements TradingOperations {
         // no-op
     }
 
-    @Override
-    public void setScaleOut(Long positionId, BigDecimal triggerPrice, double fraction) {
-        if (positionId == null || triggerPrice == null || fraction <= 0) return;
-        FuturesPositionDTO pos = findPosition(positionId);
-        if (pos == null) return;
-        BigDecimal scaleQty = pos.getQuantity().multiply(BigDecimal.valueOf(fraction));   // 比例→绝对量(注册时全仓)
-        if (scaleQty.signum() <= 0) return;
-        scaleOutByPosition.put(positionId, new ScaleOut(triggerPrice, scaleQty));
-    }
-
     // ==================== 回测专用方法 ====================
 
     /** 当前K线价格（用于开仓/平仓的成交价） */
@@ -366,20 +357,6 @@ public class BacktestTradingTools implements TradingOperations {
             }
         }
 
-        // 分批止盈：盘中触及触发价 → 触发式市价部分平仓(taker)，一次性；剩余仓 SL 不动、拉到 TP（无移动保本）
-        ScaleOut so = scaleOutByPosition.get(pos.getId());
-        if (so != null) {
-            // 触发式平仓不排 maker 队列；触及触发价即按触发价模拟成交。
-            boolean soTriggered = isLong
-                    ? high.compareTo(so.triggerPrice()) >= 0
-                    : low.compareTo(so.triggerPrice()) <= 0;
-            if (soTriggered) {
-                doClose(pos, so.scaleQty().min(pos.getQuantity()), so.triggerPrice(), "SCALE");
-                scaleOutByPosition.remove(pos.getId());                 // 一次性；剩余仓SL不动，拉到TP
-            }
-        }
-        if (!"OPEN".equals(pos.getStatus())) return;                    // 分批已全平则不再判TP
-
         // 检查止盈
         if (pos.getTakeProfits() != null && !pos.getTakeProfits().isEmpty()) {
             FuturesTakeProfit tp = pos.getTakeProfits().getFirst();
@@ -398,10 +375,12 @@ public class BacktestTradingTools implements TradingOperations {
      */
     private void doClose(FuturesPositionDTO pos, BigDecimal closeQty, BigDecimal exitPrice, String reason) {
         boolean isLong = "LONG".equals(pos.getSide());
+        // 出场分账：TP 可挂 maker 限价(无滑点 + maker 费)；SL/强平/信号平仓为触发式市价(taker 费 + 滑点)。
+        boolean tpMaker = "TP".equals(reason);
+        if (!tpMaker) exitPrice = applyExitSlippage(exitPrice, isLong);
         boolean isFullClose = closeQty.compareTo(pos.getQuantity()) >= 0;
 
-        // 当前执行用条件市价平仓：TP/SCALE/SL/强平/信号平仓统一按 taker。
-        BigDecimal closeFeeRate = CLOSE_FEE_RATE;
+        BigDecimal closeFeeRate = tpMaker ? MAKER_FEE_RATE : CLOSE_FEE_RATE;
         BigDecimal notional = closeQty.multiply(exitPrice);
         BigDecimal closeFee = notional.multiply(closeFeeRate).setScale(8, RoundingMode.HALF_UP);
 
@@ -472,7 +451,6 @@ public class BacktestTradingTools implements TradingOperations {
             maxFavorableRByPosition.remove(pos.getId());
             maxAdverseRByPosition.remove(pos.getId());
             openFeeRateByPosition.remove(pos.getId());
-            scaleOutByPosition.remove(pos.getId());
         } else {
             pos.setQuantity(pos.getQuantity().subtract(closeQty));
             pos.setMargin(pos.getMargin().subtract(marginRelease));
@@ -482,6 +460,13 @@ public class BacktestTradingTools implements TradingOperations {
                 pos.getSide(), symbol, closeQty.toPlainString(),
                 pos.getEntryPrice().toPlainString(), exitPrice.toPlainString(),
                 netPnl.toPlainString(), reason);
+    }
+
+    /** 出场滑点：long 卖出成交更低、short 买回成交更高（对持仓总是更不利）。 */
+    private static BigDecimal applyExitSlippage(BigDecimal price, boolean isLong) {
+        if (price == null || EXIT_SLIPPAGE.signum() == 0) return price;
+        return isLong ? price.multiply(BigDecimal.ONE.subtract(EXIT_SLIPPAGE))
+                      : price.multiply(BigDecimal.ONE.add(EXIT_SLIPPAGE));
     }
 
     private FuturesPositionDTO findPosition(Long positionId) {

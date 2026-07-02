@@ -3,11 +3,9 @@ package com.mawai.wiibquant.agent.strategy.fibo;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibquant.agent.strategy.core.StrategySignal;
 import com.mawai.wiibquant.agent.strategy.core.WindowedMarketView;
-import com.mawai.wiibquant.agent.strategy.backtest.BacktestTradingTools;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -23,7 +21,7 @@ class FiboRetracementStrategyTest {
 
     /**
      * 限价回踩范式快测参数：swing=5m(每根=1摆动bar，便于精确控盘)、挂单超时设极大(测试期内不超时)。
-     * 策略已是方向无关纯回踩、无方向门；信号发射/挂单逻辑在此独立验证，整体效果由 FiboStrategyDbRun 在真实数据上验证。
+     * 趋势门关掉保持方向无关纯回踩；信号发射/挂单逻辑在此独立验证，整体效果由 FiboStrategyDbRun 在真实数据上验证。
      */
     private static FiboParams fast() {
         return new FiboParams(
@@ -32,10 +30,8 @@ class FiboRetracementStrategyTest {
                 0.618, 0.786, 0.786,   // entryFib, invalidationRatio, slFibRatio
                 0.1, 1.0,              // slBufferAtrMult, tpExtensionRatio
                 100_000, 500,          // orderTimeoutBars(极大), swingLookbackBars
-                false, 0.5, 1.0,       // scaleOutOn, scaleOutFraction, scaleOutAtR
                 0.0,                   // tpRMultiple(0=用延伸位)
                 false,                 // trendFilterOn(测试保持方向无关纯回踩)
-                false, 3_600_000L,     // mtfConfluenceOn=false, mtfTfMillis
                 false);                // trendAlignOn
     }
 
@@ -78,34 +74,6 @@ class FiboRetracementStrategyTest {
 
         assertTrue(dipped.isEmpty(), "现价跌破0.618挂单位后，不应再发限价信号(守住maker被动成交)");
         assertEquals(before, signals.size());
-    }
-
-    // ---- ST3: onPositionOpened 注册分批止盈 ----
-
-    @Test
-    void onPositionOpenedRegistersScaleOutAtOneR() {
-        FiboParams params = fast().withScaleOut(true);  // scaleOutOn, fraction0.5, atR1.0
-        FiboRetracementStrategy strategy = new FiboRetracementStrategy(params, List.of(SYM));
-        BacktestTradingTools tools = new BacktestTradingTools(new BigDecimal("100000"), SYM);
-        tools.setCurrentTime(LocalDateTime.of(2026, 1, 1, 0, 0));
-        tools.setCurrentPrice(new BigDecimal("150"));
-        // 入场150、SL140(risk=10)、qty=2 → +1R 触发价=160、落袋=0.5×2=1
-        Long posId = tools.openPositionWithResult("LONG", new BigDecimal("2"), 1, "MARKET",
-                null, new BigDecimal("140"), new BigDecimal("170"), "FIBO").positionId();
-        StrategySignal sig = new StrategySignal("FIBO", SYM, "LONG", true,
-                new BigDecimal("150"), new BigDecimal("140"), new BigDecimal("170"),
-                1.0, "test", 0, "LIMIT");
-        strategy.onPositionOpened(SYM, sig, posId, new BigDecimal("150"), null, tools);
-
-        tools.setCurrentBarIndex(1);
-        tools.tickBar(new BigDecimal("152"), new BigDecimal("160"), new BigDecimal("150"), new BigDecimal("158"), 1); // 价到 +1R
-
-        var trade = tools.getClosedTrades().getFirst();
-        assertEquals("SCALE", trade.exitReason());
-        assertEquals(0, trade.exitPrice().compareTo(new BigDecimal("160")), "落袋触发价=入场+1R=160");
-        assertEquals(0, trade.quantity().compareTo(new BigDecimal("1")), "落袋量=0.5×2=1");
-        assertEquals(0, tools.getOpenPositions(SYM).getFirst().getQuantity().compareTo(new BigDecimal("1")),
-                "剩余仓续存");
     }
 
     // ---- T1: 高周期均线多头排列门 (maAligned) ----

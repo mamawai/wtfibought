@@ -90,11 +90,4 @@ public interface TradingOperations {
      * 修改止盈。
      */
     String setTakeProfit(Long positionId, BigDecimal takeProfitPrice, BigDecimal quantity);
-
-    /**
-     * 注册分批止盈：价格盘中触及 triggerPrice 时部分平仓 fraction 比例(maker)，剩余仓续存(止损不动)。
-     * 默认空实现(仅回测撮合支持)。
-     */
-    default void setScaleOut(Long positionId, BigDecimal triggerPrice, double fraction) {
-    }
 }

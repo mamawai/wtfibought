@@ -5,7 +5,6 @@ import com.mawai.wiibquant.agent.strategy.core.StrategyMarketView;
 import com.mawai.wiibquant.agent.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibquant.agent.strategy.core.StrategySignal;
 import com.mawai.wiibquant.agent.strategy.core.TradingStrategySpi;
-import com.mawai.wiibquant.agent.strategy.core.TradingOperations;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -174,21 +173,6 @@ class StrategyKlineBacktestEngineTest {
         assertEquals(0, result.totalTrades(), "reaffirm 停止后挂单撤销，后续触及不成交");
     }
 
-    @Test
-    void engineScaleOutThenRunnerTakesProfit() {
-        List<KlineBar> bars = new ArrayList<>(flatBars(20, 100));
-        bars.set(10, bar(10, 100, 101, 95, 100));   // 回踩95→limit成交于95
-        bars.set(11, bar(11, 100, 105, 99, 104));   // high105→分批落袋50%
-        bars.set(12, bar(12, 104, 110, 103, 108));  // high110→剩余仓TP
-        BacktestResult result = new StrategyKlineBacktestEngine(
-                limitLongWithScaleOut(9, 95, 90, 110, 105, 0.5), SYM, bars,
-                new BigDecimal("100000"), 5, 0, null, null).run();
-
-        assertEquals(2, result.totalTrades(), "应有 SCALE 部分平 + 剩余仓 TP 两笔");
-        assertTrue(result.getTrades().stream().anyMatch(t -> "SCALE".equals(t.exitReason())), "有分批落袋笔");
-        assertTrue(result.getTrades().stream().anyMatch(t -> "TP".equals(t.exitReason())), "有剩余仓TP笔");
-    }
-
     /** 从 fromBar 起每根持续输出 LIMIT 信号（reaffirm 不撤）。 */
     private static TradingStrategySpi limitLongFrom(int fromBar, double limit, double sl, double tp) {
         return limitLongBetween(fromBar, Integer.MAX_VALUE, limit, sl, tp);
@@ -209,31 +193,6 @@ class StrategyKlineBacktestEngineTest {
                             bd(limit), bd(sl), bd(tp), 1.0, "stub", idx * M5 + M5 - 1, "LIMIT"));
                 }
                 return Optional.empty();
-            }
-        };
-    }
-
-    /** LIMIT 入场 + 成交后在 scaleLevel 注册分批止盈(fraction 比例)，用于引擎端到端验证。 */
-    private static TradingStrategySpi limitLongWithScaleOut(int fromBar, double limit, double sl, double tp,
-                                                            double scaleLevel, double fraction) {
-        return new TradingStrategySpi() {
-            @Override public String id() { return "STUB"; }
-            @Override public List<String> symbols() { return List.of(SYM); }
-            @Override public StrategyRiskPolicy riskPolicy() { return StrategyRiskPolicy.defaults(); }
-            @Override
-            public Optional<StrategySignal> onBarClosed(String symbol, StrategyMarketView view) {
-                int idx = view.closedBars(StrategyMarketView.BASE_INTERVAL_MILLIS, 100_000).size() - 1;
-                if (idx >= fromBar) {
-                    return Optional.of(new StrategySignal("STUB", SYM, "LONG", true,
-                            bd(limit), bd(sl), bd(tp), 1.0, "stub", idx * M5 + M5 - 1, "LIMIT"));
-                }
-                return Optional.empty();
-            }
-            @Override
-            public void onPositionOpened(String symbol, StrategySignal signal, Long positionId,
-                                         BigDecimal actualEntryPrice, StrategyMarketView view,
-                                         TradingOperations tools) {
-                tools.setScaleOut(positionId, bd(scaleLevel), fraction);   // +1R 处落袋 fraction
             }
         };
     }

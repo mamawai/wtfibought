@@ -1,6 +1,5 @@
 package com.mawai.wiibquant.agent.strategy.core;
 
-import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibquant.agent.strategy.core.TradingOperations;
 
 import java.math.BigDecimal;
@@ -36,11 +35,5 @@ public interface TradingStrategySpi {
     default void onPositionOpened(String symbol, StrategySignal signal, Long positionId,
                                   BigDecimal actualEntryPrice, StrategyMarketView view,
                                   TradingOperations tools) {
-    }
-
-    /** 每根 5m 收盘后管理已有仓位。默认无动作，且只在回测/执行层显式调用时生效。 */
-    default void onOpenPositionBarClosed(String symbol, StrategyMarketView view,
-                                         List<FuturesPositionDTO> openPositions,
-                                         TradingOperations tools) {
     }
 }

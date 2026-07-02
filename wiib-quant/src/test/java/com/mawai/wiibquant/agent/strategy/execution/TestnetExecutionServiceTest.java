@@ -170,7 +170,7 @@ class TestnetExecutionServiceTest {
         assertEquals(0, sl.getStopPrice().compareTo(bd("2950")), "SL=止损价");
         assertTrue(sl.getClosePosition());
         assertEquals("TAKE_PROFIT_MARKET", tp.getType());
-        assertEquals(0, tp.getStopPrice().compareTo(bd("3020")), "TP=entry+0.4R (risk50×0.4=20)");
+        assertEquals(0, tp.getStopPrice().compareTo(bd("3100")), "TP=信号止盈价(entry+100)");
 
         // 仍持仓：不应撤单
         svc.tick(SYM, T0 + 120_000L);

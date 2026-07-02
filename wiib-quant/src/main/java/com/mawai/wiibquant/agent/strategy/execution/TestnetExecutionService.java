@@ -208,7 +208,7 @@ public class TestnetExecutionService {
         }
     }
 
-    /** 成交建仓：让策略登记 scaleOut(0.4R)，挂 SL + TP 两个 closePosition 条件单，转 POSITION。 */
+    /** 成交建仓：通知策略消费当前腿(一腿只交易一次)，挂 SL + TP 两个 closePosition 条件单，转 POSITION。 */
     private void onFilled(String symbol, OrderResponse entryOrder, ExecState st) {
         SymbolSpec spec = SPECS.get(symbol);
         BigDecimal fillPrice = entryOrder.getAvgPrice() != null && entryOrder.getAvgPrice().signum() > 0
@@ -217,17 +217,16 @@ public class TestnetExecutionService {
         st.filledEntryPrice = fillPrice;
         String exitSide = st.signal.isLong() ? "SELL" : "BUY";
 
-        // 复用策略逻辑算 0.4R 触发价：fibo onPositionOpened 调 ops.setScaleOut(trigger=entry±0.4R×risk)
-        TestnetTradingOperations ops = new TestnetTradingOperations();
+        // 策略侧登记开仓事实(fibo 消费当前腿)；执行层直管 SL/TP，不经 TradingOperations
         try {
-            st.strategy.onPositionOpened(symbol, st.signal, st.entryOrderId, fillPrice, null, ops);
+            st.strategy.onPositionOpened(symbol, st.signal, st.entryOrderId, fillPrice, null, null);
         } catch (Exception e) {
             log.warn("[TestnetExec] onPositionOpened 异常 symbol={} msg={}", symbol, e.toString());
         }
 
         placeCloseConditional(symbol, exitSide, "STOP_MARKET",
                 st.signal.stopLossPrice().setScale(spec.pricePrecision(), RoundingMode.HALF_UP), st, "SL");
-        BigDecimal tpTrigger = ops.hasScaleOut() ? ops.scaleTriggerPrice() : st.signal.takeProfitPrice();
+        BigDecimal tpTrigger = st.signal.takeProfitPrice();
         if (tpTrigger != null) {
             placeCloseConditional(symbol, exitSide, "TAKE_PROFIT_MARKET",
                     tpTrigger.setScale(spec.pricePrecision(), RoundingMode.HALF_UP), st, "TP");
