@@ -181,21 +181,23 @@ class FiboStrategyDbRun {
     }
 
     /**
-     * ETH 全腿回撤因子审计(Part B)：后见枚举 ETH 15m 2024-2026 的【所有】摆动腿(分形，非策略防重绘 ZigZag)，
+     * 全腿回撤因子审计(Part B)：后见枚举 15m 2024-2026 的【所有】摆动腿(分形，非策略防重绘 ZigZag)，
      * 逐腿模拟 0.66 口袋回撤的应然结果(WIN=先到延伸位/LOSS=先到止损)，并抽因子——
-     * 趋势排列(align)、腿长(legAtr)、回撤速度(barsToPocket)、方向、是否被 live ZigZag 确认(confirmed)——
-     * 供外部 awk 交叉制表，挖"命中(align&confirmed≈我们实际交易的) vs 没命中"能否分野出共同因子。
-     * 后见合法：这是"市场给过哪些回撤"的取证复盘，不是实盘信号。
+     * 趋势排列(align)、腿长(legAtr)、回撤速度(barsToPocket)、方向、是否被 live ZigZag 确认(confirmed)、
+     * 量能(volPre=成交前回踩段均量/推动腿均量【可行动口径, 成交当根来不及反应故排除】、volFill=成交当根量/推动腿均量)。
+     * 供外部 awk 交叉制表。后见合法：这是"市场给过哪些回撤"的取证复盘，不是实盘信号。
      *
-     * 跑法：mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#auditEthLegFactors -DskipTests=false \
-     *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false -Dfibo.bt.symbols=ETHUSDT
+     * 跑法：mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#auditLegFactors -DskipTests=false \
+     *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false -Dfibo.bt.symbols=BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT
      */
     @Test
-    void auditEthLegFactors() throws Exception {
-        String symbol = System.getProperty("fibo.bt.symbols", "ETHUSDT").split(",")[0].trim().toUpperCase(Locale.ROOT);
+    void auditLegFactors() throws Exception {
+        List<String> symbols = symbols();
         int k = Integer.getInteger("fibo.bt.fractalK", 3);       // 分形窗口(每侧根数)
         int fwd = Integer.getInteger("fibo.bt.fwdBars", 288);    // 向后模拟窗口(~3天)
-        long valStart = yearStartUtc(2024), valEnd = yearStartUtc(2027);
+        // 审计窗口可换段(-Dfibo.bt.auditFromYear/auditToYear)：因子发现段与复制段分开跑，防单段偶合
+        long valStart = yearStartUtc(Integer.getInteger("fibo.bt.auditFromYear", 2024));
+        long valEnd = yearStartUtc(Integer.getInteger("fibo.bt.auditToYear", 2027));
         long warmupMs = 15L * DAY_MS;   // ≥200根1h(SMA200)预热，窗口首日趋势闸即可判
 
         Connection con;
@@ -209,53 +211,69 @@ class FiboStrategyDbRun {
             return;
         }
         try (con) {
-            Long latest = latestCloseTime(con, symbol);
-            if (latest == null) { System.out.printf("无 %s 数据%n", symbol); return; }
-            long segEnd = Math.min(valEnd, latest + 1);
-            List<KlineBar> b5 = loadBars(con, symbol, valStart - warmupMs, segEnd);
-            if (b5.size() < 1000) { System.out.printf("%s 数据不足(%d)%n", symbol, b5.size()); return; }
-            List<KlineBar> b15 = FiboLegAudit.aggregate(b5, 900_000L);
-            List<KlineBar> h1 = FiboLegAudit.aggregate(b5, 60 * 60_000L);
-            double[] atr15 = SwingDetector.atrSeries(b15, 14);
-            List<FiboLegAudit.Leg2> legs = FiboLegAudit.legs(b15, k);
+            System.out.println("LEGHDR,symbol,fillIso,dir,legAtr,legPct,barsToPocket,align,confirmed,outcome,mfeR,maeR,volPre,volFill");
+            for (String symbol : symbols) {
+                Long latest = latestCloseTime(con, symbol);
+                if (latest == null) { System.out.printf("无 %s 数据%n", symbol); continue; }
+                long segEnd = Math.min(valEnd, latest + 1);
+                List<KlineBar> b5 = loadBars(con, symbol, valStart - warmupMs, segEnd);
+                if (b5.size() < 1000) { System.out.printf("%s 数据不足(%d)%n", symbol, b5.size()); continue; }
+                List<KlineBar> b15 = FiboLegAudit.aggregate(b5, 900_000L);
+                List<KlineBar> h1 = FiboLegAudit.aggregate(b5, 60 * 60_000L);
+                double[] atr15 = SwingDetector.atrSeries(b15, 14);
+                List<FiboLegAudit.Leg2> legs = FiboLegAudit.legs(b15, k);
 
-            // live 防重绘 ZigZag 确认点标记(用于"是否被策略可见"因子)
-            boolean[] cHigh = new boolean[b15.size()], cLow = new boolean[b15.size()];
-            for (SwingDetector.Pivot p : SwingDetector.confirmedPivots(b15, 14, 2.0)) {
-                if (p.barIndex() < 0 || p.barIndex() >= b15.size()) continue;
-                if (p.type() == SwingDetector.PivotType.HIGH) cHigh[p.barIndex()] = true; else cLow[p.barIndex()] = true;
-            }
-            long[] h1ct = new long[h1.size()];
-            for (int i = 0; i < h1.size(); i++) h1ct[i] = h1.get(i).closeTime();
+                // live 防重绘 ZigZag 确认点标记(用于"是否被策略可见"因子)
+                boolean[] cHigh = new boolean[b15.size()], cLow = new boolean[b15.size()];
+                for (SwingDetector.Pivot p : SwingDetector.confirmedPivots(b15, 14, 2.0)) {
+                    if (p.barIndex() < 0 || p.barIndex() >= b15.size()) continue;
+                    if (p.type() == SwingDetector.PivotType.HIGH) cHigh[p.barIndex()] = true; else cLow[p.barIndex()] = true;
+                }
+                long[] h1ct = new long[h1.size()];
+                for (int i = 0; i < h1.size(); i++) h1ct[i] = h1.get(i).closeTime();
 
-            System.out.println("LEGHDR,fillIso,dir,legAtr,legPct,barsToPocket,align,confirmed,outcome,mfeR,maeR");
-            int total = 0, touched = 0, inWin = 0, win = 0, loss = 0, open = 0;
-            for (FiboLegAudit.Leg2 leg : legs) {
-                total++;
-                double atrEnd = leg.endIdx() < atr15.length ? atr15[leg.endIdx()] : Double.NaN;
-                if (Double.isNaN(atrEnd) || atrEnd <= 0) continue;
-                FiboLegAudit.RetOutcome o = FiboLegAudit.simulateRetracement(leg, b15, atrEnd, 0.66, 0.88, 0.1, 1.0, fwd);
-                if (!o.touched()) continue;
-                touched++;
-                int fillIdx = leg.endIdx() + o.barsToPocket();
-                long fillTime = b15.get(fillIdx).closeTime();
-                if (fillTime < valStart) continue;   // 预热区不计
-                inWin++;
-                int ub = upperBound(h1ct, fillTime);
-                List<KlineBar> htf = h1.subList(Math.max(0, ub - 201), ub);
-                boolean align = FiboRetracementStrategy.trendGate(htf, leg.upLeg(), true);
-                boolean confirmed = confirmedNear(cHigh, cLow, leg.endIdx(), leg.upLeg(), 3);
-                double legLen = Math.abs(leg.endPrice().subtract(leg.startPrice()).doubleValue());
-                double legAtr = legLen / atrEnd;
-                double legPct = legLen / leg.endPrice().doubleValue() * 100;
-                if ("WIN".equals(o.outcome())) win++; else if ("LOSS".equals(o.outcome())) loss++; else open++;
-                System.out.printf(Locale.ROOT, "LEG,%s,%s,%.2f,%.2f,%d,%b,%b,%s,%.3f,%.3f%n",
-                        Instant.ofEpochMilli(fillTime), leg.upLeg() ? "LONG" : "SHORT",
-                        legAtr, legPct, o.barsToPocket(), align, confirmed, o.outcome(), o.mfeR(), o.maeR());
+                int total = 0, touched = 0, inWin = 0, win = 0, loss = 0, open = 0;
+                for (FiboLegAudit.Leg2 leg : legs) {
+                    total++;
+                    double atrEnd = leg.endIdx() < atr15.length ? atr15[leg.endIdx()] : Double.NaN;
+                    if (Double.isNaN(atrEnd) || atrEnd <= 0) continue;
+                    FiboLegAudit.RetOutcome o = FiboLegAudit.simulateRetracement(leg, b15, atrEnd, 0.66, 0.88, 0.1, 1.0, fwd);
+                    if (!o.touched()) continue;
+                    touched++;
+                    int fillIdx = leg.endIdx() + o.barsToPocket();
+                    long fillTime = b15.get(fillIdx).closeTime();
+                    if (fillTime < valStart) continue;   // 预热区不计
+                    inWin++;
+                    int ub = upperBound(h1ct, fillTime);
+                    List<KlineBar> htf = h1.subList(Math.max(0, ub - 201), ub);
+                    boolean align = FiboRetracementStrategy.trendGate(htf, leg.upLeg(), true);
+                    boolean confirmed = confirmedNear(cHigh, cLow, leg.endIdx(), leg.upLeg(), 3);
+                    double legLen = Math.abs(leg.endPrice().subtract(leg.startPrice()).doubleValue());
+                    double legAtr = legLen / atrEnd;
+                    double legPct = legLen / leg.endPrice().doubleValue() * 100;
+                    // 量能因子：推动腿均量 = (startIdx, endIdx] 均量；volPre 只用成交前回踩 bar(endIdx+1..fillIdx-1)
+                    double impulseVol = meanVolume(b15, leg.startIdx() + 1, leg.endIdx());
+                    double preVol = meanVolume(b15, leg.endIdx() + 1, fillIdx - 1);
+                    double volPre = impulseVol > 0 && !Double.isNaN(preVol) ? preVol / impulseVol : Double.NaN;
+                    double volFill = impulseVol > 0 ? b15.get(fillIdx).volume().doubleValue() / impulseVol : Double.NaN;
+                    if ("WIN".equals(o.outcome())) win++; else if ("LOSS".equals(o.outcome())) loss++; else open++;
+                    System.out.printf(Locale.ROOT, "LEG,%s,%s,%s,%.2f,%.2f,%d,%b,%b,%s,%.3f,%.3f,%.3f,%.3f%n",
+                            symbol, Instant.ofEpochMilli(fillTime), leg.upLeg() ? "LONG" : "SHORT",
+                            legAtr, legPct, o.barsToPocket(), align, confirmed, o.outcome(), o.mfeR(), o.maeR(),
+                            volPre, volFill);
+                }
+                System.out.printf("LEGSUMMARY,%s,totalLegs=%d,retraced=%d,inWindow=%d,WIN=%d,LOSS=%d,OPEN=%d%n",
+                        symbol, total, touched, inWin, win, loss, open);
             }
-            System.out.printf("LEGSUMMARY,totalLegs=%d,retraced=%d,inWindow=%d,WIN=%d,LOSS=%d,OPEN=%d%n",
-                    total, touched, inWin, win, loss, open);
         }
+    }
+
+    /** [from, to] 闭区间 15m 均量；区间空或越界返回 NaN。 */
+    private static double meanVolume(List<KlineBar> bars, int from, int to) {
+        if (from > to || from < 0 || to >= bars.size()) return Double.NaN;
+        double sum = 0;
+        for (int i = from; i <= to; i++) sum += bars.get(i).volume().doubleValue();
+        return sum / (to - from + 1);
     }
 
     /** closeTime 升序数组里 <= key 的元素个数(二分)，用于取"截至 fillTime 的最后 N 根 1h"。 */
