@@ -47,11 +47,9 @@ class FiboStrategyDbRun {
         int leverage = Integer.getInteger("fibo.bt.leverage", 5);
         BigDecimal initialBalance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
         String toDate = System.getProperty("fibo.bt.toDate", "").trim();
-        // 止盈实验：原版(远TP前高+1R分批) vs 1.5R全平(无分批) vs 1.5R全平(1R先落一半)
+        // 当前生产配置(趋势闸+T1+runToExt)单案例；要对比新参数时在此临时加 ParamCase。
         List<ParamCase> cases = List.of(
-                new ParamCase("scaleA_default", FiboParams.defaults()),
-                new ParamCase("tp1.5R_noScale", FiboParams.defaults().withScaleOut(false).withTpRMultiple(1.5)),
-                new ParamCase("tp1.5R_scale1R", FiboParams.defaults().withTpRMultiple(1.5)));
+                new ParamCase("defaults", FiboParams.defaults()));
 
         Connection con;
         try {
@@ -70,187 +68,12 @@ class FiboStrategyDbRun {
                     cases.stream().map(ParamCase::label).toList());
             for (ParamCase c : cases) {
                 FiboParams params = c.params();
-                System.out.printf("%n#### case=%s swing=%s entryFib=%.3f tp=%.3f slBase=%.3f scaleOut=%b ####%n",
+                System.out.printf("%n#### case=%s swing=%s entryFib=%.3f tp=%.3f slBase=%.3f trend=%b/T1=%b ####%n",
                         c.label(), tf(params.swingTfMillis()),
                         params.entryFib(), params.tpExtensionRatio(),
-                        params.slFibRatio(), params.scaleOutOn());
+                        params.slFibRatio(), params.trendFilterOn(), params.trendAlignOn());
                 for (String symbol : symbols) {
                     runOne(con, c.label(), symbol, days, initialBalance, leverage, toDate, params);
-                }
-            }
-        }
-    }
-
-    /**
-     * 趋势过滤消融：同一连续历史段，trendFilter off(方向无关基线) vs on(仅顺 1h SMA200 趋势的腿)，扣费后对比。
-     * 单段连续回放——SMA200 的 ~200h 预热缺口对多年样本可忽略(<0.5%)，故不动共享 warmup。
-     * 纯证伪：1h/SMA200 写死、不调任何参数；看趋势闸是把"全负"拉回来，还是只少做一半单照样负。
-     *
-     * 跑法：
-     *   mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#runTrendFilterAblation -DskipTests=false \
-     *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false \
-     *       -Dfibo.bt.symbols=BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT -Dfibo.bt.days=1900
-     */
-    @Test
-    void runTrendFilterAblation() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 5);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        int days = Integer.getInteger("fibo.bt.days", 1900);   // 默认 ~5.2 年，覆盖大部分历史
-        FiboParams off = FiboParams.defaults();                // 方向无关基线（当前生产行为）
-        FiboParams on = FiboParams.defaults().withTrendFilter(true);
-
-        Connection con;
-        try {
-            con = DriverManager.getConnection(
-                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
-                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
-                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
-        } catch (Exception e) {
-            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
-            return;
-        }
-        try (con) {
-            System.out.printf("%n==== Fibo 趋势过滤消融 (1h SMA200) days=%d lev=%d ====%n", days, leverage);
-            System.out.printf("判读：on 把净收益拉回正/明显改善才算有效；若只是单数砍半、收益照样负 → 趋势闸没用%n");
-            System.out.printf("%-10s %-4s %7s %7s %8s %8s %7s %6s%n",
-                    "symbol", "mode", "trades", "winR%", "ret%", "maxDD%", "sharpe", "pf");
-            for (String symbol : symbols) {
-                Long latest = latestCloseTime(con, symbol);
-                if (latest == null) { System.out.printf("%-10s (无数据)%n", symbol); continue; }
-                long start = latest - (long) days * DAY_MS;
-                SegResult so = runWindow(con, symbol, off, start, latest + 1, balance, leverage, latest);
-                SegResult sn = runWindow(con, symbol, on, start, latest + 1, balance, leverage, latest);
-                printAblationRow(symbol, "off", so);
-                printAblationRow(symbol, "on", sn);
-            }
-        }
-    }
-
-    private static void printAblationRow(String symbol, String mode, SegResult s) {
-        if (s == null) { System.out.printf("%-10s %-4s (无数据)%n", symbol, mode); return; }
-        BacktestResult r = s.r();
-        System.out.printf(Locale.ROOT, "%-10s %-4s %7d %7.1f %8.1f %8.1f %7.2f %6.2f%s%n",
-                symbol, mode, r.totalTrades(), r.winRate() * 100, r.returnPct() * 100,
-                r.maxDrawdownPct() * 100, r.sharpeRatio(), r.profitFactor(),
-                s.hasGap() ? " (gap)" : "");
-    }
-
-    /**
-     * 修改前 vs 修改后对比：本次 Fibo 改动的净行为差 = 出场(收割scalp+0.4R封顶 → runToExt持到延伸位) + 趋势闸(无 → 1h SMA200 on)。
-     * 同一连续窗、扣默认费、每仓保证金=权益×marginPct，两套参数各跑一遍，直接看哪套优。
-     *   before = defaults().withScaleOut(true).withTrendFilter(false)  —— 改动前 defaults(收割+无趋势闸)
-     *   after  = defaults()                                            —— 当前生产配置(让利润跑+趋势闸on)
-     * 预热取 20 天：足够 1h SMA200(~8.3天)+找腿窗，保证趋势闸在窗口首日即生效(否则前~8天 after 不开仓、对比失真)。
-     * before/after 共用同一份 bar(同窗同预热)，只换策略参数跑两遍——对比纯净。
-     *
-     * 跑法：
-     *   mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#runBeforeAfterCompare -DskipTests=false \
-     *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false \
-     *       -Dfibo.bt.symbols=BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT -Dfibo.bt.fromDate=2026-05-01 \
-     *       -Dfibo.bt.balance=1000 -Dfibo.bt.leverage=100 -Dbacktest.marginPctOfEquity=0.10
-     */
-    @Test
-    void runBeforeAfterCompare() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 100);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "1000"));
-        String fromDate = System.getProperty("fibo.bt.fromDate", "2026-05-01").trim();
-        long startMs = LocalDate.parse(fromDate).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
-        long warmupMs = 20L * DAY_MS;   // ≥1h SMA200(~8.3天)+找腿窗，保证趋势闸窗口首日即生效
-        FiboParams before = FiboParams.defaults().withScaleOut(true).withTrendFilter(false);
-        FiboParams after = FiboParams.defaults();
-
-        Connection con;
-        try {
-            con = DriverManager.getConnection(
-                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
-                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
-                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
-        } catch (Exception e) {
-            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
-            return;
-        }
-        try (con) {
-            System.out.printf(Locale.ROOT, "%n==== Fibo 修改前 vs 修改后 [from=%s, 最新] balance=%s lev=%d marginPct=%s ====%n",
-                    fromDate, balance.toPlainString(), leverage,
-                    System.getProperty("backtest.marginPctOfEquity", "(引擎默认)"));
-            System.out.printf("before=收割scalp(+0.4R封顶)+无趋势闸 | after=runToExt(让利润跑)+1h SMA200趋势闸%n");
-            System.out.printf("%-10s %-7s %7s %7s %11s %10s %8s %8s %7s %6s%n",
-                    "symbol", "mode", "trades", "winR%", "finalEq$", "net$", "ret%", "maxDD%", "sharpe", "pf");
-            for (String symbol : symbols) {
-                Long latest = latestCloseTime(con, symbol);
-                if (latest == null) { System.out.printf("%-10s (无数据)%n", symbol); continue; }
-                long segEnd = latest + 1;
-                if (startMs >= segEnd) { System.out.printf("%-10s (窗口无数据)%n", symbol); continue; }
-                List<KlineBar> bars = loadBars(con, symbol, startMs - warmupMs, segEnd);
-                if (bars.isEmpty()) { System.out.printf("%-10s (无bar)%n", symbol); continue; }
-                int warmupBars = (int) bars.stream().filter(b -> b.closeTime() < startMs).count();
-                printCompareRow(symbol, "before", runOnBars(symbol, before, bars, balance, leverage, warmupBars, startMs, segEnd));
-                printCompareRow(symbol, "after", runOnBars(symbol, after, bars, balance, leverage, warmupBars, startMs, segEnd));
-            }
-        }
-    }
-
-    /** 在已加载的 bar 上跑一遍引擎(before/after 共用同一份 bar，只换 params)。 */
-    private static BacktestResult runOnBars(String symbol, FiboParams params, List<KlineBar> bars,
-                                            BigDecimal balance, int leverage, int warmupBars,
-                                            long startMs, long segEnd) {
-        FiboRetracementStrategy strategy = new FiboRetracementStrategy(params, List.of(symbol));
-        return new StrategyKlineBacktestEngine(
-                strategy, symbol, bars, balance, leverage, warmupBars, startMs, segEnd).run();
-    }
-
-    private static void printCompareRow(String symbol, String mode, BacktestResult r) {
-        System.out.printf(Locale.ROOT, "%-10s %-7s %7d %7.1f %11.2f %10.2f %8.1f %8.1f %7.2f %6.2f%n",
-                symbol, mode, r.totalTrades(), r.winRate() * 100,
-                r.finalEquity().doubleValue(), r.netProfit().doubleValue(),
-                r.returnPct() * 100, r.maxDrawdownPct() * 100, r.sharpeRatio(), r.profitFactor());
-    }
-
-    /**
-     * Round1 趋势门消融：baseline vs T1(均线多头排列) vs T2(趋势斜率)，各单变量。
-     * 风险归一口径(每笔1%，不传 marginPctOfEquity)，四币，训练 2021-23 连续段 / 验证 2024-26 连续段。
-     * 判据：只看验证段——四币 PF 都≥baseline 且不显著恶化才留(详见协议)。
-     *
-     * 跑法：
-     *   mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#runRound1TrendGates -DskipTests=false \
-     *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false \
-     *       -Dfibo.bt.symbols=BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT
-     */
-    @Test
-    void runRound1TrendGates() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 5);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        List<ParamCase> cases = List.of(
-                new ParamCase("baseline", FiboParams.defaults().withTrendAlign(false)),   // 显式 pre-T1 基线（defaults 已含 T1）
-                new ParamCase("T1_align", FiboParams.defaults()));
-        long trainStart = yearStartUtc(2021), trainEnd = yearStartUtc(2024);
-        long valStart = yearStartUtc(2024), valEnd = yearStartUtc(2027);
-
-        Connection con;
-        try {
-            con = DriverManager.getConnection(
-                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
-                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
-                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
-        } catch (Exception e) {
-            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
-            return;
-        }
-        try (con) {
-            System.out.printf("%n==== Fibo Round1 趋势门消融 (每笔1%%风险, 训练21-23/验证24-26) lev=%d ====%n", leverage);
-            System.out.printf("判据: 只看验证段，四币 vaPF 都≥baseline 才留%n");
-            System.out.printf("%-10s %-10s %8s %7s %8s %7s %8s%n",
-                    "symbol", "case", "trTrades", "trPF", "vaTrades", "vaPF", "vaRet%");
-            for (String symbol : symbols) {
-                Long latest = latestCloseTime(con, symbol);
-                if (latest == null) { System.out.printf("%-10s (无数据)%n", symbol); continue; }
-                for (ParamCase c : cases) {
-                    SegResult tr = runWindow(con, symbol, c.params(), trainStart, trainEnd, balance, leverage, latest);
-                    SegResult va = runWindow(con, symbol, c.params(), valStart, valEnd, balance, leverage, latest);
-                    printRound1Row(symbol, c.label(), tr, va);
                 }
             }
         }
@@ -303,40 +126,22 @@ class FiboStrategyDbRun {
         }
     }
 
-    private static void printRound1Row(String symbol, String label, SegResult tr, SegResult va) {
-        BacktestResult t = tr == null ? null : tr.r();
-        BacktestResult v = va == null ? null : va.r();
-        System.out.printf(Locale.ROOT, "%-10s %-10s %8s %7s %8s %7s %8s%n",
-                symbol, label,
-                t == null ? "-" : String.valueOf(t.totalTrades()),
-                t == null ? "-" : String.format(Locale.ROOT, "%.2f", t.profitFactor()),
-                v == null ? "-" : String.valueOf(v.totalTrades()),
-                v == null ? "-" : String.format(Locale.ROOT, "%.2f", v.profitFactor()),
-                v == null ? "-" : String.format(Locale.ROOT, "%.1f", v.returnPct() * 100));
-    }
-
     /**
-     * 出场几何消融：趋势 on 固定、entry/stop 固定 0.66/0.88，只动止盈——隔离被数字指认的"真凶"(赢小输大)。
-     * 5 个机制驱动配置(非网格搜参)：从"+0.4R 封顶scalp" → "让利润跑到前高/更大 R 倍"，看盈亏比拉上去能否转正。
-     * 判读：只认【四币一致改善】的配置；只有一两个币好看 = 过拟合，弃。
+     * ETH Fibo 开仓点审计(Part A)：导出当前默认策略在验证段 2024-2026 ETH 的每一笔开仓点。
+     * 1% 风险口径(不传 marginPct)——避免爆仓/强平截断，捕获全部信号且 mfeR 干净。
+     * 用 mfeR(入场后最大顺势幅度, R 单位)判"是否命中真回撤"：口袋被尊重(反弹续势)则 mfeR 高，
+     * 被一刀击穿(接飞刀)则 mfeR≈0。CSV 一行一笔，分桶/取样在外部 awk 做。
      *
-     * 跑法：
-     *   mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#runExitGeometryAblation -DskipTests=false \
-     *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false \
-     *       -Dfibo.bt.symbols=BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT -Dfibo.bt.days=1460
+     * 跑法：mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#dumpEthEntries -DskipTests=false \
+     *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false -Dfibo.bt.symbols=ETHUSDT
      */
     @Test
-    void runExitGeometryAblation() throws Exception {
-        List<String> symbols = symbols();
+    void dumpEthEntries() throws Exception {
+        String symbol = System.getProperty("fibo.bt.symbols", "ETHUSDT").split(",")[0].trim().toUpperCase(Locale.ROOT);
         int leverage = Integer.getInteger("fibo.bt.leverage", 5);
         BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        int days = Integer.getInteger("fibo.bt.days", 1460);
-        List<ParamCase> cases = List.of(
-                new ParamCase("scalp0.4R(ref)", geo(true, 1.0, 0.4, 0.0)),   // 当前：+0.4R 全平(封顶赢单)
-                new ParamCase("runToExt",       geo(false, 1.0, 0.0, 0.0)),  // 不分批，持到前高/前低延伸位
-                new ParamCase("run1.5R",        geo(false, 1.0, 0.0, 1.5)),  // 不分批，TP=1.5R
-                new ParamCase("run2R",          geo(false, 1.0, 0.0, 2.0)),  // 不分批，TP=2R
-                new ParamCase("half1R+runExt",  geo(true, 0.5, 1.0, 0.0)));  // 1R 落一半，剩仓跑到前高
+        FiboParams p = FiboParams.defaults();          // 当前生产策略(趋势闸+T1)
+        long valStart = yearStartUtc(2024), valEnd = yearStartUtc(2027);
 
         Connection con;
         try {
@@ -349,55 +154,49 @@ class FiboStrategyDbRun {
             return;
         }
         try (con) {
-            System.out.printf("%n==== Fibo 出场几何消融 (trend on, entry .66/stop .88 固定) days=%d lev=%d ====%n",
-                    days, leverage);
-            System.out.printf("%-16s %-10s %7s %7s %8s %8s %7s %6s%n",
-                    "case", "symbol", "trades", "winR%", "ret%", "maxDD%", "sharpe", "pf");
-            for (ParamCase c : cases) {
-                for (String symbol : symbols) {
-                    Long latest = latestCloseTime(con, symbol);
-                    if (latest == null) continue;
-                    long start = latest - (long) days * DAY_MS;
-                    SegResult s = runWindow(con, symbol, c.params(), start, latest + 1, balance, leverage, latest);
-                    printGeoRow(c.label(), symbol, s);
-                }
+            Long latest = latestCloseTime(con, symbol);
+            if (latest == null) { System.out.printf("无 %s 数据%n", symbol); return; }
+            SegResult s = runWindow(con, symbol, p, valStart, valEnd, balance, leverage, latest);
+            if (s == null) { System.out.printf("%s 窗口无数据%n", symbol); return; }
+            List<BacktestResult.Trade> trades = s.r().getTrades();
+            System.out.println("ENTRYHDR,idx,openIso,side,entry,exit,r,mfeR,maeR,exitReason,holdBars");
+            int i = 0;
+            for (BacktestResult.Trade t : trades) {
+                System.out.printf(Locale.ROOT, "ENTRY,%d,%s,%s,%s,%s,%s,%s,%s,%s,%d%n",
+                        ++i,
+                        t.openTime() == null ? "?" : t.openTime().toString(),
+                        t.side(),
+                        t.entryPrice().toPlainString(),
+                        t.exitPrice().toPlainString(),
+                        r3(t.rMultiple()), r3(t.maxFavorableR()), r3(t.maxAdverseR()),
+                        t.exitReason(), t.closeBarIndex() - t.barIndex());
             }
+            System.out.printf("ENTRYCOUNT,%s,%d%n", symbol, trades.size());
         }
     }
 
-    /** trend-on 固定、entry/stop 用 defaults(0.66/0.88) 不动，只造止盈差异的配置。 */
-    private static FiboParams geo(boolean scaleOn, double scaleFrac, double scaleAtR, double tpR) {
-        FiboParams d = FiboParams.defaults();
-        return new FiboParams(d.swingTfMillis(), d.atrPeriod(), d.reversalAtrMult(), d.minLegAtrMult(),
-                d.entryFib(), d.invalidationRatio(), d.slFibRatio(), d.slBufferAtrMult(), d.tpExtensionRatio(),
-                d.orderTimeoutBars(), d.swingLookbackBars(),
-                scaleOn, scaleFrac, scaleAtR, tpR, true, d.mtfConfluenceOn(), d.mtfTfMillis(), d.trendAlignOn());   // trendFilter on, 无汇合
-    }
-
-    private static void printGeoRow(String caseLabel, String symbol, SegResult s) {
-        if (s == null) { System.out.printf("%-16s %-10s (无数据)%n", caseLabel, symbol); return; }
-        BacktestResult r = s.r();
-        System.out.printf(Locale.ROOT, "%-16s %-10s %7d %7.1f %8.1f %8.1f %7.2f %6.2f%n",
-                caseLabel, symbol, r.totalTrades(), r.winRate() * 100, r.returnPct() * 100,
-                r.maxDrawdownPct() * 100, r.sharpeRatio(), r.profitFactor());
+    /** R 值 3 位小数；null → NaN。 */
+    private static String r3(BigDecimal v) {
+        return v == null ? "NaN" : String.format(Locale.ROOT, "%.3f", v.doubleValue());
     }
 
     /**
-     * 入场几何消融：趋势 on + 出场固定 runToExt(持到前高、不分批)，只扫入场深度 entryFib / 止损档 slFib。
-     * 假设：趋势里回撤浅，0.66 太深可能漏掉最强续势单——测更浅入场能否把 pf 拉过 1。
-     * 同样只认四币一致改善；minRR≥1.2 会自动过滤掉 RR 太小的几何(如 e0.5/s1.0)。
+     * ETH 全腿回撤因子审计(Part B)：后见枚举 ETH 15m 2024-2026 的【所有】摆动腿(分形，非策略防重绘 ZigZag)，
+     * 逐腿模拟 0.66 口袋回撤的应然结果(WIN=先到延伸位/LOSS=先到止损)，并抽因子——
+     * 趋势排列(align)、腿长(legAtr)、回撤速度(barsToPocket)、方向、是否被 live ZigZag 确认(confirmed)——
+     * 供外部 awk 交叉制表，挖"命中(align&confirmed≈我们实际交易的) vs 没命中"能否分野出共同因子。
+     * 后见合法：这是"市场给过哪些回撤"的取证复盘，不是实盘信号。
+     *
+     * 跑法：mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#auditEthLegFactors -DskipTests=false \
+     *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false -Dfibo.bt.symbols=ETHUSDT
      */
     @Test
-    void runEntryStopAblation() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 5);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        int days = Integer.getInteger("fibo.bt.days", 1460);
-        List<ParamCase> cases = List.of(
-                new ParamCase("e.382/s.786", geoEntry(0.382, 0.786)),
-                new ParamCase("e.5/s.786",   geoEntry(0.5, 0.786)),
-                new ParamCase("e.618/s.786", geoEntry(0.618, 0.786)),
-                new ParamCase("e.66/s.88(ref)", geoEntry(0.66, 0.88)));
+    void auditEthLegFactors() throws Exception {
+        String symbol = System.getProperty("fibo.bt.symbols", "ETHUSDT").split(",")[0].trim().toUpperCase(Locale.ROOT);
+        int k = Integer.getInteger("fibo.bt.fractalK", 3);       // 分形窗口(每侧根数)
+        int fwd = Integer.getInteger("fibo.bt.fwdBars", 288);    // 向后模拟窗口(~3天)
+        long valStart = yearStartUtc(2024), valEnd = yearStartUtc(2027);
+        long warmupMs = 15L * DAY_MS;   // ≥200根1h(SMA200)预热，窗口首日趋势闸即可判
 
         Connection con;
         try {
@@ -410,46 +209,99 @@ class FiboStrategyDbRun {
             return;
         }
         try (con) {
-            System.out.printf("%n==== Fibo 入场几何消融 (trend on, 出场=runToExt) days=%d lev=%d ====%n",
-                    days, leverage);
-            System.out.printf("%-16s %-10s %7s %7s %8s %8s %7s %6s%n",
-                    "case", "symbol", "trades", "winR%", "ret%", "maxDD%", "sharpe", "pf");
-            for (ParamCase c : cases) {
-                for (String symbol : symbols) {
-                    Long latest = latestCloseTime(con, symbol);
-                    if (latest == null) continue;
-                    long start = latest - (long) days * DAY_MS;
-                    SegResult s = runWindow(con, symbol, c.params(), start, latest + 1, balance, leverage, latest);
-                    printGeoRow(c.label(), symbol, s);
-                }
+            Long latest = latestCloseTime(con, symbol);
+            if (latest == null) { System.out.printf("无 %s 数据%n", symbol); return; }
+            long segEnd = Math.min(valEnd, latest + 1);
+            List<KlineBar> b5 = loadBars(con, symbol, valStart - warmupMs, segEnd);
+            if (b5.size() < 1000) { System.out.printf("%s 数据不足(%d)%n", symbol, b5.size()); return; }
+            List<KlineBar> b15 = FiboLegAudit.aggregate(b5, 900_000L);
+            List<KlineBar> h1 = FiboLegAudit.aggregate(b5, 60 * 60_000L);
+            double[] atr15 = SwingDetector.atrSeries(b15, 14);
+            List<FiboLegAudit.Leg2> legs = FiboLegAudit.legs(b15, k);
+
+            // live 防重绘 ZigZag 确认点标记(用于"是否被策略可见"因子)
+            boolean[] cHigh = new boolean[b15.size()], cLow = new boolean[b15.size()];
+            for (SwingDetector.Pivot p : SwingDetector.confirmedPivots(b15, 14, 2.0)) {
+                if (p.barIndex() < 0 || p.barIndex() >= b15.size()) continue;
+                if (p.type() == SwingDetector.PivotType.HIGH) cHigh[p.barIndex()] = true; else cLow[p.barIndex()] = true;
             }
+            long[] h1ct = new long[h1.size()];
+            for (int i = 0; i < h1.size(); i++) h1ct[i] = h1.get(i).closeTime();
+
+            System.out.println("LEGHDR,fillIso,dir,legAtr,legPct,barsToPocket,align,confirmed,outcome,mfeR,maeR");
+            int total = 0, touched = 0, inWin = 0, win = 0, loss = 0, open = 0;
+            for (FiboLegAudit.Leg2 leg : legs) {
+                total++;
+                double atrEnd = leg.endIdx() < atr15.length ? atr15[leg.endIdx()] : Double.NaN;
+                if (Double.isNaN(atrEnd) || atrEnd <= 0) continue;
+                FiboLegAudit.RetOutcome o = FiboLegAudit.simulateRetracement(leg, b15, atrEnd, 0.66, 0.88, 0.1, 1.0, fwd);
+                if (!o.touched()) continue;
+                touched++;
+                int fillIdx = leg.endIdx() + o.barsToPocket();
+                long fillTime = b15.get(fillIdx).closeTime();
+                if (fillTime < valStart) continue;   // 预热区不计
+                inWin++;
+                int ub = upperBound(h1ct, fillTime);
+                List<KlineBar> htf = h1.subList(Math.max(0, ub - 201), ub);
+                boolean align = FiboRetracementStrategy.trendGate(htf, leg.upLeg(), true);
+                boolean confirmed = confirmedNear(cHigh, cLow, leg.endIdx(), leg.upLeg(), 3);
+                double legLen = Math.abs(leg.endPrice().subtract(leg.startPrice()).doubleValue());
+                double legAtr = legLen / atrEnd;
+                double legPct = legLen / leg.endPrice().doubleValue() * 100;
+                if ("WIN".equals(o.outcome())) win++; else if ("LOSS".equals(o.outcome())) loss++; else open++;
+                System.out.printf(Locale.ROOT, "LEG,%s,%s,%.2f,%.2f,%d,%b,%b,%s,%.3f,%.3f%n",
+                        Instant.ofEpochMilli(fillTime), leg.upLeg() ? "LONG" : "SHORT",
+                        legAtr, legPct, o.barsToPocket(), align, confirmed, o.outcome(), o.mfeR(), o.maeR());
+            }
+            System.out.printf("LEGSUMMARY,totalLegs=%d,retraced=%d,inWindow=%d,WIN=%d,LOSS=%d,OPEN=%d%n",
+                    total, touched, inWin, win, loss, open);
         }
     }
 
-    /** trend-on + 出场 runToExt(不分批、持到前高) 固定，只造入场深度 entryFib / 止损档 slFib 差异。 */
-    private static FiboParams geoEntry(double entryFib, double slFib) {
-        FiboParams d = FiboParams.defaults();
-        return new FiboParams(d.swingTfMillis(), d.atrPeriod(), d.reversalAtrMult(), d.minLegAtrMult(),
-                entryFib, slFib, slFib, d.slBufferAtrMult(), d.tpExtensionRatio(),
-                d.orderTimeoutBars(), d.swingLookbackBars(),
-                false, 1.0, 0.0, 0.0, true, d.mtfConfluenceOn(), d.mtfTfMillis(), d.trendAlignOn());   // 出场=runToExt，trendFilter on，无汇合
+    /** closeTime 升序数组里 <= key 的元素个数(二分)，用于取"截至 fillTime 的最后 N 根 1h"。 */
+    private static int upperBound(long[] a, long key) {
+        int lo = 0, hi = a.length;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (a[mid] <= key) lo = mid + 1; else hi = mid;
+        }
+        return lo;
+    }
+
+    /** 腿终点(上行腿=HIGH/下行腿=LOW) 附近 ±tol 根内是否存在 live ZigZag 确认点。 */
+    private static boolean confirmedNear(boolean[] cHigh, boolean[] cLow, int endIdx, boolean upLeg, int tol) {
+        boolean[] arr = upLeg ? cHigh : cLow;
+        for (int d = -tol; d <= tol; d++) {
+            int idx = endIdx + d;
+            if (idx >= 0 && idx < arr.length && arr[idx]) return true;
+        }
+        return false;
     }
 
     /**
-     * 多周期Fib汇合消融：当前最优(趋势 on + runToExt + 0.66/0.88) 上叠"中期回撤带汇合"，中期分别用 1h / 4h。
-     * 提质+降频，攻"薄 edge 被费吃"。判读：毛 pf 从 ~1.06 拉到 ~1.25+ 且净转正、四币一致 → 汇合有效。
-     * 配合 -Dbacktest.takerFeeRate=0 -Dbacktest.makerFeeRate=0 跑一遍毛收益对照。
+     * ETH 止盈档真回测扫描：ETH 2024-2026 单窗、1% 风险口径，只换止盈档、其余全默认，看哪档 totalR 最大。
+     * 引擎真实撮合(非 mfeR 算术)——回答"止盈挂哪能把给回接住最多"必须用这个，避开 mfeR 含出场过冲的坑。
+     * R 倍档 = entry±K×risk(近 TP)；ext 档 = 斐波延伸位(1.0=前高/前低, >1=更远)。
+     *
+     * 跑法：mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#runEthTpSweep -DskipTests=false \
+     *       -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false -Dfibo.bt.symbols=ETHUSDT
      */
     @Test
-    void runMtfConfluenceAblation() throws Exception {
-        List<String> symbols = symbols();
+    void runEthTpSweep() throws Exception {
+        String symbol = System.getProperty("fibo.bt.symbols", "ETHUSDT").split(",")[0].trim().toUpperCase(Locale.ROOT);
         int leverage = Integer.getInteger("fibo.bt.leverage", 5);
         BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        int days = Integer.getInteger("fibo.bt.days", 1460);
+        long valStart = yearStartUtc(2024), valEnd = yearStartUtc(2027);
+        FiboParams d = FiboParams.defaults();
         List<ParamCase> cases = List.of(
-                new ParamCase("noConf(ref)", geoEntry(0.66, 0.88)),         // 当前最优：无汇合
-                new ParamCase("conf_1h",     geoConfluence(60 * 60_000L)),  // 中期=1h
-                new ParamCase("conf_4h",     geoConfluence(4 * 60 * 60_000L)));  // 中期=4h
+                new ParamCase("ext1.0(base)", d),
+                new ParamCase("R1.0", d.withTpRMultiple(1.0)),
+                new ParamCase("R1.5", d.withTpRMultiple(1.5)),
+                new ParamCase("R2.0", d.withTpRMultiple(2.0)),
+                new ParamCase("R2.5", d.withTpRMultiple(2.5)),
+                new ParamCase("R3.0", d.withTpRMultiple(3.0)),
+                new ParamCase("ext1.272", withExtRatio(d, 1.272)),
+                new ParamCase("ext1.618", withExtRatio(d, 1.618)));
 
         Connection con;
         try {
@@ -462,30 +314,148 @@ class FiboStrategyDbRun {
             return;
         }
         try (con) {
-            System.out.printf("%n==== Fibo 多周期汇合消融 (趋势 on + runToExt) days=%d lev=%d ====%n", days, leverage);
-            System.out.printf("%-14s %-10s %7s %7s %8s %8s %7s %6s%n",
-                    "case", "symbol", "trades", "winR%", "ret%", "maxDD%", "sharpe", "pf");
+            Long latest = latestCloseTime(con, symbol);
+            if (latest == null) { System.out.printf("无 %s 数据%n", symbol); return; }
+            System.out.printf(Locale.ROOT, "%n==== %s 止盈档扫描 (2024-2026, 1%%风险) 真回测 ====%n", symbol);
+            System.out.printf("%-14s %7s %7s %8s %8s %6s %8s%n",
+                    "TP档", "trades", "win%", "avgR", "totalR", "pf", "ret%");
             for (ParamCase c : cases) {
-                for (String symbol : symbols) {
-                    Long latest = latestCloseTime(con, symbol);
-                    if (latest == null) continue;
-                    long start = latest - (long) days * DAY_MS;
-                    SegResult s = runWindow(con, symbol, c.params(), start, latest + 1, balance, leverage, latest);
-                    printGeoRow(c.label(), symbol, s);
+                SegResult s = runWindow(con, symbol, c.params(), valStart, valEnd, balance, leverage, latest);
+                if (s == null) { System.out.printf("%-14s (无数据)%n", c.label()); continue; }
+                BacktestResult r = s.r();
+                double totalR = r.avgR() * r.totalTrades();
+                System.out.printf(Locale.ROOT, "%-14s %7d %7.1f %8.3f %8.1f %6.2f %8.1f%n",
+                        c.label(), r.totalTrades(), r.winRate() * 100, r.avgR(), totalR,
+                        r.profitFactor(), r.returnPct() * 100);
+            }
+        }
+    }
+
+    /**
+     * TP 延伸档验证：远止盈(ext1.272/1.618) vs 基准(ext1.0=前高) 的 ① 四币样本外 + ② 存活性。
+     * 一个方法两用——不传 marginPct=每笔1%风险(看 edge 真假)；传 -Dbacktest.marginPctOfEquity=0.10 -Dfibo.bt.leverage=50
+     * =部署口径(看低胜率连败扛不扛得住)。训练21-23/验证24-26 各独立单窗。
+     *
+     * 跑法(边验)：mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#runTpValidation -DskipTests=false \
+     *   -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false -Dfibo.bt.symbols=BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT
+     * 跑法(部署)：上面再加 -Dbacktest.marginPctOfEquity=0.10 -Dfibo.bt.leverage=50 -Dfibo.bt.balance=1000
+     */
+    @Test
+    void runTpValidation() throws Exception {
+        List<String> symbols = symbols();
+        int leverage = Integer.getInteger("fibo.bt.leverage", 5);
+        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
+        String marginPct = System.getProperty("backtest.marginPctOfEquity", "(每笔1%风险)");
+        FiboParams d = FiboParams.defaults();
+        List<ParamCase> cases = List.of(
+                new ParamCase("ext1.0", d),
+                new ParamCase("ext1.272", withExtRatio(d, 1.272)),
+                new ParamCase("ext1.618", withExtRatio(d, 1.618)));
+        long trainStart = yearStartUtc(2021), trainEnd = yearStartUtc(2024);
+        long valStart = yearStartUtc(2024), valEnd = yearStartUtc(2027);
+
+        Connection con;
+        try {
+            con = DriverManager.getConnection(
+                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
+                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
+                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
+        } catch (Exception e) {
+            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
+            return;
+        }
+        try (con) {
+            System.out.printf(Locale.ROOT, "%n==== TP延伸档验证 (训练21-23/验证24-26) lev=%d 仓位=%s balance=%s ====%n",
+                    leverage, marginPct, balance.toPlainString());
+            System.out.printf("判据: 远TP要真, 验证段四币 vaPF 都要 > ext1.0; 部署口径看 vaRet/vaMaxDD 扛不扛得住%n");
+            System.out.printf("%-10s %-9s %7s %8s %7s %7s %8s %8s%n",
+                    "symbol", "case", "trPF", "vaTrades", "vaWin%", "vaPF", "vaRet%", "vaMaxDD%");
+            for (String symbol : symbols) {
+                Long latest = latestCloseTime(con, symbol);
+                if (latest == null) { System.out.printf("%-10s (无数据)%n", symbol); continue; }
+                for (ParamCase c : cases) {
+                    SegResult tr = runWindow(con, symbol, c.params(), trainStart, trainEnd, balance, leverage, latest);
+                    SegResult va = runWindow(con, symbol, c.params(), valStart, valEnd, balance, leverage, latest);
+                    BacktestResult t = tr == null ? null : tr.r();
+                    BacktestResult v = va == null ? null : va.r();
+                    System.out.printf(Locale.ROOT, "%-10s %-9s %7s %8s %7s %7s %8s %8s%n",
+                            symbol, c.label(),
+                            t == null ? "-" : String.format(Locale.ROOT, "%.2f", t.profitFactor()),
+                            v == null ? "-" : String.valueOf(v.totalTrades()),
+                            v == null ? "-" : String.format(Locale.ROOT, "%.1f", v.winRate() * 100),
+                            v == null ? "-" : String.format(Locale.ROOT, "%.2f", v.profitFactor()),
+                            v == null ? "-" : String.format(Locale.ROOT, "%.1f", v.returnPct() * 100),
+                            v == null ? "-" : String.format(Locale.ROOT, "%.1f", v.maxDrawdownPct() * 100));
                 }
             }
         }
     }
 
-    /** 当前最优(trend on + runToExt + 0.66/0.88) 上开多周期汇合，中期 TF = mtfTf。 */
-    private static FiboParams geoConfluence(long mtfTf) {
-        FiboParams d = FiboParams.defaults();
+    /** 用指定斐波延伸止盈档(tpExtensionRatio)构造 params，其余全默认(tpRMultiple=0 走延伸位)。 */
+    private static FiboParams withExtRatio(FiboParams d, double e) {
         return new FiboParams(d.swingTfMillis(), d.atrPeriod(), d.reversalAtrMult(), d.minLegAtrMult(),
-                d.entryFib(), d.invalidationRatio(), d.slFibRatio(), d.slBufferAtrMult(), d.tpExtensionRatio(),
+                d.entryFib(), d.invalidationRatio(), d.slFibRatio(), d.slBufferAtrMult(), e,
                 d.orderTimeoutBars(), d.swingLookbackBars(),
-                false, 1.0, 0.0, 0.0,   // 出场 runToExt(不分批、持到前高)
-                true,                   // trendFilter on
-                true, mtfTf, false);   // mtfConfluence on, 中期 TF；trendAlign off
+                d.tpRMultiple(), d.trendFilterOn(), d.trendAlignOn());
+    }
+
+    /**
+     * 敞口生死地图：拿最好的几何(ext1.618)在四币验证段 2024-26 连续单窗，扫一串"更低敞口"
+     * （降 marginPct 与 降 leverage 两条路都走），看降到哪一档能四币一致活下来(ret 正、maxDD 可忍)。
+     * 名义敞口 = marginPct × leverage × 权益；50x 无论 marginPct 多小，强平距≈1/50=2%(可能仍架空止损)。
+     * balance 默认 1000。
+     *
+     * 跑法：mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#runExtExposureSweep -DskipTests=false \
+     *   -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false -Dfibo.bt.symbols=BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT
+     */
+    @Test
+    void runExtExposureSweep() throws Exception {
+        List<String> symbols = symbols();
+        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "1000"));
+        FiboParams p = withExtRatio(FiboParams.defaults(), 1.618);
+        long valStart = yearStartUtc(2024), valEnd = yearStartUtc(2027);
+        // 敞口档：{marginPct, leverage}；前4档=固定50x降仓，后3档=降杠杆
+        double[][] cfgs = {
+                {0.10, 50}, {0.05, 50}, {0.03, 50}, {0.02, 50},
+                {0.10, 20}, {0.10, 10}, {0.05, 10}
+        };
+
+        Connection con;
+        try {
+            con = DriverManager.getConnection(
+                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
+                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
+                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
+        } catch (Exception e) {
+            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
+            return;
+        }
+        String savedMp = System.getProperty("backtest.marginPctOfEquity");
+        try (con) {
+            System.out.printf(Locale.ROOT, "%n==== ext1.618 敞口生死地图 (四币验证段 2024-2026, balance=%s) ====%n",
+                    balance.toPlainString());
+            for (String symbol : symbols) {
+                Long latest = latestCloseTime(con, symbol);
+                if (latest == null) { System.out.printf("%-10s (无数据)%n", symbol); continue; }
+                System.out.printf(Locale.ROOT, "%n== %s ==%n", symbol);
+                System.out.printf("%-10s %7s %11s %8s %8s %7s%n", "敞口", "名义", "finalEq$", "ret%", "maxDD%", "win%");
+                for (double[] cfg : cfgs) {
+                    double mp = cfg[0];
+                    int lev = (int) cfg[1];
+                    System.setProperty("backtest.marginPctOfEquity", String.valueOf(mp));
+                    SegResult s = runWindow(con, symbol, p, valStart, valEnd, balance, lev, latest);
+                    if (s == null) { System.out.printf("%.0f%%x%d (无数据)%n", mp * 100, lev); continue; }
+                    BacktestResult r = s.r();
+                    System.out.printf(Locale.ROOT, "%-10s %6.1fx %11.2f %8.1f %8.1f %7.1f%n",
+                            String.format("%.0f%%x%d", mp * 100, lev), mp * lev,
+                            r.finalEquity().doubleValue(), r.returnPct() * 100,
+                            r.maxDrawdownPct() * 100, r.winRate() * 100);
+                }
+            }
+        } finally {
+            if (savedMp == null) System.clearProperty("backtest.marginPctOfEquity");
+            else System.setProperty("backtest.marginPctOfEquity", savedMp);
+        }
     }
 
     /**
@@ -709,18 +679,15 @@ class FiboStrategyDbRun {
 
     /**
      * 稳健性体检：聚焦日内 15m 框架，冻结数值参数，按自然年不重叠分段。
-     * 分批止盈已定为最终配置(scaleA=defaults)；保留 M2(分批关) 对照供跨年复核。
-     * 纯证伪、不在单窗口挑最优、不调任何数值。
+     * 跑当前生产配置(defaults)逐年总览+多空拆分；纯证伪、不在单窗口挑最优、不调任何数值。
      */
     @Test
     void runRobustnessCheck() throws Exception {
         List<String> symbols = symbols();
         int leverage = Integer.getInteger("fibo.bt.leverage", 5);
         BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        FiboParams base = FiboParams.defaults();
         List<ParamCase> configs = List.of(
-                new ParamCase("M2_noScale", base.withScaleOut(false)),
-                new ParamCase("scaleA_default", base));
+                new ParamCase("defaults", FiboParams.defaults()));
 
         Connection con;
         try {
@@ -734,7 +701,7 @@ class FiboStrategyDbRun {
         }
 
         try (con) {
-            System.out.printf("%n#### Fibo 稳健性体检 (15m 日内，M2 vs scaleA默认) balance=%s leverage=%d ####%n",
+            System.out.printf("%n#### Fibo 稳健性体检 (15m 日内, defaults) balance=%s leverage=%d ####%n",
                     balance.toPlainString(), leverage);
             runYearlyCheck(con, symbols, configs, balance, leverage);
         }
@@ -770,666 +737,6 @@ class FiboStrategyDbRun {
         }
     }
 
-    /**
-     * 止盈倍数扫描：固定 15m/1H + 1R 落半分批，扫 TP = 远TP(前高)/1.5R/2.0R/2.5R/3.0R，
-     * 每个 6 年逐年汇总(posYears/retSum/平均maxDD/trades)，找"收益没掉多少、回撤明显降"的平衡点。
-     * 注：avgR 在分批下被半仓记录灌水，只看趋势；判收益看 retSum、判风险看 avgDD。
-     */
-    @Test
-    void runTpSweep() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 5);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        FiboParams base = FiboParams.defaults();   // 15m/1H，1R 落半分批开
-        double[] tpRs = {0.0, 1.5, 2.0, 2.5, 3.0}; // 0=原版远TP(前高)，其余=R倍近TP
-
-        Connection con;
-        try {
-            con = DriverManager.getConnection(
-                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
-                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
-                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
-        } catch (Exception e) {
-            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
-            return;
-        }
-
-        try (con) {
-            System.out.printf("%n#### Fibo 止盈倍数扫描 (15m/1H, 1R落半分批, 6年汇总) balance=%s lev=%d ####%n",
-                    balance.toPlainString(), leverage);
-            for (String symbol : symbols) {
-                Long latestClose = latestCloseTime(con, symbol);
-                assertThat(latestClose).as(symbol + " latest close").isNotNull();
-                System.out.printf("%n== %s ==%n", symbol);
-                System.out.printf("%-12s %8s %9s %9s %8s %8s%n", "tpMode", "posYr", "retSum%", "avgDD%", "trades", "avgR");
-                for (double tpR : tpRs) {
-                    FiboParams p = tpR > 0 ? base.withTpRMultiple(tpR) : base;
-                    int posYears = 0, validYears = 0, totalTrades = 0;
-                    double retSum = 0, ddSum = 0, rSum = 0;
-                    for (int year : CHECK_YEARS) {
-                        SegResult sr = runWindow(con, symbol, p, yearStartUtc(year), yearStartUtc(year + 1),
-                                balance, leverage, latestClose);
-                        if (sr == null) continue;
-                        BacktestResult r = sr.r();
-                        validYears++;
-                        retSum += r.returnPct() * 100;
-                        ddSum += r.maxDrawdownPct() * 100;
-                        totalTrades += r.totalTrades();
-                        rSum += r.avgR();
-                        if (r.returnPct() > 0) posYears++;
-                    }
-                    String label = tpR > 0 ? ("tp" + tpR + "R") : "远TP(前高)";
-                    System.out.printf("%-12s %6d/%-2d %9.2f %9.2f %8d %8.3f%n",
-                            label, posYears, validYears, retSum,
-                            validYears > 0 ? ddSum / validYears : 0.0, totalTrades,
-                            validYears > 0 ? rSum / validYears : 0.0);
-                }
-            }
-        }
-    }
-
-    /**
-     * 分批扫描：第二批固定 2.0R 全平(可 -Dfibo.bt.tpR 改)，扫第一批触发(0.7/1.0/1.3R)×比例(30/50/70%)，
-     * 6 年汇总，定第一批"平多少、在哪"。注：仍是负 edge 框架内找最稳，非盈利寻优。
-     */
-    @Test
-    void runScaleSweep() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 5);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        double tpR = Double.parseDouble(System.getProperty("fibo.bt.tpR", "2.0"));
-        double[] atRs = parseDoubles(System.getProperty("fibo.bt.atRs"), new double[]{0.7, 1.0, 1.3});
-        double[] fracs = parseDoubles(System.getProperty("fibo.bt.fracs"), new double[]{0.3, 0.5, 0.7});
-
-        Connection con;
-        try {
-            con = DriverManager.getConnection(
-                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
-                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
-                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
-        } catch (Exception e) {
-            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
-            return;
-        }
-
-        try (con) {
-            System.out.printf("%n#### Fibo 分批扫描 (15m/1H, 第二批固定 %.1fR 全平, 6年汇总) balance=%s lev=%d ####%n",
-                    tpR, balance.toPlainString(), leverage);
-            for (String symbol : symbols) {
-                Long latestClose = latestCloseTime(con, symbol);
-                assertThat(latestClose).as(symbol + " latest close").isNotNull();
-                System.out.printf("%n== %s (2nd=%.1fR) ==%n", symbol, tpR);
-                System.out.printf("%-14s %8s %9s %9s %8s%n", "1st", "posYr", "retSum%", "avgDD%", "trades");
-                for (double atR : atRs) {
-                    for (double frac : fracs) {
-                        FiboParams p = scaleParams(atR, frac, tpR);
-                        int posYears = 0, validYears = 0, totalTrades = 0;
-                        double retSum = 0, ddSum = 0;
-                        for (int year : CHECK_YEARS) {
-                            SegResult sr = runWindow(con, symbol, p, yearStartUtc(year), yearStartUtc(year + 1),
-                                    balance, leverage, latestClose);
-                            if (sr == null) continue;
-                            BacktestResult r = sr.r();
-                            validYears++;
-                            retSum += r.returnPct() * 100;
-                            ddSum += r.maxDrawdownPct() * 100;
-                            totalTrades += r.totalTrades();
-                            if (r.returnPct() > 0) posYears++;
-                        }
-                        System.out.printf("%-14s %6d/%-2d %9.2f %9.2f %8d%n",
-                                String.format("%.1fR x%.0f%%", atR, frac * 100),
-                                posYears, validYears, retSum,
-                                validYears > 0 ? ddSum / validYears : 0.0, totalTrades);
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * 判生死实验：控制 entryFib=0.618 等全默认，只动"腿长门槛"一个变量——
-     * baseline(reversal2/minLeg4,现状) vs 大腿(reversal3/minLeg8)，
-     * 各扫【全仓在 X R 止盈】X=0.5/1.0/1.5/2.0R/前高，6 年汇总。
-     * 实现：TP 固定前高(保证 minRR≥1.2 的进场样本对所有档一致)，用 scaleOut(fraction=1.0 全平)
-     * 表达"全仓在 X R 落袋"——避开"近 TP 因 RR<1.2 被 minRR 全过滤(0 单)"的坑。
-     * 判据：baseline 下"越近越好"(早跑优)；大腿下若翻转成"越远越好"=趋势过滤在大腿上有效(有救)，
-     * 仍"越近越好"=进场无方向 edge(该收手)。腿长/止盈档可 -Dfibo.bt.legs / -Dfibo.bt.scaleRs 覆盖。
-     */
-    @Test
-    void runLegSizeVerdict() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 5);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        double[] scaleRs = parseDoubles(System.getProperty("fibo.bt.scaleRs"), new double[]{0.5, 1.0, 1.5, 2.0, 0.0});
-        // 腿长档：每两数一组 {reversalAtrMult, minLegAtrMult}；默认 baseline 与"大腿"两组对照。
-        double[] legFlat = parseDoubles(System.getProperty("fibo.bt.legs"), new double[]{2.0, 4.0, 3.0, 8.0});
-
-        Connection con;
-        try {
-            con = DriverManager.getConnection(
-                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
-                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
-                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
-        } catch (Exception e) {
-            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
-            return;
-        }
-
-        try (con) {
-            System.out.printf("%n#### Fibo 判生死(腿长×止盈远近, 全仓止盈[scaleOut全平], 6年汇总) balance=%s lev=%d ####%n",
-                    balance.toPlainString(), leverage);
-            for (String symbol : symbols) {
-                Long latestClose = latestCloseTime(con, symbol);
-                assertThat(latestClose).as(symbol + " latest close").isNotNull();
-                for (int g = 0; g + 1 < legFlat.length; g += 2) {
-                    double reversal = legFlat[g], minLeg = legFlat[g + 1];
-                    System.out.printf("%n== %s  腿长[reversal=%.1f minLeg=%.1f] ==%n", symbol, reversal, minLeg);
-                    System.out.printf("%-10s %8s %9s %9s %8s %8s%n", "止盈档", "posYr", "retSum%", "avgDD%", "trades", "avgR");
-                    for (double scaleR : scaleRs) {
-                        FiboParams p = verdictParams(reversal, minLeg, scaleR);
-                        int posYears = 0, validYears = 0, totalTrades = 0;
-                        double retSum = 0, ddSum = 0, rSum = 0;
-                        for (int year : CHECK_YEARS) {
-                            SegResult sr = runWindow(con, symbol, p, yearStartUtc(year), yearStartUtc(year + 1),
-                                    balance, leverage, latestClose);
-                            if (sr == null) continue;
-                            BacktestResult r = sr.r();
-                            validYears++;
-                            retSum += r.returnPct() * 100;
-                            ddSum += r.maxDrawdownPct() * 100;
-                            totalTrades += r.totalTrades();
-                            rSum += r.avgR();
-                            if (r.returnPct() > 0) posYears++;
-                        }
-                        String label = scaleR > 0 ? ("全平" + scaleR + "R") : "前高";
-                        System.out.printf("%-10s %6d/%-2d %9.2f %9.2f %8d %8.3f%n",
-                                label, posYears, validYears, retSum,
-                                validYears > 0 ? ddSum / validYears : 0.0, totalTrades,
-                                validYears > 0 ? rSum / validYears : 0.0);
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * fill 成本梯度：固定"全关纯收割"(关趋势门+关BOS, 全仓 0.5R)，扫 maker 入场 fill 摩擦 0/0.5/1/1.5/2bp，6 年汇总。
-     * 全关收割是 4000+ 笔/6年的高频，fill 成本是命门——看 0 摩擦下的 +119%/+185% 能扛住几 bp。
-     * fillEpsilonBp 经 System property 注入引擎；当前只影响 maker 限价进场，触发式 TP/SL/SCALE 平仓按 taker。
-     * 档位可 -Dfibo.bt.epsBps 覆盖；收割 R 可 -Dfibo.bt.scaleR 改。
-     */
-    @Test
-    void runFillGradient() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 5);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        double scaleR = Double.parseDouble(System.getProperty("fibo.bt.scaleR", "0.5"));
-        double[] epsBps = parseDoubles(System.getProperty("fibo.bt.epsBps"), new double[]{0.0, 0.5, 1.0, 1.5, 2.0});
-        FiboParams p = mrParams(0.618, 0.786, scaleR);   // 方向无关纯收割(baseline 几何)
-
-        Connection con;
-        try {
-            con = DriverManager.getConnection(
-                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
-                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
-                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
-        } catch (Exception e) {
-            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
-            return;
-        }
-
-        String saved = System.getProperty("backtest.fillEpsilonBp");  // 跑完恢复，避免污染同进程其他测试
-        try (con) {
-            System.out.printf("%n#### Fibo fill成本梯度(全关纯收割 %.1fR, 6年汇总) balance=%s lev=%d ####%n",
-                    scaleR, balance.toPlainString(), leverage);
-            for (String symbol : symbols) {
-                Long latestClose = latestCloseTime(con, symbol);
-                assertThat(latestClose).as(symbol + " latest close").isNotNull();
-                System.out.printf("%n== %s ==%n", symbol);
-                System.out.printf("%-10s %8s %9s %9s %8s %8s%n", "fill", "posYr", "retSum%", "avgDD%", "trades", "avgR");
-                for (double bp : epsBps) {
-                    System.setProperty("backtest.fillEpsilonBp", String.valueOf(bp));
-                    int posYears = 0, validYears = 0, totalTrades = 0;
-                    double retSum = 0, ddSum = 0, rSum = 0;
-                    for (int year : CHECK_YEARS) {
-                        SegResult sr = runWindow(con, symbol, p, yearStartUtc(year), yearStartUtc(year + 1),
-                                balance, leverage, latestClose);
-                        if (sr == null) continue;
-                        BacktestResult r = sr.r();
-                        validYears++;
-                        retSum += r.returnPct() * 100;
-                        ddSum += r.maxDrawdownPct() * 100;
-                        totalTrades += r.totalTrades();
-                        rSum += r.avgR();
-                        if (r.returnPct() > 0) posYears++;
-                    }
-                    System.out.printf("%-10s %6d/%-2d %9.2f %9.2f %8d %8.3f%n",
-                            bp + "bp", posYears, validYears, retSum,
-                            validYears > 0 ? ddSum / validYears : 0.0, totalTrades,
-                            validYears > 0 ? rSum / validYears : 0.0);
-                }
-            }
-        } finally {
-            if (saved == null) System.clearProperty("backtest.fillEpsilonBp");
-            else System.setProperty("backtest.fillEpsilonBp", saved);
-        }
-    }
-
-    /**
-     * 样本外验证：固定"全关纯收割"，扫 scaleR(0.3/0.5/0.7/1.0)，分训练期(2021–23)/验证期(2024–26)两段独立汇总。
-     * 回应"0.5R×全关是不是6年全样本挑的过拟合角点"——若【训练期最优 scaleR 与验证期一致(都~0.5R)且两段都正】=非过拟合、edge时间稳定。
-     * 默认 0 摩擦(隔离时间稳定性；fill 衰减已由 runFillGradient 单测)；可 -Dfibo.bt.epsBp 注入摩擦、-Dfibo.bt.scaleRs 改档。
-     */
-    @Test
-    void runOutOfSample() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 5);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        double[] scaleRs = parseDoubles(System.getProperty("fibo.bt.scaleRs"), new double[]{0.3, 0.5, 0.7, 1.0});
-        double epsBp = Double.parseDouble(System.getProperty("fibo.bt.epsBp", "0"));
-        int[] trainYears = {2021, 2022, 2023};
-        int[] validYears = {2024, 2025, 2026};
-
-        Connection con;
-        try {
-            con = DriverManager.getConnection(
-                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
-                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
-                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
-        } catch (Exception e) {
-            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
-            return;
-        }
-
-        String saved = System.getProperty("backtest.fillEpsilonBp");
-        System.setProperty("backtest.fillEpsilonBp", String.valueOf(epsBp));
-        try (con) {
-            System.out.printf("%n#### Fibo 样本外验证(全关纯收割, 训练2021-23 / 验证2024-26, fill=%.1fbp) balance=%s lev=%d ####%n",
-                    epsBp, balance.toPlainString(), leverage);
-            for (String symbol : symbols) {
-                Long latestClose = latestCloseTime(con, symbol);
-                assertThat(latestClose).as(symbol + " latest close").isNotNull();
-                System.out.printf("%n== %s ==%n", symbol);
-                System.out.printf("%-8s %9s %10s %9s %10s%n", "scaleR", "训练posYr", "训练ret%", "验证posYr", "验证ret%");
-                for (double scaleR : scaleRs) {
-                    FiboParams p = mrParams(0.618, 0.786, scaleR);
-                    YearsAgg tr = sumYears(con, symbol, p, trainYears, balance, leverage, latestClose);
-                    YearsAgg va = sumYears(con, symbol, p, validYears, balance, leverage, latestClose);
-                    System.out.printf("%-8s %7d/%-1d %10.2f %7d/%-1d %10.2f%n",
-                            scaleR + "R", tr.posYears(), tr.validYears(), tr.retSum(),
-                            va.posYears(), va.validYears(), va.retSum());
-                }
-            }
-        } finally {
-            if (saved == null) System.clearProperty("backtest.fillEpsilonBp");
-            else System.setProperty("backtest.fillEpsilonBp", saved);
-        }
-    }
-
-    /** 多年汇总：指定自然年逐年回测的收益率%相加(各年同起点独立)，统计正年数。 */
-    private record YearsAgg(int posYears, int validYears, double retSum) {}
-
-    private static YearsAgg sumYears(Connection con, String symbol, FiboParams p, int[] years,
-                                     BigDecimal balance, int leverage, long latestClose) throws Exception {
-        int pos = 0, valid = 0;
-        double ret = 0;
-        for (int year : years) {
-            SegResult sr = runWindow(con, symbol, p, yearStartUtc(year), yearStartUtc(year + 1),
-                    balance, leverage, latestClose);
-            if (sr == null) continue;
-            valid++;
-            ret += sr.r().returnPct() * 100;
-            if (sr.r().returnPct() > 0) pos++;
-        }
-        return new YearsAgg(pos, valid, ret);
-    }
-
-    /**
-     * 进场档×止损位网格：全关纯收割(均值回归框架)下扫 entryFib(0.5/0.559/0.618/0.66) × slFibRatio(0.786/0.88)，6年汇总。
-     * 回答"挂多深最好(0.5–0.618之间?)"和"止损 0.88 vs 0.786"。默认 1bp 摩擦——找实盘可用档，
-     * 而非 0 摩擦下被成交量主导的浅档。档位可 -Dfibo.bt.entryFibs / -Dfibo.bt.slRatios / -Dfibo.bt.epsBp 覆盖。
-     */
-    @Test
-    void runEntryStopGrid() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 5);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        double scaleR = Double.parseDouble(System.getProperty("fibo.bt.scaleR", "0.5"));
-        double epsBp = Double.parseDouble(System.getProperty("fibo.bt.epsBp", "1"));
-        double[] entryFibs = parseDoubles(System.getProperty("fibo.bt.entryFibs"), new double[]{0.5, 0.559, 0.618, 0.66});
-        double[] slRatios = parseDoubles(System.getProperty("fibo.bt.slRatios"), new double[]{0.786, 0.88});
-
-        Connection con;
-        try {
-            con = DriverManager.getConnection(
-                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
-                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
-                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
-        } catch (Exception e) {
-            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
-            return;
-        }
-
-        String saved = System.getProperty("backtest.fillEpsilonBp");
-        System.setProperty("backtest.fillEpsilonBp", String.valueOf(epsBp));
-        try (con) {
-            System.out.printf("%n#### Fibo 进场×止损网格(全关纯收割 %.1fR, fill=%.1fbp, 6年汇总) balance=%s lev=%d ####%n",
-                    scaleR, epsBp, balance.toPlainString(), leverage);
-            for (String symbol : symbols) {
-                Long latestClose = latestCloseTime(con, symbol);
-                assertThat(latestClose).as(symbol + " latest close").isNotNull();
-                System.out.printf("%n== %s ==%n", symbol);
-                System.out.printf("%-16s %8s %9s %9s %8s %8s%n", "entry/sl", "posYr", "retSum%", "avgDD%", "trades", "avgR");
-                for (double ef : entryFibs) {
-                    for (double sl : slRatios) {
-                        FiboParams p = mrParams(ef, sl, scaleR);
-                        int posYears = 0, validYears = 0, totalTrades = 0;
-                        double retSum = 0, ddSum = 0, rSum = 0;
-                        for (int year : CHECK_YEARS) {
-                            SegResult sr = runWindow(con, symbol, p, yearStartUtc(year), yearStartUtc(year + 1),
-                                    balance, leverage, latestClose);
-                            if (sr == null) continue;
-                            BacktestResult r = sr.r();
-                            validYears++;
-                            retSum += r.returnPct() * 100;
-                            ddSum += r.maxDrawdownPct() * 100;
-                            totalTrades += r.totalTrades();
-                            rSum += r.avgR();
-                            if (r.returnPct() > 0) posYears++;
-                        }
-                        System.out.printf("%-16s %6d/%-2d %9.2f %9.2f %8d %8.3f%n",
-                                String.format("e%.3f/sl%.3f", ef, sl), posYears, validYears, retSum,
-                                validYears > 0 ? ddSum / validYears : 0.0, totalTrades,
-                                validYears > 0 ? rSum / validYears : 0.0);
-                    }
-                }
-            }
-        } finally {
-            if (saved == null) System.clearProperty("backtest.fillEpsilonBp");
-            else System.setProperty("backtest.fillEpsilonBp", saved);
-        }
-    }
-
-    /**
-     * 样本外网格验证：均值回归框架(全关纯收割 scaleR)下，对 entryFib×slFibRatio 组合分训练(21-23)/验证(24-26)两段，
-     * 确认 e0.66/sl0.88 不是 8 组合挑出的过拟合角——验证期仍打赢 e0.618/sl0.786 且为正才采纳。默认 1bp，可 -Dfibo.bt.epsBp 改。
-     */
-    @Test
-    void runOutOfSampleGrid() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 5);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        double scaleR = Double.parseDouble(System.getProperty("fibo.bt.scaleR", "0.5"));
-        double epsBp = Double.parseDouble(System.getProperty("fibo.bt.epsBp", "1"));
-        double[] entryFibs = parseDoubles(System.getProperty("fibo.bt.entryFibs"), new double[]{0.618, 0.66, 0.70});
-        double[] slRatios = parseDoubles(System.getProperty("fibo.bt.slRatios"), new double[]{0.786, 0.88});
-        int[] trainYears = {2021, 2022, 2023};
-        int[] validYears = {2024, 2025, 2026};
-
-        Connection con;
-        try {
-            con = DriverManager.getConnection(
-                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
-                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
-                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
-        } catch (Exception e) {
-            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
-            return;
-        }
-
-        String saved = System.getProperty("backtest.fillEpsilonBp");
-        System.setProperty("backtest.fillEpsilonBp", String.valueOf(epsBp));
-        try (con) {
-            System.out.printf("%n#### Fibo 样本外网格(entry×sl, 全关纯收割 %.1fR, 训练21-23/验证24-26, fill=%.1fbp) balance=%s lev=%d ####%n",
-                    scaleR, epsBp, balance.toPlainString(), leverage);
-            for (String symbol : symbols) {
-                Long latestClose = latestCloseTime(con, symbol);
-                assertThat(latestClose).as(symbol + " latest close").isNotNull();
-                System.out.printf("%n== %s ==%n", symbol);
-                System.out.printf("%-16s %9s %10s %9s %10s%n", "entry/sl", "训练posYr", "训练ret%", "验证posYr", "验证ret%");
-                for (double ef : entryFibs) {
-                    for (double sl : slRatios) {
-                        FiboParams p = mrParams(ef, sl, scaleR);
-                        YearsAgg tr = sumYears(con, symbol, p, trainYears, balance, leverage, latestClose);
-                        YearsAgg va = sumYears(con, symbol, p, validYears, balance, leverage, latestClose);
-                        System.out.printf("%-16s %7d/%-1d %10.2f %7d/%-1d %10.2f%n",
-                                String.format("e%.3f/sl%.3f", ef, sl),
-                                tr.posYears(), tr.validYears(), tr.retSum(),
-                                va.posYears(), va.validYears(), va.retSum());
-                    }
-                }
-            }
-        } finally {
-            if (saved == null) System.clearProperty("backtest.fillEpsilonBp");
-            else System.setProperty("backtest.fillEpsilonBp", saved);
-        }
-    }
-
-    /**
-     * 最优几何下复核止盈 R：固定全关 + entry0.66 + sl0.88(可 -D 覆盖)，扫全仓止盈 scaleR(0.3/0.4/0.5/0.7/1.0)，6年汇总。
-     * 0.5R 是旧几何(0.618/0.786, risk=0.168腿)选的；新几何 risk=0.22腿，需复核 0.5R 是否仍是甜点。默认 1bp。
-     */
-    @Test
-    void runScaleSweepMR() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 5);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
-        double entryFib = Double.parseDouble(System.getProperty("fibo.bt.entryFib", "0.66"));
-        double slFib = Double.parseDouble(System.getProperty("fibo.bt.slFib", "0.88"));
-        double epsBp = Double.parseDouble(System.getProperty("fibo.bt.epsBp", "1"));
-        double[] scaleRs = parseDoubles(System.getProperty("fibo.bt.scaleRs"), new double[]{0.3, 0.4, 0.5, 0.7, 1.0});
-
-        Connection con;
-        try {
-            con = DriverManager.getConnection(
-                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
-                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
-                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
-        } catch (Exception e) {
-            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
-            return;
-        }
-
-        String saved = System.getProperty("backtest.fillEpsilonBp");
-        System.setProperty("backtest.fillEpsilonBp", String.valueOf(epsBp));
-        try (con) {
-            System.out.printf("%n#### Fibo 最优几何止盈R复核(全关+e%.3f+sl%.3f, fill=%.1fbp, 6年汇总) balance=%s lev=%d ####%n",
-                    entryFib, slFib, epsBp, balance.toPlainString(), leverage);
-            for (String symbol : symbols) {
-                Long latestClose = latestCloseTime(con, symbol);
-                assertThat(latestClose).as(symbol + " latest close").isNotNull();
-                System.out.printf("%n== %s ==%n", symbol);
-                System.out.printf("%-10s %8s %9s %9s %8s %8s%n", "止盈R", "posYr", "retSum%", "avgDD%", "trades", "avgR");
-                for (double scaleR : scaleRs) {
-                    FiboParams p = mrParams(entryFib, slFib, scaleR);
-                    int posYears = 0, validYears = 0, totalTrades = 0;
-                    double retSum = 0, ddSum = 0, rSum = 0;
-                    for (int year : CHECK_YEARS) {
-                        SegResult sr = runWindow(con, symbol, p, yearStartUtc(year), yearStartUtc(year + 1),
-                                balance, leverage, latestClose);
-                        if (sr == null) continue;
-                        BacktestResult r = sr.r();
-                        validYears++;
-                        retSum += r.returnPct() * 100;
-                        ddSum += r.maxDrawdownPct() * 100;
-                        totalTrades += r.totalTrades();
-                        rSum += r.avgR();
-                        if (r.returnPct() > 0) posYears++;
-                    }
-                    System.out.printf("%-10s %6d/%-2d %9.2f %9.2f %8d %8.3f%n",
-                            scaleR + "R", posYears, validYears, retSum,
-                            validYears > 0 ? ddSum / validYears : 0.0, totalTrades,
-                            validYears > 0 ? rSum / validYears : 0.0);
-                }
-            }
-        } finally {
-            if (saved == null) System.clearProperty("backtest.fillEpsilonBp");
-            else System.setProperty("backtest.fillEpsilonBp", saved);
-        }
-    }
-
-    /**
-     * 实盘场景模拟：最优配置(全关+0.66+0.88+0.4R) + 指定 balance/leverage + 固定每仓保证金(-Dbacktest.fixedMarginUsdt)，
-     * 连续 2021–now 单窗口(看复利/最终账户)。默认 balance=1000 lev=20 fill=1bp；配 -Dbacktest.fixedMarginUsdt=30 即"每仓30U保证金"。
-     */
-    @Test
-    void runLiveSim() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 20);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "1000"));
-        double entryFib = Double.parseDouble(System.getProperty("fibo.bt.entryFib", "0.66"));
-        double slFib = Double.parseDouble(System.getProperty("fibo.bt.slFib", "0.88"));
-        double scaleR = Double.parseDouble(System.getProperty("fibo.bt.scaleR", "0.4"));
-        double epsBp = Double.parseDouble(System.getProperty("fibo.bt.epsBp", "1"));
-        String fixedMargin = System.getProperty("backtest.fixedMarginUsdt", "0");
-        String marginPct = System.getProperty("backtest.marginPctOfEquity", "0");
-        // 回测窗口：默认 2021→now(全样本)；-Dfibo.bt.fromDate / -Dfibo.bt.toDate 自定义(yyyy-MM-dd, toDate 含当日)
-        String fromDate = System.getProperty("fibo.bt.fromDate", "").trim();
-        String toDate = System.getProperty("fibo.bt.toDate", "").trim();
-        long startMs = fromDate.isBlank() ? yearStartUtc(2021)
-                : LocalDate.parse(fromDate).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
-        long endMs = toDate.isBlank() ? yearStartUtc(2027) : inclusiveDateEndUtc(toDate);
-        FiboParams p = mrParams(entryFib, slFib, scaleR);
-
-        Connection con;
-        try {
-            con = DriverManager.getConnection(
-                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
-                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
-                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
-        } catch (Exception e) {
-            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
-            return;
-        }
-
-        String saved = System.getProperty("backtest.fillEpsilonBp");
-        System.setProperty("backtest.fillEpsilonBp", String.valueOf(epsBp));
-        try (con) {
-            System.out.printf("%n#### Fibo 实盘模拟(e%.3f/sl%.3f/%.1fR 全关, balance=%s lev=%d 固定保证金=%sU 保证金%%=%s fill=%.1fbp, 窗口[%s, %s)) ####%n",
-                    entryFib, slFib, scaleR, balance.toPlainString(), leverage, fixedMargin, marginPct, epsBp,
-                    Instant.ofEpochMilli(startMs), Instant.ofEpochMilli(endMs));
-            for (String symbol : symbols) {
-                Long latestClose = latestCloseTime(con, symbol);
-                assertThat(latestClose).as(symbol + " latest close").isNotNull();
-                SegResult sr = runWindow(con, symbol, p, startMs, endMs,
-                        balance, leverage, latestClose);
-                if (sr == null) { System.out.printf("%s: 无数据%n", symbol); continue; }
-                BacktestResult r = sr.r();
-                System.out.printf("%n== %s ==%n", symbol);
-                System.out.printf("窗口实际止于 %s（min(toDate, 最新close)）%n",
-                        Instant.ofEpochMilli(Math.min(endMs, latestClose + 1)));
-                System.out.printf("trades=%d winRate=%.1f%% 最终权益=%.2fU 净盈亏=%.2fU 收益率=%.1f%% maxDD=%.1f%%%n",
-                        r.totalTrades(), r.winRate() * 100,
-                        r.finalEquity().doubleValue(), r.netProfit().doubleValue(),
-                        r.returnPct() * 100, r.maxDrawdownPct() * 100);
-                printTradeLedger(r, balance);
-            }
-        } finally {
-            if (saved == null) System.clearProperty("backtest.fillEpsilonBp");
-            else System.setProperty("backtest.fillEpsilonBp", saved);
-        }
-    }
-
-    /**
-     * 敞口扫描：固定最优配置(全关+0.66+0.88+0.4R)连续 2021-now，扫名义敞口(=marginPct×杠杆)，看各敞口的 maxDD 与终值，
-     * 据"能扛的回撤"反推合适敞口。默认 lev=100、balance=1000、1bp；档可 -Dfibo.bt.marginPcts 覆盖。
-     */
-    @Test
-    void runExposureSweep() throws Exception {
-        List<String> symbols = symbols();
-        int leverage = Integer.getInteger("fibo.bt.leverage", 100);
-        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "1000"));
-        double epsBp = Double.parseDouble(System.getProperty("fibo.bt.epsBp", "1"));
-        double[] marginPcts = parseDoubles(System.getProperty("fibo.bt.marginPcts"),
-                new double[]{0.02, 0.03, 0.05, 0.07, 0.10});
-        FiboParams p = mrParams(0.66, 0.88, 0.4);
-
-        Connection con;
-        try {
-            con = DriverManager.getConnection(
-                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
-                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
-                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
-        } catch (Exception e) {
-            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
-            return;
-        }
-
-        String saved = System.getProperty("backtest.fillEpsilonBp");
-        String savedMp = System.getProperty("backtest.marginPctOfEquity");
-        System.setProperty("backtest.fillEpsilonBp", String.valueOf(epsBp));
-        try (con) {
-            System.out.printf("%n#### Fibo 敞口扫描(全关 0.66/0.88/0.4R, balance=%s lev=%d fill=%.1fbp, 连续2021-now) ####%n",
-                    balance.toPlainString(), leverage, epsBp);
-            for (String symbol : symbols) {
-                Long latestClose = latestCloseTime(con, symbol);
-                assertThat(latestClose).as(symbol + " latest close").isNotNull();
-                System.out.printf("%n== %s ==%n", symbol);
-                System.out.printf("%-8s %8s %16s %10s %8s%n", "敞口", "保证金%", "最终权益U", "收益率%", "maxDD%");
-                for (double mp : marginPcts) {
-                    System.setProperty("backtest.marginPctOfEquity", String.valueOf(mp));
-                    SegResult sr = runWindow(con, symbol, p, yearStartUtc(2021), yearStartUtc(2027),
-                            balance, leverage, latestClose);
-                    if (sr == null) continue;
-                    BacktestResult r = sr.r();
-                    System.out.printf("%-8s %7.0f%% %16.2f %10.1f %8.1f%n",
-                            String.format("%.1fx", mp * leverage), mp * 100,
-                            r.finalEquity().doubleValue(), r.returnPct() * 100, r.maxDrawdownPct() * 100);
-                }
-            }
-        } finally {
-            if (saved == null) System.clearProperty("backtest.fillEpsilonBp");
-            else System.setProperty("backtest.fillEpsilonBp", saved);
-            if (savedMp == null) System.clearProperty("backtest.marginPctOfEquity");
-            else System.setProperty("backtest.marginPctOfEquity", savedMp);
-        }
-    }
-
-    /** 解析逗号分隔的 double 列表(扫描范围用)；空则回退默认。 */
-    private static double[] parseDoubles(String csv, double[] dflt) {
-        if (csv == null || csv.isBlank()) return dflt;
-        String[] parts = csv.split(",");
-        double[] out = new double[parts.length];
-        for (int i = 0; i < parts.length; i++) out[i] = Double.parseDouble(parts[i].trim());
-        return out;
-    }
-
-    /** 用 defaults 数值 + 指定第一批触发R/比例/第二批R倍止盈构造 params(scaleOut 强制开)。 */
-    private static FiboParams scaleParams(double scaleAtR, double scaleFraction, double tpR) {
-        FiboParams d = FiboParams.defaults();
-        return new FiboParams(d.swingTfMillis(), d.atrPeriod(), d.reversalAtrMult(), d.minLegAtrMult(),
-                d.entryFib(), d.invalidationRatio(), d.slFibRatio(), d.slBufferAtrMult(), d.tpExtensionRatio(),
-                d.orderTimeoutBars(), d.swingLookbackBars(),
-                true, scaleFraction, scaleAtR, tpR, d.trendFilterOn(), d.mtfConfluenceOn(), d.mtfTfMillis(), d.trendAlignOn());
-    }
-
-    /**
-     * 判生死专用：指定腿长(reversal/minLeg) + 全仓在 scaleAtR×R 止盈，其余全默认。
-     * 关键：TP 固定前高(tpR=0)以保证 minRR≥1.2 的进场样本对所有档【完全一致】；用 scaleOut(fraction=1.0 全平)
-     * 表达"全仓在 X R 落袋"——scaleOut 不过开仓 minRR 门，避开"近 TP 因 RR<1.2 被全过滤(0 单)"的坑。
-     * scaleAtR<=0 表示"前高"档(关分批，全仓直接走前高 TP)。
-     */
-    private static FiboParams verdictParams(double reversalAtrMult, double minLegAtrMult, double scaleAtR) {
-        FiboParams d = FiboParams.defaults();
-        boolean scale = scaleAtR > 0;
-        return new FiboParams(d.swingTfMillis(), d.atrPeriod(),
-                reversalAtrMult, minLegAtrMult,
-                d.entryFib(), d.invalidationRatio(), d.slFibRatio(), d.slBufferAtrMult(), d.tpExtensionRatio(),
-                d.orderTimeoutBars(), d.swingLookbackBars(),
-                scale, 1.0, scale ? scaleAtR : d.scaleOutAtR(), 0.0, d.trendFilterOn(), d.mtfConfluenceOn(), d.mtfTfMillis(), d.trendAlignOn());
-    }
-
-    /** 收割网格专用：方向无关 scaleAtR 全仓收割 + 指定 entryFib/slFibRatio(invalidation 跟随 slFibRatio)。 */
-    private static FiboParams mrParams(double entryFib, double slFibRatio, double scaleAtR) {
-        FiboParams d = FiboParams.defaults();
-        boolean scale = scaleAtR > 0;
-        return new FiboParams(d.swingTfMillis(), d.atrPeriod(),
-                d.reversalAtrMult(), d.minLegAtrMult(),
-                entryFib, slFibRatio, slFibRatio, d.slBufferAtrMult(), d.tpExtensionRatio(),
-                d.orderTimeoutBars(), d.swingLookbackBars(),
-                scale, 1.0, scale ? scaleAtR : d.scaleOutAtR(), 0.0, d.trendFilterOn(), d.mtfConfluenceOn(), d.mtfTfMillis(), d.trendAlignOn());
-    }
-
     /** 跑单个时间窗 [tradingStart, tradingEnd)，窗前 warmup 段只喂数据不交易。 */
     private static SegResult runWindow(Connection con, String symbol, FiboParams params,
                                        long tradingStartMs, long tradingEndExclusive,
@@ -1447,9 +754,11 @@ class FiboStrategyDbRun {
         return new SegResult(hasGap, r);
     }
 
-    /** 预热毫秒：覆盖找腿窗 + ATR 预热(与 controller 同口径)。 */
+    /** 预热毫秒：max(找腿窗+ATR预热, 趋势闸SMA200预热)。趋势TF=swingTf×4，201根保证窗口首日趋势闸即生效(数据允许时)。 */
     private static long warmupMs(FiboParams p) {
-        return (long) (p.swingLookbackBars() + p.atrPeriod() + 16) * p.swingTfMillis();
+        long legWarmup = (long) (p.swingLookbackBars() + p.atrPeriod() + 16) * p.swingTfMillis();
+        long trendWarmup = 201L * 4 * p.swingTfMillis();
+        return Math.max(legWarmup, trendWarmup);
     }
 
     private static long yearStartUtc(int year) {
@@ -1601,12 +910,11 @@ class FiboStrategyDbRun {
     /**
      * 进场质量诊断：定位负 edge 来源。
      * 方向 avgR 谁负=该方向趋势门失灵(选错方向)；SL笔高端 MFE=败笔反弹天花板，看够不够得着 TP(名义≈3.28R)。
-     * 注：分批(scaleA)一笔被拆成多条记录会失真，方向/兑现以 M2(noScale) 为准。
      */
     private static void printEntryQualityDiagnostics(List<BacktestResult.Trade> trades) {
         List<BacktestResult.Trade> longs = trades.stream().filter(t -> "LONG".equals(t.side())).toList();
         List<BacktestResult.Trade> shorts = trades.stream().filter(t -> "SHORT".equals(t.side())).toList();
-        System.out.printf("--- 进场质量诊断(方向 & TP兑现, 以M2为准) ---%n");
+        System.out.printf("--- 进场质量诊断(方向 & TP兑现) ---%n");
         System.out.printf("LONG : n=%d win=%.1f%% avgR=%.3f   SHORT: n=%d win=%.1f%% avgR=%.3f%n",
                 longs.size(), winPct(longs), avgField(longs, BacktestResult.Trade::rMultiple),
                 shorts.size(), winPct(shorts), avgField(shorts, BacktestResult.Trade::rMultiple));
@@ -1625,7 +933,7 @@ class FiboStrategyDbRun {
         return 100.0 * w / rows.size();
     }
 
-    /** 逐年多空 edge 拆分：看 LONG/SHORT 的笔数+avgR，验证"做多弱、做空强"是否跨年稳健(以 M2 为准)。 */
+    /** 逐年多空 edge 拆分：看 LONG/SHORT 的笔数+avgR，验证"做多弱、做空强"是否跨年稳健。 */
     private static void printDirSplit(BacktestResult r) {
         List<BacktestResult.Trade> longs = r.getTrades().stream().filter(t -> "LONG".equals(t.side())).toList();
         List<BacktestResult.Trade> shorts = r.getTrades().stream().filter(t -> "SHORT".equals(t.side())).toList();
@@ -1636,34 +944,6 @@ class FiboStrategyDbRun {
 
     private static double pctOf(long a, long total) {
         return total == 0 ? 0.0 : 100.0 * a / total;
-    }
-
-    /**
-     * 逐笔台账：开/平时间、方向、进出价、数量、盈亏(已扣费)、手续费、R、平仓原因、累计权益。
-     * 累计权益从初始余额起逐笔累加 pnl，与 finalEquity 收口一致。ASCII 表头避免控制台中文乱码。
-     */
-    private static void printTradeLedger(BacktestResult r, BigDecimal initialBalance) {
-        List<BacktestResult.Trade> trades = r.getTrades();
-        if (trades.isEmpty()) { System.out.println("(no trades)"); return; }
-        System.out.printf("--- trade ledger (%d) ---%n", trades.size());
-        System.out.printf("%-4s %-19s %-19s %-5s %12s %12s %12s %10s %8s %7s %-10s %12s%n",
-                "#", "open", "close", "side", "entry", "exit", "qty", "pnl", "fee", "R", "reason", "equity");
-        BigDecimal eq = initialBalance;
-        int n = 0;
-        for (BacktestResult.Trade t : trades) {
-            eq = eq.add(t.pnl());
-            System.out.printf("%-4d %-19s %-19s %-5s %12s %12s %12s %10s %8s %7s %-10s %12s%n",
-                    ++n, t.openTime(), t.closeTime(), t.side(),
-                    scale(t.entryPrice()), scale(t.exitPrice()), scale(t.quantity()),
-                    money(t.pnl()), money(t.fee()),
-                    t.rMultiple() == null ? "-" : t.rMultiple().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString(),
-                    t.exitReason(), money(eq));
-        }
-    }
-
-    /** 金额统一保留 2 位，台账列对齐。 */
-    private static String money(BigDecimal v) {
-        return v == null ? "-" : v.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
     }
 
     private static void printRecentTrades(List<BacktestResult.Trade> trades, int limit) {        if (trades.isEmpty()) return;
