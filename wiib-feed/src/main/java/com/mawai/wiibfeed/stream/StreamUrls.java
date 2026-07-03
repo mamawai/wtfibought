@@ -33,4 +33,9 @@ final class StreamUrls {
     static String combinedUrl(String baseWsUrl, String endpoint, List<String> symbols, String suffix) {
         return baseWsUrl.replace("/ws", "/" + endpoint + "/stream?streams=" + joinStreams(symbols, suffix));
     }
+
+    /** 期货端点裸单流 URL：不带 symbol 前缀的全市场流（如 !forceOrder@arr）。 */
+    static String rawStreamUrl(String baseWsUrl, String endpoint, String stream) {
+        return baseWsUrl.replace("/ws", "/" + endpoint + "/ws/" + stream);
+    }
 }

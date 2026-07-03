@@ -7,8 +7,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 
-/** 全市场强平（爆仓）流：@forceOrder 稀疏事件，解析后入库。属 /market 端点。 */
+/**
+ * 全市场强平（爆仓）流：!forceOrder@arr，白名单过滤后入库。属 /market 端点。
+ *
+ * <p>订全市场而非逐 symbol 的原因：逐 symbol 强平消息稀疏到无法用静默判连接死活
+ * （maxIdle 只能设 0，静默死连接无人发现，曾因此丢 2026-04 半月/2026-06 整月数据）；
+ * 全市场每几秒必有强平，静默检测重新有意义。非白名单消息只喂看门狗心跳、不入库。</p>
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -17,14 +26,17 @@ public class ForceOrderStreamHandler implements StreamHandler {
     private final BinanceProperties props;
     private final ForceOrderService forceOrderService;
 
+    /** 入库白名单 = 配置币池（懒初始化，注入完成后首条消息构建）。 */
+    private volatile Set<String> whitelist;
+
     @Override public String name() { return "ForceOrder"; }
 
-    // forceOrder 是稀疏事件流（爆仓发生时才推），不设静默阈值
-    @Override public long maxIdleSeconds() { return 0; }
+    // 全市场流每几秒必有消息，静默>120s 即视为死连接主动重连
+    @Override public long maxIdleSeconds() { return 120; }
 
     @Override
     public String buildUrl() {
-        return StreamUrls.endpointUrl(props.getFuturesWsUrl(), "market", props.getSymbols(), "forceOrder");
+        return StreamUrls.rawStreamUrl(props.getFuturesWsUrl(), "market", "!forceOrder@arr");
     }
 
     @Override
@@ -39,11 +51,14 @@ public class ForceOrderStreamHandler implements StreamHandler {
         int from = oIdx + 5;
 
         String symbol = StreamParse.extractField(raw, "\"s\":\"", from);
+        // 白名单外的币只当看门狗心跳（时间戳已在 WsConnection 更新），不入库
+        if (symbol == null || !whitelist().contains(symbol.toUpperCase(Locale.ROOT))) return;
+
         String side = StreamParse.extractField(raw, "\"S\":\"", from);
         String price = StreamParse.extractField(raw, "\"p\":\"", from);
         String avgPrice = StreamParse.extractField(raw, "\"ap\":\"", from);
         String qty = StreamParse.extractField(raw, "\"q\":\"", from);
-        if (symbol == null || side == null || price == null || avgPrice == null || qty == null) {
+        if (side == null || price == null || avgPrice == null || qty == null) {
             log.warn("[ForceOrder] 字段解析失败: {}", arg);
             return;
         }
@@ -71,5 +86,14 @@ public class ForceOrderStreamHandler implements StreamHandler {
                 log.warn("爆仓入库异常 {} {}: {}", symbol, side, e.getMessage());
             }
         });
+    }
+
+    private Set<String> whitelist() {
+        Set<String> w = whitelist;
+        if (w == null) {
+            w = props.getSymbols().stream().map(s -> s.toUpperCase(Locale.ROOT)).collect(Collectors.toSet());
+            whitelist = w;   // 竞态无害: 重复构建结果相同
+        }
+        return w;
     }
 }
