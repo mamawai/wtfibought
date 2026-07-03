@@ -424,6 +424,77 @@ class FiboStrategyDbRun {
     }
 
     /**
+     * entry×stop 网格高原检查：回答"0.66/0.88 是稳健高原还是孤立尖峰", 不是找 argmax。
+     * 判读规则(先立后跑): 训练段(2021-23)看响应面形状; 验证段(2024-26)只确认高原/尖峰定性,
+     * 不许用来挑新点——当前点若是孤峰, 结论是对 T1 本身降信心, 而非搬去更好的邻格。
+     * 其余参数全冻结 defaults, 1% 风险口径(不传 marginPct), invalidation 与 sl 联动(同 defaults)。
+     * bars 每 symbol×窗口只装载一次, 15 格共用, 免重复 IO。
+     *
+     * 跑法：mvn -pl wiib-quant -am test -Dtest=FiboStrategyDbRun#runEntryStopGrid -DskipTests=false \
+     *   -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false -Dfibo.bt.symbols=BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT
+     */
+    @Test
+    void runEntryStopGrid() throws Exception {
+        double[] entries = {0.5, 0.618, 0.66, 0.705, 0.786};
+        double[] stops = {0.80, 0.88, 1.00};
+        int leverage = Integer.getInteger("fibo.bt.leverage", 5);
+        BigDecimal balance = new BigDecimal(System.getProperty("fibo.bt.balance", "100000"));
+        long trainStart = yearStartUtc(2021), trainEnd = yearStartUtc(2024);
+        long valStart = yearStartUtc(2024), valEnd = yearStartUtc(2027);
+
+        Connection con;
+        try {
+            con = DriverManager.getConnection(
+                    System.getProperty("fibo.bt.dbUrl", DEFAULT_URL),
+                    System.getProperty("fibo.bt.dbUser", DEFAULT_USER),
+                    System.getProperty("fibo.bt.dbPassword", DEFAULT_PASSWORD));
+        } catch (Exception e) {
+            Assumptions.abort("本地 postgres 不可达，跳过: " + e.getMessage());
+            return;
+        }
+        try (con) {
+            System.out.println("GRIDHDR,symbol,window,entry,stop,trades,win%,pf,avgR,totalR");
+            for (String symbol : symbols()) {
+                Long latest = latestCloseTime(con, symbol);
+                if (latest == null) { System.out.printf("%s 无数据%n", symbol); continue; }
+                long[][] windows = {{trainStart, trainEnd}, {valStart, valEnd}};
+                String[] tags = {"TRAIN", "VAL"};
+                for (int w = 0; w < windows.length; w++) {
+                    long winStart = windows[w][0];
+                    long segEnd = Math.min(windows[w][1], latest + 1);
+                    if (winStart >= segEnd) continue;
+                    long warmupMs = warmupMs(FiboParams.defaults());   // 网格只动 entry/stop, warmup 不变
+                    List<KlineBar> bars = loadBars(con, symbol, winStart - warmupMs, segEnd);
+                    if (bars.isEmpty()) continue;
+                    int warmupBars = (int) bars.stream().filter(b -> b.closeTime() < winStart).count();
+                    for (double entry : entries) {
+                        for (double stop : stops) {
+                            if (entry >= stop) continue;   // 几何前提: 止损档必须深于入场档
+                            FiboParams p = withEntryStop(entry, stop);
+                            FiboRetracementStrategy strategy = new FiboRetracementStrategy(p, List.of(symbol));
+                            BacktestResult r = new StrategyKlineBacktestEngine(
+                                    strategy, symbol, bars, balance, leverage, warmupBars, winStart, segEnd).run();
+                            double totalR = r.avgR() * r.totalTrades();
+                            System.out.printf(Locale.ROOT, "GRID,%s,%s,%.3f,%.2f,%d,%.1f,%.3f,%.3f,%.1f%n",
+                                    symbol, tags[w], entry, stop, r.totalTrades(), r.winRate() * 100,
+                                    r.profitFactor(), r.avgR(), totalR);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 网格用 params：只动 entryFib 与 invalidation/sl(联动), 其余全 defaults。 */
+    private static FiboParams withEntryStop(double entry, double stop) {
+        FiboParams d = FiboParams.defaults();
+        return new FiboParams(d.swingTfMillis(), d.atrPeriod(), d.reversalAtrMult(), d.minLegAtrMult(),
+                entry, stop, stop, d.slBufferAtrMult(), d.tpExtensionRatio(),
+                d.orderTimeoutBars(), d.swingLookbackBars(),
+                d.tpRMultiple(), d.trendFilterOn(), d.trendAlignOn());
+    }
+
+    /**
      * 敞口生死地图：拿最好的几何(ext1.618)在四币验证段 2024-26 连续单窗，扫一串"更低敞口"
      * （降 marginPct 与 降 leverage 两条路都走），看降到哪一档能四币一致活下来(ret 正、maxDD 可忍)。
      * 名义敞口 = marginPct × leverage × 权益；50x 无论 marginPct 多小，强平距≈1/50=2%(可能仍架空止损)。
