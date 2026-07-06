@@ -3,6 +3,7 @@ package com.mawai.wiibquant.agent.strategy.fibo;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibquant.agent.strategy.backtest.StrategyKlineBacktestEngine;
+import com.mawai.wiibquant.agent.strategy.core.SwingDetector;
 import com.mawai.wiibquant.agent.strategy.core.WindowedMarketView;
 import com.mawai.wiibquant.agent.strategy.backtest.BacktestResult;
 import com.mawai.wiibcommon.config.BinanceProperties;

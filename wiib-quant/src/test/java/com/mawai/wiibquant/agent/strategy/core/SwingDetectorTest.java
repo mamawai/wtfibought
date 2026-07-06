@@ -1,4 +1,4 @@
-package com.mawai.wiibquant.agent.strategy.fibo;
+package com.mawai.wiibquant.agent.strategy.core;
 
 import com.mawai.wiibcommon.market.KlineBar;
 import org.junit.jupiter.api.Test;

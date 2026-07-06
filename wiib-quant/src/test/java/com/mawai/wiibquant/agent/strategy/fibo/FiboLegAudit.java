@@ -1,6 +1,7 @@
 package com.mawai.wiibquant.agent.strategy.fibo;
 
 import com.mawai.wiibcommon.market.KlineBar;
+import com.mawai.wiibquant.agent.strategy.core.SwingDetector;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;

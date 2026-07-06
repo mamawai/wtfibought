@@ -67,6 +67,7 @@ public final class StrategyKlineBacktestEngine {
         WindowedMarketView view = new WindowedMarketView(WINDOW_MAX_BARS);
         StrategySignal pending = null;        // 市价单：下一根开盘成交
         StrategySignal pendingLimit = null;   // 限价单：挂单跨根等价格触及(maker)
+        StrategySignal pendingStop = null;    // 触价单：挂单跨根等价格突破(taker)，生命周期与 pendingLimit 同款 reaffirm
 
         for (int i = 0; i < base5m.size(); i++) {
             KlineBar bar = base5m.get(i);
@@ -88,6 +89,12 @@ public final class StrategyKlineBacktestEngine {
                         takerEntry ? "MARKET" : "LIMIT", i, view);
                 pendingLimit = null;
             }
+            // 触价挂单：本根突破触发价即 taker 成交；开盘已跳空穿越触发价时按开盘劣价成交（拿不到比市场更好的价）
+            if (pendingStop != null && tools.getOpenPositions(symbol).isEmpty()
+                    && stopTouched(pendingStop, bar)) {
+                openFill(tools, pendingStop, stopFillPrice(pendingStop, bar), "MARKET", i, view);
+                pendingStop = null;
+            }
 
             tools.tickBar(bar.open(), bar.high(), bar.low(), bar.close(), i);
             view.append(bar);
@@ -100,11 +107,16 @@ public final class StrategyKlineBacktestEngine {
                 StrategySignal s = signal.get();
                 if ("LIMIT".equals(s.orderType())) {
                     pendingLimit = canTrade ? s : null;   // reaffirm：腿有效则刷新挂单，否则(有仓/不可交易)清挂单
+                    pendingStop = null;                   // 单挂单不变量：新信号换类型时清掉另一侧 stale 挂单
+                } else if ("STOP".equals(s.orderType())) {
+                    pendingStop = canTrade ? s : null;    // reaffirm 语义同 LIMIT
+                    pendingLimit = null;
                 } else if (canTrade) {
                     pending = s;
                 }
             } else {
                 pendingLimit = null;                      // 无信号=腿失效，撤挂单
+                pendingStop = null;
             }
 
             result.recordEquity(tools.getTotalEquity());
@@ -130,6 +142,20 @@ public final class StrategyKlineBacktestEngine {
         return s.isLong()
                 ? bar.low().compareTo(limit.multiply(BigDecimal.ONE.subtract(eps))) <= 0
                 : bar.high().compareTo(limit.multiply(BigDecimal.ONE.add(eps))) >= 0;
+    }
+
+    /** 触价单是否被本根触发：做多看 high≥触发价，做空看 low≤触发价。 */
+    private boolean stopTouched(StrategySignal s, KlineBar bar) {
+        BigDecimal trigger = s.entryRefPrice();
+        return s.isLong()
+                ? bar.high().compareTo(trigger) >= 0
+                : bar.low().compareTo(trigger) <= 0;
+    }
+
+    /** 触价单成交价：正常=触发价；开盘已跳空穿越时按开盘劣价（多头取大、空头取小）。 */
+    private static BigDecimal stopFillPrice(StrategySignal s, KlineBar bar) {
+        BigDecimal trigger = s.entryRefPrice();
+        return s.isLong() ? bar.open().max(trigger) : bar.open().min(trigger);
     }
 
     /** 成交建仓：市价用下一根开盘价(taker)、限价用挂单价(maker)，由 orderType 区分。 */

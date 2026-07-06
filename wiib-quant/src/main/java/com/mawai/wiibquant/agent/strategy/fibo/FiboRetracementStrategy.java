@@ -3,6 +3,7 @@ package com.mawai.wiibquant.agent.strategy.fibo;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibquant.agent.strategy.core.StrategyMarketView;
 import com.mawai.wiibquant.agent.strategy.core.StrategyRiskPolicy;
+import com.mawai.wiibquant.agent.strategy.core.SwingDetector;
 import com.mawai.wiibquant.agent.strategy.core.StrategySignal;
 import com.mawai.wiibquant.agent.strategy.core.TradingStrategySpi;
 import com.mawai.wiibquant.agent.strategy.core.TradingOperations;

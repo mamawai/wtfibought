@@ -1,4 +1,4 @@
-package com.mawai.wiibquant.agent.strategy.fibo;
+package com.mawai.wiibquant.agent.strategy.core;
 
 import com.mawai.wiibcommon.market.KlineBar;
 
@@ -71,7 +71,7 @@ public final class SwingDetector {
     }
 
     /** TR 的简单滑动均值；i < atrPeriod-1 为 NaN，调用方从 atrPeriod+1 开始消费，安全。 */
-    static double[] atrSeries(List<KlineBar> bars, int period) {
+    public static double[] atrSeries(List<KlineBar> bars, int period) {
         int n = bars.size();
         double[] tr = new double[n];
         double[] atr = new double[n];

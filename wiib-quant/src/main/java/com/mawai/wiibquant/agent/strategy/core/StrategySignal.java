@@ -11,13 +11,13 @@ public record StrategySignal(
         String symbol,
         String side,              // LONG / SHORT
         boolean isLong,
-        BigDecimal entryRefPrice, // MARKET=确认bar收盘参考价；LIMIT=挂单价（在此价位挂限价单）
+        BigDecimal entryRefPrice, // MARKET=确认bar收盘参考价；LIMIT=挂单价；STOP=触发价（突破才成交）
         BigDecimal stopLossPrice,
         BigDecimal takeProfitPrice,
         double score,
         String reason,
         long barCloseTime,
-        String orderType) {       // MARKET=下一根开盘市价成交；LIMIT=挂限价单等回踩触发（maker）
+        String orderType) {       // MARKET=下一根开盘市价成交；LIMIT=挂限价单等回踩触发（maker）；STOP=触价单等突破触发（taker）
 
     /** 兼容构造：不带 orderType 默认市价单，老调用走这里，行为不变。 */
     public StrategySignal(String strategyId, String symbol, String side, boolean isLong,

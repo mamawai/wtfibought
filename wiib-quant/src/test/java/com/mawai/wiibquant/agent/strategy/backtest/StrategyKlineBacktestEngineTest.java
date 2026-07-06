@@ -173,6 +173,72 @@ class StrategyKlineBacktestEngineTest {
         assertEquals(0, result.totalTrades(), "reaffirm 停止后挂单撤销，后续触及不成交");
     }
 
+    @Test
+    void stopFillsAtTriggerWhenBrokenThrough() {
+        List<KlineBar> bars = new ArrayList<>(flatBars(20, 100));   // high 恒 101，够不到 105
+        bars.set(12, bar(12, 100, 106, 99, 105));                   // bar12 冲高 106，突破触发价 105
+        BacktestResult result = new StrategyKlineBacktestEngine(
+                stopLongBetween(9, Integer.MAX_VALUE, 105, 95, 130), SYM, bars,
+                new BigDecimal("100000"), 5, 0, null, null)
+                .run();
+        assertEquals(1, result.totalTrades());
+        assertEquals(0, result.getTrades().getFirst().entryPrice().compareTo(bd(105)),
+                "stop 必须成交于触发价 105，而非开盘/收盘价");
+    }
+
+    @Test
+    void stopNotFilledWhenNeverBroken() {
+        List<KlineBar> bars = new ArrayList<>(flatBars(20, 100));   // high 恒 101，从不到 105
+        BacktestResult result = new StrategyKlineBacktestEngine(
+                stopLongBetween(9, Integer.MAX_VALUE, 105, 95, 130), SYM, bars,
+                new BigDecimal("100000"), 5, 0, null, null)
+                .run();
+        assertEquals(0, result.totalTrades());
+    }
+
+    @Test
+    void stopFillsAtOpenWhenGappedThrough() {
+        List<KlineBar> bars = new ArrayList<>(flatBars(20, 100));
+        bars.set(12, bar(12, 108, 110, 107, 109));                  // 开盘 108 已跳空越过触发价 105
+        BacktestResult result = new StrategyKlineBacktestEngine(
+                stopLongBetween(9, Integer.MAX_VALUE, 105, 95, 130), SYM, bars,
+                new BigDecimal("100000"), 5, 0, null, null)
+                .run();
+        assertEquals(1, result.totalTrades());
+        assertEquals(0, result.getTrades().getFirst().entryPrice().compareTo(bd(108)),
+                "跳空穿越必须按开盘劣价 108 成交，不许拿触发价 105");
+    }
+
+    @Test
+    void stopCancelledWhenStrategyStopsReaffirming() {
+        List<KlineBar> bars = new ArrayList<>(flatBars(20, 100));
+        bars.set(15, bar(15, 100, 106, 99, 100));                   // bar15 才突破，但挂单 bar12 已撤
+        BacktestResult result = new StrategyKlineBacktestEngine(
+                stopLongBetween(9, 12, 105, 95, 130), SYM, bars,
+                new BigDecimal("100000"), 5, 0, null, null)
+                .run();
+        assertEquals(0, result.totalTrades(), "reaffirm 停止后触价单撤销，后续突破不成交");
+    }
+
+    /** 仅在 bar 索引 [fromBar, toBarExclusive) 输出 STOP 信号，之外 empty（模拟信号窗口过期→撤单）。 */
+    private static TradingStrategySpi stopLongBetween(int fromBar, int toBarExclusive,
+                                                      double trigger, double sl, double tp) {
+        return new TradingStrategySpi() {
+            @Override public String id() { return "STUB"; }
+            @Override public List<String> symbols() { return List.of(SYM); }
+            @Override public StrategyRiskPolicy riskPolicy() { return StrategyRiskPolicy.defaults(); }
+            @Override
+            public Optional<StrategySignal> onBarClosed(String symbol, StrategyMarketView view) {
+                int idx = view.closedBars(StrategyMarketView.BASE_INTERVAL_MILLIS, 100_000).size() - 1;
+                if (idx >= fromBar && idx < toBarExclusive) {
+                    return Optional.of(new StrategySignal("STUB", SYM, "LONG", true,
+                            bd(trigger), bd(sl), bd(tp), 1.0, "stub", idx * M5 + M5 - 1, "STOP"));
+                }
+                return Optional.empty();
+            }
+        };
+    }
+
     /** 从 fromBar 起每根持续输出 LIMIT 信号（reaffirm 不撤）。 */
     private static TradingStrategySpi limitLongFrom(int fromBar, double limit, double sl, double tp) {
         return limitLongBetween(fromBar, Integer.MAX_VALUE, limit, sl, tp);
