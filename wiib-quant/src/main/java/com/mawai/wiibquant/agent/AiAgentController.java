@@ -10,15 +10,17 @@ import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibquant.agent.behavior.BehaviorAnalysisReport;
 import com.mawai.wiibquant.agent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibquant.agent.config.AiAgentRuntimeManager;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibquant.agent.quant.CryptoAnalysisReport;
-import com.mawai.wiibquant.agent.quant.QuantForecastFacade;
-import com.mawai.wiibquant.agent.quant.QuantForecastRunResult;
 import com.mawai.wiibquant.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibquant.agent.quant.memory.VerificationService;
+import com.mawai.wiibquant.task.QuantSnapshotScheduler;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
+import com.mawai.wiibcommon.entity.QuantSnapshot;
 import com.mawai.wiibquant.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibquant.mapper.QuantSignalDecisionMapper;
+import com.mawai.wiibquant.mapper.QuantSnapshotMapper;
 
 import com.alibaba.fastjson2.JSON;
 import io.swagger.v3.oas.annotations.Operation;
@@ -45,7 +47,8 @@ public class AiAgentController {
 
     private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final BehaviorAnalysisService behaviorAnalysisService;
-    private final QuantForecastFacade quantForecastFacade;
+    private final QuantSnapshotScheduler snapshotScheduler;
+    private final QuantSnapshotMapper snapshotMapper;
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantSignalDecisionMapper decisionMapper;
     private final VerificationService verificationService;
@@ -53,13 +56,15 @@ public class AiAgentController {
 
     public AiAgentController(AiAgentRuntimeManager aiAgentRuntimeManager,
                              BehaviorAnalysisService behaviorAnalysisService,
-                             QuantForecastFacade quantForecastFacade,
+                             QuantSnapshotScheduler snapshotScheduler,
+                             QuantSnapshotMapper snapshotMapper,
                              QuantForecastCycleMapper cycleMapper,
                              QuantSignalDecisionMapper decisionMapper,
                              VerificationService verificationService) {
         this.aiAgentRuntimeManager = aiAgentRuntimeManager;
         this.behaviorAnalysisService = behaviorAnalysisService;
-        this.quantForecastFacade = quantForecastFacade;
+        this.snapshotScheduler = snapshotScheduler;
+        this.snapshotMapper = snapshotMapper;
         this.cycleMapper = cycleMapper;
         this.decisionMapper = decisionMapper;
         this.verificationService = verificationService;
@@ -106,28 +111,19 @@ public class AiAgentController {
             return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
         }
 
-        // 前端展示与交易决策保持一致：只读最新正式 research cycle。
+        // P2a 中间态：旧管线已下线，此端点转历史回放（读旧表最后一次研判，不再有时效检查）。
         QuantForecastCycle cycle = cycleMapper.selectLatestHeavy(normalized);
         if (cycle == null) {
-            return Result.ok(Map.of("status", "pending", "message", "暂无分析报告，等待系统生成"));
-        }
-
-        // 35分钟内的报告视为有效（30分钟周期 + 5分钟容差）
-        boolean recent = cycle.getForecastTime() != null
-                && cycle.getForecastTime().isAfter(java.time.LocalDateTime.now().minusMinutes(35));
-        if (!recent) {
-            return Result.ok(Map.of("status", "pending", "message", "报告已过期，等待下一轮分析",
-                    "lastForecastTime", Objects.requireNonNull(cycle.getForecastTime()).toString()));
+            return Result.ok(Map.of("status", "pending", "message", "暂无历史报告"));
         }
 
         if (cycle.getReportJson() == null || cycle.getReportJson().isBlank()) {
-            return Result.ok(Map.of("status", "pending", "message", "分析进行中，请稍候",
-                    "forecastTime", cycle.getForecastTime().toString()));
+            return Result.ok(Map.of("status", "pending", "message", "历史报告数据不完整"));
         }
 
         try {
             CryptoAnalysisReport report = JSON.parseObject(cycle.getReportJson(), CryptoAnalysisReport.class);
-            // Step 7a：简报产物（脆弱度/信号面板/弱lean）单独从 briefing_json 暴露，不污染 report 契约
+            // 简报产物（脆弱度/信号面板/弱lean）单独从 briefing_json 暴露，不污染 report 契约
             Object briefing = parseBriefing(cycle.getBriefingJson());
             Map<String, Object> data = new HashMap<>();
             data.put("status", "ready");
@@ -138,12 +134,29 @@ public class AiAgentController {
             data.put("riskStatus", cycle.getRiskStatus());
             data.put("report", report);
             data.put("briefing", briefing); // 旧 cycle 无 briefing_json 时为 null，前端按存在性渲染
-            data.put("advisory", "本简报为研究展示，非交易建议");
+            data.put("advisory", "历史回放：旧研判管线最后一次输出（研判工作台升级中），非交易建议");
             return Result.ok(data);
         } catch (Exception e) {
             log.error("报告JSON解析失败 cycleId={}", cycle.getCycleId(), e);
             return Result.fail("报告数据异常");
         }
+    }
+
+    @GetMapping("/quant/snapshots/latest")
+    @Operation(summary = "查最新数值快照（P2a 新链路：vol三腿/脆弱度/信号面板）")
+    public Result<QuantSnapshot> latestSnapshot(@RequestParam(defaultValue = "BTCUSDT") String symbol) {
+        StpUtil.checkLogin();
+        String normalized;
+        try {
+            normalized = QuantConstants.normalizeSymbol(symbol);
+        } catch (IllegalArgumentException e) {
+            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
+        }
+        QuantSnapshot snapshot = snapshotMapper.selectOne(new LambdaQueryWrapper<QuantSnapshot>()
+                .eq(QuantSnapshot::getSymbol, normalized)
+                .orderByDesc(QuantSnapshot::getCloseTime)
+                .last("LIMIT 1"));
+        return snapshot != null ? Result.ok(snapshot) : Result.fail("暂无快照数据");
     }
 
     private Object parseBriefing(String json) {
@@ -161,7 +174,7 @@ public class AiAgentController {
     }
 
     @PostMapping("/analyze-crypto")
-    @Operation(summary = "加密货币量化分析")
+    @Operation(summary = "加密货币量化分析（P2a 中间态：触发数值快照，深研判 P2b 回归）")
     public Result<CryptoAnalysisReport> analyzeCrypto(@RequestBody(required = false) AnalyzeCryptoRequest request) {
         long userId = StpUtil.getLoginIdAsLong();
         String symbol = request != null ? request.getSymbol() : null;
@@ -179,38 +192,11 @@ public class AiAgentController {
 
     @RateLimiter(type = RateLimiterType.AI_CRYPTO, message = "量化分析每分钟限1次")
     public Result<CryptoAnalysisReport> doAnalyzeCryptoInternal(long userId, String symbol) {
-        long startMs = System.currentTimeMillis();
-        log.info("[Quant] 工作流开始 userId={} symbol={}", userId, symbol);
-
-        try {
-            QuantForecastRunResult result = quantForecastFacade.run(symbol, "crypto-" + userId, null);
-            if (!result.graphReturned()) {
-                log.warn("[Quant] 工作流无结果 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs);
-                return Result.fail("分析无结果");
-            }
-
-            if (!result.dataAvailable()) {
-                log.warn("[Quant] 行情采集失败 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs);
-                return Result.fail("行情数据采集失败，请稍后重试");
-            }
-
-            CryptoAnalysisReport report = result.report();
-            if (report == null) {
-                log.error("[Quant] 报告格式错误 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs);
-                return Result.fail("分析结果格式错误");
-            }
-            if (!result.reportValid()) {
-                log.error("[Quant] 报告关键字段缺失 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs);
-                return Result.fail("分析结果不完整，请重试");
-            }
-
-            log.info("[Quant] 工作流完成 userId={} symbol={} confidence={} summary={} 总耗时{}ms",
-                    userId, symbol, report.getConfidence(), report.getSummary(), System.currentTimeMillis() - startMs);
-            return Result.ok(report);
-        } catch (Exception e) {
-            log.error("[Quant] 工作流异常 userId={} symbol={} 耗时{}ms", userId, symbol, System.currentTimeMillis() - startMs, e);
-            return Result.fail("分析失败，请稍后重试");
-        }
+        // P2a 中间态：旧 LLM 管线已拆除，手动触发改为跑一次数值快照；
+        // 深度研判（debate 子图 + 门控）P2b 回归后此端点将由研判工作台取代。
+        log.info("[Quant] 手动触发数值快照 userId={} symbol={}", userId, symbol);
+        snapshotScheduler.runSnapshot(symbol);
+        return Result.fail("研判管线升级中：已触发数值快照（/quant/snapshots/latest 可查），深度研判即将回归");
     }
 
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

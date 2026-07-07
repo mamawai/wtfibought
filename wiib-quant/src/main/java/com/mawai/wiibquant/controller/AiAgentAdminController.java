@@ -11,7 +11,7 @@ import com.mawai.wiibquant.agent.config.RuntimeToggleSnapshot;
 import com.mawai.wiibquant.agent.quant.memory.VerificationService;
 import com.mawai.wiibquant.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibquant.mapper.AiRuntimeConfigMapper;
-import com.mawai.wiibquant.task.QuantForecastScheduler;
+import com.mawai.wiibquant.task.QuantSnapshotScheduler;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.Data;
@@ -30,7 +30,7 @@ import java.util.List;
 public class AiAgentAdminController {
 
     private final AiAgentRuntimeManager aiAgentRuntimeManager;
-    private final QuantForecastScheduler quantForecastScheduler;
+    private final QuantSnapshotScheduler quantSnapshotScheduler;
     private final VerificationService verificationService;
     private final RuntimeFeatureToggleService runtimeFeatureToggleService;
     private final AiRuntimeConfigMapper configMapper;
@@ -176,7 +176,7 @@ public class AiAgentAdminController {
         } catch (IllegalArgumentException e) {
             return Result.fail("symbol格式错误: " + e.getMessage());
         }
-        Thread.startVirtualThread(() -> quantForecastScheduler.runForecast(normalized));
+        Thread.startVirtualThread(() -> quantSnapshotScheduler.runSnapshot(normalized));
         return Result.ok("量化分析已触发: " + normalized);
     }
 
