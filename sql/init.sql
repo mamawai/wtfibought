@@ -1262,3 +1262,25 @@ CREATE TABLE IF NOT EXISTS kline_history (
 CREATE INDEX IF NOT EXISTS idx_kline_symbol_time ON kline_history (symbol, interval_code, open_time);
 
 -- （Slice3 融合：research 链下序列已并入 factor_history 表，不再单建 market_series_history）
+
+-- ============ quant_snapshot：数值快照（P2a，每5m零LLM预测点，vol_legs_json 含 PIT 档界） ============
+CREATE TABLE IF NOT EXISTS quant_snapshot (
+    id                  BIGSERIAL PRIMARY KEY,
+    symbol              VARCHAR(20) NOT NULL,
+    close_time          BIGINT NOT NULL,
+    last_price          NUMERIC(20, 8),
+    vol_legs_json       JSONB NOT NULL,
+    regime              VARCHAR(20),
+    regime_confidence   DOUBLE PRECISION,
+    fragility_score     INT,
+    fragility_level     VARCHAR(12),
+    fragility_direction VARCHAR(10),
+    fragility_headline  TEXT,
+    signal_panel_json   JSONB,
+    quality_flags_json  JSONB,
+    created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT uk_quant_snapshot UNIQUE (symbol, close_time)
+);
+CREATE INDEX IF NOT EXISTS idx_quant_snapshot_query ON quant_snapshot (symbol, close_time DESC);
+COMMENT ON TABLE quant_snapshot IS '量化数值快照:每5m零LLM,vol三腿(PIT档界)+regime+脆弱度+信号面板(P2a)';
+COMMENT ON COLUMN quant_snapshot.vol_legs_json IS '三腿预测JSON,lowCut/highCut为预测时点档界,验证侧禁止重算';
