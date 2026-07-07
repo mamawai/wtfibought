@@ -11,8 +11,6 @@ import com.mawai.wiibquant.agent.behavior.BehaviorAnalysisReport;
 import com.mawai.wiibquant.agent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibquant.agent.config.AiAgentRuntimeManager;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.mawai.wiibquant.agent.quant.CryptoAnalysisReport;
-import com.mawai.wiibquant.agent.quant.domain.LlmCallMode;
 import com.mawai.wiibquant.agent.quant.memory.VerificationService;
 import com.mawai.wiibquant.task.QuantSnapshotScheduler;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
@@ -122,7 +120,8 @@ public class AiAgentController {
         }
 
         try {
-            CryptoAnalysisReport report = JSON.parseObject(cycle.getReportJson(), CryptoAnalysisReport.class);
+            // 旧报告类已随旧管线删除，历史回放走 JSONObject 透传（前端只认 JSON 结构）
+            Object report = JSON.parseObject(cycle.getReportJson());
             // 简报产物（脆弱度/信号面板/弱lean）单独从 briefing_json 暴露，不污染 report 契约
             Object briefing = parseBriefing(cycle.getBriefingJson());
             Map<String, Object> data = new HashMap<>();
@@ -175,7 +174,7 @@ public class AiAgentController {
 
     @PostMapping("/analyze-crypto")
     @Operation(summary = "加密货币量化分析（P2a 中间态：触发数值快照，深研判 P2b 回归）")
-    public Result<CryptoAnalysisReport> analyzeCrypto(@RequestBody(required = false) AnalyzeCryptoRequest request) {
+    public Result<Void> analyzeCrypto(@RequestBody(required = false) AnalyzeCryptoRequest request) {
         long userId = StpUtil.getLoginIdAsLong();
         String symbol = request != null ? request.getSymbol() : null;
 
@@ -191,7 +190,7 @@ public class AiAgentController {
     }
 
     @RateLimiter(type = RateLimiterType.AI_CRYPTO, message = "量化分析每分钟限1次")
-    public Result<CryptoAnalysisReport> doAnalyzeCryptoInternal(long userId, String symbol) {
+    public Result<Void> doAnalyzeCryptoInternal(long userId, String symbol) {
         // P2a 中间态：旧 LLM 管线已拆除，手动触发改为跑一次数值快照；
         // 深度研判（debate 子图 + 门控）P2b 回归后此端点将由研判工作台取代。
         log.info("[Quant] 手动触发数值快照 userId={} symbol={}", userId, symbol);
@@ -278,16 +277,21 @@ public class AiAgentController {
                                 """)
                         .build();
 
-                LlmCallMode.STREAMING.stream(chatClient, prompt, chunk -> {
-                    if (closed.get()) {
-                        return;
-                    }
-                    try {
-                        emitter.send(SseEmitter.event().name("chunk").data(chunk));
-                    } catch (Exception sendError) {
-                        throw new RuntimeException(sendError);
-                    }
-                });
+                // 原 LlmCallMode.STREAMING 内联（旧管线拆除随之删类）：流式收集逐 chunk 推 SSE
+                chatClient.prompt().user(prompt)
+                        .stream()
+                        .content()
+                        .doOnNext(chunk -> {
+                            if (closed.get() || chunk == null || chunk.isEmpty()) {
+                                return;
+                            }
+                            try {
+                                emitter.send(SseEmitter.event().name("chunk").data(chunk));
+                            } catch (Exception sendError) {
+                                throw new RuntimeException(sendError);
+                            }
+                        })
+                        .blockLast();
 
                 if (!closed.get()) {
                     emitter.send(SseEmitter.event().name("done").data("[DONE]"));

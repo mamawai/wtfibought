@@ -2,18 +2,13 @@ package com.mawai.wiibquant.agent.config;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
-import com.alibaba.cloud.ai.graph.CompiledGraph;
-import com.alibaba.cloud.ai.graph.OverAllState;
-import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.mawai.wiibcommon.entity.AiModelAssignment;
 import com.mawai.wiibcommon.entity.AiRuntimeConfig;
 import com.mawai.wiibquant.agent.behavior.BehaviorAgentFactory;
-import com.mawai.wiibquant.agent.quant.QuantGraphFactory;
 import com.mawai.wiibquant.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibquant.mapper.AiRuntimeConfigMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.client.RestClientException;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -34,10 +29,10 @@ import java.util.stream.Collectors;
 @Component
 public class AiAgentRuntimeManager {
 
-    private static final List<String> FUNCTIONS = List.of("behavior", "quant", "chat", "reflection");
+    // P2a：reflection 随方向反思链删除；quant 的 ChatModel 保留给 P2b 深研判子图；P4 增 quant-light
+    private static final List<String> FUNCTIONS = List.of("behavior", "quant", "chat");
 
     private final BehaviorAgentFactory behaviorAgentFactory;
-    private final QuantGraphFactory quantGraphFactory;
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
     private final OpenAiChatModel prototypeChatModel;
@@ -46,11 +41,8 @@ public class AiAgentRuntimeManager {
     private final String ymlModel;
     private final AtomicReference<AiAgentRuntime> runtimeRef = new AtomicReference<>();
     private final Object graphLock = new Object();
-    private volatile CompiledGraph quantGraph;
-    private volatile CompiledGraph fallbackGraph;
 
     public AiAgentRuntimeManager(BehaviorAgentFactory behaviorAgentFactory,
-                                 QuantGraphFactory quantGraphFactory,
                                  AiRuntimeConfigMapper configMapper,
                                  AiModelAssignmentMapper assignmentMapper,
                                  ChatModel chatModel,
@@ -58,7 +50,6 @@ public class AiAgentRuntimeManager {
                                  @Value("${spring.ai.openai.base-url:}") String ymlBaseUrl,
                                  @Value("${spring.ai.openai.chat.options.model:}") String ymlModel) {
         this.behaviorAgentFactory = behaviorAgentFactory;
-        this.quantGraphFactory = quantGraphFactory;
         this.configMapper = configMapper;
         this.assignmentMapper = assignmentMapper;
         if (!(chatModel instanceof OpenAiChatModel openAiChatModel)) {
@@ -101,11 +92,8 @@ public class AiAgentRuntimeManager {
             runtimeRef.set(new AiAgentRuntime(
                     buildFromAssignment(assignments, "behavior", configMap),
                     buildFromAssignment(assignments, "quant", configMap),
-                    buildFromAssignment(assignments, "chat", configMap),
-                    buildFromAssignment(assignments, "reflection", configMap)
+                    buildFromAssignment(assignments, "chat", configMap)
             ));
-            quantGraph = null;
-            fallbackGraph = null;
             log.info("AI运行时已刷新，共{}个API Key配置，{}个模型分配", configMap.size(), assignments.size());
         }
     }
@@ -114,86 +102,8 @@ public class AiAgentRuntimeManager {
         return behaviorAgentFactory.create(current().behaviorChatModel(), onProgress);
     }
 
-    public CompiledGraph createCryptoAnalysisGraph() throws Exception {
-        return quantGraphFactory.create(current().quantChatModel());
-    }
-
-    public CompiledGraph currentQuantGraph() throws Exception {
-        CompiledGraph graph = quantGraph;
-        if (graph != null) return graph;
-        synchronized (graphLock) {
-            graph = quantGraph;
-            if (graph == null) {
-                graph = createCryptoAnalysisGraph();
-                quantGraph = graph;
-                log.info("量化Graph已构建并缓存");
-            }
-            return graph;
-        }
-    }
-
-    private CompiledGraph currentFallbackGraph() throws Exception {
-        CompiledGraph graph = fallbackGraph;
-        if (graph != null) return graph;
-        synchronized (graphLock) {
-            graph = fallbackGraph;
-            if (graph == null) {
-                AiRuntimeConfig defaultConfig = configMapper.selectDefault();
-                AiModelAssignment quantAssignment = assignmentMapper.selectByFunction("quant");
-                if (defaultConfig == null
-                        || (quantAssignment != null && quantAssignment.getConfigId().equals(defaultConfig.getId()))) {
-                    throw new IllegalStateException("无可用的fallback量化配置");
-                }
-
-                String model = defaultConfig.getModel();
-                if (model == null || model.isBlank()) {
-                    model = ymlModel;
-                }
-
-                ChatModel fallbackModel = buildChatModel(defaultConfig.getApiKey(), defaultConfig.getBaseUrl(), model);
-                graph = quantGraphFactory.create(fallbackModel);
-                fallbackGraph = graph;
-                log.info("Fallback量化Graph已构建并缓存 configId={} model={}", defaultConfig.getId(), model);
-            }
-            return graph;
-        }
-    }
-
-    /**
-     * 量化调用统一入口：支持传入额外初始状态（如共享的FGI数据）；LLM异常时自动降级到default配置重试
-     */
-    public Optional<OverAllState> invokeQuantWithFallback(String symbol, String threadId, Map<String, Object> extraState) {
-        Map<String, Object> initialState = buildInitialQuantState(symbol, extraState);
-        RunnableConfig config = RunnableConfig.builder().threadId(threadId).build();
-        try {
-            return currentQuantGraph().invoke(initialState, config);
-        } catch (RestClientException e) {
-            // 只对模型/provider HTTP层异常切fallback；节点逻辑异常不换模型掩盖。
-            log.warn("量化LLM异常，降级到default配置重试 symbol={}", symbol, e);
-
-            try {
-                // fallback graph 使用 default 模型/API Key 重新跑完整量化workflow，不做断点续跑。
-                return currentFallbackGraph().invoke(initialState, config);
-            } catch (Exception fallbackError) {
-                e.addSuppressed(fallbackError);
-                log.warn("量化fallback不可用或执行失败 symbol={} msg={}",
-                        symbol, fallbackError.toString(), fallbackError);
-                throw e;
-            }
-        } catch (Exception e) {
-            throw new IllegalStateException("量化Graph执行失败 symbol=" + symbol, e);
-        }
-    }
-
-    private static Map<String, Object> buildInitialQuantState(String symbol, Map<String, Object> extraState) {
-        Map<String, Object> initialState = new HashMap<>();
-        if (extraState != null) {
-            initialState.putAll(extraState);
-        }
-        // symbol 参数是权威来源，防止 extraState 误覆盖 target_symbol。
-        initialState.put("target_symbol", symbol);
-        return initialState;
-    }
+    // 旧 quant graph 构建/fallback 整套已随旧管线删除（P2a）：
+    // 新快照图零 LLM 走 QuantSnapshotGraphFactory；P2b 深研判的模型韧性由框架 interceptor 承担。
 
     /**
      * 检查指定API Key是否被模型分配引用
@@ -250,6 +160,12 @@ public class AiAgentRuntimeManager {
                 .eq(AiModelAssignment::getFunctionName, "trading"));
         if (removed > 0) {
             log.info("已删除旧AI Trader模型分配 {} 条", removed);
+        }
+        // P2a：reflection 随方向反思链删除，清理遗留分配（同 trading 先例）
+        int removedReflection = assignmentMapper.delete(new LambdaQueryWrapper<AiModelAssignment>()
+                .eq(AiModelAssignment::getFunctionName, "reflection"));
+        if (removedReflection > 0) {
+            log.info("已删除旧reflection模型分配 {} 条", removedReflection);
         }
 
         List<AiModelAssignment> existing = assignmentMapper.selectAll();

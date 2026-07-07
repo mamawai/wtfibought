@@ -5,7 +5,7 @@ import com.mawai.wiibquant.agent.quant.domain.signal.Signal;
 import com.mawai.wiibquant.agent.quant.domain.signal.SignalGroup;
 import com.mawai.wiibquant.agent.quant.domain.signal.SignalLean;
 import com.mawai.wiibquant.agent.quant.domain.signal.SignalPanel;
-import com.mawai.wiibquant.agent.quant.factor.NewsEventAgent.FilteredNewsItem;
+import com.mawai.wiibquant.agent.quant.domain.news.FilteredNewsItem;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
