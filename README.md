@@ -29,7 +29,7 @@ WhatIfIBought 是一个偏实验性质的模拟交易系统，后端按业务域
 - 股票和期权使用系统生成的虚拟行情。
 - 加密货币现货、永续合约、强平流、盘口和 BTC 预测接入 Binance / Polymarket 等真实外部数据，由 **wiib-feed** 统一接入并写入 Redis。
 - **wiib-sim** 负责真人模拟交易（撮合 / 账本在自研模拟盘 DB）+ 游戏 + BTC 预测，对外提供 Web / WS。
-- **wiib-quant** 的 AI Agent 负责结构化量化预测，只产出预测落库、不碰模拟盘账本；Fibonacci 等策略读取行情自行在 Binance Testnet 执行。
+- **wiib-quant** 的 AI Agent 负责结构化量化预测，只产出预测落库、不直接碰账本；FIBO / SQZMOM / LIQFADE 三策略由 5m K 线收盘驱动，执行目标二选一（`strategy.execution.target=testnet|sim`）：Binance Testnet，或经 internal API 在本平台模拟盘的独立量化账户交易。
 
 主动 AI 量化/交易标的当前是：
 
@@ -37,6 +37,7 @@ WhatIfIBought 是一个偏实验性质的模拟交易系统，后端按业务域
 |---|---|
 | 主动轮询 `WATCH_SYMBOLS` | `BTCUSDT`, `ETHUSDT` |
 | API 白名单 `ALLOWED_SYMBOLS` | `BTCUSDT`, `ETHUSDT`, `PAXGUSDT` |
+| 策略实盘篮子（按策略注册） | FIBO: `BTC/ETH` · SQZMOM: `SOL/DOGE/XRP` · LIQFADE: `BTC/ETH/DOGE` |
 
 PAXG 仍允许查询历史和残留仓位，但不在主动重周期和轻周期清单里。
 
@@ -50,9 +51,9 @@ PAXG 仍允许查询历史和残留仓位，但不在主动重周期和轻周期
 - 杠杆交易：借款买入、每日计息、爆仓清算。
 - 期权交易：CALL/PUT，Black-Scholes 定价，每日生成期权链，到期自动结算。
 - 加密货币现货：BTC/USDT、ETH/USDT、PAXG/USDT，接入 Binance 实时行情，支持市价/限价单。
-- 永续合约：逐仓保证金，多/空双向，用户侧最高 250x，分批止损/止盈单仓最多 4+4，0.01%/8h 资金费率，自动强平。
+- 永续合约：逐仓保证金，多/空双向，用户侧最高 250x，分批止损/止盈单仓最多 4+4，真实资金费率（每 8h 结算按 Binance premiumIndex 双向收付，拉取失败回退 0.01%），自动强平。
 - BTC 5 分钟涨跌预测：接入 Polymarket 盘口和 Chainlink BTC 价格，5 分钟窗口自动结算。
-- 策略实盘：Fibonacci 等策略由 5m K 线驱动，信号经执行层下单到 Binance Testnet（默认关闭，仅白名单 symbol）。
+- 策略实盘：FIBO（5m 斐波回撤限价）、SQZMOM（4H 压缩释放仅做空）、LIQFADE（5m 强平瀑布 fade 仅做多，瀑布/premium 折价/taker 卖压三签名至少二，1h 时间出场）由 5m K 线收盘驱动；执行目标 Binance Testnet 或本平台模拟盘（每策略独立量化账户 `quant-<策略ID>`，与真人同规则、资金隔离；默认关闭，仅白名单 symbol）。
 
 ### AI 量化分析
 
@@ -118,7 +119,7 @@ flowchart TD
     QUANT["wiib-quant :8082<br/>AI 量化分析 + 策略研究"]
     DB[("PostgreSQL<br/>共享 business + quant + ai runtime")]
     REDIS[("Redis 行情总线<br/>KV + Pub/Sub + Stream<br/>+ lock + zset")]
-    TESTNET["Binance Testnet<br/>策略实盘账本"]
+    TESTNET["Binance Testnet<br/>策略实盘账本(target=testnet)"]
 
     EXC -->|WS / REST| FEED
     FEED -->|写行情| REDIS
@@ -127,8 +128,8 @@ flowchart TD
     REDIS -->|消费行情| QUANT
     SIM --> DB
     QUANT --> DB
-    SIM <-->|internal API| QUANT
-    QUANT -->|策略下单| TESTNET
+    SIM <-->|"internal API<br/>行为数据 + 量化交易(target=sim)"| QUANT
+    QUANT -->|"策略下单(target=testnet)"| TESTNET
 ```
 
 ---
@@ -182,15 +183,16 @@ AI 管理后台通过 `RuntimeFeatureToggleService` 持久化开关到 `ai_runti
 ```text
 wiib-feed（上游进程）  交易所 WS → Redis
   -> spot miniTicker        -> Redis 价格 KV + Pub/Sub(feed:price)
-  -> futures markPrice@1s   -> Redis mark price KV + Pub/Sub
+  -> futures markPrice@1s   -> Redis mark price/指数价 KV + Pub/Sub
   -> forceOrder             -> force_order 表(DB, 天然跨进程)
   -> aggTrade               -> Redis Stream(orderflow, quant 读侧聚合)
   -> depth20@100ms          -> Redis KV(DepthStreamCache)
-  -> K 线收盘                -> Redis Stream(stream:kline:closed)
+  -> K 线收盘                -> Redis Stream(stream:kline:closed) + taker买量5m桶 KV
 
 wiib-sim / wiib-quant（消费进程）  从 Redis 消费 feed 写入的行情
   sim:   MatchPriceConsumer(撮合/强平) · PredictionRoundConsumer
   quant: KlineStreamConsumer(驱动预测/策略) · SentinelPriceConsumer(波动哨兵)
+         · RedisLiqSideData(LIQFADE 拉取 premium/taker KV)
 ```
 
 价格更新同时触发现货限价单、永续强平、止损、止盈检查。
@@ -251,7 +253,7 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 │       ├── agent/
 │       │   ├── quant/                # 重(30min)/轻(5min)周期 StateGraph + 因子 / 裁判 / 记忆
 │       │   ├── research/             # 回测 / 因子 / 预测 / 样本外评估
-│       │   ├── strategy/             # Fibonacci 等策略 + Binance Testnet 执行
+│       │   ├── strategy/             # FIBO/SQZMOM/LIQFADE 三策略 + 回测引擎 + 执行层(testnet|sim 路由)
 │       │   ├── binance/ behavior/ external/ tool/ config/
 │       │   └── SimInternalClient.java # quant → sim internal API（读用户行为数据）
 │       └── controller/ task/ mapper/ config/   # 5 quant controller / Scheduler / quant mapper / DeribitClient
@@ -378,6 +380,21 @@ linuxdo:
 ```
 
 AI 配置只在 `ai_runtime_config` 表为空时作为种子值写入数据库。之后可以通过 Admin 动态管理 API Key 和模型分配。
+
+策略实盘执行（`wiib-quant` 的 `application.yml`，默认全关）：
+
+```yaml
+strategy:
+  runtime:
+    enabled: true                     # 策略信号运行时
+    enabled-ids: FIBO,SQZMOM,LIQFADE  # 启用的策略
+  execution:
+    enabled: true                     # 下单执行
+    target: sim                       # testnet | sim(本平台模拟盘)
+    symbols: BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT,XRPUSDT   # 执行白名单=各策略篮子并集
+```
+
+> 策略由 K 线收盘事件驱动：`wiib-feed` 的 `binance.symbols` 必须覆盖上面全部标的（缺谁谁永远不触发）。仓库默认值目前缺 `SOLUSDT` / `XRPUSDT`，启用 SQZMOM 前需补上。
 
 ### 5. 构建后端
 
