@@ -1,6 +1,8 @@
 package com.mawai.wiibquant.agent.toolkit;
 
+import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.mawai.wiibquant.agent.analysis.ScorecardService;
 import com.mawai.wiibquant.agent.quant.domain.MacroContext;
 import com.mawai.wiibquant.agent.quant.service.MacroContextService;
 import lombok.RequiredArgsConstructor;
@@ -9,7 +11,7 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 /**
- * 量化预测工具：暴露 research 框架经统计验证的 vol/regime 预测。
+ * 量化预测工具：暴露 research 框架经统计验证的 vol/regime 预测 + 验证战绩记分卡。
  * 铁律：方向字段(directionSign/Confidence)在此层滤掉——方向预测无 edge，不喂给 agent。
  */
 @Component
@@ -17,6 +19,7 @@ import org.springframework.stereotype.Component;
 public class QuantForecastToolkit {
 
     private final MacroContextService macroContextService;
+    private final ScorecardService scorecardService;
 
     @Tool(name = "vol_forecast", description = """
             Get statistically-validated volatility forecast for a crypto symbol over H6/H12/H24 horizons.
@@ -58,6 +61,18 @@ public class QuantForecastToolkit {
             out.put(e.getKey().name(), h);
         }
         return out.toJSONString();
+    }
+
+    @Tool(name = "scorecard", description = """
+            Get the live verification scorecard of this system's volatility forecasts:
+            QLIKE loss vs naive baseline (improvement>0 means beating baseline), per-point win rate,
+            and vol-state (LOW/MID/HIGH) hit rate vs 33.3% random baseline, per horizon H6/H12/H24.
+            Use this to honestly answer "how reliable are your forecasts" - cite real numbers.
+            Direction and regime are deliberately NOT scored (validated as no-skill).""")
+    public String scorecard(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
+                            @ToolParam(description = "Rolling window in days, 7 or 30, default 7") int windowDays) {
+        int days = windowDays == 30 ? 30 : 7;
+        return JSON.toJSONString(scorecardService.scorecard(normalize(symbol), days));
     }
 
     private static boolean unavailable(MacroContext ctx) {

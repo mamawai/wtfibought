@@ -11,6 +11,7 @@ import com.mawai.wiibquant.agent.behavior.BehaviorAnalysisReport;
 import com.mawai.wiibquant.agent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibquant.agent.config.AiAgentRuntimeManager;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.mawai.wiibquant.agent.analysis.ScorecardService;
 import com.mawai.wiibquant.agent.quant.memory.VerificationService;
 import com.mawai.wiibquant.task.QuantSnapshotScheduler;
 import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
@@ -53,6 +54,7 @@ public class AiAgentController {
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantSignalDecisionMapper decisionMapper;
     private final VerificationService verificationService;
+    private final ScorecardService scorecardService;
     private final ExecutorService chatStreamExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public AiAgentController(AiAgentRuntimeManager aiAgentRuntimeManager,
@@ -62,7 +64,8 @@ public class AiAgentController {
                              QuantDeepAnalysisMapper deepAnalysisMapper,
                              QuantForecastCycleMapper cycleMapper,
                              QuantSignalDecisionMapper decisionMapper,
-                             VerificationService verificationService) {
+                             VerificationService verificationService,
+                             ScorecardService scorecardService) {
         this.aiAgentRuntimeManager = aiAgentRuntimeManager;
         this.behaviorAnalysisService = behaviorAnalysisService;
         this.snapshotScheduler = snapshotScheduler;
@@ -71,6 +74,7 @@ public class AiAgentController {
         this.cycleMapper = cycleMapper;
         this.decisionMapper = decisionMapper;
         this.verificationService = verificationService;
+        this.scorecardService = scorecardService;
     }
 
     @Data
@@ -161,6 +165,21 @@ public class AiAgentController {
                 .orderByDesc(QuantSnapshot::getCloseTime)
                 .last("LIMIT 1"));
         return snapshot != null ? Result.ok(snapshot) : Result.fail("暂无快照数据");
+    }
+
+    @GetMapping("/quant/scorecard")
+    @Operation(summary = "查技能记分卡（P3：vol预测QLIKE vs naive基准 + vol-state命中率）")
+    public Result<ScorecardService.Scorecard> scorecard(
+            @RequestParam(defaultValue = "BTCUSDT") String symbol,
+            @RequestParam(defaultValue = "7") int days) {
+        StpUtil.checkLogin();
+        String normalized;
+        try {
+            normalized = QuantConstants.normalizeSymbol(symbol);
+        } catch (IllegalArgumentException e) {
+            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
+        }
+        return Result.ok(scorecardService.scorecard(normalized, Math.clamp(days, 1, 90)));
     }
 
     @GetMapping("/quant/analysis/latest")

@@ -20,7 +20,9 @@ import static org.mockito.Mockito.when;
 class QuantForecastToolkitTest {
 
     private final MacroContextService macroContextService = mock(MacroContextService.class);
-    private final QuantForecastToolkit toolkit = new QuantForecastToolkit(macroContextService);
+    private final com.mawai.wiibquant.agent.analysis.ScorecardService scorecardService =
+            mock(com.mawai.wiibquant.agent.analysis.ScorecardService.class);
+    private final QuantForecastToolkit toolkit = new QuantForecastToolkit(macroContextService, scorecardService);
 
     private MacroContext contextWithDirection() {
         // 故意塞满方向数据，验证工具层过滤干净

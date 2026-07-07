@@ -1304,3 +1304,24 @@ CREATE TABLE IF NOT EXISTS quant_deep_analysis (
 );
 CREATE INDEX IF NOT EXISTS idx_quant_deep_analysis_query ON quant_deep_analysis (symbol, close_time DESC);
 COMMENT ON TABLE quant_deep_analysis IS '深研判(P2b):研判叙事+情景分布+失效条件+无方向态,debate升格为研判生产者不再改写方向数字';
+
+-- ============ quant_vol_verification：vol预测验证（P3，QLIKE vs naive基准 + vol-state命中，PIT档界） ============
+CREATE TABLE IF NOT EXISTS quant_vol_verification (
+    id                  BIGSERIAL PRIMARY KEY,
+    snapshot_id         BIGINT NOT NULL,
+    symbol              VARCHAR(20) NOT NULL,
+    close_time          BIGINT NOT NULL,
+    horizon             VARCHAR(4) NOT NULL,
+    forecast_sigma_bps  INT,
+    baseline_sigma_bps  INT,
+    realized_return_bps INT,
+    qlike               DOUBLE PRECISION,
+    baseline_qlike      DOUBLE PRECISION,
+    vol_state_predicted VARCHAR(8),
+    vol_state_actual    VARCHAR(8),
+    vol_state_hit       BOOLEAN,
+    verified_at         TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT uk_quant_vol_verification UNIQUE (snapshot_id, horizon)
+);
+CREATE INDEX IF NOT EXISTS idx_quant_vol_verification_query ON quant_vol_verification (symbol, close_time DESC);
+COMMENT ON TABLE quant_vol_verification IS 'vol预测验证(P3):QLIKE对照naive基准+vol-state命中(用快照PIT档界,禁止重算);regime刻意不验证(research实证无skill)';
