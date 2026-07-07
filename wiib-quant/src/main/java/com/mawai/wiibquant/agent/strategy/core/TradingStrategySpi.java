@@ -39,8 +39,8 @@ public interface TradingStrategySpi {
 
     /**
      * 持仓期每根闭合 bar 回调（当根 SL/TP 撮合之后、新信号评估之前）。默认无动作；
-     * 需要时间出场/持仓管理的策略在此用 tools 平仓（LiqFade 4h 时间出场用）。
-     * 回测引擎已接线；testnet 执行层暂未接，LiqFade 实盘接线时一并补。
+     * 需要时间出场/持仓管理的策略在此用 tools 平仓（LiqFade 1h 时间出场用）。
+     * 回测引擎与 sim 执行层（经 StrategyExecutionPort）已接线；testnet 未接。
      */
     default void onPositionBarClosed(String symbol, FuturesPositionDTO position,
                                      StrategyMarketView view, TradingOperations tools) {

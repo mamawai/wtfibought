@@ -1,9 +1,12 @@
 package com.mawai.wiibquant.agent.strategy.execution;
 
+import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
+import com.mawai.wiibquant.agent.strategy.core.StrategyMarketView;
 import com.mawai.wiibquant.agent.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibquant.agent.strategy.core.StrategySignal;
+import com.mawai.wiibquant.agent.strategy.core.TradingOperations;
 import com.mawai.wiibquant.agent.strategy.core.TradingStrategySpi;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,6 +14,8 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -37,7 +42,8 @@ import java.util.stream.Collectors;
  * ④ 每策略独立量化账户 quant-&lt;strategyId&gt;（ensure-account 幂等创建），盈亏归因互不污染。</p>
  *
  * <p>已知口径差：sim 无 GTX/post-only，挂单价已被穿越时按 taker 费成交而非拒单。
- * LiqFade 时间出场待二期（feed premium/taker 实时化后随策略一起接）。</p>
+ * 持仓期钩子 onPositionBarClosed 已接（LiqFade 时间出场）；平仓归因 reason 只落 quant 日志，
+ * sim 侧 FuturesCloseRequest 无此字段不扩。</p>
  */
 @Slf4j
 @Component
@@ -155,6 +161,73 @@ public class SimExecutionService implements StrategyExecutionPort {
                 }
             }
         }
+    }
+
+    /**
+     * 持仓期钩子：strategy 实例必须由 runtime 传入——对账收养的持仓 st.strategy 为 null，不能依赖。
+     * 钩子退出后立刻复核仓位状态：时间出场平掉的仓当根即回 FLAT，同 bar 新信号可进场（对齐回测语义）。
+     */
+    @Override
+    public void onPositionBarClosed(String symbol, TradingStrategySpi strategy, StrategyMarketView view) {
+        if (!active(symbol)) return;
+        ExecState st = states.computeIfAbsent(key(strategy.id(), symbol), k -> new ExecState());
+        synchronized (st) {
+            try {
+                recoverIfNeeded(st, strategy.id(), symbol);
+                if (st.state != State.POSITION) return;
+                Long userId = account(strategy.id());
+                client.getPositions(userId, symbol).stream()
+                        .filter(p -> Objects.equals(p.getId(), st.positionId) && OPEN_STATUS.equals(p.getStatus()))
+                        .findFirst()
+                        .ifPresent(p -> {
+                            // sim 的 createdAt 是本机时区钟面，策略按 UTC 解释（回测口径）——不转持仓时长差8h，时间出场报废
+                            p.setCreatedAt(p.getCreatedAt().atZone(ZoneId.systemDefault())
+                                    .withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime());
+                            strategy.onPositionBarClosed(symbol, p, view, hookOps(userId));
+                        });
+                checkPosition(strategy.id(), symbol, st);
+            } catch (Exception e) {
+                log.warn("[SimExec] onPositionBarClosed 异常 {}:{} msg={}", strategy.id(), symbol, e.toString());
+            }
+        }
+    }
+
+    /** 持仓钩子专用交易工具：只支持市价平仓（时间出场）；sim internal API 无改保护单端点，误用即抛快速暴露。 */
+    private TradingOperations hookOps(Long userId) {
+        return new TradingOperations() {
+            @Override
+            public String openPosition(String side, BigDecimal quantity, Integer leverage, String orderType,
+                                       BigDecimal limitPrice, BigDecimal stopLossPrice,
+                                       BigDecimal takeProfitPrice, String memo) {
+                throw new UnsupportedOperationException("持仓钩子不支持开仓");
+            }
+
+            @Override
+            public String closePosition(Long positionId, BigDecimal quantity) {
+                FuturesCloseRequest req = new FuturesCloseRequest();
+                req.setPositionId(positionId);
+                req.setQuantity(quantity);
+                req.setOrderType("MARKET");
+                client.closePosition(userId, req);
+                return "平仓成功";
+            }
+
+            @Override
+            public String closePositionWithReason(Long positionId, BigDecimal quantity, String reason) {
+                log.info("[SimExec] 钩子市价平仓 posId={} reason={}", positionId, reason);
+                return closePosition(positionId, quantity);
+            }
+
+            @Override
+            public String setStopLoss(Long positionId, BigDecimal stopLossPrice, BigDecimal quantity) {
+                throw new UnsupportedOperationException("sim internal API 无改止损端点");
+            }
+
+            @Override
+            public String setTakeProfit(Long positionId, BigDecimal takeProfitPrice, BigDecimal quantity) {
+                throw new UnsupportedOperationException("sim internal API 无改止盈端点");
+            }
+        };
     }
 
     // ==================== 下单 ====================

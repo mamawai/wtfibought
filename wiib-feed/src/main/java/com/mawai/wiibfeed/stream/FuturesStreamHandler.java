@@ -27,6 +27,9 @@ public class FuturesStreamHandler implements StreamHandler {
 
     private static final String REDIS_MARK_PRICE_KEY_PREFIX = "market:markprice:";
     private static final String REDIS_FUTURES_PRICE_KEY_PREFIX = "market:futures-price:";
+    // 指数价，值格式 <price>|<写入ms>：quant RedisLiqSideData 算 premium=(最新价-指数价)/指数价 用，
+    // 带时间戳让读方自判时效（超龄按缺数据 NaN），feed 不硬编码策略的时效参数
+    private static final String REDIS_INDEX_PRICE_KEY_PREFIX = "market:indexprice:";
 
     private final BinanceProperties props;
     private final StringRedisTemplate redisTemplate;
@@ -100,6 +103,14 @@ public class FuturesStreamHandler implements StreamHandler {
             redisTemplate.opsForValue().set(REDIS_MARK_PRICE_KEY_PREFIX + symbol, markPrice);
             cacheService.putMarkPrice(symbol, new BigDecimal(markPrice));
 
+            // 指数价 i（markPrice 报文自带；REST 兜底伪消息也补了 i）——缺字段就不写，读方自然 NaN 降级
+            int iIdx = raw.indexOf("\"i\":\"", sIdx);
+            if (iIdx >= 0) {
+                String indexPrice = StreamParse.extractQuoted(raw, iIdx + 5);
+                redisTemplate.opsForValue().set(REDIS_INDEX_PRICE_KEY_PREFIX + symbol,
+                        indexPrice + "|" + System.currentTimeMillis());
+            }
+
             broadcastService.broadcastFuturesQuote(symbol, "{\"mp\":\"" + markPrice + "\",\"fws\":" + isFuturesConnected() + "}");
 
             // markPrice 事件发 Redis：sim 侧消费做强平、quant 侧消费喂哨兵（解耦：currentPrice 由 sim 自己读 KV）
@@ -129,7 +140,11 @@ public class FuturesStreamHandler implements StreamHandler {
                     int idx = json.indexOf("\"markPrice\":\"");
                     if (idx >= 0) {
                         String markPrice = StreamParse.extractQuoted(json, idx + 13);
-                        onMessage("{\"s\":\"" + symbol + "\",\"p\":\"" + markPrice + "\"}");
+                        // premiumIndex 响应自带 indexPrice，透传进伪消息，WS 断线期 premium 采样不中断
+                        int idxPriceIdx = json.indexOf("\"indexPrice\":\"");
+                        String indexPart = idxPriceIdx >= 0
+                                ? ",\"i\":\"" + StreamParse.extractQuoted(json, idxPriceIdx + 14) + "\"" : "";
+                        onMessage("{\"s\":\"" + symbol + "\",\"p\":\"" + markPrice + "\"" + indexPart + "}");
                     }
                 }
                 String tickerJson = restClient.getFutures24hTicker(symbol);

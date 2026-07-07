@@ -1,5 +1,6 @@
 package com.mawai.wiibquant.agent.strategy.execution;
 
+import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
@@ -11,8 +12,13 @@ import com.mawai.wiibquant.agent.strategy.core.TradingStrategySpi;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,6 +37,7 @@ class SimExecutionServiceTest {
     private static final class StubClient extends SimTradeClient {
         final List<FuturesOpenRequest> opened = new ArrayList<>();
         final List<Long> canceled = new ArrayList<>();
+        final List<FuturesCloseRequest> closed = new ArrayList<>();
         FuturesOrderResponse openResp;
         FuturesOrderResponse orderQuery;
         List<FuturesPositionDTO> positions = new ArrayList<>();
@@ -56,6 +63,15 @@ class SimExecutionServiceTest {
         public FuturesOrderResponse openPosition(Long userId, FuturesOpenRequest request) {
             opened.add(request);
             return openResp;
+        }
+
+        @Override
+        public FuturesOrderResponse closePosition(Long userId, FuturesCloseRequest request) {
+            closed.add(request);
+            positions.removeIf(p -> Objects.equals(p.getId(), request.getPositionId()));   // 模拟 sim 平仓后仓位消失
+            FuturesOrderResponse r = new FuturesOrderResponse();
+            r.setStatus("FILLED");
+            return r;
         }
 
         @Override
@@ -268,6 +284,97 @@ class SimExecutionServiceTest {
         client.orderQuery = resp("FILLED", 1000L, 9L, "3000");   // 真相: 其实已成交
         svc.tick(SYM, T0 + 13 * BAR);
         assertThat(strategy.openedPositionId).isEqualTo(9L);     // 收养为 POSITION, 未双开
+    }
+
+    /** 时间出场桩：按 LiqFade 同款公式（createdAt 按 UTC 解释）持满 holdMs 即市价平。 */
+    private static final class HookStrategy implements TradingStrategySpi {
+        FuturesPositionDTO seen;
+        long nowMs;
+        long holdMs;
+
+        @Override
+        public String id() {
+            return "T";
+        }
+
+        @Override
+        public List<String> symbols() {
+            return List.of(SYM);
+        }
+
+        @Override
+        public StrategyRiskPolicy riskPolicy() {
+            return StrategyRiskPolicy.defaults();
+        }
+
+        @Override
+        public Optional<StrategySignal> onBarClosed(String symbol, StrategyMarketView view) {
+            return Optional.empty();
+        }
+
+        @Override
+        public void onPositionBarClosed(String symbol, FuturesPositionDTO position,
+                                        StrategyMarketView view, TradingOperations tools) {
+            seen = position;
+            long openedMs = position.getCreatedAt().toInstant(ZoneOffset.UTC).toEpochMilli();
+            if (nowMs - openedMs >= holdMs) {
+                tools.closePositionWithReason(position.getId(), position.getQuantity(), "TIME_EXIT");
+            }
+        }
+    }
+
+    /** sim 口径的持仓 DTO：createdAt=本机时区钟面（MetaObjectHandler LocalDateTime.now() 同款）。 */
+    private static FuturesPositionDTO simPos(long id, String qty, long openedEpochMs) {
+        FuturesPositionDTO p = pos(id);
+        p.setQuantity(bd(qty));
+        p.setCreatedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(openedEpochMs), ZoneId.systemDefault()));
+        return p;
+    }
+
+    @Test
+    void 持仓钩子_createdAt时区对齐_持满时间市价平_当根回FLAT可再进场() {
+        StubClient client = new StubClient();
+        client.openResp = resp("FILLED", 100L, 7L, "100");
+        SimExecutionService svc = service(client);
+        HookStrategy strategy = new HookStrategy();
+        strategy.holdMs = 3_600_000L;
+
+        svc.onSignal(SYM, market("100", "92", "110"), strategy);   // FLAT→POSITION posId=7
+
+        // 差1秒不满1h：不平；策略按UTC解释转换后的createdAt须还原出正确epoch（差8h即时区口径bug）
+        client.positions = new ArrayList<>(List.of(simPos(7L, "12.5", T0)));
+        strategy.nowMs = T0 + 3_599_000L;
+        svc.onPositionBarClosed(SYM, strategy, null);
+        assertThat(strategy.seen.getCreatedAt().toInstant(ZoneOffset.UTC).toEpochMilli()).isEqualTo(T0);
+        assertThat(client.closed).isEmpty();
+
+        // 满1h：市价整仓平（每次重新fetch，换新DTO模拟真实HTTP反序列化）
+        client.positions = new ArrayList<>(List.of(simPos(7L, "12.5", T0)));
+        strategy.nowMs = T0 + 3_600_000L;
+        svc.onPositionBarClosed(SYM, strategy, null);
+        assertThat(client.closed).hasSize(1);
+        assertThat(client.closed.getFirst().getPositionId()).isEqualTo(7L);
+        assertThat(client.closed.getFirst().getQuantity()).isEqualByComparingTo("12.5");
+        assertThat(client.closed.getFirst().getOrderType()).isEqualTo("MARKET");
+
+        // 钩子平仓后当根即回 FLAT：同 bar 新信号可进场（对齐回测：出场→再评估）
+        svc.onSignal(SYM, market("100", "92", "110"), strategy);
+        assertThat(client.opened).hasSize(2);
+    }
+
+    @Test
+    void 持仓钩子_重启对账收养后仍驱动时间出场() {
+        StubClient client = new StubClient();
+        client.positions = new ArrayList<>(List.of(simPos(5L, "3", T0)));
+        SimExecutionService svc = service(client);
+        HookStrategy strategy = new HookStrategy();
+        strategy.holdMs = 3_600_000L;
+        strategy.nowMs = T0 + 7_200_000L;   // 重启回来已超时
+
+        svc.onPositionBarClosed(SYM, strategy, null);   // 首次触达：收养→钩子→平仓
+
+        assertThat(client.closed).hasSize(1);
+        assertThat(client.closed.getFirst().getPositionId()).isEqualTo(5L);
     }
 
     @Test

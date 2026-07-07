@@ -8,19 +8,27 @@ import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibfeed.KlineStreamCache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 
-/** 5m K线流：@kline_5m。每次更新(含未收盘)→广播给前端蜡烛图；收盘 bar→KlineStreamCache 喂策略。属 /market 端点。 */
+/** 5m K线流：@kline_5m。每次更新(含未收盘)→广播给前端蜡烛图；收盘 bar→KlineStreamCache 喂策略 + taker买量落Redis(LiqFade签名用)。属 /market 端点。 */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class KlineStreamHandler implements StreamHandler {
 
+    // 5m 桶 taker 买量（base 量纲），每桶一键：market:takerbuy5m:<SYM>:<openMs>，值=V 原串。
+    // quant RedisLiqSideData 按 openMs 直查；TTL 即保留窗口——LiqFade 只用最近 3 根，2h≈24 根纯冗余
+    private static final String REDIS_TAKER_BUY_KEY_PREFIX = "market:takerbuy5m:";
+    private static final Duration TAKER_BUY_TTL = Duration.ofHours(2);
+
     private final BinanceProperties props;
     private final KlineStreamCache klineStreamCache;
     private final MarketBroadcaster broadcaster;
+    private final StringRedisTemplate redisTemplate;
 
     @Override public String name() { return "Kline5m"; }
     @Override public long maxIdleSeconds() { return 360; }
@@ -73,9 +81,22 @@ public class KlineStreamHandler implements StreamHandler {
                         new BigDecimal(k.getString("v"))
                 );
                 klineStreamCache.onClosedBar(symbol, interval, bar);
+                // 只在 5m 收盘路径写（15m 副连接 feedStrategy=false 天然进不来，不会污染 5m 桶）；
+                // KlineBar 不扩字段——taker 买量走 LiqSideData 侧通道，回测/落库/广播全都不动
+                storeTakerBuy(symbol, k);
             }
         } catch (Exception e) {
             log.warn("[KlineWS] 解析失败: {}", e.getMessage());
+        }
+    }
+
+    /** 收盘桶 taker 买量落 Redis（V=taker买base量）；I/O 单独 try，失败只丢这根采样（下游 NaN），日志归因准确。 */
+    private void storeTakerBuy(String symbol, JSONObject k) {
+        try {
+            redisTemplate.opsForValue().set(
+                    REDIS_TAKER_BUY_KEY_PREFIX + symbol + ":" + k.getLongValue("t"), k.getString("V"), TAKER_BUY_TTL);
+        } catch (Exception e) {
+            log.warn("[KlineWS] taker买量写Redis失败 symbol={} openTime={} msg={}", symbol, k.getLongValue("t"), e.getMessage());
         }
     }
 

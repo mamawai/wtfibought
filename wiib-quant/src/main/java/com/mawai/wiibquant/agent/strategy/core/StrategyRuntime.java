@@ -73,6 +73,8 @@ public class StrategyRuntime {
                     view.append(eventBar);
                 }
                 for (TradingStrategySpi strategy : enabledStrategiesFor(symbol)) {
+                    // 持仓钩子先于新信号评估（镜像回测顺序）：时间出场先平旧仓，同bar新信号才不会被旧仓挡下
+                    executionService.onPositionBarClosed(symbol, strategy, view);
                     Optional<StrategySignal> signal = strategy.onBarClosed(symbol, view);
                     if (signal.isPresent()) {
                         recorder.record(signal.get(), legTags(symbol, signal.get().isLong()));
