@@ -99,6 +99,11 @@ public final class StrategyKlineBacktestEngine {
             tools.tickBar(bar.open(), bar.high(), bar.low(), bar.close(), i);
             view.append(bar);
 
+            // 持仓管理钩子：当根 SL/TP 撮合完再回调（时间出场按收盘价成交），之后才评估新信号
+            for (FuturesPositionDTO pos : tools.getOpenPositions(symbol)) {
+                strategy.onPositionBarClosed(symbol, pos, view, tools);
+            }
+
             Optional<StrategySignal> signal = strategy.onBarClosed(symbol, view);
             boolean canTrade = inTradingWindow(nowMs, i)
                     && pending == null

@@ -1,6 +1,6 @@
 package com.mawai.wiibquant.agent.strategy.core;
 
-import com.mawai.wiibquant.agent.strategy.core.TradingOperations;
+import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -35,5 +35,14 @@ public interface TradingStrategySpi {
     default void onPositionOpened(String symbol, StrategySignal signal, Long positionId,
                                   BigDecimal actualEntryPrice, StrategyMarketView view,
                                   TradingOperations tools) {
+    }
+
+    /**
+     * 持仓期每根闭合 bar 回调（当根 SL/TP 撮合之后、新信号评估之前）。默认无动作；
+     * 需要时间出场/持仓管理的策略在此用 tools 平仓（LiqFade 4h 时间出场用）。
+     * 回测引擎已接线；testnet 执行层暂未接，LiqFade 实盘接线时一并补。
+     */
+    default void onPositionBarClosed(String symbol, FuturesPositionDTO position,
+                                     StrategyMarketView view, TradingOperations tools) {
     }
 }
