@@ -1,0 +1,168 @@
+package com.mawai.wiibquant.agent.chat;
+
+import com.alibaba.cloud.ai.graph.CompileConfig;
+import com.alibaba.cloud.ai.graph.CompiledGraph;
+import com.alibaba.cloud.ai.graph.agent.ReactAgent;
+import com.alibaba.cloud.ai.graph.agent.flow.agent.SupervisorAgent;
+import com.alibaba.cloud.ai.graph.agent.hook.modelcalllimit.ModelCallLimitHook;
+import com.alibaba.cloud.ai.graph.agent.hook.summarization.SummarizationHook;
+import com.alibaba.cloud.ai.graph.agent.interceptor.modelfallback.ModelFallbackInterceptor;
+import com.alibaba.cloud.ai.graph.agent.interceptor.modelretry.ModelRetryInterceptor;
+import com.alibaba.cloud.ai.graph.agent.interceptor.toolretry.ToolRetryInterceptor;
+import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
+import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
+import com.mawai.wiibquant.agent.config.AiAgentRuntime;
+import com.mawai.wiibquant.agent.config.AiAgentRuntimeManager;
+import com.mawai.wiibquant.agent.config.AiRuntimeRefreshedEvent;
+import com.mawai.wiibquant.agent.toolkit.MarketToolkit;
+import com.mawai.wiibquant.agent.toolkit.NewsToolkit;
+import com.mawai.wiibquant.agent.toolkit.QuantForecastToolkit;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.event.EventListener;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+/**
+ * 研判工作台对话 agent 工厂（P4）：SupervisorAgent(深模型) 动态调度 3 个专家 ReactAgent(浅模型)。
+ * <ul>
+ *   <li>深浅分层：Supervisor 用 quant 深模型做意图理解与裁决，子 agent 用 quant-light 干工具活</li>
+ *   <li>checkpoint：整图挂 PostgresSaver（threadId=sessionId），断连续聊 + P5 HITL 中断恢复的地基</li>
+ *   <li>韧性：ModelRetry(瞬时错误退避重试) + ModelFallback(chat 模型兜底) + ToolRetry；
+ *       预算：ModelCallLimitHook 单次运行封顶 + SummarizationHook 长对话压缩</li>
+ * </ul>
+ * 模型是构建期绑定的，监听 {@link AiRuntimeRefreshedEvent} 重建缓存实现热更新。
+ */
+@Slf4j
+@Component
+public class ChatAgentFactory {
+
+    private final AiAgentRuntimeManager runtimeManager;
+    private final MarketToolkit marketToolkit;
+    private final QuantForecastToolkit quantForecastToolkit;
+    private final NewsToolkit newsToolkit;
+    private final BaseCheckpointSaver checkpointSaver;
+    private final int runModelCallLimit;
+
+    private volatile CompiledGraph cached;
+
+    public ChatAgentFactory(AiAgentRuntimeManager runtimeManager,
+                            MarketToolkit marketToolkit,
+                            QuantForecastToolkit quantForecastToolkit,
+                            NewsToolkit newsToolkit,
+                            BaseCheckpointSaver checkpointSaver,
+                            @Value("${quant.workbench.run-model-call-limit:12}") int runModelCallLimit) {
+        this.runtimeManager = runtimeManager;
+        this.marketToolkit = marketToolkit;
+        this.quantForecastToolkit = quantForecastToolkit;
+        this.newsToolkit = newsToolkit;
+        this.checkpointSaver = checkpointSaver;
+        this.runModelCallLimit = runModelCallLimit;
+    }
+
+    /** 对话图单例（编译含 PostgresSaver），模型刷新事件后重建。 */
+    public CompiledGraph chatGraph() throws Exception {
+        CompiledGraph graph = cached;
+        if (graph != null) return graph;
+        synchronized (this) {
+            if (cached == null) {
+                cached = build();
+                log.info("对话工作台图已构建（Supervisor + 3 专家 agent + PostgresSaver）");
+            }
+            return cached;
+        }
+    }
+
+    @EventListener(AiRuntimeRefreshedEvent.class)
+    public void onRuntimeRefreshed() {
+        synchronized (this) {
+            cached = null;
+        }
+        log.info("模型配置刷新，对话图缓存已失效待重建");
+    }
+
+    private CompiledGraph build() throws Exception {
+        AiAgentRuntime runtime = runtimeManager.current();
+        var deep = runtime.quantChatModel();
+        var light = runtime.quantLightChatModel();
+        var fallback = runtime.chatChatModel();
+
+        ModelRetryInterceptor retry = ModelRetryInterceptor.builder()
+                .maxAttempts(3).initialDelay(500).maxDelay(4000).backoffMultiplier(2.0)
+                .build();
+        ToolRetryInterceptor toolRetry = ToolRetryInterceptor.builder().build();
+
+        ReactAgent marketAgent = ReactAgent.builder()
+                .name("market_agent")
+                .description("实时市场状态专家：行情快照(价格/资金费率/持仓/清算/盘口)、期权IV、市场脆弱度评分")
+                .model(light)
+                .methodTools(marketToolkit)
+                .instruction("""
+                        你是市场状态专家。用工具获取真实数据回答，所有结论必须引用工具返回的具体数字；
+                        数据不可用(available=false)时如实告知，绝不编造。回答精炼中文。""")
+                .interceptors(List.of(retry, toolRetry))
+                .build();
+
+        ReactAgent quantAgent = ReactAgent.builder()
+                .name("quant_agent")
+                .description("量化预测专家：经统计验证的波动率预测(H6/H12/H24)、市场regime、以及本系统预测战绩记分卡(QLIKE vs 基准/命中率)")
+                .model(light)
+                .methodTools(quantForecastToolkit)
+                .instruction("""
+                        你是量化预测专家。工具给的是经统计验证的 vol/regime 预测与实盘验证战绩。
+                        铁律：本系统方向预测无 edge（已被 walk-forward+置换检验证伪），永远不要给出方向性投资建议；
+                        被问"预测准不准"时调 scorecard 用真实战绩回答（QLIKE 越低越好，improvement>0=跑赢基准）。
+                        回答精炼中文，引用具体数字。""")
+                .interceptors(List.of(retry, toolRetry))
+                .build();
+
+        ReactAgent newsAgent = ReactAgent.builder()
+                .name("news_agent")
+                .description("加密新闻专家：搜索最近新闻列表、精读单篇文章全文")
+                .model(light)
+                .methodTools(newsToolkit)
+                .instruction("""
+                        你是加密新闻专家。先 news_search 拿列表，需要细节再 read_news_article 精读；
+                        输出"事件+可能影响"的精炼中文摘要，标注消息源，不评价真伪不给投资建议。""")
+                .interceptors(List.of(retry, toolRetry))
+                .build();
+
+        ReactAgent supervisorMain = ReactAgent.builder()
+                .name("workbench_supervisor")
+                .model(deep)
+                .instruction("""
+                        你是加密货币研判工作台的总调度。根据用户问题决定调用哪些专家 agent：
+                        - 行情/持仓/脆弱度/期权 → market_agent
+                        - 波动率预测/regime/预测战绩 → quant_agent
+                        - 新闻/事件 → news_agent
+                        综合专家结果后用精炼中文回答。原则：
+                        1. 结论必须可追溯到专家给的数据，不编造
+                        2. 永不给出方向性投资建议（本系统方向预测无 edge，这是统计验证过的事实）
+                        3. 信号矛盾时大方说"看不清"，这是专业而不是失职""")
+                .hooks(
+                        SummarizationHook.builder()
+                                .model(light)
+                                .maxTokensBeforeSummary(6000)
+                                .messagesToKeep(6)
+                                .build(),
+                        ModelCallLimitHook.builder()
+                                .runLimit(runModelCallLimit)
+                                .exitBehavior(ModelCallLimitHook.ExitBehavior.END)
+                                .build())
+                .interceptors(List.of(retry,
+                        ModelFallbackInterceptor.builder().addFallbackModel(fallback).build()))
+                .build();
+
+        SupervisorAgent supervisor = SupervisorAgent.builder()
+                .name("quant_workbench")
+                .mainAgent(supervisorMain)
+                .subAgents(List.of(marketAgent, quantAgent, newsAgent))
+                .build();
+
+        // 自己掌控编译：整图挂 checkpoint saver（threadId=sessionId 断点续聊；P5 HITL interrupt/resume 同一地基）
+        return supervisor.getGraph().compile(CompileConfig.builder()
+                .saverConfig(SaverConfig.builder().register(checkpointSaver).build())
+                .build());
+    }
+}

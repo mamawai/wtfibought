@@ -29,10 +29,11 @@ import java.util.stream.Collectors;
 @Component
 public class AiAgentRuntimeManager {
 
-    // P2a：reflection 随方向反思链删除；quant 的 ChatModel 保留给 P2b 深研判子图；P4 增 quant-light
-    private static final List<String> FUNCTIONS = List.of("behavior", "quant", "chat");
+    // P2a 删 reflection（方向反思链）；P4 增 quant-light（对话子 agent 浅模型，深浅分层省成本）
+    private static final List<String> FUNCTIONS = List.of("behavior", "quant", "quant-light", "chat");
 
     private final BehaviorAgentFactory behaviorAgentFactory;
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
     private final OpenAiChatModel prototypeChatModel;
@@ -46,10 +47,12 @@ public class AiAgentRuntimeManager {
                                  AiRuntimeConfigMapper configMapper,
                                  AiModelAssignmentMapper assignmentMapper,
                                  ChatModel chatModel,
+                                 org.springframework.context.ApplicationEventPublisher eventPublisher,
                                  @Value("${spring.ai.openai.api-key:}") String ymlApiKey,
                                  @Value("${spring.ai.openai.base-url:}") String ymlBaseUrl,
                                  @Value("${spring.ai.openai.chat.options.model:}") String ymlModel) {
         this.behaviorAgentFactory = behaviorAgentFactory;
+        this.eventPublisher = eventPublisher;
         this.configMapper = configMapper;
         this.assignmentMapper = assignmentMapper;
         if (!(chatModel instanceof OpenAiChatModel openAiChatModel)) {
@@ -92,9 +95,12 @@ public class AiAgentRuntimeManager {
             runtimeRef.set(new AiAgentRuntime(
                     buildFromAssignment(assignments, "behavior", configMap),
                     buildFromAssignment(assignments, "quant", configMap),
+                    buildFromAssignment(assignments, "quant-light", configMap),
                     buildFromAssignment(assignments, "chat", configMap)
             ));
             log.info("AI运行时已刷新，共{}个API Key配置，{}个模型分配", configMap.size(), assignments.size());
+            // 通知对话图等模型消费方重建（构建期绑定 ChatModel 的组件靠此感知热更新）
+            eventPublisher.publishEvent(new AiRuntimeRefreshedEvent(this));
         }
     }
 
