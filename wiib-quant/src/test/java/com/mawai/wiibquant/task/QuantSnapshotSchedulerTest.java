@@ -40,7 +40,8 @@ class QuantSnapshotSchedulerTest {
         }).when(graph).invoke(org.mockito.ArgumentMatchers.<Map<String, Object>>any());
 
         QuantSnapshotScheduler scheduler = new QuantSnapshotScheduler(
-                factory, marketDataService, mock(PriceVolatilitySentinel.class), new FakeKlineHistoryStore());
+                factory, marketDataService, mock(PriceVolatilitySentinel.class), new FakeKlineHistoryStore(),
+                3600_000L, 900_000L);
 
         long closeTime = System.currentTimeMillis();
         scheduler.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", closeTime));
@@ -72,7 +73,8 @@ class QuantSnapshotSchedulerTest {
         when(graph.invoke(org.mockito.ArgumentMatchers.<Map<String, Object>>any())).thenReturn(Optional.of(state));
 
         QuantSnapshotScheduler scheduler = new QuantSnapshotScheduler(
-                factory, marketDataService, mock(PriceVolatilitySentinel.class), store);
+                factory, marketDataService, mock(PriceVolatilitySentinel.class), store,
+                3600_000L, 900_000L);
 
         scheduler.onForecastRequest(new QuantForecastRequestEvent(this, "btcusdt", 0L, "sentinel", true));
 
@@ -83,6 +85,74 @@ class QuantSnapshotSchedulerTest {
 
         verify(graph, timeout(300).times(1))
                 .invoke(org.mockito.ArgumentMatchers.<Map<String, Object>>any());
+    }
+
+    @Test
+    void firstBarTriggersDeepAndSecondWithinIntervalDoesNot() throws Exception {
+        QuantSnapshotGraphFactory factory = mock(QuantSnapshotGraphFactory.class);
+        CompiledGraph graph = mock(CompiledGraph.class);
+        MarketDataService marketDataService = mock(MarketDataService.class);
+        when(factory.get()).thenReturn(graph);
+        when(marketDataService.assemble(any())).thenReturn(MarketAssembly.unavailable("BTCUSDT", Map.of()));
+
+        // 图返回 snapshot_id + analysis_id → 深研判记账生效
+        com.alibaba.cloud.ai.graph.OverAllState state = mock(com.alibaba.cloud.ai.graph.OverAllState.class);
+        when(state.value("snapshot_id")).thenReturn(Optional.of(1L));
+        when(state.value("analysis_id")).thenReturn(Optional.of(2L));
+        when(graph.invoke(org.mockito.ArgumentMatchers.<Map<String, Object>>any())).thenReturn(Optional.of(state));
+
+        QuantSnapshotScheduler scheduler = new QuantSnapshotScheduler(
+                factory, marketDataService, mock(PriceVolatilitySentinel.class), new FakeKlineHistoryStore(),
+                3600_000L, 900_000L);
+
+        long closeTime = System.currentTimeMillis();
+        scheduler.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", closeTime));
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<Map<String, Object>> captor =
+                org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(graph, timeout(1000).times(1)).invoke(captor.capture());
+        // 冷启动 lastDeep=0 → 首根 bar 即触发深研判（定频窗口已满）
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().get("trigger_deep")).isEqualTo(true);
+
+        // 深研判已记账 → 下一根 bar（间隔<1h）不再触发深研判
+        scheduler.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", closeTime + 300_000));
+        verify(graph, timeout(1000).times(2)).invoke(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().get("trigger_deep")).isEqualTo(false);
+    }
+
+    @Test
+    void sentinelJumpRespectsCooldown() throws Exception {
+        QuantSnapshotGraphFactory factory = mock(QuantSnapshotGraphFactory.class);
+        CompiledGraph graph = mock(CompiledGraph.class);
+        MarketDataService marketDataService = mock(MarketDataService.class);
+        when(factory.get()).thenReturn(graph);
+        when(marketDataService.assemble(any())).thenReturn(MarketAssembly.unavailable("BTCUSDT", Map.of()));
+        FakeKlineHistoryStore store = new FakeKlineHistoryStore();
+        long closeTime = System.currentTimeMillis();
+        store.latestCloseTime = closeTime;
+
+        com.alibaba.cloud.ai.graph.OverAllState state = mock(com.alibaba.cloud.ai.graph.OverAllState.class);
+        when(state.value("snapshot_id")).thenReturn(Optional.of(1L));
+        when(state.value("analysis_id")).thenReturn(Optional.of(2L));
+        when(graph.invoke(org.mockito.ArgumentMatchers.<Map<String, Object>>any())).thenReturn(Optional.of(state));
+
+        QuantSnapshotScheduler scheduler = new QuantSnapshotScheduler(
+                factory, marketDataService, mock(PriceVolatilitySentinel.class), store,
+                3600_000L, 900_000L);
+
+        // 第一次哨兵插队：冷启动可深研判
+        scheduler.onForecastRequest(new QuantForecastRequestEvent(this, "BTCUSDT", closeTime, "sentinel", true));
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<Map<String, Object>> captor =
+                org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(graph, timeout(1000).times(1)).invoke(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().get("trigger_deep")).isEqualTo(true);
+
+        // 冷却期内第二次插队：force 仍产快照，但深研判被冷却压制
+        scheduler.onForecastRequest(new QuantForecastRequestEvent(this, "BTCUSDT", closeTime + 1, "sentinel", true));
+        verify(graph, timeout(1000).times(2)).invoke(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().get("trigger_deep")).isEqualTo(false);
     }
 
     private static final class FakeKlineHistoryStore extends KlineHistoryStore {

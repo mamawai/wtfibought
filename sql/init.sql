@@ -1284,3 +1284,23 @@ CREATE TABLE IF NOT EXISTS quant_snapshot (
 CREATE INDEX IF NOT EXISTS idx_quant_snapshot_query ON quant_snapshot (symbol, close_time DESC);
 COMMENT ON TABLE quant_snapshot IS '量化数值快照:每5m零LLM,vol三腿(PIT档界)+regime+脆弱度+信号面板(P2a)';
 COMMENT ON COLUMN quant_snapshot.vol_legs_json IS '三腿预测JSON,lowCut/highCut为预测时点档界,验证侧禁止重算';
+
+-- ============ quant_deep_analysis：深研判（P2b，1h定频+哨兵插队门控，Bull∥Bear→Judge 产物） ============
+CREATE TABLE IF NOT EXISTS quant_deep_analysis (
+    id              BIGSERIAL PRIMARY KEY,
+    symbol          VARCHAR(20) NOT NULL,
+    close_time      BIGINT NOT NULL,
+    trigger_source  VARCHAR(20),
+    snapshot_id     BIGINT,
+    narrative       TEXT,
+    scenarios_json  JSONB,
+    no_direction    BOOLEAN DEFAULT FALSE,
+    invalidation    TEXT,
+    bull_argument   TEXT,
+    bear_argument   TEXT,
+    judge_reasoning TEXT,
+    news_context    TEXT,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_quant_deep_analysis_query ON quant_deep_analysis (symbol, close_time DESC);
+COMMENT ON TABLE quant_deep_analysis IS '深研判(P2b):研判叙事+情景分布+失效条件+无方向态,debate升格为研判生产者不再改写方向数字';

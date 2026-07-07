@@ -13,9 +13,11 @@ import com.mawai.wiibquant.agent.config.AiAgentRuntimeManager;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibquant.agent.quant.memory.VerificationService;
 import com.mawai.wiibquant.task.QuantSnapshotScheduler;
+import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.QuantSnapshot;
+import com.mawai.wiibquant.mapper.QuantDeepAnalysisMapper;
 import com.mawai.wiibquant.mapper.QuantForecastCycleMapper;
 import com.mawai.wiibquant.mapper.QuantSignalDecisionMapper;
 import com.mawai.wiibquant.mapper.QuantSnapshotMapper;
@@ -47,6 +49,7 @@ public class AiAgentController {
     private final BehaviorAnalysisService behaviorAnalysisService;
     private final QuantSnapshotScheduler snapshotScheduler;
     private final QuantSnapshotMapper snapshotMapper;
+    private final QuantDeepAnalysisMapper deepAnalysisMapper;
     private final QuantForecastCycleMapper cycleMapper;
     private final QuantSignalDecisionMapper decisionMapper;
     private final VerificationService verificationService;
@@ -56,6 +59,7 @@ public class AiAgentController {
                              BehaviorAnalysisService behaviorAnalysisService,
                              QuantSnapshotScheduler snapshotScheduler,
                              QuantSnapshotMapper snapshotMapper,
+                             QuantDeepAnalysisMapper deepAnalysisMapper,
                              QuantForecastCycleMapper cycleMapper,
                              QuantSignalDecisionMapper decisionMapper,
                              VerificationService verificationService) {
@@ -63,6 +67,7 @@ public class AiAgentController {
         this.behaviorAnalysisService = behaviorAnalysisService;
         this.snapshotScheduler = snapshotScheduler;
         this.snapshotMapper = snapshotMapper;
+        this.deepAnalysisMapper = deepAnalysisMapper;
         this.cycleMapper = cycleMapper;
         this.decisionMapper = decisionMapper;
         this.verificationService = verificationService;
@@ -156,6 +161,23 @@ public class AiAgentController {
                 .orderByDesc(QuantSnapshot::getCloseTime)
                 .last("LIMIT 1"));
         return snapshot != null ? Result.ok(snapshot) : Result.fail("暂无快照数据");
+    }
+
+    @GetMapping("/quant/analysis/latest")
+    @Operation(summary = "查最新深研判（P2b：研判叙事/情景分布/失效条件/无方向态）")
+    public Result<QuantDeepAnalysis> latestAnalysis(@RequestParam(defaultValue = "BTCUSDT") String symbol) {
+        StpUtil.checkLogin();
+        String normalized;
+        try {
+            normalized = QuantConstants.normalizeSymbol(symbol);
+        } catch (IllegalArgumentException e) {
+            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
+        }
+        QuantDeepAnalysis analysis = deepAnalysisMapper.selectOne(new LambdaQueryWrapper<QuantDeepAnalysis>()
+                .eq(QuantDeepAnalysis::getSymbol, normalized)
+                .orderByDesc(QuantDeepAnalysis::getCloseTime)
+                .last("LIMIT 1"));
+        return analysis != null ? Result.ok(analysis) : Result.fail("暂无深研判数据");
     }
 
     private Object parseBriefing(String json) {
