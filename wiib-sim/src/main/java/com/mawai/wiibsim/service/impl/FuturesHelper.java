@@ -40,6 +40,15 @@ final class FuturesHelper {
         };
     }
 
+    /**
+     * 资金费转移额（对齐真实机制：费率>0 多头付、空头收；费率<0 反向）。
+     * 返回正数=本仓应付、负数=本仓应收；名义额×费率，精度到分。
+     */
+    static BigDecimal fundingTransfer(String side, BigDecimal notional, BigDecimal rate) {
+        BigDecimal raw = notional.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+        return "LONG".equals(side) ? raw : raw.negate();
+    }
+
     static BigDecimal calculatePnl(String side, BigDecimal entryPrice, BigDecimal exitPrice, BigDecimal quantity) {
         if ("LONG".equals(side)) {
             return exitPrice.subtract(entryPrice).multiply(quantity).setScale(2, RoundingMode.HALF_UP);

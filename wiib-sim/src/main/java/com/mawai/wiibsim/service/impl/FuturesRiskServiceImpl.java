@@ -410,7 +410,8 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
     private BigDecimal getMarkPrice(String symbol) {
         BigDecimal mp = cacheService.getMarkPrice(symbol);
         if (mp != null) return mp;
-        BigDecimal price = cacheService.getCryptoPrice(symbol);
+        // 兜底统一用合约最新价（与 Trading/Settlement 一致）；原现货价兜底是口径笔误
+        BigDecimal price = cacheService.getFuturesPrice(symbol);
         if (price == null) throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
         return price;
     }

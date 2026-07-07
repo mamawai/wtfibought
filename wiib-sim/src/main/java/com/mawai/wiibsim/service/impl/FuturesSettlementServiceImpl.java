@@ -1,11 +1,13 @@
 package com.mawai.wiibsim.service.impl;
 
+import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
@@ -53,6 +55,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final FuturesPositionIndexService positionIndexService;
     private final FuturesRiskService riskService;
     private final RedisLockUtil redisLockUtil;
+    private final BinanceRestClient restClient;
 
     protected record FundingFeeChargeResult(boolean success, boolean checkLiquidation) {}
 
@@ -156,7 +159,12 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             return;
         }
 
-        BigDecimal executePrice = order.getFilledPrice();
+        // 成交价口径：被动 maker 单按挂单价成交（真实交易所语义——被动单躺在盘口被对手吃，成交价=挂单价，
+        // 跳空穿越的好处不归挂单方）；挂单时即穿价的 taker 单按触发价成交（主动吃对手价）。
+        // 顺带统一了实时触发（原用触发价）与宕机补漏（原用挂单价）两条路径的口径。
+        boolean isCloseOrder = order.getOrderSide().startsWith("CLOSE");
+        BigDecimal executePrice = isLimitTaker(order, isCloseOrder) ? order.getFilledPrice() : order.getLimitPrice();
+        if (executePrice == null) executePrice = order.getLimitPrice();
         if (executePrice == null) return;
 
         if (order.getOrderSide().startsWith("OPEN")) {
@@ -450,12 +458,15 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
                 .eq(FuturesPosition::getStatus, "OPEN"));
         if (positions.isEmpty()) return;
 
+        // 结算时点懒拉取各 symbol 真实资金费率（每轮每 symbol 只拉一次），拉不到回退固定费率
+        Map<String, BigDecimal> rateBySymbol = new HashMap<>();
         int successCount = 0;
         int failCount = 0;
 
         for (FuturesPosition pos : positions) {
             try {
-                boolean success = SpringUtils.getAopProxy(this).chargeFundingFeeOne(pos);
+                BigDecimal rate = rateBySymbol.computeIfAbsent(pos.getSymbol(), this::fetchFundingRate);
+                boolean success = SpringUtils.getAopProxy(this).chargeFundingFeeOne(pos, rate);
                 if (success) {
                     successCount++;
                 } else {
@@ -467,10 +478,28 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             }
         }
 
-        log.info("futures资金费率扣除完成 成功{} 失败{}", successCount, failCount);
+        log.info("futures资金费率结算完成 成功{} 失败{} 费率={}", successCount, failCount, rateBySymbol);
     }
 
-    protected boolean chargeFundingFeeOne(FuturesPosition pos) {
+    /**
+     * 结算时点拉取 symbol 当期资金费率（premiumIndex.lastFundingRate，带符号）。
+     * 拉取/解析失败回退配置固定费率（+0.01%，符号约定同真实：正=多付空收）——
+     * 降级后等价旧固定口径的"方向修正版"，结算任务永不因外部接口卡死。
+     */
+    private BigDecimal fetchFundingRate(String symbol) {
+        try {
+            String json = restClient.getFundingRate(symbol);
+            if (json != null) {
+                BigDecimal rate = JSON.parseObject(json).getBigDecimal("lastFundingRate");
+                if (rate != null) return rate;
+            }
+        } catch (Exception e) {
+            log.warn("拉取资金费率失败 symbol={} 回退固定费率: {}", symbol, e.toString());
+        }
+        return tradingConfig.getFutures().getFundingRate();
+    }
+
+    protected boolean chargeFundingFeeOne(FuturesPosition pos, BigDecimal rate) {
         String lockKey = "futures:pos:" + pos.getId();
         String lockValue = redisLockUtil.tryLock(lockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
         if (lockValue == null) {
@@ -480,7 +509,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         FundingFeeChargeResult result;
         try {
-            result = SpringUtils.getAopProxy(this).doChargeFundingFeeOne(pos.getId());
+            result = SpringUtils.getAopProxy(this).doChargeFundingFeeOne(pos.getId(), rate);
         } finally {
             redisLockUtil.unlock(lockKey, lockValue);
         }
@@ -495,16 +524,34 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    protected FundingFeeChargeResult doChargeFundingFeeOne(Long positionId) {
+    protected FundingFeeChargeResult doChargeFundingFeeOne(Long positionId, BigDecimal rate) {
         FuturesPosition pos = positionMapper.selectById(positionId);
         if (pos == null || !"OPEN".equals(pos.getStatus())) {
             return new FundingFeeChargeResult(false, false);
         }
 
-        BigDecimal entryValue = pos.getEntryPrice().multiply(pos.getQuantity());
-        BigDecimal fee = entryValue.multiply(tradingConfig.getFutures().getFundingRate())
-                .setScale(2, RoundingMode.HALF_UP);
+        // 名义额对齐 Binance：按 mark 价×数量结算；mark 不可得退回开仓价（罕见，别让结算卡死）
+        BigDecimal notionalPrice;
+        try {
+            notionalPrice = getMarkPrice(pos.getSymbol());
+        } catch (Exception e) {
+            notionalPrice = pos.getEntryPrice();
+        }
+        BigDecimal notional = notionalPrice.multiply(pos.getQuantity());
+        // 真实转移机制：正=本仓应付，负=本仓应收（费率>0 多付空收，费率<0 反向）
+        BigDecimal transfer = fundingTransfer(pos.getSide(), notional, rate);
+        if (transfer.signum() == 0) return new FundingFeeChargeResult(true, false);
 
+        if (transfer.signum() < 0) {
+            // 收取方：入余额；funding_fee_total 记负（净口径，排行榜按累计净付扣回时自然冲正）
+            userMapper.atomicUpdateBalance(pos.getUserId(), transfer.negate());
+            int added = positionMapper.atomicAddFundingFeeTotal(pos.getId(), transfer);
+            if (added == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
+            return new FundingFeeChargeResult(true, false);
+        }
+
+        // 支付方三级兜底：余额 → 保证金 → 保证金扣光并触发强平复核
+        BigDecimal fee = transfer;
         int affected = userMapper.atomicUpdateBalance(pos.getUserId(), fee.negate());
         if (affected > 0) {
             int added = positionMapper.atomicAddFundingFeeTotal(pos.getId(), fee);
