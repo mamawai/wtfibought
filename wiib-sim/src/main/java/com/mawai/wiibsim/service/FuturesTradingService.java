@@ -21,6 +21,12 @@ public interface FuturesTradingService {
 
     List<FuturesPositionDTO> getUserPositions(Long userId, String symbol);
 
+    /** 单笔订单查询（internal 执行轮询用）；订单不存在或不属于该用户抛 ORDER_NOT_FOUND。 */
+    FuturesOrderResponse getOrder(Long userId, Long orderId);
+
+    /** 该用户 PENDING 挂单列表（internal 重启对账用）；symbol 为空查全部。 */
+    List<FuturesOrderResponse> getPendingOrders(Long userId, String symbol);
+
     IPage<FuturesOrderResponse> getUserOrders(Long userId, String status, int pageNum, int pageSize, String symbol);
 
     List<FuturesOrderResponse> getLatestOrders();

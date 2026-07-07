@@ -34,7 +34,7 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Component
-public class TestnetExecutionService {
+public class TestnetExecutionService implements StrategyExecutionPort {
 
     private static final long BAR_MILLIS = 300_000L; // 5m
 
@@ -114,6 +114,12 @@ public class TestnetExecutionService {
                 case POSITION -> { /* 持仓中，忽略新信号 */ }
             }
         }
+    }
+
+    /** 端口适配：testnet P0 单策略，状态按 symbol 键，strategyId 不参与。 */
+    @Override
+    public void noSignal(String symbol, String strategyId) {
+        noSignal(symbol);
     }
 
     /** 无信号=腿失效：WORKING 撤挂单回 FLAT。 */

@@ -702,6 +702,25 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     // ==================== 查询订单 ====================
 
     @Override
+    public FuturesOrderResponse getOrder(Long userId, Long orderId) {
+        FuturesOrder order = orderMapper.selectById(orderId);
+        if (order == null || !order.getUserId().equals(userId)) {
+            throw new BizException(ErrorCode.ORDER_NOT_FOUND);
+        }
+        return buildOrderResponse(order);
+    }
+
+    @Override
+    public List<FuturesOrderResponse> getPendingOrders(Long userId, String symbol) {
+        LambdaQueryWrapper<FuturesOrder> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(FuturesOrder::getUserId, userId).eq(FuturesOrder::getStatus, "PENDING");
+        if (symbol != null && !symbol.isEmpty()) {
+            wrapper.eq(FuturesOrder::getSymbol, symbol);
+        }
+        return orderMapper.selectList(wrapper).stream().map(FuturesHelper::buildOrderResponse).toList();
+    }
+
+    @Override
     public IPage<FuturesOrderResponse> getUserOrders(Long userId, String status, int pageNum, int pageSize, String symbol) {
         Page<FuturesOrder> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<FuturesOrder> wrapper = new LambdaQueryWrapper<>();

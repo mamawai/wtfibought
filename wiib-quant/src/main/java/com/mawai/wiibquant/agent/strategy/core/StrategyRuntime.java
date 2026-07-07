@@ -4,7 +4,7 @@ import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibquant.agent.quant.domain.KlineClosedEvent;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
-import com.mawai.wiibquant.agent.strategy.execution.TestnetExecutionService;
+import com.mawai.wiibquant.agent.strategy.execution.StrategyExecutionPort;
 import com.mawai.wiibcommon.market.ForceOrderService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,7 +39,7 @@ public class StrategyRuntime {
     private final KlineHistoryStore klineHistoryStore;
     private final StrategySignalRecorder recorder;
     private final ForceOrderService forceOrderService;
-    private final TestnetExecutionService executionService;
+    private final StrategyExecutionPort executionService;   // testnet/sim 按配置路由（ExecutionRoutingConfig）
     private final ConcurrentMap<String, WindowedMarketView> views = new ConcurrentHashMap<>();
 
     @Value("${strategy.runtime.enabled:false}")
@@ -78,7 +78,7 @@ public class StrategyRuntime {
                         recorder.record(signal.get(), legTags(symbol, signal.get().isLong()));
                         executionService.onSignal(symbol, signal.get(), strategy);   // 实盘执行(默认关)
                     } else {
-                        executionService.noSignal(symbol);                           // 腿失效，撤挂单
+                        executionService.noSignal(symbol, strategy.id());            // 腿失效，撤该策略挂单
                     }
                     executionService.tick(symbol, view.nowMs());                     // 成交/超时/平仓轮询
                 }
