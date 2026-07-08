@@ -16,7 +16,7 @@ import java.util.Map;
  * 档位选择：按"仓位 USDT 名义价值"匹配半开区间 [floor, cap)。
  * 强平公式：MM = notional × MMR − maintAmount。
  * <p>
- * 已配置：BTCUSDT、ETHUSDT、PAXGUSDT、DOGEUSDT。
+ * 已配置：BTCUSDT、ETHUSDT、PAXGUSDT、DOGEUSDT、SOLUSDT、XRPUSDT。
  * 新增 symbol 必须先在此处补完档位数据，否则开仓抛 FUTURES_SYMBOL_NOT_CONFIGURED。
  */
 @Component
@@ -99,11 +99,44 @@ public class FuturesLeverageBracketRegistry {
             new Bracket(10, bd("100000000"),    bd("200000000"),    1,  bd("0.5000"),  bd("33366280"))
     );
 
+    // SOL: 主流山寨，10 档，档位 1 上限 50K USDT、MMR 起点 0.50%、最大 100x。
+    // 数据来源：Binance 公共 brackets 接口（主网口径，updateTime 2025-06-23）。
+    private static final List<Bracket> SOL_BRACKETS = List.of(
+            new Bracket(1,  bd("0"),            bd("50000"),        100, bd("0.0050"),  bd("0")),
+            new Bracket(2,  bd("50000"),        bd("400000"),       75,  bd("0.0065"),  bd("75")),
+            new Bracket(3,  bd("400000"),       bd("1000000"),      50,  bd("0.0100"),  bd("1475")),
+            new Bracket(4,  bd("1000000"),      bd("4000000"),      25,  bd("0.0200"),  bd("11475")),
+            new Bracket(5,  bd("4000000"),      bd("8000000"),      20,  bd("0.0250"),  bd("31475")),
+            new Bracket(6,  bd("8000000"),      bd("40000000"),     10,  bd("0.0500"),  bd("231475")),
+            new Bracket(7,  bd("40000000"),     bd("80000000"),     5,   bd("0.1000"),  bd("2231475")),
+            new Bracket(8,  bd("80000000"),     bd("100000000"),    4,   bd("0.1250"),  bd("4231475")),
+            new Bracket(9,  bd("100000000"),    bd("200000000"),    2,   bd("0.2500"),  bd("16731475")),
+            new Bracket(10, bd("200000000"),    bd("400000000"),    1,   bd("0.5000"),  bd("66731475"))
+    );
+
+    // XRP: 11 档，档位 1 上限 40K USDT、MMR 起点 0.50%、最大 100x。
+    // 数据来源：Binance 公共 brackets 接口（主网口径，updateTime 2025-07-17）。
+    private static final List<Bracket> XRP_BRACKETS = List.of(
+            new Bracket(1,  bd("0"),            bd("40000"),        100, bd("0.0050"),  bd("0")),
+            new Bracket(2,  bd("40000"),        bd("80000"),        75,  bd("0.0060"),  bd("40")),
+            new Bracket(3,  bd("80000"),        bd("150000"),       50,  bd("0.0100"),  bd("360")),
+            new Bracket(4,  bd("150000"),       bd("400000"),       40,  bd("0.0125"),  bd("735")),
+            new Bracket(5,  bd("400000"),       bd("1000000"),      25,  bd("0.0200"),  bd("3735")),
+            new Bracket(6,  bd("1000000"),      bd("2000000"),      20,  bd("0.0250"),  bd("8735")),
+            new Bracket(7,  bd("2000000"),      bd("10000000"),     10,  bd("0.0500"),  bd("58735")),
+            new Bracket(8,  bd("10000000"),     bd("20000000"),     5,   bd("0.1000"),  bd("558735")),
+            new Bracket(9,  bd("20000000"),     bd("25000000"),     4,   bd("0.1250"),  bd("1058735")),
+            new Bracket(10, bd("25000000"),     bd("50000000"),     2,   bd("0.2500"),  bd("4183735")),
+            new Bracket(11, bd("50000000"),     bd("100000000"),    1,   bd("0.5000"),  bd("16683735"))
+    );
+
     private static final Map<String, List<Bracket>> BRACKETS = Map.of(
             "BTCUSDT",  BTC_BRACKETS,
             "ETHUSDT",  ETH_BRACKETS,
             "PAXGUSDT", PAXG_BRACKETS,
-            "DOGEUSDT", DOGE_BRACKETS
+            "DOGEUSDT", DOGE_BRACKETS,
+            "SOLUSDT",  SOL_BRACKETS,
+            "XRPUSDT",  XRP_BRACKETS
     );
 
     /**

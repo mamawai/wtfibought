@@ -91,6 +91,15 @@ public class StrategyRuntime {
     }
 
     private WindowedMarketView seedView(String symbol) {
+        // 策略篮子币(SOL/DOGE/XRP)不在 WATCH_SYMBOLS，watchdog 不回填它们——seed 前自补 SEED_BARS
+        // 窗口，否则冷启动空视图，SQZMOM(4H) 要实时攒几天才有信号且重启清零。insertIgnore 幂等，
+        // 已有数据的 symbol 重复补无害（每进程每 symbol 仅首次触达时执行一次）。
+        long now = System.currentTimeMillis();
+        try {
+            klineHistoryStore.backfill(symbol, now - (long) SEED_BARS * KlineHistoryStore.DEFAULT_BAR_MILLIS, now);
+        } catch (Exception e) {
+            log.warn("[StrategyRuntime] seed回填失败(用既有数据继续) symbol={} msg={}", symbol, e.getMessage());
+        }
         Long latestClose = klineHistoryStore.latestCloseTime(symbol, KlineHistoryStore.DEFAULT_INTERVAL);
         long toMs = latestClose != null ? latestClose : System.currentTimeMillis();
         long fromMs = toMs - (long) SEED_BARS * KlineHistoryStore.DEFAULT_BAR_MILLIS;

@@ -61,6 +61,8 @@ public class QuantSnapshotScheduler {
     @EventListener
     public void onKlineClosed(KlineClosedEvent event) {
         if (event == null || !"5m".equalsIgnoreCase(event.interval())) return;
+        // 快照/研判轨只跑 WATCH_SYMBOLS：策略篮子币(SOL/XRP等)的 bar 不进本轨，防深研判 LLM 成本随行情币扩容翻倍
+        if (!QuantConstants.WATCH_SYMBOLS.contains(normalizeSymbol(event.symbol()))) return;
         triggerSnapshot(event.symbol(), event.closeTime(), "kline_close", false);
     }
 

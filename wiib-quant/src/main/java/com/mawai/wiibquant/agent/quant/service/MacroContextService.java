@@ -74,6 +74,10 @@ public class MacroContextService {
             return;
         }
         String normalized = normalize(event.symbol());
+        // 宏观上下文只服务快照/研判轨(WATCH_SYMBOLS)：策略篮子币(SOL/XRP等)的 bar 不触发 recompute
+        if (!QuantConstants.WATCH_SYMBOLS.contains(normalized)) {
+            return;
+        }
         MacroContext current = cache.get(normalized);
         if (current != null && !expired(current)) {
             return;

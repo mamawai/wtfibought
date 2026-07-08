@@ -104,20 +104,6 @@ trading:
     afternoon-start: "13:00"
     afternoon-end: "15:00"
 
-# 插拔式策略实盘信号运行时：默认关闭；启用后读取实时流并记录 LIVE 信号
-strategy:
-  runtime:
-    enabled: false
-    enabled-ids: FIBO
-    liquidation-window-minutes: 30
-    liquidation-threshold-usdt: 500000
-  execution:
-    enabled: false           # 实盘执行总开关(Binance Testnet)；默认关
-    symbols: ETHUSDT         # 执行白名单(逗号分隔)
-    fixed-margin-usdt: 50    # 每仓固定保证金 USDT(P0 固定小仓)
-    leverage: 20
-    order-timeout-bars: 12   # 挂单超时(5m 根数，对齐 FiboParams)
-
 # Binance行情配置
 binance:
   ws-url: wss://stream.binance.com:9443/ws
@@ -129,6 +115,8 @@ binance:
     - PAXGUSDT
     - ETHUSDT
     - DOGEUSDT
+    - SOLUSDT
+    - XRPUSDT
   fallback-poll-interval: 5000
 
 # Binance USDT-M 合约 Testnet 模拟交易（仅交易；行情仍走上方主网 binance.*）
@@ -143,10 +131,6 @@ binance-testnet:
   symbols:
     - BTCUSDT
     - ETHUSDT
-
-# CoinDesk新闻API配置
-coindesk:
-  news-api-key:
 
 # Sprint B1-3：agent+horizon+regime 静态调权。
 # 当前回放未证明收益，默认关闭；仅用于模拟盘观察或后续新规则实验。
