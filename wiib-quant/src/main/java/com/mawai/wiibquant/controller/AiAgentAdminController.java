@@ -6,8 +6,6 @@ import com.mawai.wiibcommon.entity.AiRuntimeConfig;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibquant.agent.config.AiAgentRuntimeManager;
-import com.mawai.wiibquant.agent.config.RuntimeFeatureToggleService;
-import com.mawai.wiibquant.agent.config.RuntimeToggleSnapshot;
 import com.mawai.wiibquant.agent.quant.memory.VerificationService;
 import com.mawai.wiibquant.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibquant.mapper.AiRuntimeConfigMapper;
@@ -32,7 +30,6 @@ public class AiAgentAdminController {
     private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final QuantSnapshotScheduler quantSnapshotScheduler;
     private final VerificationService verificationService;
-    private final RuntimeFeatureToggleService runtimeFeatureToggleService;
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
 
@@ -207,30 +204,7 @@ public class AiAgentAdminController {
         return Result.ok("预测验证已触发: " + symbols);
     }
 
-    // ========== 量化运行时开关 ==========
-
-    @GetMapping("/quant-config")
-    @Operation(summary = "获取量化运行时开关")
-    public Result<QuantConfigResponse> getQuantConfig() {
-        checkAdmin();
-        return Result.ok(buildQuantConfigResponse());
-    }
-
-    @PostMapping("/quant-config")
-    @Operation(summary = "设置量化运行时开关")
-    public Result<QuantConfigResponse> setQuantConfig(@RequestBody QuantConfigRequest req) {
-        checkAdmin();
-        // factor_weight_override 开关已随"调权死回路"移除；debate/macro 为只读诊断恒真，本接口当前无可写开关。
-        return Result.ok(buildQuantConfigResponse());
-    }
-
-    private QuantConfigResponse buildQuantConfigResponse() {
-        RuntimeToggleSnapshot snapshot = runtimeFeatureToggleService.snapshot();
-        QuantConfigResponse resp = new QuantConfigResponse();
-        resp.setDebateJudgeEnabled(snapshot.debateJudgeEnabled());
-        resp.setMacroRiskEnabled(snapshot.macroRiskEnabled());
-        return resp;
-    }
+    // quant-config 开关端点已删：开关框架自 v1 调权清理后空转（无注册开关），随死表清理一并拆除。
 
     // ========== DTO ==========
 
@@ -248,18 +222,6 @@ public class AiAgentAdminController {
         private String functionName;
         private Long configId;
         private String model;
-    }
-
-    @Data
-    public static class QuantConfigRequest {
-        private Boolean debateJudgeEnabled;
-        private Boolean macroRiskEnabled;
-    }
-
-    @Data
-    public static class QuantConfigResponse {
-        private Boolean debateJudgeEnabled;
-        private Boolean macroRiskEnabled;
     }
 
 }
