@@ -1,7 +1,6 @@
 package com.mawai.wiibcommon.market;
 import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
 import com.mawai.wiibcommon.config.BinanceProperties;
-import com.mawai.wiibcommon.config.CoinDeskProperties;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -25,11 +24,9 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
     private static final int LONG_SHORT_RATIO_5M_LIMIT = 288; // 5m * 288 = 24h，用于LSR滚动百分位
     private final RestTemplate restTemplate;
     private final BinanceProperties props;
-    private final CoinDeskProperties coinDeskProperties;
 
-    public BinanceRestClient(BinanceProperties props, CoinDeskProperties coinDeskProperties) {
+    public BinanceRestClient(BinanceProperties props) {
         this.props = props;
-        this.coinDeskProperties = coinDeskProperties;
         this.restTemplate = createRestTemplate(5000, 10000);
     }
 
@@ -249,42 +246,6 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
             return restTemplate.getForObject(uri, String.class);
         } catch (Exception e) {
             log.warn("获取{}多空比失败: {}", symbol, e.getMessage());
-            return null;
-        }
-    }
-
-    private static final String NEWS_API_URL = "https://data-api.coindesk.com/news/v1/article/list";
-    private static final String NEWS_API_ARTICLE_URL = "https://data-api.coindesk.com/news/v1/article/get";
-
-    public String getCryptoNews(String symbol, int limit, String lang) {
-        UriComponentsBuilder builder = UriComponentsBuilder
-                .fromUriString(NEWS_API_URL)
-                .queryParam("categories", symbol)
-                .queryParam("limit", limit)
-                .queryParam("lang", lang)
-                .queryParam("api_key", coinDeskProperties.getNewsApiKey());
-        try {
-            URI uri = builder.build().toUri();
-            log.info("CryptoNews API: symbol={}, limit={}", symbol, limit);
-            return restTemplate.getForObject(uri, String.class);
-        } catch (Exception e) {
-            log.warn("getCryptoNews failed: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    public String getArticleDetail(String sourceKey, String guid) {
-        UriComponentsBuilder builder = UriComponentsBuilder
-                .fromUriString(NEWS_API_ARTICLE_URL)
-                .queryParam("source_key", sourceKey)
-                .queryParam("guid", guid)
-                .queryParam("api_key", coinDeskProperties.getNewsApiKey());
-        try {
-            URI uri = builder.build().toUri();
-            log.info("Article detail API: sourceKey={}, guid={}", sourceKey, guid);
-            return restTemplate.getForObject(uri, String.class);
-        } catch (Exception e) {
-            log.warn("getArticleDetail failed: {}", e.getMessage());
             return null;
         }
     }

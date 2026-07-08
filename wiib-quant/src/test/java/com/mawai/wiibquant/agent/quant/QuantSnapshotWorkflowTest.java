@@ -48,7 +48,7 @@ class QuantSnapshotWorkflowTest {
         assertThat(out).isPresent();
         assertThat(out.get().value("snapshot_id")).contains(7L);
         // gate 分流：非深研判轮零 LLM
-        verify(deepAnalysisService, never()).buildNewsContext(anyString());
+        verify(deepAnalysisService, never()).buildNewsContext();
         verify(deepAnalysisService, never()).judge(anyString(), anyLong(), any(), anyString(),
                 anyString(), anyString(), anyString());
     }
@@ -64,14 +64,14 @@ class QuantSnapshotWorkflowTest {
         assertThat(out.get().value("snapshot_id")).isEmpty();
         verify(snapshotService, never()).persist(any());
         // 快照缺席时即使 trigger_deep=true 也不进深研判（gate 双条件）
-        verify(deepAnalysisService, never()).buildNewsContext(anyString());
+        verify(deepAnalysisService, never()).buildNewsContext();
     }
 
     @Test
     void runsFullDeepChainWhenTriggered() throws Exception {
         when(snapshotService.buildSnapshot(eq("BTCUSDT"), anyLong())).thenReturn(snap());
         when(snapshotService.persist(any(QuantSnapshot.class))).thenReturn(7L);
-        when(deepAnalysisService.buildNewsContext("BTCUSDT")).thenReturn("新闻上下文X");
+        when(deepAnalysisService.buildNewsContext()).thenReturn("新闻上下文X");
         when(deepAnalysisService.bullArgue("BTCUSDT", "新闻上下文X")).thenReturn("bull论据");
         when(deepAnalysisService.bearArgue("BTCUSDT", "新闻上下文X")).thenReturn("bear论据");
         QuantDeepAnalysis analysis = new QuantDeepAnalysis();
@@ -96,7 +96,7 @@ class QuantSnapshotWorkflowTest {
     void deepChainAbsentWhenJudgeFails() throws Exception {
         when(snapshotService.buildSnapshot(eq("BTCUSDT"), anyLong())).thenReturn(snap());
         when(snapshotService.persist(any(QuantSnapshot.class))).thenReturn(7L);
-        when(deepAnalysisService.buildNewsContext(anyString())).thenReturn("ctx");
+        when(deepAnalysisService.buildNewsContext()).thenReturn("ctx");
         when(deepAnalysisService.bullArgue(anyString(), anyString())).thenReturn("b1");
         when(deepAnalysisService.bearArgue(anyString(), anyString())).thenReturn("b2");
         when(deepAnalysisService.judge(anyString(), anyLong(), any(), anyString(),

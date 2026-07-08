@@ -6,7 +6,6 @@ import com.mawai.wiibquant.agent.quant.domain.signal.Signal;
 import com.mawai.wiibquant.agent.quant.domain.signal.SignalGroup;
 import com.mawai.wiibquant.agent.quant.domain.signal.SignalLean;
 import com.mawai.wiibquant.agent.quant.domain.signal.SignalPanel;
-import com.mawai.wiibquant.agent.quant.domain.news.FilteredNewsItem;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -25,26 +24,21 @@ class SignalExtractorTest {
                 vote("momentum", "H6", List.of("MA_BULLISH_5M", "MACD_GOLDEN_15M", "UNKNOWN_FLAG_XYZ"), List.of()),
                 vote("volatility", "H6", List.of(), List.of("EXTREME_VOLATILITY", "NO_DATA"))
         );
-        List<FilteredNewsItem> news = List.of(
-                new FilteredNewsItem("ETF inflow", "bullish", "high", "资金流入"),
-                new FilteredNewsItem("", "neutral", "low", "空标题应跳过")
-        );
 
-        SignalPanel panel = extractor.extract(votes, news);
+        SignalPanel panel = extractor.extract(votes);
 
-        // BID_DOMINANT 去重为 1；UNKNOWN_FLAG_XYZ / NO_DATA 忽略；空标题新闻跳过 → 共 8 条
-        assertThat(panel.signals()).hasSize(8);
+        // BID_DOMINANT 去重为 1；UNKNOWN_FLAG_XYZ / NO_DATA 忽略 → 共 7 条
+        assertThat(panel.signals()).hasSize(7);
         assertThat(codes(panel)).containsExactlyInAnyOrder(
                 "BID_DOMINANT", "HIGH_FUNDING", "SPOT_PERP_DIVERGENCE", "HEAVY_LONG_LIQ",
-                "MA_BULLISH_5M", "MACD_GOLDEN_15M", "EXTREME_VOLATILITY", "NEWS");
+                "MA_BULLISH_5M", "MACD_GOLDEN_15M", "EXTREME_VOLATILITY");
         assertThat(codes(panel)).doesNotContain("UNKNOWN_FLAG_XYZ", "NO_DATA");
     }
 
     @Test
     void crowdingFlagsLeanReverse() {
         SignalPanel panel = extractor.extract(
-                List.of(vote("microstructure", "H6", List.of("HIGH_FUNDING", "LSR_EXTREME_LONG"), List.of())),
-                List.of());
+                List.of(vote("microstructure", "H6", List.of("HIGH_FUNDING", "LSR_EXTREME_LONG"), List.of())));
 
         Signal funding = find(panel, "HIGH_FUNDING");
         assertThat(funding.lean()).isEqualTo(SignalLean.BEARISH);
@@ -55,8 +49,7 @@ class SignalExtractorTest {
     @Test
     void prefixFlagKeepsTimeframeSuffixInLabel() {
         SignalPanel panel = extractor.extract(
-                List.of(vote("momentum", "H6", List.of("MA_BULLISH_5M"), List.of())),
-                List.of());
+                List.of(vote("momentum", "H6", List.of("MA_BULLISH_5M"), List.of())));
 
         Signal ma = find(panel, "MA_BULLISH_5M");
         assertThat(ma.lean()).isEqualTo(SignalLean.BULLISH);
@@ -65,23 +58,11 @@ class SignalExtractorTest {
     }
 
     @Test
-    void newsBecomesSignalWithEvidence() {
-        SignalPanel panel = extractor.extract(List.of(),
-                List.of(new FilteredNewsItem("ETF inflow", "bullish", "high", "资金流入")));
-
-        Signal n = find(panel, "NEWS");
-        assertThat(n.lean()).isEqualTo(SignalLean.BULLISH);
-        assertThat(n.group()).isEqualTo(SignalGroup.NEWS);
-        assertThat(n.label()).isEqualTo("ETF inflow");
-        assertThat(n.evidence()).contains("high").contains("资金流入");
-    }
-
-    @Test
     void netLeanCountsByGroup() {
         SignalPanel panel = extractor.extract(List.of(
                 vote("microstructure", "H6", List.of("HIGH_FUNDING", "HEAVY_LONG_LIQ"), List.of()), // POSITIONING -2
                 vote("momentum", "H6", List.of("MA_BULLISH_5M", "MACD_GOLDEN_15M"), List.of())       // MOMENTUM +2
-        ), List.of());
+        ));
 
         assertThat(panel.netLean(SignalGroup.POSITIONING)).isEqualTo(-2);
         assertThat(panel.netLean(SignalGroup.MOMENTUM)).isEqualTo(2);

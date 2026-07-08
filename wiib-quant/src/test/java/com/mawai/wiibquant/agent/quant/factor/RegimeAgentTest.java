@@ -111,7 +111,7 @@ class RegimeAgentTest {
                 -1, "UNKNOWN",
                 null, BigDecimal.valueOf(400), null, false,
                 0, 0, 0, 0,
-                regime, List.of(), List.of(),
+                regime, List.of(),
                 0.80, transition);
     }
 }

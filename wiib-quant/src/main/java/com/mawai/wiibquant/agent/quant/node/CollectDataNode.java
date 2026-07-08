@@ -69,7 +69,6 @@ public class CollectDataNode implements NodeAction {
         boolean skipFearGreed = preFetchedFearGreed != null
                 && !preFetchedFearGreed.isBlank() && !"{}".equals(preFetchedFearGreed);
         String fearGreedData = skipFearGreed ? preFetchedFearGreed : "{}";
-        String newsData = "{}";
         String dvolData = null;
         String bookSummaryData = null;
         String[] intervals = {"1m", "3m", "5m", "15m", "1h", "4h", "1d"};
@@ -126,7 +125,6 @@ public class CollectDataNode implements NodeAction {
             var fearGreedF = skipFearGreed ? null
                     : executor.submit(() -> binanceRestClient.getFearGreedIndex(2));
             String coin = symbol.replace("USDT", "").replace("USDC", "");
-            var newsF = executor.submit(() -> binanceRestClient.getCryptoNews(coin, 30, "EN"));
 
             // Deribit 期权 IV 数据（并行采集，失败不影响主流程）
             Future<String> dvolF = deribitClient != null
@@ -170,12 +168,6 @@ public class CollectDataNode implements NodeAction {
                 }
             }
 
-            // 新闻
-            String rawNews = safeGet(newsF, "news", deadlineNanos);
-            if (rawNews != null && !rawNews.isBlank()) {
-                newsData = rawNews;
-            }
-
             // Deribit IV
             dvolData = dvolF != null ? safeGet(dvolF, "dvol", deadlineNanos) : null;
             bookSummaryData = bookSummaryF != null ? safeGet(bookSummaryF, "bookSummary", deadlineNanos) : null;
@@ -190,7 +182,7 @@ public class CollectDataNode implements NodeAction {
         String ticker = tickerMap.get(symbol);
         boolean klineOk = kline != null && kline.values().stream().anyMatch(v -> v != null && !v.isBlank());
         boolean dataAvailable = klineOk && ticker != null && !ticker.isBlank();
-        log.info("[Q1.1] collect_data完成 symbol={} futuresKlines={} spotKlines={} dataAvailable={} ticker={} spotTicker={} funding={} fundingHist={} ob={} spotOb={} oiHist={} lsr={} forceOrders={} topTrader={} takerLsr={} fearGreed={}chars news={}chars 耗时{}ms",
+        log.info("[Q1.1] collect_data完成 symbol={} futuresKlines={} spotKlines={} dataAvailable={} ticker={} spotTicker={} funding={} fundingHist={} ob={} spotOb={} oiHist={} lsr={} forceOrders={} topTrader={} takerLsr={} fearGreed={}chars 耗时{}ms",
                 symbol, kline != null ? kline.size() : 0,
                 spotKlineMap.getOrDefault(symbol, Map.of()).size(),
                 dataAvailable,
@@ -199,7 +191,7 @@ public class CollectDataNode implements NodeAction {
                 orderbookMap.containsKey(symbol), spotOrderbookMap.containsKey(symbol),
                 openInterestHistMap.containsKey(symbol), longShortRatioMap.containsKey(symbol),
                 forceOrdersMap.containsKey(symbol), topTraderPositionMap.containsKey(symbol),
-                takerLongShortMap.containsKey(symbol), fearGreedData.length(), newsData.length(),
+                takerLongShortMap.containsKey(symbol), fearGreedData.length(),
                 System.currentTimeMillis() - startMs);
 
         Map<String, Object> result = new HashMap<>();
@@ -217,7 +209,6 @@ public class CollectDataNode implements NodeAction {
         result.put("top_trader_position_map", topTraderPositionMap);
         result.put("taker_long_short_map", takerLongShortMap);
         result.put("fear_greed_data", fearGreedData);
-        result.put("news_data", newsData);
         result.put("data_available", dataAvailable);
         if (dvolData != null) result.put("dvol_data", dvolData);
         if (bookSummaryData != null) result.put("option_book_summary", bookSummaryData);

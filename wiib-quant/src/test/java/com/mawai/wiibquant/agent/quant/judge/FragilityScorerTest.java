@@ -106,6 +106,6 @@ class FragilityScorerTest {
                 topTrader, taker, fearGreed, "Neutral",
                 null, atr, null, squeeze,
                 dvol, 0, 0, 0,
-                regime, List.of(), List.of(), 1.0, "NONE");
+                regime, List.of(), 1.0, "NONE");
     }
 }

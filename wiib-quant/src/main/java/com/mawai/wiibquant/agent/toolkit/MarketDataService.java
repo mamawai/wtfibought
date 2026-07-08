@@ -98,7 +98,7 @@ public class MarketDataService {
                 log.warn("[Toolkit] 规则agent失败 agent={} msg={}", agent.name(), e.getMessage());
             }
         }
-        SignalPanel panel = new SignalExtractor().extract(votes, List.of());
+        SignalPanel panel = new SignalExtractor().extract(votes);
         FragilityScore fragility = new FragilityScorer().score(snapshot, panel);
         log.info("[Toolkit] 组装完成 symbol={} votes={} fragility={} 耗时{}ms",
                 symbol, votes.size(), fragility.score(), System.currentTimeMillis() - startMs);

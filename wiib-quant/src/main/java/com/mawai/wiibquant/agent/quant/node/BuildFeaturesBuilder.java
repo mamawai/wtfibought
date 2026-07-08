@@ -7,7 +7,6 @@ import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibquant.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibquant.agent.quant.domain.MarketRegime;
-import com.mawai.wiibquant.agent.quant.domain.NewsItem;
 import com.mawai.wiibquant.agent.tool.CryptoIndicatorCalculator;
 import com.mawai.wiibcommon.market.OrderFlowAggregator;
 import lombok.extern.slf4j.Slf4j;
@@ -65,7 +64,6 @@ final class BuildFeaturesBuilder {
         rawData.put("top_trader_position_map", state.value("top_trader_position_map").orElse(Map.of()));
         rawData.put("taker_long_short_map", state.value("taker_long_short_map").orElse(Map.of()));
         rawData.put("fear_greed_data", state.value("fear_greed_data").orElse("{}"));
-        rawData.put("news_data", state.value("news_data").orElse("{}"));
         rawData.put("dvol_data", state.value("dvol_data").orElse(null));
         rawData.put("option_book_summary", state.value("option_book_summary").orElse(null));
         return buildFeatures(symbol, rawData);
@@ -89,7 +87,6 @@ final class BuildFeaturesBuilder {
         var topTraderPositionMap = (Map<String, String>) rawData.getOrDefault("top_trader_position_map", Map.of());
         var takerLongShortMap = (Map<String, String>) rawData.getOrDefault("taker_long_short_map", Map.of());
         String fearGreedData = (String) rawData.getOrDefault("fear_greed_data", "{}");
-        String newsData = (String) rawData.getOrDefault("news_data", "{}");
         String dvolData = (String) rawData.getOrDefault("dvol_data", null);
         String bookSummaryData = (String) rawData.getOrDefault("option_book_summary", null);
 
@@ -269,10 +266,6 @@ final class BuildFeaturesBuilder {
             qualityFlags.add("PARTIAL_KLINE_DATA");
         }
 
-        // 8. 新闻解析
-        List<NewsItem> newsItems = parseNewsItems(newsData);
-        if (newsItems.isEmpty()) qualityFlags.add("NO_NEWS");
-
         FeatureSnapshot snapshot = new FeatureSnapshot(symbol, LocalDateTime.now(), lastPrice, barHigh, barLow, spotLastPrice,
                 indicatorsByTf, priceChanges,
                 spotBidAskImbalance, spotPriceChange5m, spotPerpBasisBps, spotLeadLagScore,
@@ -283,10 +276,10 @@ final class BuildFeaturesBuilder {
                 fearGreedIndex, fearGreedLabel,
                 atr1m, atr, bollBw, bollSqueeze,
                 dvolIndex, atmIv, ivSkew25d, ivTermSlope,
-                regime, newsItems, qualityFlags,
+                regime, qualityFlags,
                 0.5, "NONE");
-        log.info("[Q2.4] build_features完成 price={} news={}条 qualityFlags={} 耗时{}ms",
-                lastPrice, newsItems.size(), qualityFlags, System.currentTimeMillis() - startMs);
+        log.info("[Q2.4] build_features完成 price={} qualityFlags={} 耗时{}ms",
+                lastPrice, qualityFlags, System.currentTimeMillis() - startMs);
 
         return Map.of("feature_snapshot", snapshot, "indicator_map", indicatorsByTf,
                 "price_change_map", Map.of(symbol, priceChanges));
@@ -675,38 +668,6 @@ final class BuildFeaturesBuilder {
         } catch (Exception e) {
             log.warn("[Q2] 资金费率趋势计算失败: {}", e.getMessage());
             return new double[]{0, 0};
-        }
-    }
-
-    private List<NewsItem> parseNewsItems(String newsData) {
-        if (newsData == null || newsData.isBlank() || "{}".equals(newsData)) return List.of();
-        try {
-            // byte模式解析，绕开fastjson2 char buffer扩容bug
-            JSONObject root = JSON.parseObject(newsData.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            JSONArray items = root.getJSONArray("Data");
-            if (items == null || items.isEmpty()) return List.of();
-            List<NewsItem> result = new ArrayList<>(items.size());
-            int batchSize = 10;
-            for (int batch = 0; batch * batchSize < items.size(); batch++) {
-                int start = batch * batchSize;
-                int end = Math.min(start + batchSize, items.size());
-                for (int i = start; i < end; i++) {
-                    JSONObject item = items.getJSONObject(i);
-                    if (item == null) continue;
-                    result.add(new NewsItem(
-                            item.getString("TITLE"),
-                            item.getString("BODY"),
-                            item.getString("SOURCE_DATA_SOURCE_KEY"),
-                            item.getString("GUID"),
-                            item.getLongValue("PUBLISHED_ON")
-                    ));
-                }
-                log.info("[Q2] 新闻第{}批解析完成 [{}-{})", batch + 1, start, end);
-            }
-            return result;
-        } catch (Exception e) {
-            log.warn("[Q2] 新闻解析失败: {}", e.getMessage());
-            return List.of();
         }
     }
 

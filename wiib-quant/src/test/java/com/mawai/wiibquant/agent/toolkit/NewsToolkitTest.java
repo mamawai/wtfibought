@@ -1,47 +1,34 @@
 package com.mawai.wiibquant.agent.toolkit;
 
-import com.mawai.wiibcommon.market.BinanceRestClient;
+import com.mawai.wiibquant.agent.quant.domain.news.NewsFlash;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class NewsToolkitTest {
 
-    private final BinanceRestClient binanceRestClient = mock(BinanceRestClient.class);
-    private final NewsToolkit toolkit = new NewsToolkit(binanceRestClient);
+    private final NewsCache newsCache = mock(NewsCache.class);
+    private final NewsToolkit toolkit = new NewsToolkit(newsCache);
 
     @Test
-    void newsSearchStripsSymbolSuffixAndPassesThrough() {
-        when(binanceRestClient.getCryptoNews("BTC", 10, "EN")).thenReturn("{\"articles\":[]}");
+    void newsSearchReturnsFlashesFromCacheStrippingHtml() {
+        when(newsCache.getFlashes()).thenReturn(List.of(
+                new NewsFlash(1L, "美联储维持利率", "<p>据 CME 数据…</p>", "https://x", "2026-07-09 00:30:12")));
 
-        String json = toolkit.newsSearch("BTCUSDT", 10);
+        String json = toolkit.newsSearch();
 
-        assertThat(json).isEqualTo("{\"articles\":[]}");
+        assertThat(json).contains("美联储维持利率").contains("据 CME 数据");
+        assertThat(json).doesNotContain("<p>"); // HTML 标签已去除
     }
 
     @Test
-    void newsSearchClampsLimit() {
-        when(binanceRestClient.getCryptoNews("BTC", 30, "EN")).thenReturn("{}");
+    void newsSearchDegradesWhenCacheEmpty() {
+        when(newsCache.getFlashes()).thenReturn(List.of());
 
-        toolkit.newsSearch("BTCUSDT", 999); // 超上限 → clamp 到 30
-
-        verify(binanceRestClient).getCryptoNews("BTC", 30, "EN");
-    }
-
-    @Test
-    void newsSearchDegradesWhenNull() {
-        when(binanceRestClient.getCryptoNews("BTC", 10, "EN")).thenReturn(null);
-
-        assertThat(toolkit.newsSearch("BTCUSDT", 10)).contains("\"available\":false");
-    }
-
-    @Test
-    void readArticleDegradesWhenNull() {
-        when(binanceRestClient.getArticleDetail("src", "guid1")).thenReturn(null);
-
-        assertThat(toolkit.readNewsArticle("src", "guid1")).contains("Failed");
+        assertThat(toolkit.newsSearch()).contains("\"available\":false");
     }
 }

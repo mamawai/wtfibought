@@ -32,14 +32,14 @@ class DeepAnalysisToolkitTest {
 
         assertThat(result).contains("PENDING_APPROVAL");
         assertThat(approvalRegistry.drainPending("wb-1-x")).isPresent(); // 确认卡素材已登记
-        verify(deepAnalysisService, never()).buildNewsContext(anyString()); // 一分钱 LLM 没烧
+        verify(deepAnalysisService, never()).buildNewsContext(); // 一分钱 LLM 没烧
     }
 
     @Test
     void approvedSessionRunsFullChainAndPersists() {
         approvalRegistry.markActive("wb-1-x");
         approvalRegistry.approve("wb-1-x");
-        when(deepAnalysisService.buildNewsContext("BTCUSDT")).thenReturn("ctx");
+        when(deepAnalysisService.buildNewsContext()).thenReturn("ctx");
         when(deepAnalysisService.bullArgue("BTCUSDT", "ctx")).thenReturn("bull");
         when(deepAnalysisService.bearArgue("BTCUSDT", "ctx")).thenReturn("bear");
         QuantDeepAnalysis analysis = new QuantDeepAnalysis();
@@ -60,7 +60,7 @@ class DeepAnalysisToolkitTest {
     void judgeFailureReportsFailedWithoutPersist() {
         approvalRegistry.markActive("wb-1-x");
         approvalRegistry.approve("wb-1-x");
-        when(deepAnalysisService.buildNewsContext(anyString())).thenReturn("ctx");
+        when(deepAnalysisService.buildNewsContext()).thenReturn("ctx");
         when(deepAnalysisService.bullArgue(anyString(), anyString())).thenReturn("b");
         when(deepAnalysisService.bearArgue(anyString(), anyString())).thenReturn("b");
         when(deepAnalysisService.judge(anyString(), anyLong(), any(), anyString(),

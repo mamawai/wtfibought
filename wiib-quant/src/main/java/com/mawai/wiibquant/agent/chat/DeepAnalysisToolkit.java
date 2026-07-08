@@ -58,7 +58,7 @@ public class DeepAnalysisToolkit {
         Long snapshotId = latestSnapshotId(normalized);
 
         // 复用定时轨同一套研判服务；Bull∥Bear 虚拟线程并行（对话场景无图结构，服务级并行等价）
-        String newsContext = deepAnalysisService.buildNewsContext(normalized);
+        String newsContext = deepAnalysisService.buildNewsContext();
         CompletableFuture<String> bullF = CompletableFuture.supplyAsync(
                 () -> deepAnalysisService.bullArgue(normalized, newsContext));
         CompletableFuture<String> bearF = CompletableFuture.supplyAsync(

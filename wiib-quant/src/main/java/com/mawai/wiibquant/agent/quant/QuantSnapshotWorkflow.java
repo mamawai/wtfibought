@@ -65,7 +65,7 @@ public class QuantSnapshotWorkflow {
 
         // ===== 深研判段（LLM，gate 后才进入）=====
         NodeAction newsContextNode = state -> Map.of(
-                "news_context", deepAnalysisService.buildNewsContext(symbol(state)));
+                "news_context", deepAnalysisService.buildNewsContext());
         NodeAction bullNode = state -> Map.of(
                 "bull_argument", deepAnalysisService.bullArgue(symbol(state), newsContext(state)));
         NodeAction bearNode = state -> Map.of(

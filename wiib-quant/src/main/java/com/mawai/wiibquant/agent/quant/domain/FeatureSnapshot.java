@@ -65,9 +65,6 @@ public record FeatureSnapshot(
         // 市场状态
         MarketRegime regime,
 
-        // 新闻
-        List<NewsItem> newsItems,
-
         // 数据质量
         List<String> qualityFlags,
 
@@ -78,7 +75,6 @@ public record FeatureSnapshot(
     public FeatureSnapshot {
         indicatorsByTimeframe = indicatorsByTimeframe == null ? Map.of() : Map.copyOf(indicatorsByTimeframe);
         priceChanges = priceChanges == null ? Map.of() : Map.copyOf(priceChanges);
-        newsItems = newsItems == null ? List.of() : List.copyOf(newsItems);
         qualityFlags = qualityFlags == null ? List.of() : List.copyOf(qualityFlags);
         if (regime == null) {
             regime = MarketRegime.RANGE;
@@ -102,7 +98,7 @@ public record FeatureSnapshot(
                 topTraderBias, takerBuySellPressure, fearGreedIndex, fearGreedLabel,
                 atr1m, atr, bollBandwidth, bollSqueeze,
                 dvolIndex, atmIv, ivSkew25d, ivTermSlope,
-                newRegime, newsItems, newFlags, confidence, transition);
+                newRegime, newFlags, confidence, transition);
     }
 
     public String toIvSummary() {

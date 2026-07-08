@@ -122,11 +122,11 @@ public class ChatAgentFactory {
 
         ReactAgent newsAgent = ReactAgent.builder()
                 .name("news_agent")
-                .description("加密新闻专家：搜索最近新闻列表、精读单篇文章全文")
+                .description("加密新闻专家：获取最近重要加密快讯列表")
                 .model(light)
                 .methodTools(newsToolkit)
                 .instruction("""
-                        你是加密新闻专家。先 news_search 拿列表，需要细节再 read_news_article 精读；
+                        你是加密新闻专家。用 news_search 拿最近重要快讯列表（已是完整内容）；
                         输出"事件+可能影响"的精炼中文摘要，标注消息源，不评价真伪不给投资建议。""")
                 .interceptors(List.of(retry, toolRetry))
                 .build();

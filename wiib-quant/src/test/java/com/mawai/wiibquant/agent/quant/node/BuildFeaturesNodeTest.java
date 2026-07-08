@@ -21,6 +21,6 @@ class BuildFeaturesNodeTest {
         FeatureSnapshot snapshot = (FeatureSnapshot) result.get("feature_snapshot");
         assertThat(snapshot.symbol()).isEqualTo("BTCUSDT");
         assertThat(snapshot.qualityFlags())
-                .contains("NO_INDICATORS", "NO_PRICE", "PARTIAL_KLINE_DATA", "NO_NEWS");
+                .contains("NO_INDICATORS", "NO_PRICE", "PARTIAL_KLINE_DATA");
     }
 }

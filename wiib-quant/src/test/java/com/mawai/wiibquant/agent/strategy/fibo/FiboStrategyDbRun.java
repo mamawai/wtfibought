@@ -8,7 +8,6 @@ import com.mawai.wiibquant.agent.strategy.core.WindowedMarketView;
 import com.mawai.wiibquant.agent.strategy.backtest.BacktestResult;
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.market.BinanceRestClient;
-import com.mawai.wiibcommon.config.CoinDeskProperties;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
@@ -674,7 +673,7 @@ class FiboStrategyDbRun {
 
         BinanceProperties props = new BinanceProperties();
         props.setFuturesRestBaseUrl("https://fapi.binance.com");
-        BinanceRestClient client = new BinanceRestClient(props, new CoinDeskProperties());
+        BinanceRestClient client = new BinanceRestClient(props);
 
         Connection con;
         try {

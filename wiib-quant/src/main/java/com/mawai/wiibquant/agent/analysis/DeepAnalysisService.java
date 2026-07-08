@@ -5,9 +5,10 @@ import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibquant.agent.quant.domain.FeatureSnapshot;
+import com.mawai.wiibquant.agent.quant.domain.news.NewsFlash;
 import com.mawai.wiibquant.agent.toolkit.MarketAssembly;
 import com.mawai.wiibquant.agent.toolkit.MarketDataService;
-import com.mawai.wiibquant.agent.toolkit.NewsToolkit;
+import com.mawai.wiibquant.agent.toolkit.NewsCache;
 import com.mawai.wiibquant.agent.toolkit.QuantLlm;
 import com.mawai.wiibquant.mapper.QuantDeepAnalysisMapper;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +17,7 @@ import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 深研判服务（P2b）：新闻浓缩 → Bull∥Bear 对抗辩论 → Judge 裁决 → 落库。
@@ -32,28 +34,25 @@ public class DeepAnalysisService {
 
     private final QuantLlm quantLlm;
     private final MarketDataService marketDataService;
-    private final NewsToolkit newsToolkit;
+    private final NewsCache newsCache;
     private final QuantDeepAnalysisMapper mapper;
 
-    /** 新闻浓缩：抓最近新闻 → 一次 LLM 提炼成辩论可用的上下文段；失败返回"无新闻上下文"不阻断。 */
-    public String buildNewsContext(String symbol) {
-        try {
-            String rawNews = newsToolkit.newsSearch(symbol, 10);
-            if (rawNews == null || rawNews.contains("\"available\":false")) {
-                return "无新闻上下文";
-            }
-            String prompt = """
-                    以下是 %s 的最近新闻列表(JSON)。请提炼对未来 6-24 小时行情可能有影响的要点，
-                    输出 3-5 条中文短句（每条含事件+可能影响方向），无重要新闻则回答"无重要新闻"。
-                    不要返回JSON，纯文本。
-
-                    %s""".formatted(symbol, truncate(rawNews, 6000));
-            String context = quantLlm.call(prompt);
-            return context != null && !context.isBlank() ? context : "无新闻上下文";
-        } catch (Exception e) {
-            log.warn("[Deep] 新闻上下文失败 symbol={} msg={}", symbol, e.getMessage());
+    /** 新闻上下文：缓存的重要快讯原样拼成文本喂辩论（不再 LLM 浓缩）；无则"无新闻上下文"。 */
+    public String buildNewsContext() {
+        List<NewsFlash> flashes = newsCache.getFlashes();
+        if (flashes.isEmpty()) {
             return "无新闻上下文";
         }
+        StringBuilder sb = new StringBuilder();
+        for (NewsFlash f : flashes) {
+            sb.append("· ").append(f.title());
+            String body = f.plainContent();
+            if (!body.isBlank()) {
+                sb.append("：").append(body);
+            }
+            sb.append('\n');
+        }
+        return sb.toString().trim();
     }
 
     /** Bull 辩手：严格做多立场；失败给占位论据不阻断。 */
@@ -205,8 +204,4 @@ public class DeepAnalysisService {
         return entity;
     }
 
-    private static String truncate(String s, int max) {
-        if (s == null) return "";
-        return s.length() > max ? s.substring(0, max) + "...(截断)" : s;
-    }
 }

@@ -5,7 +5,6 @@ import com.mawai.wiibquant.agent.quant.domain.signal.Signal;
 import com.mawai.wiibquant.agent.quant.domain.signal.SignalGroup;
 import com.mawai.wiibquant.agent.quant.domain.signal.SignalLean;
 import com.mawai.wiibquant.agent.quant.domain.signal.SignalPanel;
-import com.mawai.wiibquant.agent.quant.domain.news.FilteredNewsItem;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -18,7 +17,7 @@ import static com.mawai.wiibquant.agent.quant.domain.signal.SignalGroup.*;
 import static com.mawai.wiibquant.agent.quant.domain.signal.SignalLean.*;
 
 /**
- * 信号面板提取器：把 5 个 agent 产出的 flag/reasonCode + LLM 筛后的新闻条目，
+ * 信号面板提取器：把 agent 产出的 flag/reasonCode
  * 按"信号语义字典"重组为一等公民信号面板（{@link SignalPanel}）。
  *
  * <p><b>白名单策略</b>：只有字典登记过的 flag 才进面板；未知 flag（含 NO_DATA/TIMEOUT/
@@ -43,31 +42,16 @@ public final class SignalExtractor {
     private record PrefixMeta(String prefix, String labelPrefix, SignalLean lean, SignalGroup group) {}
 
     /**
-     * @param votes        本轮全部 evidence 票（含 reasonCodes/riskFlags）
-     * @param filteredNews LLM 筛后的新闻条目（比 reasonCodes 稳定，用作新闻信号源）
+     * @param votes 本轮全部 evidence 票（含 reasonCodes/riskFlags）
      */
-    public SignalPanel extract(List<AgentVote> votes, List<FilteredNewsItem> filteredNews) {
+    public SignalPanel extract(List<AgentVote> votes) {
         List<Signal> signals = new ArrayList<>();
-        // 跨 agent/horizon 去重：同一 flag/新闻只收一次（多 horizon 会重复产同名 flag）
+        // 跨 agent/horizon 去重：同一 flag 只收一次（多 horizon 会重复产同名 flag）
         Set<String> seen = new LinkedHashSet<>();
 
         if (votes != null) {
             for (AgentVote vote : votes) {
                 collectCodes(vote, signals, seen);
-            }
-        }
-
-        if (filteredNews != null) {
-            for (FilteredNewsItem news : filteredNews) {
-                if (news.title() == null || news.title().isBlank()) {
-                    continue;
-                }
-                if (!seen.add("NEWS:" + news.title())) {
-                    continue;
-                }
-                signals.add(new Signal("NEWS", news.title(),
-                        SignalLean.fromSentiment(news.sentiment()), NEWS, "news_event",
-                        newsEvidence(news)));
             }
         }
         return new SignalPanel(signals);
@@ -106,20 +90,6 @@ public final class SignalExtractor {
             }
         }
         return null;
-    }
-
-    private static String newsEvidence(FilteredNewsItem news) {
-        StringBuilder sb = new StringBuilder();
-        if (news.impact() != null && !news.impact().isBlank()) {
-            sb.append("影响").append(news.impact());
-        }
-        if (news.reason() != null && !news.reason().isBlank()) {
-            if (sb.length() > 0) {
-                sb.append(" · ");
-            }
-            sb.append(news.reason());
-        }
-        return sb.length() == 0 ? null : sb.toString();
     }
 
     private static Map<String, Meta> buildExact() {
@@ -192,7 +162,7 @@ public final class SignalExtractor {
         m.put("ATR_ACCELERATING", new Meta("ATR加速", RISK, VOLATILITY));
         m.put("ATR_DECELERATING", new Meta("ATR减速", NEUTRAL, VOLATILITY));
 
-        // ===== 新闻事件 NEWS（riskFlags；正常新闻走 filteredNews）=====
+        // ===== 新闻事件 NEWS（agent riskFlags 驱动）=====
         m.put("BLACK_SWAN_RISK", new Meta("黑天鹅风险", RISK, NEWS));
         m.put("REGULATORY_UNCERTAINTY", new Meta("监管不确定性", RISK, NEWS));
 

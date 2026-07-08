@@ -3,13 +3,12 @@ package com.mawai.wiibquant.agent.analysis;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibquant.agent.toolkit.MarketDataService;
-import com.mawai.wiibquant.agent.toolkit.NewsToolkit;
+import com.mawai.wiibquant.agent.toolkit.NewsCache;
 import com.mawai.wiibquant.agent.toolkit.QuantLlm;
 import com.mawai.wiibquant.mapper.QuantDeepAnalysisMapper;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.mock;
@@ -19,11 +18,11 @@ class DeepAnalysisServiceTest {
 
     private final QuantLlm quantLlm = mock(QuantLlm.class);
     private final MarketDataService marketDataService = mock(MarketDataService.class);
-    private final NewsToolkit newsToolkit = mock(NewsToolkit.class);
+    private final NewsCache newsCache = mock(NewsCache.class);
     private final QuantDeepAnalysisMapper mapper = mock(QuantDeepAnalysisMapper.class);
 
     private final DeepAnalysisService service =
-            new DeepAnalysisService(quantLlm, marketDataService, newsToolkit, mapper);
+            new DeepAnalysisService(quantLlm, marketDataService, newsCache, mapper);
 
     private String judgeJson(int bull, int range, int bear, boolean noDirection) {
         JSONObject o = new JSONObject();
@@ -79,10 +78,10 @@ class DeepAnalysisServiceTest {
     }
 
     @Test
-    void newsContextDegradesWhenFeedUnavailable() {
-        when(newsToolkit.newsSearch(anyString(), anyInt())).thenReturn("{\"available\":false}");
+    void newsContextDegradesWhenCacheEmpty() {
+        when(newsCache.getFlashes()).thenReturn(java.util.List.of());
 
-        assertThat(service.buildNewsContext("BTCUSDT")).isEqualTo("无新闻上下文");
+        assertThat(service.buildNewsContext()).isEqualTo("无新闻上下文");
     }
 
     @Test

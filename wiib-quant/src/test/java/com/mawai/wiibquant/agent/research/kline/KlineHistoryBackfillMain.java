@@ -4,7 +4,6 @@ import com.mawai.wiibcommon.market.KlineBar;
 
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.market.BinanceRestClient;
-import com.mawai.wiibcommon.config.CoinDeskProperties;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -50,7 +49,7 @@ public final class KlineHistoryBackfillMain {
 
     public static void main(String[] args) throws Exception {
         Settings settings = Settings.from(args);
-        BinanceRestClient client = new BinanceRestClient(binanceProperties(settings), new CoinDeskProperties());
+        BinanceRestClient client = new BinanceRestClient(binanceProperties(settings));
 
         System.out.printf("%n==== KlineHistoryBackfillMain ====%n");
         System.out.printf("symbols=%s interval=%s%n", settings.symbols(), INTERVAL);

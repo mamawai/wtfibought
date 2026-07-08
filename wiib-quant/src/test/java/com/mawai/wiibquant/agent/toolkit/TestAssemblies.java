@@ -30,7 +30,7 @@ final class TestAssemblies {
                 0.3, -0.1, 72, "Greed",
                 null, new BigDecimal("350"), null, false,
                 52.0, 48.0, -0.05, 0.02,
-                MarketRegime.RANGE, null, null, 0.6, "NONE");
+                MarketRegime.RANGE, null, 0.6, "NONE");
         return new MarketAssembly("BTCUSDT", true, Map.of(),
                 Map.of("price_change_map", Map.of("24h", "+2.3%")),
                 s, SignalPanel.empty(),
