@@ -39,6 +39,13 @@
             <version>1.1.2</version>
         </dependency>
 
+        <!-- Spring AI MCP Server（P6：只读量化工具暴露给任意 MCP 客户端，SSE transport） -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+            <version>1.1.2</version>
+        </dependency>
+
         <!-- WebFlux：LLM API 调用（spring-ai openai 底层 WebClient） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
