@@ -1,12 +1,14 @@
 package com.mawai.wiibquant.controller;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mawai.wiibcommon.annotation.RequireAdmin;
+import com.mawai.wiibcommon.annotation.Symbol;
 import com.mawai.wiibcommon.entity.AiModelAssignment;
 import com.mawai.wiibcommon.entity.AiRuntimeConfig;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.util.Result;
+import com.mawai.wiibquant.agent.analysis.VolVerificationService;
 import com.mawai.wiibquant.agent.config.AiAgentRuntimeManager;
-import com.mawai.wiibquant.agent.quant.memory.VerificationService;
+import com.mawai.wiibquant.agent.research.ForecastHorizon;
 import com.mawai.wiibquant.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibquant.mapper.AiRuntimeConfigMapper;
 import com.mawai.wiibquant.task.QuantSnapshotScheduler;
@@ -25,34 +27,26 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/admin/ai-agent")
 @RequiredArgsConstructor
+@RequireAdmin // 整个 AI Agent 管理控制器仅管理员(userId=1)可访问
 public class AiAgentAdminController {
 
     private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final QuantSnapshotScheduler quantSnapshotScheduler;
-    private final VerificationService verificationService;
+    private final VolVerificationService volVerificationService;
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
-
-    private void checkAdmin() {
-        long userId = StpUtil.getLoginIdAsLong();
-        if (userId != 1L) {
-            throw new RuntimeException("无权限");
-        }
-    }
 
     // ========== API Key 管理 ==========
 
     @GetMapping("/keys")
     @Operation(summary = "获取所有API Key配置")
     public Result<List<AiRuntimeConfig>> listKeys() {
-        checkAdmin();
         return Result.ok(configMapper.selectAllConfigs());
     }
 
     @PostMapping("/keys")
     @Operation(summary = "新增/修改API Key配置")
     public Result<AiRuntimeConfig> saveKey(@RequestBody KeyRequest req) {
-        checkAdmin();
         if (req.getApiKey() == null || req.getApiKey().isBlank()) {
             return Result.fail("apiKey不能为空");
         }
@@ -103,7 +97,6 @@ public class AiAgentAdminController {
     @DeleteMapping("/keys/{id}")
     @Operation(summary = "删除API Key配置")
     public Result<Void> deleteKey(@PathVariable Long id) {
-        checkAdmin();
         if (aiAgentRuntimeManager.isConfigReferenced(id)) {
             return Result.fail("该API Key正被模型分配引用，无法删除");
         }
@@ -117,7 +110,6 @@ public class AiAgentAdminController {
     @GetMapping("/assignments")
     @Operation(summary = "获取模型分配")
     public Result<List<AiModelAssignment>> listAssignments() {
-        checkAdmin();
         return Result.ok(assignmentMapper.selectAll().stream()
                 .filter(a -> AiAgentRuntimeManager.isManagedFunction(a.getFunctionName()))
                 .toList());
@@ -126,7 +118,6 @@ public class AiAgentAdminController {
     @PostMapping("/assignments")
     @Operation(summary = "保存模型分配并刷新运行时")
     public Result<Void> saveAssignments(@RequestBody List<AssignmentRequest> assignments) {
-        checkAdmin();
         for (AssignmentRequest req : assignments) {
             if (req.getFunctionName() == null) {
                 return Result.fail("参数不完整: " + null);
@@ -165,22 +156,14 @@ public class AiAgentAdminController {
 
     @PostMapping("/quant/trigger")
     @Operation(summary = "手动触发量化分析")
-    public Result<String> triggerQuant(@RequestParam(defaultValue = "BTCUSDT") String symbol) {
-        checkAdmin();
-        String normalized;
-        try {
-            normalized = QuantConstants.normalizeSymbol(symbol);
-        } catch (IllegalArgumentException e) {
-            return Result.fail("symbol格式错误: " + e.getMessage());
-        }
-        Thread.startVirtualThread(() -> quantSnapshotScheduler.runSnapshot(normalized));
-        return Result.ok("量化分析已触发: " + normalized);
+    public Result<String> triggerQuant(@Symbol String symbol) {
+        Thread.startVirtualThread(() -> quantSnapshotScheduler.runSnapshot(symbol));
+        return Result.ok("量化分析已触发: " + symbol);
     }
 
     @PostMapping("/quant/verify/trigger")
     @Operation(summary = "手动触发量化预测验证")
     public Result<String> triggerQuantVerification(@RequestParam(required = false) String symbol) {
-        checkAdmin();
         List<String> symbols;
         if (symbol == null || symbol.isBlank()) {
             symbols = QuantConstants.WATCH_SYMBOLS;
@@ -191,17 +174,21 @@ public class AiAgentAdminController {
                 return Result.fail("symbol格式错误: " + e.getMessage());
             }
         }
+        // P3 起验证对象=vol 预测点（quant_vol_verification），旧方向验证已随旧管线删除
         for (String s : symbols) {
             Thread.startVirtualThread(() -> {
                 try {
-                    int verified = verificationService.verifyPendingCycles(s, 24);
-                    log.info("[Admin] 手动触发预测验证完成 symbol={} verified={}", s, verified);
+                    int verified = 0;
+                    for (ForecastHorizon horizon : ForecastHorizon.values()) {
+                        verified += volVerificationService.verifyDue(s, horizon);
+                    }
+                    log.info("[Admin] 手动触发 vol 验证完成 symbol={} verified={}", s, verified);
                 } catch (Exception e) {
-                    log.error("[Admin] 手动触发预测验证失败 symbol={}", s, e);
+                    log.error("[Admin] 手动触发 vol 验证失败 symbol={}", s, e);
                 }
             });
         }
-        return Result.ok("预测验证已触发: " + symbols);
+        return Result.ok("vol 预测验证已触发: " + symbols);
     }
 
     // quant-config 开关端点已删：开关框架自 v1 调权清理后空转（无注册开关），随死表清理一并拆除。

@@ -1,11 +1,12 @@
 package com.mawai.wiibquant.agent.chat;
 
-import cn.dev33.satoken.stp.StpUtil;
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import com.alibaba.fastjson2.JSONObject;
+import com.mawai.wiibcommon.annotation.CurrentUserId;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,12 +56,12 @@ public class ChatWorkbenchController {
 
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "工作台对话（SSE：agent调度过程+token流式）")
-    public SseEmitter chat(@RequestBody WorkbenchChatRequest request) {
-        StpUtil.checkLogin();
+    public SseEmitter chat(@CurrentUserId long userId, @RequestBody WorkbenchChatRequest request, HttpServletResponse response) {
+        // nginx 反代默认缓冲会把 SSE 憋成一次性输出，显式关掉（免改服务器配置）
+        response.setHeader("X-Accel-Buffering", "no");
         if (request.getMessage() == null || request.getMessage().isBlank()) {
             throw new IllegalArgumentException("消息不能为空");
         }
-        long userId = StpUtil.getLoginIdAsLong();
         // sessionId 绑定 userId 前缀，防跨用户续聊他人会话
         String sessionId = request.getSessionId() != null && request.getSessionId().startsWith("wb-" + userId + "-")
                 ? request.getSessionId()
@@ -82,9 +83,7 @@ public class ChatWorkbenchController {
     /** HITL 确认回执：approve 后前端自动补发"请继续执行深度研判"，agent 重调工具时闸门放行。 */
     @PostMapping("/approve")
     @Operation(summary = "贵操作确认（HITL）")
-    public Map<String, Object> approve(@RequestBody ApprovalRequest request) {
-        StpUtil.checkLogin();
-        long userId = StpUtil.getLoginIdAsLong();
+    public Map<String, Object> approve(@CurrentUserId long userId, @RequestBody ApprovalRequest request) {
         String sessionId = request.getSessionId();
         if (sessionId == null || !sessionId.startsWith("wb-" + userId + "-")) {
             return Map.of("ok", false, "message", "会话不存在或无权限");

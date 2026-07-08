@@ -1,7 +1,7 @@
 package com.mawai.wiibsim.controller;
 
-import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.dto.*;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibsim.service.PredictionService;
@@ -30,25 +30,24 @@ public class PredictionController {
 
     @PostMapping("/buy")
     @Operation(summary = "买入合约 {side: UP/DOWN, amount: 金额}")
-    public Result<PredictionBetResponse> buy(@RequestBody PredictionBuyRequest request) {
-        Long userId = StpUtil.getLoginIdAsLong();
+    public Result<PredictionBetResponse> buy(@CurrentUserId Long userId, @RequestBody PredictionBuyRequest request) {
         return Result.ok(predictionService.buy(userId, request));
     }
 
     @PostMapping("/sell/{betId}")
     @Operation(summary = "卖出合约（按当前Polymarket价格）")
-    public Result<PredictionBetResponse> sell(@PathVariable Long betId,
+    public Result<PredictionBetResponse> sell(@CurrentUserId Long userId,
+                                              @PathVariable Long betId,
                                               @RequestParam(required = false) BigDecimal contracts) {
-        Long userId = StpUtil.getLoginIdAsLong();
         return Result.ok(predictionService.sell(userId, betId, contracts));
     }
 
     @GetMapping("/bets")
     @Operation(summary = "我的下注历史")
     public Result<IPage<PredictionBetResponse>> bets(
+            @CurrentUserId Long userId,
             @RequestParam(defaultValue = "1") int pageNum,
             @RequestParam(defaultValue = "10") int pageSize) {
-        Long userId = StpUtil.getLoginIdAsLong();
         return Result.ok(predictionService.getUserBets(userId, pageNum, pageSize));
     }
 
@@ -62,8 +61,7 @@ public class PredictionController {
 
     @GetMapping("/pnl")
     @Operation(summary = "预测盈亏统计")
-    public Result<PredictionPnlResponse> pnl() {
-        Long userId = StpUtil.getLoginIdAsLong();
+    public Result<PredictionPnlResponse> pnl(@CurrentUserId Long userId) {
         return Result.ok(predictionService.getUserPnl(userId));
     }
 

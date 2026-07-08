@@ -1,8 +1,8 @@
 package com.mawai.wiibquant.controller;
 
-import cn.dev33.satoken.stp.StpUtil;
 import com.alibaba.cloud.ai.graph.observation.metric.SpringAiAlibabaObservationMetricAttributes;
 import com.alibaba.cloud.ai.graph.observation.metric.SpringAiAlibabaObservationMetricNames;
+import com.mawai.wiibcommon.annotation.RequireAdmin;
 import com.mawai.wiibcommon.util.Result;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 @RestController
 @RequestMapping("/api/admin/graph-obs")
 @RequiredArgsConstructor
+@RequireAdmin // 观测端点仅管理员(userId=1)可访问
 public class GraphObsController {
 
     /** 定时轨全节点（快照段 + 深研判段），与 QuantSnapshotWorkflow 拓扑同步 */
@@ -43,9 +44,6 @@ public class GraphObsController {
     @GetMapping("/metrics")
     @Operation(summary = "获取各节点观测指标（框架原生 graph_node 指标）")
     public Result<List<GraphNodeMetric>> metrics() {
-        StpUtil.checkLogin();
-        if (StpUtil.getLoginIdAsLong() != 1L) throw new RuntimeException("无权限");
-
         String metricName = SpringAiAlibabaObservationMetricNames.GRAPH_NODE.value();
         String nodeTag = SpringAiAlibabaObservationMetricAttributes.GRAPH_NODE_NAME.value();
         List<GraphNodeMetric> result = NODE_ORDER.stream().map(node -> {

@@ -1,6 +1,6 @@
 package com.mawai.wiibsim.controller;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.dto.MinesBetRequest;
 import com.mawai.wiibcommon.dto.MinesGameStateDTO;
 import com.mawai.wiibcommon.dto.MinesRevealRequest;
@@ -24,31 +24,27 @@ public class MinesController {
 
     @GetMapping("/status")
     @Operation(summary = "获取游戏状态")
-    public Result<MinesStatusDTO> getStatus() {
-        Long userId = StpUtil.getLoginIdAsLong();
+    public Result<MinesStatusDTO> getStatus(@CurrentUserId Long userId) {
         return Result.ok(minesService.getStatus(userId));
     }
 
     @PostMapping("/bet")
     @Operation(summary = "下注开局")
-    public Result<MinesGameStateDTO> bet(@RequestBody MinesBetRequest request) {
-        Long userId = StpUtil.getLoginIdAsLong();
+    public Result<MinesGameStateDTO> bet(@CurrentUserId Long userId, @RequestBody MinesBetRequest request) {
         BigDecimal amount = request != null && request.getAmount() != null ? request.getAmount() : BigDecimal.ZERO;
         return Result.ok(minesService.bet(userId, amount));
     }
 
     @PostMapping("/reveal")
     @Operation(summary = "翻开格子")
-    public Result<MinesGameStateDTO> reveal(@RequestBody MinesRevealRequest request) {
-        Long userId = StpUtil.getLoginIdAsLong();
+    public Result<MinesGameStateDTO> reveal(@CurrentUserId Long userId, @RequestBody MinesRevealRequest request) {
         int cell = request != null && request.getCell() != null ? request.getCell() : -1;
         return Result.ok(minesService.reveal(userId, cell));
     }
 
     @PostMapping("/cashout")
     @Operation(summary = "提现")
-    public Result<MinesGameStateDTO> cashout() {
-        Long userId = StpUtil.getLoginIdAsLong();
+    public Result<MinesGameStateDTO> cashout(@CurrentUserId Long userId) {
         return Result.ok(minesService.cashout(userId));
     }
 }

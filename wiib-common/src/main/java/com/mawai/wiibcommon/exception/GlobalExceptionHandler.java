@@ -1,8 +1,7 @@
-package com.mawai.wiibsim.config;
+package com.mawai.wiibcommon.exception;
 
 import cn.dev33.satoken.exception.NotLoginException;
 import com.mawai.wiibcommon.enums.ErrorCode;
-import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.Result;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -12,6 +11,10 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+/**
+ * 全局异常处理器（三模块共享）
+ * 放 wiib-common，quant/feed/sim 均 scanBasePackages 到 com.mawai.wiibcommon，自动生效。
+ */
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {

@@ -1,6 +1,6 @@
 package com.mawai.wiibsim.controller;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.dto.BuffStatusDTO;
 import com.mawai.wiibcommon.dto.UserBuffDTO;
 import com.mawai.wiibcommon.util.Result;
@@ -20,15 +20,13 @@ public class BuffController {
 
     @GetMapping("/status")
     @Operation(summary = "获取Buff状态")
-    public Result<BuffStatusDTO> getStatus() {
-        Long userId = StpUtil.getLoginIdAsLong();
+    public Result<BuffStatusDTO> getStatus(@CurrentUserId Long userId) {
         return Result.ok(buffService.getStatus(userId));
     }
 
     @PostMapping("/draw")
     @Operation(summary = "抽奖")
-    public Result<UserBuffDTO> draw() {
-        Long userId = StpUtil.getLoginIdAsLong();
+    public Result<UserBuffDTO> draw(@CurrentUserId Long userId) {
         return Result.ok(buffService.draw(userId));
     }
 }

@@ -1,7 +1,7 @@
 package com.mawai.wiibsim.controller;
 
-import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.dto.*;
 import com.mawai.wiibcommon.entity.OptionContract;
 import com.mawai.wiibcommon.enums.ErrorCode;
@@ -59,8 +59,7 @@ public class OptionController {
 
     @PostMapping("/buy")
     @Operation(summary = "买入开仓（BTO）")
-    public Result<OptionOrderResultDTO> buyToOpen(@RequestBody OptionOrderRequest request) {
-        Long userId = StpUtil.getLoginIdAsLong();
+    public Result<OptionOrderResultDTO> buyToOpen(@CurrentUserId Long userId, @RequestBody OptionOrderRequest request) {
         OptionOrderResultDTO result = orderService.buyToOpen(
                 userId, request.getContractId(), request.getQuantity());
         return Result.ok(result);
@@ -68,8 +67,7 @@ public class OptionController {
 
     @PostMapping("/sell")
     @Operation(summary = "卖出平仓（STC）")
-    public Result<OptionOrderResultDTO> sellToClose(@RequestBody OptionOrderRequest request) {
-        Long userId = StpUtil.getLoginIdAsLong();
+    public Result<OptionOrderResultDTO> sellToClose(@CurrentUserId Long userId, @RequestBody OptionOrderRequest request) {
         OptionOrderResultDTO result = orderService.sellToClose(
                 userId, request.getContractId(), request.getQuantity());
         return Result.ok(result);
@@ -77,21 +75,20 @@ public class OptionController {
 
     @GetMapping("/positions")
     @Operation(summary = "查询期权持仓")
-    public Result<List<OptionPositionDTO>> getPositions() {
-        Long userId = StpUtil.getLoginIdAsLong();
+    public Result<List<OptionPositionDTO>> getPositions(@CurrentUserId Long userId) {
         return Result.ok(positionService.getUserPositions(userId));
     }
 
     @GetMapping("/orders")
     @Operation(summary = "查询期权订单")
     public Result<IPage<OptionOrderDTO>> getOrders(
+            @CurrentUserId Long userId,
             @Parameter(description = "订单状态：PENDING/FILLED/CANCELLED/EXPIRED（不传则查询全部）", example = "FILLED")
             @RequestParam(required = false) String status,
             @Parameter(description = "页码（从1开始）", example = "1")
             @RequestParam(defaultValue = "1") int pageNum,
             @Parameter(description = "每页数量", example = "10")
             @RequestParam(defaultValue = "10") int pageSize) {
-        Long userId = StpUtil.getLoginIdAsLong();
         return Result.ok(orderService.getUserOrders(userId, status, pageNum, pageSize));
     }
 

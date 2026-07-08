@@ -1,6 +1,6 @@
 package com.mawai.wiibsim.controller;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.dto.SettlementDTO;
 import com.mawai.wiibcommon.entity.Settlement;
 import com.mawai.wiibcommon.util.Result;
@@ -29,8 +29,7 @@ public class SettlementController {
 
     @GetMapping("/pending")
     @Operation(summary = "获取待结算列表")
-    public Result<List<SettlementDTO>> getPendingSettlements() {
-        Long userId = StpUtil.getLoginIdAsLong();
+    public Result<List<SettlementDTO>> getPendingSettlements(@CurrentUserId Long userId) {
         List<Settlement> settlements = settlementService.getPendingSettlements(userId);
 
         List<SettlementDTO> dtoList = settlements.stream()

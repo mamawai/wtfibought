@@ -1,437 +1,142 @@
 package com.mawai.wiibquant.agent;
 
 import cn.dev33.satoken.stp.StpUtil;
-import com.mawai.wiibcommon.annotation.RateLimiter;
-import com.mawai.wiibcommon.constant.RateLimiterType;
-import com.mawai.wiibcommon.enums.ErrorCode;
+import com.mawai.wiibcommon.annotation.CurrentUserId;
+import com.mawai.wiibcommon.annotation.Symbol;
 import com.mawai.wiibcommon.util.Result;
-import com.mawai.wiibcommon.constant.QuantConstants;
-import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibquant.agent.behavior.BehaviorAnalysisReport;
 import com.mawai.wiibquant.agent.behavior.BehaviorAnalysisService;
-import com.mawai.wiibquant.agent.config.AiAgentRuntimeManager;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibquant.agent.analysis.ScorecardService;
-import com.mawai.wiibquant.agent.quant.memory.VerificationService;
-import com.mawai.wiibquant.task.QuantSnapshotScheduler;
 import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
-import com.mawai.wiibcommon.entity.QuantForecastCycle;
-import com.mawai.wiibcommon.entity.QuantSignalDecision;
 import com.mawai.wiibcommon.entity.QuantSnapshot;
+import com.mawai.wiibcommon.entity.QuantVolVerification;
 import com.mawai.wiibquant.mapper.QuantDeepAnalysisMapper;
-import com.mawai.wiibquant.mapper.QuantForecastCycleMapper;
-import com.mawai.wiibquant.mapper.QuantSignalDecisionMapper;
 import com.mawai.wiibquant.mapper.QuantSnapshotMapper;
+import com.mawai.wiibquant.mapper.QuantVolVerificationMapper;
 
 import com.alibaba.fastjson2.JSON;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.annotation.PreDestroy;
-import lombok.Data;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.MediaType;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.web.bind.annotation.*;
 
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import java.math.BigDecimal;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
-import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
-
+/**
+ * AI Agent 查询接口：behavior 分析 + 量化快照/深研判/记分卡（P7 研判工作台数据源）。
+ * 旧方向预测管线的端点（analyze-crypto/signals/forecasts/verifications）随 P7 前端切换整体删除，
+ * 对话入口在 {@link com.mawai.wiibquant.agent.chat.ChatWorkbenchController}。
+ */
 @Slf4j
 @Tag(name = "AI Agent接口")
 @RestController
 @RequestMapping("/api/ai")
+@RequiredArgsConstructor
 public class AiAgentController {
 
-    private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final BehaviorAnalysisService behaviorAnalysisService;
-    private final QuantSnapshotScheduler snapshotScheduler;
     private final QuantSnapshotMapper snapshotMapper;
     private final QuantDeepAnalysisMapper deepAnalysisMapper;
-    private final QuantForecastCycleMapper cycleMapper;
-    private final QuantSignalDecisionMapper decisionMapper;
-    private final VerificationService verificationService;
+    private final QuantVolVerificationMapper volVerificationMapper;
     private final ScorecardService scorecardService;
-    private final ExecutorService chatStreamExecutor = Executors.newVirtualThreadPerTaskExecutor();
-
-    public AiAgentController(AiAgentRuntimeManager aiAgentRuntimeManager,
-                             BehaviorAnalysisService behaviorAnalysisService,
-                             QuantSnapshotScheduler snapshotScheduler,
-                             QuantSnapshotMapper snapshotMapper,
-                             QuantDeepAnalysisMapper deepAnalysisMapper,
-                             QuantForecastCycleMapper cycleMapper,
-                             QuantSignalDecisionMapper decisionMapper,
-                             VerificationService verificationService,
-                             ScorecardService scorecardService) {
-        this.aiAgentRuntimeManager = aiAgentRuntimeManager;
-        this.behaviorAnalysisService = behaviorAnalysisService;
-        this.snapshotScheduler = snapshotScheduler;
-        this.snapshotMapper = snapshotMapper;
-        this.deepAnalysisMapper = deepAnalysisMapper;
-        this.cycleMapper = cycleMapper;
-        this.decisionMapper = decisionMapper;
-        this.verificationService = verificationService;
-        this.scorecardService = scorecardService;
-    }
-
-    @Data
-    public static class AnalyzeCryptoRequest {
-        private String symbol;
-    }
-
-    @Data
-    public static class ChatRequest {
-        private String message;
-        private String context;
-        private List<ChatMessage> history;
-    }
-
-    @Data
-    public static class ChatMessage {
-        private String role;
-        private String content;
-    }
 
     @PostMapping("/analyze-behavior")
     @Operation(summary = "用户行为分析")
-    public Result<BehaviorAnalysisReport> analyzeBehavior() {
-        long userId = StpUtil.getLoginIdAsLong();
+    public Result<BehaviorAnalysisReport> analyzeBehavior(@CurrentUserId long userId) {
         return behaviorAnalysisService.analyze(userId);
     }
 
-    @PreDestroy
-    public void shutdownExecutors() {
-        chatStreamExecutor.shutdown();
-    }
-
-    @GetMapping("/analyze-crypto/latest")
-    @Operation(summary = "获取最新量化分析报告（不触发分析）")
-    public Result<Map<String, Object>> latestCryptoReport(@RequestParam(defaultValue = "BTCUSDT") String symbol) {
-        StpUtil.checkLogin();
-        String normalized;
-        try {
-            normalized = QuantConstants.normalizeSymbol(symbol);
-        } catch (IllegalArgumentException e) {
-            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
-        }
-
-        // P2a 中间态：旧管线已下线，此端点转历史回放（读旧表最后一次研判，不再有时效检查）。
-        QuantForecastCycle cycle = cycleMapper.selectLatestHeavy(normalized);
-        if (cycle == null) {
-            return Result.ok(Map.of("status", "pending", "message", "暂无历史报告"));
-        }
-
-        if (cycle.getReportJson() == null || cycle.getReportJson().isBlank()) {
-            return Result.ok(Map.of("status", "pending", "message", "历史报告数据不完整"));
-        }
-
-        try {
-            // 旧报告类已随旧管线删除，历史回放走 JSONObject 透传（前端只认 JSON 结构）
-            Object report = JSON.parseObject(cycle.getReportJson());
-            // 简报产物（脆弱度/信号面板/弱lean）单独从 briefing_json 暴露，不污染 report 契约
-            Object briefing = parseBriefing(cycle.getBriefingJson());
-            Map<String, Object> data = new HashMap<>();
-            data.put("status", "ready");
-            data.put("schemaVersion", 2);
-            data.put("forecastTime", cycle.getForecastTime().toString());
-            data.put("cycleId", cycle.getCycleId());
-            data.put("overallDecision", cycle.getOverallDecision());
-            data.put("riskStatus", cycle.getRiskStatus());
-            data.put("report", report);
-            data.put("briefing", briefing); // 旧 cycle 无 briefing_json 时为 null，前端按存在性渲染
-            data.put("advisory", "历史回放：旧研判管线最后一次输出（研判工作台升级中），非交易建议");
-            return Result.ok(data);
-        } catch (Exception e) {
-            log.error("报告JSON解析失败 cycleId={}", cycle.getCycleId(), e);
-            return Result.fail("报告数据异常");
-        }
-    }
-
     @GetMapping("/quant/snapshots/latest")
-    @Operation(summary = "查最新数值快照（P2a 新链路：vol三腿/脆弱度/信号面板）")
-    public Result<QuantSnapshot> latestSnapshot(@RequestParam(defaultValue = "BTCUSDT") String symbol) {
+    @Operation(summary = "查最新数值快照（vol三腿/脆弱度/信号面板）")
+    public Result<QuantSnapshot> latestSnapshot(@Symbol String symbol) {
         StpUtil.checkLogin();
-        String normalized;
-        try {
-            normalized = QuantConstants.normalizeSymbol(symbol);
-        } catch (IllegalArgumentException e) {
-            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
-        }
         QuantSnapshot snapshot = snapshotMapper.selectOne(new LambdaQueryWrapper<QuantSnapshot>()
-                .eq(QuantSnapshot::getSymbol, normalized)
+                .eq(QuantSnapshot::getSymbol, symbol)
                 .orderByDesc(QuantSnapshot::getCloseTime)
                 .last("LIMIT 1"));
         return snapshot != null ? Result.ok(snapshot) : Result.fail("暂无快照数据");
     }
 
     @GetMapping("/quant/scorecard")
-    @Operation(summary = "查技能记分卡（P3：vol预测QLIKE vs naive基准 + vol-state命中率）")
+    @Operation(summary = "查技能记分卡（vol预测QLIKE vs naive基准 + vol-state命中率）")
     public Result<ScorecardService.Scorecard> scorecard(
-            @RequestParam(defaultValue = "BTCUSDT") String symbol,
+            @Symbol String symbol,
             @RequestParam(defaultValue = "7") int days) {
         StpUtil.checkLogin();
-        String normalized;
-        try {
-            normalized = QuantConstants.normalizeSymbol(symbol);
-        } catch (IllegalArgumentException e) {
-            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
-        }
-        return Result.ok(scorecardService.scorecard(normalized, Math.clamp(days, 1, 90)));
+        return Result.ok(scorecardService.scorecard(symbol, Math.clamp(days, 1, 90)));
     }
 
     @GetMapping("/quant/analysis/latest")
-    @Operation(summary = "查最新深研判（P2b：研判叙事/情景分布/失效条件/无方向态）")
-    public Result<QuantDeepAnalysis> latestAnalysis(@RequestParam(defaultValue = "BTCUSDT") String symbol) {
+    @Operation(summary = "查最新深研判（研判叙事/情景分布/失效条件/无方向态）")
+    public Result<QuantDeepAnalysis> latestAnalysis(@Symbol String symbol) {
         StpUtil.checkLogin();
-        String normalized;
-        try {
-            normalized = QuantConstants.normalizeSymbol(symbol);
-        } catch (IllegalArgumentException e) {
-            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
-        }
         QuantDeepAnalysis analysis = deepAnalysisMapper.selectOne(new LambdaQueryWrapper<QuantDeepAnalysis>()
-                .eq(QuantDeepAnalysis::getSymbol, normalized)
+                .eq(QuantDeepAnalysis::getSymbol, symbol)
                 .orderByDesc(QuantDeepAnalysis::getCloseTime)
                 .last("LIMIT 1"));
         return analysis != null ? Result.ok(analysis) : Result.fail("暂无深研判数据");
     }
 
-    private Object parseBriefing(String json) {
-        if (json == null || json.isBlank()) {
-            return null;
-        }
-        try {
-            // 透传为 JSONObject 给前端：嵌套 List<record>(signals/weakLeans) 做 typed 反序列化时
-            // fastjson2 会丢元素泛型，透传无此问题且前端只认 JSON 结构。
-            return JSON.parseObject(json);
-        } catch (Exception e) {
-            log.warn("briefing_json 解析失败: {}", e.getMessage());
-            return null;
-        }
+    /** 时间线曲线点：三腿预测 + 脆弱度 + H6 已验证 realized（到期才有，尾部 6h 天然缺）。 */
+    public record SnapshotSeriesPoint(long closeTime, BigDecimal lastPrice,
+                                      Double h6SigmaBps, Double h12SigmaBps, Double h24SigmaBps,
+                                      String volState, Integer fragilityScore, String fragilityLevel,
+                                      Integer realizedAbsBps) {
     }
 
-    @PostMapping("/analyze-crypto")
-    @Operation(summary = "加密货币量化分析（P2a 中间态：触发数值快照，深研判 P2b 回归）")
-    public Result<Void> analyzeCrypto(@RequestBody(required = false) AnalyzeCryptoRequest request) {
-        long userId = StpUtil.getLoginIdAsLong();
-        String symbol = request != null ? request.getSymbol() : null;
-
-        String normalized;
-        try {
-            normalized = QuantConstants.normalizeSymbol(symbol);
-        } catch (IllegalArgumentException e) {
-            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
-        }
-
-        // 通过代理调用，触发 @RateLimiter AOP
-        return SpringUtils.getAopProxy(this).doAnalyzeCryptoInternal(userId, normalized);
-    }
-
-    @RateLimiter(type = RateLimiterType.AI_CRYPTO, message = "量化分析每分钟限1次")
-    public Result<Void> doAnalyzeCryptoInternal(long userId, String symbol) {
-        // P2a 中间态：旧 LLM 管线已拆除，手动触发改为跑一次数值快照；
-        // 深度研判（debate 子图 + 门控）P2b 回归后此端点将由研判工作台取代。
-        log.info("[Quant] 手动触发数值快照 userId={} symbol={}", userId, symbol);
-        snapshotScheduler.runSnapshot(symbol);
-        return Result.fail("研判管线升级中：已触发数值快照（/quant/snapshots/latest 可查），深度研判即将回归");
-    }
-
-    @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @Operation(summary = "追问对话")
-    public SseEmitter chat(@RequestBody ChatRequest request) {
+    @GetMapping("/quant/snapshots/series")
+    @Operation(summary = "快照时间线序列（vol三腿+脆弱度+H6 realized，工作台画曲线）")
+    public Result<List<SnapshotSeriesPoint>> snapshotSeries(
+            @Symbol String symbol,
+            @RequestParam(defaultValue = "24") int hours) {
         StpUtil.checkLogin();
-        if (request.getMessage() == null || request.getMessage().isBlank()) {
-            throw new IllegalArgumentException("消息不能为空");
-        }
-
-        return SpringUtils.getAopProxy(this).doChatInternal(buildChatPrompt(request));
-    }
-
-    private String buildChatPrompt(ChatRequest request) {
-        StringBuilder prompt = new StringBuilder();
-        if (request.getContext() != null && !request.getContext().isBlank()) {
-            String ctx = request.getContext();
-            if (ctx.length() > 2000) {
-                ctx = ctx.substring(0, 2000) + "...(已截断)";
-            }
-            prompt.append("【当前分析报告摘要】\n").append(ctx).append("\n\n");
-        }
-        if (request.getHistory() != null) {
-            for (ChatMessage msg : recentCompleteRounds(request.getHistory(), 3)) {
-                prompt.append("user".equals(msg.getRole()) ? "用户: " : "分析师: ")
-                        .append(msg.getContent()).append("\n");
-            }
-        }
-        prompt.append("用户: ").append(request.getMessage());
-        return prompt.toString();
-    }
-
-    private List<ChatMessage> recentCompleteRounds(List<ChatMessage> history, int roundLimit) {
-        List<ChatMessage> completeRounds = new ArrayList<>();
-        ChatMessage pendingUser = null;
-
-        for (ChatMessage msg : history) {
-            if ("user".equals(msg.getRole())) {
-                pendingUser = msg;
-                continue;
-            }
-            if ("assistant".equals(msg.getRole()) && pendingUser != null) {
-                completeRounds.add(pendingUser);
-                completeRounds.add(msg);
-                pendingUser = null;
-            }
-        }
-
-        int messageLimit = roundLimit * 2;
-        if (completeRounds.size() <= messageLimit) {
-            return completeRounds;
-        }
-        return completeRounds.subList(completeRounds.size() - messageLimit, completeRounds.size());
-    }
-
-    @RateLimiter(type = RateLimiterType.AI_CHAT, permitsPerSecond = 6.0 / 60.0, bucketCapacity = 6, message = "追问每10秒限1次")
-    public SseEmitter doChatInternal(String prompt) {
-        SseEmitter emitter = new SseEmitter(120_000L);
-        AtomicBoolean closed = new AtomicBoolean(false);
-
-        emitter.onCompletion(() -> closed.set(true));
-        emitter.onTimeout(() -> {
-            closed.set(true);
-            emitter.complete();
-        });
-        emitter.onError(ex -> closed.set(true));
-
-        chatStreamExecutor.submit(() -> {
-            try {
-                ChatClient chatClient = ChatClient.builder(aiAgentRuntimeManager.current().chatChatModel())
-                        .defaultSystem("""
-                                你是专业的加密货币量化分析师，基于已有分析报告回答用户追问。
-                                回答规则：
-                                1. 控制在300字以内，精炼直接
-                                2. 先给结论，再给理由
-                                3. 涉及价格时给出具体数字
-                                4. 术语首次出现带简短注释
-                                5. 不要重复报告里已有的内容，针对问题回答
-                                """)
-                        .build();
-
-                // 原 LlmCallMode.STREAMING 内联（旧管线拆除随之删类）：流式收集逐 chunk 推 SSE
-                chatClient.prompt().user(prompt)
-                        .stream()
-                        .content()
-                        .doOnNext(chunk -> {
-                            if (closed.get() || chunk == null || chunk.isEmpty()) {
-                                return;
-                            }
-                            try {
-                                emitter.send(SseEmitter.event().name("chunk").data(chunk));
-                            } catch (Exception sendError) {
-                                throw new RuntimeException(sendError);
-                            }
-                        })
-                        .blockLast();
-
-                if (!closed.get()) {
-                    emitter.send(SseEmitter.event().name("done").data("[DONE]"));
-                    emitter.complete();
-                }
-            } catch (Exception e) {
-                log.error("对话失败", e);
-                if (!closed.get()) {
-                    try {
-                        emitter.send(SseEmitter.event().name("error")
-                                .data("回答失败: " + (e.getMessage() != null ? e.getMessage() : "未知错误")));
-                    } catch (Exception ignored) {
+        long from = System.currentTimeMillis() - Math.clamp(hours, 1, 168) * 3_600_000L;
+        List<QuantSnapshot> snaps = snapshotMapper.selectList(new LambdaQueryWrapper<QuantSnapshot>()
+                .eq(QuantSnapshot::getSymbol, symbol)
+                .ge(QuantSnapshot::getCloseTime, from)
+                .orderByAsc(QuantSnapshot::getCloseTime));
+        // 预测 vs 实际同图对照：realized 按 snapshotId 挂到各点
+        Map<Long, Integer> realizedBySnapshot = new HashMap<>();
+        volVerificationMapper.selectList(new LambdaQueryWrapper<QuantVolVerification>()
+                        .eq(QuantVolVerification::getSymbol, symbol)
+                        .eq(QuantVolVerification::getHorizon, "H6")
+                        .ge(QuantVolVerification::getCloseTime, from))
+                .forEach(v -> {
+                    if (v.getSnapshotId() != null && v.getRealizedReturnBps() != null) {
+                        realizedBySnapshot.put(v.getSnapshotId(), Math.abs(v.getRealizedReturnBps()));
                     }
-                    emitter.completeWithError(e);
-                }
-            }
-        });
-
-        return emitter;
+                });
+        List<SnapshotSeriesPoint> points = snaps.stream().map(s -> {
+            var legs = JSON.parseObject(s.getVolLegsJson());
+            var h6 = legs != null ? legs.getJSONObject("H6") : null;
+            var h12 = legs != null ? legs.getJSONObject("H12") : null;
+            var h24 = legs != null ? legs.getJSONObject("H24") : null;
+            return new SnapshotSeriesPoint(
+                    s.getCloseTime(), s.getLastPrice(),
+                    h6 != null ? h6.getDouble("sigmaBps") : null,
+                    h12 != null ? h12.getDouble("sigmaBps") : null,
+                    h24 != null ? h24.getDouble("sigmaBps") : null,
+                    h6 != null ? h6.getString("volState") : null,
+                    s.getFragilityScore(), s.getFragilityLevel(),
+                    realizedBySnapshot.get(s.getId()));
+        }).toList();
+        return Result.ok(points);
     }
 
-    @GetMapping("/quant/signals/latest")
-    @Operation(summary = "查最新量化信号")
-    public Result<Map<String, Object>> latestSignals(@RequestParam(defaultValue = "BTCUSDT") String symbol) {
-        StpUtil.checkLogin();
-        String normalized;
-        try {
-            normalized = QuantConstants.normalizeSymbol(symbol);
-        } catch (IllegalArgumentException e) {
-            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
-        }
-
-        QuantForecastCycle cycle = cycleMapper.selectLatestHeavy(normalized);
-        if (cycle == null) {
-            return Result.fail("暂无预测数据");
-        }
-
-        List<QuantSignalDecision> signals = decisionMapper.selectLatestHeavyBySymbol(normalized);
-        Map<String, Object> data = Map.of(
-                "cycleId", cycle.getCycleId(),
-                "symbol", cycle.getSymbol(),
-                "forecastTime", cycle.getForecastTime(),
-                "overallDecision", cycle.getOverallDecision(),
-                "riskStatus", cycle.getRiskStatus(),
-                "signals", signals
-        );
-        return Result.ok(data);
-    }
-
-    @GetMapping("/quant/forecasts")
-    @Operation(summary = "查历史量化预测")
-    public Result<List<QuantForecastCycle>> forecasts(
-            @RequestParam(defaultValue = "BTCUSDT") String symbol,
+    @GetMapping("/quant/analysis/list")
+    @Operation(summary = "深研判历史列表（时间线标记+详情回看）")
+    public Result<List<QuantDeepAnalysis>> analysisList(
+            @Symbol String symbol,
             @RequestParam(defaultValue = "20") int limit) {
         StpUtil.checkLogin();
-        String normalized;
-        try {
-            normalized = QuantConstants.normalizeSymbol(symbol);
-        } catch (IllegalArgumentException e) {
-            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
-        }
-
-        limit = Math.min(limit, 100);
-        List<QuantForecastCycle> list = cycleMapper.selectRecent(normalized, limit);
-        return Result.ok(list);
+        return Result.ok(deepAnalysisMapper.selectList(new LambdaQueryWrapper<QuantDeepAnalysis>()
+                .eq(QuantDeepAnalysis::getSymbol, symbol)
+                .orderByDesc(QuantDeepAnalysis::getCloseTime)
+                .last("LIMIT " + Math.clamp(limit, 1, 100))));
     }
-
-    @GetMapping("/quant/verifications")
-    @Operation(summary = "查历史量化预测验证")
-    public Result<VerificationService.VerificationSummary> verifications(
-            @RequestParam(defaultValue = "BTCUSDT") String symbol,
-            @RequestParam(defaultValue = "10") int limit) {
-        StpUtil.checkLogin();
-        String normalized;
-        try {
-            normalized = QuantConstants.normalizeSymbol(symbol);
-        } catch (IllegalArgumentException e) {
-            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
-        }
-
-        limit = Math.min(limit, 20);
-        return Result.ok(verificationService.recentVerificationResults(normalized, limit));
-    }
-
-    @GetMapping("/quant/verifications/grouped")
-    @Operation(summary = "分组查询量化预测验证（research 主周期）")
-    public Result<VerificationService.GroupedVerificationSummary> groupedVerifications(
-            @RequestParam(defaultValue = "BTCUSDT") String symbol,
-            @RequestParam(defaultValue = "10") int limit) {
-        StpUtil.checkLogin();
-        String normalized;
-        try {
-            normalized = QuantConstants.normalizeSymbol(symbol);
-        } catch (IllegalArgumentException e) {
-            return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "symbol格式错误");
-        }
-        limit = Math.min(limit, 20);
-        return Result.ok(verificationService.groupedVerificationResults(normalized, limit));
-    }
-
-
 }
