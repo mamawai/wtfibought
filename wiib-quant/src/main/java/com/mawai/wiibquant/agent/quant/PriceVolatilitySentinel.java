@@ -1,19 +1,13 @@
 package com.mawai.wiibquant.agent.quant;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.constant.QuantConstants;
-import com.mawai.wiibcommon.entity.QuantForecastCycle;
 import com.mawai.wiibquant.agent.quant.domain.QuantForecastRequestEvent;
-import com.mawai.wiibquant.mapper.QuantForecastCycleMapper;
-import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDateTime;
 import java.util.Deque;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -24,7 +18,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 价格波动哨兵：监听 WS 实时 markPrice tick，当5分钟内价格变动超过 1.3×ATR-5m 时
  * 请求完整 H6/H12/H24 重评估，捕捉异常波动中的交易机会。
  * <p>
- * ATR-5m 由量化管道计算后推送更新；启动时从DB加载最近一次ATR。
+ * ATR-5m 由快照段计算后推送更新（updateAtr）；重启后首根 bar 前用固定 fallback 阈值兜底
+ * （旧的启动时从 quant_forecast_cycle 预热已随旧管线删除——表停写后那段永远读到过期数据）。
  * 冷却期30秒（仅技术防抖，业务节流由 ATR×1.3 阈值本身提供）。
  */
 @Slf4j
@@ -45,7 +40,6 @@ public class PriceVolatilitySentinel {
     private static final double DEFAULT_FALLBACK = 0.004;
 
     private final ApplicationEventPublisher eventPublisher;
-    private final QuantForecastCycleMapper cycleMapper;
 
     private final Map<String, Deque<PriceTick>> priceWindows = new ConcurrentHashMap<>();
     private final Map<String, BigDecimal> lastAtr5m = new ConcurrentHashMap<>();
@@ -55,35 +49,8 @@ public class PriceVolatilitySentinel {
 
     record PriceTick(long timestampMs, BigDecimal price) {}
 
-    public PriceVolatilitySentinel(ApplicationEventPublisher eventPublisher,
-                                   QuantForecastCycleMapper cycleMapper) {
+    public PriceVolatilitySentinel(ApplicationEventPublisher eventPublisher) {
         this.eventPublisher = eventPublisher;
-        this.cycleMapper = cycleMapper;
-    }
-
-    @PostConstruct
-    void initAtrFromDb() {
-        for (String symbol : QuantConstants.WATCH_SYMBOLS) {
-            try {
-                QuantForecastCycle cycle = cycleMapper.selectLatest(symbol);
-                if (cycle == null || cycle.getSnapshotJson() == null) continue;
-                if (cycle.getForecastTime() != null
-                        && cycle.getForecastTime().isBefore(LocalDateTime.now().minusMinutes(30))) {
-                    log.info("[Sentinel] DB中ATR已过期，跳过 symbol={} forecastTime={}", symbol, cycle.getForecastTime());
-                    continue;
-                }
-                JSONObject snap = JSON.parseObject(cycle.getSnapshotJson());
-                Object atrVal = snap.get("atr");
-                if (atrVal == null) continue;
-                BigDecimal atr = new BigDecimal(atrVal.toString());
-                if (atr.compareTo(BigDecimal.ZERO) > 0) {
-                    lastAtr5m.put(symbol, atr);
-                    log.info("[Sentinel] 从DB加载ATR symbol={} atr={}", symbol, atr);
-                }
-            } catch (Exception e) {
-                log.warn("[Sentinel] 加载ATR失败 symbol={}: {}", symbol, e.getMessage());
-            }
-        }
     }
 
     /**

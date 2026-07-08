@@ -648,6 +648,38 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         return result;
     }
 
+    @Override
+    public List<FuturesPositionDTO> getClosedPositions(Long userId, String symbol, int limit) {
+        LambdaQueryWrapper<FuturesPosition> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(FuturesPosition::getUserId, userId);
+        wrapper.in(FuturesPosition::getStatus, "CLOSED", "LIQUIDATED");
+        if (symbol != null && !symbol.isEmpty()) {
+            wrapper.eq(FuturesPosition::getSymbol, symbol);
+        }
+        wrapper.orderByDesc(FuturesPosition::getUpdatedAt);
+        wrapper.last("LIMIT " + Math.clamp(limit, 1, 500));
+        // 已平仓只出静态字段（closedPnl 即终值），不走 buildPositionDTO 的实时价计算
+        return positionMapper.selectList(wrapper).stream().map(pos -> {
+            FuturesPositionDTO dto = new FuturesPositionDTO();
+            dto.setId(pos.getId());
+            dto.setUserId(pos.getUserId());
+            dto.setSymbol(pos.getSymbol());
+            dto.setSide(pos.getSide());
+            dto.setLeverage(pos.getLeverage());
+            dto.setQuantity(pos.getQuantity());
+            dto.setEntryPrice(pos.getEntryPrice());
+            dto.setMargin(pos.getMargin());
+            dto.setFundingFeeTotal(pos.getFundingFeeTotal());
+            dto.setStatus(pos.getStatus());
+            dto.setClosedPrice(pos.getClosedPrice());
+            dto.setClosedPnl(pos.getClosedPnl());
+            dto.setMemo(pos.getMemo());
+            dto.setCreatedAt(pos.getCreatedAt());
+            dto.setUpdatedAt(pos.getUpdatedAt());
+            return dto;
+        }).toList();
+    }
+
     private FuturesPositionDTO buildPositionDTO(FuturesPosition pos, BigDecimal markPrice) {
         FuturesPositionDTO dto = new FuturesPositionDTO();
         dto.setId(pos.getId());

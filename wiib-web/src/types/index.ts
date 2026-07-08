@@ -591,150 +591,6 @@ export interface BehaviorAnalysisReport {
   suggestions: string[];
 }
 
-export interface CryptoAnalysisReport {
-  summary: string;
-  analysisBasis: string;
-  direction: { ultraShort: string; shortTerm: string; mid: string; longTerm: string };
-  keyLevels: { support: string[]; resistance: string[] };
-  indicators: string;
-  importantNews: { title: string; sentiment: string; summary: string }[];
-  positionAdvice: { period: string; type: string; entry: string; stopLoss: string; takeProfit: string; riskReward: string }[];
-  riskWarnings: string[];
-  confidence: number;
-  debateSummary?: { bullArgument: string; bearArgument: string; judgeReasoning: string };
-  reasoning?: string;
-  // ⑤ 波动画像（主腿，vol 经样本外验证唯一 skilled）
-  volProfile?: { horizon: string; volState: string; expectedMoveBps: number; trailingPercentile: number; riskBudgetHint: number }[];
-}
-
-// ===== 简报产物（briefing_json，Step 7）=====
-export interface BriefingFragility {
-  score: number;        // 0-100
-  level: string;        // LOW/ELEVATED/HIGH/EXTREME
-  crowding: number;     // 0-1
-  deleveraging: number; // 0-1
-  volState: number;     // 0-1
-  direction: string;    // UP/DOWN/NEUTRAL 脆弱方向
-  headline: string;
-}
-
-export interface BriefingSignal {
-  code: string;
-  label: string;
-  lean: string;         // BULLISH/BEARISH/NEUTRAL/RISK
-  group: string;        // MOMENTUM/MICROSTRUCTURE/POSITIONING/VOLATILITY/NEWS
-  sourceAgent: string;
-  evidence?: string | null;
-}
-
-export interface BriefingWeakLean {
-  horizon: string;
-  lean: string;         // LONG/SHORT/NO_TRADE(无方向态)
-  bullPct: number;
-  rangePct: number;
-  bearPct: number;
-  consequence?: string | null;
-  invalidation?: string | null;
-}
-
-export interface Briefing {
-  fragility: BriefingFragility;
-  signalPanel: { signals: BriefingSignal[] };
-  weakLeans: BriefingWeakLean[];
-}
-
-export interface QuantSignalDecision {
-  horizon: string;
-  direction: string;
-  confidence: number;
-  maxLeverage: number;
-  maxPositionPct: number;
-  riskStatus: string;
-}
-
-export interface QuantLatestSignal {
-  cycleId: string;
-  symbol: string;
-  forecastTime: string;
-  overallDecision: string;
-  riskStatus: string;
-  signals: QuantSignalDecision[];
-}
-
-export interface QuantForecastCycle {
-  id: number;
-  cycleId: string;
-  symbol: string;
-  forecastTime: string;
-  overallDecision: string;
-  riskStatus: string;
-  reportJson: string | null;
-}
-
-export interface QuantForecastVerificationItem {
-  id: number;
-  cycleId: string;
-  symbol: string;
-  horizon: string;
-  predictedDirection: string;
-  predictedConfidence: number;
-  actualPriceAtForecast: string;
-  actualPriceAfter: string;
-  actualChangeBps: number;
-  maxFavorableBps: number | null;
-  maxAdverseBps: number | null;
-  tp1HitFirst: boolean | null;
-  predictionCorrect: boolean;
-  tradeQuality: string;
-  resultSummary: string | null;
-  // 第三步对账：纯方向命中 + vol-state 档对账（老记录可能为 null）
-  directionHit: boolean | null;
-  predictedVolState: string | null;
-  actualVolState: string | null;
-  volStateHit: boolean | null;
-  actualAbsMoveBps: number | null;
-  verifiedAt: string;
-  createdAt: string;
-}
-
-export interface QuantVerificationCycleResult {
-  cycleId: string;
-  symbol: string;
-  forecastTime: string | null;
-  overallDecision: string | null;
-  riskStatus: string | null;
-  verifiedAt: string | null;
-  items: QuantForecastVerificationItem[];
-}
-
-export interface QuantVerificationSummary {
-  total: number;
-  correct: number;
-  accuracyRate: string;
-  cycles: QuantVerificationCycleResult[];
-}
-
-export interface GroupedHeavyCycle {
-  heavy: QuantVerificationCycleResult;
-}
-
-export interface GroupedVerificationSummary {
-  total: number;
-  correct: number;
-  accuracyRate: string;
-  heavyTotal: number;
-  heavyCorrect: number;
-  heavyAccuracyRate: string;
-  groups: GroupedHeavyCycle[];
-}
-
-
-export interface AiAgentRuntimeConfig {
-  apiKey: string;
-  baseUrl: string;
-  model: string;
-}
-
 export interface AiKeyConfig {
   id?: number;
   configName: string;
@@ -751,25 +607,6 @@ export interface AiModelAssignment {
   model: string;
 }
 
-export interface QuantRuntimeConfig {
-  debateJudgeEnabled?: boolean;
-  debateJudgeShadowEnabled?: boolean;
-  factorWeightOverrideEnabled?: boolean;
-}
-
-export interface LatestCryptoResult {
-  status: 'ready' | 'pending';
-  message?: string;
-  forecastTime?: string;
-  cycleId?: string;
-  overallDecision?: string;
-  riskStatus?: string;
-  report?: CryptoAnalysisReport;
-  briefing?: Briefing | null;   // Step 7：脆弱度+信号面板+弱lean；旧 cycle 为 null
-  advisory?: string;            // 降级标注：非交易建议
-  schemaVersion?: number;       // 契约版本
-  lastForecastTime?: string;
-}
 
 export interface ForceOrder {
   id: number;
@@ -791,4 +628,109 @@ export interface GraphNodeMetric {
   errorCount: number;
   meanMs: number;
   maxMs: number;
+}
+
+// ========== P7 研判工作台 ==========
+/** 快照时间线曲线点（/ai/quant/snapshots/series） */
+export interface QuantSnapshotSeriesPoint {
+  closeTime: number;
+  lastPrice: number;
+  h6SigmaBps: number | null;
+  h12SigmaBps: number | null;
+  h24SigmaBps: number | null;
+  volState: string | null;
+  fragilityScore: number | null;
+  fragilityLevel: string | null;
+  /** H6 已验证实际波幅 |return| bps；到期验证才有，曲线尾部 6h 天然缺 */
+  realizedAbsBps: number | null;
+}
+
+/** 深研判（quant_deep_analysis 实体透传） */
+export interface QuantDeepAnalysisView {
+  id: number;
+  symbol: string;
+  closeTime: number;
+  triggerSource: string;
+  snapshotId: number | null;
+  narrative: string;
+  /** {bullPct, rangePct, bearPct} 和=100 */
+  scenariosJson: string;
+  noDirection: boolean;
+  invalidation: string;
+  bullArgument: string;
+  bearArgument: string;
+  judgeReasoning: string;
+  newsContext: string | null;
+  createdAt: string;
+}
+
+/** 记分卡（/ai/quant/scorecard） */
+export interface ScorecardHorizon {
+  horizon: string;
+  samples: number;
+  avgQlike: number;
+  avgBaselineQlike: number;
+  /** (baseline-forecast)/baseline，>0=跑赢基准 */
+  qlikeImprovement: number;
+  qlikeWinRate: number;
+  volStateHitRate: number;
+}
+export interface Scorecard {
+  symbol: string;
+  windowDays: number;
+  runningDays: number;
+  totalSamples: number;
+  horizons: ScorecardHorizon[];
+  note: string | null;
+}
+
+/** 工作台 SSE 事件（与 ChatWorkbenchController 协议一一对应） */
+export type WorkbenchEvent =
+  | { type: 'session'; sessionId: string }
+  | { type: 'agent_start'; node: string; agent: string }
+  | { type: 'token'; text: string }
+  | { type: 'hitl_request'; sessionId: string; symbol: string; reason: string; resumeMessage: string }
+  | { type: 'done'; sessionId: string; answer: string }
+  | { type: 'error'; message: string };
+
+// ========== 策略账户监控 ==========
+/** 已平仓历史（静态字段快照，无实时价字段） */
+export type StrategyClosedPosition = Pick<FuturesPosition,
+  'id' | 'userId' | 'symbol' | 'side' | 'leverage' | 'quantity' | 'entryPrice'
+  | 'margin' | 'fundingFeeTotal' | 'status' | 'closedPrice' | 'closedPnl'
+  | 'createdAt' | 'updatedAt'> & { memo?: string };
+
+export interface StrategyAccountView {
+  strategyId: string;
+  accountUserId: number | null;
+  /** false=sim 未启动或账户异常，整栏渲染空态 */
+  available: boolean;
+  balance: number | null;
+  unrealizedPnl: number | null;
+  equity: number | null;
+  cumPnl: number | null;
+  tradeCount: number;
+  winCount: number;
+  winRate: number;
+  positions: FuturesPosition[];
+  closedPositions: StrategyClosedPosition[];
+}
+
+/** 最新数值快照（quant_snapshot 实体透传，/ai/quant/snapshots/latest） */
+export interface QuantSnapshotView {
+  id: number;
+  symbol: string;
+  closeTime: number;
+  lastPrice: number;
+  /** {H6:{sigmaBps,percentile,tier,volState,lowCut,highCut,regime,regimeConfidence},H12,H24} */
+  volLegsJson: string;
+  regime: string | null;
+  regimeConfidence: number | null;
+  fragilityScore: number;
+  fragilityLevel: string;
+  fragilityDirection: string;
+  fragilityHeadline: string;
+  signalPanelJson: string;
+  qualityFlagsJson: string;
+  createdAt: string;
 }

@@ -21,6 +21,9 @@ public interface FuturesTradingService {
 
     List<FuturesPositionDTO> getUserPositions(Long userId, String symbol);
 
+    /** 已平/强平仓位历史（internal 策略账户监控用）：静态字段快照，不算实时浮盈。 */
+    List<FuturesPositionDTO> getClosedPositions(Long userId, String symbol, int limit);
+
     /** 单笔订单查询（internal 执行轮询用）；订单不存在或不属于该用户抛 ORDER_NOT_FOUND。 */
     FuturesOrderResponse getOrder(Long userId, Long orderId);
 

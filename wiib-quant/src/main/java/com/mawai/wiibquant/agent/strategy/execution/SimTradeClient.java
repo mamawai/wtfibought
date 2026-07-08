@@ -78,6 +78,18 @@ public class SimTradeClient {
                 .retrieve().body(new ParameterizedTypeReference<Result<List<FuturesPositionDTO>>>() {}));
     }
 
+    /** 全 symbol 持仓（策略账户监控页用，不带 symbol 过滤）。 */
+    public List<FuturesPositionDTO> getAllPositions(Long userId) {
+        return unwrap(restClient.get().uri("/internal/futures/{u}/positions", userId)
+                .retrieve().body(new ParameterizedTypeReference<Result<List<FuturesPositionDTO>>>() {}));
+    }
+
+    /** 已平/强平仓位历史，updatedAt 倒序（交易记录 + 收益曲线数据源）。 */
+    public List<FuturesPositionDTO> getClosedPositions(Long userId, int limit) {
+        return unwrap(restClient.get().uri("/internal/futures/{u}/closed-positions?limit={l}", userId, limit)
+                .retrieve().body(new ParameterizedTypeReference<Result<List<FuturesPositionDTO>>>() {}));
+    }
+
     public BigDecimal getBalance(Long userId) {
         Map<String, Object> data = unwrap(restClient.get().uri("/internal/futures/{u}/balance", userId)
                 .retrieve().body(new ParameterizedTypeReference<Result<Map<String, Object>>>() {}));

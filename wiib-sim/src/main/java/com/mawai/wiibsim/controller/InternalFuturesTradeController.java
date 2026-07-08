@@ -76,6 +76,13 @@ public class InternalFuturesTradeController {
         return Result.ok(tradingService.getUserPositions(userId, symbol));
     }
 
+    @GetMapping("/{userId}/closed-positions")
+    public Result<List<FuturesPositionDTO>> closedPositions(@PathVariable Long userId,
+                                                            @RequestParam(required = false) String symbol,
+                                                            @RequestParam(defaultValue = "100") int limit) {
+        return Result.ok(tradingService.getClosedPositions(userId, symbol, limit));
+    }
+
     @GetMapping("/{userId}/balance")
     public Result<Map<String, Object>> balance(@PathVariable Long userId) {
         User user = userService.getById(userId);

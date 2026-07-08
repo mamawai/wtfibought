@@ -1,13 +1,11 @@
 import axios from 'axios';
 import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats, TnManualOrderReq, TnOrderResult, TnAck } from '../types/testnet';
-import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, CryptoAnalysisReport, QuantLatestSignal, QuantForecastCycle, QuantVerificationSummary, GroupedVerificationSummary, ForceOrder, AiKeyConfig, AiModelAssignment, LatestCryptoResult, QuantRuntimeConfig, GraphNodeMetric } from '../types';
+import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, ForceOrder, AiKeyConfig, AiModelAssignment, GraphNodeMetric, WorkbenchEvent, QuantSnapshotView, QuantSnapshotSeriesPoint, QuantDeepAnalysisView, Scorecard, StrategyAccountView } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
   withCredentials: true,
 });
-
-type ChatHistoryItem = { role: string; content: string };
 
 // 请求拦截器：添加Token到Header
 api.interceptors.request.use((config) => {
@@ -165,11 +163,6 @@ export const adminApi = {
     api.post<unknown, string>('/admin/ai-agent/quant/trigger', null, { params: { symbol } }),
   triggerQuantVerification: (symbol: string) =>
     api.post<unknown, string>('/admin/ai-agent/quant/verify/trigger', null, { params: { symbol } }),
-  // 量化运行时开关
-  getQuantConfig: () =>
-    api.get<unknown, QuantRuntimeConfig>('/admin/ai-agent/quant-config'),
-  setQuantConfig: (config: QuantRuntimeConfig) =>
-    api.post<unknown, QuantRuntimeConfig>('/admin/ai-agent/quant-config', config),
 };
 
 // ========== 期权接口 ==========
@@ -255,53 +248,6 @@ const parseChatStreamEvent = (block: string): ChatStreamEvent => {
   return { event, data: dataLines.join('\n') };
 };
 
-const streamChatResponse = async (
-  response: Response,
-  onChunk: (chunk: string) => void,
-) => {
-  if (!response.body) {
-    throw new Error('响应流不可用');
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done }).replace(/\r/g, '');
-
-    let boundary = buffer.indexOf('\n\n');
-    while (boundary >= 0) {
-      const rawEvent = buffer.slice(0, boundary).trim();
-      buffer = buffer.slice(boundary + 2);
-      if (rawEvent) {
-        const event = parseChatStreamEvent(rawEvent);
-        if (event.event === 'chunk' && event.data) {
-          onChunk(event.data);
-        } else if (event.event === 'error') {
-          throw new Error(event.data || '回答失败');
-        } else if (event.event === 'done') {
-          return;
-        }
-      }
-      boundary = buffer.indexOf('\n\n');
-    }
-
-    if (done) {
-      if (buffer.trim()) {
-        const event = parseChatStreamEvent(buffer.trim());
-        if (event.event === 'chunk' && event.data) {
-          onChunk(event.data);
-        } else if (event.event === 'error') {
-          throw new Error(event.data || '回答失败');
-        }
-      }
-      return;
-    }
-  }
-};
-
 export const cryptoApi = {
   // K线数据（直接返回Binance原始数组，不走拦截器解包）
   klines: (symbol = 'BTCUSDT', interval = '1m', limit = 500, endTime?: number) => {
@@ -372,42 +318,96 @@ export const predictionApi = {
 export const aiAgentApi = {
   analyzeBehavior: () =>
     api.post<unknown, BehaviorAnalysisReport>('/ai/analyze-behavior'),
-  analyzeCrypto: (symbol?: string) => api.post<unknown, CryptoAnalysisReport>('/ai/analyze-crypto', symbol ? { symbol } : {}),
-  latestCryptoReport: (symbol?: string) => api.get<unknown, LatestCryptoResult>('/ai/analyze-crypto/latest', { params: { symbol: symbol || 'BTCUSDT' } }),
-  latestSignals: (symbol?: string) => api.get<unknown, QuantLatestSignal>('/ai/quant/signals/latest', { params: { symbol: symbol || 'BTCUSDT' } }),
-  forecasts: (symbol?: string, limit = 20) => api.get<unknown, QuantForecastCycle[]>('/ai/quant/forecasts', { params: { symbol: symbol || 'BTCUSDT', limit } }),
-  verifications: (symbol?: string, limit = 10) => api.get<unknown, QuantVerificationSummary>('/ai/quant/verifications', { params: { symbol: symbol || 'BTCUSDT', limit } }),
-  groupedVerifications: (symbol?: string, limit = 10) => api.get<unknown, GroupedVerificationSummary>('/ai/quant/verifications/grouped', { params: { symbol: symbol || 'BTCUSDT', limit } }),
+};
+
+// ========== P7 研判工作台 ==========
+/** 工作台 SSE：POST /ai/workbench/chat，named events 逐个回调（session/agent_start/token/hitl_request/done/error） */
+const streamWorkbenchEvents = async (
+  response: Response,
+  onEvent: (e: WorkbenchEvent) => void,
+) => {
+  if (!response.body) throw new Error('响应流不可用');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  const dispatch = (rawEvent: string) => {
+    const { event, data } = parseChatStreamEvent(rawEvent);
+    if (!data) return;
+    try {
+      const payload = JSON.parse(data);
+      onEvent({ type: event, ...payload } as WorkbenchEvent);
+    } catch {
+      // 非 JSON 数据块（心跳等）忽略
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done }).replace(/\r/g, '');
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const rawEvent = buffer.slice(0, boundary).trim();
+      buffer = buffer.slice(boundary + 2);
+      if (rawEvent) dispatch(rawEvent);
+      boundary = buffer.indexOf('\n\n');
+    }
+    if (done) {
+      if (buffer.trim()) dispatch(buffer.trim());
+      return;
+    }
+  }
+};
+
+export const workbenchApi = {
   chat: async (
+    sessionId: string | null,
     message: string,
-    context: string,
-    history: ChatHistoryItem[],
-    onChunk: (chunk: string) => void,
+    onEvent: (e: WorkbenchEvent) => void,
     signal?: AbortSignal,
   ) => {
     const token = getToken();
-    const response = await fetch('/api/ai/chat', {
+    const response = await fetch('/api/ai/workbench/chat', {
       method: 'POST',
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { satoken: token } : {}),
       },
-      body: JSON.stringify({ message, context, history }),
+      body: JSON.stringify({ sessionId, message }),
       signal,
     });
-
     const contentType = response.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
       const payload = await response.json() as { code?: number; msg?: string };
       throw new Error(payload.msg || '请求失败');
     }
-    if (!response.ok) {
-      throw new Error(`请求失败: ${response.status}`);
-    }
-
-    await streamChatResponse(response, onChunk);
+    if (!response.ok) throw new Error(`请求失败: ${response.status}`);
+    await streamWorkbenchEvents(response, onEvent);
   },
+  approve: (sessionId: string, approved: boolean) =>
+    api.post<unknown, { ok: boolean; message?: string }>('/ai/workbench/approve', { sessionId, approved }),
+};
+
+export const quantApi = {
+  latestSnapshot: (symbol?: string) =>
+    api.get<unknown, QuantSnapshotView>('/ai/quant/snapshots/latest', { params: { symbol: symbol || 'BTCUSDT' } }),
+  snapshotSeries: (symbol?: string, hours = 24) =>
+    api.get<unknown, QuantSnapshotSeriesPoint[]>('/ai/quant/snapshots/series', { params: { symbol: symbol || 'BTCUSDT', hours } }),
+  latestAnalysis: (symbol?: string) =>
+    api.get<unknown, QuantDeepAnalysisView>('/ai/quant/analysis/latest', { params: { symbol: symbol || 'BTCUSDT' } }),
+  analysisList: (symbol?: string, limit = 20) =>
+    api.get<unknown, QuantDeepAnalysisView[]>('/ai/quant/analysis/list', { params: { symbol: symbol || 'BTCUSDT', limit } }),
+  scorecard: (symbol?: string, days = 7) =>
+    api.get<unknown, Scorecard>('/ai/quant/scorecard', { params: { symbol: symbol || 'BTCUSDT', days } }),
+};
+
+// ========== 策略账户监控 ==========
+export const strategyAccountApi = {
+  overview: () => api.get<unknown, StrategyAccountView[]>('/ai/strategies/overview'),
+  /** 整仓市价平（后端仅 userId=1 放行） */
+  close: (strategyId: string, positionId: number) =>
+    api.post<unknown, void>(`/ai/strategies/${strategyId}/close`, { positionId }),
 };
 
 // ========== Testnet 模拟盘监测 ==========
