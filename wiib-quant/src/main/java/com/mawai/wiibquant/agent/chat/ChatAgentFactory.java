@@ -42,6 +42,7 @@ public class ChatAgentFactory {
     private final MarketToolkit marketToolkit;
     private final QuantForecastToolkit quantForecastToolkit;
     private final NewsToolkit newsToolkit;
+    private final DeepAnalysisToolkit deepAnalysisToolkit;
     private final BaseCheckpointSaver checkpointSaver;
     private final int runModelCallLimit;
 
@@ -51,12 +52,14 @@ public class ChatAgentFactory {
                             MarketToolkit marketToolkit,
                             QuantForecastToolkit quantForecastToolkit,
                             NewsToolkit newsToolkit,
+                            DeepAnalysisToolkit deepAnalysisToolkit,
                             BaseCheckpointSaver checkpointSaver,
                             @Value("${quant.workbench.run-model-call-limit:12}") int runModelCallLimit) {
         this.runtimeManager = runtimeManager;
         this.marketToolkit = marketToolkit;
         this.quantForecastToolkit = quantForecastToolkit;
         this.newsToolkit = newsToolkit;
+        this.deepAnalysisToolkit = deepAnalysisToolkit;
         this.checkpointSaver = checkpointSaver;
         this.runModelCallLimit = runModelCallLimit;
     }
@@ -131,11 +134,14 @@ public class ChatAgentFactory {
         ReactAgent supervisorMain = ReactAgent.builder()
                 .name("workbench_supervisor")
                 .model(deep)
+                .methodTools(deepAnalysisToolkit)
                 .instruction("""
                         你是加密货币研判工作台的总调度。根据用户问题决定调用哪些专家 agent：
                         - 行情/持仓/脆弱度/期权 → market_agent
                         - 波动率预测/regime/预测战绩 → quant_agent
                         - 新闻/事件 → news_agent
+                        - 用户明确要"深度研判/全面分析"时 → 调 run_deep_analysis 工具（昂贵，需用户确认：
+                          返回 PENDING_APPROVAL 时告知用户确认卡片已弹出，等确认后你会被再次唤起执行）
                         综合专家结果后用精炼中文回答。原则：
                         1. 结论必须可追溯到专家给的数据，不编造
                         2. 永不给出方向性投资建议（本系统方向预测无 edge，这是统计验证过的事实）

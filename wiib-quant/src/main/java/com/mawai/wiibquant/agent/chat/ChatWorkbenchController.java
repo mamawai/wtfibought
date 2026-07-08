@@ -37,12 +37,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ChatWorkbenchController {
 
     private final ChatAgentFactory chatAgentFactory;
+    private final ApprovalRegistry approvalRegistry;
+    private final ChatMemoryService chatMemoryService;
     private final ExecutorService streamExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     @Data
     public static class WorkbenchChatRequest {
         private String sessionId; // 空=新会话
         private String message;
+    }
+
+    @Data
+    public static class ApprovalRequest {
+        private String sessionId;
+        private boolean approved;
     }
 
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -67,19 +75,43 @@ public class ChatWorkbenchController {
         });
         emitter.onError(ex -> closed.set(true));
 
-        streamExecutor.submit(() -> run(emitter, closed, sessionId, request.getMessage()));
+        streamExecutor.submit(() -> run(emitter, closed, userId, sessionId, request.getMessage()));
         return emitter;
     }
 
-    private void run(SseEmitter emitter, AtomicBoolean closed, String sessionId, String message) {
+    /** HITL 确认回执：approve 后前端自动补发"请继续执行深度研判"，agent 重调工具时闸门放行。 */
+    @PostMapping("/approve")
+    @Operation(summary = "贵操作确认（HITL）")
+    public Map<String, Object> approve(@RequestBody ApprovalRequest request) {
+        StpUtil.checkLogin();
+        long userId = StpUtil.getLoginIdAsLong();
+        String sessionId = request.getSessionId();
+        if (sessionId == null || !sessionId.startsWith("wb-" + userId + "-")) {
+            return Map.of("ok", false, "message", "会话不存在或无权限");
+        }
+        if (request.isApproved()) {
+            approvalRegistry.approve(sessionId);
+        } else {
+            approvalRegistry.reject(sessionId);
+        }
+        return Map.of("ok", true);
+    }
+
+    private void run(SseEmitter emitter, AtomicBoolean closed, long userId, String sessionId, String message) {
         StringBuilder answer = new StringBuilder();
         String[] lastNode = {""};
         try {
             send(emitter, closed, "session", new JSONObject().fluentPut("sessionId", sessionId));
+            // 活跃会话槽：DeepAnalysisToolkit 的 HITL 闸门经此拿 sessionId（ToolContext 桥的兜底）
+            approvalRegistry.markActive(sessionId);
+
+            // 跨会话记忆前缀：让 agent 记得用户常看什么、上次聊到哪
+            String memory = chatMemoryService.recall(userId);
+            String enriched = memory.isEmpty() ? message : memory + "\n用户问题：" + message;
 
             var graph = chatAgentFactory.chatGraph();
             RunnableConfig config = RunnableConfig.builder().threadId(sessionId).build();
-            graph.stream(Map.of("messages", List.of(new UserMessage(message))), config)
+            graph.stream(Map.of("messages", List.of(new UserMessage(enriched))), config)
                     .doOnNext(output -> {
                         if (closed.get()) {
                             return;
@@ -103,11 +135,22 @@ public class ChatWorkbenchController {
                     })
                     .blockLast();
 
+            // HITL：本轮 agent 触发了贵操作待确认 → 弹确认卡（approve 后前端自动补发继续指令）
+            approvalRegistry.drainPending(sessionId).ifPresent(pendingRequest ->
+                    send(emitter, closed, "hitl_request", new JSONObject()
+                            .fluentPut("sessionId", sessionId)
+                            .fluentPut("symbol", pendingRequest.symbol())
+                            .fluentPut("reason", pendingRequest.reason())
+                            .fluentPut("resumeMessage", "已确认，请继续执行深度研判")));
+
             if (!closed.get()) {
                 send(emitter, closed, "done", new JSONObject()
                         .fluentPut("sessionId", sessionId)
                         .fluentPut("answer", answer.toString()));
                 emitter.complete();
+                // 跨会话记忆异步写入（规则化提取，失败不影响对话）
+                String finalAnswer = answer.toString();
+                streamExecutor.submit(() -> chatMemoryService.remember(userId, message, finalAnswer));
             }
         } catch (Exception e) {
             log.error("[Workbench] 对话失败 sessionId={}", sessionId, e);

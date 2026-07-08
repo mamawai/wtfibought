@@ -2,18 +2,27 @@ package com.mawai.wiibquant.agent.chat;
 
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.postgresql.PostgresSaver;
+import com.alibaba.cloud.ai.graph.store.Store;
+import com.alibaba.cloud.ai.graph.store.stores.DatabaseStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import javax.sql.DataSource;
 import java.net.URI;
 
 /**
- * 工作台会话 checkpoint 配置：PostgresSaver 复用主库连接（解析 jdbc url），框架自动建 checkpoint 表。
- * 会话按 threadId=sessionId 持久化——断连续聊 + P5 HITL interrupt/resume 的共同地基。
+ * 工作台持久化配置：PostgresSaver（会话 checkpoint，断连续聊地基）+ DatabaseStore（跨会话长期记忆），
+ * 都落主库 PG，框架自动建表。
  */
 @Configuration
 public class ChatCheckpointConfig {
+
+    /** 跨会话长期记忆存储（P5）：复用 Spring 主 DataSource，框架自动建 store 表。 */
+    @Bean
+    public Store workbenchStore(DataSource dataSource) {
+        return new DatabaseStore(dataSource);
+    }
 
     @Bean
     public BaseCheckpointSaver workbenchCheckpointSaver(

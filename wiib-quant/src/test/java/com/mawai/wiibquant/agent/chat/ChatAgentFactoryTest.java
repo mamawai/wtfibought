@@ -23,7 +23,7 @@ class ChatAgentFactoryTest {
                 mock(ChatModel.class), mock(ChatModel.class), mock(ChatModel.class), mock(ChatModel.class)));
         return new ChatAgentFactory(runtimeManager,
                 mock(MarketToolkit.class), mock(QuantForecastToolkit.class), mock(NewsToolkit.class),
-                mock(BaseCheckpointSaver.class), 12);
+                mock(DeepAnalysisToolkit.class), mock(BaseCheckpointSaver.class), 12);
     }
 
     @Test
