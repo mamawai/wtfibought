@@ -34,7 +34,7 @@ class QuantSnapshotWorkflowTest {
     }
 
     private CompiledGraph graph() throws Exception {
-        return QuantSnapshotWorkflow.build(snapshotService, deepAnalysisService, null);
+        return QuantSnapshotWorkflow.build(snapshotService, deepAnalysisService, null, null);
     }
 
     @Test

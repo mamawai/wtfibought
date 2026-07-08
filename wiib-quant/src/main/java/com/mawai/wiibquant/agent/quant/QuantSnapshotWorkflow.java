@@ -8,13 +8,13 @@ import com.alibaba.cloud.ai.graph.StateGraph;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.alibaba.cloud.ai.graph.state.strategy.ReplaceStrategy;
+import com.alibaba.cloud.ai.graph.GraphLifecycleListener;
 import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibcommon.entity.QuantSnapshot;
 import com.mawai.wiibquant.agent.analysis.DeepAnalysisService;
-import com.mawai.wiibquant.agent.quant.observe.NodeObservationWrapper;
 import com.mawai.wiibquant.agent.toolkit.QuantSnapshotService;
-import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.observation.ObservationRegistry;
 
 import java.util.HashMap;
 import java.util.List;
@@ -36,12 +36,14 @@ import static com.alibaba.cloud.ai.graph.action.AsyncNodeAction.node_async;
  * Bull∥Bear 用 addEdge(String, List) 原生 fan-out——框架内部走 ParallelNode，替代旧手搓虚拟线程。
  * state 只传标量与 JSON 字符串（框架 deepCopy 会破坏 record 的历史坑）；重对象走 MarketDataService 缓存共享。
  * 深研判任一 LLM 步失败只缺席本次研判（占位/null 降级），快照时序不受影响。
+ * 观测走框架原生三层（graph/node/edge，P8 替换手搓 wrapper），observationRegistry/listener 可空（测试）。
  */
 public class QuantSnapshotWorkflow {
 
     public static CompiledGraph build(QuantSnapshotService snapshotService,
                                       DeepAnalysisService deepAnalysisService,
-                                      MeterRegistry meterRegistry) throws Exception {
+                                      ObservationRegistry observationRegistry,
+                                      GraphLifecycleListener observationListener) throws Exception {
         // ===== 快照段（零 LLM）=====
         NodeAction buildNode = state -> {
             String symbol = symbol(state);
@@ -90,20 +92,13 @@ public class QuantSnapshotWorkflow {
         };
 
         StateGraph graph = new StateGraph(keyStrategies())
-                .addNode("build_snapshot", node_async(
-                        NodeObservationWrapper.wrap("build_snapshot", buildNode, meterRegistry)))
-                .addNode("persist_snapshot", node_async(
-                        NodeObservationWrapper.wrap("persist_snapshot", persistNode, meterRegistry)))
-                .addNode("news_context", node_async(
-                        NodeObservationWrapper.wrap("news_context", newsContextNode, meterRegistry)))
-                .addNode("bull", node_async(
-                        NodeObservationWrapper.wrap("bull", bullNode, meterRegistry)))
-                .addNode("bear", node_async(
-                        NodeObservationWrapper.wrap("bear", bearNode, meterRegistry)))
-                .addNode("judge", node_async(
-                        NodeObservationWrapper.wrap("judge", judgeNode, meterRegistry)))
-                .addNode("persist_analysis", node_async(
-                        NodeObservationWrapper.wrap("persist_analysis", persistAnalysisNode, meterRegistry)));
+                .addNode("build_snapshot", node_async(buildNode))
+                .addNode("persist_snapshot", node_async(persistNode))
+                .addNode("news_context", node_async(newsContextNode))
+                .addNode("bull", node_async(bullNode))
+                .addNode("bear", node_async(bearNode))
+                .addNode("judge", node_async(judgeNode))
+                .addNode("persist_analysis", node_async(persistAnalysisNode));
 
         graph.addEdge(START, "build_snapshot");
         graph.addEdge("build_snapshot", "persist_snapshot");
@@ -120,7 +115,13 @@ public class QuantSnapshotWorkflow {
         graph.addEdge("persist_analysis", END);
 
         // 空 SaverConfig：禁用默认 MemorySaver（无容量上限会 OOM，历史教训）
-        return graph.compile(CompileConfig.builder().saverConfig(SaverConfig.builder().build()).build());
+        CompileConfig.Builder compileConfig = CompileConfig.builder()
+                .saverConfig(SaverConfig.builder().build());
+        if (observationRegistry != null && observationListener != null) {
+            compileConfig.observationRegistry(observationRegistry)
+                    .withLifecycleListener(observationListener);
+        }
+        return graph.compile(compileConfig.build());
     }
 
     private static KeyStrategyFactory keyStrategies() {

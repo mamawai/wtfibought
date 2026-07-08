@@ -134,32 +134,49 @@ flowchart TD
 
 ---
 
-## AI 量化链路
+## AI 量化链路（双轨研判工作台）
+
+定位：**卖点不是"预测准"，是"工程可信"**——方向预测已被 walk-forward + 置换检验证伪（不做），vol 预测/vol-state 经统计验证有 skill（工具化 + 线上记分卡公开战绩）。
+
+### 定时轨（StateGraph，图由 MermaidGenerator 自动生成）
 
 ```mermaid
-flowchart TB
-    S["QuantForecastScheduler<br/>heavy 30min"]
-    C["collect_data<br/>Binance / Deribit / News / Local flow"]
-    B["build_features<br/>FeatureSnapshot + qualityFlags"]
-    R["regime_review<br/>shallow LLM x3"]
-    F["run_factors<br/>5 agents x 3 horizons"]
-    J["run_judges<br/>HorizonJudge"]
-    D["debate_judge<br/>default disabled"]
-    G["risk_gate<br/>risk clipping"]
-    O["generate_report<br/>hard report + text polish"]
-    P[("quant_* tables")]
-    E(("QuantCycleCompleteEvent"))
-
-    S --> C --> B --> R --> F --> J --> D --> G --> O --> P --> E
+---
+title: 定时轨：数值快照 + 深研判
+---
+flowchart TD
+	__START__((start))
+	__END__((stop))
+	build_snapshot("build_snapshot<br/>零LLM: vol三腿(PIT档界)+regime+脆弱度+信号面板")
+	persist_snapshot("persist_snapshot<br/>每5m落库,记分卡预测点")
+	news_context("news_context<br/>新闻LLM浓缩")
+	bull("bull 辩手")
+	bear("bear 辩手")
+	judge("judge<br/>研判叙事+情景分布+失效条件+无方向态")
+	persist_analysis("persist_analysis")
+	condition1{"gate: 1h定频/哨兵插队/手动"}
+	__START__ --> build_snapshot
+	build_snapshot --> persist_snapshot
+	persist_snapshot -.-> condition1
+	condition1 -.->|deep| news_context
+	condition1 -.->|end| __END__
+	news_context --> bull
+	news_context --> bear
+	bull --> judge
+	bear --> judge
+	judge --> persist_analysis
+	persist_analysis --> __END__
 ```
 
-常规 heavy 路径在 DebateJudge 关闭时包含 7 次 LLM 调用：
+- 快照段每 5m 零 LLM；Bull∥Bear 走框架原生并行边（fan-out/fan-in，内部 ParallelNode）。
+- 深研判每轮 4 次 LLM 调用（新闻+Bull+Bear+Judge），1h 定频基线 + 哨兵插队（15min 冷却）——约 200 调用/天，较旧管线降一个量级。
+- 验证闭环：每小时对账到期预测点（QLIKE vs naive 基准 + vol-state 命中，PIT 档界随快照入库），`/quant/scorecard` 出战绩。
 
-- `RegimeReviewNode`：3 次。
-- `NewsEventAgent`：3 次。
-- `GenerateReportNode`：1 次。
+### 对话轨（SupervisorAgent 多 agent 编排）
 
-light cycle 不完整重跑 Graph。它会重新采集、重建特征、跑纯 Java 因子、复用或局部刷新新闻票，然后修正父 heavy。下游读取 latest heavy，因此 light 通过回写父 heavy 的 forecast/signal 生效。
+`POST /api/ai/workbench/chat`（SSE 流式，agent 调度过程可视化）：`workbench_supervisor`（深模型）动态调度 `market_agent` / `quant_agent` / `news_agent`（浅模型，深浅分层省成本），全部工具与定时轨共用一个工具层。横切：PostgresSaver 断点续聊、DatabaseStore 跨会话记忆、`run_deep_analysis` 贵操作 HITL 确认闸、ModelRetry/Fallback + CallLimit + Summarization。
+
+同一工具层的第三个消费方：**MCP server**（SSE 端点）——Claude Desktop 等任意 MCP 客户端可直连调用只读量化工具六件。
 
 ---
 
