@@ -600,11 +600,11 @@ export interface AiKeyConfig {
   enabled?: boolean;
 }
 
+// 功能位→LLM配置的指针：更换LLM只改configId，模型名归属AiKeyConfig
 export interface AiModelAssignment {
   id?: number;
   functionName: string;
   configId: number;
-  model: string;
 }
 
 

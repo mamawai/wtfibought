@@ -12,9 +12,10 @@ import { Play, Square, RefreshCw, Database, Calendar, Clock, Plus, Trash2, Penci
 
 const FUNCTION_LABELS: Record<string, string> = {
   behavior: '行为分析',
-  quant: '量化分析',
-  chat: '追问对话',
-  reflection: '反思验证',
+  quant: '量化研判(深)',
+  'quant-light': '对话专家(浅)',
+  chat: '对话兜底',
+  sim: '模拟行情生成',
 };
 const MODEL_ASSIGNMENT_FUNCTIONS = new Set(Object.keys(FUNCTION_LABELS));
 
@@ -124,8 +125,9 @@ export function Admin() {
     try {
       await adminApi.saveAiKey(editingKey);
       setEditingKey(null);
-      await fetchAiKeys();
-      toast('API Key 已保存', 'success');
+      // 加第一条配置时后端会自动种出全部功能位分配，两块都要重拉
+      await Promise.all([fetchAiKeys(), fetchAssignments()]);
+      toast('LLM 配置已保存', 'success');
     } catch (e) {
       toast((e as Error).message || '保存失败', 'error');
     } finally {
@@ -146,18 +148,18 @@ export function Admin() {
     }
   };
 
-  // ========== 模型分配操作 ==========
+  // ========== 更换 LLM 操作 ==========
 
-  const updateDraft = (functionName: string, field: 'configId' | 'model', value: string | number) => {
+  const updateDraft = (functionName: string, configId: number) => {
     setAssignmentsDraft(prev =>
-      prev.map(a => a.functionName === functionName ? { ...a, [field]: value } : a)
+      prev.map(a => a.functionName === functionName ? { ...a, configId } : a)
     );
   };
 
   const handleSaveAssignments = async () => {
     for (const a of assignmentsDraft) {
-      if (!a.configId || !a.model?.trim()) {
-        toast(`${FUNCTION_LABELS[a.functionName] || a.functionName} 配置不完整`, 'error');
+      if (!a.configId) {
+        toast(`${FUNCTION_LABELS[a.functionName] || a.functionName} 未选择 LLM`, 'error');
         return;
       }
     }
@@ -165,7 +167,7 @@ export function Admin() {
     try {
       await adminApi.saveAssignments(assignmentsDraft);
       await fetchAssignments();
-      toast('模型分配已保存并生效', 'success');
+      toast('LLM 已切换并生效', 'success');
     } catch (e) {
       toast((e as Error).message || '保存失败', 'error');
     } finally {
@@ -252,11 +254,11 @@ export function Admin() {
             </CardContent>
           </Card>
 
-          {/* ========== AI Key 管理 ========== */}
+          {/* ========== 配置 LLM（一条=key+baseUrl+model） ========== */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">API Key 管理</CardTitle>
+                <CardTitle className="text-lg">配置 LLM</CardTitle>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={fetchAiKeys} disabled={aiKeysLoading}>
                     <RefreshCw className={`w-3.5 h-3.5 mr-1 ${aiKeysLoading ? 'animate-spin' : ''}`} /> 刷新
@@ -268,8 +270,9 @@ export function Admin() {
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
+              <div className="text-xs text-muted-foreground">一条配置 = 一个具体 LLM（API Key + Base URL + 模型名）；同一 Key 不同模型就建多条。</div>
               {aiKeys.length === 0 && !aiKeysLoading && (
-                <div className="text-sm text-muted-foreground text-center py-4">暂无 API Key 配置</div>
+                <div className="text-sm text-muted-foreground text-center py-4">暂无 LLM 配置</div>
               )}
               {aiKeys.map(key => (
                 <div key={key.id} className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
@@ -293,7 +296,7 @@ export function Admin() {
               {/* 编辑/新增表单 */}
               {editingKey && (
                 <div className="p-4 rounded-lg border-2 border-primary/30 bg-primary/5 space-y-3">
-                  <div className="text-sm font-bold">{editingKey.id ? '编辑 API Key' : '新增 API Key'}</div>
+                  <div className="text-sm font-bold">{editingKey.id ? '编辑 LLM 配置' : '新增 LLM 配置'}</div>
                   <Input
                     value={editingKey.configName}
                     onChange={e => setEditingKey(prev => prev ? { ...prev, configName: e.target.value } : prev)}
@@ -325,37 +328,31 @@ export function Admin() {
             </CardContent>
           </Card>
 
-          {/* ========== 模型分配 ========== */}
+          {/* ========== 更换 LLM（功能位→配置指针，下拉即换） ========== */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">模型分配</CardTitle>
+                <CardTitle className="text-lg">更换 LLM</CardTitle>
                 <Button variant="outline" size="sm" onClick={fetchAssignments} disabled={assignmentsLoading}>
                   <RefreshCw className={`w-3.5 h-3.5 mr-1 ${assignmentsLoading ? 'animate-spin' : ''}`} /> 刷新
                 </Button>
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="text-xs text-muted-foreground">每个功能独立选择 API Key 和模型，保存后立即生效。</div>
+              <div className="text-xs text-muted-foreground">每个功能位下拉选择要用的 LLM，保存后立即生效；模型名在上方「配置 LLM」维护。</div>
               {assignmentsDraft.map(a => (
                 <div key={a.functionName} className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3 p-3 rounded-lg border bg-muted/30">
-                  <span className="text-sm font-bold min-w-[5rem]">{FUNCTION_LABELS[a.functionName] || a.functionName}</span>
+                  <span className="text-sm font-bold min-w-[6rem]">{FUNCTION_LABELS[a.functionName] || a.functionName}</span>
                   <select
                     className="w-full md:flex-1 h-9 rounded-md border bg-background px-3 text-sm"
                     value={a.configId || ''}
-                    onChange={e => updateDraft(a.functionName, 'configId', Number(e.target.value))}
+                    onChange={e => updateDraft(a.functionName, Number(e.target.value))}
                   >
-                    <option value="">选择 API Key</option>
+                    <option value="">选择 LLM</option>
                     {aiKeys.map(k => (
-                      <option key={k.id} value={k.id}>{k.configName} ({maskKey(k.apiKey)})</option>
+                      <option key={k.id} value={k.id} disabled={!k.model}>{k.configName}（{k.model || '未设模型'}）</option>
                     ))}
                   </select>
-                  <Input
-                    className="w-full md:flex-1"
-                    value={a.model || ''}
-                    onChange={e => updateDraft(a.functionName, 'model', e.target.value)}
-                    placeholder="模型名，如 gpt-4o"
-                  />
                 </div>
               ))}
               <Button onClick={() => void handleSaveAssignments()} disabled={actionLoading === 'saveAssignments' || assignmentsDraft.length === 0}>

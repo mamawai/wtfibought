@@ -1014,29 +1014,27 @@ CREATE TABLE IF NOT EXISTS ai_runtime_config (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-COMMENT ON TABLE ai_runtime_config IS 'AI API Key配置（支持多个供应商）';
+COMMENT ON TABLE ai_runtime_config IS 'LLM配置（一条=一个具体LLM：key+baseUrl+model，支持多条）';
 COMMENT ON COLUMN ai_runtime_config.config_name IS '配置名称，如 OpenAI、DeepSeek';
 COMMENT ON COLUMN ai_runtime_config.api_key IS 'API Key';
-COMMENT ON COLUMN ai_runtime_config.base_url IS 'OpenAI Compatible Base URL';
-COMMENT ON COLUMN ai_runtime_config.model IS '默认模型名称（保留字段，实际模型由分配表决定）';
+COMMENT ON COLUMN ai_runtime_config.base_url IS 'OpenAI Compatible Base URL（不含/v1后缀，quant/sim 均自拼 /v1/chat/completions）';
+COMMENT ON COLUMN ai_runtime_config.model IS '该LLM的模型名（功能位切到此配置即用此模型）';
 COMMENT ON COLUMN ai_runtime_config.enabled IS '是否启用';
 
 -- ============================================
--- AI 模型分配表（5个功能独立选择 API Key + 模型）
+-- 功能位分配表（功能位→LLM配置的指针，更换LLM=改config_id）
 -- ============================================
 CREATE TABLE IF NOT EXISTS ai_model_assignment (
     id BIGSERIAL PRIMARY KEY,
     function_name VARCHAR(32) NOT NULL,
     config_id BIGINT NOT NULL,
-    model VARCHAR(128) NOT NULL,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uk_ai_ma_function UNIQUE (function_name)
 );
 
-COMMENT ON TABLE ai_model_assignment IS 'AI模型分配（每个功能独立配置）';
-COMMENT ON COLUMN ai_model_assignment.function_name IS '功能名称：behavior/quant/chat/reflection';
+COMMENT ON TABLE ai_model_assignment IS '功能位→LLM配置指针（模型名归属ai_runtime_config）';
+COMMENT ON COLUMN ai_model_assignment.function_name IS '功能名称：behavior/quant/quant-light/chat/sim（sim=wiib-sim行情/新闻生成，自读DB）';
 COMMENT ON COLUMN ai_model_assignment.config_id IS '关联ai_runtime_config.id';
-COMMENT ON COLUMN ai_model_assignment.model IS '使用的模型名称';
 
 -- 旧版曾保留 trading 模型槽位；生产 AI Trader 已走确定性执行器。
 DELETE FROM ai_model_assignment WHERE function_name = 'trading';

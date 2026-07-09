@@ -6,11 +6,11 @@ import com.mawai.wiibcommon.entity.AiModelAssignment;
 import com.mawai.wiibcommon.entity.AiRuntimeConfig;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.util.Result;
+import com.mawai.wiibcommon.mapper.AiModelAssignmentMapper;
+import com.mawai.wiibcommon.mapper.AiRuntimeConfigMapper;
 import com.mawai.wiibquant.agent.analysis.VolVerificationService;
 import com.mawai.wiibquant.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibquant.agent.research.ForecastHorizon;
-import com.mawai.wiibquant.mapper.AiModelAssignmentMapper;
-import com.mawai.wiibquant.mapper.AiRuntimeConfigMapper;
 import com.mawai.wiibquant.task.QuantSnapshotScheduler;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -90,18 +90,22 @@ public class AiAgentAdminController {
         }
 
         // 管理端配置修改频率很低，直接全量刷新最稳，确保主图和fallback图缓存都失效
-        aiAgentRuntimeManager.refresh();
+        if (!aiAgentRuntimeManager.refresh()) {
+            return Result.fail("配置已保存，但AI运行时刷新失败（详见服务日志），当前沿用变更前模型运行");
+        }
         return Result.ok(config);
     }
 
     @DeleteMapping("/keys/{id}")
-    @Operation(summary = "删除API Key配置")
+    @Operation(summary = "删除LLM配置")
     public Result<Void> deleteKey(@PathVariable Long id) {
         if (aiAgentRuntimeManager.isConfigReferenced(id)) {
-            return Result.fail("该API Key正被模型分配引用，无法删除");
+            return Result.fail("该LLM配置正被功能位引用，无法删除");
         }
         configMapper.deleteById(id);
-        aiAgentRuntimeManager.refresh();
+        if (!aiAgentRuntimeManager.refresh()) {
+            return Result.fail("已删除，但AI运行时刷新失败（详见服务日志），当前沿用变更前模型运行");
+        }
         return Result.ok(null);
     }
 
@@ -116,7 +120,7 @@ public class AiAgentAdminController {
     }
 
     @PostMapping("/assignments")
-    @Operation(summary = "保存模型分配并刷新运行时")
+    @Operation(summary = "更换功能位LLM（只改指针，模型名随所选配置）并刷新运行时")
     public Result<Void> saveAssignments(@RequestBody List<AssignmentRequest> assignments) {
         for (AssignmentRequest req : assignments) {
             if (req.getFunctionName() == null) {
@@ -125,30 +129,34 @@ public class AiAgentAdminController {
             if (!AiAgentRuntimeManager.isManagedFunction(req.getFunctionName())) {
                 continue;
             }
-            if (req.getConfigId() == null || req.getModel() == null || req.getModel().isBlank()) {
+            if (req.getConfigId() == null) {
                 return Result.fail("参数不完整: " + req.getFunctionName());
             }
-            // 校验configId存在
-            if (configMapper.selectById(req.getConfigId()) == null) {
-                return Result.fail("API Key不存在(id=" + req.getConfigId() + ")");
+            AiRuntimeConfig target = configMapper.selectById(req.getConfigId());
+            if (target == null) {
+                return Result.fail("LLM配置不存在(id=" + req.getConfigId() + ")");
+            }
+            // 空model的配置建不出模型（历史遗留行可能缺model），提前拦截别等refresh才炸
+            if (target.getModel() == null || target.getModel().isBlank()) {
+                return Result.fail("LLM配置'" + target.getConfigName() + "'缺模型名，请先在「配置LLM」里补全");
             }
 
             AiModelAssignment existing = assignmentMapper.selectByFunction(req.getFunctionName());
             if (existing != null) {
                 existing.setConfigId(req.getConfigId());
-                existing.setModel(req.getModel().trim());
                 existing.setUpdatedAt(LocalDateTime.now());
                 assignmentMapper.updateById(existing);
             } else {
                 AiModelAssignment a = new AiModelAssignment();
                 a.setFunctionName(req.getFunctionName());
                 a.setConfigId(req.getConfigId());
-                a.setModel(req.getModel().trim());
                 a.setUpdatedAt(LocalDateTime.now());
                 assignmentMapper.insert(a);
             }
         }
-        aiAgentRuntimeManager.refresh();
+        if (!aiAgentRuntimeManager.refresh()) {
+            return Result.fail("分配已保存，但AI运行时刷新失败（详见服务日志），当前沿用变更前模型运行");
+        }
         return Result.ok(null);
     }
 
@@ -208,7 +216,6 @@ public class AiAgentAdminController {
     public static class AssignmentRequest {
         private String functionName;
         private Long configId;
-        private String model;
     }
 
 }

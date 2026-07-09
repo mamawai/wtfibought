@@ -373,13 +373,6 @@ cp wiib-sim/src/main/resources/application.example.yml \
 
 ```yaml
 spring:
-  ai:
-    openai:
-      api-key: ${AI_API_KEY:sk-xxx}
-      base-url: https://api.xxx.com
-      chat:
-        options:
-          model: your-model
   datasource:
     url: jdbc:postgresql://localhost:5432/wiib?reWriteBatchedInserts=true
     username: postgres
@@ -396,7 +389,22 @@ linuxdo:
   redirect-uri: https://your-domain.com/login
 ```
 
-AI 配置只在 `ai_runtime_config` 表为空时作为种子值写入数据库。之后可以通过 Admin 动态管理 API Key 和模型分配。
+AI 配置不在 yml：唯一来源是 DB（`ai_runtime_config` + `ai_model_assignment`）。首次部署启动后，用管理员账号进 Admin 页添加 LLM 配置（API Key + Base URL + 模型名，Base URL 不含 `/v1` 后缀）并给各功能位下拉分配，即时生效、无需重启。
+
+wiib-quant 的 `application.yml` 必须关闭 Spring AI 的 OpenAI 自动装配（6 类开关都要关，否则缺 api-key 会拒绝启动）：
+
+```yaml
+spring:
+  ai:
+    model:
+      chat: none
+      embedding: none
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none
+```
 
 策略实盘执行（`wiib-quant` 的 `application.yml`，默认全关）：
 
