@@ -386,7 +386,7 @@ CREATE TABLE IF NOT EXISTS user_buff (
     buff_type VARCHAR(32) NOT NULL,
     buff_name VARCHAR(64) NOT NULL,
     rarity VARCHAR(16) NOT NULL,
-    extra_data text,
+    extra_data jsonb,
     draw_date DATE NOT NULL,
     expire_at TIMESTAMP NOT NULL,
     is_used BOOLEAN DEFAULT FALSE,
@@ -793,11 +793,8 @@ CREATE TABLE IF NOT EXISTS quant_forecast_cycle (
     snapshot_json JSONB,
     report_json JSONB,
     debate_json JSONB,
-    briefing_json JSONB,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
--- 已有库补列（init.sql 用 CREATE TABLE IF NOT EXISTS 不重建表，需手动执行一次）：
--- ALTER TABLE quant_forecast_cycle ADD COLUMN IF NOT EXISTS briefing_json JSONB;
 
 COMMENT ON TABLE quant_forecast_cycle IS '量化预测周期主表';
 COMMENT ON COLUMN quant_forecast_cycle.cycle_id IS '周期唯一ID，格式 qf-yyyyMMdd-HHmmss-SYMBOL';
@@ -809,7 +806,6 @@ COMMENT ON COLUMN quant_forecast_cycle.risk_status IS '风控状态：NORMAL/CAU
 COMMENT ON COLUMN quant_forecast_cycle.snapshot_json IS '当时FeatureSnapshot快照';
 COMMENT ON COLUMN quant_forecast_cycle.report_json IS 'LLM生成的报告';
 COMMENT ON COLUMN quant_forecast_cycle.debate_json IS '辩论摘要';
-COMMENT ON COLUMN quant_forecast_cycle.briefing_json IS '简报产物合集：脆弱度+信号面板+弱lean(BriefingSnapshot)';
 
 CREATE INDEX idx_qfc_symbol_time ON quant_forecast_cycle(symbol, forecast_time DESC);
 CREATE INDEX idx_qfc_parent ON quant_forecast_cycle(parent_cycle_id) WHERE parent_cycle_id IS NOT NULL;
