@@ -1,0 +1,130 @@
+server:
+  port: 8082
+
+spring:
+  ai:
+    # MCP server（P6）：SSE endpoint 默认 /sse，Claude Desktop 等 MCP 客户端可直连调量化工具
+    mcp:
+      server:
+        name: wiib-quant
+        version: 1.0.0
+        type: SYNC
+        instructions: "WhatIfIBought 量化只读工具：市场快照/脆弱度/期权IV/vol预测/regime/验证记分卡"
+    # RetryTemplate 独立装配，AiAgentRuntimeManager 手建模型时注入，仍然生效
+    retry:
+      max-attempts: 10
+      backoff:
+        initial-interval: 1000
+        multiplier: 2
+        max-interval: 30000
+    # 关闭 OpenAI 全部6类模型自动装配（各自独立开关，只关chat其余仍会因缺api-key拒绝启动）：
+    # LLM 配置唯一来源是 DB，AiAgentRuntimeManager 启动读取手建
+    model:
+      chat: none
+      embedding: none
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none
+  application:
+    name: wiib-quant
+  # 启用虚拟线程支持（量化采集 / Graph 节点并行）
+  threads:
+    virtual:
+      enabled: true
+  # 数据源：与 sim 共享同一 PostgreSQL（quant forecast/factor/strategy 落库）
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://localhost:5432/wiib?reWriteBatchedInserts=true
+    username:
+    password:
+    hikari:
+      pool-name: wiib-quant-hikari
+      maximum-pool-size: 8
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 300000
+      max-lifetime: 550000
+  # 行情总线：消费 feed 写入的 kline/markprice Stream + depth/orderflow KV
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+      password:
+      timeout: 10000
+
+mybatis-plus:
+  mapper-locations: classpath:/mapper/**/*.xml
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  metrics:
+    tags:
+      application: wiib-quant
+
+# 主决策周期：M1/M3/M5/M15/H1（QuantGraphFactory 读此项决定主 timeframe；原属 sim TradingConfig，quant 拆出后独立保留）
+trading:
+  decision-interval: M5
+
+# 插拔式策略实盘信号运行时：默认关闭；启用后读取实时流并记录 LIVE 信号
+strategy:
+  runtime:
+    enabled: false
+    enabled-ids: FIBO,LIQFADE,SQZMOM   # 三策略全启，各自部署篮子见 StrategyConfig
+    liquidation-window-minutes: 30
+    liquidation-threshold-usdt: 500000
+  execution:
+    enabled: false           # 执行总开关；默认关
+    target: sim              # sim=本平台模拟盘(每策略独立账户 quant-<ID>) | testnet=Binance Testnet
+    # 执行白名单=三策略部署篮子并集(FIBO:BTC/ETH · LIQFADE:BTC/ETH/DOGE · SQZMOM:SOL/DOGE/XRP)
+    symbols: BTCUSDT,ETHUSDT,DOGEUSDT,SOLUSDT,XRPUSDT
+    fixed-margin-usdt: 50    # 每仓固定保证金 USDT(testnet 轨用；sim 轨为风险定量)
+    leverage: 20
+    order-timeout-bars: 12   # 挂单超时(5m 根数，对齐 FiboParams)
+
+# Binance行情配置（quant 仅用 REST 拉历史/testnet；不连 WS，BinanceWsClient 在 feed）
+binance:
+  ws-url: wss://stream.binance.com:9443/ws
+  futures-ws-url: wss://fstream.binance.com/ws
+  rest-base-url: https://api.binance.com
+  futures-rest-base-url: https://fapi.binance.com
+  symbols:
+    - BTCUSDT
+    - PAXGUSDT
+    - ETHUSDT
+    - DOGEUSDT
+    - SOLUSDT
+    - XRPUSDT
+  fallback-poll-interval: 5000
+
+# Binance USDT-M Testnet：策略实盘执行下单走 testnet（行情仍主网）
+# api-key/secret-key 在 https://testnet.binancefuture.com/ 申请
+binance-testnet:
+  rest-base-url: https://demo-fapi.binance.com
+  api-key: ""
+  secret-key: ""
+  symbols:
+    - ETHUSDT
+    - BTCUSDT
+
+# BlockBeats(律动)重要快讯 API（NewsCache 懒加载用；免费额度为一次性总量、不回血）
+# api-key 在 https://theblockbeats.info 开放平台申请
+blockbeats:
+  api-key:
+  base-url: https://api-pro.theblockbeats.info
+  lang: cn
+  size: 20
+  expiry-ms: 600000           # 复用窗口 10min：窗口内多币种/多次调用复用同一份，超过才重拉
+
+# quant → sim internal API：策略执行/账户监控/behavior agent 读 sim；token 须与 sim 侧一致
+sim:
+  internal:
+    base-url: ${SIM_INTERNAL_BASE_URL:http://localhost:8080}
+internal:
+  api:
+    token: ${INTERNAL_API_TOKEN:}

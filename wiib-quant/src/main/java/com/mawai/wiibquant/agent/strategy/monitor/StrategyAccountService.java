@@ -4,20 +4,18 @@ import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibquant.agent.strategy.core.TradingStrategySpi;
 import com.mawai.wiibquant.agent.strategy.execution.SimTradeClient;
+import com.mawai.wiibquant.agent.strategy.execution.StrategyAccountRegistry;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 /**
  * 三策略独立模拟盘账户监控（quant-FIBO / quant-LIQFADE / quant-SQZMOM）。
  *
  * <p>账户体系与 {@link com.mawai.wiibquant.agent.strategy.execution.SimExecutionService} 同源：
- * ensureAccount("quant-"+id) 幂等解析 userId（账户已存在时 initialBalance 不生效，无重复入金风险）。
+ * 共用 {@link StrategyAccountRegistry}（启动预建 + quant-&lt;ID&gt; 幂等解析 userId）。
  * 数据全部实时拉 sim internal API 组装（TestnetMonitorService 同哲学：无中间落库即无偏差源）；
  * 收益曲线/交易记录都源自已平仓列表，一个 overview 端点带全，前端自行累加画线。</p>
  */
@@ -29,14 +27,13 @@ public class StrategyAccountService {
     private static final int CLOSED_LIMIT = 200;
 
     private final SimTradeClient client;
+    private final StrategyAccountRegistry accounts;
     private final List<TradingStrategySpi> strategies;
-    private final ConcurrentMap<String, Long> accountByStrategy = new ConcurrentHashMap<>();
 
-    @Value("${strategy.execution.sim.initial-balance:10000}")
-    BigDecimal initialBalance;
-
-    public StrategyAccountService(SimTradeClient client, List<TradingStrategySpi> strategies) {
+    public StrategyAccountService(SimTradeClient client, StrategyAccountRegistry accounts,
+                                  List<TradingStrategySpi> strategies) {
         this.client = client;
+        this.accounts = accounts;
         this.strategies = strategies;
     }
 
@@ -111,8 +108,7 @@ public class StrategyAccountService {
     }
 
     private Long account(String strategyId) {
-        return accountByStrategy.computeIfAbsent(strategyId,
-                id -> client.ensureAccount("quant-" + id, initialBalance));
+        return accounts.userId(strategyId);
     }
 
     private static BigDecimal nz(BigDecimal v) {

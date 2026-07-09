@@ -39,7 +39,8 @@ import java.util.stream.Collectors;
  *    与回测引擎同公式——回测口径即实盘口径；
  * ③ 重启对账：首次触达某 strategyId:symbol 时查 sim——有持仓收养为 POSITION、残留挂单一律撤
  *    （策略腿状态重启后也是新的，等新信号重挂即可）；
- * ④ 每策略独立量化账户 quant-&lt;strategyId&gt;（ensure-account 幂等创建），盈亏归因互不污染。</p>
+ * ④ 每策略独立量化账户 quant-&lt;strategyId&gt;（{@link StrategyAccountRegistry} 启动预建+幂等），
+ *    盈亏归因互不污染。</p>
  *
  * <p>已知口径差：sim 无 GTX/post-only，挂单价已被穿越时按 taker 费成交而非拒单。
  * 持仓期钩子 onPositionBarClosed 已接（LiqFade 时间出场）；平仓归因 reason 只落 quant 日志，
@@ -78,22 +79,21 @@ public class SimExecutionService implements StrategyExecutionPort {
     }
 
     private final SimTradeClient client;
+    private final StrategyAccountRegistry accounts;
     private final ConcurrentMap<String, ExecState> states = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, Long> accountByStrategy = new ConcurrentHashMap<>();
 
     @Value("${strategy.execution.enabled:false}")
     boolean enabled;
     @Value("${strategy.execution.symbols:ETHUSDT}")
     String symbolsCsv;
-    @Value("${strategy.execution.sim.initial-balance:10000}")
-    BigDecimal initialBalance;
     @Value("${strategy.execution.sim.leverage:5}")
     int leverage;
     @Value("${strategy.execution.order-timeout-bars:12}")
     int orderTimeoutBars;
 
-    public SimExecutionService(SimTradeClient client) {
+    public SimExecutionService(SimTradeClient client, StrategyAccountRegistry accounts) {
         this.client = client;
+        this.accounts = accounts;
     }
 
     private boolean active(String symbol) {
@@ -399,10 +399,8 @@ public class SimExecutionService implements StrategyExecutionPort {
         }
     }
 
-    /** 每策略独立量化账户 quant-&lt;ID&gt;，首次取用时幂等创建并缓存 userId（失败不缓存，下次重试）。 */
     private Long account(String strategyId) {
-        return accountByStrategy.computeIfAbsent(strategyId,
-                id -> client.ensureAccount("quant-" + id, initialBalance));
+        return accounts.userId(strategyId);
     }
 
     private static String key(String strategyId, String symbol) {

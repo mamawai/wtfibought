@@ -1,7 +1,6 @@
 package com.mawai.wiibquant.agent.config;
 
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.constant.AiFunctions;
 import com.mawai.wiibcommon.entity.AiModelAssignment;
 import com.mawai.wiibcommon.entity.AiRuntimeConfig;
@@ -73,7 +72,6 @@ public class AiAgentRuntimeManager {
 
     @PostConstruct
     public void init() {
-        cleanupLegacyAssignments();
         refresh();
     }
 
@@ -159,20 +157,6 @@ public class AiAgentRuntimeManager {
         }
 
         return buildChatModel(config.getApiKey(), config.getBaseUrl(), config.getModel());
-    }
-
-    /** 清理已下线功能位的遗留分配行（trading=旧AI Trader，reflection=旧方向反思链） */
-    private void cleanupLegacyAssignments() {
-        int removed = assignmentMapper.delete(new LambdaQueryWrapper<AiModelAssignment>()
-                .eq(AiModelAssignment::getFunctionName, "trading"));
-        if (removed > 0) {
-            log.info("已删除旧AI Trader模型分配 {} 条", removed);
-        }
-        int removedReflection = assignmentMapper.delete(new LambdaQueryWrapper<AiModelAssignment>()
-                .eq(AiModelAssignment::getFunctionName, "reflection"));
-        if (removedReflection > 0) {
-            log.info("已删除旧reflection模型分配 {} 条", removedReflection);
-        }
     }
 
     /**

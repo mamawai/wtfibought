@@ -133,10 +133,11 @@ class SimExecutionServiceTest {
     }
 
     private SimExecutionService service(StubClient client) {
-        SimExecutionService svc = new SimExecutionService(client);
+        StrategyAccountRegistry accounts = new StrategyAccountRegistry(client, List.of());
+        accounts.initialBalance = bd("10000");
+        SimExecutionService svc = new SimExecutionService(client, accounts);
         svc.enabled = true;
         svc.symbolsCsv = SYM;
-        svc.initialBalance = bd("10000");
         svc.leverage = 5;
         svc.orderTimeoutBars = 12;
         return svc;
