@@ -1,4 +1,4 @@
-package com.mawai.wiibsim.config;
+package com.mawai.wiibcommon.config;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -13,9 +13,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 /**
- * internal API 鉴权：仅放行带正确 X-Internal-Token 的 /internal/** 请求（quant 等内部服务调用）。
+ * internal API 鉴权（共享层）：仅放行带正确 X-Internal-Token 的 /internal/** 请求（服务间内部调用）。
  * <p>防 internal 数据接口被外部直接访问。token 配 {@code internal.api.token}；未配或不匹配一律 401。
- * 该路径已在 SaToken excludePaths 放行（不走用户登录），鉴权完全由本 filter 负责。
+ * <p>sim（用户端有 SaToken，/internal/** 已在 excludePaths 放行）与 feed（无 SaToken，纯上游）共用本 filter；
+ * quant 无 /internal 端点，本 filter 对其永不匹配（inert）。
  */
 @Slf4j
 @Component

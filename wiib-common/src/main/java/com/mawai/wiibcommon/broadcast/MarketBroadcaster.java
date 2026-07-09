@@ -24,6 +24,8 @@ public class MarketBroadcaster {
     public static final String QUANT_CHANNEL = CHANNEL_PREFIX + "quant";
     public static final String FUTURES_CHANNEL = CHANNEL_PREFIX + "futures";
     public static final String KLINE_CHANNEL = CHANNEL_PREFIX + "kline";
+    // feed WS 流健康：连/断/重连状态变化时事件驱动推送（非定时），载荷是全量快照 JSON
+    public static final String STREAM_HEALTH_CHANNEL = CHANNEL_PREFIX + "stream-health";
 
     public void broadcastStockQuote(String stockCode, String message) {
         publish(STOCK_CHANNEL, stockCode, message);
@@ -49,6 +51,11 @@ public class MarketBroadcaster {
 
     public void broadcastQuantSignal(String symbol, String message) {
         publish(QUANT_CHANNEL, symbol, message);
+    }
+
+    /** feed WS 流健康全量快照（JSON 数组）：某条流状态一变就推，前端整表替换。code 固定 "streams"，复用 code|json 中继。 */
+    public void broadcastStreamHealth(String snapshotJson) {
+        publish(STREAM_HEALTH_CHANNEL, "streams", snapshotJson);
     }
 
     /** payload 统一 code|json，订阅端 WsBroadcastRelay 按 | 拆分。失败仅 log 不阻断业务。 */

@@ -50,3 +50,8 @@ binance:
     - SOLUSDT
     - XRPUSDT
   fallback-poll-interval: 5000
+
+# 内部 API 鉴权：/internal/streams 由共享 InternalApiFilter 校验；须与 sim/quant 同值
+internal:
+  api:
+    token: ${INTERNAL_API_TOKEN:}

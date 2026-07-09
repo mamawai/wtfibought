@@ -1,6 +1,8 @@
 package com.mawai.wiibfeed;
 
 import com.mawai.wiibcommon.config.BinanceProperties;
+import com.mawai.wiibfeed.health.StreamHealthPublisher;
+import com.mawai.wiibfeed.health.WsConnectionRegistry;
 import com.mawai.wiibfeed.stream.StreamHandler;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +31,8 @@ public class BinanceWsClient implements SmartLifecycle {
 
     private final BinanceProperties props;
     private final List<StreamHandler> handlers;
+    private final WsConnectionRegistry registry;
+    private final StreamHealthPublisher healthPublisher;
 
     private HttpClient httpClient;
     private ScheduledExecutorService scheduler;
@@ -53,6 +57,9 @@ public class BinanceWsClient implements SmartLifecycle {
             WsConnection conn = new WsConnection(h.name(), h::buildUrl, h::onMessage,
                     h::onConnected, h::onDisconnected,
                     httpClient, scheduler, shutdown, h.maxIdleSeconds());
+            // 接状态回调 + 登记，都在 connect() 之前，确保首帧 CONNECTING/CONNECTED 也被捕获推送
+            conn.setOnStatusChange(healthPublisher::publish);
+            registry.register(conn);
             h.bind(conn, scheduler);
             connections.add(conn);
         }

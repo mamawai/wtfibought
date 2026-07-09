@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
 import { useToast } from '../components/ui/use-toast';
+import { FeedStreamHealthCard } from '../components/FeedStreamHealthCard';
 import { Play, Square, RefreshCw, Database, Calendar, Clock, Plus, Trash2, Pencil, Save, Activity } from 'lucide-react';
 
 const FUNCTION_LABELS: Record<string, string> = {
@@ -211,6 +212,9 @@ export function Admin() {
           </Button>
         </div>
       </div>
+
+      {/* feed 数据流健康：独立于任务状态加载，管理员进页即见 */}
+      <FeedStreamHealthCard />
 
       {status && (
         <>

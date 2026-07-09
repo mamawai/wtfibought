@@ -113,7 +113,12 @@ websocket:
   # 是否强制认证
   require-auth: false
 
-# 内部服务间 API 鉴权（quant 调 sim 的 /internal/** 须带 X-Internal-Token）；token 须与 quant 侧一致
+# 内部服务间 API 鉴权（quant 调 sim 的 /internal/** 须带 X-Internal-Token）；token 须与 quant/feed 侧一致
 internal:
   api:
     token: ${INTERNAL_API_TOKEN:}
+
+# sim → feed 内部调用（FeedInternalClient：拉 WS 流健康快照 + 转发手动重试）
+feed:
+  internal:
+    base-url: ${FEED_INTERNAL_BASE_URL:http://localhost:8081}
