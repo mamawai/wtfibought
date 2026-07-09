@@ -26,6 +26,8 @@ public class MarketBroadcaster {
     public static final String KLINE_CHANNEL = CHANNEL_PREFIX + "kline";
     // feed WS 流健康：连/断/重连状态变化时事件驱动推送（非定时），载荷是全量快照 JSON
     public static final String STREAM_HEALTH_CHANNEL = CHANNEL_PREFIX + "stream-health";
+    // 进程 JVM 监控：feed/quant 定时采样发布，sim 中继到 /topic/monitor/{进程}（sim 自身直推不走此频道）
+    public static final String MONITOR_CHANNEL = CHANNEL_PREFIX + "monitor";
 
     public void broadcastStockQuote(String stockCode, String message) {
         publish(STOCK_CHANNEL, stockCode, message);
@@ -56,6 +58,11 @@ public class MarketBroadcaster {
     /** feed WS 流健康全量快照（JSON 数组）：某条流状态一变就推，前端整表替换。code 固定 "streams"，复用 code|json 中继。 */
     public void broadcastStreamHealth(String snapshotJson) {
         publish(STREAM_HEALTH_CHANNEL, "streams", snapshotJson);
+    }
+
+    /** 进程 JVM 快照：code=进程名（feed/quant），sim 中继到 /topic/monitor/{进程}。 */
+    public void broadcastMonitor(String process, String snapshotJson) {
+        publish(MONITOR_CHANNEL, process, snapshotJson);
     }
 
     /** payload 统一 code|json，订阅端 WsBroadcastRelay 按 | 拆分。失败仅 log 不阻断业务。 */

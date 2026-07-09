@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Client } from '@stomp/stompjs';
-import SockJS from 'sockjs-client';
+import { subscribe } from '../hooks/stompClient';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Skeleton } from './ui/skeleton';
 import { Activity, Layers, Cpu, Recycle, Clock } from 'lucide-react';
@@ -164,7 +163,9 @@ function MetricTile({ icon: Icon, label, value, sub }: {
   );
 }
 
-function MonitorSkeleton() {
+// 结构与数据态逐段对齐（标题含状态点占位 + 双仪表盘 + 3 指标格 + GC 行），
+// 保证 skeleton→有数据零高度跳动；三卡轮播因 flex 行取最高值，滑动时高度亦恒定
+function MonitorSkeleton({ label }: { label: string }) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -172,44 +173,36 @@ function MonitorSkeleton() {
           <div className="p-1 rounded-md bg-primary/10">
             <Activity className="w-3.5 h-3.5 text-primary" />
           </div>
-          JVM 监控
+          {label} JVM
+          <span className="ml-auto w-1.5 h-1.5 rounded-full shrink-0 bg-muted-foreground/30" />
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="flex justify-center gap-6">
-          <Skeleton className="w-[100px] h-[58px] rounded-xl" />
-          <Skeleton className="w-[100px] h-[58px] rounded-xl" />
+        <div className="flex justify-center gap-4">
+          <Skeleton className="w-[110px] h-[80px] rounded-xl" />
+          <Skeleton className="w-[110px] h-[80px] rounded-xl" />
         </div>
-        <div className="grid grid-cols-3 gap-2">
-          {[0, 1, 2].map(i => <Skeleton key={i} className="h-12 rounded-xl" />)}
+        <div className="grid grid-cols-3 gap-1.5">
+          {[0, 1, 2].map(i => <Skeleton key={i} className="h-11 rounded-xl" />)}
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          <Skeleton className="h-11 rounded-xl" />
+          <Skeleton className="h-11 rounded-xl" />
         </div>
       </CardContent>
     </Card>
   );
 }
 
-export function MonitorCard() {
+export function MonitorCard({ topic, label }: { topic: string; label: string }) {
   const [data, setData] = useState<MonitorData | null>(null);
-  const [connected, setConnected] = useState(false);
 
-  useEffect(() => {
-    const client = new Client({
-      webSocketFactory: () => new SockJS('/ws/quotes'),
-      reconnectDelay: 5000,
-      onConnect: () => {
-        setConnected(true);
-        client.subscribe('/topic/monitor', msg => {
-          try { setData(JSON.parse(msg.body)); } catch { /* ignore */ }
-        });
-      },
-      onDisconnect: () => setConnected(false),
-      onStompError: () => setConnected(false),
-    });
-    client.activate();
-    return () => { client.deactivate(); };
-  }, []);
+  // 共享 STOMP 连接订阅该进程的 JVM topic；进程挂了不再来帧，卡片停在最后一帧（用户已认可"断了看得出来"，不做离线判定）
+  useEffect(() => subscribe(topic, msg => {
+    try { setData(JSON.parse(msg.body)); } catch { /* ignore */ }
+  }), [topic]);
 
-  if (!data) return <MonitorSkeleton />;
+  if (!data) return <MonitorSkeleton label={label} />;
 
   const heapPct = data.heap.max > 0 ? Math.round(data.heap.used / data.heap.max * 100) : -1;
   const cpuPct = data.cpuPct ?? -1;
@@ -221,14 +214,8 @@ export function MonitorCard() {
           <div className="p-1 rounded-md bg-primary/10">
             <Activity className="w-3.5 h-3.5 text-primary" />
           </div>
-          JVM 监控
-          <span
-            className={cn(
-              "ml-auto w-1.5 h-1.5 rounded-full shrink-0 transition-colors",
-              connected ? "bg-gain animate-pulse" : "bg-loss",
-            )}
-            title={connected ? '已连接' : '已断开'}
-          />
+          {label} JVM
+          <span className="ml-auto w-1.5 h-1.5 rounded-full shrink-0 bg-gain animate-pulse" title="实时" />
         </CardTitle>
       </CardHeader>
 

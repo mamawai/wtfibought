@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { stockApi, buffApi, orderApi, cryptoOrderApi, futuresApi } from '../api';
 import { StockCard } from '../components/StockCard';
 import { DailyBuffCard } from '../components/DailyBuffCard';
-import { MonitorCard } from '../components/MonitorCard';
+import { MonitorCarousel } from '../components/MonitorCarousel';
 import { LatestTradesCard } from '../components/LatestTradesCard';
 import type { TradeItem } from '../components/LatestTradesCard';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -190,7 +190,7 @@ export function Home() {
         <DailyBuffCard status={buffStatus} onDrawn={() => setRefreshNonce(n => n + 1)} />
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {isLoggedIn && <MonitorCard />}
+        {isLoggedIn && <MonitorCarousel />}
         <LatestTradesCard trades={latestTrades} loading={tradesLoading} />
       </div>
 
