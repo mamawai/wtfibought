@@ -597,6 +597,10 @@ export interface AiKeyConfig {
   apiKey: string;
   baseUrl: string;
   model?: string;
+  /** 思考档位 none/low/medium/high；空=不传走模型默认 */
+  reasoningEffort?: string;
+  /** 上游协议 openai=/v1/chat/completions，responses=/v1/responses；空=openai */
+  apiProtocol?: string;
   enabled?: boolean;
 }
 

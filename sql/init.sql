@@ -1005,16 +1005,20 @@ CREATE TABLE IF NOT EXISTS ai_runtime_config (
     api_key VARCHAR(512) NOT NULL,
     base_url VARCHAR(512) NOT NULL,
     model VARCHAR(128),
+    reasoning_effort VARCHAR(16),
+    api_protocol VARCHAR(16) NOT NULL DEFAULT 'openai',
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-COMMENT ON TABLE ai_runtime_config IS 'LLM配置（一条=一个具体LLM：key+baseUrl+model，支持多条）';
+COMMENT ON TABLE ai_runtime_config IS 'LLM配置（一条=一个具体LLM：key+baseUrl+model+思考档位，支持多条）';
 COMMENT ON COLUMN ai_runtime_config.config_name IS '配置名称，如 OpenAI、DeepSeek';
 COMMENT ON COLUMN ai_runtime_config.api_key IS 'API Key';
 COMMENT ON COLUMN ai_runtime_config.base_url IS 'OpenAI Compatible Base URL（不含/v1后缀，quant/sim 均自拼 /v1/chat/completions）';
 COMMENT ON COLUMN ai_runtime_config.model IS '该LLM的模型名（功能位切到此配置即用此模型）';
+COMMENT ON COLUMN ai_runtime_config.reasoning_effort IS '思考档位 none/low/medium/high，NULL=不传走模型默认；同模型要深浅两档就建两条配置分给不同功能位';
+COMMENT ON COLUMN ai_runtime_config.api_protocol IS '上游协议：openai=/v1/chat/completions（DeepSeek等通用），responses=/v1/responses（CPA/OpenAI官方/xAI，思考模型优先）';
 COMMENT ON COLUMN ai_runtime_config.enabled IS '是否启用';
 
 -- ============================================

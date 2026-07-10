@@ -2,11 +2,13 @@ package com.mawai.wiibquant.agent.config;
 
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.mawai.wiibcommon.constant.AiFunctions;
+import com.mawai.wiibcommon.constant.AiProtocols;
 import com.mawai.wiibcommon.entity.AiModelAssignment;
 import com.mawai.wiibcommon.entity.AiRuntimeConfig;
 import com.mawai.wiibcommon.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibcommon.mapper.AiRuntimeConfigMapper;
 import com.mawai.wiibquant.agent.behavior.BehaviorAgentFactory;
+import com.mawai.wiibquant.agent.llm.ResponsesChatModel;
 import io.micrometer.observation.ObservationRegistry;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -156,7 +158,7 @@ public class AiAgentRuntimeManager {
             throw new IllegalStateException(functionName + "所选LLM配置'" + config.getConfigName() + "'缺模型名，请在Admin页完善");
         }
 
-        return buildChatModel(config.getApiKey(), config.getBaseUrl(), config.getModel());
+        return buildChatModel(config);
     }
 
     /**
@@ -187,22 +189,33 @@ public class AiAgentRuntimeManager {
         }
     }
 
-    /** 从 DB 配置手建模型：注入与原自动装配同源的重试/工具调用/观测组件，与 mutate() 派生等价 */
-    private OpenAiChatModel buildChatModel(String apiKey, String baseUrl, String model) {
+    /**
+     * 从 DB 配置手建模型，按配置行的协议分叉：
+     * responses → 自研 ResponsesChatModel（/v1/responses，思考模型原生协议）；
+     * openai → Spring AI OpenAiChatModel（/v1/chat/completions，DeepSeek 等通用）。
+     * 思考档位两条路线都注入：responses 走 reasoning.effort，openai 走 reasoning_effort 字段。
+     */
+    private ChatModel buildChatModel(AiRuntimeConfig config) {
+        // 不设置 temperature：走各模型默认值，思考模型（多数拒收或忽略温度）也安全
+        if (AiProtocols.isResponses(config.getApiProtocol())) {
+            return new ResponsesChatModel(config.getApiKey(), config.getBaseUrl(), config.getModel(),
+                    null, config.getReasoningEffort(), toolCallingManager, retryTemplate);
+        }
+
         OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl(baseUrl)
-                .apiKey(apiKey)
+                .baseUrl(config.getBaseUrl())
+                .apiKey(config.getApiKey())
                 .build();
 
-        // temperature 沿用原自动装配默认值0.7（OpenAiChatProperties）：DB无温度概念，避免部署后输出随机性漂移
-        OpenAiChatOptions options = OpenAiChatOptions.builder()
-                .model(model)
-                .temperature(0.7)
-                .build();
+        OpenAiChatOptions.Builder options = OpenAiChatOptions.builder()
+                .model(config.getModel());
+        if (config.getReasoningEffort() != null) {
+            options.reasoningEffort(config.getReasoningEffort());
+        }
 
         return OpenAiChatModel.builder()
                 .openAiApi(openAiApi)
-                .defaultOptions(options)
+                .defaultOptions(options.build())
                 .toolCallingManager(toolCallingManager)
                 .retryTemplate(retryTemplate)
                 .observationRegistry(observationRegistry)

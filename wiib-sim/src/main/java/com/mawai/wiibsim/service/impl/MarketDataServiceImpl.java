@@ -451,7 +451,8 @@ public class MarketDataServiceImpl implements MarketDataService {
         double sigma;
 
         try {
-            String response = aiService.chat(prompt);
+            // 走势参数刻意拉满随机性（temperature=1.8）：同类股票每天的 mu/sigma 要有足够离散度
+            String response = aiService.chat(prompt, 1.8);
             String json = response.replaceAll("(?s).*?(\\{.*?}).*", "$1");
             JSONObject obj = JSON.parseObject(json);
 

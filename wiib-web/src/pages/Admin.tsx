@@ -285,6 +285,8 @@ export function Admin() {
                       <span className="text-sm font-bold">{key.configName}</span>
                       <Badge variant="outline" className="text-[10px]">{maskKey(key.apiKey)}</Badge>
                       {key.model && <Badge variant="secondary" className="text-[10px]">{key.model}</Badge>}
+                      <Badge variant="outline" className="text-[10px]">{key.apiProtocol === 'responses' ? 'Responses' : 'ChatCompletions'}</Badge>
+                      {key.reasoningEffort && <Badge variant="secondary" className="text-[10px]">思考:{key.reasoningEffort}</Badge>}
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5 truncate">{key.baseUrl}</div>
                   </div>
@@ -321,6 +323,25 @@ export function Admin() {
                     onChange={e => setEditingKey(prev => prev ? { ...prev, model: e.target.value } : prev)}
                     placeholder="模型名，如 gpt-4o、deepseek-chat"
                   />
+                  <select
+                    className="w-full h-9 rounded-md border bg-background px-3 text-sm"
+                    value={editingKey.apiProtocol || 'openai'}
+                    onChange={e => setEditingKey(prev => prev ? { ...prev, apiProtocol: e.target.value } : prev)}
+                  >
+                    <option value="openai">协议：OpenAI Chat Completions（/v1/chat/completions，DeepSeek 等通用）</option>
+                    <option value="responses">协议：OpenAI Responses（/v1/responses，CPA/OpenAI官方/xAI）</option>
+                  </select>
+                  <select
+                    className="w-full h-9 rounded-md border bg-background px-3 text-sm"
+                    value={editingKey.reasoningEffort || ''}
+                    onChange={e => setEditingKey(prev => prev ? { ...prev, reasoningEffort: e.target.value } : prev)}
+                  >
+                    <option value="">思考档位：模型默认（不传）</option>
+                    <option value="none">none（关思考，最省 token，仅部分模型支持）</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                  </select>
                   <div className="flex gap-2">
                     <Button size="sm" onClick={() => void handleSaveKey()} disabled={actionLoading === 'saveKey'}>
                       <Save className="w-3.5 h-3.5 mr-1" /> 保存

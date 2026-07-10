@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { aiAgentApi } from '../api';
+import { useUserStore } from '../stores/userStore';
 import { useToast } from '../components/ui/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -13,7 +14,10 @@ type Tab = 'behavior' | 'workbench';
 
 export function AiAgent() {
   const { toast } = useToast();
-  const [tab, setTab] = useState<Tab>('workbench');
+  const { user } = useUserStore();
+  // 工作台暂只对管理员开放（后端 @RequireAdmin 同步门禁），普通用户直接落行为分析
+  const isAdmin = user?.id === 1;
+  const [tab, setTab] = useState<Tab>(isAdmin ? 'workbench' : 'behavior');
   const [behaviorLoading, setBehaviorLoading] = useState(false);
   const [steps] = useState<string[]>([]);
   const [behaviorReport, setBehaviorReport] = useState<BehaviorAnalysisReport | null>(null);
@@ -43,6 +47,7 @@ export function AiAgent() {
 
       {/* Tab Switcher */}
       <div className="flex bg-muted rounded-lg p-0.5 max-w-md">
+        {isAdmin && (
         <button
           onClick={() => setTab('workbench')}
           className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-bold transition-all ${tab === 'workbench' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
@@ -50,6 +55,7 @@ export function AiAgent() {
           <BrainCircuit className="w-4 h-4" />
           研判工作台
         </button>
+        )}
         <button
           onClick={() => setTab('behavior')}
           className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-bold transition-all ${tab === 'behavior' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
@@ -60,7 +66,7 @@ export function AiAgent() {
       </div>
 
       {/* 研判工作台（P7）：左对话右时间线，PC 双栏吃满 7xl */}
-      {tab === 'workbench' && <Workbench />}
+      {tab === 'workbench' && isAdmin && <Workbench />}
 
       {/* 行为分析（behavior agent，保持原样）：窄容器保读感 */}
       {tab === 'behavior' && (

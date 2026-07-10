@@ -4,12 +4,14 @@ import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.annotation.CurrentUserId;
+import com.mawai.wiibcommon.annotation.RequireAdmin;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -35,6 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RestController
 @RequestMapping("/api/ai/workbench")
 @RequiredArgsConstructor
+@RequireAdmin // 暂只对管理员(userId=1)开放：LLM 对话按 token 计费，放开前先观察成本
 public class ChatWorkbenchController {
 
     private final ChatAgentFactory chatAgentFactory;
@@ -116,7 +119,8 @@ public class ChatWorkbenchController {
                             return;
                         }
                         if (output instanceof StreamingOutput<?> streaming) {
-                            String chunk = streaming.chunk();
+                            String chunk = streaming.message() instanceof AssistantMessage am && !am.hasToolCalls()
+                                    ? am.getText() : null;
                             if (chunk != null && !chunk.isEmpty()) {
                                 answer.append(chunk);
                                 send(emitter, closed, "token", new JSONObject().fluentPut("text", chunk));

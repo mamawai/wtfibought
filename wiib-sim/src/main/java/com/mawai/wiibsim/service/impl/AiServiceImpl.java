@@ -4,6 +4,7 @@ import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.mawai.wiibcommon.constant.AiFunctions;
+import com.mawai.wiibcommon.constant.AiProtocols;
 import com.mawai.wiibcommon.entity.AiModelAssignment;
 import com.mawai.wiibcommon.entity.AiRuntimeConfig;
 import com.mawai.wiibcommon.mapper.AiModelAssignmentMapper;
@@ -37,8 +38,6 @@ public class AiServiceImpl implements AiService {
     private static final String FUNCTION_NAME = AiFunctions.SIM;
     private static final int TIMEOUT_MS = 60_000;
     private static final int MAX_RETRIES = 3;
-    /** 行情参数/虚构新闻要多样性，沿用原配置的偏高温 */
-    private static final double TEMPERATURE = 0.85;
 
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
@@ -46,13 +45,13 @@ public class AiServiceImpl implements AiService {
     private final ConcurrentHashMap<String, WebClient> webClientCache = new ConcurrentHashMap<>();
 
     @Override
-    public String chat(String prompt) {
+    public String chat(String prompt, Double temperature) {
         Provider provider = loadProvider();
         Exception lastException = null;
 
         for (int i = 0; i <= MAX_RETRIES; i++) {
             try {
-                return callAi(provider, prompt);
+                return callAi(provider, prompt, temperature);
             } catch (Exception e) {
                 lastException = e;
                 if (i < MAX_RETRIES) {
@@ -85,16 +84,21 @@ public class AiServiceImpl implements AiService {
         if (config.getModel() == null || config.getModel().isBlank()) {
             throw new RuntimeException(FUNCTION_NAME + "所选LLM配置'" + config.getConfigName() + "'缺模型名，请在Admin页完善");
         }
-        return new Provider(config.getApiKey(), config.getBaseUrl(), config.getModel());
+        return new Provider(config.getApiKey(), config.getBaseUrl(), config.getModel(),
+                config.getReasoningEffort(), config.getApiProtocol());
     }
 
-    private String callAi(Provider provider, String prompt) {
-        JSONObject requestBody = getRequestBody(provider, prompt);
+    /** 按配置行的协议分叉：responses=/v1/responses（CPA/思考模型），openai=/v1/chat/completions（通用兜底） */
+    private String callAi(Provider provider, String prompt, Double temperature) {
+        boolean responses = AiProtocols.isResponses(provider.apiProtocol());
+        JSONObject requestBody = responses
+                ? getResponsesRequestBody(provider, prompt, temperature)
+                : getChatCompletionsRequestBody(provider, prompt, temperature);
 
         WebClient webClient = getOrCreateWebClient(provider.baseUrl());
-        // 与 quant(Spring AI 默认 completionsPath)同约定：base_url 不含 /v1，客户端自拼 /v1/chat/completions
+        // 与 quant 同约定：base_url 不含 /v1，客户端自拼路径
         String response = webClient.post()
-                .uri("/v1/chat/completions")
+                .uri(responses ? "/v1/responses" : "/v1/chat/completions")
                 .contentType(MediaType.APPLICATION_JSON)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + provider.apiKey())
                 .bodyValue(requestBody.toString())
@@ -108,12 +112,13 @@ public class AiServiceImpl implements AiService {
 
         JSONObject json = JSONUtil.parseObj(response);
 
-        if (json.containsKey("error")) {
+        if (json.containsKey("error") && json.get("error") != null) {
             String errorMsg = json.getByPath("error.message", String.class);
             throw new RuntimeException("AI返回错误: " + errorMsg);
         }
 
-        String content = json.getByPath("choices[0].message.content", String.class);
+        String content = responses ? extractResponsesText(json)
+                : json.getByPath("choices[0].message.content", String.class);
         if (content == null || content.trim().isEmpty()) {
             throw new RuntimeException("AI返回内容为空");
         }
@@ -121,7 +126,7 @@ public class AiServiceImpl implements AiService {
         return content;
     }
 
-    private static JSONObject getRequestBody(Provider provider, String prompt) {
+    private static JSONObject getChatCompletionsRequestBody(Provider provider, String prompt, Double temperature) {
         JSONObject requestBody = new JSONObject();
         requestBody.set("model", provider.model());
 
@@ -132,8 +137,60 @@ public class AiServiceImpl implements AiService {
         messages.add(message);
         requestBody.set("messages", messages);
         requestBody.set("stream", false);
-        requestBody.set("temperature", TEMPERATURE);
+        // 只有显式要求才带 temperature（走势生成1.8）；不带=模型默认，思考模型也安全
+        if (temperature != null) {
+            requestBody.set("temperature", temperature);
+        }
+        if (provider.reasoningEffort() != null) {
+            requestBody.set("reasoning_effort", provider.reasoningEffort());
+        }
         return requestBody;
+    }
+
+    private static JSONObject getResponsesRequestBody(Provider provider, String prompt, Double temperature) {
+        JSONObject requestBody = new JSONObject();
+        requestBody.set("model", provider.model());
+        // Responses 的 input 接受纯字符串（单轮用户输入的标准简写）
+        requestBody.set("input", prompt);
+        requestBody.set("stream", false);
+        if (temperature != null) {
+            requestBody.set("temperature", temperature);
+        }
+        // 无状态：OpenAI 官方 store 默认 true，显式关掉
+        requestBody.set("store", false);
+        if (provider.reasoningEffort() != null) {
+            requestBody.set("reasoning", new JSONObject().set("effort", provider.reasoningEffort()));
+        }
+        return requestBody;
+    }
+
+    /** Responses 响应取正文：output[] 里 type=message 项的 content[] 中所有 output_text 拼接 */
+    private static String extractResponsesText(JSONObject json) {
+        if ("failed".equals(json.getStr("status"))) {
+            throw new RuntimeException("AI返回错误: " + json.getByPath("error.message", String.class));
+        }
+        JSONArray output = json.getJSONArray("output");
+        if (output == null) {
+            return null;
+        }
+        StringBuilder text = new StringBuilder();
+        for (Object itemObj : output) {
+            JSONObject item = (JSONObject) itemObj;
+            if (!"message".equals(item.getStr("type"))) {
+                continue;
+            }
+            JSONArray content = item.getJSONArray("content");
+            if (content == null) {
+                continue;
+            }
+            for (Object partObj : content) {
+                JSONObject part = (JSONObject) partObj;
+                if ("output_text".equals(part.getStr("type")) && part.getStr("text") != null) {
+                    text.append(part.getStr("text"));
+                }
+            }
+        }
+        return text.toString();
     }
 
     private WebClient getOrCreateWebClient(String baseUrl) {
@@ -154,7 +211,7 @@ public class AiServiceImpl implements AiService {
         });
     }
 
-    /** DB 当前生效的一组调用参数（1 功能位 = 1 key+model，与 quant 同口径） */
-    private record Provider(String apiKey, String baseUrl, String model) {
+    /** DB 当前生效的一组调用参数（1 功能位 = 1 key+model+档位+协议，与 quant 同口径） */
+    private record Provider(String apiKey, String baseUrl, String model, String reasoningEffort, String apiProtocol) {
     }
 }
