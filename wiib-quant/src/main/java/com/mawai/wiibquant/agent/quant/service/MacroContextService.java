@@ -9,7 +9,6 @@ import com.mawai.wiibquant.agent.research.forecast.QuantCoreForecaster;
 import com.mawai.wiibquant.agent.research.forecast.ResearchFeatures;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
@@ -32,7 +31,8 @@ public class MacroContextService {
     static final String INTERVAL_5M = KlineHistoryStore.DEFAULT_INTERVAL;
     static final long FIVE_MINUTE_MS = KlineHistoryStore.DEFAULT_BAR_MILLIS;
     static final Duration TTL = Duration.ofMinutes(30);
-    private static final Duration HISTORY = Duration.ofDays(90);
+    /** 宏观特征窗口，也是启动全量回补（KlineHistoryWarmup）的统一窗宽。 */
+    public static final Duration HISTORY = Duration.ofDays(90);
     private static final Duration MIN_HISTORY = Duration.ofDays(30);
     private static final int MIN_HISTORY_BARS = Math.toIntExact(MIN_HISTORY.toMillis() / FIVE_MINUTE_MS);
     private static final Duration FRESH_TAIL = Duration.ofMinutes(10);
@@ -45,7 +45,7 @@ public class MacroContextService {
     private final Set<String> backgroundRefreshes = ConcurrentHashMap.newKeySet();
     private final Map<String, Object> syncLocks = new ConcurrentHashMap<>();
 
-    @PostConstruct
+    /** 宏观预热：WATCH_SYMBOLS 各刷一轮。由 KlineHistoryWarmup 在启动全量回补完成后调用，保证读到完整90天窗。 */
     public void warmup() {
         for (String symbol : QuantConstants.WATCH_SYMBOLS) {
             refreshAsync(symbol);
