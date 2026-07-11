@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { stockApi, buffApi, orderApi, cryptoOrderApi, futuresApi } from '../api';
 import { StockCard } from '../components/StockCard';
+import { CoinMarketGrid } from '../components/CoinMarketGrid';
 import { DailyBuffCard } from '../components/DailyBuffCard';
 import { MonitorCarousel } from '../components/MonitorCarousel';
 import { LatestTradesCard } from '../components/LatestTradesCard';
@@ -148,7 +149,7 @@ export function Home() {
             <div className="flex gap-6 md:gap-8 shrink-0">
               {[
                 { num: '10+', label: '股票' },
-                { num: '5+', label: '币种' },
+                { num: '6', label: '币种' },
                 { num: '24/7', label: 'BTC行情' },
               ].map(s => (
                 <div key={s.label} className="text-center">
@@ -183,6 +184,17 @@ export function Home() {
             <span className="text-xs font-bold">{label}</span>
           </button>
         ))}
+      </div>
+
+      {/* ====== 币种行情：点卡片直达交易页 ====== */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center">
+            <DollarSign className="w-3.5 h-3.5 text-amber-500" />
+          </div>
+          <span className="text-sm font-bold">币种行情</span>
+        </div>
+        <CoinMarketGrid />
       </div>
 
       {/* ====== Buff + Monitor + Trades ====== */}
