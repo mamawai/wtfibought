@@ -60,7 +60,6 @@ public class QuotePushServiceImpl implements QuotePushService {
     /**
      * 推送单个股票行情
      */
-    @Override
     public void pushQuote(Long stockId, LocalDate date) {
         try {
             // 从Redis获取Stock静态数据（避免DB查询）

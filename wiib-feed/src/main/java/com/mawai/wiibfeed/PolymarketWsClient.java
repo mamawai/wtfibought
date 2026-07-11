@@ -194,7 +194,7 @@ public class PolymarketWsClient implements SmartLifecycle {
     }
 
     private void sendWsPing(WsConnection connection) {
-        if (connection == null || !connection.isConnected()) return;
+        if (!connection.isConnected()) return;
         WebSocket ws = connection.ws();
         if (ws != null) {
             try {

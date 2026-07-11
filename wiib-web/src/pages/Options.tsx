@@ -12,7 +12,6 @@ import { useToast } from '../components/ui/use-toast';
 import { cn, isTradingHours } from '../lib/utils';
 import { Briefcase, ClipboardList, RefreshCcw, Clock, TrendingUp, Search } from 'lucide-react';
 import type { OptionPosition, OptionOrder, Stock, OptionChainItem, OptionQuote } from '../types';
-import { useDedupedEffect } from '../hooks/useDedupedEffect';
 
 export function Options() {
   const navigate = useNavigate();
@@ -92,9 +91,8 @@ export function Options() {
   }, [selectedContract, toast]);
 
   const requestKey = user ? `options:user=${user.id}:refresh=${refreshNonce}` : null;
-  useDedupedEffect(
-    requestKey,
-    () => {
+  useEffect(() => {
+      if (requestKey == null) return;
       if (!user) return;
       let cancelled = false;
 
@@ -122,9 +120,7 @@ export function Options() {
       return () => {
         cancelled = true;
       };
-    },
-    [requestKey],
-  );
+    }, [requestKey]);
 
   const handleClose = async (p: OptionPosition) => {
     const qty = sellQty[p.positionId] || 0;

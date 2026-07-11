@@ -25,8 +25,6 @@ public interface CryptoOrderService extends IService<CryptoOrder> {
     /** 过期限价单处理 */
     void expireLimitOrders();
 
-    /** 处理到期的卖出结算（Redis ZSet延迟队列） */
-    void processSettlements();
 
     /** WS价格到达时检查限价单（事件驱动） */
     void onPriceUpdate(String symbol, BigDecimal price);

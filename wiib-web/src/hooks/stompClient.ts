@@ -10,7 +10,6 @@ const subs = new Map<string, Set<Callback>>();
 // STOMP subscription id，每个 topic 只建一个
 const stompSubs = new Map<string, { unsubscribe: () => void }>();
 let connected = false;
-const pendingTopics = new Set<string>();
 
 function getClient(): Client {
   if (client) return client;
@@ -23,7 +22,6 @@ function getClient(): Client {
       for (const topic of subs.keys()) {
         bindTopic(topic);
       }
-      pendingTopics.clear();
     },
     onDisconnect: () => {
       connected = false;
@@ -58,10 +56,9 @@ export function subscribe(topic: string, cb: Callback): () => void {
   const c = getClient();
   if (!c.active) c.activate();
 
+  // 未连接时无需暂存：onConnect 会按 subs.keys() 全量补订
   if (connected) {
     bindTopic(topic);
-  } else {
-    pendingTopics.add(topic);
   }
 
   // 返回 unsubscribe

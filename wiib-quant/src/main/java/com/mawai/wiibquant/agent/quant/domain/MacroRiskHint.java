@@ -13,7 +13,4 @@ public record MacroRiskHint(double budgetMultiplier, boolean macroShock, boolean
         budgetMultiplier = Math.clamp(budgetMultiplier, 0.0, 1.0);
     }
 
-    public boolean neutralHint() {
-        return !macroShock && !macroStressed && Math.abs(budgetMultiplier - 1.0) < 1e-9;
-    }
 }

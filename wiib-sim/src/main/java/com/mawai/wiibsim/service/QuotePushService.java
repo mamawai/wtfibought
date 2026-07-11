@@ -7,12 +7,6 @@ import java.time.LocalDate;
  */
 public interface QuotePushService {
 
-    /**
-     * 推送股票行情到指定主题
-     * @param stockId 股票ID
-     * @param date 日期
-     */
-    void pushQuote(Long stockId, LocalDate date);
 
     /**
      * 推送所有股票行情

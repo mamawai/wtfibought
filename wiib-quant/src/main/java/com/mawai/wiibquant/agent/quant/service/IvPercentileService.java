@@ -1,8 +1,6 @@
 package com.mawai.wiibquant.agent.quant.service;
 
 import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.entity.FactorHistory;
 import com.mawai.wiibquant.config.DeribitClient;
@@ -14,15 +12,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeFormatterBuilder;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 
 /**
  * ATM IV 历史 shadow 采集器。
@@ -36,8 +28,6 @@ import java.util.TreeMap;
 public class IvPercentileService {
 
     private static final String FACTOR_NAME = "IV_PERCENTILE";
-    private static final DateTimeFormatter DERIBIT_EXPIRY_FMT =
-            new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("ddMMMyy").toFormatter();
 
     private final DeribitClient deribitClient;
     private final FactorHistoryMapper factorHistoryMapper;
@@ -97,58 +87,18 @@ public class IvPercentileService {
         }
     }
 
-    /** 从 Deribit bookSummary 中按到期日分组，选择近月且最接近现价的 call IV。 */
+    /** 近月最接近现价(underlying_price)的 call mark_iv；解析统一走 {@link DeribitOptionBook}(日期格式坑见其注释)。 */
     private BigDecimal parseAtmIv(String bookSummaryJson) {
-        if (bookSummaryJson == null || bookSummaryJson.isBlank()) {
+        DeribitOptionBook book = DeribitOptionBook.parse(bookSummaryJson);
+        if (book.underlyingPrice() <= 0) {
             return null;
         }
-        JSONObject root = JSON.parseObject(bookSummaryJson);
-        JSONArray results = root.getJSONArray("result");
-        if (results == null || results.isEmpty()) {
-            return null;
+        for (List<DeribitOptionBook.Quote> group : book.byExpiry().values()) {
+            double iv = DeribitOptionBook.atmCallIv(group, book.underlyingPrice());
+            if (iv > 0) {
+                return BigDecimal.valueOf(iv);
+            }
         }
-
-        double spot = 0;
-        Map<String, List<OptionInfo>> byExpiry = new TreeMap<>(
-                Comparator.comparing(s -> LocalDate.parse(s, DERIBIT_EXPIRY_FMT)));
-        for (int i = 0; i < results.size(); i++) {
-            JSONObject item = results.getJSONObject(i);
-            double markIv = item.getDoubleValue("mark_iv");
-            if (markIv <= 0) {
-                continue;
-            }
-            if (spot <= 0) {
-                spot = item.getDoubleValue("underlying_price");
-            }
-            String instrument = item.getString("instrument_name");
-            if (instrument == null) {
-                continue;
-            }
-            String[] parts = instrument.split("-");
-            if (parts.length < 4 || !"C".equals(parts[3])) {
-                continue;
-            }
-            double strike;
-            try {
-                strike = Double.parseDouble(parts[2]);
-            } catch (NumberFormatException e) {
-                continue;
-            }
-            byExpiry.computeIfAbsent(parts[1], k -> new ArrayList<>())
-                    .add(new OptionInfo(strike, markIv));
-        }
-
-        if (spot <= 0 || byExpiry.isEmpty()) {
-            return null;
-        }
-        List<OptionInfo> nearOptions = byExpiry.values().iterator().next();
-        double currentSpot = spot;
-        // ATM 近似：在近月 call 里找 strike 离 underlying_price 最近的一档。
-        return nearOptions.stream()
-                .min(Comparator.comparingDouble(o -> Math.abs(o.strike() - currentSpot)))
-                .map(o -> BigDecimal.valueOf(o.markIv()))
-                .orElse(null);
+        return null;
     }
-
-    private record OptionInfo(double strike, double markIv) {}
 }

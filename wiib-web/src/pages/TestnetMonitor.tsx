@@ -75,7 +75,7 @@ function PositionCard({ p }: { p: TnPosition }) {
           <div>
             <span className={cn('text-[10px] font-black px-1.5 py-0.5 rounded',
               isLong ? 'bg-gain/15 text-gain' : 'bg-loss/15 text-loss')}>
-              {p.side}{p.leverage != null ? ` ${Number(p.leverage)}x` : ''}
+              {p.side}
             </span>
             <div className="text-[11px] text-muted-foreground mt-0.5">{p.positionAmt} @ {px(p.entryPrice)}</div>
           </div>

@@ -107,7 +107,7 @@ public class CollectDataNode implements NodeAction {
             }
             var tickerF = executor.submit(() -> binanceRestClient.getFutures24hTicker(symbol));
             var spotTickerF = executor.submit(() -> binanceRestClient.get24hTicker(symbol));
-            var fundingF = executor.submit(() -> binanceRestClient.getFundingRate(symbol));
+            var fundingF = executor.submit(() -> binanceRestClient.getPremiumIndex(symbol));
             var fundingHistF = executor.submit(() -> binanceRestClient.getFundingRateHistory(symbol, 48));
             var obF = executor.submit(() -> {
                 if (depthStreamCache != null) {

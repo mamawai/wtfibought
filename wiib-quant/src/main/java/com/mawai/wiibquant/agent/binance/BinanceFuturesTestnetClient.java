@@ -5,7 +5,6 @@ import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibquant.agent.binance.model.AccountInfo;
 import com.mawai.wiibquant.agent.binance.model.OrderResponse;
 import com.mawai.wiibquant.agent.binance.model.PlaceOrderRequest;
-import com.mawai.wiibquant.agent.binance.model.PositionModeResponse;
 import com.mawai.wiibquant.agent.binance.model.PositionRisk;
 import com.mawai.wiibquant.agent.binance.model.SetLeverageResponse;
 import com.mawai.wiibquant.agent.binance.model.SimpleAck;
@@ -183,41 +182,6 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
         params.put("leverage", leverage);
         String json = signedRequest(HttpMethod.POST, "/fapi/v1/leverage", params);
         return JSON.parseObject(json, SetLeverageResponse.class);
-    }
-
-    /**
-     * POST /fapi/v1/marginType 切换 symbol 的保证金模式。
-     * 若已是目标模式，Binance 返回 -4046 错误，调用方按需自行 catch 忽略。
-     */
-    public SimpleAck setMarginType(String symbol, String marginType) {
-        ensureSymbolAllowed(symbol);
-        if (!"ISOLATED".equals(marginType) && !"CROSSED".equals(marginType)) {
-            throw new IllegalArgumentException("marginType 仅支持 ISOLATED / CROSSED，传入=" + marginType);
-        }
-        LinkedHashMap<String, Object> params = new LinkedHashMap<>();
-        params.put("symbol", symbol);
-        params.put("marginType", marginType);
-        String json = signedRequest(HttpMethod.POST, "/fapi/v1/marginType", params);
-        return JSON.parseObject(json, SimpleAck.class);
-    }
-
-    /**
-     * POST /fapi/v1/positionSide/dual 切换持仓模式（账户级，影响所有 symbol）。
-     * @param dualSidePosition true=双向(同时持多空) / false=单向
-     * 持仓或挂单存在时切换会失败 -4059，调用方按需自行 catch。
-     */
-    public SimpleAck setPositionMode(boolean dualSidePosition) {
-        LinkedHashMap<String, Object> params = new LinkedHashMap<>();
-        // Binance 文档明确要求该参数为 STRING 类型 "true"/"false"
-        params.put("dualSidePosition", dualSidePosition ? "true" : "false");
-        String json = signedRequest(HttpMethod.POST, "/fapi/v1/positionSide/dual", params);
-        return JSON.parseObject(json, SimpleAck.class);
-    }
-
-    /** GET /fapi/v1/positionSide/dual 查询当前持仓模式 */
-    public PositionModeResponse getPositionMode() {
-        String json = signedRequest(HttpMethod.GET, "/fapi/v1/positionSide/dual", null);
-        return JSON.parseObject(json, PositionModeResponse.class);
     }
 
     // ==================== HTTP 通用 ====================

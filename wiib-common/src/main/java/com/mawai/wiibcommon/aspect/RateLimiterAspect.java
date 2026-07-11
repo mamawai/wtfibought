@@ -47,7 +47,7 @@ public class RateLimiterAspect {
     @Around("@annotation(rateLimiter)")
     public Object around(ProceedingJoinPoint joinPoint, RateLimiter rateLimiter) throws Throwable {
         try {
-            String key = getLimiterKey(rateLimiter.type(), rateLimiter.global());
+            String key = getLimiterKey(rateLimiter.type());
             double permitsPerSecond = rateLimiter.permitsPerSecond();
             int bucketCapacity = rateLimiter.bucketCapacity();
             long now = System.currentTimeMillis();
@@ -75,11 +75,7 @@ public class RateLimiterAspect {
         return joinPoint.proceed();
     }
 
-    private static String getLimiterKey(RateLimiterType type, boolean global) {
-        if (global) {
-            return "limiter:" + type.name() + ":global";
-        }
-
+    private static String getLimiterKey(RateLimiterType type) {
         String loginId = null;
         try {
             if (StpUtil.isLogin()) {

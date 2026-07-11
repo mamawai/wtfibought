@@ -37,31 +37,10 @@ public final class FactorMath {
         return (less + 0.5 * equal) / n;
     }
 
-    /** 简单变化率：last / lagged - 1。样本不足或分母为 0 时返回中性 0。 */
-    public static double rateOfChange(double[] values, int lag) {
-        int n = size(values);
-        if (lag <= 0 || n <= lag) return 0.0;
-        double previous = values[n - 1 - lag];
-        return previous == 0.0 ? 0.0 : values[n - 1] / previous - 1.0;
-    }
-
     /** 对数收益 ln(current / previous)；价格非正时返回中性 0。 */
     public static double logReturn(double current, double previous) {
         if (current <= 0.0 || previous <= 0.0) return 0.0;
         return Math.log(current / previous);
-    }
-
-    /** 把值截到 [lower, upper]，用于 winsorize 后的单点收口。 */
-    public static double winsorize(double value, double lower, double upper) {
-        if (value < lower) return lower;
-        if (value > upper) return upper;
-        return value;
-    }
-
-    /** tanh 有界压缩，输出 [-1,1]；scale 控制收缩速度。 */
-    public static double squash(double value, double scale) {
-        if (scale <= 0.0) return Math.tanh(value);
-        return Math.tanh(value / scale);
     }
 
     /** 窗口样本波动率；样本不足返回 0。 */

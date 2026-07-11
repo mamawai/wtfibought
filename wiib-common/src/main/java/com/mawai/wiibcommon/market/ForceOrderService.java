@@ -47,13 +47,6 @@ public class ForceOrderService {
                 .orderByDesc(ForceOrder::getTradeTime));
     }
 
-    public List<ForceOrder> getLatest(String symbol, int limit) {
-        return forceOrderMapper.selectList(new LambdaQueryWrapper<ForceOrder>()
-                .eq(symbol != null, ForceOrder::getSymbol, symbol)
-                .orderByDesc(ForceOrder::getTradeTime)
-                .last("LIMIT " + limit));
-    }
-
     public IPage<ForceOrder> getPage(String symbol, int pageNum, int pageSize) {
         Page<ForceOrder> page = Page.of(pageNum, pageSize);
         return forceOrderMapper.selectPage(page, new LambdaQueryWrapper<ForceOrder>()

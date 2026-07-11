@@ -23,7 +23,7 @@ class RegimeAgentTest {
 
     @Test
     void emitsSoftVetoWhenLiveRegimeConflictsWithResearchDirection() {
-        FeatureSnapshot snapshot = snapshot(MarketRegime.TREND_DOWN, "BREAKING_DOWN", 10, 35);
+        FeatureSnapshot snapshot = snapshot(MarketRegime.TREND_DOWN, 10, 35);
         MacroContext research = research(ForecastHorizon.H6, 1, 0.70);
 
         AgentVote h6 = vote(agent.evaluate(snapshot, new FactorEvaluationContext(research)), "H6");
@@ -37,7 +37,7 @@ class RegimeAgentTest {
 
     @Test
     void emitsSupportWhenLiveRegimeAlignsWithResearchDirection() {
-        FeatureSnapshot snapshot = snapshot(MarketRegime.TREND_UP, "STRENGTHENING", 35, 10);
+        FeatureSnapshot snapshot = snapshot(MarketRegime.TREND_UP, 35, 10);
         MacroContext research = research(ForecastHorizon.H6, 1, 0.70);
 
         AgentVote h6 = vote(agent.evaluate(snapshot, new FactorEvaluationContext(research)), "H6");
@@ -50,7 +50,7 @@ class RegimeAgentTest {
 
     @Test
     void staysRiskOnlyWhenResearchDirectionIsNeutral() {
-        FeatureSnapshot snapshot = snapshot(MarketRegime.TREND_UP, "STRENGTHENING", 35, 10);
+        FeatureSnapshot snapshot = snapshot(MarketRegime.TREND_UP, 35, 10);
         MacroContext research = research(ForecastHorizon.H6, 0, 0.0);
 
         AgentVote h6 = vote(agent.evaluate(snapshot, new FactorEvaluationContext(research)), "H6");
@@ -61,7 +61,7 @@ class RegimeAgentTest {
 
     @Test
     void defaultEvaluateKeepsRiskOnlyCompatibility() {
-        FeatureSnapshot snapshot = snapshot(MarketRegime.TREND_UP, "STRENGTHENING", 35, 10);
+        FeatureSnapshot snapshot = snapshot(MarketRegime.TREND_UP, 35, 10);
 
         AgentVote h6 = vote(agent.evaluate(snapshot), "H6");
 
@@ -71,7 +71,7 @@ class RegimeAgentTest {
 
     @Test
     void defaultedLiveRegimeDoesNotBreakConsistencyVote() {
-        FeatureSnapshot snapshot = snapshot(null, "STRENGTHENING", 35, 10);
+        FeatureSnapshot snapshot = snapshot(null, 35, 10);
         MacroContext research = research(ForecastHorizon.H6, 1, 0.70);
 
         AgentVote h6 = vote(agent.evaluate(snapshot, new FactorEvaluationContext(research)), "H6");
@@ -95,7 +95,7 @@ class RegimeAgentTest {
                         0.6, directionSign, directionConfidence)), false, List.of());
     }
 
-    private static FeatureSnapshot snapshot(MarketRegime regime, String transition,
+    private static FeatureSnapshot snapshot(MarketRegime regime,
                                             double plusDi, double minusDi) {
         Map<String, Object> indicators15m = Map.of(
                 "plus_di", BigDecimal.valueOf(plusDi),
@@ -111,7 +111,6 @@ class RegimeAgentTest {
                 -1, "UNKNOWN",
                 null, BigDecimal.valueOf(400), null, false,
                 0, 0, 0, 0,
-                regime, List.of(),
-                0.80, transition);
+                regime, List.of());
     }
 }

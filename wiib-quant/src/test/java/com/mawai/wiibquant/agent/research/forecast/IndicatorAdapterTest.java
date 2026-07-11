@@ -22,15 +22,6 @@ class IndicatorAdapterTest {
     }
 
     @Test
-    void indicatorsMatchDirectCalcAllAndAreNonEmpty() {
-        List<KlineBar> bars = uptrend(40);
-        Map<String, Object> viaAdapter = IndicatorAdapter.indicators(bars);
-        Map<String, Object> direct = CryptoIndicatorCalculator.calcAll(IndicatorAdapter.toCalcInput(bars), true);
-        assertThat(viaAdapter).isEqualTo(direct);
-        assertThat(viaAdapter).doesNotContainKey("error").containsKey("ma_alignment").containsKey("macd_hist");
-    }
-
-    @Test
     void researchIndicatorsMatchFullCalcForConsumedFieldsOnly() {
         List<KlineBar> bars = uptrend(120);
         Map<String, Object> light = IndicatorAdapter.researchIndicators(bars);
@@ -40,17 +31,17 @@ class IndicatorAdapterTest {
                 .containsKeys("ma_alignment", "rsi14", "macd_hist", "macd_hist_trend",
                         "boll_pb", "atr14", "atr_spike_ratio", "adx", "plus_di", "minus_di")
                 .doesNotContainKeys("kdj_k", "obv", "volume_ratio");
+        // atr 收盘三件套只在 research 路径产出(calcAll 的 MaSlope 残留已删)，不参与与全量的漂移比对
+        List<String> researchOnly = List.of("atr14_closed", "atr_mean_30_closed", "atr_spike_ratio");
         for (String key : light.keySet()) {
+            if (researchOnly.contains(key)) continue;
             assertThat(light.get(key)).as(key).isEqualTo(full.get(key));
         }
     }
 
     @Test
     void belowThirtyBarsReturnsEmpty() {
-        assertThat(IndicatorAdapter.indicators(uptrend(29))).isEmpty();
         assertThat(IndicatorAdapter.researchIndicators(uptrend(29))).isEmpty();
-        assertThat(IndicatorAdapter.indicators(List.of())).isEmpty();
-        assertThat(IndicatorAdapter.indicators(null)).isEmpty();
     }
 
     static List<KlineBar> uptrend(int n) {

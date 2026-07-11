@@ -3,7 +3,6 @@ package com.mawai.wiibsim;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * wiib-sim：真人模拟交易平台（独立进程）。
@@ -12,7 +11,6 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  */
 @SpringBootApplication(scanBasePackages = {"com.mawai.wiibsim", "com.mawai.wiibcommon"})
 @MapperScan({"com.mawai.wiibsim.mapper", "com.mawai.wiibcommon.mapper"})
-@EnableScheduling
 public class WiibSimApplication {
 
     public static void main(String[] args) {

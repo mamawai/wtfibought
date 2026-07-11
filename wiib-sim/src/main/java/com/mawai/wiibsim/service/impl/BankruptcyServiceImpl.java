@@ -5,7 +5,6 @@ import com.mawai.wiibcommon.dto.OptionPositionDTO;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.OptionPosition;
-import com.mawai.wiibcommon.entity.PredictionBet;
 import com.mawai.wiibcommon.entity.Settlement;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
@@ -66,6 +65,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
     private final OptionPositionMapper optionPositionMapper;
     private final OptionPositionService optionPositionService;
     private final PredictionBetMapper predictionBetMapper;
+    private final AssetValuationService assetValuationService;
 
     @Value("${trading.initial-balance:100000}")
     private BigDecimal initialBalance;
@@ -99,9 +99,6 @@ public class BankruptcyServiceImpl implements BankruptcyService {
 
     @Override
     public void resetBankruptUsers(LocalDate today) {
-        if (today == null) {
-            return;
-        }
 
         List<User> users = userService.list(new LambdaQueryWrapper<User>()
                 .eq(User::getIsBankrupt, true)
@@ -138,9 +135,15 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         // crypto持仓市值
         marketValue = marketValue.add(cryptoPositionService.calculateCryptoMarketValue(userId));
 
-        // futures保证金
-        BigDecimal futuresMargin = futuresPositionMapper.sumOpenMargin(userId);
-        marketValue = marketValue.add(futuresMargin);
+        // 合约仓位 margin + 浮盈亏(统一口径见 AssetValuationService)；旧版只算保证金，深亏用户会被高估净资产、延迟破产
+        List<FuturesPosition> futuresPositions = futuresPositionMapper.selectList(
+                new LambdaQueryWrapper<FuturesPosition>()
+                        .eq(FuturesPosition::getUserId, userId)
+                        .eq(FuturesPosition::getStatus, "OPEN"));
+        for (FuturesPosition fp : futuresPositions) {
+            BigDecimal markPrice = assetValuationService.resolveFuturesPrice(fp.getSymbol());
+            marketValue = marketValue.add(AssetValuationService.futuresPositionValue(fp, markPrice));
+        }
 
         // 期权持仓市值
         for (OptionPositionDTO op : optionPositionService.getUserPositions(userId)) {
@@ -148,7 +151,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         }
 
         // 预测按立刻卖出价估值, 无bid视为不可变现
-        marketValue = marketValue.add(calculatePredictionMarketValue(userId));
+        marketValue = marketValue.add(assetValuationService.predictionMarketValue(userId));
         BigDecimal pendingSettlement = settlementService.getPendingSettlements(userId).stream()
                 .map(Settlement::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -173,21 +176,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
             return;
         }
 
-        orderMapper.cancelOpenOrdersByUserId(userId);
-        positionMapper.deleteByUserId(userId);
-        cryptoOrderMapper.cancelOpenOrdersByUserId(userId);
-        cryptoPositionMapper.deleteByUserId(userId);
-        cleanupFuturesRedisIndexes(userId);
-        futuresOrderMapper.cancelOpenOrdersByUserId(userId);
-        futuresPositionMapper.closeOpenByUserId(userId, "LIQUIDATED");
-        settlementMapper.deletePendingByUserId(userId);
-
-        // 期权: 取消挂单 + 清空持仓
-        optionOrderMapper.cancelPendingOrdersByUserId(userId);
-        optionPositionMapper.delete(new LambdaQueryWrapper<OptionPosition>()
-                .eq(OptionPosition::getUserId, userId));
-        // 预测: 取消活跃投注, 爆仓不退款
-        predictionBetMapper.cancelActiveByUserId(userId);
+        cleanupUserHoldings(userId, "LIQUIDATED");
         log.warn("用户爆仓 userId={} resetDate={}", userId, resetDate);
     }
 
@@ -198,39 +187,26 @@ public class BankruptcyServiceImpl implements BankruptcyService {
             return;
         }
 
+        cleanupUserHoldings(userId, "CLOSED");
+        log.info("用户恢复初始资金 userId={} balance={}", userId, initialBalance);
+    }
+
+    /** 爆仓清算/破产恢复共用的持仓清理序列；futuresCloseStatus 区分 LIQUIDATED/CLOSED。 */
+    private void cleanupUserHoldings(Long userId, String futuresCloseStatus) {
         orderMapper.cancelOpenOrdersByUserId(userId);
         positionMapper.deleteByUserId(userId);
         cryptoOrderMapper.cancelOpenOrdersByUserId(userId);
         cryptoPositionMapper.deleteByUserId(userId);
         cleanupFuturesRedisIndexes(userId);
         futuresOrderMapper.cancelOpenOrdersByUserId(userId);
-        futuresPositionMapper.closeOpenByUserId(userId, "CLOSED");
+        futuresPositionMapper.closeOpenByUserId(userId, futuresCloseStatus);
         settlementMapper.deletePendingByUserId(userId);
-
         // 期权: 取消挂单 + 清空持仓
         optionOrderMapper.cancelPendingOrdersByUserId(userId);
         optionPositionMapper.delete(new LambdaQueryWrapper<OptionPosition>()
                 .eq(OptionPosition::getUserId, userId));
-        // 预测: 取消残留活跃投注(防御性, 正常流程 liquidateUser 已清理)
+        // 预测: 取消活跃投注(爆仓不退款；恢复路径为防御性清残留)
         predictionBetMapper.cancelActiveByUserId(userId);
-        log.info("用户恢复初始资金 userId={} balance={}", userId, initialBalance);
-    }
-
-    private BigDecimal calculatePredictionMarketValue(Long userId) {
-        List<PredictionBet> activeBets = predictionBetMapper.selectList(
-                new LambdaQueryWrapper<PredictionBet>()
-                        .eq(PredictionBet::getUserId, userId)
-                        .eq(PredictionBet::getStatus, "ACTIVE"));
-
-        BigDecimal total = BigDecimal.ZERO;
-        for (PredictionBet bet : activeBets) {
-            BigDecimal bid = cacheService.getPredictionBid(bet.getSide());
-            if (bid == null || bid.compareTo(BigDecimal.ZERO) <= 0 || bet.getContracts() == null) {
-                continue;
-            }
-            total = total.add(bet.getContracts().multiply(bid));
-        }
-        return total;
     }
 
     private void cleanupFuturesRedisIndexes(Long userId) {
@@ -250,7 +226,6 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         }
     }
 
-    @Override
     public LocalDate nextTradingDay(LocalDate d) {
         if (d == null) {
             return null;

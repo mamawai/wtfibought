@@ -58,12 +58,4 @@ class RollingRegressionTest {
         assertThat(after).isCloseTo(before, within(1e-12));
     }
 
-    @Test
-    void latestResidualUsesLastIndex() {
-        double[] btc = {1.0, 2.0, 3.0, 4.0};
-        double[] alt = {2.0, 4.0, 6.0, 8.5};
-
-        assertThat(RollingRegression.latestResidual(alt, btc, 3))
-                .isCloseTo(0.5, within(1e-12));
-    }
 }

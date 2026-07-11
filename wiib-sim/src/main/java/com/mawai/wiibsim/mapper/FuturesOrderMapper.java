@@ -63,10 +63,6 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
             """)
     List<Map<String, Object>> sumNetPnlAfterCommissionAll();
 
-    @Select("SELECT * FROM futures_order WHERE user_id = #{userId} AND status = 'FILLED' " +
-            "ORDER BY updated_at DESC LIMIT #{limit}")
-    List<FuturesOrder> selectRecentOrders(@Param("userId") Long userId, @Param("limit") int limit);
-
     @Select("SELECT COUNT(*) FROM futures_order WHERE user_id = #{userId} AND status = 'FILLED'")
     long countFilledOrders(@Param("userId") Long userId);
 

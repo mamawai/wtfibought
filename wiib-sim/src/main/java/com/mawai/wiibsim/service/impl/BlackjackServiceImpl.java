@@ -1067,14 +1067,7 @@ public class BlackjackServiceImpl implements BlackjackService {
      * @return 实际从池中扣出的量（0 ~ userNet），用于封顶 payout
      */
     private long adjustPoolCapped(long userNet) {
-        if (userNet <= 0) {
-            // 用户输了，池子增加
-            if (userNet < 0) {
-                ensurePoolKey();
-                cacheService.increment(dailyPoolKey(), -userNet);
-            }
-            return 0;
-        }
+        // 两个调用点均保证 userNet>0（输钱回填走 adjustPoolLoss），此方法只管赢钱封顶
         // 用户赢了，原子扣减，不低于0
         ensurePoolKey();
         return cacheService.decrementWithFloor(dailyPoolKey(), userNet, 0);

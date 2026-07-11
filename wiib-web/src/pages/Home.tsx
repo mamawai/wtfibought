@@ -16,7 +16,6 @@ import {
   Settings, Gamepad2, List, DollarSign, ArrowRight, Target, Brain,
 } from 'lucide-react';
 import type { Stock, BuffStatus } from '../types';
-import { useDedupedEffect } from '../hooks/useDedupedEffect';
 import { useUserStore } from '../stores/userStore';
 import { cn } from '../lib/utils';
 
@@ -77,7 +76,8 @@ export function Home() {
       }).finally(() => setTradesLoading(false));
   }, [refreshNonce]);
 
-  useDedupedEffect(requestKey, () => {
+  useEffect(() => {
+      if (requestKey == null) return;
     let c = false;
     Promise.all([stockApi.gainers(5), stockApi.losers(5)])
       .then(([g, l]) => { if (!c) { setGainers(g || []); setLosers(l || []); } })

@@ -307,16 +307,6 @@ export interface VideoPokerStatus {
 }
 
 // ========== 加密货币行情类型 ==========
-export interface CryptoKline {
-  openTime: number;
-  open: string;
-  high: string;
-  low: string;
-  close: string;
-  volume: string;
-  closeTime: number;
-}
-
 export interface CryptoPrice {
   price: string;
   ts: string;

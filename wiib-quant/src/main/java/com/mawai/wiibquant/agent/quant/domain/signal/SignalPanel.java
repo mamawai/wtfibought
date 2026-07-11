@@ -39,8 +39,4 @@ public record SignalPanel(List<Signal> signals) {
                 .sum();
     }
 
-    /** 全盘净倾向计票。 */
-    public int netLean() {
-        return signals.stream().mapToInt(s -> s.lean().vote()).sum();
-    }
 }

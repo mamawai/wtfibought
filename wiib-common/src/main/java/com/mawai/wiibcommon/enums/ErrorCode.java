@@ -88,22 +88,6 @@ public enum ErrorCode {
     FUTURES_SYMBOL_NOT_CONFIGURED(1759, "永续合约该币种未配置档位"),
     FUTURES_MARGIN_TOO_LOW(1760, "减少后保证金不足"),
 
-    // 414扑克错误码 1800+
-    CARD_ROOM_NOT_FOUND(1800, "房间不存在"),
-    CARD_ROOM_FULL(1801, "房间已满"),
-    CARD_NOT_HOST(1802, "非房主"),
-    CARD_NOT_ALL_READY(1803, "未全部准备"),
-    CARD_NOT_YOUR_TURN(1804, "不是你的回合"),
-    CARD_INVALID_PLAY(1805, "出牌不合法"),
-    CARD_CANNOT_BEAT(1806, "牌型压不过"),
-    CARD_CHA_INVALID(1807, "无法叉"),
-    CARD_GOU_INVALID(1808, "无法勾"),
-    CARD_ALREADY_IN_ROOM(1809, "已在房间中"),
-    CARD_GAME_IN_PROGRESS(1810, "游戏进行中"),
-    CARD_NICKNAME_REQUIRED(1811, "需要昵称"),
-    CARD_PLAYER_NOT_IN_ROOM(1812, "不在房间中"),
-    CARD_INVALID_STATE(1813, "当前状态不允许此操作"),
-
     // VideoPoker错误码 1851+
     VP_GAME_IN_PROGRESS(1851, "有未完成的视频扑克"),
     VP_NO_ACTIVE_GAME(1852, "没有进行中的视频扑克"),

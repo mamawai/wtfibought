@@ -2,7 +2,6 @@ package com.mawai.wiibfeed.stream;
 
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.market.ForceOrderService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -20,14 +19,20 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ForceOrderStreamHandler implements StreamHandler {
 
     private final BinanceProperties props;
     private final ForceOrderService forceOrderService;
 
-    /** 入库白名单 = 配置币池（懒初始化，注入完成后首条消息构建）。 */
-    private volatile Set<String> whitelist;
+    /** 入库白名单 = 配置币池（@ConfigurationProperties 构造注入时绑定已完成，直接建） */
+    private final Set<String> whitelist;
+
+    ForceOrderStreamHandler(BinanceProperties props, ForceOrderService forceOrderService) {
+        this.props = props;
+        this.forceOrderService = forceOrderService;
+        this.whitelist = props.getSymbols().stream()
+                .map(sym -> sym.toUpperCase(Locale.ROOT)).collect(Collectors.toSet());
+    }
 
     @Override public String name() { return "ForceOrder"; }
 
@@ -52,7 +57,7 @@ public class ForceOrderStreamHandler implements StreamHandler {
 
         String symbol = StreamParse.extractField(raw, "\"s\":\"", from);
         // 白名单外的币只当看门狗心跳（时间戳已在 WsConnection 更新），不入库
-        if (symbol == null || !whitelist().contains(symbol.toUpperCase(Locale.ROOT))) return;
+        if (symbol == null || !whitelist.contains(symbol.toUpperCase(Locale.ROOT))) return;
 
         String side = StreamParse.extractField(raw, "\"S\":\"", from);
         String price = StreamParse.extractField(raw, "\"p\":\"", from);
@@ -88,12 +93,4 @@ public class ForceOrderStreamHandler implements StreamHandler {
         });
     }
 
-    private Set<String> whitelist() {
-        Set<String> w = whitelist;
-        if (w == null) {
-            w = props.getSymbols().stream().map(s -> s.toUpperCase(Locale.ROOT)).collect(Collectors.toSet());
-            whitelist = w;   // 竞态无害: 重复构建结果相同
-        }
-        return w;
-    }
 }

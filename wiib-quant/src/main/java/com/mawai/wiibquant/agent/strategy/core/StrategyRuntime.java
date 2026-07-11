@@ -56,7 +56,7 @@ public class StrategyRuntime {
 
     @EventListener
     public void onKlineClosed(KlineClosedEvent event) {
-        if (!enabled || event == null || strategies.isEmpty()) return;
+        if (!enabled || strategies.isEmpty()) return;
         if (!KlineHistoryStore.DEFAULT_INTERVAL.equalsIgnoreCase(event.interval())) return;
 
         String symbol = normalizeSymbol(event.symbol());

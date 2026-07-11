@@ -1,5 +1,4 @@
 package com.mawai.wiibsim.service.impl;
-import com.mawai.wiibcommon.cache.CacheService;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -37,8 +36,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     private final CryptoPositionService cryptoPositionService;
     private final CryptoOrderMapper cryptoOrderMapper;
     private final FuturesPositionMapper futuresPositionMapper;
-    private final CacheService cacheService;
     private final OptionPositionService optionPositionService;
+    private final AssetValuationService assetValuationService;
 
     @Value("${trading.initial-balance:100000}")
     private BigDecimal initialBalance;
@@ -76,24 +75,15 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         BigDecimal cryptoSettling = cryptoOrderMapper.sumSettlingAmount(userId);
         pendingSettlement = pendingSettlement.add(cryptoSettling);
 
-        // 合约仓位: margin + unrealizedPnl
+        // 合约仓位: margin + unrealizedPnl（统一口径见 AssetValuationService）
         BigDecimal futuresValue = BigDecimal.ZERO;
         List<FuturesPosition> futuresPositions = futuresPositionMapper.selectList(
                 new LambdaQueryWrapper<FuturesPosition>()
                         .eq(FuturesPosition::getUserId, userId)
                         .eq(FuturesPosition::getStatus, "OPEN"));
         for (FuturesPosition fp : futuresPositions) {
-            BigDecimal markPrice = cacheService.getMarkPrice(fp.getSymbol());
-            if (markPrice == null) markPrice = cacheService.getCryptoPrice(fp.getSymbol());
-            if (markPrice == null) {
-                // 行情短缺时保留保证金，跳过浮盈亏
-                futuresValue = futuresValue.add(fp.getMargin());
-                continue;
-            }
-            BigDecimal unrealizedPnl = "LONG".equals(fp.getSide())
-                    ? markPrice.subtract(fp.getEntryPrice()).multiply(fp.getQuantity())
-                    : fp.getEntryPrice().subtract(markPrice).multiply(fp.getQuantity());
-            futuresValue = futuresValue.add(fp.getMargin()).add(unrealizedPnl);
+            BigDecimal markPrice = assetValuationService.resolveFuturesPrice(fp.getSymbol());
+            futuresValue = futuresValue.add(AssetValuationService.futuresPositionValue(fp, markPrice));
         }
 
         // 期权持仓市值
@@ -103,12 +93,16 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             optionValue = optionValue.add(op.getMarketValue());
         }
 
+        // 预测持仓按 bid 可变现价值计入总资产
+        BigDecimal predictionValue = assetValuationService.predictionMarketValue(userId);
+
         BigDecimal totalAssets = user.getBalance()
                 .add(frozenBalance)
                 .add(marketValue)
                 .add(pendingSettlement)
                 .add(futuresValue)
                 .add(optionValue)
+                .add(predictionValue)
                 .subtract(marginLoanPrincipal)
                 .subtract(marginInterestAccrued);
 

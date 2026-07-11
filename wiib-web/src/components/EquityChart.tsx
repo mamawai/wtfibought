@@ -8,7 +8,6 @@ interface Props {
 
 /** 读主题色（tailwind v4 @theme 变量），保证与全站盈亏配色一致。 */
 function themeColor(name: string, fallback: string): string {
-  if (typeof document === 'undefined') return fallback;
   const css = getComputedStyle(document.documentElement);
   return (css.getPropertyValue(`--color-${name}`) || css.getPropertyValue(`--${name}`) || fallback).trim();
 }

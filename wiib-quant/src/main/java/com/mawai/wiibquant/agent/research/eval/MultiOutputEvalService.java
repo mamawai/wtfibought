@@ -43,8 +43,6 @@ public final class MultiOutputEvalService {
     private static final int VOL_CALIBRATION_BUCKETS = 5;
     /** vol 跑赢基准的 DM/Newey-West 单侧显著性门槛；与 summary 里"显著/不显著"同口径。 */
     private static final double VOL_SIGNIFICANCE_ALPHA = 0.05;
-    private static final int PROGRESS_BAR_WIDTH = 24;
-    private static final int PROGRESS_TARGET_UPDATES = 20;
 
     private MultiOutputEvalService() {
     }
@@ -80,27 +78,10 @@ public final class MultiOutputEvalService {
                                           List<MarketSeriesPoint> stablecoinSeries,
                                           MultiOutputForecaster forecaster, EvalParams params,
                                           int featureLookbackBars, long decisionBarMillis) {
-        return evaluateBars(symbol, horizon, oneMin, benchmarkOneMin, fundingSeries, fearGreedSeries,
-                etfFlowSeries, stablecoinSeries, forecaster, params, featureLookbackBars, decisionBarMillis,
-                EvalProgress.NOOP);
-    }
-
-    static MultiOutputReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
-                                          List<KlineBar> benchmarkOneMin,
-                                          List<MarketSeriesPoint> fundingSeries,
-                                          List<MarketSeriesPoint> fearGreedSeries,
-                                          List<MarketSeriesPoint> etfFlowSeries,
-                                          List<MarketSeriesPoint> stablecoinSeries,
-                                          MultiOutputForecaster forecaster, EvalParams params,
-                                           int featureLookbackBars, long decisionBarMillis,
-                                           EvalProgress progress) {
-        EvalProgress evalProgress = progress == null ? EvalProgress.NOOP : progress;
         try {
-        evalProgress.update("assemble", 0, 1);
         AssembledPoints a = ResearchEvalService.assemblePoints(horizon, oneMin, benchmarkOneMin,
                 fundingSeries, fearGreedSeries, etfFlowSeries, stablecoinSeries,
                 params, featureLookbackBars, decisionBarMillis);
-        evalProgress.update("assemble", 1, 1);
         List<KlineBar> decisionBars = a.decisionBars();
         int points = a.points();
         double[] baselineSigmaByPoint = a.baselineSigmaByPoint();
@@ -127,7 +108,6 @@ public final class MultiOutputEvalService {
             realizedReturnByPoint[i] = a.samplesByPoint().get(i).realizedForwardReturn();
         }
         double[] realizedReturnSqPrefix = squaredPrefix(realizedReturnByPoint);
-        evalProgress.update("vol-baselines", 0, points);
         for (int i = 0; i < points; i++) {
             int knownReturnEnd = knownRealizedReturnEndExclusive(
                     a.decisionBarIndexes(), i, a.horizonDecisionBars());
@@ -143,16 +123,10 @@ public final class MultiOutputEvalService {
             double baselineSigma = baselineSigmaByPoint[i];
             prevEwmaSigmaByPoint[i] = i >= 1 ? baselineSigmaByPoint[i - 1] : 0.0;
             rollingSigmaByPoint[i] = rollingSigma(realizedReturnSqPrefix, knownReturnEnd, rollingVolWindow);
-            MarketRegime sampleRegime = a.samplesByPoint().get(i).realizedRegime();
-            if (sampleRegime != null) {
-                actualRegimeByPoint[i] = sampleRegime;
-            } else {
-                List<KlineBar> futurePath = ResearchEvalService.pathBars(oneMin, decisionBars.get(i).closeTime(), horizon.millis());
-                actualRegimeByPoint[i] = RegimeLabeler.label(futurePath, baselineSigma);
-            }
+            // pathStats 的 realizedRegime 恒非空(缺样兜底 RANGING)，直接取用
+            actualRegimeByPoint[i] = a.samplesByPoint().get(i).realizedRegime();
             // regime 的 naive 基准只能看已走完整个 horizon 的旧标签；相邻 actual[i-1] 对 5m→H 是未来信息。
             knownRegimeByPoint[i] = knownReturnEnd > 0 ? actualRegimeByPoint[knownReturnEnd - 1] : null;
-            progressEvery(evalProgress, "vol-baselines", i + 1, points);
         }
 
         List<WalkForwardWindow> wins = WalkForwardEvaluator.windows(
@@ -182,9 +156,6 @@ public final class MultiOutputEvalService {
         int firstDecisionBarIndex = -1, lastExitBarIndex = -1;
         BigDecimal costRate = params.costRate();
         boolean hasCost = costRate.signum() > 0;
-        int totalWalkForwardPoints = wins.stream().mapToInt(WalkForwardWindow::testSize).sum();
-        int walkedPoints = 0;
-        evalProgress.update("walk-forward", 0, totalWalkForwardPoints);
         for (WalkForwardWindow w : wins) {
             if (firstDecisionBarIndex < 0) {
                 firstDecisionBarIndex = a.decisionBarIndexes().get(w.testStart());
@@ -224,12 +195,10 @@ public final class MultiOutputEvalService {
                 predRegime.add(f.regime());
                 actualRegime.add(actualRegimeByPoint[i]);
                 naiveRegime.add(knownRegimeByPoint[i]);
-                progressEvery(evalProgress, "walk-forward", ++walkedPoints, totalWalkForwardPoints);
             }
         }
 
         // ---- 方向腿判决（复用方向尺子；非重叠口径为主判决，重叠口径仅诊断）----
-        evalProgress.update("direction-score", 0, 1);
         ReturnSeries series = new ReturnSeries(forecaster.name(), posReturns, horizon.periodsPerYear());
         RiskAdjustedMetrics dirMetrics = RiskAdjustedMetrics.from(series);
         BigDecimal buyHold = (firstDecisionBarIndex >= 0 && lastExitBarIndex < a.decisionIntervalBars().size())
@@ -245,19 +214,15 @@ public final class MultiOutputEvalService {
                 : RiskAdjustedMetrics.from(new ReturnSeries(
                         forecaster.name() + "_non_overlap", nonOverlapReturns, horizon.periodsPerYear()))
                 .annualizedSharpe();
-        evalProgress.update("permutation", 0, params.iterations());
         double naivePct = positions.isEmpty() ? 0.0
-                : BenchmarkCalculator.permutationPercentile(positions, testLongReturns, params.iterations(), params.seed(),
-                done -> progressEvery(evalProgress, "permutation", done, params.iterations()));
+                : BenchmarkCalculator.permutationPercentile(positions, testLongReturns, params.iterations(), params.seed());
         // 非重叠排列分位：重叠口径下 i.i.d. 洗牌会低估持续持仓策略的 null 方差（分位虚高），非重叠近独立、分位才诚实。
         double nonOverlapNaivePct = nonOverlapPositions.isEmpty() ? 0.0
                 : BenchmarkCalculator.permutationPercentile(
                 nonOverlapPositions, nonOverlapLongReturns, params.iterations(), params.seed());
         DirectionPathSummary directionPathSummary = DirectionPathSummary.from(positions, pathOutcomes);
-        evalProgress.update("direction-score", 1, 1);
 
         // ---- 波动率判决（model 预测 σ vs 多基准；verdict 以最难基准[min QLIKE]为准，random-walk 只作对照）----
-        evalProgress.update("vol-score", 0, 1);
         double[] realizedArr = toArray(realizedForVol);
         double[] predSigmaArr = toArray(predSigma);
         VolForecastScore volScore = VolForecastScore.evaluate(predSigmaArr, realizedArr);
@@ -288,15 +253,12 @@ public final class MultiOutputEvalService {
         VolCalibrationReport volCalibration = VolCalibrationReport.evaluate(
                 predSigmaArr, realizedArr, VOL_CALIBRATION_BUCKETS);
         VolatilityRiskSummary volRiskSummary = VolatilityRiskSummary.from(volContexts);
-        evalProgress.update("vol-score", 1, 1);
 
         // ---- regime 判决（model vs persistence，封装在 score）----
-        evalProgress.update("regime-score", 0, 1);
         RegimeClassificationScore regimeScore = RegimeClassificationScore.evaluate(
                 predRegime.toArray(new MarketRegime[0]),
                 actualRegime.toArray(new MarketRegime[0]),
                 naiveRegime.toArray(new MarketRegime[0]));
-        evalProgress.update("regime-score", 1, 1);
 
         return new MultiOutputReport(forecaster.name(), symbol, horizon.hours(),
                 ResearchEvalService.minutes(a.decisionBarMillis()), points, positions.size(),
@@ -340,25 +302,6 @@ public final class MultiOutputEvalService {
         if (n <= 0) return 0.0;
         double sumSq = squaredPrefix[safeEnd] - squaredPrefix[start];
         return Math.sqrt(sumSq / n);
-    }
-
-    private static void progressEvery(EvalProgress progress, String stage, int done, int total) {
-        if (progress == null || total <= 0) {
-            return;
-        }
-        int step = Math.max(1, total / PROGRESS_TARGET_UPDATES);
-        if (done == 0 || done >= total || done % step == 0) {
-            progress.update(stage, done, total);
-        }
-    }
-
-    static String progressBar(int done, int total) {
-        if (total <= 0) {
-            return ".".repeat(PROGRESS_BAR_WIDTH);
-        }
-        int filled = Math.max(0, Math.min(PROGRESS_BAR_WIDTH,
-                (int) Math.round((double) done * PROGRESS_BAR_WIDTH / total)));
-        return "#".repeat(filled) + ".".repeat(PROGRESS_BAR_WIDTH - filled);
     }
 
     /** 当前点只能使用已经走完整个 horizon 的历史标签，避免 5m→6h 这类重叠标签泄漏。 */

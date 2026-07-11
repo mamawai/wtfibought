@@ -152,7 +152,8 @@ public class OptionPricingServiceImpl implements OptionPricingService {
         return dto;
     }
 
-    private BigDecimal getSpotPrice(Long stockId) {
+    @Override
+    public BigDecimal getSpotPrice(Long stockId) {
         BigDecimal price = cacheService.getCurrentPrice(stockId);
         if (price == null) {
             Map<String, String> stockStatic = stockCacheService.getStockStatic(stockId);

@@ -106,19 +106,6 @@ class RegimeClassificationScoreTest {
     }
 
     @Test
-    void legacyConstructorsFillZeroConfusionMatrix() {
-        RegimeClassificationScore s = new RegimeClassificationScore(0.5, 0.4, true, 4);
-
-        assertThat(s.confusionMatrix()).containsOnlyKeys(MarketRegime.values());
-        assertThat(s.confusionMatrix().values())
-                .allSatisfy(row -> assertThat(row).containsOnlyKeys(MarketRegime.values()));
-        assertThat(s.confusionMatrix().values().stream()
-                .flatMap(row -> row.values().stream())
-                .mapToInt(Integer::intValue)
-                .sum()).isZero();
-    }
-
-    @Test
     void emptyIsZero() {
         RegimeClassificationScore s = RegimeClassificationScore.evaluate(new MarketRegime[0], new MarketRegime[0]);
 

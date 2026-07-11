@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { stockApi, orderApi, newsApi, userApi, buffApi } from '../api';
 import { useQuote } from '../hooks/useQuote';
@@ -13,7 +13,6 @@ import { Select } from '../components/ui/select';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
 import { cn } from '../lib/utils';
-import { useDedupedEffect } from '../hooks/useDedupedEffect';
 import {
   ArrowLeft,
   TrendingUp,
@@ -58,7 +57,6 @@ export function StockDetail() {
   const [position, setPosition] = useState<Position | null>(null);
   const [discountBuff, setDiscountBuff] = useState<UserBuff | null>(null);
   const [useBuff, setUseBuff] = useState(false);
-  const activeRequestKey = useRef('');
 
   // 生成最近5个交易日（排除周末）
   const tradingDays = useMemo(() => {
@@ -119,15 +117,13 @@ export function StockDetail() {
   }, [user]);
 
   const requestKey = id && userReady ? `stock-detail:id=${id}:refresh=${refreshNonce}:user=${!!user}` : null;
-  useDedupedEffect(
-    requestKey,
-    () => {
+  useEffect(() => {
+      if (requestKey == null) return;
       if (!id) return;
       const stockId = Number(id);
       if (!Number.isFinite(stockId)) return;
 
       let cancelled = false;
-      activeRequestKey.current = requestKey ?? '';
 
       setLoading(true);
       setLoadError(null);
@@ -145,7 +141,6 @@ export function StockDetail() {
       ])
         .then(([s, t, positions]) => {
           if (cancelled) return;
-          if (activeRequestKey.current !== (requestKey ?? '')) return;
 
           setStock(s);
           setInitialTicks(t);
@@ -174,23 +169,19 @@ export function StockDetail() {
         })
         .catch((e: unknown) => {
           if (cancelled) return;
-          if (activeRequestKey.current !== (requestKey ?? '')) return;
           const msg = e instanceof Error ? e.message : '加载失败';
           setLoadError(msg);
           toast('加载股票详情失败', 'error', { description: msg });
         })
         .finally(() => {
           if (cancelled) return;
-          if (activeRequestKey.current !== (requestKey ?? '')) return;
           setLoading(false);
         });
 
       return () => {
         cancelled = true;
       };
-    },
-    [requestKey],
-  );
+    }, [requestKey]);
 
   // 提取交易计算逻辑
   const tradeCalc = useMemo(() => {

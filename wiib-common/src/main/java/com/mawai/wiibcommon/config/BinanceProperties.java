@@ -14,7 +14,6 @@ public class BinanceProperties {
     private String futuresWsUrl;
     private String restBaseUrl;
     private String futuresRestBaseUrl;
-    private String newsApiKey;
     private List<String> symbols;
     private long fallbackPollInterval;
 }

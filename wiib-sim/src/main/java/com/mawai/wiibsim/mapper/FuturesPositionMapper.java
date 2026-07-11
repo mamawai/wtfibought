@@ -51,10 +51,6 @@ public interface FuturesPositionMapper extends BaseMapper<FuturesPosition> {
                          @Param("closedPrice") BigDecimal closedPrice,
                          @Param("closedPnl") BigDecimal closedPnl);
 
-    /** 查询用户所有OPEN仓位的保证金总和 */
-    @Select("SELECT COALESCE(SUM(margin), 0) FROM futures_position WHERE user_id = #{userId} AND status = 'OPEN'")
-    BigDecimal sumOpenMargin(@Param("userId") Long userId);
-
     /** 排行榜硬实力：资金费已从余额或保证金扣过，这里按仓位历史累计扣回 */
     @Select("SELECT user_id, COALESCE(SUM(COALESCE(funding_fee_total, 0)), 0) AS amount " +
             "FROM futures_position GROUP BY user_id")

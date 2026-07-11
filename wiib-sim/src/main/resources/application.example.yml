@@ -55,17 +55,14 @@ linuxdo:
 # 交易配置
 trading:
   # 合约 AI 主决策周期：M1/M3/M5/M15/H1（影响 K 线采集 / 指标计算 / 回测聚合系数）
-  decision-interval: M5
   # 新用户初始余额
   initial-balance: 100000
   # 手续费率（0.05%）
   commission-rate: 0.0005
   # 市价单滑点保护（±2%）
-  slippage-limit: 0.02
   # 限价单最长有效期（小时）
   limit-order-max-hours: 24
   # 乐观锁最大重试次数
-  optimistic-lock-max-retries: 3
   # 限价单并发处理配置
   limit-order-processing:
     max-concurrency: 15

@@ -32,7 +32,6 @@ public class MicrostructureAgent implements FactorAgent {
         double spotBia = s.spotBidAskImbalance();
         double spotLeadLag = s.spotLeadLagScore();
         double basisBps = s.spotPerpBasisBps();
-        BigDecimal lastPrice = s.lastPrice();
         Map<String, BigDecimal> pc = s.priceChanges();
         double price5mBps = pc != null && pc.containsKey("5m")
                 ? pc.get("5m").doubleValue() * 100 : 0;

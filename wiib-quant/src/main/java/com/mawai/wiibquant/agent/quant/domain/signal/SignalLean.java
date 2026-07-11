@@ -31,15 +31,4 @@ public enum SignalLean {
         };
     }
 
-    /** 新闻 sentiment（bullish/bearish/neutral）映射为倾向。 */
-    public static SignalLean fromSentiment(String sentiment) {
-        if (sentiment == null) {
-            return NEUTRAL;
-        }
-        return switch (sentiment.trim().toLowerCase()) {
-            case "bullish" -> BULLISH;
-            case "bearish" -> BEARISH;
-            default -> NEUTRAL;
-        };
-    }
 }

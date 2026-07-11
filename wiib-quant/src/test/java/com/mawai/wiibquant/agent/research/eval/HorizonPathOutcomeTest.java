@@ -12,22 +12,6 @@ import static org.assertj.core.api.Assertions.within;
 class HorizonPathOutcomeTest {
 
     @Test
-    void computesRawPathBpsFromFutureHighLowClose() {
-        HorizonPathOutcome outcome = HorizonPathOutcome.from(bd("100"), bd("104"), List.of(
-                bar("100", "106", "98", "101"),
-                bar("101", "103", "95", "104")
-        ));
-
-        assertThat(outcome.actualChangeBps()).isEqualTo(400);
-        assertThat(outcome.maxUpBps()).isEqualTo(600);
-        assertThat(outcome.maxDownBps()).isEqualTo(500);
-        assertThat(outcome.maxFavorableBps(1)).isEqualTo(600);
-        assertThat(outcome.maxAdverseBps(1)).isEqualTo(500);
-        assertThat(outcome.maxFavorableBps(-1)).isEqualTo(500);
-        assertThat(outcome.maxAdverseBps(-1)).isEqualTo(600);
-    }
-
-    @Test
     void summarizesOnlyTradedDirections() {
         DirectionPathSummary summary = DirectionPathSummary.from(
                 List.of(1, -1, 0),

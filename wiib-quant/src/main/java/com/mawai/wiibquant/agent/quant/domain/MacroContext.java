@@ -86,46 +86,6 @@ public record MacroContext(
         return new MacroRiskHint(budget, shock, stressed);
     }
 
-    public String toDebateBlock() {
-        if (stale || qualityFlags.contains("MACRO_CONTEXT_NEUTRAL")) {
-            return "";
-        }
-        return "research H6/H12/H24 | vol: %s | regime: %s | direction: %s"
-                .formatted(volSummary(), regimeSummary(), directionSummary());
-    }
-
-    public String toReportBlock() {
-        if (stale || qualityFlags.contains("MACRO_CONTEXT_NEUTRAL")) {
-            return "宏观上下文预热中，暂不介入交易。";
-        }
-        return "research H6/H12/H24 | vol: %s | regime: %s | direction: %s"
-                .formatted(volSummary(), regimeSummary(), directionSummary());
-    }
-
-    private String volSummary() {
-        return "H6=%s(%dbps,预算%.2f)/H12=%s(%dbps,预算%.2f)/H24=%s(%dbps,预算%.2f)"
-                .formatted(
-                        leg(ForecastHorizon.H6).volTier(), leg(ForecastHorizon.H6).expectedMoveBps(), leg(ForecastHorizon.H6).riskBudgetHint(),
-                        leg(ForecastHorizon.H12).volTier(), leg(ForecastHorizon.H12).expectedMoveBps(), leg(ForecastHorizon.H12).riskBudgetHint(),
-                        leg(ForecastHorizon.H24).volTier(), leg(ForecastHorizon.H24).expectedMoveBps(), leg(ForecastHorizon.H24).riskBudgetHint());
-    }
-
-    private String regimeSummary() {
-        return "H6=%s@%.2f/H12=%s@%.2f/H24=%s@%.2f"
-                .formatted(
-                        leg(ForecastHorizon.H6).regime(), leg(ForecastHorizon.H6).regimeConfidence(),
-                        leg(ForecastHorizon.H12).regime(), leg(ForecastHorizon.H12).regimeConfidence(),
-                        leg(ForecastHorizon.H24).regime(), leg(ForecastHorizon.H24).regimeConfidence());
-    }
-
-    private String directionSummary() {
-        return "H6=%s@%.2f/H12=%s@%.2f/H24=%s@%.2f(仅报告建议)"
-                .formatted(
-                        directionText(leg(ForecastHorizon.H6).directionSign()), leg(ForecastHorizon.H6).directionConfidence(),
-                        directionText(leg(ForecastHorizon.H12).directionSign()), leg(ForecastHorizon.H12).directionConfidence(),
-                        directionText(leg(ForecastHorizon.H24).directionSign()), leg(ForecastHorizon.H24).directionConfidence());
-    }
-
     private Leg leg(ForecastHorizon horizon) {
         return legs.getOrDefault(horizon, Leg.neutral());
     }

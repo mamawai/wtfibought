@@ -53,16 +53,6 @@ public class OptionContractServiceImpl extends ServiceImpl<OptionContractMapper,
         log.info("生成期权链 stockId={} refPrice={} steps={} contracts={}", stockId, refPrice, steps, count);
     }
 
-    @Override
-    public List<OptionContract> getOptionChain(Long stockId, LocalDateTime expireAt) {
-        LambdaQueryWrapper<OptionContract> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(OptionContract::getStockId, stockId)
-                .eq(OptionContract::getExpireAt, expireAt)
-                .eq(OptionContract::getStatus, "ACTIVE")
-                .orderByAsc(OptionContract::getStrike)
-                .orderByAsc(OptionContract::getOptionType);
-        return baseMapper.selectList(wrapper);
-    }
 
     @Override
     public List<OptionContract> getActiveContracts(Long stockId) {

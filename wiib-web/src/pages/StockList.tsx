@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { stockApi } from '../api';
 import { StockCard } from '../components/StockCard';
@@ -9,7 +9,6 @@ import { Skeleton } from '../components/ui/skeleton';
 import { useToast } from '../components/ui/use-toast';
 import { List, ChevronLeft, ChevronRight, RefreshCcw, Search, X, ArrowUpDown } from 'lucide-react';
 import type { Stock } from '../types';
-import { useDedupedEffect } from '../hooks/useDedupedEffect';
 
 function StockCardSkeleton() {
   return (
@@ -41,41 +40,33 @@ export function StockList() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   
   const pageSize = 10;
-  const activeRequestKey = useRef('');
 
   const requestKey = `stock-list:all:refresh=${refreshNonce}`;
-  useDedupedEffect(
-    requestKey,
-    () => {
+  useEffect(() => {
+      if (requestKey == null) return;
       let cancelled = false;
-      activeRequestKey.current = requestKey;
 
       setLoading(true);
       stockApi
         .list()
         .then((res: Stock[]) => {
           if (cancelled) return;
-          if (activeRequestKey.current !== requestKey) return;
           setAllStocks(res);
         })
         .catch(() => {
           if (cancelled) return;
-          if (activeRequestKey.current !== requestKey) return;
           setAllStocks([]);
           toast('获取股票列表失败', 'error', { description: '请稍后重试' });
         })
         .finally(() => {
           if (cancelled) return;
-          if (activeRequestKey.current !== requestKey) return;
           setLoading(false);
         });
 
       return () => {
         cancelled = true;
       };
-    },
-    [requestKey],
-  );
+    }, [requestKey]);
 
   const processedStocks = useMemo(() => {
     let result = [...allStocks];

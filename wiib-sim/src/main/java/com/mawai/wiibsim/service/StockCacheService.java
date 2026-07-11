@@ -128,21 +128,6 @@ public class StockCacheService {
     }
 
     /**
-     * 获取Company数据
-     */
-    public Map<String, String> getCompany(Long companyId) {
-        String key = COMPANY_PREFIX + companyId;
-        Map<String, String> companyHash = cacheService.hGetAll(key);
-
-        if (companyHash.isEmpty()) {
-            loadCompanyToRedis(companyId);
-            companyHash = cacheService.hGetAll(key);
-        }
-
-        return companyHash.isEmpty() ? null : companyHash;
-    }
-
-    /**
      * 单独加载一支股票到Redis
      */
     private void loadSingleStockToRedis(Stock stock) {

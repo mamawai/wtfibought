@@ -32,7 +32,6 @@ class DepthStreamCacheTest {
         // 新鲜：eventTime 在窗口内 → 返回 json
         when(valueOps.get("market:depth:BTCUSDT")).thenReturn(now + "|{\"bids\":[[1,2]]}");
         assertThat(cache.getFreshDepth("BTCUSDT", 2000)).isEqualTo("{\"bids\":[[1,2]]}");
-        assertThat(cache.hasFreshData("BTCUSDT")).isTrue();
 
         // 超龄：eventTime 早于窗口 → null
         when(valueOps.get("market:depth:BTCUSDT")).thenReturn((now - 5000) + "|{\"bids\":[[1,2]]}");

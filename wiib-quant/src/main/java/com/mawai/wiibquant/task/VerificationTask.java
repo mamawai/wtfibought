@@ -36,7 +36,7 @@ public class VerificationTask {
     /** 主触发：5m bar 收盘即对账（快照/研判只产于 WATCH_SYMBOLS，其余 symbol 的 bar 不进本轨）。 */
     @EventListener
     public void onKlineClosed(KlineClosedEvent event) {
-        if (event == null || !"5m".equalsIgnoreCase(event.interval())) {
+        if (!"5m".equalsIgnoreCase(event.interval())) {
             return;
         }
         String symbol = normalize(event.symbol());

@@ -52,19 +52,6 @@ public record MultiOutputForecast(
         return new MultiOutputForecast(horizon, 0.0, MarketRegime.RANGING, 0.0, Forecast.flat());
     }
 
-    /** 方向腿是否给出可交易方向（非空仓）。 */
-    public boolean isTradeable() {
-        return direction.direction() != 0;
-    }
-
-    /**
-     * 派生定仓提示 ∈ [0,1]：agent 给 trading 的保守仓位缩放建议。
-     * 空仓→0；否则=方向置信度（trading 层 Phase B 可再结合 expectedVolatility 缩放/覆盖）。
-     */
-    public double suggestedPositionScale() {
-        return isTradeable() ? direction.confidence() : 0.0;
-    }
-
     private static VolatilityRiskContext defaultVolatilityContext(ForecastHorizon horizon, double expectedVolatility) {
         return horizon == null ? null : VolatilityRiskContext.from(horizon, expectedVolatility, java.util.List.of());
     }

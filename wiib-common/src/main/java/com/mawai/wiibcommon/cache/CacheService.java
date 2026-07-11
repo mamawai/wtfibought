@@ -256,10 +256,6 @@ public class CacheService {
 
     // ==================== 通用缓存 ====================
 
-    public void set(String key, String value, long timeout, TimeUnit unit) {
-        stringRedisTemplate.opsForValue().set(key, value, timeout, unit);
-    }
-
     public void set(String key, String value, Duration duration) {
         stringRedisTemplate.opsForValue().set(key, value, duration);
     }
@@ -272,16 +268,8 @@ public class CacheService {
         return stringRedisTemplate.opsForValue().get(key);
     }
 
-    public List<String> multiGet(Collection<String> keys) {
-        return stringRedisTemplate.opsForValue().multiGet(keys);
-    }
-
     public void delete(String key) {
         stringRedisTemplate.unlink(key);
-    }
-
-    public boolean hasKey(String key) {
-        return stringRedisTemplate.hasKey(key);
     }
 
     public boolean setIfAbsent(String key, String value, long timeout, TimeUnit unit) {
@@ -340,24 +328,6 @@ public class CacheService {
         stringRedisTemplate.opsForHash().putAll(key, hash);
     }
 
-    // ==================== List操作 ====================
-
-    public void lRightPushAll(String key, List<String> values) {
-        stringRedisTemplate.opsForList().rightPushAll(key, values);
-    }
-
-    public List<String> lRange(String key, long start, long end) {
-        return stringRedisTemplate.opsForList().range(key, start, end);
-    }
-
-    public String lIndex(String key, long index) {
-        return stringRedisTemplate.opsForList().index(key, index);
-    }
-
-    public Long lLen(String key) {
-        return stringRedisTemplate.opsForList().size(key);
-    }
-
     // ==================== 对象序列化（使用RedisTemplate） ====================
 
     public void setObject(String key, Object obj, long timeout, TimeUnit unit) {
@@ -384,52 +354,10 @@ public class CacheService {
     }
 
     /**
-     * 从Set中移除元素
-     */
-    public Long sRemove(String key, Object... values) {
-        return stringRedisTemplate.opsForSet().remove(key, values);
-    }
-
-    /**
      * 获取Set的所有成员
      */
     public Set<String> sMembers(String key) {
         return stringRedisTemplate.opsForSet().members(key);
-    }
-
-    /**
-     * 判断元素是否在Set中
-     */
-    public Boolean sIsMember(String key, Object value) {
-        return stringRedisTemplate.opsForSet().isMember(key, value);
-    }
-
-    /**
-     * 获取Set的大小
-     */
-    public Long sSize(String key) {
-        return stringRedisTemplate.opsForSet().size(key);
-    }
-
-    /**
-     * 多个Set的交集
-     */
-    public Set<String> sIntersect(String key, String otherKey) {
-        return stringRedisTemplate.opsForSet().intersect(key, otherKey);
-    }
-
-    /**
-     * 多个Set的并集
-     */
-    public Set<String> sUnion(String key, String otherKey) {
-        return stringRedisTemplate.opsForSet().union(key, otherKey);
-    }
-
-    /**
-     * 多个Set的差集
-     */
-    public Set<String> sDifference(String key, String otherKey) {
-        return stringRedisTemplate.opsForSet().difference(key, otherKey);
     }
 
     // ==================== ZSet操作 ====================
@@ -444,10 +372,6 @@ public class CacheService {
 
     public Double zScore(String key, String value) {
         return stringRedisTemplate.opsForZSet().score(key, value);
-    }
-
-    public Set<String> zRangeByScore(String key, double min, double max) {
-        return stringRedisTemplate.opsForZSet().rangeByScore(key, min, max);
     }
 
     @SuppressWarnings("unchecked")
@@ -477,51 +401,5 @@ public class CacheService {
 
     public Set<ZSetOperations.TypedTuple<String>> zRangeByScoreWithScores(String key, double min, double max) {
         return stringRedisTemplate.opsForZSet().rangeByScoreWithScores(key, min, max);
-    }
-
-    // ==================== 通用Key操作 ====================
-
-    /**
-     * 删除多个key
-     */
-    public Long deleteKeys(Collection<String> keys) {
-        return stringRedisTemplate.delete(keys);
-    }
-
-    /**
-     * 批量删除key（通配符）
-     * 使用SCAN迭代+UNLINK异步删除，避免阻塞Redis
-     */
-    public void deletePattern(String pattern) {
-        Set<String> keys = scanKeys(pattern, 200);
-        if (!keys.isEmpty()) {
-            stringRedisTemplate.unlink(keys);
-        }
-    }
-
-    /**
-     * 查找匹配的key（使用SCAN迭代，避免KEYS阻塞）
-     */
-    public Set<String> scanKeys(String pattern, int count) {
-        Set<String> keys = new HashSet<>();
-        try (Cursor<String> cursor = stringRedisTemplate.scan(
-                ScanOptions.scanOptions()
-                        .match(pattern)
-                        .count(count)
-                        .build())) {
-            cursor.forEachRemaining(keys::add);
-        } catch (Exception e) {
-            log.error("SCAN keys failed: pattern={}, count={}, error={}",
-                    pattern, count, e.getMessage(), e);
-            throw new RuntimeException("SCAN keys failed: " + e.getMessage(), e);
-        }
-        return keys;
-    }
-
-    /**
-     * 检查多个key是否存在
-     */
-    public Long countExistingKeys(Collection<String> keys) {
-        return stringRedisTemplate.countExistingKeys(keys);
     }
 }

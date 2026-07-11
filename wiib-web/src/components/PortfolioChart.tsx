@@ -2,6 +2,7 @@ import * as echarts from 'echarts';
 import { useEffect, useRef } from 'react';
 import type { Position } from '../types';
 import { getCoin } from '../lib/coinConfig';
+import { useIsDark } from '../hooks/useIsDark';
 
 interface CryptoRow {
   symbol: string;
@@ -23,10 +24,10 @@ interface Props {
 
 export function PortfolioChart({ positions, cryptoPositions = [], futuresRows = [], balance, pendingSettlement = 0 }: Props) {
   const chartRef = useRef<HTMLDivElement>(null);
+  const isDark = useIsDark();
 
   useEffect(() => {
     if (!chartRef.current) return;
-    const isDark = document.documentElement.classList.contains('dark');
     const chart = echarts.init(chartRef.current, isDark ? 'dark' : 'light');
 
     const sortedPositions = [...positions].sort((a, b) => (b.marketValue || 0) - (a.marketValue || 0));
@@ -132,7 +133,7 @@ export function PortfolioChart({ positions, cryptoPositions = [], futuresRows = 
       window.removeEventListener('resize', onResize);
       chart.dispose();
     };
-  }, [positions, cryptoPositions, futuresRows, balance, pendingSettlement]);
+  }, [positions, cryptoPositions, futuresRows, balance, pendingSettlement, isDark]);
 
   return <div ref={chartRef} className="w-full h-56 sm:h-64 transition-colors duration-300" />;
 }

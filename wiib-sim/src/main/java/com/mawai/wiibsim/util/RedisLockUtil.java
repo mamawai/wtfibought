@@ -25,11 +25,7 @@ public class RedisLockUtil {
     /** 锁前缀 */
     private static final String LOCK_PREFIX = "lock:";
 
-    /** 默认锁超时时间（秒） */
-    private static final long DEFAULT_LOCK_TIMEOUT = 30;
 
-    /** 默认获取锁等待时间（毫秒） */
-    private static final long DEFAULT_WAIT_TIMEOUT = 5000;
 
     /** 获取锁失败后的重试间隔（毫秒） */
     private static final long RETRY_INTERVAL_MILLIS = 50;
@@ -115,19 +111,6 @@ public class RedisLockUtil {
 
     /**
      * 在锁保护下执行操作
-     * 注意：此方法内部不包含事务，如需事务请在supplier内部处理
-     *
-     * @param key      锁的key
-     * @param supplier 要执行的操作
-     * @throws LockAcquisitionException 如果获取锁失败
-     */
-    @SuppressWarnings("UnusedReturnValue")
-    public <T> T executeWithLock(String key, Supplier<T> supplier) {
-        return executeWithLock(key, DEFAULT_LOCK_TIMEOUT, DEFAULT_WAIT_TIMEOUT, supplier);
-    }
-
-    /**
-     * 在锁保护下执行操作
      */
     public <T> T executeWithLock(String key, long lockTimeout, long waitTimeout, Supplier<T> supplier) {
         String lockValue = tryLockWithWait(key, lockTimeout, waitTimeout);
@@ -142,13 +125,4 @@ public class RedisLockUtil {
         }
     }
 
-    /**
-     * 在锁保护下执行操作（无返回值）
-     */
-    public void executeWithLock(String key, Runnable runnable) {
-        executeWithLock(key, () -> {
-            runnable.run();
-            return null;
-        });
-    }
 }

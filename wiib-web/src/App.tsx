@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, type ReactNode, useEffect } from 'react';
 import { Layout } from './components/Layout';
 import { Home } from './pages/Home';
 import { StockList } from './pages/StockList';
@@ -26,7 +26,6 @@ import { Strategies } from './pages/Strategies';
 import { TestnetMonitor } from './pages/TestnetMonitor';
 import { ForceOrders } from './pages/ForceOrders';
 import { useUserStore } from './stores/userStore';
-import { useDedupedEffect } from './hooks/useDedupedEffect';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const token = useUserStore(s => s.token);
@@ -38,13 +37,10 @@ function App() {
   const { token, fetchUser } = useUserStore();
   const fetchKey = useMemo(() => (token ? `auth:current:${token}` : null), [token]);
 
-  useDedupedEffect(
-    fetchKey,
-    () => {
+  useEffect(() => {
+      if (fetchKey == null) return;
       void fetchUser();
-    },
-    [fetchKey, fetchUser],
-  );
+    }, [fetchKey, fetchUser]);
 
   return (
     <BrowserRouter>

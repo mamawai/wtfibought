@@ -52,7 +52,4 @@ public class DepthStreamCache {
         }
     }
 
-    public boolean hasFreshData(String symbol) {
-        return getFreshDepth(symbol, 2000) != null;
-    }
 }

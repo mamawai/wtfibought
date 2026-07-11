@@ -54,7 +54,7 @@ public class ResearchEvalService {
     static final long FEATURE_BAR_MILLIS = 5 * 60_000L;
     static final long FIFTEEN_MINUTE_BAR_MILLIS = 15 * 60_000L;
     private static final long FEATURE_LOOKBACK_MILLIS = Duration.ofHours(48).toMillis();
-    // 默认 5m 回看 48h；15m runner 会通过 featureLookbackBars(decisionBarMillis) 换算成 192 根。
+    // 默认 5m 回看 48h。
     static final int FEATURE_LOOKBACK_BARS = barsForDuration(FEATURE_LOOKBACK_MILLIS, FEATURE_BAR_MILLIS);
     private static final String BENCHMARK_SYMBOL = "BTCUSDT";
     private static final double[] EMPTY_BENCHMARK_RETURNS = new double[0];
@@ -405,17 +405,6 @@ public class ResearchEvalService {
         return out;
     }
 
-    static long parseDecisionBarMillis(String raw) {
-        String value = raw == null || raw.isBlank() ? "5m" : raw.trim().toLowerCase();
-        long millis = switch (value) {
-            case "5", "5m", "5min", "m5" -> FEATURE_BAR_MILLIS;
-            case "15", "15m", "15min", "m15" -> FIFTEEN_MINUTE_BAR_MILLIS;
-            default -> throw new IllegalArgumentException("decision interval 只支持 5m/15m: " + raw);
-        };
-        validateDecisionBarMillis(millis);
-        return millis;
-    }
-
     private static void validateDecisionBarMillis(long decisionBarMillis) {
         if (decisionBarMillis != FEATURE_BAR_MILLIS && decisionBarMillis != FIFTEEN_MINUTE_BAR_MILLIS) {
             throw new IllegalArgumentException("决策K线只支持 5m/15m: " + decisionBarMillis + "ms");
@@ -424,11 +413,6 @@ public class ResearchEvalService {
 
     static int minutes(long millis) {
         return Math.toIntExact(millis / 60_000L);
-    }
-
-    static int featureLookbackBars(long decisionBarMillis) {
-        validateDecisionBarMillis(decisionBarMillis);
-        return barsForDuration(FEATURE_LOOKBACK_MILLIS, decisionBarMillis);
     }
 
     static int barsForDuration(long durationMillis, long barMillis) {
@@ -571,31 +555,6 @@ public class ResearchEvalService {
             return netReturn >= 0.0 ? MarketRegime.TRENDING_UP : MarketRegime.TRENDING_DOWN;
         }
         return MarketRegime.RANGING;
-    }
-
-    /**
-     * 决策在 5m/15m bar 收盘后发生，三隔栏必须只看之后 1 个 horizon 内的底层路径。
-     * 用二分定位首根 openTime > decisionCloseTime，避免长历史每个决策点都全表扫描。
-     */
-    static List<KlineBar> pathBars(List<KlineBar> oneMin, long decisionCloseTime, long horizonMillis) {
-        if (oneMin == null || oneMin.isEmpty()) return List.of();
-        long endTime = decisionCloseTime + horizonMillis;
-        int lo = 0, hi = oneMin.size();
-        while (lo < hi) {
-            int mid = (lo + hi) >>> 1;
-            if (oneMin.get(mid).openTime() <= decisionCloseTime) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        List<KlineBar> out = new ArrayList<>();
-        for (int i = lo; i < oneMin.size(); i++) {
-            KlineBar b = oneMin.get(i);
-            if (b.openTime() > endTime) break;
-            out.add(b);
-        }
-        return out;
     }
 
     /** 多头视角的单期收益：上栏/下栏按栏位价格成交；竖栏按 horizon 末尾 close 退出。 */

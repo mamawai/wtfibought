@@ -35,8 +35,6 @@ public class RegimeAgent implements FactorAgent {
         }
 
         MarketRegime regime = s.regime();
-        double regimeConf = s.regimeConfidence();
-        String transition = s.regimeTransition();
 
         // 期权 IV 信号
         double dvolIndex = s.dvolIndex();
@@ -46,7 +44,6 @@ public class RegimeAgent implements FactorAgent {
 
         List<String> reasons = new ArrayList<>();
         reasons.add("LIVE_REGIME_" + (regime != null ? regime.name() : "UNKNOWN"));
-        if (regimeConf < 0.4) reasons.add("LOW_REGIME_CONF");
 
         List<String> riskFlags = new ArrayList<>();
         if (regime == MarketRegime.RANGE) {
@@ -55,25 +52,6 @@ public class RegimeAgent implements FactorAgent {
             riskFlags.add("SQUEEZE_WAIT_BREAKOUT");
         } else if (regime == MarketRegime.SHOCK) {
             riskFlags.add("EXTREME_VOLATILITY");
-        }
-
-        // transition信号调整
-        if (transition != null) {
-            switch (transition) {
-                case "WEAKENING" -> {
-                    riskFlags.add("TREND_WEAKENING");
-                    reasons.add("TRANSITION_WEAKENING");
-                }
-                case "BREAKING_OUT" -> {
-                    reasons.add("TRANSITION_BREAKING_OUT");
-                }
-                case "BREAKING_DOWN" -> {
-                    reasons.add("TRANSITION_BREAKING_DOWN");
-                }
-                case "STRENGTHENING" -> {
-                    reasons.add("TRANSITION_STRENGTHENING");
-                }
-            }
         }
 
         // IV 信号调整
@@ -91,11 +69,11 @@ public class RegimeAgent implements FactorAgent {
             }
         }
 
-        double conf = Math.clamp(Math.max(0.15, regimeConf), 0.0, 1.0);
-        double liveBias = liveRegimeBias(indicators, regime, transition, ivSkew);
+        double conf = 0.5;   // 无 regime 置信来源(DebateJudge 已删)，恒中性
+        double liveBias = liveRegimeBias(indicators, regime, ivSkew);
 
-        log.info("[Q3.regime] regime={} regimeConf={} transition={} liveBias={} dvol={} atmIv={} skew={} riskFlags={}",
-                regime, String.format("%.2f", regimeConf), transition, String.format("%.2f", liveBias),
+        log.info("[Q3.regime] regime={} liveBias={} dvol={} atmIv={} skew={} riskFlags={}",
+                regime, String.format("%.2f", liveBias),
                 String.format("%.0f", dvolIndex), String.format("%.0f", atmIv),
                 String.format("%.1f", ivSkew), riskFlags);
 
@@ -125,22 +103,12 @@ public class RegimeAgent implements FactorAgent {
 
     private double liveRegimeBias(Map<String, Map<String, Object>> indicators,
                                   MarketRegime regime,
-                                  String transition,
                                   double ivSkew) {
         double bias = extractTrendDirection(indicators) * 0.60;
         if (regime != null) {
             bias += switch (regime) {
                 case TREND_UP -> 0.35;
                 case TREND_DOWN -> -0.35;
-                default -> 0.0;
-            };
-        }
-        if (transition != null) {
-            bias += switch (transition) {
-                case "BREAKING_OUT" -> 0.25;
-                case "BREAKING_DOWN" -> -0.25;
-                case "STRENGTHENING" -> bias > 0 ? 0.12 : bias < 0 ? -0.12 : 0.0;
-                case "WEAKENING" -> bias > 0 ? -0.12 : bias < 0 ? 0.12 : 0.0;
                 default -> 0.0;
             };
         }

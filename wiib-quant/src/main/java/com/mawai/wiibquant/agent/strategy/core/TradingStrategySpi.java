@@ -23,14 +23,6 @@ public interface TradingStrategySpi {
     /** 闭合bar回调；无信号返回 empty。实现必须无副作用可重入（同一bar重复调用结果一致）。 */
     Optional<StrategySignal> onBarClosed(String symbol, StrategyMarketView view);
 
-    /**
-     * 实际开仓前的最后校准。默认不改信号；结构策略可用下一根开盘价重算 SL/TP。
-     */
-    default StrategySignal prepareEntry(String symbol, StrategySignal signal,
-                                        BigDecimal actualEntryPrice, StrategyMarketView view) {
-        return signal;
-    }
-
     /** 开仓成功后回调。默认无动作；需要持仓管理的策略可登记 positionId 与结构上下文。 */
     default void onPositionOpened(String symbol, StrategySignal signal, Long positionId,
                                   BigDecimal actualEntryPrice, StrategyMarketView view,

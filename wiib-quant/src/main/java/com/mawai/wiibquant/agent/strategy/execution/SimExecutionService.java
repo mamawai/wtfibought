@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibquant.agent.strategy.core.StrategyMarketView;
+import com.mawai.wiibquant.agent.strategy.core.PositionSizer;
 import com.mawai.wiibquant.agent.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibquant.agent.strategy.core.StrategySignal;
 import com.mawai.wiibquant.agent.strategy.core.TradingOperations;
@@ -13,7 +14,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Arrays;
@@ -51,7 +51,6 @@ import java.util.stream.Collectors;
 public class SimExecutionService implements StrategyExecutionPort {
 
     private static final long BAR_MILLIS = 300_000L; // 5m
-    private static final BigDecimal MAX_MARGIN_PCT = new BigDecimal("0.15");   // 与回测引擎一致
     private static final String OPEN_STATUS = "OPEN";
 
     private enum State { FLAT, WORKING, POSITION }
@@ -287,31 +286,14 @@ public class SimExecutionService implements StrategyExecutionPort {
         }
     }
 
-    /** 风险定量（与回测引擎同公式）：qty=权益×每笔风险%/止损距离，保证金钳 15% 权益。 */
+    /** 风险定量：与回测引擎共用 PositionSizer 单一公式。 */
     private BigDecimal riskSizedQty(StrategySignal signal, TradingStrategySpi strategy, BigDecimal equity) {
-        BigDecimal entry = signal.entryRefPrice();
-        BigDecimal sl = signal.stopLossPrice();
-        if (entry == null || entry.signum() <= 0 || sl == null || equity == null || equity.signum() <= 0) {
-            return BigDecimal.ZERO;
-        }
-        BigDecimal riskDistance = entry.subtract(sl).abs();
-        if (riskDistance.signum() <= 0) return BigDecimal.ZERO;
-        StrategyRiskPolicy policy = policy(strategy);
-        BigDecimal riskPct = BigDecimal.valueOf(policy.riskPerTradePct() > 0
-                ? policy.riskPerTradePct()
-                : StrategyRiskPolicy.defaults().riskPerTradePct());
-        BigDecimal qty = equity.multiply(riskPct).divide(riskDistance, 8, RoundingMode.DOWN);
-        int lev = effectiveLeverage(strategy);
-        BigDecimal margin = qty.multiply(entry).divide(BigDecimal.valueOf(lev), 8, RoundingMode.CEILING);
-        BigDecimal maxMargin = equity.multiply(MAX_MARGIN_PCT);
-        if (margin.compareTo(maxMargin) > 0) {
-            qty = maxMargin.multiply(BigDecimal.valueOf(lev)).divide(entry, 8, RoundingMode.DOWN);
-        }
-        return qty;
+        return PositionSizer.riskSizedQty(equity, signal.entryRefPrice(), signal.stopLossPrice(),
+                policy(strategy), effectiveLeverage(strategy));
     }
 
     private int effectiveLeverage(TradingStrategySpi strategy) {
-        return Math.max(1, Math.min(leverage, Math.max(1, policy(strategy).maxLeverage())));
+        return PositionSizer.effectiveLeverage(leverage, policy(strategy));
     }
 
     private StrategyRiskPolicy policy(TradingStrategySpi strategy) {

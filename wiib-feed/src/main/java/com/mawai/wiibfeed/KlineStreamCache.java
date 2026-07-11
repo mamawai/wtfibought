@@ -24,11 +24,9 @@ public class KlineStreamCache {
     private final StringRedisTemplate redisTemplate;
 
     public void onClosedBar(String symbol, String interval, KlineBar bar) {
-        if (symbol == null || symbol.isBlank() || interval == null || interval.isBlank() || bar == null) {
-            return;
-        }
-        String normalizedSymbol = normalizeSymbol(symbol);
-        String normalizedInterval = normalizeInterval(interval);
+        // 调用方 KlineStreamHandler 已保证三参非空，这里只做大小写归一
+        String normalizedSymbol = symbol.trim().toUpperCase();
+        String normalizedInterval = interval.trim().toLowerCase();
         if (KlineHistoryStore.DEFAULT_INTERVAL.equals(normalizedInterval)) {
             // 异步落库，不占WS回调线程；下游预测管线经HTTP采集(秒级)后才读historyStore，无竞态
             Thread.startVirtualThread(() -> persistDefaultInterval(normalizedSymbol, normalizedInterval, bar));
@@ -39,9 +37,6 @@ public class KlineStreamCache {
     }
 
     private void persistDefaultInterval(String symbol, String interval, KlineBar bar) {
-        if (!KlineHistoryStore.DEFAULT_INTERVAL.equals(interval)) {
-            return;
-        }
         try {
             historyStore.saveClosedBar(symbol, interval, bar);
         } catch (Exception e) {
@@ -75,11 +70,4 @@ public class KlineStreamCache {
         }
     }
 
-    private static String normalizeSymbol(String symbol) {
-        return symbol == null ? "" : symbol.trim().toUpperCase();
-    }
-
-    private static String normalizeInterval(String interval) {
-        return interval == null ? "" : interval.trim().toLowerCase();
-    }
 }

@@ -69,25 +69,4 @@ class MultiOutputForecastTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    @Test
-    void tradeableWhenDirectionNonZero() {
-        MultiOutputForecast longF = new MultiOutputForecast(
-                ForecastHorizon.H6, 0.02, MarketRegime.TRENDING_UP, 0.8, new Forecast(1, 0.7));
-        MultiOutputForecast flatF = new MultiOutputForecast(
-                ForecastHorizon.H6, 0.02, MarketRegime.RANGING, 0.8, Forecast.flat());
-
-        assertThat(longF.isTradeable()).isTrue();
-        assertThat(flatF.isTradeable()).isFalse();
-    }
-
-    @Test
-    void positionScaleIsConfidenceWhenTradeableElseZero() {
-        MultiOutputForecast longF = new MultiOutputForecast(
-                ForecastHorizon.H6, 0.02, MarketRegime.TRENDING_UP, 0.8, new Forecast(1, 0.7));
-        MultiOutputForecast flatF = new MultiOutputForecast(
-                ForecastHorizon.H6, 0.02, MarketRegime.RANGING, 0.8, Forecast.flat());
-
-        assertThat(longF.suggestedPositionScale()).isEqualTo(0.7);
-        assertThat(flatF.suggestedPositionScale()).isZero();
-    }
 }

@@ -9,6 +9,7 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.OptionContractMapper;
 import com.mawai.wiibsim.mapper.PredictionBetMapper;
+import com.mawai.wiibsim.service.impl.AssetValuationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -44,6 +45,7 @@ public class RankingService {
     private final OptionContractMapper optionContractMapper;
     private final OptionPricingService optionPricingService;
     private final PredictionBetMapper predictionBetMapper;
+    private final AssetValuationService assetValuationService;
 
     private static final String RANKING_KEY = "ranking:top";
     private static final int TOP_N = 50;
@@ -90,6 +92,12 @@ public class RankingService {
                         Collectors.reducing(BigDecimal.ZERO, Settlement::getAmount, BigDecimal::add)));
         Map<Long, BigDecimal> cryptoSettlingMap = toUserAmountMap(cryptoOrderMapper.sumAllSettlingAmounts());
 
+        // 预测持仓可变现价值(bid×contracts)，与资产页/快照/破产判定同口径
+        Map<Long, List<PredictionBet>> activeBetMap = predictionBetMapper.selectList(
+                        new LambdaQueryWrapper<PredictionBet>().eq(PredictionBet::getStatus, "ACTIVE")).stream()
+                .collect(Collectors.groupingBy(PredictionBet::getUserId));
+        Map<String, BigDecimal> predictionBidCache = new HashMap<>();
+
         // ────── 4. 硬实力盈亏批量聚合（口径：交易净盈亏，优惠券另列） ──────
         Map<Long, BigDecimal> futuresNetMap = toUserAmountMap(futuresOrderMapper.sumNetPnlAfterCommissionAll());
         Map<Long, BigDecimal> futuresFundingFeeMap = toUserAmountMap(futuresPositionMapper.sumFundingFeeTotalAll());
@@ -114,10 +122,11 @@ public class RankingService {
             BigDecimal optionMarketValue = optionMarketValue(optionPositionMap.get(uid), optionContractMap, stockPriceMap);
 
             BigDecimal pendingSettlement = nz(pendingMap.get(uid)).add(nz(cryptoSettlingMap.get(uid)));
+            BigDecimal predictionValue = assetValuationService.predictionMarketValue(activeBetMap.get(uid), predictionBidCache);
 
             BigDecimal totalAssets = balance.add(frozen)
                     .add(stockMarketValue).add(cryptoMarketValue).add(pendingSettlement)
-                    .add(futures.value()).add(optionMarketValue)
+                    .add(futures.value()).add(optionMarketValue).add(predictionValue)
                     .subtract(loanPrincipal).subtract(loanInterest);
 
             // 硬实力盈亏 = 合约净盈亏 + 现货现金流(扣优惠券) + 预测已结算净盈亏
@@ -208,12 +217,10 @@ public class RankingService {
         BigDecimal value = BigDecimal.ZERO;
         BigDecimal unrealized = BigDecimal.ZERO;
         for (FuturesPosition fp : positions) {
-            BigDecimal markPrice = markPriceMap.getOrDefault(fp.getSymbol(), BigDecimal.ZERO);
-            BigDecimal pnl = "LONG".equals(fp.getSide())
-                    ? markPrice.subtract(fp.getEntryPrice()).multiply(fp.getQuantity())
-                    : fp.getEntryPrice().subtract(markPrice).multiply(fp.getQuantity());
-            value = value.add(fp.getMargin()).add(pnl);
-            unrealized = unrealized.add(pnl);
+            // 缺价保留保证金、浮盈亏按0(统一口径见 AssetValuationService)；旧版缺价按0计价会算出天文亏损
+            BigDecimal markPrice = markPriceMap.get(fp.getSymbol());
+            value = value.add(AssetValuationService.futuresPositionValue(fp, markPrice));
+            unrealized = unrealized.add(AssetValuationService.futuresUnrealizedPnl(fp, markPrice));
         }
         return new FuturesPnL(value, unrealized);
     }
@@ -252,14 +259,14 @@ public class RankingService {
         ));
     }
 
-    /** 合约 mark 价，缺失退回现货价 */
+    /** 合约 mark 价，缺失退回现货价；都缺不入 map(旧版 toMap 遇 null 值会 NPE 炸掉整次刷新)，下游按"保留保证金"处理 */
     private Map<String, BigDecimal> buildFuturesMarkPriceMap(List<FuturesPosition> positions) {
-        return positions.stream()
-                .map(FuturesPosition::getSymbol).distinct()
-                .collect(Collectors.toMap(Function.identity(), s -> {
-                    BigDecimal mp = cacheService.getMarkPrice(s);
-                    return mp != null ? mp : cacheService.getCryptoPrice(s);
-                }));
+        Map<String, BigDecimal> map = new HashMap<>();
+        for (String symbol : positions.stream().map(FuturesPosition::getSymbol).distinct().toList()) {
+            BigDecimal p = assetValuationService.resolveFuturesPrice(symbol);
+            if (p != null) map.put(symbol, p);
+        }
+        return map;
     }
 
     private Map<Long, OptionContract> buildOptionContractMap(List<OptionPosition> positions) {

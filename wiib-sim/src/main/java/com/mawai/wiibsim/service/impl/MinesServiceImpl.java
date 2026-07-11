@@ -117,13 +117,11 @@ public class MinesServiceImpl implements MinesService {
             // 生成雷位
             Set<Integer> mines = generateMines();
 
-            BigDecimal fee = amount.multiply(new BigDecimal("0.01")).setScale(2, RoundingMode.HALF_UP);
-
             // 写DB
             MinesGame game = new MinesGame();
             game.setUserId(userId);
             game.setBetAmount(amount);
-            game.setFee(fee);
+            game.setFee(BigDecimal.ZERO);   // 从未真实收取(抽水内含在赔付表 HOUSE_EDGE)，列 NOT NULL 记 0 防假账
             game.setMinePositions(mines.stream().sorted().map(String::valueOf).collect(Collectors.joining(",")));
             game.setRevealedCells("");
             game.setMultiplier(BigDecimal.ONE);

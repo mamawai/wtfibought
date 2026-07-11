@@ -24,11 +24,6 @@ public record RegimeClassificationScore(double accuracy, double naiveAccuracy, b
         confusionMatrix = completeConfusion(confusionMatrix);
     }
 
-    /** 保留旧 4 参构造，避免已有调用源码级断裂；新指标未知时置 0。 */
-    public RegimeClassificationScore(double accuracy, double naiveAccuracy, boolean beatsNaive, int n) {
-        this(accuracy, naiveAccuracy, beatsNaive, 0.0, 0.0, n);
-    }
-
     /** 保留旧 6 参构造；混淆矩阵未知时补四类 0。 */
     public RegimeClassificationScore(double accuracy, double naiveAccuracy, boolean beatsNaive,
                                      double balancedAccuracy, double macroF1, int n) {

@@ -36,10 +36,4 @@ public @interface RateLimiter {
      * @return 限流器类型
      */
     RateLimiterType type();
-
-    /**
-     * 是否全局限流（不区分用户）
-     * @return true=全局限流，false=按用户限流
-     */
-    boolean global() default false;
 }

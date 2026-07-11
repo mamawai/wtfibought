@@ -66,11 +66,7 @@ public record FeatureSnapshot(
         MarketRegime regime,
 
         // 数据质量
-        List<String> qualityFlags,
-
-        // research baseline / DebateJudge 产出的 regime 状态
-        double regimeConfidence,
-        String regimeTransition
+        List<String> qualityFlags
 ) {
     public FeatureSnapshot {
         indicatorsByTimeframe = indicatorsByTimeframe == null ? Map.of() : Map.copyOf(indicatorsByTimeframe);
@@ -82,23 +78,6 @@ public record FeatureSnapshot(
         if (fearGreedLabel == null) {
             fearGreedLabel = "UNKNOWN";
         }
-        if (regimeTransition == null) {
-            regimeTransition = "NONE";
-        }
-    }
-
-    public FeatureSnapshot withRegimeReview(MarketRegime newRegime, List<String> newFlags,
-                                            double confidence, String transition) {
-        return new FeatureSnapshot(symbol, snapshotTime, lastPrice, barHigh, barLow, spotLastPrice,
-                indicatorsByTimeframe, priceChanges,
-                spotBidAskImbalance, spotPriceChange5m, spotPerpBasisBps, spotLeadLagScore,
-                bidAskImbalance, tradeDelta, tradeIntensity, largeTradeBias, oiChangeRate,
-                fundingDeviation, fundingRateTrend, fundingRateExtreme, lsrExtreme,
-                liquidationPressure, liquidationVolumeUsdt,
-                topTraderBias, takerBuySellPressure, fearGreedIndex, fearGreedLabel,
-                atr1m, atr, bollBandwidth, bollSqueeze,
-                dvolIndex, atmIv, ivSkew25d, ivTermSlope,
-                newRegime, newFlags, confidence, transition);
     }
 
     public String toIvSummary() {

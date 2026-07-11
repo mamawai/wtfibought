@@ -221,17 +221,7 @@ public class OptionOrderServiceImpl extends ServiceImpl<OptionOrderMapper, Optio
     }
 
     private BigDecimal getSpotPrice(Long stockId) {
-        BigDecimal price = cacheService.getCurrentPrice(stockId);
-        if (price == null) {
-            Map<String, String> stockStatic = stockCacheService.getStockStatic(stockId);
-            if (stockStatic != null) {
-                price = new BigDecimal(stockStatic.getOrDefault("prevClose", "0"));
-            }
-        }
-        if (price == null || price.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new BizException(ErrorCode.SYSTEM_ERROR.getCode(), "无法获取标的价格");
-        }
-        return price;
+        return pricingService.getSpotPrice(stockId);
     }
 
     private OptionOrderResultDTO buildOrderResultResponse(OptionOrder order) {

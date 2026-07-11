@@ -64,26 +64,31 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         List<FuturesStopLossRequest.StopLossItem> items = request.getStopLosses();
         if (items != null && items.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
 
+        // 先完成全部校验再动 Redis 索引：校验抛异常时 DB 回滚而 Redis 删除不会回滚，
+        // 顺序反了会留下"DB 有旧止损但索引已删、永不触发"的不一致
+        List<FuturesStopLoss> newList = null;
+        if (items != null && !items.isEmpty()) {
+            BigDecimal markPrice = getMarkPrice(position.getSymbol());
+            BigDecimal totalQty = BigDecimal.ZERO;
+            newList = new ArrayList<>();
+            for (FuturesStopLossRequest.StopLossItem item : items) {
+                validateSlPrice(item.getPrice(), position.getSide(), markPrice);
+                validateQty(item.getQuantity());
+                totalQty = totalQty.add(item.getQuantity());
+                newList.add(new FuturesStopLoss(genId(), item.getPrice(), item.getQuantity()));
+            }
+            if (totalQty.compareTo(position.getQuantity()) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
+        }
+
         List<FuturesStopLoss> oldSls = position.getStopLosses();
         if (oldSls != null && !oldSls.isEmpty()) {
             positionIndexService.unregisterStopLosses(position.getId(), position.getSymbol(), position.getSide(), oldSls);
         }
 
-        if (items == null || items.isEmpty()) {
+        if (newList == null) {
             positionMapper.updateStopLosses(position.getId(), null);
             return;
         }
-
-        BigDecimal markPrice = getMarkPrice(position.getSymbol());
-        BigDecimal totalQty = BigDecimal.ZERO;
-        List<FuturesStopLoss> newList = new ArrayList<>();
-        for (FuturesStopLossRequest.StopLossItem item : items) {
-            validateSlPrice(item.getPrice(), position.getSide(), markPrice);
-            validateQty(item.getQuantity());
-            totalQty = totalQty.add(item.getQuantity());
-            newList.add(new FuturesStopLoss(genId(), item.getPrice(), item.getQuantity()));
-        }
-        if (totalQty.compareTo(position.getQuantity()) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
 
         positionMapper.updateStopLosses(position.getId(), newList);
         positionIndexService.registerStopLosses(position.getId(), position.getSymbol(), position.getSide(), newList);
@@ -112,27 +117,31 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         List<FuturesTakeProfitRequest.TakeProfitItem> items = request.getTakeProfits();
         if (items != null && items.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
 
+        // 同 doSetStopLoss：先校验后动 Redis 索引，防止 DB 回滚后索引已删的不一致
+        List<FuturesTakeProfit> newList = null;
+        if (items != null && !items.isEmpty()) {
+            BigDecimal markPrice = getMarkPrice(position.getSymbol());
+            BigDecimal totalQty = BigDecimal.ZERO;
+            newList = new ArrayList<>();
+            for (FuturesTakeProfitRequest.TakeProfitItem item : items) {
+                validateTpPrice(item.getPrice(), position.getSide(), markPrice);
+                validateQty(item.getQuantity());
+                totalQty = totalQty.add(item.getQuantity());
+                newList.add(new FuturesTakeProfit(genId(), item.getPrice(), item.getQuantity()));
+            }
+            if (totalQty.compareTo(position.getQuantity()) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
+        }
+
         List<FuturesTakeProfit> oldTps = position.getTakeProfits();
         if (oldTps != null && !oldTps.isEmpty()) {
             positionIndexService.unregisterTakeProfits(position.getId(), position.getSymbol(), position.getSide(), oldTps);
         }
 
-        if (items == null || items.isEmpty()) {
+        if (newList == null) {
             positionMapper.updateTakeProfits(position.getId(), null);
             log.info("futures清空止盈 userId={} posId={}", userId, request.getPositionId());
             return;
         }
-
-        BigDecimal markPrice = getMarkPrice(position.getSymbol());
-        BigDecimal totalQty = BigDecimal.ZERO;
-        List<FuturesTakeProfit> newList = new ArrayList<>();
-        for (FuturesTakeProfitRequest.TakeProfitItem item : items) {
-            validateTpPrice(item.getPrice(), position.getSide(), markPrice);
-            validateQty(item.getQuantity());
-            totalQty = totalQty.add(item.getQuantity());
-            newList.add(new FuturesTakeProfit(genId(), item.getPrice(), item.getQuantity()));
-        }
-        if (totalQty.compareTo(position.getQuantity()) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
 
         positionMapper.updateTakeProfits(position.getId(), newList);
         positionIndexService.registerTakeProfits(position.getId(), position.getSymbol(), position.getSide(), newList);
@@ -237,7 +246,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         }
     }
 
-    // ==================== 批量止损触发 ====================
+    // ==================== 批量止损/止盈触发（共用平仓流程） ====================
 
     @Override
     public void batchTriggerStopLoss(Long positionId, Collection<String> slIds, BigDecimal price) {
@@ -245,83 +254,11 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         String lockValue = redisLockUtil.tryLock(lockKey, 30);
         if (lockValue == null) return;
         try {
-            SpringUtils.getAopProxy(this).doBatchTriggerStopLoss(positionId, slIds, price);
+            SpringUtils.getAopProxy(this).doBatchTrigger(positionId, slIds, price, true);
         } finally {
             redisLockUtil.unlock(lockKey, lockValue);
         }
     }
-
-    @Transactional(rollbackFor = Exception.class)
-    protected void doBatchTriggerStopLoss(Long positionId, Collection<String> slIds, BigDecimal price) {
-        FuturesPosition position = positionMapper.selectById(positionId);
-        if (position == null || !"OPEN".equals(position.getStatus())) return;
-
-        List<FuturesStopLoss> sls = position.getStopLosses();
-        if (sls == null) return;
-
-        Set<String> idSet = new HashSet<>(slIds);
-        BigDecimal totalCloseQty = BigDecimal.ZERO;
-        for (FuturesStopLoss sl : sls) {
-            if (idSet.contains(sl.getId())) {
-                totalCloseQty = totalCloseQty.add(sl.getQuantity());
-            }
-        }
-        if (totalCloseQty.compareTo(BigDecimal.ZERO) == 0) return;
-
-        totalCloseQty = totalCloseQty.min(position.getQuantity());
-        boolean isFullClose = totalCloseQty.compareTo(position.getQuantity()) >= 0;
-
-        BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), price, totalCloseQty);
-        BigDecimal closeValue = price.multiply(totalCloseQty).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, true);
-
-        BigDecimal returnAmount;
-        if (isFullClose) {
-            returnAmount = position.getMargin().add(pnl).subtract(commission).max(BigDecimal.ZERO);
-            int affected = positionMapper.casClosePosition(positionId, "CLOSED", price, pnl);
-            if (affected == 0) return;
-            positionIndexService.unregisterAll(position);
-        } else {
-            BigDecimal marginReturn = position.getMargin()
-                    .multiply(totalCloseQty)
-                    .divide(position.getQuantity(), 2, RoundingMode.HALF_UP);
-            returnAmount = marginReturn.add(pnl).subtract(commission).max(BigDecimal.ZERO);
-            int affected = positionMapper.atomicPartialClose(positionId, totalCloseQty, marginReturn);
-            if (affected == 0) return;
-
-            sls.removeIf(s -> idSet.contains(s.getId()));
-            positionMapper.updateStopLosses(positionId, sls);
-            FuturesPosition updated = positionMapper.selectById(positionId);
-            if (updated != null && "OPEN".equals(updated.getStatus())) {
-                BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
-                        updated.getSymbol(), updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity());
-                positionIndexService.updateLiquidationPrice(updated.getId(), updated.getSymbol(), updated.getSide(), liqPrice);
-            }
-        }
-
-        if (returnAmount.compareTo(BigDecimal.ZERO) > 0) {
-            userMapper.atomicUpdateBalance(position.getUserId(), returnAmount);
-        }
-
-        FuturesOrder order = new FuturesOrder();
-        order.setUserId(position.getUserId());
-        order.setPositionId(positionId);
-        order.setSymbol(position.getSymbol());
-        order.setOrderSide("LONG".equals(position.getSide()) ? "CLOSE_LONG" : "CLOSE_SHORT");
-        order.setOrderType("MARKET");
-        order.setQuantity(totalCloseQty);
-        order.setLeverage(position.getLeverage());
-        order.setFilledPrice(price);
-        order.setFilledAmount(closeValue);
-        order.setCommission(commission);
-        order.setRealizedPnl(pnl);
-        order.setStatus("STOP_LOSS");
-        orderMapper.insert(order);
-
-        log.info("futures批量止损平仓 posId={} slIds={} qty={} price={} pnl={}", positionId, slIds, totalCloseQty, price, pnl);
-    }
-
-    // ==================== 批量止盈触发 ====================
 
     @Override
     public void batchTriggerTakeProfit(Long positionId, Collection<String> tpIds, BigDecimal price) {
@@ -329,25 +266,34 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         String lockValue = redisLockUtil.tryLock(lockKey, 30);
         if (lockValue == null) return;
         try {
-            SpringUtils.getAopProxy(this).doBatchTriggerTakeProfit(positionId, tpIds, price);
+            SpringUtils.getAopProxy(this).doBatchTrigger(positionId, tpIds, price, false);
         } finally {
             redisLockUtil.unlock(lockKey, lockValue);
         }
     }
 
+    /**
+     * SL/TP 批量触发平仓的单一流程（曾是两段逐行镜像的 80 行，改平仓逻辑只改一半的事故温床）。
+     * isStopLoss 只决定三件事：读哪张保护单列表、部分平仓后剩余列表写回哪个字段、订单状态字面量。
+     */
     @Transactional(rollbackFor = Exception.class)
-    protected void doBatchTriggerTakeProfit(Long positionId, Collection<String> tpIds, BigDecimal price) {
+    protected void doBatchTrigger(Long positionId, Collection<String> ids, BigDecimal price, boolean isStopLoss) {
         FuturesPosition position = positionMapper.selectById(positionId);
         if (position == null || !"OPEN".equals(position.getStatus())) return;
 
-        List<FuturesTakeProfit> tps = position.getTakeProfits();
-        if (tps == null) return;
+        List<FuturesStopLoss> sls = isStopLoss ? position.getStopLosses() : null;
+        List<FuturesTakeProfit> tps = isStopLoss ? null : position.getTakeProfits();
+        if (isStopLoss ? sls == null : tps == null) return;
 
-        Set<String> idSet = new HashSet<>(tpIds);
+        Set<String> idSet = new HashSet<>(ids);
         BigDecimal totalCloseQty = BigDecimal.ZERO;
-        for (FuturesTakeProfit tp : tps) {
-            if (idSet.contains(tp.getId())) {
-                totalCloseQty = totalCloseQty.add(tp.getQuantity());
+        if (isStopLoss) {
+            for (FuturesStopLoss sl : sls) {
+                if (idSet.contains(sl.getId())) totalCloseQty = totalCloseQty.add(sl.getQuantity());
+            }
+        } else {
+            for (FuturesTakeProfit tp : tps) {
+                if (idSet.contains(tp.getId())) totalCloseQty = totalCloseQty.add(tp.getQuantity());
             }
         }
         if (totalCloseQty.compareTo(BigDecimal.ZERO) == 0) return;
@@ -373,8 +319,13 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
             int affected = positionMapper.atomicPartialClose(positionId, totalCloseQty, marginReturn);
             if (affected == 0) return;
 
-            tps.removeIf(t -> idSet.contains(t.getId()));
-            positionMapper.updateTakeProfits(positionId, tps);
+            if (isStopLoss) {
+                sls.removeIf(s -> idSet.contains(s.getId()));
+                positionMapper.updateStopLosses(positionId, sls);
+            } else {
+                tps.removeIf(t -> idSet.contains(t.getId()));
+                positionMapper.updateTakeProfits(positionId, tps);
+            }
             FuturesPosition updated = positionMapper.selectById(positionId);
             if (updated != null && "OPEN".equals(updated.getStatus())) {
                 BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
@@ -399,21 +350,17 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         order.setFilledAmount(closeValue);
         order.setCommission(commission);
         order.setRealizedPnl(pnl);
-        order.setStatus("TAKE_PROFIT");
+        order.setStatus(isStopLoss ? "STOP_LOSS" : "TAKE_PROFIT");
         orderMapper.insert(order);
 
-        log.info("futures批量止盈平仓 posId={} tpIds={} qty={} price={} pnl={}", positionId, tpIds, totalCloseQty, price, pnl);
+        log.info("futures批量{}平仓 posId={} ids={} qty={} price={} pnl={}",
+                isStopLoss ? "止损" : "止盈", positionId, ids, totalCloseQty, price, pnl);
     }
 
     // ==================== 内部工具 ====================
 
     private BigDecimal getMarkPrice(String symbol) {
-        BigDecimal mp = cacheService.getMarkPrice(symbol);
-        if (mp != null) return mp;
-        // 兜底统一用合约最新价（与 Trading/Settlement 一致）；原现货价兜底是口径笔误
-        BigDecimal price = cacheService.getFuturesPrice(symbol);
-        if (price == null) throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
-        return price;
+        return FuturesHelper.markPrice(cacheService, symbol);
     }
 
     private FuturesPosition getUserPosition(Long userId, Long positionId) {

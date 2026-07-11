@@ -8,6 +8,5 @@ public interface BankruptcyService {
 
     void resetBankruptUsers(LocalDate today);
 
-    LocalDate nextTradingDay(LocalDate d);
 }
 

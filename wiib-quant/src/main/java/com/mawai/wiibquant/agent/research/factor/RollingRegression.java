@@ -56,12 +56,6 @@ public final class RollingRegression {
         return residual(y[index], x[index], b);
     }
 
-    /** 最新一期残差；beta 用最新一期之前的历史估计。 */
-    public static double latestResidual(double[] y, double[] x, int betaWindow) {
-        int n = minLength(y, x);
-        return n == 0 ? 0.0 : residualAt(y, x, n - 1, betaWindow);
-    }
-
     private static int minLength(double[] y, double[] x) {
         if (y == null || x == null) return 0;
         return Math.min(y.length, x.length);

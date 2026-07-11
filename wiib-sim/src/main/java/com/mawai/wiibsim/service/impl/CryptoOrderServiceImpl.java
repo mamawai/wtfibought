@@ -567,7 +567,6 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         nextSettleTask.set(task);
     }
 
-    @Override
     public void processSettlements() {
         long now = System.currentTimeMillis();
         Set<String> dueMembers = stringRedisTemplate.opsForZSet().rangeByScore(SETTLE_ZSET_KEY, 0, now);

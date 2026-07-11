@@ -25,17 +25,6 @@ public enum KlineInterval {
     private final int historyLimit;
 
     /**
-     * 从当前周期聚合到更大周期需要多少根（如 M5 → M15 = 3）。
-     */
-    public int aggregateRatioTo(KlineInterval larger) {
-        if (larger.minutes % this.minutes != 0) {
-            throw new IllegalArgumentException(
-                    "无法整除聚合：" + this.code + " → " + larger.code);
-        }
-        return larger.minutes / this.minutes;
-    }
-
-    /**
      * 从 Binance API 字符串反查枚举。
      */
     public static KlineInterval fromCode(String code) {

@@ -43,22 +43,6 @@ public interface OptionOrderMapper extends BaseMapper<OptionOrder> {
                                               @Param("userId") Long userId,
                                               @Param("status") String status);
 
-    @Update("UPDATE option_order SET status = #{newStatus}, updated_at = NOW() " +
-            "WHERE id = #{orderId} AND status = #{expectedStatus}")
-    int casUpdateStatus(@Param("orderId") Long orderId,
-                        @Param("expectedStatus") String expectedStatus,
-                        @Param("newStatus") String newStatus);
-
-    @Update("UPDATE option_order SET status = 'FILLED', filled_price = #{filledPrice}, " +
-            "filled_amount = #{filledAmount}, underlying_price = #{underlyingPrice}, " +
-            "commission = #{commission}, updated_at = NOW() " +
-            "WHERE id = #{orderId} AND status = 'PENDING'")
-    int casUpdateToFilled(@Param("orderId") Long orderId,
-                          @Param("filledPrice") BigDecimal filledPrice,
-                          @Param("filledAmount") BigDecimal filledAmount,
-                          @Param("underlyingPrice") BigDecimal underlyingPrice,
-                          @Param("commission") BigDecimal commission);
-
     @Update("UPDATE option_order SET status = 'CANCELLED', updated_at = NOW() " +
             "WHERE user_id = #{userId} AND status = 'PENDING'")
     int cancelPendingOrdersByUserId(@Param("userId") Long userId);

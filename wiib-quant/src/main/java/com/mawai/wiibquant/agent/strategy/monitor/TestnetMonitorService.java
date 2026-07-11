@@ -80,7 +80,7 @@ public class TestnetMonitorService {
         return new PositionView(p.getSymbol(),
                 p.getPositionAmt().signum() > 0 ? "LONG" : "SHORT",
                 p.getPositionAmt().abs(), p.getEntryPrice(), p.getMarkPrice(),
-                p.getUnRealizedProfit(), p.getLiquidationPrice(), null);
+                p.getUnRealizedProfit(), p.getLiquidationPrice());
     }
 
     // ==================== 交易记录 ====================

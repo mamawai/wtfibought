@@ -1,5 +1,4 @@
 package com.mawai.wiibsim.service.impl;
-import com.mawai.wiibcommon.cache.CacheService;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.github.benmanes.caffeine.cache.Cache;
@@ -42,7 +41,7 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
     private final CryptoPositionService cryptoPositionService;
     private final FuturesPositionMapper futuresPositionMapper;
     private final FuturesOrderMapper futuresOrderMapper;
-    private final CacheService cacheService;
+    private final AssetValuationService assetValuationService;
     private final OptionPositionService optionPositionService;
     private final PredictionBetMapper predictionBetMapper;
     private final MinesGameMapper minesGameMapper;
@@ -275,14 +274,10 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
                         .eq(FuturesPosition::getUserId, userId)
                         .eq(FuturesPosition::getStatus, "OPEN"));
         for (FuturesPosition fp : fps) {
-            BigDecimal markPrice = cacheService.getMarkPrice(fp.getSymbol());
-            if (markPrice == null) markPrice = cacheService.getCryptoPrice(fp.getSymbol());
-            if (markPrice == null) continue;
-            BigDecimal pnl = "LONG".equals(fp.getSide())
-                    ? markPrice.subtract(fp.getEntryPrice()).multiply(fp.getQuantity())
-                    : fp.getEntryPrice().subtract(markPrice).multiply(fp.getQuantity());
-            futuresFloatingProfit = futuresFloatingProfit.add(pnl);
-            futuresValue = futuresValue.add(fp.getMargin()).add(pnl);
+            // 统一口径见 AssetValuationService：缺价保留保证金、浮盈亏按0，不再整仓蒸发
+            BigDecimal markPrice = assetValuationService.resolveFuturesPrice(fp.getSymbol());
+            futuresFloatingProfit = futuresFloatingProfit.add(AssetValuationService.futuresUnrealizedPnl(fp, markPrice));
+            futuresValue = futuresValue.add(AssetValuationService.futuresPositionValue(fp, markPrice));
         }
         BigDecimal futuresRealizedProfit = futuresOrderMapper.sumRealizedPnl(userId);
         BigDecimal futuresProfit = futuresFloatingProfit.add(futuresRealizedProfit);
@@ -305,6 +300,9 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
                 .add(videoPokerGameMapper.sumNetProfit(userId))
                 .add(blackjackConvertLogMapper.sumTotalConverted(userId));
 
+        // 预测持仓按 bid 可变现价值计入总资产（与资产页/排行榜/破产判定同口径）
+        BigDecimal predictionValue = assetValuationService.predictionMarketValue(userId);
+
         BigDecimal frozenBalance = user.getFrozenBalance() != null ? user.getFrozenBalance() : BigDecimal.ZERO;
         BigDecimal marginLoan = user.getMarginLoanPrincipal() != null ? user.getMarginLoanPrincipal() : BigDecimal.ZERO;
         BigDecimal marginInterest = user.getMarginInterestAccrued() != null ? user.getMarginInterestAccrued() : BigDecimal.ZERO;
@@ -314,6 +312,7 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
                 .add(pendingSettlement)
                 .add(futuresValue)
                 .add(optionValue)
+                .add(predictionValue)
                 .subtract(marginLoan)
                 .subtract(marginInterest);
 

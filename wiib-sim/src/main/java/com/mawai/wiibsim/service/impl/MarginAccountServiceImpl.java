@@ -96,9 +96,6 @@ public class MarginAccountServiceImpl implements MarginAccountService {
 
     @Override
     public void accrueDailyInterest(LocalDate today) {
-        if (today == null) {
-            return;
-        }
         if (!tradingConfig.getMargin().isEnabled()) {
             return;
         }

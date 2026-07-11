@@ -106,21 +106,21 @@ public class KlineHistoryStore extends ServiceImpl<KlineHistoryMapper, KlineHist
     }
 
     public Long latestOpenTime(String symbol, String intervalCode) {
-        KlineHistory row = baseMapper.selectOne(new LambdaQueryWrapper<KlineHistory>()
-                .eq(KlineHistory::getSymbol, normalizeSymbol(symbol))
-                .eq(KlineHistory::getIntervalCode, normalizeInterval(intervalCode))
-                .orderByDesc(KlineHistory::getOpenTime)
-                .last("LIMIT 1"));
+        KlineHistory row = selectLatest(symbol, intervalCode);
         return row != null ? row.getOpenTime() : null;
     }
 
     public Long latestCloseTime(String symbol, String intervalCode) {
-        KlineHistory row = baseMapper.selectOne(new LambdaQueryWrapper<KlineHistory>()
-                .eq(KlineHistory::getSymbol, symbol)
-                .eq(KlineHistory::getIntervalCode, intervalCode)
+        KlineHistory row = selectLatest(symbol, intervalCode);
+        return row != null ? row.getCloseTime() : null;
+    }
+
+    private KlineHistory selectLatest(String symbol, String intervalCode) {
+        return baseMapper.selectOne(new LambdaQueryWrapper<KlineHistory>()
+                .eq(KlineHistory::getSymbol, normalizeSymbol(symbol))
+                .eq(KlineHistory::getIntervalCode, normalizeInterval(intervalCode))
                 .orderByDesc(KlineHistory::getOpenTime)   // 走唯一索引(symbol,interval_code,open_time)，免filesort
                 .last("LIMIT 1"));
-        return row != null ? row.getCloseTime() : null;
     }
 
     private static KlineHistory toEntity(String symbol, String intervalCode, KlineBar b) {
@@ -137,13 +137,18 @@ public class KlineHistoryStore extends ServiceImpl<KlineHistoryMapper, KlineHist
         return e;
     }
 
-    private static String normalizeSymbol(String symbol) {
-        return symbol == null || symbol.isBlank() ? "BTCUSDT" : symbol.trim().toUpperCase(Locale.ROOT);
+    // 空值直接抛错：此前 blank→BTCUSDT 兜底会把坏数据无声写进 BTC 历史，污染回测
+    static String normalizeSymbol(String symbol) {
+        if (symbol == null || symbol.isBlank()) {
+            throw new IllegalArgumentException("kline symbol 不能为空");
+        }
+        return symbol.trim().toUpperCase(Locale.ROOT);
     }
 
-    private static String normalizeInterval(String intervalCode) {
-        return intervalCode == null || intervalCode.isBlank()
-                ? DEFAULT_INTERVAL
-                : intervalCode.trim().toLowerCase(Locale.ROOT);
+    static String normalizeInterval(String intervalCode) {
+        if (intervalCode == null || intervalCode.isBlank()) {
+            throw new IllegalArgumentException("kline intervalCode 不能为空");
+        }
+        return intervalCode.trim().toLowerCase(Locale.ROOT);
     }
 }

@@ -38,11 +38,6 @@ public interface UserMapper extends BaseMapper<User> {
             "WHERE id = #{userId}")
     int atomicAddMarginLoanPrincipal(@Param("userId") Long userId, @Param("amount") BigDecimal amount);
 
-    /** 原子增加杠杆应计利息 */
-    @Update("UPDATE \"user\" SET margin_interest_accrued = COALESCE(margin_interest_accrued, 0) + #{amount}, updated_at = NOW() " +
-            "WHERE id = #{userId}")
-    int atomicAddMarginInterestAccrued(@Param("userId") Long userId, @Param("amount") BigDecimal amount);
-
     /** 确保计息上次日期存在（仅在null时设置） */
     @Update("UPDATE \"user\" SET margin_interest_last_date = COALESCE(margin_interest_last_date, #{today}), updated_at = NOW() " +
             "WHERE id = #{userId}")

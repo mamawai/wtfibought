@@ -26,8 +26,7 @@ public record OverviewView(
             BigDecimal entryPrice,
             BigDecimal markPrice,
             BigDecimal unrealizedProfit,
-            BigDecimal liquidationPrice,
-            BigDecimal leverage) {}
+            BigDecimal liquidationPrice) {}
 
     /** 单个挂单（GET /fapi/v1/openOrders）。 */
     public record OpenOrderView(

@@ -2,6 +2,7 @@ import * as echarts from 'echarts';
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '../lib/utils';
 import type { AssetSnapshot } from '../types';
+import { useIsDark } from '../hooks/useIsDark';
 
 interface Props {
   data: AssetSnapshot[];
@@ -31,12 +32,12 @@ export function ProfitChart({ data }: Props) {
   const chartRef = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<'cumulative' | 'daily'>('cumulative');
   const [dailyRange, setDailyRange] = useState<7 | 14 | 30>(7);
+  const isDark = useIsDark();
 
   const filteredData = mode === 'daily' ? data.slice(-dailyRange) : data;
 
   useEffect(() => {
     if (!chartRef.current || filteredData.length === 0) return;
-    const isDark = document.documentElement.classList.contains('dark');
     const chart = echarts.init(chartRef.current, isDark ? 'dark' : 'light');
 
     const config = mode === 'daily' ? DAILY_CONFIG : CUMULATIVE_CONFIG;
@@ -121,7 +122,7 @@ export function ProfitChart({ data }: Props) {
       window.removeEventListener('resize', onResize);
       chart.dispose();
     };
-  }, [filteredData, mode]);
+  }, [filteredData, mode, isDark]);
 
   if (data.length === 0) {
     return (

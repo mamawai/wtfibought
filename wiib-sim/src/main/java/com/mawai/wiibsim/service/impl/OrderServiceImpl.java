@@ -517,9 +517,6 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Transactional(rollbackFor = Exception.class)
     protected boolean processTriggeredOrder(Order order, Stock stock) {
         // 1) 校验状态
-        if (order == null) {
-            return false;
-        }
         if (!OrderStatus.TRIGGERED.getCode().equals(order.getStatus())) {
             return false;
         }

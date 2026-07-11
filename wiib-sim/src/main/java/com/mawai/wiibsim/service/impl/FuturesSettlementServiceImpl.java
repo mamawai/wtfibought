@@ -124,7 +124,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     }
 
     protected void processTriggeredOrder(FuturesOrder order) {
-        if (order == null || !"TRIGGERED".equals(order.getStatus())) return;
+        if (!"TRIGGERED".equals(order.getStatus())) return;
 
         if (!order.getOrderSide().startsWith("OPEN")) {
             String lockKey = "futures:pos:" + order.getPositionId();
@@ -488,7 +488,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
      */
     private BigDecimal fetchFundingRate(String symbol) {
         try {
-            String json = restClient.getFundingRate(symbol);
+            String json = restClient.getPremiumIndex(symbol);
             if (json != null) {
                 BigDecimal rate = JSON.parseObject(json).getBigDecimal("lastFundingRate");
                 if (rate != null) return rate;
@@ -599,11 +599,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     // ==================== 内部工具 ====================
 
     private BigDecimal getMarkPrice(String symbol) {
-        BigDecimal mp = cacheService.getMarkPrice(symbol);
-        if (mp != null) return mp;
-        BigDecimal price = cacheService.getFuturesPrice(symbol);
-        if (price == null) throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
-        return price;
+        return FuturesHelper.markPrice(cacheService, symbol);
     }
 
     private boolean isLimitTaker(FuturesOrder order, boolean isClose) {

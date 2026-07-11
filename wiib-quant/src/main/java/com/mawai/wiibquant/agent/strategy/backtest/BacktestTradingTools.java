@@ -58,10 +58,6 @@ public class BacktestTradingTools implements TradingOperations {
     private final List<FuturesPositionDTO> openPositions = new ArrayList<>();
     private final List<ClosedTrade> closedTrades = new ArrayList<>();
     private final Map<Long, BigDecimal> initialRiskPerUnitByPosition = new HashMap<>();
-    private final Map<Long, String> entryDiagnosticsJsonByPosition = new HashMap<>();
-    private final Map<Long, String> entryModeByPosition = new HashMap<>();
-    private final Map<Long, Boolean> lateContinuationByPosition = new HashMap<>();
-    private final Map<Long, Integer> latestFailScoreByPosition = new HashMap<>();
     private final Map<Long, BigDecimal> maxFavorableRByPosition = new HashMap<>();
     private final Map<Long, BigDecimal> maxAdverseRByPosition = new HashMap<>();
     private final Map<Long, BigDecimal> openFeeRateByPosition = new HashMap<>();  // 开仓实际费率(maker/taker)，平仓算总费用时复用
@@ -81,7 +77,6 @@ public class BacktestTradingTools implements TradingOperations {
             int closeBarIndex,
             LocalDateTime openTime,
             LocalDateTime closeTime,
-            String entryDiagnosticsJson,
             String side,
             String strategy,
             BigDecimal entryPrice,
@@ -92,11 +87,8 @@ public class BacktestTradingTools implements TradingOperations {
             BigDecimal fee,
             BigDecimal rMultiple,
             String exitReason,
-            String entryMode,
-            Integer failScoreAtExit,
             BigDecimal maxFavorableR,
-            BigDecimal maxAdverseR,
-            boolean wasLateContinuation
+            BigDecimal maxAdverseR
     ) {}
 
     public BacktestTradingTools(BigDecimal initialBalance, String symbol) {
@@ -106,11 +98,6 @@ public class BacktestTradingTools implements TradingOperations {
     }
 
     // ==================== TradingOperations 实现 ====================
-
-    @Override
-    public BigDecimal peakEquity() {
-        return peakEquity;
-    }
 
     @Override
     public String openPosition(String side, BigDecimal quantity, Integer leverage,
@@ -259,10 +246,6 @@ public class BacktestTradingTools implements TradingOperations {
         return "止盈修改成功";
     }
 
-    /** 兼容旧调用；maker 入场 fill 摩擦已在 StrategyKlineBacktestEngine.limitTouched 内处理。 */
-    public void setFillEpsilon(BigDecimal eps) {
-        // no-op
-    }
 
     // ==================== 回测专用方法 ====================
 
@@ -420,7 +403,6 @@ public class BacktestTradingTools implements TradingOperations {
                 currentBarIndex,
                 pos.getCreatedAt(),
                 currentTime,
-                entryDiagnosticsJsonByPosition.get(pos.getId()),
                 pos.getSide(),
                 pos.getMemo() != null ? pos.getMemo() : "UNKNOWN",
                 pos.getEntryPrice(),
@@ -431,11 +413,8 @@ public class BacktestTradingTools implements TradingOperations {
                 totalFeeForRecord,
                 rMultiple,
                 reason,
-                entryModeByPosition.get(pos.getId()),
-                latestFailScoreByPosition.get(pos.getId()),
                 maxFavorableRByPosition.get(pos.getId()),
-                maxAdverseRByPosition.get(pos.getId()),
-                Boolean.TRUE.equals(lateContinuationByPosition.get(pos.getId()))
+                maxAdverseRByPosition.get(pos.getId())
         ));
 
         if (isFullClose) {
@@ -444,10 +423,6 @@ public class BacktestTradingTools implements TradingOperations {
             pos.setClosedPnl(netPnl);
             openPositions.remove(pos);
             initialRiskPerUnitByPosition.remove(pos.getId());
-            entryDiagnosticsJsonByPosition.remove(pos.getId());
-            entryModeByPosition.remove(pos.getId());
-            lateContinuationByPosition.remove(pos.getId());
-            latestFailScoreByPosition.remove(pos.getId());
             maxFavorableRByPosition.remove(pos.getId());
             maxAdverseRByPosition.remove(pos.getId());
             openFeeRateByPosition.remove(pos.getId());
@@ -579,39 +554,8 @@ public class BacktestTradingTools implements TradingOperations {
      * 利用 FuturesPositionDTO.fundingFeeTotal 字段临时存储开仓bar index。
      */
     public void markOpenBarIndex(int barIndex) {
-        markOpenBarIndex(barIndex, null);
-    }
-
-    public void markOpenBarIndex(int barIndex, String entryDiagnosticsJson) {
         if (!openPositions.isEmpty()) {
-            FuturesPositionDTO lastOpened = openPositions.getLast();
-            lastOpened.setFundingFeeTotal(BigDecimal.valueOf(barIndex));
-            if (entryDiagnosticsJson != null && !entryDiagnosticsJson.isBlank()) {
-                entryDiagnosticsJsonByPosition.put(lastOpened.getId(), entryDiagnosticsJson);
-                rememberEntryDiagnostics(lastOpened.getId(), entryDiagnosticsJson);
-            }
-        }
-    }
-
-    public void recordExitSignalDiagnostics(Long positionId, Integer failScoreAtExit) {
-        if (positionId != null && failScoreAtExit != null) {
-            latestFailScoreByPosition.put(positionId, failScoreAtExit);
-        }
-    }
-
-    private void rememberEntryDiagnostics(Long positionId, String entryDiagnosticsJson) {
-        try {
-            JSONObject json = JSON.parseObject(entryDiagnosticsJson);
-            String entryMode = json.getString("entryMode");
-            if (entryMode != null && !entryMode.isBlank()) {
-                entryModeByPosition.put(positionId, entryMode);
-            }
-            Boolean late = json.getBoolean("wasLateContinuation");
-            if (late != null) {
-                lateContinuationByPosition.put(positionId, late);
-            }
-        } catch (Exception ignored) {
-            // 诊断 JSON 只用于报告，解析失败不影响回测交易。
+            openPositions.getLast().setFundingFeeTotal(BigDecimal.valueOf(barIndex));
         }
     }
 }

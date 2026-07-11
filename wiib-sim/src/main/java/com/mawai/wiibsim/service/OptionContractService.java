@@ -21,13 +21,6 @@ public interface OptionContractService extends IService<OptionContract> {
     void generateOptionChain(Long stockId, BigDecimal refPrice, BigDecimal sigma,
                              LocalDateTime expireAt, int steps);
 
-    /**
-     * 获取某只股票的可用期权链
-     * @param stockId 标的ID
-     * @param expireAt 到期时间（精确到分钟）
-     * @return 合约列表
-     */
-    List<OptionContract> getOptionChain(Long stockId, LocalDateTime expireAt);
 
     /**
      * 获取某只股票当前可交易的所有期权（未到期）

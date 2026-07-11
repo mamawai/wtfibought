@@ -147,7 +147,6 @@ public class FuturesLeverageBracketRegistry {
      * 使用 calcMaintenanceMargin / getEffectiveMaxLeverage 等带异常的 API）。
      */
     public Bracket findBracket(String symbol, BigDecimal notional) {
-        if (symbol == null || notional == null) return null;
         List<Bracket> list = BRACKETS.get(symbol);
         if (list == null) return null;
         for (Bracket b : list) {

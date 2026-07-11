@@ -1,6 +1,7 @@
 import * as echarts from 'echarts';
 import { useEffect, useRef } from 'react';
 import type { CategoryAverages } from '../types';
+import { useIsDark } from '../hooks/useIsDark';
 
 interface Props {
   userData: CategoryAverages;
@@ -18,10 +19,10 @@ const INDICATORS = [
 export function RadarChart({ userData }: Props) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstanceRef = useRef<echarts.ECharts | null>(null);
+  const isDark = useIsDark();
 
   useEffect(() => {
     if (!chartRef.current) return;
-    const isDark = document.documentElement.classList.contains('dark');
     const chart = echarts.init(chartRef.current, isDark ? 'dark' : 'light');
     chartInstanceRef.current = chart;
 
@@ -90,24 +91,12 @@ export function RadarChart({ userData }: Props) {
     chart.setOption(buildOption(isDark));
 
     const onResize = () => chartInstanceRef.current?.resize();
-    const observer = new MutationObserver((records) => {
-      if (records.some(r => r.attributeName === 'class') && chartInstanceRef.current) {
-        chartInstanceRef.current.dispose();
-        const newDark = document.documentElement.classList.contains('dark');
-        const newChart = echarts.init(chartRef.current!, newDark ? 'dark' : 'light');
-        chartInstanceRef.current = newChart;
-        newChart.setOption(buildOption(newDark));
-      }
-    });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-
     window.addEventListener('resize', onResize);
     return () => {
-      observer.disconnect();
       window.removeEventListener('resize', onResize);
       chartInstanceRef.current?.dispose();
     };
-  }, [userData]);
+  }, [userData, isDark]);
 
   return (
     <div className="w-full">

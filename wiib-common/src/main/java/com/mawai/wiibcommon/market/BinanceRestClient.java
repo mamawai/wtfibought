@@ -120,7 +120,8 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         }
     }
 
-    public String getMarkPrice(String symbol) {
+    /** premiumIndex 单次响应同时含 markPrice/indexPrice/lastFundingRate，mark 价与资金费率调用方共用。 */
+    public String getPremiumIndex(String symbol) {
         String baseUrl = props.getFuturesRestBaseUrl();
         if (baseUrl == null || baseUrl.isBlank()) return null;
         URI uri = UriComponentsBuilder
@@ -163,19 +164,6 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         return restTemplate.getForObject(uri, String.class);
     }
 
-    /**
-     * 获取资金费率
-     */
-    public String getFundingRate(String symbol) {
-        String baseUrl = props.getFuturesRestBaseUrl();
-        if (baseUrl == null || baseUrl.isBlank()) return null;
-        URI uri = UriComponentsBuilder
-                .fromUriString(baseUrl + "/fapi/v1/premiumIndex")
-                .queryParam("symbol", symbol)
-                .build().toUri();
-        log.info("Binance REST fundingRate: {}", uri);
-        return restTemplate.getForObject(uri, String.class);
-    }
 
     public String getOrderbook(String symbol, int limit) {
         URI uri = UriComponentsBuilder
@@ -187,21 +175,6 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
             return restTemplate.getForObject(uri, String.class);
         } catch (Exception e) {
             log.warn("获取{}盘口失败: {}", symbol, e.getMessage());
-            return null;
-        }
-    }
-
-    public String getOpenInterest(String symbol) {
-        String baseUrl = props.getFuturesRestBaseUrl();
-        if (baseUrl == null || baseUrl.isBlank()) return null;
-        URI uri = UriComponentsBuilder
-                .fromUriString(baseUrl + "/fapi/v1/openInterest")
-                .queryParam("symbol", symbol)
-                .build().toUri();
-        try {
-            return restTemplate.getForObject(uri, String.class);
-        } catch (Exception e) {
-            log.warn("获取{}持仓量失败: {}", symbol, e.getMessage());
             return null;
         }
     }
@@ -353,28 +326,6 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
             return restTemplate.getForObject(uri, String.class);
         } catch (Exception e) {
             log.warn("获取{}资金费率历史失败: {}", symbol, e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * 资金费率历史·带 endTime 向前翻页重载（research 回填用；limit 上限 1000）。
-     * 原 2 参方法(limit≤100、无 endTime)保留不动——本重载 additive，不动 live 调用点。
-     */
-    public String getFundingRateHistory(String symbol, int limit, long endTime) {
-        String baseUrl = props.getFuturesRestBaseUrl();
-        if (baseUrl == null || baseUrl.isBlank()) return null;
-        URI uri = UriComponentsBuilder
-                .fromUriString(baseUrl + "/fapi/v1/fundingRate")
-                .queryParam("symbol", symbol)
-                .queryParam("endTime", endTime)
-                .queryParam("limit", Math.min(limit, 1000))
-                .build().toUri();
-        try {
-            log.info("Binance REST fundingRateHistory(endTime): {}", uri);
-            return restTemplate.getForObject(uri, String.class);
-        } catch (Exception e) {
-            log.warn("获取{}资金费率历史(endTime)失败: {}", symbol, e.getMessage());
             return null;
         }
     }

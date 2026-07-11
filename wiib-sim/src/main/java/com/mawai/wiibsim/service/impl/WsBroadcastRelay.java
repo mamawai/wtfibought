@@ -32,7 +32,7 @@ public class WsBroadcastRelay implements MessageListener {
         for (String ch : new String[]{
                 MarketBroadcaster.STOCK_CHANNEL, MarketBroadcaster.CRYPTO_CHANNEL,
                 MarketBroadcaster.FUTURES_CHANNEL, MarketBroadcaster.PREDICTION_CHANNEL,
-                MarketBroadcaster.QUANT_CHANNEL, MarketBroadcaster.KLINE_CHANNEL,
+                MarketBroadcaster.KLINE_CHANNEL,
                 MarketBroadcaster.STREAM_HEALTH_CHANNEL, MarketBroadcaster.MONITOR_CHANNEL}) {
             redisMessageListenerContainer.addMessageListener(this, new ChannelTopic(ch));
         }
@@ -63,7 +63,6 @@ public class WsBroadcastRelay implements MessageListener {
                 case MarketBroadcaster.FUTURES_CHANNEL -> messagingTemplate.convertAndSend("/topic/futures/" + code, json);
                 case MarketBroadcaster.KLINE_CHANNEL -> messagingTemplate.convertAndSend("/topic/kline/" + code, json);
                 case MarketBroadcaster.PREDICTION_CHANNEL -> messagingTemplate.convertAndSend("/topic/prediction/" + code, json);
-                case MarketBroadcaster.QUANT_CHANNEL -> messagingTemplate.convertAndSend("/topic/quant/" + code, json);
                 // feed WS 流健康：code 固定 "streams" → /topic/feed/streams，前端订此 topic 整表替换
                 case MarketBroadcaster.STREAM_HEALTH_CHANNEL -> messagingTemplate.convertAndSend("/topic/feed/" + code, json);
                 // 进程 JVM：code=进程名 → /topic/monitor/{feed|quant}，与 sim 自推的 /topic/monitor/sim 并列

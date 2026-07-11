@@ -114,34 +114,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         position.setMemo(request.getMemo());
         position.setStatus("OPEN");
 
-        List<FuturesOpenRequest.StopLoss> stopLosses = request.getStopLosses();
-        if (stopLosses != null && !stopLosses.isEmpty()) {
-            if (stopLosses.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
-            BigDecimal slTotal = BigDecimal.ZERO;
-            List<FuturesStopLoss> slList = new ArrayList<>();
-            for (FuturesOpenRequest.StopLoss sl : stopLosses) {
-                validateSlPrice(sl.getPrice(), request.getSide(), price);
-                validateQty(sl.getQuantity());
-                slTotal = slTotal.add(sl.getQuantity());
-                slList.add(new FuturesStopLoss(genId(), sl.getPrice(), sl.getQuantity()));
-            }
-            if (slTotal.compareTo(quantity) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
-            position.setStopLosses(slList);
-        }
-        List<FuturesOpenRequest.TakeProfit> takeProfits = request.getTakeProfits();
-        if (takeProfits != null && !takeProfits.isEmpty()) {
-            if (takeProfits.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
-            BigDecimal tpTotal = BigDecimal.ZERO;
-            List<FuturesTakeProfit> tpList = new ArrayList<>();
-            for (FuturesOpenRequest.TakeProfit tp : takeProfits) {
-                validateTpPrice(tp.getPrice(), request.getSide(), price);
-                validateQty(tp.getQuantity());
-                tpTotal = tpTotal.add(tp.getQuantity());
-                tpList.add(new FuturesTakeProfit(genId(), tp.getPrice(), tp.getQuantity()));
-            }
-            if (tpTotal.compareTo(quantity) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
-            position.setTakeProfits(tpList);
-        }
+        position.setStopLosses(buildStopLosses(request.getStopLosses(), request.getSide(), price, quantity));
+        position.setTakeProfits(buildTakeProfits(request.getTakeProfits(), request.getSide(), price, quantity));
 
         positionMapper.insert(position);
 
@@ -198,34 +172,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setExpireAt(expireAt);
 
         String side = request.getSide();
-        List<FuturesOpenRequest.StopLoss> stopLosses = request.getStopLosses();
-        if (stopLosses != null && !stopLosses.isEmpty()) {
-            if (stopLosses.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
-            BigDecimal slTotal = BigDecimal.ZERO;
-            List<FuturesStopLoss> slList = new ArrayList<>();
-            for (FuturesOpenRequest.StopLoss sl : stopLosses) {
-                validateSlPrice(sl.getPrice(), side, limitPrice);
-                validateQty(sl.getQuantity());
-                slTotal = slTotal.add(sl.getQuantity());
-                slList.add(new FuturesStopLoss(genId(), sl.getPrice(), sl.getQuantity()));
-            }
-            if (slTotal.compareTo(quantity) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
-            order.setStopLosses(slList);
-        }
-        List<FuturesOpenRequest.TakeProfit> takeProfits = request.getTakeProfits();
-        if (takeProfits != null && !takeProfits.isEmpty()) {
-            if (takeProfits.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
-            BigDecimal tpTotal = BigDecimal.ZERO;
-            List<FuturesTakeProfit> tpList = new ArrayList<>();
-            for (FuturesOpenRequest.TakeProfit tp : takeProfits) {
-                validateTpPrice(tp.getPrice(), side, limitPrice);
-                validateQty(tp.getQuantity());
-                tpTotal = tpTotal.add(tp.getQuantity());
-                tpList.add(new FuturesTakeProfit(genId(), tp.getPrice(), tp.getQuantity()));
-            }
-            if (tpTotal.compareTo(quantity) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
-            order.setTakeProfits(tpList);
-        }
+        order.setStopLosses(buildStopLosses(request.getStopLosses(), side, limitPrice, quantity));
+        order.setTakeProfits(buildTakeProfits(request.getTakeProfits(), side, limitPrice, quantity));
 
         orderMapper.insert(order);
 
@@ -782,17 +730,11 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     // ==================== 内部工具 ====================
 
     private BigDecimal getPrice(String symbol) {
-        BigDecimal price = cacheService.getFuturesPrice(symbol);
-        if (price != null) return price;
-        price = cacheService.getMarkPrice(symbol);
-        if (price == null) throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
-        return price;
+        return FuturesHelper.latestFuturesPrice(cacheService, symbol);
     }
 
     private BigDecimal getMarkPrice(String symbol) {
-        BigDecimal mp = cacheService.getMarkPrice(symbol);
-        if (mp != null) return mp;
-        return getPrice(symbol);
+        return FuturesHelper.markPrice(cacheService, symbol);
     }
 
     private boolean isLimitTaker(String orderSide, BigDecimal limitPrice, BigDecimal markPrice) {

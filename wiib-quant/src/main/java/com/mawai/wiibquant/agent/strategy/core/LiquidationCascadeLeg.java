@@ -23,7 +23,6 @@ public final class LiquidationCascadeLeg {
         String washSide = signalIsLong ? "SELL" : "BUY";
         BigDecimal threshold = notionalThreshold == null ? BigDecimal.ZERO : notionalThreshold;
         BigDecimal total = recent.stream()
-                .filter(order -> order != null)
                 .filter(order -> washSide.equals(normalizeSide(order.getSide())))
                 .map(ForceOrder::getAmount)
                 .filter(amount -> amount != null && amount.signum() > 0)

@@ -1,7 +1,6 @@
 package com.mawai.wiibsim.config;
 
 import com.mawai.wiibcommon.enums.ErrorCode;
-import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibcommon.exception.BizException;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -22,9 +21,6 @@ import java.time.LocalTime;
 @ConfigurationProperties(prefix = "trading")
 public class TradingConfig {
 
-    /** 合约 AI 主决策周期：影响 K 线采集、指标计算、回测聚合系数 */
-    private KlineInterval decisionInterval = KlineInterval.M5;
-
     /** 手续费率（默认0.05%） */
     private BigDecimal commissionRate = new BigDecimal("0.0005");
 
@@ -42,9 +38,6 @@ public class TradingConfig {
 
     /** 合约taker手续费率（默认0.04%，市价/强平成交） */
     private BigDecimal futuresTakerCommissionRate = new BigDecimal("0.0004");
-
-    /** 市价单滑点保护（默认±2%） */
-    private BigDecimal slippageLimit = new BigDecimal("0.02");
 
     /** 限价单最长有效期（小时） */
     private int limitOrderMaxHours = 24;
@@ -80,9 +73,6 @@ public class TradingConfig {
         /** 仓位操作分布式锁超时时间（秒） */
         private int lockTimeoutSeconds = 30;
     }
-
-    /** 乐观锁最大重试次数 */
-    private int optimisticLockMaxRetries = 3;
 
     /** 限价单并发处理配置 */
     private LimitOrderProcessing limitOrderProcessing = new LimitOrderProcessing();
@@ -150,19 +140,6 @@ public class TradingConfig {
     public BigDecimal calculateFuturesCommission(BigDecimal amount, boolean isClose, boolean isTaker) {
         BigDecimal rate = isTaker ? futuresTakerCommissionRate : (isClose ? futuresCloseCommissionRate : futuresOpenCommissionRate);
         return amount.multiply(rate).setScale(2, RoundingMode.HALF_UP);
-    }
-
-    /**
-     * 检查价格是否在滑点保护范围内
-     * 
-     * @param expectedPrice 预期价格
-     * @param actualPrice   实际价格
-     * @return 是否在允许范围内
-     */
-    public boolean isWithinSlippageLimit(BigDecimal expectedPrice, BigDecimal actualPrice) {
-        BigDecimal diff = actualPrice.subtract(expectedPrice).abs();
-        BigDecimal maxDiff = expectedPrice.multiply(slippageLimit);
-        return diff.compareTo(maxDiff) <= 0;
     }
 
     public void validateLimitPrice(BigDecimal limitPrice, BigDecimal marketPrice) {

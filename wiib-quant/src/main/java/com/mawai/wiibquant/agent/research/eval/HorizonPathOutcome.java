@@ -21,28 +21,6 @@ public record HorizonPathOutcome(int actualChangeBps, int maxUpBps, int maxDownB
         return direction > 0 ? maxDownBps : direction < 0 ? maxUpBps : 0;
     }
 
-    public static HorizonPathOutcome from(BigDecimal entry, BigDecimal fallbackClose, List<KlineBar> path) {
-        if (entry == null || entry.signum() <= 0) {
-            return new HorizonPathOutcome(0, 0, 0);
-        }
-        BigDecimal high = fallbackClose != null ? fallbackClose : entry;
-        BigDecimal low = fallbackClose != null ? fallbackClose : entry;
-        BigDecimal close = fallbackClose != null ? fallbackClose : entry;
-        if (path != null && !path.isEmpty()) {
-            close = path.get(path.size() - 1).close();
-            high = path.get(0).high();
-            low = path.get(0).low();
-            for (KlineBar b : path) {
-                if (b.high().compareTo(high) > 0) high = b.high();
-                if (b.low().compareTo(low) < 0) low = b.low();
-            }
-        }
-        return new HorizonPathOutcome(
-                bps(entry, close),
-                Math.max(0, bps(entry, high)),
-                Math.max(0, -bps(entry, low)));
-    }
-
     static HorizonPathOutcome fromStats(BigDecimal entry, BigDecimal close, BigDecimal high, BigDecimal low) {
         if (entry == null || entry.signum() <= 0) {
             return new HorizonPathOutcome(0, 0, 0);

@@ -135,7 +135,7 @@ public class FuturesStreamHandler implements StreamHandler {
     private void pollOnce() {
         for (String symbol : props.getSymbols()) {
             try {
-                String json = restClient.getMarkPrice(symbol);
+                String json = restClient.getPremiumIndex(symbol);
                 if (json != null) {
                     int idx = json.indexOf("\"markPrice\":\"");
                     if (idx >= 0) {

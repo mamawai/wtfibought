@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Workbench } from '../components/workbench/Workbench';
-import { Loader2, Brain, User, CheckCircle2, BarChart3, Zap, Trophy, BrainCircuit } from 'lucide-react';
+import { Brain, User, CheckCircle2, BarChart3, Zap, Trophy, BrainCircuit } from 'lucide-react';
 import type { BehaviorAnalysisReport } from '../types';
 
 type Tab = 'behavior' | 'workbench';
@@ -19,7 +19,6 @@ export function AiAgent() {
   const isAdmin = user?.id === 1;
   const [tab, setTab] = useState<Tab>(isAdmin ? 'workbench' : 'behavior');
   const [behaviorLoading, setBehaviorLoading] = useState(false);
-  const [steps] = useState<string[]>([]);
   const [behaviorReport, setBehaviorReport] = useState<BehaviorAnalysisReport | null>(null);
 
   const handleAnalyzeBehavior = useCallback(async () => {
@@ -87,22 +86,6 @@ export function AiAgent() {
                   <>
                     <Brain className="w-10 h-10 sm:w-12 sm:h-12 mx-auto text-primary mb-4 animate-pulse" />
                     <h2 className="text-lg font-bold mb-4">正在分析中...</h2>
-                    {steps.length > 0 && (
-                      <div className="text-left max-w-xs mx-auto space-y-2">
-                        {steps.map((step, i) => (
-                          <div key={i} className="flex items-center gap-2 text-sm">
-                            {i === steps.length - 1 ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin text-primary shrink-0" />
-                            ) : (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />
-                            )}
-                            <span className={i === steps.length - 1 ? 'text-foreground' : 'text-muted-foreground'}>
-                              {step}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </>
                 )}
               </CardContent>

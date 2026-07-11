@@ -1,8 +1,6 @@
 package com.mawai.wiibquant.agent.strategy.core;
 
 import java.math.BigDecimal;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 交易操作抽象接口。
@@ -12,40 +10,12 @@ import java.util.regex.Pattern;
  */
 public interface TradingOperations {
 
-    Pattern POS_ID_PATTERN = Pattern.compile("posId=(\\d+)");
-    Pattern POSITION_ID_JSON_PATTERN = Pattern.compile("\"positionId\"\\s*:\\s*(\\d+)");
-
     record OpenResult(boolean success, Long positionId, String message) {
+        /** 唯一真实开仓实现(BacktestTradingTools)直接带 positionId 构造；此入口只做成败判定。 */
         public static OpenResult fromMessage(String message) {
             boolean success = message != null && message.startsWith("开仓成功");
-            return new OpenResult(success, success ? parsePositionId(message) : null, message);
+            return new OpenResult(success, null, message);
         }
-
-        private static Long parsePositionId(String message) {
-            Long posId = parseFirstLong(POS_ID_PATTERN.matcher(message));
-            if (posId != null) {
-                return posId;
-            }
-            return parseFirstLong(POSITION_ID_JSON_PATTERN.matcher(message));
-        }
-
-        private static Long parseFirstLong(Matcher matcher) {
-            if (!matcher.find()) {
-                return null;
-            }
-            try {
-                return Long.valueOf(matcher.group(1));
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        }
-    }
-
-    /**
-     * 当前账户峰值权益。生产环境来自熔断服务；回测环境可自行维护。
-     */
-    default BigDecimal peakEquity() {
-        return null;
     }
 
     /**

@@ -12,6 +12,7 @@ import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
 import { FuturesActionButton } from '../components/FuturesActionButton';
+import { LeverageSlider } from '../components/LeverageSlider';
 import { CandleChart } from '../components/CandleChart';
 import { TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Loader2, X, RefreshCw, Sparkles, Wallet, Warehouse, Scale, HelpCircle, Plus, Flame } from 'lucide-react';
 import TradingViewWidget from '../components/TradingViewWidget';
@@ -1026,7 +1027,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               {/* 限价输入 */}
               {futuresOrderType === 'LIMIT' && (
                 <div className="space-y-1.5">
-                  <label className="text-xs text-muted-foreground">限价 (USDT)</label>
+                  <label className="text-xs font-bold text-muted-foreground">限价 (USDT)</label>
                   <Input type="number" placeholder="输入限价" value={limitPrice} onChange={e => setLimitPrice(e.target.value)} step={PRICE_STEP_TEXT} min="0" />
                   {parseFloat(limitPrice) > 0 && currentPrice > 0 && (
                     (futuresSide === 'LONG' && parseFloat(limitPrice) >= currentPrice) ||
@@ -1038,68 +1039,56 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               )}
 
               {/* 杠杆选择 */}
-              <div className="space-y-3">
+              <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs text-muted-foreground flex items-center gap-1.5 font-medium">
+                  <label className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
                     <Scale className="w-3.5 h-3.5" /> 杠杆
                   </label>
                   <div className="px-2 py-0.5 rounded bg-primary/10 text-primary text-xs font-bold tabular-nums">{futuresLeverage}x</div>
                 </div>
-                <div className="flex gap-1.5">
-                  {futuresLeverageOptions.map(lv => (
-                    <button key={lv} onClick={() => setFuturesLeverage(lv)} className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all border ${futuresLeverage === lv ? 'bg-primary border-primary text-primary-foreground shadow-sm' : 'bg-transparent border-border/60 text-muted-foreground hover:text-foreground hover:border-border'}`}>
-                      {lv}x
-                    </button>
-                  ))}
-                </div>
-                <div className="pt-1">
-                  <input
-                    type="range" min={1} max={symbolMaxLeverage}
-                    value={futuresLeverage}
-                    onChange={e => setFuturesLeverage(Number(e.target.value))}
-                    className="w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md transition-all"
-                  />
-                </div>
+                <LeverageSlider
+                  value={futuresLeverage}
+                  max={symbolMaxLeverage}
+                  ticks={futuresLeverageOptions}
+                  onChange={setFuturesLeverage}
+                />
                 <div className="text-[10px] text-muted-foreground leading-relaxed">
                   当前币种最高 {symbolMaxLeverage}x，实际 MMR 按仓位名义价值档位计算
                 </div>
               </div>
 
-              {/* 数量输入 */}
-              <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
-                {/* 左半边：保证金输入框 */}
-                <div className="flex-1">
-                  <div className="relative">
-                    <Input type="number" placeholder={String(MIN_QTY)} value={quantity} onChange={e => setQuantity(e.target.value)} step={String(MIN_QTY)} min={MIN_QTY} className="pr-24" />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">保证金 {cfg.name}</span>
-                  </div>
-                </div>
-
-                {/* 右半边：余额和百分比按钮 */}
-                <div className="flex-1 space-y-1.5">
+              {/* 保证金数量 */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
+                    <Wallet className="w-3.5 h-3.5" /> 保证金
+                  </label>
                   {user && (
-                    <div className="flex items-center justify-end gap-1 text-xs text-muted-foreground">
-                      <Wallet className="w-3 h-3" />
-                      {formatPrice(user.balance)} USDT
-                    </div>
-                  )}
-                  {futuresPriceForCalc > 0 && (
-                    <div className="flex gap-1.5">
-                      {POSITION_PCTS.map(pct => {
-                        const handlePct = () => {
-                          const balance = user?.balance ?? 0;
-                          const qty = calcMaxAffordableMarginQty(balance, pct, futuresPriceForCalc, futuresLeverage, MIN_QTY);
-                          if (qty > 0) animateQuantity(qty, MIN_QTY); else setQuantity('');
-                        };
-                        return (
-                          <Button key={pct} size="sm" variant="outline" className="h-7 text-[11px] flex-1 min-w-15" onClick={handlePct}>
-                            {pct * 100}%
-                          </Button>
-                        );
-                      })}
-                    </div>
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      可用 {formatPrice(user.balance)} USDT
+                    </span>
                   )}
                 </div>
+                <div className="relative">
+                  <Input type="number" placeholder={String(MIN_QTY)} value={quantity} onChange={e => setQuantity(e.target.value)} step={String(MIN_QTY)} min={MIN_QTY} className="pr-16" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">{cfg.name}</span>
+                </div>
+                {futuresPriceForCalc > 0 && (
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {POSITION_PCTS.map(pct => {
+                      const handlePct = () => {
+                        const balance = user?.balance ?? 0;
+                        const qty = calcMaxAffordableMarginQty(balance, pct, futuresPriceForCalc, futuresLeverage, MIN_QTY);
+                        if (qty > 0) animateQuantity(qty, MIN_QTY); else setQuantity('');
+                      };
+                      return (
+                        <Button key={pct} size="sm" variant="outline" className="h-7 text-[11px]" onClick={handlePct}>
+                          {pct * 100}%
+                        </Button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* 预估信息 */}
@@ -1110,30 +1099,34 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                 const liqPriceText = liq && liq.price > 0 ? `$${fmtPrice(liq.price)}` : '—';
                 const mmrText = liq ? `档位 ${liq.bracket.tier} / ${formatRate(liq.bracket.mmr)}` : '—';
                 return (
-                  <div className="space-y-1.5 p-3 rounded-lg bg-accent/30 border border-border/50">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">仓位价值</span>
-                      <span className="font-mono">${formatPrice(positionValue)}</span>
+                  <div className="p-3.5 rounded-xl neu-inset space-y-2.5">
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">仓位价值</span>
+                        <span className="font-mono">${formatPrice(positionValue)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">保证金</span>
+                        <span className="font-mono">${formatPrice(margin)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">手续费 (0.04%)</span>
+                        <span className="font-mono">${formatPrice(commission)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">维持保证金率</span>
+                        <span className="font-mono">{mmrText}</span>
+                      </div>
                     </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">保证金</span>
-                      <span className="font-mono">${formatPrice(margin)}</span>
+                    <div className="flex justify-between items-center text-xs pt-2 border-t border-border/40">
+                      <span className="text-muted-foreground flex items-center gap-1">
+                        <Flame className="w-3 h-3 text-yellow-500" /> 预估强平价
+                      </span>
+                      <span className="font-mono font-bold text-yellow-500">{liqPriceText}</span>
                     </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">手续费 (0.04%)</span>
-                      <span className="font-mono">${formatPrice(commission)}</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">预估强平价</span>
-                      <span className="font-mono text-yellow-500">{liqPriceText}</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">维持保证金率</span>
-                      <span className="font-mono">{mmrText}</span>
-                    </div>
-                    <div className="flex justify-between text-xs font-medium pt-1.5 border-t border-border/50">
-                      <span className="text-muted-foreground">合计需要</span>
-                      <span>${formatPrice(totalCost)}</span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-muted-foreground">合计需要</span>
+                      <span className="text-sm font-bold tabular-nums">${formatPrice(totalCost)}</span>
                     </div>
                   </div>
                 );
@@ -1143,7 +1136,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs text-muted-foreground flex items-center gap-1">止损 <HelpTip text="标记价格触及止损价时自动平仓对应数量，可设多档分批止损" /></label>
+                    <label className="text-xs font-bold text-muted-foreground flex items-center gap-1">止损 <HelpTip text="标记价格触及止损价时自动平仓对应数量，可设多档分批止损" /></label>
                     <button type="button" onClick={() => { setOpenSlEnabled(!openSlEnabled); setOpenSlRows([{ price: '', quantity: '' }]); }}
                       className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${openSlEnabled ? 'bg-primary' : 'bg-muted-foreground/30'}`}>
                       <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-background transition-transform shadow-sm ${openSlEnabled ? 'translate-x-4.5' : 'translate-x-0.75'}`} />
@@ -1158,7 +1151,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                 </div>
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs text-muted-foreground flex items-center gap-1">止盈 <HelpTip text="现价触及止盈价时自动平仓对应数量，可设多档分批止盈" /></label>
+                    <label className="text-xs font-bold text-muted-foreground flex items-center gap-1">止盈 <HelpTip text="现价触及止盈价时自动平仓对应数量，可设多档分批止盈" /></label>
                     <button type="button" onClick={() => { setOpenTpEnabled(!openTpEnabled); setOpenTpRows([{ price: '', quantity: '' }]); }}
                       className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${openTpEnabled ? 'bg-primary' : 'bg-muted-foreground/30'}`}>
                       <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-background transition-transform shadow-sm ${openTpEnabled ? 'translate-x-4.5' : 'translate-x-0.75'}`} />

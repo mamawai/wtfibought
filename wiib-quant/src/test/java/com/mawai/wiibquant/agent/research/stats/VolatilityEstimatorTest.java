@@ -57,43 +57,6 @@ class VolatilityEstimatorTest {
         assertThat(rv).isGreaterThan(perBar);
     }
 
-    @Test
-    void rollingSigmaUsesOnlyLastWindowReturns() {
-        // returns: r1=ln(110/100), r2=ln(99/110)。window=1 只取最后一个收益 → |r2|；window=2 → 两者 RMS。
-        List<KlineBar> bars = List.of(bar("100"), bar("110"), bar("99"));
-        double r1 = Math.log(110.0 / 100.0);
-        double r2 = Math.log(99.0 / 110.0);
-
-        assertThat(VolatilityEstimator.rollingSigma(bars, 1)).isCloseTo(Math.abs(r2), within(1e-12));
-        assertThat(VolatilityEstimator.rollingSigma(bars, 2))
-                .isCloseTo(Math.sqrt((r1 * r1 + r2 * r2) / 2), within(1e-12));
-    }
-
-    @Test
-    void rollingSigmaWindowBeyondAvailableUsesAllReturns() {
-        // window 超过可用收益数 → 退化为全样本（即"常数/扩张 σ"用 window=MAX_VALUE 实现）。
-        List<KlineBar> bars = List.of(bar("100"), bar("110"), bar("99"));
-
-        assertThat(VolatilityEstimator.rollingSigma(bars, 100))
-                .isCloseTo(VolatilityEstimator.rollingSigma(bars, 2), within(1e-12));
-        assertThat(VolatilityEstimator.rollingSigma(bars, Integer.MAX_VALUE))
-                .isCloseTo(VolatilityEstimator.rollingSigma(bars, 2), within(1e-12));
-    }
-
-    @Test
-    void rollingSigmaConstantRatioEqualsAbsReturn() {
-        // 恒定比率 1.01 → 任意窗口 RMS = |ln(1.01)|，且不会像 random-walk 单点那样塌到 0。
-        List<KlineBar> bars = List.of(bar("100"), bar("101"), bar("102.01"), bar("103.0301"));
-
-        assertThat(VolatilityEstimator.rollingSigma(bars, 3)).isCloseTo(Math.log(1.01), within(1e-9));
-    }
-
-    @Test
-    void rollingSigmaLessThanTwoBarsIsZero() {
-        assertThat(VolatilityEstimator.rollingSigma(List.of(bar("100")), 5)).isZero();
-        assertThat(VolatilityEstimator.rollingSigma(List.of(), 5)).isZero();
-    }
-
     static KlineBar bar(String close) {
         BigDecimal c = new BigDecimal(close);
         return new KlineBar(0, 0, c, c, c, c, BigDecimal.ONE);

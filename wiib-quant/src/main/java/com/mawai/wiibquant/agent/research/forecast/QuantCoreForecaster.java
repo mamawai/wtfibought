@@ -66,23 +66,6 @@ public final class QuantCoreForecaster implements MultiOutputForecaster {
                 MultiFactorForecaster.defaults());
     }
 
-    /** EWMA + 训练窗 trailing-shape regime 转移腿；用于检验 future-regime 是否有比当前 ADX 更强的可预测性。 */
-    public static QuantCoreForecaster trailingShapeRegime(ForecastHorizon horizon) {
-        return trailingShapeRegime(horizon, 5 * 60_000L);
-    }
-
-    public static QuantCoreForecaster trailingShapeRegime(ForecastHorizon horizon, long decisionBarMillis) {
-        return trailingShapeRegime(horizon, decisionBarMillis, MultiFactorForecaster.defaults());
-    }
-
-    public static QuantCoreForecaster trailingShapeRegime(ForecastHorizon horizon, long decisionBarMillis,
-                                                         Forecaster directionForecaster) {
-        return new QuantCoreForecaster(horizon, DEFAULT_VOL_LAMBDA,
-                defaultVolForecaster(horizon, DEFAULT_VOL_LAMBDA),
-                TrailingShapeTransitionRegimeForecaster.defaults(decisionBarMillis),
-                directionForecaster);
-    }
-
     private static VolForecaster defaultVolForecaster(ForecastHorizon horizon, double lambda) {
         return new HorizonScaledVolForecaster(new EwmaVolForecaster(lambda), horizon);
     }

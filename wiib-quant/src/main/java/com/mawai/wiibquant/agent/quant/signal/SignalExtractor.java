@@ -130,11 +130,6 @@ public final class SignalExtractor {
         m.put("PERP_DISCOUNT_DEEP", new Meta("合约贴水偏深·空头付费(反向偏多)", BULLISH, POSITIONING));
 
         // ===== 趋势动量 MOMENTUM（regime 的 transition/趋势语义并入此组）=====
-        m.put("TRANSITION_BREAKING_OUT", new Meta("向上突破", BULLISH, MOMENTUM));
-        m.put("TRANSITION_BREAKING_DOWN", new Meta("向下突破", BEARISH, MOMENTUM));
-        m.put("TRANSITION_STRENGTHENING", new Meta("趋势强化", NEUTRAL, MOMENTUM));
-        m.put("TRANSITION_WEAKENING", new Meta("趋势弱化", RISK, MOMENTUM));
-        m.put("TREND_WEAKENING", new Meta("趋势走弱", RISK, MOMENTUM));
 
         // ===== 波动状态 VOLATILITY（脆弱度·vol-state 腿来源；regime/IV/布林/ATR）=====
         m.put("LIVE_REGIME_TREND_UP", new Meta("当前状态·上升趋势", BULLISH, VOLATILITY));
@@ -163,8 +158,6 @@ public final class SignalExtractor {
         m.put("ATR_DECELERATING", new Meta("ATR减速", NEUTRAL, VOLATILITY));
 
         // ===== 新闻事件 NEWS（agent riskFlags 驱动）=====
-        m.put("BLACK_SWAN_RISK", new Meta("黑天鹅风险", RISK, NEWS));
-        m.put("REGULATORY_UNCERTAINTY", new Meta("监管不确定性", RISK, NEWS));
 
         return Map.copyOf(m);
     }

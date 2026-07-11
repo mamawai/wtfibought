@@ -104,6 +104,8 @@ public class AuthServiceImpl implements AuthService {
             log.info("用户登录成功: {} UserId={}", username, user.getId());
 
             return token;
+        } catch (BizException e) {
+            throw e;   // 内部已带具体错误码/文案，别降级成通用系统错误
         } catch (Exception e) {
             log.error("LinuxDo登录失败", e);
             throw new BizException(ErrorCode.SYSTEM_ERROR.getCode(), "登录失败: " + e.getMessage());

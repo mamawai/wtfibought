@@ -45,29 +45,6 @@ class QuantCoreForecasterTest {
     }
 
     @Test
-    void harGkFactoryKeepsOnlyHarVariantVisibleInName() {
-        QuantCoreForecaster fc = QuantCoreForecaster.harRvGk(ForecastHorizon.H6);
-
-        assertThat(fc.name()).contains("har_rv_gk");
-    }
-
-    @Test
-    void allFactorDirectionFactoryKeepsDirectionVariantVisibleInName() {
-        QuantCoreForecaster fc = QuantCoreForecaster.allFactorDirection(ForecastHorizon.H6);
-
-        assertThat(fc.name()).contains("multi_factor_all5");
-        assertThat(QuantCoreForecaster.defaults(ForecastHorizon.H6).name())
-                .contains("multi_factor_trend_funding_fng");
-    }
-
-    @Test
-    void trailingShapeRegimeFactoryKeepsVariantVisibleInName() {
-        QuantCoreForecaster fc = QuantCoreForecaster.trailingShapeRegime(ForecastHorizon.H6);
-
-        assertThat(fc.name()).contains("trailing_shape_transition").contains("regime=");
-    }
-
-    @Test
     void horizonPassthrough() {
         QuantCoreForecaster fc = new QuantCoreForecaster(ForecastHorizon.H12, 0.94, new StubDir(Forecast.flat()));
 

@@ -31,12 +31,6 @@ public final class IndicatorAdapter {
         return out;
     }
 
-    /** 全套指标快照（字段见 CryptoIndicatorCalculator）；&lt;30 bar（calcAll 下限）返回空 Map。 */
-    public static Map<String, Object> indicators(List<KlineBar> bars) {
-        if (bars == null || bars.size() < 30) return Map.of();
-        return CryptoIndicatorCalculator.calcAll(toCalcInput(bars), true);
-    }
-
     /** research 方向/regime 专用轻量快照；只含当前模型读取的字段，历史长跑必须走这条。 */
     public static Map<String, Object> researchIndicators(List<KlineBar> bars) {
         if (bars == null || bars.size() < 30) return Map.of();

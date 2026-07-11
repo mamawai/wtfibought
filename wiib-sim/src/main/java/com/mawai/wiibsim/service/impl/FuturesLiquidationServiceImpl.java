@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.util.*;
 
+import static com.mawai.wiibsim.service.impl.FuturesHelper.*;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -18,12 +20,6 @@ public class FuturesLiquidationServiceImpl implements FuturesLiquidationService 
     private final FuturesRiskService futuresRiskService;
     private final CacheService cacheService;
 
-    private static final String LIQ_LONG_PREFIX = "futures:liq:long:";
-    private static final String LIQ_SHORT_PREFIX = "futures:liq:short:";
-    private static final String SL_LONG_PREFIX = "futures:sl:long:";
-    private static final String SL_SHORT_PREFIX = "futures:sl:short:";
-    private static final String TP_LONG_PREFIX = "futures:tp:long:";
-    private static final String TP_SHORT_PREFIX = "futures:tp:short:";
 
     private record RecoveryEntry(String key, String member, double score) {}
 

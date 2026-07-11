@@ -92,7 +92,6 @@ public class MacroContextService {
 
     private void recomputeInBackground(String symbol, long toTime, boolean allowLongBackfill) {
         if (!backgroundRefreshes.add(symbol)) {
-            cache.get(symbol);
             return;
         }
         RecomputeResult result;

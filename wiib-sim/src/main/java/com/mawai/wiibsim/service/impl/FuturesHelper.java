@@ -6,9 +6,13 @@ import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibcommon.entity.FuturesStopLoss;
+import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 final class FuturesHelper {
@@ -19,6 +23,14 @@ final class FuturesHelper {
     static final String LIMIT_OPEN_SHORT_PREFIX = "futures:limit:open_short:";
     static final String LIMIT_CLOSE_LONG_PREFIX = "futures:limit:close_long:";
     static final String LIMIT_CLOSE_SHORT_PREFIX = "futures:limit:close_short:";
+
+    // 强平/止损/止盈触发索引前缀：写入侧(PositionIndex)与消费侧(Liquidation)共用，改一处即全局生效
+    static final String LIQ_LONG_PREFIX = "futures:liq:long:";
+    static final String LIQ_SHORT_PREFIX = "futures:liq:short:";
+    static final String SL_LONG_PREFIX = "futures:sl:long:";
+    static final String SL_SHORT_PREFIX = "futures:sl:short:";
+    static final String TP_LONG_PREFIX = "futures:tp:long:";
+    static final String TP_SHORT_PREFIX = "futures:tp:short:";
 
     static void addToLimitZSet(FuturesOrder order, CacheService cacheService) {
         String key = getLimitZSetKey(order.getOrderSide(), order.getSymbol());
@@ -115,6 +127,58 @@ final class FuturesHelper {
         resp.setExpireAt(order.getExpireAt());
         resp.setCreatedAt(order.getCreatedAt());
         return resp;
+    }
+
+    /** 最新合约价：futures 实时价优先，mark 价兜底；都缺抛价不可用。 */
+    static BigDecimal latestFuturesPrice(CacheService cacheService, String symbol) {
+        BigDecimal price = cacheService.getFuturesPrice(symbol);
+        if (price != null) return price;
+        price = cacheService.getMarkPrice(symbol);
+        if (price == null) throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
+        return price;
+    }
+
+    /** mark 价：mark 优先，合约最新价兜底（三处调用方曾各写一份，其中一份还把兜底写成了现货价）。 */
+    static BigDecimal markPrice(CacheService cacheService, String symbol) {
+        BigDecimal mp = cacheService.getMarkPrice(symbol);
+        if (mp != null) return mp;
+        BigDecimal price = cacheService.getFuturesPrice(symbol);
+        if (price == null) throw new BizException(ErrorCode.CRYPTO_PRICE_UNAVAILABLE);
+        return price;
+    }
+
+    /** 开仓单随单止损列表构建+校验；空返回 null（市价参照当前价、限价参照挂单价）。 */
+    static List<FuturesStopLoss> buildStopLosses(List<FuturesOpenRequest.StopLoss> items, String side,
+                                                 BigDecimal refPrice, BigDecimal quantity) {
+        if (items == null || items.isEmpty()) return null;
+        if (items.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
+        BigDecimal total = BigDecimal.ZERO;
+        List<FuturesStopLoss> list = new ArrayList<>();
+        for (FuturesOpenRequest.StopLoss sl : items) {
+            validateSlPrice(sl.getPrice(), side, refPrice);
+            validateQty(sl.getQuantity());
+            total = total.add(sl.getQuantity());
+            list.add(new FuturesStopLoss(genId(), sl.getPrice(), sl.getQuantity()));
+        }
+        if (total.compareTo(quantity) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
+        return list;
+    }
+
+    /** 开仓单随单止盈列表构建+校验；空返回 null。 */
+    static List<FuturesTakeProfit> buildTakeProfits(List<FuturesOpenRequest.TakeProfit> items, String side,
+                                                    BigDecimal refPrice, BigDecimal quantity) {
+        if (items == null || items.isEmpty()) return null;
+        if (items.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
+        BigDecimal total = BigDecimal.ZERO;
+        List<FuturesTakeProfit> list = new ArrayList<>();
+        for (FuturesOpenRequest.TakeProfit tp : items) {
+            validateTpPrice(tp.getPrice(), side, refPrice);
+            validateQty(tp.getQuantity());
+            total = total.add(tp.getQuantity());
+            list.add(new FuturesTakeProfit(genId(), tp.getPrice(), tp.getQuantity()));
+        }
+        if (total.compareTo(quantity) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
+        return list;
     }
 
     static String genId() {

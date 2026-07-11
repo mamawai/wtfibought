@@ -7,15 +7,14 @@ import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibquant.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibquant.agent.quant.domain.MarketRegime;
+import com.mawai.wiibquant.agent.quant.service.DeribitOptionBook;
 import com.mawai.wiibquant.agent.tool.CryptoIndicatorCalculator;
 import com.mawai.wiibcommon.market.OrderFlowAggregator;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatterBuilder;
 import java.util.*;
 import java.util.function.Supplier;
 
@@ -37,10 +36,6 @@ final class BuildFeaturesBuilder {
         this.orderFlowAggregator = orderFlowAggregator;
         this.decisionIntervalSupplier = decisionIntervalSupplier;
     }
-
-    private static final java.time.format.DateTimeFormatter DERIBIT_EXPIRY_FMT =
-            new DateTimeFormatterBuilder().parseCaseInsensitive()
-                    .appendPattern("dMMMuu").toFormatter(java.util.Locale.ENGLISH);
 
     private static final String[][] PRICE_CHANGE_SOURCES = {
             {"5m", "1m", "5"}, {"15m", "5m", "3"}, {"30m", "5m", "6"},
@@ -276,8 +271,7 @@ final class BuildFeaturesBuilder {
                 fearGreedIndex, fearGreedLabel,
                 atr1m, atr, bollBw, bollSqueeze,
                 dvolIndex, atmIv, ivSkew25d, ivTermSlope,
-                regime, qualityFlags,
-                0.5, "NONE");
+                regime, qualityFlags);
         log.info("[Q2.4] build_features完成 price={} qualityFlags={} 耗时{}ms",
                 lastPrice, qualityFlags, System.currentTimeMillis() - startMs);
 
@@ -706,75 +700,36 @@ final class BuildFeaturesBuilder {
         double[] empty = {0, 0, 0};
         if (bookSummaryJson == null || bookSummaryJson.isBlank() || lastPrice == null) return empty;
         try {
-            JSONObject root = JSON.parseObject(bookSummaryJson);
-            JSONArray results = root.getJSONArray("result");
-            if (results == null || results.isEmpty()) return empty;
-
             double spot = lastPrice.doubleValue();
             if (spot <= 0) return empty;
 
-            // 按到期日分组: expiry -> list of {strike, type(C/P), mark_iv}
-            record OptionInfo(String expiry, double strike, String type, double markIv) {}
-            Map<String, List<OptionInfo>> byExpiry = new java.util.TreeMap<>(
-                    Comparator.comparing(s -> LocalDate.parse(s, DERIBIT_EXPIRY_FMT)));
-
-            for (int i = 0; i < results.size(); i++) {
-                JSONObject item = results.getJSONObject(i);
-                double markIv = item.getDoubleValue("mark_iv");
-                if (markIv <= 0) continue;
-                String name = item.getString("instrument_name");
-                if (name == null) continue;
-                // BTC-28MAR25-90000-C
-                String[] parts = name.split("-");
-                if (parts.length < 4) continue;
-                String expiry = parts[1];
-                double strike;
-                try { strike = Double.parseDouble(parts[2]); } catch (NumberFormatException e) { continue; }
-                String type = parts[3]; // C or P
-                byExpiry.computeIfAbsent(expiry, k -> new ArrayList<>())
-                        .add(new OptionInfo(expiry, strike, type, markIv));
-            }
-
-            if (byExpiry.isEmpty()) return empty;
-
-            // 找最近到期日（至少有几个合约的）和次近到期日
-            List<String> expiries = byExpiry.entrySet().stream()
-                    .filter(e -> e.getValue().size() >= 4)
-                    .map(Map.Entry::getKey)
+            // 解析统一走 DeribitOptionBook(日期格式坑见其注释)；只保留合约数足够的到期日，近月/次近月
+            List<List<DeribitOptionBook.Quote>> groups = DeribitOptionBook.parse(bookSummaryJson)
+                    .byExpiry().values().stream()
+                    .filter(g -> g.size() >= 4)
                     .toList();
-            if (expiries.isEmpty()) return empty;
+            if (groups.isEmpty()) return empty;
 
-            String nearExpiry = expiries.getFirst();
-            List<OptionInfo> nearOptions = byExpiry.get(nearExpiry);
+            List<DeribitOptionBook.Quote> nearOptions = groups.getFirst();
 
             // ATM IV: strike 最接近 spot 的 call
-            double atmIv = nearOptions.stream()
-                    .filter(o -> "C".equals(o.type()))
-                    .min(java.util.Comparator.comparingDouble(o -> Math.abs(o.strike() - spot)))
-                    .map(OptionInfo::markIv)
-                    .orElse(0.0);
+            double atmIv = DeribitOptionBook.atmCallIv(nearOptions, spot);
 
             // 25d skew 近似: OTM 5-8% 区间
             double otmLow = spot * 1.05, otmHigh = spot * 1.08;
             double otmPutLow = spot * 0.92, otmPutHigh = spot * 0.95;
             double callIv = nearOptions.stream()
-                    .filter(o -> "C".equals(o.type()) && o.strike() >= otmLow && o.strike() <= otmHigh)
-                    .mapToDouble(OptionInfo::markIv).average().orElse(0);
+                    .filter(o -> o.call() && o.strike() >= otmLow && o.strike() <= otmHigh)
+                    .mapToDouble(DeribitOptionBook.Quote::markIv).average().orElse(0);
             double putIv = nearOptions.stream()
-                    .filter(o -> "P".equals(o.type()) && o.strike() >= otmPutLow && o.strike() <= otmPutHigh)
-                    .mapToDouble(OptionInfo::markIv).average().orElse(0);
+                    .filter(o -> !o.call() && o.strike() >= otmPutLow && o.strike() <= otmPutHigh)
+                    .mapToDouble(DeribitOptionBook.Quote::markIv).average().orElse(0);
             double skew25d = (callIv > 0 && putIv > 0) ? callIv - putIv : 0;
 
             // term structure slope
             double termSlope = 0;
-            if (expiries.size() >= 2) {
-                String farExpiry = expiries.get(1);
-                List<OptionInfo> farOptions = byExpiry.get(farExpiry);
-                double farAtmIv = farOptions.stream()
-                        .filter(o -> "C".equals(o.type()))
-                        .min(java.util.Comparator.comparingDouble(o -> Math.abs(o.strike() - spot)))
-                        .map(OptionInfo::markIv)
-                        .orElse(0.0);
+            if (groups.size() >= 2) {
+                double farAtmIv = DeribitOptionBook.atmCallIv(groups.get(1), spot);
                 if (atmIv > 0 && farAtmIv > 0) {
                     termSlope = farAtmIv - atmIv;
                 }

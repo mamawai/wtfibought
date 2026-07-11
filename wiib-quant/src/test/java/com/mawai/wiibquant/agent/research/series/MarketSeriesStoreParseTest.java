@@ -159,7 +159,6 @@ class MarketSeriesStoreParseTest {
         assertThat(rows).isEqualTo(1001);
         verify(client).getFundingRateHistory("BTCUSDT", 1000, from, to);
         verify(client).getFundingRateHistory("BTCUSDT", 1000, secondCursor, to);
-        verify(client, never()).getFundingRateHistory(eq("BTCUSDT"), eq(1000), anyLong());
         verify(mapper, times(1001)).upsert(any(FactorHistory.class));
     }
 

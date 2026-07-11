@@ -2,6 +2,7 @@ package com.mawai.wiibquant.agent.strategy.backtest;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.market.KlineBar;
+import com.mawai.wiibquant.agent.strategy.core.PositionSizer;
 import com.mawai.wiibquant.agent.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibquant.agent.strategy.core.StrategySignal;
 import com.mawai.wiibquant.agent.strategy.core.TradingStrategySpi;
@@ -26,7 +27,6 @@ import java.util.Optional;
 public final class StrategyKlineBacktestEngine {
 
     private static final int WINDOW_MAX_BARS = 50_000;
-    private static final BigDecimal MAX_MARGIN_PCT = new BigDecimal("0.15");
 
     private final TradingStrategySpi strategy;
     private final String symbol;
@@ -59,7 +59,6 @@ public final class StrategyKlineBacktestEngine {
         // fill 摩擦压力测试：默认 0(原行为)；>0 时 maker 限价进场需价格穿过挂单价 ε 才成交。
         this.fillEpsilon = BigDecimal.valueOf(
                 Double.parseDouble(System.getProperty("backtest.fillEpsilonBp", "0")) / 10_000.0);
-        tools.setFillEpsilon(fillEpsilon);
         this.takerEntry = Boolean.parseBoolean(System.getProperty("backtest.takerEntry", "false"));
         this.fixedMarginUsdt = Double.parseDouble(System.getProperty("backtest.fixedMarginUsdt", "0"));
         this.marginPctOfEquity = Double.parseDouble(System.getProperty("backtest.marginPctOfEquity", "0"));
@@ -167,8 +166,8 @@ public final class StrategyKlineBacktestEngine {
     private void openFill(BacktestTradingTools tools, StrategySignal signal, BigDecimal fillPrice,
                           String orderType, int barIndex, WindowedMarketView view) {
         if (signal == null || fillPrice == null || fillPrice.signum() <= 0) return;
-        signal = strategy.prepareEntry(symbol, signal, fillPrice, view);
-        if (signal == null) return;
+        // 回测填单模型的保守门：市价单按下一根开盘成交，滑点比实盘秒级延迟严苛。
+        // 实盘无法"拒绝"已成交的市价/挂单，此差异有界于秒级滑点，方向上回测更严格。
         if (!directionalPricesStillValid(signal, fillPrice)) return;
         if (gappedBeyondStop(signal, fillPrice)) return;
         if (!rrStillAcceptable(signal, fillPrice)) return;
@@ -180,7 +179,7 @@ public final class StrategyKlineBacktestEngine {
         boolean customSizing = marginPctOfEquity > 0 || fixedMarginUsdt > 0;
         int effectiveLeverage = customSizing
                 ? Math.max(1, leverage)
-                : Math.max(1, Math.min(leverage, Math.max(1, policy.maxLeverage())));
+                : PositionSizer.effectiveLeverage(leverage, policy);
         BigDecimal quantity;
         if (marginPctOfEquity > 0) {
             // 复利全仓口径：每仓保证金=权益×比例，名义=保证金×杠杆。
@@ -193,19 +192,9 @@ public final class StrategyKlineBacktestEngine {
                     .multiply(BigDecimal.valueOf(effectiveLeverage))
                     .divide(fillPrice, 8, RoundingMode.DOWN);
         } else {
-            BigDecimal riskDistance = fillPrice.subtract(signal.stopLossPrice()).abs();
-            BigDecimal riskPct = BigDecimal.valueOf(policy.riskPerTradePct() > 0
-                    ? policy.riskPerTradePct()
-                    : StrategyRiskPolicy.defaults().riskPerTradePct());
-            BigDecimal equity = tools.getTotalEquity();
-            quantity = equity.multiply(riskPct).divide(riskDistance, 8, RoundingMode.DOWN);
-            BigDecimal maxMargin = equity.multiply(MAX_MARGIN_PCT);
-            BigDecimal margin = quantity.multiply(fillPrice)
-                    .divide(BigDecimal.valueOf(effectiveLeverage), 8, RoundingMode.CEILING);
-            if (margin.compareTo(maxMargin) > 0) {
-                quantity = maxMargin.multiply(BigDecimal.valueOf(effectiveLeverage))
-                        .divide(fillPrice, 8, RoundingMode.DOWN);
-            }
+            // 风险定量与实盘执行共用 PositionSizer，公式漂移即破坏"回测判决对实盘有效"
+            quantity = PositionSizer.riskSizedQty(tools.getTotalEquity(), fillPrice,
+                    signal.stopLossPrice(), policy, effectiveLeverage);
         }
         if (quantity.signum() <= 0) return;
 
@@ -251,11 +240,10 @@ public final class StrategyKlineBacktestEngine {
         for (BacktestTradingTools.ClosedTrade ct : tools.getClosedTrades()) {
             result.addTrade(new BacktestResult.Trade(
                     ct.openBarIndex(), ct.closeBarIndex(), ct.openTime(), ct.closeTime(),
-                    ct.entryDiagnosticsJson(), ct.side(), ct.strategy(),
+                    ct.side(), ct.strategy(),
                     ct.entryPrice(), ct.exitPrice(), ct.quantity(), ct.leverage(),
                     ct.pnl(), ct.fee(), ct.rMultiple(), ct.exitReason(),
-                    ct.entryMode(), ct.failScoreAtExit(), ct.maxFavorableR(), ct.maxAdverseR(),
-                    ct.wasLateContinuation()
+                    ct.maxFavorableR(), ct.maxAdverseR()
             ));
         }
     }

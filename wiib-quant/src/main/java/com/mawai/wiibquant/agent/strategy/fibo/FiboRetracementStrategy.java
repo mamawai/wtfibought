@@ -138,23 +138,6 @@ public final class FiboRetracementStrategy implements TradingStrategySpi {
     }
 
     @Override
-    public StrategySignal prepareEntry(String symbol, StrategySignal signal,
-                                       BigDecimal actualEntryPrice, StrategyMarketView view) {
-        // limit 成交价确定、SL/TP 已按腿固定，这里只做方向 + RR 的最后 sanity。
-        if (signal == null || actualEntryPrice == null || actualEntryPrice.signum() <= 0) {
-            return signal;
-        }
-        if (!directionalSane(signal.isLong(), actualEntryPrice, signal.stopLossPrice(), signal.takeProfitPrice())) {
-            return null;
-        }
-        BigDecimal risk = actualEntryPrice.subtract(signal.stopLossPrice()).abs();
-        if (risk.signum() <= 0) return null;
-        BigDecimal rr = signal.takeProfitPrice().subtract(actualEntryPrice).abs().divide(risk, 4, RoundingMode.HALF_UP);
-        if (rr.compareTo(riskPolicy.minRiskReward()) < 0) return null;
-        return signal;
-    }
-
-    @Override
     public void onPositionOpened(String symbol, StrategySignal signal, Long positionId,
                                  BigDecimal actualEntryPrice, StrategyMarketView view,
                                  TradingOperations tools) {
@@ -212,12 +195,6 @@ public final class FiboRetracementStrategy implements TradingStrategySpi {
     private static BigDecimal rMultipleTp(BigDecimal entry, BigDecimal risk, double r, boolean upLeg) {
         BigDecimal off = risk.multiply(BigDecimal.valueOf(r));
         return upLeg ? entry.add(off) : entry.subtract(off);
-    }
-
-    private boolean directionalSane(boolean isLong, BigDecimal entry, BigDecimal stop, BigDecimal takeProfit) {
-        return isLong
-                ? stop.compareTo(entry) < 0 && takeProfit.compareTo(entry) > 0
-                : stop.compareTo(entry) > 0 && takeProfit.compareTo(entry) < 0;
     }
 
     private double lastAtr(List<KlineBar> bars) {

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Activity, AlertTriangle, ArrowLeft, Clock, RefreshCw, Zap } from 'lucide-react';
 import { graphObsApi } from '../api';
+import { useIsDark } from '../hooks/useIsDark';
 import { useToast } from '../components/ui/use-toast';
 import { cn } from '../lib/utils';
 import { Button } from '../components/ui/button';
@@ -65,11 +66,11 @@ function SummaryTile({
 
 function DurationBarChart({ metrics }: { metrics: GraphNodeMetric[] }) {
   const ref = useRef<HTMLDivElement>(null);
+  const isDark = useIsDark();
 
   useEffect(() => {
     if (!ref.current || metrics.every(m => m.meanMs <= 0)) return;
 
-    const isDark = document.documentElement.classList.contains('dark');
     const chart = echarts.init(ref.current, isDark ? 'dark' : 'light');
     const textColor = isDark ? '#94A3B8' : '#78716C';
     const bgColor = isDark ? '#1E293B' : '#FFFFFF';
@@ -126,7 +127,7 @@ function DurationBarChart({ metrics }: { metrics: GraphNodeMetric[] }) {
     const obs = new ResizeObserver(() => chart.resize());
     obs.observe(ref.current);
     return () => { obs.disconnect(); chart.dispose(); };
-  }, [metrics]);
+  }, [metrics, isDark]);
 
   return <div ref={ref} style={{ height: 280 }} />;
 }

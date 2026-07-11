@@ -34,7 +34,6 @@ import {
   Target,
 } from 'lucide-react';
 import type { Position, Order, Settlement, CryptoPosition, FuturesPosition, OptionPosition, PredictionPnl, AssetSnapshot, CategoryAverages } from '../types';
-import { useDedupedEffect } from '../hooks/useDedupedEffect';
 import { formatCoinPrice, getCoin } from '../lib/coinConfig';
 
 interface CryptoRow extends CryptoPosition {
@@ -96,7 +95,6 @@ export function Portfolio() {
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [tab, setTab] = useState<'positions' | 'orders' | 'settlements'>('positions');
   const [loading, setLoading] = useState(true);
-  const activeRequestKey = useRef('');
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [cancelOrder, setCancelOrder] = useState<Order | null>(null);
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
@@ -162,12 +160,10 @@ export function Portfolio() {
   }, []);
 
   const requestKey = user ? `portfolio:user=${user.id}:refresh=${refreshNonce}:page=${orderPage}:size=${orderPageSize}` : null;
-  useDedupedEffect(
-    requestKey,
-    () => {
+  useEffect(() => {
+      if (requestKey == null) return;
       if (!user) return;
       let cancelled = false;
-      activeRequestKey.current = requestKey ?? '';
 
       setLoading(true);
       setChartReady(false);
@@ -180,7 +176,6 @@ export function Portfolio() {
       ])
         .then(([u, p, o, s]) => {
           if (cancelled) return;
-          if (activeRequestKey.current !== (requestKey ?? '')) return;
           useUserStore.setState({ user: u });
           setPositions(p);
           setOrders(o.records);
@@ -192,13 +187,11 @@ export function Portfolio() {
             optionApi.positions().then(setOptionPositions).catch(() => setOptionPositions([])),
             predictionApi.pnl().then(setPredictionPnl).catch(() => setPredictionPnl(null)),
           ]).then(() => {
-            if (!cancelled && activeRequestKey.current === (requestKey ?? ''))
-              setWalletReady(true);
+            if (!cancelled) setWalletReady(true);
           });
         })
         .catch(() => {
           if (cancelled) return;
-          if (activeRequestKey.current !== (requestKey ?? '')) return;
           setPositions([]);
           setOrders([]);
           setOrderTotal(0);
@@ -212,16 +205,13 @@ export function Portfolio() {
         })
         .finally(() => {
           if (cancelled) return;
-          if (activeRequestKey.current !== (requestKey ?? '')) return;
           setLoading(false);
         });
 
       return () => {
         cancelled = true;
       };
-    },
-    [requestKey],
-  );
+    }, [requestKey]);
 
   const handleCancelOrder = async (orderId: number) => {
     try {

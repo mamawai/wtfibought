@@ -33,4 +33,7 @@ public interface OptionPricingService {
     BigDecimal calculateIntrinsicValue(String optionType, BigDecimal spotPrice, BigDecimal strike);
 
     OptionQuoteDTO getQuote(Long contractId);
+
+    /** 标的现价：实时价缺失时回退 prevClose；仍无效抛价格不可用。定价与下单共用此口径。 */
+    BigDecimal getSpotPrice(Long stockId);
 }
