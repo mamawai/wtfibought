@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * 深研判工具（P5，仅对话轨）：贵操作——新闻浓缩 + Bull∥Bear + Judge 共 4 次 LLM 调用。
+ * 深研判工具（P5，仅对话轨）：贵操作——Bull∥Bear + Judge 共 3 次深模型调用（新闻上下文是缓存拼接，零 LLM）。
  * HITL 闸门：未授权时登记 pending 并返回 PENDING_APPROVAL（agent 转述给用户，Controller 随后弹确认卡）；
  * 用户确认后 agent 重调本工具，消费一次性授权后真执行。sessionId 经 ToolContext 传入。
  */
@@ -34,7 +34,7 @@ public class DeepAnalysisToolkit {
 
     @Tool(name = "run_deep_analysis", description = """
             Run a full deep market analysis (Bull vs Bear adversarial debate + Judge verdict) for a symbol.
-            EXPENSIVE: costs 4 deep-model LLM calls. Requires user approval per session.
+            EXPENSIVE: costs 3 deep-model LLM calls. Requires user approval per session.
             If the result status is PENDING_APPROVAL, tell the user approval is needed and why - the UI
             will show a confirmation card; after they approve, call this tool again to execute.
             Returns: narrative, bull/range/bear scenario distribution, invalidation condition, noDirection flag.""")
@@ -46,25 +46,28 @@ public class DeepAnalysisToolkit {
         // HITL 闸门：无有效授权 → 登记 pending，返回待确认标记（不烧深模型）
         if (!approvalRegistry.consumeApproval(sessionId)) {
             approvalRegistry.requestApproval(sessionId, normalized,
-                    "深度研判需 4 次深模型调用（新闻浓缩 + Bull/Bear 辩论 + Judge 裁决）");
+                    "深度研判需 3 次深模型调用（Bull/Bear 辩论 + Judge 裁决）");
             JSONObject out = new JSONObject();
             out.put("status", "PENDING_APPROVAL");
-            out.put("message", "深度研判是昂贵操作（4 次深模型调用），已向用户请求确认。请告知用户等待确认卡片，确认后你会被再次调用。");
+            out.put("message", "深度研判是昂贵操作（3 次深模型调用），已向用户请求确认。请告知用户等待确认卡片，确认后你会被再次调用。");
             return out.toJSONString();
         }
 
         log.info("[DeepTool] 用户已授权，执行深研判 session={} symbol={}", sessionId, normalized);
         long closeTime = System.currentTimeMillis();
-        Long snapshotId = latestSnapshotId(normalized);
+        // 对话轨挂靠最新快照（≤5min 前）：snapshotId 溯源 + 三腿喂 prompt，与定时轨同口径
+        QuantSnapshot latest = latestSnapshot(normalized);
+        Long snapshotId = latest != null ? latest.getId() : null;
+        String volLegsJson = latest != null ? latest.getVolLegsJson() : null;
 
         // 复用定时轨同一套研判服务；Bull∥Bear 虚拟线程并行（对话场景无图结构，服务级并行等价）
         String newsContext = deepAnalysisService.buildNewsContext();
         CompletableFuture<String> bullF = CompletableFuture.supplyAsync(
-                () -> deepAnalysisService.bullArgue(normalized, newsContext));
+                () -> deepAnalysisService.bullArgue(normalized, newsContext, volLegsJson));
         CompletableFuture<String> bearF = CompletableFuture.supplyAsync(
-                () -> deepAnalysisService.bearArgue(normalized, newsContext));
+                () -> deepAnalysisService.bearArgue(normalized, newsContext, volLegsJson));
         QuantDeepAnalysis analysis = deepAnalysisService.judge(normalized, closeTime, snapshotId, "chat",
-                newsContext, bullF.join(), bearF.join());
+                newsContext, volLegsJson, bullF.join(), bearF.join());
         if (analysis == null) {
             JSONObject out = new JSONObject();
             out.put("status", "FAILED");
@@ -83,12 +86,11 @@ public class DeepAnalysisToolkit {
         return out.toJSONString();
     }
 
-    private Long latestSnapshotId(String symbol) {
-        QuantSnapshot latest = snapshotMapper.selectOne(new LambdaQueryWrapper<QuantSnapshot>()
+    private QuantSnapshot latestSnapshot(String symbol) {
+        return snapshotMapper.selectOne(new LambdaQueryWrapper<QuantSnapshot>()
                 .eq(QuantSnapshot::getSymbol, symbol)
                 .orderByDesc(QuantSnapshot::getCloseTime)
                 .last("LIMIT 1"));
-        return latest != null ? latest.getId() : null;
     }
 
     private String sessionId(ToolContext toolContext) {

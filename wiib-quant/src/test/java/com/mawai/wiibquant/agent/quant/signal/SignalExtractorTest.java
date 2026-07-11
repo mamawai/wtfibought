@@ -70,7 +70,7 @@ class SignalExtractorTest {
     }
 
     private static AgentVote vote(String agent, String horizon, List<String> reasons, List<String> risks) {
-        return new AgentVote(agent, horizon, Direction.NO_TRADE, 0, 0.5, 0, 20, reasons, risks);
+        return new AgentVote(agent, horizon, Direction.NO_TRADE, 0, 0.5, reasons, risks);
     }
 
     private static List<String> codes(SignalPanel panel) {

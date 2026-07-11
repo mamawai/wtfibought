@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * quant 域 LLM 调用门面：每次调用现取 RuntimeManager 当前模型——Admin 热更新模型配置即时生效，
- * 图/服务不持有 ChatClient 也不用重建。P4 深浅分层时加 lightCall(quant-light 模型)。
+ * 图/服务不持有 ChatClient 也不用重建。
  */
 @Component
 @RequiredArgsConstructor

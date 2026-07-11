@@ -53,21 +53,15 @@ public class MomentumAgent implements FactorAgent {
         score1 += consistency * 0.20;
         score2 += consistency * 0.25;
 
-        BigDecimal lastPrice = s.lastPrice();
-        int volBps = s.atr() != null && lastPrice != null && lastPrice.signum() > 0
-                ? s.atr().multiply(BigDecimal.valueOf(10000))
-                    .divide(lastPrice, 0, java.math.RoundingMode.HALF_UP).intValue()
-                : 30;
-
         log.info("[Q3.momentum] scores[{},{},{}] consistency={} reasons={}|{}|{}",
                 String.format("%.3f", score0), String.format("%.3f", score1),
                 String.format("%.3f", score2), String.format("%.2f", consistency),
                 reasons0, reasons1, reasons2);
 
         return List.of(
-                buildVote("H6", score0, volBps, reasons0, pair0.fallbackUsed(), qualityFlags),
-                buildVote("H12", score1, volBps, reasons1, pair1.fallbackUsed(), qualityFlags),
-                buildVote("H24", score2 * 0.55, volBps, reasons2, pair2.fallbackUsed(), qualityFlags));
+                buildVote("H6", score0, reasons0, pair0.fallbackUsed(), qualityFlags),
+                buildVote("H12", score1, reasons1, pair1.fallbackUsed(), qualityFlags),
+                buildVote("H24", score2 * 0.55, reasons2, pair2.fallbackUsed(), qualityFlags));
     }
 
     private double calcTimeframeScore(Map<String, Map<String, Object>> indicators,
@@ -232,7 +226,7 @@ public class MomentumAgent implements FactorAgent {
 
     private record TimeframePair(String horizon, String primary, String secondary, boolean fallbackUsed) {}
 
-    private AgentVote buildVote(String horizon, double score, int volBps,
+    private AgentVote buildVote(String horizon, double score,
                                 List<String> reasons, boolean fallbackUsed, List<String> qualityFlags) {
         double s = clamp(score);
         Direction dir = Math.abs(s) < 0.05 ? Direction.NO_TRADE : (s > 0 ? Direction.LONG : Direction.SHORT);
@@ -244,8 +238,7 @@ public class MomentumAgent implements FactorAgent {
         // 数据质量差 → 进一步衰减
         if (qualityFlags.contains("PARTIAL_KLINE_DATA")) conf *= 0.8;
 
-        int moveBps = (int) (Math.abs(s) * volBps * 0.5);
-        return new AgentVote(name(), horizon, dir, s, conf, moveBps, volBps, reasons, List.of());
+        return new AgentVote(name(), horizon, dir, s, conf, reasons, List.of());
     }
 
     private static int toInt(Object v) {

@@ -23,6 +23,8 @@ import static org.mockito.Mockito.when;
 
 class QuantSnapshotWorkflowTest {
 
+    private static final String LEGS = "{\"H6\":{\"sigmaBps\":85}}";
+
     private final QuantSnapshotService snapshotService = mock(QuantSnapshotService.class);
     private final DeepAnalysisService deepAnalysisService = mock(DeepAnalysisService.class);
 
@@ -30,6 +32,7 @@ class QuantSnapshotWorkflowTest {
         QuantSnapshot snap = new QuantSnapshot();
         snap.setSymbol("BTCUSDT");
         snap.setCloseTime(123L);
+        snap.setVolLegsJson(LEGS);
         return snap;
     }
 
@@ -50,7 +53,7 @@ class QuantSnapshotWorkflowTest {
         // gate 分流：非深研判轮零 LLM
         verify(deepAnalysisService, never()).buildNewsContext();
         verify(deepAnalysisService, never()).judge(anyString(), anyLong(), any(), anyString(),
-                anyString(), anyString(), anyString());
+                anyString(), any(), anyString(), anyString());
     }
 
     @Test
@@ -72,12 +75,12 @@ class QuantSnapshotWorkflowTest {
         when(snapshotService.buildSnapshot(eq("BTCUSDT"), anyLong())).thenReturn(snap());
         when(snapshotService.persist(any(QuantSnapshot.class))).thenReturn(7L);
         when(deepAnalysisService.buildNewsContext()).thenReturn("新闻上下文X");
-        when(deepAnalysisService.bullArgue("BTCUSDT", "新闻上下文X")).thenReturn("bull论据");
-        when(deepAnalysisService.bearArgue("BTCUSDT", "新闻上下文X")).thenReturn("bear论据");
+        when(deepAnalysisService.bullArgue("BTCUSDT", "新闻上下文X", LEGS)).thenReturn("bull论据");
+        when(deepAnalysisService.bearArgue("BTCUSDT", "新闻上下文X", LEGS)).thenReturn("bear论据");
         QuantDeepAnalysis analysis = new QuantDeepAnalysis();
         analysis.setSymbol("BTCUSDT");
         when(deepAnalysisService.judge(eq("BTCUSDT"), eq(123L), eq(7L), eq("cron_1h"),
-                eq("新闻上下文X"), eq("bull论据"), eq("bear论据"))).thenReturn(analysis);
+                eq("新闻上下文X"), eq(LEGS), eq("bull论据"), eq("bear论据"))).thenReturn(analysis);
         when(deepAnalysisService.persist(any(QuantDeepAnalysis.class))).thenReturn(88L);
 
         Optional<OverAllState> out = graph().invoke(Map.of(
@@ -87,9 +90,9 @@ class QuantSnapshotWorkflowTest {
         assertThat(out).isPresent();
         assertThat(out.get().value("snapshot_id")).contains(7L);
         assertThat(out.get().value("analysis_id")).contains(88L);
-        // Bull/Bear 并行边都执行过（fan-out），Judge 收到双方论据（fan-in）
-        verify(deepAnalysisService).bullArgue("BTCUSDT", "新闻上下文X");
-        verify(deepAnalysisService).bearArgue("BTCUSDT", "新闻上下文X");
+        // Bull/Bear 并行边都执行过（fan-out），Judge 收到双方论据（fan-in）；三腿从 state 快照透传
+        verify(deepAnalysisService).bullArgue("BTCUSDT", "新闻上下文X", LEGS);
+        verify(deepAnalysisService).bearArgue("BTCUSDT", "新闻上下文X", LEGS);
     }
 
     @Test
@@ -97,10 +100,10 @@ class QuantSnapshotWorkflowTest {
         when(snapshotService.buildSnapshot(eq("BTCUSDT"), anyLong())).thenReturn(snap());
         when(snapshotService.persist(any(QuantSnapshot.class))).thenReturn(7L);
         when(deepAnalysisService.buildNewsContext()).thenReturn("ctx");
-        when(deepAnalysisService.bullArgue(anyString(), anyString())).thenReturn("b1");
-        when(deepAnalysisService.bearArgue(anyString(), anyString())).thenReturn("b2");
+        when(deepAnalysisService.bullArgue(anyString(), anyString(), anyString())).thenReturn("b1");
+        when(deepAnalysisService.bearArgue(anyString(), anyString(), anyString())).thenReturn("b2");
         when(deepAnalysisService.judge(anyString(), anyLong(), any(), anyString(),
-                anyString(), anyString(), anyString())).thenReturn(null); // LLM 失败研判缺席
+                anyString(), anyString(), anyString(), anyString())).thenReturn(null); // LLM 失败研判缺席
 
         Optional<OverAllState> out = graph().invoke(Map.of(
                 "target_symbol", "BTCUSDT", "kline_close_time", 123L,

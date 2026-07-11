@@ -1,6 +1,7 @@
 package com.mawai.wiibquant.agent.chat;
 
 import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
+import com.mawai.wiibcommon.entity.QuantSnapshot;
 import com.mawai.wiibquant.agent.analysis.DeepAnalysisService;
 import com.mawai.wiibquant.mapper.QuantSnapshotMapper;
 import org.junit.jupiter.api.Test;
@@ -39,16 +40,21 @@ class DeepAnalysisToolkitTest {
     void approvedSessionRunsFullChainAndPersists() {
         approvalRegistry.markActive("wb-1-x");
         approvalRegistry.approve("wb-1-x");
+        QuantSnapshot latest = new QuantSnapshot();
+        latest.setId(7L);
+        latest.setVolLegsJson("{\"H6\":{\"sigmaBps\":85}}");
+        when(snapshotMapper.selectOne(any())).thenReturn(latest);
         when(deepAnalysisService.buildNewsContext()).thenReturn("ctx");
-        when(deepAnalysisService.bullArgue("BTCUSDT", "ctx")).thenReturn("bull");
-        when(deepAnalysisService.bearArgue("BTCUSDT", "ctx")).thenReturn("bear");
+        when(deepAnalysisService.bullArgue("BTCUSDT", "ctx", "{\"H6\":{\"sigmaBps\":85}}")).thenReturn("bull");
+        when(deepAnalysisService.bearArgue("BTCUSDT", "ctx", "{\"H6\":{\"sigmaBps\":85}}")).thenReturn("bear");
         QuantDeepAnalysis analysis = new QuantDeepAnalysis();
         analysis.setNarrative("研判叙事");
         analysis.setScenariosJson("{\"bullPct\":40,\"rangePct\":35,\"bearPct\":25}");
         analysis.setNoDirection(false);
         analysis.setInvalidation("若X则作废");
-        when(deepAnalysisService.judge(eq("BTCUSDT"), anyLong(), any(), eq("chat"),
-                eq("ctx"), eq("bull"), eq("bear"))).thenReturn(analysis);
+        // 挂靠最新快照：snapshotId 与三腿都来自同一行
+        when(deepAnalysisService.judge(eq("BTCUSDT"), anyLong(), eq(7L), eq("chat"),
+                eq("ctx"), eq("{\"H6\":{\"sigmaBps\":85}}"), eq("bull"), eq("bear"))).thenReturn(analysis);
 
         String result = toolkit.runDeepAnalysis("BTCUSDT", null);
 
@@ -61,10 +67,11 @@ class DeepAnalysisToolkitTest {
         approvalRegistry.markActive("wb-1-x");
         approvalRegistry.approve("wb-1-x");
         when(deepAnalysisService.buildNewsContext()).thenReturn("ctx");
-        when(deepAnalysisService.bullArgue(anyString(), anyString())).thenReturn("b");
-        when(deepAnalysisService.bearArgue(anyString(), anyString())).thenReturn("b");
+        // 库里无快照（mapper 默认返回 null）：volLegs 以 null 透传，用 any() 匹配
+        when(deepAnalysisService.bullArgue(anyString(), anyString(), any())).thenReturn("b");
+        when(deepAnalysisService.bearArgue(anyString(), anyString(), any())).thenReturn("b");
         when(deepAnalysisService.judge(anyString(), anyLong(), any(), anyString(),
-                anyString(), anyString(), anyString())).thenReturn(null);
+                anyString(), any(), anyString(), anyString())).thenReturn(null);
 
         String result = toolkit.runDeepAnalysis("BTCUSDT", null);
 

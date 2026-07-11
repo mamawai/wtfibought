@@ -1,6 +1,8 @@
 package com.mawai.wiibquant.agent.analysis;
 
+import com.mawai.wiibcommon.entity.QuantNarrativeVerification;
 import com.mawai.wiibcommon.entity.QuantVolVerification;
+import com.mawai.wiibquant.mapper.QuantNarrativeVerificationMapper;
 import com.mawai.wiibquant.mapper.QuantVolVerificationMapper;
 import org.junit.jupiter.api.Test;
 
@@ -14,7 +16,8 @@ import static org.mockito.Mockito.when;
 class ScorecardServiceTest {
 
     private final QuantVolVerificationMapper mapper = mock(QuantVolVerificationMapper.class);
-    private final ScorecardService service = new ScorecardService(mapper);
+    private final QuantNarrativeVerificationMapper narrativeMapper = mock(QuantNarrativeVerificationMapper.class);
+    private final ScorecardService service = new ScorecardService(mapper, narrativeMapper);
 
     private QuantVolVerification row(String horizon, double qlike, double baselineQlike, boolean hit, long closeTime) {
         QuantVolVerification r = new QuantVolVerification();
@@ -56,6 +59,39 @@ class ScorecardServiceTest {
 
         assertThat(card.totalSamples()).isZero();
         assertThat(card.note()).contains("暂无已验证样本");
+    }
+
+    @Test
+    void narrativeAggregatesVerifiedOnlyAndReportsSkipped() {
+        long now = System.currentTimeMillis();
+        when(narrativeMapper.selectList(any())).thenReturn(List.of(
+                narrativeRow(0.24, true, true, "VERIFIED", now - 3_600_000),   // 命中 且 noDirection
+                narrativeRow(1.04, false, false, "VERIFIED", now - 7_200_000), // miss
+                narrativeRow(null, null, false, "SKIPPED", now - 7_200_000))); // 不可对账只报数
+
+        ScorecardService.Scorecard card = service.scorecard("BTCUSDT", 7);
+
+        ScorecardService.NarrativeScore n = card.narrative();
+        assertThat(n).isNotNull();
+        assertThat(n.samples()).isEqualTo(2);
+        assertThat(n.avgBrier()).isEqualTo(0.64);            // (0.24+1.04)/2
+        assertThat(n.uniformBrier()).isEqualTo(0.6667);
+        assertThat(n.brierImprovement()).isEqualTo(0.04);    // (2/3-0.64)/(2/3)
+        assertThat(n.scenarioHitRate()).isEqualTo(0.5);
+        assertThat(n.noDirectionSamples()).isEqualTo(1);
+        assertThat(n.skippedSamples()).isEqualTo(1);
+    }
+
+    private QuantNarrativeVerification narrativeRow(Double brier, Boolean hit, Boolean noDirection,
+                                                    String status, long closeTime) {
+        QuantNarrativeVerification r = new QuantNarrativeVerification();
+        r.setSymbol("BTCUSDT");
+        r.setCloseTime(closeTime);
+        r.setBrier(brier);
+        r.setScenarioHit(hit);
+        r.setNoDirection(noDirection);
+        r.setStatus(status);
+        return r;
     }
 
     @Test

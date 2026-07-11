@@ -67,16 +67,16 @@ public class QuantSnapshotWorkflow {
         NodeAction newsContextNode = state -> Map.of(
                 "news_context", deepAnalysisService.buildNewsContext());
         NodeAction bullNode = state -> Map.of(
-                "bull_argument", deepAnalysisService.bullArgue(symbol(state), newsContext(state)));
+                "bull_argument", deepAnalysisService.bullArgue(symbol(state), newsContext(state), volLegsJson(state)));
         NodeAction bearNode = state -> Map.of(
-                "bear_argument", deepAnalysisService.bearArgue(symbol(state), newsContext(state)));
+                "bear_argument", deepAnalysisService.bearArgue(symbol(state), newsContext(state), volLegsJson(state)));
         NodeAction judgeNode = state -> {
             QuantDeepAnalysis analysis = deepAnalysisService.judge(
                     symbol(state), closeTime(state),
                     state.value("snapshot_id").filter(Number.class::isInstance)
                             .map(v -> ((Number) v).longValue()).orElse(null),
                     (String) state.value("trigger_source").orElse("unknown"),
-                    newsContext(state),
+                    newsContext(state), volLegsJson(state),
                     (String) state.value("bull_argument").orElse(""),
                     (String) state.value("bear_argument").orElse(""));
             // 实体过 state 走 JSON 字符串（同快照约定）；null=本次研判缺席
@@ -154,5 +154,15 @@ public class QuantSnapshotWorkflow {
 
     private static String newsContext(com.alibaba.cloud.ai.graph.OverAllState state) {
         return (String) state.value("news_context").orElse("无新闻上下文");
+    }
+
+    /** 从 state 快照 JSON 取三腿：深研判引用的 vol 数字与落库快照严格同一份（gate 已保证快照非空）。 */
+    private static String volLegsJson(com.alibaba.cloud.ai.graph.OverAllState state) {
+        String json = (String) state.value("snapshot_json").orElse("");
+        if (json.isEmpty()) {
+            return null;
+        }
+        QuantSnapshot snap = JSON.parseObject(json, QuantSnapshot.class);
+        return snap != null ? snap.getVolLegsJson() : null;
     }
 }

@@ -22,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 定时轨调度器（P2b 完整形态）：每根 5m bar 收盘跑快照图；深研判门控在调度层判定——
  * 1h 定频基线（配置可调）+ 哨兵/手动插队（带冷却防抖），trigger_deep 随 state 进图由 gate 条件边分流。
- * closeTime 幂等去重 + runningKey 防并发。
+ * closeTime 幂等去重 + runningKey 防并发 + 深研判在飞标记防双烧（记账在完成后，标记堵并发窗口）。
  */
 @Slf4j
 @Component
@@ -56,6 +56,8 @@ public class QuantSnapshotScheduler {
     /** 每个 symbol 最近一次深研判墙钟时间（定频与冷却共用一本账）。 */
     private final Map<String, Long> lastDeepAnalysisAt = new ConcurrentHashMap<>();
     private final Set<String> runningKeys = ConcurrentHashMap.newKeySet();
+    /** 深研判在飞标记：LLM 跑几十秒到几分钟、完成后才记账，这段窗口内并发触发只产快照不烧 LLM。 */
+    private final Set<String> deepInFlight = ConcurrentHashMap.newKeySet();
 
     /** 主触发：5m K 线收盘。 */
     @EventListener
@@ -128,6 +130,12 @@ public class QuantSnapshotScheduler {
 
     private void runOnce(String symbol, long closeTime, String source) {
         boolean triggerDeep = decideDeepTrigger(symbol, source);
+        // 账本读的是"已完成"的深研判；在飞的靠标记补位，抢不到就本次降级纯快照（快照时序不受影响）
+        boolean deepClaimed = triggerDeep && deepInFlight.add(symbol);
+        if (triggerDeep && !deepClaimed) {
+            log.info("[Snapshot] 深研判在飞，本次降级纯快照 symbol={} source={}", symbol, source);
+            triggerDeep = false;
+        }
         log.info("[Snapshot] 快照开始 symbol={} closeTime={} source={} deep={}", symbol, closeTime, source, triggerDeep);
         try {
             var out = graphFactory.get().invoke(Map.of(
@@ -160,12 +168,17 @@ public class QuantSnapshotScheduler {
                     assembly.available() ? assembly.fragility().score() : -1);
         } catch (Exception e) {
             log.error("[Snapshot] 快照异常 symbol={}", symbol, e);
+        } finally {
+            if (deepClaimed) {
+                deepInFlight.remove(symbol);
+            }
         }
     }
 
     /**
      * 深研判门控（确定性，不烧 LLM 路由）：
      * manual/sentinel 插队但受冷却约束；常规 bar（kline_close/watchdog）按 1h 定频基线。
+     * 只查账本；在飞并发窗口由 runOnce 的 deepInFlight 标记兜底。
      */
     private boolean decideDeepTrigger(String symbol, String source) {
         long now = System.currentTimeMillis();

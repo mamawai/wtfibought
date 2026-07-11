@@ -67,7 +67,9 @@ public class QuantForecastToolkit {
             Get the live verification scorecard of this system's volatility forecasts:
             QLIKE loss vs naive baseline (improvement>0 means beating baseline), per-point win rate,
             and vol-state (LOW/MID/HIGH) hit rate vs 33.3% random baseline, per horizon H6/H12/H24.
-            Use this to honestly answer "how reliable are your forecasts" - cite real numbers.
+            Also includes 'narrative': the Judge's scenario-probability track record over 12h windows
+            (Brier score, lower is better, vs 0.667 uniform-guess baseline; scenario hit rate).
+            Use this to honestly answer "how reliable are your forecasts/analyses" - cite real numbers.
             Direction and regime are deliberately NOT scored (validated as no-skill).""")
     public String scorecard(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
                             @ToolParam(description = "Rolling window in days, 7 or 30, default 7") int windowDays) {

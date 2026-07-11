@@ -1146,3 +1146,29 @@ CREATE TABLE IF NOT EXISTS quant_vol_verification (
 );
 CREATE INDEX IF NOT EXISTS idx_quant_vol_verification_query ON quant_vol_verification (symbol, close_time DESC);
 COMMENT ON TABLE quant_vol_verification IS 'vol预测验证(P3):QLIKE对照naive基准+vol-state命中(用快照PIT档界,禁止重算);regime刻意不验证(research实证无skill)';
+
+-- ============ quant_narrative_verification：叙事对账（Judge三情景概率到期对答案，档界来自挂靠快照PIT） ============
+CREATE TABLE IF NOT EXISTS quant_narrative_verification (
+    id                  BIGSERIAL PRIMARY KEY,
+    analysis_id         BIGINT NOT NULL,
+    symbol              VARCHAR(20) NOT NULL,
+    close_time          BIGINT NOT NULL,
+    horizon             VARCHAR(4) NOT NULL,
+    bull_pct            INT,
+    range_pct           INT,
+    bear_pct            INT,
+    no_direction        BOOLEAN,
+    range_cut_bps       INT,
+    realized_return_bps INT,
+    actual_scenario     VARCHAR(8),
+    predicted_scenario  VARCHAR(8),
+    scenario_hit        BOOLEAN,
+    brier               DOUBLE PRECISION,
+    status              VARCHAR(16) NOT NULL,
+    verified_at         TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT uk_quant_narrative_verification UNIQUE (analysis_id)
+);
+CREATE INDEX IF NOT EXISTS idx_quant_narrative_verification_query ON quant_narrative_verification (symbol, close_time DESC);
+COMMENT ON TABLE quant_narrative_verification IS '叙事对账:Judge三情景概率12h到期后对真实走势打分(Brier,均匀基线2/3)——快照轨有记分卡,叙事轨同样要战绩';
+COMMENT ON COLUMN quant_narrative_verification.range_cut_bps IS '实际情景判定界=挂靠快照H12腿lowCut(90天|收益|下三分位,基率≈1/3均分),PIT禁止重算';
+COMMENT ON COLUMN quant_narrative_verification.status IS 'VERIFIED=已对账/SKIPPED=不可对账(缺档界或情景损坏或K线缺口超宽限)';

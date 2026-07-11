@@ -91,7 +91,6 @@ public class RegimeAgent implements FactorAgent {
             }
         }
 
-        int volBps = estimateVolBps(s);
         double conf = Math.clamp(Math.max(0.15, regimeConf), 0.0, 1.0);
         double liveBias = liveRegimeBias(indicators, regime, transition, ivSkew);
 
@@ -101,9 +100,9 @@ public class RegimeAgent implements FactorAgent {
                 String.format("%.1f", ivSkew), riskFlags);
 
         return List.of(
-                consistencyVote("H6", ForecastHorizon.H6, conf, volBps, liveBias, reasons, riskFlags, context),
-                consistencyVote("H12", ForecastHorizon.H12, conf * 0.90, volBps, liveBias, reasons, riskFlags, context),
-                consistencyVote("H24", ForecastHorizon.H24, conf * 0.80, volBps, liveBias, reasons, riskFlags, context));
+                consistencyVote("H6", ForecastHorizon.H6, conf, liveBias, reasons, riskFlags, context),
+                consistencyVote("H12", ForecastHorizon.H12, conf * 0.90, liveBias, reasons, riskFlags, context),
+                consistencyVote("H24", ForecastHorizon.H24, conf * 0.80, liveBias, reasons, riskFlags, context));
     }
 
     /**
@@ -164,36 +163,26 @@ public class RegimeAgent implements FactorAgent {
         return null;
     }
 
-    private int estimateVolBps(FeatureSnapshot s) {
-        BigDecimal lastPrice = s.lastPrice();
-        BigDecimal atr = s.atr() != null ? s.atr() : s.atr1m();
-        if (atr != null && lastPrice != null && lastPrice.signum() > 0) {
-            return atr.multiply(BigDecimal.valueOf(10000))
-                    .divide(lastPrice, 0, java.math.RoundingMode.HALF_UP).intValue();
-        }
-        return 30;
-    }
-
     private AgentVote riskVote(String horizon, double conf,
-                               int volBps, List<String> reasons, List<String> riskFlags) {
-        return new AgentVote(name(), horizon, Direction.NO_TRADE, 0, Math.clamp(conf, 0, 1), 0, volBps,
+                               List<String> reasons, List<String> riskFlags) {
+        return new AgentVote(name(), horizon, Direction.NO_TRADE, 0, Math.clamp(conf, 0, 1),
                 List.copyOf(reasons), List.copyOf(riskFlags));
     }
 
     private AgentVote consistencyVote(String horizon, ForecastHorizon forecastHorizon,
-                                      double conf, int volBps, double liveBias,
+                                      double conf, double liveBias,
                                       List<String> reasons, List<String> riskFlags,
                                       FactorEvaluationContext context) {
         MacroContext.Leg leg = context != null ? context.researchLeg(forecastHorizon) : MacroContext.Leg.neutral();
         int researchSign = leg.directionSign();
         double researchConf = leg.directionConfidence();
         if (researchSign == 0 || researchConf < 0.35 || Math.abs(liveBias) < 0.20) {
-            return riskVote(horizon, conf, volBps, reasons, riskFlags);
+            return riskVote(horizon, conf, reasons, riskFlags);
         }
 
         double alignment = researchSign * liveBias;
         if (Math.abs(alignment) < 0.20) {
-            return riskVote(horizon, conf, volBps, reasons, riskFlags);
+            return riskVote(horizon, conf, reasons, riskFlags);
         }
 
         double horizonScale = switch (horizon) {
@@ -216,7 +205,7 @@ public class RegimeAgent implements FactorAgent {
         }
 
         Direction direction = score > 0 ? Direction.LONG : Direction.SHORT;
-        return new AgentVote(name(), horizon, direction, score, voteConf, 0, volBps,
+        return new AgentVote(name(), horizon, direction, score, voteConf,
                 List.copyOf(outReasons), List.copyOf(outFlags));
     }
 

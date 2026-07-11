@@ -122,16 +122,11 @@ public class MicrostructureAgent implements FactorAgent {
         // 对冲场景留底 40%（强对冲本身也有信息量——告诉 judge 这里分歧大）
         double conf = Math.min(1.0, signalStrength * 1.5 * (0.4 + 0.6 * coherence));
 
-        int volBps = s.atr1m() != null && lastPrice != null && lastPrice.signum() > 0
-                ? s.atr1m().multiply(BigDecimal.valueOf(10000))
-                    .divide(lastPrice, 0, java.math.RoundingMode.HALF_UP).intValue()
-                : 20;
-
         List<AgentVote> votes = new ArrayList<>(3);
-        votes.add(buildVote("H6", raw0, conf, volBps, flags0));
-        votes.add(buildVote("H12", raw1 * 0.45, conf * 0.35, volBps, flags1));
+        votes.add(buildVote("H6", raw0, conf, flags0));
+        votes.add(buildVote("H12", raw1 * 0.45, conf * 0.35, flags1));
         votes.add(new AgentVote(name(), "H24", Direction.NO_TRADE, 0, 0.10,
-                0, volBps, List.of("MICRO_H24_NO_DIRECTION"), List.copyOf(flags1)));
+                List.of("MICRO_H24_NO_DIRECTION"), List.copyOf(flags1)));
 
         log.info("[Q3.micro] futBia={} spotBia={} td={} largeBias={} intensity={} oi={} liq={} topTrader={} taker={} basis={} spotLead={} funding={} lsr={} → scores[H6={},H12={}] conf={} coherence={}",
                 fmt(bia), fmt(spotBia), fmt(td), fmt(largeBias), String.format("%.1f", tradeIntensity),
@@ -198,12 +193,11 @@ public class MicrostructureAgent implements FactorAgent {
         return flags;
     }
 
-    private AgentVote buildVote(String horizon, double score, double conf, int volBps, List<String> reasons) {
+    private AgentVote buildVote(String horizon, double score, double conf, List<String> reasons) {
         double s = clamp(score);
         Direction dir = Math.abs(s) < 0.05 ? Direction.NO_TRADE : (s > 0 ? Direction.LONG : Direction.SHORT);
-        int moveBps = (int) (Math.abs(s) * volBps * 0.6);
         return new AgentVote(name(), horizon, dir, s, Math.clamp(conf, 0, 1),
-                moveBps, volBps, List.copyOf(reasons), List.of());
+                List.copyOf(reasons), List.of());
     }
 
     private static double clamp(double v) { return Math.clamp(v, -1, 1); }

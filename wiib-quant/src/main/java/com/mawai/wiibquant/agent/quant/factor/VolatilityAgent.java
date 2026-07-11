@@ -11,7 +11,8 @@ import java.util.Map;
 
 /**
  * 波动率因子 Agent。
- * 不参与多空方向投票，主要估算各 horizon 的合理波动范围，并输出布林带、ATR 等风险标志。
+ * 不参与多空方向投票，只产布林带挤压/扩张、触轨、ATR 加速等形态风险标志（进面板与研判 prompt）；
+ * 波动幅度的数字口径统一走 research 三腿（快照落库、记分卡对账那份），本 agent 不再自估。
  */
 @Slf4j
 public class VolatilityAgent implements FactorAgent {
@@ -53,21 +54,15 @@ public class VolatilityAgent implements FactorAgent {
         // ATR趋势（加速/减速）
         analyzeAtrTrend(indicators, reasons);
 
-        // 波动率 evidence 只做风险刻画，不给方向；5m ATR 按 H6/H12/H24 近似缩放。
-        int vol0 = estimateVolBps(s, "5m", 72);     // H6: 72 根 5m
-        int vol1 = estimateVolBps(s, "5m", 144);    // H12
-        int vol2 = estimateVolBps(s, "5m", 288);    // H24
-
-        // 波动率agent不给方向，只提供volatilityBps和风险标志
+        // 波动率agent不给方向，只提供形态风险标志
         double conf = 0.3 + Math.min(0.4, riskFlags.size() * 0.1);
 
-        log.info("[Q3.vol] volBps[{},{},{}] reasons={} riskFlags={}",
-                vol0, vol1, vol2, reasons, riskFlags);
+        log.info("[Q3.vol] reasons={} riskFlags={}", reasons, riskFlags);
 
         return List.of(
-                buildVote("H6", conf, vol0, 1.00, reasons, riskFlags),
-                buildVote("H12", conf, vol1, 1.00, reasons, riskFlags),
-                buildVote("H24", conf, vol2, 1.00, reasons, riskFlags));
+                buildVote("H6", conf, reasons, riskFlags),
+                buildVote("H12", conf, reasons, riskFlags),
+                buildVote("H24", conf, reasons, riskFlags));
     }
 
     private void analyzeVolState(Map<String, Map<String, Object>> indicators,
@@ -117,28 +112,11 @@ public class VolatilityAgent implements FactorAgent {
         }
     }
 
-    private int estimateVolBps(FeatureSnapshot s, String timeframe, int periods) {
-        BigDecimal lastPrice = s.lastPrice();
-        Map<String, Map<String, Object>> indicators = s.indicatorsByTimeframe();
-        if (indicators == null || lastPrice == null || lastPrice.signum() <= 0) return 30;
-
-        Map<String, Object> ind = indicators.get(timeframe);
-        if (ind == null) return 30;
-
-        BigDecimal atr = toBd(ind.get("atr14"));
-        if (atr == null || atr.signum() == 0) return 30;
-
-        double scaledAtr = atr.doubleValue() * Math.pow(periods, 0.6);
-        return Math.max(5, (int) (scaledAtr / lastPrice.doubleValue() * 10000));
-    }
-
     private AgentVote buildVote(String horizon, double conf,
-                                 int volBps, double moveRatio,
                                  List<String> reasons, List<String> riskFlags) {
-        // score=0: 不参与方向投票；expectedMoveBps给出该horizon下合理波动幅度
-        int expectedMoveBps = (int) Math.round(volBps * moveRatio);
+        // score=0: 不参与方向投票，票的价值在 reasons/riskFlags（经面板白名单进研判语料）
         return new AgentVote(name(), horizon, Direction.NO_TRADE, 0, Math.clamp(conf, 0, 1),
-                expectedMoveBps, volBps, List.copyOf(reasons), List.copyOf(riskFlags));
+                List.copyOf(reasons), List.copyOf(riskFlags));
     }
 
     private static BigDecimal toBd(Object v) {

@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibcommon.util.JsonUtils;
 import com.mawai.wiibquant.agent.quant.domain.FeatureSnapshot;
 import com.mawai.wiibquant.agent.quant.domain.news.NewsFlash;
+import com.mawai.wiibquant.agent.research.ForecastHorizon;
 import com.mawai.wiibquant.agent.toolkit.MarketAssembly;
 import com.mawai.wiibquant.agent.toolkit.MarketDataService;
 import com.mawai.wiibquant.agent.toolkit.NewsCache;
@@ -20,9 +21,10 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 深研判服务（P2b）：新闻浓缩 → Bull∥Bear 对抗辩论 → Judge 裁决 → 落库。
+ * 深研判服务（P2b）：新闻拼接 → Bull∥Bear 对抗辩论 → Judge 裁决 → 落库。
  * 产物是研判叙事（情景分布/失效条件/无方向态），与交易解耦；LLM 任一步失败只缺席本次研判，
  * 绝不影响数值快照时序（记分卡命脉）。
+ * volLegsJson 是挂靠快照落库的那份三腿——LLM 引用的幅度数字与记分卡对账的严格同一份。
  */
 @Slf4j
 @Service
@@ -56,16 +58,16 @@ public class DeepAnalysisService {
     }
 
     /** Bull 辩手：严格做多立场；失败给占位论据不阻断。 */
-    public String bullArgue(String symbol, String newsContext) {
-        return argue(symbol, newsContext, true);
+    public String bullArgue(String symbol, String newsContext, String volLegsJson) {
+        return argue(symbol, newsContext, volLegsJson, true);
     }
 
     /** Bear 辩手：严格做空/观望立场；失败给占位论据不阻断。 */
-    public String bearArgue(String symbol, String newsContext) {
-        return argue(symbol, newsContext, false);
+    public String bearArgue(String symbol, String newsContext, String volLegsJson) {
+        return argue(symbol, newsContext, volLegsJson, false);
     }
 
-    private String argue(String symbol, String newsContext, boolean bull) {
+    private String argue(String symbol, String newsContext, String volLegsJson, boolean bull) {
         String side = bull ? "Bull" : "Bear";
         try {
             String stance = bull
@@ -84,7 +86,7 @@ public class DeepAnalysisService {
 
                     %s
 
-                    限300字，纯文字论述，不要返回JSON。""".formatted(stance, buildDataContext(symbol, newsContext));
+                    限300字，纯文字论述，不要返回JSON。""".formatted(stance, buildDataContext(symbol, newsContext, volLegsJson));
             String argument = quantLlm.call(prompt);
             return argument != null && !argument.isBlank() ? argument : side + "辩手未能提供论据";
         } catch (Exception e) {
@@ -95,12 +97,13 @@ public class DeepAnalysisService {
 
     /** Judge 裁决：综合数据+双方论据产研判；失败返回 null（本次研判缺席）。 */
     public QuantDeepAnalysis judge(String symbol, long closeTime, Long snapshotId, String triggerSource,
-                                   String newsContext, String bullArgument, String bearArgument) {
+                                   String newsContext, String volLegsJson,
+                                   String bullArgument, String bearArgument) {
         try {
             String prompt = """
                     你是加密货币研判系统的裁判(Judge)。Bull 与 Bear 辩手已在完全隔离的环境中独立完成辩论。
-                    请综合原始数据与双方论据，产出一份"市场研判"——注意：这是研判叙事，不是交易信号，
-                    系统的方向预测已被统计验证无 edge，你的职责是把信号综合成可读、可证伪的情景研判。
+                    请综合原始数据与双方论据，产出一份"市场研判"——研判叙事而非交易信号，不给买卖建议，
+                    你的职责是把信号综合成可读、可证伪的情景研判。
 
                     ========== 原始数据 ==========
                     %s
@@ -120,7 +123,7 @@ public class DeepAnalysisService {
                     5. judgeReasoning：裁决推理(100字内)——谁的证据更具体、更有数据支撑
 
                     %s
-                    """.formatted(buildDataContext(symbol, newsContext), bullArgument, bearArgument,
+                    """.formatted(buildDataContext(symbol, newsContext, volLegsJson), bullArgument, bearArgument,
                     JUDGE_CONVERTER.getFormat());
             String response = quantLlm.call(prompt);
             if (response == null || response.isBlank()) {
@@ -144,11 +147,13 @@ public class DeepAnalysisService {
         return analysis.getId();
     }
 
-    /** 数据上下文：vol 三腿 + 脆弱度 + 信号面板 + 微结构，全部来自共享组装（60s 缓存，与快照同源）。 */
-    private String buildDataContext(String symbol, String newsContext) {
+    /** 数据上下文：快照三腿(vol预测·与落库同一份) + 脆弱度 + 信号面板 + 微结构 + 期权IV + 新闻；重对象来自共享组装（60s 缓存，与快照同源）。 */
+    private String buildDataContext(String symbol, String newsContext, String volLegsJson) {
+        String volForecast = formatVolForecast(volLegsJson);
         MarketAssembly a = marketDataService.assemble(symbol);
         if (!a.available()) {
-            return "【市场数据】暂不可用\n【新闻上下文】" + newsContext;
+            return "【市场数据】暂不可用\n【vol预测·统计模型(幅度口径，非方向信号)】\n"
+                    + volForecast + "\n【新闻上下文】" + newsContext;
         }
         FeatureSnapshot s = a.snapshot();
         String micro = ("futuresBidAsk=%.3f tradeDelta=%.3f largeBias=%.3f oiChange=%.3f fundingDev=%.3f "
@@ -160,16 +165,51 @@ public class DeepAnalysisService {
         String iv = s.toIvSummary();
         return """
                 【标的】%s 现价=%s
+                【vol预测·统计模型(幅度口径，非方向信号)】
+                %s
                 【脆弱度】%d/100 (%s) 方向=%s ——%s
                 【信号面板】%s
                 【微结构快照】%s
                 【期权IV】%s
                 【新闻上下文】
                 %s""".formatted(
-                s.symbol(), s.lastPrice(),
+                s.symbol(), s.lastPrice(), volForecast,
                 a.fragility().score(), a.fragility().level(), a.fragility().direction(), a.fragility().headline(),
                 JSON.toJSONString(a.signalPanel()),
                 micro, iv, newsContext);
+    }
+
+    /** 快照三腿 → prompt 段落：sigmaBps/分位/volState档界/regime，H6→H24 定序；缺失明示不静默。 */
+    private String formatVolForecast(String volLegsJson) {
+        if (volLegsJson == null || volLegsJson.isBlank()) {
+            return "无（本次快照未携带）";
+        }
+        try {
+            JSONObject legs = JSONObject.parseObject(volLegsJson);
+            StringBuilder sb = new StringBuilder();
+            for (ForecastHorizon horizon : ForecastHorizon.values()) {
+                JSONObject leg = legs != null ? legs.getJSONObject(horizon.name()) : null;
+                if (leg == null) {
+                    continue;
+                }
+                if (!sb.isEmpty()) {
+                    sb.append('\n');
+                }
+                sb.append("%s: 预期波动=%dbps(90天分位%.0f%%) 波动档=%s(档界%.0f/%.0fbps) regime=%s(%.2f)".formatted(
+                        horizon.name(),
+                        leg.getIntValue("sigmaBps"),
+                        leg.getDoubleValue("percentile") * 100,
+                        leg.getString("volState"),
+                        leg.getDoubleValue("lowCut") * 10_000,
+                        leg.getDoubleValue("highCut") * 10_000,
+                        leg.getString("regime"),
+                        leg.getDoubleValue("regimeConfidence")));
+            }
+            return sb.isEmpty() ? "无（本次快照未携带）" : sb.toString();
+        } catch (Exception e) {
+            log.warn("[Deep] 三腿解析失败，prompt 降级为无vol预测 msg={}", e.getMessage());
+            return "无（解析失败）";
+        }
     }
 
     private QuantDeepAnalysis toEntity(String symbol, long closeTime, Long snapshotId, String triggerSource,

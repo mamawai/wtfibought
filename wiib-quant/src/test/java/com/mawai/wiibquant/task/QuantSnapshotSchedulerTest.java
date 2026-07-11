@@ -122,6 +122,47 @@ class QuantSnapshotSchedulerTest {
     }
 
     @Test
+    void concurrentTriggerDowngradedWhileDeepInFlight() throws Exception {
+        QuantSnapshotGraphFactory factory = mock(QuantSnapshotGraphFactory.class);
+        CompiledGraph graph = mock(CompiledGraph.class);
+        MarketDataService marketDataService = mock(MarketDataService.class);
+        when(factory.get()).thenReturn(graph);
+        when(marketDataService.assemble(any())).thenReturn(MarketAssembly.unavailable("BTCUSDT", Map.of()));
+
+        CountDownLatch firstEntered = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        java.util.List<Map<String, Object>> inputs =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        doAnswer(invocation -> {
+            Map<String, Object> in = invocation.getArgument(0);
+            inputs.add(in);
+            if (inputs.size() == 1) {
+                firstEntered.countDown();
+                releaseFirst.await(2, TimeUnit.SECONDS); // 第一次深研判挂住（模拟 LLM 在飞未记账）
+            }
+            return Optional.empty();
+        }).when(graph).invoke(org.mockito.ArgumentMatchers.<Map<String, Object>>any());
+
+        QuantSnapshotScheduler scheduler = new QuantSnapshotScheduler(
+                factory, marketDataService, mock(PriceVolatilitySentinel.class), new FakeKlineHistoryStore(),
+                3600_000L, 900_000L);
+
+        long closeTime = System.currentTimeMillis();
+        // 冷启动首根 bar：深研判放行并被 latch 挂住（在飞）
+        scheduler.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", closeTime));
+        org.assertj.core.api.Assertions.assertThat(firstEntered.await(1, TimeUnit.SECONDS)).isTrue();
+
+        // 在飞期间下一根 bar：账本仍是 0（未记账），无在飞标记会双烧——应降级纯快照
+        scheduler.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", closeTime + 300_000));
+        verify(graph, timeout(1000).times(2))
+                .invoke(org.mockito.ArgumentMatchers.<Map<String, Object>>any());
+        releaseFirst.countDown();
+
+        org.assertj.core.api.Assertions.assertThat(inputs.get(0).get("trigger_deep")).isEqualTo(true);
+        org.assertj.core.api.Assertions.assertThat(inputs.get(1).get("trigger_deep")).isEqualTo(false);
+    }
+
+    @Test
     void sentinelJumpRespectsCooldown() throws Exception {
         QuantSnapshotGraphFactory factory = mock(QuantSnapshotGraphFactory.class);
         CompiledGraph graph = mock(CompiledGraph.class);
