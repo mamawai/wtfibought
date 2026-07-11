@@ -3,7 +3,6 @@ package com.mawai.wiibquant.agent.chat;
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import com.alibaba.cloud.ai.graph.checkpoint.savers.postgresql.PostgresSaver;
 import com.alibaba.cloud.ai.graph.store.Store;
-import com.alibaba.cloud.ai.graph.store.stores.DatabaseStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,10 +17,10 @@ import java.net.URI;
 @Configuration
 public class ChatCheckpointConfig {
 
-    /** 跨会话长期记忆存储（P5）：复用 Spring 主 DataSource，框架自动建 store 表。 */
+    /** 跨会话长期记忆存储（P5）：复用 Spring 主 DataSource，自动建 store 表（PG 方言，见 PostgresDatabaseStore）。 */
     @Bean
     public Store workbenchStore(DataSource dataSource) {
-        return new DatabaseStore(dataSource);
+        return new PostgresDatabaseStore(dataSource);
     }
 
     @Bean

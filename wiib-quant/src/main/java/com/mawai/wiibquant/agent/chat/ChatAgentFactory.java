@@ -6,14 +6,13 @@ import com.alibaba.cloud.ai.graph.agent.ReactAgent;
 import com.alibaba.cloud.ai.graph.agent.flow.agent.SupervisorAgent;
 import com.alibaba.cloud.ai.graph.agent.hook.modelcalllimit.ModelCallLimitHook;
 import com.alibaba.cloud.ai.graph.agent.hook.summarization.SummarizationHook;
-import com.alibaba.cloud.ai.graph.agent.interceptor.modelfallback.ModelFallbackInterceptor;
-import com.alibaba.cloud.ai.graph.agent.interceptor.modelretry.ModelRetryInterceptor;
 import com.alibaba.cloud.ai.graph.agent.interceptor.toolretry.ToolRetryInterceptor;
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
 import com.alibaba.cloud.ai.graph.checkpoint.config.SaverConfig;
 import com.mawai.wiibquant.agent.config.AiAgentRuntime;
 import com.mawai.wiibquant.agent.config.AiAgentRuntimeManager;
 import com.mawai.wiibquant.agent.config.AiRuntimeRefreshedEvent;
+import com.mawai.wiibquant.agent.llm.ResilientModelInterceptor;
 import com.mawai.wiibquant.agent.toolkit.MarketToolkit;
 import com.mawai.wiibquant.agent.toolkit.NewsToolkit;
 import com.mawai.wiibquant.agent.toolkit.QuantForecastToolkit;
@@ -29,7 +28,8 @@ import java.util.List;
  * <ul>
  *   <li>深浅分层：Supervisor 用 quant 深模型做意图理解与裁决，子 agent 用 quant-light 干工具活</li>
  *   <li>checkpoint：整图挂 PostgresSaver（threadId=sessionId），断连续聊 + P5 HITL 中断恢复的地基</li>
- *   <li>韧性：ModelRetry(瞬时错误退避重试) + ModelFallback(chat 模型兜底) + ToolRetry；
+ *   <li>韧性：ResilientModelInterceptor（流式兼容的退避重试，supervisor 额外挂 chat 模型兜底）+ ToolRetry。
+ *       框架自带的 ModelRetry/ModelFallback 会把流式响应的 Flux 强转 Message 必炸（1.1.2.0 bug），不可用；
  *       预算：ModelCallLimitHook 单次运行封顶 + SummarizationHook 长对话压缩</li>
  * </ul>
  * 模型是构建期绑定的，监听 {@link AiRuntimeRefreshedEvent} 重建缓存实现热更新。
@@ -91,8 +91,8 @@ public class ChatAgentFactory {
         var light = runtime.quantLightChatModel();
         var fallback = runtime.chatChatModel();
 
-        ModelRetryInterceptor retry = ModelRetryInterceptor.builder()
-                .maxAttempts(3).initialDelay(500).maxDelay(4000).backoffMultiplier(2.0)
+        ResilientModelInterceptor retry = ResilientModelInterceptor.builder()
+                .maxAttempts(3).initialDelay(500).maxDelay(4000)
                 .build();
         ToolRetryInterceptor toolRetry = ToolRetryInterceptor.builder().build();
 
@@ -109,12 +109,12 @@ public class ChatAgentFactory {
 
         ReactAgent quantAgent = ReactAgent.builder()
                 .name("quant_agent")
-                .description("量化预测专家：经统计验证的波动率预测(H6/H12/H24)、市场regime、以及本系统预测战绩记分卡(QLIKE vs 基准/命中率)")
+                .description("量化预测专家：波动率预测(H6/H12/H24)、市场regime、以及本系统预测战绩记分卡(QLIKE vs 基准/命中率)")
                 .model(light)
                 .methodTools(quantForecastToolkit)
                 .instruction("""
-                        你是量化预测专家。工具给的是经统计验证的 vol/regime 预测与实盘验证战绩。
-                        铁律：本系统方向预测无 edge（已被 walk-forward+置换检验证伪），永远不要给出方向性投资建议；
+                        你是量化预测专家。工具给的是本系统的 vol/regime 预测与实盘验证战绩。
+                        铁律：只谈波动幅度与风险，不给方向性投资建议、不预测涨跌；
                         被问"预测准不准"时调 scorecard 用真实战绩回答（QLIKE 越低越好，improvement>0=跑赢基准）。
                         回答精炼中文，引用具体数字。""")
                 .interceptors(List.of(retry, toolRetry))
@@ -144,7 +144,7 @@ public class ChatAgentFactory {
                           返回 PENDING_APPROVAL 时告知用户确认卡片已弹出，等确认后你会被再次唤起执行）
                         综合专家结果后用精炼中文回答。原则：
                         1. 结论必须可追溯到专家给的数据，不编造
-                        2. 永不给出方向性投资建议（本系统方向预测无 edge，这是统计验证过的事实）
+                        2. 不给方向性投资建议，不预测涨跌
                         3. 信号矛盾时大方说"看不清"，这是专业而不是失职""")
                 .hooks(
                         SummarizationHook.builder()
@@ -156,8 +156,10 @@ public class ChatAgentFactory {
                                 .runLimit(runModelCallLimit)
                                 .exitBehavior(ModelCallLimitHook.ExitBehavior.END)
                                 .build())
-                .interceptors(List.of(retry,
-                        ModelFallbackInterceptor.builder().addFallbackModel(fallback).build()))
+                .interceptors(List.of(ResilientModelInterceptor.builder()
+                        .maxAttempts(3).initialDelay(500).maxDelay(4000)
+                        .fallbackModel(fallback)
+                        .build()))
                 .build();
 
         SupervisorAgent supervisor = SupervisorAgent.builder()

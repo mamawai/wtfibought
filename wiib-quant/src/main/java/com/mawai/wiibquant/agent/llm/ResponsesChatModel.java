@@ -166,8 +166,10 @@ public class ResponsesChatModel implements ChatModel {
      */
     private Flux<ChatResponse> streamOnce(Prompt prompt) {
         JSONObject body = buildRequestBody(prompt, true);
-        StreamState state = new StreamState();
-        return webClient.post()
+        // state 必须每次订阅新建：外层 ResilientModelInterceptor 靠重订阅实现重试，共享 state 会污染收尾帧判断
+        return Flux.defer(() -> {
+            StreamState state = new StreamState();
+            return webClient.post()
                 .uri("/v1/responses")
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.TEXT_EVENT_STREAM)
@@ -182,6 +184,7 @@ public class ResponsesChatModel implements ChatModel {
                 .onErrorMap(java.util.concurrent.TimeoutException.class, e ->
                         new TransientAiException("Responses SSE 空闲超过 " + STREAM_IDLE_TIMEOUT.toMinutes() + " 分钟，判定连接挂死"))
                 .concatMap(sse -> toFrames(sse, state));
+        });
     }
 
     /** SSE 事件流的累计状态：判定收尾帧的 finishReason、无增量服务端的兜底 */

@@ -45,8 +45,8 @@ public class ChatMemoryService {
                 }
             }
         } catch (Exception e) {
-            // 记忆是增益不是主链，失败只记日志
-            log.warn("[Memory] 写入失败 userId={} msg={}", userId, e.getMessage());
+            // 记忆是增益不是主链，失败只记日志（带堆栈——框架包装异常的 message 不含真实 SQL 错误）
+            log.warn("[Memory] 写入失败 userId={}", userId, e);
         }
     }
 
@@ -72,7 +72,7 @@ public class ChatMemoryService {
             }
             return sb.toString();
         } catch (Exception e) {
-            log.warn("[Memory] 召回失败 userId={} msg={}", userId, e.getMessage());
+            log.warn("[Memory] 召回失败 userId={}", userId, e);
             return "";
         }
     }
