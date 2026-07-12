@@ -57,7 +57,7 @@ public class MacroContextService {
      * 这里不走 TTL，避免主链路拿到 30min 旧 research 结果。
      */
     public MacroContext computeNow(String symbol, long decisionCloseTime) {
-        String normalized = normalize(symbol);
+        String normalized = QuantConstants.normalizeSymbolLenient(symbol);
         long toTime = decisionCloseTime > 0 ? decisionCloseTime + 1 : System.currentTimeMillis();
         Object lock = syncLocks.computeIfAbsent(normalized, ignored -> new Object());
         MacroContext context;
@@ -73,7 +73,7 @@ public class MacroContextService {
         if (event == null || !"5m".equalsIgnoreCase(event.interval())) {
             return;
         }
-        String normalized = normalize(event.symbol());
+        String normalized = QuantConstants.normalizeSymbolLenient(event.symbol());
         // 宏观上下文只服务快照/研判轨(WATCH_SYMBOLS)：策略篮子币(SOL/XRP等)的 bar 不触发 recompute
         if (!QuantConstants.WATCH_SYMBOLS.contains(normalized)) {
             return;
@@ -86,7 +86,7 @@ public class MacroContextService {
     }
 
     private void refreshAsync(String symbol) {
-        String normalized = normalize(symbol);
+        String normalized = QuantConstants.normalizeSymbolLenient(symbol);
         Thread.startVirtualThread(() -> recomputeInBackground(normalized, System.currentTimeMillis(), true));
     }
 
@@ -203,9 +203,5 @@ public class MacroContextService {
             return true;
         }
         return Duration.between(context.computedAt(), Instant.now()).compareTo(TTL) >= 0;
-    }
-
-    private static String normalize(String symbol) {
-        return symbol == null || symbol.isBlank() ? "BTCUSDT" : symbol.trim().toUpperCase();
     }
 }

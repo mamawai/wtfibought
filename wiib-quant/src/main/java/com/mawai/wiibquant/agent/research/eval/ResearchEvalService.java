@@ -18,8 +18,6 @@ import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibquant.agent.research.label.BarrierLabel;
 import com.mawai.wiibquant.agent.research.label.RegimeLabeler;
 import com.mawai.wiibquant.agent.research.label.TripleBarrierLabeler;
-import com.mawai.wiibquant.agent.research.metrics.ReturnSeries;
-import com.mawai.wiibquant.agent.research.metrics.RiskAdjustedMetrics;
 import com.mawai.wiibquant.agent.research.series.MarketSeriesPoint;
 import com.mawai.wiibquant.agent.research.series.MarketSeriesStore;
 import com.mawai.wiibquant.agent.research.series.SeriesAligner;
@@ -179,102 +177,27 @@ public class ResearchEvalService {
                 : BigDecimal.ZERO;
 
         // ---- 每预测器一条 StrategyLine（naive 分位依赖各自 positions，逐策略算） ----
-        BigDecimal costRate = params.costRate();
-        boolean hasCost = costRate.signum() > 0;
         List<StrategyLine> lines = new ArrayList<>(forecasters.size());
         for (Forecaster fc : forecasters) {
-            List<Integer> positions = new ArrayList<>(testPointCount);
-            List<BigDecimal> posReturns = new ArrayList<>(testPointCount);
-            List<BigDecimal> testLongReturns = new ArrayList<>(testPointCount);
-            // 非重叠口径：信号持有 horizonDecisionBars 期间不重复开仓
-            List<BigDecimal> nonOverlapReturns = new ArrayList<>(testPointCount);
-            List<Integer> nonOverlapPositions = new ArrayList<>(testPointCount);
-            List<BigDecimal> nonOverlapLongReturns = new ArrayList<>(testPointCount);
-            int nextNonOverlapBarIndex = Integer.MIN_VALUE;
-            int nonOverlapHits = 0;
-            int nonOverlapActive = 0;
-            int nonOverlapActiveHits = 0;
-            int activeCount = 0;
-            int positionChanges = 0;
-            int previousDirection = 0;
-            boolean hasPrevious = false;
-
+            DirectionLegSimulator sim = new DirectionLegSimulator(params.costRate(), assembled.horizonDecisionBars());
             for (WalkForwardWindow w : wins) {
                 // 每个窗口单独 fit；训练样本只来自 testStart 之前，且中间已有 purge+embargo 间隔。
                 Forecaster trained = fc.fit(List.copyOf(samplesByPoint.subList(w.trainStart(), w.trainEnd())));
                 for (int i = w.testStart(); i < w.testEnd(); i++) {
-                    BigDecimal longReturn = longBarrierReturnsByPoint.get(i);
-                    int dir = trained.forecast(featuresByPoint.get(i)).direction();
-                    // 归一化：只关心多(+1)/空(-1)/平(0)
-                    int normDir = Integer.compare(dir, 0);
-                    positions.add(normDir);
-                    testLongReturns.add(longReturn);
-                    BigDecimal posReturn = longReturn.multiply(BigDecimal.valueOf(normDir));
-                    // 每个非 flat 信号 = 一笔独立往返交易，扣一次成本（与本尺子的逐信号模拟语义一致）
-                    if (hasCost && normDir != 0) {
-                        posReturn = posReturn.subtract(costRate);
-                    }
-                    posReturns.add(posReturn);
-
-                    // 方向统计
-                    if (normDir != 0) {
-                        activeCount++;
-                    }
-                    if (hasPrevious && normDir != previousDirection) {
-                        positionChanges++;
-                    }
-                    previousDirection = normDir;
-                    hasPrevious = true;
-
-                    // 非重叠采样：当前 bar 已走出上一信号的持有窗口后才计入
-                    int decisionBarIndex = assembled.decisionBarIndexes().get(i);
-                    if (decisionBarIndex >= nextNonOverlapBarIndex) {
-                        nonOverlapReturns.add(posReturn);
-                        nonOverlapPositions.add(normDir);
-                        nonOverlapLongReturns.add(longReturn);
-                        if (posReturn.signum() > 0) {
-                            nonOverlapHits++;
-                        }
-                        if (normDir != 0) {
-                            nonOverlapActive++;
-                            if (posReturn.signum() > 0) {
-                                nonOverlapActiveHits++;
-                            }
-                        }
-                        nextNonOverlapBarIndex = decisionBarIndex + assembled.horizonDecisionBars();
-                    }
+                    sim.record(trained.forecast(featuresByPoint.get(i)).direction(),
+                            longBarrierReturnsByPoint.get(i), assembled.decisionBarIndexes().get(i));
                 }
             }
-            int totalPoints = positions.size();
-            double exposure = totalPoints > 0 ? (double) activeCount / totalPoints : 0.0;
-            double turnover = totalPoints > 1 ? (double) positionChanges / (totalPoints - 1) : 0.0;
+            DirectionLegSimulator.Verdict v = sim.summarize(fc.name(), horizon, params);
 
-            ReturnSeries series = new ReturnSeries(fc.name(), posReturns, horizon.periodsPerYear());
-            RiskAdjustedMetrics metrics = RiskAdjustedMetrics.from(series);
-            double naivePct = positions.isEmpty() ? 0.0
-                    : BenchmarkCalculator.permutationPercentile(positions, testLongReturns, params.iterations(), params.seed());
-            BigDecimal stratReturn = compound(posReturns);
-
-            BigDecimal nonOverlapReturn = nonOverlapReturns.isEmpty()
-                    ? BigDecimal.ZERO
-                    : compound(nonOverlapReturns);
-            double nonOverlapSharpe = nonOverlapReturns.isEmpty()
-                    ? 0.0
-                    : RiskAdjustedMetrics.from(new ReturnSeries(
-                            fc.name() + "_non_overlap", nonOverlapReturns, horizon.periodsPerYear()))
-                    .annualizedSharpe();
-            double nonOverlapNaivePct = nonOverlapPositions.isEmpty() ? 0.0
-                    : BenchmarkCalculator.permutationPercentile(
-                    nonOverlapPositions, nonOverlapLongReturns, params.iterations(), params.seed());
-
-            lines.add(new StrategyLine(fc.name(), metrics, stratReturn,
-                    stratReturn.compareTo(buyHold) > 0, naivePct, naivePct >= params.naivePercentileThreshold(), series,
-                    nonOverlapReturn, nonOverlapSharpe, nonOverlapReturns.size(),
-                    nonOverlapReturns.isEmpty() ? 0.0 : (double) nonOverlapHits / nonOverlapReturns.size(),
-                    nonOverlapActive == 0 ? 0.0 : (double) nonOverlapActiveHits / nonOverlapActive,
-                    nonOverlapReturn.compareTo(buyHold) > 0,
-                    nonOverlapNaivePct, nonOverlapNaivePct >= params.naivePercentileThreshold(),
-                    exposure, turnover));
+            lines.add(new StrategyLine(fc.name(), v.metrics(), v.strategyReturn(),
+                    v.strategyReturn().compareTo(buyHold) > 0,
+                    v.naivePercentile(), v.naivePercentile() >= params.naivePercentileThreshold(), v.series(),
+                    v.nonOverlapReturn(), v.nonOverlapSharpe(), v.nonOverlapPeriods(),
+                    v.nonOverlapHitRate(), v.nonOverlapActiveHitRate(),
+                    v.nonOverlapReturn().compareTo(buyHold) > 0,
+                    v.nonOverlapNaivePercentile(), v.nonOverlapNaivePercentile() >= params.naivePercentileThreshold(),
+                    v.exposure(), v.turnover()));
         }
 
         return new ComparisonReport(symbol, horizon.hours(), minutes(assembled.decisionBarMillis()),

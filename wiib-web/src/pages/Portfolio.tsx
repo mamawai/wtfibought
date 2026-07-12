@@ -13,7 +13,9 @@ import { PortfolioWallet } from '../components/PortfolioWallet';
 import { ProfitChart } from '../components/ProfitChart';
 import { RadarChart } from '../components/RadarChart';
 import type { WalletAsset } from '../components/PortfolioWallet';
-import { cn } from '../lib/utils';
+import { cn, fmtNum } from '../lib/utils';
+import { TabButton } from '../components/TabButton';
+import { EmptyState } from '../components/EmptyState';
 import {
   Wallet,
   TrendingUp,
@@ -43,10 +45,6 @@ interface CryptoRow extends CryptoPosition {
   profitPct: number;
 }
 
-function fmt(n: number) {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
 function AnimNum({ value, prefix = '', suffix = '', duration = 600 }: { value: number; prefix?: string; suffix?: string; duration?: number }) {
   const ref = useRef<HTMLSpanElement>(null);
   const prev = useRef(value);
@@ -54,14 +52,14 @@ function AnimNum({ value, prefix = '', suffix = '', duration = 600 }: { value: n
   useEffect(() => {
     if (!mounted.current) {
       mounted.current = true;
-      if (ref.current) ref.current.textContent = prefix + fmt(value) + suffix;
+      if (ref.current) ref.current.textContent = prefix + fmtNum(value) + suffix;
       return;
     }
     const from = prev.current;
     const to = value;
     prev.current = to;
     if (from === to) {
-      if (ref.current) ref.current.textContent = prefix + fmt(to) + suffix;
+      if (ref.current) ref.current.textContent = prefix + fmtNum(to) + suffix;
       return;
     }
     const start = performance.now();
@@ -70,7 +68,7 @@ function AnimNum({ value, prefix = '', suffix = '', duration = 600 }: { value: n
       const t = Math.min((now - start) / duration, 1);
       const ease = 1 - (1 - t) ** 3;
       const v = from + (to - from) * ease;
-      if (ref.current) ref.current.textContent = prefix + fmt(v) + suffix;
+      if (ref.current) ref.current.textContent = prefix + fmtNum(v) + suffix;
       if (t < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -211,6 +209,7 @@ export function Portfolio() {
       return () => {
         cancelled = true;
       };
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- requestKey 已编码 user/page/refresh 全部刷新条件；effect 内会回写 user store，加 user 依赖会自触发死循环
     }, [requestKey]);
 
   const handleCancelOrder = async (orderId: number) => {
@@ -387,7 +386,7 @@ export function Portfolio() {
                             "text-sm sm:text-xs font-bold tabular-nums",
                             realtimeSnapshot.dailyProfit >= 0 ? "text-green-400" : "text-red-400"
                           )}>
-                            {realtimeSnapshot.dailyProfit >= 0 ? '+' : ''}{fmt(realtimeSnapshot.dailyProfit)}
+                            {realtimeSnapshot.dailyProfit >= 0 ? '+' : ''}{fmtNum(realtimeSnapshot.dailyProfit)}
                             <span className="ml-1 opacity-70">
                               ({realtimeSnapshot.dailyProfitPct >= 0 ? '+' : ''}{realtimeSnapshot.dailyProfitPct?.toFixed(2)}%)
                             </span>
@@ -405,7 +404,7 @@ export function Portfolio() {
                             <div key={item.label} className="flex justify-between">
                               <span className="text-muted-foreground">{item.label}</span>
                               <span className={cn("tabular-nums font-medium", item.value >= 0 ? "text-green-400" : "text-red-400")}>
-                                {item.value >= 0 ? '+' : ''}{fmt(item.value)}
+                                {item.value >= 0 ? '+' : ''}{fmtNum(item.value)}
                               </span>
                             </div>
                           ))}
@@ -706,7 +705,7 @@ export function Portfolio() {
                             <div className="text-right shrink-0 flex items-center gap-2">
                               <div>
                                 <div className={cn("text-[13px] font-bold tabular-nums", up ? "text-green-400" : "text-red-400")}>
-                                  {up ? '+' : ''}{fmt(c.profit)}
+                                  {up ? '+' : ''}{fmtNum(c.profit)}
                                 </div>
                                 <div className={cn("text-[11px] tabular-nums font-medium", up ? "text-green-400/70" : "text-red-400/70")}>
                                   {up ? '+' : ''}{c.profitPct.toFixed(2)}%
@@ -771,14 +770,14 @@ export function Portfolio() {
                                   <span className="text-border">·</span>
                                   <span>开仓 {formatCoinPrice(f.symbol, f.entryPrice)}</span>
                                   <span className="text-border">·</span>
-                                  <span>保证金 {fmt(f.margin)}</span>
+                                  <span>保证金 {fmtNum(f.margin)}</span>
                                 </div>
                               </div>
                             </div>
                             <div className="text-right shrink-0 flex items-center gap-2">
                               <div>
                                 <div className={cn("text-[13px] font-bold tabular-nums", up ? "text-green-400" : "text-red-400")}>
-                                  {up ? '+' : ''}{fmt(f.unrealizedPnl)}
+                                  {up ? '+' : ''}{fmtNum(f.unrealizedPnl)}
                                 </div>
                                 <div className={cn("text-[11px] tabular-nums font-medium", up ? "text-green-400/70" : "text-red-400/70")}>
                                   {up ? '+' : ''}{f.unrealizedPnlPct.toFixed(2)}%
@@ -833,19 +832,19 @@ export function Portfolio() {
                               <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
                                 <span>{o.quantity}张</span>
                                 <span className="text-border">·</span>
-                                <span>成本 {fmt(o.avgCost)}</span>
+                                <span>成本 {fmtNum(o.avgCost)}</span>
                                 <span className="text-border">·</span>
-                                <span>现价 {fmt(o.currentPremium)}</span>
+                                <span>现价 {fmtNum(o.currentPremium)}</span>
                                 <span className="text-border">·</span>
                                 <span>到期 {o.expireAt.substring(0, 10)}</span>
                               </div>
                             </div>
                             <div className="text-right shrink-0">
                               <div className={cn("text-[13px] font-bold tabular-nums", up ? "text-green-400" : "text-red-400")}>
-                                {up ? '+' : ''}{fmt(o.pnl)}
+                                {up ? '+' : ''}{fmtNum(o.pnl)}
                               </div>
                               <div className="text-[11px] tabular-nums text-muted-foreground">
-                                市值 {fmt(o.marketValue)}
+                                市值 {fmtNum(o.marketValue)}
                               </div>
                             </div>
                           </div>
@@ -877,7 +876,7 @@ export function Portfolio() {
                       <div className="text-right flex items-center gap-2">
                         <div>
                           <div className={cn("text-[13px] font-bold tabular-nums", predictionProfit >= 0 ? "text-green-400" : "text-red-400")}>
-                            {predictionProfit >= 0 ? '+' : ''}{fmt(predictionProfit)}
+                            {predictionProfit >= 0 ? '+' : ''}{fmtNum(predictionProfit)}
                           </div>
                           <div className="text-[11px] text-muted-foreground tabular-nums">
                             胜率 {predictionPnl.winRate}%
@@ -891,15 +890,15 @@ export function Portfolio() {
                     <div className="px-4 py-3 flex items-center justify-between">
                       <span className="text-[12px] text-muted-foreground">已实现盈亏</span>
                       <span className={cn("text-[13px] font-semibold tabular-nums", predictionPnl.realizedPnl >= 0 ? "text-green-400" : "text-red-400")}>
-                        {predictionPnl.realizedPnl >= 0 ? '+' : ''}{fmt(predictionPnl.realizedPnl)}
+                        {predictionPnl.realizedPnl >= 0 ? '+' : ''}{fmtNum(predictionPnl.realizedPnl)}
                       </span>
                     </div>
                     {predictionPnl.activeBets > 0 && (
                       <div className="px-4 py-3 flex items-center justify-between">
                         <span className="text-[12px] text-muted-foreground">活跃持仓 ({predictionPnl.activeBets}笔)</span>
                         <div className="flex items-center gap-2">
-                          <span className="text-[12px] text-muted-foreground tabular-nums">成本 {fmt(predictionPnl.activeCost)}</span>
-                          <span className="text-[13px] font-semibold tabular-nums">市值 {fmt(predictionPnl.activeValue)}</span>
+                          <span className="text-[12px] text-muted-foreground tabular-nums">成本 {fmtNum(predictionPnl.activeCost)}</span>
+                          <span className="text-[13px] font-semibold tabular-nums">市值 {fmtNum(predictionPnl.activeValue)}</span>
                         </div>
                       </div>
                     )}
@@ -1139,34 +1138,6 @@ export function Portfolio() {
           </Button>
         </DialogFooter>
       </Dialog>
-    </div>
-  );
-}
-
-function TabButton({ active, onClick, icon, children }: { active: boolean; onClick: () => void; icon: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-sm font-medium transition-all whitespace-nowrap",
-        active
-          ? "bg-primary text-primary-foreground neu-raised-sm"
-          : "text-muted-foreground hover:text-foreground"
-      )}
-    >
-      {icon}
-      {children}
-    </button>
-  );
-}
-
-function EmptyState({ icon, text }: { icon: React.ReactNode; text: string }) {
-  return (
-    <div className="p-12 text-center text-muted-foreground">
-      <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-muted flex items-center justify-center">
-        {icon}
-      </div>
-      {text}
     </div>
   );
 }

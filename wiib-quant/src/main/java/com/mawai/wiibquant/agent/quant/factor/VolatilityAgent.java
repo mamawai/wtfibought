@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibquant.agent.quant.util.IndicatorValues.toBd;
+
 /**
  * 波动率因子 Agent。
  * 不参与多空方向投票，只产布林带挤压/扩张、触轨、ATR 加速等形态风险标志（进面板与研判 prompt）；
@@ -22,8 +24,9 @@ public class VolatilityAgent implements FactorAgent {
 
     @Override
     public List<AgentVote> evaluate(FeatureSnapshot s) {
+        // indicatorsByTimeframe 由 FeatureSnapshot 紧凑构造器保证非空
         Map<String, Map<String, Object>> indicators = s.indicatorsByTimeframe();
-        if (indicators == null || indicators.isEmpty()) {
+        if (indicators.isEmpty()) {
             return List.of(
                     AgentVote.noTrade(name(), "H6", "NO_DATA"),
                     AgentVote.noTrade(name(), "H12", "NO_DATA"),
@@ -119,9 +122,4 @@ public class VolatilityAgent implements FactorAgent {
                 List.copyOf(reasons), List.copyOf(riskFlags));
     }
 
-    private static BigDecimal toBd(Object v) {
-        if (v instanceof BigDecimal bd) return bd;
-        if (v instanceof Number n) return BigDecimal.valueOf(n.doubleValue());
-        return null;
-    }
 }

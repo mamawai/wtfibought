@@ -3,7 +3,7 @@ import { rankingApi } from '../api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
-import { cn } from '../lib/utils';
+import { cn, fmtNum } from '../lib/utils';
 import { Trophy, TrendingUp, TrendingDown, Clock } from 'lucide-react';
 import type { RankingItem } from '../types';
 
@@ -11,8 +11,7 @@ type Numeric = number | null | undefined;
 
 const num = (v: Numeric) => Number.isFinite(v) ? v as number : 0;
 
-const fmt = (v: Numeric) =>
-  num(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (v: Numeric) => fmtNum(num(v));  // 缺失值仍按 0.00 展示（奖台口径）
 
 // 移动端紧凑展示：1.23M / 12.3K，避免奖台窄列里大数字溢出
 const fmtCompact = (v: Numeric) => {

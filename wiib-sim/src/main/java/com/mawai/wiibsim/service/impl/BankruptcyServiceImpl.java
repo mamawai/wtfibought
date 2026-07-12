@@ -10,6 +10,7 @@ import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.SpringUtils;
+import com.mawai.wiibcommon.util.TradingDayUtil;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.mapper.CryptoPositionMapper;
@@ -37,7 +38,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -169,7 +169,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
 
     @Transactional(rollbackFor = Exception.class)
     protected void liquidateUser(Long userId, LocalDate today) {
-        LocalDate resetDate = nextTradingDay(today);
+        LocalDate resetDate = TradingDayUtil.nextTradingDay(today);
 
         int affected = userMapper.markBankrupt(userId, resetDate, today);
         if (affected == 0) {
@@ -226,17 +226,4 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         }
     }
 
-    public LocalDate nextTradingDay(LocalDate d) {
-        if (d == null) {
-            return null;
-        }
-        LocalDate next = d.plusDays(1);
-        DayOfWeek dow = next.getDayOfWeek();
-        if (dow == DayOfWeek.SATURDAY) {
-            next = next.plusDays(2);
-        } else if (dow == DayOfWeek.SUNDAY) {
-            next = next.plusDays(1);
-        }
-        return next;
-    }
 }

@@ -18,6 +18,8 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.Supplier;
 
+import static com.mawai.wiibquant.agent.quant.util.IndicatorValues.toBd;
+
 /**
  * 特征工程节点：从原始市场数据构建FeatureSnapshot。
  * 复用CryptoIndicatorCalculator.calcAll()，额外计算盘口微结构和波动率特征。
@@ -311,7 +313,7 @@ final class BuildFeaturesBuilder {
         return CryptoIndicatorCalculator.pctChange(closes.get(closes.size() - 1 - bars), closes.getLast());
     }
 
-    private double calcBasisBps(BigDecimal futuresPrice, BigDecimal spotPrice) {
+    static double calcBasisBps(BigDecimal futuresPrice, BigDecimal spotPrice) {
         if (futuresPrice == null || spotPrice == null || spotPrice.signum() <= 0) return 0;
         return futuresPrice.subtract(spotPrice)
                 .multiply(BigDecimal.valueOf(10000))
@@ -342,7 +344,7 @@ final class BuildFeaturesBuilder {
         return Math.clamp((spotChange.subtract(futuresChange)).doubleValue() / scalePct, -1, 1);
     }
 
-    private double calcBidAskImbalance(String obJson) {
+    static double calcBidAskImbalance(String obJson) {
         if (obJson == null) return 0;
         try {
             JSONObject ob = JSON.parseObject(obJson);
@@ -353,7 +355,7 @@ final class BuildFeaturesBuilder {
         } catch (Exception e) { return 0; }
     }
 
-    private double sumDepth(JSONArray levels, int depth) {
+    private static double sumDepth(JSONArray levels, int depth) {
         if (levels == null) return 0;
         double sum = 0;
         for (int i = 0; i < Math.min(levels.size(), depth); i++) {
@@ -388,7 +390,7 @@ final class BuildFeaturesBuilder {
      * 使用/futures/data/openInterestHist返回的数组，取最新与最早的OI对比。
      * 正值=OI增长（资金流入），负值=OI萎缩（资金流出）。
      */
-    private double calcOiChangeRate(String oiHistJson) {
+    static double calcOiChangeRate(String oiHistJson) {
         if (oiHistJson == null || oiHistJson.isBlank()) return 0;
         try {
             JSONArray arr = JSON.parseArray(oiHistJson);
@@ -402,7 +404,7 @@ final class BuildFeaturesBuilder {
         } catch (Exception e) { return 0; }
     }
 
-    private double calcFundingDeviation(String fundingJson) {
+    static double calcFundingDeviation(String fundingJson) {
         if (fundingJson == null) return 0;
         try {
             JSONObject f = JSON.parseObject(fundingJson);
@@ -412,7 +414,7 @@ final class BuildFeaturesBuilder {
         } catch (Exception e) { return 0; }
     }
 
-    private double calcLsrExtreme(String lsrJson) {
+    static double calcLsrExtreme(String lsrJson) {
         if (lsrJson == null) return 0;
         try {
             JSONArray arr = JSON.parseArray(lsrJson);
@@ -530,12 +532,6 @@ final class BuildFeaturesBuilder {
         return count > 0 ? sum / count : 0;
     }
 
-    private static BigDecimal toBd(Object v) {
-        if (v instanceof BigDecimal bd) return bd;
-        if (v instanceof Number n) return BigDecimal.valueOf(n.doubleValue());
-        return null;
-    }
-
     private void addMissingTimeframeFlags(List<String> qualityFlags,
                                           Map<String, String> rawKlines,
                                           Map<String, Map<String, Object>> indicatorsByTf) {
@@ -587,7 +583,7 @@ final class BuildFeaturesBuilder {
     /**
      * 通用趋势偏离: 对比JSON数组前半段 vs 后半段某字段的均值变化，归一化到[-1,1]。
      */
-    private double calcTrendBias(String json, String fieldName, double divisor) {
+    static double calcTrendBias(String json, String fieldName, double divisor) {
         if (json == null || json.isBlank()) return 0;
         try {
             JSONArray arr = JSON.parseArray(json);
@@ -611,7 +607,7 @@ final class BuildFeaturesBuilder {
     /**
      * 恐惧贪婪指数解析。返回当前值(0-100)，失败返回-1。
      */
-    private int calcFearGreed(String fearGreedJson) {
+    static int calcFearGreed(String fearGreedJson) {
         if (fearGreedJson == null || fearGreedJson.isBlank() || "{}".equals(fearGreedJson)) return -1;
         try {
             JSONObject root = JSON.parseObject(fearGreedJson);
@@ -624,7 +620,7 @@ final class BuildFeaturesBuilder {
         }
     }
 
-    private String mapFearGreedLabel(int index) {
+    static String mapFearGreedLabel(int index) {
         if (index < 0) return "UNKNOWN";
         if (index <= 24) return "EXTREME_FEAR";
         if (index <= 44) return "FEAR";
@@ -637,7 +633,7 @@ final class BuildFeaturesBuilder {
      * 从资金费率历史计算趋势和极端度。
      * 返回 [trend, extreme]，trend: 近期均值 vs 远期均值的变化方向，extreme: 最新值偏离均值的程度。
      */
-    private double[] calcFundingTrend(String fundingHistJson) {
+    static double[] calcFundingTrend(String fundingHistJson) {
         if (fundingHistJson == null || fundingHistJson.isBlank()) return new double[]{0, 0};
         try {
             JSONArray arr = JSON.parseArray(fundingHistJson);

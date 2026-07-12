@@ -10,6 +10,8 @@ import { Input } from '../components/ui/input';
 import { Select } from '../components/ui/select';
 import { useToast } from '../components/ui/use-toast';
 import { cn, isTradingHours } from '../lib/utils';
+import { TabButton } from '../components/TabButton';
+import { EmptyState } from '../components/EmptyState';
 import { Briefcase, ClipboardList, RefreshCcw, Clock, TrendingUp, Search } from 'lucide-react';
 import type { OptionPosition, OptionOrder, Stock, OptionChainItem, OptionQuote } from '../types';
 
@@ -120,6 +122,7 @@ export function Options() {
       return () => {
         cancelled = true;
       };
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- requestKey 已编码 user/refresh 全部刷新条件；user 对象身份变化不应重拉
     }, [requestKey]);
 
   const handleClose = async (p: OptionPosition) => {
@@ -582,34 +585,6 @@ export function Options() {
           )}
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-function TabButton({ active, onClick, icon, children }: { active: boolean; onClick: () => void; icon: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-md text-sm font-medium transition-all whitespace-nowrap border border-transparent",
-        active
-          ? "bg-primary text-primary-foreground shadow-md border-primary/20"
-          : "text-muted-foreground hover:text-foreground hover:bg-accent/80 border-transparent"
-      )}
-    >
-      {icon}
-      {children}
-    </button>
-  );
-}
-
-function EmptyState({ icon, text }: { icon: React.ReactNode; text: string }) {
-  return (
-    <div className="p-12 text-center text-muted-foreground">
-      <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-muted flex items-center justify-center">
-        {icon}
-      </div>
-      {text}
     </div>
   );
 }

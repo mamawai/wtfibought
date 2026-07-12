@@ -7,6 +7,7 @@ import com.mawai.wiibcommon.entity.QuantVolVerification;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibquant.agent.research.ForecastHorizon;
+import com.mawai.wiibquant.agent.research.forecast.VolStateClassifier;
 import com.mawai.wiibquant.agent.research.metrics.VolForecastScore;
 import com.mawai.wiibquant.mapper.QuantSnapshotMapper;
 import com.mawai.wiibquant.mapper.QuantVolVerificationMapper;
@@ -103,8 +104,9 @@ public class VolVerificationService {
         double qlike = VolForecastScore.qlikeLosses(new double[]{forecastSigma}, new double[]{realized})[0];
         double baselineQlike = VolForecastScore.qlikeLosses(new double[]{baselineSigma}, new double[]{realized})[0];
 
-        // vol-state 实际态：快照档界 + 同 VolStateClassifier 语义（界点归 MID）
-        String actual = classifyWithCuts(Math.abs(realized), leg.getDoubleValue("lowCut"), leg.getDoubleValue("highCut"));
+        // vol-state 实际态：快照 PIT 档界喂给分类单一真相源（界点归 MID）
+        String actual = VolStateClassifier.classifyWithCuts(
+                Math.abs(realized), leg.getDoubleValue("lowCut"), leg.getDoubleValue("highCut")).name();
         String predicted = leg.getString("volState");
 
         QuantVolVerification row = new QuantVolVerification();
@@ -122,13 +124,6 @@ public class VolVerificationService {
         row.setVolStateHit(predicted != null && predicted.equals(actual));
         row.setVerifiedAt(LocalDateTime.now());
         return row;
-    }
-
-    /** 与 VolStateClassifier.classify 同语义：< lowCut → LOW，> highCut → HIGH，界点归 MID。 */
-    private static String classifyWithCuts(double vol, double lowCut, double highCut) {
-        if (vol < lowCut) return "LOW";
-        if (vol > highCut) return "HIGH";
-        return "MID";
     }
 
     private boolean insertIdempotent(QuantVolVerification row) {

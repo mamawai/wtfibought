@@ -1,5 +1,6 @@
 package com.mawai.wiibquant.agent.toolkit;
 
+import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.DepthStreamCache;
@@ -65,7 +66,7 @@ public class MarketDataService {
 
     /** 工具层统一入口：TTL 内直接复用，避免一轮对话多个工具各采一遍。 */
     public MarketAssembly assemble(String symbol) {
-        String normalized = normalize(symbol);
+        String normalized = QuantConstants.normalizeSymbolLenient(symbol);
         MarketAssembly cached = cache.get(normalized);
         if (cached != null && Instant.now().toEpochMilli() - cached.assembledAt().toEpochMilli() < ttlMillis) {
             return cached;
@@ -105,7 +106,4 @@ public class MarketDataService {
         return new MarketAssembly(symbol, true, raw, featureOut, snapshot, panel, fragility, Instant.now());
     }
 
-    private static String normalize(String symbol) {
-        return symbol == null || symbol.isBlank() ? "BTCUSDT" : symbol.trim().toUpperCase();
-    }
 }

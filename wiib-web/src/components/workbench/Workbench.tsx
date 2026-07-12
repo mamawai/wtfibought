@@ -31,25 +31,34 @@ export function Workbench() {
   const [analyses, setAnalyses] = useState<QuantDeepAnalysisView[]>([]);
   const [snapshot, setSnapshot] = useState<QuantSnapshotView | null>(null);
   const [selected, setSelected] = useState<QuantDeepAnalysisView | null>(null);
-  const [loading, setLoading] = useState(false);
 
-  const load = useCallback(async (sym: string, h: number) => {
-    setLoading(true);
-    const [s, a, snap] = await Promise.allSettled([
+  // symbol/hours 切换时在 render 期清空选中详情（React 文档 prev 比较模式）；
+  // loading 由"已加载 key 是否追上视图 key"派生——60s 定时刷新不再闪加载态
+  const viewKey = `${symbol}:${hours}`;
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const loading = loadedKey !== viewKey;
+  const [prevViewKey, setPrevViewKey] = useState(viewKey);
+  if (prevViewKey !== viewKey) {
+    setPrevViewKey(viewKey);
+    setSelected(null);
+  }
+
+  const load = useCallback((sym: string, h: number) => {
+    Promise.allSettled([
       quantApi.snapshotSeries(sym, h),
       quantApi.analysisList(sym, 30),
       quantApi.latestSnapshot(sym),
-    ]);
-    if (s.status === 'fulfilled') setSeries(s.value);
-    if (a.status === 'fulfilled') setAnalyses(a.value); else setAnalyses([]);
-    if (snap.status === 'fulfilled') setSnapshot(snap.value); else setSnapshot(null);
-    setLoading(false);
+    ] as const).then(([s, a, snap]) => {
+      if (s.status === 'fulfilled') setSeries(s.value);
+      if (a.status === 'fulfilled') setAnalyses(a.value); else setAnalyses([]);
+      if (snap.status === 'fulfilled') setSnapshot(snap.value); else setSnapshot(null);
+      setLoadedKey(`${sym}:${h}`);
+    });
   }, []);
 
   useEffect(() => {
-    setSelected(null);
-    void load(symbol, hours);
-    const timer = setInterval(() => void load(symbol, hours), REFRESH_MS);
+    load(symbol, hours);
+    const timer = setInterval(() => load(symbol, hours), REFRESH_MS);
     return () => clearInterval(timer);
   }, [symbol, hours, load]);
 

@@ -1,5 +1,4 @@
-package com.mawai.wiibsim.service;
-import com.mawai.wiibcommon.market.DepthStreamCache;
+package com.mawai.wiibcommon.market;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;

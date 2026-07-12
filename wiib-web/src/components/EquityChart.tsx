@@ -39,7 +39,7 @@ export function EquityChart({ points }: Props) {
       grid: { top: 20, right: 16, bottom: 28, left: 60 },
       tooltip: {
         trigger: 'axis',
-        formatter: (params: any) => {
+        formatter: (params: { value: [number, number] }[]) => {
           const p = params[0];
           const v = p.value[1] as number;
           const sign = v >= 0 ? '+' : '';

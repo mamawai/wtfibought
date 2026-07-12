@@ -11,8 +11,6 @@ import com.mawai.wiibquant.agent.research.forecast.VolatilityRiskSummary;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibquant.agent.research.label.RegimeLabeler;
 import com.mawai.wiibquant.agent.research.metrics.RegimeClassificationScore;
-import com.mawai.wiibquant.agent.research.metrics.ReturnSeries;
-import com.mawai.wiibquant.agent.research.metrics.RiskAdjustedMetrics;
 import com.mawai.wiibquant.agent.research.metrics.VolForecastScore;
 import com.mawai.wiibquant.agent.research.metrics.ForecastAccuracyComparison;
 import com.mawai.wiibquant.agent.research.metrics.VolCalibrationReport;
@@ -132,16 +130,8 @@ public final class MultiOutputEvalService {
         List<WalkForwardWindow> wins = WalkForwardEvaluator.windows(
                 points, params.testSize(), a.horizonDecisionBars(), params.embargoBars(), params.minTrain());
 
-        // ---- 逐窗 fit（转发方向腿）→ 逐 test 点收集三输出 ----
-        List<Integer> positions = new ArrayList<>();
-        List<BigDecimal> testLongReturns = new ArrayList<>();
-        List<BigDecimal> posReturns = new ArrayList<>();
-        // 非重叠口径（与 ResearchEvalService 同规则）：信号持有 horizonDecisionBars 期间不重复开仓。
-        // 重叠口径每 5m 复利等于 horizon/5m 层叠仓敞口，对单倍敞口 buy&hold 不公平——方向判决以非重叠为主。
-        List<BigDecimal> nonOverlapReturns = new ArrayList<>();
-        List<Integer> nonOverlapPositions = new ArrayList<>();
-        List<BigDecimal> nonOverlapLongReturns = new ArrayList<>();
-        int nextNonOverlapBarIndex = Integer.MIN_VALUE;
+        // ---- 逐窗 fit（转发方向腿）→ 逐 test 点收集三输出；方向腿口径与 ResearchEvalService 同源于 simulator ----
+        DirectionLegSimulator sim = new DirectionLegSimulator(params.costRate(), a.horizonDecisionBars());
         List<HorizonPathOutcome> pathOutcomes = new ArrayList<>();
         List<Double> predSigma = new ArrayList<>();
         List<Double> realizedForVol = new ArrayList<>();
@@ -154,8 +144,6 @@ public final class MultiOutputEvalService {
         List<MarketRegime> actualRegime = new ArrayList<>();
         List<MarketRegime> naiveRegime = new ArrayList<>();
         int firstDecisionBarIndex = -1, lastExitBarIndex = -1;
-        BigDecimal costRate = params.costRate();
-        boolean hasCost = costRate.signum() > 0;
         for (WalkForwardWindow w : wins) {
             if (firstDecisionBarIndex < 0) {
                 firstDecisionBarIndex = a.decisionBarIndexes().get(w.testStart());
@@ -167,23 +155,8 @@ public final class MultiOutputEvalService {
                     List.copyOf(a.samplesByPoint().subList(w.trainStart(), w.trainEnd())));
             for (int i = w.testStart(); i < w.testEnd(); i++) {
                 MultiOutputForecast f = trained.forecast(a.featuresByPoint().get(i));
-                int dir = Integer.compare(f.direction().direction(), 0); // 契约 {-1,0,1}；归一化兜底，防越界方向放大收益
-                BigDecimal longReturn = a.longBarrierReturnsByPoint().get(i);
-                BigDecimal posReturn = longReturn.multiply(BigDecimal.valueOf(dir));
-                // 每个非 flat 信号 = 一笔独立往返交易，扣一次成本；permutation 用 gross（成本对洗牌不变）
-                if (hasCost && dir != 0) {
-                    posReturn = posReturn.subtract(costRate);
-                }
-                positions.add(dir);
-                testLongReturns.add(longReturn);
-                posReturns.add(posReturn);
-                int decisionBarIndex = a.decisionBarIndexes().get(i);
-                if (decisionBarIndex >= nextNonOverlapBarIndex) {
-                    nonOverlapReturns.add(posReturn);
-                    nonOverlapPositions.add(dir);
-                    nonOverlapLongReturns.add(longReturn);
-                    nextNonOverlapBarIndex = decisionBarIndex + a.horizonDecisionBars();
-                }
+                sim.record(f.direction().direction(), a.longBarrierReturnsByPoint().get(i),
+                        a.decisionBarIndexes().get(i));
                 pathOutcomes.add(a.pathOutcomesByPoint().get(i));
                 predSigma.add(f.expectedVolatility());
                 volContexts.add(f.volatilityContext());
@@ -198,29 +171,13 @@ public final class MultiOutputEvalService {
             }
         }
 
-        // ---- 方向腿判决（复用方向尺子；非重叠口径为主判决，重叠口径仅诊断）----
-        ReturnSeries series = new ReturnSeries(forecaster.name(), posReturns, horizon.periodsPerYear());
-        RiskAdjustedMetrics dirMetrics = RiskAdjustedMetrics.from(series);
+        // ---- 方向腿判决（与 ResearchEvalService 同一把尺子；非重叠口径为主判决，重叠口径仅诊断）----
+        DirectionLegSimulator.Verdict dir = sim.summarize(forecaster.name(), horizon, params);
         BigDecimal buyHold = (firstDecisionBarIndex >= 0 && lastExitBarIndex < a.decisionIntervalBars().size())
                 ? BenchmarkCalculator.buyAndHoldReturn(
                 a.decisionIntervalBars().subList(firstDecisionBarIndex, lastExitBarIndex + 1))
                 : BigDecimal.ZERO;
-        BigDecimal dirReturn = ResearchEvalService.compound(posReturns);
-        BigDecimal nonOverlapReturn = nonOverlapReturns.isEmpty()
-                ? BigDecimal.ZERO
-                : ResearchEvalService.compound(nonOverlapReturns);
-        double nonOverlapSharpe = nonOverlapReturns.isEmpty()
-                ? 0.0
-                : RiskAdjustedMetrics.from(new ReturnSeries(
-                        forecaster.name() + "_non_overlap", nonOverlapReturns, horizon.periodsPerYear()))
-                .annualizedSharpe();
-        double naivePct = positions.isEmpty() ? 0.0
-                : BenchmarkCalculator.permutationPercentile(positions, testLongReturns, params.iterations(), params.seed());
-        // 非重叠排列分位：重叠口径下 i.i.d. 洗牌会低估持续持仓策略的 null 方差（分位虚高），非重叠近独立、分位才诚实。
-        double nonOverlapNaivePct = nonOverlapPositions.isEmpty() ? 0.0
-                : BenchmarkCalculator.permutationPercentile(
-                nonOverlapPositions, nonOverlapLongReturns, params.iterations(), params.seed());
-        DirectionPathSummary directionPathSummary = DirectionPathSummary.from(positions, pathOutcomes);
+        DirectionPathSummary directionPathSummary = DirectionPathSummary.from(sim.positions(), pathOutcomes);
 
         // ---- 波动率判决（model 预测 σ vs 多基准；verdict 以最难基准[min QLIKE]为准，random-walk 只作对照）----
         double[] realizedArr = toArray(realizedForVol);
@@ -261,14 +218,14 @@ public final class MultiOutputEvalService {
                 naiveRegime.toArray(new MarketRegime[0]));
 
         return new MultiOutputReport(forecaster.name(), symbol, horizon.hours(),
-                ResearchEvalService.minutes(a.decisionBarMillis()), points, positions.size(),
-                dirMetrics, dirReturn, buyHold, dirReturn.compareTo(buyHold) > 0,
-                naivePct, naivePct >= params.naivePercentileThreshold(),
-                nonOverlapReturn, nonOverlapSharpe, nonOverlapReturns.size(),
-                nonOverlapReturn.compareTo(buyHold) > 0,
-                nonOverlapNaivePct, nonOverlapNaivePct >= params.naivePercentileThreshold(),
+                ResearchEvalService.minutes(a.decisionBarMillis()), points, sim.positions().size(),
+                dir.metrics(), dir.strategyReturn(), buyHold, dir.strategyReturn().compareTo(buyHold) > 0,
+                dir.naivePercentile(), dir.naivePercentile() >= params.naivePercentileThreshold(),
+                dir.nonOverlapReturn(), dir.nonOverlapSharpe(), dir.nonOverlapPeriods(),
+                dir.nonOverlapReturn().compareTo(buyHold) > 0,
+                dir.nonOverlapNaivePercentile(), dir.nonOverlapNaivePercentile() >= params.naivePercentileThreshold(),
                 directionPathSummary,
-                series,
+                dir.series(),
                 volScore, volBaselines, bestBaselineName, volQlikeVsBestBaseline, volCalibration,
                 volRiskSummary,
                 volBeatsAllBaselines,

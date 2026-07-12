@@ -11,15 +11,12 @@ const MAX_TICKS = 1440;
 
 export function useQuote(stockCode: string | undefined, initialTicks?: DayTick[]): UseQuoteResult {
   const [quote, setQuote] = useState<Quote | null>(null);
-  const [realtimeTicks, setRealtimeTicks] = useState<DayTick[]>([]);
-
-  useEffect(() => {
-    if (initialTicks && initialTicks.length > 0) {
-      setRealtimeTicks([...initialTicks].slice(0, MAX_TICKS));
-    } else {
-      setRealtimeTicks([]);
-    }
-  }, [initialTicks]);
+  // initialTicks 变化时在 render 期重置为基底（React 文档 prev 比较模式），流式增量在订阅回调追加
+  const [ticksState, setTicksState] = useState<{ src: DayTick[] | undefined; list: DayTick[] }>(
+    () => ({ src: initialTicks, list: initialTicks?.length ? [...initialTicks].slice(0, MAX_TICKS) : [] }));
+  if (ticksState.src !== initialTicks) {
+    setTicksState({ src: initialTicks, list: initialTicks?.length ? [...initialTicks].slice(0, MAX_TICKS) : [] });
+  }
 
   useEffect(() => {
     if (!stockCode) return;
@@ -28,9 +25,9 @@ export function useQuote(stockCode: string | undefined, initialTicks?: DayTick[]
       try {
         const data: Quote = JSON.parse(msg.body);
         setQuote(data);
-        setRealtimeTicks((prev) => {
-          if (prev.length >= MAX_TICKS) return prev;
-          return [...prev, { time: '', price: data.price }];
+        setTicksState((s) => {
+          if (s.list.length >= MAX_TICKS) return s;
+          return { ...s, list: [...s.list, { time: '', price: data.price }] };
         });
       } catch { /* ignore */ }
     });
@@ -38,5 +35,5 @@ export function useQuote(stockCode: string | undefined, initialTicks?: DayTick[]
     return unsub;
   }, [stockCode]);
 
-  return { quote, realtimeTicks };
+  return { quote, realtimeTicks: ticksState.list };
 }

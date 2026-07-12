@@ -10,6 +10,7 @@ import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -24,6 +25,7 @@ import java.util.List;
  * Sa-Token 基础配置类
  * 各模块继承并自定义
  */
+@Slf4j
 @RequiredArgsConstructor
 public abstract class BaseSaTokenConfig implements WebMvcConfigurer {
 
@@ -65,7 +67,7 @@ public abstract class BaseSaTokenConfig implements WebMvcConfigurer {
                 try {
                     stringRedisTemplate.delete("satoken:login:token:" + tokenValue);
                 } catch (Exception e) {
-                    System.err.println("删除被顶下线的token失败: " + e.getMessage());
+                    log.warn("删除被顶下线的token失败: {}", e.getMessage());
                 }
             }
 
@@ -114,15 +116,8 @@ public abstract class BaseSaTokenConfig implements WebMvcConfigurer {
 
     protected abstract List<String> getExcludePaths();
 
-    protected boolean isInterceptorEnabled() {
-        return true;
-    }
-
     @Override
     public void addInterceptors(@NonNull InterceptorRegistry registry) {
-        if (!isInterceptorEnabled()) {
-            return;
-        }
         registry.addInterceptor(new SaInterceptor(handle ->
                 SaRouter.match("/**")
                         .notMatch(getExcludePaths())

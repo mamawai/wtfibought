@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibquant.agent.quant.util.IndicatorValues.toBd;
+
 /**
  * 市场状态因子 Agent。
  * 不重复 research 主 regime，只把当前 live regime/IV/transition 做一致性和风险 evidence。
@@ -26,8 +28,9 @@ public class RegimeAgent implements FactorAgent {
 
     @Override
     public List<AgentVote> evaluate(FeatureSnapshot s, FactorEvaluationContext context) {
+        // indicatorsByTimeframe/regime 由 FeatureSnapshot 紧凑构造器保证非空
         Map<String, Map<String, Object>> indicators = s.indicatorsByTimeframe();
-        if (indicators == null || indicators.isEmpty()) {
+        if (indicators.isEmpty()) {
             return List.of(
                     AgentVote.noTrade(name(), "H6", "NO_DATA"),
                     AgentVote.noTrade(name(), "H12", "NO_DATA"),
@@ -43,7 +46,7 @@ public class RegimeAgent implements FactorAgent {
         boolean hasIv = dvolIndex > 0 || atmIv > 0;
 
         List<String> reasons = new ArrayList<>();
-        reasons.add("LIVE_REGIME_" + (regime != null ? regime.name() : "UNKNOWN"));
+        reasons.add("LIVE_REGIME_" + regime.name());
 
         List<String> riskFlags = new ArrayList<>();
         if (regime == MarketRegime.RANGE) {
@@ -179,9 +182,4 @@ public class RegimeAgent implements FactorAgent {
 
     private record TfWeight(String name, double weight) {}
 
-    private static BigDecimal toBd(Object v) {
-        if (v instanceof BigDecimal bd) return bd;
-        if (v instanceof Number n) return BigDecimal.valueOf(n.doubleValue());
-        return null;
-    }
 }

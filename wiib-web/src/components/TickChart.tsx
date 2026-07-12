@@ -149,7 +149,7 @@ export function TickChart({ ticks, prevClose }: Props) {
       chartInstanceRef.current = null;
       pricesRef.current = new Array(fullTimeAxis.length).fill(null);
     };
-  }, [isMobile, isDark]);
+  }, [isMobile, isDark, prevClose]);
 
   // 更新数据（增量更新，不重建图表）
   const updateChart = useCallback(() => {
@@ -207,7 +207,7 @@ export function TickChart({ ticks, prevClose }: Props) {
           : []),
       ],
     });
-  }, [ticks, prevClose]);
+  }, [ticks, prevClose, isDark]);
 
   useEffect(() => {
     updateChart();

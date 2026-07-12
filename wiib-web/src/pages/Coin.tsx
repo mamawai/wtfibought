@@ -1,7 +1,10 @@
+import { fmtNum } from '../lib/utils';
+import { HelpTip } from '../components/HelpTip';
+import { useDiscountBuff } from '../hooks/useDiscountBuff';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import * as echarts from 'echarts';
-import { cryptoApi, cryptoOrderApi, buffApi, futuresApi } from '../api';
+import { cryptoApi, cryptoOrderApi, futuresApi } from '../api';
 import { useUserStore } from '../stores/userStore';
 import { useIsDark } from '../hooks/useIsDark';
 import { useCryptoStream } from '../hooks/useCryptoStream';
@@ -14,10 +17,10 @@ import { Skeleton } from '../components/ui/skeleton';
 import { FuturesActionButton } from '../components/FuturesActionButton';
 import { LeverageSlider } from '../components/LeverageSlider';
 import { CandleChart } from '../components/CandleChart';
-import { TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Loader2, X, RefreshCw, Sparkles, Wallet, Warehouse, Scale, HelpCircle, Plus, Flame } from 'lucide-react';
+import { TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Loader2, X, RefreshCw, Sparkles, Wallet, Warehouse, Scale, Plus, Flame } from 'lucide-react';
 import TradingViewWidget from '../components/TradingViewWidget';
 import { COIN_MAP, getCoin, DEFAULT_SYMBOL, formatCoinPrice, getCoinPriceDecimals } from '../lib/coinConfig';
-import type { CryptoOrder, CryptoPosition, PageResult, UserBuff, FuturesPosition, FuturesOrder, FuturesSLItem, FuturesTPItem, FuturesBracket } from '../types';
+import type { CryptoOrder, CryptoPosition, PageResult, FuturesPosition, FuturesOrder, FuturesSLItem, FuturesTPItem, FuturesBracket } from '../types';
 
 interface SLTPRow { price: string; quantity: string }
 
@@ -61,11 +64,6 @@ function formatTime(ts: number, interval: string): string {
     return `${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
   }
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-}
-
-function formatPrice(n?: number | null, decimals = 2): string {
-  if (n == null || !Number.isFinite(n)) return '-';
-  return n.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
 function roundHalfUp2(n: number): number {
@@ -335,14 +333,14 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const [ordersLoading, setOrdersLoading] = useState(false);
 
   // 折扣券状态
-  const [discountBuff, setDiscountBuff] = useState<UserBuff | null>(null);
+  const [discountBuff, setDiscountBuff] = useDiscountBuff(true, `${symbol}:${orderType}`);
   const [useBuff, setUseBuff] = useState(false);
 
   // 持仓
   const [position, setPosition] = useState<CryptoPosition | null>(null);
   const fetchPosition = useCallback(() => {
     cryptoOrderApi.position(symbol).then(setPosition).catch(() => setPosition(null));
-  }, []);
+  }, [symbol]);
 
   // 拉取K线（现货/合约分用不同数据源）
   const fetchKlines = useCallback(async (tabIdx: number) => {
@@ -397,8 +395,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
 
   const renderChart = useCallback((
     container: HTMLDivElement | null,
-    instRef: React.MutableRefObject<echarts.ECharts | null>,
-    readyRef: React.MutableRefObject<boolean>,
+    instRef: React.RefObject<echarts.ECharts | null>,
+    readyRef: React.RefObject<boolean>,
     data: ChartPoint[],
     tab: TabConfig,
     withEffect: boolean,
@@ -488,16 +486,6 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   useEffect(() => { fetchOrders(orderFilter, orderPage); }, [orderFilter, orderPage, fetchOrders]);
 
   // 加载折扣券 + 持仓 + 合约仓位
-  useEffect(() => {
-    buffApi.status().then(s => {
-      const b = s.todayBuff;
-      if (b && b.buffType.startsWith('DISCOUNT_') && !b.isUsed) setDiscountBuff(b);
-      else setDiscountBuff(null);
-    }).catch(() => {});
-    fetchPosition();
-    if (orderType === 'FUTURES') fetchFuturesPositions();
-  }, [fetchPosition, orderType]);
-
   // 合约仓位查询
   const fetchFuturesPositions = useCallback(async () => {
     setPositionsLoading(true);
@@ -512,6 +500,11 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
     }
   }, [symbol]);
 
+  useEffect(() => {
+    fetchPosition();
+    if (orderType === 'FUTURES') fetchFuturesPositions();
+  }, [fetchPosition, fetchFuturesPositions, orderType]);
+
   // 用 WS 推送的 markPrice 实时更新合约仓位盈亏
   useEffect(() => {
     if (!tick?.mp || futuresPositions.length === 0) return;
@@ -525,7 +518,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
       const unrealizedPnlPct = pos.margin > 0 ? (unrealizedPnl / pos.margin) * 100 : 0;
       return { ...pos, markPrice: mp, currentPrice: mp, positionValue: posValue, unrealizedPnl, unrealizedPnlPct, effectiveMargin };
     }));
-  }, [tick?.mp]);
+  }, [tick?.mp, futuresPositions.length]);
 
   // 合约订单查询
   const fetchFuturesOrders = useCallback(async (status: string, page: number) => {
@@ -967,16 +960,16 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                       {isPnlUp ? '+' : ''}{pnlPct.toFixed(2)}%
                     </div>
                     <div className={`text-xs font-bold mt-0.5 ${isPnlUp ? 'text-gain' : 'text-loss'}`}>
-                      {isPnlUp ? '+' : ''}${formatPrice(pnlAmount)}
+                      {isPnlUp ? '+' : ''}${fmtNum(pnlAmount)}
                     </div>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs font-bold text-muted-foreground pt-1">
                   <span>均价 <span className="text-foreground font-mono">${fmtPrice(position.avgCost)}</span></span>
                   <span>现价 <span className="text-foreground font-mono">${fmtPrice(currentPrice)}</span></span>
-                  <span>市值 <span className="text-foreground font-mono">${formatPrice(currentPrice * position.quantity)}</span></span>
+                  <span>市值 <span className="text-foreground font-mono">${fmtNum(currentPrice * position.quantity)}</span></span>
                   {position.frozenQuantity > 0 && <span>冻结 <span className="text-warning font-mono">{position.frozenQuantity}</span></span>}
-                  {position.totalDiscount > 0 && <span>已省 <span className="text-warning font-mono">${formatPrice(position.totalDiscount)}</span></span>}
+                  {position.totalDiscount > 0 && <span>已省 <span className="text-warning font-mono">${fmtNum(position.totalDiscount)}</span></span>}
                 </div>
               </div>
             </div>
@@ -1065,7 +1058,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                   </label>
                   {user && (
                     <span className="text-xs text-muted-foreground tabular-nums">
-                      可用 {formatPrice(user.balance)} USDT
+                      可用 {fmtNum(user.balance)} USDT
                     </span>
                   )}
                 </div>
@@ -1103,15 +1096,15 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">仓位价值</span>
-                        <span className="font-mono">${formatPrice(positionValue)}</span>
+                        <span className="font-mono">${fmtNum(positionValue)}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">保证金</span>
-                        <span className="font-mono">${formatPrice(margin)}</span>
+                        <span className="font-mono">${fmtNum(margin)}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">手续费 (0.04%)</span>
-                        <span className="font-mono">${formatPrice(commission)}</span>
+                        <span className="font-mono">${fmtNum(commission)}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">维持保证金率</span>
@@ -1126,7 +1119,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-xs text-muted-foreground">合计需要</span>
-                      <span className="text-sm font-bold tabular-nums">${formatPrice(totalCost)}</span>
+                      <span className="text-sm font-bold tabular-nums">${fmtNum(totalCost)}</span>
                     </div>
                   </div>
                 );
@@ -1204,7 +1197,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                 <span className="text-xs font-bold text-muted-foreground flex items-center gap-1">
                   <Wallet className="w-3.5 h-3.5" />
                   {side === 'BUY'
-                    ? <>{formatPrice(user.balance)} USDT</>
+                    ? <>{fmtNum(user.balance)} USDT</>
                     : <>{position?.quantity ?? 0} {cfg.name}</>
                   }
                 </span>
@@ -1296,27 +1289,27 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                 {side === 'BUY' && leverage > 1 && (
                   <div className="flex justify-between text-xs font-bold text-muted-foreground">
                     <span>总仓位 ({leverage}x)</span>
-                    <span className="font-mono text-foreground">${formatPrice(estimatedAmount)} USDT</span>
+                    <span className="font-mono text-foreground">${fmtNum(estimatedAmount)} USDT</span>
                   </div>
                 )}
                 <div className="flex justify-between text-xs font-bold text-muted-foreground">
                   <span>{side === 'BUY' && leverage > 1 ? '保证金' : `预估${side === 'BUY' ? '花费' : '收入'}`}</span>
                   <span className="text-foreground">
                     {useBuff && discountRate < 1 && side === 'BUY' && (
-                      <span className="line-through text-muted-foreground mr-1.5">${formatPrice(marginAmount)}</span>
+                      <span className="line-through text-muted-foreground mr-1.5">${fmtNum(marginAmount)}</span>
                     )}
-                    ${formatPrice(marginAmount * discountRate)} USDT
+                    ${fmtNum(marginAmount * discountRate)} USDT
                   </span>
                 </div>
                 <div className="flex justify-between text-xs font-bold text-muted-foreground">
                   <span>手续费 (0.1%)</span>
-                  <span className="font-mono">${formatPrice(estimatedCommission * discountRate)} USDT</span>
+                  <span className="font-mono">${fmtNum(estimatedCommission * discountRate)} USDT</span>
                 </div>
                 {side === 'BUY' && (
                   <div className="flex justify-between text-sm font-black pt-1">
                     <span className="text-muted-foreground">合计</span>
                     <span className="text-foreground">
-                      ${formatPrice((marginAmount + estimatedCommission) * discountRate)} USDT
+                      ${fmtNum((marginAmount + estimatedCommission) * discountRate)} USDT
                     </span>
                   </div>
                 )}
@@ -1371,7 +1364,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                         {isPnlUp ? '+' : ''}{pos.unrealizedPnlPct.toFixed(2)}%
                       </div>
                       <div className={`text-xs ${isPnlUp ? 'text-green-500/70' : 'text-red-500/70'}`}>
-                        {isPnlUp ? '+' : ''}${formatPrice(pos.unrealizedPnl)}
+                        {isPnlUp ? '+' : ''}${fmtNum(pos.unrealizedPnl)}
                       </div>
                     </div>
                   </div>
@@ -1380,8 +1373,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
                     <div>开仓 <span className="text-foreground font-mono">${fmtPrice(pos.entryPrice)}</span></div>
                     <div>强平 <span className="text-yellow-500 font-mono">${fmtPrice(pos.liquidationPrice)}</span></div>
-                    <div>保证金 <span className="text-foreground font-mono">${formatPrice(pos.margin)}</span></div>
-                    <div>资金费 <span className="font-mono">${formatPrice(pos.fundingFeeTotal)}</span></div>
+                    <div>保证金 <span className="text-foreground font-mono">${fmtNum(pos.margin)}</span></div>
+                    <div>资金费 <span className="font-mono">${fmtNum(pos.fundingFeeTotal)}</span></div>
                     <div>MMR <span className="text-foreground font-mono">{currentBracket ? `档位 ${currentBracket.tier} / ${formatRate(currentBracket.mmr)}` : '—'}</span></div>
                   </div>
                   {/* 操作按钮 */}
@@ -1461,7 +1454,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                           )}
                           <div className="flex items-center gap-2">
                             <Input type="number" placeholder={`${MIN_QTY} - ${maxIncQty > 0 ? maxIncQty : '0'}`} value={posIncreaseQty} onChange={e => setPosIncreaseQty(e.target.value)} step={String(MIN_QTY)} min={MIN_QTY} max={maxIncQty > 0 ? maxIncQty : undefined} className="flex-1 h-8 text-xs" />
-                            {user && <span className="text-[11px] text-muted-foreground shrink-0">余额 {formatPrice(user.balance)}</span>}
+                            {user && <span className="text-[11px] text-muted-foreground shrink-0">余额 {fmtNum(user.balance)}</span>}
                           </div>
                           {parseFloat(posIncreaseQty) > 0 && incPrice > 0 && (() => {
                             const iq = parseFloat(posIncreaseQty);
@@ -1471,10 +1464,10 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                             return (
                               <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px] text-muted-foreground">
                                 <div>杠杆前数量 <span className="text-foreground font-mono">{(iq / pos.leverage).toFixed(8).replace(/0+$/, '').replace(/\.$/, '')}</span></div>
-                                <div>仓位价值 <span className="text-foreground font-mono">${formatPrice(val)}</span></div>
-                                <div>保证金 <span className="text-foreground font-mono">${formatPrice(mg)}</span></div>
-                                <div>手续费 <span className="text-foreground font-mono">${formatPrice(cm)}</span></div>
-                                <div className="col-span-2">需支付 <span className="text-foreground font-mono font-semibold">${formatPrice(mg + cm)}</span></div>
+                                <div>仓位价值 <span className="text-foreground font-mono">${fmtNum(val)}</span></div>
+                                <div>保证金 <span className="text-foreground font-mono">${fmtNum(mg)}</span></div>
+                                <div>手续费 <span className="text-foreground font-mono">${fmtNum(cm)}</span></div>
+                                <div className="col-span-2">需支付 <span className="text-foreground font-mono font-semibold">${fmtNum(mg + cm)}</span></div>
                               </div>
                             );
                           })()}
@@ -1488,7 +1481,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                       {posAction.type === 'margin' && (
                         <>
                           <Input type="number" placeholder="追加金额 (USDT)" value={posMarginAmt} onChange={e => setPosMarginAmt(e.target.value)} step="0.01" min="0" className="h-8 text-xs" />
-                          {user && <div className="text-[11px] text-muted-foreground">可用余额 {formatPrice(user.balance)} USDT</div>}
+                          {user && <div className="text-[11px] text-muted-foreground">可用余额 {fmtNum(user.balance)} USDT</div>}
                           <Button size="sm" className="w-full h-8 text-xs" onClick={() => handleAddMargin(pos.id)} disabled={submitting}>
                             {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : '确认追加'}
                           </Button>
@@ -1498,7 +1491,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                       {posAction.type === 'reduceMargin' && (
                         <>
                           <Input type="number" placeholder="减少金额 (USDT)" value={posMarginAmt} onChange={e => setPosMarginAmt(e.target.value)} step="0.01" min="0" max={pos.margin} className="h-8 text-xs" />
-                          <div className="text-[11px] text-muted-foreground">当前保证金 {formatPrice(pos.margin)} USDT</div>
+                          <div className="text-[11px] text-muted-foreground">当前保证金 {fmtNum(pos.margin)} USDT</div>
                           <Button size="sm" className="w-full h-8 text-xs" onClick={() => handleReduceMargin(pos.id)} disabled={submitting}>
                             {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : '确认减少'}
                           </Button>
@@ -1607,7 +1600,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                             <td className="px-2 py-2.5 text-right font-mono">{o.limitPrice != null ? fmtPrice(o.limitPrice) : '-'}</td>
                             <td className="px-2 py-2.5 text-right font-mono">{o.filledPrice != null ? fmtPrice(o.filledPrice) : '-'}</td>
                             <td className={`px-2 py-2.5 text-right font-mono ${hasPnl ? (o.realizedPnl! > 0 ? 'text-green-500' : 'text-red-500') : ''}`}>
-                              {hasPnl ? `${o.realizedPnl! > 0 ? '+' : ''}${formatPrice(o.realizedPnl!)}` : '-'}
+                              {hasPnl ? `${o.realizedPnl! > 0 ? '+' : ''}${fmtNum(o.realizedPnl!)}` : '-'}
                             </td>
                             <td className="px-2 py-2.5 text-center"><Badge variant={st.variant}>{st.label}</Badge></td>
                             <td className="px-4 py-2.5 text-center">
@@ -1672,7 +1665,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                             <td className="px-2 py-2.5 text-right font-mono">{o.quantity}</td>
                             <td className="px-2 py-2.5 text-right font-mono">{o.limitPrice != null ? fmtPrice(o.limitPrice) : '-'}</td>
                             <td className="px-2 py-2.5 text-right font-mono">{o.triggerPrice != null ? fmtPrice(o.triggerPrice) : '-'}</td>
-                            <td className="px-2 py-2.5 text-right font-mono">{o.filledAmount != null ? formatPrice(o.filledAmount) : '-'}</td>
+                            <td className="px-2 py-2.5 text-right font-mono">{o.filledAmount != null ? fmtNum(o.filledAmount) : '-'}</td>
                             <td className="px-2 py-2.5 text-center"><Badge variant={st.variant}>{st.label}</Badge></td>
                             <td className="px-4 py-2.5 text-center">
                               {o.status === 'PENDING' ? (
@@ -1708,30 +1701,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   );
 }
 
-function HelpTip({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, [open]);
-  return (
-    <div ref={ref} className="relative inline-flex">
-      <button type="button" onClick={() => setOpen(!open)} className="text-muted-foreground hover:text-foreground transition-colors">
-        <HelpCircle className="w-3.5 h-3.5" />
-      </button>
-      {open && (
-        <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 z-50 w-52 p-2.5 rounded-lg border bg-card text-xs text-muted-foreground shadow-lg leading-relaxed">
-          {text}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SLTPEditor({ rows, onChange, label, posQty, minQty, currentPrice, side, liquidationPrice, minPriceStep = 0.01, priceFormatter = formatPrice }: {
+function SLTPEditor({ rows, onChange, label, posQty, minQty, currentPrice, side, liquidationPrice, minPriceStep = 0.01, priceFormatter = fmtNum }: {
   rows: SLTPRow[];
   onChange: (rows: SLTPRow[]) => void;
   label: string;
@@ -1850,7 +1820,7 @@ function SLTPEditor({ rows, onChange, label, posQty, minQty, currentPrice, side,
   );
 }
 
-function PositionPriceBar({ pos, currentPrice, priceFormatter = formatPrice }: {
+function PositionPriceBar({ pos, currentPrice, priceFormatter = fmtNum }: {
   pos: FuturesPosition;
   currentPrice: number;
   priceFormatter?: (value?: number | null) => string;

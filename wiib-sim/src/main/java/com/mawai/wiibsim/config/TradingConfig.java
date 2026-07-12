@@ -81,8 +81,6 @@ public class TradingConfig {
     public static class LimitOrderProcessing {
         /** 最大并发处理订单数（建议设为数据库连接池的一半） */
         private int maxConcurrency = 50;
-        /** 单个订单处理超时时间（秒） */
-        private int orderTimeoutSeconds = 6;
     }
 
     /** 是否启用交易时段限制 */

@@ -32,4 +32,12 @@ public final class QuantConstants {
         }
         return normalized;
     }
+
+    /**
+     * 宽松归一（不校验白名单、永不抛错）：trim+大写，空/null 回退 BTCUSDT。
+     * LLM 工具入口与事件监听用它——模型/事件漏传 symbol 时按 BTC 容错处理，不能把整条链打断。
+     */
+    public static String normalizeSymbolLenient(String symbol) {
+        return symbol == null || symbol.isBlank() ? "BTCUSDT" : symbol.trim().toUpperCase();
+    }
 }

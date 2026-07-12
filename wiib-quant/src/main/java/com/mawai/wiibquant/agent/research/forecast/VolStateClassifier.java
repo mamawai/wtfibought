@@ -37,6 +37,14 @@ public final class VolStateClassifier {
 
     /** 界点归中档：vol==lowCut 或 vol==highCut 都算 MID。 */
     public VolState classify(double vol) {
+        return classifyWithCuts(vol, lowCut, highCut);
+    }
+
+    /**
+     * 三档分类的单一真相源：&lt; lowCut → LOW，&gt; highCut → HIGH，界点归 MID（不归 LOW/HIGH）。
+     * 对账服务用快照携带的 PIT 档界走这里，禁止各自手写比较——界点归属漂移=对账口径污染。
+     */
+    public static VolState classifyWithCuts(double vol, double lowCut, double highCut) {
         if (vol < lowCut) return VolState.LOW;
         if (vol > highCut) return VolState.HIGH;
         return VolState.MID;

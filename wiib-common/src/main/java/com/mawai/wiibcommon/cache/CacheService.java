@@ -1,6 +1,7 @@
 package com.mawai.wiibcommon.cache;
 
 import com.alibaba.fastjson2.JSON;
+import com.mawai.wiibcommon.entity.Stock;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +46,15 @@ public class CacheService {
         if (daily == null) return null;
         String last = daily.get("last");
         return last != null ? new BigDecimal(last) : null;
+    }
+
+    /**
+     * 实时价兜底口径（买/卖/持仓估值共用）：无实时数据时回退 开盘价（AI预生成）→ 昨收。
+     */
+    public BigDecimal getCurrentPriceOrFallback(Stock stock) {
+        BigDecimal price = getCurrentPrice(stock.getId());
+        if (price != null) return price;
+        return stock.getOpen() != null ? stock.getOpen() : stock.getPrevClose();
     }
 
     /**

@@ -1,3 +1,4 @@
+import { fmtNum } from '../lib/utils';
 import { useMemo } from 'react';
 import styled from 'styled-components';
 
@@ -15,10 +16,6 @@ interface Props {
   username: string;
   assets: WalletAsset[];
   ready?: boolean;
-}
-
-function fmt(n: number) {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function compact(n: number): string {
@@ -44,7 +41,7 @@ export function PortfolioWallet({ totalAssets, balance, username, assets, ready 
       label: 'Balance',
       detail: 'USDT',
       masked: `≈ ${compact(balance)}`,
-      full: fmt(balance),
+      full: fmtNum(balance),
       bg: '#ffffff',
       isDark: true,
     };
@@ -55,8 +52,8 @@ export function PortfolioWallet({ totalAssets, balance, username, assets, ready 
       label: '总持仓',
       detail: a.count,
       masked: `≈ ${compact(a.value)}`,
-      full: fmt(a.value),
-      sub: `${a.profit >= 0 ? '+' : ''}${fmt(a.profit)}`,
+      full: fmtNum(a.value),
+      sub: `${a.profit >= 0 ? '+' : ''}${fmtNum(a.profit)}`,
       bg: a.bg,
     }));
 
@@ -115,7 +112,7 @@ export function PortfolioWallet({ totalAssets, balance, username, assets, ready 
                         {c.detail.map(item => (
                           <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, opacity: 0.9 }}>
                             <span style={{ opacity: 0.7 }}>{item.label}</span>
-                            <span style={{ fontWeight: 600, fontFamily: 'monospace' }}>{fmt(item.value)}</span>
+                            <span style={{ fontWeight: 600, fontFamily: 'monospace' }}>{fmtNum(item.value)}</span>
                           </div>
                         ))}
                       </div>
@@ -153,7 +150,7 @@ export function PortfolioWallet({ totalAssets, balance, username, assets, ready 
           <div className="pocket-content">
             <div style={{ position: 'relative', height: 24, width: '100%' }}>
               <div className="balance-stars">******</div>
-              <div className="balance-real">{fmt(totalAssets)}</div>
+              <div className="balance-real">{fmtNum(totalAssets)}</div>
             </div>
             <div style={{ color: '#698263', fontSize: 12, fontWeight: 500 }}>总资产</div>
             <div className="eye-icon-wrapper">

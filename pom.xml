@@ -195,6 +195,28 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+        <plugins>
+            <!-- 把各依赖 jar 路径暴露为 ${groupId:artifactId:jar} 属性，供下方 surefire argLine 引用 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- JDK21 起动态加载 agent 会 WARNING（未来 JDK 默认禁止）：显式挂 mockito agent；-Xshare:off 避免 CDS 提示 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>-javaagent:${org.mockito:mockito-core:jar} -Xshare:off</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
     </build>
 
     <!--使用aliyun的Maven镜像源提升下载速度-->

@@ -1,5 +1,4 @@
-package com.mawai.wiibsim.service;
-import com.mawai.wiibcommon.cache.CacheService;
+package com.mawai.wiibcommon.cache;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;

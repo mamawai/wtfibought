@@ -2,6 +2,7 @@ package com.mawai.wiibquant.agent.toolkit;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibquant.agent.analysis.ScorecardService;
 import com.mawai.wiibquant.agent.quant.domain.MacroContext;
 import com.mawai.wiibquant.agent.quant.service.MacroContextService;
@@ -27,7 +28,7 @@ public class QuantForecastToolkit {
             trailingPercentile (0-1, how high current vol sits vs history), riskBudgetHint (0-1).
             This is the system's core skill - vol forecasts beat baselines under QLIKE/DM tests.""")
     public String volForecast(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol) {
-        MacroContext ctx = macroContextService.computeNow(normalize(symbol), 0);
+        MacroContext ctx = macroContextService.computeNow(QuantConstants.normalizeSymbolLenient(symbol), 0);
         if (unavailable(ctx)) {
             return unavailableJson(ctx);
         }
@@ -48,7 +49,7 @@ public class QuantForecastToolkit {
             Get ADX/ATR-based market regime classification for a crypto symbol over H6/H12/H24 horizons.
             Returns per-horizon: regime (TRENDING_UP/TRENDING_DOWN/RANGING/SHOCK) and confidence (0-1).""")
     public String marketRegime(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol) {
-        MacroContext ctx = macroContextService.computeNow(normalize(symbol), 0);
+        MacroContext ctx = macroContextService.computeNow(QuantConstants.normalizeSymbolLenient(symbol), 0);
         if (unavailable(ctx)) {
             return unavailableJson(ctx);
         }
@@ -74,7 +75,7 @@ public class QuantForecastToolkit {
     public String scorecard(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
                             @ToolParam(description = "Rolling window in days, 7 or 30, default 7") int windowDays) {
         int days = windowDays == 30 ? 30 : 7;
-        return JSON.toJSONString(scorecardService.scorecard(normalize(symbol), days));
+        return JSON.toJSONString(scorecardService.scorecard(QuantConstants.normalizeSymbolLenient(symbol), days));
     }
 
     private static boolean unavailable(MacroContext ctx) {
@@ -97,9 +98,5 @@ public class QuantForecastToolkit {
             out.put("qualityFlags", ctx.qualityFlags());
         }
         return out;
-    }
-
-    private static String normalize(String symbol) {
-        return symbol == null || symbol.isBlank() ? "BTCUSDT" : symbol.trim().toUpperCase();
     }
 }

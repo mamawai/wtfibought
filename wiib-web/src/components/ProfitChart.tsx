@@ -73,7 +73,7 @@ export function ProfitChart({ data }: Props) {
         backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
         borderColor: isDark ? '#334155' : '#E7E0D8',
         textStyle: { color: isDark ? '#F8FAFC' : '#1C1917', fontSize: 12 },
-        formatter: (params: any) => {
+        formatter: (params: { axisValue: string; value: number; marker: string; seriesName: string }[]) => {
           const date = params[0]?.axisValue ?? '';
           let html = `<div style="font-weight:600;margin-bottom:4px">${date}</div>`;
           for (const p of params) {

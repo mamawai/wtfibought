@@ -3,6 +3,7 @@ package com.mawai.wiibquant.agent.chat;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibcommon.entity.QuantSnapshot;
 import com.mawai.wiibquant.agent.analysis.DeepAnalysisService;
@@ -41,7 +42,7 @@ public class DeepAnalysisToolkit {
     public String runDeepAnalysis(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
                                   ToolContext toolContext) {
         String sessionId = sessionId(toolContext);
-        String normalized = symbol == null || symbol.isBlank() ? "BTCUSDT" : symbol.trim().toUpperCase();
+        String normalized = QuantConstants.normalizeSymbolLenient(symbol);
 
         // HITL 闸门：无有效授权 → 登记 pending，返回待确认标记（不烧深模型）
         if (!approvalRegistry.consumeApproval(sessionId)) {

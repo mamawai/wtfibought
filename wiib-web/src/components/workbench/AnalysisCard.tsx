@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, Scale, ShieldOff, Clock } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { cn, fmtDateTime } from '../../lib/utils';
 import type { QuantDeepAnalysisView } from '../../types';
 
 const TRIGGER_CN: Record<string, string> = { schedule: '定频', sentinel: '哨兵插队', chat: '对话触发', manual: '手动' };
@@ -77,7 +77,7 @@ export function AnalysisCard({ analysis }: { analysis: QuantDeepAnalysisView | n
         )}
         <span className="ml-auto text-[10px] text-muted-foreground flex items-center gap-1">
           <Clock className="w-3 h-3" />
-          {new Date(analysis.closeTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+          {fmtDateTime(analysis.closeTime)}
         </span>
       </div>
 

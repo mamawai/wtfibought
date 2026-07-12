@@ -9,7 +9,7 @@ import { useUserStore } from '../stores/userStore';
 import { useToast } from '../components/ui/use-toast';
 import { Dialog, DialogContent, DialogHeader } from '../components/ui/dialog';
 import { EquityChart } from '../components/EquityChart';
-import { cn } from '../lib/utils';
+import { cn, fmtDateTime, fmtNum } from '../lib/utils';
 import type { FuturesPosition, StrategyAccountView, StrategyClosedPosition } from '../types';
 import type { TnEquityPoint } from '../types/testnet';
 
@@ -23,17 +23,12 @@ const STRATEGY_META: Record<string, { name: string; desc: string }> = {
   SQZMOM: { name: 'Sqz Momentum', desc: '挤压动量突破' },
 };
 
-const fmt$ = (v: number | null | undefined, digits = 2) =>
-  v == null ? '-' : v.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
-
-const fmtTime = (iso: string) =>
-  new Date(iso).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 function PnlText({ value, className }: { value: number | null | undefined; className?: string }) {
   if (value == null) return <span className={className}>-</span>;
   return (
     <span className={cn(value >= 0 ? 'text-gain' : 'text-loss', className)}>
-      {value >= 0 ? '+' : ''}{fmt$(value)}
+      {value >= 0 ? '+' : ''}{fmtNum(value)}
     </span>
   );
 }
@@ -57,15 +52,15 @@ function PositionCard({ pos, canClose, onClose }: {
         <span className={cn('text-[10px] font-bold px-1.5 py-0.5 rounded', isLong ? 'bg-gain/15 text-gain' : 'bg-loss/15 text-loss')}>
           {isLong ? '多' : '空'} {pos.leverage}x
         </span>
-        <span className="ml-auto text-[10px] text-muted-foreground">{fmtTime(pos.createdAt)}</span>
+        <span className="ml-auto text-[10px] text-muted-foreground">{fmtDateTime(pos.createdAt)}</span>
       </div>
       <div className="grid grid-cols-3 gap-1.5 text-[11px]">
         <span className="text-muted-foreground">数量 <span className="font-bold text-foreground tabular-nums">{pos.quantity}</span></span>
-        <span className="text-muted-foreground">开仓 <span className="font-bold text-foreground tabular-nums">{fmt$(pos.entryPrice)}</span></span>
-        <span className="text-muted-foreground">标记 <span className="font-bold text-foreground tabular-nums">{fmt$(pos.markPrice)}</span></span>
-        <span className="text-muted-foreground">保证金 <span className="font-bold text-foreground tabular-nums">{fmt$(pos.margin)}</span></span>
-        {sl != null && <span className="text-muted-foreground">SL <span className="font-bold text-loss tabular-nums">{fmt$(sl)}</span></span>}
-        {tp != null && <span className="text-muted-foreground">TP <span className="font-bold text-gain tabular-nums">{fmt$(tp)}</span></span>}
+        <span className="text-muted-foreground">开仓 <span className="font-bold text-foreground tabular-nums">{fmtNum(pos.entryPrice)}</span></span>
+        <span className="text-muted-foreground">标记 <span className="font-bold text-foreground tabular-nums">{fmtNum(pos.markPrice)}</span></span>
+        <span className="text-muted-foreground">保证金 <span className="font-bold text-foreground tabular-nums">{fmtNum(pos.margin)}</span></span>
+        {sl != null && <span className="text-muted-foreground">SL <span className="font-bold text-loss tabular-nums">{fmtNum(sl)}</span></span>}
+        {tp != null && <span className="text-muted-foreground">TP <span className="font-bold text-gain tabular-nums">{fmtNum(tp)}</span></span>}
       </div>
       <div className="flex items-center justify-between">
         <span className="text-xs">
@@ -95,10 +90,10 @@ function TradeRow({ t }: { t: StrategyClosedPosition }) {
     <div className="flex items-center gap-2 py-1.5 text-[11px] border-b border-border/40 last:border-0">
       <span className={cn('font-bold w-6 shrink-0', isLong ? 'text-gain' : 'text-loss')}>{isLong ? '多' : '空'}</span>
       <span className="font-bold w-16 shrink-0">{t.symbol.replace('USDT', '')}</span>
-      <span className="text-muted-foreground tabular-nums">{fmt$(t.entryPrice)} → {fmt$(t.closedPrice)}</span>
+      <span className="text-muted-foreground tabular-nums">{fmtNum(t.entryPrice)} → {fmtNum(t.closedPrice)}</span>
       {t.status === 'LIQUIDATED' && <span className="text-[9px] font-bold px-1 rounded bg-loss/15 text-loss">强平</span>}
       <PnlText value={t.closedPnl} className="ml-auto font-bold tabular-nums" />
-      <span className="text-muted-foreground/70 w-20 text-right shrink-0">{fmtTime(t.updatedAt)}</span>
+      <span className="text-muted-foreground/70 w-20 text-right shrink-0">{fmtDateTime(t.updatedAt)}</span>
     </div>
   );
 }
@@ -115,11 +110,12 @@ function StrategyColumn({ view, canClose, onClose }: {
   // 收益曲线：已平仓 closedPnl 按平仓时间升序累加（testnet 页同口径，从 0 起）
   const equityPoints = useMemo<TnEquityPoint[]>(() => {
     const asc = [...view.closedPositions].reverse();
-    let cum = 0;
-    return asc.map(p => {
-      cum += p.closedPnl ?? 0;
-      return { time: new Date(p.updatedAt).getTime(), cumPnl: cum };
-    });
+    // 前缀和写法：闭包内累加变量违反 react-hooks/immutability（条数少，O(n²) 无所谓）
+    const pnls = asc.map(p => p.closedPnl ?? 0);
+    return asc.map((p, i) => ({
+      time: new Date(p.updatedAt).getTime(),
+      cumPnl: pnls.slice(0, i + 1).reduce((a, b) => a + b, 0),
+    }));
   }, [view.closedPositions]);
 
   const trades = showAllTrades ? view.closedPositions : view.closedPositions.slice(0, 8);
@@ -149,8 +145,8 @@ function StrategyColumn({ view, canClose, onClose }: {
           {/* Stats */}
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-lg neu-flat px-3 py-2">
-              <div className="text-base font-black tabular-nums truncate">${fmt$(view.equity)}</div>
-              <div className="text-[10px] text-muted-foreground flex items-center gap-1"><Wallet className="w-3 h-3" /> 权益（可用 ${fmt$(view.balance, 0)}）</div>
+              <div className="text-base font-black tabular-nums truncate">${fmtNum(view.equity)}</div>
+              <div className="text-[10px] text-muted-foreground flex items-center gap-1"><Wallet className="w-3 h-3" /> 权益（可用 ${fmtNum(view.balance, 0)}）</div>
             </div>
             <div className="rounded-lg neu-flat px-3 py-2">
               <div className="text-base font-black tabular-nums truncate"><PnlText value={view.cumPnl} /></div>

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, type ElementType, type React
 import { testnetApi } from '../api';
 import { useToast } from '../components/ui/use-toast';
 import { useUserStore } from '../stores/userStore';
-import { cn } from '../lib/utils';
+import { cn, fmtDateTime, fmtNum } from '../lib/utils';
 import { formatCoinPrice } from '../lib/coinConfig';
 import { EquityChart } from '../components/EquityChart';
 import { DailyGrid } from '../components/DailyGrid';
@@ -19,12 +19,8 @@ const SYM_LABEL: Record<string, string> = { ALL: '全部', BTCUSDT: 'BTC', ETHUS
 
 /* ========== 格式化（与 AiTrader 同口径） ========== */
 function fmt$(n?: number | null, compact = false) {
-  if (n == null || !Number.isFinite(n)) return '-';
-  if (compact && Math.abs(n) >= 1e4) return (n / 1e3).toFixed(1) + 'K';
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-function fmtTime(ms: number) {
-  return new Date(ms).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  if (compact && n != null && Number.isFinite(n) && Math.abs(n) >= 1e4) return (n / 1e3).toFixed(1) + 'K';
+  return fmtNum(n);
 }
 /** 毫秒时刻 → 东八区 yyyy-MM-dd（与后端 dailyGrid 切日口径一致）。 */
 function cnDate(ms: number) {
@@ -126,7 +122,7 @@ function TradeRow({ t }: { t: TnTrade }) {
   const pnlUp = t.realizedPnl >= 0;
   return (
     <div className="neu-flat rounded-lg px-3 py-2 flex items-center gap-2 text-xs">
-      <span className="text-[10px] text-muted-foreground tabular-nums w-20">{fmtTime(t.time)}</span>
+      <span className="text-[10px] text-muted-foreground tabular-nums w-20">{fmtDateTime(t.time)}</span>
       <span className="font-bold">{t.symbol.replace('USDT', '')}</span>
       <span className={cn('font-bold', buy ? 'text-gain' : 'text-loss')}>{t.side}</span>
       {t.maker

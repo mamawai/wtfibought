@@ -4,12 +4,11 @@ import { useToast } from '../components/ui/use-toast';
 import { Button } from '../components/ui/button';
 import { Skeleton } from '../components/ui/skeleton';
 import { Wallet, TrendingUp, Pickaxe } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, fmtNum } from '../lib/utils';
 import type { MinesGameState, MinesStatus } from '../types';
 
 const BET_PRESETS = [100, 500, 1000, 5000, 10000, 50000];
 
-const fmt = (n: number) => n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtMult = (n: number) => n.toFixed(2);
 
 export function Mines() {
@@ -133,7 +132,7 @@ export function Mines() {
             <div className="text-xs text-muted-foreground">余额</div>
             <div className="text-xl font-bold tabular-nums flex items-center gap-1.5">
               <Wallet className="w-4 h-4 text-muted-foreground" />
-              {fmt(balance)}
+              {fmtNum(balance)}
             </div>
           </div>
         </div>
@@ -151,7 +150,7 @@ export function Mines() {
           <div className="text-right">
             <div className="text-xs text-muted-foreground">可得</div>
             <div className="text-xl font-bold tabular-nums text-emerald-400">
-              {fmt(game.potentialPayout)}
+              {fmtNum(game.potentialPayout)}
             </div>
           </div>
         )}
@@ -166,9 +165,9 @@ export function Mines() {
             : 'bg-red-500/20 text-red-400 border border-red-500/30'
         )}>
           {game.result === 'CASHED_OUT' ? (
-            <span>提现成功 +{fmt(game.payout ?? 0)} ({fmtMult(game.currentMultiplier)}×)</span>
+            <span>提现成功 +{fmtNum(game.payout ?? 0)} ({fmtMult(game.currentMultiplier)}×)</span>
           ) : (
-            <span>踩雷了！失去 {fmt(game.betAmount)}</span>
+            <span>踩雷了！失去 {fmtNum(game.betAmount)}</span>
           )}
         </div>
       )}
@@ -287,7 +286,7 @@ export function Mines() {
           <div className="text-center">
             <div className="text-xs text-muted-foreground mb-1">当前可提现</div>
             <div className="text-3xl font-bold tabular-nums text-emerald-400">
-              {game.revealed.length > 0 ? fmt(game.potentialPayout) : fmt(0)}
+              {game.revealed.length > 0 ? fmtNum(game.potentialPayout) : fmtNum(0)}
             </div>
             {game.nextMultiplier && (
               <div className="text-xs text-muted-foreground mt-1 flex items-center justify-center gap-1">
@@ -301,7 +300,7 @@ export function Mines() {
             disabled={acting || game.revealed.length === 0}
             className="w-full h-12 text-base bg-emerald-600 hover:bg-emerald-500 border-emerald-500/30 text-white"
           >
-            提现 {game.revealed.length > 0 ? fmt(game.potentialPayout) : ''}
+            提现 {game.revealed.length > 0 ? fmtNum(game.potentialPayout) : ''}
           </Button>
         </div>
       ) : null}

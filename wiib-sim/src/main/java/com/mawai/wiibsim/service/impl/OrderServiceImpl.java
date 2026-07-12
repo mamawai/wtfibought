@@ -29,6 +29,7 @@ import com.mawai.wiibsim.service.StockCacheService;
 import com.mawai.wiibsim.service.StockService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.service.BuffService;
+import com.mawai.wiibsim.util.ConcurrentBatch;
 import com.mawai.wiibsim.util.RedisLockUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,16 +39,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 /**
@@ -95,12 +89,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BizException(ErrorCode.USER_BANKRUPT);
         }
 
-        // 从Redis获取实时价格
-        BigDecimal price = cacheService.getCurrentPrice(stock.getId());
-        if (price == null) {
-            // 非交易时段用开盘价（AI预生成）
-            price = stock.getOpen() != null ? stock.getOpen() : stock.getPrevClose();
-        }
+        // 实时价，无数据时回退开盘价/昨收（共用兜底口径）
+        BigDecimal price = cacheService.getCurrentPriceOrFallback(stock);
 
         int leverageMultiple = marginAccountService.normalizeLeverageMultiple(request.getLeverageMultiple());
 
@@ -194,12 +184,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             throw new BizException(ErrorCode.POSITION_NOT_ENOUGH);
         }
 
-        // 从Redis获取实时价格
-        BigDecimal price = cacheService.getCurrentPrice(stock.getId());
-        if (price == null) {
-            // 非交易时段用开盘价（AI预生成）
-            price = stock.getOpen() != null ? stock.getOpen() : stock.getPrevClose();
-        }
+        // 实时价，无数据时回退开盘价/昨收（共用兜底口径）
+        BigDecimal price = cacheService.getCurrentPriceOrFallback(stock);
 
         if (OrderType.MARKET.getCode().equals(request.getOrderType())) {
             BigDecimal amount = price.multiply(BigDecimal.valueOf(request.getQuantity()));
@@ -325,74 +311,16 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (pendingOrders.isEmpty())
             return;
 
-        int maxConcurrency = tradingConfig.getLimitOrderProcessing().getMaxConcurrency();
-        int timeoutSeconds = tradingConfig.getLimitOrderProcessing().getOrderTimeoutSeconds();
-
-        Semaphore semaphore = new Semaphore(maxConcurrency);
-
-        log.info("开始检测{}个限价单触发条件，最大并发数={}", pendingOrders.size(), maxConcurrency);
-        long startTime = System.currentTimeMillis();
-        int triggeredCount = 0;
-        int failCount = 0;
-
-        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            List<Future<Boolean>> futures = new ArrayList<>();
-
-            for (Order order : pendingOrders) {
-                Future<Boolean> future = executor.submit(() -> {
-                    try {
-                        if (!semaphore.tryAcquire(5, TimeUnit.SECONDS)) {
-                            log.warn("获取信号量超时，跳过订单{}", order.getId());
-                            return false;
-                        }
-
-                        try {
-                            return checkAndMarkTriggered(order);
-                        } finally {
-                            semaphore.release();
-                        }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        log.warn("检测订单{}被中断", order.getId());
-                        return false;
-                    }
-                });
-                futures.add(future);
-            }
-
-            for (Future<Boolean> future : futures) {
-                try {
-                    long remainingTime = (timeoutSeconds * 1000L) - (System.currentTimeMillis() - startTime);
-                    if (remainingTime > 0) {
-                        Boolean triggered = future.get(remainingTime, TimeUnit.MILLISECONDS);
-                        if (Boolean.TRUE.equals(triggered)) {
-                            triggeredCount++;
-                        } else {
-                            failCount++;
-                        }
-                    } else {
-                        failCount++;
-                    }
-                } catch (TimeoutException e) {
-                    log.warn("订单检测超时");
-                    failCount++;
-                } catch (Exception e) {
-                    log.info("订单检测异常: {}", e.getMessage());
-                    failCount++;
-                }
-            }
-        }
-
-        long elapsed = System.currentTimeMillis() - startTime;
-        log.info("限价单触发检测完成，共{}个订单，触发{}个，失败{}个，耗时{}ms",
-                pendingOrders.size(), triggeredCount, failCount, elapsed);
+        log.info("开始检测{}个限价单触发条件", pendingOrders.size());
+        ConcurrentBatch.run(pendingOrders,
+                tradingConfig.getLimitOrderProcessing().getMaxConcurrency(),
+                this::checkAndMarkTriggered);
     }
 
     /**
      * 检测并标记限价单触发（虚拟线程内执行）
-     * @return true=已触发，false=未触发或失败
      */
-    private boolean checkAndMarkTriggered(Order order) {
+    private void checkAndMarkTriggered(Order order) {
         try {
             Long stockId = order.getStockId();
             BigDecimal currentPrice = cacheService.getCurrentPrice(stockId);
@@ -421,7 +349,6 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 if (lockValue != null) {
                     try {
                         SpringUtils.getAopProxy(this).markOrderTriggered(order.getId(), currentPrice);
-                        return true;
                     } finally {
                         redisLockUtil.unlock(lockKey, lockValue);
                     }
@@ -429,10 +356,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                     log.info("限价单{}正在被其他实例处理", order.getId());
                 }
             }
-            return false;
         } catch (Exception e) {
             log.error("检测限价单触发失败 orderId={}", order.getId(), e);
-            return false;
         }
     }
 
@@ -602,70 +527,10 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (expiredOrders.isEmpty())
             return;
 
-        int maxConcurrency = tradingConfig.getLimitOrderProcessing().getMaxConcurrency();
-        int timeoutSeconds = tradingConfig.getLimitOrderProcessing().getOrderTimeoutSeconds();
-
-        Semaphore semaphore = new Semaphore(maxConcurrency);
-
-        log.info("开始并发处理{}个过期订单，最大并发数={}", expiredOrders.size(), maxConcurrency);
-        long startTime = System.currentTimeMillis();
-        int successCount = 0;
-        int failCount = 0;
-
-        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            List<Future<Boolean>> futures = new ArrayList<>();
-
-            for (Order order : expiredOrders) {
-                Future<Boolean> future = executor.submit(() -> {
-                    try {
-                        // 信号量超时时间短一些，避免长时间等待
-                        if (!semaphore.tryAcquire(5, TimeUnit.SECONDS)) {
-                            log.warn("获取信号量超时，跳过过期订单{}", order.getId());
-                            return false;
-                        }
-
-                        try {
-                            processExpiredOrder(order);
-                            return true;
-                        } finally {
-                            semaphore.release();
-                        }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        log.warn("处理过期订单{}被中断", order.getId());
-                        return false;
-                    }
-                });
-                futures.add(future);
-            }
-
-            // 等待所有任务完成
-            for (Future<Boolean> future : futures) {
-                try {
-                    long remainingTime = (timeoutSeconds * 1000L) - (System.currentTimeMillis() - startTime);
-                    if (remainingTime > 0) {
-                        Boolean success = future.get(remainingTime, TimeUnit.MILLISECONDS);
-                        if (Boolean.TRUE.equals(success)) {
-                            successCount++;
-                        } else {
-                            failCount++;
-                        }
-                    } else {
-                        failCount++;
-                    }
-                } catch (TimeoutException e) {
-                    log.warn("过期订单处理超时");
-                    failCount++;
-                } catch (Exception e) {
-                    log.info("过期订单处理异常: {}", e.getMessage());
-                    failCount++;
-                }
-            }
-        }
-
-        long elapsed = System.currentTimeMillis() - startTime;
-        log.info("过期订单处理完成，共{}个订单，成功{}个，失败{}个，耗时{}ms",
-                expiredOrders.size(), successCount, failCount, elapsed);
+        log.info("开始并发处理{}个过期订单", expiredOrders.size());
+        ConcurrentBatch.run(expiredOrders,
+                tradingConfig.getLimitOrderProcessing().getMaxConcurrency(),
+                this::processExpiredOrder);
     }
 
     /**

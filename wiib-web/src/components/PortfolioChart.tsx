@@ -75,7 +75,7 @@ export function PortfolioChart({ positions, cryptoPositions = [], futuresRows = 
         backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
         borderColor: isDark ? '#334155' : '#E7E0D8',
         textStyle: { color: isDark ? '#F8FAFC' : '#1C1917' },
-        formatter: (params: any) => {
+        formatter: (params: { marker: string; name: string; value: number; percent: number }) => {
            return `${params.marker}${params.name}<br/>
                    <span style="font-weight:bold; font-size:1.1em">${params.value.toFixed(2)}</span> (${params.percent}%)`;
         }

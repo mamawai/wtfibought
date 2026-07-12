@@ -2,6 +2,7 @@ package com.mawai.wiibquant.agent.behavior;
 
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.agent.ReactAgent;
+import com.alibaba.cloud.ai.graph.exception.GraphRunnerException;
 import com.alibaba.fastjson2.JSON;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -80,17 +81,14 @@ public class BehaviorAnalysisService {
         return Result.ok(report);
     }
 
-    private String collectResponse(ReactAgent agent, long userId) {
+    /** 流式异常直接上抛，由 doAnalyze 统一 catch 落 Result.fail，不再多包一层前缀。 */
+    private String collectResponse(ReactAgent agent, long userId) throws GraphRunnerException {
         String prompt = "分析用户#" + userId + "的全部行为数据，用户ID为" + userId;
         StringBuilder assistantChunks = new StringBuilder();
 
-        try {
-            agent.streamMessages(prompt, RunnableConfig.builder().threadId("behavior-" + userId).build())
-                    .doOnNext(message -> appendResponse(message, assistantChunks))
-                    .blockLast();
-        } catch (Exception e) {
-            throw new RuntimeException("行为分析流式执行失败: " + e.getMessage(), e);
-        }
+        agent.streamMessages(prompt, RunnableConfig.builder().threadId("behavior-" + userId).build())
+                .doOnNext(message -> appendResponse(message, assistantChunks))
+                .blockLast();
 
         String finalText = assistantChunks.toString();
         if (finalText.isBlank()) {

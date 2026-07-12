@@ -15,14 +15,16 @@ export interface CryptoTick {
 const THROTTLE_MS = 3000;
 
 export function useCryptoStream(symbol: string | undefined, mode: CryptoStreamMode): CryptoTick | null {
-  const [tick, setTick] = useState<CryptoTick | null>(null);
+  // tick 挂 key：symbol/mode 切换时旧数据按 null 返回，免去 effect 里同步 setState 清空
+  const [state, setState] = useState<{ key: string; tick: CryptoTick | null }>({ key: '', tick: null });
   const lastUpdateRef = useRef(0);
   const pendingRef = useRef<CryptoTick | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const key = `${symbol}:${mode}`;
 
   useEffect(() => {
     if (!symbol) return;
-    setTick(null);
+    const k = `${symbol}:${mode}`;
     lastUpdateRef.current = 0;
     pendingRef.current = null;
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -31,7 +33,7 @@ export function useCryptoStream(symbol: string | undefined, mode: CryptoStreamMo
     const flush = (t: CryptoTick) => {
       lastUpdateRef.current = Date.now();
       pendingRef.current = null;
-      setTick(t);
+      setState({ key: k, tick: t });
     };
 
     const topic = mode === 'futures' ? `/topic/futures/${symbol}` : `/topic/crypto/${symbol}`;
@@ -43,13 +45,14 @@ export function useCryptoStream(symbol: string | undefined, mode: CryptoStreamMo
         if (mode === 'futures') {
           const nextFp = data.fp != null ? parseFloat(data.fp) : undefined;
           const nextMp = data.mp != null ? parseFloat(data.mp) : undefined;
-          setTick(prev => {
+          setState(s => {
+            const prev = s.key === k ? s.tick : null;
             const price = nextFp ?? prev?.fp ?? prev?.price ?? nextMp;
-            if (price == null) return prev;
-            return {
+            if (price == null) return s;
+            return { key: k, tick: {
               price, ts: Date.now(), ws: false, fws: !!data.fws,
               mp: nextMp ?? prev?.mp, fp: nextFp ?? prev?.fp,
-            };
+            } };
           });
           return;
         }
@@ -80,5 +83,5 @@ export function useCryptoStream(symbol: string | undefined, mode: CryptoStreamMo
     };
   }, [symbol, mode]);
 
-  return tick;
+  return state.key === key ? state.tick : null;
 }

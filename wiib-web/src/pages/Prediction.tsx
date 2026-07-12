@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { fmtNum } from '../lib/utils';
+import { HelpTip } from '../components/HelpTip';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import * as echarts from 'echarts';
 import { predictionApi } from '../api';
 import { useUserStore } from '../stores/userStore';
@@ -9,7 +11,7 @@ import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
-import { TrendingUp, TrendingDown, Loader2, Clock, Wallet, ArrowUpRight, ArrowDownRight, HelpCircle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Loader2, Clock, Wallet, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import type { PredictionRound, PredictionBet, PageResult } from '../types';
 
 const WINDOW_SECONDS = 300;
@@ -53,36 +55,33 @@ function RollingChar({ char, direction }: { char: string; direction: 'up' | 'dow
   );
 }
 
-function RollingNumber({ value, className }: { value: string; className?: string }) {
-  const prev = useRef(value);
-  const chars = useMemo(() => {
-    const oldChars = prev.current.split('');
-    const newChars = value.split('');
-    const maxLen = Math.max(oldChars.length, newChars.length);
-    const padOld = oldChars.length < maxLen ? Array(maxLen - oldChars.length).fill('').concat(oldChars) : oldChars;
-    const padNew = newChars.length < maxLen ? Array(maxLen - newChars.length).fill('').concat(newChars) : newChars;
-    return padNew.map((c, i) => {
-      const o = padOld[i];
-      if (c === o) return { char: c, dir: 'none' as const };
-      const cn = parseInt(c), on = parseInt(o);
-      if (isNaN(cn) || isNaN(on)) return { char: c, dir: 'none' as const };
-      return { char: c, dir: cn > on ? 'up' as const : 'down' as const };
-    });
-  }, [value]);
+function diffRollingChars(oldValue: string, newValue: string) {
+  const oldChars = oldValue.split('');
+  const newChars = newValue.split('');
+  const maxLen = Math.max(oldChars.length, newChars.length);
+  const padOld = oldChars.length < maxLen ? Array(maxLen - oldChars.length).fill('').concat(oldChars) : oldChars;
+  const padNew = newChars.length < maxLen ? Array(maxLen - newChars.length).fill('').concat(newChars) : newChars;
+  return padNew.map((c, i) => {
+    const o = padOld[i];
+    if (c === o) return { char: c, dir: 'none' as const };
+    const cn = parseInt(c), on = parseInt(o);
+    if (isNaN(cn) || isNaN(on)) return { char: c, dir: 'none' as const };
+    return { char: c, dir: cn > on ? 'up' as const : 'down' as const };
+  });
+}
 
-  useEffect(() => { prev.current = value; }, [value]);
+function RollingNumber({ value, className }: { value: string; className?: string }) {
+  // 上一渲染值放 state（render 期读 ref 违反 react-hooks/refs）：过渡方向在变更瞬间算好并保留
+  const [state, setState] = useState(() => ({ value, chars: diffRollingChars(value, value) }));
+  if (state.value !== value) {
+    setState({ value, chars: diffRollingChars(state.value, value) });
+  }
 
   return (
     <span className={className}>
-      {chars.map((c, i) => <RollingChar key={i} char={c.char} direction={c.dir} />)}
+      {state.chars.map((c, i) => <RollingChar key={i} char={c.char} direction={c.dir} />)}
     </span>
   );
-}
-
-function formatPrice(n: number | string | undefined | null): string {
-  if (n == null) return '--';
-  const v = typeof n === 'string' ? parseFloat(n) : n;
-  return isNaN(v) ? '--' : v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function formatTime(ts: number): string {
@@ -94,29 +93,6 @@ function fmtCountdown(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
-function Tip({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
-  }, [open]);
-  return (
-    <span ref={ref} className="relative inline-flex">
-      <span className="text-muted-foreground cursor-pointer" onClick={e => { e.stopPropagation(); setOpen(v => !v); }}>
-        <HelpCircle className="w-3 h-3" />
-      </span>
-      {open && (
-        <span className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 rounded-md bg-popover border shadow-md text-[11px] text-popover-foreground leading-snug whitespace-pre-line w-48">
-          {text}
-        </span>
-      )}
-    </span>
-  );
 }
 
 export function Prediction() {
@@ -268,7 +244,7 @@ export function Prediction() {
           ]) },
           markLine: startPrice != null ? {
             silent: true, symbol: 'none',
-            data: [{ yAxis: startPrice, lineStyle: { color: '#666', type: 'dashed', width: 1 }, label: { formatter: '目标价: $' + formatPrice(startPrice), fontSize: 10, position: 'insideStartTop', color: '#888' } }]
+            data: [{ yAxis: startPrice, lineStyle: { color: '#666', type: 'dashed', width: 1 }, label: { formatter: '目标价: $' + fmtNum(startPrice), fontSize: 10, position: 'insideStartTop', color: '#888' } }]
           } : undefined,
         },
         {
@@ -283,7 +259,7 @@ export function Prediction() {
       tooltip: { trigger: 'axis', formatter: (p: unknown) => {
         const arr = p as { data: [number, number] }[];
         if (!arr?.[0]) return '';
-        return `${formatTime(arr[0].data[0])}<br/><b>$${formatPrice(arr[0].data[1])}</b>`;
+        return `${formatTime(arr[0].data[0])}<br/><b>$${fmtNum(arr[0].data[1])}</b>`;
       }},
     }, false);
   }, [priceHistory, round?.startPrice, isDark]);
@@ -423,7 +399,7 @@ export function Prediction() {
           {/* 价格行 */}
           <div className="flex items-end justify-between px-5 pb-2">
             <div>
-              <RollingNumber value={`$${formatPrice(currentPrice)}`} className={`text-2xl font-black tabular-nums ${isUp ? 'text-green-500' : 'text-red-500'}`} />
+              <RollingNumber value={`$${fmtNum(currentPrice)}`} className={`text-2xl font-black tabular-nums ${isUp ? 'text-green-500' : 'text-red-500'}`} />
               {diff != null && (
                 <div className={`flex items-center gap-1 mt-0.5 text-xs font-semibold ${isUp ? 'text-green-500' : 'text-red-500'}`}>
                   {isUp ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
@@ -433,7 +409,7 @@ export function Prediction() {
             </div>
             <span className="px-2.5 py-1 rounded bg-muted text-xs font-bold font-mono tabular-nums text-muted-foreground flex items-center gap-1">
               {startPrice != null
-                ? <><Tip text="回合开始时的BTC基准价，结束时高于此价为涨，低于为跌" />目标价 ${formatPrice(startPrice)}</>
+                ? <><HelpTip side="top" iconClassName="w-3 h-3" text="回合开始时的BTC基准价，结束时高于此价为涨，低于为跌" />目标价 ${fmtNum(startPrice)}</>
                 : <><Loader2 className="w-3 h-3 animate-spin" />目标价获取中</>}
             </span>
           </div>
@@ -469,7 +445,7 @@ export function Prediction() {
                 <button onClick={() => setSide('UP')}
                         className={`relative rounded-xl border p-4 text-center transition-all ${side === 'UP' ? 'border-green-500 bg-green-500/10 shadow-[0_0_12px_-3px_rgba(34,197,94,0.3)]' : 'border-border hover:border-green-500/40'}`}>
                   <TrendingUp className="mx-auto w-5 h-5 text-green-500 mb-1.5" />
-                  <div className="text-[10px] text-muted-foreground tracking-wider mb-0.5 flex items-center justify-center gap-0.5">看涨 <Tip text="概率价格：50¢ = 市场认为50%概率上涨。价格越高代表越看好" /></div>
+                  <div className="text-[10px] text-muted-foreground tracking-wider mb-0.5 flex items-center justify-center gap-0.5">看涨 <HelpTip side="top" iconClassName="w-3 h-3" text="概率价格：50¢ = 市场认为50%概率上涨。价格越高代表越看好" /></div>
                   <div className="text-2xl font-black text-green-500 tabular-nums">
                     {tradeTab === 'buy'
                       ? (displayUpAsk != null ? `${(displayUpAsk * 100).toFixed(0)}¢` : '--')
@@ -479,7 +455,7 @@ export function Prediction() {
                 <button onClick={() => setSide('DOWN')}
                         className={`relative rounded-xl border p-4 text-center transition-all ${side === 'DOWN' ? 'border-red-500 bg-red-500/10 shadow-[0_0_12px_-3px_rgba(239,68,68,0.3)]' : 'border-border hover:border-red-500/40'}`}>
                   <TrendingDown className="mx-auto w-5 h-5 text-red-500 mb-1.5" />
-                  <div className="text-[10px] text-muted-foreground tracking-wider mb-0.5 flex items-center justify-center gap-0.5">看跌 <Tip text="概率价格：50¢ = 市场认为50%概率下跌。价格越高代表越看空" /></div>
+                  <div className="text-[10px] text-muted-foreground tracking-wider mb-0.5 flex items-center justify-center gap-0.5">看跌 <HelpTip side="top" iconClassName="w-3 h-3" text="概率价格：50¢ = 市场认为50%概率下跌。价格越高代表越看空" /></div>
                   <div className="text-2xl font-black text-red-500 tabular-nums">
                     {tradeTab === 'buy'
                       ? (displayDownAsk != null ? `${(displayDownAsk * 100).toFixed(0)}¢` : '--')
@@ -493,7 +469,7 @@ export function Prediction() {
                   <div className="flex items-center justify-between mb-2.5">
                     <span className="text-xs text-muted-foreground flex items-center gap-1">
                       <Wallet className="w-3 h-3" />
-                      {user ? `${formatPrice(user.balance)} USDT` : '--'}
+                      {user ? `${fmtNum(user.balance)} USDT` : '--'}
                     </span>
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs text-muted-foreground">金额</span>
@@ -516,7 +492,7 @@ export function Prediction() {
                     </Button>
                   </div>
                   <div className="flex items-center justify-between py-2.5 px-3 mb-4 rounded-lg bg-muted/50">
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">预计收益 <Tip text="若预测正确，每份合约按$1结算。收益 = 金额 ÷ 概率价格" /></span>
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">预计收益 <HelpTip side="top" iconClassName="w-3 h-3" text="若预测正确，每份合约按$1结算。收益 = 金额 ÷ 概率价格" /></span>
                     <span className="text-sm font-bold font-mono tabular-nums">${toWin > 0 ? toWin.toFixed(2) : '--'}</span>
                   </div>
                   <Button onClick={handleBuy} disabled={submitting || !user}
@@ -528,7 +504,7 @@ export function Prediction() {
               ) : (
                 <>
                   <div className="flex items-center justify-between mb-2.5">
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">持仓份数 <Tip text="持有的合约数量，预测正确时每份值$1" />: <span className="font-bold text-foreground">{totalShares.toFixed(2)}</span></span>
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">持仓份数 <HelpTip side="top" iconClassName="w-3 h-3" text="持有的合约数量，预测正确时每份值$1" />: <span className="font-bold text-foreground">{totalShares.toFixed(2)}</span></span>
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs text-muted-foreground">份数</span>
                       <Input type="number" placeholder="0" value={shares}
@@ -550,7 +526,7 @@ export function Prediction() {
                     </Button>
                   </div>
                   <div className="flex items-center justify-between py-2.5 px-3 mb-4 rounded-lg bg-muted/50">
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">预计到账 <Tip text="按当前卖出价计算的到手金额（已扣手续费）" /></span>
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">预计到账 <HelpTip side="top" iconClassName="w-3 h-3" text="按当前卖出价计算的到手金额（已扣手续费）" /></span>
                     <span className="text-sm font-bold font-mono tabular-nums">${youllReceive > 0 ? youllReceive.toFixed(2) : '--'}</span>
                   </div>
                   <Button onClick={handleSellSide} disabled={submitting || activeBetsForSide.length === 0}
@@ -677,9 +653,9 @@ export function Prediction() {
                       {r.windowStart ? new Date(r.windowStart * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '--'}
                     </span>
                     <span className="text-muted-foreground">&rarr;</span>
-                    <span className="font-mono tabular-nums">${formatPrice(r.startPrice)}</span>
+                    <span className="font-mono tabular-nums">${fmtNum(r.startPrice)}</span>
                     <span className="text-muted-foreground">&rarr;</span>
-                    <span className="font-mono tabular-nums">${formatPrice(r.endPrice)}</span>
+                    <span className="font-mono tabular-nums">${fmtNum(r.endPrice)}</span>
                     <span className="ml-auto">
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${r.outcome === 'UP' ? 'bg-green-500/12 text-green-500' : r.outcome === 'DOWN' ? 'bg-red-500/12 text-red-500' : 'bg-muted text-muted-foreground'}`}>
                         {r.outcome || '--'}

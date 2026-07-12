@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { cn } from '../../lib/utils';
 
 const SUIT_SYMBOLS: Record<string, string> = { H: '\u2665', D: '\u2666', C: '\u2663', S: '\u2660' };
@@ -12,18 +12,19 @@ interface Props {
 }
 
 export function PlayingCard({ card, className, delay = 0 }: Props) {
-  const prevRef = useRef(card);
+  // render 期 prev 比较（React 文档模式）：暗牌翻开的瞬间触发 flip 动画
+  const [prevCard, setPrevCard] = useState(card);
   const [flip, setFlip] = useState(false);
+  if (prevCard !== card) {
+    setPrevCard(card);
+    if (prevCard === '??' && card !== '??') setFlip(true);
+  }
 
   useEffect(() => {
-    if (prevRef.current === '??' && card !== '??') {
-      setFlip(true);
-      const t = setTimeout(() => setFlip(false), 500);
-      prevRef.current = card;
-      return () => clearTimeout(t);
-    }
-    prevRef.current = card;
-  }, [card]);
+    if (!flip) return;
+    const t = setTimeout(() => setFlip(false), 500);
+    return () => clearTimeout(t);
+  }, [flip]);
 
   const isHidden = card === '??';
   const animStyle = !flip && delay > 0

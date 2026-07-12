@@ -1,29 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
+import { StockCardSkeleton } from '../components/StockCardSkeleton';
 import { useNavigate } from 'react-router-dom';
 import { stockApi } from '../api';
 import { StockCard } from '../components/StockCard';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { Skeleton } from '../components/ui/skeleton';
 import { useToast } from '../components/ui/use-toast';
 import { List, ChevronLeft, ChevronRight, RefreshCcw, Search, X, ArrowUpDown } from 'lucide-react';
 import type { Stock } from '../types';
-
-function StockCardSkeleton() {
-  return (
-    <div className="flex justify-between items-center p-4 border-b border-border last:border-b-0">
-      <div className="flex flex-col gap-2">
-        <Skeleton className="h-4 w-20" />
-        <Skeleton className="h-3 w-16" />
-      </div>
-      <div className="flex flex-col items-end gap-2">
-        <Skeleton className="h-5 w-16" />
-        <Skeleton className="h-3 w-24" />
-      </div>
-    </div>
-  );
-}
 
 type SortField = 'default' | 'price' | 'change';
 type SortOrder = 'asc' | 'desc';
@@ -32,7 +17,6 @@ export function StockList() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [allStocks, setAllStocks] = useState<Stock[]>([]);
-  const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState('');
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -41,12 +25,13 @@ export function StockList() {
   
   const pageSize = 10;
 
+  // loading 由"已加载 key 是否追上请求 key"派生，不在 effect 里同步 setState
   const requestKey = `stock-list:all:refresh=${refreshNonce}`;
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const loading = loadedKey !== requestKey;
   useEffect(() => {
-      if (requestKey == null) return;
       let cancelled = false;
 
-      setLoading(true);
       stockApi
         .list()
         .then((res: Stock[]) => {
@@ -60,13 +45,13 @@ export function StockList() {
         })
         .finally(() => {
           if (cancelled) return;
-          setLoading(false);
+          setLoadedKey(requestKey);
         });
 
       return () => {
         cancelled = true;
       };
-    }, [requestKey]);
+    }, [requestKey, toast]);
 
   const processedStocks = useMemo(() => {
     let result = [...allStocks];
@@ -105,10 +90,13 @@ export function StockList() {
     return result;
   }, [allStocks, query, sortField, sortOrder]);
 
-  // Reset page when filter changes
-  useEffect(() => {
+  // 筛选/排序变化时在 render 期回到第一页（React 文档 prev 比较模式）
+  const filterKey = `${query}|${sortField}|${sortOrder}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (prevFilterKey !== filterKey) {
+    setPrevFilterKey(filterKey);
     setPage(1);
-  }, [query, sortField, sortOrder]);
+  }
 
   const total = processedStocks.length;
   const totalPages = Math.ceil(total / pageSize) || 1;

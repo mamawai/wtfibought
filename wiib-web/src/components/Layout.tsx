@@ -1,4 +1,5 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { useClickOutside } from '../hooks/useClickOutside';
 import { useState, useRef, useEffect } from 'react';
 import { useUserStore } from '../stores/userStore';
 import { useTheme } from '../hooks/useTheme';
@@ -165,13 +166,7 @@ function MarketDropdown({ isActive }: { isActive: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
+  useClickOutside(ref, () => setOpen(false));
 
   return (
     <div ref={ref} className="relative">

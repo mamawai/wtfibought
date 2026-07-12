@@ -132,12 +132,8 @@ public class PositionServiceImpl extends ServiceImpl<PositionMapper, Position> i
             return null;
         }
 
-        // 从Redis获取实时价格
-        BigDecimal currentPrice = cacheService.getCurrentPrice(stock.getId());
-        if (currentPrice == null) {
-            // 非交易时段用开盘价（AI预生成）
-            currentPrice = stock.getOpen() != null ? stock.getOpen() : stock.getPrevClose();
-        }
+        // 实时价，无数据时回退开盘价/昨收（共用兜底口径）
+        BigDecimal currentPrice = cacheService.getCurrentPriceOrFallback(stock);
 
         int totalQuantity = position.getQuantity() +
                 (position.getFrozenQuantity() != null ? position.getFrozenQuantity() : 0);

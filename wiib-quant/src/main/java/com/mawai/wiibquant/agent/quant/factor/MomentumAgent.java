@@ -8,6 +8,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibquant.agent.quant.util.IndicatorValues.toBd;
+
 /**
  * 动量因子 Agent。
  * 基于多周期均线、RSI、MACD、KDJ 和量价关系，给 H6/H12 输出趋势辅助，H24 低权重背景。
@@ -20,16 +22,17 @@ public class MomentumAgent implements FactorAgent {
 
     @Override
     public List<AgentVote> evaluate(FeatureSnapshot s) {
+        // indicatorsByTimeframe/qualityFlags/regime 由 FeatureSnapshot 紧凑构造器保证非空
         Map<String, Map<String, Object>> indicators = s.indicatorsByTimeframe();
-        if (indicators == null || indicators.isEmpty()) {
+        if (indicators.isEmpty()) {
             return List.of(
                     AgentVote.noTrade(name(), "H6", "NO_DATA"),
                     AgentVote.noTrade(name(), "H12", "NO_DATA"),
                     AgentVote.noTrade(name(), "H24", "NO_DATA"));
         }
 
-        List<String> qualityFlags = s.qualityFlags() != null ? s.qualityFlags() : List.of();
-        MarketRegime regime = s.regime() != null ? s.regime() : MarketRegime.RANGE;
+        List<String> qualityFlags = s.qualityFlags();
+        MarketRegime regime = s.regime();
 
         // 对3个时间尺度分别做动量分析
         // H6 主要看 5m/15m
@@ -244,12 +247,6 @@ public class MomentumAgent implements FactorAgent {
     private static int toInt(Object v) {
         if (v instanceof Number n) return n.intValue();
         return 0;
-    }
-
-    private static BigDecimal toBd(Object v) {
-        if (v instanceof BigDecimal bd) return bd;
-        if (v instanceof Number n) return BigDecimal.valueOf(n.doubleValue());
-        return null;
     }
 
     private static double clamp(double v) { return Math.clamp(v, -1, 1); }

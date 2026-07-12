@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { StockCardSkeleton } from '../components/StockCardSkeleton';
 import { useNavigate } from 'react-router-dom';
 import { stockApi, buffApi, orderApi, cryptoOrderApi, futuresApi } from '../api';
 import { StockCard } from '../components/StockCard';
@@ -9,7 +10,6 @@ import { LatestTradesCard } from '../components/LatestTradesCard';
 import type { TradeItem } from '../components/LatestTradesCard';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { Skeleton } from '../components/ui/skeleton';
 import { useToast } from '../components/ui/use-toast';
 import {
   TrendingUp, TrendingDown, LineChart, RefreshCcw, Bell,
@@ -29,15 +29,6 @@ const FUTURES_SIDE_MAP: Record<string, { label: string; tone: 'buy' | 'sell' }> 
   CLOSE_SHORT: { label: '平空', tone: 'buy' },
 };
 
-function StockCardSkeleton() {
-  return (
-    <div className="flex justify-between items-center px-4 py-3 border-b border-border/20 last:border-b-0">
-      <div className="flex flex-col gap-2"><Skeleton className="h-4 w-20" /><Skeleton className="h-3 w-14" /></div>
-      <Skeleton className="h-7 w-20 rounded-full" />
-    </div>
-  );
-}
-
 function fmtMoney(n: number) {
   if (Math.abs(n) >= 1e8) return (n / 1e8).toFixed(2) + '亿';
   if (Math.abs(n) >= 1e4) return (n / 1e4).toFixed(2) + '万';
@@ -56,24 +47,31 @@ export function Home() {
 
   const [buffStatus, setBuffStatus] = useState<BuffStatus | null>(null);
   const [latestTrades, setLatestTrades] = useState<TradeItem[]>([]);
-  const [tradesLoading, setTradesLoading] = useState(true);
+  // tradesLoading 由"已加载 nonce 是否追上刷新 nonce"派生
+  const [tradesLoadedNonce, setTradesLoadedNonce] = useState(-1);
+  const tradesLoading = tradesLoadedNonce !== refreshNonce;
   const requestKey = `home:gainers-losers:limit=5:refresh=${refreshNonce}`;
 
-  useEffect(() => { if (shouldShowNotice()) navigate('/intro', { replace: true }); }, []);
+  useEffect(() => { if (shouldShowNotice()) navigate('/intro', { replace: true }); }, [navigate]);
+  // 登出瞬间在 render 期清掉 buff（React 文档 prev 比较模式）
+  const [prevLoggedIn, setPrevLoggedIn] = useState(isLoggedIn);
+  if (prevLoggedIn !== isLoggedIn) {
+    setPrevLoggedIn(isLoggedIn);
+    if (!isLoggedIn) setBuffStatus(null);
+  }
+
   useEffect(() => {
     if (isLoggedIn) buffApi.status().then(setBuffStatus).catch(() => {});
-    else setBuffStatus(null);
   }, [isLoggedIn, refreshNonce]);
 
   useEffect(() => {
-    setTradesLoading(true);
     Promise.all([orderApi.live().catch(() => []), cryptoOrderApi.live().catch(() => []), futuresApi.live().catch(() => [])])
       .then(([so, co, fo]) => {
         const si: TradeItem[] = so.map(o => ({ id: `s-${o.orderId}`, orderSide: o.orderSide, sideTone: o.orderSide === 'BUY' ? 'buy' as const : 'sell' as const, name: o.stockName, quantity: o.quantity, unit: '股', filledAmount: o.filledAmount, createdAt: o.createdAt }));
         const ci: TradeItem[] = co.map(o => ({ id: `c-${o.orderId}`, orderSide: o.orderSide, sideTone: o.orderSide === 'BUY' ? 'buy' as const : 'sell' as const, name: o.symbol.replace('USDT', ''), quantity: o.quantity, unit: o.symbol.replace('USDT', ''), filledAmount: o.filledAmount, createdAt: o.createdAt }));
         const fi: TradeItem[] = fo.map(o => { const s = FUTURES_SIDE_MAP[o.orderSide] ?? { label: o.orderSide, tone: 'buy' as const }; const b = o.symbol.replace('USDT', ''); return { id: `f-${o.orderId}`, orderSide: o.orderSide, sideLabel: s.label, sideTone: s.tone, name: `${b} 合约`, quantity: o.quantity, unit: b, filledAmount: o.filledAmount, createdAt: o.createdAt, isAi: o.isAiTrader === true }; });
         setLatestTrades([...si, ...ci, ...fi].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 20));
-      }).finally(() => setTradesLoading(false));
+      }).finally(() => setTradesLoadedNonce(refreshNonce));
   }, [refreshNonce]);
 
   useEffect(() => {
@@ -84,7 +82,7 @@ export function Home() {
       .catch(() => { if (!c) { setGainers([]); setLosers([]); toast('获取行情失败', 'error', { description: '请稍后重试' }); } })
       .finally(() => { if (!c) setLoading(false); });
     return () => { c = true; };
-  }, [requestKey]);
+  }, [requestKey, toast]);
 
   const isProfit = (user?.profit ?? 0) >= 0;
 
@@ -219,7 +217,7 @@ export function Home() {
           </CardHeader>
           <CardContent className="p-0">
             {loading
-              ? Array.from({ length: 5 }).map((_, i) => <StockCardSkeleton key={i} />)
+              ? Array.from({ length: 5 }).map((_, i) => <StockCardSkeleton key={i} variant="pill" />)
               : gainers.length > 0
                 ? gainers.map(s => <StockCard key={s.id} stock={s} onClick={() => navigate(`/stock/${s.id}`)} />)
                 : <div className="p-6 text-center text-sm text-muted-foreground">暂无数据</div>
@@ -237,7 +235,7 @@ export function Home() {
           </CardHeader>
           <CardContent className="p-0">
             {loading
-              ? Array.from({ length: 5 }).map((_, i) => <StockCardSkeleton key={i} />)
+              ? Array.from({ length: 5 }).map((_, i) => <StockCardSkeleton key={i} variant="pill" />)
               : losers.length > 0
                 ? losers.map(s => <StockCard key={s.id} stock={s} onClick={() => navigate(`/stock/${s.id}`)} />)
                 : <div className="p-6 text-center text-sm text-muted-foreground">暂无数据</div>

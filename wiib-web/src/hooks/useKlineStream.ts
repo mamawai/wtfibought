@@ -19,20 +19,22 @@ export interface KlineTick {
  * 仅合约（后端只广播合约 kline）。
  */
 export function useKlineStream(symbol: string | undefined, interval: string): KlineTick | null {
-  const [tick, setTick] = useState<KlineTick | null>(null);
+  // tick 挂 key：symbol/interval 切换时旧数据按 null 返回，免去 effect 里同步 setState 清空
+  const [state, setState] = useState<{ key: string; tick: KlineTick | null }>({ key: '', tick: null });
+  const key = `${symbol}:${interval}`;
 
   useEffect(() => {
     if (!symbol) return;
-    setTick(null);
+    const k = `${symbol}:${interval}`;
     const unsub = subscribe(`/topic/kline/${symbol}`, (msg) => {
       try {
         const d = JSON.parse(msg.body);
         if (d.i !== interval) return;   // 过滤：只要当前 interval（5m / 15m）
-        setTick({ i: d.i, t: d.t, o: +d.o, h: +d.h, l: +d.l, c: +d.c, v: +d.v, q: +d.q, x: !!d.x });
+        setState({ key: k, tick: { i: d.i, t: d.t, o: +d.o, h: +d.h, l: +d.l, c: +d.c, v: +d.v, q: +d.q, x: !!d.x } });
       } catch { /* ignore */ }
     });
     return unsub;
   }, [symbol, interval]);
 
-  return tick;
+  return state.key === key ? state.tick : null;
 }

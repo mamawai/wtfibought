@@ -4,37 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Skeleton } from '../components/ui/skeleton';
-import { cn } from '../lib/utils';
+import { cn, fmtDateTime, fmtNum } from '../lib/utils';
 import { AlertTriangle, ChevronLeft, ChevronRight, Flame, RefreshCw } from 'lucide-react';
 import type { ForceOrder, PageResult } from '../types';
 import { formatCoinPrice } from '../lib/coinConfig';
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'PAXGUSDT', 'DOGEUSDT'] as const;
 const PAGE_SIZE = 20;
-
-function formatDateTime(ts: string): string {
-  const d = new Date(ts);
-  return d.toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
-}
-
-function formatPrice(symbol: string, value: number): string {
-  return formatCoinPrice(symbol, value);
-}
-
-function formatQty(value: number): string {
-  return value.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
-}
-
-function formatAmount(value: number): string {
-  return value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-}
 
 function sideLabel(side: string): string {
   return side === 'SELL' ? '多头爆仓' : '空头爆仓';
@@ -43,6 +19,7 @@ function sideLabel(side: string): string {
 export function ForceOrders() {
   const [symbol, setSymbol] = useState<string>('BTCUSDT');
   const [page, setPage] = useState(1);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const [result, setResult] = useState<PageResult<ForceOrder>>({
     records: [],
     total: 0,
@@ -50,25 +27,25 @@ export function ForceOrders() {
     current: 1,
     pages: 0,
   });
-  const [loading, setLoading] = useState(true);
+  // loading 由"已加载 key 是否追上请求 key"派生，不在 effect 里同步 setState
+  const requestKey = `${symbol}:${page}:${refreshNonce}`;
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const loading = loadedKey !== requestKey;
 
-  const fetchOrders = (targetPage = page) => {
-    setLoading(true);
-    futuresApi.forceOrders(symbol, targetPage, PAGE_SIZE)
-      .then(res => setResult(res))
-      .catch(() => setResult({
+  useEffect(() => {
+    let cancelled = false;
+    futuresApi.forceOrders(symbol, page, PAGE_SIZE)
+      .then(res => { if (!cancelled) setResult(res); })
+      .catch(() => { if (!cancelled) setResult({
         records: [],
         total: 0,
         size: PAGE_SIZE,
-        current: targetPage,
+        current: page,
         pages: 0,
-      }))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    fetchOrders(page);
-  }, [symbol, page]);
+      }); })
+      .finally(() => { if (!cancelled) setLoadedKey(requestKey); });
+    return () => { cancelled = true; };
+  }, [requestKey, symbol, page]);
 
   const records = result.records;
 
@@ -97,7 +74,7 @@ export function ForceOrders() {
                 <span className="sm:hidden">Binance 合约爆仓记录。SELL=多头强平，BUY=空头强平。</span>
               </div>
             </div>
-            <Button variant="outline" size="sm" className="h-9 w-fit gap-2 shrink-0" onClick={() => fetchOrders(page)}>
+            <Button variant="outline" size="sm" className="h-9 w-fit gap-2 shrink-0" onClick={() => setRefreshNonce(n => n + 1)}>
               <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />
               刷新
             </Button>
@@ -143,7 +120,7 @@ export function ForceOrders() {
         <Card>
           <CardContent className="p-4 space-y-1">
             <div className="text-xs font-bold text-muted-foreground">当前页总名义金额</div>
-            <div className="text-xl sm:text-2xl font-black tabular-nums">${formatAmount(stats.totalAmount)}</div>
+            <div className="text-xl sm:text-2xl font-black tabular-nums">${fmtNum(stats.totalAmount, 0)}</div>
             <div className="text-xs text-muted-foreground">仅统计当前页 {records.length} 条记录</div>
           </CardContent>
         </Card>
@@ -188,7 +165,7 @@ export function ForceOrders() {
                   <tbody>
                     {records.map(order => (
                       <tr key={order.id} className="border-b border-border/30 hover:bg-accent/30 transition-colors">
-                        <td className="px-5 py-3 text-xs font-mono text-muted-foreground whitespace-nowrap">{formatDateTime(order.tradeTime)}</td>
+                        <td className="px-5 py-3 text-xs font-mono text-muted-foreground whitespace-nowrap">{fmtDateTime(order.tradeTime, true)}</td>
                         <td className="px-4 py-3">
                           <Badge
                             className={cn(
@@ -201,10 +178,10 @@ export function ForceOrders() {
                             {sideLabel(order.side)}
                           </Badge>
                         </td>
-                        <td className="px-4 py-3 text-right font-mono font-bold">{formatPrice(order.symbol, order.price)}</td>
-                        <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatPrice(order.symbol, order.avgPrice)}</td>
-                        <td className="px-4 py-3 text-right font-mono">{formatQty(order.quantity)}</td>
-                        <td className="px-5 py-3 text-right font-mono font-bold">${formatAmount(order.amount)}</td>
+                        <td className="px-4 py-3 text-right font-mono font-bold">{formatCoinPrice(order.symbol, order.price)}</td>
+                        <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatCoinPrice(order.symbol, order.avgPrice)}</td>
+                        <td className="px-4 py-3 text-right font-mono">{fmtNum(order.quantity, 4)}</td>
+                        <td className="px-5 py-3 text-right font-mono font-bold">${fmtNum(order.amount, 0)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -216,7 +193,7 @@ export function ForceOrders() {
                   <div key={order.id} className="rounded-xl sm:rounded-2xl border border-border/50 bg-card p-3 sm:p-4 space-y-2.5 sm:space-y-3 neu-raised-sm">
                     <div className="flex items-start justify-between gap-3">
                       <div className="space-y-1">
-                        <div className="text-xs text-muted-foreground font-mono">{formatDateTime(order.tradeTime)}</div>
+                        <div className="text-xs text-muted-foreground font-mono">{fmtDateTime(order.tradeTime, true)}</div>
                         <div className="text-sm font-black">{symbol.replace('USDT', '')}</div>
                       </div>
                       <Badge
@@ -233,19 +210,19 @@ export function ForceOrders() {
                     <div className="grid grid-cols-2 gap-3 text-xs">
                       <div className="space-y-1">
                         <div className="text-muted-foreground">成交价</div>
-                        <div className="font-mono font-bold">{formatPrice(order.symbol, order.price)}</div>
+                        <div className="font-mono font-bold">{formatCoinPrice(order.symbol, order.price)}</div>
                       </div>
                       <div className="space-y-1">
                         <div className="text-muted-foreground">均价</div>
-                        <div className="font-mono">{formatPrice(order.symbol, order.avgPrice)}</div>
+                        <div className="font-mono">{formatCoinPrice(order.symbol, order.avgPrice)}</div>
                       </div>
                       <div className="space-y-1">
                         <div className="text-muted-foreground">数量</div>
-                        <div className="font-mono">{formatQty(order.quantity)}</div>
+                        <div className="font-mono">{fmtNum(order.quantity, 4)}</div>
                       </div>
                       <div className="space-y-1">
                         <div className="text-muted-foreground">名义金额</div>
-                        <div className="font-mono font-bold">${formatAmount(order.amount)}</div>
+                        <div className="font-mono font-bold">${fmtNum(order.amount, 0)}</div>
                       </div>
                     </div>
                   </div>

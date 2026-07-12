@@ -64,23 +64,21 @@ public class QuantSnapshotScheduler {
     public void onKlineClosed(KlineClosedEvent event) {
         if (!"5m".equalsIgnoreCase(event.interval())) return;
         // 快照/研判轨只跑 WATCH_SYMBOLS：策略篮子币(SOL/XRP等)的 bar 不进本轨，防深研判 LLM 成本随行情币扩容翻倍
-        if (!QuantConstants.WATCH_SYMBOLS.contains(normalizeSymbol(event.symbol()))) return;
+        if (!QuantConstants.WATCH_SYMBOLS.contains(QuantConstants.normalizeSymbolLenient(event.symbol()))) return;
         triggerSnapshot(event.symbol(), event.closeTime(), "kline_close", false);
     }
 
-    /** 哨兵价格异动 / 手动请求事件。 */
+    /** 哨兵价格异动 / 手动请求事件；归一化与 closeTime 解析统一在 triggerSnapshot 做一次。 */
     @EventListener
     public void onForecastRequest(QuantForecastRequestEvent event) {
-        String symbol = normalizeSymbol(event.getSymbol());
-        long closeTime = resolveCloseTime(symbol, event.getCloseTime());
-        triggerSnapshot(symbol, closeTime, event.getRequestSource(), event.isForce());
+        triggerSnapshot(event.getSymbol(), event.getCloseTime(), event.getRequestSource(), event.isForce());
     }
 
     /** 兜底 cron：每 5 分钟检查是否有新闭合 bar 未处理，防止 WS 落后。 */
     @Scheduled(cron = "0 */5 * * * *")
     public void watchdogFallback() {
         for (String symbol : QuantConstants.WATCH_SYMBOLS) {
-            String normalized = normalizeSymbol(symbol);
+            String normalized = QuantConstants.normalizeSymbolLenient(symbol);
             long now = System.currentTimeMillis();
             Long latestClose = historyStore.latestCloseTime(normalized, KlineHistoryStore.DEFAULT_INTERVAL);
             if (latestClose == null || now - latestClose > Duration.ofMinutes(10).toMillis()) {
@@ -97,16 +95,13 @@ public class QuantSnapshotScheduler {
         }
     }
 
-    /** 手动触发（Controller 用）。 */
+    /** 手动触发（Controller 用）；closeTime 传 0 由 triggerSnapshot 解析到最新闭合 bar。 */
     public void runSnapshot(String symbol) {
-        String normalized = normalizeSymbol(symbol);
-        Long latestClose = historyStore.latestCloseTime(normalized, KlineHistoryStore.DEFAULT_INTERVAL);
-        triggerSnapshot(normalized, latestClose != null ? latestClose : System.currentTimeMillis(),
-                "manual", true);
+        triggerSnapshot(symbol, 0L, "manual", true);
     }
 
     private void triggerSnapshot(String symbol, long closeTime, String source, boolean force) {
-        String normalized = normalizeSymbol(symbol);
+        String normalized = QuantConstants.normalizeSymbolLenient(symbol);
         long resolved = resolveCloseTime(normalized, closeTime);
         long lastDone = lastSnapshotCloseTime.getOrDefault(normalized, 0L);
         if (!force && lastDone >= resolved) {
@@ -198,9 +193,5 @@ public class QuantSnapshotScheduler {
         if (requestedCloseTime > 0) return requestedCloseTime;
         Long latestClose = historyStore.latestCloseTime(symbol, KlineHistoryStore.DEFAULT_INTERVAL);
         return latestClose != null ? latestClose : System.currentTimeMillis();
-    }
-
-    private static String normalizeSymbol(String symbol) {
-        return symbol == null || symbol.isBlank() ? "BTCUSDT" : symbol.trim().toUpperCase();
     }
 }

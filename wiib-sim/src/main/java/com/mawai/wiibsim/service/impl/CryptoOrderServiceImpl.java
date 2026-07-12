@@ -23,6 +23,7 @@ import com.mawai.wiibsim.service.CryptoOrderService;
 import com.mawai.wiibsim.service.CryptoPositionService;
 import com.mawai.wiibsim.service.MarginAccountService;
 import com.mawai.wiibsim.service.UserService;
+import com.mawai.wiibsim.util.ConcurrentBatch;
 import com.mawai.wiibsim.util.RedisLockUtil;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -39,9 +40,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -384,22 +383,9 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
                 .lt(CryptoOrder::getExpireAt, LocalDateTime.now()));
         if (expiredOrders.isEmpty()) return;
 
-        int maxConcurrency = tradingConfig.getLimitOrderProcessing().getMaxConcurrency();
-        Semaphore semaphore = new Semaphore(maxConcurrency);
-
-        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            for (CryptoOrder order : expiredOrders) {
-                executor.submit(() -> {
-                    try {
-                        if (!semaphore.tryAcquire(5, TimeUnit.SECONDS)) return;
-                        try { processExpiredOrder(order); }
-                        finally { semaphore.release(); }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
-                });
-            }
-        }
+        ConcurrentBatch.run(expiredOrders,
+                tradingConfig.getLimitOrderProcessing().getMaxConcurrency(),
+                this::processExpiredOrder);
     }
 
     private void processExpiredOrder(CryptoOrder order) {

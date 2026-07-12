@@ -5,7 +5,7 @@ import { Button } from '../components/ui/button';
 import { Skeleton } from '../components/ui/skeleton';
 import { Wallet, ChevronDown } from 'lucide-react';
 import { CardContent } from '../components/ui/card';
-import { cn } from '../lib/utils';
+import { cn, fmtNum } from '../lib/utils';
 import type { VideoPokerGameState, VideoPokerStatus } from '../types';
 
 const BET_PRESETS = [100, 500, 1000, 5000, 10000, 50000];
@@ -14,7 +14,6 @@ const CHIP_COLORS: Record<number, string> = {
   5000: 'vp-chip-5000', 10000: 'vp-chip-10000', 50000: 'vp-chip-50000',
 };
 
-const fmt = (n: number) => n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const SUIT_SYMBOLS: Record<string, string> = { H: '♥', D: '♦', C: '♣', S: '♠' };
 const SUIT_COLORS: Record<string, string> = { H: 'text-red-500', D: 'text-red-500', C: 'text-zinc-800', S: 'text-zinc-800' };
@@ -155,7 +154,7 @@ export function VideoPoker() {
       }
     }
     prevCardsRef.current = [...game?.cards ?? []];
-  }, [game?.cards, game?.heldPositions]);
+  }, [game]);
 
   const handleBet = async () => {
     if (acting) return;
@@ -227,7 +226,7 @@ export function VideoPoker() {
             <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Joker&apos;s Wild</div>
             <div className="text-xl font-bold tabular-nums flex items-center gap-1.5">
               <Wallet className="w-4 h-4 text-muted-foreground" />
-              {fmt(balance)}
+              {fmtNum(balance)}
             </div>
           </div>
         </div>
@@ -268,10 +267,10 @@ export function VideoPoker() {
               {winRank ? (
                 <div>
                   <div className="text-lg">{winRank}</div>
-                  <div className="text-sm font-normal text-emerald-800 dark:text-emerald-300/80">+{fmt(game.payout)} ({game.multiplier}x)</div>
+                  <div className="text-sm font-normal text-emerald-800 dark:text-emerald-300/80">+{fmtNum(game.payout)} ({game.multiplier}x)</div>
                 </div>
               ) : (
-                <span className="text-sm">未中奖 · -{fmt(game.betAmount)}</span>
+                <span className="text-sm">未中奖 · -{fmtNum(game.betAmount)}</span>
               )}
             </div>
           )}

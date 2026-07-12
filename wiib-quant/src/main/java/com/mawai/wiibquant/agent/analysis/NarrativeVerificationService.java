@@ -7,6 +7,8 @@ import com.mawai.wiibcommon.entity.QuantSnapshot;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibquant.agent.research.ForecastHorizon;
+import com.mawai.wiibquant.agent.research.forecast.VolState;
+import com.mawai.wiibquant.agent.research.forecast.VolStateClassifier;
 import com.mawai.wiibquant.mapper.QuantDeepAnalysisMapper;
 import com.mawai.wiibquant.mapper.QuantNarrativeVerificationMapper;
 import com.mawai.wiibquant.mapper.QuantSnapshotMapper;
@@ -89,8 +91,10 @@ public class NarrativeVerificationService {
         }
 
         double realized = Math.log(end.close().doubleValue() / start.close().doubleValue());
-        // 界点归方向（与 VolStateClassifier "界点不归 LOW" 同语义）
-        String actual = Math.abs(realized) < lowCut ? "RANGE" : (realized > 0 ? "BULL" : "BEAR");
+        // RANGE 判定 = 分类单一真相源的 LOW 档（|realized| < lowCut；界点归方向，即"界点不归 LOW"）
+        boolean isRange = VolStateClassifier.classifyWithCuts(
+                Math.abs(realized), lowCut, Double.MAX_VALUE) == VolState.LOW;
+        String actual = isRange ? "RANGE" : (realized > 0 ? "BULL" : "BEAR");
 
         int bull = Math.max(0, scenarios.getIntValue("bullPct"));
         int range = Math.max(0, scenarios.getIntValue("rangePct"));

@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useDiscountBuff } from '../hooks/useDiscountBuff';
 import { useParams, useNavigate } from 'react-router-dom';
-import { stockApi, orderApi, newsApi, userApi, buffApi } from '../api';
+import { stockApi, orderApi, newsApi, userApi } from '../api';
 import { useQuote } from '../hooks/useQuote';
 import { TickChart } from '../components/TickChart';
 import { useUserStore } from '../stores/userStore';
@@ -29,7 +30,7 @@ import {
   Sparkles,
   ChartCandlestick,
 } from 'lucide-react';
-import type { Stock, DayTick, News, Position, UserBuff } from '../types';
+import type { Stock, DayTick, News, Position } from '../types';
 
 export function StockDetail() {
   const { id } = useParams<{ id: string }>();
@@ -55,14 +56,14 @@ export function StockDetail() {
   const [leverageMultiple, setLeverageMultiple] = useState(10);
   const [submitting, setSubmitting] = useState(false);
   const [position, setPosition] = useState<Position | null>(null);
-  const [discountBuff, setDiscountBuff] = useState<UserBuff | null>(null);
+  const [discountBuff, setDiscountBuff] = useDiscountBuff(!!user);
   const [useBuff, setUseBuff] = useState(false);
 
   // 生成最近5个交易日（排除周末）
   const tradingDays = useMemo(() => {
     const days: { date: string; label: string }[] = [];
     const today = new Date();
-    let d = new Date(today);
+    const d = new Date(today);
     while (days.length < 5) {
       const dayOfWeek = d.getDay();
       if (dayOfWeek !== 0 && dayOfWeek !== 6) {
@@ -99,22 +100,6 @@ export function StockDetail() {
   const quoteTime = quote?.timestamp
     ? new Date(quote.timestamp).toLocaleTimeString('zh-CN', { hour12: false })
     : null;
-
-  // 加载折扣Buff
-  useEffect(() => {
-    if (user) {
-      buffApi.status().then((s) => {
-        const buff = s.todayBuff;
-        if (buff && buff.buffType.startsWith('DISCOUNT_') && !buff.isUsed) {
-          setDiscountBuff(buff);
-        } else {
-          setDiscountBuff(null);
-        }
-      }).catch(() => {});
-    } else {
-      setDiscountBuff(null);
-    }
-  }, [user]);
 
   const requestKey = id && userReady ? `stock-detail:id=${id}:refresh=${refreshNonce}:user=${!!user}` : null;
   useEffect(() => {
@@ -181,6 +166,7 @@ export function StockDetail() {
       return () => {
         cancelled = true;
       };
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- requestKey 已编码 id/user/refresh 全部刷新条件；user 对象身份变化不应重拉详情
     }, [requestKey]);
 
   // 提取交易计算逻辑

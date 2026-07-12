@@ -252,15 +252,18 @@ const parseChatStreamEvent = (block: string): ChatStreamEvent => {
   return { event, data: dataLines.join('\n') };
 };
 
-export const cryptoApi = {
-  // K线数据（直接返回Binance原始数组，不走拦截器解包）
-  klines: (symbol = 'BTCUSDT', interval = '1m', limit = 500, endTime?: number) => {
+// K线数据（直接返回Binance原始数组，不走拦截器解包）；现货/合约仅路径不同
+const rawKlines = (path: string) =>
+  (symbol = 'BTCUSDT', interval = '1m', limit = 500, endTime?: number) => {
     const token = getToken();
-    return axios.get<number[][]>(`/api/crypto/klines`, {
+    return axios.get<number[][]>(path, {
       params: { symbol, interval, limit, ...(endTime ? { endTime } : {}) },
       ...(token ? { headers: { satoken: token } } : {}),
     }).then(res => res.data);
-  },
+  };
+
+export const cryptoApi = {
+  klines: rawKlines('/api/crypto/klines'),
   // 最新价格
   price: (symbol = 'BTCUSDT') => api.get<unknown, CryptoPrice>('/crypto/price', { params: { symbol } }),
 };
@@ -279,13 +282,7 @@ export const cryptoOrderApi = {
 
 // ========== 永续合约接口 ==========
 export const futuresApi = {
-  klines: (symbol = 'BTCUSDT', interval = '1m', limit = 500, endTime?: number) => {
-    const token = getToken();
-    return axios.get<number[][]>(`/api/futures/klines`, {
-      params: { symbol, interval, limit, ...(endTime ? { endTime } : {}) },
-      ...(token ? { headers: { satoken: token } } : {}),
-    }).then(res => res.data);
-  },
+  klines: rawKlines('/api/futures/klines'),
   open: (data: FuturesOpenRequest) => api.post<unknown, FuturesOrder>('/futures/open', data),
   close: (data: FuturesCloseRequest) => api.post<unknown, FuturesOrder>('/futures/close', data),
   cancel: (orderId: number) => api.post<unknown, FuturesOrder>(`/futures/cancel/${orderId}`),

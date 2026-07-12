@@ -869,16 +869,7 @@ public class BlackjackServiceImpl implements BlackjackService {
         dto.setChips(chips);
         dto.setInsurance(session.isInsuranceTaken() ? session.getInsuranceBet() : null);
 
-        dto.setPlayerHands(session.getPlayerHands().stream().map(hand -> {
-            HandDTO hd = new HandDTO();
-            hd.setCards(hand.getCards());
-            hd.setBet(hand.getBet());
-            hd.setScore(bestScore(hand.getCards()));
-            hd.setBust(bestScore(hand.getCards()) > 21);
-            hd.setBlackjack(isBlackjack(hand.getCards()));
-            hd.setDoubled(hand.isDoubled());
-            return hd;
-        }).toList());
+        dto.setPlayerHands(session.getPlayerHands().stream().map(this::toHandDTO).toList());
 
         if (PHASE_PLAYER_TURN.equals(session.getPhase())) {
             dto.setDealerCards(List.of(HIDDEN_CARD, session.getDealerCards().get(1)));
@@ -900,22 +891,24 @@ public class BlackjackServiceImpl implements BlackjackService {
         dto.setChips(chips);
         dto.setInsurance(session.isInsuranceTaken() ? session.getInsuranceBet() : null);
 
-        dto.setPlayerHands(session.getPlayerHands().stream().map(hand -> {
-            HandDTO hd = new HandDTO();
-            hd.setCards(hand.getCards());
-            hd.setBet(hand.getBet());
-            hd.setScore(bestScore(hand.getCards()));
-            hd.setBust(bestScore(hand.getCards()) > 21);
-            hd.setBlackjack(isBlackjack(hand.getCards()));
-            hd.setDoubled(hand.isDoubled());
-            return hd;
-        }).toList());
+        dto.setPlayerHands(session.getPlayerHands().stream().map(this::toHandDTO).toList());
 
         dto.setDealerCards(session.getDealerCards());
         dto.setDealerScore(bestScore(session.getDealerCards()));
         dto.setActions(List.of(ACTION_BET));
         dto.setResults(results);
         return dto;
+    }
+
+    private HandDTO toHandDTO(SessionHand hand) {
+        HandDTO hd = new HandDTO();
+        hd.setCards(hand.getCards());
+        hd.setBet(hand.getBet());
+        hd.setScore(bestScore(hand.getCards()));
+        hd.setBust(bestScore(hand.getCards()) > 21);
+        hd.setBlackjack(isBlackjack(hand.getCards()));
+        hd.setDoubled(hand.isDoubled());
+        return hd;
     }
 
     private List<String> computeActions(BlackjackSession session) {

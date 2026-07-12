@@ -66,7 +66,6 @@ trading:
   # 限价单并发处理配置
   limit-order-processing:
     max-concurrency: 15
-    order-timeout-seconds: 6
   # 是否启用交易时段限制（游戏模式可关闭）
   trading-hours-enabled: true
   # 交易时段（仅当trading-hours-enabled=true时生效）

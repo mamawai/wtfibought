@@ -1,3 +1,4 @@
+import { fmtNum } from '../lib/utils';
 import { useEffect, useRef } from 'react';
 import {
   createChart, CrosshairMode,
@@ -14,7 +15,6 @@ interface Bar { time: number; openMs: number; open: number; high: number; low: n
 const TZ = new Date().getTimezoneOffset() * 60;             // 本地时区偏移(秒)：横轴显示本地时间且边界对齐
 const toBarTime = (ms: number) => Math.floor(ms / 1000) - TZ;
 const barDate = (t: number) => new Date((t + TZ) * 1000);   // 反算真实时刻用于格式化
-const fmtP = (n: number, d: number) => n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 const fmtVol = (n: number) => n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(2) + 'K' : n.toFixed(2);
 const pad = (n: number) => String(n).padStart(2, '0');
 const VOL_UP = 'rgba(38,166,154,.5)', VOL_DOWN = 'rgba(239,83,80,.5)';
@@ -32,8 +32,8 @@ function tooltipHtml(bar: Bar, bars: Bar[], idx: Map<number, number>, d: number,
   const row = (k: string, v: string, c = '#d1d4dc') =>
     `<div style="display:flex;justify-content:space-between;gap:18px"><span style="color:#6b7280">${k}</span><span style="color:${c};font-weight:700">${v}</span></div>`;
   return `<div style="color:#9ca3af;font-weight:700;margin-bottom:5px;padding-bottom:5px;border-bottom:1px solid #2a2e3a">${tStr}</div>`
-    + row('开', fmtP(bar.open, d)) + row('高', fmtP(bar.high, d)) + row('低', fmtP(bar.low, d)) + row('收', fmtP(bar.close, d))
-    + row('涨跌', sign + fmtP(chg, d), col) + row('涨跌幅', sign + chgPct.toFixed(2) + '%', col)
+    + row('开', fmtNum(bar.open, d)) + row('高', fmtNum(bar.high, d)) + row('低', fmtNum(bar.low, d)) + row('收', fmtNum(bar.close, d))
+    + row('涨跌', sign + fmtNum(chg, d), col) + row('涨跌幅', sign + chgPct.toFixed(2) + '%', col)
     + row('振幅', amp.toFixed(2) + '%')
     + row('量', fmtVol(bar.volume) + ' ' + base) + row('额', fmtVol(bar.quote) + ' USDT');
 }
@@ -54,7 +54,7 @@ export function CandleChart({ symbol, interval, limit = 300 }: { symbol: string;
   const idxRef = useRef<Map<number, number>>(new Map());
   const readyRef = useRef(false);
   const hoverRef = useRef<{ time: number | null; x: number; y: number }>({ time: null, x: 0, y: 0 });
-  const isDarkRef = useRef(isDark); isDarkRef.current = isDark;
+  const isDarkRef = useRef(isDark);
   const decimals = getCoinPriceDecimals(symbol);
   const base = symbol.replace('USDT', '');
 
@@ -72,7 +72,9 @@ export function CandleChart({ symbol, interval, limit = 300 }: { symbol: string;
     tip.style.left = Math.max(4, x) + 'px';
     tip.style.top = Math.max(4, y) + 'px';
   };
-  const showTipRef = useRef(showTip); showTipRef.current = showTip;
+  const showTipRef = useRef(showTip);
+  // 事件回调只在交互时读取，提交后同步最新值即可（render 期写 ref 违反 react-hooks/refs）
+  useEffect(() => { isDarkRef.current = isDark; showTipRef.current = showTip; });
 
   // 建图 + 拉历史（symbol/interval 变则重建）
   useEffect(() => {

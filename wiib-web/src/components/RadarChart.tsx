@@ -41,7 +41,7 @@ export function RadarChart({ userData }: Props) {
           backgroundColor: d ? '#1E293B' : '#fff',
           borderColor: d ? '#334155' : '#E7E0D8',
           textStyle: { color: d ? '#E2E8F0' : '#1C1917', fontSize: 12 },
-          formatter: (params: any) => {
+          formatter: (params: { value: number[] }) => {
             const vals = params.value;
             return INDICATORS.map((ind, i) => `${ind.name}: <b>超过${Number(vals[i]).toFixed(2)}%的其他用户</b>`).join('<br/>');
           },

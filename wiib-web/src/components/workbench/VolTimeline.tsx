@@ -1,3 +1,4 @@
+import { fmtDateTime } from '../../lib/utils';
 import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts';
 import { useIsDark } from '../../hooks/useIsDark';
@@ -56,7 +57,7 @@ export function VolTimeline({ points, analyses, onSelectAnalysis }: Props) {
         formatter: (params: unknown) => {
           const list = params as { seriesName: string; value: [number, number | null]; marker: string }[];
           if (!list.length) return '';
-          const time = new Date(list[0].value[0]).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+          const time = fmtDateTime(list[0].value[0]);
           const rows = list
             .filter(p => p.value[1] != null)
             .map(p => `${p.marker}${p.seriesName}: ${typeof p.value[1] === 'number' ? p.value[1]!.toFixed(0) : p.value[1]}${p.seriesName === '脆弱度' ? '' : ' bps'}`);
