@@ -9,6 +9,10 @@ import org.springframework.context.annotation.Configuration;
 
 import javax.sql.DataSource;
 import java.net.URI;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 
 /**
  * 工作台持久化配置：PostgresSaver（会话 checkpoint，断连续聊地基）+ DatabaseStore（跨会话长期记忆），
@@ -25,9 +29,17 @@ public class ChatCheckpointConfig {
 
     @Bean
     public BaseCheckpointSaver workbenchCheckpointSaver(
+            DataSource dataSource,
             @Value("${spring.datasource.url}") String url,
             @Value("${spring.datasource.username}") String user,
-            @Value("${spring.datasource.password}") String password) {
+            @Value("${spring.datasource.password}") String password) throws SQLException {
+        // 库的 initTable DDL 非幂等（索引没加 IF NOT EXISTS），表已存在时重跑必炸：先查一把，建过就跳过建表
+        boolean tablesExist;
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT to_regclass('graphcheckpoint')")) {
+            tablesExist = rs.next() && rs.getString(1) != null;
+        }
         URI uri = URI.create(url.replaceFirst("^jdbc:", ""));
         String database = uri.getPath().replaceFirst("^/", "").replaceAll("\\?.*$", "");
         return PostgresSaver.builder()
@@ -36,7 +48,7 @@ public class ChatCheckpointConfig {
                 .database(database)
                 .user(user)
                 .password(password)
-                .createTables(true)
+                .createTables(!tablesExist)
                 .build();
     }
 }

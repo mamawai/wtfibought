@@ -126,10 +126,11 @@ public class CollectDataNode implements NodeAction {
                     : executor.submit(() -> binanceRestClient.getFearGreedIndex(2));
             String coin = symbol.replace("USDT", "").replace("USDC", "");
 
-            // Deribit 期权 IV 数据（并行采集，失败不影响主流程）
-            Future<String> dvolF = deribitClient != null
+            // Deribit 期权 IV 数据（并行采集，失败不影响主流程；只有 BTC/ETH 有期权段，其余币直接跳过）
+            boolean deribitOk = deribitClient != null && DeribitClient.supports(coin);
+            Future<String> dvolF = deribitOk
                     ? executor.submit(() -> deribitClient.getDvolIndex(coin, 3600)) : null;
-            Future<String> bookSummaryF = deribitClient != null
+            Future<String> bookSummaryF = deribitOk
                     ? executor.submit(() -> deribitClient.getBookSummaryByCurrency(coin)) : null;
 
             // 收集K线

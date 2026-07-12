@@ -5,6 +5,7 @@ import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.annotation.RequireAdmin;
+import com.mawai.wiibcommon.util.Result;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
@@ -70,7 +71,8 @@ public class ChatWorkbenchController {
                 ? request.getSessionId()
                 : "wb-" + userId + "-" + UUID.randomUUID();
 
-        SseEmitter emitter = new SseEmitter(180_000L);
+        // 深研判轮次要跑 Bull∥Bear+Judge 共3次深模型调用，180s 会掐断回答流，给足 10 分钟
+        SseEmitter emitter = new SseEmitter(600_000L);
         AtomicBoolean closed = new AtomicBoolean(false);
         emitter.onCompletion(() -> closed.set(true));
         emitter.onTimeout(() -> {
@@ -86,17 +88,17 @@ public class ChatWorkbenchController {
     /** HITL 确认回执：approve 后前端自动补发"请继续执行深度研判"，agent 重调工具时闸门放行。 */
     @PostMapping("/approve")
     @Operation(summary = "贵操作确认（HITL）")
-    public Map<String, Object> approve(@CurrentUserId long userId, @RequestBody ApprovalRequest request) {
+    public Result<Void> approve(@CurrentUserId long userId, @RequestBody ApprovalRequest request) {
         String sessionId = request.getSessionId();
         if (sessionId == null || !sessionId.startsWith("wb-" + userId + "-")) {
-            return Map.of("ok", false, "message", "会话不存在或无权限");
+            return Result.fail("会话不存在或无权限");
         }
         if (request.isApproved()) {
             approvalRegistry.approve(sessionId);
         } else {
             approvalRegistry.reject(sessionId);
         }
-        return Map.of("ok", true);
+        return Result.ok(null);
     }
 
     private void run(SseEmitter emitter, AtomicBoolean closed, long userId, String sessionId, String message) {

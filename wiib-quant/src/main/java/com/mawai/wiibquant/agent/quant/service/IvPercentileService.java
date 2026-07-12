@@ -53,6 +53,10 @@ public class IvPercentileService {
     public void collectOnce(String symbol) {
         String normalized = QuantConstants.normalizeSymbol(symbol);
         String currency = normalized.replace("USDT", "").replace("USDC", "");
+        // Deribit 只有 BTC/ETH 期权段：其余币无 IV 可采，跳过（避免每小时刷 no_atm_iv 噪音）
+        if (!DeribitClient.supports(currency)) {
+            return;
+        }
         try {
             String bookSummary = deribitClient.getBookSummaryByCurrency(currency);
             BigDecimal atmIv = parseAtmIv(bookSummary);

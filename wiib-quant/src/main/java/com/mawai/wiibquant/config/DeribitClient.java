@@ -6,19 +6,27 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
 import java.net.URI;
+import java.util.Set;
 
 import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * Deribit 公开 API 客户端（免认证）。
- * 仅拉取 BTC 期权隐含波动率相关数据，供量化系统使用。
+ * 仅拉取 BTC/ETH 期权隐含波动率相关数据，供量化系统使用。
  */
 @Slf4j
 @Component
 public class DeribitClient extends BaseRestTemplateConfig {
 
     private static final String BASE_URL = "https://www.deribit.com/api/v2/public";
+    /** Deribit 只有 BTC/ETH 期权段有数据（实测：SOL/XRP/PAXG 返回空簿，DOGE 直接 400 invalid currency） */
+    private static final Set<String> SUPPORTED_CURRENCIES = Set.of("BTC", "ETH");
     private final RestTemplate restTemplate;
+
+    /** 白名单外的币种没有期权/DVOL 数据，调用方据此跳过，不发无谓请求 */
+    public static boolean supports(String currency) {
+        return currency != null && SUPPORTED_CURRENCIES.contains(currency.toUpperCase());
+    }
 
     public DeribitClient() {
         this.restTemplate = createRestTemplate(5000, 10000);
@@ -30,6 +38,7 @@ public class DeribitClient extends BaseRestTemplateConfig {
      * 返回最近若干小时的 DVOL 数据点。
      */
     public String getDvolIndex(String currency, int resolution) {
+        if (!supports(currency)) return null;
         URI uri = UriComponentsBuilder
                 .fromUriString(BASE_URL + "/get_volatility_index_data")
                 .queryParam("currency", currency)
@@ -53,6 +62,7 @@ public class DeribitClient extends BaseRestTemplateConfig {
      * 下游用于计算 ATM IV、25d skew、term structure。
      */
     public String getBookSummaryByCurrency(String currency) {
+        if (!supports(currency)) return null;
         URI uri = UriComponentsBuilder
                 .fromUriString(BASE_URL + "/get_book_summary_by_currency")
                 .queryParam("currency", currency)

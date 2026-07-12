@@ -38,9 +38,21 @@ public class CrossMarketService extends BaseRestTemplateConfig {
     private static final String FACTOR_NAME = "CROSS_MARKET_RISK";
     private static final String YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}";
     private static final ZoneId SYSTEM_ZONE = ZoneId.systemDefault();
+    /** Yahoo edge 对非浏览器 UA（Java 默认 UA）首个请求就回 429，必须伪装浏览器 */
+    private static final String BROWSER_UA =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
     private final FactorHistoryMapper factorHistoryMapper;
-    private final RestTemplate restTemplate = createRestTemplate(5000, 10000);
+    private final RestTemplate restTemplate = yahooRestTemplate();
+
+    private RestTemplate yahooRestTemplate() {
+        RestTemplate rt = createRestTemplate(5000, 10000);
+        rt.getInterceptors().add((req, body, exec) -> {
+            req.getHeaders().set(org.springframework.http.HttpHeaders.USER_AGENT, BROWSER_UA);
+            return exec.execute(req, body);
+        });
+        return rt;
+    }
 
     @Value("${factor.cross_market_risk.enabled:true}")
     private boolean enabled;

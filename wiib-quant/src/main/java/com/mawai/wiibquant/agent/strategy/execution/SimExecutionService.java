@@ -389,9 +389,12 @@ public class SimExecutionService implements StrategyExecutionPort {
         return strategyId + ":" + symbol;
     }
 
-    /** 腿指纹：方向+挂单价+止损价（同腿三者不变，据此判 reaffirm 还是换腿）。 */
+    /**
+     * 腿指纹：方向+挂单价，据此判 reaffirm 还是换腿。刻意不含 SL——SL 带 ATR 缓冲每根 bar 尾数微漂，
+     * 含入会把同价挂单每根 bar 撤了重挂（真盘丢排队位）；真换腿挂单价必变，语义不丢。
+     * SL/TP 随挂单时刻值固定，滞留被超时撤单封顶，重挂自然刷新。
+     */
     private static String legKey(StrategySignal s) {
-        return s.side() + ":" + s.entryRefPrice().stripTrailingZeros().toPlainString()
-                + ":" + s.stopLossPrice().stripTrailingZeros().toPlainString();
+        return s.side() + ":" + s.entryRefPrice().stripTrailingZeros().toPlainString();
     }
 }

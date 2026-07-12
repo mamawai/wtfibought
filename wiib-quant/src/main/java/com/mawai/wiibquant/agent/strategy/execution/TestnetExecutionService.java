@@ -287,9 +287,12 @@ public class TestnetExecutionService implements StrategyExecutionPort {
         return steps.multiply(spec.qtyStep());
     }
 
-    /** 腿指纹：方向+挂单价+止损价。同腿这三者不变(fibo 腿几何固定)，据此判 reaffirm 还是换腿。 */
+    /**
+     * 腿指纹：方向+挂单价，据此判 reaffirm 还是换腿。刻意不含 SL——SL 带 ATR 缓冲每根 bar 尾数微漂，
+     * 含入会把同价挂单每根 bar 撤了重挂（GTX 重挂丢排队位+烧 API 权重）；真换腿挂单价必变，语义不丢。
+     * 成交后补挂的 SL/TP 用挂单时刻值，滞留被超时撤单封顶，重挂自然刷新。
+     */
     private String legKey(StrategySignal s) {
-        return s.side() + ":" + s.entryRefPrice().stripTrailingZeros().toPlainString()
-                + ":" + s.stopLossPrice().stripTrailingZeros().toPlainString();
+        return s.side() + ":" + s.entryRefPrice().stripTrailingZeros().toPlainString();
     }
 }

@@ -29,8 +29,10 @@ public class CacheService {
 
     // L1: 股票日内行情（getCurrentPrice + getDailyQuote 共用）
     private final Cache<Long, Map<String, String>> stockDailyCache = Caffeine.newBuilder().maximumSize(500).build();
-    // L1: 加密货币价格（spot/mark 用 key 前缀区分）
-    private final Cache<String, BigDecimal> cryptoPriceCache = Caffeine.newBuilder().maximumSize(50).build();
+    // L1: 加密货币价格（spot/mark/futures 用 key 前缀区分）。put 刷新只在 feed 进程（WS tick），
+    // sim/quant 读进程无人回填，必须短过期回源 Redis——否则拆进程后首读值永久冻结（曾致标记价/成交价死价）
+    private final Cache<String, BigDecimal> cryptoPriceCache = Caffeine.newBuilder()
+            .maximumSize(50).expireAfterWrite(Duration.ofSeconds(1)).build();
 
     // prediction 缓存改 Redis 后端（feed 写 sim 读跨进程），窗口/盘口数据靠 TTL 自动清理
     private static final Duration PREDICTION_TTL = Duration.ofMinutes(20);

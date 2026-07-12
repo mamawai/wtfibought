@@ -128,3 +128,9 @@ sim:
 internal:
   api:
     token: ${INTERNAL_API_TOKEN:}
+
+# 框架噪音抑制：MainAgentNodeAction 每次主 agent 用文本收尾都会打"JSON 路由解析失败"WARN+堆栈，
+# 这是 1.1.2.0 的 FINISH 判定机制（解析失败=本轮结束），预期路径非故障，压到 ERROR 零损失
+logging:
+  level:
+    com.alibaba.cloud.ai.graph.agent.flow.node.MainAgentNodeAction: error

@@ -45,6 +45,9 @@ public class KlineStreamConsumer {
 
     private StreamMessageListenerContainer<String, MapRecord<String, String, String>> container;
     private Subscription subscription;
+    // 停机标志：cancel() 不会打断正阻塞的 XREADGROUP，连接工厂随后关闭必然掐死最后一次读，
+    // 该"Connection closed"是预期时序而非故障，errorHandler 据此降噪
+    private volatile boolean shuttingDown;
 
     public KlineStreamConsumer(StringRedisTemplate redisTemplate,
                                RedisConnectionFactory connectionFactory,
@@ -60,6 +63,7 @@ public class KlineStreamConsumer {
         StreamMessageListenerContainerOptions<String, MapRecord<String, String, String>> options =
                 StreamMessageListenerContainerOptions.builder()
                         .pollTimeout(Duration.ofSeconds(2))
+                        .errorHandler(this::handlePollError)
                         .build();
         container = StreamMessageListenerContainer.create(connectionFactory, options);
         subscription = container.receiveAutoAck(
@@ -112,8 +116,18 @@ public class KlineStreamConsumer {
         }
     }
 
+    /** 轮询异常：停机期的连接中断是预期时序，降 debug；运行期异常保持 ERROR 可见。 */
+    private void handlePollError(Throwable e) {
+        if (shuttingDown) {
+            log.debug("[KlineStream] 停机期轮询中断（预期）: {}", e.toString());
+        } else {
+            log.error("[KlineStream] Stream 轮询异常", e);
+        }
+    }
+
     @PreDestroy
     public void stop() {
+        shuttingDown = true;
         try {
             if (subscription != null) subscription.cancel();
             if (container != null) container.stop();
