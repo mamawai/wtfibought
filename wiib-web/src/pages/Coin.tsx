@@ -814,7 +814,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const estimatedCommission = estimatedAmount * COMMISSION_RATE;
 
   return (
-    <div className="max-w-5xl mx-auto p-4 md:p-6 space-y-8">
+    <div className="page-shell p-4 md:p-6 space-y-8">
       {/* 顶部价格 */}
       <Card className="relative overflow-hidden mb-6">
         <div className={`absolute top-0 right-0 p-32 rounded-full blur-3xl -z-10 transform translate-x-1/3 -translate-y-1/2 opacity-20 bg-linear-to-br ${cfg.gradientClass}`} />

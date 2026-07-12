@@ -87,7 +87,7 @@ export function Home() {
   const isProfit = (user?.profit ?? 0) >= 0;
 
   return (
-    <div className="max-w-5xl mx-auto px-4 md:px-6 py-4 space-y-6">
+    <div className="page-shell px-4 md:px-6 py-4 space-y-6">
 
       {/* ====== Hero ====== */}
       <Card>

@@ -387,7 +387,7 @@ export const workbenchApi = {
     await streamWorkbenchEvents(response, onEvent);
   },
   approve: (sessionId: string, approved: boolean) =>
-    api.post<unknown, { ok: boolean; message?: string }>('/ai/workbench/approve', { sessionId, approved }),
+    api.post<unknown, void>('/ai/workbench/approve', { sessionId, approved }),
 };
 
 export const quantApi = {

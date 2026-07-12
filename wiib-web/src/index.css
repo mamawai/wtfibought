@@ -119,6 +119,16 @@ html.dark::view-transition-new(root) { z-index: 1; }
   .wiib-toast-progress { animation-name: wiib-toast-progress; animation-timing-function: linear; animation-fill-mode: both }
 }
 
+/* ===== 页面容器 ===== */
+/* 主内容页统一壳：PC 主体宽度只在这里定义，改这里=改全站。
+   游戏/个人/引导/股票系暂未接入：窄内容（牌桌/表单/单列卡片流）直接拉宽会散架，
+   接入前需同步调整页内布局。 */
+.page-shell {
+  width: 100%;
+  max-width: 90rem; /* 1440px */
+  margin-inline: auto;
+}
+
 /* ===== Neumorphism Utilities ===== */
 .neu-text { text-shadow: 1px 1px 0px #fff, -1px -1px 1px #a0a5ae }
 html.dark .neu-text { text-shadow: 1px 1px 0px #464b56, -1px -1px 1px #1a1d23 }

@@ -1,16 +1,66 @@
 import { useState, useCallback } from 'react';
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { aiAgentApi } from '../api';
 import { useUserStore } from '../stores/userStore';
 import { useToast } from '../components/ui/use-toast';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { Badge } from '../components/ui/badge';
 import { Workbench } from '../components/workbench/Workbench';
-import { Brain, User, CheckCircle2, BarChart3, Zap, Trophy, BrainCircuit } from 'lucide-react';
+import { cn } from '../lib/utils';
+import {
+  BarChart3, Bomb, Brain, BrainCircuit, CheckCircle2, Coins, Dices, Gem,
+  Rocket, ShieldAlert, Target, Trophy, User, Zap,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import type { BehaviorAnalysisReport } from '../types';
 
 type Tab = 'behavior' | 'workbench';
+
+const RISK_TONE: Record<string, string> = {
+  HIGH: 'bg-loss/15 text-loss',
+  MEDIUM: 'bg-warning/15 text-warning',
+  LOW: 'bg-gain/15 text-gain',
+};
+
+/** 拟物区块卡：浮起面板 + 主色图标标题，全页统一节奏。 */
+function SectionCard({ icon: Icon, title, children }: { icon: LucideIcon; title: string; children: ReactNode }) {
+  return (
+    <div className="rounded-xl neu-raised-sm p-4 sm:p-5 space-y-3">
+      <div className="flex items-center gap-2 text-sm font-black">
+        <Icon className="w-4 h-4 text-primary" /> {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** 类别块：neu-flat 分组 + 2×2 指标网格（数值在上、标签退后，替代"标签: 值"挤行）。 */
+function CategoryBlock({ icon: Icon, title, children }: { icon: LucideIcon; title: string; children: ReactNode }) {
+  return (
+    <div className="rounded-lg neu-flat p-3">
+      <div className="text-[11px] font-black text-muted-foreground flex items-center gap-1.5 mb-2.5">
+        <Icon className="w-3.5 h-3.5" /> {title}
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">{children}</div>
+    </div>
+  );
+}
+
+function Metric({ label, value, tone }: { label: string; value: ReactNode; tone?: 'gain' | 'loss' }) {
+  return (
+    <div className="min-w-0">
+      <div className={cn('text-[13px] font-bold tabular-nums truncate', tone === 'gain' && 'text-gain', tone === 'loss' && 'text-loss')}>
+        {value}
+      </div>
+      <div className="text-[10px] text-muted-foreground mt-0.5">{label}</div>
+    </div>
+  );
+}
+
+/** 带符号盈亏文本 + 颜色 tone */
+function pnl(v: number): { text: string; tone: 'gain' | 'loss' } {
+  return { text: `${v >= 0 ? '+' : ''}${v.toFixed(2)}`, tone: v >= 0 ? 'gain' : 'loss' };
+}
 
 export function AiAgent() {
   const { toast } = useToast();
@@ -35,8 +85,8 @@ export function AiAgent() {
   }, [toast]);
 
   return (
-    <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
-      <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 border border-primary/20 text-primary text-xs font-bold">
+    <div className="page-shell p-4 md:p-6 space-y-4">
+      <div className="rounded-xl neu-flat px-4 py-2.5 flex items-center gap-2.5 text-primary text-xs font-bold">
         <Zap className="w-4 h-4 shrink-0" />
         投资有风险，当前分析结果仅供参考不构成任何建议
         <Link to="/scorecard" className="ml-auto hidden sm:flex items-center gap-1 hover:underline shrink-0">
@@ -44,20 +94,26 @@ export function AiAgent() {
         </Link>
       </div>
 
-      {/* Tab Switcher */}
-      <div className="flex bg-muted rounded-lg p-0.5 max-w-md">
+      {/* Tab：内凹滑槽 + 浮起选中块（拟物分段控件） */}
+      <div className="neu-inset rounded-xl p-1 flex max-w-md">
         {isAdmin && (
-        <button
-          onClick={() => setTab('workbench')}
-          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-bold transition-all ${tab === 'workbench' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-        >
-          <BrainCircuit className="w-4 h-4" />
-          研判工作台
-        </button>
+          <button
+            onClick={() => setTab('workbench')}
+            className={cn(
+              'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all',
+              tab === 'workbench' ? 'neu-raised-sm bg-background text-primary' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <BrainCircuit className="w-4 h-4" />
+            研判工作台
+          </button>
         )}
         <button
           onClick={() => setTab('behavior')}
-          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-bold transition-all ${tab === 'behavior' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+          className={cn(
+            'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all',
+            tab === 'behavior' ? 'neu-raised-sm bg-background text-primary' : 'text-muted-foreground hover:text-foreground',
+          )}
         >
           <User className="w-4 h-4" />
           行为分析
@@ -67,191 +123,153 @@ export function AiAgent() {
       {/* 研判工作台（P7）：左对话右时间线，PC 双栏吃满 7xl */}
       {tab === 'workbench' && isAdmin && <Workbench />}
 
-      {/* 行为分析（behavior agent，保持原样）：窄容器保读感 */}
+      {/* 行为分析（behavior agent）：窄容器保读感 */}
       {tab === 'behavior' && (
         <div className="space-y-4 max-w-5xl">
           {!behaviorReport || !behaviorReport.overview ? (
-            <Card>
-              <CardContent className="p-5 sm:p-8 text-center">
-                {!behaviorLoading ? (
-                  <>
-                    <Brain className="w-10 h-10 sm:w-12 sm:h-12 mx-auto text-muted-foreground mb-4" />
-                    <h2 className="text-lg font-bold mb-2">用户行为分析</h2>
-                    <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-                      基于你的全部历史交易数据、游戏记录、风险偏好等维度，全面分析你的投资行为特征
-                    </p>
-                    <Button onClick={handleAnalyzeBehavior} size="lg">开始分析</Button>
-                  </>
-                ) : (
-                  <>
-                    <Brain className="w-10 h-10 sm:w-12 sm:h-12 mx-auto text-primary mb-4 animate-pulse" />
-                    <h2 className="text-lg font-bold mb-4">正在分析中...</h2>
-                  </>
-                )}
-              </CardContent>
-            </Card>
+            <div className="rounded-xl neu-raised-sm p-8 sm:p-12 text-center">
+              <div className={cn(
+                'w-16 h-16 rounded-2xl neu-flat bg-primary/10 flex items-center justify-center mx-auto mb-5',
+                behaviorLoading && 'animate-pulse',
+              )}>
+                <Brain className="w-8 h-8 text-primary" />
+              </div>
+              {!behaviorLoading ? (
+                <>
+                  <h2 className="text-lg font-black mb-2">用户行为分析</h2>
+                  <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto leading-relaxed">
+                    基于你的全部历史交易数据、游戏记录、风险偏好等维度，全面分析你的投资行为特征
+                  </p>
+                  <Button onClick={handleAnalyzeBehavior} size="lg">开始分析</Button>
+                </>
+              ) : (
+                <h2 className="text-lg font-black">正在分析中...</h2>
+              )}
+            </div>
           ) : (
             <>
               {/* 概览 */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <BarChart3 className="w-4 h-4" /> 资产概览
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-3 rounded-lg bg-muted/50">
-                      <div className="text-xl sm:text-2xl font-black tabular-nums">${behaviorReport.overview.totalAssets.toLocaleString()}</div>
-                      <div className="text-xs text-muted-foreground">总资产</div>
+              <SectionCard icon={BarChart3} title="资产概览">
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="rounded-lg neu-inset px-3.5 py-3">
+                    <div className="text-xl sm:text-2xl font-black tabular-nums truncate leading-tight">
+                      ${behaviorReport.overview.totalAssets.toLocaleString()}
                     </div>
-                    <div className="p-3 rounded-lg bg-muted/50">
-                      <div className={`text-xl sm:text-2xl font-black tabular-nums ${behaviorReport.overview.totalProfitPct >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                        {behaviorReport.overview.totalProfitPct >= 0 ? '+' : ''}{behaviorReport.overview.totalProfitPct.toFixed(2)}%
-                      </div>
-                      <div className="text-xs text-muted-foreground">总收益率</div>
+                    <div className="text-[10px] text-muted-foreground mt-1">总资产</div>
+                  </div>
+                  <div className="rounded-lg neu-inset px-3.5 py-3">
+                    <div className={cn('text-xl sm:text-2xl font-black tabular-nums leading-tight',
+                      behaviorReport.overview.totalProfitPct >= 0 ? 'text-gain' : 'text-loss')}>
+                      {behaviorReport.overview.totalProfitPct >= 0 ? '+' : ''}{behaviorReport.overview.totalProfitPct.toFixed(2)}%
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-1">总收益率</div>
+                  </div>
+                </div>
+
+                {behaviorReport.overview.distribution.length > 0 && (
+                  <div>
+                    <div className="text-[10px] font-bold text-muted-foreground mb-2">资产分布</div>
+                    <div className="flex flex-wrap gap-2">
+                      {behaviorReport.overview.distribution.map((d, i) => (
+                        <span key={i} className="neu-flat rounded-full px-2.5 py-1 text-[11px] font-bold tabular-nums">
+                          <span className="text-muted-foreground">{d.category}</span> ${d.value.toLocaleString()}
+                        </span>
+                      ))}
                     </div>
                   </div>
-
-                  {behaviorReport.overview.distribution.length > 0 && (
-                    <div>
-                      <div className="text-xs text-muted-foreground mb-2">资产分布</div>
-                      <div className="flex flex-wrap gap-2">
-                        {behaviorReport.overview.distribution.map((d, i) => (
-                          <Badge key={i} variant="outline">{d.category}: ${d.value.toLocaleString()}</Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+                )}
+              </SectionCard>
 
               {/* 交易行为 */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">交易行为分析</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
+              <SectionCard icon={Coins} title="交易行为分析">
+                <div className="grid sm:grid-cols-2 gap-2.5">
                   {behaviorReport.tradeBehavior.stock.positionCount > 0 && (
-                    <div className="p-3 rounded-lg bg-muted/50">
-                      <div className="text-xs text-muted-foreground mb-1">股票</div>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <span>持仓: <span className="font-bold">{behaviorReport.tradeBehavior.stock.positionCount}</span></span>
-                        <span>订单: <span className="font-bold">{behaviorReport.tradeBehavior.stock.orderCount}</span></span>
-                        <span>买入额: <span className="font-bold">${behaviorReport.tradeBehavior.stock.totalBuyAmount.toLocaleString()}</span></span>
-                        <span>偏好: <span className="font-bold">{behaviorReport.tradeBehavior.stock.preference}</span></span>
-                      </div>
-                    </div>
+                    <CategoryBlock icon={BarChart3} title="股票">
+                      <Metric label="持仓" value={behaviorReport.tradeBehavior.stock.positionCount} />
+                      <Metric label="订单" value={behaviorReport.tradeBehavior.stock.orderCount} />
+                      <Metric label="买入额" value={`$${behaviorReport.tradeBehavior.stock.totalBuyAmount.toLocaleString()}`} />
+                      <Metric label="偏好" value={behaviorReport.tradeBehavior.stock.preference} />
+                    </CategoryBlock>
                   )}
                   {behaviorReport.tradeBehavior.crypto.positionCount > 0 && (
-                    <div className="p-3 rounded-lg bg-muted/50">
-                      <div className="text-xs text-muted-foreground mb-1">加密货币</div>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <span>持仓: <span className="font-bold">{behaviorReport.tradeBehavior.crypto.positionCount}</span></span>
-                        <span>杠杆: <span className="font-bold">{behaviorReport.tradeBehavior.crypto.leverageUsage}</span></span>
-                        <span>买入: <span className="font-bold">${behaviorReport.tradeBehavior.crypto.totalBuyAmount.toLocaleString()}</span></span>
-                        <span>卖出: <span className="font-bold">${behaviorReport.tradeBehavior.crypto.totalSellAmount.toLocaleString()}</span></span>
-                      </div>
-                    </div>
+                    <CategoryBlock icon={Coins} title="加密货币">
+                      <Metric label="持仓" value={behaviorReport.tradeBehavior.crypto.positionCount} />
+                      <Metric label="杠杆" value={behaviorReport.tradeBehavior.crypto.leverageUsage} />
+                      <Metric label="买入" value={`$${behaviorReport.tradeBehavior.crypto.totalBuyAmount.toLocaleString()}`} />
+                      <Metric label="卖出" value={`$${behaviorReport.tradeBehavior.crypto.totalSellAmount.toLocaleString()}`} />
+                    </CategoryBlock>
                   )}
                   {behaviorReport.tradeBehavior.futures.orderCount > 0 && (
-                    <div className="p-3 rounded-lg bg-muted/50">
-                      <div className="text-xs text-muted-foreground mb-1">永续合约</div>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <span>订单: <span className="font-bold">{behaviorReport.tradeBehavior.futures.orderCount}</span></span>
-                        <span>方向: <span className="font-bold">{behaviorReport.tradeBehavior.futures.direction}</span></span>
-                        <span>平仓盈亏: <span className="font-bold">{behaviorReport.tradeBehavior.futures.realizedPnl >= 0 ? '+' : ''}{behaviorReport.tradeBehavior.futures.realizedPnl.toFixed(2)}</span></span>
-                        <span>平均杠杆: <span className="font-bold">{behaviorReport.tradeBehavior.futures.avgLeverage}x</span></span>
-                      </div>
-                    </div>
+                    <CategoryBlock icon={Rocket} title="永续合约">
+                      <Metric label="订单" value={behaviorReport.tradeBehavior.futures.orderCount} />
+                      <Metric label="方向" value={behaviorReport.tradeBehavior.futures.direction} />
+                      <Metric label="平仓盈亏" {...(() => { const p = pnl(behaviorReport.tradeBehavior.futures.realizedPnl); return { value: p.text, tone: p.tone }; })()} />
+                      <Metric label="平均杠杆" value={`${behaviorReport.tradeBehavior.futures.avgLeverage}x`} />
+                    </CategoryBlock>
                   )}
                   {behaviorReport.tradeBehavior.prediction.frequency > 0 && (
-                    <div className="p-3 rounded-lg bg-muted/50">
-                      <div className="text-xs text-muted-foreground mb-1">预测交易</div>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <span>频率: <span className="font-bold">{behaviorReport.tradeBehavior.prediction.frequency}次</span></span>
-                        <span>胜率: <span className="font-bold">{behaviorReport.tradeBehavior.prediction.winRate}%</span></span>
-                        <span>净盈亏: <span className="font-bold">{behaviorReport.tradeBehavior.prediction.netProfit >= 0 ? '+' : ''}{behaviorReport.tradeBehavior.prediction.netProfit.toFixed(2)}</span></span>
-                        <span>偏好: <span className="font-bold">{behaviorReport.tradeBehavior.prediction.directionPreference}</span></span>
-                      </div>
-                    </div>
+                    <CategoryBlock icon={Target} title="预测交易">
+                      <Metric label="频率" value={`${behaviorReport.tradeBehavior.prediction.frequency}次`} />
+                      <Metric label="胜率" value={`${behaviorReport.tradeBehavior.prediction.winRate}%`} />
+                      <Metric label="净盈亏" {...(() => { const p = pnl(behaviorReport.tradeBehavior.prediction.netProfit); return { value: p.text, tone: p.tone }; })()} />
+                      <Metric label="偏好" value={behaviorReport.tradeBehavior.prediction.directionPreference} />
+                    </CategoryBlock>
                   )}
-                </CardContent>
-              </Card>
+                </div>
+              </SectionCard>
 
               {/* 游戏行为 */}
               {behaviorReport.gameBehavior && (
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-base">游戏行为分析</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
+                <SectionCard icon={Dices} title="游戏行为分析">
+                  <div className="grid sm:grid-cols-2 gap-2.5">
                     {behaviorReport.gameBehavior.blackjack.totalHands > 0 && (
-                      <div className="p-3 rounded-lg bg-muted/50">
-                        <div className="text-xs text-muted-foreground mb-1">Blackjack</div>
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          <span>局数: <span className="font-bold">{behaviorReport.gameBehavior.blackjack.totalHands}</span></span>
-                          <span>胜: <span className="font-bold text-green-500">{behaviorReport.gameBehavior.blackjack.totalWon}</span></span>
-                          <span>负: <span className="font-bold text-red-500">{behaviorReport.gameBehavior.blackjack.totalLost}</span></span>
-                          <span>最大赢: <span className="font-bold">${behaviorReport.gameBehavior.blackjack.biggestWin}</span></span>
-                        </div>
-                      </div>
+                      <CategoryBlock icon={Dices} title="Blackjack">
+                        <Metric label="局数" value={behaviorReport.gameBehavior.blackjack.totalHands} />
+                        <Metric label="最大赢" value={`$${behaviorReport.gameBehavior.blackjack.biggestWin}`} />
+                        <Metric label="胜" value={behaviorReport.gameBehavior.blackjack.totalWon} tone="gain" />
+                        <Metric label="负" value={behaviorReport.gameBehavior.blackjack.totalLost} tone="loss" />
+                      </CategoryBlock>
                     )}
                     {behaviorReport.gameBehavior.mines.frequency > 0 && (
-                      <div className="p-3 rounded-lg bg-muted/50">
-                        <div className="text-xs text-muted-foreground mb-1">矿工游戏</div>
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          <span>频率: <span className="font-bold">{behaviorReport.gameBehavior.mines.frequency}次</span></span>
-                          <span>净盈亏: <span className="font-bold">{behaviorReport.gameBehavior.mines.netProfit >= 0 ? '+' : ''}{behaviorReport.gameBehavior.mines.netProfit.toFixed(2)}</span></span>
-                        </div>
-                      </div>
+                      <CategoryBlock icon={Bomb} title="矿工游戏">
+                        <Metric label="频率" value={`${behaviorReport.gameBehavior.mines.frequency}次`} />
+                        <Metric label="净盈亏" {...(() => { const p = pnl(behaviorReport.gameBehavior.mines.netProfit); return { value: p.text, tone: p.tone }; })()} />
+                      </CategoryBlock>
                     )}
                     {behaviorReport.gameBehavior.videoPoker.frequency > 0 && (
-                      <div className="p-3 rounded-lg bg-muted/50">
-                        <div className="text-xs text-muted-foreground mb-1">视频扑克</div>
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          <span>频率: <span className="font-bold">{behaviorReport.gameBehavior.videoPoker.frequency}次</span></span>
-                          <span>净盈亏: <span className="font-bold">{behaviorReport.gameBehavior.videoPoker.netProfit >= 0 ? '+' : ''}{behaviorReport.gameBehavior.videoPoker.netProfit.toFixed(2)}</span></span>
-                        </div>
-                      </div>
+                      <CategoryBlock icon={Gem} title="视频扑克">
+                        <Metric label="频率" value={`${behaviorReport.gameBehavior.videoPoker.frequency}次`} />
+                        <Metric label="净盈亏" {...(() => { const p = pnl(behaviorReport.gameBehavior.videoPoker.netProfit); return { value: p.text, tone: p.tone }; })()} />
+                      </CategoryBlock>
                     )}
-                  </CardContent>
-                </Card>
+                  </div>
+                </SectionCard>
               )}
 
               {/* 风险画像 */}
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">风险画像</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <Badge variant={behaviorReport.riskProfile.riskLevel === 'HIGH' ? 'destructive' : behaviorReport.riskProfile.riskLevel === 'MEDIUM' ? 'default' : 'outline'}>
-                      {behaviorReport.riskProfile.riskLevel}
-                    </Badge>
-                    <span className="text-xs">爆仓次数: <span className="font-bold">{behaviorReport.riskProfile.bankruptCount}</span></span>
-                    <span className="text-xs">最大回撤: <span className="font-bold">{behaviorReport.riskProfile.maxDrawdown}</span></span>
-                  </div>
-                </CardContent>
-              </Card>
+              <SectionCard icon={ShieldAlert} title="风险画像">
+                <div className="flex items-center gap-4 flex-wrap">
+                  <span className={cn('text-xs font-black px-3 py-1 rounded-full',
+                    RISK_TONE[behaviorReport.riskProfile.riskLevel] || RISK_TONE.LOW)}>
+                    {behaviorReport.riskProfile.riskLevel}
+                  </span>
+                  <Metric label="爆仓次数" value={behaviorReport.riskProfile.bankruptCount} />
+                  <Metric label="最大回撤" value={behaviorReport.riskProfile.maxDrawdown} />
+                </div>
+              </SectionCard>
 
               {/* 建议 */}
               {behaviorReport.suggestions.length > 0 && (
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-base">个性化建议</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <ul className="space-y-2">
-                      {behaviorReport.suggestions.map((s, i) => (
-                        <li key={i} className="flex items-start gap-2 text-sm">
-                          <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0 mt-0.5" />
-                          {s}
-                        </li>
-                      ))}
-                    </ul>
-                  </CardContent>
-                </Card>
+                <SectionCard icon={CheckCircle2} title="个性化建议">
+                  <ul className="space-y-2">
+                    {behaviorReport.suggestions.map((s, i) => (
+                      <li key={i} className="flex items-start gap-2.5 rounded-lg neu-flat px-3 py-2.5 text-sm leading-relaxed">
+                        <CheckCircle2 className="w-4 h-4 text-gain shrink-0 mt-0.5" />
+                        {s}
+                      </li>
+                    ))}
+                  </ul>
+                </SectionCard>
               )}
 
               <Button variant="outline" onClick={() => setBehaviorReport(null)} className="mb-4">重新分析</Button>

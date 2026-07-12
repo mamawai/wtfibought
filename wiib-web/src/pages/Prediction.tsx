@@ -356,7 +356,7 @@ export function Prediction() {
   const countdownColor = countdown <= 10 ? 'text-red-500' : countdown <= 30 ? 'text-amber-500' : '';
 
   return (
-    <div className="max-w-5xl mx-auto p-4 md:p-6 space-y-4">
+    <div className="page-shell p-4 md:p-6 space-y-4">
 
       <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs font-bold">
         <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />

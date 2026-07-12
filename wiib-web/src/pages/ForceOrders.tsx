@@ -57,7 +57,7 @@ export function ForceOrders() {
   }, [records]);
 
   return (
-    <div className="max-w-6xl mx-auto p-4 md:p-6 space-y-5">
+    <div className="page-shell p-4 md:p-6 space-y-5">
       <Card className="relative overflow-hidden">
         <div className="absolute -top-16 -right-12 w-48 h-48 rounded-full bg-red-500/10 blur-3xl" />
         <CardHeader className="relative space-y-4">
