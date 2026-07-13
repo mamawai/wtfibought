@@ -5,10 +5,13 @@ import { Home } from './pages/Home';
 import { StockList } from './pages/StockList';
 import { StockDetail } from './pages/StockDetail';
 import { StockKline } from './pages/StockKline';
+import { BStockList } from './pages/BStockList';
+import { BStockRoute } from './pages/BStockDetail';
 import { Portfolio } from './pages/Portfolio';
 import { Options } from './pages/Options';
 import { CoinRoute } from './pages/Coin';
 import { CoinSelect } from './pages/CoinSelect';
+import { CommoditySelect } from './pages/CommoditySelect';
 import { Ranking } from './pages/Ranking';
 import { Login } from './pages/Login';
 import { Admin } from './pages/Admin';
@@ -54,12 +57,15 @@ function App() {
                 <Route path="/" element={<Home />} />
                 <Route path="/intro" element={<Intro />} />
                 <Route path="/stocks" element={<StockList />} />
+                <Route path="/bstock" element={<BStockList />} />
+                <Route path="/bstock/:symbol" element={<BStockRoute />} />
                 <Route path="/stock/:id" element={<StockDetail />} />
                 <Route path="/stock/:id/kline" element={<StockKline />} />
                 <Route path="/portfolio" element={<Portfolio />} />
                 <Route path="/options" element={<Options />} />
                 <Route path="/coin" element={<CoinSelect />} />
                 <Route path="/coin/:symbol" element={<CoinRoute />} />
+                <Route path="/commodity" element={<CommoditySelect />} />
                 <Route path="/ranking" element={<Ranking />} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="/admin/graph-obs" element={<RequireAuth><GraphObs /></RequireAuth>} />

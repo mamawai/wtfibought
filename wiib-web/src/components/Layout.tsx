@@ -8,12 +8,12 @@ import { cn } from '../lib/utils';
 import {
   Home, Briefcase, LogOut, LogIn, TrendingUp, Sun, Moon,
   BarChart3, User, ChevronDown, List, DollarSign, LineChart,
-  Brain,
+  Brain, Gem,
 } from 'lucide-react';
 
 interface Props { children: React.ReactNode }
 
-const MARKET_PATHS = ['/stocks', '/coin', '/options'];
+const MARKET_PATHS = ['/bstock', '/coin', '/commodity', '/options'];
 
 export function Layout({ children }: Props) {
   const navigate = useNavigate();
@@ -134,7 +134,7 @@ export function Layout({ children }: Props) {
       <nav className="fixed bottom-3 left-3 right-3 md:hidden z-50">
         <div className="flex items-center rounded-full bg-card neu-raised p-1.5 gap-1">
           <BottomNavItem to="/" icon={<Home className="w-5 h-5" />} label="首页" />
-          <BottomNavItem to="/stocks" icon={<BarChart3 className="w-5 h-5" />} label="市场" forceActive={isMarketActive} />
+          <BottomNavItem to="/bstock" icon={<BarChart3 className="w-5 h-5" />} label="市场" forceActive={isMarketActive} />
           <BottomNavItem to="/portfolio" icon={<Briefcase className="w-5 h-5" />} label="持仓" />
           <BottomNavItem to="/me" icon={<User className="w-5 h-5" />} label="我的" />
           <BottomNavItem to="/ai" icon={<Brain className="w-5 h-5" />} label="AI" />
@@ -184,8 +184,9 @@ function MarketDropdown({ isActive }: { isActive: boolean }) {
       {open && (
         <div className="absolute top-full left-0 mt-2 w-44 rounded-2xl bg-card neu-raised py-1.5 opacity-100 scale-100 transition-all duration-200">
           {[
-            { to: '/stocks', icon: <List className="w-4 h-4" />, label: '股票' },
+            { to: '/bstock', icon: <List className="w-4 h-4" />, label: '股票' },
             { to: '/coin', icon: <DollarSign className="w-4 h-4" />, label: '币种' },
+            { to: '/commodity', icon: <Gem className="w-4 h-4" />, label: '大宗商品' },
             { to: '/options', icon: <LineChart className="w-4 h-4" />, label: '期权' },
           ].map(({ to, icon, label }) => (
             <NavLink

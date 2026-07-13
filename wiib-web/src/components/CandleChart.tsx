@@ -42,7 +42,7 @@ function tooltipHtml(bar: Bar, bars: Bar[], idx: Map<number, number>, d: number,
  * 合约实时蜡烛图 + 成交量柱 + 悬停气泡。
  * 历史走 REST(含量/额)，当前根走 {@link useKlineStream}(后端实时广播 o/h/l/c/v/q)。仅合约。
  */
-export function CandleChart({ symbol, interval, limit = 300 }: { symbol: string; interval: '5m' | '15m'; limit?: number }) {
+export function CandleChart({ symbol, interval, limit = 300, klinesFn = futuresApi.klines }: { symbol: string; interval: '5m' | '15m'; limit?: number; klinesFn?: (symbol: string, interval: string, limit: number) => Promise<number[][]> }) {
   const isDark = useIsDark();
   const wrapRef = useRef<HTMLDivElement>(null);
   const chartDivRef = useRef<HTMLDivElement>(null);
@@ -115,7 +115,7 @@ export function CandleChart({ symbol, interval, limit = 300 }: { symbol: string;
     });
 
     readyRef.current = false;
-    futuresApi.klines(symbol, interval, limit).then(raw => {
+    klinesFn(symbol, interval, limit).then(raw => {
       const bars: Bar[] = [], idx = new Map<number, number>();
       for (const k of raw) {
         const time = toBarTime(k[0]);
@@ -137,7 +137,7 @@ export function CandleChart({ symbol, interval, limit = 300 }: { symbol: string;
       chartRef.current = null; candleRef.current = null; volRef.current = null;
       readyRef.current = false; barsRef.current = []; idxRef.current = new Map();
     };
-  }, [symbol, interval, limit, decimals]);
+  }, [symbol, interval, limit, decimals, klinesFn]);
 
   // 主题切换：只改颜色，不重建
   useEffect(() => {

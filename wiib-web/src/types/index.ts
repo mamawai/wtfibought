@@ -331,6 +331,31 @@ export interface CryptoPosition {
   totalDiscount: number;
 }
 
+// bStock 代币化美股：静态信息(bstock 表) + 实时行情
+export interface BStock {
+  id: number;
+  symbol: string;        // NVDABUSDT
+  ticker: string;        // NVDA
+  name: string;          // 英伟达
+  nameEn?: string;
+  industry?: string;
+  description?: string;
+  ceo?: string;
+  homepage?: string;
+  marketCap?: number;
+  peRatio?: number;
+  dividendYield?: number;
+  multiplier?: number;
+  week52High?: number;
+  week52Low?: number;
+  // 实时
+  price?: number;
+  changePct?: number;
+  high?: number;
+  low?: number;
+  volume?: number;
+}
+
 export interface CryptoOrder {
   orderId: number;
   symbol: string;

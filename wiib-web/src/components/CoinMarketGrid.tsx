@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { COIN_LIST, formatCoinPrice, type CoinCfg } from '../lib/coinConfig';
-import { cryptoApi } from '../api';
+import { cryptoApi, futuresApi } from '../api';
 import { useCryptoStream } from '../hooks/useCryptoStream';
 
 /** 折线归一化到 100x28 视口；range=0（横盘）时画中线 */
@@ -21,25 +21,28 @@ function sparkPoints(data: number[]): string {
 
 function CoinMarketCard({ cfg }: { cfg: CoinCfg }) {
   const navigate = useNavigate();
-  const tick = useCryptoStream(cfg.symbol, 'spot');
+  // 商品是纯合约（无现货）→ 走 futures 流 + 合约K线；crypto 走现货
+  const tick = useCryptoStream(cfg.symbol, cfg.futuresOnly ? 'futures' : 'spot');
   // 进页面拉一次 1h×25 根：closes[0]≈24h前收盘价作涨跌基准，整条作走势线
   const [closes, setCloses] = useState<number[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    cryptoApi.klines(cfg.symbol, '1h', 25)
+    const loadKlines = cfg.futuresOnly ? futuresApi.klines : cryptoApi.klines;
+    loadKlines(cfg.symbol, '1h', 25)
       .then(rows => { if (!cancelled && rows?.length) setCloses(rows.map(r => Number(r[4]))); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [cfg.symbol]);
+  }, [cfg.symbol, cfg.futuresOnly]);
 
+  const livePrice = cfg.futuresOnly ? (tick?.fp ?? tick?.price) : tick?.price;
   // 实时价到了就顶掉最后一根（当前未收盘K线）的收盘价，走势线尾端跟着动
   const spark = useMemo(
-    () => (tick && closes.length ? [...closes.slice(0, -1), tick.price] : closes),
-    [closes, tick],
+    () => (livePrice != null && closes.length ? [...closes.slice(0, -1), livePrice] : closes),
+    [closes, livePrice],
   );
 
-  const price = tick?.price ?? (closes.length ? closes[closes.length - 1] : null);
+  const price = livePrice ?? (closes.length ? closes[closes.length - 1] : null);
   const base = closes.length ? closes[0] : null;
   const pct = price != null && base ? ((price - base) / base) * 100 : null;
   const up = (pct ?? 0) >= 0;
@@ -88,10 +91,10 @@ function CoinMarketCard({ cfg }: { cfg: CoinCfg }) {
 }
 
 /** 币种行情卡片网格：实时价（STOMP）+24h涨跌+迷你走势线，点卡片直达交易页。首页与 /coin 选择页共用。 */
-export function CoinMarketGrid() {
+export function CoinMarketGrid({ list = COIN_LIST }: { list?: CoinCfg[] }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
-      {COIN_LIST.map(c => <CoinMarketCard key={c.symbol} cfg={c} />)}
+      {list.map(c => <CoinMarketCard key={c.symbol} cfg={c} />)}
     </div>
   );
 }

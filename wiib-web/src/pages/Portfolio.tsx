@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUserStore } from '../stores/userStore';
-import { userApi, orderApi, settlementApi, cryptoOrderApi, cryptoApi, futuresApi, optionApi, predictionApi } from '../api';
+import { userApi, orderApi, settlementApi, cryptoOrderApi, cryptoApi, futuresApi, optionApi, predictionApi, bstockApi } from '../api';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -34,8 +34,9 @@ import {
   Scale,
   Layers,
   Target,
+  Landmark,
 } from 'lucide-react';
-import type { Position, Order, Settlement, CryptoPosition, FuturesPosition, OptionPosition, PredictionPnl, AssetSnapshot, CategoryAverages } from '../types';
+import type { Position, Order, Settlement, CryptoPosition, FuturesPosition, OptionPosition, PredictionPnl, AssetSnapshot, CategoryAverages, BStock } from '../types';
 import { formatCoinPrice, getCoin } from '../lib/coinConfig';
 
 interface CryptoRow extends CryptoPosition {
@@ -43,6 +44,11 @@ interface CryptoRow extends CryptoPosition {
   marketValue: number;
   profit: number;
   profitPct: number;
+}
+
+interface BStockRow extends CryptoRow {
+  name: string;
+  ticker: string;
 }
 
 function AnimNum({ value, prefix = '', suffix = '', duration = 600 }: { value: number; prefix?: string; suffix?: string; duration?: number }) {
@@ -83,6 +89,7 @@ export function Portfolio() {
   const { toast } = useToast();
   const [positions, setPositions] = useState<Position[]>([]);
   const [cryptoRows, setCryptoRows] = useState<CryptoRow[]>([]);
+  const [bstockRows, setBstockRows] = useState<BStockRow[]>([]);
   const [futuresPositions, setFuturesPositions] = useState<FuturesPosition[]>([]);
   const [optionPositions, setOptionPositions] = useState<OptionPosition[]>([]);
   const [predictionPnl, setPredictionPnl] = useState<PredictionPnl | null>(null);
@@ -133,11 +140,19 @@ export function Portfolio() {
     }
   }, [panel]);
 
-  const loadCryptoPositions = useCallback(async () => {
+  // 现货持仓：crypto_position 里混着 crypto 与 bStock，按 bstock 列表符号拆分
+  const loadSpotPositions = useCallback(async () => {
     try {
-      const cps = await cryptoOrderApi.positions();
-      if (!cps || cps.length === 0) { setCryptoRows([]); setChartReady(true); return; }
-      const rows = await Promise.all(cps.map(async (cp) => {
+      const [cps, blist] = await Promise.all([
+        cryptoOrderApi.positions(),
+        bstockApi.list().catch(() => [] as BStock[]),
+      ]);
+      const bmap = new Map<string, BStock>((blist ?? []).map(b => [b.symbol, b]));
+      const all = cps ?? [];
+
+      // 纯 crypto：逐只取现价
+      const cryptoCps = all.filter(cp => !bmap.has(cp.symbol));
+      const crows = await Promise.all(cryptoCps.map(async (cp) => {
         let currentPrice = 0;
         try {
           const res = await cryptoApi.price(cp.symbol);
@@ -149,9 +164,22 @@ export function Portfolio() {
         const profitPct = costValue > 0 ? (profit / costValue) * 100 : 0;
         return { ...cp, currentPrice, marketValue, profit, profitPct };
       }));
-      setCryptoRows(rows);
+      setCryptoRows(crows);
+
+      // bStock：现价/名称取自 bstock 列表（已含实时价）
+      const brows: BStockRow[] = all.filter(cp => bmap.has(cp.symbol)).map(cp => {
+        const b = bmap.get(cp.symbol)!;
+        const currentPrice = b.price ?? 0;
+        const marketValue = currentPrice * cp.quantity;
+        const costValue = cp.avgCost * cp.quantity;
+        const profit = marketValue - costValue;
+        const profitPct = costValue > 0 ? (profit / costValue) * 100 : 0;
+        return { ...cp, name: b.name, ticker: b.ticker, currentPrice, marketValue, profit, profitPct };
+      });
+      setBstockRows(brows);
     } catch {
       setCryptoRows([]);
+      setBstockRows([]);
     } finally {
       setChartReady(true);
     }
@@ -180,7 +208,7 @@ export function Portfolio() {
           setOrderTotal(o.total);
           setSettlements(s);
           Promise.all([
-            loadCryptoPositions(),
+            loadSpotPositions(),
             futuresApi.positions().then(setFuturesPositions).catch(() => setFuturesPositions([])),
             optionApi.positions().then(setOptionPositions).catch(() => setOptionPositions([])),
             predictionApi.pnl().then(setPredictionPnl).catch(() => setPredictionPnl(null)),
@@ -195,6 +223,7 @@ export function Portfolio() {
           setOrderTotal(0);
           setSettlements([]);
           setCryptoRows([]);
+          setBstockRows([]);
           setFuturesPositions([]);
           setOptionPositions([]);
           setPredictionPnl(null);
@@ -232,6 +261,8 @@ export function Portfolio() {
   const cryptoTotal = cryptoRows.reduce((s, c) => s + c.marketValue, 0);
   const stockProfit = positions.reduce((s, p) => s + (p.profit || 0), 0);
   const cryptoProfit = cryptoRows.reduce((s, c) => s + c.profit, 0);
+  const bstockTotal = bstockRows.reduce((s, b) => s + b.marketValue, 0);
+  const bstockProfit = bstockRows.reduce((s, b) => s + b.profit, 0);
   const futuresMargin = futuresPositions.reduce((s, f) => s + f.margin, 0);
   const futuresProfit = futuresPositions.reduce((s, f) => s + f.unrealizedPnl, 0);
   const futuresTotal = futuresMargin + futuresProfit;
@@ -247,14 +278,15 @@ export function Portfolio() {
   const predictionProfit = predictionPnl?.totalPnl ?? 0;
   const hasStock = positions.length > 0;
   const hasCrypto = cryptoRows.length > 0;
+  const hasBstock = bstockRows.length > 0;
   const hasFutures = futuresPositions.length > 0;
   const hasOptions = optionPositions.length > 0;
-  const hasPositions = hasStock || hasCrypto || hasFutures || hasOptions || hasPrediction;
+  const hasPositions = hasStock || hasCrypto || hasBstock || hasFutures || hasOptions || hasPrediction;
 
-  const holdingsTotal = stockTotal + cryptoTotal + futuresTotal + optionTotal;
-  const holdingsProfit = stockProfit + cryptoProfit + futuresProfit + optionProfit;
+  const holdingsTotal = stockTotal + cryptoTotal + bstockTotal + futuresTotal + optionTotal;
+  const holdingsProfit = stockProfit + cryptoProfit + bstockProfit + futuresProfit + optionProfit;
   const holdingsItems = [
-    { label: '股票', value: stockTotal },
+    { label: 'bStock', value: bstockTotal },
     { label: '币种', value: cryptoTotal },
     { label: '合约', value: futuresTotal },
   ];
@@ -709,6 +741,73 @@ export function Portfolio() {
                                 </div>
                                 <div className={cn("text-[11px] tabular-nums font-medium", up ? "text-green-400/70" : "text-red-400/70")}>
                                   {up ? '+' : ''}{c.profitPct.toFixed(2)}%
+                                </div>
+                              </div>
+                              <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-primary/60 transition-colors" />
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* bStock 股票持仓 */}
+              {hasBstock && (
+                <Card className="overflow-hidden">
+                  <div className="px-4 py-3 flex items-center justify-between border-b border-border/40 bg-gradient-to-r from-primary/[0.06] to-transparent">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center ring-1 ring-primary/20">
+                        <Landmark className="w-4 h-4 text-primary" />
+                      </div>
+                      <div>
+                        <span className="text-sm font-semibold tracking-tight">股票持仓</span>
+                        <span className="text-[11px] text-muted-foreground ml-1.5">{bstockRows.length}只 · bStock</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[13px] font-bold tabular-nums tracking-tight"><AnimNum value={bstockTotal} /></div>
+                      <div className={cn("text-[11px] tabular-nums font-medium", bstockProfit >= 0 ? "text-green-400" : "text-red-400")}>
+                        <AnimNum value={bstockProfit} prefix={bstockProfit >= 0 ? '+' : ''} />
+                      </div>
+                    </div>
+                  </div>
+                  <CardContent className="p-0 divide-y divide-border/30">
+                    {bstockRows.map((b) => {
+                      const up = b.profit >= 0;
+                      return (
+                        <button
+                          type="button"
+                          key={b.id}
+                          onClick={() => navigate(`/bstock/${b.symbol}`)}
+                          className="w-full text-left px-4 py-3.5 cursor-pointer hover:bg-accent/40 active:bg-accent/60 transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                              <div className="w-8 h-8 rounded-lg bg-primary/10 ring-1 ring-primary/20 flex items-center justify-center shrink-0 text-[9px] font-bold text-primary">
+                                {b.ticker?.slice(0, 4)}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 mb-1">
+                                  <span className="font-semibold text-[13px] truncate group-hover:text-primary transition-colors">{b.name}</span>
+                                  <span className="text-[11px] text-muted-foreground/70 shrink-0">{b.ticker}</span>
+                                </div>
+                                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                                  <span>{fmtNum(b.quantity)}股</span>
+                                  <span className="text-border">·</span>
+                                  <span>均价 {fmtNum(b.avgCost)}</span>
+                                  {b.currentPrice > 0 && (<><span className="text-border">·</span><span>现价 {fmtNum(b.currentPrice)}</span></>)}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0 flex items-center gap-2">
+                              <div>
+                                <div className={cn("text-[13px] font-bold tabular-nums", up ? "text-green-400" : "text-red-400")}>
+                                  {up ? '+' : ''}{fmtNum(b.profit)}
+                                </div>
+                                <div className={cn("text-[11px] tabular-nums font-medium", up ? "text-green-400/70" : "text-red-400/70")}>
+                                  {up ? '+' : ''}{b.profitPct.toFixed(2)}%
                                 </div>
                               </div>
                               <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-primary/60 transition-colors" />

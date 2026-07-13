@@ -992,9 +992,11 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
             )}
           </div>
           <div className="flex rounded-xl bg-card overflow-hidden neu-raised">
-            <button onClick={() => setOrderType('FUTURES')} className={`px-5 py-2.5 text-xs font-bold border-r border-border transition-colors ${orderType === 'FUTURES' ? 'bg-foreground text-background' : 'bg-card text-foreground hover:bg-surface-hover'}`}>合约</button>
-            {/* 现货：从合约切过来默认市价；已在现货则保留当前市价/限价选择 */}
-            <button onClick={() => { if (orderType === 'FUTURES') setOrderType('MARKET'); }} className={`px-5 py-2.5 text-xs font-bold transition-colors ${orderType !== 'FUTURES' ? 'bg-foreground text-background' : 'bg-card text-foreground hover:bg-surface-hover'}`}>现货</button>
+            <button onClick={() => setOrderType('FUTURES')} className={`px-5 py-2.5 text-xs font-bold ${cfg.futuresOnly ? '' : 'border-r border-border'} transition-colors ${orderType === 'FUTURES' ? 'bg-foreground text-background' : 'bg-card text-foreground hover:bg-surface-hover'}`}>合约</button>
+            {/* 纯合约标的（黄金/原油）无现货，藏掉现货切换 */}
+            {!cfg.futuresOnly && (
+              <button onClick={() => { if (orderType === 'FUTURES') setOrderType('MARKET'); }} className={`px-5 py-2.5 text-xs font-bold transition-colors ${orderType !== 'FUTURES' ? 'bg-foreground text-background' : 'bg-card text-foreground hover:bg-surface-hover'}`}>现货</button>
+            )}
           </div>
           <Link
             to="/force-orders"

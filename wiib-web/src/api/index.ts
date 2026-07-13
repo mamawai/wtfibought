@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats, TnManualOrderReq, TnOrderResult, TnAck } from '../types/testnet';
-import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, ForceOrder, AiKeyConfig, AiModelAssignment, GraphNodeMetric, WorkbenchEvent, QuantSnapshotView, QuantSnapshotSeriesPoint, QuantDeepAnalysisView, Scorecard, StrategyAccountView, FeedStreamHealth } from '../types';
+import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, ForceOrder, AiKeyConfig, AiModelAssignment, GraphNodeMetric, WorkbenchEvent, QuantSnapshotView, QuantSnapshotSeriesPoint, QuantDeepAnalysisView, Scorecard, StrategyAccountView, FeedStreamHealth } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -278,6 +278,21 @@ export const cryptoOrderApi = {
   position: (symbol = 'BTCUSDT') => api.get<unknown, CryptoPosition | null>('/crypto/order/position', { params: { symbol } }),
   positions: () => api.get<unknown, CryptoPosition[]>('/crypto/order/positions'),
   live: () => api.get<unknown, CryptoOrder[]>('/crypto/order/live'),
+};
+
+// ========== bStock（代币化美股）接口 ==========
+// 行情走真实 Binance 现货；交易复用现货引擎（仅现货：市价/限价买卖 + 杠杆借款）
+export const bstockApi = {
+  list: () => api.get<unknown, BStock[]>('/bstock/list'),
+  detail: (symbol: string) => api.get<unknown, BStock>(`/bstock/${symbol}`),
+  price: (symbol: string) => api.get<unknown, number>('/bstock/price', { params: { symbol } }),
+  klines: rawKlines('/api/bstock/klines'),
+  buy: (data: CryptoOrderRequest) => api.post<unknown, CryptoOrder>('/bstock/order/buy', data),
+  sell: (data: CryptoOrderRequest) => api.post<unknown, CryptoOrder>('/bstock/order/sell', data),
+  cancel: (orderId: number) => api.post<unknown, CryptoOrder>(`/bstock/order/cancel/${orderId}`),
+  orders: (status?: string, pageNum = 1, pageSize = 10, symbol?: string) =>
+    api.get<unknown, PageResult<CryptoOrder>>('/bstock/order/list', { params: { status, pageNum, pageSize, symbol } }),
+  positions: () => api.get<unknown, CryptoPosition[]>('/bstock/order/positions'),
 };
 
 // ========== 永续合约接口 ==========
