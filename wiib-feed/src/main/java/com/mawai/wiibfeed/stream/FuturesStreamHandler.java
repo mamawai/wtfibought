@@ -57,7 +57,7 @@ public class FuturesStreamHandler implements StreamHandler {
     // Binance 2026-04-23起: markPrice走/market端点
     @Override
     public String buildUrl() {
-        return StreamUrls.combinedUrl(props.getFuturesWsUrl(), "market", props.getSymbols(), "markPrice@1s");
+        return StreamUrls.combinedUrl(props.getFuturesWsUrl(), "market", props.getAllFuturesSymbols(), "markPrice@1s");
     }
 
     @Override
@@ -133,7 +133,7 @@ public class FuturesStreamHandler implements StreamHandler {
     // ── REST兜底：WS断开期间切REST轮询保证价格不中断 ──
 
     private void pollOnce() {
-        for (String symbol : props.getSymbols()) {
+        for (String symbol : props.getAllFuturesSymbols()) {
             try {
                 String json = restClient.getPremiumIndex(symbol);
                 if (json != null) {
@@ -163,7 +163,7 @@ public class FuturesStreamHandler implements StreamHandler {
 
     private void recoverMissedFuturesLimitOrders() {
         try {
-            for (String symbol : props.getSymbols()) {
+            for (String symbol : props.getAllFuturesSymbols()) {
                 BigDecimal[] futuresLowHigh = restClient.getRecentFuturesHighLow(symbol);
                 if (futuresLowHigh != null) {
                     matchPricePublisher.publish("{\"symbol\":\"" + symbol + "\",\"type\":\"futures-recover\",\"low\":\""
@@ -177,7 +177,7 @@ public class FuturesStreamHandler implements StreamHandler {
 
     private void recoverMissedLiquidations() {
         try {
-            for (String symbol : props.getSymbols()) {
+            for (String symbol : props.getAllFuturesSymbols()) {
                 BigDecimal[] markLowHigh = restClient.getRecentMarkPriceHighLow(symbol);
                 BigDecimal[] futuresLowHigh = restClient.getRecentFuturesHighLow(symbol);
                 if (markLowHigh != null) {

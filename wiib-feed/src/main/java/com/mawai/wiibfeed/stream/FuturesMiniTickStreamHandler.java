@@ -21,7 +21,7 @@ public class FuturesMiniTickStreamHandler implements StreamHandler {
     // Binance 2026-04-23起: miniTicker走/market端点
     @Override
     public String buildUrl() {
-        return StreamUrls.combinedUrl(props.getFuturesWsUrl(), "market", props.getSymbols(), "miniTicker");
+        return StreamUrls.combinedUrl(props.getFuturesWsUrl(), "market", props.getAllFuturesSymbols(), "miniTicker");
     }
 
     @Override

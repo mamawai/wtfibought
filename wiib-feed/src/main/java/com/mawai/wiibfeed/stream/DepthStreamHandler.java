@@ -20,7 +20,7 @@ public class DepthStreamHandler implements StreamHandler {
 
     @Override
     public String buildUrl() {
-        return StreamUrls.endpointUrl(props.getFuturesWsUrl(), "public", props.getSymbols(), "depth20@100ms");
+        return StreamUrls.endpointUrl(props.getFuturesWsUrl(), "public", props.getAllFuturesSymbols(), "depth20@100ms");
     }
 
     @Override

@@ -20,7 +20,7 @@ public class AggTradeStreamHandler implements StreamHandler {
 
     @Override
     public String buildUrl() {
-        return StreamUrls.endpointUrl(props.getFuturesWsUrl(), "market", props.getSymbols(), "aggTrade");
+        return StreamUrls.endpointUrl(props.getFuturesWsUrl(), "market", props.getAllFuturesSymbols(), "aggTrade");
     }
 
     @Override

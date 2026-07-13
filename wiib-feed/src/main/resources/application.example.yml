@@ -44,11 +44,26 @@ binance:
   futures-rest-base-url: https://fapi.binance.com
   symbols:
     - BTCUSDT
-    - PAXGUSDT
     - ETHUSDT
     - DOGEUSDT
     - SOLUSDT
     - XRPUSDT
+  # bStock（代币化美股，纯现货无合约）：价并入 Spot 流，5m K线走现货端点单独一条连接
+  stock-symbols:
+    - MUBUSDT
+    - SPCXBUSDT
+    - SNDKBUSDT
+    - CRCLBUSDT
+    - QQQBUSDT
+    - MSTRBUSDT
+    - NVDABUSDT
+    - AMDBUSDT
+    - TSLABUSDT
+    - SOXLBUSDT
+  # 大宗商品（TradFi 永续合约，无现货）：黄金/原油，只进合约流
+  commodity-symbols:
+    - XAUUSDT
+    - CLUSDT
   fallback-poll-interval: 5000
 
 # 内部 API 鉴权：/internal/streams 由共享 InternalApiFilter 校验；须与 sim/quant 同值

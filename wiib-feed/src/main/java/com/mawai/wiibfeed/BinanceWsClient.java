@@ -54,6 +54,12 @@ public class BinanceWsClient implements SmartLifecycle {
 
         // 每个 handler 组装成一条连接，再回填连接+调度器（兜底轮询/读连接状态用）
         for (StreamHandler h : handlers) {
+            // buildUrl 为空 = 该流无订阅符号（如未配 bStock 时的 StockKline5m），跳过不建连
+            String url = h.buildUrl();
+            if (url == null || url.isBlank()) {
+                log.info("跳过 {}：无订阅符号", h.name());
+                continue;
+            }
             WsConnection conn = new WsConnection(h.name(), h::buildUrl, h::onMessage,
                     h::onConnected, h::onDisconnected,
                     httpClient, scheduler, shutdown, h.maxIdleSeconds());

@@ -51,8 +51,8 @@ public class SpotStreamHandler implements StreamHandler {
     @Override
     public String buildUrl() {
         // 现货端点结构与期货不同：无 /market /public 段，单流直接 base/{stream}，多流走 /stream?streams=
-        String streams = StreamUrls.joinStreams(props.getSymbols(), "miniTicker");
-        if (props.getSymbols().size() == 1) {
+        String streams = StreamUrls.joinStreams(props.getAllSpotSymbols(), "miniTicker");
+        if (props.getAllSpotSymbols().size() == 1) {
             return props.getWsUrl() + "/" + streams;
         }
         return props.getWsUrl().replace("/ws", "/stream?streams=" + streams);
@@ -99,7 +99,7 @@ public class SpotStreamHandler implements StreamHandler {
     // ── REST兜底：WS断开期间切REST轮询保证价格不中断 ──
 
     private void pollOnce() {
-        for (String symbol : props.getSymbols()) {
+        for (String symbol : props.getAllSpotSymbols()) {
             try {
                 String json = restClient.getTickerPrice(symbol);
                 updatePriceFromJson(symbol, json);
@@ -118,7 +118,7 @@ public class SpotStreamHandler implements StreamHandler {
 
     private void recoverMissedLimitOrders() {
         try {
-            for (String symbol : props.getSymbols()) {
+            for (String symbol : props.getAllSpotSymbols()) {
                 BigDecimal[] lowHigh = restClient.getRecentHighLow(symbol);
                 if (lowHigh != null) {
                     // 发恢复事件，sim 侧按区间高低价补触发限价单（解耦：撮合不在 feed）

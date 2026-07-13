@@ -30,7 +30,7 @@ public class ForceOrderStreamHandler implements StreamHandler {
     ForceOrderStreamHandler(BinanceProperties props, ForceOrderService forceOrderService) {
         this.props = props;
         this.forceOrderService = forceOrderService;
-        this.whitelist = props.getSymbols().stream()
+        this.whitelist = props.getAllFuturesSymbols().stream()
                 .map(sym -> sym.toUpperCase(Locale.ROOT)).collect(Collectors.toSet());
     }
 
