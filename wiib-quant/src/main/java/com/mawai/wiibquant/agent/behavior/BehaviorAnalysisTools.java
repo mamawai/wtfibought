@@ -9,7 +9,7 @@ import java.util.function.Consumer;
 
 /**
  * 用户行为分析 AI 工具（quant 侧）。
- * <p>12 个 @Tool 签名/描述不变，AI agent 行为零变化；数据从直连 sim 库改为 HTTP 调 sim 的
+ * <p>老 GBM 股市/期权下线后余 9 个 @Tool；数据 HTTP 调 sim 的
  * {@code /internal/behavior} 端点（{@link SimInternalClient}），quant 与 sim 编译解耦。
  */
 @RequiredArgsConstructor
@@ -38,16 +38,6 @@ public class BehaviorAnalysisTools {
         return fetch("获取近30日资产快照", userId, "asset-snapshots");
     }
 
-    @Tool(description = "获取用户股票持仓列表")
-    public String getStockPositions(@ToolParam(description = "用户ID") Long userId) {
-        return fetch("查询股票持仓", userId, "stock-positions");
-    }
-
-    @Tool(description = "获取用户股票交易统计：买入总额、订单数、买卖偏好、订单类型偏好")
-    public String getStockTradeStats(@ToolParam(description = "用户ID") Long userId) {
-        return fetch("统计股票交易数据", userId, "stock-stats");
-    }
-
     @Tool(description = "获取用户加密货币交易统计：买入总额、卖出总额、持仓数、杠杆使用情况")
     public String getCryptoTradeStats(@ToolParam(description = "用户ID") Long userId) {
         return fetch("统计加密货币交易数据", userId, "crypto-stats");
@@ -56,11 +46,6 @@ public class BehaviorAnalysisTools {
     @Tool(description = "获取用户合约交易统计：已实现盈亏、订单数、多空偏好、平均杠杆、止损率、爆仓次数")
     public String getFuturesTradeStats(@ToolParam(description = "用户ID") Long userId) {
         return fetch("统计合约交易数据", userId, "futures-stats");
-    }
-
-    @Tool(description = "获取用户期权交易统计：买入总额(BTO)、卖出总额(STC)")
-    public String getOptionTradeStats(@ToolParam(description = "用户ID") Long userId) {
-        return fetch("统计期权交易数据", userId, "option-stats");
     }
 
     @Tool(description = "获取用户Prediction统计：参与次数、净盈亏、胜率、方向偏好")

@@ -1,7 +1,6 @@
 package com.mawai.wiibcommon.cache;
 
 import com.alibaba.fastjson2.JSON;
-import com.mawai.wiibcommon.entity.Stock;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.RequiredArgsConstructor;
@@ -27,8 +26,6 @@ public class CacheService {
     private final RedisTemplate<String, Object> redisTemplate;
     private final StringRedisTemplate stringRedisTemplate;
 
-    // L1: 股票日内行情（getCurrentPrice + getDailyQuote 共用）
-    private final Cache<Long, Map<String, String>> stockDailyCache = Caffeine.newBuilder().maximumSize(500).build();
     // L1: 加密货币价格（spot/mark/futures 用 key 前缀区分）。put 刷新只在 feed 进程（WS tick），
     // sim/quant 读进程无人回填，必须短过期回源 Redis——否则拆进程后首读值永久冻结（曾致标记价/成交价死价）
     private final Cache<String, BigDecimal> cryptoPriceCache = Caffeine.newBuilder()
@@ -37,83 +34,6 @@ public class CacheService {
     // prediction 缓存改 Redis 后端（feed 写 sim 读跨进程），窗口/盘口数据靠 TTL 自动清理
     private static final Duration PREDICTION_TTL = Duration.ofMinutes(20);
 
-    // ==================== 实时行情 ====================
-
-    /**
-     * 获取股票实时价格
-     * @return 当前价格，无数据返回null
-     */
-    public BigDecimal getCurrentPrice(Long stockId) {
-        Map<String, String> daily = getStockDaily(stockId);
-        if (daily == null) return null;
-        String last = daily.get("last");
-        return last != null ? new BigDecimal(last) : null;
-    }
-
-    /**
-     * 实时价兜底口径（买/卖/持仓估值共用）：无实时数据时回退 开盘价（AI预生成）→ 昨收。
-     */
-    public BigDecimal getCurrentPriceOrFallback(Stock stock) {
-        BigDecimal price = getCurrentPrice(stock.getId());
-        if (price != null) return price;
-        return stock.getOpen() != null ? stock.getOpen() : stock.getPrevClose();
-    }
-
-    /**
-     * 批量获取股票实时价格
-     * @return stockId -> price，无数据的stockId不在map中
-     */
-    public Map<Long, BigDecimal> getCurrentPrices(List<Long> stockIds) {
-        if (stockIds == null || stockIds.isEmpty()) return Map.of();
-        Map<Long, BigDecimal> priceMap = new HashMap<>();
-        for (Long id : stockIds) {
-            BigDecimal price = getCurrentPrice(id);
-            if (price != null) priceMap.put(id, price);
-        }
-        return priceMap;
-    }
-
-    /**
-     * 获取股票当日行情汇总
-     * @return {open, high, low, last, prevClose}
-     */
-    public Map<String, BigDecimal> getDailyQuote(Long stockId) {
-        Map<String, String> daily = getStockDaily(stockId);
-        if (daily == null) return null;
-
-        Map<String, BigDecimal> result = new HashMap<>();
-        daily.forEach((k, v) -> result.put(k, new BigDecimal(v)));
-        return result;
-    }
-
-    public void putStockDaily(Long stockId, Map<String, String> daily) {
-        stockDailyCache.put(stockId, daily);
-    }
-
-    private Map<String, String> getStockDaily(Long stockId) {
-        Map<String, String> daily = stockDailyCache.getIfPresent(stockId);
-        if (daily != null) return daily;
-        // fallback: 重启后caffeine为空，从redis加载
-        String dailyKey = String.format("stock:daily:%s:%d", LocalDate.now(), stockId);
-        Map<Object, Object> raw = stringRedisTemplate.opsForHash().entries(dailyKey);
-        if (raw.isEmpty()) return null;
-        Map<String, String> m = new HashMap<>(raw.size());
-        raw.forEach((k, v) -> m.put(k.toString(), v.toString()));
-        stockDailyCache.put(stockId, m);
-        return m;
-    }
-
-    public BigDecimal getPrevTradingDayLast(Long stockId) {
-        LocalDate today = LocalDate.now();
-        LocalDate prevTradeDay = switch (today.getDayOfWeek()) {
-            case SUNDAY -> today.minusDays(2);
-            case MONDAY -> today.minusDays(3);
-            default -> today.minusDays(1);
-        };
-        String key = String.format("stock:daily:%s:%d", prevTradeDay, stockId);
-        String last = (String) stringRedisTemplate.opsForHash().get(key, "last");
-        return last != null ? new BigDecimal(last) : null;
-    }
 
     // ==================== Polymarket openPrice ====================
 
