@@ -15,6 +15,8 @@ import com.alibaba.fastjson2.JSONArray;
 
 import java.math.BigDecimal;
 import java.net.URI;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -162,6 +164,27 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
                 .build().toUri();
         log.info("Binance REST 24hTicker: {}", uri);
         return restTemplate.getForObject(uri, String.class);
+    }
+
+    /**
+     * 批量 24h 行情：/api/v3/ticker/24hr?symbols=["A","B"]，一次拉多只（bStock 列表页用）。
+     * 失败返回 null，调用方降级为逐只 Redis 现价。
+     */
+    public String get24hTickers(List<String> symbols) {
+        if (symbols == null || symbols.isEmpty()) return null;
+        String arr = symbols.stream().map(s -> "\"" + s + "\"").collect(Collectors.joining(",", "[", "]"));
+        URI uri = UriComponentsBuilder
+                .fromUriString(props.getRestBaseUrl() + "/api/v3/ticker/24hr")
+                .queryParam("symbols", arr)
+                .encode()
+                .build().toUri();
+        try {
+            log.info("Binance REST 24hTickers: {} symbols", symbols.size());
+            return restTemplate.getForObject(uri, String.class);
+        } catch (Exception e) {
+            log.warn("获取多symbol 24h行情失败: {}", e.getMessage());
+            return null;
+        }
     }
 
 

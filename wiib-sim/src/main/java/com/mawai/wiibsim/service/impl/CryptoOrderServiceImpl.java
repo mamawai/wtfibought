@@ -21,6 +21,7 @@ import com.mawai.wiibsim.service.BuffService;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.service.CryptoOrderService;
 import com.mawai.wiibsim.service.CryptoPositionService;
+import com.mawai.wiibsim.service.BStockService;
 import com.mawai.wiibsim.service.MarginAccountService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.ConcurrentBatch;
@@ -59,6 +60,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
     private final BuffService buffService;
     private final StringRedisTemplate stringRedisTemplate;
     private final CacheService cacheService;
+    private final BStockService bStockService;
 
     private static final String SETTLE_ZSET_KEY = "crypto:settle:pending";
     private static final long SETTLE_DELAY_MS = 5 * 60 * 1000L; // btc 到账时间 5 minutes
@@ -253,21 +255,29 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         return buildResponse(order);
     }
 
-    // ==================== 市价卖出执行（5min延迟到账） ====================
+    // ==================== 市价卖出执行（crypto 5min延迟 / bStock 瞬时到账） ====================
 
     private CryptoOrderResponse executeMarketSell(Long userId, String symbol, BigDecimal quantity,
                                                    BigDecimal price, BigDecimal amount, BigDecimal commission) {
         BigDecimal netAmount = amount.subtract(commission);
         cryptoPositionService.reducePosition(userId, symbol, quantity);
 
+        // bStock（代币化实股）瞬时结算；crypto 沿用 5min 延迟到账
+        boolean instant = bStockService.isBStockSymbol(symbol);
+        String status = instant ? OrderStatus.FILLED.getCode() : OrderStatus.SETTLING.getCode();
+
         CryptoOrder order = buildOrder(userId, symbol, OrderSide.SELL.getCode(), OrderType.MARKET.getCode(),
-                quantity, 1, null, price, amount, commission, null, OrderStatus.SETTLING.getCode(), null);
+                quantity, 1, null, price, amount, commission, null, status, null);
         baseMapper.insert(order);
 
-        // 延迟5min到账，塞入Redis ZSet
-        addSettlement(userId, order.getId(), netAmount);
-
-        log.info("crypto市价卖出 userId={} {} qty={} price={} net={} (5min到账)", userId, symbol, quantity, price, netAmount);
+        if (instant) {
+            // 同一笔事务内立即：先还保证金贷+息、余额入账（订单已 FILLED）
+            marginAccountService.applyCashInflow(userId, netAmount, "BSTOCK_SETTLE");
+            log.info("bStock市价卖出 userId={} {} qty={} price={} net={} (瞬时到账)", userId, symbol, quantity, price, netAmount);
+        } else {
+            addSettlement(userId, order.getId(), netAmount);
+            log.info("crypto市价卖出 userId={} {} qty={} price={} net={} (5min到账)", userId, symbol, quantity, price, netAmount);
+        }
         return buildResponse(order);
     }
 
@@ -353,7 +363,8 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         BigDecimal commission = tradingConfig.calculateCryptoCommission(amount);
 
         boolean isSell = OrderSide.SELL.getCode().equals(order.getOrderSide());
-        int affected = isSell
+        boolean instant = isSell && bStockService.isBStockSymbol(order.getSymbol());  // bStock 卖出瞬时结算
+        int affected = (isSell && !instant)
                 ? baseMapper.casUpdateToSettling(order.getId(), executePrice, amount, commission)
                 : baseMapper.casUpdateToFilled(order.getId(), executePrice, amount, commission);
         if (affected == 0) return false;
@@ -368,7 +379,8 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         } else {
             cryptoPositionService.deductFrozenPosition(order.getUserId(), order.getSymbol(), order.getQuantity());
             BigDecimal netAmount = amount.subtract(commission);
-            addSettlement(order.getUserId(), order.getId(), netAmount);
+            if (instant) marginAccountService.applyCashInflow(order.getUserId(), netAmount, "BSTOCK_SETTLE");  // 同事务立即到账+还贷
+            else addSettlement(order.getUserId(), order.getId(), netAmount);
         }
         return true;
     }

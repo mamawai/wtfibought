@@ -130,13 +130,30 @@ public class FuturesLeverageBracketRegistry {
             new Bracket(11, bd("50000000"),     bd("100000000"),    1,   bd("0.5000"),  bd("16683735"))
     );
 
+    // 大宗商品（TradFi 永续：黄金 XAU / 原油 CL）：二者档位完全一致（与 SOL 同结构），10 档，档位1 上限 50K、MMR 0.50%、最大 100x。
+    // 数据来源：Binance 主网 /fapi/v1/leverageBracket（XAUUSDT & CLUSDT，实拉核对一致）。
+    private static final List<Bracket> COMMODITY_BRACKETS = List.of(
+            new Bracket(1,  bd("0"),            bd("50000"),        100, bd("0.0050"),  bd("0")),
+            new Bracket(2,  bd("50000"),        bd("400000"),       75,  bd("0.0065"),  bd("75")),
+            new Bracket(3,  bd("400000"),       bd("1000000"),      50,  bd("0.0100"),  bd("1475")),
+            new Bracket(4,  bd("1000000"),      bd("4000000"),      25,  bd("0.0200"),  bd("11475")),
+            new Bracket(5,  bd("4000000"),      bd("8000000"),      20,  bd("0.0250"),  bd("31475")),
+            new Bracket(6,  bd("8000000"),      bd("40000000"),     10,  bd("0.0500"),  bd("231475")),
+            new Bracket(7,  bd("40000000"),     bd("80000000"),     5,   bd("0.1000"),  bd("2231475")),
+            new Bracket(8,  bd("80000000"),     bd("100000000"),    4,   bd("0.1250"),  bd("4231475")),
+            new Bracket(9,  bd("100000000"),    bd("200000000"),    2,   bd("0.2500"),  bd("16731475")),
+            new Bracket(10, bd("200000000"),    bd("400000000"),    1,   bd("0.5000"),  bd("66731475"))
+    );
+
     private static final Map<String, List<Bracket>> BRACKETS = Map.of(
             "BTCUSDT",  BTC_BRACKETS,
             "ETHUSDT",  ETH_BRACKETS,
             "PAXGUSDT", PAXG_BRACKETS,
             "DOGEUSDT", DOGE_BRACKETS,
             "SOLUSDT",  SOL_BRACKETS,
-            "XRPUSDT",  XRP_BRACKETS
+            "XRPUSDT",  XRP_BRACKETS,
+            "XAUUSDT",  COMMODITY_BRACKETS,
+            "CLUSDT",   COMMODITY_BRACKETS
     );
 
     /**
