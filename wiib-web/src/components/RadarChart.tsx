@@ -8,10 +8,8 @@ interface Props {
 }
 
 const INDICATORS = [
-  { name: '股票', key: 'stockProfit' },
   { name: '加密货币', key: 'cryptoProfit' },
   { name: '合约', key: 'futuresProfit' },
-  { name: '期权', key: 'optionProfit' },
   { name: '预测', key: 'predictionProfit' },
   { name: '游戏', key: 'gameProfit' },
 ];

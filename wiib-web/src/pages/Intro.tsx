@@ -40,13 +40,13 @@ export function Intro() {
           </section>
 
           <section>
-            <h3 className="font-bold mb-1">股票交易</h3>
+            <h3 className="font-bold mb-1">股票交易（bStock）</h3>
             <ul className="list-disc list-inside text-muted-foreground space-y-1">
-              <li><strong>市价单</strong>：当前价立即成交</li>
-              <li><strong>限价单</strong>：设定价格，触发后成交（当日有效）</li>
-              <li><strong>手续费</strong>：0.05%，最低$5</li>
-              <li><strong>T+1结算</strong>：卖出后资金24小时到账</li>
-              <li><strong>初始资金</strong>：$100,000</li>
+              <li><strong>代币化美股</strong>：真实 Binance 现货行情，NVDA / TSLA / QQQ 等</li>
+              <li><strong>市价 / 限价单</strong>：支持杠杆借款 1-10 倍</li>
+              <li><strong>手续费</strong>：0.1%</li>
+              <li><strong>瞬时结算</strong>：卖出即时到账，无 T+1</li>
+              <li><strong>24/7</strong>：全天候交易</li>
             </ul>
           </section>
 
