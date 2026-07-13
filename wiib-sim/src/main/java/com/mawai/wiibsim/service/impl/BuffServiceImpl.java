@@ -5,7 +5,6 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mawai.wiibcommon.dto.BuffStatusDTO;
 import com.mawai.wiibcommon.dto.UserBuffDTO;
-import com.mawai.wiibcommon.entity.Stock;
 import com.mawai.wiibcommon.entity.UserBuff;
 import com.mawai.wiibcommon.enums.BuffType;
 import com.mawai.wiibcommon.enums.ErrorCode;
@@ -23,8 +22,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -33,8 +30,6 @@ import java.util.concurrent.TimeUnit;
 public class BuffServiceImpl extends ServiceImpl<UserBuffMapper, UserBuff> implements BuffService {
 
     private final UserService userService;
-    private final StockService stockService;
-    private final PositionService positionService;
     private final CacheService cacheService;
     private final RedisLockUtil redisLockUtil;
 
@@ -90,14 +85,6 @@ public class BuffServiceImpl extends ServiceImpl<UserBuffMapper, UserBuff> imple
                 int amount = (int) buffType.getValue();
                 userService.updateBalance(userId, BigDecimal.valueOf(amount));
                 log.info("用户{}抽中红包{}元", userId, amount);
-            }
-            case STOCK -> {
-                List<Stock> stocks = stockService.list();
-                Stock stock = stocks.get(ThreadLocalRandom.current().nextInt(stocks.size()));
-                int qty = (int) buffType.getValue();
-                positionService.addPosition(userId, stock.getId(), qty, BigDecimal.ZERO, BigDecimal.ZERO);
-                extraData = "{\"stockCode\":\"" + stock.getCode() + "\",\"stockName\":\"" + stock.getName() + "\",\"quantity\":" + qty + "}";
-                log.info("用户{}抽中股票{}{}股", userId, stock.getCode(), qty);
             }
             default -> {}
         }

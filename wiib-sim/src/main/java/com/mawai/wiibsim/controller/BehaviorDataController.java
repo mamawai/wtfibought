@@ -4,7 +4,6 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.dto.UserDTO;
 import com.mawai.wiibcommon.entity.BlackjackAccount;
-import com.mawai.wiibcommon.entity.Position;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.entity.UserAssetSnapshot;
 import com.mawai.wiibsim.mapper.BlackjackAccountMapper;
@@ -12,9 +11,6 @@ import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.MinesGameMapper;
-import com.mawai.wiibsim.mapper.OptionOrderMapper;
-import com.mawai.wiibsim.mapper.OrderMapper;
-import com.mawai.wiibsim.mapper.PositionMapper;
 import com.mawai.wiibsim.mapper.PredictionBetMapper;
 import com.mawai.wiibsim.mapper.UserAssetSnapshotMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -44,13 +40,10 @@ public class BehaviorDataController {
 
     private final UserMapper userMapper;
     private final UserAssetSnapshotMapper snapshotMapper;
-    private final PositionMapper positionMapper;
-    private final OrderMapper orderMapper;
     private final CryptoOrderMapper cryptoOrderMapper;
     private final CryptoPositionService cryptoPositionService;
     private final FuturesOrderMapper futuresOrderMapper;
     private final FuturesPositionMapper futuresPositionMapper;
-    private final OptionOrderMapper optionOrderMapper;
     private final PredictionBetMapper predictionBetMapper;
     private final BlackjackAccountMapper blackjackAccountMapper;
     private final MinesGameMapper minesGameMapper;
@@ -93,27 +86,6 @@ public class BehaviorDataController {
         return JSON.toJSONString(snapshots);
     }
 
-    @GetMapping("/{userId}/stock-positions")
-    public String getStockPositions(@PathVariable Long userId) {
-        List<Position> positions = positionMapper.selectList(
-                new LambdaQueryWrapper<Position>().eq(Position::getUserId, userId));
-        return JSON.toJSONString(positions);
-    }
-
-    @GetMapping("/{userId}/stock-stats")
-    public String getStockTradeStats(@PathVariable Long userId) {
-        BigDecimal buyTotal = orderMapper.sumBuyFilledAmount(userId);
-        long count = orderMapper.countFilledOrders(userId);
-        String sidePref = orderMapper.selectSidePreference(userId);
-        String orderTypePref = orderMapper.selectOrderTypePreference(userId);
-        return JSON.toJSONString(new Object() {
-            public final BigDecimal totalBuyAmount = buyTotal;
-            public final long filledOrderCount = count;
-            public final String sidePreference = sidePref;
-            public final String orderTypePreference = orderTypePref;
-        });
-    }
-
     @GetMapping("/{userId}/crypto-stats")
     public String getCryptoTradeStats(@PathVariable Long userId) {
         BigDecimal buyTotal = cryptoOrderMapper.sumBuyFilledAmount(userId);
@@ -145,16 +117,6 @@ public class BehaviorDataController {
             public final BigDecimal avgLeverage = lev;
             public final BigDecimal stopLossRate = slRate;
             public final int liquidationCount = liqCount;
-        });
-    }
-
-    @GetMapping("/{userId}/option-stats")
-    public String getOptionTradeStats(@PathVariable Long userId) {
-        BigDecimal bto = optionOrderMapper.sumBtoFilledAmount(userId);
-        BigDecimal stc = optionOrderMapper.sumStcFilledAmount(userId);
-        return JSON.toJSONString(new Object() {
-            public final BigDecimal totalBtoAmount = bto;
-            public final BigDecimal totalStcAmount = stc;
         });
     }
 

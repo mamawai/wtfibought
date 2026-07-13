@@ -7,7 +7,6 @@ import com.mawai.wiibcommon.entity.*;
 import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
-import com.mawai.wiibsim.mapper.OptionContractMapper;
 import com.mawai.wiibsim.mapper.PredictionBetMapper;
 import com.mawai.wiibsim.service.impl.AssetValuationService;
 import lombok.RequiredArgsConstructor;
@@ -22,9 +21,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -33,17 +30,11 @@ import java.util.stream.Collectors;
 public class RankingService {
 
     private final UserService userService;
-    private final PositionService positionService;
     private final CryptoPositionService cryptoPositionService;
     private final CacheService cacheService;
-    private final SettlementService settlementService;
-    private final StockCacheService stockCacheService;
     private final CryptoOrderMapper cryptoOrderMapper;
     private final FuturesPositionMapper futuresPositionMapper;
     private final FuturesOrderMapper futuresOrderMapper;
-    private final OptionPositionService optionPositionService;
-    private final OptionContractMapper optionContractMapper;
-    private final OptionPricingService optionPricingService;
     private final PredictionBetMapper predictionBetMapper;
     private final AssetValuationService assetValuationService;
 
@@ -67,29 +58,18 @@ public class RankingService {
 
         // ────── 1. 用户与持仓快照 ──────
         List<User> users = userService.list();
-        Map<Long, List<Position>> stockPositionMap = positionService.list().stream()
-                .collect(Collectors.groupingBy(Position::getUserId));
         Map<Long, List<CryptoPosition>> cryptoPositionMap = cryptoPositionService.list().stream()
                 .collect(Collectors.groupingBy(CryptoPosition::getUserId));
         List<FuturesPosition> allFuturesPositions = futuresPositionMapper.selectList(
                 new LambdaQueryWrapper<FuturesPosition>().eq(FuturesPosition::getStatus, "OPEN"));
         Map<Long, List<FuturesPosition>> futuresPositionMap = allFuturesPositions.stream()
                 .collect(Collectors.groupingBy(FuturesPosition::getUserId));
-        List<OptionPosition> allOptionPositions = optionPositionService.list(
-                new LambdaQueryWrapper<OptionPosition>().gt(OptionPosition::getQuantity, 0));
-        Map<Long, List<OptionPosition>> optionPositionMap = allOptionPositions.stream()
-                .collect(Collectors.groupingBy(OptionPosition::getUserId));
 
-        // ────── 2. 价格 / 合约元数据 ──────
-        Map<Long, BigDecimal> stockPriceMap = buildStockPriceMap();
+        // ────── 2. 价格 ──────
         Map<String, BigDecimal> cryptoPriceMap = cryptoPositionService.fetchCryptoPriceMap();
         Map<String, BigDecimal> futuresMarkPriceMap = buildFuturesMarkPriceMap(allFuturesPositions);
-        Map<Long, OptionContract> optionContractMap = buildOptionContractMap(allOptionPositions);
 
-        // ────── 3. 待结算金额按用户聚合 ──────
-        Map<Long, BigDecimal> pendingMap = settlementService.getAllPendingSettlements().stream()
-                .collect(Collectors.groupingBy(Settlement::getUserId,
-                        Collectors.reducing(BigDecimal.ZERO, Settlement::getAmount, BigDecimal::add)));
+        // ────── 3. 待结算金额按用户聚合（crypto settling；老股 T+1 已退） ──────
         Map<Long, BigDecimal> cryptoSettlingMap = toUserAmountMap(cryptoOrderMapper.sumAllSettlingAmounts());
 
         // 预测持仓可变现价值(bid×contracts)，与资产页/快照/破产判定同口径
@@ -116,17 +96,15 @@ public class RankingService {
             BigDecimal loanPrincipal = nz(user.getMarginLoanPrincipal());
             BigDecimal loanInterest = nz(user.getMarginInterestAccrued());
 
-            BigDecimal stockMarketValue = stockMarketValue(stockPositionMap.get(uid), stockPriceMap);
             BigDecimal cryptoMarketValue = cryptoMarketValue(cryptoPositionMap.get(uid), cryptoPriceMap);
             FuturesPnL futures = futuresPnL(futuresPositionMap.get(uid), futuresMarkPriceMap);
-            BigDecimal optionMarketValue = optionMarketValue(optionPositionMap.get(uid), optionContractMap, stockPriceMap);
 
-            BigDecimal pendingSettlement = nz(pendingMap.get(uid)).add(nz(cryptoSettlingMap.get(uid)));
+            BigDecimal pendingSettlement = nz(cryptoSettlingMap.get(uid));
             BigDecimal predictionValue = assetValuationService.predictionMarketValue(activeBetMap.get(uid), predictionBidCache);
 
             BigDecimal totalAssets = balance.add(frozen)
-                    .add(stockMarketValue).add(cryptoMarketValue).add(pendingSettlement)
-                    .add(futures.value()).add(optionMarketValue).add(predictionValue)
+                    .add(cryptoMarketValue).add(pendingSettlement)
+                    .add(futures.value()).add(predictionValue)
                     .subtract(loanPrincipal).subtract(loanInterest);
 
             // 硬实力盈亏 = 合约净盈亏 + 现货现金流(扣优惠券) + 预测已结算净盈亏
@@ -192,16 +170,6 @@ public class RankingService {
     /** 合约仓位估值同时产出 (margin+未实现盈亏) 与 单独的未实现盈亏，硬实力计算两者都要 */
     private record FuturesPnL(BigDecimal value, BigDecimal unrealizedPnl) {}
 
-    private static BigDecimal stockMarketValue(List<Position> positions, Map<Long, BigDecimal> priceMap) {
-        if (positions == null) return BigDecimal.ZERO;
-        BigDecimal sum = BigDecimal.ZERO;
-        for (Position p : positions) {
-            BigDecimal price = priceMap.getOrDefault(p.getStockId(), BigDecimal.ZERO);
-            sum = sum.add(price.multiply(BigDecimal.valueOf(p.getTotalQuantity())));
-        }
-        return sum;
-    }
-
     private static BigDecimal cryptoMarketValue(List<CryptoPosition> positions, Map<String, BigDecimal> priceMap) {
         if (positions == null) return BigDecimal.ZERO;
         BigDecimal sum = BigDecimal.ZERO;
@@ -225,40 +193,6 @@ public class RankingService {
         return new FuturesPnL(value, unrealized);
     }
 
-    private BigDecimal optionMarketValue(List<OptionPosition> positions,
-                                         Map<Long, OptionContract> contractMap,
-                                         Map<Long, BigDecimal> stockPriceMap) {
-        if (positions == null) return BigDecimal.ZERO;
-        BigDecimal sum = BigDecimal.ZERO;
-        for (OptionPosition op : positions) {
-            OptionContract contract = contractMap.get(op.getContractId());
-            if (contract == null) continue;
-            BigDecimal spotPrice = stockPriceMap.getOrDefault(contract.getStockId(), BigDecimal.ZERO);
-            BigDecimal premium = optionPricingService.calculatePremium(
-                    contract.getOptionType(), spotPrice, contract.getStrike(),
-                    contract.getExpireAt(), contract.getSigma());
-            sum = sum.add(premium.multiply(BigDecimal.valueOf(op.getQuantity())));
-        }
-        return sum;
-    }
-
-    /** 缓存命中走实时价，否则退回 prevClose，全无则 0 */
-    private Map<Long, BigDecimal> buildStockPriceMap() {
-        Set<Long> stockIds = stockCacheService.getAllStockIds();
-        Map<Long, BigDecimal> cached = cacheService.getCurrentPrices(new ArrayList<>(stockIds));
-        return stockIds.stream().collect(Collectors.toMap(
-                id -> id,
-                id -> {
-                    if (cached.containsKey(id)) return cached.get(id);
-                    Map<String, String> stockStatic = stockCacheService.getStockStatic(id);
-                    if (stockStatic != null && stockStatic.get("prevClose") != null) {
-                        return new BigDecimal(stockStatic.get("prevClose"));
-                    }
-                    return BigDecimal.ZERO;
-                }
-        ));
-    }
-
     /** 合约 mark 价，缺失退回现货价；都缺不入 map(旧版 toMap 遇 null 值会 NPE 炸掉整次刷新)，下游按"保留保证金"处理 */
     private Map<String, BigDecimal> buildFuturesMarkPriceMap(List<FuturesPosition> positions) {
         Map<String, BigDecimal> map = new HashMap<>();
@@ -267,13 +201,5 @@ public class RankingService {
             if (p != null) map.put(symbol, p);
         }
         return map;
-    }
-
-    private Map<Long, OptionContract> buildOptionContractMap(List<OptionPosition> positions) {
-        Set<Long> contractIds = positions.stream()
-                .map(OptionPosition::getContractId).collect(Collectors.toSet());
-        if (contractIds.isEmpty()) return Map.of();
-        return optionContractMapper.selectByIds(contractIds).stream()
-                .collect(Collectors.toMap(OptionContract::getId, Function.identity()));
     }
 }

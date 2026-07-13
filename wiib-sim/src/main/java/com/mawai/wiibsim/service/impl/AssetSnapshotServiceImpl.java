@@ -6,8 +6,6 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.LoadingCache;
 import com.mawai.wiibcommon.dto.AssetSnapshotDTO;
 import com.mawai.wiibcommon.dto.CategoryAveragesDTO;
-import com.mawai.wiibcommon.dto.OptionPositionDTO;
-import com.mawai.wiibcommon.dto.PositionDTO;
 import com.mawai.wiibcommon.entity.*;
 import com.mawai.wiibsim.mapper.*;
 import com.mawai.wiibsim.service.*;
@@ -37,22 +35,15 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
 
     private final UserMapper userMapper;
     private final UserAssetSnapshotMapper snapshotMapper;
-    private final PositionService positionService;
     private final CryptoPositionService cryptoPositionService;
     private final FuturesPositionMapper futuresPositionMapper;
     private final FuturesOrderMapper futuresOrderMapper;
     private final AssetValuationService assetValuationService;
-    private final OptionPositionService optionPositionService;
     private final PredictionBetMapper predictionBetMapper;
     private final MinesGameMapper minesGameMapper;
     private final VideoPokerGameMapper videoPokerGameMapper;
     private final BlackjackConvertLogMapper blackjackConvertLogMapper;
-    private final SettlementService settlementService;
     private final CryptoOrderMapper cryptoOrderMapper;
-    private final OrderMapper orderMapper;
-    private final SettlementMapper settlementMapper;
-    private final OptionOrderMapper optionOrderMapper;
-    private final OptionSettlementMapper optionSettlementMapper;
 
     @org.springframework.beans.factory.annotation.Value("${trading.initial-balance:100000}")
     private BigDecimal initialBalance;
@@ -244,12 +235,8 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
     private UserAssetSnapshot computeSnapshot(User user, LocalDate date, Map<String, BigDecimal> cryptoPriceMap) {
         Long userId = user.getId();
 
-        List<PositionDTO> stockPositions = positionService.getUserPositions(userId);
-        BigDecimal stockMarketValue = stockPositions.stream().map(PositionDTO::getMarketValue).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal stockFloatingProfit = stockPositions.stream().map(PositionDTO::getProfit).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal stockRealizedProfit = settlementMapper.sumSettledAmount(userId)
-                .subtract(orderMapper.sumBuyFilledAmount(userId));
-        BigDecimal stockProfit = stockFloatingProfit.add(stockRealizedProfit);
+        // 老 GBM 股市已退：股票口径归零（bStock 在 crypto_position，市值/盈亏并入 crypto）
+        BigDecimal stockProfit = BigDecimal.ZERO;
 
         BigDecimal cryptoMarketValue = BigDecimal.ZERO;
         BigDecimal cryptoFloatingProfit = BigDecimal.ZERO;
@@ -282,17 +269,11 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
         BigDecimal futuresRealizedProfit = futuresOrderMapper.sumRealizedPnl(userId);
         BigDecimal futuresProfit = futuresFloatingProfit.add(futuresRealizedProfit);
 
-        List<OptionPositionDTO> optionPositions = optionPositionService.getUserPositions(userId);
-        BigDecimal optionFloatingProfit = optionPositions.stream().map(OptionPositionDTO::getPnl).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal optionValue = optionPositions.stream().map(OptionPositionDTO::getMarketValue).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal optionRealizedProfit = optionOrderMapper.sumStcFilledAmount(userId)
-                .add(optionSettlementMapper.sumSettlementAmount(userId))
-                .subtract(optionOrderMapper.sumBtoFilledAmount(userId));
-        BigDecimal optionProfit = optionFloatingProfit.add(optionRealizedProfit);
+        // 期权已退：口径归零
+        BigDecimal optionProfit = BigDecimal.ZERO;
 
-        BigDecimal pendingSettlement = settlementService.getPendingSettlements(userId).stream()
-                .map(Settlement::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
-        pendingSettlement = pendingSettlement.add(cryptoOrderMapper.sumSettlingAmount(userId));
+        // crypto待结算（老股 T+1 已退）
+        BigDecimal pendingSettlement = cryptoOrderMapper.sumSettlingAmount(userId);
 
         BigDecimal predictionProfit = predictionBetMapper.sumRealizedProfit(userId);
 
@@ -308,10 +289,9 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
         BigDecimal marginInterest = user.getMarginInterestAccrued() != null ? user.getMarginInterestAccrued() : BigDecimal.ZERO;
         BigDecimal totalAssets = user.getBalance()
                 .add(frozenBalance)
-                .add(stockMarketValue).add(cryptoMarketValue)
+                .add(cryptoMarketValue)
                 .add(pendingSettlement)
                 .add(futuresValue)
-                .add(optionValue)
                 .add(predictionValue)
                 .subtract(marginLoan)
                 .subtract(marginInterest);

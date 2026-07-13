@@ -1,11 +1,8 @@
 package com.mawai.wiibsim.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.mawai.wiibcommon.dto.OptionPositionDTO;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
-import com.mawai.wiibcommon.entity.OptionPosition;
-import com.mawai.wiibcommon.entity.Settlement;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
@@ -16,20 +13,12 @@ import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.mapper.CryptoPositionMapper;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
-import com.mawai.wiibsim.mapper.OptionOrderMapper;
-import com.mawai.wiibsim.mapper.OptionPositionMapper;
-import com.mawai.wiibsim.mapper.OrderMapper;
-import com.mawai.wiibsim.mapper.PositionMapper;
 import com.mawai.wiibsim.mapper.PredictionBetMapper;
-import com.mawai.wiibsim.mapper.SettlementMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.service.CryptoPositionService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
-import com.mawai.wiibsim.service.OptionPositionService;
-import com.mawai.wiibsim.service.PositionService;
-import com.mawai.wiibsim.service.SettlementService;
 import com.mawai.wiibsim.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,12 +37,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
 
     private final UserService userService;
     private final UserMapper userMapper;
-    private final OrderMapper orderMapper;
-    private final PositionMapper positionMapper;
-    private final SettlementMapper settlementMapper;
-    private final PositionService positionService;
     private final CryptoPositionService cryptoPositionService;
-    private final SettlementService settlementService;
     private final TradingConfig tradingConfig;
     private final CryptoOrderMapper cryptoOrderMapper;
     private final CryptoPositionMapper cryptoPositionMapper;
@@ -61,9 +45,6 @@ public class BankruptcyServiceImpl implements BankruptcyService {
     private final FuturesPositionMapper futuresPositionMapper;
     private final CacheService cacheService;
     private final FuturesPositionIndexService futuresPositionIndexService;
-    private final OptionOrderMapper optionOrderMapper;
-    private final OptionPositionMapper optionPositionMapper;
-    private final OptionPositionService optionPositionService;
     private final PredictionBetMapper predictionBetMapper;
     private final AssetValuationService assetValuationService;
 
@@ -130,10 +111,8 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         BigDecimal principal = user.getMarginLoanPrincipal() != null ? user.getMarginLoanPrincipal() : BigDecimal.ZERO;
         BigDecimal interest = user.getMarginInterestAccrued() != null ? user.getMarginInterestAccrued() : BigDecimal.ZERO;
 
-        BigDecimal marketValue = positionService.calculateTotalMarketValue(userId);
-
-        // crypto持仓市值
-        marketValue = marketValue.add(cryptoPositionService.calculateCryptoMarketValue(userId));
+        // 现货持仓市值（crypto + bStock，均在 crypto_position）
+        BigDecimal marketValue = cryptoPositionService.calculateCryptoMarketValue(userId);
 
         // 合约仓位 margin + 浮盈亏(统一口径见 AssetValuationService)；旧版只算保证金，深亏用户会被高估净资产、延迟破产
         List<FuturesPosition> futuresPositions = futuresPositionMapper.selectList(
@@ -145,17 +124,10 @@ public class BankruptcyServiceImpl implements BankruptcyService {
             marketValue = marketValue.add(AssetValuationService.futuresPositionValue(fp, markPrice));
         }
 
-        // 期权持仓市值
-        for (OptionPositionDTO op : optionPositionService.getUserPositions(userId)) {
-            marketValue = marketValue.add(op.getMarketValue());
-        }
-
         // 预测按立刻卖出价估值, 无bid视为不可变现
         marketValue = marketValue.add(assetValuationService.predictionMarketValue(userId));
-        BigDecimal pendingSettlement = settlementService.getPendingSettlements(userId).stream()
-                .map(Settlement::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        pendingSettlement = pendingSettlement.add(cryptoOrderMapper.sumSettlingAmount(userId));
+        // crypto待结算（老股 T+1 已退）
+        BigDecimal pendingSettlement = cryptoOrderMapper.sumSettlingAmount(userId);
 
         BigDecimal netAssets = balance
                 .add(frozen)
@@ -193,18 +165,11 @@ public class BankruptcyServiceImpl implements BankruptcyService {
 
     /** 爆仓清算/破产恢复共用的持仓清理序列；futuresCloseStatus 区分 LIQUIDATED/CLOSED。 */
     private void cleanupUserHoldings(Long userId, String futuresCloseStatus) {
-        orderMapper.cancelOpenOrdersByUserId(userId);
-        positionMapper.deleteByUserId(userId);
         cryptoOrderMapper.cancelOpenOrdersByUserId(userId);
         cryptoPositionMapper.deleteByUserId(userId);
         cleanupFuturesRedisIndexes(userId);
         futuresOrderMapper.cancelOpenOrdersByUserId(userId);
         futuresPositionMapper.closeOpenByUserId(userId, futuresCloseStatus);
-        settlementMapper.deletePendingByUserId(userId);
-        // 期权: 取消挂单 + 清空持仓
-        optionOrderMapper.cancelPendingOrdersByUserId(userId);
-        optionPositionMapper.delete(new LambdaQueryWrapper<OptionPosition>()
-                .eq(OptionPosition::getUserId, userId));
         // 预测: 取消活跃投注(爆仓不退款；恢复路径为防御性清残留)
         predictionBetMapper.cancelActiveByUserId(userId);
     }

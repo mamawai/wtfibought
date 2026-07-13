@@ -3,11 +3,9 @@ package com.mawai.wiibsim.controller;
 import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.dto.AssetSnapshotDTO;
 import com.mawai.wiibcommon.dto.CategoryAveragesDTO;
-import com.mawai.wiibcommon.dto.PositionDTO;
 import com.mawai.wiibcommon.dto.UserDTO;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibsim.service.AssetSnapshotService;
-import com.mawai.wiibsim.service.PositionService;
 import com.mawai.wiibsim.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -26,19 +24,12 @@ import java.util.List;
 public class UserController {
 
     private final UserService userService;
-    private final PositionService positionService;
     private final AssetSnapshotService assetSnapshotService;
 
     @GetMapping("/portfolio")
     @Operation(summary = "获取用户资产概览")
     public Result<UserDTO> getUserPortfolio(@CurrentUserId Long userId) {
         return Result.ok(userService.getUserPortfolio(userId));
-    }
-
-    @GetMapping("/positions")
-    @Operation(summary = "获取用户持仓列表")
-    public Result<List<PositionDTO>> getUserPositions(@CurrentUserId Long userId) {
-        return Result.ok(positionService.getUserPositions(userId));
     }
 
     @GetMapping("/asset-realtime")

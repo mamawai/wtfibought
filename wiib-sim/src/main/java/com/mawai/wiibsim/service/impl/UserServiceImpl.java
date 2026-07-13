@@ -2,10 +2,8 @@ package com.mawai.wiibsim.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.mawai.wiibcommon.dto.OptionPositionDTO;
 import com.mawai.wiibcommon.dto.UserDTO;
 import com.mawai.wiibcommon.entity.FuturesPosition;
-import com.mawai.wiibcommon.entity.Settlement;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
@@ -31,12 +29,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
 
-    private final PositionService positionService;
-    private final SettlementService settlementService;
     private final CryptoPositionService cryptoPositionService;
     private final CryptoOrderMapper cryptoOrderMapper;
     private final FuturesPositionMapper futuresPositionMapper;
-    private final OptionPositionService optionPositionService;
     private final AssetValuationService assetValuationService;
 
     @Value("${trading.initial-balance:100000}")
@@ -56,24 +51,15 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             throw new BizException(ErrorCode.USER_NOT_FOUND);
         }
 
-        BigDecimal marketValue = positionService.calculateTotalMarketValue(userId);
-
-        // crypto持仓市值（取查询时刻的BTC实时价格）
-        BigDecimal cryptoMarketValue = cryptoPositionService.calculateCryptoMarketValue(userId);
-        marketValue = marketValue.add(cryptoMarketValue);
+        // 现货持仓市值（crypto + bStock，均在 crypto_position）
+        BigDecimal marketValue = cryptoPositionService.calculateCryptoMarketValue(userId);
 
         BigDecimal frozenBalance = user.getFrozenBalance() != null ? user.getFrozenBalance() : BigDecimal.ZERO;
         BigDecimal marginLoanPrincipal = user.getMarginLoanPrincipal() != null ? user.getMarginLoanPrincipal() : BigDecimal.ZERO;
         BigDecimal marginInterestAccrued = user.getMarginInterestAccrued() != null ? user.getMarginInterestAccrued() : BigDecimal.ZERO;
-        
-        // 计算待结算金额
-        BigDecimal pendingSettlement = settlementService.getPendingSettlements(userId).stream()
-                .map(Settlement::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // crypto待结算（SETTLING状态）
-        BigDecimal cryptoSettling = cryptoOrderMapper.sumSettlingAmount(userId);
-        pendingSettlement = pendingSettlement.add(cryptoSettling);
+        // crypto待结算（SETTLING状态；老股 T+1 已退）
+        BigDecimal pendingSettlement = cryptoOrderMapper.sumSettlingAmount(userId);
 
         // 合约仓位: margin + unrealizedPnl（统一口径见 AssetValuationService）
         BigDecimal futuresValue = BigDecimal.ZERO;
@@ -86,13 +72,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             futuresValue = futuresValue.add(AssetValuationService.futuresPositionValue(fp, markPrice));
         }
 
-        // 期权持仓市值
-        BigDecimal optionValue = BigDecimal.ZERO;
-        List<OptionPositionDTO> optionPositions = optionPositionService.getUserPositions(userId);
-        for (OptionPositionDTO op : optionPositions) {
-            optionValue = optionValue.add(op.getMarketValue());
-        }
-
         // 预测持仓按 bid 可变现价值计入总资产
         BigDecimal predictionValue = assetValuationService.predictionMarketValue(userId);
 
@@ -101,7 +80,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                 .add(marketValue)
                 .add(pendingSettlement)
                 .add(futuresValue)
-                .add(optionValue)
                 .add(predictionValue)
                 .subtract(marginLoanPrincipal)
                 .subtract(marginInterestAccrued);
