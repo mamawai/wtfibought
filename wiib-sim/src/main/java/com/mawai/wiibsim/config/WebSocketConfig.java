@@ -6,7 +6,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
 import org.springframework.http.server.ServletServerHttpRequest;
@@ -58,7 +57,6 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private static final Set<String> connectedSessions = ConcurrentHashMap.newKeySet();
 
     @Bean("wsHeartbeatTaskScheduler")
-    @Primary
     public TaskScheduler wsHeartbeatTaskScheduler() {
         var virtualThreadFactory = Thread.ofVirtual().name("ws-heartbeat-", 0).factory();
         var virtualScheduler = Executors.newScheduledThreadPool(1, virtualThreadFactory);
