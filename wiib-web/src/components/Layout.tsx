@@ -7,13 +7,13 @@ import { Button } from './ui/button';
 import { cn } from '../lib/utils';
 import {
   Home, Briefcase, LogOut, LogIn, TrendingUp, Sun, Moon,
-  BarChart3, User, ChevronDown, List, DollarSign, LineChart,
+  BarChart3, User, ChevronDown, List, DollarSign,
   Brain, Gem,
 } from 'lucide-react';
 
 interface Props { children: React.ReactNode }
 
-const MARKET_PATHS = ['/bstock', '/coin', '/commodity', '/options'];
+const MARKET_PATHS = ['/bstock', '/coin', '/commodity'];
 
 export function Layout({ children }: Props) {
   const navigate = useNavigate();
@@ -187,7 +187,6 @@ function MarketDropdown({ isActive }: { isActive: boolean }) {
             { to: '/bstock', icon: <List className="w-4 h-4" />, label: '股票' },
             { to: '/coin', icon: <DollarSign className="w-4 h-4" />, label: '币种' },
             { to: '/commodity', icon: <Gem className="w-4 h-4" />, label: '大宗商品' },
-            { to: '/options', icon: <LineChart className="w-4 h-4" />, label: '期权' },
           ].map(({ to, icon, label }) => (
             <NavLink
               key={to}

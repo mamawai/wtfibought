@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useUserStore } from '../stores/userStore';
-import { adminApi, type TaskStatus } from '../api';
+import { adminApi } from '../api';
 import type { AiKeyConfig, AiModelAssignment } from '../types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -9,7 +9,7 @@ import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
 import { useToast } from '../components/ui/use-toast';
 import { FeedStreamHealthCard } from '../components/FeedStreamHealthCard';
-import { Play, Square, RefreshCw, Database, Calendar, Clock, Plus, Trash2, Pencil, Save, Activity } from 'lucide-react';
+import { RefreshCw, Calendar, Plus, Trash2, Pencil, Save, Activity } from 'lucide-react';
 
 const FUNCTION_LABELS: Record<string, string> = {
   behavior: '行为分析',
@@ -23,10 +23,7 @@ const MODEL_ASSIGNMENT_FUNCTIONS = new Set(Object.keys(FUNCTION_LABELS));
 export function Admin() {
   const { user } = useUserStore();
   const { toast } = useToast();
-  const [status, setStatus] = useState<TaskStatus | null>(null);
-  const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [generateOffset, setGenerateOffset] = useState(0);
   const [quantSymbol, setQuantSymbol] = useState('BTCUSDT');
   const [interestRateDecimal, setInterestRateDecimal] = useState<number | null>(null);
   const [interestRatePct, setInterestRatePct] = useState('');
@@ -40,15 +37,6 @@ export function Admin() {
   // 模型分配
   const [assignmentsLoading, setAssignmentsLoading] = useState(false);
   const [assignmentsDraft, setAssignmentsDraft] = useState<AiModelAssignment[]>([]);
-
-  const fetchStatus = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await adminApi.taskStatus();
-      setStatus(data);
-    } catch { /* ignore */ }
-    finally { setLoading(false); }
-  }, []);
 
   const fetchInterestRate = useCallback(async () => {
     setRateLoading(true);
@@ -80,12 +68,11 @@ export function Admin() {
 
   useEffect(() => {
     if (user?.id === 1) {
-      fetchStatus();
       fetchInterestRate();
       fetchAiKeys();
       fetchAssignments();
     }
-  }, [user, fetchStatus, fetchInterestRate, fetchAiKeys, fetchAssignments]);
+  }, [user, fetchInterestRate, fetchAiKeys, fetchAssignments]);
 
   if (!user || user.id !== 1) {
     return <Navigate to="/" replace />;
@@ -95,7 +82,6 @@ export function Admin() {
     setActionLoading(name);
     try {
       await action();
-      await fetchStatus();
     } catch { /* ignore */ }
     finally { setActionLoading(null); }
   };
@@ -181,7 +167,6 @@ export function Admin() {
     try {
       const message = await action();
       toast(message, 'success');
-      await fetchStatus();
     } catch (e) {
       toast((e as Error).message || '操作失败', 'error');
     } finally {
@@ -206,36 +191,13 @@ export function Admin() {
             <Activity className="w-3.5 h-3.5" />
             Graph 观测
           </Link>
-          <Button variant="outline" size="sm" onClick={fetchStatus} disabled={loading}>
-            <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
-            刷新
-          </Button>
         </div>
       </div>
 
       {/* feed 数据流健康：独立于任务状态加载，管理员进页即见 */}
       <FeedStreamHealthCard />
 
-      {status && (
-        <>
-          {/* 状态概览 */}
-          <Card>
-            <CardHeader><CardTitle className="text-lg">运行状态</CardTitle></CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <StatusItem label="行情推送" running={status.marketDataTask} />
-                <StatusItem label="订单执行" running={status.orderExecutionTask} />
-                <StatusItem label="T+1结算" running={status.settlementTask} />
-                <StatusItem label="排行榜刷新" running={status.rankingTask} />
-              </div>
-              <div className="mt-4 flex gap-4 text-sm text-muted-foreground">
-                <span>交易时段: {status.isTradingTime ? '是' : '否'}</span>
-                <span>当前Tick: {status.currentTickIndex}/1440</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* 杠杆日利率 */}
+      {/* 杠杆日利率 */}
           <Card>
             <CardHeader><CardTitle className="text-lg">杠杆日利率</CardTitle></CardHeader>
             <CardContent className="space-y-3">
@@ -386,40 +348,6 @@ export function Admin() {
             </CardContent>
           </Card>
 
-          {/* 行情推送控制 */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Clock className="w-5 h-5" /> 行情推送 (含订单执行、排行榜)
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex gap-3">
-              <Button onClick={() => handleAction(adminApi.startMarketPush, 'startMarket')} disabled={actionLoading !== null || status.marketDataTask}>
-                <Play className="w-4 h-4 mr-1" /> 启动
-              </Button>
-              <Button variant="destructive" onClick={() => handleAction(adminApi.stopMarketPush, 'stopMarket')} disabled={actionLoading !== null || !status.marketDataTask}>
-                <Square className="w-4 h-4 mr-1" /> 停止
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* 结算任务控制 */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Database className="w-5 h-5" /> T+1结算任务
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex gap-3">
-              <Button onClick={() => handleAction(adminApi.startSettlement, 'startSettle')} disabled={actionLoading !== null || status.settlementTask}>
-                <Play className="w-4 h-4 mr-1" /> 启动
-              </Button>
-              <Button variant="destructive" onClick={() => handleAction(adminApi.stopSettlement, 'stopSettle')} disabled={actionLoading !== null || !status.settlementTask}>
-                <Square className="w-4 h-4 mr-1" /> 停止
-              </Button>
-            </CardContent>
-          </Card>
-
           {/* 手动触发任务 */}
           <Card>
             <CardHeader>
@@ -428,25 +356,10 @@ export function Admin() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* 股票行情 */}
-              <div>
-                <div className="text-xs text-muted-foreground mb-2">股票行情</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="col-span-2 flex gap-2">
-                    <Input type="number" value={generateOffset} onChange={e => setGenerateOffset(Number(e.target.value) || 0)} className="w-20 h-9 shrink-0" />
-                    <Button variant="outline" className="flex-1 h-9 text-xs" onClick={() => handleAction(() => adminApi.generateData(generateOffset), 'generate')} disabled={actionLoading !== null}>
-                      生成行情(偏移{generateOffset >= 0 ? '+' : ''}{generateOffset}天)
-                    </Button>
-                  </div>
-                  <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(adminApi.loadRedis, 'loadRedis')} disabled={actionLoading !== null}>加载行情到Redis</Button>
-                  <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(async () => adminApi.refreshStockCache(), 'refreshStockCache')} disabled={actionLoading !== null}>重建汇总缓存</Button>
-                </div>
-              </div>
               {/* 结算与风控 */}
               <div>
                 <div className="text-xs text-muted-foreground mb-2">结算与风控</div>
                 <div className="grid grid-cols-2 gap-2">
-                  <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(adminApi.expireOrders, 'expire')} disabled={actionLoading !== null}>处理过期订单</Button>
                   <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(adminApi.bankruptcyCheck, 'bankruptcyCheck')} disabled={actionLoading !== null}>执行爆仓检查</Button>
                   <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(adminApi.accrueInterest, 'accrueInterest')} disabled={actionLoading !== null}>手动计息</Button>
                   <Button variant="outline" className="h-9 text-xs" onClick={() => handleAction(adminApi.assetSnapshot, 'assetSnapshot')} disabled={actionLoading !== null}>资产快照</Button>
@@ -465,19 +378,6 @@ export function Admin() {
               </div>
             </CardContent>
           </Card>
-
-
-        </>
-      )}
-    </div>
-  );
-}
-
-function StatusItem({ label, running }: { label: string; running: boolean }) {
-  return (
-    <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-      <span className="text-sm">{label}</span>
-      <Badge variant={running ? 'default' : 'secondary'}>{running ? '运行中' : '已停止'}</Badge>
     </div>
   );
 }

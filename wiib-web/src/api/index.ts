@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats, TnManualOrderReq, TnOrderResult, TnAck } from '../types/testnet';
-import type { Stock, User, Position, OrderRequest, Order, DayTick, Kline, Settlement, PageResult, News, RankingItem, OptionChainItem, OptionQuote, OptionPosition, OptionOrder, OptionOrderRequest, OptionOrderResult, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, ForceOrder, AiKeyConfig, AiModelAssignment, GraphNodeMetric, WorkbenchEvent, QuantSnapshotView, QuantSnapshotSeriesPoint, QuantDeepAnalysisView, Scorecard, StrategyAccountView, FeedStreamHealth } from '../types';
+import type { User, PageResult, RankingItem, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, ForceOrder, AiKeyConfig, AiModelAssignment, GraphNodeMetric, WorkbenchEvent, QuantSnapshotView, QuantSnapshotSeriesPoint, QuantDeepAnalysisView, Scorecard, StrategyAccountView, FeedStreamHealth } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -52,63 +52,12 @@ export const authApi = {
   logout: () => api.post<unknown, void>('/auth/logout'),
 };
 
-// ========== 股票接口 ==========
-export const stockApi = {
-  // 获取所有股票列表
-  list: () => api.get<unknown, Stock[]>('/stock/list'),
-  // 分页查询股票列表
-  page: (pageNum = 1, pageSize = 10) =>
-    api.get<unknown, PageResult<Stock>>('/stock/page', { params: { pageNum, pageSize } }),
-  // 获取股票详情
-  detail: (id: number) => api.get<unknown, Stock>(`/stock/${id}`),
-  // 获取涨幅榜
-  gainers: (limit = 10) => api.get<unknown, Stock[]>('/stock/gainers', { params: { limit } }),
-  // 获取跌幅榜
-  losers: (limit = 10) => api.get<unknown, Stock[]>('/stock/losers', { params: { limit } }),
-  // 获取当日分时数据
-  ticks: (stockId: number) => api.get<unknown, DayTick[]>(`/stock/${stockId}/ticks`),
-  // 获取历史某天分时数据
-  historyTicks: (stockId: number, date: string, signal?: AbortSignal) =>
-    api.get<unknown, DayTick[]>(`/stock/${stockId}/history-ticks`, { params: { date }, signal }),
-  // 获取日K线
-  kline: (stockId: number, days = 30) =>
-    api.get<unknown, Kline[]>(`/stock/${stockId}/kline`, { params: { days } }),
-};
-
-// ========== 订单接口 ==========
-export const orderApi = {
-  // 买入下单（市价/限价）
-  buy: (data: OrderRequest) => api.post<unknown, Order>('/order/buy', data),
-  // 卖出下单（市价/限价）
-  sell: (data: OrderRequest) => api.post<unknown, Order>('/order/sell', data),
-  // 取消订单
-  cancel: (orderId: number) => api.post<unknown, Order>(`/order/cancel/${orderId}`),
-  // 查询订单列表（分页）
-  list: (status?: string, pageNum = 1, pageSize = 10) =>
-    api.get<unknown, PageResult<Order>>('/order/list', { params: { status, pageNum, pageSize } }),
-  live: () => api.get<unknown, Order[]>('/order/live'),
-};
-
 // ========== 用户接口 ==========
 export const userApi = {
   portfolio: () => api.get<unknown, User>('/user/portfolio'),
-  positions: () => api.get<unknown, Position[]>('/user/positions'),
   assetHistory: (days = 30) => api.get<unknown, AssetSnapshot[]>('/user/asset-history', { params: { days } }),
   assetRealtime: () => api.get<unknown, AssetSnapshot>('/user/asset-realtime'),
   categoryAverages: (days = 30) => api.get<unknown, CategoryAverages>('/user/category-averages', { params: { days } }),
-};
-
-// ========== 结算接口 ==========
-export const settlementApi = {
-  // 获取待结算列表
-  pending: () => api.get<unknown, Settlement[]>('/settlement/pending'),
-};
-
-// ========== 新闻接口 ==========
-export const newsApi = {
-  // 获取股票相关新闻（按日期）
-  byStock: (stockCode: string, date?: string) =>
-    api.get<unknown, News[]>(`/news/stock/${stockCode}`, { params: { date } }),
 };
 
 // ========== 排行榜接口 ==========
@@ -118,33 +67,7 @@ export const rankingApi = {
 };
 
 // ========== 管理接口 ==========
-export interface TaskStatus {
-  marketDataTask: boolean;
-  orderExecutionTask: boolean;
-  settlementTask: boolean;
-  rankingTask: boolean;
-  isTradingTime: boolean;
-  currentTickIndex: number;
-}
-
-export interface RefreshStockCacheResult {
-  date: string;
-  time: string;
-  updated: number;
-  skipped: number;
-}
-
 export const adminApi = {
-  taskStatus: () => api.get<unknown, TaskStatus>('/admin/task/status'),
-  startMarketPush: () => api.post<unknown, void>('/admin/task/market-push/start'),
-  stopMarketPush: () => api.post<unknown, void>('/admin/task/market-push/stop'),
-  startSettlement: () => api.post<unknown, void>('/admin/task/settlement/start'),
-  stopSettlement: () => api.post<unknown, void>('/admin/task/settlement/stop'),
-  expireOrders: () => api.post<unknown, void>('/admin/task/expire-orders'),
-  generateData: (offset = 1) =>
-    api.post<unknown, void>('/admin/task/generate-data', null, { params: { offset } }),
-  loadRedis: () => api.post<unknown, void>('/admin/task/load-redis'),
-  refreshStockCache: () => api.post<unknown, RefreshStockCacheResult>('/admin/task/refresh-stock-cache'),
   bankruptcyCheck: () => api.post<unknown, void>('/admin/task/bankruptcy/check'),
   accrueInterest: () => api.post<unknown, void>('/admin/task/margin/accrue-interest'),
   getDailyInterestRate: () => api.get<unknown, number>('/admin/task/margin/daily-interest-rate'),
@@ -167,23 +90,6 @@ export const adminApi = {
   feedStreams: () => api.get<unknown, FeedStreamHealth[]>('/monitor/streams'),
   retryFeedStream: (name: string) =>
     api.post<unknown, { ok: boolean; name: string }>(`/monitor/streams/${encodeURIComponent(name)}/retry`),
-};
-
-// ========== 期权接口 ==========
-export const optionApi = {
-  // 获取期权链
-  chain: (stockId: number) => api.get<unknown, OptionChainItem[]>(`/option/chain/${stockId}`),
-  // 获取期权报价
-  quote: (contractId: number) => api.get<unknown, OptionQuote>(`/option/quote/${contractId}`),
-  // 买入开仓
-  buy: (data: OptionOrderRequest) => api.post<unknown, OptionOrderResult>('/option/buy', data),
-  // 卖出平仓
-  sell: (data: OptionOrderRequest) => api.post<unknown, OptionOrderResult>('/option/sell', data),
-  // 获取持仓
-  positions: () => api.get<unknown, OptionPosition[]>('/option/positions'),
-  // 获取订单
-  orders: (status?: string, pageNum = 1, pageSize = 10) =>
-    api.get<unknown, PageResult<OptionOrder>>('/option/orders', { params: { status, pageNum, pageSize } }),
 };
 
 // ========== Buff接口 ==========

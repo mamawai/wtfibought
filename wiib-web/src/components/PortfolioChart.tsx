@@ -1,6 +1,5 @@
 import * as echarts from 'echarts';
 import { useEffect, useRef } from 'react';
-import type { Position } from '../types';
 import { getCoin } from '../lib/coinConfig';
 import { useIsDark } from '../hooks/useIsDark';
 
@@ -15,14 +14,13 @@ interface FuturesRow {
 }
 
 interface Props {
-  positions: Position[];
   cryptoPositions?: CryptoRow[];
   futuresRows?: FuturesRow[];
   balance: number;
   pendingSettlement?: number;
 }
 
-export function PortfolioChart({ positions, cryptoPositions = [], futuresRows = [], balance, pendingSettlement = 0 }: Props) {
+export function PortfolioChart({ cryptoPositions = [], futuresRows = [], balance, pendingSettlement = 0 }: Props) {
   const chartRef = useRef<HTMLDivElement>(null);
   const isDark = useIsDark();
 
@@ -30,17 +28,7 @@ export function PortfolioChart({ positions, cryptoPositions = [], futuresRows = 
     if (!chartRef.current) return;
     const chart = echarts.init(chartRef.current, isDark ? 'dark' : 'light');
 
-    const sortedPositions = [...positions].sort((a, b) => (b.marketValue || 0) - (a.marketValue || 0));
-    const topPositions = sortedPositions.slice(0, 5);
-    const otherValue = sortedPositions.slice(5).reduce((acc, p) => acc + (p.marketValue || 0), 0);
-
     const data = [
-      ...topPositions.map(p => ({
-        name: p.stockName,
-        value: p.marketValue || 0,
-        itemStyle: { color: undefined }
-      })),
-      ...(otherValue > 0 ? [{ name: '其他股票', value: otherValue, itemStyle: { color: '#666' } }] : []),
       ...cryptoPositions
         .filter(c => c.marketValue > 0)
         .map(c => {
@@ -133,7 +121,7 @@ export function PortfolioChart({ positions, cryptoPositions = [], futuresRows = 
       window.removeEventListener('resize', onResize);
       chart.dispose();
     };
-  }, [positions, cryptoPositions, futuresRows, balance, pendingSettlement, isDark]);
+  }, [cryptoPositions, futuresRows, balance, pendingSettlement, isDark]);
 
   return <div ref={chartRef} className="w-full h-56 sm:h-64 transition-colors duration-300" />;
 }

@@ -10,20 +10,16 @@ interface Props {
 
 const CUMULATIVE_CONFIG = [
   { key: 'profit', name: '总收益', color: '#635bff' },
-  { key: 'stockProfit', name: '股票', color: '#3b82f6' },
   { key: 'cryptoProfit', name: '加密货币', color: '#f97316' },
   { key: 'futuresProfit', name: '合约', color: '#a855f7' },
-  { key: 'optionProfit', name: '期权', color: '#14b8a6' },
   { key: 'predictionProfit', name: '预测', color: '#eab308' },
   { key: 'gameProfit', name: '游戏', color: '#ef4444' },
 ] as const;
 
 const DAILY_CONFIG = [
   { key: 'dailyProfit', name: '日收益', color: '#635bff' },
-  { key: 'dailyStockProfit', name: '股票', color: '#3b82f6' },
   { key: 'dailyCryptoProfit', name: '加密货币', color: '#f97316' },
   { key: 'dailyFuturesProfit', name: '合约', color: '#a855f7' },
-  { key: 'dailyOptionProfit', name: '期权', color: '#14b8a6' },
   { key: 'dailyPredictionProfit', name: '预测', color: '#eab308' },
   { key: 'dailyGameProfit', name: '游戏', color: '#ef4444' },
 ] as const;

@@ -60,16 +60,6 @@ export function Intro() {
           </section>
 
           <section>
-            <h3 className="font-bold mb-1">期权交易</h3>
-            <ul className="list-disc list-inside text-muted-foreground space-y-1">
-              <li><strong>CALL看涨</strong>：涨得越多赚得越多</li>
-              <li><strong>PUT看跌</strong>：跌得越多赚得越多</li>
-              <li>仅支持买入开仓，到期前可平仓或等待结算</li>
-              <li>现金结算，不涉及股票交割</li>
-            </ul>
-          </section>
-
-          <section>
             <h3 className="font-bold mb-1">BTC模拟交易</h3>
             <ul className="list-disc list-inside text-muted-foreground space-y-1">
               <li><strong>实时行情</strong>：接入Binance WebSocket</li>

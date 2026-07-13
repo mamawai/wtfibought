@@ -1,32 +1,3 @@
-export interface Stock {
-  id: number;
-  code: string;
-  name: string;
-  industry?: string;
-  price: number;
-  openPrice?: number;
-  highPrice?: number;
-  lowPrice?: number;
-  prevClose?: number;
-  change: number;
-  changePct: number;
-  marketCap?: number;
-  peRatio?: number;
-  companyDesc?: string;
-  trendList?: number[];
-}
-
-export interface Quote {
-  code: string;
-  name: string;
-  price: number;
-  open: number;
-  high: number;
-  low: number;
-  prevClose: number;
-  timestamp: number;
-}
-
 export interface User {
   id: number;
   username: string;
@@ -45,68 +16,6 @@ export interface User {
   profitPct: number;
 }
 
-export interface Position {
-  id: number;
-  stockId: number;
-  stockCode: string;
-  stockName: string;
-  quantity: number;
-  avgCost: number;
-  currentPrice: number;
-  marketValue: number;
-  profit: number;
-  profitPct: number;
-}
-
-export interface OrderRequest {
-  stockId: number;
-  quantity: number;
-  orderType: 'MARKET' | 'LIMIT';
-  limitPrice?: number;
-  leverageMultiple?: number;
-  useBuffId?: number;
-}
-
-export interface Order {
-  orderId: number;
-  stockCode: string;
-  stockName: string;
-  orderSide: string;
-  orderType: string;
-  status: string;
-  quantity: number;
-  limitPrice?: number;
-  filledPrice?: number;
-  filledAmount?: number;
-  commission?: number;
-  triggerPrice?: number;
-  triggeredAt?: string;
-  expireAt?: string;
-  createdAt: string;
-}
-
-export interface DayTick {
-  time: string;
-  price: number;
-}
-
-export interface Kline {
-  date: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-}
-
-export interface Settlement {
-  id: number;
-  orderId: number;
-  amount: number;
-  settleTime?: string;
-  createdAt: string;
-  status: string;
-}
-
 // MyBatis-Plus分页结果
 export interface PageResult<T> {
   records: T[];
@@ -115,16 +24,6 @@ export interface PageResult<T> {
   current: number;
   pages: number;
 }
-
-export interface News {
-  id: number;
-  stockCode: string;
-  title: string;
-  content: string;
-  newsType: string;
-  publishTime: string;
-}
-
 
 export interface RankingItem {
   rank: number;
@@ -135,73 +34,6 @@ export interface RankingItem {
   profitPct: number;
   hardcoreProfit: number;
   buffProfit: number;
-}
-
-// ========== 期权相关类型 ==========
-export interface OptionChainItem {
-  contractId: number;
-  stockId: number;
-  optionType: 'CALL' | 'PUT';
-  strike: number;
-  expireAt: string;
-}
-
-export interface OptionQuote {
-  contractId: number;
-  stockCode: string;
-  stockName: string;
-  optionType: 'CALL' | 'PUT';
-  strike: number;
-  expireAt: string;
-  premium: number;
-  intrinsicValue: number;
-  timeValue: number;
-  spotPrice: number;
-  sigma: number;
-}
-
-export interface OptionPosition {
-  positionId: number;
-  contractId: number;
-  stockId: number;
-  stockCode: string;
-  stockName: string;
-  optionType: 'CALL' | 'PUT';
-  strike: number;
-  expireAt: string;
-  quantity: number;
-  avgCost: number;
-  currentPremium: number;
-  marketValue: number;
-  pnl: number;
-  spotPrice: number;
-}
-
-export interface OptionOrder {
-  orderId: number;
-  stockName: string;
-  optionType: 'CALL' | 'PUT';
-  strike: number;
-  expireAt: string;
-  orderSide: 'BTO' | 'STC';
-  quantity: number;
-  filledPrice: number;
-  filledAmount: number;
-  commission: number;
-  status: string;
-}
-
-export interface OptionOrderRequest {
-  contractId: number;
-  quantity: number;
-}
-
-export interface OptionOrderResult {
-  orderId: number;
-  status: string;
-  filledPrice: number;
-  filledAmount: number;
-  commission: number;
 }
 
 // ========== Buff相关类型 ==========
