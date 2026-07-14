@@ -45,7 +45,7 @@ management:
 
 # AI 配置已迁 DB（每日行情/新闻生成用）：ai_runtime_config + ai_model_assignment('sim' 功能位)，Admin 页管理
 
-# LinuxDo OAuth配置
+# LinuxDo OAuth配置（可以不配置）
 linuxdo:
   client-id:
   client-secret:
@@ -89,16 +89,6 @@ binance:
     - SOLUSDT
     - XRPUSDT
   fallback-poll-interval: 5000
-
-# Binance USDT-M 合约 Testnet 模拟交易（仅交易；行情仍走上方主网 binance.*）
-# api-key/secret-key 在 https://testnet.binancefuture.com/ 申请
-binance-testnet:
-  rest-base-url: https://demo-fapi.binance.com
-  api-key: ""
-  secret-key: ""
-  symbols:
-    - ETHUSDT
-    - BTCUSDT
 
 # WebSocket配置
 websocket:
