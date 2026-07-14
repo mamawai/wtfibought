@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { authApi } from '../api';
 import { useUserStore } from '../stores/userStore';
 import { Typewriter } from '../components/ui/typewriter';
-import { Loader2, Globe, BarChart3, Wallet, LineChart } from 'lucide-react';
+import { Loader2, Globe, BarChart3, Wallet, LineChart, LogIn } from 'lucide-react';
 
 // const LINUXDO_CONFIG = {
 //   clientId: 'toCFytIO9bCHpbUbFKM1mTgvy1ax8tG2',
@@ -47,6 +47,7 @@ export function Login() {
   const { user, setToken, fetchUser } = useUserStore();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [linuxDoEnabled, setLinuxDoEnabled] = useState<boolean | null>(null);   // null=模式加载中
   const callbackHandled = useRef(false);
 
   const handleOAuthCallback = useCallback(async (code: string, state: string) => {
@@ -81,6 +82,13 @@ export function Login() {
     }
   }, [user, navigate]);
 
+  // 拉登录模式：linuxDoEnabled=false 则展示管理员直登；失败兜底回 OAuth（既有行为）
+  useEffect(() => {
+    authApi.mode()
+      .then(m => setLinuxDoEnabled(m.linuxDoEnabled))
+      .catch(() => setLinuxDoEnabled(true));
+  }, []);
+
   useEffect(() => {
     const code = searchParams.get('code');
     const state = searchParams.get('state');
@@ -94,6 +102,25 @@ export function Login() {
     const state = Math.random().toString(36).substring(2, 10);
     localStorage.setItem('oauth_state', state);
     window.location.href = `${LINUXDO_CONFIG.authorizeUrl}?client_id=${LINUXDO_CONFIG.clientId}&redirect_uri=${encodeURIComponent(LINUXDO_CONFIG.redirectUri)}&response_type=code&state=${state}`;
+  };
+
+  // 管理员直登：无 OAuth 跳转，直接调后端拿 token 进站
+  const handleLocalLogin = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const token = await authApi.localLogin();
+      if (token) {
+        setToken(token);
+        await fetchUser();
+        navigate('/');
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '登录失败';
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -171,14 +198,14 @@ export function Login() {
             </div>
           )}
 
-          {/* 登录按钮 */}
+          {/* 登录按钮：模式加载中→spinner；linuxDoEnabled→OAuth；否则→管理员直登 */}
           <div className="w-full">
-            {loading ? (
+            {loading || linuxDoEnabled === null ? (
               <div className="flex flex-col items-center justify-center h-16 rounded-2xl bg-surface neu-raised gap-2">
                 <Loader2 className="w-6 h-6 text-foreground animate-spin" strokeWidth={3} />
-                <p className="text-sm font-black text-foreground">登录中...</p>
+                <p className="text-sm font-black text-foreground">{loading ? '登录中...' : '加载中...'}</p>
               </div>
-            ) : (
+            ) : linuxDoEnabled ? (
               <button
                 onClick={handleLinuxDoLogin}
                 className="group relative w-full h-16 rounded-2xl bg-primary text-primary-foreground font-black text-lg neu-btn-sm transition-all flex items-center justify-center gap-3 overflow-hidden"
@@ -187,6 +214,16 @@ export function Login() {
                 <div className="absolute inset-0 w-full h-full bg-white/20 -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
                 <Globe className="w-6 h-6 relative z-10" strokeWidth={2.5} />
                 <span className="relative z-10 tracking-wide">使用 LinuxDo 登录</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleLocalLogin}
+                className="group relative w-full h-16 rounded-2xl bg-primary text-primary-foreground font-black text-lg neu-btn-sm transition-all flex items-center justify-center gap-3 overflow-hidden"
+              >
+                {/* 按钮内扫光效果 */}
+                <div className="absolute inset-0 w-full h-full bg-white/20 -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
+                <LogIn className="w-6 h-6 relative z-10" strokeWidth={2.5} />
+                <span className="relative z-10 tracking-wide">进入</span>
               </button>
             )}
           </div>

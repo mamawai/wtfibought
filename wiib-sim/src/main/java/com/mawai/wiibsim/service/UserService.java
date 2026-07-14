@@ -18,6 +18,11 @@ public interface UserService extends IService<User> {
     User findByLinuxDoId(String linuxDoId);
 
     /**
+     * 确保 admin 用户（id=1）存在——仅管理员直登模式下调用，幂等
+     */
+    void ensureAdminUser();
+
+    /**
      * 获取用户资产概览
      */
     UserDTO getUserPortfolio(Long userId);

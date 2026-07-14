@@ -130,6 +130,27 @@ public class AuthServiceImpl implements AuthService {
         log.info("用户退出登录");
     }
 
+    @Override
+    public boolean isLinuxDoEnabled() {
+        return linuxDoConfig.isEnabled();
+    }
+
+    /**
+     * 仅管理员直登：未配 LinuxDo 时，任何人点"进入"即以 admin(id=1) 登录
+     * 配了 LinuxDo 则拒绝，避免 OAuth 部署被绕过成 admin
+     */
+    @Override
+    public String localLogin() {
+        if (linuxDoConfig.isEnabled()) {
+            throw new BizException("LinuxDo 已启用，管理员直登不可用");
+        }
+        userService.ensureAdminUser();   // 幂等，保证 id=1 存在
+        StpUtil.login(1L);
+        String token = StpUtil.getTokenValue();
+        log.info("管理员直登成功 UserId=1");
+        return token;
+    }
+
     /**
      * 用授权码换取access_token
      */

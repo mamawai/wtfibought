@@ -2,6 +2,7 @@ package com.mawai.wiibsim.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.mawai.wiibcommon.entity.User;
+import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -12,6 +13,17 @@ import java.time.LocalDate;
 
 @Mapper
 public interface UserMapper extends BaseMapper<User> {
+
+    /**
+     * 幂等创建 admin 用户（强制 id=1），仅管理员直登模式用。
+     * IdType.AUTO 下普通 save 会剥掉 id 交给自增，故用原生 SQL 显式写 id；
+     * linux_do_id 用固定哨兵占位（不会与真实 LinuxDo 数字 id 冲突）；
+     * 其余 NOT NULL 列走 DB 默认值；ON CONFLICT 保证并发/重复调用安全。
+     */
+    @Insert("INSERT INTO \"user\" (id, linux_do_id, username, balance) " +
+            "VALUES (1, 'local-admin', 'admin', #{balance}) " +
+            "ON CONFLICT (id) DO NOTHING")
+    int insertAdmin(@Param("balance") BigDecimal balance);
 
     /** 原子更新可用余额，返回影响行数（0表示余额不足） */
     @Update("UPDATE \"user\" SET balance = balance + #{amount}, updated_at = NOW() " +

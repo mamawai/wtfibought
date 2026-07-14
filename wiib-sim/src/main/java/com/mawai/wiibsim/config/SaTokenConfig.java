@@ -21,6 +21,8 @@ public class SaTokenConfig extends BaseSaTokenConfig {
     protected List<String> getExcludePaths() {
         List<String> paths = new ArrayList<>(getDefaultExcludePaths());
         paths.add("/api/auth/callback/**");
+        paths.add("/api/auth/mode");        // 登录前拉取登录模式
+        paths.add("/api/auth/login/**");    // 管理员直登，登录前访问
         paths.add("/api/agora/**");
         paths.add("/api/invite/**");
         paths.add("/linuxdo/**");

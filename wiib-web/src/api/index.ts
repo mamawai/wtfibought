@@ -44,8 +44,12 @@ api.interceptors.response.use(
 
 // ========== 认证接口 ==========
 export const authApi = {
+  // 登录模式：linuxDoEnabled=false 时走管理员直登
+  mode: () => api.get<unknown, { linuxDoEnabled: boolean }>('/auth/mode'),
   // LinuxDo OAuth回调
   linuxDoCallback: (code: string) => api.get<unknown, string>('/auth/callback/linuxdo', { params: { code } }),
+  // 管理员直登（仅未配置 LinuxDo 时可用）
+  localLogin: () => api.post<unknown, string>('/auth/login/local'),
   // 获取当前用户信息
   current: () => api.get<unknown, User>('/auth/current'),
   // 退出登录

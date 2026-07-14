@@ -2,6 +2,7 @@ package com.mawai.wiibsim.controller;
 
 import com.mawai.wiibcommon.dto.UserDTO;
 import com.mawai.wiibcommon.util.Result;
+import com.mawai.wiibsim.dto.AuthModeDTO;
 import com.mawai.wiibsim.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,12 +21,31 @@ public class AuthController {
     private final AuthService authService;
 
     /**
+     * 登录模式：前端据此决定展示 LinuxDo 登录还是管理员直登
+     */
+    @GetMapping("/mode")
+    @Operation(summary = "获取登录模式")
+    public Result<AuthModeDTO> mode() {
+        return Result.ok(new AuthModeDTO(authService.isLinuxDoEnabled()));
+    }
+
+    /**
      * LinuxDo回调处理
      */
     @GetMapping("/callback/linuxdo")
     @Operation(summary = "LinuxDo OAuth回调")
     public Result<String> linuxDoCallback(@RequestParam String code) {
         String token = authService.handleLinuxDoCallback(code);
+        return Result.ok(token);
+    }
+
+    /**
+     * 管理员直登（仅未配置 LinuxDo 时可用）
+     */
+    @PostMapping("/login/local")
+    @Operation(summary = "管理员直登")
+    public Result<String> localLogin() {
+        String token = authService.localLogin();
         return Result.ok(token);
     }
 

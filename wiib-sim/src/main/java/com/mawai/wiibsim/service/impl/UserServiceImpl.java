@@ -45,6 +45,12 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
+    public void ensureAdminUser() {
+        // 幂等：id=1 已存在则 ON CONFLICT 跳过；balance 用配置的初始资金
+        baseMapper.insertAdmin(initialBalance);
+    }
+
+    @Override
     public UserDTO getUserPortfolio(Long userId) {
         User user = baseMapper.selectById(userId);
         if (user == null) {
