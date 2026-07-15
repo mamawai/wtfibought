@@ -208,9 +208,14 @@ public final class StrategyKlineBacktestEngine {
     }
 
     private boolean directionalPricesStillValid(StrategySignal signal, BigDecimal entry) {
+        if (signal.stopLossPrice() == null) return false;
+        boolean stopValid = signal.isLong()
+                ? signal.stopLossPrice().compareTo(entry) < 0
+                : signal.stopLossPrice().compareTo(entry) > 0;
+        if (!stopValid || signal.takeProfitPrice() == null) return stopValid;
         return signal.isLong()
-                ? signal.stopLossPrice().compareTo(entry) < 0 && signal.takeProfitPrice().compareTo(entry) > 0
-                : signal.stopLossPrice().compareTo(entry) > 0 && signal.takeProfitPrice().compareTo(entry) < 0;
+                ? signal.takeProfitPrice().compareTo(entry) > 0
+                : signal.takeProfitPrice().compareTo(entry) < 0;
     }
 
     private boolean gappedBeyondStop(StrategySignal signal, BigDecimal entry) {
@@ -220,6 +225,8 @@ public final class StrategyKlineBacktestEngine {
     }
 
     private boolean rrStillAcceptable(StrategySignal signal, BigDecimal entry) {
+        // 无固定 TP 的趋势策略由持仓回调动态退出，无法在入场时定义静态 RR；仍由固定 SL 完成风险定量。
+        if (signal.takeProfitPrice() == null) return true;
         BigDecimal risk = entry.subtract(signal.stopLossPrice()).abs();
         if (risk.signum() <= 0) return false;
         BigDecimal reward = signal.takeProfitPrice().subtract(entry).abs();

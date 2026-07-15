@@ -122,7 +122,7 @@ class StrategyKlineBacktestEngineTest {
 
     private static StrategySignal longSignal(KlineBar bar, double sl, double tp) {
         return new StrategySignal("STUB", SYM, "LONG", true,
-                bar.close(), bd(sl), bd(tp), 1.0, "stub", bar.closeTime());
+                bar.close(), bd(sl), bd(tp), 1.0, "stub", bar.closeTime(), "MARKET");
     }
 
     private static List<KlineBar> flatBars(int n, double price) {

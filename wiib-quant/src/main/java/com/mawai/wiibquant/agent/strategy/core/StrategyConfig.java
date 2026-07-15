@@ -8,6 +8,8 @@ import com.mawai.wiibquant.agent.strategy.liq.LiqFadeStrategy;
 import com.mawai.wiibquant.agent.strategy.liq.RedisLiqSideData;
 import com.mawai.wiibquant.agent.strategy.sqzmom.SqzMomParams;
 import com.mawai.wiibquant.agent.strategy.sqzmom.SqueezeMomentumStrategy;
+import com.mawai.wiibquant.agent.strategy.turtle.TurtleParams;
+import com.mawai.wiibquant.agent.strategy.turtle.TurtleStrategy;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -31,6 +33,17 @@ public class StrategyConfig {
     public SqueezeMomentumStrategy squeezeMomentumStrategy() {
         return new SqueezeMomentumStrategy(SqzMomParams.defaults(),
                 List.of("SOLUSDT", "DOGEUSDT", "XRPUSDT"));
+    }
+
+    /**
+     * TURTLE 4H 90入场/15退出、盘中触价入场（六币粗+细网格验证的高原中心），多空双向；
+     * 是否运行由 enabled-ids 控制。触价单是 quant 内存态（SimExecutionService ARMED），
+     * 由 feed:price 的 futures tick 触发。feed 侧 symbols 已覆盖四币 5m 流（含 BNB）。
+     */
+    @Bean
+    public TurtleStrategy turtleStrategy() {
+        return new TurtleStrategy(TurtleParams.defaults(),
+                List.of("SOLUSDT", "ETHUSDT", "DOGEUSDT", "BNBUSDT"));
     }
 
     /**

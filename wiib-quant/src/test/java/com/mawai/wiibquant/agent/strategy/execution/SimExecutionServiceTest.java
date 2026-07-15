@@ -168,6 +168,11 @@ class SimExecutionServiceTest {
                 bd(entry).add(bd("100")), 0.5, "t", barClose, "LIMIT");
     }
 
+    private static StrategySignal stop(String side, String trigger, String sl, long barClose) {
+        boolean isLong = "LONG".equals(side);
+        return new StrategySignal("T", SYM, side, isLong, bd(trigger), bd(sl), null, 0.5, "t", barClose, "STOP");
+    }
+
     @Test
     void 市价信号_风险定量开仓_SLTP随单_转POSITION() {
         StubClient client = new StubClient();
@@ -285,6 +290,73 @@ class SimExecutionServiceTest {
         client.orderQuery = resp("FILLED", 1000L, 9L, "3000");   // 真相: 其实已成交
         svc.tick(SYM, T0 + 13 * BAR);
         assertThat(strategy.openedPositionId).isEqualTo(9L);     // 收养为 POSITION, 未双开
+    }
+
+    @Test
+    void 触价信号_ARMED不落单_tick穿越才市价开仓_持仓后不再触发() {
+        StubClient client = new StubClient();
+        client.openResp = resp("FILLED", 100L, 7L, "3001");
+        SimExecutionService svc = service(client);
+        RecStrategy strategy = new RecStrategy();
+
+        svc.onSignal(SYM, stop("LONG", "3000", "2900", T0), strategy);
+        assertThat(client.opened).isEmpty();                 // 虚拟单，不落 sim
+
+        svc.onPriceTick(SYM, bd("2995"));                    // 未穿越
+        assertThat(client.opened).isEmpty();
+
+        svc.onPriceTick(SYM, bd("3001"));                    // 穿越 → 市价进场，SL 随单
+        assertThat(client.opened).hasSize(1);
+        FuturesOpenRequest req = client.opened.getFirst();
+        assertThat(req.getOrderType()).isEqualTo("MARKET");
+        // 风险定量按触发价：10000×1%/(3000-2900)=1
+        assertThat(req.getQuantity()).isEqualByComparingTo("1");
+        assertThat(req.getStopLosses().getFirst().getPrice()).isEqualByComparingTo("2900");
+        assertThat(strategy.openedPositionId).isEqualTo(7L);
+
+        svc.onPriceTick(SYM, bd("3002"));                    // POSITION 后 tick 不再触发
+        assertThat(client.opened).hasSize(1);
+    }
+
+    @Test
+    void 触价信号_同腿reaffirm刷新SL_换腿替换_无信号撤虚拟单() {
+        StubClient client = new StubClient();
+        client.openResp = resp("FILLED", 100L, 7L, "3051");
+        SimExecutionService svc = service(client);
+        RecStrategy strategy = new RecStrategy();
+
+        svc.onSignal(SYM, stop("LONG", "3000", "2900", T0), strategy);
+        svc.onSignal(SYM, stop("LONG", "3000", "2910", T0 + BAR), strategy);    // 同腿 reaffirm(SL漂移)
+        svc.onSignal(SYM, stop("LONG", "3050", "2950", T0 + 2 * BAR), strategy); // 换腿(触发价变)
+        assertThat(client.opened).isEmpty();                 // 全程无 sim 交互
+
+        svc.onPriceTick(SYM, bd("3050"));                    // 按新腿触发，SL 是换腿后的 2950
+        assertThat(client.opened).hasSize(1);
+        assertThat(client.opened.getFirst().getStopLosses().getFirst().getPrice()).isEqualByComparingTo("2950");
+
+        // 平仓回 FLAT → 重新 arm → noSignal 撤虚拟单 → tick 不触发
+        client.positions = List.of();
+        svc.tick(SYM, T0 + 3 * BAR);
+        svc.onSignal(SYM, stop("LONG", "3100", "3000", T0 + 4 * BAR), strategy);
+        svc.noSignal(SYM, "T");
+        svc.onPriceTick(SYM, bd("3200"));
+        assertThat(client.opened).hasSize(1);                // 未新增
+    }
+
+    @Test
+    void 触价信号_空头下穿触发() {
+        StubClient client = new StubClient();
+        client.openResp = resp("FILLED", 101L, 8L, "2799");
+        SimExecutionService svc = service(client);
+        RecStrategy strategy = new RecStrategy();
+
+        svc.onSignal(SYM, stop("SHORT", "2800", "2900", T0), strategy);
+        svc.onPriceTick(SYM, bd("2850"));                    // 高于触发价，不触发
+        assertThat(client.opened).isEmpty();
+        svc.onPriceTick(SYM, bd("2799"));                    // 下穿触发
+        assertThat(client.opened).hasSize(1);
+        assertThat(client.opened.getFirst().getSide()).isEqualTo("SHORT");
+        assertThat(strategy.openedPositionId).isEqualTo(8L);
     }
 
     /** 时间出场桩：按 LiqFade 同款公式（createdAt 按 UTC 解释）持满 holdMs 即市价平。 */

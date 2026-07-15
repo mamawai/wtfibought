@@ -52,7 +52,6 @@ public class BacktestTradingTools implements TradingOperations {
     // 状态
     @Getter
     private BigDecimal balance;
-    private BigDecimal peakEquity;
     @Getter
     private BigDecimal frozenBalance = BigDecimal.ZERO;
     private final List<FuturesPositionDTO> openPositions = new ArrayList<>();
@@ -67,12 +66,15 @@ public class BacktestTradingTools implements TradingOperations {
     @Setter
     private LocalDateTime currentTime;
     private final String symbol;
+    // 组合回测：撮合上下文币种。单币回测恒等于构造符，多币引擎每处理一个币前 setCurrentSymbol 切换。
+    private String currentSymbol;
 
     /**
      * 已平仓交易记录，用于生成 BacktestResult.Trade。
      */
     public record ClosedTrade(
             long positionId,
+            String symbol,
             int openBarIndex,
             int closeBarIndex,
             LocalDateTime openTime,
@@ -93,8 +95,13 @@ public class BacktestTradingTools implements TradingOperations {
 
     public BacktestTradingTools(BigDecimal initialBalance, String symbol) {
         this.balance = initialBalance;
-        this.peakEquity = initialBalance;
         this.symbol = symbol;
+        this.currentSymbol = symbol;
+    }
+
+    /** 组合回测切换撮合币种；单币回测无需调用（恒为构造符）。 */
+    public void setCurrentSymbol(String s) {
+        this.currentSymbol = s;
     }
 
     // ==================== TradingOperations 实现 ====================
@@ -144,7 +151,7 @@ public class BacktestTradingTools implements TradingOperations {
         long posId = positionIdSeq.getAndIncrement();
         pos.setId(posId);
         pos.setUserId(0L);
-        pos.setSymbol(symbol);
+        pos.setSymbol(currentSymbol);
         pos.setSide(side);
         pos.setLeverage(leverage);
         pos.setQuantity(quantity);
@@ -201,7 +208,7 @@ public class BacktestTradingTools implements TradingOperations {
             closeQty = pos.getQuantity();
         }
 
-        BigDecimal exitPrice = getCurrentPrice();
+        BigDecimal exitPrice = getCurrentPrice(pos.getSymbol());   // 按持仓自身币种取现价，多币强平也正确
         doClose(pos, closeQty, exitPrice, normalizeExitReason(reason));
 
         return "平仓成功|posId=" + positionId;
@@ -249,12 +256,20 @@ public class BacktestTradingTools implements TradingOperations {
 
     // ==================== 回测专用方法 ====================
 
-    /** 当前K线价格（用于开仓/平仓的成交价） */
-    @Setter
-    private BigDecimal currentPrice;
+    /** 各币种当前K线价（开仓/平仓成交价）。单币只有一个 key，多币每币一条。 */
+    private final Map<String, BigDecimal> priceBySymbol = new HashMap<>();
+
+    /** 写入「当前撮合币种」的现价（openFill 成交前调用）。 */
+    public void setCurrentPrice(BigDecimal price) {
+        priceBySymbol.put(currentSymbol, price);
+    }
 
     private BigDecimal getCurrentPrice() {
-        return currentPrice;
+        return priceBySymbol.get(currentSymbol);
+    }
+
+    private BigDecimal getCurrentPrice(String sym) {
+        return priceBySymbol.get(sym);
     }
 
     /**
@@ -270,7 +285,7 @@ public class BacktestTradingTools implements TradingOperations {
      * @param barIndex 当前K线序号
      */
     public void tickBar(BigDecimal open, BigDecimal high, BigDecimal low, BigDecimal close, int barIndex) {
-        this.currentPrice = close;
+        priceBySymbol.put(currentSymbol, close);
         this.currentBarIndex = barIndex;
 
         // 阳线先探低后冲高、阴线先冲高后杀低，得到 开→中1→中2→收 四点盘中路径。
@@ -279,15 +294,16 @@ public class BacktestTradingTools implements TradingOperations {
                 ? new BigDecimal[]{open, low, high, close}
                 : new BigDecimal[]{open, high, low, close};
 
+        // 只撮合当前币种的仓位；多币下别的币用它自己 tickBar 时的价，互不污染。
         List<FuturesPositionDTO> posSnapshot = new ArrayList<>(openPositions);
         for (FuturesPositionDTO pos : posSnapshot) {
-            if (!"OPEN".equals(pos.getStatus())) continue;
+            if (!"OPEN".equals(pos.getStatus()) || !currentSymbol.equals(pos.getSymbol())) continue;
             walkBarPath(pos, path);
         }
 
-        // 更新所有仓位的当前价格和未实现盈亏
+        // 更新当前币种仓位的现价与未实现盈亏
         for (FuturesPositionDTO pos : openPositions) {
-            if (!"OPEN".equals(pos.getStatus())) continue;
+            if (!"OPEN".equals(pos.getStatus()) || !currentSymbol.equals(pos.getSymbol())) continue;
             pos.setCurrentPrice(close);
             pos.setMarkPrice(close);
             BigDecimal pnl = calcUnrealizedPnl(pos, close);
@@ -399,6 +415,7 @@ public class BacktestTradingTools implements TradingOperations {
         // 记录平仓
         closedTrades.add(new ClosedTrade(
                 pos.getId(),
+                pos.getSymbol(),
                 findOpenBarIndex(pos),
                 currentBarIndex,
                 pos.getCreatedAt(),
@@ -522,11 +539,7 @@ public class BacktestTradingTools implements TradingOperations {
                 .filter(p -> "OPEN".equals(p.getStatus()))
                 .map(p -> p.getUnrealizedPnl() != null ? p.getUnrealizedPnl() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal equity = balance.add(frozenBalance).add(unrealized);
-        if (peakEquity == null || equity.compareTo(peakEquity) > 0) {
-            peakEquity = equity;
-        }
-        return equity;
+        return balance.add(frozenBalance).add(unrealized);
     }
 
     public List<FuturesPositionDTO> getOpenPositions() {

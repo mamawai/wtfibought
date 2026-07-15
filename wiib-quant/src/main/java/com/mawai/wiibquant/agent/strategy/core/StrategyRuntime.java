@@ -41,6 +41,8 @@ public class StrategyRuntime {
     private final ForceOrderService forceOrderService;
     private final StrategyExecutionPort executionService;   // testnet/sim 按配置路由（ExecutionRoutingConfig）
     private final ConcurrentMap<String, WindowedMarketView> views = new ConcurrentHashMap<>();
+    // 信号落库腿去重：STOP/LIMIT 信号每5m reaffirm 一次，同腿只记首条，换腿/换价/断档后才再落库
+    private final ConcurrentMap<String, String> lastRecordedLeg = new ConcurrentHashMap<>();
 
     @Value("${strategy.runtime.enabled:false}")
     private boolean enabled;
@@ -77,9 +79,16 @@ public class StrategyRuntime {
                     executionService.onPositionBarClosed(symbol, strategy, view);
                     Optional<StrategySignal> signal = strategy.onBarClosed(symbol, view);
                     if (signal.isPresent()) {
-                        recorder.record(signal.get(), legTags(symbol, signal.get().isLong()));
-                        executionService.onSignal(symbol, signal.get(), strategy);   // 实盘执行(默认关)
+                        StrategySignal s = signal.get();
+                        String legFingerprint = s.orderType() + ":" + s.side() + ":"
+                                + s.entryRefPrice().stripTrailingZeros().toPlainString();
+                        String legKey = strategy.id() + ":" + symbol;
+                        if (!legFingerprint.equals(lastRecordedLeg.put(legKey, legFingerprint))) {
+                            recorder.record(s, legTags(symbol, s.isLong()));
+                        }
+                        executionService.onSignal(symbol, s, strategy);              // 实盘执行(默认关)
                     } else {
+                        lastRecordedLeg.remove(strategy.id() + ":" + symbol);
                         executionService.noSignal(symbol, strategy.id());            // 腿失效，撤该策略挂单
                     }
                     executionService.tick(symbol, view.nowMs());                     // 成交/超时/平仓轮询

@@ -30,8 +30,10 @@ import java.util.stream.Collectors;
  * 策略信号 → 本平台模拟盘执行（strategy.execution.target=sim 时由 ExecutionRoutingConfig 选用）。
  *
  * <p>状态机每 strategyId:symbol 一份：FLAT →(LIMIT 挂单)WORKING →(成交)POSITION →(sim 侧平仓)FLAT；
- * MARKET 信号 FLAT→POSITION 一步到位（sim 市价单同步成交）。撮合/SL/TP/强平全在 sim 既有链路
- * 由 feed 价格驱动——决策价与撮合价同源，quant 只下指令和轮询状态，quant 挂掉保护单照常生效。</p>
+ * MARKET 信号 FLAT→POSITION 一步到位（sim 市价单同步成交）；STOP 信号 FLAT→ARMED（quant 侧虚拟
+ * 触价单，见 {@link ExecutionPriceConsumer}），实时价穿越触发价→市价进场→POSITION。撮合/SL/TP/强平
+ * 全在 sim 既有链路由 feed 价格驱动——决策价与撮合价同源，quant 只下指令和轮询状态，quant 挂掉
+ * 保护单照常生效（例外：ARMED 是 quant 内存态，quant 挂掉触价单失效，重启后策略 reaffirm 自愈）。</p>
  *
  * <p>与 testnet 版的结构性差异：
  * ① SL/TP 随开仓单一并提交、成交自动转入仓位——无"成交后补挂保护单失败裸奔"缺口；
@@ -53,7 +55,7 @@ public class SimExecutionService implements StrategyExecutionPort {
     private static final long BAR_MILLIS = 300_000L; // 5m
     private static final String OPEN_STATUS = "OPEN";
 
-    private enum State { FLAT, WORKING, POSITION }
+    private enum State { FLAT, ARMED, WORKING, POSITION }   // ARMED=quant侧虚拟触价单(STOP)，不落sim挂单
 
     /** 单 strategyId:symbol 执行状态；所有读写都在 synchronized(st) 下。 */
     private static final class ExecState {
@@ -116,6 +118,16 @@ public class SimExecutionService implements StrategyExecutionPort {
                 recoverIfNeeded(st, signal.strategyId(), symbol);
                 switch (st.state) {
                     case FLAT -> place(symbol, signal, strategy, st);
+                    case ARMED -> {
+                        if ("STOP".equals(signal.orderType()) && legKey(signal).equals(st.legKey)) {
+                            st.signal = signal;                            // 同腿 reaffirm：刷新SL(随ATR漂移)
+                            st.strategy = strategy;
+                            st.placedBarCloseTime = signal.barCloseTime();
+                        } else {
+                            st.reset();                                    // 换腿/换单型：虚拟单直接弃，重下
+                            place(symbol, signal, strategy, st);
+                        }
+                    }
                     case WORKING -> {
                         if (!"LIMIT".equals(signal.orderType())) return;   // WORKING 只可能是 LIMIT 范式
                         if (!legKey(signal).equals(st.legKey) && cancelQuiet(signal.strategyId(), st)) {
@@ -136,8 +148,47 @@ public class SimExecutionService implements StrategyExecutionPort {
         ExecState st = states.get(key(strategyId, symbol));
         if (st == null) return;
         synchronized (st) {
-            if (st.state == State.WORKING && cancelQuiet(strategyId, st)) {
+            if (st.state == State.ARMED) {
+                st.reset();   // 虚拟触价单直接撤，无交易所交互
+            } else if (st.state == State.WORKING && cancelQuiet(strategyId, st)) {
                 st.reset();   // 撤失败(可能已成交)保持 WORKING，下一 tick 定夺
+            }
+        }
+    }
+
+    /**
+     * 实时价 tick：ARMED 的虚拟触价单在价格穿越触发价时立即市价进场（复用 MARKET 通路，
+     * 数量在触发时按当时权益定量，SL/TP 随单）。电平式判断——只要价在触发价之外任一 tick 即触发，
+     * Pub/Sub 偶发丢 tick 不影响持续性突破。与 5m 收盘线程并发，同一把 st 锁保证不双开。
+     */
+    @Override
+    public void onPriceTick(String symbol, BigDecimal price) {
+        if (!active(symbol) || price == null || price.signum() <= 0) return;
+        String suffix = ":" + symbol;
+        for (Map.Entry<String, ExecState> entry : states.entrySet()) {
+            if (!entry.getKey().endsWith(suffix)) continue;
+            ExecState st = entry.getValue();
+            if (st.state != State.ARMED) continue;   // 无锁粗筛，命中再加锁复核
+            synchronized (st) {
+                if (st.state != State.ARMED) continue;
+                StrategySignal s = st.signal;
+                boolean crossed = s.isLong()
+                        ? price.compareTo(s.entryRefPrice()) >= 0
+                        : price.compareTo(s.entryRefPrice()) <= 0;
+                if (!crossed) continue;
+                try {
+                    log.info("[SimExec] 触价触发 {}:{} {} trigger={} tick={}", s.strategyId(), symbol,
+                            s.side(), s.entryRefPrice().toPlainString(), price.toPlainString());
+                    TradingStrategySpi strategy = st.strategy;
+                    // 以 MARKET 形态复用 place：开仓失败(余额不足等)state留FLAT，下一根5m reaffirm重新arm
+                    StrategySignal marketSig = new StrategySignal(s.strategyId(), s.symbol(), s.side(),
+                            s.isLong(), s.entryRefPrice(), s.stopLossPrice(), s.takeProfitPrice(),
+                            s.score(), s.reason(), s.barCloseTime(), "MARKET");
+                    st.reset();
+                    place(symbol, marketSig, strategy, st);
+                } catch (Exception e) {
+                    log.warn("[SimExec] 触价开仓异常 {}:{} msg={}", s.strategyId(), symbol, e.toString());
+                }
             }
         }
     }
@@ -232,6 +283,17 @@ public class SimExecutionService implements StrategyExecutionPort {
     // ==================== 下单 ====================
 
     private void place(String symbol, StrategySignal signal, TradingStrategySpi strategy, ExecState st) {
+        // STOP=虚拟触价单：只在 quant 内存持状态，价格 tick 穿越触发价才真正下市价单（onPriceTick）
+        if ("STOP".equals(signal.orderType())) {
+            st.state = State.ARMED;
+            st.strategy = strategy;
+            st.signal = signal;
+            st.legKey = legKey(signal);
+            st.placedBarCloseTime = signal.barCloseTime();
+            log.debug("[SimExec] 虚拟触价单 armed {}:{} {} trigger={}", signal.strategyId(), symbol,
+                    signal.side(), signal.entryRefPrice().toPlainString());
+            return;
+        }
         Long userId = account(signal.strategyId());
         BigDecimal equity = client.getBalance(userId);   // 进场只在 FLAT，余额≈权益
         BigDecimal qty = riskSizedQty(signal, strategy, equity);

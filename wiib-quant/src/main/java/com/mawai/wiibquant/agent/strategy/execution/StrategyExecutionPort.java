@@ -4,6 +4,8 @@ import com.mawai.wiibquant.agent.strategy.core.StrategyMarketView;
 import com.mawai.wiibquant.agent.strategy.core.StrategySignal;
 import com.mawai.wiibquant.agent.strategy.core.TradingStrategySpi;
 
+import java.math.BigDecimal;
+
 /**
  * 策略实盘执行端口：StrategyRuntime 只面向本接口，落地实现按
  * {@code strategy.execution.target=testnet|sim} 二选一（见 {@link ExecutionRoutingConfig}）。
@@ -28,5 +30,12 @@ public interface StrategyExecutionPort {
      * 默认无动作（testnet 未接，LiqFade 只跑 sim）。
      */
     default void onPositionBarClosed(String symbol, TradingStrategySpi strategy, StrategyMarketView view) {
+    }
+
+    /**
+     * 实时价 tick（feed:price futures，约1s粒度）：驱动 quant 侧虚拟触价单（STOP）盘中触发。
+     * 与 5m 收盘事件不同线程，实现方自行同步。默认无动作（testnet 只做 LIMIT）。
+     */
+    default void onPriceTick(String symbol, BigDecimal price) {
     }
 }
