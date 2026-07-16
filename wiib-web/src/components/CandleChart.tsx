@@ -42,7 +42,10 @@ function tooltipHtml(bar: Bar, bars: Bar[], idx: Map<number, number>, d: number,
  * - streamLive=true（默认，合约）：走 {@link useKlineStream}(后端实时广播 o/h/l/c/v/q)
  * - streamLive=false（现货/bstock，后端不广播其K线）：由外部 tick(价格流)更新最后一根的 c/h/l
  */
-export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, klinesFn = futuresApi.klines, streamLive = true, tick = null }: { symbol: string; interval: '5m' | '15m'; limit?: number; visibleBars?: number; klinesFn?: (symbol: string, interval: string, limit: number) => Promise<number[][]>; streamLive?: boolean; tick?: { price: number; ts: number } | null }) {
+const BUCKET_MS = { '5m': 300_000, '15m': 900_000, '1h': 3_600_000 } as const;
+type Interval = keyof typeof BUCKET_MS;
+
+export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, klinesFn = futuresApi.klines, streamLive = true, tick = null }: { symbol: string; interval: Interval; limit?: number; visibleBars?: number; klinesFn?: (symbol: string, interval: string, limit: number) => Promise<number[][]>; streamLive?: boolean; tick?: { price: number; ts: number } | null }) {
   const isDark = useIsDark();
   const wrapRef = useRef<HTMLDivElement>(null);
   const chartDivRef = useRef<HTMLDivElement>(null);
@@ -159,7 +162,7 @@ export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, 
   useEffect(() => {
     if (streamLive || !tick || tick.price <= 0 || !readyRef.current) return;
     const candle = candleRef.current, vol = volRef.current; if (!candle || !vol) return;
-    const bucketMs = interval === '5m' ? 300_000 : 900_000;
+    const bucketMs = BUCKET_MS[interval];
     const openMs = Math.floor(tick.ts / bucketMs) * bucketMs;
     const time = toBarTime(openMs);
     const last = barsRef.current[barsRef.current.length - 1];

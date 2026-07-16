@@ -113,7 +113,8 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
         <TradeModeSwitch mode="spot" futuresOnly={cfg.futuresOnly} onModeChange={onModeChange} />
       </div>
 
-      <CardContent className="p-5 space-y-6 mt-2">
+      {/* flex-1 + 预估提交区 mt-auto：面板随左侧图表卡等高，条件块（限价/杠杆/折扣券）出现时消耗预留空档 */}
+      <CardContent className="p-5 mt-2 flex-1 flex flex-col gap-6">
         {/* 执行方式：市价/限价 */}
         <div className="flex items-center gap-2">
           <div className="flex rounded-lg overflow-hidden neu-raised-sm">
@@ -222,8 +223,8 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
           </div>
         )}
 
-        {/* 预估 + 提交 */}
-        <div className="pt-4 border-t border-border border-dashed space-y-4">
+        {/* 预估 + 提交（mt-auto 压底） */}
+        <div className="mt-auto pt-4 border-t border-border border-dashed space-y-4">
           {qtyNum > 0 && priceForCalc > 0 && (
             <div className="space-y-2">
               {side === 'BUY' && leverage > 1 && (

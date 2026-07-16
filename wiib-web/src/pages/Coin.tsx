@@ -17,11 +17,13 @@ import { fmtNum } from '../lib/utils';
 import { COIN_MAP, getCoin, DEFAULT_SYMBOL, formatCoinPrice } from '../lib/coinConfig';
 import type { CryptoPosition, FuturesBracket } from '../types';
 
-/** 图表周期：现货/合约统一 K 线（1D→5m，7D→15m）；idx 2 = TradingView 高级图 */
+/** 图表周期：现货/合约统一 K 线（各拉 500 根：5m≈41h / 15m≈5天 / 1h≈20天）；TABS 之后一位 = TradingView 高级图 */
 const TABS = [
-  { label: '1D', interval: '5m' as const, limit: 288 },
-  { label: '7D', interval: '15m' as const, limit: 672 },
+  { label: '5m', interval: '5m' as const, limit: 500 },
+  { label: '15m', interval: '15m' as const, limit: 500 },
+  { label: '1h', interval: '1h' as const, limit: 500 },
 ];
+const TV_TAB = TABS.length;
 
 export function CoinRoute() {
   const { symbol } = useParams<{ symbol: string }>();
@@ -112,11 +114,15 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const changePct = base24h > 0 ? (change / base24h) * 100 : 0;
   const isUp = change >= 0;
 
-  // 现货K线的价格流驱动（后端只广播合约K线，现货由价格 tick 更新最后一根）
-  const spotTick = useMemo(
-    () => (tick?.price != null && tick?.ts != null ? { price: tick.price, ts: tick.ts } : null),
-    [tick],
-  );
+  // K线实时驱动分派：crypto 合约 5m/15m/1h 后端都有K线广播（含量/额）；
+  // 大宗商品合约只有 5m 广播，15m/1h 退化为价格 tick 驱动；现货全部由价格 tick 驱动最后一根
+  const chartInterval = activeTab < TABS.length ? TABS[activeTab].interval : null;
+  const klineLive = isFuturesMode && (!cfg.futuresOnly || chartInterval === '5m');
+  const chartTick = useMemo(() => {
+    if (tick?.ts == null) return null;
+    const p = isFuturesMode ? (tick.fp ?? tick.price) : tick.price;
+    return p != null ? { price: p, ts: tick.ts } : null;
+  }, [tick, isFuturesMode]);
 
   return (
     <div className="page-shell p-4 md:p-6 space-y-5">
@@ -185,11 +191,11 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
         </CardContent>
       </Card>
 
-      {/* PC 左图右面板（items-stretch 等高），移动端自然上下堆叠 */}
-      <div className="grid lg:grid-cols-3 gap-5 items-stretch">
+      {/* PC 左图右面板（items-stretch 等高：图表卡 flex 填满左列，右面板内容变化时两列始终同高），移动端自然上下堆叠 */}
+      <div className="grid lg:grid-cols-5 gap-5 items-stretch">
         {/* 左：图表 + BTC预测入口 */}
-        <div className="lg:col-span-2 space-y-5">
-          <Card>
+        <div className="lg:col-span-3 flex flex-col gap-5">
+          <Card className="flex-1 flex flex-col">
             <CardHeader className="pb-2 pt-5 px-5">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base font-black">走势</CardTitle>
@@ -199,29 +205,29 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                       {tab.label}
                     </button>
                   ))}
-                  <button onClick={() => setActiveTab(2)} className={`px-4 py-1.5 text-xs font-bold transition-colors ${activeTab === 2 ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>
+                  <button onClick={() => setActiveTab(TV_TAB)} className={`px-4 py-1.5 text-xs font-bold transition-colors ${activeTab === TV_TAB ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>
                     高级
                   </button>
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="p-2">
-              {/* 现货/合约统一 K 线：合约走后端K线广播，现货由价格流驱动最后一根 */}
+            <CardContent className="p-2 flex-1 flex flex-col">
+              {/* 现货/合约统一 K 线：合约走后端K线广播，现货由价格流驱动最后一根；高度跟随右侧面板拉伸，最矮 560 */}
               {activeTab < TABS.length && (
-                <div style={{ height: 440 }}>
+                <div className="flex-1 min-h-[560px]">
                   <CandleChart
                     key={mode}
                     symbol={symbol}
                     interval={TABS[activeTab].interval}
                     limit={TABS[activeTab].limit}
                     klinesFn={isFuturesMode ? futuresApi.klines : cryptoApi.klines}
-                    streamLive={isFuturesMode}
-                    tick={isFuturesMode ? null : spotTick}
+                    streamLive={klineLive}
+                    tick={klineLive ? null : chartTick}
                   />
                 </div>
               )}
               {/* 高级：TradingView（合约/现货各自 symbol） */}
-              {activeTab === 2 && <div style={{ height: 500 }}><TradingViewWidget symbol={isFuturesMode ? cfg.futuresTvSymbol : cfg.tvSymbol} label={cfg.name} /></div>}
+              {activeTab === TV_TAB && <div className="flex-1 min-h-[560px]"><TradingViewWidget symbol={isFuturesMode ? cfg.futuresTvSymbol : cfg.tvSymbol} label={cfg.name} /></div>}
             </CardContent>
           </Card>
 
@@ -241,8 +247,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
           )}
         </div>
 
-        {/* 右：交易面板（含现货持仓信息块） */}
-        <Card className="self-start lg:self-auto flex flex-col">
+        {/* 右：交易面板（含现货持仓信息块），2/5 宽 */}
+        <Card className="lg:col-span-2 self-start lg:self-auto flex flex-col">
           {/* 现货持仓信息（两种模式都显示） */}
           {position && (position.quantity > 0 || position.frozenQuantity > 0) && (() => {
             const pnlPct = position.avgCost > 0 && currentPrice > 0

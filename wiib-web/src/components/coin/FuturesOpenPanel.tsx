@@ -134,7 +134,8 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
         <TradeModeSwitch mode="futures" futuresOnly={cfg.futuresOnly} onModeChange={onModeChange} />
       </div>
 
-      <CardContent className="p-5 space-y-6 mt-2">
+      {/* flex-1 + 按钮 mt-auto：面板随左侧图表卡等高，止损止盈展开时消耗预留空档而不是撑高整卡 */}
+      <CardContent className="p-5 mt-2 flex-1 flex flex-col gap-6">
         {/* 执行方式 */}
         <div className="flex items-center gap-2">
           <div className="flex rounded-lg overflow-hidden neu-raised-sm">
@@ -285,7 +286,7 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
 
         {/* 开仓按钮 */}
         <FuturesActionButton
-          className="mt-2"
+          className="mt-auto"
           onClick={handleSubmit}
           disabled={submitting || currentPrice <= 0}
           loading={submitting}
