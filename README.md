@@ -214,7 +214,10 @@ Polymarket CLOB      -> UP/DOWN bid/ask     -> /topic/prediction/market
 whatifibought/                        # Maven 多 module 聚合 reactor
 ├── pom.xml
 ├── README.md
-├── docker-compose-example.yml
+├── .env.example                      # 环境配置模板（唯一需手工填值的文件，复制为 .env.local / .env）
+├── start-local.ps1                   # 本地一键启动三服务
+├── docker-compose.yml                # 三进程编排（无私有值，配置全在 .env）
+├── redis-compose.yml                 # Redis 主从 + 哨兵栈（可选）
 ├── sql/                              # init.sql（26 表）+ bstock.sql（bStock 静态表 + 种子）
 ├── docs/                             # 现役设计文档（见「重要文档」）
 ├── wiib-common/                      # 共享层：被 feed/quant/sim 共同依赖，三者互不直接依赖
@@ -234,7 +237,6 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 │   ├── controller/ task/ mapper/ config/   # ResearchEval/Strategy/Testnet... / 调度 / DeribitClient
 │   └── AGENT_REFACTOR_PLAN.md        # 量化 Agent 双轨改造总纲
 ├── wiib-sim/                         # ③ 真人模拟交易进程（:8080，账本=自研模拟盘 DB，对外）
-│   ├── Dockerfile-example
 │   └── controller/ service/ mapper/ config/ task/
 │                                     # 交易(bStock/crypto/futures) / 游戏 / 预测 / 结算 / WS 网关
 │                                     # + BehaviorDataController（internal API 供 quant 调）
@@ -299,17 +301,17 @@ psql -U postgres -d wiib -f sql/bstock.sql    # bStock 代币化美股静态表 
 
 ### 3. 后端配置
 
-三个进程各有 `application.example.yml` 模板，分别复制为 `application.yml` 并填库 / Redis / OAuth：
+密钥与结构分离：`application.yml` 直接入库（只有 `${VAR}` 占位符），真实值只存在根目录 env 文件里。本地开发复制模板填值即可：
 
 ```bash
-cp wiib-sim/src/main/resources/application.example.yml   wiib-sim/src/main/resources/application.yml
-cp wiib-feed/src/main/resources/application.example.yml  wiib-feed/src/main/resources/application.yml
-cp wiib-quant/src/main/resources/application.example.yml  wiib-quant/src/main/resources/application.yml
+cp .env.example .env.local    # 填 PG_USER / PG_PASSWORD（必填），其余可选
 ```
+
+启动时按 `本机环境变量 > .env.local > yml 默认值` 解析；线上 Docker 部署同一文件命名为 `.env`（见第 6 节）。
 
 要点：
 
-- **共享库 / 总线**：三进程指向同一 PostgreSQL `wiib` + 同一 Redis；`internal.api.token` 三者须一致（进程间 `/internal/**` 鉴权）。
+- **共享库 / 总线**：三进程指向同一 PostgreSQL `wiib` + 同一 Redis，读同一份 `.env.local`；`INTERNAL_API_TOKEN` 天然一致（进程间 `/internal/**` 鉴权），不填走统一默认值。
 - **LLM 配置不在 yml**：唯一来源是 DB（`ai_runtime_config` + `ai_model_assignment`）。启动后用管理员账号进 Admin 页填 LLM（API Key + Base URL + 模型名，Base URL 不含 `/v1`）并给各功能位分配，即时生效、无需重启。
 - **quant 必须关掉 Spring AI 的 OpenAI 自动装配**（6 类全关，否则缺 api-key 拒绝启动）：
 
@@ -349,7 +351,13 @@ npm run build      # 开发：npm run dev（Vite 默认 3000，代理 /api、/ws
 
 ### 6. 启动
 
-三进程共享同一 PostgreSQL + Redis，建议先起 feed 再起 sim/quant：
+本地一键（Windows，构建 + 依次拉起 feed → sim → quant）：
+
+```powershell
+.\start-local.ps1              # 加 -SkipBuild 跳过构建
+```
+
+或手动逐个起（须在仓库根目录执行，`.env.local` 按相对路径解析；IDEA 直接点各模块 Run 也可）：
 
 ```bash
 java -jar wiib-feed/target/wiib-feed-0.0.1-SNAPSHOT.jar    # :8081 交易所 WS → Redis
@@ -357,16 +365,14 @@ java -jar wiib-quant/target/wiib-quant-0.0.1-SNAPSHOT.jar  # :8082 量化研判 
 java -jar wiib-sim/target/wiib-sim-0.0.1-SNAPSHOT.jar      # :8080 模拟交易（对外，前端连它）
 ```
 
-Docker Compose：
+Docker Compose（三进程全编排；配置放服务器上的 `.env`，与 `.env.example` 同款变量）：
 
 ```bash
-cp docker-compose-example.yml docker-compose.yml
-cp wiib-sim/Dockerfile-example wiib-sim/Dockerfile
 docker network create wiib-network
 docker compose up -d --build
 ```
 
-> 注：当前 `docker-compose.yml` 仅编排 `wiib-sim`；`wiib-feed` / `wiib-quant` 暂需手动 `java -jar`。对外只暴露 sim（:8080），建议经 Nginx / Caddy 反代。
+> 对外只暴露 sim（:8080，均绑 127.0.0.1），建议经 Nginx / Caddy 反代。Redis 主从 + 哨兵栈可选 `docker compose -f redis-compose.yml up -d`。
 
 ---
 

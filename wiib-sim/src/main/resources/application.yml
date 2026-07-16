@@ -2,33 +2,37 @@ server:
   port: 8080
 
 spring:
+  # 本地开发密钥来源：根目录 .env.local（从根目录跑命中第一条；IDEA 工作目录=模块目录命中第二条）
+  # 线上容器内无此文件，optional 自动跳过，占位符由 docker-compose env_file 注入的环境变量解析
+  config:
+    import:
+      - optional:file:.env.local[.properties]
+      - optional:file:../.env.local[.properties]
   application:
     name: wiib-sim
   # 启用虚拟线程支持
   threads:
     virtual:
       enabled: true
-  # 本地部署这里连接的是本地数据源 - docker部署docker-compose覆盖
+  # 数据源；连接参数全部来自 .env
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://localhost:5432/wiib?reWriteBatchedInserts=true
-    username:
-    password:
+    url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/${PG_DB:wiib}?reWriteBatchedInserts=true
+    username: ${PG_USER}
+    password: ${PG_PASSWORD}
     hikari:
       pool-name: wiib-hikari
-      # 如果你是4core `4×2+1=9`，取整 10, 如果你是2core 用5
       maximum-pool-size: 10
-      # HikariCP 官方建议 min=max，避免连接抖动
-      minimum-idle: 10
+      minimum-idle: 3
       connection-timeout: 30000
       idle-timeout: 300000
       max-lifetime: 550000
   data:
     redis:
-      host: localhost
-      port: 6379
-      database: 0
-      password:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DB:0}
+      password: ${REDIS_PASSWORD:}
       timeout: 10000
 
 mybatis-plus:
@@ -43,14 +47,13 @@ management:
     tags:
       application: wiib-sim
 
-# AI 配置已迁 DB（每日行情/新闻生成用）：ai_runtime_config + ai_model_assignment('sim' 功能位)，Admin 页管理
+# AI 配置已迁 DB：ai_runtime_config + ai_model_assignment('sim' 功能位)，Admin 页管理热切换
 
-# LinuxDo OAuth配置（可以不配置）
+# LinuxDo OAuth 配置（可选，不配则关闭 LinuxDo 登录；本地/线上两对凭证分别放 .env.local / 线上 .env）
 linuxdo:
-  client-id:
-  client-secret:
-  redirect-uri:
-
+  client-id: ${LINUXDO_CLIENT_ID:}
+  client-secret: ${LINUXDO_CLIENT_SECRET:}
+  redirect-uri: ${LINUXDO_REDIRECT_URI:http://localhost:3000/login}
 
 # 交易配置
 trading:
@@ -99,12 +102,27 @@ websocket:
   # 是否强制认证
   require-auth: false
 
-# 内部服务间 API 鉴权（quant 调 sim 的 /internal/** 须带 X-Internal-Token）；token 须与 quant/feed 侧一致
+# 内部服务间 API 鉴权（quant 调 sim 的 /internal/** 须带 X-Internal-Token）
+# 须与 feed/quant 同值（三进程读同一 .env，默认值也一致，不填即可互通）
 internal:
   api:
-    token: ${INTERNAL_API_TOKEN:}
+    token: ${INTERNAL_API_TOKEN:wiib-internal-dev}
 
 # sim → feed 内部调用（FeedInternalClient：拉 WS 流健康快照 + 转发手动重试）
 feed:
   internal:
     base-url: ${FEED_INTERNAL_BASE_URL:http://localhost:8081}
+
+---
+# Redis 主从-哨兵模式（线上高可用，配合 redis-compose.yml 栈）：
+# .env 里 SPRING_PROFILES_ACTIVE=sentinel 即启用，经哨兵发现主库、故障自动切换；
+# 生效后上面的 REDIS_HOST/REDIS_PORT 被忽略，REDIS_PASSWORD/REDIS_DB 照常生效
+spring:
+  config:
+    activate:
+      on-profile: sentinel
+  data:
+    redis:
+      sentinel:
+        master: ${REDIS_SENTINEL_MASTER:mymaster}
+        nodes: ${REDIS_SENTINEL_NODES:redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}

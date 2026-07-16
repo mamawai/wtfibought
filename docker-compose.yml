@@ -1,0 +1,78 @@
+# ============================================================
+# WhatIfIBought 三进程部署 (feed / sim / quant)
+#   1. 建 .env（cp .env.example 填值，HOST 填法见 .env.example 注释）
+#   2. mvn clean package -pl wiib-feed,wiib-quant,wiib-sim -am -DskipTests
+#   3. docker compose up -d --build
+#
+# 配置只改 .env，本文件不含任何环境私有值，直接入库。
+# env_file 把 .env 全量注入容器，application.yml 占位符自行解析，
+# 无需再做 SPRING_* 环境变量映射；端口已固定在各模块 yml 里。
+# x-* 为复用锚点，<<: 合并到各服务。
+# ============================================================
+
+x-svc-base: &svc-base
+  restart: unless-stopped
+  env_file:
+    - .env
+  ulimits:
+    nproc: 16384
+    nofile: 65536
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "50m"
+      max-file: "3"
+
+x-shared-env: &shared-env
+  TZ: ${TZ:-Asia/Singapore}
+
+services:
+  wiib-feed:
+    <<: *svc-base
+    build: { context: ./wiib-feed, dockerfile: Dockerfile }
+    container_name: wiib-feed
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - ./dumps/feed:/dumps      # 各服务独立子目录，避免 PID=1 dump 重名
+    environment:
+      <<: *shared-env
+    mem_limit: 3584m
+    mem_reservation: 1g
+    cpus: "2"
+
+  wiib-sim:
+    <<: *svc-base
+    build: { context: ./wiib-sim, dockerfile: Dockerfile }
+    container_name: wiib-sim
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./dumps/sim:/dumps
+    environment:
+      <<: *shared-env
+      # 容器间用服务名寻址，覆盖 yml 里的 localhost 默认
+      FEED_INTERNAL_BASE_URL: http://wiib-feed:8081
+    mem_limit: 5632m
+    mem_reservation: 2g
+    cpus: "3"
+
+  wiib-quant:
+    <<: *svc-base
+    build: { context: ./wiib-quant, dockerfile: Dockerfile }
+    container_name: wiib-quant
+    ports:
+      - "127.0.0.1:8082:8082"
+    volumes:
+      - ./dumps/quant:/dumps
+    environment:
+      <<: *shared-env
+      SIM_INTERNAL_BASE_URL: http://wiib-sim:8080
+    mem_limit: 6144m
+    mem_reservation: 2g
+    cpus: "3"
+
+networks:
+  default:
+    name: wiib-network
+    external: true

@@ -38,10 +38,10 @@ build/
 ### OOM Dumps ###
 dumps/
 
-### Secrets ###
+### Secrets：真实密钥只存在于 env 文件，结构模板(.env.example/application.yml)照常入库 ###
 .env
-*.yml
-Dockerfile*
+.env.*
+!.env.example
 
 ### 本地部署脚本（含服务器信息）###
 deploy_script.txt

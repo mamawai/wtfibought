@@ -1,0 +1,94 @@
+server:
+  port: 8081
+
+spring:
+  # 本地开发密钥来源：根目录 .env.local（从根目录跑命中第一条；IDEA 工作目录=模块目录命中第二条）
+  # 线上容器内无此文件，optional 自动跳过，占位符由 docker-compose env_file 注入的环境变量解析
+  config:
+    import:
+      - optional:file:.env.local[.properties]
+      - optional:file:../.env.local[.properties]
+  application:
+    name: wiib-feed
+  threads:
+    virtual:
+      enabled: true
+  # K线落库（KlineStreamCache → common.KlineHistoryStore）；连接参数全部来自 .env
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/${PG_DB:wiib}?reWriteBatchedInserts=true
+    username: ${PG_USER}
+    password: ${PG_PASSWORD}
+    hikari:
+      pool-name: wiib-feed-hikari
+      maximum-pool-size: 6
+      minimum-idle: 2
+      connection-timeout: 30000
+  # 行情总线
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DB:0}
+      password: ${REDIS_PASSWORD:}
+      timeout: 10000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  metrics:
+    tags:
+      application: wiib-feed
+
+# Binance行情配置（WS 接入 + REST 回填）
+binance:
+  ws-url: wss://stream.binance.com:9443/ws
+  futures-ws-url: wss://fstream.binance.com/ws
+  rest-base-url: https://api.binance.com
+  futures-rest-base-url: https://fapi.binance.com
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - DOGEUSDT
+    - SOLUSDT
+    - XRPUSDT
+    - BNBUSDT   # TURTLE 篮子第4币；其余 SOL/ETH/DOGE 已在列
+  # bStock（代币化美股，纯现货无合约）：价并入 Spot 流，5m K线走现货端点单独一条连接
+  stock-symbols:
+    - MUBUSDT
+    - SPCXBUSDT
+    - SNDKBUSDT
+    - CRCLBUSDT
+    - QQQBUSDT
+    - MSTRBUSDT
+    - NVDABUSDT
+    - AMDBUSDT
+    - TSLABUSDT
+    - SOXLBUSDT
+  # 大宗商品（TradFi 永续合约，无现货）：黄金/原油，只进合约流
+  commodity-symbols:
+    - XAUUSDT
+    - CLUSDT
+  fallback-poll-interval: 5000
+
+# 内部 API 鉴权：/internal/streams（流健康+重试）由共享 InternalApiFilter 校验此 token；
+# 须与 sim/quant 同值（三进程读同一 .env，默认值也一致，不填即可互通）
+internal:
+  api:
+    token: ${INTERNAL_API_TOKEN:wiib-internal-dev}
+
+---
+# Redis 主从-哨兵模式（线上高可用，配合 redis-compose.yml 栈）：
+# .env 里 SPRING_PROFILES_ACTIVE=sentinel 即启用，经哨兵发现主库、故障自动切换；
+# 生效后上面的 REDIS_HOST/REDIS_PORT 被忽略，REDIS_PASSWORD/REDIS_DB 照常生效
+spring:
+  config:
+    activate:
+      on-profile: sentinel
+  data:
+    redis:
+      sentinel:
+        master: ${REDIS_SENTINEL_MASTER:mymaster}
+        nodes: ${REDIS_SENTINEL_NODES:redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}

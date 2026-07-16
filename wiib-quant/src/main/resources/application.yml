@@ -2,6 +2,12 @@ server:
   port: 8082
 
 spring:
+  # 本地开发密钥来源：根目录 .env.local（从根目录跑命中第一条；IDEA 工作目录=模块目录命中第二条）
+  # 线上容器内无此文件，optional 自动跳过，占位符由 docker-compose env_file 注入的环境变量解析
+  config:
+    import:
+      - optional:file:.env.local[.properties]
+      - optional:file:../.env.local[.properties]
   ai:
     # MCP server（P6）：SSE endpoint 默认 /sse，Claude Desktop 等 MCP 客户端可直连调量化工具
     mcp:
@@ -33,12 +39,12 @@ spring:
   threads:
     virtual:
       enabled: true
-  # 数据源：与 sim 共享同一 PostgreSQL（quant forecast/factor/strategy 落库）
+  # 数据源：与 sim 共享同一 PostgreSQL（quant forecast/factor/strategy 落库）；连接参数全部来自 .env
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://localhost:5432/wiib?reWriteBatchedInserts=true
-    username:
-    password:
+    url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/${PG_DB:wiib}?reWriteBatchedInserts=true
+    username: ${PG_USER}
+    password: ${PG_PASSWORD}
     hikari:
       pool-name: wiib-quant-hikari
       maximum-pool-size: 8
@@ -49,10 +55,10 @@ spring:
   # 行情总线：消费 feed 写入的 kline/markprice Stream + depth/orderflow KV
   data:
     redis:
-      host: localhost
-      port: 6379
-      database: 0
-      password:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DB:0}
+      password: ${REDIS_PASSWORD:}
       timeout: 10000
 
 mybatis-plus:
@@ -74,15 +80,15 @@ trading:
 # 插拔式策略实盘信号运行时：默认关闭；启用后读取实时流并记录 LIVE 信号
 strategy:
   runtime:
-    enabled: false
-    enabled-ids: FIBO,LIQFADE,SQZMOM   # 三策略全启，各自部署篮子见 StrategyConfig
+    enabled: true
+    enabled-ids: FIBO,LIQFADE,SQZMOM,TURTLE   # 四策略全启，各自部署篮子见 StrategyConfig
     liquidation-window-minutes: 30
     liquidation-threshold-usdt: 500000
   execution:
-    enabled: false           # 执行总开关；默认关
+    enabled: true           # 执行总开关；默认关
     target: sim              # sim=本平台模拟盘(每策略独立账户 quant-<ID>) | testnet=Binance Testnet
-    # 执行白名单=三策略部署篮子并集(FIBO:BTC/ETH · LIQFADE:BTC/ETH/DOGE · SQZMOM:SOL/DOGE/XRP)
-    symbols: BTCUSDT,ETHUSDT,DOGEUSDT,SOLUSDT,XRPUSDT
+    # 执行白名单=四策略部署篮子并集(FIBO:BTC/ETH · LIQFADE:BTC/ETH/DOGE · SQZMOM:SOL/DOGE/XRP · TURTLE:SOL/ETH/DOGE/BNB)
+    symbols: BTCUSDT,ETHUSDT,DOGEUSDT,SOLUSDT,XRPUSDT,BNBUSDT
     fixed-margin-usdt: 50    # 每仓固定保证金 USDT(testnet 轨用；sim 轨为风险定量)
     leverage: 20
     order-timeout-bars: 12   # 挂单超时(5m 根数，对齐 FiboParams)
@@ -102,35 +108,48 @@ binance:
     - XRPUSDT
   fallback-poll-interval: 5000
 
-# Binance USDT-M Testnet：策略实盘执行下单走 testnet（行情仍主网）
-# api-key/secret-key 在 https://testnet.binancefuture.com/ 申请
+# Binance USDT-M Testnet：策略实盘执行下单走 testnet（行情仍主网）；key 不填则 testnet 轨不可用，sim 轨不受影响
 binance-testnet:
   rest-base-url: https://demo-fapi.binance.com
-  api-key: ""
-  secret-key: ""
+  api-key: ${BINANCE_TESTNET_API_KEY:}
+  secret-key: ${BINANCE_TESTNET_SECRET_KEY:}
   symbols:
     - ETHUSDT
     - BTCUSDT
 
-# BlockBeats(律动)重要快讯 API（NewsCache 懒加载用；免费额度为一次性总量、不回血）
-# api-key 在 https://theblockbeats.info 开放平台申请
+# BlockBeats(律动)重要快讯 API（NewsCache 懒加载用；免费额度为一次性总量、不回血；不填则新闻功能降级）
 blockbeats:
-  api-key:
+  api-key: ${BLOCKBEATS_API_KEY:}
   base-url: https://api-pro.theblockbeats.info
   lang: cn
   size: 20
   expiry-ms: 600000           # 复用窗口 10min：窗口内多币种/多次调用复用同一份，超过才重拉
 
-# quant → sim internal API：策略执行/账户监控/behavior agent 读 sim；token 须与 sim 侧一致
+# quant → sim internal API：SimInternalClient 读用户行为数据（behavior agent），须与 sim 同 token
+# 三进程读同一 .env，默认值也一致，不填即可互通
 sim:
   internal:
     base-url: ${SIM_INTERNAL_BASE_URL:http://localhost:8080}
 internal:
   api:
-    token: ${INTERNAL_API_TOKEN:}
+    token: ${INTERNAL_API_TOKEN:wiib-internal-dev}
 
 # 框架噪音抑制：MainAgentNodeAction 每次主 agent 用文本收尾都会打"JSON 路由解析失败"WARN+堆栈，
 # 这是 1.1.2.0 的 FINISH 判定机制（解析失败=本轮结束），预期路径非故障，压到 ERROR 零损失
 logging:
   level:
     com.alibaba.cloud.ai.graph.agent.flow.node.MainAgentNodeAction: error
+
+---
+# Redis 主从-哨兵模式（线上高可用，配合 redis-compose.yml 栈）：
+# .env 里 SPRING_PROFILES_ACTIVE=sentinel 即启用，经哨兵发现主库、故障自动切换；
+# 生效后上面的 REDIS_HOST/REDIS_PORT 被忽略，REDIS_PASSWORD/REDIS_DB 照常生效
+spring:
+  config:
+    activate:
+      on-profile: sentinel
+  data:
+    redis:
+      sentinel:
+        master: ${REDIS_SENTINEL_MASTER:mymaster}
+        nodes: ${REDIS_SENTINEL_NODES:redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}

@@ -1,0 +1,86 @@
+# Redis 主从 + 哨兵栈：1 master + 1 replica + 3 sentinel(quorum=2)
+# 与三服务共用外部 wiib-network；app 通过 sentinel 发现主库，故障自动切换
+# resolve-hostnames yes：sentinel 用容器名而非缓存 IP（Docker 里跑哨兵的关键）
+# 密码统一走 .env 的 REDIS_PASSWORD，不硬编码；镜像对齐服务器 redis:8.0
+
+x-sentinel: &sentinel
+  image: redis:8.0
+  restart: unless-stopped
+  depends_on: [redis-master]
+  environment:
+    REDIS_PASSWORD: ${REDIS_PASSWORD}
+  # 哨兵会回写自身配置，故在 /tmp 现生成可写副本；重启自动重新发现，无需持久化
+  command:
+    - sh
+    - -c
+    - |
+      cat > /tmp/sentinel.conf <<EOF
+      port 26379
+      sentinel resolve-hostnames yes
+      sentinel announce-hostnames yes
+      sentinel monitor mymaster redis-master 6379 2
+      sentinel auth-pass mymaster $$REDIS_PASSWORD
+      sentinel down-after-milliseconds mymaster 5000
+      sentinel failover-timeout mymaster 10000
+      sentinel parallel-syncs mymaster 1
+      EOF
+      exec redis-sentinel /tmp/sentinel.conf
+
+services:
+  redis-master:
+    image: redis:8.0
+    container_name: redis-master
+    restart: unless-stopped
+    volumes:
+      - redis-master-data:/data
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD}
+      - --appendonly
+      - "yes"
+    mem_limit: 1g
+
+  redis-replica:
+    image: redis:8.0
+    container_name: redis-replica
+    restart: unless-stopped
+    depends_on: [redis-master]
+    volumes:
+      - redis-replica-data:/data
+    command:
+      - redis-server
+      - --replicaof
+      - redis-master
+      - "6379"
+      - --masterauth
+      - ${REDIS_PASSWORD}
+      - --requirepass
+      - ${REDIS_PASSWORD}
+      - --appendonly
+      - "yes"
+      - --replica-announce-ip
+      - redis-replica
+    mem_limit: 1g
+
+  redis-sentinel-1:
+    <<: *sentinel
+    container_name: redis-sentinel-1
+    mem_limit: 128m
+  redis-sentinel-2:
+    <<: *sentinel
+    container_name: redis-sentinel-2
+    mem_limit: 128m
+  redis-sentinel-3:
+    <<: *sentinel
+    container_name: redis-sentinel-3
+    mem_limit: 128m
+
+volumes:
+  redis-master-data:
+  redis-replica-data:
+
+networks:
+  default:
+    name: wiib-network
+    external: true
