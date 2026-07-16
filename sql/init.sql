@@ -478,7 +478,7 @@ CREATE TABLE IF NOT EXISTS strategy_signal (
     mode              VARCHAR(8)      NOT NULL DEFAULT 'LIVE',
     entry_ref_price   DECIMAL(20,8)   NOT NULL,
     stop_loss         DECIMAL(20,8)   NOT NULL,
-    take_profit       DECIMAL(20,8)   NOT NULL,
+    take_profit       DECIMAL(20,8),
     score             DECIMAL(10,4),
     reason            VARCHAR(512),
     leg_tags          VARCHAR(512),
@@ -490,6 +490,7 @@ COMMENT ON TABLE strategy_signal IS '策略实盘信号记录';
 COMMENT ON COLUMN strategy_signal.mode IS 'LIVE；保留字段用于兼容与审计';
 COMMENT ON COLUMN strategy_signal.entry_ref_price IS '信号参考价(确认bar收盘)';
 COMMENT ON COLUMN strategy_signal.leg_tags IS 'live确认腿判定，如liq_cascade=PASS';
+COMMENT ON COLUMN strategy_signal.take_profit IS '固定止盈价；TURTLE类通道出场策略无固定TP，为NULL';
 
 CREATE INDEX idx_strategy_signal_symbol_time ON strategy_signal(symbol, bar_close_time DESC);
 
@@ -640,3 +641,16 @@ CREATE INDEX IF NOT EXISTS idx_quant_narrative_verification_query ON quant_narra
 COMMENT ON TABLE quant_narrative_verification IS '叙事对账:Judge三情景概率12h到期后对真实走势打分(Brier,均匀基线2/3)——快照轨有记分卡,叙事轨同样要战绩';
 COMMENT ON COLUMN quant_narrative_verification.range_cut_bps IS '实际情景判定界=挂靠快照H12腿lowCut(90天|收益|下三分位,基率≈1/3均分),PIT禁止重算';
 COMMENT ON COLUMN quant_narrative_verification.status IS 'VERIFIED=已对账/SKIPPED=不可对账(缺档界或情景损坏或K线缺口超宽限)';
+
+-- ============ workbench_chat_message：工作台对话历史（展示用；续聊上下文走 graphcheckpoint） ============
+CREATE TABLE IF NOT EXISTS workbench_chat_message (
+    id          BIGSERIAL PRIMARY KEY,
+    session_id  VARCHAR(80) NOT NULL,
+    user_id     BIGINT NOT NULL,
+    role        VARCHAR(10) NOT NULL,
+    content     TEXT NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_wb_chat_session ON workbench_chat_message (session_id, id);
+CREATE INDEX IF NOT EXISTS idx_wb_chat_user ON workbench_chat_message (user_id, id DESC);
+COMMENT ON TABLE workbench_chat_message IS '工作台对话历史(展示用):user/assistant按会话落库,quant启动时幂等自建(ChatHistoryService)';
