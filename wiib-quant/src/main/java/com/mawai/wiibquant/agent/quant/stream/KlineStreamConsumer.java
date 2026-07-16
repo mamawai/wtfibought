@@ -7,6 +7,8 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.ContextClosedEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.stream.Consumer;
@@ -46,7 +48,9 @@ public class KlineStreamConsumer {
     private StreamMessageListenerContainer<String, MapRecord<String, String, String>> container;
     private Subscription subscription;
     // 停机标志：cancel() 不会打断正阻塞的 XREADGROUP，连接工厂随后关闭必然掐死最后一次读，
-    // 该"Connection closed"是预期时序而非故障，errorHandler 据此降噪
+    // 该"Connection closed"是预期时序而非故障，errorHandler 据此降噪。
+    // 注意必须在 ContextClosedEvent 时就置位——Lettuce 连接工厂在 lifecycle stop 阶段关连接，
+    // 早于 @PreDestroy 销毁阶段，只靠 @PreDestroy 置位赶不上最后一拍轮询报错。
     private volatile boolean shuttingDown;
 
     public KlineStreamConsumer(StringRedisTemplate redisTemplate,
@@ -125,8 +129,15 @@ public class KlineStreamConsumer {
         }
     }
 
+    /** ContextClosedEvent 先于 lifecycle stop（Lettuce 关连接）与销毁阶段发布——在这里提前撤订阅。 */
+    @EventListener(ContextClosedEvent.class)
+    public void onContextClosed() {
+        stop();
+    }
+
     @PreDestroy
     public void stop() {
+        if (shuttingDown) return;   // onContextClosed 已处理，销毁阶段幂等跳过
         shuttingDown = true;
         try {
             if (subscription != null) subscription.cancel();
