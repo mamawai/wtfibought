@@ -1,13 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import styled from 'styled-components';
 
 /**
  * 合约杠杆滑杆（拟物·收敛版）：细凹槽轨道 + 风险色净色填充 + 小旋钮，拖拽跟随数值气泡。
- * 档位刻痕/标签可点击跳档；键盘全支持。
  *
- * 交互正确性：拖拽去重用事件侧同步 ref（liveRef），不依赖渲染时序——
- * 旧版在渲染期写 ref 再拿它去重，事件与渲染一错位就吞掉移动事件（表现为满档回拖卡死）。
- * 性能：拖拽期组件内 liveValue 渲染，对父组件 onChange 按 rAF 节流、松手必提交终值。
+ * 交互层是一个透明的原生 <input type="range">（绝对定位盖住轨道区），拖拽/点击/键盘/aria
+ * 全部由浏览器原生实现——此前两版手写 pointer 事件跟踪都出过"回拖卡住"类 bug，
+ * 原生控件从根上消灭这一类问题。轨道/填充/刻痕/旋钮/气泡只是跟随 value 的纯视觉层。
  */
 interface LeverageSliderProps {
   value: number;
@@ -26,140 +25,46 @@ function riskColor(ratio: number): string {
 }
 
 export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderProps) {
-  const trackRef = useRef<HTMLDivElement>(null);
+  // 仅控制气泡显隐与旋钮跟手（拖拽期关掉 left 过渡），不参与取值
   const [dragging, setDragging] = useState(false);
-  // 拖拽期本地值：非 null 时渲染以它为准；liveRef 是它的事件侧同步镜像（去重专用）
-  const [liveValue, setLiveValue] = useState<number | null>(null);
-  const liveRef = useRef<number | null>(null);
-  const rafRef = useRef(0);
-  const pendingRef = useRef(value);
-  const lastSentRef = useRef(value);
 
-  const shown = liveValue ?? value;
   const disabled = max <= 1;
-
   const span = Math.max(max - 1, 1);
-  const ratio = Math.min(1, Math.max(0, (shown - 1) / span));
+  const ratio = Math.min(1, Math.max(0, (value - 1) / span));
   const pct = ratio * 100;
-  const atMax = max > 1 && shown >= max;
+  const atMax = max > 1 && value >= max;
   const color = riskColor(ratio);
-
-  // 卸载时丢弃未 flush 的 rAF 提交
-  useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
-
-  const setLive = (v: number) => {
-    liveRef.current = v;
-    setLiveValue(v);
-  };
-
-  /** 立即提交给父组件（去重：同值不重复触发父页渲染） */
-  const commit = (v: number) => {
-    if (v !== lastSentRef.current) {
-      lastSentRef.current = v;
-      onChange(v);
-    }
-  };
-  /** 拖拽期节流提交：每动画帧至多一次，父页渲染频率被封顶 */
-  const scheduleCommit = (v: number) => {
-    pendingRef.current = v;
-    if (!rafRef.current) {
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = 0;
-        commit(pendingRef.current);
-      });
-    }
-  };
-
-  const valueFromClientX = (clientX: number) => {
-    const rect = trackRef.current!.getBoundingClientRect();
-    const r = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    return Math.max(1, Math.round(1 + r * span));
-  };
-
-  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (disabled) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setDragging(true);
-    const next = valueFromClientX(e.clientX);
-    setLive(next);
-    scheduleCommit(next);
-  };
-  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragging) return;
-    const next = valueFromClientX(e.clientX);
-    if (next === liveRef.current) return;
-    setLive(next);
-    scheduleCommit(next);
-  };
-  const stopDrag = () => {
-    if (!dragging) return;
-    setDragging(false);
-    // 终值必达父组件，然后交还受控权
-    cancelAnimationFrame(rafRef.current);
-    rafRef.current = 0;
-    commit(pendingRef.current);
-    liveRef.current = null;
-    setLiveValue(null);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (disabled) return;
-    let next: number | null = null;
-    switch (e.key) {
-      case 'ArrowRight': case 'ArrowUp': next = shown + 1; break;
-      case 'ArrowLeft': case 'ArrowDown': next = shown - 1; break;
-      case 'PageUp': next = shown + 10; break;
-      case 'PageDown': next = shown - 10; break;
-      case 'Home': next = 1; break;
-      case 'End': next = max; break;
-      default: return;
-    }
-    e.preventDefault();
-    commit(Math.min(max, Math.max(1, next)));
-  };
 
   return (
     <Wrapper className={`${dragging ? 'dragging' : ''} ${disabled ? 'disabled' : ''}`} $color={color}>
-      <div
-        className="hit-area"
-        ref={trackRef}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={stopDrag}
-        onPointerCancel={stopDrag}
-      >
+      <div className="slider-area">
         <div className="track">
           <div className="fill" style={{ width: `${pct}%` }} />
           {ticks.map(t => {
             const tp = ((t - 1) / span) * 100;
-            return (
-              <button
-                key={t}
-                type="button"
-                className={`tick-notch ${shown >= t ? 'passed' : ''}`}
-                style={{ left: `${tp}%` }}
-                onClick={() => commit(t)}
-                tabIndex={-1}
-                aria-label={`${t}x`}
-              />
-            );
+            return <span key={t} className={`tick-notch ${value >= t ? 'passed' : ''}`} style={{ left: `${tp}%` }} />;
           })}
-          <div
-            className={`thumb ${atMax ? 'at-max' : ''}`}
-            style={{ left: `${pct}%` }}
-            role="slider"
-            tabIndex={disabled ? -1 : 0}
-            aria-valuemin={1}
-            aria-valuemax={max}
-            aria-valuenow={shown}
-            aria-label="杠杆"
-            onKeyDown={handleKeyDown}
-          >
+          <div className={`thumb ${atMax ? 'at-max' : ''}`} style={{ left: `${pct}%` }}>
             {(dragging || atMax) && (
-              <span className={`bubble ${atMax ? 'max' : ''}`}>{atMax ? 'MAX' : `${shown}x`}</span>
+              <span className={`bubble ${atMax ? 'max' : ''}`}>{atMax ? 'MAX' : `${value}x`}</span>
             )}
           </div>
         </div>
+        <input
+          type="range"
+          className="native"
+          min={1}
+          max={Math.max(max, 1)}
+          step={1}
+          value={value}
+          disabled={disabled}
+          aria-label="杠杆"
+          onChange={e => onChange(Number(e.target.value))}
+          onPointerDown={() => setDragging(true)}
+          onPointerUp={() => setDragging(false)}
+          onPointerCancel={() => setDragging(false)}
+          onBlur={() => setDragging(false)}
+        />
       </div>
       <div className="tick-labels">
         {ticks.map(t => {
@@ -168,9 +73,9 @@ export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderPr
             <button
               key={t}
               type="button"
-              className={`tick-label ${shown === t ? 'active' : ''}`}
+              className={`tick-label ${value === t ? 'active' : ''}`}
               style={{ left: `${tp}%` }}
-              onClick={() => commit(t)}
+              onClick={() => onChange(t)}
             >
               {t}x
             </button>
@@ -189,13 +94,29 @@ const Wrapper = styled.div<{ $color: string }>`
   padding: 0 10px;
 
   &.disabled { opacity: 0.45; }
-  &.disabled .hit-area { cursor: default; }
 
-  .hit-area {
+  .slider-area {
+    position: relative;
     padding: 10px 0;
+  }
+
+  /* 原生 range 铺满轨道区，透明但可交互：拖拽/点击跳值/方向键全部原生 */
+  .native {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
     cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
     touch-action: none; /* 拖拽时禁掉页面滚动 */
   }
+  .native:disabled { cursor: default; }
+  /* 原生 thumb 放大到旋钮大小，保证按到旋钮附近就能拖 */
+  .native::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 28px; }
+  .native::-moz-range-thumb { width: 28px; height: 28px; border: 0; }
 
   /* 细凹槽：内阴影读作"车出来的槽" */
   .track {
@@ -219,23 +140,10 @@ const Wrapper = styled.div<{ $color: string }>`
   }
   &.dragging .fill { transition: background-color 0.2s ease; }
 
-  /* 档位刻痕：槽内细竖痕，越过后在填充上显白 */
+  /* 档位刻痕：槽内细竖痕（纯视觉），越过后在填充上显白；点击跳档由原生 range 与下方标签负责 */
   .tick-notch {
     position: absolute;
-    top: 50%;
-    width: 14px;
-    height: 18px;
-    padding: 0;
-    border: 0;
-    transform: translate(-50%, -50%);
-    background: transparent;
-    cursor: pointer;
-    z-index: 1;
-  }
-  .tick-notch::after {
-    content: '';
-    position: absolute;
-    left: 50%;
+    left: 0;
     top: 50%;
     width: 1.5px;
     height: 4px;
@@ -243,10 +151,11 @@ const Wrapper = styled.div<{ $color: string }>`
     transform: translate(-50%, -50%);
     background: color-mix(in srgb, var(--color-muted-foreground, #9ca3af) 45%, transparent);
     transition: background 0.2s;
+    pointer-events: none;
   }
-  .tick-notch.passed::after { background: rgba(255, 255, 255, 0.8); }
+  .tick-notch.passed { background: rgba(255, 255, 255, 0.8); }
 
-  /* 旋钮：小而实的白色圆钮 + 风险色细环 */
+  /* 旋钮：小而实的白色圆钮 + 风险色细环（纯视觉，跟随 value） */
   .thumb {
     position: absolute;
     top: 50%;
@@ -259,19 +168,17 @@ const Wrapper = styled.div<{ $color: string }>`
     box-shadow:
       2px 2px 5px var(--shadow-dark),
       -2px -2px 4px var(--shadow-light);
-    cursor: grab;
-    outline: none;
-    z-index: 2;
+    pointer-events: none;
+    z-index: 1;
     transition: left 0.18s ease-out, border-color 0.2s ease, transform 0.15s ease;
   }
-  .thumb:hover { transform: translate(-50%, -50%) scale(1.12); }
-  .thumb:focus-visible {
+  .slider-area:hover .thumb { transform: translate(-50%, -50%) scale(1.12); }
+  .slider-area:has(.native:focus-visible) .thumb {
     box-shadow:
       0 0 0 3px color-mix(in srgb, var(--risk) 30%, transparent),
       2px 2px 5px var(--shadow-dark);
   }
   &.dragging .thumb {
-    cursor: grabbing;
     transform: translate(-50%, -50%) scale(1.18);
     transition-property: border-color, transform; /* 拖拽中 left 不过渡，跟手 */
   }
