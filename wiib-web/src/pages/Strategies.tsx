@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Activity, ArrowDownRight, ArrowUpRight, Bot, ChevronDown, ChevronUp, Crosshair,
-  History, Loader2, PowerOff, RefreshCcw, TrendingUp, Wallet, X,
+  Activity, ArrowDownRight, ArrowUpRight, Bot, ChevronLeft, ChevronRight, Crosshair,
+  History, Loader2, PowerOff, Radar, RefreshCcw, TrendingUp, Wallet, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { strategyAccountApi } from '../api';
@@ -10,7 +10,7 @@ import { useUserStore } from '../stores/userStore';
 import { useToast } from '../components/ui/use-toast';
 import { EquityChart } from '../components/EquityChart';
 import { cn, fmtDateTime, fmtNum } from '../lib/utils';
-import type { FuturesPosition, StrategyAccountView, StrategyClosedPosition } from '../types';
+import type { FuturesPosition, StrategyAccountView, StrategyClosedPosition, StrategySignalState } from '../types';
 import type { TnEquityPoint } from '../types/testnet';
 
 const ADMIN_USER_ID = 1;
@@ -21,6 +21,7 @@ const STRATEGY_META: Record<string, { name: string; desc: string; accent: string
   FIBO: { name: 'Fibo 回撤', desc: '斐波那契回撤挂单', accent: '#F97316' },
   LIQFADE: { name: 'Liq Fade', desc: '清算级联反向', accent: '#3b82f6' },
   SQZMOM: { name: 'Sqz Momentum', desc: '挤压动量突破', accent: '#a855f7' },
+  TURTLE: { name: 'Turtle 突破', desc: '4H 90/15 通道突破', accent: '#10b981' },
 };
 
 
@@ -86,6 +87,25 @@ function PositionCard({ pos, canClose, closing, onClose }: {
   );
 }
 
+/** 单币信号状态行：一句话状态 + 指标 chips，让人看见"策略活着、离触发差多少"。 */
+function SignalStateRow({ sig }: { sig: StrategySignalState }) {
+  return (
+    <div className="rounded-lg neu-flat p-2.5 space-y-1.5">
+      <div className="flex items-start gap-2">
+        <span className="text-xs font-black shrink-0">{sig.symbol.replace('USDT', '')}</span>
+        <span className="ml-auto text-right text-[10px] font-bold text-primary/90 leading-tight">{sig.state}</span>
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        {Object.entries(sig.metrics).map(([k, v]) => (
+          <span key={k} className="text-[10px] text-muted-foreground whitespace-nowrap">
+            {k} <span className="font-bold text-foreground tabular-nums">{v}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** 拟物空态：内凹面板 + 浮起图标圆盘，替代光秃秃一行灰字。 */
 function EmptyState({ icon: Icon, title, hint, className }: {
   icon: LucideIcon; title: string; hint?: string; className?: string;
@@ -124,15 +144,16 @@ function TradeRow({ t }: { t: StrategyClosedPosition }) {
   );
 }
 
-/** 单策略账户栏：stat 行 → 收益曲线 → 持仓 → 交易记录（折叠）。 */
-function StrategyColumn({ view, canClose, closingId, onClose }: {
+/** 单策略账户栏：stat 行 → 实时信号 → 收益曲线 → 持仓 → 交易记录（分页）。 */
+function StrategyColumn({ view, signals, canClose, closingId, onClose }: {
   view: StrategyAccountView;
+  signals: StrategySignalState[];
   canClose: boolean;
   closingId: number | null;
   onClose: (strategyId: string, pos: FuturesPosition) => void;
 }) {
   const meta = STRATEGY_META[view.strategyId] || { name: view.strategyId, desc: '', accent: '#F97316' };
-  const [showAllTrades, setShowAllTrades] = useState(false);
+  const [tradePage, setTradePage] = useState(0);
 
   // 收益曲线：已平仓 closedPnl 按平仓时间升序累加（testnet 页同口径，从 0 起）
   const equityPoints = useMemo<TnEquityPoint[]>(() => {
@@ -145,7 +166,11 @@ function StrategyColumn({ view, canClose, closingId, onClose }: {
     }));
   }, [view.closedPositions]);
 
-  const trades = showAllTrades ? view.closedPositions : view.closedPositions.slice(0, 8);
+  // 前端分页：overview 一次带全（≤200笔），翻页纯内存；60s 刷新后条数变化时钳住页码
+  const TRADE_PAGE_SIZE = 8;
+  const pageCount = Math.max(1, Math.ceil(view.closedPositions.length / TRADE_PAGE_SIZE));
+  const page = Math.min(tradePage, pageCount - 1);
+  const trades = view.closedPositions.slice(page * TRADE_PAGE_SIZE, (page + 1) * TRADE_PAGE_SIZE);
 
   return (
     <div className="rounded-xl neu-raised-sm p-5 space-y-4 min-w-0">
@@ -196,6 +221,18 @@ function StrategyColumn({ view, canClose, closingId, onClose }: {
             </div>
           </div>
 
+          {/* 实时信号状态：每根5m收盘随策略评估更新，证明策略在跑 */}
+          <div className="space-y-2 pt-1 border-t border-border/40">
+            <div className="text-[11px] font-black text-muted-foreground tracking-wide pt-1.5 flex items-center gap-1">
+              <Radar className="w-3 h-3" /> 实时信号状态
+            </div>
+            {signals.length === 0 ? (
+              <EmptyState icon={Radar} title="信号快照不可用" hint="quant 策略运行时未启用或该策略未激活" className="py-6" />
+            ) : (
+              signals.map(s => <SignalStateRow key={s.symbol} sig={s} />)
+            )}
+          </div>
+
           {/* 收益曲线 */}
           {equityPoints.length > 0 ? (
             <div className="rounded-xl neu-inset px-1 py-2">
@@ -226,13 +263,28 @@ function StrategyColumn({ view, canClose, closingId, onClose }: {
             ) : (
               <>
                 {trades.map(t => <TradeRow key={t.id} t={t} />)}
-                {view.closedPositions.length > 8 && (
-                  <button
-                    onClick={() => setShowAllTrades(v => !v)}
-                    className="w-full py-1.5 text-[11px] font-bold text-muted-foreground hover:text-primary flex items-center justify-center gap-1"
-                  >
-                    {showAllTrades ? <>收起 <ChevronUp className="w-3 h-3" /></> : <>展开全部 {view.closedPositions.length} 笔 <ChevronDown className="w-3 h-3" /></>}
-                  </button>
+                {pageCount > 1 && (
+                  <div className="flex items-center justify-center gap-3 pt-1.5">
+                    <button
+                      disabled={page === 0}
+                      onClick={() => setTradePage(page - 1)}
+                      className="neu-btn-sm w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary disabled:opacity-40"
+                      aria-label="上一页"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="text-[11px] font-bold text-muted-foreground tabular-nums">
+                      {page + 1} / {pageCount} · 共 {view.closedPositions.length} 笔
+                    </span>
+                    <button
+                      disabled={page >= pageCount - 1}
+                      onClick={() => setTradePage(page + 1)}
+                      className="neu-btn-sm w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary disabled:opacity-40"
+                      aria-label="下一页"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 )}
               </>
             )}
@@ -244,8 +296,8 @@ function StrategyColumn({ view, canClose, closingId, onClose }: {
 }
 
 /**
- * 三策略账户监控：FIBO / LIQFADE / SQZMOM 各绑独立模拟盘账户（盈亏归因互不污染）。
- * PC 三栏并排对比，移动端竖排。平仓按钮仅 userId=1 渲染，后端二次校验才是真正的门。
+ * 四策略账户监控：FIBO / LIQFADE / SQZMOM / TURTLE 各绑独立模拟盘账户（盈亏归因互不污染）。
+ * PC 2×2 田字格对比，移动端竖排。平仓按钮仅 userId=1 渲染，后端二次校验才是真正的门。
  */
 export function Strategies() {
   const { toast } = useToast();
@@ -253,13 +305,20 @@ export function Strategies() {
   const isAdmin = user?.id === ADMIN_USER_ID;
 
   const [views, setViews] = useState<StrategyAccountView[]>([]);
+  const [signals, setSignals] = useState<StrategySignalState[]>([]);
   const [loading, setLoading] = useState(false);
   const [closingId, setClosingId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setViews(await strategyAccountApi.overview());
+      // 信号快照失败不拖垮账户全景（quant 运行时可能未启用）
+      const [overview, sigs] = await Promise.all([
+        strategyAccountApi.overview(),
+        strategyAccountApi.signals().catch(() => [] as StrategySignalState[]),
+      ]);
+      setViews(overview);
+      setSignals(sigs);
     } catch (e) {
       toast((e as Error).message || '加载策略账户失败', 'error');
     } finally {
@@ -298,7 +357,7 @@ export function Strategies() {
           </div>
           <div>
             <h1 className="text-xl font-black tracking-tight">策略账户</h1>
-            <p className="text-[11px] text-muted-foreground">三策略独立账户 · 本平台模拟盘执行 · 决策价与撮合价同源</p>
+            <p className="text-[11px] text-muted-foreground">四策略独立账户 · 本平台模拟盘执行 · 决策价与撮合价同源</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -314,14 +373,15 @@ export function Strategies() {
 
       {loading && views.length === 0 ? (
         <div className="flex items-center justify-center py-20 gap-2 text-sm text-muted-foreground">
-          <Loader2 className="w-4 h-4 animate-spin" /> 加载三策略账户...
+          <Loader2 className="w-4 h-4 animate-spin" /> 加载策略账户...
         </div>
       ) : (
-        <div className="grid gap-5 lg:grid-cols-3">
+        <div className="grid gap-5 md:grid-cols-2">
           {views.map(v => (
             <StrategyColumn
               key={v.strategyId}
               view={v}
+              signals={signals.filter(s => s.strategyId === v.strategyId)}
               canClose={isAdmin}
               closingId={closingId}
               onClose={handleClose}
