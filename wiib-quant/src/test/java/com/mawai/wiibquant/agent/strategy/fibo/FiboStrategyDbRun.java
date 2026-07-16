@@ -43,7 +43,7 @@ class FiboStrategyDbRun {
 
     private static final String DEFAULT_URL = "jdbc:postgresql://localhost:5432/wiib";
     private static final String DEFAULT_USER = "mawai";
-    private static final String DEFAULT_PASSWORD = "LOCAL_PASSWORD";
+    private static final String DEFAULT_PASSWORD = com.mawai.wiibquant.LocalEnv.dbPassword();
     private static final long DAY_MS = Duration.ofDays(1).toMillis();
 
     @Test

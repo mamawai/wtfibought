@@ -30,7 +30,7 @@ class VolTruthProxyDbRun {
 
     private static final String URL = "jdbc:postgresql://localhost:5432/wiib";
     private static final String USER = "mawai";
-    private static final String PASSWORD = "LOCAL_PASSWORD";
+    private static final String PASSWORD = com.mawai.wiibquant.LocalEnv.dbPassword();
 
     @Test
     void runDiagnostic() throws Exception {

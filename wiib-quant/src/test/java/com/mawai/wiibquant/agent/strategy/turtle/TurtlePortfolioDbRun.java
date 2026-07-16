@@ -30,7 +30,7 @@ class TurtlePortfolioDbRun {
 
     private static final String URL = "jdbc:postgresql://localhost:5432/wiib";
     private static final String USER = "mawai";
-    private static final String PASSWORD = "LOCAL_PASSWORD";
+    private static final String PASSWORD = com.mawai.wiibquant.LocalEnv.dbPassword();
     private static final List<String> COINS = coins();
 
     /** 组合篮子，-Dturtle.pf.symbols 覆盖（默认=live 部署篮子）。 */

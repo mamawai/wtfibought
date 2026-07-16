@@ -31,7 +31,7 @@ class TurtleFillInvariantsDbRun {
 
     private static final String URL = "jdbc:postgresql://localhost:5432/wiib";
     private static final String USER = "mawai";
-    private static final String PASSWORD = "LOCAL_PASSWORD";
+    private static final String PASSWORD = com.mawai.wiibquant.LocalEnv.dbPassword();
     private static final List<String> COINS =
             List.of("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "XRPUSDT", "BNBUSDT");
     private static final BigDecimal BALANCE = new BigDecimal("100000");

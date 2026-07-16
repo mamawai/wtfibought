@@ -45,7 +45,7 @@ class LiqDataBackfillRun {
     private static final String DEFAULT_URL =
             "jdbc:postgresql://localhost:5432/wiib?reWriteBatchedInserts=true";
     private static final String DEFAULT_USER = "mawai";
-    private static final String DEFAULT_PASSWORD = "LOCAL_PASSWORD";
+    private static final String DEFAULT_PASSWORD = com.mawai.wiibquant.LocalEnv.dbPassword();
     private static final String VISION = "https://data.binance.vision/data/futures/um";
     private static final DateTimeFormatter METRICS_TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 

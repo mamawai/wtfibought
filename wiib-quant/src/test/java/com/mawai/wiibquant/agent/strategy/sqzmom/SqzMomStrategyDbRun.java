@@ -27,7 +27,7 @@ class SqzMomStrategyDbRun {
 
     private static final String DEFAULT_URL = "jdbc:postgresql://localhost:5432/wiib";
     private static final String DEFAULT_USER = "mawai";
-    private static final String DEFAULT_PASSWORD = "LOCAL_PASSWORD";
+    private static final String DEFAULT_PASSWORD = com.mawai.wiibquant.LocalEnv.dbPassword();
     private static final int[] CHECK_YEARS = {2021, 2022, 2023, 2024, 2025, 2026};
     /** 部署篮子（多币消融+双口径过线+主流流动性筛出）。 */
     private static final String DEPLOY_SYMBOLS = "SOLUSDT,DOGEUSDT,XRPUSDT";

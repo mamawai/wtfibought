@@ -392,7 +392,7 @@ public final class KlineHistoryBackfillMain {
                     zone,
                     System.getProperty("kline.fill.dbUrl", "jdbc:postgresql://localhost:5432/wiib"),
                     System.getProperty("kline.fill.dbUser", "mawai"),
-                    System.getProperty("kline.fill.dbPassword", "LOCAL_PASSWORD"),
+                    System.getProperty("kline.fill.dbPassword", com.mawai.wiibquant.LocalEnv.dbPassword()),
                     System.getProperty("kline.fill.spotBaseUrl", "https://api.binance.com"),
                     System.getProperty("kline.fill.futuresBaseUrl", "https://fapi.binance.com"),
                     Long.getLong("kline.fill.sleepMs", 200L));

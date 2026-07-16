@@ -48,7 +48,7 @@ class LiqFadeStrategyDbRun {
 
     private static final String DEFAULT_URL = "jdbc:postgresql://localhost:5432/wiib";
     private static final String DEFAULT_USER = "mawai";
-    private static final String DEFAULT_PASSWORD = "LOCAL_PASSWORD";
+    private static final String DEFAULT_PASSWORD = com.mawai.wiibquant.LocalEnv.dbPassword();
     private static final long M5 = 300_000L;
     private static final long WARMUP_MS = 6 * 3_600_000L;   // 策略仅需4根bar, 6h 富余
 

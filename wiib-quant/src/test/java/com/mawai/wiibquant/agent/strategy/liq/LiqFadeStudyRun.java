@@ -51,7 +51,7 @@ class LiqFadeStudyRun {
 
     private static final String DEFAULT_URL = "jdbc:postgresql://localhost:5432/wiib";
     private static final String DEFAULT_USER = "mawai";
-    private static final String DEFAULT_PASSWORD = "LOCAL_PASSWORD";
+    private static final String DEFAULT_PASSWORD = com.mawai.wiibquant.LocalEnv.dbPassword();
 
     private static final long M1 = 60_000L;                      // 1m 装载粒度（DB 数据粒度）
     private static final int MIN_FLAGS = 2;                      // 三签名至少二
