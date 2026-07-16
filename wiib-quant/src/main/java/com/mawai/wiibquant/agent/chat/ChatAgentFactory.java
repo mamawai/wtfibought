@@ -114,7 +114,8 @@ public class ChatAgentFactory {
                 .methodTools(quantForecastToolkit)
                 .instruction("""
                         你是量化预测专家。工具给的是本系统的 vol/regime 预测与实盘验证战绩。
-                        铁律：只谈波动幅度与风险，不给方向性投资建议、不预测涨跌；
+                        本系统验证过的能力是波动幅度与风险预测；方向预测无验证优势。被问涨跌方向时
+                        不要生硬拒绝——给双向波动情景 + 风险提示（幅度、regime、脆弱度），说明方向确定性低的原因。
                         被问"预测准不准"时调 scorecard 用真实战绩回答（QLIKE 越低越好，improvement>0=跑赢基准）。
                         回答精炼中文，引用具体数字。""")
                 .interceptors(List.of(retry, toolRetry))
@@ -131,20 +132,29 @@ public class ChatAgentFactory {
                 .interceptors(List.of(retry, toolRetry))
                 .build();
 
+        // 派发协议是硬约束：SupervisorAgent 带自定义 mainAgent 时框架不注入路由提示词，
+        // 完全靠本 instruction 让模型输出 JSON 数组（MainAgentNodeAction 解析失败即 FINISH=不派发）
         ReactAgent supervisorMain = ReactAgent.builder()
                 .name("workbench_supervisor")
                 .model(deep)
                 .methodTools(deepAnalysisToolkit)
                 .instruction("""
-                        你是加密货币研判工作台的总调度。根据用户问题决定调用哪些专家 agent：
-                        - 行情/持仓/脆弱度/期权 → market_agent
-                        - 波动率预测/regime/预测战绩 → quant_agent
-                        - 新闻/事件 → news_agent
+                        你是加密货币研判工作台的总调度，负责把用户问题派发给专家 agent，再汇总成最终回答。
+
+                        派发协议（严格遵守）：
+                        - 需要专家数据时，只输出一个 JSON 数组（要调用的专家名），不要输出任何其他文字。
+                          例：["market_agent"] 或 ["market_agent","news_agent"]
+                        - 可用专家：market_agent=实时行情/持仓/清算/期权/脆弱度；
+                          quant_agent=波动率预测/regime/预测战绩；news_agent=加密新闻快讯
+                        - 涉及行情、预测、新闻的问题必须先派发拿真实数据，不要凭记忆回答
+                        - 专家结果已在对话里、足够回答时，输出最终精炼中文回答（此时不要再输出 JSON 数组）
                         - 用户明确要"深度研判/全面分析"时 → 调 run_deep_analysis 工具（昂贵，需用户确认：
                           返回 PENDING_APPROVAL 时告知用户确认卡片已弹出，等确认后你会被再次唤起执行）
-                        综合专家结果后用精炼中文回答。原则：
+
+                        回答原则：
                         1. 结论必须可追溯到专家给的数据，不编造
-                        2. 不给方向性投资建议，不预测涨跌
+                        2. 被问涨跌方向时不要生硬拒绝：本系统验证过的能力是波动与风险预测（方向预测无验证优势），
+                           给"双向情景 + 当前风险画像 + 仓位/止损等风控参考"，并说明方向确定性低的原因
                         3. 信号矛盾时大方说"看不清"，这是专业而不是失职""")
                 .hooks(
                         SummarizationHook.builder()
