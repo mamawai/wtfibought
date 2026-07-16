@@ -65,7 +65,7 @@ export function BStockList() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-4 space-y-4">
+    <div className="page-shell px-4 md:px-6 py-5 space-y-4">
       <Card className="overflow-hidden">
         <CardHeader className="pb-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -124,33 +124,33 @@ export function BStockList() {
                   type="button"
                   key={s.id}
                   onClick={() => navigate(`/bstock/${s.symbol}`)}
-                  className="w-full text-left px-4 py-3.5 cursor-pointer hover:bg-accent/40 active:bg-accent/60 transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                  className="w-full text-left px-5 py-5 cursor-pointer hover:bg-accent/40 active:bg-accent/60 transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      <div className="w-9 h-9 rounded-lg bg-primary/10 ring-1 ring-primary/20 flex items-center justify-center shrink-0 text-[10px] font-bold text-primary tracking-tight">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <div className="w-11 h-11 rounded-xl bg-primary/10 ring-1 ring-primary/20 flex items-center justify-center shrink-0 text-[11px] font-bold text-primary tracking-tight">
                         {s.ticker?.slice(0, 4)}
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <span className="font-semibold text-[13px] truncate group-hover:text-primary transition-colors">{s.name}</span>
-                          <span className="text-[11px] text-muted-foreground/70 shrink-0">{s.ticker}</span>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-semibold text-sm truncate group-hover:text-primary transition-colors">{s.name}</span>
+                          <span className="text-xs text-muted-foreground/70 shrink-0">{s.ticker}</span>
                         </div>
-                        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
                           {s.industry && <><span>{s.industry}</span><span className="text-border">·</span></>}
                           <span>市值 {fmtCap(s.marketCap)}</span>
                           {s.peRatio != null && <><span className="text-border">·</span><span>PE {s.peRatio}</span></>}
                         </div>
                       </div>
                     </div>
-                    <div className="text-right shrink-0 flex items-center gap-2">
+                    <div className="text-right shrink-0 flex items-center gap-2.5">
                       <div>
-                        <div className="text-[13px] font-bold tabular-nums tracking-tight">{s.price != null ? fmtNum(s.price) : '-'}</div>
-                        <div className={cn("text-[11px] tabular-nums font-medium", up ? "text-green-400" : "text-red-400")}>
+                        <div className="text-sm font-bold tabular-nums tracking-tight">{s.price != null ? fmtNum(s.price) : '-'}</div>
+                        <div className={cn("text-xs tabular-nums font-medium mt-0.5", up ? "text-green-400" : "text-red-400")}>
                           {up ? '+' : ''}{chg.toFixed(2)}%
                         </div>
                       </div>
-                      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-primary/60 transition-colors" />
+                      <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-primary/60 transition-colors" />
                     </div>
                   </div>
                 </button>
