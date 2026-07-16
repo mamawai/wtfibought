@@ -78,8 +78,10 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         JSONArray result = new JSONArray(root.size());
         for (int i = 0; i < root.size(); i++) {
             JSONArray kline = root.getJSONArray(i);
-            JSONArray slim = new JSONArray(5);
-            for (int j = 0; j <= 4; j++) slim.add(kline.get(j));
+            JSONArray slim = new JSONArray(8);
+            // 保留 0-7（时间/OHLC/量/收盘时间/额）：前端蜡烛图按 Binance 原始下标取 k[5]=量、k[7]=额，
+            // 只裁 8-11（笔数/taker 量额/保留位）；早期裁到 0-4 导致历史K线量额全 NaN
+            for (int j = 0; j <= 7; j++) slim.add(kline.get(j));
             result.add(slim);
         }
         return result.toJSONString();
