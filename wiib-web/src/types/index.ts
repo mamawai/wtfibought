@@ -569,6 +569,29 @@ export interface StrategyAccountView {
   closedPositions: StrategyClosedPosition[];
 }
 
+/** 工作台历史会话摘要（/ai/workbench/sessions） */
+export interface WorkbenchSessionSummary {
+  sessionId: string;
+  title: string;
+  messageCount: number;
+  lastAt: number;
+}
+
+/** 工作台历史消息（/ai/workbench/sessions/{id}/messages） */
+export interface WorkbenchChatMessage {
+  role: 'user' | 'assistant' | string;
+  content: string;
+  createdAt: number;
+}
+
+/** 策略×币种实时信号状态快照（/ai/strategies/signals）：一句话状态 + 有序指标表 */
+export interface StrategySignalState {
+  strategyId: string;
+  symbol: string;
+  state: string;
+  metrics: Record<string, string>;
+}
+
 /** 最新数值快照（quant_snapshot 实体透传，/ai/quant/snapshots/latest） */
 export interface QuantSnapshotView {
   id: number;

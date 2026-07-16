@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats, TnManualOrderReq, TnOrderResult, TnAck } from '../types/testnet';
-import type { User, PageResult, RankingItem, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, ForceOrder, AiKeyConfig, AiModelAssignment, GraphNodeMetric, WorkbenchEvent, QuantSnapshotView, QuantSnapshotSeriesPoint, QuantDeepAnalysisView, Scorecard, StrategyAccountView, FeedStreamHealth } from '../types';
+import type { User, PageResult, RankingItem, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, ForceOrder, AiKeyConfig, AiModelAssignment, GraphNodeMetric, WorkbenchEvent, QuantSnapshotView, QuantSnapshotSeriesPoint, QuantDeepAnalysisView, Scorecard, StrategyAccountView, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchChatMessage } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -313,6 +313,14 @@ export const workbenchApi = {
   },
   approve: (sessionId: string, approved: boolean) =>
     api.post<unknown, void>('/ai/workbench/approve', { sessionId, approved }),
+  /** 历史会话列表（标题=首条提问，按最后活跃倒序） */
+  sessions: () => api.get<unknown, WorkbenchSessionSummary[]>('/ai/workbench/sessions'),
+  /** 单会话消息记录；续聊仍走 chat 带同一 sessionId */
+  sessionMessages: (sessionId: string) =>
+    api.get<unknown, WorkbenchChatMessage[]>(`/ai/workbench/sessions/${sessionId}/messages`),
+  /** 删除历史会话（展示记录 + 后端 checkpoint 上下文） */
+  deleteSession: (sessionId: string) =>
+    api.delete<unknown, void>(`/ai/workbench/sessions/${sessionId}`),
 };
 
 export const quantApi = {
@@ -331,6 +339,8 @@ export const quantApi = {
 // ========== 策略账户监控 ==========
 export const strategyAccountApi = {
   overview: () => api.get<unknown, StrategyAccountView[]>('/ai/strategies/overview'),
+  /** 各策略×币种实时信号状态（通道位置/压缩计数/签名命中） */
+  signals: () => api.get<unknown, StrategySignalState[]>('/ai/strategies/signals'),
   /** 整仓市价平（后端仅 userId=1 放行） */
   close: (strategyId: string, positionId: number) =>
     api.post<unknown, void>(`/ai/strategies/${strategyId}/close`, { positionId }),

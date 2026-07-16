@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, Loader2, RotateCcw, Send, ShieldQuestion, User } from 'lucide-react';
+import { Bot, History, Loader2, MessageSquareText, RotateCcw, Send, ShieldQuestion, Trash2, User } from 'lucide-react';
 import { workbenchApi } from '../../api';
-import { cn } from '../../lib/utils';
-import type { WorkbenchEvent } from '../../types';
+import { cn, fmtDateTime } from '../../lib/utils';
+import type { WorkbenchChatMessage, WorkbenchEvent, WorkbenchSessionSummary } from '../../types';
 
 const SESSION_KEY = 'wiib-workbench-session';
 
@@ -101,11 +101,21 @@ function Markdown({ content }: { content: string }) {
  * 工作台对话面板：SSE 渲染 Supervisor 多 agent 调度过程 + token 流 + HITL 确认。
  * sessionId 持久在 sessionStorage——断连/刷新后带同一 id 续聊（后端 PostgresSaver）。
  */
+/** 后端历史消息 → 对话项（过程事件不落库，只回放 user/assistant） */
+function toItems(messages: WorkbenchChatMessage[]): ChatItem[] {
+  return messages.map(m => m.role === 'user'
+    ? { kind: 'user' as const, content: m.content }
+    : { kind: 'assistant' as const, content: m.content, streaming: false });
+}
+
 export function ChatPanel() {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [hitlBusy, setHitlBusy] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [sessions, setSessions] = useState<WorkbenchSessionSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const sessionRef = useRef<string | null>(sessionStorage.getItem(SESSION_KEY));
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -116,6 +126,42 @@ export function ChatPanel() {
   }, [items]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  // 刷新页面后当前会话不再一片空白：有 sessionId 就把消息回放出来
+  useEffect(() => {
+    const sid = sessionRef.current;
+    if (!sid) return;
+    workbenchApi.sessionMessages(sid)
+      .then(msgs => { if (msgs.length) setItems(prev => (prev.length ? prev : toItems(msgs))); })
+      .catch(() => {});
+  }, []);
+
+  const openHistory = useCallback(() => {
+    setShowHistory(true);
+    setHistoryLoading(true);
+    workbenchApi.sessions()
+      .then(setSessions)
+      .catch(() => setSessions([]))
+      .finally(() => setHistoryLoading(false));
+  }, []);
+
+  /** 载入历史会话：消息回放 + sessionId 复用（checkpoint 在后端，继续聊自动带全上下文） */
+  const openSession = useCallback(async (s: WorkbenchSessionSummary) => {
+    setHistoryLoading(true);
+    try {
+      const msgs = await workbenchApi.sessionMessages(s.sessionId);
+      abortRef.current?.abort();
+      sessionRef.current = s.sessionId;
+      sessionStorage.setItem(SESSION_KEY, s.sessionId);
+      setItems(toItems(msgs));
+      setShowHistory(false);
+      setLoading(false);
+    } catch {
+      setSessions(prev => prev); // 拉取失败保持列表
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
 
   const send = useCallback(async (message: string, opts?: { silent?: boolean }) => {
     if (!message.trim() || loading) return;
@@ -202,6 +248,21 @@ export function ChatPanel() {
     }
   }, [items, send]);
 
+  /** 删除会话：列表移除；删的是当前会话时本地一并清空，回到全新会话状态。 */
+  const removeSession = useCallback(async (s: WorkbenchSessionSummary) => {
+    try {
+      await workbenchApi.deleteSession(s.sessionId);
+      setSessions(prev => prev.filter(x => x.sessionId !== s.sessionId));
+      if (sessionRef.current === s.sessionId) {
+        abortRef.current?.abort();
+        sessionRef.current = null;
+        sessionStorage.removeItem(SESSION_KEY);
+        setItems([]);
+        setLoading(false);
+      }
+    } catch { /* 删除失败保持原样 */ }
+  }, []);
+
   const handleNewSession = useCallback(() => {
     abortRef.current?.abort();
     sessionRef.current = null;
@@ -218,16 +279,73 @@ export function ChatPanel() {
         <span className="text-sm font-black">研判对话</span>
         <span className="text-[10px] text-muted-foreground hidden sm:inline">Supervisor 调度 · 断连自动续聊</span>
         <button
+          onClick={() => showHistory ? setShowHistory(false) : openHistory()}
+          className={cn(
+            'ml-auto neu-btn-sm w-7 h-7 rounded-lg flex items-center justify-center hover:text-primary',
+            showHistory ? 'text-primary' : 'text-muted-foreground',
+          )}
+          title="历史对话"
+        >
+          <History className="w-3.5 h-3.5" />
+        </button>
+        <button
           onClick={handleNewSession}
-          className="ml-auto neu-btn-sm w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary"
+          className="neu-btn-sm w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary"
           title="新会话"
         >
           <RotateCcw className="w-3.5 h-3.5" />
         </button>
       </div>
 
+      {/* 历史会话列表：点开回放消息并复用 sessionId 续聊（上下文由后端 checkpoint 自动带全） */}
+      {showHistory && (
+        <div className="flex-1 overflow-y-auto px-4 pb-3 space-y-2">
+          {historyLoading ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-xs text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> 加载历史会话...
+            </div>
+          ) : sessions.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+              <MessageSquareText className="w-8 h-8 text-muted-foreground/40" />
+              <p className="text-xs text-muted-foreground">还没有历史对话</p>
+            </div>
+          ) : (
+            sessions.map(s => (
+              <div
+                key={s.sessionId}
+                role="button"
+                tabIndex={0}
+                onClick={() => void openSession(s)}
+                onKeyDown={e => e.key === 'Enter' && void openSession(s)}
+                className={cn(
+                  'w-full text-left rounded-xl neu-flat px-3.5 py-2.5 space-y-1 hover:bg-accent/40 transition-colors cursor-pointer',
+                  s.sessionId === sessionRef.current && 'ring-1 ring-primary/40',
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <div className="text-xs font-bold truncate flex-1">{s.title}</div>
+                  <button
+                    onClick={e => { e.stopPropagation(); void removeSession(s); }}
+                    className="shrink-0 w-6 h-6 rounded-md flex items-center justify-center text-muted-foreground/50 hover:text-loss hover:bg-loss/10 transition-colors"
+                    title="删除会话"
+                    aria-label="删除会话"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="text-[10px] text-muted-foreground flex items-center gap-2">
+                  <span>{fmtDateTime(s.lastAt)}</span>
+                  <span>· {s.messageCount} 条</span>
+                  {s.sessionId === sessionRef.current && <span className="text-primary font-bold">当前会话</span>}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
       {/* 消息流 */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 space-y-3 pb-3">
+      <div ref={scrollRef} className={cn('flex-1 overflow-y-auto px-4 space-y-3 pb-3', showHistory && 'hidden')}>
         {items.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center gap-3 text-center px-6">
             <Bot className="w-10 h-10 text-muted-foreground/50" />

@@ -9,6 +9,7 @@ interface Props {
   points: QuantSnapshotSeriesPoint[];
   analyses: QuantDeepAnalysisView[];
   onSelectAnalysis?: (a: QuantDeepAnalysisView) => void;
+  height?: number;
 }
 
 const TRIGGER_CN: Record<string, string> = { schedule: '定频', sentinel: '哨兵插队', chat: '对话触发', manual: '手动' };
@@ -24,7 +25,7 @@ const C_FRAGILITY = '#f59e0b';
  * 研判点画成可点击 scatter（贴在预测线高度），点击联动下方研判卡。
  * 轴/网格/tooltip 走 chartTheme，与拟物底色同源。
  */
-export function VolTimeline({ points, analyses, onSelectAnalysis }: Props) {
+export function VolTimeline({ points, analyses, onSelectAnalysis, height = 300 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const isDark = useIsDark();
 
@@ -88,7 +89,8 @@ export function VolTimeline({ points, analyses, onSelectAnalysis }: Props) {
       ],
       yAxis: [
         {
-          type: 'value', gridIndex: 0, name: 'H6 vol (bps)', nameTextStyle: { fontSize: 9, color: ui.axisLabel },
+          // 轴名删掉：顶部与 legend 重叠，单位(bps)已在图下方指标说明里交代
+          type: 'value', gridIndex: 0,
           axisLabel: { fontSize: 10, color: ui.axisLabel }, splitLine: { lineStyle: { color: ui.gridLine, opacity: 0.6 } },
         },
         {
@@ -115,7 +117,7 @@ export function VolTimeline({ points, analyses, onSelectAnalysis }: Props) {
           tooltip: {
             formatter: (p: unknown) => {
               const a = (p as { data: { analysis: QuantDeepAnalysisView } }).data.analysis;
-              return `${new Date(a.closeTime).toLocaleString('zh-CN')}<br/>深研判 · ${TRIGGER_CN[a.triggerSource] || a.triggerSource}<br/><span style="opacity:.7">点击查看详情</span>`;
+              return `${fmtDateTime(a.closeTime)}<br/>深研判 · ${TRIGGER_CN[a.triggerSource] || a.triggerSource}<br/><span style="opacity:.7">点击查看详情</span>`;
             },
           },
           z: 10,
@@ -146,5 +148,5 @@ export function VolTimeline({ points, analyses, onSelectAnalysis }: Props) {
     return () => { chart.dispose(); window.removeEventListener('resize', onResize); };
   }, [points, analyses, isDark, onSelectAnalysis]);
 
-  return <div ref={ref} style={{ width: '100%', height: 300 }} />;
+  return <div ref={ref} style={{ width: '100%', height }} />;
 }

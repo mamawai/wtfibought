@@ -5,24 +5,26 @@ import { quantApi } from '../api';
 import { cn } from '../lib/utils';
 import type { Scorecard as ScorecardData, ScorecardHorizon } from '../types';
 
-const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'PAXGUSDT'] as const;
-const SYM_LABEL: Record<string, string> = { BTCUSDT: 'BTC', ETHUSDT: 'ETH', PAXGUSDT: 'PAXG' };
+// 只展示 quant 实际监控的标的（WATCH_SYMBOLS=BTC/ETH），PAXG 无预测数据
+const SYMBOLS = ['BTCUSDT', 'ETHUSDT'] as const;
+const SYM_LABEL: Record<string, string> = { BTCUSDT: 'BTC', ETHUSDT: 'ETH' };
 const HORIZON_LABEL: Record<string, string> = { H6: '6 小时', H12: '12 小时', H24: '24 小时' };
 /** vol-state 三分类的随机基线：胜过 33.3% 才叫有 skill */
 const VOL_STATE_RANDOM_BASELINE = 1 / 3;
 
-/** QLIKE 对比条：预测 vs 基准并排，短的赢（QLIKE 越低越好）。 */
+/** 误差对比条：预测误差 vs 基准误差并排，条越短误差越小=越准。 */
 function QlikeBars({ h }: { h: ScorecardHorizon }) {
   const max = Math.max(h.avgQlike, h.avgBaselineQlike) || 1;
   const better = h.avgQlike <= h.avgBaselineQlike;
   return (
     <div className="space-y-1.5">
+      <div className="text-[10px] font-bold text-muted-foreground">平均预测误差（QLIKE，条越短越准）</div>
       {[
-        { label: '预测', value: h.avgQlike, tone: better ? 'bg-gain/80' : 'bg-loss/80' },
+        { label: '本系统', value: h.avgQlike, tone: better ? 'bg-gain/80' : 'bg-loss/80' },
         { label: '基准', value: h.avgBaselineQlike, tone: 'bg-muted-foreground/40' },
       ].map(row => (
         <div key={row.label} className="flex items-center gap-2 text-[10px]">
-          <span className="w-7 shrink-0 text-muted-foreground font-bold">{row.label}</span>
+          <span className="w-10 shrink-0 text-muted-foreground font-bold">{row.label}</span>
           <div className="flex-1 h-2 rounded-full neu-inset overflow-hidden">
             <div className={cn('h-full rounded-full', row.tone)} style={{ width: `${(row.value / max) * 100}%` }} />
           </div>
@@ -38,19 +40,24 @@ function HorizonCard({ h }: { h: ScorecardHorizon }) {
   const winPct = h.qlikeWinRate * 100;
   const hitPct = h.volStateHitRate * 100;
   const beatsRandom = h.volStateHitRate > VOL_STATE_RANDOM_BASELINE;
+  const beatsBaseline = impPct >= 0;
   return (
     <div className="rounded-xl neu-raised-sm p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-black">{HORIZON_LABEL[h.horizon] || h.horizon}</span>
-        <span className="text-[10px] text-muted-foreground">{h.samples} 样本</span>
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-black">预测未来 {HORIZON_LABEL[h.horizon] || h.horizon}</span>
+        <span className={cn('text-[10px] font-black px-2 py-0.5 rounded-full',
+          beatsBaseline ? 'bg-gain/15 text-gain' : 'bg-loss/15 text-loss')}>
+          {beatsBaseline ? '✓ 跑赢基准' : '✗ 未跑赢基准'}
+        </span>
+        <span className="ml-auto text-[10px] text-muted-foreground">{h.samples} 次对账</span>
       </div>
 
-      {/* improvement 大数字：这页的主指标 */}
+      {/* 主指标：比基准准多少 */}
       <div>
         <div className={cn('text-3xl font-black tabular-nums', impPct >= 0 ? 'text-gain' : 'text-loss')}>
           {impPct >= 0 ? '+' : ''}{impPct.toFixed(1)}%
         </div>
-        <div className="text-[10px] text-muted-foreground font-bold">QLIKE 相对基准改善</div>
+        <div className="text-[10px] text-muted-foreground font-bold">比基准方法更准的幅度（误差降低比例）</div>
       </div>
 
       <QlikeBars h={h} />
@@ -58,11 +65,11 @@ function HorizonCard({ h }: { h: ScorecardHorizon }) {
       <div className="grid grid-cols-2 gap-2 pt-1">
         <div className="rounded-lg neu-flat px-2.5 py-2">
           <div className={cn('text-sm font-black tabular-nums', winPct >= 50 ? 'text-gain' : 'text-loss')}>{winPct.toFixed(1)}%</div>
-          <div className="text-[10px] text-muted-foreground">逐样本胜率</div>
+          <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">单挑胜率：逐条和基准 PK，本系统更准的占比（&gt;50% 算赢）</div>
         </div>
         <div className="rounded-lg neu-flat px-2.5 py-2">
           <div className={cn('text-sm font-black tabular-nums', beatsRandom ? 'text-gain' : 'text-loss')}>{hitPct.toFixed(1)}%</div>
-          <div className="text-[10px] text-muted-foreground">vol-state 命中 · 随机 33.3%</div>
+          <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">波动档位命中：低/中/高三档猜中比例（瞎猜=33.3%）</div>
         </div>
       </div>
     </div>
@@ -108,7 +115,7 @@ export function Scorecard() {
           </div>
           <div>
             <h1 className="text-xl font-black tracking-tight">验证记分卡</h1>
-            <p className="text-[11px] text-muted-foreground">vol 预测 QLIKE vs naive 基准 · 每 5m 预测点到期自动验证 · 战绩可审计</p>
+            <p className="text-[11px] text-muted-foreground">波动预测准不准，到期对账说了算 · 全自动记录，不可挑样本</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -135,6 +142,13 @@ export function Scorecard() {
             <RefreshCcw className={cn('w-4 h-4', loading && 'animate-spin')} />
           </button>
         </div>
+      </div>
+
+      {/* 这页是什么：先讲人话再上数字 */}
+      <div className="rounded-xl neu-flat px-4 py-3 text-xs text-muted-foreground leading-relaxed">
+        本系统每 5 分钟发布一次「未来 6 / 12 / 24 小时市场会波动多大」的预测（只预测波动幅度，不预测涨跌方向）。
+        预测到期后，自动拿实际行情对答案，并和一个<b className="text-foreground">基准方法</b>
+        （"拿最近的波动水平直接当预测"，行业常用的免费对照组）比谁更准。下面就是对账成绩单。
       </div>
 
       {/* 运行天数横幅（诚实展示：线上时序从新链路上线起算） */}
@@ -174,11 +188,11 @@ export function Scorecard() {
         </div>
         <ul className="text-xs text-muted-foreground leading-relaxed space-y-1.5">
           <li className="flex gap-2"><Target className="w-3.5 h-3.5 shrink-0 mt-0.5 text-primary" />
-            <span><b className="text-foreground">QLIKE</b>：vol 预测的标准损失函数，越低越好；「改善 &gt; 0」= 跑赢 naive 基准（EWMA 类），这是 research 阶段被 walk-forward + 置换检验 + DM 检验验证过的同一口径。</span></li>
+            <span><b className="text-foreground">误差怎么算</b>：用 QLIKE——评估波动预测的标准打分方式，误差越低越准。「比基准准 +X%」= 本系统的平均误差比基准低 X%；这与离线研究阶段（walk-forward + 置换检验 + DM 检验）用的是同一把尺子。</span></li>
           <li className="flex gap-2"><Target className="w-3.5 h-3.5 shrink-0 mt-0.5 text-primary" />
-            <span><b className="text-foreground">vol-state 命中</b>：LOW/MID/HIGH 三档分类命中率，随机基线 33.3%。</span></li>
+            <span><b className="text-foreground">波动档位命中</b>：把未来实际波动分成低/中/高三档（按历史分位划界），预测档位与实际档位一致算命中；瞎猜的期望是 33.3%，持续高于它才叫有真本事。</span></li>
           <li className="flex gap-2"><Target className="w-3.5 h-3.5 shrink-0 mt-0.5 text-primary" />
-            <span><b className="text-foreground">不晒方向</b>：方向预测经离线验证无 edge（≈抛硬币），永不作为信号；这页只公开被验证过有 skill 的腿。</span></li>
+            <span><b className="text-foreground">为什么不晒涨跌方向</b>：方向预测经离线验证无优势（≈抛硬币），永不作为信号；这页只公开被验证过真正有效的能力——波动与风险预测。</span></li>
         </ul>
       </div>
     </div>
