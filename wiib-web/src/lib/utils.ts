@@ -25,21 +25,21 @@ export function fmtDateTime(ts: number | string | Date, withSeconds = false): st
   });
 }
 
-export function isTradingHours(): boolean {
-  const now = new Date();
-  const day = now.getDay();
-  if (day === 0 || day === 6) return false; // 周末
+/** 新加坡时间 HH:mm（withSeconds=true 时带秒），日内图表轴/tooltip 走这里。 */
+export function fmtTime(ts: number | string | Date, withSeconds = false): string {
+  return new Date(ts).toLocaleTimeString('en-GB', {
+    timeZone: 'Asia/Singapore',
+    hour: '2-digit', minute: '2-digit',
+    ...(withSeconds ? { second: '2-digit' as const } : {}),
+    hour12: false,
+  });
+}
 
-  const hours = now.getHours();
-  const minutes = now.getMinutes();
-  const time = hours * 60 + minutes;
-
-  const morningStart = 9 * 60 + 30;  // 09:30
-  const morningEnd = 11 * 60 + 30;   // 11:30
-  const afternoonStart = 13 * 60;    // 13:00
-  const afternoonEnd = 15 * 60;      // 15:00
-
-  return (time >= morningStart && time <= morningEnd) ||
-         (time >= afternoonStart && time <= afternoonEnd);
+/** 大额缩写：≥1亿 → X.XX亿，≥1万 → X.XX万，其余两位小数；null/NaN 返回 '-'。 */
+export function fmtMoney(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '-';
+  if (Math.abs(n) >= 1e8) return (n / 1e8).toFixed(2) + '亿';
+  if (Math.abs(n) >= 1e4) return (n / 1e4).toFixed(2) + '万';
+  return n.toFixed(2);
 }
 

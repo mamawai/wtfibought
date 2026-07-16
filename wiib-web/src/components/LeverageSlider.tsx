@@ -2,13 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import styled from 'styled-components';
 
 /**
- * 合约杠杆滑杆（拟物）：
- * - 凹槽轨道（内嵌刻痕档位）+ 随杠杆升高绿→橙→红的渐变"液柱"填充
- * - 旋钮式 thumb（外圈软凸起 + 风险色内环 + 中心点），拖拽跟随数值气泡
- * - 档位刻痕/标签可点击跳档；键盘全支持；拉满瞬间火花爆发 + MAX 徽章 + 移动端震动
+ * 合约杠杆滑杆（拟物·收敛版）：细凹槽轨道 + 风险色净色填充 + 小旋钮，拖拽跟随数值气泡。
+ * 档位刻痕/标签可点击跳档；键盘全支持。
  *
- * 性能：拖拽期间用组件内 liveValue 渲染（只重渲染滑杆自身），对父组件的 onChange
- * 按 rAF 节流、松手必提交终值——父页面再重（Coin 页千行+图表）拖动也不掉帧。
+ * 交互正确性：拖拽去重用事件侧同步 ref（liveRef），不依赖渲染时序——
+ * 旧版在渲染期写 ref 再拿它去重，事件与渲染一错位就吞掉移动事件（表现为满档回拖卡死）。
+ * 性能：拖拽期组件内 liveValue 渲染，对父组件 onChange 按 rAF 节流、松手必提交终值。
  */
 interface LeverageSliderProps {
   value: number;
@@ -21,27 +20,22 @@ const GAIN = '#089981';
 const MID = '#F97316';
 const LOSS = '#f23645';
 
-/** 当前杠杆占比对应的风险色（thumb 内环/气泡用） */
+/** 当前杠杆占比对应的风险色（填充/thumb 内环/气泡用） */
 function riskColor(ratio: number): string {
   return ratio < 0.35 ? GAIN : ratio < 0.7 ? MID : LOSS;
 }
 
-const SPARK_COLORS = [LOSS, MID, '#fbbf24'];
-const SPARK_COUNT = 12;
-
 export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
-  // 拖拽期本地值：非 null 时渲染以它为准，父页 value 更新与否都不影响跟手
+  // 拖拽期本地值：非 null 时渲染以它为准；liveRef 是它的事件侧同步镜像（去重专用）
   const [liveValue, setLiveValue] = useState<number | null>(null);
-  const [burstKey, setBurstKey] = useState(0);
+  const liveRef = useRef<number | null>(null);
   const rafRef = useRef(0);
   const pendingRef = useRef(value);
   const lastSentRef = useRef(value);
-  const shownRef = useRef(value);
 
   const shown = liveValue ?? value;
-  shownRef.current = shown;
   const disabled = max <= 1;
 
   const span = Math.max(max - 1, 1);
@@ -50,21 +44,13 @@ export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderPr
   const atMax = max > 1 && shown >= max;
   const color = riskColor(ratio);
 
-  // 拉满边沿检测：从非满档进入满档才触发爆发（点档位/拖拽/键盘都走这里）
-  const detectBurst = (next: number) => {
-    if (max > 1 && next >= max && shownRef.current < max) {
-      setBurstKey(k => k + 1);
-      navigator.vibrate?.(40);
-    }
-  };
-  // 粒子放完自动卸载，避免残留 DOM
-  useEffect(() => {
-    if (!burstKey) return;
-    const t = setTimeout(() => setBurstKey(0), 900);
-    return () => clearTimeout(t);
-  }, [burstKey]);
   // 卸载时丢弃未 flush 的 rAF 提交
   useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
+
+  const setLive = (v: number) => {
+    liveRef.current = v;
+    setLiveValue(v);
+  };
 
   /** 立即提交给父组件（去重：同值不重复触发父页渲染） */
   const commit = (v: number) => {
@@ -83,11 +69,6 @@ export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderPr
       });
     }
   };
-  /** 非拖拽入口（点档位/键盘）：边沿检测 + 直接提交 */
-  const emit = (next: number) => {
-    detectBurst(next);
-    commit(next);
-  };
 
   const valueFromClientX = (clientX: number) => {
     const rect = trackRef.current!.getBoundingClientRect();
@@ -100,16 +81,14 @@ export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderPr
     e.currentTarget.setPointerCapture(e.pointerId);
     setDragging(true);
     const next = valueFromClientX(e.clientX);
-    detectBurst(next);
-    setLiveValue(next);
+    setLive(next);
     scheduleCommit(next);
   };
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!dragging) return;
     const next = valueFromClientX(e.clientX);
-    if (next === shownRef.current) return;
-    detectBurst(next);
-    setLiveValue(next);
+    if (next === liveRef.current) return;
+    setLive(next);
     scheduleCommit(next);
   };
   const stopDrag = () => {
@@ -119,6 +98,7 @@ export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderPr
     cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
     commit(pendingRef.current);
+    liveRef.current = null;
     setLiveValue(null);
   };
 
@@ -135,7 +115,7 @@ export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderPr
       default: return;
     }
     e.preventDefault();
-    emit(Math.min(max, Math.max(1, next)));
+    commit(Math.min(max, Math.max(1, next)));
   };
 
   return (
@@ -149,16 +129,7 @@ export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderPr
         onPointerCancel={stopDrag}
       >
         <div className="track">
-          <div
-            className="fill"
-            style={{
-              width: `${pct}%`,
-              // 渐变始终铺满整条轨道宽度，填充只是"揭开"它
-              backgroundSize: pct > 0 ? `${10000 / pct}% 100%` : '100% 100%',
-            }}
-          >
-            {atMax && <div className="shimmer" />}
-          </div>
+          <div className="fill" style={{ width: `${pct}%` }} />
           {ticks.map(t => {
             const tp = ((t - 1) / span) * 100;
             return (
@@ -167,14 +138,14 @@ export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderPr
                 type="button"
                 className={`tick-notch ${shown >= t ? 'passed' : ''}`}
                 style={{ left: `${tp}%` }}
-                onClick={() => emit(t)}
+                onClick={() => commit(t)}
                 tabIndex={-1}
                 aria-label={`${t}x`}
               />
             );
           })}
           <div
-            className={`thumb ${atMax ? 'at-max' : ''} ${burstKey ? 'bounce' : ''}`}
+            className={`thumb ${atMax ? 'at-max' : ''}`}
             style={{ left: `${pct}%` }}
             role="slider"
             tabIndex={disabled ? -1 : 0}
@@ -184,26 +155,10 @@ export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderPr
             aria-label="杠杆"
             onKeyDown={handleKeyDown}
           >
-            {dragging && !atMax && <span className="bubble">{shown}x</span>}
-            {atMax && <span className="max-chip">MAX</span>}
+            {(dragging || atMax) && (
+              <span className={`bubble ${atMax ? 'max' : ''}`}>{atMax ? 'MAX' : `${shown}x`}</span>
+            )}
           </div>
-          {burstKey > 0 && (
-            <span className="burst" key={burstKey} style={{ left: `${pct}%` }}>
-              {Array.from({ length: SPARK_COUNT }, (_, i) => (
-                <span
-                  key={i}
-                  className="spark"
-                  style={{
-                    // 伪随机方向/距离：137° 黄金角错开，视觉均匀又不呆板
-                    ['--a' as string]: `${(i * 137) % 360}deg`,
-                    ['--d' as string]: `${26 + (i % 3) * 9}px`,
-                    background: SPARK_COLORS[i % SPARK_COLORS.length],
-                    animationDelay: `${i * 14}ms`,
-                  }}
-                />
-              ))}
-            </span>
-          )}
         </div>
       </div>
       <div className="tick-labels">
@@ -215,7 +170,7 @@ export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderPr
               type="button"
               className={`tick-label ${shown === t ? 'active' : ''}`}
               style={{ left: `${tp}%` }}
-              onClick={() => emit(t)}
+              onClick={() => commit(t)}
             >
               {t}x
             </button>
@@ -231,7 +186,7 @@ const Wrapper = styled.div<{ $color: string }>`
 
   position: relative;
   /* 左右留出 thumb 半径，避免两端溢出裁切 */
-  padding: 0 12px;
+  padding: 0 10px;
 
   &.disabled { opacity: 0.45; }
   &.disabled .hit-area { cursor: default; }
@@ -242,39 +197,29 @@ const Wrapper = styled.div<{ $color: string }>`
     touch-action: none; /* 拖拽时禁掉页面滚动 */
   }
 
-  /* 凹槽：双内阴影 + 底缘 1px 高光，读作"车出来的槽"而非扁平色条 */
+  /* 细凹槽：内阴影读作"车出来的槽" */
   .track {
     position: relative;
-    height: 12px;
+    height: 8px;
     border-radius: 999px;
     background: color-mix(in srgb, var(--color-muted, #e5e7eb) 85%, transparent);
     box-shadow:
-      inset 2px 2px 5px var(--shadow-dark),
-      inset -2px -2px 4px var(--shadow-light),
-      0 1px 0 var(--shadow-light);
+      inset 1.5px 1.5px 4px var(--shadow-dark),
+      inset -1.5px -1.5px 3px var(--shadow-light);
   }
 
-  /* 液柱：渐变揭开式填充 + 顶部高光弧，像槽里注入的有体积的液体 */
+  /* 填充：风险色净色 + 顶部细高光，随占比 GAIN→MID→LOSS 整段换色 */
   .fill {
     position: absolute;
     inset: 0 auto 0 0;
     border-radius: 999px;
-    background-image: linear-gradient(90deg, ${GAIN} 0%, ${MID} 55%, ${LOSS} 100%);
-    background-repeat: no-repeat;
-    overflow: hidden;
-    box-shadow: inset 0 2px 2px rgba(255, 255, 255, 0.25), inset 0 -2px 3px rgba(0, 0, 0, 0.18);
-    transition: width 0.22s cubic-bezier(0.34, 1.3, 0.64, 1);
+    background: var(--risk);
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3);
+    transition: width 0.18s ease-out, background-color 0.2s ease;
   }
+  &.dragging .fill { transition: background-color 0.2s ease; }
 
-  .shimmer {
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.45) 50%, transparent 70%);
-    background-size: 200% 100%;
-    animation: lever-shimmer 1.4s linear infinite;
-  }
-
-  /* 档位刻痕：槽内竖向凹痕（暗上缘+亮下缘），已越过的在液柱上显白 */
+  /* 档位刻痕：槽内细竖痕，越过后在填充上显白 */
   .tick-notch {
     position: absolute;
     top: 50%;
@@ -292,100 +237,64 @@ const Wrapper = styled.div<{ $color: string }>`
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 2px;
-    height: 6px;
+    width: 1.5px;
+    height: 4px;
     border-radius: 1px;
     transform: translate(-50%, -50%);
-    background: color-mix(in srgb, var(--color-muted-foreground, #9ca3af) 55%, transparent);
-    box-shadow: 0 1px 0 var(--shadow-light);
+    background: color-mix(in srgb, var(--color-muted-foreground, #9ca3af) 45%, transparent);
     transition: background 0.2s;
   }
-  .tick-notch.passed::after {
-    background: rgba(255, 255, 255, 0.85);
-    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
-  }
+  .tick-notch.passed::after { background: rgba(255, 255, 255, 0.8); }
 
-  /* 旋钮：软凸起外壳 + 风险色内环 + 中心点，拟物件里的"实体旋钮" */
+  /* 旋钮：小而实的白色圆钮 + 风险色细环 */
   .thumb {
     position: absolute;
     top: 50%;
-    width: 24px;
-    height: 24px;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     transform: translate(-50%, -50%);
     background: var(--color-card, #fff);
+    border: 2px solid var(--risk);
     box-shadow:
-      3px 3px 6px var(--shadow-dark),
-      -3px -3px 6px var(--shadow-light),
-      inset 1px 1px 1px rgba(255, 255, 255, 0.6);
+      2px 2px 5px var(--shadow-dark),
+      -2px -2px 4px var(--shadow-light);
     cursor: grab;
     outline: none;
     z-index: 2;
-    transition:
-      left 0.22s cubic-bezier(0.34, 1.3, 0.64, 1),
-      scale 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
-      box-shadow 0.25s ease;
+    transition: left 0.18s ease-out, border-color 0.2s ease, transform 0.15s ease;
   }
-  .thumb::before {
-    content: '';
-    position: absolute;
-    inset: 4px;
-    border-radius: 50%;
-    border: 2px solid var(--risk);
-    transition: border-color 0.2s ease;
-  }
-  .thumb::after {
-    content: '';
-    position: absolute;
-    inset: 9px;
-    border-radius: 50%;
-    background: var(--risk);
-    transition: background 0.2s ease;
-  }
-  .thumb:hover { scale: 1.1; }
+  .thumb:hover { transform: translate(-50%, -50%) scale(1.12); }
   .thumb:focus-visible {
     box-shadow:
-      0 0 0 3px color-mix(in srgb, var(--risk) 35%, transparent),
-      3px 3px 6px var(--shadow-dark);
+      0 0 0 3px color-mix(in srgb, var(--risk) 30%, transparent),
+      2px 2px 5px var(--shadow-dark);
   }
-
   &.dragging .thumb {
     cursor: grabbing;
-    scale: 1.25;
-    box-shadow:
-      4px 4px 9px var(--shadow-dark),
-      -3px -3px 7px var(--shadow-light),
-      inset 1px 1px 1px rgba(255, 255, 255, 0.6);
-    transition-property: scale, box-shadow; /* 拖拽中 left 不过渡，跟手 */
+    transform: translate(-50%, -50%) scale(1.18);
+    transition-property: border-color, transform; /* 拖拽中 left 不过渡，跟手 */
   }
-  &.dragging .fill { transition: none; }
+  .thumb.at-max { border-color: ${LOSS}; }
 
-  .thumb.at-max::before { border-color: ${LOSS}; }
-  .thumb.at-max::after { background: ${LOSS}; }
-  .thumb.at-max { animation: lever-glow 1.1s ease-in-out infinite; }
-  .thumb.bounce { animation: lever-bounce 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), lever-glow 1.1s ease-in-out 0.5s infinite; }
-
-  /* 数值气泡：带指向箭头，风险色底 */
-  .bubble,
-  .max-chip {
+  /* 数值气泡：风险色底，带指向箭头；满档常驻显示 MAX */
+  .bubble {
     position: absolute;
-    bottom: calc(100% + 9px);
+    bottom: calc(100% + 8px);
     left: 50%;
     transform: translateX(-50%);
     padding: 2px 8px;
-    border-radius: 7px;
+    border-radius: 6px;
     font-size: 11px;
     font-weight: 800;
     line-height: 1.4;
     white-space: nowrap;
     color: #fff;
-    pointer-events: none;
-  }
-  .bubble {
     background: var(--risk);
-    box-shadow: 0 2px 6px color-mix(in srgb, var(--risk) 45%, transparent);
+    box-shadow: 0 2px 6px color-mix(in srgb, var(--risk) 40%, transparent);
     font-variant-numeric: tabular-nums;
-    animation: lever-pop 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+    pointer-events: none;
+    animation: lever-pop 0.16s ease-out;
   }
   .bubble::after {
     content: '';
@@ -396,47 +305,17 @@ const Wrapper = styled.div<{ $color: string }>`
     border: 4px solid transparent;
     border-top-color: var(--risk);
   }
-  .max-chip {
-    background: linear-gradient(135deg, ${LOSS}, ${MID});
+  .bubble.max {
+    background: ${LOSS};
     letter-spacing: 0.05em;
-    box-shadow: 0 2px 8px color-mix(in srgb, ${LOSS} 50%, transparent);
-    animation: lever-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
-  .max-chip::after {
-    content: '';
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    border: 4px solid transparent;
-    border-top-color: ${LOSS};
-  }
-
-  .burst {
-    position: absolute;
-    top: 50%;
-    width: 0;
-    height: 0;
-    z-index: 3;
-    pointer-events: none;
-  }
-  .spark {
-    position: absolute;
-    top: -2px;
-    left: -2px;
-    width: 5px;
-    height: 5px;
-    border-radius: 2px;
-    transform: rotate(var(--a)) translateX(0);
-    animation: lever-spark 0.65s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
-  }
+  .bubble.max::after { border-top-color: ${LOSS}; }
 
   .tick-labels {
     position: relative;
     height: 18px;
     margin-top: 3px;
   }
-  /* 标签与刻痕同一坐标系居中，不再对首末标签做特殊位移（对不齐正是廉价感来源之一） */
   .tick-label {
     position: absolute;
     top: 0;
@@ -461,27 +340,8 @@ const Wrapper = styled.div<{ $color: string }>`
     box-shadow: inset 1px 1px 2px var(--shadow-dark), inset -1px -1px 2px var(--shadow-light);
   }
 
-  @keyframes lever-shimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -100% 0; }
-  }
-  @keyframes lever-glow {
-    0%, 100% { box-shadow: 0 0 4px 1px color-mix(in srgb, ${LOSS} 45%, transparent), 3px 3px 6px var(--shadow-dark); }
-    50% { box-shadow: 0 0 12px 4px color-mix(in srgb, ${LOSS} 60%, transparent), 3px 3px 6px var(--shadow-dark); }
-  }
-  @keyframes lever-bounce {
-    0% { scale: 1; }
-    35% { scale: 1.55; }
-    65% { scale: 0.92; }
-    100% { scale: 1; }
-  }
   @keyframes lever-pop {
-    0% { transform: translateX(-50%) scale(0.4); opacity: 0; }
-    70% { transform: translateX(-50%) scale(1.12); opacity: 1; }
+    0% { transform: translateX(-50%) scale(0.5); opacity: 0; }
     100% { transform: translateX(-50%) scale(1); opacity: 1; }
-  }
-  @keyframes lever-spark {
-    0% { transform: rotate(var(--a)) translateX(2px) scale(1); opacity: 1; }
-    100% { transform: rotate(var(--a)) translateX(var(--d)) scale(0.25); opacity: 0; }
   }
 `;

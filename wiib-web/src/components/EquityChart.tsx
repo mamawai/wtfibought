@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts';
 import { useIsDark } from '../hooks/useIsDark';
 import { chartUi, cssVar, rgba } from '../lib/chartTheme';
+import { fmtDateTime } from '../lib/utils';
 import type { TnEquityPoint } from '../types/testnet';
 
 interface Props {
@@ -37,7 +38,7 @@ export function EquityChart({ points }: Props) {
           const p = params[0];
           const v = p.value[1] as number;
           const sign = v >= 0 ? '+' : '';
-          return `${new Date(p.value[0]).toLocaleString('zh-CN')}<br/><b>累计盈亏 ${sign}$${v.toFixed(2)}</b>`;
+          return `${fmtDateTime(p.value[0])}<br/><b>累计盈亏 ${sign}$${v.toFixed(2)}</b>`;
         },
       },
       xAxis: {

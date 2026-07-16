@@ -85,6 +85,12 @@ export function getCoinPriceDecimals(symbol?: string): number {
   return getCoin(symbol).priceDecimals ?? 2;
 }
 
+/** 最小价格步长（由 priceDecimals 推导）：2 位小数 → 0.01 */
+export function getCoinPriceStep(symbol?: string): number {
+  const d = getCoinPriceDecimals(symbol);
+  return Number((1 / 10 ** d).toFixed(d));
+}
+
 export function formatCoinPrice(symbol: string | undefined, value?: number | null): string {
   return fmtNum(value, getCoinPriceDecimals(symbol));
 }

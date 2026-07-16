@@ -1,0 +1,299 @@
+import { useEffect, useState } from 'react';
+import { Wallet, Scale, Flame } from 'lucide-react';
+import { futuresApi } from '../../api';
+import { useUserStore } from '../../stores/userStore';
+import { useToast } from '../ui/use-toast';
+import { CardContent } from '../ui/card';
+import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { FuturesActionButton } from '../FuturesActionButton';
+import { LeverageSlider } from '../LeverageSlider';
+import { HelpTip } from '../HelpTip';
+import { fmtNum } from '../../lib/utils';
+import { getCoin, getCoinPriceDecimals, getCoinPriceStep, formatCoinPrice } from '../../lib/coinConfig';
+import type { FuturesBracket, FuturesSLItem, FuturesTPItem } from '../../types';
+import { TradeModeSwitch } from './TradeModeSwitch';
+import { SLTPEditor } from './SLTPEditor';
+import { useQuantityAnimation } from './useQuantityAnimation';
+import {
+  POSITION_PCTS, FUTURES_LEVERAGE_OPTIONS, formatRate,
+  calcFuturesOpenEstimate, calcMaxAffordableMarginQty, estimateFuturesLiqPrice,
+  type SLTPRow,
+} from './futuresMath';
+
+/**
+ * 合约开仓面板：方向、市价/限价、杠杆、保证金数量、开仓止损/止盈、预估强平价。
+ * 状态全部内聚；开仓成功后调 onTraded 让父级刷新用户/仓位卡/订单表。
+ */
+export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange, onTraded }: {
+  symbol: string;
+  currentPrice: number;
+  brackets: FuturesBracket[] | undefined;
+  onModeChange: (m: 'spot' | 'futures') => void;
+  onTraded: () => void;
+}) {
+  const cfg = getCoin(symbol);
+  const MIN_QTY = cfg.minQty;
+  const PRICE_DECIMALS = getCoinPriceDecimals(symbol);
+  const PRICE_STEP = getCoinPriceStep(symbol);
+  const PRICE_STEP_TEXT = PRICE_STEP.toFixed(PRICE_DECIMALS);
+  const fmtPrice = (n?: number | null) => formatCoinPrice(symbol, n);
+  const maxLeverage = brackets?.[0]?.maxLeverage ?? 0;
+  const leverageOptions = FUTURES_LEVERAGE_OPTIONS.filter(lv => lv <= maxLeverage);
+
+  const { toast } = useToast();
+  const user = useUserStore(s => s.user);
+
+  const [side, setSide] = useState<'LONG' | 'SHORT'>('LONG');
+  const [leverage, setLeverage] = useState(10);
+  const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET');
+  const [quantity, setQuantity] = useState('');
+  const animateQuantity = useQuantityAnimation(quantity, setQuantity);
+  const [limitPrice, setLimitPrice] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [actionSuccess, setActionSuccess] = useState(false);
+  const [slEnabled, setSlEnabled] = useState(false);
+  const [slRows, setSlRows] = useState<SLTPRow[]>([{ price: '', quantity: '' }]);
+  const [tpEnabled, setTpEnabled] = useState(false);
+  const [tpRows, setTpRows] = useState<SLTPRow[]>([{ price: '', quantity: '' }]);
+
+  // 档位数据到位后收敛超限杠杆
+  useEffect(() => {
+    if (maxLeverage > 0) setLeverage(lv => Math.min(lv, maxLeverage));
+  }, [maxLeverage]);
+
+  useEffect(() => {
+    if (!actionSuccess) return;
+    const timer = window.setTimeout(() => setActionSuccess(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [actionSuccess]);
+
+  const handleSubmit = async () => {
+    const qty = parseFloat(quantity);
+    if (!qty || qty < MIN_QTY) { toast(`最小数量 ${MIN_QTY}`, 'error'); return; }
+    if (orderType === 'LIMIT') {
+      const lp = parseFloat(limitPrice);
+      if (!lp || lp <= 0) { toast('请输入有效限价', 'error'); return; }
+    }
+    const orderQty = qty * leverage;
+    const slItems: FuturesSLItem[] = slEnabled
+      ? slRows.filter(r => parseFloat(r.price) > 0 && parseFloat(r.quantity) > 0).map(r => ({ price: parseFloat(r.price), quantity: parseFloat(r.quantity) }))
+      : [];
+    const tpItems: FuturesTPItem[] = tpEnabled
+      ? tpRows.filter(r => parseFloat(r.price) > 0 && parseFloat(r.quantity) > 0).map(r => ({ price: parseFloat(r.price), quantity: parseFloat(r.quantity) }))
+      : [];
+    const slTotal = slItems.reduce((s, r) => s + r.quantity, 0);
+    const tpTotal = tpItems.reduce((s, r) => s + r.quantity, 0);
+    if (slTotal > orderQty + 1e-9) { toast('止损总量超过开仓数量', 'error'); return; }
+    if (tpTotal > orderQty + 1e-9) { toast('止盈总量超过开仓数量', 'error'); return; }
+    setSubmitting(true);
+    try {
+      await futuresApi.open({
+        symbol,
+        side,
+        quantity: orderQty,
+        leverage,
+        orderType,
+        ...(orderType === 'LIMIT' ? { limitPrice: parseFloat(limitPrice) } : {}),
+        ...(slItems.length > 0 ? { stopLosses: slItems } : {}),
+        ...(tpItems.length > 0 ? { takeProfits: tpItems } : {}),
+      });
+      setActionSuccess(true);
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      toast(`${side === 'LONG' ? '做多' : '做空'}开仓成功`, 'success');
+      setQuantity(String(MIN_QTY));
+      setLimitPrice('');
+      setSlEnabled(false);
+      setSlRows([{ price: '', quantity: '' }]);
+      setTpEnabled(false);
+      setTpRows([{ price: '', quantity: '' }]);
+      onTraded();
+    } catch (e: unknown) {
+      toast((e as Error).message || '开仓失败', 'error');
+    } finally { setSubmitting(false); }
+  };
+
+  // 预估
+  const qtyNum = parseFloat(quantity) || 0;
+  const priceForCalc = orderType === 'LIMIT' ? (parseFloat(limitPrice) || 0) : currentPrice;
+  const openEstimate = qtyNum > 0 && priceForCalc > 0
+    ? calcFuturesOpenEstimate(qtyNum, priceForCalc, leverage)
+    : null;
+  const openLiqPrice = openEstimate
+    ? estimateFuturesLiqPrice(brackets, side, priceForCalc, openEstimate.margin, openEstimate.orderQty)?.price
+    : undefined;
+
+  return (
+    <>
+      {/* 做多/做空切换 + 现货/合约 + 爆仓 */}
+      <div className="px-5 pt-5 flex flex-wrap items-center gap-3">
+        <div className="flex flex-1 min-w-[140px] rounded-xl bg-card overflow-hidden neu-raised">
+          <button onClick={() => setSide('LONG')} className={`flex-1 py-2.5 text-sm font-black border-r border-border transition-colors ${side === 'LONG' ? 'bg-gain text-white' : 'bg-card text-foreground hover:bg-surface-hover'}`}>做多</button>
+          <button onClick={() => setSide('SHORT')} className={`flex-1 py-2.5 text-sm font-black transition-colors ${side === 'SHORT' ? 'bg-loss text-white' : 'bg-card text-foreground hover:bg-surface-hover'}`}>做空</button>
+        </div>
+        <TradeModeSwitch mode="futures" futuresOnly={cfg.futuresOnly} onModeChange={onModeChange} />
+      </div>
+
+      <CardContent className="p-5 space-y-6 mt-2">
+        {/* 执行方式 */}
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg overflow-hidden neu-raised-sm">
+            <button onClick={() => setOrderType('MARKET')} className={`px-4 py-1.5 text-xs font-bold transition-colors ${orderType === 'MARKET' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-surface-hover'}`}>市价</button>
+            <button onClick={() => setOrderType('LIMIT')} className={`px-4 py-1.5 text-xs font-bold border-l border-border transition-colors ${orderType === 'LIMIT' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-surface-hover'}`}>限价</button>
+          </div>
+        </div>
+
+        {/* 限价输入 */}
+        {orderType === 'LIMIT' && (
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-muted-foreground">限价 (USDT)</label>
+            <Input type="number" placeholder="输入限价" value={limitPrice} onChange={e => setLimitPrice(e.target.value)} step={PRICE_STEP_TEXT} min="0" />
+            {parseFloat(limitPrice) > 0 && currentPrice > 0 && (
+              (side === 'LONG' && parseFloat(limitPrice) >= currentPrice) ||
+              (side === 'SHORT' && parseFloat(limitPrice) <= currentPrice)
+            ) && (
+              <div className="text-[10px] text-yellow-500">限价{side === 'LONG' ? '≥' : '≤'}当前价，将立即以市价成交</div>
+            )}
+          </div>
+        )}
+
+        {/* 杠杆选择 */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
+              <Scale className="w-3.5 h-3.5" /> 杠杆
+            </label>
+            <div className="px-2 py-0.5 rounded bg-primary/10 text-primary text-xs font-bold tabular-nums">{leverage}x</div>
+          </div>
+          <LeverageSlider
+            value={leverage}
+            max={maxLeverage}
+            ticks={leverageOptions}
+            onChange={setLeverage}
+          />
+          <div className="text-[10px] text-muted-foreground leading-relaxed">
+            当前币种最高 {maxLeverage}x，实际 MMR 按仓位名义价值档位计算
+          </div>
+        </div>
+
+        {/* 保证金数量 */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
+              <Wallet className="w-3.5 h-3.5" /> 保证金
+            </label>
+            {user && (
+              <span className="text-xs text-muted-foreground tabular-nums">
+                可用 {fmtNum(user.balance)} USDT
+              </span>
+            )}
+          </div>
+          <div className="relative">
+            <Input type="number" placeholder={String(MIN_QTY)} value={quantity} onChange={e => setQuantity(e.target.value)} step={String(MIN_QTY)} min={MIN_QTY} className="pr-16" />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">{cfg.name}</span>
+          </div>
+          {priceForCalc > 0 && (
+            <div className="grid grid-cols-4 gap-1.5">
+              {POSITION_PCTS.map(pct => {
+                const handlePct = () => {
+                  const balance = user?.balance ?? 0;
+                  const qty = calcMaxAffordableMarginQty(balance, pct, priceForCalc, leverage, MIN_QTY);
+                  if (qty > 0) animateQuantity(qty, MIN_QTY); else setQuantity('');
+                };
+                return (
+                  <Button key={pct} size="sm" variant="outline" className="h-7 text-[11px]" onClick={handlePct}>
+                    {pct * 100}%
+                  </Button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 预估信息 */}
+        {openEstimate && (() => {
+          const { orderQty, positionValue, margin, commission, totalCost } = openEstimate;
+          const liq = estimateFuturesLiqPrice(brackets, side, priceForCalc, margin, orderQty);
+          const liqPriceText = liq && liq.price > 0 ? `$${fmtPrice(liq.price)}` : '—';
+          const mmrText = liq ? `档位 ${liq.bracket.tier} / ${formatRate(liq.bracket.mmr)}` : '—';
+          return (
+            <div className="p-3.5 rounded-xl neu-inset space-y-2.5">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">仓位价值</span>
+                  <span className="font-mono">${fmtNum(positionValue)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">保证金</span>
+                  <span className="font-mono">${fmtNum(margin)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">手续费 (0.04%)</span>
+                  <span className="font-mono">${fmtNum(commission)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">维持保证金率</span>
+                  <span className="font-mono">{mmrText}</span>
+                </div>
+              </div>
+              <div className="flex justify-between items-center text-xs pt-2 border-t border-border/40">
+                <span className="text-muted-foreground flex items-center gap-1">
+                  <Flame className="w-3 h-3 text-yellow-500" /> 预估强平价
+                </span>
+                <span className="font-mono font-bold text-yellow-500">{liqPriceText}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-muted-foreground">合计需要</span>
+                <span className="text-sm font-bold tabular-nums">${fmtNum(totalCost)}</span>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* 开仓止损/止盈 */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-muted-foreground flex items-center gap-1">止损 <HelpTip text="标记价格触及止损价时自动平仓对应数量，可设多档分批止损" /></label>
+              <button type="button" onClick={() => { setSlEnabled(!slEnabled); setSlRows([{ price: '', quantity: '' }]); }}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${slEnabled ? 'bg-primary' : 'bg-muted-foreground/30'}`}>
+                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-background transition-transform shadow-sm ${slEnabled ? 'translate-x-4.5' : 'translate-x-0.75'}`} />
+              </button>
+            </div>
+            {slEnabled && (
+              <SLTPEditor rows={slRows} onChange={setSlRows} label="止损" posQty={qtyNum * leverage} minQty={MIN_QTY}
+                currentPrice={priceForCalc || currentPrice} side={side}
+                liquidationPrice={openLiqPrice}
+                minPriceStep={PRICE_STEP} priceFormatter={fmtPrice} />
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-muted-foreground flex items-center gap-1">止盈 <HelpTip text="现价触及止盈价时自动平仓对应数量，可设多档分批止盈" /></label>
+              <button type="button" onClick={() => { setTpEnabled(!tpEnabled); setTpRows([{ price: '', quantity: '' }]); }}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${tpEnabled ? 'bg-primary' : 'bg-muted-foreground/30'}`}>
+                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-background transition-transform shadow-sm ${tpEnabled ? 'translate-x-4.5' : 'translate-x-0.75'}`} />
+              </button>
+            </div>
+            {tpEnabled && (
+              <SLTPEditor rows={tpRows} onChange={setTpRows} label="止盈" posQty={qtyNum * leverage} minQty={MIN_QTY}
+                currentPrice={priceForCalc || currentPrice} side={side}
+                minPriceStep={PRICE_STEP} priceFormatter={fmtPrice} />
+            )}
+          </div>
+        </div>
+
+        {/* 开仓按钮 */}
+        <FuturesActionButton
+          className="mt-2"
+          onClick={handleSubmit}
+          disabled={submitting || currentPrice <= 0}
+          loading={submitting}
+          success={actionSuccess}
+          side={side}
+          leverage={leverage}
+        />
+      </CardContent>
+    </>
+  );
+}

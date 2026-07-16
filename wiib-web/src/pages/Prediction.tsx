@@ -1,4 +1,4 @@
-import { fmtNum } from '../lib/utils';
+import { fmtNum, fmtDateTime, fmtTime } from '../lib/utils';
 import { HelpTip } from '../components/HelpTip';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import * as echarts from 'echarts';
@@ -82,11 +82,6 @@ function RollingNumber({ value, className }: { value: string; className?: string
       {state.chars.map((c, i) => <RollingChar key={i} char={c.char} direction={c.dir} />)}
     </span>
   );
-}
-
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
 function fmtCountdown(sec: number): string {
@@ -259,7 +254,7 @@ export function Prediction() {
       tooltip: { trigger: 'axis', formatter: (p: unknown) => {
         const arr = p as { data: [number, number] }[];
         if (!arr?.[0]) return '';
-        return `${formatTime(arr[0].data[0])}<br/><b>$${fmtNum(arr[0].data[1])}</b>`;
+        return `${fmtTime(arr[0].data[0], true)}<br/><b>$${fmtNum(arr[0].data[1])}</b>`;
       }},
     }, false);
   }, [priceHistory, round?.startPrice, isDark]);
@@ -600,8 +595,7 @@ export function Prediction() {
                 {bets.map(b => {
                   const ws = b.windowStart;
                   const timeRange = ws ? (() => {
-                    const fmt = (ts: number) => new Date(ts * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-                    return `${fmt(ws)} - ${fmt(ws + WINDOW_SECONDS)}`;
+                    return `${fmtTime(ws * 1000)} - ${fmtTime((ws + WINDOW_SECONDS) * 1000)}`;
                   })() : '';
                   return (
                   <div key={b.id} className="flex items-center gap-3 text-xs py-2.5 px-3 rounded-lg hover:bg-muted/40 transition-colors">
@@ -650,7 +644,7 @@ export function Prediction() {
                 {rounds.map(r => (
                   <div key={r.id} className="flex items-center gap-3 text-xs py-2.5 px-3 rounded-lg hover:bg-muted/40 transition-colors">
                     <span className="text-muted-foreground font-mono tabular-nums text-[11px]">
-                      {r.windowStart ? new Date(r.windowStart * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '--'}
+                      {r.windowStart ? fmtDateTime(r.windowStart * 1000) : '--'}
                     </span>
                     <span className="text-muted-foreground">&rarr;</span>
                     <span className="font-mono tabular-nums">${fmtNum(r.startPrice)}</span>

@@ -1,4 +1,4 @@
-import { fmtNum } from '../lib/utils';
+import { fmtNum, fmtDateTime } from '../lib/utils';
 import { useEffect, useRef } from 'react';
 import {
   createChart, CrosshairMode,
@@ -12,11 +12,10 @@ import { getCoinPriceDecimals } from '../lib/coinConfig';
 /** 一根 K：series 只用 OHLC，量/额留给气泡和成交量柱。 */
 interface Bar { time: number; openMs: number; open: number; high: number; low: number; close: number; volume: number; quote: number; }
 
-const TZ = new Date().getTimezoneOffset() * 60;             // 本地时区偏移(秒)：横轴显示本地时间且边界对齐
+const TZ = -8 * 3600;                                       // 固定 UTC+8 偏移(秒)：横轴统一显示新加坡时间且边界对齐
 const toBarTime = (ms: number) => Math.floor(ms / 1000) - TZ;
 const barDate = (t: number) => new Date((t + TZ) * 1000);   // 反算真实时刻用于格式化
 const fmtVol = (n: number) => n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(2) + 'K' : n.toFixed(2);
-const pad = (n: number) => String(n).padStart(2, '0');
 const VOL_UP = 'rgba(38,166,154,.5)', VOL_DOWN = 'rgba(239,83,80,.5)';
 
 /** 气泡 HTML（固定深色，亮/暗主题下都清晰）：时间·开高低收·涨跌·涨跌幅·振幅·量·额。 */
@@ -27,8 +26,7 @@ function tooltipHtml(bar: Bar, bars: Bar[], idx: Map<number, number>, d: number,
   const chgPct = prevClose ? chg / prevClose * 100 : 0;
   const amp = prevClose ? (bar.high - bar.low) / prevClose * 100 : 0;
   const up = chg >= 0, col = up ? '#26a69a' : '#ef5350', sign = up ? '+' : '';
-  const dt = barDate(bar.time);
-  const tStr = `${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+  const tStr = fmtDateTime(barDate(bar.time));
   const row = (k: string, v: string, c = '#d1d4dc') =>
     `<div style="display:flex;justify-content:space-between;gap:18px"><span style="color:#6b7280">${k}</span><span style="color:${c};font-weight:700">${v}</span></div>`;
   return `<div style="color:#9ca3af;font-weight:700;margin-bottom:5px;padding-bottom:5px;border-bottom:1px solid #2a2e3a">${tStr}</div>`
@@ -39,10 +37,12 @@ function tooltipHtml(bar: Bar, bars: Bar[], idx: Map<number, number>, d: number,
 }
 
 /**
- * 合约实时蜡烛图 + 成交量柱 + 悬停气泡。
- * 历史走 REST(含量/额)，当前根走 {@link useKlineStream}(后端实时广播 o/h/l/c/v/q)。仅合约。
+ * 实时蜡烛图 + 成交量柱 + 悬停气泡。
+ * 历史走 REST(含量/额)；当前根两种驱动二选一：
+ * - streamLive=true（默认，合约）：走 {@link useKlineStream}(后端实时广播 o/h/l/c/v/q)
+ * - streamLive=false（现货/bstock，后端不广播其K线）：由外部 tick(价格流)更新最后一根的 c/h/l
  */
-export function CandleChart({ symbol, interval, limit = 300, klinesFn = futuresApi.klines }: { symbol: string; interval: '5m' | '15m'; limit?: number; klinesFn?: (symbol: string, interval: string, limit: number) => Promise<number[][]> }) {
+export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, klinesFn = futuresApi.klines, streamLive = true, tick = null }: { symbol: string; interval: '5m' | '15m'; limit?: number; visibleBars?: number; klinesFn?: (symbol: string, interval: string, limit: number) => Promise<number[][]>; streamLive?: boolean; tick?: { price: number; ts: number } | null }) {
   const isDark = useIsDark();
   const wrapRef = useRef<HTMLDivElement>(null);
   const chartDivRef = useRef<HTMLDivElement>(null);
@@ -125,7 +125,12 @@ export function CandleChart({ symbol, interval, limit = 300, klinesFn = futuresA
       barsRef.current = bars; idxRef.current = idx;
       candle.setData(bars.map(b => ({ time: b.time as UTCTimestamp, open: b.open, high: b.high, low: b.low, close: b.close })));
       vol.setData(bars.map(b => ({ time: b.time as UTCTimestamp, value: b.volume, color: b.close >= b.open ? VOL_UP : VOL_DOWN })));
-      chart.timeScale().fitContent();
+      // 默认只看最近 visibleBars 根（fitContent 会把全量挤进视口，蜡烛小成一条线）；往左拖/缩放仍可看全历史
+      if (bars.length > visibleBars) {
+        chart.timeScale().setVisibleLogicalRange({ from: bars.length - visibleBars, to: bars.length + 5 });
+      } else {
+        chart.timeScale().fitContent();
+      }
       readyRef.current = true;
     }).catch(() => { /* 历史失败仍可靠实时累积 */ });
 
@@ -137,7 +142,7 @@ export function CandleChart({ symbol, interval, limit = 300, klinesFn = futuresA
       chartRef.current = null; candleRef.current = null; volRef.current = null;
       readyRef.current = false; barsRef.current = []; idxRef.current = new Map();
     };
-  }, [symbol, interval, limit, decimals, klinesFn]);
+  }, [symbol, interval, limit, visibleBars, decimals, klinesFn]);
 
   // 主题切换：只改颜色，不重建
   useEffect(() => {
@@ -150,9 +155,34 @@ export function CandleChart({ symbol, interval, limit = 300, klinesFn = futuresA
     });
   }, [isDark]);
 
+  // 外部价格 tick 驱动（streamLive=false）：桶对齐后更新/追加最后一根，量额保持历史值（价格流无量数据）
+  useEffect(() => {
+    if (streamLive || !tick || tick.price <= 0 || !readyRef.current) return;
+    const candle = candleRef.current, vol = volRef.current; if (!candle || !vol) return;
+    const bucketMs = interval === '5m' ? 300_000 : 900_000;
+    const openMs = Math.floor(tick.ts / bucketMs) * bucketMs;
+    const time = toBarTime(openMs);
+    const last = barsRef.current[barsRef.current.length - 1];
+    if (last && time < last.time) return;
+    const i = idxRef.current.get(time);
+    let bar: Bar;
+    if (i == null) {
+      bar = { time, openMs, open: tick.price, high: tick.price, low: tick.price, close: tick.price, volume: 0, quote: 0 };
+      idxRef.current.set(time, barsRef.current.length);
+      barsRef.current.push(bar);
+    } else {
+      const prev = barsRef.current[i];
+      bar = { ...prev, close: tick.price, high: Math.max(prev.high, tick.price), low: Math.min(prev.low, tick.price) };
+      barsRef.current[i] = bar;
+    }
+    candle.update({ time: bar.time as UTCTimestamp, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
+    vol.update({ time: bar.time as UTCTimestamp, value: bar.volume, color: bar.close >= bar.open ? VOL_UP : VOL_DOWN });
+    if (hoverRef.current.time === bar.time) showTipRef.current(bar, hoverRef.current.x, hoverRef.current.y);
+  }, [tick, streamLive, interval]);
+
   // 实时：当前根原地更新（蜡烛 + 量柱 + 悬停时刷新气泡）
   useEffect(() => {
-    if (!live || !readyRef.current) return;
+    if (!streamLive || !live || !readyRef.current) return;
     const candle = candleRef.current, vol = volRef.current; if (!candle || !vol) return;
     const time = toBarTime(live.t);
     // 防乱序：忽略比最后一根更早的(重连/迟到)消息，否则 LWC update(time<lastTime) 会抛异常
@@ -165,7 +195,7 @@ export function CandleChart({ symbol, interval, limit = 300, klinesFn = futuresA
     candle.update({ time: time as UTCTimestamp, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
     vol.update({ time: time as UTCTimestamp, value: bar.volume, color: bar.close >= bar.open ? VOL_UP : VOL_DOWN });
     if (hoverRef.current.time === time) showTipRef.current(bar, hoverRef.current.x, hoverRef.current.y);
-  }, [live]);
+  }, [live, streamLive]);
 
   return (
     <div ref={wrapRef} className="relative w-full h-full">

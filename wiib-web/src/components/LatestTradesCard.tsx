@@ -1,6 +1,7 @@
 import { Activity, Bot } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Skeleton } from './ui/skeleton';
+import { fmtDateTime, fmtMoney } from '../lib/utils';
 
 export interface TradeItem {
   id: string;
@@ -18,16 +19,6 @@ export interface TradeItem {
 interface Props {
   trades: TradeItem[];
   loading: boolean;
-}
-
-function formatTime(dateStr: string) {
-  const d = new Date(dateStr);
-  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-function formatAmount(n?: number) {
-  if (!n) return '-';
-  return n >= 10000 ? `${(n / 10000).toFixed(2)}万` : n.toFixed(2);
 }
 
 export function LatestTradesCard({ trades, loading }: Props) {
@@ -71,8 +62,8 @@ export function LatestTradesCard({ trades, loading }: Props) {
                     <span className="text-muted-foreground text-xs">{t.quantity}{t.unit}</span>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
-                    <span className="text-muted-foreground text-xs">{formatAmount(t.filledAmount)}</span>
-                    <span className="text-muted-foreground text-xs w-14 text-right">{formatTime(t.createdAt)}</span>
+                    <span className="text-muted-foreground text-xs">{t.filledAmount ? fmtMoney(t.filledAmount) : '-'}</span>
+                    <span className="text-muted-foreground text-xs w-14 text-right">{fmtDateTime(t.createdAt)}</span>
                   </div>
                 </div>
               );
