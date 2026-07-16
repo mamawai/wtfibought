@@ -9,7 +9,10 @@ import java.util.List;
 public record OverviewView(
         AccountView account,
         List<PositionView> positions,
-        List<OpenOrderView> openOrders) {
+        List<OpenOrderView> openOrders,
+        // 当前策略执行目标（sim|testnet）：target=sim 时本看板是停更的历史轨，前端据此挂横幅，
+        // 免得拿 testnet 旧交易去对"策略账户"页的 sim 记录（两轨本就不该一致）
+        String executionTarget) {
 
     /** 账户资金快照（GET /fapi/v3/account）。 */
     public record AccountView(

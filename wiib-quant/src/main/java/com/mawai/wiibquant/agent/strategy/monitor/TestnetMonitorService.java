@@ -16,6 +16,7 @@ import com.mawai.wiibquant.agent.strategy.monitor.dto.OverviewView.OpenOrderView
 import com.mawai.wiibquant.agent.strategy.monitor.dto.OverviewView.PositionView;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -48,6 +49,10 @@ public class TestnetMonitorService {
     private final BinanceFuturesTestnetClient client;
     private final BinanceFuturesTestnetProperties props;
 
+    /** 当前执行目标（sim|testnet）：随 overview 透传给前端，target=sim 时看板明示"历史轨已停更"。 */
+    @Value("${strategy.execution.target:testnet}")
+    private String executionTarget;
+
     // ==================== 实时总览 ====================
 
     /** 账户 + 持仓 + 挂单当下快照。未配置/异常时返回空结构（看板显示空态，不崩）。 */
@@ -69,10 +74,10 @@ public class TestnetMonitorService {
                         o.getSymbol(), o.getOrderId(), o.getClientOrderId(), o.getSide(), o.getType(),
                         o.getPrice(), o.getStopPrice(), o.getOrigQty(), o.getStatus(), o.getTime())));
             }
-            return new OverviewView(account, positions, openOrders);
+            return new OverviewView(account, positions, openOrders, executionTarget);
         } catch (Exception e) {
             log.warn("[TestnetMonitor] overview 失败（key未配置或网络）: {}", e.toString());
-            return new OverviewView(new AccountView(null, null, null, null), List.of(), List.of());
+            return new OverviewView(new AccountView(null, null, null, null), List.of(), List.of(), executionTarget);
         }
     }
 

@@ -40,6 +40,8 @@ export interface TnOverview {
   account: TnAccount;
   positions: TnPosition[];
   openOrders: TnOpenOrder[];
+  /** 当前策略执行目标（sim|testnet）：sim 时本看板为停更历史轨 */
+  executionTarget: string | null;
 }
 
 /** 一笔真实成交（fill）。 */

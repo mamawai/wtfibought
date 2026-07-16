@@ -358,7 +358,7 @@ export function TestnetMonitor() {
           </div>
           <div>
             <h1 className="text-xl font-black tracking-tight">模拟盘监测</h1>
-            <p className="text-[11px] text-muted-foreground">Binance Testnet · Fibo 策略实盘验证 · 真实盘口撮合</p>
+            <p className="text-[11px] text-muted-foreground">Binance Testnet · 策略实盘验证轨 · 真实盘口撮合</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -377,6 +377,18 @@ export function TestnetMonitor() {
           </button>
         </div>
       </div>
+
+      {/* 历史轨横幅：执行目标已切 sim 时明示——本页旧交易与"策略账户"页 sim 记录不一致属预期 */}
+      {overview?.executionTarget === 'sim' && (
+        <div className="rounded-xl neu-flat px-4 py-3 text-xs leading-relaxed border-l-4 border-l-warning">
+          <span className="font-black text-warning">Testnet 轨已停用：</span>
+          <span className="text-muted-foreground">
+            策略执行目标当前为本平台模拟盘（sim），本页展示的是切换前 Binance Testnet 的历史交易，不再产生新记录，
+            与「策略账户」页的记录不一致属正常。最新策略交易请看
+          </span>
+          <a href="/strategies" className="font-bold text-primary hover:underline ml-1">策略账户 →</a>
+        </div>
+      )}
 
       {/* 接口自检面板（仅 admin=1 可见；后端再做一次 admin 门控） */}
       {user?.id === 1 && <ManualTradePanel onDone={load} />}
