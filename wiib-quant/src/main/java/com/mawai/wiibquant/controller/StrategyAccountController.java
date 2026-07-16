@@ -3,6 +3,8 @@ package com.mawai.wiibquant.controller;
 import cn.dev33.satoken.stp.StpUtil;
 import com.mawai.wiibcommon.annotation.RequireAdmin;
 import com.mawai.wiibcommon.util.Result;
+import com.mawai.wiibquant.agent.strategy.core.StrategyRuntime;
+import com.mawai.wiibquant.agent.strategy.core.StrategySignalState;
 import com.mawai.wiibquant.agent.strategy.monitor.StrategyAccountService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -33,6 +35,7 @@ import java.util.List;
 public class StrategyAccountController {
 
     private final StrategyAccountService strategyAccountService;
+    private final StrategyRuntime strategyRuntime;
 
     @Data
     public static class ClosePositionRequest {
@@ -44,6 +47,13 @@ public class StrategyAccountController {
     public Result<List<StrategyAccountService.StrategyAccountView>> overview() {
         StpUtil.checkLogin();
         return Result.ok(strategyAccountService.overview());
+    }
+
+    @GetMapping("/signals")
+    @Operation(summary = "各策略×币种实时信号状态快照（通道位置/压缩计数/签名命中等）")
+    public Result<List<StrategySignalState>> signals() {
+        StpUtil.checkLogin();
+        return Result.ok(strategyRuntime.signalStates());
     }
 
     @PostMapping("/{strategyId}/close")

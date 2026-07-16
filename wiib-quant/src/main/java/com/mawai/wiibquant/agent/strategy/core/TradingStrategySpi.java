@@ -37,4 +37,12 @@ public interface TradingStrategySpi {
     default void onPositionBarClosed(String symbol, FuturesPositionDTO position,
                                      StrategyMarketView view, TradingOperations tools) {
     }
+
+    /**
+     * 监控快照：当前信号内部状态（如通道位置、压缩计数、距触发差距），给策略页证明"策略在跑"。
+     * 只读 view、不许有副作用；默认 null = 不支持展示。
+     */
+    default StrategySignalState signalState(String symbol, StrategyMarketView view) {
+        return null;
+    }
 }

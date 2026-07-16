@@ -5,6 +5,7 @@ import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibquant.agent.strategy.core.StrategyMarketView;
 import com.mawai.wiibquant.agent.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibquant.agent.strategy.core.StrategySignal;
+import com.mawai.wiibquant.agent.strategy.core.StrategySignalState;
 import com.mawai.wiibquant.agent.strategy.core.TradingOperations;
 import com.mawai.wiibquant.agent.strategy.core.TradingStrategySpi;
 
@@ -125,6 +126,59 @@ public final class LiqFadeStrategy implements TradingStrategySpi {
         if (view.nowMs() - openedMs >= (long) params.holdBars() * BASE) {
             tools.closePositionWithReason(position.getId(), position.getQuantity(), "TIME_EXIT");
         }
+    }
+
+    /** 监控快照：三签名各自当前值 vs 门限 + 冷却状态。与 onBarClosed 同口径计算，仅展示不落状态。 */
+    @Override
+    public StrategySignalState signalState(String symbol, StrategyMarketView view) {
+        LiqFadeParams.CoinGate gate = params.gates().get(symbol);
+        if (gate == null) {
+            return new StrategySignalState(ID, symbol, "该币未配置门限", StrategySignalState.kv());
+        }
+        List<KlineBar> bars = view.closedBars(BASE, params.flushBars() + 1);
+        if (bars.size() < params.flushBars() + 1) {
+            return new StrategySignalState(ID, symbol, "攒历史数据中",
+                    StrategySignalState.kv("5m桶", bars.size() + " / " + (params.flushBars() + 1)));
+        }
+        KlineBar first = bars.getFirst();
+        KlineBar last = bars.getLast();
+
+        double basePx = first.close().doubleValue();
+        double flushRet = basePx > 0 ? last.close().doubleValue() / basePx - 1 : Double.NaN;
+        boolean flushHit = flushRet <= gate.flushLe();
+        double prem = sideData.premiumAt(symbol, last.closeTime());
+        boolean premHit = prem <= gate.premLe();
+        double sellShare = sellShare15(symbol, bars);
+        boolean takerHit = sellShare >= gate.sellGe();
+        int flags = (flushHit ? 1 : 0) + (premHit ? 1 : 0) + (takerHit ? 1 : 0);
+
+        long cooldownLeftMin = 0;
+        Long lastFire = lastFireCloseTime.get(symbol);
+        if (lastFire != null) {
+            long elapsed = last.closeTime() - lastFire;
+            long total = (long) params.cooldownBars() * BASE;
+            if (elapsed > 0 && elapsed < total) cooldownLeftMin = (total - elapsed) / 60_000;
+        }
+
+        String state = cooldownLeftMin > 0 ? "冷却中（剩 " + cooldownLeftMin + " 分钟）"
+                : flags >= params.minFlags() ? "签名达标，下根 5m 开盘接多"
+                : "监听强平瀑布中（" + flags + "/" + params.minFlags() + " 签名命中）";
+        return new StrategySignalState(ID, symbol, state, StrategySignalState.kv(
+                "15m滚动收益", pct(flushRet) + " / 需≤" + pct(gate.flushLe()) + (flushHit ? " ✓" : ""),
+                "perp折价", bp(prem) + " / 需≤" + bp(gate.premLe()) + (premHit ? " ✓" : ""),
+                "taker卖占比", ratio(sellShare) + " / 需≥" + ratio(gate.sellGe()) + (takerHit ? " ✓" : "")));
+    }
+
+    private static String pct(double v) {
+        return Double.isNaN(v) ? "无数据" : String.format(Locale.ROOT, "%.2f%%", v * 100);
+    }
+
+    private static String bp(double v) {
+        return Double.isNaN(v) ? "无数据" : String.format(Locale.ROOT, "%.1fbp", v * 10_000);
+    }
+
+    private static String ratio(double v) {
+        return Double.isNaN(v) ? "无数据" : String.format(Locale.ROOT, "%.3f", v);
     }
 
     /** 15m 量加权卖占比 = 1 - Σtaker买量/Σ总量，窗口为最后 flushBars 根；任一根缺 taker 数据 → NaN。 */

@@ -5,6 +5,7 @@ import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibquant.agent.strategy.core.StrategyMarketView;
 import com.mawai.wiibquant.agent.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibquant.agent.strategy.core.StrategySignal;
+import com.mawai.wiibquant.agent.strategy.core.StrategySignalState;
 import com.mawai.wiibquant.agent.strategy.core.SwingDetector;
 import com.mawai.wiibquant.agent.strategy.core.TradingOperations;
 import com.mawai.wiibquant.agent.strategy.core.TradingStrategySpi;
@@ -129,6 +130,41 @@ public final class TurtleStrategy implements TradingStrategySpi {
         if (exit) {
             tools.closePositionWithReason(position.getId(), position.getQuantity(), "CHANNEL_EXIT");
         }
+    }
+
+    /** 监控快照：通道位置与现价差距。与 stopEntrySignal 同口径（通道=最近 entryLookback 根已闭合桶极值）。 */
+    @Override
+    public StrategySignalState signalState(String symbol, StrategyMarketView view) {
+        int tfHours = (int) (params.decisionTfMillis() / 3_600_000L);
+        int need = Math.max(params.entryLookback(), params.atrPeriod() + 1);
+        List<KlineBar> buckets = view.closedBars(params.decisionTfMillis(), need);
+        if (buckets.size() < need) {
+            return new StrategySignalState(ID, symbol, "攒历史数据中",
+                    StrategySignalState.kv(tfHours + "H桶", buckets.size() + " / " + need));
+        }
+        List<KlineBar> history = buckets.subList(buckets.size() - params.entryLookback(), buckets.size());
+        BigDecimal upper = maxHigh(history);
+        BigDecimal lower = minLow(history);
+        List<KlineBar> base = view.closedBars(StrategyMarketView.BASE_INTERVAL_MILLIS, 1);
+        BigDecimal close = base.isEmpty() ? buckets.getLast().close() : base.getLast().close();
+        double px = close.doubleValue();
+        // 距上轨为正=还差多少涨幅触发做多；距下轨为负=还差多少跌幅触发做空
+        double upGap = (upper.doubleValue() - px) / px * 100;
+        double dnGap = (lower.doubleValue() - px) / px * 100;
+        boolean nearLong = upper.subtract(close).abs().compareTo(close.subtract(lower).abs()) <= 0;
+        String state = params.stopEntry()
+                ? "触价单挂" + (nearLong ? "上轨(等突破做多)" : "下轨(等跌破做空)")
+                : "等" + tfHours + "H收盘突破通道";
+        return new StrategySignalState(ID, symbol, state, StrategySignalState.kv(
+                "上轨·" + params.entryLookback() + "桶最高", plain(upper),
+                "下轨·" + params.entryLookback() + "桶最低", plain(lower),
+                "现价", plain(close),
+                "距上轨", String.format(Locale.ROOT, "%+.2f%%", upGap),
+                "距下轨", String.format(Locale.ROOT, "%+.2f%%", dnGap)));
+    }
+
+    private static String plain(BigDecimal v) {
+        return v.stripTrailingZeros().toPlainString();
     }
 
     private StrategySignal signal(String symbol, boolean isLong, BigDecimal entryRef,

@@ -13,6 +13,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -97,6 +98,32 @@ public class StrategyRuntime {
         } catch (Exception e) {
             log.warn("[StrategyRuntime] evaluate失败 symbol={} msg={}", symbol, e.getMessage());
         }
+    }
+
+    /**
+     * 监控页信号快照：enabled 策略 × 各自币篮全量。view 惰性 seed 与 evaluate 同源；
+     * 快照在 view 锁内执行，避开 5m 收盘并发写窗口。
+     */
+    public List<StrategySignalState> signalStates() {
+        if (!enabled) return List.of();
+        Set<String> ids = enabledIdSet();
+        List<StrategySignalState> out = new ArrayList<>();
+        for (TradingStrategySpi strategy : strategies) {
+            if (!ids.contains(strategy.id().toUpperCase(Locale.ROOT))) continue;
+            for (String symbol : strategy.symbols()) {
+                try {
+                    WindowedMarketView view = views.computeIfAbsent(symbol, this::seedView);
+                    synchronized (view) {
+                        StrategySignalState state = strategy.signalState(symbol, view);
+                        if (state != null) out.add(state);
+                    }
+                } catch (Exception e) {
+                    log.warn("[StrategyRuntime] signalState失败 strategy={} symbol={} msg={}",
+                            strategy.id(), symbol, e.getMessage());
+                }
+            }
+        }
+        return out;
     }
 
     private WindowedMarketView seedView(String symbol) {

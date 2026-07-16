@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibquant.agent.strategy.core.StrategyMarketView;
 import com.mawai.wiibquant.agent.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibquant.agent.strategy.core.StrategySignal;
+import com.mawai.wiibquant.agent.strategy.core.StrategySignalState;
 import com.mawai.wiibquant.agent.strategy.core.TradingStrategySpi;
 
 import java.math.BigDecimal;
@@ -113,9 +114,10 @@ public final class SqueezeMomentumStrategy implements TradingStrategySpi {
      *
      * @param released     上一根 sqzOn 且本根 sqzOff（一次性跳变，即触发时机）
      * @param sqzRunBefore 截至上一根的 sqzOn 连续根数
+     * @param sqzNow       本根是否 sqzOn（监控快照用，信号逻辑不消费）
      * @param atr          SMA(TR,L)，与 KC 同源，供 ATR 止损锚
      */
-    record Ind(double val, double valPrev, boolean released, int sqzRunBefore, double atr) {
+    record Ind(double val, double valPrev, boolean released, int sqzRunBefore, boolean sqzNow, double atr) {
     }
 
     static Ind compute(List<KlineBar> bars, int len) {
@@ -159,7 +161,45 @@ public final class SqueezeMomentumStrategy implements TradingStrategySpi {
         boolean released = off[n - 1] && on[n - 2];
         int run = 0;
         for (int i = n - 2; i >= len - 1 && on[i]; i--) run++;
-        return new Ind(val, valPrev, released, run, atrLast);
+        return new Ind(val, valPrev, released, run, on[n - 1], atrLast);
+    }
+
+    /** 监控快照：压缩计数与动量柱色，离"压缩足量后向下释放"还差什么一目了然。 */
+    @Override
+    public StrategySignalState signalState(String symbol, StrategyMarketView view) {
+        int tfHours = (int) (params.decisionTfMillis() / 3_600_000L);
+        int minBars = 2 * params.length() + 1;
+        List<KlineBar> bars = view.closedBars(params.decisionTfMillis(),
+                minBars + params.squeezeMinBars() + 30);
+        if (bars.size() < minBars) {
+            return new StrategySignalState(ID, symbol, "攒历史数据中",
+                    StrategySignalState.kv(tfHours + "H桶", bars.size() + " / " + minBars));
+        }
+        Ind ind = compute(bars, params.length());
+        if (ind == null) {
+            return new StrategySignalState(ID, symbol, "攒历史数据中", StrategySignalState.kv());
+        }
+        boolean redAccel = Double.isFinite(ind.val()) && ind.val() < 0 && ind.val() < ind.valPrev();
+        String momo = !Double.isFinite(ind.val()) ? "N/A"
+                : ind.val() < 0
+                    ? (redAccel ? "亮红·向下加速" : "暗红·下行减速")
+                    : (ind.val() > ind.valPrev() ? "亮绿·向上加速" : "暗绿·上行减速");
+        int curRun = ind.sqzNow() ? ind.sqzRunBefore() + 1 : 0;
+        String state;
+        if (ind.sqzNow()) {
+            state = curRun >= params.squeezeMinBars()
+                    ? "压缩已足量，等向下释放开空"
+                    : "压缩蓄能中，还需 " + (params.squeezeMinBars() - curRun) + " 桶";
+        } else if (ind.released() && ind.sqzRunBefore() >= params.squeezeMinBars()) {
+            state = redAccel ? "本桶刚释放·红柱达标(已触发开空)" : "本桶刚释放·柱色不符,放弃";
+        } else {
+            state = "未压缩，等波动率收缩";
+        }
+        return new StrategySignalState(ID, symbol, state, StrategySignalState.kv(
+                "压缩(BB<KC)", ind.sqzNow() ? "ON" : "OFF",
+                "连续压缩", curRun + " / 需" + params.squeezeMinBars() + "桶",
+                "动量柱", momo,
+                "动量值", String.format(Locale.ROOT, "%.4f", ind.val())));
     }
 
     /** 最小二乘直线在窗口末点的取值 = Pine linreg(src, len, 0)。x=0..len-1，端点取 x=len-1。 */

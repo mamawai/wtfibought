@@ -5,6 +5,7 @@ import com.mawai.wiibquant.agent.strategy.core.StrategyMarketView;
 import com.mawai.wiibquant.agent.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibquant.agent.strategy.core.SwingDetector;
 import com.mawai.wiibquant.agent.strategy.core.StrategySignal;
+import com.mawai.wiibquant.agent.strategy.core.StrategySignalState;
 import com.mawai.wiibquant.agent.strategy.core.TradingStrategySpi;
 import com.mawai.wiibquant.agent.strategy.core.TradingOperations;
 
@@ -146,6 +147,53 @@ public final class FiboRetracementStrategy implements TradingStrategySpi {
         if (state.activeLeg != null) {
             consume(state, state.activeLeg);
         }
+    }
+
+    /** 监控快照：当前推动腿与挂单位。只读 states，不推进腿生命周期（那是 onBarClosed 的事）。 */
+    @Override
+    public StrategySignalState signalState(String symbol, StrategyMarketView view) {
+        List<KlineBar> swingBars = view.closedBars(params.swingTfMillis(), params.swingLookbackBars());
+        int tfMin = (int) (params.swingTfMillis() / 60_000);
+        if (swingBars.size() <= params.atrPeriod() + 2) {
+            return new StrategySignalState(ID, symbol, "攒历史数据中",
+                    StrategySignalState.kv(tfMin + "m桶", swingBars.size() + " / " + (params.atrPeriod() + 3)));
+        }
+        KlineBar last = swingBars.getLast();
+        SymbolState state = states.get(symbol);
+        Leg leg = state == null ? null : state.activeLeg;
+        if (leg == null || leg.key() == state.consumedLegKey) {
+            return new StrategySignalState(ID, symbol, "无有效推动腿，等 ZigZag 新腿确认",
+                    StrategySignalState.kv("现价", plain(last.close())));
+        }
+
+        FiboLevels.FiboGrid grid = new FiboLevels.FiboGrid(leg.startPrice(), leg.endPrice(), leg.upLeg());
+        BigDecimal limit = grid.retracement(params.entryFib());
+        double px = last.close().doubleValue();
+        double gap = px > 0 ? (limit.doubleValue() - px) / px * 100 : Double.NaN;
+
+        String trendGateState = "未启用";
+        boolean trendBlocked = false;
+        if (params.trendFilterOn()) {
+            List<KlineBar> htf = view.closedBars(TREND_TF_MULT * params.swingTfMillis(), TREND_SMA_PERIOD + 1);
+            trendBlocked = !trendGate(htf, leg.upLeg(), params.trendAlignOn());
+            trendGateState = trendBlocked ? "逆势·拦截" : "顺势·放行";
+        }
+        boolean passed = leg.upLeg()
+                ? last.close().compareTo(limit) <= 0
+                : last.close().compareTo(limit) >= 0;
+        String stateText = trendBlocked ? "有腿但逆 1h 趋势，不挂单"
+                : passed ? "现价已穿过回撤位，弃单等新腿"
+                : "限价单挂 " + params.entryFib() + " 回撤位，等回踩";
+        return new StrategySignalState(ID, symbol, stateText, StrategySignalState.kv(
+                "推动腿", plain(leg.startPrice()) + " → " + plain(leg.endPrice()) + (leg.upLeg() ? " ↑多" : " ↓空"),
+                "挂单价·" + params.entryFib() + "回撤", plain(limit),
+                "现价", plain(last.close()),
+                "距挂单价", String.format(java.util.Locale.ROOT, "%+.2f%%", gap),
+                "1h趋势闸", trendGateState));
+    }
+
+    private static String plain(BigDecimal v) {
+        return v.stripTrailingZeros().toPlainString();
     }
 
     private Optional<Leg> latestConfirmedLeg(List<KlineBar> swingBars, double atr) {
