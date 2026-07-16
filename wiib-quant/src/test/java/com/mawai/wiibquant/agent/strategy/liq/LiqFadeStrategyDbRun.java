@@ -24,17 +24,21 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * LiqFade 引擎体检 runner（采纳口径：三签名2/3 → 次根市价接多 → 1h TIME_EXIT × 8%/10% 灾难框）。
- * 回答：事件研究的 close-to-close 漂移经过真实撮合（次根开盘 taker 进场、TIME_EXIT taker 出场+滑点、
- * 1% 风险定量、一次一仓）后净值还剩多少。判决口径统一加 -Dbacktest.slippageBps=5。
+ * LiqFade 引擎体检 runner。采纳口径：三签名命中 2/3 → 下一根 5m 开盘市价接多 →
+ * 持有 1h 时间出场，外加 8%/10% 宽幅灾难止损止盈。
+ * 回答的问题：事件研究里看到的价格漂移，经过真实撮合（taker 手续费、滑点、下根进场延迟、
+ * 1% 风险定量、一次一仓）之后还剩多少净收益。判决口径统一加 -Dbacktest.slippageBps=5。
  *
- * <p><b>判决史（判据均先立后跑，消融 harness 已按惯例清退，明细留档提交信息）</b>：
- * ① 4h 基线终审：验证段 4/5 币净 PF&gt;1，但兑现率未达研究 fwd4h 的 60% → 归因=出场损耗非信号失效
- *    （ETH 反弹 1h 后回吐 + 固定成本 ~15bp + 次根进场滞后）；
- * ② 出场几何消融 hold{1h,2h,4h}×frame{pct,ATR}：1h×pct 唯一三判据全过（验证段 5/5 币 PF&gt;1、
- *    加权 +56.8bp vs 4h 的 +33.8、worstΔpf −0.30 压线），ATR 框因 SOL 劣化超线全灭 → 采纳 1h×pct；
- * ③ 采纳口径复检（24-26）：BTC 1.888 / ETH 1.400 / SOL 3.100(n=10) / DOGE 1.620 / XRP 1.829。
- * 注意：1h 优势偏近时代（训练段 3/5 币 PF&gt;1），最终仲裁 = testnet 前瞻。</p>
+ * <p><b>历次判决记录</b>（判据都在跑之前先定好，实验代码按惯例已删，数据细节在提交历史）：
+ * ① 最早的 4h 持有基线：验证段 4/5 币赚钱，但只兑现了研究预期漂移的六成不到——
+ *    归因是出场太慢（ETH 反弹 1 小时后回吐）加 ~15bp 固定成本，不是信号失效；
+ * ② 出场方式消融（持有 1h/2h/4h × 百分比框/ATR框）：只有"1h+百分比框"全部判据通过
+ *    （验证段五币全赚、平均每笔 +56.8bp 明显好于 4h 的 +33.8bp），ATR 框因 SOL 变差全灭 → 采纳；
+ * ③ 采纳口径在 2024-2026 段复检：BTC 1.888 / ETH 1.400 / SOL 3.100(仅10笔) / DOGE 1.620 / XRP 1.829，
+ *    五币 PF 全大于 1。注意 1h 的优势近两年才明显，最终还要看 testnet 实跑；
+ * ④ 滚动门槛消融（2026-07）：让门槛随行情自适应（365天分位、每日刷新），想修复 SOL 信号太少。
+ *    SOL 确实修好了（83笔、PF 1.596），但 BTC/ETH/XRP 的门槛在平静行情松过头、放进太多平庸信号，
+ *    平均每笔净收益只剩 29~38bp，没过"不低于冻结版七成（39.3bp）"的预定线 → 否决，门槛保持冻结。</p>
  *
  * <p>跑法：mvn -pl wiib-quant -am test -Dtest=LiqFadeStrategyDbRun -DskipTests=false \
  *   -Dsurefire.failIfNoSpecifiedTests=false -Dsurefire.useFile=false -Dbacktest.slippageBps=5 \
