@@ -11,7 +11,7 @@ export function Intro() {
   const goHome = () => navigate('/', { replace: true });
 
   return (
-    <div className="max-w-2xl mx-auto px-4 md:px-6 py-6 pb-36 md:pb-24 space-y-5">
+    <div className="page-shell px-4 md:px-6 py-6 pb-36 md:pb-24 space-y-5">
 
       <h1 className="text-2xl font-extrabold flex items-center gap-2">
         <Bell className="w-6 h-6 text-primary" />
@@ -29,6 +29,8 @@ export function Intro() {
         </CardContent>
       </Card>
 
+      {/* 桌面双列：左交易规则，右游戏规则+每日福利；移动端自然单列 */}
+      <div className="grid md:grid-cols-2 gap-5 items-start">
       {/* 交易规则 */}
       <Card>
         <CardContent className="pt-5 space-y-4 text-sm leading-relaxed">
@@ -82,6 +84,7 @@ export function Intro() {
         </CardContent>
       </Card>
 
+      <div className="space-y-5">
       {/* 游戏规则 */}
       <Card>
         <CardContent className="pt-5 space-y-4 text-sm leading-relaxed">
@@ -122,6 +125,8 @@ export function Intro() {
           <p className="text-muted-foreground">每天可抽一次，有机会获得红包、股票或折扣券</p>
         </CardContent>
       </Card>
+      </div>
+      </div>
 
       {/* 风险声明 */}
       <div className="bg-red-500/10 border-2 border-red-500/20 rounded-2xl p-4 text-xs text-red-500 dark:text-red-400 font-medium leading-relaxed">

@@ -68,7 +68,7 @@ function Gauge({ pct, label, sub }: { pct: number; label: string; sub?: string }
 
   return (
     <div className="flex flex-col items-center">
-      <svg viewBox="0 0 100 58" className="w-full max-w-[110px]">
+      <svg viewBox="0 0 100 58" className="w-full max-w-[130px]">
         <defs>
           <linearGradient id={`gauge-grad-${label}`} x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stopColor="var(--color-gain)" />
@@ -165,7 +165,7 @@ function MetricTile({ icon: Icon, label, value, sub }: {
 
 // 结构与数据态逐段对齐（标题含状态点占位 + 双仪表盘 + 3 指标格 + GC 行），
 // 保证 skeleton→有数据零高度跳动；三卡轮播因 flex 行取最高值，滑动时高度亦恒定
-function MonitorSkeleton({ label }: { label: string }) {
+function MonitorSkeleton({ label, desc }: { label: string; desc?: string }) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -174,13 +174,14 @@ function MonitorSkeleton({ label }: { label: string }) {
             <Activity className="w-3.5 h-3.5 text-primary" />
           </div>
           {label} JVM
+          {desc && <span className="text-xs text-muted-foreground font-normal">{desc}</span>}
           <span className="ml-auto w-1.5 h-1.5 rounded-full shrink-0 bg-muted-foreground/30" />
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="flex justify-center gap-4">
-          <Skeleton className="w-[110px] h-[80px] rounded-xl" />
-          <Skeleton className="w-[110px] h-[80px] rounded-xl" />
+        <div className="flex justify-center gap-8">
+          <Skeleton className="w-[130px] h-[92px] rounded-xl" />
+          <Skeleton className="w-[130px] h-[92px] rounded-xl" />
         </div>
         <div className="grid grid-cols-3 gap-1.5">
           {[0, 1, 2].map(i => <Skeleton key={i} className="h-11 rounded-xl" />)}
@@ -194,7 +195,7 @@ function MonitorSkeleton({ label }: { label: string }) {
   );
 }
 
-export function MonitorCard({ topic, label }: { topic: string; label: string }) {
+export function MonitorCard({ topic, label, desc }: { topic: string; label: string; desc?: string }) {
   const [data, setData] = useState<MonitorData | null>(null);
 
   // 共享 STOMP 连接订阅该进程的 JVM topic；进程挂了不再来帧，卡片停在最后一帧（用户已认可"断了看得出来"，不做离线判定）
@@ -202,7 +203,7 @@ export function MonitorCard({ topic, label }: { topic: string; label: string }) 
     try { setData(JSON.parse(msg.body)); } catch { /* ignore */ }
   }), [topic]);
 
-  if (!data) return <MonitorSkeleton label={label} />;
+  if (!data) return <MonitorSkeleton label={label} desc={desc} />;
 
   const heapPct = data.heap.max > 0 ? Math.round(data.heap.used / data.heap.max * 100) : -1;
   const cpuPct = data.cpuPct ?? -1;
@@ -215,13 +216,14 @@ export function MonitorCard({ topic, label }: { topic: string; label: string }) 
             <Activity className="w-3.5 h-3.5 text-primary" />
           </div>
           {label} JVM
+          {desc && <span className="text-xs text-muted-foreground font-normal">{desc}</span>}
           <span className="ml-auto w-1.5 h-1.5 rounded-full shrink-0 bg-gain animate-pulse" title="实时" />
         </CardTitle>
       </CardHeader>
 
       <CardContent className="space-y-3">
         {/* 仪表盘 */}
-        <div className="flex justify-center gap-4">
+        <div className="flex justify-center gap-8">
           <Gauge
             pct={cpuPct}
             label="CPU"

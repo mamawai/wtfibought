@@ -1,25 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
+import { sparkPoints } from '../lib/sparkline';
 import { COIN_LIST, formatCoinPrice, type CoinCfg } from '../lib/coinConfig';
 import { cryptoApi, futuresApi } from '../api';
 import { useCryptoStream } from '../hooks/useCryptoStream';
 
-/** 折线归一化到 100x28 视口；range=0（横盘）时画中线 */
-function sparkPoints(data: number[]): string {
-  const min = Math.min(...data), max = Math.max(...data);
-  const range = max - min || 1;
-  const W = 100, H = 28, PAD = 2;
-  return data
-    .map((v, i) => {
-      const x = (i / (data.length - 1)) * W;
-      const y = PAD + (1 - (v - min) / range) * (H - PAD * 2);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(' ');
-}
-
-function CoinMarketCard({ cfg }: { cfg: CoinCfg }) {
+export function CoinMarketCard({ cfg }: { cfg: CoinCfg }) {
   const navigate = useNavigate();
   // 商品是纯合约（无现货）→ 走 futures 流 + 合约K线；crypto 走现货
   const tick = useCryptoStream(cfg.symbol, cfg.futuresOnly ? 'futures' : 'spot');

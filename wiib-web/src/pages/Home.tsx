@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { buffApi, cryptoOrderApi, futuresApi } from '../api';
-import { CoinMarketGrid } from '../components/CoinMarketGrid';
+import { HomeMarketSection } from '../components/HomeMarketSection';
 import { DailyBuffCard } from '../components/DailyBuffCard';
 import { MonitorCarousel } from '../components/MonitorCarousel';
 import { LatestTradesCard } from '../components/LatestTradesCard';
@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import type { BuffStatus } from '../types';
 import { useUserStore } from '../stores/userStore';
-import { cn } from '../lib/utils';
+import { cn, fmtMoney } from '../lib/utils';
 
 const HIDE_NOTICE_KEY = 'wiib-notice-hide-date';
 function shouldShowNotice() { const d = localStorage.getItem(HIDE_NOTICE_KEY); return !d || d !== new Date().toDateString(); }
@@ -26,12 +26,6 @@ const FUTURES_SIDE_MAP: Record<string, { label: string; tone: 'buy' | 'sell' }> 
   CLOSE_LONG: { label: '平多', tone: 'sell' },
   CLOSE_SHORT: { label: '平空', tone: 'buy' },
 };
-
-function fmtMoney(n: number) {
-  if (Math.abs(n) >= 1e8) return (n / 1e8).toFixed(2) + '亿';
-  if (Math.abs(n) >= 1e4) return (n / 1e4).toFixed(2) + '万';
-  return n.toFixed(2);
-}
 
 export function Home() {
   const navigate = useNavigate();
@@ -166,16 +160,8 @@ export function Home() {
         ))}
       </div>
 
-      {/* ====== 币种行情：点卡片直达交易页 ====== */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center">
-            <DollarSign className="w-3.5 h-3.5 text-amber-500" />
-          </div>
-          <span className="text-sm font-bold">币种行情</span>
-        </div>
-        <CoinMarketGrid />
-      </div>
+      {/* ====== 市场行情：三分类,点分类头去市场页,点卡片直达交易页 ====== */}
+      <HomeMarketSection />
 
       {/* ====== Buff + Monitor + Trades ====== */}
       {isLoggedIn && (

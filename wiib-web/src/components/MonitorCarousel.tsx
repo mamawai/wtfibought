@@ -4,14 +4,14 @@ import { cn } from '../lib/utils';
 
 // 三进程 JVM，统一订 /topic/monitor/{进程}（sim 自推，feed/quant 经 sim 中继）
 const PROCESSES = [
-  { topic: '/topic/monitor/sim', label: 'sim' },
-  { topic: '/topic/monitor/feed', label: 'feed' },
-  { topic: '/topic/monitor/quant', label: 'quant' },
+  { topic: '/topic/monitor/sim', label: 'sim', desc: '模拟盘' },
+  { topic: '/topic/monitor/feed', label: 'feed', desc: '行情上游' },
+  { topic: '/topic/monitor/quant', label: 'quant', desc: '量化引擎' },
 ];
 
 /**
  * 三进程 JVM 监控轮播。三张卡全程挂载（都订阅、都有实时数据），仅靠 translateX 滑动切换可见的那张；
- * 6s 自动轮播，hover 暂停，圆点可点选。无第三方轮播库。
+ * 6s 自动轮播，hover 暂停，底部进程标签可点选。无第三方轮播库。
  */
 export function MonitorCarousel() {
   const [idx, setIdx] = useState(0);
@@ -25,29 +25,33 @@ export function MonitorCarousel() {
 
   return (
     <div onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
-      <div className="overflow-hidden">
+      {/* 裁剪框外扩 16px（-m-4 + 内 p-4）：拟物高光阴影在裁剪边内自然衰减，不再被直角截出四角白边 */}
+      <div className="overflow-hidden -m-4">
         <div
           className="flex transition-transform duration-500 ease-out"
           style={{ transform: `translateX(-${idx * 100}%)` }}
         >
           {PROCESSES.map(p => (
-            <div key={p.label} className="w-full shrink-0">
-              <MonitorCard topic={p.topic} label={p.label} />
+            <div key={p.label} className="w-full shrink-0 p-4">
+              <MonitorCard topic={p.topic} label={p.label} desc={p.desc} />
             </div>
           ))}
         </div>
       </div>
-      <div className="flex justify-center gap-1.5 mt-2">
+      <div className="flex justify-center gap-2 mt-3">
         {PROCESSES.map((p, i) => (
           <button
             key={p.label}
             onClick={() => setIdx(i)}
-            aria-label={p.label}
             className={cn(
-              'h-1.5 rounded-full transition-all',
-              i === idx ? 'w-4 bg-primary' : 'w-1.5 bg-muted-foreground/30 hover:bg-muted-foreground/50',
+              'px-3 py-1 rounded-full text-[11px] font-bold transition-all cursor-pointer',
+              i === idx
+                ? 'bg-primary/10 text-primary neu-inset'
+                : 'text-muted-foreground hover:text-foreground neu-flat',
             )}
-          />
+          >
+            {p.label}
+          </button>
         ))}
       </div>
     </div>
