@@ -117,12 +117,13 @@ public class CrossMarketService extends BaseRestTemplateConfig {
 
     /** 通过 Yahoo chart JSON 取 ticker 最近两个有效 close，返回最新价和单 bar 涨跌幅。 */
     private MarketQuote fetchQuote(String ticker) {
-        String url = UriComponentsBuilder
+        // build(ticker) 已完成一次编码（GC=F → GC%3DF），必须以 URI 对象传入；
+        // 若 toString 后走字符串重载，RestTemplate 会当模板再编码一次变成 GC%253DF → Yahoo 404
+        java.net.URI url = UriComponentsBuilder
                 .fromUriString(YAHOO_CHART_URL)
                 .queryParam("range", "2d")
                 .queryParam("interval", "5m")
-                .build(ticker)
-                .toString();
+                .build(ticker);
         String raw = restTemplate.getForObject(url, String.class);
         JSONObject root = JSON.parseObject(raw);
         JSONArray result = root.getJSONObject("chart").getJSONArray("result");
