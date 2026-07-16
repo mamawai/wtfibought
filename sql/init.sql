@@ -448,82 +448,6 @@ COMMENT ON COLUMN factor_history.factor_value IS '外部因子原值，DECIMAL(2
 COMMENT ON COLUMN factor_history.observed_at IS '数据观测时刻（非入库时刻，跨市场数据需考虑时区）';
 COMMENT ON COLUMN factor_history.metadata_json IS '可放原始 API response、stale 标记、source 名等';
 
--- ============================================
--- 量化预测：research 三腿原始预测（vol/regime/direction），供事后对账
--- ============================================
-CREATE TABLE IF NOT EXISTS quant_research_forecast (
-    id BIGSERIAL PRIMARY KEY,
-    cycle_id VARCHAR(64) NOT NULL,
-    horizon VARCHAR(8) NOT NULL,
-    expected_move_bps INT NOT NULL DEFAULT 0,
-    vol_tier VARCHAR(16),
-    trailing_percentile DECIMAL(6,4),
-    risk_budget_hint DECIMAL(6,4),
-    regime VARCHAR(16),
-    regime_confidence DECIMAL(6,4),
-    direction_sign INT NOT NULL DEFAULT 0,
-    direction_confidence DECIMAL(6,4),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-COMMENT ON TABLE quant_research_forecast IS 'research 三腿原始预测(vol/regime/direction)，供事后对账';
-COMMENT ON COLUMN quant_research_forecast.cycle_id IS '关联预测周期ID';
-COMMENT ON COLUMN quant_research_forecast.horizon IS 'H6/H12/H24';
-COMMENT ON COLUMN quant_research_forecast.expected_move_bps IS 'vol腿：预期波动bps';
-COMMENT ON COLUMN quant_research_forecast.vol_tier IS 'vol腿：波动状态档';
-COMMENT ON COLUMN quant_research_forecast.trailing_percentile IS 'vol腿：历史分位';
-COMMENT ON COLUMN quant_research_forecast.risk_budget_hint IS 'vol腿：风险预算0-1';
-COMMENT ON COLUMN quant_research_forecast.regime IS 'regime腿：市场状态';
-COMMENT ON COLUMN quant_research_forecast.regime_confidence IS 'regime腿：状态置信';
-COMMENT ON COLUMN quant_research_forecast.direction_sign IS 'direction腿：方向 -1/0/1';
-COMMENT ON COLUMN quant_research_forecast.direction_confidence IS 'direction腿：方向置信';
-
-CREATE INDEX idx_qrf_cycle ON quant_research_forecast(cycle_id);
-
--- ============================================
--- 量化预测：预测验证表（事后对比实际价格）
--- ============================================
-CREATE TABLE IF NOT EXISTS quant_forecast_verification (
-    id BIGSERIAL PRIMARY KEY,
-    cycle_id VARCHAR(64) NOT NULL,
-    symbol VARCHAR(20) NOT NULL,
-    horizon VARCHAR(8) NOT NULL,
-    predicted_direction VARCHAR(10) NOT NULL,
-    predicted_confidence DECIMAL(6,4),
-    actual_price_at_forecast DECIMAL(20,8),
-    actual_price_after DECIMAL(20,8),
-    actual_change_bps INT,
-    max_favorable_bps INT,
-    max_adverse_bps INT,
-    tp1_hit_first BOOLEAN,
-    prediction_correct BOOLEAN,
-    trade_quality VARCHAR(10),
-    result_summary VARCHAR(500),
-    reversal_severity DECIMAL(6,4),
-    -- 第三步对账新增：纯方向口径 + vol-state 对账(与 direction 路径口径并存)
-    direction_hit BOOLEAN,
-    predicted_vol_state VARCHAR(8),
-    actual_vol_state VARCHAR(8),
-    vol_state_hit BOOLEAN,
-    actual_abs_move_bps INT,
-    verified_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-COMMENT ON TABLE quant_forecast_verification IS '预测验证（事后对比实际价格）';
-COMMENT ON COLUMN quant_forecast_verification.cycle_id IS '关联预测周期ID';
-COMMENT ON COLUMN quant_forecast_verification.actual_change_bps IS '实际价格变化（基点）';
-COMMENT ON COLUMN quant_forecast_verification.prediction_correct IS '预测方向是否正确';
-COMMENT ON COLUMN quant_forecast_verification.reversal_severity IS '段内反转严重度[0,1]，NULL=NO_TRADE不适用';
-COMMENT ON COLUMN quant_forecast_verification.direction_hit IS '纯方向命中：预测涨跌==实际涨跌，不掺路径/盈亏';
-COMMENT ON COLUMN quant_forecast_verification.predicted_vol_state IS 'vol预测档 LOW/MID/HIGH(3档tercile)';
-COMMENT ON COLUMN quant_forecast_verification.actual_vol_state IS 'vol实际档 LOW/MID/HIGH';
-COMMENT ON COLUMN quant_forecast_verification.vol_state_hit IS 'vol档命中；NULL=历史不足不判';
-COMMENT ON COLUMN quant_forecast_verification.actual_abs_move_bps IS '实际|horizon对数收益|×10000';
-
-CREATE INDEX idx_qfv_symbol_time ON quant_forecast_verification(symbol, verified_at DESC);
-CREATE INDEX idx_qfv_cycle_id ON quant_forecast_verification(cycle_id);
-
 -- 爆仓记录（Binance WS @forceOrder 推送）
 CREATE TABLE IF NOT EXISTS force_order (
     id              BIGSERIAL       PRIMARY KEY,
@@ -608,35 +532,6 @@ CREATE TABLE IF NOT EXISTS ai_model_assignment (
 COMMENT ON TABLE ai_model_assignment IS '功能位→LLM配置指针（模型名归属ai_runtime_config）';
 COMMENT ON COLUMN ai_model_assignment.function_name IS '功能名称：behavior/quant/quant-light/chat/sim（sim=wiib-sim行情/新闻生成，自读DB）';
 COMMENT ON COLUMN ai_model_assignment.config_id IS '关联ai_runtime_config.id';
-
--- 旧版曾保留 trading 模型槽位；生产 AI Trader 已走确定性执行器。
-DELETE FROM ai_model_assignment WHERE function_name = 'trading';
-
--- ============================================
--- 策略路径状态表（自动禁用/人工解除持久化）
--- ============================================
-CREATE TABLE IF NOT EXISTS strategy_path_status (
-    path VARCHAR(32) PRIMARY KEY,
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    disabled_reason VARCHAR(256),
-    disabled_at TIMESTAMP,
-    consecutive_loss_count INT NOT NULL DEFAULT 0,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT ck_strategy_path_status_path
-        CHECK (path IN ('BREAKOUT', 'MR', 'LEGACY_TREND'))
-);
-
-COMMENT ON TABLE strategy_path_status IS '策略路径运行状态，自动禁用/人工解除均落库';
-COMMENT ON COLUMN strategy_path_status.path IS '实盘路径：BREAKOUT / MR / LEGACY_TREND';
-COMMENT ON COLUMN strategy_path_status.enabled IS 'false 表示该路径暂停开新仓';
-COMMENT ON COLUMN strategy_path_status.disabled_reason IS '自动禁用或人工禁用原因';
-COMMENT ON COLUMN strategy_path_status.consecutive_loss_count IS '路径级连续亏损计数';
-
-INSERT INTO strategy_path_status (path, enabled) VALUES
-    ('BREAKOUT', TRUE),
-    ('MR', TRUE),
-    ('LEGACY_TREND', TRUE)
-ON CONFLICT (path) DO NOTHING;
 
 -- ============ kline_history：回测/评估用 5m 基础 K 线落库（research，可复现） ============
 CREATE TABLE IF NOT EXISTS kline_history (
