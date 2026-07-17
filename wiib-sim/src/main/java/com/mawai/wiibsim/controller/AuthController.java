@@ -3,6 +3,8 @@ package com.mawai.wiibsim.controller;
 import com.mawai.wiibcommon.dto.UserDTO;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibsim.dto.AuthModeDTO;
+import com.mawai.wiibsim.dto.PasswordLoginRequest;
+import com.mawai.wiibsim.dto.RegisterRequest;
 import com.mawai.wiibsim.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -26,7 +28,27 @@ public class AuthController {
     @GetMapping("/mode")
     @Operation(summary = "获取登录模式")
     public Result<AuthModeDTO> mode() {
-        return Result.ok(new AuthModeDTO(authService.isLinuxDoEnabled()));
+        return Result.ok(new AuthModeDTO(authService.isLinuxDoEnabled(), authService.isPasswordLoginEnabled()));
+    }
+
+    /**
+     * 邀请码注册（注册成功即登录）
+     */
+    @PostMapping("/register")
+    @Operation(summary = "邀请码注册")
+    public Result<String> register(@RequestBody RegisterRequest request) {
+        String token = authService.register(request.username(), request.password(), request.inviteCode());
+        return Result.ok(token);
+    }
+
+    /**
+     * 账号密码登录
+     */
+    @PostMapping("/login/password")
+    @Operation(summary = "账号密码登录")
+    public Result<String> passwordLogin(@RequestBody PasswordLoginRequest request) {
+        String token = authService.passwordLogin(request.username(), request.password());
+        return Result.ok(token);
     }
 
     /**

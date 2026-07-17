@@ -25,6 +25,10 @@ public interface UserMapper extends BaseMapper<User> {
             "ON CONFLICT (id) DO NOTHING")
     int insertAdmin(@Param("balance") BigDecimal balance);
 
+    /** 同步自增序列到当前最大 id：insertAdmin 显式写 id 不推进序列，新库不同步会让下一次自增插入撞 id=1 */
+    @Select("SELECT setval(pg_get_serial_sequence('\"user\"', 'id'), (SELECT COALESCE(MAX(id), 1) FROM \"user\"))")
+    Long syncIdSequence();
+
     /** 原子更新可用余额，返回影响行数（0表示余额不足） */
     @Update("UPDATE \"user\" SET balance = balance + #{amount}, updated_at = NOW() " +
             "WHERE id = #{userId} AND balance + #{amount} >= 0")

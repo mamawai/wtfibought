@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats, TnManualOrderReq, TnOrderResult, TnAck } from '../types/testnet';
-import type { User, PageResult, RankingItem, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, ForceOrder, AiKeyConfig, AiModelAssignment, GraphNodeMetric, WorkbenchEvent, QuantSnapshotView, QuantSnapshotSeriesPoint, QuantDeepAnalysisView, Scorecard, StrategyAccountView, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchChatMessage } from '../types';
+import type { User, PageResult, RankingItem, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, ForceOrder, AiKeyConfig, AiModelAssignment, InviteCode, GraphNodeMetric, WorkbenchEvent, QuantSnapshotView, QuantSnapshotSeriesPoint, QuantDeepAnalysisView, Scorecard, StrategyAccountView, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchChatMessage } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -44,12 +44,18 @@ api.interceptors.response.use(
 
 // ========== 认证接口 ==========
 export const authApi = {
-  // 登录模式：linuxDoEnabled=false 时走管理员直登
-  mode: () => api.get<unknown, { linuxDoEnabled: boolean }>('/auth/mode'),
+  // 登录模式：两个开关都关时走管理员直登
+  mode: () => api.get<unknown, { linuxDoEnabled: boolean; passwordLoginEnabled: boolean }>('/auth/mode'),
   // LinuxDo OAuth回调
   linuxDoCallback: (code: string) => api.get<unknown, string>('/auth/callback/linuxdo', { params: { code } }),
-  // 管理员直登（仅未配置 LinuxDo 时可用）
+  // 管理员直登（仅所有正式登录方式都未启用时可用）
   localLogin: () => api.post<unknown, string>('/auth/login/local'),
+  // 邀请码注册（成功即登录，返回 token）
+  register: (username: string, password: string, inviteCode: string) =>
+    api.post<unknown, string>('/auth/register', { username, password, inviteCode }),
+  // 账号密码登录
+  passwordLogin: (username: string, password: string) =>
+    api.post<unknown, string>('/auth/login/password', { username, password }),
   // 获取当前用户信息
   current: () => api.get<unknown, User>('/auth/current'),
   // 退出登录
@@ -94,6 +100,11 @@ export const adminApi = {
   feedStreams: () => api.get<unknown, FeedStreamHealth[]>('/monitor/streams'),
   retryFeedStream: (name: string) =>
     api.post<unknown, { ok: boolean; name: string }>(`/monitor/streams/${encodeURIComponent(name)}/retry`),
+  // 邀请码管理
+  listInviteCodes: () => api.get<unknown, InviteCode[]>('/admin/invite-code/list'),
+  generateInviteCodes: (maxUses: number, count: number) =>
+    api.post<unknown, InviteCode[]>('/admin/invite-code/generate', { maxUses, count }),
+  disableInviteCode: (id: number) => api.post<unknown, void>(`/admin/invite-code/${id}/disable`),
 };
 
 // ========== Buff接口 ==========

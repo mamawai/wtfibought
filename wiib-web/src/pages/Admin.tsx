@@ -2,14 +2,14 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useUserStore } from '../stores/userStore';
 import { adminApi } from '../api';
-import type { AiKeyConfig, AiModelAssignment } from '../types';
+import type { AiKeyConfig, AiModelAssignment, InviteCode } from '../types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
 import { useToast } from '../components/ui/use-toast';
 import { FeedStreamHealthCard } from '../components/FeedStreamHealthCard';
-import { RefreshCw, Calendar, Plus, Trash2, Pencil, Save, Activity } from 'lucide-react';
+import { RefreshCw, Calendar, Plus, Trash2, Pencil, Save, Activity, Ban } from 'lucide-react';
 
 const FUNCTION_LABELS: Record<string, string> = {
   behavior: '行为分析',
@@ -37,6 +37,12 @@ export function Admin() {
   // 模型分配
   const [assignmentsLoading, setAssignmentsLoading] = useState(false);
   const [assignmentsDraft, setAssignmentsDraft] = useState<AiModelAssignment[]>([]);
+
+  // 邀请码管理
+  const [inviteCodes, setInviteCodes] = useState<InviteCode[]>([]);
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteMaxUses, setInviteMaxUses] = useState('1');
+  const [inviteCount, setInviteCount] = useState('1');
 
   const fetchInterestRate = useCallback(async () => {
     setRateLoading(true);
@@ -66,13 +72,23 @@ export function Admin() {
     finally { setAssignmentsLoading(false); }
   }, []);
 
+  const fetchInviteCodes = useCallback(async () => {
+    setInviteLoading(true);
+    try {
+      const list = await adminApi.listInviteCodes();
+      setInviteCodes(list);
+    } catch { /* ignore */ }
+    finally { setInviteLoading(false); }
+  }, []);
+
   useEffect(() => {
     if (user?.id === 1) {
       fetchInterestRate();
       fetchAiKeys();
       fetchAssignments();
+      fetchInviteCodes();
     }
-  }, [user, fetchInterestRate, fetchAiKeys, fetchAssignments]);
+  }, [user, fetchInterestRate, fetchAiKeys, fetchAssignments, fetchInviteCodes]);
 
   if (!user || user.id !== 1) {
     return <Navigate to="/" replace />;
@@ -179,6 +195,48 @@ export function Admin() {
     return key.slice(0, 4) + '****' + key.slice(-4);
   };
 
+  // ========== 邀请码操作 ==========
+
+  const handleGenerateInvites = async () => {
+    const maxUses = Number(inviteMaxUses);
+    const count = Number(inviteCount);
+    if (!Number.isInteger(maxUses) || maxUses < 1 || !Number.isInteger(count) || count < 1) {
+      toast('次数和个数需为正整数', 'error');
+      return;
+    }
+    setActionLoading('generateInvites');
+    try {
+      await adminApi.generateInviteCodes(maxUses, count);
+      await fetchInviteCodes();
+      toast('邀请码已生成', 'success');
+    } catch (e) {
+      toast((e as Error).message || '生成失败', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDisableInvite = async (id: number) => {
+    setActionLoading('disableInvite');
+    try {
+      await adminApi.disableInviteCode(id);
+      await fetchInviteCodes();
+    } catch (e) {
+      toast((e as Error).message || '作废失败', 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const copyInviteCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      toast(`已复制 ${code}`, 'success');
+    } catch {
+      toast('复制失败', 'error');
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -217,6 +275,65 @@ export function Admin() {
                 <Button onClick={() => void handleSaveRate()} disabled={rateLoading || actionLoading !== null || interestRatePct.trim() === ''}>保存</Button>
               </div>
               <div className="text-xs text-muted-foreground">输入为百分比；例如 0.05%/天 对应 decimal=0.0005。</div>
+            </CardContent>
+          </Card>
+
+          {/* ========== 邀请码（注册凭证，可配次数/批量生成/作废） ========== */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg">邀请码</CardTitle>
+                <Button variant="outline" size="sm" onClick={fetchInviteCodes} disabled={inviteLoading}>
+                  <RefreshCw className={`w-3.5 h-3.5 mr-1 ${inviteLoading ? 'animate-spin' : ''}`} /> 刷新
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap gap-3 items-center">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">每码可用次数</span>
+                  <Input className="w-20" value={inviteMaxUses} onChange={e => setInviteMaxUses(e.target.value)} disabled={actionLoading !== null} />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">生成个数</span>
+                  <Input className="w-20" value={inviteCount} onChange={e => setInviteCount(e.target.value)} disabled={actionLoading !== null} />
+                </div>
+                <Button size="sm" onClick={() => void handleGenerateInvites()} disabled={actionLoading !== null}>
+                  <Plus className="w-3.5 h-3.5 mr-1" /> 生成
+                </Button>
+              </div>
+              {inviteCodes.length === 0 && !inviteLoading && (
+                <div className="text-sm text-muted-foreground text-center py-4">暂无邀请码</div>
+              )}
+              {inviteCodes.map(ic => {
+                const usedUp = ic.usedCount >= ic.maxUses;
+                return (
+                  <div key={ic.id} className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
+                    <button
+                      className="font-mono text-sm font-bold tracking-widest hover:text-primary"
+                      onClick={() => void copyInviteCode(ic.code)}
+                      title="点击复制"
+                    >
+                      {ic.code}
+                    </button>
+                    <Badge variant="outline" className="text-[10px]">{ic.usedCount}/{ic.maxUses}</Badge>
+                    {!ic.enabled ? (
+                      <Badge variant="secondary" className="text-[10px]">已作废</Badge>
+                    ) : usedUp ? (
+                      <Badge variant="secondary" className="text-[10px]">已用完</Badge>
+                    ) : (
+                      <Badge className="text-[10px]">可用</Badge>
+                    )}
+                    <span className="flex-1" />
+                    <span className="text-xs text-muted-foreground">{ic.createdAt?.slice(0, 10)}</span>
+                    {ic.enabled && !usedUp && (
+                      <Button variant="ghost" size="sm" onClick={() => void handleDisableInvite(ic.id)} disabled={actionLoading !== null} title="作废">
+                        <Ban className="w-3.5 h-3.5 text-destructive" />
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
             </CardContent>
           </Card>
 

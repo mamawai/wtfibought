@@ -45,9 +45,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
+    public User findByUsername(String username) {
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(User::getUsername, username);
+        return baseMapper.selectOne(wrapper);
+    }
+
+    @Override
     public void ensureAdminUser() {
         // 幂等：id=1 已存在则 ON CONFLICT 跳过；balance 用配置的初始资金
         baseMapper.insertAdmin(initialBalance);
+        baseMapper.syncIdSequence();
     }
 
     @Override

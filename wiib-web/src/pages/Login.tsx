@@ -47,8 +47,14 @@ export function Login() {
   const { user, setToken, fetchUser } = useUserStore();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [linuxDoEnabled, setLinuxDoEnabled] = useState<boolean | null>(null);   // null=模式加载中
+  // null=模式加载中；两个开关决定展示哪些登录入口
+  const [mode, setMode] = useState<{ linuxDoEnabled: boolean; passwordLoginEnabled: boolean } | null>(null);
   const callbackHandled = useRef(false);
+  // 账号密码表单
+  const [isRegister, setIsRegister] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
 
   const handleOAuthCallback = useCallback(async (code: string, state: string) => {
     const savedState = localStorage.getItem('oauth_state');
@@ -82,11 +88,11 @@ export function Login() {
     }
   }, [user, navigate]);
 
-  // 拉登录模式：linuxDoEnabled=false 则展示管理员直登；失败兜底回 OAuth（既有行为）
+  // 拉登录模式：两个开关都关才展示管理员直登；失败兜底回 OAuth（既有行为）
   useEffect(() => {
     authApi.mode()
-      .then(m => setLinuxDoEnabled(m.linuxDoEnabled))
-      .catch(() => setLinuxDoEnabled(true));
+      .then(m => setMode({ linuxDoEnabled: m.linuxDoEnabled, passwordLoginEnabled: m.passwordLoginEnabled ?? false }))
+      .catch(() => setMode({ linuxDoEnabled: true, passwordLoginEnabled: false }));
   }, []);
 
   useEffect(() => {
@@ -117,6 +123,28 @@ export function Login() {
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '登录失败';
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 账号密码登录 / 邀请码注册（注册成功即登录）
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const token = isRegister
+        ? await authApi.register(username.trim(), password, inviteCode.trim())
+        : await authApi.passwordLogin(username.trim(), password);
+      if (token) {
+        setToken(token);
+        await fetchUser();
+        navigate('/');
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : (isRegister ? '注册失败' : '登录失败');
       setError(msg);
     } finally {
       setLoading(false);
@@ -198,33 +226,101 @@ export function Login() {
             </div>
           )}
 
-          {/* 登录按钮：模式加载中→spinner；linuxDoEnabled→OAuth；否则→管理员直登 */}
+          {/* 登录区：加载中→spinner；密码模式→表单（可与 LinuxDo 并列）；都没开→管理员直登 */}
           <div className="w-full">
-            {loading || linuxDoEnabled === null ? (
+            {loading || mode === null ? (
               <div className="flex flex-col items-center justify-center h-16 rounded-2xl bg-surface neu-raised gap-2">
                 <Loader2 className="w-6 h-6 text-foreground animate-spin" strokeWidth={3} />
                 <p className="text-sm font-black text-foreground">{loading ? '登录中...' : '加载中...'}</p>
               </div>
-            ) : linuxDoEnabled ? (
-              <button
-                onClick={handleLinuxDoLogin}
-                className="group relative w-full h-16 rounded-2xl bg-primary text-primary-foreground font-black text-lg neu-btn-sm transition-all flex items-center justify-center gap-3 overflow-hidden"
-              >
-                {/* 按钮内扫光效果 */}
-                <div className="absolute inset-0 w-full h-full bg-white/20 -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
-                <Globe className="w-6 h-6 relative z-10" strokeWidth={2.5} />
-                <span className="relative z-10 tracking-wide">使用 LinuxDo 登录</span>
-              </button>
             ) : (
-              <button
-                onClick={handleLocalLogin}
-                className="group relative w-full h-16 rounded-2xl bg-primary text-primary-foreground font-black text-lg neu-btn-sm transition-all flex items-center justify-center gap-3 overflow-hidden"
-              >
-                {/* 按钮内扫光效果 */}
-                <div className="absolute inset-0 w-full h-full bg-white/20 -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
-                <LogIn className="w-6 h-6 relative z-10" strokeWidth={2.5} />
-                <span className="relative z-10 tracking-wide">进入</span>
-              </button>
+              <>
+                {mode.passwordLoginEnabled && (
+                  <form onSubmit={handlePasswordSubmit} className="w-full space-y-4">
+                    {/* 登录/注册切换 */}
+                    <div className="grid grid-cols-2 gap-1.5 p-1.5 rounded-2xl bg-surface neu-inset">
+                      <button
+                        type="button"
+                        onClick={() => { setIsRegister(false); setError(''); }}
+                        className={`h-10 rounded-xl font-black text-sm transition-all ${!isRegister ? 'bg-primary text-primary-foreground neu-raised-sm' : 'text-muted-foreground'}`}
+                      >
+                        登录
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setIsRegister(true); setError(''); }}
+                        className={`h-10 rounded-xl font-black text-sm transition-all ${isRegister ? 'bg-primary text-primary-foreground neu-raised-sm' : 'text-muted-foreground'}`}
+                      >
+                        注册
+                      </button>
+                    </div>
+                    <input
+                      value={username}
+                      onChange={e => setUsername(e.target.value)}
+                      placeholder="用户名"
+                      autoComplete="username"
+                      required
+                      className="w-full h-12 px-4 rounded-xl bg-surface neu-inset font-bold text-foreground placeholder:text-muted-foreground outline-none"
+                    />
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={e => setPassword(e.target.value)}
+                      placeholder={isRegister ? '密码（至少6位）' : '密码'}
+                      autoComplete={isRegister ? 'new-password' : 'current-password'}
+                      required
+                      className="w-full h-12 px-4 rounded-xl bg-surface neu-inset font-bold text-foreground placeholder:text-muted-foreground outline-none"
+                    />
+                    {isRegister && (
+                      <input
+                        value={inviteCode}
+                        onChange={e => setInviteCode(e.target.value)}
+                        placeholder="邀请码"
+                        required
+                        className="w-full h-12 px-4 rounded-xl bg-surface neu-inset font-bold text-foreground placeholder:text-muted-foreground outline-none"
+                      />
+                    )}
+                    <button
+                      type="submit"
+                      className="group relative w-full h-14 rounded-2xl bg-primary text-primary-foreground font-black text-lg neu-btn-sm transition-all flex items-center justify-center gap-3 overflow-hidden"
+                    >
+                      {/* 按钮内扫光效果 */}
+                      <div className="absolute inset-0 w-full h-full bg-white/20 -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
+                      <LogIn className="w-5 h-5 relative z-10" strokeWidth={2.5} />
+                      <span className="relative z-10 tracking-wide">{isRegister ? '注册并进入' : '登录'}</span>
+                    </button>
+                  </form>
+                )}
+                {mode.passwordLoginEnabled && mode.linuxDoEnabled && (
+                  <div className="flex items-center gap-3 my-5">
+                    <div className="flex-1 h-0.5 bg-muted-foreground/20 rounded-full" />
+                    <span className="text-xs font-black text-muted-foreground">或</span>
+                    <div className="flex-1 h-0.5 bg-muted-foreground/20 rounded-full" />
+                  </div>
+                )}
+                {mode.linuxDoEnabled && (
+                  <button
+                    onClick={handleLinuxDoLogin}
+                    className="group relative w-full h-16 rounded-2xl bg-primary text-primary-foreground font-black text-lg neu-btn-sm transition-all flex items-center justify-center gap-3 overflow-hidden"
+                  >
+                    {/* 按钮内扫光效果 */}
+                    <div className="absolute inset-0 w-full h-full bg-white/20 -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
+                    <Globe className="w-6 h-6 relative z-10" strokeWidth={2.5} />
+                    <span className="relative z-10 tracking-wide">使用 LinuxDo 登录</span>
+                  </button>
+                )}
+                {!mode.linuxDoEnabled && !mode.passwordLoginEnabled && (
+                  <button
+                    onClick={handleLocalLogin}
+                    className="group relative w-full h-16 rounded-2xl bg-primary text-primary-foreground font-black text-lg neu-btn-sm transition-all flex items-center justify-center gap-3 overflow-hidden"
+                  >
+                    {/* 按钮内扫光效果 */}
+                    <div className="absolute inset-0 w-full h-full bg-white/20 -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
+                    <LogIn className="w-6 h-6 relative z-10" strokeWidth={2.5} />
+                    <span className="relative z-10 tracking-wide">进入</span>
+                  </button>
+                )}
+              </>
             )}
           </div>
 

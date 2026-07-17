@@ -11,9 +11,11 @@
 -- ============================================
 CREATE TABLE IF NOT EXISTS "user" (
     id BIGSERIAL PRIMARY KEY,
-    linux_do_id VARCHAR(64) NOT NULL UNIQUE,
-    username VARCHAR(64) NOT NULL,
+    linux_do_id VARCHAR(64) UNIQUE,
+    username VARCHAR(64) NOT NULL UNIQUE,
     avatar VARCHAR(256),
+    password_hash VARCHAR(60),
+    invite_code_id BIGINT,
     balance DECIMAL(18,2) NOT NULL DEFAULT 100000.00,
     frozen_balance DECIMAL(18,2) NOT NULL DEFAULT 0,
     margin_loan_principal DECIMAL(18,2) NOT NULL DEFAULT 0,
@@ -29,9 +31,11 @@ CREATE TABLE IF NOT EXISTS "user" (
 
 COMMENT ON TABLE "user" IS '用户表';
 COMMENT ON COLUMN "user".id IS '主键';
-COMMENT ON COLUMN "user".linux_do_id IS 'LinuxDo用户ID，OAuth登录标识';
-COMMENT ON COLUMN "user".username IS '用户名';
+COMMENT ON COLUMN "user".linux_do_id IS 'LinuxDo用户ID，OAuth登录标识（本地注册用户为空）';
+COMMENT ON COLUMN "user".username IS '用户名（全局唯一，密码登录按此查人）';
 COMMENT ON COLUMN "user".avatar IS '头像URL';
+COMMENT ON COLUMN "user".password_hash IS 'BCrypt密码哈希（定长60，OAuth用户为空）';
+COMMENT ON COLUMN "user".invite_code_id IS '注册用的邀请码ID（可追溯，OAuth用户为空）';
 COMMENT ON COLUMN "user".balance IS '可用余额';
 COMMENT ON COLUMN "user".frozen_balance IS '冻结余额（限价买单冻结）';
 COMMENT ON COLUMN "user".margin_loan_principal IS '杠杆借款本金';
@@ -45,6 +49,25 @@ COMMENT ON COLUMN "user".created_at IS '创建时间';
 COMMENT ON COLUMN "user".updated_at IS '更新时间';
 
 CREATE INDEX idx_user_bankrupt ON "user"(is_bankrupt, bankrupt_reset_date);
+
+-- ============================================
+-- 1b. 邀请码表（邀请码注册模式：有码才能注册本地账号）
+-- ============================================
+CREATE TABLE IF NOT EXISTS invite_code (
+    id BIGSERIAL PRIMARY KEY,
+    code VARCHAR(32) NOT NULL UNIQUE,
+    max_uses INT NOT NULL DEFAULT 1,
+    used_count INT NOT NULL DEFAULT 0,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE invite_code IS '邀请码表';
+COMMENT ON COLUMN invite_code.code IS '邀请码（唯一）';
+COMMENT ON COLUMN invite_code.max_uses IS '最大可用次数';
+COMMENT ON COLUMN invite_code.used_count IS '已用次数（注册时原子+1，防并发超用）';
+COMMENT ON COLUMN invite_code.enabled IS '是否可用（作废置 FALSE）';
 
 -- ============================================
 -- 13. 每日Buff表

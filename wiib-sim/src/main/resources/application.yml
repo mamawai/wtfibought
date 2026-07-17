@@ -55,6 +55,14 @@ linuxdo:
   client-secret: ${LINUXDO_CLIENT_SECRET:}
   redirect-uri: ${LINUXDO_REDIRECT_URI:http://localhost:3000/login}
 
+# 账号密码登录 + 邀请码注册（可选，与 LinuxDo 并存；开了任一正式登录方式则管理员直登关闭）
+# admin-password = 管理员账号(id=1)的登录密码，启动时自动设置/同步到 id=1 上
+# 开密码登录时必须配：邀请码只有管理员能生成，id=1 没密码则没人能生成码、也就没人能注册
+auth:
+  password-login:
+    enabled: ${PASSWORD_LOGIN_ENABLED:false}
+    admin-password: ${ADMIN_PASSWORD:}
+
 # 交易配置
 trading:
   # 合约 AI 主决策周期：M1/M3/M5/M15/H1（影响 K 线采集 / 指标计算 / 回测聚合系数）

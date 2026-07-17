@@ -27,6 +27,12 @@ public class User {
     /** 头像URL */
     private String avatar;
 
+    /** BCrypt密码哈希（定长60，OAuth用户为空） */
+    private String passwordHash;
+
+    /** 注册用的邀请码ID（可追溯，OAuth用户为空） */
+    private Long inviteCodeId;
+
     /** 可用余额 */
     private BigDecimal balance;
 
