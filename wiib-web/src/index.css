@@ -298,14 +298,18 @@ html.dark .neu-btn-sm:active:not(:disabled) { box-shadow: inset 3px 3px 6px var(
 .animate-card-replace { animation: card-replace-flip 0.8s ease-in-out both; perspective: 600px; transform-style: preserve-3d; }
 
 .vp-card {
-  width: 4.5rem;
-  height: 6.3rem;
+  /* 基础尺寸按 360px 屏定：5张×3.8rem+4缝×8px 恰好塞进容器，不横向溢出 */
+  width: 3.8rem;
+  height: 5.32rem;
   border-radius: 0.5rem;
   flex-shrink: 0;
   user-select: none;
   transition: transform 0.15s ease;
   position: relative;
   background: transparent;
+}
+@media (min-width: 480px) {
+  .vp-card { width: 4.5rem; height: 6.3rem; }
 }
 @media (min-width: 640px) {
   .vp-card { width: 5.5rem; height: 7.7rem; border-radius: 0.6rem; }

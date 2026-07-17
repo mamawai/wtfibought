@@ -101,7 +101,6 @@ binance:
   futures-rest-base-url: https://fapi.binance.com
   symbols:
     - BTCUSDT
-    - PAXGUSDT
     - ETHUSDT
     - DOGEUSDT
     - SOLUSDT

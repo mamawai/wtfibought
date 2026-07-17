@@ -21,13 +21,13 @@ public interface UserAssetSnapshotMapper extends BaseMapper<UserAssetSnapshot> {
 
     @Insert("""
             INSERT INTO user_asset_snapshot (user_id, snapshot_date, total_assets, profit, profit_pct,
-              stock_profit, crypto_profit, futures_profit, option_profit, prediction_profit, game_profit, created_at)
+              bstock_profit, crypto_profit, commodity_profit, prediction_profit, game_profit, created_at)
             VALUES (#{userId}, #{snapshotDate}, #{totalAssets}, #{profit}, #{profitPct},
-              #{stockProfit}, #{cryptoProfit}, #{futuresProfit}, #{optionProfit}, #{predictionProfit}, #{gameProfit}, #{createdAt})
+              #{bstockProfit}, #{cryptoProfit}, #{commodityProfit}, #{predictionProfit}, #{gameProfit}, #{createdAt})
             ON CONFLICT (user_id, snapshot_date) DO UPDATE SET
               total_assets = EXCLUDED.total_assets, profit = EXCLUDED.profit, profit_pct = EXCLUDED.profit_pct,
-              stock_profit = EXCLUDED.stock_profit, crypto_profit = EXCLUDED.crypto_profit,
-              futures_profit = EXCLUDED.futures_profit, option_profit = EXCLUDED.option_profit,
+              bstock_profit = EXCLUDED.bstock_profit, crypto_profit = EXCLUDED.crypto_profit,
+              commodity_profit = EXCLUDED.commodity_profit,
               prediction_profit = EXCLUDED.prediction_profit, game_profit = EXCLUDED.game_profit
             """)
     void upsert(UserAssetSnapshot snapshot);

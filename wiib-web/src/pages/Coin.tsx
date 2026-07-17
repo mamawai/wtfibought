@@ -201,20 +201,20 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                 <CardTitle className="text-base font-black">走势</CardTitle>
                 <div className="flex rounded-xl bg-card neu-raised-sm overflow-hidden">
                   {TABS.map((tab, i) => (
-                    <button key={tab.label} onClick={() => setActiveTab(i)} className={`px-4 py-1.5 text-xs font-bold border-r border-border transition-colors ${activeTab === i ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>
+                    <button key={tab.label} onClick={() => setActiveTab(i)} className={`px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-bold border-r border-border transition-colors ${activeTab === i ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>
                       {tab.label}
                     </button>
                   ))}
-                  <button onClick={() => setActiveTab(TV_TAB)} className={`px-4 py-1.5 text-xs font-bold transition-colors ${activeTab === TV_TAB ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>
+                  <button onClick={() => setActiveTab(TV_TAB)} className={`px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-bold transition-colors ${activeTab === TV_TAB ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>
                     高级
                   </button>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="p-2 flex-1 flex flex-col">
-              {/* 现货/合约统一 K 线：合约走后端K线广播，现货由价格流驱动最后一根；高度跟随右侧面板拉伸，最矮 560 */}
+              {/* 现货/合约统一 K 线：合约走后端K线广播，现货由价格流驱动最后一根；高度跟随右侧面板拉伸，PC 最矮 560、手机 400 免得占满两屏 */}
               {activeTab < TABS.length && (
-                <div className="flex-1 min-h-[560px]">
+                <div className="flex-1 min-h-[400px] md:min-h-[560px]">
                   <CandleChart
                     key={mode}
                     symbol={symbol}
@@ -227,7 +227,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                 </div>
               )}
               {/* 高级：TradingView（合约/现货各自 symbol） */}
-              {activeTab === TV_TAB && <div className="flex-1 min-h-[560px]"><TradingViewWidget symbol={isFuturesMode ? cfg.futuresTvSymbol : cfg.tvSymbol} label={cfg.name} /></div>}
+              {activeTab === TV_TAB && <div className="flex-1 min-h-[400px] md:min-h-[560px]"><TradingViewWidget symbol={isFuturesMode ? cfg.futuresTvSymbol : cfg.tvSymbol} label={cfg.name} /></div>}
             </CardContent>
           </Card>
 

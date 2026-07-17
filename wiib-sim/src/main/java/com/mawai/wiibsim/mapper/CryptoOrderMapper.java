@@ -64,6 +64,17 @@ public interface CryptoOrderMapper extends BaseMapper<CryptoOrder> {
             "WHERE user_id = #{userId} AND order_side = 'SELL' AND status = 'FILLED'")
     BigDecimal sumSellFilledAmount(@Param("userId") Long userId);
 
+    /** 分符号净现金流：SELL(净得) − BUY(净付)，配合当前持仓市值可得该符号真实盈亏。五分类归集用 */
+    @Select("""
+            SELECT symbol,
+                   COALESCE(SUM(CASE WHEN order_side = 'SELL' THEN filled_amount - COALESCE(commission, 0)
+                                     ELSE -(filled_amount + COALESCE(commission, 0)) END), 0) AS amount
+            FROM crypto_order
+            WHERE user_id = #{userId} AND status = 'FILLED'
+            GROUP BY symbol
+            """)
+    List<Map<String, Object>> sumNetCashBySymbol(@Param("userId") Long userId);
+
     /** 全部用户的现货买入总成本（含手续费），用于排行榜批量聚合 */
     @Select("SELECT user_id, COALESCE(SUM(filled_amount + COALESCE(commission, 0)), 0) AS amount " +
             "FROM crypto_order WHERE order_side = 'BUY' AND status = 'FILLED' GROUP BY user_id")

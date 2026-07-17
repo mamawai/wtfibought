@@ -204,8 +204,8 @@ export function Admin() {
               <div className="text-sm text-muted-foreground">
                 当前：{interestRateDecimal == null ? ' -' : ` ${(interestRateDecimal * 100).toFixed(4)}%/天（${interestRateDecimal}）`}
               </div>
-              <div className="flex gap-3 items-center">
-                <div className="flex-1">
+              <div className="flex flex-wrap gap-3 items-center">
+                <div className="flex-1 min-w-[10rem]">
                   <Input
                     value={interestRatePct}
                     onChange={e => setInterestRatePct(e.target.value)}
@@ -243,7 +243,7 @@ export function Admin() {
               {aiKeys.map(key => (
                 <div key={key.id} className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-bold">{key.configName}</span>
                       <Badge variant="outline" className="text-[10px]">{maskKey(key.apiKey)}</Badge>
                       {key.model && <Badge variant="secondary" className="text-[10px]">{key.model}</Badge>}

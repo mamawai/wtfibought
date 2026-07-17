@@ -13,14 +13,23 @@ interface FuturesRow {
   marketValue: number;
 }
 
+interface BStockRow {
+  ticker: string;
+  marketValue: number;
+}
+
+// bStock 无 coinConfig 配色，用独立蓝青系列循环取色，与币种暖色区分
+const BSTOCK_COLORS = ['#635bff', '#0ea5e9', '#14b8a6', '#6366f1', '#06b6d4', '#3b82f6'];
+
 interface Props {
   cryptoPositions?: CryptoRow[];
+  bstockRows?: BStockRow[];
   futuresRows?: FuturesRow[];
   balance: number;
   pendingSettlement?: number;
 }
 
-export function PortfolioChart({ cryptoPositions = [], futuresRows = [], balance, pendingSettlement = 0 }: Props) {
+export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresRows = [], balance, pendingSettlement = 0 }: Props) {
   const chartRef = useRef<HTMLDivElement>(null);
   const isDark = useIsDark();
 
@@ -39,6 +48,13 @@ export function PortfolioChart({ cryptoPositions = [], futuresRows = [], balance
             itemStyle: { color: coin.chartColor },
           };
         }),
+      ...bstockRows
+        .filter(b => b.marketValue > 0)
+        .map((b, i) => ({
+          name: b.ticker,
+          value: b.marketValue,
+          itemStyle: { color: BSTOCK_COLORS[i % BSTOCK_COLORS.length] },
+        })),
       ...futuresRows
         .filter(f => f.marketValue > 0)
         .map(f => {
@@ -121,7 +137,7 @@ export function PortfolioChart({ cryptoPositions = [], futuresRows = [], balance
       window.removeEventListener('resize', onResize);
       chart.dispose();
     };
-  }, [cryptoPositions, futuresRows, balance, pendingSettlement, isDark]);
+  }, [cryptoPositions, bstockRows, futuresRows, balance, pendingSettlement, isDark]);
 
   return <div ref={chartRef} className="w-full h-56 sm:h-64 transition-colors duration-300" />;
 }

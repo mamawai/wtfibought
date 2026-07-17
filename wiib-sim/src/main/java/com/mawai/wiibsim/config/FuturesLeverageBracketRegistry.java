@@ -16,7 +16,7 @@ import java.util.Map;
  * 档位选择：按"仓位 USDT 名义价值"匹配半开区间 [floor, cap)。
  * 强平公式：MM = notional × MMR − maintAmount。
  * <p>
- * 已配置：BTCUSDT、ETHUSDT、PAXGUSDT、DOGEUSDT、SOLUSDT、XRPUSDT。
+ * 已配置：BTCUSDT、ETHUSDT、DOGEUSDT、SOLUSDT、XRPUSDT、XAUUSDT、CLUSDT。
  * 新增 symbol 必须先在此处补完档位数据，否则开仓抛 FUTURES_SYMBOL_NOT_CONFIGURED。
  */
 @Component
@@ -68,21 +68,6 @@ public class FuturesLeverageBracketRegistry {
             new Bracket(10, bd("400000000"),    bd("530000000"),    3,   bd("0.1500"), bd("27507000")),
             new Bracket(11, bd("530000000"),    bd("800000000"),    2,   bd("0.2500"), bd("80507000")),
             new Bracket(12, bd("800000000"),    bd("1200000000"),   1,   bd("0.5000"), bd("280507000"))
-    );
-
-    // PAXG: 黄金稳定币流动性远低于 BTC/ETH，11 档，档位 1 仅 5K USDT、MMR 起点 1.00%。
-    private static final List<Bracket> PAXG_BRACKETS = List.of(
-            new Bracket(1,  bd("0"),            bd("5000"),         75, bd("0.0100"),  bd("0")),
-            new Bracket(2,  bd("5000"),         bd("10000"),        50, bd("0.0150"),  bd("25")),
-            new Bracket(3,  bd("10000"),        bd("50000"),        25, bd("0.0200"),  bd("75")),
-            new Bracket(4,  bd("50000"),        bd("100000"),       20, bd("0.0250"),  bd("325")),
-            new Bracket(5,  bd("100000"),       bd("175000"),       15, bd("0.0333"),  bd("1158")),
-            new Bracket(6,  bd("175000"),       bd("500000"),       10, bd("0.0500"),  bd("4075.25")),
-            new Bracket(7,  bd("500000"),       bd("750000"),       5,  bd("0.1000"),  bd("29075.25")),
-            new Bracket(8,  bd("750000"),       bd("1500000"),      4,  bd("0.1250"),  bd("47825.25")),
-            new Bracket(9,  bd("1500000"),      bd("4500000"),      3,  bd("0.1667"),  bd("110375.25")),
-            new Bracket(10, bd("4500000"),      bd("7500000"),      2,  bd("0.2500"),  bd("485225.25")),
-            new Bracket(11, bd("7500000"),      bd("12500000"),     1,  bd("0.5000"),  bd("2360225.25"))
     );
 
     // DOGE: meme 币高波动，10 档，档位 1 上限 80K USDT、MMR 起点 0.65%（比 BTC/ETH 高）。
@@ -148,7 +133,6 @@ public class FuturesLeverageBracketRegistry {
     private static final Map<String, List<Bracket>> BRACKETS = Map.of(
             "BTCUSDT",  BTC_BRACKETS,
             "ETHUSDT",  ETH_BRACKETS,
-            "PAXGUSDT", PAXG_BRACKETS,
             "DOGEUSDT", DOGE_BRACKETS,
             "SOLUSDT",  SOL_BRACKETS,
             "XRPUSDT",  XRP_BRACKETS,

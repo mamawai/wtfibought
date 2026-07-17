@@ -34,8 +34,7 @@ public class PriceVolatilitySentinel {
     /** 兜底固定阈值：ATR 尚未就绪时使用 */
     private static final Map<String, Double> FALLBACK_THRESHOLDS = Map.of(
             "BTCUSDT", 0.003,
-            "ETHUSDT", 0.005,
-            "PAXGUSDT", 0.002
+            "ETHUSDT", 0.005
     );
     private static final double DEFAULT_FALLBACK = 0.004;
 

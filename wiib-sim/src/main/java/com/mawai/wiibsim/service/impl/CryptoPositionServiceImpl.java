@@ -101,8 +101,12 @@ public class CryptoPositionServiceImpl extends ServiceImpl<CryptoPositionMapper,
 
     @Override
     public Map<String, BigDecimal> fetchCryptoPriceMap() {
-        List<String> symbols = binanceProperties.getSymbols();
-        if (symbols == null || symbols.isEmpty()) return Collections.emptyMap();
-        return cacheService.getCryptoPrices(symbols);
+        // 配置符号 ∪ 实际持仓符号：bStock 等不在配置列表里的持仓也要取到价，否则估值/快照漏算
+        java.util.LinkedHashSet<String> symbols = new java.util.LinkedHashSet<>();
+        List<String> configured = binanceProperties.getSymbols();
+        if (configured != null) symbols.addAll(configured);
+        symbols.addAll(baseMapper.listDistinctSymbols());
+        if (symbols.isEmpty()) return Collections.emptyMap();
+        return cacheService.getCryptoPrices(List.copyOf(symbols));
     }
 }

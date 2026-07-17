@@ -168,8 +168,8 @@ export function GraphObs() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-4 px-4 py-6">
-      {/* Header */}
-      <div className="flex items-center gap-3">
+      {/* Header：手机上标题+徽标+刷新钮允许换行 */}
+      <div className="flex flex-wrap items-center gap-3 gap-y-2">
         <Link to="/admin" className="text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft className="w-4 h-4" />
         </Link>
@@ -245,7 +245,8 @@ export function GraphObs() {
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            {/* min-w：7 列在手机上整表横向滚动而不是挤压 */}
+            <table className="w-full min-w-[560px] text-xs">
               <thead className="text-[10px] uppercase text-muted-foreground">
                 <tr className="border-b">
                   <th className="px-4 py-2 text-left">节点</th>

@@ -7,9 +7,11 @@ interface Props {
   userData: CategoryAverages;
 }
 
+// 五分类能力轴：与后端 CategoryAveragesDTO 一一对应
 const INDICATORS = [
   { name: '加密货币', key: 'cryptoProfit' },
-  { name: '合约', key: 'futuresProfit' },
+  { name: '大宗商品', key: 'commodityProfit' },
+  { name: 'bStock', key: 'bstockProfit' },
   { name: '预测', key: 'predictionProfit' },
   { name: '游戏', key: 'gameProfit' },
 ];
@@ -98,7 +100,21 @@ export function RadarChart({ userData }: Props) {
 
   return (
     <div className="w-full">
-      <div ref={chartRef} className="w-full h-80 sm:h-96" />
+      <div ref={chartRef} className="w-full h-72 sm:h-96" />
+      {/* 五分类百分位速览：免 hover 直读，值=胜过多少其他用户 */}
+      <div className="grid grid-cols-5 gap-1 mt-2 px-1">
+        {INDICATORS.map(ind => {
+          const v = Number(userData[ind.key as keyof CategoryAverages] || 0);
+          return (
+            <div key={ind.key} className="text-center">
+              <div className="text-[10px] text-muted-foreground leading-tight">{ind.name}</div>
+              <div className={`text-xs font-bold tabular-nums ${v >= 50 ? 'text-green-400' : 'text-muted-foreground'}`}>
+                {v.toFixed(0)}%
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

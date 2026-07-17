@@ -16,13 +16,12 @@ public class AssetSnapshotDTO {
 
     private BigDecimal profitPct;
 
-    private BigDecimal stockProfit;
+    // 五分类盈亏：bStock / crypto(现货+合约) / 大宗商品 / 预测 / 游戏
+    private BigDecimal bstockProfit;
 
     private BigDecimal cryptoProfit;
 
-    private BigDecimal futuresProfit;
-
-    private BigDecimal optionProfit;
+    private BigDecimal commodityProfit;
 
     private BigDecimal predictionProfit;
 
@@ -31,10 +30,9 @@ public class AssetSnapshotDTO {
     // 日收益（对比昨日快照的差值）
     private BigDecimal dailyProfit;
     private BigDecimal dailyProfitPct;
-    private BigDecimal dailyStockProfit;
+    private BigDecimal dailyBstockProfit;
     private BigDecimal dailyCryptoProfit;
-    private BigDecimal dailyFuturesProfit;
-    private BigDecimal dailyOptionProfit;
+    private BigDecimal dailyCommodityProfit;
     private BigDecimal dailyPredictionProfit;
     private BigDecimal dailyGameProfit;
 }

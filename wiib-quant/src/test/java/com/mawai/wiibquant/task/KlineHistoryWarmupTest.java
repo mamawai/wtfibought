@@ -17,9 +17,9 @@ class KlineHistoryWarmupTest {
         FakeKlineHistoryStore store = new FakeKlineHistoryStore();
         FakeMacroContextService macro = new FakeMacroContextService(store);
 
-        warmup(store, macro, List.of("BTCUSDT", "PAXGUSDT", "SOLUSDT")).run();
+        warmup(store, macro, List.of("BTCUSDT", "ETHUSDT", "SOLUSDT")).run();
 
-        assertThat(store.symbols).containsExactly("BTCUSDT", "PAXGUSDT", "SOLUSDT");
+        assertThat(store.symbols).containsExactly("BTCUSDT", "ETHUSDT", "SOLUSDT");
         assertThat(store.lastToMs - store.lastFromMs).isEqualTo(MacroContextService.HISTORY.toMillis());
         assertThat(macro.warmupCalls).isEqualTo(1);
         // 预热必须发生在全部回补之后，宏观才能读到完整窗口

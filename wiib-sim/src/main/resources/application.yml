@@ -86,11 +86,14 @@ binance:
   futures-rest-base-url: https://fapi.binance.com
   symbols:
     - BTCUSDT
-    - PAXGUSDT
     - ETHUSDT
     - DOGEUSDT
     - SOLUSDT
     - XRPUSDT
+  # 大宗商品符号：五分类盈亏归集判定用（TradFi 永续：黄金/原油）
+  commodity-symbols:
+    - XAUUSDT
+    - CLUSDT
   fallback-poll-interval: 5000
 
 # WebSocket配置

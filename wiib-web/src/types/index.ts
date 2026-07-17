@@ -378,27 +378,30 @@ export interface PredictionBetLive {
   ts: number;
 }
 
-// ========== 资产快照类型 ==========
+// ========== 资产快照类型（五分类：bStock/crypto/大宗商品/预测/游戏） ==========
 export interface AssetSnapshot {
   date: string;
   totalAssets: number;
   profit: number;
   profitPct: number;
+  bstockProfit: number;
   cryptoProfit: number;
-  futuresProfit: number;
+  commodityProfit: number;
   predictionProfit: number;
   gameProfit: number;
   dailyProfit: number;
   dailyProfitPct: number;
+  dailyBstockProfit: number;
   dailyCryptoProfit: number;
-  dailyFuturesProfit: number;
+  dailyCommodityProfit: number;
   dailyPredictionProfit: number;
   dailyGameProfit: number;
 }
 
 export interface CategoryAverages {
+  bstockProfit: number;
   cryptoProfit: number;
-  futuresProfit: number;
+  commodityProfit: number;
   predictionProfit: number;
   gameProfit: number;
 }

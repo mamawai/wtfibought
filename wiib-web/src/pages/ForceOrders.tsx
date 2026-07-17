@@ -9,7 +9,7 @@ import { AlertTriangle, ChevronLeft, ChevronRight, Flame, RefreshCw } from 'luci
 import type { ForceOrder, PageResult } from '../types';
 import { formatCoinPrice } from '../lib/coinConfig';
 
-const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'PAXGUSDT', 'DOGEUSDT'] as const;
+const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'DOGEUSDT'] as const;
 const PAGE_SIZE = 20;
 
 function sideLabel(side: string): string {

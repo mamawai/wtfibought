@@ -8,7 +8,7 @@ import { VolTimeline } from './VolTimeline';
 import { AnalysisCard } from './AnalysisCard';
 import type { QuantDeepAnalysisView, QuantSnapshotSeriesPoint, QuantSnapshotView } from '../../types';
 
-// 只展示 quant 实际监控的标的（WATCH_SYMBOLS=BTC/ETH），PAXG 无快照数据不再出现
+// 只展示 quant 实际监控的标的（WATCH_SYMBOLS=BTC/ETH）
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT'] as const;
 const SYM_LABEL: Record<string, string> = { BTCUSDT: 'BTC', ETHUSDT: 'ETH' };
 const WINDOWS = [{ label: '24h', hours: 24 }, { label: '72h', hours: 72 }, { label: '7d', hours: 168 }] as const;

@@ -19,7 +19,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 public class DeribitClient extends BaseRestTemplateConfig {
 
     private static final String BASE_URL = "https://www.deribit.com/api/v2/public";
-    /** Deribit 只有 BTC/ETH 期权段有数据（实测：SOL/XRP/PAXG 返回空簿，DOGE 直接 400 invalid currency） */
+    /** Deribit 只有 BTC/ETH 期权段有数据（实测：SOL/XRP 返回空簿，DOGE 直接 400 invalid currency） */
     private static final Set<String> SUPPORTED_CURRENCIES = Set.of("BTC", "ETH");
     private final RestTemplate restTemplate;
 

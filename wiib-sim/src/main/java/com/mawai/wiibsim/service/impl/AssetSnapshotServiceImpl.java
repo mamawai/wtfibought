@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.LoadingCache;
+import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.dto.AssetSnapshotDTO;
 import com.mawai.wiibcommon.dto.CategoryAveragesDTO;
 import com.mawai.wiibcommon.entity.*;
@@ -21,6 +22,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -44,6 +46,25 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
     private final VideoPokerGameMapper videoPokerGameMapper;
     private final BlackjackConvertLogMapper blackjackConvertLogMapper;
     private final CryptoOrderMapper cryptoOrderMapper;
+    private final BStockMapper bstockMapper;
+    private final BinanceProperties binanceProperties;
+
+    /** 符号→五分类归属的判定集：bStock 来自 bstock 表（现货），大宗商品来自配置（金/油） */
+    private record CategorySets(Set<String> bstock, Set<String> commodity) {
+        String classify(String symbol) {
+            if (bstock.contains(symbol)) return "bstock";
+            if (commodity.contains(symbol)) return "commodity";
+            return "crypto";
+        }
+    }
+
+    private CategorySets loadCategorySets() {
+        Set<String> bstock = bstockMapper.selectList(null).stream()
+                .map(BStock::getSymbol)
+                .collect(java.util.stream.Collectors.toSet());
+        List<String> commodities = binanceProperties.getCommoditySymbols();
+        return new CategorySets(bstock, commodities == null ? Set.of() : Set.copyOf(commodities));
+    }
 
     @org.springframework.beans.factory.annotation.Value("${trading.initial-balance:100000}")
     private BigDecimal initialBalance;
@@ -62,6 +83,7 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
         LocalDate yesterday = LocalDate.now().minusDays(1);
         List<User> users = userMapper.selectList(null);
         Map<String, BigDecimal> cryptoPriceMap = cryptoPositionService.fetchCryptoPriceMap();
+        CategorySets sets = loadCategorySets();
 
         int concurrency = 5;
         Semaphore semaphore = new Semaphore(concurrency);
@@ -71,7 +93,7 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
                     .map(user -> CompletableFuture.runAsync(() -> {
                         try {
                             semaphore.acquire();
-                            computeAndUpsert(user, yesterday, cryptoPriceMap);
+                            snapshotMapper.upsert(computeSnapshot(user, yesterday, cryptoPriceMap, sets));
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                             log.warn("快照用户{}被中断: {}", user.getId(), e.getMessage());
@@ -99,7 +121,7 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
 
         LocalDate today = LocalDate.now();
         Map<String, BigDecimal> cryptoPriceMap = cryptoPositionService.fetchCryptoPriceMap();
-        UserAssetSnapshot snapshot = computeSnapshot(user, today, cryptoPriceMap);
+        UserAssetSnapshot snapshot = computeSnapshot(user, today, cryptoPriceMap, loadCategorySets());
 
         UserAssetSnapshot yesterday = snapshotMapper.selectByUserAndDate(userId, today.minusDays(1));
         AssetSnapshotDTO dto = toDTO(snapshot, yesterday);
@@ -144,10 +166,9 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
             UserAssetSnapshot current = currentMap.get(user.getId());
             if (current == null) continue;
             userTotals.put(user.getId(), new BigDecimal[]{
-                    current.getStockProfit(),
+                    current.getBstockProfit(),
                     current.getCryptoProfit(),
-                    current.getFuturesProfit(),
-                    current.getOptionProfit(),
+                    current.getCommodityProfit(),
                     current.getPredictionProfit(),
                     current.getGameProfit()
             });
@@ -160,6 +181,7 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
                                                                   LocalDate date,
                                                                   Map<String, BigDecimal> cryptoPriceMap) {
         Map<Long, UserAssetSnapshot> snapshots = new ConcurrentHashMap<>();
+        CategorySets sets = loadCategorySets();
         int concurrency = 5;
         Semaphore semaphore = new Semaphore(concurrency);
 
@@ -168,7 +190,7 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
                     .map(user -> CompletableFuture.runAsync(() -> {
                         try {
                             semaphore.acquire();
-                            snapshots.put(user.getId(), computeSnapshot(user, date, cryptoPriceMap));
+                            snapshots.put(user.getId(), computeSnapshot(user, date, cryptoPriceMap, sets));
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                             log.warn("实时快照用户{}被中断: {}", user.getId(), e.getMessage());
@@ -194,8 +216,8 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
 
         Map<Long, CategoryAveragesDTO> result = new HashMap<>();
         for (Map.Entry<Long, BigDecimal[]> entry : userTotals.entrySet()) {
-            BigDecimal[] userRank = new BigDecimal[6];
-            for (int i = 0; i < 6; i++) {
+            BigDecimal[] userRank = new BigDecimal[5];
+            for (int i = 0; i < 5; i++) {
                 BigDecimal userVal = entry.getValue()[i];
                 if (userCount == 1) {
                     userRank[i] = new BigDecimal("100");
@@ -218,28 +240,21 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
 
     private CategoryAveragesDTO toCategoryAveragesDTO(BigDecimal[] values) {
         CategoryAveragesDTO dto = new CategoryAveragesDTO();
-        dto.setStockProfit(values[0]);
+        dto.setBstockProfit(values[0]);
         dto.setCryptoProfit(values[1]);
-        dto.setFuturesProfit(values[2]);
-        dto.setOptionProfit(values[3]);
-        dto.setPredictionProfit(values[4]);
-        dto.setGameProfit(values[5]);
+        dto.setCommodityProfit(values[2]);
+        dto.setPredictionProfit(values[3]);
+        dto.setGameProfit(values[4]);
         return dto;
     }
 
-    private void computeAndUpsert(User user, LocalDate date, Map<String, BigDecimal> cryptoPriceMap) {
-        UserAssetSnapshot snapshot = computeSnapshot(user, date, cryptoPriceMap);
-        snapshotMapper.upsert(snapshot);
-    }
-
-    private UserAssetSnapshot computeSnapshot(User user, LocalDate date, Map<String, BigDecimal> cryptoPriceMap) {
+    private UserAssetSnapshot computeSnapshot(User user, LocalDate date, Map<String, BigDecimal> cryptoPriceMap,
+                                              CategorySets sets) {
         Long userId = user.getId();
 
-        // 老 GBM 股市已退：股票口径归零（bStock 在 crypto_position，市值/盈亏并入 crypto）
-        BigDecimal stockProfit = BigDecimal.ZERO;
-
+        // ---- 现货：全部市值进总资产；在持市值按符号归入 bStock/大宗商品/crypto 三桶 ----
         BigDecimal cryptoMarketValue = BigDecimal.ZERO;
-        BigDecimal cryptoFloatingProfit = BigDecimal.ZERO;
+        Map<String, BigDecimal> heldMv = new HashMap<>();   // 分类桶 → 在持市值
         List<CryptoPosition> cryptoPositions = cryptoPositionService.getUserPositions(userId);
         for (CryptoPosition cp : cryptoPositions) {
             BigDecimal price = cryptoPriceMap.get(cp.getSymbol());
@@ -247,15 +262,22 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
                 BigDecimal totalQty = cp.getQuantity().add(cp.getFrozenQuantity() != null ? cp.getFrozenQuantity() : BigDecimal.ZERO);
                 BigDecimal mv = price.multiply(totalQty);
                 cryptoMarketValue = cryptoMarketValue.add(mv);
-                cryptoFloatingProfit = cryptoFloatingProfit.add(mv.subtract(cp.getAvgCost().multiply(totalQty)));
+                heldMv.merge(sets.classify(cp.getSymbol()), mv, BigDecimal::add);
             }
         }
-        BigDecimal cryptoRealizedProfit = cryptoOrderMapper.sumSellFilledAmount(userId)
-                .subtract(cryptoOrderMapper.sumBuyFilledAmount(userId));
-        BigDecimal cryptoProfit = cryptoFloatingProfit.add(cryptoRealizedProfit);
+        // 现货真实盈亏 = 在持市值 + 全史净现金流(卖出净得−买入净付)，与排行榜同口径。
+        // 曾用"浮盈+(卖−买)"：在持成本被双扣，买入即显示巨亏，已废弃
+        Map<String, BigDecimal> netCash = new HashMap<>();
+        for (Map<String, Object> row : cryptoOrderMapper.sumNetCashBySymbol(userId)) {
+            netCash.merge(sets.classify((String) row.get("symbol")), (BigDecimal) row.get("amount"), BigDecimal::add);
+        }
+        BigDecimal bstockProfit = bucket(heldMv, "bstock").add(bucket(netCash, "bstock"));
+        BigDecimal cryptoSpotProfit = bucket(heldMv, "crypto").add(bucket(netCash, "crypto"));
+        BigDecimal commoditySpotProfit = bucket(heldMv, "commodity").add(bucket(netCash, "commodity"));
 
-        BigDecimal futuresFloatingProfit = BigDecimal.ZERO;
+        // ---- 合约：浮盈按持仓符号、已实现按订单符号拆入 crypto / 大宗商品 ----
         BigDecimal futuresValue = BigDecimal.ZERO;
+        Map<String, BigDecimal> futFloating = new HashMap<>();
         List<FuturesPosition> fps = futuresPositionMapper.selectList(
                 new LambdaQueryWrapper<FuturesPosition>()
                         .eq(FuturesPosition::getUserId, userId)
@@ -263,14 +285,16 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
         for (FuturesPosition fp : fps) {
             // 统一口径见 AssetValuationService：缺价保留保证金、浮盈亏按0，不再整仓蒸发
             BigDecimal markPrice = assetValuationService.resolveFuturesPrice(fp.getSymbol());
-            futuresFloatingProfit = futuresFloatingProfit.add(AssetValuationService.futuresUnrealizedPnl(fp, markPrice));
+            futFloating.merge(sets.classify(fp.getSymbol()),
+                    AssetValuationService.futuresUnrealizedPnl(fp, markPrice), BigDecimal::add);
             futuresValue = futuresValue.add(AssetValuationService.futuresPositionValue(fp, markPrice));
         }
-        BigDecimal futuresRealizedProfit = futuresOrderMapper.sumRealizedPnl(userId);
-        BigDecimal futuresProfit = futuresFloatingProfit.add(futuresRealizedProfit);
-
-        // 期权已退：口径归零
-        BigDecimal optionProfit = BigDecimal.ZERO;
+        Map<String, BigDecimal> futRealized = new HashMap<>();
+        for (Map<String, Object> row : futuresOrderMapper.sumRealizedPnlBySymbol(userId)) {
+            futRealized.merge(sets.classify((String) row.get("symbol")), (BigDecimal) row.get("amount"), BigDecimal::add);
+        }
+        BigDecimal cryptoProfit = cryptoSpotProfit.add(bucket(futFloating, "crypto")).add(bucket(futRealized, "crypto"));
+        BigDecimal commodityProfit = commoditySpotProfit.add(bucket(futFloating, "commodity")).add(bucket(futRealized, "commodity"));
 
         // crypto待结算（老股 T+1 已退）
         BigDecimal pendingSettlement = cryptoOrderMapper.sumSettlingAmount(userId);
@@ -305,14 +329,17 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
         snapshot.setTotalAssets(totalAssets);
         snapshot.setProfit(profit);
         snapshot.setProfitPct(profitPct);
-        snapshot.setStockProfit(stockProfit.setScale(2, RoundingMode.HALF_UP));
+        snapshot.setBstockProfit(bstockProfit.setScale(2, RoundingMode.HALF_UP));
         snapshot.setCryptoProfit(cryptoProfit.setScale(2, RoundingMode.HALF_UP));
-        snapshot.setFuturesProfit(futuresProfit.setScale(2, RoundingMode.HALF_UP));
-        snapshot.setOptionProfit(optionProfit.setScale(2, RoundingMode.HALF_UP));
+        snapshot.setCommodityProfit(commodityProfit.setScale(2, RoundingMode.HALF_UP));
         snapshot.setPredictionProfit(predictionProfit.setScale(2, RoundingMode.HALF_UP));
         snapshot.setGameProfit(gameProfit.setScale(2, RoundingMode.HALF_UP));
         snapshot.setCreatedAt(LocalDateTime.now());
         return snapshot;
+    }
+
+    private static BigDecimal bucket(Map<String, BigDecimal> byCategory, String category) {
+        return byCategory.getOrDefault(category, BigDecimal.ZERO);
     }
 
     private AssetSnapshotDTO toDTO(UserAssetSnapshot cur, UserAssetSnapshot prev) {
@@ -321,10 +348,9 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
         dto.setTotalAssets(cur.getTotalAssets());
         dto.setProfit(cur.getProfit());
         dto.setProfitPct(cur.getProfitPct());
-        dto.setStockProfit(cur.getStockProfit());
+        dto.setBstockProfit(cur.getBstockProfit());
         dto.setCryptoProfit(cur.getCryptoProfit());
-        dto.setFuturesProfit(cur.getFuturesProfit());
-        dto.setOptionProfit(cur.getOptionProfit());
+        dto.setCommodityProfit(cur.getCommodityProfit());
         dto.setPredictionProfit(cur.getPredictionProfit());
         dto.setGameProfit(cur.getGameProfit());
 
@@ -333,19 +359,17 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
             BigDecimal prevTotal = prev.getTotalAssets();
             dto.setDailyProfitPct(prevTotal.signum() == 0 ? BigDecimal.ZERO
                     : dto.getDailyProfit().divide(prevTotal, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
-            dto.setDailyStockProfit(sub(cur.getStockProfit(), prev.getStockProfit()));
+            dto.setDailyBstockProfit(sub(cur.getBstockProfit(), prev.getBstockProfit()));
             dto.setDailyCryptoProfit(sub(cur.getCryptoProfit(), prev.getCryptoProfit()));
-            dto.setDailyFuturesProfit(sub(cur.getFuturesProfit(), prev.getFuturesProfit()));
-            dto.setDailyOptionProfit(sub(cur.getOptionProfit(), prev.getOptionProfit()));
+            dto.setDailyCommodityProfit(sub(cur.getCommodityProfit(), prev.getCommodityProfit()));
             dto.setDailyPredictionProfit(sub(cur.getPredictionProfit(), prev.getPredictionProfit()));
             dto.setDailyGameProfit(sub(cur.getGameProfit(), prev.getGameProfit()));
         } else {
             dto.setDailyProfit(cur.getProfit());
             dto.setDailyProfitPct(cur.getProfitPct());
-            dto.setDailyStockProfit(cur.getStockProfit());
+            dto.setDailyBstockProfit(cur.getBstockProfit());
             dto.setDailyCryptoProfit(cur.getCryptoProfit());
-            dto.setDailyFuturesProfit(cur.getFuturesProfit());
-            dto.setDailyOptionProfit(cur.getOptionProfit());
+            dto.setDailyCommodityProfit(cur.getCommodityProfit());
             dto.setDailyPredictionProfit(cur.getPredictionProfit());
             dto.setDailyGameProfit(cur.getGameProfit());
         }

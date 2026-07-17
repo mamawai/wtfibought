@@ -131,8 +131,8 @@ export function Blackjack() {
         </ul>
       </div>
 
-      {/* 顶栏 */}
-      <div className="flex items-center justify-between px-1">
+      {/* 顶栏：手机上积分+战绩+转出钮允许换行 */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-xl bg-emerald-500/20">
             <Spade className="w-5 h-5 text-emerald-400" />

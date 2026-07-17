@@ -138,23 +138,24 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
   return (
     <Card>
       <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
+        {/* 手机上标题+5个筛选钮一行放不下：允许换行，筛选组自身也可换行 */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-base flex items-center gap-2">
             {isFutures ? '合约订单' : '订单'}
             <button onClick={() => isFutures ? fetchFuturesOrders(futuresOrderFilter, futuresOrderPage) : fetchOrders(orderFilter, orderPage)} className="text-muted-foreground hover:text-foreground transition-colors" title="刷新">
               <RefreshCw className={`w-3.5 h-3.5 ${(isFutures ? futuresOrdersLoading : ordersLoading) ? 'animate-spin' : ''}`} />
             </button>
           </CardTitle>
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {isFutures ? (
               FUTURES_ORDER_FILTERS.map(f => (
-                <Button key={f.value} variant={futuresOrderFilter === f.value ? 'default' : 'ghost'} size="sm" className="h-7 px-2.5 text-xs" onClick={() => { setFuturesOrderFilter(f.value); setFuturesOrderPage(1); }}>
+                <Button key={f.value} variant={futuresOrderFilter === f.value ? 'default' : 'ghost'} size="sm" className="h-9 sm:h-7 px-2.5 text-xs" onClick={() => { setFuturesOrderFilter(f.value); setFuturesOrderPage(1); }}>
                   {f.label}
                 </Button>
               ))
             ) : (
               ORDER_STATUS_FILTERS.map(f => (
-                <Button key={f.value} variant={orderFilter === f.value ? 'default' : 'ghost'} size="sm" className="h-7 px-2.5 text-xs" onClick={() => { setOrderFilter(f.value); setOrderPage(1); }}>
+                <Button key={f.value} variant={orderFilter === f.value ? 'default' : 'ghost'} size="sm" className="h-9 sm:h-7 px-2.5 text-xs" onClick={() => { setOrderFilter(f.value); setOrderPage(1); }}>
                   {f.label}
                 </Button>
               ))
@@ -172,7 +173,8 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full text-xs">
+                {/* min-w：10 列在手机上不再互相挤压，整表横向滚动 */}
+                <table className="w-full min-w-[640px] text-xs">
                   <thead>
                     <tr className="border-b border-border/50 text-muted-foreground">
                       <th className="text-left px-4 py-2.5 font-medium">时间</th>
@@ -241,7 +243,8 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full text-xs">
+                {/* min-w：9 列在手机上不再互相挤压，整表横向滚动 */}
+                <table className="w-full min-w-[560px] text-xs">
                   <thead>
                     <tr className="border-b border-border/50 text-muted-foreground">
                       <th className="text-left px-4 py-2.5 font-medium">时间</th>

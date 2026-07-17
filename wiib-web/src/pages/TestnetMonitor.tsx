@@ -121,7 +121,8 @@ function TradeRow({ t }: { t: TnTrade }) {
   const hasPnl = t.realizedPnl !== 0;
   const pnlUp = t.realizedPnl >= 0;
   return (
-    <div className="neu-flat rounded-lg px-3 py-2 flex items-center gap-2 text-xs">
+    // flex-wrap：手机上时间+价格×数量+盈亏一行放不下时折行
+    <div className="neu-flat rounded-lg px-3 py-2 flex flex-wrap items-center gap-2 text-xs">
       <span className="text-[10px] text-muted-foreground tabular-nums w-20">{fmtDateTime(t.time)}</span>
       <span className="font-bold">{t.symbol.replace('USDT', '')}</span>
       <span className={cn('font-bold', buy ? 'text-gain' : 'text-loss')}>{t.side}</span>
@@ -350,8 +351,8 @@ export function TestnetMonitor() {
 
   return (
     <div className="page-shell px-4 md:px-6 py-5 space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      {/* Header：手机上标题+币种切换放不下一行，允许换行 */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 rounded-xl neu-raised-sm flex items-center justify-center bg-primary/10">
             <Activity className="w-5.5 h-5.5 text-primary" />

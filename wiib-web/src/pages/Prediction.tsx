@@ -476,12 +476,12 @@ export function Prediction() {
                   <div className="flex gap-1.5 mb-4">
                     {[1, 5, 10, 100].map(v => (
                       <Button key={v} variant="outline" size="sm"
-                              className="flex-1 h-7 text-xs font-semibold"
+                              className="flex-1 h-9 sm:h-7 text-xs font-semibold"
                               onClick={() => setAmount(prev => String((parseFloat(prev) || 0) + v))}>
                         +${v}
                       </Button>
                     ))}
-                    <Button variant="outline" size="sm" className="flex-1 h-7 text-xs font-semibold"
+                    <Button variant="outline" size="sm" className="flex-1 h-9 sm:h-7 text-xs font-semibold"
                             onClick={() => setAmount(user?.balance ? String(Math.floor(parseFloat(String(user.balance)) / 1.02 * 100) / 100) : '0')}>
                       全部
                     </Button>
@@ -510,12 +510,12 @@ export function Prediction() {
                   <div className="flex gap-1.5 mb-4">
                     {[0.25, 0.5].map(pct => (
                       <Button key={pct} variant="outline" size="sm"
-                              className="flex-1 h-7 text-xs font-semibold"
+                              className="flex-1 h-9 sm:h-7 text-xs font-semibold"
                               onClick={() => setShares(String(Math.floor(totalShares * pct * 100) / 100))}>
                         {pct * 100}%
                       </Button>
                     ))}
-                    <Button variant="outline" size="sm" className="flex-1 h-7 text-xs font-semibold"
+                    <Button variant="outline" size="sm" className="flex-1 h-9 sm:h-7 text-xs font-semibold"
                             onClick={() => setShares(String(totalShares))}>
                       全部
                     </Button>
@@ -598,7 +598,8 @@ export function Prediction() {
                     return `${fmtTime(ws * 1000)} - ${fmtTime((ws + WINDOW_SECONDS) * 1000)}`;
                   })() : '';
                   return (
-                  <div key={b.id} className="flex items-center gap-3 text-xs py-2.5 px-3 rounded-lg hover:bg-muted/40 transition-colors">
+                  // flex-wrap：手机上时间段+份数+状态一行放不下时折行，不再横向溢出
+                  <div key={b.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs py-2.5 px-3 rounded-lg hover:bg-muted/40 transition-colors">
                     {timeRange && <span className="text-muted-foreground font-mono tabular-nums text-[11px] shrink-0">{timeRange}</span>}
                     <span className={`w-10 text-center text-[10px] font-bold py-0.5 rounded ${b.side === 'UP' ? 'bg-green-500/12 text-green-500' : 'bg-red-500/12 text-red-500'}`}>
                       {b.side}
@@ -642,7 +643,7 @@ export function Prediction() {
               <div className="space-y-1.5">
                 {rounds.length === 0 && <p className="text-xs text-muted-foreground text-center py-6">暂无回合记录</p>}
                 {rounds.map(r => (
-                  <div key={r.id} className="flex items-center gap-3 text-xs py-2.5 px-3 rounded-lg hover:bg-muted/40 transition-colors">
+                  <div key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs py-2.5 px-3 rounded-lg hover:bg-muted/40 transition-colors">
                     <span className="text-muted-foreground font-mono tabular-nums text-[11px]">
                       {r.windowStart ? fmtDateTime(r.windowStart * 1000) : '--'}
                     </span>

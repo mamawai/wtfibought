@@ -255,11 +255,11 @@ export function FuturesPositionsCard({ symbol, currentPrice, markPrice, brackets
               </div>
               {/* 操作按钮 */}
               <div className="flex flex-wrap gap-1.5 pt-1">
-                <Button size="sm" variant={isActive && posAction.type === 'close' ? 'default' : 'outline'} className="h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'close', pos)}>平仓</Button>
-                <Button size="sm" variant={isActive && posAction.type === 'increase' ? 'default' : 'outline'} className="h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'increase', pos)}>加仓</Button>
-                <Button size="sm" variant={isActive && posAction.type === 'margin' ? 'default' : 'outline'} className="h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'margin', pos)}>+保证金</Button>
-                <Button size="sm" variant={isActive && posAction.type === 'reduceMargin' ? 'default' : 'outline'} className="h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'reduceMargin', pos)}>-保证金</Button>
-                <Button size="sm" variant={isActive && posAction.type === 'stoploss' ? 'default' : 'outline'} className="h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'stoploss', pos)}>止损/盈</Button>
+                <Button size="sm" variant={isActive && posAction.type === 'close' ? 'default' : 'outline'} className="h-9 sm:h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'close', pos)}>平仓</Button>
+                <Button size="sm" variant={isActive && posAction.type === 'increase' ? 'default' : 'outline'} className="h-9 sm:h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'increase', pos)}>加仓</Button>
+                <Button size="sm" variant={isActive && posAction.type === 'margin' ? 'default' : 'outline'} className="h-9 sm:h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'margin', pos)}>+保证金</Button>
+                <Button size="sm" variant={isActive && posAction.type === 'reduceMargin' ? 'default' : 'outline'} className="h-9 sm:h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'reduceMargin', pos)}>-保证金</Button>
+                <Button size="sm" variant={isActive && posAction.type === 'stoploss' ? 'default' : 'outline'} className="h-9 sm:h-7 text-[11px] flex-1 min-w-15" onClick={() => togglePosAction(pos.id, 'stoploss', pos)}>止损/盈</Button>
               </div>
               {/* 内联操作面板 */}
               {isActive && (
@@ -294,7 +294,7 @@ export function FuturesPositionsCard({ symbol, currentPrice, markPrice, brackets
                           <button key={pct} onClick={() => {
                             const raw = pos.quantity * pct;
                             setCloseQty(pct === 1 ? String(pos.quantity) : (Math.round(raw / MIN_QTY) * MIN_QTY).toFixed(8).replace(/0+$/, '').replace(/\.$/, ''));
-                          }} className="flex-1 py-1 rounded text-[11px] font-medium border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-accent transition-all">
+                          }} className="flex-1 py-2 sm:py-1 rounded text-[11px] font-medium border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-accent transition-all">
                             {pct * 100}%
                           </button>
                         ))}
@@ -375,7 +375,8 @@ export function FuturesPositionsCard({ symbol, currentPrice, markPrice, brackets
                   )}
                   {/* 止损/止盈 */}
                   {posAction.type === 'stoploss' && (
-                    <div className="grid grid-cols-2 gap-3">
+                    // 手机单列（双列时 SLTP 编辑器输入框被挤到不可用），≥sm 恢复双列
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="space-y-2">
                         <div className="text-xs text-muted-foreground flex items-center gap-1">
                           止损 <HelpTip text="触发价达到时自动市价平仓，可分多档，总量不超过持仓" />

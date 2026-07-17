@@ -9,10 +9,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * K线历史启动修复：quant 启动后把 binance.symbols 全部标的（BTC/ETH/SOL/DOGE/XRP/PAXG）的
- * 最近 90 天 5m 窗口无条件全量重走一遍。运行时的尾补（ensureHistoryReady / watchdog）只从
- * "最新 bar"往后补，停机跨段留下的中段空洞永远补不上——本任务全窗翻页 + insertIgnore 幂等，
- * 已有数据约等于纯索引探测，一次把洞补齐。补完才触发宏观预热，冷库时不和长回补重复翻页。
+ * K线历史启动修复：quant 启动后对 binance.symbols 全部标的（BTC/ETH/SOL/DOGE/XRP）的
+ * 最近 90 天 5m 窗口做缺口检测回补。运行时的尾补（ensureHistoryReady / watchdog）只从
+ * "最新 bar"往后补，停机跨段留下的中段空洞永远补不上——本任务网格比对精确找洞、只拉缺口区间：
+ * 正常重启每币约 1 页尾补（原来无条件全窗重走 ~18 页），冷库时整窗即一个大缺口，退化为全量。
+ * 补完才触发宏观预热，冷库时不和长回补重复翻页。
  */
 @Slf4j
 @Component
@@ -25,7 +26,7 @@ public class KlineHistoryWarmup {
 
     @PostConstruct
     public void start() {
-        // 6币×~18页 REST 约1分钟，异步跑不堵启动
+        // 缺口回补通常每币 1 条 SQL + 1 页 REST（几秒），冷库最坏 5币×~18页约1分钟，异步跑不堵启动
         Thread.startVirtualThread(this::run);
     }
 
@@ -35,7 +36,7 @@ public class KlineHistoryWarmup {
         if (binanceProperties.getSymbols() != null) {
             for (String symbol : binanceProperties.getSymbols()) {
                 try {
-                    int inserted = historyStore.backfill(symbol, from, now);
+                    int inserted = historyStore.backfillMissing(symbol, from, now);
                     log.info("[KlineWarmup] 启动回补完成 symbol={} 新增={}", symbol, inserted);
                 } catch (Exception e) {
                     // 单币失败不挡全局，缺口留给 watchdog / ensureHistoryReady 运行时自愈

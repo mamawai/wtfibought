@@ -202,7 +202,7 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
                   if (qty > 0) animateQuantity(qty, MIN_QTY); else setQuantity('');
                 };
                 return (
-                  <Button key={pct} size="sm" variant="outline" className="h-7 text-[11px]" onClick={handlePct}>
+                  <Button key={pct} size="sm" variant="outline" className="h-10 sm:h-7 text-[11px]" onClick={handlePct}>
                     {pct * 100}%
                   </Button>
                 );
@@ -219,7 +219,8 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
           const mmrText = liq ? `档位 ${liq.bracket.tier} / ${formatRate(liq.bracket.mmr)}` : '—';
           return (
             <div className="p-3.5 rounded-xl neu-inset space-y-2.5">
-              <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+              {/* 预估四项：手机单列防"标签+数值"挤爆，≥sm 恢复两列 */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">仓位价值</span>
                   <span className="font-mono">${fmtNum(positionValue)}</span>
@@ -251,8 +252,8 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
           );
         })()}
 
-        {/* 开仓止损/止盈 */}
-        <div className="grid grid-cols-2 gap-3">
+        {/* 开仓止损/止盈：手机单列（双列时价格/数量输入被挤到不可用），≥sm 恢复双列 */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-muted-foreground flex items-center gap-1">止损 <HelpTip text="标记价格触及止损价时自动平仓对应数量，可设多档分批止损" /></label>

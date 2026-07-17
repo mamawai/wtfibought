@@ -24,13 +24,12 @@ public class UserAssetSnapshot {
 
     private BigDecimal profitPct;
 
-    private BigDecimal stockProfit;
+    // 五分类盈亏口径：bStock(代币化美股现货) / crypto(币现货+币合约) / 大宗商品(金油,现货遗留+合约) / 预测 / 游戏
+    private BigDecimal bstockProfit;
 
     private BigDecimal cryptoProfit;
 
-    private BigDecimal futuresProfit;
-
-    private BigDecimal optionProfit;
+    private BigDecimal commodityProfit;
 
     private BigDecimal predictionProfit;
 

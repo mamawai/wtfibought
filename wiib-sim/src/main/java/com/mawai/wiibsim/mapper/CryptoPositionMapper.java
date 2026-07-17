@@ -41,4 +41,8 @@ public interface CryptoPositionMapper extends BaseMapper<CryptoPosition> {
 
     @Delete("DELETE FROM crypto_position WHERE user_id = #{userId}")
     int deleteByUserId(@Param("userId") Long userId);
+
+    /** 全库实际持有的符号全集：估值取价以持仓为准，防配置符号列表漂移漏价（bStock 曾因此漏估值） */
+    @Select("SELECT DISTINCT symbol FROM crypto_position WHERE quantity > 0 OR frozen_quantity > 0")
+    java.util.List<String> listDistinctSymbols();
 }

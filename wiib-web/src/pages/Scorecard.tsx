@@ -5,7 +5,7 @@ import { quantApi } from '../api';
 import { cn } from '../lib/utils';
 import type { Scorecard as ScorecardData, ScorecardHorizon } from '../types';
 
-// 只展示 quant 实际监控的标的（WATCH_SYMBOLS=BTC/ETH），PAXG 无预测数据
+// 只展示 quant 实际监控的标的（WATCH_SYMBOLS=BTC/ETH）
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT'] as const;
 const SYM_LABEL: Record<string, string> = { BTCUSDT: 'BTC', ETHUSDT: 'ETH' };
 const HORIZON_LABEL: Record<string, string> = { H6: '6 小时', H12: '12 小时', H24: '24 小时' };

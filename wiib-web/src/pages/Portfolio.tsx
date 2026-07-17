@@ -281,11 +281,11 @@ export function Portfolio() {
                 <p className="text-[11px] text-muted-foreground leading-tight mt-0.5 tracking-wide uppercase">模拟账户</p>
               </div>
             </div>
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
               <button
                 onClick={() => setPanel(p => p === 'chart' ? null : 'chart')}
                 className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all",
+                  "flex items-center gap-1.5 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-medium transition-all",
                   panel === 'chart'
                     ? "bg-primary/15 text-primary border border-primary/25"
                     : "text-muted-foreground border border-border/50 hover:border-border hover:text-foreground"
@@ -297,7 +297,7 @@ export function Portfolio() {
               <button
                 onClick={() => setPanel(p => p === 'profit' ? null : 'profit')}
                 className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all",
+                  "flex items-center gap-1.5 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-medium transition-all",
                   panel === 'profit'
                     ? "bg-primary/15 text-primary border border-primary/25"
                     : "text-muted-foreground border border-border/50 hover:border-border hover:text-foreground"
@@ -309,7 +309,7 @@ export function Portfolio() {
               <button
                 onClick={() => setPanel(p => p === 'radar' ? null : 'radar')}
                 className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all",
+                  "flex items-center gap-1.5 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-medium transition-all",
                   panel === 'radar'
                     ? "bg-primary/15 text-primary border border-primary/25"
                     : "text-muted-foreground border border-border/50 hover:border-border hover:text-foreground"
@@ -321,7 +321,7 @@ export function Portfolio() {
               <button
                 onClick={() => setPanel(p => p === 'wallet' ? null : 'wallet')}
                 className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all",
+                  "flex items-center gap-1.5 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-medium transition-all",
                   panel === 'wallet'
                     ? "bg-primary/15 text-primary border border-primary/25"
                     : "text-muted-foreground border border-border/50 hover:border-border hover:text-foreground"
@@ -343,6 +343,7 @@ export function Portfolio() {
                     <div className="w-full animate-in fade-in duration-300">
                       <PortfolioChart
                         cryptoPositions={cryptoRows}
+                        bstockRows={bstockRows}
                         futuresRows={futuresChartRows}
                         balance={user.balance}
                         pendingSettlement={user.pendingSettlement}
@@ -375,7 +376,8 @@ export function Portfolio() {
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-2 text-xs">
                           {[
                             { label: '加密', value: realtimeSnapshot.dailyCryptoProfit },
-                            { label: '合约', value: realtimeSnapshot.dailyFuturesProfit },
+                            { label: '大宗商品', value: realtimeSnapshot.dailyCommodityProfit },
+                            { label: 'bStock', value: realtimeSnapshot.dailyBstockProfit },
                             { label: '预测', value: realtimeSnapshot.dailyPredictionProfit },
                             { label: '游戏', value: realtimeSnapshot.dailyGameProfit },
                           ].filter(item => item.value !== 0).map(item => (
@@ -583,7 +585,7 @@ export function Portfolio() {
                                   <span className={`text-[10px] ${coin.colorClass}/60`}>1枚=1盎司（{coin.unitFactor}g）</span>
                                 )}
                               </div>
-                              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                              <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                                 <span>持有 {c.quantity}{coin.unitLabel && <span className={`${coin.colorClass}/60 ml-0.5`}>约合 {(c.quantity * coin.unitFactor!).toFixed(1)} {coin.unitLabel}</span>}</span>
                                 <span className="text-border">·</span>
                                 <span>均价 {fmtCryptoPrice(c.avgCost)}</span>
@@ -650,7 +652,7 @@ export function Portfolio() {
                                 <span className="font-semibold text-[13px] truncate group-hover:text-primary transition-colors">{b.name}</span>
                                 <span className="text-[11px] text-muted-foreground/70 shrink-0">{b.ticker}</span>
                               </div>
-                              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                              <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                                 <span>{fmtNum(b.quantity)}股</span>
                                 <span className="text-border">·</span>
                                 <span>均价 {fmtNum(b.avgCost)}</span>
@@ -721,7 +723,7 @@ export function Portfolio() {
                                 <Badge className={cn("text-[9px] px-1 py-0", isLong ? "bg-green-500" : "bg-red-500")}>{isLong ? '多' : '空'}</Badge>
                                 <span className="text-[11px] text-muted-foreground">{f.leverage}x</span>
                               </div>
-                              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                              <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                                 <span>数量 {f.quantity}</span>
                                 <span className="text-border">·</span>
                                 <span>开仓 {formatCoinPrice(f.symbol, f.entryPrice)}</span>

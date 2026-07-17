@@ -414,10 +414,10 @@ CREATE TABLE IF NOT EXISTS user_asset_snapshot (
     total_assets DECIMAL(18,2) NOT NULL,
     profit DECIMAL(18,2) NOT NULL,
     profit_pct DECIMAL(10,4) NOT NULL,
-    stock_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
+    -- 五分类盈亏：bStock / crypto(现货+合约) / 大宗商品(金油) / 预测 / 游戏
+    bstock_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
     crypto_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
-    futures_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
-    option_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
+    commodity_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
     prediction_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
     game_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

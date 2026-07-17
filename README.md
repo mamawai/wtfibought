@@ -36,7 +36,7 @@ WhatIfIBought 是一个偏实验性质的模拟交易系统，后端按业务域
 
 | 品类 | 标的 |
 |---|---|
-| 加密现货 / 永续 | `BTC` `ETH` `DOGE` `SOL` `XRP`（`PAXG` 仅查询 / 残留仓，不进主动清单） |
+| 加密现货 / 永续 | `BTC` `ETH` `DOGE` `SOL` `XRP` |
 | bStock 代币化美股（10） | NVDA · TSLA · MU · SNDK · CRCL · MSTR · AMD · SPCX · QQQ · SOXL（Binance 现货，如 `NVDABUSDT`） |
 | 大宗商品 | 黄金 `XAUUSDT` · 原油 `CLUSDT`（TradFi 永续，无现货） |
 | 策略实盘篮子 | FIBO: `BTC/ETH` · LIQFADE: `BTC/ETH/DOGE` · SQZMOM: `SOL/DOGE/XRP` |
@@ -48,7 +48,7 @@ WhatIfIBought 是一个偏实验性质的模拟交易系统，后端按业务域
 ### 交易系统
 
 - **bStock 代币化美股**：真实 Binance 现货行情（价来自 feed→Redis，K 线代理 REST），含公司基本面；下单挂靠统一保证金账户。
-- **加密货币现货**：BTC/ETH/DOGE/SOL/XRP（+PAXG），接入 Binance 实时行情，市价 / 限价单。
+- **加密货币现货**：BTC/ETH/DOGE/SOL/XRP，接入 Binance 实时行情，市价 / 限价单。
 - **永续合约**：逐仓保证金，多 / 空双向，真实资金费率（每 8h 按 Binance premiumIndex 双向收付，拉取失败回退 0.01%），自动强平。
 - **大宗商品**：黄金 / 原油 TradFi 永续。
 - **保证金 / 计息 / 爆仓 / 破产恢复**：借款买入统一保证金账户，交易日 17:00 计息 + 爆仓检查，09:00 破产用户幂等恢复。

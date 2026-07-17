@@ -139,7 +139,8 @@ export function Home() {
       </Card>
 
       {/* ====== Quick Actions ====== */}
-      <div className="grid grid-cols-4 md:grid-cols-7 gap-3">
+      {/* 移动端 5 列一行放齐 5 个入口，避免 4+1 孤行 */}
+      <div className="grid grid-cols-5 md:grid-cols-7 gap-2 sm:gap-3">
         {[
           { icon: List, label: '股票', to: '/bstock', bg: 'bg-blue-100 dark:bg-blue-500/15', ic: 'text-blue-600 dark:text-blue-400' },
           { icon: DollarSign, label: 'CRYPTO', to: '/coin', bg: 'bg-amber-100 dark:bg-amber-500/15', ic: 'text-amber-600 dark:text-amber-400' },

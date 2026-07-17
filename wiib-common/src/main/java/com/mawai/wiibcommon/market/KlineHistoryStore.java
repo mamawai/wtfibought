@@ -14,8 +14,10 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /** 5m K 线落库 / 加载。回填走 getFuturesKlines（endTime 向前翻页），幂等批插。 */
 @Slf4j
@@ -75,6 +77,52 @@ public class KlineHistoryStore extends ServiceImpl<KlineHistoryMapper, KlineHist
         if (!buffer.isEmpty()) total += baseMapper.batchInsertIgnore(buffer);
         log.info("backfill {} {} [{}, {}) 行数={}", normalizedSymbol, DEFAULT_INTERVAL, fromMs, toMs, total);
         return total;
+    }
+
+    /**
+     * 只回补 [fromMs, toMs) 内缺失的默认 5m 段：先取库里已有 open_time 与期望网格比对找出缺口，
+     * 仅对缺口区间调用 {@link #backfill}。无缺口时零 REST 请求；冷库时整窗即一个大缺口，退化为全量回补。
+     */
+    public int backfillMissing(String symbol, long fromMs, long toMs) {
+        String normalizedSymbol = normalizeSymbol(symbol);
+        long firstOpen = alignUp(fromMs, DEFAULT_BAR_MILLIS);                  // 窗口内第一根期望 bar
+        long lastOpen = toMs / DEFAULT_BAR_MILLIS * DEFAULT_BAR_MILLIS - DEFAULT_BAR_MILLIS; // 最后一根已闭合 bar
+        if (firstOpen > lastOpen) return 0;
+        // 只取 open_time 列（走唯一索引覆盖扫描），90 天 5m 约 2.6 万个 long，内存可忽略
+        List<Object> rows = baseMapper.selectObjs(new LambdaQueryWrapper<KlineHistory>()
+                .select(KlineHistory::getOpenTime)
+                .eq(KlineHistory::getSymbol, normalizedSymbol)
+                .eq(KlineHistory::getIntervalCode, DEFAULT_INTERVAL)
+                .ge(KlineHistory::getOpenTime, firstOpen)
+                .le(KlineHistory::getOpenTime, lastOpen));
+        Set<Long> existing = new HashSet<>(rows.size() * 2);
+        for (Object o : rows) existing.add(((Number) o).longValue());
+        List<long[]> gaps = missingRanges(firstOpen, lastOpen, DEFAULT_BAR_MILLIS, existing);
+        int total = 0;
+        for (long[] g : gaps) total += backfill(normalizedSymbol, g[0], g[1]);
+        log.info("backfillMissing {} {} 缺口数={} 补入={}", normalizedSymbol, DEFAULT_INTERVAL, gaps.size(), total);
+        return total;
+    }
+
+    /** 网格比对：期望 openTime 序列 [firstOpen..lastOpen]（步长 bar）中不在 existing 里的，合并成连续区间 [from, to)。 */
+    static List<long[]> missingRanges(long firstOpen, long lastOpen, long bar, Set<Long> existing) {
+        List<long[]> gaps = new ArrayList<>();
+        long runStart = -1;
+        for (long t = firstOpen; t <= lastOpen; t += bar) {
+            if (!existing.contains(t)) {
+                if (runStart < 0) runStart = t;
+            } else if (runStart >= 0) {
+                gaps.add(new long[]{runStart, t});
+                runStart = -1;
+            }
+        }
+        if (runStart >= 0) gaps.add(new long[]{runStart, lastOpen + bar});
+        return gaps;
+    }
+
+    /** 向上对齐到 bar 网格（fromMs 通常是 now-90d，不落在整 5m 上）。 */
+    static long alignUp(long ms, long bar) {
+        return (ms + bar - 1) / bar * bar;
     }
 
     /**
