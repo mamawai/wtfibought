@@ -128,11 +128,12 @@ public class StrategyRuntime {
 
     private WindowedMarketView seedView(String symbol) {
         // 策略篮子币(SOL/DOGE/XRP)不在 WATCH_SYMBOLS，watchdog 不回填它们——seed 前自补 SEED_BARS
-        // 窗口，否则冷启动空视图，SQZMOM(4H) 要实时攒几天才有信号且重启清零。insertIgnore 幂等，
-        // 已有数据的 symbol 重复补无害（每进程每 symbol 仅首次触达时执行一次）。
+        // 窗口，否则冷启动空视图，SQZMOM(4H) 要实时攒几天才有信号且重启清零。
+        // 用 backfillMissing：库已齐时零 REST（只查 open_time 找洞）；冷库/有洞才翻页。
+        // 旧 backfill 无脑整窗打网，insertIgnore 虽幂等但 9 页×N币白耗配额（日志行数=0 即此）。
         long now = System.currentTimeMillis();
         try {
-            klineHistoryStore.backfill(symbol, now - (long) SEED_BARS * KlineHistoryStore.DEFAULT_BAR_MILLIS, now);
+            klineHistoryStore.backfillMissing(symbol, now - (long) SEED_BARS * KlineHistoryStore.DEFAULT_BAR_MILLIS, now);
         } catch (Exception e) {
             log.warn("[StrategyRuntime] seed回填失败(用既有数据继续) symbol={} msg={}", symbol, e.getMessage());
         }

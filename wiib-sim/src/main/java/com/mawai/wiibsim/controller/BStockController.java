@@ -1,9 +1,9 @@
 package com.mawai.wiibsim.controller;
 
 import com.mawai.wiibcommon.dto.BStockDTO;
-import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibsim.service.BStockService;
+import com.mawai.wiibsim.service.KlineCacheService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -22,7 +22,7 @@ import java.util.List;
 public class BStockController {
 
     private final BStockService bStockService;
-    private final BinanceRestClient binanceRestClient;
+    private final KlineCacheService klineCacheService;
 
     @GetMapping("/list")
     @Operation(summary = "全部上架 bStock（含实时价 + 24h 涨跌）")
@@ -37,13 +37,13 @@ public class BStockController {
     }
 
     @GetMapping("/klines")
-    @Operation(summary = "K线（代理 Binance 现货，默认 5m）")
+    @Operation(summary = "K线（代理 Binance 现货，Redis短TTL缓存，默认 5m）")
     public String klines(
             @RequestParam String symbol,
             @RequestParam(defaultValue = "5m") String interval,
             @RequestParam(defaultValue = "500") int limit,
             @RequestParam(required = false) Long endTime) {
-        return binanceRestClient.getKlinesLight(symbol, interval, limit, endTime);
+        return klineCacheService.spotKlines(symbol, interval, limit, endTime);
     }
 
     @GetMapping("/{symbol}")

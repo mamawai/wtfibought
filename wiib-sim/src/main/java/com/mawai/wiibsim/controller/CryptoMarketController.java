@@ -3,6 +3,7 @@ package com.mawai.wiibsim.controller;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibsim.service.KlineCacheService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -19,15 +20,16 @@ public class CryptoMarketController {
 
     private final BinanceRestClient binanceRestClient;
     private final CacheService cacheService;
+    private final KlineCacheService klineCacheService;
 
     @GetMapping("/klines")
-    @Operation(summary = "获取K线数据（代理Binance REST）")
+    @Operation(summary = "获取K线数据（代理Binance REST，Redis短TTL缓存）")
     public String klines(
             @RequestParam(defaultValue = "BTCUSDT") String symbol,
             @RequestParam(defaultValue = "1m") String interval,
             @RequestParam(defaultValue = "500") int limit,
             @RequestParam(required = false) Long endTime) {
-        return binanceRestClient.getKlinesLight(symbol, interval, limit, endTime);
+        return klineCacheService.spotKlines(symbol, interval, limit, endTime);
     }
 
     @GetMapping("/price")

@@ -68,7 +68,7 @@ class KlineHistoryWarmupTest {
         }
 
         @Override
-        public int backfill(String symbol, long fromMs, long toMs) {
+        public int backfillMissing(String symbol, long fromMs, long toMs) {
             symbols.add(symbol);
             lastFromMs = fromMs;
             lastToMs = toMs;
