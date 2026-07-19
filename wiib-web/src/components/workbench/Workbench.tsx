@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Activity, AlertTriangle, RefreshCcw, Trophy } from 'lucide-react';
 import { quantApi } from '../../api';
+import { useUserStore } from '../../stores/userStore';
 import { cn } from '../../lib/utils';
 import { ChatPanel } from './ChatPanel';
 import { VolTimeline } from './VolTimeline';
@@ -26,6 +27,8 @@ const REFRESH_MS = 60_000;
  * 右栏 60s 轮询——快照 5m 一根、深研判 1h 一次，无需推送级实时性。
  */
 export function Workbench() {
+  // 数据区全员可看；Supervisor 对话按 token 计费，仅管理员可用（后端 @RequireAdmin 同步门禁）
+  const isAdmin = useUserStore(s => s.user)?.id === 1;
   const [symbol, setSymbol] = useState<string>('BTCUSDT');
   const [hours, setHours] = useState<number>(24);
   const [series, setSeries] = useState<QuantSnapshotSeriesPoint[]>([]);
@@ -148,9 +151,9 @@ export function Workbench() {
           </div>
         </div>
 
-      {/* 下排：左对话，右研判详情 + 战绩入口 */}
-      <div className="grid gap-4 lg:grid-cols-2 items-start">
-        <ChatPanel />
+      {/* 下排：左对话（Supervisor 按 token 计费，仅管理员），右研判详情 + 战绩入口；普通用户研判区占满整行 */}
+      <div className={`grid gap-4 items-start ${isAdmin ? 'lg:grid-cols-2' : ''}`}>
+        {isAdmin && <ChatPanel />}
 
         <div className="space-y-4">
           <AnalysisCard analysis={displayed} />

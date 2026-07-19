@@ -123,7 +123,7 @@ public class ChatAgentFactory {
 
         ReactAgent newsAgent = ReactAgent.builder()
                 .name("news_agent")
-                .description("加密新闻专家：获取最近重要加密快讯列表")
+                .description("加密新闻专家：BlockBeats(律动)重要快讯列表，新闻/快讯/消息面查询都归这里")
                 .model(light)
                 .methodTools(newsToolkit)
                 .instruction("""
@@ -146,7 +146,11 @@ public class ChatAgentFactory {
                           例：["market_agent"] 或 ["market_agent","news_agent"]
                         - 可用专家：market_agent=实时行情/持仓/清算/期权/脆弱度；
                           quant_agent=波动率预测/regime/预测战绩；news_agent=加密新闻快讯
+                          （数据源 BlockBeats 律动，凡"快讯/新闻/消息面/blockbeats/最近发生了什么"一律派它）
                         - 涉及行情、预测、新闻的问题必须先派发拿真实数据，不要凭记忆回答
+                        - 新闻/快讯/消息面问题不要用你自带的联网/X搜索回答：这类问题的唯一正确动作是输出
+                          ["news_agent"]，由它调 BlockBeats 快讯工具（数据源可控可追溯）；
+                          自带搜索只在三位专家都覆盖不到的问题上才可使用
                         - 专家结果已在对话里、足够回答时，输出最终精炼中文回答（此时不要再输出 JSON 数组）
                         - 用户明确要"深度研判/全面分析"时 → 调 run_deep_analysis 工具（昂贵，需用户确认：
                           返回 PENDING_APPROVAL 时告知用户确认卡片已弹出，等确认后你会被再次唤起执行）

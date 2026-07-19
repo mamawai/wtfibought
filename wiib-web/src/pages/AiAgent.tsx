@@ -2,7 +2,6 @@ import { useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { aiAgentApi } from '../api';
-import { useUserStore } from '../stores/userStore';
 import { useToast } from '../components/ui/use-toast';
 import { Button } from '../components/ui/button';
 import { Workbench } from '../components/workbench/Workbench';
@@ -64,10 +63,8 @@ function pnl(v: number): { text: string; tone: 'gain' | 'loss' } {
 
 export function AiAgent() {
   const { toast } = useToast();
-  const { user } = useUserStore();
-  // 工作台暂只对管理员开放（后端 @RequireAdmin 同步门禁），普通用户直接落行为分析
-  const isAdmin = user?.id === 1;
-  const [tab, setTab] = useState<Tab>(isAdmin ? 'workbench' : 'behavior');
+  // 工作台数据区全员可看（Supervisor 对话在 Workbench 内部按管理员单独门禁）
+  const [tab, setTab] = useState<Tab>('workbench');
   const [behaviorLoading, setBehaviorLoading] = useState(false);
   const [behaviorReport, setBehaviorReport] = useState<BehaviorAnalysisReport | null>(null);
 
@@ -96,18 +93,16 @@ export function AiAgent() {
 
       {/* Tab：内凹滑槽 + 浮起选中块（拟物分段控件） */}
       <div className="neu-inset rounded-xl p-1 flex max-w-md">
-        {isAdmin && (
-          <button
-            onClick={() => setTab('workbench')}
-            className={cn(
-              'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all',
-              tab === 'workbench' ? 'neu-raised-sm bg-background text-primary' : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            <BrainCircuit className="w-4 h-4" />
-            研判工作台
-          </button>
-        )}
+        <button
+          onClick={() => setTab('workbench')}
+          className={cn(
+            'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all',
+            tab === 'workbench' ? 'neu-raised-sm bg-background text-primary' : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          <BrainCircuit className="w-4 h-4" />
+          研判工作台
+        </button>
         <button
           onClick={() => setTab('behavior')}
           className={cn(
@@ -120,8 +115,8 @@ export function AiAgent() {
         </button>
       </div>
 
-      {/* 研判工作台（P7）：左对话右时间线，PC 双栏吃满 7xl */}
-      {tab === 'workbench' && isAdmin && <Workbench />}
+      {/* 研判工作台（P7）：管理员左对话右时间线；普通用户纯数据视图 */}
+      {tab === 'workbench' && <Workbench />}
 
       {/* 行为分析（behavior agent）：窄容器保读感 */}
       {tab === 'behavior' && (
