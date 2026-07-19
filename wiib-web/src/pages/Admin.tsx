@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { useUserStore } from '../stores/userStore';
 import { adminApi } from '../api';
 import type { AiKeyConfig, AiModelAssignment, InviteCode } from '../types';
@@ -9,7 +9,7 @@ import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
 import { useToast } from '../components/ui/use-toast';
 import { FeedStreamHealthCard } from '../components/FeedStreamHealthCard';
-import { RefreshCw, Calendar, Plus, Trash2, Pencil, Save, Activity, Ban } from 'lucide-react';
+import { RefreshCw, Calendar, Plus, Trash2, Pencil, Save, Ban } from 'lucide-react';
 
 const FUNCTION_LABELS: Record<string, string> = {
   behavior: '行为分析',
@@ -239,18 +239,7 @@ export function Admin() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-2xl font-bold">任务管理</h1>
-        <div className="flex items-center gap-1.5">
-          <Link
-            to="/admin/graph-obs"
-            className="inline-flex h-8 items-center gap-1 rounded-md border bg-background px-2 text-xs font-medium hover:bg-muted"
-          >
-            <Activity className="w-3.5 h-3.5" />
-            Graph 观测
-          </Link>
-        </div>
-      </div>
+      <h1 className="text-2xl font-bold">任务管理</h1>
 
       {/* feed 数据流健康：独立于任务状态加载，管理员进页即见 */}
       <FeedStreamHealthCard />

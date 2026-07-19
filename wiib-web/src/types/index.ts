@@ -519,15 +519,6 @@ export interface ForceOrder {
   createdAt: string;
 }
 
-// ========== Graph 观测 ==========
-export interface GraphNodeMetric {
-  node: string;
-  successCount: number;
-  errorCount: number;
-  meanMs: number;
-  maxMs: number;
-}
-
 // feed WS 流健康（Admin 面板：状态展示 + 手动重试）
 export interface FeedStreamHealth {
   name: string;

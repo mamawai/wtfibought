@@ -11,7 +11,6 @@ import { CommoditySelect } from './pages/CommoditySelect';
 import { Ranking } from './pages/Ranking';
 import { Login } from './pages/Login';
 import { Admin } from './pages/Admin';
-import { GraphObs } from './pages/GraphObs';
 import { Blackjack } from './pages/Blackjack';
 import { Mines } from './pages/Mines';
 import { VideoPoker } from './pages/VideoPoker';
@@ -60,7 +59,6 @@ function App() {
                 <Route path="/commodity" element={<CommoditySelect />} />
                 <Route path="/ranking" element={<Ranking />} />
                 <Route path="/admin" element={<Admin />} />
-                <Route path="/admin/graph-obs" element={<RequireAuth><GraphObs /></RequireAuth>} />
                 <Route path="/games" element={<Games />} />
                 <Route path="/me" element={<Me />} />
                 <Route path="/blackjack" element={<RequireAuth><Blackjack /></RequireAuth>} />
