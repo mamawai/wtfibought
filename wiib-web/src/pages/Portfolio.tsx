@@ -245,7 +245,7 @@ export function Portfolio() {
   ];
 
   return (
-    <div className="max-w-4xl mx-auto p-4 space-y-4">
+    <div className="page-shell p-4 md:p-6 space-y-4">
       {user.bankrupt && (
         <Card className="border-destructive/30 bg-destructive/5">
           <CardContent className="p-4 text-sm">
@@ -439,19 +439,19 @@ export function Portfolio() {
               {/* 分隔线 */}
               <div className="h-px bg-gradient-to-r from-border/60 to-transparent mb-3" />
 
-              {/* 次要指标列表 */}
-              <div className="space-y-0 divide-y divide-border/20">
-                <div className="flex items-center justify-between py-2">
+              {/* 次要指标列表：页面拉宽到 page-shell 后单列行太长，宽屏两列 */}
+              <div className="divide-y divide-border/20 lg:grid lg:grid-cols-2 lg:gap-x-12 lg:divide-y-0">
+                <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                   <span className="text-[12px] text-muted-foreground">余额钱包</span>
                   <span className="text-[13px] font-semibold tabular-nums"><AnimNum value={user.balance} /></span>
                 </div>
 
-                <div className="flex items-center justify-between py-2">
+                <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                   <span className="text-[12px] text-muted-foreground">游戏钱包</span>
                   <span className="text-[13px] font-semibold tabular-nums"><AnimNum value={user.gameBalance} /></span>
                 </div>
 
-                <div className="flex items-center justify-between py-2">
+                <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                   <span className="text-[12px] text-muted-foreground">总盈亏</span>
                   <div className={cn(
                     "flex items-center gap-1 px-2 py-0.5 rounded-md text-[12px] font-bold tabular-nums",
@@ -466,7 +466,7 @@ export function Portfolio() {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between py-2">
+                <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                   <span className="text-[12px] text-muted-foreground">杠杆借款</span>
                   <span className={cn(
                     "text-[13px] font-semibold tabular-nums",
@@ -474,7 +474,7 @@ export function Portfolio() {
                   )}><AnimNum value={user.marginLoanPrincipal} /></span>
                 </div>
 
-                <div className="flex items-center justify-between py-2">
+                <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                   <span className="text-[12px] text-muted-foreground">应计利息</span>
                   <span className={cn(
                     "text-[13px] font-semibold tabular-nums",
@@ -484,11 +484,11 @@ export function Portfolio() {
 
                 {hasFutures && (
                   <>
-                    <div className="flex items-center justify-between py-2">
+                    <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                       <span className="text-[12px] text-muted-foreground">合约保证金</span>
                       <span className="text-[13px] font-semibold tabular-nums"><AnimNum value={futuresMargin} /></span>
                     </div>
-                    <div className="flex items-center justify-between py-2">
+                    <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                       <span className="text-[12px] text-muted-foreground">合约浮盈</span>
                       <span className={cn(
                         "text-[13px] font-semibold tabular-nums",
@@ -507,6 +507,15 @@ export function Portfolio() {
         <div className="h-px bg-gradient-to-r from-transparent via-border/40 to-transparent" />
       </div>
 
+      {/* 合约持仓：固定在钱包卡正下方，全宽容纳四列小卡（WS 实时盈亏 + 平仓/加仓/杠杆/止盈损 + 一键全平） */}
+      {hasFutures && (
+        <FuturesPositionsCard
+          refreshKey={refreshNonce}
+          showCloseAll
+          onOrdersChanged={() => setRefreshNonce(n => n + 1)}
+        />
+      )}
+
       {/* 刷新 */}
       <div className="flex items-center justify-end">
         <Button
@@ -524,10 +533,10 @@ export function Portfolio() {
         </Button>
       </div>
 
-      {/* 持仓 */}
-      <div className="space-y-3">
+      {/* 持仓：宽屏两栏一行两卡（行式列表卡拉满全宽太长），汇总条跨全宽 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
         {loading ? (
-          <Card>
+          <Card className="lg:col-span-2">
             <CardContent className="p-5 space-y-5">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="flex items-center gap-3">
@@ -545,7 +554,7 @@ export function Portfolio() {
             </CardContent>
           </Card>
         ) : !hasPositions ? (
-          <Card><CardContent className="p-0"><EmptyState icon={<Briefcase />} text="暂无持仓" /></CardContent></Card>
+          <Card className="lg:col-span-2"><CardContent className="p-0"><EmptyState icon={<Briefcase />} text="暂无持仓" /></CardContent></Card>
         ) : (
           <>
             {/* 币种持仓 */}
@@ -688,15 +697,6 @@ export function Portfolio() {
               </Card>
             )}
 
-            {/* 合约持仓：复用 Coin 页可操作卡组（WS 实时盈亏 + 平仓/加仓/杠杆/止盈损 + 一键全平） */}
-            {hasFutures && (
-              <FuturesPositionsCard
-                refreshKey={refreshNonce}
-                showCloseAll
-                onOrdersChanged={() => setRefreshNonce(n => n + 1)}
-              />
-            )}
-
             {/* 预测盈亏 */}
             {hasPrediction && predictionPnl && (
               <Card className="overflow-hidden">
@@ -762,7 +762,7 @@ export function Portfolio() {
               const allTotal = cryptoTotal + bstockTotal + futuresTotal + (predictionPnl?.activeValue ?? 0);
               const up = allProfit >= 0;
               return (
-                <div className="rounded-xl border border-dashed border-border/60 bg-card/50 backdrop-blur-sm px-4 py-3 flex items-center justify-between">
+                <div className="lg:col-span-2 rounded-xl border border-dashed border-border/60 bg-card/50 backdrop-blur-sm px-4 py-3 flex items-center justify-between">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Briefcase className="w-3.5 h-3.5" />
                     <span>持仓合计</span>

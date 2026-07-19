@@ -11,8 +11,9 @@ import styled from 'styled-components';
 interface LeverageSliderProps {
   value: number;
   max: number;        // 当前币种最高杠杆（档位未加载时可能为 0）
-  ticks: number[];    // 可点击档位（已按 max 过滤）
+  ticks: number[];    // 可点击档位（已按 min/max 过滤）
   onChange: (v: number) => void;
+  min?: number;       // 下限，默认 1；持仓调杠杆时逐仓只能调高（下限=当前杠杆）
 }
 
 const GAIN = '#089981';
@@ -24,15 +25,15 @@ function riskColor(ratio: number): string {
   return ratio < 0.35 ? GAIN : ratio < 0.7 ? MID : LOSS;
 }
 
-export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderProps) {
+export function LeverageSlider({ value, max, ticks, onChange, min = 1 }: LeverageSliderProps) {
   // 仅控制气泡显隐与旋钮跟手（拖拽期关掉 left 过渡），不参与取值
   const [dragging, setDragging] = useState(false);
 
-  const disabled = max <= 1;
-  const span = Math.max(max - 1, 1);
-  const ratio = Math.min(1, Math.max(0, (value - 1) / span));
+  const disabled = max <= min;
+  const span = Math.max(max - min, 1);
+  const ratio = Math.min(1, Math.max(0, (value - min) / span));
   const pct = ratio * 100;
-  const atMax = max > 1 && value >= max;
+  const atMax = max > min && value >= max;
   const color = riskColor(ratio);
 
   return (
@@ -41,7 +42,7 @@ export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderPr
         <div className="track">
           <div className="fill" style={{ width: `${pct}%` }} />
           {ticks.map(t => {
-            const tp = ((t - 1) / span) * 100;
+            const tp = ((t - min) / span) * 100;
             return <span key={t} className={`tick-notch ${value >= t ? 'passed' : ''}`} style={{ left: `${tp}%` }} />;
           })}
           <div className={`thumb ${atMax ? 'at-max' : ''}`} style={{ left: `${pct}%` }}>
@@ -53,8 +54,8 @@ export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderPr
         <input
           type="range"
           className="native"
-          min={1}
-          max={Math.max(max, 1)}
+          min={min}
+          max={Math.max(max, min)}
           step={1}
           value={value}
           disabled={disabled}
@@ -68,7 +69,7 @@ export function LeverageSlider({ value, max, ticks, onChange }: LeverageSliderPr
       </div>
       <div className="tick-labels">
         {ticks.map(t => {
-          const tp = ((t - 1) / span) * 100;
+          const tp = ((t - min) / span) * 100;
           return (
             <button
               key={t}

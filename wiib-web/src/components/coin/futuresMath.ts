@@ -28,6 +28,14 @@ export function formatRate(rate: number): string {
   return `${(rate * 100).toFixed(2)}%`;
 }
 
+/** 持仓百分比→数量字符串：100% 精确全量（避免尾差平不干净），其余档按 step 对齐 */
+export function qtyByPct(posQty: number, pct: number, step: number): string {
+  if (pct >= 100) return String(posQty);
+  if (pct <= 0) return '';
+  const q = Math.round((posQty * pct / 100) / step) * step;
+  return q > 0 ? q.toFixed(getStepPrecision(step)).replace(/0+$/, '').replace(/\.$/, '') : '';
+}
+
 export function findFuturesBracket(brackets: FuturesBracket[] | undefined, notional: number): FuturesBracket | null {
   if (!brackets || brackets.length === 0) return null;
   return brackets.find(b => notional >= b.notionalFloor && notional < b.notionalCap) ?? brackets[brackets.length - 1];

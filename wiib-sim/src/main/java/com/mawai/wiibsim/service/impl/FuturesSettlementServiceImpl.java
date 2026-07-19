@@ -223,7 +223,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         positionMapper.insert(position);
 
-        int filled = orderMapper.casUpdateToFilled(order.getId(), executePrice, positionValue, commission, margin, null);
+        // 回填 position_id：限价开仓下单时仓位未生成，不补上这单的开仓手续费就聚合不进仓位已实现盈亏
+        int filled = orderMapper.casUpdateToFilled(order.getId(), position.getId(), executePrice, positionValue, commission, margin, null);
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
 
         positionIndexService.registerPositionIndex(position);
@@ -279,7 +280,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
         }
 
-        int filled = orderMapper.casUpdateToFilled(order.getId(), executePrice, addValue, commission, addMargin, null);
+        int filled = orderMapper.casUpdateToFilled(order.getId(), null, executePrice, addValue, commission, addMargin, null);
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
 
         log.info("futures限价加仓成交 orderId={} posId={} price={} feeType={} addMargin={}",
@@ -337,7 +338,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         } else {
             userMapper.atomicUpdateBalance(order.getUserId(), marginPart.add(pnl).subtract(commission).max(BigDecimal.ZERO));
         }
-        int filled = orderMapper.casUpdateToFilled(order.getId(), executePrice, closeValue, commission, null, pnl);
+        int filled = orderMapper.casUpdateToFilled(order.getId(), null, executePrice, closeValue, commission, null, pnl);
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
 
         log.info("futures限价平仓成交 orderId={} price={} feeType={} pnl={}",

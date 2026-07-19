@@ -341,8 +341,7 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
             </div>
             {slEnabled && (
               <SLTPEditor rows={slRows} onChange={setSlRows} label="止损" posQty={qtyNum * leverage} minQty={MIN_QTY}
-                currentPrice={priceForCalc || currentPrice} side={side}
-                liquidationPrice={openLiqPrice}
+                entryPrice={priceForCalc || currentPrice} margin={openEstimate?.margin ?? 0} side={side}
                 minPriceStep={PRICE_STEP} priceFormatter={fmtPrice} />
             )}
           </div>
@@ -356,7 +355,7 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
             </div>
             {tpEnabled && (
               <SLTPEditor rows={tpRows} onChange={setTpRows} label="止盈" posQty={qtyNum * leverage} minQty={MIN_QTY}
-                currentPrice={priceForCalc || currentPrice} side={side}
+                entryPrice={priceForCalc || currentPrice} margin={openEstimate?.margin ?? 0} side={side}
                 minPriceStep={PRICE_STEP} priceFormatter={fmtPrice} />
             )}
           </div>

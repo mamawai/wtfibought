@@ -21,9 +21,10 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
                         @Param("oldStatus") String oldStatus,
                         @Param("newStatus") String newStatus);
 
-    /** CAS更新为FILLED */
+    /** CAS更新为FILLED；positionId 仅限价开仓成交时传（下单时仓位未生成，成交回填才能让仓位聚合到开仓手续费） */
     @Update("UPDATE futures_order SET " +
             "status = 'FILLED', " +
+            "position_id = COALESCE(#{positionId}, position_id), " +
             "filled_price = #{filledPrice}, " +
             "filled_amount = #{filledAmount}, " +
             "commission = #{commission}, " +
@@ -32,11 +33,25 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
             "updated_at = NOW() " +
             "WHERE id = #{orderId} AND status = 'PROCESSING'")
     int casUpdateToFilled(@Param("orderId") Long orderId,
+                          @Param("positionId") Long positionId,
                           @Param("filledPrice") BigDecimal filledPrice,
                           @Param("filledAmount") BigDecimal filledAmount,
                           @Param("commission") BigDecimal commission,
                           @Param("marginAmount") BigDecimal marginAmount,
                           @Param("realizedPnl") BigDecimal realizedPnl);
+
+    /** 持仓已实现盈亏：开/加仓单只贡献-fee，平仓单贡献 pnl-fee；只算已成交状态，资金费不在此表另行累计 */
+    @Select("""
+            <script>
+            SELECT position_id, COALESCE(SUM(COALESCE(realized_pnl, 0) - COALESCE(commission, 0)), 0) AS amount
+            FROM futures_order
+            WHERE status IN ('FILLED', 'STOP_LOSS', 'TAKE_PROFIT')
+              AND position_id IN
+              <foreach collection="positionIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+            GROUP BY position_id
+            </script>
+            """)
+    List<Map<String, Object>> sumRealizedPnlByPositionIds(@Param("positionIds") List<Long> positionIds);
 
     /** CAS标记为TRIGGERED */
     @Update("UPDATE futures_order SET status = 'TRIGGERED', filled_price = #{triggerPrice}, updated_at = NOW() " +

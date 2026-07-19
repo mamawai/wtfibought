@@ -30,6 +30,7 @@ public class FuturesPositionDTO {
     private LocalDateTime updatedAt;
 
     // 计算字段
+    private BigDecimal realizedPnl; // 持仓期间已实现盈亏：开/加仓手续费+已平部分净盈亏（不含资金费），订单流水聚合
     private BigDecimal currentPrice;
     private BigDecimal markPrice;
     private BigDecimal positionValue;

@@ -323,6 +323,8 @@ export interface FuturesPosition {
   closedPnl?: number;
   createdAt: string;
   updatedAt: string;
+  /** 持仓期已实现盈亏：开/加仓手续费+已平部分净盈亏（不含资金费） */
+  realizedPnl?: number;
   currentPrice: number;
   markPrice: number;
   positionValue: number;

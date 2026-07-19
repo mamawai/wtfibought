@@ -32,7 +32,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import static com.mawai.wiibsim.service.impl.FuturesHelper.*;
@@ -726,16 +728,31 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         CrossMarginService.CrossAccount crossAccount = positions.stream().anyMatch(FuturesPosition::isCross)
                 ? crossMarginService.snapshot(userId) : null;
 
+        // 持仓期已实现盈亏（开/加仓手续费+部分平仓净额）从订单流水一次聚合，全列表共用
+        Map<Long, BigDecimal> realizedMap = sumRealizedByPosition(positions);
+
         for (FuturesPosition pos : positions) {
             try {
                 BigDecimal markPrice = getMarkPrice(pos.getSymbol());
-                result.add(buildPositionDTO(pos, markPrice, crossAccount));
+                FuturesPositionDTO dto = buildPositionDTO(pos, markPrice, crossAccount);
+                dto.setRealizedPnl(realizedMap.getOrDefault(pos.getId(), BigDecimal.ZERO));
+                result.add(dto);
             } catch (Exception e) {
                 log.warn("查询仓位价格失败 posId={}", pos.getId(), e);
             }
         }
 
         return result;
+    }
+
+    private Map<Long, BigDecimal> sumRealizedByPosition(List<FuturesPosition> positions) {
+        if (positions.isEmpty()) return Map.of();
+        List<Long> ids = positions.stream().map(FuturesPosition::getId).toList();
+        Map<Long, BigDecimal> map = new HashMap<>();
+        for (Map<String, Object> row : orderMapper.sumRealizedPnlByPositionIds(ids)) {
+            map.put(((Number) row.get("position_id")).longValue(), (BigDecimal) row.get("amount"));
+        }
+        return map;
     }
 
     @Override

@@ -51,7 +51,8 @@ public class RedisLockUtil {
                 .setIfAbsent(lockKey, lockValue, timeout, TimeUnit.SECONDS);
 
         if (Boolean.TRUE.equals(success)) {
-            log.info("获取锁成功: {}", lockKey);
+            // 常态路径不上INFO：强平巡检等高频调用方每秒抢锁，会刷爆日志
+            log.debug("获取锁成功: {}", lockKey);
             return lockValue;
         }
         return null;
@@ -103,7 +104,7 @@ public class RedisLockUtil {
 
         boolean success = result == 1;
         if (success) {
-            log.info("释放锁成功: {}", lockKey);
+            log.debug("释放锁成功: {}", lockKey);
         } else {
             log.warn("释放锁失败（锁已过期或被他人持有）: {}", lockKey);
         }
