@@ -33,8 +33,8 @@ public class MinesServiceImpl implements MinesService {
     private static final int GRID_SIZE = 25;
     private static final int MINE_COUNT = 5;
     private static final int SAFE_COUNT = GRID_SIZE - MINE_COUNT;
-    private static final BigDecimal MIN_BET = new BigDecimal("100");
-    private static final BigDecimal MAX_BET = new BigDecimal("50000");
+    private static final BigDecimal MIN_BET = new BigDecimal("10");
+    private static final BigDecimal MAX_BET = new BigDecimal("5000");
     private static final BigDecimal HOUSE_EDGE = new BigDecimal("0.50");
     private static final double DAMPEN = 0.9;
 
@@ -85,7 +85,7 @@ public class MinesServiceImpl implements MinesService {
     public MinesStatusDTO getStatus(Long userId) {
         return gameLock.executeInLock(LK, userId, () -> {
             MinesStatusDTO dto = new MinesStatusDTO();
-            dto.setBalance(userService.getUserPortfolio(userId).getBalance());
+            dto.setBalance(userService.getGameBalance(userId));
 
             MinesSession session = gameLock.getSession(SK, userId);
             if (session != null) {
@@ -106,13 +106,13 @@ public class MinesServiceImpl implements MinesService {
                 throw new BizException(ErrorCode.MINES_GAME_IN_PROGRESS);
             }
 
-            BigDecimal balance = userService.getUserPortfolio(userId).getBalance();
+            BigDecimal balance = userService.getGameBalance(userId);
             if (balance.compareTo(amount) < 0) {
                 throw new BizException(ErrorCode.MINES_BALANCE_NOT_ENOUGH);
             }
 
             // 扣余额
-            userService.updateBalance(userId, amount.negate());
+            userService.updateGameBalance(userId, amount.negate());
 
             // 生成雷位
             Set<Integer> mines = generateMines();
@@ -140,7 +140,7 @@ public class MinesServiceImpl implements MinesService {
             session.setPhase(PHASE_PLAYING);
             gameLock.saveSession(SK, userId, session, SESSION_TTL);
 
-            BigDecimal newBalance = userService.getUserPortfolio(userId).getBalance();
+            BigDecimal newBalance = userService.getGameBalance(userId);
             return buildPlayingState(session, newBalance);
         });
     }
@@ -175,7 +175,7 @@ public class MinesServiceImpl implements MinesService {
 
                 gameLock.deleteSession(SK, userId);
 
-                BigDecimal balance = userService.getUserPortfolio(userId).getBalance();
+                BigDecimal balance = userService.getGameBalance(userId);
 
                 MinesGameStateDTO dto = new MinesGameStateDTO();
                 dto.setGameId(session.getGameId());
@@ -211,7 +211,7 @@ public class MinesServiceImpl implements MinesService {
             game.setUpdatedAt(LocalDateTime.now());
             minesGameMapper.updateById(game);
 
-            BigDecimal balance = userService.getUserPortfolio(userId).getBalance();
+            BigDecimal balance = userService.getGameBalance(userId);
             return buildPlayingState(session, balance);
         });
     }
@@ -236,7 +236,7 @@ public class MinesServiceImpl implements MinesService {
     private MinesGameStateDTO doCashout(Long userId, MinesSession session, BigDecimal multiplier) {
         BigDecimal payout = session.getBetAmount().multiply(multiplier).setScale(2, RoundingMode.HALF_UP);
 
-        userService.updateBalance(userId, payout);
+        userService.updateGameBalance(userId, payout);
 
         session.setPhase(PHASE_SETTLED);
 
@@ -250,7 +250,7 @@ public class MinesServiceImpl implements MinesService {
 
         gameLock.deleteSession(SK, userId);
 
-        BigDecimal balance = userService.getUserPortfolio(userId).getBalance();
+        BigDecimal balance = userService.getGameBalance(userId);
 
         MinesGameStateDTO dto = new MinesGameStateDTO();
         dto.setGameId(session.getGameId());

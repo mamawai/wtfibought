@@ -78,8 +78,10 @@ public class StrategyAccountService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         int wins = (int) closed.stream().filter(p -> nz(p.getClosedPnl()).signum() > 0).count();
         double winRate = closed.isEmpty() ? 0 : (double) wins / closed.size();
-        // 权益=可用余额+持仓保证金+浮盈（sim 的 balance 开仓时已扣走保证金）
+        // 权益=余额+逐仓保证金+浮盈。只加逐仓的margin：逐仓开仓时钱已从balance划走到仓位；
+        // 全仓是占用制，钱没离开balance，再加margin就重复计钱（机器人默认逐仓，此处兼容手动开的全仓）
         BigDecimal marginInUse = positions.stream()
+                .filter(p -> !"CROSS".equals(p.getMarginMode()))
                 .map(p -> nz(p.getMargin()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal equity = balance.add(marginInUse).add(unrealized);

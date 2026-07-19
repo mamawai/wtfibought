@@ -3,6 +3,7 @@ package com.mawai.wiibsim.service.impl;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.entity.FuturesOrder;
+import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.cache.CacheService;
@@ -106,6 +107,15 @@ final class FuturesHelper {
         return leverage;
     }
 
+    /** 保证金模式归一：缺省=全仓（与Binance默认一致；quant机器人显式传ISOLATED保持原行为） */
+    static String normalizeMarginMode(String marginMode) {
+        if (marginMode == null || marginMode.isBlank()) return FuturesPosition.CROSS;
+        if (!FuturesPosition.CROSS.equals(marginMode) && !FuturesPosition.ISOLATED.equals(marginMode)) {
+            throw new BizException(ErrorCode.PARAM_ERROR);
+        }
+        return marginMode;
+    }
+
     static FuturesOrderResponse buildOrderResponse(FuturesOrder order) {
         FuturesOrderResponse resp = new FuturesOrderResponse();
         resp.setOrderId(order.getId());
@@ -114,6 +124,7 @@ final class FuturesHelper {
         resp.setSymbol(order.getSymbol());
         resp.setOrderSide(order.getOrderSide());
         resp.setOrderType(order.getOrderType());
+        resp.setMarginMode(order.getMarginMode());
         resp.setQuantity(order.getQuantity());
         resp.setLeverage(order.getLeverage());
         resp.setLimitPrice(order.getLimitPrice());

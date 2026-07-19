@@ -201,7 +201,7 @@ public class PredictionServiceImpl implements PredictionService {
                 BigDecimal commission = cost.multiply(calcFeeRate(price)).setScale(4, RoundingMode.HALF_UP);
                 BigDecimal totalDeduct = cost.add(commission);
 
-                userService.updateBalance(userId, totalDeduct.negate());
+                userService.updateGameBalance(userId, totalDeduct.negate());
 
                 PredictionBet bet = new PredictionBet();
                 bet.setUserId(userId);
@@ -287,7 +287,7 @@ public class PredictionServiceImpl implements PredictionService {
                     betMapper.insert(soldBet);
                 }
 
-                userService.updateBalance(userId, netRevenue);
+                userService.updateGameBalance(userId, netRevenue);
 
                 bet.setStatus(fullSell ? "SOLD" : "ACTIVE");
                 bet.setContracts(fullSell ? bet.getContracts() : bet.getContracts().subtract(sellContracts));
@@ -510,7 +510,7 @@ public class PredictionServiceImpl implements PredictionService {
                                     .eq(PredictionBet::getRoundId, round.getId())
                                     .eq(PredictionBet::getStatus, "DRAW"));
                     for (PredictionBet bet : drawBets) {
-                        userService.updateBalance(bet.getUserId(), bet.getCost());
+                        userService.updateGameBalance(bet.getUserId(), bet.getCost());
                     }
                 } else {
                     String losingSide = "UP".equals(outcome) ? "DOWN" : "UP";
@@ -522,7 +522,7 @@ public class PredictionServiceImpl implements PredictionService {
                                     .eq(PredictionBet::getRoundId, round.getId())
                                     .eq(PredictionBet::getStatus, "WON"));
                     for (PredictionBet bet : wonBets) {
-                        userService.updateBalance(bet.getUserId(), bet.getContracts());
+                        userService.updateGameBalance(bet.getUserId(), bet.getContracts());
                     }
                 }
 

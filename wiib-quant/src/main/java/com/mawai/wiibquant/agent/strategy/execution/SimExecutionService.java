@@ -87,7 +87,8 @@ public class SimExecutionService implements StrategyExecutionPort {
     boolean enabled;
     @Value("${strategy.execution.symbols:ETHUSDT}")
     String symbolsCsv;
-    @Value("${strategy.execution.sim.leverage:5}")
+    /** sim 轨请求杠杆；实际下单 = min(此值, 各策略 riskPolicy.maxLeverage)，风险定量下只影响保证金占用与强平距离 */
+    @Value("${strategy.execution.sim.leverage:20}")
     int leverage;
     @Value("${strategy.execution.order-timeout-bars:12}")
     int orderTimeoutBars;
@@ -305,6 +306,8 @@ public class SimExecutionService implements StrategyExecutionPort {
         FuturesOpenRequest req = new FuturesOpenRequest();
         req.setSymbol(symbol);
         req.setSide(signal.side());
+        // 显式逐仓：sim 端缺省已改为全仓(CROSS)，机器人保持逐仓的独立风险隔离不受影响
+        req.setMarginMode("ISOLATED");
         req.setQuantity(qty);
         req.setLeverage(effectiveLeverage(strategy));
         req.setMemo(signal.strategyId());

@@ -87,6 +87,9 @@ public enum ErrorCode {
     FUTURES_LIQUIDATED(1756, "仓位已强平"),
     FUTURES_SYMBOL_NOT_CONFIGURED(1759, "永续合约该币种未配置档位"),
     FUTURES_MARGIN_TOO_LOW(1760, "减少后保证金不足"),
+    FUTURES_CROSS_MARGIN_ADJUST(1761, "全仓仓位不支持调整保证金"),
+    FUTURES_CROSS_AVAILABLE_NOT_ENOUGH(1762, "全仓可用余额不足"),
+    FUTURES_LEVERAGE_ONLY_UP(1763, "逐仓持仓杠杆只能调高，补保证金请用追加保证金"),
 
     // VideoPoker错误码 1851+
     VP_GAME_IN_PROGRESS(1851, "有未完成的视频扑克"),
@@ -100,7 +103,12 @@ public enum ErrorCode {
     PREDICTION_ROUND_NOT_FOUND(1901, "回合不存在"),
     PREDICTION_BET_NOT_FOUND(1902, "下注不存在"),
     PREDICTION_PRICE_UNAVAILABLE(1903, "无法获取BTC价格"),
-    PREDICTION_AMOUNT_INVALID(1904, "金额无效");
+    PREDICTION_AMOUNT_INVALID(1904, "金额无效"),
+
+    // 钱包错误码 1950+
+    GAME_BALANCE_NOT_ENOUGH(1950, "游戏钱包余额不足"),
+    WALLET_TRANSFER_INVALID(1951, "划转金额无效"),
+    CROSS_OUTFLOW_BLOCKED(1952, "资金转出后全仓仓位将触发强平，已拒绝");
 
     private final int code;
     private final String msg;

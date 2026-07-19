@@ -11,7 +11,8 @@ import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
-import { TrendingUp, TrendingDown, Loader2, Clock, Wallet, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { WalletTransferModal } from '../components/WalletTransferModal';
+import { TrendingUp, TrendingDown, Loader2, Clock, Wallet, ArrowUpRight, ArrowDownRight, ArrowLeftRight } from 'lucide-react';
 import type { PredictionRound, PredictionBet, PageResult } from '../types';
 
 const WINDOW_SECONDS = 300;
@@ -112,6 +113,7 @@ export function Prediction() {
   const [roundsPage, setRoundsPage] = useState(1);
   const [roundsTotalPages, setRoundsTotalPages] = useState(1);
   const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0);
+  const [transferOpen, setTransferOpen] = useState(false);
 
   const [priceHistory, setPriceHistory] = useState<{ time: number; price: number }[]>([]);
   const chartRef = useRef<HTMLDivElement>(null);
@@ -462,9 +464,13 @@ export function Prediction() {
               {tradeTab === 'buy' ? (
                 <>
                   <div className="flex items-center justify-between mb-2.5">
+                    {/* 预测下注走游戏钱包，不是交易余额 */}
                     <span className="text-xs text-muted-foreground flex items-center gap-1">
                       <Wallet className="w-3 h-3" />
-                      {user ? `${fmtNum(user.balance)} USDT` : '--'}
+                      游戏钱包 {user ? `${fmtNum(user.gameBalance)} USDT` : '--'}
+                      <Button size="sm" variant="outline" onClick={() => setTransferOpen(true)} className="text-[10px] h-6 px-2 ml-1">
+                        <ArrowLeftRight className="w-3 h-3" />划转
+                      </Button>
                     </span>
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs text-muted-foreground">金额</span>
@@ -482,7 +488,7 @@ export function Prediction() {
                       </Button>
                     ))}
                     <Button variant="outline" size="sm" className="flex-1 h-9 sm:h-7 text-xs font-semibold"
-                            onClick={() => setAmount(user?.balance ? String(Math.floor(parseFloat(String(user.balance)) / 1.02 * 100) / 100) : '0')}>
+                            onClick={() => setAmount(user?.gameBalance ? String(Math.floor(parseFloat(String(user.gameBalance)) / 1.02 * 100) / 100) : '0')}>
                       全部
                     </Button>
                   </div>
@@ -674,6 +680,8 @@ export function Prediction() {
           </div>
         </CardContent>
       </Card>
+
+      <WalletTransferModal open={transferOpen} onClose={() => setTransferOpen(false)} />
     </div>
   );
 }

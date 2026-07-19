@@ -1,6 +1,7 @@
 package com.mawai.wiibsim.task;
 
 import com.mawai.wiibsim.service.CryptoOrderService;
+import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.FuturesSettlementService;
 import com.mawai.wiibsim.service.RankingService;
 import com.mawai.wiibsim.service.BankruptcyService;
@@ -27,6 +28,13 @@ public class ScheduledTasks {
     private final RankingService rankingService;
     private final MarginAccountService marginAccountService;
     private final BankruptcyService bankruptcyService;
+    private final CrossLiquidationService crossLiquidationService;
+
+    /** 全仓健康兜底轮询：价格tick是主触发，这里兜住行情静默/进程重启的空窗 */
+    @Scheduled(fixedRate = 30 * 1000)
+    public void sweepCrossAccounts() {
+        Thread.startVirtualThread(crossLiquidationService::sweepAll);
+    }
 
     /** 交易日09:00恢复破产用户（幂等） */
     @Scheduled(cron = "0 0 9 * * MON-FRI")

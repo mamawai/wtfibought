@@ -1,6 +1,8 @@
 import { fmtNum } from '../lib/utils';
 import { useMemo } from 'react';
 import styled from 'styled-components';
+import { ArrowLeftRight } from 'lucide-react';
+import { Button } from './ui/button';
 
 export interface WalletAsset {
   name: string;
@@ -13,9 +15,12 @@ export interface WalletAsset {
 interface Props {
   totalAssets: number;
   balance: number;
+  gameBalance: number;
   username: string;
   assets: WalletAsset[];
   ready?: boolean;
+  /** 打开划转弹窗 */
+  onTransfer?: () => void;
 }
 
 function compact(n: number): string {
@@ -26,7 +31,7 @@ function compact(n: number): string {
   return n.toFixed(0);
 }
 
-export function PortfolioWallet({ totalAssets, balance, username, assets, ready = true }: Props) {
+export function PortfolioWallet({ totalAssets, balance, gameBalance, username, assets, ready = true, onTransfer }: Props) {
   const cards = useMemo(() => {
     type C = {
       key: string; name: string; label: string;
@@ -35,15 +40,26 @@ export function PortfolioWallet({ totalAssets, balance, username, assets, ready 
       bg: string; isDark?: boolean;
     };
 
+    // 双钱包：余额钱包(交易) + 游戏钱包(小游戏/预测)
     const balanceCard: C = {
       key: 'balance',
       name: username,
-      label: 'Balance',
+      label: '余额钱包',
       detail: 'USDT',
       masked: `≈ ${compact(balance)}`,
       full: fmtNum(balance),
       bg: '#ffffff',
       isDark: true,
+    };
+
+    const gameCard: C = {
+      key: 'game',
+      name: 'GAME',
+      label: '游戏钱包',
+      detail: 'USDT',
+      masked: `≈ ${compact(gameBalance)}`,
+      full: fmtNum(gameBalance),
+      bg: 'linear-gradient(135deg, #7c3aed, #a855f7)',
     };
 
     const assetCards: C[] = assets.slice(0, 1).map(a => ({
@@ -57,8 +73,8 @@ export function PortfolioWallet({ totalAssets, balance, username, assets, ready 
       bg: a.bg,
     }));
 
-    return [...assetCards, balanceCard];
-  }, [assets, balance, username]);
+    return [...assetCards, gameCard, balanceCard];
+  }, [assets, balance, gameBalance, username]);
 
   const count = cards.length;
   const stackGap = Math.min(25, Math.max(15, Math.floor(75 / Math.max(count - 1, 1))));
@@ -77,9 +93,10 @@ export function PortfolioWallet({ totalAssets, balance, username, assets, ready 
           const bottom = 40 + fromFront * stackGap;
           const spreadY = -(10 + fromFront * spreadGap);
           const rotate = i === count - 1 ? 0 : (i % 2 === 0 ? -3 : 2);
-          const isBalance = c.key === 'balance';
-          const shouldAnimate = isBalance || ready;
-          const animDelay = isBalance ? 0.1 : 0.2 + i * 0.12;
+          // 两张钱包卡数据来自 user，不用等持仓 ready
+          const isWalletCard = c.key === 'balance' || c.key === 'game';
+          const shouldAnimate = isWalletCard || ready;
+          const animDelay = isWalletCard ? 0.1 + i * 0.08 : 0.2 + i * 0.12;
 
           return (
             <div
@@ -176,13 +193,21 @@ export function PortfolioWallet({ totalAssets, balance, username, assets, ready 
           </div>
         </div>
       </div>
+      {onTransfer && (
+        <Button variant="outline" size="sm" onClick={onTransfer}>
+          <ArrowLeftRight className="w-3.5 h-3.5" />
+          划转
+        </Button>
+      )}
     </Wrapper>
   );
 }
 
 const Wrapper = styled.div`
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
 
   .wallet {
     position: relative;

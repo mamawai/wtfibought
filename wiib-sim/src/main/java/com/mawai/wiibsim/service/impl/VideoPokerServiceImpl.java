@@ -30,8 +30,8 @@ public class VideoPokerServiceImpl implements VideoPokerService {
     private final UserService userService;
     private final GameLockExecutor gameLock;
 
-    private static final BigDecimal MIN_BET = new BigDecimal("100");
-    private static final BigDecimal MAX_BET = new BigDecimal("50000");
+    private static final BigDecimal MIN_BET = new BigDecimal("10");
+    private static final BigDecimal MAX_BET = new BigDecimal("5000");
 
     private static final String SK = "vp:session:";
     private static final String LK = "videopoker:user:";
@@ -76,7 +76,7 @@ public class VideoPokerServiceImpl implements VideoPokerService {
     public VideoPokerStatusDTO getStatus(Long userId) {
         return gameLock.executeInLock(LK, userId, () -> {
             VideoPokerStatusDTO dto = new VideoPokerStatusDTO();
-            dto.setBalance(userService.getUserPortfolio(userId).getBalance());
+            dto.setBalance(userService.getGameBalance(userId));
             VPSession session = gameLock.getSession(SK, userId);
             if (session != null) {
                 dto.setActiveGame(buildDealingState(session, dto.getBalance()));
@@ -94,12 +94,12 @@ public class VideoPokerServiceImpl implements VideoPokerService {
             if (gameLock.getSession(SK, userId) != null) {
                 throw new BizException(ErrorCode.VP_GAME_IN_PROGRESS);
             }
-            BigDecimal balance = userService.getUserPortfolio(userId).getBalance();
+            BigDecimal balance = userService.getGameBalance(userId);
             if (balance.compareTo(amount) < 0) {
                 throw new BizException(ErrorCode.VP_BALANCE_NOT_ENOUGH);
             }
 
-            userService.updateBalance(userId, amount.negate());
+            userService.updateGameBalance(userId, amount.negate());
 
             List<String> deck = buildDeck();
             Collections.shuffle(deck, RANDOM);
@@ -127,7 +127,7 @@ public class VideoPokerServiceImpl implements VideoPokerService {
             session.setPhase(PHASE_DEALING);
             gameLock.saveSession(SK, userId, session, SESSION_TTL);
 
-            BigDecimal newBalance = userService.getUserPortfolio(userId).getBalance();
+            BigDecimal newBalance = userService.getGameBalance(userId);
             return buildDealingState(session, newBalance);
         });
     }
@@ -164,7 +164,7 @@ public class VideoPokerServiceImpl implements VideoPokerService {
             BigDecimal payout = session.getBetAmount().multiply(multiplier).setScale(2, RoundingMode.HALF_UP);
 
             if (payout.compareTo(BigDecimal.ZERO) > 0) {
-                userService.updateBalance(userId, payout);
+                userService.updateGameBalance(userId, payout);
             }
 
             VideoPokerGame game = videoPokerGameMapper.selectById(session.getGameId());
@@ -179,7 +179,7 @@ public class VideoPokerServiceImpl implements VideoPokerService {
 
             gameLock.deleteSession(SK, userId);
 
-            BigDecimal balance = userService.getUserPortfolio(userId).getBalance();
+            BigDecimal balance = userService.getGameBalance(userId);
 
             VideoPokerGameStateDTO dto = new VideoPokerGameStateDTO();
             dto.setGameId(session.getGameId());

@@ -6,6 +6,7 @@ import { DailyBuffCard } from '../components/DailyBuffCard';
 import { MonitorCarousel } from '../components/MonitorCarousel';
 import { LatestTradesCard } from '../components/LatestTradesCard';
 import type { TradeItem } from '../components/LatestTradesCard';
+import { ForceOrdersCard } from '../components/ForceOrdersCard';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { useToast } from '../components/ui/use-toast';
@@ -170,7 +171,14 @@ export function Home() {
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         {isLoggedIn && <MonitorCarousel />}
-        <LatestTradesCard trades={latestTrades} loading={tradesLoading} />
+        {/* 未登录没有监控列，成交列表撑满整行防孤列空洞 */}
+        <div className={isLoggedIn ? undefined : 'md:col-span-2'}>
+          <LatestTradesCard trades={latestTrades} loading={tradesLoading} />
+        </div>
+        {/* 爆仓动态：轻量入口横幅，点击进 /force-orders 全量页 */}
+        <div className="md:col-span-2">
+          <ForceOrdersCard />
+        </div>
       </div>
 
     </div>

@@ -15,6 +15,7 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.util.RedisLockUtil;
@@ -42,6 +43,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
     private final FuturesLeverageBracketRegistry bracketRegistry;
+    private final CrossMarginService crossMarginService;
 
     // ==================== 设置止损 ====================
 
@@ -196,6 +198,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         order.setSymbol(position.getSymbol());
         order.setOrderSide("LONG".equals(position.getSide()) ? "CLOSE_LONG" : "CLOSE_SHORT");
         order.setOrderType("MARKET");
+        order.setMarginMode(position.getMarginMode());
         order.setQuantity(position.getQuantity());
         order.setLeverage(position.getLeverage());
         order.setFilledPrice(price);
@@ -305,18 +308,15 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         BigDecimal closeValue = price.multiply(totalCloseQty).setScale(2, RoundingMode.HALF_UP);
         BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, true);
 
-        BigDecimal returnAmount;
+        BigDecimal marginPart = isFullClose ? position.getMargin()
+                : position.getMargin().multiply(totalCloseQty).divide(position.getQuantity(), 2, RoundingMode.HALF_UP);
+
         if (isFullClose) {
-            returnAmount = position.getMargin().add(pnl).subtract(commission).max(BigDecimal.ZERO);
             int affected = positionMapper.casClosePosition(positionId, "CLOSED", price, pnl);
             if (affected == 0) return;
             positionIndexService.unregisterAll(position);
         } else {
-            BigDecimal marginReturn = position.getMargin()
-                    .multiply(totalCloseQty)
-                    .divide(position.getQuantity(), 2, RoundingMode.HALF_UP);
-            returnAmount = marginReturn.add(pnl).subtract(commission).max(BigDecimal.ZERO);
-            int affected = positionMapper.atomicPartialClose(positionId, totalCloseQty, marginReturn);
+            int affected = positionMapper.atomicPartialClose(positionId, totalCloseQty, marginPart);
             if (affected == 0) return;
 
             if (isStopLoss) {
@@ -326,16 +326,24 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
                 tps.removeIf(t -> idSet.contains(t.getId()));
                 positionMapper.updateTakeProfits(positionId, tps);
             }
-            FuturesPosition updated = positionMapper.selectById(positionId);
-            if (updated != null && "OPEN".equals(updated.getStatus())) {
-                BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
-                        updated.getSymbol(), updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity());
-                positionIndexService.updateLiquidationPrice(updated.getId(), updated.getSymbol(), updated.getSide(), liqPrice);
+            if (!position.isCross()) {
+                FuturesPosition updated = positionMapper.selectById(positionId);
+                if (updated != null && "OPEN".equals(updated.getStatus())) {
+                    BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
+                            updated.getSymbol(), updated.getSide(), updated.getEntryPrice(), updated.getMargin(), updated.getQuantity());
+                    positionIndexService.updateLiquidationPrice(updated.getId(), updated.getSymbol(), updated.getSide(), liqPrice);
+                }
             }
         }
 
-        if (returnAmount.compareTo(BigDecimal.ZERO) > 0) {
-            userMapper.atomicUpdateBalance(position.getUserId(), returnAmount);
+        // 全仓只结盈亏净额(可为负)；逐仓返还保证金±盈亏，下限0
+        if (position.isCross()) {
+            crossMarginService.settle(position.getUserId(), pnl.subtract(commission));
+        } else {
+            BigDecimal returnAmount = marginPart.add(pnl).subtract(commission).max(BigDecimal.ZERO);
+            if (returnAmount.compareTo(BigDecimal.ZERO) > 0) {
+                userMapper.atomicUpdateBalance(position.getUserId(), returnAmount);
+            }
         }
 
         FuturesOrder order = new FuturesOrder();
@@ -344,6 +352,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         order.setSymbol(position.getSymbol());
         order.setOrderSide("LONG".equals(position.getSide()) ? "CLOSE_LONG" : "CLOSE_SHORT");
         order.setOrderType("MARKET");
+        order.setMarginMode(position.getMarginMode());
         order.setQuantity(totalCloseQty);
         order.setLeverage(position.getLeverage());
         order.setFilledPrice(price);

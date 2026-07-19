@@ -48,6 +48,12 @@ public interface FuturesOrderMapper extends BaseMapper<FuturesOrder> {
             "WHERE id = #{orderId} AND status = 'TRIGGERED'")
     int casMarkProcessing(@Param("orderId") Long orderId);
 
+    /** 全仓挂单占用：PENDING 开/加仓限价单预留的保证金+手续费（全仓不物理冻结，靠此计入可用余额扣减项） */
+    @Select("SELECT COALESCE(SUM(frozen_amount), 0) FROM futures_order " +
+            "WHERE user_id = #{userId} AND status = 'PENDING' AND margin_mode = 'CROSS' " +
+            "AND order_side NOT LIKE 'CLOSE%'")
+    BigDecimal sumPendingCrossReserved(@Param("userId") Long userId);
+
     /** 用户所有已平仓单的已实现盈亏（已扣手续费） */
     @Select("SELECT COALESCE(SUM(realized_pnl - COALESCE(commission, 0)), 0) FROM futures_order " +
             "WHERE user_id = #{userId} AND realized_pnl IS NOT NULL")

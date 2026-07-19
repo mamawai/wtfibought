@@ -26,10 +26,11 @@ interface Props {
   bstockRows?: BStockRow[];
   futuresRows?: FuturesRow[];
   balance: number;
+  gameBalance?: number;
   pendingSettlement?: number;
 }
 
-export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresRows = [], balance, pendingSettlement = 0 }: Props) {
+export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresRows = [], balance, gameBalance = 0, pendingSettlement = 0 }: Props) {
   const chartRef = useRef<HTMLDivElement>(null);
   const isDark = useIsDark();
 
@@ -65,7 +66,8 @@ export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresR
             itemStyle: { color: coin.chartColor },
           };
         }),
-      { name: '现金余额', value: balance, itemStyle: { color: '#22c55e' } },
+      { name: '余额钱包', value: balance, itemStyle: { color: '#22c55e' } },
+      ...(gameBalance > 0 ? [{ name: '游戏钱包', value: gameBalance, itemStyle: { color: '#d946ef' } }] : []),
       ...(pendingSettlement > 0 ? [{ name: '待结算', value: pendingSettlement, itemStyle: { color: '#a855f7' } }] : [])
     ];
 
@@ -80,8 +82,11 @@ export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresR
         borderColor: isDark ? '#334155' : '#E7E0D8',
         textStyle: { color: isDark ? '#F8FAFC' : '#1C1917' },
         formatter: (params: { marker: string; name: string; value: number; percent: number }) => {
+           // 游戏钱包计入总资产但不能直接下单交易，tooltip 里说清楚免得误解
+           const note = params.name === '游戏钱包'
+             ? '<br/><span style="font-size:0.8em;opacity:0.7">不可直接交易，需划转至余额钱包</span>' : '';
            return `${params.marker}${params.name}<br/>
-                   <span style="font-weight:bold; font-size:1.1em">${params.value.toFixed(2)}</span> (${params.percent}%)`;
+                   <span style="font-weight:bold; font-size:1.1em">${params.value.toFixed(2)}</span> (${params.percent}%)${note}`;
         }
       },
       legend: {
@@ -137,7 +142,7 @@ export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresR
       window.removeEventListener('resize', onResize);
       chart.dispose();
     };
-  }, [cryptoPositions, bstockRows, futuresRows, balance, pendingSettlement, isDark]);
+  }, [cryptoPositions, bstockRows, futuresRows, balance, gameBalance, pendingSettlement, isDark]);
 
   return <div ref={chartRef} className="w-full h-56 sm:h-64 transition-colors duration-300" />;
 }

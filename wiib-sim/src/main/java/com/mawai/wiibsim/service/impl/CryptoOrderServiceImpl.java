@@ -22,6 +22,7 @@ import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.service.CryptoOrderService;
 import com.mawai.wiibsim.service.CryptoPositionService;
 import com.mawai.wiibsim.service.BStockService;
+import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.MarginAccountService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.ConcurrentBatch;
@@ -58,6 +59,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
     private final RedisLockUtil redisLockUtil;
     private final MarginAccountService marginAccountService;
     private final BuffService buffService;
+    private final CrossMarginService crossMarginService;
     private final StringRedisTemplate stringRedisTemplate;
     private final CacheService cacheService;
     private final BStockService bStockService;
@@ -119,6 +121,8 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
             if (leverageMultiple <= 1) {
                 BigDecimal totalCost = amount.add(commission);
                 if (user.getBalance().compareTo(totalCost) < 0) throw new BizException(ErrorCode.BALANCE_NOT_ENOUGH);
+                // 现货买入=余额钱包流出，有全仓仓位时过维持保证金硬底线
+                crossMarginService.assertOutflowAllowed(userId, totalCost);
                 BigDecimal discountPercent = discountRate != null ? discountRate.multiply(BigDecimal.valueOf(100)) : null;
                 CryptoOrderResponse resp = executeMarketBuy(userId, request.getSymbol(), request.getQuantity(), price, amount, commission, discountPercent);
                 if (discountRate != null) buffService.markUsed(request.getUseBuffId());
@@ -132,6 +136,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
             BigDecimal borrowed = amount.subtract(margin);
             BigDecimal cashNeed = margin.add(commission);
             if (user.getBalance().compareTo(cashNeed) < 0) throw new BizException(ErrorCode.BALANCE_NOT_ENOUGH);
+            crossMarginService.assertOutflowAllowed(userId, cashNeed);
             return executeMarketBuyWithLeverage(userId, request.getSymbol(), request.getQuantity(), price, amount, commission, margin, borrowed, leverageMultiple);
         }
 
@@ -142,6 +147,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         BigDecimal estimatedCommission = tradingConfig.calculateCryptoCommission(freezeAmount);
         BigDecimal totalFreeze = freezeAmount.add(estimatedCommission);
         if (user.getBalance().compareTo(totalFreeze) < 0) throw new BizException(ErrorCode.BALANCE_NOT_ENOUGH);
+        crossMarginService.assertOutflowAllowed(userId, totalFreeze);
         return createLimitBuyOrder(userId, request, totalFreeze);
     }
 

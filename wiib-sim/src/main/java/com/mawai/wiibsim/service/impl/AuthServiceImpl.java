@@ -58,7 +58,7 @@ public class AuthServiceImpl implements AuthService {
         this.inviteCodeMapper = inviteCodeMapper;
     }
 
-    @Value("${trading.initial-balance:100000}")
+    @Value("${trading.initial-balance:10000}")
     private BigDecimal initialBalance;
 
     @Value("${auth.password-login.enabled:false}")

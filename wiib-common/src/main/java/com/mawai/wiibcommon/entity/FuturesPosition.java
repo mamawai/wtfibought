@@ -13,6 +13,14 @@ import java.util.List;
 @TableName(value = "futures_position", autoResultMap = true)
 public class FuturesPosition {
 
+    public static final String ISOLATED = "ISOLATED";
+    public static final String CROSS = "CROSS";
+
+    /** 全仓判定统一入口（老数据 marginMode 为 null 视为逐仓） */
+    public boolean isCross() {
+        return CROSS.equals(marginMode);
+    }
+
     @TableId(type = IdType.AUTO)
     private Long id;
 
@@ -21,6 +29,9 @@ public class FuturesPosition {
     private String symbol; // 交易对 如BTCUSDT
 
     private String side; // LONG做多 SHORT做空
+
+    // ISOLATED逐仓：margin=从余额钱包划扣的仓位保证金；CROSS全仓：margin=起始保证金占用额(钱仍在余额钱包)
+    private String marginMode;
 
     private Integer leverage; // 杠杆倍数
 

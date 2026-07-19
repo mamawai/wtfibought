@@ -49,6 +49,25 @@ public interface UserMapper extends BaseMapper<User> {
             "WHERE id = #{userId} AND frozen_balance >= #{amount}")
     int atomicDeductFrozenBalance(@Param("userId") Long userId, @Param("amount") BigDecimal amount);
 
+    /** 原子更新游戏钱包，返回影响行数（0表示游戏钱包不足） */
+    @Update("UPDATE \"user\" SET game_balance = game_balance + #{amount}, updated_at = NOW() " +
+            "WHERE id = #{userId} AND game_balance + #{amount} >= 0")
+    int atomicUpdateGameBalance(@Param("userId") Long userId, @Param("amount") BigDecimal amount);
+
+    /** 余额钱包→游戏钱包，单条SQL原子划转（0=余额不足）；net=扣掉手续费后的实际到账 */
+    @Update("UPDATE \"user\" SET balance = balance - #{amount}, game_balance = game_balance + #{net}, updated_at = NOW() " +
+            "WHERE id = #{userId} AND balance >= #{amount}")
+    int atomicTransferToGame(@Param("userId") Long userId, @Param("amount") BigDecimal amount, @Param("net") BigDecimal net);
+
+    /** 游戏钱包→余额钱包，单条SQL原子划转（0=游戏钱包不足）；net=扣掉手续费后的实际到账 */
+    @Update("UPDATE \"user\" SET game_balance = game_balance - #{amount}, balance = balance + #{net}, updated_at = NOW() " +
+            "WHERE id = #{userId} AND game_balance >= #{amount}")
+    int atomicTransferToBalance(@Param("userId") Long userId, @Param("amount") BigDecimal amount, @Param("net") BigDecimal net);
+
+    /** 全仓结算专用：直接加减余额，允许扣成负数（穿仓缺口由破产流程接管），其他场景禁用 */
+    @Update("UPDATE \"user\" SET balance = balance + #{amount}, updated_at = NOW() WHERE id = #{userId}")
+    int atomicSettleBalance(@Param("userId") Long userId, @Param("amount") BigDecimal amount);
+
     /** 原子增加杠杆借款本金 */
     @Update("UPDATE \"user\" SET margin_loan_principal = COALESCE(margin_loan_principal, 0) + #{amount}, updated_at = NOW() " +
             "WHERE id = #{userId}")
@@ -93,6 +112,7 @@ public interface UserMapper extends BaseMapper<User> {
             "bankrupt_reset_date = #{resetDate}, " +
             "balance = 0, " +
             "frozen_balance = 0, " +
+            "game_balance = 0, " +
             "margin_loan_principal = 0, " +
             "margin_interest_accrued = 0, " +
             "margin_interest_last_date = #{today}, " +
@@ -107,6 +127,7 @@ public interface UserMapper extends BaseMapper<User> {
             "is_bankrupt = FALSE, " +
             "balance = #{initialBalance}, " +
             "frozen_balance = 0, " +
+            "game_balance = 0, " +
             "margin_loan_principal = 0, " +
             "margin_interest_accrued = 0, " +
             "margin_interest_last_date = #{today}, " +

@@ -48,7 +48,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
     private final PredictionBetMapper predictionBetMapper;
     private final AssetValuationService assetValuationService;
 
-    @Value("${trading.initial-balance:100000}")
+    @Value("${trading.initial-balance:10000}")
     private BigDecimal initialBalance;
 
     @Override
@@ -97,6 +97,11 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         }
     }
 
+    @Override
+    public void bankruptNow(Long userId) {
+        SpringUtils.getAopProxy(this).liquidateUser(userId, LocalDate.now());
+    }
+
     private boolean shouldBankrupt(Long userId) {
         User user = userService.getById(userId);
         if (user == null) {
@@ -129,6 +134,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         // crypto待结算（老股 T+1 已退）
         BigDecimal pendingSettlement = cryptoOrderMapper.sumSettlingAmount(userId);
 
+        // 游戏钱包刻意不计入：破产判定只看交易侧净资产，游戏钱包既救不了你、破产时也会被清空
         BigDecimal netAssets = balance
                 .add(frozen)
                 .add(marketValue)

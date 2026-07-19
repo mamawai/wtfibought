@@ -33,11 +33,14 @@ public class User {
     /** 注册用的邀请码ID（可追溯，OAuth用户为空） */
     private Long inviteCodeId;
 
-    /** 可用余额 */
+    /** 余额钱包（交易：现货/B股/合约/杠杆，也是全仓保证金池） */
     private BigDecimal balance;
 
-    /** 冻结余额（限价买单冻结的资金） */
+    /** 冻结余额（限价买单冻结的资金，属余额钱包） */
     private BigDecimal frozenBalance;
+
+    /** 游戏钱包（Mines/扑克/21点/预测市场，与全仓风险隔离） */
+    private BigDecimal gameBalance;
 
     /** 杠杆借款本金 */
     private BigDecimal marginLoanPrincipal;

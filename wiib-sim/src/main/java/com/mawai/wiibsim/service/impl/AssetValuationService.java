@@ -29,8 +29,15 @@ public class AssetValuationService {
         return mark != null ? mark : cacheService.getCryptoPrice(symbol);
     }
 
-    /** 合约仓位估值 = 保证金 + 未实现盈亏；行情短缺(price=null)时保留保证金、跳过浮盈亏。 */
+    /**
+     * 合约仓位估值。逐仓 = 保证金 + 浮盈亏（保证金已从余额划走，住在仓位里）；
+     * 全仓 = 仅浮盈亏（占用制，保证金从没离开余额钱包，再加就重复计钱）。
+     * 行情短缺(price=null)时浮盈亏按0。
+     */
     public static BigDecimal futuresPositionValue(FuturesPosition fp, BigDecimal markPrice) {
+        if (fp.isCross()) {
+            return futuresUnrealizedPnl(fp, markPrice);
+        }
         if (markPrice == null) {
             return fp.getMargin();
         }

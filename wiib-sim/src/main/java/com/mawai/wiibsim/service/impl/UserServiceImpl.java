@@ -5,16 +5,19 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mawai.wiibcommon.dto.UserDTO;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibcommon.entity.WalletTransfer;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.mapper.WalletTransferMapper;
 import com.mawai.wiibsim.service.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -33,8 +36,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     private final CryptoOrderMapper cryptoOrderMapper;
     private final FuturesPositionMapper futuresPositionMapper;
     private final AssetValuationService assetValuationService;
+    private final WalletTransferMapper walletTransferMapper;
 
-    @Value("${trading.initial-balance:100000}")
+    @Value("${trading.initial-balance:10000}")
     private BigDecimal initialBalance;
 
     @Override
@@ -89,8 +93,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         // 预测持仓按 bid 可变现价值计入总资产
         BigDecimal predictionValue = assetValuationService.predictionMarketValue(userId);
 
+        BigDecimal gameBalance = user.getGameBalance() != null ? user.getGameBalance() : BigDecimal.ZERO;
         BigDecimal totalAssets = user.getBalance()
                 .add(frozenBalance)
+                .add(gameBalance)
                 .add(marketValue)
                 .add(pendingSettlement)
                 .add(futuresValue)
@@ -117,6 +123,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         dto.setAvatar(user.getAvatar());
         dto.setBalance(user.getBalance());
         dto.setFrozenBalance(frozenBalance);
+        dto.setGameBalance(user.getGameBalance() != null ? user.getGameBalance() : BigDecimal.ZERO);
         dto.setPositionMarketValue(positionMarketValue);
         dto.setPendingSettlement(pendingSettlement);
         dto.setMarginLoanPrincipal(marginLoanPrincipal);
@@ -176,6 +183,68 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             throw new BizException(ErrorCode.FROZEN_BALANCE_NOT_ENOUGH);
         }
         log.info("用户{}扣除冻结余额: {}", userId, amount);
+    }
+
+    @Override
+    public BigDecimal getGameBalance(Long userId) {
+        User user = baseMapper.selectById(userId);
+        if (user == null) throw new BizException(ErrorCode.USER_NOT_FOUND);
+        return user.getGameBalance() != null ? user.getGameBalance() : BigDecimal.ZERO;
+    }
+
+    @Override
+    public void updateGameBalance(Long userId, BigDecimal amount) {
+        int affected = baseMapper.atomicUpdateGameBalance(userId, amount);
+        if (affected == 0) {
+            if (baseMapper.selectById(userId) == null) {
+                throw new BizException(ErrorCode.USER_NOT_FOUND);
+            }
+            throw new BizException(ErrorCode.GAME_BALANCE_NOT_ENOUGH);
+        }
+        log.info("用户{}游戏钱包更新: {}", userId, amount);
+    }
+
+    /** 划转手续费率 1%：转出方全额扣，到账 = amount − fee，手续费即销毁（平台无账户） */
+    private static final BigDecimal TRANSFER_FEE_RATE = new BigDecimal("0.01");
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void transferToGame(Long userId, BigDecimal amount) {
+        BigDecimal fee = validateAndCalcFee(amount);
+        int affected = baseMapper.atomicTransferToGame(userId, amount, amount.subtract(fee));
+        if (affected == 0) {
+            throw new BizException(ErrorCode.BALANCE_NOT_ENOUGH);
+        }
+        insertTransferLog(userId, WalletTransfer.TO_GAME, amount, fee);
+        log.info("用户{}划转 余额→游戏: {} 手续费: {}", userId, amount, fee);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void transferToBalance(Long userId, BigDecimal amount) {
+        BigDecimal fee = validateAndCalcFee(amount);
+        int affected = baseMapper.atomicTransferToBalance(userId, amount, amount.subtract(fee));
+        if (affected == 0) {
+            throw new BizException(ErrorCode.GAME_BALANCE_NOT_ENOUGH);
+        }
+        insertTransferLog(userId, WalletTransfer.TO_BALANCE, amount, fee);
+        log.info("用户{}划转 游戏→余额: {} 手续费: {}", userId, amount, fee);
+    }
+
+    private BigDecimal validateAndCalcFee(BigDecimal amount) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BizException(ErrorCode.WALLET_TRANSFER_INVALID);
+        }
+        return amount.multiply(TRANSFER_FEE_RATE).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private void insertTransferLog(Long userId, String direction, BigDecimal amount, BigDecimal fee) {
+        WalletTransfer transfer = new WalletTransfer();
+        transfer.setUserId(userId);
+        transfer.setDirection(direction);
+        transfer.setAmount(amount);
+        transfer.setFee(fee);
+        walletTransferMapper.insert(transfer);
     }
 
 }

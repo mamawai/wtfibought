@@ -4,11 +4,12 @@ import { useUserStore } from '../stores/userStore';
 import { userApi, cryptoOrderApi, cryptoApi, futuresApi, predictionApi, bstockApi } from '../api';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
 import { useToast } from '../components/ui/use-toast';
 import { PortfolioChart } from '../components/PortfolioChart';
 import { PortfolioWallet } from '../components/PortfolioWallet';
+import { WalletTransferModal } from '../components/WalletTransferModal';
+import { FuturesPositionsCard } from '../components/coin/FuturesPositionsCard';
 import { ProfitChart } from '../components/ProfitChart';
 import { RadarChart } from '../components/RadarChart';
 import type { WalletAsset } from '../components/PortfolioWallet';
@@ -25,7 +26,6 @@ import {
   LineChart,
   Radar,
   CircleDollarSign,
-  Scale,
   Target,
   Landmark,
 } from 'lucide-react';
@@ -93,6 +93,7 @@ export function Portfolio() {
   const [profitLoaded, setProfitLoaded] = useState(false);
   const [realtimeSnapshot, setRealtimeSnapshot] = useState<AssetSnapshot | null>(null);
   const [categoryAverages, setCategoryAverages] = useState<CategoryAverages | null>(null);
+  const [transferOpen, setTransferOpen] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -346,6 +347,7 @@ export function Portfolio() {
                         bstockRows={bstockRows}
                         futuresRows={futuresChartRows}
                         balance={user.balance}
+                        gameBalance={user.gameBalance}
                         pendingSettlement={user.pendingSettlement}
                       />
                     </div>
@@ -411,9 +413,11 @@ export function Portfolio() {
                     <PortfolioWallet
                       totalAssets={user.totalAssets}
                       balance={user.balance}
+                      gameBalance={user.gameBalance}
                       username={user.username}
                       assets={walletAssets}
                       ready={walletReady}
+                      onTransfer={() => setTransferOpen(true)}
                     />
                   </div>
                 )}
@@ -438,8 +442,13 @@ export function Portfolio() {
               {/* 次要指标列表 */}
               <div className="space-y-0 divide-y divide-border/20">
                 <div className="flex items-center justify-between py-2">
-                  <span className="text-[12px] text-muted-foreground">可用余额</span>
+                  <span className="text-[12px] text-muted-foreground">余额钱包</span>
                   <span className="text-[13px] font-semibold tabular-nums"><AnimNum value={user.balance} /></span>
+                </div>
+
+                <div className="flex items-center justify-between py-2">
+                  <span className="text-[12px] text-muted-foreground">游戏钱包</span>
+                  <span className="text-[13px] font-semibold tabular-nums"><AnimNum value={user.gameBalance} /></span>
                 </div>
 
                 <div className="flex items-center justify-between py-2">
@@ -679,76 +688,13 @@ export function Portfolio() {
               </Card>
             )}
 
-            {/* 合约持仓 */}
+            {/* 合约持仓：复用 Coin 页可操作卡组（WS 实时盈亏 + 平仓/加仓/杠杆/止盈损 + 一键全平） */}
             {hasFutures && (
-              <Card className="overflow-hidden">
-                <div className="px-4 py-3 flex items-center justify-between border-b border-border/40 bg-gradient-to-r from-purple-500/[0.06] to-transparent">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center ring-1 ring-purple-500/20">
-                      <Scale className="w-4 h-4 text-purple-400" />
-                    </div>
-                    <div>
-                      <span className="text-sm font-semibold tracking-tight">合约持仓</span>
-                      <span className="text-[11px] text-muted-foreground ml-1.5">{futuresPositions.length}个</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-[11px] text-muted-foreground">保证金 <span className="text-foreground font-bold tabular-nums"><AnimNum value={futuresMargin} /></span></div>
-                    <div className={cn("text-[11px] tabular-nums font-medium", futuresProfit >= 0 ? "text-green-400" : "text-red-400")}>
-                      浮盈 <AnimNum value={futuresProfit} prefix={futuresProfit >= 0 ? '+' : ''} />
-                    </div>
-                  </div>
-                </div>
-                <CardContent className="p-0 divide-y divide-border/30">
-                  {futuresPositions.map((f) => {
-                    const up = f.unrealizedPnl >= 0;
-                    const isLong = f.side === 'LONG';
-                    const coin = getCoin(f.symbol);
-                    const Icon = coin.icon;
-                    return (
-                      <button
-                        type="button"
-                        key={f.id}
-                        onClick={() => navigate(`/coin/${f.symbol}`)}
-                        className="w-full text-left px-4 py-3.5 cursor-pointer hover:bg-accent/40 active:bg-accent/60 transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                            <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ring-1", coin.bgClass, `ring-current/20 ${coin.colorClass}`)}>
-                              <Icon className={cn("w-4 h-4", coin.colorClass)} />
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5 mb-1">
-                                <span className="font-semibold text-[13px] group-hover:text-primary transition-colors">{coin.name}</span>
-                                <Badge className={cn("text-[9px] px-1 py-0", isLong ? "bg-green-500" : "bg-red-500")}>{isLong ? '多' : '空'}</Badge>
-                                <span className="text-[11px] text-muted-foreground">{f.leverage}x</span>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                                <span>数量 {f.quantity}</span>
-                                <span className="text-border">·</span>
-                                <span>开仓 {formatCoinPrice(f.symbol, f.entryPrice)}</span>
-                                <span className="text-border">·</span>
-                                <span>保证金 {fmtNum(f.margin)}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="text-right shrink-0 flex items-center gap-2">
-                            <div>
-                              <div className={cn("text-[13px] font-bold tabular-nums", up ? "text-green-400" : "text-red-400")}>
-                                {up ? '+' : ''}{fmtNum(f.unrealizedPnl)}
-                              </div>
-                              <div className={cn("text-[11px] tabular-nums font-medium", up ? "text-green-400/70" : "text-red-400/70")}>
-                                {up ? '+' : ''}{f.unrealizedPnlPct.toFixed(2)}%
-                              </div>
-                            </div>
-                            <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-primary/60 transition-colors" />
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </CardContent>
-              </Card>
+              <FuturesPositionsCard
+                refreshKey={refreshNonce}
+                showCloseAll
+                onOrdersChanged={() => setRefreshNonce(n => n + 1)}
+              />
             )}
 
             {/* 预测盈亏 */}
@@ -833,6 +779,8 @@ export function Portfolio() {
           </>
         )}
       </div>
+
+      <WalletTransferModal open={transferOpen} onClose={() => setTransferOpen(false)} />
     </div>
   );
 }

@@ -16,8 +16,9 @@ CREATE TABLE IF NOT EXISTS "user" (
     avatar VARCHAR(256),
     password_hash VARCHAR(60),
     invite_code_id BIGINT,
-    balance DECIMAL(18,2) NOT NULL DEFAULT 100000.00,
+    balance DECIMAL(18,2) NOT NULL DEFAULT 10000.00,
     frozen_balance DECIMAL(18,2) NOT NULL DEFAULT 0,
+    game_balance DECIMAL(18,2) NOT NULL DEFAULT 0,
     margin_loan_principal DECIMAL(18,2) NOT NULL DEFAULT 0,
     margin_interest_accrued DECIMAL(18,2) NOT NULL DEFAULT 0,
     margin_interest_last_date DATE,
@@ -36,8 +37,9 @@ COMMENT ON COLUMN "user".username IS '用户名（全局唯一，密码登录按
 COMMENT ON COLUMN "user".avatar IS '头像URL';
 COMMENT ON COLUMN "user".password_hash IS 'BCrypt密码哈希（定长60，OAuth用户为空）';
 COMMENT ON COLUMN "user".invite_code_id IS '注册用的邀请码ID（可追溯，OAuth用户为空）';
-COMMENT ON COLUMN "user".balance IS '可用余额';
-COMMENT ON COLUMN "user".frozen_balance IS '冻结余额（限价买单冻结）';
+COMMENT ON COLUMN "user".balance IS '余额钱包（交易：现货/B股/合约/杠杆，全仓保证金池）';
+COMMENT ON COLUMN "user".frozen_balance IS '冻结余额（限价买单冻结，属余额钱包）';
+COMMENT ON COLUMN "user".game_balance IS '游戏钱包（Mines/扑克/21点/预测市场，与全仓风险隔离）';
 COMMENT ON COLUMN "user".margin_loan_principal IS '杠杆借款本金';
 COMMENT ON COLUMN "user".margin_interest_accrued IS '杠杆应计利息（未支付）';
 COMMENT ON COLUMN "user".margin_interest_last_date IS '杠杆计息上次日期（用于补记）';
@@ -68,6 +70,25 @@ COMMENT ON COLUMN invite_code.code IS '邀请码（唯一）';
 COMMENT ON COLUMN invite_code.max_uses IS '最大可用次数';
 COMMENT ON COLUMN invite_code.used_count IS '已用次数（注册时原子+1，防并发超用）';
 COMMENT ON COLUMN invite_code.enabled IS '是否可用（作废置 FALSE）';
+
+-- ============================================
+-- 1c. 钱包划转流水表（余额钱包 ↔ 游戏钱包）
+-- ============================================
+CREATE TABLE IF NOT EXISTS wallet_transfer (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    direction VARCHAR(12) NOT NULL,
+    amount DECIMAL(18,2) NOT NULL,
+    fee DECIMAL(18,2) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE wallet_transfer IS '钱包划转流水（审计用）';
+COMMENT ON COLUMN wallet_transfer.direction IS '方向：TO_GAME=余额→游戏 TO_BALANCE=游戏→余额';
+COMMENT ON COLUMN wallet_transfer.amount IS '划转金额（恒为正，转出方全额扣）';
+COMMENT ON COLUMN wallet_transfer.fee IS '手续费（1%，到账=amount-fee，费即销毁）';
+
+CREATE INDEX IF NOT EXISTS idx_wt_user ON wallet_transfer(user_id, created_at DESC);
 
 -- ============================================
 -- 13. 每日Buff表
@@ -258,6 +279,7 @@ CREATE TABLE IF NOT EXISTS futures_position (
     user_id BIGINT NOT NULL,
     symbol VARCHAR(20) NOT NULL,
     side VARCHAR(5) NOT NULL,
+    margin_mode VARCHAR(8) NOT NULL DEFAULT 'ISOLATED',
     leverage INT NOT NULL,
     quantity DECIMAL(18,8) NOT NULL,
     entry_price DECIMAL(20,8) NOT NULL,
@@ -277,10 +299,11 @@ COMMENT ON TABLE futures_position IS '永续合约仓位表';
 COMMENT ON COLUMN futures_position.user_id IS '用户ID';
 COMMENT ON COLUMN futures_position.symbol IS '交易对（如BTCUSDT）';
 COMMENT ON COLUMN futures_position.side IS '方向：LONG/SHORT';
+COMMENT ON COLUMN futures_position.margin_mode IS '保证金模式：ISOLATED逐仓(margin=划扣的仓位保证金) CROSS全仓(margin=占用的起始保证金,钱仍在余额钱包)';
 COMMENT ON COLUMN futures_position.leverage IS '杠杆倍数';
 COMMENT ON COLUMN futures_position.quantity IS '数量';
 COMMENT ON COLUMN futures_position.entry_price IS '开仓价';
-COMMENT ON COLUMN futures_position.margin IS '逐仓保证金（动态变化）';
+COMMENT ON COLUMN futures_position.margin IS '保证金：逐仓=实划金额 全仓=起始保证金占用额';
 COMMENT ON COLUMN futures_position.funding_fee_total IS '累计资金费率';
 COMMENT ON COLUMN futures_position.stop_losses IS '止损列表(JSONB)';
 COMMENT ON COLUMN futures_position.take_profits IS '止盈列表(JSONB)';
@@ -302,6 +325,7 @@ CREATE TABLE IF NOT EXISTS futures_order (
     symbol VARCHAR(20) NOT NULL,
     order_side VARCHAR(15) NOT NULL,
     order_type VARCHAR(10) NOT NULL DEFAULT 'MARKET',
+    margin_mode VARCHAR(8) NOT NULL DEFAULT 'ISOLATED',
     quantity DECIMAL(18,8) NOT NULL,
     leverage INT NOT NULL,
     limit_price DECIMAL(20,8),
@@ -325,6 +349,7 @@ COMMENT ON COLUMN futures_order.position_id IS '关联仓位ID';
 COMMENT ON COLUMN futures_order.symbol IS '交易对';
 COMMENT ON COLUMN futures_order.order_side IS '订单方向：OPEN_LONG/OPEN_SHORT/CLOSE_LONG/CLOSE_SHORT/INCREASE_LONG/INCREASE_SHORT';
 COMMENT ON COLUMN futures_order.order_type IS '订单类型：MARKET/LIMIT';
+COMMENT ON COLUMN futures_order.margin_mode IS '保证金模式：ISOLATED逐仓(限价单物理冻结) CROSS全仓(不冻结,计入挂单占用)';
 COMMENT ON COLUMN futures_order.quantity IS '委托数量';
 COMMENT ON COLUMN futures_order.leverage IS '杠杆倍数';
 COMMENT ON COLUMN futures_order.limit_price IS '限价';

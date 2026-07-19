@@ -18,11 +18,14 @@ public class UserDTO {
     /** 头像 */
     private String avatar;
 
-    /** 可用余额 */
+    /** 余额钱包（交易） */
     private BigDecimal balance;
 
     /** 冻结余额 */
     private BigDecimal frozenBalance;
+
+    /** 游戏钱包 */
+    private BigDecimal gameBalance;
 
     /** 持仓总市值 */
     private BigDecimal positionMarketValue;

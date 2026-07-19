@@ -66,4 +66,24 @@ public interface UserService extends IService<User> {
      * @param amount 扣除金额
      */
     void deductFrozenBalance(Long userId, BigDecimal amount);
+
+    /**
+     * 更新游戏钱包（正数增加，负数减少，游戏模块专用）
+     */
+    void updateGameBalance(Long userId, BigDecimal amount);
+
+    /**
+     * 读游戏钱包余额（非空；用户不存在抛异常）
+     */
+    BigDecimal getGameBalance(Long userId);
+
+    /**
+     * 余额钱包→游戏钱包划转（记流水）
+     */
+    void transferToGame(Long userId, BigDecimal amount);
+
+    /**
+     * 游戏钱包→余额钱包划转（记流水）
+     */
+    void transferToBalance(Long userId, BigDecimal amount);
 }

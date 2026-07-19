@@ -26,6 +26,8 @@ public class FuturesOrder {
 
     private String orderType; // MARKET市价 LIMIT限价
 
+    private String marginMode; // ISOLATED逐仓(限价单物理冻结) CROSS全仓(不冻结,计入挂单占用)
+
     private BigDecimal quantity; // 下单数量(币)
 
     private Integer leverage; // 杠杆倍数

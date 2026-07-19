@@ -313,13 +313,10 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
         </Card>
       </div>
 
-      {/* 合约持仓（独立Card，空仓时自隐藏） */}
+      {/* 合约持仓（独立Card，空仓时自隐藏；卡内自订 WS 流与档位表） */}
       {isFuturesMode && (
         <FuturesPositionsCard
           symbol={symbol}
-          currentPrice={currentPrice}
-          markPrice={tick?.mp}
-          bracketsMap={futuresBracketsMap}
           refreshKey={futuresPositionsKey}
           onOrdersChanged={() => setFuturesOrdersKey(k => k + 1)}
         />

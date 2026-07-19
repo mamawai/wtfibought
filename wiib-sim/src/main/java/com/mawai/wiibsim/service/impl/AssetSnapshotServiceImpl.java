@@ -66,7 +66,7 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
         return new CategorySets(bstock, commodities == null ? Set.of() : Set.copyOf(commodities));
     }
 
-    @org.springframework.beans.factory.annotation.Value("${trading.initial-balance:100000}")
+    @org.springframework.beans.factory.annotation.Value("${trading.initial-balance:10000}")
     private BigDecimal initialBalance;
 
     private final Cache<Long, AssetSnapshotDTO> realtimeCache = Caffeine.newBuilder()
@@ -309,10 +309,12 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
         BigDecimal predictionValue = assetValuationService.predictionMarketValue(userId);
 
         BigDecimal frozenBalance = user.getFrozenBalance() != null ? user.getFrozenBalance() : BigDecimal.ZERO;
+        BigDecimal gameBalance = user.getGameBalance() != null ? user.getGameBalance() : BigDecimal.ZERO;
         BigDecimal marginLoan = user.getMarginLoanPrincipal() != null ? user.getMarginLoanPrincipal() : BigDecimal.ZERO;
         BigDecimal marginInterest = user.getMarginInterestAccrued() != null ? user.getMarginInterestAccrued() : BigDecimal.ZERO;
         BigDecimal totalAssets = user.getBalance()
                 .add(frozenBalance)
+                .add(gameBalance)
                 .add(cryptoMarketValue)
                 .add(pendingSettlement)
                 .add(futuresValue)

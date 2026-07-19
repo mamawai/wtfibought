@@ -70,11 +70,13 @@ public class FuturesPositionIndexServiceImpl implements FuturesPositionIndexServ
 
         stringRedisTemplate.executePipelined((RedisCallback<Object>) connection -> {
             StringRedisConnection conn = (StringRedisConnection) connection;
-            // 始终注册LIQ
-            BigDecimal liqPrice = calcStaticLiqPrice(symbol, side, position.getEntryPrice(), position.getMargin(),
-                    position.getQuantity());
-            String liqKey = "LONG".equals(side) ? LIQ_LONG_PREFIX + symbol : LIQ_SHORT_PREFIX + symbol;
-            conn.zAdd(liqKey, liqPrice.doubleValue(), positionId.toString());
+            // 逐仓注册静态强平价；全仓强平价随账户动态变化，不走ZSet，由CrossLiquidationService账户级巡检
+            if (!position.isCross()) {
+                BigDecimal liqPrice = calcStaticLiqPrice(symbol, side, position.getEntryPrice(), position.getMargin(),
+                        position.getQuantity());
+                String liqKey = "LONG".equals(side) ? LIQ_LONG_PREFIX + symbol : LIQ_SHORT_PREFIX + symbol;
+                conn.zAdd(liqKey, liqPrice.doubleValue(), positionId.toString());
+            }
 
             if (sls != null && !sls.isEmpty()) {
                 String slKey = "LONG".equals(side) ? SL_LONG_PREFIX + symbol : SL_SHORT_PREFIX + symbol;

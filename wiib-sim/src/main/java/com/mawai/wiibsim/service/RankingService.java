@@ -41,7 +41,7 @@ public class RankingService {
     private static final String RANKING_KEY = "ranking:top";
     private static final int TOP_N = 50;
 
-    @Value("${trading.initial-balance:100000}")
+    @Value("${trading.initial-balance:10000}")
     private BigDecimal initialBalance;
 
     public List<RankingDTO> getRanking() {
@@ -102,7 +102,7 @@ public class RankingService {
             BigDecimal pendingSettlement = nz(cryptoSettlingMap.get(uid));
             BigDecimal predictionValue = assetValuationService.predictionMarketValue(activeBetMap.get(uid), predictionBidCache);
 
-            BigDecimal totalAssets = balance.add(frozen)
+            BigDecimal totalAssets = balance.add(frozen).add(nz(user.getGameBalance()))
                     .add(cryptoMarketValue).add(pendingSettlement)
                     .add(futures.value()).add(predictionValue)
                     .subtract(loanPrincipal).subtract(loanInterest);

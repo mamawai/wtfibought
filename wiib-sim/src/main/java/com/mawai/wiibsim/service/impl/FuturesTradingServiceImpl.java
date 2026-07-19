@@ -18,6 +18,7 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesTradingService;
 import com.mawai.wiibsim.service.UserService;
@@ -52,6 +53,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
     private final FuturesLeverageBracketRegistry bracketRegistry;
+    private final CrossMarginService crossMarginService;
 
     // ==================== 开仓 ====================
 
@@ -86,26 +88,35 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     }
 
     private FuturesOrderResponse executeMarketOpen(Long userId, FuturesOpenRequest request, BigDecimal price, int leverage) {
+        String marginMode = normalizeMarginMode(request.getMarginMode());
         BigDecimal quantity = request.getQuantity();
         BigDecimal positionValue = price.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
         BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false, true);
         BigDecimal totalCost = margin.add(commission);
 
-        User user = userService.getById(userId);
-        // 允许0.05 USDT的价格滑点容差，避免前后端价格时间差导致误报余额不足
-        BigDecimal tolerance = tradingConfig.getFutures().getBalanceTolerance();
-        if (user.getBalance().add(tolerance).compareTo(totalCost) < 0) {
-            throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
+        if (FuturesPosition.CROSS.equals(marginMode)) {
+            // 全仓占用制：钱不动，只校验可用额度（含浮盈亏，浮盈开仓天然成立）；手续费实扣
+            crossMarginService.assertCanAfford(userId, totalCost);
+            userMapper.atomicSettleBalance(userId, commission.negate());
+        } else {
+            // 逐仓划扣制：把保证金从余额钱包划走；对全仓池而言是资金流出，先过硬底线
+            crossMarginService.assertOutflowAllowed(userId, totalCost);
+            User user = userService.getById(userId);
+            // 允许0.05 USDT的价格滑点容差，避免前后端价格时间差导致误报余额不足
+            BigDecimal tolerance = tradingConfig.getFutures().getBalanceTolerance();
+            if (user.getBalance().add(tolerance).compareTo(totalCost) < 0) {
+                throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
+            }
+            int affected = userMapper.atomicUpdateBalance(userId, totalCost.negate());
+            if (affected == 0) throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
         }
-
-        int affected = userMapper.atomicUpdateBalance(userId, totalCost.negate());
-        if (affected == 0) throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
 
         FuturesPosition position = new FuturesPosition();
         position.setUserId(userId);
         position.setSymbol(request.getSymbol());
         position.setSide(request.getSide());
+        position.setMarginMode(marginMode);
         position.setLeverage(leverage);
         position.setQuantity(quantity);
         position.setEntryPrice(price);
@@ -125,6 +136,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setSymbol(request.getSymbol());
         order.setOrderSide("LONG".equals(request.getSide()) ? "OPEN_LONG" : "OPEN_SHORT");
         order.setOrderType("MARKET");
+        order.setMarginMode(marginMode);
         order.setQuantity(quantity);
         order.setLeverage(leverage);
         order.setFilledPrice(price);
@@ -135,15 +147,17 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         orderMapper.insert(order);
 
         positionIndexService.registerPositionIndex(position);
+        if (position.isCross()) crossMarginService.refreshUserIndex(userId);
 
-        log.info("futures市价开仓 userId={} {} side={} qty={} price={} leverage={} margin={}",
-                userId, request.getSymbol(), request.getSide(), quantity, price, leverage, margin);
+        log.info("futures市价开仓 userId={} {} side={} mode={} qty={} price={} leverage={} margin={}",
+                userId, request.getSymbol(), request.getSide(), marginMode, quantity, price, leverage, margin);
 
         return buildOrderResponse(order);
     }
 
     private FuturesOrderResponse createLimitOpenOrder(Long userId, FuturesOpenRequest request, int leverage,
                                                        BigDecimal markPrice) {
+        String marginMode = normalizeMarginMode(request.getMarginMode());
         BigDecimal limitPrice = request.getLimitPrice();
         BigDecimal quantity = request.getQuantity();
         BigDecimal positionValue = limitPrice.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
@@ -153,8 +167,14 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false, isTaker);
         BigDecimal frozenAmount = margin.add(commission);
 
-        int affected = userMapper.atomicFreezeBalance(userId, frozenAmount);
-        if (affected == 0) throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
+        if (FuturesPosition.CROSS.equals(marginMode)) {
+            // 全仓挂单不物理冻结：frozenAmount 只作"挂单占用"记账，入库后自动进可用余额扣减项
+            crossMarginService.assertCanAfford(userId, frozenAmount);
+        } else {
+            crossMarginService.assertOutflowAllowed(userId, frozenAmount);
+            int affected = userMapper.atomicFreezeBalance(userId, frozenAmount);
+            if (affected == 0) throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
+        }
 
         LocalDateTime expireAt = LocalDateTime.now().plusHours(tradingConfig.getLimitOrderMaxHours());
 
@@ -163,6 +183,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setSymbol(request.getSymbol());
         order.setOrderSide(orderSide);
         order.setOrderType("LIMIT");
+        order.setMarginMode(marginMode);
         order.setQuantity(quantity);
         order.setLeverage(leverage);
         order.setLimitPrice(limitPrice);
@@ -204,8 +225,10 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     protected FuturesOrderResponse doClosePosition(Long userId, FuturesCloseRequest request) {
         FuturesPosition position = getUserPosition(userId, request.getPositionId());
 
-        BigDecimal closeQty = request.getQuantity();
-        if (closeQty.compareTo(position.getQuantity()) > 0) {
+        // quantity 空=全平：锁内取实时持仓量，消除"查列表→加锁"窗口期数量变化（如SL/TP部分成交）的误差
+        BigDecimal closeQty = request.getQuantity() != null ? request.getQuantity() : position.getQuantity();
+        // ≤0 必须拦：负数会让 atomicPartialClose 的 quantity-(-x) 反向加仓、盈亏符号翻转
+        if (closeQty.signum() <= 0 || closeQty.compareTo(position.getQuantity()) > 0) {
             throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
         }
 
@@ -218,6 +241,30 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         }
     }
 
+    @Override
+    public CloseAllResult closeAllPositions(Long userId) {
+        List<FuturesPosition> positions = positionMapper.selectList(new LambdaQueryWrapper<FuturesPosition>()
+                .eq(FuturesPosition::getUserId, userId)
+                .eq(FuturesPosition::getStatus, "OPEN"));
+
+        int closed = 0;
+        List<String> failures = new ArrayList<>();
+        for (FuturesPosition pos : positions) {
+            try {
+                FuturesCloseRequest req = new FuturesCloseRequest();
+                req.setPositionId(pos.getId());
+                req.setOrderType("MARKET");   // quantity 不设=锁内全平
+                closePosition(userId, req);   // 复用单仓锁+独立事务，单仓失败不影响已平的
+                closed++;
+            } catch (Exception e) {
+                log.warn("一键全平单仓失败 userId={} posId={} symbol={}", userId, pos.getId(), pos.getSymbol(), e);
+                failures.add(pos.getSymbol() + "#" + pos.getId() + ": " + e.getMessage());
+            }
+        }
+        log.info("一键全平完成 userId={} closed={} failed={}", userId, closed, failures.size());
+        return new CloseAllResult(closed, failures);
+    }
+
     private FuturesOrderResponse executeMarketClose(Long userId, FuturesPosition position, BigDecimal closeQty) {
         BigDecimal currentPrice = getPrice(position.getSymbol());
         BigDecimal pnl = calculatePnl(position.getSide(), position.getEntryPrice(), currentPrice, closeQty);
@@ -226,34 +273,34 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
 
         boolean isFullClose = closeQty.compareTo(position.getQuantity()) == 0;
 
-        BigDecimal returnAmount;
-        if (isFullClose) {
-            returnAmount = position.getMargin().add(pnl).subtract(commission);
-            returnAmount = returnAmount.max(BigDecimal.ZERO);
+        // 占用/划扣两种记账：全仓保证金没离开过余额，平仓只结盈亏净额（可为负，亏穿走破产）；
+        // 逐仓把仓位口袋里的钱(保证金±盈亏-费)拿回来，亏损上限就是保证金，返还不为负
+        BigDecimal marginPart = isFullClose ? position.getMargin()
+                : position.getMargin().multiply(closeQty).divide(position.getQuantity(), 2, RoundingMode.HALF_UP);
 
+        if (isFullClose) {
             int affected = positionMapper.casClosePosition(position.getId(), "CLOSED", currentPrice, pnl);
             if (affected == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
-
             positionIndexService.unregisterAll(position);
         } else {
-            BigDecimal marginReturn = position.getMargin()
-                    .multiply(closeQty)
-                    .divide(position.getQuantity(), 2, RoundingMode.HALF_UP);
-            returnAmount = marginReturn.add(pnl).subtract(commission);
-            returnAmount = returnAmount.max(BigDecimal.ZERO);
-
-            int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginReturn);
+            int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginPart);
             if (affected == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
 
-            // 部分平仓改了 qty/margin，强平索引必须同步。
-            BigDecimal newQty = position.getQuantity().subtract(closeQty);
-            BigDecimal newMargin = position.getMargin().subtract(marginReturn);
-            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
-                    position.getSymbol(), position.getSide(), position.getEntryPrice(), newMargin, newQty);
-            positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
+            if (!position.isCross()) {
+                // 部分平仓改了 qty/margin，逐仓静态强平索引必须同步（全仓无此索引）
+                BigDecimal newQty = position.getQuantity().subtract(closeQty);
+                BigDecimal newMargin = position.getMargin().subtract(marginPart);
+                BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
+                        position.getSymbol(), position.getSide(), position.getEntryPrice(), newMargin, newQty);
+                positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
+            }
         }
 
-        userMapper.atomicUpdateBalance(userId, returnAmount);
+        if (position.isCross()) {
+            crossMarginService.settle(userId, pnl.subtract(commission));
+        } else {
+            userMapper.atomicUpdateBalance(userId, marginPart.add(pnl).subtract(commission).max(BigDecimal.ZERO));
+        }
 
         FuturesOrder order = new FuturesOrder();
         order.setUserId(userId);
@@ -261,6 +308,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setSymbol(position.getSymbol());
         order.setOrderSide("LONG".equals(position.getSide()) ? "CLOSE_LONG" : "CLOSE_SHORT");
         order.setOrderType("MARKET");
+        order.setMarginMode(position.getMarginMode());
         order.setQuantity(closeQty);
         order.setLeverage(position.getLeverage());
         order.setFilledPrice(currentPrice);
@@ -270,8 +318,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setStatus("FILLED");
         orderMapper.insert(order);
 
-        log.info("futures市价平仓 userId={} posId={} qty={} price={} pnl={} return={}",
-                userId, position.getId(), closeQty, currentPrice, pnl, returnAmount);
+        log.info("futures市价平仓 userId={} posId={} mode={} qty={} price={} pnl={}",
+                userId, position.getId(), position.getMarginMode(), closeQty, currentPrice, pnl);
 
         return buildOrderResponse(order);
     }
@@ -305,6 +353,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setSymbol(position.getSymbol());
         order.setOrderSide(orderSide);
         order.setOrderType("LIMIT");
+        order.setMarginMode(position.getMarginMode());
         order.setQuantity(closeQty);
         order.setLeverage(position.getLeverage());
         order.setLimitPrice(limitPrice);
@@ -339,7 +388,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
 
         removeFromLimitZSet(order, cacheService);
 
-        if (!order.getOrderSide().startsWith("CLOSE")) {
+        // 逐仓开/加仓单解冻资金；全仓单没冻结过钱，状态一改挂单占用自动消失
+        if (!order.getOrderSide().startsWith("CLOSE") && !FuturesPosition.CROSS.equals(order.getMarginMode())) {
             userMapper.atomicUnfreezeBalance(userId, order.getFrozenAmount());
         }
 
@@ -365,12 +415,15 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     @Transactional(rollbackFor = Exception.class)
     protected void doAddMargin(Long userId, FuturesAddMarginRequest request) {
         FuturesPosition position = getUserPosition(userId, request.getPositionId());
+        if (position.isCross()) throw new BizException(ErrorCode.FUTURES_CROSS_MARGIN_ADJUST);
 
         BigDecimal amount = request.getAmount();
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BizException(ErrorCode.PARAM_ERROR);
         }
 
+        // 往逐仓仓位里划钱 = 全仓池资金流出
+        crossMarginService.assertOutflowAllowed(userId, amount);
         int affected = userMapper.atomicUpdateBalance(userId, amount.negate());
         if (affected == 0) throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
 
@@ -402,6 +455,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     @Transactional(rollbackFor = Exception.class)
     protected void doReduceMargin(Long userId, FuturesReduceMarginRequest request) {
         FuturesPosition position = getUserPosition(userId, request.getPositionId());
+        if (position.isCross()) throw new BizException(ErrorCode.FUTURES_CROSS_MARGIN_ADJUST);
 
         BigDecimal amount = request.getAmount();
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
@@ -439,6 +493,75 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
 
         log.info("futures减少保证金 userId={} posId={} amount={}", userId, request.getPositionId(), amount);
+    }
+
+    // ==================== 调杠杆 ====================
+
+    @Override
+    public void adjustLeverage(Long userId, FuturesAdjustLeverageRequest request) {
+        String lockKey = "futures:pos:" + request.getPositionId();
+        String lockValue = redisLockUtil.tryLock(lockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
+        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
+        try {
+            SpringUtils.getAopProxy(this).doAdjustLeverage(userId, request);
+        } finally {
+            redisLockUtil.unlock(lockKey, lockValue);
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    protected void doAdjustLeverage(Long userId, FuturesAdjustLeverageRequest request) {
+        FuturesPosition position = getUserPosition(userId, request.getPositionId());
+        int newLeverage = normalizeLeverage(request.getLeverage(), tradingConfig.getFutures().getMaxLeverage());
+        if (newLeverage == position.getLeverage()) return;
+
+        BigDecimal markPrice = getMarkPrice(position.getSymbol());
+        validateLeverageByBracket(position.getSymbol(), newLeverage, markPrice.multiply(position.getQuantity()));
+
+        // 新目标保证金 = 开仓名义额/新杠杆（与开仓口径一致）。举例：0.1 BTC@60000 用 10x 占 600，
+        // 调到 5x 目标变 1200 要多占 600；调到 20x 目标 300 释放 300
+        BigDecimal newMargin = position.getEntryPrice().multiply(position.getQuantity())
+                .divide(BigDecimal.valueOf(newLeverage), 2, RoundingMode.CEILING);
+
+        if (position.isCross()) {
+            // 全仓占用制：只改占用数字，钱不动。调低多占的部分要过可用额度；调高白释放
+            BigDecimal delta = newMargin.subtract(position.getMargin());
+            if (delta.signum() > 0) crossMarginService.assertCanAfford(userId, delta);
+            int affected = positionMapper.updateLeverageAndMargin(position.getId(), newLeverage, newMargin);
+            if (affected == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
+        } else {
+            // 逐仓只能调高：调低=要补钱，走追加保证金即可，不重复做一套
+            if (newLeverage < position.getLeverage()) throw new BizException(ErrorCode.FUTURES_LEVERAGE_ONLY_UP);
+
+            BigDecimal release = position.getMargin().subtract(newMargin);
+            if (release.signum() > 0) {
+                // 释放多余保证金回钱包，安全约束与减保证金同一套：
+                // (1) 剩余承诺金 ≥ 维持保证金 (2) 剩余净值 ≥ 新杠杆下的 markIM
+                BigDecimal unrealizedPnl = calculatePnl(position.getSide(), position.getEntryPrice(), markPrice, position.getQuantity());
+                BigDecimal markNotional = markPrice.multiply(position.getQuantity());
+                BigDecimal maintenanceMargin = bracketRegistry.calcMaintenanceMargin(position.getSymbol(), markNotional);
+                BigDecimal markIM = markNotional.divide(BigDecimal.valueOf(newLeverage), 2, RoundingMode.CEILING);
+                if (newMargin.compareTo(maintenanceMargin) < 0
+                        || newMargin.add(unrealizedPnl).compareTo(markIM) < 0) {
+                    throw new BizException(ErrorCode.FUTURES_MARGIN_TOO_LOW);
+                }
+
+                int affected = positionMapper.updateLeverageAndMargin(position.getId(), newLeverage, newMargin);
+                if (affected == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
+                userMapper.atomicUpdateBalance(userId, release);
+
+                BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSymbol(), position.getSide(),
+                        position.getEntryPrice(), newMargin, position.getQuantity());
+                positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
+            } else {
+                // 保证金已被资金费吃到目标线以下：只改杠杆数字，不动钱
+                int affected = positionMapper.updateLeverageAndMargin(position.getId(), newLeverage, position.getMargin());
+                if (affected == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
+            }
+        }
+
+        log.info("futures调杠杆 userId={} posId={} mode={} {}x→{}x margin={}",
+                userId, position.getId(), position.getMarginMode(), position.getLeverage(), newLeverage, newMargin);
     }
 
     // ==================== 加仓 ====================
@@ -489,8 +612,14 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         BigDecimal newNotional = price.multiply(newQty);
         validateLeverageByBracket(position.getSymbol(), leverage, newNotional);
 
-        int affected = userMapper.atomicUpdateBalance(userId, totalCost.negate());
-        if (affected == 0) throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
+        if (position.isCross()) {
+            crossMarginService.assertCanAfford(userId, totalCost);
+            userMapper.atomicSettleBalance(userId, commission.negate());
+        } else {
+            crossMarginService.assertOutflowAllowed(userId, totalCost);
+            int affected = userMapper.atomicUpdateBalance(userId, totalCost.negate());
+            if (affected == 0) throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
+        }
 
         BigDecimal newEntryPrice = position.getEntryPrice().multiply(oldQty)
                 .add(price.multiply(addQty))
@@ -499,10 +628,12 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         int affected2 = positionMapper.atomicIncreasePosition(position.getId(), newEntryPrice, addQty, addMargin);
         if (affected2 == 0) throw new BizException(ErrorCode.FUTURES_POSITION_CLOSED);
 
-        BigDecimal newMargin = position.getMargin().add(addMargin);
-        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSymbol(), position.getSide(), newEntryPrice, newMargin,
-                newQty);
-        positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
+        if (!position.isCross()) {
+            BigDecimal newMargin = position.getMargin().add(addMargin);
+            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSymbol(), position.getSide(), newEntryPrice, newMargin,
+                    newQty);
+            positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
+        }
 
         FuturesOrder order = new FuturesOrder();
         order.setUserId(userId);
@@ -510,6 +641,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setSymbol(position.getSymbol());
         order.setOrderSide("LONG".equals(position.getSide()) ? "INCREASE_LONG" : "INCREASE_SHORT");
         order.setOrderType("MARKET");
+        order.setMarginMode(position.getMarginMode());
         order.setQuantity(addQty);
         order.setLeverage(leverage);
         order.setFilledPrice(price);
@@ -541,8 +673,13 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         BigDecimal commission = tradingConfig.calculateFuturesCommission(addValue, false, isTaker);
         BigDecimal frozenAmount = addMargin.add(commission);
 
-        int affected = userMapper.atomicFreezeBalance(userId, frozenAmount);
-        if (affected == 0) throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
+        if (position.isCross()) {
+            crossMarginService.assertCanAfford(userId, frozenAmount);
+        } else {
+            crossMarginService.assertOutflowAllowed(userId, frozenAmount);
+            int affected = userMapper.atomicFreezeBalance(userId, frozenAmount);
+            if (affected == 0) throw new BizException(ErrorCode.FUTURES_INSUFFICIENT_BALANCE);
+        }
 
         LocalDateTime expireAt = LocalDateTime.now().plusHours(tradingConfig.getLimitOrderMaxHours());
 
@@ -552,6 +689,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         order.setSymbol(position.getSymbol());
         order.setOrderSide(orderSide);
         order.setOrderType("LIMIT");
+        order.setMarginMode(position.getMarginMode());
         order.setQuantity(addQty);
         order.setLeverage(leverage);
         order.setLimitPrice(limitPrice);
@@ -584,10 +722,14 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         List<FuturesPosition> positions = positionMapper.selectList(wrapper);
         List<FuturesPositionDTO> result = new ArrayList<>();
 
+        // 全仓强平价依赖账户整体状态，快照每用户算一次全列表共用
+        CrossMarginService.CrossAccount crossAccount = positions.stream().anyMatch(FuturesPosition::isCross)
+                ? crossMarginService.snapshot(userId) : null;
+
         for (FuturesPosition pos : positions) {
             try {
                 BigDecimal markPrice = getMarkPrice(pos.getSymbol());
-                result.add(buildPositionDTO(pos, markPrice));
+                result.add(buildPositionDTO(pos, markPrice, crossAccount));
             } catch (Exception e) {
                 log.warn("查询仓位价格失败 posId={}", pos.getId(), e);
             }
@@ -613,6 +755,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
             dto.setUserId(pos.getUserId());
             dto.setSymbol(pos.getSymbol());
             dto.setSide(pos.getSide());
+            dto.setMarginMode(pos.getMarginMode());
             dto.setLeverage(pos.getLeverage());
             dto.setQuantity(pos.getQuantity());
             dto.setEntryPrice(pos.getEntryPrice());
@@ -628,12 +771,14 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         }).toList();
     }
 
-    private FuturesPositionDTO buildPositionDTO(FuturesPosition pos, BigDecimal markPrice) {
+    private FuturesPositionDTO buildPositionDTO(FuturesPosition pos, BigDecimal markPrice,
+                                                CrossMarginService.CrossAccount crossAccount) {
         FuturesPositionDTO dto = new FuturesPositionDTO();
         dto.setId(pos.getId());
         dto.setUserId(pos.getUserId());
         dto.setSymbol(pos.getSymbol());
         dto.setSide(pos.getSide());
+        dto.setMarginMode(pos.getMarginMode());
         dto.setLeverage(pos.getLeverage());
         dto.setQuantity(pos.getQuantity());
         dto.setEntryPrice(pos.getEntryPrice());
@@ -668,8 +813,11 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
                 pos.getSymbol(), positionValue);
         dto.setMaintenanceMargin(maintenanceMargin);
 
-        BigDecimal liquidationPrice = positionIndexService.calcStaticLiqPrice(pos.getSymbol(), pos.getSide(), pos.getEntryPrice(),
-                pos.getMargin(), pos.getQuantity());
+        // 逐仓强平价是静态的；全仓强平价随余额和其他仓位浮盈亏动态变化，按当下账户状态估算
+        BigDecimal liquidationPrice = pos.isCross() && crossAccount != null
+                ? crossMarginService.estimateLiqPrice(pos, crossAccount)
+                : positionIndexService.calcStaticLiqPrice(pos.getSymbol(), pos.getSide(), pos.getEntryPrice(),
+                        pos.getMargin(), pos.getQuantity());
         dto.setLiquidationPrice(liquidationPrice);
 
         BigDecimal entryValue = pos.getEntryPrice().multiply(pos.getQuantity());

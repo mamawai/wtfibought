@@ -45,13 +45,13 @@ public class BlackjackServiceImpl implements BlackjackService {
     private final GameLockExecutor gameLock;
 
     /** 用户初始积分，同时也是每日保底重置目标值。 */
-    private static final long INITIAL_CHIPS = 20_000L;
+    private static final long INITIAL_CHIPS = 500L;
     /** 每日最多可从 Blackjack 转出的积分上限。 */
-    private static final long DAILY_CONVERT_LIMIT = 20_000L;
+    private static final long DAILY_CONVERT_LIMIT = 1_000L;
     /** 单次下注最小积分。 */
-    private static final long MIN_BET = 100L;
+    private static final long MIN_BET = 10L;
     /** 单次下注最大积分。 */
-    private static final long MAX_BET = 10_000L;
+    private static final long MAX_BET = 1_000L;
     /** 一局牌靴使用的副数（当前为单副牌）。 */
     private static final int SHOE_DECKS = 1;
     private static final Random RANDOM = new SecureRandom();
@@ -537,7 +537,7 @@ public class BlackjackServiceImpl implements BlackjackService {
             }
 
             long chipsBefore = account.getChips();
-            BigDecimal balanceBefore = userService.getById(userId).getBalance();
+            BigDecimal balanceBefore = userService.getGameBalance(userId);
 
             account.setChips(account.getChips() - amount);
             account.setTodayConverted(todayConverted + amount);
@@ -545,7 +545,8 @@ public class BlackjackServiceImpl implements BlackjackService {
             account.setUpdatedAt(LocalDateTime.now());
             accountMapper.updateById(account);
 
-            userService.updateBalance(userId, BigDecimal.valueOf(amount));
+            // 筹码兑现进游戏钱包（21点是游戏，赢利属游戏资金；想交易需再手动划转）
+            userService.updateGameBalance(userId, BigDecimal.valueOf(amount));
 
             BlackjackConvertLog logEntry = new BlackjackConvertLog();
             logEntry.setUserId(userId);
@@ -559,7 +560,7 @@ public class BlackjackServiceImpl implements BlackjackService {
 
             ConvertResultDTO result = new ConvertResultDTO();
             result.setChips(account.getChips());
-            result.setBalance(userService.getById(userId).getBalance().doubleValue());
+            result.setBalance(userService.getGameBalance(userId).doubleValue());
             result.setTodayConverted(account.getTodayConverted());
             return result;
         });

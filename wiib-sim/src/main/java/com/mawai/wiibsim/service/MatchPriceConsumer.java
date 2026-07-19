@@ -39,6 +39,7 @@ public class MatchPriceConsumer implements MessageListener {
     private final CryptoOrderService cryptoOrderService;
     private final FuturesLiquidationService futuresLiquidationService;
     private final FuturesSettlementService futuresSettlementService;
+    private final CrossLiquidationService crossLiquidationService;
     private final BinanceRestClient restClient;
     private final BinanceProperties props;
 
@@ -79,6 +80,8 @@ public class MatchPriceConsumer implements MessageListener {
                                        BigDecimal futLow, BigDecimal futHigh) {
         futuresLiquidationService.checkOnPriceUpdate(symbol, markLow, futLow);
         futuresLiquidationService.checkOnPriceUpdate(symbol, markHigh, futHigh);
+        // 全仓按当下账户状态巡检即可，无需区间补偿（轮询制没有"错过穿越"问题）
+        crossLiquidationService.onPriceTick(symbol);
     }
 
     @Override
@@ -101,6 +104,7 @@ public class MatchPriceConsumer implements MessageListener {
                     BigDecimal mp = new BigDecimal(obj.getString("price"));
                     String cp = redisTemplate.opsForValue().get(FUTURES_PRICE_KEY_PREFIX + symbol);
                     futuresLiquidationService.checkOnPriceUpdate(symbol, mp, cp != null ? new BigDecimal(cp) : mp);
+                    crossLiquidationService.onPriceTick(symbol);
                 }
                 case "spot-recover" -> cryptoOrderService.recoverLimitOrders(symbol,
                         new BigDecimal(obj.getString("low")), new BigDecimal(obj.getString("high")));

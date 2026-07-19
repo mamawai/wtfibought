@@ -13,6 +13,7 @@ public class FuturesOrderResponse {
     private String symbol;
     private String orderSide;
     private String orderType;
+    private String marginMode;
     private BigDecimal quantity;
     private Integer leverage;
     private BigDecimal limitPrice;

@@ -16,6 +16,13 @@ import java.util.Map;
 @Mapper
 public interface FuturesPositionMapper extends BaseMapper<FuturesPosition> {
 
+    /** 调杠杆：杠杆与保证金一起改（逐仓=划扣额，全仓=占用额） */
+    @Update("UPDATE futures_position SET leverage = #{leverage}, margin = #{margin}, updated_at = NOW() " +
+            "WHERE id = #{positionId} AND status = 'OPEN'")
+    int updateLeverageAndMargin(@Param("positionId") Long positionId,
+                                @Param("leverage") int leverage,
+                                @Param("margin") BigDecimal margin);
+
     /** 原子追加保证金 */
     @Update("UPDATE futures_position SET margin = margin + #{amount}, updated_at = NOW() " +
             "WHERE id = #{positionId} AND status = 'OPEN'")

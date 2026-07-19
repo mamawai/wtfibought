@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats, TnManualOrderReq, TnOrderResult, TnAck } from '../types/testnet';
-import type { User, PageResult, RankingItem, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, ForceOrder, AiKeyConfig, AiModelAssignment, InviteCode, GraphNodeMetric, WorkbenchEvent, QuantSnapshotView, QuantSnapshotSeriesPoint, QuantDeepAnalysisView, Scorecard, StrategyAccountView, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchChatMessage } from '../types';
+import type { User, PageResult, RankingItem, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesAdjustLeverageRequest, FuturesCrossAccount, WalletTransferPreview, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, ForceOrder, AiKeyConfig, AiModelAssignment, InviteCode, GraphNodeMetric, WorkbenchEvent, QuantSnapshotView, QuantSnapshotSeriesPoint, QuantDeepAnalysisView, Scorecard, StrategyAccountView, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchChatMessage } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -68,6 +68,15 @@ export const userApi = {
   assetHistory: (days = 30) => api.get<unknown, AssetSnapshot[]>('/user/asset-history', { params: { days } }),
   assetRealtime: () => api.get<unknown, AssetSnapshot>('/user/asset-realtime'),
   categoryAverages: (days = 30) => api.get<unknown, CategoryAverages>('/user/category-averages', { params: { days } }),
+};
+
+// ========== 钱包划转（余额钱包 ⇌ 游戏钱包） ==========
+export const walletApi = {
+  transfer: (direction: 'TO_GAME' | 'TO_BALANCE', amount: number) =>
+    api.post<unknown, { balance: number; gameBalance: number }>('/wallet/transfer', { direction, amount }),
+  // 划转预检：余额→游戏 有全仓敞口时算净值/新强平价/最大可转
+  transferPreview: (direction: 'TO_GAME' | 'TO_BALANCE', amount: number) =>
+    api.get<unknown, WalletTransferPreview>('/wallet/transfer/preview', { params: { direction, amount } }),
 };
 
 // ========== 排行榜接口 ==========
@@ -221,9 +230,14 @@ export const futuresApi = {
   klines: rawKlines('/api/futures/klines'),
   open: (data: FuturesOpenRequest) => api.post<unknown, FuturesOrder>('/futures/open', data),
   close: (data: FuturesCloseRequest) => api.post<unknown, FuturesOrder>('/futures/close', data),
+  closeAll: () => api.post<unknown, { closedCount: number; failures: string[] }>('/futures/close-all'),
   cancel: (orderId: number) => api.post<unknown, FuturesOrder>(`/futures/cancel/${orderId}`),
   addMargin: (data: FuturesAddMarginRequest) => api.post<unknown, void>('/futures/margin', data),
   reduceMargin: (data: FuturesReduceMarginRequest) => api.post<unknown, void>('/futures/margin/reduce', data),
+  // 持仓调杠杆：全仓双向可调（调低要可用够），逐仓只能调高
+  adjustLeverage: (data: FuturesAdjustLeverageRequest) => api.post<unknown, void>('/futures/leverage', data),
+  // 全仓账户概览：净值/可用/占用/维持保证金
+  crossAccount: () => api.get<unknown, FuturesCrossAccount>('/futures/cross-account'),
   brackets: () => api.get<unknown, Record<string, FuturesBracket[]>>('/futures/brackets'),
   increase: (data: FuturesIncreaseRequest) => api.post<unknown, FuturesOrder>('/futures/increase', data),
   setStopLoss: (data: FuturesStopLossRequest) => api.post<unknown, void>('/futures/stop-loss', data),
@@ -381,3 +395,4 @@ export const testnetApi = {
 export const graphObsApi = {
   metrics: () => api.get<unknown, GraphNodeMetric[]>('/admin/graph-obs/metrics'),
 };
+

@@ -15,6 +15,8 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibsim.service.CrossLiquidationService;
+import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesSettlementService;
@@ -54,6 +56,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
     private final FuturesRiskService riskService;
+    private final CrossMarginService crossMarginService;
+    private final CrossLiquidationService crossLiquidationService;
     private final RedisLockUtil redisLockUtil;
     private final BinanceRestClient restClient;
 
@@ -177,6 +181,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     }
 
     private void processTriggeredOpenOrder(FuturesOrder order, BigDecimal executePrice) {
+        boolean isCross = FuturesPosition.CROSS.equals(order.getMarginMode());
         BigDecimal quantity = order.getQuantity();
         BigDecimal positionValue = executePrice.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
         if (!isLeverageAllowed(order.getSymbol(), order.getLeverage(), positionValue)) {
@@ -188,18 +193,24 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false, isTaker);
         BigDecimal actualCost = margin.add(commission);
 
-        BigDecimal frozenAmount = order.getFrozenAmount();
-        int deducted = userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
-        if (deducted == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
-        if (actualCost.compareTo(frozenAmount) < 0) {
-            BigDecimal refund = frozenAmount.subtract(actualCost);
-            userMapper.atomicUpdateBalance(order.getUserId(), refund);
+        if (isCross) {
+            // 全仓：挂单期间只是占用记账，成交只实扣手续费（挂单占用随状态翻转自动消失）
+            userMapper.atomicSettleBalance(order.getUserId(), commission.negate());
+        } else {
+            BigDecimal frozenAmount = order.getFrozenAmount();
+            int deducted = userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
+            if (deducted == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
+            if (actualCost.compareTo(frozenAmount) < 0) {
+                BigDecimal refund = frozenAmount.subtract(actualCost);
+                userMapper.atomicUpdateBalance(order.getUserId(), refund);
+            }
         }
 
         FuturesPosition position = new FuturesPosition();
         position.setUserId(order.getUserId());
         position.setSymbol(order.getSymbol());
         position.setSide(order.getOrderSide().contains("LONG") ? "LONG" : "SHORT");
+        position.setMarginMode(order.getMarginMode());
         position.setLeverage(order.getLeverage());
         position.setQuantity(quantity);
         position.setEntryPrice(executePrice);
@@ -216,9 +227,10 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
 
         positionIndexService.registerPositionIndex(position);
+        if (isCross) crossMarginService.refreshUserIndex(order.getUserId());
 
-        log.info("futures限价开仓成交 orderId={} price={} feeType={} margin={}",
-                order.getId(), executePrice, isTaker ? "TAKER" : "MAKER", margin);
+        log.info("futures限价开仓成交 orderId={} mode={} price={} feeType={} margin={}",
+                order.getId(), order.getMarginMode(), executePrice, isTaker ? "TAKER" : "MAKER", margin);
     }
 
     private void processTriggeredIncreaseOrder(FuturesOrder order, BigDecimal executePrice) {
@@ -241,11 +253,15 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         BigDecimal commission = tradingConfig.calculateFuturesCommission(addValue, false, isTaker);
         BigDecimal actualCost = addMargin.add(commission);
 
-        BigDecimal frozenAmount = order.getFrozenAmount();
-        int deducted = userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
-        if (deducted == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
-        if (actualCost.compareTo(frozenAmount) < 0) {
-            userMapper.atomicUpdateBalance(order.getUserId(), frozenAmount.subtract(actualCost));
+        if (position.isCross()) {
+            userMapper.atomicSettleBalance(order.getUserId(), commission.negate());
+        } else {
+            BigDecimal frozenAmount = order.getFrozenAmount();
+            int deducted = userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
+            if (deducted == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
+            if (actualCost.compareTo(frozenAmount) < 0) {
+                userMapper.atomicUpdateBalance(order.getUserId(), frozenAmount.subtract(actualCost));
+            }
         }
 
         BigDecimal oldQty = position.getQuantity();
@@ -256,10 +272,12 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         positionMapper.atomicIncreasePosition(position.getId(), newEntryPrice, addQty, addMargin);
 
-        BigDecimal newMargin = position.getMargin().add(addMargin);
-        BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSymbol(), position.getSide(), newEntryPrice, newMargin,
-                newQty);
-        positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
+        if (!position.isCross()) {
+            BigDecimal newMargin = position.getMargin().add(addMargin);
+            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSymbol(), position.getSide(), newEntryPrice, newMargin,
+                    newQty);
+            positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
+        }
 
         int filled = orderMapper.casUpdateToFilled(order.getId(), executePrice, addValue, commission, addMargin, null);
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
@@ -283,10 +301,10 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         boolean isFullClose = closeQty.compareTo(position.getQuantity()) == 0;
 
-        BigDecimal returnAmount;
+        BigDecimal marginPart = isFullClose ? position.getMargin()
+                : position.getMargin().multiply(closeQty).divide(position.getQuantity(), 2, RoundingMode.HALF_UP);
+
         if (isFullClose) {
-            returnAmount = position.getMargin().add(pnl).subtract(commission);
-            returnAmount = returnAmount.max(BigDecimal.ZERO);
             int affected = positionMapper.casClosePosition(position.getId(), "CLOSED", executePrice, pnl);
             if (affected == 0) {
                 // 仓位已被并发平掉，订单取消，禁止重复返款
@@ -296,27 +314,29 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
             positionIndexService.unregisterAll(position);
         } else {
-            BigDecimal marginReturn = position.getMargin()
-                    .multiply(closeQty)
-                    .divide(position.getQuantity(), 2, RoundingMode.HALF_UP);
-            returnAmount = marginReturn.add(pnl).subtract(commission);
-            returnAmount = returnAmount.max(BigDecimal.ZERO);
-            int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginReturn);
+            int affected = positionMapper.atomicPartialClose(position.getId(), closeQty, marginPart);
             if (affected == 0) {
                 // 可平数量不足或已关闭，订单取消，禁止重复返款
                 orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
                 return;
             }
 
-            // 限价部分平仓成交后 qty/margin 已变，刷新强平索引。
-            BigDecimal newQty = position.getQuantity().subtract(closeQty);
-            BigDecimal newMargin = position.getMargin().subtract(marginReturn);
-            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
-                    position.getSymbol(), position.getSide(), position.getEntryPrice(), newMargin, newQty);
-            positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
+            if (!position.isCross()) {
+                // 限价部分平仓成交后 qty/margin 已变，刷新逐仓强平索引。
+                BigDecimal newQty = position.getQuantity().subtract(closeQty);
+                BigDecimal newMargin = position.getMargin().subtract(marginPart);
+                BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(
+                        position.getSymbol(), position.getSide(), position.getEntryPrice(), newMargin, newQty);
+                positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
+            }
         }
 
-        userMapper.atomicUpdateBalance(order.getUserId(), returnAmount);
+        // 全仓只结盈亏净额(可为负，穿仓由settle处理)；逐仓返还保证金±盈亏，下限0
+        if (position.isCross()) {
+            crossMarginService.settle(order.getUserId(), pnl.subtract(commission));
+        } else {
+            userMapper.atomicUpdateBalance(order.getUserId(), marginPart.add(pnl).subtract(commission).max(BigDecimal.ZERO));
+        }
         int filled = orderMapper.casUpdateToFilled(order.getId(), executePrice, closeValue, commission, null, pnl);
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
 
@@ -333,8 +353,10 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         int affected = orderMapper.casUpdateStatus(order.getId(), "PROCESSING", "CANCELLED");
         if (affected == 0) return;
 
+        // 全仓单没冻结过钱，状态翻转后挂单占用自动消失，无需退款
         BigDecimal frozenAmount = order.getFrozenAmount();
-        if (frozenAmount != null && frozenAmount.compareTo(BigDecimal.ZERO) > 0) {
+        if (!FuturesPosition.CROSS.equals(order.getMarginMode())
+                && frozenAmount != null && frozenAmount.compareTo(BigDecimal.ZERO) > 0) {
             int deducted = userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
             // 异常状态：cancel 前 frozen 必然存在，扣不到说明数据被并发改动，整事务回滚避免余额凭空增加
             if (deducted == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
@@ -422,7 +444,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         removeFromLimitZSet(order, cacheService);
 
-        if (!order.getOrderSide().startsWith("CLOSE")) {
+        if (!order.getOrderSide().startsWith("CLOSE") && !FuturesPosition.CROSS.equals(order.getMarginMode())) {
             userMapper.atomicUnfreezeBalance(order.getUserId(), order.getFrozenAmount());
         }
 
@@ -515,9 +537,13 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         }
 
         if (result.checkLiquidation()) {
-            FuturesPosition latest = positionMapper.selectById(pos.getId());
-            if (latest != null && "OPEN".equals(latest.getStatus())) {
-                riskService.checkAndLiquidate(latest.getId(), getMarkPrice(latest.getSymbol()));
+            if (pos.isCross()) {
+                crossLiquidationService.checkUser(pos.getUserId());
+            } else {
+                FuturesPosition latest = positionMapper.selectById(pos.getId());
+                if (latest != null && "OPEN".equals(latest.getStatus())) {
+                    riskService.checkAndLiquidate(latest.getId(), getMarkPrice(latest.getSymbol()));
+                }
             }
         }
         return result.success();
@@ -541,6 +567,14 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         // 真实转移机制：正=本仓应付，负=本仓应收（费率>0 多付空收，费率<0 反向）
         BigDecimal transfer = fundingTransfer(pos.getSide(), notional, rate);
         if (transfer.signum() == 0) return new FundingFeeChargeResult(true, false);
+
+        if (pos.isCross()) {
+            // 全仓：资金费直接对余额结算（可为负，没有"扣保证金"兜底——保证金只是占用数字）；应付方结算后账户级复核
+            crossMarginService.settle(pos.getUserId(), transfer.negate());
+            int added = positionMapper.atomicAddFundingFeeTotal(pos.getId(), transfer);
+            if (added == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
+            return new FundingFeeChargeResult(true, transfer.signum() > 0);
+        }
 
         if (transfer.signum() < 0) {
             // 收取方：入余额；funding_fee_total 记负（净口径，排行榜按累计净付扣回时自然冲正）

@@ -22,12 +22,13 @@ class MatchPriceConsumerTest {
     private final CryptoOrderService cryptoOrderService = mock(CryptoOrderService.class);
     private final FuturesLiquidationService liquidationService = mock(FuturesLiquidationService.class);
     private final FuturesSettlementService settlementService = mock(FuturesSettlementService.class);
+    private final CrossLiquidationService crossLiquidationService = mock(CrossLiquidationService.class);
     private final StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
 
     private MatchPriceConsumer consumer() {
         return new MatchPriceConsumer(
                 mock(RedisMessageListenerContainer.class), redisTemplate, cryptoOrderService,
-                liquidationService, settlementService,
+                liquidationService, settlementService, crossLiquidationService,
                 mock(BinanceRestClient.class), mock(BinanceProperties.class));
     }
 

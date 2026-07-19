@@ -3,11 +3,12 @@ import { minesApi } from '../api';
 import { useToast } from '../components/ui/use-toast';
 import { Button } from '../components/ui/button';
 import { Skeleton } from '../components/ui/skeleton';
-import { Wallet, TrendingUp, Pickaxe } from 'lucide-react';
+import { WalletTransferModal } from '../components/WalletTransferModal';
+import { Wallet, TrendingUp, Pickaxe, ArrowLeftRight } from 'lucide-react';
 import { cn, fmtNum } from '../lib/utils';
 import type { MinesGameState, MinesStatus } from '../types';
 
-const BET_PRESETS = [100, 500, 1000, 5000, 10000, 50000];
+const BET_PRESETS = [10, 50, 100, 500, 1000, 5000];
 
 const fmtMult = (n: number) => n.toFixed(2);
 
@@ -17,9 +18,10 @@ export function Mines() {
   const [game, setGame] = useState<MinesGameState | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
-  const [betAmount, setBetAmount] = useState(1000);
-  const [betInput, setBetInput] = useState('1000');
+  const [betAmount, setBetAmount] = useState(100);
+  const [betInput, setBetInput] = useState('100');
   const [showResult, setShowResult] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
   // 记录已翻开过的格子（用于翻转动画，避免页面恢复时重播）
   const flippedRef = useRef<Set<number>>(new Set());
 
@@ -129,12 +131,16 @@ export function Mines() {
             <Pickaxe className="w-5 h-5 text-amber-400" />
           </div>
           <div>
-            <div className="text-xs text-muted-foreground">余额</div>
+            <div className="text-xs text-muted-foreground">游戏钱包</div>
             <div className="text-xl font-bold tabular-nums flex items-center gap-1.5">
               <Wallet className="w-4 h-4 text-muted-foreground" />
               {fmtNum(balance)}
             </div>
           </div>
+          <Button variant="outline" size="sm" onClick={() => setTransferOpen(true)}>
+            <ArrowLeftRight className="w-3.5 h-3.5" />
+            划转
+          </Button>
         </div>
 
         {isPlaying && game && (
@@ -242,8 +248,8 @@ export function Mines() {
               value={betInput}
               onChange={e => handleBetInput(e.target.value)}
               className="w-full max-w-xs mx-auto block text-center text-2xl font-bold bg-background rounded-lg px-4 py-2 tabular-nums neu-inset focus:outline-none focus:ring-2 focus:ring-primary/50"
-              min={100}
-              max={50000}
+              min={10}
+              max={5000}
             />
           </div>
 
@@ -273,7 +279,7 @@ export function Mines() {
           ) : (
             <Button
               onClick={handleBet}
-              disabled={acting || betAmount < 100 || betAmount > 50000 || betAmount > balance}
+              disabled={acting || betAmount < 10 || betAmount > 5000 || betAmount > balance}
               className="w-full h-12 text-base"
             >
               <Pickaxe className="w-4 h-4" />
@@ -330,6 +336,9 @@ export function Mines() {
           <li>下注范围 100 ~ 50,000，含 1% 手续费（已计入倍率）。</li>
         </ul>
       </div>
+
+      {/* 划转成功后刷 status：顶栏余额取自游戏接口而非 user store */}
+      <WalletTransferModal open={transferOpen} onClose={() => setTransferOpen(false)} onSuccess={() => void fetchStatus()} />
     </div>
   );
 }

@@ -3,6 +3,8 @@ export interface User {
   username: string;
   avatar?: string;
   balance: number;
+  /** 游戏钱包：Mines/扑克/21点兑现/预测市场专用，和交易 balance 分离 */
+  gameBalance: number;
   frozenBalance: number;
   positionMarketValue: number;
   pendingSettlement: number;
@@ -207,6 +209,9 @@ export interface CryptoOrder {
 }
 
 // ========== 永续合约类型 ==========
+/** 保证金模式：CROSS=全仓（整个账户净值兜底），ISOLATED=逐仓（只赔本仓保证金） */
+export type FuturesMarginMode = 'CROSS' | 'ISOLATED';
+
 export interface FuturesSLItem { price: number; quantity: number }
 export interface FuturesTPItem { price: number; quantity: number }
 export interface FuturesSLEntry { id: string; price: number; quantity: number }
@@ -217,6 +222,7 @@ export interface FuturesOpenRequest {
   side: 'LONG' | 'SHORT';
   quantity: number;
   leverage: number;
+  marginMode: FuturesMarginMode;
   orderType: 'MARKET' | 'LIMIT';
   limitPrice?: number;
   stopLosses?: FuturesSLItem[];
@@ -256,6 +262,39 @@ export interface FuturesBracket {
   maintAmount: number;
 }
 
+export interface FuturesAdjustLeverageRequest {
+  positionId: number;
+  leverage: number;
+}
+
+/** 全仓账户概览（GET /futures/cross-account） */
+export interface FuturesCrossAccount {
+  balance: number;
+  unrealizedPnl: number;
+  equity: number;
+  available: number;
+  usedMargin: number;
+  pendingReserved: number;
+  maintenanceMargin: number;
+  positionCount: number;
+}
+
+/** 划转预检（GET /wallet/transfer/preview）：restricted=有全仓敞口，转出会动净值 */
+export interface WalletTransferPreviewPosition {
+  positionId: number;
+  symbol: string;
+  side: string;
+  estLiqPrice: number;
+}
+export interface WalletTransferPreview {
+  restricted: boolean;
+  allowed: boolean;
+  maxTransferable?: number;
+  equityAfter?: number;
+  maintenanceMargin?: number;
+  positions?: WalletTransferPreviewPosition[];
+}
+
 export interface FuturesStopLossRequest {
   positionId: number;
   stopLosses: FuturesSLItem[];
@@ -272,6 +311,7 @@ export interface FuturesPosition {
   symbol: string;
   side: 'LONG' | 'SHORT';
   leverage: number;
+  marginMode: FuturesMarginMode;
   quantity: number;
   entryPrice: number;
   margin: number;

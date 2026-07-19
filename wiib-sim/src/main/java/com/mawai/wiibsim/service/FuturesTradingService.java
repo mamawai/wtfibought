@@ -11,11 +11,20 @@ public interface FuturesTradingService {
 
     FuturesOrderResponse closePosition(Long userId, FuturesCloseRequest request);
 
+    /** 一键全平：市价平掉该用户全部 OPEN 仓位，逐仓循环，单仓失败不阻断其余。 */
+    CloseAllResult closeAllPositions(Long userId);
+
+    /** 一键全平结果：成功笔数 + 失败明细（"symbol#posId: 原因"）。 */
+    record CloseAllResult(int closedCount, List<String> failures) {}
+
     FuturesOrderResponse cancelOrder(Long userId, Long orderId);
 
     void addMargin(Long userId, FuturesAddMarginRequest request);
 
     void reduceMargin(Long userId, FuturesReduceMarginRequest request);
+
+    /** 持仓调杠杆：全仓双向可调（改占用额度），逐仓只能调高（释放多余保证金回钱包） */
+    void adjustLeverage(Long userId, FuturesAdjustLeverageRequest request);
 
     FuturesOrderResponse increasePosition(Long userId, FuturesIncreaseRequest request);
 

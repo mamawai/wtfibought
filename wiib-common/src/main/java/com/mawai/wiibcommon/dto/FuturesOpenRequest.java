@@ -9,6 +9,7 @@ import java.util.List;
 public class FuturesOpenRequest {
     private String symbol;
     private String side; // LONG/SHORT
+    private String marginMode; // ISOLATED/CROSS，缺省=CROSS（与Binance默认一致）
     private BigDecimal quantity;
     private Integer leverage;
     private String orderType; // MARKET/LIMIT

@@ -90,7 +90,9 @@ strategy:
     # 执行白名单=四策略部署篮子并集(FIBO:BTC/ETH · LIQFADE:BTC/ETH/DOGE · SQZMOM:SOL/DOGE/XRP · TURTLE:SOL/ETH/DOGE/BNB)
     symbols: BTCUSDT,ETHUSDT,DOGEUSDT,SOLUSDT,XRPUSDT,BNBUSDT
     fixed-margin-usdt: 50    # 每仓固定保证金 USDT(testnet 轨用；sim 轨为风险定量)
-    leverage: 20
+    leverage: 20             # testnet 轨请求杠杆
+    sim:
+      leverage: 20           # sim 轨请求杠杆；实际 = min(此值, 各策略 riskPolicy.maxLeverage)
     order-timeout-bars: 12   # 挂单超时(5m 根数，对齐 FiboParams)
 
 # Binance行情配置（quant 仅用 REST 拉历史/testnet；不连 WS，BinanceWsClient 在 feed）

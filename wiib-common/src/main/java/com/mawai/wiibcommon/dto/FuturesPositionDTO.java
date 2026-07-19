@@ -14,6 +14,7 @@ public class FuturesPositionDTO {
     private Long userId;
     private String symbol;
     private String side;
+    private String marginMode; // ISOLATED/CROSS
     private Integer leverage;
     private BigDecimal quantity;
     private BigDecimal entryPrice;

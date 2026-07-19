@@ -3,15 +3,17 @@ import { videoPokerApi } from '../api';
 import { useToast } from '../components/ui/use-toast';
 import { Button } from '../components/ui/button';
 import { Skeleton } from '../components/ui/skeleton';
-import { Wallet, ChevronDown } from 'lucide-react';
+import { WalletTransferModal } from '../components/WalletTransferModal';
+import { Wallet, ChevronDown, ArrowLeftRight } from 'lucide-react';
 import { CardContent } from '../components/ui/card';
 import { cn, fmtNum } from '../lib/utils';
 import type { VideoPokerGameState, VideoPokerStatus } from '../types';
 
-const BET_PRESETS = [100, 500, 1000, 5000, 10000, 50000];
+const BET_PRESETS = [10, 50, 100, 500, 1000, 5000];
+// 面额÷10对齐新经济，配色沿用原档位样式类
 const CHIP_COLORS: Record<number, string> = {
-  100: 'vp-chip-100', 500: 'vp-chip-500', 1000: 'vp-chip-1000',
-  5000: 'vp-chip-5000', 10000: 'vp-chip-10000', 50000: 'vp-chip-50000',
+  10: 'vp-chip-100', 50: 'vp-chip-500', 100: 'vp-chip-1000',
+  500: 'vp-chip-5000', 1000: 'vp-chip-10000', 5000: 'vp-chip-50000',
 };
 
 
@@ -111,10 +113,11 @@ export function VideoPoker() {
   const [game, setGame] = useState<VideoPokerGameState | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
-  const [betAmount, setBetAmount] = useState(1000);
+  const [betAmount, setBetAmount] = useState(100);
   const [held, setHeld] = useState<Set<number>>(new Set());
   const [replacing, setReplacing] = useState<Set<number>>(new Set());
   const [showDisclaimer, setShowDisclaimer] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
 
   const prevCardsRef = useRef<string[]>([]);
 
@@ -223,13 +226,17 @@ export function VideoPoker() {
             <span className="text-xl">🃏</span>
           </div>
           <div>
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Joker&apos;s Wild</div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">游戏钱包</div>
             <div className="text-xl font-bold tabular-nums flex items-center gap-1.5">
               <Wallet className="w-4 h-4 text-muted-foreground" />
               {fmtNum(balance)}
             </div>
           </div>
         </div>
+        <Button variant="outline" size="sm" onClick={() => setTransferOpen(true)}>
+          <ArrowLeftRight className="w-3.5 h-3.5" />
+          划转
+        </Button>
       </div>
 
       {/* 机台主体 */}
@@ -339,7 +346,7 @@ export function VideoPoker() {
 
               <Button
                 onClick={handleBet}
-                disabled={acting || betAmount < 100 || betAmount > 50000 || betAmount > balance}
+                disabled={acting || betAmount < 10 || betAmount > 5000 || betAmount > balance}
                 className="w-full h-12 text-base font-bold bg-amber-500 hover:bg-amber-400 text-black"
               >
                 🃏 发牌
@@ -399,6 +406,9 @@ export function VideoPoker() {
           </section>
         </CardContent>
       </div>
+
+      {/* 划转成功后刷 status：顶栏余额取自游戏接口而非 user store */}
+      <WalletTransferModal open={transferOpen} onClose={() => setTransferOpen(false)} onSuccess={() => void fetchStatus()} />
     </div>
   );
 }

@@ -10,13 +10,14 @@ import {ArrowLeftRight, CopyPlus, Hand, RotateCcw, Shield, Spade, Split, Square}
 import {cn} from '../lib/utils';
 import type {BlackjackStatus, GameState, HandResult} from '../types';
 
-const BET_PRESETS = [100, 500, 1000, 5000, 10000];
+const BET_PRESETS = [10, 50, 100, 500, 1000];
+// 面额÷10对齐新经济，配色沿用原档位样式类
 const CHIP_COLORS: Record<number, string> = {
-  100: 'bj-chip-100',
-  500: 'bj-chip-500',
-  1000: 'bj-chip-1000',
-  5000: 'bj-chip-5000',
-  10000: 'bj-chip-10000',
+  10: 'bj-chip-100',
+  50: 'bj-chip-500',
+  100: 'bj-chip-1000',
+  500: 'bj-chip-5000',
+  1000: 'bj-chip-10000',
 };
 
 const RESULT_LABELS: Record<string, string> = {
@@ -32,7 +33,7 @@ export function Blackjack() {
   const [game, setGame] = useState<GameState | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
-  const [betAmount, setBetAmount] = useState(1000);
+  const [betAmount, setBetAmount] = useState(100);
   const [convertAmount, setConvertAmount] = useState('');
   const [convertOpen, setConvertOpen] = useState(false);
   const [resumeOpen, setResumeOpen] = useState(false);
@@ -95,11 +96,11 @@ export function Blackjack() {
     if (!amt || amt <= 0) return;
     try {
       const result = await blackjackApi.convert(amt);
-      toast(`成功转出 ${amt.toLocaleString()} 积分`, 'success');
+      toast(`成功转出 ${amt.toLocaleString()} 积分至游戏钱包`, 'success');
       setConvertOpen(false);
       setConvertAmount('');
       if (status) {
-        setStatus({ ...status, chips: result.chips, todayConverted: result.todayConverted, convertable: Math.max(0, result.chips - 20000) });
+        setStatus({ ...status, chips: result.chips, todayConverted: result.todayConverted, convertable: Math.max(0, result.chips - 500) });
       }
     } catch (e: unknown) {
       toast((e as Error).message || '转出失败', 'error');
@@ -361,7 +362,7 @@ export function Blackjack() {
                   betAmount <= chips && betAmount >= 100 && !acting && 'bj-pulse-glow'
                 )}
                 onClick={handleBet}
-                disabled={acting || betAmount > chips || betAmount < 100}
+                disabled={acting || betAmount > chips || betAmount < 10}
               >
                 发牌
               </Button>
@@ -436,7 +437,8 @@ export function Blackjack() {
           <div className="space-y-3">
             <div className="text-sm text-muted-foreground space-y-1">
               <p>可转出: <span className="font-bold text-foreground">{(status?.convertable ?? 0).toLocaleString()}</span></p>
-              <p>今日已转: {(status?.todayConverted ?? 0).toLocaleString()} / {(status?.todayConvertLimit ?? 20000).toLocaleString()}</p>
+              <p>今日已转: {(status?.todayConverted ?? 0).toLocaleString()} / {(status?.todayConvertLimit ?? 1000).toLocaleString()}</p>
+              <p>转出后计入游戏钱包</p>
             </div>
             <input
               type="number"
@@ -445,10 +447,10 @@ export function Blackjack() {
               placeholder="输入转出金额"
               className="w-full px-3 py-2 rounded-lg bg-background text-sm neu-inset"
               min={1}
-              max={Math.min(status?.convertable ?? 0, (status?.todayConvertLimit ?? 20000) - (status?.todayConverted ?? 0))}
+              max={Math.min(status?.convertable ?? 0, (status?.todayConvertLimit ?? 1000) - (status?.todayConverted ?? 0))}
             />
             <div className="flex gap-2">
-              {[1000, 5000, 10000].map(v => (
+              {[100, 500, 1000].map(v => (
                 <Button key={v} variant="outline" size="sm" onClick={() => setConvertAmount(String(v))} className="flex-1">
                   {v >= 1000 ? `${v / 1000}K` : v}
                 </Button>
@@ -456,7 +458,7 @@ export function Blackjack() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setConvertAmount(String(Math.min(status?.convertable ?? 0, (status?.todayConvertLimit ?? 20000) - (status?.todayConverted ?? 0))))}
+                onClick={() => setConvertAmount(String(Math.min(status?.convertable ?? 0, (status?.todayConvertLimit ?? 1000) - (status?.todayConverted ?? 0))))}
                 className="flex-1"
               >
                 MAX

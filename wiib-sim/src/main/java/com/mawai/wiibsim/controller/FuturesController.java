@@ -5,11 +5,12 @@ import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.dto.*;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.entity.ForceOrder;
-import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibcommon.market.ForceOrderService;
+import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesTradingService;
+import com.mawai.wiibsim.service.KlineCacheService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -24,8 +25,9 @@ public class FuturesController {
     private final FuturesTradingService futuresTradingService;
     private final FuturesRiskService futuresRiskService;
     private final ForceOrderService forceOrderService;
-    private final BinanceRestClient binanceRestClient;
+    private final KlineCacheService klineCacheService;
     private final FuturesLeverageBracketRegistry bracketRegistry;
+    private final CrossMarginService crossMarginService;
 
     /** 开仓 */
     @PostMapping("/open")
@@ -37,6 +39,12 @@ public class FuturesController {
     @PostMapping("/close")
     public Result<FuturesOrderResponse> close(@CurrentUserId Long userId, @RequestBody FuturesCloseRequest request) {
         return Result.ok(futuresTradingService.closePosition(userId, request));
+    }
+
+    /** 一键全平：市价平掉当前用户全部仓位，返回成功笔数与失败明细 */
+    @PostMapping("/close-all")
+    public Result<FuturesTradingService.CloseAllResult> closeAll(@CurrentUserId Long userId) {
+        return Result.ok(futuresTradingService.closeAllPositions(userId));
     }
 
     /** 取消限价单 */
@@ -57,6 +65,28 @@ public class FuturesController {
     public Result<Void> reduceMargin(@CurrentUserId Long userId, @RequestBody FuturesReduceMarginRequest request) {
         futuresTradingService.reduceMargin(userId, request);
         return Result.ok();
+    }
+
+    /** 持仓调杠杆：全仓双向可调，逐仓只能调高 */
+    @PostMapping("/leverage")
+    public Result<Void> adjustLeverage(@CurrentUserId Long userId, @RequestBody FuturesAdjustLeverageRequest request) {
+        futuresTradingService.adjustLeverage(userId, request);
+        return Result.ok();
+    }
+
+    /** 全仓账户概览：净值/可用/占用/维持保证金（开仓面板与仓位卡展示用） */
+    @GetMapping("/cross-account")
+    public Result<Map<String, Object>> crossAccount(@CurrentUserId Long userId) {
+        var account = crossMarginService.snapshot(userId);
+        return Result.ok(Map.of(
+                "balance", account.balance(),
+                "unrealizedPnl", account.unrealizedPnl(),
+                "equity", account.equity(),
+                "available", account.available(),
+                "usedMargin", account.usedMargin(),
+                "pendingReserved", account.pendingReserved(),
+                "maintenanceMargin", account.maintenanceMargin(),
+                "positionCount", account.positions().size()));
     }
 
     /** 加仓 */
@@ -112,13 +142,14 @@ public class FuturesController {
         return Result.ok(forceOrderService.getPage(symbol, safePageNum, safePageSize));
     }
 
+    /** 合约K线（代理 Binance，Redis短TTL缓存） */
     @GetMapping("/klines")
     public String klines(
             @RequestParam(defaultValue = "BTCUSDT") String symbol,
             @RequestParam(defaultValue = "1m") String interval,
             @RequestParam(defaultValue = "500") int limit,
             @RequestParam(required = false) Long endTime) {
-        return binanceRestClient.getFuturesKlinesLight(symbol, interval, limit, endTime);
+        return klineCacheService.futuresKlines(symbol, interval, limit, endTime);
     }
 
     /** 永续合约档位表：前端预估强平价/MMR 用，避免与后端两份硬编码 */
