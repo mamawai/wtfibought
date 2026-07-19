@@ -165,7 +165,7 @@ function MetricTile({ icon: Icon, label, value, sub }: {
 
 // 结构与数据态逐段对齐（标题含状态点占位 + 双仪表盘 + 3 指标格 + GC 行），
 // 保证 skeleton→有数据零高度跳动；三卡轮播因 flex 行取最高值，滑动时高度亦恒定
-function MonitorSkeleton({ label, desc }: { label: string; desc?: string }) {
+function MonitorSkeleton({ label, desc, actions }: { label: string; desc?: string; actions?: React.ReactNode }) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -175,7 +175,10 @@ function MonitorSkeleton({ label, desc }: { label: string; desc?: string }) {
           </div>
           {label} JVM
           {desc && <span className="text-xs text-muted-foreground font-normal">{desc}</span>}
-          <span className="ml-auto w-1.5 h-1.5 rounded-full shrink-0 bg-muted-foreground/30" />
+          <span className="ml-auto flex items-center gap-2">
+            {actions}
+            <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-muted-foreground/30" />
+          </span>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -195,7 +198,7 @@ function MonitorSkeleton({ label, desc }: { label: string; desc?: string }) {
   );
 }
 
-export function MonitorCard({ topic, label, desc }: { topic: string; label: string; desc?: string }) {
+export function MonitorCard({ topic, label, desc, actions }: { topic: string; label: string; desc?: string; actions?: React.ReactNode }) {
   const [data, setData] = useState<MonitorData | null>(null);
 
   // 共享 STOMP 连接订阅该进程的 JVM topic；进程挂了不再来帧，卡片停在最后一帧（用户已认可"断了看得出来"，不做离线判定）
@@ -203,7 +206,7 @@ export function MonitorCard({ topic, label, desc }: { topic: string; label: stri
     try { setData(JSON.parse(msg.body)); } catch { /* ignore */ }
   }), [topic]);
 
-  if (!data) return <MonitorSkeleton label={label} desc={desc} />;
+  if (!data) return <MonitorSkeleton label={label} desc={desc} actions={actions} />;
 
   const heapPct = data.heap.max > 0 ? Math.round(data.heap.used / data.heap.max * 100) : -1;
   const cpuPct = data.cpuPct ?? -1;
@@ -217,7 +220,10 @@ export function MonitorCard({ topic, label, desc }: { topic: string; label: stri
           </div>
           {label} JVM
           {desc && <span className="text-xs text-muted-foreground font-normal">{desc}</span>}
-          <span className="ml-auto w-1.5 h-1.5 rounded-full shrink-0 bg-gain animate-pulse" title="实时" />
+          <span className="ml-auto flex items-center gap-2">
+            {actions}
+            <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-gain animate-pulse" title="实时" />
+          </span>
         </CardTitle>
       </CardHeader>
 

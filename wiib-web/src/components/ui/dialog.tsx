@@ -23,9 +23,10 @@ export function Dialog({ open, onClose, children, className }: DialogProps) {
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      {/* 深色遮罩上拟物软阴影会糊成一圈毛边，弹窗改用实边框+利落投影 */}
       <div className={cn(
-        "relative bg-card rounded-2xl neu-raised-lg w-full max-w-lg max-h-[80vh] overflow-hidden animate-in zoom-in-95 fade-in",
+        "relative bg-card rounded-2xl border border-border shadow-2xl w-full max-w-lg max-h-[80vh] overflow-hidden animate-in zoom-in-95 fade-in",
         className
       )}>
         <button

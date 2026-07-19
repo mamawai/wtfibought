@@ -16,7 +16,7 @@ import { ChevronLeft, Wallet, Globe, Landmark } from 'lucide-react';
 import type { BStock, CryptoPosition } from '../types';
 
 const COMMISSION_RATE = 0.001;
-const CHART_TABS = [{ label: '5m', interval: '5m' as const }, { label: '15m', interval: '15m' as const }];
+const CHART_TABS = [{ label: '5m', interval: '5m' as const }, { label: '15m', interval: '15m' as const }, { label: '1h', interval: '1h' as const }];
 const PCTS = [0.25, 0.5, 0.75, 1];
 const LEVERAGES = [1, 2, 3, 5, 10];
 const QTY_STEP = 0.0001;   // 数量精度：与 toFixed(4) 同口径，缓动动画的步长
