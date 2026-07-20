@@ -702,3 +702,52 @@ CREATE TABLE IF NOT EXISTS workbench_chat_message (
 CREATE INDEX IF NOT EXISTS idx_wb_chat_session ON workbench_chat_message (session_id, id);
 CREATE INDEX IF NOT EXISTS idx_wb_chat_user ON workbench_chat_message (user_id, id DESC);
 COMMENT ON TABLE workbench_chat_message IS '工作台对话历史(展示用):user/assistant按会话落库,quant启动时幂等自建(ChatHistoryService)';
+
+-- ============================================
+-- 27. 留言板评论（全站唯一，无附着实体）
+-- ============================================
+CREATE TABLE IF NOT EXISTS comment (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    root_id BIGINT,
+    reply_to_user_id BIGINT,
+    content VARCHAR(500) NOT NULL,
+    like_count INT NOT NULL DEFAULT 0,
+    dislike_count INT NOT NULL DEFAULT 0,
+    status SMALLINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE comment IS '留言板评论（全站唯一，无附着实体）';
+COMMENT ON COLUMN comment.root_id IS 'NULL=根评论；非NULL=所属根评论ID。只有两层：回复子评论时root_id仍指向根';
+COMMENT ON COLUMN comment.reply_to_user_id IS '子评论回复的目标用户，用于展示"回复 @xxx"';
+COMMENT ON COLUMN comment.like_count IS '赞数。只存计数，投票去重靠Redis Set，不落记录表';
+COMMENT ON COLUMN comment.status IS '1=正常 0=已删（软删；根评论被删时级联软删其子评论）';
+
+CREATE INDEX IF NOT EXISTS idx_comment_child ON comment(root_id, created_at DESC) WHERE status = 1;
+CREATE INDEX IF NOT EXISTS idx_comment_root ON comment(created_at DESC) WHERE root_id IS NULL AND status = 1;
+
+-- ============================================
+-- 28. 评论通知（赞/回复，踩不通知）
+-- ============================================
+CREATE TABLE IF NOT EXISTS comment_notification (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    actor_id BIGINT NOT NULL,
+    type SMALLINT NOT NULL,
+    comment_id BIGINT NOT NULL,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE comment_notification IS '评论通知（赞/回复，踩不通知；自己操作自己不通知）';
+COMMENT ON COLUMN comment_notification.user_id IS '接收者';
+COMMENT ON COLUMN comment_notification.actor_id IS '触发者（谁赞的/谁回复的）';
+COMMENT ON COLUMN comment_notification.type IS '1=赞 2=回复';
+COMMENT ON COLUMN comment_notification.comment_id IS '点击后要定位的评论：赞=自己被赞的那条，回复=对方那条回复';
+
+CREATE INDEX IF NOT EXISTS idx_notif_unread ON comment_notification(user_id, is_read, created_at DESC);
+
+-- 禁言（评论区管理用）。重置账户刻意不清此列，否则被禁言者可靠重置逃避处罚
+ALTER TABLE "user" ADD COLUMN IF NOT EXISTS muted_until TIMESTAMP;
+COMMENT ON COLUMN "user".muted_until IS '禁言到期时间，NULL或已过期=未禁言；永久禁言存2099年。到期自动解禁，无需定时任务';

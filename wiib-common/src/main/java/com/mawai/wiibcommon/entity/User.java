@@ -63,6 +63,9 @@ public class User {
     /** 恢复日期（交易日09:00恢复） */
     private LocalDate bankruptResetDate;
 
+    /** 禁言到期时间，NULL 或已过期=未禁言。到期自动解禁；重置账户刻意不清它 */
+    private LocalDateTime mutedUntil;
+
     /** 创建时间 */
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
