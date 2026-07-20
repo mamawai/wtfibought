@@ -78,7 +78,9 @@ WhatIfIBought 是一个偏实验性质的模拟交易系统，后端按业务域
 ### 游戏与社交
 
 - 每日 Buff 抽奖、21 点、Mines、Video Poker。
-- 总资产排行榜、用户行为分析 Agent（quant 经 internal API 读 sim 行为数据）。
+- 总资产排行榜（总额下拆展余额钱包 / 游戏钱包现金构成）、用户行为分析 Agent（quant 经 internal API 读 sim 行为数据）。
+- **留言板**：全站唯一，根评论 + 子评论两层，赞踩只存计数（去重靠 Redis Set 不落记录表），管理员可删除 / 禁言（`user.muted_until` 到期自动解禁）。赞与回复产生通知，顶栏信封角标 + WebSocket 点对点推送，前端按「类型 + 评论」合并展示。
+- **自助重置账户**：清空全部交易与游戏数据回到初始资金，每周一次、需逐字输入用户名确认。清理先注销 Redis 触发索引再事务删表，失败则把索引装回去。
 
 ---
 
@@ -93,7 +95,7 @@ WhatIfIBought 是一个偏实验性质的模拟交易系统，后端按业务域
 | MCP | Spring AI MCP Server (WebMVC/SSE) | 1.1.2 |
 | ORM | MyBatis-Plus | 3.5.10 |
 | 认证 | Sa-Token | 1.42.0（+ LinuxDo OAuth） |
-| 数据库 | PostgreSQL | 共享主库，建表见 `sql/init.sql`（26 张）+ `sql/bstock.sql` |
+| 数据库 | PostgreSQL | 共享主库，建表见 `sql/init.sql`（28 张）+ `sql/bstock.sql` |
 | 缓存 | Redis + Caffeine | 行情总线、分布式锁、ZSet 索引 + 本地热缓存 |
 | 观测 | Actuator + Micrometer Prometheus | Graph 节点本地观测 |
 | 前端 | React + TypeScript | React 19.2 / TypeScript 5.9 |
@@ -108,7 +110,7 @@ WhatIfIBought 是一个偏实验性质的模拟交易系统，后端按业务域
 
 ```mermaid
 flowchart TD
-    UI["React Web<br/>bStock / Coin / Futures / Commodity / Portfolio<br/>Prediction / AI / Scorecard / Strategies / Games"]
+    UI["React Web<br/>bStock / Coin / Futures / Commodity / Portfolio<br/>Prediction / AI / Scorecard / Strategies / Games / Comments"]
     EXC["Binance / Polymarket / Deribit<br/>外部行情源"]
     FEED["wiib-feed :8081<br/>交易所 WS/REST 接入"]
     SIM["wiib-sim :8080<br/>真人模拟交易 + 游戏 + 预测<br/>账本 = 自研模拟盘"]

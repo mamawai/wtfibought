@@ -8,7 +8,7 @@ import { Input } from '../components/ui/input';
 import { Dialog, DialogHeader, DialogContent, DialogFooter } from '../components/ui/dialog';
 import { useToast } from '../components/ui/use-toast';
 import { userApi } from '../api';
-import { Trophy, Gamepad2, Sun, Moon, LogOut, LogIn, ChevronRight, User, LineChart, Monitor, RotateCcw } from 'lucide-react';
+import { Trophy, Gamepad2, Sun, Moon, LogOut, LogIn, ChevronRight, User, LineChart, Monitor, RotateCcw, MessageSquare } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export function Me() {
@@ -51,6 +51,7 @@ export function Me() {
     { icon: Monitor, label: '模拟盘', to: '/testnet', color: 'text-sky-400' },
     { icon: Trophy, label: '排行榜', to: '/ranking', color: 'text-amber-400' },
     { icon: Gamepad2, label: '游戏中心', to: '/games', color: 'text-pink-400' },
+    { icon: MessageSquare, label: '留言板', to: '/comments', color: 'text-teal-400' },
   ];
 
   return (

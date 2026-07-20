@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useUserStore } from '../stores/userStore';
 import { useTheme } from '../hooks/useTheme';
 import { Button } from './ui/button';
+import { NotificationBell } from './NotificationBell';
 import { cn } from '../lib/utils';
 import {
   Home, Briefcase, LogOut, LogIn, TrendingUp, Sun, Moon,
@@ -78,13 +79,14 @@ export function Layout({ children }: Props) {
               <HeaderNavItem to="/games" label="游戏" />
               <HeaderNavItem to="/testnet" label="模拟盘" />
               <HeaderNavItem to="/strategies" label="策略" />
+              <HeaderNavItem to="/comments" label="留言" />
             </nav>
 
             {/* Actions */}
+            {/* 收起时才 overflow-hidden：展开时要让信封的下拉面板溢出显示（与上面 nav 同处理） */}
             <div className={cn(
-              "hidden md:flex items-center gap-2",
-              "overflow-hidden whitespace-nowrap transition-all",
-              expanded ? "opacity-100 max-w-[20rem]" : "opacity-0 max-w-0"
+              "hidden md:flex items-center gap-2 whitespace-nowrap transition-all",
+              expanded ? "opacity-100 max-w-[20rem] overflow-visible" : "opacity-0 max-w-0 overflow-hidden"
             )} style={{ transitionDuration: '400ms', transitionTimingFunction: 'cubic-bezier(0.34, 1.56, 0.64, 1)' }}>
               <a
                 href="https://github.com/mamawai/wiib"
@@ -110,6 +112,7 @@ export function Layout({ children }: Props) {
               {user ? (
                 <div className="hidden md:flex items-center gap-2">
                   <span className="text-xs font-bold text-muted-foreground hidden lg:inline">{user.username}</span>
+                  <NotificationBell />
                   <Button variant="ghost" size="icon" className="w-8 h-8" onClick={handleLogout}>
                     <LogOut className="w-4 h-4" />
                   </Button>

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats, TnManualOrderReq, TnOrderResult, TnAck } from '../types/testnet';
-import type { User, PageResult, RankingItem, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesAdjustLeverageRequest, FuturesCrossAccount, WalletTransferPreview, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, ForceOrder, AiKeyConfig, AiModelAssignment, InviteCode, WorkbenchEvent, QuantSnapshotView, QuantSnapshotSeriesPoint, QuantDeepAnalysisView, Scorecard, StrategyAccountView, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchChatMessage } from '../types';
+import type { User, PageResult, RankingItem, CommentItem, NotificationItem, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesIncreaseRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesAdjustLeverageRequest, FuturesCrossAccount, WalletTransferPreview, FuturesPosition, FuturesOrder, FuturesBracket, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, BehaviorAnalysisReport, ForceOrder, AiKeyConfig, AiModelAssignment, InviteCode, WorkbenchEvent, QuantSnapshotView, QuantSnapshotSeriesPoint, QuantDeepAnalysisView, Scorecard, StrategyAccountView, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchChatMessage } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -86,6 +86,35 @@ export const walletApi = {
 export const rankingApi = {
   // 获取排行榜
   list: () => api.get<unknown, RankingItem[]>('/ranking'),
+};
+
+// ========== 留言板 ==========
+export const commentApi = {
+  /** 根评论分页（时间倒序），每条带 childCount + 最多 2 条子评论预览 + 当前用户是否表过态 */
+  list: (page = 1, size = 20) =>
+    api.get<unknown, CommentItem[]>('/comments', { params: { page, size } }),
+  children: (rootId: number, page = 1, size = 10) =>
+    api.get<unknown, CommentItem[]>(`/comments/${rootId}/children`, { params: { page, size } }),
+  /** 聚焦视图：给一条评论ID，返回它所属的根评论 + 该根下全部子评论。通知跳转靠它，不用算分页位置 */
+  context: (commentId: number) =>
+    api.get<unknown, CommentItem>(`/comments/context/${commentId}`),
+  /** 回复时 rootId 传所属根评论ID（不是被回复的那条子评论ID），replyToUserId 传被回复者 */
+  post: (content: string, rootId?: number, replyToUserId?: number) =>
+    api.post<unknown, number>('/comments', { content, rootId, replyToUserId }),
+  vote: (id: number, type: 'like' | 'dislike') =>
+    api.post<unknown, void>(`/comments/${id}/vote`, null, { params: { type } }),
+  remove: (id: number) => api.delete<unknown, void>(`/comments/${id}`),
+  /** 管理员禁言，days=-1 为永久 */
+  mute: (userId: number, days: number) =>
+    api.post<unknown, void>('/comments/mute', { userId, days }),
+};
+
+// ========== 评论通知 ==========
+export const notificationApi = {
+  /** 最近 50 条（含已读），前端按 type+commentId 合并后展示 */
+  recent: () => api.get<unknown, NotificationItem[]>('/notifications'),
+  unread: () => api.get<unknown, number>('/notifications/unread'),
+  readAll: () => api.post<unknown, void>('/notifications/read-all'),
 };
 
 // ========== 管理接口 ==========

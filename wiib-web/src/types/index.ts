@@ -659,3 +659,39 @@ export interface QuantSnapshotView {
   qualityFlagsJson: string;
   createdAt: string;
 }
+
+// ========== 留言板与通知 ==========
+
+/** 留言板评论。只有两层：rootId 为空是根评论，非空是该根评论下的子评论。 */
+export interface CommentItem {
+  id: number;
+  userId: number;
+  username: string;
+  avatar?: string;
+  rootId?: number;
+  replyToUserId?: number;
+  /** 子评论展示"回复 @xxx"用 */
+  replyToUsername?: string;
+  content: string;
+  likeCount: number;
+  dislikeCount: number;
+  /** 已对本条表过态（赞踩共用一次机会），true 时两个按钮都置灰。未登录恒 false */
+  voted: boolean;
+  /** 根评论专用：子评论总数。列表接口只带前 2 条预览，靠它判断要不要出"查看全部" */
+  childCount: number;
+  children?: CommentItem[];
+  createdAt: string;
+}
+
+/** 通知条目。前端按 type+commentId 分组合并展示，后端每次事件只管插一行。 */
+export interface NotificationItem {
+  id: number;
+  /** 1=赞 2=回复 */
+  type: 1 | 2;
+  /** 点击跳转目标：赞=自己被赞那条，回复=对方那条回复 */
+  commentId: number;
+  actorId: number;
+  actorName: string;
+  isRead: boolean;
+  createdAt: string;
+}
