@@ -368,11 +368,3 @@ docker compose up -d --build
 ```
 
 > 对外只暴露 sim（:8080，均绑 127.0.0.1），建议经 Nginx / Caddy 反代。Redis 主从 + 哨兵栈可选 `docker compose -f redis-compose.yml up -d`。
-
----
-
-## 维护原则
-
-- README 只写当前代码已经落地的事实；已下线的功能（老 GBM 股票 / 期权）不再出现。
-- 量化架构以 `wiib-quant/AGENT_REFACTOR_PLAN.md` 为准。
-- 改运行时配置、交易风控、Graph 节点、数据源、DB schema（`sql/`）时，需同步 README 与对应 docs。
