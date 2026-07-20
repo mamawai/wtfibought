@@ -36,6 +36,9 @@ export interface RankingItem {
   profitPct: number;
   hardcoreProfit: number;
   buffProfit: number;
+  /** 余额钱包（含冻结）与游戏钱包只是总资产的现金部分，相加 ≠ totalAssets */
+  balanceWallet: number;
+  gameWallet: number;
 }
 
 // ========== Buff相关类型 ==========

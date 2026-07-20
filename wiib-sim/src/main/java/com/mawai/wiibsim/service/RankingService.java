@@ -150,7 +150,18 @@ public class RankingService {
         dto.setProfitPct(profitPct.setScale(2, RoundingMode.HALF_UP));
         dto.setHardcoreProfit(hardcoreProfit.setScale(2, RoundingMode.HALF_UP));
         dto.setBuffProfit(buffProfit.setScale(2, RoundingMode.HALF_UP));
+        dto.setBalanceWallet(balanceWalletOf(user));
+        dto.setGameWallet(gameWalletOf(user));
         return dto;
+    }
+
+    /** 余额钱包 = 可用 + 冻结。冻结的钱（限价买单占用）仍属余额钱包，漏加会显示得比实际少 */
+    static BigDecimal balanceWalletOf(User user) {
+        return nz(user.getBalance()).add(nz(user.getFrozenBalance())).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    static BigDecimal gameWalletOf(User user) {
+        return nz(user.getGameBalance()).setScale(2, RoundingMode.HALF_UP);
     }
 
     /** 把 List<Map<"user_id"/"amount">> 转成 Map<userId, amount>，供批量聚合查询使用 */

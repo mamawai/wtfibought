@@ -16,4 +16,8 @@ public class RankingDTO implements Serializable {
     private BigDecimal hardcoreProfit;
     /** 优惠券累计省下的金额，独立展示 */
     private BigDecimal buffProfit;
+    /** 余额钱包（含冻结）。与游戏钱包一起只是总资产的现金部分，两者相加≠totalAssets */
+    private BigDecimal balanceWallet;
+    /** 游戏钱包（与全仓风险隔离） */
+    private BigDecimal gameWallet;
 }

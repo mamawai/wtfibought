@@ -62,6 +62,20 @@ function HardcoreLine({ hardcore, buff, compact = false }: { hardcore: Numeric; 
   );
 }
 
+/* ── 双钱包现金构成：总资产里的现金部分，不含持仓市值，两者相加≠总资产 ── */
+function WalletLine({ balance, game, compact = false }: { balance: Numeric; game: Numeric; compact?: boolean }) {
+  const fs = compact ? 'text-[9px]' : 'text-[10px]';
+  return (
+    <div
+      className={cn(fs, "flex flex-wrap items-center justify-end gap-x-1.5 leading-tight tabular-nums text-muted-foreground")}
+      title="账户现金构成（不含持仓市值）"
+    >
+      <span className="whitespace-nowrap">余额 {fmt(num(balance))}</span>
+      <span className="whitespace-nowrap">游戏 {fmt(num(game))}</span>
+    </div>
+  );
+}
+
 /* ── Avatar with theme-consistent styling ── */
 function RankAvatar({ username, avatar, size = 'md', accent }: {
   username: string; avatar?: string;
@@ -128,6 +142,7 @@ function PodiumCard({ item, place }: { item: RankingItem; place: 1 | 2 | 3 }) {
           <span className="sm:hidden">{fmtCompact(item.totalAssets)}</span>
           <span className="hidden sm:inline">{fmt(item.totalAssets)}</span>
         </span>
+        <WalletLine balance={item.balanceWallet} game={item.gameWallet} compact />
         <ProfitBadge pct={item.profitPct} />
         <HardcoreLine hardcore={item.hardcoreProfit} buff={item.buffProfit} compact />
       </div>
@@ -156,6 +171,7 @@ function RankingRow({ item }: { item: RankingItem }) {
       {/* assets + profit */}
       <div className="text-right shrink-0">
         <div className="text-sm font-semibold tabular-nums">{fmt(item.totalAssets)}</div>
+        <WalletLine balance={item.balanceWallet} game={item.gameWallet} />
         <ProfitBadge pct={item.profitPct} />
         <HardcoreLine hardcore={item.hardcoreProfit} buff={item.buffProfit} />
       </div>
