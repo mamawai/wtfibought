@@ -29,7 +29,7 @@ export function Intro() {
         </CardContent>
       </Card>
 
-      {/* 桌面双列：左交易规则，右游戏规则+每日福利；移动端自然单列 */}
+      {/* 桌面双列：左交易（重点），右游戏+福利；移动端自然单列 */}
       <div className="grid md:grid-cols-2 gap-5 items-start">
       {/* 交易规则 */}
       <Card>
@@ -37,95 +37,60 @@ export function Intro() {
           <h2 className="font-bold text-base text-primary">交易规则</h2>
 
           <section>
-            <h3 className="font-bold mb-1">交易时间</h3>
-            <p className="text-muted-foreground">周一至周五 9:30-11:30、13:00-15:00，每10秒更新行情</p>
-          </section>
-
-          <section>
-            <h3 className="font-bold mb-1">股票交易（bStock）</h3>
+            <h3 className="font-bold mb-1">现货 · 代币化美股（bStock）</h3>
             <ul className="list-disc list-inside text-muted-foreground space-y-1">
-              <li><strong>代币化美股</strong>：真实 Binance 现货行情，NVDA / TSLA / QQQ 等</li>
-              <li><strong>市价 / 限价单</strong>：支持杠杆借款 1-10 倍</li>
-              <li><strong>手续费</strong>：0.1%</li>
-              <li><strong>瞬时结算</strong>：卖出即时到账，无 T+1</li>
-              <li><strong>24/7</strong>：全天候交易</li>
+              <li>真实 Binance 现货行情，NVDA / TSLA / QQQ 等，24/7 全天候</li>
+              <li>市价 / 限价单，市价买入可加 1-10 倍杠杆（借款日息 0.05%）</li>
+              <li>手续费 0.1%，卖出即时到账，无 T+1</li>
             </ul>
           </section>
 
           <section>
-            <h3 className="font-bold mb-1">杠杆交易</h3>
+            <h3 className="font-bold mb-1">现货 · 加密货币</h3>
             <ul className="list-disc list-inside text-muted-foreground space-y-1">
-              <li>市价买入可选1-10倍杠杆</li>
-              <li>借款按日计息0.05%</li>
-              <li>爆仓：资产低于借款时自动清仓，次日9:00恢复</li>
+              <li>BTC 等主流币，Binance WebSocket 实时行情</li>
+              <li>限价单 50%-150% 市价内有效 24 小时</li>
+              <li>杠杆 1-10 倍日息 0.05%，手续费 0.1%</li>
             </ul>
           </section>
 
           <section>
-            <h3 className="font-bold mb-1">BTC模拟交易</h3>
+            <h3 className="font-bold mb-1">USDT 永续合约</h3>
             <ul className="list-disc list-inside text-muted-foreground space-y-1">
-              <li><strong>实时行情</strong>：接入Binance WebSocket</li>
-              <li><strong>支持小数</strong>：最小0.00001 BTC</li>
-              <li><strong>手续费</strong>：0.1%</li>
-              <li><strong>限价单</strong>：50%-150%市价，24小时有效</li>
-              <li><strong>杠杆</strong>：1-10倍，日息0.05%</li>
-              <li><strong>卖出到账</strong>：5分钟到账，优先偿还借款</li>
+              <li><strong>开多 / 开空</strong>：市价、限价单，全仓保证金——整个账户净值为仓位兜底</li>
+              <li><strong>杠杆 1-150 倍</strong>：按仓位价值分档，对齐 Binance 档位表</li>
+              <li><strong>止盈止损</strong>：开仓即可预设、支持分批，实时预估强平价</li>
+              <li><strong>资金费率</strong>：真实费率，每 8 小时多空互付</li>
+              <li><strong>手续费</strong>：挂单 maker 0.02%，市价 taker 0.04%</li>
+              <li>保证金不足自动强平，请控制杠杆</li>
             </ul>
           </section>
 
           <section>
-            <h3 className="font-bold mb-1">合约交易</h3>
-            <ul className="list-disc list-inside text-muted-foreground space-y-1">
-              <li>支持开多/开空，1-250倍杠杆</li>
-              <li>实时盈亏计算，爆仓自动平仓</li>
-              <li>手续费：开仓/平仓各0.04%</li>
-            </ul>
+            <h3 className="font-bold mb-1">双钱包</h3>
+            <p className="text-muted-foreground">余额钱包管交易、游戏钱包管游戏，互相隔离，随时划转。</p>
+          </section>
+
+          <section>
+            <h3 className="font-bold mb-1">量化策略</h3>
+            <p className="text-muted-foreground">「策略」页可围观四套量化策略（通道突破 / 挤压动量 / 清算级联反向 / 斐波那契回撤）的实时信号与模拟盘自动执行。</p>
           </section>
         </CardContent>
       </Card>
 
-      <div className="space-y-5">
-      {/* 游戏规则 */}
+      {/* 游戏与福利 */}
       <Card>
-        <CardContent className="pt-5 space-y-4 text-sm leading-relaxed">
-          <h2 className="font-bold text-base text-primary">游戏规则</h2>
-
-          <section>
-            <h3 className="font-bold mb-1">21点</h3>
-            <p className="text-muted-foreground">经典Blackjack，点数最接近21点不爆牌即赢。支持分牌、加倍、保险。</p>
-          </section>
-
-          <section>
-            <h3 className="font-bold mb-1">视频扑克</h3>
-            <p className="text-muted-foreground">发5张牌，选择保留后换牌一次，按最终牌型赔付。</p>
-          </section>
-
-          <section>
-            <h3 className="font-bold mb-1">翻翻爆金币</h3>
-            <p className="text-muted-foreground">5×5方格隐藏地雷，每翻开一个安全格奖金递增，踩雷则全部归零。随时可收手。</p>
-          </section>
-
-          <section>
-            <h3 className="font-bold mb-1">BTC 5分钟涨跌预测 <span className="text-[10px] text-amber-500 font-bold ml-1">NEW</span></h3>
-            <ul className="list-disc list-inside text-muted-foreground space-y-1">
-              <li>每5分钟一轮，预测BTC价格涨跌</li>
-              <li>基于 Polymarket 实时概率定价</li>
-              <li>买入看涨/看跌合约，预测正确每份值$1</li>
-              <li>可随时卖出，按当前市场价成交</li>
-              <li>手续费根据概率动态计算（0.1%~2%）</li>
-            </ul>
-          </section>
+        <CardContent className="pt-5 space-y-3 text-sm leading-relaxed">
+          <h2 className="font-bold text-base text-primary">游戏与福利</h2>
+          <ul className="list-disc list-inside text-muted-foreground space-y-1.5">
+            <li><strong>21点</strong>：经典 Blackjack，支持分牌、加倍、保险</li>
+            <li><strong>视频扑克</strong>：发 5 张选保留换一次，按牌型赔付</li>
+            <li><strong>翻翻爆金币</strong>：翻开安全格奖金递增，踩雷归零，随时收手</li>
+            <li><strong>BTC 涨跌预测</strong>：每 5 分钟一轮，Polymarket 实时概率定价，可随时卖出</li>
+            <li><strong>每日福利</strong>：每天一抽，红包 / 股票 / 折扣券</li>
+          </ul>
         </CardContent>
       </Card>
-
-      {/* 每日福利 */}
-      <Card>
-        <CardContent className="pt-5 text-sm leading-relaxed">
-          <h2 className="font-bold text-base text-primary mb-2">每日福利</h2>
-          <p className="text-muted-foreground">每天可抽一次，有机会获得红包、股票或折扣券</p>
-        </CardContent>
-      </Card>
-      </div>
       </div>
 
       {/* 风险声明 */}
