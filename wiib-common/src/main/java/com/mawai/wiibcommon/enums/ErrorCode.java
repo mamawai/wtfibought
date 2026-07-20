@@ -112,7 +112,14 @@ public enum ErrorCode {
 
     // 账户重置错误码 2000+（1200/1600 段已被杠杆与 Crypto 占用）
     RESET_TOO_FREQUENT(2001, "每周只能重置一次账户"),
-    RESET_NOT_ALLOWED(2002, "该账户不可重置");
+    RESET_NOT_ALLOWED(2002, "该账户不可重置"),
+
+    // 留言板错误码 2100+
+    COMMENT_MUTED(2101, "你已被禁言"),
+    COMMENT_CONTENT_INVALID(2102, "评论内容为空或超过500字"),
+    COMMENT_TOO_FREQUENT(2103, "评论过于频繁，请稍后再试"),
+    COMMENT_NOT_FOUND(2104, "评论不存在或已删除"),
+    COMMENT_ALREADY_VOTED(2105, "你已经表过态了");
 
     private final int code;
     private final String msg;

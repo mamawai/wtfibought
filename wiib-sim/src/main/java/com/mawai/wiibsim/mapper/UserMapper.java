@@ -10,6 +10,7 @@ import org.apache.ibatis.annotations.Update;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Mapper
 public interface UserMapper extends BaseMapper<User> {
@@ -48,6 +49,10 @@ public interface UserMapper extends BaseMapper<User> {
             "updated_at = NOW() " +
             "WHERE id = #{userId}")
     int resetToInitial(@Param("userId") long userId, @Param("initialBalance") BigDecimal initialBalance);
+
+    /** 禁言到期时间（留言板管理用）。只动这一列，且 resetToInitial 刻意不复位它——禁言要扛过重置 */
+    @Update("UPDATE \"user\" SET muted_until = #{mutedUntil}, updated_at = NOW() WHERE id = #{userId}")
+    int updateMutedUntil(@Param("userId") long userId, @Param("mutedUntil") LocalDateTime mutedUntil);
 
     /** 原子更新可用余额，返回影响行数（0表示余额不足） */
     @Update("UPDATE \"user\" SET balance = balance + #{amount}, updated_at = NOW() " +
