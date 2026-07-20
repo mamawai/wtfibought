@@ -3,7 +3,7 @@ import { useUserStore } from '../stores/userStore';
 import { useTheme } from '../hooks/useTheme';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { Trophy, Gamepad2, Sun, Moon, LogOut, LogIn, ChevronRight, User } from 'lucide-react';
+import { Trophy, Gamepad2, Sun, Moon, LogOut, LogIn, ChevronRight, User, LineChart, Monitor } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export function Me() {
@@ -17,6 +17,9 @@ export function Me() {
   };
 
   const items = [
+    // 移动端底栏只有5槽，策略/模拟盘与排行/游戏一样从这里进（桌面走头部导航）
+    { icon: LineChart, label: '策略', to: '/strategies', color: 'text-violet-400' },
+    { icon: Monitor, label: '模拟盘', to: '/testnet', color: 'text-sky-400' },
     { icon: Trophy, label: '排行榜', to: '/ranking', color: 'text-amber-400' },
     { icon: Gamepad2, label: '游戏中心', to: '/games', color: 'text-pink-400' },
   ];
