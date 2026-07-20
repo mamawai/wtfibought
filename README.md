@@ -249,19 +249,6 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 └── wiib-web/                         # React 前端（拟物风）
     └── src/                          # App.tsx / pages/ components/ hooks/ stores/ api/
 ```
-
----
-
-## 重要文档
-
-| 文档 | 内容 |
-|---|---|
-| `wiib-quant/AGENT_REFACTOR_PLAN.md` | 量化 Agent 双轨改造总纲（架构主文档） |
-| `docs/superpowers/specs/2026-06-06-new-agent-principles.md` | Agent H6/H12/H24 三腿原则与边界 |
-| `docs/superpowers/specs/2026-06-18-fibo-limit-retracement-redesign-design.md` | Fibo(M2) 限价回踩策略设计 |
-| `docs/superpowers/specs/2026-07-09-feed-ws-stream-health-retry-design.md` | feed WS 流健康 + 手动重试（事件驱动） |
-| `docs/frontend-p7-workbench-plan.md` | 前端研判工作台 + PC 布局标准 |
-
 ---
 
 ## 并发与一致性
