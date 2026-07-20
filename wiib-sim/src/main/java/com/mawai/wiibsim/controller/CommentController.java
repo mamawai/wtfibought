@@ -1,6 +1,5 @@
 package com.mawai.wiibsim.controller;
 
-import cn.dev33.satoken.stp.StpUtil;
 import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.annotation.RequireAdmin;
 import com.mawai.wiibcommon.dto.CommentDTO;
@@ -16,6 +15,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -24,11 +24,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 留言板接口。
- * <p>
- * 三个 GET 允许游客访问（{@code SaTokenConfig} 里把 /api/comments/** 放行了），写操作靠
- * {@code @CurrentUserId} / {@code @RequireAdmin} 自己校验登录态——它们取不到 loginId
- * 会抛 NotLoginException，由全局处理器转 401。
+ * 留言板接口。整体需登录：路径不在 {@code SaTokenConfig} 放行清单里，拦截器先挡一道，
+ * 各接口的 {@code @CurrentUserId} / {@code @RequireAdmin} 再取一次 loginId。
  */
 @Tag(name = "留言板")
 @RestController
@@ -41,17 +38,6 @@ public class CommentController {
 
     private final CommentService commentService;
 
-    /**
-     * 可选登录：拿得到就返回 userId，游客返回 null。
-     * <p>
-     * 不能用 {@code @CurrentUserId}——那个注解没有 required 属性，未登录时解析器直接
-     * 抛 NotLoginException 转 401，而留言板必须让没登录的人也能看。
-     */
-    private static Long currentUserIdOrNull() {
-        Object id = StpUtil.getLoginIdDefaultNull();
-        return id == null ? null : Long.valueOf(id.toString());
-    }
-
     @Data
     public static class PostRequest {
         private String content;
@@ -59,6 +45,11 @@ public class CommentController {
         private Long rootId;
         /** 回复时传被回复者，用于展示"回复 @xxx" */
         private Long replyToUserId;
+    }
+
+    @Data
+    public static class EditRequest {
+        private String content;
     }
 
     @Data
@@ -70,23 +61,25 @@ public class CommentController {
 
     @GetMapping
     @Operation(summary = "根评论分页（时间倒序，带子评论预览与本人表态）")
-    public Result<List<CommentDTO>> list(@RequestParam(defaultValue = "1") int page,
+    public Result<List<CommentDTO>> list(@CurrentUserId Long userId,
+                                         @RequestParam(defaultValue = "1") int page,
                                          @RequestParam(defaultValue = "20") int size) {
-        return Result.ok(commentService.listRoots(currentUserIdOrNull(), page, size));
+        return Result.ok(commentService.listRoots(userId, page, size));
     }
 
     @GetMapping("/{rootId}/children")
     @Operation(summary = "子评论分页")
-    public Result<List<CommentDTO>> children(@PathVariable long rootId,
+    public Result<List<CommentDTO>> children(@CurrentUserId Long userId,
+                                             @PathVariable long rootId,
                                              @RequestParam(defaultValue = "1") int page,
                                              @RequestParam(defaultValue = "10") int size) {
-        return Result.ok(commentService.listChildren(currentUserIdOrNull(), rootId, page, size));
+        return Result.ok(commentService.listChildren(userId, rootId, page, size));
     }
 
     @GetMapping("/context/{commentId}")
     @Operation(summary = "聚焦视图：该评论所属根评论+其全部子评论（通知跳转用）")
-    public Result<CommentDTO> context(@PathVariable long commentId) {
-        return Result.ok(commentService.context(currentUserIdOrNull(), commentId));
+    public Result<CommentDTO> context(@CurrentUserId Long userId, @PathVariable long commentId) {
+        return Result.ok(commentService.context(userId, commentId));
     }
 
     @PostMapping
@@ -109,10 +102,19 @@ public class CommentController {
         return Result.ok(null);
     }
 
+    @PutMapping("/{id}")
+    @Operation(summary = "编辑自己的评论")
+    public Result<Void> edit(@CurrentUserId Long userId, @PathVariable long id,
+                             @RequestBody EditRequest req) {
+        commentService.edit(id, userId, req.getContent());
+        return Result.ok(null);
+    }
+
+    /** 删自己的变占位文案，管理员删别人的才真删——分流在 Service 里，接口签名不变 */
     @DeleteMapping("/{id}")
     @Operation(summary = "删除评论（本人或管理员）")
     public Result<Void> delete(@CurrentUserId Long userId, @PathVariable long id) {
-        commentService.delete(id, userId, userId.longValue() == ADMIN_USER_ID);
+        commentService.delete(id, userId, userId == ADMIN_USER_ID);
         return Result.ok(null);
     }
 

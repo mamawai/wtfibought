@@ -26,5 +26,9 @@ public class CommentDTO implements Serializable {
     private Integer childCount;
     /** 根评论专用：子评论预览（列表页最多2条；聚焦视图为全量） */
     private List<CommentDTO> children;
+    /** 非空即编辑过，前端据此显示"已编辑"。自删不写此列，所以占位符不会被标成已编辑 */
+    private LocalDateTime updatedAt;
+    /** 用户自删的占位符。前端据此隐藏编辑/删除按钮 */
+    private Boolean selfDeleted;
     private LocalDateTime createdAt;
 }

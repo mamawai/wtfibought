@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, ChevronDown, CornerDownRight, Loader2, MessageSquare,
+  ArrowLeft, ChevronDown, CornerDownRight, Loader2, MessageSquare, Pencil,
   RefreshCcw, Send, ShieldAlert, ThumbsDown, ThumbsUp, Trash2, VolumeX,
 } from 'lucide-react';
 import { commentApi } from '../api';
@@ -26,6 +26,12 @@ const MUTE_OPTIONS = [
 
 /** 正在回复谁：rootId 恒指向根评论（回复子评论也是），toUserId 决定"回复 @xxx"挂在谁身上 */
 type ReplyTarget = { rootId: number; toUserId: number; toUsername: string };
+
+/**
+ * 自删后顶替原文的占位文案，须与后端 CommentService.DELETED_PLACEHOLDER 一致。
+ * 这里只用于删除后的乐观更新，刷新页面拿到的仍以后端为准
+ */
+const DELETED_PLACEHOLDER = '该留言已删除，无法查看';
 
 /** 就地改一条评论（根或子），赞踩后不必整页重拉。结构固定两层，不做递归 */
 function patchComment(roots: CommentItem[], id: number, fn: (c: CommentItem) => CommentItem): CommentItem[] {
@@ -83,16 +89,17 @@ function ActionButton({ disabled, title, onClick, hoverClass, children }: {
   );
 }
 
-/** 发帖与回复共用的输入框。未登录时禁用并把提示写进 placeholder，不额外弹东西 */
-function ComposeBox({ value, onChange, onSubmit, submitting, canPost, placeholder, rows = 3, onCancel }: {
+/** 发帖、回复、编辑三处共用的输入框。ready=false 是 user 还没拉回来，先禁用免得拿不到自己的 id */
+function ComposeBox({ value, onChange, onSubmit, submitting, ready, placeholder, rows = 3, onCancel, submitLabel = '发布' }: {
   value: string;
   onChange: (v: string) => void;
   onSubmit: () => void;
   submitting: boolean;
-  canPost: boolean;
+  ready: boolean;
   placeholder: string;
   rows?: number;
   onCancel?: () => void;
+  submitLabel?: string;
 }) {
   const over = value.length > MAX_LEN;
   return (
@@ -100,8 +107,8 @@ function ComposeBox({ value, onChange, onSubmit, submitting, canPost, placeholde
       <textarea
         value={value}
         rows={rows}
-        disabled={!canPost || submitting}
-        placeholder={canPost ? placeholder : '登录后才能发言'}
+        disabled={!ready || submitting}
+        placeholder={placeholder}
         onChange={e => onChange(e.target.value)}
         className={cn(
           'w-full rounded-xl bg-background px-3.5 py-2.5 text-sm neu-inset resize-none',
@@ -115,17 +122,17 @@ function ComposeBox({ value, onChange, onSubmit, submitting, canPost, placeholde
           {value.length} / {MAX_LEN}
         </span>
         {onCancel && <Button variant="ghost" size="sm" onClick={onCancel}>取消</Button>}
-        <Button size="sm" disabled={!canPost || submitting || !value.trim() || over} onClick={onSubmit}>
+        <Button size="sm" disabled={!ready || submitting || !value.trim() || over} onClick={onSubmit}>
           {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-          发布
+          {submitLabel}
         </Button>
       </div>
     </div>
   );
 }
 
-/** 单条评论：头像 + 昵称/回复对象 + 正文 + 赞踩/回复/管理动作 */
-function CommentRow({ c, isChild, focused, currentUserId, isAdmin, busy, onVote, onReply, onDelete, onMute }: {
+/** 单条评论：头像 + 昵称/回复对象 + 正文 + 赞踩/回复/编辑/管理动作 */
+function CommentRow({ c, isChild, focused, currentUserId, isAdmin, busy, onVote, onReply, onEdit, onDelete, onMute }: {
   c: CommentItem;
   isChild?: boolean;
   focused?: boolean;
@@ -134,13 +141,41 @@ function CommentRow({ c, isChild, focused, currentUserId, isAdmin, busy, onVote,
   busy: boolean;
   onVote: (c: CommentItem, type: 'like' | 'dislike') => void;
   onReply: (c: CommentItem) => void;
+  /** 失败时抛出，本行据此决定不关编辑框；提示由父层统一弹 */
+  onEdit: (c: CommentItem, content: string) => Promise<void>;
   onDelete: (c: CommentItem) => void;
   onMute: (c: CommentItem) => void;
 }) {
-  const loggedIn = currentUserId != null;
-  const canDelete = isAdmin || currentUserId === c.userId;
+  // 编辑态就地自管：提上去要往每一行传 4 个 props，而它跟别的行毫无关系
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const ready = currentUserId != null;
+  const isMine = currentUserId === c.userId;
+  const canEdit = isMine && !c.selfDeleted;
+  // 自己的占位符没什么可再删的，但管理员对别人的占位符照样要能真删——
+  // 自删只换掉正文，底下挂的一串回复还在，管理员得有办法整组清掉
+  const canDelete = isMine ? !c.selfDeleted : isAdmin;
   // voted 一置就同时锁死赞和踩：一人对一条评论只有一次表态机会
-  const voteTitle = !loggedIn ? '登录后才能表态' : c.voted ? '你已经表过态了' : undefined;
+  const voteTitle = c.voted ? '你已经表过态了' : undefined;
+
+  const startEdit = () => {
+    setEditText(c.content);   // 每次打开都取当下正文，免得留着上一轮的草稿
+    setEditing(true);
+  };
+
+  const submitEdit = async () => {
+    setSaving(true);
+    try {
+      await onEdit(c, editText.trim());
+      setEditing(false);
+    } catch {
+      // 父层已经弹过提示，这里保持编辑框开着，内容不丢
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className={cn('flex gap-2.5', focused && 'rounded-xl neu-inset px-3 py-2.5')}>
@@ -151,48 +186,77 @@ function CommentRow({ c, isChild, focused, currentUserId, isAdmin, busy, onVote,
           {c.replyToUsername && (
             <span className="text-[11px] text-muted-foreground shrink-0">回复 @{c.replyToUsername}</span>
           )}
+          {c.updatedAt && !c.selfDeleted && (
+            <span className="text-[10px] text-muted-foreground shrink-0">已编辑</span>
+          )}
           <span className="ml-auto text-[10px] text-muted-foreground shrink-0">{fmtDateTime(c.createdAt)}</span>
         </div>
 
-        <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{c.content}</p>
+        {editing ? (
+          <ComposeBox
+            value={editText}
+            onChange={setEditText}
+            onSubmit={() => void submitEdit()}
+            submitting={saving}
+            ready={ready}
+            placeholder="改点什么…"
+            rows={2}
+            submitLabel="保存"
+            onCancel={() => setEditing(false)}
+          />
+        ) : (
+          <p className={cn(
+            'text-[13px] leading-relaxed whitespace-pre-wrap break-words',
+            c.selfDeleted && 'italic text-muted-foreground',
+          )}>
+            {c.content}
+          </p>
+        )}
 
-        <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-          <ActionButton
-            disabled={!loggedIn || c.voted || busy}
-            title={voteTitle}
-            hoverClass="hover:text-gain"
-            onClick={() => onVote(c, 'like')}
-          >
-            <ThumbsUp className="w-3 h-3" /> {c.likeCount}
-          </ActionButton>
-          <ActionButton
-            disabled={!loggedIn || c.voted || busy}
-            title={voteTitle}
-            hoverClass="hover:text-loss"
-            onClick={() => onVote(c, 'dislike')}
-          >
-            <ThumbsDown className="w-3 h-3" /> {c.dislikeCount}
-          </ActionButton>
-          <ActionButton
-            disabled={!loggedIn}
-            title={loggedIn ? undefined : '登录后才能回复'}
-            hoverClass="hover:text-primary"
-            onClick={() => onReply(c)}
-          >
-            <CornerDownRight className="w-3 h-3" /> 回复
-          </ActionButton>
+        {/* 编辑时收起动作区：边改边点赞是个没意义的中间态 */}
+        {!editing && (
+          <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+            <ActionButton
+              disabled={!ready || c.voted || busy}
+              title={voteTitle}
+              hoverClass="hover:text-gain"
+              onClick={() => onVote(c, 'like')}
+            >
+              <ThumbsUp className="w-3 h-3" /> {c.likeCount}
+            </ActionButton>
+            <ActionButton
+              disabled={!ready || c.voted || busy}
+              title={voteTitle}
+              hoverClass="hover:text-loss"
+              onClick={() => onVote(c, 'dislike')}
+            >
+              <ThumbsDown className="w-3 h-3" /> {c.dislikeCount}
+            </ActionButton>
+            <ActionButton
+              disabled={!ready}
+              hoverClass="hover:text-primary"
+              onClick={() => onReply(c)}
+            >
+              <CornerDownRight className="w-3 h-3" /> 回复
+            </ActionButton>
 
-          {canDelete && (
-            <ActionButton hoverClass="hover:text-destructive" onClick={() => onDelete(c)}>
-              <Trash2 className="w-3 h-3" /> 删除
-            </ActionButton>
-          )}
-          {isAdmin && c.userId !== currentUserId && (
-            <ActionButton hoverClass="hover:text-destructive" onClick={() => onMute(c)}>
-              <VolumeX className="w-3 h-3" /> 禁言
-            </ActionButton>
-          )}
-        </div>
+            {canEdit && (
+              <ActionButton hoverClass="hover:text-primary" onClick={startEdit}>
+                <Pencil className="w-3 h-3" /> 编辑
+              </ActionButton>
+            )}
+            {canDelete && (
+              <ActionButton hoverClass="hover:text-destructive" onClick={() => onDelete(c)}>
+                <Trash2 className="w-3 h-3" /> 删除
+              </ActionButton>
+            )}
+            {isAdmin && !isMine && (
+              <ActionButton hoverClass="hover:text-destructive" onClick={() => onMute(c)}>
+                <VolumeX className="w-3 h-3" /> 禁言
+              </ActionButton>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -210,7 +274,8 @@ export function Comments() {
 
   const currentUserId = user?.id ?? null;
   const isAdmin = currentUserId === ADMIN_USER_ID;
-  const loggedIn = currentUserId != null;
+  // 路由已挡住未登录，这里为 null 只可能是 fetchUser 还没回来
+  const ready = currentUserId != null;
   const focusId = params.get('focus');
 
   const [roots, setRoots] = useState<CommentItem[]>([]);
@@ -220,10 +285,18 @@ export function Comments() {
   // 已展开的根评论 → 子评论加载到第几页。子评论本身只挂在 root.children 上，
   // 只有一处持有数据，赞踩/删除的就地更新才不用同时维护两份
   const [childPage, setChildPage] = useState<Record<number, number>>({});
-  const [expanding, setExpanding] = useState<number | null>(null);
+  // 正在展开哪几条根评论。早先是单个 number：A 请求飞行中去点 B，A 的按钮就被解禁了，
+  // 再点一次 A 会用同一个页码再拉一遍 → 子评论重复 → rest 变负 → 按钮消失 → 卡死
+  const [expanding, setExpanding] = useState<Set<number>>(new Set());
+  // 丢弃过期响应用。focus 参数变化和刷新按钮都会触发 load，慢的那个后返回会覆盖新结果
+  const loadSeq = useRef(0);
 
   const [text, setText] = useState('');
-  const [posting, setPosting] = useState(false);
+  // 发主楼和发回复各一个 in-flight 标志。早先共用一个 posting，再靠 `posting && !replyTo`
+  // 反推是谁在提交——只要回复框开着，主发帖框就永远算不出"正在提交"，双击能发两条
+  const [postingRoot, setPostingRoot] = useState(false);
+  const [postingReply, setPostingReply] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
   const [replyText, setReplyText] = useState('');
   const [votingId, setVotingId] = useState<number | null>(null);
@@ -231,14 +304,17 @@ export function Comments() {
   const [muting, setMuting] = useState(false);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     try {
       if (focusId) {
         const root = await commentApi.context(Number(focusId));
+        if (seq !== loadSeq.current) return;   // 期间又发起了新的加载，这份结果已过期
         setRoots([root]);
         setHasMore(false);
       } else {
         const list = await commentApi.list(1, ROOT_PAGE_SIZE);
+        if (seq !== loadSeq.current) return;
         setRoots(list);
         setHasMore(list.length === ROOT_PAGE_SIZE);
       }
@@ -246,16 +322,18 @@ export function Comments() {
       setChildPage({});
       setReplyTo(null);
     } catch (e) {
-      toast((e as Error).message || '加载留言失败', 'error');
+      if (seq === loadSeq.current) toast((e as Error).message || '加载留言失败', 'error');
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, [focusId, toast]);
 
   useEffect(() => { void load(); }, [load]);
 
   const loadMoreRoots = async () => {
+    if (loadingMore) return;   // 页码要等响应回来才推进，不挡住的话双击会把同一页追加两遍
     const next = page + 1;
+    setLoadingMore(true);
     try {
       const list = await commentApi.list(next, ROOT_PAGE_SIZE);
       setRoots(prev => [...prev, ...list]);
@@ -263,13 +341,16 @@ export function Comments() {
       setHasMore(list.length === ROOT_PAGE_SIZE);
     } catch (e) {
       toast((e as Error).message || '加载失败', 'error');
+    } finally {
+      setLoadingMore(false);
     }
   };
 
   /** 展开或继续翻子评论。第 1 页直接顶掉列表里那 2 条预览，之后追加 */
   const loadChildren = async (root: CommentItem) => {
+    if (expanding.has(root.id)) return;
     const next = (childPage[root.id] ?? 0) + 1;
-    setExpanding(root.id);
+    setExpanding(prev => new Set(prev).add(root.id));
     try {
       const list = await commentApi.children(root.id, next, CHILD_PAGE_SIZE);
       setRoots(prev => patchComment(prev, root.id, c => ({
@@ -280,12 +361,17 @@ export function Comments() {
     } catch (e) {
       toast((e as Error).message || '加载回复失败', 'error');
     } finally {
-      setExpanding(null);
+      setExpanding(prev => {
+        const s = new Set(prev);
+        s.delete(root.id);
+        return s;
+      });
     }
   };
 
   const submitRoot = async () => {
-    setPosting(true);
+    if (postingRoot) return;
+    setPostingRoot(true);
     try {
       await commentApi.post(text.trim());
       setText('');
@@ -296,26 +382,36 @@ export function Comments() {
     } catch (e) {
       toast((e as Error).message || '发布失败', 'error');
     } finally {
-      setPosting(false);
+      setPostingRoot(false);
     }
   };
 
   const submitReply = async () => {
-    if (!replyTo) return;
+    if (!replyTo || postingReply) return;
     const rootId = replyTo.rootId;
-    setPosting(true);
+    setPostingReply(true);
     try {
       await commentApi.post(replyText.trim(), rootId, replyTo.toUserId);
-      setReplyText('');
-      setReplyTo(null);
-      toast('回复已发布', 'success');
+    } catch (e) {
+      toast((e as Error).message || '回复失败', 'error');
+      setPostingReply(false);
+      return;
+    }
+
+    // 到这儿回复已经入库了。刷新那步必须单独 try——早先它跟发布共用一个，
+    // 刷新一失败就在"回复已发布"后面再弹一个"回复失败"，用户以为没发出去会再发一遍
+    setReplyText('');
+    setReplyTo(null);
+    toast('回复已发布', 'success');
+    try {
       // 用 context 把整串重拉：一次拿到根+全部子评论，比按页往回拼稳，也保证看得见自己刚发的
       const fresh = await commentApi.context(rootId);
       setRoots(prev => prev.map(r => (r.id === rootId ? fresh : r)));
-    } catch (e) {
-      toast((e as Error).message || '回复失败', 'error');
+    } catch {
+      // 回复本身是成功的，只是没刷出来，提示一下让用户自己刷新，别说成"失败"
+      toast('回复已发布，下拉刷新可看到', 'success');
     } finally {
-      setPosting(false);
+      setPostingReply(false);
     }
   };
 
@@ -336,10 +432,33 @@ export function Comments() {
     }
   };
 
+  /** 编辑成功后就地换正文并打上"已编辑"，不整页重拉。失败往上抛，由 CommentRow 决定不关编辑框 */
+  const handleEdit = async (c: CommentItem, content: string) => {
+    try {
+      await commentApi.edit(c.id, content);
+    } catch (e) {
+      toast((e as Error).message || '保存失败', 'error');
+      throw e;
+    }
+    setRoots(prev => patchComment(prev, c.id, x => ({
+      ...x,
+      content,
+      updatedAt: new Date().toISOString(),
+    })));
+    toast('已保存', 'success');
+  };
+
+  /**
+   * 删除的界面表现跟后端分流一致：删自己的是把正文换成占位文案，评论留在原位；
+   * 管理员删别人的才真的从树里摘掉（根评论会连整组子评论一起消失）
+   */
   const handleDelete = async (c: CommentItem) => {
+    const isMine = c.userId === currentUserId;
     try {
       await commentApi.remove(c.id);
-      setRoots(prev => dropComment(prev, c.id));
+      setRoots(prev => isMine
+        ? patchComment(prev, c.id, x => ({ ...x, content: DELETED_PLACEHOLDER, selfDeleted: true }))
+        : dropComment(prev, c.id));
       toast('已删除', 'success');
     } catch (e) {
       toast((e as Error).message || '删除失败', 'error');
@@ -413,8 +532,8 @@ export function Comments() {
           value={text}
           onChange={setText}
           onSubmit={() => void submitRoot()}
-          submitting={posting && !replyTo}
-          canPost={loggedIn}
+          submitting={postingRoot}
+          ready={ready}
           placeholder="说点什么…"
         />
       </div>
@@ -461,6 +580,7 @@ export function Comments() {
                   busy={votingId === root.id}
                   onVote={(c, t) => void handleVote(c, t)}
                   onReply={startReply}
+                  onEdit={handleEdit}
                   onDelete={c => void handleDelete(c)}
                   onMute={setMuteTarget}
                 />
@@ -478,6 +598,7 @@ export function Comments() {
                         busy={votingId === child.id}
                         onVote={(c, t) => void handleVote(c, t)}
                         onReply={startReply}
+                        onEdit={handleEdit}
                         onDelete={c => void handleDelete(c)}
                         onMute={setMuteTarget}
                       />
@@ -487,11 +608,11 @@ export function Comments() {
 
                 {rest > 0 && (
                   <button
-                    disabled={expanding === root.id}
+                    disabled={expanding.has(root.id)}
                     onClick={() => void loadChildren(root)}
                     className="ml-5 text-[11px] font-bold text-primary hover:underline disabled:opacity-50 cursor-pointer flex items-center gap-1"
                   >
-                    {expanding === root.id && <Loader2 className="w-3 h-3 animate-spin" />}
+                    {expanding.has(root.id) && <Loader2 className="w-3 h-3 animate-spin" />}
                     {started ? `加载更多回复（还有 ${rest} 条）` : `查看全部 ${root.childCount} 条回复`}
                   </button>
                 )}
@@ -505,8 +626,8 @@ export function Comments() {
                       value={replyText}
                       onChange={setReplyText}
                       onSubmit={() => void submitReply()}
-                      submitting={posting}
-                      canPost={loggedIn}
+                      submitting={postingReply}
+                      ready={ready}
                       placeholder="写下你的回复…"
                       rows={2}
                       onCancel={() => { setReplyTo(null); setReplyText(''); }}
@@ -518,7 +639,8 @@ export function Comments() {
           })}
 
           {hasMore && (
-            <Button variant="outline" className="w-full" onClick={() => void loadMoreRoots()}>
+            <Button variant="outline" className="w-full" disabled={loadingMore} onClick={() => void loadMoreRoots()}>
+              {loadingMore && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               加载更多留言
             </Button>
           )}

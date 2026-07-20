@@ -43,6 +43,16 @@ public class Comment {
     /** 1=正常 0=已删 */
     private Integer status;
 
+    /**
+     * NULL=从未编辑过。刻意不加 {@code @TableField(fill = FieldFill.UPDATE)}：
+     * 全局 MetaObjectHandler 见到该注解会给任何 updateById 自动盖时间戳，
+     * 那自删也会被盖上，占位符就成了"已编辑"。这一列只由编辑的手写 SQL 显式写
+     */
+    private LocalDateTime updatedAt;
+
+    /** 用户自删：内容已被占位文案覆盖。不参与任何过滤，占位符仍是一条正常评论 */
+    private Boolean selfDeleted;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 }

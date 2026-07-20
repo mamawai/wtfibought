@@ -43,11 +43,18 @@ public class CommentService {
     private static final int PREVIEW_SIZE = 2;
     private static final int MAX_PAGE_SIZE = 50;
 
+    /** 用户自删后顶替原文的占位文案。原文被直接覆盖，不留副本 */
+    public static final String DELETED_PLACEHOLDER = "该留言已删除，无法查看";
+
     private static final String RATE_PREFIX = "comment:rate:";
     private static final String VOTE_PREFIX = "comment:voted:";
     private static final Duration VOTE_TTL = Duration.ofDays(30);
     /** 永久禁言的存法：一个远到不用管的日期，省掉给 muted_until 单独加"是否永久"标志位 */
     private static final LocalDateTime PERMANENT_MUTE = LocalDateTime.of(2099, 1, 1, 0, 0);
+    /** 超过这个天数直接算永久，避免 plusDays 加出 PG timestamp 装不下的年份 */
+    private static final int MAX_MUTE_DAYS = 3650;
+    /** 聚焦视图一次带多少条子评论。够看完整对话，又不至于被刷爆的话题拖垮一次请求 */
+    private static final int MAX_CONTEXT_CHILDREN = 200;
 
     private final CommentMapper commentMapper;
     private final CommentNotificationMapper notificationMapper;
@@ -84,9 +91,12 @@ public class CommentService {
     /**
      * 禁言到期时间。负数=永久；0 算出来正好是"此刻到期"，
      * 也就是解禁——管理员误封想撤销时传 0 即可，不用单开一个解禁接口。
+     * <p>
+     * 超过 10 年一律按永久：再大的天数加出来会超出 PG timestamp 的上限(294276年)写库报错，
+     * 而"禁言 20 年"和"永久"本来也没区别。
      */
     static LocalDateTime muteUntil(int days) {
-        return days < 0 ? PERMANENT_MUTE : LocalDateTime.now().plusDays(days);
+        return days < 0 || days > MAX_MUTE_DAYS ? PERMANENT_MUTE : LocalDateTime.now().plusDays(days);
     }
 
     // ---------------- 写 ----------------
@@ -102,7 +112,6 @@ public class CommentService {
         User user = userMapper.selectById(userId);
         assertNotMuted(user == null ? null : user.getMutedUntil());
         assertContentValid(content);
-        assertRateOk(userId);
 
         if (rootId != null) {
             // 只认活着的根评论：指向子评论会长出第三层，指向已删的会挂在坟头上
@@ -114,6 +123,14 @@ public class CommentService {
 
         // 根评论没有"回复谁"，客户端硬塞也不认，免得凭空生出通知
         Long replyTo = rootId == null ? null : replyToUserId;
+        // 只能回复这串里说过话的人。不查的话，随便填个 userId 就能给任何人推一条
+        // "XX 回复了你"，点进去却是个跟他毫无关系的话题
+        if (replyTo != null && !commentMapper.existsInThread(rootId, replyTo)) {
+            throw new BizException(ErrorCode.COMMENT_NOT_FOUND);
+        }
+
+        // 限流放在校验之后：回复一条刚被删掉的评论本来就该失败，不该白扣一次额度
+        assertRateOk(userId);
 
         Comment c = new Comment();
         c.setUserId(userId);
@@ -125,7 +142,7 @@ public class CommentService {
         c.setStatus(Comment.STATUS_OK);
         commentMapper.insert(c);
 
-        if (replyTo != null && replyTo.longValue() != userId) {
+        if (replyTo != null && replyTo != userId) {
             // 跳转目标是我这条新回复：对方点通知要看到"谁回了我什么"
             insertNotification(replyTo, userId, CommentNotification.TYPE_REPLY, c.getId());
         }
@@ -140,6 +157,10 @@ public class CommentService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void vote(long userId, long commentId, boolean like) {
+        // 禁言的人也不能赞：赞会给对方发通知，不拦的话被禁言者照样能刷满别人的信封
+        User voter = userMapper.selectById(userId);
+        assertNotMuted(voter == null ? null : voter.getMutedUntil());
+
         Comment c = commentMapper.selectById(commentId);
         if (c == null || c.getStatus() != Comment.STATUS_OK) {
             // 先校验再 SADD，否则这一票会被永久记在一条已删评论上
@@ -151,17 +172,60 @@ public class CommentService {
         if (added == null || added == 0L) {
             throw new BizException(ErrorCode.COMMENT_ALREADY_VOTED);
         }
-        redis.expire(key, VOTE_TTL);
+        // 只在刚建 Set 时设过期。每次投票都 expire 等于把 TTL 一直往后推，
+        // 热门评论只要 30 天内有人表态就永不过期，那这 Set 就是永久堆着了
+        Long ttl = redis.getExpire(key);
+        if (ttl < 0) {
+            redis.expire(key, VOTE_TTL);
+        }
 
         commentMapper.incrementVote(commentId, like);
 
         // 踩不通知；赞自己的也不通知
-        if (like && c.getUserId().longValue() != userId) {
+        if (like && c.getUserId() != userId) {
             insertNotification(c.getUserId(), userId, CommentNotification.TYPE_LIKE, commentId);
         }
     }
 
-    /** 软删。删根评论时一条 UPDATE 级联软删其全部子评论；删子评论不牵连别人。 */
+    /**
+     * 编辑自己的评论。不限时、不占限流额度（编辑不产生新的内容曝光）。
+     * <p>
+     * 但要拦禁言：不拦的话被禁言者能把旧评论当输入框，改成任意新内容继续发言。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void edit(long commentId, long userId, String content) {
+        User user = userMapper.selectById(userId);
+        assertNotMuted(user == null ? null : user.getMutedUntil());
+        assertContentValid(content);
+
+        Comment c = commentMapper.selectById(commentId);
+        if (c == null || c.getStatus() != Comment.STATUS_OK) {
+            throw new BizException(ErrorCode.COMMENT_NOT_FOUND);
+        }
+        // 只能改自己的，管理员也不行：改完只显示"已编辑"，看不出是谁改的，
+        // 别人会以为是原作者自己改口。管理员要处理违规内容用删除，那是诚实的手段
+        if (c.getUserId() != userId) {
+            throw new BizException(ErrorCode.FORBIDDEN);
+        }
+        // 自删过的不能再编辑，否则"该留言已删除"能被改回任意内容
+        if (Boolean.TRUE.equals(c.getSelfDeleted())) {
+            throw new BizException(ErrorCode.COMMENT_NOT_FOUND);
+        }
+
+        // 改不到行 = 上面那次 SELECT 之后被自删抢先了，别静默成功
+        if (commentMapper.updateContent(commentId, content.trim()) == 0) {
+            throw new BizException(ErrorCode.COMMENT_NOT_FOUND);
+        }
+    }
+
+    /**
+     * 删除。两条路，按操作对象分流：
+     * <ul>
+     *   <li>删自己的（管理员也不例外）→ 正文换占位文案，评论仍留在原位，子评论和通知都不动</li>
+     *   <li>管理员删别人的 → 软删，根评论级联带走全部子评论，相关通知一并清掉</li>
+     * </ul>
+     * 自删不清通知是有意的：占位符点进去看得到文案，不是死链，没必要抹掉通知记录。
+     */
     @Transactional(rollbackFor = Exception.class)
     public void delete(long commentId, long operatorId, boolean isAdmin) {
         Comment c = commentMapper.selectById(commentId);
@@ -171,9 +235,22 @@ public class CommentService {
         if (!canDelete(c.getUserId(), operatorId, isAdmin)) {
             throw new BizException(ErrorCode.FORBIDDEN);
         }
+
+        if (c.getUserId() == operatorId) {
+            // 重复删按幂等处理：并发双击不该弹"评论不存在"
+            if (!Boolean.TRUE.equals(c.getSelfDeleted())) {
+                commentMapper.selfDelete(commentId, DELETED_PLACEHOLDER);
+            }
+            return;
+        }
+
         commentMapper.softDelete(commentId);
+        // 通知得跟着内容走：不删的话点进去只会看到"评论不存在"，而且这条死链永远留在信封里。
+        // 删根评论时它的子评论一起没了，指向那些子评论的通知也要一并清掉
+        notificationMapper.deleteByCommentId(commentId);
         if (c.getRootId() == null) {
             commentMapper.softDeleteChildren(commentId);
+            notificationMapper.deleteByRootId(commentId);
         }
     }
 
@@ -195,9 +272,11 @@ public class CommentService {
             return roots;
         }
 
-        // 预览查询内部会用同样的 offset/limit 复算一遍分页窗口，两边必须传一样的值
+        // 直接把上一步查到的根评论ID传下去。早先是让预览查询自己按同样的 offset/limit
+        // 复算一遍窗口，但两次查询之间只要有人发了新根评论，窗口就整体挪一格——
+        // 当页最后一条根评论会拿不到预览，显示"查看全部N条"却一条都展不开
         Map<Long, List<CommentDTO>> previewsByRoot = commentMapper
-                .selectChildPreviews(offset, limit, PREVIEW_SIZE)
+                .selectChildPreviews(roots.stream().map(CommentDTO::getId).toList(), PREVIEW_SIZE)
                 .stream()
                 .collect(Collectors.groupingBy(CommentDTO::getRootId));
         for (CommentDTO root : roots) {
@@ -234,8 +313,16 @@ public class CommentService {
         if (root == null) {
             throw new BizException(ErrorCode.COMMENT_NOT_FOUND);
         }
-        // 聚焦视图要全量子评论，LIMIT 给到 int 上限等于不限
-        root.setChildren(commentMapper.selectChildren(rootId, 0, Integer.MAX_VALUE));
+        // 聚焦视图要整串对话，但得封顶：原先给的是 int 上限等于不限，
+        // 一条被刷到几千回复的话题会一次拉回几千行，还要逐条问 Redis 表态状态
+        List<CommentDTO> children = commentMapper.selectChildren(rootId, 0, MAX_CONTEXT_CHILDREN);
+        root.setChildren(children);
+        // 封顶时把总数对齐到实际给出的条数。前端拿 childCount - children.length 判断要不要出
+        // "加载更多回复"，而聚焦视图下点那个按钮是从第 1 页重新分页的，
+        // 反而会把已经拿到的这些条替换成 10 条——不如干脆不给它出现的机会
+        if (children.size() >= MAX_CONTEXT_CHILDREN) {
+            root.setChildCount(children.size());
+        }
 
         fillVoted(userId, List.of(root));
         return root;
@@ -272,7 +359,7 @@ public class CommentService {
      * <p>
      * 游客直接全 false 且完全不碰 Redis。登录用户是每条评论一次 SISMEMBER——
      * 一条评论一个 Set，天然没法批量查（SMISMEMBER 是一个 key 查多个 member，正好反过来）。
-     * 一页最多 20 根 + 40 条预览，本地 Redis 这点往返不值得为它上 pipeline。
+     * 列表页上限 50 根 + 100 条预览、聚焦视图上限 200 条，本地 Redis 这点往返不值得上 pipeline。
      */
     private void fillVoted(Long userId, List<CommentDTO> comments) {
         String member = userId == null ? null : String.valueOf(userId);
@@ -296,10 +383,16 @@ public class CommentService {
 
     /** 手搓请求可能传 0 或负数，兜住免得算出负 OFFSET 让 SQL 直接报错 */
     private static int clampSize(int size) {
-        return Math.max(1, Math.min(size, MAX_PAGE_SIZE));
+        return Math.clamp(size, 1, MAX_PAGE_SIZE);
     }
 
+    /**
+     * page 先夹到 ≥1 再算，且用 long 做乘法。
+     * 原先是 int 相乘：page 传 1 亿出头就溢出成负数，PG 收到负 OFFSET 直接报错——
+     * 而列表接口是放行游客的，等于一个匿名 GET 就能刷 500。
+     */
     private static int offsetOf(int page, int size) {
-        return Math.max(0, page - 1) * size;
+        long offset = (Math.max(1, page) - 1L) * size;
+        return (int) Math.min(offset, Integer.MAX_VALUE);
     }
 }

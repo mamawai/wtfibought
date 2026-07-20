@@ -110,8 +110,6 @@ websocket:
   max-connections: 10000
   # 心跳间隔（秒）
   heartbeat-interval: 15
-  # 是否强制认证
-  require-auth: false
 
 # 内部服务间 API 鉴权（quant 调 sim 的 /internal/** 须带 X-Internal-Token）
 # 须与 feed/quant 同值（三进程读同一 .env，默认值也一致，不填即可互通）

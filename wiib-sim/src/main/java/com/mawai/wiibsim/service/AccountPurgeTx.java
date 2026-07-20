@@ -1,6 +1,7 @@
 package com.mawai.wiibsim.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.support.SFunction;
 import com.mawai.wiibcommon.entity.*;
 import com.mawai.wiibsim.mapper.*;
 import lombok.RequiredArgsConstructor;
@@ -63,9 +64,7 @@ public class AccountPurgeTx {
     }
 
     /** 12 张表都是同一个 user_id 条件，抽掉重复的 wrapper 构造 */
-    private static <T> LambdaQueryWrapper<T> eq(Class<T> type,
-                                                com.baomidou.mybatisplus.core.toolkit.support.SFunction<T, ?> column,
-                                                long userId) {
+    private static <T> LambdaQueryWrapper<T> eq(Class<T> type, SFunction<T, ?> column, long userId) {
         return new LambdaQueryWrapper<>(type).eq(column, userId);
     }
 }

@@ -69,7 +69,13 @@ function bindTopic(topic: string) {
  */
 export function reconnectWithIdentity() {
   if (!client?.active) return;
-  void client.deactivate().then(() => client?.activate());
+  void client.deactivate().then(() => {
+    // 断开期间订阅者可能全走了（登出会卸掉信封组件），这时不该再连回来。
+    // deactivate() 是同步把 active 置 false 的，所以 unsubscribe 里那句
+    // "没人订阅了就关连接" 判断会失效，得在这儿补上这一刀，否则登出后
+    // 会留一条谁也不用、又没人能关掉的匿名连接靠 5s 重连一直活着
+    if (subs.size > 0) client?.activate();
+  });
 }
 
 /** 订阅 topic，返回取消函数 */

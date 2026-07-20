@@ -2,6 +2,7 @@ package com.mawai.wiibsim.service;
 
 import com.mawai.wiibcommon.entity.Comment;
 import com.mawai.wiibcommon.entity.CommentNotification;
+import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibsim.mapper.CommentMapper;
 import com.mawai.wiibsim.mapper.CommentNotificationMapper;
@@ -14,6 +15,7 @@ import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -42,6 +44,7 @@ class CommentVoteTest {
 
     private CommentMapper commentMapper;
     private CommentNotificationMapper notificationMapper;
+    private UserMapper userMapper;
     private StringRedisTemplate redis;
     private SetOperations<String, String> setOps;
     private CommentService service;
@@ -51,15 +54,18 @@ class CommentVoteTest {
     void setUp() {
         commentMapper = mock(CommentMapper.class);
         notificationMapper = mock(CommentNotificationMapper.class);
+        userMapper = mock(UserMapper.class);
 
         redis = mock(StringRedisTemplate.class);
         setOps = mock(SetOperations.class);
         when(redis.opsForSet()).thenReturn(setOps);
         when(setOps.add(anyString(), anyString())).thenReturn(1L);   // 默认首次表态
+        when(redis.getExpire(anyString())).thenReturn(-1L);          // 默认刚建、还没 TTL
 
         when(commentMapper.selectById(COMMENT_ID)).thenReturn(comment(AUTHOR, Comment.STATUS_OK));
+        when(userMapper.selectById(anyLong())).thenReturn(new User());   // 默认未禁言
 
-        service = new CommentService(commentMapper, notificationMapper, mock(UserMapper.class), redis, mock(NotificationPushService.class));
+        service = new CommentService(commentMapper, notificationMapper, userMapper, redis, mock(NotificationPushService.class));
     }
 
     private static Comment comment(long authorId, int status) {
@@ -137,10 +143,45 @@ class CommentVoteTest {
     }
 
     @Test
-    void voteKeyGetsThirtyDayTtl() {
+    void voteKeyGetsThirtyDayTtlOnFirstVote() {
         // 不设 TTL 这些 Set 会永久堆在 Redis 里；30 天后记录消失是设计上接受的
+        when(redis.getExpire("comment:voted:42")).thenReturn(-1L);   // 刚建，还没 TTL
+
         service.vote(ME, COMMENT_ID, true);
 
         verify(redis).expire("comment:voted:42", Duration.ofDays(30));
+    }
+
+    @Test
+    void missingTtlReplyIsTreatedAsNoTtl() {
+        // getExpire 返回的是包装类型 Long，直接拿去比大小是自动拆箱，null 会 NPE
+        when(redis.getExpire("comment:voted:42")).thenReturn(null);
+
+        service.vote(ME, COMMENT_ID, true);
+
+        verify(redis).expire("comment:voted:42", Duration.ofDays(30));
+    }
+
+    @Test
+    void laterVotesDoNotPushTtlForward() {
+        // 每次投票都 expire 等于把 TTL 一直往后推，热门评论只要 30 天内有人表态就永不过期
+        when(redis.getExpire("comment:voted:42")).thenReturn(1000L);   // 已有 TTL
+
+        service.vote(ME, COMMENT_ID, true);
+
+        verify(redis, never()).expire(anyString(), any(Duration.class));
+    }
+
+    @Test
+    void mutedUserCannotVote() {
+        // 赞会给对方发通知，不拦的话被禁言者照样能刷满别人的信封
+        User muted = new User();
+        muted.setMutedUntil(LocalDateTime.now().plusDays(3));
+        when(userMapper.selectById(ME)).thenReturn(muted);
+
+        assertThrows(BizException.class, () -> service.vote(ME, COMMENT_ID, true));
+
+        verify(setOps, never()).add(anyString(), anyString());
+        verify(commentMapper, never()).incrementVote(anyLong(), anyBoolean());
     }
 }

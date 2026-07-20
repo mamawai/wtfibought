@@ -13,6 +13,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
 
@@ -33,6 +34,10 @@ public class AccountResetService {
     private static final String LIMIT_SELL_PREFIX = "crypto:limit:sell:";
     private static final String RESET_LOCK_PREFIX = "user:reset:";
     private static final String RANKING_KEY = "ranking:top";
+    /** 三个游戏"进行中的那一局"只存在 Redis 里，不在库表（见各 ServiceImpl 的 SK 常量） */
+    private static final List<String> GAME_SESSION_PREFIXES =
+            List.of("bj:session:", "mines:session:", "vp:session:");
+    private static final String BUFF_STATUS_PREFIX = "buff:status:";
 
     private final FuturesPositionMapper futuresPositionMapper;
     private final CryptoOrderMapper cryptoOrderMapper;
@@ -114,5 +119,15 @@ public class AccountResetService {
             settling.stream().filter(m -> m.startsWith(prefix))
                     .forEach(m -> redis.opsForZSet().remove(SETTLE_ZSET_KEY, m));
         }
+
+        // 进行中的牌局。库表行被 purge 删了、游戏钱包也归零了，这一局要是留着，
+        // 用户回去接着"提现"就能从一局本该抹掉的游戏里拿到派彩，等于凭空造钱
+        for (String prefix : GAME_SESSION_PREFIXES) {
+            redis.delete(prefix + userId);
+        }
+
+        // 今日 buff 状态缓存(TTL 1h)。user_buff 行删了但缓存还写着"今天已抽"，
+        // 不清的话用户重置完最长一小时抽不了新 buff
+        redis.delete(BUFF_STATUS_PREFIX + userId + ":" + LocalDate.now());
     }
 }

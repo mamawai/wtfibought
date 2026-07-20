@@ -28,12 +28,14 @@ class CommentDeleteTest {
     private static final long STRANGER = 99L;
 
     private CommentMapper commentMapper;
+    private CommentNotificationMapper notificationMapper;
     private CommentService service;
 
     @BeforeEach
     void setUp() {
         commentMapper = mock(CommentMapper.class);
-        service = new CommentService(commentMapper, mock(CommentNotificationMapper.class),
+        notificationMapper = mock(CommentNotificationMapper.class);
+        service = new CommentService(commentMapper, notificationMapper,
                 mock(UserMapper.class), mock(StringRedisTemplate.class), mock(NotificationPushService.class));
     }
 
@@ -98,6 +100,28 @@ class CommentDeleteTest {
         service.delete(100L, STRANGER, true);
 
         verify(commentMapper).softDelete(100L);
+    }
+
+    @Test
+    void deletingCommentAlsoClearsItsNotifications() {
+        // 不清的话，点那条通知只会看到"评论不存在"，而且这条死链永远留在信封里
+        existing(200L, 100L, OWNER, Comment.STATUS_OK);
+
+        service.delete(200L, OWNER, false);
+
+        verify(notificationMapper).deleteByCommentId(200L);
+        verify(notificationMapper, never()).deleteByRootId(anyLong());   // 子评论没有下级
+    }
+
+    @Test
+    void deletingRootAlsoClearsChildrenNotifications() {
+        // 删主楼会级联软删它下面所有回复，指向那些回复的通知也要一起清
+        existing(100L, null, OWNER, Comment.STATUS_OK);
+
+        service.delete(100L, OWNER, false);
+
+        verify(notificationMapper).deleteByCommentId(100L);
+        verify(notificationMapper).deleteByRootId(100L);
     }
 
     @Test

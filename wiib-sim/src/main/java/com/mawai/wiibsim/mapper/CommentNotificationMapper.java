@@ -3,6 +3,7 @@ package com.mawai.wiibsim.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.mawai.wiibcommon.dto.NotificationDTO;
 import com.mawai.wiibcommon.entity.CommentNotification;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -31,4 +32,12 @@ public interface CommentNotificationMapper extends BaseMapper<CommentNotificatio
 
     @Update("UPDATE comment_notification SET is_read = TRUE WHERE user_id = #{userId} AND is_read = FALSE")
     int markAllRead(@Param("userId") long userId);
+
+    /** 评论被删时清掉指向它的通知，否则点进去只会看到"评论不存在"，且这条死链永远留在信封里 */
+    @Delete("DELETE FROM comment_notification WHERE comment_id = #{commentId}")
+    int deleteByCommentId(@Param("commentId") long commentId);
+
+    /** 根评论被删=其子评论一并软删，指向这些子评论的通知也要清 */
+    @Delete("DELETE FROM comment_notification WHERE comment_id IN (SELECT id FROM comment WHERE root_id = #{rootId})")
+    int deleteByRootId(@Param("rootId") long rootId);
 }

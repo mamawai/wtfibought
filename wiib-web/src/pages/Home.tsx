@@ -31,8 +31,10 @@ const FUTURES_SIDE_MAP: Record<string, { label: string; tone: 'buy' | 'sell' }> 
 export function Home() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user, token } = useUserStore();
-  const isLoggedIn = !!token && !!user;
+  const { user } = useUserStore();
+  // 路由已挡住未登录，user 为 null 只可能是 fetchUser 还没回来。
+  // 行情/成交那几块不依赖 user，先渲染出来，本人相关的卡等 user 到了再补
+  const ready = !!user;
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   const [buffStatus, setBuffStatus] = useState<BuffStatus | null>(null);
@@ -42,16 +44,10 @@ export function Home() {
   const tradesLoading = tradesLoadedNonce !== refreshNonce;
 
   useEffect(() => { if (shouldShowNotice()) navigate('/intro', { replace: true }); }, [navigate]);
-  // 登出瞬间在 render 期清掉 buff（React 文档 prev 比较模式）
-  const [prevLoggedIn, setPrevLoggedIn] = useState(isLoggedIn);
-  if (prevLoggedIn !== isLoggedIn) {
-    setPrevLoggedIn(isLoggedIn);
-    if (!isLoggedIn) setBuffStatus(null);
-  }
 
   useEffect(() => {
-    if (isLoggedIn) buffApi.status().then(setBuffStatus).catch(() => {});
-  }, [isLoggedIn, refreshNonce]);
+    if (ready) buffApi.status().then(setBuffStatus).catch(() => {});
+  }, [ready, refreshNonce]);
 
   useEffect(() => {
     Promise.all([cryptoOrderApi.live().catch(() => []), futuresApi.live().catch(() => [])])
@@ -83,16 +79,16 @@ export function Home() {
               </h2>
               <p className="text-sm text-muted-foreground">体验"如果当初买了会怎样"。股票、BTC、合约全覆盖。</p>
               <div className="flex flex-wrap gap-2 pt-1">
-                <Button size="sm" onClick={() => navigate(isLoggedIn ? '/bstock' : '/login')}>
-                  {isLoggedIn ? '开始交易' : '免费开始'} <ArrowRight className="w-3.5 h-3.5" />
+                <Button size="sm" onClick={() => navigate('/bstock')}>
+                  开始交易 <ArrowRight className="w-3.5 h-3.5" />
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => navigate('/intro')}>玩法说明</Button>
-                {isLoggedIn && <Button variant="outline" size="sm" onClick={() => document.getElementById('daily-buff-card')?.scrollIntoView({ behavior: 'smooth' })}>每日福利</Button>}
+                {ready && <Button variant="outline" size="sm" onClick={() => document.getElementById('daily-buff-card')?.scrollIntoView({ behavior: 'smooth' })}>每日福利</Button>}
               </div>
             </div>
 
             {/* Right: total assets or stats */}
-            {isLoggedIn ? (
+            {ready ? (
             <div className="md:text-right space-y-2 shrink-0">
               <div className="flex md:justify-end items-center gap-1.5">
                 {user?.id === 1 && (
@@ -166,13 +162,13 @@ export function Home() {
       <HomeMarketSection />
 
       {/* ====== Buff + Monitor + Trades ====== */}
-      {isLoggedIn && (
+      {ready && (
         <DailyBuffCard status={buffStatus} onDrawn={() => setRefreshNonce(n => n + 1)} />
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {isLoggedIn && <MonitorCarousel />}
-        {/* 未登录没有监控列，成交列表撑满整行防孤列空洞 */}
-        <div className={isLoggedIn ? undefined : 'md:col-span-2'}>
+        {ready && <MonitorCarousel />}
+        {/* user 没到时没有监控列，成交列表撑满整行防孤列空洞 */}
+        <div className={ready ? undefined : 'md:col-span-2'}>
           <LatestTradesCard trades={latestTrades} loading={tradesLoading} />
         </div>
         {/* 爆仓动态：轻量入口横幅，点击进 /force-orders 全量页 */}

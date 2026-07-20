@@ -10,6 +10,7 @@ import org.mockito.InOrder;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
 
@@ -34,6 +35,7 @@ class AccountResetServiceTest {
     private CryptoOrderMapper cryptoOrderMapper;
     private FuturesPositionIndexService indexService;
     private AccountPurgeTx purgeTx;
+    private StringRedisTemplate redis;
     private ZSetOperations<String, String> zSetOps;
     private AccountResetService service;
 
@@ -45,7 +47,7 @@ class AccountResetServiceTest {
         indexService = mock(FuturesPositionIndexService.class);
         purgeTx = mock(AccountPurgeTx.class);
 
-        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        redis = mock(StringRedisTemplate.class);
         zSetOps = mock(ZSetOperations.class);
         when(redis.opsForZSet()).thenReturn(zSetOps);
 
@@ -100,6 +102,25 @@ class AccountResetServiceTest {
         verify(zSetOps).remove("crypto:settle:pending", "7:1001:50.00");
         verify(zSetOps, never()).remove("crypto:settle:pending", "77:1002:80.00");
         verify(zSetOps, never()).remove("crypto:settle:pending", "8:1003:20.00");
+    }
+
+    @Test
+    void clearsInFlightGameSessions() {
+        // 三个游戏"进行中的那一局"只存 Redis。库表行被 purge 删了、游戏钱包也归零了，
+        // 这一局要是留着，用户回去接着提现就能从一局本该抹掉的游戏里拿到派彩
+        service.reset(7L);
+
+        verify(redis).delete("bj:session:7");
+        verify(redis).delete("mines:session:7");
+        verify(redis).delete("vp:session:7");
+    }
+
+    @Test
+    void clearsTodayBuffStatusCache() {
+        // user_buff 行删了但缓存(TTL 1h)还写着"今天已抽"，不清的话重置完最长一小时抽不了新 buff
+        service.reset(7L);
+
+        verify(redis).delete("buff:status:7:" + LocalDate.now());
     }
 
     @Test

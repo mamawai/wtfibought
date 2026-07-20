@@ -19,7 +19,7 @@ const MARKET_PATHS = ['/bstock', '/coin', '/commodity'];
 export function Layout({ children }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout } = useUserStore();
+  const { user, token, logout } = useUserStore();
   const { ref: themeRef, toggleTheme, isDark } = useTheme();
   const [scrolled, setScrolled] = useState(false);
   const [headerHover, setHeaderHover] = useState(false);
@@ -109,6 +109,8 @@ export function Layout({ children }: Props) {
                 {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </Button>
 
+              {/* 登录按钮只给真游客（/intro 是唯一免登录页）。有 token 但 user 还没拉回来时
+                  两边都不显示，否则每次刷新都要闪一下"登录"再变回用户名 */}
               {user ? (
                 <div className="hidden md:flex items-center gap-2">
                   <span className="text-xs font-bold text-muted-foreground hidden lg:inline">{user.username}</span>
@@ -117,7 +119,7 @@ export function Layout({ children }: Props) {
                     <LogOut className="w-4 h-4" />
                   </Button>
                 </div>
-              ) : (
+              ) : !token && (
                 <Button size="sm" className="hidden md:inline-flex" onClick={() => navigate('/login')}>
                   <LogIn className="w-3.5 h-3.5" />
                   登录

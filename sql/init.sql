@@ -724,6 +724,12 @@ COMMENT ON COLUMN comment.reply_to_user_id IS '子评论回复的目标用户，
 COMMENT ON COLUMN comment.like_count IS '赞数。只存计数，投票去重靠Redis Set，不落记录表';
 COMMENT ON COLUMN comment.status IS '1=正常 0=已删（软删；根评论被删时级联软删其子评论）';
 
+-- 编辑与自删。两列都不参与任何过滤，下面两个部分索引和所有读查询的 status=1 无需改动
+ALTER TABLE comment ADD COLUMN IF NOT EXISTS updated_at   TIMESTAMP;
+ALTER TABLE comment ADD COLUMN IF NOT EXISTS self_deleted BOOLEAN NOT NULL DEFAULT FALSE;
+COMMENT ON COLUMN comment.updated_at IS 'NULL=从未编辑过；非空=最后一次编辑时刻，前端据此显示"已编辑"。自删刻意不写此列';
+COMMENT ON COLUMN comment.self_deleted IS '用户自删：内容已被占位文案覆盖（原文不可恢复）。仍算正常评论，照常可赞可回复，只是不能再编辑';
+
 CREATE INDEX IF NOT EXISTS idx_comment_child ON comment(root_id, created_at DESC) WHERE status = 1;
 CREATE INDEX IF NOT EXISTS idx_comment_root ON comment(created_at DESC) WHERE root_id IS NULL AND status = 1;
 

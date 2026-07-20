@@ -8,20 +8,24 @@ import com.mawai.wiibsim.mapper.CommentNotificationMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -65,7 +69,7 @@ class CommentQueryTest {
     @Test
     void guestVotedAllFalseWithoutTouchingRedis() {
         when(commentMapper.selectRootPage(anyInt(), anyInt())).thenReturn(List.of(dto(1L, null)));
-        when(commentMapper.selectChildPreviews(anyInt(), anyInt(), anyInt()))
+        when(commentMapper.selectChildPreviews(anyList(), anyInt()))
                 .thenReturn(List.of(dto(11L, 1L)));
 
         List<CommentDTO> roots = service.listRoots(null, 1, 20);
@@ -79,7 +83,7 @@ class CommentQueryTest {
     @Test
     void loggedInVotedReadsRedisPerComment() {
         when(commentMapper.selectRootPage(anyInt(), anyInt())).thenReturn(List.of(dto(1L, null)));
-        when(commentMapper.selectChildPreviews(anyInt(), anyInt(), anyInt())).thenReturn(List.of());
+        when(commentMapper.selectChildPreviews(anyList(), anyInt())).thenReturn(List.of());
         when(setOps.isMember("comment:voted:1", "7")).thenReturn(true);
 
         List<CommentDTO> roots = service.listRoots(ME, 1, 20);
@@ -91,7 +95,7 @@ class CommentQueryTest {
     void childPreviewsAttachToOwningRoot() {
         when(commentMapper.selectRootPage(anyInt(), anyInt()))
                 .thenReturn(List.of(dto(1L, null), dto(2L, null)));
-        when(commentMapper.selectChildPreviews(anyInt(), anyInt(), anyInt()))
+        when(commentMapper.selectChildPreviews(anyList(), anyInt()))
                 .thenReturn(List.of(dto(11L, 1L), dto(12L, 1L), dto(21L, 2L)));
 
         List<CommentDTO> roots = service.listRoots(null, 1, 20);
@@ -105,7 +109,7 @@ class CommentQueryTest {
     @Test
     void rootWithoutChildrenGetsEmptyListNotNull() {
         when(commentMapper.selectRootPage(anyInt(), anyInt())).thenReturn(List.of(dto(1L, null)));
-        when(commentMapper.selectChildPreviews(anyInt(), anyInt(), anyInt())).thenReturn(List.of());
+        when(commentMapper.selectChildPreviews(anyList(), anyInt())).thenReturn(List.of());
 
         List<CommentDTO> roots = service.listRoots(null, 1, 20);
 
@@ -118,7 +122,7 @@ class CommentQueryTest {
 
         assertTrue(service.listRoots(ME, 5, 20).isEmpty());
 
-        verify(commentMapper, never()).selectChildPreviews(anyInt(), anyInt(), anyInt());
+        verify(commentMapper, never()).selectChildPreviews(anyList(), anyInt());
     }
 
     @Test
@@ -136,7 +140,44 @@ class CommentQueryTest {
 
         assertEquals(100L, root.getId());
         assertEquals(2, root.getChildren().size());
-        verify(commentMapper).selectChildren(100L, 0, Integer.MAX_VALUE);   // 全量，不分页
+        verify(commentMapper).selectChildren(100L, 0, 200);   // 整串对话，但封顶 200 条
+    }
+
+    @Test
+    void cappedContextReportsCountItActuallyReturned() {
+        // 封顶 200 条时若仍报真实总数，前端 rest=总数-200>0 会冒出"加载更多回复"，
+        // 而聚焦视图下点它是从第1页重新分页的，反而把 200 条替换成 10 条
+        Comment root = new Comment();
+        root.setId(100L);
+        root.setStatus(Comment.STATUS_OK);
+        when(commentMapper.selectById(100L)).thenReturn(root);
+
+        CommentDTO dto = dto(100L, null);
+        dto.setChildCount(250);                       // 真实总数远大于封顶
+        when(commentMapper.selectDtoById(100L)).thenReturn(dto);
+        when(commentMapper.selectChildren(anyLong(), anyInt(), anyInt()))
+                .thenReturn(IntStream.range(0, 200).mapToObj(i -> dto(1000L + i, 100L)).toList());
+
+        CommentDTO result = service.context(null, 100L);
+
+        assertEquals(200, result.getChildren().size());
+        assertEquals(200, result.getChildCount());    // 对齐后 rest=0，按钮不出现
+    }
+
+    @Test
+    void uncappedContextKeepsRealChildCount() {
+        Comment root = new Comment();
+        root.setId(100L);
+        root.setStatus(Comment.STATUS_OK);
+        when(commentMapper.selectById(100L)).thenReturn(root);
+
+        CommentDTO dto = dto(100L, null);
+        dto.setChildCount(3);
+        when(commentMapper.selectDtoById(100L)).thenReturn(dto);
+        when(commentMapper.selectChildren(anyLong(), anyInt(), anyInt()))
+                .thenReturn(List.of(dto(11L, 100L), dto(12L, 100L), dto(13L, 100L)));
+
+        assertEquals(3, service.context(null, 100L).getChildCount());
     }
 
     @Test
@@ -160,6 +201,34 @@ class CommentQueryTest {
         when(commentMapper.selectById(100L)).thenReturn(gone);
 
         assertThrows(BizException.class, () -> service.context(null, 100L));
+    }
+
+    @Test
+    void hugePageNumberDoesNotOverflowIntoNegativeOffset() {
+        // page*size 用 int 乘会溢出成负数，PG 收到负 OFFSET 直接报错；
+        // 而列表接口对游客放行，等于一个匿名 GET 就能刷 500
+        when(commentMapper.selectRootPage(anyInt(), anyInt())).thenReturn(List.of());
+
+        service.listRoots(null, 107374184, 20);
+        service.listRoots(null, Integer.MAX_VALUE, 50);
+        service.listRoots(null, Integer.MIN_VALUE, 20);
+
+        ArgumentCaptor<Integer> offsets = ArgumentCaptor.forClass(Integer.class);
+        verify(commentMapper, times(3)).selectRootPage(offsets.capture(), anyInt());
+        offsets.getAllValues().forEach(off -> assertTrue(off >= 0, "OFFSET 不能为负，实际 " + off));
+    }
+
+    @Test
+    void previewQueryTakesActualRootIdsNotAWindow() {
+        // 早先预览查询自己按 offset/limit 复算窗口，两次查询之间有人发帖就会错位，
+        // 当页最后一条根评论静默丢掉预览。现在直接吃上一步查到的 ID
+        when(commentMapper.selectRootPage(anyInt(), anyInt()))
+                .thenReturn(List.of(dto(1L, null), dto(2L, null)));
+        when(commentMapper.selectChildPreviews(anyList(), anyInt())).thenReturn(List.of());
+
+        service.listRoots(null, 1, 20);
+
+        verify(commentMapper).selectChildPreviews(List.of(1L, 2L), 2);
     }
 
     @Test

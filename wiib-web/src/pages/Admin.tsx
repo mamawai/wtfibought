@@ -90,9 +90,10 @@ export function Admin() {
     }
   }, [user, fetchInterestRate, fetchAiKeys, fetchAssignments, fetchInviteCodes]);
 
-  if (!user || user.id !== 1) {
-    return <Navigate to="/" replace />;
-  }
+  // 外层守卫保证 token 存在，user 为 null 只能是 fetchUser 还没回来 —— 等它。
+  // 早先这里 !user 也一起弹，管理员刷新本页会被自己的代码踢回首页（user 没持久化，刷新必为 null）
+  if (!user) return null;
+  if (user.id !== 1) return <Navigate to="/" replace />;
 
   const handleAction = async (action: () => Promise<unknown>, name: string) => {
     setActionLoading(name);

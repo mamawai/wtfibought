@@ -1,13 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell } from 'lucide-react';
-import { notificationApi } from '../api';
-import { subscribe } from '../hooks/stompClient';
 import { useUserStore } from '../stores/userStore';
 import { useClickOutside } from '../hooks/useClickOutside';
-import { mergeNotifications } from '../lib/notifications';
+import { useNotificationPanel } from '../hooks/useNotificationPanel';
 import { NotificationList } from './NotificationList';
-import type { NotificationItem } from '../types';
 
 /**
  * 顶栏信封：未读角标 + 下拉面板。点开即全部标已读，面板仍列最近 50 条历史。
@@ -19,40 +16,10 @@ export function NotificationBell() {
   // 而退订到 0 时 stompClient 会直接断开连接，白白抖一次 WS
   const userId = useUserStore(s => s.user?.id ?? null);
 
-  const [unread, setUnread] = useState(0);
-  const [open, setOpen] = useState(false);
-  const [list, setList] = useState<NotificationItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const { unread, open, setOpen, loading, items, toggle } = useNotificationPanel(userId);
   const ref = useRef<HTMLDivElement>(null);
 
   useClickOutside(ref, () => setOpen(false), open);
-
-  useEffect(() => {
-    if (userId == null) return;
-    void notificationApi.unread().then(setUnread).catch(() => { /* 角标失败不打扰 */ });
-    // 点对点推送只带未读数，面板内容等用户点开再拉，省一次无人看的查询
-    return subscribe('/user/queue/notification', msg => {
-      const body = JSON.parse(msg.body) as { unread: number };
-      setUnread(body.unread);
-    });
-  }, [userId]);
-
-  const togglePanel = async () => {
-    if (open) { setOpen(false); return; }
-    setOpen(true);
-    setLoading(true);
-    try {
-      // 先取列表再标已读：顺序反了会把刚到的那几条也读成已读，面板里就分不出新旧了
-      const items = await notificationApi.recent();
-      setList(items);
-      setUnread(0);
-      await notificationApi.readAll();
-    } catch {
-      // 拉不到就是空面板，顶栏不适合弹 toast
-    } finally {
-      setLoading(false);
-    }
-  };
 
   if (userId == null) return null;
 
@@ -60,7 +27,7 @@ export function NotificationBell() {
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => void togglePanel()}
+        onClick={() => void toggle()}
         className="relative w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
         aria-label="通知"
       >
@@ -76,7 +43,7 @@ export function NotificationBell() {
         <div className="absolute right-0 top-full mt-3 w-80 rounded-2xl bg-card border border-border shadow-2xl overflow-hidden z-50">
           <div className="px-4 py-2.5 text-xs font-black border-b border-border/60">通知</div>
           <NotificationList
-            items={mergeNotifications(list)}
+            items={items}
             loading={loading}
             onSelect={commentId => { setOpen(false); navigate(`/comments?focus=${commentId}`); }}
             className="max-h-96"

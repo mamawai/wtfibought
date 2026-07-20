@@ -34,6 +34,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -56,6 +59,16 @@ public class ChatWorkbenchController {
     private final ChatHistoryService chatHistoryService;
     private final BaseCheckpointSaver checkpointSaver;
     private final ExecutorService streamExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    /** 心跳专用：只发注释帧(微秒级)，单线程够所有会话用；虚拟线程不支持定时调度故用平台线程 */
+    private final ScheduledExecutorService heartbeatScheduler =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "sse-heartbeat");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** 深研判期间 SSE 通道会静默数分钟，nginx 默认 proxy_read_timeout 60s 会掐断——20s 一帧留 3 倍余量 */
+    private static final long HEARTBEAT_SECONDS = 20;
 
     @Data
     public static class WorkbenchChatRequest {
@@ -84,15 +97,15 @@ public class ChatWorkbenchController {
 
         // 深研判轮次要跑 Bull∥Bear+Judge 共3次深模型调用，180s 会掐断回答流，给足 10 分钟
         SseEmitter emitter = new SseEmitter(600_000L);
-        AtomicBoolean closed = new AtomicBoolean(false);
-        emitter.onCompletion(() -> closed.set(true));
+        SseChannel channel = new SseChannel(emitter);
+        emitter.onCompletion(channel::markClosed);
         emitter.onTimeout(() -> {
-            closed.set(true);
+            channel.markClosed();
             emitter.complete();
         });
-        emitter.onError(ex -> closed.set(true));
+        emitter.onError(ex -> channel.markClosed());
 
-        streamExecutor.submit(() -> run(emitter, closed, userId, sessionId, request.getMessage()));
+        streamExecutor.submit(() -> run(channel, userId, sessionId, request.getMessage()));
         return emitter;
     }
 
@@ -204,7 +217,7 @@ public class ChatWorkbenchController {
             }
 
             void end() {
-                if (buf.length() > 0 && !(hold && isRoutingArray(buf.toString()))) {
+                if (!buf.isEmpty() && !(hold && isRoutingArray(buf.toString()))) {
                     sink.accept(buf.toString());
                 }
                 buf.setLength(0);
@@ -223,15 +236,18 @@ public class ChatWorkbenchController {
         }
     }
 
-    private void run(SseEmitter emitter, AtomicBoolean closed, long userId, String sessionId, String message) {
+    private void run(SseChannel channel, long userId, String sessionId, String message) {
         StringBuilder answer = new StringBuilder();
         RoutingFilter filter = new RoutingFilter(text -> {
             answer.append(text);
-            send(emitter, closed, "token", new JSONObject().fluentPut("text", text));
+            channel.send("token", new JSONObject().fluentPut("text", text));
         });
         String[] lastNode = {""};
+        // 深研判这类工具在图内同步阻塞跑，期间通道零字节。心跳全程喂着，中间层才不会当连接死了掐断
+        ScheduledFuture<?> heartbeat = heartbeatScheduler.scheduleWithFixedDelay(
+                channel::heartbeat, HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
         try {
-            send(emitter, closed, "session", new JSONObject().fluentPut("sessionId", sessionId));
+            channel.send("session", new JSONObject().fluentPut("sessionId", sessionId));
             // 活跃会话槽：DeepAnalysisToolkit 的 HITL 闸门经此拿 sessionId（ToolContext 桥的兜底）
             approvalRegistry.markActive(sessionId);
             chatHistoryService.append(sessionId, userId, "user", message);
@@ -244,7 +260,7 @@ public class ChatWorkbenchController {
             RunnableConfig config = RunnableConfig.builder().threadId(sessionId).build();
             graph.stream(Map.of("messages", List.of(new UserMessage(enriched))), config)
                     .doOnNext(output -> {
-                        if (closed.get()) {
+                        if (channel.isClosed()) {
                             return;
                         }
                         if (output instanceof StreamingOutput<?> streaming) {
@@ -269,7 +285,7 @@ public class ChatWorkbenchController {
                         String node = output.node();
                         if (node != null && !node.equals(lastNode[0]) && !output.isSTART() && !output.isEND()) {
                             lastNode[0] = node;
-                            send(emitter, closed, "agent_start", new JSONObject()
+                            channel.send("agent_start", new JSONObject()
                                     .fluentPut("node", node)
                                     .fluentPut("agent", output.agent()));
                         }
@@ -279,17 +295,17 @@ public class ChatWorkbenchController {
 
             // HITL：本轮 agent 触发了贵操作待确认 → 弹确认卡（approve 后前端自动补发继续指令）
             approvalRegistry.drainPending(sessionId).ifPresent(pendingRequest ->
-                    send(emitter, closed, "hitl_request", new JSONObject()
+                    channel.send("hitl_request", new JSONObject()
                             .fluentPut("sessionId", sessionId)
                             .fluentPut("symbol", pendingRequest.symbol())
                             .fluentPut("reason", pendingRequest.reason())
                             .fluentPut("resumeMessage", "已确认，请继续执行深度研判")));
 
-            if (!closed.get()) {
-                send(emitter, closed, "done", new JSONObject()
+            if (!channel.isClosed()) {
+                channel.send("done", new JSONObject()
                         .fluentPut("sessionId", sessionId)
                         .fluentPut("answer", answer.toString()));
-                emitter.complete();
+                channel.complete();
                 // 跨会话记忆 + 历史记录异步写入（都是增益不是主链，失败不影响对话）
                 String finalAnswer = answer.toString();
                 streamExecutor.submit(() -> {
@@ -299,22 +315,76 @@ public class ChatWorkbenchController {
             }
         } catch (Exception e) {
             log.error("[Workbench] 对话失败 sessionId={}", sessionId, e);
-            if (!closed.get()) {
-                send(emitter, closed, "error", new JSONObject()
+            if (!channel.isClosed()) {
+                channel.send("error", new JSONObject()
                         .fluentPut("message", e.getMessage() != null ? e.getMessage() : "研判失败，请重试"));
-                emitter.completeWithError(e);
+                channel.completeWithError(e);
             }
+        } finally {
+            heartbeat.cancel(false);
         }
     }
 
-    private void send(SseEmitter emitter, AtomicBoolean closed, String event, JSONObject data) {
-        if (closed.get()) {
-            return;
+    /**
+     * SSE 通道：emitter + 关闭标志 + 写锁收在一起。
+     * 锁是必须的——SseEmitter.send 非线程安全，心跳线程与主流线程并发写会让帧交错损坏。
+     * 锁在实例上而非 Controller 上，各会话互不阻塞。
+     */
+    private static final class SseChannel {
+        private final SseEmitter emitter;
+        private final AtomicBoolean closed = new AtomicBoolean(false);
+        private final Object writeLock = new Object();
+
+        SseChannel(SseEmitter emitter) {
+            this.emitter = emitter;
         }
-        try {
-            emitter.send(SseEmitter.event().name(event).data(data.toJSONString()));
-        } catch (Exception e) {
+
+        boolean isClosed() {
+            return closed.get();
+        }
+
+        void markClosed() {
             closed.set(true);
+        }
+
+        void send(String event, JSONObject data) {
+            write(SseEmitter.event().name(event).data(data.toJSONString()));
+        }
+
+        /** 心跳：SSE 注释帧，前端 dispatch 取不到 data 直接忽略，纯粹喂饱中间层的空闲计时器。 */
+        void heartbeat() {
+            write(SseEmitter.event().comment("hb"));
+        }
+
+        private void write(SseEmitter.SseEventBuilder builder) {
+            if (closed.get()) {
+                return;
+            }
+            synchronized (writeLock) {
+                if (closed.get()) {
+                    return;
+                }
+                try {
+                    emitter.send(builder);
+                } catch (Exception e) {
+                    closed.set(true);
+                }
+            }
+        }
+
+        /** complete 与写共用锁：避免心跳正在写时通道被关，Tomcat 抛 IllegalStateException */
+        void complete() {
+            synchronized (writeLock) {
+                closed.set(true);
+                emitter.complete();
+            }
+        }
+
+        void completeWithError(Throwable t) {
+            synchronized (writeLock) {
+                closed.set(true);
+                emitter.completeWithError(t);
+            }
         }
     }
 }

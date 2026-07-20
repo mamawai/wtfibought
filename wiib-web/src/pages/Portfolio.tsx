@@ -78,7 +78,7 @@ function AnimNum({ value, prefix = '', suffix = '', duration = 600 }: { value: n
 
 export function Portfolio() {
   const navigate = useNavigate();
-  const { user, token} = useUserStore();
+  const { user } = useUserStore();
   const { toast } = useToast();
   const [cryptoRows, setCryptoRows] = useState<CryptoRow[]>([]);
   const [bstockRows, setBstockRows] = useState<BStockRow[]>([]);
@@ -94,12 +94,6 @@ export function Portfolio() {
   const [realtimeSnapshot, setRealtimeSnapshot] = useState<AssetSnapshot | null>(null);
   const [categoryAverages, setCategoryAverages] = useState<CategoryAverages | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
-
-  useEffect(() => {
-    if (!token) {
-      navigate('/login');
-    }
-  }, [token, navigate]);
 
   useEffect(() => {
     if (panel === 'profit' && !profitLoaded) {

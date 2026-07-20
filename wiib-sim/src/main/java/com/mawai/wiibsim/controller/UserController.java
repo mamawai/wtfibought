@@ -5,6 +5,8 @@ import com.mawai.wiibcommon.dto.AssetSnapshotDTO;
 import com.mawai.wiibcommon.dto.CategoryAveragesDTO;
 import com.mawai.wiibcommon.dto.UserDTO;
 import com.mawai.wiibcommon.entity.User;
+import com.mawai.wiibcommon.enums.ErrorCode;
+import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibsim.service.AccountResetService;
 import com.mawai.wiibsim.service.AssetSnapshotService;
@@ -40,6 +42,9 @@ public class UserController {
     @Operation(summary = "重置账户到初始状态（清空交易与游戏数据，每周一次）")
     public Result<Void> resetAccount(@CurrentUserId Long userId, @RequestBody ResetRequest request) {
         User user = userService.getById(userId);
+        if (user == null) {
+            throw new BizException(ErrorCode.USER_NOT_FOUND);
+        }
         accountResetService.resetWithGuard(userId, user.getUsername(), request.getConfirmUsername());
         return Result.ok(null);
     }

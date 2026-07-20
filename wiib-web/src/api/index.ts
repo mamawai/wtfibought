@@ -103,6 +103,10 @@ export const commentApi = {
     api.post<unknown, number>('/comments', { content, rootId, replyToUserId }),
   vote: (id: number, type: 'like' | 'dislike') =>
     api.post<unknown, void>(`/comments/${id}/vote`, null, { params: { type } }),
+  /** 编辑自己的评论，不限时。已自删的改不动 */
+  edit: (id: number, content: string) =>
+    api.put<unknown, void>(`/comments/${id}`, { content }),
+  /** 删自己的变占位文案，管理员删别人的才真删——后端按操作对象分流，这里不区分 */
   remove: (id: number) => api.delete<unknown, void>(`/comments/${id}`),
   /** 管理员禁言，days=-1 为永久 */
   mute: (userId: number, days: number) =>

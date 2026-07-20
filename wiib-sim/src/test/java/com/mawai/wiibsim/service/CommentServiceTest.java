@@ -63,6 +63,8 @@ class CommentServiceTest {
         when(valueOps.increment(anyString())).thenReturn(1L);   // 默认没超频
 
         when(userMapper.selectById(any())).thenReturn(new User());   // 默认未禁言
+        // 默认被回复者是这串里的人；"回复不相干的人"单独有用例把它翻成 false
+        when(commentMapper.existsInThread(anyLong(), anyLong())).thenReturn(true);
         // insert 后 MyBatis-Plus 会把自增主键回填进实体，mock 得自己补上，否则通知拿不到跳转目标
         when(commentMapper.insert(any(Comment.class))).thenAnswer(inv -> {
             inv.getArgument(0, Comment.class).setId(NEW_COMMENT_ID);
@@ -178,6 +180,37 @@ class CommentServiceTest {
     @Test
     void permanentMuteStoresYear2099() {
         assertEquals(2099, CommentService.muteUntil(-1).getYear());
+    }
+
+    @Test
+    void absurdMuteDaysFallBackToPermanent() {
+        // plusDays(Integer.MAX_VALUE) 算出公元 5881637 年，Java 不报错但超出 PG timestamp
+        // 上限(294276年)，写库直接 500。超过 10 年一律按永久处理
+        assertEquals(2099, CommentService.muteUntil(Integer.MAX_VALUE).getYear());
+        assertEquals(2099, CommentService.muteUntil(365 * 100).getYear());
+    }
+
+    @Test
+    void rejectsReplyToOutsiderOfThread() {
+        // 不校验的话，随便填个 userId 就能给任意用户推一条"XX 回复了你"，
+        // 点进去却是个跟他毫无关系的话题
+        when(commentMapper.selectById(100L)).thenReturn(root(100L));
+        when(commentMapper.existsInThread(100L, 12345L)).thenReturn(false);
+
+        assertThrows(BizException.class, () -> service.post(ME, "骚扰", 100L, 12345L));
+
+        verify(commentMapper, never()).insert(any(Comment.class));
+        verify(notificationMapper, never()).insert(any(CommentNotification.class));
+    }
+
+    @Test
+    void failedPostDoesNotBurnRateQuota() {
+        // 限流必须排在校验之后：回复一条已删评论本来就该失败，不该白扣一次额度
+        when(commentMapper.selectById(100L)).thenReturn(null);
+
+        assertThrows(BizException.class, () -> service.post(ME, "回复已删", 100L, OTHER));
+
+        verify(valueOps, never()).increment(anyString());
     }
 
     @Test

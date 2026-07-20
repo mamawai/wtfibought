@@ -680,6 +680,10 @@ export interface CommentItem {
   /** 根评论专用：子评论总数。列表接口只带前 2 条预览，靠它判断要不要出"查看全部" */
   childCount: number;
   children?: CommentItem[];
+  /** 非空即编辑过，显示"已编辑"。自删不写此字段，占位符不会被标成已编辑 */
+  updatedAt?: string;
+  /** 作者自删的占位符：正文已被覆盖，不能再编辑，但照常可赞可回复 */
+  selfDeleted?: boolean;
   createdAt: string;
 }
 
