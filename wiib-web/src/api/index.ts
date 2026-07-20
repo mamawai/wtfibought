@@ -68,6 +68,9 @@ export const userApi = {
   assetHistory: (days = 30) => api.get<unknown, AssetSnapshot[]>('/user/asset-history', { params: { days } }),
   assetRealtime: () => api.get<unknown, AssetSnapshot>('/user/asset-realtime'),
   categoryAverages: (days = 30) => api.get<unknown, CategoryAverages>('/user/category-averages', { params: { days } }),
+  // 重置账户：清空交易与游戏数据回到初始资金，每周一次，需逐字输入用户名确认
+  resetAccount: (confirmUsername: string) =>
+    api.post<unknown, void>('/user/reset', { confirmUsername }),
 };
 
 // ========== 钱包划转（余额钱包 ⇌ 游戏钱包） ==========
