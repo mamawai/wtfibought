@@ -29,6 +29,26 @@ public interface UserMapper extends BaseMapper<User> {
     @Select("SELECT setval(pg_get_serial_sequence('\"user\"', 'id'), (SELECT COALESCE(MAX(id), 1) FROM \"user\"))")
     Long syncIdSequence();
 
+    /**
+     * 重置到初始账户（自助重置用）。
+     * SET 子句刻意不含 muted_until——否则被禁言的用户点一下重置就解禁了；
+     * 也不动 username/avatar/linux_do_id/invite_code_id 等身份字段。
+     */
+    @Update("UPDATE \"user\" SET " +
+            "balance = #{initialBalance}, " +
+            "frozen_balance = 0, " +
+            "game_balance = 0, " +
+            "margin_loan_principal = 0, " +
+            "margin_interest_accrued = 0, " +
+            "margin_interest_last_date = NULL, " +
+            "is_bankrupt = FALSE, " +
+            "bankrupt_count = 0, " +
+            "bankrupt_at = NULL, " +
+            "bankrupt_reset_date = NULL, " +
+            "updated_at = NOW() " +
+            "WHERE id = #{userId}")
+    int resetToInitial(@Param("userId") long userId, @Param("initialBalance") BigDecimal initialBalance);
+
     /** 原子更新可用余额，返回影响行数（0表示余额不足） */
     @Update("UPDATE \"user\" SET balance = balance + #{amount}, updated_at = NOW() " +
             "WHERE id = #{userId} AND balance + #{amount} >= 0")

@@ -4,11 +4,14 @@ import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.dto.AssetSnapshotDTO;
 import com.mawai.wiibcommon.dto.CategoryAveragesDTO;
 import com.mawai.wiibcommon.dto.UserDTO;
+import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.util.Result;
+import com.mawai.wiibsim.service.AccountResetService;
 import com.mawai.wiibsim.service.AssetSnapshotService;
 import com.mawai.wiibsim.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,6 +28,21 @@ public class UserController {
 
     private final UserService userService;
     private final AssetSnapshotService assetSnapshotService;
+    private final AccountResetService accountResetService;
+
+    @Data
+    public static class ResetRequest {
+        /** 必须逐字等于自己的用户名，前端弹窗强制输入，防误点 */
+        private String confirmUsername;
+    }
+
+    @PostMapping("/reset")
+    @Operation(summary = "重置账户到初始状态（清空交易与游戏数据，每周一次）")
+    public Result<Void> resetAccount(@CurrentUserId Long userId, @RequestBody ResetRequest request) {
+        User user = userService.getById(userId);
+        accountResetService.resetWithGuard(userId, user.getUsername(), request.getConfirmUsername());
+        return Result.ok(null);
+    }
 
     @GetMapping("/portfolio")
     @Operation(summary = "获取用户资产概览")

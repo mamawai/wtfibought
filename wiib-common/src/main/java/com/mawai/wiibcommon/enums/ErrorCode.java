@@ -108,7 +108,11 @@ public enum ErrorCode {
     // 钱包错误码 1950+
     GAME_BALANCE_NOT_ENOUGH(1950, "游戏钱包余额不足"),
     WALLET_TRANSFER_INVALID(1951, "划转金额无效"),
-    CROSS_OUTFLOW_BLOCKED(1952, "资金转出后全仓仓位将触发强平，已拒绝");
+    CROSS_OUTFLOW_BLOCKED(1952, "资金转出后全仓仓位将触发强平，已拒绝"),
+
+    // 账户重置错误码 2000+（1200/1600 段已被杠杆与 Crypto 占用）
+    RESET_TOO_FREQUENT(2001, "每周只能重置一次账户"),
+    RESET_NOT_ALLOWED(2002, "该账户不可重置");
 
     private final int code;
     private final String msg;
