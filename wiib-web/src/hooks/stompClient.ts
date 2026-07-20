@@ -11,10 +11,27 @@ const subs = new Map<string, Set<Callback>>();
 const stompSubs = new Map<string, { unsubscribe: () => void }>();
 let connected = false;
 
+/** 从持久化的 store 里取 token。带上它后端才认得出身份，才能收 /user/queue 点对点消息 */
+function currentToken(): string {
+  try {
+    const stored = localStorage.getItem('wiib-user');
+    if (!stored) return '';
+    const { state } = JSON.parse(stored);
+    return state?.token ?? '';
+  } catch {
+    return '';
+  }
+}
+
 function getClient(): Client {
   if (client) return client;
   client = new Client({
-    webSocketFactory: () => new SockJS('/ws/quotes'),
+    // 每次建连（含自动重连）都会重新执行，所以总是拿到当下最新的 token；
+    // 游客没 token 就匿名连，后端不会拒，照样收行情广播
+    webSocketFactory: () => {
+      const token = currentToken();
+      return new SockJS(`/ws/quotes${token ? `?token=${encodeURIComponent(token)}` : ''}`);
+    },
     reconnectDelay: 5000,
     onConnect: () => {
       connected = true;
@@ -42,6 +59,17 @@ function bindTopic(topic: string) {
     if (cbs) cbs.forEach(cb => cb(msg));
   });
   stompSubs.set(topic, sub);
+}
+
+/**
+ * 登录态变化后重连，让新 token 生效。
+ * 漏调的表现很隐蔽：行情照跑、评论能发，只有通知角标永远是 0 且不报任何错——
+ * 因为连接还挂着登录前的匿名身份，点对点消息投不到它。
+ * subs 不动，onConnect 会按 subs.keys() 全量补订。
+ */
+export function reconnectWithIdentity() {
+  if (!client?.active) return;
+  void client.deactivate().then(() => client?.activate());
 }
 
 /** 订阅 topic，返回取消函数 */

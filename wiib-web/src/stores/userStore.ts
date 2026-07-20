@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User } from '../types';
 import { authApi } from '../api';
+import { reconnectWithIdentity } from '../hooks/stompClient';
 
 interface UserState {
   user: User | null;
@@ -21,7 +22,12 @@ export const useUserStore = create<UserState>()(
       loading: false,
 
       setUser: (user: User | null) => set({ user }),
-      setToken: (token: string | null) => set({ token }),
+      // token 变了必须重连 WS：连接的身份是握手时用 token 定的，不重连就还挂着旧身份，
+      // 表现为登录后通知角标永远 0 且不报错。persist 是同步写，重连读到的已是新值
+      setToken: (token: string | null) => {
+        set({ token });
+        reconnectWithIdentity();
+      },
 
       fetchUser: async () => {
         try {
@@ -42,6 +48,7 @@ export const useUserStore = create<UserState>()(
           // ignore
         }
         set({ user: null, token: null });
+        reconnectWithIdentity();   // 退回匿名身份，否则登出后仍能收到上一个账号的通知
       },
     }),
     {
