@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUserStore } from '../stores/userStore';
 import { useTheme } from '../hooks/useTheme';
@@ -7,8 +7,12 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Dialog, DialogHeader, DialogContent, DialogFooter } from '../components/ui/dialog';
 import { useToast } from '../components/ui/use-toast';
-import { userApi } from '../api';
-import { Trophy, Gamepad2, Sun, Moon, LogOut, LogIn, ChevronRight, User, LineChart, Monitor, RotateCcw, MessageSquare } from 'lucide-react';
+import { NotificationList } from '../components/NotificationList';
+import { mergeNotifications } from '../lib/notifications';
+import { subscribe } from '../hooks/stompClient';
+import { userApi, notificationApi } from '../api';
+import type { NotificationItem } from '../types';
+import { Trophy, Gamepad2, Sun, Moon, LogOut, LogIn, ChevronRight, User, LineChart, Monitor, RotateCcw, MessageSquare, Bell } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export function Me() {
@@ -20,6 +24,43 @@ export function Me() {
   const [resetOpen, setResetOpen] = useState(false);
   const [confirmName, setConfirmName] = useState('');
   const [resetting, setResetting] = useState(false);
+
+  // 通知：手机端顶栏信封是 hidden md:flex 看不到，这里是手机用户唯一的通知入口
+  const [unread, setUnread] = useState(0);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifs, setNotifs] = useState<NotificationItem[]>([]);
+  const [notifLoading, setNotifLoading] = useState(false);
+
+  // 只盯 id：fetchUser 每次返回新 user 对象，盯整个对象会反复退订重订，
+  // 而退订到 0 时 stompClient 会直接断连，白抖一次 WS
+  const userId = user?.id ?? null;
+
+  useEffect(() => {
+    if (userId == null) return;
+    void notificationApi.unread().then(setUnread).catch(() => { /* 角标失败不打扰 */ });
+    return subscribe('/user/queue/notification', msg => {
+      const body = JSON.parse(msg.body) as { unread: number };
+      setUnread(body.unread);
+    });
+  }, [userId]);
+
+  // 展开才拉列表：进「我的」页不该无脑打一次 50 条查询
+  const toggleNotif = async () => {
+    if (notifOpen) { setNotifOpen(false); return; }
+    setNotifOpen(true);
+    setNotifLoading(true);
+    try {
+      // 先取列表再标已读，顺序反了刚到的通知会被读成已读，列表里分不出新旧
+      const items = await notificationApi.recent();
+      setNotifs(items);
+      setUnread(0);
+      await notificationApi.readAll();
+    } catch {
+      // 拉不到就是空列表
+    } finally {
+      setNotifLoading(false);
+    }
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -80,6 +121,43 @@ export function Me() {
           )}
         </CardContent>
       </Card>
+
+      {/* 通知（手机端唯一入口；PC 顶栏也有信封，两处共用同一份列表组件） */}
+      {user && (
+        <Card>
+          <CardContent className="pt-5">
+            <button
+              onClick={() => void toggleNotif()}
+              className="flex items-center gap-3 w-full text-left cursor-pointer group"
+            >
+              <div className="w-8 h-8 rounded-lg bg-surface-hover flex items-center justify-center relative">
+                <Bell className="w-4 h-4 text-primary" />
+                {unread > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-destructive text-white text-[9px] font-black tabular-nums flex items-center justify-center">
+                    {unread > 99 ? '99+' : unread}
+                  </span>
+                )}
+              </div>
+              <span className="flex-1 text-sm font-medium">通知</span>
+              <ChevronRight className={cn(
+                "w-4 h-4 text-muted-foreground transition-transform group-hover:text-primary",
+                notifOpen && "rotate-90",
+              )} />
+            </button>
+
+            {notifOpen && (
+              <div className="mt-3 -mx-6 border-t border-border/50">
+                <NotificationList
+                  items={mergeNotifications(notifs)}
+                  loading={notifLoading}
+                  onSelect={commentId => navigate(`/comments?focus=${commentId}`)}
+                  className="max-h-80"
+                />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* 功能入口 */}
       <Card>
