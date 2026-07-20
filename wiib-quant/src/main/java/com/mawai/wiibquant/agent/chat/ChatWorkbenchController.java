@@ -2,6 +2,7 @@ package com.mawai.wiibquant.agent.chat;
 
 import com.alibaba.cloud.ai.graph.RunnableConfig;
 import com.alibaba.cloud.ai.graph.checkpoint.BaseCheckpointSaver;
+import com.alibaba.cloud.ai.graph.streaming.OutputType;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
@@ -27,13 +28,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /**
  * 研判工作台对话入口（P4）：SSE 流式暴露 Supervisor 多 agent 调度全过程。
@@ -144,75 +146,89 @@ public class ChatWorkbenchController {
 
     /**
      * 路由指令过滤：supervisor 派发专家时按协议输出裸 JSON 数组（如 ["news_agent"]），
-     * 属内部控制流不该进用户答案。按节点分段缓冲——段首是 '[' 的段先扣住不外发，
-     * 段结束（节点切换/流结束）时仍是合法字符串数组即整段丢弃，否则原文补发（答案恰好以 [ 开头的场景）。
+     * 属内部控制流不该进用户答案。按段缓冲——段首是 '[' 的段先扣住不外发，
+     * 段结束时仍是合法字符串数组即整段丢弃，否则原文补发（答案恰好以 [ 开头的场景）。
+     * <p>
+     * 分段边界靠框架每次 LLM 调用末尾的 *_FINISHED 聚合帧（见 chat 方法内说明），
+     * 不能靠节点名切换：所有 ReactAgent 的模型节点都叫 _AGENT_MODEL_，名字永远不变。
+     * 按 key(node|agent) 分桶：supervisor 一次派发多个专家时子 agent 并行跑、chunk 交错到达，
+     * 共用一个缓冲会互相污染判定状态。
      */
-    private final class RoutingFilter {
-        private final SseEmitter emitter;
-        private final AtomicBoolean closed;
-        private final StringBuilder answer;
-        private final StringBuilder buf = new StringBuilder();
-        private String node = "";
-        private boolean decided = false;
-        private boolean hold = false;
+    static final class RoutingFilter {
+        private final Consumer<String> sink;
+        private final Map<String, Segment> segments = new LinkedHashMap<>();
 
-        RoutingFilter(SseEmitter emitter, AtomicBoolean closed, StringBuilder answer) {
-            this.emitter = emitter;
-            this.closed = closed;
-            this.answer = answer;
+        RoutingFilter(Consumer<String> sink) {
+            this.sink = sink;
         }
 
-        void onChunk(String nodeName, String chunk) {
-            if (!Objects.equals(nodeName, node)) {
-                endSegment();
-                node = nodeName;
+        void onChunk(String key, String chunk) {
+            segments.computeIfAbsent(key, k -> new Segment()).onChunk(chunk);
+        }
+
+        /** 一次 LLM 调用结束：被扣住的段若确是路由数组即丢弃，否则补发。 */
+        void endSegment(String key) {
+            Segment segment = segments.remove(key);
+            if (segment != null) {
+                segment.end();
             }
-            if (decided && !hold) {
-                emit(chunk);
-                return;
-            }
-            buf.append(chunk);
-            if (!decided) {
-                String lead = buf.toString().stripLeading();
-                if (lead.isEmpty()) return;
-                decided = true;
-                hold = lead.charAt(0) == '[';
-                if (!hold) {
-                    emit(buf.toString());
-                    buf.setLength(0);
+        }
+
+        /** 流结束兜底：异常中断等场景可能没有对应的聚合帧，把在途段全部收尾。 */
+        void endAll() {
+            segments.values().forEach(Segment::end);
+            segments.clear();
+        }
+
+        private final class Segment {
+            private final StringBuilder buf = new StringBuilder();
+            private boolean decided = false;
+            private boolean hold = false;
+
+            void onChunk(String chunk) {
+                if (decided && !hold) {
+                    sink.accept(chunk);
+                    return;
+                }
+                buf.append(chunk);
+                if (!decided) {
+                    String lead = buf.toString().stripLeading();
+                    if (lead.isEmpty()) return;
+                    decided = true;
+                    hold = lead.charAt(0) == '[';
+                    if (!hold) {
+                        sink.accept(buf.toString());
+                        buf.setLength(0);
+                    }
                 }
             }
-        }
 
-        void endSegment() {
-            if (buf.length() > 0 && !(hold && isRoutingArray(buf.toString()))) {
-                emit(buf.toString());
+            void end() {
+                if (buf.length() > 0 && !(hold && isRoutingArray(buf.toString()))) {
+                    sink.accept(buf.toString());
+                }
+                buf.setLength(0);
             }
-            buf.setLength(0);
-            decided = false;
-            hold = false;
         }
 
-        private void emit(String text) {
-            answer.append(text);
-            send(emitter, closed, "token", new JSONObject().fluentPut("text", text));
-        }
-    }
-
-    private static boolean isRoutingArray(String text) {
-        String t = text.trim();
-        if (!t.startsWith("[") || !t.endsWith("]")) return false;
-        try {
-            JSONArray arr = JSON.parseArray(t);
-            return arr != null && !arr.isEmpty() && arr.stream().allMatch(e -> e instanceof String);
-        } catch (Exception e) {
-            return false;
+        private static boolean isRoutingArray(String text) {
+            String t = text.trim();
+            if (!t.startsWith("[") || !t.endsWith("]")) return false;
+            try {
+                JSONArray arr = JSON.parseArray(t);
+                return arr != null && !arr.isEmpty() && arr.stream().allMatch(e -> e instanceof String);
+            } catch (Exception e) {
+                return false;
+            }
         }
     }
 
     private void run(SseEmitter emitter, AtomicBoolean closed, long userId, String sessionId, String message) {
         StringBuilder answer = new StringBuilder();
-        RoutingFilter filter = new RoutingFilter(emitter, closed, answer);
+        RoutingFilter filter = new RoutingFilter(text -> {
+            answer.append(text);
+            send(emitter, closed, "token", new JSONObject().fluentPut("text", text));
+        });
         String[] lastNode = {""};
         try {
             send(emitter, closed, "session", new JSONObject().fluentPut("sessionId", sessionId));
@@ -232,11 +248,20 @@ public class ChatWorkbenchController {
                             return;
                         }
                         if (output instanceof StreamingOutput<?> streaming) {
+                            // 框架对每次 LLM 调用先逐帧下发增量(*_STREAMING)，流结束再补 1 帧完整聚合
+                            // 文本(*_FINISHED)。聚合帧内容与增量完全重复，绝不能当 token 外发（否则每条
+                            // 消息双份），只用作"一次调用结束"的分段边界驱动路由过滤
+                            String key = output.node() + "|" + output.agent();
+                            OutputType type = streaming.getOutputType();
+                            if (type != null && type.name().endsWith("_FINISHED")) {
+                                filter.endSegment(key);
+                                return;
+                            }
                             String chunk = streaming.message() instanceof AssistantMessage am && !am.hasToolCalls()
                                     ? am.getText() : null;
                             if (chunk != null && !chunk.isEmpty()) {
                                 // 经路由过滤外发：supervisor 的派发 JSON 数组是内部控制流，不进答案
-                                filter.onChunk(output.node(), chunk);
+                                filter.onChunk(key, chunk);
                             }
                             return;
                         }
@@ -250,7 +275,7 @@ public class ChatWorkbenchController {
                         }
                     })
                     .blockLast();
-            filter.endSegment();   // 收尾：最后一段若是被扣住的路由数组即丢弃，否则补发
+            filter.endAll();   // 收尾：在途段若是被扣住的路由数组即丢弃，否则补发
 
             // HITL：本轮 agent 触发了贵操作待确认 → 弹确认卡（approve 后前端自动补发继续指令）
             approvalRegistry.drainPending(sessionId).ifPresent(pendingRequest ->
