@@ -62,7 +62,9 @@ services:
     build: { context: ./wiib-quant, dockerfile: Dockerfile }
     container_name: wiib-quant
     ports:
-      - "127.0.0.1:8082:8082"
+      # 宿主 8082 已被占用，宿主侧映射 18082（nginx 反代 quant 路径用它；容器间仍走 wiib-quant:8082 可自行调整）
+      - "127.0.0.1:18082:8082"
+#      - "127.0.0.1:8082:8082"
     volumes:
       - ./dumps/quant:/dumps
     environment:
