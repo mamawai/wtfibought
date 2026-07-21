@@ -9,6 +9,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Badge } from '../ui/badge';
 import { FuturesActionButton } from '../FuturesActionButton';
+import { NeuToggle } from '../NeuToggle';
 import { fmtNum } from '../../lib/utils';
 import { getCoin, getCoinPriceDecimals, getCoinPriceStep } from '../../lib/coinConfig';
 import type { CryptoPosition } from '../../types';
@@ -117,10 +118,12 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
       <CardContent className="p-5 mt-2 flex-1 flex flex-col gap-6">
         {/* 执行方式：市价/限价 */}
         <div className="flex items-center gap-2">
-          <div className="flex rounded-lg overflow-hidden neu-raised-sm">
-            <button onClick={() => setOrderType('MARKET')} className={`px-4 py-1.5 text-xs font-bold transition-colors ${orderType === 'MARKET' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-surface-hover'}`}>市价</button>
-            <button onClick={() => setOrderType('LIMIT')} className={`px-4 py-1.5 text-xs font-bold border-l border-border transition-colors ${orderType === 'LIMIT' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-surface-hover'}`}>限价</button>
-          </div>
+          <NeuToggle
+            label="执行方式"
+            value={orderType}
+            onChange={setOrderType}
+            options={[{ value: 'MARKET', label: '市价' }, { value: 'LIMIT', label: '限价' }]}
+          />
         </div>
         {/* 限价输入 */}
         {orderType === 'LIMIT' && (

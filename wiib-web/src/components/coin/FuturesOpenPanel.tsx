@@ -8,6 +8,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { FuturesActionButton } from '../FuturesActionButton';
 import { LeverageSlider } from '../LeverageSlider';
+import { NeuToggle } from '../NeuToggle';
 import { HelpTip } from '../HelpTip';
 import { fmtNum } from '../../lib/utils';
 import { getCoin, getCoinPriceDecimals, getCoinPriceStep, formatCoinPrice } from '../../lib/coinConfig';
@@ -185,14 +186,18 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
       <CardContent className="p-5 mt-2 flex-1 flex flex-col gap-6">
         {/* 保证金模式 + 执行方式 */}
         <div className="flex items-center gap-2">
-          <div className="flex rounded-lg overflow-hidden neu-raised-sm">
-            <button onClick={() => setMarginMode('CROSS')} className={`px-4 py-1.5 text-xs font-bold transition-colors ${isCross ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-surface-hover'}`}>全仓</button>
-            <button onClick={() => setMarginMode('ISOLATED')} className={`px-4 py-1.5 text-xs font-bold border-l border-border transition-colors ${!isCross ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-surface-hover'}`}>逐仓</button>
-          </div>
-          <div className="flex rounded-lg overflow-hidden neu-raised-sm">
-            <button onClick={() => setOrderType('MARKET')} className={`px-4 py-1.5 text-xs font-bold transition-colors ${orderType === 'MARKET' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-surface-hover'}`}>市价</button>
-            <button onClick={() => setOrderType('LIMIT')} className={`px-4 py-1.5 text-xs font-bold border-l border-border transition-colors ${orderType === 'LIMIT' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-surface-hover'}`}>限价</button>
-          </div>
+          <NeuToggle
+            label="保证金模式"
+            value={marginMode}
+            onChange={setMarginMode}
+            options={[{ value: 'CROSS', label: '全仓' }, { value: 'ISOLATED', label: '逐仓' }]}
+          />
+          <NeuToggle
+            label="执行方式"
+            value={orderType}
+            onChange={setOrderType}
+            options={[{ value: 'MARKET', label: '市价' }, { value: 'LIMIT', label: '限价' }]}
+          />
         </div>
 
         {/* 限价输入 */}

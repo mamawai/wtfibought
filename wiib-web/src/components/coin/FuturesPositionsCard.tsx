@@ -10,6 +10,7 @@ import { Input } from '../ui/input';
 import { Badge } from '../ui/badge';
 import { HelpTip } from '../HelpTip';
 import { LeverageSlider } from '../LeverageSlider';
+import { NeuToggle } from '../NeuToggle';
 import { PctSlider } from '../PctSlider';
 import { fmtNum } from '../../lib/utils';
 import { getCoin, getCoinPriceDecimals, getCoinPriceStep, formatCoinPrice } from '../../lib/coinConfig';
@@ -374,10 +375,13 @@ function PositionItem({ pos, brackets, crossAvailable, onMutated }: {
             <>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground shrink-0">执行</span>
-                <div className="flex rounded-md border border-border overflow-hidden">
-                  <button onClick={() => setCloseOrderType('MARKET')} className={`px-4 sm:px-3 py-2 sm:py-1 text-[11px] font-medium transition-all ${closeOrderType === 'MARKET' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:text-foreground'}`}>市价</button>
-                  <button onClick={() => setCloseOrderType('LIMIT')} className={`px-4 sm:px-3 py-2 sm:py-1 text-[11px] font-medium transition-all border-l border-border ${closeOrderType === 'LIMIT' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:text-foreground'}`}>限价</button>
-                </div>
+                <NeuToggle
+                  size="sm"
+                  label="平仓执行方式"
+                  value={closeOrderType}
+                  onChange={setCloseOrderType}
+                  options={[{ value: 'MARKET', label: '市价' }, { value: 'LIMIT', label: '限价' }]}
+                />
               </div>
               {closeOrderType === 'LIMIT' && (
                 <>
@@ -420,10 +424,13 @@ function PositionItem({ pos, brackets, crossAvailable, onMutated }: {
             <>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground shrink-0">执行</span>
-                <div className="flex rounded-md border border-border overflow-hidden">
-                  <button onClick={() => setIncreaseOrderType('MARKET')} className={`px-4 sm:px-3 py-2 sm:py-1 text-[11px] font-medium transition-all ${increaseOrderType === 'MARKET' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:text-foreground'}`}>市价</button>
-                  <button onClick={() => setIncreaseOrderType('LIMIT')} className={`px-4 sm:px-3 py-2 sm:py-1 text-[11px] font-medium transition-all border-l border-border ${increaseOrderType === 'LIMIT' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:text-foreground'}`}>限价</button>
-                </div>
+                <NeuToggle
+                  size="sm"
+                  label="加仓执行方式"
+                  value={increaseOrderType}
+                  onChange={setIncreaseOrderType}
+                  options={[{ value: 'MARKET', label: '市价' }, { value: 'LIMIT', label: '限价' }]}
+                />
               </div>
               {increaseOrderType === 'LIMIT' && (
                 <>
