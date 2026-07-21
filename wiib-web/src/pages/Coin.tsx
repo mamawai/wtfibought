@@ -212,9 +212,11 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               </div>
             </CardHeader>
             <CardContent className="p-2 flex-1 flex flex-col">
-              {/* 现货/合约统一 K 线：合约走后端K线广播，现货由价格流驱动最后一根；高度跟随右侧面板拉伸，PC 最矮 560、手机 400 免得占满两屏 */}
+              {/* 现货/合约统一 K 线：合约走后端K线广播，现货由价格流驱动最后一根；
+                  高度跟随右侧面板拉伸。主图:MACD:RSI=3:1:1，比纯 K 线时多要了两格，
+                  所以底线抬到 PC 720 / 手机 520，否则主图蜡烛被压得看不清 */}
               {activeTab < TABS.length && (
-                <div className="flex-1 min-h-[400px] md:min-h-[560px]">
+                <div className="flex-1 min-h-[520px] md:min-h-[720px]">
                   <CandleChart
                     key={mode}
                     symbol={symbol}
@@ -223,6 +225,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                     klinesFn={isFuturesMode ? futuresApi.klines : cryptoApi.klines}
                     streamLive={klineLive}
                     tick={klineLive ? null : chartTick}
+                    indicators
                   />
                 </div>
               )}
