@@ -50,7 +50,7 @@ COMMENT ON COLUMN "user".bankrupt_reset_date IS '恢复日期（交易日09:00�
 COMMENT ON COLUMN "user".created_at IS '创建时间';
 COMMENT ON COLUMN "user".updated_at IS '更新时间';
 
-CREATE INDEX idx_user_bankrupt ON "user"(is_bankrupt, bankrupt_reset_date);
+CREATE INDEX IF NOT EXISTS idx_user_bankrupt ON "user"(is_bankrupt, bankrupt_reset_date);
 
 -- ============================================
 -- 1b. 邀请码表（邀请码注册模式：有码才能注册本地账号）
@@ -165,7 +165,7 @@ CREATE TABLE IF NOT EXISTS blackjack_convert_log (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_bj_convert_user ON blackjack_convert_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_bj_convert_user ON blackjack_convert_log(user_id);
 
 COMMENT ON TABLE blackjack_convert_log IS 'Blackjack积分转出日志';
 
@@ -234,10 +234,10 @@ COMMENT ON COLUMN crypto_order.triggered_at IS '触发时间';
 COMMENT ON COLUMN crypto_order.status IS 'PENDING/TRIGGERED/FILLED/CANCELLED/EXPIRED';
 COMMENT ON COLUMN crypto_order.expire_at IS '过期时间';
 
-CREATE INDEX idx_crypto_order_user ON crypto_order(user_id);
-CREATE INDEX idx_crypto_order_status ON crypto_order(status, order_type);
-CREATE INDEX idx_crypto_order_symbol ON crypto_order(symbol, status);
-CREATE INDEX idx_crypto_order_expire ON crypto_order(expire_at);
+CREATE INDEX IF NOT EXISTS idx_crypto_order_user ON crypto_order(user_id);
+CREATE INDEX IF NOT EXISTS idx_crypto_order_status ON crypto_order(status, order_type);
+CREATE INDEX IF NOT EXISTS idx_crypto_order_symbol ON crypto_order(symbol, status);
+CREATE INDEX IF NOT EXISTS idx_crypto_order_expire ON crypto_order(expire_at);
 
 -- ============================================
 -- 17. 矿工游戏记录表
@@ -269,7 +269,7 @@ COMMENT ON COLUMN mines_game.status IS 'PLAYING/CASHED_OUT/EXPLODED';
 COMMENT ON COLUMN mines_game.created_at IS '创建时间';
 COMMENT ON COLUMN mines_game.updated_at IS '更新时间';
 
-CREATE INDEX idx_mines_game_user_status ON mines_game(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_mines_game_user_status ON mines_game(user_id, status);
 
 -- ============================================
 -- 18. 永续合约仓位表
@@ -312,8 +312,8 @@ COMMENT ON COLUMN futures_position.closed_price IS '平仓价';
 COMMENT ON COLUMN futures_position.closed_pnl IS '平仓盈亏';
 COMMENT ON COLUMN futures_position.memo IS 'AI策略标签：TREND/MEAN_REVERSION/BREAKOUT';
 
-CREATE INDEX idx_fp_user_status ON futures_position(user_id, status);
-CREATE INDEX idx_fp_symbol_status ON futures_position(symbol, status);
+CREATE INDEX IF NOT EXISTS idx_fp_user_status ON futures_position(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_fp_symbol_status ON futures_position(symbol, status);
 
 -- ============================================
 -- 19. 永续合约订单表
@@ -364,9 +364,9 @@ COMMENT ON COLUMN futures_order.take_profits IS '止盈列表(JSONB)';
 COMMENT ON COLUMN futures_order.status IS '状态：PENDING/TRIGGERED/FILLED/CANCELLED/EXPIRED/LIQUIDATED';
 COMMENT ON COLUMN futures_order.expire_at IS '过期时间';
 
-CREATE INDEX idx_fo_user ON futures_order(user_id);
-CREATE INDEX idx_fo_position ON futures_order(position_id);
-CREATE INDEX idx_fo_symbol_status ON futures_order(symbol, status);
+CREATE INDEX IF NOT EXISTS idx_fo_user ON futures_order(user_id);
+CREATE INDEX IF NOT EXISTS idx_fo_position ON futures_order(position_id);
+CREATE INDEX IF NOT EXISTS idx_fo_symbol_status ON futures_order(symbol, status);
 
 -- ============================================
 -- 20. 视频扑克游戏记录表
@@ -397,7 +397,7 @@ COMMENT ON COLUMN video_poker_game.multiplier IS '赔率倍数';
 COMMENT ON COLUMN video_poker_game.payout IS '赔付金额';
 COMMENT ON COLUMN video_poker_game.status IS 'DEALING/SETTLED';
 
-CREATE INDEX idx_vp_game_user_status ON video_poker_game(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_vp_game_user_status ON video_poker_game(user_id, status);
 
 -- ============================================
 -- 21. BTC 5min 涨跌预测回合表
@@ -449,8 +449,8 @@ COMMENT ON COLUMN prediction_bet.payout IS '结算赔付';
 COMMENT ON COLUMN prediction_bet.window_start IS '窗口起始时间戳(秒)';
 COMMENT ON COLUMN prediction_bet.status IS '状态：ACTIVE/WON/LOST/DRAW/SOLD/CANCELLED';
 
-CREATE INDEX idx_pred_bet_round ON prediction_bet(round_id, status);
-CREATE INDEX idx_pred_bet_user ON prediction_bet(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pred_bet_round ON prediction_bet(round_id, status);
+CREATE INDEX IF NOT EXISTS idx_pred_bet_user ON prediction_bet(user_id, created_at DESC);
 
 -- ============================================
 -- 用户资产每日快照
@@ -515,7 +515,7 @@ COMMENT ON COLUMN force_order.price IS '强平委托价';
 COMMENT ON COLUMN force_order.avg_price IS '成交均价';
 COMMENT ON COLUMN force_order.amount IS '爆仓金额(avg_price * quantity)';
 
-CREATE INDEX idx_fo_symbol_time ON force_order(symbol, trade_time DESC);
+CREATE INDEX IF NOT EXISTS idx_fo_symbol_time ON force_order(symbol, trade_time DESC);
 
 -- 策略运行时信号记录（实盘信号复盘）
 CREATE TABLE IF NOT EXISTS strategy_signal (
@@ -540,7 +540,7 @@ COMMENT ON COLUMN strategy_signal.entry_ref_price IS '信号参考价(确认bar�
 COMMENT ON COLUMN strategy_signal.leg_tags IS 'live确认腿判定，如liq_cascade=PASS';
 COMMENT ON COLUMN strategy_signal.take_profit IS '固定止盈价；TURTLE类通道出场策略无固定TP，为NULL';
 
-CREATE INDEX idx_strategy_signal_symbol_time ON strategy_signal(symbol, bar_close_time DESC);
+CREATE INDEX IF NOT EXISTS idx_strategy_signal_symbol_time ON strategy_signal(symbol, bar_close_time DESC);
 
 -- ============================================
 -- AI 运行时配置表（API Key 管理，支持多条）

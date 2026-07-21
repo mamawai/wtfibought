@@ -16,7 +16,7 @@ const ADMIN_USER_ID = 1;
 const MAX_LEN = 500;
 const ROOT_PAGE_SIZE = 20;
 const CHILD_PAGE_SIZE = 10;
-const ISSUE_URL = 'https://github.com/mamawai/whatifibought/issues/new';
+const ISSUE_URL = 'https://github.com/mamawai/wtfibought/issues/new';
 
 const MUTE_OPTIONS = [
   { days: 1, label: '禁言 1 天' },
