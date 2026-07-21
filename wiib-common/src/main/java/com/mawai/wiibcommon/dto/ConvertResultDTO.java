@@ -13,4 +13,7 @@ public class ConvertResultDTO {
 
     /** 转出完成后当日累计已转出积分。 */
     private long todayConverted;
+
+    /** 转出完成后仍可转出的积分（= 剩余积分 - 保底值），前端不再自己算。 */
+    private long convertable;
 }

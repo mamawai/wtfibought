@@ -125,7 +125,7 @@ COMMENT ON COLUMN user_buff.created_at IS '创建时间';
 CREATE TABLE IF NOT EXISTS blackjack_account (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL UNIQUE REFERENCES "user"(id),
-    chips BIGINT NOT NULL DEFAULT 20000,
+    chips BIGINT NOT NULL DEFAULT 200,
     today_converted BIGINT NOT NULL DEFAULT 0,
     last_convert_date DATE,
     last_reset_date DATE,

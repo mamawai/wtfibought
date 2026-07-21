@@ -45,19 +45,17 @@ public class BlackjackServiceImpl implements BlackjackService {
     private final GameLockExecutor gameLock;
 
     /** 用户初始积分，同时也是每日保底重置目标值。 */
-    private static final long INITIAL_CHIPS = 500L;
+    private static final long INITIAL_CHIPS = 200L;
     /** 每日最多可从 Blackjack 转出的积分上限。 */
-    private static final long DAILY_CONVERT_LIMIT = 1_000L;
-    /** 单次下注最小积分。 */
-    private static final long MIN_BET = 10L;
-    /** 单次下注最大积分。 */
-    private static final long MAX_BET = 1_000L;
+    private static final long DAILY_CONVERT_LIMIT = 500L;
+    /** 允许的下注档位，只收这四个值，前端筹码与之一一对应。 */
+    private static final Set<Long> BET_TIERS = Set.of(50L, 100L, 500L, 1000L);
     /** 一局牌靴使用的副数（当前为单副牌）。 */
     private static final int SHOE_DECKS = 1;
     private static final Random RANDOM = new SecureRandom();
 
     /** 每日积分池总额度。 */
-    private static final long DAILY_POOL = 400_000L;
+    private static final long DAILY_POOL = 20_000L;
     /** 积分池 Redis 键前缀。 */
     private static final String POOL_KEY_PREFIX = "bj:pool:";
 
@@ -158,7 +156,7 @@ public class BlackjackServiceImpl implements BlackjackService {
             BlackjackStatusDTO dto = new BlackjackStatusDTO();
             dto.setChips(account.getChips());
             dto.setTodayConverted(getTodayConverted(account));
-            dto.setConvertable(Math.max(0, account.getChips() - INITIAL_CHIPS));
+            dto.setConvertable(convertableOf(account));
             dto.setTodayConvertLimit(DAILY_CONVERT_LIMIT);
             dto.setTotalHands(account.getTotalHands());
             dto.setTotalWon(account.getTotalWon());
@@ -526,7 +524,7 @@ public class BlackjackServiceImpl implements BlackjackService {
             BlackjackAccount account = getOrCreateAccount(userId);
             checkDailyReset(account);
 
-            long convertable = Math.max(0, account.getChips() - INITIAL_CHIPS);
+            long convertable = convertableOf(account);
             if (amount > convertable) {
                 throw new BizException(ErrorCode.BJ_CONVERT_INSUFFICIENT);
             }
@@ -562,6 +560,7 @@ public class BlackjackServiceImpl implements BlackjackService {
             result.setChips(account.getChips());
             result.setBalance(userService.getGameBalance(userId).doubleValue());
             result.setTodayConverted(account.getTodayConverted());
+            result.setConvertable(convertableOf(account));
             return result;
         });
     }
@@ -852,6 +851,11 @@ public class BlackjackServiceImpl implements BlackjackService {
         accountMapper.updateById(account);
     }
 
+    /** 保底积分不可转出，超出部分才算可转出额。 */
+    private long convertableOf(BlackjackAccount account) {
+        return Math.max(0, account.getChips() - INITIAL_CHIPS);
+    }
+
     private long getTodayConverted(BlackjackAccount account) {
         LocalDate today = LocalDate.now();
         if (account.getLastConvertDate() == null || !account.getLastConvertDate().equals(today)) {
@@ -998,7 +1002,7 @@ public class BlackjackServiceImpl implements BlackjackService {
     // ==================== 规则与工具 ====================
 
     private void validateBetAmount(long amount) {
-        if (amount < MIN_BET || amount > MAX_BET) {
+        if (!BET_TIERS.contains(amount)) {
             throw new BizException(ErrorCode.BJ_INVALID_BET);
         }
     }

@@ -10,10 +10,9 @@ import {ArrowLeftRight, CopyPlus, Hand, RotateCcw, Shield, Spade, Split, Square}
 import {cn} from '../lib/utils';
 import type {BlackjackStatus, GameState, HandResult} from '../types';
 
-const BET_PRESETS = [10, 50, 100, 500, 1000];
+const BET_PRESETS = [50, 100, 500, 1000];
 // 面额÷10对齐新经济，配色沿用原档位样式类
 const CHIP_COLORS: Record<number, string> = {
-  10: 'bj-chip-100',
   50: 'bj-chip-500',
   100: 'bj-chip-1000',
   500: 'bj-chip-5000',
@@ -100,7 +99,7 @@ export function Blackjack() {
       setConvertOpen(false);
       setConvertAmount('');
       if (status) {
-        setStatus({ ...status, chips: result.chips, todayConverted: result.todayConverted, convertable: Math.max(0, result.chips - 500) });
+        setStatus({ ...status, chips: result.chips, todayConverted: result.todayConverted, convertable: result.convertable });
       }
     } catch (e: unknown) {
       toast((e as Error).message || '转出失败', 'error');
@@ -359,10 +358,10 @@ export function Blackjack() {
                 className={cn(
                   'w-full max-w-xs mx-auto h-12 text-base font-bold',
                   'bg-amber-500 hover:bg-amber-400 text-black',
-                  betAmount <= chips && betAmount >= 100 && !acting && 'bj-pulse-glow'
+                  betAmount <= chips && !acting && 'bj-pulse-glow'
                 )}
                 onClick={handleBet}
-                disabled={acting || betAmount > chips || betAmount < 10}
+                disabled={acting || betAmount > chips}
               >
                 发牌
               </Button>
@@ -402,7 +401,10 @@ export function Blackjack() {
             <h3 className="font-semibold mb-1">积分机制</h3>
             <ul className="list-disc list-inside text-muted-foreground space-y-1">
               <li>积分为站内虚拟数值，用于小游戏内结算与展示。</li>
-              <li>支持每日积分转出限制，用于提供日常趣味玩法与参与感。</li>
+              <li>每日保底 200 积分，低于此值时次日自动补足。</li>
+              <li>单局可下注 50 / 100 / 500 / 1000 四档。</li>
+              <li>超出 200 保底的部分可转出至游戏钱包，每日上限 500。</li>
+              <li>每日积分池全站共享，池子耗尽后当日不再开新局。</li>
             </ul>
           </section>
         </CardContent>
@@ -437,7 +439,7 @@ export function Blackjack() {
           <div className="space-y-3">
             <div className="text-sm text-muted-foreground space-y-1">
               <p>可转出: <span className="font-bold text-foreground">{(status?.convertable ?? 0).toLocaleString()}</span></p>
-              <p>今日已转: {(status?.todayConverted ?? 0).toLocaleString()} / {(status?.todayConvertLimit ?? 1000).toLocaleString()}</p>
+              <p>今日已转: {(status?.todayConverted ?? 0).toLocaleString()} / {(status?.todayConvertLimit ?? 500).toLocaleString()}</p>
               <p>转出后计入游戏钱包</p>
             </div>
             <input
@@ -447,10 +449,10 @@ export function Blackjack() {
               placeholder="输入转出金额"
               className="w-full px-3 py-2 rounded-lg bg-background text-sm neu-inset"
               min={1}
-              max={Math.min(status?.convertable ?? 0, (status?.todayConvertLimit ?? 1000) - (status?.todayConverted ?? 0))}
+              max={Math.min(status?.convertable ?? 0, (status?.todayConvertLimit ?? 500) - (status?.todayConverted ?? 0))}
             />
             <div className="flex gap-2">
-              {[100, 500, 1000].map(v => (
+              {[100, 200, 500].map(v => (
                 <Button key={v} variant="outline" size="sm" onClick={() => setConvertAmount(String(v))} className="flex-1">
                   {v >= 1000 ? `${v / 1000}K` : v}
                 </Button>
@@ -458,7 +460,7 @@ export function Blackjack() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setConvertAmount(String(Math.min(status?.convertable ?? 0, (status?.todayConvertLimit ?? 1000) - (status?.todayConverted ?? 0))))}
+                onClick={() => setConvertAmount(String(Math.min(status?.convertable ?? 0, (status?.todayConvertLimit ?? 500) - (status?.todayConverted ?? 0))))}
                 className="flex-1"
               >
                 MAX
