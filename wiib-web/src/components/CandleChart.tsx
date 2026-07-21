@@ -82,6 +82,12 @@ const toLine = (bars: Bar[], s: (number | null)[]) =>
 const legendCell = (color: string, label: string, v: number | undefined, digits: number) =>
   `<span style="color:${color};margin-right:9px">${label}:${v === undefined ? '--' : v.toFixed(digits)}</span>`;
 
+/**
+ * 手机竖屏（图表宽 < 380）走紧凑读数：字号降一档、砍掉指标参数前缀。
+ * 按图表实际宽度判断而不是视口——同一台机器横屏、或 PC 上窗口拖窄，都该跟着缩。
+ */
+const isCompact = (chart: IChartApi) => chart.options().width < 380;
+
 // ========== 主图叠加指标 (MA / EMA / BOLL) ==========
 
 /** MA 和 EMA 共用这组周期 */
@@ -192,6 +198,7 @@ function ensureLegends(ind: IndSeries) {
  */
 function renderLegends(ind: IndSeries, param: MouseEventParams | null) {
   ensureLegends(ind);
+  const compact = isCompact(ind.chart);
   const hovering = param?.time != null;
   const pick = (s: ISeriesApi<'Line'> | ISeriesApi<'Histogram'>, fallback: number | undefined) => {
     if (!hovering) return fallback;
@@ -202,13 +209,16 @@ function renderLegends(ind: IndSeries, param: MouseEventParams | null) {
   if (ind.macdLegend) {
     const h = pick(ind.hist, ind.last.hist);
     const hc = h === undefined ? LEGEND_DIM : (h >= 0 ? '#26a69a' : '#ef5350');
+    ind.macdLegend.style.fontSize = compact ? '10px' : '11px';
+    // 窄屏砍掉参数前缀：那截占 88px，手机上留着会把 MACD 值挤出可视区（nowrap 直接裁掉）
     ind.macdLegend.innerHTML =
-      `<span style="color:${LEGEND_DIM};margin-right:10px">MACD(12,26,9)</span>`
+      (compact ? '' : `<span style="color:${LEGEND_DIM};margin-right:10px">MACD(12,26,9)</span>`)
       + legendCell(DIF_COLOR, 'DIF', pick(ind.dif, ind.last.dif), ind.decimals)
       + legendCell(DEA_COLOR, 'DEA', pick(ind.dea, ind.last.dea), ind.decimals)
       + legendCell(hc, 'MACD', h, ind.decimals);
   }
   if (ind.rsiLegend) {
+    ind.rsiLegend.style.fontSize = compact ? '10px' : '11px';
     ind.rsiLegend.innerHTML = RSI_PERIODS
       .map((p, k) => legendCell(RSI_COLORS[k], `RSI(${p})`, pick(ind.rsi[k], ind.last.rsi[k]), 2))
       .join('');
@@ -230,6 +240,7 @@ function renderOverlayLegend(
   on: Record<OverlayKey, boolean>,
   param: MouseEventParams | null,
   decimals: number,
+  compact = false,
 ) {
   const hovering = param?.time != null;
   const pick = (s: ISeriesApi<'Line'>, fallback: number | undefined) => {
@@ -242,11 +253,15 @@ function renderOverlayLegend(
     ema: MA_PERIODS.map(p => `EMA${p}`),
     boll: BOLL_LABELS,
   };
-  const title: Record<OverlayKey, string> = { ma: 'MA', ema: 'EMA', boll: `BOLL(${BOLL_PERIOD},${BOLL_MULT})` };
+  // 关着的组只是个入口，窄屏没必要把参数也摆出来
+  const title: Record<OverlayKey, string> = {
+    ma: 'MA', ema: 'EMA', boll: compact ? 'BOLL' : `BOLL(${BOLL_PERIOD},${BOLL_MULT})`,
+  };
 
   for (const key of ['ma', 'ema', 'boll'] as OverlayKey[]) {
     const el = refs[key];
     if (!el) continue;
+    el.style.fontSize = compact ? '10px' : '11px';
     if (!on[key]) {
       el.innerHTML = `<span style="color:${LEGEND_DIM}">${title[key]}</span>`;
       continue;
@@ -368,7 +383,8 @@ export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, 
       },
       grid: { vertLines: { color: grid }, horzLines: { color: grid } },
       crosshair: { mode: CrosshairMode.Normal },
-      rightPriceScale: { borderColor: border, scaleMargins: { top: 0.06, bottom: 0.26 } },  // 上方留蜡烛，下方留量柱
+      // top 0.10 是给主图读数条腾的：0.06 在手机上只有 19px，MA 展开换行就压到蜡烛了
+      rightPriceScale: { borderColor: border, scaleMargins: { top: 0.10, bottom: 0.26 } },
       timeScale: { borderColor: border, timeVisible: true, secondsVisible: false, rightOffset: 5 },
     });
     chartRef.current = chart;
@@ -436,7 +452,7 @@ export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, 
     chart.subscribeCrosshairMove((param: MouseEventParams) => {
       // 读数条先更新：它跟气泡不同，移出图表也要留着（回落到最新值），不能被下面的 early return 跳过
       if (indRef.current) renderLegends(indRef.current, param);
-      if (ovRef.current) renderOverlayLegend(ovRef.current, legendRefs(), overlaysRef.current, param, decimals);
+      if (ovRef.current) renderOverlayLegend(ovRef.current, legendRefs(), overlaysRef.current, param, decimals, isCompact(chart));
       const tip = tipRef.current; if (!tip) return;
       const t = param.time as number | undefined;
       if (t == null || !param.point) { hoverRef.current.time = null; tip.style.display = 'none'; return; }
@@ -460,7 +476,7 @@ export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, 
       if (indRef.current) { setIndicators(indRef.current, bars); renderLegends(indRef.current, null); }
       if (ovRef.current) {
         setOverlayData(ovRef.current, bars);
-        renderOverlayLegend(ovRef.current, legendRefs(), overlaysRef.current, null, decimals);
+        renderOverlayLegend(ovRef.current, legendRefs(), overlaysRef.current, null, decimals, chartRef.current ? isCompact(chartRef.current) : false);
       }
       // 默认只看最近 visibleBars 根（fitContent 会把全量挤进视口，蜡烛小成一条线）；往左拖/缩放仍可看全历史
       if (bars.length > visibleBars) {
@@ -471,7 +487,14 @@ export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, 
       readyRef.current = true;
     }).catch(() => { /* 历史失败仍可靠实时累积 */ });
 
-    const ro = new ResizeObserver(() => chart.applyOptions({ width: host.clientWidth, height: host.clientHeight }));
+    const ro = new ResizeObserver(() => {
+      chart.applyOptions({ width: host.clientWidth, height: host.clientHeight });
+      // 旋屏/拖窗口会让 compact 判定翻转，读数条得跟着重排，否则要等下一个 tick 才变
+      if (indRef.current) renderLegends(indRef.current, null);
+      if (ovRef.current) {
+        renderOverlayLegend(ovRef.current, legendRefs(), overlaysRef.current, null, decimals, isCompact(chart));
+      }
+    });
     ro.observe(host);
 
     return () => {
@@ -489,7 +512,7 @@ export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, 
     ov.ma.forEach(s => s.applyOptions({ visible: overlays.ma }));
     ov.ema.forEach(s => s.applyOptions({ visible: overlays.ema }));
     ov.boll.forEach(s => s.applyOptions({ visible: overlays.boll }));
-    renderOverlayLegend(ov, legendRefs(), overlays, null, decimals);
+    renderOverlayLegend(ov, legendRefs(), overlays, null, decimals, chartRef.current ? isCompact(chartRef.current) : false);
   }, [overlays, decimals, legendRefs]);
 
   // 主题切换：只改颜色，不重建
@@ -533,7 +556,7 @@ export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, 
     if (ovRef.current) {
       updateOverlayLast(ovRef.current, barsRef.current);
       if (hoverRef.current.time === null) {
-        renderOverlayLegend(ovRef.current, legendRefs(), overlaysRef.current, null, decimals);
+        renderOverlayLegend(ovRef.current, legendRefs(), overlaysRef.current, null, decimals, chartRef.current ? isCompact(chartRef.current) : false);
       }
     }
     if (hoverRef.current.time === bar.time) showTipRef.current(bar, hoverRef.current.x, hoverRef.current.y);
@@ -561,7 +584,7 @@ export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, 
     if (ovRef.current) {
       updateOverlayLast(ovRef.current, barsRef.current);
       if (hoverRef.current.time === null) {
-        renderOverlayLegend(ovRef.current, legendRefs(), overlaysRef.current, null, decimals);
+        renderOverlayLegend(ovRef.current, legendRefs(), overlaysRef.current, null, decimals, chartRef.current ? isCompact(chartRef.current) : false);
       }
     }
     if (hoverRef.current.time === time) showTipRef.current(bar, hoverRef.current.x, hoverRef.current.y);

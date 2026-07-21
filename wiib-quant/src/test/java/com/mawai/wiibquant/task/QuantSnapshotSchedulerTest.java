@@ -24,6 +24,29 @@ import static org.mockito.Mockito.when;
 
 class QuantSnapshotSchedulerTest {
 
+    /**
+     * 关轨后 bar 收盘不该再触发分析——这个开关是拿来停自动烧钱的，
+     * 漏了就是关了以为省钱、实际还在调模型。
+     */
+    @Test
+    void analysisDisabledSilencesKlineClosedTrigger() throws Exception {
+        QuantSnapshotGraphFactory factory = mock(QuantSnapshotGraphFactory.class);
+        CompiledGraph graph = mock(CompiledGraph.class);
+        MarketDataService marketDataService = mock(MarketDataService.class);
+        when(factory.get()).thenReturn(graph);
+        when(marketDataService.assemble(any())).thenReturn(MarketAssembly.unavailable("BTCUSDT", Map.of()));
+
+        QuantSnapshotScheduler scheduler = new QuantSnapshotScheduler(
+                factory, marketDataService, mock(PriceVolatilitySentinel.class), new FakeKlineHistoryStore(),
+                3600_000L, 900_000L, false);
+
+        scheduler.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", System.currentTimeMillis()));
+
+        Thread.sleep(200);   // 触发是异步的，给它一点时间证明"确实没跑"
+        verify(graph, org.mockito.Mockito.never())
+                .invoke(org.mockito.ArgumentMatchers.<Map<String, Object>>any());
+    }
+
     @Test
     void deduplicatesSameKlineCloseTimeWhileRunning() throws Exception {
         QuantSnapshotGraphFactory factory = mock(QuantSnapshotGraphFactory.class);
@@ -41,7 +64,7 @@ class QuantSnapshotSchedulerTest {
 
         QuantSnapshotScheduler scheduler = new QuantSnapshotScheduler(
                 factory, marketDataService, mock(PriceVolatilitySentinel.class), new FakeKlineHistoryStore(),
-                3600_000L, 900_000L);
+                3600_000L, 900_000L, true);
 
         long closeTime = System.currentTimeMillis();
         scheduler.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", closeTime));
@@ -74,7 +97,7 @@ class QuantSnapshotSchedulerTest {
 
         QuantSnapshotScheduler scheduler = new QuantSnapshotScheduler(
                 factory, marketDataService, mock(PriceVolatilitySentinel.class), store,
-                3600_000L, 900_000L);
+                3600_000L, 900_000L, true);
 
         scheduler.onForecastRequest(new QuantForecastRequestEvent(this, "btcusdt", 0L, "sentinel", true));
 
@@ -103,7 +126,7 @@ class QuantSnapshotSchedulerTest {
 
         QuantSnapshotScheduler scheduler = new QuantSnapshotScheduler(
                 factory, marketDataService, mock(PriceVolatilitySentinel.class), new FakeKlineHistoryStore(),
-                3600_000L, 900_000L);
+                3600_000L, 900_000L, true);
 
         long closeTime = System.currentTimeMillis();
         scheduler.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", closeTime));
@@ -145,7 +168,7 @@ class QuantSnapshotSchedulerTest {
 
         QuantSnapshotScheduler scheduler = new QuantSnapshotScheduler(
                 factory, marketDataService, mock(PriceVolatilitySentinel.class), new FakeKlineHistoryStore(),
-                3600_000L, 900_000L);
+                3600_000L, 900_000L, true);
 
         long closeTime = System.currentTimeMillis();
         // 冷启动首根 bar：深研判放行并被 latch 挂住（在飞）
@@ -180,7 +203,7 @@ class QuantSnapshotSchedulerTest {
 
         QuantSnapshotScheduler scheduler = new QuantSnapshotScheduler(
                 factory, marketDataService, mock(PriceVolatilitySentinel.class), store,
-                3600_000L, 900_000L);
+                3600_000L, 900_000L, true);
 
         // 第一次哨兵插队：冷启动可深研判
         scheduler.onForecastRequest(new QuantForecastRequestEvent(this, "BTCUSDT", closeTime, "sentinel", true));

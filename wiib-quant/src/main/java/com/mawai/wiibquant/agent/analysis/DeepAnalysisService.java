@@ -14,6 +14,7 @@ import com.mawai.wiibquant.agent.toolkit.QuantLlm;
 import com.mawai.wiibquant.mapper.QuantDeepAnalysisMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
 import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.stereotype.Service;
 
@@ -131,9 +132,6 @@ public class DeepAnalysisService {
                 return null;
             }
             DeepAnalysisResponse parsed = JUDGE_CONVERTER.convert(JsonUtils.extractJson(response));
-            if (parsed == null) {
-                return null;
-            }
             return toEntity(symbol, closeTime, snapshotId, triggerSource,
                     newsContext, bullArgument, bearArgument, parsed);
         } catch (Exception e) {
@@ -215,17 +213,7 @@ public class DeepAnalysisService {
     private QuantDeepAnalysis toEntity(String symbol, long closeTime, Long snapshotId, String triggerSource,
                                        String newsContext, String bull, String bear, DeepAnalysisResponse r) {
         // 情景分布归一化到 100（LLM 偶尔差 1-3）
-        int bullPct = r.bullPct() != null ? Math.max(0, r.bullPct()) : 33;
-        int rangePct = r.rangePct() != null ? Math.max(0, r.rangePct()) : 34;
-        int bearPct = r.bearPct() != null ? Math.max(0, r.bearPct()) : 33;
-        int sum = bullPct + rangePct + bearPct;
-        if (sum > 0 && sum != 100) {
-            rangePct += 100 - sum;
-        }
-        JSONObject scenarios = new JSONObject();
-        scenarios.put("bullPct", bullPct);
-        scenarios.put("rangePct", rangePct);
-        scenarios.put("bearPct", bearPct);
+        JSONObject scenarios = getScenarios(r);
 
         QuantDeepAnalysis entity = new QuantDeepAnalysis();
         entity.setSymbol(symbol);
@@ -242,6 +230,21 @@ public class DeepAnalysisService {
         entity.setNewsContext(newsContext);
         entity.setCreatedAt(LocalDateTime.now());
         return entity;
+    }
+
+    private static @NonNull JSONObject getScenarios(DeepAnalysisResponse r) {
+        int bullPct = r.bullPct() != null ? Math.max(0, r.bullPct()) : 33;
+        int rangePct = r.rangePct() != null ? Math.max(0, r.rangePct()) : 34;
+        int bearPct = r.bearPct() != null ? Math.max(0, r.bearPct()) : 33;
+        int sum = bullPct + rangePct + bearPct;
+        if (sum > 0 && sum != 100) {
+            rangePct += 100 - sum;
+        }
+        JSONObject scenarios = new JSONObject();
+        scenarios.put("bullPct", bullPct);
+        scenarios.put("rangePct", rangePct);
+        scenarios.put("bearPct", bearPct);
+        return scenarios;
     }
 
 }

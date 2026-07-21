@@ -82,7 +82,7 @@ trading:
 # 注意跟 quant.deep-analysis.* 区分：那两项是本轨内部深研判的定频与冷却，此项是整轨开关
 quant:
   analysis:
-    enabled: false
+    enabled: true
 
 # 插拔式策略实盘信号运行时：默认关闭；启用后读取实时流并记录 LIVE 信号
 strategy:

@@ -195,7 +195,10 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
       <div className="grid lg:grid-cols-5 gap-5 items-stretch">
         {/* 左：图表 + BTC预测入口 */}
         <div className="lg:col-span-3 flex flex-col gap-5">
-          <Card className="flex-1 flex flex-col">
+          {/* 手机上让图表卡突破页面 p-4 贴到屏幕边：宽度是看 K 线最稀缺的资源，
+              320 宽的机器上光 padding 就吃掉 48px(页面32+卡内16)。贴边就没地方画
+              neu 阴影了，所以同时收掉圆角，PC 端(md+)完全保持原样 */}
+          <Card className="flex-1 flex flex-col -mx-4 md:mx-0 rounded-none md:rounded-2xl">
             <CardHeader className="pb-2 pt-5 px-5">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base font-black">走势</CardTitle>
@@ -211,12 +214,13 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="p-2 flex-1 flex flex-col">
+            <CardContent className="p-0 md:p-2 flex-1 flex flex-col">
               {/* 现货/合约统一 K 线：合约走后端K线广播，现货由价格流驱动最后一根；
                   高度跟随右侧面板拉伸。主图:MACD:RSI=3:1:1，比纯 K 线时多要了两格，
-                  所以底线抬到 PC 720 / 手机 520，否则主图蜡烛被压得看不清 */}
+                  所以底线抬到 PC 720 / 手机 520，否则主图蜡烛被压得看不清。
+                  矮视口(手机横屏)按视口高度收，否则 520 的底线会把图顶出屏幕外要滚动才看得全 */}
               {activeTab < TABS.length && (
-                <div className="flex-1 min-h-[520px] md:min-h-[720px]">
+                <div className="flex-1 min-h-[520px] md:min-h-[720px] [@media(max-height:600px)]:min-h-[300px]">
                   <CandleChart
                     key={mode}
                     symbol={symbol}
@@ -230,7 +234,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                 </div>
               )}
               {/* 高级：TradingView（合约/现货各自 symbol） */}
-              {activeTab === TV_TAB && <div className="flex-1 min-h-[400px] md:min-h-[560px]"><TradingViewWidget symbol={isFuturesMode ? cfg.futuresTvSymbol : cfg.tvSymbol} label={cfg.name} /></div>}
+              {activeTab === TV_TAB && <div className="flex-1 min-h-[400px] md:min-h-[560px] [@media(max-height:600px)]:min-h-[300px]"><TradingViewWidget symbol={isFuturesMode ? cfg.futuresTvSymbol : cfg.tvSymbol} label={cfg.name} /></div>}
             </CardContent>
           </Card>
 

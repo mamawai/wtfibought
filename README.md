@@ -16,7 +16,7 @@
 
 用户通过 LinuxDo OAuth 登录，用虚拟资金体验代币化美股、加密货币现货 / 永续合约、大宗商品、BTC 5 分钟涨跌预测和小游戏，并观察一套"只预测不下单"的 AI 量化研判。
 
-线上地址：https://linuxdo.stockgame.icu
+线上地址：https://wtfibought.com
 
 </div>
 
@@ -282,8 +282,8 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/mamawai/whatifibought.git
-cd whatifibought
+git clone https://github.com/mamawai/wtfibought.git
+cd wtfibought
 ```
 
 ### 2. 初始化数据库
