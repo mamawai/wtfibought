@@ -77,6 +77,13 @@ management:
 trading:
   decision-interval: M5
 
+# AI 分析轨总开关：关掉后快照/深研判/预测验证不再自动跑（bar 收盘、哨兵异动、兜底 cron 全静默），
+# Admin 页手动触发不受影响。只管这一轨——因子采集归 factor.*.enabled，策略与下单归下面 strategy.*
+# 注意跟 quant.deep-analysis.* 区分：那两项是本轨内部深研判的定频与冷却，此项是整轨开关
+quant:
+  analysis:
+    enabled: false
+
 # 插拔式策略实盘信号运行时：默认关闭；启用后读取实时流并记录 LIVE 信号
 strategy:
   runtime:
@@ -85,7 +92,7 @@ strategy:
     liquidation-window-minutes: 30
     liquidation-threshold-usdt: 500000
   execution:
-    enabled: true           # 执行总开关；默认关
+    enabled: true           # 执行总开关：当前=开，正在往下面 target 真下单（代码 @Value 默认为 false）
     target: sim              # sim=本平台模拟盘(每策略独立账户 quant-<ID>) | testnet=Binance Testnet
     # 执行白名单=四策略部署篮子并集(FIBO:BTC/ETH · LIQFADE:BTC/ETH/DOGE · SQZMOM:SOL/DOGE/XRP · TURTLE:SOL/ETH/DOGE/BNB)
     symbols: BTCUSDT,ETHUSDT,DOGEUSDT,SOLUSDT,XRPUSDT,BNBUSDT

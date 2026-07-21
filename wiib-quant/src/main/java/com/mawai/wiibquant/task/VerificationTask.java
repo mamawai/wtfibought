@@ -7,6 +7,7 @@ import com.mawai.wiibquant.agent.quant.domain.KlineClosedEvent;
 import com.mawai.wiibquant.agent.research.ForecastHorizon;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -28,6 +29,10 @@ public class VerificationTask {
     private final VolVerificationService volVerificationService;
     private final NarrativeVerificationService narrativeVerificationService;
 
+    /** 与 QuantSnapshotScheduler 同一个开关：关掉后本轨自动对账停跑，Admin 手动验证走 service 不受影响 */
+    @Value("${quant.analysis.enabled:true}")
+    private boolean analysisEnabled;
+
     /** 每 symbol 在飞防抖：上一轮没扫完不叠加（幂等，漏了有 cron 兜底）。 */
     private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
     /** 叙事扫描是全局的（不分 symbol），单独防抖免得多 symbol 同刻收盘时重复扫。 */
@@ -36,6 +41,9 @@ public class VerificationTask {
     /** 主触发：5m bar 收盘即对账（快照/研判只产于 WATCH_SYMBOLS，其余 symbol 的 bar 不进本轨）。 */
     @EventListener
     public void onKlineClosed(KlineClosedEvent event) {
+        if (!analysisEnabled) {
+            return;
+        }
         if (!"5m".equalsIgnoreCase(event.interval())) {
             return;
         }
@@ -58,6 +66,9 @@ public class VerificationTask {
     /** 兜底 cron：WS 断流/事件丢失时每小时扫平欠账。 */
     @Scheduled(cron = "0 10 * * * *")
     public void verifyDuePoints() {
+        if (!analysisEnabled) {
+            return;
+        }
         for (String symbol : QuantConstants.WATCH_SYMBOLS) {
             verifySymbol(normalize(symbol));
         }

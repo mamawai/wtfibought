@@ -36,19 +36,26 @@ public class QuantSnapshotScheduler {
     private final long deepIntervalMs;
     /** 插队冷却：哨兵/手动触发后，冷却期内的再次插队只产快照不烧 LLM */
     private final long deepCooldownMs;
+    /** 分析轨总开关：关掉后自动入口（bar 收盘/哨兵/兜底 cron）全部静默，Admin 手动触发不受影响 */
+    private final boolean analysisEnabled;
 
     public QuantSnapshotScheduler(QuantSnapshotGraphFactory graphFactory,
                                   MarketDataService marketDataService,
                                   PriceVolatilitySentinel priceVolatilitySentinel,
                                   KlineHistoryStore historyStore,
                                   @Value("${quant.deep-analysis.interval-ms:3600000}") long deepIntervalMs,
-                                  @Value("${quant.deep-analysis.cooldown-ms:900000}") long deepCooldownMs) {
+                                  @Value("${quant.deep-analysis.cooldown-ms:900000}") long deepCooldownMs,
+                                  @Value("${quant.analysis.enabled:true}") boolean analysisEnabled) {
         this.graphFactory = graphFactory;
         this.marketDataService = marketDataService;
         this.priceVolatilitySentinel = priceVolatilitySentinel;
         this.historyStore = historyStore;
         this.deepIntervalMs = deepIntervalMs;
         this.deepCooldownMs = deepCooldownMs;
+        this.analysisEnabled = analysisEnabled;
+        if (!analysisEnabled) {
+            log.warn("量化分析轨已关闭(quant.analysis.enabled=false)：快照/深研判/验证不自动跑，Admin 手动触发仍可用");
+        }
     }
 
     /** 每个 symbol 最近成功处理的 5m closeTime。 */
@@ -62,21 +69,24 @@ public class QuantSnapshotScheduler {
     /** 主触发：5m K 线收盘。 */
     @EventListener
     public void onKlineClosed(KlineClosedEvent event) {
+        if (!analysisEnabled) return;
         if (!"5m".equalsIgnoreCase(event.interval())) return;
         // 快照/研判轨只跑 WATCH_SYMBOLS：策略篮子币(SOL/XRP等)的 bar 不进本轨，防深研判 LLM 成本随行情币扩容翻倍
         if (!QuantConstants.WATCH_SYMBOLS.contains(QuantConstants.normalizeSymbolLenient(event.symbol()))) return;
         triggerSnapshot(event.symbol(), event.closeTime(), "kline_close", false);
     }
 
-    /** 哨兵价格异动 / 手动请求事件；归一化与 closeTime 解析统一在 triggerSnapshot 做一次。 */
+    /** 哨兵价格异动事件（唯一发布方 PriceVolatilitySentinel，属自动轨）；归一化与 closeTime 解析统一在 triggerSnapshot 做一次。 */
     @EventListener
     public void onForecastRequest(QuantForecastRequestEvent event) {
+        if (!analysisEnabled) return;
         triggerSnapshot(event.getSymbol(), event.getCloseTime(), event.getRequestSource(), event.isForce());
     }
 
     /** 兜底 cron：每 5 分钟检查是否有新闭合 bar 未处理，防止 WS 落后。 */
     @Scheduled(cron = "0 */5 * * * *")
     public void watchdogFallback() {
+        if (!analysisEnabled) return;
         for (String symbol : QuantConstants.WATCH_SYMBOLS) {
             String normalized = QuantConstants.normalizeSymbolLenient(symbol);
             long now = System.currentTimeMillis();
@@ -95,7 +105,10 @@ public class QuantSnapshotScheduler {
         }
     }
 
-    /** 手动触发（Controller 用）；closeTime 传 0 由 triggerSnapshot 解析到最新闭合 bar。 */
+    /**
+     * 手动触发（Controller 用）；closeTime 传 0 由 triggerSnapshot 解析到最新闭合 bar。
+     * 刻意不受 analysisEnabled 约束：关轨是为了停自动烧钱，人手点的单次调试仍要能跑。
+     */
     public void runSnapshot(String symbol) {
         triggerSnapshot(symbol, 0L, "manual", true);
     }
