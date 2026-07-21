@@ -4,7 +4,7 @@ import com.mawai.wiibcommon.dto.CommentDTO;
 import com.mawai.wiibcommon.entity.Comment;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibsim.mapper.CommentMapper;
-import com.mawai.wiibsim.mapper.CommentNotificationMapper;
+import com.mawai.wiibsim.mapper.NotificationMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,7 +55,7 @@ class CommentQueryTest {
         when(redis.opsForSet()).thenReturn(setOps);
         when(setOps.isMember(anyString(), anyString())).thenReturn(false);
 
-        service = new CommentService(commentMapper, mock(CommentNotificationMapper.class),
+        service = new CommentService(commentMapper, mock(NotificationMapper.class),
                 mock(UserMapper.class), redis, mock(NotificationPushService.class));
     }
 

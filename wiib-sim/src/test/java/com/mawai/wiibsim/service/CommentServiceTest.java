@@ -1,11 +1,11 @@
 package com.mawai.wiibsim.service;
 
 import com.mawai.wiibcommon.entity.Comment;
-import com.mawai.wiibcommon.entity.CommentNotification;
+import com.mawai.wiibcommon.entity.Notification;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibsim.mapper.CommentMapper;
-import com.mawai.wiibsim.mapper.CommentNotificationMapper;
+import com.mawai.wiibsim.mapper.NotificationMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,7 +45,7 @@ class CommentServiceTest {
     private static final long NEW_COMMENT_ID = 1001L;
 
     private CommentMapper commentMapper;
-    private CommentNotificationMapper notificationMapper;
+    private NotificationMapper notificationMapper;
     private UserMapper userMapper;
     private ValueOperations<String, String> valueOps;
     private CommentService service;
@@ -54,7 +54,7 @@ class CommentServiceTest {
     @BeforeEach
     void setUp() {
         commentMapper = mock(CommentMapper.class);
-        notificationMapper = mock(CommentNotificationMapper.class);
+        notificationMapper = mock(NotificationMapper.class);
         userMapper = mock(UserMapper.class);
 
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
@@ -126,12 +126,12 @@ class CommentServiceTest {
 
         service.post(ME, "回复一下", 100L, OTHER);
 
-        ArgumentCaptor<CommentNotification> captor = ArgumentCaptor.forClass(CommentNotification.class);
+        ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
         verify(notificationMapper).insert(captor.capture());
-        CommentNotification n = captor.getValue();
+        Notification n = captor.getValue();
         assertEquals(OTHER, n.getUserId());                            // 接收者=被回复的人
         assertEquals(ME, n.getActorId());
-        assertEquals(CommentNotification.TYPE_REPLY, n.getType());
+        assertEquals(Notification.TYPE_REPLY, n.getType());
         assertEquals(NEW_COMMENT_ID, n.getCommentId());                // 跳转目标=我这条新回复
         assertFalse(n.getIsRead());
     }
@@ -142,7 +142,7 @@ class CommentServiceTest {
 
         service.post(ME, "自己补一句", 100L, ME);
 
-        verify(notificationMapper, never()).insert(any(CommentNotification.class));
+        verify(notificationMapper, never()).insert(any(Notification.class));
     }
 
     @Test
@@ -150,7 +150,7 @@ class CommentServiceTest {
         // 根评论没有"回复谁"，客户端硬塞 replyToUserId 也不该产生通知
         service.post(ME, "开个新话题", null, OTHER);
 
-        verify(notificationMapper, never()).insert(any(CommentNotification.class));
+        verify(notificationMapper, never()).insert(any(Notification.class));
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentMapper).insert(captor.capture());
         assertEquals(null, captor.getValue().getReplyToUserId());
@@ -200,7 +200,7 @@ class CommentServiceTest {
         assertThrows(BizException.class, () -> service.post(ME, "骚扰", 100L, 12345L));
 
         verify(commentMapper, never()).insert(any(Comment.class));
-        verify(notificationMapper, never()).insert(any(CommentNotification.class));
+        verify(notificationMapper, never()).insert(any(Notification.class));
     }
 
     @Test

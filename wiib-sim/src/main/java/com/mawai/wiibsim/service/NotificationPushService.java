@@ -1,6 +1,6 @@
 package com.mawai.wiibsim.service;
 
-import com.mawai.wiibsim.mapper.CommentNotificationMapper;
+import com.mawai.wiibsim.mapper.NotificationMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -22,7 +22,7 @@ import java.util.Map;
 public class NotificationPushService {
 
     private final SimpMessagingTemplate messagingTemplate;
-    private final CommentNotificationMapper notificationMapper;
+    private final NotificationMapper notificationMapper;
 
     /** 事务提交后推最新未读数给接收者。多标签页时该用户每条连接都会收到 */
     public void pushUnreadAfterCommit(long receiverId) {

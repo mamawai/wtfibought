@@ -1,11 +1,11 @@
 package com.mawai.wiibsim.service;
 
 import com.mawai.wiibcommon.entity.Comment;
-import com.mawai.wiibcommon.entity.CommentNotification;
+import com.mawai.wiibcommon.entity.Notification;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibsim.mapper.CommentMapper;
-import com.mawai.wiibsim.mapper.CommentNotificationMapper;
+import com.mawai.wiibsim.mapper.NotificationMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,7 +43,7 @@ class CommentVoteTest {
     private static final long COMMENT_ID = 42L;
 
     private CommentMapper commentMapper;
-    private CommentNotificationMapper notificationMapper;
+    private NotificationMapper notificationMapper;
     private UserMapper userMapper;
     private StringRedisTemplate redis;
     private SetOperations<String, String> setOps;
@@ -53,7 +53,7 @@ class CommentVoteTest {
     @BeforeEach
     void setUp() {
         commentMapper = mock(CommentMapper.class);
-        notificationMapper = mock(CommentNotificationMapper.class);
+        notificationMapper = mock(NotificationMapper.class);
         userMapper = mock(UserMapper.class);
 
         redis = mock(StringRedisTemplate.class);
@@ -98,19 +98,19 @@ class CommentVoteTest {
         assertThrows(BizException.class, () -> service.vote(ME, COMMENT_ID, false));
 
         verify(commentMapper, never()).incrementVote(anyLong(), anyBoolean());
-        verify(notificationMapper, never()).insert(any(CommentNotification.class));
+        verify(notificationMapper, never()).insert(any(Notification.class));
     }
 
     @Test
     void likeNotifiesAuthor() {
         service.vote(ME, COMMENT_ID, true);
 
-        ArgumentCaptor<CommentNotification> captor = ArgumentCaptor.forClass(CommentNotification.class);
+        ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
         verify(notificationMapper).insert(captor.capture());
-        CommentNotification n = captor.getValue();
+        Notification n = captor.getValue();
         assertEquals(AUTHOR, n.getUserId());
         assertEquals(ME, n.getActorId());
-        assertEquals(CommentNotification.TYPE_LIKE, n.getType());
+        assertEquals(Notification.TYPE_LIKE, n.getType());
         assertEquals(COMMENT_ID, n.getCommentId());   // 跳转目标=作者自己那条被赞的评论
     }
 
@@ -119,7 +119,7 @@ class CommentVoteTest {
         service.vote(ME, COMMENT_ID, false);
 
         verify(commentMapper).incrementVote(COMMENT_ID, false);
-        verify(notificationMapper, never()).insert(any(CommentNotification.class));
+        verify(notificationMapper, never()).insert(any(Notification.class));
     }
 
     @Test
@@ -129,7 +129,7 @@ class CommentVoteTest {
         service.vote(ME, COMMENT_ID, true);
 
         verify(commentMapper).incrementVote(COMMENT_ID, true);
-        verify(notificationMapper, never()).insert(any(CommentNotification.class));
+        verify(notificationMapper, never()).insert(any(Notification.class));
     }
 
     @Test

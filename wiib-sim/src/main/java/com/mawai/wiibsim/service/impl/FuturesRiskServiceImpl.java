@@ -18,6 +18,7 @@ import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
+import com.mawai.wiibsim.service.TradeNotificationService;
 import com.mawai.wiibsim.util.RedisLockUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -44,6 +45,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
     private final FuturesPositionIndexService positionIndexService;
     private final FuturesLeverageBracketRegistry bracketRegistry;
     private final CrossMarginService crossMarginService;
+    private final TradeNotificationService tradeNotificationService;
 
     // ==================== 设置止损 ====================
 
@@ -209,6 +211,9 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         orderMapper.insert(order);
 
         log.warn("futures强制平仓 posId={} userId={} price={} pnl={}", position.getId(), position.getUserId(), price, pnl);
+
+        // 挂在 CAS 之后：巡检和价格触发两条路径都汇到这儿，重复调用被 casClosePosition 挡掉了，不会重复通知
+        tradeNotificationService.liquidation(position, price, pnl);
     }
 
     // ==================== 检查并强平 ====================
@@ -364,6 +369,9 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
         log.info("futures批量{}平仓 posId={} ids={} qty={} price={} pnl={}",
                 isStopLoss ? "止损" : "止盈", positionId, ids, totalCloseQty, price, pnl);
+
+        // 用 totalCloseQty 不用 position.getQuantity()：保护单可部分平仓，后者会把"平了0.2"说成"平了0.5"
+        tradeNotificationService.protectiveClose(position, totalCloseQty, price, pnl, isStopLoss);
     }
 
     // ==================== 内部工具 ====================

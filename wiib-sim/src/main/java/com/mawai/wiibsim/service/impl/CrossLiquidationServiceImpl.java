@@ -11,6 +11,7 @@ import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.TradeNotificationService;
 import com.mawai.wiibsim.util.RedisLockUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +36,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
     private final RedisLockUtil redisLockUtil;
+    private final TradeNotificationService tradeNotificationService;
 
     @Override
     public void onPriceTick(String symbol) {
@@ -122,6 +124,8 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
         if (closed == 0) return;
 
         log.warn("全仓爆仓 userId={} 平仓数={} 结算={}", userId, closed, settle);
+        // 合并成一条：每仓一条会把信封刷满。closed 只统计 CAS 抢到的仓位，并发手动平仓的那些不算进来
+        tradeNotificationService.crossLiquidation(userId, closed, settle);
         // 占用制下保证金没离开过余额，结算只记盈亏净额；全平后已无全仓仓位，扣穿由 settle 触发破产
         crossMarginService.settle(userId, settle);
     }

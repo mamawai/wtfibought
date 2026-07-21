@@ -3,7 +3,7 @@ package com.mawai.wiibsim.controller;
 import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.dto.NotificationDTO;
 import com.mawai.wiibcommon.util.Result;
-import com.mawai.wiibsim.mapper.CommentNotificationMapper;
+import com.mawai.wiibsim.mapper.NotificationMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -23,7 +23,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class NotificationController {
 
-    private final CommentNotificationMapper notificationMapper;
+    private final NotificationMapper notificationMapper;
 
     @GetMapping
     @Operation(summary = "最近50条通知（前端按 type+commentId 合并展示）")

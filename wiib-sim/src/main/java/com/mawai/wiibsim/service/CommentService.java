@@ -2,12 +2,12 @@ package com.mawai.wiibsim.service;
 
 import com.mawai.wiibcommon.dto.CommentDTO;
 import com.mawai.wiibcommon.entity.Comment;
-import com.mawai.wiibcommon.entity.CommentNotification;
+import com.mawai.wiibcommon.entity.Notification;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibsim.mapper.CommentMapper;
-import com.mawai.wiibsim.mapper.CommentNotificationMapper;
+import com.mawai.wiibsim.mapper.NotificationMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -57,7 +57,7 @@ public class CommentService {
     private static final int MAX_CONTEXT_CHILDREN = 200;
 
     private final CommentMapper commentMapper;
-    private final CommentNotificationMapper notificationMapper;
+    private final NotificationMapper notificationMapper;
     private final UserMapper userMapper;
     private final StringRedisTemplate redis;
     private final NotificationPushService pushService;
@@ -144,7 +144,7 @@ public class CommentService {
 
         if (replyTo != null && replyTo != userId) {
             // 跳转目标是我这条新回复：对方点通知要看到"谁回了我什么"
-            insertNotification(replyTo, userId, CommentNotification.TYPE_REPLY, c.getId());
+            insertNotification(replyTo, userId, Notification.TYPE_REPLY, c.getId());
         }
         return c;
     }
@@ -175,7 +175,10 @@ public class CommentService {
         // 只在刚建 Set 时设过期。每次投票都 expire 等于把 TTL 一直往后推，
         // 热门评论只要 30 天内有人表态就永不过期，那这 Set 就是永久堆着了
         Long ttl = redis.getExpire(key);
-        if (ttl < 0) {
+        // 判 null 不能省：getExpire 是包装类型，拿不到时返回 null，直接比大小会拆箱 NPE。
+        // 而这里一 NPE，上面 SADD 抢到的去重位就白占了——Redis 不跟着事务回滚，
+        // 用户这一票既没记上、重投又被"你已经表过态了"挡住
+        if (ttl == null || ttl < 0) {
             redis.expire(key, VOTE_TTL);
         }
 
@@ -183,7 +186,7 @@ public class CommentService {
 
         // 踩不通知；赞自己的也不通知
         if (like && c.getUserId() != userId) {
-            insertNotification(c.getUserId(), userId, CommentNotification.TYPE_LIKE, commentId);
+            insertNotification(c.getUserId(), userId, Notification.TYPE_LIKE, commentId);
         }
     }
 
@@ -331,7 +334,7 @@ public class CommentService {
     // ---------------- 内部 ----------------
 
     private void insertNotification(long receiverId, long actorId, int type, long commentId) {
-        CommentNotification n = new CommentNotification();
+        Notification n = new Notification();
         n.setUserId(receiverId);
         n.setActorId(actorId);
         n.setType(type);

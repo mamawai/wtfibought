@@ -734,25 +734,55 @@ CREATE INDEX IF NOT EXISTS idx_comment_child ON comment(root_id, created_at DESC
 CREATE INDEX IF NOT EXISTS idx_comment_root ON comment(created_at DESC) WHERE root_id IS NULL AND status = 1;
 
 -- ============================================
--- 28. 评论通知（赞/回复，踩不通知）
+-- 28. 通知（评论赞/回复 + 交易事件）
 -- ============================================
-CREATE TABLE IF NOT EXISTS comment_notification (
+-- 表原名 comment_notification，加交易通知后语义不再局限于评论，改名 notification。
+-- 先改名再建表：老库走 RENAME（索引跟着表走，不用重建），新库走下面的 CREATE。
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'comment_notification')
+       AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'notification') THEN
+        ALTER TABLE comment_notification RENAME TO notification;
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS notification (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
-    actor_id BIGINT NOT NULL,
     type SMALLINT NOT NULL,
-    comment_id BIGINT NOT NULL,
+    -- 评论类才有：交易通知是系统触发的，没有 actor，也不指向任何评论
+    actor_id BIGINT,
+    comment_id BIGINT,
+    -- 交易类才有
+    symbol VARCHAR(20),
+    side VARCHAR(8),
+    quantity NUMERIC(28,10),
+    price NUMERIC(28,10),
+    pnl NUMERIC(28,10),
     is_read BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-COMMENT ON TABLE comment_notification IS '评论通知（赞/回复，踩不通知；自己操作自己不通知）';
-COMMENT ON COLUMN comment_notification.user_id IS '接收者';
-COMMENT ON COLUMN comment_notification.actor_id IS '触发者（谁赞的/谁回复的）';
-COMMENT ON COLUMN comment_notification.type IS '1=赞 2=回复';
-COMMENT ON COLUMN comment_notification.comment_id IS '点击后要定位的评论：赞=自己被赞的那条，回复=对方那条回复';
+-- 老库补齐：原表这两列是 NOT NULL，交易通知填不上
+ALTER TABLE notification ALTER COLUMN actor_id DROP NOT NULL;
+ALTER TABLE notification ALTER COLUMN comment_id DROP NOT NULL;
+ALTER TABLE notification ADD COLUMN IF NOT EXISTS symbol VARCHAR(20);
+ALTER TABLE notification ADD COLUMN IF NOT EXISTS side VARCHAR(8);
+ALTER TABLE notification ADD COLUMN IF NOT EXISTS quantity NUMERIC(28,10);
+ALTER TABLE notification ADD COLUMN IF NOT EXISTS price NUMERIC(28,10);
+ALTER TABLE notification ADD COLUMN IF NOT EXISTS pnl NUMERIC(28,10);
 
-CREATE INDEX IF NOT EXISTS idx_notif_unread ON comment_notification(user_id, is_read, created_at DESC);
+COMMENT ON TABLE notification IS '通知：评论赞/回复 + 交易事件（强平/止损/止盈/全仓爆仓）';
+COMMENT ON COLUMN notification.user_id IS '接收者';
+COMMENT ON COLUMN notification.type IS '1=赞 2=回复 3=逐仓强平 4=止损触发 5=止盈触发 6=全仓爆仓';
+COMMENT ON COLUMN notification.actor_id IS '触发者（谁赞的/谁回复的）；交易类为空';
+COMMENT ON COLUMN notification.comment_id IS '点击后要定位的评论：赞=自己被赞的那条，回复=对方那条回复；交易类为空';
+COMMENT ON COLUMN notification.symbol IS '交易对；全仓爆仓跨多个币种，为空';
+COMMENT ON COLUMN notification.side IS 'LONG/SHORT；全仓爆仓为空';
+COMMENT ON COLUMN notification.quantity IS '平掉的数量；type=6 时复用为"爆掉的仓位数"';
+COMMENT ON COLUMN notification.price IS '触发价；全仓爆仓为空';
+COMMENT ON COLUMN notification.pnl IS '已实现盈亏；type=6 时是全部仓位的净结算额';
+
+CREATE INDEX IF NOT EXISTS idx_notif_unread ON notification(user_id, is_read, created_at DESC);
 
 -- 禁言（评论区管理用）。重置账户刻意不清此列，否则被禁言者可靠重置逃避处罚
 ALTER TABLE "user" ADD COLUMN IF NOT EXISTS muted_until TIMESTAMP;
