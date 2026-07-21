@@ -35,6 +35,22 @@ export function fmtTime(ts: number | string | Date, withSeconds = false): string
   });
 }
 
+/**
+ * 相对时间："刚刚 / N分钟前 / N小时前 / N天前"，超过 7 天回落到 {@link fmtDateTime} 的绝对时间。
+ * 通知列表用——"3分钟前"比"07-21 14:23"更快让人判断这事新不新鲜。
+ */
+export function fmtRelative(ts: number | string | Date): string {
+  const then = new Date(ts).getTime();
+  if (!Number.isFinite(then)) return '-';
+  const diff = Date.now() - then;
+  // 时钟漂移/服务端时间超前时 diff 为负，按"刚刚"处理，不显示"-1分钟前"
+  if (diff < 60_000) return '刚刚';
+  if (diff < 3600_000) return Math.floor(diff / 60_000) + '分钟前';
+  if (diff < 86400_000) return Math.floor(diff / 3600_000) + '小时前';
+  if (diff < 7 * 86400_000) return Math.floor(diff / 86400_000) + '天前';
+  return fmtDateTime(ts);
+}
+
 /** 大额缩写：≥1亿 → X.XX亿，≥1万 → X.XX万，其余两位小数；null/NaN 返回 '-'。 */
 export function fmtMoney(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '-';

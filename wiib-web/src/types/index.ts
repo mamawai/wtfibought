@@ -688,14 +688,32 @@ export interface CommentItem {
 }
 
 /** 通知条目。前端按 type+commentId 分组合并展示，后端每次事件只管插一行。 */
+/** 评论类通知的 type */
+export type CommentNotifType = 1 | 2;
+/** 交易类通知的 type：3逐仓强平 4止损 5止盈 6全仓爆仓 */
+export type TradeNotifType = 3 | 4 | 5 | 6;
+
 export interface NotificationItem {
   id: number;
-  /** 1=赞 2=回复 */
-  type: 1 | 2;
-  /** 点击跳转目标：赞=自己被赞那条，回复=对方那条回复 */
-  commentId: number;
-  actorId: number;
-  actorName: string;
+  /** 1赞 2回复 3逐仓强平 4止损 5止盈 6全仓爆仓 */
+  type: CommentNotifType | TradeNotifType;
   isRead: boolean;
   createdAt: string;
+
+  // ---- 评论类专属（交易类为 null）----
+  /** 点击跳转目标：赞=自己被赞那条，回复=对方那条回复 */
+  commentId: number | null;
+  actorId: number | null;
+  actorName: string | null;
+
+  // ---- 交易类专属（评论类为 null）----
+  /** 全仓爆仓跨多币种，为 null */
+  symbol: string | null;
+  side: 'LONG' | 'SHORT' | null;
+  /** 平掉的数量；type=6 时是"爆掉的仓位数" */
+  quantity: number | null;
+  /** 触发价；全仓爆仓为 null */
+  price: number | null;
+  /** 已实现盈亏；type=6 时是净结算额 */
+  pnl: number | null;
 }
