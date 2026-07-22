@@ -7,7 +7,20 @@ import { useCryptoStream } from '../hooks/useCryptoStream';
 import { DecryptedText } from '../components/fx/DecryptedText';
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
-import { Loader2, Globe, BarChart3, Wallet, LineChart, LogIn } from 'lucide-react';
+import { Loader2, BarChart3, Wallet, LineChart, LogIn } from 'lucide-react';
+
+/** LinuxDo 官方三色圆 Logo（取自 linux.do favicon SVG） */
+function LinuxDoLogo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <clipPath id="linuxdo-clip"><circle cx="60" cy="60" r="47" /></clipPath>
+      <circle fill="#f0f0f0" cx="60" cy="60" r="50" />
+      <rect fill="#1c1c1e" clipPath="url(#linuxdo-clip)" x="10" y="10" width="100" height="30" />
+      <rect fill="#f0f0f0" clipPath="url(#linuxdo-clip)" x="10" y="40" width="100" height="40" />
+      <rect fill="#ffb003" clipPath="url(#linuxdo-clip)" x="10" y="80" width="100" height="30" />
+    </svg>
+  );
+}
 
 const LINUXDO_CONFIG = {
   clientId: 'toCFytIO9bCHpbUbFKM1mTgvy1ax8tG2',
@@ -290,7 +303,7 @@ export function Login() {
 
                 {mode.linuxDoEnabled && (
                   <Button variant="outline" className="w-full h-11" onClick={handleLinuxDoLogin}>
-                    <Globe className="w-4 h-4" />
+                    <LinuxDoLogo className="w-4 h-4" />
                     使用 LinuxDo 登录
                   </Button>
                 )}
