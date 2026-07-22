@@ -24,7 +24,7 @@ const RISK_TONE: Record<string, string> = {
 /** 拟物区块卡：浮起面板 + 主色图标标题，全页统一节奏。 */
 function SectionCard({ icon: Icon, title, children }: { icon: LucideIcon; title: string; children: ReactNode }) {
   return (
-    <div className="rounded-xl neu-raised-sm p-4 sm:p-5 space-y-3">
+    <div className="rounded-lg pt-card p-4 sm:p-5 space-y-3">
       <div className="flex items-center gap-2 text-sm font-black">
         <Icon className="w-4 h-4 text-primary" /> {title}
       </div>
@@ -33,10 +33,10 @@ function SectionCard({ icon: Icon, title, children }: { icon: LucideIcon; title:
   );
 }
 
-/** 类别块：neu-flat 分组 + 2×2 指标网格（数值在上、标签退后，替代"标签: 值"挤行）。 */
+/** 类别块：边框分组 + 2×2 指标网格（数值在上、标签退后，替代"标签: 值"挤行）。 */
 function CategoryBlock({ icon: Icon, title, children }: { icon: LucideIcon; title: string; children: ReactNode }) {
   return (
-    <div className="rounded-lg neu-flat p-3">
+    <div className="rounded-md border border-border bg-card p-3">
       <div className="text-[11px] font-black text-muted-foreground flex items-center gap-1.5 mb-2.5">
         <Icon className="w-3.5 h-3.5" /> {title}
       </div>
@@ -83,7 +83,7 @@ export function AiAgent() {
 
   return (
     <div className="page-shell p-4 md:p-6 space-y-4">
-      <div className="rounded-xl neu-flat px-4 py-2.5 flex items-center gap-2.5 text-primary text-xs font-bold">
+      <div className="rounded-lg border border-border bg-card px-4 py-2.5 flex items-center gap-2.5 text-primary text-xs font-bold">
         <Zap className="w-4 h-4 shrink-0" />
         投资有风险，当前分析结果仅供参考不构成任何建议
         <Link to="/scorecard" className="ml-auto hidden sm:flex items-center gap-1 hover:underline shrink-0">
@@ -92,12 +92,12 @@ export function AiAgent() {
       </div>
 
       {/* Tab：内凹滑槽 + 浮起选中块（拟物分段控件） */}
-      <div className="neu-inset rounded-xl p-1 flex max-w-md">
+      <div className="border border-border bg-card-2 rounded-lg p-1 flex max-w-md">
         <button
           onClick={() => setTab('workbench')}
           className={cn(
             'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all',
-            tab === 'workbench' ? 'neu-raised-sm bg-background text-primary' : 'text-muted-foreground hover:text-foreground',
+            tab === 'workbench' ? 'bg-card border border-border bg-background text-primary' : 'text-muted-foreground hover:text-foreground',
           )}
         >
           <BrainCircuit className="w-4 h-4" />
@@ -107,7 +107,7 @@ export function AiAgent() {
           onClick={() => setTab('behavior')}
           className={cn(
             'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-bold transition-all',
-            tab === 'behavior' ? 'neu-raised-sm bg-background text-primary' : 'text-muted-foreground hover:text-foreground',
+            tab === 'behavior' ? 'bg-card border border-border bg-background text-primary' : 'text-muted-foreground hover:text-foreground',
           )}
         >
           <User className="w-4 h-4" />
@@ -122,9 +122,9 @@ export function AiAgent() {
       {tab === 'behavior' && (
         <div className="space-y-4 max-w-5xl">
           {!behaviorReport || !behaviorReport.overview ? (
-            <div className="rounded-xl neu-raised-sm p-8 sm:p-12 text-center">
+            <div className="rounded-lg pt-card p-8 sm:p-12 text-center">
               <div className={cn(
-                'w-16 h-16 rounded-2xl neu-flat bg-primary/10 flex items-center justify-center mx-auto mb-5',
+                'w-16 h-16 rounded-2xl border border-border bg-primary/10 flex items-center justify-center mx-auto mb-5',
                 behaviorLoading && 'animate-pulse',
               )}>
                 <Brain className="w-8 h-8 text-primary" />
@@ -146,13 +146,13 @@ export function AiAgent() {
               {/* 概览 */}
               <SectionCard icon={BarChart3} title="资产概览">
                 <div className="grid grid-cols-2 gap-2.5">
-                  <div className="rounded-lg neu-inset px-3.5 py-3">
+                  <div className="rounded-md border border-border bg-card-2 px-3.5 py-3">
                     <div className="text-xl sm:text-2xl font-black tabular-nums truncate leading-tight">
                       ${behaviorReport.overview.totalAssets.toLocaleString()}
                     </div>
                     <div className="text-[10px] text-muted-foreground mt-1">总资产</div>
                   </div>
-                  <div className="rounded-lg neu-inset px-3.5 py-3">
+                  <div className="rounded-md border border-border bg-card-2 px-3.5 py-3">
                     <div className={cn('text-xl sm:text-2xl font-black tabular-nums leading-tight',
                       behaviorReport.overview.totalProfitPct >= 0 ? 'text-gain' : 'text-loss')}>
                       {behaviorReport.overview.totalProfitPct >= 0 ? '+' : ''}{behaviorReport.overview.totalProfitPct.toFixed(2)}%
@@ -166,7 +166,7 @@ export function AiAgent() {
                     <div className="text-[10px] font-bold text-muted-foreground mb-2">资产分布</div>
                     <div className="flex flex-wrap gap-2">
                       {behaviorReport.overview.distribution.map((d, i) => (
-                        <span key={i} className="neu-flat rounded-full px-2.5 py-1 text-[11px] font-bold tabular-nums">
+                        <span key={i} className="border border-border rounded-full px-2.5 py-1 text-[11px] font-bold tabular-nums">
                           <span className="text-muted-foreground">{d.category}</span> ${d.value.toLocaleString()}
                         </span>
                       ))}
@@ -258,7 +258,7 @@ export function AiAgent() {
                 <SectionCard icon={CheckCircle2} title="个性化建议">
                   <ul className="space-y-2">
                     {behaviorReport.suggestions.map((s, i) => (
-                      <li key={i} className="flex items-start gap-2.5 rounded-lg neu-flat px-3 py-2.5 text-sm leading-relaxed">
+                      <li key={i} className="flex items-start gap-2.5 rounded-md border border-border bg-card px-3 py-2.5 text-sm leading-relaxed">
                         <CheckCircle2 className="w-4 h-4 text-gain shrink-0 mt-0.5" />
                         {s}
                       </li>

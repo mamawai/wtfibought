@@ -252,7 +252,7 @@ export function Portfolio() {
       )}
 
       {/* 总资产概览 */}
-      <div className={cn("relative rounded-2xl border border-primary/15", panel === 'wallet' || panel === 'profit' ? "" : "overflow-hidden")}
+      <div className={cn("relative rounded-lg border border-border", panel === 'wallet' || panel === 'profit' ? "" : "overflow-hidden")}
         style={{
           backgroundImage: `linear-gradient(135deg, color-mix(in oklab, var(--color-primary) 12%, var(--color-card)) 0%, var(--color-card) 60%), repeating-linear-gradient(0deg, transparent, transparent 24px, color-mix(in oklab, var(--color-border) 30%, transparent) 24px, color-mix(in oklab, var(--color-border) 30%, transparent) 25px), repeating-linear-gradient(90deg, transparent, transparent 24px, color-mix(in oklab, var(--color-border) 30%, transparent) 24px, color-mix(in oklab, var(--color-border) 30%, transparent) 25px)`,
         }}
@@ -360,8 +360,8 @@ export function Portfolio() {
                         <div className="flex items-center justify-between mb-3">
                           <span className="text-xs sm:text-[11px] text-muted-foreground uppercase tracking-wider">今日收益</span>
                           <span className={cn(
-                            "text-sm sm:text-xs font-bold tabular-nums",
-                            realtimeSnapshot.dailyProfit >= 0 ? "text-green-400" : "text-red-400"
+                            "text-sm sm:text-xs font-bold num",
+                            realtimeSnapshot.dailyProfit >= 0 ? "text-gain" : "text-loss"
                           )}>
                             {realtimeSnapshot.dailyProfit >= 0 ? '+' : ''}{fmtNum(realtimeSnapshot.dailyProfit)}
                             <span className="ml-1 opacity-70">
@@ -379,7 +379,7 @@ export function Portfolio() {
                           ].filter(item => item.value !== 0).map(item => (
                             <div key={item.label} className="flex justify-between">
                               <span className="text-muted-foreground">{item.label}</span>
-                              <span className={cn("tabular-nums font-medium", item.value >= 0 ? "text-green-400" : "text-red-400")}>
+                              <span className={cn("num font-medium", item.value >= 0 ? "text-gain" : "text-loss")}>
                                 {item.value >= 0 ? '+' : ''}{fmtNum(item.value)}
                               </span>
                             </div>
@@ -425,7 +425,7 @@ export function Portfolio() {
               <div className="mb-4">
                 <span className="text-[11px] text-muted-foreground uppercase tracking-widest">总资产</span>
                 <div className="flex items-baseline gap-2 mt-0.5">
-                  <span className="text-3xl font-bold tabular-nums tracking-tight"><AnimNum value={user.totalAssets} /></span>
+                  <span className="text-3xl font-bold num tracking-tight"><AnimNum value={user.totalAssets} /></span>
                   <span className="text-xs text-muted-foreground font-normal">USDT</span>
                 </div>
               </div>
@@ -437,19 +437,19 @@ export function Portfolio() {
               <div className="divide-y divide-border/20 lg:grid lg:grid-cols-2 lg:gap-x-12 lg:divide-y-0">
                 <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                   <span className="text-[12px] text-muted-foreground">余额钱包</span>
-                  <span className="text-[13px] font-semibold tabular-nums"><AnimNum value={user.balance} /></span>
+                  <span className="text-[13px] font-semibold num"><AnimNum value={user.balance} /></span>
                 </div>
 
                 <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                   <span className="text-[12px] text-muted-foreground">游戏钱包</span>
-                  <span className="text-[13px] font-semibold tabular-nums"><AnimNum value={user.gameBalance} /></span>
+                  <span className="text-[13px] font-semibold num"><AnimNum value={user.gameBalance} /></span>
                 </div>
 
                 <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                   <span className="text-[12px] text-muted-foreground">总盈亏</span>
                   <div className={cn(
-                    "flex items-center gap-1 px-2 py-0.5 rounded-md text-[12px] font-bold tabular-nums",
-                    isProfit ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"
+                    "flex items-center gap-1 px-2 py-0.5 rounded-md text-[12px] font-bold num",
+                    isProfit ? "bg-gain/10 text-gain" : "bg-loss/10 text-loss"
                   )}>
                     {isProfit
                       ? <TrendingUp className="w-3 h-3" />
@@ -463,7 +463,7 @@ export function Portfolio() {
                 <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                   <span className="text-[12px] text-muted-foreground">杠杆借款</span>
                   <span className={cn(
-                    "text-[13px] font-semibold tabular-nums",
+                    "text-[13px] font-semibold num",
                     user.marginLoanPrincipal > 0 ? "text-warning" : "text-muted-foreground"
                   )}><AnimNum value={user.marginLoanPrincipal} /></span>
                 </div>
@@ -471,7 +471,7 @@ export function Portfolio() {
                 <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                   <span className="text-[12px] text-muted-foreground">应计利息</span>
                   <span className={cn(
-                    "text-[13px] font-semibold tabular-nums",
+                    "text-[13px] font-semibold num",
                     user.marginInterestAccrued > 0 ? "text-destructive/80" : "text-muted-foreground"
                   )}><AnimNum value={user.marginInterestAccrued} /></span>
                 </div>
@@ -480,13 +480,13 @@ export function Portfolio() {
                   <>
                     <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                       <span className="text-[12px] text-muted-foreground">合约保证金</span>
-                      <span className="text-[13px] font-semibold tabular-nums"><AnimNum value={futuresMargin} /></span>
+                      <span className="text-[13px] font-semibold num"><AnimNum value={futuresMargin} /></span>
                     </div>
                     <div className="flex items-center justify-between py-2 lg:border-b lg:border-border/20">
                       <span className="text-[12px] text-muted-foreground">合约浮盈</span>
                       <span className={cn(
-                        "text-[13px] font-semibold tabular-nums",
-                        futuresProfit >= 0 ? "text-green-400" : "text-red-400"
+                        "text-[13px] font-semibold num",
+                        futuresProfit >= 0 ? "text-gain" : "text-loss"
                       )}><AnimNum value={futuresProfit} prefix={futuresProfit >= 0 ? '+' : ''} /></span>
                     </div>
                   </>
@@ -565,8 +565,8 @@ export function Portfolio() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-[13px] font-bold tabular-nums tracking-tight"><AnimNum value={cryptoTotal} /></div>
-                    <div className={cn("text-[11px] tabular-nums font-medium", cryptoProfit >= 0 ? "text-green-400" : "text-red-400")}>
+                    <div className="text-[13px] font-bold num tracking-tight"><AnimNum value={cryptoTotal} /></div>
+                    <div className={cn("text-[11px] num font-medium", cryptoProfit >= 0 ? "text-gain" : "text-loss")}>
                       <AnimNum value={cryptoProfit} prefix={cryptoProfit >= 0 ? '+' : ''} />
                     </div>
                   </div>
@@ -607,10 +607,10 @@ export function Portfolio() {
                           </div>
                           <div className="text-right shrink-0 flex items-center gap-2">
                             <div>
-                              <div className={cn("text-[13px] font-bold tabular-nums", up ? "text-green-400" : "text-red-400")}>
+                              <div className={cn("text-[13px] font-bold num", up ? "text-gain" : "text-loss")}>
                                 {up ? '+' : ''}{fmtNum(c.profit)}
                               </div>
-                              <div className={cn("text-[11px] tabular-nums font-medium", up ? "text-green-400/70" : "text-red-400/70")}>
+                              <div className={cn("text-[11px] num font-medium", up ? "text-gain/70" : "text-loss/70")}>
                                 {up ? '+' : ''}{c.profitPct.toFixed(2)}%
                               </div>
                             </div>
@@ -638,8 +638,8 @@ export function Portfolio() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-[13px] font-bold tabular-nums tracking-tight"><AnimNum value={bstockTotal} /></div>
-                    <div className={cn("text-[11px] tabular-nums font-medium", bstockProfit >= 0 ? "text-green-400" : "text-red-400")}>
+                    <div className="text-[13px] font-bold num tracking-tight"><AnimNum value={bstockTotal} /></div>
+                    <div className={cn("text-[11px] num font-medium", bstockProfit >= 0 ? "text-gain" : "text-loss")}>
                       <AnimNum value={bstockProfit} prefix={bstockProfit >= 0 ? '+' : ''} />
                     </div>
                   </div>
@@ -674,10 +674,10 @@ export function Portfolio() {
                           </div>
                           <div className="text-right shrink-0 flex items-center gap-2">
                             <div>
-                              <div className={cn("text-[13px] font-bold tabular-nums", up ? "text-green-400" : "text-red-400")}>
+                              <div className={cn("text-[13px] font-bold num", up ? "text-gain" : "text-loss")}>
                                 {up ? '+' : ''}{fmtNum(b.profit)}
                               </div>
-                              <div className={cn("text-[11px] tabular-nums font-medium", up ? "text-green-400/70" : "text-red-400/70")}>
+                              <div className={cn("text-[11px] num font-medium", up ? "text-gain/70" : "text-loss/70")}>
                                 {up ? '+' : ''}{b.profitPct.toFixed(2)}%
                               </div>
                             </div>
@@ -711,10 +711,10 @@ export function Portfolio() {
                     </div>
                     <div className="text-right flex items-center gap-2">
                       <div>
-                        <div className={cn("text-[13px] font-bold tabular-nums", predictionProfit >= 0 ? "text-green-400" : "text-red-400")}>
+                        <div className={cn("text-[13px] font-bold num", predictionProfit >= 0 ? "text-gain" : "text-loss")}>
                           {predictionProfit >= 0 ? '+' : ''}{fmtNum(predictionProfit)}
                         </div>
-                        <div className="text-[11px] text-muted-foreground tabular-nums">
+                        <div className="text-[11px] text-muted-foreground num">
                           胜率 {predictionPnl.winRate}%
                         </div>
                       </div>
@@ -725,7 +725,7 @@ export function Portfolio() {
                 <CardContent className="p-0 divide-y divide-border/30">
                   <div className="px-4 py-3 flex items-center justify-between">
                     <span className="text-[12px] text-muted-foreground">已实现盈亏</span>
-                    <span className={cn("text-[13px] font-semibold tabular-nums", predictionPnl.realizedPnl >= 0 ? "text-green-400" : "text-red-400")}>
+                    <span className={cn("text-[13px] font-semibold num", predictionPnl.realizedPnl >= 0 ? "text-gain" : "text-loss")}>
                       {predictionPnl.realizedPnl >= 0 ? '+' : ''}{fmtNum(predictionPnl.realizedPnl)}
                     </span>
                   </div>
@@ -733,17 +733,17 @@ export function Portfolio() {
                     <div className="px-4 py-3 flex items-center justify-between">
                       <span className="text-[12px] text-muted-foreground">活跃持仓 ({predictionPnl.activeBets}笔)</span>
                       <div className="flex items-center gap-2">
-                        <span className="text-[12px] text-muted-foreground tabular-nums">成本 {fmtNum(predictionPnl.activeCost)}</span>
-                        <span className="text-[13px] font-semibold tabular-nums">市值 {fmtNum(predictionPnl.activeValue)}</span>
+                        <span className="text-[12px] text-muted-foreground num">成本 {fmtNum(predictionPnl.activeCost)}</span>
+                        <span className="text-[13px] font-semibold num">市值 {fmtNum(predictionPnl.activeValue)}</span>
                       </div>
                     </div>
                   )}
                   <div className="px-4 py-3 flex items-center justify-between">
                     <span className="text-[12px] text-muted-foreground">胜/负</span>
-                    <span className="text-[13px] tabular-nums">
-                      <span className="text-green-400 font-semibold">{predictionPnl.wonBets}</span>
+                    <span className="text-[13px] num">
+                      <span className="text-gain font-semibold">{predictionPnl.wonBets}</span>
                       <span className="text-muted-foreground mx-1">/</span>
-                      <span className="text-red-400 font-semibold">{predictionPnl.lostBets}</span>
+                      <span className="text-loss font-semibold">{predictionPnl.lostBets}</span>
                     </span>
                   </div>
                 </CardContent>
@@ -762,8 +762,8 @@ export function Portfolio() {
                     <span>持仓合计</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="text-sm font-bold tabular-nums"><AnimNum value={allTotal} /></span>
-                    <span className={cn("text-xs font-semibold tabular-nums px-1.5 py-0.5 rounded", up ? "text-green-400 bg-green-500/10" : "text-red-400 bg-red-500/10")}>
+                    <span className="text-sm font-bold num"><AnimNum value={allTotal} /></span>
+                    <span className={cn("text-xs font-semibold num px-1.5 py-0.5 rounded", up ? "text-gain bg-gain/10" : "text-loss bg-loss/10")}>
                       <AnimNum value={allProfit} prefix={up ? '+' : ''} />
                     </span>
                   </div>

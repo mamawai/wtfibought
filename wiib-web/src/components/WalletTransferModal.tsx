@@ -85,7 +85,7 @@ export function WalletTransferModal({ open, onClose, onSuccess }: Props) {
         <div className="space-y-4">
           {/* 两个钱包 + 中间方向切换（转出/转入标签跟随方向翻转，按钮带"换向"提示） */}
           <div className="flex items-stretch gap-2">
-            <div className="relative flex-1 rounded-xl neu-inset bg-background p-3 text-center">
+            <div className="relative flex-1 rounded-md border border-border bg-card-2 p-3 text-center">
               <span className={`absolute top-1.5 right-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${toGame ? 'bg-primary/10 text-primary' : 'bg-gain/10 text-gain'}`}>
                 {toGame ? '转出' : '转入'}
               </span>
@@ -96,14 +96,14 @@ export function WalletTransferModal({ open, onClose, onSuccess }: Props) {
             </div>
             <button
               onClick={() => setDirection(d => d === 'TO_GAME' ? 'TO_BALANCE' : 'TO_GAME')}
-              className="self-center px-2 py-1.5 rounded-full bg-card neu-btn-sm text-primary transition-all flex flex-col items-center gap-0.5"
+              className="self-center px-2 py-1.5 rounded-full border border-border bg-card hover:bg-surface-hover text-primary transition-colors flex flex-col items-center gap-0.5"
               title="点击切换划转方向"
               aria-label="切换划转方向"
             >
               {toGame ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
               <span className="text-[9px] font-bold leading-none">换向</span>
             </button>
-            <div className="relative flex-1 rounded-xl neu-inset bg-background p-3 text-center">
+            <div className="relative flex-1 rounded-md border border-border bg-card-2 p-3 text-center">
               <span className={`absolute top-1.5 right-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${toGame ? 'bg-gain/10 text-gain' : 'bg-primary/10 text-primary'}`}>
                 {toGame ? '转入' : '转出'}
               </span>
@@ -147,7 +147,7 @@ export function WalletTransferModal({ open, onClose, onSuccess }: Props) {
           {/* 全仓敞口预检：restricted=false 时什么都不显示 */}
           {toGame && preview?.restricted && (
             preview.allowed ? (
-              <div className="rounded-xl neu-inset bg-background p-3 space-y-1.5 text-xs">
+              <div className="rounded-md border border-border bg-card-2 p-3 space-y-1.5 text-xs">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">划转后账户净值</span>
                   <span className="font-mono tabular-nums">{fmtNum(preview.equityAfter)}</span>
@@ -174,7 +174,7 @@ export function WalletTransferModal({ open, onClose, onSuccess }: Props) {
                 )}
               </div>
             ) : (
-              <div className="rounded-xl neu-inset bg-background p-3 text-xs text-loss">
+              <div className="rounded-md border border-border bg-card-2 p-3 text-xs text-loss">
                 转出后将触发全仓强平，最多可转{' '}
                 <button
                   type="button"

@@ -25,7 +25,7 @@ function QlikeBars({ h }: { h: ScorecardHorizon }) {
       ].map(row => (
         <div key={row.label} className="flex items-center gap-2 text-[10px]">
           <span className="w-10 shrink-0 text-muted-foreground font-bold">{row.label}</span>
-          <div className="flex-1 h-2 rounded-full neu-inset overflow-hidden">
+          <div className="flex-1 h-2 rounded-full border border-border bg-card-2 overflow-hidden">
             <div className={cn('h-full rounded-full', row.tone)} style={{ width: `${(row.value / max) * 100}%` }} />
           </div>
           <span className="w-12 text-right font-mono tabular-nums">{row.value.toFixed(4)}</span>
@@ -42,7 +42,7 @@ function HorizonCard({ h }: { h: ScorecardHorizon }) {
   const beatsRandom = h.volStateHitRate > VOL_STATE_RANDOM_BASELINE;
   const beatsBaseline = impPct >= 0;
   return (
-    <div className="rounded-xl neu-raised-sm p-4 space-y-3">
+    <div className="rounded-lg pt-card p-4 space-y-3">
       <div className="flex items-center gap-2">
         <span className="text-sm font-black">预测未来 {HORIZON_LABEL[h.horizon] || h.horizon}</span>
         <span className={cn('text-[10px] font-black px-2 py-0.5 rounded-full',
@@ -63,11 +63,11 @@ function HorizonCard({ h }: { h: ScorecardHorizon }) {
       <QlikeBars h={h} />
 
       <div className="grid grid-cols-2 gap-2 pt-1">
-        <div className="rounded-lg neu-flat px-2.5 py-2">
+        <div className="rounded-md border border-border bg-card px-2.5 py-2">
           <div className={cn('text-sm font-black tabular-nums', winPct >= 50 ? 'text-gain' : 'text-loss')}>{winPct.toFixed(1)}%</div>
           <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">单挑胜率：逐条和基准 PK，本系统更准的占比（&gt;50% 算赢）</div>
         </div>
-        <div className="rounded-lg neu-flat px-2.5 py-2">
+        <div className="rounded-md border border-border bg-card px-2.5 py-2">
           <div className={cn('text-sm font-black tabular-nums', beatsRandom ? 'text-gain' : 'text-loss')}>{hitPct.toFixed(1)}%</div>
           <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">波动档位命中：低/中/高三档猜中比例（瞎猜=33.3%）</div>
         </div>
@@ -107,10 +107,10 @@ export function Scorecard() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <Link to="/ai" className="neu-btn-sm w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary" aria-label="返回工作台">
+          <Link to="/ai" className="border border-border hover:bg-surface-hover w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary" aria-label="返回工作台">
             <ArrowLeft className="w-4 h-4" />
           </Link>
-          <div className="w-11 h-11 rounded-xl neu-raised-sm flex items-center justify-center bg-primary/10">
+          <div className="w-11 h-11 rounded-lg pt-card flex items-center justify-center bg-primary/10">
             <Trophy className="w-5.5 h-5.5 text-primary" />
           </div>
           <div>
@@ -123,7 +123,7 @@ export function Scorecard() {
             {SYMBOLS.map(s => (
               <button key={s} onClick={() => setSymbol(s)}
                 className={cn('text-[11px] font-bold px-2.5 py-1 rounded-lg transition-all',
-                  symbol === s ? 'neu-inset text-primary' : 'neu-flat text-muted-foreground hover:text-foreground')}>
+                  symbol === s ? 'border border-border bg-card-2 text-primary' : 'border border-border text-muted-foreground hover:text-foreground')}>
                 {SYM_LABEL[s]}
               </button>
             ))}
@@ -132,20 +132,20 @@ export function Scorecard() {
             {([7, 30] as const).map(d => (
               <button key={d} onClick={() => setDays(d)}
                 className={cn('text-[11px] font-bold px-2.5 py-1 rounded-lg transition-all',
-                  days === d ? 'neu-inset text-primary' : 'neu-flat text-muted-foreground hover:text-foreground')}>
+                  days === d ? 'border border-border bg-card-2 text-primary' : 'border border-border text-muted-foreground hover:text-foreground')}>
                 {d}d
               </button>
             ))}
           </div>
           <button onClick={() => void load(symbol, days)}
-            className="neu-btn-sm w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary" aria-label="刷新">
+            className="border border-border hover:bg-surface-hover w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary" aria-label="刷新">
             <RefreshCcw className={cn('w-4 h-4', loading && 'animate-spin')} />
           </button>
         </div>
       </div>
 
       {/* 这页是什么：先讲人话再上数字 */}
-      <div className="rounded-xl neu-flat px-4 py-3 text-xs text-muted-foreground leading-relaxed">
+      <div className="rounded-lg border border-border bg-card px-4 py-3 text-xs text-muted-foreground leading-relaxed">
         本系统每 5 分钟发布一次「未来 6 / 12 / 24 小时市场会波动多大」的预测（只预测波动幅度，不预测涨跌方向）。
         预测到期后，自动拿实际行情对答案，并和一个<b className="text-foreground">基准方法</b>
         （"拿最近的波动水平直接当预测"，行业常用的免费对照组）比谁更准。下面就是对账成绩单。
@@ -153,7 +153,7 @@ export function Scorecard() {
 
       {/* 运行天数横幅（诚实展示：线上时序从新链路上线起算） */}
       {data && (
-        <div className="rounded-xl neu-raised-sm px-4 py-3 flex items-center gap-3 flex-wrap">
+        <div className="rounded-lg pt-card px-4 py-3 flex items-center gap-3 flex-wrap">
           <CalendarDays className="w-4.5 h-4.5 text-primary shrink-0" />
           <span className="text-sm font-bold">线上验证已运行 <span className="text-primary text-lg font-black tabular-nums">{data.runningDays}</span> 天</span>
           <span className="text-xs text-muted-foreground">窗口 {data.windowDays}d · 共 {data.totalSamples} 个已验证预测点</span>
@@ -166,7 +166,7 @@ export function Scorecard() {
           <Loader2 className="w-4 h-4 animate-spin" /> 加载战绩...
         </div>
       ) : error ? (
-        <div className="rounded-xl neu-inset py-14 text-center">
+        <div className="rounded-lg border border-border bg-card-2 py-14 text-center">
           <p className="text-sm text-muted-foreground">{error}</p>
           <p className="text-[11px] text-muted-foreground/70 mt-1">验证时序随新链路上线积累，首个 H6 结果需运行 6 小时后出现</p>
         </div>
@@ -175,13 +175,13 @@ export function Scorecard() {
           {data.horizons.map(h => <HorizonCard key={h.horizon} h={h} />)}
         </div>
       ) : data ? (
-        <div className="rounded-xl neu-inset py-14 text-center text-sm text-muted-foreground">
+        <div className="rounded-lg border border-border bg-card-2 py-14 text-center text-sm text-muted-foreground">
           窗口内暂无已验证样本
         </div>
       ) : null}
 
       {/* 口径说明：让"战绩"经得起追问 */}
-      <div className="rounded-xl neu-raised-sm p-4 space-y-2.5">
+      <div className="rounded-lg pt-card p-4 space-y-2.5">
         <div className="flex items-center gap-2">
           <Info className="w-4 h-4 text-primary" />
           <span className="text-sm font-black">口径说明</span>

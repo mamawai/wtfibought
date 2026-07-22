@@ -8,6 +8,7 @@ import com.mawai.wiibquant.agent.behavior.BehaviorAnalysisReport;
 import com.mawai.wiibquant.agent.behavior.BehaviorAnalysisService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibquant.agent.analysis.ScorecardService;
+import com.mawai.wiibquant.agent.toolkit.NewsCache;
 import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibcommon.entity.QuantSnapshot;
 import com.mawai.wiibcommon.entity.QuantVolVerification;
@@ -44,6 +45,7 @@ public class AiAgentController {
     private final QuantDeepAnalysisMapper deepAnalysisMapper;
     private final QuantVolVerificationMapper volVerificationMapper;
     private final ScorecardService scorecardService;
+    private final NewsCache newsCache;
 
     @PostMapping("/analyze-behavior")
     @Operation(summary = "用户行为分析")
@@ -126,6 +128,19 @@ public class AiAgentController {
                     realizedBySnapshot.get(s.getId()));
         }).toList();
         return Result.ok(points);
+    }
+
+    /** 快讯条目：正文脱 HTML 的纯文本，前端直接展示 */
+    public record NewsFlashView(long id, String title, String plain, String url, String createTime) {
+    }
+
+    @GetMapping("/quant/news")
+    @Operation(summary = "重要快讯（BlockBeats 内存缓存：未过期复用不打上游，首页快讯卡数据源）")
+    public Result<List<NewsFlashView>> news() {
+        StpUtil.checkLogin();
+        return Result.ok(newsCache.getFlashes().stream()
+                .map(f -> new NewsFlashView(f.id(), f.title(), f.plainContent(), f.url(), f.createTime()))
+                .toList());
     }
 
     @GetMapping("/quant/analysis/list")

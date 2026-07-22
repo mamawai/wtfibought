@@ -62,7 +62,7 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
   // 开仓成功后 +1 触发全仓账户重拉（可用/净值都变了）
   const [acctTick, setAcctTick] = useState(0);
   // 保证金输入单位：币=未乘杠杆数量；USDT=保证金金额（内部再 /price 还原成币数量）
-  const [marginUnit, setMarginUnit] = useState<'COIN' | 'USDT'>('COIN');
+  const [marginUnit, setMarginUnit] = useState<'COIN' | 'USDT'>('USDT');
 
   const isCross = marginMode === 'CROSS';
 
@@ -175,9 +175,9 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
     <>
       {/* 做多/做空切换 + 现货/合约 */}
       <div className="px-5 pt-5 flex flex-wrap items-center gap-3">
-        <div className="flex flex-1 min-w-[140px] rounded-xl bg-card overflow-hidden neu-raised">
-          <button onClick={() => setSide('LONG')} className={`flex-1 py-2.5 text-sm font-black border-r border-border transition-colors ${side === 'LONG' ? 'bg-gain text-white' : 'bg-card text-foreground hover:bg-surface-hover'}`}>做多</button>
-          <button onClick={() => setSide('SHORT')} className={`flex-1 py-2.5 text-sm font-black transition-colors ${side === 'SHORT' ? 'bg-loss text-white' : 'bg-card text-foreground hover:bg-surface-hover'}`}>做空</button>
+        <div className="flex flex-1 min-w-[140px] rounded-md border border-border overflow-hidden divide-x divide-border">
+          <button onClick={() => setSide('LONG')} className={`flex-1 py-2.5 text-sm font-bold transition-colors cursor-pointer ${side === 'LONG' ? 'bg-gain text-white' : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>做多</button>
+          <button onClick={() => setSide('SHORT')} className={`flex-1 py-2.5 text-sm font-bold transition-colors cursor-pointer ${side === 'SHORT' ? 'bg-loss text-white' : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>做空</button>
         </div>
         <TradeModeSwitch mode="futures" futuresOnly={cfg.futuresOnly} onModeChange={onModeChange} />
       </div>
@@ -245,13 +245,13 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
                   可用 {fmtNum(budgetBalance)} USDT
                 </span>
               )}
-              <div className="flex rounded-md overflow-hidden neu-raised-sm">
+              <div className="flex rounded-md border border-border overflow-hidden divide-x divide-border">
                 <button type="button" onClick={() => switchMarginUnit('COIN')}
-                  className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${marginUnit === 'COIN' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:text-foreground'}`}>
+                  className={`px-2 py-0.5 text-[10px] font-bold transition-colors cursor-pointer ${marginUnit === 'COIN' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>
                   {cfg.name}
                 </button>
                 <button type="button" onClick={() => switchMarginUnit('USDT')}
-                  className={`px-2 py-0.5 text-[10px] font-bold border-l border-border transition-colors ${marginUnit === 'USDT' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:text-foreground'}`}>
+                  className={`px-2 py-0.5 text-[10px] font-bold transition-colors cursor-pointer ${marginUnit === 'USDT' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>
                   USDT
                 </button>
               </div>
@@ -300,7 +300,7 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
           const liqPriceText = openLiqPrice ? `$${fmtPrice(openLiqPrice)}` : '—';
           const mmrText = openLiq ? `档位 ${openLiq.bracket.tier} / ${formatRate(openLiq.bracket.mmr)}` : '—';
           return (
-            <div className="p-3.5 rounded-xl neu-inset space-y-2.5">
+            <div className="p-3.5 rounded-md border border-border bg-card-2 space-y-2.5">
               {/* 预估四项：手机单列防"标签+数值"挤爆，≥sm 恢复两列 */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
                 <div className="flex justify-between">

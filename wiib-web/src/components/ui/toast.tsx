@@ -76,18 +76,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             key={t.id}
             className={cn(
               "relative overflow-hidden pointer-events-auto",
-              "flex items-start gap-3 p-4 rounded-xl bg-card text-card-foreground neu-raised",
+              "flex items-start gap-3 p-4 rounded-lg bg-card text-card-foreground border shadow-lg",
               "animate-in slide-in-from-bottom-2 fade-in",
-              t.type === 'success' && "border-green-500/25",
-              t.type === 'error' && "border-red-500/25",
-              t.type === 'info' && "border-primary/25"
+              t.type === 'success' && "border-success/30",
+              t.type === 'error' && "border-destructive/30",
+              t.type === 'info' && "border-border"
             )}
             role="status"
           >
             <div className={cn(
               "mt-0.5",
-              t.type === 'success' && "text-green-500",
-              t.type === 'error' && "text-red-500",
+              t.type === 'success' && "text-success",
+              t.type === 'error' && "text-destructive",
               t.type === 'info' && "text-primary"
             )}>
               {icon[t.type]}
@@ -120,7 +120,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               onClick={() => remove(t.id)}
-              className="shrink-0 p-1 rounded-md hover:bg-accent transition-colors"
+              className="shrink-0 p-1 rounded-md hover:bg-surface-hover transition-colors"
               aria-label="关闭通知"
             >
               <X className="w-4 h-4 text-muted-foreground" />
@@ -129,8 +129,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             <div
               className={cn(
                 "absolute bottom-0 left-0 h-0.5 w-full origin-left",
-                t.type === 'success' && "bg-green-500/60",
-                t.type === 'error' && "bg-red-500/60",
+                t.type === 'success' && "bg-success/60",
+                t.type === 'error' && "bg-destructive/60",
                 t.type === 'info' && "bg-primary/60",
                 "wiib-toast-progress"
               )}

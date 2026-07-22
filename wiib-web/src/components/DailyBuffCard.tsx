@@ -1,16 +1,16 @@
 import { useState } from 'react';
-import { Gift, Loader2 } from 'lucide-react';
-import { Card, CardContent } from './ui/card';
+import { Gift, Loader2, Sparkles } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader } from './ui/dialog';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { buffApi } from '../api';
 import type { BuffStatus, UserBuff } from '../types';
 
 const rarityStyles: Record<string, string> = {
-  COMMON: 'bg-gray-100 text-gray-700',
-  RARE: 'bg-blue-100 text-blue-700',
-  EPIC: 'bg-purple-100 text-purple-700',
-  LEGENDARY: 'bg-yellow-100 text-yellow-700 animate-pulse',
+  COMMON: 'bg-secondary text-secondary-foreground',
+  RARE: 'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300',
+  EPIC: 'bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300',
+  LEGENDARY: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/15 dark:text-yellow-300 animate-pulse',
 };
 
 const rarityNames: Record<string, string> = {
@@ -20,12 +20,38 @@ const rarityNames: Record<string, string> = {
   LEGENDARY: '传说',
 };
 
-interface Props {
-  status: BuffStatus | null;
-  onDrawn: () => void;
+function BuffRow({ buff }: { buff: UserBuff }) {
+  let extra = '';
+  if (buff.extraData) {
+    try {
+      const data = JSON.parse(buff.extraData);
+      if (data.stockCode) {
+        extra = ` (${data.stockName} ${data.quantity}股)`;
+      }
+    } catch { /* ignore */ }
+  }
+  return (
+    <div className="flex items-center justify-center gap-2 flex-wrap">
+      <Badge className={rarityStyles[buff.rarity]}>{rarityNames[buff.rarity]}</Badge>
+      <span className="font-semibold">{buff.buffName}</span>
+      {extra && <span className="text-muted-foreground text-sm">{extra}</span>}
+      {buff.buffType.startsWith('DISCOUNT_') && !buff.isUsed && (
+        <Badge variant="outline" className="text-xs">未使用</Badge>
+      )}
+    </div>
+  );
 }
 
-export function DailyBuffCard({ status, onDrawn }: Props) {
+/**
+ * 每日福利弹窗：快捷入口点开后抽取/查看今日 Buff。
+ * status 由父级（Home）传入，抽完调 onDrawn 让父级刷新。
+ */
+export function DailyBuffModal({ status, open, onClose, onDrawn }: {
+  status: BuffStatus | null;
+  open: boolean;
+  onClose: () => void;
+  onDrawn: () => void;
+}) {
   const [drawing, setDrawing] = useState(false);
   const [result, setResult] = useState<UserBuff | null>(null);
   const [showResult, setShowResult] = useState(false);
@@ -47,69 +73,51 @@ export function DailyBuffCard({ status, onDrawn }: Props) {
     }
   };
 
-  const renderBuff = (buff: UserBuff) => {
-    let extra = '';
-    if (buff.extraData) {
-      try {
-        const data = JSON.parse(buff.extraData);
-        if (data.stockCode) {
-          extra = ` (${data.stockName} ${data.quantity}股)`;
-        }
-      } catch { /* ignore */ }
-    }
-    return (
-      <div className="flex items-center gap-2">
-        <Badge className={rarityStyles[buff.rarity]}>{rarityNames[buff.rarity]}</Badge>
-        <span className="font-medium">{buff.buffName}</span>
-        {extra && <span className="text-muted-foreground text-sm">{extra}</span>}
-        {buff.buffType.startsWith('DISCOUNT_') && !buff.isUsed && (
-          <Badge variant="outline" className="text-xs">未使用</Badge>
-        )}
-      </div>
-    );
-  };
-
-  // 紧凑单行条：左标题 / 中状态与结果 / 右抽奖按钮
   return (
-    <Card id="daily-buff-card">
-      <CardContent className="py-3 px-5 pt-3 flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="p-1 rounded-md bg-primary/10">
-            <Gift className="w-3.5 h-3.5 text-primary" />
-          </div>
+    <Dialog open={open} onClose={onClose} className="max-w-sm">
+      <DialogHeader>
+        <div className="flex items-center gap-2">
+          <Gift className="w-4 h-4 text-primary" />
           <span className="text-sm font-bold">每日福利</span>
         </div>
+      </DialogHeader>
+      <DialogContent>
+        <div className="py-6 text-center space-y-5">
+          {/* 礼盒主视觉：抽取中晃动 */}
+          <div className={`w-16 h-16 mx-auto rounded-lg border border-border bg-card-2 machined flex items-center justify-center ${drawing ? 'animate-pulse' : ''}`}>
+            {drawing
+              ? <Loader2 className="w-7 h-7 text-primary animate-spin" />
+              : <Gift className="w-7 h-7 text-primary" />}
+          </div>
 
-        <div className="flex-1 min-w-0 flex items-center gap-2 text-sm">
           {status?.canDraw ? (
             drawing ? (
-              <span className="flex items-center gap-2 text-muted-foreground">
-                <Loader2 className="w-4 h-4 animate-spin text-primary" /> 抽奖中...
-              </span>
+              <p className="text-sm text-muted-foreground">抽奖中...</p>
             ) : showResult && result ? (
-              <>
-                <span className="text-muted-foreground shrink-0">恭喜获得</span>
-                {renderBuff(result)}
-              </>
+              <div className="space-y-2 animate-in fade-in zoom-in-95">
+                <p className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5 text-warning" /> 恭喜获得
+                </p>
+                <BuffRow buff={result} />
+              </div>
             ) : (
-              <span className="text-muted-foreground">今日还未抽取，试试手气</span>
+              <>
+                <p className="text-sm text-muted-foreground">今日还未抽取，试试手气</p>
+                <Button onClick={handleDraw}>
+                  <Gift className="w-4 h-4" /> 抽取今日 Buff
+                </Button>
+              </>
             )
           ) : status?.todayBuff ? (
-            <>
-              <span className="text-muted-foreground shrink-0">今日已抽取</span>
-              {renderBuff(status.todayBuff)}
-            </>
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">今日已抽取</p>
+              <BuffRow buff={status.todayBuff} />
+            </div>
           ) : (
-            <span className="text-muted-foreground">登录后可抽奖</span>
+            <p className="text-sm text-muted-foreground">登录后可抽奖</p>
           )}
         </div>
-
-        {status?.canDraw && !drawing && !(showResult && result) && (
-          <Button size="sm" onClick={handleDraw} className="shrink-0">
-            <Gift className="w-3.5 h-3.5" /> 抽取今日Buff
-          </Button>
-        )}
-      </CardContent>
-    </Card>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -107,9 +107,9 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
     <>
       {/* 买卖切换 + 现货/合约 + 爆仓 */}
       <div className="px-5 pt-5 flex flex-wrap items-center gap-3">
-        <div className="flex flex-1 min-w-[140px] rounded-xl bg-card overflow-hidden neu-raised">
-          <button onClick={() => setSide('BUY')} className={`flex-1 py-2.5 text-sm font-black border-r border-border transition-colors ${side === 'BUY' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-surface-hover'}`}>买入</button>
-          <button onClick={() => setSide('SELL')} className={`flex-1 py-2.5 text-sm font-black transition-colors ${side === 'SELL' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-surface-hover'}`}>卖出</button>
+        <div className="flex flex-1 min-w-[140px] rounded-md border border-border overflow-hidden divide-x divide-border">
+          <button onClick={() => setSide('BUY')} className={`flex-1 py-2.5 text-sm font-bold transition-colors cursor-pointer ${side === 'BUY' ? 'bg-gain text-white' : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>买入</button>
+          <button onClick={() => setSide('SELL')} className={`flex-1 py-2.5 text-sm font-bold transition-colors cursor-pointer ${side === 'SELL' ? 'bg-loss text-white' : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>卖出</button>
         </div>
         <TradeModeSwitch mode="spot" futuresOnly={cfg.futuresOnly} onModeChange={onModeChange} />
       </div>
@@ -189,7 +189,7 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
               <select
                 value={leverage}
                 onChange={e => setLeverage(Number(e.target.value))}
-                className="w-full h-11 rounded-xl bg-background neu-inset px-4 text-sm font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-ring appearance-none cursor-pointer"
+                className="w-full h-10 rounded-md bg-input border border-border px-3.5 text-sm font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-ring appearance-none cursor-pointer"
                 style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center' }}
               >
                 {SPOT_LEVERAGE_OPTIONS.map(lv => (
@@ -218,7 +218,7 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
               </button>
             </div>
             {useBuff && (
-              <div className="flex items-center gap-2 text-xs bg-warning/10 border-2 border-warning/50 rounded-xl px-3 py-2">
+              <div className="flex items-center gap-2 text-xs bg-warning/10 border border-warning/40 rounded-md px-3 py-2">
                 <Badge variant="warning" className="text-[10px] px-2">{discountBuff.buffName}</Badge>
                 <span className="text-muted-foreground font-bold">本次买入整单折扣</span>
               </div>

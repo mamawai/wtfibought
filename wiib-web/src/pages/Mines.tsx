@@ -179,7 +179,7 @@ export function Mines() {
       )}
 
       {/* 5×5 棋盘 */}
-      <div className="grid grid-cols-5 gap-2 sm:gap-3 p-3 sm:p-4 rounded-2xl neu-inset">
+      <div className="grid grid-cols-5 gap-2 sm:gap-3 p-3 sm:p-4 rounded-lg border border-border bg-card-2">
         {Array.from({ length: 25 }, (_, i) => {
           const state = getCellState(i);
           const isFlipped = state === 'safe' || state === 'mine';
@@ -210,7 +210,7 @@ export function Mines() {
                   state === 'hidden-done' && 'opacity-25',
                   acting && state === 'clickable' && 'opacity-50',
                 )}>
-                  <div className="w-full h-full neu-raised bg-background rounded-xl flex items-center justify-center">
+                  <div className="w-full h-full border border-border bg-card machined rounded-lg flex items-center justify-center">
                     <span className="text-2xl sm:text-3xl select-none">⛏️</span>
                   </div>
                 </div>
@@ -219,13 +219,13 @@ export function Mines() {
                   'absolute inset-0 backface-hidden transform-[rotateY(180deg)] rounded-xl overflow-hidden',
                 )}>
                   {state === 'safe' && (
-                    <div className="w-full h-full neu-inset bg-amber-500/10 rounded-xl flex items-center justify-center">
+                    <div className="w-full h-full border border-warning/40 bg-amber-500/10 rounded-lg flex items-center justify-center">
                       <span className="text-2xl sm:text-3xl drop-shadow-[0_0_8px_rgba(255,215,0,0.6)]">💰</span>
                     </div>
                   )}
                   {state === 'mine' && (
                     <div className={cn(
-                      'w-full h-full neu-inset bg-red-500/10 rounded-xl flex items-center justify-center',
+                      'w-full h-full border border-loss/40 bg-loss/10 rounded-lg flex items-center justify-center',
                       game?.result === 'MINE' && 'animate-pulse',
                     )}>
                       <span className="text-2xl sm:text-3xl drop-shadow-[0_0_8px_rgba(255,60,60,0.6)]">💣</span>
@@ -240,14 +240,14 @@ export function Mines() {
 
       {/* 下注区 / 提现区 */}
       {!game || (isSettled && showResult) ? (
-        <div className="space-y-4 rounded-xl bg-card neu-raised p-5">
+        <div className="space-y-4 rounded-lg pt-card p-5">
           <div className="text-center">
             <div className="text-xs text-muted-foreground mb-2">下注金额</div>
             <input
               type="number"
               value={betInput}
               onChange={e => handleBetInput(e.target.value)}
-              className="w-full max-w-xs mx-auto block text-center text-2xl font-bold bg-background rounded-lg px-4 py-2 tabular-nums neu-inset focus:outline-none focus:ring-2 focus:ring-primary/50"
+              className="w-full max-w-xs mx-auto block text-center text-2xl font-bold bg-input border border-border rounded-md px-4 py-2 tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/50"
               min={10}
               max={5000}
             />
@@ -262,8 +262,8 @@ export function Mines() {
                 className={cn(
                   'px-3 py-1.5 rounded-lg text-sm font-medium transition-all',
                   betAmount === v
-                    ? 'bg-primary text-primary-foreground neu-raised-sm'
-                    : 'bg-muted neu-flat hover:bg-muted/80',
+                    ? 'bg-primary text-primary-foreground machined'
+                    : 'bg-muted border border-border hover:bg-surface-hover',
                   v > balance && 'opacity-40 cursor-not-allowed',
                 )}
               >
@@ -328,7 +328,7 @@ export function Mines() {
       )}
 
       {/* 规则 */}
-      <div className="rounded-xl bg-card neu-raised p-5 space-y-3">
+      <div className="rounded-lg pt-card p-5 space-y-3">
         <h3 className="font-semibold text-sm">规则</h3>
         <ul className="text-xs text-muted-foreground space-y-1 leading-relaxed">
           <li>5×5 格子中藏有 5 颗雷，每翻开一个安全格倍率递增。</li>

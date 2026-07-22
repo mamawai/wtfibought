@@ -1,6 +1,5 @@
 import { fmtNum } from '../lib/utils';
 import { useMemo } from 'react';
-import styled from 'styled-components';
 import { ArrowLeftRight } from 'lucide-react';
 import { Button } from './ui/button';
 
@@ -83,7 +82,8 @@ export function PortfolioWallet({ totalAssets, balance, gameBalance, username, a
   const backH = walletH - 30;
 
   return (
-    <Wrapper
+    <div
+      className="wallet-widget"
       style={{ '--wallet-h': `${walletH}px`, '--back-h': `${backH}px` } as React.CSSProperties}
     >
       <div className="wallet">
@@ -199,122 +199,6 @@ export function PortfolioWallet({ totalAssets, balance, gameBalance, username, a
           划转
         </Button>
       )}
-    </Wrapper>
+    </div>
   );
 }
-
-const Wrapper = styled.div`
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-
-  .wallet {
-    position: relative;
-    width: 280px;
-    height: var(--wallet-h, 230px);
-    cursor: pointer;
-    perspective: 1000px;
-    display: flex;
-    justify-content: center;
-    align-items: flex-end;
-    transition: transform 0.4s ease;
-  }
-
-  @keyframes slideIntoPocket {
-    0% { transform: translateY(-100px); opacity: 0; }
-    100% { transform: translateY(0); opacity: 1; }
-  }
-
-  .wallet-back {
-    position: absolute;
-    bottom: 0;
-    width: 280px;
-    height: var(--back-h, 200px);
-    background: #1e341e;
-    border-radius: 22px 22px 60px 60px;
-    z-index: 5;
-    box-shadow:
-      inset 0 25px 35px rgba(0, 0, 0, 0.4),
-      inset 0 5px 15px rgba(0, 0, 0, 0.5);
-  }
-
-  .card {
-    position: absolute;
-    width: 260px;
-    height: 160px;
-    left: 10px;
-    border-radius: 16px;
-    padding: 18px;
-    color: white;
-    box-shadow:
-      inset 0 1px 1px rgba(255, 255, 255, 0.3),
-      0 -4px 15px rgba(0, 0, 0, 0.1);
-    transition:
-      transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1),
-      z-index 0s;
-    animation: slideIntoPocket 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
-  }
-
-  .card-inner { display: flex; flex-direction: column; justify-content: space-between; height: 100%; }
-  .card-top { display: flex; justify-content: space-between; align-items: center; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
-  .chip { width: 32px; height: 24px; background: rgba(255, 255, 255, 0.2); border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.1); }
-  .card-bottom { display: flex; justify-content: space-between; align-items: flex-end; }
-  .label { font-size: 8px; opacity: 0.7; text-transform: uppercase; margin-bottom: 2px; display: block; }
-  .value { font-size: 10px; font-weight: 500; }
-  .card-number-wrapper { text-align: right; }
-  .hidden-stars { font-size: 15px; letter-spacing: 2px; font-weight: 600; }
-  .card-number { display: none; font-size: 14px; letter-spacing: 1px; font-family: monospace; }
-  .card-sub { font-size: 10px; opacity: 0.7; letter-spacing: 0; }
-
-  .pocket {
-    position: absolute;
-    bottom: 0;
-    width: 280px;
-    height: 160px;
-    z-index: 40;
-    filter: drop-shadow(0 15px 25px rgba(20, 40, 20, 0.4));
-  }
-
-  .pocket-content {
-    position: absolute;
-    top: 45px;
-    width: 100%;
-    text-align: center;
-    z-index: 50;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .balance-stars { color: #839e7b; font-size: 24px; letter-spacing: 4px; transition: 0.3s; }
-  .balance-real {
-    color: #a7c59e; font-size: 22px; font-weight: 600;
-    opacity: 0; position: absolute; top: 0; left: 50%;
-    transform: translate(-50%, 10px); transition: 0.3s;
-  }
-
-  .eye-icon-wrapper { margin-top: 8px; height: 20px; width: 20px; position: relative; opacity: 0.3; transition: 0.3s; }
-  .eye-icon { position: absolute; top: 0; left: 0; stroke: #3be60b; transition: 0.3s; }
-
-  .wallet:hover { transform: translateY(-5px); }
-  .wallet:hover .eye-icon-wrapper { opacity: 1; }
-
-  .wallet:hover .card {
-    transform: translateY(var(--spread-y)) rotate(var(--spread-r));
-  }
-
-  .card:hover { z-index: 100 !important; transition-delay: 0s !important; }
-  .wallet:hover .card:hover {
-    transform: translateY(var(--spread-y)) scale(1.05) rotate(0deg);
-  }
-
-  .card:hover .hidden-stars { display: none; }
-  .card:hover .card-number { display: block; }
-
-  .wallet:hover .balance-stars { opacity: 0; }
-  .wallet:hover .balance-real { opacity: 1; transform: translate(-50%, 0); }
-  .wallet:hover .eye-slash { opacity: 0; transform: scale(0.5); }
-  .wallet:hover .eye-open { opacity: 1; transform: scale(1.1); }
-`;

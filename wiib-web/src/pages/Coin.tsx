@@ -126,89 +126,76 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
 
   return (
     <div className="page-shell p-4 md:p-6 space-y-5">
-      {/* 顶部价格 */}
-      <Card className="relative overflow-hidden">
-        <div className={`absolute top-0 right-0 p-32 rounded-full blur-3xl -z-10 transform translate-x-1/3 -translate-y-1/2 opacity-20 bg-linear-to-br ${cfg.gradientClass}`} />
-        <CardContent className="p-5 md:p-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="p-2.5 sm:p-3 rounded-2xl bg-card neu-raised-sm shrink-0">
-                <Icon className={`w-6 h-6 sm:w-7 sm:h-7 ${cfg.colorClass}`} />
-              </div>
-              <div className="space-y-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-lg sm:text-xl font-black tracking-tight">{cfg.pair}</span>
-                  <div className="flex items-center gap-2 px-2 py-0.5 rounded-full bg-card neu-flat text-[10px]">
-                    <span className="flex items-center gap-1.5" title="现货行情">
-                      <span className={`inline-block w-2 h-2 rounded-full ${isFuturesMode ? 'bg-muted-foreground/35' : (tick?.ws ? 'bg-success' : 'bg-destructive animate-pulse')}`} />
-                      <span className={`font-bold ${isFuturesMode ? 'text-muted-foreground' : 'text-foreground'}`}>现货</span>
-                    </span>
-                    <span className="w-0.5 h-2.5 bg-border" />
-                    <span className="flex items-center gap-1.5" title="合约行情">
-                      <span className={`inline-block w-2 h-2 rounded-full ${isFuturesMode ? (tick?.fws ? 'bg-success' : 'bg-destructive animate-pulse') : 'bg-muted-foreground/35'}`} />
-                      <span className={`font-bold ${isFuturesMode ? 'text-foreground' : 'text-muted-foreground'}`}>合约</span>
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-bold text-muted-foreground">Binance</span>
-                  {cfg.unitLabel && (
-                    <>
-                      <span className="w-1.5 h-1.5 rounded-full bg-border" />
-                      <span className="text-[11px] text-warning font-bold">1枚 = 1盎司黄金（{cfg.unitFactor}{cfg.unitLabel}）</span>
-                    </>
-                  )}
-                </div>
+      {/* 页头：去卡片化的终端报价行 */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <Icon className={`w-8 h-8 sm:w-9 sm:h-9 shrink-0 ${cfg.colorClass}`} />
+          <div className="space-y-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-lg sm:text-xl font-extrabold tracking-tight">{cfg.pair}</span>
+              <div className="flex items-center gap-2 px-2.5 py-0.5 rounded-full border border-border bg-card text-[10px]">
+                <span className="flex items-center gap-1.5" title="现货行情">
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${isFuturesMode ? 'bg-muted-foreground/35' : (tick?.ws ? 'led' : 'bg-destructive animate-pulse')}`} />
+                  <span className={`font-semibold ${isFuturesMode ? 'text-muted-foreground' : 'text-foreground'}`}>现货</span>
+                </span>
+                <span className="w-px h-2.5 bg-border" />
+                <span className="flex items-center gap-1.5" title="合约行情">
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${isFuturesMode ? (tick?.fws ? 'led' : 'bg-destructive animate-pulse') : 'bg-muted-foreground/35'}`} />
+                  <span className={`font-semibold ${isFuturesMode ? 'text-foreground' : 'text-muted-foreground'}`}>合约</span>
+                </span>
               </div>
             </div>
-            <div className="text-left sm:text-right">
-              {currentPrice > 0 ? (
-                <div className="flex flex-col items-start sm:items-end">
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-2xl sm:text-3xl font-black tracking-tight font-mono" style={{ color: 'var(--color-foreground)' }}>
-                      ${fmtPrice(currentPrice)}
-                    </span>
-                  </div>
-                  {cfg.unitLabel && usdCny > 0 && currentPrice > 0 && (
-                    <div className="text-sm text-warning font-mono font-bold mt-1">
-                      ¥{(currentPrice * usdCny / cfg.unitFactor!).toFixed(2)}/{cfg.unitLabel}
-                    </div>
-                  )}
-                  <div className={`flex items-center gap-1.5 text-sm font-bold mt-2 px-2.5 py-1 rounded-lg neu-flat ${isUp ? 'bg-gain/10 text-gain' : 'bg-loss/10 text-loss'}`}>
-                    {isUp ? <TrendingUp className="w-4 h-4 stroke-[3px]" /> : <TrendingDown className="w-4 h-4 stroke-[3px]" />}
-                    <span>{isUp ? '+' : ''}{fmtPrice(change)}</span>
-                    <span>({isUp ? '+' : ''}{changePct.toFixed(2)}% · 24h)</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2 flex flex-col items-start sm:items-end">
-                  <Skeleton className="h-10 w-40" />
-                  <Skeleton className="h-6 w-24" />
-                </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="microlabel font-semibold">BINANCE</span>
+              {cfg.unitLabel && (
+                <span className="text-[11px] text-warning font-semibold">1枚 = 1盎司黄金（{cfg.unitFactor}{cfg.unitLabel}）</span>
               )}
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+        <div className="text-left sm:text-right">
+          {currentPrice > 0 ? (
+            <div className="flex flex-col items-start sm:items-end gap-1">
+              <span className="num text-2xl sm:text-3xl font-bold tracking-tight">
+                ${fmtPrice(currentPrice)}
+              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`num inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md ${isUp ? 'bg-gain/10 text-gain' : 'bg-loss/10 text-loss'}`}>
+                  {isUp ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                  {isUp ? '+' : ''}{fmtPrice(change)}（{isUp ? '+' : ''}{changePct.toFixed(2)}% · 24h）
+                </span>
+                {cfg.unitLabel && usdCny > 0 && (
+                  <span className="num text-xs text-warning font-semibold">
+                    ¥{(currentPrice * usdCny / cfg.unitFactor!).toFixed(2)}/{cfg.unitLabel}
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2 flex flex-col items-start sm:items-end">
+              <Skeleton className="h-9 w-40" />
+              <Skeleton className="h-5 w-24" />
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* PC 左图右面板（items-stretch 等高：图表卡 flex 填满左列，右面板内容变化时两列始终同高），移动端自然上下堆叠 */}
       <div className="grid lg:grid-cols-5 gap-5 items-stretch">
         {/* 左：图表 + BTC预测入口 */}
         <div className="lg:col-span-3 flex flex-col gap-5">
-          {/* 手机上让图表卡突破页面 p-4 贴到屏幕边：宽度是看 K 线最稀缺的资源，
-              320 宽的机器上光 padding 就吃掉 48px(页面32+卡内16)。贴边就没地方画
-              neu 阴影了，所以同时收掉圆角，PC 端(md+)完全保持原样 */}
-          <Card className="flex-1 flex flex-col -mx-4 md:mx-0 rounded-none md:rounded-2xl">
-            <CardHeader className="pb-2 pt-5 px-5">
+          {/* 手机上图表卡吃掉大部分页边距（留 8px 呼吸），保留边框和小圆角；PC 端(md+)完全保持原样 */}
+          <Card className="flex-1 flex flex-col -mx-2 md:mx-0 rounded-md md:rounded-lg">
+            <CardHeader className="pb-2 pt-4 px-4">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base font-black">走势</CardTitle>
-                <div className="flex rounded-xl bg-card neu-raised-sm overflow-hidden">
+                <CardTitle>走势</CardTitle>
+                <div className="flex rounded-md border border-border overflow-hidden divide-x divide-border">
                   {TABS.map((tab, i) => (
-                    <button key={tab.label} onClick={() => setActiveTab(i)} className={`px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-bold border-r border-border transition-colors ${activeTab === i ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>
+                    <button key={tab.label} onClick={() => setActiveTab(i)} className={`num px-3 sm:px-3.5 py-2 sm:py-1.5 text-xs font-semibold transition-colors cursor-pointer ${activeTab === i ? 'bg-card-2 text-foreground shadow-[inset_0_2px_0_var(--color-primary)]' : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>
                       {tab.label}
                     </button>
                   ))}
-                  <button onClick={() => setActiveTab(TV_TAB)} className={`px-3 sm:px-4 py-2 sm:py-1.5 text-xs font-bold transition-colors ${activeTab === TV_TAB ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>
+                  <button onClick={() => setActiveTab(TV_TAB)} className={`px-3 sm:px-3.5 py-2 sm:py-1.5 text-xs font-semibold transition-colors cursor-pointer ${activeTab === TV_TAB ? 'bg-card-2 text-foreground shadow-[inset_0_2px_0_var(--color-primary)]' : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`}>
                     高级
                   </button>
                 </div>
@@ -241,11 +228,11 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
           {/* BTC涨跌预测入口 */}
           {symbol === 'BTCUSDT' && (
             <button onClick={() => navigate('/prediction')}
-                    className="w-full flex items-center justify-between px-5 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/30 hover:border-amber-500/50 transition-all group">
+                    className="w-full flex items-center justify-between px-4 py-3 rounded-lg pt-card hover:bg-surface-hover hover:border-primary/40 transition-colors group cursor-pointer">
               <div className="flex items-center gap-3">
                 <span className="text-lg">🔮</span>
                 <div className="text-left">
-                  <div className="text-sm font-bold">BTC 5分钟涨跌预测 <span className="text-[10px] font-bold text-amber-500 ml-1">NEW</span></div>
+                  <div className="text-sm font-semibold">BTC 5分钟涨跌预测 <span className="text-[10px] font-bold text-primary ml-1">NEW</span></div>
                   <div className="text-[11px] text-muted-foreground">基于 Polymarket 实时概率，预测BTC短期走势</div>
                 </div>
               </div>
@@ -264,36 +251,34 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               ? (currentPrice - position.avgCost) * position.quantity : 0;
             const isPnlUp = pnlPct >= 0;
             return (
-              <div className="px-5 pt-5">
-                <div className={`rounded-2xl bg-card p-4 space-y-3 neu-raised`}>
+              <div className="px-4 pt-4">
+                <div className="rounded-lg border border-border bg-card-2 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-xl bg-card neu-flat`}>
-                        <Icon className={`w-5 h-5 ${cfg.colorClass}`} />
-                      </div>
+                      <Icon className={`w-6 h-6 ${cfg.colorClass}`} />
                       <div>
-                        <span className="text-base font-black">{cfg.name}</span>
-                        <span className="text-sm font-bold text-muted-foreground ml-2">{position.quantity} 个</span>
+                        <span className="text-base font-bold">{cfg.name}</span>
+                        <span className="num text-sm font-semibold text-muted-foreground ml-2">{position.quantity} 个</span>
                         {cfg.unitLabel && (
-                          <span className="text-xs font-bold text-warning ml-1.5">约合 {(position.quantity * cfg.unitFactor!).toFixed(1)} {cfg.unitLabel}</span>
+                          <span className="text-xs font-semibold text-warning ml-1.5">约合 {(position.quantity * cfg.unitFactor!).toFixed(1)} {cfg.unitLabel}</span>
                         )}
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className={`text-base font-black tracking-tight ${isPnlUp ? 'text-gain' : 'text-loss'}`}>
+                      <div className={`num text-base font-bold tracking-tight ${isPnlUp ? 'text-gain' : 'text-loss'}`}>
                         {isPnlUp ? '+' : ''}{pnlPct.toFixed(2)}%
                       </div>
-                      <div className={`text-xs font-bold mt-0.5 ${isPnlUp ? 'text-gain' : 'text-loss'}`}>
+                      <div className={`num text-xs font-semibold mt-0.5 ${isPnlUp ? 'text-gain' : 'text-loss'}`}>
                         {isPnlUp ? '+' : ''}${fmtNum(pnlAmount)}
                       </div>
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs font-bold text-muted-foreground pt-1">
-                    <span>均价 <span className="text-foreground font-mono">${fmtPrice(position.avgCost)}</span></span>
-                    <span>现价 <span className="text-foreground font-mono">${fmtPrice(currentPrice)}</span></span>
-                    <span>市值 <span className="text-foreground font-mono">${fmtNum(currentPrice * position.quantity)}</span></span>
-                    {position.frozenQuantity > 0 && <span>冻结 <span className="text-warning font-mono">{position.frozenQuantity}</span></span>}
-                    {position.totalDiscount > 0 && <span>已省 <span className="text-warning font-mono">${fmtNum(position.totalDiscount)}</span></span>}
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs font-semibold text-muted-foreground pt-1">
+                    <span>均价 <span className="num text-foreground">${fmtPrice(position.avgCost)}</span></span>
+                    <span>现价 <span className="num text-foreground">${fmtPrice(currentPrice)}</span></span>
+                    <span>市值 <span className="num text-foreground">${fmtNum(currentPrice * position.quantity)}</span></span>
+                    {position.frozenQuantity > 0 && <span>冻结 <span className="num text-warning">{position.frozenQuantity}</span></span>}
+                    {position.totalDiscount > 0 && <span>已省 <span className="num text-warning">${fmtNum(position.totalDiscount)}</span></span>}
                   </div>
                 </div>
               </div>

@@ -28,7 +28,7 @@ function TradingViewWidget({ symbol = 'BINANCE:BTCUSD', label = 'Bitcoin' }: { s
       symbol,
       theme: isDark ? 'dark' : 'light',
       timezone: 'Etc/UTC',
-      backgroundColor: isDark ? '#0F0F0F' : '#FFFFFF',
+      backgroundColor: isDark ? '#0b0c0f' : '#FFFFFF',
       gridColor: isDark ? 'rgba(242, 242, 242, 0.06)' : 'rgba(0, 0, 0, 0.06)',
       watchlist: [],
       withdateranges: false,

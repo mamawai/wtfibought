@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 export function EmptyState({ icon, text }: { icon: ReactNode; text: string }) {
   return (
     <div className="p-12 text-center text-muted-foreground">
-      <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-muted flex items-center justify-center">
+      <div className="w-12 h-12 mx-auto mb-3 rounded-lg border border-border bg-card-2 flex items-center justify-center">
         {icon}
       </div>
       {text}

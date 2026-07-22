@@ -1,11 +1,8 @@
-import styled from 'styled-components';
+import { cn } from '../lib/utils';
 
 /**
- * 二选一拟物开关：槽凹进去、滑块凸起来，滑块滑到哪边哪边高亮。
+ * 二选一仪器开关：凹槽轨道 + 橙色滑块（机加工高光）。
  * 两个档位始终都写在面上——下单界面只显示当前档会让人分不清"这是当前值还是点了会变成的值"。
- *
- * 阴影不自己写，直接挂 index.css 的 .neu-inset / .neu-raised-sm，
- * 那边的暗色收窄高光、手机端缩小 blur 已经调好，跟着全站走。
  */
 
 interface NeuToggleOption<T extends string> {
@@ -25,10 +22,10 @@ interface NeuToggleProps<T extends string> {
   className?: string;
 }
 
-/** pad=槽内边距(滑块四周留的沟)，px=按钮左右内边距，font/weight 对齐被替换的原按钮 */
+/** pad=槽内边距(滑块四周留的沟)，btn=按钮字号/内边距，对齐被替换的原按钮 */
 const SIZES = {
-  md: { pad: 3, px: '0.875rem', font: '0.75rem', weight: 700 },
-  sm: { pad: 2, px: '0.625rem', font: '0.6875rem', weight: 500 },
+  md: { pad: 3, btn: 'px-3.5 text-xs font-bold' },
+  sm: { pad: 2, btn: 'px-2.5 text-[0.6875rem] font-medium' },
 } as const;
 
 export function NeuToggle<T extends string>({
@@ -42,12 +39,16 @@ export function NeuToggle<T extends string>({
   // 传进来的 value 不在两档里时兜到左档，否则 -1 会把滑块甩出槽外
   const idx = options.findIndex(o => o.value === value);
   const activeIndex = idx < 0 ? 0 : idx;
+  const { pad, btn } = SIZES[size];
 
   return (
-    <Wrapper
-      className={`neu-inset${className ? ` ${className}` : ''}`}
-      $size={size}
-      $index={activeIndex}
+    <div
+      className={cn(
+        'relative inline-grid grid-cols-2 rounded-full bg-secondary border border-border',
+        'shadow-[inset_0_1px_2px_rgba(0,0,0,0.08)] dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.4)]',
+        className,
+      )}
+      style={{ padding: pad }}
       role="group"
       aria-label={label}
     >
@@ -57,76 +58,29 @@ export function NeuToggle<T extends string>({
           type="button"
           aria-pressed={i === activeIndex}
           onClick={() => onChange(opt.value)}
+          className={cn(
+            'relative z-[1] rounded-full border-0 bg-transparent py-1 leading-4 whitespace-nowrap cursor-pointer',
+            'transition-colors duration-150 motion-reduce:transition-none',
+            'focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2',
+            btn,
+            i === activeIndex ? 'text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+          )}
         >
           {opt.label}
         </button>
       ))}
-      {/* 滑块必须排在按钮后面：按下拉伸靠 button:active ~ .slider，兄弟选择器只能往后找 */}
-      <span className="slider neu-raised-sm" aria-hidden="true" />
-    </Wrapper>
+      {/* 滑块：橙色实体键帽，machined 顶部高光给物理感 */}
+      <span
+        aria-hidden="true"
+        className="absolute z-0 rounded-full bg-primary machined transition-transform duration-150 ease-out motion-reduce:transition-none"
+        style={{
+          top: pad,
+          bottom: pad,
+          left: pad,
+          width: `calc(50% - ${pad}px)`,
+          transform: `translateX(${activeIndex * 100}%)`,
+        }}
+      />
+    </div>
   );
 }
-
-const Wrapper = styled.div<{ $size: 'sm' | 'md'; $index: number }>`
-  position: relative;
-  display: inline-grid;
-  grid-template-columns: 1fr 1fr;
-  padding: ${({ $size }) => SIZES[$size].pad}px;
-  border-radius: 999px;
-  background: var(--color-card);
-
-  button {
-    position: relative;
-    z-index: 1;
-    padding: 0.25rem ${({ $size }) => SIZES[$size].px};
-    border: 0;
-    border-radius: 999px;
-    background: transparent;
-    font-size: ${({ $size }) => SIZES[$size].font};
-    font-weight: ${({ $size }) => SIZES[$size].weight};
-    line-height: 1rem;
-    white-space: nowrap;
-    cursor: pointer;
-    color: var(--color-muted-foreground);
-    transition: color 0.25s ease;
-  }
-
-  button[aria-pressed='true'] {
-    color: var(--color-primary-foreground);
-  }
-
-  button[aria-pressed='false']:hover {
-    color: var(--color-foreground);
-  }
-
-  button:focus-visible {
-    outline: 2px solid var(--color-ring);
-    outline-offset: 2px;
-  }
-
-  .slider {
-    position: absolute;
-    z-index: 0;
-    top: ${({ $size }) => SIZES[$size].pad}px;
-    bottom: ${({ $size }) => SIZES[$size].pad}px;
-    left: ${({ $size }) => SIZES[$size].pad}px;
-    /* 宽度扣掉一份 pad，translateX(100%) 正好把它推到右格 */
-    width: calc(50% - ${({ $size }) => SIZES[$size].pad}px);
-    border-radius: 999px;
-    background: var(--color-primary);
-    transform: translateX(${({ $index }) => $index * 100}%) scaleX(var(--stretch, 1));
-    transition: transform 0.3s cubic-bezier(0.18, 0.89, 0.35, 1.15);
-  }
-
-  /* 按下时滑块横向撑一点，复刻原组件 :active 拉伸的手感 */
-  button:active ~ .slider {
-    --stretch: 1.06;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    button,
-    .slider {
-      transition: none;
-    }
-  }
-`;

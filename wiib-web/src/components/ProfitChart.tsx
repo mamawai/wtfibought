@@ -41,7 +41,9 @@ export function ProfitChart({ data }: Props) {
 
     const config = mode === 'daily' ? DAILY_CONFIG : CUMULATIVE_CONFIG;
     const dates = filteredData.map(d => d.date);
-    const textColor = isDark ? '#94A3B8' : '#78716C';
+    const textColor = isDark ? '#878b96' : '#71737b';
+    const gainColor = isDark ? '#0abf95' : '#089981';
+    const lossColor = isDark ? '#ff5a68' : '#f23645';
 
     const series: echarts.SeriesOption[] = config.map(cfg => ({
       name: cfg.name,
@@ -69,9 +71,9 @@ export function ProfitChart({ data }: Props) {
       backgroundColor: 'transparent',
       tooltip: {
         trigger: 'axis',
-        backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-        borderColor: isDark ? '#334155' : '#E7E0D8',
-        textStyle: { color: isDark ? '#F8FAFC' : '#1C1917', fontSize: 12 },
+        backgroundColor: isDark ? '#13151a' : '#FFFFFF',
+        borderColor: isDark ? '#23262e' : '#e4e4df',
+        textStyle: { color: isDark ? '#eceef0' : '#17181a', fontSize: 12 },
         formatter: (params: { axisValue: string; value: number; marker: string; seriesName: string }[]) => {
           const date = params[0]?.axisValue ?? '';
           let html = `<div style="font-weight:600;margin-bottom:4px">${date}</div>`;
@@ -80,7 +82,7 @@ export function ProfitChart({ data }: Props) {
             const sign = p.value >= 0 ? '+' : '';
             html += `<div style="display:flex;align-items:center;gap:6px;margin:2px 0">
               ${p.marker}<span>${p.seriesName}</span>
-              <span style="margin-left:auto;font-weight:600;color:${p.value >= 0 ? '#22c55e' : '#ef4444'}">${sign}${v}</span>
+              <span style="margin-left:auto;font-weight:600;color:${p.value >= 0 ? gainColor : lossColor}">${sign}${v}</span>
             </div>`;
           }
           return html;
@@ -104,12 +106,12 @@ export function ProfitChart({ data }: Props) {
           fontSize: 9,
           formatter: (v: string) => v.substring(5),
         },
-        axisLine: { lineStyle: { color: isDark ? '#334155' : '#E7E0D8' } },
+        axisLine: { lineStyle: { color: isDark ? '#23262e' : '#e4e4df' } },
         axisTick: { show: false },
       },
       yAxis: {
         type: 'value',
-        splitLine: { lineStyle: { color: isDark ? '#1E293B' : '#F5F0EB', type: 'dashed' } },
+        splitLine: { lineStyle: { color: isDark ? '#181b21' : '#f1f1ee', type: 'dashed' } },
         axisLabel: { color: textColor, fontSize: 9 },
       },
       series,

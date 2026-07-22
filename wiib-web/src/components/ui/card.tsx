@@ -7,8 +7,8 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "rounded-2xl bg-card text-card-foreground neu-raised",
-        "transition-all duration-150",
+        "rounded-lg pt-card text-card-foreground",
+        "transition-colors duration-150",
         className
       )}
       {...props}
@@ -17,11 +17,12 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("flex flex-col space-y-1.5 p-5", className)} {...props} />
+  return <div className={cn("flex flex-col space-y-1.5 p-4", className)} {...props} />
 }
 
+/* 终端面板式小标题：小号宽字距灰字，让数据当主角 */
 function CardTitle({ className, ...props }: React.ComponentProps<"h3">) {
-  return <h3 className={cn("text-lg font-bold leading-none tracking-tight", className)} {...props} />
+  return <h3 className={cn("text-xs font-semibold leading-none tracking-[0.12em] text-muted-foreground uppercase", className)} {...props} />
 }
 
 function CardDescription({ className, ...props }: React.ComponentProps<"p">) {
@@ -29,11 +30,11 @@ function CardDescription({ className, ...props }: React.ComponentProps<"p">) {
 }
 
 function CardContent({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("p-5 pt-0", className)} {...props} />
+  return <div className={cn("p-4 pt-0", className)} {...props} />
 }
 
 function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("flex items-center p-5 pt-0", className)} {...props} />
+  return <div className={cn("flex items-center p-4 pt-0", className)} {...props} />
 }
 
 export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent }

@@ -45,7 +45,7 @@ function PositionCard({ pos, canClose, closing, onClose }: {
   const sl = pos.stopLosses?.[0]?.price;
   const tp = pos.takeProfits?.[0]?.price;
   return (
-    <div className="rounded-lg neu-flat p-3 space-y-2">
+    <div className="rounded-md border border-border bg-card p-3 space-y-2">
       <div className="flex items-center gap-2">
         {isLong
           ? <ArrowUpRight className="w-3.5 h-3.5 text-gain shrink-0" />
@@ -77,7 +77,7 @@ function PositionCard({ pos, canClose, closing, onClose }: {
           <button
             disabled={closing}
             onClick={() => onClose(pos)}
-            className="neu-btn-sm px-2.5 py-1 rounded-lg text-[11px] font-bold text-loss flex items-center gap-1 disabled:opacity-50"
+            className="border border-border hover:bg-surface-hover px-2.5 py-1 rounded-lg text-[11px] font-bold text-loss flex items-center gap-1 disabled:opacity-50"
           >
             {closing ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />} 平仓
           </button>
@@ -90,7 +90,7 @@ function PositionCard({ pos, canClose, closing, onClose }: {
 /** 单币信号状态行：一句话状态 + 指标 chips，让人看见"策略活着、离触发差多少"。 */
 function SignalStateRow({ sig }: { sig: StrategySignalState }) {
   return (
-    <div className="rounded-lg neu-flat p-2.5 space-y-1.5">
+    <div className="rounded-md border border-border bg-card p-2.5 space-y-1.5">
       <div className="flex items-start gap-2">
         <span className="text-xs font-black shrink-0">{sig.symbol.replace('USDT', '')}</span>
         <span className="ml-auto text-right text-[10px] font-bold text-primary/90 leading-tight">{sig.state}</span>
@@ -111,8 +111,8 @@ function EmptyState({ icon: Icon, title, hint, className }: {
   icon: LucideIcon; title: string; hint?: string; className?: string;
 }) {
   return (
-    <div className={cn('rounded-xl neu-inset flex flex-col items-center justify-center text-center gap-2.5 px-4', className || 'py-10')}>
-      <div className="w-11 h-11 rounded-full neu-flat bg-background flex items-center justify-center text-muted-foreground/70">
+    <div className={cn('rounded-lg border border-border bg-card-2 flex flex-col items-center justify-center text-center gap-2.5 px-4', className || 'py-10')}>
+      <div className="w-11 h-11 rounded-full border border-border bg-background flex items-center justify-center text-muted-foreground/70">
         <Icon className="w-5 h-5" />
       </div>
       <div className="text-xs font-bold text-muted-foreground">{title}</div>
@@ -173,11 +173,11 @@ function StrategyColumn({ view, signals, canClose, closingId, onClose }: {
   const trades = view.closedPositions.slice(page * TRADE_PAGE_SIZE, (page + 1) * TRADE_PAGE_SIZE);
 
   return (
-    <div className="rounded-xl neu-raised-sm p-5 space-y-4 min-w-0">
+    <div className="rounded-lg pt-card p-5 space-y-4 min-w-0">
       {/* 头：策略专属点缀色只用在图标底，识别度够又不破坏拟物基调 */}
       <div className="flex items-center gap-3">
         <div
-          className="w-10 h-10 rounded-xl neu-flat flex items-center justify-center shrink-0"
+          className="w-10 h-10 rounded-lg border border-border bg-card flex items-center justify-center shrink-0"
           style={{ background: `${meta.accent}1f`, color: meta.accent }}
         >
           <Bot className="w-5 h-5" />
@@ -197,25 +197,25 @@ function StrategyColumn({ view, signals, canClose, closingId, onClose }: {
         <>
           {/* Stats：内凹"仪表窗"，主数字加大一档，标签退后 */}
           <div className="grid grid-cols-2 gap-2.5">
-            <div className="rounded-lg neu-inset px-3 py-2.5">
+            <div className="rounded-md border border-border bg-card-2 px-3 py-2.5">
               <div className="text-lg font-black tabular-nums truncate leading-tight">${fmtNum(view.equity)}</div>
               <div className="text-[10px] text-muted-foreground flex items-center gap-1 mt-1">
                 <Wallet className="w-3 h-3" /> 权益 · 可用 ${fmtNum(view.balance, 0)}
               </div>
             </div>
-            <div className="rounded-lg neu-inset px-3 py-2.5">
+            <div className="rounded-md border border-border bg-card-2 px-3 py-2.5">
               <div className="text-lg font-black tabular-nums truncate leading-tight"><PnlText value={view.cumPnl} /></div>
               <div className="text-[10px] text-muted-foreground flex items-center gap-1 mt-1">
                 <TrendingUp className="w-3 h-3" /> 累计已实现 · {view.tradeCount} 笔
               </div>
             </div>
-            <div className="rounded-lg neu-inset px-3 py-2.5">
+            <div className="rounded-md border border-border bg-card-2 px-3 py-2.5">
               <div className={cn('text-lg font-black tabular-nums leading-tight', view.tradeCount > 0 && view.winRate >= 0.5 ? 'text-gain' : view.tradeCount > 0 ? 'text-loss' : '')}>
                 {view.tradeCount > 0 ? `${(view.winRate * 100).toFixed(1)}%` : '—'}
               </div>
               <div className="text-[10px] text-muted-foreground mt-1">胜率 · {view.winCount}/{view.tradeCount}</div>
             </div>
-            <div className="rounded-lg neu-inset px-3 py-2.5">
+            <div className="rounded-md border border-border bg-card-2 px-3 py-2.5">
               <div className="text-lg font-black tabular-nums truncate leading-tight"><PnlText value={view.unrealizedPnl} /></div>
               <div className="text-[10px] text-muted-foreground mt-1">持仓浮盈 · {view.positions.length} 仓</div>
             </div>
@@ -235,7 +235,7 @@ function StrategyColumn({ view, signals, canClose, closingId, onClose }: {
 
           {/* 收益曲线 */}
           {equityPoints.length > 0 ? (
-            <div className="rounded-xl neu-inset px-1 py-2">
+            <div className="rounded-lg border border-border bg-card-2 px-1 py-2">
               <EquityChart points={equityPoints} />
             </div>
           ) : (
@@ -268,7 +268,7 @@ function StrategyColumn({ view, signals, canClose, closingId, onClose }: {
                     <button
                       disabled={page === 0}
                       onClick={() => setTradePage(page - 1)}
-                      className="neu-btn-sm w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary disabled:opacity-40"
+                      className="border border-border hover:bg-surface-hover w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary disabled:opacity-40"
                       aria-label="上一页"
                     >
                       <ChevronLeft className="w-3.5 h-3.5" />
@@ -279,7 +279,7 @@ function StrategyColumn({ view, signals, canClose, closingId, onClose }: {
                     <button
                       disabled={page >= pageCount - 1}
                       onClick={() => setTradePage(page + 1)}
-                      className="neu-btn-sm w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary disabled:opacity-40"
+                      className="border border-border hover:bg-surface-hover w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary disabled:opacity-40"
                       aria-label="下一页"
                     >
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -352,7 +352,7 @@ export function Strategies() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl neu-raised-sm flex items-center justify-center bg-primary/10">
+          <div className="w-11 h-11 rounded-lg pt-card flex items-center justify-center bg-primary/10">
             <Activity className="w-5.5 h-5.5 text-primary" />
           </div>
           <div>
@@ -361,11 +361,11 @@ export function Strategies() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Link to="/testnet" className="neu-btn-sm px-3 py-1.5 rounded-lg text-[11px] font-bold text-muted-foreground hover:text-primary">
+          <Link to="/testnet" className="border border-border hover:bg-surface-hover px-3 py-1.5 rounded-lg text-[11px] font-bold text-muted-foreground hover:text-primary">
             Testnet 监测 →
           </Link>
           <button onClick={() => { void load(); }}
-            className="neu-btn-sm w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary" aria-label="刷新">
+            className="border border-border hover:bg-surface-hover w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary" aria-label="刷新">
             <RefreshCcw className={cn('w-4 h-4', loading && 'animate-spin')} />
           </button>
         </div>

@@ -55,10 +55,10 @@ function dropComment(roots: CommentItem[], id: number): CommentItem[] {
 function Avatar({ username, avatar, small }: { username: string; avatar?: string; small?: boolean }) {
   const dim = small ? 'w-7 h-7' : 'w-9 h-9';
   if (avatar) {
-    return <img src={avatar} alt="" className={cn(dim, 'rounded-full object-cover shrink-0 neu-flat')} />;
+    return <img src={avatar} alt="" className={cn(dim, 'rounded-full object-cover shrink-0 border border-border')} />;
   }
   return (
-    <div className={cn(dim, 'rounded-full shrink-0 neu-flat bg-primary/10 text-primary flex items-center justify-center font-black',
+    <div className={cn(dim, 'rounded-full shrink-0 border border-border bg-primary/10 text-primary flex items-center justify-center font-black',
       small ? 'text-[10px]' : 'text-xs')}>
       {username.slice(0, 1).toUpperCase()}
     </div>
@@ -80,7 +80,7 @@ function ActionButton({ disabled, title, onClick, hoverClass, children }: {
       title={title}
       onClick={onClick}
       className={cn(
-        'neu-btn-sm px-2 py-1 rounded-lg text-[11px] font-bold tabular-nums flex items-center gap-1 transition-colors text-muted-foreground',
+        'border border-border hover:bg-surface-hover px-2 py-1 rounded-lg text-[11px] font-bold tabular-nums flex items-center gap-1 transition-colors text-muted-foreground',
         disabled ? 'opacity-45 cursor-not-allowed' : cn('cursor-pointer', hoverClass),
       )}
     >
@@ -111,7 +111,7 @@ function ComposeBox({ value, onChange, onSubmit, submitting, ready, placeholder,
         placeholder={placeholder}
         onChange={e => onChange(e.target.value)}
         className={cn(
-          'w-full rounded-xl bg-background px-3.5 py-2.5 text-sm neu-inset resize-none',
+          'w-full rounded-xl bg-background px-3.5 py-2.5 text-sm border border-border bg-card-2 resize-none',
           'placeholder:text-muted-foreground transition-all duration-150',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
           'disabled:cursor-not-allowed disabled:opacity-50',
@@ -178,7 +178,7 @@ function CommentRow({ c, isChild, focused, currentUserId, isAdmin, busy, onVote,
   };
 
   return (
-    <div className={cn('flex gap-2.5', focused && 'rounded-xl neu-inset px-3 py-2.5')}>
+    <div className={cn('flex gap-2.5', focused && 'rounded-lg border border-border bg-card-2 px-3 py-2.5')}>
       <Avatar username={c.username} avatar={c.avatar} small={isChild} />
       <div className="flex-1 min-w-0 space-y-1">
         <div className="flex items-baseline gap-2">
@@ -489,7 +489,7 @@ export function Comments() {
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="w-11 h-11 rounded-xl neu-raised-sm flex items-center justify-center bg-primary/10 shrink-0">
+        <div className="w-11 h-11 rounded-lg pt-card flex items-center justify-center bg-primary/10 shrink-0">
           <MessageSquare className="w-5.5 h-5.5 text-primary" />
         </div>
         <div className="min-w-0">
@@ -498,7 +498,7 @@ export function Comments() {
         </div>
         <button
           onClick={() => { void load(); }}
-          className="ml-auto neu-btn-sm w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary cursor-pointer"
+          className="ml-auto border border-border hover:bg-surface-hover w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary cursor-pointer"
           aria-label="刷新"
         >
           <RefreshCcw className={cn('w-4 h-4', loading && 'animate-spin')} />
@@ -506,7 +506,7 @@ export function Comments() {
       </div>
 
       {/* 留言规范：默认折叠，不占地方但随手能看 */}
-      <details className="group rounded-2xl bg-card neu-raised px-4 py-3">
+      <details className="group rounded-lg pt-card px-4 py-3">
         <summary className="flex items-center gap-2 cursor-pointer text-sm font-bold list-none [&::-webkit-details-marker]:hidden">
           <ShieldAlert className="w-4 h-4 text-primary" />
           留言规范
@@ -527,7 +527,7 @@ export function Comments() {
       </details>
 
       {/* 发帖框 */}
-      <div className="rounded-2xl bg-card neu-raised p-4">
+      <div className="rounded-lg pt-card p-4">
         <ComposeBox
           value={text}
           onChange={setText}
@@ -542,7 +542,7 @@ export function Comments() {
       {focusId && (
         <button
           onClick={() => setParams({}, { replace: true })}
-          className="flex items-center gap-2 text-xs font-bold text-primary neu-btn-sm rounded-xl px-3 py-2 cursor-pointer"
+          className="flex items-center gap-2 text-xs font-bold text-primary border border-border hover:bg-surface-hover rounded-xl px-3 py-2 cursor-pointer"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           返回全部评论
@@ -555,8 +555,8 @@ export function Comments() {
           <Loader2 className="w-4 h-4 animate-spin" /> 加载留言…
         </div>
       ) : roots.length === 0 ? (
-        <div className="rounded-2xl neu-inset flex flex-col items-center justify-center gap-2.5 py-14 px-4 text-center">
-          <div className="w-11 h-11 rounded-full neu-flat bg-background flex items-center justify-center text-muted-foreground/70">
+        <div className="rounded-lg border border-border bg-card-2 flex flex-col items-center justify-center gap-2.5 py-14 px-4 text-center">
+          <div className="w-11 h-11 rounded-full border border-border bg-background flex items-center justify-center text-muted-foreground/70">
             <MessageSquare className="w-5 h-5" />
           </div>
           <div className="text-xs font-bold text-muted-foreground">还没有人留言</div>
@@ -571,7 +571,7 @@ export function Comments() {
             const replying = replyTo?.rootId === root.id;
 
             return (
-              <div key={root.id} className="rounded-2xl bg-card neu-raised p-4 space-y-3">
+              <div key={root.id} className="rounded-lg pt-card p-4 space-y-3">
                 <CommentRow
                   c={root}
                   focused={focusId === String(root.id)}

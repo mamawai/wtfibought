@@ -663,6 +663,16 @@ export interface QuantSnapshotView {
   createdAt: string;
 }
 
+/** 重要快讯（BlockBeats 缓存透传，plain 为脱 HTML 纯文本） */
+export interface NewsFlashItem {
+  id: number;
+  title: string;
+  plain: string;
+  url: string;
+  /** 形如 "2026-07-09 00:30:12" */
+  createTime: string;
+}
+
 // ========== 留言板与通知 ==========
 
 /** 留言板评论。只有两层：rootId 为空是根评论，非空是该根评论下的子评论。 */

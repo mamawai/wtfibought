@@ -30,10 +30,10 @@ export function ForceOrdersCard() {
   return (
     <Link
       to="/force-orders"
-      className="flex items-center gap-3 rounded-2xl bg-card px-4 py-3.5 neu-btn-sm transition-all cursor-pointer"
+      className="flex items-center gap-3 rounded-lg pt-card px-4 py-3.5 hover:bg-surface-hover transition-colors cursor-pointer"
     >
-      <div className="p-2 rounded-xl bg-red-500/10 shrink-0">
-        <Flame className="w-4 h-4 text-red-500" />
+      <div className="p-2 rounded-xl bg-loss/10 shrink-0">
+        <Flame className="w-4 h-4 text-loss" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="text-sm font-bold leading-none">爆仓动态</div>

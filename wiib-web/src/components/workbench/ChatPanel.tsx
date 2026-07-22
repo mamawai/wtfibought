@@ -5,6 +5,7 @@ import { Bot, ChevronRight, History, Loader2, MessageSquareText, RotateCcw, Send
 import { workbenchApi } from '../../api';
 import { cn, fmtDateTime } from '../../lib/utils';
 import { chatStore, type ChatItem } from './chatStore';
+import { BeamCard } from '../fx/BeamCard';
 import type { WorkbenchSessionSummary } from '../../types';
 
 const AGENT_CN: Record<string, string> = {
@@ -35,7 +36,7 @@ function HitlCard({ item, onDecide, busy }: {
   return (
     <div className={cn(
       'rounded-xl p-3.5 space-y-2.5 border-l-4',
-      item.status === 'pending' ? 'neu-raised-sm border-l-primary' : 'neu-flat border-l-muted-foreground/30 opacity-70',
+      item.status === 'pending' ? 'bg-card border border-border border-l-primary' : 'border border-border border-l-muted-foreground/30 opacity-70',
     )}>
       <div className="flex items-center gap-2">
         <ShieldQuestion className="w-4 h-4 text-primary shrink-0" />
@@ -48,14 +49,14 @@ function HitlCard({ item, onDecide, busy }: {
           <button
             disabled={busy}
             onClick={() => onDecide(true)}
-            className="neu-btn-sm flex-1 py-1.5 rounded-lg text-xs font-bold text-primary disabled:opacity-50"
+            className="border border-border hover:bg-surface-hover flex-1 py-1.5 rounded-lg text-xs font-bold text-primary disabled:opacity-50"
           >
             批准执行
           </button>
           <button
             disabled={busy}
             onClick={() => onDecide(false)}
-            className="neu-btn-sm flex-1 py-1.5 rounded-lg text-xs font-bold text-muted-foreground disabled:opacity-50"
+            className="border border-border hover:bg-surface-hover flex-1 py-1.5 rounded-lg text-xs font-bold text-muted-foreground disabled:opacity-50"
           >
             拒绝
           </button>
@@ -172,7 +173,7 @@ export function ChatPanel() {
     ((it.kind === 'assistant' || it.kind === 'expert') && it.streaming) || (it.kind === 'progress' && it.active));
 
   return (
-    <div className="rounded-xl neu-raised-sm flex flex-col h-[70vh] lg:h-[calc(100vh-11rem)] lg:sticky lg:top-24">
+    <div className="rounded-lg pt-card flex flex-col h-[70vh] lg:h-[calc(100vh-11rem)] lg:sticky lg:top-24">
       {/* 面板头 */}
       <div className="flex items-center gap-2 px-4 py-3">
         <Bot className="w-4.5 h-4.5 text-primary" />
@@ -181,7 +182,7 @@ export function ChatPanel() {
         <button
           onClick={() => showHistory ? setShowHistory(false) : openHistory()}
           className={cn(
-            'ml-auto neu-btn-sm w-7 h-7 rounded-lg flex items-center justify-center hover:text-primary',
+            'ml-auto border border-border hover:bg-surface-hover w-7 h-7 rounded-lg flex items-center justify-center hover:text-primary',
             showHistory ? 'text-primary' : 'text-muted-foreground',
           )}
           title="历史对话"
@@ -190,7 +191,7 @@ export function ChatPanel() {
         </button>
         <button
           onClick={handleNewSession}
-          className="neu-btn-sm w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary"
+          className="border border-border hover:bg-surface-hover w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary"
           title="新会话"
         >
           <RotateCcw className="w-3.5 h-3.5" />
@@ -218,7 +219,7 @@ export function ChatPanel() {
                 onClick={() => void openSession(s)}
                 onKeyDown={e => e.key === 'Enter' && void openSession(s)}
                 className={cn(
-                  'w-full text-left rounded-xl neu-flat px-3.5 py-2.5 space-y-1 hover:bg-accent/40 transition-colors cursor-pointer',
+                  'w-full text-left rounded-lg border border-border bg-card px-3.5 py-2.5 space-y-1 hover:bg-surface-hover transition-colors cursor-pointer',
                   s.sessionId === sessionId && 'ring-1 ring-primary/40',
                 )}
               >
@@ -255,7 +256,7 @@ export function ChatPanel() {
                 <button
                   key={q}
                   onClick={() => { setInput(''); void chatStore.send(q); }}
-                  className="neu-btn-sm w-full py-2 px-3 rounded-lg text-xs text-left text-muted-foreground hover:text-foreground"
+                  className="border border-border hover:bg-surface-hover w-full py-2 px-3 rounded-lg text-xs text-left text-muted-foreground hover:text-foreground"
                 >
                   {q}
                 </button>
@@ -277,7 +278,7 @@ export function ChatPanel() {
             case 'assistant':
               return (
                 <div key={i} className="flex">
-                  <div className="max-w-[92%] rounded-2xl rounded-bl-md neu-inset px-3.5 py-2.5 text-sm">
+                  <div className="max-w-[92%] rounded-2xl rounded-bl-md border border-border bg-card-2 px-3.5 py-2.5 text-sm">
                     <Markdown content={item.content} />
                     {item.streaming && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground inline-block ml-1" />}
                   </div>
@@ -295,21 +296,25 @@ export function ChatPanel() {
                     {item.streaming && <Loader2 className="w-3 h-3 animate-spin ml-1" />}
                   </button>
                   {!item.collapsed && (
-                    <div className="rounded-xl neu-flat px-3.5 py-2.5 text-xs text-muted-foreground">
+                    <div className="rounded-lg border border-border bg-card px-3.5 py-2.5 text-xs text-muted-foreground">
                       <Markdown content={item.content} />
                     </div>
                   )}
                 </div>
               );
             case 'progress':
-              return (
+              // 活跃条目上边框巡游光：一眼看出"深研判正在跑"
+              return item.active ? (
+                <BeamCard key={i} className="my-1">
+                  <div className="flex items-center gap-1.5 py-1.5 px-2.5">
+                    <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" />
+                    <span className="text-[10px] font-bold text-primary">{item.text}</span>
+                  </div>
+                </BeamCard>
+              ) : (
                 <div key={i} className="flex items-center gap-1.5 py-0.5 pl-1">
-                  {item.active
-                    ? <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" />
-                    : <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40 shrink-0" />}
-                  <span className={cn('text-[10px] font-bold', item.active ? 'text-primary' : 'text-muted-foreground')}>
-                    {item.text}
-                  </span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40 shrink-0" />
+                  <span className="text-[10px] font-bold text-muted-foreground">{item.text}</span>
                 </div>
               );
             case 'agent':
@@ -332,7 +337,7 @@ export function ChatPanel() {
 
       {/* 输入区 */}
       <div className="p-3">
-        <div className="flex items-center gap-2 rounded-xl neu-inset px-3 py-1.5">
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-card-2 px-3 py-1.5">
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
@@ -344,7 +349,7 @@ export function ChatPanel() {
           <button
             onClick={handleSend}
             disabled={loading || !input.trim()}
-            className="neu-btn-sm w-8 h-8 rounded-lg flex items-center justify-center text-primary disabled:opacity-40"
+            className="border border-border hover:bg-surface-hover w-8 h-8 rounded-lg flex items-center justify-center text-primary disabled:opacity-40"
             aria-label="发送"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}

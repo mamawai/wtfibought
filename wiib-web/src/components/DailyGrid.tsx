@@ -63,14 +63,14 @@ export function DailyGrid({ cells, selectedDate, onSelectDate }: Props) {
   const level = (absPnl: number) => Math.min(3, Math.floor((absPnl / maxAbs) * 4));
 
   return (
-    <div className="neu-raised-sm rounded-xl p-4">
+    <div className="pt-card rounded-lg p-4">
       {/* 月份切换 */}
       <div className="flex items-center justify-between mb-3">
-        <button onClick={() => shiftMonth(-1)} className="neu-btn-sm w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary">
+        <button onClick={() => shiftMonth(-1)} className="w-7 h-7 rounded-md border border-border hover:bg-surface-hover flex items-center justify-center text-muted-foreground hover:text-primary transition-colors cursor-pointer">
           <ChevronLeft className="w-4 h-4" />
         </button>
-        <span className="text-sm font-black tabular-nums">{month}</span>
-        <button onClick={() => shiftMonth(1)} className="neu-btn-sm w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary">
+        <span className="num text-sm font-bold">{month}</span>
+        <button onClick={() => shiftMonth(1)} className="w-7 h-7 rounded-md border border-border hover:bg-surface-hover flex items-center justify-center text-muted-foreground hover:text-primary transition-colors cursor-pointer">
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>

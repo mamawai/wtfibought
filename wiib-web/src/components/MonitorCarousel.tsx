@@ -30,10 +30,10 @@ export function MonitorCarousel() {
           key={p.label}
           onClick={() => setIdx(i)}
           className={cn(
-            'px-2 py-0.5 rounded-full text-[10px] font-bold transition-all cursor-pointer',
+            'px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors cursor-pointer border',
             i === idx
-              ? 'bg-primary/10 text-primary neu-inset'
-              : 'text-muted-foreground hover:text-foreground neu-flat',
+              ? 'bg-primary/10 text-primary border-primary/30'
+              : 'text-muted-foreground hover:text-foreground border-border hover:bg-surface-hover',
           )}
         >
           {p.label}

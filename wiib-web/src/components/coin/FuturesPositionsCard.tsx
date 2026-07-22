@@ -155,7 +155,7 @@ export function FuturesPositionsCard({ symbol, refreshKey, onOrdersChanged, show
         ))}
         {/* 行尾 + 槽占位补齐四格：self-stretch 跟随同行最高卡；仅四列宽屏有意义，窄屏隐藏 */}
         {Array.from({ length: (4 - positions.length % 4) % 4 }).map((_, i) => (
-          <div key={`slot-${i}`} className="hidden xl:flex self-stretch min-h-44 rounded-2xl neu-inset items-center justify-center">
+          <div key={`slot-${i}`} className="hidden xl:flex self-stretch min-h-44 rounded-lg border border-dashed border-border bg-card-2 items-center justify-center">
             <Plus className="w-7 h-7 text-muted-foreground opacity-30" />
           </div>
         ))}
@@ -308,7 +308,7 @@ function PositionItem({ pos, brackets, crossAvailable, onMutated }: {
 
   return (
     // 不能 overflow-hidden：卡内 HelpTip/预估气泡要溢出卡边显示（窄卡下会被裁掉），色条自己收圆角
-    <div className="p-4 rounded-2xl bg-card neu-raised relative">
+    <div className="p-4 rounded-lg border border-border bg-card-2 relative">
       <div className={`absolute top-0 bottom-0 left-0 w-1.5 rounded-l-2xl ${isLong ? 'bg-gain' : 'bg-loss'}`} />
       {/* 全信息竖排常驻：头部徽标 → 盈亏主角 → 全量指标 → SL/TP 胶囊 → 操作按钮 */}
       <div className="pl-3 space-y-3">

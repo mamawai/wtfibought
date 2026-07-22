@@ -18,7 +18,7 @@ function ScenarioBar({ scenariosJson }: { scenariosJson: string }) {
   if (!s) return null;
   return (
     <div className="space-y-1.5">
-      <div className="flex h-3.5 rounded-full neu-inset overflow-hidden p-[3px] gap-[2px]">
+      <div className="flex h-3.5 rounded-full border border-border bg-card-2 overflow-hidden p-[3px] gap-[2px]">
         <div className="rounded-full bg-gain/85" style={{ width: `${s.bull}%` }} />
         <div className="rounded-full bg-muted-foreground/35" style={{ width: `${s.range}%` }} />
         <div className="rounded-full bg-loss/85" style={{ width: `${s.bear}%` }} />
@@ -38,7 +38,7 @@ function ArgumentFold({ title, content, tone }: { title: string; content: string
   const color = tone === 'bull' ? 'text-gain' : tone === 'bear' ? 'text-loss' : 'text-primary';
   const border = tone === 'bull' ? 'border-gain/50' : tone === 'bear' ? 'border-loss/50' : 'border-primary/50';
   return (
-    <div className="rounded-lg neu-flat overflow-hidden">
+    <div className="rounded-md border border-border bg-card overflow-hidden">
       <button
         onClick={() => setOpen(v => !v)}
         className={cn('w-full flex items-center justify-between px-3 py-2 text-xs font-bold', color)}
@@ -62,8 +62,8 @@ function ArgumentFold({ title, content, tone }: { title: string; content: string
 export function AnalysisCard({ analysis }: { analysis: QuantDeepAnalysisView | null }) {
   if (!analysis) {
     return (
-      <div className="rounded-xl neu-inset flex flex-col items-center justify-center text-center gap-2.5 px-4 py-8">
-        <div className="w-11 h-11 rounded-full neu-flat bg-background flex items-center justify-center text-muted-foreground/70">
+      <div className="rounded-lg border border-border bg-card-2 flex flex-col items-center justify-center text-center gap-2.5 px-4 py-8">
+        <div className="w-11 h-11 rounded-full border border-border bg-background flex items-center justify-center text-muted-foreground/70">
           <Scale className="w-5 h-5" />
         </div>
         <div className="text-xs font-bold text-muted-foreground">暂无深研判</div>
@@ -72,7 +72,7 @@ export function AnalysisCard({ analysis }: { analysis: QuantDeepAnalysisView | n
     );
   }
   return (
-    <div className="rounded-xl neu-raised-sm p-4 space-y-3">
+    <div className="rounded-lg pt-card p-4 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
         <Scale className="w-4 h-4 text-primary" />
         <span className="text-sm font-black">深研判</span>
@@ -91,7 +91,7 @@ export function AnalysisCard({ analysis }: { analysis: QuantDeepAnalysisView | n
       </div>
 
       {/* 叙事主体：内凹"读稿区"，与操作性内容分层 */}
-      <div className="rounded-lg neu-inset px-3.5 py-3 flex gap-2.5">
+      <div className="rounded-md border border-border bg-card-2 px-3.5 py-3 flex gap-2.5">
         <ScrollText className="w-4 h-4 text-muted-foreground/60 shrink-0 mt-0.5" />
         <p className="text-sm leading-relaxed whitespace-pre-wrap min-w-0">{analysis.narrative}</p>
       </div>

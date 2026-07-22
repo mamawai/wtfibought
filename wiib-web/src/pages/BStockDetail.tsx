@@ -190,9 +190,9 @@ function BStockDetail({ symbol }: { symbol: string }) {
                       ['CEO', info.ceo ?? '—'],
                       ['英文名', info.nameEn ?? info.ticker ?? '—'],
                     ].map(([k, v]) => (
-                      <div key={k} className="rounded-xl neu-inset px-3 py-2.5">
+                      <div key={k} className="rounded-md border border-border bg-card-2 px-3 py-2.5">
                         <div className="text-[10px] text-muted-foreground">{k}</div>
-                        <div className="text-sm font-bold tabular-nums tracking-tight truncate mt-0.5" title={v}>{v}</div>
+                        <div className="num text-sm font-semibold tracking-tight truncate mt-0.5" title={v}>{v}</div>
                       </div>
                     ))}
                   </div>
@@ -212,18 +212,18 @@ function BStockDetail({ symbol }: { symbol: string }) {
         <div className="flex flex-col gap-4">
           <Card className="overflow-hidden flex-1 flex flex-col">
             <CardContent className="p-5 flex-1 flex flex-col gap-5">
-              {/* 买/卖切换：拟物段控件 */}
-              <div className="flex rounded-xl bg-card overflow-hidden neu-raised">
+              {/* 买/卖切换：终端段控件 */}
+              <div className="flex rounded-md border border-border overflow-hidden divide-x divide-border">
                 {(['BUY', 'SELL'] as const).map(sd => (
                   <button
                     key={sd}
                     type="button"
                     onClick={() => { setSide(sd); setQty(''); }}
                     className={cn(
-                      "flex-1 py-2.5 text-sm font-black transition-colors first:border-r first:border-border",
+                      "flex-1 py-2.5 text-sm font-bold transition-colors cursor-pointer",
                       side === sd
                         ? (sd === 'BUY' ? "bg-gain text-white" : "bg-loss text-white")
-                        : "bg-card text-foreground hover:bg-surface-hover"
+                        : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
                     )}
                   >
                     {sd === 'BUY' ? '买入' : '卖出'}
@@ -273,8 +273,8 @@ function BStockDetail({ symbol }: { symbol: string }) {
                 </div>
               )}
 
-              {/* 预览：内凹面板，数字随数量实时跳动（百分比按钮触发缓动） */}
-              <div className="rounded-xl neu-inset px-3.5 py-3 space-y-1.5 text-xs">
+              {/* 预览：次级面板，数字随数量实时跳动（百分比按钮触发缓动） */}
+              <div className="rounded-md border border-border bg-card-2 px-3.5 py-3 space-y-1.5 text-xs">
                 <div className="flex justify-between"><span className="text-muted-foreground">成交额</span><span className="tabular-nums font-bold">{fmtNum(amount)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">手续费 (0.1%)</span><span className="tabular-nums font-bold">{fmtNum(commission)}</span></div>
                 {isLevBuy && <div className="flex justify-between"><span className="text-muted-foreground">借款</span><span className="tabular-nums font-bold text-amber-400">{fmtNum(amount - amount / leverage)}</span></div>}

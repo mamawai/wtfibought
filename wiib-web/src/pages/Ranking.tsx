@@ -215,7 +215,6 @@ export function Ranking() {
               <Clock className="w-3 h-3" />
               交易时段每10分钟更新
             </span>
-            <span className="text-[11px]">盈亏 = 合约+现货+预测</span>
           </div>
         </CardHeader>
 

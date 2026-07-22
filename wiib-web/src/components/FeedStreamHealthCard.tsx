@@ -103,7 +103,7 @@ export function FeedStreamHealthCard() {
         {streams?.map(s => {
           const meta = STATUS_META[s.status];
           return (
-            <div key={s.name} className="flex items-center gap-3 p-2.5 rounded-xl neu-inset">
+            <div key={s.name} className="flex items-center gap-3 p-2.5 rounded-lg border border-border bg-card-2">
               <span className={cn('w-2 h-2 rounded-full shrink-0', meta.dot, s.status === 'CONNECTED' && 'animate-pulse')} />
               <span className="text-sm font-bold min-w-[7rem]">{s.name}</span>
               <span className={cn('text-xs font-medium', meta.text)}>{meta.label}</span>

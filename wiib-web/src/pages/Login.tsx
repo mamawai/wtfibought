@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import NumberFlow from '@number-flow/react';
 import { authApi } from '../api';
 import { useUserStore } from '../stores/userStore';
-import { Typewriter } from '../components/ui/typewriter';
+import { useCryptoStream } from '../hooks/useCryptoStream';
+import { DecryptedText } from '../components/fx/DecryptedText';
+import { Input } from '../components/ui/input';
+import { Button } from '../components/ui/button';
 import { Loader2, Globe, BarChart3, Wallet, LineChart, LogIn } from 'lucide-react';
 
 const LINUXDO_CONFIG = {
@@ -16,28 +20,21 @@ const LINUXDO_CONFIG = {
 //   redirectUri: 'http://localhost:3000/login',
 // };
 
-// 定制化新粗野主义商标组件：时光机+涨幅趋势
-function ProjectLogo({ className, ...props }: React.SVGProps<SVGSVGElement>) {
+/** 登录前的实时报价角标：匿名 STOMP 流（后端不拒游客），进门先看见"活"的行情 */
+function LiveQuote({ symbol, name }: { symbol: string; name: string }) {
+  const tick = useCryptoStream(symbol, 'spot');
   return (
-    <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} {...props}>
-      {/* 底部偏移阴影（时钟的背影） */}
-      <circle cx="50" cy="58" r="32" fill="currentColor" opacity="0.15" />
-      {/* 时钟表盘 */}
-      <circle cx="46" cy="54" r="32" fill="#FFFFFF" stroke="currentColor" strokeWidth="7" />
-      
-      {/* 时钟刻度 */}
-      <line x1="46" y1="30" x2="46" y2="36" stroke="currentColor" strokeWidth="5" strokeLinecap="round" />
-      <line x1="70" y1="54" x2="64" y2="54" stroke="currentColor" strokeWidth="5" strokeLinecap="round" />
-      <line x1="46" y1="78" x2="46" y2="72" stroke="currentColor" strokeWidth="5" strokeLinecap="round" />
-      <line x1="22" y1="54" x2="28" y2="54" stroke="currentColor" strokeWidth="5" strokeLinecap="round" />
-      
-      {/* 时钟中心点 */}
-      <circle cx="46" cy="54" r="6" fill="currentColor" />
-      
-      {/* 突破时间限制的增长箭头 */}
-      <polyline points="32,68 46,54 74,26" fill="none" stroke="currentColor" strokeWidth="7" strokeLinecap="square" strokeLinejoin="miter" />
-      <polygon points="61,23 81,19 77,39" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-    </svg>
+    <div className="flex items-center gap-2 px-3.5 py-2 rounded-md border border-border bg-card/70 backdrop-blur-sm">
+      <span className="led" />
+      <span className="text-xs font-bold">{name}</span>
+      {tick?.price != null
+        ? <NumberFlow
+            value={tick.price}
+            format={{ maximumFractionDigits: 2, minimumFractionDigits: 2 }}
+            className="num text-xs text-muted-foreground"
+          />
+        : <span className="num text-xs text-muted-foreground">····</span>}
+    </div>
   );
 }
 
@@ -151,181 +148,165 @@ export function Login() {
     }
   };
 
+  const segBtn = (active: boolean) =>
+    `flex-1 h-10 text-sm font-bold transition-colors cursor-pointer ${
+      active
+        ? 'bg-card-2 text-foreground shadow-[inset_0_2px_0_var(--color-primary)]'
+        : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'
+    }`;
+
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden bg-background">
-      {/* 恢复原版的渐变垂直条纹背景 */}
-      <div className="absolute inset-0 z-0 pointer-events-none">
-        <div className="absolute inset-0 flex">
-          {Array.from({ length: 26 }).map((_, i) => (
-            <div
-              key={i}
-              className="flex-1"
-              style={{
-                background: `linear-gradient(to bottom,
-                  rgba(249, 115, 22, 0) 0%,
-                  rgba(253, 186, 116, ${Math.sin((i / 26) * Math.PI) * 0.35 + 0.25}) 50%,
-                  rgba(249, 115, 22, 0) 100%)`,
-              }}
-            />
-          ))}
+    <div className="min-h-screen relative overflow-hidden bg-background lg:grid lg:grid-cols-[1.1fr_1fr]">
+      {/* 背景：图纸网格（顶部渐隐）+ 橙色辉光 */}
+      <div aria-hidden className="absolute inset-0 pointer-events-none">
+        <div
+          className="absolute inset-0 opacity-50"
+          style={{
+            backgroundImage:
+              'linear-gradient(var(--color-border) 1px, transparent 1px), linear-gradient(90deg, var(--color-border) 1px, transparent 1px)',
+            backgroundSize: '44px 44px',
+            maskImage: 'radial-gradient(ellipse 90% 70% at 50% 0%, black 30%, transparent 75%)',
+            WebkitMaskImage: 'radial-gradient(ellipse 90% 70% at 50% 0%, black 30%, transparent 75%)',
+          }}
+        />
+        <div
+          className="absolute -top-44 left-1/2 -translate-x-1/2 w-[52rem] h-[26rem] rounded-full"
+          style={{ background: 'radial-gradient(closest-side, color-mix(in srgb, var(--color-primary) 15%, transparent), transparent)' }}
+        />
+      </div>
+
+      {/* 左：品牌面板（桌面） */}
+      <div className="hidden lg:flex relative flex-col justify-between p-14 border-r border-border/60">
+        <div className="flex items-baseline gap-3">
+          <span className="text-lg font-extrabold tracking-wide">WIIB<span className="text-primary">.</span></span>
+          <span className="microlabel font-semibold">SIMULATED TRADING TERMINAL</span>
+        </div>
+
+        <div className="space-y-8">
+          <h1 className="text-5xl xl:text-6xl font-extrabold tracking-tight leading-[1.08] uppercase">
+            <DecryptedText text="What If" speed={45} />
+            <br />
+            <span className="text-primary"><DecryptedText text="I Bought" speed={45} /></span>
+          </h1>
+          <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
+            虚拟资金 · 真实行情。股票、加密货币、永续合约与 AI 量化研判，
+            零风险体验"如果当初买了会怎样"。
+          </p>
+          {/* 实时行情角标：未登录也在跳动 */}
+          <div className="flex flex-wrap gap-3">
+            <LiveQuote symbol="BTCUSDT" name="BTC" />
+            <LiveQuote symbol="ETHUSDT" name="ETH" />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-6 text-[11px] font-semibold text-muted-foreground">
+          <span className="flex items-center gap-1.5"><BarChart3 className="w-3.5 h-3.5" />Binance 实时行情</span>
+          <span className="flex items-center gap-1.5"><Wallet className="w-3.5 h-3.5" />虚拟资金 零风险</span>
+          <span className="flex items-center gap-1.5"><LineChart className="w-3.5 h-3.5" />AI 波动研判</span>
         </div>
       </div>
 
-      {/* 主卡片 */}
-      <div className="w-full max-w-md relative z-10">
-        {/* 卡片后置阴影块（纯物理错位感） */}
-
-
-        <div className="relative rounded-4xl bg-card neu-raised-lg p-8 md:p-10 flex flex-col items-center">
-          
-          {/* Logo - 倾斜重叠设计 + 专属商标 */}
-          <div className="mb-8 relative group cursor-pointer">
-            <div className="absolute inset-0 bg-warning rounded-2xl rotate-6 transition-transform duration-300 group-hover:rotate-12 neu-flat" />
-            <div className="relative w-24 h-24 rounded-2xl bg-primary flex items-center justify-center neu-raised-sm -rotate-6 transition-transform duration-300 group-hover:rotate-0">
-              <ProjectLogo className="w-16 h-16 text-foreground" />
-            </div>
+      {/* 右：登录卡 */}
+      <div className="relative flex items-center justify-center p-4 py-14 min-h-screen lg:min-h-0">
+        <div className="w-full max-w-sm">
+          {/* 移动端顶部品牌 */}
+          <div className="lg:hidden text-center mb-8">
+            <div className="text-2xl font-extrabold tracking-wide">WIIB<span className="text-primary">.</span></div>
+            <div className="microlabel font-semibold mt-1.5">SIMULATED TRADING TERMINAL</div>
           </div>
 
-          {/* 标题 */}
-          <div className="text-center mb-10 w-full flex flex-col items-center">
-            <h1 className="text-3xl sm:text-4xl md:text-[2.5rem] font-black text-foreground mb-6 tracking-tighter uppercase flex flex-wrap items-center justify-center gap-x-3 gap-y-4">
-              <span className="relative inline-block z-10" style={{ textShadow: '4px 4px 0 var(--color-warning)' }}>
-                What If
-              </span>
-              <span className="px-4 py-1 bg-primary text-primary-foreground neu-raised-sm -rotate-2 inline-block relative z-20 hover:rotate-0 hover:translate-y-1 transition-all">
-                I Bought
-              </span>
-            </h1>
-            <div className="inline-flex items-center justify-center px-4 py-2.5 rounded-xl bg-surface neu-flat">
-              <span className="text-sm font-bold text-foreground">
-                <Typewriter text="模拟股票交易，看看如果当初买了会怎样" speed={80} />
-              </span>
+          <div className="pt-card rounded-lg p-7 space-y-5">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="led" />
+                <span className="microlabel font-semibold">TERMINAL ACCESS</span>
+              </div>
+              <h2 className="text-xl font-extrabold tracking-tight mt-2">
+                {mode?.passwordLoginEnabled && isRegister ? '创建账户' : '登录终端'}
+              </h2>
             </div>
-          </div>
 
-          {/* 功能点矩阵 */}
-          <div className="grid grid-cols-3 gap-3 w-full mb-10">
-            <div className="text-center p-4 rounded-xl bg-[#FEF08A] neu-btn-sm transition-all">
-              <BarChart3 className="w-7 h-7 mx-auto mb-2 text-foreground" strokeWidth={2.5} />
-              <span className="text-xs font-black text-foreground">真实行情</span>
-            </div>
-            <div className="text-center p-4 rounded-xl bg-[#86EFAC] neu-btn-sm transition-all">
-              <Wallet className="w-7 h-7 mx-auto mb-2 text-foreground" strokeWidth={2.5} />
-              <span className="text-xs font-black text-foreground">无损模拟</span>
-            </div>
-            <div className="text-center p-4 rounded-xl bg-[#93C5FD] neu-btn-sm transition-all">
-              <LineChart className="w-7 h-7 mx-auto mb-2 text-foreground" strokeWidth={2.5} />
-              <span className="text-xs font-black text-foreground">收益复盘</span>
-            </div>
-          </div>
+            {error && (
+              <div className="p-3 rounded-md border border-destructive/40 bg-destructive/10 text-destructive text-xs font-semibold animate-in slide-in-from-top-2 fade-in">
+                {error}
+              </div>
+            )}
 
-          {/* 错误提示 */}
-          {error && (
-            <div className="w-full p-4 rounded-xl bg-destructive text-white text-sm font-black text-center mb-8 neu-raised animate-in slide-in-from-top-2">
-              {error}
-            </div>
-          )}
-
-          {/* 登录区：加载中→spinner；密码模式→表单（可与 LinuxDo 并列）；都没开→管理员直登 */}
-          <div className="w-full">
             {loading || mode === null ? (
-              <div className="flex flex-col items-center justify-center h-16 rounded-2xl bg-surface neu-raised gap-2">
-                <Loader2 className="w-6 h-6 text-foreground animate-spin" strokeWidth={3} />
-                <p className="text-sm font-black text-foreground">{loading ? '登录中...' : '加载中...'}</p>
+              <div className="h-28 flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                <span className="text-xs font-semibold">{loading ? '登录中...' : '加载中...'}</span>
               </div>
             ) : (
               <>
                 {mode.passwordLoginEnabled && (
-                  <form onSubmit={handlePasswordSubmit} className="w-full space-y-4">
-                    {/* 登录/注册切换 */}
-                    <div className="grid grid-cols-2 gap-1.5 p-1.5 rounded-2xl bg-surface neu-inset">
-                      <button
-                        type="button"
-                        onClick={() => { setIsRegister(false); setError(''); }}
-                        className={`h-10 rounded-xl font-black text-sm transition-all ${!isRegister ? 'bg-primary text-primary-foreground neu-raised-sm' : 'text-muted-foreground'}`}
-                      >
+                  <form onSubmit={handlePasswordSubmit} className="space-y-3.5">
+                    {/* 登录/注册段控件 */}
+                    <div className="flex rounded-md border border-border overflow-hidden divide-x divide-border">
+                      <button type="button" onClick={() => { setIsRegister(false); setError(''); }} className={segBtn(!isRegister)}>
                         登录
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => { setIsRegister(true); setError(''); }}
-                        className={`h-10 rounded-xl font-black text-sm transition-all ${isRegister ? 'bg-primary text-primary-foreground neu-raised-sm' : 'text-muted-foreground'}`}
-                      >
+                      <button type="button" onClick={() => { setIsRegister(true); setError(''); }} className={segBtn(isRegister)}>
                         注册
                       </button>
                     </div>
-                    <input
+                    <Input
                       value={username}
                       onChange={e => setUsername(e.target.value)}
                       placeholder="用户名"
                       autoComplete="username"
                       required
-                      className="w-full h-12 px-4 rounded-xl bg-surface neu-inset font-bold text-foreground placeholder:text-muted-foreground outline-none"
                     />
-                    <input
+                    <Input
                       type="password"
                       value={password}
                       onChange={e => setPassword(e.target.value)}
                       placeholder={isRegister ? '密码（至少6位）' : '密码'}
                       autoComplete={isRegister ? 'new-password' : 'current-password'}
                       required
-                      className="w-full h-12 px-4 rounded-xl bg-surface neu-inset font-bold text-foreground placeholder:text-muted-foreground outline-none"
                     />
                     {isRegister && (
-                      <input
+                      <Input
                         value={inviteCode}
                         onChange={e => setInviteCode(e.target.value)}
                         placeholder="邀请码"
                         required
-                        className="w-full h-12 px-4 rounded-xl bg-surface neu-inset font-bold text-foreground placeholder:text-muted-foreground outline-none"
                       />
                     )}
-                    <button
-                      type="submit"
-                      className="group relative w-full h-14 rounded-2xl bg-primary text-primary-foreground font-black text-lg neu-btn-sm transition-all flex items-center justify-center gap-3 overflow-hidden"
-                    >
-                      {/* 按钮内扫光效果 */}
-                      <div className="absolute inset-0 w-full h-full bg-white/20 -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
-                      <LogIn className="w-5 h-5 relative z-10" strokeWidth={2.5} />
-                      <span className="relative z-10 tracking-wide">{isRegister ? '注册并进入' : '登录'}</span>
-                    </button>
+                    <Button type="submit" className="w-full h-11">
+                      <LogIn className="w-4 h-4" />
+                      {isRegister ? '注册并进入' : '登录'}
+                    </Button>
                   </form>
                 )}
+
                 {mode.passwordLoginEnabled && mode.linuxDoEnabled && (
-                  <div className="flex items-center gap-3 my-5">
-                    <div className="flex-1 h-0.5 bg-muted-foreground/20 rounded-full" />
-                    <span className="text-xs font-black text-muted-foreground">或</span>
-                    <div className="flex-1 h-0.5 bg-muted-foreground/20 rounded-full" />
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-px bg-border" />
+                    <span className="text-[10px] font-semibold text-muted-foreground tracking-widest">或</span>
+                    <div className="flex-1 h-px bg-border" />
                   </div>
                 )}
+
                 {mode.linuxDoEnabled && (
-                  <button
-                    onClick={handleLinuxDoLogin}
-                    className="group relative w-full h-16 rounded-2xl bg-primary text-primary-foreground font-black text-lg neu-btn-sm transition-all flex items-center justify-center gap-3 overflow-hidden"
-                  >
-                    {/* 按钮内扫光效果 */}
-                    <div className="absolute inset-0 w-full h-full bg-white/20 -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
-                    <Globe className="w-6 h-6 relative z-10" strokeWidth={2.5} />
-                    <span className="relative z-10 tracking-wide">使用 LinuxDo 登录</span>
-                  </button>
+                  <Button variant="outline" className="w-full h-11" onClick={handleLinuxDoLogin}>
+                    <Globe className="w-4 h-4" />
+                    使用 LinuxDo 登录
+                  </Button>
                 )}
+
                 {!mode.linuxDoEnabled && !mode.passwordLoginEnabled && (
-                  <button
-                    onClick={handleLocalLogin}
-                    className="group relative w-full h-16 rounded-2xl bg-primary text-primary-foreground font-black text-lg neu-btn-sm transition-all flex items-center justify-center gap-3 overflow-hidden"
-                  >
-                    {/* 按钮内扫光效果 */}
-                    <div className="absolute inset-0 w-full h-full bg-white/20 -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
-                    <LogIn className="w-6 h-6 relative z-10" strokeWidth={2.5} />
-                    <span className="relative z-10 tracking-wide">进入</span>
-                  </button>
+                  <Button className="w-full h-11" onClick={handleLocalLogin}>
+                    <LogIn className="w-4 h-4" />
+                    进入终端
+                  </Button>
                 )}
               </>
             )}
           </div>
 
-          <p className="text-[11px] font-black text-center text-muted-foreground mt-8 uppercase tracking-[0.2em]">
-            Welcome To The Playground
+          <p className="text-[10px] font-semibold text-center text-muted-foreground mt-6 tracking-[0.25em] uppercase">
+            Paper Trading · No Real Funds
           </p>
         </div>
       </div>

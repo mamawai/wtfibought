@@ -50,7 +50,7 @@ export function Games() {
             key={g.key}
             onClick={() => navigate(g.path)}
             className={cn(
-              'flex flex-col items-center gap-3 rounded-2xl p-6 transition-all cursor-pointer neu-btn-sm',
+              'flex flex-col items-center gap-3 rounded-lg p-6 pt-card machined hover:bg-surface-hover transition-colors cursor-pointer',
               g.bg,
             )}
           >

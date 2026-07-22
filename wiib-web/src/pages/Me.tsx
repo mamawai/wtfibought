@@ -16,7 +16,7 @@ import { cn } from '../lib/utils';
 export function Me() {
   const navigate = useNavigate();
   const { user, logout, fetchUser } = useUserStore();
-  const { ref: themeRef, toggleTheme, isDark } = useTheme();
+  const { toggleTheme, isDark } = useTheme();
   const { toast } = useToast();
 
   const [resetOpen, setResetOpen] = useState(false);
@@ -144,7 +144,6 @@ export function Me() {
       <Card>
         <CardContent className="pt-5">
           <button
-            ref={themeRef}
             onClick={toggleTheme}
             className="flex items-center gap-3 w-full text-left cursor-pointer"
           >

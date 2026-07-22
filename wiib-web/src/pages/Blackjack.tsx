@@ -122,7 +122,7 @@ export function Blackjack() {
 
   return (
     <div className="max-w-2xl mx-auto p-4 space-y-4">
-      <div className="rounded-2xl bg-red-50 dark:bg-red-500/10 p-5 neu-raised">
+      <div className="rounded-lg border border-loss/30 bg-loss/10 p-5">
         <h3 className="text-base font-bold text-red-800 dark:text-red-400 mb-2">郑重声明与风险提示</h3>
         <ul className="list-disc list-inside text-sm text-red-900 dark:text-red-200/90 space-y-1 leading-relaxed">
           <li>本小游戏不涉及任何赌博行为，不涉及任何现实资金下注或交易。</li>
@@ -447,7 +447,7 @@ export function Blackjack() {
               value={convertAmount}
               onChange={e => setConvertAmount(e.target.value)}
               placeholder="输入转出金额"
-              className="w-full px-3 py-2 rounded-lg bg-background text-sm neu-inset"
+              className="w-full px-3 py-2 rounded-md bg-input border border-border text-sm"
               min={1}
               max={Math.min(status?.convertable ?? 0, (status?.todayConvertLimit ?? 500) - (status?.todayConverted ?? 0))}
             />
@@ -499,7 +499,7 @@ function ActionBtn({ onClick, disabled, color, label, span, children }: {
       disabled={disabled}
       aria-label={label}
       className={cn(
-        'inline-flex items-center justify-center gap-1.5 rounded-lg font-bold transition-all neu-btn-sm',
+        'inline-flex items-center justify-center gap-1.5 rounded-md font-bold border border-border machined hover:bg-surface-hover active:translate-y-px transition-all',
         'h-11 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
         'disabled:opacity-40 disabled:cursor-not-allowed',
         span && 'col-span-2 h-9 text-xs',

@@ -28,7 +28,7 @@ export function NotificationBell() {
       <button
         type="button"
         onClick={() => void toggle()}
-        className="relative w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+        className="relative w-8 h-8 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
         aria-label="通知"
       >
         <Bell className="w-4 h-4" />
@@ -40,8 +40,8 @@ export function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-3 w-80 rounded-2xl bg-card border border-border shadow-2xl overflow-hidden z-50">
-          <div className="px-4 py-2.5 text-xs font-black border-b border-border/60">通知</div>
+        <div className="absolute right-0 top-full mt-2 w-80 rounded-lg pt-card shadow-lg overflow-hidden z-50 animate-in fade-in slide-in-from-top-2">
+          <div className="px-4 py-2.5 microlabel font-semibold border-b border-border/60">通知</div>
           <NotificationList
             items={items}
             loading={loading}

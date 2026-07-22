@@ -38,7 +38,7 @@ function StatCard({ label, value, sub, icon: Icon, trend }: {
   label: string; value: string; sub?: string; icon: ElementType; trend?: 'up' | 'down' | 'neutral';
 }) {
   return (
-    <div className="neu-raised-sm rounded-xl p-4 flex flex-col gap-1.5">
+    <div className="pt-card rounded-lg p-4 flex flex-col gap-1.5">
       <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
         <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center',
           trend === 'up' && 'bg-gain/10 text-gain',
@@ -61,7 +61,7 @@ function PositionCard({ p }: { p: TnPosition }) {
   const pnlUp = p.unrealizedProfit >= 0;
   const px = (v?: number | null) => formatCoinPrice(p.symbol, v);
   return (
-    <div className={cn('neu-raised-sm rounded-xl p-4', isLong ? 'border-l-3 border-l-gain' : 'border-l-3 border-l-loss')}>
+    <div className={cn('pt-card rounded-lg p-4', isLong ? 'border-l-3 border-l-gain' : 'border-l-3 border-l-loss')}>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2.5">
           <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center text-xs font-black',
@@ -86,7 +86,7 @@ function PositionCard({ p }: { p: TnPosition }) {
           { label: '强平价', value: px(p.liquidationPrice), warn: true },
           { label: '开仓价', value: px(p.entryPrice) },
         ].map((it) => (
-          <div key={it.label} className="neu-inset rounded-lg px-2 py-1.5 text-center">
+          <div key={it.label} className="border border-border bg-card-2 rounded-md px-2 py-1.5 text-center">
             <div className="text-[10px] text-muted-foreground">{it.label}</div>
             <div className={cn('text-xs font-bold tabular-nums mt-0.5', it.warn && 'text-loss')}>{it.value}</div>
           </div>
@@ -101,7 +101,7 @@ function OpenOrderRow({ o }: { o: TnOpenOrder }) {
   const isEntry = o.type === 'LIMIT';
   const buy = o.side === 'BUY';
   return (
-    <div className="neu-flat rounded-lg px-3 py-2 flex items-center gap-2 text-xs">
+    <div className="border border-border bg-card rounded-md px-3 py-2 flex items-center gap-2 text-xs">
       <span className="font-bold">{o.symbol.replace('USDT', '')}</span>
       <span className={cn('text-[10px] font-black px-1.5 py-0.5 rounded',
         isEntry ? 'bg-primary/10 text-primary' : 'bg-warning/10 text-warning')}>
@@ -122,7 +122,7 @@ function TradeRow({ t }: { t: TnTrade }) {
   const pnlUp = t.realizedPnl >= 0;
   return (
     // flex-wrap：手机上时间+价格×数量+盈亏一行放不下时折行
-    <div className="neu-flat rounded-lg px-3 py-2 flex flex-wrap items-center gap-2 text-xs">
+    <div className="border border-border bg-card rounded-md px-3 py-2 flex flex-wrap items-center gap-2 text-xs">
       <span className="text-[10px] text-muted-foreground tabular-nums w-20">{fmtDateTime(t.time)}</span>
       <span className="font-bold">{t.symbol.replace('USDT', '')}</span>
       <span className={cn('font-bold', buy ? 'text-gain' : 'text-loss')}>{t.side}</span>
@@ -209,10 +209,10 @@ function ManualTradePanel({ onDone }: { onDone: () => void }) {
     return `已撤 ${symbol} 全部挂单`;
   });
 
-  const inputCls = 'neu-inset rounded-lg px-2.5 py-1.5 text-xs tabular-nums w-24 bg-transparent outline-none';
+  const inputCls = 'border border-border bg-card-2 rounded-md px-2.5 py-1.5 text-xs tabular-nums w-24 bg-transparent outline-none';
 
   return (
-    <div className="neu-raised-sm rounded-xl overflow-hidden">
+    <div className="pt-card rounded-lg overflow-hidden">
       <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-4 py-3 text-sm font-bold">
         <Wrench className="w-4 h-4 text-warning" />
         接口自检 · 手动交易
@@ -227,7 +227,7 @@ function ManualTradePanel({ onDone }: { onDone: () => void }) {
               {(['BTCUSDT', 'ETHUSDT'] as const).map((s) => (
                 <button key={s} onClick={() => setSymbol(s)}
                   className={cn('text-[11px] font-bold px-2.5 py-1 rounded-lg transition-all',
-                    symbol === s ? 'neu-inset text-primary' : 'neu-flat text-muted-foreground hover:text-foreground')}>
+                    symbol === s ? 'border border-border bg-card-2 text-primary' : 'border border-border text-muted-foreground hover:text-foreground')}>
                   {s.replace('USDT', '')}
                 </button>
               ))}
@@ -236,7 +236,7 @@ function ManualTradePanel({ onDone }: { onDone: () => void }) {
               {(['BUY', 'SELL'] as const).map((s) => (
                 <button key={s} onClick={() => setSide(s)}
                   className={cn('text-[11px] font-bold px-2.5 py-1 rounded-lg transition-all',
-                    side === s ? (s === 'BUY' ? 'neu-inset text-gain' : 'neu-inset text-loss') : 'neu-flat text-muted-foreground')}>
+                    side === s ? (s === 'BUY' ? 'border border-border bg-card-2 text-gain' : 'border border-border bg-card-2 text-loss') : 'border border-border text-muted-foreground')}>
                   {s === 'BUY' ? '买/多' : '卖/空'}
                 </button>
               ))}
@@ -245,7 +245,7 @@ function ManualTradePanel({ onDone }: { onDone: () => void }) {
               {(['MARKET', 'LIMIT'] as const).map((t) => (
                 <button key={t} onClick={() => setType(t)}
                   className={cn('text-[11px] font-bold px-2.5 py-1 rounded-lg transition-all',
-                    type === t ? 'neu-inset text-primary' : 'neu-flat text-muted-foreground hover:text-foreground')}>
+                    type === t ? 'border border-border bg-card-2 text-primary' : 'border border-border text-muted-foreground hover:text-foreground')}>
                   {t === 'MARKET' ? '市价' : '限价'}
                 </button>
               ))}
@@ -268,21 +268,21 @@ function ManualTradePanel({ onDone }: { onDone: () => void }) {
           {/* 行3：操作按钮 */}
           <div className="flex flex-wrap gap-2">
             <button onClick={submitOrder} disabled={busy !== null}
-              className="neu-btn-sm px-3 py-1.5 rounded-lg text-xs font-bold text-primary disabled:opacity-50">
+              className="border border-border hover:bg-surface-hover px-3 py-1.5 rounded-lg text-xs font-bold text-primary disabled:opacity-50">
               {busy === 'order' ? '提交中…' : '下单'}
             </button>
             <button onClick={submitClose} disabled={busy !== null}
-              className="neu-btn-sm px-3 py-1.5 rounded-lg text-xs font-bold text-loss disabled:opacity-50">
+              className="border border-border hover:bg-surface-hover px-3 py-1.5 rounded-lg text-xs font-bold text-loss disabled:opacity-50">
               {busy === 'close' ? '平仓中…' : '市价平仓'}
             </button>
             <button onClick={submitCancelAll} disabled={busy !== null}
-              className="neu-btn-sm px-3 py-1.5 rounded-lg text-xs font-bold text-muted-foreground disabled:opacity-50">
+              className="border border-border hover:bg-surface-hover px-3 py-1.5 rounded-lg text-xs font-bold text-muted-foreground disabled:opacity-50">
               {busy === 'cancel' ? '撤单中…' : '撤挂单'}
             </button>
           </div>
           {/* 结果框 */}
           {result && (
-            <div className={cn('neu-inset rounded-lg px-3 py-2 text-[11px] font-mono break-all',
+            <div className={cn('border border-border bg-card-2 rounded-md px-3 py-2 text-[11px] font-mono break-all',
               result.ok ? 'text-gain' : 'text-loss')}>
               {result.ok ? '✓ ' : '✗ '}{result.text}
             </div>
@@ -354,7 +354,7 @@ export function TestnetMonitor() {
       {/* Header：手机上标题+币种切换放不下一行，允许换行 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl neu-raised-sm flex items-center justify-center bg-primary/10">
+          <div className="w-11 h-11 rounded-lg pt-card flex items-center justify-center bg-primary/10">
             <Activity className="w-5.5 h-5.5 text-primary" />
           </div>
           <div>
@@ -367,13 +367,13 @@ export function TestnetMonitor() {
             {SYMBOLS.map((s) => (
               <button key={s} onClick={() => setSymbol(s)}
                 className={cn('text-[11px] font-bold px-2.5 py-1 rounded-lg transition-all',
-                  symbol === s ? 'neu-inset text-primary' : 'neu-flat text-muted-foreground hover:text-foreground')}>
+                  symbol === s ? 'border border-border bg-card-2 text-primary' : 'border border-border text-muted-foreground hover:text-foreground')}>
                 {SYM_LABEL[s]}
               </button>
             ))}
           </div>
           <button onClick={() => { load(); toast('已刷新', 'info'); }}
-            className="neu-btn-sm w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary">
+            className="border border-border hover:bg-surface-hover w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary">
             <RefreshCcw className={cn('w-4 h-4', loading && 'animate-spin')} />
           </button>
         </div>
@@ -381,7 +381,7 @@ export function TestnetMonitor() {
 
       {/* 历史轨横幅：执行目标已切 sim 时明示——本页旧交易与"策略账户"页 sim 记录不一致属预期 */}
       {overview?.executionTarget === 'sim' && (
-        <div className="rounded-xl neu-flat px-4 py-3 text-xs leading-relaxed border-l-4 border-l-warning">
+        <div className="rounded-lg border border-border bg-card px-4 py-3 text-xs leading-relaxed border-l-4 border-l-warning">
           <span className="font-black text-warning">Testnet 轨已停用：</span>
           <span className="text-muted-foreground">
             策略执行目标当前为本平台模拟盘（sim），本页展示的是切换前 Binance Testnet 的历史交易，不再产生新记录，
@@ -396,7 +396,7 @@ export function TestnetMonitor() {
 
       {/* 空态提示 */}
       {isEmpty && (
-        <div className="neu-inset rounded-xl py-10 text-center">
+        <div className="border border-border bg-card-2 rounded-lg py-10 text-center">
           <p className="text-sm text-muted-foreground">暂无 testnet 数据</p>
           <p className="text-[11px] text-muted-foreground/70 mt-1">
             需在 application.yml 配置 binance-testnet 的 api-key/secret-key，并开启 strategy.execution.enabled 跑出成交后才有数据
@@ -422,7 +422,7 @@ export function TestnetMonitor() {
       {equity.length > 0 && (
         <div className="space-y-2">
           <SectionTitle icon={BarChart3} title="权益曲线" hint="累计已实现盈亏（从0起）" />
-          <div className="neu-raised-sm rounded-xl p-3"><EquityChart points={equity} /></div>
+          <div className="pt-card rounded-lg p-3"><EquityChart points={equity} /></div>
         </div>
       )}
 
@@ -431,7 +431,7 @@ export function TestnetMonitor() {
         <SectionTitle icon={Layers} title="日交易网格" hint="点格子看当天成交" />
         <DailyGrid cells={daily} selectedDate={selectedDate} onSelectDate={setSelectedDate} />
         {selectedDate && (
-          <div className="neu-inset rounded-xl p-3 space-y-2">
+          <div className="border border-border bg-card-2 rounded-lg p-3 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold">{selectedDate} 当天成交（{dayTrades.length}）</span>
               <button onClick={() => setSelectedDate(undefined)} className="text-[11px] text-muted-foreground hover:text-primary">收起</button>
@@ -474,7 +474,7 @@ export function TestnetMonitor() {
             <StatCard label="零滑点确认" value={`${fill.makerConfirmed}/${fill.filled}`} sub="成交价=挂单价" icon={CheckCircle2}
               trend={fill.makerConfirmed === fill.filled && fill.filled > 0 ? 'up' : 'neutral'} />
           </div>
-          <div className="neu-inset rounded-lg px-3 py-2 text-[11px] text-muted-foreground leading-relaxed">
+          <div className="border border-border bg-card-2 rounded-md px-3 py-2 text-[11px] text-muted-foreground leading-relaxed">
             成交率 = 挂在回撤位的进场单真正被回踩成交的比例。回测假设"价格触及即成交(100%)"，
             实盘 GTX maker 单"触及还要排队"——此处成交率越接近回测假设，回测越可信；差距越大，回测越乐观。
           </div>
@@ -486,9 +486,9 @@ export function TestnetMonitor() {
         <SectionTitle icon={ListChecks} title="交易记录" hint="近30天真实成交" />
         <div className="space-y-1.5">
           {loading && trades.length === 0 ? (
-            Array.from({ length: 3 }).map((_, i) => <div key={i} className="neu-flat rounded-lg h-9 animate-pulse bg-muted/20" />)
+            Array.from({ length: 3 }).map((_, i) => <div key={i} className="border border-border bg-card rounded-md h-9 animate-pulse bg-muted/20" />)
           ) : trades.length === 0 ? (
-            <div className="neu-inset rounded-xl py-8 text-center text-sm text-muted-foreground">暂无成交记录</div>
+            <div className="border border-border bg-card-2 rounded-lg py-8 text-center text-sm text-muted-foreground">暂无成交记录</div>
           ) : (
             trades.slice(0, 50).map((t) => <TradeRow key={t.id} t={t} />)
           )}

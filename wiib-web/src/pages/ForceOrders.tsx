@@ -59,12 +59,12 @@ export function ForceOrders() {
   return (
     <div className="page-shell p-4 md:p-6 space-y-5">
       <Card className="relative overflow-hidden">
-        <div className="absolute -top-16 -right-12 w-48 h-48 rounded-full bg-red-500/10 blur-3xl" />
+        <div className="absolute -top-16 -right-12 w-48 h-48 rounded-full bg-loss/10 blur-3xl" />
         <CardHeader className="relative space-y-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div className="space-y-3">
               <CardTitle className="flex items-center gap-3 text-lg sm:text-xl md:text-2xl font-black tracking-tight">
-                <span className="p-1.5 sm:p-2 rounded-xl sm:rounded-2xl bg-red-500/10 text-red-500">
+                <span className="p-1.5 sm:p-2 rounded-xl sm:rounded-2xl bg-loss/10 text-loss">
                   <Flame className="w-4 h-4 sm:w-5 sm:h-5" />
                 </span>
                 爆仓记录
@@ -92,7 +92,7 @@ export function ForceOrders() {
                   'px-3.5 py-2 rounded-xl text-xs font-black border transition-colors',
                   symbol === item
                     ? 'bg-foreground text-background border-foreground'
-                    : 'bg-card neu-raised text-foreground border-border/60 hover:bg-surface-hover',
+                    : 'bg-card border border-border text-foreground hover:bg-surface-hover',
                 )}
               >
                 {item.replace('USDT', '')}
@@ -106,14 +106,14 @@ export function ForceOrders() {
         <Card>
           <CardContent className="p-4 space-y-1">
             <div className="text-xs font-bold text-muted-foreground">当前页多头爆仓</div>
-            <div className="text-xl sm:text-2xl font-black text-red-500 tabular-nums">{stats.longLiquidations}</div>
+            <div className="text-xl sm:text-2xl font-black text-loss tabular-nums">{stats.longLiquidations}</div>
             <div className="text-xs text-muted-foreground">对应 SELL 强平单</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 space-y-1">
             <div className="text-xs font-bold text-muted-foreground">当前页空头爆仓</div>
-            <div className="text-xl sm:text-2xl font-black text-green-500 tabular-nums">{stats.shortLiquidations}</div>
+            <div className="text-xl sm:text-2xl font-black text-gain tabular-nums">{stats.shortLiquidations}</div>
             <div className="text-xs text-muted-foreground">对应 BUY 强平单</div>
           </CardContent>
         </Card>
@@ -136,7 +136,7 @@ export function ForceOrders() {
               </div>
             </div>
             <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground">
-              <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+              <AlertTriangle className="w-3.5 h-3.5 text-loss shrink-0" />
               爆仓金额大并不等于马上反转，只说明该方向刚经历了强制出清。
             </div>
           </div>
@@ -171,8 +171,8 @@ export function ForceOrders() {
                             className={cn(
                               'font-black text-xs',
                               order.side === 'SELL'
-                                ? 'bg-red-500/10 text-red-500 border-red-500/20'
-                                : 'bg-green-500/10 text-green-500 border-green-500/20',
+                                ? 'bg-loss/10 text-loss border-loss/20'
+                                : 'bg-gain/10 text-gain border-gain/20',
                             )}
                           >
                             {sideLabel(order.side)}
@@ -190,7 +190,7 @@ export function ForceOrders() {
 
               <div className="md:hidden p-2.5 sm:p-3 space-y-2.5 sm:space-y-3">
                 {records.map(order => (
-                  <div key={order.id} className="rounded-xl sm:rounded-2xl border border-border/50 bg-card p-3 sm:p-4 space-y-2.5 sm:space-y-3 neu-raised-sm">
+                  <div key={order.id} className="rounded-lg border border-border bg-card p-3 sm:p-4 space-y-2.5 sm:space-y-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="space-y-1">
                         <div className="text-xs text-muted-foreground font-mono">{fmtDateTime(order.tradeTime, true)}</div>
@@ -200,8 +200,8 @@ export function ForceOrders() {
                         className={cn(
                           'font-black text-xs',
                           order.side === 'SELL'
-                            ? 'bg-red-500/10 text-red-500 border-red-500/20'
-                            : 'bg-green-500/10 text-green-500 border-green-500/20',
+                            ? 'bg-loss/10 text-loss border-loss/20'
+                            : 'bg-gain/10 text-gain border-gain/20',
                         )}
                       >
                         {sideLabel(order.side)}

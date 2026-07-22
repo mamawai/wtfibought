@@ -71,16 +71,16 @@ export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresR
       ...(pendingSettlement > 0 ? [{ name: '待结算', value: pendingSettlement, itemStyle: { color: '#a855f7' } }] : [])
     ];
 
-    const textColor = isDark ? '#94A3B8' : '#78716C'; // Tailwind slate-400 / stone-500
-    const borderColor = isDark ? '#1E293B' : '#FFFFFF'; // Card background
+    const textColor = isDark ? '#878b96' : '#71737b'; // muted-foreground token
+    const borderColor = isDark ? '#13151a' : '#FFFFFF'; // Card background
 
     chart.setOption({
       backgroundColor: 'transparent',
       tooltip: {
         trigger: 'item',
-        backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-        borderColor: isDark ? '#334155' : '#E7E0D8',
-        textStyle: { color: isDark ? '#F8FAFC' : '#1C1917' },
+        backgroundColor: isDark ? '#13151a' : '#FFFFFF',
+        borderColor: isDark ? '#23262e' : '#e4e4df',
+        textStyle: { color: isDark ? '#eceef0' : '#17181a' },
         formatter: (params: { marker: string; name: string; value: number; percent: number }) => {
            // 游戏钱包计入总资产但不能直接下单交易，tooltip 里说清楚免得误解
            const note = params.name === '游戏钱包'
@@ -92,7 +92,7 @@ export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresR
       legend: {
         bottom: '0%',
         left: 'center',
-        textStyle: { color: textColor, fontSize: 11, fontFamily: 'Plus Jakarta Sans, sans-serif' },
+        textStyle: { color: textColor, fontSize: 11, fontFamily: "'Plus Jakarta Sans Variable', sans-serif" },
         itemWidth: 10,
         itemHeight: 10,
         itemGap: 12,
@@ -119,8 +119,8 @@ export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresR
               show: true,
               fontSize: 14,
               fontWeight: 'bold',
-              color: isDark ? '#F8FAFC' : '#1C1917',
-              fontFamily: 'Plus Jakarta Sans, sans-serif'
+              color: isDark ? '#eceef0' : '#17181a',
+              fontFamily: "'Plus Jakarta Sans Variable', sans-serif"
             },
             itemStyle: {
               shadowBlur: 10,

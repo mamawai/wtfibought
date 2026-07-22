@@ -11,6 +11,17 @@ const subs = new Map<string, Set<Callback>>();
 const stompSubs = new Map<string, { unsubscribe: () => void }>();
 let connected = false;
 
+// 连接状态监听（壳层 LED 用）：注册即回推当前值，返回取消函数
+const connListeners = new Set<(up: boolean) => void>();
+function notifyConn(up: boolean) {
+  connListeners.forEach(cb => cb(up));
+}
+export function onConnectionState(cb: (up: boolean) => void): () => void {
+  connListeners.add(cb);
+  cb(connected);
+  return () => { connListeners.delete(cb); };
+}
+
 /** 从持久化的 store 里取 token。带上它后端才认得出身份，才能收 /user/queue 点对点消息 */
 function currentToken(): string {
   try {
@@ -35,6 +46,7 @@ function getClient(): Client {
     reconnectDelay: 5000,
     onConnect: () => {
       connected = true;
+      notifyConn(true);
       // 重连后重新订阅所有 topic
       for (const topic of subs.keys()) {
         bindTopic(topic);
@@ -42,10 +54,12 @@ function getClient(): Client {
     },
     onDisconnect: () => {
       connected = false;
+      notifyConn(false);
       stompSubs.clear();
     },
     onWebSocketClose: () => {
       connected = false;
+      notifyConn(false);
       stompSubs.clear();
     },
   });
@@ -108,6 +122,7 @@ export function subscribe(topic: string, cb: Callback): () => void {
       client.deactivate();
       client = null;
       connected = false;
+      notifyConn(false);
     }
   };
 }

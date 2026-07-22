@@ -82,7 +82,7 @@ export function BStockList() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索名称 / 代码 / 行业" className="pl-9 pr-9 h-9" />
                 {query.trim() && (
-                  <button type="button" onClick={() => setQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md hover:bg-accent transition-colors" aria-label="清空搜索">
+                  <button type="button" onClick={() => setQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md hover:bg-surface-hover transition-colors" aria-label="清空搜索">
                     <X className="w-4 h-4 text-muted-foreground" />
                   </button>
                 )}
@@ -124,11 +124,11 @@ export function BStockList() {
                   type="button"
                   key={s.id}
                   onClick={() => navigate(`/bstock/${s.symbol}`)}
-                  className="w-full text-left px-5 py-5 cursor-pointer hover:bg-accent/40 active:bg-accent/60 transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                  className="w-full text-left px-4 py-3.5 cursor-pointer hover:bg-surface-hover active:bg-secondary transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <div className="w-11 h-11 rounded-xl bg-primary/10 ring-1 ring-primary/20 flex items-center justify-center shrink-0 text-[11px] font-bold text-primary tracking-tight">
+                      <div className="w-10 h-10 rounded-md border border-border bg-card-2 flex items-center justify-center shrink-0 text-[10px] font-bold text-muted-foreground tracking-tight">
                         {s.ticker?.slice(0, 4)}
                       </div>
                       <div className="min-w-0">
@@ -145,8 +145,8 @@ export function BStockList() {
                     </div>
                     <div className="text-right shrink-0 flex items-center gap-2.5">
                       <div>
-                        <div className="text-sm font-bold tabular-nums tracking-tight">{s.price != null ? fmtNum(s.price) : '-'}</div>
-                        <div className={cn("text-xs tabular-nums font-medium mt-0.5", up ? "text-green-400" : "text-red-400")}>
+                        <div className="num text-sm font-semibold tracking-tight">{s.price != null ? fmtNum(s.price) : '-'}</div>
+                        <div className={cn("num text-xs font-semibold mt-0.5", up ? "text-gain" : "text-loss")}>
                           {up ? '+' : ''}{chg.toFixed(2)}%
                         </div>
                       </div>

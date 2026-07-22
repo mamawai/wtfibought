@@ -8,9 +8,10 @@ function Select({ className, children, ...props }: SelectProps) {
   return (
     <select
       className={cn(
-        "flex h-11 w-full rounded-xl bg-background px-4 py-2 text-sm font-medium neu-inset",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:border-primary",
-        "disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-150",
+        "flex h-10 w-full rounded-md bg-input border border-border px-3.5 py-2 text-sm font-medium",
+        "hover:border-foreground/20",
+        "focus-visible:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30",
+        "disabled:cursor-not-allowed disabled:opacity-50 transition-colors duration-150",
         className
       )}
       {...props}

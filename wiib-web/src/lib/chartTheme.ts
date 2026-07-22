@@ -1,5 +1,5 @@
 /**
- * ECharts 拟物主题工具：轴/网格/提示框与全站 CSS 变量同源，
+ * ECharts 精密终端主题工具：轴/网格/提示框与全站 CSS 变量同源，
  * 亮暗双模式各取各的层次色，杜绝图表里硬编码白底 slate 灰。
  */
 
@@ -12,15 +12,16 @@ export function cssVar(name: string, fallback: string): string {
 export interface ChartUi {
   /** 轴刻度文字 */
   axisLabel: string;
-  /** 网格线/轴线（比背景深/浅半档，保持 recessive） */
+  /** 网格线/轴线（用全站边框色，保持 recessive） */
   gridLine: string;
   /** 卡片面色（tooltip 底） */
   card: string;
   /** 正文色 */
   fg: string;
-  /** 拟物 tooltip 外观（直接展开进 ECharts tooltip 配置） */
+  /** 平面 tooltip 外观（直接展开进 ECharts tooltip 配置） */
   tooltip: {
     backgroundColor: string;
+    borderColor: string;
     borderWidth: number;
     padding: number[];
     textStyle: { color: string; fontSize: number; fontFamily: string };
@@ -29,10 +30,10 @@ export interface ChartUi {
 }
 
 export function chartUi(isDark: boolean): ChartUi {
-  const axisLabel = cssVar('--color-muted-foreground', isDark ? '#A3A3A3' : '#78716C');
-  const gridLine = isDark ? '#3a3e47' : '#cdd3db';
-  const card = cssVar('--color-card', isDark ? '#2d3039' : '#e0e5ec');
-  const fg = cssVar('--color-foreground', isDark ? '#e4e6eb' : '#44475a');
+  const axisLabel = cssVar('--color-muted-foreground', isDark ? '#878b96' : '#71737b');
+  const gridLine = cssVar('--color-border', isDark ? '#23262e' : '#e4e4df');
+  const card = cssVar('--color-card', isDark ? '#13151a' : '#ffffff');
+  const fg = cssVar('--color-foreground', isDark ? '#eceef0' : '#17181a');
   return {
     axisLabel,
     gridLine,
@@ -40,12 +41,13 @@ export function chartUi(isDark: boolean): ChartUi {
     fg,
     tooltip: {
       backgroundColor: card,
-      borderWidth: 0,
+      borderColor: gridLine,
+      borderWidth: 1,
       padding: [8, 12],
-      textStyle: { color: fg, fontSize: 11, fontFamily: "'Plus Jakarta Sans', ui-sans-serif, sans-serif" },
+      textStyle: { color: fg, fontSize: 11, fontFamily: cssVar('--font-sans', 'ui-sans-serif, sans-serif') },
       extraCssText: isDark
-        ? 'box-shadow: 4px 4px 10px #22242b, -3px -3px 8px #383c45; border-radius: 10px;'
-        : 'box-shadow: 5px 5px 12px #b8bec7, -5px -5px 12px #ffffff; border-radius: 10px;',
+        ? 'box-shadow: 0 6px 16px rgba(0,0,0,.45); border-radius: 8px;'
+        : 'box-shadow: 0 4px 12px rgba(0,0,0,.10); border-radius: 8px;',
     },
   };
 }

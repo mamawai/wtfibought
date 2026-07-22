@@ -77,7 +77,7 @@ export function Workbench() {
   return (
     <div className="space-y-4">
         {/* 时间线卡：全宽大图，一眼看清预测-实际-脆弱度 */}
-        <div className="rounded-xl neu-raised-sm p-4 space-y-3">
+        <div className="rounded-lg pt-card p-4 space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
             <Activity className="w-4 h-4 text-primary" />
             <span className="text-sm font-black">快照时间线</span>
@@ -94,7 +94,7 @@ export function Workbench() {
                   onClick={() => setSymbol(s)}
                   className={cn(
                     'text-[11px] font-bold px-2 py-1 rounded-lg transition-all',
-                    symbol === s ? 'neu-inset text-primary' : 'neu-flat text-muted-foreground hover:text-foreground',
+                    symbol === s ? 'border border-border bg-card-2 text-primary' : 'border border-border text-muted-foreground hover:text-foreground',
                   )}
                 >
                   {SYM_LABEL[s]}
@@ -107,7 +107,7 @@ export function Workbench() {
                   onClick={() => setHours(w.hours)}
                   className={cn(
                     'text-[11px] font-bold px-2 py-1 rounded-lg transition-all',
-                    hours === w.hours ? 'neu-inset text-primary' : 'neu-flat text-muted-foreground hover:text-foreground',
+                    hours === w.hours ? 'border border-border bg-card-2 text-primary' : 'border border-border text-muted-foreground hover:text-foreground',
                   )}
                 >
                   {w.label}
@@ -115,7 +115,7 @@ export function Workbench() {
               ))}
               <button
                 onClick={() => void load(symbol, hours)}
-                className="neu-btn-sm w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary"
+                className="border border-border hover:bg-surface-hover w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary"
                 aria-label="刷新"
               >
                 <RefreshCcw className={cn('w-3.5 h-3.5', loading && 'animate-spin')} />
@@ -124,7 +124,7 @@ export function Workbench() {
           </div>
 
           {series.length === 0 ? (
-            <div className="rounded-lg neu-inset py-12 text-center text-sm text-muted-foreground">
+            <div className="rounded-md border border-border bg-card-2 py-12 text-center text-sm text-muted-foreground">
               暂无快照数据 · 5m K 线收盘后自动落库
             </div>
           ) : (
@@ -143,7 +143,7 @@ export function Workbench() {
               { color: '#ec4899', name: '深研判（粉色标记）', desc: 'AI 深度研判（多空辩论+裁决）发生的时刻，点击标记可在下方查看该次研判详情。' },
               { color: '#f59e0b', name: '脆弱度（下方黄色面积）', desc: '0-100 的市场结构脆弱评分：清算密集、盘口变薄等因素越多分越高，越高越容易被单边行情打穿。' },
             ].map(it => (
-              <div key={it.name} className="rounded-lg neu-flat px-3 py-2 text-[11px] leading-relaxed">
+              <div key={it.name} className="rounded-md border border-border bg-card px-3 py-2 text-[11px] leading-relaxed">
                 <span className="font-bold" style={{ color: it.color }}>{it.name}</span>
                 <span className="text-muted-foreground"> — {it.desc}</span>
               </div>
@@ -160,7 +160,7 @@ export function Workbench() {
 
           <Link
             to="/scorecard"
-            className="neu-btn-sm rounded-xl px-4 py-3 flex items-center gap-2 text-sm font-bold text-muted-foreground hover:text-primary"
+            className="border border-border hover:bg-surface-hover rounded-xl px-4 py-3 flex items-center gap-2 text-sm font-bold text-muted-foreground hover:text-primary"
           >
             <Trophy className="w-4 h-4 text-primary" />
             验证记分卡 · vol 预测公开战绩

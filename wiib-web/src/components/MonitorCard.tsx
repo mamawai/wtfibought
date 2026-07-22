@@ -152,7 +152,7 @@ function MetricTile({ icon: Icon, label, value, sub }: {
   icon: React.ElementType; label: string; value: React.ReactNode; sub?: string;
 }) {
   return (
-    <div className="rounded-xl p-2 neu-inset space-y-0.5">
+    <div className="rounded-md p-2 border border-border bg-card-2 space-y-0.5">
       <div className="flex items-center gap-1 text-[10px] text-muted-foreground leading-none">
         <Icon className="w-2.5 h-2.5 shrink-0" />
         <span className="truncate">{label}</span>
