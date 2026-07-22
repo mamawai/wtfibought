@@ -21,9 +21,10 @@ class DeepAnalysisToolkitTest {
     private final DeepAnalysisService deepAnalysisService = mock(DeepAnalysisService.class);
     private final ApprovalRegistry approvalRegistry = new ApprovalRegistry();
     private final QuantSnapshotMapper snapshotMapper = mock(QuantSnapshotMapper.class);
+    private final WorkbenchRunRegistry runRegistry = new WorkbenchRunRegistry();
 
     private final DeepAnalysisToolkit toolkit =
-            new DeepAnalysisToolkit(deepAnalysisService, approvalRegistry, snapshotMapper);
+            new DeepAnalysisToolkit(deepAnalysisService, approvalRegistry, snapshotMapper, runRegistry);
 
     @Test
     void gateBlocksWithoutApprovalAndRegistersPending() {
