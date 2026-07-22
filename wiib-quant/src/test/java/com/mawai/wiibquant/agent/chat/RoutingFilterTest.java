@@ -14,8 +14,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RoutingFilterTest {
 
     private final List<String> emitted = new ArrayList<>();
+    private final List<String> emittedKeys = new ArrayList<>();
     private final ChatWorkbenchController.RoutingFilter filter =
-            new ChatWorkbenchController.RoutingFilter(emitted::add);
+            new ChatWorkbenchController.RoutingFilter((key, text) -> {
+                emittedKeys.add(key);
+                emitted.add(text);
+            });
 
     @Test
     void 路由数组整段丢弃() {
@@ -75,6 +79,18 @@ class RoutingFilterTest {
         filter.endSegment("m|market");
 
         assertThat(String.join("", emitted)).isEqualTo("资金费率为正");
+    }
+
+    @Test
+    void 外发文本带回所属key() {
+        // 答案流/过程流分离靠 key 里的 agent 名：交错流各 chunk 必须带回自己的 key
+        filter.onChunk("m|news_agent", "快讯");
+        filter.onChunk("m|workbench_supervisor", "汇总");
+        filter.endSegment("m|news_agent");
+        filter.endSegment("m|workbench_supervisor");
+
+        assertThat(emittedKeys).containsExactly("m|news_agent", "m|workbench_supervisor");
+        assertThat(emitted).containsExactly("快讯", "汇总");
     }
 
     @Test

@@ -592,7 +592,8 @@ export interface Scorecard {
 export type WorkbenchEvent =
   | { type: 'session'; sessionId: string }
   | { type: 'agent_start'; node: string; agent: string }
-  | { type: 'token'; text: string }
+  | { type: 'token'; text: string; agent: string; role: 'answer' | 'process' }
+  | { type: 'progress'; text: string }
   | { type: 'hitl_request'; sessionId: string; symbol: string; reason: string; resumeMessage: string }
   | { type: 'done'; sessionId: string; answer: string }
   | { type: 'error'; message: string };

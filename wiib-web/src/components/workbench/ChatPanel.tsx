@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, History, Loader2, MessageSquareText, RotateCcw, Send, ShieldQuestion, Trash2, User } from 'lucide-react';
+import { Bot, ChevronRight, History, Loader2, MessageSquareText, RotateCcw, Send, ShieldQuestion, Trash2, User } from 'lucide-react';
 import { workbenchApi } from '../../api';
 import { cn, fmtDateTime } from '../../lib/utils';
-import type { WorkbenchChatMessage, WorkbenchEvent, WorkbenchSessionSummary } from '../../types';
-
-const SESSION_KEY = 'wiib-workbench-session';
+import { chatStore, type ChatItem } from './chatStore';
+import type { WorkbenchSessionSummary } from '../../types';
 
 const AGENT_CN: Record<string, string> = {
   market_agent: '市场专家',
@@ -14,13 +13,6 @@ const AGENT_CN: Record<string, string> = {
   news_agent: '新闻专家',
   supervisor: '调度中枢',
 };
-
-type ChatItem =
-  | { kind: 'user'; content: string }
-  | { kind: 'assistant'; content: string; streaming: boolean }
-  | { kind: 'agent'; node: string; agent: string }
-  | { kind: 'hitl'; symbol: string; reason: string; resumeMessage: string; status: 'pending' | 'approved' | 'rejected' }
-  | { kind: 'error'; message: string };
 
 /** agent 调度切换 chip：Supervisor 把问题派给了谁，一眼可见（多 agent 编排的过程可视化）。 */
 function AgentChip({ agent, node }: { agent: string; node: string }) {
@@ -98,26 +90,16 @@ function Markdown({ content }: { content: string }) {
 }
 
 /**
- * 工作台对话面板：SSE 渲染 Supervisor 多 agent 调度过程 + token 流 + HITL 确认。
- * sessionId 持久在 sessionStorage——断连/刷新后带同一 id 续聊（后端 PostgresSaver）。
+ * 工作台对话面板：chatStore 的视图层（SSE 消费在 store，切页不中断）。
+ * 渲染调度过程 + 专家过程(可折叠) + 进度 + token 流 + HITL 确认。
  */
-/** 后端历史消息 → 对话项（过程事件不落库，只回放 user/assistant） */
-function toItems(messages: WorkbenchChatMessage[]): ChatItem[] {
-  return messages.map(m => m.role === 'user'
-    ? { kind: 'user' as const, content: m.content }
-    : { kind: 'assistant' as const, content: m.content, streaming: false });
-}
-
 export function ChatPanel() {
-  const [items, setItems] = useState<ChatItem[]>([]);
+  const { items, loading, background, sessionId } = useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
   const [hitlBusy, setHitlBusy] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [sessions, setSessions] = useState<WorkbenchSessionSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const sessionRef = useRef<string | null>(sessionStorage.getItem(SESSION_KEY));
-  const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -125,16 +107,8 @@ export function ChatPanel() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [items]);
 
-  useEffect(() => () => abortRef.current?.abort(), []);
-
-  // 刷新页面后当前会话不再一片空白：有 sessionId 就把消息回放出来
-  useEffect(() => {
-    const sid = sessionRef.current;
-    if (!sid) return;
-    workbenchApi.sessionMessages(sid)
-      .then(msgs => { if (msgs.length) setItems(prev => (prev.length ? prev : toItems(msgs))); })
-      .catch(() => {});
-  }, []);
+  // 首挂：回放历史 + 感知后台运行状态（store 级幂等；切页回来时 store 状态还在，直接续显）
+  useEffect(() => { chatStore.init(); }, []);
 
   const openHistory = useCallback(() => {
     setShowHistory(true);
@@ -147,129 +121,55 @@ export function ChatPanel() {
 
   /** 载入历史会话：消息回放 + sessionId 复用（checkpoint 在后端，继续聊自动带全上下文） */
   const openSession = useCallback(async (s: WorkbenchSessionSummary) => {
+    // 点的就是当前在跑的会话：直接关列表回对话，别把在途流掐了重载
+    if (s.sessionId === sessionId && loading) {
+      setShowHistory(false);
+      return;
+    }
     setHistoryLoading(true);
     try {
-      const msgs = await workbenchApi.sessionMessages(s.sessionId);
-      abortRef.current?.abort();
-      sessionRef.current = s.sessionId;
-      sessionStorage.setItem(SESSION_KEY, s.sessionId);
-      setItems(toItems(msgs));
+      await chatStore.openSession(s.sessionId);
       setShowHistory(false);
-      setLoading(false);
-    } catch {
-      setSessions(prev => prev); // 拉取失败保持列表
-    } finally {
+    } catch { /* 拉取失败保持列表 */ } finally {
       setHistoryLoading(false);
     }
-  }, []);
-
-  const send = useCallback(async (message: string, opts?: { silent?: boolean }) => {
-    if (!message.trim() || loading) return;
-    if (!opts?.silent) {
-      setItems(prev => [...prev, { kind: 'user', content: message }]);
-    }
-    setLoading(true);
-    const abort = new AbortController();
-    abortRef.current = abort;
-    try {
-      await workbenchApi.chat(sessionRef.current, message, (e: WorkbenchEvent) => {
-        switch (e.type) {
-          case 'session':
-            sessionRef.current = e.sessionId;
-            sessionStorage.setItem(SESSION_KEY, e.sessionId);
-            break;
-          case 'agent_start':
-            setItems(prev => [...prev, { kind: 'agent', node: e.node, agent: e.agent }]);
-            break;
-          case 'token':
-            setItems(prev => {
-              const next = [...prev];
-              const last = next[next.length - 1];
-              if (last?.kind === 'assistant' && last.streaming) {
-                next[next.length - 1] = { ...last, content: last.content + e.text };
-              } else {
-                next.push({ kind: 'assistant', content: e.text, streaming: true });
-              }
-              return next;
-            });
-            break;
-          case 'hitl_request':
-            setItems(prev => [...prev, {
-              kind: 'hitl', symbol: e.symbol, reason: e.reason,
-              resumeMessage: e.resumeMessage, status: 'pending',
-            }]);
-            break;
-          case 'done':
-            setItems(prev => prev.map(it =>
-              it.kind === 'assistant' && it.streaming
-                ? { ...it, content: it.content || e.answer, streaming: false }
-                : it,
-            ));
-            break;
-          case 'error':
-            setItems(prev => [...prev, { kind: 'error', message: e.message }]);
-            break;
-        }
-      }, abort.signal);
-    } catch (err) {
-      if (!abort.signal.aborted) {
-        setItems(prev => [...prev, { kind: 'error', message: (err as Error).message || '连接中断，可直接重问续聊' }]);
-      }
-    } finally {
-      if (abortRef.current === abort) abortRef.current = null;
-      setLoading(false);
-    }
-  }, [loading]);
+  }, [sessionId, loading]);
 
   const handleSend = useCallback(() => {
     const msg = input.trim();
     if (!msg) return;
     setInput('');
-    void send(msg);
-  }, [input, send]);
+    void chatStore.send(msg);
+  }, [input]);
 
-  /** HITL 决策：批准→登记授权→自动补发 resumeMessage 让 agent 恢复执行；拒绝→仅登记。 */
+  /** HITL 决策交给 store；busy 只是本地防连点。 */
   const handleHitl = useCallback(async (idx: number, approved: boolean) => {
-    const item = items[idx];
-    if (item?.kind !== 'hitl' || !sessionRef.current) return;
     setHitlBusy(true);
     try {
-      await workbenchApi.approve(sessionRef.current, approved);
-      setItems(prev => prev.map((it, i) =>
-        i === idx && it.kind === 'hitl' ? { ...it, status: approved ? 'approved' : 'rejected' } : it,
-      ));
-      if (approved) {
-        await send(item.resumeMessage);
-      }
+      await chatStore.hitlDecide(idx, approved);
     } catch (err) {
-      setItems(prev => [...prev, { kind: 'error', message: (err as Error).message || '确认失败，请重试' }]);
+      chatStore.pushError((err as Error).message || '确认失败，请重试');
     } finally {
       setHitlBusy(false);
     }
-  }, [items, send]);
+  }, []);
 
-  /** 删除会话：列表移除；删的是当前会话时本地一并清空，回到全新会话状态。 */
+  /** 删除会话：列表移除；删的是当前会话时 store 一并清空。 */
   const removeSession = useCallback(async (s: WorkbenchSessionSummary) => {
     try {
       await workbenchApi.deleteSession(s.sessionId);
       setSessions(prev => prev.filter(x => x.sessionId !== s.sessionId));
-      if (sessionRef.current === s.sessionId) {
-        abortRef.current?.abort();
-        sessionRef.current = null;
-        sessionStorage.removeItem(SESSION_KEY);
-        setItems([]);
-        setLoading(false);
-      }
+      chatStore.clearIfCurrent(s.sessionId);
     } catch { /* 删除失败保持原样 */ }
   }, []);
 
   const handleNewSession = useCallback(() => {
-    abortRef.current?.abort();
-    sessionRef.current = null;
-    sessionStorage.removeItem(SESSION_KEY);
-    setItems([]);
-    setLoading(false);
+    chatStore.newSession();
   }, []);
+
+  // 有 token 流或亮着的进度行时，气泡/进度自带 spinner，底部指示条只在"纯静默"时出现
+  const streamingNow = items.some(it =>
+    ((it.kind === 'assistant' || it.kind === 'expert') && it.streaming) || (it.kind === 'progress' && it.active));
 
   return (
     <div className="rounded-xl neu-raised-sm flex flex-col h-[70vh] lg:h-[calc(100vh-11rem)] lg:sticky lg:top-24">
@@ -277,7 +177,7 @@ export function ChatPanel() {
       <div className="flex items-center gap-2 px-4 py-3">
         <Bot className="w-4.5 h-4.5 text-primary" />
         <span className="text-sm font-black">研判对话</span>
-        <span className="text-[10px] text-muted-foreground hidden sm:inline">Supervisor 调度 · 断连自动续聊</span>
+        <span className="text-[10px] text-muted-foreground hidden sm:inline">Supervisor 调度 · 切页/断连后台继续</span>
         <button
           onClick={() => showHistory ? setShowHistory(false) : openHistory()}
           className={cn(
@@ -319,7 +219,7 @@ export function ChatPanel() {
                 onKeyDown={e => e.key === 'Enter' && void openSession(s)}
                 className={cn(
                   'w-full text-left rounded-xl neu-flat px-3.5 py-2.5 space-y-1 hover:bg-accent/40 transition-colors cursor-pointer',
-                  s.sessionId === sessionRef.current && 'ring-1 ring-primary/40',
+                  s.sessionId === sessionId && 'ring-1 ring-primary/40',
                 )}
               >
                 <div className="flex items-center gap-2">
@@ -336,7 +236,7 @@ export function ChatPanel() {
                 <div className="text-[10px] text-muted-foreground flex items-center gap-2">
                   <span>{fmtDateTime(s.lastAt)}</span>
                   <span>· {s.messageCount} 条</span>
-                  {s.sessionId === sessionRef.current && <span className="text-primary font-bold">当前会话</span>}
+                  {s.sessionId === sessionId && <span className="text-primary font-bold">当前会话</span>}
                 </div>
               </div>
             ))
@@ -354,7 +254,7 @@ export function ChatPanel() {
               {['BTC 现在市场结构怎么样？', '你的 vol 预测战绩靠谱吗？', '对 ETH 做一次深度研判'].map(q => (
                 <button
                   key={q}
-                  onClick={() => { setInput(''); void send(q); }}
+                  onClick={() => { setInput(''); void chatStore.send(q); }}
                   className="neu-btn-sm w-full py-2 px-3 rounded-lg text-xs text-left text-muted-foreground hover:text-foreground"
                 >
                   {q}
@@ -383,6 +283,35 @@ export function ChatPanel() {
                   </div>
                 </div>
               );
+            case 'expert':
+              return (
+                <div key={i} className="max-w-[92%]">
+                  <button
+                    onClick={() => chatStore.toggleExpert(i)}
+                    className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground hover:text-foreground py-0.5"
+                  >
+                    <ChevronRight className={cn('w-3 h-3 transition-transform', !item.collapsed && 'rotate-90')} />
+                    {AGENT_CN[item.agent] || item.agent} · 工作过程
+                    {item.streaming && <Loader2 className="w-3 h-3 animate-spin ml-1" />}
+                  </button>
+                  {!item.collapsed && (
+                    <div className="rounded-xl neu-flat px-3.5 py-2.5 text-xs text-muted-foreground">
+                      <Markdown content={item.content} />
+                    </div>
+                  )}
+                </div>
+              );
+            case 'progress':
+              return (
+                <div key={i} className="flex items-center gap-1.5 py-0.5 pl-1">
+                  {item.active
+                    ? <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" />
+                    : <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40 shrink-0" />}
+                  <span className={cn('text-[10px] font-bold', item.active ? 'text-primary' : 'text-muted-foreground')}>
+                    {item.text}
+                  </span>
+                </div>
+              );
             case 'agent':
               return <AgentChip key={i} agent={item.agent} node={item.node} />;
             case 'hitl':
@@ -393,9 +322,10 @@ export function ChatPanel() {
               );
           }
         })}
-        {loading && items[items.length - 1]?.kind === 'user' && (
+        {loading && !streamingNow && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Supervisor 分析问题中...
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            {background ? 'AI 在后台继续研判中，完成后自动展示答案' : 'Supervisor 分析问题中...'}
           </div>
         )}
       </div>
@@ -407,7 +337,7 @@ export function ChatPanel() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && !e.nativeEvent.isComposing && handleSend()}
-            placeholder="问市场、要研判、查战绩..."
+            placeholder={loading ? 'AI 工作中，稍候…' : '问市场、要研判、查战绩...'}
             disabled={loading}
             className="flex-1 bg-transparent text-sm py-1.5 focus:outline-none placeholder:text-muted-foreground/60 disabled:opacity-50"
           />

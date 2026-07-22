@@ -376,6 +376,9 @@ export const workbenchApi = {
     api.post<unknown, void>('/ai/workbench/approve', { sessionId, approved }),
   /** 历史会话列表（标题=首条提问，按最后活跃倒序） */
   sessions: () => api.get<unknown, WorkbenchSessionSummary[]>('/ai/workbench/sessions'),
+  /** 会话是否还在后台跑（切页/刷新回来判断，结束后拉历史补答案） */
+  sessionStatus: (sessionId: string) =>
+    api.get<unknown, boolean>(`/ai/workbench/sessions/${sessionId}/status`),
   /** 单会话消息记录；续聊仍走 chat 带同一 sessionId */
   sessionMessages: (sessionId: string) =>
     api.get<unknown, WorkbenchChatMessage[]>(`/ai/workbench/sessions/${sessionId}/messages`),

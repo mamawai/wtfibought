@@ -22,6 +22,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * 研判工作台对话 agent 工厂（P4）：SupervisorAgent(深模型) 动态调度 3 个专家 ReactAgent(浅模型)。
@@ -37,6 +38,12 @@ import java.util.List;
 @Slf4j
 @Component
 public class ChatAgentFactory {
+
+    /** 专家 agent 名单：流式 chunk 的 agent 名在此集合内=专家过程流，否则=supervisor 答案流 */
+    public static final String MARKET_AGENT = "market_agent";
+    public static final String QUANT_AGENT = "quant_agent";
+    public static final String NEWS_AGENT = "news_agent";
+    public static final Set<String> EXPERT_AGENTS = Set.of(MARKET_AGENT, QUANT_AGENT, NEWS_AGENT);
 
     private final AiAgentRuntimeManager runtimeManager;
     private final MarketToolkit marketToolkit;
@@ -97,7 +104,7 @@ public class ChatAgentFactory {
         ToolRetryInterceptor toolRetry = ToolRetryInterceptor.builder().build();
 
         ReactAgent marketAgent = ReactAgent.builder()
-                .name("market_agent")
+                .name(MARKET_AGENT)
                 .description("实时市场状态专家：行情快照(价格/资金费率/持仓/清算/盘口)、期权IV、市场脆弱度评分")
                 .model(light)
                 .methodTools(marketToolkit)
@@ -108,7 +115,7 @@ public class ChatAgentFactory {
                 .build();
 
         ReactAgent quantAgent = ReactAgent.builder()
-                .name("quant_agent")
+                .name(QUANT_AGENT)
                 .description("量化预测专家：波动率预测(H6/H12/H24)、市场regime、以及本系统预测战绩记分卡(QLIKE vs 基准/命中率)")
                 .model(light)
                 .methodTools(quantForecastToolkit)
@@ -122,7 +129,7 @@ public class ChatAgentFactory {
                 .build();
 
         ReactAgent newsAgent = ReactAgent.builder()
-                .name("news_agent")
+                .name(NEWS_AGENT)
                 .description("加密新闻专家：BlockBeats(律动)重要快讯列表，新闻/快讯/消息面查询都归这里")
                 .model(light)
                 .methodTools(newsToolkit)

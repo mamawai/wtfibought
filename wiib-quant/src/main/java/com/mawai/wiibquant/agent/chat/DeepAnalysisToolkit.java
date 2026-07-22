@@ -32,6 +32,7 @@ public class DeepAnalysisToolkit {
     private final DeepAnalysisService deepAnalysisService;
     private final ApprovalRegistry approvalRegistry;
     private final QuantSnapshotMapper snapshotMapper;
+    private final WorkbenchRunRegistry runRegistry;
 
     @Tool(name = "run_deep_analysis", description = """
             Run a full deep market analysis (Bull vs Bear adversarial debate + Judge verdict) for a symbol.
@@ -62,13 +63,24 @@ public class DeepAnalysisToolkit {
         String volLegsJson = latest != null ? latest.getVolLegsJson() : null;
 
         // 复用定时轨同一套研判服务；Bull∥Bear 虚拟线程并行（对话场景无图结构，服务级并行等价）
+        // 全程静默数分钟，按阶段推进度给 SSE，前端才知道跑到哪了
+        runRegistry.publishProgress(sessionId, "深研判 " + normalized + " 启动：Bull/Bear 并行辩论中（约需数分钟）");
         String newsContext = deepAnalysisService.buildNewsContext();
-        CompletableFuture<String> bullF = CompletableFuture.supplyAsync(
-                () -> deepAnalysisService.bullArgue(normalized, newsContext, volLegsJson));
-        CompletableFuture<String> bearF = CompletableFuture.supplyAsync(
-                () -> deepAnalysisService.bearArgue(normalized, newsContext, volLegsJson));
+        CompletableFuture<String> bullF = CompletableFuture.supplyAsync(() -> {
+            String r = deepAnalysisService.bullArgue(normalized, newsContext, volLegsJson);
+            runRegistry.publishProgress(sessionId, "Bull 多方论证完成");
+            return r;
+        });
+        CompletableFuture<String> bearF = CompletableFuture.supplyAsync(() -> {
+            String r = deepAnalysisService.bearArgue(normalized, newsContext, volLegsJson);
+            runRegistry.publishProgress(sessionId, "Bear 空方论证完成");
+            return r;
+        });
+        String bull = bullF.join();
+        String bear = bearF.join();
+        runRegistry.publishProgress(sessionId, "辩论汇齐，Judge 裁决中");
         QuantDeepAnalysis analysis = deepAnalysisService.judge(normalized, closeTime, snapshotId, "chat",
-                newsContext, volLegsJson, bullF.join(), bearF.join());
+                newsContext, volLegsJson, bull, bear);
         if (analysis == null) {
             JSONObject out = new JSONObject();
             out.put("status", "FAILED");
@@ -76,6 +88,7 @@ public class DeepAnalysisToolkit {
             return out.toJSONString();
         }
         deepAnalysisService.persist(analysis);
+        runRegistry.publishProgress(sessionId, "裁决完成，正在生成回答");
 
         JSONObject out = new JSONObject();
         out.put("status", "OK");

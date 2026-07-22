@@ -38,12 +38,14 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 /**
  * 研判工作台对话入口（P4）：SSE 流式暴露 Supervisor 多 agent 调度全过程。
- * 事件协议：session(会话号) / agent_start(调度切换) / token(LLM流) / done(完整回答) / error。
- * threadId=sessionId 走 PostgresSaver——断连后带同一 sessionId 重连即续聊。
+ * 事件协议：session(会话号) / agent_start(调度切换) / token(LLM流，带 agent+role 区分专家过程/答案)
+ * / progress(长工具阶段进度) / done(完整回答) / error。
+ * threadId=sessionId 走 PostgresSaver——断连后带同一 sessionId 重连即续聊；
+ * 断连不中止图：跑完照样落历史，前端靠 status 接口+历史回放补答案。
  */
 @Slf4j
 @Tag(name = "研判工作台")
@@ -58,6 +60,7 @@ public class ChatWorkbenchController {
     private final ChatMemoryService chatMemoryService;
     private final ChatHistoryService chatHistoryService;
     private final BaseCheckpointSaver checkpointSaver;
+    private final WorkbenchRunRegistry runRegistry;
     private final ExecutorService streamExecutor = Executors.newVirtualThreadPerTaskExecutor();
     /** 心跳专用：只发注释帧(微秒级)，单线程够所有会话用；虚拟线程不支持定时调度故用平台线程 */
     private final ScheduledExecutorService heartbeatScheduler =
@@ -115,6 +118,15 @@ public class ChatWorkbenchController {
         return Result.ok(chatHistoryService.sessions(userId, 50));
     }
 
+    @GetMapping("/sessions/{sessionId}/status")
+    @Operation(summary = "会话运行状态（切页/刷新回来判断 AI 是否还在后台跑，结束后拉历史补答案）")
+    public Result<Boolean> sessionStatus(@CurrentUserId long userId, @PathVariable String sessionId) {
+        if (sessionId == null || !sessionId.startsWith("wb-" + userId + "-")) {
+            return Result.fail("会话不存在或无权限");
+        }
+        return Result.ok(runRegistry.isRunning(sessionId));
+    }
+
     @GetMapping("/sessions/{sessionId}/messages")
     @Operation(summary = "单会话消息记录（点进历史会话回看，续聊仍走 /chat 带同一 sessionId）")
     public Result<List<ChatHistoryService.ChatMessage>> sessionMessages(@CurrentUserId long userId,
@@ -168,15 +180,16 @@ public class ChatWorkbenchController {
      * 共用一个缓冲会互相污染判定状态。
      */
     static final class RoutingFilter {
-        private final Consumer<String> sink;
+        /** sink(key, text)：key=node|agent，调用方按 agent 区分答案流/过程流 */
+        private final BiConsumer<String, String> sink;
         private final Map<String, Segment> segments = new LinkedHashMap<>();
 
-        RoutingFilter(Consumer<String> sink) {
+        RoutingFilter(BiConsumer<String, String> sink) {
             this.sink = sink;
         }
 
         void onChunk(String key, String chunk) {
-            segments.computeIfAbsent(key, k -> new Segment()).onChunk(chunk);
+            segments.computeIfAbsent(key, Segment::new).onChunk(chunk);
         }
 
         /** 一次 LLM 调用结束：被扣住的段若确是路由数组即丢弃，否则补发。 */
@@ -194,13 +207,18 @@ public class ChatWorkbenchController {
         }
 
         private final class Segment {
+            private final String key;
             private final StringBuilder buf = new StringBuilder();
             private boolean decided = false;
             private boolean hold = false;
 
+            Segment(String key) {
+                this.key = key;
+            }
+
             void onChunk(String chunk) {
                 if (decided && !hold) {
-                    sink.accept(chunk);
+                    sink.accept(key, chunk);
                     return;
                 }
                 buf.append(chunk);
@@ -210,7 +228,7 @@ public class ChatWorkbenchController {
                     decided = true;
                     hold = lead.charAt(0) == '[';
                     if (!hold) {
-                        sink.accept(buf.toString());
+                        sink.accept(key, buf.toString());
                         buf.setLength(0);
                     }
                 }
@@ -218,7 +236,7 @@ public class ChatWorkbenchController {
 
             void end() {
                 if (!buf.isEmpty() && !(hold && isRoutingArray(buf.toString()))) {
-                    sink.accept(buf.toString());
+                    sink.accept(key, buf.toString());
                 }
                 buf.setLength(0);
             }
@@ -237,16 +255,27 @@ public class ChatWorkbenchController {
     }
 
     private void run(SseChannel channel, long userId, String sessionId, String message) {
+        // 答案流/过程流分离：专家 agent 的输出是"工作过程"（前端弱化展示、不落历史），
+        // 只有 supervisor 的最终汇总才是答案——否则单专家问题会"专家一遍+汇总一遍"重复输出
         StringBuilder answer = new StringBuilder();
-        RoutingFilter filter = new RoutingFilter(text -> {
-            answer.append(text);
-            channel.send("token", new JSONObject().fluentPut("text", text));
+        StringBuilder expertLog = new StringBuilder();
+        RoutingFilter filter = new RoutingFilter((key, text) -> {
+            String agent = key.substring(key.indexOf('|') + 1);
+            boolean expert = ChatAgentFactory.EXPERT_AGENTS.contains(agent);
+            (expert ? expertLog : answer).append(text);
+            channel.send("token", new JSONObject()
+                    .fluentPut("text", text)
+                    .fluentPut("agent", agent)
+                    .fluentPut("role", expert ? "process" : "answer"));
         });
         String[] lastNode = {""};
         // 深研判这类工具在图内同步阻塞跑，期间通道零字节。心跳全程喂着，中间层才不会当连接死了掐断
         ScheduledFuture<?> heartbeat = heartbeatScheduler.scheduleWithFixedDelay(
                 channel::heartbeat, HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
         try {
+            // 运行登记：status 接口靠它回答"是否还在跑"；进度监听把长工具的阶段进度转成 SSE 事件
+            runRegistry.start(sessionId, text ->
+                    channel.send("progress", new JSONObject().fluentPut("text", text)));
             channel.send("session", new JSONObject().fluentPut("sessionId", sessionId));
             // 活跃会话槽：DeepAnalysisToolkit 的 HITL 闸门经此拿 sessionId（ToolContext 桥的兜底）
             approvalRegistry.markActive(sessionId);
@@ -301,17 +330,17 @@ public class ChatWorkbenchController {
                             .fluentPut("reason", pendingRequest.reason())
                             .fluentPut("resumeMessage", "已确认，请继续执行深度研判")));
 
+            // 极端场景（调用上限 END 等）supervisor 没产出汇总，退专家过程文本，答案不至于丢
+            String finalAnswer = !answer.isEmpty() ? answer.toString() : expertLog.toString();
+            // 历史/记忆不看连接死活：切页断连后图照跑，答案必须落库（前端回来靠 status+历史补）。
+            // 且必须在 finally 摘运行标记之前写完——轮询端不能出现"已结束但查不到答案"的空窗
+            chatHistoryService.append(sessionId, userId, "assistant", finalAnswer);
+            chatMemoryService.remember(userId, message, finalAnswer);
             if (!channel.isClosed()) {
                 channel.send("done", new JSONObject()
                         .fluentPut("sessionId", sessionId)
-                        .fluentPut("answer", answer.toString()));
+                        .fluentPut("answer", finalAnswer));
                 channel.complete();
-                // 跨会话记忆 + 历史记录异步写入（都是增益不是主链，失败不影响对话）
-                String finalAnswer = answer.toString();
-                streamExecutor.submit(() -> {
-                    chatHistoryService.append(sessionId, userId, "assistant", finalAnswer);
-                    chatMemoryService.remember(userId, message, finalAnswer);
-                });
             }
         } catch (Exception e) {
             log.error("[Workbench] 对话失败 sessionId={}", sessionId, e);
@@ -322,6 +351,7 @@ public class ChatWorkbenchController {
             }
         } finally {
             heartbeat.cancel(false);
+            runRegistry.finish(sessionId);
         }
     }
 
