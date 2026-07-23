@@ -21,7 +21,8 @@ export default defineConfig({
         start_url: '/',
         scope: '/',
         display: 'standalone',
-        orientation: 'portrait',
+        // 不锁竖屏：K 线横屏看是真实需求，且横屏宽度(如 852px)已过 md 断点，自动切桌面版布局
+        orientation: 'any',
         background_color: '#f6f6f4',  // 启动闪屏底色，对齐亮色主题 --color-background
         theme_color: '#F97316',
         icons: [
