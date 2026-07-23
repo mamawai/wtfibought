@@ -45,6 +45,7 @@ final class FuturesHelper {
 
     static String getLimitZSetKey(String orderSide, String symbol) {
         return switch (orderSide) {
+            // INCREASE_* 仅存量历史挂单路由（重建/过期/撤单），触发即自清撤单，不再产生新单
             case "OPEN_LONG", "INCREASE_LONG" -> LIMIT_OPEN_LONG_PREFIX + symbol;
             case "OPEN_SHORT", "INCREASE_SHORT" -> LIMIT_OPEN_SHORT_PREFIX + symbol;
             case "CLOSE_LONG" -> LIMIT_CLOSE_LONG_PREFIX + symbol;
@@ -194,5 +195,27 @@ final class FuturesHelper {
 
     static String genId() {
         return UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    /** 合并SL档位（开仓并入同向仓位用）：现有+新增，条数≤4、总量≤合并后持仓；新增为空返回null=不改库 */
+    static List<FuturesStopLoss> mergeSlList(List<FuturesStopLoss> existing, List<FuturesStopLoss> added, BigDecimal mergedQty) {
+        if (added == null || added.isEmpty()) return null;
+        List<FuturesStopLoss> combined = new ArrayList<>(existing == null ? List.of() : existing);
+        combined.addAll(added);
+        if (combined.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
+        BigDecimal total = combined.stream().map(FuturesStopLoss::getQuantity).reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (total.compareTo(mergedQty) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
+        return combined;
+    }
+
+    /** 合并TP档位：规则同SL */
+    static List<FuturesTakeProfit> mergeTpList(List<FuturesTakeProfit> existing, List<FuturesTakeProfit> added, BigDecimal mergedQty) {
+        if (added == null || added.isEmpty()) return null;
+        List<FuturesTakeProfit> combined = new ArrayList<>(existing == null ? List.of() : existing);
+        combined.addAll(added);
+        if (combined.size() > 4) throw new BizException(ErrorCode.FUTURES_SPLIT_LIMIT);
+        BigDecimal total = combined.stream().map(FuturesTakeProfit::getQuantity).reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (total.compareTo(mergedQty) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
+        return combined;
     }
 }

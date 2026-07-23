@@ -17,12 +17,11 @@ import { getCoin, getCoinPriceDecimals, getCoinPriceStep, formatCoinPrice } from
 import type { FuturesPosition, FuturesBracket } from '../../types';
 import { SLTPEditor } from './SLTPEditor';
 import {
-  FUTURES_COMMISSION_RATE, FUTURES_LEVERAGE_OPTIONS, roundHalfUp2, roundCeil2,
-  findFuturesBracket, formatRate, calcMaxIncreaseQty, qtyByPct,
+  FUTURES_LEVERAGE_OPTIONS, findFuturesBracket, formatRate, qtyByPct,
   type SLTPRow,
 } from './futuresMath';
 
-type PosActionType = 'close' | 'increase' | 'margin' | 'reduceMargin' | 'stoploss' | 'leverage';
+type PosActionType = 'close' | 'margin' | 'reduceMargin' | 'stoploss' | 'leverage';
 
 // 档位表运行期不变，模块级缓存：Coin/Portfolio 多处挂载全站只打一次接口
 let bracketsCache: Record<string, FuturesBracket[]> | null = null;
@@ -36,22 +35,24 @@ function loadBrackets(): Promise<Record<string, FuturesBracket[]>> {
 }
 
 /**
- * 合约持仓卡组：symbol 传入=只显示该币种（Coin页），不传=全部持仓（Portfolio汇总）。
+ * 合约持仓卡组：symbol 传入=只显示该币种（Coin页，双向持仓最多 多+空 两张，一行两格），
+ * 不传=全部持仓（Portfolio汇总，一行四张）。行尾空位用 + 槽占位。
  * 每张仓位卡自订该币 futures WS 流（共享 STOMP 连接）实时算盈亏，不再依赖页面传 markPrice；
- * showCloseAll 开启头部"一键全平"（两段确认，市价全平所有仓位）。宽屏一行四张全信息小卡，行尾空位用 + 槽占位。
+ * showCloseAll 开启头部"一键全平"（两段确认，市价全平所有仓位）。
+ * 加仓无独立入口（对齐Binance）：同方向再下单即自动并入，走开仓面板。
  */
-export function FuturesPositionsCard({ symbol, refreshKey, onOrdersChanged, showCloseAll }: {
+export function FuturesPositionsCard({ symbol, refreshKey, onOrdersChanged, onPositionsChanged, showCloseAll }: {
   symbol?: string;
   refreshKey: number;
   onOrdersChanged?: () => void;
+  /** 仓位有任何变动（平仓/调杠杆/保证金）时回调；Coin 页用它驱动开仓面板的持仓快照重拉 */
+  onPositionsChanged?: () => void;
   showCloseAll?: boolean;
 }) {
   const { toast } = useToast();
   const fetchUser = useUserStore(s => s.fetchUser);
 
   const [positions, setPositions] = useState<FuturesPosition[]>([]);
-  // 全仓可用余额（含浮盈亏），全仓仓位加仓的预算基数；无全仓仓位时为 null
-  const [crossAvailable, setCrossAvailable] = useState<number | null>(null);
   const [bracketsMap, setBracketsMap] = useState<Record<string, FuturesBracket[]>>({});
   const [loading, setLoading] = useState(false);
   const [closingAll, setClosingAll] = useState(false);
@@ -64,12 +65,6 @@ export function FuturesPositionsCard({ symbol, refreshKey, onOrdersChanged, show
     try {
       const list = await futuresApi.positions(symbol);
       setPositions(list);
-      // 跟仓位一起刷：全仓预算按账户统一算
-      if (list.some(p => p.marginMode === 'CROSS')) {
-        futuresApi.crossAccount().then(a => setCrossAvailable(a.available)).catch(() => setCrossAvailable(null));
-      } else {
-        setCrossAvailable(null);
-      }
     } catch (e) {
       console.error('查询合约仓位失败', e);
       setPositions([]);
@@ -87,12 +82,13 @@ export function FuturesPositionsCard({ symbol, refreshKey, onOrdersChanged, show
     return () => window.clearTimeout(t);
   }, [confirmCloseAll]);
 
-  // 子卡操作成功后的统一收口：刷仓位+用户；成交类操作再通知外部订单表
+  // 子卡操作成功后的统一收口：刷仓位+用户+通知外部（开仓面板要跟随仓位快照）；成交类操作再通知订单表
   const handleMutated = useCallback((ordersChanged: boolean) => {
     fetchPositions();
     fetchUser();
+    onPositionsChanged?.();
     if (ordersChanged) onOrdersChanged?.();
-  }, [fetchPositions, fetchUser, onOrdersChanged]);
+  }, [fetchPositions, fetchUser, onPositionsChanged, onOrdersChanged]);
 
   const handleCloseAll = async () => {
     setConfirmCloseAll(false);
@@ -142,20 +138,21 @@ export function FuturesPositionsCard({ symbol, refreshKey, onOrdersChanged, show
           </div>
         </div>
       </CardHeader>
-      {/* 宽屏一行四张；items-start 防止一张打开操作面板把同行其他卡撑高 */}
-      <CardContent className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 px-5 pb-5 pt-0 items-start">
+      {/* Coin页(传symbol)对齐Binance双向持仓：每币最多 多+空 两张，一行两格；Portfolio跨币汇总维持一行四张。
+          items-start 防止一张打开操作面板把同行其他卡撑高 */}
+      <CardContent className={`grid grid-cols-1 sm:grid-cols-2 ${symbol ? '' : 'xl:grid-cols-4'} gap-4 px-5 pb-5 pt-0 items-start`}>
         {positions.map(pos => (
           <PositionItem
             key={pos.id}
             pos={pos}
             brackets={bracketsMap[pos.symbol]}
-            crossAvailable={crossAvailable}
+            wide={!!symbol}
             onMutated={handleMutated}
           />
         ))}
-        {/* 行尾 + 槽占位补齐四格：self-stretch 跟随同行最高卡；仅四列宽屏有意义，窄屏隐藏 */}
-        {Array.from({ length: (4 - positions.length % 4) % 4 }).map((_, i) => (
-          <div key={`slot-${i}`} className="hidden xl:flex self-stretch min-h-44 rounded-lg border border-dashed border-border bg-card-2 items-center justify-center">
+        {/* 行尾 + 槽占位：Coin页补到两格（空缺的多/空方向），Portfolio补齐四格；self-stretch 跟随同行最高卡，窄屏隐藏 */}
+        {Array.from({ length: symbol ? Math.max(0, 2 - positions.length) : (4 - positions.length % 4) % 4 }).map((_, i) => (
+          <div key={`slot-${i}`} className={`${symbol ? 'hidden sm:flex' : 'hidden xl:flex'} self-stretch min-h-44 rounded-lg border border-dashed border-border bg-card-2 items-center justify-center`}>
             <Plus className="w-7 h-7 text-muted-foreground opacity-30" />
           </div>
         ))}
@@ -168,10 +165,11 @@ export function FuturesPositionsCard({ symbol, refreshKey, onOrdersChanged, show
  * 单仓位卡：自订该币 futures 流，标记价实时衍生盈亏（纯 render 期计算，不回写 state）；
  * 全信息常驻（不折叠），竖排布局适配四列窄卡；操作面板点按钮展开，状态全部内聚于本卡。
  */
-function PositionItem({ pos, brackets, crossAvailable, onMutated }: {
+function PositionItem({ pos, brackets, wide, onMutated }: {
   pos: FuturesPosition;
   brackets?: FuturesBracket[];
-  crossAvailable: number | null;
+  /** Coin页两格布局卡更宽，指标恒3列；Portfolio四格窄卡 ≥sm 退2列 */
+  wide?: boolean;
   onMutated: (ordersChanged: boolean) => void;
 }) {
   const cfg = getCoin(pos.symbol);
@@ -198,9 +196,6 @@ function PositionItem({ pos, brackets, crossAvailable, onMutated }: {
   const [closeOrderType, setCloseOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET');
   const [closeLimitPrice, setCloseLimitPrice] = useState('');
   const [closeQty, setCloseQty] = useState('');
-  const [increaseOrderType, setIncreaseOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET');
-  const [increaseLimitPrice, setIncreaseLimitPrice] = useState('');
-  const [increaseQty, setIncreaseQty] = useState('');
   const [marginAmt, setMarginAmt] = useState('');
   const [newLeverage, setNewLeverage] = useState<number | null>(null);
   const [slRows, setSlRows] = useState<SLTPRow[]>([]);
@@ -219,7 +214,6 @@ function PositionItem({ pos, brackets, crossAvailable, onMutated }: {
     }
     setAction(type);
     setCloseQty(type === 'close' ? String(pos.quantity) : ''); setCloseLimitPrice(''); setCloseOrderType('MARKET');
-    setIncreaseQty(''); setIncreaseLimitPrice(''); setIncreaseOrderType('MARKET');
     setMarginAmt('');
     setNewLeverage(null);
     setSlRows(pos.stopLosses?.map(s => ({ price: String(s.price), quantity: String(s.quantity) })) ?? [{ price: '', quantity: '' }]);
@@ -254,19 +248,6 @@ function PositionItem({ pos, brackets, crossAvailable, onMutated }: {
     }), '平仓成功', true);
   };
 
-  const handleIncrease = () => {
-    const qty = parseFloat(increaseQty);
-    if (!qty || qty <= 0) { toast('请输入加仓数量', 'error'); return; }
-    if (increaseOrderType === 'LIMIT') {
-      const lp = parseFloat(increaseLimitPrice);
-      if (!lp || lp <= 0) { toast('请输入有效限价', 'error'); return; }
-    }
-    void submit(() => futuresApi.increase({
-      positionId: pos.id, quantity: qty, orderType: increaseOrderType,
-      ...(increaseOrderType === 'LIMIT' ? { limitPrice: parseFloat(increaseLimitPrice) } : {}),
-    }), '加仓成功', true);
-  };
-
   const handleAddMargin = () => {
     const amt = parseFloat(marginAmt);
     if (!amt || amt <= 0) { toast('请输入有效金额', 'error'); return; }
@@ -279,10 +260,10 @@ function PositionItem({ pos, brackets, crossAvailable, onMutated }: {
     void submit(() => futuresApi.reduceMargin({ positionId: pos.id, amount: amt }), '减少保证金成功', false);
   };
 
-  // 调杠杆：全仓双向可调（调低要可用够），逐仓只能调高；错误信息由后端 toast 透出
+  // 币种级调杠杆：多空共用，同时作用于该币全部仓位；全仓双向可调（调低要可用够），逐仓只能调高；错误信息由后端 toast 透出
   const handleAdjustLeverage = () => {
     if (!newLeverage) { toast('请选择目标杠杆', 'error'); return; }
-    void submit(() => futuresApi.adjustLeverage({ positionId: pos.id, leverage: newLeverage }), '杠杆调整成功', false);
+    void submit(() => futuresApi.adjustLeverage({ symbol: pos.symbol, leverage: newLeverage }), '杠杆调整成功', false);
   };
 
   const handleSetStopLoss = () => {
@@ -326,8 +307,8 @@ function PositionItem({ pos, brackets, crossAvailable, onMutated }: {
           {isPnlUp ? '+' : ''}{unrealizedPnlPct.toFixed(2)}%
         </span>
       </div>
-      {/* 手机全宽单列卡塞得下3列指标（压卡高），≥sm 起卡变窄（双列/四列网格）退回2列 */}
-      <div className="grid grid-cols-3 sm:grid-cols-2 gap-x-3 gap-y-1.5">
+      {/* 手机全宽单列卡塞得下3列指标（压卡高）；四格窄卡 ≥sm 退2列，Coin页两格宽卡恒3列 */}
+      <div className={`grid grid-cols-3 ${wide ? '' : 'sm:grid-cols-2'} gap-x-3 gap-y-1.5`}>
         {[
           { label: '数量', value: `${pos.quantity} ${cfg.name}` },
           { label: '开仓价', value: `$${fmtPrice(pos.entryPrice)}` },
@@ -359,8 +340,8 @@ function PositionItem({ pos, brackets, crossAvailable, onMutated }: {
         </div>
       )}
       <div className="flex flex-wrap gap-1.5 pt-1">
+        {/* 加仓无独立入口（对齐Binance）：同方向再下一单即自动并入仓位，走开仓面板 */}
         <Button size="sm" variant={action === 'close' ? 'default' : 'outline'} className="h-9 sm:h-7 text-[11px] flex-1 min-w-15" onClick={() => toggleAction('close')}>平仓</Button>
-        <Button size="sm" variant={action === 'increase' ? 'default' : 'outline'} className="h-9 sm:h-7 text-[11px] flex-1 min-w-15" onClick={() => toggleAction('increase')}>加仓</Button>
         {/* 全仓保证金按账户统一算，单仓加减保证金没意义，后端也会拒（1761），直接不给入口 */}
         {!isCrossPos && <Button size="sm" variant={action === 'margin' ? 'default' : 'outline'} className="h-9 sm:h-7 text-[11px] flex-1 min-w-15" onClick={() => toggleAction('margin')}>+保证金</Button>}
         {!isCrossPos && <Button size="sm" variant={action === 'reduceMargin' ? 'default' : 'outline'} className="h-9 sm:h-7 text-[11px] flex-1 min-w-15" onClick={() => toggleAction('reduceMargin')}>-保证金</Button>}
@@ -414,60 +395,6 @@ function PositionItem({ pos, brackets, crossAvailable, onMutated }: {
               </Button>
             </>
           )}
-          {/* 加仓 */}
-          {action === 'increase' && (() => {
-            const incPrice = increaseOrderType === 'LIMIT' && parseFloat(increaseLimitPrice) > 0 ? parseFloat(increaseLimitPrice) : livePrice;
-            // 预算：全仓=账户可用余额（占用制口径），逐仓=余额钱包
-            const incBudget = isCrossPos ? (crossAvailable ?? 0) : (user?.balance ?? 0);
-            const maxIncQty = calcMaxIncreaseQty(incBudget, incPrice, pos.leverage, MIN_QTY);
-            return (
-            <>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground shrink-0">执行</span>
-                <NeuToggle
-                  size="sm"
-                  label="加仓执行方式"
-                  value={increaseOrderType}
-                  onChange={setIncreaseOrderType}
-                  options={[{ value: 'MARKET', label: '市价' }, { value: 'LIMIT', label: '限价' }]}
-                />
-              </div>
-              {increaseOrderType === 'LIMIT' && (
-                <>
-                  <Input type="number" placeholder="限价 (USDT)" value={increaseLimitPrice} onChange={e => setIncreaseLimitPrice(e.target.value)} step={PRICE_STEP_TEXT} className="h-9 sm:h-8 text-xs" />
-                  {parseFloat(increaseLimitPrice) > 0 && livePrice > 0 && (
-                    (isLong && parseFloat(increaseLimitPrice) >= livePrice) ||
-                    (!isLong && parseFloat(increaseLimitPrice) <= livePrice)
-                  ) && (
-                    <div className="text-[10px] text-yellow-500">限价{isLong ? '≥' : '≤'}当前价，将立即以市价成交</div>
-                  )}
-                </>
-              )}
-              <div className="flex items-center gap-2">
-                <Input type="number" placeholder={`${MIN_QTY} - ${maxIncQty > 0 ? maxIncQty : '0'}`} value={increaseQty} onChange={e => setIncreaseQty(e.target.value)} step={String(MIN_QTY)} min={MIN_QTY} max={maxIncQty > 0 ? maxIncQty : undefined} className="flex-1 h-9 sm:h-8 text-xs" />
-                {user && <span className="text-[11px] text-muted-foreground shrink-0">{isCrossPos ? `可用 ${fmtNum(crossAvailable ?? 0)}` : `余额 ${fmtNum(user.balance)}`}</span>}
-              </div>
-              {parseFloat(increaseQty) > 0 && incPrice > 0 && (() => {
-                const iq = parseFloat(increaseQty);
-                const val = roundHalfUp2(incPrice * iq);
-                const mg = roundCeil2(val / pos.leverage);
-                const cm = roundHalfUp2(val * FUTURES_COMMISSION_RATE);
-                return (
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px] text-muted-foreground">
-                    <div>杠杆前数量 <span className="text-foreground font-mono">{(iq / pos.leverage).toFixed(8).replace(/0+$/, '').replace(/\.$/, '')}</span></div>
-                    <div>仓位价值 <span className="text-foreground font-mono">${fmtNum(val)}</span></div>
-                    <div>{isCrossPos ? '占用保证金' : '保证金'} <span className="text-foreground font-mono">${fmtNum(mg)}</span></div>
-                    <div>手续费 <span className="text-foreground font-mono">${fmtNum(cm)}</span></div>
-                    <div className="col-span-2">需支付 <span className="text-foreground font-mono font-semibold">${fmtNum(mg + cm)}</span></div>
-                  </div>
-                );
-              })()}
-              <Button size="sm" className="w-full h-9 sm:h-8 text-xs" onClick={handleIncrease} disabled={submitting}>
-                {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : '确认加仓'}
-              </Button>
-            </>
-            );
-          })()}
           {/* +保证金 */}
           {action === 'margin' && (
             <>
@@ -500,7 +427,7 @@ function PositionItem({ pos, brackets, crossAvailable, onMutated }: {
               <>
                 <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
                   <span className="text-[11px] text-muted-foreground">
-                    当前 {pos.leverage}x · {isCrossPos ? '全仓可调高调低，调低需可用余额足够' : '逐仓只能调高'}
+                    当前 {pos.leverage}x · 多空共用同时调整 · {isCrossPos ? '全仓可调高调低，调低需可用余额足够' : '逐仓只能调高'}
                   </span>
                   <span className={`text-sm font-black tabular-nums ${changed ? 'text-primary' : 'text-muted-foreground'}`}>{selLev}x</span>
                 </div>

@@ -64,29 +64,6 @@ export function estimateFuturesLiqPrice(brackets: FuturesBracket[] | undefined, 
   return { price: entryBracketPrice, bracket: entryBracket };
 }
 
-/** 二分逼近：给定余额与杠杆，按现货费率能加仓的最大数量（step 对齐） */
-export function calcMaxIncreaseQty(balance: number, price: number, leverage: number, step: number): number {
-  if (balance <= 0 || price <= 0 || leverage <= 0 || step <= 0) return 0;
-  const precision = getStepPrecision(step);
-  let left = 0;
-  let right = Math.floor((balance * leverage / price) / step);
-  let best = 0;
-  while (left <= right) {
-    const mid = Math.floor((left + right) / 2);
-    const qty = Number((mid * step).toFixed(precision));
-    const value = roundHalfUp2(price * qty);
-    const margin = roundCeil2(value / leverage);
-    const commission = roundHalfUp2(value * COMMISSION_RATE);
-    if (margin + commission <= balance + 1e-9) {
-      best = qty;
-      left = mid + 1;
-    } else {
-      right = mid - 1;
-    }
-  }
-  return best;
-}
-
 /** 合约开仓预估：以保证金数量（未乘杠杆）算仓位价值/保证金/手续费/合计 */
 export function calcFuturesOpenEstimate(marginQty: number, price: number, leverage: number) {
   const orderQty = marginQty * leverage;

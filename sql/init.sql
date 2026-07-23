@@ -314,6 +314,8 @@ COMMENT ON COLUMN futures_position.memo IS 'AI策略标签：TREND/MEAN_REVERSIO
 
 CREATE INDEX IF NOT EXISTS idx_fp_user_status ON futures_position(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_fp_symbol_status ON futures_position(symbol, status);
+-- 对齐Binance双向持仓：同用户同币同向最多一张OPEN仓位（多空各一张），开仓合并的并发兜底
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fp_user_symbol_side_open ON futures_position(user_id, symbol, side) WHERE status = 'OPEN';
 
 -- ============================================
 -- 19. 永续合约订单表

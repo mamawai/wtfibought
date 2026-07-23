@@ -89,12 +89,6 @@ public class FuturesController {
                 "positionCount", account.positions().size()));
     }
 
-    /** 加仓 */
-    @PostMapping("/increase")
-    public Result<FuturesOrderResponse> increase(@CurrentUserId Long userId, @RequestBody FuturesIncreaseRequest request) {
-        return Result.ok(futuresTradingService.increasePosition(userId, request));
-    }
-
     /** 设置止损 */
     @PostMapping("/stop-loss")
     public Result<Void> setStopLoss(@CurrentUserId Long userId, @RequestBody FuturesStopLossRequest request) {

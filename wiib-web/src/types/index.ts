@@ -246,13 +246,6 @@ export interface FuturesAddMarginRequest {
   amount: number;
 }
 
-export interface FuturesIncreaseRequest {
-  positionId: number;
-  quantity: number;
-  orderType: 'MARKET' | 'LIMIT';
-  limitPrice?: number;
-}
-
 export interface FuturesReduceMarginRequest {
   positionId: number;
   amount: number;
@@ -267,8 +260,9 @@ export interface FuturesBracket {
   maintAmount: number;
 }
 
+// 币种级调杠杆（对齐Binance）：多空共用杠杆，一次调整作用于该币全部仓位
 export interface FuturesAdjustLeverageRequest {
-  positionId: number;
+  symbol: string;
   leverage: number;
 }
 

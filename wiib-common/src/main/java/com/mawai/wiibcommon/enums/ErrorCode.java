@@ -90,6 +90,8 @@ public enum ErrorCode {
     FUTURES_CROSS_MARGIN_ADJUST(1761, "全仓仓位不支持调整保证金"),
     FUTURES_CROSS_AVAILABLE_NOT_ENOUGH(1762, "全仓可用余额不足"),
     FUTURES_LEVERAGE_ONLY_UP(1763, "逐仓持仓杠杆只能调高，补保证金请用追加保证金"),
+    FUTURES_LEVERAGE_MISMATCH(1764, "杠杆与该币现有仓位不一致，请先调整杠杆"),
+    FUTURES_MARGIN_MODE_CONFLICT(1765, "保证金模式与该币现有仓位不一致"),
 
     // VideoPoker错误码 1851+
     VP_GAME_IN_PROGRESS(1851, "有未完成的视频扑克"),

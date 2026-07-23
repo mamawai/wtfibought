@@ -23,10 +23,8 @@ public interface FuturesTradingService {
 
     void reduceMargin(Long userId, FuturesReduceMarginRequest request);
 
-    /** 持仓调杠杆：全仓双向可调（改占用额度），逐仓只能调高（释放多余保证金回钱包） */
+    /** 币种级调杠杆（多空共用，一次调整该币全部仓位）：全仓双向可调（改占用额度），逐仓只能调高（释放多余保证金回钱包） */
     void adjustLeverage(Long userId, FuturesAdjustLeverageRequest request);
-
-    FuturesOrderResponse increasePosition(Long userId, FuturesIncreaseRequest request);
 
     List<FuturesPositionDTO> getUserPositions(Long userId, String symbol);
 

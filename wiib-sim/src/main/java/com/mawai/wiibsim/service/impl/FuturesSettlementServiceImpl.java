@@ -4,6 +4,8 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
+import com.mawai.wiibcommon.entity.FuturesStopLoss;
+import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
@@ -145,7 +147,36 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             return;
         }
 
-        SpringUtils.getAopProxy(this).doProcessTriggeredOrder(order);
+        // 开仓成交可能并入同向仓位：币种锁与市价开仓/调杠杆互斥，发现同向仓位再压仓位锁
+        // （锁序 sym→pos 与交易侧一致防死锁）；拿不到锁直接放弃，TRIGGERED 孤儿补扫会重试
+        String symLockKey = "futures:sym:" + order.getUserId() + ":" + order.getSymbol();
+        String symLockValue = redisLockUtil.tryLock(symLockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
+        if (symLockValue == null) {
+            log.info("futures限价开仓成交跳过，币种处理中 orderId={}", order.getId());
+            return;
+        }
+        try {
+            String side = order.getOrderSide().contains("LONG") ? "LONG" : "SHORT";
+            FuturesPosition sameSide = openPositionsOf(order.getUserId(), order.getSymbol()).stream()
+                    .filter(p -> p.getSide().equals(side)).findFirst().orElse(null);
+            if (sameSide == null) {
+                SpringUtils.getAopProxy(this).doProcessTriggeredOrder(order);
+                return;
+            }
+            String posLockKey = "futures:pos:" + sameSide.getId();
+            String posLockValue = redisLockUtil.tryLock(posLockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
+            if (posLockValue == null) {
+                log.info("futures限价开仓成交跳过，仓位处理中 orderId={} posId={}", order.getId(), sameSide.getId());
+                return;
+            }
+            try {
+                SpringUtils.getAopProxy(this).doProcessTriggeredOrder(order);
+            } finally {
+                redisLockUtil.unlock(posLockKey, posLockValue);
+            }
+        } finally {
+            redisLockUtil.unlock(symLockKey, symLockValue);
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -174,7 +205,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         if (order.getOrderSide().startsWith("OPEN")) {
             processTriggeredOpenOrder(order, executePrice);
         } else if (order.getOrderSide().startsWith("INCREASE")) {
-            processTriggeredIncreaseOrder(order, executePrice);
+            // 加仓链路已删除（同向下单即合并进仓位）：存量历史加仓挂单触发时撤单退款自清，免手动迁移
+            cancelTriggeredOrderAndRefund(order, "increase_removed");
         } else {
             processTriggeredCloseOrder(order, executePrice);
         }
@@ -182,12 +214,37 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
     private void processTriggeredOpenOrder(FuturesOrder order, BigDecimal executePrice) {
         boolean isCross = FuturesPosition.CROSS.equals(order.getMarginMode());
+        String side = order.getOrderSide().contains("LONG") ? "LONG" : "SHORT";
+
+        // 挂单期间币种格局可能已变（新开了仓/调了杠杆）：成交前按币种级一致性复查，
+        // 冲突不硬成交也不改单，直接撤单退款（Binance订单不带杠杆无此问题，我们以撤代改最干净）
+        FuturesPosition sameSide = null;
+        for (FuturesPosition p : openPositionsOf(order.getUserId(), order.getSymbol())) {
+            if (p.isCross() != isCross) {
+                cancelTriggeredOrderAndRefund(order, "margin_mode_conflict");
+                return;
+            }
+            if (!Objects.equals(p.getLeverage(), order.getLeverage())) {
+                cancelTriggeredOrderAndRefund(order, "leverage_mismatch");
+                return;
+            }
+            if (side.equals(p.getSide())) sameSide = p;
+        }
+
         BigDecimal quantity = order.getQuantity();
-        BigDecimal positionValue = executePrice.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
-        if (!isLeverageAllowed(order.getSymbol(), order.getLeverage(), positionValue)) {
+        // 同向并入按合并后总持仓过档
+        BigDecimal bracketQty = sameSide != null ? sameSide.getQuantity().add(quantity) : quantity;
+        if (!isLeverageAllowed(order.getSymbol(), order.getLeverage(), executePrice.multiply(bracketQty))) {
             cancelTriggeredOrderAndRefund(order, "leverage_not_allowed");
             return;
         }
+
+        if (sameSide != null) {
+            fillOpenOrderIntoPosition(order, sameSide, executePrice);
+            return;
+        }
+
+        BigDecimal positionValue = executePrice.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(order.getLeverage()), 2, RoundingMode.CEILING);
         boolean isTaker = isLimitTaker(order, false);
         BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false, isTaker);
@@ -234,20 +291,27 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
                 order.getId(), order.getMarginMode(), executePrice, isTaker ? "TAKER" : "MAKER", margin);
     }
 
-    private void processTriggeredIncreaseOrder(FuturesOrder order, BigDecimal executePrice) {
-        FuturesPosition position = positionMapper.selectById(order.getPositionId());
-        if (position == null || !"OPEN".equals(position.getStatus())) {
-            cancelTriggeredOrderAndRefund(order, "position_closed");
+    /**
+     * 限价开仓单成交并入同向仓位（Binance 语义：同向下单即合并，均价加权）。
+     * 随单SL/TP追加到仓位现有档位；合计条数超4撤单退款（总量恒不超：仓位≤持仓、订单≤订单量）。
+     */
+    private void fillOpenOrderIntoPosition(FuturesOrder order, FuturesPosition position, BigDecimal executePrice) {
+        BigDecimal addQty = order.getQuantity();
+        int leverage = position.getLeverage(); // 一致性已复查，与订单杠杆相同
+        BigDecimal oldQty = position.getQuantity();
+        BigDecimal newQty = oldQty.add(addQty);
+
+        List<FuturesStopLoss> mergedSl;
+        List<FuturesTakeProfit> mergedTp;
+        try {
+            mergedSl = mergeSlList(position.getStopLosses(), order.getStopLosses(), newQty);
+            mergedTp = mergeTpList(position.getTakeProfits(), order.getTakeProfits(), newQty);
+        } catch (BizException e) {
+            // 动钱之前拦住：档位超限不硬成交，撤单退款
+            cancelTriggeredOrderAndRefund(order, "sltp_split_limit");
             return;
         }
 
-        BigDecimal addQty = order.getQuantity();
-        int leverage = position.getLeverage();
-        BigDecimal newNotional = executePrice.multiply(position.getQuantity().add(addQty));
-        if (!isLeverageAllowed(order.getSymbol(), leverage, newNotional)) {
-            cancelTriggeredOrderAndRefund(order, "leverage_not_allowed");
-            return;
-        }
         BigDecimal addValue = executePrice.multiply(addQty).setScale(2, RoundingMode.HALF_UP);
         BigDecimal addMargin = addValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
         boolean isTaker = isLimitTaker(order, false);
@@ -255,6 +319,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         BigDecimal actualCost = addMargin.add(commission);
 
         if (position.isCross()) {
+            // 全仓：挂单期间只是占用记账，成交只实扣手续费（挂单占用随状态翻转自动消失）
             userMapper.atomicSettleBalance(order.getUserId(), commission.negate());
         } else {
             BigDecimal frozenAmount = order.getFrozenAmount();
@@ -265,26 +330,43 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             }
         }
 
-        BigDecimal oldQty = position.getQuantity();
-        BigDecimal newQty = oldQty.add(addQty);
         BigDecimal newEntryPrice = position.getEntryPrice().multiply(oldQty)
                 .add(executePrice.multiply(addQty))
                 .divide(newQty, PRICE_SCALE, RoundingMode.HALF_UP);
 
-        positionMapper.atomicIncreasePosition(position.getId(), newEntryPrice, addQty, addMargin);
+        int affected = positionMapper.atomicIncreasePosition(position.getId(), newEntryPrice, addQty, addMargin);
+        if (affected == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
+
+        if (mergedSl != null) positionMapper.updateStopLosses(position.getId(), mergedSl);
+        if (mergedTp != null) positionMapper.updateTakeProfits(position.getId(), mergedTp);
+        // 只注册新增档位的触发索引（存量已在册）
+        if (order.getStopLosses() != null && !order.getStopLosses().isEmpty()) {
+            positionIndexService.registerStopLosses(position.getId(), position.getSymbol(), position.getSide(), order.getStopLosses());
+        }
+        if (order.getTakeProfits() != null && !order.getTakeProfits().isEmpty()) {
+            positionIndexService.registerTakeProfits(position.getId(), position.getSymbol(), position.getSide(), order.getTakeProfits());
+        }
 
         if (!position.isCross()) {
             BigDecimal newMargin = position.getMargin().add(addMargin);
-            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSymbol(), position.getSide(), newEntryPrice, newMargin,
-                    newQty);
+            BigDecimal liqPrice = positionIndexService.calcStaticLiqPrice(position.getSymbol(), position.getSide(),
+                    newEntryPrice, newMargin, newQty);
             positionIndexService.updateLiquidationPrice(position.getId(), position.getSymbol(), position.getSide(), liqPrice);
         }
 
-        int filled = orderMapper.casUpdateToFilled(order.getId(), null, executePrice, addValue, commission, addMargin, null);
+        // 回填 position_id：开仓手续费聚合进仓位已实现盈亏
+        int filled = orderMapper.casUpdateToFilled(order.getId(), position.getId(), executePrice, addValue, commission, addMargin, null);
         if (filled == 0) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
 
-        log.info("futures限价加仓成交 orderId={} posId={} price={} feeType={} addMargin={}",
-                order.getId(), position.getId(), executePrice, isTaker ? "TAKER" : "MAKER", addMargin);
+        log.info("futures限价开仓并入 orderId={} posId={} price={} feeType={} addMargin={} 新均价={}",
+                order.getId(), position.getId(), executePrice, isTaker ? "TAKER" : "MAKER", addMargin, newEntryPrice);
+    }
+
+    private List<FuturesPosition> openPositionsOf(Long userId, String symbol) {
+        return positionMapper.selectList(new LambdaQueryWrapper<FuturesPosition>()
+                .eq(FuturesPosition::getUserId, userId)
+                .eq(FuturesPosition::getSymbol, symbol)
+                .eq(FuturesPosition::getStatus, "OPEN"));
     }
 
     private void processTriggeredCloseOrder(FuturesOrder order, BigDecimal executePrice) {

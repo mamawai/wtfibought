@@ -22,7 +22,7 @@ public class FuturesOrder {
 
     private String symbol; // 交易对
 
-    private String orderSide; // OPEN_LONG开多 OPEN_SHORT开空 CLOSE_LONG平多 CLOSE_SHORT平空 INCREASE_LONG加多 INCREASE_SHORT加空
+    private String orderSide; // OPEN_LONG开多 OPEN_SHORT开空 CLOSE_LONG平多 CLOSE_SHORT平空（INCREASE_*为存量历史流水，加仓已并入OPEN语义不再产生）
 
     private String orderType; // MARKET市价 LIMIT限价
 

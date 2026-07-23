@@ -12,7 +12,7 @@ import { NeuToggle } from '../NeuToggle';
 import { HelpTip } from '../HelpTip';
 import { fmtNum } from '../../lib/utils';
 import { getCoin, getCoinPriceDecimals, getCoinPriceStep, formatCoinPrice } from '../../lib/coinConfig';
-import type { FuturesBracket, FuturesCrossAccount, FuturesMarginMode, FuturesSLItem, FuturesTPItem } from '../../types';
+import type { FuturesBracket, FuturesCrossAccount, FuturesMarginMode, FuturesPosition, FuturesSLItem, FuturesTPItem } from '../../types';
 import { TradeModeSwitch } from './TradeModeSwitch';
 import { SLTPEditor } from './SLTPEditor';
 import { useQuantityAnimation } from './useQuantityAnimation';
@@ -25,11 +25,14 @@ import {
 /**
  * 合约开仓面板：方向、市价/限价、杠杆、保证金数量、开仓止损/止盈、预估强平价。
  * 状态全部内聚；开仓成功后调 onTraded 让父级刷新用户/仓位卡/订单表。
+ * 对齐Binance币种级设置：该币有持仓时保证金模式锁定、杠杆滑杆=调杠杆入口（确认即改仓位，多空一起变），
+ * 同向下单后端自动并入现有仓位。positionsKey 由父级在仓位卡变动时递增，驱动面板持仓快照重拉。
  */
-export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange, onTraded }: {
+export function FuturesOpenPanel({ symbol, currentPrice, brackets, positionsKey, onModeChange, onTraded }: {
   symbol: string;
   currentPrice: number;
   brackets: FuturesBracket[] | undefined;
+  positionsKey: number;
   onModeChange: (m: 'spot' | 'futures') => void;
   onTraded: () => void;
 }) {
@@ -59,17 +62,41 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
   const [tpEnabled, setTpEnabled] = useState(false);
   const [tpRows, setTpRows] = useState<SLTPRow[]>([{ price: '', quantity: '' }]);
   const [crossAcct, setCrossAcct] = useState<FuturesCrossAccount | null>(null);
-  // 开仓成功后 +1 触发全仓账户重拉（可用/净值都变了）
+  // 开仓/调杠杆成功后 +1 触发全仓账户与持仓快照重拉（可用/净值/杠杆都可能变了）
   const [acctTick, setAcctTick] = useState(0);
   // 保证金输入单位：币=未乘杠杆数量；USDT=保证金金额（内部再 /price 还原成币数量）
   const [marginUnit, setMarginUnit] = useState<'COIN' | 'USDT'>('USDT');
+  // 该币现有仓位快照（≤2张，模式/杠杆币种级一致）
+  const [positions, setPositions] = useState<FuturesPosition[]>([]);
+  const [adjustingLev, setAdjustingLev] = useState(false);
 
-  const isCross = marginMode === 'CROSS';
+  useEffect(() => {
+    let alive = true;
+    futuresApi.positions(symbol)
+      .then(list => { if (alive) setPositions(list); })
+      .catch(() => { if (alive) setPositions([]); });
+    return () => { alive = false; };
+  }, [symbol, positionsKey, acctTick]);
+
+  // 币种级设置载体：两张仓位时模式/杠杆必一致，任取其一
+  const heldPos = positions[0] ?? null;
+  const posLeverage = heldPos?.leverage ?? null;
+  // 有持仓时模式/杠杆以仓位为准（下单/预估全用有效值），本地 state 只在无持仓时生效
+  const effMarginMode: FuturesMarginMode = heldPos ? heldPos.marginMode : marginMode;
+  const isCross = effMarginMode === 'CROSS';
+  const effLeverage = posLeverage ?? leverage;
+  // 滑杆被拖离持仓杠杆=待确认的调杠杆操作（Binance语义：确认即独立生效，不是下单参数）
+  const pendingLev = posLeverage != null && leverage !== posLeverage;
 
   // 档位数据到位后收敛超限杠杆
   useEffect(() => {
     if (maxLeverage > 0) setLeverage(lv => Math.min(lv, maxLeverage));
   }, [maxLeverage]);
+
+  // 持仓杠杆变化（首拉/别处调整）时滑杆跟随归位
+  useEffect(() => {
+    if (posLeverage != null) setLeverage(posLeverage);
+  }, [posLeverage]);
 
   // 全仓模式拉账户概览：预算基数和强平价兜底金都取自它
   useEffect(() => {
@@ -107,13 +134,15 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
   };
 
   const handleSubmit = async () => {
+    // 杠杆拖了没确认：先让用户把调杠杆这步走完，避免"滑杆显示50x实际按150x下单"的错位
+    if (pendingLev) { toast('杠杆调整未确认，请先确认或还原', 'error'); return; }
     const qty = marginQty;
     if (!qty || qty < MIN_QTY) { toast(`最小数量 ${MIN_QTY}`, 'error'); return; }
     if (orderType === 'LIMIT') {
       const lp = parseFloat(limitPrice);
       if (!lp || lp <= 0) { toast('请输入有效限价', 'error'); return; }
     }
-    const orderQty = qty * leverage;
+    const orderQty = qty * effLeverage;
     const slItems: FuturesSLItem[] = slEnabled
       ? slRows.filter(r => parseFloat(r.price) > 0 && parseFloat(r.quantity) > 0).map(r => ({ price: parseFloat(r.price), quantity: parseFloat(r.quantity) }))
       : [];
@@ -130,8 +159,8 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
         symbol,
         side,
         quantity: orderQty,
-        leverage,
-        marginMode,
+        leverage: effLeverage,
+        marginMode: effMarginMode,
         orderType,
         ...(orderType === 'LIMIT' ? { limitPrice: parseFloat(limitPrice) } : {}),
         ...(slItems.length > 0 ? { stopLosses: slItems } : {}),
@@ -154,10 +183,27 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
     } finally { setSubmitting(false); }
   };
 
-  // 预估（qtyNum = 币保证金数量，与单位无关）
+  // 确认调杠杆（Binance语义：点确认那一刻即完成调整，独立于下单）：多空共用，同时作用于该币全部仓位；
+  // 失败（全仓可用不够/逐仓禁调低）toast 后端信息并把滑杆弹回持仓杠杆
+  const handleAdjustLeverage = async (target: number) => {
+    setAdjustingLev(true);
+    try {
+      await futuresApi.adjustLeverage({ symbol, leverage: target });
+      toast(`杠杆已调整为 ${target}x`, 'success');
+      // 乐观更新本地快照：避免重拉落地前确认按钮仍挂着被二次点击
+      setPositions(ps => ps.map(p => ({ ...p, leverage: target })));
+      setAcctTick(t => t + 1);
+      onTraded();
+    } catch (e: unknown) {
+      toast((e as Error).message || '杠杆调整失败', 'error');
+      if (posLeverage != null) setLeverage(posLeverage);
+    } finally { setAdjustingLev(false); }
+  };
+
+  // 预估（qtyNum = 币保证金数量，与单位无关；杠杆用有效值=有持仓时恒为仓位杠杆）
   const qtyNum = marginQty;
   const openEstimate = qtyNum > 0 && priceForCalc > 0
-    ? calcFuturesOpenEstimate(qtyNum, priceForCalc, leverage)
+    ? calcFuturesOpenEstimate(qtyNum, priceForCalc, effLeverage)
     : null;
   // 全仓强平价：margin 参数换成兜底金 backing=equity−maintenanceMargin，即全仓拿整个账户净值兜底而非本仓保证金（无仓位时 maintenanceMargin=0，backing 就是 equity）；逐仓仍用本仓 margin
   const liqMargin = isCross
@@ -184,12 +230,15 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
 
       {/* flex-1 + 按钮 mt-auto：面板随左侧图表卡等高，止损止盈展开时消耗预留空档而不是撑高整卡 */}
       <CardContent className="p-5 mt-2 flex-1 flex flex-col gap-6">
-        {/* 保证金模式 + 执行方式 */}
+        {/* 保证金模式 + 执行方式：模式是币种级设置（对齐Binance），有持仓时锁定不可切 */}
         <div className="flex items-center gap-2">
           <NeuToggle
             label="保证金模式"
-            value={marginMode}
-            onChange={setMarginMode}
+            value={effMarginMode}
+            onChange={m => {
+              if (heldPos) { toast('有持仓时无法切换保证金模式', 'error'); return; }
+              setMarginMode(m);
+            }}
             options={[{ value: 'CROSS', label: '全仓' }, { value: 'ISOLATED', label: '逐仓' }]}
           />
           <NeuToggle
@@ -214,24 +263,48 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
           </div>
         )}
 
-        {/* 杠杆选择 */}
+        {/* 杠杆选择：无持仓=本地状态；有持仓=调杠杆入口（拖动出确认，确认即改仓位，多空一起变） */}
+        {(() => {
+          const isolatedHeld = heldPos != null && !isCross;
+          // 逐仓只能调高：滑杆下限=持仓杠杆，档位标签补持仓值作起点
+          const sliderMin = isolatedHeld ? posLeverage! : 1;
+          const ticks = isolatedHeld
+            ? [...new Set([posLeverage!, ...FUTURES_LEVERAGE_OPTIONS.filter(lv => lv >= posLeverage! && lv <= maxLeverage)])].sort((a, b) => a - b)
+            : leverageOptions;
+          return (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <label className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
               <Scale className="w-3.5 h-3.5" /> 杠杆
             </label>
-            <div className="px-2 py-0.5 rounded bg-primary/10 text-primary text-xs font-bold tabular-nums">{leverage}x</div>
+            <div className={`px-2 py-0.5 rounded text-xs font-bold tabular-nums ${pendingLev ? 'bg-yellow-500/10 text-yellow-500' : 'bg-primary/10 text-primary'}`}>{leverage}x</div>
           </div>
           <LeverageSlider
             value={leverage}
+            min={sliderMin}
             max={maxLeverage}
-            ticks={leverageOptions}
+            ticks={ticks}
             onChange={setLeverage}
           />
-          <div className="text-[10px] text-muted-foreground leading-relaxed">
-            当前币种最高 {maxLeverage}x，实际 MMR 按仓位名义价值档位计算
-          </div>
+          {pendingLev ? (
+            <div className="flex items-center gap-1.5">
+              <Button size="sm" className="flex-1 h-9 sm:h-7 text-[11px]" disabled={adjustingLev} onClick={() => handleAdjustLeverage(leverage)}>
+                {adjustingLev ? '调整中…' : `确认调整为 ${leverage}x（多空共用）`}
+              </Button>
+              <Button size="sm" variant="outline" className="h-9 sm:h-7 text-[11px]" disabled={adjustingLev} onClick={() => setLeverage(posLeverage!)}>
+                还原
+              </Button>
+            </div>
+          ) : (
+            <div className="text-[10px] text-muted-foreground leading-relaxed">
+              {heldPos
+                ? `持仓 ${posLeverage}x · 多空共用，拖动滑杆确认后立即调整仓位杠杆${isCross ? '（调低需可用余额足够）' : '（逐仓只能调高）'}`
+                : `当前币种最高 ${maxLeverage}x，实际 MMR 按仓位名义价值档位计算`}
+            </div>
+          )}
         </div>
+          );
+        })()}
 
         {/* 保证金数量：币 | USDT 双单位，内部统一换成币数量再算 */}
         <div className="space-y-2">
@@ -280,7 +353,7 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
                     const usdt = Math.floor(budgetBalance * pct * 100) / 100;
                     if (usdt > 0) setQuantity(usdt.toFixed(2)); else setQuantity('');
                   } else {
-                    const qty = calcMaxAffordableMarginQty(budgetBalance, pct, priceForCalc, leverage, MIN_QTY);
+                    const qty = calcMaxAffordableMarginQty(budgetBalance, pct, priceForCalc, effLeverage, MIN_QTY);
                     if (qty > 0) animateQuantity(qty, MIN_QTY); else setQuantity('');
                   }
                 };
@@ -345,7 +418,7 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
               </button>
             </div>
             {slEnabled && (
-              <SLTPEditor rows={slRows} onChange={setSlRows} label="止损" posQty={qtyNum * leverage} minQty={MIN_QTY}
+              <SLTPEditor rows={slRows} onChange={setSlRows} label="止损" posQty={qtyNum * effLeverage} minQty={MIN_QTY}
                 entryPrice={priceForCalc || currentPrice} margin={openEstimate?.margin ?? 0} side={side}
                 minPriceStep={PRICE_STEP} priceFormatter={fmtPrice} />
             )}
@@ -359,22 +432,22 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, onModeChange,
               </button>
             </div>
             {tpEnabled && (
-              <SLTPEditor rows={tpRows} onChange={setTpRows} label="止盈" posQty={qtyNum * leverage} minQty={MIN_QTY}
+              <SLTPEditor rows={tpRows} onChange={setTpRows} label="止盈" posQty={qtyNum * effLeverage} minQty={MIN_QTY}
                 entryPrice={priceForCalc || currentPrice} margin={openEstimate?.margin ?? 0} side={side}
                 minPriceStep={PRICE_STEP} priceFormatter={fmtPrice} />
             )}
           </div>
         </div>
 
-        {/* 开仓按钮 */}
+        {/* 开仓按钮：杠杆调整待确认时置灰，防止"滑杆显示的杠杆"与"实际下单杠杆"错位 */}
         <FuturesActionButton
           className="mt-auto"
           onClick={handleSubmit}
-          disabled={submitting || currentPrice <= 0}
+          disabled={submitting || currentPrice <= 0 || pendingLev}
           loading={submitting}
           success={actionSuccess}
           side={side}
-          leverage={leverage}
+          leverage={effLeverage}
         />
       </CardContent>
     </>

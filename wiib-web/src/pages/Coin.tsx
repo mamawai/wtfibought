@@ -73,6 +73,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const [spotOrdersKey, setSpotOrdersKey] = useState(0);
   const [futuresOrdersKey, setFuturesOrdersKey] = useState(0);
   const [futuresPositionsKey, setFuturesPositionsKey] = useState(0);
+  // 仓位卡有变动（平仓/调杠杆/保证金）时递增，驱动开仓面板的持仓快照重拉（模式锁定/杠杆跟随要保持新鲜）
+  const [futuresPanelKey, setFuturesPanelKey] = useState(0);
 
   const handleSpotTraded = () => {
     fetchPosition();
@@ -290,6 +292,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               symbol={symbol}
               currentPrice={currentPrice}
               brackets={futuresBracketsMap[symbol]}
+              positionsKey={futuresPanelKey}
               onModeChange={setMode}
               onTraded={handleFuturesOpened}
             />
@@ -311,6 +314,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
           symbol={symbol}
           refreshKey={futuresPositionsKey}
           onOrdersChanged={() => setFuturesOrdersKey(k => k + 1)}
+          onPositionsChanged={() => setFuturesPanelKey(k => k + 1)}
         />
       )}
 
