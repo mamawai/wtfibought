@@ -4,6 +4,8 @@ import { useUserStore } from '../stores/userStore';
 import { userApi, cryptoOrderApi, cryptoApi, futuresApi, predictionApi, bstockApi } from '../api';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
+import { Dialog, DialogHeader, DialogContent, DialogFooter } from '../components/ui/dialog';
 import { Skeleton } from '../components/ui/skeleton';
 import { useToast } from '../components/ui/use-toast';
 import { PortfolioChart } from '../components/PortfolioChart';
@@ -28,6 +30,7 @@ import {
   CircleDollarSign,
   Target,
   Landmark,
+  RotateCcw,
 } from 'lucide-react';
 import type { CryptoPosition, FuturesPosition, PredictionPnl, AssetSnapshot, CategoryAverages, BStock } from '../types';
 import { formatCoinPrice, getCoin } from '../lib/coinConfig';
@@ -94,6 +97,9 @@ export function Portfolio() {
   const [realtimeSnapshot, setRealtimeSnapshot] = useState<AssetSnapshot | null>(null);
   const [categoryAverages, setCategoryAverages] = useState<CategoryAverages | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [confirmName, setConfirmName] = useState('');
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     if (panel === 'profit' && !profitLoaded) {
@@ -203,6 +209,29 @@ export function Portfolio() {
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps -- requestKey 已编码 user/refresh 全部刷新条件；effect 内会回写 user store，加 user 依赖会自触发死循环
     }, [requestKey]);
+
+  const closeReset = () => {
+    setResetOpen(false);
+    setConfirmName('');
+  };
+
+  // 重置后整页重拉：refreshNonce 一变就重走 portfolio（顺带回写 user store）+ 持仓，
+  // 收益面板的缓存也一并作废，否则图上还挂着重置前的曲线
+  const handleReset = async () => {
+    setResetting(true);
+    try {
+      await userApi.resetAccount(confirmName);
+      closeReset();
+      setRefreshNonce(n => n + 1);
+      setProfitLoaded(false);
+      setRealtimeSnapshot(null);
+      toast('账户已重置为初始状态', 'success');
+    } catch (e) {
+      toast((e as Error).message || '重置失败', 'error');
+    } finally {
+      setResetting(false);
+    }
+  };
 
   if (!user) return null;
 
@@ -772,6 +801,67 @@ export function Portfolio() {
             })()}
           </>
         )}
+      </div>
+
+      {/* 危险操作：重置账户。只在 PC 出现——手机端底栏有「我的」页，同一个入口不重复摆两处 */}
+      <div className="hidden md:block">
+        <Card className="border-destructive/20">
+          <CardContent className="p-4 flex items-center justify-between gap-6">
+            <div className="space-y-1.5 min-w-0">
+              <div className="flex items-center gap-2">
+                <RotateCcw className="w-4 h-4 text-destructive shrink-0" />
+                <h2 className="text-sm font-bold text-destructive">重置账户</h2>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                清空全部持仓、订单、游戏记录与资产历史，余额恢复为初始资金。
+                留言和禁言状态不受影响。每周只能重置一次。
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/8"
+              onClick={() => setResetOpen(true)}
+            >
+              重置我的账户
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* 二次确认：必须逐字输入用户名，防误点 */}
+        <Dialog open={resetOpen} onClose={closeReset}>
+          <DialogHeader>
+            <h2 className="text-lg font-bold text-destructive">确认重置账户</h2>
+          </DialogHeader>
+          <DialogContent>
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                此操作不可撤销，将清空：现货与合约的全部持仓和订单、预测下注、
+                21点/Mines/视频扑克记录、资产历史、每日 Buff、钱包划转流水。
+              </p>
+              <p className="text-xs">
+                请输入你的用户名 <strong className="text-foreground">{user.username}</strong> 以确认：
+              </p>
+              <Input
+                value={confirmName}
+                onChange={e => setConfirmName(e.target.value)}
+                placeholder="输入用户名"
+                autoComplete="off"
+              />
+            </div>
+          </DialogContent>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={closeReset}>取消</Button>
+            <Button
+              size="sm"
+              className="bg-destructive text-white hover:bg-destructive/90"
+              disabled={confirmName !== user.username || resetting}
+              onClick={handleReset}
+            >
+              {resetting ? '重置中…' : '确认重置'}
+            </Button>
+          </DialogFooter>
+        </Dialog>
       </div>
 
       <WalletTransferModal open={transferOpen} onClose={() => setTransferOpen(false)} />
