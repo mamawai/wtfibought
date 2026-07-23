@@ -1,7 +1,7 @@
 import { fmtNum } from './utils';
 import {Bitcoin, Coins, Fuel, type LucideProps} from 'lucide-react';
 import type {ComponentType} from "react";
-import {Doge, Eth, Sol, Xrp} from './coinIcons';
+import {Bnb, Doge, Eth, Sol, Xrp} from './coinIcons';
 
 export interface CoinCfg {
   symbol: string;
@@ -57,6 +57,12 @@ export const COIN_MAP: Record<string, CoinCfg> = {
     priceDecimals: 4, icon: Xrp,
     colorClass: 'text-sky-500', bgClass: 'bg-sky-500/10', hoverBgClass: 'hover:bg-sky-500/20', gradientClass: 'from-sky-500/5',
     chartColor: '#0ea5e9', desc: '瑞波币 / USDT 模拟交易',
+  },
+  BNBUSDT: {
+    symbol: 'BNBUSDT', name: 'BNB', pair: 'BNB / USDT', tvSymbol: 'BINANCE:BNBUSDT', futuresTvSymbol: 'BINANCE:BNBUSDT.P',
+    icon: Bnb,
+    colorClass: 'text-yellow-400', bgClass: 'bg-yellow-400/10', hoverBgClass: 'hover:bg-yellow-400/20', gradientClass: 'from-yellow-400/5',
+    chartColor: '#f0b90b', desc: 'BNB / USDT 模拟交易',
   },
   XAUUSDT: {
     symbol: 'XAUUSDT', name: '黄金', pair: 'XAU / USDT', tvSymbol: 'TVC:GOLD', futuresTvSymbol: 'BINANCE:XAUUSDT.P',

@@ -28,6 +28,18 @@ export const Sol = ({ className, ...rest }: LucideProps) => (
     </svg>
 );
 
+// BNB 五枚菱形：中心一枚 + 上下左右各一枚（Binance 官方 logo 的描边简化版）
+export const Bnb = ({ className, ...rest }: LucideProps) => (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...rest}>
+      <path d="M12 2.8L14.2 5 12 7.2 9.8 5 12 2.8z" />
+      <path d="M5 9.8L7.2 12 5 14.2 2.8 12 5 9.8z" />
+      <path d="M12 9.8L14.2 12 12 14.2 9.8 12 12 9.8z" />
+      <path d="M19 9.8L21.2 12 19 14.2 16.8 12 19 9.8z" />
+      <path d="M12 16.8L14.2 19 12 21.2 9.8 19 12 16.8z" />
+    </svg>
+);
+
 // XRP 上下两道喇叭口曲线组成的 X（Ripple 官方 logo 的描边简化版）
 export const Xrp = ({ className, ...rest }: LucideProps) => (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"

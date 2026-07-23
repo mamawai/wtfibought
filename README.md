@@ -36,7 +36,7 @@ WhatIfIBought 是一个偏实验性质的模拟交易系统，后端按业务域
 
 | 品类 | 标的 |
 |---|---|
-| 加密现货 / 永续 | `BTC` `ETH` `DOGE` `SOL` `XRP` |
+| 加密现货 / 永续 | `BTC` `ETH` `DOGE` `SOL` `XRP` `BNB` |
 | bStock 代币化美股（10） | NVDA · TSLA · MU · SNDK · CRCL · MSTR · AMD · SPCX · QQQ · SOXL（Binance 现货，如 `NVDABUSDT`） |
 | 大宗商品 | 黄金 `XAUUSDT` · 原油 `CLUSDT`（TradFi 永续，无现货） |
 | 策略实盘篮子 | FIBO: `BTC/ETH` · LIQFADE: `BTC/ETH/DOGE` · SQZMOM: `SOL/DOGE/XRP` · TURTLE: `SOL/ETH/DOGE/BNB` |

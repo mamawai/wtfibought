@@ -16,7 +16,7 @@ import java.util.Map;
  * 档位选择：按"仓位 USDT 名义价值"匹配半开区间 [floor, cap)。
  * 强平公式：MM = notional × MMR − maintAmount。
  * <p>
- * 已配置：BTCUSDT、ETHUSDT、DOGEUSDT、SOLUSDT、XRPUSDT、XAUUSDT、CLUSDT。
+ * 已配置：BTCUSDT、ETHUSDT、DOGEUSDT、SOLUSDT、XRPUSDT、BNBUSDT、XAUUSDT、CLUSDT。
  * 新增 symbol 必须先在此处补完档位数据，否则开仓抛 FUTURES_SYMBOL_NOT_CONFIGURED。
  */
 @Component
@@ -115,6 +115,21 @@ public class FuturesLeverageBracketRegistry {
             new Bracket(11, bd("50000000"),     bd("100000000"),    1,   bd("0.5000"),  bd("16683735"))
     );
 
+    // BNB: 平台币，10 档，档位1 上限仅 10K USDT（各币中最小）、MMR 起点 0.50%、最大 75x。
+    // 数据来源：Binance 主网 /fapi/v1/leverageBracket（实拉 2026-07-23，cum 速算数逐档验算自洽）。
+    private static final List<Bracket> BNB_BRACKETS = List.of(
+            new Bracket(1,  bd("0"),            bd("10000"),        75, bd("0.0050"),  bd("0")),
+            new Bracket(2,  bd("10000"),        bd("200000"),       50, bd("0.0060"),  bd("10")),
+            new Bracket(3,  bd("200000"),       bd("400000"),       40, bd("0.0100"),  bd("810")),
+            new Bracket(4,  bd("400000"),       bd("1500000"),      25, bd("0.0200"),  bd("4810")),
+            new Bracket(5,  bd("1500000"),      bd("3000000"),      20, bd("0.0250"),  bd("12310")),
+            new Bracket(6,  bd("3000000"),      bd("15000000"),     10, bd("0.0500"),  bd("87310")),
+            new Bracket(7,  bd("15000000"),     bd("30000000"),     5,  bd("0.1000"),  bd("837310")),
+            new Bracket(8,  bd("30000000"),     bd("37500000"),     4,  bd("0.1250"),  bd("1587310")),
+            new Bracket(9,  bd("37500000"),     bd("75000000"),     2,  bd("0.2500"),  bd("6274810")),
+            new Bracket(10, bd("75000000"),     bd("150000000"),    1,  bd("0.5000"),  bd("25024810"))
+    );
+
     // 大宗商品（TradFi 永续：黄金 XAU / 原油 CL）：二者档位完全一致（与 SOL 同结构），10 档，档位1 上限 50K、MMR 0.50%、最大 100x。
     // 数据来源：Binance 主网 /fapi/v1/leverageBracket（XAUUSDT & CLUSDT，实拉核对一致）。
     private static final List<Bracket> COMMODITY_BRACKETS = List.of(
@@ -136,6 +151,7 @@ public class FuturesLeverageBracketRegistry {
             "DOGEUSDT", DOGE_BRACKETS,
             "SOLUSDT",  SOL_BRACKETS,
             "XRPUSDT",  XRP_BRACKETS,
+            "BNBUSDT",  BNB_BRACKETS,
             "XAUUSDT",  COMMODITY_BRACKETS,
             "CLUSDT",   COMMODITY_BRACKETS
     );
@@ -155,7 +171,7 @@ public class FuturesLeverageBracketRegistry {
                 return b;
             }
         }
-        return list.get(list.size() - 1);
+        return list.getLast();
     }
 
     /** 已配置 symbol 的完整档位；未配置 symbol 返回 null。 */

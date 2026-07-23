@@ -54,7 +54,7 @@ binance:
     - DOGEUSDT
     - SOLUSDT
     - XRPUSDT
-    - BNBUSDT   # TURTLE 篮子第4币；其余 SOL/ETH/DOGE 已在列
+    - BNBUSDT
   # bStock（代币化美股，纯现货无合约）：价并入 Spot 流，5m K线走现货端点单独一条连接
   stock-symbols:
     - MUBUSDT

@@ -26,6 +26,7 @@ public final class TradeFilterDefaults {
             "DOGEUSDT", f("1",     "5"),
             "SOLUSDT",  f("0.01",  "5"),
             "XRPUSDT",  f("0.1",   "5"),
+            "BNBUSDT",  f("0.01",  "5"),
             "XAUUSDT",  f("0.001", "5"),
             "CLUSDT",   f("0.01",  "5"));
 
@@ -34,7 +35,8 @@ public final class TradeFilterDefaults {
             "ETHUSDT",  f("0.0001",  "5"),
             "DOGEUSDT", f("1",       "1"),
             "SOLUSDT",  f("0.001",   "5"),
-            "XRPUSDT",  f("0.1",     "5"));
+            "XRPUSDT",  f("0.1",     "5"),
+            "BNBUSDT",  f("0.001",   "5"));
 
     /** 未配置 symbol 返回 null，调用方按"不校验"处理 */
     public static Filter futures(String symbol) {

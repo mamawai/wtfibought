@@ -13,6 +13,7 @@ const DEFAULTS: TradeFilterMap = {
     DOGEUSDT: { stepSize: 1,      minQty: 1,      minNotional: 5 },
     SOLUSDT:  { stepSize: 0.01,   minQty: 0.01,   minNotional: 5 },
     XRPUSDT:  { stepSize: 0.1,    minQty: 0.1,    minNotional: 5 },
+    BNBUSDT:  { stepSize: 0.01,   minQty: 0.01,   minNotional: 5 },
     XAUUSDT:  { stepSize: 0.001,  minQty: 0.001,  minNotional: 5 },
     CLUSDT:   { stepSize: 0.01,   minQty: 0.01,   minNotional: 5 },
   },
@@ -22,6 +23,7 @@ const DEFAULTS: TradeFilterMap = {
     DOGEUSDT: { stepSize: 1,       minQty: 1,       minNotional: 1 },
     SOLUSDT:  { stepSize: 0.001,   minQty: 0.001,   minNotional: 5 },
     XRPUSDT:  { stepSize: 0.1,     minQty: 0.1,     minNotional: 5 },
+    BNBUSDT:  { stepSize: 0.001,   minQty: 0.001,   minNotional: 5 },
   },
 };
 

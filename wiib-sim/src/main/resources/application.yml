@@ -98,6 +98,7 @@ binance:
     - DOGEUSDT
     - SOLUSDT
     - XRPUSDT
+    - BNBUSDT
   # 大宗商品符号：五分类盈亏归集判定用（TradFi 永续：黄金/原油）
   commodity-symbols:
     - XAUUSDT
