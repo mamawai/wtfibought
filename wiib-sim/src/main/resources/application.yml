@@ -103,6 +103,14 @@ binance:
   commodity-symbols:
     - XAUUSDT
     - CLUSDT
+  # TradFi 合约（美股/ETF 永续，纯合约无现货）：盈亏归入 bstock（股票）桶
+  tradfi-symbols:
+    - SNDKUSDT
+    - SOXLUSDT
+    - SKHYNIXUSDT
+    - MUUSDT
+    - KORUUSDT
+    - SPCXUSDT
   fallback-poll-interval: 5000
 
 # WebSocket配置

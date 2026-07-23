@@ -231,8 +231,8 @@ const OVERLAY_COLORS: Record<OverlayKey, string[]> = {
 };
 
 /**
- * 主图读数条。开着的组摊开显示三个值，关掉的只留组名（点一下就能开），
- * 免得三组九条值同时怼在一行上。
+ * 图表上方工具条里的读数区。开着的组摊开显示三个值（悬停跟随十字线，不悬停显示最新值），
+ * 关着的留空——开关是工具条上的按钮，不再兼任显示入口。
  */
 function renderOverlayLegend(
   ov: OverlaySeries,
@@ -253,19 +253,12 @@ function renderOverlayLegend(
     ema: MA_PERIODS.map(p => `EMA${p}`),
     boll: BOLL_LABELS,
   };
-  // 关着的组只是个入口，窄屏没必要把参数也摆出来
-  const title: Record<OverlayKey, string> = {
-    ma: 'MA', ema: 'EMA', boll: compact ? 'BOLL' : `BOLL(${BOLL_PERIOD},${BOLL_MULT})`,
-  };
 
   for (const key of ['ma', 'ema', 'boll'] as OverlayKey[]) {
     const el = refs[key];
     if (!el) continue;
     el.style.fontSize = compact ? '10px' : '11px';
-    if (!on[key]) {
-      el.innerHTML = `<span style="color:${LEGEND_DIM}">${title[key]}</span>`;
-      continue;
-    }
+    if (!on[key]) { el.innerHTML = ''; continue; }
     el.innerHTML = ov[key]
       .map((s, k) => legendCell(OVERLAY_COLORS[key][k], labels[key][k], pick(s, ov.last[key][k]), decimals))
       .join('');
@@ -329,7 +322,7 @@ export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, 
   const volRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const indRef = useRef<IndSeries | null>(null);
   const ovRef = useRef<OverlaySeries | null>(null);
-  // 默认全关走裸K：三组九条线画满会糊成一团，要看哪组点顶上的组名开
+  // 默认全关走裸K：三组九条线画满会糊成一团，要看哪组点图表上方工具条的按钮开
   const [overlays, setOverlays] = useState<Record<OverlayKey, boolean>>({ ma: false, ema: false, boll: false });
   const overlaysRef = useRef(overlays);
   const maLegendRef = useRef<HTMLSpanElement>(null);
@@ -385,8 +378,8 @@ export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, 
       crosshair: { mode: CrosshairMode.Normal },
       // 手机纵向滑动交还给页面滚动（否则想下滑页面却在拖图表）；横向平移/捏合缩放保留
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
-      // top 0.10 是给主图读数条腾的：0.06 在手机上只有 19px，MA 展开换行就压到蜡烛了
-      rightPriceScale: { borderColor: border, scaleMargins: { top: 0.10, bottom: 0.26 } },
+      // 读数条已移到图表外的工具条，顶部只留常规呼吸空间
+      rightPriceScale: { borderColor: border, scaleMargins: { top: 0.06, bottom: 0.26 } },
       timeScale: { borderColor: border, timeVisible: true, secondsVisible: false, rightOffset: 5 },
     });
     chartRef.current = chart;
@@ -594,31 +587,42 @@ export function CandleChart({ symbol, interval, limit = 300, visibleBars = 110, 
 
   const toggle = (k: OverlayKey) => setOverlays(prev => ({ ...prev, [k]: !prev[k] }));
 
-  return (
-    <div ref={wrapRef} className="relative w-full h-full">
-      <div ref={chartDivRef} className="absolute inset-0" />
+  // 开关按钮样式对齐周期切换组（激活=顶部主色内阴影）
+  const chipCls = (on: boolean) =>
+    `px-2.5 py-1 text-[11px] font-semibold transition-colors cursor-pointer ${
+      on ? 'bg-card-2 text-foreground shadow-[inset_0_2px_0_var(--color-primary)]'
+         : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'}`;
 
-      {/* 主图读数条。pane 0 永远在顶部，位置固定，所以直接叠在容器上，
-          不像副图那样得等 pane 的 DOM 建好再挂 */}
+  return (
+    <div className="w-full h-full flex flex-col">
+      {/* 指标工具条（图表外）：MA/EMA/BOLL 开关 + 开启组的读数。
+          读数 span 由 renderOverlayLegend 走 DOM 直改（悬停跟随十字线），高频刷新不过 React */}
       {indicators && (
-        <div className="absolute left-2.5 top-1 z-10 flex flex-wrap items-center gap-x-1.5 gap-y-0.5"
-             style={{ font: '700 11px/1.6 ui-monospace, Consolas, monospace' }}>
-          <button type="button" onClick={() => toggle('ma')} className="hover:opacity-70 transition-opacity cursor-pointer">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 px-2 md:px-1 pb-1.5">
+          <div className="flex rounded-md border border-border overflow-hidden divide-x divide-border">
+            {(['ma', 'ema', 'boll'] as OverlayKey[]).map(k => (
+              <button key={k} type="button" onClick={() => toggle(k)} className={chipCls(overlays[k])}>
+                {k.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5"
+               style={{ font: '700 11px/1.6 ui-monospace, Consolas, monospace' }}>
             <span ref={maLegendRef} />
-          </button>
-          <button type="button" onClick={() => toggle('ema')} className="hover:opacity-70 transition-opacity cursor-pointer">
             <span ref={emaLegendRef} />
-          </button>
-          <button type="button" onClick={() => toggle('boll')} className="hover:opacity-70 transition-opacity cursor-pointer">
             <span ref={bollLegendRef} />
-          </button>
+          </div>
         </div>
       )}
-      <div ref={tipRef} style={{
-        position: 'absolute', display: 'none', pointerEvents: 'none', zIndex: 5,
-        background: 'rgba(13,14,18,.9)', border: '1px solid #23262e', borderRadius: 8, padding: '8px 11px',
-        font: '12px/1.6 ui-monospace, Consolas, monospace', minWidth: 154, boxShadow: '0 6px 22px rgba(0,0,0,.45)',
-      }} />
+
+      <div ref={wrapRef} className="relative w-full flex-1 min-h-0">
+        <div ref={chartDivRef} className="absolute inset-0" />
+        <div ref={tipRef} style={{
+          position: 'absolute', display: 'none', pointerEvents: 'none', zIndex: 5,
+          background: 'rgba(13,14,18,.9)', border: '1px solid #23262e', borderRadius: 8, padding: '8px 11px',
+          font: '12px/1.6 ui-monospace, Consolas, monospace', minWidth: 154, boxShadow: '0 6px 22px rgba(0,0,0,.45)',
+        }} />
+      </div>
     </div>
   );
 }

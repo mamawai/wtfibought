@@ -20,15 +20,22 @@ public final class TradeFilterDefaults {
     /** 单市场过滤器：数量步长 / 最小数量 / 最小名义额(USDT) */
     public record Filter(BigDecimal stepSize, BigDecimal minQty, BigDecimal minNotional) {}
 
-    public static final Map<String, Filter> FUTURES = Map.of(
-            "BTCUSDT",  f("0.001", "50"),
-            "ETHUSDT",  f("0.001", "20"),
-            "DOGEUSDT", f("1",     "5"),
-            "SOLUSDT",  f("0.01",  "5"),
-            "XRPUSDT",  f("0.1",   "5"),
-            "BNBUSDT",  f("0.01",  "5"),
-            "XAUUSDT",  f("0.001", "5"),
-            "CLUSDT",   f("0.01",  "5"));
+    public static final Map<String, Filter> FUTURES = Map.ofEntries(
+            Map.entry("BTCUSDT",     f("0.001", "50")),
+            Map.entry("ETHUSDT",     f("0.001", "20")),
+            Map.entry("DOGEUSDT",    f("1",     "5")),
+            Map.entry("SOLUSDT",     f("0.01",  "5")),
+            Map.entry("XRPUSDT",     f("0.1",   "5")),
+            Map.entry("BNBUSDT",     f("0.01",  "5")),
+            Map.entry("XAUUSDT",     f("0.001", "5")),
+            Map.entry("CLUSDT",      f("0.01",  "5")),
+            // TradFi 股票/ETF 永续：六标的官方口径一致（step 0.01 / minNotional 5，实拉 2026-07-23）
+            Map.entry("SNDKUSDT",    f("0.01",  "5")),
+            Map.entry("SOXLUSDT",    f("0.01",  "5")),
+            Map.entry("SKHYNIXUSDT", f("0.01",  "5")),
+            Map.entry("MUUSDT",      f("0.01",  "5")),
+            Map.entry("KORUUSDT",    f("0.01",  "5")),
+            Map.entry("SPCXUSDT",    f("0.01",  "5")));
 
     public static final Map<String, Filter> SPOT = Map.of(
             "BTCUSDT",  f("0.00001", "5"),

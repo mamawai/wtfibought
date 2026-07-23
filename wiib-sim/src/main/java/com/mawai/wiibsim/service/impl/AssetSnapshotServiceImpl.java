@@ -49,10 +49,13 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
     private final BStockMapper bstockMapper;
     private final BinanceProperties binanceProperties;
 
-    /** 符号→五分类归属的判定集：bStock 来自 bstock 表（现货），大宗商品来自配置（金/油） */
-    private record CategorySets(Set<String> bstock, Set<String> commodity) {
+    /**
+     * 符号→五分类归属的判定集：bStock 来自 bstock 表（现货），大宗商品来自配置（金/油），
+     * TradFi 合约（美股/ETF 永续）来自配置——本质是股票衍生品，盈亏归入 bstock（股票）桶。
+     */
+    private record CategorySets(Set<String> bstock, Set<String> commodity, Set<String> tradfi) {
         String classify(String symbol) {
-            if (bstock.contains(symbol)) return "bstock";
+            if (bstock.contains(symbol) || tradfi.contains(symbol)) return "bstock";
             if (commodity.contains(symbol)) return "commodity";
             return "crypto";
         }
@@ -63,7 +66,10 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
                 .map(BStock::getSymbol)
                 .collect(java.util.stream.Collectors.toSet());
         List<String> commodities = binanceProperties.getCommoditySymbols();
-        return new CategorySets(bstock, commodities == null ? Set.of() : Set.copyOf(commodities));
+        List<String> tradfi = binanceProperties.getTradfiSymbols();
+        return new CategorySets(bstock,
+                commodities == null ? Set.of() : Set.copyOf(commodities),
+                tradfi == null ? Set.of() : Set.copyOf(tradfi));
     }
 
     @org.springframework.beans.factory.annotation.Value("${trading.initial-balance:10000}")

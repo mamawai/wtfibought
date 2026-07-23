@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
  * 撮合价格事件订阅者（sim 侧）。feed 把行情价格发到 {@link MarketStreamChannels#PRICE}，本消费者订阅后
@@ -50,13 +51,18 @@ public class MatchPriceConsumer implements MessageListener {
         log.info("[MatchPrice] 订阅 {} 启动", MarketStreamChannels.PRICE);
     }
 
-    /** sim 启动补漏：拉区间高低价补触发现货/合约限价单 + 强平，覆盖本进程宕机期间错过的价格穿越。 */
+    /**
+     * sim 启动补漏：拉区间高低价补触发现货/合约限价单 + 强平，覆盖本进程宕机期间错过的价格穿越。
+     * 合约侧遍历合约全集（含金/油/TradFi 纯合约标的），现货侧只有 crypto 有现货。
+     */
     private void recoverOnStartup() {
-        if (props.getSymbols() == null) return;
-        for (String symbol : props.getSymbols()) {
+        List<String> spotSymbols = props.getSymbols() == null ? List.of() : props.getSymbols();
+        for (String symbol : props.getAllFuturesSymbols()) {
             try {
-                BigDecimal[] spot = restClient.getRecentHighLow(symbol);
-                if (spot != null) cryptoOrderService.recoverLimitOrders(symbol, spot[0], spot[1]);
+                if (spotSymbols.contains(symbol)) {
+                    BigDecimal[] spot = restClient.getRecentHighLow(symbol);
+                    if (spot != null) cryptoOrderService.recoverLimitOrders(symbol, spot[0], spot[1]);
+                }
                 BigDecimal[] fut = restClient.getRecentFuturesHighLow(symbol);
                 if (fut != null) futuresSettlementService.recoverLimitOrders(symbol, fut[0], fut[1]);
                 recoverLiquidationFromRest(symbol);

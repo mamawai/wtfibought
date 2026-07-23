@@ -71,6 +71,14 @@ binance:
   commodity-symbols:
     - XAUUSDT
     - CLUSDT
+  # TradFi 合约（美股/ETF 永续，纯合约无现货）：与商品同链路，只进合约流
+  tradfi-symbols:
+    - SNDKUSDT
+    - SOXLUSDT
+    - SKHYNIXUSDT
+    - MUUSDT
+    - KORUUSDT
+    - SPCXUSDT
   fallback-poll-interval: 5000
 
 # 内部 API 鉴权：/internal/streams（流健康+重试）由共享 InternalApiFilter 校验此 token；

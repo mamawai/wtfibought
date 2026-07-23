@@ -16,7 +16,8 @@ import java.util.Map;
  * 档位选择：按"仓位 USDT 名义价值"匹配半开区间 [floor, cap)。
  * 强平公式：MM = notional × MMR − maintAmount。
  * <p>
- * 已配置：BTCUSDT、ETHUSDT、DOGEUSDT、SOLUSDT、XRPUSDT、BNBUSDT、XAUUSDT、CLUSDT。
+ * 已配置：BTCUSDT、ETHUSDT、DOGEUSDT、SOLUSDT、XRPUSDT、BNBUSDT、XAUUSDT、CLUSDT，
+ * 及 TradFi 股票/ETF 永续：SNDKUSDT、SOXLUSDT、SKHYNIXUSDT、MUUSDT、KORUUSDT、SPCXUSDT。
  * 新增 symbol 必须先在此处补完档位数据，否则开仓抛 FUTURES_SYMBOL_NOT_CONFIGURED。
  */
 @Component
@@ -145,15 +146,67 @@ public class FuturesLeverageBracketRegistry {
             new Bracket(10, bd("200000000"),    bd("400000000"),    1,   bd("0.5000"),  bd("66731475"))
     );
 
-    private static final Map<String, List<Bracket>> BRACKETS = Map.of(
-            "BTCUSDT",  BTC_BRACKETS,
-            "ETHUSDT",  ETH_BRACKETS,
-            "DOGEUSDT", DOGE_BRACKETS,
-            "SOLUSDT",  SOL_BRACKETS,
-            "XRPUSDT",  XRP_BRACKETS,
-            "BNBUSDT",  BNB_BRACKETS,
-            "XAUUSDT",  COMMODITY_BRACKETS,
-            "CLUSDT",   COMMODITY_BRACKETS
+    // TradFi 美股/存储芯片股永续（闪迪 SNDK / 半导体3X SOXL / SK海力士 / 美光 MU）：四者档位完全一致，
+    // 11 档，档位1 上限 50K、MMR 起点 1%（股票波动大起点比主流币高）、最大 50x。
+    // 数据来源：Binance 主网 /fapi/v1/leverageBracket（实拉 2026-07-23，cum 速算数逐档验算自洽，下同）。
+    private static final List<Bracket> US_STOCK_BRACKETS = List.of(
+            new Bracket(1,  bd("0"),            bd("50000"),        50, bd("0.0100"),  bd("0")),
+            new Bracket(2,  bd("50000"),        bd("200000"),       40, bd("0.0125"),  bd("125")),
+            new Bracket(3,  bd("200000"),       bd("500000"),       25, bd("0.0200"),  bd("1625")),
+            new Bracket(4,  bd("500000"),       bd("1000000"),      20, bd("0.0250"),  bd("4125")),
+            new Bracket(5,  bd("1000000"),      bd("2000000"),      15, bd("0.0333"),  bd("12425")),
+            new Bracket(6,  bd("2000000"),      bd("5000000"),      10, bd("0.0500"),  bd("45825")),
+            new Bracket(7,  bd("5000000"),      bd("8000000"),      5,  bd("0.1000"),  bd("295825")),
+            new Bracket(8,  bd("8000000"),      bd("20000000"),     4,  bd("0.1250"),  bd("495825")),
+            new Bracket(9,  bd("20000000"),     bd("50000000"),     3,  bd("0.1667"),  bd("1329825")),
+            new Bracket(10, bd("50000000"),     bd("100000000"),    2,  bd("0.2500"),  bd("5494825")),
+            new Bracket(11, bd("100000000"),    bd("200000000"),    1,  bd("0.5000"),  bd("30494825"))
+    );
+
+    // KORU（三倍做多韩国ETF）：杠杆ETF自带3倍波动，9 档，MMR 起点即 2%、最大仅 25x（全场最保守）。
+    private static final List<Bracket> KORU_BRACKETS = List.of(
+            new Bracket(1,  bd("0"),            bd("250000"),       25, bd("0.0200"),  bd("0")),
+            new Bracket(2,  bd("250000"),       bd("1000000"),      20, bd("0.0250"),  bd("1250")),
+            new Bracket(3,  bd("1000000"),      bd("2000000"),      15, bd("0.0333"),  bd("9550")),
+            new Bracket(4,  bd("2000000"),      bd("5000000"),      10, bd("0.0500"),  bd("42950")),
+            new Bracket(5,  bd("5000000"),      bd("8000000"),      5,  bd("0.1000"),  bd("292950")),
+            new Bracket(6,  bd("8000000"),      bd("15000000"),     4,  bd("0.1250"),  bd("492950")),
+            new Bracket(7,  bd("15000000"),     bd("25000000"),     3,  bd("0.1667"),  bd("1118450")),
+            new Bracket(8,  bd("25000000"),     bd("50000000"),     2,  bd("0.2500"),  bd("3200950")),
+            new Bracket(9,  bd("50000000"),     bd("200000000"),    1,  bd("0.5000"),  bd("15700950"))
+    );
+
+    // SPCX（SpaceX pre-IPO 永续）：11 档，档位1 上限 50K、MMR 起点 0.65%、最大 75x（TradFi 组里最宽松）。
+    private static final List<Bracket> SPCX_BRACKETS = List.of(
+            new Bracket(1,  bd("0"),            bd("50000"),        75, bd("0.0065"),  bd("0")),
+            new Bracket(2,  bd("50000"),        bd("250000"),       50, bd("0.0100"),  bd("175")),
+            new Bracket(3,  bd("250000"),       bd("500000"),       25, bd("0.0200"),  bd("2675")),
+            new Bracket(4,  bd("500000"),       bd("1500000"),      20, bd("0.0250"),  bd("5175")),
+            new Bracket(5,  bd("1500000"),      bd("5000000"),      15, bd("0.0333"),  bd("17625")),
+            new Bracket(6,  bd("5000000"),      bd("10000000"),     10, bd("0.0500"),  bd("101125")),
+            new Bracket(7,  bd("10000000"),     bd("25000000"),     5,  bd("0.1000"),  bd("601125")),
+            new Bracket(8,  bd("25000000"),     bd("50000000"),     4,  bd("0.1250"),  bd("1226125")),
+            new Bracket(9,  bd("50000000"),     bd("100000000"),    3,  bd("0.1667"),  bd("3311125")),
+            new Bracket(10, bd("100000000"),    bd("200000000"),    2,  bd("0.2500"),  bd("11641125")),
+            new Bracket(11, bd("200000000"),    bd("400000000"),    1,  bd("0.5000"),  bd("61641125"))
+    );
+
+    // Map.of 上限 10 对，超出后用 ofEntries
+    private static final Map<String, List<Bracket>> BRACKETS = Map.ofEntries(
+            Map.entry("BTCUSDT",     BTC_BRACKETS),
+            Map.entry("ETHUSDT",     ETH_BRACKETS),
+            Map.entry("DOGEUSDT",    DOGE_BRACKETS),
+            Map.entry("SOLUSDT",     SOL_BRACKETS),
+            Map.entry("XRPUSDT",     XRP_BRACKETS),
+            Map.entry("BNBUSDT",     BNB_BRACKETS),
+            Map.entry("XAUUSDT",     COMMODITY_BRACKETS),
+            Map.entry("CLUSDT",      COMMODITY_BRACKETS),
+            Map.entry("SNDKUSDT",    US_STOCK_BRACKETS),
+            Map.entry("SOXLUSDT",    US_STOCK_BRACKETS),
+            Map.entry("SKHYNIXUSDT", US_STOCK_BRACKETS),
+            Map.entry("MUUSDT",      US_STOCK_BRACKETS),
+            Map.entry("KORUUSDT",    KORU_BRACKETS),
+            Map.entry("SPCXUSDT",    SPCX_BRACKETS)
     );
 
     /**

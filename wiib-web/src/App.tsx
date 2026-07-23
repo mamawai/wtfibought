@@ -8,6 +8,7 @@ import { Portfolio } from './pages/Portfolio';
 import { CoinRoute } from './pages/Coin';
 import { CoinSelect } from './pages/CoinSelect';
 import { CommoditySelect } from './pages/CommoditySelect';
+import { TradFiSelect } from './pages/TradFiSelect';
 import { Ranking } from './pages/Ranking';
 import { Comments } from './pages/Comments';
 import { Login } from './pages/Login';
@@ -66,6 +67,7 @@ function App() {
                   <Route path="/coin" element={<CoinSelect />} />
                   <Route path="/coin/:symbol" element={<CoinRoute />} />
                   <Route path="/commodity" element={<CommoditySelect />} />
+                  <Route path="/tradfi" element={<TradFiSelect />} />
                   <Route path="/ranking" element={<Ranking />} />
                   <Route path="/comments" element={<Comments />} />
                   <Route path="/admin" element={<Admin />} />

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ComponentType } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Landmark, Bitcoin, Gem, ChevronRight, type LucideProps } from 'lucide-react';
+import { Landmark, Bitcoin, Gem, Globe, ChevronRight, type LucideProps } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { COIN_MAP, COMMODITY_LIST } from '../lib/coinConfig';
 import { CoinMarketRow, BStockMarketRow } from './MarketRow';
@@ -30,8 +30,8 @@ function CategoryHeader({ icon: Icon, title, subtitle, iconColor, to }: {
 }
 
 /**
- * 首页市场行情：bStock / Crypto / 大宗商品三分类终端表，每类 2 个代表标的。
- * 点分类头去市场页，点行直达交易页。桌面三列并排，移动端纵向堆叠。
+ * 首页市场行情：bStock / Crypto / 大宗商品 / TradFi 合约四分类终端表，每类 2 个代表标的。
+ * 点分类头去市场页，点行直达交易页。大屏四列并排，中屏两两成行，移动端纵向堆叠。
  */
 export function HomeMarketSection() {
   const [topStocks, setTopStocks] = useState<BStock[]>([]);
@@ -47,9 +47,11 @@ export function HomeMarketSection() {
   }, []);
 
   const cryptoReps = [COIN_MAP.BTCUSDT, COIN_MAP.ETHUSDT];
+  // TradFi 代表：SpaceX（话题标的）+ SK海力士（成交最活跃）
+  const tradfiReps = [COIN_MAP.SPCXUSDT, COIN_MAP.SKHYNIXUSDT];
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
       <div className="pt-card rounded-lg overflow-hidden">
         <CategoryHeader icon={Landmark} title="股票" subtitle="代币化美股" iconColor="text-blue-500" to="/bstock" />
         {topStocks.length
@@ -63,8 +65,13 @@ export function HomeMarketSection() {
       </div>
 
       <div className="pt-card rounded-lg overflow-hidden">
-        <CategoryHeader icon={Gem} title="大宗商品" subtitle="TradFi 永续" iconColor="text-yellow-500" to="/commodity" />
+        <CategoryHeader icon={Gem} title="大宗商品" subtitle="黄金 / 原油" iconColor="text-yellow-500" to="/commodity" />
         {COMMODITY_LIST.map(c => <CoinMarketRow key={c.symbol} cfg={c} />)}
+      </div>
+
+      <div className="pt-card rounded-lg overflow-hidden">
+        <CategoryHeader icon={Globe} title="TradFi 合约" subtitle="美股/ETF 永续" iconColor="text-sky-500" to="/tradfi" />
+        {tradfiReps.map(c => <CoinMarketRow key={c.symbol} cfg={c} />)}
       </div>
     </div>
   );

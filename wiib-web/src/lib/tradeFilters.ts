@@ -16,6 +16,13 @@ const DEFAULTS: TradeFilterMap = {
     BNBUSDT:  { stepSize: 0.01,   minQty: 0.01,   minNotional: 5 },
     XAUUSDT:  { stepSize: 0.001,  minQty: 0.001,  minNotional: 5 },
     CLUSDT:   { stepSize: 0.01,   minQty: 0.01,   minNotional: 5 },
+    // TradFi 股票/ETF 永续：六标的官方口径一致（实拉 2026-07-23）
+    SNDKUSDT:    { stepSize: 0.01, minQty: 0.01, minNotional: 5 },
+    SOXLUSDT:    { stepSize: 0.01, minQty: 0.01, minNotional: 5 },
+    SKHYNIXUSDT: { stepSize: 0.01, minQty: 0.01, minNotional: 5 },
+    MUUSDT:      { stepSize: 0.01, minQty: 0.01, minNotional: 5 },
+    KORUUSDT:    { stepSize: 0.01, minQty: 0.01, minNotional: 5 },
+    SPCXUSDT:    { stepSize: 0.01, minQty: 0.01, minNotional: 5 },
   },
   spot: {
     BTCUSDT:  { stepSize: 0.00001, minQty: 0.00001, minNotional: 5 },

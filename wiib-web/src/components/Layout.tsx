@@ -11,12 +11,12 @@ import { cn } from '../lib/utils';
 import {
   Home, Briefcase, LogOut, LogIn, TrendingUp, Sun, Moon,
   BarChart3, User, ChevronDown, List, DollarSign,
-  Brain, Gem,
+  Brain, Gem, Globe,
 } from 'lucide-react';
 
 interface Props { children: React.ReactNode }
 
-const MARKET_PATHS = ['/bstock', '/coin', '/commodity'];
+const MARKET_PATHS = ['/bstock', '/coin', '/commodity', '/tradfi'];
 
 const LED_LABEL: Record<HealthLevel, string> = {
   ok: '正常', warn: '降级', down: '断连', unknown: '未知',
@@ -211,6 +211,7 @@ function MarketDropdown({ isActive }: { isActive: boolean }) {
             { to: '/bstock', icon: <List className="w-4 h-4" />, label: '股票' },
             { to: '/coin', icon: <DollarSign className="w-4 h-4" />, label: '币种' },
             { to: '/commodity', icon: <Gem className="w-4 h-4" />, label: '大宗商品' },
+            { to: '/tradfi', icon: <Globe className="w-4 h-4" />, label: 'TradFi 合约' },
           ].map(({ to, icon, label }) => (
             <NavLink
               key={to}

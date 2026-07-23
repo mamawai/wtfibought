@@ -20,6 +20,8 @@ public class BinanceProperties {
     private List<String> stockSymbols;
     /** 大宗商品（TradFi 永续：黄金/原油）符号：纯合约、无现货。只并入合约流，绝不进现货流。 */
     private List<String> commoditySymbols;
+    /** TradFi 合约（美股/ETF 永续：闪迪/美光/SpaceX 等）符号：纯合约、无现货，流处理同大宗商品。 */
+    private List<String> tradfiSymbols;
     private long fallbackPollInterval;
 
     /** 现货订阅全集 = crypto symbols ∪ bStock stockSymbols。Spot 价流与现货 K线用；两组互斥，直接拼接不去重。 */
@@ -32,13 +34,17 @@ public class BinanceProperties {
         return all;
     }
 
-    /** 合约订阅全集 = crypto symbols ∪ commoditySymbols（TradFi 永续：金/油，无现货）。合约各流用。 */
+    /** 合约订阅全集 = crypto symbols ∪ 纯合约标的（大宗商品 + TradFi）。合约各流用。 */
     public List<String> getAllFuturesSymbols() {
-        if (commoditySymbols == null || commoditySymbols.isEmpty()) {
-            return symbols == null ? List.of() : symbols;
-        }
         List<String> all = new ArrayList<>(symbols == null ? List.of() : symbols);
-        all.addAll(commoditySymbols);
+        all.addAll(getFuturesOnlySymbols());
+        return all;
+    }
+
+    /** 纯合约标的全集（无现货）= commoditySymbols ∪ tradfiSymbols。纯合约 5m K线流用。 */
+    public List<String> getFuturesOnlySymbols() {
+        List<String> all = new ArrayList<>(commoditySymbols == null ? List.of() : commoditySymbols);
+        if (tradfiSymbols != null) all.addAll(tradfiSymbols);
         return all;
     }
 }
