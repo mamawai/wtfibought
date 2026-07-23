@@ -52,24 +52,24 @@ export function HomeMarketSection() {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-      <div className="pt-card rounded-lg overflow-hidden">
+      <div className="@container pt-card rounded-lg overflow-hidden">
         <CategoryHeader icon={Landmark} title="股票" subtitle="代币化美股" iconColor="text-blue-500" to="/bstock" />
         {topStocks.length
           ? topStocks.map(s => <BStockMarketRow key={s.symbol} stock={s} />)
           : Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-[52px] m-2" />)}
       </div>
 
-      <div className="pt-card rounded-lg overflow-hidden">
+      <div className="@container pt-card rounded-lg overflow-hidden">
         <CategoryHeader icon={Bitcoin} title="Crypto" subtitle="加密货币" iconColor="text-amber-500" to="/coin" />
         {cryptoReps.map(c => <CoinMarketRow key={c.symbol} cfg={c} />)}
       </div>
 
-      <div className="pt-card rounded-lg overflow-hidden">
+      <div className="@container pt-card rounded-lg overflow-hidden">
         <CategoryHeader icon={Gem} title="大宗商品" subtitle="黄金 / 原油" iconColor="text-yellow-500" to="/commodity" />
         {COMMODITY_LIST.map(c => <CoinMarketRow key={c.symbol} cfg={c} />)}
       </div>
 
-      <div className="pt-card rounded-lg overflow-hidden">
+      <div className="@container pt-card rounded-lg overflow-hidden">
         <CategoryHeader icon={Globe} title="TradFi 合约" subtitle="美股/ETF 永续" iconColor="text-sky-500" to="/tradfi" />
         {tradfiReps.map(c => <CoinMarketRow key={c.symbol} cfg={c} />)}
       </div>

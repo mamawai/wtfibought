@@ -9,7 +9,9 @@ import type { BStock } from '../types';
 
 /**
  * 终端式行情表行：图标名称 | 价格(右对齐) | 走势线 | 涨跌幅。
- * 移动端收起走势线列。首页行情表与选币/选股页共用。
+ * 按容器宽度自适应（@container，父卡片需带 @container 类）：窄卡走势线缩窄(48px)、
+ * 涨跌幅降号、间距收紧，宽卡全尺寸展开——首页 xl 四列的窄卡与选币/选股页的宽卡
+ * 共用本组件，不能按视口判断。价格列 auto 保完整，挤压全落在可截断的名称列上。
  */
 export function MarketRow({ icon, name, sub, price, pct, spark, sparkColor, onClick }: {
   icon: ReactNode;
@@ -26,7 +28,7 @@ export function MarketRow({ icon, name, sub, price, pct, spark, sparkColor, onCl
     <button
       onClick={onClick}
       className={cn(
-        'grid grid-cols-[minmax(0,1fr)_auto_72px] sm:grid-cols-[minmax(0,1.1fr)_1fr_88px_76px] items-center gap-2 sm:gap-3',
+        'grid grid-cols-[minmax(0,1fr)_auto_48px_46px] @md:grid-cols-[minmax(0,1.1fr)_1fr_88px_76px] items-center gap-1.5 @md:gap-3',
         'w-full px-3 py-2.5 text-left border-b border-border/60 last:border-0',
         'hover:bg-surface-hover transition-colors cursor-pointer',
       )}
@@ -39,15 +41,15 @@ export function MarketRow({ icon, name, sub, price, pct, spark, sparkColor, onCl
         </span>
       </span>
 
-      <span className="num text-sm font-medium text-right">{price ?? '—'}</span>
+      <span className="num text-[13px] @md:text-sm font-medium text-right">{price ?? '—'}</span>
 
-      <span className="hidden sm:block h-[22px]">
+      <span className="block h-[22px]">
         {spark && spark.length > 1 && <Sparkline data={spark} stroke={sparkColor} className="w-full h-full" />}
       </span>
 
       <span
         className={cn(
-          'num text-[11px] font-semibold text-right tabular-nums',
+          'num text-[10px] @md:text-[11px] font-semibold text-right tabular-nums',
           pct == null ? 'text-muted-foreground' : up ? 'text-gain' : 'text-loss',
         )}
       >
