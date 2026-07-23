@@ -13,6 +13,7 @@ import { SpotTradePanel } from '../components/coin/SpotTradePanel';
 import { FuturesOpenPanel } from '../components/coin/FuturesOpenPanel';
 import { FuturesPositionsCard } from '../components/coin/FuturesPositionsCard';
 import { CoinOrdersCard } from '../components/coin/CoinOrdersCard';
+import { MarketSessionBadge } from '../components/coin/MarketSessionBadge';
 import { fmtNum } from '../lib/utils';
 import { COIN_MAP, getCoin, DEFAULT_SYMBOL, formatCoinPrice } from '../lib/coinConfig';
 import type { CryptoPosition, FuturesBracket } from '../types';
@@ -149,6 +150,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="microlabel font-semibold">BINANCE</span>
+              {/* TradFi 标的：合约 7×24，但流动性跟着标的股票市场走，给个当前时段入口 */}
+              {cfg.market && <MarketSessionBadge market={cfg.market} />}
               {cfg.unitLabel && (
                 <span className="text-[11px] text-warning font-semibold">1枚 = 1盎司黄金（{cfg.unitFactor}{cfg.unitLabel}）</span>
               )}

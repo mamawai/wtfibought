@@ -2,6 +2,7 @@ import { fmtNum } from './utils';
 import {Bitcoin, Coins, Cpu, Flag, Fuel, HardDrive, MemoryStick, Rocket, type LucideProps} from 'lucide-react';
 import type {ComponentType} from "react";
 import {Bnb, Doge, Eth, Sol, Xrp} from './coinIcons';
+import type {MarketId} from './marketSession';
 
 export interface CoinCfg {
   symbol: string;
@@ -25,6 +26,8 @@ export interface CoinCfg {
   category?: 'crypto' | 'commodity' | 'tradfi';
   // 纯合约标的（无现货）：交易页只出合约，不出现货买卖
   futuresOnly?: boolean;
+  // 标的所在的股票市场：填了才在页头显示"当前交易时段"按钮（合约本身 7×24，但流动性跟着标的市场走）
+  market?: MarketId;
 }
 
 export const COIN_MAP: Record<string, CoinCfg> = {
@@ -80,37 +83,37 @@ export const COIN_MAP: Record<string, CoinCfg> = {
     symbol: 'SNDKUSDT', name: '闪迪', pair: 'SNDK / USDT', tvSymbol: 'NASDAQ:SNDK', futuresTvSymbol: 'BINANCE:SNDKUSDT.P',
     icon: HardDrive,
     colorClass: 'text-red-500', bgClass: 'bg-red-500/10', hoverBgClass: 'hover:bg-red-500/20', gradientClass: 'from-red-500/5',
-    chartColor: '#ef4444', desc: '闪迪 SanDisk / USDT · TradFi 永续合约', category: 'tradfi', futuresOnly: true,
+    chartColor: '#ef4444', desc: '闪迪 SanDisk / USDT · TradFi 永续合约', category: 'tradfi', futuresOnly: true, market: 'US',
   },
   SOXLUSDT: {
     symbol: 'SOXLUSDT', name: 'SOXL', pair: 'SOXL / USDT', tvSymbol: 'AMEX:SOXL', futuresTvSymbol: 'BINANCE:SOXLUSDT.P',
     icon: Cpu,
     colorClass: 'text-emerald-500', bgClass: 'bg-emerald-500/10', hoverBgClass: 'hover:bg-emerald-500/20', gradientClass: 'from-emerald-500/5',
-    chartColor: '#10b981', desc: '三倍做多半导体ETF / USDT · TradFi 永续合约', category: 'tradfi', futuresOnly: true,
+    chartColor: '#10b981', desc: '三倍做多半导体ETF / USDT · TradFi 永续合约', category: 'tradfi', futuresOnly: true, market: 'US',
   },
   SKHYNIXUSDT: {
     symbol: 'SKHYNIXUSDT', name: 'SK海力士', pair: 'SKHYNIX / USDT', tvSymbol: 'KRX:000660', futuresTvSymbol: 'BINANCE:SKHYNIXUSDT.P',
     icon: MemoryStick,
     colorClass: 'text-orange-600', bgClass: 'bg-orange-600/10', hoverBgClass: 'hover:bg-orange-600/20', gradientClass: 'from-orange-600/5',
-    chartColor: '#ea580c', desc: 'SK海力士 / USDT · TradFi 永续合约', category: 'tradfi', futuresOnly: true,
+    chartColor: '#ea580c', desc: 'SK海力士 / USDT · TradFi 永续合约', category: 'tradfi', futuresOnly: true, market: 'KRX',
   },
   MUUSDT: {
     symbol: 'MUUSDT', name: '美光', pair: 'MU / USDT', tvSymbol: 'NASDAQ:MU', futuresTvSymbol: 'BINANCE:MUUSDT.P',
     icon: Cpu,
     colorClass: 'text-blue-500', bgClass: 'bg-blue-500/10', hoverBgClass: 'hover:bg-blue-500/20', gradientClass: 'from-blue-500/5',
-    chartColor: '#3b82f6', desc: '美光科技 / USDT · TradFi 永续合约', category: 'tradfi', futuresOnly: true,
+    chartColor: '#3b82f6', desc: '美光科技 / USDT · TradFi 永续合约', category: 'tradfi', futuresOnly: true, market: 'US',
   },
   KORUUSDT: {
     symbol: 'KORUUSDT', name: 'KORU', pair: 'KORU / USDT', tvSymbol: 'AMEX:KORU', futuresTvSymbol: 'BINANCE:KORUUSDT.P',
     icon: Flag,
     colorClass: 'text-rose-500', bgClass: 'bg-rose-500/10', hoverBgClass: 'hover:bg-rose-500/20', gradientClass: 'from-rose-500/5',
-    chartColor: '#f43f5e', desc: '三倍做多韩国ETF / USDT · TradFi 永续合约', category: 'tradfi', futuresOnly: true,
+    chartColor: '#f43f5e', desc: '三倍做多韩国ETF / USDT · TradFi 永续合约', category: 'tradfi', futuresOnly: true, market: 'US',
   },
   SPCXUSDT: {
     symbol: 'SPCXUSDT', name: 'SpaceX', pair: 'SPCX / USDT', tvSymbol: 'BINANCE:SPCXUSDT.P', futuresTvSymbol: 'BINANCE:SPCXUSDT.P',
     icon: Rocket,
     colorClass: 'text-violet-500', bgClass: 'bg-violet-500/10', hoverBgClass: 'hover:bg-violet-500/20', gradientClass: 'from-violet-500/5',
-    chartColor: '#8b5cf6', desc: 'SpaceX pre-IPO / USDT · TradFi 永续合约', category: 'tradfi', futuresOnly: true,
+    chartColor: '#8b5cf6', desc: 'SpaceX pre-IPO / USDT · TradFi 永续合约', category: 'tradfi', futuresOnly: true, market: 'US',
   },
 };
 
