@@ -94,20 +94,23 @@ body {
   min-height: 100vh;
 }
 
-/* ===== 移动端触摸观感（装成 PWA 后尤其明显）=====
-   顶部下拉会触发整页刷新——本站代价特别大，等于重连全部 WebSocket 再重拉行情，
-   全屏无地址栏时手一滑就中招；本站也没有下拉刷新功能，直接禁掉无损失。
+/* ===== 触摸观感：仅从桌面图标启动时生效 =====
+   html.pwa 由 index.html 内联脚本打标（不用 @media display-mode，iOS 支持度没把握）。
+   浏览器访问一律保持原样：下拉照样刷新、长按照样弹菜单。
    （点击蓝框不用管，Tailwind preflight 已全局设了 tap-highlight-color:transparent） */
-html, body {
-  overscroll-behavior-y: none;          /* 禁下拉刷新，顺带消掉 iOS 橡皮筋露底 */
+
+/* 全屏无地址栏时顶部下拉极易误触，而刷新对本站代价很大——等于重连全部 WebSocket
+   再重拉行情；本站也没有下拉刷新功能，禁掉无损失，顺带消除 iOS 橡皮筋露底 */
+html.pwa, html.pwa body {
+  overscroll-behavior-y: none;
 }
 
 /* 长按弹"复制/查找"菜单只对操作类元素关闭；
    正文、留言、AI 对话、行情数字、输入框一律保持可选可复制 */
-button,
-[role="button"],
-header a,
-nav a {
+html.pwa button,
+html.pwa [role="button"],
+html.pwa header a,
+html.pwa nav a {
   -webkit-touch-callout: none;
   user-select: none;
 }
