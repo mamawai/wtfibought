@@ -12,12 +12,13 @@ import { NeuToggle } from '../NeuToggle';
 import { HelpTip } from '../HelpTip';
 import { fmtNum } from '../../lib/utils';
 import { getCoin, getCoinPriceDecimals, getCoinPriceStep, formatCoinPrice } from '../../lib/coinConfig';
+import { useTradeFilter } from '../../lib/tradeFilters';
 import type { FuturesBracket, FuturesCrossAccount, FuturesMarginMode, FuturesPosition, FuturesSLItem, FuturesTPItem } from '../../types';
 import { TradeModeSwitch } from './TradeModeSwitch';
 import { SLTPEditor } from './SLTPEditor';
 import { useQuantityAnimation } from './useQuantityAnimation';
 import {
-  POSITION_PCTS, FUTURES_LEVERAGE_OPTIONS, formatRate, getStepPrecision,
+  POSITION_PCTS, FUTURES_LEVERAGE_OPTIONS, formatRate, getStepPrecision, floorToStep,
   calcFuturesOpenEstimate, calcMaxAffordableMarginQty, estimateFuturesLiqPrice,
   type SLTPRow,
 } from './futuresMath';
@@ -37,7 +38,9 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, positionsKey,
   onTraded: () => void;
 }) {
   const cfg = getCoin(symbol);
-  const MIN_QTY = cfg.minQty;
+  // 交易过滤器（对齐Binance）：合约步长与现货不同（如BTC合约0.001 vs 现货0.00001），minNotional 是下单硬门槛
+  const filter = useTradeFilter('futures', symbol);
+  const MIN_QTY = filter.stepSize;
   const PRICE_DECIMALS = getCoinPriceDecimals(symbol);
   const PRICE_STEP = getCoinPriceStep(symbol);
   const PRICE_STEP_TEXT = PRICE_STEP.toFixed(PRICE_DECIMALS);
@@ -136,13 +139,16 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, positionsKey,
   const handleSubmit = async () => {
     // 杠杆拖了没确认：先让用户把调杠杆这步走完，避免"滑杆显示50x实际按150x下单"的错位
     if (pendingLev) { toast('杠杆调整未确认，请先确认或还原', 'error'); return; }
-    const qty = marginQty;
-    if (!qty || qty < MIN_QTY) { toast(`最小数量 ${MIN_QTY}`, 'error'); return; }
     if (orderType === 'LIMIT') {
       const lp = parseFloat(limitPrice);
       if (!lp || lp <= 0) { toast('请输入有效限价', 'error'); return; }
     }
-    const orderQty = qty * effLeverage;
+    // 实际下单币量按步长向下对齐（USDT模式÷价、×杠杆都会产生任意小数，后端按Binance规则硬校验）
+    const orderQty = floorToStep(marginQty * effLeverage, filter.stepSize);
+    if (orderQty < filter.minQty) { toast(`最小下单数量 ${filter.minQty} ${cfg.name}`, 'error'); return; }
+    if (priceForCalc > 0 && orderQty * priceForCalc < filter.minNotional) {
+      toast(`最小下单金额 ${filter.minNotional} USDT`, 'error'); return;
+    }
     const slItems: FuturesSLItem[] = slEnabled
       ? slRows.filter(r => parseFloat(r.price) > 0 && parseFloat(r.quantity) > 0).map(r => ({ price: parseFloat(r.price), quantity: parseFloat(r.quantity) }))
       : [];
@@ -343,6 +349,11 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, positionsKey,
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">
               {marginUnit === 'USDT' ? 'USDT' : cfg.name}
             </span>
+          </div>
+          {/* 币安同款门槛：最小名义额 + 按当前杠杆折算的最小保证金（100x黄金≈0.05、50x≈0.10 的来源） */}
+          <div className="text-[10px] text-muted-foreground">
+            最小下单 {filter.minNotional} USDT · 步长 {filter.stepSize} {cfg.name}
+            {effLeverage > 0 && ` · 最小保证金 ≈ ${(filter.minNotional / effLeverage).toFixed(2)} USDT`}
           </div>
           {priceForCalc > 0 && (
             <div className="grid grid-cols-4 gap-1.5">

@@ -12,10 +12,11 @@ import { FuturesActionButton } from '../FuturesActionButton';
 import { NeuToggle } from '../NeuToggle';
 import { fmtNum } from '../../lib/utils';
 import { getCoin, getCoinPriceDecimals, getCoinPriceStep } from '../../lib/coinConfig';
+import { useTradeFilter } from '../../lib/tradeFilters';
 import type { CryptoPosition } from '../../types';
 import { TradeModeSwitch } from './TradeModeSwitch';
 import { useQuantityAnimation } from './useQuantityAnimation';
-import { COMMISSION_RATE, POSITION_PCTS, SPOT_LEVERAGE_OPTIONS } from './futuresMath';
+import { COMMISSION_RATE, POSITION_PCTS, SPOT_LEVERAGE_OPTIONS, floorToStep } from './futuresMath';
 
 /**
  * 现货交易面板：买卖方向、市价/限价、数量/仓位、现货杠杆、折扣券、预估与提交。
@@ -29,7 +30,9 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
   onTraded: () => void;
 }) {
   const cfg = getCoin(symbol);
-  const MIN_QTY = cfg.minQty;
+  // 现货交易过滤器（对齐Binance）：步长 + 最小名义额（DOGE=1U 其余5U）
+  const filter = useTradeFilter('spot', symbol);
+  const MIN_QTY = filter.stepSize;
   const PRICE_STEP_TEXT = getCoinPriceStep(symbol).toFixed(getCoinPriceDecimals(symbol));
   const { toast } = useToast();
   const user = useUserStore(s => s.user);
@@ -64,9 +67,17 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
       const lp = parseFloat(limitPrice);
       if (!lp || lp <= 0) { toast('请输入有效限价', 'error'); return; }
     }
+    // ×杠杆会产生浮点尾差，按步长向下对齐；全量卖出保留精确持仓量（后端豁免步长，尘埃能清干净）
+    const isFullSell = side === 'SELL' && qty === (position?.quantity ?? -1);
+    const price = orderType === 'LIMIT' ? parseFloat(limitPrice) : currentPrice;
+    let actualQty = side === 'BUY' && orderType === 'MARKET' && leverage > 1 ? qty * leverage : qty;
+    if (!isFullSell) actualQty = floorToStep(actualQty, filter.stepSize);
+    // 买入需过最小名义额（对齐Binance；卖出为减持豁免）
+    if (side === 'BUY' && price > 0 && actualQty * price < filter.minNotional) {
+      toast(`最小下单金额 ${filter.minNotional} USDT`, 'error'); return;
+    }
     setSubmitting(true);
     try {
-      const actualQty = side === 'BUY' && orderType === 'MARKET' && leverage > 1 ? qty * leverage : qty;
       const req = {
         symbol: symbol,
         quantity: actualQty,
@@ -147,7 +158,7 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
               </span>
             )}
           </div>
-          <Input type="number" placeholder={String(MIN_QTY)} value={quantity} onChange={e => setQuantity(e.target.value)} step="0.001" min={MIN_QTY} />
+          <Input type="number" placeholder={String(MIN_QTY)} value={quantity} onChange={e => setQuantity(e.target.value)} step={String(MIN_QTY)} min={MIN_QTY} />
           {currentPrice > 0 && (
             <div className="space-y-1.5 pt-1">
               <label className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
@@ -156,6 +167,12 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
               <div className="flex gap-1.5">
                 {POSITION_PCTS.map(pct => {
                 const handlePct = () => {
+                  // 卖出100%：精确全量（尘埃也能清干净，后端对全量卖豁免步长），不做步长取整
+                  if (side === 'SELL' && pct >= 1) {
+                    const full = position?.quantity ?? 0;
+                    if (full > 0) setQuantity(String(full));
+                    return;
+                  }
                   let raw: number;
                   if (side === 'BUY') {
                     const balance = user?.balance ?? 0;
@@ -164,7 +181,7 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
                   } else {
                     raw = (position?.quantity ?? 0) * pct;
                   }
-                  const qty = Math.max(MIN_QTY, Math.floor(raw / MIN_QTY) * MIN_QTY);
+                  const qty = Math.max(MIN_QTY, floorToStep(raw, MIN_QTY));
                   const target = qty <= MIN_QTY && raw < MIN_QTY ? MIN_QTY : qty;
                   animateQuantity(target, MIN_QTY);
                 };

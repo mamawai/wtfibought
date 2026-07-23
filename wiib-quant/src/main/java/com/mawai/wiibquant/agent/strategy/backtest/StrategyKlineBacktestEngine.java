@@ -2,6 +2,7 @@ package com.mawai.wiibquant.agent.strategy.backtest;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.market.KlineBar;
+import com.mawai.wiibcommon.market.TradeFilterDefaults;
 import com.mawai.wiibquant.agent.strategy.core.PositionSizer;
 import com.mawai.wiibquant.agent.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibquant.agent.strategy.core.StrategySignal;
@@ -194,9 +195,11 @@ public final class StrategyKlineBacktestEngine {
         } else {
             // 风险定量与实盘执行共用 PositionSizer，公式漂移即破坏"回测判决对实盘有效"
             quantity = PositionSizer.riskSizedQty(tools.getTotalEquity(), fillPrice,
-                    signal.stopLossPrice(), policy, effectiveLeverage);
+                    signal.stopLossPrice(), policy, effectiveLeverage, TradeFilterDefaults.futures(symbol));
         }
-        if (quantity.signum() <= 0) return;
+        // 自定义仓位口径同样按交易过滤器落地（步长/最小额），回测约束与实盘一致
+        quantity = PositionSizer.applyFilter(quantity, fillPrice, TradeFilterDefaults.futures(symbol));
+        if (quantity == null || quantity.signum() <= 0) return;
 
         tools.setCurrentPrice(fillPrice);
         TradingOperations.OpenResult opened = tools.openPositionWithResult(signal.side(), quantity, effectiveLeverage,

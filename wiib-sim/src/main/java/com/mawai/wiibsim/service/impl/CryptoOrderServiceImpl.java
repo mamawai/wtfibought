@@ -15,6 +15,7 @@ import com.mawai.wiibcommon.enums.OrderStatus;
 import com.mawai.wiibcommon.enums.OrderType;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.SpringUtils;
+import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.service.BuffService;
@@ -63,6 +64,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
     private final StringRedisTemplate stringRedisTemplate;
     private final CacheService cacheService;
     private final BStockService bStockService;
+    private final TradeFilterRegistry tradeFilterRegistry;
 
     private static final String SETTLE_ZSET_KEY = "crypto:settle:pending";
     private static final long SETTLE_DELAY_MS = 5 * 60 * 1000L; // btc 到账时间 5 minutes
@@ -101,6 +103,10 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         validateRequest(request);
         User user = getAndValidateUser(userId);
         BigDecimal price = getCryptoPrice(request.getSymbol());
+        // 交易过滤器（对齐Binance exchangeInfo）：步长对齐 + 名义额≥minNotional（限价按挂单价估）
+        boolean isMarketBuy = OrderType.MARKET.getCode().equals(request.getOrderType());
+        tradeFilterRegistry.validateSpotBuy(request.getSymbol(), request.getQuantity(),
+                isMarketBuy ? price : request.getLimitPrice());
         int leverageMultiple = marginAccountService.normalizeLeverageMultiple(request.getLeverageMultiple());
 
         // 市价
@@ -163,6 +169,8 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         if (position == null || position.getQuantity().compareTo(request.getQuantity()) < 0) {
             throw new BizException(ErrorCode.POSITION_NOT_ENOUGH);
         }
+        // 卖出=减持：豁免最小名义额；部分卖查步长，全量卖豁免（尘埃持仓能清干净）
+        tradeFilterRegistry.validateSpotSell(request.getSymbol(), request.getQuantity(), position.getQuantity());
 
         BigDecimal price = getCryptoPrice(request.getSymbol());
 

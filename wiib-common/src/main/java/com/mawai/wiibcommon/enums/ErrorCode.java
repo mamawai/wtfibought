@@ -65,6 +65,8 @@ public enum ErrorCode {
     // Crypto错误码 1600+
     CRYPTO_PRICE_UNAVAILABLE(1601, "无法获取实时价格"),
     CRYPTO_SYMBOL_INVALID(1602, "交易对无效"),
+    TRADE_STEP_INVALID(1603, "数量不符合最小交易步长"),
+    TRADE_MIN_NOTIONAL(1604, "下单金额低于最小名义额"),
 
     // Mines错误码 1700+
     MINES_GAME_IN_PROGRESS(1701, "有未完成的矿工游戏"),

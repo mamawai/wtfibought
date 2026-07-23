@@ -241,6 +241,18 @@ export interface FuturesCloseRequest {
   limitPrice?: number;
 }
 
+// 交易过滤器：数量步长/最小数量/最小名义额（对齐Binance exchangeInfo，后端注册表下发）
+export interface TradeFilter {
+  stepSize: number;
+  minQty: number;
+  minNotional: number;
+}
+
+export interface TradeFilterMap {
+  futures: Record<string, TradeFilter>;
+  spot: Record<string, TradeFilter>;
+}
+
 export interface FuturesAddMarginRequest {
   positionId: number;
   amount: number;

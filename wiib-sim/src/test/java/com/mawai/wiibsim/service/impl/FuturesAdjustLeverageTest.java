@@ -5,7 +5,9 @@ import com.mawai.wiibcommon.dto.FuturesAdjustLeverageRequest;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
+import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
@@ -69,7 +71,8 @@ class FuturesAdjustLeverageTest {
         service = new FuturesTradingServiceImpl(
                 mock(UserService.class), userMapper, positionMapper, mock(FuturesOrderMapper.class),
                 new TradingConfig(), mock(RedisLockUtil.class), cacheService,
-                positionIndexService, bracketRegistry, crossMarginService);
+                positionIndexService, bracketRegistry, crossMarginService,
+                new TradeFilterRegistry(mock(BinanceRestClient.class)));
     }
 
     private static FuturesPosition pos(long id, String side, String mode, int leverage,

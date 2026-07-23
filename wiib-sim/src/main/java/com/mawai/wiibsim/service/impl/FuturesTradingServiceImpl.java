@@ -13,6 +13,7 @@ import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
+import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
@@ -56,6 +57,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     private final FuturesPositionIndexService positionIndexService;
     private final FuturesLeverageBracketRegistry bracketRegistry;
     private final CrossMarginService crossMarginService;
+    private final TradeFilterRegistry tradeFilterRegistry;
 
     // ==================== 开仓 ====================
 
@@ -102,6 +104,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
 
         if ("MARKET".equals(request.getOrderType())) {
             BigDecimal price = getPrice(request.getSymbol());
+            // 交易过滤器（对齐Binance exchangeInfo）：步长对齐 + 名义额≥minNotional，加仓单同样受限
+            tradeFilterRegistry.validateFuturesOrder(request.getSymbol(), request.getQuantity(), price);
             // 同向已有仓位：Binance 无独立"加仓"概念，同向下单即并入现有仓位
             if (sameSide != null) return executeMarketMerge(userId, sameSide, request, price);
             // BTC/ETH 等已配置档位的 symbol 按 Binance 档位二次校验杠杆（按 notional 取档）
@@ -110,6 +114,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         } else {
             BigDecimal markPrice = getMarkPrice(request.getSymbol());
             tradingConfig.validateLimitPrice(request.getLimitPrice(), markPrice);
+            tradeFilterRegistry.validateFuturesOrder(request.getSymbol(), request.getQuantity(), request.getLimitPrice());
             // 限价同向加仓：挂单按合并后总持仓过档（成交时并入由结算侧处理）
             BigDecimal bracketQty = sameSide != null ? sameSide.getQuantity().add(request.getQuantity()) : request.getQuantity();
             validateLeverageByBracket(request.getSymbol(), leverage, request.getLimitPrice().multiply(bracketQty));
@@ -365,6 +370,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         if (closeQty.signum() <= 0 || closeQty.compareTo(position.getQuantity()) > 0) {
             throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
         }
+        // reduce-only 豁免最小名义额；部分平仓查步长，全量平仓豁免（存量尘埃仓能平干净）
+        tradeFilterRegistry.validateFuturesClose(position.getSymbol(), closeQty, position.getQuantity());
 
         if ("MARKET".equals(request.getOrderType())) {
             return executeMarketClose(userId, position, closeQty);

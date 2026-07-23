@@ -28,6 +28,12 @@ export function formatRate(rate: number): string {
   return `${(rate * 100).toFixed(2)}%`;
 }
 
+/** 数量向下对齐步长（含浮点误差容忍）：0.11×50=5.500000000000001 → 5.5 */
+export function floorToStep(qty: number, step: number): number {
+  if (!(step > 0)) return qty;
+  return Number((Math.floor(qty / step + 1e-9) * step).toFixed(getStepPrecision(step)));
+}
+
 /** 持仓百分比→数量字符串：100% 精确全量（避免尾差平不干净），其余档按 step 对齐 */
 export function qtyByPct(posQty: number, pct: number, step: number): string {
   if (pct >= 100) return String(posQty);

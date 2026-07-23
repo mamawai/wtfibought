@@ -2,6 +2,7 @@ package com.mawai.wiibquant.agent.strategy.backtest;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.market.KlineBar;
+import com.mawai.wiibcommon.market.TradeFilterDefaults;
 import com.mawai.wiibquant.agent.strategy.core.PositionSizer;
 import com.mawai.wiibquant.agent.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibquant.agent.strategy.core.StrategySignal;
@@ -163,7 +164,7 @@ public final class PortfolioBacktestEngine {
         int effLev = PositionSizer.effectiveLeverage(leverage, policy);
         // 组合总权益 = 共享余额 + 全币未实现，riskSizedQty 因此在组合层面复利
         BigDecimal qty = PositionSizer.riskSizedQty(tools.getTotalEquity(), fillPrice,
-                signal.stopLossPrice(), policy, effLev);
+                signal.stopLossPrice(), policy, effLev, TradeFilterDefaults.futures(symbol));
         if (qty.signum() <= 0) return;
 
         tools.setCurrentPrice(fillPrice);

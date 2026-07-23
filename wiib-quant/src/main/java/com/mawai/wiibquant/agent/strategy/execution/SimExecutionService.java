@@ -3,6 +3,7 @@ package com.mawai.wiibquant.agent.strategy.execution;
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
+import com.mawai.wiibcommon.market.TradeFilterDefaults;
 import com.mawai.wiibquant.agent.strategy.core.StrategyMarketView;
 import com.mawai.wiibquant.agent.strategy.core.PositionSizer;
 import com.mawai.wiibquant.agent.strategy.core.StrategyRiskPolicy;
@@ -351,10 +352,10 @@ public class SimExecutionService implements StrategyExecutionPort {
         }
     }
 
-    /** 风险定量：与回测引擎共用 PositionSizer 单一公式。 */
+    /** 风险定量：与回测引擎共用 PositionSizer 单一公式（含交易过滤器落地对齐）。 */
     private BigDecimal riskSizedQty(StrategySignal signal, TradingStrategySpi strategy, BigDecimal equity) {
         return PositionSizer.riskSizedQty(equity, signal.entryRefPrice(), signal.stopLossPrice(),
-                policy(strategy), effectiveLeverage(strategy));
+                policy(strategy), effectiveLeverage(strategy), TradeFilterDefaults.futures(signal.symbol()));
     }
 
     private int effectiveLeverage(TradingStrategySpi strategy) {

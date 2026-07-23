@@ -6,7 +6,9 @@ import com.mawai.wiibcommon.dto.*;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
+import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibcommon.market.ForceOrderService;
+import com.mawai.wiibcommon.market.TradeFilterDefaults;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesTradingService;
@@ -28,6 +30,7 @@ public class FuturesController {
     private final KlineCacheService klineCacheService;
     private final FuturesLeverageBracketRegistry bracketRegistry;
     private final CrossMarginService crossMarginService;
+    private final TradeFilterRegistry tradeFilterRegistry;
 
     /** 开仓 */
     @PostMapping("/open")
@@ -150,5 +153,11 @@ public class FuturesController {
     @GetMapping("/brackets")
     public Result<Map<String, List<FuturesLeverageBracketRegistry.Bracket>>> brackets() {
         return Result.ok(bracketRegistry.getAllBrackets());
+    }
+
+    /** 交易过滤器（步长/最小数量/最小名义额，对齐Binance exchangeInfo，启动时刷新）：合约+现货两套 */
+    @GetMapping("/trade-filters")
+    public Result<Map<String, Map<String, TradeFilterDefaults.Filter>>> tradeFilters() {
+        return Result.ok(Map.of("futures", tradeFilterRegistry.allFutures(), "spot", tradeFilterRegistry.allSpot()));
     }
 }

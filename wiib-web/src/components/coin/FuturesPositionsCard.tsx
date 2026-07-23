@@ -14,6 +14,7 @@ import { NeuToggle } from '../NeuToggle';
 import { PctSlider } from '../PctSlider';
 import { fmtNum } from '../../lib/utils';
 import { getCoin, getCoinPriceDecimals, getCoinPriceStep, formatCoinPrice } from '../../lib/coinConfig';
+import { useTradeFilter } from '../../lib/tradeFilters';
 import type { FuturesPosition, FuturesBracket } from '../../types';
 import { SLTPEditor } from './SLTPEditor';
 import {
@@ -173,7 +174,8 @@ function PositionItem({ pos, brackets, wide, onMutated }: {
   onMutated: (ordersChanged: boolean) => void;
 }) {
   const cfg = getCoin(pos.symbol);
-  const MIN_QTY = cfg.minQty;
+  // 平仓/SLTP 数量步长用合约过滤器（reduce-only 免最小名义额；全量平仓后端豁免步长，存量尘埃仓能平干净）
+  const MIN_QTY = useTradeFilter('futures', pos.symbol).stepSize;
   const PRICE_STEP = getCoinPriceStep(pos.symbol);
   const PRICE_STEP_TEXT = PRICE_STEP.toFixed(getCoinPriceDecimals(pos.symbol));
   const fmtPrice = useCallback((n?: number | null) => formatCoinPrice(pos.symbol, n), [pos.symbol]);

@@ -124,6 +124,38 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         }
     }
 
+    /** 合约 exchangeInfo（全量，含各 symbol 的 LOT_SIZE/MIN_NOTIONAL 过滤器）；失败返回 null。 */
+    public String getFuturesExchangeInfo() {
+        String baseUrl = props.getFuturesRestBaseUrl();
+        if (baseUrl == null || baseUrl.isBlank()) return null;
+        URI uri = UriComponentsBuilder.fromUriString(baseUrl + "/fapi/v1/exchangeInfo").build().toUri();
+        try {
+            log.info("Binance REST futures exchangeInfo");
+            return restTemplate.getForObject(uri, String.class);
+        } catch (Exception e) {
+            log.warn("获取合约exchangeInfo失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 现货 exchangeInfo（按 symbols 过滤，含 LOT_SIZE/NOTIONAL 过滤器）；失败返回 null。 */
+    public String getSpotExchangeInfo(List<String> symbols) {
+        if (symbols == null || symbols.isEmpty()) return null;
+        String arr = symbols.stream().map(s -> "\"" + s + "\"").collect(Collectors.joining(",", "[", "]"));
+        URI uri = UriComponentsBuilder
+                .fromUriString(props.getRestBaseUrl() + "/api/v3/exchangeInfo")
+                .queryParam("symbols", arr)
+                .encode()
+                .build().toUri();
+        try {
+            log.info("Binance REST spot exchangeInfo: {} symbols", symbols.size());
+            return restTemplate.getForObject(uri, String.class);
+        } catch (Exception e) {
+            log.warn("获取现货exchangeInfo失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
     /** premiumIndex 单次响应同时含 markPrice/indexPrice/lastFundingRate，mark 价与资金费率调用方共用。 */
     public String getPremiumIndex(String symbol) {
         String baseUrl = props.getFuturesRestBaseUrl();
