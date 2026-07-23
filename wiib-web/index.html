@@ -6,18 +6,22 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon-180.png" />
     <!-- viewport-fit=cover：iOS 装成 PWA 后全屏，需自行让开刘海/底部横条（安全区内边距见 Layout.tsx） -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="theme-color" content="#F97316" />
+    <!-- 值由下方内联脚本按主题改写；此处默认亮色顶栏底色，装成 PWA 后状态栏与顶栏同色不割裂 -->
+    <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="WIIB" />
     <title>WhatIfIBought</title>
     <script>
+      // 阻塞式执行：必须赶在首帧之前定主题，否则暗色用户每次冷启动都要闪一下白
       (function() {
-        var theme = localStorage.getItem('theme');
-        if (theme === 'dark') {
-          document.documentElement.classList.add('dark');
-        }
+        var dark = localStorage.getItem('theme') === 'dark';
+        if (dark) document.documentElement.classList.add('dark');
+        // 状态栏色同步在这里做，晚到 React 挂载会让 PWA 状态栏先闪一下亮色
+        // 取值须与 index.css 的 --color-card 保持一致（见 src/lib/themeColor.ts）
+        document.querySelector('meta[name="theme-color"]')
+          .setAttribute('content', dark ? '#13151a' : '#ffffff');
       })();
     </script>
   </head>

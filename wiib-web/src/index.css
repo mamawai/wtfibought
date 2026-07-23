@@ -94,6 +94,24 @@ body {
   min-height: 100vh;
 }
 
+/* ===== 移动端触摸观感（装成 PWA 后尤其明显）=====
+   顶部下拉会触发整页刷新——本站代价特别大，等于重连全部 WebSocket 再重拉行情，
+   全屏无地址栏时手一滑就中招；本站也没有下拉刷新功能，直接禁掉无损失。
+   （点击蓝框不用管，Tailwind preflight 已全局设了 tap-highlight-color:transparent） */
+html, body {
+  overscroll-behavior-y: none;          /* 禁下拉刷新，顺带消掉 iOS 橡皮筋露底 */
+}
+
+/* 长按弹"复制/查找"菜单只对操作类元素关闭；
+   正文、留言、AI 对话、行情数字、输入框一律保持可选可复制 */
+button,
+[role="button"],
+header a,
+nav a {
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
 /* ===== Animations ===== */
 @layer utilities {
   @keyframes wiib-fade-in { from { opacity: 0 } to { opacity: 1 } }

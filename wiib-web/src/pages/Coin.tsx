@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { TrendingUp, TrendingDown, ChevronRight } from 'lucide-react';
+import { TrendingUp, TrendingDown, ChevronRight, ChevronLeft } from 'lucide-react';
 import { cryptoApi, cryptoOrderApi, futuresApi } from '../api';
 import { useUserStore } from '../stores/userStore';
 import { useCryptoStream } from '../hooks/useCryptoStream';
@@ -35,6 +35,8 @@ export function CoinRoute() {
 export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const cfg = getCoin(symbol);
   const Icon = cfg.icon;
+  // 返回目标写死对应列表页而不是 navigate(-1)：后者在直接打开深链时会一路退出 App
+  const backTo = cfg.category === 'commodity' ? '/commodity' : cfg.category === 'tradfi' ? '/tradfi' : '/coin';
   const fmtPrice = useCallback((n?: number | null) => formatCoinPrice(symbol, n), [symbol]);
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -132,6 +134,16 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
       {/* 页头：去卡片化的终端报价行 */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
+          {/* 返回列表：装成 PWA 后 iOS 没有浏览器返回键，底部 Tab 的"市场"只通向股票列表，
+              不给入口就退不回币种/大宗/TradFi 列表 */}
+          <button
+            type="button"
+            onClick={() => navigate(backTo)}
+            aria-label="返回列表"
+            className="shrink-0 h-9 w-9 -ml-1.5 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
           <Icon className={`w-8 h-8 sm:w-9 sm:h-9 shrink-0 ${cfg.colorClass}`} />
           <div className="space-y-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
