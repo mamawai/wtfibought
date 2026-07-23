@@ -7,6 +7,7 @@ import { useSystemHealth, type HealthLevel } from '../hooks/useSystemHealth';
 import { Button } from './ui/button';
 import { NotificationBell } from './NotificationBell';
 import { TickerStrip } from './TickerStrip';
+import { OfflineBanner } from './OfflineBanner';
 import { cn } from '../lib/utils';
 import {
   Home, Briefcase, LogOut, LogIn, TrendingUp, Sun, Moon,
@@ -66,7 +67,8 @@ export function Layout({ children }: Props) {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       {/* ===== 全宽顶栏 + 行情副条 ===== */}
-      <header className="sticky top-0 z-50 w-full">
+      {/* 安全区：装成 PWA 后页面顶到屏幕边缘，顶栏自己让开刘海和横屏圆角 */}
+      <header className="sticky top-0 z-50 w-full bg-card pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
         <div className="flex h-12 items-center gap-5 border-b border-border bg-card px-3 md:px-5">
           {/* Logo */}
           <button
@@ -145,15 +147,16 @@ export function Layout({ children }: Props) {
         </div>
 
         <TickerStrip />
+        <OfflineBanner />
       </header>
 
       {/* Main */}
-      <main className="flex-1 pb-24 md:pb-6 pt-4">
+      <main className="flex-1 pb-24 md:pb-6 pt-4 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
         {children}
       </main>
 
       {/* ===== 移动端底部 Tab：贴边实条 ===== */}
-      <nav className="fixed bottom-0 inset-x-0 md:hidden z-50 flex items-stretch border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
+      <nav className="fixed bottom-0 inset-x-0 md:hidden z-50 flex items-stretch border-t border-border bg-card pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
         <BottomNavItem to="/" icon={<Home className="w-5 h-5" />} label="首页" />
         <BottomNavItem to="/bstock" icon={<BarChart3 className="w-5 h-5" />} label="市场" forceActive={isMarketActive} />
         <BottomNavItem to="/portfolio" icon={<Briefcase className="w-5 h-5" />} label="持仓" />
