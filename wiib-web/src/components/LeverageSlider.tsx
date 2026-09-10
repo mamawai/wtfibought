@@ -47,15 +47,11 @@ export function LeverageSlider({ value, max, ticks, onChange, min = 1 }: Leverag
 
   return (
     <div className={disabled ? 'opacity-45' : ''}>
-      <div className="relative">
-        <div className="relative h-1.5 bg-border mx-1.5 mt-3 mb-1.5">
-          <div className="absolute left-0 top-0 bottom-0 bg-foreground" style={{ width: `${pct}%` }} />
-          <div className="absolute top-1/2 w-4 h-4 bg-background border-2 border-foreground -translate-x-1/2 -translate-y-1/2" style={{ left: `${pct}%` }} />
-        </div>
-        {/* 拇指热区放到 28px，手机好按；touch-action:none 免得拖滑杆带着页面滚 */}
+      <div className="ui-slider">
+        {/* 原生拇指宽 28px，视觉轨道两端各让 14px，拖动位置才能对齐。 */}
         <input
           type="range"
-          className="absolute inset-0 w-full h-full m-0 opacity-0 cursor-pointer appearance-none touch-none disabled:cursor-default [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-7 [&::-webkit-slider-thumb]:h-7 [&::-moz-range-thumb]:w-7 [&::-moz-range-thumb]:h-7 [&::-moz-range-thumb]:border-0"
+          className="ui-slider-input absolute inset-0 z-10 w-full h-full m-0 opacity-0 cursor-grab active:cursor-grabbing appearance-none touch-none disabled:cursor-default [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-7 [&::-webkit-slider-thumb]:h-7 [&::-moz-range-thumb]:w-7 [&::-moz-range-thumb]:h-7 [&::-moz-range-thumb]:border-0"
           min={0}
           max={RES}
           step={1}
@@ -65,13 +61,22 @@ export function LeverageSlider({ value, max, ticks, onChange, min = 1 }: Leverag
           aria-valuetext={`${value}x`}
           onChange={e => onChange(valueAt(Number(e.target.value) / RES))}
         />
+        <div className="ui-slider-track" aria-hidden="true">
+          <div className="absolute inset-y-0 left-0 bg-foreground" style={{ width: `${pct}%` }} />
+          <div className="ui-slider-thumb" style={{ left: `${pct}%` }} />
+        </div>
       </div>
-      <div className="num flex justify-between px-0.5 text-[11px] text-muted-foreground">
+      {/* 档位跟旋钮共用 posOf 定位，各自居中钉在自己那格上；左右让出的 14px 跟轨道对齐。
+          三位数的档位自己撑宽，窄屏挤在一起也只是靠拢，不会把面板撑出横向滚动 */}
+      <div className="num relative mx-[14px] h-7 text-[11px] text-muted-foreground">
         {nodes.map(node => (
           <button
             key={node}
             type="button"
-            className={`cursor-pointer transition-colors ${value === node ? 'text-foreground font-bold' : 'hover:text-foreground'}`}
+            disabled={disabled}
+            aria-pressed={value === node}
+            style={{ left: `${posOf(node) * 100}%` }}
+            className={`ui-slider-tick absolute top-0 -translate-x-1/2 inline-flex h-7 min-w-7 items-center justify-center px-1 cursor-pointer disabled:cursor-default ${value === node ? 'bg-foreground text-background font-bold' : ''}`}
             onClick={() => onChange(node)}
           >
             {node}

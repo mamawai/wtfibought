@@ -51,7 +51,14 @@
     "deletedPlaceholder": "This comment was deleted"
   },
   "ranking": {
-    "title": "Asset leaderboard",
+    "title": "Trading leaderboard",
+    "sortLabel": "Rank by",
+    "leaders": "Leading traders",
+    "board": "Rankings",
+    "range": "Ranks {{from}}–{{to}}",
+    "pagination": "Leaderboard pages",
+    "prevPage": "Previous",
+    "nextPage": "Next",
     "updateHint": "Updates every 10 minutes during market hours",
     "totalUsers": "Only users with at least one fill · <0>{{total}}</0> ranked",
     "rowHint": "Tap any row to see that user's holdings and position history",
@@ -64,6 +71,7 @@
       "third": "Third"
     },
     "me": {
+      "title": "Your position",
       "badge": "YOU",
       "notRanked": "You're not ranked yet — one fill puts you on the board"
     },

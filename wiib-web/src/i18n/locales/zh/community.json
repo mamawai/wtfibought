@@ -47,7 +47,14 @@
     "deletedPlaceholder": "该留言已删除，无法查看"
   },
   "ranking": {
-    "title": "资产排行榜",
+    "title": "交易排行榜",
+    "sortLabel": "排名依据",
+    "leaders": "本榜前三",
+    "board": "榜单明细",
+    "range": "第 {{from}}—{{to}} 名",
+    "pagination": "榜单翻页",
+    "prevPage": "上一页",
+    "nextPage": "下一页",
     "updateHint": "交易时段每 10 分钟更新",
     "totalUsers": "仅统计有过成交的用户 · 共 <0>{{total}}</0> 人",
     "rowHint": "点任意一行可以查看该用户的持仓与仓位历史",
@@ -60,6 +67,7 @@
       "third": "季军"
     },
     "me": {
+      "title": "我的排名",
       "badge": "我",
       "notRanked": "你还没上榜，完成一笔成交就进榜"
     },

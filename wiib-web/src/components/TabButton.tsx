@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { cn } from '../lib/utils';
 
-/** 页内分组切换按钮：激活格 = 次级面板底 + 顶部橙色指示线（仪器面板选中态）。 */
+/** 边框始终占位，切换时文字不跳；指示线和底色一起过渡。 */
 export function TabButton({ active, onClick, icon, children }: {
   active: boolean;
   onClick: () => void;
@@ -10,11 +10,13 @@ export function TabButton({ active, onClick, icon, children }: {
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
-        'flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-md text-sm font-medium transition-colors whitespace-nowrap',
+        'ui-tab relative flex-1 flex items-center justify-center gap-2 py-2 px-3 border border-transparent rounded-md text-sm font-medium whitespace-nowrap cursor-pointer',
         active
-          ? 'bg-card-2 text-foreground border border-border shadow-[inset_0_2px_0_var(--color-primary)]'
+          ? 'bg-card-2 text-foreground border-border'
           : 'text-muted-foreground hover:text-foreground hover:bg-surface-hover'
       )}
     >

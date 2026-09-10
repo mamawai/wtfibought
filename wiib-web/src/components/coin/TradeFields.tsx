@@ -1,4 +1,5 @@
 import { cn } from '../../lib/utils';
+import { ArrowLeftRight } from 'lucide-react';
 import { POSITION_PCTS } from './futuresMath';
 
 /** 塞进 .input 里的裸输入：撑满、去掉自带边框和上下箭头，字体跟着 .input 走 */
@@ -34,8 +35,9 @@ export function NumInput({ value, onChange, placeholder, step, min, max, unit, o
       />
       {unit && (onUnitClick
         ? (
-          <button type="button" className="unit cursor-pointer hover:text-foreground transition-colors" title={unitTitle} onClick={onUnitClick}>
+          <button type="button" className="unit inline-flex items-center gap-1.5 self-stretch pl-3 border-l border-border cursor-pointer" title={unitTitle} aria-label={unitTitle} onClick={onUnitClick}>
             {unit}
+            <ArrowLeftRight aria-hidden="true" className="size-3 shrink-0" />
           </button>
         )
         : <span className="unit">{unit}</span>

@@ -38,6 +38,7 @@
   /* 中文回落系统字体，不打包 CJK */
   --font-sans: "Archivo Variable", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --ease-control: cubic-bezier(.2, .8, .2, 1);
   /* 汉字可读性：全站的说明/规则/提示长文本几乎都压在 text-xs 上，默认 0.75rem 读中文太挤。
      抬到 0.8125rem 并放宽行高，一个旋钮改全站；层级不变（仍小于 text-sm），
      10/11px 与 .microlabel 那些仪表微标签是设计元素，不跟着动 */
@@ -217,6 +218,30 @@ html.pwa nav a {
 .led-down { background: var(--color-loss); }
 .led-off { background: var(--color-muted-foreground); opacity: .5; }
 
+/* Polaris 浮动球：近处压住球体，外层柔影拉开与页面的距离。 */
+@layer components {
+  .polaris-ball {
+    --ball-shadow: 0 2px 5px rgb(18 19 22 / .09), 0 8px 22px rgb(18 19 22 / .14);
+    --ball-lift-shadow: 0 3px 7px rgb(18 19 22 / .12), 0 12px 28px rgb(18 19 22 / .19);
+    box-shadow: var(--ball-shadow);
+  }
+  html.dark .polaris-ball {
+    --ball-shadow: 0 3px 7px rgb(0 0 0 / .35), 0 10px 26px rgb(0 0 0 / .48), inset 0 1px 0 rgb(255 255 255 / .06);
+    --ball-lift-shadow: 0 4px 10px rgb(0 0 0 / .42), 0 14px 32px rgb(0 0 0 / .56), inset 0 1px 0 rgb(255 255 255 / .08);
+  }
+  .polaris-ball[data-dragging="true"] { box-shadow: var(--ball-lift-shadow); }
+  .polaris-ball:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 4px; }
+  @media (hover: hover) {
+    .polaris-ball:hover:not(:disabled) { box-shadow: var(--ball-lift-shadow); }
+  }
+}
+
+/* 收回时先让内容退场，剩下的外壳跟球是同一套卡片底 + 边，缩到最后就是球本身，
+   看着是面板变成了球，不是面板关掉再冒一个球出来。
+   不进 @layer：面板里随手加个 transition-* 工具类就会把这里的过渡整条顶掉 */
+#polaris-dock > * { transition: opacity 150ms var(--ease-control); }
+#polaris-dock[data-state="closing"] > * { opacity: 0; }
+
 /* 机加工边缘：实体感控件（开关/游戏件）顶部 1px 高光 */
 .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5); }
 html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
@@ -323,11 +348,8 @@ html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
   @keyframes pt-pulse{0%,100%{opacity:1}50%{opacity:.25}}
 
   /* 按钮：实心墨 / 描边 / 橙 */
-  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 18px;border:1.5px solid var(--color-foreground);background:transparent;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;transition:background-color .15s,color .15s,border-color .15s,transform .08s}
-  .btn:hover{background:var(--color-card-2)}
-  .btn:active,.seg button:active,.ibtn:active{transform:translateY(1px)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 18px;border:1.5px solid var(--color-foreground);background:transparent;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}
   .btn.fill{background:var(--color-foreground);color:var(--color-background)}
-  .btn.fill:hover{opacity:.9}
   .btn.orange{background:var(--color-primary);border-color:var(--color-primary);color:#fff}
   .btn.gain{background:var(--color-gain);border-color:var(--color-gain);color:#fff}
   .btn.loss{background:var(--color-loss);border-color:var(--color-loss);color:#fff}
@@ -337,13 +359,12 @@ html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
 
   /* 段选：一排并排的小按钮，选中的填墨 */
   .seg{display:inline-flex;border:1px solid var(--color-foreground)}
-  .seg button{background:none;border:0;border-right:1px solid var(--color-foreground);height:30px;padding:0 12px;display:inline-flex;align-items:center;gap:5px;font-size:13px;font-weight:600;color:var(--color-muted-foreground);cursor:pointer;transition:background-color .15s,color .15s}
+  .seg button{background:none;border:0;border-right:1px solid var(--color-foreground);height:30px;padding:0 12px;display:inline-flex;align-items:center;gap:5px;font-size:13px;font-weight:600;color:var(--color-muted-foreground);cursor:pointer}
   .seg button:last-child{border-right:0}
   .seg button.on{background:var(--color-foreground);color:var(--color-background)}
 
   /* 图标钮：30 方格细框，激活填墨；开关类（参考线/成交/快讯/全屏）和竖栏工具都用它 */
-  .ibtn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--color-foreground);background:transparent;padding:0;color:var(--color-muted-foreground);cursor:pointer;transition:background-color .15s,color .15s}
-  .ibtn:hover{background:var(--color-card-2);color:var(--color-foreground)}
+  .ibtn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--color-foreground);background:transparent;padding:0;color:var(--color-muted-foreground);cursor:pointer}
   .ibtn.on{background:var(--color-foreground);color:var(--color-background)}
   .ibtn .ic{width:15px;height:15px}
 
@@ -353,6 +374,129 @@ html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
   .input{height:42px;border:1px solid var(--color-foreground);background:transparent;padding:0 12px;font-size:16px;display:flex;align-items:center;gap:8px;font-family:inherit}
   .input.num{font-stretch:85%}
   .input .unit{margin-left:auto;font-size:12.5px;color:var(--color-muted-foreground);font-weight:600}
+
+  /* React 控件与页面里的 .btn/.input 共用反馈；只动颜色和位移，不改变占位。 */
+  .ui-button, .btn, .ibtn, .seg button, .ui-tab, .ui-slider-tick {
+    outline: 2px solid transparent;
+    outline-offset: 3px;
+    transition:
+      background-color 160ms var(--ease-control),
+      border-color 160ms var(--ease-control),
+      color 160ms var(--ease-control),
+      opacity 160ms var(--ease-control),
+      outline-color 160ms var(--ease-control),
+      transform 100ms var(--ease-control);
+  }
+  .ui-button:focus-visible, .btn:focus-visible, .ibtn:focus-visible,
+  .seg button:focus-visible, .ui-tab:focus-visible, .ui-slider-tick:focus-visible {
+    outline-color: var(--color-ring);
+  }
+  .seg button:focus-visible { position: relative; z-index: 1; }
+  .ui-button:active:not(:disabled), .btn:active:not(:disabled),
+  .ibtn:active:not(:disabled), .ui-slider-tick:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  .seg button:active:not(:disabled), .ui-tab:active:not(:disabled) { opacity: .8; }
+  .btn:disabled, .ibtn:disabled, .seg button:disabled { cursor: not-allowed; opacity: .5; }
+
+  /* 触屏不留下悬停底色；条件跟 Tailwind v4 的 hover: 一致，免得同一页两套口径。 */
+  @media (hover: hover) {
+    .btn:hover:not(:disabled) { background: var(--color-card-2); }
+    .btn.fill:hover:not(:disabled), .ibtn.on:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--color-foreground) 88%, var(--color-background));
+    }
+    .btn.orange:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--color-primary) 88%, var(--color-foreground));
+    }
+    .btn.gain:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--color-gain) 88%, var(--color-foreground));
+    }
+    .btn.loss:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--color-loss) 88%, var(--color-foreground));
+    }
+    /* 选中的档位已经填墨，划过时不再给底色，免得跟选中态撞脸 */
+    .ibtn:hover:not(:disabled):not(.on), .seg button:hover:not(:disabled):not(.on),
+    .ui-slider-tick:hover:not(:disabled):not([aria-pressed="true"]) {
+      background: var(--color-card-2);
+      color: var(--color-foreground);
+    }
+    .ui-input:hover:not(:disabled):not(:focus), .input:hover:not(:focus-within) {
+      border-color: var(--color-muted-foreground);
+    }
+    .input button.unit:hover { color: var(--color-foreground); }
+  }
+
+  .ui-input { border-color: var(--color-border); }
+  .ui-input, .input {
+    outline: none;
+    transition:
+      border-color 160ms var(--ease-control),
+      background-color 160ms var(--ease-control),
+      box-shadow 180ms var(--ease-control);
+  }
+  /* 数值与单位组成一个输入框，聚焦任一部分时一起亮，内边距不跳。 */
+  .ui-input:focus, .input:focus-within {
+    border-color: var(--color-ring);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-ring) 16%, transparent);
+  }
+  .ui-input[aria-invalid="true"] {
+    border-color: var(--color-loss);
+  }
+  .ui-input[aria-invalid="true"]:focus {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-loss) 16%, transparent);
+  }
+  .field > label, .input button.unit { transition: color 160ms var(--ease-control); }
+  .field:focus-within > label { color: var(--color-foreground); }
+  .input button.unit:focus-visible { outline: none; color: var(--color-foreground); text-decoration: underline; text-underline-offset: 4px; }
+
+  .ui-tab::after {
+    content: "";
+    position: absolute;
+    inset-inline: 12px;
+    bottom: -1px;
+    height: 2px;
+    background: var(--color-primary);
+    opacity: 0;
+    transform: scaleX(.65);
+    transition: opacity 160ms var(--ease-control), transform 200ms var(--ease-control);
+    pointer-events: none;
+  }
+  .ui-tab[aria-pressed="true"]::after { opacity: 1; transform: scaleX(1); }
+
+  .ui-slider { position: relative; display: flex; align-items: center; height: 36px; padding-inline: 14px; }
+  .ui-slider-track { position: relative; width: 100%; height: 5px; background: var(--color-border); pointer-events: none; }
+  .ui-slider-thumb {
+    position: absolute;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--color-foreground);
+    background: var(--color-background);
+    outline: 2px solid transparent;
+    outline-offset: 3px;
+    transform: translate(-50%, -50%);
+    /* left 跟手直达，不做缓动；只给抓取状态一点回馈。 */
+    transition: transform 120ms var(--ease-control), border-color 160ms var(--ease-control), outline-color 160ms var(--ease-control);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .ui-slider-input:hover:not(:disabled) + .ui-slider-track .ui-slider-thumb {
+      transform: translate(-50%, -50%) scale(1.125);
+    }
+  }
+  .ui-slider-input:active:not(:disabled) + .ui-slider-track .ui-slider-thumb {
+    border-color: var(--color-primary);
+    transform: translate(-50%, -50%) scale(1.2);
+  }
+  .ui-slider-input:focus-visible + .ui-slider-track .ui-slider-thumb { outline-color: var(--color-ring); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ui-button, .btn, .ibtn, .seg button, .ui-tab, .ui-tab::after,
+    .ui-input, .input, .input button.unit, .field > label, .ui-slider-thumb, .ui-slider-tick { transition: none; }
+    .ui-button:active:not(:disabled), .btn:active:not(:disabled),
+    .ibtn:active:not(:disabled), .ui-slider-tick:active:not(:disabled) { transform: none; }
+    .ui-slider-input:hover:not(:disabled) + .ui-slider-track .ui-slider-thumb,
+    .ui-slider-input:active:not(:disabled) + .ui-slider-track .ui-slider-thumb { transform: translate(-50%, -50%); }
+  }
 
   /* 键值行 */
   .kv{display:flex;justify-content:space-between;align-items:baseline;padding:9px 0;border-bottom:1px solid var(--color-border);font-size:14px}
