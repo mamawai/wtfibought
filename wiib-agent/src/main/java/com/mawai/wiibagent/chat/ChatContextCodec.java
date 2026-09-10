@@ -105,7 +105,7 @@ public final class ChatContextCodec {
             case UserMessage user -> {
                 o.fluentPut(TYPE_KEY, USER).fluentPut("text", user.getText());
                 List<Media> media = user.getMedia();
-                if (media != null && !media.isEmpty()) {
+                if (!media.isEmpty()) {
                     JSONArray list = new JSONArray(media.size());
                     for (Media m : media) {
                         MimeType mime = m.getMimeType();
@@ -122,29 +122,25 @@ public final class ChatContextCodec {
             case AssistantMessage assistant -> {
                 o.fluentPut(TYPE_KEY, ASSISTANT).fluentPut("text", assistant.getText());
                 JSONArray list = new JSONArray();
-                if (assistant.getToolCalls() != null) {
-                    for (AssistantMessage.ToolCall c : assistant.getToolCalls()) {
-                        list.add(new JSONObject()
-                                .fluentPut(TYPE_KEY, TOOL_CALL_TYPE)
-                                .fluentPut("id", c.id())
-                                .fluentPut("type", c.type())
-                                .fluentPut("name", c.name())
-                                .fluentPut("arguments", c.arguments()));
-                    }
+                for (AssistantMessage.ToolCall c : assistant.getToolCalls()) {
+                    list.add(new JSONObject()
+                            .fluentPut(TYPE_KEY, TOOL_CALL_TYPE)
+                            .fluentPut("id", c.id())
+                            .fluentPut("type", c.type())
+                            .fluentPut("name", c.name())
+                            .fluentPut("arguments", c.arguments()));
                 }
                 o.put("toolCalls", list);
             }
             case ToolResponseMessage tool -> {
                 o.put(TYPE_KEY, TOOL);
                 JSONArray list = new JSONArray();
-                if (tool.getResponses() != null) {
-                    for (ToolResponseMessage.ToolResponse r : tool.getResponses()) {
-                        list.add(new JSONObject()
-                                .fluentPut(TYPE_KEY, TOOL_RESPONSE_TYPE)
-                                .fluentPut("id", r.id())
-                                .fluentPut("name", r.name())
-                                .fluentPut("responseData", r.responseData()));
-                    }
+                for (ToolResponseMessage.ToolResponse r : tool.getResponses()) {
+                    list.add(new JSONObject()
+                            .fluentPut(TYPE_KEY, TOOL_RESPONSE_TYPE)
+                            .fluentPut("id", r.id())
+                            .fluentPut("name", r.name())
+                            .fluentPut("responseData", r.responseData()));
                 }
                 o.put("responses", list);
             }
