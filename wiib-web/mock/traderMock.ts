@@ -9,6 +9,7 @@ import type { Plugin } from 'vite';
 import type { ServerResponse } from 'node:http';
 import { basePrice, hasFutures, klines, livePrice, roundPrice } from './market';
 import { handleQuotes } from './stompMock';
+import { LEDGER_BIZ_TYPES, LEDGER_ENTRIES, rankingRows } from './account';
 
 const MIN = 60_000;
 const HOUR = 3_600_000;
@@ -998,6 +999,34 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
         const bstockMatch = path.match(/^\/api\/bstock\/([A-Z0-9]+)$/);
         if (bstockMatch) {
           return ok(res, bstockList().find(b => b.symbol === bstockMatch[1]) ?? bstockList()[0]);
+        }
+
+        // ---- 账单：类型筛选与 beforeId 游标都走预览接口，浏览器无需另塞测试数据 ----
+        if (path === '/api/ledger/biz-types') return ok(res, LEDGER_BIZ_TYPES);
+        if (path === '/api/ledger') {
+          const bizType = q.get('bizType');
+          const beforeId = Number(q.get('beforeId')) || Infinity;
+          const limit = Math.max(1, Math.min(Number(q.get('limit')) || 30, 100));
+          const rows = LEDGER_ENTRIES.filter(entry => (!bizType || entry.bizType === bizType) && entry.id < beforeId);
+          return ok(res, rows.slice(0, limit));
+        }
+
+        // ---- 真人排行与用户主页 ----
+        if (path === '/api/ranking') {
+          const rows = rankingRows(q.get('sort'));
+          const size = Math.max(1, Math.min(Number(q.get('pageSize')) || 20, 100));
+          const current = Math.max(1, Math.trunc(Number(q.get('pageNum')) || 1));
+          return ok(res, {
+            records: rows.slice((current - 1) * size, current * size),
+            total: rows.length, size, current, pages: Math.ceil(rows.length / size),
+          });
+        }
+        if (path === '/api/ranking/me') return ok(res, rankingRows(q.get('sort')).find(row => row.userId === 9001));
+        const rankingUser = path.match(/^\/api\/ranking\/users\/(\d+)(?:\/(trades|position-history))?$/);
+        if (rankingUser) {
+          if (rankingUser[2]) return ok(res, page([]));
+          const summary = rankingRows('ASSETS').find(row => row.userId === Number(rankingUser[1]));
+          return ok(res, summary ? { summary, spotPositions: [], futuresPositions: [] } : null);
         }
 
         // ---- 持仓页 ----

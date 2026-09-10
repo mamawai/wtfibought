@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Bot, KeyRound, Loader2, X } from 'lucide-react';
@@ -28,6 +28,19 @@ const DRAG_THRESHOLD = 8;
 /** 拖完补的那个 click 在这段时间内到达就吞掉。用时间戳不用布尔：补不出 click 的路径
  *  （拖出元素、触摸被取消）会把布尔标记一直留着，下一次键盘 Enter 就被冤枉吞掉 */
 const CLICK_SWALLOW_MS = 300;
+
+/** 开像从 Dock 图标里放大出来，关像被吸回去。收回要看得清是「一路缩过去」，
+ *  所以比打开还长一点——短了就成了原地消失，看不出面板去了哪 */
+const OPEN_MS = 400, CLOSE_MS = 440;
+
+const canAnimateDock = () => typeof Element.prototype.animate === 'function'
+  && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** 反向关闭时接住正在显示的那一帧，不能先跳到完整尺寸再缩回去。 */
+function motionFrame(element: HTMLElement) {
+  const style = getComputedStyle(element);
+  return { transform: style.transform, opacity: style.opacity, borderRadius: style.borderRadius };
+}
 
 /** 面板尺寸的 CSS 上限用的是 rem（max-w-[calc(100vw-2rem)] / max-h-[calc(100vh-6.5rem)]），
  *  JS 侧的钳制得用同一把尺子，写死 px 在 PC(17px 根字号) 下会差出十几像素 */
@@ -96,6 +109,10 @@ export function ChatDock() {
   const { t } = useTranslation('ai');
   const { loading, items } = useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
   const [open, setOpen] = useState(false);
+  // open 管交互，present 管挂载；收回球里的动画结束后才卸载内容。
+  const [present, setPresent] = useState(false);
+  const motionRef = useRef<Animation | null>(null);
+  const motionStartRef = useRef<ReturnType<typeof motionFrame> | null>(null);
   const [unread, setUnread] = useState(false);
   // null=首次还没查回来（面板内转圈）。每次打开都重查：用户去配置页存完回来，不用刷新页面
   const [hasConfig, setHasConfig] = useState<boolean | null>(null);
@@ -123,6 +140,8 @@ export function ChatDock() {
   const [desktop, setDesktop] = useState(() => window.matchMedia('(min-width: 768px)').matches);
   useEffect(() => {
     const onResize = () => {
+      // 收放动画按旧的球位置和面板尺寸算的，视口一变就先让它落地
+      motionRef.current?.finish();
       setBounds(ballBounds());
       setDesktop(window.matchMedia('(min-width: 768px)').matches);
     };
@@ -135,17 +154,99 @@ export function ChatDock() {
   // 全屏 = 铺满浏览器视口的一个 fixed 层，不走原生 Fullscreen API：那个连地址栏、标签栏一起吃掉，
   // 整块屏幕只剩对话，跟"一边看盘一边问"是反着的。K 线那边仍用原生（看图本来就该独占屏幕）
   const [fullscreen, setFullscreen] = useState(false);
-  const toggleFullscreen = useCallback(() => setFullscreen(v => !v), []);
+  const toggleFullscreen = useCallback(() => {
+    motionRef.current?.finish();
+    setFullscreen(v => !v);
+  }, []);
 
-  // 球在面板打开时是 display:none 的，焦点会跟着掉进 body。打开时把焦点送进面板，
-  // 关闭时还给球——不接的话键盘用户开完面板就找不着北，关完也回不到原处。
-  // 只认"开过又关上"这一次：首挂时 open 就是 false，不判的话页面一加载就把焦点抢到球上
-  const wasOpenRef = useRef(false);
+  useLayoutEffect(() => {
+    const panel = dockRef.current, trigger = ballBtnRef.current;
+    if (!present || !panel || !trigger || !canAnimateDock()) {
+      motionStartRef.current = null;
+      return;
+    }
+
+    const rect = panel.getBoundingClientRect();
+    const ballRect = trigger.getBoundingClientRect();
+    // 绕默认的中心缩放，再把中心平移到球心。
+    // 别改成把 transform-origin 钉在球心：origin 是缩放的不动点，不是缩放后的中心，
+    // 缩完中心停在 origin+(半宽-origin)×scale，400x672 的面板收到 48 的球上会差二十几像素。
+    // translate 和 scale 必须写在同一条 transform 里走同一个进度，分轴分进度才会中途甩偏
+    const dx = ballRect.left + ballRect.width / 2 - rect.left - rect.width / 2;
+    const dy = ballRect.top + ballRect.height / 2 - rect.top - rect.height / 2;
+    const scaleX = ballRect.width / Math.max(rect.width, 1);
+    const scaleY = ballRect.height / Math.max(rect.height, 1);
+
+    // 球的位置和形状。50% 的圆角在非等比缩放下也跟着压，落到球那一刻正好是个正圆
+    const collapsed = {
+      transform: `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`,
+      borderRadius: '50%',
+    };
+    // 展开态也写成同构的函数列表，让两端逐函数插值，不退化成矩阵插值
+    const expanded = { ...motionFrame(panel), transform: 'translate(0px, 0px) scale(1, 1)' };
+    const from = motionStartRef.current ?? (open ? { ...collapsed, opacity: '0' } : expanded);
+    motionStartRef.current = null;
+
+    // 展开到一半就关掉时按当前大小折算时长，剩一小截还等满程会显得拖沓。
+    // 下限给到 220：再短就看不出收的过程了
+    const startScale = new DOMMatrixReadOnly(from.transform === 'none' ? undefined : from.transform).a;
+    const extent = clamp((startScale - scaleX) / Math.max(1 - scaleX, .001), 0, 1);
+    const closeMs = Math.round(220 + (CLOSE_MS - 220) * Math.sqrt(extent));
+
+    const frames: Keyframe[] = open ? [
+      { ...from, offset: 0 },
+      // 先补齐不透明再撑开，免得背景文字从半透明的面板里透出来
+      { opacity: 1, offset: .3 },
+      { borderRadius: expanded.borderRadius, offset: .5 },
+      { ...expanded, offset: 1 },
+    ] : [
+      { ...from, offset: 0 },
+      // 早早开始化圆，外壳全程实心地缩。末帧就是球的样子，不淡出——
+      // 一淡就露出底下的球，成了「球先冒出来、面板还在缩」
+      { borderRadius: from.borderRadius, offset: .3 },
+      { ...collapsed, opacity: from.opacity, offset: 1 },
+    ];
+    const animation = panel.animate(frames, {
+      duration: open ? OPEN_MS : closeMs,
+      // 开：先窜出大半再慢慢贴到位。关：前段留出起势，中段收，末段贴住球停下。
+      // 关这条不能用先慢后猛的 ease-in——大半路程挤在最后一瞬走完，看着就是原地变没
+      easing: open ? 'cubic-bezier(.25, .8, .25, 1)' : 'cubic-bezier(.55, 0, .35, 1)',
+      fill: 'both',
+    });
+    motionRef.current = animation;
+
+    animation.onfinish = () => {
+      if (motionRef.current !== animation || openRef.current !== open) return;
+      motionRef.current = null;
+      motionStartRef.current = null;
+      if (open) {
+        animation.cancel();
+      } else {
+        setPresent(false);
+        // 全屏尺寸保留到收回结束，否则关闭第一帧会先跳回小窗。
+        setFullscreen(false);
+      }
+    };
+
+    return () => {
+      if (motionRef.current === animation) {
+        motionStartRef.current = motionFrame(panel);
+        motionRef.current = null;
+      }
+      animation.cancel();
+    };
+  }, [open, present]);
+
+  // 球要等收回结束才可聚焦；首挂不抢焦点，重新出现后再接回来。
+  const wasPresentRef = useRef(false);
   useEffect(() => {
-    if (open) dockRef.current?.focus();
-    else if (wasOpenRef.current) ballBtnRef.current?.focus();
-    wasOpenRef.current = open;
-  }, [open]);
+    if (open) dockRef.current?.focus({ preventScroll: true });
+    // 点外部输入框关闭时，保留用户刚移过去的焦点。
+    else if (!present && wasPresentRef.current && document.activeElement === document.body) {
+      ballBtnRef.current?.focus({ preventScroll: true });
+    }
+    wasPresentRef.current = present;
+  }, [open, present]);
 
   // 面板关着时一轮研判跑完（loading 真→假）→ 气泡亮橙点
   useEffect(() => {
@@ -157,12 +258,18 @@ export function ChatDock() {
     });
   }, []);
 
-  // 所有关面板的路径都走这里，退全屏就收口在这一处：全屏态留在一个关着的面板上，
-  // 下次点球会直接铺满整屏，不是用户点那一下预期的样子
+  // 无动效偏好下直接开关；其余关闭路径统一等退出动画收尾。
   const setOpenBoth = useCallback((v: boolean) => {
     openRef.current = v;
     setOpen(v);
-    if (!v) setFullscreen(false);
+    if (v) setPresent(true);
+    else {
+      dragRef.current = null;
+      if (!canAnimateDock()) {
+        setPresent(false);
+        setFullscreen(false);
+      }
+    }
   }, []);
 
   const toggle = useCallback(() => {
@@ -204,7 +311,7 @@ export function ChatDock() {
   const ballDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     // 已经有手指在拖就不抢：第二根手指进来会把起点算成它的，正在拖的球会瞬间跳位，
     // 它先松手还会把拖动整个终结掉
-    if (ballRef.current) return;
+    if (present || ballRef.current) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     const b = ballBounds();
     const ox = ball.side === 'left' ? b.minX : b.maxX;
@@ -242,6 +349,7 @@ export function ChatDock() {
 
   /** 面板锚在球那一侧的底角，所以往"外"拖是放大：锚右往左拖，锚左往右拖 */
   const resizeStart = (axis: Axis) => (e: React.PointerEvent) => {
+    motionRef.current?.finish();
     e.preventDefault();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     dragRef.current = { axis, x: e.clientX, y: e.clientY, w: size.w, h: size.h, cur: size };
@@ -299,24 +407,30 @@ export function ChatDock() {
           top: ballY,
           // 吸边回弹带一点过冲；拖动中必须关掉 left/top 的过渡，否则球跟不上手指。
           // background-color 这项不能漏：它整条盖掉 className 里的过渡，漏了 hover 就成硬切
-          transition: dragging
+          transition: present ? 'none' : dragging
             ? 'transform .16s ease, box-shadow .16s ease, background-color .16s ease'
             : 'left .34s cubic-bezier(.22,1.4,.36,1), top .34s cubic-bezier(.22,1.4,.36,1),'
               + ' transform .16s ease, box-shadow .16s ease, background-color .16s ease',
         }}
         title={t('chat.title')}
         aria-label={t('chat.openAria')}
+        aria-expanded={open}
+        aria-controls="polaris-dock"
+        aria-hidden={present}
+        disabled={present}
+        data-dragging={dragging}
+        tabIndex={present ? -1 : 0}
         className={cn(
-          'fixed z-[90] w-12 h-12 rounded-full pt-card touch-none',
+          'polaris-ball fixed z-[90] flex w-12 h-12 rounded-full pt-card touch-none motion-reduce:transition-none!',
           'items-center justify-center hover:bg-surface-hover',
-          dragging ? 'cursor-grabbing scale-105 shadow-2xl' : 'cursor-grab active:scale-95',
-          // 开着面板就把球收起来（PC 也一样）：球能停在任意高度，而面板锚点固定，
-          // 两者一旦重叠，球（z-90）会盖住面板（z-85）的头部按钮和输入区，点上去还会误把面板关掉。
-          // 关闭入口交给面板头部的 X / ESC / 点外部，与移动端本来的行为一致
-          open ? 'hidden' : 'flex',
+          // 触屏的 :active 会延后释放；隐藏后去掉按压缩放，动画按原始球尺寸对位。
+          dragging ? 'cursor-grabbing scale-105' : present ? 'cursor-default' : 'cursor-grab active:scale-95',
+          // 面板在场的整段时间都藏住球（含开合动画）：面板收到最后一帧就是球的样子，
+          // 卸载那一刻球顶上来，中间不会出现「球和还在缩的面板同时在」
+          present && 'invisible pointer-events-none',
         )}
       >
-        {/* 下面这些不必再判 open：球只在面板关着时渲染 */}
+        {/* 球只在面板完全收起时可见 */}
         {/* 研判中：一道扇形绕球扫。-inset-1 让环带落在球外沿，压在图标下面不挡它 */}
         {loading && (
           <span aria-hidden className="absolute -inset-1 rounded-full pointer-events-none wiib-ball-sweep" />
@@ -332,13 +446,19 @@ export function ChatDock() {
         )}
       </button>
 
-      {open && (
+      {present && (
         <div
+          id="polaris-dock"
           ref={dockRef}
+          role="dialog"
+          aria-label={HUB_NAME}
+          inert={!open}
+          data-state={open ? 'open' : 'closing'}
           tabIndex={-1}
+          // 收放动画绕默认的中心缩放，transform-origin 别在这儿改
           style={{ '--dock-w': `${size.w}px`, '--dock-h': `${size.h}px` } as React.CSSProperties}
           className={cn(
-            'fixed z-[85] pt-card flex flex-col overflow-hidden',
+            'fixed z-[85] pt-card flex flex-col overflow-hidden outline-none',
             fullscreen
               // 全屏铺满浏览器视口，浮窗那套尺寸/锚点全让开
               ? 'inset-0 rounded-none w-full h-full max-w-none max-h-none'
@@ -347,12 +467,11 @@ export function ChatDock() {
                   'inset-0 rounded-none pt-[env(safe-area-inset-top)]',
                   // 面板跟着球换边：球在左就从左下角长出来。竖直方向仍锚底——面板高度可变，
                   // 球拖到顶部时它必然要向下铺，锚底最稳，resize 的方向语义也才立得住
-                  'md:inset-auto md:bottom-20 md:rounded-xl md:shadow-2xl md:pt-0',
-                  ball.side === 'left' ? 'md:left-4 md:origin-bottom-left' : 'md:right-4 md:origin-bottom-right',
+                  'md:inset-auto md:bottom-20 md:shadow-2xl md:pt-0',
+                  ball.side === 'left' ? 'md:left-4' : 'md:right-4',
                   'md:w-[var(--dock-w)] md:h-[var(--dock-h)]',
                   'md:max-w-[calc(100vw-2rem)] md:max-h-[calc(100vh-6.5rem)]',
                 ),
-            'animate-in fade-in zoom-in-95',
           )}
         >
           {/* 拖拽把手（仅 PC 浮窗态）：贴外侧的那条边缘调宽、上边缘调高、外侧上角双向。

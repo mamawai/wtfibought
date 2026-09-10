@@ -2,22 +2,21 @@ import { useState, useEffect } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { rankingApi } from '../api';
-import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Skeleton } from '../components/ui/skeleton';
 import { EmptyState } from '../components/EmptyState';
 import { useUserStore } from '../stores/userStore';
 import { cn, fmtNum } from '../lib/utils';
-import { ChevronLeft, ChevronRight, Clock, Info, Trophy } from 'lucide-react';
+import { ArrowDown, ArrowUpRight, ChevronLeft, ChevronRight, Clock, Info, Trophy } from 'lucide-react';
 import type { RankingItem, RankingSort } from '../types';
 
 const PAGE_SIZE = 20;
 
 /**
  * 列宽模板。表头与数据行共用一份，各写各的迟早错位（同 PositionHistoryList）。
- * 窄屏退化成带微标签的两列格子，表头整条隐藏。
+ * 窄屏用带m标签的两列；到 lg 才排成表，给金额和长用户名留够空间。
  */
-const GRID = 'grid grid-cols-2 gap-x-3 gap-y-2 md:gap-y-0 md:items-center md:grid-cols-[2.25rem_minmax(7rem,1.4fr)_minmax(0,1.1fr)_minmax(0,.85fr)_minmax(0,1.05fr)_minmax(0,1.1fr)_1rem]';
+const GRID = 'grid grid-cols-2 gap-x-4 gap-y-3 lg:gap-x-5 lg:gap-y-0 lg:items-center lg:grid-cols-[3rem_minmax(8rem,1.35fr)_minmax(0,1.2fr)_minmax(0,.75fr)_minmax(0,1.1fr)_minmax(0,1.15fr)_1rem]';
 
 type Numeric = number | null | undefined;
 
@@ -35,18 +34,18 @@ const fmtCompact = (v: Numeric) => {
   return fmt(n);
 };
 
-/** 名次序号：等宽补零，前三名用主色。数字本身就是层级，不再叠奖牌 emoji */
+/** 名次靠字号分层，橙色留给自己的位置。 */
 function RankNum({ rank, className }: { rank: number; className?: string }) {
   return (
-    <span className={cn('num tabular-nums', rank <= 3 ? 'text-primary' : 'text-muted-foreground', className)}>
+    <span className={cn('num cond', rank <= 3 ? 'text-foreground' : 'text-muted-foreground', className)}>
       {String(rank).padStart(2, '0')}
     </span>
   );
 }
 
-/** 尺寸由调用方传（前三卡窄屏要缩），所以不做 size 枚举 */
+/** 头像沿用方形，尺寸由所在行决定。 */
 function Avatar({ username, avatar, className }: { username: string; avatar?: string; className?: string }) {
-  const base = 'rounded-md border border-border shrink-0';
+  const base = 'border border-border shrink-0';
   if (avatar) {
     return <img src={avatar} alt="" className={cn(base, 'object-cover', className)} />;
   }
@@ -77,11 +76,13 @@ function TradingProfit({ value, className }: { value: Numeric; className?: strin
   );
 }
 
-/** 窄屏每格自带微标签（表头看不见了），宽屏交给表头 */
-function Cell({ label, className, children }: { label: string; className?: string; children: React.ReactNode }) {
+/** 独立的「我的排名」没有表头，宽屏也保留字段标签。 */
+function Cell({ label, showLabel, className, children }: {
+  label: string; showLabel?: boolean; className?: string; children: React.ReactNode;
+}) {
   return (
     <div className={cn('min-w-0', className)}>
-      <div className="microlabel md:hidden mb-0.5">{label}</div>
+      <div className={cn('mb-1 text-[12px] font-normal text-muted-foreground', !showLabel && 'lg:hidden')}>{label}</div>
       {children}
     </div>
   );
@@ -101,105 +102,81 @@ const METRIC_LABEL_KEY: Record<RankingSort, string> = {
 
 const ALL_METRICS: RankingSort[] = ['ASSETS', 'TRADING_PROFIT'];
 
-/** 按维度取值渲染。前三卡的主数字要跟着当前排序走，否则「按交易盈利排的榜、卡上最大的数是总资产」会看懵 */
+/** 主数字跟着排序维度走，避免按盈利排榜却突出总资产。 */
 function MetricValue({ metric, item, className }: { metric: RankingSort; item: RankingItem; className?: string }) {
   if (metric === 'TRADING_PROFIT') return <TradingProfit value={item.tradingProfit} className={className} />;
   return (
-    <span className={cn('num', className)}>
-      <span className="sm:hidden">{fmtCompact(item.totalAssets)}</span>
-      <span className="hidden sm:inline">{fmt(item.totalAssets)}</span>
-    </span>
+    <span className={cn('num', className)}>{fmt(item.totalAssets)}</span>
   );
 }
 
-/**
- * 前三名重点卡。用「大号序号 + 顶部高光条」拉层级，不用奖牌 emoji 和渐变台阶——
- * 台阶那套是游戏皮，跟全站仪器风不是一个语言。三张等高并排，冠军多一条主色高光。
- */
-function TopCard({ item, place, sort, onOpen }: {
-  item: RankingItem; place: 0 | 1 | 2; sort: RankingSort; onOpen: () => void;
+/** 前三名共用一个版面；手机和平板逐行展开，给完整金额留够宽度。 */
+function TopEntry({ item, place, sort, me, onOpen }: {
+  item: RankingItem; place: 0 | 1 | 2; sort: RankingSort; me?: boolean; onOpen: () => void;
 }) {
   const { t } = useTranslation('community');
-  const champion = place === 0;
   return (
     <button
       type="button"
       onClick={onOpen}
       title={t('ranking.rowTitle', { name: item.username })}
       className={cn(
-        'relative overflow-hidden rounded-lg pt-card text-left p-2.5 sm:p-3.5 transition-colors group',
-        'hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        champion && 'border-primary/40',
+        'group grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-x-4 gap-y-4 py-5 text-left lg:grid-cols-[3.5rem_minmax(0,1fr)] lg:gap-x-3 lg:py-6 lg:px-5 lg:first:pl-0 lg:last:pr-0 xl:grid-cols-[4.5rem_minmax(0,1fr)] xl:px-7',
+        'transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
       )}
     >
-      {/* 顶部 1px 高光：冠军主色，二三名素色。仪器面板的选中感 */}
-      <div className={cn(
-        'absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent to-transparent',
-        champion ? 'via-primary/60' : 'via-border',
-      )} />
-
-      {/* 窄屏三卡并排每张只有 ~110px，横排放不下"序号+头像+名字"，改成竖排居中 */}
-      <div className="flex flex-col items-center text-center gap-1.5 sm:flex-row sm:items-center sm:text-left sm:gap-2.5">
-        <RankNum
-          rank={item.rank}
-          className={cn('leading-none font-black', champion ? 'text-xl sm:text-2xl' : 'text-lg sm:text-xl opacity-70')}
-        />
-        <Avatar
-          username={item.username}
-          avatar={item.avatar}
-          className="w-9 h-9 text-sm sm:w-11 sm:h-11 sm:text-base"
-        />
-        <div className="min-w-0 w-full sm:flex-1">
-          <div className="text-[12px] sm:text-[13px] font-bold truncate group-hover:text-primary transition-colors">
+      <RankNum rank={item.rank} className="row-span-2 self-start text-[52px] font-bold leading-none lg:row-span-1 lg:text-[64px] xl:text-[80px]" />
+      <div className="flex min-w-0 items-center gap-2.5 lg:self-center">
+        <Avatar username={item.username} avatar={item.avatar} className="size-8 text-sm xl:size-10" />
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex items-center gap-2 text-[12px] text-muted-foreground">
+            <span>{t(PLACE_LABEL_KEY[place])}</span>
+            {me && <MeBadge />}
+          </div>
+          <div className="truncate text-[17px] font-bold leading-tight xl:text-[21px]" title={item.username}>
             {item.username}
           </div>
-          <div className="microlabel">{t(PLACE_LABEL_KEY[place])}</div>
         </div>
+        <ArrowUpRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 motion-reduce:transform-none" />
       </div>
 
-      <div className="mt-2.5 sm:mt-3 pt-2.5 sm:pt-3 border-t border-border/40 space-y-1.5">
-        {/* 主数字 = 当前排序维度，其余维度降到下面的明细行 */}
-        <div className="text-center sm:text-left">
-          <div className="microlabel">{t(METRIC_LABEL_KEY[sort])}</div>
-          <MetricValue metric={sort} item={item} className="block text-[15px] sm:text-lg font-bold leading-tight truncate" />
-        </div>
-        <div className="flex items-center justify-center sm:justify-between gap-2">
-          <span className="microlabel hidden sm:inline">{t('ranking.metric.return')}</span>
-          <Pct value={item.profitPct} className="text-[12px] font-semibold" />
-        </div>
+      <div className="min-w-0 lg:col-span-2 lg:mt-2">
+        <div className="mb-1.5 text-[12px] text-muted-foreground">{t(METRIC_LABEL_KEY[sort])} <span className="ml-1">USD</span></div>
+        <MetricValue metric={sort} item={item} className="cond block text-[clamp(26px,3.2vw,50px)] font-bold leading-none" />
+      </div>
 
-        {/* 窄屏收起下面几行：110px 宽塞五行标签值必挤成一团，这些数点进详情页都有 */}
-        <div className="hidden sm:block space-y-1.5">
-          {ALL_METRICS.filter(m => m !== sort).map(m => (
-            <div key={m} className="flex items-center justify-between gap-2">
-              <span className="microlabel">{t(METRIC_LABEL_KEY[m])}</span>
-              <MetricValue metric={m} item={item} className="text-[12px] font-semibold" />
-            </div>
-          ))}
-          <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/25">
-            <span className="microlabel">{t('ranking.metric.wallet')}</span>
-            <span className="num text-[10px] text-muted-foreground truncate">
-              {fmtCompact(item.balanceWallet)} / {fmtCompact(item.gameWallet)}
-            </span>
+      <div className="col-span-2 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-border pt-3">
+        <div>
+          <div className="mb-1 text-[12px] text-muted-foreground">{t('ranking.metric.return')}</div>
+          <Pct value={item.profitPct} className="cond2 text-[18px] font-semibold" />
+        </div>
+        {ALL_METRICS.filter(m => m !== sort).map(m => (
+          <div key={m} className="min-w-0 text-right">
+            <div className="mb-1 text-[12px] text-muted-foreground">{t(METRIC_LABEL_KEY[m])}</div>
+            <MetricValue metric={m} item={item} className="cond2 text-[16px] font-semibold" />
           </div>
+        ))}
+        <div className="col-span-2 hidden items-center justify-between gap-3 text-[12px] text-muted-foreground lg:flex">
+          <span>{t('ranking.metric.wallet')}</span>
+          <span className="num">{fmtCompact(item.balanceWallet)} / {fmtCompact(item.gameWallet)}</span>
         </div>
       </div>
     </button>
   );
 }
 
-/** 「我」徽标。名次列宽只够放两位数字，塞不进去，所以跟在用户名后面 */
+/** 自己的标记跟着用户名，榜首和明细都能认出来。 */
 function MeBadge() {
   const { t } = useTranslation('community');
   return (
-    <span className="microlabel text-primary shrink-0 px-1 py-px rounded border border-primary/40 leading-none">
+    <span className="shrink-0 border border-primary px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary">
       {t('ranking.me.badge')}
     </span>
   );
 }
 
-function RankRow({ item, sort, me, onOpen }: {
-  item: RankingItem; sort: RankingSort; me?: boolean; onOpen: () => void;
+function RankRow({ item, sort, me, showLabels, onOpen }: {
+  item: RankingItem; sort: RankingSort; me?: boolean; showLabels?: boolean; onOpen: () => void;
 }) {
   const { t } = useTranslation('community');
   return (
@@ -207,52 +184,52 @@ function RankRow({ item, sort, me, onOpen }: {
       type="button"
       onClick={onOpen}
       title={t('ranking.rowTitle', { name: item.username })}
-      className={cn(GRID, 'w-full text-left px-3 sm:px-4 py-2.5 border-b border-border/25 last:border-b-0',
-        'hover:bg-accent/25 transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-        // 自己那条：左侧主色竖条 + 极淡主色底，跟表格行同构但一眼能挑出来
-        me && 'relative bg-primary/5 hover:bg-primary/10 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-primary')}
+      className={cn(GRID, 'group w-full border-b border-border py-4 text-left',
+        'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+        // card-2 跟 surface-hover 是同一个色值，自己那条得换主色淡底，否则划过普通行就跟它撞脸
+        me ? 'bg-primary/8 hover:bg-primary/14' : 'hover:bg-surface-hover')}
     >
       {/* 名次 + 用户：窄屏并成一行占满，箭头也跟着挪到这行尾（宽屏那个在表格最后一列） */}
-      <div className="col-span-2 md:col-span-1 flex items-center gap-2 md:gap-0">
-        <RankNum rank={item.rank} className={cn('text-[13px] font-bold', me && 'text-primary')} />
-        <div className="flex items-center gap-2 md:hidden min-w-0 flex-1">
-          <Avatar username={item.username} avatar={item.avatar} className="w-7 h-7 text-[11px]" />
-          <span className="text-[13px] font-semibold truncate">{item.username}</span>
+      <div className="col-span-2 flex items-center gap-3 lg:col-span-1 lg:gap-0">
+        <RankNum rank={item.rank} className={cn('text-[30px] font-semibold leading-none', me && 'text-primary')} />
+        <div className="flex min-w-0 flex-1 items-center gap-2.5 lg:hidden">
+          <Avatar username={item.username} avatar={item.avatar} className="size-8 text-[12px]" />
+          <span className="truncate text-[15px] font-semibold">{item.username}</span>
           {me && <MeBadge />}
-          <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/35 ml-auto shrink-0" />
+          <ChevronRight aria-hidden="true" className="ml-auto size-4 shrink-0 text-muted-foreground" />
         </div>
       </div>
-      <div className="hidden md:flex items-center gap-2 min-w-0">
-        <Avatar username={item.username} avatar={item.avatar} className="w-7 h-7 text-[11px]" />
-        <span className="text-[13px] font-semibold truncate group-hover:text-primary transition-colors">
+      <div className="hidden min-w-0 items-center gap-2.5 lg:flex">
+        <Avatar username={item.username} avatar={item.avatar} className="size-8 text-[12px]" />
+        <span className="truncate text-[15px] font-semibold" title={item.username}>
           {item.username}
         </span>
         {me && <MeBadge />}
       </div>
 
-      <Cell label={t('ranking.metric.assets')} className={cn('md:text-right', sort === 'ASSETS' && 'text-primary')}>
-        <span className="num text-[13px] font-bold">
-          <span className="md:hidden">{fmtCompact(item.totalAssets)}</span>
-          <span className="hidden md:inline">{fmt(item.totalAssets)}</span>
+      <Cell label={t('ranking.metric.assets')} showLabel={showLabels} className="lg:text-right">
+        <span className={cn('num cond2', sort === 'ASSETS' ? 'text-[20px] font-bold' : 'text-[16px] font-semibold')}>
+          <span className="lg:hidden" title={fmt(item.totalAssets)}>{fmtCompact(item.totalAssets)}</span>
+          <span className="hidden lg:inline">{fmt(item.totalAssets)}</span>
         </span>
       </Cell>
 
-      <Cell label={t('ranking.metric.return')} className="md:text-right">
-        <Pct value={item.profitPct} className="text-[12px] font-semibold" />
+      <Cell label={t('ranking.metric.return')} showLabel={showLabels} className="lg:text-right">
+        <Pct value={item.profitPct} className="cond2 text-[16px] font-semibold" />
       </Cell>
 
-      <Cell label={t('ranking.metric.profit')} className={cn('md:text-right', sort === 'TRADING_PROFIT' && 'text-primary')}>
-        <TradingProfit value={item.tradingProfit} className="text-[12px] font-semibold" />
+      <Cell label={t('ranking.metric.profit')} showLabel={showLabels} className="lg:text-right">
+        <TradingProfit value={item.tradingProfit} className={cn('cond2', sort === 'TRADING_PROFIT' ? 'text-[20px] font-bold' : 'text-[16px] font-semibold')} />
       </Cell>
 
-      <Cell label={t('ranking.metric.wallet')} className="md:text-right">
-        <span className="num text-[11px] text-muted-foreground truncate">
+      <Cell label={t('ranking.metric.wallet')} showLabel={showLabels} className="lg:text-right">
+        <span className="num text-[13px] text-muted-foreground">
           {fmtCompact(item.balanceWallet)} / {fmtCompact(item.gameWallet)}
         </span>
       </Cell>
 
-      <div className="hidden md:flex justify-end">
-        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/35 group-hover:text-primary/60 transition-colors" />
+      <div className="hidden justify-end lg:flex">
+        <ChevronRight aria-hidden="true" className="size-4 text-muted-foreground transition-colors group-hover:text-foreground" />
       </div>
     </button>
   );
@@ -275,7 +252,7 @@ export function Ranking() {
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const loading = loadedKey !== requestKey;
 
-  // 自己那条只在第 1 页出现（前三卡也只在第 1 页），未登录不要——那条接口未登录是 401
+  // 自己那条和前三名都只在第 1 页出现；未登录不请求个人名次。
   const showMine = page === 1 && myUserId != null;
 
   useEffect(() => {
@@ -299,159 +276,168 @@ export function Ranking() {
   const openUser = (userId: number) => navigate(`/user/${userId}`);
 
   // 换维度必须回到第 1 页：停在第 3 页换榜，看到的是新榜的第 41 名开始，
-  // 而前三名重点卡只在第 1 页出现，换完一片空
+  // 而前三名只在第 1 页出现，换完一片空
   const switchSort = (next: RankingSort) => {
     if (next === sort) return;
     setSort(next);
     setPage(1);
   };
 
-  // 前三名重点卡只在第 1 页出现：第 2 页往后的"前三个"是这一页的前三个，不是全榜前三
+  // 第 2 页往后的前三条不是全榜前三，不能放进榜首区。
   const showTop = page === 1;
   const top = showTop ? ranking.slice(0, 3) : [];
   const rest = showTop ? ranking.slice(3) : ranking;
 
   return (
-    <div className="page-shell p-4 md:p-6 space-y-4">
-      {/* 页头 */}
-      <Card>
-        <CardContent className="py-4">
-          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-            <h1 className="flex items-center gap-2.5 text-lg font-black tracking-tight">
-              <span className="p-1.5 rounded-xl bg-primary/10 text-primary">
-                <Trophy className="w-4 h-4" />
-              </span>
-              {t('ranking.title')}
-            </h1>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <span className="led" />
-                <Clock className="w-3 h-3" />
-                {t('ranking.updateHint')}
-              </span>
-              <span>
-                <Trans
-                  ns="community"
-                  i18nKey="ranking.totalUsers"
-                  values={{ total }}
-                  components={[<span key="total" className="num text-foreground" />]}
-                />
-              </span>
-              <span>{t('ranking.rowHint')}</span>
+    <div className="page-shell pb-6">
+      <div className="page-h flex-wrap justify-between gap-y-4">
+        <div className="min-w-0">
+          <h1>{t('ranking.title')}</h1>
+          <div className="mt-2 text-[13px] text-muted-foreground">
+            <Trans
+              ns="community"
+              i18nKey="ranking.totalUsers"
+              values={{ total }}
+              components={[<span key="total" className="num font-semibold text-foreground" />]}
+            />
+          </div>
+        </div>
+        <div className="flex max-w-xl flex-col gap-2 text-[12px] text-muted-foreground lg:items-end">
+          <span className="flex items-center gap-2">
+            <Clock aria-hidden="true" className="size-3.5 shrink-0" />
+            {t('ranking.updateHint')}
+          </span>
+          <span className="leading-relaxed">{t('ranking.rowHint')}</span>
+        </div>
+      </div>
+
+      {/* 排序口径直接展示，触屏用户也能看见。 */}
+      <div className="mt-6 flex flex-col gap-3 border-t-2 border-foreground py-5 md:flex-row md:items-center md:gap-6">
+        <div className="seg w-full shrink-0 sm:w-auto" role="group" aria-label={t('ranking.sortLabel')}>
+          {SORT_TABS.map(tab => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => switchSort(tab.key)}
+              title={t(tab.hintKey)}
+              aria-pressed={sort === tab.key}
+              aria-controls="ranking-results"
+              className={cn('h-10 flex-1 px-5 text-sm sm:flex-none', sort === tab.key && 'on')}
+            >
+              {t(tab.labelKey)}
+            </button>
+          ))}
+        </div>
+        <p className="m-0 text-[13px] leading-relaxed text-muted-foreground">
+          {t(sort === 'ASSETS' ? 'ranking.hint.assets' : 'ranking.hint.profit')}
+        </p>
+      </div>
+
+      <div id="ranking-results" aria-busy={loading}>
+        {loading ? (
+          <div role="status">
+            <span className="sr-only">{t('common:loading')}</span>
+            <div aria-hidden="true">
+              {showMine && <Skeleton className="mb-8 h-24 w-full motion-reduce:animate-none" />}
+              {showTop && (
+                <div className="grid grid-cols-1 gap-5 border-t-2 border-foreground py-6 lg:grid-cols-3 lg:gap-10">
+                  {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-44 w-full motion-reduce:animate-none lg:h-56" />)}
+                </div>
+              )}
+              <div className="mt-8 space-y-4 border-t-2 border-foreground pt-5">
+                {Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-16 w-full motion-reduce:animate-none" />)}
+              </div>
             </div>
           </div>
-
-          {/* 排序维度：换维度名次跟着重算，01 就是该维度第一 */}
-          <div className="mt-3.5 flex items-center gap-1 p-1 rounded-lg bg-card-2 border border-border/50">
-            {SORT_TABS.map(tab => (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => switchSort(tab.key)}
-                title={t(tab.hintKey)}
-                className={cn(
-                  'flex-1 py-1.5 px-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap',
-                  sort === tab.key
-                    ? 'bg-card text-foreground border border-border shadow-[inset_0_2px_0_var(--color-primary)]'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-surface-hover',
-                )}
-              >
-                {t(tab.labelKey)}
-              </button>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {loading ? (
-        <>
-          {showMine && <Skeleton className="h-14 w-full rounded-lg" />}
-          <div className="grid grid-cols-3 gap-2 sm:gap-3">
-            {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-40 sm:h-52 w-full rounded-lg" />)}
-          </div>
-          <Card><CardContent className="p-4 space-y-2.5">
-            {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}
-          </CardContent></Card>
-        </>
-      ) : ranking.length === 0 ? (
-        <Card><CardContent className="p-0"><EmptyState icon={<Trophy />} text={t('ranking.empty')} /></CardContent></Card>
-      ) : (
-        <>
-          {/* 自己那条提到最上面。下面的名次表照旧也有这个人，这里是提出来的一份，不是搬走 */}
-          {showMine && myRow !== undefined && (
-            <Card className="overflow-hidden border-primary/40">
-              <CardContent className="p-0">
+        ) : ranking.length === 0 ? (
+          <section className="border-y border-border py-10">
+            <EmptyState icon={<Trophy />} text={t('ranking.empty')} />
+          </section>
+        ) : (
+          <>
+            {/* 单独提取自己的位置，榜首与明细仍保留完整名次。 */}
+            {showMine && myRow !== undefined && (
+              <section className="mb-8 border-l-2 border-primary pl-4" aria-label={t('ranking.me.title')}>
+                <h2 className="text-[13px] font-semibold">{t('ranking.me.title')}</h2>
                 {myRow ? (
-                  <RankRow item={myRow} sort={sort} me onOpen={() => openUser(myRow.userId)} />
+                  <RankRow item={myRow} sort={sort} me showLabels onOpen={() => openUser(myRow.userId)} />
                 ) : (
-                  <div className="flex items-center gap-2 px-3 sm:px-4 py-3 text-[12px] text-muted-foreground">
-                    <Info className="w-3.5 h-3.5 shrink-0" />
+                  <div className="flex items-center gap-2 border-b border-border py-4 text-[13px] text-muted-foreground">
+                    <Info aria-hidden="true" className="size-4 shrink-0" />
                     {t('ranking.me.notRanked')}
                   </div>
                 )}
-              </CardContent>
-            </Card>
-          )}
+              </section>
+            )}
 
-          {/* 前三名：并排等高，不做台阶。名次靠序号和高光条区分 */}
-          {top.length > 0 && (
-            <div className="grid grid-cols-3 gap-2 sm:gap-3">
-              {top.map((item, i) => (
-                <TopCard key={item.userId} item={item} place={i as 0 | 1 | 2} sort={sort} onOpen={() => openUser(item.userId)} />
-              ))}
-            </div>
-          )}
+            {top.length > 0 && (
+              <section className="border-t-2 border-foreground" aria-labelledby="ranking-leaders-heading">
+                <div className="flex items-baseline justify-between gap-4 border-b border-border py-3">
+                  <h2 id="ranking-leaders-heading" className="text-[17px] font-extrabold">{t('ranking.leaders')}</h2>
+                  <span className="text-[12px] text-muted-foreground">{t(METRIC_LABEL_KEY[sort])} / USD</span>
+                </div>
+                <div className="grid grid-cols-1 divide-y divide-border border-b border-border lg:grid-cols-3 lg:divide-x lg:divide-y-0">
+                  {top.map((item, i) => (
+                    <TopEntry key={item.userId} item={item} place={i as 0 | 1 | 2} sort={sort} me={item.userId === myUserId} onOpen={() => openUser(item.userId)} />
+                  ))}
+                </div>
+              </section>
+            )}
 
-          {rest.length > 0 && (
-            <Card className="overflow-hidden">
-              <CardContent className="p-0">
-                {/* 表头只在宽屏出现，窄屏每格自带微标签 */}
-                <div className={cn(GRID, 'hidden md:grid px-4 py-2 bg-card-2 border-b border-border/30')}>
-                  <span className="microlabel font-bold">#</span>
-                  <span className="microlabel font-bold">{t('ranking.metric.user')}</span>
-                  <span className={cn('microlabel font-bold text-right', sort === 'ASSETS' && 'text-primary')}>
+            {rest.length > 0 && (
+              <section className="mt-8 border-t-2 border-foreground" aria-labelledby="ranking-board-heading">
+                <div className="flex items-baseline justify-between gap-4 py-4">
+                  <h2 id="ranking-board-heading" className="text-[17px] font-extrabold">{t('ranking.board')}</h2>
+                  <span className="num text-[12px] text-muted-foreground">
+                    {t('ranking.range', { from: rest[0].rank, to: rest[rest.length - 1].rank })}
+                  </span>
+                </div>
+                <div className={cn(GRID, 'hidden border-b border-foreground pb-3 text-[12.5px] font-semibold text-muted-foreground lg:grid')}>
+                  <span>#</span>
+                  <span>{t('ranking.metric.user')}</span>
+                  <span className={cn('flex items-center justify-end gap-1', sort === 'ASSETS' && 'text-foreground')}>
                     {t('ranking.metric.assets')}
+                    {sort === 'ASSETS' && <ArrowDown aria-hidden="true" className="size-3 shrink-0" />}
                   </span>
-                  <span className="microlabel font-bold text-right">{t('ranking.metric.return')}</span>
-                  <span className={cn('microlabel font-bold text-right', sort === 'TRADING_PROFIT' && 'text-primary')}
-                    title={t('ranking.hint.profitCol')}>{t('ranking.metric.profit')}</span>
-                  <span className="microlabel font-bold text-right" title={t('ranking.hint.walletCol')}>
-                    {t('ranking.metric.wallet')}
+                  <span className="text-right">{t('ranking.metric.return')}</span>
+                  <span className={cn('flex items-center justify-end gap-1', sort === 'TRADING_PROFIT' && 'text-foreground')} title={t('ranking.hint.profitCol')}>
+                    {t('ranking.metric.profit')}
+                    {sort === 'TRADING_PROFIT' && <ArrowDown aria-hidden="true" className="size-3 shrink-0" />}
                   </span>
+                  <span className="text-right" title={t('ranking.hint.walletCol')}>{t('ranking.metric.wallet')}</span>
                   <span />
                 </div>
-
                 {rest.map(item => (
-                  <RankRow key={item.userId} item={item} sort={sort} onOpen={() => openUser(item.userId)} />
+                  <RankRow key={item.userId} item={item} sort={sort} me={item.userId === myUserId} onOpen={() => openUser(item.userId)} />
                 ))}
-              </CardContent>
-            </Card>
-          )}
+              </section>
+            )}
 
-          {pages > 1 && (
-            <div className="flex items-center justify-between px-1">
-              <span className="text-xs text-muted-foreground">
-                <Trans
-                  ns="community"
-                  i18nKey="ranking.page"
-                  values={{ page, pages }}
-                  components={[<span key="page" className="num" />, <span key="pages" className="num" />]}
-                />
-              </span>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" className="h-8 w-8 p-0"
-                  disabled={page <= 1} onClick={() => setPage(p => p - 1)}>
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <Button variant="ghost" size="sm" className="h-8 w-8 p-0"
-                  disabled={page >= pages} onClick={() => setPage(p => p + 1)}>
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-          )}
-        </>
-      )}
+            {pages > 1 && (
+              <nav className="mt-6 flex flex-wrap items-center justify-between gap-3" aria-label={t('ranking.pagination')}>
+                <span className="text-[13px] text-muted-foreground">
+                  <Trans
+                    ns="community"
+                    i18nKey="ranking.page"
+                    values={{ page, pages }}
+                    components={[<span key="page" className="num font-semibold text-foreground" />, <span key="pages" className="num" />]}
+                  />
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" className="border-foreground"
+                    disabled={page <= 1} onClick={() => setPage(p => p - 1)}>
+                    <ChevronLeft aria-hidden="true" className="size-4" />{t('ranking.prevPage')}
+                  </Button>
+                  <Button variant="outline" className="border-foreground"
+                    disabled={page >= pages} onClick={() => setPage(p => p + 1)}>
+                    {t('ranking.nextPage')}<ChevronRight aria-hidden="true" className="size-4" />
+                  </Button>
+                </div>
+              </nav>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
