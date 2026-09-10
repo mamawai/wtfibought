@@ -22,7 +22,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 会话上下文的存取往返。序列化器用真的（Jackson 版，生产同款）——
+ * 会话上下文的存取往返。编解码用真的（{@link ChatContextCodec}，生产同款）——
  * 这张表的全部价值就是"Message 多态与 tool_call 配对往返无损"，mock 序列化器等于什么都没测。
  */
 class ChatContextStoreTest {
