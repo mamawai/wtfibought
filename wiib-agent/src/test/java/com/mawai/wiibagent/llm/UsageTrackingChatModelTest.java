@@ -36,7 +36,7 @@ class UsageTrackingChatModelTest {
 
     /**
      * 最要命的一条：getOptions 必须是被包模型那个实例本身。
-     * 返回自己新造的 options，ReactAgent 拿到的 tools 就是空数组，一个工具都调不动。
+     * 返回自己新造的 options，ResilientChatService 挂出去的 tools 就是空数组，一个工具都调不动。
      */
     @Test
     void getOptionsIsPassedThroughUntouched() {

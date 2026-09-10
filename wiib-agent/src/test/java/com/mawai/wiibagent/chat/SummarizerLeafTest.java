@@ -7,11 +7,8 @@ import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
+import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.trader.TraderChatService;
-import org.bsc.langgraph4j.NodeOutput;
-import org.bsc.langgraph4j.RunnableConfig;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
-import org.bsc.langgraph4j.streaming.StreamingOutput;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -28,7 +25,6 @@ import reactor.core.publisher.Flux;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -44,14 +40,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * summarizer 叶子上那三个 hook 的装配（压缩 + HITL 闸门 + 保险丝），以及它的迭代硬顶够不够用。
- * 闸门被挂上了没有由 {@code ApprovalGateOrderTest} 钉，这里只管压缩与预算。
+ * summarizer 那三样的装配：压缩 + HITL 闸门 + 保险丝，一样都不能漏传给它的 {@link ReactLoop}。
  * <p>
- * 这些以前只能挂父图 + 按 id 过滤（子图 hook 在 {@code addNode(id, StateGraph)} 内联时会被框架
- * 整个丢掉），现在叶子是独立 {@code compile()} 的，走 ReactAgent 自己的挂载点。
- * <b>建的是生产的 {@link ChatAgentFactory#leavesFor} 并真跑</b>——自己搭个 agent 自己挂 hook
- * 只能证明 hook 类好使（那件事 ModelCallLimiterTest/ConversationSummarizerTest 已经证过），
- * 证明不了生产装配里挂上了。
+ * <b>建的是生产的 {@link ChatAgentFactory#leavesFor} 并真跑</b>——自己搭个循环自己塞这三样，
+ * 只能证明它们各自好使（那件事 ModelCallLimiterTest/ConversationSummarizerTest 已经证过），
+ * 证明不了生产装配里传上了。
  */
 class SummarizerLeafTest {
 
@@ -84,7 +77,7 @@ class SummarizerLeafTest {
     /**
      * @param threshold 压缩阈值（token），调小才触发
      * @param keep      保留最近几条，调小才有原文可压
-     * @param limit     模型调用上限，也就是迭代账里的 L
+     * @param limit     模型调用上限
      */
     private ChatAgentFactory.Leaves leaves(int threshold, int keep, int limit) {
         // ChatService 建请求时无条件读 getOptions() 挂工具，null 会 NPE
@@ -102,20 +95,17 @@ class SummarizerLeafTest {
                 .leavesFor(llmConfig, AgentLang.ZH);
     }
 
-    /** 与 {@code ChatTurnRunner} 同款消费：普通迭代 + threadId（闸门要拿会话号）+ state 里的会话号（工具要拿） */
-    private List<String> consume(ChatAgentFactory.Leaves leaves, List<Message> input,
-                                 List<NodeOutput<MessagesState<Message>>> outputs) {
-        List<String> chunks = new ArrayList<>();
-        for (NodeOutput<MessagesState<Message>> output : leaves.summarizer().stream(
-                Map.of("messages", input, ToolRunContext.SESSION_KEY, SESSION),
-                RunnableConfig.builder().threadId(SESSION).build())) {
-            if (output instanceof StreamingOutput<?> streaming
-                    && streaming.chunk() != null && !streaming.chunk().isEmpty()) {
-                chunks.add(streaming.chunk());
+    /** 与 {@code ChatTurnRunner} 同款跑法：会话号一份进闸门、一份进工具的 ToolContext；答案 token 逐帧收进 chunks */
+    private ReactLoop.Result consume(ChatAgentFactory.Leaves leaves, List<Message> input, List<String> chunks) {
+        return leaves.summarizer().run(input, SESSION, null, new ReactLoop.Listener() {
+            @Override
+            public void chunk(ChatResponse frame) {
+                String text = frame.getResult().getOutput().getText();
+                if (text != null && !text.isEmpty()) {
+                    chunks.add(text);
+                }
             }
-            outputs.add(output);
-        }
-        return chunks;
+        });
     }
 
     /** 深研判工具的回包：narrative 撑得够大，一条回执就把历史顶过压缩阈值 */
@@ -138,9 +128,9 @@ class SummarizerLeafTest {
         registry.approve(SESSION, registry.peekPending(SESSION).orElseThrow().requestId());
     }
 
-    /** 工具方法体的会话号来自图 state：输入里带的 SESSION_KEY 经框架交给工具的 ToolContext 到达，不靠 ThreadLocal */
+    /** 工具方法体的会话号来自 run 的 sessionId 入参：循环执行工具时放进 ToolContext，不靠 ThreadLocal */
     @Test
-    void 工具从图state里拿到会话号() {
+    void 工具从ToolContext里拿到会话号() {
         AtomicInteger round = new AtomicInteger();
         when(deep.stream(any(Prompt.class))).thenAnswer(inv -> Flux.just(responseOf(round.incrementAndGet() == 1
                 ? toolCall("c1", "wake_trader", "{}")
@@ -150,6 +140,26 @@ class SummarizerLeafTest {
         consume(leaves(NO_COMPRESSION, 6, 8), List.of(new UserMessage("叫醒交易员")), new ArrayList<>());
 
         verify(runRegistry).publishForm(eq(SESSION), eq("wake"), isNull());
+    }
+
+    /**
+     * 闸门真的传给了 summarizer 的循环：生产叶子跑一轮，模型要调深研判，未授权时必须被拦下、
+     * 留下待确认。
+     * <p>
+     * 这是唯一抓得住"忘了把 ApprovalGate 传给 summarizer 的 {@link ReactLoop}"的钉子——
+     * gate 是可空参数，漏传编译照过、一个字都不报，HITL 整条链直接哑掉。
+     */
+    @Test
+    void 闸门在生产叶子上拦下未授权的深研判() {
+        when(deep.stream(any(Prompt.class)))
+                .thenReturn(Flux.just(responseOf(deepAnalysisCall("c1"))))
+                .thenReturn(Flux.just(responseOf(new AssistantMessage("已请你确认"))));
+
+        leaves(NO_COMPRESSION, 6, 8).summarizer()
+                .run(List.of(new UserMessage("深度研判 BTC")), SESSION, null, null);
+
+        assertThat(registry.peekPending(SESSION)).isPresent()
+                .get().satisfies(p -> assertThat(p.symbol()).isEqualTo("BTCUSDT"));
     }
 
     /**
@@ -181,10 +191,10 @@ class SummarizerLeafTest {
         // keep=2：第二次调用时历史 5 条，理想切点落在 tool_call 之前，正好检验它切得安不安全
         ChatAgentFactory.Leaves leaves = leaves(200, 2, 8);
 
-        List<NodeOutput<MessagesState<Message>>> outputs = new ArrayList<>();
-        List<String> chunks = consume(leaves, List.of(
+        List<String> chunks = new ArrayList<>();
+        ReactLoop.Result result = consume(leaves, List.of(
                 new UserMessage("上轮问题"), new AssistantMessage("上轮回答"),
-                new UserMessage("深度研判 BTC")), outputs);
+                new UserMessage("深度研判 BTC")), chunks);
 
         assertThat(deepPrompts).hasSize(2);
         List<Message> second = deepPrompts.getLast().getInstructions();
@@ -201,22 +211,19 @@ class SummarizerLeafTest {
         // 压缩开着的时候 token 照样逐帧到达前端——这是用户唯一看得见的东西
         assertThat(chunks).containsExactly("这是答案");
         // 终态也得是配对完整的：它会被整体落进会话上下文表，下一轮原样重放
-        List<Message> finalMessages = outputs.getLast().state().messages();
+        List<Message> finalMessages = result.messages();
         assertThat(orphanToolResponses(finalMessages)).isEmpty();
         assertThat(finalMessages.getLast().getText()).isEqualTo("这是答案");
     }
 
     /**
-     * 迭代预算：模型永不收尾时，收束它的必须是保险丝而不是框架的迭代硬顶。
+     * 模型永不收尾时收束它的是保险丝，模型被调次数恰好等于上限。
      * <p>
-     * 硬顶抛在<b>结果交出去之前</b>——开小了，保险丝哪怕正常触发、日志正常打，
-     * 用户拿到的还是异常而不是那半个截断回答。所以这两个数必须一起看。
-     * <p>
-     * 制造"永不收尾"的办法是不授权：闸门每次都短路回模型节点，等于一个纯净的循环，
+     * 制造"永不收尾"的办法是不授权：闸门每次都拦下、回一条 PENDING_APPROVAL，等于一个纯净的循环，
      * 一次深模型工具都不真跑。
      */
     @Test
-    void 模型永不收尾时被保险丝收束而不是撞硬顶() {
+    void 模型永不收尾时被保险丝收束() {
         int limit = 8;   // 生产口径
         AtomicInteger round = new AtomicInteger();
         when(deep.stream(any(Prompt.class))).thenAnswer(inv ->
@@ -226,7 +233,7 @@ class SummarizerLeafTest {
         assertThatCode(() -> consume(leaves, List.of(new UserMessage("深度研判 BTC")), new ArrayList<>()))
                 .doesNotThrowAnyException();
 
-        // 恰好等于而非"不超过"：calls=已有+1、calls>=runLimit 才跳 END，触发那刻模型正好被调 limit 次。
+        // 恰好等于而非"不超过"：到上限就补占位回执收尾，触发那刻模型正好被调 limit 次。
         // 钉死这个数才验得到上限值确实是从构造参数来的
         assertThat(round.get()).isEqualTo(limit);
     }

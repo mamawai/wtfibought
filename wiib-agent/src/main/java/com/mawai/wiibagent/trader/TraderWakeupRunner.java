@@ -20,10 +20,9 @@ import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.learning.ReviewMaterialAssembler;
-import com.mawai.wiibagent.llm.AgentGraphs;
-import com.mawai.wiibagent.llm.CancelSignal;
 import com.mawai.wiibagent.llm.LlmErrorMessages;
 import com.mawai.wiibagent.llm.ModelCallLimiter;
+import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.ResilientChatService;
 import com.mawai.wiibagent.llm.ToolCallTraceHook;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
@@ -35,16 +34,11 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.bsc.langgraph4j.CompileConfig;
-import org.bsc.langgraph4j.CompiledGraph;
-import org.bsc.langgraph4j.NodeOutput;
-import org.bsc.langgraph4j.RunnableConfig;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
-import org.bsc.langgraph4j.streaming.StreamingOutput;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
@@ -73,7 +67,7 @@ import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 
 /**
- * 唤醒回路核心：一次唤醒 = 一个无状态 ReactAgent 会话（BYOK 模型 + 数据工具 + 绑定子账户的交易工具），
+ * 唤醒回路核心：一次唤醒 = 一个无状态 ReactLoop 会话（BYOK 模型 + 数据工具 + 绑定子账户的交易工具），
  * 决策全文 + 动作轨迹 + 权益落 ai_trader_decision。
  * 失败语义：连续 5 次失败自动 PAUSED（key 无效是永久错误，不等连败当场停）；权益跌破初始 1% 判 LIQUIDATED 终局。
  */
@@ -261,7 +255,7 @@ public class TraderWakeupRunner {
     }
 
     /**
-     * ReactAgent 会话：备料（工具/计划/最近几轮/提示词）→ 建图 → 开场白 → 限时执行，过程逐帧推给现场 {@code run}。
+     * ReactLoop 会话：备料（工具/计划/最近几轮/提示词）→ 建循环 → 开场白 → 限时执行，过程逐帧推给现场 {@code run}。
      * 返回模型最终文本；动作轨迹随 decision 一并写入。trigger 非空=警报唤醒（只换开场白）。
      */
     private String runAgentSession(AiTrader trader, long boundaryTime, long budgetSeconds,
@@ -285,51 +279,41 @@ public class TraderWakeupRunner {
 
         // 全量工具轨迹（含数据工具）：收集器在本方法手里，超时 cancel 也保得住已发生的记录
         ToolCallTraceHook trace = new ToolCallTraceHook();
-        CompiledGraph<MessagesState<Message>> graph = AgentGraphs.reactAgent(model, prompt)
-                .streaming(true) // 模型文本逐字推给现场
+        ResilientChatService chat = ResilientChatService.builder().model(model).systemPrompt(prompt)
                 .tools(wakeTools(lang, tradeTools))
-                .addCallModelHook(CancelSignal.hook()) // 超时/异常收尾时掐断在途模型流
-                .addExecuteToolsHook(new ModelCallLimiter(MAX_MODEL_CALLS, prompts.get(lang, "llm.callLimit.notExecuted"),
-                        prompts.get(lang, "llm.callLimit.lastCall")))
-                .addExecuteToolsHook(trace)
                 // 首轮强制调工具：不看数据不许决策；弱模型不支持 tool_choice 会以 ERROR 落库并最终自动暂停
-                .build(ResilientChatService.builder().model(model).forceFirstToolChoice("required").asFactory())
-                // 框架默认 25 不够；流式模型节点吃 2 格，账按 3L+8（见 ChatAgentFactory.summarizerLeaf）
-                .compile(CompileConfig.builder().recursionLimit(3 * MAX_MODEL_CALLS + 8).build());
+                .forceFirstToolChoice("required").build();
+        ReactLoop loop = ReactLoop.builder().chat(chat)
+                .streaming(true)      // 模型文本逐字推给现场
+                .limiter(new ModelCallLimiter(MAX_MODEL_CALLS, prompts.get(lang, "llm.callLimit.notExecuted"),
+                        prompts.get(lang, "llm.callLimit.lastCall")))
+                .trace(trace).build();
 
         String calendar = econCalendar.assemble(nowMs.getAsLong(), lang);
         String instruction = trigger != null
                 ? alertInstruction(trader, trigger, recent.isEmpty() ? null : recent.getFirst().wakeTime(), observation, calendar, lang, ownerNote)
                 : routineInstruction(trader, boundaryTime, observation, marketSnapshot(whitelist, lang), calendar, lang, ownerNote);
         run.prompt(prompt, instruction);
-        // 中断信号随 config 进图，finally 里 complete：在途模型流不再往下烧
+        // 中断信号交给循环，finally 里 complete：在途模型流不再往下烧
         CompletableFuture<Void> cancel = new CompletableFuture<>();
-        RunnableConfig config = RunnableConfig.builder()
-                .threadId("trader-" + trader.getId() + "-" + boundaryTime)
-                .addMetadata(CancelSignal.CONFIG_KEY, cancel).build();
 
         record SessionOutcome(String reasoning, int modelCalls) {
         }
         // 虚拟线程 + FutureTask 承载超时；超时后本轮作废（已发出的订单不回滚——sim 是事实源）
         FutureTask<SessionOutcome> task = new FutureTask<>(() -> {
             run.callStart();
-            // 已处理消息数水位：节点输出的 state 是到此为止的全部消息，只看比上次多出来的那截
-            int seen = 0;
-            NodeOutput<MessagesState<Message>> last = null;
-            // 普通迭代不用 forEachAsync：后者每个 chunk 叠一层栈帧，长回答会 StackOverflowError
-            for (NodeOutput<MessagesState<Message>> output : graph.stream(Map.of("messages", List.of(new UserMessage(instruction))), config)) {
-                if (output instanceof StreamingOutput<?> streaming) {
-                    String chunk = streaming.chunk();
+            ReactLoop.Result result = loop.run(List.of(new UserMessage(instruction)), null, cancel, new ReactLoop.Listener() {
+                @Override
+                public void chunk(ChatResponse frame) {
+                    String chunk = frame.getResult().getOutput().getText();
                     if (chunk != null && !chunk.isEmpty()) {
                         run.token(chunk);
                     }
-                    continue;
                 }
-                last = output;
-                List<Message> messages = output.state().messages();
-                // 不按节点名分支：保险丝跳 END 补的占位回执也走这条路
-                for (; seen < messages.size(); seen++) {
-                    Message m = messages.get(seen);
+
+                @Override
+                public void message(Message m) {
+                    // 不按来源分支：保险丝补的占位回执也走这条路
                     if (m instanceof AssistantMessage assistant) {
                         run.callEnd(assistant.getText(), assistant.getToolCalls());
                     } else if (m instanceof ToolResponseMessage responses) {
@@ -339,13 +323,8 @@ public class TraderWakeupRunner {
                         run.callStart();
                     }
                 }
-            }
-            if (last == null) {
-                throw new IllegalStateException("图执行无返回状态");
-            }
-            MessagesState<Message> state = last.state();
-            return new SessionOutcome(finalReasoning(prompts, lang, state.messages()),
-                    state.<Number>value(ModelCallLimiter.CALL_COUNT_KEY).map(Number::intValue).orElse(0));
+            });
+            return new SessionOutcome(finalReasoning(prompts, lang, result.messages()), result.modelCalls());
         });
         Thread.startVirtualThread(task);
         SessionOutcome outcome;
@@ -551,7 +530,7 @@ public class TraderWakeupRunner {
     /**
      * 唤醒挂的整套工具。工具描述按语言取自词表 {@code tool.<工具名>}（词表没这条就用注解原描述）。
      * <p>
-     * 包私有：单测直接调它，验的才是建图点真正挂上去的那批工具，而不是测试里另抄一份清单。
+     * 包私有：单测直接调它，验的才是建循环时真正挂上去的那批工具，而不是测试里另抄一份清单。
      * <p>
      * 快讯工具的语言在这里烤进实例（英文取译文，缺译文回落中文原文）——取哪门语言的新闻不是模型的选择。
      */
@@ -685,8 +664,8 @@ public class TraderWakeupRunner {
     }
 
     /**
-     * 合并轨迹：顺序骨架来自图上 hook 的全量记录（含数据工具）；交易工具用 TradeTools 的
-     * 富记录（结果/拒因）按序替换轻量占位。极端中断时 hook 记录缺失，富记录兜底补尾。
+     * 合并轨迹：顺序骨架来自轨迹收集器的全量记录（含数据工具）；交易工具用 TradeTools 的
+     * 富记录（结果/拒因）按序替换轻量占位。极端中断时轨迹记录缺失，富记录兜底补尾。
      */
     private static List<JSONObject> mergeActions(List<JSONObject> traced, List<JSONObject> tradeActions) {
         Deque<JSONObject> rich = new ArrayDeque<>(tradeActions);

@@ -3,10 +3,6 @@ package com.mawai.wiibagent.llm;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import lombok.extern.slf4j.Slf4j;
-import org.bsc.langgraph4j.RunnableConfig;
-import org.bsc.langgraph4j.hook.NodeHook;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
-import org.bsc.langgraph4j.state.AppenderChannel;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -19,14 +15,14 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 
 /**
  * 长对话压缩：模型调用前检查历史长度，超阈值就把老消息交给浅模型总结成一段，替换原文。
  * 不压缩上下文会一路涨到撞破模型窗口，届时直接报错。
  * <p>
- * 挂在模型节点的 BeforeCall——它的返回值会并入 state，压缩结果因此**持久生效**：
+ * {@link ReactLoop} 每次调模型前调一次，返回非空就整体替换历史，之后本轮都用压缩后的——
  * 一轮 ReAct 可能调用模型五到十次，若只作用于单次调用则每次都要重压，白烧浅模型的钱。
  * <p>
  * 压缩后的结构（借鉴 spring-ai-alibaba SummarizationHook）：
@@ -43,7 +39,7 @@ import java.util.concurrent.CompletableFuture;
  * {@link #countSegments} 逐语言各认一遍。
  */
 @Slf4j
-public class ConversationSummarizer implements NodeHook.BeforeCall<MessagesState<Message>> {
+public class ConversationSummarizer {
 
     /** 切点前后各扫这么多条，找是否有跨越切点的工具调用配对 */
     private static final int TOOL_PAIR_SEARCH_RANGE = 5;
@@ -54,7 +50,7 @@ public class ConversationSummarizer implements NodeHook.BeforeCall<MessagesState
     private final int thresholdTokens;
     private final int messagesToKeep;
     private final PromptCatalog prompts;
-    /** 摘要正文、段头、角色名都按它写；压缩钩子是建叶子时挂上去的，语言跟着叶子走 */
+    /** 摘要正文、段头、角色名都按它写；压缩器是建叶子时装上的，语言跟着叶子走 */
     private final AgentLang lang;
 
     public ConversationSummarizer(ChatModel summaryModel, int thresholdTokens, int messagesToKeep,
@@ -66,37 +62,33 @@ public class ConversationSummarizer implements NodeHook.BeforeCall<MessagesState
         this.lang = lang;
     }
 
-    @Override
-    public CompletableFuture<Map<String, Object>> applyBefore(String nodeId, MessagesState<Message> state,
-                                                              RunnableConfig config) {
-        List<Message> messages = state.messages();
+    /** 空 = 这次不压（没到阈值 / 没有安全切点 / 没有新原文可压 / 压缩失败），调用方沿用原始历史 */
+    public Optional<List<Message>> compress(List<Message> messages) {
         int tokens = estimateTokens(messages);
         if (tokens < thresholdTokens) {
-            return CompletableFuture.completedFuture(Map.of());
+            return Optional.empty();
         }
         int cutoff = findSafeCutoff(messages);
         if (cutoff <= 0) {
             log.warn("[Summarize] 找不到安全切点，跳过压缩 tokens={} messages={}", tokens, messages.size());
-            return CompletableFuture.completedFuture(Map.of());
+            return Optional.empty();
         }
         try {
-            List<Message> compressed = compress(messages, cutoff);
+            List<Message> compressed = rebuild(messages, cutoff);
             if (compressed.isEmpty()) {
                 // 切点前只剩首条用户消息与老摘要：没有新原文可压，压了也是白烧浅模型的钱
                 log.warn("[Summarize] 无新原文可压，跳过 tokens={} messages={}", tokens, messages.size());
-                return CompletableFuture.completedFuture(Map.of());
+                return Optional.empty();
             }
             log.info("[Summarize] 压缩 {} 条 → {} 条（原 ~{} tokens）", messages.size(), compressed.size(), tokens);
-            return CompletableFuture.completedFuture(
-                    Map.of("messages", new AppenderChannel.ReplaceAllWith<>(compressed)));
+            return Optional.of(compressed);
         } catch (Exception e) {
             // 压缩失败不该打断对话：宁可带着长上下文继续，撞窗口是下一步的事
             log.warn("[Summarize] 压缩失败，沿用原始对话", e);
-            return CompletableFuture.completedFuture(Map.of());
+            return Optional.empty();
         }
     }
 
-    /** 返回空列表 = 没有新原文可压（调用方据此跳过本次压缩） */
     /**
      * 这条是不是压缩产出的摘要。压缩后的形状是「首问 + 摘要 + 保留窗」，
      * 重新生成回退要靠它认出"队首那条 user 是压缩留下的首问、不是本轮提问"。
@@ -114,7 +106,8 @@ public class ConversationSummarizer implements NodeHook.BeforeCall<MessagesState
         return false;
     }
 
-    private List<Message> compress(List<Message> messages, int cutoff) {
+    /** 返回空列表 = 没有新原文可压 */
+    private List<Message> rebuild(List<Message> messages, int cutoff) {
         UserMessage firstUser = messages.stream()
                 .filter(UserMessage.class::isInstance).map(UserMessage.class::cast)
                 .findFirst().orElse(null);

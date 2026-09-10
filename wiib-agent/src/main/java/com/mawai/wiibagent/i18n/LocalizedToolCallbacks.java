@@ -36,7 +36,7 @@ import java.util.List;
  * <b>@ToolParam 的参数描述不跟语言走</b>：它嵌在自动推导的 inputSchema 里，换语言要在 schema 层
  * 逐字段改写，复杂度不值。参数描述是字段级技术说明，全仓统一写英文。
  * <p>
- * <b>工具失败回给模型，不抛出</b>（{@link FailureAsResult}）：langgraph4j 的工具节点不接异常，
+ * <b>工具失败回给模型，不抛出</b>（{@link FailureAsResult}）：ReactLoop 执行工具不接异常，
  * 抛出去整轮就没了。写工具自己都 catch 了，这层兜的是数据工具（K线首拉失败会原样抛）和参数解析失败。
  */
 @Slf4j

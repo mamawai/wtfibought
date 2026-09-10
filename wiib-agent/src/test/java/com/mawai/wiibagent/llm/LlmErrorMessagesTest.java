@@ -54,9 +54,8 @@ class LlmErrorMessagesTest {
     /** 真正的原因常被 SDK/框架包在 cause 里，外层 message 非空但泛泛，不能只看最外层 */
     @Test
     void 从因果链里认出真正的原因() {
-        Throwable wrapped = new java.util.concurrent.CompletionException(
-                "org.bsc.langgraph4j.GraphRunnerException: node execution failed",
-                new RuntimeException("HTTP 401 Unauthorized"));
+        Throwable wrapped = new java.util.concurrent.ExecutionException(
+                "唤醒会话执行失败", new RuntimeException("HTTP 401 Unauthorized"));
 
         assertThat(zh(wrapped)).contains("API key");
     }

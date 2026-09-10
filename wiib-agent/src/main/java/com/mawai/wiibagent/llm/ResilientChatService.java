@@ -2,8 +2,6 @@ package com.mawai.wiibagent.llm;
 
 import com.openai.errors.OpenAIInvalidDataException;
 import lombok.extern.slf4j.Slf4j;
-import org.bsc.langgraph4j.spring.ai.agent.ReactAgent;
-import org.bsc.langgraph4j.spring.ai.agent.ReactAgentBuilder;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -12,6 +10,7 @@ import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.retry.NonTransientAiException;
+import org.springframework.ai.tool.ToolCallback;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
@@ -22,15 +21,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Function;
 
 /**
- * 带韧性的 ChatService：退避重试，装配进 langgraph4j 的 ReactAgent。
- * <p>
- * 落点选择：langgraph4j 的模型调用全部经 {@link ReactAgent.ChatService}，
- * {@code ReactAgent.builder().build(chatServiceFactory)} 允许换实现——重试放这一层，
- * 对图与节点完全透明。（原 spring-ai-alibaba 版本是 ModelInterceptor，同一套逻辑换了个挂载点。）
+ * 叶子 {@link ReactLoop} 的模型调用层：捎系统提示、挂工具与 options、首轮强制、搜索许可、退避重试。
  * <p>
  * 韧性分层（两条路径职责不同，别再往回加）：
  * <ul>
@@ -48,12 +43,12 @@ import java.util.function.Function;
  * 去掉强制重发。它不是重试——换的是请求本身，原样再发多少次都一样。
  * 流式路径还有一层同款的<b>搜索降级</b>（{@link #searchRejected}）：上游拒收服务端搜索工具时去掉许可重发
  * （只有 summarizer 捎许可且它是流式的，阻塞路径用不上）。
- * 流式路径的最外层是<b>中断</b>（{@link CancelSignal}）：用户点停止时掐断整条流水线，取消传到模型层。
+ * <b>中断</b>：{@link #streamingExecute} 的 cancel 完成时掐断整条流水线，取消传到模型层。
  * <p>
  * 不做兜底模型：BYOK 只有用户自己那一个端点，切"同端点另一个模型"没意义（端点挂了两个一起挂）。
  */
 @Slf4j
-public class ResilientChatService implements ReactAgent.ChatService {
+public class ResilientChatService {
 
     private final ChatModel primaryModel;
     private final int maxAttempts;
@@ -63,23 +58,24 @@ public class ResilientChatService implements ReactAgent.ChatService {
     /** 可空。非空=首轮强制用工具（"required" 或具体工具名），逐次调用时经 {@link #optionsFor} 落地 */
     private final String forceFirstToolChoice;
     private final SystemMessage systemMessage;
+    /** 本 agent 的工具表：既挂进 options 给模型看，也是 {@link ReactLoop} 执行工具时的查表处 */
+    private final List<ToolCallback> tools;
 
-    private ResilientChatService(Builder builder, ReactAgentBuilder<?, ?> agentBuilder) {
+    private ResilientChatService(Builder builder) {
         this.primaryModel = builder.primaryModel;
         this.maxAttempts = builder.maxAttempts;
         this.initialDelayMs = builder.initialDelayMs;
         this.maxDelayMs = builder.maxDelayMs;
         this.forceFirstToolChoice = builder.forceFirstToolChoice;
-        // 工具挂进 options（与框架 DefaultChatService 同构）：没工具的 agent 保持 null 走模型默认。
+        this.tools = List.copyOf(builder.tools);
+        // 工具挂进 options：没工具的 agent 保持 null 走模型默认。
         // 从模型自己的 options 派生而非泛型 builder：具体类型必须跟着模型走，理由见 ToolChoice 类头
-        ChatOptions base = agentBuilder.tools().isEmpty()
+        ChatOptions base = tools.isEmpty()
                 || !(primaryModel.getOptions() instanceof ToolCallingChatOptions)
                 ? null
-                : ToolChoice.withTools(primaryModel, agentBuilder.tools());
+                : ToolChoice.withTools(primaryModel, tools);
         this.chatOptions = builder.webSearch ? withWebSearch(base, primaryModel) : base;
-        this.systemMessage = SystemMessage.builder()
-                .text(agentBuilder.systemMessage().orElse("You are a helpful AI Assistant answering questions."))
-                .build();
+        this.systemMessage = SystemMessage.builder().text(builder.systemPrompt).build();
     }
 
     public static Builder builder() {
@@ -104,7 +100,7 @@ public class ResilientChatService implements ReactAgent.ChatService {
 
     /**
      * 本次调用的 options：首轮强制用工具的话，把 tool_choice 按协议落进去（{@link ToolChoice#apply}）。
-     * 逐次算而不是建服务时算死：ReactAgent 是循环，只有"最后一条用户消息之后还没有工具回执"那一次才强制，
+     * 逐次算而不是建服务时算死：ReactLoop 是循环，只有"最后一条用户消息之后还没有工具回执"那一次才强制，
      * 拿到工具结果后必须放开否则收不了尾。同一个 ChatModel 实例被多个 agent 共用，
      * "这个 agent 必须先拿真实数据"是 agent 自己的属性，所以落在 options 上而不是模型构造参数里。
      */
@@ -115,18 +111,17 @@ public class ResilientChatService implements ReactAgent.ChatService {
         return ToolChoice.apply(chatOptions, forceFirstToolChoice);
     }
 
-    @Override
-    public ChatModel chatModel() {
-        return primaryModel;
+    /** 本 agent 挂的工具，{@link ReactLoop} 按 tool_call 的名字在这份表里找 callback */
+    public List<ToolCallback> tools() {
+        return tools;
     }
 
-    @Override
     public Optional<ChatOptions> chatOptions() {
         return Optional.ofNullable(chatOptions);
     }
 
-    @Override
-    public Flux<ChatResponse> streamingExecute(List<Message> messages) {
+    /** @param cancel 可空。非空且完成时掐断整条流水线 */
+    public Flux<ChatResponse> streamingExecute(List<Message> messages, CompletableFuture<Void> cancel) {
         List<Message> withSystem = withSystem(messages);
         ChatOptions used = optionsFor(withSystem);
         AtomicBoolean emitted = new AtomicBoolean(false);
@@ -157,9 +152,7 @@ public class ResilientChatService implements ReactAgent.ChatService {
         // 用户中断：整条流水线（含重试与降级）在这儿被掐断，取消向上游传到 WebClient / SDK 流
         // （Spring AI 2.0.1 起 SDK 流随 dispose 关闭）。suppressCancel=true 必须给：
         // 缺省会在流正常结束时反向 cancel 这个 future，专家等待期挂在它上面的 anyOf 会被误唤醒
-        return CancelSignal.current()
-                .map(signal -> stream.takeUntilOther(Mono.fromFuture(signal, true)))
-                .orElse(stream);
+        return cancel == null ? stream : stream.takeUntilOther(Mono.fromFuture(cancel, true));
     }
 
     /**
@@ -188,7 +181,6 @@ public class ResilientChatService implements ReactAgent.ChatService {
      * OpenAI 走 SDK 的 maxRetries）。这里再来一轮会叠乘成 3×3=9 次，纯粹放大尾延迟。
      * 流式路径相反：模型层不重试，重试全在上面的 streamingExecute 里。
      */
-    @Override
     public ChatResponse execute(List<Message> messages) {
         return callPrimary(withSystem(messages));
     }
@@ -253,6 +245,8 @@ public class ResilientChatService implements ReactAgent.ChatService {
     public static class Builder {
 
         private ChatModel primaryModel;
+        private String systemPrompt;
+        private List<ToolCallback> tools = List.of();
         private int maxAttempts = 3;
         private long initialDelayMs = 500;
         private long maxDelayMs = 4000;
@@ -283,6 +277,18 @@ public class ResilientChatService implements ReactAgent.ChatService {
             return this;
         }
 
+        /** 系统提示，必填非空；每次调用都捎在历史最前面 */
+        public Builder systemPrompt(String systemPrompt) {
+            this.systemPrompt = systemPrompt;
+            return this;
+        }
+
+        /** 本 agent 的工具表，缺省不挂工具 */
+        public Builder tools(List<ToolCallback> tools) {
+            this.tools = tools;
+            return this;
+        }
+
         public Builder maxAttempts(int maxAttempts) {
             this.maxAttempts = maxAttempts;
             return this;
@@ -298,9 +304,12 @@ public class ResilientChatService implements ReactAgent.ChatService {
             return this;
         }
 
-        /** 交给 {@code ReactAgent.Builder#build(factory)}：建图时框架回传 agentBuilder 取工具与系统提示。 */
-        public Function<ReactAgentBuilder<?, ?>, ReactAgent.ChatService> asFactory() {
-            return agentBuilder -> new ResilientChatService(this, agentBuilder);
+        public ResilientChatService build() {
+            if (systemPrompt == null || systemPrompt.isBlank()) {
+                throw new IllegalArgumentException(
+                        "systemPrompt 不能为空：系统提示是每个 agent 的纪律与格式约定，不许静默缺席");
+            }
+            return new ResilientChatService(this);
         }
     }
 }

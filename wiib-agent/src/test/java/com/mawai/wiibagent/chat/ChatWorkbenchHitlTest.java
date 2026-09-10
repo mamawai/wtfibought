@@ -14,7 +14,6 @@ import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.trader.TraderChatService;
 import com.mawai.wiibagent.mapper.WorkbenchChatContextMapper;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -135,8 +134,7 @@ class ChatWorkbenchHitlTest {
                     wantsMarketExpert.get() ? "{\"next\":[\"market_agent\"]}" : "{\"next\":[\"FINISH\"]}"));
         });
         // 每轮：先要一次深研判（闸门在这儿拦），拿到回执后再说一句话收尾。
-        // 每条消息都带序号是必须的：MessagesState.SCHEMA 的 reducer 按 Objects.hash 去重，
-        // 连着几轮回同一句话，后面那条会被静默丢掉，工具节点当场 no AssistantMessage provided
+        // 每条消息带序号：几轮回同一句话时，断言按内容分得清是哪一轮的
         when(deep.stream(any(Prompt.class))).thenAnswer(inv -> {
             summarizerPrompts.add(inv.getArgument(0));
             return Flux.just(responseOf(

@@ -1,13 +1,10 @@
 package com.mawai.wiibagent.llm;
 
-import org.bsc.langgraph4j.CompiledGraph;
-import org.bsc.langgraph4j.action.Command;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
-import org.bsc.langgraph4j.spring.ai.agent.ReactAgent;
-import org.bsc.langgraph4j.spring.ai.serializer.jackson.SpringAIJacksonStateSerializer;
+import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
+import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibcommon.enums.AgentLang;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -18,10 +15,7 @@ import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.tool.annotation.Tool;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,9 +24,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * 保险丝的核心契约：它挂在**工具执行边**上，跳 END 时 state 最后一条必然是带 toolCalls 的
- * AssistantMessage。只跳不补 = 留下永远等不到 tool_result 的孤儿 tool_call，
- * 这段历史进 Responses API 就是 400（工作台会持久化它 → 该会话彻底报废）。
+ * 保险丝的核心契约：三个纯函数，计数在 {@link ReactLoop} 手里。
+ * 到上限那一刻最后一条必然是带 toolCalls 的 AssistantMessage，只跳不补 = 留下永远等不到
+ * tool_result 的孤儿 tool_call，这段历史进 Responses API 就是 400（工作台会持久化它 → 该会话彻底报废）。
  */
 class ModelCallLimiterTest {
 
@@ -41,41 +35,20 @@ class ModelCallLimiterTest {
     /** 预算收尾提示（llm.callLimit.lastCall）同理 */
     private static final String LAST_CALL = "（系统提示：预算已用完）";
 
-    /** 一条带 toolCalls 的助手消息 + 已有调用计数 = 保险丝触发那一刻的 state */
-    private static MessagesState<Message> stateAtToolEdge(int alreadyCalled, String... toolCallIds) {
-        AssistantMessage.Builder builder = AssistantMessage.builder().content("");
-        builder.toolCalls(java.util.Arrays.stream(toolCallIds)
-                .map(id -> new AssistantMessage.ToolCall(id, "function", "get_account", "{}"))
-                .toList());
-        return new MessagesState<>(Map.of(
-                "messages", List.of(new UserMessage("看看账户"), builder.build()),
-                ModelCallLimiter.CALL_COUNT_KEY, alreadyCalled));
-    }
-
-    @SuppressWarnings("unchecked")
-    private static List<Message> appendedMessages(Command command) {
-        Object messages = command.update().get("messages");
-        return messages instanceof List<?> list ? (List<Message>) list : List.of((Message) messages);
+    private static AssistantMessage replyWith(String... toolCallIds) {
+        return AssistantMessage.builder().content("")
+                .toolCalls(java.util.Arrays.stream(toolCallIds)
+                        .map(id -> new AssistantMessage.ToolCall(id, "function", "get_account", "{}"))
+                        .toList())
+                .build();
     }
 
     @Test
-    void 达上限跳END时给未执行的工具调用补齐占位回执() {
-        AtomicBoolean toolsRan = new AtomicBoolean();
-
-        Command command = new ModelCallLimiter(3, NOT_EXECUTED, LAST_CALL).applyWrap("tools", stateAtToolEdge(2, "call_a", "call_b"),
-                null, (s, c) -> {
-                    toolsRan.set(true);
-                    return CompletableFuture.completedFuture(Command.emptyCommand());
-                }).join();
-
-        assertThat(toolsRan).isFalse(); // 到顶了就不许再执行工具
-        assertThat(command.gotoNode()).isEqualTo("end");
-        assertThat(command.update()).containsEntry(ModelCallLimiter.CALL_COUNT_KEY, 3);
+    void 达上限时给未执行的工具调用补齐占位回执() {
+        ToolResponseMessage placeholder = new ModelCallLimiter(3, NOT_EXECUTED, LAST_CALL)
+                .placeholders(replyWith("call_a", "call_b"));
 
         // 每个未执行的 tool_call 都要有配对的 tool_result，否则这段历史一送上游就是 400
-        List<Message> appended = appendedMessages(command);
-        assertThat(appended).hasSize(1).allMatch(ToolResponseMessage.class::isInstance);
-        ToolResponseMessage placeholder = (ToolResponseMessage) appended.getFirst();
         assertThat(placeholder.getResponses()).extracting(ToolResponseMessage.ToolResponse::id)
                 .containsExactly("call_a", "call_b");
         // 占位内容要说清"没执行"，模型/复盘看得懂，不是伪造的成功结果——传进去的文案原样落回执
@@ -83,30 +56,28 @@ class ModelCallLimiterTest {
                 assertThat(r.responseData()).isEqualTo(NOT_EXECUTED));
     }
 
+    /** 倒数第二次能执行工具：回执末尾贴预算已尽提示，下一次模型调用直接收尾（不再撞保险丝硬切） */
     @Test
-    void 没有待执行工具调用时不补空回执() {
-        // 理论上走不到（工具边前必有 tool_call），但补一条空 TRM 反而是新的孤儿
-        MessagesState<Message> state = new MessagesState<>(Map.of(
-                "messages", List.of(new UserMessage("你好"), new AssistantMessage("好的")),
-                ModelCallLimiter.CALL_COUNT_KEY, 2));
+    void 倒数第二次调用把预算已尽提示贴在回执末尾() {
+        ToolResponseMessage notified = new ModelCallLimiter(3, NOT_EXECUTED, LAST_CALL).withLastCallNotice(
+                ToolResponseMessage.builder().responses(List.of(
+                        new ToolResponseMessage.ToolResponse("call_a", "get_account", "{\"balance\":1}"))).build());
 
-        Command command = new ModelCallLimiter(3, NOT_EXECUTED, LAST_CALL).applyWrap("tools", state, null,
-                (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
-
-        assertThat(command.gotoNode()).isEqualTo("end");
-        assertThat(command.update()).doesNotContainKey("messages");
+        String data = notified.getResponses().getFirst().responseData();
+        assertThat(data).startsWith("{\"balance\":1}").endsWith(LAST_CALL);
+        assertThat(notified.getResponses().getFirst().id()).isEqualTo("call_a");
     }
 
-    /** 图上真跑一遍：被保险丝收束的最终 state 是要被工作台持久化的，孤儿 tool_call 会让该会话彻底报废 */
+    /** 真跑一遍：被保险丝收束的最终历史是要被工作台持久化的，孤儿 tool_call 会让该会话彻底报废 */
     public static class EchoTools {
-        @Tool(description = "回声")
+        @Tool(name = "echo", description = "回声")
         public String echo(String text) {
             return text;
         }
     }
 
     @Test
-    void 收束后的最终state里不留孤儿toolCall() throws Exception {
+    void 收束后的最终历史里不留孤儿toolCall() {
         ChatModel model = mock(ChatModel.class);
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
         AtomicInteger round = new AtomicInteger();
@@ -119,71 +90,29 @@ class ModelCallLimiterTest {
                     .build())));
         });
 
-        CompiledGraph<MessagesState<Message>> graph = ReactAgent.<MessagesState<Message>>builder()
-                .chatModel(model)
-                .stateSerializer(new SpringAIJacksonStateSerializer<>(MessagesState::new))
-                .toolsFromObject(new EchoTools())
-                .addExecuteToolsHook(new ModelCallLimiter(3, NOT_EXECUTED, LAST_CALL))
+        ResilientChatService chat = ResilientChatService.builder()
+                .model(model)
+                .systemPrompt("测试")
+                .tools(new LocalizedToolCallbacks(new PromptCatalog()).of(AgentLang.ZH, new EchoTools()))
+                .build();
+        ReactLoop.Result result = ReactLoop.builder()
+                .chat(chat)
+                .limiter(new ModelCallLimiter(3, NOT_EXECUTED, LAST_CALL))
                 .build()
-                .compile();
+                .run(List.of(new UserMessage("说点什么")), null, null, null);
 
-        MessagesState<Message> state = graph
-                .invoke(Map.of("messages", List.of(new UserMessage("说点什么")))).orElseThrow();
+        assertThat(result.modelCalls()).isEqualTo(3);
 
-        Set<String> called = state.messages().stream()
+        Set<String> called = result.messages().stream()
                 .filter(AssistantMessage.class::isInstance).map(AssistantMessage.class::cast)
                 .flatMap(a -> a.getToolCalls().stream()).map(AssistantMessage.ToolCall::id)
                 .collect(java.util.stream.Collectors.toSet());
-        Set<String> answered = state.messages().stream()
+        Set<String> answered = result.messages().stream()
                 .filter(ToolResponseMessage.class::isInstance).map(ToolResponseMessage.class::cast)
                 .flatMap(t -> t.getResponses().stream()).map(ToolResponseMessage.ToolResponse::id)
                 .collect(java.util.stream.Collectors.toSet());
 
         assertThat(called).isNotEmpty();
         assertThat(answered).containsExactlyInAnyOrderElementsOf(called);
-    }
-
-    /** 倒数第二次能执行工具：工具照跑，回执末尾贴预算已尽提示，下一次模型调用直接收尾（不再撞保险丝硬切） */
-    @Test
-    void 倒数第二次调用把预算已尽提示贴在回执末尾() {
-        Command command = new ModelCallLimiter(3, NOT_EXECUTED, LAST_CALL).applyWrap("tools", stateAtToolEdge(1, "call_a"),
-                null, (s, c) -> CompletableFuture.completedFuture(new Command("agent", Map.of("messages",
-                        ToolResponseMessage.builder().responses(List.of(
-                                new ToolResponseMessage.ToolResponse("call_a", "get_account", "{\"balance\":1}"))).build())))).join();
-
-        assertThat(command.gotoNode()).isEqualTo("agent");
-        assertThat(command.update()).containsEntry(ModelCallLimiter.CALL_COUNT_KEY, 2);
-        ToolResponseMessage trm = (ToolResponseMessage) appendedMessages(command).getFirst();
-        String data = trm.getResponses().getFirst().responseData();
-        assertThat(data).startsWith("{\"balance\":1}").endsWith(LAST_CALL);
-        assertThat(trm.getResponses().getFirst().id()).isEqualTo("call_a");
-    }
-
-    /** 没到倒数第二次：回执原样，只累加计数 */
-    @Test
-    void 没到倒数第二次不贴提示() {
-        Command command = new ModelCallLimiter(3, NOT_EXECUTED, LAST_CALL).applyWrap("tools", stateAtToolEdge(0, "call_a"),
-                null, (s, c) -> CompletableFuture.completedFuture(new Command("agent", Map.of("messages",
-                        ToolResponseMessage.builder().responses(List.of(
-                                new ToolResponseMessage.ToolResponse("call_a", "get_account", "{\"balance\":1}"))).build())))).join();
-
-        assertThat(command.update()).containsEntry(ModelCallLimiter.CALL_COUNT_KEY, 1);
-        ToolResponseMessage trm = (ToolResponseMessage) appendedMessages(command).getFirst();
-        assertThat(trm.getResponses().getFirst().responseData()).isEqualTo("{\"balance\":1}");
-    }
-
-    @Test
-    void 未到上限照常执行工具并累加计数() {
-        AtomicBoolean toolsRan = new AtomicBoolean();
-
-        Command command = new ModelCallLimiter(8, NOT_EXECUTED, LAST_CALL).applyWrap("tools", stateAtToolEdge(2, "call_a"),
-                null, (s, c) -> {
-                    toolsRan.set(true);
-                    return CompletableFuture.completedFuture(Command.emptyCommand());
-                }).join();
-
-        assertThat(toolsRan).isTrue();
-        assertThat(command.update()).containsEntry(ModelCallLimiter.CALL_COUNT_KEY, 3)
-                .doesNotContainKey("messages"); // 工具真跑了，回执由 ExecuteToolsAction 出，不该有占位
     }
 }

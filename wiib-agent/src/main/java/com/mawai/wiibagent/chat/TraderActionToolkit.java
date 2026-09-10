@@ -19,8 +19,8 @@ import java.util.Map;
  * <p>
  * 挂在汇总者不挂 trader 专家：查询归专家，动手归汇总者——收尾动作由写最终回答的那个人做。
  * <p>
- * 会话号从框架交给工具的 ToolContext 里取（{@link ToolRunContext#sessionId}）：
- * ChatTurnRunner 把它放进图 state，langgraph4j 执行工具时整个 state 就是 ToolContext。
+ * 会话号从执行工具时交进来的 ToolContext 里取（{@link ToolRunContext#sessionId}）：
+ * ChatTurnRunner 把它传给 ReactLoop，循环执行工具时放进 ToolContext。
  * <p>
  * userId 建叶子时烤死，理由见 {@link TraderQueryToolkit}。
  */

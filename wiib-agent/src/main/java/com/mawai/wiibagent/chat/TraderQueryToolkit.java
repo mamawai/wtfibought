@@ -8,8 +8,8 @@ import org.springframework.ai.tool.annotation.ToolParam;
 /**
  * trader 专家的只读工具集：纯查库，一个字都不写。
  * <p>
- * <b>userId 是建叶子时烤死的</b>，不是工具参数——工具方法体拿不到用户身份
- *（{@code ChatService.execute} 签名里没有 RunnableConfig），做成参数则等于让模型自己填要看谁的
+ * <b>userId 是建叶子时烤死的</b>，不是工具参数——工具方法体拿不到用户身份，
+ * 做成参数则等于让模型自己填要看谁的
  * trader，模型填错或被诱导就是跨用户越权。叶子按含 userId 的配置指纹缓存，见
  * {@link ChatModelFactory#fingerprint}。
  */

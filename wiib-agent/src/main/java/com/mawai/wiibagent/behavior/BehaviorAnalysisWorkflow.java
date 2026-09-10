@@ -5,9 +5,6 @@ import com.mawai.wiibagent.behavior.BehaviorDataCollector.Section;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.llm.ResilientChatService;
 import lombok.RequiredArgsConstructor;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
-import org.bsc.langgraph4j.spring.ai.agent.ReactAgent;
-import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -72,13 +69,11 @@ public class BehaviorAnalysisWorkflow {
     }
 
     /**
-     * 走 {@link ResilientChatService} 而不是裸 {@code chatModel.call}：兜底切换与"读响应被掐"的补救挂在这一层。
-     * 它的工厂签名要一个 ReactAgentBuilder，这里只借它捎系统提示——不挂工具、不 build 图，
-     * 所以没有 ReAct 循环，落到底就是一次 {@code model.call}。
+     * 走 {@link ResilientChatService} 而不是裸 {@code chatModel.call}：读响应被掐的补救挂在这一层。
+     * 不挂工具、不进 {@code ReactLoop}，落到底就是一次 {@code model.call}。
      */
-    private ReactAgent.ChatService chatService(ChatModel chatModel, String system) {
-        return ResilientChatService.builder().model(chatModel).asFactory()
-                .apply(ReactAgent.<MessagesState<Message>>builder().defaultSystem(system));
+    private ResilientChatService chatService(ChatModel chatModel, String system) {
+        return ResilientChatService.builder().model(chatModel).systemPrompt(system).build();
     }
 
     private String buildPrompt(AgentLang lang, long userId, List<Section> sections) {

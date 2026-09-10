@@ -3,19 +3,13 @@ package com.mawai.wiibagent.chat;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
-import org.bsc.langgraph4j.RunnableConfig;
-import org.bsc.langgraph4j.action.Command;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ToolContext;
 
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -35,7 +29,7 @@ import static org.mockito.Mockito.when;
 class DeepAnalysisToolkitTest {
 
     private static final String SESSION = "wb-1-x";
-    /** 生产里会话号由 ChatTurnRunner 放进图 state、框架经 ToolContext 交给工具 */
+    /** 生产里会话号由 ChatTurnRunner 传给 ReactLoop，循环执行工具时经 ToolContext 交给工具 */
     private static final ToolContext CTX = new ToolContext(Map.of(ToolRunContext.SESSION_KEY, SESSION));
 
     private final ChatModel model = mock(ChatModel.class);
@@ -90,9 +84,8 @@ class DeepAnalysisToolkitTest {
     @Test
     void 工具执行的标的与闸门授权键一致() {
         ApprovalRegistry registry = new ApprovalRegistry();
-        new ApprovalGate(registry, ChatTestEndpoints.PROMPTS, AgentLang.ZH).applyWrap("tools", deepCallState("btc"),
-                RunnableConfig.builder().threadId(SESSION).build(),
-                (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        new ApprovalGate(registry, ChatTestEndpoints.PROMPTS, AgentLang.ZH)
+                .intercept(SESSION, deepCall("btc"));
         String gateSymbol = registry.peekPending(SESSION).orElseThrow().symbol();
         when(deepAnalysisService.buildNewsContext(any())).thenReturn("ctx");
 
@@ -104,12 +97,10 @@ class DeepAnalysisToolkitTest {
                 anyString(), any(), any(), any());
     }
 
-    private static MessagesState<Message> deepCallState(String symbol) {
-        return new MessagesState<>(Map.of("messages", List.of(
-                new UserMessage("深度研判一下"),
-                AssistantMessage.builder().content("")
-                        .toolCalls(List.of(new AssistantMessage.ToolCall("c1", "function",
-                                "run_deep_analysis", "{\"symbol\":\"" + symbol + "\"}")))
-                        .build())));
+    private static AssistantMessage deepCall(String symbol) {
+        return AssistantMessage.builder().content("")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("c1", "function",
+                        "run_deep_analysis", "{\"symbol\":\"" + symbol + "\"}")))
+                .build();
     }
 }

@@ -104,7 +104,7 @@ public class ByokModelBuilder {
         if (effort != null) {
             options.reasoningEffort(effort);
         }
-        // 不传 toolCallingManager：模型层不跑工具循环（循环在 langgraph4j 图里）
+        // 不传 toolCallingManager：模型层不跑工具循环（循环在 ReactLoop 里）
         return OpenAiChatModel.builder()
                 .openAiClient(client)
                 .openAiClientAsync(clientAsync)

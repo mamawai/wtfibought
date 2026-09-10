@@ -37,13 +37,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <b>本类独有、单测替代不了的三件事</b>（切点配对那条纯逻辑已由
  * {@code ConversationSummarizerTest} 的真实形状参数化用例必现覆盖，别再把它当本类的卖点）：
  * <ol>
- *   <li><b>hook 在生产装配下真的通电</b>。ConversationSummarizer 从上线起就长期是死代码——
- *       它原先挂在 summarizer 子图上，而子图被 {@code addNode(id, StateGraph)} 内联进父图时
- *       框架只搬 nodes/edges、不搬 hook。父图退役后叶子是独立编译的，走 ReactAgent 自己的
- *       {@code addCallModelHook}；而全绿的单测（mock 掉 ChatModel）当年整个上线周期都没发现这件事</li>
- *   <li><b>压缩结果经 {@link ChatContextStore} 序列化往返后仍被上游接受</b>。压缩走的是
- *       {@code ReplaceAllWith}，要先并进 state、落库、下一轮再读出来重放给模型，
- *       这条链上任何一环出错单测都看不见</li>
+ *   <li><b>压缩在生产装配下真的通电</b>。ConversationSummarizer 从上线起就长期是死代码——
+ *       挂上去的那一份压根没被调到，而全绿的单测（mock 掉 ChatModel）当年整个上线周期都没发现这件事</li>
+ *   <li><b>压缩结果经 {@link ChatContextStore} 序列化往返后仍被上游接受</b>。压缩换掉的是
+ *       整份历史，要落库、下一轮再读出来重放给模型，这条链上任何一环出错单测都看不见</li>
  *   <li><b>多轮同会话累积</b>下压缩的实际节奏：什么时候触发、摘要怎么分段、
  *       后续轮次会不会被压没上下文</li>
  * </ol>

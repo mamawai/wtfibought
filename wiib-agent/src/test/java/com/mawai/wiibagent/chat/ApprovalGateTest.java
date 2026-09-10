@@ -1,26 +1,19 @@
 package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.enums.AgentLang;
-import org.bsc.langgraph4j.RunnableConfig;
-import org.bsc.langgraph4j.action.Command;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
-import org.springframework.ai.chat.messages.UserMessage;
 
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * HITL 闸门的核心契约：判断必须发生在同时看得到 sessionId(RunnableConfig)
+ * HITL 闸门的核心契约：判断必须发生在同时看得到 sessionId
  * 和工具名/参数(tool_call) 的这一层。工具方法体两样都看不到——那正是
  * "卡片说 BTC、实际能跑 ETH"这个洞的根源。
  */
@@ -31,43 +24,22 @@ class ApprovalGateTest {
 
     private static final String SESSION = "wb-1-abc";
 
-    private static MessagesState<Message> stateWithToolCall(String toolName, String argsJson) {
-        return new MessagesState<>(Map.of("messages", List.of(
-                new UserMessage("深度研判一下"),
-                AssistantMessage.builder().content("")
-                        .toolCalls(List.of(new AssistantMessage.ToolCall("c1", "function", toolName, argsJson)))
-                        .build())));
+    /** 模型这一拍的回复：只带一个 tool_call，闸门看到的就是它 */
+    private static AssistantMessage toolCallOf(String toolName, String argsJson) {
+        return AssistantMessage.builder().content("")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("c1", "function", toolName, argsJson)))
+                .build();
     }
 
-    private static RunnableConfig config() {
-        return RunnableConfig.builder().threadId(SESSION).build();
-    }
-
-    @SuppressWarnings("unchecked")
-    private static ToolResponseMessage responseOf(Command command) {
-        Object messages = command.update().get("messages");
-        List<Message> list = messages instanceof List<?> l ? (List<Message>) l : List.of((Message) messages);
-        return (ToolResponseMessage) list.getFirst();
-    }
-
-    /** 未授权时不许烧深模型：直接短路并回一条 PENDING_APPROVAL，让模型转述给用户 */
+    /** 未授权时不许烧深模型：直接拦下并回一条 PENDING_APPROVAL，让模型转述给用户 */
     @Test
     void 未授权时短路并登记待确认() {
-        AtomicBoolean toolRan = new AtomicBoolean();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION,
+                toolCallOf("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"));
 
-        Command command = gate.applyWrap("tools",
-                stateWithToolCall("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
-                config(), (s, c) -> {
-                    toolRan.set(true);
-                    return CompletableFuture.completedFuture(Command.emptyCommand());
-                }).join();
-
-        assertThat(toolRan).isFalse();
-        // 短路后必须回到模型节点：gotoNode 为 null 会在 CompiledGraph.nextNodeId 里
-        // Objects.requireNonNull 直接 NPE（实跑验证过），而 "end" 会让模型没机会
-        // 把"卡片已弹出"说给用户
-        assertThat(command.gotoNode()).isEqualTo("agent");
-        assertThat(responseOf(command).getResponses()).singleElement()
+        // 有回执 = 这批工具一个都不跑，模型下一拍看到的是这条
+        assertThat(out).isPresent();
+        assertThat(out.orElseThrow().getResponses()).singleElement()
                 .satisfies(r -> assertThat(r.responseData()).contains("PENDING_APPROVAL"));
         assertThat(registry.peekPending(SESSION)).isPresent()
                 .get().satisfies(p -> {
@@ -79,21 +51,14 @@ class ApprovalGateTest {
     /** 批准 BTC 之后模型改口要 ETH：key 对不上，必须重新弹卡而不是放行 */
     @Test
     void 批准的标的之外不放行() {
-        gate.applyWrap("tools", stateWithToolCall("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
-                config(), (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        gate.intercept(SESSION, toolCallOf("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"));
         registry.approve(SESSION, registry.peekPending(SESSION).orElseThrow().requestId());
-        AtomicBoolean toolRan = new AtomicBoolean();
 
-        Command command = gate.applyWrap("tools",
-                stateWithToolCall("run_deep_analysis", "{\"symbol\":\"ETHUSDT\"}"),
-                config(), (s, c) -> {
-                    toolRan.set(true);
-                    return CompletableFuture.completedFuture(Command.emptyCommand());
-                }).join();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION,
+                toolCallOf("run_deep_analysis", "{\"symbol\":\"ETHUSDT\"}"));
 
-        assertThat(toolRan).isFalse();
-        assertThat(command.gotoNode()).isEqualTo("agent");   // 同上：不能是 null 也不能是 end
-        assertThat(responseOf(command).getResponses()).singleElement()
+        assertThat(out).isPresent();
+        assertThat(out.orElseThrow().getResponses()).singleElement()
                 .satisfies(r -> assertThat(r.responseData()).contains("PENDING_APPROVAL"));
     }
 
@@ -106,19 +71,14 @@ class ApprovalGateTest {
      */
     @Test
     void 标的归一化后能对上授权() {
-        gate.applyWrap("tools", stateWithToolCall("run_deep_analysis", "{\"symbol\":\"btc\"}"),
-                config(), (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        gate.intercept(SESSION, toolCallOf("run_deep_analysis", "{\"symbol\":\"btc\"}"));
         assertThat(registry.peekPending(SESSION).orElseThrow().symbol()).isEqualTo("BTCUSDT");
         registry.approve(SESSION, registry.peekPending(SESSION).orElseThrow().requestId());
-        AtomicBoolean toolRan = new AtomicBoolean();
 
-        gate.applyWrap("tools", stateWithToolCall("run_deep_analysis", "{\"symbol\":\"btcusdt\"}"),
-                config(), (s, c) -> {
-                    toolRan.set(true);
-                    return CompletableFuture.completedFuture(Command.emptyCommand());
-                }).join();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION,
+                toolCallOf("run_deep_analysis", "{\"symbol\":\"btcusdt\"}"));
 
-        assertThat(toolRan).isTrue();
+        assertThat(out).isEmpty();   // 空 = 放行，循环自己去执行
     }
 
     /**
@@ -127,34 +87,27 @@ class ApprovalGateTest {
      */
     @Test
     void 白名单外的标的不蹭已有授权() {
-        gate.applyWrap("tools", stateWithToolCall("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
-                config(), (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        gate.intercept(SESSION, toolCallOf("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"));
         registry.approve(SESSION, registry.peekPending(SESSION).orElseThrow().requestId());
-        AtomicBoolean toolRan = new AtomicBoolean();
 
-        gate.applyWrap("tools", stateWithToolCall("run_deep_analysis", "{\"symbol\":\"SOLUSDT\"}"),
-                config(), (s, c) -> {
-                    toolRan.set(true);
-                    return CompletableFuture.completedFuture(Command.emptyCommand());
-                }).join();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION,
+                toolCallOf("run_deep_analysis", "{\"symbol\":\"SOLUSDT\"}"));
 
-        assertThat(toolRan).isFalse();
+        assertThat(out).isPresent();
         assertThat(registry.peekPending(SESSION).orElseThrow().symbol()).isEqualTo("SOLUSDT");
     }
 
     /** 用户拒绝后再问同样的问题，应该告诉模型"用户拒了"，而不是又弹一次卡 */
     @Test
     void 拒绝后回执说明原因不再弹卡() {
-        gate.applyWrap("tools", stateWithToolCall("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
-                config(), (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        gate.intercept(SESSION, toolCallOf("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"));
         registry.reject(SESSION, registry.peekPending(SESSION).orElseThrow().requestId());
 
-        Command command = gate.applyWrap("tools",
-                stateWithToolCall("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
-                config(), (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION,
+                toolCallOf("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"));
 
-        assertThat(command.gotoNode()).isEqualTo("agent");   // 同上：不能是 null 也不能是 end
-        assertThat(responseOf(command).getResponses()).singleElement()
+        assertThat(out).isPresent();
+        assertThat(out.orElseThrow().getResponses()).singleElement()
                 .satisfies(r -> assertThat(r.responseData()).contains("拒绝"));
         assertThat(registry.peekPending(SESSION)).isEmpty(); // 没有再登记新的待确认
     }
@@ -166,13 +119,11 @@ class ApprovalGateTest {
      */
     @Test
     void 重新弹卡前丢弃用不上的旧授权() {
-        gate.applyWrap("tools", stateWithToolCall("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
-                config(), (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        gate.intercept(SESSION, toolCallOf("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"));
         registry.approve(SESSION, registry.peekPending(SESSION).orElseThrow().requestId());
 
         // 模型改口要 ETH：授权对不上 → 重新弹卡，此时 BTC 那条授权必须被丢掉
-        gate.applyWrap("tools", stateWithToolCall("run_deep_analysis", "{\"symbol\":\"ETHUSDT\"}"),
-                config(), (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        gate.intercept(SESSION, toolCallOf("run_deep_analysis", "{\"symbol\":\"ETHUSDT\"}"));
 
         assertThat(registry.hasApproval(SESSION)).isFalse();
     }
@@ -183,15 +134,13 @@ class ApprovalGateTest {
      */
     @Test
     void 拒绝标记只挡被拒的那件事() {
-        gate.applyWrap("tools", stateWithToolCall("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
-                config(), (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        gate.intercept(SESSION, toolCallOf("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"));
         registry.reject(SESSION, registry.peekPending(SESSION).orElseThrow().requestId());
 
-        Command command = gate.applyWrap("tools",
-                stateWithToolCall("run_deep_analysis", "{\"symbol\":\"ETHUSDT\"}"),
-                config(), (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION,
+                toolCallOf("run_deep_analysis", "{\"symbol\":\"ETHUSDT\"}"));
 
-        assertThat(responseOf(command).getResponses()).singleElement()
+        assertThat(out.orElseThrow().getResponses()).singleElement()
                 .satisfies(r -> assertThat(r.responseData()).contains("PENDING_APPROVAL"));
         assertThat(registry.peekPending(SESSION)).isPresent()
                 .get().satisfies(p -> assertThat(p.symbol()).isEqualTo("ETHUSDT"));
@@ -203,20 +152,17 @@ class ApprovalGateTest {
      */
     @Test
     void 短路时同批每个toolcall都配回执() {
-        MessagesState<Message> state = new MessagesState<>(Map.of("messages", List.of(
-                new UserMessage("深度研判一下，顺便看眼行情"),
-                AssistantMessage.builder().content("")
-                        .toolCalls(List.of(
-                                new AssistantMessage.ToolCall("c1", "function",
-                                        "run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
-                                new AssistantMessage.ToolCall("c2", "function",
-                                        "market_snapshot", "{\"symbol\":\"BTCUSDT\"}")))
-                        .build())));
+        AssistantMessage reply = AssistantMessage.builder().content("")
+                .toolCalls(List.of(
+                        new AssistantMessage.ToolCall("c1", "function",
+                                "run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
+                        new AssistantMessage.ToolCall("c2", "function",
+                                "market_snapshot", "{\"symbol\":\"BTCUSDT\"}")))
+                .build();
 
-        Command command = gate.applyWrap("tools", state, config(),
-                (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION, reply);
 
-        assertThat(responseOf(command).getResponses())
+        assertThat(out.orElseThrow().getResponses())
                 .extracting(ToolResponseMessage.ToolResponse::id)
                 .containsExactly("c1", "c2");
     }
@@ -230,17 +176,12 @@ class ApprovalGateTest {
     @Test
     void 未授权时拦下并登记待批() {
         String symbol = "BTCUSDT";
-        AtomicBoolean toolRan = new AtomicBoolean();
 
-        Command command = gate.applyWrap("tools",
-                stateWithToolCall("run_deep_analysis", "{\"symbol\":\"" + symbol + "\"}"),
-                config(), (s, c) -> {
-                    toolRan.set(true);
-                    return CompletableFuture.completedFuture(Command.emptyCommand());
-                }).join();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION,
+                toolCallOf("run_deep_analysis", "{\"symbol\":\"" + symbol + "\"}"));
 
-        assertThat(toolRan).isFalse();
-        assertThat(responseOf(command).getResponses()).singleElement()
+        assertThat(out).isPresent();
+        assertThat(out.orElseThrow().getResponses()).singleElement()
                 .satisfies(r -> assertThat(r.responseData()).contains("PENDING_APPROVAL"));
         assertThat(registry.peekPending(SESSION)).isPresent()
                 .get().satisfies(p -> assertThat(p.symbol()).isEqualTo(symbol));
@@ -250,17 +191,12 @@ class ApprovalGateTest {
     @Test
     void 批准后同一标的放行() {
         String args = "{\"symbol\":\"BTCUSDT\"}";
-        gate.applyWrap("tools", stateWithToolCall("run_deep_analysis", args), config(),
-                (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        gate.intercept(SESSION, toolCallOf("run_deep_analysis", args));
         registry.approve(SESSION, registry.peekPending(SESSION).orElseThrow().requestId());
-        AtomicBoolean toolRan = new AtomicBoolean();
 
-        gate.applyWrap("tools", stateWithToolCall("run_deep_analysis", args), config(), (s, c) -> {
-            toolRan.set(true);
-            return CompletableFuture.completedFuture(Command.emptyCommand());
-        }).join();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION, toolCallOf("run_deep_analysis", args));
 
-        assertThat(toolRan).isTrue();
+        assertThat(out).isEmpty();
     }
 
     /**
@@ -272,20 +208,14 @@ class ApprovalGateTest {
      */
     @Test
     void 批了一个标的不放行另一个() {
-        gate.applyWrap("tools", stateWithToolCall("run_deep_analysis", "{\"symbol\":\"btc\"}"),
-                config(), (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        gate.intercept(SESSION, toolCallOf("run_deep_analysis", "{\"symbol\":\"btc\"}"));
         registry.approve(SESSION, registry.peekPending(SESSION).orElseThrow().requestId());
-        AtomicBoolean toolRan = new AtomicBoolean();
 
-        Command command = gate.applyWrap("tools",
-                stateWithToolCall("run_deep_analysis", "{\"symbol\":\"eth\"}"),
-                config(), (s, c) -> {
-                    toolRan.set(true);
-                    return CompletableFuture.completedFuture(Command.emptyCommand());
-                }).join();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION,
+                toolCallOf("run_deep_analysis", "{\"symbol\":\"eth\"}"));
 
-        assertThat(toolRan).isFalse();
-        assertThat(responseOf(command).getResponses()).singleElement()
+        assertThat(out).isPresent();
+        assertThat(out.orElseThrow().getResponses()).singleElement()
                 .satisfies(r -> assertThat(r.responseData()).contains("PENDING_APPROVAL"));
         assertThat(registry.peekPending(SESSION).orElseThrow().symbol()).isEqualTo("ETHUSDT");
     }
@@ -296,13 +226,12 @@ class ApprovalGateTest {
      */
     @Test
     void 确认卡写清贵在哪() {
-        Command command = gate.applyWrap("tools",
-                stateWithToolCall("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
-                config(), (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION,
+                toolCallOf("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"));
 
         assertThat(registry.peekPending(SESSION).orElseThrow().reason())
                 .contains("3 次深模型调用").contains("Judge");
-        assertThat(responseOf(command).getResponses()).singleElement()
+        assertThat(out.orElseThrow().getResponses()).singleElement()
                 .satisfies(r -> assertThat(r.responseData())
                         .contains("深度研判").contains("3 次深模型调用"));
     }
@@ -314,20 +243,17 @@ class ApprovalGateTest {
      */
     @Test
     void 同批两个受管辖调用只有正主拿到说明() {
-        MessagesState<Message> state = new MessagesState<>(Map.of("messages", List.of(
-                new UserMessage("BTC 和 ETH 都深度研判一下"),
-                AssistantMessage.builder().content("")
-                        .toolCalls(List.of(
-                                new AssistantMessage.ToolCall("c1", "function",
-                                        "run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
-                                new AssistantMessage.ToolCall("c2", "function",
-                                        "run_deep_analysis", "{\"symbol\":\"ETHUSDT\"}")))
-                        .build())));
+        AssistantMessage reply = AssistantMessage.builder().content("")
+                .toolCalls(List.of(
+                        new AssistantMessage.ToolCall("c1", "function",
+                                "run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
+                        new AssistantMessage.ToolCall("c2", "function",
+                                "run_deep_analysis", "{\"symbol\":\"ETHUSDT\"}")))
+                .build();
 
-        Command command = gate.applyWrap("tools", state, config(),
-                (s, c) -> CompletableFuture.completedFuture(Command.emptyCommand())).join();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION, reply);
 
-        assertThat(responseOf(command).getResponses()).satisfiesExactly(
+        assertThat(out.orElseThrow().getResponses()).satisfiesExactly(
                 first -> assertThat(first.responseData()).contains("PENDING_APPROVAL"),
                 second -> assertThat(second.responseData()).isEqualTo("未执行：本轮存在待确认的贵操作。"));
         assertThat(registry.peekPending(SESSION).orElseThrow().symbol()).isEqualTo("BTCUSDT");
@@ -340,29 +266,19 @@ class ApprovalGateTest {
     @ParameterizedTest
     @ValueSource(strings = {"leave_note_to_trader", "wake_trader", "review_trader_now"})
     void trader动作不进闸门原样放行(String tool) {
-        AtomicBoolean toolRan = new AtomicBoolean();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION,
+                toolCallOf(tool, "{\"note\":\"仓位轻点\"}"));
 
-        gate.applyWrap("tools", stateWithToolCall(tool, "{\"note\":\"仓位轻点\"}"), config(),
-                (s, c) -> {
-                    toolRan.set(true);
-                    return CompletableFuture.completedFuture(Command.emptyCommand());
-                }).join();
-
-        assertThat(toolRan).isTrue();
+        assertThat(out).isEmpty();
         assertThat(registry.peekPending(SESSION)).isEmpty();
     }
 
     /** 非贵操作的工具（专家那些）不该被闸门碰，原样放行 */
     @Test
     void 其他工具原样放行() {
-        AtomicBoolean toolRan = new AtomicBoolean();
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION,
+                toolCallOf("market_snapshot", "{\"symbol\":\"BTCUSDT\"}"));
 
-        gate.applyWrap("tools", stateWithToolCall("market_snapshot", "{\"symbol\":\"BTCUSDT\"}"),
-                config(), (s, c) -> {
-                    toolRan.set(true);
-                    return CompletableFuture.completedFuture(Command.emptyCommand());
-                }).join();
-
-        assertThat(toolRan).isTrue();
+        assertThat(out).isEmpty();
     }
 }

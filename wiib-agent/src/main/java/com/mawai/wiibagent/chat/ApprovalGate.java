@@ -5,15 +5,9 @@ import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.llm.ReactLoop;
 import lombok.extern.slf4j.Slf4j;
-import org.bsc.langgraph4j.RunnableConfig;
-import org.bsc.langgraph4j.action.AsyncCommandAction;
-import org.bsc.langgraph4j.action.Command;
-import org.bsc.langgraph4j.agent.Agent;
-import org.bsc.langgraph4j.hook.EdgeHook;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
 import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 
 import java.util.ArrayList;
@@ -21,23 +15,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 
 /**
- * 贵操作的 HITL 闸门，挂在工具执行边上。
+ * 贵操作的 HITL 闸门，{@link ReactLoop} 执行工具前先问它。
  * <p>
  * <b>管辖范围：只有深度研判</b>。弹表单卡的三个 trader 工具不受管辖——执行权本来就归用户
  * 在卡上点击，再批准一次等于让用户确认两遍，第一道毫无信息量。
  * <p>
  * 判断做在这一层，这么写为了在执行之前拿到 sessionId 和 tool_call 的 name/arguments。
  * <p>
- * 挂在 summarizer 叶子的工具边（addExecuteToolsHook），且<b>必须先于 ModelCallLimiter 注册</b>——
- * WrapCall 后注册的在外层先执行，保险丝必须在外层。
- * <p>
  * 拒绝标记跨轮活着（用户点拒绝发生在两轮之间）且一次性——被读走就没了，改主意重新问不被挡。
  */
 @Slf4j
-public class ApprovalGate implements EdgeHook.WrapCall<MessagesState<Message>> {
+public class ApprovalGate implements ReactLoop.ToolGate {
 
     /** Bull∥Bear + Judge 三次深模型调用 */
     public static final String DEEP_ANALYSIS_TOOL = "run_deep_analysis";
@@ -70,14 +60,14 @@ public class ApprovalGate implements EdgeHook.WrapCall<MessagesState<Message>> {
         return prompts.get(lang, "chat.hitl.reason");
     }
 
+    /**
+     * 空 = 放行，循环自己去执行这批工具；非空 = 这批工具不跑，拿这条回执回模型。
+     */
     @Override
-    public CompletableFuture<Command> applyWrap(String nodeId, MessagesState<Message> state,
-                                                RunnableConfig config,
-                                                AsyncCommandAction<MessagesState<Message>> action) {
-        String sessionId = config == null ? null : config.threadId().orElse(null);
-        Optional<AssistantMessage.ToolCall> guarded = guardedCall(state);
+    public Optional<ToolResponseMessage> intercept(String sessionId, AssistantMessage reply) {
+        Optional<AssistantMessage.ToolCall> guarded = guardedCall(reply);
         if (sessionId == null || guarded.isEmpty()) {
-            return action.apply(state, config);
+            return Optional.empty();
         }
         AssistantMessage.ToolCall call = guarded.get();
         String symbol = normalizedSymbol(call);
@@ -88,13 +78,13 @@ public class ApprovalGate implements EdgeHook.WrapCall<MessagesState<Message>> {
         if (rejected.isPresent() && sameRequest(rejected.get(), call.name(), symbol)) {
             log.info("[HITL] 用户已拒绝，回执告知模型 session={} tool={} symbol={}",
                     sessionId, call.name(), symbol);
-            return CompletableFuture.completedFuture(shortCircuit(state, call.id(),
+            return Optional.of(pairedReply(reply, call.id(),
                     prompts.get(lang, "chat.hitl.rejectedReply", Map.of("label", label()))));
         }
 
         if (registry.consumeApproval(sessionId, call.name(), symbol)) {
             log.info("[HITL] 授权命中，放行 session={} tool={} symbol={}", sessionId, call.name(), symbol);
-            return action.apply(state, config);
+            return Optional.empty();
         }
 
         // 又要弹卡 = 上一条授权已经用不上了（模型改口换了 symbol）。留着它，
@@ -107,33 +97,14 @@ public class ApprovalGate implements EdgeHook.WrapCall<MessagesState<Message>> {
         out.put("status", "PENDING_APPROVAL");
         out.put("message", prompts.get(lang, "chat.hitl.pendingMessage",
                 Map.of("label", label(), "reason", reason())));
-        return CompletableFuture.completedFuture(shortCircuit(state, call.id(), out.toJSONString()));
-    }
-
-    /**
-     * 短路回模型节点。<b>gotoNode 必须是 {@code Agent.AGENT_LABEL}，不能是 null</b>：
-     * {@code Command.gotoNode()} 是 {@code Objects.requireNonNull(gotoNode, "gotoNode cannot be null")}，
-     * 而 {@code CompiledGraph.nextNodeId} 拿到 hook 返回值后第一件事就是调它——
-     * 传 null 会在 HITL 第一次触发时当场 NPE，用户看到的是"研判失败"，卡片永远不弹。
-     * <p>
-     * 也不能像 {@link com.mawai.wiibagent.llm.ModelCallLimiter} 那样跳 "end"：
-     * 短路后要让模型看到回执并转述给用户。action 节点的 EdgeMappings 只有这两个合法值
-     *（{@code Agent.Builder.build()}：{@code .to("agent").toEND("end")}）。
-     */
-    private Command shortCircuit(MessagesState<Message> state, String guardedCallId, String body) {
-        return new Command(Agent.AGENT_LABEL,
-                Map.of("messages", List.of(reply(state, guardedCallId, body))));
+        return Optional.of(pairedReply(reply, call.id(), out.toJSONString()));
     }
 
     /** 本批 tool_call 里受管辖的那个（一批里最多处理一个贵操作，其余的连同它一起等下一轮）。 */
-    private static Optional<AssistantMessage.ToolCall> guardedCall(MessagesState<Message> state) {
-        return state.lastMessage()
-                .filter(AssistantMessage.class::isInstance)
-                .map(AssistantMessage.class::cast)
-                .filter(AssistantMessage::hasToolCalls)
-                .flatMap(a -> a.getToolCalls().stream()
-                        .filter(c -> GUARDED_TOOLS.contains(c.name()))
-                        .findFirst());
+    private static Optional<AssistantMessage.ToolCall> guardedCall(AssistantMessage reply) {
+        return reply.getToolCalls().stream()
+                .filter(c -> GUARDED_TOOLS.contains(c.name()))
+                .findFirst();
     }
 
     /**
@@ -162,7 +133,7 @@ public class ApprovalGate implements EdgeHook.WrapCall<MessagesState<Message>> {
      * {@code BTCUSDT}，正是这里要防的那件事；<br>
      * {@code normalizeSymbol} 会对白名单外的标的抛错，而且它在算后缀时无条件
      * {@code substring(0, len-4)}，传 {@code BTC} 这种三字母当场
-     * StringIndexOutOfBounds（实测）——闸门在工具执行边上，抛出去就是整轮对话失败。
+     * StringIndexOutOfBounds（实测）——闸门在工具执行前，抛出去就是整轮对话失败。
      * <p>
      * 白名单外的标的（{@code SOL} 之类）保留自己的键、<b>不塌成 BTCUSDT</b>：
      * 塌了会让"批了 BTC"的授权把一个 SOL 请求放行进去，比不归一化更危险。
@@ -180,27 +151,19 @@ public class ApprovalGate implements EdgeHook.WrapCall<MessagesState<Message>> {
     }
 
     /**
-     * 短路时必须给**这一批**每个 tool_call 都配对回执。只回一条 = 留下孤儿 tool_call，
+     * 拦下时必须给**这一批**每个 tool_call 都配对回执。只回一条 = 留下孤儿 tool_call，
      * 这段历史被 {@link ChatContextStore} 持久化后，续聊重放时上游直接 400，会话只能删掉重开。
      * <p>
      * 按 id 而不是按工具名认领正主：一批里可能同时来两个受管辖的调用（比如模型一口气研判
      * BTC 和 ETH），按名字匹配会把只针对其中一个的说明同时发给两个——工具名一样，
      * 用户批的是 BTC，模型会以为 ETH 也批了。
      */
-    private ToolResponseMessage reply(MessagesState<Message> state, String guardedCallId,
-                                      String body) {
+    private ToolResponseMessage pairedReply(AssistantMessage reply, String guardedCallId, String body) {
         List<ToolResponseMessage.ToolResponse> responses = new ArrayList<>();
-        state.lastMessage()
-                .filter(AssistantMessage.class::isInstance)
-                .map(AssistantMessage.class::cast)
-                .filter(AssistantMessage::hasToolCalls)
-                .ifPresent(a -> {
-                    for (AssistantMessage.ToolCall c : a.getToolCalls()) {
-                        responses.add(new ToolResponseMessage.ToolResponse(c.id(), c.name(),
-                                c.id().equals(guardedCallId) ? body
-                                        : prompts.get(lang, "chat.hitl.notExecuted")));
-                    }
-                });
+        for (AssistantMessage.ToolCall c : reply.getToolCalls()) {
+            responses.add(new ToolResponseMessage.ToolResponse(c.id(), c.name(),
+                    c.id().equals(guardedCallId) ? body : prompts.get(lang, "chat.hitl.notExecuted")));
+        }
         return ToolResponseMessage.builder().responses(responses).build();
     }
 }

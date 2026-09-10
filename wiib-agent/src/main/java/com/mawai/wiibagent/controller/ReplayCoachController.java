@@ -21,9 +21,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
-import org.bsc.langgraph4j.spring.ai.agent.ReactAgent;
-import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -142,13 +139,12 @@ public class ReplayCoachController {
                 channel::heartbeat, HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
         StringBuilder answer = new StringBuilder();
         try {
-            // 借 ResilientChatService 捎系统提示 + 流式重试；不挂工具不建图，落到底就是一次 model.stream
-            ReactAgent.ChatService service = ResilientChatService.builder().model(model).asFactory()
-                    .apply(ReactAgent.<MessagesState<Message>>builder()
-                            .defaultSystem(coachPrompts.system(request, lang)));
+            // ResilientChatService 捎系统提示 + 流式重试；不挂工具不进 ReactLoop，落到底就是一次 model.stream
+            ResilientChatService service = ResilientChatService.builder().model(model)
+                    .systemPrompt(coachPrompts.system(request, lang)).build();
             // toStream + try-with-resources：用户切走（通道关闭）后 takeWhile 停止迭代、close 取消订阅，不再烧 token
             try (Stream<ChatResponse> frames = service.streamingExecute(
-                    List.of(new UserMessage(coachPrompts.user(request, lang)))).toStream()) {
+                    List.of(new UserMessage(coachPrompts.user(request, lang))), null).toStream()) {
                 frames.takeWhile(f -> !channel.isClosed()).forEach(f -> {
                     String chunk = textOf(f);
                     if (chunk == null || chunk.isEmpty()) {
@@ -184,8 +180,6 @@ public class ReplayCoachController {
     private static String textOf(ChatResponse frame) {
         if (frame == null || frame.getResult() == null) {
             return null;
-        } else {
-            frame.getResult();
         }
         return frame.getResult().getOutput().getText();
     }

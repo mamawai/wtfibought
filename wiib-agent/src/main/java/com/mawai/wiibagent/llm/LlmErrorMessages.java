@@ -85,7 +85,7 @@ public final class LlmErrorMessages {
     }
 
     /**
-     * 归类要看<b>整条因果链</b>：框架的包装异常（CompletionException、GraphRunnerException 之类）
+     * 归类要看<b>整条因果链</b>：框架的包装异常（CompletionException、ExecutionException 之类）
      * message 都非空但泛泛，真正的 401/429 埋在 cause 里。
      * 只在"外层 message 为 null"时才往下扒是抓不到的——那种情况几乎不发生。
      */

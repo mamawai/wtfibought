@@ -42,12 +42,12 @@ import java.util.concurrent.TimeoutException;
  * 自研 SSE 协议 ChatModel 的公共骨架：Responses / Anthropic Messages / Gemini generateContent 三个子类共用。
  * 这里管的是与框架、与网络的契约，子类只管协议形状（请求路径与头、请求体、SSE 事件→帧、错误文案、usage）。
  * <p>
- * 与框架的契约（langgraph4j + Spring AI 2.0）：
+ * 与上层的契约（{@link ReactLoop} + Spring AI 2.0）：
  * <ul>
  *   <li>只负责"说"：返回带 toolCalls 的 AssistantMessage、接受 ToolResponseMessage 入参。
- *       工具一律由图的 ExecuteToolsAction 执行——Spring AI 2.0 已从 ChatModel 层移除内部工具执行</li>
- *   <li>CallModelAction 走流式 stream()，Summarization 等走阻塞 call()；阻塞路径也走 SSE 收帧后合并</li>
- *   <li>流式帧由 StreamingChatGenerator 聚合：每帧只发增量文本，工具调用整只发一帧，收尾帧带 finishReason/usage；
+ *       工具一律由 {@link ReactLoop} 执行——Spring AI 2.0 已从 ChatModel 层移除内部工具执行</li>
+ *   <li>流式叶子走 stream()，压缩等走阻塞 call()；阻塞路径也走 SSE 收帧后合并</li>
+ *   <li>流式帧由 {@link ReactLoop} 聚合：每帧只发增量文本，工具调用整只发一帧，收尾帧带 finishReason/usage；
  *       它把<b>最后一帧</b> AssistantMessage 的 metadata 当作最终消息的 metadata，子类靠这一点把原始内容块挂回去
  *       （阻塞路径的 {@link #mergeFrames} 同样取最后一帧的）；空文本帧也必须带一个 Generation，否则被它过滤</li>
  * </ul>
@@ -229,7 +229,7 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
 
     /**
      * 帧合并：拼文本、收工具调用，finishReason/usage/消息 metadata 取收尾帧；没等到收尾帧＝上游断流，判瞬时可重试。
-     * 消息 metadata 跟着最后一帧走，与 StreamingChatGenerator 的流式合并同口径——子类挂在上面的原始内容块两条路都不丢。
+     * 消息 metadata 跟着最后一帧走，与 {@link ReactLoop} 的流式合并同口径——子类挂在上面的原始内容块两条路都不丢。
      */
     private ChatResponse mergeFrames(List<ChatResponse> frames) {
         ChatResponse last = frames == null || frames.isEmpty() ? null : frames.getLast();

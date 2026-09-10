@@ -3,8 +3,6 @@ package com.mawai.wiibagent.llm;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.sun.net.httpserver.HttpServer;
-import org.bsc.langgraph4j.spring.ai.agent.ReactAgent;
-import org.bsc.langgraph4j.spring.ai.agent.ReactAgentBuilder;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -26,12 +24,10 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 /**
  * 钉死与框架的契约边界（这些曾被别处单测 mock 掉，真跑才暴露）：
@@ -207,14 +203,13 @@ class ResponsesChatModelTest {
 
     @Test
     void 与ResilientChatService组合时工具挂得上() {
-        // 复刻 expertGraph 的装配路径：真实模型 + 工厂回调，工具必须进 chatOptions
-        ReactAgentBuilder<?, ?> agentBuilder = mock(ReactAgentBuilder.class);
-        when(agentBuilder.tools()).thenReturn(List.of(mock(ToolCallback.class)));
-        when(agentBuilder.systemMessage()).thenReturn(Optional.of("你是专家"));
-
-        ReactAgent.ChatService service = ResilientChatService.builder()
-                .model(model()).forceFirstToolChoice("required")
-                .asFactory().apply(agentBuilder);
+        // 复刻专家叶子的装配路径：真实模型 + 真实工具表，工具必须进 chatOptions
+        ResilientChatService service = ResilientChatService.builder()
+                .model(model())
+                .systemPrompt("你是专家")
+                .tools(List.of(mock(ToolCallback.class)))
+                .forceFirstToolChoice("required")
+                .build();
 
         ToolCallingChatOptions options = (ToolCallingChatOptions) service.chatOptions().orElseThrow();
         assertThat(options.getToolCallbacks()).hasSize(1);

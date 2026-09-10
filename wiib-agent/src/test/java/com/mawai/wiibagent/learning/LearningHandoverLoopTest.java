@@ -44,7 +44,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 日线交接整链回路（G6 验收的 mock 侧）：K线事件进 → 真调度三阶段 → 真 LearningRunner 跑
- * ReactAgent（mock 模型）→ 真 PeerInsightService 出工具数据 → 3 个 learner 并发学完各自落库。
+ * ReactLoop（mock 模型）→ 真 PeerInsightService 出工具数据 → 3 个 learner 并发学完各自落库。
  * 与分层测试的分工：TraderSchedulerTest 验时序/屏障/窗口，LearningLoopTest 验单人回路，
  * 这里验的是"整条链真对象手拉手 + 多 learner 并发"——装配错、并发共享 mock 模型出乱序，只有这里现形。
  */

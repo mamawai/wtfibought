@@ -63,9 +63,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 唤醒回路 mock 回路测试（纯 mock 无外部依赖，常规套件必跑；勿再用 *IT 命名——surefire 默认不收）：mock ChatModel 走一遍真 ReactAgent 工具循环——
+ * 唤醒回路 mock 回路测试（纯 mock 无外部依赖，常规套件必跑；勿再用 *IT 命名——surefire 默认不收）：mock ChatModel 走一遍真 ReactLoop 工具循环——
  * 开仓工具真被调用（经 TradeGuard）、决策行真落库（含论点标签/动作轨迹/权益/过程轨迹）、现场帧按序推给订阅者。
- * 图开着 streaming，模型桩打在 {@code stream()} 上：一帧一个 ChatResponse，tool_call 帧正文空。
+ * 循环开着 streaming，模型桩打在 {@code stream()} 上：一帧一个 ChatResponse，tool_call 帧正文空。
  */
 class TraderWakeupLoopTest {
 
@@ -819,7 +819,7 @@ class TraderWakeupLoopTest {
                 .withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.ofEpochMilli(boundary)) + "）");
     }
 
-    /** 数据工具（klines等）没有自己的记录点，必须经轨迹hook进 actionsJson——"调用了哪些工具"要完整。 */
+    /** 数据工具（klines等）没有自己的记录点，必须经轨迹收集器进 actionsJson——"调用了哪些工具"要完整。 */
     @Test
     void dataToolCallsTracedIntoActions() {
         stubHealthyAccount();

@@ -47,7 +47,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 学习回路 mock 回路测试（纯 mock 无外部依赖，常规套件必跑）：真 PeerInsightService +
- * 真 PeerInsightToolkit + 真 ReactAgent 循环跑一遍——
+ * 真 PeerInsightToolkit + 真 ReactLoop 循环跑一遍——
  * 模型首轮调 peer_insights 深看同侪、拿到真实详情后次轮交终稿，
  * LEARN 行带"它看了谁"的轨迹落库、learning_notes 覆盖写。
  * （LearningRunnerTest 里模型第一轮就交稿，工具那条边没走过；这条缝必须真接一次才算数。）
@@ -166,7 +166,7 @@ class LearningLoopTest {
 
         // 先建好再 stub：thenReturn 参数里嵌套 when() 是 UnfinishedStubbing
         ChatModel model = mock(ChatModel.class);
-        // getOptions 必须给真 options：返回 null/自造的，ReactAgent 拿到的工具列表就是空数组
+        // getOptions 必须给真 options：返回 null/自造的，ResilientChatService 挂出去的工具列表就是空数组
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
         AssistantMessage lookup = AssistantMessage.builder().content("先看看榜首这位。")
                 .toolCalls(List.of(new AssistantMessage.ToolCall(
