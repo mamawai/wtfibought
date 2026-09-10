@@ -26,7 +26,7 @@ import java.util.List;
  * 行为分析端点同理下线（2026-08）：它已是对话轨的 analyze_my_behavior 工具，
  * 报告以卡片形式出现在对话里，生成与准入在 BehaviorToolkit/BehaviorAnalysisService。
  * 预测端点（snapshots/scorecard/series）已随预测管线下线（2026-08：生产验证无前瞻信息），
- * 对话入口在 {@link com.mawai.wiibagent.chat.ChatWorkbenchController}。
+ * 对话入口在 {@link ChatWorkbenchController}。
  */
 @Slf4j
 @Tag(name = "AI Agent接口")

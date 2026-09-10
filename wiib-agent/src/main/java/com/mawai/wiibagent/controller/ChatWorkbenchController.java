@@ -1,4 +1,4 @@
-package com.mawai.wiibagent.chat;
+package com.mawai.wiibagent.controller;
 
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.annotation.CurrentUserId;
@@ -6,6 +6,17 @@ import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.util.Result;
+import com.mawai.wiibagent.chat.ApprovalRegistry;
+import com.mawai.wiibagent.chat.ChatAgentFactory;
+import com.mawai.wiibagent.chat.ChatConcurrencyGate;
+import com.mawai.wiibagent.chat.ChatContextStore;
+import com.mawai.wiibagent.chat.ChatHistoryService;
+import com.mawai.wiibagent.chat.ChatIntent;
+import com.mawai.wiibagent.chat.ChatTurnRewinder;
+import com.mawai.wiibagent.chat.ChatTurnRunner;
+import com.mawai.wiibagent.chat.ChatTurnStreamer;
+import com.mawai.wiibagent.chat.ChatYieldCoordinator;
+import com.mawai.wiibagent.chat.WorkbenchRunRegistry;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.llm.ChatEndpoints;
@@ -62,8 +73,8 @@ public class ChatWorkbenchController {
     private final PromptCatalog prompts;
     /** chat 是实时请求：语言走 @CurrentUserId → user.lang，与 trader 同一条路 */
     private final UserLangResolver userLangResolver;
-    /** 包私有：名额泄漏那条钉子（{@code ChatWorkbenchAdmissionTest}）要关掉它来制造提交失败 */
-    final ExecutorService streamExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    /** 一轮对话跑在它上面（虚拟线程，见 {@code AgentExecutorConfig}）；名额泄漏那条钉子传一个已关的进来制造提交失败 */
+    private final ExecutorService streamExecutor;
 
     /** 单条用户消息字符上限；文案见 error.chatMessageTooLong，改这里要一起改 */
     static final int MAX_MESSAGE_CHARS = 10_000;

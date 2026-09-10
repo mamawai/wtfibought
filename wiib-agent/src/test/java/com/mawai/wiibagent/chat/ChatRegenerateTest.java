@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibagent.controller.ChatWorkbenchController;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
 import jakarta.servlet.http.HttpServletResponse;
@@ -18,6 +19,7 @@ import org.springframework.ai.chat.model.ChatModel;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -107,7 +109,8 @@ class ChatRegenerateTest {
         ChatTurnRewinder rewinder = new ChatTurnRewinder(history, contextStore, ChatTestEndpoints.PROMPTS);
         ChatWorkbenchController controller = new ChatWorkbenchController(agentFactory, endpointService,
                 approvals, history, contextStore, streamer, rewinder, runRegistry, gate, new MessageCatalog(),
-                coordinator, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang());
+                coordinator, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
+                Executors.newVirtualThreadPerTaskExecutor());
         return new Harness(controller, history, contextStore, turnRunner, gate, coordinator);
     }
 

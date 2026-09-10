@@ -2,6 +2,7 @@ package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
+import com.mawai.wiibagent.controller.ChatWorkbenchController;
 import com.mawai.wiibagent.llm.SseChannel;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
@@ -29,6 +30,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -174,7 +176,8 @@ class ChatWorkbenchHitlTest {
                 ChatTestEndpoints.PROMPTS);
         return new ChatWorkbenchController(mock(ChatAgentFactory.class), mock(LlmEndpointService.class),
                 registry, history, contextStore, streamer, mock(ChatTurnRewinder.class),
-                runRegistry, gate, new MessageCatalog(), yieldCoordinator, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang());
+                runRegistry, gate, new MessageCatalog(), yieldCoordinator, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
+                Executors.newVirtualThreadPerTaskExecutor());
     }
 
     /** 跑一轮，返回这一轮发出去的全部 SSE 事件 */
