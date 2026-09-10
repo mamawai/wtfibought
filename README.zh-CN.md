@@ -16,7 +16,6 @@
 
 [![Java](https://img.shields.io/badge/Java-25-ED8B00?style=flat-square&logo=openjdk&logoColor=white)](https://openjdk.org/projects/jdk/25/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.1.0-6DB33F?style=flat-square&logo=springboot&logoColor=white)](https://spring.io/projects/spring-boot)
-[![langgraph4j](https://img.shields.io/badge/langgraph4j-1.8.26-F97316?style=flat-square)](https://github.com/bsorrentino/langgraph4j)
 [![Spring AI](https://img.shields.io/badge/Spring%20AI-2.0.1-6DB33F?style=flat-square&logo=spring&logoColor=white)](https://docs.spring.io/spring-ai/reference/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)
@@ -140,10 +139,10 @@ WhatIfIBought 的重头戏是回测练习、量化策略模拟和 AI Trader：
 
 | 装置 | 形态 | 工具 | 循环 | 触发 | 模型来源 | 产出 |
 |---|---|:---:|:---:|---|---|---|
-| **trader agent** | ReactAgent | 15 | ✓ 上限 12 次调用 | 每根 K 线收盘 / 波动警报 | 主人的 key | 真实开平仓 + 决策行 |
+| **trader agent** | ReAct 循环 | 15 | ✓ 上限 12 次调用 | 每根 K 线收盘 / 波动警报 | 主人的 key | 真实开平仓 + 决策行 |
 | **reviewer workflow** | 单次调用 | 0 | ✗ | 日线边界 | 同 trader | 复盘笔记 |
-| **learning agent** | ReactAgent | 1（只读同侪） | ✓ 上限 8 次调用 | 全体复盘之后（屏障） | 同 trader | 学习笔记 |
-| **chat agent** | 平铺编排 + ReactAgent 叶子 | 分层 | ✓ 带回环 | 用户提问 | 用户的 key | 流式回答 |
+| **learning agent** | ReAct 循环 | 1（只读同侪） | ✓ 上限 8 次调用 | 全体复盘之后（屏障） | 同 trader | 学习笔记 |
+| **chat agent** | 平铺编排 + ReAct 循环叶子 | 分层 | ✓ 带回环 | 用户提问 | 用户的 key | 流式回答 |
 | **replay coach** | 单次调用 | 0 | ✗ | 手动复盘里点「AI 提示 / AI 评估」 | 用户的 key | 盘面提示 / 整局操作评估 |
 | **behavior workflow** | 单次调用 | 0 | ✗ | 对话里明说要分析自己 | 用户的 key | 行为画像报告 |
 
@@ -247,7 +246,7 @@ npx vite --config vite.config.mock.ts    # 或纯前端预览，端口 3001，�
 ## 技术栈
 
 - Java 25（启用 Virtual Threads）+ Spring Boot 4.1
-- langgraph4j 1.8.26 + Spring AI 2.0.1
+- Spring AI 2.0.1（ReAct 循环手写，不引图引擎）
 - PostgreSQL + Redis + MyBatis-Plus
 - Sa-Token
 - React 19 + TypeScript 5.9 + Vite 7 + TailwindCSS 4

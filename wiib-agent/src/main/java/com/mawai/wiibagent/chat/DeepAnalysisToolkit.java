@@ -22,8 +22,8 @@ import java.util.concurrent.CompletableFuture;
  * <b>这里没有 HITL 判断</b>：授权闸门在 {@link ApprovalGate}——
  * 只有那一层同时看得到 sessionId 和本次 tool_call 的参数。
  * <p>
- * 模型建图时构造注入（同配置的用户共享同一张图和同一个模型实例）；
- * sessionId 是请求级的，从框架交给工具的 ToolContext 里取（{@link ToolRunContext#sessionId}），只用来推进度。
+ * 模型建叶子时构造注入（同配置的用户共享同一个叶子和同一个模型实例）；
+ * sessionId 是请求级的，从执行工具时交进来的 ToolContext 里取（{@link ToolRunContext#sessionId}），只用来推进度。
  */
 @Slf4j
 public class DeepAnalysisToolkit {

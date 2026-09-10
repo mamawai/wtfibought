@@ -64,7 +64,7 @@ class BehaviorToolkitTest {
         when(service.analyze(anyLong(), any(), any(), any())).thenReturn(Result.ok(report()));
     }
 
-    /** 生产里会话号由 ChatTurnRunner 放进图 state、框架经 ToolContext 交给工具；这里手动摆一个 */
+    /** 生产里会话号由 ChatTurnRunner 传给 ReactLoop，循环执行工具时经 ToolContext 交给工具；这里手动摆一个 */
     private static ToolContext ctx(String sessionId) {
         return new ToolContext(sessionId == null ? Map.of() : Map.of(ToolRunContext.SESSION_KEY, sessionId));
     }

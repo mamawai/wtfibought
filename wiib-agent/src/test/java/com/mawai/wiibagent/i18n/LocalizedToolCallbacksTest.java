@@ -108,7 +108,7 @@ class LocalizedToolCallbacksTest {
         assertThat(result).contains("echo:hi");
     }
 
-    /** 多个工具对象一把扫，建图点一行接上 */
+    /** 多个工具对象一把扫，建叶子时一行接上 */
     @Test
     void 一次可以扫多个工具对象() {
         List<ToolCallback> all = localized.of(AgentLang.ZH, new DemoTools(), new DemoTools());

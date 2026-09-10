@@ -36,7 +36,7 @@ import static org.mockito.Mockito.mock;
  * 唤醒挂的那批工具的双语契约。工具描述与提示词一样是模型逐字读的输入：混一句中文，
  * 英文 trader 就会跟着串语言，而且它藏在注解里，翻提示词词表根本翻不到。
  * <p>
- * 断言直接打在 {@link TraderWakeupRunner#wakeTools} 上——那是建图点真正挂上去的那批，
+ * 断言直接打在 {@link TraderWakeupRunner#wakeTools} 上——那是建叶子时真正挂上去的那批，
  * 测试里另抄一份工具清单就等于漏掉后来新加的工具。
  */
 class TraderToolI18nTest {
@@ -92,7 +92,7 @@ class TraderToolI18nTest {
         });
     }
 
-    /** 建图点换成 LocalizedToolCallbacks 后，挂上去的工具一个不能多一个不能少 */
+    /** 工具表由 LocalizedToolCallbacks 出之后，挂上去的工具一个不能多一个不能少 */
     @Test
     void 工具集与注解自动推导那份逐个对得上() {
         assertThat(descriptions(AgentLang.ZH).keySet()).isEqualTo(annotated().keySet());

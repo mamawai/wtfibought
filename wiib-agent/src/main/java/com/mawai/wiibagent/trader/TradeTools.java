@@ -46,7 +46,7 @@ public class TradeTools {
                           TraderRiskConfig risk, AgentLang lang) {
     }
 
-    /** 本类自带富记录（结果/拒因）的工具名——轨迹合并时用富记录替换 hook 的轻量占位 */
+    /** 本类自带富记录（结果/拒因）的工具名——轨迹合并时用富记录替换轨迹收集器的轻量占位 */
     public static final Set<String> RECORDED_TOOLS = Set.of(
             "get_account", "open_position", "close_position", "set_stop_loss",
             "set_take_profit", "cancel_order", "write_plan");

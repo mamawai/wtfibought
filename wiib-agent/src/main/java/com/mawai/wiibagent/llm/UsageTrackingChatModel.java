@@ -161,7 +161,7 @@ public class UsageTrackingChatModel implements ChatModel {
     /**
      * 换一本新账，划出新一轮的起点。
      * <p>
-     * 给"实例跨轮复用"的对话轨用：那边模型被烤进编译好的叶子图、图又按配置指纹缓存，
+     * 给"实例跨轮复用"的对话轨用：那边模型被烤进叶子、叶子又按配置指纹缓存，
      * 拿不到"每轮 new 一个"的机会，只能在轮开头换账本。交易员轨每轮新建，不需要调它。
      */
     public void reset() {

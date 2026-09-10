@@ -9,7 +9,7 @@ spring:
       - optional:file:../.env.local[.properties]
   ai:
     # Spring AI 2.0 起弃用 spring-retry，spring.ai.retry.* 已无人读取；重试在
-    # ResponsesChatModel(协议层) 与 ResilientChatService(ReactAgent 层) 两处代码里。
+    # ResponsesChatModel(协议层) 与 ResilientChatService(叶子的模型调用层) 两处代码里。
     # 下面 6 类必须全关：各自独立开关，只关 chat 其余仍会因缺 api-key 拒启动。LLM 配置唯一来源是 DB
     model:
       chat: none

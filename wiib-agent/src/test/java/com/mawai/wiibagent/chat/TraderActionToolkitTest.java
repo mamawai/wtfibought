@@ -28,7 +28,7 @@ import static org.mockito.Mockito.verify;
 class TraderActionToolkitTest {
 
     private static final String SESSION = "wb-42-x";
-    /** 生产里会话号由 ChatTurnRunner 放进图 state、框架经 ToolContext 交给工具 */
+    /** 生产里会话号由 ChatTurnRunner 传给 ReactLoop，循环执行工具时经 ToolContext 交给工具 */
     private static final ToolContext CTX = new ToolContext(Map.of(ToolRunContext.SESSION_KEY, SESSION));
 
     /** 推出去的每一张卡的 data（form + prefill） */

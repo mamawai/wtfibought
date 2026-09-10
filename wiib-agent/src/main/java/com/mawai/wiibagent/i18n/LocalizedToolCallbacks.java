@@ -28,7 +28,7 @@ import java.util.List;
  * 名字与 inputSchema 照旧由注解自动推导（{@link ToolDefinitions#from}，schema 零手写），
  * 只把 description 换成 {@code tool.<工具名>} 那条。
  * <p>
- * 用它替掉建图时的 {@code builder.toolsFromObject(x)}：{@code builder.tools(localized.of(lang, x))}。
+ * 建叶子时 {@code ResilientChatService.builder().tools(localized.of(lang, x))} 挂上去。
  * <p>
  * <b>唯一允许静默回落的地方</b>：catalog 里没有 {@code tool.<工具名>} 就原样保留注解里的描述——
  * 让还没搬进 yml 的工具照常工作，后续批次逐个搬。

@@ -6,20 +6,20 @@
 
 平台里有六处独立的 LLM 用法，形态和停止条件各不相同。它们之间不直接调用，只通过 PostgreSQL 交换数据，加一套新的不用改旧的。
 
-图引擎用 langgraph4j 1.8.26，只用在叶子 ReactAgent 上。取舍原则是：能写死成代码的固定步骤就写死，只有开放决策才交给模型循环。六处里三处是真正的 agent（trader / learning / chat），另外三处是一次性调用。
+叶子 agent 的 ReAct 循环是自写的 `ReactLoop`（Spring AI 2.0.1 原语：`ChatModel` 调模型、`ToolCallback` 执行工具、`Flux<ChatResponse>` 出流），不引图引擎。取舍原则是：能写死成代码的固定步骤就写死，只有开放决策才交给模型循环。六处里三处是真正的 agent（trader / learning / chat），另外三处是一次性调用。
 
 | 装置 | 形态 | 工具 | 循环 | 触发 | 模型来源 | 产出 |
 |---|---|:---:|:---:|---|---|---|
-| **trader agent** | ReactAgent | 15 | ✓ 上限 12 次调用 | 每根 K 线收盘 / 波动警报 | 主人的 key | 真实开平仓 + 决策行 |
+| **trader agent** | ReAct 循环 | 15 | ✓ 上限 12 次调用 | 每根 K 线收盘 / 波动警报 | 主人的 key | 真实开平仓 + 决策行 |
 | **reviewer workflow** | 单次调用 | 0 | ✗ | 日线边界 | 同 trader | 复盘笔记 |
-| **learning agent** | ReactAgent | 1（只读同侪） | ✓ 上限 8 次调用 | 全体复盘之后（屏障） | 同 trader | 学习笔记 |
-| **chat agent** | 平铺编排 + ReactAgent 叶子 | 分层 | ✓ 带回环 | 用户提问 | 用户的 key | 流式回答 |
+| **learning agent** | ReAct 循环 | 1（只读同侪） | ✓ 上限 8 次调用 | 全体复盘之后（屏障） | 同 trader | 学习笔记 |
+| **chat agent** | 平铺编排 + ReAct 循环叶子 | 分层 | ✓ 带回环 | 用户提问 | 用户的 key | 流式回答 |
 | **replay coach** | 单次调用 | 0 | ✗ | 手动复盘里点「AI 提示 / AI 评估」 | 用户的 key | 盘面提示 / 整局操作评估 |
 | **behavior workflow** | 单次调用 | 0 | ✗ | 对话里明说要分析自己（`analyze_my_behavior`） | 用户的 key（chat 那颗深模型） | 行为画像报告 |
 
 模型来源：面向用户的四处（交易、对话、复盘教练、行为分析）全部 BYOK（用户自带 key，AES-GCM 加密存库），统一放在一个端点库里，按用途绑定。交易员一天自动跑几十上百轮要便宜稳，对话是按需的深度研判要强模型，所以允许各绑各的端点；只配一条时它就是全局默认。平台自己掏钱的只剩 news-tagging（快讯打标）一个功能位（`ai_runtime_config` + `ai_model_assignment`）——它是后台批量任务，没有"当前用户"可言。behavior 的平台功能位已退休，那次调用记在用户自己的 key 上。
 
-behavior 不做成 agent 的原因：它那 10 个数据源的参数都是 `userId`、端点固定，模型没有决策空间，套 ReactAgent 只是多跑几趟，所以就是并发拉 10 个端点、拼一个 prompt、调一次 LLM。它也不挂 HITL 闸门：深研判一调就是 3 次深模型调用，这里只有 1 次，而"分析我的交易习惯"本身就是用户明说的意图，再弹卡请他确认自己刚说过的话是纯噪音；防滥调靠 30 分钟缓存与并发闸门。
+behavior 不做成 agent 的原因：它那 10 个数据源的参数都是 `userId`、端点固定，模型没有决策空间，套 ReAct 循环只是多跑几趟，所以就是并发拉 10 个端点、拼一个 prompt、调一次 LLM。它也不挂 HITL 闸门：深研判一调就是 3 次深模型调用，这里只有 1 次，而"分析我的交易习惯"本身就是用户明说的意图，再弹卡请他确认自己刚说过的话是纯噪音；防滥调靠 30 分钟缓存与并发闸门。
 
 ## 全景：交易那四套如何经 DB 咬合
 
@@ -29,9 +29,9 @@ behavior 不做成 agent 的原因：它那 10 个数据源的参数都是 `user
 flowchart TB
     subgraph HARNESS["agent harness"]
         direction TB
-        TA["<b>trader agent</b><br/>ReactAgent · 交易+数据工具<br/>每根 K 线一次决策"]
+        TA["<b>trader agent</b><br/>ReAct 循环 · 交易+数据工具<br/>每根 K 线一次决策"]
         RW["<b>reviewer workflow</b><br/>单次调用 · 无工具<br/>自己看自己"]
-        LA["<b>learning agent</b><br/>ReactAgent · 只读同侪<br/>向别人学"]
+        LA["<b>learning agent</b><br/>ReAct 循环 · 只读同侪<br/>向别人学"]
         CA["<b>chat agent</b><br/>平铺编排 + 专家叶子并行<br/>研判工作台"]
     end
     DB[("PostgreSQL<br/>ai_trader · ai_trader_decision<br/>ai_trader_plan")]
@@ -56,7 +56,7 @@ flowchart LR
     CLK["5m K线收盘事件"] --> SCH{"TraderScheduler<br/>对齐 interval 边界<br/>抢占 + 互斥 + 并发闸"}
     SEN["VolatilitySentinel<br/>5min 振幅超阈值<br/>且持有该币"] -->|"警报（冷静期/预算预检）"| SCH
     SCH --> PA["TraderPromptAssembler<br/>系统提示词 + 账户状态<br/>+ 复盘笔记 + 学习笔记"]
-    PA --> RA(("ReactAgent<br/>循环"))
+    PA --> RA(("ReactLoop<br/>ReAct 循环"))
     RA <--> T1["交易工具 ×7<br/>开平仓/止损止盈/计划"]
     RA <--> T2["数据工具 ×8<br/>K线/结构/指标/快照/IV/资金费/盘口/快讯"]
     RA --> OUT["决策全文 + 动作轨迹<br/>→ ai_trader_decision"]
@@ -121,7 +121,7 @@ flowchart LR
     NOTE --> INJ["下一根 K 线注入 trader"]
 ```
 
-- 形态：ReactAgent + 唯一只读工具 `peer_insights`（单工具双模式：无参回排行榜，传 traderId 深看某人的复盘全文 / 学习笔记 / 在场计划论点 / 论点→结局配对）。排行榜、自己的复盘笔记、上一份学习笔记随开场白代码注入；看谁、看几个、看多深由模型自己定。
+- 形态：ReAct 循环 + 唯一只读工具 `peer_insights`（单工具双模式：无参回排行榜，传 traderId 深看某人的复盘全文 / 学习笔记 / 在场计划论点 / 论点→结局配对）。排行榜、自己的复盘笔记、上一份学习笔记随开场白代码注入；看谁、看几个、看多深由模型自己定。
 - 同侪池（`PeerInsightService.peers()`）：谁能被学 = 勾了同侪学习 + 未暂停 + 在场（手里有仓，或最近一笔了结在 24h 内）。排行榜只摆池里的人，`peer_insights` 查池外的人一律拒；调度门槛数的也是这个池——除自己外不足 2 人，该 learner 本日不学。谁能去学 = RUNNING + 勾了开关，自己不必在池里，刚开局没开过仓的新人恰恰最该学。这把尺子把两类人挡在外面：注册后从没启动过、或刚重置开新局本局零战绩的空壳，它们那行是 `0.00% / 0 笔 / 尚无复盘`，学不到东西却占名额；歇了很久的账号，复盘早已过期。爆仓的凭强平那笔了结在 24h 内留在榜上当前车之鉴，过后自然退场。
 - 反照抄三条：【不学什么】是必填段（只会说"值得学"的等于没学，缺了判格式失守）；每条学习必须带证据与差距数字；引用同侪战绩必须带笔数，样本少的时候运气和方法看起来一样。
 - 降级安全：格式失守时 ERROR 行留痕、learning_notes 不动；学习失败不计连败；同侪不足整体静默跳过，不写空话不留 ERROR 行。
@@ -131,7 +131,7 @@ flowchart LR
 
 ## chat agent：研判工作台
 
-编排是 `ChatTurnRunner` 里的普通 Java 循环，不是 StateGraph：这段编排里分支就是 if、并行就是虚拟线程、回环就是 while，用不上图。图只留给叶子：三个专家与 summarizer 各自是独立编译的 `ReactAgent` 子图，那里的 ReAct 循环确实是框架在管。
+编排是 `ChatTurnRunner` 里的普通 Java 循环：分支就是 if、并行就是虚拟线程、回环就是 while。叶子是 `ReactLoop`：三个专家与 summarizer 各自一个，那里只有模型 ↔ 工具的直线循环。
 
 ```mermaid
 flowchart LR
@@ -152,12 +152,12 @@ flowchart LR
 - 路由：浅模型调 route 工具给出结构化去向，循环只认这个值，不解析消息文本。summarizer 一个字都不提"要不要再派发"，让它同时纠结作答和派发就会在两者之间反复横跳。
 - 并行与停止：专家在虚拟线程上并行跑；同一专家整轮只派一次（去重名单），另设 3 轮派发上限兜底。
 - trader 联动：`trader_agent` 专家只读用户自己的 AI Trader（概况 / 持仓 / 决策 / 计划）；`wake_trader` / `review_trader_now` / `leave_note_to_trader` 只往对话里推一张表单（留言连草稿带轮次一起预填），按下按钮的是用户，模型碰不到执行路径；只有当场就烧钱的 `run_deep_analysis` 走 HITL 闸。
-- 韧性：自研 `ResilientChatService` 装配进 `ReactAgent.ChatService`，对叶子透明。流式路径带退避重试，仅在尚未吐帧时重订阅。不挂兜底模型：BYOK 只有一个端点，切到同端点的另一个模型没有意义。
-- 横切：会话历史落 `workbench_chat_context` 自建表（终态整体覆盖写入）、跨会话长期记忆（规则化写入，不烧 LLM）、调用限额 + 历史摘要压缩控预算。
+- 韧性：`ResilientChatService` 是叶子的模型调用层（系统提示、工具、首轮强制、搜索许可、重试）。流式路径带退避重试，仅在尚未吐帧时重订阅。不挂兜底模型：BYOK 只有一个端点，切到同端点的另一个模型没有意义。
+- 横切：会话历史落 `workbench_chat_context` 自建表（终态整体覆盖写入），裸 JSON（`ChatContextCodec`，读兼容老的对象流格式）、跨会话长期记忆（规则化写入，不烧 LLM）、调用限额 + 历史摘要压缩控预算。
 - 新闻双源分工：`news_agent` 只预取 BlockBeats 出清单（它自己不联网搜索），summarizer 用服务端搜索补充合并，独有条目带源标签。搜索是端点显式勾选的能力，不是默认开着的——所以 summarizer 的系统提示词按能力二选一拼：能搜就承诺联网补充，不能搜就如实说没有检索能力。提示词不许承诺端点给不了的事。
 - 协议适配：四条协议——openai（chat/completions，走 Spring AI `OpenAiChatModel`）、responses、anthropic（Messages）、gemini（generateContent），后三条是自研 `ResponsesChatModel` / `AnthropicChatModel` / `GeminiChatModel`。挂工具与 tool_choice 由 `ToolChoice` 统一处理，首轮强制用工具按次落地，四条路行为一致。服务端搜索只有后三条声明得了，openai 的 chat-completions 没有标准的服务端搜索——所以"能不能搜"是协议能力与用户勾选的与。
 
-### 模型来自用户，所以图也跟着用户走
+### 模型来自用户，所以叶子也跟着用户走
 
 ```text
 POST /api/ai/workbench/chat
@@ -172,17 +172,17 @@ POST /api/ai/workbench/chat
 - 叶子按指纹缓存，userId 必须进指纹：指纹 = `SHA-256(userId + 主/轻两条端点各自的协议 / baseUrl / 模型 / 思考档位 / 搜索开关 / 密文)`（分量间拿 NUL 分隔——model 是用户自由输入，用空格的话 `("gpt-5 x","y")` 和 `("gpt-5","x y")` 会撞；NUL 是 Postgres 的 text 存不下的字节，绝不会出现在任何一个从库里读出来的值里）。搜索开关也是建模要素：它既进 `ResponsesChatModel` 的构造参数，也决定 summarizer 提示词拼哪版，勾了必须换指纹。用户改配置指纹就变，自然拿到新叶子，不需要显式失效。userId 进指纹不是为了缓存粒度，是数据隔离：叶子里有按用户烤死的工具（trader_agent 读的是"这个人的 trader"），两人共用一份叶子就会看到别人的持仓；隔离要靠键本身，不能指望密文的随机性。
 - 主模型 + 轻模型：轻模型（可选绑定 CHAT_LIGHT）跑 router / 专家 / 历史压缩，主模型只写最终回答。不绑就复用主模型实例本身，省一份客户端和连接池。
 - 思考档位是端点属性，每条端点各自配；轻模型绑到别的端点就用那条自己的档位。**不设白名单**：`none/low/medium/high` 只是前端给的快捷选项，各家还有 `xhigh` / `minimal` 之类自己起的名，认不认只有上游知道，代码只抹平大小写空白、只挡列宽（VARCHAR(16)）。模型支不支持这个参数也查不到（OpenAI 标准 `/v1/models` 只回 id/object/created/owned_by），所以默认留空不传，由用户自己填，配套一个「测试连通性」按钮真发一次请求验——探测走的是生产建模路径，测什么就得是接下来真跑什么。
-- 错误归类：401/403、429、404+model、超时 / 连不上各给一句能照着做的话；认不出来的不替用户判病因，因为那个 catch 罩着落历史、写记忆、checkpoint 落库，数据库挂了也走这条路，兜底要是说"请检查端点与模型配置"，用户会去乱改一把本来没问题的 key。任何分支都不回显上游原文：中转网关的异常里经常带完整请求 URL（`?api_key=…`），正则追不全 key 的形态。
+- 错误归类：401/403、429、404+model、超时 / 连不上各给一句能照着做的话；认不出来的不替用户判病因，因为那个 catch 罩着落历史、写记忆、上下文落库，数据库挂了也走这条路，兜底要是说"请检查端点与模型配置"，用户会去乱改一把本来没问题的 key。任何分支都不回显上游原文：中转网关的异常里经常带完整请求 URL（`?api_key=…`），正则追不全 key 的形态。
 
 ### HITL：判断要发生在信息完整的那一层
 
-`run_deep_analysis` 一次烧三次深模型调用，必须用户点头。闸门不在工具内部，而是 `EdgeHook.WrapCall` 挂在 summarizer 的工具边上：
+`run_deep_analysis` 一次烧三次深模型调用，必须用户点头。闸门不在工具内部，而是 `ApprovalGate` 实现 `ReactLoop.ToolGate`，循环执行工具前先问它：
 
 ```text
 授权键 = (sessionId, 工具名, 归一化后的标的)
 ```
 
-工具方法体看不到自己被调用时的 sessionId（`ChatService.execute(List<Message>)` 的签名里没有 `RunnableConfig`），而 hook 拿得到 `threadId` 和待执行 tool_call 的名字与参数。所以卡片上写 BTCUSDT、模型改口要 ETHUSDT 时键不匹配，会重新弹卡。这不是多加一道校验，是把判断挪到了信息完整的那一层。
+工具方法体看不到自己被调用时的 sessionId，而闸门拿得到 `ReactLoop.run` 传进来的会话号和待执行 tool_call 的名字与参数。所以卡片上写 BTCUSDT、模型改口要 ETHUSDT 时键不匹配，会重新弹卡。这不是多加一道校验，是把判断挪到了信息完整的那一层。
 
 ## 日线边界的时序
 

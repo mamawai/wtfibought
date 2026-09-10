@@ -92,7 +92,7 @@ class TraderLiveHubTest {
         TraderLiveHub.Run run = begin(1L);
         run.callStart();
         run.finish("ERROR", "超时", BigDecimal.TEN, 1, 1, null);
-        // 超时后图线程还在推
+        // 超时后循环线程还在推
         run.token("晚到");
         run.callEnd("晚到", List.of());
         run.callStart();

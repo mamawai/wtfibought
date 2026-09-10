@@ -106,7 +106,7 @@ public class TraderLiveHub {
             emit(() -> trace.toolResult(id, name, responseData));
         }
 
-        /** 过程帧的统一出口：已 finish 的一轮不再收帧（超时后图线程还会晚推几帧） */
+        /** 过程帧的统一出口：已 finish 的一轮不再收帧（超时后循环线程还会晚推几帧） */
         private void emit(Supplier<WakeTrace.Frame> change) {
             if (endFrame != null) {
                 return;

@@ -13,16 +13,16 @@
 先读同目录的 [Agent Harness 架构](./architecture.md)，只需要记住三件事：
 
 1. **装置之间只经 PostgreSQL 咬合**。没有任何一个直接调用另一个——chat 想知道 trader 干了什么，读的是 trader 自己写下的表。
-2. **选型只有一条准则**：固定步骤写死成代码，开放决策才交给模型循环。同一条准则也管形态内部——chat 的**编排**是普通 Java 循环（`ChatTurnRunner`），只有**叶子**用 `ReactAgent`。
+2. **选型只有一条准则**：固定步骤写死成代码，开放决策才交给模型循环。同一条准则也管形态内部——chat 的**编排**是普通 Java 循环（`ChatTurnRunner`），只有**叶子**是 `ReactLoop`。
 3. **模型来源两条轨**：面向用户的全部 BYOK（用户自带 key，AES-GCM 加密存库）；平台自己只剩 `newsTagging` 一个功能位买单（见 `runtime/AiAgentRuntime`）——行为分析已在 2026-08 切到用户自己的 key。
 
 ### 六处装置速查
 
 | 装置 | 形态 | 循环 | 触发 | 代码在 |
 |---|---|:---:|---|---|
-| **trader agent** | ReactAgent（15 工具） | ✓ | K 线收盘 / 波动警报 / 手动 | `trader/`（现场流与轨迹见 5.7） |
-| **chat agent** | 平铺编排 + ReactAgent 叶子 | ✓ 带回环 | 用户提问 | `chat/` |
-| **learning agent** | ReactAgent（1 只读工具） | ✓ | 日线交接第三阶段 | `learning/LearningRunner` |
+| **trader agent** | ReAct 循环（15 工具） | ✓ | K 线收盘 / 波动警报 / 手动 | `trader/`（现场流与轨迹见 5.7） |
+| **chat agent** | 平铺编排 + ReAct 循环叶子 | ✓ 带回环 | 用户提问 | `chat/` |
+| **learning agent** | ReAct 循环（1 只读工具） | ✓ | 日线交接第三阶段 | `learning/LearningRunner` |
 | **reviewer workflow** | 单次调用，无工具 | ✗ | 日线交接第二阶段 / 点播 | `learning/ReviewRunner` |
 | **behavior workflow** | 单次调用，无工具 | ✗ | 对话里的 `analyze_my_behavior` | `behavior/` |
 | **replay coach** | 单次流式调用，无工具 | ✗ | 手动复盘点「AI 提示 / AI 评估」 | `controller/ReplayCoachController` |
@@ -34,7 +34,7 @@
 ```mermaid
 flowchart LR
     W["① 热身<br/>两个小文件"] --> C["② 主线<br/>chat agent"]
-    C --> T["③ 框架陷阱<br/>（必须在主线之后）"]
+    C --> T["③ ReactLoop 读法<br/>（必须在主线之后）"]
     T --> I["④ i18n<br/>（横跨两条链）"]
     I --> TR["⑤ trader agent"]
     TR --> L["⑥ reviewer / learning<br/>选型准则教材"]
@@ -43,7 +43,7 @@ flowchart LR
     FE --> TEST["⑨ 拿测试当说明书"]
 ```
 
-**为什么从 chat 开始而不是从 trader**：trader 是业务最重的（要动真账本、有护栏、有调度），chat 是**框架用得最深的**。先啃框架、再看业务，比反过来省力——trader 里那些看着奇怪的写法多半在 chat 里也出现过，而且 chat 那边有注释解释过为什么。
+**为什么从 chat 开始而不是从 trader**：trader 是业务最重的（要动真账本、有护栏、有调度），chat 是**循环用得最深的**（压缩 + 闸门 + 保险丝 + 中断全在 summarizer 那一个叶子上）。先啃循环、再看业务，比反过来省力——trader 里那些看着奇怪的写法多半在 chat 里也出现过，而且 chat 那边有注释解释过为什么。
 
 **i18n 单开一章插在中间**：它不是"翻译"这么简单，它改了叶子的缓存键、改了旧数据的识别方式（认的时候要遍历全部语言）。不先过一遍，读 trader 的提示词组装会一直卡在"为什么这里要传个 lang"。
 
@@ -56,7 +56,7 @@ flowchart LR
 | 文件 | 行数 | 读它干什么 |
 |---|---|---|
 | `chat/ChatConcurrencyGate.java` | 56 | 全包最简单的一个类。看两件事：`tryAcquire` 为什么**先占用户位再占全局位**（反过来会让同一用户的第二次请求先拿走一个全局名额再被拒，中间那一瞬别人被无谓挡住）；为什么返回**枚举而不是 boolean**（拒因得由闸门自己给，让调用方去别处二次推断既是重新发明轮子又有竞态） |
-| `chat/ToolRunContext.java` | 25 | 会话号怎么到工具方法体：放进图 state，langgraph4j 执行工具时整个 state 就是 Spring AI 的 `ToolContext`，工具声明一个 `ToolContext` 参数就读得到（不进 schema，模型看不见）。为什么不走 `RunnableConfig`，是第 2 章站点 8 的核心，先把疑惑留着 |
+| `chat/ToolRunContext.java` | 25 | 会话号怎么到工具方法体：`ChatTurnRunner` 把它传给 `ReactLoop.run`，循环执行工具时放进 Spring AI 的 `ToolContext`，工具声明一个 `ToolContext` 参数就读得到（不进 schema，模型看不见）。闸门拿的是同一个会话号，见第 2 章站点 8 |
 
 读完这两个，你应该能感觉到：**这个仓库的注释讲"为什么"不讲"做了什么"**。看到一段费解的代码，先找它头上那句注释，多半解释了它为什么不能写成更直觉的样子。
 
@@ -77,7 +77,7 @@ flowchart LR
 | 5 | 一轮的骨架 | `ChatTurnStreamer.Turn.run()` | 心跳、三种结局、读数 |
 | 6 | 一轮的编排 | `ChatTurnRunner.run()`（先读类 javadoc 的 ASCII 图） | 路由 / 并行 / 回环，全是普通 Java |
 | 7 | 让位与补答 | `ChatYieldCoordinator` | 用户消息插队、专家结果排队 |
-| 8 | HITL | `ApprovalGate.applyWrap` → `ApprovalRegistry` | 三元组授权 |
+| 8 | HITL | `ApprovalGate.intercept` → `ApprovalRegistry` | 三元组授权 |
 | 9 | 重新生成 | `ChatTurnRewinder.rewind` | 上下文回退与它的两个陷阱 |
 
 ### 站点 1 · 入口与准入
@@ -124,7 +124,7 @@ POST /api/ai/workbench/chat
 `ChatAgentFactory.leavesFor` 的缓存策略与 `ChatModelFactory` 同款（LRU 32、锁外建）。键是 `leafKey` = **配置指纹 + 语言码**：
 
 - **userId 进指纹不是为了缓存粒度，是数据隔离**：叶子里有按用户烤死的工具（`trader_agent` 读的是"这个人的 trader"），两人共用一份叶子就会看到别人的持仓。隔离要靠键本身，不能指望密文的随机性。
-- **语言只加在叶子这一层，不进模型指纹**：系统提示词与工具描述按语言写死进图里，语言变则叶子必须重建；但模型实例与语言无关，切语言不该重建 SDK 客户端与连接池。
+- **语言只加在叶子这一层，不进模型指纹**：系统提示词与工具描述按语言烤进叶子里，语言变则叶子必须重建；但模型实例与语言无关，切语言不该重建 SDK 客户端与连接池。
 
 `build()` 造出四个叶子：
 
@@ -133,11 +133,9 @@ POST /api/ai/workbench/chat
 | `market_agent` | 轻 | `MarketToolkit` 4 个 | 首轮 `tool_choice=required`——不强制的话模型会用自带内置搜索直接答，数据源就失控了 |
 | `news_agent` | 轻 | **不挂 tool** | 靠 `preload` 预取 BlockBeats：无参工具挂成 function tool 模型未必调，预取才 100% 保证数据到位 |
 | `trader_agent` | 轻 | `TraderQueryToolkit` 4 个只读 | userId 建叶子时烤死 |
-| `summarizer` | 深 | 5 个（深研判 1 + trader 动作 3 + 行为分析 1） | `streaming(true)`，挂压缩 hook 与两个工具边 hook |
+| `summarizer` | 深 | 5 个（深研判 1 + trader 动作 3 + 行为分析 1） | `streaming(true)`，带压缩、HITL 闸门、保险丝三样 |
 
-`summarizerLeaf` 结尾那笔 `recursionLimit = 3L+8` 的账要跟着算一遍：流式模型节点一轮吃 2 格 + 工具边 1 格，加 START/END/收尾三格，最小可跑值就是 `3L+3`（L=8 时实测 27 恰好跑通、26 当场抛 `Maximum number of iterations reached`）。真正管事的闸门是 `ModelCallLimiter`，硬顶只兜"环没收住"。
-
-**同一个 `runModelCallLimit` 管的是"每个 agent 各自的上限"而不是"整轮总量"**：summarizer 和每个带工具的专家各跑各的 state，计数互不相通。一轮对话的模型调用是各家相加，不是 8 次封顶。
+**同一个 `runModelCallLimit` 管的是"每个 agent 各自的上限"而不是"整轮总量"**：summarizer 和每个带工具的专家各跑各的循环，计数互不相通。一轮对话的模型调用是各家相加，不是 8 次封顶。
 
 ### 站点 5 · 一轮的骨架 · `ChatTurnStreamer`
 
@@ -164,7 +162,7 @@ POST /api/ai/workbench/chat
 
 ### 站点 6 · 编排 · `ChatTurnRunner`
 
-先读类 javadoc 顶上的 ASCII 图，再读 `run()`。编排用普通 Java：分支就是 if、并行就是虚拟线程、回环就是 while，用不上 StateGraph。
+先读类 javadoc 顶上的 ASCII 图，再读 `run()`。编排用普通 Java：分支就是 if、并行就是虚拟线程、回环就是 while，用不上图。
 
 三个零件：
 
@@ -176,7 +174,7 @@ POST /api/ai/workbench/chat
 
 进汇总前垫的最后一条消息（`summaryTail`）恒为**用户侧**——整段输入以 assistant 结尾，模型只会补一句"没什么可补充的"。这条消息里的**输出语言硬收尾必须排在最后**：用户打的字不翻译，聊天输入随时是另一门语言，而近因权重最高。
 
-`streamSummarizer` 里有一条必须记住的框架事实：**必须用普通迭代消费，不能用 `forEachAsync`**——后者 `thenCompose` 递归自链，每个流式 chunk 叠一层栈帧，长回答（数千帧）会 `StackOverflowError`（真跑实证过）。
+`streamSummarizer` 现在只是把 token / 搜索事件从 `ReactLoop.Listener.chunk` 里取出来交给 SSE 出口，逐帧消费在 `ReactLoop` 里（那边有一条硬规矩：在调用线程上普通迭代消费，不用 `forEachAsync`——后者每个 chunk 叠一层栈帧，长回答会 `StackOverflowError`，真跑实证过）。
 
 ### 站点 7 · 让位与补答 · `ChatYieldCoordinator`（新增，最该细读的一节）
 
@@ -209,14 +207,14 @@ POST /api/ai/workbench/chat
 
 ### 站点 8 · HITL · `ApprovalGate` / `ApprovalRegistry`
 
-先理解约束：`DeepAnalysisToolkit` 的方法体**从来看不到自己被调用时的 sessionId**——`ChatService.execute(List<Message>)` 的签名里就没有 `RunnableConfig`，递不进去。授权若只绑 sessionId，就会是"卡片上写 BTC、模型改口跑 ETH 照样放行"。
+先理解约束：`DeepAnalysisToolkit` 的方法体**从来看不到自己被调用时的 sessionId**——工具方法体拿到的只有 `ToolContext` 里的会话号，没有当次 tool_call 的参数。授权若只绑 sessionId，就会是"卡片上写 BTC、模型改口跑 ETH 照样放行"。
 
-修法不是加校验，是**把判断挪到信息完整的那一层**。`EdgeHook.WrapCall` 拿得到 `threadId`（= sessionId）+ 待执行 tool_call 的名字和参数，所以授权键能做成 `(sessionId, 工具名, 归一化后的标的)`。
+修法不是加校验，是**把判断挪到信息完整的那一层**。`ApprovalGate` 实现 `ReactLoop.ToolGate`，循环执行工具前把会话号和整条 `AssistantMessage`（含每个 tool_call 的名字与参数）交给它，所以授权键能做成 `(sessionId, 工具名, 归一化后的标的)`。
 
 两处当前版本的要点：
 
 - **管辖范围只剩深研判一个工具**（`GUARDED_TOOLS`）。trader 那三个工具只弹表单、真正的执行扳机在用户手指上，再批准一次等于让用户确认两遍。
-- **不受管辖的工具原样放行**。工具方法体自己的 sessionId 不经闸门：`ChatTurnRunner` 把它放进图 state（`ToolRunContext.SESSION_KEY`），框架经 `ToolContext` 交给工具。
+- **不受管辖的工具原样放行**。工具方法体自己的 sessionId 不经闸门：`ChatTurnRunner` 把它传给 `ReactLoop.run`，循环执行工具时放进 `ToolContext`（`ToolRunContext.SESSION_KEY`）。
 
 再看 `discardApprovals` 那段注释：又要弹卡就说明上一条授权已经用不上了，不丢的话它会一直躺到 TTL 结束，而路由见 `hasApproval` 为真就跳过全部专家派发——于是这 10 分钟内该会话每一条新提问都不取数据、直接凭空作答，**且没有任何日志会说明原因**。
 
@@ -235,38 +233,48 @@ POST /api/ai/workbench/chat
 
 ---
 
-## 第 3 章 · 三个框架陷阱（读完回头看站点 4）
+## 第 3 章 · ReactLoop 读法（读完回头看站点 4）
 
-langgraph4j 有几处行为跟直觉相反，而且**错了不报错**。这几条都是实跑撞出来的，不是从文档抄的。
+叶子的 ReAct 循环是自己写的，就 `llm/ReactLoop` 一个类：调模型 → 有 tool_call 就执行 → 回执接回历史 → 再调模型，直到模型不再要工具。`run` 那几十行就是全部语义——**先读类头注释（新形态的权威描述在那儿），再对着读 `run`**，比读这一章快。下面四条是容易一眼滑过去、写反了又不报错的地方。
 
-### ① hook 的执行顺序跟注册顺序是反的
+### ① 三条顺序约束是源码顺序
 
-`EdgeHook.WrapCall` 是 **reduce 左折叠**（FIFO 存储），注册 h1、h2、h3 实际执行 `h3(h2(h1(真实工具执行)))`——**最后注册的在最外层、最先执行**。
+`run` 里那几个 if 的先后不是随手排的：
 
-所以保险丝（`ModelCallLimiter`）必须**后**注册。写反了代码照跑什么都不报错，只在"ReAct 已逼近调用上限、这时用户要深研判"这个特定情况下出问题：卡片弹出来了，但模型没配额告诉用户发生了什么。还有一层更硬的后果：闸门在外层短路时压根不调 `action.apply`，内层的调用上限整个被跳过、那一跳不计数——**保险丝会静默少数**。
+- **轨迹在保险丝外层**：模型给出 tool_call 就记，被保险丝拦下、根本没执行的那批也记——要看的是"模型想调什么"，trader 的动作轨迹是主人回看的依据。
+- **保险丝在闸门外层**：到上限直接补占位回执收尾，不再问闸门。反过来会出现"逼近上限时闸门先弹了卡，模型已经没配额把这件事告诉用户"。
+- **收尾提示贴本轮回执**：倒数第二次调用（最后一次能执行工具）的回执末尾贴一句预算已尽，闸门合成的那条回执同样要贴——下一次模型调用直接收尾，不撞上限硬切。
 
-注意各建图点的"正确顺序"不一样，**没有全仓统一的答案**：summarizer 要保险丝压在 `ApprovalGate` 外层；trader / learning 要 `ToolCallTraceHook` 在保险丝外层（被拒的调用也得记轨迹）。所以 `AgentGraphs` 不收口 hook 顺序，各点自己注释 + 测试钉住（`ApprovalGateOrderTest`）。
+写反了代码照跑、什么都不报错，只在特定路径上出错。所以顺序钉在 `ReactLoop.run` 的源码里，不是配置项，也没有"注册顺序"这回事。
 
-### ② 内容相同的消息会被静默丢弃
+### ② 可空参数漏传，编译照过
 
-框架默认 schema 用的是 `ReducerDisallowDuplicate`，判据是 `Objects.hash(旧) == Objects.hash(新)`——拿哈希跟**整段历史**比、不走 equals，命中就不 add 且不留日志。Spring AI 的 Message 全族是值语义 hashCode，于是同一句话问第二遍、专家两轮返回同样文本、固定垫话，都从第二次起消失。吞掉的是 AssistantMessage 时，下游症状是 `no AssistantMessage provided!`，**错误信息与真因八竿子打不着**。
+`gate`（HITL 闸门）、`summarizer`（长对话压缩）、`trace`（工具调用轨迹）三个建造参数都可空：忘了传，循环照转，那一样静默哑掉——不弹卡、不压缩、轨迹空一片。必填的只有 `chat` 与 `limiter`，漏了 `build()` 当场抛。
 
-这个坑在本仓库被三个人各踩过一次，现已结构性堵死：所有建图点统一从 `AgentGraphs.reactAgent(model, systemPrompt)` 起步，schema（`llm/MessagesSchema`）、serializer、系统提示三样约定内置在入口里。
+三根钉子守着，都是**建生产叶子真跑**而不是自己搭一个循环自己塞：
 
-### ③ 系统提示会被静默换掉
+- `SummarizerLeafTest.闸门在生产叶子上拦下未授权的深研判`
+- `SummarizerLeafTest.压缩发生且不切断工具调用配对`
+- `TraderWakeupLoopTest.dataToolCallsTracedIntoActions`
 
-`ResilientChatService` 取 `systemMessage().orElse("You are a helpful AI Assistant…")`——忘了传 `defaultSystem` 时你的系统提示被换成框架默认串，**不报错**。靠系统提示带 JSON Schema 或纪律条文的地方，整份内容会直接消失。
+### ③ 中断
 
-建图路已被 `AgentGraphs` 拦住（systemPrompt 必填、空值当场抛）；**绕开它的只有 behavior 与 replay coach 两处不建图的借用**（它们借 `ReactAgent.builder()` 只为捎系统提示，不挂工具不 compile），那里要自己记得传。
+`cancel`（一个 `CompletableFuture<Void>`）直接传进 `run`，两头同时管：
 
-### 附：其他值得知道的框架事实
+- **掐在途流**：`ResilientChatService.streamingExecute` 用 `takeUntilOther(Mono.fromFuture(cancel, true))` 把整条流水线（含重试与降级）掐断，取消传到 WebClient / SDK 流。`suppressCancel=true` 必须给——缺省会在流正常结束时反向 cancel 这个 future，专家等待期挂在它上面的 `anyOf` 会被误唤醒。
+- **循环退出**：两个检查点，模型答完之后不再执行工具、工具回执入历史后不再调模型。两处都是正常退出、把已有历史交出去，不抛异常。拉流时每帧还先看一眼 cancel：掐上游那一刻队列里排着的帧也不再上屏。
+
+被掐断那次调用的 token 未知，`markAbandoned` 让本轮的账退化成只报耗时；账本按轮换新（`UsageTrackingChatModel.TokenLedger`），晚到的入账只会落进旧账本。测试：`ChatCancelTest`、`ResilientChatServiceTest` 的中断两条。
+
+### ④ 系统提示必填
+
+`ResilientChatService.builder().systemPrompt()` 空值 `build()` 当场抛，没有"静默换成框架默认提示"的通道。系统提示是每个 agent 的纪律与格式约定，静默换掉等于整份内容凭空消失，而且不报错。
+
+### 附：其他值得知道的事实
 
 | 事实 | 为什么要知道 |
 |---|---|
-| `new Command(null, update)` 必然 NPE | `gotoNode()` 是 `requireNonNull`，而框架拿到 hook 返回值第一件事就是调它。`Command.emptyCommand().withMergedUpdate()` 一样炸 |
-| **token 帧不吃迭代格** | 帧走生成器栈顶，不经过 `AsyncNodeGenerator.next()`，而迭代计数只活在后者里。长回答不会撞递归硬顶 |
-| 图生成器**取消不了** | `mergeAtStreamEnd` 那层没实现 `AsyncGenerator.Cancellable`，且 `StreamingChatGenerator` 在构造函数里就订阅了模型流、不留 Disposable。本仓从不 cancel 图生成器（断连后是**故意**消费到底好落历史的）；用户中断走的是 `llm/CancelSignal`：信号放进 `RunnableConfig` 的 metadata，模型节点最内层的 hook 用 ScopedValue 把它带到 `ResilientChatService` 建流那一刻做 `takeUntilOther`，取消传到 WebClient / SDK 流。被掐断那次调用的 token 未知，`markAbandoned` 让本轮的账退化成只报耗时；账本按轮换新（`UsageTrackingChatModel.TokenLedger`），晚到的入账只会落进旧账本 |
-| `UsageTrackingChatModel.getOptions` 必须原样透传 | 返回自己造的 options 会让 ReactAgent 的工具列表变成空数组 |
+| `UsageTrackingChatModel.getOptions` 必须原样透传 | 返回自己造的 options 会让 `ResilientChatService` 挂出去的工具列表变成空数组 |
 | `options` 必须从 `model.getOptions().mutate()` 派生 | Spring AI 2.0 的 `OpenAiChatModel` 把 `prompt.getOptions()` 直接硬转 `OpenAiChatOptions`，塞个泛型 builder 造的进去当场 ClassCastException。真跑实证：路由这一次调用抛了、被兜成 FINISH，整轮零专家派发 |
 
 ---
@@ -276,7 +284,7 @@ langgraph4j 有几处行为跟直觉相反，而且**错了不报错**。这几�
 | 类 | 管什么 |
 |---|---|
 | `i18n/PromptCatalog` | **喂给模型**的东西：系统提示词、工具描述，以及 AI 产出后落库、跟 trader 主人语言走的话（决策 error/reasoning、paused_reason）。词表在 `resources/prompts/{zh,en}/*.yml` |
-| `i18n/LocalizedToolCallbacks` | `@Tool(description=...)` 是编译期常量换不掉，所以自己拼 ToolCallback：名字与 inputSchema 照旧由注解推导，只把 description 换成 `tool.<工具名>` 那条。它还兼了 `FailureAsResult`：**工具失败包成回执回给模型，不抛出**——langgraph4j 的工具节点不接异常，抛出去整轮就没了。写工具自己都 catch 了，这层兜的是数据工具（K 线首拉失败会原样抛）和参数解析失败 |
+| `i18n/LocalizedToolCallbacks` | `@Tool(description=...)` 是编译期常量换不掉，所以自己拼 ToolCallback：名字与 inputSchema 照旧由注解推导，只把 description 换成 `tool.<工具名>` 那条。它还兼了 `FailureAsResult`：**工具失败包成回执回给模型，不抛出**——`ReactLoop` 执行工具不接异常，抛出去整轮就没了。写工具自己都 catch 了，这层兜的是数据工具（K 线首拉失败会原样抛）和参数解析失败 |
 | `i18n/UserLangResolver` | 查用户的 AI 产出语言（lang 列在 sim 的 user 表，走 internal API）。不加缓存——缓存换来的是"刚切完语言还出旧语言" |
 
 三条规矩，读到别的地方会反复撞上：
@@ -293,7 +301,7 @@ langgraph4j 有几处行为跟直觉相反，而且**错了不报错**。这几�
 
 ## 第 5 章 · trader agent（2.5 小时）
 
-业务最重的一套。框架用法比 chat 简单——一个独立编译的 `ReactAgent`，没有多专家编排；难在**注入面**。
+业务最重的一套。循环用法比 chat 简单——一个 `ReactLoop`，没有多专家编排；难在**注入面**。
 
 ### 5.1 谁来敲门 · `TraderScheduler`
 
@@ -362,16 +370,15 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
   → TradeTools 每轮 new（绑 sim 子账户 / 白名单 / 风险规格 / 本轮截止时刻）
   → 计划对账（rebindPlans → TraderPlanStore.rebind，出 Rebind(live/closed/filled) 三段）
   → 组装系统提示词（promptAssembler.assemble）、观察包（observation）与开场白（routine / alert instruction）
-  → AgentGraphs.reactAgent + 15 工具 + ModelCallLimiter + ToolCallTraceHook
-       首轮 forceFirstToolChoice=required：不看数据不许决策
-       streaming(true)：模型文本逐字推给唤醒现场（见 5.7）
+  → ResilientChatService（系统提示 + 15 工具 + 首轮 forceFirstToolChoice=required：不看数据不许决策）
+     + ReactLoop（streaming(true)：模型文本逐字推给唤醒现场，见 5.7；ModelCallLimiter 保险丝；ToolCallTraceHook 轨迹）
   → FutureTask 限时执行
   → finally：动作轨迹与用量**无论成败都要落**（超时作废那轮，单和 token 都是真发生的）
 ```
 
-`mergeActions` 的合并规则：顺序骨架来自 hook 的全量记录（含数据工具），交易工具用 `TradeTools` 的富记录（带结果/拒因）按序替换轻量占位。
+`mergeActions` 的合并规则：顺序骨架来自轨迹收集器的全量记录（含数据工具），交易工具用 `TradeTools` 的富记录（带结果/拒因）按序替换轻量占位。
 
-`finalReasoning` 往前找**最近一条有正文的**助手消息，而不是死盯最后一条——保险丝在工具边收束时末尾是纯 tool_call，死盯就会写出 status=OK 却一个字没有的决策行。
+`finalReasoning` 往前找**最近一条有正文的**助手消息，而不是死盯最后一条——保险丝收束时末尾是纯 tool_call，死盯就会写出 status=OK 却一个字没有的决策行。
 
 ### 5.4 注入面（最该细读的一段）
 
@@ -421,8 +428,8 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 | 文件 | 管什么 | 不认识什么 |
 |---|---|---|
-| `trader/WakeTrace` | 一次唤醒的过程状态（纯数据）。每个变更方法**返回要外发的帧**，`replay` 按当前状态合成回放帧，`toJson` 是落库形状 | 不认识 SSE、langgraph、Spring 容器 |
-| `trader/TraderLiveHub` | 订阅者管理、扇出、心跳。按 traderId 订阅，一次唤醒一个 `Run` 句柄，runner 只碰它 | 不认识 langgraph |
+| `trader/WakeTrace` | 一次唤醒的过程状态（纯数据）。每个变更方法**返回要外发的帧**，`replay` 按当前状态合成回放帧，`toJson` 是落库形状 | 不认识 SSE、ReactLoop、Spring 容器 |
+| `trader/TraderLiveHub` | 订阅者管理、扇出、心跳。按 traderId 订阅，一次唤醒一个 `Run` 句柄，runner 只碰它 | 不认识 ReactLoop |
 | `controller/TraderController` | 准入：谁能连 | — |
 
 帧序列：`run_start` → `prompt` → 每次模型调用的 `model_start` / `token…` / `model_end` → `tool_result…` → `run_end`。中途连上按当前状态回放，空闲只有心跳。
@@ -441,7 +448,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 ## 第 6 章 · reviewer 与 learning：什么时候该/不该用 agent（2 小时）
 
-`learning/` 包里住着一对形态相反的东西：reviewer 是单次调用的 workflow，learning 是带工具循环的 ReactAgent。**对比读这两个，就是"选型准则"最好的教材**——素材算得齐的（复盘自己）不给模型循环，需要甄别的（向同侪学）才给。
+`learning/` 包里住着一对形态相反的东西：reviewer 是单次调用的 workflow，learning 是带工具循环的 ReactLoop。**对比读这两个，就是"选型准则"最好的教材**——素材算得齐的（复盘自己）不给模型循环，需要甄别的（向同侪学）才给。
 
 ### reviewer：自己看自己
 
@@ -464,7 +471,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 | `PeerInsightService.peers()` | **同侪池一把尺子**：同意学习 + 未暂停 + 在场（手里有仓，或最近一笔了结在 24h 内）。调度门槛计数、排行榜、detail 三处同一口径 |
 | `PeerInsightService.leaderboard` / `detail` | 纯代码只读查询，吐拼好的文本块。**每行硬带已了结笔数**是设计红线——样本量不摆出来，模型就会把 1 笔的运气当方法论 |
 | `PeerInsightToolkit` | 单工具双模式（无参=排行榜，传 traderId=详情）；每次会话 new 一个绑定"我是谁"（不标出自己那行，模型会把自己的战绩当外人的经验学一遍） |
-| `LearningRunner.learn` | ReactAgent 用法与 `TraderWakeupRunner.runAgentSession` 同构；超时 300s、上限 8 次调用 |
+| `LearningRunner.learn` | ReactLoop 用法与 `TraderWakeupRunner.runAgentSession` 同构；超时 300s、上限 8 次调用 |
 | `LearningRunner.missingMarks` | 输出契约校验——缺【不学什么】就是格式失守，ERROR 行留痕、笔记不动 |
 | `learning.system` 词表 | **反照抄三件套**：①【不学什么】必填 ②每条带证据与差距数字 ③引用同侪战绩必须带笔数 |
 
@@ -485,7 +492,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 ## 第 7 章 · 三处一次性调用（1 小时）
 
-这三处的共同点：没有工具、没有循环，一次调用进去出来。**理由都是"模型在查什么上没有决策自由度"**，套 ReactAgent 只是让它来回跑腿——多花钱、多花时间、多一堆失败模式，换不来任何决策质量。
+这三处的共同点：没有工具、没有循环，一次调用进去出来。**理由都是"模型在查什么上没有决策自由度"**，套 ReAct 循环只是让它来回跑腿——多花钱、多花时间、多一堆失败模式，换不来任何决策质量。
 
 | 装置 | 入口 | 要点 |
 |---|---|---|
@@ -493,7 +500,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 | **replay coach** | `controller/ReplayCoachController` + `analysis/ReplayCoachPrompts` | 一次 BYOK 流式调用，SSE 协议与工作台同款。**不进会话历史、不记忆、不排队**，只挡"上一次还没跑完又点"；断连即停（没有落库诉求，用户切走了就别再烧他的 token）。两个硬约束在 `ReplayCoachPrompts`：只依据给定数据（盲测局禁止猜日期）、中性不下单 |
 | **deep analysis** | `chat/DeepAnalysisToolkit` → `analysis/DeepAnalysisService` | 严格说是**固定编排**不是单次调用：Bull∥Bear 虚拟线程并行 + Judge 裁决 = 3 次深模型调用，所以它是唯一挂 HITL 闸门的工具。产物落库后由 `analysis/NarrativeVerificationService` 到期（H12）拿真实走势对账——叙事轨也要有战绩 |
 
-behavior 和 replay coach 是**唯二绕开 `AgentGraphs` 的地方**（借 `ReactAgent.builder()` 只为捎系统提示，不挂工具不 compile），所以第 3 章陷阱 ③ 对它们仍然有效：系统提示得自己记得传。
+behavior 和 replay coach 直接建 `ResilientChatService` 用（不进 `ReactLoop`），系统提示同样是 builder 必填项，漏了 `build()` 当场抛。
 
 ---
 
@@ -537,7 +544,7 @@ trader 那条链的前端另在两处：
 
 ## 第 9 章 · 拿测试当说明书
 
-这个仓库的测试有不少是**建真图跑**的，比读代码快。
+这个仓库的测试有不少是**建真叶子跑**的，比读代码快。
 
 | 测试 | 它替你回答什么 |
 |---|---|
@@ -545,14 +552,14 @@ trader 那条链的前端另在两处：
 | `ChatWorkbenchAdmissionTest` | 四道准入的顺序，以及名额泄漏那条钉子（要关掉 executor 制造提交失败） |
 | `ChatWorkbenchDeferredTest` / `ChatCancelTest` / `ChatRegenerateTest` | 让位补答 / 中断 / 重新生成三条链路 |
 | `ChatYieldCoordinatorTest` | 让位握手与队列本身 |
-| `ApprovalGateOrderTest` / `ChatWorkbenchHitlTest` | hook 顺序对不对、闸门在真叶子上真的拦下了；后者跑 HITL 端到端 |
-| `ExpertCallLimitTest` | 专家的调用上限怎么生效（直接调 `expertGraph` 真跑，验的才是生产建图点挂没挂） |
+| `SummarizerLeafTest` / `ChatWorkbenchHitlTest` | 闸门、压缩、保险丝在真叶子上真的传上了；后者跑 HITL 端到端 |
+| `ExpertCallLimitTest` | 专家的调用上限怎么生效（直接调 `expertLoop` 真跑，验的才是生产建叶子时挂没挂） |
 | `AnthropicChatModelTest` / `GeminiChatModelTest` / `ResponsesChatModelTest` | 三条自研协议各自的请求体、流式解析、工具与 tool_choice |
-| `CancelSignalTest` | 中断信号从 `RunnableConfig` 走到在途模型流：绑定时机、掐断、取消传上游、正常结束不反向取消（用 mock 模型跑，真到 WebClient 那一段只能真跑验，见附录 B） |
+| `ResilientChatServiceTest` | 韧性分层、options 契约、中断掐流与不反向取消信号（用 mock 模型跑，真到 WebClient 那一段只能真跑验，见附录 B） |
 | `TraderLiveHubTest` / `WakeTraceTest` | 现场扇出与轨迹帧、落库形状（见 5.7） |
 | `TraderPlanStoreTest` | 计划对账 `rebind` 的三段划分 |
 | `ReviewMaterialAssemblerTest` | 全包最大那个类的配对算法与 stale 剔段 |
-| `TraderWakeupLoopTest` | mock 模型跑通真 ReactAgent 唤醒回路 |
+| `TraderWakeupLoopTest` | mock 模型跑通真 ReactLoop 唤醒回路 |
 | `TraderSchedulerTest` | 三阶段时序、屏障不漏人、停工窗口挡四入口、异常不卡死窗口 |
 | `TraderPromptAssemblerTest` / `WakeInstructionI18nTest` | 注入面成文、收尾标记两处同源 |
 | `LearningLoopTest` / `LearningHandoverLoopTest` | 学习单人回路 / 日线交接整链（真调度 + 真 runner + 真查询，3 learner 并发） |
@@ -565,7 +572,7 @@ trader 那条链的前端另在两处：
 - **恒真断言**：断 `.contains("模型")`，而兜底文案本身就含"模型"——删掉整条分支照样绿
 - **断言点打错层**：在测试里自己 new 一个对象、自己加密、再验尾号——把生产代码改成明文落库照样绿
 - **`any()` 吃掉一切**：`when(factory.leavesFor(any()))` 之后，"传给它的是不是本人那份配置"就没人守了
-- **mock 遮蔽真跑**：所有直接调 `applyWrap` 的用例，对"这个 hook 根本没被框架调用"完全无感
+- **mock 遮蔽真跑**：直接调 `intercept` / `compress` 的用例，对"这一样根本没传给 ReactLoop"完全无感
 
 **看到一条测试，先问：把它守的那段生产代码删掉，它会红吗？**
 
@@ -579,7 +586,7 @@ mvn -o test -pl wiib-agent -am -DskipTests=false -Dsurefire.failIfNoSpecifiedTes
 
 # 单个/多个测试类（逗号分隔，不是 +）
 mvn -o test -pl wiib-agent -am -DskipTests=false -Dsurefire.failIfNoSpecifiedTests=false \
-    -Dtest=ApprovalGateOrderTest,ChatTurnRunnerTest
+    -Dtest=SummarizerLeafTest,ChatTurnRunnerTest
 
 # 前端
 cd wiib-web && npx tsc -b && npm run build
@@ -598,8 +605,7 @@ cd wiib-web && npx tsc -b && npm run build
 
 它们各自守的、以及仍需手工验的：
 
-- hook 在生产装配下真的被执行到（挂错了不报错也不告警，单测全绿也发现不了）
-- 模型节点从 hook 到建流是否同线程（`CancelSignal` 的 ScopedValue 依赖这个；工具拿 sessionId 已改走 state → ToolContext，不再有线程假设）
+- 压缩 / 闸门 / 保险丝在生产叶子上真的传给了 ReactLoop（可空参数漏传不报错，mock 单测已能抓一部分，真跑再兜一层）
 - 点停止后上游是否真的断了（openai 协议靠 Spring AI 2.0.1 的 `sink.onDispose(response::close)`，单测里只能验到 Flux 被取消）
 - 批准"深研判 BTCUSDT"后诱导模型去查 ETH，应该**重新弹卡**；再问普通行情问题，专家必须照常派发（验残留授权被丢弃）
 - 让位链路的真实时序：专家取数期间发第二条消息该插队，出答案期间发该排队
