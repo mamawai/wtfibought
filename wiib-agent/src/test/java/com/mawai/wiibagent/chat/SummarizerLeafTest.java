@@ -100,7 +100,7 @@ class SummarizerLeafTest {
         return leaves.summarizer().run(input, SESSION, null, new ReactLoop.Listener() {
             @Override
             public void chunk(ChatResponse frame) {
-                String text = frame.getResult().getOutput().getText();
+                String text = frame.getResults().getFirst().getOutput().getText();
                 if (text != null && !text.isEmpty()) {
                     chunks.add(text);
                 }

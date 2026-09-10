@@ -305,7 +305,7 @@ public class TraderWakeupRunner {
             ReactLoop.Result result = loop.run(List.of(new UserMessage(instruction)), null, cancel, new ReactLoop.Listener() {
                 @Override
                 public void chunk(ChatResponse frame) {
-                    String chunk = frame.getResult().getOutput().getText();
+                    String chunk = frame.getResults().getFirst().getOutput().getText();
                     if (chunk != null && !chunk.isEmpty()) {
                         run.token(chunk);
                     }

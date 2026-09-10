@@ -59,7 +59,7 @@ public final class ReactLoop {
 
     /** 过程回调，两条都可不实现 */
     public interface Listener {
-        /** 流式每帧原样给一份，先于聚合 */
+        /** 流式每帧原样给一份，先于聚合；results 为空的帧已过滤，取 {@code getResults().getFirst()} 即可 */
         default void chunk(ChatResponse frame) {
         }
 
@@ -168,7 +168,7 @@ public final class ReactLoop {
             calls++;
             AssistantMessage reply = streaming
                     ? streamAndAggregate(messages, cancel, sink)
-                    : chat.execute(messages).getResult().getOutput();
+                    : Objects.requireNonNull(chat.execute(messages).getResult(), "模型没有返回任何内容").getOutput();
             messages.add(reply);
             sink.message(reply);
             if (!reply.hasToolCalls()) {
@@ -237,7 +237,7 @@ public final class ReactLoop {
                     continue;
                 }
                 listener.chunk(frame);
-                aggregated = merge(aggregated, frame.getResult().getOutput());
+                aggregated = merge(aggregated, frame.getResults().getFirst().getOutput());
             }
         }
         if (aggregated == null) {

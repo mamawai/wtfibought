@@ -463,7 +463,7 @@ public class ChatTurnRunner {
         ReactLoop.Listener listener = new ReactLoop.Listener() {
             @Override
             public void chunk(ChatResponse frame) {
-                String chunk = frame.getResult().getOutput().getText();
+                String chunk = frame.getResults().getFirst().getOutput().getText();
                 if (chunk != null && !chunk.isEmpty()) {
                     tokenSink.accept(chunk);
                 }
