@@ -178,7 +178,7 @@ class WakeInstructionI18nTest {
     /** 财经日历块在事实区注入（例行/警报同享）；null 时一个字不加（逐字钉死用例覆盖无日历路径） */
     @Test
     void 财经日历块注入例行与警报开场白() {
-        String calendar = "【财经日历】宏观事件时刻表\n- 09-04 20:30 [High] USD Non-Farm Employment Change\n";
+        String calendar = "【财经日历】全球 High 级宏观事件\n- 09-04 20:30 US/USD Non Farm Payrolls 实际:206K 预测:205K 前值:207K\n";
         String routine = runner.routineInstruction(trader(), BOUNDARY, "", "", calendar, AgentLang.ZH, "");
         String alert = runner.alertInstruction(trader(), alert(), null, "", calendar, AgentLang.ZH, "");
 

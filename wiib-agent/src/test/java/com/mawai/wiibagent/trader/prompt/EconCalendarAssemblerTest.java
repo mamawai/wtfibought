@@ -11,78 +11,98 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 财经日历注入块：过去 12h 已公布 + 未来 24h 即将公布，两段式；库里只有 High 级事件，注入不再过滤。
+ * 财经日历注入块：刚公布（上一边界以来，置顶）→ 过去 3 天已公布 → 今天剩余即将公布；
  * 无内容返回 null 整块缺席，与 PlayStatsAssembler 同语义。
  */
 class EconCalendarAssemblerTest {
 
+    /** 2025-09-04 15:33:20 UTC = 北京 23:33:20，当天 24:00 是 26 分 40 秒之后 */
     private static final long NOW = 1_757_000_000_000L;
+    private static final long END_OF_DAY = NOW + 1_600_000L;
     private static final long HOUR = 3_600_000L;
+    /** 1h 档：上一边界一小时前 */
+    private static final long SINCE = NOW - HOUR;
 
     private final EconCalendarMapper mapper = mock(EconCalendarMapper.class);
     private final EconCalendarAssembler assembler =
             new EconCalendarAssembler(mapper, new PromptCatalog());
 
-    private static EconCalendarMapper.Row row(long time, String currency, String title,
-                                              String forecast, String previous) {
+    private static EconCalendarMapper.Row row(long time, String country, String currency, String title,
+                                              String actual, String forecast, String previous) {
         EconCalendarMapper.Row r = new EconCalendarMapper.Row();
         r.setEventTime(time);
+        r.setCountry(country);
         r.setCurrency(currency);
         r.setTitle(title);
+        r.setActual(actual);
         r.setForecast(forecast);
         r.setPrevious(previous);
         return r;
     }
 
     @Test
-    void 已公布与即将公布分两段_行带预测前值() {
+    void 三段_刚公布置顶_行带国家货币与实际值() {
         when(mapper.selectWindow(anyLong(), anyLong())).thenReturn(List.of(
-                row(NOW - 2 * HOUR, "USD", "CPI m/m", "0.3%", "0.2%"),
-                row(NOW + 5 * HOUR, "USD", "Non-Farm Employment Change", "55K", "-23K")));
+                row(NOW - 5 * HOUR, "GB", "GBP", "GDP m/m", "0.4%", "0%", "0.3%"),
+                row(NOW - 30 * 60_000L, "US", "USD", "CPI m/m", "0.4%", "0.3%", "0.2%"),
+                row(NOW + 10 * 60_000L, "US", "USD", "Michigan Consumer Sentiment Prel", null, "51", "55.2")));
 
-        String block = assembler.assemble(NOW, AgentLang.ZH);
+        String block = assembler.assemble(NOW, SINCE, AgentLang.ZH);
 
-        assertThat(block).contains("已公布").contains("即将公布");
-        assertThat(block).contains("CPI m/m").contains("Non-Farm Employment Change");
-        assertThat(block).contains("预测:55K").contains("前值:-23K");
-        // 已公布段必须排在即将公布段之前（时间叙事顺序）
-        assertThat(block.indexOf("CPI m/m")).isLessThan(block.indexOf("Non-Farm"));
-        // 对外宣称的"过去12h/未来24h"钉在查询窗口上，改错常量测试要红
-        org.mockito.Mockito.verify(mapper).selectWindow(NOW - 12 * HOUR, NOW + 24 * HOUR);
+        assertThat(block).contains("US/USD CPI m/m 实际:0.4% 预测:0.3% 前值:0.2%");
+        // 三段顺序：刚公布 → 已公布 → 即将公布
+        assertThat(block.indexOf("刚公布")).isLessThan(block.indexOf("已公布"));
+        assertThat(block.indexOf("已公布")).isLessThan(block.indexOf("即将公布"));
+        assertThat(block.indexOf("CPI m/m")).isLessThan(block.indexOf("GDP m/m"));
+        // 窗口钉死：过去 72h 到北京时间当天 24:00
+        verify(mapper).selectWindow(NOW - 72 * HOUR, END_OF_DAY);
     }
 
     @Test
-    void 无预测前值的行不出现空标签() {
+    void 刚公布段_数字型事件缺实际值写暂缺_讲话类不写() {
         when(mapper.selectWindow(anyLong(), anyLong())).thenReturn(List.of(
-                row(NOW + HOUR, "GBP", "BOE Gov Bailey Speaks", null, null)));
+                row(NOW - 10 * 60_000L, "US", "USD", "PPI m/m", null, "0.3%", "0.2%"),
+                row(NOW - 10 * 60_000L, "US", "USD", "Fed Press Conference", null, null, null)));
 
-        String block = assembler.assemble(NOW, AgentLang.ZH);
+        String block = assembler.assemble(NOW, SINCE, AgentLang.ZH);
 
-        assertThat(block).contains("Bailey Speaks");
-        assertThat(block).doesNotContain("预测").doesNotContain("前值");
+        assertThat(block).contains("PPI m/m 实际:暂缺 预测:0.3%");
+        assertThat(block).contains("Fed Press Conference\n");
+    }
+
+    @Test
+    void 恰在上一边界的那条归刚公布() {
+        when(mapper.selectWindow(anyLong(), anyLong())).thenReturn(List.of(
+                row(SINCE, "US", "USD", "Non Farm Payrolls", "206K", "205K", "207K")));
+
+        String block = assembler.assemble(NOW, SINCE, AgentLang.ZH);
+
+        assertThat(block).contains("刚公布").doesNotContain("已公布（");
     }
 
     @Test
     void 窗口内无事件_返回null整块缺席() {
         when(mapper.selectWindow(anyLong(), anyLong())).thenReturn(List.of());
-        assertThat(assembler.assemble(NOW, AgentLang.ZH)).isNull();
+        assertThat(assembler.assemble(NOW, SINCE, AgentLang.ZH)).isNull();
     }
 
     @Test
     void 查询失败_返回null不拖垮唤醒() {
         when(mapper.selectWindow(anyLong(), anyLong())).thenThrow(new RuntimeException("db down"));
-        assertThat(assembler.assemble(NOW, AgentLang.ZH)).isNull();
+        assertThat(assembler.assemble(NOW, SINCE, AgentLang.ZH)).isNull();
     }
 
     @Test
     void 英文版全文无中文() {
         when(mapper.selectWindow(anyLong(), anyLong())).thenReturn(List.of(
-                row(NOW - HOUR, "USD", "CPI m/m", "0.3%", "0.2%"),
-                row(NOW + HOUR, "USD", "Non-Farm Employment Change", "55K", "-23K")));
+                row(NOW - 30 * 60_000L, "US", "USD", "CPI m/m", "0.4%", "0.3%", "0.2%"),
+                row(NOW - 5 * HOUR, "GB", "GBP", "GDP m/m", null, "0%", "0.3%"),
+                row(NOW + 10 * 60_000L, "US", "USD", "Fed Press Conference", null, null, null)));
 
-        PromptI18nAssertions.assertNoCjk("英文财经日历块", assembler.assemble(NOW, AgentLang.EN));
+        PromptI18nAssertions.assertNoCjk("英文财经日历块", assembler.assemble(NOW, SINCE, AgentLang.EN));
     }
 }

@@ -243,10 +243,14 @@ trader:
 
   # Economic-calendar block (EconCalendarAssembler): facts only; same wording red line as the sleep
   # notice - an event being near is not by itself a reason for any directional action.
+  # "Just released" holds the actuals the pre-wake gate just fetched; the model must read it first.
   calendar:
-    header: "[Economic calendar] Scheduled macro events (Beijing time, UTC+8). Actual readings of published events are NOT in this table - check the news flashes and price action; an event being near is not by itself a reason for any directional action."
-    published: "Published (last 12h):"
-    upcoming: "Upcoming (next 24h):"
+    header: "[Economic calendar] Global high-impact macro events (Beijing time, UTC+8). The 'Just released' section holds actual readings that landed since your last wake-up - read it before the market data; how the actual compares with forecast and previous is the most important new fact this round. An event being near, or a surprise in the data, is not by itself a reason for any directional action."
+    justPublished: "Just released (new this round - read first):"
+    published: "Released (last 3 days):"
+    upcoming: "Upcoming (rest of today):"
+    actual: "actual:"
+    actualPending: "actual:pending"
     forecast: "forecast:"
     previous: "previous:"
 

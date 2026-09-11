@@ -297,7 +297,10 @@ public class TraderWakeupRunner {
                         prompts.get(lang, "llm.callLimit.lastCall")))
                 .trace(trace).build();
 
-        String calendar = econCalendar.assemble(nowMs.getAsLong(), lang);
+        // 上一边界之后公布的算"刚公布"：例行轮就是上次唤醒以来；警报/手动的 boundaryTime 是触发时刻，对齐后同一个意思
+        long intervalMs = TraderScheduler.INTERVAL_MS.getOrDefault(trader.getIntervalCode(), 300_000L);
+        long since = boundaryTime - Math.floorMod(boundaryTime, intervalMs) - intervalMs;
+        String calendar = econCalendar.assemble(nowMs.getAsLong(), since, lang);
         String instruction = trigger != null
                 ? alertInstruction(trader, trigger, recent.isEmpty() ? null : recent.getFirst().wakeTime(), observation, calendar, lang, ownerNote)
                 : routineInstruction(trader, boundaryTime, observation, marketSnapshot(whitelist, lang), calendar, lang, ownerNote);
