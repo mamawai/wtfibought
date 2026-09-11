@@ -337,7 +337,7 @@ class GeminiChatModelTest {
     // ========== 错误归类 ==========
 
     @Test
-    void 拒收400判非瞬时_安全终止判非瞬时_断流判瞬时() {
+    void 拒收400判非瞬时_安全终止与截断判非瞬时_断流判瞬时() {
         GeminiChatModel m = model();
         httpStatus = 400;
         httpBody = "{\"error\":{\"code\":400,\"message\":\"Multiple tools are supported only when they are all search tools.\",\"status\":\"INVALID_ARGUMENT\"}}";
@@ -353,6 +353,15 @@ class GeminiChatModelTest {
         assertThatThrownBy(() -> model().call(new Prompt("q")))
                 .isInstanceOf(NonTransientAiException.class)
                 .hasMessageContaining("SAFETY");
+
+        // MAX_TOKENS 带着半截正文来，按 STOP 收就是半截结论落库
+        chunks = new String[]{
+                """
+                {"candidates":[{"content":{"role":"model","parts":[{"text":"半截"}]},"finishReason":"MAX_TOKENS"}]}"""
+        };
+        assertThatThrownBy(() -> model().call(new Prompt("q")))
+                .isInstanceOf(NonTransientAiException.class)
+                .hasMessageContaining("MAX_TOKENS");
 
         chunks = new String[]{PLAIN[0]};
         assertThatThrownBy(() -> model().call(new Prompt("q")))

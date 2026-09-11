@@ -158,7 +158,14 @@ class AnthropicChatModelTest {
         JSONObject body = body();
         assertThat(body.getString("model")).isEqualTo("claude-test");
         assertThat(body.getIntValue("max_tokens")).isEqualTo(AnthropicChatModel.MAX_TOKENS);
-        assertThat(body.getString("system")).isEqualTo("你是助手");
+        // system 是块数组，末块挂 1h 缓存断点；末条消息末块挂默认（5 分钟）断点
+        JSONObject systemBlock = body.getJSONArray("system").getJSONObject(0);
+        assertThat(systemBlock.getString("text")).isEqualTo("你是助手");
+        assertThat(systemBlock.getJSONObject(AnthropicChatModel.CACHE_CONTROL).getString("ttl")).isEqualTo("1h");
+        JSONObject tail = body.getJSONArray("messages").getJSONObject(0).getJSONArray("content").getJSONObject(0)
+                .getJSONObject(AnthropicChatModel.CACHE_CONTROL);
+        assertThat(tail.getString("type")).isEqualTo("ephemeral");
+        assertThat(tail.containsKey("ttl")).isFalse();
         assertThat(body.getJSONObject("thinking").getString("type")).isEqualTo("adaptive");
         assertThat(body.getJSONObject("output_config").getString("effort")).isEqualTo("high");
         assertThat(body.getJSONArray("tools")).extracting(t -> ((JSONObject) t).getString("type"))
@@ -233,6 +240,11 @@ class AnthropicChatModelTest {
         assertThat(userBlocks).extracting(b -> ((JSONObject) b).getString("type")).containsExactly("tool_result", "text");
         assertThat(userBlocks.getJSONObject(0).getString("tool_use_id")).isEqualTo("toolu_1");
         assertThat(userBlocks.getJSONObject(0).getString("content")).isEqualTo("60000");
+        // 缓存断点只在末条消息的末块
+        assertThat(userBlocks.getJSONObject(0).containsKey(AnthropicChatModel.CACHE_CONTROL)).isFalse();
+        assertThat(userBlocks.getJSONObject(1).containsKey(AnthropicChatModel.CACHE_CONTROL)).isTrue();
+        assertThat(messages.getJSONObject(0).getJSONArray("content").getJSONObject(1)
+                .containsKey(AnthropicChatModel.CACHE_CONTROL)).isFalse();
     }
 
     // ========== 阻塞路径 ==========
@@ -253,6 +265,22 @@ class AnthropicChatModelTest {
         assertThat(response.getMetadata().getUsage().getCompletionTokens()).isEqualTo(3);
         assertThat(response.getMetadata().getUsage().getTotalTokens()).isEqualTo(15);
         assertThat(response.getMetadata().getId()).isEqualTo("msg_1");
+    }
+
+    /** 开了缓存 input_tokens 只算未命中的；命中与写入两项要一起算进 prompt，否则用量少记一大截 */
+    @Test
+    void 阻塞路径_usage把缓存命中与写入算进prompt() {
+        events = new String[]{
+                """
+                {"type":"message_start","message":{"id":"msg_c","usage":{"input_tokens":3,
+                 "cache_creation_input_tokens":20,"cache_read_input_tokens":100}}}""",
+                PLAIN[1], PLAIN[2], PLAIN[3], PLAIN[4], PLAIN[5]
+        };
+        ChatResponse response = model().call(new Prompt("问题"));
+
+        assertThat(response.getMetadata().getUsage().getPromptTokens()).isEqualTo(123);
+        assertThat(response.getMetadata().getUsage().getCompletionTokens()).isEqualTo(3);
+        assertThat(response.getMetadata().getUsage().getTotalTokens()).isEqualTo(126);
     }
 
     private static final String[] THINK_THEN_TOOL = new String[]{
@@ -429,6 +457,34 @@ class AnthropicChatModelTest {
         assertThatThrownBy(() -> model().call(new Prompt("q")))
                 .isInstanceOf(TransientAiException.class)
                 .hasMessageContaining("Overloaded");
+    }
+
+    /**
+     * refusal 是 HTTP 200 + stop_reason，零输出或半截；max_tokens 是撞顶。
+     * 按 STOP 收会把空回答或半截[本轮结论]以 status=OK 落库，必须显式失败且不重试
+     */
+    @Test
+    void 非正常收尾_refusal与max_tokens判非瞬时() {
+        events = new String[]{
+                PLAIN[0],
+                """
+                {"type":"message_delta","delta":{"stop_reason":"refusal",
+                 "stop_details":{"type":"refusal","category":"cyber"}},"usage":{"output_tokens":0}}""",
+                PLAIN[5]
+        };
+        assertThatThrownBy(() -> model().call(new Prompt("q")))
+                .isInstanceOf(NonTransientAiException.class)
+                .hasMessageContaining("拒绝生成").hasMessageContaining("cyber");
+
+        events = new String[]{
+                PLAIN[0], PLAIN[1], PLAIN[2], PLAIN[3],
+                """
+                {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":3}}""",
+                PLAIN[5]
+        };
+        assertThatThrownBy(() -> model().call(new Prompt("q")))
+                .isInstanceOf(NonTransientAiException.class)
+                .hasMessageContaining("max_tokens");
     }
 
     @Test

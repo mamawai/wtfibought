@@ -296,7 +296,8 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
         }
         String finishReason = candidate.getString("finishReason");
         if (finishReason != null) {
-            if (!"STOP".equals(finishReason) && !"MAX_TOKENS".equals(finishReason)) {
+            // 只有 STOP 是完整回答：MAX_TOKENS 是截断、SAFETY 等是拦下，半截不当结论
+            if (!"STOP".equals(finishReason)) {
                 return Flux.error(new NonTransientAiException("Gemini 生成终止: " + finishReason));
             }
             frames.add(finalFrame(state.sawToolCall, usageMetadata(state, chunk.getString("responseId")),

@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.llm;
 
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
@@ -8,6 +9,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
@@ -240,12 +243,15 @@ class ResponsesChatModelTest {
     }
 
     @Test
-    void 阻塞路径_工具帧_收齐并标TOOL_CALLS() {
+    void 阻塞路径_工具帧_收齐并标TOOL_CALLS_原始item只在工具循环里回放() {
         // 有的渠道 completed 里 output 不全，工具调用只能从 output_item.done 收——
         // 帧合并必须靠工具帧而不是 completed 的 output（cpa 对 grok 专门打过 output 补丁，上游真有此形态）
         events = new String[]{
                 """
-                {"type":"response.output_item.done","item":{"type":"function_call",
+                {"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_1",
+                 "summary":[],"encrypted_content":"enc-1"}}""",
+                """
+                {"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1",
                  "call_id":"c1","name":"get_account","arguments":"{}"}}""",
                 """
                 {"type":"response.completed","response":{"id":"resp_2","status":"completed",
@@ -253,11 +259,33 @@ class ResponsesChatModelTest {
         };
         ChatResponse response = model().call(new Prompt("查账户"));
 
-        List<AssistantMessage.ToolCall> toolCalls = response.getResult().getOutput().getToolCalls();
+        AssistantMessage assistant = response.getResult().getOutput();
+        List<AssistantMessage.ToolCall> toolCalls = assistant.getToolCalls();
         assertThat(toolCalls).hasSize(1);
         assertThat(toolCalls.getFirst().name()).isEqualTo("get_account");
         assertThat(toolCalls.getFirst().id()).isEqualTo("c1");
         assertThat(response.getResult().getMetadata().getFinishReason()).isEqualTo("TOOL_CALLS");
+        // 原始 item 挂在消息 metadata 上，阻塞路径的帧合并不能把它丢了
+        assertThat(assistant.getMetadata()).containsKey(ResponsesChatModel.ITEMS_KEY);
+
+        // 回传工具结果：工具循环里的 assistant 按原始 item 回放，reasoning 带着 encrypted_content 原样回去
+        events = PLAIN_COMPLETED;
+        ToolResponseMessage toolResult = ToolResponseMessage.builder().responses(List.of(
+                new ToolResponseMessage.ToolResponse("c1", "get_account", "{\"equity\":100}"))).build();
+        model().call(new Prompt(List.of(new UserMessage("查账户"), assistant, toolResult)));
+        JSONArray input = JSON.parseObject(lastRequestBody).getJSONArray("input");
+        assertThat(input).extracting(i -> ((JSONObject) i).getString("type"))
+                .containsExactly("message", "reasoning", "function_call", "function_call_output");
+        assertThat(input.getJSONObject(1).getString("encrypted_content")).isEqualTo("enc-1");
+        assertThat(input.getJSONObject(2).getString("id")).isEqualTo("fc_1");
+        assertThat(input.getJSONObject(3).getString("call_id")).isEqualTo("c1");
+
+        // 已结束的轮次（后面是新提问）：按 function_call 现拼，reasoning 不带
+        model().call(new Prompt(List.of(new UserMessage("查账户"), assistant, new UserMessage("再问"))));
+        input = JSON.parseObject(lastRequestBody).getJSONArray("input");
+        assertThat(input).extracting(i -> ((JSONObject) i).getString("type"))
+                .containsExactly("message", "function_call", "message");
+        assertThat(input.getJSONObject(1).containsKey("id")).isFalse();
     }
 
     @Test
@@ -276,6 +304,10 @@ class ResponsesChatModelTest {
         assertThat(toolCalls).hasSize(1);
         assertThat(toolCalls.getFirst().name()).isEqualTo("get_account");
         assertThat(response.getResult().getMetadata().getFinishReason()).isEqualTo("TOOL_CALLS");
+        // 原始 item 同样从 output 兜底
+        JSONArray items = JSON.parseArray((String) response.getResult().getOutput().getMetadata().get(ResponsesChatModel.ITEMS_KEY));
+        assertThat(items).hasSize(1);
+        assertThat(items.getJSONObject(0).getString("call_id")).isEqualTo("c9");
     }
 
     @Test

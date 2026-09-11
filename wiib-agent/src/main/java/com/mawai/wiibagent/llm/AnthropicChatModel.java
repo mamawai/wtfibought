@@ -36,6 +36,10 @@ import java.util.TreeMap;
  * 只有还在工具循环里的那条（后面紧跟工具回执）原样回放这些块（思考块 signature、搜索结果 encrypted_content
  * 都要原样回去），其余按文本 + tool_use 拼（见 {@link #inToolLoop}）。
  * 同角色连续消息合成一条多块消息（Messages 要求 user/assistant 交替）。
+ * <p>
+ * 提示缓存两个断点：system 末块挂 1h（tools 排在 system 前面，一个断点把两者一起盖住），
+ * 末条消息末块挂默认 5 分钟、随对话前移（见 {@link #markCacheTail}）。
+ * 收尾只认 end_turn / stop_sequence / tool_use 是完整回答，refusal / max_tokens 等显式失败（见 {@link #abnormalStop}）。
  */
 public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
 
@@ -43,8 +47,9 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
     public static final String BLOCKS_KEY = "wiib_anthropic_blocks";
     static final String SEARCH_TOOL_TYPE = "web_search_20250305";
     static final String SEARCH_TOOL_NAME = "web_search";
-    /** max_tokens 必填；给个大值，真正的上限由模型自己封顶 */
-    static final int MAX_TOKENS = 16384;
+    /** max_tokens 必填，思考 token 也算在内；超过模型上限上游直接 400，64000 是现役模型都收的值 */
+    static final int MAX_TOKENS = 64000;
+    static final String CACHE_CONTROL = "cache_control";
     private static final Duration LIST_TIMEOUT = Duration.ofSeconds(30);
 
     public AnthropicChatModel(String apiKey, String baseUrl, String model, Double temperature,
@@ -145,18 +150,36 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
                         blocks.add(new JSONObject()
                                 .fluentPut("type", "tool_result")
                                 .fluentPut("tool_use_id", tr.id())
-                                .fluentPut("content", tr.responseData() == null ? "" : tr.responseData()));
+                                .fluentPut("content", tr.responseData()));
                     }
                     append(messages, "user", blocks);
                 }
             }
         }
         if (!system.isEmpty()) {
-            body.put("system", system.toString());
+            // 1h：隔 15 分钟 / 1 小时再醒的 trader 也能命中同一份 system + tools
+            body.put("system", new JSONArray().fluentAdd(textBlock(system.toString())
+                    .fluentPut(CACHE_CONTROL, cacheControl("1h"))));
         }
+        markCacheTail(messages);
         body.put("messages", messages);
         logRequest(body.getString("model"), body.get("tool_choice"), toolNames);
         return body;
+    }
+
+    /** 缓存断点；ttl 空=默认 5 分钟 */
+    private static JSONObject cacheControl(String ttl) {
+        JSONObject control = new JSONObject().fluentPut("type", "ephemeral");
+        if (ttl != null) {
+            control.put("ttl", ttl);
+        }
+        return control;
+    }
+
+    /** 末条消息的末块挂 5 分钟断点，随对话前移：一次唤醒里的十几次调用靠它复用前面的整段历史 */
+    private static void markCacheTail(JSONArray messages) {
+        JSONArray content = messages.getJSONObject(messages.size() - 1).getJSONArray("content");
+        content.getJSONObject(content.size() - 1).put(CACHE_CONTROL, cacheControl(null));
     }
 
     /** required → any；具体工具名 → tool；auto 不传（默认就是 auto） */
@@ -208,7 +231,7 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
                     .fluentPut("type", "tool_use")
                     .fluentPut("id", tc.id())
                     .fluentPut("name", tc.name())
-                    .fluentPut("input", tc.arguments() == null || tc.arguments().isBlank()
+                    .fluentPut("input", tc.arguments().isBlank()
                             ? new JSONObject() : JSON.parseObject(tc.arguments())));
         }
         return blocks;
@@ -224,7 +247,8 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
         /** server_tool_use id → 搜索词，搜索结果块按 tool_use_id 配回 */
         final Map<String, String> queries = new HashMap<>();
         String messageId;
-        Integer inputTokens;
+        /** message_start 的 usage：input 与缓存三项在这，message_delta 没带时用它 */
+        JSONObject startUsage;
     }
 
     @Override
@@ -237,10 +261,7 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
             case "message_start" -> {
                 JSONObject message = event.getJSONObject("message");
                 state.messageId = message.getString("id");
-                JSONObject usage = message.getJSONObject("usage");
-                if (usage != null) {
-                    state.inputTokens = usage.getInteger("input_tokens");
-                }
+                state.startUsage = message.getJSONObject("usage");
                 return Flux.empty();
             }
             case "content_block_start" -> {
@@ -336,6 +357,10 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
             case "message_delta" -> {
                 JSONObject delta = event.getJSONObject("delta");
                 String stopReason = delta == null ? null : delta.getString("stop_reason");
+                String abnormal = abnormalStop(stopReason, delta);
+                if (abnormal != null) {
+                    return Flux.error(new NonTransientAiException("Anthropic " + abnormal));
+                }
                 boolean toolCalls = state.sawToolCall || "tool_use".equals(stopReason);
                 return Flux.just(finalFrame(toolCalls, deltaMetadata(event.getJSONObject("usage"), state),
                         Map.of(BLOCKS_KEY, new JSONArray(state.blocks.values()).toJSONString())));
@@ -357,6 +382,26 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
                 return Flux.empty();
             }
         }
+    }
+
+    /**
+     * 非正常收尾的说明；正常收尾（end_turn / stop_sequence / tool_use）和中转站自定义值返回 null。
+     * 这几种拿到的都不是完整回答，按 STOP 收会把半截或空回答当结论落库：
+     * refusal 是安全分类器拦下（可能零输出，也可能流到一半）；max_tokens 撞顶截断；
+     * model_context_window_exceeded 上下文写满；pause_turn 服务端搜索回合被暂停，得原样回传才能续，本层不续
+     */
+    private static String abnormalStop(String stopReason, JSONObject delta) {
+        if (stopReason == null) {
+            return null;
+        }
+        return switch (stopReason) {
+            case "refusal" -> "拒绝生成" + (delta.getJSONObject("stop_details") == null
+                    ? "" : ": " + delta.getJSONObject("stop_details").toJSONString());
+            case "max_tokens" -> "输出撞到 max_tokens 上限被截断";
+            case "model_context_window_exceeded" -> "上下文窗口写满，输出被截断";
+            case "pause_turn" -> "服务端搜索回合被暂停，没拿到完整回答";
+            default -> null;
+        };
     }
 
     /** partial_json 拼完就是 input；一个增量都没来的保留起始块自带的 input（无参工具是 {}） */
@@ -381,16 +426,21 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
         return sources;
     }
 
-    /** usage：input 取 message_start 的，output 取 message_delta 的；服务端搜索次数记进观测 */
+    /** usage：input 三项先取 message_delta 的、没带再取 message_start 的，output 取 message_delta 的；服务端搜索次数记进观测 */
     private ChatResponseMetadata deltaMetadata(JSONObject usage, State state) {
         ChatResponseMetadata.Builder metadata = metadata().id(state.messageId);
-        Integer input = usage != null && usage.getInteger("input_tokens") != null
-                ? usage.getInteger("input_tokens") : state.inputTokens;
+        Integer input = usageField(usage, state.startUsage, "input_tokens");
         Integer output = usage == null ? null : usage.getInteger("output_tokens");
         if (input != null || output != null) {
-            int in = input == null ? 0 : input;
-            int out = output == null ? 0 : output;
+            // input_tokens 只算没命中缓存的那部分，命中的和写入的各自单列，三项加起来才是整段 prompt
+            int cacheRead = orZero(usageField(usage, state.startUsage, "cache_read_input_tokens"));
+            int cacheWrite = orZero(usageField(usage, state.startUsage, "cache_creation_input_tokens"));
+            int in = orZero(input) + cacheRead + cacheWrite;
+            int out = orZero(output);
             metadata.usage(new DefaultUsage(in, out, in + out));
+            if (cacheRead > 0 || cacheWrite > 0) {
+                log.info("[Anthropic] {} 缓存命中{} 写入{} 未命中{}", model, cacheRead, cacheWrite, orZero(input));
+            }
         }
         JSONObject serverTools = usage == null ? null : usage.getJSONObject("server_tool_use");
         Integer searches = serverTools == null ? null : serverTools.getInteger("web_search_requests");
@@ -399,5 +449,14 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
             log.info("[Anthropic] {} 服务端搜索{}次", model, searches);
         }
         return metadata.build();
+    }
+
+    private static Integer usageField(JSONObject delta, JSONObject start, String field) {
+        Integer value = delta == null ? null : delta.getInteger(field);
+        return value != null || start == null ? value : start.getInteger(field);
+    }
+
+    private static int orZero(Integer value) {
+        return value == null ? 0 : value;
     }
 }
