@@ -57,7 +57,7 @@ public final class ReactLoop {
         Optional<ToolResponseMessage> intercept(String sessionId, AssistantMessage reply);
     }
 
-    /** 过程回调，两条都可不实现 */
+    /** 过程回调 */
     public interface Listener {
         /** 流式每帧原样给一份，先于聚合；results 为空的帧已过滤，取 {@code getResults().getFirst()} 即可 */
         default void chunk(ChatResponse frame) {

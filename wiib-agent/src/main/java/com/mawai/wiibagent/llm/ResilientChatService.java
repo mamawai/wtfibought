@@ -126,7 +126,7 @@ public class ResilientChatService {
         ChatOptions used = optionsFor(withSystem);
         AtomicBoolean emitted = new AtomicBoolean(false);
         Flux<ChatResponse> stream = primaryModel.stream(promptOf(primaryModel, withSystem, used))
-                .doOnNext(r -> emitted.set(true))
+                .doOnNext(_ -> emitted.set(true))
                 .retryWhen(Retry.backoff(maxAttempts - 1, Duration.ofMillis(initialDelayMs))
                         .maxBackoff(Duration.ofMillis(maxDelayMs))
                         // 强制被拒是配置类失败，重试多少次都一样，留给下面降级
@@ -135,11 +135,11 @@ public class ResilientChatService {
                         .doBeforeRetry(signal -> log.warn("模型流式调用失败，退避重试 {}/{}: {}",
                                 signal.totalRetries() + 2, maxAttempts, String.valueOf(signal.failure())))
                         // 耗尽时抛原始异常而非 RetryExhausted 包装，让下面的兜底拿到真实原因
-                        .onRetryExhaustedThrow((spec, signal) -> signal.failure()))
+                        .onRetryExhaustedThrow((_, signal) -> signal.failure()))
                 .onErrorResume(e -> {
                     // 强制被拒发生在请求刚落地、必然还没吐过帧，重订阅不会拼出重复文本
                     if (toolChoiceRejected(e, used)) {
-                        log.warn("上游拒收 tool_choice 强制，本次降级为不强制重发: {}", e.toString());
+                        log.warn("[stream] 上游拒收 tool_choice 强制，本次降级为不强制重发: {}", e.toString());
                         return primaryModel.stream(promptOf(primaryModel, withSystem, chatOptions));
                     }
                     // 搜索工具被拒同理：去掉许可重发一次，这一轮就不搜
@@ -149,10 +149,14 @@ public class ResilientChatService {
                     }
                     return Flux.error(e);
                 });
-        // 用户中断：整条流水线（含重试与降级）在这儿被掐断，取消向上游传到 WebClient / SDK 流
-        // （Spring AI 2.0.1 起 SDK 流随 dispose 关闭）。suppressCancel=true 必须给：
-        // 缺省会在流正常结束时反向 cancel 这个 future，专家等待期挂在它上面的 anyOf 会被误唤醒
-        return cancel == null ? stream : stream.takeUntilOther(Mono.fromFuture(cancel, true));
+        if (cancel == null) {
+            return stream;
+        } else {
+            // 用户中断：整条流水线（含重试与降级）在这儿被掐断，取消向上游传到 WebClient / SDK 流
+            // （Spring AI 2.0.1 起 SDK 流随 dispose 关闭）。suppressCancel=true 必须给：缺省会在流正常结束时反向 cancel 这个 future，专家等待期挂在它上面的 anyOf 会被误唤醒
+            Mono<Void> other = Mono.fromFuture(cancel, true); // 包装成Mono
+            return stream.takeUntilOther(other); // 如果other complete就直接cancel掉stream 见内部的onComplete和cancelMainAndComplete
+        }
     }
 
     /**

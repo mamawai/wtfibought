@@ -468,7 +468,7 @@ public class ChatTurnRunner {
                     tokenSink.accept(chunk);
                 }
                 // 搜索过程帧是空文本帧，事件挂在这一帧的响应 metadata 上
-                String json = frame.getMetadata().<String>get(SearchEvent.KEY);
+                String json = frame.getMetadata().get(SearchEvent.KEY);
                 if (json != null) {
                     searchSink.accept(SearchEvent.parse(json));
                 }

@@ -46,7 +46,7 @@ public class BaseUrlGuard {
             return messages.get("agent.endpoint.baseUrl.malformed");
         }
         String scheme = uri.getScheme();
-        if (scheme == null || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+        if (!("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
             return messages.get("agent.endpoint.baseUrl.schemeUnsupported");
         }
         String host = uri.getHost();

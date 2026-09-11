@@ -3,6 +3,7 @@ package com.mawai.wiibagent.trader;
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibagent.llm.SseChannel;
 import com.mawai.wiibcommon.entity.AiTrader;
+import jakarta.annotation.PreDestroy;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -41,7 +42,7 @@ public class TraderLiveHub {
     private final Map<Long, Set<Sink>> traderSubscribers = new ConcurrentHashMap<>();
     /** 所有 SSE 通道，心跳用 */
     private final Set<SseChannel> channels = ConcurrentHashMap.newKeySet();
-    /** 心跳只发注释帧，单线程够用；虚拟线程不支持定时调度故用平台线程 */
+    /** 心跳专用：只发注释帧，单线程够所有订阅者用；虚拟线程不支持定时调度故用平台线程 */
     private final ScheduledExecutorService heartbeatScheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "trader-live-heartbeat");
@@ -51,6 +52,12 @@ public class TraderLiveHub {
 
     public TraderLiveHub() {
         heartbeatScheduler.scheduleWithFixedDelay(this::heartbeat, HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
+    }
+
+    /** 上下文收尾：停掉心跳线程 */
+    @PreDestroy
+    public void stop() {
+        heartbeatScheduler.shutdownNow();
     }
 
     private void heartbeat() {

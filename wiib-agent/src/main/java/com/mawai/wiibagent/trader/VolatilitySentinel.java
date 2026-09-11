@@ -10,6 +10,7 @@ import com.mawai.wiibagent.mapper.AiTraderMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.listener.ChannelTopic;
@@ -86,7 +87,7 @@ public class VolatilitySentinel implements MessageListener {
     }
 
     @Override
-    public void onMessage(Message message, byte[] pattern) {
+    public void onMessage(@NonNull Message message, byte[] pattern) {
         try {
             JSONObject obj = JSON.parseObject(new String(message.getBody(), StandardCharsets.UTF_8));
             if (!"markprice".equals(obj.getString("type"))) {
