@@ -12,7 +12,10 @@ import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
+import com.mawai.wiibquant.mapper.EconCalendarMapper;
+import com.mawai.wiibquant.task.EconCalendarCollector;
 import com.mawai.wiibagent.trader.TraderModelFactory;
+import com.mawai.wiibagent.trader.wakeup.EconCalendarGate;
 import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
 import com.mawai.wiibagent.trader.wakeup.TraderWakeupRunner;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
@@ -139,7 +142,8 @@ class LearningHandoverLoopTest {
                 traderMapper, decisionMapper, planMapper, simTradeClient, assembler, prompts);
         LearningRunner learningRunner = new LearningRunner(peers, modelFactory, traderMapper,
                 decisionMapper, prompts, new LocalizedToolCallbacks(prompts), langResolver);
-        TraderScheduler scheduler = new TraderScheduler(traderMapper, wakeupRunner, reviewRunner, learningRunner, peers, new MessageCatalog());
+        TraderScheduler scheduler = new TraderScheduler(traderMapper, wakeupRunner, reviewRunner, learningRunner, peers, new MessageCatalog(),
+                new EconCalendarGate(mock(EconCalendarMapper.class), mock(EconCalendarCollector.class)));
 
         scheduler.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
 

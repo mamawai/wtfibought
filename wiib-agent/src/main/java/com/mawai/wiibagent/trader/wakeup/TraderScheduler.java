@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 距下一边界不足 30s 直接放弃，见 TraderWakeupRunner）。
  * 唤醒时段（ai_trader.wake_window，见 {@link WakeWindow}）只在这里过滤：例行/警报时段外静默跳过（不写 SKIPPED，
  * 5m 档一天会写 150 行"休眠中"），手动唤醒不拦，日线交接的复盘/学习不看它。
+ * 边界撞上 High 级数据公布时刻，例行触发先过 {@link EconCalendarGate}（最多等 30s 拿实际值）再发。
  * <p>
  * 日线边界走三阶段交接（见 {@link #startDailyHandover}）：先交易、再全体复盘、最后全体学习，
  * 复盘与学习之间是全局屏障——learning 读的是同侪<b>刚写好</b>的复盘，没有屏障，同一轮学习里
@@ -61,6 +62,7 @@ public class TraderScheduler {
     private final PeerInsightService peerInsightService;
     /** 手动唤醒的拦因当场回给用户，跟界面语言 */
     private final MessageCatalog messages;
+    private final EconCalendarGate calendarGate;
 
     /** 警报冷静期：距该 trader 上一次任何唤醒（例行/警报）不足 5 分钟不再警报 */
     static final long ALERT_COOLDOWN_MS = 5 * 60_000L;
@@ -102,12 +104,19 @@ public class TraderScheduler {
             startDailyHandover(dayBoundary);
             return;
         }
-        for (String ic : WAKE_INTERVALS) {
-            long boundary = boundaryOf(event.closeTime(), ic);
-            if (boundary > 0) {
-                fireInterval(ic, boundary);
+        // 撞上数据公布时刻先等实际值再发本轮；没有待公布的 future 已完成，thenRun 就地同步执行，与不等一样。
+        // 发布方（KlineStreamConsumer）兜的异常到不了 future 里，这里自己记
+        calendarGate.released(event.closeTime() + 1).thenRun(() -> {
+            for (String ic : WAKE_INTERVALS) {
+                long boundary = boundaryOf(event.closeTime(), ic);
+                if (boundary > 0) {
+                    fireInterval(ic, boundary);
+                }
             }
-        }
+        }).exceptionally(e -> {
+            log.error("[TraderSched] 例行触发失败 closeTime={} msg={}", event.closeTime(), e.toString());
+            return null;
+        });
     }
 
     /**
@@ -124,6 +133,8 @@ public class TraderScheduler {
             return;
         }
         Thread.startVirtualThread(() -> {
+            // 阶段0 同样过闸：日线边界撞上数据公布也先等实际值
+            calendarGate.released(boundary).join();
             // 阶段0：日线边界同时是四档的边界，全体例行唤醒照常发出
             List<Thread> wakes = new ArrayList<>();
             for (String ic : WAKE_INTERVALS) {
