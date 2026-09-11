@@ -1,11 +1,11 @@
 package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
+import com.mawai.wiibagent.llm.ApiKeyCrypto;
 import com.mawai.wiibagent.llm.ByokModelBuilder;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.ResponsesChatModel;
 import com.mawai.wiibagent.llm.SseChatModel;
-import com.mawai.wiibagent.trader.ApiKeyCrypto;
 import io.micrometer.observation.ObservationRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.model.ChatModel;

@@ -7,12 +7,9 @@ import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.enums.AgentLang;
-import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibagent.i18n.PromptCatalog;
-import com.mawai.wiibagent.learning.ReviewMaterialAssembler;
+import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
-import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
-import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -43,12 +40,10 @@ class TraderChatServiceTest {
     private final SimTradeClient simTradeClient = mock(SimTradeClient.class);
     private final TraderModelFactory modelFactory = mock(TraderModelFactory.class);
     /** stale 过滤走真实实现：chat 面的剔段/剔轮断言要打在真逻辑上 */
-    private final ReviewMaterialAssembler assembler = new ReviewMaterialAssembler(
-            mock(AiTraderDecisionMapper.class), mock(AiTraderPlanMapper.class),
-            simTradeClient, mock(KlineHistoryStore.class), new PromptCatalog());
+    private final DecisionText decisionText = new DecisionText(new PromptCatalog());
 
     private final TraderChatService service =
-            new TraderChatService(traderService, modelFactory, planStore, simTradeClient, assembler,
+            new TraderChatService(traderService, modelFactory, planStore, simTradeClient, decisionText,
                     new PromptCatalog());
 
     private AiTrader running() {

@@ -2,10 +2,14 @@ package com.mawai.wiibagent.chat;
 
 import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
+import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.llm.LlmErrorMessages;
 import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.llm.SseChannel;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -57,6 +61,12 @@ public class ChatTurnStreamer {
                 t.setDaemon(true);
                 return t;
             });
+
+    /** 上下文收尾：停掉心跳线程 */
+    @PreDestroy
+    public void stop() {
+        heartbeatScheduler.shutdownNow();
+    }
 
     /**
      * 跑一轮到底。

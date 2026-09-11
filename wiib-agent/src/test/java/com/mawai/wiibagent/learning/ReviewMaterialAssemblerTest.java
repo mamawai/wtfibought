@@ -15,6 +15,8 @@ import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.trader.DecisionText;
+import com.mawai.wiibagent.trader.TradePairing;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -56,7 +58,8 @@ class ReviewMaterialAssemblerTest {
     private final KlineHistoryStore historyStore = mock(KlineHistoryStore.class);
 
     private final ReviewMaterialAssembler assembler = new ReviewMaterialAssembler(
-            decisionMapper, planMapper, simTradeClient, historyStore, new PromptCatalog());
+            decisionMapper, planMapper, simTradeClient, historyStore, new PromptCatalog(),
+            new DecisionText(new PromptCatalog()));
 
     private AiTrader trader() {
         AiTrader t = new AiTrader();
@@ -203,22 +206,22 @@ class ReviewMaterialAssemblerTest {
         // 强平状态直判
         FuturesPositionDTO liq = closedPos("LONG", "100000", "90000", "-500", FROM, FROM + 1);
         liq.setStatus("LIQUIDATED");
-        assertThat(ReviewMaterialAssembler.closeManner(new PromptCatalog(), liq, AgentLang.ZH)).isEqualTo("强平");
+        assertThat(TradePairing.closeManner(new PromptCatalog(), liq, AgentLang.ZH)).isEqualTo("强平");
 
         // 触发价是探测时的markPrice会越过挂单价：方向性对照而非相等
         FuturesPositionDTO sl = closedPos("LONG", "100000", "95400", "-46", FROM, FROM + 1);
         sl.setStopLosses(List.of(new FuturesStopLoss("s1", new BigDecimal("95500"), new BigDecimal("0.01"))));
-        assertThat(ReviewMaterialAssembler.closeManner(new PromptCatalog(), sl, AgentLang.ZH)).isEqualTo("止损带走");
+        assertThat(TradePairing.closeManner(new PromptCatalog(), sl, AgentLang.ZH)).isEqualTo("止损带走");
 
         FuturesPositionDTO tp = closedPos("SHORT", "100000", "94900", "51", FROM, FROM + 1);
         tp.setTakeProfits(List.of(new FuturesTakeProfit("t1", new BigDecimal("95000"), new BigDecimal("0.01"))));
-        assertThat(ReviewMaterialAssembler.closeManner(new PromptCatalog(), tp, AgentLang.ZH)).isEqualTo("止盈带走");
+        assertThat(TradePairing.closeManner(new PromptCatalog(), tp, AgentLang.ZH)).isEqualTo("止盈带走");
 
         // 保护单实时监控在先，带内成交只能是主动平仓（模型自己调 close_position）
         FuturesPositionDTO manual = closedPos("LONG", "100000", "101000", "10", FROM, FROM + 1);
         manual.setStopLosses(List.of(new FuturesStopLoss("s1", new BigDecimal("95500"), new BigDecimal("0.01"))));
         manual.setTakeProfits(List.of(new FuturesTakeProfit("t1", new BigDecimal("110000"), new BigDecimal("0.01"))));
-        assertThat(ReviewMaterialAssembler.closeManner(new PromptCatalog(), manual, AgentLang.ZH)).isEqualTo("主动平仓");
+        assertThat(TradePairing.closeManner(new PromptCatalog(), manual, AgentLang.ZH)).isEqualTo("主动平仓");
     }
 
     @Test
@@ -254,7 +257,7 @@ class ReviewMaterialAssemblerTest {
         AiTraderPlan planB = planOf("BTCUSDT", "PULLBACK", FROM + 3600_000, false);
         planB.setPositionId(102L);
 
-        var paired = ReviewMaterialAssembler.pairAll(List.of(pos1, pos2), List.of(planA, planB));
+        var paired = TradePairing.pairAll(List.of(pos1, pos2), List.of(planA, planB));
 
         assertThat(paired.get(pos1)).isSameAs(planA);
         assertThat(paired.get(pos2)).isSameAs(planB);
@@ -271,8 +274,8 @@ class ReviewMaterialAssemblerTest {
         // 单个无 id 计划：谁先配谁得手，喂入顺序就是结果——统一顺序后必须永远归 early
         AiTraderPlan plan = planOf("BTCUSDT", "BREAKOUT", FROM + 7200_000, false);
 
-        var ascFeed = ReviewMaterialAssembler.pairAll(List.of(early, late), List.of(plan));
-        var descFeed = ReviewMaterialAssembler.pairAll(List.of(late, early), List.of(plan));
+        var ascFeed = TradePairing.pairAll(List.of(early, late), List.of(plan));
+        var descFeed = TradePairing.pairAll(List.of(late, early), List.of(plan));
 
         assertThat(ascFeed.get(early)).isSameAs(plan);
         assertThat(ascFeed.get(late)).isNull();
@@ -288,7 +291,7 @@ class ReviewMaterialAssemblerTest {
         AiTraderPlan boundElsewhere = planOf("BTCUSDT", "BREAKOUT", FROM + 3600_000, false);
         boundElsewhere.setPositionId(999L);
 
-        var paired = ReviewMaterialAssembler.pairAll(List.of(pos), List.of(boundElsewhere));
+        var paired = TradePairing.pairAll(List.of(pos), List.of(boundElsewhere));
 
         assertThat(paired.get(pos)).isNull();
     }
@@ -666,9 +669,9 @@ class ReviewMaterialAssemblerTest {
     /** [ROUND CONCLUSION] 自己带空格，不会被误认成分段标记 */
     @Test
     void segmentTagDoesNotMatchConclusionMark() {
-        assertThat(ReviewMaterialAssembler.splitSegments(
+        assertThat(DecisionText.splitSegments(
                 "Overall: fine\n[BTCUSDT]\nWaiting: none")).hasSize(1);
-        assertThat(ReviewMaterialAssembler.splitSegments("Judgement: no tags here")).isEmpty();
+        assertThat(DecisionText.splitSegments("Judgement: no tags here")).isEmpty();
     }
 
     /**

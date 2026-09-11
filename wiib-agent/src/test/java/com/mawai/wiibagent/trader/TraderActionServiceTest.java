@@ -12,6 +12,7 @@ import com.mawai.wiibagent.trader.TraderActionService.ActionPanel;
 import com.mawai.wiibagent.trader.TraderActionService.ActionResult;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;

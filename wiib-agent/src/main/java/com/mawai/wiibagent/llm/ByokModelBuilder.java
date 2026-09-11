@@ -2,7 +2,6 @@ package com.mawai.wiibagent.llm;
 
 import com.mawai.wiibcommon.constant.AiProtocols;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
-import com.mawai.wiibagent.trader.ApiKeyCrypto;
 import com.openai.client.OpenAIClient;
 import com.openai.client.OpenAIClientAsync;
 import com.openai.models.models.Model;

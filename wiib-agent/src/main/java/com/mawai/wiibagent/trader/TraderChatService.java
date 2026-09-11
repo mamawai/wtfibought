@@ -12,7 +12,7 @@ import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
-import com.mawai.wiibagent.learning.ReviewMaterialAssembler;
+import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -51,7 +51,7 @@ public class TraderChatService {
     private final TraderPlanStore planStore;
     private final SimTradeClient simTradeClient;
     /** stale 教材过滤的共用入口（与复盘时间线/唤醒回注同一套识别逻辑） */
-    private final ReviewMaterialAssembler materialAssembler;
+    private final DecisionText decisionText;
     /** 返回 JSON 里的说明字段（chat.traderQuery.*）按 lang 取：这些字段是喂给 chat 模型看的 */
     private final PromptCatalog prompts;
 
@@ -145,7 +145,7 @@ public class TraderChatService {
             String reasoning = d.getReasoning();
             boolean tradeRow = TRADE_KINDS.contains(d.getKind());
             if (tradeRow) {
-                reasoning = materialAssembler.staleFiltered(d, allPlans);
+                reasoning = decisionText.staleFiltered(d, allPlans);
                 if (reasoning == null) {
                     continue;
                 }
@@ -159,7 +159,7 @@ public class TraderChatService {
                     .fluentPut("toolCalls", d.getToolCalls())
                     .fluentPut("error", d.getError())
                     // 交易行的工具名同样过 stale：被忽略交易的 open/close 动作名不出现
-                    .fluentPut("tools", tradeRow ? materialAssembler.staleFilteredToolNames(d, allPlans)
+                    .fluentPut("tools", tradeRow ? decisionText.staleFilteredToolNames(d, allPlans)
                             : toolNames(d.getActionsJson()))
                     .fluentPut("reasoning", reasoning));
         }

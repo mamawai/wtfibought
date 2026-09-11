@@ -11,6 +11,7 @@ import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.trader.TradePairing;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -161,7 +162,7 @@ public class PeerInsightService {
             sb.append(prompts.get(lang, "learning.label.peer.noRecentTrades")).append('\n');
         }
         // 配对走 pairAll 统一入口：同一笔交易在同侪详情与复盘/竞技场里必须配到同一份计划
-        Map<FuturesPositionDTO, AiTraderPlan> planByPos = ReviewMaterialAssembler.pairAll(recent, plans);
+        Map<FuturesPositionDTO, AiTraderPlan> planByPos = TradePairing.pairAll(recent, plans);
         int i = 1;
         for (FuturesPositionDTO pos : recent) {
             AiTraderPlan plan = planByPos.get(pos);
@@ -198,7 +199,7 @@ public class PeerInsightService {
             return true;
         }
         return !closed.isEmpty()
-                && ReviewMaterialAssembler.msOf(closed.get(0).getUpdatedAt()) >= nowMs.getAsLong() - ACTIVE_WINDOW_MS;
+                && TradePairing.msOf(closed.get(0).getUpdatedAt()) >= nowMs.getAsLong() - ACTIVE_WINDOW_MS;
     }
 
     // ==================== 硬事实计算 ====================

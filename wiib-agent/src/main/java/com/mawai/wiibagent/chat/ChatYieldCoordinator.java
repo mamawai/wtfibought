@@ -1,5 +1,6 @@
 package com.mawai.wiibagent.chat;
 
+import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;

@@ -9,6 +9,7 @@ import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.trader.DecisionText;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -170,7 +171,8 @@ class PromptMarkParsingTest {
 
     private ReviewMaterialAssembler assembler() {
         return new ReviewMaterialAssembler(mock(AiTraderDecisionMapper.class), mock(AiTraderPlanMapper.class),
-                mock(SimTradeClient.class), mock(KlineHistoryStore.class), prompts);
+                mock(SimTradeClient.class), mock(KlineHistoryStore.class), prompts,
+                new DecisionText(prompts));
     }
 
     private LearningRunner learningRunner() {

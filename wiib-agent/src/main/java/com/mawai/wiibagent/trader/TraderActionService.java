@@ -8,6 +8,7 @@ import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibagent.learning.ReviewRunner;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

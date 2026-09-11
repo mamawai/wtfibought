@@ -16,6 +16,8 @@ import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibquant.market.indicator.KlineStructureCalculator;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.trader.DecisionText;
+import com.mawai.wiibagent.trader.TradePairing;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -36,8 +38,8 @@ import java.util.regex.Pattern;
  * 素材窗口 = (上次成功REVIEW的wake_time, 本日线边界]；无REVIEW则本局开始（round过滤天然覆盖）。
  * <p>
  * 段标签全在 {@link PromptCatalog} 的 {@code reviewer.label.*}，按 reviewer 本轮的语言取。
- * 但<b>读旧决策时两门语言的结论标记都认</b>：库里的决策是当时那门语言写的，用户切过语言后
- * 只认当前这套，整条时间线会被判成"没给等待条件"，观望对账直接空转。
+ * 仓位⟵配对⟶计划与了结方式判定在 {@link TradePairing}，决策正文的结论块定位与 stale 剔除在
+ * {@link DecisionText}——竞技场/同侪/统计共用同一套，各写一套迟早口径对不上。
  */
 @Slf4j
 @Component
@@ -68,6 +70,7 @@ public class ReviewMaterialAssembler {
     private final SimTradeClient simTradeClient;
     private final KlineHistoryStore historyStore;
     private final PromptCatalog prompts;
+    private final DecisionText decisionText;
 
     /** 四块素材文本 + 已了结笔数（调用方日志用） */
     public record ReviewMaterial(String statsBlock, String tradesBlock,
@@ -164,7 +167,7 @@ public class ReviewMaterialAssembler {
         List<AiTraderPlan> plans = planMapper.selectList(new LambdaQueryWrapper<AiTraderPlan>()
                 .eq(AiTraderPlan::getTraderId, trader.getId())
                 .eq(AiTraderPlan::getRoundNo, trader.getRoundNo()));
-        Map<FuturesPositionDTO, AiTraderPlan> planByPos = pairAll(closed, plans);
+        Map<FuturesPositionDTO, AiTraderPlan> planByPos = TradePairing.pairAll(closed, plans);
         // 主人标记忽略的交易从复盘教材整体消失（配对表 + 战绩表的了结统计行）；权益线来自决策行序列，不动
         List<FuturesPositionDTO> visible = closed.stream()
                 .filter(p -> !isStale(planByPos.get(p)))
@@ -294,8 +297,9 @@ public class ReviewMaterialAssembler {
                 "entry", plain(pos.getEntryPrice()),
                 "exit", plain(pos.getClosedPrice()),
                 "pnl", signed(pos.getClosedPnl()),
-                "held", humanize(prompts, msOf(pos.getUpdatedAt()) - msOf(pos.getCreatedAt()), lang),
-                "manner", closeManner(prompts, pos, lang)));
+                "held", humanize(prompts, TradePairing.msOf(pos.getUpdatedAt())
+                        - TradePairing.msOf(pos.getCreatedAt()), lang),
+                "manner", TradePairing.closeManner(prompts, pos, lang)));
     }
 
     /** 论点/失效条件那一行，同样对同侪详情开放 */
@@ -304,103 +308,6 @@ public class ReviewMaterialAssembler {
         return prompts.get(lang, "reviewer.label.planLine", Map.of(
                 "signals", nullSafe(signalsUsed),
                 "invalidation", nullSafe(invalidationCondition)));
-    }
-
-    /**
-     * 统一配对入口：已平仓位 ⟵配对⟶ 本局计划，两趟——先按 position_id 精确 join（开仓即落 id 的
-     * 新数据），剩余未绑定的仓位按平仓时刻升序跑 {@link #bestMatch} 时间就近兜底（无 id 的历史行）。
-     * 复盘/竞技场/统计/同侪四处共用这一个入口：各配各的、喂入顺序不同（复盘升序、竞技场倒序），
-     * 贪心就近对顺序敏感，同一笔交易会在两处配到不同计划。
-     * <p>
-     * 兜底池只放无 id 的计划：带 id 的计划要么已在精确趟配走，要么它的仓位不在本批——
-     * 拿它配别的仓位就是明知故犯的错配。键用对象身份，不依赖仓位 id 非空。
-     */
-    public static Map<FuturesPositionDTO, AiTraderPlan> pairAll(List<FuturesPositionDTO> positions,
-                                                                List<AiTraderPlan> plans) {
-        Map<FuturesPositionDTO, AiTraderPlan> out = new IdentityHashMap<>();
-        Map<Long, AiTraderPlan> byPosId = new HashMap<>();
-        plans.forEach(p -> {
-            if (p.getPositionId() != null) {
-                byPosId.putIfAbsent(p.getPositionId(), p);
-            }
-        });
-        List<FuturesPositionDTO> unbound = new ArrayList<>();
-        for (FuturesPositionDTO pos : positions) {
-            AiTraderPlan hit = pos.getId() == null ? null : byPosId.get(pos.getId());
-            if (hit != null) {
-                out.put(pos, hit);
-            } else {
-                unbound.add(pos);
-            }
-        }
-        List<AiTraderPlan> unboundPlans = plans.stream().filter(p -> p.getPositionId() == null).toList();
-        unbound.sort(Comparator.comparingLong(p -> msOf(p.getUpdatedAt())));
-        Set<AiTraderPlan> used = new HashSet<>();
-        for (FuturesPositionDTO pos : unbound) {
-            AiTraderPlan plan = bestMatch(unboundPlans, pos, used);
-            if (plan != null) {
-                out.put(pos, plan);
-            }
-        }
-        return out;
-    }
-
-    /**
-     * 同 symbol/side 里选开仓时刻最贴近该仓位开仓时间的计划（懒归档时刻粗糙，openedWakeTime 才可靠）。
-     * 兜底算法：新数据的精确配对与喂入顺序统一都在 {@link #pairAll}，消费端一律走那个入口。
-     */
-    public static AiTraderPlan bestMatch(List<AiTraderPlan> plans, FuturesPositionDTO pos, Set<AiTraderPlan> used) {
-        long posOpen = msOf(pos.getCreatedAt());
-        long posClose = msOf(pos.getUpdatedAt());
-        return plans.stream()
-                .filter(p -> !used.contains(p))
-                .filter(p -> pos.getSymbol().equals(p.getSymbol()) && pos.getSide().equals(p.getSide()))
-                .filter(p -> p.getOpenedWakeTime() != null && p.getOpenedWakeTime() <= posClose)
-                .min(Comparator.comparingLong(p -> Math.abs(p.getOpenedWakeTime() - posOpen)))
-                .map(p -> {
-                    used.add(p);
-                    return p;
-                })
-                .orElse(null);
-    }
-
-    /** 主动平仓的码：竞技场判"要不要挂平仓决策"靠它，别再拿文案字符串比 */
-    public static final String MANNER_MANUAL = "manual";
-    /** 判不出来时的码：它本身就是码不是文案，两门语言都原样透传 */
-    public static final String MANNER_UNKNOWN = "UNKNOWN";
-
-    /**
-     * 了结方式推断（返回<b>语言无关的码</b>）：强平看状态；止损/止盈用方向性对照——触发价是探测时的
-     * markPrice 会越过挂单价，不能按相等判。保护单实时监控在先，带内成交只能是主动平仓
-     * （模型自己调 close_position，没有别的入口）。全平不清保护单列表（sim 只在部分平仓时改写），closed 行上的列表
-     * 就是了结时在岗的那组。
-     * <p>码与文案分家：竞技场按码做判断（"主动平仓才挂平仓决策"），码不随语言变。
-     */
-    public static String closeMannerKey(FuturesPositionDTO p) {
-        if ("LIQUIDATED".equals(p.getStatus())) {
-            return "liquidated";
-        }
-        BigDecimal cp = p.getClosedPrice();
-        if (cp == null) {
-            return MANNER_UNKNOWN;
-        }
-        boolean isLong = "LONG".equals(p.getSide());
-        if (p.getStopLosses() != null && p.getStopLosses().stream().anyMatch(sl ->
-                isLong ? cp.compareTo(sl.getPrice()) <= 0 : cp.compareTo(sl.getPrice()) >= 0)) {
-            return "stopLoss";
-        }
-        if (p.getTakeProfits() != null && p.getTakeProfits().stream().anyMatch(tp ->
-                isLong ? cp.compareTo(tp.getPrice()) >= 0 : cp.compareTo(tp.getPrice()) <= 0)) {
-            return "takeProfit";
-        }
-        return MANNER_MANUAL;
-    }
-
-    /** 了结方式文案：码 → 词表；UNKNOWN 没有文案，原样给出去 */
-    public static String closeManner(PromptCatalog prompts, FuturesPositionDTO p, AgentLang lang) {
-        String key = closeMannerKey(p);
-        return MANNER_UNKNOWN.equals(key) ? key
-                : prompts.get(lang, "reviewer.label.closeManner." + key);
     }
 
     // ==================== 决策时间线摘编 ====================
@@ -441,7 +348,7 @@ public class ReviewMaterialAssembler {
                 continue;
             }
             // stale 治理：新格式剔段后继续；错误格式落在 stale 生命期内整行剔（唤醒轮数仍按原始行统计）
-            String reasoning = staleFiltered(d, plans);
+            String reasoning = decisionText.staleFiltered(d, plans);
             if (reasoning == null) {
                 continue;
             }
@@ -559,7 +466,8 @@ public class ReviewMaterialAssembler {
             for (int i = 0; i < arr.size(); i++) {
                 JSONObject a = arr.getJSONObject(i);
                 String tool = a.getString("tool");
-                if (tool == null || !ACTION_TOOLS.contains(tool) || staleAction(a, d.getWakeTime(), plans)) {
+                if (tool == null || !ACTION_TOOLS.contains(tool)
+                        || DecisionText.staleAction(a, d.getWakeTime(), plans)) {
                     continue;
                 }
                 JSONObject args = a.getJSONObject("args");
@@ -595,7 +503,7 @@ public class ReviewMaterialAssembler {
         if (reasoning == null || reasoning.isBlank()) {
             return "";
         }
-        Conclusion c = locateConclusion(reasoning, lang);
+        DecisionText.Conclusion c = decisionText.locateConclusion(reasoning, lang);
         if (c == null) {
             String tail = reasoning.strip();
             return (tail.length() > 120 ? "…" + tail.substring(tail.length() - 120) : tail).replace('\n', ' ');
@@ -604,84 +512,8 @@ public class ReviewMaterialAssembler {
         return flat.length() > ACTION_MAX_CHARS ? flat.substring(0, ACTION_MAX_CHARS) + "…" : flat;
     }
 
-    /** 命中的结论块：块正文 + 它是用哪门语言写的（小节标签得按同一门认） */
-    private record Conclusion(AgentLang lang, int index, int markLength) {
-        String body(String reasoning) {
-            return reasoning.substring(index + markLength).strip();
-        }
-    }
-
-    /**
-     * 找结论块：先认当前语言的标记，认不到再试别的语言。
-     * 决策行按写入时的语言落库，中途切语言不能丢历史；两套标记字面不同，多认一套不误伤。
-     */
-    private Conclusion locateConclusion(String reasoning, AgentLang lang) {
-        Conclusion hit = matchConclusion(reasoning, lang);
-        if (hit != null) {
-            return hit;
-        }
-        for (AgentLang other : AgentLang.values()) {
-            if (other != lang) {
-                hit = matchConclusion(reasoning, other);
-                if (hit != null) {
-                    return hit;
-                }
-            }
-        }
-        return null;
-    }
-
-    private Conclusion matchConclusion(String reasoning, AgentLang lang) {
-        String mark = prompts.get(lang, "trader.mark.conclusion");
-        int idx = reasoning.lastIndexOf(mark);
-        return idx < 0 ? null : new Conclusion(lang, idx, mark.length());
-    }
-
-    /** 结论块全文（从标记起到末尾），两门语言的标记都认；没有 → null */
-    public String conclusionBlock(String reasoning) {
-        if (reasoning == null || reasoning.isBlank()) {
-            return null;
-        }
-        Conclusion c = locateConclusion(reasoning, AgentLang.ZH);
-        return c == null ? null : reasoning.substring(c.index());
-    }
-
-    // ==================== 结论分段（总分结构） ====================
-
-    /**
-     * 结论块内的币种分段标记：方括号币码独占一行（[BTCUSDT]）。语言无关——两门语言的模板同一形状。
-     * 只在结论块正文里匹配，[ROUND CONCLUSION] 带空格够不到，[本轮结论]、[警报] 非拉丁字母也够不到。
-     */
-    private static final Pattern SEGMENT_TAG = Pattern.compile("(?m)^\\s*\\[([A-Z0-9]{2,20})]\\s*$");
-
-    /** 结论块里的一个币种分段：段头币码 + 段身（判断/动作/等待） */
-    public record ConclusionSegment(String symbol, String body) {
-    }
-
     /** 错误格式（没分段）整块观望在按币容器里的伪键：没有分段标记时全部条件归它 */
     static final String WHOLE = "";
-
-    /**
-     * 结论块正文按 [SYMBOL] 标记切段；无标记（错误格式）返回空列表。
-     * 首个标记之前的引子（总评）不绑定任何币，不进结果——归属计算只认分段。
-     */
-    public static List<ConclusionSegment> splitSegments(String conclusionBody) {
-        Matcher m = SEGMENT_TAG.matcher(conclusionBody);
-        List<ConclusionSegment> out = new ArrayList<>();
-        String symbol = null;
-        int start = 0;
-        while (m.find()) {
-            if (symbol != null) {
-                out.add(new ConclusionSegment(symbol, conclusionBody.substring(start, m.start())));
-            }
-            symbol = m.group(1);
-            start = m.end();
-        }
-        if (symbol != null) {
-            out.add(new ConclusionSegment(symbol, conclusionBody.substring(start)));
-        }
-        return out;
-    }
 
     /**
      * 观望轮的等待条件按币抽取：新格式（总分结构）每个 [SYMBOL] 段各抽各的，键=币码；
@@ -693,145 +525,21 @@ public class ReviewMaterialAssembler {
             out.put(WHOLE, "");
             return out;
         }
-        Conclusion c = locateConclusion(reasoning, lang);
+        DecisionText.Conclusion c = decisionText.locateConclusion(reasoning, lang);
         if (c == null) {
             out.put(WHOLE, "");
             return out;
         }
         String body = c.body(reasoning);
-        List<ConclusionSegment> segments = splitSegments(body);
+        List<DecisionText.ConclusionSegment> segments = DecisionText.splitSegments(body);
         if (segments.isEmpty()) {
             out.put(WHOLE, extractWait(body, c.lang()));
             return out;
         }
-        for (ConclusionSegment s : segments) {
+        for (DecisionText.ConclusionSegment s : segments) {
             out.put(s.symbol(), extractWait(s.body(), c.lang()));
         }
         return out;
-    }
-
-    // ==================== 被标记不算数的交易，从决策正文里剔掉 ====================
-
-    /**
-     * 主人把某笔交易标记成"这笔不算数"（stale）之后，这行决策还剩多少字能用。
-     * 时间线、唤醒回注、chat 都走这里，免得被否掉的那笔继续教坏模型。
-     * 结论块按 [SYMBOL] 分了段的，只剔那个币的段，别的币照留；
-     * 错误格式（没按币分段或没写结论块）剔不了段，退化成按轮兜底：这轮落在任一 stale 计划生命期内就整行不要返回 null。
-     * 没有 stale 计划就原样返回，一个字不动，错误格式的行也照留。
-     */
-    public String staleFiltered(AiTraderDecision d, List<AiTraderPlan> plans) {
-        String reasoning = d.getReasoning() == null ? "" : d.getReasoning();
-        if (plans.stream().noneMatch(p -> Boolean.TRUE.equals(p.getStale()))) {
-            return reasoning;
-        }
-        // 起点语言随便给：locateConclusion 两门语言的标记都会尝试
-        Conclusion c = reasoning.isBlank() ? null : locateConclusion(reasoning, AgentLang.ZH);
-        if (c != null && SEGMENT_TAG.matcher(c.body(reasoning)).find()) {
-            return scrubStaleSegments(reasoning, c, d.getWakeTime(), plans);
-        }
-        return inStaleLifetime(d.getWakeTime(), plans) ? null : reasoning;
-    }
-
-    /** 新格式剔段：结论块里被忽略交易的 [SYMBOL] 段连段头一起剔，引子（总评）与其余段保留 */
-    private String scrubStaleSegments(String reasoning, Conclusion c, long wakeTime, List<AiTraderPlan> plans) {
-        int bodyStart = c.index() + c.markLength();
-        String body = reasoning.substring(bodyStart);
-        Matcher m = SEGMENT_TAG.matcher(body);
-        StringBuilder out = new StringBuilder(reasoning.substring(0, bodyStart));
-        String symbol = null;
-        int segStart = 0;
-        while (m.find()) {
-            if (symbol == null) {
-                out.append(body, 0, m.start());
-            } else if (!staleSegment(symbol, wakeTime, plans)) {
-                out.append(body, segStart, m.start());
-            }
-            symbol = m.group(1);
-            segStart = m.start();
-        }
-        if (!staleSegment(symbol, wakeTime, plans)) {
-            out.append(body, segStart, body.length());
-        }
-        return out.toString();
-    }
-
-    /**
-     * 该轮该币的分段是否属于被忽略交易：wake 落在某 stale 计划生命期内，且覆盖该时刻的
-     * 该币计划<b>全部</b> stale——双开粒度=币，任一方向没被忽略这段就得留。
-     */
-    private static boolean staleSegment(String symbol, long wakeTime, List<AiTraderPlan> plans) {
-        boolean hasStale = false;
-        for (AiTraderPlan p : plans) {
-            if (symbol.equals(p.getSymbol()) && covers(p, wakeTime)) {
-                if (!Boolean.TRUE.equals(p.getStale())) {
-                    return false;
-                }
-                hasStale = true;
-            }
-        }
-        return hasStale;
-    }
-
-    private static boolean covers(AiTraderPlan p, long wakeTime) {
-        return p.getOpenedWakeTime() != null && p.getOpenedWakeTime() <= wakeTime
-                && wakeTime <= (p.getClosedWakeTime() == null ? Long.MAX_VALUE : p.getClosedWakeTime());
-    }
-
-    /** 错误格式按轮兜底：这轮 wakeTime 落在任一 stale 计划的生命期内，时间规则与新格式剔段同一条 */
-    private static boolean inStaleLifetime(long wakeTime, List<AiTraderPlan> plans) {
-        for (AiTraderPlan p : plans) {
-            if (Boolean.TRUE.equals(p.getStale()) && covers(p, wakeTime)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * 单个动作是否属于被忽略交易（时间线摘要/chat 工具名共用同一识别核心）：
-     * positionId 命中 stale 仓位绑定，或该轮是 stale 计划的开仓轮且动作开的正是该币向。
-     */
-    private static boolean staleAction(JSONObject action, long wakeTime, List<AiTraderPlan> plans) {
-        JSONObject args = action == null ? null : action.getJSONObject("args");
-        for (AiTraderPlan p : plans) {
-            if (!Boolean.TRUE.equals(p.getStale())) {
-                continue;
-            }
-            Long id = args == null ? null : args.getLong("positionId");
-            if (p.getPositionId() != null && id != null && id.longValue() == p.getPositionId()) {
-                return true;
-            }
-            if ("open_position".equals(Objects.requireNonNull(action).getString("tool"))
-                    && java.util.Objects.equals(p.getOpenedWakeTime(), wakeTime)
-                    && args != null
-                    && p.getSymbol().equals(args.getString("symbol"))
-                    && p.getSide().equals(args.getString("side"))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** chat 决策行的工具名列表（stale 治理后）：被忽略交易的动作名剔除，数据工具与其余动作照常 */
-    public List<String> staleFilteredToolNames(AiTraderDecision d, List<AiTraderPlan> plans) {
-        if (d.getActionsJson() == null || d.getActionsJson().isBlank()) {
-            return List.of();
-        }
-        try {
-            JSONArray arr = JSON.parseArray(d.getActionsJson());
-            List<String> out = new ArrayList<>(arr.size());
-            for (int i = 0; i < arr.size(); i++) {
-                JSONObject a = arr.getJSONObject(i);
-                String tool = a.getString("tool");
-                if (tool == null || staleAction(a, d.getWakeTime(), plans)) {
-                    continue;
-                }
-                out.add(tool);
-            }
-            return out;
-        } catch (Exception e) {
-            return List.of();
-        }
     }
 
     /**
@@ -1096,15 +804,11 @@ public class ReviewMaterialAssembler {
         return fetched.stream()
                 .filter(p -> p.getUpdatedAt() != null)
                 .filter(p -> {
-                    long closedAt = msOf(p.getUpdatedAt());
+                    long closedAt = TradePairing.msOf(p.getUpdatedAt());
                     return closedAt > fromMs && closedAt <= toMs;
                 })
                 .sorted(Comparator.comparing(FuturesPositionDTO::getUpdatedAt))
                 .toList();
-    }
-
-    public static long msOf(java.time.LocalDateTime t) {
-        return t == null ? 0 : t.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
     }
 
     static String plain(BigDecimal v) {

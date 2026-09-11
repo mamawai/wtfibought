@@ -1,7 +1,7 @@
 package com.mawai.wiibagent.controller;
 
-import com.mawai.wiibagent.trader.EconCalendarAssembler;
-import com.mawai.wiibagent.trader.WakeWindow;
+import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
+import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import com.mawai.wiibcommon.dto.NewsEventItem;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibquant.mapper.EconCalendarMapper;

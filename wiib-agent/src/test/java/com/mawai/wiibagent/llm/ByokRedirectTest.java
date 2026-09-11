@@ -2,7 +2,6 @@ package com.mawai.wiibagent.llm;
 
 import com.mawai.wiibcommon.constant.AiProtocols;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
-import com.mawai.wiibagent.trader.ApiKeyCrypto;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.micrometer.observation.ObservationRegistry;

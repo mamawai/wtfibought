@@ -1,8 +1,8 @@
 package com.mawai.wiibagent.i18n;
 
 import java.util.Map;
-import com.mawai.wiibagent.analysis.ReplayCoachRequest;
-import com.mawai.wiibagent.analysis.ReplayCoachPrompts;
+import com.mawai.wiibagent.replay.ReplayCoachRequest;
+import com.mawai.wiibagent.replay.ReplayCoachPrompts;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
@@ -14,8 +14,9 @@ import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibagent.learning.PeerInsightService;
 import com.mawai.wiibagent.learning.ReviewMaterialAssembler;
-import com.mawai.wiibagent.trader.TraderPromptAssembler;
-import com.mawai.wiibagent.trader.TraderRiskConfig;
+import com.mawai.wiibagent.trader.DecisionText;
+import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
+import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
@@ -599,7 +600,8 @@ class PromptI18nTest {
 
         AiTrader t = enTrader();
         t.setSymbols("BTCUSDT");
-        return new ReviewMaterialAssembler(decisionMapper, planMapper, sim, store, prompts)
+        return new ReviewMaterialAssembler(decisionMapper, planMapper, sim, store, prompts,
+                new DecisionText(prompts))
                 .assemble(t, FROM, TO, AgentLang.EN);
     }
 
