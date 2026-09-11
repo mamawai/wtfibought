@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.controller;
 
-import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
 import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import com.mawai.wiibcommon.dto.NewsEventItem;
 import com.mawai.wiibcommon.util.Result;
@@ -79,8 +78,7 @@ public class AiAgentController {
 
     /**
      * 首页财经日历：本周起点到此刻的已公布事件取最近 6 条，此刻之后的即将公布取最近 6 条。
-     * 表里留着旧周的行，下界取本周起点而不是往回数 7 天。
-     * 筛选口径与 trader 唤醒注入同一条规则（{@link EconCalendarAssembler#relevant}）。
+     * 表里留着旧周的行，下界取本周起点而不是往回数 7 天。库里只有 High 级事件，不再过滤。
      */
     @GetMapping("/quant/econ-calendar")
     @Operation(summary = "财经日历（econ_calendar_event 本周）：已公布 / 即将公布各 6 条")
@@ -90,9 +88,7 @@ public class AiAgentController {
         long weekStart = Instant.ofEpochMilli(now).atZone(WakeWindow.ZONE)
                 .with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
                 .truncatedTo(ChronoUnit.DAYS).toInstant().toEpochMilli();
-        List<EconCalendarMapper.Row> rows = econCalendarMapper.selectWindow(weekStart, now + WEEK_MS).stream()
-                .filter(EconCalendarAssembler::relevant)
-                .toList();
+        List<EconCalendarMapper.Row> rows = econCalendarMapper.selectWindow(weekStart, now + WEEK_MS);
         List<EconCalendarMapper.Row> past = rows.stream().filter(r -> r.getEventTime() <= now).toList();
         List<EconCalendarMapper.Row> upcoming = rows.stream().filter(r -> r.getEventTime() > now).toList();
         return Result.ok(new EconCalendarView(

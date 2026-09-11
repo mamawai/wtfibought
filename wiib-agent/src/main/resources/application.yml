@@ -81,8 +81,8 @@ agent:
     # 这里配的是来源标签名，只影响补充条目怎么标；换源改这里，提示词不用动。留空标 [Web]
     news-supplement-source:
 
-# 财经日历采集轨（EconCalendarCollector）：定时拉 ForexFactory 本周日历（免费无key）落 econ_calendar_event，
-# 唤醒开场白注入"过去12h已公布+未来24h即将公布"。feed 为个人用途口径，节奏别调快——日历天然耐过期
+# 财经日历采集轨（EconCalendarCollector）：每 4h 拉 TradingView 日历接口（只收 High 级）按事件 id upsert econ_calendar_event，
+# 唤醒开场白注入"刚公布 / 过去3天已公布 / 今天剩余即将公布"。公布时刻的实际值由等待闸窄窗口轮询补齐，不靠这个周期
 econ:
   calendar:
     enabled: true

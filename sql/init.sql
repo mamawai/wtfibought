@@ -714,25 +714,39 @@ COMMENT ON COLUMN news_event.tagged_model IS '打标用的模型名,坏标追责
 COMMENT ON COLUMN news_event.title_en IS '标题英文译文,打标同一次调用顺带产出;NULL=没译成(模型没给/正文超长/老行):模型侧回落中文原文,英文界面不展示这条——不许拿原文冒充译文';
 COMMENT ON COLUMN news_event.content_en IS '正文英文译文;NULL 同 title_en。正文超过打标输入上限的那条不留译文:半截译文比原文更糟';
 
--- ============ econ_calendar_event：财经日历（ForexFactory 周历，唤醒开场白注入） ============
--- 采集轨 EconCalendarCollector 定时拉本周 JSON 删窗口重插（feed 是全量快照，改期/取消靠整窗覆盖自愈）；
--- EconCalendarAssembler 注入"过去12h已公布+未来24h即将公布"，防 trader 撞数据公布/讲话时刻
+-- ============ econ_calendar_event：财经日历（TradingView 日历接口只收 High 级，唤醒开场白注入 + BTC K线标记） ============
+-- 采集轨 EconCalendarCollector 每 4h 同步 [now-3d, now+7d]，按 TradingView 事件 id upsert（改期改时刻、公布填实际值、
+-- 前值修正落同一行），窗口内不在回包里的行删掉（改期出窗/取消）；公布时刻等待闸 EconCalendarGate 窄窗口轮询补 actual。
+-- EconCalendarAssembler 注入"刚公布 / 过去3天已公布 / 今天剩余即将公布"
 CREATE TABLE IF NOT EXISTS econ_calendar_event (
     id         BIGSERIAL    PRIMARY KEY,
+    source_id  VARCHAR(32)  NOT NULL,
     event_time BIGINT       NOT NULL,
+    country    VARCHAR(8)   NOT NULL,
     currency   VARCHAR(8)   NOT NULL,
     title      VARCHAR(200) NOT NULL,
-    impact     VARCHAR(16)  NOT NULL,
+    actual     VARCHAR(32),
     forecast   VARCHAR(32),
     previous   VARCHAR(32),
     created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- 换源 TradingView（2026-09）：存量库补列、清 ForexFactory 旧行（旧行没有 source_id），全部幂等可重跑
+ALTER TABLE econ_calendar_event ADD COLUMN IF NOT EXISTS source_id VARCHAR(32);
+ALTER TABLE econ_calendar_event ADD COLUMN IF NOT EXISTS country   VARCHAR(8);
+ALTER TABLE econ_calendar_event ADD COLUMN IF NOT EXISTS actual    VARCHAR(32);
+ALTER TABLE econ_calendar_event DROP COLUMN IF EXISTS impact;
+DELETE FROM econ_calendar_event WHERE source_id IS NULL;
+ALTER TABLE econ_calendar_event ALTER COLUMN source_id SET NOT NULL, ALTER COLUMN country SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uk_econ_calendar_source ON econ_calendar_event (source_id);
 CREATE INDEX IF NOT EXISTS idx_econ_calendar_time ON econ_calendar_event (event_time);
-COMMENT ON TABLE econ_calendar_event IS '财经日历:ForexFactory周历快照,采集删窗口重插;唤醒注入±窗口内高影响事件';
-COMMENT ON COLUMN econ_calendar_event.event_time IS '公布/开始时刻epoch毫秒(feed的ISO带时区时间换算)';
-COMMENT ON COLUMN econ_calendar_event.currency IS '事件影响的货币代码(USD/EUR/…,德国CPI标EUR;All=全局事件);feed字段名叫country是上游历史命名';
-COMMENT ON COLUMN econ_calendar_event.impact IS 'feed原样:High/Medium/Low/Holiday(外汇视角评级,注入过滤另有USD讲话补捞)';
-COMMENT ON COLUMN econ_calendar_event.forecast IS '共识预测值原样文本(55K/0.3%等);NULL=无数值(讲话/会议类);免费feed无实际值列';
+COMMENT ON TABLE econ_calendar_event IS '财经日历:TradingView日历接口只收High级,按事件id upsert;唤醒注入过去3天+当天剩余,BTC K线挂日历标记';
+COMMENT ON COLUMN econ_calendar_event.source_id IS 'TradingView事件id,幂等键';
+COMMENT ON COLUMN econ_calendar_event.event_time IS '公布/开始时刻epoch毫秒(接口的UTC ISO时间换算)';
+COMMENT ON COLUMN econ_calendar_event.country IS 'ISO国家码(US/EU/GB/DE…),前端配国旗';
+COMMENT ON COLUMN econ_calendar_event.currency IS '事件影响的货币代码(德国CPI国家DE货币EUR)';
+COMMENT ON COLUMN econ_calendar_event.actual IS '实际值显示文本(0.2%/206K/1.443M,数字+K/M/B+%拼成);NULL=未公布或无数值(讲话/会议类)';
+COMMENT ON COLUMN econ_calendar_event.forecast IS '共识预测值显示文本;NULL=无数值(讲话/会议类)';
+COMMENT ON COLUMN econ_calendar_event.previous IS '前值显示文本,接口给的已是修正后的值';
 
 -- ============================================
 -- 27. 留言板评论（全站唯一，无附着实体）
