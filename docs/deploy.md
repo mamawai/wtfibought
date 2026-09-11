@@ -87,7 +87,7 @@ cp .env.example .env.local    # 填 PG_USER / PG_PASSWORD / INTERNAL_API_TOKEN�
 ### 三处不走 env 的配置
 
 - **LLM 配置不在 yml**，分两处，看是谁在烧钱：
-  - 平台位：只剩 news-tagging（快讯打标）一个——后台批量任务，没有"当前用户"可言。配在 DB 的 `ai_runtime_config` + `ai_model_assignment`，管理员进 Admin 页填 API Key + Base URL + 模型名（不含 `/v1`）并分配功能位，即时生效、无需重启。
+  - 平台位：只剩 news-translation（快讯英文译文）一个——后台批量任务，没有"当前用户"可言。配在 DB 的 `ai_runtime_config` + `ai_model_assignment`，管理员进 Admin 页填 API Key + Base URL + 模型名（不含 `/v1`）并分配功能位，即时生效、无需重启。
   - 用户 BYOK：`user_llm_endpoint` 端点库（一人多条：协议 + URL + key + 模型 + 思考档位 + 搜索开关）+ `user_llm_binding` 用途绑定（对话主 / 轻、交易员；没绑的用途落到默认端点），全在 AI 页「模型配置」维护，交易员 / 复盘教练页只从下拉里选。协议四选一：`openai` / `responses` / `anthropic` / `gemini`。
 - **wiib-agent 必须关掉 Spring AI 的 OpenAI 自动装配**（6 类全关，否则缺 api-key 拒绝启动）——仓库里已经配好，自己改 yml 时别删：
 

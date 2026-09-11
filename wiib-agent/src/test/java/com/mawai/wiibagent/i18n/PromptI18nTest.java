@@ -200,11 +200,11 @@ class PromptI18nTest {
                 Map.of("playType", "BREAKOUT", "invalidation", "loses 99000")));
     }
 
-    /** 打标是平台后台任务（没有"当前用户"）：提示词整篇取英文，混一个中文字都可能把译文带回中文 */
+    /** 翻译是平台后台任务（没有"当前用户"）：提示词整篇取英文，混一个中文字都可能把译文带回中文 */
     @Test
-    void 英文打标提示词与快讯行模板全文无中文() {
-        assertNoCjk("英文打标提示词", prompts.get(AgentLang.EN, "news.tagging",
-                Map.of("vocabulary", "OIL, GOLD, BTC", "flashes", "id=1 TITLE: t BODY: b")));
+    void 英文翻译提示词与快讯行模板全文无中文() {
+        assertNoCjk("英文翻译提示词", prompts.get(AgentLang.EN, "news.translate",
+                Map.of("flashes", "id=1 TITLE: t BODY: b")));
         assertNoCjk("英文快讯行模板", prompts.get(AgentLang.EN, "news.flashLine",
                 Map.of("id", 1, "title", "t", "content", "b")));
     }
@@ -321,7 +321,7 @@ class PromptI18nTest {
                 "trader.reject.stopOnlyTighter", "trader.reject.expired", "trader.reject.planAlreadyExists",
                 "trader.revise.moveStop",
                 "trader.revise.addOnNote",
-                "news.tagging", "news.flashLine",
+                "news.translate", "news.flashLine",
                 // 轮起始标记与 trader 查询说明字段：全是喂模型的，回落成中文就混语
                 "chat.turn.timeMark", "chat.traderQuery.kindNote", "llm.callLimit.notExecuted",
                 // 已搬进词表的工具描述：中文侧真有译文而不是英文原样两份

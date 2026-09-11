@@ -24,25 +24,24 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 采集轨的三条语义：增量去重（存量不再打标不再插）、失败跳过本轮（快讯还在拉取窗口里，
- * 下轮自愈——硬插空标会让这批永远失去打标机会）、正常路标签与译文随行落库。
+ * 采集轨的三条语义：增量去重（存量不再翻译不再插）、失败跳过本轮（快讯还在拉取窗口里，
+ * 下轮自愈——硬插空译文会让这批永远失去译文机会）、正常路译文与模型名随行落库。
  */
 class NewsEventCollectorTest {
 
     private final NewsCache newsCache = mock(NewsCache.class);
-    private final NewsTagger tagger = mock(NewsTagger.class);
+    private final NewsTranslator translator = mock(NewsTranslator.class);
     private final NewsEventMapper mapper = mock(NewsEventMapper.class);
     private final AiAgentRuntimeManager runtimeManager = mock(AiAgentRuntimeManager.class);
 
     private NewsEventCollector collector() {
-        NewsEventCollector c = new NewsEventCollector(newsCache, tagger, mapper, runtimeManager);
+        NewsEventCollector c = new NewsEventCollector(newsCache, translator, mapper, runtimeManager);
         ReflectionTestUtils.setField(c, "enabled", true);
-        ReflectionTestUtils.setField(c, "vocabulary", List.of("OIL", "GOLD", "BTC"));
         return c;
     }
 
-    private static NewsTagger.Tagged tagged(String tags, String titleEn, String contentEn) {
-        return new NewsTagger.Tagged(tags, titleEn, contentEn);
+    private static NewsTranslator.Translated translated(String titleEn, String contentEn) {
+        return new NewsTranslator.Translated(titleEn, contentEn);
     }
 
     private static NewsFlash flash(long id, String title) {
@@ -55,17 +54,17 @@ class NewsEventCollectorTest {
     }
 
     @Test
-    void 新快讯打标后落库且标签译文与模型名随行() {
+    void 新快讯译后落库且译文与模型名随行() {
         runtimeReady();
         when(newsCache.getFlashes()).thenReturn(List.of(flash(1, "BTC 突破十万")));
         when(mapper.selectExistingSourceIds(anyList())).thenReturn(List.of());
-        when(tagger.tag(any(), anyList(), anyList()))
-                .thenReturn(Map.of(1L, tagged("BTC", "BTC tops 100k", "Body")));
+        when(translator.translate(any(), anyList()))
+                .thenReturn(Map.of(1L, translated("BTC tops 100k", "Body")));
 
         collector().collect();
 
         verify(mapper).insertIgnore(eq(1L), eq("BTC 突破十万"), eq("正文"),
-                eq("BTC tops 100k"), eq("Body"), anyString(), anyLong(), eq("BTC"), eq("light-model"));
+                eq("BTC tops 100k"), eq("Body"), anyString(), anyLong(), eq("light-model"));
     }
 
     @Test
@@ -73,60 +72,58 @@ class NewsEventCollectorTest {
         runtimeReady();
         when(newsCache.getFlashes()).thenReturn(List.of(flash(1, "BTC 突破十万")));
         when(mapper.selectExistingSourceIds(anyList())).thenReturn(List.of());
-        when(tagger.tag(any(), anyList(), anyList()))
-                .thenReturn(Map.of(1L, tagged("BTC", null, null)));
+        when(translator.translate(any(), anyList())).thenReturn(Map.of(1L, translated(null, null)));
 
         collector().collect();
 
         verify(mapper).insertIgnore(eq(1L), eq("BTC 突破十万"), eq("正文"),
-                isNull(), isNull(), anyString(), anyLong(), eq("BTC"), eq("light-model"));
+                isNull(), isNull(), anyString(), anyLong(), eq("light-model"));
     }
 
     @Test
-    void 打标产出里没有的那条本轮不落库() {
-        // 它那一批挂了：落了空标就再没有打标机会（去重键挡住重入），留到下轮重试
+    void 译文产出里没有的那条本轮不落库() {
+        // 它那一批挂了：落了空译文就再没有译文机会（去重键挡住重入），留到下轮重试
         runtimeReady();
         when(newsCache.getFlashes()).thenReturn(List.of(flash(1, "甲"), flash(2, "乙")));
         when(mapper.selectExistingSourceIds(anyList())).thenReturn(List.of());
-        when(tagger.tag(any(), anyList(), anyList()))
-                .thenReturn(Map.of(2L, tagged("", null, null)));
+        when(translator.translate(any(), anyList())).thenReturn(Map.of(2L, translated(null, null)));
 
         collector().collect();
 
         verify(mapper, never()).insertIgnore(eq(1L), anyString(), anyString(), any(), any(),
-                anyString(), anyLong(), anyString(), anyString());
+                anyString(), anyLong(), anyString());
         verify(mapper).insertIgnore(eq(2L), anyString(), anyString(), any(), any(),
-                anyString(), anyLong(), eq(""), anyString());
+                anyString(), anyLong(), anyString());
     }
 
     @Test
-    void 已入库的快讯不再打标不再插() {
+    void 已入库的快讯不再翻译不再插() {
         runtimeReady();
         when(newsCache.getFlashes()).thenReturn(List.of(flash(1, "旧闻"), flash(2, "新闻")));
         when(mapper.selectExistingSourceIds(anyList())).thenReturn(List.of(1L));
-        when(tagger.tag(any(), anyList(), anyList())).thenReturn(Map.of(2L, tagged("", null, null)));
+        when(translator.translate(any(), anyList())).thenReturn(Map.of(2L, translated(null, null)));
 
         collector().collect();
 
-        // 只有新的那条进打标与落库；打标调用的名单也只有它——存量白烧打标的钱正是要防的
-        verify(tagger).tag(any(), eq(List.of(flash(2, "新闻"))), anyList());
+        // 只有新的那条进翻译与落库；翻译的名单也只有它——存量白烧模型调用正是要防的
+        verify(translator).translate(any(), eq(List.of(flash(2, "新闻"))));
         verify(mapper, never()).insertIgnore(eq(1L), anyString(), anyString(), any(), any(),
-                anyString(), anyLong(), anyString(), anyString());
+                anyString(), anyLong(), anyString());
         verify(mapper).insertIgnore(eq(2L), anyString(), anyString(), any(), any(),
-                anyString(), anyLong(), eq(""), anyString());
+                anyString(), anyLong(), anyString());
     }
 
     @Test
-    void 打标失败本轮一条都不插() {
+    void 翻译失败本轮一条都不插() {
         runtimeReady();
         when(newsCache.getFlashes()).thenReturn(List.of(flash(1, "新闻")));
         when(mapper.selectExistingSourceIds(anyList())).thenReturn(List.of());
-        when(tagger.tag(any(), anyList(), anyList())).thenThrow(new RuntimeException("上游挂了"));
+        when(translator.translate(any(), anyList())).thenThrow(new RuntimeException("上游挂了"));
 
         collector().collect();
 
         verify(mapper, never()).insertIgnore(anyLong(), anyString(), anyString(), any(), any(),
-                anyString(), anyLong(), anyString(), anyString());
+                anyString(), anyLong(), anyString());
     }
 
     @Test
@@ -138,7 +135,7 @@ class NewsEventCollectorTest {
         collector().collect();
 
         verify(mapper, never()).insertIgnore(anyLong(), anyString(), anyString(), any(), any(),
-                anyString(), anyLong(), anyString(), anyString());
+                anyString(), anyLong(), anyString());
     }
 
     @Test

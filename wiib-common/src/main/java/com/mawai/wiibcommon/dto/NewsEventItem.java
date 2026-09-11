@@ -3,7 +3,7 @@ package com.mawai.wiibcommon.dto;
 import lombok.Data;
 
 /**
- * 打标快讯条目（K 线新闻图标数据源）：news_event 表的查询投影，MyBatis 按列别名注入。
+ * 快讯条目（首页快讯卡数据源）：news_event 表的查询投影，MyBatis 按列别名注入。
  */
 @Data
 public class NewsEventItem {
@@ -17,8 +17,6 @@ public class NewsEventItem {
     private String contentEn;
     /** 原始消息源链接 */
     private String url;
-    /** 发稿时刻 epoch 毫秒，前端按 K 线周期桶定位图标 */
+    /** 发稿时刻 epoch 毫秒 */
     private Long publishedAt;
-    /** 逗号标签串，如 BTC,GOLD */
-    private String tags;
 }

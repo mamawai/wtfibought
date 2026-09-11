@@ -14,7 +14,7 @@
 
 1. **装置之间只经 PostgreSQL 咬合**。没有任何一个直接调用另一个——chat 想知道 trader 干了什么，读的是 trader 自己写下的表。
 2. **选型只有一条准则**：固定步骤写死成代码，开放决策才交给模型循环。同一条准则也管形态内部——chat 的**编排**是普通 Java 循环（`ChatTurnRunner`），只有**叶子**是 `ReactLoop`。
-3. **模型来源两条轨**：面向用户的全部 BYOK（用户自带 key，AES-GCM 加密存库）；平台自己只剩 `newsTagging` 一个功能位买单（见 `runtime/AiAgentRuntime`）——行为分析已在 2026-08 切到用户自己的 key。
+3. **模型来源两条轨**：面向用户的全部 BYOK（用户自带 key，AES-GCM 加密存库）；平台自己只剩 `newsTranslation` 一个功能位买单（见 `runtime/AiAgentRuntime`）——行为分析已在 2026-08 切到用户自己的 key。
 
 ### 六处装置速查
 

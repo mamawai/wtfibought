@@ -10,7 +10,7 @@ import org.apache.ibatis.annotations.Select;
 import java.util.List;
 
 /**
- * 快讯打标存档读写。刻意不建 entity 不继承 BaseMapper：写路就一条 insert，
+ * 快讯存档读写。刻意不建 entity 不继承 BaseMapper：写路就一条 insert，
  * 查询按前端契约投影到 DTO，参数直进直出。
  */
 @Mapper
@@ -29,18 +29,17 @@ public interface NewsEventMapper {
     /** 冲突静默跳过：source_id 唯一键兜底并发与重复窗口，插了多少条以返回值为准。 */
     @Insert("""
             INSERT INTO news_event (source_id, title, content, title_en, content_en,
-                                    url, published_at, tags, tagged_model)
+                                    url, published_at, translated_model)
             VALUES (#{sourceId}, #{title}, #{content}, #{titleEn}, #{contentEn},
-                    #{url}, #{publishedAt}, #{tags}, #{taggedModel})
+                    #{url}, #{publishedAt}, #{translatedModel})
             ON CONFLICT (source_id) DO NOTHING
             """)
     int insertIgnore(@Param("sourceId") long sourceId, @Param("title") String title,
                      @Param("content") String content, @Param("titleEn") String titleEn,
                      @Param("contentEn") String contentEn, @Param("url") String url,
-                     @Param("publishedAt") long publishedAt, @Param("tags") String tags,
-                     @Param("taggedModel") String taggedModel);
+                     @Param("publishedAt") long publishedAt, @Param("translatedModel") String translatedModel);
 
-    /** 本批快讯里已入库的那些 id——先筛后打标，别为存量白烧打标调用。 */
+    /** 本批快讯里已入库的那些 id——先筛后翻译，别为存量白烧模型调用。 */
     @Select("""
             <script>
             SELECT source_id FROM news_event WHERE source_id IN
@@ -51,7 +50,7 @@ public interface NewsEventMapper {
 
     /**
      * 按 BlockBeats 快讯 id 取译文。取用侧（首页快讯卡 / news_search 预取 / 深研判素材）
-     * 拿的是 NewsCache 里的实时快讯，译文只在打标落库那份里，靠 source_id 对上。
+     * 拿的是 NewsCache 里的实时快讯，译文只在落库那份里，靠 source_id 对上。
      * 没译成的那条列是 NULL，调用方回落中文原文。
      */
     @Select("""
@@ -66,7 +65,7 @@ public interface NewsEventMapper {
     /** 最新 N 条（首页快讯卡数据源）：中英两套都投出来，前端按界面语言现选 */
     @Select("""
             SELECT id, title, content, title_en AS titleEn, content_en AS contentEn,
-                   url, published_at AS publishedAt, tags
+                   url, published_at AS publishedAt
               FROM news_event
              ORDER BY published_at DESC
              LIMIT #{limit}
@@ -76,7 +75,7 @@ public interface NewsEventMapper {
     /** 时间窗内的快讯（首页快讯卡按天翻）：左闭右开，倒序，投影同 selectLatest */
     @Select("""
             SELECT id, title, content, title_en AS titleEn, content_en AS contentEn,
-                   url, published_at AS publishedAt, tags
+                   url, published_at AS publishedAt
               FROM news_event
              WHERE published_at >= #{fromMs} AND published_at < #{toMs}
              ORDER BY published_at DESC
@@ -84,24 +83,4 @@ public interface NewsEventMapper {
             """)
     List<NewsEventItem> selectInRange(@Param("fromMs") long fromMs, @Param("toMs") long toMs,
                                       @Param("limit") int limit);
-
-    /**
-     * 按标签查时间窗内的快讯（K 线图标数据源）。
-     * 标签匹配用逗号包夹：tags 是逗号串，裸 LIKE 会让词表未来加了有包含关系的词
-     * （如 GOLD 与 GOLDX）时互相误中；包夹后只按完整词命中。
-     * 倒序取最近的——窗口超限时牺牲的是最老的图标。
-     * <p>
-     * 中英两套都投出来，前端按界面语言现选，切语言不用重拉。
-     */
-    @Select("""
-            SELECT id, title, content, title_en AS titleEn, content_en AS contentEn,
-                   url, published_at AS publishedAt, tags
-              FROM news_event
-             WHERE ',' || tags || ',' LIKE '%,' || #{tag} || ',%'
-               AND published_at BETWEEN #{fromMs} AND #{toMs}
-             ORDER BY published_at DESC
-             LIMIT #{limit}
-            """)
-    List<NewsEventItem> selectByTagInRange(@Param("tag") String tag, @Param("fromMs") long fromMs,
-                                           @Param("toMs") long toMs, @Param("limit") int limit);
 }

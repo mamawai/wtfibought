@@ -576,7 +576,7 @@ CREATE TABLE IF NOT EXISTS ai_model_assignment (
 );
 
 COMMENT ON TABLE ai_model_assignment IS '功能位→LLM配置指针（模型名归属ai_runtime_config）';
-COMMENT ON COLUMN ai_model_assignment.function_name IS '功能名称，白名单见AiFunctions，现只有news-tagging（quant后台批量打标）；面向用户的功能位已全量BYOK，behavior等残行是孤儿不影响使用';
+COMMENT ON COLUMN ai_model_assignment.function_name IS '功能名称，白名单见AiFunctions，现只有news-translation（快讯后台批量译英文）；面向用户的功能位已全量BYOK，behavior等残行是孤儿不影响使用';
 COMMENT ON COLUMN ai_model_assignment.config_id IS '关联ai_runtime_config.id';
 
 -- ============ kline_history：回测/评估用 5m 基础 K 线落库（research，可复现） ============
@@ -689,29 +689,37 @@ COMMENT ON COLUMN workbench_chat_context.state IS '裸JSON {"messages":[...]}(fa
 -- 工作台跨会话记忆表 workbench_memory 已删：召回段对答案质量没有可观测贡献，链路整条拆掉。旧库执行：
 --     DROP TABLE IF EXISTS workbench_memory;
 
--- ============ news_event：快讯打标存档（K线新闻图标 + 事件研究数据积累） ============
--- 采集轨独立于 NewsCache 懒加载：定时经缓存拉 BlockBeats（共享额度窗），新条目轻模型打标后落库。
+-- ============ news_event：快讯存档（首页快讯卡 + 事件研究数据积累） ============
+-- 采集轨独立于 NewsCache 懒加载：定时经缓存拉 BlockBeats（共享额度窗），新条目轻模型译成英文后落库。
 -- BlockBeats 免费额度一次性不回血，采集节奏见 application.yml 的 news.collect
 CREATE TABLE IF NOT EXISTS news_event (
-    id           BIGSERIAL PRIMARY KEY,
-    source_id    BIGINT NOT NULL UNIQUE,
-    title        TEXT NOT NULL,
-    content      TEXT,
-    title_en     TEXT,
-    content_en   TEXT,
-    url          TEXT,
-    published_at BIGINT NOT NULL,
-    tags         VARCHAR(128),
-    tagged_model VARCHAR(128),
-    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id               BIGSERIAL PRIMARY KEY,
+    source_id        BIGINT NOT NULL UNIQUE,
+    title            TEXT NOT NULL,
+    content          TEXT,
+    title_en         TEXT,
+    content_en       TEXT,
+    url              TEXT,
+    published_at     BIGINT NOT NULL,
+    translated_model VARCHAR(128),
+    created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- 快讯停止打标（2026-09）：K线图标改挂财经日历，tags 列删掉；模型只做译文，列名跟着改；功能位改名
+ALTER TABLE news_event DROP COLUMN IF EXISTS tags;
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'news_event' AND column_name = 'tagged_model') THEN
+        ALTER TABLE news_event RENAME COLUMN tagged_model TO translated_model;
+    END IF;
+END $$;
+UPDATE ai_model_assignment SET function_name = 'news-translation'
+ WHERE function_name = 'news-tagging'
+   AND NOT EXISTS (SELECT 1 FROM ai_model_assignment WHERE function_name = 'news-translation');
 CREATE INDEX IF NOT EXISTS idx_news_event_published ON news_event (published_at DESC);
-COMMENT ON TABLE news_event IS '快讯打标存档:BlockBeats重要快讯+轻模型封闭词表打标;前端按K线时间桶挂globe图标,未来做事件研究';
+COMMENT ON TABLE news_event IS '快讯存档:BlockBeats重要快讯+轻模型英文译文;首页快讯卡数据源,未来做事件研究';
 COMMENT ON COLUMN news_event.source_id IS 'BlockBeats快讯id,增量去重键';
-COMMENT ON COLUMN news_event.published_at IS '发稿时刻epoch毫秒(BlockBeats create_time按北京时间解析),对齐K线open_time用';
-COMMENT ON COLUMN news_event.tags IS '逗号串,封闭词表(OIL/GOLD/BTC/美股白名单,见news.collect.vocabulary);空串=轻模型判定与词表标的无关';
-COMMENT ON COLUMN news_event.tagged_model IS '打标用的模型名,坏标追责用';
-COMMENT ON COLUMN news_event.title_en IS '标题英文译文,打标同一次调用顺带产出;NULL=没译成(模型没给/正文超长/老行):模型侧回落中文原文,英文界面不展示这条——不许拿原文冒充译文';
+COMMENT ON COLUMN news_event.published_at IS '发稿时刻epoch毫秒(BlockBeats create_time按北京时间解析)';
+COMMENT ON COLUMN news_event.translated_model IS '译文用的模型名,追责用';
+COMMENT ON COLUMN news_event.title_en IS '标题英文译文;NULL=没译成(模型没给/正文超长/老行):模型侧回落中文原文,英文界面不展示这条——不许拿原文冒充译文';
 COMMENT ON COLUMN news_event.content_en IS '正文英文译文;NULL 同 title_en。正文超过打标输入上限的那条不留译文:半截译文比原文更糟';
 
 -- ============ econ_calendar_event：财经日历（TradingView 日历接口只收 High 级，唤醒开场白注入 + BTC K线标记） ============

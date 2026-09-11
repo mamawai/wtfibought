@@ -95,8 +95,6 @@ news:
     # 采集周期。BlockBeats 免费额度一次性不回血：每周期最多真打一次 API（NewsCache 10min 缓存窗内
     # 与对话/深研判共享同一次拉取）。30min≈每天最多48次，改小前先看额度余量
     interval-ms: 1800000
-    # 打标封闭词表：OIL=原油 GOLD=黄金 BTC=比特币/加密大盘 + 美股白名单。模型只许从中选，选不出留空
-    vocabulary: OIL,GOLD,BTC,COIN,MSTR,TSLA,NVDA
 
 # 策略实盘信号运行时：读实时流并记录 LIVE 信号
 strategy:

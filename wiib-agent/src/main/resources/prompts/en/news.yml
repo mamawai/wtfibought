@@ -1,38 +1,26 @@
-# News-tagging domain catalog (English). Directory `en` is the language code;
+# News-translation domain catalog (English). Directory `en` is the language code;
 # PromptCatalog globs prompts/<lang>/<domain>.yml.
 #
 # Two separate things here, do not conflate them:
 #  * WHAT LANGUAGE THE TRANSLATION IS IN — fixed English, spelled out in both language copies of
-#    this file. Tagging is a platform background job (model comes from ai_runtime_config); there is
-#    no "current user", so it never follows user.lang.
-#  * WHAT LANGUAGE THIS PROMPT IS WRITTEN IN — a constant in NewsTagger, currently this file.
+#    this file. Translation is a platform background job (model comes from ai_runtime_config); there
+#    is no "current user", so it never follows user.lang.
+#  * WHAT LANGUAGE THIS PROMPT IS WRITTEN IN — a constant in NewsTranslator, currently this file.
 #    A prompt that is English end to end is the steadiest signal for "write the translation in
 #    English"; the material fed in is Chinese either way.
 news:
 
-  # One light-model call per chunk does tagging AND translation. {{vocabulary}} = the closed tag set,
-  # {{flashes}} = the chunk, one flash per line.
-  tagging: |-
-    You classify Chinese-language financial news flashes and translate them into English.
-    For every flash below do two things.
-
-    1. TAG — decide which of these instruments the flash is clearly about (several are allowed):
-    {{vocabulary}}
-       - BTC is for news about bitcoin or about the direction of the crypto market as a whole;
-         news about one single altcoin on its own does not count
-       - OIL is crude oil, GOLD is gold; pick a US-equity ticker only when the flash explicitly
-         concerns that company
-       - When you cannot tell, or none of the listed instruments fit, give an empty tags array.
-         Do not guess: a wrong tag pins a wrong icon on the chart, which is worse than no icon
-
-    2. TRANSLATE — render the title and the body into natural English. Translate what is written:
-       do not summarise, do not add, do not comment on it. Keep numbers, tickers and proper names
-       as they are. If you cannot translate one, leave that field out entirely rather than echoing
-       the Chinese back — the caller can tell an empty field apart from a translation, but it
-       cannot tell Chinese-passed-off-as-English apart from a flash that was never translated.
+  # One light-model call per chunk. {{flashes}} = the chunk, one flash per line.
+  translate: |-
+    You translate Chinese-language financial news flashes into English.
+    For every flash below, render the title and the body into natural English. Translate what is
+    written: do not summarise, do not add, do not comment on it. Keep numbers, tickers and proper
+    names as they are. If you cannot translate one, leave that field out entirely rather than
+    echoing the Chinese back — the caller can tell an empty field apart from a translation, but it
+    cannot tell Chinese-passed-off-as-English apart from a flash that was never translated.
 
     Output a JSON array and nothing else, in exactly this shape:
-    [{"id":<flash id>,"tags":["BTC"],"title_en":"...","content_en":"..."},{"id":<flash id>,"tags":[],"title_en":"...","content_en":"..."}]
+    [{"id":<flash id>,"title_en":"...","content_en":"..."},{"id":<flash id>,"title_en":"...","content_en":"..."}]
 
     Flashes:
     {{flashes}}

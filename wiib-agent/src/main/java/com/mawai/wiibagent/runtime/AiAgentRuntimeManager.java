@@ -31,7 +31,7 @@ public class AiAgentRuntimeManager {
     // quant/quant-light/chat 随对话轨 BYOK 化删除、behavior 随行为分析进对话轨删除，
     // sim 是 wiib-sim 自读 DB 的位；这些名字在 ai_model_assignment 里的残行是孤儿，无害——
     // 种子、白名单、删除保护都只认这个常量
-    private static final List<String> MANAGED_FUNCTIONS = List.of(AiFunctions.NEWS_TAGGING);
+    private static final List<String> MANAGED_FUNCTIONS = List.of(AiFunctions.NEWS_TRANSLATION);
 
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
@@ -66,7 +66,7 @@ public class AiAgentRuntimeManager {
     }
 
     /**
-     * 从DB读取所有配置和分配关系，重建 news-tagging 功能位的 ChatModel（面向用户的功能位已全量 BYOK 化）；
+     * 从DB读取所有配置和分配关系，重建 news-translation 功能位的 ChatModel（面向用户的功能位已全量 BYOK 化）；
      * 返回是否刷新成功（Admin据此报错）。
      * 空库→runtime置空（合法的"未配置"态）；构建失败→保留上一份可用runtime——坏切换/瞬时DB错误不打死在跑的AI。
      */
@@ -83,9 +83,9 @@ public class AiAgentRuntimeManager {
                     Map<Long, AiRuntimeConfig> configMap = configs.stream()
                             .collect(Collectors.toMap(AiRuntimeConfig::getId, c -> c));
                     List<AiModelAssignment> assignments = assignmentMapper.selectAll();
-                    // 打标模型名随行落库（news_event.tagged_model 坏标追责用），所以这一位要留住配置行
-                    AiRuntimeConfig newsTagging = configFor(assignments, AiFunctions.NEWS_TAGGING, configMap);
-                    runtimeRef.set(new AiAgentRuntime(buildChatModel(newsTagging), newsTagging.getModel()));
+                    // 译文模型名随行落库（news_event.translated_model 追责用），所以这一位要留住配置行
+                    AiRuntimeConfig newsTranslation = configFor(assignments, AiFunctions.NEWS_TRANSLATION, configMap);
+                    runtimeRef.set(new AiAgentRuntime(buildChatModel(newsTranslation), newsTranslation.getModel()));
                     log.info("AI运行时已刷新，共{}个LLM配置，{}个功能位分配", configMap.size(), assignments.size());
                 }
                 ok = true;

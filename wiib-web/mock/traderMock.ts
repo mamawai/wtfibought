@@ -1040,7 +1040,6 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
         if (path === '/api/user/category-averages') return ok(res, CATEGORY_AVERAGES);
         if (path === '/api/prediction/pnl') return ok(res, PREDICTION_PNL);
         // K 线上的快讯标记：跟快讯用同一批，publishedAt 已经贴着现在
-        if (path === '/api/ai/quant/news-events') return ok(res, news());
 
         // K 线不走业务包装（rawKlines 直接吃 res.data），要裸数组；
         // 给成 {code,data} 的话行情条那句 [...list] 会在 then 里抛，控制台一片红
