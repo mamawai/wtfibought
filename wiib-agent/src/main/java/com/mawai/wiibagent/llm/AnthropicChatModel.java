@@ -37,7 +37,8 @@ import java.util.TreeMap;
  * 都要原样回去），其余按文本 + tool_use 拼（见 {@link #inToolLoop}）。
  * 同角色连续消息合成一条多块消息（Messages 要求 user/assistant 交替）。
  * <p>
- * 提示缓存两个断点：system 末块挂 1h（tools 排在 system 前面，一个断点把两者一起盖住），
+ * 提示缓存两个断点：system 首块挂 1h（tools 排在 system 前面，一个断点把两者一起盖住；
+ * 每条 SystemMessage 各成一块，首块是 agent 基础提示词，后面的是压缩摘要、会变，不能跟首块粘一起），
  * 末条消息末块挂默认 5 分钟、随对话前移（见 {@link #markCacheTail}）。
  * 收尾只认 end_turn / stop_sequence / tool_use 是完整回答，refusal / max_tokens 等显式失败（见 {@link #abnormalStop}）。
  */
@@ -129,18 +130,13 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
             }
         }
 
-        StringBuilder system = new StringBuilder();
+        JSONArray system = new JSONArray();
         JSONArray messages = new JSONArray();
         List<Message> history = prompt.getInstructions();
         for (int i = 0; i < history.size(); i++) {
             Message message = history.get(i);
             switch (message.getMessageType()) {
-                case SYSTEM -> {
-                    if (!system.isEmpty()) {
-                        system.append("\n\n");
-                    }
-                    system.append(message.getText());
-                }
+                case SYSTEM -> system.add(textBlock(message.getText()));
                 case USER -> append(messages, "user", List.of(textBlock(message.getText())));
                 case ASSISTANT -> append(messages, "assistant",
                         assistantBlocks((AssistantMessage) message, inToolLoop(history, i)));
@@ -157,9 +153,10 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
             }
         }
         if (!system.isEmpty()) {
-            // 1h：隔 15 分钟 / 1 小时再醒的 trader 也能命中同一份 system + tools
-            body.put("system", new JSONArray().fluentAdd(textBlock(system.toString())
-                    .fluentPut(CACHE_CONTROL, cacheControl("1h"))));
+            // 1h 只挂首块：隔 15 分钟 / 1 小时再醒的 trader 也能命中同一份 system + tools；
+            // 后面的块是压缩摘要，压一次变一次，挂在首块上会把基础提示词的缓存一起冲掉
+            system.getJSONObject(0).put(CACHE_CONTROL, cacheControl("1h"));
+            body.put("system", system);
         }
         markCacheTail(messages);
         body.put("messages", messages);

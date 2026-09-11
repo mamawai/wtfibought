@@ -345,6 +345,11 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
                     state.usage.getInteger("promptTokenCount"),
                     state.usage.getInteger("candidatesTokenCount"),
                     state.usage.getInteger("totalTokenCount")));
+            // 隐式缓存 2.5 起默认开，不用声明；命中数是 promptTokenCount 内部的明细，不另加
+            Integer cached = state.usage.getInteger("cachedContentTokenCount");
+            if (cached != null && cached > 0) {
+                log.info("[Gemini] {} 缓存命中{}/{}", model, cached, state.usage.getInteger("promptTokenCount"));
+            }
         }
         return metadata.build();
     }

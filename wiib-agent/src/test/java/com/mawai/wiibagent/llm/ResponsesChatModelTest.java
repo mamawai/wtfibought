@@ -9,6 +9,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -195,6 +196,30 @@ class ResponsesChatModelTest {
         assertThat(frames.stream().map(f -> f.getResult().getOutput().getText()).reduce("", String::concat))
                 .isEqualTo("据 A 报道");
         assertThat(frames.getLast().getResult().getMetadata().getFinishReason()).isEqualTo("STOP");
+    }
+
+    /**
+     * 缓存分组键:同一份 system 的请求要拿到同一个键——xAI 按它路由到同一台机器,
+     * 换机器就等于前面存的白存(真实用量表里跨唤醒那批只命中 128 token)。
+     */
+    @Test
+    void 请求侧_缓存分组键按系统提示稳定且不带原文() {
+        events = PLAIN_COMPLETED;
+        ResponsesChatModel m = model();
+        m.call(new Prompt(List.of(new SystemMessage("你是交易员"), new UserMessage("问题"))));
+        String key = JSON.parseObject(lastRequestBody).getString("prompt_cache_key");
+        assertThat(key).isNotBlank();
+
+        // 用户消息变了键不变:跨轮、跨唤醒都要落回同一台
+        m.call(new Prompt(List.of(new SystemMessage("你是交易员"), new UserMessage("另一个问题"))));
+        assertThat(JSON.parseObject(lastRequestBody).getString("prompt_cache_key")).isEqualTo(key);
+
+        // system 变了前缀就失效,键必须跟着变
+        m.call(new Prompt(List.of(new SystemMessage("你是分析师"), new UserMessage("问题"))));
+        assertThat(JSON.parseObject(lastRequestBody).getString("prompt_cache_key")).isNotEqualTo(key);
+
+        // 送哈希不送原文:system 里有用户自己写的自定义指令
+        assertThat(key).doesNotContain("交易员");
     }
 
     @Test

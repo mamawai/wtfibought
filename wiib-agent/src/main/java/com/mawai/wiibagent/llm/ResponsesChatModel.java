@@ -19,7 +19,11 @@ import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.http.HttpHeaders;
 import reactor.core.publisher.Flux;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -28,6 +32,7 @@ import java.util.Map;
  * <p>
  * 思考档位走 reasoning.effort；无状态模式（store=false，历史每轮全量带），
  * 服务端搜索声明 {@code {"type":"web_search"}}。
+ * 提示缓存不用声明，各家都是自动的；只捎一个分组键让同前缀的请求落到同一台机器（见 {@link #cacheKey}）。
  * 流式：正文只认 output_text.delta，工具调用整只收在 output_item.done，response.completed 发收尾帧；
  * 不发增量事件的网关，正文、工具与原始 item 都从 completed 的 output 兜底。
  * <p>
@@ -129,8 +134,30 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
                 body.put("tool_choice", ToolChoice.of(toolOptions));
             }
         }
+        body.put("prompt_cache_key", cacheKey(instructions.toString(), toolNames));
         logRequest(body.getString("model"), body.getString("tool_choice"), toolNames);
         return body;
+    }
+
+    /**
+     * 提示缓存的分组键：它不是缓存句柄，是个标签，告诉上游"带同一个标签的请求共用同一段前缀"。
+     * xAI 按它路由到同一台机器（缓存按机器存，不给标签就可能每次换机器，前面存的白存），
+     * OpenAI 拿它分账与隔离。
+     * <p>
+     * 取 instructions + 工具名的哈希：这两样正好决定了可复用的那段前缀，同一个 agent 跨轮跨唤醒键不变，
+     * 它们变了键跟着变（那时旧前缀本就失效）。送哈希不送原文——system 里有用户自己写的字。
+     */
+    private static String cacheKey(String instructions, List<String> toolNames) {
+        try {
+            MessageDigest sha = MessageDigest.getInstance("SHA-256");
+            sha.update(instructions.getBytes(StandardCharsets.UTF_8));
+            for (String name : toolNames) {
+                sha.update(name.getBytes(StandardCharsets.UTF_8));
+            }
+            return HexFormat.of().formatHex(sha.digest(), 0, 12);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
     }
 
     private JSONObject messageItem(String role, String contentType, String text) {
@@ -294,6 +321,7 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
             JSONObject usage = response.getJSONObject("usage");
             if (usage != null) {
                 metadata.usage(parseUsage(usage));
+                logCacheHit(usage);
                 Integer serverTools = usage.getInteger("num_server_side_tools_used");
                 if (serverTools != null && serverTools > 0) {
                     metadata.keyValue("num_server_side_tools_used", serverTools);
@@ -306,6 +334,15 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
             }
         }
         return metadata.build();
+    }
+
+    /** 缓存命中观测：cached_tokens 是 input_tokens 内部的明细、不另加，命中好不好只能靠它看 */
+    private void logCacheHit(JSONObject usage) {
+        JSONObject details = usage.getJSONObject("input_tokens_details");
+        Integer cached = details == null ? null : details.getInteger("cached_tokens");
+        if (cached != null && cached > 0) {
+            log.info("[Responses] {} 缓存命中{}/{}", model, cached, usage.getInteger("input_tokens"));
+        }
     }
 
     private String extractOutputText(JSONArray output) {

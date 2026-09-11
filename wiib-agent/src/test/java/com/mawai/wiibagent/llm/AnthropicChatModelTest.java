@@ -158,7 +158,7 @@ class AnthropicChatModelTest {
         JSONObject body = body();
         assertThat(body.getString("model")).isEqualTo("claude-test");
         assertThat(body.getIntValue("max_tokens")).isEqualTo(AnthropicChatModel.MAX_TOKENS);
-        // system 是块数组，末块挂 1h 缓存断点；末条消息末块挂默认（5 分钟）断点
+        // system 是块数组，首块挂 1h 缓存断点；末条消息末块挂默认（5 分钟）断点
         JSONObject systemBlock = body.getJSONArray("system").getJSONObject(0);
         assertThat(systemBlock.getString("text")).isEqualTo("你是助手");
         assertThat(systemBlock.getJSONObject(AnthropicChatModel.CACHE_CONTROL).getString("ttl")).isEqualTo("1h");
@@ -172,6 +172,26 @@ class AnthropicChatModelTest {
                 .containsExactly(AnthropicChatModel.SEARCH_TOOL_TYPE);
         assertThat(body.getJSONArray("tools").getJSONObject(0).getString("name")).isEqualTo("web_search");
         assertThat(body.getJSONArray("messages").getJSONObject(0).getString("role")).isEqualTo("user");
+    }
+
+    @Test
+    void 请求侧_多条系统消息各成一块_只有首块挂1h断点() {
+        events = PLAIN;
+        // 压缩后的形状：基础提示词 + 首问 + 摘要（SystemMessage）+ 最近消息
+        model().call(new Prompt(List.of(
+                new SystemMessage("你是助手"), new UserMessage("首问"),
+                new SystemMessage("【摘要】第1段"), new UserMessage("新问题"))));
+
+        JSONArray system = body().getJSONArray("system");
+        assertThat(system).extracting(b -> ((JSONObject) b).getString("text")).containsExactly("你是助手", "【摘要】第1段");
+        assertThat(system.getJSONObject(0).getJSONObject(AnthropicChatModel.CACHE_CONTROL).getString("ttl")).isEqualTo("1h");
+        // 摘要块不挂断点：它压一次变一次，挂上去会把基础提示词的 1h 缓存一起冲掉
+        assertThat(system.getJSONObject(1).containsKey(AnthropicChatModel.CACHE_CONTROL)).isFalse();
+        // 摘要没混进 messages
+        JSONArray messages = body().getJSONArray("messages");
+        assertThat(messages).hasSize(1);
+        assertThat(messages.getJSONObject(0).getJSONArray("content")).extracting(b -> ((JSONObject) b).getString("text"))
+                .containsExactly("首问", "新问题");
     }
 
     @Test
