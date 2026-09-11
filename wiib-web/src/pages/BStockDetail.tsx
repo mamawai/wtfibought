@@ -10,7 +10,6 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Skeleton } from '../components/ui/skeleton';
 import { CandleChart } from '../components/CandleChart';
-import { newsTagForSymbol } from '../components/chart/newsTag';
 import { FuturesActionButton } from '../components/FuturesActionButton';
 import { LoginPrompt } from '../components/LoginPrompt';
 import { useQuantityAnimation } from '../components/coin/useQuantityAnimation';
@@ -181,7 +180,6 @@ function BStockDetail({ symbol }: { symbol: string }) {
                 symbol={symbol}
                 interval={chartIv}
                 marketLabel={`BINANCE ${t('coin.spot')}`}
-                newsTag={newsTagForSymbol(symbol)}
                 klinesFn={bstockApi.klines}
                 loadHistory={loggedIn}
                 streamLive={false}

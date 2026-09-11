@@ -90,11 +90,12 @@
   },
   "calendar": {
     "title": "财经日历",
-    "note": "本周高 / 中影响事件",
+    "note": "全球高影响事件 · TradingView",
     "published": "已公布",
     "upcoming": "即将公布",
-    "emptyPast": "本周还没有已公布的事件",
-    "emptyUpcoming": "本周没有更多事件",
+    "emptyPast": "过去 3 天没有已公布的事件",
+    "emptyUpcoming": "未来一周没有更多事件",
+    "actual": "实际",
     "forecast": "预测",
     "previous": "前值"
   },

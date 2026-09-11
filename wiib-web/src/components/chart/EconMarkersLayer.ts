@@ -1,8 +1,6 @@
 /**
- * 新闻 globe 标记层：以 ISeriesPrimitive 挂在蜡烛 series 上，直接画进主图画布——
- * 与蜡烛同一条渲染管线，平移缩放零延迟（旧实现是 DOM 覆盖层靠 250ms 轮询定位，
- * 拖图时肉眼可见拖影）；文字与图形随画布按 devicePixelRatio 渲染，清晰度与轴标签同级
- * （旧实现是 11px SVG + 8px HTML 角标，低分屏上发糊）。
+ * 财经日历标记层：以 ISeriesPrimitive 挂在蜡烛 series 上，直接画进主图画布——
+ * 与蜡烛同一条渲染管线，平移缩放零延迟；文字与图形随画布按 devicePixelRatio 渲染，清晰度与轴标签同级。
  *
  * 点击命中不走 LWC 的 hover：CandleChart 在 pointerdown 里主动 {@link pick}
  * （触摸端没有 hover 前置态，套路同画线层 DrawingLayer）；hitTest 只负责悬停变手型。
@@ -13,18 +11,18 @@ import type {
 } from 'lightweight-charts';
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 
-/** 一个标记：一根 K 线时间桶内的快讯聚合（count>1 时画数字角标） */
-export interface NewsMarker { time: number; count: number; }
+/** 一个标记：一根 K 线时间桶内的事件聚合（count>1 时画数字角标） */
+export interface EconMarker { time: number; count: number; }
 
 const FONT = '700 10px system-ui, sans-serif';
-/** 角标高度；globe 独占区宽度也用它（正方形区域内画圆） */
+/** 角标高度；日历图标独占区宽度也用它 */
 const CHIP_H = 18;
-/** globe 半径 */
-const R = 4.5;
+/** 日历图标边长 */
+const S = 10;
 
-export class NewsMarkersLayer implements ISeriesPrimitive<Time> {
-  /** 标记集合，CandleChart 拉完快讯后赋值并调 update() */
-  markers: NewsMarker[] = [];
+export class EconMarkersLayer implements ISeriesPrimitive<Time> {
+  /** 标记集合，CandleChart 拉完事件后赋值并调 update() */
+  markers: EconMarker[] = [];
   /** 角标配色：纸底 + 灰描边灰图形，由 CandleChart 从 token 灌进来，切主题改完调 update() */
   palette = { fg: '#7a7e88', border: 'rgba(122,126,136,.45)', bg: '#fafaf7' };
   /** 每帧实测的角标矩形（pane 坐标，time → 矩形）：点击命中与弹窗定位都读它 */
@@ -32,7 +30,7 @@ export class NewsMarkersLayer implements ISeriesPrimitive<Time> {
 
   chartApi: IChartApi | null = null;
   seriesApi: ISeriesApi<SeriesType> | null = null;
-  /** time → 该桶 bar 的最高价；桶里没 bar 返回 null（休市快讯没有可依附的蜡烛，不画） */
+  /** time → 该桶 bar 的最高价；桶里没 bar 返回 null（没有可依附的蜡烛，不画） */
   readonly highOf: (time: number) => number | null;
 
   private _requestUpdate?: () => void;
@@ -79,14 +77,14 @@ export class NewsMarkersLayer implements ISeriesPrimitive<Time> {
   hitTest(x: number, y: number): PrimitiveHoveredItem | null {
     const time = this.pick(x, y);
     if (time === null) return null;
-    return { externalId: `news:${time}`, zOrder: 'top', cursorStyle: 'pointer', hitTestPriority: 2 };
+    return { externalId: `econ:${time}`, zOrder: 'top', cursorStyle: 'pointer', hitTestPriority: 2 };
   }
 }
 
 class PaneView implements IPrimitivePaneView {
   private readonly _r: PaneRenderer;
 
-  constructor(layer: NewsMarkersLayer) {
+  constructor(layer: EconMarkersLayer) {
     this._r = new PaneRenderer(layer);
   }
 
@@ -100,9 +98,9 @@ class PaneView implements IPrimitivePaneView {
 }
 
 class PaneRenderer implements IPrimitivePaneRenderer {
-  private readonly _layer: NewsMarkersLayer;
+  private readonly _layer: EconMarkersLayer;
 
-  constructor(layer: NewsMarkersLayer) {
+  constructor(layer: EconMarkersLayer) {
     this._layer = layer;
   }
 
@@ -153,25 +151,24 @@ class PaneRenderer implements IPrimitivePaneRenderer {
         c.lineWidth = 1;
         c.stroke();
 
-        // globe：圆 + 竖椭圆经线 + 赤道横线（lucide globe 的画布摹写）
-        const cx = x0 + CHIP_H / 2, cy = y0 + CHIP_H / 2;
+        // 日历：外框 + 表头横线 + 顶上两个挂环（lucide calendar 的画布摹写）
+        const gx = x0 + (CHIP_H - S) / 2, gy = y0 + (CHIP_H - S) / 2 + 1;
         c.strokeStyle = fg;
         c.lineWidth = 1.2;
+        c.strokeRect(gx, gy, S, S - 1);
         c.beginPath();
-        c.arc(cx, cy, R, 0, Math.PI * 2);
-        c.stroke();
-        c.beginPath();
-        c.ellipse(cx, cy, R * 0.42, R, 0, 0, Math.PI * 2);
-        c.stroke();
-        c.beginPath();
-        c.moveTo(cx - R, cy);
-        c.lineTo(cx + R, cy);
+        c.moveTo(gx, gy + 3);
+        c.lineTo(gx + S, gy + 3);
+        c.moveTo(gx + 3, gy - 2);
+        c.lineTo(gx + 3, gy + 1);
+        c.moveTo(gx + S - 3, gy - 2);
+        c.lineTo(gx + S - 3, gy + 1);
         c.stroke();
 
-        // 条数：直接排在 globe 右侧（旧版是 8px 悬浮角标，小到发糊）
+        // 条数：直接排在图标右侧
         if (label) {
           c.fillStyle = fg;
-          c.fillText(label, x0 + CHIP_H - 1, cy + 0.5);
+          c.fillText(label, x0 + CHIP_H - 1, y0 + CHIP_H / 2 + 0.5);
         }
         L.rects.set(m.time, { x: x0, y: y0, w, h: CHIP_H });
       }
