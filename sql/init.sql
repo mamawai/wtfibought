@@ -576,7 +576,7 @@ CREATE TABLE IF NOT EXISTS ai_model_assignment (
 );
 
 COMMENT ON TABLE ai_model_assignment IS '功能位→LLM配置指针（模型名归属ai_runtime_config）';
-COMMENT ON COLUMN ai_model_assignment.function_name IS '功能名称，白名单见AiFunctions，现只有news-tagging（quant后台批量打标）；面向用户的功能位已全量BYOK，behavior等残行是孤儿不影响使用';
+COMMENT ON COLUMN ai_model_assignment.function_name IS '功能名称，白名单见AiFunctions，现只有news-translation（快讯后台批量译英文）；面向用户的功能位已全量BYOK，behavior等残行是孤儿不影响使用';
 COMMENT ON COLUMN ai_model_assignment.config_id IS '关联ai_runtime_config.id';
 
 -- ============ kline_history：回测/评估用 5m 基础 K 线落库（research，可复现） ============
@@ -684,55 +684,77 @@ CREATE TABLE IF NOT EXISTS workbench_chat_context (
     updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 COMMENT ON TABLE workbench_chat_context IS '工作台会话模型侧上下文:完整消息历史(含专家结论/压缩摘要/工具配对),每轮结束整体替换;删会话随展示表一并清';
-COMMENT ON COLUMN workbench_chat_context.state IS 'StateSerializer(Jackson)序列化的{"messages":[...]}:与叶子agent同一序列化器,保Spring AI Message多态与tool_call配对往返无损';
+COMMENT ON COLUMN workbench_chat_context.state IS '裸JSON {"messages":[...]}(fastjson2,ChatContextCodec写),保Spring AI Message多态与tool_call配对往返无损;老行是Java对象流包JSON,读时兼容,下一轮整体覆盖后自然换成新格式';
 
 -- 工作台跨会话记忆表 workbench_memory 已删：召回段对答案质量没有可观测贡献，链路整条拆掉。旧库执行：
 --     DROP TABLE IF EXISTS workbench_memory;
 
--- ============ news_event：快讯打标存档（K线新闻图标 + 事件研究数据积累） ============
--- 采集轨独立于 NewsCache 懒加载：定时经缓存拉 BlockBeats（共享额度窗），新条目轻模型打标后落库。
+-- ============ news_event：快讯存档（首页快讯卡 + 事件研究数据积累） ============
+-- 采集轨独立于 NewsCache 懒加载：定时经缓存拉 BlockBeats（共享额度窗），新条目轻模型译成英文后落库。
 -- BlockBeats 免费额度一次性不回血，采集节奏见 application.yml 的 news.collect
 CREATE TABLE IF NOT EXISTS news_event (
-    id           BIGSERIAL PRIMARY KEY,
-    source_id    BIGINT NOT NULL UNIQUE,
-    title        TEXT NOT NULL,
-    content      TEXT,
-    title_en     TEXT,
-    content_en   TEXT,
-    url          TEXT,
-    published_at BIGINT NOT NULL,
-    tags         VARCHAR(128),
-    tagged_model VARCHAR(128),
-    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id               BIGSERIAL PRIMARY KEY,
+    source_id        BIGINT NOT NULL UNIQUE,
+    title            TEXT NOT NULL,
+    content          TEXT,
+    title_en         TEXT,
+    content_en       TEXT,
+    url              TEXT,
+    published_at     BIGINT NOT NULL,
+    translated_model VARCHAR(128),
+    created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- 快讯停止打标（2026-09）：K线图标改挂财经日历，tags 列删掉；模型只做译文，列名跟着改；功能位改名
+ALTER TABLE news_event DROP COLUMN IF EXISTS tags;
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'news_event' AND column_name = 'tagged_model') THEN
+        ALTER TABLE news_event RENAME COLUMN tagged_model TO translated_model;
+    END IF;
+END $$;
+UPDATE ai_model_assignment SET function_name = 'news-translation'
+ WHERE function_name = 'news-tagging'
+   AND NOT EXISTS (SELECT 1 FROM ai_model_assignment WHERE function_name = 'news-translation');
 CREATE INDEX IF NOT EXISTS idx_news_event_published ON news_event (published_at DESC);
-COMMENT ON TABLE news_event IS '快讯打标存档:BlockBeats重要快讯+轻模型封闭词表打标;前端按K线时间桶挂globe图标,未来做事件研究';
+COMMENT ON TABLE news_event IS '快讯存档:BlockBeats重要快讯+轻模型英文译文;首页快讯卡数据源,未来做事件研究';
 COMMENT ON COLUMN news_event.source_id IS 'BlockBeats快讯id,增量去重键';
-COMMENT ON COLUMN news_event.published_at IS '发稿时刻epoch毫秒(BlockBeats create_time按北京时间解析),对齐K线open_time用';
-COMMENT ON COLUMN news_event.tags IS '逗号串,封闭词表(OIL/GOLD/BTC/美股白名单,见news.collect.vocabulary);空串=轻模型判定与词表标的无关';
-COMMENT ON COLUMN news_event.tagged_model IS '打标用的模型名,坏标追责用';
-COMMENT ON COLUMN news_event.title_en IS '标题英文译文,打标同一次调用顺带产出;NULL=没译成(模型没给/正文超长/老行):模型侧回落中文原文,英文界面不展示这条——不许拿原文冒充译文';
+COMMENT ON COLUMN news_event.published_at IS '发稿时刻epoch毫秒(BlockBeats create_time按北京时间解析)';
+COMMENT ON COLUMN news_event.translated_model IS '译文用的模型名,追责用';
+COMMENT ON COLUMN news_event.title_en IS '标题英文译文;NULL=没译成(模型没给/正文超长/老行):模型侧回落中文原文,英文界面不展示这条——不许拿原文冒充译文';
 COMMENT ON COLUMN news_event.content_en IS '正文英文译文;NULL 同 title_en。正文超过打标输入上限的那条不留译文:半截译文比原文更糟';
 
--- ============ econ_calendar_event：财经日历（ForexFactory 周历，唤醒开场白注入） ============
--- 采集轨 EconCalendarCollector 定时拉本周 JSON 删窗口重插（feed 是全量快照，改期/取消靠整窗覆盖自愈）；
--- EconCalendarAssembler 注入"过去12h已公布+未来24h即将公布"，防 trader 撞数据公布/讲话时刻
+-- ============ econ_calendar_event：财经日历（TradingView 日历接口只收 High 级，唤醒开场白注入 + BTC K线标记） ============
+-- 采集轨 EconCalendarCollector 每 4h 同步 [now-3d, now+7d]，按 TradingView 事件 id upsert（改期改时刻、公布填实际值、
+-- 前值修正落同一行），窗口内不在回包里的行删掉（改期出窗/取消）；公布时刻等待闸 EconCalendarGate 窄窗口轮询补 actual。
+-- EconCalendarAssembler 注入"刚公布 / 过去3天已公布 / 今天剩余即将公布"
 CREATE TABLE IF NOT EXISTS econ_calendar_event (
     id         BIGSERIAL    PRIMARY KEY,
+    source_id  VARCHAR(32)  NOT NULL,
     event_time BIGINT       NOT NULL,
+    country    VARCHAR(8)   NOT NULL,
     currency   VARCHAR(8)   NOT NULL,
     title      VARCHAR(200) NOT NULL,
-    impact     VARCHAR(16)  NOT NULL,
+    actual     VARCHAR(32),
     forecast   VARCHAR(32),
     previous   VARCHAR(32),
     created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- 换源 TradingView（2026-09）：存量库补列、清 ForexFactory 旧行（旧行没有 source_id），全部幂等可重跑
+ALTER TABLE econ_calendar_event ADD COLUMN IF NOT EXISTS source_id VARCHAR(32);
+ALTER TABLE econ_calendar_event ADD COLUMN IF NOT EXISTS country   VARCHAR(8);
+ALTER TABLE econ_calendar_event ADD COLUMN IF NOT EXISTS actual    VARCHAR(32);
+ALTER TABLE econ_calendar_event DROP COLUMN IF EXISTS impact;
+DELETE FROM econ_calendar_event WHERE source_id IS NULL;
+ALTER TABLE econ_calendar_event ALTER COLUMN source_id SET NOT NULL, ALTER COLUMN country SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uk_econ_calendar_source ON econ_calendar_event (source_id);
 CREATE INDEX IF NOT EXISTS idx_econ_calendar_time ON econ_calendar_event (event_time);
-COMMENT ON TABLE econ_calendar_event IS '财经日历:ForexFactory周历快照,采集删窗口重插;唤醒注入±窗口内高影响事件';
-COMMENT ON COLUMN econ_calendar_event.event_time IS '公布/开始时刻epoch毫秒(feed的ISO带时区时间换算)';
-COMMENT ON COLUMN econ_calendar_event.currency IS '事件影响的货币代码(USD/EUR/…,德国CPI标EUR;All=全局事件);feed字段名叫country是上游历史命名';
-COMMENT ON COLUMN econ_calendar_event.impact IS 'feed原样:High/Medium/Low/Holiday(外汇视角评级,注入过滤另有USD讲话补捞)';
-COMMENT ON COLUMN econ_calendar_event.forecast IS '共识预测值原样文本(55K/0.3%等);NULL=无数值(讲话/会议类);免费feed无实际值列';
+COMMENT ON TABLE econ_calendar_event IS '财经日历:TradingView日历接口只收High级,按事件id upsert;唤醒注入过去3天+当天剩余,BTC K线挂日历标记';
+COMMENT ON COLUMN econ_calendar_event.source_id IS 'TradingView事件id,幂等键';
+COMMENT ON COLUMN econ_calendar_event.event_time IS '公布/开始时刻epoch毫秒(接口的UTC ISO时间换算)';
+COMMENT ON COLUMN econ_calendar_event.country IS 'ISO国家码(US/EU/GB/DE…),前端配国旗';
+COMMENT ON COLUMN econ_calendar_event.currency IS '事件影响的货币代码(德国CPI国家DE货币EUR)';
+COMMENT ON COLUMN econ_calendar_event.actual IS '实际值显示文本(0.2%/206K/1.443M,数字+K/M/B+%拼成);NULL=未公布或无数值(讲话/会议类)';
+COMMENT ON COLUMN econ_calendar_event.forecast IS '共识预测值显示文本;NULL=无数值(讲话/会议类)';
+COMMENT ON COLUMN econ_calendar_event.previous IS '前值显示文本,接口给的已是修正后的值';
 
 -- ============================================
 -- 27. 留言板评论（全站唯一，无附着实体）

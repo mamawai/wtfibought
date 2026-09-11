@@ -90,11 +90,12 @@
   },
   "calendar": {
     "title": "Economic calendar",
-    "note": "This week · high / medium impact",
+    "note": "Global high impact · TradingView",
     "published": "Released",
     "upcoming": "Upcoming",
-    "emptyPast": "Nothing released yet this week",
-    "emptyUpcoming": "No more events this week",
+    "emptyPast": "Nothing released in the last 3 days",
+    "emptyUpcoming": "No more events in the coming week",
+    "actual": "Actual",
     "forecast": "Fcst",
     "previous": "Prev"
   },

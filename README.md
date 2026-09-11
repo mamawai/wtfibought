@@ -16,7 +16,6 @@
 
 [![Java](https://img.shields.io/badge/Java-25-ED8B00?style=flat-square&logo=openjdk&logoColor=white)](https://openjdk.org/projects/jdk/25/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.1.0-6DB33F?style=flat-square&logo=springboot&logoColor=white)](https://spring.io/projects/spring-boot)
-[![langgraph4j](https://img.shields.io/badge/langgraph4j-1.8.26-F97316?style=flat-square)](https://github.com/bsorrentino/langgraph4j)
 [![Spring AI](https://img.shields.io/badge/Spring%20AI-2.0.1-6DB33F?style=flat-square&logo=spring&logoColor=white)](https://docs.spring.io/spring-ai/reference/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)
@@ -140,10 +139,10 @@ Six independent LLM call sites, each with its own shape and stop conditions. The
 
 | Device | Shape | Tools | Loop | Trigger | Model source | Output |
 |---|---|:---:|:---:|---|---|---|
-| **trader agent** | ReactAgent | 15 | ✓ max 12 calls | Every candle close / volatility alert | Owner's key | Real position changes + decision entry |
+| **trader agent** | ReAct loop | 15 | ✓ max 12 calls | Every candle close / volatility alert | Owner's key | Real position changes + decision entry |
 | **reviewer workflow** | Single call | 0 | ✗ | Daily boundary | Same as trader | Review note |
-| **learning agent** | ReactAgent | 1 (peer read-only) | ✓ max 8 calls | After all reviews (barrier) | Same as trader | Learning note |
-| **chat agent** | Flat orchestration + ReactAgent leaves | Tiered | ✓ with loopback | User question | User's key | Streamed answer |
+| **learning agent** | ReAct loop | 1 (peer read-only) | ✓ max 8 calls | After all reviews (barrier) | Same as trader | Learning note |
+| **chat agent** | Flat orchestration + ReAct loop leaves | Tiered | ✓ with loopback | User question | User's key | Streamed answer |
 | **replay coach** | Single call | 0 | ✗ | "AI hint / AI review" in manual replay | User's key | Chart hint / full-session review |
 | **behavior workflow** | Single call | 0 | ✗ | User asks for it in chat | User's key | Behavior profile report |
 
@@ -247,7 +246,7 @@ npx vite --config vite.config.mock.ts    # or a frontend-only preview on 3001, n
 ## Tech Stack
 
 - Java 25 (Virtual Threads enabled) + Spring Boot 4.1
-- langgraph4j 1.8.26 + Spring AI 2.0.1
+- Spring AI 2.0.1 (hand-written ReAct loop, no graph engine)
 - PostgreSQL + Redis + MyBatis-Plus
 - Sa-Token
 - React 19 + TypeScript 5.9 + Vite 7 + TailwindCSS 4

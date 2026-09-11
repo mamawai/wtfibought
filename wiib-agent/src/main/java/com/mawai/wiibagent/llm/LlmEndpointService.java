@@ -6,8 +6,6 @@ import com.mawai.wiibcommon.constant.AiProtocols;
 import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
-import com.mawai.wiibagent.trader.ApiKeyCrypto;
-import com.mawai.wiibagent.trader.BaseUrlGuard;
 import com.mawai.wiibagent.mapper.UserLlmBindingMapper;
 import com.mawai.wiibagent.mapper.UserLlmEndpointMapper;
 import lombok.RequiredArgsConstructor;

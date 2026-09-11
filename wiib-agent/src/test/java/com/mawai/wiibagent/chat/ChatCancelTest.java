@@ -2,6 +2,10 @@ package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
+import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
+import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
+import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
@@ -37,7 +41,7 @@ import static org.mockito.Mockito.when;
  * 两个检查点效果不同，测试也分开钉：
  * <ul>
  *   <li><b>派发之前</b>中断＝真省钱：专家和汇总那次调用都不会发生；</li>
- *   <li><b>答案流中途</b>中断＝掐断在途流：取消经 CancelSignal 传到模型层，后面的 token 不再烧；
+ *   <li><b>答案流中途</b>中断＝掐断在途流：取消传到模型层，后面的 token 不再烧；
  *       已经吐出来的半截必须留住——它是花钱换的。</li>
  * </ul>
  * 与让位的分界也要钉死：中断<b>不欠补答</b>，deferredExperts 必须是空。
@@ -109,7 +113,7 @@ class ChatCancelTest {
         };
     }
 
-    /** 带真实中断信号的让位面：runner 把它放进 config，在途答案流靠它掐断 */
+    /** 带真实中断信号的让位面：runner 把它交给 ReactLoop，在途答案流靠它掐断 */
     private static ChatTurnRunner.TurnYield yieldWith(AtomicBoolean cancelled, CompletableFuture<Void> signal) {
         return new ChatTurnRunner.TurnYield() {
             @Override
@@ -168,7 +172,8 @@ class ChatCancelTest {
     void 答案流中途中断要留住已经吐出来的半截() {
         routerFinishes();
         AtomicBoolean cancelled = new AtomicBoolean(false);
-        // 第一帧出字后就点停：后面的帧不再上屏，但这次调用的 token 已经烧了
+        CompletableFuture<Void> signal = new CompletableFuture<>();
+        // 第一帧出字后就点停：第二帧已经排在队列里也不再上屏，但这次调用的 token 已经烧了
         when(deep.stream(any(Prompt.class))).thenAnswer(inv -> Flux.just(
                 responseOf("前半截"), responseOf("后半截")));
 
@@ -176,7 +181,8 @@ class ChatCancelTest {
                 .run(leaves(), 1L, SESSION, "看看行情", null, chunk -> {
                     answer.append(chunk);
                     cancelled.set(true);
-                }, e -> { }, s -> { }, yieldWith(cancelled), null);
+                    signal.complete(null);   // 与 TurnHandle.requestCancel 同序：先置位再发信号
+                }, e -> { }, s -> { }, yieldWith(cancelled, signal), null);
 
         assertThat(result.cancelled()).isTrue();
         assertThat(answer.toString()).isEqualTo("前半截");

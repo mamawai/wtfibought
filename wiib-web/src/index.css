@@ -249,6 +249,10 @@ html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
 /* 行情副条 marquee：两份等宽内容首尾相接，走完一份宽度即无缝循环 */
 @keyframes wiib-ticker { to { transform: translateX(-50%); } }
 
+/* 顶栏折叠的两条进度，注册成数值才能用 transition 播；规则在下面 .hdr 上 */
+@property --pf { syntax: '<number>'; inherits: true; initial-value: 0; }
+@property --ps { syntax: '<number>'; inherits: true; initial-value: 0; }
+
 /* ===== 海报原子：顶栏 + 副条 + 分节 + 表格/按钮/表单这些通用件 =====
    落在 components 层：调用方叠 Tailwind 工具类能盖掉这里的值 */
 @layer components {
@@ -261,41 +265,62 @@ html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
   .ic{width:16px;height:16px}
   .wrap{max-width:1800px;margin:0 auto;padding:0 52px}
 
-  /* 顶栏：一行文字导航，激活项前一颗橙方块 */
-  .top{display:flex;align-items:center;gap:44px;height:72px}
-  .logo{font-weight:900;font-size:24px;letter-spacing:-.04em}
+  /* ===== 顶栏：sticky 一行，往下滚整体折叠成 WIIB. + 图标，回顶展开 =====
+     --pf 淡出/淡入进度，只走前半段时长；--ps 滑拢/滑开进度，走满时长，曲线照 anthropic.com 那个 lottie
+     折叠：字母和文案前半段淡掉，同时剩下的滑拢；展开倒过来：先滑开，最后半段才淡回来
+     JS 只负责按滚动位置切 .collapsed，以及把各处自然宽量好写进 --w */
+  .hdr{--pf:0;--ps:0;--dur:520ms;--ic:16px;position:sticky;top:0;z-index:50;background:var(--color-background)}
+  .hdr.collapsed{--pf:1;--ps:1}
+  /* .ready 首帧之后才挂：刷新时页面已在半路，先按位摆好再开过渡，不然会从头播一遍 */
+  .hdr.ready{transition:--pf calc(var(--dur) * .5) cubic-bezier(.77,0,.175,1) calc(var(--dur) * .5),--ps var(--dur) cubic-bezier(.77,0,.175,1)}
+  .hdr.ready.collapsed{transition:--pf calc(var(--dur) * .5) cubic-bezier(.77,0,.175,1) 0s,--ps var(--dur) cubic-bezier(.77,0,.175,1)}
+  /* 高度恒定：sticky 元素自身高度一变整页内容就跟着挪，往上滚会像卡一下 */
+  .top{display:flex;align-items:center;gap:24px;height:56px}
+  .logo{display:inline-flex;align-items:center;font-weight:700;font-size:20px;letter-spacing:-.04em;line-height:1;white-space:nowrap}
   .logo i{color:var(--color-primary);font-style:normal}
-  .nav{position:relative;display:flex;gap:28px;font-size:16px;font-weight:500}
-  .nav a{display:inline-flex;align-items:center;gap:4px;padding:4px 0;white-space:nowrap;color:var(--color-muted-foreground);transition:color .15s}
-  .nav a:hover{color:var(--color-foreground)}
-  .nav a.on{color:var(--color-foreground);font-weight:700}
+  .logo span,.logo i{display:inline-block;position:relative;z-index:1}
+  /* 要折的字母原地淡出，不缩不裁；负右边距按滑动进度把占位让出来，后面保留的字母滑过来盖住它 */
+  .logo .go{z-index:0;opacity:calc(1 - var(--pf));margin-right:calc(-1 * var(--w,0px) * var(--ps))}
+  /* 左内边距 13px 是给第一项前面的橙方块留的位，不然方块会伸进 logo 和导航之间的 gap 里贴住 logo */
+  .nav{position:relative;display:flex;gap:24px;padding-left:13px;font-size:14px;font-weight:500}
+  /* 导航项（a / 下拉 button 同一套）：文案在流内撑出自然宽，图标钉在左边缘；
+     折叠时 max-width 从文案宽滑到图标宽，文案溢出不裁，被滑过来的下一项盖住 */
+  .nav .item{position:relative;display:block;height:calc(var(--ic) + 12px);max-width:calc(var(--ic) + (var(--w,999px) - var(--ic)) * (1 - var(--ps)));white-space:nowrap;color:var(--color-muted-foreground);transition:color .15s;background:none;border:0;padding:0;cursor:pointer;font:inherit}
+  .nav .item:hover{color:var(--color-foreground)}
+  .nav .item.on{color:var(--color-foreground);font-weight:700}
+  .nav .lab{display:inline-flex;align-items:center;gap:4px;height:100%;opacity:calc(1 - var(--pf))}
+  .nav .ico{position:absolute;left:0;top:50%;transform:translateY(-50%);display:inline-flex;opacity:var(--pf)}
+  .nav .ico svg{width:var(--ic);height:var(--ic)}
+  /* 折叠后悬停图标，墨线下方弹一个文案小标签，样式蹭下拉面板那套 */
+  .nav .item::after{content:attr(data-label);position:absolute;top:calc(100% + 20px);left:50%;transform:translate(-50%,-4px);font-size:11.5px;font-weight:700;color:var(--color-foreground);background:var(--color-background);border:1px solid var(--color-foreground);padding:3px 7px;opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;z-index:60}
+  .hdr.collapsed .nav .item:hover::after{opacity:1;transform:translate(-50%,0)}
   /* 激活项前那颗橙方块是独立元素：悬停到别的项就滑过去，移开滑回来（位置由 JS 写 left） */
   .nav-dot{position:absolute;top:50%;left:0;width:7px;height:7px;background:var(--color-primary);transform:translateY(-50%);transition:left .28s cubic-bezier(.16,1,.3,1);pointer-events:none}
   .nav .ic{width:13px;height:13px}
-  .tools{margin-left:auto;display:flex;align-items:center;gap:20px;font-size:13.5px;font-weight:600}
+  .tools{margin-left:auto;display:flex;align-items:center;gap:18px;font-size:12.5px;font-weight:600}
   .leds{display:flex;gap:5px}
   .leds i{width:7px;height:7px;background:var(--color-gain)}
-  .tools .ic{width:16px;height:16px;color:var(--color-muted-foreground)}
+  .tools .ic{width:15px;height:15px;color:var(--color-muted-foreground)}
   .tools button{background:none;border:0;padding:0;cursor:pointer;display:inline-flex}
 
-  /* 顶栏一行摆 11 项，英文文案更长，1500px 往下就开始挤：分四档收间距和字号，
+  /* 顶栏一行摆 11 项 + 展开态的整词 logo，英文文案更长，1500px 往下就开始挤：分四档收间距和字号，
      全部限定在 .top 里，手机顶栏那套 .tools/.logo 不跟着动。
-     每档按"英文 0.55×字号/字符 + logo + tools + 两侧 52px"估算，最紧一档保 1024px 不溢出 */
+     每档按"英文 0.55×字号/字符 + 整词 logo 0.62×字号×14 + tools + 两侧 52px"估算，最紧一档保 1024px 不溢出 */
   @media (max-width:1500px){
-    .top{gap:32px}.top .logo{font-size:22px}
-    .top .nav{gap:20px;font-size:15px}.top .tools{gap:16px;font-size:13px}
+    .top{gap:16px}.top .logo{font-size:19px}
+    .top .nav{gap:18px;font-size:13.5px}.top .tools{gap:14px;font-size:12px}
   }
   @media (max-width:1330px){
-    .top{gap:24px}.top .logo{font-size:21px}
-    .top .nav{gap:14px;font-size:14px}.top .tools{gap:13px;font-size:12.5px}
+    .top{gap:12px}.top .logo{font-size:18px}
+    .top .nav{gap:14px;font-size:13px}.top .tools{gap:12px;font-size:11.5px}
   }
   @media (max-width:1190px){
-    .top{gap:18px}.top .logo{font-size:20px}
-    .top .nav{gap:10px;font-size:13px}.top .tools{gap:10px;font-size:12px}
+    .top{gap:10px}.top .logo{font-size:16px}
+    .top .nav{gap:10px;font-size:12px}.top .tools{gap:10px;font-size:11px}
   }
   @media (max-width:1080px){
-    .top{gap:14px}.top .logo{font-size:18px}
-    .top .nav{gap:8px;font-size:12.5px}.top .tools{gap:8px;font-size:11.5px}
+    .top{gap:8px}.top .logo{font-size:15px}
+    .top .nav{gap:8px;font-size:12px}.top .tools{gap:8px;font-size:10.5px}
     .top .nav .ic{width:12px;height:12px}
   }
   .rule{height:2px;background:var(--color-foreground)}
@@ -554,7 +579,7 @@ html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
 @media (prefers-reduced-motion:reduce){
   .reveal,.reveal-late,.stagger>*{animation:none;opacity:1;clip-path:none}
   .ticker .track{animation:none}
-  .nav-dot{transition:none}
+  .nav-dot,.hdr,.nav .item::after{transition:none}
 }
 
 /* 赌场麂皮牌桌 */

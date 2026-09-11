@@ -14,13 +14,12 @@
     <packaging>jar</packaging>
 
     <properties>
-        <langgraph4j.version>1.8.26</langgraph4j.version>
         <spring-ai.version>2.0.1</spring-ai.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
-            <!-- 钉死 spring-ai 全家版本：langgraph4j 传递的 core 是 2.0.0，会和 starter 的 2.0.1 autoconfigure 打架 -->
+            <!-- 钉死 spring-ai 全家版本：starter / retry 与任何传递进来的 spring-ai 模块都走同一个号 -->
             <dependency>
                 <groupId>org.springframework.ai</groupId>
                 <artifactId>spring-ai-bom</artifactId>
@@ -38,33 +37,7 @@
             <artifactId>wiib-quant</artifactId>
         </dependency>
 
-        <!-- langgraph4j：图引擎 -->
-        <dependency>
-            <groupId>org.bsc.langgraph4j</groupId>
-            <artifactId>langgraph4j-core</artifactId>
-            <version>${langgraph4j.version}</version>
-        </dependency>
-        <!-- Spring AI 桥接：Message 的 Jackson 序列化（会话上下文表复用） + Flux<ChatResponse> 接图 -->
-        <dependency>
-            <groupId>org.bsc.langgraph4j</groupId>
-            <artifactId>langgraph4j-spring-ai</artifactId>
-            <version>${langgraph4j.version}</version>
-        </dependency>
-        <!-- ReactAgent：叶子 agent（专家/summarizer/trader）的 ReAct 循环 -->
-        <dependency>
-            <groupId>org.bsc.langgraph4j</groupId>
-            <artifactId>langgraph4j-springai-agentexecutor</artifactId>
-            <version>${langgraph4j.version}</version>
-            <exclusions>
-                <!-- 库不该把 devtools 带进生产 -->
-                <exclusion>
-                    <groupId>org.springframework.boot</groupId>
-                    <artifactId>spring-boot-devtools</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <!-- Spring AI OpenAI Starter（接入 OpenAI Compatible API） -->
+        <!-- Spring AI OpenAI Starter（接入 OpenAI Compatible API）；叶子 agent 的 ReAct 循环是 llm/ReactLoop 手写的，不引图引擎 -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>

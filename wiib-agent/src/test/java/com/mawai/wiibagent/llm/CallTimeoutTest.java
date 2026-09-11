@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.llm;
 
-import com.mawai.wiibagent.trader.ApiKeyCrypto;
 import com.mawai.wiibcommon.constant.AiProtocols;
 import io.micrometer.observation.ObservationRegistry;
 import org.junit.jupiter.api.Test;

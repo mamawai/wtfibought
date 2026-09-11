@@ -1,5 +1,6 @@
 package com.mawai.wiibagent.chat;
 
+import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -30,7 +31,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class ChatYieldCoordinator {
 
     /** 让位握手上限：从发信号到那轮退位还名额，正常几百毫秒（存档+发收尾事件）；超时按占线拒 */
-    static final long YIELD_HANDSHAKE_MS = 15_000;
+    public static final long YIELD_HANDSHAKE_MS = 15_000;
 
     /** userId → 在跑轮的让位句柄（闸门每用户 1 轮，键天然唯一） */
     private final Map<Long, TurnHandle> activeTurns = new ConcurrentHashMap<>();

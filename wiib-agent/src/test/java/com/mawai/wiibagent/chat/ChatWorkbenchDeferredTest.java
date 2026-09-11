@@ -3,6 +3,12 @@ package com.mawai.wiibagent.chat;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
+import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
+import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
+import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.store.ChatContextStore;
+import com.mawai.wiibagent.chat.store.ChatHistoryService;
+import com.mawai.wiibagent.controller.ChatWorkbenchController;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.SseChannel;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
@@ -16,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -71,7 +78,7 @@ class ChatWorkbenchDeferredTest {
         return new ChatWorkbenchController(factory, endpointService, new ApprovalRegistry(),
                 history, mock(ChatContextStore.class), streamer(), mock(ChatTurnRewinder.class),
                 mock(WorkbenchRunRegistry.class), gate, new MessageCatalog(), coordinator,
-                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang());
+                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), Executors.newVirtualThreadPerTaskExecutor());
     }
 
     /** run() 要拿叶子清账本、取语言；runner 是 mock，图用不上 */

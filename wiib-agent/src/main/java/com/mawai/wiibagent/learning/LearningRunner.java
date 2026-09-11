@@ -9,9 +9,9 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
-import com.mawai.wiibagent.llm.AgentGraphs;
 import com.mawai.wiibagent.llm.LlmErrorMessages;
 import com.mawai.wiibagent.llm.ModelCallLimiter;
+import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.ResilientChatService;
 import com.mawai.wiibagent.llm.ToolCallTraceHook;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
@@ -20,9 +20,6 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.bsc.langgraph4j.CompiledGraph;
-import org.bsc.langgraph4j.RunnableConfig;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -42,7 +39,7 @@ import java.util.concurrent.TimeoutException;
 
 /**
  * learning agent 学习回路（向同侪学习，看别人不看自己；看自己的复盘见 ReviewRunner）：
- * ReactAgent + 唯一只读工具 peer_insights → 一份完整学习笔记 →
+ * ReactLoop + 唯一只读工具 peer_insights → 一份完整学习笔记 →
  * LEARN 决策行公开上时间线、全文覆盖 ai_trader.learning_notes。
  * <p>
  * 做成 agent 而非单次调用：看谁、看多深、值不值得学，下一步取决于上一步看到了什么，
@@ -183,39 +180,33 @@ public class LearningRunner {
         return missing;
     }
 
-    /** ReactAgent 会话：返回模型最终文本；工具轨迹与用量随 decision 一并写入。 */
+    /** ReactLoop 会话：返回模型最终文本；工具轨迹与用量随 decision 一并写入。 */
     private String runAgentSession(AiTrader trader, long boundaryMs, String leaderboard,
                                    AgentLang lang, AiTraderDecision d) throws Exception {
         // 用量统计包在最外层：ReAct 一轮要调模型很多次。工厂里的实例是跨唤醒缓存的，
         // 装饰器必须每轮新建，否则用量会跨轮累加
         UsageTrackingChatModel model = new UsageTrackingChatModel(modelFactory.modelFor(trader));
-        // "它看了谁"是 LEARN 行在公开时间线上的观赏点，全靠这个 hook 记
+        // "它看了谁"是 LEARN 行在公开时间线上的观赏点，全靠这个收集器记
         ToolCallTraceHook trace = new ToolCallTraceHook();
         // 提示词里那句"≤N"是笔记篇幅的唯一约束（落库不裁），取值见 NoteBudget
-        CompiledGraph<MessagesState<Message>> graph = AgentGraphs
-                .reactAgent(model, prompts.get(lang, "learning.system",
+        ResilientChatService chat = ResilientChatService.builder().model(model)
+                .systemPrompt(prompts.get(lang, "learning.system",
                         Map.of("maxChars", NoteBudget.maxChars(lang))))
                 // 工具描述也得跟语言走：@Tool 的 description 是编译期常量，这一层替它换
                 .tools(localizedTools.of(lang,
                         new PeerInsightToolkit(peerInsightService, trader.getId(), lang)))
-                .addExecuteToolsHook(new ModelCallLimiter(MAX_MODEL_CALLS,
+                // 不强制首轮调工具：排行榜已随开场白注入，首轮该做的正是"挑谁值得深看"这步推理
+                .build();
+        ReactLoop loop = ReactLoop.builder().chat(chat)
+                .limiter(new ModelCallLimiter(MAX_MODEL_CALLS,
                         prompts.get(lang, "llm.callLimit.notExecuted"),
                         prompts.get(lang, "llm.callLimit.lastCall")))
-                .addExecuteToolsHook(trace)
-                // 不强制首轮调工具：排行榜已随开场白注入，首轮该做的正是"挑谁值得深看"这步推理
-                .build(ResilientChatService.builder().model(model).asFactory())
-                .compile();
+                .trace(trace).build();
 
-        RunnableConfig config = RunnableConfig.builder()
-                .threadId("learn-" + trader.getId() + "-" + boundaryMs).build();
         String instruction = userPrompt(trader, boundaryMs, leaderboard, lang);
-        // 虚拟线程 + FutureTask 承载超时；非流式 invoke（消费流用 forEachAsync 会栈溢出，实测）
-        FutureTask<String> task = new FutureTask<>(() -> {
-            MessagesState<Message> state = graph
-                    .invoke(Map.of("messages", List.of(new UserMessage(instruction))), config)
-                    .orElseThrow(() -> new IllegalStateException("图执行无返回状态"));
-            return finalReasoning(state.messages(), lang);
-        });
+        // 虚拟线程 + FutureTask 承载超时；阻塞跑，不需要流
+        FutureTask<String> task = new FutureTask<>(() ->
+                finalReasoning(loop.run(List.of(new UserMessage(instruction)), null, null, null).messages(), lang));
         Thread.startVirtualThread(task);
         try {
             return task.get(timeoutSeconds, TimeUnit.SECONDS);

@@ -12,9 +12,12 @@ import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
+import com.mawai.wiibquant.mapper.EconCalendarMapper;
+import com.mawai.wiibquant.task.EconCalendarCollector;
 import com.mawai.wiibagent.trader.TraderModelFactory;
-import com.mawai.wiibagent.trader.TraderScheduler;
-import com.mawai.wiibagent.trader.TraderWakeupRunner;
+import com.mawai.wiibagent.trader.wakeup.EconCalendarGate;
+import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
+import com.mawai.wiibagent.trader.wakeup.TraderWakeupRunner;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
@@ -44,7 +47,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 日线交接整链回路（G6 验收的 mock 侧）：K线事件进 → 真调度三阶段 → 真 LearningRunner 跑
- * ReactAgent（mock 模型）→ 真 PeerInsightService 出工具数据 → 3 个 learner 并发学完各自落库。
+ * ReactLoop（mock 模型）→ 真 PeerInsightService 出工具数据 → 3 个 learner 并发学完各自落库。
  * 与分层测试的分工：TraderSchedulerTest 验时序/屏障/窗口，LearningLoopTest 验单人回路，
  * 这里验的是"整条链真对象手拉手 + 多 learner 并发"——装配错、并发共享 mock 模型出乱序，只有这里现形。
  */
@@ -139,7 +142,8 @@ class LearningHandoverLoopTest {
                 traderMapper, decisionMapper, planMapper, simTradeClient, assembler, prompts);
         LearningRunner learningRunner = new LearningRunner(peers, modelFactory, traderMapper,
                 decisionMapper, prompts, new LocalizedToolCallbacks(prompts), langResolver);
-        TraderScheduler scheduler = new TraderScheduler(traderMapper, wakeupRunner, reviewRunner, learningRunner, peers, new MessageCatalog());
+        TraderScheduler scheduler = new TraderScheduler(traderMapper, wakeupRunner, reviewRunner, learningRunner, peers, new MessageCatalog(),
+                new EconCalendarGate(mock(EconCalendarMapper.class), mock(EconCalendarCollector.class)));
 
         scheduler.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
 

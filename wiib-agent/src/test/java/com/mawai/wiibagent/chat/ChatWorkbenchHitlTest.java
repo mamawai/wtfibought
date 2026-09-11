@@ -2,6 +2,12 @@ package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
+import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
+import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
+import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.store.ChatContextStore;
+import com.mawai.wiibagent.chat.store.ChatHistoryService;
+import com.mawai.wiibagent.controller.ChatWorkbenchController;
 import com.mawai.wiibagent.llm.SseChannel;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
@@ -14,7 +20,6 @@ import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.trader.TraderChatService;
 import com.mawai.wiibagent.mapper.WorkbenchChatContextMapper;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -30,6 +35,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -135,8 +141,7 @@ class ChatWorkbenchHitlTest {
                     wantsMarketExpert.get() ? "{\"next\":[\"market_agent\"]}" : "{\"next\":[\"FINISH\"]}"));
         });
         // 每轮：先要一次深研判（闸门在这儿拦），拿到回执后再说一句话收尾。
-        // 每条消息都带序号是必须的：MessagesState.SCHEMA 的 reducer 按 Objects.hash 去重，
-        // 连着几轮回同一句话，后面那条会被静默丢掉，工具节点当场 no AssistantMessage provided
+        // 每条消息带序号：几轮回同一句话时，断言按内容分得清是哪一轮的
         when(deep.stream(any(Prompt.class))).thenAnswer(inv -> {
             summarizerPrompts.add(inv.getArgument(0));
             return Flux.just(responseOf(
@@ -176,7 +181,8 @@ class ChatWorkbenchHitlTest {
                 ChatTestEndpoints.PROMPTS);
         return new ChatWorkbenchController(mock(ChatAgentFactory.class), mock(LlmEndpointService.class),
                 registry, history, contextStore, streamer, mock(ChatTurnRewinder.class),
-                runRegistry, gate, new MessageCatalog(), yieldCoordinator, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang());
+                runRegistry, gate, new MessageCatalog(), yieldCoordinator, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
+                Executors.newVirtualThreadPerTaskExecutor());
     }
 
     /** 跑一轮，返回这一轮发出去的全部 SSE 事件 */

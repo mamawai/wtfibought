@@ -3,6 +3,7 @@ package com.mawai.wiibagent.trader;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
+import com.mawai.wiibagent.llm.ApiKeyCrypto;
 import com.mawai.wiibagent.llm.ByokModelBuilder;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import io.micrometer.observation.ObservationRegistry;

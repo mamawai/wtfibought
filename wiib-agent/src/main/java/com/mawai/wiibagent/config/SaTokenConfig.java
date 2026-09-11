@@ -32,8 +32,8 @@ public class SaTokenConfig extends BaseSaTokenConfig {
     protected List<String> getAnonymousGetPaths() {
         return List.of(
                 "/api/ai/quant/news",
-                "/api/ai/quant/news-events",
                 "/api/ai/quant/econ-calendar",
+                "/api/ai/quant/econ-calendar/events",
                 "/api/ai/trader/arena",
                 "/api/ai/trader/*",
                 "/api/ai/trader/*/decisions",

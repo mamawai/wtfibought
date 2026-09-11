@@ -8,9 +8,9 @@ import {
   type DeepPartial, type HandleScrollOptions, type IPriceLine, type SeriesMarker,
 } from 'lightweight-charts';
 import {
-  ChartCandlestick, ChartLine, ChartNoAxesCombined, ChevronDown, Expand, Globe, History, Layers, Shrink,
+  CalendarClock, ChartCandlestick, ChartLine, ChartNoAxesCombined, ChevronDown, Expand, History, Layers, Shrink,
 } from 'lucide-react';
-import { futuresApi, quantApi, type NewsEventItem } from '../api';
+import { futuresApi, quantApi, type EconCalendarEvent } from '../api';
 import { useKlineStream } from '../hooks/useKlineStream';
 import { useIsDark } from '../hooks/useIsDark';
 import { useFullscreen } from '../hooks/useFullscreen';
@@ -21,7 +21,8 @@ import { lwcTheme, rgba } from '../lib/chartTheme';
 import type { ChartCtx } from '../lib/chartDrawings';
 import { useDrawings } from './chart/useDrawings';
 import { DrawToolPopover, DrawToolRail } from './chart/DrawToolPicker';
-import { NewsMarkersLayer } from './chart/NewsMarkersLayer';
+import { EconMarkersLayer } from './chart/EconMarkersLayer';
+import { flagHtml } from './CountryFlag';
 
 /** 一根 K：series 只用 OHLC，量/额留给读数和成交量柱。 */
 interface Bar { time: number; openMs: number; open: number; high: number; low: number; close: number; volume: number; quote: number; }
@@ -293,13 +294,12 @@ const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches;
 /** 快讯是外部内容，进 innerHTML 前必须转义（标题/正文/URL 都不可信） */
 const esc = (s: string) => s.replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
-const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : s);
 
 /** 贴价格轴的仓位小签：挨得近的往下推，不叠在一起 */
 const LABEL_GAP = 16;
 
-/** 快讯角标配色：纸底、灰边灰 globe */
-const newsPalette = () => {
+/** 日历角标配色：纸底、灰边灰图标 */
+const econPalette = () => {
   const th = lwcTheme();
   return { fg: th.mute, border: rgba(th.mute, .45), bg: th.bg };
 };
@@ -319,7 +319,8 @@ export interface CandleChartProps {
   onIntervalChange: (i: Interval) => void;
   positionOverlays?: PositionOverlay[];
   tradeMarks?: TradeMark[];
-  newsTag?: string;
+  /** 财经日历标记：只有 BTC 传 true，其他标的不挂 */
+  econMarks?: boolean;
   /** 「高级」档的内容（TradingView）：传了才多出这颗按钮；选中时盖住 plot，图表实例不卸载 */
   advanced?: ReactNode;
   /** 图内读数第一行的灰字，如 'BINANCE 永续' / 'BINANCE 现货' */
@@ -328,11 +329,11 @@ export interface CandleChartProps {
 
 export function CandleChart({
   symbol, interval, limit = 300, visibleBars = 110, klinesFn = futuresApi.klines, loadHistory = true, streamLive = true,
-  tick = null, indicators = false, onIntervalChange, positionOverlays, tradeMarks, newsTag,
+  tick = null, indicators = false, onIntervalChange, positionOverlays, tradeMarks, econMarks,
   advanced, marketLabel = 'BINANCE',
 }: CandleChartProps) {
   const { t } = useTranslation('market');
-  // 新闻标记按界面语言取字：英文只留标题正文都译好的，切语言重建标记
+  // 日历弹窗的标签跟界面语言，切语言重建标记
   const uiLang = currentLang();
   const isDark = useIsDark();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -387,10 +388,10 @@ export function CandleChart({
   const [showMarks, setShowMarks] = useState(() => localStorage.getItem('wiib-chart-trade-marks') === '1');
   const marksByTimeRef = useRef<Map<number, { b: Fill[]; s: Fill[] }>>(new Map());
   const markTipRef = useRef<HTMLDivElement>(null);
-  // 新闻标记：默认开（关一次记住）。globe 画在主图画布上（NewsMarkersLayer），随蜡烛同帧移动
-  const [showNews, setShowNews] = useState(() => localStorage.getItem('wiib-chart-news') !== '0');
-  const newsLayerRef = useRef<NewsMarkersLayer | null>(null);
-  const newsTipRef = useRef<HTMLDivElement>(null);
+  // 财经日历标记：默认开（关一次记住）。画在主图画布上（EconMarkersLayer），随蜡烛同帧移动
+  const [showEcon, setShowEcon] = useState(() => localStorage.getItem('wiib-chart-econ') !== '0');
+  const econLayerRef = useRef<EconMarkersLayer | null>(null);
+  const econTipRef = useRef<HTMLDivElement>(null);
   const cdRef = useRef<HTMLDivElement>(null);
   /** 仓位参考线的贴轴小签，由 250ms 循环随缩放平移重新定位 */
   const posLabelElsRef = useRef<{ el: HTMLDivElement; price: number }[]>([]);
@@ -895,38 +896,42 @@ export function CandleChart({
     };
   }, [tradeMarks, showMarks, interval, chartEpoch, isDark]);
 
-  // 新闻标记：打标快讯按 K 线时间桶聚合，globe 悬在所属那根上方，点开看内容。
-  // 语义是"这根K线覆盖的时间段内发生过什么新闻"——按发稿时刻定位，不承诺行情因果。
-  // 标记画在主图画布上（NewsMarkersLayer 挂蜡烛 series）：与蜡烛同帧渲染，平移缩放零延迟；
-  // 弹窗仍是 DOM（富文本+可点链接，画布画不了），点击命中在 pointerdown 里主动 pick
+  // 财经日历标记：High 级事件按 K 线时间桶聚合，日历图标悬在所属那根上方，点开看实际/预测/前值。
+  // 语义是"这根K线覆盖的时间段内公布了什么"——按公布时刻定位，不承诺行情因果。
+  // 标记画在主图画布上（EconMarkersLayer 挂蜡烛 series）：与蜡烛同帧渲染，平移缩放零延迟；
+  // 弹窗仍是 DOM（国旗与换行画布画不了），点击命中在 pointerdown 里主动 pick
   useEffect(() => {
     const wrap = wrapRef.current, candle = candleRef.current;
-    const newsTip = newsTipRef.current;
-    if (!newsTag || !showNews || !wrap || !candle) return;
+    const econTip = econTipRef.current;
+    if (!econMarks || !showEcon || !wrap || !candle) return;
     let disposed = false;
-    const en = uiLang === 'en';
     const bucketMs = BUCKET_MS[interval];
-    /** time → 该桶的快讯组，点击标记时按命中的时间桶取内容 */
-    const groups = new Map<number, NewsEventItem[]>();
-    const layer = new NewsMarkersLayer(time => {
+    /** time → 该桶的事件组，点击标记时按命中的时间桶取内容 */
+    const groups = new Map<number, EconCalendarEvent[]>();
+    const layer = new EconMarkersLayer(time => {
       const i = idxRef.current.get(time);
       return i == null ? null : barsRef.current[i].high;
     });
-    layer.palette = newsPalette();
+    layer.palette = econPalette();
     candle.attachPrimitive(layer);
-    newsLayerRef.current = layer;
+    econLayerRef.current = layer;
 
     const fmtClock = (ms: number) => new Date(ms).toLocaleString('zh-CN',
       { timeZone: 'Asia/Singapore', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-    const showPopup = (rect: { x: number; y: number; w: number }, events: NewsEventItem[]) => {
-      const tip = newsTipRef.current; if (!tip || !events.length) return;
-      tip.innerHTML = events.map(e =>
-        '<div style="padding:6px 0;border-bottom:1px solid var(--color-border)">'
-        + `<div class="mute" style="font-weight:700;margin-bottom:2px">${fmtClock(e.publishedAt)} · ${esc(e.tags)}</div>`
-        + `<div style="font-weight:700;margin-bottom:2px">${esc((en ? e.titleEn : e.title) ?? '')}</div>`
-        + `<div class="mute">${esc(clip((en ? e.contentEn : e.content) ?? '', 160))}</div>`
-        + (e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--color-primary);font-weight:700">${i18n.t('market:chart.newsSource')}</a>` : '')
-        + '</div>').join('');
+    /** 实际 · 预测 · 前值，有哪个拼哪个；讲话类三个都没有就空串 */
+    const values = (e: EconCalendarEvent) => ([['actual', e.actual], ['forecast', e.forecast], ['previous', e.previous]] as const)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${i18n.t(`home:calendar.${k}`)} ${esc(v!)}`).join(' · ');
+    const showPopup = (rect: { x: number; y: number; w: number }, events: EconCalendarEvent[]) => {
+      const tip = econTipRef.current; if (!tip || !events.length) return;
+      tip.innerHTML = events.map(e => {
+        const nums = values(e);
+        return '<div style="padding:6px 0;border-bottom:1px solid var(--color-border)">'
+          + `<div class="mute" style="font-weight:700;margin-bottom:2px">${fmtClock(e.eventTime)} · ${flagHtml(e.country)} ${esc(e.country)} / ${esc(e.currency)}</div>`
+          + `<div style="font-weight:700;margin-bottom:2px">${esc(e.title)}</div>`
+          + (nums ? `<div class="mute num">${nums}</div>` : '')
+          + '</div>';
+      }).join('');
       tip.style.display = 'block';
       // 内容定了再量尺寸：横向对中标记并夹在图内，纵向优先弹标记上方、顶部放不下翻到下方
       const W = wrap.clientWidth, tw = tip.offsetWidth, th = tip.offsetHeight;
@@ -935,27 +940,25 @@ export function CandleChart({
       tip.style.top = `${iy - th - 8 >= 4 ? iy - th - 8 : iy + 26}px`;
     };
 
-    // 窗口按内存上限的最远可翻历史算：翻到底标记也都在；服务端上限 500 条倒序保最近
-    quantApi.newsEvents(newsTag, Date.now() - bucketMs * MAX_BARS, Date.now() + bucketMs).then(events => {
+    // 窗口按内存上限的最远可翻历史算：翻到底标记也都在
+    quantApi.econCalendarEvents(Date.now() - bucketMs * MAX_BARS, Date.now() + bucketMs).then(events => {
       if (disposed || !events.length) return;
-      // 英文只留标题正文都译好的，没译完的不挂标记，不拿中文凑
-      for (const e of en ? events.filter(e => e.titleEn && e.contentEn) : events) {
-        const time = toBarTime(Math.floor(e.publishedAt / bucketMs) * bucketMs);
+      for (const e of events) {
+        const time = toBarTime(Math.floor(e.eventTime / bucketMs) * bucketMs);
         const g = groups.get(time) ?? [];
         g.push(e);
         groups.set(time, g);
       }
-      for (const g of groups.values()) g.sort((a, b) => a.publishedAt - b.publishedAt);
       layer.markers = [...groups.entries()].map(([time, g]) => ({ time, count: g.length }));
       layer.update();
-    }).catch(() => { /* 未登录/接口失败：没有标记而已，图表照常 */ });
+    }).catch(() => { /* 接口失败：没有标记而已，图表照常 */ });
 
     // 点击命中：capture 在 document 上——点中标记时截住事件（LWC 的拖拽别跟着起步），
     // 点在标记与弹窗之外的任何地方都收起弹窗
     const onDown = (ev: PointerEvent) => {
-      const tip = newsTipRef.current;
+      const tip = econTipRef.current;
       const target = ev.target as Node;
-      if (tip && tip.style.display !== 'none' && tip.contains(target)) return;   // 弹窗内（链接等）放行
+      if (tip && tip.style.display !== 'none' && tip.contains(target)) return;   // 弹窗内放行
       const paneCanvas = chartRef.current?.panes()[0]?.getHTMLElement()?.querySelector('canvas');
       const r = paneCanvas?.getBoundingClientRect();
       const hit = r ? layer.pick(ev.clientX - r.left, ev.clientY - r.top) : null;
@@ -972,12 +975,12 @@ export function CandleChart({
     return () => {
       disposed = true;
       document.removeEventListener('pointerdown', onDown, true);
-      newsLayerRef.current = null;
+      econLayerRef.current = null;
       // 图整体重建时 series 已死，detach 会抛，吞掉即可（同成交标记的清理）
       try { candle.detachPrimitive(layer); } catch { /* chart disposed */ }
-      if (newsTip) newsTip.style.display = 'none';
+      if (econTip) econTip.style.display = 'none';
     };
-  }, [newsTag, showNews, interval, chartEpoch, uiLang]);
+  }, [econMarks, showEcon, interval, chartEpoch, uiLang]);
 
   // 「最新价 + 收盘倒计时」墨块：顶在价格轴上原生最新价标签的位置（原生标签已关），
   // 上行价格、下行倒计时，一个框解决"倒计时和价格分家"。
@@ -1038,8 +1041,8 @@ export function CandleChart({
   // 主题切换：只改颜色，不重建
   useEffect(() => {
     applyThemeRef.current?.();
-    const news = newsLayerRef.current;
-    if (news) { news.palette = newsPalette(); news.update(); }
+    const econ = econLayerRef.current;
+    if (econ) { econ.palette = econPalette(); econ.update(); }
   }, [isDark]);
 
   // 外部价格 tick 驱动（streamLive=false）：桶对齐后更新/追加最后一根，量额保持历史值（价格流无量数据）
@@ -1210,16 +1213,16 @@ export function CandleChart({
           </button>
         )}
 
-        {/* 新闻标记开关：只有词表内标的（传了 newsTag）才出现 */}
-        {newsTag != null && (
-          <button type="button" title={t('chart.newsTitle')}
-                  className={cn('ibtn', showNews && 'on')}
+        {/* 财经日历标记开关：只有 BTC 才出现 */}
+        {econMarks && (
+          <button type="button" title={t('chart.econTitle')}
+                  className={cn('ibtn', showEcon && 'on')}
                   onClick={() => {
-                    const v = !showNews;
-                    setShowNews(v);
-                    localStorage.setItem('wiib-chart-news', v ? '1' : '0');
+                    const v = !showEcon;
+                    setShowEcon(v);
+                    localStorage.setItem('wiib-chart-econ', v ? '1' : '0');
                   }}>
-            <Globe className="ic" />
+            <CalendarClock className="ic" />
           </button>
         )}
 
@@ -1271,8 +1274,8 @@ export function CandleChart({
           {/* B/S 标记的点击弹窗：逐笔成交价（subscribeClick 填充） */}
           <div ref={markTipRef} className="absolute z-[6] pointer-events-none px-2.5 py-1.5 border border-foreground bg-background text-[12px] min-w-[130px]"
                style={{ display: 'none' }} />
-          {/* 新闻图标的点击弹窗：时间+标题+摘要+源链接。链接要能点，pointerEvents 保持默认 */}
-          <div ref={newsTipRef} className="absolute z-[6] px-3 py-0.5 border border-foreground bg-background text-[12px] leading-[1.55] w-[280px] max-h-[240px] overflow-y-auto"
+          {/* 日历图标的点击弹窗：时间+国旗+标题+实际/预测/前值 */}
+          <div ref={econTipRef} className="absolute z-[6] px-3 py-0.5 border border-foreground bg-background text-[12px] leading-[1.55] w-[280px] max-h-[240px] overflow-y-auto"
                style={{ display: 'none' }} />
           {/* 「最新价 + 收盘倒计时」墨块：顶替原生最新价轴标签，右缘与价格轴齐平 */}
           <div ref={cdRef} className="num absolute z-[4] pointer-events-none bg-foreground text-background text-[11px] font-bold leading-[1.35] text-center"

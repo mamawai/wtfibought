@@ -296,7 +296,8 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
         }
         String finishReason = candidate.getString("finishReason");
         if (finishReason != null) {
-            if (!"STOP".equals(finishReason) && !"MAX_TOKENS".equals(finishReason)) {
+            // 只有 STOP 是完整回答：MAX_TOKENS 是截断、SAFETY 等是拦下，半截不当结论
+            if (!"STOP".equals(finishReason)) {
                 return Flux.error(new NonTransientAiException("Gemini 生成终止: " + finishReason));
             }
             frames.add(finalFrame(state.sawToolCall, usageMetadata(state, chunk.getString("responseId")),
@@ -344,6 +345,11 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
                     state.usage.getInteger("promptTokenCount"),
                     state.usage.getInteger("candidatesTokenCount"),
                     state.usage.getInteger("totalTokenCount")));
+            // 隐式缓存 2.5 起默认开，不用声明；命中数是 promptTokenCount 内部的明细，不另加
+            Integer cached = state.usage.getInteger("cachedContentTokenCount");
+            if (cached != null && cached > 0) {
+                log.info("[Gemini] {} 缓存命中{}/{}", model, cached, state.usage.getInteger("promptTokenCount"));
+            }
         }
         return metadata.build();
     }

@@ -2,8 +2,6 @@ package com.mawai.wiibagent.llm;
 
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
-import org.bsc.langgraph4j.state.AppenderChannel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -23,6 +21,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -51,15 +50,6 @@ class ConversationSummarizerTest {
                 .thenReturn(new ChatResponse(List.of(new Generation(new AssistantMessage(text)))));
     }
 
-    @SuppressWarnings("unchecked")
-    private List<Message> compressedOf(Map<String, Object> update) {
-        return ((AppenderChannel.ReplaceAllWith<Message>) update.get("messages")).newValues();
-    }
-
-    private static MessagesState<Message> stateOf(List<Message> messages) {
-        return new MessagesState<>(Map.of("messages", messages));
-    }
-
     // ===== token 估算：中英文分别校准 =====
 
     @Test
@@ -83,10 +73,10 @@ class ConversationSummarizerTest {
 
     @Test
     void skipsWhenUnderThreshold() {
-        Map<String, Object> update = summarizer(10_000, 6)
-                .applyBefore("agent", stateOf(List.of(new UserMessage("短对话"))), null).join();
+        Optional<List<Message>> compressed = summarizer(10_000, 6)
+                .compress(List.of(new UserMessage("短对话")));
 
-        assertThat(update).isEmpty();
+        assertThat(compressed).isEmpty();
         verify(summaryModel, never()).call(any(org.springframework.ai.chat.prompt.Prompt.class));
     }
 
@@ -99,8 +89,7 @@ class ConversationSummarizerTest {
             messages.add(new AssistantMessage("这是一段很长的助手回复用来撑高token计数" + i));
         }
 
-        Map<String, Object> update = summarizer(50, 3).applyBefore("agent", stateOf(messages), null).join();
-        List<Message> compressed = compressedOf(update);
+        List<Message> compressed = summarizer(50, 3).compress(messages).orElseThrow();
 
         assertThat(compressed).hasSize(1 + 1 + 3); // 首条用户消息 + 摘要 + 最近3条
         assertThat(compressed.get(0)).isInstanceOf(UserMessage.class);
@@ -127,8 +116,7 @@ class ConversationSummarizerTest {
         messages.add(ToolResponseMessage.builder().responses(List.of(
                 new ToolResponseMessage.ToolResponse("call_1", "getSnapshot", "{\"price\":95000}"))).build());
 
-        List<Message> compressed = compressedOf(
-                summarizer(50, 2).applyBefore("agent", stateOf(messages), null).join());
+        List<Message> compressed = summarizer(50, 2).compress(messages).orElseThrow();
 
         // 配对的两条要么都在保留区、要么都被压缩，不能只剩一半
         boolean hasCall = compressed.stream().anyMatch(m -> m instanceof AssistantMessage a
@@ -160,7 +148,7 @@ class ConversationSummarizerTest {
             messages.add(new AssistantMessage("闲聊填充把体积撑过阈值" + i));
         }
 
-        summarizer(50, 2).applyBefore("agent", stateOf(messages), null).join();
+        summarizer(50, 2).compress(messages);
 
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(summaryModel).call(prompt.capture());
@@ -195,8 +183,7 @@ class ConversationSummarizerTest {
             messages.add(new AssistantMessage("新一轮对话内容填充把体积撑过阈值" + i));
         }
 
-        List<Message> compressed = compressedOf(
-                summarizer(50, 3).applyBefore("agent", stateOf(messages), null).join());
+        List<Message> compressed = summarizer(50, 3).compress(messages).orElseThrow();
 
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(summaryModel).call(prompt.capture());
@@ -249,12 +236,12 @@ class ConversationSummarizerTest {
         stubSummary("摘要");
         List<Message> messages = shapeOf(spec);
 
-        Map<String, Object> update = summarizer(1, keep).applyBefore("agent", stateOf(messages), null).join();
-        if (update.isEmpty()) {
+        Optional<List<Message>> result = summarizer(1, keep).compress(messages);
+        if (result.isEmpty()) {
             return; // 没触发压缩（历史比保留数还短 / 无新原文可压）：没产出就没有孤儿
         }
 
-        List<Message> compressed = compressedOf(update);
+        List<Message> compressed = result.orElseThrow();
         // 只查"回执找不到调用"：compress 是严格前缀切、提头的两条带不了 toolCalls，
         // 所以反方向的孤儿构造不出来（详见真跑类 recordPairingViolation 的注释）
         assertThat(responseIds(compressed))
@@ -274,8 +261,7 @@ class ConversationSummarizerTest {
         stubSummary("摘要");
         List<Message> messages = shapeOf(REAL_SHAPES.get("run1-R3-首压"));
 
-        List<Message> compressed = compressedOf(
-                summarizer(1, 4).applyBefore("agent", stateOf(messages), null).join());
+        List<Message> compressed = summarizer(1, 4).compress(messages).orElseThrow();
 
         assertThat(compressed).hasSize(4 + 3); // keep+2 是理想切点；多这一条 = 守卫退了一步
         assertThat(responseIds(compressed)).isEqualTo(callIds(compressed));
@@ -342,7 +328,7 @@ class ConversationSummarizerTest {
             messages.add(new AssistantMessage("很长很长的助手回复内容用来撑高计数" + i));
         }
 
-        // 压缩失败只记日志，返回空更新=沿用原始对话，不该打断整轮对话
-        assertThat(summarizer(50, 3).applyBefore("agent", stateOf(messages), null).join()).isEmpty();
+        // 压缩失败只记日志，返回空=沿用原始对话，不该打断整轮对话
+        assertThat(summarizer(50, 3).compress(messages)).isEmpty();
     }
 }

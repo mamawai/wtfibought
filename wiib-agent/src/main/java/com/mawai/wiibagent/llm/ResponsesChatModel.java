@@ -19,7 +19,11 @@ import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.http.HttpHeaders;
 import reactor.core.publisher.Flux;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -28,10 +32,18 @@ import java.util.Map;
  * <p>
  * 思考档位走 reasoning.effort；无状态模式（store=false，历史每轮全量带），
  * 服务端搜索声明 {@code {"type":"web_search"}}。
+ * 提示缓存不用声明，各家都是自动的；只捎一个分组键让同前缀的请求落到同一台机器（见 {@link #cacheKey}）。
  * 流式：正文只认 output_text.delta，工具调用整只收在 output_item.done，response.completed 发收尾帧；
- * 不发增量事件的网关，正文与工具从 completed 的 output 兜底。
+ * 不发增量事件的网关，正文、工具与原始 item 都从 completed 的 output 兜底。
+ * <p>
+ * 原始 item 回放：本轮 output 的 item 数组（reasoning / message / function_call…）挂在收尾帧消息的 {@link #ITEMS_KEY} 上，
+ * 只有还在工具循环里的那条（后面紧跟工具回执）原样回放——store=false 下 reasoning 的 encrypted_content 得原样回去，
+ * 模型才接得上上一步的推理；其余按文本 + function_call 拼（见 {@link #inToolLoop}）。
  */
-public class ResponsesChatModel extends SseChatModel<SseChatModel.StreamState> {
+public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
+
+    /** 消息 metadata 键：本轮 output 原始 item 数组的 JSON 串 */
+    public static final String ITEMS_KEY = "wiib_responses_items";
 
     public ResponsesChatModel(String apiKey, String baseUrl, String model, Double temperature,
                               String reasoningEffort, ToolCallingManager toolCallingManager,
@@ -42,8 +54,8 @@ public class ResponsesChatModel extends SseChatModel<SseChatModel.StreamState> {
     }
 
     @Override
-    protected StreamState newState() {
-        return new StreamState();
+    protected State newState() {
+        return new State();
     }
 
     @Override
@@ -73,7 +85,9 @@ public class ResponsesChatModel extends SseChatModel<SseChatModel.StreamState> {
         // system 消息进 instructions（Responses 惯例），其余按序转 input items
         StringBuilder instructions = new StringBuilder();
         JSONArray input = new JSONArray();
-        for (Message message : prompt.getInstructions()) {
+        List<Message> history = prompt.getInstructions();
+        for (int i = 0; i < history.size(); i++) {
+            Message message = history.get(i);
             switch (message.getMessageType()) {
                 case SYSTEM -> {
                     if (!instructions.isEmpty()) {
@@ -82,20 +96,7 @@ public class ResponsesChatModel extends SseChatModel<SseChatModel.StreamState> {
                     instructions.append(message.getText());
                 }
                 case USER -> input.add(messageItem("user", "input_text", message.getText()));
-                case ASSISTANT -> {
-                    AssistantMessage assistant = (AssistantMessage) message;
-                    if (assistant.getText() != null && !assistant.getText().isBlank()) {
-                        input.add(messageItem("assistant", "output_text", assistant.getText()));
-                    }
-                    // 历史工具调用重建为 function_call item——function_call_output 必须有配对的调用项
-                    for (AssistantMessage.ToolCall tc : assistant.getToolCalls()) {
-                        input.add(new JSONObject()
-                                .fluentPut("type", "function_call")
-                                .fluentPut("call_id", tc.id())
-                                .fluentPut("name", tc.name())
-                                .fluentPut("arguments", tc.arguments()));
-                    }
-                }
+                case ASSISTANT -> input.addAll(assistantItems((AssistantMessage) message, inToolLoop(history, i)));
                 case TOOL -> {
                     for (ToolResponseMessage.ToolResponse tr : ((ToolResponseMessage) message).getResponses()) {
                         input.add(new JSONObject()
@@ -133,8 +134,30 @@ public class ResponsesChatModel extends SseChatModel<SseChatModel.StreamState> {
                 body.put("tool_choice", ToolChoice.of(toolOptions));
             }
         }
+        body.put("prompt_cache_key", cacheKey(instructions.toString(), toolNames));
         logRequest(body.getString("model"), body.getString("tool_choice"), toolNames);
         return body;
+    }
+
+    /**
+     * 提示缓存的分组键：它不是缓存句柄，是个标签，告诉上游"带同一个标签的请求共用同一段前缀"。
+     * xAI 按它路由到同一台机器（缓存按机器存，不给标签就可能每次换机器，前面存的白存），
+     * OpenAI 拿它分账与隔离。
+     * <p>
+     * 取 instructions + 工具名的哈希：这两样正好决定了可复用的那段前缀，同一个 agent 跨轮跨唤醒键不变，
+     * 它们变了键跟着变（那时旧前缀本就失效）。送哈希不送原文——system 里有用户自己写的字。
+     */
+    private static String cacheKey(String instructions, List<String> toolNames) {
+        try {
+            MessageDigest sha = MessageDigest.getInstance("SHA-256");
+            sha.update(instructions.getBytes(StandardCharsets.UTF_8));
+            for (String name : toolNames) {
+                sha.update(name.getBytes(StandardCharsets.UTF_8));
+            }
+            return HexFormat.of().formatHex(sha.digest(), 0, 12);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
     }
 
     private JSONObject messageItem(String role, String contentType, String text) {
@@ -146,10 +169,42 @@ public class ResponsesChatModel extends SseChatModel<SseChatModel.StreamState> {
                         .fluentPut("text", text == null ? "" : text)));
     }
 
+    /**
+     * assistant 消息 → input item。工具循环里的那条带 {@link #ITEMS_KEY} 就原样回放；
+     * 其余按文本 + function_call 拼（已结束的轮次、别的协议留下的历史、压缩产物）。
+     */
+    private List<JSONObject> assistantItems(AssistantMessage assistant, boolean replayRaw) {
+        List<JSONObject> items = new ArrayList<>();
+        if (replayRaw && assistant.getMetadata().get(ITEMS_KEY) instanceof String raw) {
+            JSONArray stored = JSON.parseArray(raw);
+            for (int i = 0; i < stored.size(); i++) {
+                items.add(stored.getJSONObject(i));
+            }
+            return items;
+        }
+        if (assistant.getText() != null && !assistant.getText().isBlank()) {
+            items.add(messageItem("assistant", "output_text", assistant.getText()));
+        }
+        // 历史工具调用重建为 function_call item——function_call_output 必须有配对的调用项
+        for (AssistantMessage.ToolCall tc : assistant.getToolCalls()) {
+            items.add(new JSONObject()
+                    .fluentPut("type", "function_call")
+                    .fluentPut("call_id", tc.id())
+                    .fluentPut("name", tc.name())
+                    .fluentPut("arguments", tc.arguments()));
+        }
+        return items;
+    }
+
     // ========== 响应解析 ==========
 
+    /** 一次订阅里按顺序攒的原始 output item：收尾时整体挂到消息 metadata 原样回传 */
+    protected static class State extends StreamState {
+        final JSONArray items = new JSONArray();
+    }
+
     @Override
-    protected Flux<ChatResponse> toFrames(JSONObject event, StreamState state) {
+    protected Flux<ChatResponse> toFrames(JSONObject event, State state) {
         // 事件类型以 data.type 为准（比 event: 行更普适，CPA/OpenAI 都带）
         String type = event.getString("type");
         if (type == null) {
@@ -178,6 +233,7 @@ public class ResponsesChatModel extends SseChatModel<SseChatModel.StreamState> {
                 if (item == null) {
                     return Flux.empty();
                 }
+                state.items.add(item);
                 if (isSearchCall(item)) {
                     return Flux.just(searchFrame(searchedEvent(item.getJSONObject("action"))));
                 }
@@ -205,24 +261,27 @@ public class ResponsesChatModel extends SseChatModel<SseChatModel.StreamState> {
                             "Responses 流式失败: " + extractErrorMessage(response)));
                 }
                 List<ChatResponse> frames = new ArrayList<>();
+                JSONArray output = response == null ? null : response.getJSONArray("output");
                 // 兜底：不发增量事件的服务端，正文和工具调用都只在完整响应的 output 里
-                if (!state.sawText && !state.sawToolCall && response != null) {
-                    JSONArray output = response.getJSONArray("output");
+                if (!state.sawText && !state.sawToolCall && output != null) {
                     String fullText = extractOutputText(output);
                     if (!fullText.isEmpty()) {
                         frames.add(textFrame(fullText));
                     }
-                    if (output != null) {
-                        for (int i = 0; i < output.size(); i++) {
-                            JSONObject item = output.getJSONObject(i);
-                            if ("function_call".equals(item.getString("type"))) {
-                                state.sawToolCall = true;
-                                frames.add(toolCallFrame(parseToolCall(item)));
-                            }
+                    for (int i = 0; i < output.size(); i++) {
+                        JSONObject item = output.getJSONObject(i);
+                        if ("function_call".equals(item.getString("type"))) {
+                            state.sawToolCall = true;
+                            frames.add(toolCallFrame(parseToolCall(item)));
                         }
                     }
                 }
-                frames.add(finalFrame(state.sawToolCall, completedMetadata(response)));
+                // 原始 item 同理：一条 output_item.done 都没来的，整份 output 就是它
+                if (state.items.isEmpty() && output != null) {
+                    state.items.addAll(output);
+                }
+                frames.add(finalFrame(state.sawToolCall, completedMetadata(response),
+                        Map.of(ITEMS_KEY, state.items.toJSONString())));
                 return Flux.fromIterable(frames);
             }
             case "response.failed", "response.incomplete" -> {
@@ -262,6 +321,7 @@ public class ResponsesChatModel extends SseChatModel<SseChatModel.StreamState> {
             JSONObject usage = response.getJSONObject("usage");
             if (usage != null) {
                 metadata.usage(parseUsage(usage));
+                logCacheHit(usage);
                 Integer serverTools = usage.getInteger("num_server_side_tools_used");
                 if (serverTools != null && serverTools > 0) {
                     metadata.keyValue("num_server_side_tools_used", serverTools);
@@ -276,10 +336,16 @@ public class ResponsesChatModel extends SseChatModel<SseChatModel.StreamState> {
         return metadata.build();
     }
 
-    private String extractOutputText(JSONArray output) {
-        if (output == null) {
-            return "";
+    /** 缓存命中观测：cached_tokens 是 input_tokens 内部的明细、不另加，命中好不好只能靠它看 */
+    private void logCacheHit(JSONObject usage) {
+        JSONObject details = usage.getJSONObject("input_tokens_details");
+        Integer cached = details == null ? null : details.getInteger("cached_tokens");
+        if (cached != null && cached > 0) {
+            log.info("[Responses] {} 缓存命中{}/{}", model, cached, usage.getInteger("input_tokens"));
         }
+    }
+
+    private String extractOutputText(JSONArray output) {
         StringBuilder text = new StringBuilder();
         for (int i = 0; i < output.size(); i++) {
             JSONObject item = output.getJSONObject(i);

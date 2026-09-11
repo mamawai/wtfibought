@@ -36,7 +36,7 @@ class UsageTrackingChatModelTest {
 
     /**
      * 最要命的一条：getOptions 必须是被包模型那个实例本身。
-     * 返回自己新造的 options，ReactAgent 拿到的 tools 就是空数组，一个工具都调不动。
+     * 返回自己新造的 options，ResilientChatService 挂出去的 tools 就是空数组，一个工具都调不动。
      */
     @Test
     void getOptionsIsPassedThroughUntouched() {
@@ -115,7 +115,7 @@ class UsageTrackingChatModelTest {
     }
 
     /**
-     * 对话轨的实例跟着叶子图跨轮缓存，只能靠 reset 划轮边界：清完必须回到"一次没调过"的状态，
+     * 对话轨的实例跟着叶子跨轮缓存，只能靠 reset 划轮边界：清完必须回到"一次没调过"的状态，
      * token 三项要回 null 而不是 0——否则新一轮上游不报 usage 时，前端看到的是个假的 0。
      */
     @Test

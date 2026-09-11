@@ -41,7 +41,7 @@ import static org.mockito.Mockito.when;
  * LearningRunner 回路测试：合格判定（两个必需段）/降级安全（格式失守不动笔记）/2000字截断/
  * 三样注入齐全/失败与超时只留 ERROR 行不计连败。提示词按习惯配套断言。
  * <p>
- * 这些用例跑的是真 ReactAgent 图，只是模型第一轮就给终稿（不调工具）——工具循环那条路
+ * 这些用例跑的是真 ReactLoop，只是模型第一轮就给终稿（不调工具）——工具循环那条路
  * 由 {@link LearningLoopTest} 覆盖。
  */
 class LearningRunnerTest {
@@ -92,7 +92,7 @@ class LearningRunnerTest {
                 """);
     }
 
-    /** 第一轮就给终稿的模型（不调工具）。getOptions 必须给真 options，否则 ReactAgent 拿到的工具是空数组。 */
+    /** 第一轮就给终稿的模型（不调工具）。getOptions 必须给真 options，否则 ResilientChatService 挂出去的工具列表就是空数组。 */
     private ChatModel modelReturning(String text) {
         ChatModel model = mock(ChatModel.class);
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());

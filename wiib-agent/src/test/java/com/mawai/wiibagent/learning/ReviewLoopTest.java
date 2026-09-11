@@ -14,6 +14,7 @@ import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
+import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
@@ -70,7 +71,7 @@ class ReviewLoopTest {
 
     private final ReviewRunner runner = new ReviewRunner(
             new ReviewMaterialAssembler(decisionMapper, planMapper, simTradeClient, historyStore,
-                    new PromptCatalog()),
+                    new PromptCatalog(), new DecisionText(new PromptCatalog())),
             modelFactory, traderMapper, decisionMapper, new PromptCatalog(), langResolver);
 
     {

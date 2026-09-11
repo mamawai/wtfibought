@@ -1,6 +1,9 @@
 package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
+import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.llm.SseChannel;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
 import org.junit.jupiter.api.Test;

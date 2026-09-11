@@ -3,26 +3,22 @@ package com.mawai.wiibagent.chat;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
+import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
-import com.mawai.wiibagent.llm.CancelSignal;
 import com.mawai.wiibagent.llm.ConversationSummarizer;
 import com.mawai.wiibagent.llm.LlmErrorMessages;
-import com.mawai.wiibagent.llm.ModelCallLimiter;
+import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.llm.SseChatModel;
 import com.mawai.wiibagent.llm.ToolChoice;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.bsc.langgraph4j.NodeOutput;
-import org.bsc.langgraph4j.RunnableConfig;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
-import org.bsc.langgraph4j.streaming.StreamingOutput;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
@@ -64,7 +60,7 @@ import java.util.function.Consumer;
  * 终态（含压缩替换）整体覆盖会话历史，下一轮从这里起跑
  * </pre>
  * 编排用普通 Java 循环：分支就是 if、并行就是虚拟线程、回环就是 while。
- * 叶子 agent 保留 ReactAgent，那里的 ReAct 循环确实是框架在管。
+ * 叶子是 {@link ReactLoop}，那里只有模型 ↔ 工具的直线循环。
  * <p>
  * <b>让位</b>（用户消息优先于专家返回）：专家等待期收到 {@link TurnYield} 的信号即让位——
  * 存档 working、把在途批次交回（{@link TurnResult}），由 {@link ChatYieldCoordinator} 排队；
@@ -85,7 +81,7 @@ public class ChatTurnRunner {
     /** 专家并行用。虚拟线程：专家全程阻塞在上游 HTTP 上，池大小不该成为约束 */
     private final ExecutorService expertExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
-    /** 结束派发、转去汇总的信号值。对齐 langgraph4j 官方 how-to 的 Router.next 值域（含 FINISH） */
+    /** 结束派发、转去汇总的信号值，也是路由工具的结束值 */
     static final String FINISH = "FINISH";
 
     /**
@@ -333,15 +329,15 @@ public class ChatTurnRunner {
         }
 
         working.add(new UserMessage(summaryTail(lang, !dispatched.isEmpty(), intent)));
-        // 答案流的检查点在拉流循环里，中断时半截答案已经攒在这儿
+        // 中断时半截答案已经攒在这儿：token 逐帧进来，掐断在哪一帧就攒到哪一帧
         StringBuilder emitted = new StringBuilder();
-        NodeOutput<MessagesState<Message>> last =
+        ReactLoop.Result result =
                 streamSummarizer(leaves, working, userId, sessionId, chunk -> {
                     emitted.append(chunk);
                     answerTokenSink.accept(chunk);
                 }, searchSink, yield);
         if (yield.cancelRequested()) {
-            // 拉流是 break 出来的，在途那条流已被中断信号掐断（见 CancelSignal），但它的收尾帧没到、
+            // 在途那条流已被中断信号掐断、循环在检查点退出了，但收尾帧没到、
             // 这次调用的 token 未知——账本就此不可信，标记让它退化成只报耗时
             leaves.deep().markAbandoned();
             leaves.light().markAbandoned();
@@ -349,13 +345,12 @@ public class ChatTurnRunner {
         }
 
         // 终态含压缩替换 + 本轮全部新消息，整体覆盖会话历史（下一轮从这里起跑）
-        List<Message> finalMessages = last.state().messages();
+        List<Message> finalMessages = result.messages();
         contextStore.save(sessionId, userId, finalMessages);
 
         log.info("[TurnMetrics] session={} rounds={} experts={} summarizerCalls={} historyIn={} "
                         + "historyOut={} estTokensIn={} durationMs={}",
-                sessionId, round, dispatched.size(),
-                last.state().<Number>value(ModelCallLimiter.CALL_COUNT_KEY).map(Number::intValue).orElse(0),
+                sessionId, round, dispatched.size(), result.modelCalls(),
                 history.size(), finalMessages.size(),
                 // 估算不是计费口径：按 CJK 1 字≈1 token 折的，只用来看"这轮喂进去多大"
                 ConversationSummarizer.estimateTokens(working),
@@ -460,46 +455,34 @@ public class ChatTurnRunner {
     /**
      * summarizer 叶子流式收尾。
      * 摔了先把 working 落库再抛：用户消息和专家结论此刻只在内存里，不落库的话用户重试一遍，
-     * 专家全得重派重烧（market 还打真实上游配额）。存 working 而不是半截 state：
-     * 摔掉那次的工具往来本来就没凑成完整配对，不该进历史。
+     * 专家全得重派重烧（market 还打真实上游配额）。
      */
-    private NodeOutput<MessagesState<Message>> streamSummarizer(ChatAgentFactory.Leaves leaves,
-                                                                List<Message> working, long userId,
-                                                                String sessionId, Consumer<String> tokenSink,
-                                                                Consumer<SearchEvent> searchSink,
-                                                                TurnYield yield) {
-        // threadId 给 ApprovalGate 取会话号，少了它 HITL 整条链断掉（工具方法体那份走 state 里的 SESSION_KEY）；
-        // 中断信号也从这儿带进图：模型节点的 CancelSignal.hook 把它接到答案流上，点停止就掐断在途流
-        RunnableConfig config = RunnableConfig.builder().threadId(sessionId)
-                .addMetadata(CancelSignal.CONFIG_KEY, yield.cancelSignal()).build();
-        NodeOutput<MessagesState<Message>> last = null;
-        try {
-            // 必须用普通迭代消费而非 forEachAsync：后者 thenCompose 递归自链，
-            // 每个流式 chunk 叠一层栈帧，长回答（数千帧）会 StackOverflowError（真跑实证过）
-            // 会话号随 state 走：框架执行工具时整个 state 就是 ToolContext，工具靠它推进度、推表单卡
-            for (NodeOutput<MessagesState<Message>> output : leaves.summarizer().stream(
-                    Map.of("messages", working, ToolRunContext.SESSION_KEY, sessionId), config)) {
-                if (output instanceof StreamingOutput<?> streaming) {
-                    String chunk = streaming.chunk();
-                    if (chunk != null && !chunk.isEmpty()) {
-                        tokenSink.accept(chunk);
-                    }
-                    // 搜索过程帧是空文本帧，事件挂在这一帧的响应 metadata 上
-                    streaming.metadata("chatResponseMetadata")
-                            .filter(ChatResponseMetadata.class::isInstance)
-                            .map(m -> ((ChatResponseMetadata) m).<String>get(SearchEvent.KEY))
-                            .ifPresent(json -> searchSink.accept(SearchEvent.parse(json)));
+    private ReactLoop.Result streamSummarizer(ChatAgentFactory.Leaves leaves,
+                                              List<Message> working, long userId,
+                                              String sessionId, Consumer<String> tokenSink,
+                                              Consumer<SearchEvent> searchSink,
+                                              TurnYield yield) {
+        ReactLoop.Listener listener = new ReactLoop.Listener() {
+            @Override
+            public void chunk(ChatResponse frame) {
+                String chunk = frame.getResults().getFirst().getOutput().getText();
+                if (chunk != null && !chunk.isEmpty()) {
+                    tokenSink.accept(chunk);
                 }
-                last = output;
-                if (yield.cancelRequested()) {
-                    break;
+                // 搜索过程帧是空文本帧，事件挂在这一帧的响应 metadata 上
+                String json = frame.getMetadata().get(SearchEvent.KEY);
+                if (json != null) {
+                    searchSink.accept(SearchEvent.parse(json));
                 }
             }
+        };
+        try {
+            // 会话号进 ToolContext 与闸门；中断信号直接掐模型流，点停止就在下一个检查点退出
+            return leaves.summarizer().run(working, sessionId, yield.cancelSignal(), listener);
         } catch (RuntimeException e) {
             contextStore.save(sessionId, userId, working);
             throw e;
         }
-        return last;
     }
 
     /**
@@ -526,12 +509,8 @@ public class ChatTurnRunner {
             if (expert.preload() != null) {
                 messages.add(new UserMessage(prompts.get(lang, "chat.preloadHeader") + "\n" + expert.preload().get()));
             }
-            // 专家叶子没有 saver，每次 invoke 都从 schema 起算，不需要 threadId 隔离
-            Message reply = expert.graph()
-                    .invoke(Map.of("messages", messages), RunnableConfig.builder().build())
-                    .flatMap(MessagesState::lastMessage)
-                    .orElse(null);
-            String text = reply == null ? null : reply.getText();
+            Message reply = expert.loop().run(messages, null, null, null).messages().getLast();
+            String text = reply.getText();
             if (text == null || text.isBlank()) {
                 // 空结论不当数据接：接了 summarizer 只会答"没有数据"，且无处排查
                 log.warn("[Workbench] 专家 {} 没有产出任何内容", name);

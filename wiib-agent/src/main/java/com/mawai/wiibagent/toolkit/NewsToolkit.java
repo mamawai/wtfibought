@@ -49,13 +49,13 @@ public class NewsToolkit {
         return arr.toJSONString();
     }
 
-    /** 建图时取一个绑定语言的工具视图挂上去 */
+    /** 建叶子时取一个绑定语言的工具视图挂上去 */
     public NewsSearchTool boundTo(AgentLang lang) {
         return new NewsSearchTool(this, lang);
     }
 
     /**
-     * 语言在建图时烤进来，<b>不做成工具参数</b>——做成参数就等于让模型自己挑新闻用哪门语言，
+     * 语言在建叶子时烤进来，<b>不做成工具参数</b>——做成参数就等于让模型自己挑新闻用哪门语言，
      * 同 {@code TraderQueryToolkit} 烤 userId 的道理。
      */
     @RequiredArgsConstructor

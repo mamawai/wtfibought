@@ -70,7 +70,7 @@ class ToolChoiceTest {
 
         // 干净首轮：只有提问
         assertThat(ToolChoice.isFirstTurn(List.of(user))).isTrue();
-        // 本轮已拿过工具结果：不再是首轮（ReactAgent 循环收尾必须放开）
+        // 本轮已拿过工具结果：不再是首轮（ReactLoop 收尾必须放开）
         assertThat(ToolChoice.isFirstTurn(List.of(user, assistant, toolResponse))).isFalse();
         // 上一轮的 TRM 在新提问之前（summarizer 深研判留痕）：新一轮仍是首轮
         assertThat(ToolChoice.isFirstTurn(List.of(toolResponse, assistant, user))).isTrue();

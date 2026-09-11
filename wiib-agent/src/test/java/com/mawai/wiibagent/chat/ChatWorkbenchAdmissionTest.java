@@ -1,5 +1,11 @@
 package com.mawai.wiibagent.chat;
 
+import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
+import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
+import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.store.ChatContextStore;
+import com.mawai.wiibagent.chat.store.ChatHistoryService;
+import com.mawai.wiibagent.controller.ChatWorkbenchController;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibagent.llm.LlmEndpointService;
@@ -9,6 +15,8 @@ import org.assertj.core.api.ThrowableAssert;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
@@ -36,6 +44,10 @@ class ChatWorkbenchAdmissionTest {
     private final ChatTurnRunner turnRunner = mock(ChatTurnRunner.class);
 
     private ChatWorkbenchController controller(ChatConcurrencyGate gate) {
+        return controller(gate, Executors.newVirtualThreadPerTaskExecutor());
+    }
+
+    private ChatWorkbenchController controller(ChatConcurrencyGate gate, ExecutorService streamExecutor) {
         // mock runner 默认返回 null，streamer 会在 result.cancelled() 上 NPE——真跑到 run 的用例要正常收尾
         when(turnRunner.run(any(), anyLong(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(ChatTurnRunner.TurnResult.COMPLETED);
@@ -48,7 +60,7 @@ class ChatWorkbenchAdmissionTest {
         return new ChatWorkbenchController(factory, llmConfigService, approvals,
                 history, mock(ChatContextStore.class), streamer, mock(ChatTurnRewinder.class),
                 runRegistry, gate, new MessageCatalog(), coordinator,
-                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang());
+                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), streamExecutor);
     }
 
     private static void chat(ChatWorkbenchController controller, long userId) {
@@ -119,8 +131,9 @@ class ChatWorkbenchAdmissionTest {
         when(llmConfigService.chatEndpoints(1L)).thenReturn(ChatTestEndpoints.eps(1L, "gpt-5"));
         when(factory.leavesFor(any(), any())).thenReturn(null); // 跑不到用它的那一步
         ChatConcurrencyGate gate = new ChatConcurrencyGate(1);
-        ChatWorkbenchController controller = controller(gate);
-        controller.streamExecutor.shutdown(); // 之后 execute 必被拒
+        ExecutorService closed = Executors.newVirtualThreadPerTaskExecutor();
+        closed.shutdown(); // 关掉的执行器 execute 必被拒
+        ChatWorkbenchController controller = controller(gate, closed);
 
         assertThatThrownBy(() -> chat(controller, 1L)).isInstanceOf(RejectedExecutionException.class);
 

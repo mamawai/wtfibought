@@ -8,7 +8,6 @@ import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
-import com.mawai.wiibagent.learning.ReviewMaterialAssembler;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
@@ -27,7 +26,7 @@ import java.util.stream.Collectors;
 
 /**
  * 竞技场「已了结交易 · 论点→结局」：sim 已平仓位 ⟵配对⟶ 交易计划 ⟵关联⟶ 开仓/平仓那一轮的决策全文。
- * 配对与了结方式推断复用 ReviewMaterialAssembler 的同一套算法（复盘/同侪学习/竞技场三处一致，各配一套会自相矛盾）。
+ * 配对与了结方式推断复用 {@link TradePairing} 的同一套算法（复盘/同侪学习/竞技场三处一致，各配一套会自相矛盾）。
  * 只看当前局：每局独立 sim 子账户，AiTrader 只存当前局 simUserId，历史局查不回来。
  */
 @Service
@@ -64,7 +63,7 @@ public class TradeRecordService {
         List<AiTraderPlan> plans = planMapper.selectList(new LambdaQueryWrapper<AiTraderPlan>()
                 .eq(AiTraderPlan::getTraderId, t.getId())
                 .eq(AiTraderPlan::getRoundNo, t.getRoundNo()));
-        Map<FuturesPositionDTO, AiTraderPlan> planByPos = ReviewMaterialAssembler.pairAll(closed, plans);
+        Map<FuturesPositionDTO, AiTraderPlan> planByPos = TradePairing.pairAll(closed, plans);
         Map<Long, AiTraderDecision> openByWake = openDecisions(t, planByPos.values());
         Map<Long, DecisionRef> closeByPos = closeDecisions(t, closed);
 
@@ -74,15 +73,15 @@ public class TradeRecordService {
             AiTraderDecision open = plan == null ? null : openByWake.get(plan.getOpenedWakeTime());
             // 下发语言无关的码，文案由前端查自己的词表：这张卡是给人看的界面元素，
             // 该跟界面语言走；服务端渲染成某一门语言存下来，切了语言就翻不回去了
-            String mannerKey = ReviewMaterialAssembler.closeMannerKey(pos);
+            String mannerKey = TradePairing.closeMannerKey(pos);
             out.add(new TradeRecord(pos.getId(), pos.getSymbol(), pos.getSide(), pos.getLeverage(),
                     pos.getEntryPrice(), pos.getClosedPrice(), pos.getClosedPnl(),
-                    ReviewMaterialAssembler.msOf(pos.getCreatedAt()), ReviewMaterialAssembler.msOf(pos.getUpdatedAt()),
+                    TradePairing.msOf(pos.getCreatedAt()), TradePairing.msOf(pos.getUpdatedAt()),
                     mannerKey, plan,
                     open == null ? null
                             : new DecisionRef(open.getId(), open.getWakeTime(), open.getKind(), open.getReasoning(), null),
                     // 止损/止盈带走的依据就是计划里的原始止损/目标，不挂平仓决策
-                    ReviewMaterialAssembler.MANNER_MANUAL.equals(mannerKey)
+                    TradePairing.MANNER_MANUAL.equals(mannerKey)
                             ? closeByPos.get(pos.getId()) : null));
         }
         return out;
@@ -120,9 +119,9 @@ public class TradeRecordService {
      * 仓位早已平掉后再对它下的一条失败 close_position 也会落进窗口，不筛掉就会顶掉真正的平仓决策。
      */
     private Map<Long, DecisionRef> closeDecisions(AiTrader t, List<FuturesPositionDTO> closed) {
-        long from = closed.stream().mapToLong(p -> ReviewMaterialAssembler.msOf(p.getCreatedAt())).min().orElse(0)
+        long from = closed.stream().mapToLong(p -> TradePairing.msOf(p.getCreatedAt())).min().orElse(0)
                 - CLOSE_LOOKBACK_MS;
-        long to = closed.stream().mapToLong(p -> ReviewMaterialAssembler.msOf(p.getUpdatedAt())).max().orElse(0);
+        long to = closed.stream().mapToLong(p -> TradePairing.msOf(p.getUpdatedAt())).max().orElse(0);
         List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getTraderId, t.getId())
                 .eq(AiTraderDecision::getRoundNo, t.getRoundNo())

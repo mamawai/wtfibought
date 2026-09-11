@@ -9,7 +9,6 @@ import { useCountUp } from '../hooks/useCountUp';
 import { useToast } from '../components/ui/use-toast';
 import { Skeleton } from '../components/ui/skeleton';
 import { CandleChart, type PositionOverlay, type TradeMark } from '../components/CandleChart';
-import { newsTagForSymbol } from '../components/chart/newsTag';
 import TradingViewWidget from '../components/TradingViewWidget';
 import { SpotTradePanel } from '../components/coin/SpotTradePanel';
 import { FuturesOpenPanel } from '../components/coin/FuturesOpenPanel';
@@ -300,7 +299,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               advanced={<TradingViewWidget symbol={isFuturesMode ? cfg.futuresTvSymbol : cfg.tvSymbol} label={cfg.name} />}
               positionOverlays={positionOverlays}
               tradeMarks={isFuturesMode ? tradeMarks : undefined}
-              newsTag={newsTagForSymbol(symbol)}
+              econMarks={symbol === 'BTCUSDT'}
               klinesFn={isFuturesMode ? futuresApi.klines : cryptoApi.klines}
               loadHistory={loggedIn}
               streamLive={klineLive}

@@ -2,22 +2,17 @@ package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
-import com.mawai.wiibagent.llm.AgentGraphs;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.SseChatModel;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
+import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
+import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.trader.TraderChatService;
-import org.bsc.langgraph4j.RunnableConfig;
-import org.bsc.langgraph4j.StateGraph;
-import org.bsc.langgraph4j.prebuilt.MessagesState;
-import org.bsc.langgraph4j.state.AppenderChannel;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -26,20 +21,17 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import reactor.core.publisher.Flux;
 
-import java.io.NotSerializableException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 叶子工厂本身：建出来的东西齐不齐、缓存有没有生效、序列化器挂没挂对。
+ * 叶子工厂本身：建出来的东西齐不齐、缓存有没有生效、搜索许可投放面对不对。
  * 编排（派发/去重/汇总/落库）在 {@link ChatTurnRunnerTest}，不在这里。
  */
 class ChatAgentFactoryTest {
@@ -152,7 +144,7 @@ class ChatAgentFactoryTest {
      * 专家（数据源必须可控）一个都不捎——双闸门里"调用方授权"这一半就是这里发的。
      */
     @Test
-    void 端点声明搜索时只有summarizer的调用捎许可() throws Exception {
+    void 端点声明搜索时只有summarizer的调用捎许可() {
         ChatModel model = mock(ChatModel.class);
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
         List<Prompt> summarizerPrompts = new ArrayList<>();
@@ -171,12 +163,9 @@ class ChatAgentFactoryTest {
         e.setWebSearch(true);
 
         ChatAgentFactory.Leaves leaves = factory(model).leavesFor(new ChatEndpoints(1L, e, null), AgentLang.ZH);
-        leaves.summarizer().stream(Map.of("messages", List.of(new UserMessage("过去24小时BTC新闻"))),
-                        RunnableConfig.builder().threadId("wb-ws").build())
-                .forEach(o -> { });
-        leaves.experts().get(ChatAgentFactory.MARKET_AGENT).graph()
-                .invoke(Map.of("messages", List.of(new UserMessage("BTC行情"))),
-                        RunnableConfig.builder().threadId("wb-ws-m").build());
+        leaves.summarizer().run(List.of(new UserMessage("过去24小时BTC新闻")), "wb-ws", null, null);
+        leaves.experts().get(ChatAgentFactory.MARKET_AGENT).loop()
+                .run(List.of(new UserMessage("BTC行情")), null, null, null);
 
         assertThat(summarizerPrompts).isNotEmpty();
         assertThat(summarizerPrompts).allMatch(p ->
@@ -186,54 +175,5 @@ class ChatAgentFactoryTest {
         assertThat(expertPrompts).allMatch(p ->
                 !(p.getOptions() instanceof ToolCallingChatOptions t) || t.getToolContext() == null
                         || t.getToolContext().get(SseChatModel.WEB_SEARCH_KEY) == null);
-    }
-
-    // ===== 序列化：叶子与会话上下文表共用的序列化器必须是 Jackson 版，默认的 Java 对象流存不下 Spring AI Message =====
-
-    @Test
-    void defaultObjectStreamSerializerCannotCloneSpringAiMessages() {
-        StateGraph<MessagesState<Message>> graph = new StateGraph<>(MessagesState.SCHEMA, MessagesState::new);
-
-        assertThatThrownBy(() -> graph.getStateSerializer()
-                .cloneObject(Map.of("messages", List.of(new UserMessage("x")))))
-                .isInstanceOf(NotSerializableException.class);
-    }
-
-    /** 叶子拿到的确实是 {@link AgentGraphs#STATE_SERIALIZER}——与会话上下文表同一份，两边不一致就写得进读不出 */
-    @Test
-    void leafSerializerCanCloneStateWithSpringAiMessages() throws Exception {
-        ChatAgentFactory.Leaves leaves = factory().leavesFor(config("gpt-5"), AgentLang.ZH);
-
-        MessagesState<Message> cloned = leaves.summarizer().stateGraph.getStateSerializer()
-                .cloneObject(Map.of("messages", List.of(
-                        new UserMessage("我只关注 ETH"), new AssistantMessage("记住了"))));
-
-        assertThat(cloned.messages()).hasSize(2);
-        assertThat(cloned.messages().getFirst().getText()).isEqualTo("我只关注 ETH");
-        assertThat(leaves.summarizer().stateGraph.getStateSerializer()).isSameAs(AgentGraphs.STATE_SERIALIZER);
-    }
-
-    // ===== 长对话压缩：压缩结果必须活着进 state，否则每次调用都要重压 =====
-
-    @Test
-    void compressionSurvivesMergeWithModelResult() {
-        List<Message> compressed = List.of(new UserMessage("原始问题"), new SystemMessage("## 早前对话摘要：…"));
-        Map<String, Object> compression = Map.of("messages", new AppenderChannel.ReplaceAllWith<>(compressed));
-        Map<String, Object> modelResult = Map.of("messages", new AssistantMessage("本轮回答"));
-
-        Map<String, Object> merged = ChatAgentFactory.mergeUpdates(compression, modelResult);
-
-        assertThat(merged.get("messages")).isInstanceOf(AppenderChannel.ReplaceAllWith.class);
-        List<?> values = ((AppenderChannel.ReplaceAllWith<?>) merged.get("messages")).newValues();
-        assertThat(values).hasSize(3); // 压缩后 2 条 + 模型本轮 1 条
-        assertThat(((Message) values.getLast()).getText()).isEqualTo("本轮回答");
-    }
-
-    @Test
-    void modelResultPassesThroughWhenNoCompression() {
-        Map<String, Object> merged = ChatAgentFactory.mergeUpdates(
-                Map.of(), Map.of("messages", new AssistantMessage("直接回答")));
-
-        assertThat(merged.get("messages")).isInstanceOf(AssistantMessage.class);
     }
 }

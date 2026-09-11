@@ -108,14 +108,14 @@ class LocalizedToolCallbacksTest {
         assertThat(result).contains("echo:hi");
     }
 
-    /** 多个工具对象一把扫，建图点一行接上 */
+    /** 多个工具对象一把扫，建叶子时一行接上 */
     @Test
     void 一次可以扫多个工具对象() {
         List<ToolCallback> all = localized.of(AgentLang.ZH, new DemoTools(), new DemoTools());
         assertThat(all).hasSize(10);
     }
 
-    /** langgraph4j 的工具节点不接异常：抛出去整轮唤醒作废，所以失败必须变成模型看得懂的结果 */
+    /** ReactLoop 执行工具不接异常：抛出去整轮唤醒作废，所以失败必须变成模型看得懂的结果 */
     @Test
     void 工具抛异常_回给模型的是失败结果而不是异常() {
         String result = callbacks(AgentLang.EN).get("boom_tool").call("{}");

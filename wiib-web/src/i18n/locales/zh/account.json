@@ -122,7 +122,7 @@
     "title": "任务管理",
     "actionFailed": "操作失败",
     "fn": {
-      "newsTagging": "新闻打标"
+      "newsTranslation": "快讯翻译"
     },
     "rate": {
       "title": "杠杆日利率",

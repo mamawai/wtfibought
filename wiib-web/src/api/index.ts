@@ -537,7 +537,7 @@ export const llmEndpointApi = {
     api.post<unknown, void>('/ai/llm-endpoints/test', req, { params: id != null ? { id } : {} }),
 };
 
-/** 打标快讯（news_event 存档行，K 线新闻图标数据源） */
+/** 快讯（news_event 存档行，首页快讯卡数据源） */
 export interface NewsEventItem {
   id: number;
   title: string;
@@ -546,22 +546,21 @@ export interface NewsEventItem {
   titleEn: string | null;
   contentEn: string | null;
   url: string;
-  /** 发稿时刻 epoch 毫秒，按 K 线周期桶定位图标 */
+  /** 发稿时刻 epoch 毫秒 */
   publishedAt: number;
-  /** 逗号标签串，如 BTC,GOLD */
-  tags: string;
 }
 
-/** 财经日历一条（ForexFactory 本周快照行，标题是 feed 英文原文） */
+/** 财经日历一条（TradingView 全球 High 级事件，标题是接口英文原文） */
 export interface EconCalendarEvent {
   /** 公布/开始时刻 epoch 毫秒 */
   eventTime: number;
-  /** 影响的货币代码，如 USD；All=全局事件 */
+  /** ISO 国家码，如 US / EU */
+  country: string;
+  /** 影响的货币代码，如 USD */
   currency: string;
   title: string;
-  /** feed 原样：High / Medium / Low / Holiday */
-  impact: string;
-  /** 共识预测值原样文本；null=讲话/会议类无数值 */
+  /** 实际值显示文本；null=未公布或讲话/会议类无数值 */
+  actual: string | null;
   forecast: string | null;
   previous: string | null;
 }
@@ -573,17 +572,17 @@ export interface EconCalendarView {
 }
 
 export const quantApi = {
-  /** 首页财经日历：本周快照里已公布 / 即将公布各 6 条（筛选口径同 trader 唤醒注入） */
+  /** 首页财经日历：过去 3 天已公布 / 未来一周即将公布各 6 条 */
   econCalendar: () => api.get<unknown, EconCalendarView>('/ai/quant/econ-calendar'),
+  /** 财经日历事件：时间窗内全部（BTC K 线标记数据源） */
+  econCalendarEvents: (from: number, to: number) =>
+    api.get<unknown, EconCalendarEvent[]>('/ai/quant/econ-calendar/events', { params: { from, to } }),
   /**
    * 快讯（news_event 存档，中英两套一起到）。不带参＝最新 100 条；
    * from/to 都给＝该区间 [from, to) 内按发稿时间倒序最多 300 条（按天翻看用）
    */
   news: (from?: number, to?: number) =>
     api.get<unknown, NewsEventItem[]>('/ai/quant/news', { params: { from, to } }),
-  /** 打标快讯：标签+时间窗（服务端上限 500 条，倒序取最近） */
-  newsEvents: (tag: string, from: number, to: number) =>
-    api.get<unknown, NewsEventItem[]>('/ai/quant/news-events', { params: { tag, from, to } }),
 };
 
 // ========== AI Trader 竞技场 ==========

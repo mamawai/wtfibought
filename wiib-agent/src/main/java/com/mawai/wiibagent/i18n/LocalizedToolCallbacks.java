@@ -28,7 +28,7 @@ import java.util.List;
  * 名字与 inputSchema 照旧由注解自动推导（{@link ToolDefinitions#from}，schema 零手写），
  * 只把 description 换成 {@code tool.<工具名>} 那条。
  * <p>
- * 用它替掉建图时的 {@code builder.toolsFromObject(x)}：{@code builder.tools(localized.of(lang, x))}。
+ * 建叶子时 {@code ResilientChatService.builder().tools(localized.of(lang, x))} 挂上去。
  * <p>
  * <b>唯一允许静默回落的地方</b>：catalog 里没有 {@code tool.<工具名>} 就原样保留注解里的描述——
  * 让还没搬进 yml 的工具照常工作，后续批次逐个搬。
@@ -36,7 +36,7 @@ import java.util.List;
  * <b>@ToolParam 的参数描述不跟语言走</b>：它嵌在自动推导的 inputSchema 里，换语言要在 schema 层
  * 逐字段改写，复杂度不值。参数描述是字段级技术说明，全仓统一写英文。
  * <p>
- * <b>工具失败回给模型，不抛出</b>（{@link FailureAsResult}）：langgraph4j 的工具节点不接异常，
+ * <b>工具失败回给模型，不抛出</b>（{@link FailureAsResult}）：ReactLoop 执行工具不接异常，
  * 抛出去整轮就没了。写工具自己都 catch 了，这层兜的是数据工具（K线首拉失败会原样抛）和参数解析失败。
  */
 @Slf4j

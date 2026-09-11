@@ -16,7 +16,7 @@ import { EFFORT_PRESETS } from '../lib/llmEffort';
 
 /** 功能位名称的词表 key。常量在组件外，存翻译结果会在模块加载那一刻定死，切语言不跟着变 */
 const FUNCTION_LABEL_KEYS: Record<string, string> = {
-  'news-tagging': 'admin.fn.newsTagging',
+  'news-translation': 'admin.fn.newsTranslation',
 };
 const MODEL_ASSIGNMENT_FUNCTIONS = new Set(Object.keys(FUNCTION_LABEL_KEYS));
 
