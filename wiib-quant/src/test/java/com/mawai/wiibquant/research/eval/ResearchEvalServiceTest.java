@@ -2,15 +2,14 @@ package com.mawai.wiibquant.research.eval;
 
 import com.mawai.wiibquant.research.ForecastHorizon;
 import com.mawai.wiibquant.research.factor.ContinuousFactorVector;
+import com.mawai.wiibquant.research.forecast.ContinuousFactorForecaster;
 import com.mawai.wiibquant.research.forecast.EwmaMomentumForecaster;
 import com.mawai.wiibquant.research.forecast.Forecast;
 import com.mawai.wiibquant.research.forecast.Forecaster;
 import com.mawai.wiibquant.research.forecast.HorizonScaledVolForecaster;
-import com.mawai.wiibquant.research.forecast.MultiFactorForecaster;
 import com.mawai.wiibquant.research.forecast.ResearchFeatures;
 import com.mawai.wiibquant.research.forecast.TrainingSample;
 import com.mawai.wiibcommon.market.KlineBar;
-import com.mawai.wiibquant.research.series.MarketSeriesPoint;
 import com.mawai.wiibquant.research.stats.VolatilityEstimator;
 import org.junit.jupiter.api.Test;
 
@@ -26,13 +25,12 @@ class ResearchEvalServiceTest {
 
     @Test
     void evaluateBarsProducesMultiStrategyOutOfSampleReport() {
-        // 小样本验证"多策略同框编排"：MultiFactor 在 <30 根决策 bar 下暖机 flat（不影响编排验证）
+        // 小样本验证"多策略同框编排"：ContinuousFactor 训练窗 <5 样本时恒 flat（不影响编排验证）
         EvalParams params = new EvalParams(1.5, 0.94, 3, 0, 2, 200, 0.95, 42L);
         List<KlineBar> oneMin = uptrend1m(8 * 360); // 8 个 6h 桶
-        List<Forecaster> fcs = List.of(new EwmaMomentumForecaster(2, 4), MultiFactorForecaster.defaults());
+        List<Forecaster> fcs = List.of(new EwmaMomentumForecaster(2, 4), ContinuousFactorForecaster.defaults());
 
-        ComparisonReport r = ResearchEvalService.evaluateBars(
-                "BTCUSDT", ForecastHorizon.H6, oneMin, List.of(), List.of(), List.of(), List.of(), fcs, params);
+        ComparisonReport r = ResearchEvalService.evaluateBars("BTCUSDT", ForecastHorizon.H6, oneMin, fcs, params);
 
         assertThat(r).isNotNull();
         assertThat(r.symbol()).isEqualTo("BTCUSDT");
@@ -41,7 +39,7 @@ class ResearchEvalServiceTest {
         assertThat(r.buyAndHoldReturn().doubleValue()).isGreaterThan(0); // 上行趋势 buy&hold 为正
         assertThat(r.strategies()).hasSize(2);
         assertThat(r.strategies()).extracting(StrategyLine::name)
-                .containsExactly("ewma_momentum_2_4", "multi_factor_trend_funding_fng");
+                .containsExactly("ewma_momentum_2_4", "continuous_factor_ic");
         for (StrategyLine s : r.strategies()) {
             assertThat(s.metrics().periods()).isEqualTo(r.testPoints()); // 每策略 periods 与 test 点数一致
             assertThat(s.naivePercentile()).isBetween(0.0, 1.0);
@@ -61,51 +59,11 @@ class ResearchEvalServiceTest {
     }
 
     @Test
-    void offChainSeriesAreAsOfAlignedAndAffectMultiFactorDirection() {
-        // 足够长上涨样本(趋势腿=+1) + 全程极端正资金费 + 极贪 → off-chain 应把 MultiFactor 压成做空，与趋势相反。
-        // 证明 fundingSeries/fearGreedSeries 经 SeriesAligner as-of 真装配进了预测（链下"穿过尺子"）。
-        EvalParams params = new EvalParams(1.5, 0.94, 5, 0, 30, 100, 0.95, 42L);
-        List<KlineBar> oneMin = uptrend1m(40 * 360); // 40 个 H6 桶 → 决策点 subList ≥30，ma_alignment 可算
-        // 单点序列(ts=0)：任何决策点 as-of 都取到它（floor）
-        List<MarketSeriesPoint> funding = List.of(new MarketSeriesPoint(0L, BigDecimal.valueOf(0.002)));  // 极端正→偏空
-        List<MarketSeriesPoint> fearGreed = List.of(new MarketSeriesPoint(0L, BigDecimal.valueOf(95)));   // 极贪→偏空
-
-        ComparisonReport r = ResearchEvalService.evaluateBars(
-                "BTCUSDT", ForecastHorizon.H6, oneMin, funding, fearGreed, List.of(), List.of(),
-                List.of(new EwmaMomentumForecaster(2, 4), MultiFactorForecaster.defaults()), params);
-
-        StrategyLine ewma = r.strategies().get(0);
-        StrategyLine multi = r.strategies().get(1);
-        // 上涨中：EWMA 顺势做多→收益>0；MultiFactor 被 off-chain 压成做空→收益<0
-        assertThat(ewma.strategyReturn().doubleValue()).isGreaterThan(0);
-        assertThat(multi.strategyReturn().doubleValue()).isLessThan(0);
-    }
-
-    @Test
-    void onChainSeriesAreAsOfAlignedAndDriveOnChainForecaster() {
-        // 上涨样本 + 全程 ETF 净流入 + 稳定币铸币 → onChainOnly 应顺势做多 → 收益>0。
-        // 证明 etfFlow/stablecoin 序列经 SeriesAligner as-of 真装配进了预测（链上"穿过尺子"）。
-        EvalParams params = new EvalParams(1.5, 0.94, 5, 0, 30, 100, 0.95, 42L);
-        List<KlineBar> oneMin = uptrend1m(40 * 360);
-        List<MarketSeriesPoint> etf = List.of(new MarketSeriesPoint(0L, BigDecimal.valueOf(150)));               // 净流入→偏多
-        List<MarketSeriesPoint> stablecoin = List.of(new MarketSeriesPoint(0L, BigDecimal.valueOf(500_000_000L))); // 铸币→偏多
-
-        ComparisonReport r = ResearchEvalService.evaluateBars(
-                "BTCUSDT", ForecastHorizon.H6, oneMin, List.of(), List.of(), etf, stablecoin,
-                List.of(MultiFactorForecaster.onChainOnly()), params);
-
-        StrategyLine oc = r.strategies().get(0);
-        assertThat(oc.name()).isEqualTo("onchain_etf_stablecoin");
-        assertThat(oc.strategyReturn().doubleValue()).isGreaterThan(0);   // 上涨中做多→正收益
-    }
-
-    @Test
     void evaluateBarsUsesTripleBarrierPathBeforeCloseToCloseReturn() {
         // 决策后下一根 H6 最终收涨，但路径先打到下栏；做多应按三隔栏止损亏损，而不是按收盘收益盈利。
         EvalParams params = new EvalParams(1.0, 0.94, 1, 0, 2, 100, 0.95, 42L);
         AssembledPoints a = ResearchEvalService.assemblePoints(
-                ForecastHorizon.H6, pathHitsLowerThenClosesUp(), List.of(),
-                List.of(), List.of(), List.of(), List.of(), params,
+                ForecastHorizon.H6, pathHitsLowerThenClosesUp(), List.of(), params,
                 ResearchEvalService.FEATURE_LOOKBACK_BARS);
 
         long bucket3CloseTime = 4 * 360L * 60_000L - 1L;
@@ -142,8 +100,7 @@ class ResearchEvalServiceTest {
         RecordingFitForecaster fc = new RecordingFitForecaster();
 
         ComparisonReport r = ResearchEvalService.evaluateBars(
-                "BTCUSDT", ForecastHorizon.H6, uptrend1m(8 * 360),
-                List.of(), List.of(), List.of(), List.of(), List.of(fc), params);
+                "BTCUSDT", ForecastHorizon.H6, uptrend1m(8 * 360), List.of(fc), params);
 
         assertThat(r.testPoints()).isGreaterThan(4);
         assertThat(fc.fitSizes.subList(0, 2)).containsExactly(2, 4);
@@ -159,8 +116,7 @@ class ResearchEvalServiceTest {
         CapturingFactorForecaster fc = new CapturingFactorForecaster();
 
         ResearchEvalService.evaluateBars(
-                "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360),
-                List.of(), List.of(), List.of(), List.of(), List.of(fc), params);
+                "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360), List.of(fc), params);
 
         assertThat(fc.factors).isNotEmpty();
         ContinuousFactorVector v = fc.factors.stream()
@@ -180,7 +136,7 @@ class ResearchEvalServiceTest {
 
         ResearchEvalService.evaluateBars(
                 "ETHUSDT", ForecastHorizon.H6, uptrend1m(40 * 360), flat1m(40 * 360, 100.0),
-                List.of(), List.of(), List.of(), List.of(), List.of(fc), params);
+                List.of(fc), params);
 
         assertThat(fc.factors).isNotEmpty();
         assertThat(fc.factors.stream().anyMatch(f -> f.residualMomentum() > 0.0)).isTrue();
@@ -196,11 +152,9 @@ class ResearchEvalServiceTest {
         CapturingFactorForecaster changed = new CapturingFactorForecaster();
 
         ResearchEvalService.evaluateBars(
-                "ETHUSDT", ForecastHorizon.H6, asset, benchmark,
-                List.of(), List.of(), List.of(), List.of(), List.of(base), params);
+                "ETHUSDT", ForecastHorizon.H6, asset, benchmark, List.of(base), params);
         ResearchEvalService.evaluateBars(
-                "ETHUSDT", ForecastHorizon.H6, asset, changedFuture,
-                List.of(), List.of(), List.of(), List.of(), List.of(changed), params);
+                "ETHUSDT", ForecastHorizon.H6, asset, changedFuture, List.of(changed), params);
 
         assertThat(changed.factors.get(0).residualMomentum())
                 .isCloseTo(base.factors.get(0).residualMomentum(), within(1e-12));
@@ -212,8 +166,7 @@ class ResearchEvalServiceTest {
         CapturingFeatureForecaster fc = new CapturingFeatureForecaster();
 
         ResearchEvalService.evaluateBars(
-                "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360),
-                List.of(), List.of(), List.of(), List.of(), List.of(fc), params);
+                "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360), List.of(fc), params);
 
         assertThat(fc.barMillis).isNotEmpty().allMatch(v -> v == ResearchEvalService.FEATURE_BAR_MILLIS);
         assertThat(fc.featureSizes).isNotEmpty().allMatch(v -> v <= ResearchEvalService.FEATURE_LOOKBACK_BARS);
@@ -225,8 +178,7 @@ class ResearchEvalServiceTest {
         EvalParams params = new EvalParams(1.5, 0.94, 2, 0, 30, 50, 0.95, 42L);
 
         AssembledPoints a = ResearchEvalService.assemblePoints(
-                ForecastHorizon.H6, uptrend1m(8 * 360), List.of(),
-                List.of(), List.of(), List.of(), List.of(), params,
+                ForecastHorizon.H6, uptrend1m(8 * 360), List.of(), params,
                 ResearchEvalService.FEATURE_LOOKBACK_BARS);
 
         assertThat(a.horizonDecisionBars()).isEqualTo(72); // 6h / 5m
@@ -254,8 +206,7 @@ class ResearchEvalServiceTest {
         EvalParams params = new EvalParams(1.5, 0.94, 2, 0, 30, 50, 0.95, 42L);
 
         AssembledPoints a = ResearchEvalService.assemblePoints(
-                ForecastHorizon.H6, uptrend1m(8 * 360), List.of(),
-                List.of(), List.of(), List.of(), List.of(), params,
+                ForecastHorizon.H6, uptrend1m(8 * 360), List.of(), params,
                 ResearchEvalService.FEATURE_LOOKBACK_BARS,
                 ResearchEvalService.FIFTEEN_MINUTE_BAR_MILLIS);
 
@@ -273,10 +224,8 @@ class ResearchEvalServiceTest {
         EvalParams free = new EvalParams(1.5, 0.94, 3, 0, 2, 200, 0.95, 42L);
         EvalParams costly = new EvalParams(1.5, 0.94, 3, 0, 2, 200, 0.95, 42L, 20.0);
 
-        ComparisonReport rFree = ResearchEvalService.evaluateBars(
-                "BTCUSDT", ForecastHorizon.H6, oneMin, List.of(), List.of(), List.of(), List.of(), fcs, free);
-        ComparisonReport rCost = ResearchEvalService.evaluateBars(
-                "BTCUSDT", ForecastHorizon.H6, oneMin, List.of(), List.of(), List.of(), List.of(), fcs, costly);
+        ComparisonReport rFree = ResearchEvalService.evaluateBars("BTCUSDT", ForecastHorizon.H6, oneMin, fcs, free);
+        ComparisonReport rCost = ResearchEvalService.evaluateBars("BTCUSDT", ForecastHorizon.H6, oneMin, fcs, costly);
 
         StrategyLine sFree = rFree.strategies().get(0);
         StrategyLine sCost = rCost.strategies().get(0);

@@ -30,15 +30,6 @@ class ContinuousFactorSignalsTest {
     }
 
     @Test
-    void fundingCarryInvertsFundingZScore() {
-        double[] funding = {0.0, 0.001, 0.002};
-        double expected = -FactorMath.zScore(0.002, funding);
-
-        assertThat(ContinuousFactorSignals.fundingCarry(funding, 3, 3))
-                .isCloseTo(expected, within(1e-12));
-    }
-
-    @Test
     void volumeZScoreUsesLatestVolumeAgainstWindow() {
         double[] volumes = {100.0, 200.0, 400.0};
 
@@ -82,7 +73,6 @@ class ContinuousFactorSignalsTest {
     @Test
     void insufficientInputReturnsNeutral() {
         assertThat(ContinuousFactorSignals.riskAdjustedMomentum(new double[]{100.0}, 1, 3)).isZero();
-        assertThat(ContinuousFactorSignals.fundingCarry(new double[]{}, 0, 10)).isZero();
         assertThat(ContinuousFactorSignals.amihudIlliquidity(new double[]{100.0}, new double[]{10.0}, 1, 5)).isZero();
     }
 }

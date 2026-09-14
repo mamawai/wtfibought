@@ -6,7 +6,6 @@ import java.time.Duration;
 public record ContinuousFactorParams(
         int momentumLookback,
         int reversalLookback,
-        int fundingLookback,
         int volumeLookback,
         int amihudLookback,
         int residualMomentumLookback,
@@ -22,8 +21,7 @@ public record ContinuousFactorParams(
         return new ContinuousFactorParams(
                 bars(Duration.ofHours(12), barMillis), // 半日动量
                 bars(Duration.ofHours(1), barMillis),  // 短反转
-                bars(Duration.ofHours(24), barMillis), // 资金费/量能/流动性日内上下文
-                bars(Duration.ofHours(24), barMillis),
+                bars(Duration.ofHours(24), barMillis), // 量能/流动性日内上下文
                 bars(Duration.ofHours(24), barMillis),
                 bars(Duration.ofHours(12), barMillis),
                 bars(Duration.ofHours(48), barMillis)); // beta 稳一点，但不拉到多周

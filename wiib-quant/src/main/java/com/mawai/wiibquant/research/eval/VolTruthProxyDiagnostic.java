@@ -30,12 +30,11 @@ public final class VolTruthProxyDiagnostic {
 
     /**
      * 主入口：assemble(vol-only 价格)→walk-forward 取 OOS 点→收 HAR-GK/EWMA σ + 三真值→各真值下 QLIKE+DM。
-     * 链下/benchmark 全传空：vol 预测只读价格(barsUpToNow)，不受影响，保持诊断轻量。
+     * benchmark 传空：vol 预测只读价格(barsUpToNow)，不受影响，保持诊断轻量。
      */
     public static VolTruthProxyReport run(String symbol, ForecastHorizon horizon,
                                           List<KlineBar> baseBars, EvalParams params) {
         AssembledPoints a = ResearchEvalService.assemblePoints(horizon, baseBars, List.of(),
-                List.of(), List.of(), List.of(), List.of(),
                 params, ResearchEvalService.FEATURE_LOOKBACK_BARS, ResearchEvalService.FEATURE_BAR_MILLIS);
         int points = a.points();
         double[] baselineSigma = a.baselineSigmaByPoint();

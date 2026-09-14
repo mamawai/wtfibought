@@ -8,11 +8,10 @@ public final class ContinuousFactorBuilder {
 
     /**
      * endExclusive 是决策点右边界；所有输入序列只读取 [0,endExclusive)。
-     * closes/volumes/fundingRates/returns 均需由调用方提前按同一时间轴对齐。
+     * closes/volumes/returns 均需由调用方提前按同一时间轴对齐。
      */
     public static ContinuousFactorVector build(double[] closes,
                                                double[] volumes,
-                                               double[] fundingRates,
                                                double[] assetReturns,
                                                double[] benchmarkReturns,
                                                int endExclusive,
@@ -20,7 +19,6 @@ public final class ContinuousFactorBuilder {
         return new ContinuousFactorVector(
                 ContinuousFactorSignals.riskAdjustedMomentum(closes, endExclusive, params.momentumLookback()),
                 ContinuousFactorSignals.shortReversal(closes, endExclusive, params.reversalLookback()),
-                ContinuousFactorSignals.fundingCarry(fundingRates, endExclusive, params.fundingLookback()),
                 ContinuousFactorSignals.volumeZScore(volumes, endExclusive, params.volumeLookback()),
                 ContinuousFactorSignals.amihudIlliquidity(closes, volumes, endExclusive, params.amihudLookback()),
                 ContinuousFactorSignals.residualMomentum(assetReturns, benchmarkReturns, endExclusive,
@@ -34,7 +32,6 @@ public final class ContinuousFactorBuilder {
      */
     public static ContinuousFactorVector[] buildSeries(double[] closes,
                                                        double[] volumes,
-                                                       double[] fundingRates,
                                                        double[] assetReturns,
                                                        double[] benchmarkReturns,
                                                        ContinuousFactorParams params) {
@@ -48,8 +45,6 @@ public final class ContinuousFactorBuilder {
         double[] closeReturns = logReturns(closes);
         double[] returnPrefix = prefix(closeReturns);
         double[] returnSqPrefix = prefixSquares(closeReturns);
-        double[] fundingPrefix = prefix(fundingRates);
-        double[] fundingSqPrefix = prefixSquares(fundingRates);
         double[] volumePrefix = prefix(volumes);
         double[] volumeSqPrefix = prefixSquares(volumes);
         AmihudPrefix amihud = amihudPrefix(closes, volumes);
@@ -58,14 +53,13 @@ public final class ContinuousFactorBuilder {
         for (int end = 0; end <= n; end++) {
             double ram = riskAdjustedMomentum(closes, returnPrefix, returnSqPrefix, end, params.momentumLookback());
             double reversal = -riskAdjustedMomentum(closes, returnPrefix, returnSqPrefix, end, params.reversalLookback());
-            double fundingCarry = -zScoreAt(fundingRates, fundingPrefix, fundingSqPrefix, end, params.fundingLookback());
             double volumeZ = zScoreAt(volumes, volumePrefix, volumeSqPrefix, end, params.volumeLookback());
             double amihudValue = amihudMean(amihud, end, params.amihudLookback());
             double residual = hasBenchmark
                     ? ContinuousFactorSignals.residualMomentum(assetReturns, benchmarkReturns, end,
                     params.residualMomentumLookback(), params.betaWindow())
                     : 0.0;
-            out[end] = new ContinuousFactorVector(ram, reversal, fundingCarry, volumeZ, amihudValue, residual);
+            out[end] = new ContinuousFactorVector(ram, reversal, volumeZ, amihudValue, residual);
         }
         return out;
     }

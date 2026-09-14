@@ -14,7 +14,6 @@ import com.mawai.wiibquant.research.metrics.RegimeClassificationScore;
 import com.mawai.wiibquant.research.metrics.VolForecastScore;
 import com.mawai.wiibquant.research.metrics.ForecastAccuracyComparison;
 import com.mawai.wiibquant.research.metrics.VolCalibrationReport;
-import com.mawai.wiibquant.research.series.MarketSeriesPoint;
 import com.mawai.wiibquant.research.stats.RealizedVarianceSeries;
 
 import java.math.BigDecimal;
@@ -47,38 +46,24 @@ public final class MultiOutputEvalService {
 
     public static MultiOutputReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
                                                  List<KlineBar> benchmarkOneMin,
-                                                 List<MarketSeriesPoint> fundingSeries,
-                                                 List<MarketSeriesPoint> fearGreedSeries,
-                                                 List<MarketSeriesPoint> etfFlowSeries,
-                                                 List<MarketSeriesPoint> stablecoinSeries,
                                                  MultiOutputForecaster forecaster, EvalParams params) {
-        return evaluateBars(symbol, horizon, oneMin, benchmarkOneMin, fundingSeries, fearGreedSeries,
-                etfFlowSeries, stablecoinSeries, forecaster, params, ResearchEvalService.FEATURE_LOOKBACK_BARS);
+        return evaluateBars(symbol, horizon, oneMin, benchmarkOneMin, forecaster, params,
+                ResearchEvalService.FEATURE_LOOKBACK_BARS);
     }
 
     static MultiOutputReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
                                           List<KlineBar> benchmarkOneMin,
-                                          List<MarketSeriesPoint> fundingSeries,
-                                          List<MarketSeriesPoint> fearGreedSeries,
-                                          List<MarketSeriesPoint> etfFlowSeries,
-                                          List<MarketSeriesPoint> stablecoinSeries,
                                           MultiOutputForecaster forecaster, EvalParams params, int featureLookbackBars) {
-        return evaluateBars(symbol, horizon, oneMin, benchmarkOneMin, fundingSeries, fearGreedSeries,
-                etfFlowSeries, stablecoinSeries, forecaster, params, featureLookbackBars,
+        return evaluateBars(symbol, horizon, oneMin, benchmarkOneMin, forecaster, params, featureLookbackBars,
                 ResearchEvalService.FEATURE_BAR_MILLIS);
     }
 
     static MultiOutputReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
                                           List<KlineBar> benchmarkOneMin,
-                                          List<MarketSeriesPoint> fundingSeries,
-                                          List<MarketSeriesPoint> fearGreedSeries,
-                                          List<MarketSeriesPoint> etfFlowSeries,
-                                          List<MarketSeriesPoint> stablecoinSeries,
                                           MultiOutputForecaster forecaster, EvalParams params,
                                           int featureLookbackBars, long decisionBarMillis) {
         try {
         AssembledPoints a = ResearchEvalService.assemblePoints(horizon, oneMin, benchmarkOneMin,
-                fundingSeries, fearGreedSeries, etfFlowSeries, stablecoinSeries,
                 params, featureLookbackBars, decisionBarMillis);
         List<KlineBar> decisionBars = a.decisionBars();
         int points = a.points();

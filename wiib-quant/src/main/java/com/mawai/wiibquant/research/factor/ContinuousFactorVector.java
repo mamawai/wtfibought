@@ -4,7 +4,6 @@ package com.mawai.wiibquant.research.factor;
 public record ContinuousFactorVector(
         double riskAdjustedMomentum,
         double shortReversal,
-        double fundingCarry,
         double volumeZScore,
         double amihudIlliquidity,
         double residualMomentum
@@ -12,7 +11,6 @@ public record ContinuousFactorVector(
     public ContinuousFactorVector {
         riskAdjustedMomentum = normalizeSignedZero(riskAdjustedMomentum);
         shortReversal = normalizeSignedZero(shortReversal);
-        fundingCarry = normalizeSignedZero(fundingCarry);
         volumeZScore = normalizeSignedZero(volumeZScore);
         amihudIlliquidity = normalizeSignedZero(amihudIlliquidity);
         residualMomentum = normalizeSignedZero(residualMomentum);
@@ -23,6 +21,6 @@ public record ContinuousFactorVector(
     }
 
     public static ContinuousFactorVector neutral() {
-        return new ContinuousFactorVector(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        return new ContinuousFactorVector(0.0, 0.0, 0.0, 0.0, 0.0);
     }
 }

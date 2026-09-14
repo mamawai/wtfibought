@@ -67,10 +67,10 @@ class ContinuousFactorForecasterTest {
     }
 
     private static ResearchFeatures features(ContinuousFactorVector v) {
-        return new ResearchFeatures(List.of(), 0.0, 50, 0.0, 0.0, v);
+        return new ResearchFeatures(List.of(), v);
     }
 
     private static ContinuousFactorVector vector(double riskAdjustedMomentum) {
-        return new ContinuousFactorVector(riskAdjustedMomentum, 0.0, 0.0, 0.0, 0.0, 0.0);
+        return new ContinuousFactorVector(riskAdjustedMomentum, 0.0, 0.0, 0.0, 0.0);
     }
 }

@@ -9,7 +9,6 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>wiib-feed</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
     <name>wiib-feed</name>
     <description>数据流上游：交易所 WS 接入 → 写 Redis（KV/Pub-Sub/Stream）</description>
     <packaging>jar</packaging>

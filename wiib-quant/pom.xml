@@ -9,7 +9,6 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>wiib-quant</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
     <name>wiib-quant</name>
     <description>量化能力库：策略/回测/研究/行情/交易所客户端 + 各自的 HTTP 门面。不是可执行进程，由 wiib-agent 依赖并扫描挂载</description>
     <packaging>jar</packaging>
@@ -23,20 +22,13 @@
             <artifactId>wiib-common</artifactId>
         </dependency>
 
-        <!-- jsoup：EtfFlowScraper 解析 ETF 流向页（common 无，显式补） -->
-        <dependency>
-            <groupId>org.jsoup</groupId>
-            <artifactId>jsoup</artifactId>
-            <version>1.22.1</version>
-        </dependency>
-
         <!-- fastjson2：market/external/strategy/research 落库与解析重度使用，BOM 管版本 -->
         <dependency>
             <groupId>com.alibaba.fastjson2</groupId>
             <artifactId>fastjson2</artifactId>
         </dependency>
 
-        <!-- PostgreSQL：quant mapper 落库（forecast/factor/strategy 等） -->
+        <!-- PostgreSQL：quant mapper 落库（日历 / 快讯 / 策略信号） -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>

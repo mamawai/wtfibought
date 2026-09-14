@@ -16,7 +16,7 @@ import java.util.Map;
  * 档位选择：按"仓位 USDT 名义价值"匹配半开区间 [floor, cap)。
  * 强平公式：MM = notional × MMR − maintAmount。
  * <p>
- * 已配置：BTCUSDT、ETHUSDT、DOGEUSDT、SOLUSDT、XRPUSDT、BNBUSDT、XAUUSDT、CLUSDT，
+ * 已配置：BTCUSDT、ETHUSDT、DOGEUSDT、SOLUSDT、XRPUSDT、BNBUSDT、ZECUSDT、HYPEUSDT、XAUUSDT、CLUSDT，
  * 及 TradFi 股票/ETF 永续：SNDKUSDT、SOXLUSDT、SKHYNIXUSDT、MUUSDT、KORUUSDT、SPCXUSDT。
  * 新增 symbol 必须先在此处补完档位数据，否则开仓抛 FUTURES_SYMBOL_NOT_CONFIGURED。
  */
@@ -191,6 +191,34 @@ public class FuturesLeverageBracketRegistry {
             new Bracket(11, bd("200000000"),    bd("400000000"),    1,  bd("0.5000"),  bd("61641125"))
     );
 
+    // ZEC：9 档，档位1 上限仅 20K、MMR 起点 1%、最大 75x。
+    // 数据来源：Binance 主站 bapi friendly/brackets（实拉 2026-09-14，updateTime 2025-11-30，cum 逐档验算自洽）。
+    private static final List<Bracket> ZEC_BRACKETS = List.of(
+            new Bracket(1,  bd("0"),            bd("20000"),        75, bd("0.0100"),  bd("0")),
+            new Bracket(2,  bd("20000"),        bd("200000"),       50, bd("0.0150"),  bd("100")),
+            new Bracket(3,  bd("200000"),       bd("1000000"),      25, bd("0.0200"),  bd("1100")),
+            new Bracket(4,  bd("1000000"),      bd("2000000"),      20, bd("0.0250"),  bd("6100")),
+            new Bracket(5,  bd("2000000"),      bd("5000000"),      10, bd("0.0500"),  bd("56100")),
+            new Bracket(6,  bd("5000000"),      bd("7500000"),      5,  bd("0.1000"),  bd("306100")),
+            new Bracket(7,  bd("7500000"),      bd("10000000"),     4,  bd("0.1250"),  bd("493600")),
+            new Bracket(8,  bd("10000000"),     bd("20000000"),     2,  bd("0.2500"),  bd("1743600")),
+            new Bracket(9,  bd("20000000"),     bd("40000000"),     1,  bd("0.5000"),  bd("6743600"))
+    );
+
+    // HYPE：前 7 档与 ZEC 完全一致，只有最后两档封顶更低（1x 档 15M 就到头）。
+    // 数据来源同上（updateTime 2025-09-09）。
+    private static final List<Bracket> HYPE_BRACKETS = List.of(
+            new Bracket(1,  bd("0"),            bd("20000"),        75, bd("0.0100"),  bd("0")),
+            new Bracket(2,  bd("20000"),        bd("200000"),       50, bd("0.0150"),  bd("100")),
+            new Bracket(3,  bd("200000"),       bd("1000000"),      25, bd("0.0200"),  bd("1100")),
+            new Bracket(4,  bd("1000000"),      bd("2000000"),      20, bd("0.0250"),  bd("6100")),
+            new Bracket(5,  bd("2000000"),      bd("5000000"),      10, bd("0.0500"),  bd("56100")),
+            new Bracket(6,  bd("5000000"),      bd("7500000"),      5,  bd("0.1000"),  bd("306100")),
+            new Bracket(7,  bd("7500000"),      bd("10000000"),     4,  bd("0.1250"),  bd("493600")),
+            new Bracket(8,  bd("10000000"),     bd("12500000"),     2,  bd("0.2500"),  bd("1743600")),
+            new Bracket(9,  bd("12500000"),     bd("15000000"),     1,  bd("0.5000"),  bd("4868600"))
+    );
+
     // Map.of 上限 10 对，超出后用 ofEntries
     private static final Map<String, List<Bracket>> BRACKETS = Map.ofEntries(
             Map.entry("BTCUSDT",     BTC_BRACKETS),
@@ -199,6 +227,8 @@ public class FuturesLeverageBracketRegistry {
             Map.entry("SOLUSDT",     SOL_BRACKETS),
             Map.entry("XRPUSDT",     XRP_BRACKETS),
             Map.entry("BNBUSDT",     BNB_BRACKETS),
+            Map.entry("ZECUSDT",     ZEC_BRACKETS),
+            Map.entry("HYPEUSDT",    HYPE_BRACKETS),
             Map.entry("XAUUSDT",     COMMODITY_BRACKETS),
             Map.entry("CLUSDT",      COMMODITY_BRACKETS),
             Map.entry("SNDKUSDT",    US_STOCK_BRACKETS),

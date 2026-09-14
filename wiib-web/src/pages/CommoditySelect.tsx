@@ -1,4 +1,3 @@
-import { Gem } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { CoinMarketGrid } from '../components/CoinMarketGrid';
 import { COMMODITY_LIST } from '../lib/coinConfig';
@@ -6,16 +5,11 @@ import { COMMODITY_LIST } from '../lib/coinConfig';
 export function CommoditySelect() {
   const { t } = useTranslation('market');
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
-      <div className="flex flex-col items-center gap-1.5">
-        <div className="flex items-center gap-2.5">
-          <div className="p-1.5 rounded-lg bg-amber-500/10">
-            <Gem className="w-5 h-5 text-amber-500" />
-          </div>
-          <h1 className="text-xl font-bold">{t('select.commodityTitle')}</h1>
-        </div>
-        <p className="text-[11px] text-muted-foreground">{t('select.commoditySub')}</p>
-      </div>
+    <div className="max-w-[820px] mx-auto px-5 pt-11 pb-14">
+      <h1 className="text-[22px] font-extrabold tracking-[-.01em] mb-2.5 flex items-baseline gap-2.5 flex-wrap">
+        {t('select.commodityTitle')}
+        <small className="text-[13px] font-medium tracking-normal text-muted-foreground">{t('select.commoditySub')}</small>
+      </h1>
       <CoinMarketGrid list={COMMODITY_LIST} />
     </div>
   );

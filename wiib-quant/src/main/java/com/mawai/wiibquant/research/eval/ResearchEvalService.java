@@ -18,10 +18,6 @@ import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibquant.research.label.BarrierLabel;
 import com.mawai.wiibquant.research.label.RegimeLabeler;
 import com.mawai.wiibquant.research.label.TripleBarrierLabeler;
-import com.mawai.wiibquant.research.series.MarketSeriesPoint;
-import com.mawai.wiibquant.research.series.MarketSeriesStore;
-import com.mawai.wiibquant.research.series.SeriesAligner;
-import com.mawai.wiibquant.research.series.SeriesCode;
 import com.mawai.wiibquant.research.stats.VolatilityEstimator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,15 +33,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-/** 评估编排：从库加载基础 K线 + 链下序列 → 聚合 5m/15m 决策 bar → 调纯核心 evaluateBars → 写 target/ JSON。 */
+/** 评估编排：从库加载基础 K线 → 聚合 5m/15m 决策 bar → 调纯核心 evaluateBars → 写 target/ JSON。 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ResearchEvalService {
-
-    private static final BigDecimal NEUTRAL_FUNDING = BigDecimal.ZERO;            // 链下缺口中性：资金费=0
-    private static final BigDecimal NEUTRAL_FEAR_GREED = BigDecimal.valueOf(50);  // 恐惧贪婪=50（中性）
-    private static final BigDecimal NEUTRAL_ONCHAIN = BigDecimal.ZERO;            // 链上缺口中性：ETF 流入/稳定币差=0
 
     private static final String KLINE_INTERVAL = KlineHistoryStore.DEFAULT_INTERVAL;
     // 默认每 5m 出一个预测；6/12/24h 只作为未来持仓验证窗口，不是 K线粒度。
@@ -60,21 +52,15 @@ public class ResearchEvalService {
     private static final int REPORT_RETURN_SCALE = 10;
 
     private final KlineHistoryStore store;
-    private final MarketSeriesStore seriesStore;
 
-    /** 一窗多预测器同框评估。链下/链上序列(funding/fng/etf/stablecoin)随基础 K 线按 [fromMs,toMs) 加载，逐决策点 as-of 对齐。 */
+    /** 一窗多预测器同框评估。 */
     public ComparisonReport evaluate(String symbol, ForecastHorizon horizon, long fromMs, long toMs,
                                      List<Forecaster> forecasters, EvalParams params) {
         List<KlineBar> baseBars = store.load(symbol, KLINE_INTERVAL, fromMs, toMs);
         List<KlineBar> benchmarkBaseBars = BENCHMARK_SYMBOL.equalsIgnoreCase(symbol)
                 ? List.of()
                 : store.load(BENCHMARK_SYMBOL, KLINE_INTERVAL, fromMs, toMs);
-        List<MarketSeriesPoint> funding = seriesStore.load(symbol, SeriesCode.FUNDING, fromMs, toMs);
-        List<MarketSeriesPoint> fearGreed = seriesStore.load(MarketSeriesStore.GLOBAL, SeriesCode.FEAR_GREED, fromMs, toMs);
-        List<MarketSeriesPoint> etfFlow = seriesStore.load(symbol, SeriesCode.ETF_FLOW, fromMs, toMs);            // 仅 BTC 有；其他 symbol 空→中性
-        List<MarketSeriesPoint> stablecoin = seriesStore.load(symbol, SeriesCode.STABLECOIN_DELTA, fromMs, toMs);
-        ComparisonReport report = evaluateBars(symbol, horizon, baseBars, benchmarkBaseBars,
-                funding, fearGreed, etfFlow, stablecoin, forecasters, params);
+        ComparisonReport report = evaluateBars(symbol, horizon, baseBars, benchmarkBaseBars, forecasters, params);
         writeReport(report);
         return report;
     }
@@ -82,65 +68,27 @@ public class ResearchEvalService {
     /**
      * 纯核心（无 DB，可单测）：聚合→walk-forward 取样本外→逐决策点装配 point-in-time 特征→
      * 每预测器模拟收益+指标→buy&hold 基准算一次→多策略同框报告。
-     * 各序列须按 ts 升序（store.load 已保证）；可为空→该因子全程中性。
      */
     public static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
-                                                List<MarketSeriesPoint> fundingSeries,
-                                                List<MarketSeriesPoint> fearGreedSeries,
-                                                List<MarketSeriesPoint> etfFlowSeries,
-                                                List<MarketSeriesPoint> stablecoinSeries,
                                                 List<Forecaster> forecasters, EvalParams params) {
-        return evaluateBars(symbol, horizon, oneMin, List.of(), fundingSeries, fearGreedSeries, etfFlowSeries,
-                stablecoinSeries, forecasters, params, FEATURE_LOOKBACK_BARS);
+        return evaluateBars(symbol, horizon, oneMin, List.of(), forecasters, params);
     }
 
     /** 同上；benchmarkOneMin 用于残差动量，传空则残差腿中性。 */
     public static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
                                                 List<KlineBar> benchmarkOneMin,
-                                                List<MarketSeriesPoint> fundingSeries,
-                                                List<MarketSeriesPoint> fearGreedSeries,
-                                                List<MarketSeriesPoint> etfFlowSeries,
-                                                List<MarketSeriesPoint> stablecoinSeries,
                                                 List<Forecaster> forecasters, EvalParams params) {
-        return evaluateBars(symbol, horizon, oneMin, benchmarkOneMin, fundingSeries, fearGreedSeries, etfFlowSeries,
-                stablecoinSeries, forecasters, params, FEATURE_LOOKBACK_BARS);
+        return evaluateBars(symbol, horizon, oneMin, benchmarkOneMin, forecasters, params,
+                FEATURE_LOOKBACK_BARS, FEATURE_BAR_MILLIS);
     }
 
-    /** 同上；回看窗 W 可注入——测试可传 Integer.MAX_VALUE 跑"全历史"对照。生产恒走默认 W。 */
-    static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
-                                         List<MarketSeriesPoint> fundingSeries,
-                                         List<MarketSeriesPoint> fearGreedSeries,
-                                         List<MarketSeriesPoint> etfFlowSeries,
-                                         List<MarketSeriesPoint> stablecoinSeries,
-                                         List<Forecaster> forecasters, EvalParams params, int featureLookbackBars) {
-        return evaluateBars(symbol, horizon, oneMin, List.of(), fundingSeries, fearGreedSeries, etfFlowSeries,
-                stablecoinSeries, forecasters, params, featureLookbackBars);
-    }
-
-    /** 同上；带 benchmark 的测试/runner 入口。 */
+    /** 同上；回看窗 W 与决策 bar 粒度可注入，decisionBarMillis 只允许 5m/15m，horizon 仍固定为未来 6/12/24h。 */
     static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
                                          List<KlineBar> benchmarkOneMin,
-                                         List<MarketSeriesPoint> fundingSeries,
-                                         List<MarketSeriesPoint> fearGreedSeries,
-                                         List<MarketSeriesPoint> etfFlowSeries,
-                                         List<MarketSeriesPoint> stablecoinSeries,
-                                         List<Forecaster> forecasters, EvalParams params, int featureLookbackBars) {
-        return evaluateBars(symbol, horizon, oneMin, benchmarkOneMin, fundingSeries, fearGreedSeries,
-                etfFlowSeries, stablecoinSeries, forecasters, params, featureLookbackBars, FEATURE_BAR_MILLIS);
-    }
-
-    /** 同上；decisionBarMillis 只允许 5m/15m，horizon 仍固定为未来 6/12/24h。 */
-    static ComparisonReport evaluateBars(String symbol, ForecastHorizon horizon, List<KlineBar> oneMin,
-                                          List<KlineBar> benchmarkOneMin,
-                                          List<MarketSeriesPoint> fundingSeries,
-                                          List<MarketSeriesPoint> fearGreedSeries,
-                                          List<MarketSeriesPoint> etfFlowSeries,
-                                          List<MarketSeriesPoint> stablecoinSeries,
-                                          List<Forecaster> forecasters, EvalParams params,
-                                          int featureLookbackBars, long decisionBarMillis) {
+                                         List<Forecaster> forecasters, EvalParams params,
+                                         int featureLookbackBars, long decisionBarMillis) {
         try {
             AssembledPoints assembled = assemblePoints(horizon, oneMin, benchmarkOneMin,
-                    fundingSeries, fearGreedSeries, etfFlowSeries, stablecoinSeries,
                     params, featureLookbackBars, decisionBarMillis);
             return evaluateAssembled(symbol, horizon, assembled, forecasters, params);
         } finally {
@@ -206,25 +154,16 @@ public class ResearchEvalService {
 
     /**
      * 逐决策点 point-in-time 装配（单/多输出评估共用，保证同一份无泄漏口径）：
-     * 基础 K 线 → 5m/15m feature bars；按 horizon 间隔采决策点；每点 as-of 链下 + continuous 因子（绝不含未来）+ 未来路径目标。
+     * 基础 K 线 → 5m/15m feature bars；按 horizon 间隔采决策点；每点 continuous 因子（绝不含未来）+ 未来路径目标。
      */
     static AssembledPoints assemblePoints(ForecastHorizon horizon, List<KlineBar> oneMin,
                                           List<KlineBar> benchmarkOneMin,
-                                          List<MarketSeriesPoint> fundingSeries,
-                                          List<MarketSeriesPoint> fearGreedSeries,
-                                          List<MarketSeriesPoint> etfFlowSeries,
-                                          List<MarketSeriesPoint> stablecoinSeries,
                                           EvalParams params, int featureLookbackBars) {
-        return assemblePoints(horizon, oneMin, benchmarkOneMin, fundingSeries, fearGreedSeries,
-                etfFlowSeries, stablecoinSeries, params, featureLookbackBars, FEATURE_BAR_MILLIS);
+        return assemblePoints(horizon, oneMin, benchmarkOneMin, params, featureLookbackBars, FEATURE_BAR_MILLIS);
     }
 
     static AssembledPoints assemblePoints(ForecastHorizon horizon, List<KlineBar> oneMin,
                                           List<KlineBar> benchmarkOneMin,
-                                          List<MarketSeriesPoint> fundingSeries,
-                                          List<MarketSeriesPoint> fearGreedSeries,
-                                          List<MarketSeriesPoint> etfFlowSeries,
-                                          List<MarketSeriesPoint> stablecoinSeries,
                                           EvalParams params, int featureLookbackBars,
                                           long decisionBarMillis) {
         validateDecisionBarMillis(decisionBarMillis);
@@ -239,10 +178,9 @@ public class ResearchEvalService {
         double[] assetReturns = logReturns(closes);
         double[] benchmarkReturns = benchmarkReturns(featureBars, benchmarkFeatureBars);
         double[] effectiveBenchmarkReturns = benchmarkReturns.length == 0 ? EMPTY_BENCHMARK_RETURNS : benchmarkReturns;
-        double[] fundingByFeatureBar = fundingByFeatureBar(featureBars, fundingSeries);
         ContinuousFactorParams continuousFactorParams = ContinuousFactorParams.forBarMillis(decisionBarMillis);
         ContinuousFactorVector[] continuousFactorsByEnd = ContinuousFactorBuilder.buildSeries(
-                closes, volumes, fundingByFeatureBar, assetReturns, effectiveBenchmarkReturns, continuousFactorParams);
+                closes, volumes, assetReturns, effectiveBenchmarkReturns, continuousFactorParams);
 
         // ---- 装配每个决策点的 point-in-time 特征 + 三隔栏训练目标；后面按 window 只把 train 交给 fit ----
         List<ResearchFeatures> featuresByPoint = new ArrayList<>(points);
@@ -257,15 +195,10 @@ public class ResearchEvalService {
             KlineBar decisionBar = featureBars.get(featureIndex);
             KlineBar exitBar = featureBars.get(featureIndex + horizonFeatureBars);
             long ti = decisionBar.closeTime();                             // 决策"当下"=该 5m bar 收盘时刻
-            double funding = fundingByFeatureBar[featureIndex];
-            int fng = SeriesAligner.asOf(fearGreedSeries, ti, NEUTRAL_FEAR_GREED).intValue();
-            double etf = SeriesAligner.asOf(etfFlowSeries, ti, NEUTRAL_ONCHAIN).doubleValue();
-            double stablecoin = SeriesAligner.asOf(stablecoinSeries, ti, NEUTRAL_ONCHAIN).doubleValue();
             ContinuousFactorVector continuousFactors = continuousFactorsByEnd[featureIndex + 1];
             int lookbackFrom = Math.max(0, featureIndex + 1 - featureLookbackBars); // 回看窗起点：晚期点恒 W 根，早期点不足则从 0（暖机语义不变）
             ResearchFeatures features = new ResearchFeatures(
-                    featureBars.subList(lookbackFrom, featureIndex + 1),
-                    funding, fng, etf, stablecoin, continuousFactors); // 绝不含未来
+                    featureBars.subList(lookbackFrom, featureIndex + 1), continuousFactors); // 绝不含未来
             BigDecimal entry = decisionBar.close();
             double sigma = HorizonScaledVolForecaster.scale(
                     VolatilityEstimator.ewmaVolatility(assetReturns, featureIndex + 1,
@@ -343,14 +276,6 @@ public class ResearchEvalService {
             throw new IllegalArgumentException("durationMillis/barMillis 必须为正");
         }
         return Math.max(1, Math.toIntExact((durationMillis + barMillis - 1L) / barMillis));
-    }
-
-    private static double[] fundingByFeatureBar(List<KlineBar> featureBars, List<MarketSeriesPoint> fundingSeries) {
-        double[] out = new double[featureBars.size()];
-        for (int i = 0; i < featureBars.size(); i++) {
-            out[i] = SeriesAligner.asOf(fundingSeries, featureBars.get(i).closeTime(), NEUTRAL_FUNDING).doubleValue();
-        }
-        return out;
     }
 
     private static double[] closes(List<KlineBar> bars) {

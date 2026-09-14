@@ -99,6 +99,18 @@
     "forecast": "预测",
     "previous": "前值"
   },
+  "whale": {
+    "title": "大户持仓",
+    "note": "Hyperliquid · {{count}} 个地址 · 快照 {{time}}",
+    "coin": "币",
+    "price": "快照价",
+    "long": "多头",
+    "short": "空头",
+    "liqAbove": "上方 5% 空头强平",
+    "liqBelow": "下方 5% 多头强平",
+    "holders_other": "{{count}} 人",
+    "none": "无"
+  },
   "buff": {
     "title": "每日福利",
     "drawing": "抽奖中...",

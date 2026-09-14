@@ -25,14 +25,6 @@ public final class ContinuousFactorSignals {
         return -riskAdjustedMomentum(closes, endExclusive, lookback);
     }
 
-    /** funding carry：资金费越高，多头越拥挤，long 方向得分越低。 */
-    public static double fundingCarry(double[] fundingRates, int endExclusive, int lookback) {
-        int end = Math.min(size(fundingRates), endExclusive);
-        if (lookback <= 0 || end == 0) return 0.0;
-        double[] window = tailWindow(fundingRates, end, lookback);
-        return -FactorMath.zScore(fundingRates[end - 1], window);
-    }
-
     /** 最新成交量相对自身历史窗口的 z-score。 */
     public static double volumeZScore(double[] volumes, int endExclusive, int lookback) {
         int end = Math.min(size(volumes), endExclusive);

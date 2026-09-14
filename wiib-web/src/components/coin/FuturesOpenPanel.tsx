@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ChevronRight } from 'lucide-react';
 import { futuresApi } from '../../api';
 import { useUserStore } from '../../stores/userStore';
 import { useToast } from '../ui/use-toast';
@@ -60,6 +61,16 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, positionsKey,
   const [actionSuccess, setActionSuccess] = useState(false);
   const [slRows, setSlRows] = useState<SLTPRow[]>([{ price: '', quantity: '' }]);
   const [tpRows, setTpRows] = useState<SLTPRow[]>([{ price: '', quantity: '' }]);
+  // 手机上止盈止损默认收起；收起行摘要：填了价格的，一档显示价格，多档显示档数
+  const [sltpOpen, setSltpOpen] = useState(false);
+  const sltpSummary = ([['sl', slRows], ['tp', tpRows]] as const)
+    .map(([k, rows]) => {
+      const set = rows.filter(r => parseFloat(r.price) > 0);
+      if (!set.length) return null;
+      return `${t(`sltp.${k}`)} ${set.length === 1 ? fmtPrice(parseFloat(set[0].price)) : t('sltp.levels', { count: set.length })}`;
+    })
+    .filter(Boolean)
+    .join(' · ') || t('sltp.notSet');
   const [crossAcct, setCrossAcct] = useState<FuturesCrossAccount | null>(null);
   // 开仓/调杠杆成功后 +1 触发全仓账户与持仓快照重拉（可用/净值/杠杆都可能变了）
   const [acctTick, setAcctTick] = useState(0);
@@ -395,8 +406,16 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, positionsKey,
         </div>
       )}
 
-      {/* 开仓止损/止盈：常显，价格留空就是不设。手机单列（双列时价格/数量输入被挤到不可用），≥sm 恢复双列 */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+      {/* 手机上止盈止损收成一行，点开才显示编辑器；电脑端常显 */}
+      <button type="button" onClick={() => setSltpOpen(o => !o)}
+              className="md:hidden flex items-center gap-1.5 h-10 border-y border-border text-[13px] font-semibold cursor-pointer">
+        <ChevronRight className={cn('w-3.5 h-3.5 shrink-0 transition-transform', sltpOpen && 'rotate-90')} />
+        {t('sltp.toggle')}
+        <span className="ml-auto min-w-0 truncate num font-medium text-muted-foreground">{sltpSummary}</span>
+      </button>
+
+      {/* 开仓止损/止盈：价格留空就是不设。手机单列（双列时价格/数量输入被挤到不可用），≥sm 恢复双列 */}
+      <div className={cn('grid grid-cols-1 sm:grid-cols-2 gap-3.5', !sltpOpen && 'max-md:hidden')}>
         <div className="field">
           <label>
             <span className="flex items-center gap-1">{t('sltp.sl')} <HelpTip text={t('sltp.slHelpOpen')} /></span>

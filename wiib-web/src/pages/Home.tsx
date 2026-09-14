@@ -11,6 +11,7 @@ import type { TradeItem } from '../components/LatestTradesCard';
 import { ForceOrdersCard } from '../components/ForceOrdersCard';
 import { NewsFlashCard } from '../components/NewsFlashCard';
 import { EconCalendarCard } from '../components/EconCalendarCard';
+import { WhaleSummaryCard } from '../components/WhaleSummaryCard';
 import { HomeFaq } from '../components/HomeFaq';
 import { LoginPrompt } from '../components/LoginPrompt';
 import { Sparkline } from '../components/fx/Sparkline';
@@ -287,6 +288,9 @@ export function Home() {
 
       {/* ====== 财经日历：本周已公布 / 即将公布 ====== */}
       <section className="sec mt-12"><EconCalendarCard /></section>
+
+      {/* ====== 大户持仓：没快照时组件自己整节不渲染 ====== */}
+      <WhaleSummaryCard />
 
       {/* ====== 爆仓动态 ====== */}
       <section className="sec mt-12"><ForceOrdersCard /></section>

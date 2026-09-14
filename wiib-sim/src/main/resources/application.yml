@@ -75,6 +75,7 @@ binance:
     - SOLUSDT
     - XRPUSDT
     - BNBUSDT
+    - ZECUSDT
   # 五分类盈亏归集用：TradFi 永续，黄金/原油
   commodity-symbols:
     - XAUUSDT
@@ -87,6 +88,9 @@ binance:
     - MUUSDT
     - KORUUSDT
     - SPCXUSDT
+  # 纯合约加密币(Binance 主站只有永续没现货)：不进现货补漏，盈亏归 crypto 桶
+  crypto-futures-symbols:
+    - HYPEUSDT
 
 websocket:
   max-connections: 10000

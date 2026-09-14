@@ -174,7 +174,7 @@ function BStockDetail({ symbol }: { symbol: string }) {
             <div className="px-4 pt-3 text-right text-xs text-muted-foreground tabular-nums">
               {info?.high != null && info?.low != null && t('bstockDetail.highLow', { high: fmtNum(info.high), low: fmtNum(info.low) })}
             </div>
-            <div className="h-[430px] sm:h-[520px] p-2">
+            <div className="h-[430px] sm:h-[520px] phone:h-auto p-2">
               {/* bstock 无后端K线广播：现货价格流驱动最后一根实时跳动 */}
               <CandleChart
                 symbol={symbol}

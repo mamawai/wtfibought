@@ -6,18 +6,13 @@ import com.mawai.wiibcommon.market.KlineBar;
 import java.util.List;
 
 /**
- * 升级后的 {@link Forecaster} 入参：决策点"当下"的 point-in-time 上下文。
- * barsUpToNow 绝不含未来；fundingRate/fearGreed/etfFlow/stablecoinDelta 由 SeriesAligner as-of 对齐而来
- * （无数据则中性：funding=0、fng=50、etf=0、stablecoin=0）。
- * continuousFactors 是同一决策点的结构化连续因子向量；纯价格预测器（如 EWMA 基线）可忽略额外字段。
+ * {@link Forecaster} 入参：决策点"当下"的 point-in-time 上下文。
+ * barsUpToNow 绝不含未来；continuousFactors 是同一决策点的结构化连续因子向量，纯价格预测器（如 EWMA 基线）可忽略。
  */
-public record ResearchFeatures(List<KlineBar> barsUpToNow, double fundingRate, int fearGreed,
-                               double etfFlow, double stablecoinDelta,
-                               ContinuousFactorVector continuousFactors) {
+public record ResearchFeatures(List<KlineBar> barsUpToNow, ContinuousFactorVector continuousFactors) {
 
-    public ResearchFeatures(List<KlineBar> barsUpToNow, double fundingRate, int fearGreed,
-                            double etfFlow, double stablecoinDelta) {
-        this(barsUpToNow, fundingRate, fearGreed, etfFlow, stablecoinDelta, ContinuousFactorVector.neutral());
+    public ResearchFeatures(List<KlineBar> barsUpToNow) {
+        this(barsUpToNow, ContinuousFactorVector.neutral());
     }
 
     public ResearchFeatures {

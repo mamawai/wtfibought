@@ -10,7 +10,7 @@ wiib-agent 里那套 LLM 装置单独成篇，见 [Agent Harness 架构](./agent
 flowchart TD
     UI["React Web<br/>Home / bStock / Coin / Commodity / TradFi / Portfolio / Prediction<br/>Arena / MyTrader / AI / Backtest / Strategies / Testnet / ForceOrders<br/>Ledger / Trades / PositionHistory / Ranking / Comments / Games / Me / Admin"]
     EXC["Binance / Polymarket<br/>实时行情源"]
-    EXT["Deribit / BlockBeats / ETF 流<br/>按需取数，不进总线"]
+    EXT["Deribit / BlockBeats<br/>按需取数，不进总线"]
     FEED["wiib-feed :8081<br/>交易所 WS/REST 接入"]
     SIM["wiib-sim :8080<br/>真人模拟交易 + 游戏 + 预测<br/>账本 = 自研模拟盘"]
     AGENT["wiib-agent :8082<br/>AI 交易员 + 策略执行"]
@@ -137,12 +137,12 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 │
 ├── wiib-quant/                       # ③ 量化能力库（非进程，被 wiib-agent 依赖并扫描挂载）
 │   ├── market/                       # 行情数据链路：领域事件 / 采集→特征快照 / 取数缓存
-│   │                                 # + 指标·结构计算器 + 期权/资金面/跨市场服务 + 收盘流消费
+│   │                                 # + 指标·结构计算器 + 期权/资金面服务 + 收盘流消费
 │   ├── research/                     # 量化研究库：因子/预测/标注/评估/风险指标
 │   ├── strategy/                     # FIBO/SQZMOM/TURTLE + 回测引擎
 │   │                                 # + 执行层(testnet|sim) + 账户监控
 │   ├── external/                     # 进程外客户端：binance testnet / blockbeats / deribit
-│   │                                 # / ETF 流爬取 / sim internal（行为数据 + 合约下单）
+│   │                                 # / sim internal（行为数据 + 合约下单）
 │   └── controller/ task/ mapper/     # ResearchEval/Strategy/Testnet/Backtest 接口 / 日历·K线采集
 │
 ├── wiib-sim/                         # ④ 真人模拟交易进程（:8080，账本=自研模拟盘 DB，对外）

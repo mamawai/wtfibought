@@ -14,7 +14,7 @@ import type { PageResult, PublicTrade } from '../types';
 
 const PAGE_SIZE = 20;
 
-const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'XRPUSDT', 'BNBUSDT'] as const;
+const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'XRPUSDT', 'BNBUSDT', 'ZECUSDT', 'HYPEUSDT'] as const;
 // 静态数组存词表 key 不存文案，渲染时才 t()
 const KINDS = [
   { key: 'all', value: undefined, labelKey: 'common:all' },

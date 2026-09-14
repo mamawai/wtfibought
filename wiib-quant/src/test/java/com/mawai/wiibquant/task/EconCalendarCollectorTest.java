@@ -4,6 +4,7 @@ import com.mawai.wiibquant.mapper.EconCalendarMapper;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -16,6 +17,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * 财经日历采集：TradingView 回包按事件 id upsert，定时轮删窗口内不在回包里的幽灵行；
@@ -140,5 +142,94 @@ class EconCalendarCollectorTest {
 
         verify(mapper, never()).upsert(anyString(), anyLong(), anyString(), anyString(), anyString(), any(), any(), any());
         verify(mapper, never()).deleteWindowExcept(anyLong(), anyLong(), anyList());
+    }
+
+    private static long at(String iso) {
+        return Instant.parse(iso).toEpochMilli();
+    }
+
+    /** 回填用：把每次请求的 URL 记进 urls，回包都给 FEED */
+    private EconCalendarCollector recording(List<String> urls) {
+        EconCalendarCollector c = collector(FEED);
+        c.http = u -> {
+            urls.add(u);
+            return FEED;
+        };
+        return c;
+    }
+
+    @Test
+    void 回填_最早一条已到2022_不请求() {
+        List<String> urls = new ArrayList<>();
+        EconCalendarCollector c = recording(urls);
+        when(mapper.selectMinEventTime()).thenReturn(at("2022-01-04T01:45:00Z"));
+
+        c.backfill();
+
+        assertThat(urls).isEmpty();
+    }
+
+    @Test
+    void 回填_空库_新到旧按90天切片_片片首尾相接_末片到起点() {
+        List<String> urls = new ArrayList<>();
+        EconCalendarCollector c = recording(urls);
+        c.nowMs = () -> at("2022-07-01T00:00:00Z");
+        when(mapper.selectMinEventTime()).thenReturn(null);
+
+        c.backfill();
+
+        // 2022-01-01 到 2022-07-01 共 181 天：90 + 90 + 1
+        assertThat(urls).hasSize(3);
+        assertThat(urls.get(0)).contains("from=2022-04-02T00:00:00Z&to=2022-07-01T00:00:00Z");
+        assertThat(urls.get(1)).contains("from=2022-01-02T00:00:00Z&to=2022-04-02T00:00:00Z");
+        assertThat(urls.get(2)).contains("from=2022-01-01T00:00:00Z&to=2022-01-02T00:00:00Z");
+        // 回填只写不删
+        verify(mapper, never()).deleteWindowExcept(anyLong(), anyLong(), anyList());
+    }
+
+    @Test
+    void 回填_最早一条晚于起点一周多_照样补() {
+        List<String> urls = new ArrayList<>();
+        EconCalendarCollector c = recording(urls);
+        c.nowMs = () -> at("2022-02-01T00:00:00Z");
+        // 起点+7天是 01-08，最早一条在 01-09
+        when(mapper.selectMinEventTime()).thenReturn(at("2022-01-09T00:00:00Z"));
+
+        c.backfill();
+
+        assertThat(urls).hasSize(1);
+        assertThat(urls.getFirst()).contains("from=2022-01-01T00:00:00Z&to=2022-02-01T00:00:00Z");
+    }
+
+    @Test
+    void 回填_中途某片失败_停下不再往前请求() {
+        List<String> urls = new ArrayList<>();
+        EconCalendarCollector c = collector(FEED);
+        c.nowMs = () -> at("2022-07-01T00:00:00Z");
+        c.http = u -> {
+            urls.add(u);
+            if (urls.size() == 2) {
+                throw new IllegalStateException("HTTP 503");
+            }
+            return FEED;
+        };
+        when(mapper.selectMinEventTime()).thenReturn(null);
+
+        c.backfill();
+
+        // 第二片失败即停
+        assertThat(urls).hasSize(2);
+    }
+
+    @Test
+    void 回填_关闭时_不查库不请求() {
+        List<String> urls = new ArrayList<>();
+        EconCalendarCollector c = recording(urls);
+        c.enabled = false;
+
+        c.backfill();
+
+        assertThat(urls).isEmpty();
+        verify(mapper, never()).selectMinEventTime();
     }
 }

@@ -99,6 +99,19 @@
     "forecast": "Fcst",
     "previous": "Prev"
   },
+  "whale": {
+    "title": "Whale positions",
+    "note": "Hyperliquid · {{count}} addresses · snapshot {{time}}",
+    "coin": "Coin",
+    "price": "Price",
+    "long": "Longs",
+    "short": "Shorts",
+    "liqAbove": "Short liq. within +5%",
+    "liqBelow": "Long liq. within −5%",
+    "holders_one": "{{count}} address",
+    "holders_other": "{{count}} addresses",
+    "none": "None"
+  },
   "buff": {
     "title": "Daily buff",
     "drawing": "Drawing...",

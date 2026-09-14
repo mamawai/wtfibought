@@ -12,7 +12,7 @@ import java.util.List;
  */
 public final class ContinuousFactorForecaster implements Forecaster {
 
-    private static final int FACTOR_COUNT = 6;
+    private static final int FACTOR_COUNT = 5;
     private static final int MIN_TRAIN_SAMPLES = 5;
     public static final double DEFAULT_EPSILON = 0.05;
 
@@ -140,10 +140,9 @@ public final class ContinuousFactorForecaster implements Forecaster {
         return switch (index) {
             case 0 -> safe.riskAdjustedMomentum();
             case 1 -> safe.shortReversal();
-            case 2 -> safe.fundingCarry();
-            case 3 -> safe.volumeZScore();
-            case 4 -> safe.amihudIlliquidity();
-            case 5 -> safe.residualMomentum();
+            case 2 -> safe.volumeZScore();
+            case 3 -> safe.amihudIlliquidity();
+            case 4 -> safe.residualMomentum();
             default -> 0.0;
         };
     }

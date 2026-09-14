@@ -22,7 +22,7 @@ import type { ChartCtx } from '../lib/chartDrawings';
 import { useDrawings } from './chart/useDrawings';
 import { DrawToolPopover, DrawToolRail } from './chart/DrawToolPicker';
 import { EconMarkersLayer } from './chart/EconMarkersLayer';
-import { flagHtml } from './CountryFlag';
+import { flagHtml } from '../lib/countryFlags';
 
 /** 一根 K：series 只用 OHLC，量/额留给读数和成交量柱。 */
 interface Bar { time: number; openMs: number; open: number; high: number; low: number; close: number; volume: number; quote: number; }
@@ -51,8 +51,8 @@ const fmtBarTime = (d: Date, interval: string) =>
 
 /** 读数容器：绝对定位在 pane 左上，穿透点击 */
 const LG_BASE = 'position:absolute;left:10px;z-index:3;pointer-events:none;white-space:nowrap;font-size:11.5px;line-height:1.55';
-/** 每格之间 9px；格内标签灰、值跟着外层色走 */
-const LG_SP = 'margin-right:9px';
+/** 每格之间 9px，一格整体换行；格内标签灰、值跟着外层色走 */
+const LG_SP = 'display:inline-block;margin-right:9px';
 const LG_LABEL = 'font-style:normal;margin-right:3px';
 /** 三条线的固定配色（同 lwcTheme().col3），走 CSS 变量所以切主题不用重刷读数 */
 const LG_COL3 = ['var(--color-primary)', '#2f8fd6', '#7c5cff'];
@@ -290,6 +290,9 @@ const SCROLL_OPTS: DeepPartial<HandleScrollOptions> =
 
 /** 触屏设备判定：竖屏全屏的"转横屏"提示只该出现在真能转的设备上（桌面竖屏显示器转不了） */
 const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches;
+
+/** 手机竖屏画布高：主图 360，每开一个副图加 120，和主图:副图 3:1 的 stretch 对上 */
+const PHONE_PLOT_H = ['phone:h-[360px]', 'phone:h-[480px]', 'phone:h-[600px]'];
 
 /** 快讯是外部内容，进 innerHTML 前必须转义（标题/正文/URL 都不可信） */
 const esc = (s: string) => s.replace(/[&<>"']/g, c =>
@@ -603,8 +606,11 @@ export function CandleChart({
         if (on.ema) row3 += MA_PERIODS.map((p, k) => cell(`EMA${p}`, nv(pick(ov.ema[k], ov.last.ema[k])), LG_COL3[k])).join('');
         if (on.boll) row3 += BOLL_LABELS.map((n, k) => cell(`BOLL ${n}`, nv(pick(ov.boll[k], ov.last.boll[k])), 'var(--color-muted-foreground)')).join('');
       }
+      // 窄屏：读数按格折行、右边让出价格轴，第一行不带市场名
+      els.main.style.whiteSpace = compact ? 'normal' : 'nowrap';
+      els.main.style.right = compact ? `${chart.priceScale('right').width() + 4}px` : '';
       els.main.innerHTML =
-        `<div><b style="font-weight:800;font-size:12.5px">${symbol}</b> <span class="mute">${interval} · ${marketLabel}</span></div>`
+        `<div><b style="font-weight:800;font-size:12.5px">${symbol}</b> <span class="mute">${compact ? interval : `${interval} · ${marketLabel}`}</span></div>`
         + `<div class="num ${up ? 'up' : 'dn'}">`
         + cell(i18n.t('market:chart.open'), fmtNum(bar.open, decimals))
         + cell(i18n.t('market:chart.high'), fmtNum(bar.high, decimals))
@@ -828,20 +834,20 @@ export function CandleChart({
     const th = lwcTheme();
     const lines: IPriceLine[] = [];
     const labels: { el: HTMLDivElement; price: number }[] = [];
+    const add = (price: number | null | undefined, title: string, color: string) => {
+      if (price == null || !(price > 0)) return;
+      lines.push(series.createPriceLine({ price, color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: '' }));
+      const el = document.createElement('div');
+      el.textContent = `${title} ${fmtNum(price, decimals)}`;
+      el.className = 'num';
+      el.style.cssText = 'position:absolute;display:none;transform:translateY(-50%);z-index:4;pointer-events:none;'
+        + 'padding:0 5px;font-size:11px;font-weight:700;line-height:1.5;white-space:nowrap;'
+        + `background:var(--color-background);border:1px solid currentColor;color:${color}`;
+      wrap.appendChild(el);
+      labels.push({ el, price });
+    };
     for (const p of positionOverlays) {
       if (hiddenPosIds.has(p.id)) continue;
-      const add = (price: number | null | undefined, title: string, color: string) => {
-        if (price == null || !(price > 0)) return;
-        lines.push(series.createPriceLine({ price, color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: '' }));
-        const el = document.createElement('div');
-        el.textContent = `${title} ${fmtNum(price, decimals)}`;
-        el.className = 'num';
-        el.style.cssText = 'position:absolute;display:none;transform:translateY(-50%);z-index:4;pointer-events:none;'
-          + 'padding:0 5px;font-size:11px;font-weight:700;line-height:1.5;white-space:nowrap;'
-          + `background:var(--color-background);border:1px solid currentColor;color:${color}`;
-        wrap.appendChild(el);
-        labels.push({ el, price });
-      };
       add(p.entry, `${p.label} ${t('chart.entry')}`, th.fg);
       p.tps.forEach((tp, i) => add(tp, `${p.label} TP${p.tps.length > 1 ? i + 1 : ''}`, th.gain));
       p.sls.forEach((s, i) => add(s, `${p.label} SL${p.sls.length > 1 ? i + 1 : ''}`, th.loss));
@@ -896,14 +902,14 @@ export function CandleChart({
     };
   }, [tradeMarks, showMarks, interval, chartEpoch, isDark]);
 
-  // 财经日历标记：High 级事件按 K 线时间桶聚合，日历图标悬在所属那根上方，点开看实际/预测/前值。
+  // 财经日历标记：美国 High 级事件按 K 线时间桶聚合，日历图标悬在所属那根上方，点开看实际/预测/前值。
   // 语义是"这根K线覆盖的时间段内公布了什么"——按公布时刻定位，不承诺行情因果。
   // 标记画在主图画布上（EconMarkersLayer 挂蜡烛 series）：与蜡烛同帧渲染，平移缩放零延迟；
   // 弹窗仍是 DOM（国旗与换行画布画不了），点击命中在 pointerdown 里主动 pick
   useEffect(() => {
-    const wrap = wrapRef.current, candle = candleRef.current;
+    const wrap = wrapRef.current, candle = candleRef.current, chart = chartRef.current;
     const econTip = econTipRef.current;
-    if (!econMarks || !showEcon || !wrap || !candle) return;
+    if (!econMarks || !showEcon || !wrap || !candle || !chart) return;
     let disposed = false;
     const bucketMs = BUCKET_MS[interval];
     /** time → 该桶的事件组，点击标记时按命中的时间桶取内容 */
@@ -940,18 +946,30 @@ export function CandleChart({
       tip.style.top = `${iy - th - 8 >= 4 ? iy - th - 8 : iy + 26}px`;
     };
 
-    // 窗口按内存上限的最远可翻历史算：翻到底标记也都在
-    quantApi.econCalendarEvents(Date.now() - bucketMs * MAX_BARS, Date.now() + bucketMs).then(events => {
-      if (disposed || !events.length) return;
-      for (const e of events) {
-        const time = toBarTime(Math.floor(e.eventTime / bucketMs) * bucketMs);
-        const g = groups.get(time) ?? [];
-        g.push(e);
-        groups.set(time, g);
-      }
-      layer.markers = [...groups.entries()].map(([time, g]) => ({ time, count: g.length }));
-      layer.update();
-    }).catch(() => { /* 接口失败：没有标记而已，图表照常 */ });
+    // 事件跟着已加载的 K 线拉：首屏画完、往左翻出新一页，补拉 [最早一根, 已拉起点) 这段
+    // 起点先挪再发请求；失败的段不重拉
+    let fetchedFrom = Infinity;
+    const loadEvents = () => {
+      const first = barsRef.current[0];
+      if (!first || first.openMs >= fetchedFrom) return;
+      // 右端退 1ms，与上一段不重叠
+      const to = Number.isFinite(fetchedFrom) ? fetchedFrom - 1 : Date.now() + bucketMs;
+      fetchedFrom = first.openMs;
+      quantApi.econCalendarEvents(first.openMs, to).then(events => {
+        if (disposed) return;
+        // BTC 只挂美国数据
+        for (const e of events.filter(ev => ev.country === 'US')) {
+          const time = toBarTime(Math.floor(e.eventTime / bucketMs) * bucketMs);
+          const g = groups.get(time) ?? [];
+          g.push(e);
+          groups.set(time, g);
+        }
+        layer.markers = [...groups.entries()].map(([time, g]) => ({ time, count: g.length }));
+        layer.update();
+      }).catch(() => { /* 接口失败：没有标记而已，图表照常 */ });
+    };
+    loadEvents();
+    chart.timeScale().subscribeVisibleLogicalRangeChange(loadEvents);
 
     // 点击命中：capture 在 document 上——点中标记时截住事件（LWC 的拖拽别跟着起步），
     // 点在标记与弹窗之外的任何地方都收起弹窗
@@ -976,7 +994,8 @@ export function CandleChart({
       disposed = true;
       document.removeEventListener('pointerdown', onDown, true);
       econLayerRef.current = null;
-      // 图整体重建时 series 已死，detach 会抛，吞掉即可（同成交标记的清理）
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(loadEvents);
+      // 图已销毁时 detach 会抛，吞掉
       try { candle.detachPrimitive(layer); } catch { /* chart disposed */ }
       if (econTip) econTip.style.display = 'none';
     };
@@ -1098,18 +1117,9 @@ export function CandleChart({
       'w-full h-full flex flex-col',
       fs.active && 'fixed inset-0 z-50 bg-background p-4 pb-7',
     )}>
-      {/* 顶栏：周期 / 图型 / 指标入口 —— 撑开 —— 显示开关 / 全屏。画线工具收进左侧竖栏（手机放这行最前） */}
+      {/* 顶栏：周期 / 图型 / 画线（手机）/ 指标入口 —— 撑开 —— 显示开关 / 全屏。
+          画线工具桌面收进左侧竖栏；手机上周期和图型占第一行，画线、指标、开关折到第二行 */}
       <div className="flex items-center gap-2.5 mb-2.5 flex-wrap">
-        {!advMode && (
-          <DrawToolPopover
-            className="md:hidden" tool={tool} onSelect={setTool}
-            magnet={magnet} onToggleMagnet={() => setMagnet(!magnet)}
-            hiddenAll={hiddenAll} onToggleHidden={() => setHiddenAll(!hiddenAll)} hideDisabled={!drawCount}
-            onTrash={trash} trashDisabled={!hasSelection && !drawCount}
-            trashTitle={hasSelection ? t('chart.deleteSelected') : t('chart.clearAll')}
-          />
-        )}
-
         <div className="seg num">
           {(Object.keys(BUCKET_MS) as Interval[]).map(k => (
             <button key={k} type="button" className={cn(!advMode && interval === k && 'on')}
@@ -1134,6 +1144,16 @@ export function CandleChart({
             <ChartLine className="w-[15px] h-[15px]" />
           </button>
         </div>
+
+        {!advMode && (
+          <DrawToolPopover
+            className="md:hidden" tool={tool} onSelect={setTool}
+            magnet={magnet} onToggleMagnet={() => setMagnet(!magnet)}
+            hiddenAll={hiddenAll} onToggleHidden={() => setHiddenAll(!hiddenAll)} hideDisabled={!drawCount}
+            onTrash={trash} trashDisabled={!hasSelection && !drawCount}
+            trashTitle={hasSelection ? t('chart.deleteSelected') : t('chart.clearAll')}
+          />
+        )}
 
         {/* 指标弹层：主图三组、副图两组，chip 填墨=开 */}
         {indicators && (
@@ -1232,9 +1252,11 @@ export function CandleChart({
         </button>
       </div>
 
-      {/* 左竖栏 34px + 画布。高级档整块盖住 plot，竖栏也收起来 */}
+      {/* 左竖栏 34px + 画布。高级档整块盖住 plot，竖栏也收起来。
+          手机竖屏非全屏：高度按副图数定，副图往下加高不挤主图 */}
       <div className={cn('grid grid-cols-1 border-t border-foreground flex-1 min-h-0',
-        advMode ? 'md:grid-cols-1' : 'md:grid-cols-[34px_1fr]')}>
+        advMode ? 'md:grid-cols-1' : 'md:grid-cols-[34px_1fr]',
+        !fs.active && ['phone:flex-none', PHONE_PLOT_H[indicators ? Number(subs.macd) + Number(subs.rsi) : 0]])}>
         {!advMode && (
           <DrawToolRail
             className="hidden md:flex" tool={tool} onSelect={setTool}

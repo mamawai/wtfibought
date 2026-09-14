@@ -53,6 +53,7 @@ binance:
     - SOLUSDT
     - XRPUSDT
     - BNBUSDT
+    - ZECUSDT
   # bStock(代币化美股，纯现货无合约)：价并入 Spot 流，5m K线走现货端点单独一条连接
   stock-symbols:
     - MUBUSDT
@@ -77,6 +78,9 @@ binance:
     - MUUSDT
     - KORUUSDT
     - SPCXUSDT
+  # 纯合约加密币(Binance 主站只有永续没现货)：与商品同链路，只进合约流
+  crypto-futures-symbols:
+    - HYPEUSDT
   fallback-poll-interval: 5000
 
 # /internal/streams(流健康+重试)由共享 InternalApiFilter 校验此 token；须与 sim/quant 同值

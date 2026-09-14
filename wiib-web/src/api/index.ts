@@ -552,6 +552,8 @@ export interface NewsEventItem {
 
 /** 财经日历一条（TradingView 全球 High 级事件，标题是接口英文原文） */
 export interface EconCalendarEvent {
+  /** TradingView 事件 id；同一时刻可能有多条 */
+  sourceId: string;
   /** 公布/开始时刻 epoch 毫秒 */
   eventTime: number;
   /** ISO 国家码，如 US / EU */
@@ -571,12 +573,83 @@ export interface EconCalendarView {
   upcoming: EconCalendarEvent[];
 }
 
+/** 大户持仓一个方向；没仓位时 count=0、其余 null */
+export interface WhaleSide {
+  /** 地址数 */
+  count: number;
+  /** 名义额（美元） */
+  notional: number | null;
+  /** 按币数量加权的开仓均价 */
+  wavgEntry: number | null;
+  /** 按地址取的开仓价中位数 */
+  medianEntry: number | null;
+  /** 前一名名义占比 0~1 */
+  top1Share: number | null;
+  /** 浮盈亏合计 */
+  upnl: number | null;
+}
+
+/** 现价 5% 内的强平名义合计与名义最大那个桶的下界 */
+export interface WhaleLiqBand {
+  notional: number;
+  peakPrice: number;
+}
+
+/** 分桶：桶宽跟当轮标记价走，只有非空桶、按下界升序；每桶 [下界, 多头名义, 空头名义] */
+export interface WhaleBuckets {
+  width: number;
+  buckets: [number, number, number][];
+}
+
+/** summary 里一个币那段 */
+export interface WhaleCoin {
+  /** Hyperliquid 币码，如 BTC */
+  coin: string;
+  /** 平台交易对，如 BTCUSDT */
+  symbol: string;
+  /** Hyperliquid 标记价（快照价） */
+  price: number;
+  long: WhaleSide;
+  short: WhaleSide;
+  /** 上方 5% 内空头强平；没有 = null */
+  liqAbove: WhaleLiqBand | null;
+  /** 下方 5% 内多头强平；没有 = null */
+  liqBelow: WhaleLiqBand | null;
+  /** 全市场持仓量名义 */
+  hlOpenInterest: number;
+  /** 池内名义 / 全市场持仓量，0~1；OI 为 0 时 null */
+  coverage: { long: number | null; short: number | null };
+}
+
+/** 首页卡：最新一槽；没快照时 coins 空、observedAt/poolSize 为 null */
+export interface WhaleSummary {
+  observedAt: number | null;
+  poolSize: number | null;
+  coins: WhaleCoin[];
+}
+
+/** Coin 页：该币最新快照全量 */
+export interface WhaleCoinDetail extends WhaleCoin {
+  observedAt: number;
+  poolSize: number;
+  entryBuckets: WhaleBuckets;
+  liqBuckets: WhaleBuckets;
+}
+
 export const quantApi = {
+  /** 大户持仓首页卡：各币最新一轮，只列有仓位的币 */
+  whaleSummary: () => api.get<unknown, WhaleSummary>('/ai/quant/whale/summary'),
+  /** 大户持仓 Coin 页：传 Hyperliquid 币码（BTC）；不在盯盘列表 / 没快照 / 没仓位都回 null，整块不渲染 */
+  whaleCoin: (coin: string) => api.get<unknown, WhaleCoinDetail | null>(`/ai/quant/whale/${coin}`),
   /** 首页财经日历：过去 3 天已公布 / 未来一周即将公布各 6 条 */
   econCalendar: () => api.get<unknown, EconCalendarView>('/ai/quant/econ-calendar'),
   /** 财经日历事件：时间窗内全部（BTC K 线标记数据源） */
   econCalendarEvents: (from: number, to: number) =>
     api.get<unknown, EconCalendarEvent[]>('/ai/quant/econ-calendar/events', { params: { from, to } }),
+  /** 日历页单指标历次公布：同一指标换过名的新旧标题一起传，发成 titles=a&titles=b */
+  econCalendarSeries: (country: string, titles: string[]) =>
+    api.get<unknown, EconCalendarEvent[]>('/ai/quant/econ-calendar/series',
+      { params: { country, titles }, paramsSerializer: { indexes: null } }),
   /**
    * 快讯（news_event 存档，中英两套一起到）。不带参＝最新 100 条；
    * from/to 都给＝该区间 [from, to) 内按发稿时间倒序最多 300 条（按天翻看用）

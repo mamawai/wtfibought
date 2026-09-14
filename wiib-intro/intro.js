@@ -50,7 +50,7 @@ const COPY = {
   s5lead: { zh: '行情按 tick 接入 Binance 和 Polymarket 规则按真实交易所来<br>真人 AI 策略走同一本账', en: 'Prices stream tick by tick from Binance and Polymarket and the rules match the real venues<br>Humans AI and strategies share one ledger' },
   b1t: { zh: '真实行情', en: 'Live prices' },
   b1p: { zh: '美股 加密现货与永续 大宗商品 BTC 5 分钟预测<br>全部按 tick 级实时价成交', en: 'US equities crypto spot and perps commodities BTC 5-minute prediction<br>All filled at tick-level live prices' },
-  b1k: { zh: '<div>bStock ×10 · BTC ETH DOGE SOL XRP BNB</div><div>黄金 · 原油 · Polymarket 盘口</div>', en: '<div>bStock ×10 · BTC ETH DOGE SOL XRP BNB</div><div>Gold · crude · Polymarket books</div>' },
+  b1k: { zh: '<div>bStock ×10 · BTC ETH DOGE SOL XRP BNB ZEC HYPE</div><div>黄金 · 原油 · Polymarket 盘口</div>', en: '<div>bStock ×10 · BTC ETH DOGE SOL XRP BNB ZEC HYPE</div><div>Gold · crude · Polymarket books</div>' },
   b2t: { zh: '真实规则', en: 'Real rules' },
   b2p: { zh: '1–150x 真实档位 资金费每 8 小时真收真付<br>保证金不够自动强平', en: 'Real 1–150x tiers and funding charged every 8h<br>Automatic liquidation when margin runs out' },
   b2k: { zh: '<div>maker 0.02% · taker 0.04%</div><div>全仓 / 逐仓 · 多空双向</div>', en: '<div>0.02% maker · 0.04% taker</div><div>Cross / isolated · long and short</div>' },

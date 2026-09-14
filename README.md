@@ -61,8 +61,8 @@ The main act here is backtesting, quant strategy simulation, and AI Trader:
 ## Core Capabilities
 
 - **bStock tokenized US equities**: 10 tickers (NVDA · TSLA · MU · SNDK · CRCL · MSTR · AMD · SPCX · QQQ · SOXL) on real Binance spot data (e.g. `NVDABUSDT`), with company fundamentals; orders settle against the unified margin account.
-- **Crypto spot**: BTC / ETH / DOGE / SOL / XRP / BNB on live Binance data, market and limit orders, sells credit immediately.
-- **Perpetual futures**: cross and isolated margin, long and short, 1-150x tiered leverage (matching Binance's tier table), 0.02% maker / 0.04% taker, real funding rates (charged both ways every 8h from Binance premiumIndex), automatic liquidation; gold `XAUUSDT` and crude oil `CLUSDT` are TradFi perpetuals with no spot market.
+- **Crypto spot**: BTC / ETH / DOGE / SOL / XRP / BNB / ZEC on live Binance data, market and limit orders, sells credit immediately.
+- **Perpetual futures**: cross and isolated margin, long and short, 1-150x tiered leverage (matching Binance's tier table), 0.02% maker / 0.04% taker, real funding rates (charged both ways every 8h from Binance premiumIndex), automatic liquidation; `HYPEUSDT` is perpetual-only (Binance lists no spot pair), and gold `XAUUSDT` / crude oil `CLUSDT` are TradFi perpetuals with no spot market.
 - **BTC 5-minute prediction**: Polymarket order books plus a Chainlink BTC price line, auto-settled on 5-minute windows (settlement uses Polymarket open/close prices) with a dynamic fee.
 - **Unified margin and a complete ledger**: borrow-to-buy through the unified margin account, with interest accrual and liquidation checks on trading days; every balance change passes through the `@Ledger` aspect into the ledger table across 44 labeled business types; statements paginate by cursor and filter by type, and position history shows one row per position, expandable into partial-close detail.
 - **AI Trader Arena**: one trader per user, BYOK with your own model and key, woken on your chosen candle interval to make decisions (up to 3 symbols, capped at 12 model calls per wake); you set the leverage range and margin budget, and orders outside them are rejected rather than silently clamped. Daily self-review plus learning from peers. The decision timeline, entry theses and revisions, review and learning notes, and equity curve are public site-wide; the token-by-token live wake feed and raw tool receipts are visible only to the trader's owner.
@@ -88,8 +88,8 @@ To self-host:
 
    ```bash
    psql -U postgres -c "CREATE DATABASE wiib;"
-   psql -U postgres -d wiib -f sql/init.sql      # business + quant + AI runtime (34 tables)
-   psql -U postgres -d wiib -f sql/bstock.sql    # bStock static table + 10 seed tickers (35 in total)
+   psql -U postgres -d wiib -f sql/init.sql      # business + quant + AI runtime (36 tables)
+   psql -U postgres -d wiib -f sql/bstock.sql    # bStock static table + 10 seed tickers (37 in total)
    ```
 
 4. Copy the environment template and fill in the three required values `PG_USER` / `PG_PASSWORD` / `INTERNAL_API_TOKEN` (generate the last one with `openssl rand -base64 24`).
@@ -199,7 +199,7 @@ Current instruments:
 
 | Class | Instruments |
 |---|---|
-| Crypto spot / perpetual | `BTC` `ETH` `DOGE` `SOL` `XRP` `BNB` |
+| Crypto spot / perpetual | `BTC` `ETH` `DOGE` `SOL` `XRP` `BNB` `ZEC` · `HYPE` (perpetual only) |
 | bStock tokenized US equities | 10: NVDA · TSLA · MU · SNDK · CRCL · MSTR · AMD · SPCX · QQQ · SOXL |
 | Commodities | Gold `XAUUSDT` · crude oil `CLUSDT` |
 | TradFi contracts | `SNDK` · `SOXL` · `SKHYNIX` · `MU` · `KORU` · `SPCX` (equity / ETF perpetuals, no spot) |

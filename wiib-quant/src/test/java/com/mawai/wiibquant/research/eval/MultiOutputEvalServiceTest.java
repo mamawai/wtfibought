@@ -22,7 +22,7 @@ class MultiOutputEvalServiceTest {
 
         MultiOutputReport r = MultiOutputEvalService.evaluateBars(
                 "BTCUSDT", ForecastHorizon.H6, uptrend1m(8 * 360),
-                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(),
                 QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
 
         assertThat(r.symbol()).isEqualTo("BTCUSDT");
@@ -50,7 +50,7 @@ class MultiOutputEvalServiceTest {
 
         MultiOutputReport r = MultiOutputEvalService.evaluateBars(
                 "BTCUSDT", ForecastHorizon.H6, uptrend1m(8 * 360),
-                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(),
                 QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
 
         assertThat(r.buyAndHoldReturn().doubleValue()).isGreaterThan(0); // 上行趋势
@@ -68,7 +68,7 @@ class MultiOutputEvalServiceTest {
 
         MultiOutputReport r = MultiOutputEvalService.evaluateBars(
                 "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360),
-                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(),
                 QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
 
         // 持续上涨：regime 预测(ADX 高→UP) 与事后标签(平滑路径 directionality≫q→UP) 大量吻合
@@ -81,7 +81,7 @@ class MultiOutputEvalServiceTest {
 
         MultiOutputReport r = MultiOutputEvalService.evaluateBars(
                 "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360),
-                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(),
                 QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
 
         assertThat(r.volScore().n()).isGreaterThan(0);
@@ -95,7 +95,7 @@ class MultiOutputEvalServiceTest {
 
         MultiOutputReport r = MultiOutputEvalService.evaluateBars(
                 "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360),
-                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(),
                 QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
 
         // 分布是诊断 regime 塌缩的直接证据：各类计数之和必等于样本外点数
@@ -113,11 +113,11 @@ class MultiOutputEvalServiceTest {
 
         MultiOutputReport rFree = MultiOutputEvalService.evaluateBars(
                 "BTCUSDT", ForecastHorizon.H6, bars,
-                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(),
                 QuantCoreForecaster.defaults(ForecastHorizon.H6), free);
         MultiOutputReport rCost = MultiOutputEvalService.evaluateBars(
                 "BTCUSDT", ForecastHorizon.H6, bars,
-                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(),
                 QuantCoreForecaster.defaults(ForecastHorizon.H6), costly);
 
         // 成本只打方向腿；vol/regime 判决与排列分位（gross、洗牌不变）必须纹丝不动
@@ -145,7 +145,7 @@ class MultiOutputEvalServiceTest {
 
         MultiOutputReport r = MultiOutputEvalService.evaluateBars(
                 "BTCUSDT", ForecastHorizon.H6, uptrend1m(8 * 360),
-                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(),
                 QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
 
         // DSR 钩子：方向逐期收益序列须与样本外点数一致、年化周期取 horizon 口径，供 multi-*.json 离线重判
@@ -160,7 +160,7 @@ class MultiOutputEvalServiceTest {
 
         MultiOutputReport r = MultiOutputEvalService.evaluateBars(
                 "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360),
-                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(),
                 QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
 
         // 新口径：跑赢全部基准 == 对最难基准的 QLIKE 优势在 DM/Newey-West 检验下显著；裸点估计更低/打平不算赢
@@ -174,7 +174,7 @@ class MultiOutputEvalServiceTest {
 
         MultiOutputReport r = MultiOutputEvalService.evaluateBars(
                 "BTCUSDT", ForecastHorizon.H6, uptrend1m(40 * 360),
-                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(),
                 QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
 
         String summary = r.summary(); // 同时验证 format 参数对齐不抛异常
@@ -192,7 +192,7 @@ class MultiOutputEvalServiceTest {
 
         MultiOutputReport r = MultiOutputEvalService.evaluateBars(
                 "BTCUSDT", ForecastHorizon.H6, oscillating5m(160),
-                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(),
                 QuantCoreForecaster.defaults(ForecastHorizon.H6), params);
 
         assertThat(r.testPoints()).isGreaterThan(0);

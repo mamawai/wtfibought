@@ -61,8 +61,8 @@ WhatIfIBought 的重头戏是回测练习、量化策略模拟和 AI Trader：
 ## 核心能力
 
 - **bStock 代币化美股**：10 只（NVDA · TSLA · MU · SNDK · CRCL · MSTR · AMD · SPCX · QQQ · SOXL），走 Binance 现货真实行情（如 `NVDABUSDT`），含公司基本面，下单挂靠统一保证金账户。
-- **加密货币现货**：BTC / ETH / DOGE / SOL / XRP / BNB，Binance 实时行情，市价 / 限价单，卖出即时到账。
-- **永续合约**：全仓 / 逐仓双模式，多空双向，1-150 倍分档杠杆（对齐 Binance 档位表），maker 0.02% / taker 0.04%，真实资金费率（每 8h 按 Binance premiumIndex 双向收付），自动强平；大宗商品黄金 `XAUUSDT` 与原油 `CLUSDT` 是 TradFi 永续，无现货。
+- **加密货币现货**：BTC / ETH / DOGE / SOL / XRP / BNB / ZEC，Binance 实时行情，市价 / 限价单，卖出即时到账。
+- **永续合约**：全仓 / 逐仓双模式，多空双向，1-150 倍分档杠杆（对齐 Binance 档位表），maker 0.02% / taker 0.04%，真实资金费率（每 8h 按 Binance premiumIndex 双向收付），自动强平；`HYPEUSDT` 只有永续（Binance 主站无现货对），大宗商品黄金 `XAUUSDT` 与原油 `CLUSDT` 是 TradFi 永续，无现货。
 - **BTC 5 分钟涨跌预测**：接 Polymarket 盘口与 Chainlink BTC 价格线，5 分钟窗口自动结算（结算基准取 Polymarket 开 / 收盘价），动态手续费。
 - **统一保证金与全量账本**：借款买入统一保证金账户，交易日计息与爆仓检查；所有资金变动经 `@Ledger` 切面写入流水表，44 种业务类型各带说明；账单页游标翻页可按类型筛选，合约仓位历史一行一笔、展开看分批平仓明细。
 - **AI Trader 竞技场**：每用户一个 trader，BYOK 接自己的模型和 key，按选定 K 线级别定时唤醒决策（最多盯 3 个币，单轮模型调用上限 12 次），杠杆区间与保证金占比由主人设定、越界下单直接拒绝而不是悄悄截断；每日复盘 + 向同侪学习。决策时间线、开仓论点与修订史、复盘与学习笔记、净值曲线全站公开；逐字吐字的唤醒现场与工具回执只有主人能看。
@@ -88,8 +88,8 @@ WhatIfIBought 的重头戏是回测练习、量化策略模拟和 AI Trader：
 
    ```bash
    psql -U postgres -c "CREATE DATABASE wiib;"
-   psql -U postgres -d wiib -f sql/init.sql      # 业务 + 量化 + AI runtime（34 张表）
-   psql -U postgres -d wiib -f sql/bstock.sql    # bStock 静态表 + 10 只种子（两份合计 35 张）
+   psql -U postgres -d wiib -f sql/init.sql      # 业务 + 量化 + AI runtime（36 张表）
+   psql -U postgres -d wiib -f sql/bstock.sql    # bStock 静态表 + 10 只种子（两份合计 37 张）
    ```
 
 4. 复制环境配置模板，填三个必填项 `PG_USER` / `PG_PASSWORD` / `INTERNAL_API_TOKEN`（最后一个用 `openssl rand -base64 24` 生成）。
@@ -199,7 +199,7 @@ BYOK 流式对话，路由派 market / news / trader 三个专家并行取数后
 
 | 品类 | 标的 |
 |---|---|
-| 加密现货 / 永续 | `BTC` `ETH` `DOGE` `SOL` `XRP` `BNB` |
+| 加密现货 / 永续 | `BTC` `ETH` `DOGE` `SOL` `XRP` `BNB` `ZEC` · `HYPE`（仅永续） |
 | bStock 代币化美股 | 10 只：NVDA · TSLA · MU · SNDK · CRCL · MSTR · AMD · SPCX · QQQ · SOXL |
 | 大宗商品 | 黄金 `XAUUSDT` · 原油 `CLUSDT` |
 | TradFi 合约 | `SNDK` · `SOXL` · `SKHYNIX` · `MU` · `KORU` · `SPCX`（美股 / ETF 永续，无现货） |

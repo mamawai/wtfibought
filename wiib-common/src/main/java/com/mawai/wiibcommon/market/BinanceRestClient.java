@@ -363,7 +363,7 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
      * 恐惧贪婪指数打的是 alternative.me，不是 Binance，所以刻意绕开熔断器：
      * 它是个免费公共 API，被它限流一次就冻结全部 Binance 行情 2 分钟（连策略自动交易轨一起），
      * 拿不相干供应商的配额去停自家主链路，比这个任务要防的故障还糟。
-     * 失败仍归一成 null（CollectDataNode / MarketSeriesStore 都按 null 降级），只是不写 blockedUntil。
+     * 失败仍归一成 null（CollectDataNode 按 null 降级），只是不写 blockedUntil。
      */
     public String getFearGreedIndex(int limit) {
         URI uri = UriComponentsBuilder
@@ -440,24 +440,6 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
                 .queryParam("limit", Math.min(limit, 100))
                 .build().toUri();
         log.info("Binance REST fundingRateHistory: {}", uri);
-        return getGuarded(uri);
-    }
-
-    /**
-     * 资金费率历史·带 startTime/endTime 的正向分页重载（research 回填用）。
-     * Binance 只传 endTime 时会从历史最早点开始返回，不能用于最近窗口回填。
-     */
-    public String getFundingRateHistory(String symbol, int limit, long startTime, long endTime) {
-        String baseUrl = props.getFuturesRestBaseUrl();
-        if (baseUrl == null || baseUrl.isBlank()) return null;
-        URI uri = UriComponentsBuilder
-                .fromUriString(baseUrl + "/fapi/v1/fundingRate")
-                .queryParam("symbol", symbol)
-                .queryParam("startTime", startTime)
-                .queryParam("endTime", endTime)
-                .queryParam("limit", Math.min(limit, 1000))
-                .build().toUri();
-        log.info("Binance REST fundingRateHistory(start/end): {}", uri);
         return getGuarded(uri);
     }
 

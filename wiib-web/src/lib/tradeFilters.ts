@@ -14,6 +14,9 @@ const DEFAULTS: TradeFilterMap = {
     SOLUSDT:  { stepSize: 0.01,   minQty: 0.01,   minNotional: 5 },
     XRPUSDT:  { stepSize: 0.1,    minQty: 0.1,    minNotional: 5 },
     BNBUSDT:  { stepSize: 0.01,   minQty: 0.01,   minNotional: 5 },
+    // ZEC / HYPE 实拉 2026-09-14（HYPE 主站无现货）
+    ZECUSDT:  { stepSize: 0.001,  minQty: 0.001,  minNotional: 5 },
+    HYPEUSDT: { stepSize: 0.01,   minQty: 0.01,   minNotional: 5 },
     XAUUSDT:  { stepSize: 0.001,  minQty: 0.001,  minNotional: 5 },
     CLUSDT:   { stepSize: 0.01,   minQty: 0.01,   minNotional: 5 },
     // TradFi 股票/ETF 永续：六标的官方口径一致（实拉 2026-07-23）
@@ -31,6 +34,7 @@ const DEFAULTS: TradeFilterMap = {
     SOLUSDT:  { stepSize: 0.001,   minQty: 0.001,   minNotional: 5 },
     XRPUSDT:  { stepSize: 0.1,     minQty: 0.1,     minNotional: 5 },
     BNBUSDT:  { stepSize: 0.001,   minQty: 0.001,   minNotional: 5 },
+    ZECUSDT:  { stepSize: 0.001,   minQty: 0.001,   minNotional: 5 },
   },
 };
 

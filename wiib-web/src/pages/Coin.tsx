@@ -2,10 +2,9 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight, ChevronLeft, Target } from 'lucide-react';
-import { cryptoApi, cryptoOrderApi, futuresApi } from '../api';
+import { cryptoApi, cryptoOrderApi, futuresApi, quantApi, type WhaleCoinDetail } from '../api';
 import { useUserStore } from '../stores/userStore';
 import { useCryptoStream } from '../hooks/useCryptoStream';
-import { useCountUp } from '../hooks/useCountUp';
 import { useToast } from '../components/ui/use-toast';
 import { Skeleton } from '../components/ui/skeleton';
 import { CandleChart, type PositionOverlay, type TradeMark } from '../components/CandleChart';
@@ -15,8 +14,9 @@ import { FuturesOpenPanel } from '../components/coin/FuturesOpenPanel';
 import { FuturesPositionsCard } from '../components/coin/FuturesPositionsCard';
 import { CoinOrdersCard } from '../components/coin/CoinOrdersCard';
 import { MarketSessionBadge } from '../components/coin/MarketSessionBadge';
+import { WhaleBlock } from '../components/coin/WhaleBlock';
 import { LoginPrompt } from '../components/LoginPrompt';
-import { fmtNum } from '../lib/utils';
+import { cn, fmtNum } from '../lib/utils';
 import { COIN_MAP, getCoin, DEFAULT_SYMBOL, formatCoinPrice } from '../lib/coinConfig';
 import type { CryptoPosition, FuturesBracket, FuturesPosition } from '../types';
 
@@ -72,6 +72,21 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
     const timer = setInterval(pull, 10 * 60 * 1000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [symbol, isFuturesMode]);
+
+  // 大户持仓：Hyperliquid 只有加密币，大宗/TradFi 与现货模式不拉。
+  // 后端 10 分钟一轮快照，60 秒重拉一次；不在盯盘列表/没快照/没仓位都回 null，整块不渲染
+  const whaleOn = isFuturesMode && !cfg.category;
+  const [whale, setWhale] = useState<WhaleCoinDetail | null>(null);
+  useEffect(() => {
+    if (!whaleOn) return;
+    let cancelled = false;
+    const pull = () => quantApi.whaleCoin(symbol.replace(/USDT$/, ''))
+      .then(d => { if (!cancelled) setWhale(d); })
+      .catch(() => { if (!cancelled) setWhale(null); });
+    pull();
+    const timer = setInterval(pull, 60 * 1000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [symbol, whaleOn]);
 
   // 实物换算币种: USD/CNY 汇率
   const [usdCny, setUsdCny] = useState(0);
@@ -187,9 +202,6 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
   const changePct = day.base > 0 ? (change / day.base) * 100 : 0;
   const isUp = change >= 0;
 
-  // 大数滚动：挂载 0→现价，之后每次报价变化补间过去
-  const priceRef = useCountUp<HTMLElement>(currentPrice, v => `$${fmtPrice(v)}`);
-
   // K线实时驱动分派：crypto 合约 5m/15m/1h 有后端广播（含量/额），4h/1d 没有；
   // 大宗商品/美股永续只有 5m 广播；现货全部由价格 tick 驱动最后一根。
   // 无广播的档位量/额停在进页时的 REST 快照，只有 OHLC 随价格流跳
@@ -224,7 +236,11 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
           </button>
 
           <div className="flex items-baseline gap-4 flex-wrap">
-            <b className="cond text-[44px] font-bold leading-none">{symbol}</b>
+            {/* data-reveal-icon：选币页飞过来的图标落在这儿（lib/coinReveal） */}
+            <span className="inline-flex items-center gap-3">
+              <cfg.icon data-reveal-icon={symbol} className={cn('w-9 h-9 shrink-0', cfg.colorClass)} />
+              <b className="cond text-[44px] font-bold leading-none">{symbol}</b>
+            </span>
             <span className="text-[15px] mute">{cfg.pair} · {isFuturesMode ? t('coin.perp') : t('coin.spot')}</span>
             <span className="inline-flex gap-3.5 self-center text-[12.5px] font-semibold">
               <span className={spotFeed.text} title={t('coin.spotFeed')}><i className={spotFeed.dot} />{t('coin.spot')}</span>
@@ -256,7 +272,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
         <div className="num text-left xl:text-right">
           {currentPrice > 0 ? (
             <>
-              <b ref={priceRef} className="cond block text-[64px] font-bold leading-none" />
+              <b className="cond block text-[64px] font-bold leading-none">${fmtPrice(currentPrice)}</b>
               <div className="flex items-baseline flex-wrap gap-3 mt-2 text-[15px] font-semibold justify-start xl:justify-end">
                 <span className={isUp ? 'up' : 'dn'}>
                   {t('coin.change', {
@@ -287,8 +303,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 mt-7 border-t-2 border-foreground pt-[18px]">
         <div className="xl:col-span-8 flex flex-col gap-5">
           {/* 周期/图型/指标/画线全在图表组件里；「高级」档把 plot 区换成 TradingView。
-              矮视口(手机横屏)收到 360，否则整张图顶出屏幕外 */}
-          <div className="h-[600px] xl:h-[822px] [@media(max-height:600px)]:h-[360px]">
+              矮视口(手机横屏)收到 360；手机竖屏高度由图表按副图数自己定 */}
+          <div className="h-[600px] xl:h-[822px] [@media(max-height:600px)]:h-[360px] phone:h-auto">
             <CandleChart
               key={mode}
               symbol={symbol}
@@ -307,6 +323,8 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
               indicators
             />
           </div>
+
+          {whaleOn && whale && <WhaleBlock data={whale} symbol={symbol} />}
 
           {/* BTC涨跌预测入口 */}
           {symbol === 'BTCUSDT' && (

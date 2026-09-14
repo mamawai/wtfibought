@@ -76,13 +76,13 @@ export function NewsFlashCard() {
             return (
               <div key={n.id} className="grid grid-cols-[56px_1fr] gap-4 py-4 border-b border-border">
                 <span className="num text-[13px] text-muted-foreground pt-[3px]">{fmtTime(n.publishedAt)}</span>
-                <div className="min-w-0">
+                <div className="min-w-0 pr-6">
                   {n.url
                     ? <a href={n.url} target="_blank" rel="noopener noreferrer" className="block text-[18px] font-bold tracking-[-0.01em] leading-[1.35] break-words">{title}</a>
                     : <div className="text-[18px] font-bold tracking-[-0.01em] leading-[1.35] break-words">{title}</div>}
                   {/* 全文不截断：2/3 宽度是给全文腾的，截两行就白拿这个宽度了 */}
                   {content && (
-                    <div className="mt-1 max-w-[72ch] text-sm text-muted-foreground leading-[1.45] break-words">{content}</div>
+                    <div className="mt-1 text-sm text-muted-foreground leading-[1.45] break-words">{content}</div>
                   )}
                 </div>
               </div>

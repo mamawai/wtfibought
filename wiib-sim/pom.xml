@@ -9,7 +9,6 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>wiib-sim</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
     <name>wiib-sim</name>
     <description>wiib-sim</description>
     <packaging>jar</packaging>

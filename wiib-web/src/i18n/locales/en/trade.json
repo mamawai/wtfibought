@@ -106,7 +106,11 @@
     "saveSl": "Save SL",
     "clearSl": "Clear SL",
     "saveTp": "Save TP",
-    "clearTp": "Clear TP"
+    "clearTp": "Clear TP",
+    "toggle": "TP / SL",
+    "notSet": "Not set",
+    "levels_one": "{{count}} level",
+    "levels_other": "{{count}} levels"
   },
   "pos": {
     "titleAll": "Futures positions",

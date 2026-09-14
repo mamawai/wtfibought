@@ -106,7 +106,10 @@
     "saveSl": "保存止损",
     "clearSl": "取消止损",
     "saveTp": "保存止盈",
-    "clearTp": "取消止盈"
+    "clearTp": "取消止盈",
+    "toggle": "止盈止损",
+    "notSet": "未设置",
+    "levels_other": "{{count}} 档"
   },
   "pos": {
     "titleAll": "合约持仓",

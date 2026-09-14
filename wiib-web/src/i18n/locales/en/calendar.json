@@ -1,0 +1,147 @@
+{
+  "title": "Economic calendar",
+  "note": "Global high-impact events · Data from TradingView · History back to 2022",
+  "viewAll": "View all",
+  "prevWeek": "Previous week",
+  "nextWeek": "Next week",
+  "thisWeek": "Back to this week",
+  "allCountries": "All countries",
+  "nextUs": "Next US release",
+  "country": {
+    "US": "US",
+    "EU": "Euro area",
+    "GB": "UK",
+    "CN": "China",
+    "DE": "Germany",
+    "JP": "Japan",
+    "CA": "Canada",
+    "AU": "Australia",
+    "FR": "France",
+    "IT": "Italy",
+    "ES": "Spain",
+    "CH": "Switzerland",
+    "IN": "India",
+    "KR": "Korea",
+    "BE": "Belgium"
+  },
+  "emptyWeek": "No high-impact events this week",
+  "above": "Above forecast",
+  "below": "Below forecast",
+  "inline": "In line",
+  "unknown": "No explainer yet",
+  "unknownTip": "A new indicator without an explainer yet",
+  "usImpact": "US data moves the dollar and Fed rate expectations, and usually has the biggest impact on crypto",
+  "chart": {
+    "history": "Past actuals",
+    "release": "{{date}} release",
+    "noData": "TradingView never publishes actual values for this indicator, so there is nothing to chart"
+  },
+  "bank": {
+    "default": "the central bank",
+    "US": "the Fed",
+    "EU": "the ECB",
+    "DE": "the ECB",
+    "FR": "the ECB",
+    "IT": "the ECB",
+    "ES": "the ECB",
+    "BE": "the ECB",
+    "GB": "the Bank of England",
+    "JP": "the Bank of Japan",
+    "CN": "the PBoC",
+    "CA": "the Bank of Canada",
+    "AU": "the RBA",
+    "CH": "the SNB",
+    "IN": "the RBI",
+    "KR": "the Bank of Korea"
+  },
+  "kind": {
+    "cpi": {
+      "what": "The consumer price index tracks how fast everyday goods and services get pricier. It is the most-watched inflation gauge and a key input for {{bank}} when setting rates.",
+      "read": "Above forecast: inflation pressure builds → cuts pushed back or hike odds up at {{bank}} → {{currency}} usually firmer, risk assets often under pressure; below: rate-cut hopes rise → {{currency}} often weaker, risk assets often supported"
+    },
+    "coreCpi": {
+      "what": "CPI minus volatile food and energy prices. It shows the underlying inflation trend more clearly, and {{bank}} often gives it more weight.",
+      "read": "Above forecast: sticky underlying inflation → cuts pushed back or hike odds up at {{bank}} → {{currency}} usually firmer, risk assets often under pressure; below: rate-cut hopes rise → {{currency}} often weaker, risk assets often supported"
+    },
+    "pce": {
+      "what": "The core PCE price index leaves out food and energy and covers more spending than CPI, making it one of the inflation gauges {{bank}} watches most closely. CPI comes out first, so markets often have a rough idea already.",
+      "read": "Above forecast: inflation pressure builds → cuts pushed back or hike odds up at {{bank}} → {{currency}} usually firmer, risk assets often under pressure; below: rate-cut hopes rise → {{currency}} often weaker, risk assets often supported"
+    },
+    "ppi": {
+      "what": "The producer price index tracks prices at the factory gate and wholesale level. Upstream cost increases tend to reach consumers over time, so it is read as an early inflation signal.",
+      "read": "Above forecast: upstream price pressure → cuts pushed back or hike odds up at {{bank}} → {{currency}} usually firmer, risk assets often under pressure; below: inflation pressure eases → {{currency}} often weaker, risk assets often supported"
+    },
+    "nfp": {
+      "what": "Nonfarm payrolls count the jobs added outside agriculture: the headline gauge of the job market and a big input for {{bank}} on rates. The annual revision goes back and corrects the past year.",
+      "read": "Above forecast: strong hiring, economy running hot → more room to keep rates high → {{currency}} usually firmer; below: hiring slows → rate-cut hopes rise → {{currency}} often weaker"
+    },
+    "unemployment": {
+      "what": "The unemployment rate and jobless claims read the job market from the other side: higher numbers mean weaker jobs, which tends to push {{bank}} toward cutting.",
+      "read": "Above forecast: job market softening → rate-cut hopes rise → {{currency}} usually weaker; below: jobs holding up → more room to keep rates high → {{currency}} usually firmer"
+    },
+    "jobOpenings": {
+      "what": "Job openings count the positions employers still haven't filled. They gauge labor demand and are often used to anticipate where hiring goes next.",
+      "read": "Above forecast: strong labor demand → more room to keep rates high → {{currency}} usually firmer; below: job market cooling → {{currency}} often weaker"
+    },
+    "gdp": {
+      "what": "Gross domestic product measures the total value an economy produces over a period, the broadest report card on growth. The first estimate usually gets more attention than later revisions.",
+      "read": "Above forecast: stronger growth → {{currency}} usually firmer; below: growth slowing → {{currency}} often weaker"
+    },
+    "retail": {
+      "what": "Retail sales track how much people buy in stores and online, a direct read on whether households are willing to spend. Consumption is a major driver of growth.",
+      "read": "Above forecast: solid consumer demand → {{currency}} usually firmer; below: spending softening → {{currency}} often weaker"
+    },
+    "consumerConf": {
+      "what": "Consumer confidence surveys ask households how they feel about income, jobs and the economy ahead. Confident households tend to spend more freely.",
+      "read": "Above forecast: households more upbeat and willing to spend → {{currency}} usually firmer; below: confidence fading → {{currency}} often weaker"
+    },
+    "businessConf": {
+      "what": "Business confidence surveys ask companies how things are going and what they expect next. They land before the hard data and are often used to spot turning points.",
+      "read": "Above forecast: firms more optimistic → economy firmer → {{currency}} usually firmer; below: business sentiment weakening → {{currency}} often weaker"
+    },
+    "pmi": {
+      "what": "Purchasing managers' indexes ask companies whether orders, output and hiring got better or worse than the month before. Among the earliest data each month, they are treated as a leading indicator.",
+      "read": "50 separates expansion (above) from contraction (below); above forecast: activity stronger → {{currency}} usually firmer; below forecast: activity weakening → {{currency}} often weaker"
+    },
+    "industrial": {
+      "what": "Industrial production measures output from factories, mines and utilities, showing how busy the production side of the economy is.",
+      "read": "Above forecast: stronger output → {{currency}} usually firmer; below: output slowing → {{currency}} often weaker"
+    },
+    "durableGoods": {
+      "what": "Durable goods orders cover big-ticket items meant to last three years or more, such as cars, machinery and aircraft. They reflect business investment and factory demand, and often swing sharply month to month.",
+      "read": "Above forecast: stronger investment and order demand → {{currency}} usually firmer; below: demand softening → {{currency}} often weaker"
+    },
+    "income": {
+      "what": "Personal income tracks what households receive from wages, interest, government benefits and more. Steady income growth gives future spending a firmer footing.",
+      "read": "Above forecast: stronger income, spending better supported → {{currency}} usually firmer; below: income growth slowing → {{currency}} often weaker"
+    },
+    "spending": {
+      "what": "Personal spending measures what households pay for goods and services. Consumption is a large share of the economy, making it a key read on demand.",
+      "read": "Above forecast: households spending more, demand firmer → {{currency}} usually firmer; below: demand cooling → {{currency}} often weaker"
+    },
+    "trade": {
+      "what": "The trade balance is exports minus imports: positive is a surplus, negative a deficit. Exports reflect foreign demand and imports domestic demand, and settling trade also shifts demand for {{currency}}.",
+      "read": "Above forecast: a wider surplus or narrower deficit → usually supports {{currency}}; stronger exports or imports point to firmer foreign or domestic demand; below: broadly the reverse"
+    },
+    "housing": {
+      "what": "Building permits, housing starts and existing home sales show how many homes are approved, started and sold. Housing reacts quickly to interest rates and is often read as an early signal for the economy.",
+      "read": "Above forecast: firmer housing demand → economy warming → {{currency}} usually firmer; below: housing cooling → {{currency}} often weaker"
+    },
+    "rateDecision": {
+      "what": "The rate decision from {{bank}}: raise, cut or hold, which sets the cost of borrowing. When the result matches forecasts, markets focus on the statement wording and the press conference that follows.",
+      "read": "Above forecast: a bigger hike or smaller cut than expected → {{currency}} usually firmer, risk assets often under pressure; below: a bigger cut or smaller hike than expected → {{currency}} often weaker, risk assets often supported"
+    },
+    "cbMeeting": {
+      "what": "Press conferences, meeting minutes, economic projections and policy reports from {{bank}}, with no headline number. Markets listen for whether the tone leans hawkish (toward tightening) or dovish (toward easing)."
+    },
+    "cbSpeech": {
+      "what": "Speeches and hearing testimony from the head of {{bank}} or other officials often hint at their latest views on inflation and rates. Markets listen for a hawkish (toward tightening) or dovish (toward easing) tone."
+    },
+    "budget": {
+      "what": "The government's plan for taxes, spending and borrowing. It shapes expectations for growth and the bond market."
+    },
+    "event": {
+      "what": "One-off events such as elections, summits, major political meetings, tariff announcements or leaders' speeches. Outcomes are hard to call and often bring sharp swings, so keep position size in check."
+    }
+  }
+}

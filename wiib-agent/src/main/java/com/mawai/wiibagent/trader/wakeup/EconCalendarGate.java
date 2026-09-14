@@ -24,7 +24,6 @@ import java.util.concurrent.CompletableFuture;
 public class EconCalendarGate {
 
     static final long LOOKBACK_MS = 10 * 60_000L;
-    /** 包私有可调：测试把节奏拨快 */
     long pollMs = 5_000L;
     long maxWaitMs = 30_000L;
 

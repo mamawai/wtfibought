@@ -186,5 +186,22 @@
     "long": "多",
     "short": "空",
     "bars_other": "{{count}}根"
+  },
+  "whale": {
+    "title": "大户持仓",
+    "snapshot": "Hyperliquid · 快照 {{time}}",
+    "long": "多头",
+    "short": "空头",
+    "snapshotPrice": "快照价",
+    "addresses_other": "{{count}} 个地址",
+    "stats": "均价 {{wavg}} · 中位数 {{median}} · 前一名 {{top1}}",
+    "none": "无",
+    "viewEntry": "开仓价",
+    "viewLiq": "强平价",
+    "legendLong": "多头名义",
+    "legendShort": "空头名义",
+    "footer": "{{count}} 个地址 · 合约净值 ≥ $1M 或持有 ≥ $100K 仓位 · 只算单笔 ≥ $100K · 多头占全市场 {{long}} / 空头 {{short}} · 数据来自 Hyperliquid",
+    "bucketTip": "{{from}} – {{to}} · 多头 {{long}} · 空头 {{short}}",
+    "readoutHint": "悬停或点一行，看这个价位的多空名义"
   }
 }

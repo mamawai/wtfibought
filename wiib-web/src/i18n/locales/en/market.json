@@ -189,5 +189,23 @@
     "short": "Short",
     "bars_one": "{{count}} bar",
     "bars_other": "{{count}} bars"
+  },
+  "whale": {
+    "title": "Whale positions",
+    "snapshot": "Hyperliquid · snapshot {{time}}",
+    "long": "Long",
+    "short": "Short",
+    "snapshotPrice": "Snapshot price",
+    "addresses_one": "{{count}} address",
+    "addresses_other": "{{count}} addresses",
+    "stats": "Avg {{wavg}} · Median {{median}} · Top 1 {{top1}}",
+    "none": "None",
+    "viewEntry": "Entry price",
+    "viewLiq": "Liquidation price",
+    "legendLong": "Long notional",
+    "legendShort": "Short notional",
+    "footer": "{{count}} addresses · account value ≥ $1M or a position ≥ $100K · only positions ≥ $100K counted · longs {{long}} / shorts {{short}} of open interest · data from Hyperliquid",
+    "bucketTip": "{{from}} – {{to}} · long {{long}} · short {{short}}",
+    "readoutHint": "Hover or tap a row to see long and short notional at that level"
   }
 }

@@ -105,7 +105,6 @@ public class TraderScheduler {
             return;
         }
         // 撞上数据公布时刻先等实际值再发本轮；没有待公布的 future 已完成，thenRun 就地同步执行，与不等一样。
-        // 发布方（KlineStreamConsumer）兜的异常到不了 future 里，这里自己记
         calendarGate.released(event.closeTime() + 1).thenRun(() -> {
             for (String ic : WAKE_INTERVALS) {
                 long boundary = boundaryOf(event.closeTime(), ic);

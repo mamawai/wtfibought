@@ -24,7 +24,7 @@ public class SaTokenConfig extends BaseSaTokenConfig {
     }
 
     /**
-     * 游客只读：快讯/财经日历、竞技场。
+     * 游客只读：快讯/财经日历、大户持仓、竞技场。
      * /api/ai/trader/* 单段通配连 GET /mine、/action-panel 也会放进来，它们形参是 @CurrentUserId long，游客照样 401；
      * /{id}/live 和 trace 不放，只有主人能看
      */
@@ -34,6 +34,8 @@ public class SaTokenConfig extends BaseSaTokenConfig {
                 "/api/ai/quant/news",
                 "/api/ai/quant/econ-calendar",
                 "/api/ai/quant/econ-calendar/events",
+                "/api/ai/quant/econ-calendar/series",
+                "/api/ai/quant/whale/*",
                 "/api/ai/trader/arena",
                 "/api/ai/trader/*",
                 "/api/ai/trader/*/decisions",

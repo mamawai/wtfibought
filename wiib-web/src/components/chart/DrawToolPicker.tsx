@@ -90,7 +90,7 @@ const IBTN = 'inline-flex items-center justify-center h-[30px] border border-for
   + 'disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-muted-foreground';
 const IBTN_ON = 'bg-foreground text-background hover:bg-foreground hover:text-background';
 
-/** 手机：当前工具 + 3 列弹层，旁边并排磁吸/显隐/删除 */
+/** 手机：当前工具一颗按钮，弹层里 3 列工具，底下一排磁吸/显隐/删除 */
 export function DrawToolPopover(p: DrawToolProps) {
   const { t } = useTranslation('market');
   const [open, setOpen] = useState(false);
@@ -100,16 +100,16 @@ export function DrawToolPopover(p: DrawToolProps) {
   const cur = TOOLS.find(x => x.k === p.tool) ?? TOOLS[0];
 
   return (
-    <div className={cn('flex items-center gap-1.5', p.className)}>
-      <div ref={wrapRef} className="relative">
-        <button type="button" onClick={() => setOpen(o => !o)} title={t(cur.titleKey)}
-                className={cn(IBTN, 'gap-1 px-2', p.tool !== null && IBTN_ON)}>
-          {cur.icon}
-          <span className="text-[10px] font-bold">{t(cur.nameKey)}</span>
-          <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
-        </button>
-        {open && (
-          <div className="absolute left-0 top-[calc(100%+6px)] z-20 w-[248px] p-1.5 border border-foreground bg-background grid grid-cols-3 gap-1">
+    <div ref={wrapRef} className={cn('relative', p.className)}>
+      <button type="button" onClick={() => setOpen(o => !o)} title={t(cur.titleKey)}
+              className={cn(IBTN, 'gap-1 px-2', p.tool !== null && IBTN_ON)}>
+        {cur.icon}
+        <span className="text-[10px] font-bold">{t(cur.nameKey)}</span>
+        <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-[calc(100%+6px)] z-20 w-[248px] p-1.5 border border-foreground bg-background">
+          <div className="grid grid-cols-3 gap-1">
             {TOOLS.map(b => (
               <button key={b.k ?? 'pick'} type="button" title={t(b.titleKey)}
                       onClick={() => { p.onSelect(b.k); setOpen(false); }}
@@ -123,21 +123,23 @@ export function DrawToolPopover(p: DrawToolProps) {
               </button>
             ))}
           </div>
-        )}
-      </div>
-      <button type="button" onClick={p.onToggleMagnet} title={p.magnet ? t('chart.magnetOn') : t('chart.magnetOff')}
-              className={cn(IBTN, 'w-[30px]', p.magnet && IBTN_ON)}>
-        <Magnet className={ICON} />
-      </button>
-      <button type="button" onClick={p.onToggleHidden} disabled={p.hideDisabled}
-              title={p.hiddenAll ? t('chart.drawingsHidden') : t('chart.drawingsHide')}
-              className={cn(IBTN, 'w-[30px]', p.hiddenAll && IBTN_ON)}>
-        {p.hiddenAll ? <EyeOff className={ICON} /> : <Eye className={ICON} />}
-      </button>
-      <button type="button" onClick={p.onTrash} disabled={p.trashDisabled} title={p.trashTitle}
-              className={cn(IBTN, 'w-[30px]')}>
-        <Trash2 className={ICON} />
-      </button>
+          <div className="flex gap-1.5 mt-1.5 pt-1.5 border-t border-border">
+            <button type="button" onClick={p.onToggleMagnet} title={p.magnet ? t('chart.magnetOn') : t('chart.magnetOff')}
+                    className={cn(IBTN, 'w-[30px]', p.magnet && IBTN_ON)}>
+              <Magnet className={ICON} />
+            </button>
+            <button type="button" onClick={p.onToggleHidden} disabled={p.hideDisabled}
+                    title={p.hiddenAll ? t('chart.drawingsHidden') : t('chart.drawingsHide')}
+                    className={cn(IBTN, 'w-[30px]', p.hiddenAll && IBTN_ON)}>
+              {p.hiddenAll ? <EyeOff className={ICON} /> : <Eye className={ICON} />}
+            </button>
+            <button type="button" onClick={p.onTrash} disabled={p.trashDisabled} title={p.trashTitle}
+                    className={cn(IBTN, 'w-[30px]')}>
+              <Trash2 className={ICON} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

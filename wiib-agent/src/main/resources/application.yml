@@ -145,6 +145,24 @@ blockbeats:
   size: 20
   expiry-ms: 600000           # 复用窗口 10min：窗口内多币种/多次调用复用同一份，超过才重拉
 
+# Hyperliquid 大户持仓（WhalePoolTask / WhalePositionTask）：纯展示 + 落库，不进 trader 决策。方案见 docs/hyperliquid-whale.md
+whale:
+  enabled: true                        # 关掉：两条任务不跑，接口回空
+  coins: BTC,ETH,SOL,XRP,DOGE          # Hyperliquid 币码；平台 BTCUSDT ↔ BTC
+  leaderboard-url: https://stats-data.hyperliquid.xyz/Mainnet/leaderboard
+  max-in-flight: 8                     # 在途请求上限
+  pool:
+    cron: "0 30 4 * * *"               # 每日认证，北京时间（代码里 zone=Asia/Shanghai）；启动时表为空另跑一次
+    weight-per-minute: 800             # 认证预算；与 poll 合计 1100，官方上限 1200/分钟/IP
+    min-leaderboard-value: 300000      # 排行榜候选门槛：榜上约 6400 个实体，认证约 3 小时；本地验证可临时抬高
+    min-account-value: 1000000         # 门 1：链上合约净值 ≥ 它，或持有 ≥ min-position-value 的盯盘币仓位
+    max-positions: 10
+    cap: 1000
+  poll:
+    cron: "0 */10 * * * *"             # 对齐整 10 分钟
+    weight-per-minute: 300             # 轮询预算；1000 地址 × 2 = 2000/10 分钟，够用有余
+    min-position-value: 100000         # 仓位层过滤：聚合只算这个名义以上的仓位；门 1 的仓位口径与入池排序同一个数
+
 # SimInternalClient 读用户行为数据(behavior agent)，须与 sim 同 token
 # (三进程读同一 .env，默认值也一致，不填即可互通)
 sim:

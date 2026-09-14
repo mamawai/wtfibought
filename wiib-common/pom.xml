@@ -9,7 +9,6 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>wiib-common</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
     <name>wiib-common</name>
     <description>wiib-common</description>
     <packaging>jar</packaging>

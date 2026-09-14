@@ -34,6 +34,7 @@ import { Strategies } from './pages/Strategies';
 import { Backtest } from './pages/Backtest';
 import { TestnetMonitor } from './pages/TestnetMonitor';
 import { ForceOrders } from './pages/ForceOrders';
+import { EconCalendar } from './pages/EconCalendar';
 import { useUserStore } from './stores/userStore';
 
 declare global {
@@ -92,6 +93,7 @@ function App() {
                 <Route path="/arena" element={<Arena />} />
                 <Route path="/arena/:id" element={<ArenaDetail />} />
                 <Route path="/force-orders" element={<ForceOrders />} />
+                <Route path="/calendar" element={<EconCalendar />} />
                 {/* 本人账户/操作页，没登录没意义 */}
                 <Route element={<RequireAuth />}>
                   <Route path="/portfolio" element={<Portfolio />} />

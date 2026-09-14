@@ -59,7 +59,7 @@ COMMENT ON COLUMN "user".updated_at IS '更新时间';
 CREATE INDEX IF NOT EXISTS idx_user_bankrupt ON "user"(is_bankrupt, bankrupt_reset_date);
 
 -- ============================================
--- 1b. 邀请码表（邀请码注册模式：有码才能注册本地账号）
+-- 2. 邀请码表（邀请码注册模式：有码才能注册本地账号）
 -- ============================================
 CREATE TABLE IF NOT EXISTS invite_code (
     id BIGSERIAL PRIMARY KEY,
@@ -77,10 +77,8 @@ COMMENT ON COLUMN invite_code.max_uses IS '最大可用次数';
 COMMENT ON COLUMN invite_code.used_count IS '已用次数（注册时原子+1，防并发超用）';
 COMMENT ON COLUMN invite_code.enabled IS '是否可用（作废置 FALSE）';
 
--- 1c. 无钱包划转流水表：划转记 user_ledger 的 WALLET_TRANSFER_OUT/IN 两条，差额即销毁的手续费
-
 -- ============================================
--- 13. 每日Buff表
+-- 3. 每日Buff表
 -- ============================================
 CREATE TABLE IF NOT EXISTS user_buff (
     id BIGSERIAL PRIMARY KEY,
@@ -109,7 +107,7 @@ COMMENT ON COLUMN user_buff.is_used IS '是否已使用（折扣类）';
 COMMENT ON COLUMN user_buff.created_at IS '创建时间';
 
 -- ============================================
--- 14. Blackjack积分账户表
+-- 4. Blackjack积分账户表
 -- ============================================
 CREATE TABLE IF NOT EXISTS blackjack_account (
     id BIGSERIAL PRIMARY KEY,
@@ -143,7 +141,7 @@ COMMENT ON COLUMN blackjack_account.created_at IS '创建时间';
 COMMENT ON COLUMN blackjack_account.updated_at IS '更新时间';
 
 -- ============================================
--- 14b. Blackjack 转出日志表
+-- 5. Blackjack 转出日志表
 -- ============================================
 CREATE TABLE IF NOT EXISTS blackjack_convert_log (
     id BIGSERIAL PRIMARY KEY,
@@ -161,7 +159,7 @@ CREATE INDEX IF NOT EXISTS idx_bj_convert_user ON blackjack_convert_log(user_id)
 COMMENT ON TABLE blackjack_convert_log IS 'Blackjack积分转出日志';
 
 -- ============================================
--- 15. 加密货币持仓表
+-- 6. 加密货币持仓表
 -- ============================================
 CREATE TABLE IF NOT EXISTS crypto_position (
     id BIGSERIAL PRIMARY KEY,
@@ -184,7 +182,7 @@ COMMENT ON COLUMN crypto_position.frozen_quantity IS '冻结数量（限价卖�
 COMMENT ON COLUMN crypto_position.avg_cost IS '持仓成本（加权平均）';
 
 -- ============================================
--- 16. 加密货币订单表
+-- 7. 加密货币订单表
 -- ============================================
 CREATE TABLE IF NOT EXISTS crypto_order (
     id BIGSERIAL PRIMARY KEY,
@@ -228,7 +226,7 @@ CREATE INDEX IF NOT EXISTS idx_crypto_order_status ON crypto_order(status, order
 CREATE INDEX IF NOT EXISTS idx_crypto_order_symbol ON crypto_order(symbol, status);
 
 -- ============================================
--- 17. 矿工游戏记录表
+-- 8. 矿工游戏记录表
 -- ============================================
 CREATE TABLE IF NOT EXISTS mines_game (
     id BIGSERIAL PRIMARY KEY,
@@ -260,7 +258,7 @@ COMMENT ON COLUMN mines_game.updated_at IS '更新时间';
 CREATE INDEX IF NOT EXISTS idx_mines_game_user_status ON mines_game(user_id, status);
 
 -- ============================================
--- 18. 永续合约仓位表
+-- 9. 永续合约仓位表
 -- ============================================
 CREATE TABLE IF NOT EXISTS futures_position (
     id BIGSERIAL PRIMARY KEY,
@@ -306,7 +304,7 @@ CREATE INDEX IF NOT EXISTS idx_fp_symbol_status ON futures_position(symbol, stat
 CREATE UNIQUE INDEX IF NOT EXISTS uq_fp_user_symbol_side_open ON futures_position(user_id, symbol, side) WHERE status = 'OPEN';
 
 -- ============================================
--- 19. 永续合约订单表
+-- 10. 永续合约订单表
 -- ============================================
 CREATE TABLE IF NOT EXISTS futures_order (
     id BIGSERIAL PRIMARY KEY,
@@ -357,7 +355,7 @@ CREATE INDEX IF NOT EXISTS idx_fo_position ON futures_order(position_id);
 CREATE INDEX IF NOT EXISTS idx_fo_symbol_status ON futures_order(symbol, status);
 
 -- ============================================
--- 20. 视频扑克游戏记录表
+-- 11. 视频扑克游戏记录表
 -- ============================================
 CREATE TABLE IF NOT EXISTS video_poker_game (
     id BIGSERIAL PRIMARY KEY,
@@ -390,7 +388,7 @@ COMMENT ON COLUMN video_poker_game.status IS 'DEALING/SETTLED';
 CREATE INDEX IF NOT EXISTS idx_vp_game_user_status ON video_poker_game(user_id, status);
 
 -- ============================================
--- 21. BTC 5min 涨跌预测回合表
+-- 12. BTC 5min 涨跌预测回合表
 -- ============================================
 CREATE TABLE IF NOT EXISTS prediction_round (
     id BIGSERIAL PRIMARY KEY,
@@ -411,7 +409,7 @@ COMMENT ON COLUMN prediction_round.outcome IS '结果：UP/DOWN/DRAW/VOID（VOID
 COMMENT ON COLUMN prediction_round.status IS '状态：OPEN/LOCKED/SETTLED';
 
 -- ============================================
--- 22. BTC 5min 涨跌预测下注表
+-- 13. BTC 5min 涨跌预测下注表
 -- ============================================
 CREATE TABLE IF NOT EXISTS prediction_bet (
     id BIGSERIAL PRIMARY KEY,
@@ -443,7 +441,7 @@ CREATE INDEX IF NOT EXISTS idx_pred_bet_round ON prediction_bet(round_id, status
 CREATE INDEX IF NOT EXISTS idx_pred_bet_user ON prediction_bet(user_id, created_at DESC);
 
 -- ============================================
--- 用户资产每日快照
+-- 14. 用户资产每日快照
 -- ============================================
 CREATE TABLE IF NOT EXISTS user_asset_snapshot (
     id BIGSERIAL PRIMARY KEY,
@@ -465,28 +463,8 @@ CREATE TABLE IF NOT EXISTS user_asset_snapshot (
 COMMENT ON TABLE user_asset_snapshot IS '用户资产每日快照';
 
 -- ============================================
--- 外部因子时间序列表（shadow 采集原值）
+-- 15. 爆仓记录（Binance WS @forceOrder 推送）
 -- ============================================
-CREATE TABLE IF NOT EXISTS factor_history (
-    id BIGSERIAL PRIMARY KEY,
-    symbol VARCHAR(16) NOT NULL,
-    factor_name VARCHAR(64) NOT NULL,
-    factor_value DECIMAL(28,10),
-    observed_at TIMESTAMP NOT NULL,
-    metadata_json JSONB,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uq_factor_observation UNIQUE (symbol, factor_name, observed_at)
-);
-
-CREATE INDEX IF NOT EXISTS idx_factor_hist_symbol_factor_time
-    ON factor_history(symbol, factor_name, observed_at DESC);
-
-COMMENT ON TABLE factor_history IS '外部因子时间序列原值，shadow 采集供 B3 启用权重时计算分位';
-COMMENT ON COLUMN factor_history.factor_value IS '外部因子原值，DECIMAL(28,10) 防 OI/资金流大额溢出';
-COMMENT ON COLUMN factor_history.observed_at IS '数据观测时刻（非入库时刻，跨市场数据需考虑时区）';
-COMMENT ON COLUMN factor_history.metadata_json IS '可放原始 API response、stale 标记、source 名等';
-
--- 爆仓记录（Binance WS @forceOrder 推送）
 CREATE TABLE IF NOT EXISTS force_order (
     id              BIGSERIAL       PRIMARY KEY,
     symbol          VARCHAR(20)     NOT NULL,
@@ -509,7 +487,9 @@ CREATE INDEX IF NOT EXISTS idx_fo_symbol_time ON force_order(symbol, trade_time 
 -- 首页"最新一条强平"卡片直取首行，代价与表大小无关
 CREATE INDEX IF NOT EXISTS idx_fo_time ON force_order(trade_time DESC);
 
--- 策略运行时信号记录（实盘信号复盘）
+-- ============================================
+-- 16. 策略运行时信号记录（实盘信号复盘）
+-- ============================================
 CREATE TABLE IF NOT EXISTS strategy_signal (
     id                BIGSERIAL       PRIMARY KEY,
     strategy_id       VARCHAR(32)     NOT NULL,
@@ -534,13 +514,8 @@ COMMENT ON COLUMN strategy_signal.take_profit IS '固定止盈价；TURTLE类通
 
 CREATE INDEX IF NOT EXISTS idx_strategy_signal_symbol_time ON strategy_signal(symbol, bar_close_time DESC);
 
--- 旧库放开列宽（新库的 CREATE 里已是 TEXT）：PG 的 varchar(n) 与 text 存储实现相同，
--- 封顶换不来好处，只会让超长的那行整条写不进去
-ALTER TABLE strategy_signal ALTER COLUMN reason   TYPE TEXT;
-ALTER TABLE strategy_signal ALTER COLUMN leg_tags TYPE TEXT;
-
 -- ============================================
--- AI 运行时配置表（API Key 管理，支持多条）
+-- 17. AI 运行时配置表（API Key 管理，支持多条）
 -- ============================================
 CREATE TABLE IF NOT EXISTS ai_runtime_config (
     id BIGSERIAL PRIMARY KEY,
@@ -565,7 +540,7 @@ COMMENT ON COLUMN ai_runtime_config.api_protocol IS '上游协议：openai=/v1/c
 COMMENT ON COLUMN ai_runtime_config.enabled IS '是否启用';
 
 -- ============================================
--- 功能位分配表（功能位→LLM配置的指针，更换LLM=改config_id）
+-- 18. 功能位分配表（功能位→LLM配置的指针，更换LLM=改config_id）
 -- ============================================
 CREATE TABLE IF NOT EXISTS ai_model_assignment (
     id BIGSERIAL PRIMARY KEY,
@@ -579,7 +554,9 @@ COMMENT ON TABLE ai_model_assignment IS '功能位→LLM配置指针（模型名
 COMMENT ON COLUMN ai_model_assignment.function_name IS '功能名称，白名单见AiFunctions，现只有news-translation（快讯后台批量译英文）；面向用户的功能位已全量BYOK，behavior等残行是孤儿不影响使用';
 COMMENT ON COLUMN ai_model_assignment.config_id IS '关联ai_runtime_config.id';
 
--- ============ kline_history：回测/评估用 5m 基础 K 线落库（research，可复现） ============
+-- ============================================
+-- 19. 回测/评估用 5m 基础 K 线落库（research，可复现）
+-- ============================================
 CREATE TABLE IF NOT EXISTS kline_history (
     id            BIGSERIAL PRIMARY KEY,
     symbol        VARCHAR(32)   NOT NULL,
@@ -596,9 +573,9 @@ CREATE TABLE IF NOT EXISTS kline_history (
 );
 CREATE INDEX IF NOT EXISTS idx_kline_symbol_time ON kline_history (symbol, interval_code, open_time);
 
--- （research 链下序列统一存 factor_history 表，不单建序列表）
-
--- ============ quant_deep_analysis：深研判（工作台对话触发，Bull∥Bear→Judge 产物） ============
+-- ============================================
+-- 20. 深研判（工作台对话触发，Bull∥Bear→Judge 产物）
+-- ============================================
 CREATE TABLE IF NOT EXISTS quant_deep_analysis (
     id              BIGSERIAL PRIMARY KEY,
     symbol          VARCHAR(20) NOT NULL,
@@ -617,7 +594,9 @@ CREATE TABLE IF NOT EXISTS quant_deep_analysis (
 CREATE INDEX IF NOT EXISTS idx_quant_deep_analysis_query ON quant_deep_analysis (symbol, close_time DESC);
 COMMENT ON TABLE quant_deep_analysis IS '深研判:研判叙事+情景分布+失效条件+无方向态;定时轨下线后唯一入口=工作台对话(HITL确认后跑)';
 
--- ============ quant_narrative_verification：叙事对账（Judge三情景概率到期对答案，判定界对账时现算） ============
+-- ============================================
+-- 21. 叙事对账（Judge三情景概率到期对答案，判定界对账时现算）
+-- ============================================
 CREATE TABLE IF NOT EXISTS quant_narrative_verification (
     id                  BIGSERIAL PRIMARY KEY,
     analysis_id         BIGINT NOT NULL,
@@ -643,7 +622,9 @@ COMMENT ON TABLE quant_narrative_verification IS '叙事对账:Judge三情景概
 COMMENT ON COLUMN quant_narrative_verification.range_cut_bps IS '实际情景判定界=研判时点前90天|H12收益|下三分位(基率≈1/3均分);对账时从K线现算,只用closeTime前数据保PIT';
 COMMENT ON COLUMN quant_narrative_verification.status IS 'VERIFIED=已对账/SKIPPED=不可对账(缺档界或情景损坏或K线缺口超宽限)';
 
--- ============ workbench_chat_message：工作台对话历史（展示用；续聊上下文走 workbench_chat_context） ============
+-- ============================================
+-- 22. 工作台对话历史（展示用；续聊上下文走 workbench_chat_context）
+-- ============================================
 CREATE TABLE IF NOT EXISTS workbench_chat_message (
     id          BIGSERIAL PRIMARY KEY,
     session_id  VARCHAR(80) NOT NULL,
@@ -663,8 +644,6 @@ CREATE TABLE IF NOT EXISTS workbench_chat_message (
     sources     JSONB,
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
--- 旧库补列（新库的 CREATE 里已有），可反复执行
-ALTER TABLE workbench_chat_message ADD COLUMN IF NOT EXISTS sources JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_wb_chat_session ON workbench_chat_message (session_id, id);
 CREATE INDEX IF NOT EXISTS idx_wb_chat_user ON workbench_chat_message (user_id, id DESC);
@@ -674,9 +653,10 @@ COMMENT ON COLUMN workbench_chat_message.total_tokens IS '本轮全部模型调�
 COMMENT ON COLUMN workbench_chat_message.latency_ms IS '本轮墙钟耗时:从controller接手这一轮起算,不含准入/建叶子/让位握手;比[TurnMetrics]日志多一帧session与user行落库';
 COMMENT ON COLUMN workbench_chat_message.sources IS '这一轮联网搜索搜到/引用的来源 [{url,title}],按url去重;答案底部展示;没搜过或老数据为NULL';
 
--- ============ workbench_chat_context：工作台会话模型侧上下文（续聊主链；一会话一行整体替换） ============
--- 替代 langgraph4j PostgresSaver 的 lg4j* 表：那套图每走一步存一行完整快照（一轮 8 行、同一份历史重复存），
--- 而续聊只消费最新一份。这里只存那一份：每轮对话结束用 summarizer 的最终 state 整体覆盖
+-- ============================================
+-- 23. 工作台会话模型侧上下文（续聊主链；一会话一行整体替换）
+-- ============================================
+-- 续聊只消费最新一份：每轮对话结束用 summarizer 的最终 state 整体覆盖
 CREATE TABLE IF NOT EXISTS workbench_chat_context (
     session_id  VARCHAR(80) PRIMARY KEY,
     user_id     BIGINT NOT NULL,
@@ -686,10 +666,9 @@ CREATE TABLE IF NOT EXISTS workbench_chat_context (
 COMMENT ON TABLE workbench_chat_context IS '工作台会话模型侧上下文:完整消息历史(含专家结论/压缩摘要/工具配对),每轮结束整体替换;删会话随展示表一并清';
 COMMENT ON COLUMN workbench_chat_context.state IS '裸JSON {"messages":[...]}(fastjson2,ChatContextCodec写),保Spring AI Message多态与tool_call配对往返无损;老行是Java对象流包JSON,读时兼容,下一轮整体覆盖后自然换成新格式';
 
--- 工作台跨会话记忆表 workbench_memory 已删：召回段对答案质量没有可观测贡献，链路整条拆掉。旧库执行：
---     DROP TABLE IF EXISTS workbench_memory;
-
--- ============ news_event：快讯存档（首页快讯卡 + 事件研究数据积累） ============
+-- ============================================
+-- 24. 快讯存档（首页快讯卡 + 事件研究数据积累）
+-- ============================================
 -- 采集轨独立于 NewsCache 懒加载：定时经缓存拉 BlockBeats（共享额度窗），新条目轻模型译成英文后落库。
 -- BlockBeats 免费额度一次性不回血，采集节奏见 application.yml 的 news.collect
 CREATE TABLE IF NOT EXISTS news_event (
@@ -704,27 +683,20 @@ CREATE TABLE IF NOT EXISTS news_event (
     translated_model VARCHAR(128),
     created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
--- 快讯停止打标（2026-09）：K线图标改挂财经日历，tags 列删掉；模型只做译文，列名跟着改；功能位改名
-ALTER TABLE news_event DROP COLUMN IF EXISTS tags;
-DO $$ BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'news_event' AND column_name = 'tagged_model') THEN
-        ALTER TABLE news_event RENAME COLUMN tagged_model TO translated_model;
-    END IF;
-END $$;
-UPDATE ai_model_assignment SET function_name = 'news-translation'
- WHERE function_name = 'news-tagging'
-   AND NOT EXISTS (SELECT 1 FROM ai_model_assignment WHERE function_name = 'news-translation');
 CREATE INDEX IF NOT EXISTS idx_news_event_published ON news_event (published_at DESC);
 COMMENT ON TABLE news_event IS '快讯存档:BlockBeats重要快讯+轻模型英文译文;首页快讯卡数据源,未来做事件研究';
 COMMENT ON COLUMN news_event.source_id IS 'BlockBeats快讯id,增量去重键';
 COMMENT ON COLUMN news_event.published_at IS '发稿时刻epoch毫秒(BlockBeats create_time按北京时间解析)';
 COMMENT ON COLUMN news_event.translated_model IS '译文用的模型名,追责用';
 COMMENT ON COLUMN news_event.title_en IS '标题英文译文;NULL=没译成(模型没给/正文超长/老行):模型侧回落中文原文,英文界面不展示这条——不许拿原文冒充译文';
-COMMENT ON COLUMN news_event.content_en IS '正文英文译文;NULL 同 title_en。正文超过打标输入上限的那条不留译文:半截译文比原文更糟';
+COMMENT ON COLUMN news_event.content_en IS '正文英文译文;NULL 同 title_en。正文超过译文输入上限(NewsTranslator.CONTENT_CLIP)的那条不留译文:半截译文比原文更糟';
 
--- ============ econ_calendar_event：财经日历（TradingView 日历接口只收 High 级，唤醒开场白注入 + BTC K线标记） ============
+-- ============================================
+-- 25. 财经日历（TradingView 日历接口只收 High 级，唤醒开场白注入 + BTC K线标记 + 日历页历史）
+-- ============================================
 -- 采集轨 EconCalendarCollector 每 4h 同步 [now-3d, now+7d]，按 TradingView 事件 id upsert（改期改时刻、公布填实际值、
 -- 前值修正落同一行），窗口内不在回包里的行删掉（改期出窗/取消）；公布时刻等待闸 EconCalendarGate 窄窗口轮询补 actual。
+-- 启动后一次性回填 2022-01-01 起的历史（库里最早一条没到起点才补），日历页按周翻、按指标标题查历次公布。
 -- EconCalendarAssembler 注入"刚公布 / 过去3天已公布 / 今天剩余即将公布"
 CREATE TABLE IF NOT EXISTS econ_calendar_event (
     id         BIGSERIAL    PRIMARY KEY,
@@ -738,16 +710,9 @@ CREATE TABLE IF NOT EXISTS econ_calendar_event (
     previous   VARCHAR(32),
     created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
--- 换源 TradingView（2026-09）：存量库补列、清 ForexFactory 旧行（旧行没有 source_id），全部幂等可重跑
-ALTER TABLE econ_calendar_event ADD COLUMN IF NOT EXISTS source_id VARCHAR(32);
-ALTER TABLE econ_calendar_event ADD COLUMN IF NOT EXISTS country   VARCHAR(8);
-ALTER TABLE econ_calendar_event ADD COLUMN IF NOT EXISTS actual    VARCHAR(32);
-ALTER TABLE econ_calendar_event DROP COLUMN IF EXISTS impact;
-DELETE FROM econ_calendar_event WHERE source_id IS NULL;
-ALTER TABLE econ_calendar_event ALTER COLUMN source_id SET NOT NULL, ALTER COLUMN country SET NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uk_econ_calendar_source ON econ_calendar_event (source_id);
 CREATE INDEX IF NOT EXISTS idx_econ_calendar_time ON econ_calendar_event (event_time);
-COMMENT ON TABLE econ_calendar_event IS '财经日历:TradingView日历接口只收High级,按事件id upsert;唤醒注入过去3天+当天剩余,BTC K线挂日历标记';
+COMMENT ON TABLE econ_calendar_event IS '财经日历:TradingView日历接口只收High级,按事件id upsert,2022-01-01起回填历史;唤醒注入过去3天+当天剩余,BTC K线挂日历标记,日历页按周翻与按指标查';
 COMMENT ON COLUMN econ_calendar_event.source_id IS 'TradingView事件id,幂等键';
 COMMENT ON COLUMN econ_calendar_event.event_time IS '公布/开始时刻epoch毫秒(接口的UTC ISO时间换算)';
 COMMENT ON COLUMN econ_calendar_event.country IS 'ISO国家码(US/EU/GB/DE…),前端配国旗';
@@ -757,7 +722,7 @@ COMMENT ON COLUMN econ_calendar_event.forecast IS '共识预测值显示文本;N
 COMMENT ON COLUMN econ_calendar_event.previous IS '前值显示文本,接口给的已是修正后的值';
 
 -- ============================================
--- 27. 留言板评论（全站唯一，无附着实体）
+-- 26. 留言板评论（全站唯一，无附着实体）
 -- ============================================
 CREATE TABLE IF NOT EXISTS comment (
     id BIGSERIAL PRIMARY KEY,
@@ -786,7 +751,7 @@ CREATE INDEX IF NOT EXISTS idx_comment_child ON comment(root_id, created_at DESC
 CREATE INDEX IF NOT EXISTS idx_comment_root ON comment(created_at DESC) WHERE root_id IS NULL AND status = 1;
 
 -- ============================================
--- 28. 通知（评论赞/回复 + 交易事件）
+-- 27. 通知（评论赞/回复 + 交易事件）
 -- ============================================
 CREATE TABLE IF NOT EXISTS notification (
     id BIGSERIAL PRIMARY KEY,
@@ -819,7 +784,7 @@ COMMENT ON COLUMN notification.pnl IS '已实现盈亏；type=6 时是全部仓�
 CREATE INDEX IF NOT EXISTS idx_notif_unread ON notification(user_id, is_read, created_at DESC);
 
 -- ============================================
--- 30. 用户资金流水账本
+-- 28. 用户资金流水账本
 -- ============================================
 CREATE TABLE IF NOT EXISTS user_ledger (
     id            BIGSERIAL PRIMARY KEY,
@@ -849,7 +814,9 @@ CREATE INDEX IF NOT EXISTS idx_ledger_user_time ON user_ledger(user_id, id DESC)
 -- 按类型筛选
 CREATE INDEX IF NOT EXISTS idx_ledger_user_biz ON user_ledger(user_id, biz_type, id DESC);
 
--- ============ AI Trader：用户BYOK自主交易代理（2026-08，公开竞技场） ============
+-- ============================================
+-- 29. AI Trader（用户BYOK自主交易代理，公开竞技场）
+-- ============================================
 CREATE TABLE IF NOT EXISTS ai_trader (
     id              BIGSERIAL PRIMARY KEY,
     user_id         BIGINT NOT NULL UNIQUE,
@@ -885,7 +852,7 @@ CREATE TABLE IF NOT EXISTS ai_trader (
 COMMENT ON TABLE ai_trader IS 'AI Trader：用户BYOK自主交易代理（每用户1个，独立sim子账户，公开竞技场）';
 COMMENT ON COLUMN ai_trader.status IS 'PAUSED/RUNNING/LIQUIDATED';
 COMMENT ON COLUMN ai_trader.symbols IS '交易币种白名单子集，逗号分隔（须在binance.symbols范围内）';
-COMMENT ON COLUMN ai_trader.interval_code IS '唤醒K线级别 5m/15m/1h/4h（1d已下线；5m烧token快，适合短期测试）';
+COMMENT ON COLUMN ai_trader.interval_code IS '唤醒K线级别 5m/15m/1h/4h（5m烧token快，适合短期测试）';
 COMMENT ON COLUMN ai_trader.review_enabled IS '每日复盘开关：reviewer日线边界复盘写REVIEW决策行并整理memory；关掉只停复盘，已有笔记照常注入';
 COMMENT ON COLUMN ai_trader.learning_enabled IS '同侪学习开关：learning agent在全体复盘完成后向同侪学习写LEARN行并整理learning_notes；关掉只停学习，已有笔记照常注入';
 COMMENT ON COLUMN ai_trader.alert_enabled IS '波动哨兵警报开关（仅1h/4h档生效）：5分钟振幅超过 币基准阈值×灵敏度系数 且持有该币仓位/挂单时临时唤醒';
@@ -904,9 +871,10 @@ COMMENT ON COLUMN ai_trader.margin_pct_min IS '单笔保证金占权益%下界�
 COMMENT ON COLUMN ai_trader.margin_pct_max IS '单笔保证金占权益%上界，0.1~100';
 COMMENT ON COLUMN ai_trader.allow_multi_position IS '允许同时持有多个仓位；false=全账户至多一仓（挂单一并计数，否则挂几单就能绕过）';
 COMMENT ON COLUMN ai_trader.allow_hedge IS '允许同币多空双开；仅在allow_multi_position=true时有意义（双开天然占两个仓位）';
--- 自主加/减仓开关 allow_self_add / allow_self_reduce 已删：agentic trading 里调仓不等人点头，模型始终自主。旧库执行：
---     ALTER TABLE ai_trader DROP COLUMN IF EXISTS allow_self_add, DROP COLUMN IF EXISTS allow_self_reduce;
 
+-- ============================================
+-- 30. AI Trader 决策记录（每次唤醒一行）
+-- ============================================
 CREATE TABLE IF NOT EXISTS ai_trader_decision (
     id              BIGSERIAL PRIMARY KEY,
     trader_id       BIGINT NOT NULL,
@@ -929,7 +897,6 @@ CREATE TABLE IF NOT EXISTS ai_trader_decision (
     trace_json      TEXT,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-ALTER TABLE ai_trader_decision ADD COLUMN IF NOT EXISTS trace_json TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_atd_trader_time ON ai_trader_decision(trader_id, wake_time DESC);
 COMMENT ON TABLE ai_trader_decision IS 'AI Trader每次唤醒一行：推理全文+动作(含play_type论点标签)+权益快照——竞技场决策时间线与净值曲线数据源';
@@ -941,6 +908,9 @@ COMMENT ON COLUMN ai_trader_decision.model_calls IS '本轮模型调用次数：
 COMMENT ON COLUMN ai_trader_decision.total_tokens IS '本轮全部模型调用的token合计；NULL=上游端点没返回usage（BYOK网关各不相同），不是0';
 COMMENT ON COLUMN ai_trader_decision.trace_json IS '唤醒过程轨迹JSON（提示词/每次模型调用的正文与工具调用/回执预览/收尾），形状见WakeTrace.toJson；仅TRADE/ALERT/MANUAL行，NULL=老行或begin之前就失败';
 
+-- ============================================
+-- 31. AI Trader 持仓交易计划
+-- ============================================
 CREATE TABLE IF NOT EXISTS ai_trader_plan (
     id              BIGSERIAL PRIMARY KEY,
     trader_id       BIGINT NOT NULL,
@@ -962,8 +932,6 @@ CREATE TABLE IF NOT EXISTS ai_trader_plan (
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-ALTER TABLE ai_trader_plan ADD COLUMN IF NOT EXISTS stale BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE ai_trader_plan ADD COLUMN IF NOT EXISTS position_id BIGINT;
 -- 同键同一时刻至多一份存活计划；归档行不占键——同轮重开/跨轮重开都能再立新计划
 CREATE UNIQUE INDEX IF NOT EXISTS uq_atp_live ON ai_trader_plan (trader_id, round_no, symbol, side)
     WHERE status = 'LIVE';
@@ -977,21 +945,11 @@ COMMENT ON COLUMN ai_trader_plan.closed_wake_time IS '归档时刻(ms)：懒清�
 COMMENT ON COLUMN ai_trader_plan.stale IS '主人标记忽略:true=本笔不进论点战绩统计与复盘教材(配对表/了结统计行);权益/排行榜/同侪学习照常。仅CLOSED可标,可随时取消';
 COMMENT ON COLUMN ai_trader_plan.position_id IS 'sim仓位id:市价开仓/加仓从下单响应落盘,限价单成交后唤醒懒清理趟补绑;计划↔仓位配对的精确键,NULL(历史行/未成交挂单)走bestMatch时间就近兜底';
 
--- 加仓/减仓待主人确认表 ai_trader_request 已删：agentic trading 里调仓不该等人点头，审批链路整条拆掉。旧库执行：
---     DROP TABLE IF EXISTS ai_trader_request;
-
--- 旧库放开这几列的列宽（新库的 CREATE 里已是 TEXT）。装的是模型自由文本与上游异常串，
--- 长度封顶换不来任何好处：PG 的 varchar(n) 与 text 存储实现相同，超长不截断而是整行拒收——
--- 模型多写一句，一整份交易计划就没了。varchar→text 二进制兼容，只改 catalog 不重写表，可反复执行
-ALTER TABLE ai_trader          ALTER COLUMN paused_reason          TYPE TEXT;
-ALTER TABLE ai_trader_decision ALTER COLUMN error                  TYPE TEXT;
-ALTER TABLE ai_trader_plan     ALTER COLUMN signals_used           TYPE TEXT;
-ALTER TABLE ai_trader_plan     ALTER COLUMN invalidation_condition TYPE TEXT;
-
--- ============ user_llm_endpoint / user_llm_binding：用户 BYOK 端点库（2026-08 重构） ============
+-- ============================================
+-- 32. 用户 BYOK 端点库
+-- ============================================
 -- 全站 BYOK 总配置：一人多条端点（协议+URL+key+模型+思考档位），对话/交易员/复盘教练只做选择；
 -- 用途绑定表按 purpose 指到某条端点，没绑的用途落到 is_default 那条（一人恰一条默认，只配一条时它就是全局配置）。
--- 取代原 user_llm_config（对话一人一行）与 ai_trader 里的四列 BYOK——两处各填一套表单的时代结束。
 CREATE TABLE IF NOT EXISTS user_llm_endpoint (
     id               BIGSERIAL     PRIMARY KEY,
     user_id          BIGINT        NOT NULL,
@@ -1007,18 +965,17 @@ CREATE TABLE IF NOT EXISTS user_llm_endpoint (
     updated_at       TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_user_llm_endpoint_user ON user_llm_endpoint(user_id);
--- 一人恰一条默认。旧库若同一用户有多条默认只留最早一条，再建部分唯一索引：并发新增/设默认时另一方直接失败
-UPDATE user_llm_endpoint e SET is_default = FALSE
- WHERE e.is_default AND e.id <> (SELECT min(d.id) FROM user_llm_endpoint d WHERE d.user_id = e.user_id AND d.is_default);
+-- 一人恰一条默认：并发新增/设默认时另一方直接失败
 CREATE UNIQUE INDEX IF NOT EXISTS uq_user_llm_endpoint_default ON user_llm_endpoint(user_id) WHERE is_default;
--- 旧库补列（新库的 CREATE 里已有），可反复执行
-ALTER TABLE user_llm_endpoint ADD COLUMN IF NOT EXISTS web_search BOOLEAN NOT NULL DEFAULT FALSE;
 COMMENT ON TABLE  user_llm_endpoint IS '用户 BYOK 端点库：一条=协议+URL+key+模型(+思考档位)，一人多条；对话/交易员/复盘教练从中选';
 COMMENT ON COLUMN user_llm_endpoint.reasoning_effort IS '思考档位，任意上游认的值（none/low/medium/high/xhigh…），NULL=不传走模型默认；模型支不支持查不到，由用户自选';
 COMMENT ON COLUMN user_llm_endpoint.web_search IS '服务端联网搜索：请求里声明该协议的服务端搜索工具才搜(opt-in)，上游拒收自动退回不搜；responses/anthropic/gemini协议可勾(openai归一false)，端点支不支持由用户自己勾；当前只有对话summarizer用';
 COMMENT ON COLUMN user_llm_endpoint.api_key_enc IS 'AES-256-GCM 密文，密钥来自 WIIB_TRADER_KEY_SECRET';
 COMMENT ON COLUMN user_llm_endpoint.is_default IS '默认端点：没按用途绑定的地方都用它；一人恰一条（首条自动、删默认时最早的顶上）';
 
+-- ============================================
+-- 33. 用户 BYOK 用途绑定
+-- ============================================
 CREATE TABLE IF NOT EXISTS user_llm_binding (
     id          BIGSERIAL   PRIMARY KEY,
     user_id     BIGINT      NOT NULL,
@@ -1027,3 +984,79 @@ CREATE TABLE IF NOT EXISTS user_llm_binding (
     UNIQUE (user_id, purpose)
 );
 COMMENT ON TABLE  user_llm_binding IS '用途→端点绑定：CHAT_MAIN 对话主模型 / CHAT_LIGHT 对话轻模型 / TRADER 交易员；无行=跟随默认端点。端点删除时其绑定连带删';
+
+-- ============================================
+-- 34. Hyperliquid 大户持仓（纯展示 + 落库，不进 trader；方案见 docs/hyperliquid-whale.md）
+-- ============================================
+-- WhalePoolTask 每日：排行榜出新候选实体 → subAccounts 展开成交易账户 → 按链上净值/持仓数/角色认证 → upsert whale_address；
+-- WhalePositionTask 每 10 分钟：metaAndAssetCtxs 拿标记价与全市场持仓量 → 轮询池内地址 clearinghouseState →
+-- 每币聚合写 whale_snapshot（前端读它），(address, coin) 的 szi/entryPx 变了才写 whale_position（研究用）
+
+-- Hyperliquid 大户地址池：交易账户为单位，主地址与子账户各一行；只存过了门 1 的账户
+CREATE TABLE IF NOT EXISTS whale_address (
+    address              VARCHAR(42)  PRIMARY KEY,
+    parent_address       VARCHAR(42),                 -- 子账户的主地址；主地址为 NULL
+    role                 VARCHAR(16),                 -- user / subAccount / vault；主地址查一次，子账户直接写 subAccount
+    in_pool              BOOLEAN      NOT NULL DEFAULT FALSE,
+    account_value        NUMERIC(20,2),
+    position_count       INT,
+    tracked_max_position NUMERIC(20,2),               -- 盯盘币里最大一笔仓位名义；门 1 的仓位口径与入池排序看它
+    reject_reason        VARCHAR(32),                 -- 最近一次不合格的原因（SMALL / TOO_MANY_POSITIONS / VAULT / OVER_CAP）；NULL=合格
+    first_seen_at        BIGINT       NOT NULL,
+    qualified_at         BIGINT,                      -- 最近一次合格的时刻
+    updated_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_whale_address_pool ON whale_address (in_pool, account_value DESC);
+COMMENT ON TABLE whale_address IS 'Hyperliquid大户地址池:交易账户为单位(主地址与子账户各一行),每日重新认证,合格进池不合格出池但保留行;只存过了门1(持仓≤10,且净值≥100万或盯盘币仓位≥10万)的账户';
+COMMENT ON COLUMN whale_address.role IS '主地址查userRole存一次以后不再查;子账户天然subAccount不查;vault不合格';
+COMMENT ON COLUMN whale_address.in_pool IS '是否在轮询池:合格账户按"有盯盘币大仓位优先→净值降序"取前cap个';
+COMMENT ON COLUMN whale_address.tracked_max_position IS '盯盘币里最大一笔仓位名义(美元);它≥min-position-value的净值不够也过门1,入池排序也看它';
+COMMENT ON COLUMN whale_address.reject_reason IS '最近一次不合格原因:SMALL净值不够且没有大仓位/TOO_MANY_POSITIONS持仓超10/VAULT/OVER_CAP超池上限;NULL=合格';
+
+-- 每币每轮一行的聚合快照：前端读它，回测也读它
+CREATE TABLE IF NOT EXISTS whale_snapshot (
+    id                 BIGSERIAL     PRIMARY KEY,
+    observed_at        BIGINT        NOT NULL,
+    coin               VARCHAR(16)   NOT NULL,
+    price              NUMERIC(20,8) NOT NULL,   -- Hyperliquid 标记价
+    hl_open_interest   NUMERIC(20,2) NOT NULL,   -- 全市场持仓量名义，覆盖率分母
+    pool_size          INT           NOT NULL,   -- 本轮成功查到的地址数
+    long_count         INT           NOT NULL,
+    long_notional      NUMERIC(20,2) NOT NULL,
+    long_wavg_entry    NUMERIC(20,8),
+    long_median_entry  NUMERIC(20,8),
+    long_top1_share    NUMERIC(6,4),
+    long_upnl          NUMERIC(20,2),
+    short_count        INT           NOT NULL,
+    short_notional     NUMERIC(20,2) NOT NULL,
+    short_wavg_entry   NUMERIC(20,8),
+    short_median_entry NUMERIC(20,8),
+    short_top1_share   NUMERIC(6,4),
+    short_upnl         NUMERIC(20,2),
+    entry_buckets_json TEXT          NOT NULL,   -- 按开仓价分桶的多空名义
+    liq_buckets_json   TEXT          NOT NULL,   -- 按强平价分桶的多空名义
+    UNIQUE (observed_at, coin)
+);
+CREATE INDEX IF NOT EXISTS idx_whale_snapshot_coin_time ON whale_snapshot (coin, observed_at DESC);
+COMMENT ON TABLE whale_snapshot IS '大户持仓每币每轮聚合快照(10分钟一轮,对齐整10分钟):多空地址数/名义/加权均价/中位数/前一名占比/浮盈亏+开仓价与强平价分桶;只算盯盘币且单笔名义≥min-position-value的仓位';
+COMMENT ON COLUMN whale_snapshot.price IS 'Hyperliquid标记价markPx:强平按它算,强平桶与快照价同口径';
+COMMENT ON COLUMN whale_snapshot.hl_open_interest IS '全市场持仓量名义=openInterest×markPx;覆盖率=long_notional/它、short_notional/它(永续OI=全部多头=全部空头)';
+COMMENT ON COLUMN whale_snapshot.entry_buckets_json IS '{"width":桶宽,"buckets":[[下界,多头名义,空头名义],...]},桶宽=标记价×0.25%,只存非空桶;桶宽跟当轮价走,跨轮不对齐';
+COMMENT ON COLUMN whale_snapshot.liq_buckets_json IS '同entry_buckets_json,按liquidationPx分桶,桶宽=标记价×0.5%;liquidationPx为空的仓位不进这里';
+
+-- 单地址仓位变化流水：只在 szi/entryPx 变化时写，szi=0 表示已平
+CREATE TABLE IF NOT EXISTS whale_position (
+    id             BIGSERIAL     PRIMARY KEY,
+    observed_at    BIGINT        NOT NULL,
+    address        VARCHAR(42)   NOT NULL,
+    coin           VARCHAR(16)   NOT NULL,
+    szi            NUMERIC(24,8) NOT NULL,
+    entry_px       NUMERIC(20,8),
+    position_value NUMERIC(20,2),
+    leverage       INT,
+    liquidation_px NUMERIC(20,8),
+    unrealized_pnl NUMERIC(20,2)
+);
+CREATE INDEX IF NOT EXISTS idx_whale_position_addr ON whale_position (address, coin, observed_at DESC);
+COMMENT ON TABLE whale_position IS '池内地址在盯盘币上的仓位变化流水:(address,coin)的szi/entryPx变了才写一行,上轮有本轮没有写szi=0;不论大小全记,研究用;首轮轮询每键取最近一行当基线';
+COMMENT ON COLUMN whale_position.szi IS '币数量,正多负空,0=已平';

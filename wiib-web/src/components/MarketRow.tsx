@@ -1,58 +1,58 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { formatCoinPrice, type CoinCfg } from '../lib/coinConfig';
 import { cryptoApi, futuresApi } from '../api';
 import { useCryptoStream } from '../hooks/useCryptoStream';
+import { landCoinReveal, playCoinReveal } from '../lib/coinReveal';
 import { Sparkline } from './fx/Sparkline';
 
 /**
- * 终端式行情表行：图标名称 | 价格(右对齐) | 走势线 | 涨跌幅。
- * 按容器宽度自适应（@container，父卡片需带 @container 类）：窄卡走势线缩窄(48px)、
- * 涨跌幅降号、间距收紧，宽卡全尺寸展开——首页 xl 四列的窄卡与选币/选股页的宽卡
- * 共用本组件，不能按视口判断。价格列 auto 保完整，挤压全落在可截断的名称列上。
+ * 行情行：图标 币名 | 最新价 | 涨跌幅 | 走势线，横线分行，没有表头和副标题。
+ * 鼠标指上去这一行浮起、别的行退后（样式在 index.css 的 .mkt-* 段，只给有鼠标的设备）。
+ * 按容器宽度自适应（@container，父级带 @container 类）：窄容器走势线缩窄、字号降一号。
+ * 行比文字列左右各宽出一截（负外边距 + 内边距），浮起来时底面盖过文字边缘才像一块。
  */
-export function MarketRow({ icon, name, sub, price, pct, spark, sparkColor, onClick }: {
+export function MarketRow({ icon, name, price, pct, spark, sparkColor, onClick, rowRef }: {
   icon: ReactNode;
   name: string;
-  sub?: string;
   price: string | null;
   pct: number | null;
   spark?: number[];
   sparkColor?: string;
   onClick: () => void;
+  rowRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const up = (pct ?? 0) >= 0;
   return (
     <button
+      ref={rowRef}
+      type="button"
       onClick={onClick}
       className={cn(
-        'grid grid-cols-[minmax(0,1fr)_auto_48px_46px] @md:grid-cols-[minmax(0,1.1fr)_1fr_88px_76px] items-center gap-1.5 @md:gap-3',
-        'w-full px-3 py-2.5 text-left border-b border-border/60 last:border-0',
-        'hover:bg-surface-hover transition-colors cursor-pointer',
+        'mkt-row grid items-center text-left cursor-pointer border-b border-border',
+        'grid-cols-[minmax(0,1fr)_auto_62px_84px] gap-3 h-[60px] w-[calc(100%+1.5rem)] -mx-3 px-3',
+        '@md:grid-cols-[minmax(0,1fr)_auto_76px_160px] @md:gap-[22px] @md:h-[66px] @md:w-[calc(100%+2rem)] @md:-mx-4 @md:px-4',
       )}
     >
-      <span className="flex items-center gap-2.5 min-w-0">
-        {icon}
-        <span className="min-w-0">
-          <span className="block text-sm font-semibold leading-tight truncate">{name}</span>
-          {sub && <span className="block text-[10px] text-muted-foreground truncate">{sub}</span>}
-        </span>
+      <span className="flex items-center gap-3 @md:gap-[13px] min-w-0">
+        <span data-cr-icon className="shrink-0 w-[26px] h-[26px] @md:w-[30px] @md:h-[30px]">{icon}</span>
+        <b className="text-[15px] @md:text-base font-bold tracking-[-.01em] truncate">{name}</b>
       </span>
 
-      <span className="num text-[13px] @md:text-sm font-medium text-right">{price ?? '—'}</span>
-
-      <span className="block h-[22px]">
-        {spark && spark.length > 1 && <Sparkline data={spark} stroke={sparkColor} className="w-full h-full" />}
-      </span>
+      <span className="num text-base @md:text-lg font-semibold font-stretch-[88%] tracking-[-.01em] text-right">{price ?? '—'}</span>
 
       <span
         className={cn(
-          'num text-[10px] @md:text-[11px] font-semibold text-right tabular-nums',
+          'num text-xs @md:text-[13.5px] font-bold text-right',
           pct == null ? 'text-muted-foreground' : up ? 'text-gain' : 'text-loss',
         )}
       >
         {pct == null ? '—' : `${up ? '+' : ''}${pct.toFixed(2)}%`}
+      </span>
+
+      <span data-cr-spark className="block h-[26px] @md:h-[30px]">
+        {spark && spark.length > 1 && <Sparkline data={spark} stroke={sparkColor} className="w-full h-full" />}
       </span>
     </button>
   );
@@ -61,6 +61,7 @@ export function MarketRow({ icon, name, sub, price, pct, spark, sparkColor, onCl
 /** 币种/商品行：实时流价 + 1h×25 根K线（首根收盘=24h涨跌基准，整条作走势线），与原行情卡同口径 */
 export function CoinMarketRow({ cfg }: { cfg: CoinCfg }) {
   const navigate = useNavigate();
+  const rowRef = useRef<HTMLButtonElement>(null);
   const tick = useCryptoStream(cfg.symbol, cfg.futuresOnly ? 'futures' : 'spot');
   const [closes, setCloses] = useState<number[]>([]);
 
@@ -78,17 +79,26 @@ export function CoinMarketRow({ cfg }: { cfg: CoinCfg }) {
   const price = livePrice ?? (closes.length ? closes[closes.length - 1] : null);
   const base = closes.length ? closes[0] : null;
   const pct = price != null && base ? ((price - base) / base) * 100 : null;
+  const priceText = price == null ? null : `$${formatCoinPrice(cfg.symbol, price)}`;
+
+  // 点行：先放过渡（约 0.7s 图标到正中），再切页，交易页挂好后图标落到页头
+  const open = () => {
+    const to = `/coin/${cfg.symbol}`;
+    const flight = rowRef.current && playCoinReveal(rowRef.current, { color: cfg.chartColor, price: priceText, pct });
+    if (!flight) return;   // 连点 / 图标没渲染：忽略，等这段跑完
+    flight.then(() => { navigate(to); landCoinReveal(cfg.symbol); });
+  };
 
   return (
     <MarketRow
-      icon={<cfg.icon className={cn('w-6 h-6 shrink-0', cfg.colorClass)} />}
+      rowRef={rowRef}
+      icon={<cfg.icon className={cn('w-full h-full', cfg.colorClass)} />}
       name={cfg.name}
-      sub={cfg.pair}
-      price={price == null ? null : `$${formatCoinPrice(cfg.symbol, price)}`}
+      price={priceText}
       pct={pct}
       spark={spark}
       sparkColor={cfg.chartColor}
-      onClick={() => navigate(`/coin/${cfg.symbol}`)}
+      onClick={open}
     />
   );
 }

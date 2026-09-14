@@ -5,23 +5,17 @@ import com.mawai.wiibquant.research.forecast.ContinuousFactorForecaster;
 import com.mawai.wiibquant.research.forecast.EwmaMomentumForecaster;
 import com.mawai.wiibquant.research.forecast.Forecaster;
 import com.mawai.wiibquant.research.forecast.IndicatorAdapter;
-import com.mawai.wiibquant.research.forecast.MultiFactorForecaster;
 import com.mawai.wiibcommon.market.KlineBar;
-import com.mawai.wiibquant.research.series.MarketSeriesPoint;
-import com.mawai.wiibquant.research.series.SeriesCode;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -31,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 手动 direction DB 运行器（非 *Test 命名，默认/全量构建不会跑）。
- * 显式 -Dtest=DirectionResearchDbRun 时，直连 Postgres 读 kline/factor_history，绕开 Spring Boot/Redis。
+ * 显式 -Dtest=DirectionResearchDbRun 时，直连 Postgres 读 kline_history，绕开 Spring Boot/Redis。
  *
  * 跑法：
  *   mvn -pl wiib-quant -am -DskipTests=false -Dtest=DirectionResearchDbRun \
@@ -44,7 +38,6 @@ class DirectionResearchDbRun {
     private static final String DEFAULT_USER = "mawai";
     private static final String DEFAULT_PASSWORD = com.mawai.wiibquant.LocalEnv.dbPassword();
     private static final String DEFAULT_SYMBOL = "BTCUSDT";
-    private static final String GLOBAL_SYMBOL = "GLOBAL";
     private static final long DAY_MS = Duration.ofDays(1).toMillis();
 
     @Test
@@ -68,8 +61,6 @@ class DirectionResearchDbRun {
         }
 
         try (con) {
-            printFactorCoverage(con);
-
             long max = maxOpenTime(con, symbol);
             Assumptions.assumeTrue(max > 0, "库里无 " + symbol + " 5m 数据");
             long latestTo = max + 1;
@@ -82,19 +73,12 @@ class DirectionResearchDbRun {
                     ? List.of()
                     : loadBars(con, DEFAULT_SYMBOL, from, to);
 
-            List<MarketSeriesPoint> funding = loadSeries(con, symbol, SeriesCode.FUNDING, from, to);
-            List<MarketSeriesPoint> fearGreed = loadSeries(con, GLOBAL_SYMBOL, SeriesCode.FEAR_GREED, from, to);
-            List<MarketSeriesPoint> etfFlow = loadSeries(con, symbol, SeriesCode.ETF_FLOW, from, to);
-            List<MarketSeriesPoint> stablecoin = loadSeries(con, symbol, SeriesCode.STABLECOIN_DELTA, from, to);
-
             System.out.printf("%n加载 %s 5m bars=%d，benchmarkBars=%d，最近 %d 天，耗时 %.1fs%n",
                     symbol, bars.size(), benchmarkBars.size(), days, (System.nanoTime() - t0) / 1e9);
             System.out.printf("评估区间 UTC [%s, %s)%n", Instant.ofEpochMilli(from), Instant.ofEpochMilli(to));
             if (!toDate.isBlank()) {
                 System.out.printf("K线终点已按 direction.diag.toDate=%s 截断；该日期按 UTC 全日包含%n", toDate);
             }
-            System.out.printf("as-of 因子点数 funding=%d, fearGreed=%d, etfFlow=%d, stablecoin=%d%n",
-                    funding.size(), fearGreed.size(), etfFlow.size(), stablecoin.size());
             System.out.printf("EvalParams testSize=%d, minTrain=%d, embargo=%d, iterations=%d%n",
                     params.testSize(), params.minTrain(), params.embargoBars(), params.iterations());
             System.out.printf("Forecasters=%s%n", forecasterNames);
@@ -105,7 +89,6 @@ class DirectionResearchDbRun {
                 List<Forecaster> selectedForecasters = forecasters();
                 try {
                     AssembledPoints assembled = ResearchEvalService.assemblePoints(horizon, bars, benchmarkBars,
-                            funding, fearGreed, etfFlow, stablecoin,
                             params, ResearchEvalService.FEATURE_LOOKBACK_BARS);
                     ComparisonReport report = ResearchEvalService.evaluateAssembled(
                             symbol, horizon, assembled, selectedForecasters, params);
@@ -121,15 +104,11 @@ class DirectionResearchDbRun {
     }
 
     private static List<Forecaster> forecasters() {
-        String raw = System.getProperty("direction.diag.forecasters",
-                "ewma,multi,onchain,all");
+        String raw = System.getProperty("direction.diag.forecasters", "ewma,continuous");
         List<Forecaster> out = new ArrayList<>();
         for (String token : raw.split(",")) {
             switch (token.trim().toLowerCase(Locale.ROOT)) {
                 case "ewma" -> out.add(new EwmaMomentumForecaster(12, 26));
-                case "multi" -> out.add(MultiFactorForecaster.defaults());
-                case "onchain" -> out.add(MultiFactorForecaster.onChainOnly());
-                case "all" -> out.add(MultiFactorForecaster.allFactors());
                 case "continuous" -> out.add(ContinuousFactorForecaster.defaults());
                 case "" -> { }
                 default -> throw new IllegalArgumentException("未知 direction.diag.forecasters token: " + token);
@@ -154,31 +133,6 @@ class DirectionResearchDbRun {
     private static double doubleProperty(String key, double fallback) {
         String raw = System.getProperty(key);
         return raw == null || raw.isBlank() ? fallback : Double.parseDouble(raw);
-    }
-
-    private static void printFactorCoverage(Connection con) throws Exception {
-        String sql = """
-                SELECT symbol, factor_name, COUNT(*) AS n, MIN(observed_at) AS first_at, MAX(observed_at) AS last_at
-                FROM factor_history
-                WHERE factor_name IN (?, ?, ?, ?)
-                GROUP BY symbol, factor_name
-                ORDER BY factor_name, symbol
-                """;
-        try (PreparedStatement ps = con.prepareStatement(sql)) {
-            ps.setString(1, SeriesCode.FUNDING.factorName());
-            ps.setString(2, SeriesCode.FEAR_GREED.factorName());
-            ps.setString(3, SeriesCode.ETF_FLOW.factorName());
-            ps.setString(4, SeriesCode.STABLECOIN_DELTA.factorName());
-            try (ResultSet rs = ps.executeQuery()) {
-                System.out.println("\n==== factor_history 覆盖率（observed_at 原始观测日/时点） ====");
-                System.out.printf("%-12s %-28s %8s %-22s %-22s%n", "symbol", "factor", "n", "first_at", "last_at");
-                while (rs.next()) {
-                    System.out.printf("%-12s %-28s %8d %-22s %-22s%n",
-                            rs.getString(1), rs.getString(2), rs.getLong(3),
-                            rs.getTimestamp(4), rs.getTimestamp(5));
-                }
-            }
-        }
     }
 
     private static long maxOpenTime(Connection con, String symbol) throws Exception {
@@ -211,48 +165,9 @@ class DirectionResearchDbRun {
         return bars;
     }
 
-    private static List<MarketSeriesPoint> loadSeries(Connection con, String symbol, SeriesCode code,
-                                                      long fromMs, long toMs) throws Exception {
-        long lagMs = availabilityLagMs(code);
-        String sql = "SELECT observed_at, factor_value FROM factor_history "
-                + "WHERE symbol=? AND factor_name=? AND observed_at>=? AND observed_at<? ORDER BY observed_at";
-        List<MarketSeriesPoint> points = new ArrayList<>();
-        try (PreparedStatement ps = con.prepareStatement(sql)) {
-            ps.setString(1, symbol);
-            ps.setString(2, code.factorName());
-            ps.setTimestamp(3, Timestamp.valueOf(toUtcLocalDateTime(fromMs - lagMs)));
-            ps.setTimestamp(4, Timestamp.valueOf(toUtcLocalDateTime(toMs)));
-            ps.setFetchSize(5000);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    long availableAt = toEpochMsUtc(rs.getTimestamp(1)) + lagMs;
-                    // 日级慢因子 observed_at 存原始日期；策略只能在 T+1 看到，和 MarketSeriesStore.load 保持一致。
-                    if (availableAt >= fromMs && availableAt < toMs) {
-                        BigDecimal value = rs.getBigDecimal(2);
-                        if (value != null) points.add(new MarketSeriesPoint(availableAt, value));
-                    }
-                }
-            }
-        }
-        return points;
-    }
-
-    private static long availabilityLagMs(SeriesCode code) {
-        return code == SeriesCode.FUNDING ? 0L : DAY_MS;
-    }
-
-    private static LocalDateTime toUtcLocalDateTime(long ms) {
-        return LocalDateTime.ofInstant(Instant.ofEpochMilli(ms), ZoneOffset.UTC);
-    }
-
     private static long inclusiveDateEndUtc(String yyyyMmDd) {
         // toDate 是“跑到某天”为人读语义；内部仍用 [from,to)，所以终点取次日 00:00 UTC。
         return LocalDate.parse(yyyyMmDd).plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli();
-    }
-
-    private static long toEpochMsUtc(Timestamp ts) {
-        // factor_history 是 UTC LocalDateTime；别走 Timestamp.toInstant()，否则本机时区会偷偷参与。
-        return ts.toLocalDateTime().toInstant(ZoneOffset.UTC).toEpochMilli();
     }
 
     /** 只打印市场背景一行；方向预测的判分全在 printDiagnostics（纯命中率口径），收益不参与评判。 */

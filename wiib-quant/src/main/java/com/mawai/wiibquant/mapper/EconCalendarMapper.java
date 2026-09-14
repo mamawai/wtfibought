@@ -19,6 +19,8 @@ public interface EconCalendarMapper {
     /** 注入块用的事件行（唤醒开场白按它成文） */
     @Data
     class Row {
+        /** TradingView 事件 id；同一时刻可能有多条（补发多期），前端按它区分 */
+        private String sourceId;
         private Long eventTime;
         /** ISO 国家码 US/EU/GB… */
         private String country;
@@ -65,10 +67,27 @@ public interface EconCalendarMapper {
     int countPendingActual(@Param("fromMs") long fromMs, @Param("toMs") long toMs);
 
     @Select("""
-            SELECT event_time AS eventTime, country, currency, title, actual, forecast, previous
+            SELECT source_id AS sourceId, event_time AS eventTime, country, currency, title, actual, forecast, previous
               FROM econ_calendar_event
              WHERE event_time BETWEEN #{fromMs} AND #{toMs}
-             ORDER BY event_time
+             ORDER BY event_time, source_id
             """)
     List<Row> selectWindow(@Param("fromMs") long fromMs, @Param("toMs") long toMs);
+
+    /** 库里最早一条的时刻，空表 null；历史回填看它判断补没补过 */
+    @Select("SELECT MIN(event_time) FROM econ_calendar_event")
+    Long selectMinEventTime();
+
+    /** 单个指标的历次公布：同一指标换过名的，新旧标题一起传；titles 非空 */
+    @Select("""
+            <script>
+            SELECT source_id AS sourceId, event_time AS eventTime, country, currency, title, actual, forecast, previous
+              FROM econ_calendar_event
+             WHERE country = #{country}
+               AND title IN
+            <foreach collection="titles" item="t" open="(" separator="," close=")">#{t}</foreach>
+             ORDER BY event_time, source_id
+            </script>
+            """)
+    List<Row> selectSeries(@Param("country") String country, @Param("titles") List<String> titles);
 }

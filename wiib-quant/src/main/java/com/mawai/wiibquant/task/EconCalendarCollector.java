@@ -23,11 +23,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
+import java.util.function.LongSupplier;
 
 /**
  * 财经日历采集轨：拉 TradingView 日历接口（只要 High 级，服务端 minImportance=1 过滤）→ 按事件 id upsert
  * econ_calendar_event。定时每 4h 同步 [now-3d, now+7d]；公布时刻的等待闸（EconCalendarGate）用 {@link #sync}
- * 窄窗口轮询拿实际值。
+ * 窄窗口轮询拿实际值；启动后一次性回填 2022 年起的历史（{@link #backfill}）。
  * <p>
  * 接口只认 Origin 头，不看 TLS 指纹，Java HttpClient 直连即可。事件 id 跨次拉取稳定，做幂等键：
  * 改期只改时刻、公布填实际值、前值修正落同一行；改期出窗/取消的靠定时轮删窗口内不在回包里的行。
@@ -50,6 +51,13 @@ public class EconCalendarCollector {
     /** 列宽 VARCHAR(200)：外部数据超长会让整批事务回滚，截一刀保住其余行 */
     private static final int MAX_TITLE_LEN = 200;
 
+    /** 历史回填起点 */
+    private static final long BACKFILL_FROM = Instant.parse("2022-01-01T00:00:00Z").toEpochMilli();
+    /** 回填每片 90 天 */
+    private static final long BACKFILL_CHUNK_MS = 90 * 86_400_000L;
+    /** 最早一条早于 起点+7天 算已回填 */
+    private static final long BACKFILL_SLACK_MS = 7 * 86_400_000L;
+
     private final EconCalendarMapper mapper;
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 
@@ -60,6 +68,8 @@ public class EconCalendarCollector {
 
     /** 拉取注入点（完整 URL → 回包）：测试换假源 */
     Function<String, String> http = this::httpGet;
+    /** 时钟注入点：测试换假时钟 */
+    LongSupplier nowMs = System::currentTimeMillis;
 
     /** 周期见 econ.calendar.interval-ms（缺省 4h）。initialDelay 让开启动高峰 */
     @Scheduled(fixedDelayString = "${econ.calendar.interval-ms:14400000}", initialDelay = 30_000)
@@ -68,7 +78,7 @@ public class EconCalendarCollector {
         if (!enabled) {
             return;
         }
-        long now = System.currentTimeMillis();
+        long now = nowMs.getAsLong();
         long from = now - PAST_MS;
         long to = now + FUTURE_MS;
         List<Event> events;
@@ -85,6 +95,35 @@ public class EconCalendarCollector {
         }
         int pruned = mapper.deleteWindowExcept(from, to, events.stream().map(Event::sourceId).toList());
         log.info("[EconCalendar] 同步 {} 条（删幽灵 {} 条）", events.size(), pruned);
+    }
+
+    /**
+     * 启动后一次性回填 2022 年起的历史，库里最早一条没到起点才补。
+     * 新→旧按 90 天切片调 {@link #sync}，任一片失败就停，下次启动整段重来。
+     * 不挂事务，自调用 sync 逐条自动提交。
+     */
+    @Scheduled(initialDelay = 60_000)
+    public void backfill() {
+        if (!enabled) {
+            return;
+        }
+        Long earliest = mapper.selectMinEventTime();
+        if (earliest != null && earliest < BACKFILL_FROM + BACKFILL_SLACK_MS) {
+            return;
+        }
+        int chunks = 0;
+        int rows = 0;
+        for (long to = nowMs.getAsLong(); to > BACKFILL_FROM; to -= BACKFILL_CHUNK_MS) {
+            long from = Math.max(BACKFILL_FROM, to - BACKFILL_CHUNK_MS);
+            try {
+                rows += sync(from, to).size();
+            } catch (Exception e) {
+                log.warn("[EconCalendar] 回填 {} ~ {} 失败，停在这，下次启动重来: {}", iso(from), iso(to), e.toString());
+                return;
+            }
+            chunks++;
+        }
+        log.info("[EconCalendar] 历史回填完成：{} 片 {} 条", chunks, rows);
     }
 
     /** 拉 [fromMs, toMs] 内的 High 事件并逐条 upsert，返回本次事件；拉取/解析失败抛出，由调用方定夺 */

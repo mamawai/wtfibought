@@ -27,6 +27,9 @@ public final class TradeFilterDefaults {
             Map.entry("SOLUSDT",     f("0.01",  "5")),
             Map.entry("XRPUSDT",     f("0.1",   "5")),
             Map.entry("BNBUSDT",     f("0.01",  "5")),
+            // ZEC / HYPE 实拉 2026-09-14（HYPE 主站无现货，只有这一份）
+            Map.entry("ZECUSDT",     f("0.001", "5")),
+            Map.entry("HYPEUSDT",    f("0.01",  "5")),
             Map.entry("XAUUSDT",     f("0.001", "5")),
             Map.entry("CLUSDT",      f("0.01",  "5")),
             // TradFi 股票/ETF 永续：六标的官方口径一致（step 0.01 / minNotional 5，实拉 2026-07-23）
@@ -43,7 +46,8 @@ public final class TradeFilterDefaults {
             "DOGEUSDT", f("1",       "1"),
             "SOLUSDT",  f("0.001",   "5"),
             "XRPUSDT",  f("0.1",     "5"),
-            "BNBUSDT",  f("0.001",   "5"));
+            "BNBUSDT",  f("0.001",   "5"),
+            "ZECUSDT",  f("0.001",   "5"));
 
     /** 未配置 symbol 返回 null，调用方按"不校验"处理 */
     public static Filter futures(String symbol) {

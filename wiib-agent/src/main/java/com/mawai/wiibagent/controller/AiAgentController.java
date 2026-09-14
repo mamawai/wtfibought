@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /**
- * AI Agent 查询接口：快讯一条 + 财经日历两条（首页卡、BTC K 线标记）。
+ * AI Agent 查询接口：快讯一条 + 财经日历三条（首页卡、BTC K 线标记、日历页单指标历史）。
  * 深研判查询端点已随 AI 页市场研判 tab 下线（2026-08）：研判只在对话里触发时看，
  * 生成与落库仍在 DeepAnalysisToolkit/DeepAnalysisService。
  * 行为分析端点同理下线（2026-08）：它已是对话轨的 analyze_my_behavior 工具，
@@ -82,5 +82,13 @@ public class AiAgentController {
     public Result<List<EconCalendarMapper.Row>> econCalendarEvents(@RequestParam long from,
                                                                   @RequestParam long to) {
         return Result.ok(econCalendarMapper.selectWindow(from, to));
+    }
+
+    /** 日历页单个指标的历次公布（走势图数据源）：前端核对清单把同一指标的新旧标题一起传来，按标题精确查 */
+    @GetMapping("/quant/econ-calendar/series")
+    @Operation(summary = "财经日历单指标历次公布：国家 + 该指标的全部标题")
+    public Result<List<EconCalendarMapper.Row>> econCalendarSeries(@RequestParam String country,
+                                                                  @RequestParam List<String> titles) {
+        return Result.ok(econCalendarMapper.selectSeries(country, titles));
     }
 }

@@ -7,7 +7,7 @@ import java.util.List;
 
 /**
  * 量化核心多输出预测器：组装三腿——vol=可插拔 VolForecaster、regime=可插拔 RegimeForecaster、
- * direction=注入的单输出 {@link Forecaster}（默认复用 MultiFactorForecaster，已知方向 edge 弱，作 LLM 增量的对照基线）。
+ * direction=注入的单输出 {@link Forecaster}（默认 EWMA 动量价格基线，已知方向 edge 弱，作 LLM 增量的对照基线）。
  * 三腿独立无耦合：各腿状态(fit)由本类转发。
  */
 public final class QuantCoreForecaster implements MultiOutputForecaster {
@@ -41,18 +41,13 @@ public final class QuantCoreForecaster implements MultiOutputForecaster {
         this.directionForecaster = directionForecaster;
     }
 
-    /** 默认：EWMA(0.94) + ADX/ATR 当前状态 + MultiFactorForecaster.defaults() 方向腿。 */
+    /** 默认：EWMA(0.94) + ADX/ATR 当前状态 + EWMA 动量(12,26) 方向腿。 */
     public static QuantCoreForecaster defaults(ForecastHorizon horizon) {
-        return defaults(horizon, MultiFactorForecaster.defaults());
+        return defaults(horizon, defaultDirectionForecaster());
     }
 
     public static QuantCoreForecaster defaults(ForecastHorizon horizon, Forecaster directionForecaster) {
         return new QuantCoreForecaster(horizon, DEFAULT_VOL_LAMBDA, directionForecaster);
-    }
-
-    /** EWMA + ADX/ATR + 全 5 因子方向腿；365d 验证中 direction 明显优于原 fixed3，保留显式工厂避免改默认。 */
-    public static QuantCoreForecaster allFactorDirection(ForecastHorizon horizon) {
-        return defaults(horizon, MultiFactorForecaster.allFactors());
     }
 
     /** GK 输入的 HAR-RV 腿：保留唯一 HAR 候选；close-return HAR 已删除，避免 floor 病理回流。 */
@@ -63,11 +58,16 @@ public final class QuantCoreForecaster implements MultiOutputForecaster {
     public static QuantCoreForecaster harRvGk(ForecastHorizon horizon, long decisionBarMillis) {
         return new QuantCoreForecaster(horizon, DEFAULT_VOL_LAMBDA,
                 new HorizonScaledVolForecaster(HarRvVolForecaster.gkDefaults(DEFAULT_VOL_LAMBDA, decisionBarMillis), horizon),
-                MultiFactorForecaster.defaults());
+                defaultDirectionForecaster());
     }
 
     private static VolForecaster defaultVolForecaster(ForecastHorizon horizon, double lambda) {
         return new HorizonScaledVolForecaster(new EwmaVolForecaster(lambda), horizon);
+    }
+
+    /** 方向腿默认价格基线，与 ResearchEvalController /run 的 EWMA 基线同参。 */
+    private static Forecaster defaultDirectionForecaster() {
+        return new EwmaMomentumForecaster(12, 26);
     }
 
     @Override

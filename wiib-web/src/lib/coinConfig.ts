@@ -1,8 +1,8 @@
 import i18n from '../i18n';
 import { fmtNum } from './utils';
-import {Bitcoin, Coins, Cpu, Flag, Fuel, HardDrive, MemoryStick, Rocket, type LucideProps} from 'lucide-react';
+import {Coins, Cpu, Flag, Fuel, HardDrive, MemoryStick, Rocket, type LucideProps} from 'lucide-react';
 import type {ComponentType} from "react";
-import {Bnb, Doge, Eth, Sol, Xrp} from './coinIcons';
+import {Bnb, Btc, Doge, Eth, Hype, Sol, Xrp, Zec} from './coinIcons';
 import type {MarketId} from './marketSession';
 
 export interface CoinCfg {
@@ -39,7 +39,7 @@ export interface CoinCfg {
 export const COIN_MAP: Record<string, CoinCfg> = {
   BTCUSDT: {
     symbol: 'BTCUSDT', name: 'BTC', pair: 'BTC / USDT', tvSymbol: 'BINANCE:BTCUSD', futuresTvSymbol: 'BINANCE:BTCUSDT.P',
-    icon: Bitcoin,
+    icon: Btc,
     colorClass: 'text-orange-500', bgClass: 'bg-orange-500/10', hoverBgClass: 'hover:bg-orange-500/20', gradientClass: 'from-orange-500/5',
     chartColor: '#f97316',
   },
@@ -64,7 +64,8 @@ export const COIN_MAP: Record<string, CoinCfg> = {
   XRPUSDT: {
     symbol: 'XRPUSDT', name: 'XRP', pair: 'XRP / USDT', tvSymbol: 'BINANCE:XRPUSDT', futuresTvSymbol: 'BINANCE:XRPUSDT.P',
     priceDecimals: 4, icon: Xrp,
-    colorClass: 'text-sky-500', bgClass: 'bg-sky-500/10', hoverBgClass: 'hover:bg-sky-500/20', gradientClass: 'from-sky-500/5',
+    // 官方 X 符号是黑/白单色，图标跟前景色走；面板底色/走势线仍用蓝系区分
+    colorClass: 'text-foreground', bgClass: 'bg-sky-500/10', hoverBgClass: 'hover:bg-sky-500/20', gradientClass: 'from-sky-500/5',
     chartColor: '#0ea5e9',
   },
   BNBUSDT: {
@@ -72,6 +73,19 @@ export const COIN_MAP: Record<string, CoinCfg> = {
     icon: Bnb,
     colorClass: 'text-yellow-400', bgClass: 'bg-yellow-400/10', hoverBgClass: 'hover:bg-yellow-400/20', gradientClass: 'from-yellow-400/5',
     chartColor: '#f0b90b',
+  },
+  ZECUSDT: {
+    symbol: 'ZECUSDT', name: 'ZEC', pair: 'ZEC / USDT', tvSymbol: 'BINANCE:ZECUSDT', futuresTvSymbol: 'BINANCE:ZECUSDT.P',
+    icon: Zec,
+    colorClass: 'text-amber-400', bgClass: 'bg-amber-400/10', hoverBgClass: 'hover:bg-amber-400/20', gradientClass: 'from-amber-400/5',
+    chartColor: '#f4b728',
+  },
+  // HYPE：Binance 主站只有永续没现货，归 crypto 但按纯合约走
+  HYPEUSDT: {
+    symbol: 'HYPEUSDT', name: 'HYPE', pair: 'HYPE / USDT', tvSymbol: 'BINANCE:HYPEUSDT.P', futuresTvSymbol: 'BINANCE:HYPEUSDT.P',
+    priceDecimals: 3, icon: Hype,
+    colorClass: 'text-teal-400', bgClass: 'bg-teal-400/10', hoverBgClass: 'hover:bg-teal-400/20', gradientClass: 'from-teal-400/5',
+    chartColor: '#50d2c1', futuresOnly: true,
   },
   XAUUSDT: {
     symbol: 'XAUUSDT', get name() { return i18n.t('market:coinName.XAUUSDT'); }, pair: 'XAU / USDT', tvSymbol: 'TVC:GOLD', futuresTvSymbol: 'BINANCE:XAUUSDT.P',
