@@ -402,7 +402,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 | 账户状态 | `accountStateJson` | 持仓带杠杆/标记价/强平价、计划与修订历史（时刻可读）、挂单带已挂时长。一次给足，工具预算才能留给行情求证 |
 | 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 两处共吃 `recentWakes` 一次查齐的那份 `List<RecentWake>`（别各查各的）：结论完整回注（最近一条写出结论块的 OK 行，整块不截断）+ 轨迹一行一轮（时刻/状态/权益/工具名或失败原因）。只回注交易类（TRADE/ALERT/MANUAL），REVIEW/LEARN 已走笔记注入。被主人标记忽略的交易在 `RecentWake` 里就已剔掉内容，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
 | 论点战绩 | `PlayStatsAssembler` | 纯代码算，模型只许引用不许自算；stale 过滤在**配对之后** |
-| 财经日历 | `EconCalendarAssembler` | 过去 12h + 未来 24h，只给事实不给指令 |
+| 财经日历 | `EconCalendarAssembler` | 三段：刚公布（上一边界以来新落地的实际值，置顶）→ 过去 3 天已公布 → 今天剩余即将公布，只给事实不给指令 |
 | 复盘笔记 / 学习笔记 | `ai_trader.memory` / `learning_notes` | **并列注入不合并**：来源分开，模型才分得清"自己的教训"与"从别人学的" |
 | 休眠提示 | `sleepNotice` | 时段内末次唤醒才有。明说休眠本身不是任何方向动作的理由——"13 小时看不见"既诱导睡前减仓，也诱导赶在休眠前多开一笔 |
 

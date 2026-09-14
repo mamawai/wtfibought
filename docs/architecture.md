@@ -8,9 +8,9 @@ wiib-agent 里那套 LLM 装置单独成篇，见 [Agent Harness 架构](./agent
 
 ```mermaid
 flowchart TD
-    UI["React Web<br/>Home / bStock / Coin / Commodity / TradFi / Portfolio / Prediction<br/>Arena / MyTrader / AI / Backtest / Strategies / Testnet / ForceOrders<br/>Ledger / Trades / PositionHistory / Ranking / Comments / Games / Me / Admin"]
+    UI["React Web<br/>Home / bStock / Coin / Commodity / TradFi / Portfolio / Prediction<br/>Arena / MyTrader / AI / Backtest / Strategies / Testnet / ForceOrders / EconCalendar<br/>Ledger / Trades / PositionHistory / Ranking / Comments / Games / Me / Admin"]
     EXC["Binance / Polymarket<br/>实时行情源"]
-    EXT["Deribit / BlockBeats<br/>按需取数，不进总线"]
+    EXT["Deribit / BlockBeats / TradingView / Hyperliquid<br/>直连取数，不进总线"]
     FEED["wiib-feed :8081<br/>交易所 WS/REST 接入"]
     SIM["wiib-sim :8080<br/>真人模拟交易 + 游戏 + 预测<br/>账本 = 自研模拟盘"]
     AGENT["wiib-agent :8082<br/>AI 交易员 + 策略执行"]
@@ -101,7 +101,7 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 ├── start-local.ps1 / .bat            # 本地一键启动三服务（bat 为双击入口，转调 ps1）
 ├── docker-compose.yml                # 三进程编排（无私有值，配置全在 .env）
 ├── redis-compose.yml                 # Redis 主从 + 哨兵栈（可选）
-├── sql/                              # init.sql（34 表）+ bstock.sql（bStock 静态表 + 10 只种子）
+├── sql/                              # init.sql（36 表）+ bstock.sql（bStock 静态表 + 10 只种子）
 │
 ├── wiib-common/                      # 共享层：被 feed/agent/quant/sim 共同依赖
 │   └── market/ broadcast/ cache/ aspect/ mapper/ entity/ dto/ enums/ util/ ...
@@ -141,9 +141,10 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 │   ├── research/                     # 量化研究库：因子/预测/标注/评估/风险指标
 │   ├── strategy/                     # FIBO/SQZMOM/TURTLE + 回测引擎
 │   │                                 # + 执行层(testnet|sim) + 账户监控
-│   ├── external/                     # 进程外客户端：binance testnet / blockbeats / deribit
+│   ├── whale/                        # Hyperliquid 大户持仓：每日地址池认证 + 10 分钟持仓轮询 + 查询
+│   ├── external/                     # 进程外客户端：binance testnet / blockbeats / deribit / hyperliquid
 │   │                                 # / sim internal（行为数据 + 合约下单）
-│   └── controller/ task/ mapper/     # ResearchEval/Strategy/Testnet/Backtest 接口 / 日历·K线采集
+│   └── controller/ task/ mapper/     # ResearchEval/Strategy/Testnet/Backtest/Whale 接口 / 日历·K线采集
 │
 ├── wiib-sim/                         # ④ 真人模拟交易进程（:8080，账本=自研模拟盘 DB，对外）
 │   ├── ledger/                       # 资金记账切面：@Ledger + LedgerAspect + 行映射

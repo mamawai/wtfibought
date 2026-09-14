@@ -38,11 +38,11 @@ cd wtfibought
 
 ```bash
 psql -U postgres -c "CREATE DATABASE wiib;"
-psql -U postgres -d wiib -f sql/init.sql      # 业务 + 量化 + AI runtime（33 张表）
+psql -U postgres -d wiib -f sql/init.sql      # 业务 + 量化 + AI runtime（36 张表）
 psql -U postgres -d wiib -f sql/bstock.sql    # bStock 代币化美股静态表 + 10 只种子
 ```
 
-两份合计 34 张表。
+两份合计 37 张表。
 
 ## 3. 后端配置
 
