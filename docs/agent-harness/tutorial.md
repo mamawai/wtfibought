@@ -368,7 +368,7 @@ POST /api/ai/workbench/chat
 ```text
 UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存的，装饰器不新建会跨轮累加）
   → TradeTools 每轮 new（绑 sim 子账户 / 白名单 / 风险规格 / 本轮截止时刻）
-  → 计划对账（rebindPlans → TraderPlanStore.rebind，出 Rebind(live/closed/filled) 三段）
+  → 计划对账（TraderPlanStore.reconcile：逐份 LIVE 计划对 sim 持仓/挂单，出 Reconcile(live, events)；已平仓位懒取）
   → 组装系统提示词（promptAssembler.assemble）、观察包（observation）与开场白（routine / alert instruction）
   → ResilientChatService（系统提示 + 15 工具 + 首轮 forceFirstToolChoice=required：不看数据不许决策）
      + ReactLoop（streaming(true)：模型文本逐字推给唤醒现场，见 5.7；ModelCallLimiter 保险丝；ToolCallTraceHook 轨迹）
@@ -398,7 +398,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 | 块 | 来源 | 要点 |
 |---|---|---|
-| 自上次唤醒以来 | `events` | 素材就是上一步 `Rebind` 的两段：`closed()` 配 sim 已平仓位说结局（止损/止盈/主动平、成交价、盈亏、当时的失效条件），`filled()` 说限价单成交补上了仓位 id；没事件整块缺席 |
+| 自上次唤醒以来 | `events` | 素材就是上一步 `reconcile` 按发生顺序给出的事件：`Closed` 说结局（止损/止盈/主动平、成交价、盈亏、当时的失效条件），`Filled` 说限价单成交计划绑上仓位，`Cancelled` 说挂单撤了计划归档；一份计划对应一个仓位生命期，旧仓了结而同键加仓单还挂着时旧计划归档、论点续立一份新计划接着等；没事件整块缺席 |
 | 账户状态 | `accountStateJson` | 持仓带杠杆/标记价/强平价、计划与修订历史（时刻可读）、挂单带已挂时长。一次给足，工具预算才能留给行情求证 |
 | 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 两处共吃 `recentWakes` 一次查齐的那份 `List<RecentWake>`（别各查各的）：结论完整回注（最近一条写出结论块的 OK 行，整块不截断）+ 轨迹一行一轮（时刻/状态/权益/工具名或失败原因）。只回注交易类（TRADE/ALERT/MANUAL），REVIEW/LEARN 已走笔记注入。被主人标记忽略的交易在 `RecentWake` 里就已剔掉内容，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
 | 论点战绩 | `PlayStatsAssembler` | 纯代码算，模型只许引用不许自算；stale 过滤在**配对之后** |
@@ -557,7 +557,7 @@ trader 那条链的前端另在两处：
 | `AnthropicChatModelTest` / `GeminiChatModelTest` / `ResponsesChatModelTest` | 三条自研协议各自的请求体、流式解析、工具与 tool_choice |
 | `ResilientChatServiceTest` | 韧性分层、options 契约、中断掐流与不反向取消信号（用 mock 模型跑，真到 WebClient 那一段只能真跑验，见附录 B） |
 | `TraderLiveHubTest` / `WakeTraceTest` | 现场扇出与轨迹帧、落库形状（见 5.7） |
-| `TraderPlanStoreTest` | 计划对账 `rebind` 的三段划分 |
+| `TraderPlanStoreTest` | 计划对账 `reconcile` 的三条规则（了结报结局并归档/续立、限价成交绑仓、无仓无挂单归档）与 `open`/`cover` 写路径 |
 | `ReviewMaterialAssemblerTest` | 全包最大那个类的配对算法与 stale 剔段 |
 | `TraderWakeupLoopTest` | mock 模型跑通真 ReactLoop 唤醒回路 |
 | `TraderSchedulerTest` | 三阶段时序、屏障不漏人、停工窗口挡四入口、异常不卡死窗口 |

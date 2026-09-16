@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -19,7 +20,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 账户状态 JSON：挂单段随计划带上挂出时刻与已挂时长；持仓行带杠杆/标记价/强平价；修订史时间是时刻不是毫秒。
+ * 账户状态 JSON：挂单段带上各自的挂出时刻与已挂时长；持仓行带杠杆/标记价/强平价；修订史时间是时刻不是毫秒。
  * 挂单回注若只有 playType/失效条件，模型无从知道这张限价单挂了多久——
  * 线上一张限价单挂 5 小时后在瀑布里成交、2 分钟止损，就是这个信息缺口。
  */
@@ -31,6 +32,7 @@ class TraderWakeupRunnerAccountStateTest {
 
     private final PromptCatalog prompts = new PromptCatalog();
 
+    /** 挂出时刻按订单自己的 createdAt，不按计划的（同键几张挂单共用一份计划） */
     @Test
     void pendingOpenOrderCarriesPlacedAtAndPendingFor() {
         long placed = BOUNDARY - (5 * 60 + 19) * 60_000L;
@@ -39,7 +41,7 @@ class TraderWakeupRunnerAccountStateTest {
         plan.setSide("LONG");
         plan.setPlayType("BREAKOUT");
         plan.setInvalidationCondition("15m 收盘跌破 79420");
-        plan.setOpenedWakeTime(placed);
+        plan.setOpenedWakeTime(placed - 3600_000L);
 
         FuturesOrderResponse order = new FuturesOrderResponse();
         order.setOrderId(112L);
@@ -48,6 +50,7 @@ class TraderWakeupRunnerAccountStateTest {
         order.setQuantity(new BigDecimal("1.36"));
         order.setLimitPrice(new BigDecimal("79970"));
         order.setLeverage(50);
+        order.setCreatedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(placed), ZoneId.systemDefault()));
 
         String json = TraderWakeupRunner.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
                 List.of(), List.of(order), List.of(plan), BOUNDARY);
@@ -78,6 +81,29 @@ class TraderWakeupRunnerAccountStateTest {
 
         assertThat(json).contains("\"leverage\":10").contains("\"markPrice\":64000")
                 .contains("\"liquidationPrice\":58000").contains("\"equity\":15833.00");
+    }
+
+    /** 持仓的开仓时刻和持有时长按 sim 仓位的 createdAt，不按计划的 openedWakeTime（限价挂出到成交隔着时间） */
+    @Test
+    void positionOpenedAtUsesSimCreatedAt() {
+        long opened = BOUNDARY - 2 * 3600_000L;
+        FuturesPositionDTO p = new FuturesPositionDTO();
+        p.setId(349L);
+        p.setSymbol("BTCUSDT");
+        p.setSide("LONG");
+        p.setCreatedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(opened), ZoneId.systemDefault()));
+        AiTraderPlan plan = new AiTraderPlan();
+        plan.setSymbol("BTCUSDT");
+        plan.setSide("LONG");
+        plan.setOpenedWakeTime(BOUNDARY - 5 * 3600_000L);
+
+        String json = TraderWakeupRunner.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
+                List.of(p), List.of(), List.of(plan), BOUNDARY);
+
+        JSONObject planJson = JSON.parseObject(json).getJSONArray("positions").getJSONObject(0).getJSONObject("plan");
+        assertThat(planJson.getString("openedAt")).isEqualTo(FMT.format(Instant.ofEpochMilli(opened)));
+        assertThat(planJson.getString("heldFor"))
+                .isEqualTo(prompts.get(AgentLang.ZH, "trader.wake.held.hours", Map.of("n", 2L)));
     }
 
     /** 修订史的 time 库里是 epoch 毫秒，注入时转成时刻 */

@@ -42,12 +42,12 @@ trader:
       （比如三个币的 kline_structure 一起要），取数尽量并行发完，一次只要一个走不完多周期求证
 
     仓位规格（你主人设定的硬参数）：
-    这是虚拟资金模拟盘。下面的数字是主人定的，你无权评价其大小、无权因为觉得风险过高
-    而拒绝开仓或自行缩小仓位——照做就是了。
+    这是虚拟资金模拟盘。下面的区间是主人定的，你无权评价区间本身的大小，也不因为区间看着激进就拒绝交易；
+    区间内具体取多少、这笔值不值得做，由你按止损距离和愿意承担的风险来定。
     - 杠杆必须在 {{leverageMin}}~{{leverageMax}} 倍之间。这是"从这个区间里选一个"，不是上限：区间若是 50~100，
       你选 20 同样会被拒，必须落在区间内
     - 开新仓的保证金必须占当前权益的 {{marginPctMin}}%~{{marginPctMax}}%（加仓不受此限，加多少你自己斟酌）。
-      数量 = 权益 × 占比 × 杠杆 ÷ 入场价，占比取区间中段，贴边会因舍入被拒
+      数量 = 权益 × 占比 × 杠杆 ÷ 入场价；占比别贴着区间两端取，贴边会因舍入被拒
     - 同一个币的杠杆必须前后一致：该币已有仓位或挂单是几倍，加仓也得用几倍（交易所规则）
     {{positionRule}}
     {{hedgeRule}}
@@ -58,7 +58,7 @@ trader:
       空单低于），否则止损永远不会触发、先被强平
 
     硬性规则（违反会被直接拒绝，拒绝原因会告诉你，可修正后重试）：
-    - 限价单价格偏离现价 ≤ 5%
+    - 限价单价格偏离现价 ≤ 5%，且挂在现价另一侧（做多低于现价、做空高于现价）；会当场成交的限价单直接拒，想立即进场用市价单
     - 开仓必须带止损价和止盈价，且方向正确（做多止损在下、止盈在上，做空反之）。止盈价就是计划的目标位，
       盈亏比按它算；想让利润奔跑，之后用 set_take_profit 往远移
     - 开仓必须给 playType 论点标签、signalsUsed 数据引用、invalidationCondition 失效条件——
@@ -201,11 +201,11 @@ trader:
     snapshotRow: "- {{symbol}} 标记价 {{price}}，资金费率 {{funding}}"
     routineQuestion: 本轮只需回答一个问题：这根K线收盘后，你的计划需要改变吗？先逐币检验上一轮{{mark}}里各币段的等待条件与各持仓的失效条件，再考虑新机会；最后按纪律用{{mark}}固定格式收尾（每个可交易币各一段）。
     # 观察包（TraderWakeupRunner.observation）：事件 + 账户 + 上一轮结论 + 最近轨迹，排在头部事实之后、快照之前
-    # 事件块：懒清理归档的计划配 sim 已平仓位说结局，补绑的说成交；没事件整块缺席
+    # 事件块：唤醒开头对账（TraderPlanStore.reconcile）发现的事按发生顺序成文；没事件整块缺席
     eventsHeader: 【自上次唤醒以来】
     eventClosed: "- {{symbol}} {{side}} 已{{manner}} @{{price}}，盈亏 {{pnl}} USDT（当时计划：{{playType}} / 失效条件：{{invalidation}}）"
     eventFilled: "- {{symbol}} {{side}} 限价单已成交，计划生效"
-    eventCancelled: "- {{symbol}} {{side}} 挂单已不在（撤单或未成交），计划归档"
+    eventCancelled: "- {{symbol}} {{side}} 挂单已不在（主动撤单，或 sim 触发时因保证金/杠杆/档位限制撤单退款），计划归档"
     accountHeader: 【当前账户】（实时数据，不是指令；权益/持仓/挂单/计划已给足，不必 get_account 复查）
     lastConclusionHeader: 【上一轮结论】（{{time}}，权益{{equity}}）先逐币检验这里的"等待"条件与各持仓的失效条件，再考虑新机会
     lastConclusionNone: 【上一轮结论】本局还没有可检验的结论块（首轮，或之前几轮都没写出结论）
@@ -261,6 +261,9 @@ trader:
     invalidationRequired: 必须给invalidationCondition失效条件：一句话说明什么市场状况会证明这个论点错了（市场条件，不是盈亏数字）
     limitPriceRequired: 限价单必须给limitPrice
     limitTooFar: 限价偏离现价{{pct}}%，超过5%上限（现价{{mark}}）
+    limitMarketable: "这张限价单挂出去会当场按现价成交，不是挂着等：{{rule}}（限价{{limit}}，现价{{mark}}）。想现在进场就用 MARKET，并按现价核对止损止盈；想等价格过来，把限价挂到现价另一侧"
+    limitMarketableLong: 做多限价要低于现价才会挂着等
+    limitMarketableShort: 做空限价要高于现价才会挂着等
     symbolLeverageMismatch: "{{symbol}}已有{{lev}}倍仓位/挂单，同币杠杆必须一致（交易所规则），本次也得用{{lev}}倍"
     singlePositionOnly: "主人设定只允许同时持有一个仓位，当前已占用：{{occupied}}。要换标的先平掉现有仓位"
     hedgeNotAllowed: "{{symbol}}已有反向仓位，主人未开启多空双开——同一个币不能同时做多做空"
@@ -299,8 +302,12 @@ trader:
   # 计划修订历史里的动作名与"原本没有"的占位，同样公开展示
   revise:
     addOn: 加仓
-    # 加仓覆盖时旧论点进修订历史的留痕（TraderPlanStore.upsert）
+    # 加仓覆盖时旧论点进修订历史的留痕（TraderPlanStore.cover）
     addOnNote: "旧论点[{{playType}} / {{invalidation}}]被新论点覆盖"
+    # 同一论点下另起一行的留痕（TraderPlanStore.reconcile）：旧仓了结后续立给新仓/挂单，或给间隙里又开又平的一笔补归档行
+    carry: 续立
+    carryChange: "旧仓 {{positionId}} 已了结"
+    carryReason: 同一论点下的下一笔仓位另起一行，论点与修订史继承
     fileNew: 补立
     fileNewNote: 为无计划持仓补立计划
     moveStop: 移动止损

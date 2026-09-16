@@ -183,7 +183,8 @@ tool:
     rejected too; when opening a NEW position the margin (=quantity*price/leverage) must land
     inside the configured percent-of-equity band (adds are exempt); same-symbol leverage must
     match any position or pending order already on that symbol;
-    LIMIT price within 5% of mark; stopLossPrice and takeProfitPrice are both REQUIRED and on the correct side.
+    LIMIT price within 5% of mark and resting on the far side of it (LONG below, SHORT above) — a LIMIT
+    that would fill at once is rejected, use MARKET for that; stopLossPrice and takeProfitPrice are both REQUIRED and on the correct side.
     playType is your thesis label: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER.
     signalsUsed: one sentence citing the concrete data fields your thesis rests on.
     invalidationCondition: the market condition that would prove your thesis wrong (NOT a PnL

@@ -145,7 +145,8 @@ tool:
     在你的模拟账户开合约仓位（全仓模式）。硬规则（违反即拒，拒因可修正、并附带确切的允许区间）：
     杠杆必须落在主人配置的区间内——那是区间不是上限，选太低同样被拒；开新仓时保证金
     （=数量×价格÷杠杆）必须落在配置的权益占比区间内（加仓豁免）；同一标的的杠杆必须与
-    已有持仓或挂单一致；LIMIT 价须在标记价 ±5% 内；stopLossPrice 与 takeProfitPrice 都必填且方向正确。
+    已有持仓或挂单一致；LIMIT 价须在标记价 ±5% 内，且挂在标记价另一侧（做多低于、做空高于），
+    会当场成交的限价单被拒；stopLossPrice 与 takeProfitPrice 都必填且方向正确。
     playType 是论点标签：BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER。
     signalsUsed：一句话，引用论点所依据的具体数据字段。
     invalidationCondition：能证明论点错了的市场条件（不是盈亏数字）——它进入该仓位的计划；

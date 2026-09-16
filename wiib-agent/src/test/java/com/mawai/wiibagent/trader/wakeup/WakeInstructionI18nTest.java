@@ -193,7 +193,7 @@ class WakeInstructionI18nTest {
     @Test
     void 观察包中英文案无中文() {
         String en = runner.observation(trader(), new BigDecimal("10000"), List.of(), List.of(),
-                new TraderPlanStore.Rebind(List.of(), List.of(), List.of()), List.of(), BOUNDARY, AgentLang.EN);
+                new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.EN);
         PromptI18nAssertions.assertNoCjk("英文观察包", en);
         PromptI18nAssertions.assertNoCjk("英文例行开场白（带观察包）",
                 runner.routineInstruction(trader(), BOUNDARY, en, "", null, AgentLang.EN, ""));
@@ -202,7 +202,7 @@ class WakeInstructionI18nTest {
         assertThat(en).contains("[Account]").contains("[Last round's conclusion]");
 
         String zh = runner.observation(trader(), new BigDecimal("10000"), List.of(), List.of(),
-                new TraderPlanStore.Rebind(List.of(), List.of(), List.of()), List.of(), BOUNDARY, AgentLang.ZH);
+                new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.ZH);
         assertThat(zh).contains("【当前账户】").contains("\"equity\":10000.00")
                 .contains("【上一轮结论】本局还没有可检验的结论块");
     }

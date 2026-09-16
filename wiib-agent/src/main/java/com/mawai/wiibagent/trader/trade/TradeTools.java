@@ -56,7 +56,7 @@ public class TradeTools {
     private final Set<String> symbolWhitelist;
     /** 按现查持仓算权益：同一轮先平后开，护栏要按平完之后的权益算占比 */
     private final Function<List<FuturesPositionDTO>, BigDecimal> equityOf;
-    /** 现价查询（symbol → mark price）；由唤醒回路注入，通常取最近K线收盘价 */
+    /** 现价查询（symbol → mark price）；由唤醒回路注入，取 Binance 实时标记价 */
     private final Function<String, BigDecimal> markPrice;
     private final TraderPlanStore planStore;
     private final WakeCtx ctx;
@@ -131,7 +131,8 @@ public class TradeTools {
             rejected too; when opening a NEW position the margin (=quantity*price/leverage) must land
             inside the configured percent-of-equity band (adds are exempt); same-symbol leverage must
             match any position or pending order already on that symbol;
-            LIMIT price within 5% of mark; stopLossPrice and takeProfitPrice are both REQUIRED and on the correct side.
+            LIMIT price within 5% of mark and resting on the far side of it (LONG below, SHORT above) — a LIMIT
+            that would fill at once is rejected, use MARKET for that; stopLossPrice and takeProfitPrice are both REQUIRED and on the correct side.
             playType is your thesis label: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER.
             signalsUsed: one sentence citing the concrete data fields your thesis rests on.
             invalidationCondition: the market condition that would prove your thesis wrong (NOT a PnL
@@ -182,8 +183,9 @@ public class TradeTools {
             // action() 内部已入轨迹列表，不许再包一层 add——否则拒绝动作双计
             return rejected("open_position", argSummary, reject);
         }
-        // 同向已有仓位＝这单是加仓，计划走覆盖而不是新立
-        FuturesPositionDTO sameSide = acct.sameSide(req.symbol(), req.side());
+        // 同向已有仓位或开仓挂单：计划走覆盖而不是新立，旧论点进修订历史
+        boolean coversPlan = acct.sameSide(req.symbol(), req.side()) != null
+                || acct.pendingOpen(req.symbol(), req.side());
         try {
             FuturesOpenRequest openReq = new FuturesOpenRequest();
             openReq.setSymbol(req.symbol());
@@ -208,7 +210,7 @@ public class TradeTools {
                 openReq.setTakeProfits(List.of(tp));
             }
             FuturesOrderResponse resp = SimOrderRetry.send(() -> simTradeClient.openPosition(simUserId, openReq));
-            persistPlan(req, mark, sameSide != null, resp);
+            persistPlan(req, mark, coversPlan, resp);
             return ok("open_position", argSummary, JSON.toJSONString(resp));
         } catch (SimOrderRetry.UnknownOutcome e) {
             return unknown("open_position", argSummary, e);
@@ -217,8 +219,11 @@ public class TradeTools {
         }
     }
 
-    /** 成交/挂单即落计划（下轮唤醒回注）；写失败只记日志不回错——交易已真实发生，回错误会诱导模型重复开仓。 */
-    private void persistPlan(TradeGuard.OpenReq req, BigDecimal mark, boolean isAddOn, FuturesOrderResponse resp) {
+    /**
+     * 成交/挂单即落计划（下轮唤醒回注）：同键已有持仓或挂单走覆盖，否则新立。
+     * 写失败只记日志不回错——交易已真实发生，回错误会诱导模型重复开仓。
+     */
+    private void persistPlan(TradeGuard.OpenReq req, BigDecimal mark, boolean coversPlan, FuturesOrderResponse resp) {
         try {
             AiTraderPlan plan = new AiTraderPlan();
             plan.setTraderId(ctx.traderId());
@@ -232,9 +237,13 @@ public class TradeTools {
             plan.setStopLossPrice(req.stopLossPrice());
             plan.setTakeProfitPrice(req.takeProfitPrice());
             plan.setOpenedWakeTime(ctx.boundaryTime());
-            // 市价单/市价加仓响应即带仓位id；限价挂单为null，成交后下次唤醒开头补上（TraderPlanStore.rebind）
+            // 市价单/市价加仓响应即带仓位id；限价挂单为null，成交后下次唤醒开头对账补上
             plan.setPositionId(resp.getPositionId());
-            planStore.upsert(plan, isAddOn, ctx.lang());
+            if (coversPlan) {
+                planStore.cover(plan, ctx.lang());
+            } else {
+                planStore.open(plan);
+            }
         } catch (Exception e) {
             log.warn("[TradeTools] 计划落库失败 traderId={} {} msg={}", ctx.traderId(), req.symbol(), e.getMessage());
         }
@@ -255,13 +264,20 @@ public class TradeTools {
             return expired("close_position", args);
         }
         try {
+            // 先查仓位：拒因与 sl/tp 工具同一句，留痕也要靠它的币向找计划
+            FuturesPositionDTO pos = findPosition(positionId);
+            if (pos == null) {
+                return rejected("close_position", args, prompts.get(ctx.lang(), "trader.reject.positionIdNotFound"));
+            }
             FuturesCloseRequest req = new FuturesCloseRequest();
             req.setPositionId(positionId);
             req.setQuantity(BigDecimal.valueOf(quantity));
             req.setOrderType("MARKET");
             req.setClientRequestId(UUID.randomUUID().toString());
             FuturesOrderResponse resp = SimOrderRetry.send(() -> simTradeClient.closePosition(simUserId, req));
-            reviseClose(positionId, BigDecimal.valueOf(quantity).stripTrailingZeros().toPlainString(), reason);
+            // 平掉的数量进修订史，理由是模型给的；全平后计划到下轮开头对账归档
+            revisePlan(pos, prompts.get(ctx.lang(), "trader.revise.close"),
+                    BigDecimal.valueOf(quantity).stripTrailingZeros().toPlainString(), reason);
             return ok("close_position", args, JSON.toJSONString(resp));
         } catch (SimOrderRetry.UnknownOutcome e) {
             return unknown("close_position", args, e);
@@ -420,7 +436,7 @@ public class TradeTools {
             if (pos == null) {
                 return rejected("write_plan", args, prompts.get(ctx.lang(), "trader.reject.positionIdNotFound"));
             }
-            if (planStore.find(ctx.traderId(), ctx.roundNo(), pos.getSymbol(), pos.getSide()) != null) {
+            if (planStore.liveFor(ctx.traderId(), ctx.roundNo(), pos.getSymbol(), pos.getSide()) != null) {
                 return rejected("write_plan", args,
                         prompts.get(ctx.lang(), "trader.reject.planAlreadyExists"));
             }
@@ -456,8 +472,8 @@ public class TradeTools {
                     : ctx.boundaryTime());
             TraderPlanStore.appendRevision(plan, ctx.boundaryTime(), prompts.get(ctx.lang(), "trader.revise.fileNew"),
                     prompts.get(ctx.lang(), "trader.revise.fileNewNote"), signalsUsed);
-            // 前置校验已确认无计划，走 insert 路径；isAddOn=false 语义上也对——补立不是加仓
-            planStore.upsert(plan, false, ctx.lang());
+            // 前置校验已确认无计划，补立就是新立
+            planStore.open(plan);
             return ok("write_plan", args, "{\"ok\":true}");
         } catch (Exception e) {
             return fail("write_plan", args, e);
@@ -491,6 +507,12 @@ public class TradeTools {
                     .filter(p -> p.getSymbol().equals(symbol) && p.getSide().equals(side))
                     .findFirst().orElse(null);
         }
+
+        /** 同币同向还挂着开仓单 */
+        boolean pendingOpen(String symbol, String side) {
+            return pending.stream()
+                    .anyMatch(o -> symbol.equals(o.getSymbol()) && ("OPEN_" + side).equals(o.getOrderSide()));
+        }
     }
 
     private Account account() {
@@ -505,28 +527,19 @@ public class TradeTools {
                 .findFirst().orElse(null);
     }
 
-    /** 有计划就留修订；没有计划（旧仓）不强求——write_plan 是它的补救路径。 */
+    /**
+     * 移止损/移止盈/平仓的留痕：按仓位的币向找存活计划，这是唤醒中唯一可靠的找法
+     * （本轮内成交的限价仓要到下轮开头才绑上 id）。没有计划（旧仓）不强求，write_plan 是补救路径。
+     * 交易已成交，留痕失败只记日志不回错——回错会诱导模型再做一次。
+     */
     private void revisePlan(FuturesPositionDTO pos, String type, String change, String reason) {
         try {
-            AiTraderPlan plan = planStore.find(ctx.traderId(), ctx.roundNo(), pos.getSymbol(), pos.getSide());
+            AiTraderPlan plan = planStore.liveFor(ctx.traderId(), ctx.roundNo(), pos.getSymbol(), pos.getSide());
             if (plan != null) {
                 planStore.revise(plan, ctx.boundaryTime(), type, change, reason);
             }
         } catch (Exception e) {
             log.warn("[TradeTools] 修订落库失败 traderId={} {} msg={}", ctx.traderId(), pos.getSymbol(), e.getMessage());
-        }
-    }
-
-    /** 平仓/减仓留痕：平仓工具手里只有 positionId，按它找计划。交易已成交，留痕失败只记日志不回错——回错会诱导模型再平一次 */
-    private void reviseClose(long positionId, String change, String reason) {
-        try {
-            AiTraderPlan plan = planStore.findLiveByPositionId(ctx.traderId(), ctx.roundNo(), positionId);
-            // 旧仓可能没有计划，revisePlan 同款
-            if (plan != null) {
-                planStore.revise(plan, ctx.boundaryTime(), prompts.get(ctx.lang(), "trader.revise.close"), change, reason);
-            }
-        } catch (Exception e) {
-            log.warn("[TradeTools] 平仓留痕失败 traderId={} positionId={} msg={}", ctx.traderId(), positionId, e.getMessage());
         }
     }
 

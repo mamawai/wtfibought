@@ -61,7 +61,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -274,14 +273,17 @@ public class TraderWakeupRunner {
         UsageTrackingChatModel model = new UsageTrackingChatModel(modelFactory.modelFor(trader));
         Set<String> whitelist = Arrays.stream(trader.getSymbols().split(",")).map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toSet());
         TradeTools tradeTools = tradeToolsFor(trader, whitelist, boundaryTime, budgetSeconds, lang);
-        // 计划对照 sim 持仓/挂单：已了结的归档、限价成交的补上仓位 id，存活的随持仓注入账户状态
-        TraderPlanStore.Rebind rebind = rebindPlans(trader, positions, pendingOrders, boundaryTime);
+        // 计划对照 sim 持仓/挂单：了结的归档并报结局、限价成交的绑上仓位，存活的随持仓注入账户状态；已平仓位只在有事时才查
+        TraderPlanStore.Reconcile reconcile = planStore.reconcile(trader.getId(), trader.getRoundNo(), positions, pendingOrders,
+                () -> simTradeClient.getClosedPositions(trader.getSimUserId(), PlayStatsAssembler.FETCH_LIMIT), boundaryTime, lang);
+        // 本局全部计划（含归档）：最近轮的 stale 过滤要按计划生命期判段落归属
+        List<AiTraderPlan> plans = planStore.listAll(trader.getId(), trader.getRoundNo());
         // 获取最近的唤醒轮，并过滤掉stale内容
-        List<RecentWake> recent = recentWakes(trader, boundaryTime);
+        List<RecentWake> recent = recentWakes(trader, boundaryTime, plans);
         // system 提示词：平台模板 + 复盘/学习笔记 + 自定义指令 + 固定收尾格式 + 输出语言
         String prompt = promptAssembler.assemble(trader, lang);
         // 观察包：自己的状态事实，进开场白。上次醒来后的事件 + 账户（持仓/挂单带计划）+ 上一轮结论 + 最近轨迹 + 论点战绩
-        String observation = observation(trader, equity, positions, pendingOrders, rebind, recent, boundaryTime, lang);
+        String observation = observation(trader, equity, positions, pendingOrders, reconcile, recent, boundaryTime, lang);
         // 留言进开场白不进 system；取一次就消费一轮，例行/警报两种开场白共用这一份
         String ownerNote = promptAssembler.ownerNoteBlock(trader, lang);
 
@@ -389,9 +391,9 @@ public class TraderWakeupRunner {
     /**
      * 最近 {@value #RECENT_DECISIONS} 条交易行（例行/警报/手动），最新在前。
      * 复盘/学习行不进来：它们的产出已经走 memory/learning_notes 注入，再进就是重复占字数。
-     * 忽略过滤要按计划生命期判段落归属（同币另一方向没被忽略的段得留），计划查本局全部；一条决策都没有就不查。
+     * 忽略过滤要按计划生命期判段落归属（同币另一方向没被忽略的段得留），plans 是本局全部计划。
      */
-    private List<RecentWake> recentWakes(AiTrader trader, long boundaryTime) {
+    private List<RecentWake> recentWakes(AiTrader trader, long boundaryTime, List<AiTraderPlan> plans) {
         List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getTraderId, trader.getId())
                 .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
@@ -399,10 +401,6 @@ public class TraderWakeupRunner {
                 .lt(AiTraderDecision::getWakeTime, boundaryTime)
                 .orderByDesc(AiTraderDecision::getWakeTime)
                 .last("LIMIT " + RECENT_DECISIONS));
-        if (rows.isEmpty()) {
-            return List.of();
-        }
-        List<AiTraderPlan> plans = planStore.listAll(trader.getId(), trader.getRoundNo());
         List<RecentWake> out = new ArrayList<>(rows.size());
         for (AiTraderDecision d : rows) {
             String reasoning = decisionText.staleFiltered(d, plans);
@@ -412,34 +410,14 @@ public class TraderWakeupRunner {
         return out;
     }
 
-    /**
-     * 把 sim 的持仓键和开仓挂单键、持仓的仓位 id 交给 {@link TraderPlanStore#rebind}：
-     * 还活着的计划留下并补上仓位 id，已了结的归档。存活的进账户状态，归档/成交的进事件块
-     */
-    private TraderPlanStore.Rebind rebindPlans(AiTrader trader, List<FuturesPositionDTO> positions,
-                                               List<FuturesOrderResponse> pendingOrders, long boundaryTime) {
-        Set<String> liveKeys = new HashSet<>();
-        Map<String, Long> positionIdByKey = new HashMap<>();
-        positions.forEach(p -> {
-            liveKeys.add(TraderPlanStore.key(p.getSymbol(), p.getSide()));
-            positionIdByKey.put(TraderPlanStore.key(p.getSymbol(), p.getSide()), p.getId());
-        });
-        for (FuturesOrderResponse o : pendingOrders) {
-            if (o.getOrderSide() != null && o.getOrderSide().startsWith("OPEN_")) {
-                liveKeys.add(TraderPlanStore.key(o.getSymbol(), o.getOrderSide().substring("OPEN_".length())));
-            }
-        }
-        return planStore.rebind(trader.getId(), trader.getRoundNo(), liveKeys, positionIdByKey, boundaryTime);
-    }
-
     /** 观察包：事件 + 账户 + 上一轮结论 + 最近轨迹 + 论点战绩。例行/警报开场白共用，排在头部事实之后、问题之前 */
     String observation(AiTrader trader, BigDecimal equity, List<FuturesPositionDTO> positions,
-                       List<FuturesOrderResponse> pendingOrders, TraderPlanStore.Rebind rebind,
+                       List<FuturesOrderResponse> pendingOrders, TraderPlanStore.Reconcile reconcile,
                        List<RecentWake> recent, long boundaryTime, AgentLang lang) {
         StringBuilder sb = new StringBuilder();
-        sb.append(events(trader, rebind, lang));
+        sb.append(events(reconcile.events(), lang));
         sb.append('\n').append(prompts.get(lang, "trader.wake.accountHeader")).append('\n')
-                .append(accountStateJson(prompts, lang, equity, positions, pendingOrders, rebind.live(), boundaryTime)).append('\n');
+                .append(accountStateJson(prompts, lang, equity, positions, pendingOrders, reconcile.live(), boundaryTime)).append('\n');
         sb.append('\n').append(lastConclusion(recent, lang));
         String trajectory = trajectory(recent, lang);
         if (!trajectory.isEmpty()) {
@@ -452,35 +430,34 @@ public class TraderWakeupRunner {
         return sb.toString();
     }
 
-    /** 自上次唤醒以来：归档的计划配 sim 已平仓位说结局，限价成交的说成交；没事件返回空串 */
-    private String events(AiTrader trader, TraderPlanStore.Rebind rebind, AgentLang lang) {
-        if (rebind.closed().isEmpty() && rebind.filled().isEmpty()) {
+    /** 自上次唤醒以来：对账事件逐条成文（了结说结局、成交说成交、挂单没了说没了），同一计划内先结局后成交；没事件返回空串 */
+    private String events(List<TraderPlanStore.Event> events, AgentLang lang) {
+        if (events.isEmpty()) {
             return "";
         }
         StringBuilder sb = new StringBuilder("\n").append(prompts.get(lang, "trader.wake.eventsHeader")).append('\n');
-        if (!rebind.closed().isEmpty()) {
-            Map<Long, FuturesPositionDTO> closedById = new HashMap<>();
-            simTradeClient.getClosedPositions(trader.getSimUserId(), PlayStatsAssembler.FETCH_LIMIT)
-                    .forEach(p -> closedById.put(p.getId(), p));
-            for (AiTraderPlan p : rebind.closed()) {
-                // 没仓位 id = 限价单从没成交过（撤了或到期）
-                FuturesPositionDTO pos = p.getPositionId() == null ? null : closedById.get(p.getPositionId());
-                sb.append(pos == null
-                        ? prompts.get(lang, "trader.wake.eventCancelled", Map.of("symbol", p.getSymbol(), "side", p.getSide()))
-                        : prompts.get(lang, "trader.wake.eventClosed", Map.of(
-                                "symbol", p.getSymbol(), "side", p.getSide(),
-                                "manner", TradePairing.closeManner(prompts, pos, lang),
-                                "price", String.valueOf(pos.getClosedPrice()),
-                                "pnl", money(pos.getClosedPnl()),
-                                "playType", String.valueOf(p.getPlayType()),
-                                "invalidation", p.getInvalidationCondition())))
-                        .append('\n');
-            }
-        }
-        for (AiTraderPlan p : rebind.filled()) {
-            sb.append(prompts.get(lang, "trader.wake.eventFilled", Map.of("symbol", p.getSymbol(), "side", p.getSide()))).append('\n');
+        for (TraderPlanStore.Event e : events) {
+            AiTraderPlan p = e.plan();
+            sb.append(switch (e) {
+                case TraderPlanStore.Closed c -> closedEvent(p, c.position(), lang);
+                case TraderPlanStore.Filled f -> prompts.get(lang, "trader.wake.eventFilled",
+                        Map.of("symbol", p.getSymbol(), "side", p.getSide()));
+                case TraderPlanStore.Cancelled c -> prompts.get(lang, "trader.wake.eventCancelled",
+                        Map.of("symbol", p.getSymbol(), "side", p.getSide()));
+            }).append('\n');
         }
         return sb.toString();
+    }
+
+    /** 一条平仓事件：了结方式/成交价/盈亏 + 当时的论点与失效条件 */
+    private String closedEvent(AiTraderPlan p, FuturesPositionDTO pos, AgentLang lang) {
+        return prompts.get(lang, "trader.wake.eventClosed", Map.of(
+                "symbol", p.getSymbol(), "side", p.getSide(),
+                "manner", TradePairing.closeManner(prompts, pos, lang),
+                "price", String.valueOf(pos.getClosedPrice()),
+                "pnl", money(pos.getClosedPnl()),
+                "playType", String.valueOf(p.getPlayType()),
+                "invalidation", p.getInvalidationCondition()));
     }
 
     /** sim 的 closedPnl 可以为空（PlayStatsAssembler 同样按空处理），Map.of 不收 null */
@@ -758,6 +735,8 @@ public class TraderWakeupRunner {
             }
             AiTraderPlan plan = planByKey.get(TraderPlanStore.key(p.getSymbol(), p.getSide()));
             if (plan != null) {
+                // 开仓时刻按 sim 仓位自己的，不按计划的
+                long opened = TradePairing.msOf(p.getCreatedAt());
                 JSONObject planJson = new JSONObject()
                         .fluentPut("playType", plan.getPlayType())
                         .fluentPut("signalsUsed", plan.getSignalsUsed())
@@ -765,8 +744,8 @@ public class TraderWakeupRunner {
                         .fluentPut("entryPrice", plan.getEntryPrice())
                         .fluentPut("originalStop", plan.getStopLossPrice())
                         .fluentPut("target", plan.getTakeProfitPrice())
-                        .fluentPut("openedAt", TIME_FMT.format(Instant.ofEpochMilli(plan.getOpenedWakeTime())))
-                        .fluentPut("heldFor", humanizeHeld(prompts, lang, boundaryTime - plan.getOpenedWakeTime()));
+                        .fluentPut("openedAt", TIME_FMT.format(Instant.ofEpochMilli(opened)))
+                        .fluentPut("heldFor", humanizeHeld(prompts, lang, boundaryTime - opened));
                 // 修订历史也回注：无记忆的模型必须看到"上轮为什么动了止损/目标"
                 if (plan.getRevisionsJson() != null && !plan.getRevisionsJson().isBlank()) {
                     JSONArray revisions = JSON.parseArray(plan.getRevisionsJson());
@@ -801,11 +780,13 @@ public class TraderWakeupRunner {
                 AiTraderPlan plan = planByKey.get(TraderPlanStore.key(o.getSymbol(),
                         o.getOrderSide().substring("OPEN_".length())));
                 if (plan != null) {
+                    // 挂出时刻按订单自己的
+                    long placed = TradePairing.msOf(o.getCreatedAt());
                     row.put("plan", new JSONObject()
                             .fluentPut("playType", plan.getPlayType())
                             .fluentPut("invalidationCondition", plan.getInvalidationCondition())
-                            .fluentPut("placedAt", TIME_FMT.format(Instant.ofEpochMilli(plan.getOpenedWakeTime())))
-                            .fluentPut("pendingFor", humanizeHeld(prompts, lang, boundaryTime - plan.getOpenedWakeTime())));
+                            .fluentPut("placedAt", TIME_FMT.format(Instant.ofEpochMilli(placed)))
+                            .fluentPut("pendingFor", humanizeHeld(prompts, lang, boundaryTime - placed)));
                 }
             }
             po.add(row);

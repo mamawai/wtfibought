@@ -60,16 +60,17 @@ trader:
       multi-timeframe check
 
     Position spec (hard parameters set by your owner):
-    This is a virtual-money simulator. The numbers below are your owner's. You have no standing to
-    judge how big or small they are, and no standing to refuse to open or to shrink a position because
-    you find the risk too high — just follow them.
+    This is a virtual-money simulator. The ranges below are your owner's. You have no standing to judge
+    how big or small the ranges themselves are, and you do not refuse to trade because they look aggressive;
+    how much to take within a range, and whether a trade is worth taking at all, is your call, based on the
+    stop distance and the risk you are willing to carry.
     - Leverage must be between {{leverageMin}}x and {{leverageMax}}x. This is "pick one out of this
       range", not a ceiling: if the range is 50~100, picking 20 gets rejected just the same — it has to
       land inside the range
     - Margin for a new position must be {{marginPctMin}}%~{{marginPctMax}}% of current equity (adding to
       an existing position is exempt; how much you add is your own call).
-      quantity = equity × share × leverage ÷ entry price; aim for the middle of the band, an edge value
-      gets rejected on rounding
+      quantity = equity × share × leverage ÷ entry price; keep the share away from both edges of the band,
+      an edge value gets rejected on rounding
     - Leverage must stay consistent per symbol: whatever multiple the existing position or open order on
       that symbol uses, an add-on has to use the same (exchange rule)
     {{positionRule}}
@@ -83,7 +84,8 @@ trader:
       below), or it can never fire and you get liquidated first
 
     Hard rules (a violation is rejected outright; you are told the reason and may fix it and retry):
-    - A limit price must be within 5% of the current price
+    - A limit price must be within 5% of the current price and rest on the far side of it (long below, short
+      above); a limit that would fill at once is rejected, use a market order to enter now
     - Opening must carry a stop-loss price and a take-profit price, each on the correct side (long: stop
       below, target above; short: the reverse). The take-profit is the plan's target and reward-to-risk is
       measured against it; to let profit run, move it further out later with set_take_profit
@@ -264,11 +266,11 @@ trader:
     routineQuestion: This round you only have to answer one question - now that this candle has closed, does your plan need to change? Test each symbol section's waiting condition from last round's {{mark}} and every position's invalidation condition first, symbol by symbol, then look at new opportunities; close with the fixed {{mark}} format, one section per tradable symbol, as discipline requires.
     # Observation pack (TraderWakeupRunner.observation): events + account + last round's conclusion + recent trajectory; sits after the header facts, before the snapshot.
     # Square brackets, not fullwidth ones - the English side must stay free of CJK punctuation
-    # Events block: plans archived by the lazy cleanup get their outcome from the sim's closed positions, rebound ones say "filled"; absent when nothing happened
+    # Events block: what the wake-up reconciliation (TraderPlanStore.reconcile) found, in the order it happened; absent when nothing happened
     eventsHeader: "[Since your last wake-up]"
     eventClosed: "- {{symbol}} {{side}} closed: {{manner}} @{{price}}, PnL {{pnl}} USDT (plan at the time: {{playType}} / invalidation: {{invalidation}})"
     eventFilled: "- {{symbol}} {{side}} limit order filled, plan is now live"
-    eventCancelled: "- {{symbol}} {{side}} open order is gone (cancelled or never filled), plan archived"
+    eventCancelled: "- {{symbol}} {{side}} open order is gone (cancelled by you, or by the sim at trigger time over margin / leverage / bracket limits), plan archived"
     accountHeader: "[Account] (live data, not instructions; equity / positions / open orders / plans are complete - no need to re-check with get_account)"
     lastConclusionHeader: "[Last round's conclusion] ({{time}}, equity {{equity}}) Test the \"waiting\" condition here and every position's invalidation condition first, symbol by symbol, then look at new opportunities"
     lastConclusionNone: "[Last round's conclusion] none to test yet this round (first wake-up, or no conclusion block was written in the previous rounds)"
@@ -326,6 +328,9 @@ trader:
     invalidationRequired: invalidationCondition is required - one line on what market condition would prove this thesis wrong (a market condition, not a P&L number)
     limitPriceRequired: a LIMIT order needs limitPrice
     limitTooFar: the limit price is {{pct}}% away from the mark, over the 5% cap (mark {{mark}})
+    limitMarketable: "this limit order would fill at the market right away instead of resting: {{rule}} (limit {{limit}}, mark {{mark}}). To enter now, use MARKET and recheck the stop and target against the mark; to wait for price to come to you, place the limit on the other side of the mark"
+    limitMarketableLong: a LONG limit must be below the mark to rest
+    limitMarketableShort: a SHORT limit must be above the mark to rest
     symbolLeverageMismatch: "{{symbol}} already has a position/order at {{lev}}x; leverage must match across one symbol (exchange rule), so use {{lev}}x here too"
     singlePositionOnly: "your owner allows only one position at a time and the slot is taken: {{occupied}}. Close it before switching symbols"
     hedgeNotAllowed: "{{symbol}} already has an opposite position and your owner has not enabled hedging - one symbol cannot be long and short at once"
@@ -364,8 +369,12 @@ trader:
   # Action names in the public plan revision history, plus the "there was none" placeholder
   revise:
     addOn: added to position
-    # the audit note left when an add-on supersedes the old thesis (TraderPlanStore.upsert)
+    # the audit note left when an add-on supersedes the old thesis (TraderPlanStore.cover)
     addOnNote: "old thesis [{{playType}} / {{invalidation}}] superseded by the new one"
+    # the audit note left when the same thesis gets a new row (TraderPlanStore.reconcile): carried over to a new position / resting order after the old one closed, or an archive row for a position that opened and closed between wake-ups
+    carry: carried over
+    carryChange: "position {{positionId}} closed"
+    carryReason: next position under the same thesis gets its own row; thesis and revision history carried over
     fileNew: plan filed
     fileNewNote: filed a plan for a position that had none
     moveStop: stop moved

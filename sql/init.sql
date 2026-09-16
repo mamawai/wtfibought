@@ -940,10 +940,10 @@ COMMENT ON COLUMN ai_trader_plan.invalidation_condition IS '失效条件：什�
 COMMENT ON COLUMN ai_trader_plan.stop_loss_price IS '原始止损快照；当前生效止损以sim仓位为准（可能已上移锁盈）';
 COMMENT ON COLUMN ai_trader_plan.opened_wake_time IS '开仓所在唤醒边界(ms)，回注时计算已持有时长';
 COMMENT ON COLUMN ai_trader_plan.revisions_json IS '修订历史追加式JSON [{time,type,change,reason}]：加仓覆盖/移动止盈/移动止损/补立——修改必须留痕带理由，计划本体价格字段永远是原始快照';
-COMMENT ON COLUMN ai_trader_plan.status IS 'LIVE=仓位/挂单存活 CLOSED=已了结归档。归档不删：论点→结局的配对数据是reviewer每日复盘的原料（结局按symbol/side/时间窗join sim已平仓位）';
-COMMENT ON COLUMN ai_trader_plan.closed_wake_time IS '归档时刻(ms)：懒清理发现仓位已了结的唤醒边界/重置时刻，与opened_wake_time围出计划生命期';
+COMMENT ON COLUMN ai_trader_plan.status IS 'LIVE=仓位/挂单存活 CLOSED=已了结归档。归档不删：论点→结局的配对数据是reviewer每日复盘的原料（结局按position_id join sim已平仓位，历史无id行按symbol/side/时间就近兜底）';
+COMMENT ON COLUMN ai_trader_plan.closed_wake_time IS '归档时刻(ms)：唤醒开头对账发现仓位已了结的边界/重置时刻，与opened_wake_time围出计划生命期';
 COMMENT ON COLUMN ai_trader_plan.stale IS '主人标记忽略:true=本笔不进论点战绩统计与复盘教材(配对表/了结统计行);权益/排行榜/同侪学习照常。仅CLOSED可标,可随时取消';
-COMMENT ON COLUMN ai_trader_plan.position_id IS 'sim仓位id:市价开仓/加仓从下单响应落盘,限价单成交后唤醒懒清理趟补绑;计划↔仓位配对的精确键,NULL(历史行/未成交挂单)走bestMatch时间就近兜底';
+COMMENT ON COLUMN ai_trader_plan.position_id IS 'sim仓位id:市价开仓/加仓从下单响应落盘,限价单成交后唤醒开头对账补绑;一行计划对应一个仓位生命期,同论点下一笔另起一行;计划↔仓位配对的精确键,NULL(历史行/未成交挂单)走bestMatch时间就近兜底';
 
 -- ============================================
 -- 32. 用户 BYOK 端点库

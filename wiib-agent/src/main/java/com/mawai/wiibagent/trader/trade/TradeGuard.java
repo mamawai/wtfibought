@@ -13,7 +13,7 @@ import java.util.Set;
  * 开仓硬校验：AI 会幻觉出荒谬参数，入口一票否决。拒绝原因用中文原样返回给模型——
  * 模型看得懂就能自行修正重试。
  * 杠杆/保证金/仓位数/双开来自主人的 {@link TraderRiskConfig}，越界一律拒不截断：
- * 这是模拟盘，仓位规格是主人说了算的硬参数，模型无权评价也无权自行缩小。
+ * 这是模拟盘，仓位规格是主人说了算的硬参数，区间内取多少由模型自己定。
  */
 public final class TradeGuard {
 
@@ -96,6 +96,15 @@ public final class TradeGuard {
             if (deviation.compareTo(MAX_LIMIT_DEVIATION) > 0) {
                 return prompts.get(lang, "trader.guard.limitTooFar", Map.of(
                         "pct", deviation.multiply(new BigDecimal("100")).setScale(1, RoundingMode.HALF_UP),
+                        "mark", markPrice.stripTrailingZeros().toPlainString()));
+            }
+            // 买入限价不低于现价、卖出限价不高于现价：挂出去当场按现价成交，不是挂单
+            boolean marketable = isLong ? req.limitPrice().compareTo(markPrice) >= 0
+                    : req.limitPrice().compareTo(markPrice) <= 0;
+            if (marketable) {
+                return prompts.get(lang, "trader.guard.limitMarketable", Map.of(
+                        "rule", prompts.get(lang, isLong ? "trader.guard.limitMarketableLong" : "trader.guard.limitMarketableShort"),
+                        "limit", req.limitPrice().stripTrailingZeros().toPlainString(),
                         "mark", markPrice.stripTrailingZeros().toPlainString()));
             }
         }

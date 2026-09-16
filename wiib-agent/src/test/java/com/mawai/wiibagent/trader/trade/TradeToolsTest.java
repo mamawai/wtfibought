@@ -458,7 +458,7 @@ class TradeToolsTest {
 
     /**
      * 同向已有仓位＝加仓，现在直接成交：审批闸门拆掉后这条路径不该再被拦下，
-     * 且计划要走加仓覆盖（isAddOn）而不是新立一份。
+     * 且计划要走加仓覆盖（coversPlan）而不是新立一份。
      */
     @Test
     void addOnFillsImmediately() {
@@ -475,14 +475,41 @@ class TradeToolsTest {
         assertThat(r).doesNotStartWith("REJECTED").contains("777");
         assertThat(tools.actions().get(0).getString("status")).isEqualTo("ok");
         verify(simTradeClient).openPosition(eq(99L), any());
-        // isAddOn 是从 sameSide 推出来的：覆盖走 updateById，判成新立就会多插一行
+        // coversPlan 由同向持仓/开仓挂单推出：覆盖走 updateById，判成新立就会多插一行
         verify(planMapper).updateById(any(AiTraderPlan.class));
+        verify(planMapper, never()).insert(any(AiTraderPlan.class));
+    }
+
+    /** 同币同向还挂着限价单时再挂一张：计划走覆盖，不能把挂着那张的计划归档掉 */
+    @Test
+    void secondOrderWhileSameSidePendingCoversPlan() {
+        FuturesOrderResponse pending = new FuturesOrderResponse();
+        pending.setOrderId(600L);
+        pending.setSymbol("BTCUSDT");
+        pending.setOrderSide("OPEN_LONG");
+        pending.setLimitPrice(new BigDecimal("98000"));
+        pending.setLeverage(10);
+        when(simTradeClient.getPendingOrders(eq(99L), any())).thenReturn(List.of(pending));
+        FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setOrderId(601L);
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
+        when(planMapper.selectOne(any())).thenReturn(existingPlan());
+
+        String r = tools.openPosition("BTCUSDT", "LONG", "LIMIT", 0.02, 10,
+                97000.0, 95000.0, 110000.0, "PULLBACK", "二次回踩", "1h收盘跌破96000");
+
+        assertThat(r).doesNotStartWith("REJECTED").contains("601");
+        ArgumentCaptor<AiTraderPlan> cap = ArgumentCaptor.forClass(AiTraderPlan.class);
+        verify(planMapper).updateById(cap.capture());
+        assertThat(cap.getValue().getId()).isEqualTo(21L);
+        assertThat(cap.getValue().getRevisionsJson()).contains("1h收盘跌回98000下方");
         verify(planMapper, never()).insert(any(AiTraderPlan.class));
     }
 
     /** 平仓同理：进来就是市价单，不再有转请求那一跳 */
     @Test
     void closeFillsImmediately() {
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
         FuturesOrderResponse resp = new FuturesOrderResponse();
         resp.setOrderId(778L);
         when(simTradeClient.closePosition(eq(99L), any())).thenReturn(resp);
@@ -493,9 +520,23 @@ class TradeToolsTest {
         verify(simTradeClient).closePosition(eq(99L), any());
     }
 
-    /** 平仓理由进计划修订史：归档后复盘看得到"为什么平"，不再只留在 actions_json 里 */
+    /** 平不存在的仓位：与 sl/tp 同一句拒因，不把模型抄错的 id 打到 sim */
+    @Test
+    void closeUnknownPositionRejectedBeforeSim() {
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(longPosition()));
+
+        String r = tools.closePosition(999L, 0.01, "x");
+
+        assertThat(r).startsWith("REJECTED").contains("positionId不存在");
+        verify(simTradeClient, never()).closePosition(anyLong(), any());
+    }
+
+    /** 平仓理由进计划修订史：归档后复盘看得到"为什么平"，不再只留在 actions_json 里。计划按仓位币向找 */
     @Test
     void closeLeavesReasonInPlanRevisions() {
+        FuturesPositionDTO pos = longPosition();
+        pos.setId(42L);
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(pos));
         AiTraderPlan plan = existingPlan();
         plan.setPositionId(42L);
         when(planMapper.selectOne(any())).thenReturn(plan);
@@ -531,54 +572,25 @@ class TradeToolsTest {
         verify(simTradeClient, never()).openPosition(anyLong(), any());
     }
 
-    /** 加仓覆盖：旧论点进修订历史（含理由），持有时长按最初开仓算；sim 并仓 id 不变，绑定跟着保留 */
+    /** 同轮内平掉再开同向仓＝重开不是加仓：sim 上无同向持仓/挂单，计划走新立，旧计划由 TraderPlanStore.open 归档 */
     @Test
-    void upsertExistingPlanKeepsOldThesisAsRevision() {
-        AiTraderPlan old = existingPlan();
-        old.setPositionId(42L);
-        when(planMapper.selectOne(any())).thenReturn(old);
-        AiTraderPlan neu = existingPlan();
-        neu.setId(null);
-        neu.setSignalsUsed("回踩确认支撑，加仓");
-        neu.setInvalidationCondition("4h收盘跌破97000");
-        neu.setOpenedWakeTime(1785171600000L);
-        // 限价加仓挂单响应不带仓位 id：覆盖不能把已有绑定抹掉
-        neu.setPositionId(null);
+    void reentryWithoutExposureOpensNewPlan() {
+        when(planMapper.selectOne(any())).thenReturn(existingPlan());
+        FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setOrderId(889L);
+        resp.setPositionId(43L);
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
 
-        new TraderPlanStore(planMapper, PROMPTS).upsert(neu, true, AgentLang.ZH);
+        String r = openOnce(tools);
 
-        ArgumentCaptor<AiTraderPlan> cap = ArgumentCaptor.forClass(AiTraderPlan.class);
-        verify(planMapper).updateById(cap.capture());
-        AiTraderPlan p = cap.getValue();
-        assertThat(p.getInvalidationCondition()).isEqualTo("4h收盘跌破97000");
-        assertThat(p.getRevisionsJson()).contains("加仓").contains("1h收盘跌回98000下方");
-        assertThat(p.getOpenedWakeTime()).isEqualTo(1785168000000L);
-        assertThat(p.getPositionId()).isEqualTo(42L);
-    }
-
-    /** 同轮内平掉再开同向仓＝重开不是加仓：旧计划归档留档、仓龄从新仓起算、修订史不继承（仓龄诚实） */
-    @Test
-    void upsertReentryArchivesOldPlanInsteadOfAddOnRevision() {
-        AiTraderPlan old = existingPlan();
-        when(planMapper.selectOne(any())).thenReturn(old);
-        AiTraderPlan neu = existingPlan();
-        neu.setId(null);
-        neu.setSignalsUsed("重新突破，独立新仓");
-        neu.setOpenedWakeTime(1785171600000L);
-
-        new TraderPlanStore(planMapper, PROMPTS).upsert(neu, false, AgentLang.ZH);
-
-        // 归档不删：论点→结局配对是 reviewer 的复盘原料
+        assertThat(r).contains("889");
         ArgumentCaptor<AiTraderPlan> archived = ArgumentCaptor.forClass(AiTraderPlan.class);
         verify(planMapper).updateById(archived.capture());
         assertThat(archived.getValue().getId()).isEqualTo(21L);
         assertThat(archived.getValue().getStatus()).isEqualTo(AiTraderPlan.STATUS_CLOSED);
-        assertThat(archived.getValue().getClosedWakeTime()).isEqualTo(1785171600000L);
-
-        ArgumentCaptor<AiTraderPlan> cap = ArgumentCaptor.forClass(AiTraderPlan.class);
-        verify(planMapper).insert(cap.capture());
-        assertThat(cap.getValue().getStatus()).isEqualTo(AiTraderPlan.STATUS_LIVE);
-        assertThat(cap.getValue().getOpenedWakeTime()).isEqualTo(1785171600000L);
-        assertThat(cap.getValue().getRevisionsJson()).isNull();
+        ArgumentCaptor<AiTraderPlan> inserted = ArgumentCaptor.forClass(AiTraderPlan.class);
+        verify(planMapper).insert(inserted.capture());
+        assertThat(inserted.getValue().getPositionId()).isEqualTo(43L);
+        assertThat(inserted.getValue().getRevisionsJson()).isNull();
     }
 }

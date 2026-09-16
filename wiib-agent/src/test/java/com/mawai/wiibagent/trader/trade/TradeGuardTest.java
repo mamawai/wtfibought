@@ -193,6 +193,26 @@ class TradeGuardTest {
         assertThat(validateOpen(req, EQUITY, MARK, WL, cfg(), List.of())).isNull();
     }
 
+    // ---------- 限价单必须挂在现价另一侧 ----------
+
+    /** 做多限价等于现价＝挂出去当场成交：拒，并说清该用 MARKET 还是挂到现价另一侧 */
+    @Test
+    void marketableLongLimitRejected() {
+        TradeGuard.OpenReq atMark = withLimitPrice(withOrderType(base(), "LIMIT"), MARK);
+        assertThat(validateOpen(atMark, EQUITY, MARK, WL, cfg(), List.of()))
+                .contains("当场按现价成交").contains("MARKET").contains("做多限价要低于现价");
+    }
+
+    /** 做空限价：挂在现价下方拒，挂在上方放行 */
+    @Test
+    void shortLimitMustRestAboveMark() {
+        TradeGuard.OpenReq below = withLimitPrice(withOrderType(baseShort(), "LIMIT"), new BigDecimal("99000"));
+        assertThat(validateOpen(below, EQUITY, MARK, WL, cfg(), List.of()))
+                .contains("当场按现价成交").contains("做空限价要高于现价");
+        TradeGuard.OpenReq above = withLimitPrice(withOrderType(baseShort(), "LIMIT"), new BigDecimal("101000"));
+        assertThat(validateOpen(above, EQUITY, MARK, WL, cfg(), List.of())).isNull();
+    }
+
     // ---------- 仓位数与双开 ----------
 
     /** 单仓模式下换标的：拒，并把占坑的仓位报给模型 */

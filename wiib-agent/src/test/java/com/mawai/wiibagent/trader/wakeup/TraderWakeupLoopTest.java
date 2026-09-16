@@ -610,6 +610,7 @@ class TraderWakeupLoopTest {
         plan.setId(21L);
         plan.setSymbol("BTCUSDT");
         plan.setSide("LONG");
+        plan.setStatus(AiTraderPlan.STATUS_LIVE);
         plan.setPlayType("REVERSAL");
         plan.setSignalsUsed("4h RSI 底背离");
         plan.setInvalidationCondition("1h收盘跌回64200箱体内");
@@ -717,6 +718,103 @@ class TraderWakeupLoopTest {
         assertThat(user.indexOf("【自上次唤醒以来】")).isLessThan(user.indexOf("【当前账户】"));
     }
 
+    /**
+     * 限价计划没仓位 id，但两次唤醒之间成交又被止损：事件报真实结局，不能说成挂单已不在；
+     * 计划挂出之前就平掉的同币同向旧仓不算这张计划的结局
+     */
+    @Test
+    void limitFilledAndClosedBetweenWakesReportedAsClosed() {
+        stubHealthyAccount();
+        long placed = 1785171600000L - 900_000L;
+        AiTraderPlan plan = new AiTraderPlan();
+        plan.setId(22L);
+        plan.setSymbol("BTCUSDT");
+        plan.setSide("SHORT");
+        plan.setStatus(AiTraderPlan.STATUS_LIVE);
+        plan.setPlayType("BREAKOUT");
+        plan.setInvalidationCondition("15m收盘站回76860");
+        plan.setOpenedWakeTime(placed);
+        // 对账按计划行的创建时刻切"立案之后"：更早平掉的同键旧仓不是它的
+        plan.setCreatedAt(java.time.LocalDateTime.ofInstant(
+                java.time.Instant.ofEpochMilli(placed), java.time.ZoneId.systemDefault()));
+        when(planMapper.selectList(any())).thenReturn(List.of(plan));
+        FuturesPositionDTO older = new FuturesPositionDTO();
+        older.setId(1059L);
+        older.setSymbol("BTCUSDT");
+        older.setSide("SHORT");
+        older.setCreatedAt(java.time.LocalDateTime.ofInstant(
+                java.time.Instant.ofEpochMilli(placed - 60_000L), java.time.ZoneId.systemDefault()));
+        older.setUpdatedAt(java.time.LocalDateTime.ofInstant(
+                java.time.Instant.ofEpochMilli(placed - 30_000L), java.time.ZoneId.systemDefault()));
+        older.setClosedPrice(new BigDecimal("77500"));
+        older.setClosedPnl(new BigDecimal("-30.10"));
+        FuturesPositionDTO closed = new FuturesPositionDTO();
+        closed.setId(1060L);
+        closed.setSymbol("BTCUSDT");
+        closed.setSide("SHORT");
+        closed.setCreatedAt(java.time.LocalDateTime.ofInstant(
+                java.time.Instant.ofEpochMilli(placed + 240_000L), java.time.ZoneId.systemDefault()));
+        closed.setUpdatedAt(java.time.LocalDateTime.ofInstant(
+                java.time.Instant.ofEpochMilli(placed + 600_000L), java.time.ZoneId.systemDefault()));
+        closed.setClosedPrice(new BigDecimal("77163.8"));
+        closed.setClosedPnl(new BigDecimal("66.43"));
+        com.mawai.wiibcommon.entity.FuturesStopLoss sl = new com.mawai.wiibcommon.entity.FuturesStopLoss();
+        sl.setPrice(new BigDecimal("76750"));
+        closed.setStopLosses(List.of(sl));
+        when(simTradeClient.getClosedPositions(99L, 200)).thenReturn(List.of(older, closed));
+        ChatModel model = modelCheckingThenSummary();
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.wake(trader(), 1785171600000L);
+
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, atLeastOnce()).stream(prompt.capture());
+        String user = prompt.getAllValues().get(0).getInstructions().stream()
+                .filter(m -> m instanceof org.springframework.ai.chat.messages.UserMessage)
+                .map(org.springframework.ai.chat.messages.Message::getText).reduce("", String::concat);
+        assertThat(user).contains("【自上次唤醒以来】").contains("止损带走").contains("66.43")
+                .contains("15m收盘站回76860").doesNotContain("挂单已不在").doesNotContain("-30.10");
+    }
+
+    /** 持仓被止损、同键挂单成交成新仓：计划换绑到新仓，事件块先报旧仓结局再报成交，不能只说成交 */
+    @Test
+    void replacedPositionCloseReportedBeforeFill() {
+        stubHealthyAccount();
+        when(simTradeClient.getAllPositions(99L)).thenReturn(List.of(crossPosition("2000", "0")));
+        AiTraderPlan plan = new AiTraderPlan();
+        plan.setId(21L);
+        plan.setSymbol("BTCUSDT");
+        plan.setSide("LONG");
+        plan.setStatus(AiTraderPlan.STATUS_LIVE);
+        plan.setPositionId(42L);
+        plan.setPlayType("PULLBACK");
+        plan.setInvalidationCondition("1h收盘跌回64200");
+        plan.setOpenedWakeTime(1785171600000L - 3600_000L);
+        when(planMapper.selectList(any())).thenReturn(List.of(plan));
+        FuturesPositionDTO closed = new FuturesPositionDTO();
+        closed.setId(42L);
+        closed.setSymbol("BTCUSDT");
+        closed.setSide("LONG");
+        closed.setClosedPrice(new BigDecimal("63800"));
+        closed.setClosedPnl(new BigDecimal("-120.5"));
+        com.mawai.wiibcommon.entity.FuturesStopLoss sl = new com.mawai.wiibcommon.entity.FuturesStopLoss();
+        sl.setPrice(new BigDecimal("63800"));
+        closed.setStopLosses(List.of(sl));
+        when(simTradeClient.getClosedPositions(99L, 200)).thenReturn(List.of(closed));
+        ChatModel model = modelCheckingThenSummary();
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.wake(trader(), 1785171600000L);
+
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, atLeastOnce()).stream(prompt.capture());
+        String user = prompt.getAllValues().get(0).getInstructions().stream()
+                .filter(m -> m instanceof org.springframework.ai.chat.messages.UserMessage)
+                .map(org.springframework.ai.chat.messages.Message::getText).reduce("", String::concat);
+        assertThat(user).contains("止损带走").contains("-120.50").contains("1h收盘跌回64200").contains("限价单已成交");
+        assertThat(user.indexOf("止损带走")).isLessThan(user.indexOf("限价单已成交"));
+    }
+
     /** 战绩块归观察包：排在轨迹之后、行情快照之前 */
     @Test
     void playStatsInjectedAfterTrajectoryBeforeSnapshot() {
@@ -752,6 +850,7 @@ class TraderWakeupLoopTest {
         stale.setId(11L);
         stale.setSymbol("BTCUSDT");
         stale.setSide("LONG");
+        stale.setStatus(AiTraderPlan.STATUS_LIVE);
         stale.setInvalidationCondition("x");
         stale.setOpenedWakeTime(1785168000000L);
         when(planMapper.selectList(any())).thenReturn(List.of(stale));
