@@ -101,8 +101,7 @@ reviewer:
     pathFirstNote: 注意：本局首篇复盘，这段路径可能早于开局时刻——开局前的价格只作背景，不作对账依据
     pathNoBars: 窗口内无K线数据
     pathRow: 开 {{open}} → 收 {{close}}（{{pct}}%）；最高 {{high}}（{{highAt}}）最低 {{low}}（{{lowAt}}）
-    pathCloses: "1h收盘: {{closes}}"
-    pathRanges: "1h高/低: {{ranges}}"
+    pathBars: "1h 高/低/收（时刻为该小时开始）: {{bars}}"
 
   # 落库文案：写进 ai_trader_decision.error，公开展示在竞技场时间线上
   error:

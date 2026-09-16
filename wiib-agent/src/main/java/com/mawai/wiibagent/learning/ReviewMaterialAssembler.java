@@ -727,10 +727,8 @@ public class ReviewMaterialAssembler {
             BigDecimal low = null;
             long highAt = 0;
             long lowAt = 0;
-            StringBuilder closes = new StringBuilder();
-            // 逐小时高低必须给：等待条件多是"回踩 63370–63480"这种区间触碰，只有收盘序列
-            // 判不出"这一小时探到过没有"，模型要么瞎猜要么编，观望对账就成了假账
-            StringBuilder ranges = new StringBuilder();
+            // 逐小时高/低/收，每根带该小时开始时刻
+            StringBuilder bars = new StringBuilder();
             for (KlineBar k : hourly) {
                 if (high == null || k.high().compareTo(high) > 0) {
                     high = k.high();
@@ -740,9 +738,9 @@ public class ReviewMaterialAssembler {
                     low = k.low();
                     lowAt = k.openTime();
                 }
-                closes.append(closes.isEmpty() ? "" : "→").append(plain(k.close()));
-                ranges.append(ranges.isEmpty() ? "" : "→")
-                        .append(plain(k.high())).append('/').append(plain(k.low()));
+                bars.append(bars.isEmpty() ? "" : " | ")
+                        .append(TIME_FMT.format(Instant.ofEpochMilli(k.openTime()))).append(' ')
+                        .append(plain(k.high())).append('/').append(plain(k.low())).append('/').append(plain(k.close()));
             }
             BigDecimal pct = open.signum() > 0
                     ? close.subtract(open).multiply(BigDecimal.valueOf(100)).divide(open, 2, RoundingMode.HALF_UP)
@@ -752,10 +750,8 @@ public class ReviewMaterialAssembler {
                             "open", plain(open), "close", plain(close), "pct", signed(pct),
                             "high", plain(high), "highAt", TIME_FMT.format(Instant.ofEpochMilli(highAt)),
                             "low", plain(low), "lowAt", TIME_FMT.format(Instant.ofEpochMilli(lowAt)))))
-                    .append("\n  ").append(prompts.get(lang, "reviewer.label.pathCloses",
-                            Map.of("closes", closes)))
-                    .append("\n  ").append(prompts.get(lang, "reviewer.label.pathRanges",
-                            Map.of("ranges", ranges))).append('\n');
+                    .append("\n  ").append(prompts.get(lang, "reviewer.label.pathBars",
+                            Map.of("bars", bars))).append('\n');
         }
         return sb.toString();
     }

@@ -107,8 +107,7 @@ reviewer:
     pathFirstNote: "Note: this is the first review of the round, so this path may start before the round did — prices from before the round are background only, not evidence for reconciliation"
     pathNoBars: no candle data in the window
     pathRow: open {{open}} → close {{close}} ({{pct}}%); high {{high}} ({{highAt}}) low {{low}} ({{lowAt}})
-    pathCloses: "1h closes: {{closes}}"
-    pathRanges: "1h high/low: {{ranges}}"
+    pathBars: "1h high/low/close (time = start of the hour): {{bars}}"
 
   # Persisted text: goes into ai_trader_decision.error and is on public display in the arena timeline
   error:

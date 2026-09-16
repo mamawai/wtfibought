@@ -25,6 +25,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -761,10 +762,11 @@ class ReviewMaterialAssemblerTest {
         // 开=61000 收=63500 高=64000 低=60800，涨跌幅 (63500-61000)/61000=+4.10%
         assertThat(m.pricePathBlock()).contains("61000").contains("63500")
                 .contains("64000").contains("60800").contains("+4.10%");
-        // 逐小时收盘只该有两根（每组末根收），不是四根 5m
-        assertThat(m.pricePathBlock()).contains("1h收盘: 61200→63500");
-        // 逐小时高低是组内极值：等待条件多是"回踩到某区间"，只给收盘判不出这一小时探到过没有
-        assertThat(m.pricePathBlock()).contains("1h高/低: 61500/60800→64000/61100");
+        // 逐小时只该有两根（不是四根 5m）：高/低是组内极值、收是组内末根收，每根带该小时开始时刻
+        DateTimeFormatter hm = DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault());
+        assertThat(m.pricePathBlock()).contains("1h 高/低/收（时刻为该小时开始）: "
+                + hm.format(Instant.ofEpochMilli(FROM)) + " 61500/60800/61200 | "
+                + hm.format(Instant.ofEpochMilli(FROM + 3_600_000L)) + " 64000/61100/63500");
     }
 
     /**
