@@ -31,7 +31,7 @@
     </dependencyManagement>
 
     <dependencies>
-        <!-- 量化能力库：策略/回测/研究/行情/交易所客户端，传递 wiib-common(web/redis/aop/sa-token/mybatis-plus/fastjson2/caffeine) -->
+        <!-- 量化能力库：策略/回测/研究/行情/交易所客户端，传递 wiib-common(web/redis/aop/sa-token/mybatis-plus/jackson/caffeine) -->
         <dependency>
             <groupId>com.mawai</groupId>
             <artifactId>wiib-quant</artifactId>

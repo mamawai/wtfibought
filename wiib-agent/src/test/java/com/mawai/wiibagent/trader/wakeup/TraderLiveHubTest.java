@@ -1,9 +1,10 @@
 package com.mawai.wiibagent.trader.wakeup;
 
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.entity.AiTrader;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -20,16 +21,16 @@ class TraderLiveHubTest {
     /** 收帧的出口 */
     private static final class Frames implements TraderLiveHub.Sink {
         final List<String> events = new ArrayList<>();
-        final List<JSONObject> data = new ArrayList<>();
+        final List<JsonNode> data = new ArrayList<>();
 
         @Override
-        public boolean send(String event, JSONObject d) {
+        public boolean send(String event, ObjectNode d) {
             events.add(event);
             data.add(d);
             return true;
         }
 
-        JSONObject last(String event) {
+        JsonNode last(String event) {
             return data.get(events.lastIndexOf(event));
         }
     }
@@ -65,16 +66,16 @@ class TraderLiveHubTest {
         hub.subscribeTrader(1L, owner);
 
         assertThat(owner.events).containsExactly("run_start", "prompt", "model_end", "tool_result", "model_start", "token");
-        assertThat(owner.last("prompt").getString("system")).isEqualTo("SYS");
-        assertThat(owner.last("token").getString("text")).isEqualTo("半截");
+        assertThat(owner.last("prompt").path("system").asString(null)).isEqualTo("SYS");
+        assertThat(owner.last("token").path("text").asString(null)).isEqualTo("半截");
 
         // 之后的在途帧继续到
         run.token("后半");
-        assertThat(owner.last("token").getString("text")).isEqualTo("后半");
+        assertThat(owner.last("token").path("text").asString(null)).isEqualTo("后半");
         run.finish("OK", null, BigDecimal.TEN, 1, 2, null);
         run.end(5L);
-        assertThat(owner.last("run_end").getLongValue("decisionId")).isEqualTo(5L);
-        assertThat(owner.last("run_end").getString("status")).isEqualTo("OK");
+        assertThat(owner.last("run_end").path("decisionId").asLong(0)).isEqualTo(5L);
+        assertThat(owner.last("run_end").path("status").asString(null)).isEqualTo("OK");
 
         // 空闲 trader 连上什么都不发
         Frames idle = new Frames();
@@ -99,7 +100,7 @@ class TraderLiveHubTest {
         run.end(9L);
 
         assertThat(owner.events).containsExactly("run_start", "model_start", "run_end");
-        assertThat(owner.last("run_end").getString("status")).isEqualTo("ERROR");
+        assertThat(owner.last("run_end").path("status").asString(null)).isEqualTo("ERROR");
     }
 
     @Test

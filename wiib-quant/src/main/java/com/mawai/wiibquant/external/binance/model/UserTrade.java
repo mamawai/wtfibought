@@ -8,7 +8,7 @@ import java.math.BigDecimal;
  * GET /fapi/v1/userTrades 账户成交明细（每一笔真实 fill）。
  *
  * <p>看板交易记录 + fill 对账的权威来源：maker 标志验证零滑点、commission 是真实成本、
- * realizedPnl 是该笔已实现盈亏（不含手续费）。数值字段 Binance 返回字符串，fastjson2 自动转 BigDecimal。</p>
+ * realizedPnl 是该笔已实现盈亏（不含手续费）。数值字段 Binance 返回字符串，Jackson 自动转 BigDecimal。</p>
  */
 @Data
 public class UserTrade {

@@ -1,7 +1,5 @@
 package com.mawai.wiibagent.chat.tools;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
@@ -13,9 +11,12 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 深研判工具（仅对话轨）：贵操作——Bull∥Bear + Judge 共 3 次深模型调用
@@ -84,22 +85,23 @@ public class DeepAnalysisToolkit {
         QuantDeepAnalysis analysis = deepAnalysisService.judge(model, normalized, closeTime, "chat",
                 newsContext, bull, bear, lang);
         if (analysis == null) {
-            JSONObject out = new JSONObject();
+            ObjectNode out = MAPPER.createObjectNode();
             out.put("status", "FAILED");
             out.put("message", prompts.get(lang, "chat.deepAnalysis.judgeFailed"));
-            return out.toJSONString();
+            return MAPPER.writeValueAsString(out);
         }
         deepAnalysisService.persist(analysis);
         progress(sessionId, prompts.get(lang, "chat.deepAnalysis.progress.judged"));
 
-        JSONObject out = new JSONObject();
+        ObjectNode out = MAPPER.createObjectNode();
         out.put("status", "OK");
         out.put("narrative", analysis.getNarrative());
-        out.put("scenarios", JSON.parseObject(analysis.getScenariosJson()));
+        out.set("scenarios", MAPPER.readTree(analysis.getScenariosJson()));
         out.put("noDirection", analysis.getNoDirection());
         out.put("invalidation", analysis.getInvalidation());
         out.put("judgeReasoning", analysis.getJudgeReasoning());
-        return out.toJSONString();
+        return MAPPER.writeValueAsString(out);
+
     }
 
     /** 进度是尽力而为：拿不到会话号（不在工具执行栈里）就静默跳过，不影响正确性。 */

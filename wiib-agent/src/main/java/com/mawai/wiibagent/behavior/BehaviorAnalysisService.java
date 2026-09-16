@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.behavior;
 
-import com.alibaba.fastjson2.JSON;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.mawai.wiibcommon.enums.AgentLang;
@@ -105,7 +104,7 @@ public class BehaviorAnalysisService {
 
         BehaviorAnalysisReport report;
         try {
-            report = JSON.parseObject(JsonUtils.extractJson(text), BehaviorAnalysisReport.class);
+            report = JsonUtils.MAPPER.readValue(JsonUtils.extractJson(text), BehaviorAnalysisReport.class);
         } catch (Exception e) {
             log.error("行为分析报告解析失败 userId={}", userId, e);
             return Result.fail(prompts.get(lang, "behavior.error.parseFailed"));

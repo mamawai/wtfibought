@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.trader;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
@@ -13,6 +10,8 @@ import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -23,6 +22,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 竞技场「已了结交易 · 论点→结局」：sim 已平仓位 ⟵配对⟶ 交易计划 ⟵关联⟶ 开仓/平仓那一轮的决策全文。
@@ -131,23 +132,25 @@ public class TradeRecordService {
                 .orderByAsc(AiTraderDecision::getWakeTime));
         Map<Long, DecisionRef> byPos = new HashMap<>();
         for (AiTraderDecision d : rows) {
-            JSONArray actions;
+            ArrayNode actions;
             try {
-                actions = JSON.parseArray(d.getActionsJson());
+                actions = MAPPER.readValue(d.getActionsJson(), ArrayNode.class);
             } catch (Exception e) {
                 continue;
             }
-            for (int i = 0; actions != null && i < actions.size(); i++) {
-                JSONObject a = actions.getJSONObject(i);
-                JSONObject args = a == null ? null : a.getJSONObject("args");
-                if (a == null || !"close_position".equals(a.getString("tool"))
-                        || args == null || args.getLong("positionId") == null
-                        || a.containsKey("rejected") || "error".equals(a.getString("status"))) {
+            if (actions == null) {
+                continue;
+            }
+            for (JsonNode a : actions) {
+                JsonNode args = a.hasNonNull("args") ? a.get("args") : null;
+                if (!"close_position".equals(a.path("tool").asString(null))
+                        || args == null || !args.hasNonNull("positionId")
+                        || a.has("rejected") || "error".equals(a.path("status").asString(null))) {
                     continue;
                 }
                 // 升序遍历 + 覆盖 = 留最后一轮
-                byPos.put(args.getLong("positionId"),
-                        new DecisionRef(d.getId(), d.getWakeTime(), d.getKind(), d.getReasoning(), args.getString("reason")));
+                byPos.put(args.get("positionId").asLong(),
+                        new DecisionRef(d.getId(), d.getWakeTime(), d.getKind(), d.getReasoning(), args.path("reason").asString(null)));
             }
         }
         return byPos;

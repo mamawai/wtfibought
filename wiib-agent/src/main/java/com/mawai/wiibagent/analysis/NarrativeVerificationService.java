@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.analysis;
 
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibcommon.entity.QuantNarrativeVerification;
 import com.mawai.wiibcommon.market.KlineBar;
@@ -15,9 +14,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 
 import java.time.LocalDateTime;
 import java.util.List;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 叙事对账服务：Judge 的三情景概率到期（H12）后拿真实走势对答案——快照轨有记分卡，叙事轨同样要战绩。
@@ -73,7 +75,7 @@ public class NarrativeVerificationService {
 
     /** 单行对账；K线未就绪且未超宽限返回 null（下轮重试）。包级可见供测试直调。 */
     QuantNarrativeVerification verifyOne(QuantDeepAnalysis analysis, long now) {
-        JSONObject scenarios = parseScenarios(analysis.getScenariosJson());
+        JsonNode scenarios = parseScenarios(analysis.getScenariosJson());
         Double lowCut = resolveRangeCut(analysis.getSymbol(), analysis.getCloseTime());
         if (scenarios == null || lowCut == null) {
             log.info("[NarrativeVerify] 不可对账落SKIPPED analysisId={} 情景损坏={} 缺档界={}",
@@ -99,9 +101,9 @@ public class NarrativeVerificationService {
                 Math.abs(realized), lowCut, Double.MAX_VALUE) == VolState.LOW;
         String actual = isRange ? "RANGE" : (realized > 0 ? "BULL" : "BEAR");
 
-        int bull = Math.max(0, scenarios.getIntValue("bullPct"));
-        int range = Math.max(0, scenarios.getIntValue("rangePct"));
-        int bear = Math.max(0, scenarios.getIntValue("bearPct"));
+        int bull = Math.max(0, scenarios.path("bullPct").asInt(0));
+        int range = Math.max(0, scenarios.path("rangePct").asInt(0));
+        int bear = Math.max(0, scenarios.path("bearPct").asInt(0));
         double sum = bull + range + bear; // parseScenarios 已保证 > 0
         double pBull = bull / sum;
         double pRange = range / sum;
@@ -125,18 +127,15 @@ public class NarrativeVerificationService {
     }
 
     /** 情景 JSON 合法性：可解析且三情景和 > 0，否则视为损坏。 */
-    private static JSONObject parseScenarios(String json) {
+    private static JsonNode parseScenarios(String json) {
         if (json == null || json.isBlank()) {
             return null;
         }
         try {
-            JSONObject o = JSONObject.parseObject(json);
-            if (o == null) {
-                return null;
-            }
-            int sum = Math.max(0, o.getIntValue("bullPct"))
-                    + Math.max(0, o.getIntValue("rangePct"))
-                    + Math.max(0, o.getIntValue("bearPct"));
+            JsonNode o = MAPPER.readTree(json);
+            int sum = Math.max(0, o.path("bullPct").asInt(0))
+                    + Math.max(0, o.path("rangePct").asInt(0))
+                    + Math.max(0, o.path("bearPct").asInt(0));
             return sum > 0 ? o : null;
         } catch (Exception e) {
             return null;
@@ -181,22 +180,22 @@ public class NarrativeVerificationService {
         return null;
     }
 
-    private static QuantNarrativeVerification skipRow(QuantDeepAnalysis analysis, JSONObject scenarios) {
+    private static QuantNarrativeVerification skipRow(QuantDeepAnalysis analysis, JsonNode scenarios) {
         QuantNarrativeVerification row = baseRow(analysis, scenarios);
         row.setStatus(STATUS_SKIPPED);
         return row;
     }
 
-    private static QuantNarrativeVerification baseRow(QuantDeepAnalysis analysis, JSONObject scenarios) {
+    private static QuantNarrativeVerification baseRow(QuantDeepAnalysis analysis, JsonNode scenarios) {
         QuantNarrativeVerification row = new QuantNarrativeVerification();
         row.setAnalysisId(analysis.getId());
         row.setSymbol(analysis.getSymbol());
         row.setCloseTime(analysis.getCloseTime());
         row.setHorizon(ForecastHorizon.H12.name());
         if (scenarios != null) {
-            row.setBullPct(scenarios.getIntValue("bullPct"));
-            row.setRangePct(scenarios.getIntValue("rangePct"));
-            row.setBearPct(scenarios.getIntValue("bearPct"));
+            row.setBullPct(scenarios.path("bullPct").asInt(0));
+            row.setRangePct(scenarios.path("rangePct").asInt(0));
+            row.setBearPct(scenarios.path("bearPct").asInt(0));
         }
         row.setNoDirection(analysis.getNoDirection());
         row.setVerifiedAt(LocalDateTime.now());

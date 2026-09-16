@@ -1,10 +1,12 @@
 package com.mawai.wiibagent.llm;
 
-import com.alibaba.fastjson2.JSONObject;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * SSE 通道：emitter + 关闭标志 + 写锁收在一起。
@@ -39,8 +41,8 @@ public final class SseChannel {
         closed.set(true);
     }
 
-    public void send(String event, JSONObject data) {
-        write(SseEmitter.event().name(event).data(data.toJSONString()));
+    public void send(String event, ObjectNode data) {
+        write(SseEmitter.event().name(event).data(MAPPER.writeValueAsString(data)));
     }
 
     /** 心跳：SSE 注释帧，前端 dispatch 取不到 data 直接忽略，纯粹喂饱中间层的空闲计时器。 */

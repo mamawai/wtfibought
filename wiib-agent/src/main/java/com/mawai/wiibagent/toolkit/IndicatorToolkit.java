@@ -1,9 +1,6 @@
 package com.mawai.wiibagent.toolkit;
 import com.mawai.wiibquant.market.service.KlineFetcher;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibquant.market.indicator.CryptoIndicatorCalculator;
@@ -12,12 +9,16 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * K线与技术指标工具（AI Trader 数据面核心）：原始 OHLCV 是 AI 的眼睛，指标由
@@ -113,7 +114,7 @@ public class IndicatorToolkit {
             return error("kline data unavailable");
         }
         // 末根仍在跳动，实盘快照本就该含它
-        return JSON.toJSONString(CryptoIndicatorCalculator.calcAll(toCalcRows(bars), false));
+        return MAPPER.writeValueAsString(CryptoIndicatorCalculator.calcAll(toCalcRows(bars), false));
     }
 
     @Tool(name = "kline_structure", description = """
@@ -171,7 +172,7 @@ public class IndicatorToolkit {
             out.remove("focus_bars");
         }
         // 默认不写 null：字段缺席本身就是"算不出"，warnings 里另有说明，省下的是实打实的 token
-        return JSON.toJSONString(out);
+        return MAPPER.writeValueAsString(out);
     }
 
     /** → calcAll 的契约行 [high, low, close, volume]。 */
@@ -185,17 +186,16 @@ public class IndicatorToolkit {
 
     /** → 紧凑行 [openTime,open,high,low,close,volume]（数值不带引号省 token）。 */
     static String toCompactRows(List<KlineBar> bars) {
-        JSONArray out = new JSONArray();
+        ArrayNode out = MAPPER.createArrayNode();
         for (KlineBar b : bars) {
-            JSONArray row = new JSONArray();
+            ArrayNode row = out.addArray();
             row.add(b.openTime());
             for (BigDecimal v : List.of(b.open(), b.high(), b.low(), b.close(), b.volume())) {
                 // stripTrailingZeros 会产生 1E+2 科学计数法，过一遍 toPlainString 恢复普通标度
                 row.add(new BigDecimal(v.stripTrailingZeros().toPlainString()));
             }
-            out.add(row);
         }
-        return out.toJSONString();
+        return MAPPER.writeValueAsString(out);
     }
 
     /** 返回 null=合法；否则给模型看的错误说明。 */
@@ -205,9 +205,9 @@ public class IndicatorToolkit {
     }
 
     private static String error(String reason) {
-        JSONObject o = new JSONObject();
+        ObjectNode o = MAPPER.createObjectNode();
         o.put("available", false);
         o.put("reason", reason);
-        return o.toJSONString();
+        return MAPPER.writeValueAsString(o);
     }
 }

@@ -1,13 +1,15 @@
 package com.mawai.wiibagent.trader.wakeup;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 一次唤醒的过程轨迹：纯数据。运行线程写、订阅者连上时读，方法全同步。
@@ -23,21 +25,22 @@ public final class WakeTrace {
     private static final int VERSION = 1;
 
     /** 一帧：SSE 事件名 + data */
-    public record Frame(String event, JSONObject data) {
+    public record Frame(String event, ObjectNode data) {
     }
 
     /** 模型想调的一个工具；args 是解析后的 JSON 对象，解析不了给原字符串 */
     record ToolCall(String id, String name, Object args) {
-        JSONObject json() {
-            return new JSONObject().fluentPut("id", id).fluentPut("name", name).fluentPut("args", args);
+        ObjectNode json() {
+            ObjectNode o = MAPPER.createObjectNode().put("id", id).put("name", name);
+            return args instanceof JsonNode node ? o.set("args", node) : o.put("args", (String) args);
         }
     }
 
     /** 一条工具回执；status ∈ ok/rejected/error，preview 截过 */
     record ToolResult(String id, String name, String status, String preview) {
-        JSONObject json() {
-            return new JSONObject().fluentPut("id", id).fluentPut("name", name)
-                    .fluentPut("status", status).fluentPut("preview", preview);
+        ObjectNode json() {
+            return MAPPER.createObjectNode().put("id", id).put("name", name)
+                    .put("status", status).put("preview", preview);
         }
     }
 
@@ -59,22 +62,22 @@ public final class WakeTrace {
             return text.isEmpty() && toolCalls.isEmpty();
         }
 
-        JSONArray toolCallsJson() {
-            JSONArray arr = new JSONArray();
+        ArrayNode toolCallsJson() {
+            ArrayNode arr = MAPPER.createArrayNode();
             toolCalls.forEach(tc -> arr.add(tc.json()));
             return arr;
         }
 
-        JSONObject json() {
-            JSONArray rs = new JSONArray();
+        ObjectNode json() {
+            ArrayNode rs = MAPPER.createArrayNode();
             results.forEach(r -> rs.add(r.json()));
-            return new JSONObject()
-                    .fluentPut("n", n)
-                    .fluentPut("text", text.toString())
-                    .fluentPut("startedAt", startedAt)
-                    .fluentPut("endedAt", endedAt)
-                    .fluentPut("toolCalls", toolCallsJson())
-                    .fluentPut("results", rs);
+            return MAPPER.createObjectNode()
+                    .put("n", n)
+                    .put("text", text.toString())
+                    .put("startedAt", startedAt)
+                    .put("endedAt", endedAt)
+                    .set("toolCalls", toolCallsJson())
+                    .set("results", rs);
         }
     }
 
@@ -90,7 +93,7 @@ public final class WakeTrace {
     private String promptInstruction;
     private final List<Call> calls = new ArrayList<>();
     /** 收尾块，非空=本轮已结束 */
-    private JSONObject end;
+    private ObjectNode end;
 
     public WakeTrace(long traderId, String kind, long wakeTime, long budgetSeconds,
                      BigDecimal equity, int positions, int pendingOrders) {
@@ -107,14 +110,14 @@ public final class WakeTrace {
 
     /** 唤醒开始帧；回放的第一帧也是它 */
     public synchronized Frame runStart() {
-        return new Frame("run_start", new JSONObject()
-                .fluentPut("kind", kind)
-                .fluentPut("wakeTime", wakeTime)
-                .fluentPut("budgetSeconds", budgetSeconds)
-                .fluentPut("equity", equity)
-                .fluentPut("positions", positions)
-                .fluentPut("pendingOrders", pendingOrders)
-                .fluentPut("startedAt", startedAt));
+        return new Frame("run_start", MAPPER.createObjectNode()
+                .put("kind", kind)
+                .put("wakeTime", wakeTime)
+                .put("budgetSeconds", budgetSeconds)
+                .put("equity", equity)
+                .put("positions", positions)
+                .put("pendingOrders", pendingOrders)
+                .put("startedAt", startedAt));
     }
 
     public synchronized Frame prompt(String system, String instruction) {
@@ -134,7 +137,7 @@ public final class WakeTrace {
     public synchronized Frame token(String text) {
         Call call = calls.getLast();
         call.text.append(text);
-        return new Frame("token", new JSONObject().fluentPut("call", call.n).fluentPut("text", text));
+        return new Frame("token", MAPPER.createObjectNode().put("call", call.n).put("text", text));
     }
 
     /** 一次模型调用结束：text 整段覆盖攒的增量，toolCalls 记下 */
@@ -168,14 +171,14 @@ public final class WakeTrace {
         if (!calls.isEmpty() && calls.getLast().empty()) {
             calls.removeLast();
         }
-        end = new JSONObject()
-                .fluentPut("status", status)
-                .fluentPut("error", error)
-                .fluentPut("equity", equity)
-                .fluentPut("latencyMs", latencyMs)
-                .fluentPut("modelCalls", modelCalls)
-                .fluentPut("totalTokens", totalTokens);
-        return new Frame("run_end", new JSONObject(end));
+        end = MAPPER.createObjectNode()
+                .put("status", status)
+                .put("error", error)
+                .put("equity", equity)
+                .put("latencyMs", latencyMs)
+                .put("modelCalls", modelCalls)
+                .put("totalTokens", totalTokens);
+        return new Frame("run_end", end.deepCopy());
     }
 
     // ========== 读 ==========
@@ -199,8 +202,8 @@ public final class WakeTrace {
             } else {
                 frames.add(modelStart(call));
                 if (!call.text.isEmpty()) {
-                    frames.add(new Frame("token", new JSONObject()
-                            .fluentPut("call", call.n).fluentPut("text", call.text.toString())));
+                    frames.add(new Frame("token", MAPPER.createObjectNode()
+                            .put("call", call.n).put("text", call.text.toString())));
                 }
             }
         }
@@ -209,23 +212,23 @@ public final class WakeTrace {
 
     /** 落库形状（含 prompt，读接口按主人与否剥） */
     public synchronized String toJson() {
-        JSONArray callsJson = new JSONArray();
+        ArrayNode callsJson = MAPPER.createArrayNode();
         calls.forEach(c -> callsJson.add(c.json()));
-        JSONObject out = new JSONObject()
-                .fluentPut("v", VERSION)
-                .fluentPut("kind", kind)
-                .fluentPut("wakeTime", wakeTime)
-                .fluentPut("startedAt", startedAt)
-                .fluentPut("budgetSeconds", budgetSeconds)
-                .fluentPut("equity", equity)
-                .fluentPut("positions", positions)
-                .fluentPut("pendingOrders", pendingOrders);
+        ObjectNode out = MAPPER.createObjectNode()
+                .put("v", VERSION)
+                .put("kind", kind)
+                .put("wakeTime", wakeTime)
+                .put("startedAt", startedAt)
+                .put("budgetSeconds", budgetSeconds)
+                .put("equity", equity)
+                .put("positions", positions)
+                .put("pendingOrders", pendingOrders);
         if (promptSystem != null) {
-            out.put("prompt", promptJson());
+            out.set("prompt", promptJson());
         }
-        out.put("calls", callsJson);
-        out.put("end", end);
-        return out.toJSONString();
+        out.set("calls", callsJson);
+        out.set("end", end);
+        return MAPPER.writeValueAsString(out);
     }
 
     // ========== 帧拼装 ==========
@@ -234,29 +237,29 @@ public final class WakeTrace {
         return new Frame("prompt", promptJson());
     }
 
-    private JSONObject promptJson() {
-        return new JSONObject().fluentPut("system", promptSystem).fluentPut("instruction", promptInstruction);
+    private ObjectNode promptJson() {
+        return MAPPER.createObjectNode().put("system", promptSystem).put("instruction", promptInstruction);
     }
 
     private static Frame modelStart(Call call) {
-        return new Frame("model_start", new JSONObject().fluentPut("call", call.n));
+        return new Frame("model_start", MAPPER.createObjectNode().put("call", call.n));
     }
 
     private static Frame modelEnd(Call call) {
-        return new Frame("model_end", new JSONObject()
-                .fluentPut("call", call.n)
-                .fluentPut("text", call.text.toString())
-                .fluentPut("toolCalls", call.toolCallsJson()));
+        return new Frame("model_end", MAPPER.createObjectNode()
+                .put("call", call.n)
+                .put("text", call.text.toString())
+                .set("toolCalls", call.toolCallsJson()));
     }
 
     private static Frame toolResultFrame(Call call, ToolResult result) {
-        return new Frame("tool_result", result.json().fluentPut("call", call.n));
+        return new Frame("tool_result", result.json().put("call", call.n));
     }
 
     /** 参数不是合法 JSON 就给原字符串 */
     private static Object parseArgs(String arguments) {
         try {
-            return JSON.parseObject(arguments);
+            return MAPPER.readValue(arguments, ObjectNode.class);
         } catch (Exception e) {
             return arguments;
         }

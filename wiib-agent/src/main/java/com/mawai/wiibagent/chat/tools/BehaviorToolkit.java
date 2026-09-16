@@ -1,7 +1,5 @@
 package com.mawai.wiibagent.chat.tools;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisReport;
@@ -11,6 +9,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
+import tools.jackson.databind.node.ObjectNode;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 用户行为分析工具（仅对话轨）：贵操作——10 个 sim 内部端点 + 一次大 prompt 的深模型调用。
@@ -64,21 +65,21 @@ public class BehaviorToolkit {
         Result<BehaviorAnalysisReport> result = behaviorAnalysisService.analyze(userId, lang, model,
                 text -> progress(sessionId, text));
         if (result.getCode() != 0 || result.getData() == null) {
-            JSONObject out = new JSONObject();
+            ObjectNode out = MAPPER.createObjectNode();
             out.put("status", "FAILED");
             out.put("message", result.getMsg());
-            return out.toJSONString();
+            return MAPPER.writeValueAsString(out);
         }
 
-        JSONObject full = JSON.parseObject(JSON.toJSONString(result.getData()));
+        ObjectNode full = MAPPER.valueToTree(result.getData());
         boolean shown = runRegistry.publishBehaviorReport(sessionId, full);
 
-        JSONObject out = new JSONObject();
+        ObjectNode out = MAPPER.createObjectNode();
         out.put("status", "OK");
         // 如实答"卡上没上屏"：断连、补答轮、会话已结束都会走到这里，模型据此改口自己讲结论
         out.put("cardShown", shown);
-        out.put("report", trimmed(full));
-        return out.toJSONString();
+        out.set("report", trimmed(full));
+        return MAPPER.writeValueAsString(out);
     }
 
     /**
@@ -86,13 +87,13 @@ public class BehaviorToolkit {
      * <p>那是给卡片画资产曲线用的几十行数字，喂给模型既占上下文又不会改变任何结论——
      * 走势该说什么，overview 的总额与收益率、riskProfile 的最大回撤已经说清了。
      */
-    private static JSONObject trimmed(JSONObject full) {
-        JSONObject copy = JSON.parseObject(full.toJSONString());
-        JSONObject overview = copy.getJSONObject("overview");
-        if (overview != null) {
+    private static ObjectNode trimmed(ObjectNode full) {
+        ObjectNode copy = full.deepCopy();
+        if (copy.get("overview") instanceof ObjectNode overview) {
             overview.remove("trend");
         }
         return copy;
+
     }
 
     /** 进度是尽力而为：拿不到会话号（不在工具执行栈里）就静默跳过，不影响正确性。 */

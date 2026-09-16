@@ -1,6 +1,5 @@
 package com.mawai.wiibsim.campaign.service;
 
-import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibsim.campaign.entity.Campaign;
@@ -15,6 +14,7 @@ import com.mawai.wiibsim.campaign.score.TradeScorer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import tools.jackson.core.type.TypeReference;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
@@ -370,7 +371,7 @@ class CampaignScoreServiceTest {
     /**
      * ★ 缓存命中不重算，且 JSON 能原样转回来 ★
      * <p>
-     * 断言"反序列化后等于原对象"：fastjson2 对 record 的支持是运行期的事，
+     * 断言"反序列化后等于原对象"：JSON 对 record 的支持是运行期的事，
      * 错只在缓存命中那次请求暴露；equals 逐字段比且 BigDecimal 带 scale，顺带钉住 14.50 不变 14.5。
      */
     @Test
@@ -384,7 +385,7 @@ class CampaignScoreServiceTest {
         List<CampaignScore> second = service.scoreBoard();
 
         assertThat(second)
-                .as("record 走 fastjson2 转一圈必须逐字段（含 BigDecimal 标度）不变")
+                .as("record 走 JSON 转一圈必须逐字段（含 BigDecimal 标度）不变")
                 .isEqualTo(first);
         verify(tradeScorer, times(1)).scoreAll(CAMPAIGN_ID, START, END);
         verify(checkinService, times(1)).scoreAll(any(Campaign.class));
@@ -398,7 +399,7 @@ class CampaignScoreServiceTest {
     void 积分记录的JSON往返逐字段不变() {
         List<CampaignScore> board = service.scoreBoard();
 
-        List<CampaignScore> back = JSON.parseArray(JSON.toJSONString(board), CampaignScore.class);
+        List<CampaignScore> back = MAPPER.readValue(MAPPER.writeValueAsString(board), new TypeReference<List<CampaignScore>>() {});
 
         assertThat(back).isEqualTo(board);
         assertThat(back.getFirst().items()).isEqualTo(board.getFirst().items());
@@ -406,10 +407,23 @@ class CampaignScoreServiceTest {
         assertThat(back.getFirst().finalScore()).isEqualTo(new BigDecimal("14.50"));
     }
 
+    /** 换库前 fastjson2 写进缓存的榜（字段字母序、BigDecimal 写数字），换库后还得读得回来 */
+    @Test
+    void fastjson2老缓存串仍能读回() {
+        when(cacheService.get(BOARD_KEY)).thenReturn("[{\"claimable\":true,\"dailyScore\":3,\"finalScore\":14.50,"
+                + "\"items\":[{\"code\":\"VOTE\",\"count\":2,\"label\":\"投票\",\"score\":1.50}],"
+                + "\"penalty\":-5,\"tradeScore\":15,\"userId\":1,\"username\":\"u1\",\"voteScore\":1.50}]");
+
+        assertThat(service.scoreBoard()).containsExactly(new CampaignScore(1L, "u1", true, 15, 3,
+                new BigDecimal("1.50"), -5, new BigDecimal("14.50"),
+                List.of(new ScoreItem("VOTE", "投票", 2, new BigDecimal("1.50")))));
+        verify(statsMapper, never()).listEligibleUsers();
+    }
+
     /** 缓存命中时连业务表都不碰 —— 缓存的意义就在这，破了等于每次请求全表扫一遍 */
     @Test
     void 缓存命中时一次库都不查() {
-        when(cacheService.get(BOARD_KEY)).thenReturn(JSON.toJSONString(
+        when(cacheService.get(BOARD_KEY)).thenReturn(MAPPER.writeValueAsString(
                 List.of(score(ACE, true, new BigDecimal("14.50")))));
 
         assertThat(service.scoreBoard()).extracting(CampaignScore::userId).containsExactly(ACE);
@@ -425,7 +439,7 @@ class CampaignScoreServiceTest {
      */
     @Test
     void 结算用的freshBoard无视缓存重算而展示路径照样吃缓存() {
-        when(cacheService.get(BOARD_KEY)).thenReturn(JSON.toJSONString(
+        when(cacheService.get(BOARD_KEY)).thenReturn(MAPPER.writeValueAsString(
                 List.of(score(ACE, true, new BigDecimal("999.00")))));
 
         assertThat(service.freshBoard())

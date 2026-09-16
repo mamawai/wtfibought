@@ -1,6 +1,5 @@
 package com.mawai.wiibquant.market.collect;
 
-import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibquant.external.deribit.DeribitClient;
@@ -12,6 +11,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 市场数据采集：虚拟线程并行采集K线(7周期)、ticker、funding、盘口、OI、多空比、强平、期权面(DVOL/盘面)、FGI。
@@ -242,6 +243,6 @@ public class CollectDataNode {
                 "price", o.getAvgPrice(),
                 "origQty", o.getQuantity()
         )).toList();
-        return JSON.toJSONString(list);
+        return MAPPER.writeValueAsString(list);
     }
 }

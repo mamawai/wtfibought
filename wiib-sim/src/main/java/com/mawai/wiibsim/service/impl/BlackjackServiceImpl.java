@@ -1,6 +1,5 @@
 package com.mawai.wiibsim.service.impl;
 
-import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.dto.*;
 import com.mawai.wiibcommon.entity.BlackjackAccount;
@@ -28,6 +27,7 @@ import java.util.*;
 import java.time.Duration;
 
 import static com.mawai.wiibcommon.enums.LedgerBizType.BLACKJACK_CONVERT;
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * Blackjack 服务实现。
@@ -754,7 +754,7 @@ public class BlackjackServiceImpl implements BlackjackService {
     /** session_json 为 NULL = 当前没有牌局（persist 只写 null 或整份快照，不会写空串） */
     private BlackjackSession readSession(BlackjackAccount account) {
         String json = account.getSessionJson();
-        return json == null ? null : JSON.parseObject(json, BlackjackSession.class);
+        return json == null ? null : MAPPER.readValue(json, BlackjackSession.class);
     }
 
     private BlackjackSession requireSession(BlackjackAccount account) {
@@ -770,7 +770,7 @@ public class BlackjackServiceImpl implements BlackjackService {
      * 筹码扣了牌局没存这种账最难对。session 传 null 表示这一局结束。
      */
     private void persist(BlackjackAccount account, BlackjackSession session) {
-        account.setSessionJson(session == null ? null : JSON.toJSONString(session));
+        account.setSessionJson(session == null ? null : MAPPER.writeValueAsString(session));
         account.setUpdatedAt(LocalDateTime.now());
         accountMapper.updateById(account);
     }

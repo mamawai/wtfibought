@@ -1,7 +1,5 @@
 package com.mawai.wiibagent.chat;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
@@ -27,6 +25,7 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -40,6 +39,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 一轮对话的编排：问路由 → 并行跑专家 → 汇总出答案 → 历史落库。
@@ -588,19 +589,21 @@ public class ChatTurnRunner {
             if (!"route".equals(call.name())) {
                 continue;
             }
-            JSONArray next = JSON.parseObject(call.arguments()).getJSONArray("next");
-            if (next == null || next.isEmpty()) {
+            JsonNode next = MAPPER.readTree(call.arguments()).path("next");
+            if (next.isEmpty()) {
                 return List.of();
             }
             List<String> names = new ArrayList<>(next.size());
-            for (Object item : next) {
-                if (FINISH.equals(item)) {
+            for (JsonNode item : next) {
+                String name = item.isString() ? item.asString() : null;
+                if (FINISH.equals(name)) {
                     return List.of(FINISH);
                 }
-                if (item instanceof String name && ChatAgentFactory.EXPERT_AGENTS.contains(name)) {
+                if (name != null && ChatAgentFactory.EXPERT_AGENTS.contains(name)) {
                     names.add(name);
                 }
             }
+
             return names;
         }
         return List.of();

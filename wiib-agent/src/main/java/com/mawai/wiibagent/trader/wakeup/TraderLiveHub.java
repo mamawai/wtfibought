@@ -1,12 +1,12 @@
 package com.mawai.wiibagent.trader.wakeup;
 
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibagent.llm.SseChannel;
 import com.mawai.wiibcommon.entity.AiTrader;
 import jakarta.annotation.PreDestroy;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -28,7 +28,7 @@ public class TraderLiveHub {
 
     /** 帧出口：返回 false=通道已死，hub 摘掉它 */
     public interface Sink {
-        boolean send(String event, JSONObject data);
+        boolean send(String event, ObjectNode data);
     }
 
     /** nginx 默认 proxy_read_timeout 60s 会掐静默连接，20s 一帧留 3 倍余量 */

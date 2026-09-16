@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.chat.tools;
 
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -8,8 +7,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.Map;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 对 trader 动手的三个入口，挂在 summarizer 叶子上（与 {@link DeepAnalysisToolkit} 并列）。
@@ -76,7 +78,7 @@ public class TraderActionToolkit {
                     "How many upcoming wake-ups should carry this note, 1-24. Omit for 1 (a one-off remark).")
             Integer rounds,
             ToolContext context) {
-        JSONObject prefill = new JSONObject().fluentPut("note", note);
+        ObjectNode prefill = MAPPER.createObjectNode().put("note", note);
         if (rounds != null) {
             prefill.put("rounds", rounds);
         }
@@ -87,7 +89,7 @@ public class TraderActionToolkit {
      * 推一张待填的卡。推不出去要如实回报——补答轮与断连后都没有 SSE 通道，
      * 这时候答"表单已打开"就是一句用户永远兑现不了的话，而它还会落进对话历史。
      */
-    private String openForm(String sessionId, String formType, JSONObject prefill, String labelKey) {
+    private String openForm(String sessionId, String formType, ObjectNode prefill, String labelKey) {
         boolean sent = sessionId != null && runRegistry.publishForm(sessionId, formType, prefill);
         log.info("[TraderAction] 打开{}表单 userId={} session={} sent={}", formType, userId, sessionId, sent);
         Map<String, Object> vars = Map.of("label", prompts.get(lang, labelKey));
@@ -97,6 +99,7 @@ public class TraderActionToolkit {
     }
 
     private static String outcome(boolean ok, String message) {
-        return new JSONObject().fluentPut("ok", ok).fluentPut("message", message).toJSONString();
+        return MAPPER.writeValueAsString(MAPPER.createObjectNode().put("ok", ok).put("message", message));
+
     }
 }

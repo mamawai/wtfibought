@@ -1,11 +1,13 @@
 package com.mawai.wiibagent.llm;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
 import java.util.List;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 服务端搜索的过程事件，三个自研协议共用一个形状。
@@ -27,20 +29,19 @@ public record SearchEvent(String phase, String query, List<Source> sources) {
     public record Source(String url, String title) {
 
         /** 来源列表 ⇄ [{url,title}]：SSE 的 search/done 事件、历史接口、库里的 sources 列都是这个形状 */
-        public static JSONArray toJson(List<Source> sources) {
-            JSONArray list = new JSONArray();
+        public static ArrayNode toJson(List<Source> sources) {
+            ArrayNode list = MAPPER.createArrayNode();
             for (Source s : sources) {
-                list.add(new JSONObject().fluentPut("url", s.url()).fluentPut("title", s.title()));
+                list.add(MAPPER.createObjectNode().put("url", s.url()).put("title", s.title()));
             }
             return list;
         }
 
-        public static List<Source> fromJson(JSONArray list) {
+        public static List<Source> fromJson(JsonNode list) {
             List<Source> sources = new ArrayList<>();
             if (list != null) {
-                for (int i = 0; i < list.size(); i++) {
-                    JSONObject s = list.getJSONObject(i);
-                    sources.add(new Source(s.getString("url"), s.getString("title")));
+                for (JsonNode s : list) {
+                    sources.add(new Source(s.path("url").asString(null), s.path("title").asString(null)));
                 }
             }
             return sources;
@@ -60,17 +61,17 @@ public record SearchEvent(String phase, String query, List<Source> sources) {
     }
 
     /** 与 SSE search 事件同形 */
-    public JSONObject toJsonObject() {
-        return new JSONObject().fluentPut("phase", phase).fluentPut("query", query)
-                .fluentPut("sources", Source.toJson(sources));
+    public ObjectNode toJsonObject() {
+        return MAPPER.createObjectNode().put("phase", phase).put("query", query)
+                .set("sources", Source.toJson(sources));
     }
 
     public String toJson() {
-        return toJsonObject().toJSONString();
+        return MAPPER.writeValueAsString(toJsonObject());
     }
 
     public static SearchEvent parse(String json) {
-        JSONObject o = JSON.parseObject(json);
-        return new SearchEvent(o.getString("phase"), o.getString("query"), Source.fromJson(o.getJSONArray("sources")));
+        JsonNode o = MAPPER.readTree(json);
+        return new SearchEvent(o.path("phase").asString(null), o.path("query").asString(null), Source.fromJson(o.get("sources")));
     }
 }

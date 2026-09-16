@@ -1,15 +1,16 @@
 package com.mawai.wiibcommon.handler;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.TypeReference;
 import org.apache.ibatis.type.BaseTypeHandler;
 import org.apache.ibatis.type.JdbcType;
+import tools.jackson.core.type.TypeReference;
 
 import java.sql.CallableStatement;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 public abstract class AbstractJsonbTypeHandler<T> extends BaseTypeHandler<T> {
 
@@ -22,7 +23,7 @@ public abstract class AbstractJsonbTypeHandler<T> extends BaseTypeHandler<T> {
     @Override
     public void setNonNullParameter(PreparedStatement ps, int i, T parameter, JdbcType jdbcType) throws SQLException {
         try {
-            ps.setObject(i, JSON.toJSONString(parameter), Types.OTHER);
+            ps.setObject(i, MAPPER.writeValueAsString(parameter), Types.OTHER);
         } catch (Exception e) {
             throw new SQLException("Failed to serialize jsonb parameter.", e);
         }
@@ -48,7 +49,7 @@ public abstract class AbstractJsonbTypeHandler<T> extends BaseTypeHandler<T> {
             return null;
         }
         try {
-            return JSON.parseObject(json, typeReference.getType());
+            return MAPPER.readValue(json, typeReference);
         } catch (Exception e) {
             throw new SQLException("Failed to deserialize jsonb value.", e);
         }

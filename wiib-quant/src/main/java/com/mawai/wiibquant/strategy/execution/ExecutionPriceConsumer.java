@@ -1,7 +1,5 @@
 package com.mawai.wiibquant.strategy.execution;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.market.MarketStreamChannels;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -10,10 +8,12 @@ import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 执行层行情订阅：{@link MarketStreamChannels#PRICE} 的 futures tick → 执行端口 onPriceTick，
@@ -42,10 +42,10 @@ public class ExecutionPriceConsumer implements MessageListener {
     @Override
     public void onMessage(Message message, byte[] pattern) {
         try {
-            JSONObject obj = JSON.parseObject(new String(message.getBody(), StandardCharsets.UTF_8));
-            if (!"futures".equals(obj.getString("type"))) return;
-            String symbol = obj.getString("symbol");
-            String price = obj.getString("price");
+            JsonNode obj = MAPPER.readTree(message.getBody());
+            if (!"futures".equals(obj.path("type").asString(null))) return;
+            String symbol = obj.path("symbol").asString(null);
+            String price = obj.path("price").asString(null);
             if (symbol == null || price == null) return;
             executionPort.onPriceTick(symbol.trim().toUpperCase(Locale.ROOT), new BigDecimal(price));
         } catch (Exception e) {

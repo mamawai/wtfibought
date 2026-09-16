@@ -1,19 +1,19 @@
 package com.mawai.wiibagent.toolkit;
 import com.mawai.wiibquant.market.service.KlineFetcher;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.KlineBar;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.List;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -65,11 +65,11 @@ class IndicatorToolkitTest {
      * 用正弦造起伏，好让 swing 检测真有拐点可找——一条直线测不出摆动点。
      */
     private static String syntheticKlines(int n) {
-        JSONArray arr = new JSONArray();
+        ArrayNode arr = MAPPER.createArrayNode();
         for (int i = 0; i < n; i++) {
             long t = 1_700_000_000_000L + i * 300_000L;
             double base = 100 + Math.sin(i / 5.0) * 10;
-            JSONArray k = new JSONArray();
+            ArrayNode k = arr.addArray();
             k.add(t);
             k.add(String.valueOf(base));
             k.add(String.valueOf(base + 2));
@@ -77,9 +77,8 @@ class IndicatorToolkitTest {
             k.add(String.valueOf(base + 1));
             k.add(String.valueOf(10 + i));
             k.add(t + 299_999L);
-            arr.add(k);
         }
-        return arr.toJSONString();
+        return MAPPER.writeValueAsString(arr);
     }
 
     /**
@@ -111,25 +110,25 @@ class IndicatorToolkitTest {
     void klineStructureExposesOnlySymbolAndIntervalAsRequired() {
         // 三个调优参数必须是可选的：标成必填会逼模型每轮都猜一个值，
         // 而它们是流派选择，没意见时就该走默认
-        JSONObject schema = JSON.parseObject(
+        JsonNode schema = MAPPER.readTree(
                 callback(toolkitWith(80), "kline_structure")
                         .getToolDefinition().inputSchema());
 
-        assertThat(schema.getJSONArray("required")).containsExactlyInAnyOrder("symbol", "interval");
-        assertThat(schema.getJSONObject("properties").keySet())
+        assertThat(schema.get("required")).extracting(JsonNode::asString).containsExactlyInAnyOrder("symbol", "interval");
+        assertThat(schema.get("properties").propertyNames())
                 .contains("symbol", "interval", "swingWindow", "lastN", "includeBars");
     }
 
     @Test
     void klineStructureReturnsNeutralBlocks() {
         String out = toolkitWith(80).klineStructure("BTCUSDT", "5m", null, null, null);
-        JSONObject o = JSON.parseObject(out);
+        JsonNode o = MAPPER.readTree(out);
 
-        assertThat(o.getJSONArray("errors")).isEmpty();
-        assertThat(o.keySet()).contains("meta", "range", "bar_stats", "swings",
+        assertThat(o.get("errors")).isEmpty();
+        assertThat(o.propertyNames()).contains("meta", "range", "bar_stats", "swings",
                 "segments_equal", "segments_swing", "volume", "volatility", "ma_context",
                 "levels", "focus_bars");
-        assertThat(o.getJSONArray("swings")).isNotEmpty();
+        assertThat(o.get("swings")).isNotEmpty();
         // 中性事实层的底线：不许出现判读词
         assertThat(out).doesNotContain("bullish", "bearish", "reversal", "breakout");
     }
@@ -141,11 +140,11 @@ class IndicatorToolkitTest {
         // 桩按 limit 截断，这条才验得到两边取的是同一个窗口
         IndicatorToolkit toolkit = toolkitWith(300);
 
-        BigDecimal fromStructure = JSON.parseObject(
+        BigDecimal fromStructure = MAPPER.readTree(
                         toolkit.klineStructure("BTCUSDT", "1h", null, null, false))
-                .getJSONObject("volatility").getBigDecimal("atr14");
-        BigDecimal fromIndicators = JSON.parseObject(toolkit.indicators("BTCUSDT", "1h"))
-                .getBigDecimal("atr14");
+                .get("volatility").path("atr14").asDecimal(null);
+        BigDecimal fromIndicators = MAPPER.readTree(toolkit.indicators("BTCUSDT", "1h"))
+                .path("atr14").asDecimal(null);
 
         assertThat(fromStructure).isEqualByComparingTo(fromIndicators);
     }
@@ -155,7 +154,7 @@ class IndicatorToolkitTest {
         String out = toolkitWith(80)
                 .klineStructure("BTCUSDT", "5m", null, null, false);
 
-        assertThat(JSON.parseObject(out).containsKey("focus_bars")).isFalse();
+        assertThat(MAPPER.readTree(out).has("focus_bars")).isFalse();
     }
 
     @Test
@@ -163,10 +162,10 @@ class IndicatorToolkitTest {
         // 窗口开到比数据还长时 swings 会空，但不许炸——夹取后照常出其余字段
         String out = toolkitWith(80)
                 .klineStructure("BTCUSDT", "5m", 9999, -5, null);
-        JSONObject o = JSON.parseObject(out);
+        JsonNode o = MAPPER.readTree(out);
 
-        assertThat(o.getJSONArray("errors")).isEmpty();
-        assertThat(o.getJSONObject("meta").getIntValue("swing_window")).isEqualTo(50);
+        assertThat(o.get("errors")).isEmpty();
+        assertThat(o.get("meta").path("swing_window").asInt(0)).isEqualTo(50);
     }
 
     @Test
@@ -174,13 +173,13 @@ class IndicatorToolkitTest {
         // 熔断/网络失败时 getFuturesKlines 给 null，工具要报不可用而不是抛异常
         String out = toolkitUnavailable().klineStructure("BTCUSDT", "5m", null, null, null);
 
-        assertThat(JSON.parseObject(out).getBooleanValue("available")).isFalse();
+        assertThat(MAPPER.readTree(out).path("available").asBoolean(false)).isFalse();
     }
 
     @Test
     void klineStructureRejectsBadInterval() {
         String out = toolkitWith(80).klineStructure("BTCUSDT", "1m", null, null, null);
 
-        assertThat(JSON.parseObject(out).getString("reason")).contains("interval");
+        assertThat(MAPPER.readTree(out).path("reason").asString(null)).contains("interval");
     }
 }

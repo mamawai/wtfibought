@@ -1,13 +1,12 @@
 package com.mawai.wiibsim.campaign.ldc;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibsim.campaign.LdcProperties;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -19,6 +18,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -256,14 +256,17 @@ class LdcClientTest {
         String raw = requestBodies.getFirst();
         assertThat(raw).contains("\"user_id\":12345")
                 .doesNotContain("\"user_id\":\"12345\"");
+        // 逐字钉住：字段顺序、类型、中文不转义
+        assertThat(raw).isEqualTo("{\"user_id\":12345,\"username\":\"someone\",\"amount\":\"12.34\","
+                + "\"out_trade_no\":\"WIIB_T_1\",\"remark\":\"WhatIfIBought 五维交易赛奖励\"}");
 
-        JSONObject sent = JSON.parseObject(raw);
-        assertThat(sent.get("user_id")).isInstanceOf(Number.class);
-        assertThat(sent.get("amount")).isInstanceOf(String.class);   // 金额发字符串，不发浮点
-        assertThat(sent.getString("amount")).isEqualTo("12.34");
-        assertThat(sent.getString("out_trade_no")).isEqualTo("WIIB_T_1");
-        assertThat(sent.getString("username")).isEqualTo("someone");
-        assertThat(sent.getString("remark")).isNotBlank();
+        JsonNode sent = MAPPER.readTree(raw);
+        assertThat(sent.get("user_id").isNumber()).isTrue();
+        assertThat(sent.get("amount").isString()).isTrue();   // 金额发字符串，不发浮点
+        assertThat(sent.get("amount").asString()).isEqualTo("12.34");
+        assertThat(sent.get("out_trade_no").asString()).isEqualTo("WIIB_T_1");
+        assertThat(sent.get("username").asString()).isEqualTo("someone");
+        assertThat(sent.get("remark").asString()).isNotBlank();
     }
 
     /** 超过两位小数服务端直接拒，按 DOWN 截断成两位再发（不进位，宁少发不多发） */
@@ -275,8 +278,8 @@ class LdcClientTest {
         client().distribute("12345", "someone", new BigDecimal("12.3499"), "WIIB_T_3");
         client().distribute("12345", "someone", new BigDecimal("7"), "WIIB_T_4");
 
-        assertThat(JSON.parseObject(requestBodies.get(0)).getString("amount")).isEqualTo("12.34");
-        assertThat(JSON.parseObject(requestBodies.get(1)).getString("amount")).isEqualTo("7.00");
+        assertThat(MAPPER.readTree(requestBodies.get(0)).get("amount").asString()).isEqualTo("12.34");
+        assertThat(MAPPER.readTree(requestBodies.get(1)).get("amount").asString()).isEqualTo("7.00");
     }
 
     /** 非数字 ID（AI_TRADER / 邀请码用户）物理上收不了款，本地就拦掉，别浪费一次请求 */

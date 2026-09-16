@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.replay;
 
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.enums.ErrorCode;
@@ -31,6 +30,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 手动复盘 AI 教练的一次请求：准入 → 交出 emitter → 虚拟线程里跑流式调用。
@@ -151,24 +152,24 @@ public class ReplayCoachService {
                         return;
                     }
                     answer.append(chunk);
-                    channel.send("token", new JSONObject().fluentPut("text", chunk));
+                    channel.send("token", MAPPER.createObjectNode().put("text", chunk));
                 });
             }
             if (channel.isClosed()) {
                 return;
             }
             if (answer.isEmpty()) {
-                channel.send("error", new JSONObject().fluentPut("message",
+                channel.send("error", MAPPER.createObjectNode().put("message",
                         prompts.get(lang, "coach.error.emptyAnswer")));
             } else {
-                channel.send("done", new JSONObject().fluentPut("answer", answer.toString()));
+                channel.send("done", MAPPER.createObjectNode().put("answer", answer.toString()));
             }
             channel.complete();
         } catch (Exception e) {
             log.error("[ReplayCoach] 调用失败 mode={}", request.mode(), e);
             if (!channel.isClosed()) {
                 // 正常收尾而非 completeWithError：原因已随 error 事件发出，抛回 MVC 只会往 event-stream 里塞 JSON 盖掉真因
-                channel.send("error", new JSONObject().fluentPut("message",
+                channel.send("error", MAPPER.createObjectNode().put("message",
                         LlmErrorMessages.classify(e, prompts, lang)));
                 channel.complete();
             }

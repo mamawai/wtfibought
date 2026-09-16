@@ -1,8 +1,6 @@
 package com.mawai.wiibagent.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
@@ -36,11 +34,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
 import java.util.Map;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * AI Trader：我的 trader 管理（创建/配置/启停/重置）+ 公开竞技场（排行/详情/决策时间线/净值曲线）。
@@ -357,14 +358,14 @@ public class TraderController {
 
     @GetMapping("/{id}/decisions/{decisionId}/trace")
     @Operation(summary = "一条决策的过程轨迹（trace_json 原样；只给主人，别人与没有轨迹一样回 null）")
-    public Result<JSONObject> decisionTrace(@PathVariable long id, @PathVariable long decisionId) {
+    public Result<JsonNode> decisionTrace(@PathVariable long id, @PathVariable long decisionId) {
         AiTraderDecision d = traderService.trace(decisionId);
         // 非主人回 null 不报错：轨迹入口本就藏在主人才见得到的按钮后面，报错反倒把"有这东西"讲出去了
         if (d == null || d.getTraderId() != id
                 || traderService.byId(id).getUserId() != StpUtil.getLoginIdAsLong()) {
             return Result.ok(null);
         }
-        return Result.ok(JSON.parseObject(d.getTraceJson()));
+        return Result.ok(MAPPER.readTree(d.getTraceJson()));
     }
 
     @GetMapping("/{id}/token-usage")

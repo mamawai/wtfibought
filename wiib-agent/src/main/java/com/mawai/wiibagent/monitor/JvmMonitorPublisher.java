@@ -1,12 +1,13 @@
 package com.mawai.wiibagent.monitor;
 
-import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import com.mawai.wiibcommon.monitor.JvmMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * agent 进程 JVM 监控发布：定时采样本进程 JVM 发 Redis，sim 中继到 /topic/monitor/quant。
@@ -23,7 +24,7 @@ public class JvmMonitorPublisher {
     @Scheduled(fixedRate = 5000)
     public void publish() {
         try {
-            broadcaster.broadcastMonitor("quant", JSON.toJSONString(JvmMetrics.collectLite()));
+            broadcaster.broadcastMonitor("quant", MAPPER.writeValueAsString(JvmMetrics.collectLite()));
         } catch (Exception e) {
             log.warn("[JVM监控] quant 发布失败: {}", e.getMessage());
         }

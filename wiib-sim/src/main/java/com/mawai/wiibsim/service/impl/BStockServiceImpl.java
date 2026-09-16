@@ -1,8 +1,5 @@
 package com.mawai.wiibsim.service.impl;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.dto.BStockDTO;
@@ -16,6 +13,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -25,6 +24,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * bStock 读取服务实现。静态信息读 bstock 表；实时价来自 feed 写入的 Redis（{@code market:price:*}），
@@ -55,7 +56,7 @@ public class BStockServiceImpl extends ServiceImpl<BStockMapper, BStock> impleme
                 .list();
         if (stocks.isEmpty()) return Collections.emptyList();
 
-        Map<String, JSONObject> tickers = loadTicker24h(stocks.stream().map(BStock::getSymbol).toList());
+        Map<String, JsonNode> tickers = loadTicker24h(stocks.stream().map(BStock::getSymbol).toList());
         return stocks.stream().map(s -> toDTO(s, tickers.get(s.getSymbol()))).toList();
     }
 
@@ -78,7 +79,7 @@ public class BStockServiceImpl extends ServiceImpl<BStockMapper, BStock> impleme
         // Redis 未命中（如刚启动 WS 未推）→ 回退 REST
         try {
             String json = binanceRestClient.getTickerPrice(symbol);
-            if (json != null) return JSON.parseObject(json).getBigDecimal("price");
+            if (json != null) return MAPPER.readTree(json).path("price").asDecimal(null);
         } catch (Exception e) {
             log.warn("获取{}最新价失败: {}", symbol, e.getMessage());
         }
@@ -86,33 +87,31 @@ public class BStockServiceImpl extends ServiceImpl<BStockMapper, BStock> impleme
     }
 
     /** 批量拉 24h 行情（缓存 15s），返回 symbol→ticker JSON。失败降级空 map，DTO 回退 Redis 现价。 */
-    private Map<String, JSONObject> loadTicker24h(List<String> symbols) {
+    private Map<String, JsonNode> loadTicker24h(List<String> symbols) {
         String json = cacheService.get(TICKER_CACHE_KEY);
         if (json == null) {
             json = binanceRestClient.get24hTickers(symbols);
             if (json != null) cacheService.set(TICKER_CACHE_KEY, json, TICKER_TTL);
         }
-        Map<String, JSONObject> map = new HashMap<>();
+        Map<String, JsonNode> map = new HashMap<>();
         if (json != null) {
-            JSONArray arr = JSON.parseArray(json);
-            for (int i = 0; i < arr.size(); i++) {
-                JSONObject o = arr.getJSONObject(i);
-                map.put(o.getString("symbol"), o);
+            for (JsonNode o : MAPPER.readValue(json, ArrayNode.class)) {
+                map.put(o.path("symbol").asString(null), o);
             }
         }
         return map;
     }
 
     /** 静态字段整体拷贝 + 合并实时行情；无 24h 数据时价用 Redis 现价兜底。 */
-    private BStockDTO toDTO(BStock s, JSONObject t) {
+    private BStockDTO toDTO(BStock s, JsonNode t) {
         BStockDTO d = new BStockDTO();
         BeanUtils.copyProperties(s, d);
         if (t != null) {
-            d.setPrice(t.getBigDecimal("lastPrice"));
-            d.setChangePct(t.getBigDecimal("priceChangePercent"));
-            d.setHigh(t.getBigDecimal("highPrice"));
-            d.setLow(t.getBigDecimal("lowPrice"));
-            d.setVolume(t.getBigDecimal("quoteVolume"));
+            d.setPrice(t.path("lastPrice").asDecimal(null));
+            d.setChangePct(t.path("priceChangePercent").asDecimal(null));
+            d.setHigh(t.path("highPrice").asDecimal(null));
+            d.setLow(t.path("lowPrice").asDecimal(null));
+            d.setVolume(t.path("quoteVolume").asDecimal(null));
         } else {
             d.setPrice(cacheService.getCryptoPrice(s.getSymbol()));
         }

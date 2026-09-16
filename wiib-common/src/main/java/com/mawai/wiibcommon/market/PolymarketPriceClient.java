@@ -1,9 +1,8 @@
 package com.mawai.wiibcommon.market;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -12,6 +11,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * Polymarket 5 分钟回合的开/收盘价。feed 轮询取价写缓存，sim 结算时缓存缺价回源，共用这一份。
@@ -43,12 +44,12 @@ public class PolymarketPriceClient {
                     .GET().build();
             HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() != 200) return null;
-            JSONObject json = JSON.parseObject(resp.body());
-            if (json == null) return null;
+            JsonNode json = MAPPER.readTree(resp.body());
+            if (!json.isObject()) return null;
             return new CryptoPrice(
-                    json.getBigDecimal("openPrice"),
-                    json.getBigDecimal("closePrice"),
-                    Boolean.TRUE.equals(json.getBoolean("completed")));
+                    json.path("openPrice").asDecimal(null),
+                    json.path("closePrice").asDecimal(null),
+                    json.path("completed").asBoolean(false));
         } catch (Exception e) {
             log.warn("Polymarket取价失败: windowStart={}, err={}", windowStart, e.getMessage());
             return null;

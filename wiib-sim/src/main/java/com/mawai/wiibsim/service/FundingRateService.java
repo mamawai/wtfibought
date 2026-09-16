@@ -1,8 +1,5 @@
 package com.mawai.wiibsim.service;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.market.BinanceRestClient;
@@ -10,6 +7,8 @@ import com.mawai.wiibsim.config.TradingConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -21,6 +20,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 资金费率的唯一出口。只在结算点（0:00/8:00/16:00）调一次官方全量 premiumIndex 写缓存，
@@ -87,13 +88,11 @@ public class FundingRateService {
         Set<String> wanted = new HashSet<>(symbols);
         Map<String, BigDecimal> result = new HashMap<>();
         try {
-            JSONArray arr = JSON.parseArray(json);
-            for (int i = 0; i < arr.size(); i++) {
-                JSONObject item = arr.getJSONObject(i);
-                if (item == null) continue;
-                String symbol = item.getString("symbol");
+            ArrayNode arr = MAPPER.readValue(json, ArrayNode.class);
+            for (JsonNode item : arr) {
+                String symbol = item.path("symbol").asString(null);
                 if (symbol == null || !wanted.contains(symbol)) continue;
-                BigDecimal rate = item.getBigDecimal("lastFundingRate");
+                BigDecimal rate = item.path("lastFundingRate").asDecimal(null);
                 if (rate != null) result.put(symbol, rate);
             }
         } catch (Exception e) {

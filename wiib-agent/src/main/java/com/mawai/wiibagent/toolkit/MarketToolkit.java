@@ -2,14 +2,16 @@ package com.mawai.wiibagent.toolkit;
 import com.mawai.wiibquant.market.service.MarketAssembly;
 import com.mawai.wiibquant.market.service.MarketDataService;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibquant.market.domain.FeatureSnapshot;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 市场状态工具：实时快照 / 期权IV 走 MarketDataService 共享组装缓存；
@@ -57,13 +59,13 @@ public class MarketToolkit {
             return unavailableJson(a);
         }
         FeatureSnapshot s = a.snapshot();
-        JSONObject out = new JSONObject();
+        ObjectNode out = MAPPER.createObjectNode();
         out.put("available", true);
         out.put("symbol", s.symbol());
         out.put("lastPrice", s.lastPrice());
         out.put("atr", s.atr());
         out.put("regime", s.regime().name());
-        out.put("price_change", a.featureOutput().get("price_change_map"));
+        out.set("price_change", MAPPER.valueToTree(a.featureOutput().get("price_change_map")));
         out.put("fundingDeviation", s.fundingDeviation());
         out.put("oiChangeRate", s.oiChangeRate());
         out.put("lsrExtreme", s.lsrExtreme());
@@ -78,9 +80,9 @@ public class MarketToolkit {
         out.put("spotPerpBasisBps", s.spotPerpBasisBps());
         out.put("fearGreed", s.fearGreedIndex() + "(" + s.fearGreedLabel() + ")");
         if (!s.qualityFlags().isEmpty()) {
-            out.put("qualityFlags", s.qualityFlags());
+            out.set("qualityFlags", MAPPER.valueToTree(s.qualityFlags()));
         }
-        return out.toJSONString();
+        return MAPPER.writeValueAsString(out);
     }
 
     @Tool(name = "option_iv", description = """
@@ -92,12 +94,12 @@ public class MarketToolkit {
         if (!a.available()) {
             return unavailableJson(a);
         }
-        JSONObject out = new JSONObject();
+        ObjectNode out = MAPPER.createObjectNode();
         out.put("available", true);
         out.put("symbol", a.snapshot().symbol());
         out.put("dvolIndex", a.snapshot().dvolIndex());
         out.put("ivSummary", a.snapshot().toIvSummary("no data"));
-        return out.toJSONString();
+        return MAPPER.writeValueAsString(out);
     }
 
     @Tool(name = "funding_history", description = """
@@ -110,29 +112,27 @@ public class MarketToolkit {
             return errorJson("funding data unavailable");
         }
         try {
-            JSONObject out = new JSONObject();
+            ObjectNode out = MAPPER.createObjectNode();
             out.put("available", true);
-            JSONArray history = JSON.parseArray(raw);
-            JSONArray compact = new JSONArray();
-            for (int i = 0; i < history.size(); i++) {
-                JSONObject h = history.getJSONObject(i);
-                JSONObject row = new JSONObject();
-                row.put("time", h.getLong("fundingTime"));
-                row.put("rate", h.getString("fundingRate"));
+            ArrayNode compact = MAPPER.createArrayNode();
+            for (JsonNode h : MAPPER.readValue(raw, ArrayNode.class)) {
+                ObjectNode row = MAPPER.createObjectNode();
+                row.put("time", h.hasNonNull("fundingTime") ? h.get("fundingTime").asLong() : null);
+                row.put("rate", h.path("fundingRate").asString(null));
                 compact.add(row);
             }
-            out.put("history", compact);
-            // 先判空再解析：取不到且没有过期缓存可兜时这里给 null，而 JSON.parseObject(null) 也是 null，
-            // 后面三个 getter 直接 NPE，异常信息（fastjson2 内部类名）会顺着 catch 喂给模型
+            out.set("history", compact);
+            // 先判空再解析：取不到且没有过期缓存可兜时这里给 null，readTree(null) 直接抛参数异常，
+            // 异常信息会顺着 catch 喂给模型
             String premiumRaw = dataService.premiumIndex(symbol);
             if (premiumRaw == null) {
                 return errorJson("funding data unavailable");
             }
-            JSONObject premium = JSON.parseObject(premiumRaw);
-            out.put("nextFundingTime", premium.getLong("nextFundingTime"));
-            out.put("lastFundingRate", premium.getString("lastFundingRate"));
-            out.put("markPrice", premium.getString("markPrice"));
-            return out.toJSONString();
+            JsonNode premium = MAPPER.readTree(premiumRaw);
+            out.put("nextFundingTime", premium.hasNonNull("nextFundingTime") ? premium.get("nextFundingTime").asLong() : null);
+            out.put("lastFundingRate", premium.path("lastFundingRate").asString(null));
+            out.put("markPrice", premium.path("markPrice").asString(null));
+            return MAPPER.writeValueAsString(out);
         } catch (Exception e) {
             return errorJson("funding data unavailable: " + e.getMessage());
         }
@@ -148,36 +148,40 @@ public class MarketToolkit {
             return errorJson("orderbook unavailable");
         }
         try {
-            JSONObject book = JSON.parseObject(raw);
-            JSONObject out = new JSONObject();
+            JsonNode book = MAPPER.readTree(raw);
+            ObjectNode out = MAPPER.createObjectNode();
             out.put("available", true);
             // 数据源档数不定（WS 快照是 top20，REST 兜底是 top10），这里统一截到工具描述承诺的 10 档
-            out.put("bids", topLevels(book.getJSONArray("bids")));
-            out.put("asks", topLevels(book.getJSONArray("asks")));
-            return out.toJSONString();
+            out.set("bids", topLevels(book.get("bids")));
+            out.set("asks", topLevels(book.get("asks")));
+            return MAPPER.writeValueAsString(out);
         } catch (Exception e) {
             return errorJson("orderbook unavailable: " + e.getMessage());
         }
     }
 
-    private static JSONArray topLevels(JSONArray levels) {
+    private static JsonNode topLevels(JsonNode levels) {
         if (levels == null || levels.size() <= DEPTH_LEVELS) {
             return levels;
         }
-        return new JSONArray(levels.subList(0, DEPTH_LEVELS));
+        ArrayNode top = MAPPER.createArrayNode();
+        for (int i = 0; i < DEPTH_LEVELS; i++) {
+            top.add(levels.get(i));
+        }
+        return top;
     }
 
     private static String errorJson(String reason) {
-        JSONObject out = new JSONObject();
+        ObjectNode out = MAPPER.createObjectNode();
         out.put("available", false);
         out.put("reason", reason);
-        return out.toJSONString();
+        return MAPPER.writeValueAsString(out);
     }
 
     private static String unavailableJson(MarketAssembly a) {
-        JSONObject out = new JSONObject();
+        ObjectNode out = MAPPER.createObjectNode();
         out.put("available", false);
         out.put("reason", "market data unavailable for " + a.symbol());
-        return out.toJSONString();
+        return MAPPER.writeValueAsString(out);
     }
 }

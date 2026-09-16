@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.trader.trade;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
@@ -21,6 +18,8 @@ import com.mawai.wiibquant.external.sim.SimTradeClient;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -29,6 +28,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 交易工具（非 Spring bean）：每次唤醒 new 一个，绑定该 trader 的 sim 子账户与白名单。
@@ -65,7 +66,7 @@ public class TradeTools {
     /** sim 那侧的拒因按错误码在这儿成文（余额不足/止损价非法等），同样跟 {@code ctx.lang()} */
     private final MessageCatalog messages;
     /** 本次唤醒的动作轨迹，唤醒回路收走序列化进 ai_trader_decision.actions_json */
-    private final List<JSONObject> actions = new ArrayList<>();
+    private final List<ObjectNode> actions = new ArrayList<>();
 
     public TradeTools(SimTradeClient simTradeClient, long simUserId, Set<String> symbolWhitelist,
                       Function<List<FuturesPositionDTO>, BigDecimal> equityOf, Function<String, BigDecimal> markPrice,
@@ -82,7 +83,7 @@ public class TradeTools {
         this.messages = messages;
     }
 
-    public List<JSONObject> actions() {
+    public List<ObjectNode> actions() {
         return actions;
     }
 
@@ -96,12 +97,12 @@ public class TradeTools {
             to confirm the account after your own trades within this round.""")
     public String getAccount() {
         try {
-            JSONObject out = new JSONObject();
+            ObjectNode out = MAPPER.createObjectNode();
             out.put("balance", simTradeClient.getBalance(simUserId));
             List<FuturesPositionDTO> positions = simTradeClient.getAllPositions(simUserId);
-            JSONArray ps = new JSONArray();
+            ArrayNode ps = MAPPER.createArrayNode();
             for (FuturesPositionDTO p : positions) {
-                JSONObject row = new JSONObject();
+                ObjectNode row = MAPPER.createObjectNode();
                 row.put("positionId", p.getId());
                 row.put("symbol", p.getSymbol());
                 row.put("side", p.getSide());
@@ -111,14 +112,14 @@ public class TradeTools {
                 row.put("margin", p.getMargin());
                 row.put("unrealizedPnl", p.getUnrealizedPnl());
                 row.put("liquidationPrice", p.getLiquidationPrice());
-                row.put("stopLosses", p.getStopLosses());
-                row.put("takeProfits", p.getTakeProfits());
+                row.set("stopLosses", MAPPER.valueToTree(p.getStopLosses()));
+                row.set("takeProfits", MAPPER.valueToTree(p.getTakeProfits()));
                 ps.add(row);
             }
-            out.put("positions", ps);
+            out.set("positions", ps);
             List<FuturesOrderResponse> pending = simTradeClient.getPendingOrders(simUserId, null);
-            out.put("pendingOrders", JSON.toJSON(pending));
-            return ok("get_account", null, out.toJSONString());
+            out.set("pendingOrders", MAPPER.valueToTree(pending));
+            return ok("get_account", null, MAPPER.writeValueAsString(out));
         } catch (Exception e) {
             return fail("get_account", null, e);
         }
@@ -159,7 +160,7 @@ public class TradeTools {
                 stopLossPrice == null ? null : BigDecimal.valueOf(stopLossPrice),
                 takeProfitPrice == null ? null : BigDecimal.valueOf(takeProfitPrice),
                 playType, signalsUsed, invalidationCondition);
-        JSONObject argSummary = openArgs(req);
+        ObjectNode argSummary = openArgs(req);
         if (roundExpired()) {
             return expired("open_position", argSummary);
         }
@@ -211,7 +212,7 @@ public class TradeTools {
             }
             FuturesOrderResponse resp = SimOrderRetry.send(() -> simTradeClient.openPosition(simUserId, openReq));
             persistPlan(req, mark, coversPlan, resp);
-            return ok("open_position", argSummary, JSON.toJSONString(resp));
+            return ok("open_position", argSummary, MAPPER.writeValueAsString(resp));
         } catch (SimOrderRetry.UnknownOutcome e) {
             return unknown("open_position", argSummary, e);
         } catch (Exception e) {
@@ -256,10 +257,10 @@ public class TradeTools {
     public String closePosition(@ToolParam(description = "Position id from the [Account] block in your opening message (or get_account)") long positionId,
                                 @ToolParam(description = "Quantity in coins to close") double quantity,
                                 @ToolParam(description = "One sentence: why close now") String reason) {
-        JSONObject args = new JSONObject()
-                .fluentPut("positionId", positionId)
-                .fluentPut("quantity", quantity)
-                .fluentPut("reason", reason);
+        ObjectNode args = MAPPER.createObjectNode()
+                .put("positionId", positionId)
+                .put("quantity", quantity)
+                .put("reason", reason);
         if (roundExpired()) {
             return expired("close_position", args);
         }
@@ -278,7 +279,7 @@ public class TradeTools {
             // 平掉的数量进修订史，理由是模型给的；全平后计划到下轮开头对账归档
             revisePlan(pos, prompts.get(ctx.lang(), "trader.revise.close"),
                     BigDecimal.valueOf(quantity).stripTrailingZeros().toPlainString(), reason);
-            return ok("close_position", args, JSON.toJSONString(resp));
+            return ok("close_position", args, MAPPER.writeValueAsString(resp));
         } catch (SimOrderRetry.UnknownOutcome e) {
             return unknown("close_position", args, e);
         } catch (Exception e) {
@@ -298,10 +299,10 @@ public class TradeTools {
     public String setStopLoss(@ToolParam(description = "Position id from the [Account] block in your opening message (or get_account)") long positionId,
                               @ToolParam(description = "New stop-loss price") double stopLossPrice,
                               @ToolParam(description = "Why you move the stop now, e.g. 'price +2R, lock breakeven'") String reason) {
-        JSONObject args = new JSONObject()
-                .fluentPut("positionId", positionId)
-                .fluentPut("stopLossPrice", stopLossPrice)
-                .fluentPut("reason", reason);
+        ObjectNode args = MAPPER.createObjectNode()
+                .put("positionId", positionId)
+                .put("stopLossPrice", stopLossPrice)
+                .put("reason", reason);
         if (roundExpired()) {
             return expired("set_stop_loss", args);
         }
@@ -362,10 +363,10 @@ public class TradeTools {
     public String setTakeProfit(@ToolParam(description = "Position id from the [Account] block in your opening message (or get_account)") long positionId,
                                 @ToolParam(description = "New take-profit price") double takeProfitPrice,
                                 @ToolParam(description = "Why you move the target now, e.g. 'trend accelerating, extend to next resistance'") String reason) {
-        JSONObject args = new JSONObject()
-                .fluentPut("positionId", positionId)
-                .fluentPut("takeProfitPrice", takeProfitPrice)
-                .fluentPut("reason", reason);
+        ObjectNode args = MAPPER.createObjectNode()
+                .put("positionId", positionId)
+                .put("takeProfitPrice", takeProfitPrice)
+                .put("reason", reason);
         if (roundExpired()) {
             return expired("set_take_profit", args);
         }
@@ -425,12 +426,12 @@ public class TradeTools {
                             @ToolParam(description = "One sentence citing concrete data behind holding this position") String signalsUsed,
                             @ToolParam(description = "Market condition that proves this thesis wrong (NOT a PnL number)") String invalidationCondition,
                             @ToolParam(description = "Target price, optional", required = false) Double targetPrice) {
-        JSONObject args = new JSONObject()
-                .fluentPut("positionId", positionId)
-                .fluentPut("playType", playType)
-                .fluentPut("signalsUsed", signalsUsed)
-                .fluentPut("invalidationCondition", invalidationCondition)
-                .fluentPut("targetPrice", targetPrice);
+        ObjectNode args = MAPPER.createObjectNode()
+                .put("positionId", positionId)
+                .put("playType", playType)
+                .put("signalsUsed", signalsUsed)
+                .put("invalidationCondition", invalidationCondition)
+                .put("targetPrice", targetPrice);
         try {
             FuturesPositionDTO pos = findPosition(positionId);
             if (pos == null) {
@@ -548,84 +549,83 @@ public class TradeTools {
         return System.currentTimeMillis() > ctx.deadlineMs();
     }
 
-    private String expired(String tool, JSONObject args) {
+    private String expired(String tool, ObjectNode args) {
         return rejected(tool, args, prompts.get(ctx.lang(), "trader.reject.expired"));
     }
 
     /** 结果未知：绝不能当普通失败回——模型看见 ERROR 会重下一单，那就是双仓。 */
-    private String unknown(String tool, JSONObject args, SimOrderRetry.UnknownOutcome e) {
+    private String unknown(String tool, ObjectNode args, SimOrderRetry.UnknownOutcome e) {
         String cause = String.valueOf(e.getCause().getMessage());
         if (cause.length() > 200) {
             cause = cause.substring(0, 200) + "…";
         }
-        action(tool, args).fluentPut("status", "unknown").fluentPut("error", cause);
+        action(tool, args).put("status", "unknown").put("error", cause);
         log.warn("[TradeTools] {} 结果未知 simUserId={} msg={}", tool, simUserId, cause);
         return prompts.get(ctx.lang(), "trader.reject.unknown", Map.of("cause", String.valueOf(cause)));
     }
 
     /** 护栏拒绝：与 open_position 的 REJECTED 同一语义，进动作轨迹，模型可修正重试。 */
-    private String rejected(String tool, JSONObject args, String reason) {
-        action(tool, args).fluentPut("rejected", reason);
+    private String rejected(String tool, ObjectNode args, String reason) {
+        action(tool, args).put("rejected", reason);
         return "REJECTED: " + reason;
     }
 
     @Tool(name = "cancel_order", description = "Cancel a pending limit order by orderId (from the [Account] block's pendingOrders in your opening message, or get_account).")
     public String cancelOrder(@ToolParam(description = "Order id from the [Account] block's pendingOrders in your opening message (or get_account)") long orderId) {
-        JSONObject args = new JSONObject().fluentPut("orderId", orderId);
+        ObjectNode args = MAPPER.createObjectNode().put("orderId", orderId);
         if (roundExpired()) {
             return expired("cancel_order", args);
         }
         try {
             FuturesOrderResponse resp = simTradeClient.cancelOrder(simUserId, orderId);
-            return ok("cancel_order", args, JSON.toJSONString(resp));
+            return ok("cancel_order", args, MAPPER.writeValueAsString(resp));
         } catch (Exception e) {
             return fail("cancel_order", args, e);
         }
     }
 
-    private static JSONObject openArgs(TradeGuard.OpenReq req) {
-        return new JSONObject()
-                .fluentPut("symbol", req.symbol())
-                .fluentPut("side", req.side())
-                .fluentPut("orderType", req.orderType())
-                .fluentPut("quantity", req.quantity())
-                .fluentPut("leverage", req.leverage())
-                .fluentPut("limitPrice", req.limitPrice())
-                .fluentPut("stopLossPrice", req.stopLossPrice())
-                .fluentPut("takeProfitPrice", req.takeProfitPrice())
-                .fluentPut("playType", req.playType())
-                .fluentPut("signalsUsed", req.signalsUsed())
-                .fluentPut("invalidationCondition", req.invalidationCondition());
+    private static ObjectNode openArgs(TradeGuard.OpenReq req) {
+        return MAPPER.createObjectNode()
+                .put("symbol", req.symbol())
+                .put("side", req.side())
+                .put("orderType", req.orderType())
+                .put("quantity", req.quantity())
+                .put("leverage", req.leverage())
+                .put("limitPrice", req.limitPrice())
+                .put("stopLossPrice", req.stopLossPrice())
+                .put("takeProfitPrice", req.takeProfitPrice())
+                .put("playType", req.playType())
+                .put("signalsUsed", req.signalsUsed())
+                .put("invalidationCondition", req.invalidationCondition());
     }
 
-    private JSONObject action(String tool, JSONObject args) {
-        JSONObject a = new JSONObject().fluentPut("tool", tool);
+    private ObjectNode action(String tool, ObjectNode args) {
+        ObjectNode a = MAPPER.createObjectNode().put("tool", tool);
         if (args != null) {
-            a.put("args", args);
+            a.set("args", args);
         }
         actions.add(a);
         return a;
     }
 
     /** 成功：结果同时写进动作轨迹（摘要）与工具返回值（全文）。 */
-    private String ok(String tool, JSONObject args, Object payload) {
-        String s = payload instanceof String str ? str : JSON.toJSONString(payload);
+    private String ok(String tool, ObjectNode args, Object payload) {
+        String s = payload instanceof String str ? str : MAPPER.writeValueAsString(payload);
+        ObjectNode action = action(tool, args).put("status", "ok");
         // 轨迹里只存摘要，防止 get_account 大 JSON 把决策行撑爆
-        Object result;
         if (s.length() > 400) {
-            result = s.substring(0, 400) + "…";
+            action.put("result", s.substring(0, 400) + "…");
         } else {
             try {
-                result = JSON.parse(s);
+                action.set("result", MAPPER.readTree(s));
             } catch (Exception e) {
-                result = s; // 不是 JSON 的结果原样入轨迹
+                action.put("result", s); // 不是 JSON 的结果原样入轨迹
             }
         }
-        action(tool, args).fluentPut("status", "ok").fluentPut("result", result);
         return s;
     }
 
-    private String fail(String tool, JSONObject args, Exception e) {
+    private String fail(String tool, ObjectNode args, Exception e) {
         // sim 拒因按码查词表跟 ctx.lang()：这句既进模型上下文又进公开时间线，
         // 跟不上语言的话英文 trader 会读到一句中文（模型立刻跟着混）
         String msg = SimTradeClient.describe(e, messages, ctx.lang());
@@ -633,7 +633,7 @@ public class TradeTools {
         if (msg.length() > 300) {
             msg = msg.substring(0, 300) + "…";
         }
-        action(tool, args).fluentPut("status", "error").fluentPut("error", msg);
+        action(tool, args).put("status", "error").put("error", msg);
         log.warn("[TradeTools] {} 失败 simUserId={} msg={}", tool, simUserId, msg);
         return "ERROR: " + msg;
     }

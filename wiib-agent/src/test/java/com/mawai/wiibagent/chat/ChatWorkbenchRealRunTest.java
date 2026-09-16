@@ -1,7 +1,6 @@
 package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.enums.AgentLang;
-import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.trader.TraderChatService;
@@ -19,6 +18,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -149,7 +149,7 @@ class ChatWorkbenchRealRunTest {
 
     /** 权益的整数段：模型可能写 10,515.31 也可能写 10515.31，去掉千分位后比整数段最稳 */
     private static String equityDigits(String overviewJson) {
-        return JSON.parseObject(overviewJson).getBigDecimal("equity")
+        return MAPPER.readTree(overviewJson).path("equity").asDecimal(null)
                 .setScale(0, RoundingMode.DOWN).toPlainString();
     }
 }

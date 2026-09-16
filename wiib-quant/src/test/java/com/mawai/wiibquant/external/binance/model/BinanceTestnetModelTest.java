@@ -1,11 +1,12 @@
 package com.mawai.wiibquant.external.binance.model;
 
-import com.alibaba.fastjson2.JSON;
 import org.junit.jupiter.api.Test;
+import tools.jackson.core.type.TypeReference;
 
 import java.math.BigDecimal;
 import java.util.List;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -36,7 +37,7 @@ class BinanceTestnetModelTest {
                   "symbol": "BTCUSDT",
                   "time": 1569514978020
                 }]""";
-        List<UserTrade> trades = JSON.parseArray(json, UserTrade.class);
+        List<UserTrade> trades = MAPPER.readValue(json, new TypeReference<List<UserTrade>>() {});
         assertEquals(1, trades.size());
         UserTrade t = trades.get(0);
         assertEquals(698759L, t.getId());
@@ -62,7 +63,7 @@ class BinanceTestnetModelTest {
                   {"symbol":"BTCUSDT","incomeType":"COMMISSION","income":"-0.01000000","asset":"USDT","info":"COMMISSION","time":1570636800000,"tranId":9689322392,"tradeId":"2059192"},
                   {"symbol":"BTCUSDT","incomeType":"REALIZED_PNL","income":"1.23450000","asset":"USDT","info":"REALIZED_PNL","time":1570636800001,"tranId":9689322393,"tradeId":"2059193"}
                 ]""";
-        List<IncomeRecord> incomes = JSON.parseArray(json, IncomeRecord.class);
+        List<IncomeRecord> incomes = MAPPER.readValue(json, new TypeReference<List<IncomeRecord>>() {});
         assertEquals(3, incomes.size());
 
         IncomeRecord commission = incomes.get(1);
@@ -82,5 +83,54 @@ class BinanceTestnetModelTest {
                 .map(IncomeRecord::getIncome)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         assertEquals(0, net.compareTo(new BigDecimal("1.22450000")));
+    }
+
+    /** POST /fapi/v1/order 样例：数值是字符串、布尔是 JSON 布尔，model 里没有的字段不能报错 */
+    @Test
+    void orderResponseDeserialization() {
+        String json = """
+                {
+                  "clientOrderId": "testOrder", "cumQty": "0", "cumQuote": "0", "executedQty": "0",
+                  "orderId": 22542179, "avgPrice": "0.00000", "origQty": "10", "price": "0",
+                  "reduceOnly": false, "side": "BUY", "positionSide": "SHORT", "status": "NEW",
+                  "stopPrice": "9300", "closePosition": true, "symbol": "BTCUSDT", "timeInForce": "GTD",
+                  "type": "TRAILING_STOP_MARKET", "origType": "TRAILING_STOP_MARKET",
+                  "activatePrice": "9020", "priceRate": "0.3", "updateTime": 1566818724722,
+                  "workingType": "CONTRACT_PRICE", "priceProtect": false, "priceMatch": "NONE",
+                  "selfTradePreventionMode": "NONE", "goodTillDate": 1693207680000, "notInModel": "x"
+                }""";
+        OrderResponse o = MAPPER.readValue(json, OrderResponse.class);
+        assertEquals(22542179L, o.getOrderId());
+        assertEquals(new BigDecimal("0.00000"), o.getAvgPrice());
+        assertEquals(new BigDecimal("10"), o.getOrigQty());
+        assertEquals(new BigDecimal("0.3"), o.getPriceRate());
+        assertFalse(o.getReduceOnly());
+        assertTrue(o.getClosePosition());
+        assertEquals(1693207680000L, o.getGoodTillDate());
+    }
+
+    /** GET /fapi/v3/positionRisk 样例：unRealizedProfit 这种中间大写的字段名要对上 */
+    @Test
+    void positionRiskDeserialization() {
+        String json = """
+                [{"symbol":"ADAUSDT","positionSide":"BOTH","positionAmt":"30","entryPrice":"0.385",
+                  "breakEvenPrice":"0.385077","markPrice":"0.41047590","unRealizedProfit":"0.76427700",
+                  "liquidationPrice":"0","isolatedMargin":"0","notional":"12.31427700","marginAsset":"USDT",
+                  "isolatedWallet":"0","initialMargin":"0.61571385","maintMargin":"0.08004280",
+                  "positionInitialMargin":"0.61571385","openOrderInitialMargin":"0","adl":2,
+                  "bidNotional":"0","askNotional":"0","updateTime":1720736417660}]""";
+        PositionRisk p = MAPPER.readValue(json, new TypeReference<List<PositionRisk>>() {}).get(0);
+        assertEquals(new BigDecimal("0.76427700"), p.getUnRealizedProfit());
+        assertEquals(new BigDecimal("0.41047590"), p.getMarkPrice());
+        assertEquals(2, p.getAdl());
+        assertEquals(1720736417660L, p.getUpdateTime());
+    }
+
+    /** DELETE /fapi/v1/allOpenOrders：code 可能是字符串 */
+    @Test
+    void simpleAckStringCode() {
+        SimpleAck ack = MAPPER.readValue("{\"code\":\"200\",\"msg\":\"The operation of cancel all open order is done.\"}",
+                SimpleAck.class);
+        assertEquals(200, ack.getCode());
     }
 }

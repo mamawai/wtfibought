@@ -1,7 +1,5 @@
 package com.mawai.wiibquant.whale;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibquant.external.hyperliquid.FakeHyperliquid;
 import com.mawai.wiibquant.external.hyperliquid.HyperliquidClient;
 import com.mawai.wiibquant.mapper.WhaleAddressMapper;
@@ -9,6 +7,7 @@ import com.mawai.wiibquant.mapper.WhaleAddressMapper.Known;
 import com.mawai.wiibquant.mapper.WhaleAddressMapper.Row;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import tools.jackson.databind.JsonNode;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -20,6 +19,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
@@ -68,9 +68,9 @@ class WhalePoolTaskTest {
     }
 
     private String route(String body) {
-        JSONObject o = JSON.parseObject(body);
-        String type = o.getString("type");
-        String user = o.getString("user");
+        JsonNode o = MAPPER.readTree(body);
+        String type = o.path("type").asString(null);
+        String user = o.path("user").asString(null);
         requests.add(type + " " + user);
         return switch (type) {
             case "clearinghouseState" -> states.getOrDefault(user, EMPTY_STATE);

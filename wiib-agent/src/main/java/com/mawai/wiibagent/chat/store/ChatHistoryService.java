@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.chat.store;
 
-import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.WorkbenchChatMessage;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
@@ -11,10 +10,13 @@ import com.mawai.wiibagent.mapper.WorkbenchChatMessageMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 工作台对话历史（展示用）：user/assistant 消息按会话落库，支撑历史会话列表与回看。
@@ -90,7 +92,7 @@ public class ChatHistoryService {
                 row.setLatencyMs(meta.latencyMs());
             }
             if (sources != null && !sources.isEmpty()) {
-                row.setSources(SearchEvent.Source.toJson(sources).toJSONString());
+                row.setSources(MAPPER.writeValueAsString(SearchEvent.Source.toJson(sources)));
             }
             // createdAt 由全局 MetaObjectHandler 填，不手塞
             messageMapper.insert(row);
@@ -142,7 +144,8 @@ public class ChatHistoryService {
 
     /** 没搜过的行（user 行、老数据）给 null，不给空列表 */
     private static List<SearchEvent.Source> sourcesOf(WorkbenchChatMessage row) {
-        return row.getSources() == null ? null : SearchEvent.Source.fromJson(JSON.parseArray(row.getSources()));
+        return row.getSources() == null ? null : SearchEvent.Source.fromJson(MAPPER.readValue(row.getSources(), ArrayNode.class));
+
     }
 
     /** 没落过读数的行（user 行、老数据）给 null 而不是空壳，省得前端再判一层"有对象但全空" */

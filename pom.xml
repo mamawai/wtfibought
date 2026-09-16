@@ -37,7 +37,6 @@
         <hutool.version>5.8.24</hutool.version>
         <pagehelper-starter.version>4.1.1</pagehelper-starter.version>
         <openapi.version>3.0.3</openapi.version>
-        <fastjson2.version>2.0.60</fastjson2.version>
     </properties>
 
     <dependencyManagement>
@@ -89,10 +88,10 @@
                 <version>${sa-token.version}</version>
             </dependency>
 
-            <!-- Sa-Token Redis Jackson -->
+            <!-- Sa-Token Redis（JSON 走 boot4-starter 自带的 Jackson 3 插件） -->
             <dependency>
                 <groupId>cn.dev33</groupId>
-                <artifactId>sa-token-redis-jackson</artifactId>
+                <artifactId>sa-token-redis-template</artifactId>
                 <version>${sa-token.version}</version>
             </dependency>
 
@@ -115,12 +114,6 @@
                 <groupId>org.springdoc</groupId>
                 <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
                 <version>${openapi.version}</version>
-            </dependency>
-
-            <dependency>
-                <groupId>com.alibaba.fastjson2</groupId>
-                <artifactId>fastjson2</artifactId>
-                <version>${fastjson2.version}</version>
             </dependency>
 
             <!-- PageHelper分页 -->

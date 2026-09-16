@@ -1,11 +1,13 @@
 package com.mawai.wiibagent.chat.gate;
 
-import com.alibaba.fastjson2.JSONObject;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiPredicate;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 工作台运行注册表：sessionId → 运行中标记 + SSE 事件出口。
@@ -22,7 +24,7 @@ public class WorkbenchRunRegistry {
     /**
      * 事件出口：返回 true=真推出去了。用 BiPredicate 为了把"推没推出去"答给调用方。
      */
-    public interface Emitter extends BiPredicate<String, JSONObject> {
+    public interface Emitter extends BiPredicate<String, ObjectNode> {
     }
 
     /** value=SSE 事件出口（key 存在即"运行中"） */
@@ -44,7 +46,7 @@ public class WorkbenchRunRegistry {
 
     /** 工具侧：推一条阶段进度。data 字段名 {@code text} 是既有前端契约，别改。 */
     public void publishProgress(String sessionId, String text) {
-        publish(sessionId, "progress", new JSONObject().fluentPut("text", text));
+        publish(sessionId, "progress", MAPPER.createObjectNode().put("text", text));
     }
 
     /**
@@ -56,10 +58,10 @@ public class WorkbenchRunRegistry {
      * @param formType note / wake / review
      * @param prefill  预填字段，可为 null（不放这个字段，前端按空表单渲染）
      */
-    public boolean publishForm(String sessionId, String formType, JSONObject prefill) {
-        JSONObject data = new JSONObject().fluentPut("form", formType);
+    public boolean publishForm(String sessionId, String formType, ObjectNode prefill) {
+        ObjectNode data = MAPPER.createObjectNode().put("form", formType);
         if (prefill != null) {
-            data.fluentPut("prefill", prefill);
+            data.set("prefill", prefill);
         }
         return publish(sessionId, "form_request", data);
     }
@@ -73,12 +75,12 @@ public class WorkbenchRunRegistry {
      * 整份报告只经这条通道给前端，回模型的是裁剪版（见 {@code BehaviorToolkit}）：
      * 30 天逐日快照对模型是纯噪音，对卡片却是那条资产曲线。
      */
-    public boolean publishBehaviorReport(String sessionId, JSONObject report) {
-        return publish(sessionId, "behavior_report", new JSONObject().fluentPut("report", report));
+    public boolean publishBehaviorReport(String sessionId, ObjectNode report) {
+        return publish(sessionId, "behavior_report", MAPPER.createObjectNode().set("report", report));
     }
 
     /** 统一出口：会话已结束、通道已断连，两种都返回 false。 */
-    private boolean publish(String sessionId, String event, JSONObject data) {
+    private boolean publish(String sessionId, String event, ObjectNode data) {
         Emitter emitter = runs.get(sessionId);
         return emitter != null && emitter.test(event, data);
     }

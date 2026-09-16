@@ -1,7 +1,5 @@
 package com.mawai.wiibagent.learning;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
@@ -24,6 +22,7 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -36,6 +35,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * learning agent 学习回路（向同侪学习，看别人不看自己；看自己的复盘见 ReviewRunner）：
@@ -213,8 +214,8 @@ public class LearningRunner {
         } finally {
             task.cancel(true);
             // 轨迹与用量都落 finally：超时作废的那一轮，"看了谁"和烧掉的 token 一样真实发生过
-            List<JSONObject> calls = trace.calls();
-            d.setActionsJson(JSON.toJSONString(calls));
+            List<ObjectNode> calls = trace.calls();
+            d.setActionsJson(MAPPER.writeValueAsString(calls));
             d.setToolCalls(calls.size());
             UsageTrackingChatModel.UsageSnapshot usage = model.snapshot();
             d.setModelCalls(usage.modelCalls());

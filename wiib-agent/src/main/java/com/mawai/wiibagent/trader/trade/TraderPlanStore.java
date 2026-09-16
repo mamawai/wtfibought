@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.trader.trade;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -15,6 +12,7 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -29,6 +27,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 交易计划存取。键 trader+round+symbol+side，LIVE 至多一条（DB 部分唯一索引只约束 LIVE）。
@@ -56,11 +56,11 @@ public class TraderPlanStore {
 
     /** 修订追加：计划的任何修改一律留痕带理由（回注给下轮无记忆的模型看）；不动计划本体的原始快照字段。 */
     public static void appendRevision(AiTraderPlan plan, long time, String type, String change, String reason) {
-        JSONArray arr = plan.getRevisionsJson() == null || plan.getRevisionsJson().isBlank()
-                ? new JSONArray() : JSON.parseArray(plan.getRevisionsJson());
-        arr.add(new JSONObject().fluentPut("time", time).fluentPut("type", type)
-                .fluentPut("change", change).fluentPut("reason", reason));
-        plan.setRevisionsJson(arr.toJSONString());
+        ArrayNode arr = plan.getRevisionsJson() == null || plan.getRevisionsJson().isBlank()
+                ? MAPPER.createArrayNode() : MAPPER.readValue(plan.getRevisionsJson(), ArrayNode.class);
+        arr.add(MAPPER.createObjectNode().put("time", time).put("type", type)
+                .put("change", change).put("reason", reason));
+        plan.setRevisionsJson(MAPPER.writeValueAsString(arr));
     }
 
     // ==================== 写路径：唤醒中模型下单 ====================

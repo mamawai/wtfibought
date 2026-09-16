@@ -67,7 +67,7 @@ class CacheServiceTest {
         CacheService cache = withRedis(valueOps);
 
         cache.putPredictionOfficialWindow(1700000000L, 100L, 200L, 150L, 160L);
-        // 捕获真实写入的 JSON，再喂回去回读——验证 fastjson2 对 record 的序列化/反序列化闭环
+        // 捕获真实写入的 JSON，再喂回去回读——验证 record 的序列化/反序列化闭环
         ArgumentCaptor<String> json = ArgumentCaptor.forClass(String.class);
         verify(valueOps).set(eq("prediction:window:1700000000"), json.capture(), any(Duration.class));
 
@@ -79,6 +79,39 @@ class CacheServiceTest {
         assertThat(w.endTimeMs()).isEqualTo(200L);
         assertThat(w.referenceNowMs()).isEqualTo(150L);
         assertThat(w.referenceLocalTimeMs()).isEqualTo(160L);
+    }
+
+    /** 换库前 fastjson2 写进 Redis 的串（字段按字母序），换库后还得读得回来 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void fastjson2老串仍能读回() {
+        ValueOperations<String, String> valueOps = mock(ValueOperations.class);
+        CacheService cache = withRedis(valueOps);
+
+        when(valueOps.get("prediction:window:1700000000")).thenReturn(
+                "{\"endTimeMs\":200,\"referenceLocalTimeMs\":160,\"referenceNowMs\":150,\"startTimeMs\":100,\"windowStart\":1700000000}");
+        assertThat(cache.getPredictionOfficialWindow(1700000000L))
+                .isEqualTo(new CacheService.PredictionOfficialWindow(1700000000L, 100L, 200L, 150L, 160L));
+
+        when(valueOps.get("market:funding-rate:BTCUSDT")).thenReturn("{\"fetchedAt\":1700000000000,\"rate\":0.00010000}");
+        CacheService.FundingRate rate = cache.getFundingRate("BTCUSDT");
+        assertThat(rate.rate()).isEqualTo(new BigDecimal("0.00010000"));
+        assertThat(rate.fetchedAt()).isEqualTo(1700000000000L);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 资金费率写读保留标度() {
+        ValueOperations<String, String> valueOps = mock(ValueOperations.class);
+        CacheService cache = withRedis(valueOps);
+
+        cache.putFundingRate("BTCUSDT", new BigDecimal("-0.00012500"), 1700000000000L);
+        ArgumentCaptor<String> json = ArgumentCaptor.forClass(String.class);
+        verify(valueOps).set(eq("market:funding-rate:BTCUSDT"), json.capture(), any(Duration.class));
+
+        when(valueOps.get("market:funding-rate:BTCUSDT")).thenReturn(json.getValue());
+        assertThat(cache.getFundingRate("BTCUSDT"))
+                .isEqualTo(new CacheService.FundingRate(new BigDecimal("-0.00012500"), 1700000000000L));
     }
 
     @Test

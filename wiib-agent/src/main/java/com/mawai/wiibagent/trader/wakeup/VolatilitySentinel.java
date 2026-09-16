@@ -1,7 +1,5 @@
 package com.mawai.wiibagent.trader.wakeup;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.market.MarketStreamChannels;
@@ -16,10 +14,10 @@ import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.List;
@@ -27,6 +25,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 波动哨兵（探测层）：feed markPrice tick（~1s）→ 每币 5 分钟滚动窗口振幅，超过
@@ -89,12 +89,12 @@ public class VolatilitySentinel implements MessageListener {
     @Override
     public void onMessage(@NonNull Message message, byte[] pattern) {
         try {
-            JSONObject obj = JSON.parseObject(new String(message.getBody(), StandardCharsets.UTF_8));
-            if (!"markprice".equals(obj.getString("type"))) {
+            JsonNode obj = MAPPER.readTree(message.getBody());
+            if (!"markprice".equals(obj.path("type").asString(null))) {
                 return;
             }
-            String symbol = obj.getString("symbol");
-            String price = obj.getString("price");
+            String symbol = obj.path("symbol").asString(null);
+            String price = obj.path("price").asString(null);
             if (symbol == null || price == null) {
                 return;
             }

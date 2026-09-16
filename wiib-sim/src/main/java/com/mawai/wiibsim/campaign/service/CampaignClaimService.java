@@ -1,7 +1,5 @@
 package com.mawai.wiibsim.campaign.service;
 
-import cn.hutool.json.JSONObject;
-import cn.hutool.json.JSONUtil;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibsim.campaign.LdcProperties;
@@ -27,6 +25,8 @@ import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDateTime;
 import java.util.Map;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 领取：二次 LinuxDo 授权 → 拿最新身份 → 调分发接口。
@@ -163,8 +163,7 @@ public class CampaignClaimService {
         } catch (RestClientException e) {
             throw new BizException(messages.get("campaign.claim.authFailed", Map.of("reason", String.valueOf(e.getMessage()))));
         }
-        JSONObject json = JSONUtil.parseObj(tokenResp == null ? "{}" : tokenResp);
-        String accessToken = json.getStr("access_token");
+        String accessToken = MAPPER.readTree(tokenResp == null ? "{}" : tokenResp).path("access_token").asString(null);
         if (accessToken == null) throw new BizException(messages.get("campaign.claim.authNoToken"));
 
         HttpHeaders userHeaders = new HttpHeaders();

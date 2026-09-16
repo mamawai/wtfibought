@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.llm;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
@@ -18,6 +15,9 @@ import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.http.HttpHeaders;
 import reactor.core.publisher.Flux;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -26,6 +26,8 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * OpenAI Responses API（/v1/responses）协议。
@@ -66,8 +68,8 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
     // ========== 请求构建 ==========
 
     @Override
-    protected JSONObject requestBody(Prompt prompt) {
-        JSONObject body = new JSONObject();
+    protected ObjectNode requestBody(Prompt prompt) {
+        ObjectNode body = MAPPER.createObjectNode();
         ChatOptions options = prompt.getOptions();
 
         body.put("model", effectiveModel(prompt));
@@ -76,7 +78,7 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
             body.put("temperature", temp);
         }
         if (reasoningEffort != null) {
-            body.put("reasoning", new JSONObject().fluentPut("effort", reasoningEffort));
+            body.set("reasoning", MAPPER.createObjectNode().put("effort", reasoningEffort));
         }
         // 无状态：不让服务端存会话，OpenAI 官方 store 默认 true 必须显式关
         body.put("store", false);
@@ -84,7 +86,7 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
 
         // system 消息进 instructions（Responses 惯例），其余按序转 input items
         StringBuilder instructions = new StringBuilder();
-        JSONArray input = new JSONArray();
+        ArrayNode input = MAPPER.createArrayNode();
         List<Message> history = prompt.getInstructions();
         for (int i = 0; i < history.size(); i++) {
             Message message = history.get(i);
@@ -99,10 +101,10 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
                 case ASSISTANT -> input.addAll(assistantItems((AssistantMessage) message, inToolLoop(history, i)));
                 case TOOL -> {
                     for (ToolResponseMessage.ToolResponse tr : ((ToolResponseMessage) message).getResponses()) {
-                        input.add(new JSONObject()
-                                .fluentPut("type", "function_call_output")
-                                .fluentPut("call_id", tr.id())
-                                .fluentPut("output", tr.responseData()));
+                        input.add(MAPPER.createObjectNode()
+                                .put("type", "function_call_output")
+                                .put("call_id", tr.id())
+                                .put("output", tr.responseData()));
                     }
                 }
             }
@@ -110,32 +112,32 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
         if (!instructions.isEmpty()) {
             body.put("instructions", instructions.toString());
         }
-        body.put("input", input);
+        body.set("input", input);
 
         // 工具定义：Responses 是扁平结构（name 在顶层，不像 completions 嵌在 function 下）
         List<String> toolNames = new ArrayList<>();
         if (options instanceof ToolCallingChatOptions toolOptions) {
-            JSONArray tools = new JSONArray();
+            ArrayNode tools = MAPPER.createArrayNode();
             for (ToolDefinition def : toolCallingManager.resolveToolDefinitions(toolOptions)) {
-                tools.add(new JSONObject()
-                        .fluentPut("type", "function")
-                        .fluentPut("name", def.name())
-                        .fluentPut("description", def.description())
-                        .fluentPut("parameters", JSON.parseObject(def.inputSchema())));
+                tools.add(MAPPER.createObjectNode()
+                        .put("type", "function")
+                        .put("name", def.name())
+                        .put("description", def.description())
+                        .set("parameters", MAPPER.readTree(def.inputSchema())));
                 toolNames.add(def.name());
             }
             if (searchAllowed(toolOptions)) {
-                tools.add(new JSONObject().fluentPut("type", "web_search"));
+                tools.add(MAPPER.createObjectNode().put("type", "web_search"));
                 toolNames.add("web_search");
             }
             if (!tools.isEmpty()) {
-                body.put("tools", tools);
+                body.set("tools", tools);
                 // 强不强制用工具由调用方按次决定（首轮强制/单次结构化调用），经 toolContext 捎进来（ToolChoice）
                 body.put("tool_choice", ToolChoice.of(toolOptions));
             }
         }
         body.put("prompt_cache_key", cacheKey(instructions.toString(), toolNames));
-        logRequest(body.getString("model"), body.getString("tool_choice"), toolNames);
+        logRequest(body.path("model").asString(null), body.path("tool_choice").asString(null), toolNames);
         return body;
     }
 
@@ -160,25 +162,24 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
         }
     }
 
-    private JSONObject messageItem(String role, String contentType, String text) {
-        return new JSONObject()
-                .fluentPut("type", "message")
-                .fluentPut("role", role)
-                .fluentPut("content", new JSONArray().fluentAdd(new JSONObject()
-                        .fluentPut("type", contentType)
-                        .fluentPut("text", text == null ? "" : text)));
+    private ObjectNode messageItem(String role, String contentType, String text) {
+        return MAPPER.createObjectNode()
+                .put("type", "message")
+                .put("role", role)
+                .set("content", MAPPER.createArrayNode().add(MAPPER.createObjectNode()
+                        .put("type", contentType)
+                        .put("text", text == null ? "" : text)));
     }
 
     /**
      * assistant 消息 → input item。工具循环里的那条带 {@link #ITEMS_KEY} 就原样回放；
      * 其余按文本 + function_call 拼（已结束的轮次、别的协议留下的历史、压缩产物）。
      */
-    private List<JSONObject> assistantItems(AssistantMessage assistant, boolean replayRaw) {
-        List<JSONObject> items = new ArrayList<>();
+    private List<ObjectNode> assistantItems(AssistantMessage assistant, boolean replayRaw) {
+        List<ObjectNode> items = new ArrayList<>();
         if (replayRaw && assistant.getMetadata().get(ITEMS_KEY) instanceof String raw) {
-            JSONArray stored = JSON.parseArray(raw);
-            for (int i = 0; i < stored.size(); i++) {
-                items.add(stored.getJSONObject(i));
+            for (JsonNode item : MAPPER.readValue(raw, ArrayNode.class)) {
+                items.add((ObjectNode) item);
             }
             return items;
         }
@@ -187,11 +188,11 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
         }
         // 历史工具调用重建为 function_call item——function_call_output 必须有配对的调用项
         for (AssistantMessage.ToolCall tc : assistant.getToolCalls()) {
-            items.add(new JSONObject()
-                    .fluentPut("type", "function_call")
-                    .fluentPut("call_id", tc.id())
-                    .fluentPut("name", tc.name())
-                    .fluentPut("arguments", tc.arguments()));
+            items.add(MAPPER.createObjectNode()
+                    .put("type", "function_call")
+                    .put("call_id", tc.id())
+                    .put("name", tc.name())
+                    .put("arguments", tc.arguments()));
         }
         return items;
     }
@@ -200,19 +201,19 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
 
     /** 一次订阅里按顺序攒的原始 output item：收尾时整体挂到消息 metadata 原样回传 */
     protected static class State extends StreamState {
-        final JSONArray items = new JSONArray();
+        final ArrayNode items = MAPPER.createArrayNode();
     }
 
     @Override
-    protected Flux<ChatResponse> toFrames(JSONObject event, State state) {
+    protected Flux<ChatResponse> toFrames(JsonNode event, State state) {
         // 事件类型以 data.type 为准（比 event: 行更普适，CPA/OpenAI 都带）
-        String type = event.getString("type");
+        String type = event.path("type").asString(null);
         if (type == null) {
             return Flux.empty();
         }
         switch (type) {
             case "response.output_text.delta" -> {
-                String delta = event.getString("delta");
+                String delta = event.path("delta").asString(null);
                 if (delta == null || delta.isEmpty()) {
                     return Flux.empty();
                 }
@@ -221,56 +222,55 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
             }
             // 服务端搜索项（web_search_call 等，各家名字不同，认 *_search_call 后缀）：added=开搜，done=搜完
             case "response.output_item.added" -> {
-                JSONObject item = event.getJSONObject("item");
-                if (item == null || !isSearchCall(item)) {
+                JsonNode item = event.get("item");
+                if (item == null || item.isNull() || !isSearchCall(item)) {
                     return Flux.empty();
                 }
-                JSONObject action = item.getJSONObject("action");
-                return Flux.just(searchFrame(SearchEvent.searching(action == null ? null : action.getString("query"))));
+                return Flux.just(searchFrame(SearchEvent.searching(item.path("action").path("query").asString(null))));
             }
             case "response.output_item.done" -> {
-                JSONObject item = event.getJSONObject("item");
-                if (item == null) {
+                JsonNode item = event.get("item");
+                if (item == null || item.isNull()) {
                     return Flux.empty();
                 }
                 state.items.add(item);
                 if (isSearchCall(item)) {
-                    return Flux.just(searchFrame(searchedEvent(item.getJSONObject("action"))));
+                    return Flux.just(searchFrame(searchedEvent(item.path("action"))));
                 }
-                if (!"function_call".equals(item.getString("type"))) {
+                if (!"function_call".equals(item.path("type").asString(null))) {
                     return Flux.empty();
                 }
                 state.sawToolCall = true;
                 return Flux.just(toolCallFrame(parseToolCall(item)));
             }
             case "response.output_text.annotation.added" -> {
-                JSONObject annotation = event.getJSONObject("annotation");
-                if (annotation == null || !"url_citation".equals(annotation.getString("type"))) {
+                JsonNode annotation = event.path("annotation");
+                if (!"url_citation".equals(annotation.path("type").asString(null))) {
                     return Flux.empty();
                 }
                 return Flux.just(searchFrame(SearchEvent.cited(List.of(
-                        new SearchEvent.Source(annotation.getString("url"), annotation.getString("title"))))));
+                        new SearchEvent.Source(annotation.path("url").asString(null),
+                                annotation.path("title").asString(null))))));
             }
             case "response.completed" -> {
-                JSONObject response = event.getJSONObject("response");
+                JsonNode response = event.hasNonNull("response") ? event.get("response") : null;
                 // 简易网关会把非流式响应原样包成 completed 事件发出，payload 里的 status 可能
                 // 仍是 failed/incomplete——事件类型说完成、payload 说截断时信 payload
-                String status = response == null ? null : response.getString("status");
+                String status = response == null ? null : response.path("status").asString(null);
                 if ("failed".equals(status) || "incomplete".equals(status)) {
                     return Flux.error(new NonTransientAiException(
                             "Responses 流式失败: " + extractErrorMessage(response)));
                 }
                 List<ChatResponse> frames = new ArrayList<>();
-                JSONArray output = response == null ? null : response.getJSONArray("output");
+                JsonNode output = response == null || !response.hasNonNull("output") ? null : response.get("output");
                 // 兜底：不发增量事件的服务端，正文和工具调用都只在完整响应的 output 里
                 if (!state.sawText && !state.sawToolCall && output != null) {
                     String fullText = extractOutputText(output);
                     if (!fullText.isEmpty()) {
                         frames.add(textFrame(fullText));
                     }
-                    for (int i = 0; i < output.size(); i++) {
-                        JSONObject item = output.getJSONObject(i);
-                        if ("function_call".equals(item.getString("type"))) {
+                    for (JsonNode item : output) {
+                        if ("function_call".equals(item.path("type").asString(null))) {
                             state.sawToolCall = true;
                             frames.add(toolCallFrame(parseToolCall(item)));
                         }
@@ -278,21 +278,21 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
                 }
                 // 原始 item 同理：一条 output_item.done 都没来的，整份 output 就是它
                 if (state.items.isEmpty() && output != null) {
-                    state.items.addAll(output);
+                    output.forEach(state.items::add);
                 }
                 frames.add(finalFrame(state.sawToolCall, completedMetadata(response),
-                        Map.of(ITEMS_KEY, state.items.toJSONString())));
+                        Map.of(ITEMS_KEY, MAPPER.writeValueAsString(state.items))));
                 return Flux.fromIterable(frames);
             }
             case "response.failed", "response.incomplete" -> {
-                String message = event.getJSONObject("response") != null
-                        ? extractErrorMessage(event.getJSONObject("response"))
+                String message = event.hasNonNull("response")
+                        ? extractErrorMessage(event.get("response"))
                         : type;
                 return Flux.error(new NonTransientAiException("Responses 流式失败: " + message));
             }
             case "error" -> {
                 return Flux.error(new NonTransientAiException(
-                        "Responses 流式错误: " + event.getString("message")));
+                        "Responses 流式错误: " + event.path("message").asString(null)));
             }
             // 已知且无需处理的事件：进度心跳、reasoning 摘要、arguments 增量（工具整只收在 output_item.done）、
             // 文本/分段的 added/done（正文只认 delta）
@@ -314,20 +314,20 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
     }
 
     /** 收尾帧的 metadata：id、usage，以及服务端搜索观测（xAI usage 形态）——搜没搜必须有据可查 */
-    private ChatResponseMetadata completedMetadata(JSONObject response) {
+    private ChatResponseMetadata completedMetadata(JsonNode response) {
         ChatResponseMetadata.Builder metadata = metadata();
         if (response != null) {
-            metadata.id(response.getString("id"));
-            JSONObject usage = response.getJSONObject("usage");
-            if (usage != null) {
+            metadata.id(response.path("id").asString(null));
+            if (response.hasNonNull("usage")) {
+                JsonNode usage = response.get("usage");
                 metadata.usage(parseUsage(usage));
                 logCacheHit(usage);
-                Integer serverTools = usage.getInteger("num_server_side_tools_used");
-                if (serverTools != null && serverTools > 0) {
+                int serverTools = usage.path("num_server_side_tools_used").asInt(0);
+                if (serverTools > 0) {
                     metadata.keyValue("num_server_side_tools_used", serverTools);
-                    JSONObject details = usage.getJSONObject("server_side_tool_usage_details");
-                    if (details != null) {
-                        metadata.keyValue("server_side_tool_usage_details", details.toJSONString());
+                    JsonNode details = usage.get("server_side_tool_usage_details");
+                    if (details != null && !details.isNull()) {
+                        metadata.keyValue("server_side_tool_usage_details", MAPPER.writeValueAsString(details));
                     }
                     log.info("[Responses] {} 服务端工具调用{}次 明细={}", model, serverTools, details);
                 }
@@ -337,75 +337,69 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
     }
 
     /** 缓存命中观测：cached_tokens 是 input_tokens 内部的明细、不另加，命中好不好只能靠它看 */
-    private void logCacheHit(JSONObject usage) {
-        JSONObject details = usage.getJSONObject("input_tokens_details");
-        Integer cached = details == null ? null : details.getInteger("cached_tokens");
-        if (cached != null && cached > 0) {
-            log.info("[Responses] {} 缓存命中{}/{}", model, cached, usage.getInteger("input_tokens"));
+    private void logCacheHit(JsonNode usage) {
+        int cached = usage.path("input_tokens_details").path("cached_tokens").asInt(0);
+        if (cached > 0) {
+            log.info("[Responses] {} 缓存命中{}/{}", model, cached, usage.path("input_tokens").asInt(0));
         }
     }
 
-    private String extractOutputText(JSONArray output) {
+    private String extractOutputText(JsonNode output) {
         StringBuilder text = new StringBuilder();
-        for (int i = 0; i < output.size(); i++) {
-            JSONObject item = output.getJSONObject(i);
-            if (!"message".equals(item.getString("type"))) {
+        for (JsonNode item : output) {
+            if (!"message".equals(item.path("type").asString(null))) {
                 continue;
             }
-            JSONArray content = item.getJSONArray("content");
-            if (content == null) {
-                continue;
-            }
-            for (int j = 0; j < content.size(); j++) {
-                JSONObject part = content.getJSONObject(j);
-                if ("output_text".equals(part.getString("type")) && part.getString("text") != null) {
-                    text.append(part.getString("text"));
+            for (JsonNode part : item.path("content")) {
+                String partText = part.path("text").asString(null);
+                if ("output_text".equals(part.path("type").asString(null)) && partText != null) {
+                    text.append(partText);
                 }
             }
         }
         return text.toString();
     }
 
-    private static boolean isSearchCall(JSONObject item) {
-        String type = item.getString("type");
+    private static boolean isSearchCall(JsonNode item) {
+        String type = item.path("type").asString(null);
         return type != null && type.endsWith("_search_call");
     }
 
     /** 搜完：query 与 sources 都在 action 里（有就取，没有就是空） */
-    private static SearchEvent searchedEvent(JSONObject action) {
+    private static SearchEvent searchedEvent(JsonNode action) {
         List<SearchEvent.Source> sources = new ArrayList<>();
-        JSONArray list = action == null ? null : action.getJSONArray("sources");
-        if (list != null) {
-            for (int i = 0; i < list.size(); i++) {
-                JSONObject s = list.getJSONObject(i);
-                sources.add(new SearchEvent.Source(s.getString("url"), s.getString("title")));
-            }
+        for (JsonNode s : action.path("sources")) {
+            sources.add(new SearchEvent.Source(s.path("url").asString(null), s.path("title").asString(null)));
         }
-        return SearchEvent.searched(action == null ? null : action.getString("query"), sources);
+        return SearchEvent.searched(action.path("query").asString(null), sources);
     }
 
-    private AssistantMessage.ToolCall parseToolCall(JSONObject item) {
+    private AssistantMessage.ToolCall parseToolCall(JsonNode item) {
         // call_id 是配对 function_call_output 的键；个别实现只给 id，兜底用它
-        String callId = item.getString("call_id") != null ? item.getString("call_id") : item.getString("id");
-        return new AssistantMessage.ToolCall(callId, "function",
-                item.getString("name"), item.getString("arguments"));
+        String callId = item.path("call_id").asString(null) != null
+                ? item.path("call_id").asString(null) : item.path("id").asString(null);
+        // arguments 按协议是 JSON 串；个别网关直接给对象，转回串
+        JsonNode arguments = item.get("arguments");
+        return new AssistantMessage.ToolCall(callId, "function", item.path("name").asString(null),
+                arguments == null || arguments.isNull() ? null
+                        : arguments.isString() ? arguments.asString() : MAPPER.writeValueAsString(arguments));
     }
 
-    private Usage parseUsage(JSONObject usage) {
+    private Usage parseUsage(JsonNode usage) {
         return new DefaultUsage(
-                usage.getInteger("input_tokens"),
-                usage.getInteger("output_tokens"),
-                usage.getInteger("total_tokens"));
+                usage.hasNonNull("input_tokens") ? usage.get("input_tokens").asInt() : null,
+                usage.hasNonNull("output_tokens") ? usage.get("output_tokens").asInt() : null,
+                usage.hasNonNull("total_tokens") ? usage.get("total_tokens").asInt() : null);
     }
 
-    private String extractErrorMessage(JSONObject response) {
-        JSONObject error = response.getJSONObject("error");
-        if (error != null && error.getString("message") != null) {
-            return error.getString("message");
+    private String extractErrorMessage(JsonNode response) {
+        String message = response.path("error").path("message").asString(null);
+        if (message != null) {
+            return message;
         }
-        JSONObject incomplete = response.getJSONObject("incomplete_details");
-        if (incomplete != null) {
-            return "incomplete: " + incomplete.getString("reason");
+        JsonNode incomplete = response.get("incomplete_details");
+        if (incomplete != null && !incomplete.isNull()) {
+            return "incomplete: " + incomplete.path("reason").asString(null);
         }
         return "未知错误";
     }

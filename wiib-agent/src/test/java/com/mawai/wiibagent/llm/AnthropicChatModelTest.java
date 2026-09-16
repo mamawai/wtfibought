@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.llm;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -19,6 +16,7 @@ import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.retry.TransientAiException;
 import org.springframework.ai.tool.definition.ToolDefinition;
+import tools.jackson.databind.JsonNode;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -27,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -69,7 +68,7 @@ class AnthropicChatModelTest {
             try (OutputStream os = exchange.getResponseBody()) {
                 for (String event : events) {
                     String line = event.replaceAll("\\s*\\R\\s*", "");
-                    String type = JSON.parseObject(line).getString("type");
+                    String type = MAPPER.readTree(line).path("type").asString(null);
                     os.write(("event: " + type + "\ndata: " + line + "\n\n").getBytes(StandardCharsets.UTF_8));
                     os.flush();
                 }
@@ -126,8 +125,8 @@ class AnthropicChatModelTest {
         return tcm;
     }
 
-    private static JSONObject body() {
-        return JSON.parseObject(lastRequestBody);
+    private static JsonNode body() {
+        return MAPPER.readTree(lastRequestBody);
     }
 
     private static final String[] PLAIN = new String[]{
@@ -155,23 +154,23 @@ class AnthropicChatModelTest {
 
         assertThat(lastHeaders.get("X-api-key")).containsExactly("sk-ant");
         assertThat(lastHeaders.get("Anthropic-version")).containsExactly("2023-06-01");
-        JSONObject body = body();
-        assertThat(body.getString("model")).isEqualTo("claude-test");
-        assertThat(body.getIntValue("max_tokens")).isEqualTo(AnthropicChatModel.MAX_TOKENS);
+        JsonNode body = body();
+        assertThat(body.path("model").asString(null)).isEqualTo("claude-test");
+        assertThat(body.path("max_tokens").asInt(0)).isEqualTo(AnthropicChatModel.MAX_TOKENS);
         // system 是块数组，首块挂 1h 缓存断点；末条消息末块挂默认（5 分钟）断点
-        JSONObject systemBlock = body.getJSONArray("system").getJSONObject(0);
-        assertThat(systemBlock.getString("text")).isEqualTo("你是助手");
-        assertThat(systemBlock.getJSONObject(AnthropicChatModel.CACHE_CONTROL).getString("ttl")).isEqualTo("1h");
-        JSONObject tail = body.getJSONArray("messages").getJSONObject(0).getJSONArray("content").getJSONObject(0)
-                .getJSONObject(AnthropicChatModel.CACHE_CONTROL);
-        assertThat(tail.getString("type")).isEqualTo("ephemeral");
-        assertThat(tail.containsKey("ttl")).isFalse();
-        assertThat(body.getJSONObject("thinking").getString("type")).isEqualTo("adaptive");
-        assertThat(body.getJSONObject("output_config").getString("effort")).isEqualTo("high");
-        assertThat(body.getJSONArray("tools")).extracting(t -> ((JSONObject) t).getString("type"))
+        JsonNode systemBlock = body.get("system").get(0);
+        assertThat(systemBlock.path("text").asString(null)).isEqualTo("你是助手");
+        assertThat(systemBlock.get(AnthropicChatModel.CACHE_CONTROL).path("ttl").asString(null)).isEqualTo("1h");
+        JsonNode tail = body.get("messages").get(0).get("content").get(0)
+                .get(AnthropicChatModel.CACHE_CONTROL);
+        assertThat(tail.path("type").asString(null)).isEqualTo("ephemeral");
+        assertThat(tail.has("ttl")).isFalse();
+        assertThat(body.get("thinking").path("type").asString(null)).isEqualTo("adaptive");
+        assertThat(body.get("output_config").path("effort").asString(null)).isEqualTo("high");
+        assertThat(body.get("tools")).extracting(t -> t.path("type").asString(null))
                 .containsExactly(AnthropicChatModel.SEARCH_TOOL_TYPE);
-        assertThat(body.getJSONArray("tools").getJSONObject(0).getString("name")).isEqualTo("web_search");
-        assertThat(body.getJSONArray("messages").getJSONObject(0).getString("role")).isEqualTo("user");
+        assertThat(body.get("tools").get(0).path("name").asString(null)).isEqualTo("web_search");
+        assertThat(body.get("messages").get(0).path("role").asString(null)).isEqualTo("user");
     }
 
     @Test
@@ -182,15 +181,15 @@ class AnthropicChatModelTest {
                 new SystemMessage("你是助手"), new UserMessage("首问"),
                 new SystemMessage("【摘要】第1段"), new UserMessage("新问题"))));
 
-        JSONArray system = body().getJSONArray("system");
-        assertThat(system).extracting(b -> ((JSONObject) b).getString("text")).containsExactly("你是助手", "【摘要】第1段");
-        assertThat(system.getJSONObject(0).getJSONObject(AnthropicChatModel.CACHE_CONTROL).getString("ttl")).isEqualTo("1h");
+        JsonNode system = body().get("system");
+        assertThat(system).extracting(b -> b.path("text").asString(null)).containsExactly("你是助手", "【摘要】第1段");
+        assertThat(system.get(0).get(AnthropicChatModel.CACHE_CONTROL).path("ttl").asString(null)).isEqualTo("1h");
         // 摘要块不挂断点：它压一次变一次，挂上去会把基础提示词的 1h 缓存一起冲掉
-        assertThat(system.getJSONObject(1).containsKey(AnthropicChatModel.CACHE_CONTROL)).isFalse();
+        assertThat(system.get(1).has(AnthropicChatModel.CACHE_CONTROL)).isFalse();
         // 摘要没混进 messages
-        JSONArray messages = body().getJSONArray("messages");
+        JsonNode messages = body().get("messages");
         assertThat(messages).hasSize(1);
-        assertThat(messages.getJSONObject(0).getJSONArray("content")).extracting(b -> ((JSONObject) b).getString("text"))
+        assertThat(messages.get(0).get("content")).extracting(b -> b.path("text").asString(null))
                 .containsExactly("首问", "新问题");
     }
 
@@ -198,11 +197,11 @@ class AnthropicChatModelTest {
     void 请求侧_档位none为disabled_留空不传() {
         events = PLAIN;
         model("none", false, mock(ToolCallingManager.class)).call(new Prompt("q"));
-        assertThat(body().getJSONObject("thinking").getString("type")).isEqualTo("disabled");
-        assertThat(body().containsKey("output_config")).isFalse();
+        assertThat(body().get("thinking").path("type").asString(null)).isEqualTo("disabled");
+        assertThat(body().has("output_config")).isFalse();
 
         model().call(new Prompt("q"));
-        assertThat(body().containsKey("thinking")).isFalse();
+        assertThat(body().has("thinking")).isFalse();
     }
 
     @Test
@@ -210,11 +209,11 @@ class AnthropicChatModelTest {
         events = PLAIN;
         AnthropicChatModel on = model(null, true, mock(ToolCallingManager.class));
         on.call(new Prompt("q", on.getOptions()));
-        assertThat(body().containsKey("tools")).isFalse();
+        assertThat(body().has("tools")).isFalse();
 
         AnthropicChatModel off = model(null, false, mock(ToolCallingManager.class));
         off.call(new Prompt("q", allowWebSearch(off)));
-        assertThat(body().containsKey("tools")).isFalse();
+        assertThat(body().has("tools")).isFalse();
     }
 
     @Test
@@ -222,17 +221,17 @@ class AnthropicChatModelTest {
         events = PLAIN;
         AnthropicChatModel m = model(null, false, oneTool());
         m.call(new Prompt("q", ToolChoice.apply(m.getOptions(), ToolChoice.REQUIRED)));
-        JSONObject tool = body().getJSONArray("tools").getJSONObject(0);
-        assertThat(tool.getString("name")).isEqualTo("get_price");
-        assertThat(tool.getJSONObject("input_schema").getString("type")).isEqualTo("object");
-        assertThat(body().getJSONObject("tool_choice").getString("type")).isEqualTo("any");
+        JsonNode tool = body().get("tools").get(0);
+        assertThat(tool.path("name").asString(null)).isEqualTo("get_price");
+        assertThat(tool.get("input_schema").path("type").asString(null)).isEqualTo("object");
+        assertThat(body().get("tool_choice").path("type").asString(null)).isEqualTo("any");
 
         m.call(new Prompt("q", ToolChoice.apply(m.getOptions(), "get_price")));
-        assertThat(body().getJSONObject("tool_choice").getString("type")).isEqualTo("tool");
-        assertThat(body().getJSONObject("tool_choice").getString("name")).isEqualTo("get_price");
+        assertThat(body().get("tool_choice").path("type").asString(null)).isEqualTo("tool");
+        assertThat(body().get("tool_choice").path("name").asString(null)).isEqualTo("get_price");
 
         m.call(new Prompt("q", m.getOptions()));
-        assertThat(body().containsKey("tool_choice")).isFalse();
+        assertThat(body().has("tool_choice")).isFalse();
     }
 
     @Test
@@ -245,26 +244,80 @@ class AnthropicChatModelTest {
         model().call(new Prompt(List.of(new UserMessage("问题"), new UserMessage("补充"),
                 assistant, toolResult, new UserMessage("专家结论"))));
 
-        JSONArray messages = body().getJSONArray("messages");
+        JsonNode messages = body().get("messages");
         assertThat(messages).hasSize(3);
-        assertThat(messages.getJSONObject(0).getString("role")).isEqualTo("user");
-        assertThat(messages.getJSONObject(0).getJSONArray("content")).extracting(b -> ((JSONObject) b).getString("text"))
+        assertThat(messages.get(0).path("role").asString(null)).isEqualTo("user");
+        assertThat(messages.get(0).get("content")).extracting(b -> b.path("text").asString(null))
                 .containsExactly("问题", "补充");
         // 没有原始块的 assistant 按 tool_use 拼；空文本不发空 text 块
-        JSONArray assistantBlocks = messages.getJSONObject(1).getJSONArray("content");
+        JsonNode assistantBlocks = messages.get(1).get("content");
         assertThat(assistantBlocks).hasSize(1);
-        assertThat(assistantBlocks.getJSONObject(0).getString("type")).isEqualTo("tool_use");
-        assertThat(assistantBlocks.getJSONObject(0).getJSONObject("input").getString("symbol")).isEqualTo("BTC");
+        assertThat(assistantBlocks.get(0).path("type").asString(null)).isEqualTo("tool_use");
+        assertThat(assistantBlocks.get(0).get("input").path("symbol").asString(null)).isEqualTo("BTC");
         // 工具回执与紧随的用户消息并成一条，tool_result 在前
-        JSONArray userBlocks = messages.getJSONObject(2).getJSONArray("content");
-        assertThat(userBlocks).extracting(b -> ((JSONObject) b).getString("type")).containsExactly("tool_result", "text");
-        assertThat(userBlocks.getJSONObject(0).getString("tool_use_id")).isEqualTo("toolu_1");
-        assertThat(userBlocks.getJSONObject(0).getString("content")).isEqualTo("60000");
+        JsonNode userBlocks = messages.get(2).get("content");
+        assertThat(userBlocks).extracting(b -> b.path("type").asString(null)).containsExactly("tool_result", "text");
+        assertThat(userBlocks.get(0).path("tool_use_id").asString(null)).isEqualTo("toolu_1");
+        assertThat(userBlocks.get(0).path("content").asString(null)).isEqualTo("60000");
         // 缓存断点只在末条消息的末块
-        assertThat(userBlocks.getJSONObject(0).containsKey(AnthropicChatModel.CACHE_CONTROL)).isFalse();
-        assertThat(userBlocks.getJSONObject(1).containsKey(AnthropicChatModel.CACHE_CONTROL)).isTrue();
-        assertThat(messages.getJSONObject(0).getJSONArray("content").getJSONObject(1)
-                .containsKey(AnthropicChatModel.CACHE_CONTROL)).isFalse();
+        assertThat(userBlocks.get(0).has(AnthropicChatModel.CACHE_CONTROL)).isFalse();
+        assertThat(userBlocks.get(1).has(AnthropicChatModel.CACHE_CONTROL)).isTrue();
+        assertThat(messages.get(0).get("content").get(1)
+                .has(AnthropicChatModel.CACHE_CONTROL)).isFalse();
+    }
+
+    /**
+     * 请求体整串钉死：温度/档位、工具定义与 schema 里的小数、搜索声明、tool_choice、系统块与断点、
+     * 没原始块的按文本+tool_use 拼、工具循环里的原始块原样回放（签名、密文、小数、null 字段）、转义与 emoji
+     */
+    @Test
+    void 请求侧_请求体整串金标准() {
+        events = PLAIN;
+        ToolCallingManager tcm = mock(ToolCallingManager.class);
+        when(tcm.resolveToolDefinitions(any())).thenReturn(List.of(ToolDefinition.builder()
+                .name("get_price").description("查价格 <b>&\"引号\"")
+                .inputSchema("{\"type\":\"object\",\"properties\":{\"qty\":{\"type\":\"number\",\"minimum\":0.010}},"
+                        + "\"required\":[\"qty\"],\"additionalProperties\":false}").build()));
+        AnthropicChatModel m = new AnthropicChatModel("sk-ant", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1",
+                "claude-test", 0.30, "high", tcm, true);
+        String blocks = """
+                [{"type":"thinking","thinking":"先查\\n再说","signature":"sig/+="},
+                 {"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"btc"}},
+                 {"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[
+                     {"type":"web_search_result","url":"https://a.com/x?q=1&b=2","title":"A","encrypted_content":"enc==","page_age":null}]},
+                 {"type":"text","text":"答","citations":[{"type":"web_search_result_location","url":"https://a.com/x","start_index":12,"score":0.50}]},
+                 {"type":"tool_use","id":"toolu_1","name":"get_price","input":{"qty":0.010,"n":3}}]""";
+        AssistantMessage plain = AssistantMessage.builder().content("旧答\n第二行").toolCalls(List.of(
+                new AssistantMessage.ToolCall("toolu_0", "function", "get_price", "{\"qty\":1.50}"))).build();
+        AssistantMessage inLoop = AssistantMessage.builder().content("答").toolCalls(List.of(
+                        new AssistantMessage.ToolCall("toolu_1", "function", "get_price", "{\"qty\":0.010,\"n\":3}")))
+                .properties(Map.of(AnthropicChatModel.BLOCKS_KEY, blocks)).build();
+        ToolResponseMessage result0 = ToolResponseMessage.builder().responses(List.of(
+                new ToolResponseMessage.ToolResponse("toolu_0", "get_price", "{\"price\":60000.10}"))).build();
+        ToolResponseMessage result1 = ToolResponseMessage.builder().responses(List.of(
+                new ToolResponseMessage.ToolResponse("toolu_1", "get_price", "ERROR: 超时\t重试"))).build();
+
+        m.call(new Prompt(List.of(new SystemMessage("你是助手"), new UserMessage("问题 📈 \"引号\" \\ /"),
+                plain, result0, new UserMessage("再问"), new SystemMessage("【摘要】第1段"), inLoop, result1),
+                ToolChoice.apply(allowWebSearch(m), "get_price")));
+
+        assertThat(lastRequestBody).isEqualTo("{\"model\":\"claude-test\",\"max_tokens\":64000,\"stream\":true,\"temperature\":0.3,\"thinking\":{\"type\":\"adaptive\"},"
+                + "\"output_config\":{\"effort\":\"high\"},\"tools\":[{\"name\":\"get_price\",\"description\":\"查价格 <b>&\\\"引号\\\"\","
+                + "\"input_schema\":{\"type\":\"object\",\"properties\":{\"qty\":{\"type\":\"number\",\"minimum\":0.010}},\"required\":[\"qty\"],"
+                + "\"additionalProperties\":false}},{\"type\":\"web_search_20250305\",\"name\":\"web_search\"}],\"tool_choice\":{\"type\":\"tool\","
+                + "\"name\":\"get_price\"},\"system\":[{\"type\":\"text\",\"text\":\"你是助手\",\"cache_control\":{\"type\":\"ephemeral\","
+                + "\"ttl\":\"1h\"}},{\"type\":\"text\",\"text\":\"【摘要】第1段\"}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\","
+                + "\"text\":\"问题 📈 \\\"引号\\\" \\\\ /\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"旧答\\n第二行\"},"
+                + "{\"type\":\"tool_use\",\"id\":\"toolu_0\",\"name\":\"get_price\",\"input\":{\"qty\":1.50}}]},{\"role\":\"user\","
+                + "\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_0\",\"content\":\"{\\\"price\\\":60000.10}\"},"
+                + "{\"type\":\"text\",\"text\":\"再问\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"先查\\n再说\","
+                + "\"signature\":\"sig/+=\"},{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_1\",\"name\":\"web_search\",\"input\":{\"query\":\"btc\"}},"
+                + "{\"type\":\"web_search_tool_result\",\"tool_use_id\":\"srvtoolu_1\",\"content\":[{\"type\":\"web_search_result\","
+                + "\"url\":\"https://a.com/x?q=1&b=2\",\"title\":\"A\",\"encrypted_content\":\"enc==\"}]},{\"type\":\"text\","
+                + "\"text\":\"答\",\"citations\":[{\"type\":\"web_search_result_location\",\"url\":\"https://a.com/x\",\"start_index\":12,"
+                + "\"score\":0.50}]},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"get_price\",\"input\":{\"qty\":0.010,"
+                + "\"n\":3}}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_1\",\"content\":\"ERROR: 超时\\t重试\","
+                + "\"cache_control\":{\"type\":\"ephemeral\"}}]}]}");
     }
 
     // ========== 阻塞路径 ==========
@@ -342,7 +395,7 @@ class AnthropicChatModelTest {
         assertThat(assistant.getToolCalls()).hasSize(1);
         assertThat(assistant.getToolCalls().getFirst().id()).isEqualTo("toolu_9");
         assertThat(assistant.getToolCalls().getFirst().name()).isEqualTo("get_price");
-        assertThat(JSON.parseObject(assistant.getToolCalls().getFirst().arguments()).getString("symbol")).isEqualTo("BTC");
+        assertThat(MAPPER.readTree(assistant.getToolCalls().getFirst().arguments()).path("symbol").asString(null)).isEqualTo("BTC");
         assertThat(response.getResult().getMetadata().getFinishReason()).isEqualTo("TOOL_CALLS");
         // 原始块挂在消息 metadata 上，阻塞路径的帧合并不能把它丢了
         assertThat(assistant.getMetadata()).containsKey(AnthropicChatModel.BLOCKS_KEY);
@@ -353,13 +406,13 @@ class AnthropicChatModelTest {
                 new ToolResponseMessage.ToolResponse("toolu_9", "get_price", "60000"))).build();
         m.call(new Prompt(List.of(new UserMessage("BTC 多少钱"), assistant, toolResult)));
 
-        JSONArray messages = body().getJSONArray("messages");
-        JSONArray replayed = messages.getJSONObject(1).getJSONArray("content");
-        assertThat(replayed).extracting(b -> ((JSONObject) b).getString("type")).containsExactly("thinking", "tool_use");
-        assertThat(replayed.getJSONObject(0).getString("signature")).isEqualTo("sig-1");
-        assertThat(replayed.getJSONObject(0).getString("thinking")).isEqualTo("先查价");
-        assertThat(replayed.getJSONObject(1).getJSONObject("input").getString("symbol")).isEqualTo("BTC");
-        assertThat(messages.getJSONObject(2).getJSONArray("content").getJSONObject(0).getString("type"))
+        JsonNode messages = body().get("messages");
+        JsonNode replayed = messages.get(1).get("content");
+        assertThat(replayed).extracting(b -> b.path("type").asString(null)).containsExactly("thinking", "tool_use");
+        assertThat(replayed.get(0).path("signature").asString(null)).isEqualTo("sig-1");
+        assertThat(replayed.get(0).path("thinking").asString(null)).isEqualTo("先查价");
+        assertThat(replayed.get(1).get("input").path("symbol").asString(null)).isEqualTo("BTC");
+        assertThat(messages.get(2).get("content").get(0).path("type").asString(null))
                 .isEqualTo("tool_result");
     }
 
@@ -381,19 +434,19 @@ class AnthropicChatModelTest {
 
         // 已结束的轮次：后面是新提问
         m.call(new Prompt(List.of(new UserMessage("q"), assistant, new UserMessage("再问")), allowWebSearch(m)));
-        JSONArray ended = body().getJSONArray("messages").getJSONObject(1).getJSONArray("content");
-        assertThat(ended).extracting(b -> ((JSONObject) b).getString("type")).containsExactly("text", "tool_use");
-        assertThat(ended.getJSONObject(0).containsKey("citations")).isFalse();
+        JsonNode ended = body().get("messages").get(1).get("content");
+        assertThat(ended).extracting(b -> b.path("type").asString(null)).containsExactly("text", "tool_use");
+        assertThat(ended.get(0).has("citations")).isFalse();
 
         // 工具循环里：后面紧跟工具回执
         ToolResponseMessage toolResult = ToolResponseMessage.builder().responses(List.of(
                 new ToolResponseMessage.ToolResponse("toolu_1", "get_price", "60000"))).build();
         m.call(new Prompt(List.of(new UserMessage("q"), assistant, toolResult), allowWebSearch(m)));
-        JSONArray inLoop = body().getJSONArray("messages").getJSONObject(1).getJSONArray("content");
-        assertThat(inLoop).extracting(b -> ((JSONObject) b).getString("type"))
+        JsonNode inLoop = body().get("messages").get(1).get("content");
+        assertThat(inLoop).extracting(b -> b.path("type").asString(null))
                 .containsExactly("thinking", "server_tool_use", "web_search_tool_result", "text", "tool_use");
-        assertThat(inLoop.getJSONObject(0).getString("signature")).isEqualTo("sig-1");
-        assertThat(inLoop.getJSONObject(2).getJSONArray("content").getJSONObject(0).getString("encrypted_content"))
+        assertThat(inLoop.get(0).path("signature").asString(null)).isEqualTo("sig-1");
+        assertThat(inLoop.get(2).get("content").get(0).path("encrypted_content").asString(null))
                 .isEqualTo("enc");
     }
 
@@ -450,11 +503,11 @@ class AnthropicChatModelTest {
         assertThat(last.getResult().getMetadata().getFinishReason()).isEqualTo("STOP");
         assertThat(last.getMetadata().<Integer>get("web_search_requests")).isEqualTo(1);
         // 原始块含搜索结果（encrypted_content 回传要用）与引用
-        JSONArray blocks = JSON.parseArray((String) last.getResult().getOutput().getMetadata().get(AnthropicChatModel.BLOCKS_KEY));
-        assertThat(blocks).extracting(b -> ((JSONObject) b).getString("type"))
+        JsonNode blocks = MAPPER.readTree((String) last.getResult().getOutput().getMetadata().get(AnthropicChatModel.BLOCKS_KEY));
+        assertThat(blocks).extracting(b -> b.path("type").asString(null))
                 .containsExactly("server_tool_use", "web_search_tool_result", "text");
-        assertThat(blocks.getJSONObject(0).getJSONObject("input").getString("query")).isEqualTo("BTC news");
-        assertThat(blocks.getJSONObject(2).getJSONArray("citations")).hasSize(1);
+        assertThat(blocks.get(0).get("input").path("query").asString(null)).isEqualTo("BTC news");
+        assertThat(blocks.get(2).get("citations")).hasSize(1);
     }
 
     // ========== 错误归类 ==========

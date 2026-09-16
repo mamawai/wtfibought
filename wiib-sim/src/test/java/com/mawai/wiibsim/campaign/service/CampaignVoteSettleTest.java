@@ -1,6 +1,5 @@
 package com.mawai.wiibsim.campaign.service;
 
-import com.alibaba.fastjson2.JSONArray;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibsim.campaign.entity.Campaign;
@@ -10,6 +9,7 @@ import com.mawai.wiibsim.campaign.mapper.CampaignVoteMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
@@ -712,10 +713,10 @@ class CampaignVoteSettleTest {
      * open/high/low 填成与 close 无关的常量：实现读错收盘价下标的话，各行就一模一样，涨跌塌成平盘。
      */
     private static String klines(LocalDate lastDay, String... closes) {
-        JSONArray rows = new JSONArray();
+        ArrayNode rows = MAPPER.createArrayNode();
         for (int i = 0; i < closes.length; i++) {
             LocalDate day = lastDay.minusDays(closes.length - 1L - i);
-            JSONArray r = new JSONArray();
+            ArrayNode r = rows.addArray();
             r.add(utcStartMs(day));                    // 0 openTime ← 用来核对"是不是我要的那天"
             r.add("1");                                // 1 open
             r.add("99999");                            // 2 high
@@ -724,8 +725,7 @@ class CampaignVoteSettleTest {
             r.add("0");                                // 5 volume
             r.add(utcStartMs(day.plusDays(1)) - 1);    // 6 closeTime
             r.add("0");                                // 7 quoteVolume
-            rows.add(r);
         }
-        return rows.toJSONString();
+        return MAPPER.writeValueAsString(rows);
     }
 }

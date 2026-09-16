@@ -10,6 +10,8 @@ import org.springframework.ai.content.Media;
 import org.springframework.util.MimeType;
 
 import java.io.InputStream;
+import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -49,6 +51,36 @@ class ChatContextCodecTest {
                                         "{\"markPrice\":97000}")))
                         .build(),
                 new SystemMessage("## 早前对话摘要：\n── 第1段 ──\n用户在 92000 附近建了多单"));
+    }
+
+    /** fixture 再加一条：正文为 null 的工具调用回答，metadata 里有整数和小数 */
+    static List<Message> bareJsonFixture() {
+        List<Message> messages = new ArrayList<>(fixture());
+        messages.add(AssistantMessage.builder().content(null)
+                .toolCalls(List.of(new AssistantMessage.ToolCall("call_3", "function", "klines", "{\"limit\":0.50}")))
+                .properties(Map.of("n", 3, "ratio", new BigDecimal("0.50"), "wiib_gemini_parts", "[{\"text\":\"x\"}]"))
+                .build());
+        return messages;
+    }
+
+    /**
+     * 裸 JSON 老行：{@code chat/chat-context-fastjson2.json} 是换库前 fastjson2 对 {@link #bareJsonFixture()} 写的真字节，
+     * null 正文照写 {@code "text":null}，metadata 里的数字是 JSON 数字
+     */
+    @Test
+    void fastjson2写的裸JSON老行读得出来() throws Exception {
+        byte[] old;
+        try (InputStream in = ChatContextCodecTest.class.getResourceAsStream("/chat/chat-context-fastjson2.json")) {
+            assertThat(in).as("golden 文件不在测试类路径上").isNotNull();
+            old = in.readAllBytes();
+        }
+
+        List<Message> messages = ChatContextCodec.read(old);
+        assertSameMessages(bareJsonFixture(), messages);
+        assertThat(messages.getLast().getMetadata().get("n")).isInstanceOf(Integer.class);
+        assertThat(messages.getLast().getMetadata().get("ratio")).isEqualTo(new BigDecimal("0.50"));
+        // 读进来再写出去再读回来仍一致
+        assertSameMessages(bareJsonFixture(), ChatContextCodec.read(ChatContextCodec.write(messages)));
     }
 
     @Test

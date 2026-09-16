@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.analysis;
 
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.util.JsonUtils;
@@ -19,10 +18,13 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 深研判服务（P2b）：新闻拼接 → Bull∥Bear 对抗辩论 → Judge 裁决 → 落库。
@@ -153,14 +155,14 @@ public class DeepAnalysisService {
     private QuantDeepAnalysis toEntity(String symbol, long closeTime, String triggerSource,
                                        String newsContext, String bull, String bear, DeepAnalysisResponse r) {
         // 情景分布归一化到 100（LLM 偶尔差 1-3）
-        JSONObject scenarios = getScenarios(r);
+        ObjectNode scenarios = getScenarios(r);
 
         QuantDeepAnalysis entity = new QuantDeepAnalysis();
         entity.setSymbol(symbol);
         entity.setCloseTime(closeTime);
         entity.setTriggerSource(triggerSource);
         entity.setNarrative(r.narrative());
-        entity.setScenariosJson(scenarios.toJSONString());
+        entity.setScenariosJson(MAPPER.writeValueAsString(scenarios));
         entity.setNoDirection(Boolean.TRUE.equals(r.noDirection()));
         entity.setInvalidation(r.invalidation());
         entity.setBullArgument(bull);
@@ -171,7 +173,7 @@ public class DeepAnalysisService {
         return entity;
     }
 
-    private static @NonNull JSONObject getScenarios(DeepAnalysisResponse r) {
+    private static @NonNull ObjectNode getScenarios(DeepAnalysisResponse r) {
         int bullPct = r.bullPct() != null ? Math.max(0, r.bullPct()) : 33;
         int rangePct = r.rangePct() != null ? Math.max(0, r.rangePct()) : 34;
         int bearPct = r.bearPct() != null ? Math.max(0, r.bearPct()) : 33;
@@ -179,7 +181,7 @@ public class DeepAnalysisService {
         if (sum > 0 && sum != 100) {
             rangePct += 100 - sum;
         }
-        JSONObject scenarios = new JSONObject();
+        ObjectNode scenarios = MAPPER.createObjectNode();
         scenarios.put("bullPct", bullPct);
         scenarios.put("rangePct", rangePct);
         scenarios.put("bearPct", bearPct);

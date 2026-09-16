@@ -16,16 +16,10 @@
     <!-- 注意：这里不能挂 spring-boot-maven-plugin，否则 repackage 出的 fat jar 依赖不到 -->
 
     <dependencies>
-        <!-- 共享层：行情通道/缓存/REST客户端/entity/mapper/基础设施config 全在这（传递 web/redis/aop/sa-token/mybatis-plus/fastjson2/caffeine） -->
+        <!-- 共享层：行情通道/缓存/REST客户端/entity/mapper/基础设施config 全在这（传递 web/redis/aop/sa-token/mybatis-plus/jackson/caffeine） -->
         <dependency>
             <groupId>com.mawai</groupId>
             <artifactId>wiib-common</artifactId>
-        </dependency>
-
-        <!-- fastjson2：market/external/strategy/research 落库与解析重度使用，BOM 管版本 -->
-        <dependency>
-            <groupId>com.alibaba.fastjson2</groupId>
-            <artifactId>fastjson2</artifactId>
         </dependency>
 
         <!-- PostgreSQL：quant mapper 落库（日历 / 快讯 / 策略信号） -->

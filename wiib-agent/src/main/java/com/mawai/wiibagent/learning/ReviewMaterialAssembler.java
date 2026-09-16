@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.learning;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
@@ -21,6 +18,8 @@ import com.mawai.wiibagent.trader.TradePairing;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -31,6 +30,8 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 复盘素材组装（纯代码，可单测）：战绩表/配对表/时间线摘编/价格路径四块硬事实。
@@ -461,31 +462,30 @@ public class ReviewMaterialAssembler {
             return "";
         }
         try {
-            JSONArray arr = JSON.parseArray(d.getActionsJson());
+            ArrayNode arr = MAPPER.readValue(d.getActionsJson(), ArrayNode.class);
             List<String> parts = new ArrayList<>();
-            for (int i = 0; i < arr.size(); i++) {
-                JSONObject a = arr.getJSONObject(i);
-                String tool = a.getString("tool");
+            for (JsonNode a : arr) {
+                String tool = a.path("tool").asString(null);
                 if (tool == null || !ACTION_TOOLS.contains(tool)
                         || DecisionText.staleAction(a, d.getWakeTime(), plans)) {
                     continue;
                 }
-                JSONObject args = a.getJSONObject("args");
+                JsonNode args = a.get("args");
                 StringBuilder brief = new StringBuilder();
-                if (args != null) {
+                if (args != null && !args.isNull()) {
                     for (String k : new String[]{"symbol", "side", "quantity", "positionId"}) {
-                        Object v = args.get(k);
-                        if (v != null) {
-                            brief.append(brief.isEmpty() ? "" : " ").append(v);
+                        JsonNode v = args.get(k);
+                        if (v != null && !v.isNull()) {
+                            brief.append(brief.isEmpty() ? "" : " ").append(v.asString());
                         }
                     }
                 }
                 // pending＝转成待主人确认的请求，本轮并没有成交，摘编里不标就成了"平了仓"的假事实
-                String outcome = a.containsKey("rejected")
+                String outcome = a.has("rejected")
                         ? prompts.get(lang, "reviewer.label.outcomeRejected")
-                        : "error".equals(a.getString("status"))
+                        : "error".equals(a.path("status").asString(null))
                         ? prompts.get(lang, "reviewer.label.outcomeFailed")
-                        : "pending".equals(a.getString("status"))
+                        : "pending".equals(a.path("status").asString(null))
                         ? prompts.get(lang, "reviewer.label.outcomePending") : "";
                 parts.add(tool + "(" + brief + ")" + outcome);
             }
@@ -607,17 +607,16 @@ public class ReviewMaterialAssembler {
      */
     private static Set<String> actedSymbols(String actionsJson, List<AiTraderPlan> plans) {
         try {
-            JSONArray arr = JSON.parseArray(actionsJson);
+            ArrayNode arr = MAPPER.readValue(actionsJson, ArrayNode.class);
             Set<String> out = new HashSet<>();
-            for (int i = 0; i < arr.size(); i++) {
-                JSONObject a = arr.getJSONObject(i);
-                if (!ACTION_TOOLS.contains(String.valueOf(a.getString("tool")))) {
+            for (JsonNode a : arr) {
+                if (!ACTION_TOOLS.contains(String.valueOf(a.path("tool").asString(null)))) {
                     continue;
                 }
-                JSONObject args = a.getJSONObject("args");
-                String symbol = args == null ? null : args.getString("symbol");
+                JsonNode args = a.hasNonNull("args") ? a.get("args") : null;
+                String symbol = args == null ? null : args.path("symbol").asString(null);
                 if (symbol == null) {
-                    Long id = args == null ? null : args.getLong("positionId");
+                    Long id = args == null || !args.hasNonNull("positionId") ? null : args.get("positionId").asLong();
                     symbol = id == null ? null : plans.stream()
                             .filter(p -> p.getPositionId() != null && p.getPositionId().longValue() == id)
                             .map(AiTraderPlan::getSymbol).findFirst().orElse(null);

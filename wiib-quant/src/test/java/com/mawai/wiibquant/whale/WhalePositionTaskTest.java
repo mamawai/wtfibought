@@ -1,7 +1,5 @@
 package com.mawai.wiibquant.whale;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibquant.external.hyperliquid.FakeHyperliquid;
 import com.mawai.wiibquant.external.hyperliquid.HyperliquidClient;
 import com.mawai.wiibquant.mapper.WhaleAddressMapper;
@@ -10,12 +8,14 @@ import com.mawai.wiibquant.mapper.WhaleSnapshotMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
@@ -61,14 +61,14 @@ class WhalePositionTaskTest {
     }
 
     private String route(String body) {
-        JSONObject o = JSON.parseObject(body);
-        if ("metaAndAssetCtxs".equals(o.getString("type"))) {
+        JsonNode o = MAPPER.readTree(body);
+        if ("metaAndAssetCtxs".equals(o.path("type").asString(null))) {
             if (meta == null) {
                 throw new IllegalStateException("HTTP 500");
             }
             return meta;
         }
-        String s = states.getOrDefault(o.getString("user"), EMPTY_STATE);
+        String s = states.getOrDefault(o.path("user").asString(null), EMPTY_STATE);
         if ("ERROR".equals(s)) {
             throw new IllegalStateException("HTTP 500");
         }

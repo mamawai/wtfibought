@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.trader;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
@@ -13,10 +10,12 @@ import com.mawai.wiibquant.external.sim.SimTradeClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.util.List;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -63,8 +62,8 @@ class TraderChatServiceTest {
         return t;
     }
 
-    private static JSONObject parse(String json) {
-        return JSON.parseObject(json);
+    private static JsonNode parse(String json) {
+        return MAPPER.readTree(json);
     }
 
     /**
@@ -79,9 +78,9 @@ class TraderChatServiceTest {
         when(traderService.mine(OTHERS)).thenReturn(null);
         when(traderService.latestEquity(any())).thenReturn(new BigDecimal("10500"));
 
-        assertThat(parse(call(which, ME)).getBooleanValue("hasTrader")).isTrue();
+        assertThat(parse(call(which, ME)).path("hasTrader").asBoolean(false)).isTrue();
         // 别人的 userId 拿不到任何东西，而不是拿到我的
-        assertThat(parse(call(which, OTHERS)).getBooleanValue("hasTrader")).isFalse();
+        assertThat(parse(call(which, OTHERS)).path("hasTrader").asBoolean(false)).isFalse();
     }
 
     private String call(String which, long userId) {
@@ -129,12 +128,12 @@ class TraderChatServiceTest {
         when(traderService.decisions(eq(7L), anyInt(), any(), any(), any(), any()))
                 .thenReturn(List.of(segmented, unsegmentedClose));
 
-        JSONArray out = parse(service.decisions(ME, null, AgentLang.ZH)).getJSONArray("decisions");
+        JsonNode out = parse(service.decisions(ME, null, AgentLang.ZH)).get("decisions");
 
         assertThat(out).hasSize(1);
-        String reasoning = out.getJSONObject(0).getString("reasoning");
+        String reasoning = out.get(0).path("reasoning").asString(null);
         assertThat(reasoning).doesNotContain("BTCUSDT").contains("[ETHUSDT]").contains("跌破 1888");
-        assertThat(out.getJSONObject(0).getJSONArray("tools")).containsExactly("klines");
+        assertThat(out.get(0).get("tools")).extracting(JsonNode::asString).containsExactly("klines");
     }
 
     /** plans：recentClosedPlans 滤 stale，宁缺不顶替 */
@@ -154,9 +153,9 @@ class TraderChatServiceTest {
         kept.setOpenedWakeTime(2000L);
         when(planStore.recentClosed(7L, 1, 5)).thenReturn(List.of(ignored, kept));
 
-        JSONArray closed = parse(service.plans(ME, AgentLang.ZH)).getJSONArray("recentClosedPlans");
+        JsonNode closed = parse(service.plans(ME, AgentLang.ZH)).get("recentClosedPlans");
 
         assertThat(closed).hasSize(1);
-        assertThat(closed.getJSONObject(0).getString("symbol")).isEqualTo("ETHUSDT");
+        assertThat(closed.get(0).path("symbol").asString(null)).isEqualTo("ETHUSDT");
     }
 }

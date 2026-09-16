@@ -1,12 +1,14 @@
 package com.mawai.wiibquant.market.indicator;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
 import java.util.*;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 加密货币技术指标计算器。
@@ -922,20 +924,19 @@ public class CryptoIndicatorCalculator {
      */
     public static List<BigDecimal[]> parseKlines(String json) {
         if (json == null || json.isBlank()) return List.of();
-        JSONArray arr = JSON.parseArray(json);
+        ArrayNode arr = MAPPER.readValue(json, ArrayNode.class);
         List<BigDecimal[]> result = new ArrayList<>(arr.size());
-        for (int i = 0; i < arr.size(); i++) {
-            JSONArray k = arr.getJSONArray(i);
+        for (JsonNode k : arr) {
             // 老版本接口可能没有 index 9（takerBuyBaseVol），做一次防御
-            BigDecimal takerBuyVol = k.size() > 9 ? new BigDecimal(k.getString(9)) : BigDecimal.ZERO;
+            BigDecimal takerBuyVol = k.size() > 9 ? k.get(9).asDecimal() : BigDecimal.ZERO;
             result.add(new BigDecimal[]{
-                    new BigDecimal(k.getString(2)),  // [0] High
-                    new BigDecimal(k.getString(3)),  // [1] Low
-                    new BigDecimal(k.getString(4)),  // [2] Close
-                    new BigDecimal(k.getString(5)),  // [3] Volume
-                    takerBuyVol,                     // [4] TakerBuyBaseAssetVolume
-                    new BigDecimal(k.getString(0)),  // [5] OpenTime
-                    new BigDecimal(k.getString(6))   // [6] CloseTime
+                    k.get(2).asDecimal(),  // [0] High
+                    k.get(3).asDecimal(),  // [1] Low
+                    k.get(4).asDecimal(),  // [2] Close
+                    k.get(5).asDecimal(),  // [3] Volume
+                    takerBuyVol,           // [4] TakerBuyBaseAssetVolume
+                    k.get(0).asDecimal(),  // [5] OpenTime
+                    k.get(6).asDecimal()   // [6] CloseTime
             });
         }
         return result;

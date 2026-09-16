@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.llm;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
@@ -18,12 +15,17 @@ import org.springframework.ai.retry.TransientAiException;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * Gemini generateContent 协议（/v1beta/models/{model}:streamGenerateContent?alt=sse）。
@@ -58,10 +60,10 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
                 .uri("/v1beta/models?pageSize=1000")
                 .header("x-goog-api-key", apiKey)
                 .retrieve().bodyToMono(String.class).block(LIST_TIMEOUT);
-        JSONArray models = JSON.parseObject(body).getJSONArray("models");
+        JsonNode models = MAPPER.readTree(body).get("models");
         List<String> names = new ArrayList<>();
-        for (int i = 0; i < models.size(); i++) {
-            String name = models.getJSONObject(i).getString("name");
+        for (JsonNode item : models) {
+            String name = item.path("name").asString(null);
             names.add(name.startsWith("models/") ? name.substring("models/".length()) : name);
         }
         return names.stream().sorted().toList();
@@ -80,26 +82,26 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
     // ========== 请求构建 ==========
 
     @Override
-    protected JSONObject requestBody(Prompt prompt) {
-        JSONObject body = new JSONObject();
+    protected ObjectNode requestBody(Prompt prompt) {
+        ObjectNode body = MAPPER.createObjectNode();
         ChatOptions options = prompt.getOptions();
 
-        JSONObject generation = new JSONObject();
+        ObjectNode generation = MAPPER.createObjectNode();
         Double temp = effectiveTemperature(prompt);
         if (temp != null) {
             generation.put("temperature", temp);
         }
         if ("none".equals(reasoningEffort)) {
-            generation.put("thinkingConfig", new JSONObject().fluentPut("thinkingBudget", 0));
+            generation.set("thinkingConfig", MAPPER.createObjectNode().put("thinkingBudget", 0));
         } else if (reasoningEffort != null) {
-            generation.put("thinkingConfig", new JSONObject().fluentPut("thinkingLevel", reasoningEffort.toUpperCase()));
+            generation.set("thinkingConfig", MAPPER.createObjectNode().put("thinkingLevel", reasoningEffort.toUpperCase()));
         }
         if (!generation.isEmpty()) {
-            body.put("generationConfig", generation);
+            body.set("generationConfig", generation);
         }
 
         StringBuilder system = new StringBuilder();
-        JSONArray contents = new JSONArray();
+        ArrayNode contents = MAPPER.createArrayNode();
         List<Message> history = prompt.getInstructions();
         for (int i = 0; i < history.size(); i++) {
             Message message = history.get(i);
@@ -114,91 +116,90 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
                 case ASSISTANT -> append(contents, "model",
                         assistantParts((AssistantMessage) message, inToolLoop(history, i)));
                 case TOOL -> {
-                    List<JSONObject> parts = new ArrayList<>();
+                    List<ObjectNode> parts = new ArrayList<>();
                     for (ToolResponseMessage.ToolResponse tr : ((ToolResponseMessage) message).getResponses()) {
-                        JSONObject response = new JSONObject().fluentPut("name", tr.name())
-                                .fluentPut("response", responseObject(tr.responseData()));
+                        ObjectNode response = MAPPER.createObjectNode().put("name", tr.name())
+                                .set("response", responseObject(tr.responseData()));
                         if (tr.id() != null && !tr.id().startsWith(SYNTHETIC_ID_PREFIX)) {
                             response.put("id", tr.id());
                         }
-                        parts.add(new JSONObject().fluentPut("functionResponse", response));
+                        parts.add(MAPPER.createObjectNode().set("functionResponse", response));
                     }
                     append(contents, "user", parts);
                 }
             }
         }
         if (!system.isEmpty()) {
-            body.put("systemInstruction", new JSONObject().fluentPut("parts",
-                    new JSONArray().fluentAdd(textPart(system.toString()))));
+            body.set("systemInstruction", MAPPER.createObjectNode().set("parts",
+                    MAPPER.createArrayNode().add(textPart(system.toString()))));
         }
-        body.put("contents", contents);
+        body.set("contents", contents);
 
         List<String> toolNames = new ArrayList<>();
         if (options instanceof ToolCallingChatOptions toolOptions) {
-            JSONArray tools = new JSONArray();
-            JSONArray declarations = new JSONArray();
+            ArrayNode tools = MAPPER.createArrayNode();
+            ArrayNode declarations = MAPPER.createArrayNode();
             for (ToolDefinition def : toolCallingManager.resolveToolDefinitions(toolOptions)) {
                 // parametersJsonSchema 收 JSON Schema 原文；parameters 是 OpenAPI 子集，additionalProperties 这类字段会被拒
-                declarations.add(new JSONObject()
-                        .fluentPut("name", def.name())
-                        .fluentPut("description", def.description())
-                        .fluentPut("parametersJsonSchema", JSON.parseObject(def.inputSchema())));
+                declarations.add(MAPPER.createObjectNode()
+                        .put("name", def.name())
+                        .put("description", def.description())
+                        .set("parametersJsonSchema", MAPPER.readTree(def.inputSchema())));
                 toolNames.add(def.name());
             }
             if (!declarations.isEmpty()) {
-                tools.add(new JSONObject().fluentPut("functionDeclarations", declarations));
+                tools.add(MAPPER.createObjectNode().set("functionDeclarations", declarations));
             }
             if (searchAllowed(toolOptions)) {
-                tools.add(new JSONObject().fluentPut("google_search", new JSONObject()));
+                tools.add(MAPPER.createObjectNode().set("google_search", MAPPER.createObjectNode()));
                 toolNames.add("google_search");
             }
             if (!tools.isEmpty()) {
-                body.put("tools", tools);
-                JSONObject config = functionCallingConfig(ToolChoice.of(toolOptions));
+                body.set("tools", tools);
+                ObjectNode config = functionCallingConfig(ToolChoice.of(toolOptions));
                 if (config != null) {
-                    body.put("toolConfig", new JSONObject().fluentPut("functionCallingConfig", config));
+                    body.set("toolConfig", MAPPER.createObjectNode().set("functionCallingConfig", config));
                 }
             }
         }
-        logRequest(effectiveModel(prompt), body.getJSONObject("toolConfig"), toolNames);
+        logRequest(effectiveModel(prompt), body.get("toolConfig"), toolNames);
         return body;
     }
 
     /** required → ANY；具体工具名 → ANY + allowedFunctionNames；auto 不传 */
-    private static JSONObject functionCallingConfig(String choice) {
+    private static ObjectNode functionCallingConfig(String choice) {
         if (ToolChoice.AUTO.equals(choice)) {
             return null;
         }
-        JSONObject config = new JSONObject().fluentPut("mode", "ANY");
+        ObjectNode config = MAPPER.createObjectNode().put("mode", "ANY");
         if (!ToolChoice.REQUIRED.equals(choice)) {
-            config.put("allowedFunctionNames", new JSONArray().fluentAdd(choice));
+            config.set("allowedFunctionNames", MAPPER.createArrayNode().add(choice));
         }
         return config;
     }
 
-    private static void append(JSONArray contents, String role, List<JSONObject> parts) {
+    private static void append(ArrayNode contents, String role, List<ObjectNode> parts) {
         if (parts.isEmpty()) {
             return;
         }
-        JSONObject last = contents.isEmpty() ? null : contents.getJSONObject(contents.size() - 1);
-        if (last != null && role.equals(last.getString("role"))) {
-            last.getJSONArray("parts").addAll(parts);
+        JsonNode last = contents.isEmpty() ? null : contents.get(contents.size() - 1);
+        if (last != null && role.equals(last.path("role").asString(null))) {
+            ((ArrayNode) last.get("parts")).addAll(parts);
             return;
         }
-        contents.add(new JSONObject().fluentPut("role", role).fluentPut("parts", new JSONArray(parts)));
+        contents.add(MAPPER.createObjectNode().put("role", role).set("parts", MAPPER.createArrayNode().addAll(parts)));
     }
 
-    private static JSONObject textPart(String text) {
-        return new JSONObject().fluentPut("text", text == null ? "" : text);
+    private static ObjectNode textPart(String text) {
+        return MAPPER.createObjectNode().put("text", text == null ? "" : text);
     }
 
     /** 工具循环里的那条带 {@link #PARTS_KEY} 就原样回放；其余按文本 + functionCall 拼（合成 id 不回传） */
-    private static List<JSONObject> assistantParts(AssistantMessage assistant, boolean replayRaw) {
-        List<JSONObject> parts = new ArrayList<>();
+    private static List<ObjectNode> assistantParts(AssistantMessage assistant, boolean replayRaw) {
+        List<ObjectNode> parts = new ArrayList<>();
         if (replayRaw && assistant.getMetadata().get(PARTS_KEY) instanceof String raw) {
-            JSONArray stored = JSON.parseArray(raw);
-            for (int i = 0; i < stored.size(); i++) {
-                parts.add(stored.getJSONObject(i));
+            for (JsonNode part : MAPPER.readValue(raw, ArrayNode.class)) {
+                parts.add((ObjectNode) part);
             }
             return parts;
         }
@@ -206,149 +207,146 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
             parts.add(textPart(assistant.getText()));
         }
         for (AssistantMessage.ToolCall tc : assistant.getToolCalls()) {
-            JSONObject call = new JSONObject().fluentPut("name", tc.name())
-                    .fluentPut("args", tc.arguments() == null || tc.arguments().isBlank()
-                            ? new JSONObject() : JSON.parseObject(tc.arguments()));
+            ObjectNode call = MAPPER.createObjectNode().put("name", tc.name())
+                    .set("args", tc.arguments() == null || tc.arguments().isBlank()
+                            ? MAPPER.createObjectNode() : MAPPER.readTree(tc.arguments()));
             if (tc.id() != null && !tc.id().startsWith(SYNTHETIC_ID_PREFIX)) {
                 call.put("id", tc.id());
             }
-            parts.add(new JSONObject().fluentPut("functionCall", call));
+            parts.add(MAPPER.createObjectNode().set("functionCall", call));
         }
         return parts;
     }
 
     /** functionResponse.response 必须是 JSON 对象：工具回执本身是对象就直接用，否则包一层 */
-    private static JSONObject responseObject(String responseData) {
+    private static ObjectNode responseObject(String responseData) {
         String data = responseData == null ? "" : responseData.trim();
         if (data.startsWith("{")) {
             try {
-                return JSON.parseObject(data);
+                return MAPPER.readValue(data, ObjectNode.class);
             } catch (RuntimeException ignored) {
                 // 不是合法 JSON 对象，按文本包
             }
         }
-        return new JSONObject().fluentPut("output", data);
+        return MAPPER.createObjectNode().put("output", data);
     }
 
     // ========== 响应解析 ==========
 
     /** 一次订阅里累计的原始 parts（相邻纯文本 part 合并），收尾时挂到消息 metadata 原样回传 */
     protected static class State extends StreamState {
-        final JSONArray parts = new JSONArray();
+        final ArrayNode parts = MAPPER.createArrayNode();
         /** 合成 id 的随机段，一次订阅一个：同名函数跨轮调用的 id 不能撞 */
         final String idNonce = Long.toHexString(ThreadLocalRandom.current().nextLong());
         int callSeq;
-        JSONObject usage;
+        JsonNode usage;
     }
 
     @Override
-    protected Flux<ChatResponse> toFrames(JSONObject chunk, State state) {
-        JSONObject error = chunk.getJSONObject("error");
-        if (error != null) {
-            String message = "Gemini 流式错误: " + error.getInteger("code") + " " + error.getString("message");
-            Integer code = error.getInteger("code");
+    protected Flux<ChatResponse> toFrames(JsonNode chunk, State state) {
+        if (chunk.hasNonNull("error")) {
+            JsonNode error = chunk.get("error");
+            Integer code = error.hasNonNull("code") ? error.get("code").asInt() : null;
+            String message = "Gemini 流式错误: " + code + " " + error.path("message").asString(null);
             return Flux.error(code != null && (code == 429 || code >= 500)
                     ? new TransientAiException(message) : new NonTransientAiException(message));
         }
-        if (chunk.getJSONObject("usageMetadata") != null) {
-            state.usage = chunk.getJSONObject("usageMetadata");
+        if (chunk.hasNonNull("usageMetadata")) {
+            state.usage = chunk.get("usageMetadata");
         }
-        JSONArray candidates = chunk.getJSONArray("candidates");
-        if (candidates == null || candidates.isEmpty()) {
-            JSONObject feedback = chunk.getJSONObject("promptFeedback");
-            if (feedback != null && feedback.getString("blockReason") != null) {
-                return Flux.error(new NonTransientAiException("Gemini 拒绝生成: " + feedback.getString("blockReason")));
+        JsonNode candidates = chunk.path("candidates");
+        if (candidates.isEmpty()) {
+            String blockReason = chunk.path("promptFeedback").path("blockReason").asString(null);
+            if (blockReason != null) {
+                return Flux.error(new NonTransientAiException("Gemini 拒绝生成: " + blockReason));
             }
             return Flux.empty();
         }
-        JSONObject candidate = candidates.getJSONObject(0);
+        JsonNode candidate = candidates.get(0);
         List<ChatResponse> frames = new ArrayList<>();
-        JSONObject content = candidate.getJSONObject("content");
-        JSONArray parts = content == null ? null : content.getJSONArray("parts");
-        if (parts != null) {
-            for (int i = 0; i < parts.size(); i++) {
-                JSONObject part = parts.getJSONObject(i);
-                // 思考摘要 part 不是正文，也不必回传
-                if (Boolean.TRUE.equals(part.getBoolean("thought"))) {
-                    continue;
-                }
-                if (part.getJSONObject("functionCall") != null) {
-                    JSONObject call = part.getJSONObject("functionCall");
-                    String id = call.getString("id") != null ? call.getString("id")
-                            : SYNTHETIC_ID_PREFIX + state.idNonce + "_" + (++state.callSeq) + "_" + call.getString("name");
-                    JSONObject args = call.getJSONObject("args");
-                    state.sawToolCall = true;
-                    frames.add(toolCallFrame(new AssistantMessage.ToolCall(id, "function", call.getString("name"),
-                            (args == null ? new JSONObject() : args).toJSONString())));
-                } else if (part.getString("text") != null && !part.getString("text").isEmpty()) {
-                    state.sawText = true;
-                    frames.add(textFrame(part.getString("text")));
-                }
-                storePart(state, part);
+        for (JsonNode part : candidate.path("content").path("parts")) {
+            // 思考摘要 part 不是正文，也不必回传
+            if (part.path("thought").asBoolean(false)) {
+                continue;
             }
+            if (part.hasNonNull("functionCall")) {
+                JsonNode call = part.get("functionCall");
+                String name = call.path("name").asString(null);
+                String id = call.path("id").asString(null) != null ? call.path("id").asString(null)
+                        : SYNTHETIC_ID_PREFIX + state.idNonce + "_" + (++state.callSeq) + "_" + name;
+                JsonNode args = call.hasNonNull("args") ? call.get("args") : MAPPER.createObjectNode();
+                state.sawToolCall = true;
+                frames.add(toolCallFrame(new AssistantMessage.ToolCall(id, "function", name,
+                        MAPPER.writeValueAsString(args))));
+            } else {
+                String text = part.path("text").asString(null);
+                if (text != null && !text.isEmpty()) {
+                    state.sawText = true;
+                    frames.add(textFrame(text));
+                }
+            }
+            storePart(state, part);
         }
-        JSONObject grounding = candidate.getJSONObject("groundingMetadata");
-        if (grounding != null) {
-            SearchEvent event = groundingEvent(grounding);
+        if (candidate.hasNonNull("groundingMetadata")) {
+            SearchEvent event = groundingEvent(candidate.get("groundingMetadata"));
             if (event != null) {
                 frames.add(searchFrame(event));
             }
         }
-        String finishReason = candidate.getString("finishReason");
+        String finishReason = candidate.path("finishReason").asString(null);
         if (finishReason != null) {
             // 只有 STOP 是完整回答：MAX_TOKENS 是截断、SAFETY 等是拦下，半截不当结论
             if (!"STOP".equals(finishReason)) {
                 return Flux.error(new NonTransientAiException("Gemini 生成终止: " + finishReason));
             }
-            frames.add(finalFrame(state.sawToolCall, usageMetadata(state, chunk.getString("responseId")),
-                    Map.of(PARTS_KEY, state.parts.toJSONString())));
+            frames.add(finalFrame(state.sawToolCall, usageMetadata(state, chunk.path("responseId").asString(null)),
+                    Map.of(PARTS_KEY, MAPPER.writeValueAsString(state.parts))));
         }
         return Flux.fromIterable(frames);
     }
 
     /** 相邻的纯文本 part 并成一个，回放时不至于几十个碎片；带签名/functionCall 的原样单存 */
-    private static void storePart(State state, JSONObject part) {
-        boolean plainText = part.size() == 1 && part.getString("text") != null;
-        JSONObject last = state.parts.isEmpty() ? null : state.parts.getJSONObject(state.parts.size() - 1);
-        if (plainText && last != null && last.size() == 1 && last.getString("text") != null) {
-            last.put("text", last.getString("text") + part.getString("text"));
+    private static void storePart(State state, JsonNode part) {
+        boolean plainText = part.size() == 1 && part.path("text").asString(null) != null;
+        JsonNode last = state.parts.isEmpty() ? null : state.parts.get(state.parts.size() - 1);
+        if (plainText && last != null && last.size() == 1 && last.path("text").asString(null) != null) {
+            ((ObjectNode) last).put("text", last.path("text").asString(null) + part.path("text").asString(null));
             return;
         }
         state.parts.add(part);
     }
 
     /** groundingMetadata → 搜完事件：搜索词与命中站点一起给（协议不区分每个词各命中了谁） */
-    private static SearchEvent groundingEvent(JSONObject grounding) {
-        JSONArray queries = grounding.getJSONArray("webSearchQueries");
-        JSONArray chunks = grounding.getJSONArray("groundingChunks");
-        if ((queries == null || queries.isEmpty()) && (chunks == null || chunks.isEmpty())) {
+    private static SearchEvent groundingEvent(JsonNode grounding) {
+        JsonNode queries = grounding.path("webSearchQueries");
+        JsonNode chunks = grounding.path("groundingChunks");
+        if (queries.isEmpty() && chunks.isEmpty()) {
             return null;
         }
         List<SearchEvent.Source> sources = new ArrayList<>();
-        if (chunks != null) {
-            for (int i = 0; i < chunks.size(); i++) {
-                JSONObject web = chunks.getJSONObject(i).getJSONObject("web");
-                if (web != null) {
-                    sources.add(new SearchEvent.Source(web.getString("uri"), web.getString("title")));
-                }
+        for (JsonNode chunk : chunks) {
+            JsonNode web = chunk.path("web");
+            if (web.isObject()) {
+                sources.add(new SearchEvent.Source(web.path("uri").asString(null), web.path("title").asString(null)));
             }
         }
-        String query = queries == null || queries.isEmpty() ? null
-                : String.join(" · ", queries.toJavaList(String.class));
+        String query = queries.isEmpty() ? null
+                : String.join(" · ", queries.valueStream().map(q -> q.asString(null)).toList());
         return SearchEvent.searched(query, sources);
     }
 
     private ChatResponseMetadata usageMetadata(State state, String responseId) {
         ChatResponseMetadata.Builder metadata = metadata().id(responseId);
-        if (state.usage != null) {
-            metadata.usage(new DefaultUsage(
-                    state.usage.getInteger("promptTokenCount"),
-                    state.usage.getInteger("candidatesTokenCount"),
-                    state.usage.getInteger("totalTokenCount")));
+        JsonNode usage = state.usage;
+        if (usage != null) {
+            Integer prompt = usage.hasNonNull("promptTokenCount") ? usage.get("promptTokenCount").asInt() : null;
+            metadata.usage(new DefaultUsage(prompt,
+                    usage.hasNonNull("candidatesTokenCount") ? usage.get("candidatesTokenCount").asInt() : null,
+                    usage.hasNonNull("totalTokenCount") ? usage.get("totalTokenCount").asInt() : null));
             // 隐式缓存 2.5 起默认开，不用声明；命中数是 promptTokenCount 内部的明细，不另加
-            Integer cached = state.usage.getInteger("cachedContentTokenCount");
-            if (cached != null && cached > 0) {
-                log.info("[Gemini] {} 缓存命中{}/{}", model, cached, state.usage.getInteger("promptTokenCount"));
+            int cached = usage.path("cachedContentTokenCount").asInt(0);
+            if (cached > 0) {
+                log.info("[Gemini] {} 缓存命中{}/{}", model, cached, prompt);
             }
         }
         return metadata.build();

@@ -1,7 +1,5 @@
 package com.mawai.wiibcommon.market;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.mawai.wiibcommon.entity.KlineHistory;
@@ -9,13 +7,16 @@ import com.mawai.wiibcommon.mapper.KlineHistoryMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /** 5m K 线落库 / 加载。回填走 getFuturesKlines（endTime 向前翻页），幂等批插。 */
 @Slf4j
@@ -33,18 +34,17 @@ public class KlineHistoryStore extends ServiceImpl<KlineHistoryMapper, KlineHist
     /** 解析 Binance 原始 K 线 JSON → KlineBar（raw 数组: [0]openTime [1]open [2]high [3]low [4]close [5]vol [6]closeTime ...）。 */
     public static List<KlineBar> parseRawFuturesKlines(String json) {
         if (json == null || json.isBlank()) return List.of();
-        JSONArray arr = JSON.parseArray(json);
+        ArrayNode arr = MAPPER.readValue(json, ArrayNode.class);
         List<KlineBar> bars = new ArrayList<>(arr.size());
-        for (int i = 0; i < arr.size(); i++) {
-            JSONArray k = arr.getJSONArray(i);
+        for (JsonNode k : arr) {
             bars.add(new KlineBar(
-                    k.getLongValue(0),               // openTime
-                    k.getLongValue(6),               // closeTime
-                    new BigDecimal(k.getString(1)),  // open
-                    new BigDecimal(k.getString(2)),  // high
-                    new BigDecimal(k.getString(3)),  // low
-                    new BigDecimal(k.getString(4)),  // close
-                    new BigDecimal(k.getString(5))   // volume
+                    k.get(0).asLong(),      // openTime
+                    k.get(6).asLong(),      // closeTime
+                    k.get(1).asDecimal(),   // open
+                    k.get(2).asDecimal(),   // high
+                    k.get(3).asDecimal(),   // low
+                    k.get(4).asDecimal(),   // close
+                    k.get(5).asDecimal()    // volume
             ));
         }
         return bars;

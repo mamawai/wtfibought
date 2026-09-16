@@ -1,7 +1,5 @@
 package com.mawai.wiibquant.strategy.backtest;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibquant.strategy.core.TradingOperations;
 
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;

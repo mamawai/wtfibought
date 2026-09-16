@@ -1,7 +1,5 @@
 package com.mawai.wiibsim.campaign.service;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
@@ -16,6 +14,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -25,6 +25,8 @@ import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 每日多空投票，标的固定 BTC + 黄金。
@@ -268,10 +270,12 @@ public class CampaignVoteService {
         try {
             long dayStartMs = utcDay.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
             long endMs = utcDay.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli() - 1;
-            JSONArray rows = JSON.parseArray(binanceRestClient.getFuturesKlinesLight(symbol, "1d", 3, endMs));
-            if (rows == null || rows.size() < 2) return null;
+            String json = binanceRestClient.getFuturesKlinesLight(symbol, "1d", 3, endMs);
+            if (json == null || json.isBlank()) return null;
+            ArrayNode rows = MAPPER.readValue(json, ArrayNode.class);
+            if (rows.size() < 2) return null;
 
-            JSONArray lastRow = rows.getJSONArray(rows.size() - 1);
+            JsonNode lastRow = rows.get(rows.size() - 1);
             Long openTime = openTimeOf(lastRow);
             if (openTime == null) return null;
             if (openTime.longValue() != dayStartMs) {
@@ -281,7 +285,7 @@ public class CampaignVoteService {
             }
 
             BigDecimal close = closeOf(lastRow);
-            BigDecimal prevClose = closeOf(rows.getJSONArray(rows.size() - 2));
+            BigDecimal prevClose = closeOf(rows.get(rows.size() - 2));
             if (close == null || prevClose == null) return null;
 
             int cmp = close.compareTo(prevClose);
@@ -298,13 +302,13 @@ public class CampaignVoteService {
      * 收盘价固定在下标 4：getFuturesKlinesLight 只裁 Binance 12 元组的尾部 8-11，
      * 前 8 位原序原位，精简失败回退原始串 close 也在 4。
      */
-    private static BigDecimal closeOf(JSONArray row) {
-        return (row == null || row.size() < 5) ? null : row.getBigDecimal(4);
+    private static BigDecimal closeOf(JsonNode row) {
+        return row.size() < 5 ? null : row.path(4).asDecimal(null);
     }
 
     /** openTime 在下标 0（同样是 Binance 原始下标，见 {@link #closeOf}）；1d 线的它就是该 UTC 日 0 点 */
-    private static Long openTimeOf(JSONArray row) {
-        return (row == null || row.isEmpty()) ? null : row.getLong(0);
+    private static Long openTimeOf(JsonNode row) {
+        return row.hasNonNull(0) ? row.get(0).asLong() : null;
     }
 
     /** 全场投票分：userId → 累计得分 */

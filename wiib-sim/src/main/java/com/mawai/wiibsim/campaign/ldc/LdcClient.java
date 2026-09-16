@@ -1,12 +1,12 @@
 package com.mawai.wiibsim.campaign.ldc;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibsim.campaign.LdcProperties;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.util.Map;
@@ -18,6 +18,8 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * LinuxDo 积分分发客户端。
@@ -83,7 +85,7 @@ public class LdcClient {
             return LdcResult.fail(messages.get("sim.ldc.payeeIdNotNumeric", Map.of("id", String.valueOf(linuxDoId))));
         }
 
-        JSONObject payload = new JSONObject();
+        ObjectNode payload = MAPPER.createObjectNode();
         payload.put("user_id", numericUserId);
         payload.put("username", username);
         payload.put("amount", amountStr);
@@ -96,7 +98,7 @@ public class LdcClient {
                 .timeout(Duration.ofSeconds(15))
                 .header("Authorization", basicAuth())
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(payload.toJSONString(), StandardCharsets.UTF_8))
+                .POST(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(payload), StandardCharsets.UTF_8))
                 .build();
 
         String lastError = null;
@@ -146,9 +148,8 @@ public class LdcClient {
 
         if (status == 200) {
             try {
-                JSONObject json = JSON.parseObject(raw);
-                JSONObject data = json == null ? null : json.getJSONObject("data");
-                String tradeNo = data == null ? null : data.getString("trade_no");
+                JsonNode json = MAPPER.readTree(raw);
+                String tradeNo = json.path("data").path("trade_no").asString(null);
                 if (tradeNo != null && !tradeNo.isBlank()) {
                     log.info("LDC 分发成功 {} trade_no={}", outTradeNo, tradeNo);
                     return LdcResult.ok(tradeNo);

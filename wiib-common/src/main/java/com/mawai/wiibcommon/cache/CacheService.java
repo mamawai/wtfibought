@@ -1,6 +1,5 @@
 package com.mawai.wiibcommon.cache;
 
-import com.alibaba.fastjson2.JSON;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.RequiredArgsConstructor;
@@ -12,6 +11,8 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.*;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 缓存服务 - 封装Redis操作
@@ -68,12 +69,12 @@ public class CacheService {
                                             long referenceNowMs, long referenceLocalTimeMs) {
         PredictionOfficialWindow w = new PredictionOfficialWindow(
                 windowStart, startTimeMs, endTimeMs, referenceNowMs, referenceLocalTimeMs);
-        stringRedisTemplate.opsForValue().set("prediction:window:" + windowStart, JSON.toJSONString(w), PREDICTION_TTL);
+        stringRedisTemplate.opsForValue().set("prediction:window:" + windowStart, MAPPER.writeValueAsString(w), PREDICTION_TTL);
     }
 
     public PredictionOfficialWindow getPredictionOfficialWindow(long windowStart) {
         String v = stringRedisTemplate.opsForValue().get("prediction:window:" + windowStart);
-        return v != null ? JSON.parseObject(v, PredictionOfficialWindow.class) : null;
+        return v != null ? MAPPER.readValue(v, PredictionOfficialWindow.class) : null;
     }
 
     // ==================== BTC价格历史（feed 写 sim 读，Redis ZSet：score=ts，member=ts:price 保唯一） ====================
@@ -193,12 +194,12 @@ public class CacheService {
 
     public void putFundingRate(String symbol, BigDecimal rate, long fetchedAtMs) {
         stringRedisTemplate.opsForValue().set("market:funding-rate:" + symbol,
-                JSON.toJSONString(new FundingRate(rate, fetchedAtMs)), FUNDING_RATE_TTL);
+                MAPPER.writeValueAsString(new FundingRate(rate, fetchedAtMs)), FUNDING_RATE_TTL);
     }
 
     public FundingRate getFundingRate(String symbol) {
         String v = stringRedisTemplate.opsForValue().get("market:funding-rate:" + symbol);
-        return v != null ? JSON.parseObject(v, FundingRate.class) : null;
+        return v != null ? MAPPER.readValue(v, FundingRate.class) : null;
     }
 
     // ==================== 通用缓存 ====================

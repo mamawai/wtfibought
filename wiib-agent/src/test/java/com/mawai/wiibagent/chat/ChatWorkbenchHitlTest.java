@@ -9,8 +9,6 @@ import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.controller.ChatWorkbenchController;
 import com.mawai.wiibagent.llm.SseChannel;
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibcommon.util.Result;
@@ -29,6 +27,7 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
+import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -39,6 +38,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -102,12 +102,12 @@ class ChatWorkbenchHitlTest {
         }
 
         /** 事件帧是 "event:名字\n" + "data:JSON\n\n" 分开落的，按名字取紧随其后的那条 data */
-        List<JSONObject> events(String name) {
-            List<JSONObject> found = new ArrayList<>();
+        List<JsonNode> events(String name) {
+            List<JsonNode> found = new ArrayList<>();
             for (int i = 0; i < raw.size() - 1; i++) {
                 if (raw.get(i).contains(name)) {
                     String data = raw.get(i + 1).trim();
-                    if (data.startsWith("{")) found.add(JSON.parseObject(data));
+                    if (data.startsWith("{")) found.add(MAPPER.readTree(data));
                 }
             }
             return found;
@@ -213,8 +213,8 @@ class ChatWorkbenchHitlTest {
         ChatAgentFactory.Leaves leaves = productionLeaves();
         ChatWorkbenchController controller = controller();
 
-        JSONObject card = turn(leaves, "深度研判 BTC").events("hitl_request").getFirst();
-        assertThat(card.getString("requestId")).isNotBlank();
+        JsonNode card = turn(leaves, "深度研判 BTC").events("hitl_request").getFirst();
+        assertThat(card.path("requestId").asString(null)).isNotBlank();
 
         Result<Void> stale = controller.approve(1L, decision("别的卡片的标识", true));
 
@@ -222,7 +222,7 @@ class ChatWorkbenchHitlTest {
         assertThat(registry.hasApproval(SESSION)).isFalse();   // 一分授权都没给出去
 
         // 原样回传那张卡的标识才算数
-        Result<Void> ok = controller.approve(1L, decision(card.getString("requestId"), true));
+        Result<Void> ok = controller.approve(1L, decision(card.path("requestId").asString(null), true));
 
         assertThat(ok.getCode()).isZero();
         assertThat(registry.hasApproval(SESSION)).isTrue();
@@ -261,8 +261,8 @@ class ChatWorkbenchHitlTest {
         ChatAgentFactory.Leaves leaves = productionLeaves();
         ChatWorkbenchController controller = controller();
 
-        JSONObject card = turn(leaves, "深度研判 BTC").events("hitl_request").getFirst();
-        assertThat(controller.approve(1L, decision(card.getString("requestId"), false)).getCode()).isZero();
+        JsonNode card = turn(leaves, "深度研判 BTC").events("hitl_request").getFirst();
+        assertThat(controller.approve(1L, decision(card.path("requestId").asString(null), false)).getCode()).isZero();
 
         RecordingEmitter second = turn(leaves, "再研判一次 BTC");
 
@@ -287,12 +287,12 @@ class ChatWorkbenchHitlTest {
         ChatWorkbenchController controller = controller();
 
         RecordingEmitter first = turn(leaves, "先看行情，再深度研判 BTC");
-        JSONObject card = first.events("hitl_request").getFirst();
+        JsonNode card = first.events("hitl_request").getFirst();
         String expertConclusion = first.events("token").stream()
-                .filter(e -> "process".equals(e.getString("role")))
-                .map(e -> e.getString("text")).findFirst().orElseThrow();
-        String firstAnswer = first.events("done").getFirst().getString("answer");
-        assertThat(controller.approve(1L, decision(card.getString("requestId"), true)).getCode()).isZero();
+                .filter(e -> "process".equals(e.path("role").asString(null)))
+                .map(e -> e.path("text").asString(null)).findFirst().orElseThrow();
+        String firstAnswer = first.events("done").getFirst().path("answer").asString(null);
+        assertThat(controller.approve(1L, decision(card.path("requestId").asString(null), true)).getCode()).isZero();
 
         // 授权还在 → 第二轮直通汇总，专家不再派；上下文只能从存储来
         wantsMarketExpert.set(false);

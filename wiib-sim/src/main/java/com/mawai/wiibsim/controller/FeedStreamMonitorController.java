@@ -1,6 +1,5 @@
 package com.mawai.wiibsim.controller;
 
-import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.annotation.RequireAdmin;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.util.Result;
@@ -16,6 +15,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * feed WS 流健康的前端转发端点（sim 作为唯一前端网关，经 FeedInternalClient 调 feed）。
@@ -38,7 +39,8 @@ public class FeedStreamMonitorController {
     @Operation(summary = "feed WS 流健康快照")
     public Result<Object> streams() {
         try {
-            return Result.ok(JSON.parse(feedClient.getStreams()));
+            String body = feedClient.getStreams();
+            return Result.ok(body == null ? null : MAPPER.readTree(body));
         } catch (Exception e) {
             log.warn("获取 feed 流健康失败: {}", e.getMessage());
             return Result.fail(messages.get("sim.feed.statusFailed", Map.of("reason", String.valueOf(e.getMessage()))));
@@ -49,7 +51,8 @@ public class FeedStreamMonitorController {
     @Operation(summary = "手动重试指定 WS 流")
     public Result<Object> retry(@PathVariable String name) {
         try {
-            return Result.ok(JSON.parse(feedClient.retry(name)));
+            String body = feedClient.retry(name);
+            return Result.ok(body == null ? null : MAPPER.readTree(body));
         } catch (Exception e) {
             log.warn("重试 feed 流 {} 失败: {}", name, e.getMessage());
             return Result.fail(messages.get("sim.feed.retryFailed", Map.of("reason", String.valueOf(e.getMessage()))));

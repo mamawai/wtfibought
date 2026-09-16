@@ -664,7 +664,7 @@ CREATE TABLE IF NOT EXISTS workbench_chat_context (
     updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 COMMENT ON TABLE workbench_chat_context IS '工作台会话模型侧上下文:完整消息历史(含专家结论/压缩摘要/工具配对),每轮结束整体替换;删会话随展示表一并清';
-COMMENT ON COLUMN workbench_chat_context.state IS '裸JSON {"messages":[...]}(fastjson2,ChatContextCodec写),保Spring AI Message多态与tool_call配对往返无损;老行是Java对象流包JSON,读时兼容,下一轮整体覆盖后自然换成新格式';
+COMMENT ON COLUMN workbench_chat_context.state IS '裸JSON {"messages":[...]}(Jackson,ChatContextCodec写),保Spring AI Message多态与tool_call配对往返无损;老行是Java对象流包JSON,读时兼容,下一轮整体覆盖后自然换成新格式';
 
 -- ============================================
 -- 24. 快讯存档（首页快讯卡 + 事件研究数据积累）

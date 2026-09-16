@@ -1,14 +1,13 @@
 package com.mawai.wiibquant.external.hyperliquid;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
 import com.mawai.wiibquant.whale.WhaleProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -24,6 +23,8 @@ import java.util.concurrent.Semaphore;
 import java.util.function.Function;
 import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * Hyperliquid 公开读接口客户端：四个 info 请求（POST /info，无密钥）+ 排行榜下载（GET，S3 文件）。
@@ -75,8 +76,6 @@ public class HyperliquidClient {
     static final int W_USER_ROLE = 60;
     static final long FREEZE_MS = 60_000;
 
-    private static final JsonFactory JSON_FACTORY = new JsonFactory();
-
     private final WhaleProperties props;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     private final WeightBucket pool;
@@ -108,19 +107,19 @@ public class HyperliquidClient {
 
     /** 一个地址的合约账户与持仓，权重 2 */
     public AccountState clearinghouseState(String user, Bucket bucket) {
-        return parseState(JSON.parseObject(call(bucket, W_CLEARINGHOUSE_STATE, userRequest("clearinghouseState", user))));
+        return parseState(MAPPER.readTree(call(bucket, W_CLEARINGHOUSE_STATE, userRequest("clearinghouseState", user))));
     }
 
     /** 全部币种的标记价与全市场持仓量，权重 20。含已下架币（OI 为 0），按 universe 下标与 ctx 对齐 */
     public List<AssetCtx> metaAndAssetCtxs(Bucket bucket) {
-        JSONArray root = JSON.parseArray(call(bucket, W_META_AND_ASSET_CTXS, "{\"type\":\"metaAndAssetCtxs\"}"));
-        JSONArray universe = root.getJSONObject(0).getJSONArray("universe");
-        JSONArray ctxs = root.getJSONArray(1);
+        ArrayNode root = MAPPER.readValue(call(bucket, W_META_AND_ASSET_CTXS, "{\"type\":\"metaAndAssetCtxs\"}"), ArrayNode.class);
+        JsonNode universe = root.get(0).get("universe");
+        JsonNode ctxs = root.get(1);
         List<AssetCtx> out = new ArrayList<>(universe.size());
         for (int i = 0; i < universe.size(); i++) {
-            JSONObject c = ctxs.getJSONObject(i);
-            out.add(new AssetCtx(universe.getJSONObject(i).getString("name"),
-                    c.getBigDecimal("markPx"), c.getBigDecimal("openInterest")));
+            JsonNode c = ctxs.get(i);
+            out.add(new AssetCtx(universe.get(i).path("name").asString(null),
+                    c.path("markPx").asDecimal(null), c.path("openInterest").asDecimal(null)));
         }
         return out;
     }
@@ -131,35 +130,35 @@ public class HyperliquidClient {
         if ("null".equals(body.trim())) {
             return List.of();
         }
-        JSONArray arr = JSON.parseArray(body);
+        ArrayNode arr = MAPPER.readValue(body, ArrayNode.class);
         List<SubAccount> out = new ArrayList<>(arr.size());
-        for (int i = 0; i < arr.size(); i++) {
-            JSONObject s = arr.getJSONObject(i);
-            out.add(new SubAccount(s.getString("subAccountUser"), parseState(s.getJSONObject("clearinghouseState"))));
+        for (JsonNode s : arr) {
+            out.add(new SubAccount(s.path("subAccountUser").asString(null), parseState(s.get("clearinghouseState"))));
         }
         return out;
     }
 
     /** 地址角色 user / agent / vault / subAccount / missing，权重 60 */
     public String userRole(String user, Bucket bucket) {
-        return JSON.parseObject(call(bucket, W_USER_ROLE, userRequest("userRole", user))).getString("role");
+        return MAPPER.readTree(call(bucket, W_USER_ROLE, userRequest("userRole", user))).path("role").asString(null);
     }
 
-    static AccountState parseState(JSONObject state) {
-        BigDecimal accountValue = state.getJSONObject("marginSummary").getBigDecimal("accountValue");
-        JSONArray arr = state.getJSONArray("assetPositions");
+    static AccountState parseState(JsonNode state) {
+        BigDecimal accountValue = state.get("marginSummary").path("accountValue").asDecimal(null);
+        JsonNode arr = state.get("assetPositions");
         List<Position> positions = new ArrayList<>(arr.size());
-        for (int i = 0; i < arr.size(); i++) {
-            JSONObject p = arr.getJSONObject(i).getJSONObject("position");
-            positions.add(new Position(p.getString("coin"), p.getBigDecimal("szi"), p.getBigDecimal("entryPx"),
-                    p.getBigDecimal("positionValue"), p.getJSONObject("leverage").getIntValue("value"),
-                    p.getBigDecimal("liquidationPx"), p.getBigDecimal("unrealizedPnl")));
+        for (JsonNode item : arr) {
+            JsonNode p = item.get("position");
+            positions.add(new Position(p.path("coin").asString(null), p.path("szi").asDecimal(null),
+                    p.path("entryPx").asDecimal(null), p.path("positionValue").asDecimal(null),
+                    p.get("leverage").path("value").asInt(0),
+                    p.path("liquidationPx").asDecimal(null), p.path("unrealizedPnl").asDecimal(null)));
         }
         return new AccountState(accountValue, List.copyOf(positions));
     }
 
     private static String userRequest(String type, String user) {
-        return JSONObject.of("type", type, "user", user).toJSONString();
+        return MAPPER.writeValueAsString(MAPPER.createObjectNode().put("type", type).put("user", user));
     }
 
     // ---------- 排行榜 ----------
@@ -170,9 +169,9 @@ public class HyperliquidClient {
      */
     public List<String> leaderboard(BigDecimal minAccountValue) {
         List<String> out = new ArrayList<>();
-        try (InputStream in = get.apply(props.getLeaderboardUrl()); JsonParser p = JSON_FACTORY.createParser(in)) {
+        try (InputStream in = get.apply(props.getLeaderboardUrl()); JsonParser p = MAPPER.createParser(in)) {
             p.nextToken();
-            while (p.nextToken() == JsonToken.FIELD_NAME) {
+            while (p.nextToken() == JsonToken.PROPERTY_NAME) {
                 if (!"leaderboardRows".equals(p.currentName())) {
                     p.nextToken();
                     p.skipChildren();
@@ -184,12 +183,12 @@ public class HyperliquidClient {
                 while (p.nextToken() == JsonToken.START_OBJECT) {
                     String address = null;
                     String valueText = null;
-                    while (p.nextToken() == JsonToken.FIELD_NAME) {
+                    while (p.nextToken() == JsonToken.PROPERTY_NAME) {
                         String field = p.currentName();
                         p.nextToken();
                         switch (field) {
-                            case "ethAddress" -> address = p.getText();
-                            case "accountValue" -> valueText = p.getText();
+                            case "ethAddress" -> address = p.getString();
+                            case "accountValue" -> valueText = p.getString();
                             default -> p.skipChildren();   // windowPerformances 等整块跳过
                         }
                     }
@@ -206,7 +205,7 @@ public class HyperliquidClient {
                 return out;
             }
             throw new IllegalStateException("排行榜里没有 leaderboardRows");
-        } catch (IOException e) {
+        } catch (IOException | JacksonException e) {
             throw new IllegalStateException("排行榜下载/解析失败: " + e.getMessage(), e);
         }
     }

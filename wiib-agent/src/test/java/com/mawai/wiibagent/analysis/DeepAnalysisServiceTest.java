@@ -2,7 +2,6 @@ package com.mawai.wiibagent.analysis;
 
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibcommon.enums.AgentLang;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibquant.market.service.MarketAssembly;
 import com.mawai.wiibquant.market.service.MarketDataService;
@@ -17,10 +16,13 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -60,7 +62,7 @@ class DeepAnalysisServiceTest {
     }
 
     private String judgeJson(int bull, int range, int bear, boolean noDirection) {
-        JSONObject o = new JSONObject();
+        ObjectNode o = MAPPER.createObjectNode();
         o.put("narrative", "多头拥挤+清算邻近，若funding维持高位，未来12h下行脆弱");
         o.put("bullPct", bull);
         o.put("rangePct", range);
@@ -68,7 +70,7 @@ class DeepAnalysisServiceTest {
         o.put("noDirection", noDirection);
         o.put("invalidation", "若funding回正且OI回落则本研判作废");
         o.put("judgeReasoning", "Bear证据更具体");
-        return o.toJSONString();
+        return MAPPER.writeValueAsString(o);
     }
 
     @Test
@@ -82,8 +84,8 @@ class DeepAnalysisServiceTest {
 
         assertThat(analysis).isNotNull();
         assertThat(analysis.getTriggerSource()).isEqualTo("cron_1h");
-        JSONObject scenarios = JSONObject.parseObject(analysis.getScenariosJson());
-        int sum = scenarios.getIntValue("bullPct") + scenarios.getIntValue("rangePct") + scenarios.getIntValue("bearPct");
+        JsonNode scenarios = MAPPER.readTree(analysis.getScenariosJson());
+        int sum = scenarios.path("bullPct").asInt(0) + scenarios.path("rangePct").asInt(0) + scenarios.path("bearPct").asInt(0);
         assertThat(sum).isEqualTo(100);
         assertThat(analysis.getInvalidation()).contains("作废");
         assertThat(analysis.getNoDirection()).isFalse();

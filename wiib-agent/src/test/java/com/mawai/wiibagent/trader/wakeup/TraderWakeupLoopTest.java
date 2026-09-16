@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.trader.wakeup;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
@@ -48,6 +45,8 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import reactor.core.publisher.Flux;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -55,6 +54,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
@@ -78,16 +78,16 @@ class TraderWakeupLoopTest {
     /** 收帧的出口：事件名与 data 按序存 */
     private static final class Frames implements TraderLiveHub.Sink {
         final List<String> events = new ArrayList<>();
-        final List<JSONObject> data = new ArrayList<>();
+        final List<JsonNode> data = new ArrayList<>();
 
         @Override
-        public boolean send(String event, JSONObject d) {
+        public boolean send(String event, ObjectNode d) {
             events.add(event);
             data.add(d);
             return true;
         }
 
-        JSONObject last(String event) {
+        JsonNode last(String event) {
             return data.get(events.lastIndexOf(event));
         }
     }
@@ -259,25 +259,25 @@ class TraderWakeupLoopTest {
         assertThat(d.getToolCalls()).isGreaterThanOrEqualTo(1);
 
         // 过程轨迹落库：提示词、第 1 次调用想调的工具与回执、第 2 次调用的正文、收尾
-        JSONObject trace = JSON.parseObject(d.getTraceJson());
-        assertThat(trace.getIntValue("v")).isEqualTo(1);
-        assertThat(trace.getString("kind")).isEqualTo(AiTraderDecision.KIND_TRADE);
-        assertThat(trace.getJSONObject("prompt").getString("system")).isNotBlank();
-        assertThat(trace.getJSONObject("prompt").getString("instruction")).contains("【当前账户】");
-        JSONArray calls = trace.getJSONArray("calls");
+        JsonNode trace = MAPPER.readTree(d.getTraceJson());
+        assertThat(trace.path("v").asInt(0)).isEqualTo(1);
+        assertThat(trace.path("kind").asString(null)).isEqualTo(AiTraderDecision.KIND_TRADE);
+        assertThat(trace.get("prompt").path("system").asString(null)).isNotBlank();
+        assertThat(trace.get("prompt").path("instruction").asString(null)).contains("【当前账户】");
+        JsonNode calls = trace.get("calls");
         assertThat(calls).hasSize(2);
-        assertThat(calls.getJSONObject(0).getJSONArray("toolCalls").getJSONObject(0).getString("name")).isEqualTo("open_position");
-        assertThat(calls.getJSONObject(0).getJSONArray("toolCalls").getJSONObject(0).getJSONObject("args").getString("playType")).isEqualTo("BREAKOUT");
-        assertThat(calls.getJSONObject(0).getJSONArray("results").getJSONObject(0).getString("status")).isEqualTo("ok");
-        assertThat(calls.getJSONObject(1).getString("text")).isEqualTo("突破前高放量，做多并挂好止损，本轮结束。");
-        assertThat(trace.getJSONObject("end").getString("status")).isEqualTo(AiTraderDecision.STATUS_OK);
+        assertThat(calls.get(0).get("toolCalls").get(0).path("name").asString(null)).isEqualTo("open_position");
+        assertThat(calls.get(0).get("toolCalls").get(0).get("args").path("playType").asString(null)).isEqualTo("BREAKOUT");
+        assertThat(calls.get(0).get("results").get(0).path("status").asString(null)).isEqualTo("ok");
+        assertThat(calls.get(1).path("text").asString(null)).isEqualTo("突破前高放量，做多并挂好止损，本轮结束。");
+        assertThat(trace.get("end").path("status").asString(null)).isEqualTo(AiTraderDecision.STATUS_OK);
 
         // 现场帧序
         assertThat(owner.events).containsExactly("run_start", "prompt", "model_start", "model_end", "tool_result",
                 "model_start", "token", "model_end", "run_end");
-        assertThat(owner.last("run_end").getLong("decisionId")).isEqualTo(1234L);
-        assertThat(owner.last("tool_result").getString("name")).isEqualTo("open_position");
-        assertThat(owner.last("token").getString("text")).contains("本轮结束");
+        assertThat(owner.last("run_end").path("decisionId").asLong()).isEqualTo(1234L);
+        assertThat(owner.last("tool_result").path("name").asString(null)).isEqualTo("open_position");
+        assertThat(owner.last("token").path("text").asString(null)).contains("本轮结束");
     }
 
     /** 唤醒"最近决策"回注同样过 stale：被忽略交易的分段不注入；行本身保留——行头时刻是唤醒事实 */

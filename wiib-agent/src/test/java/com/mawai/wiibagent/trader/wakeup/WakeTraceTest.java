@@ -1,14 +1,13 @@
 package com.mawai.wiibagent.trader.wakeup;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.util.List;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -38,45 +37,45 @@ class WakeTraceTest {
         t.callEnd("结论", List.of());
         t.end("OK", null, new BigDecimal("10012.3"), 42000, 2, 18000L);
 
-        JSONObject o = JSON.parseObject(t.toJson());
-        assertThat(o.getIntValue("v")).isEqualTo(1);
-        assertThat(o.getString("kind")).isEqualTo("TRADE");
-        assertThat(o.getLongValue("wakeTime")).isEqualTo(1000L);
-        assertThat(o.getLongValue("budgetSeconds")).isEqualTo(595L);
-        assertThat(o.getBigDecimal("equity")).isEqualByComparingTo("10000");
-        assertThat(o.getIntValue("positions")).isEqualTo(1);
-        assertThat(o.getIntValue("pendingOrders")).isEqualTo(2);
-        assertThat(o.getLong("startedAt")).isPositive();
-        assertThat(o.getJSONObject("prompt").getString("system")).isEqualTo("SYS");
-        assertThat(o.getJSONObject("prompt").getString("instruction")).isEqualTo("INS");
+        JsonNode o = MAPPER.readTree(t.toJson());
+        assertThat(o.path("v").asInt(0)).isEqualTo(1);
+        assertThat(o.path("kind").asString(null)).isEqualTo("TRADE");
+        assertThat(o.path("wakeTime").asLong(0)).isEqualTo(1000L);
+        assertThat(o.path("budgetSeconds").asLong(0)).isEqualTo(595L);
+        assertThat(o.path("equity").asDecimal(null)).isEqualByComparingTo("10000");
+        assertThat(o.path("positions").asInt(0)).isEqualTo(1);
+        assertThat(o.path("pendingOrders").asInt(0)).isEqualTo(2);
+        assertThat(o.path("startedAt").asLong()).isPositive();
+        assertThat(o.get("prompt").path("system").asString(null)).isEqualTo("SYS");
+        assertThat(o.get("prompt").path("instruction").asString(null)).isEqualTo("INS");
 
-        JSONArray calls = o.getJSONArray("calls");
+        JsonNode calls = o.get("calls");
         assertThat(calls).hasSize(2);
-        JSONObject first = calls.getJSONObject(0);
-        assertThat(first.getIntValue("n")).isEqualTo(1);
+        JsonNode first = calls.get(0);
+        assertThat(first.path("n").asInt(0)).isEqualTo(1);
         // callEnd 的整段正文覆盖攒的增量
-        assertThat(first.getString("text")).isEqualTo("先看K线");
-        assertThat(first.getLong("startedAt")).isPositive();
-        assertThat(first.getLong("endedAt")).isPositive();
-        JSONArray toolCalls = first.getJSONArray("toolCalls");
-        assertThat(toolCalls.getJSONObject(0).getString("id")).isEqualTo("c1");
-        assertThat(toolCalls.getJSONObject(0).getString("name")).isEqualTo("klines");
-        assertThat(toolCalls.getJSONObject(0).getJSONObject("args").getString("symbol")).isEqualTo("BTCUSDT");
+        assertThat(first.path("text").asString(null)).isEqualTo("先看K线");
+        assertThat(first.path("startedAt").asLong()).isPositive();
+        assertThat(first.path("endedAt").asLong()).isPositive();
+        JsonNode toolCalls = first.get("toolCalls");
+        assertThat(toolCalls.get(0).path("id").asString(null)).isEqualTo("c1");
+        assertThat(toolCalls.get(0).path("name").asString(null)).isEqualTo("klines");
+        assertThat(toolCalls.get(0).get("args").path("symbol").asString(null)).isEqualTo("BTCUSDT");
         // 参数不是合法 JSON：原字符串
-        assertThat(toolCalls.getJSONObject(1).get("args")).isEqualTo("not json");
-        JSONArray results = first.getJSONArray("results");
-        assertThat(results.getJSONObject(0).getString("status")).isEqualTo("ok");
-        assertThat(results.getJSONObject(0).getString("preview")).isEqualTo("OK data");
-        assertThat(results.getJSONObject(1).getString("status")).isEqualTo("rejected");
-        assertThat(calls.getJSONObject(1).getString("text")).isEqualTo("结论");
+        assertThat(toolCalls.get(1).get("args").asString()).isEqualTo("not json");
+        JsonNode results = first.get("results");
+        assertThat(results.get(0).path("status").asString(null)).isEqualTo("ok");
+        assertThat(results.get(0).path("preview").asString(null)).isEqualTo("OK data");
+        assertThat(results.get(1).path("status").asString(null)).isEqualTo("rejected");
+        assertThat(calls.get(1).path("text").asString(null)).isEqualTo("结论");
 
-        JSONObject end = o.getJSONObject("end");
-        assertThat(end.getString("status")).isEqualTo("OK");
-        assertThat(end.containsKey("error")).isFalse();
-        assertThat(end.getBigDecimal("equity")).isEqualByComparingTo("10012.3");
-        assertThat(end.getIntValue("latencyMs")).isEqualTo(42000);
-        assertThat(end.getIntValue("modelCalls")).isEqualTo(2);
-        assertThat(end.getLongValue("totalTokens")).isEqualTo(18000L);
+        JsonNode end = o.get("end");
+        assertThat(end.path("status").asString(null)).isEqualTo("OK");
+        assertThat(end.has("error")).isFalse();
+        assertThat(end.path("equity").asDecimal(null)).isEqualByComparingTo("10012.3");
+        assertThat(end.path("latencyMs").asInt(0)).isEqualTo(42000);
+        assertThat(end.path("modelCalls").asInt(0)).isEqualTo(2);
+        assertThat(end.path("totalTokens").asLong(0)).isEqualTo(18000L);
     }
 
     @Test
@@ -90,14 +89,14 @@ class WakeTraceTest {
         WakeTrace.Frame rejected = t.toolResult("c3", "b", "REJECTED: 杠杆越界");
 
         assertThat(ok.event()).isEqualTo("tool_result");
-        assertThat(ok.data().getIntValue("call")).isEqualTo(1);
-        assertThat(ok.data().getString("id")).isEqualTo("c1");
-        assertThat(ok.data().getString("name")).isEqualTo("klines");
-        assertThat(ok.data().getString("status")).isEqualTo("ok");
-        assertThat(ok.data().getString("preview")).hasSize(WakeTrace.PREVIEW_CHARS);
-        assertThat(error.data().getString("status")).isEqualTo("error");
-        assertThat(rejected.data().getString("status")).isEqualTo("rejected");
-        assertThat(rejected.data().getString("preview")).isEqualTo("REJECTED: 杠杆越界");
+        assertThat(ok.data().path("call").asInt(0)).isEqualTo(1);
+        assertThat(ok.data().path("id").asString(null)).isEqualTo("c1");
+        assertThat(ok.data().path("name").asString(null)).isEqualTo("klines");
+        assertThat(ok.data().path("status").asString(null)).isEqualTo("ok");
+        assertThat(ok.data().path("preview").asString(null)).hasSize(WakeTrace.PREVIEW_CHARS);
+        assertThat(error.data().path("status").asString(null)).isEqualTo("error");
+        assertThat(rejected.data().path("status").asString(null)).isEqualTo("rejected");
+        assertThat(rejected.data().path("preview").asString(null)).isEqualTo("REJECTED: 杠杆越界");
     }
 
     @Test
@@ -112,22 +111,22 @@ class WakeTraceTest {
         WakeTrace.Frame end = t.end("OK", "上限", new BigDecimal("9990"), 1000, 12, null);
 
         assertThat(end.event()).isEqualTo("run_end");
-        assertThat(end.data().getString("status")).isEqualTo("OK");
-        assertThat(end.data().getString("error")).isEqualTo("上限");
+        assertThat(end.data().path("status").asString(null)).isEqualTo("OK");
+        assertThat(end.data().path("error").asString(null)).isEqualTo("上限");
         // 没报的项内存里是 null，线上（toJSONString）缺席
-        assertThat(end.data().get("totalTokens")).isNull();
-        assertThat(end.data().toJSONString()).doesNotContain("totalTokens");
-        assertThat(JSON.parseObject(t.toJson()).getJSONArray("calls")).hasSize(1);
+        assertThat(end.data().hasNonNull("totalTokens")).isFalse();
+        assertThat(MAPPER.writeValueAsString(end.data())).doesNotContain("totalTokens");
+        assertThat(MAPPER.readTree(t.toJson()).get("calls")).hasSize(1);
 
         // 尾 call 有半截正文（超时打断）：保留，endedAt 缺席
         WakeTrace half = trace();
         half.callStart();
         half.token("半截");
         half.end("ERROR", "超时", new BigDecimal("10000"), 600000, 1, null);
-        JSONArray calls = JSON.parseObject(half.toJson()).getJSONArray("calls");
+        JsonNode calls = MAPPER.readTree(half.toJson()).get("calls");
         assertThat(calls).hasSize(1);
-        assertThat(calls.getJSONObject(0).getString("text")).isEqualTo("半截");
-        assertThat(calls.getJSONObject(0).containsKey("endedAt")).isFalse();
+        assertThat(calls.get(0).path("text").asString(null)).isEqualTo("半截");
+        assertThat(calls.get(0).has("endedAt")).isFalse();
     }
 
     @Test
@@ -145,15 +144,15 @@ class WakeTraceTest {
         List<WakeTrace.Frame> owner = t.replay();
         assertThat(owner).extracting(WakeTrace.Frame::event)
                 .containsExactly("run_start", "prompt", "model_end", "tool_result", "model_start", "token");
-        assertThat(owner.get(0).data().getString("kind")).isEqualTo("TRADE");
-        assertThat(owner.get(0).data().getLongValue("wakeTime")).isEqualTo(1000L);
-        assertThat(owner.get(1).data().getString("system")).isEqualTo("SYS");
-        assertThat(owner.get(2).data().getIntValue("call")).isEqualTo(1);
-        assertThat(owner.get(2).data().getJSONArray("toolCalls")).hasSize(1);
-        assertThat(owner.get(3).data().getString("id")).isEqualTo("c1");
-        assertThat(owner.get(4).data().getIntValue("call")).isEqualTo(2);
-        assertThat(owner.get(5).data().getIntValue("call")).isEqualTo(2);
-        assertThat(owner.get(5).data().getString("text")).isEqualTo("前后");
+        assertThat(owner.get(0).data().path("kind").asString(null)).isEqualTo("TRADE");
+        assertThat(owner.get(0).data().path("wakeTime").asLong(0)).isEqualTo(1000L);
+        assertThat(owner.get(1).data().path("system").asString(null)).isEqualTo("SYS");
+        assertThat(owner.get(2).data().path("call").asInt(0)).isEqualTo(1);
+        assertThat(owner.get(2).data().get("toolCalls")).hasSize(1);
+        assertThat(owner.get(3).data().path("id").asString(null)).isEqualTo("c1");
+        assertThat(owner.get(4).data().path("call").asInt(0)).isEqualTo(2);
+        assertThat(owner.get(5).data().path("call").asInt(0)).isEqualTo(2);
+        assertThat(owner.get(5).data().path("text").asString(null)).isEqualTo("前后");
         // 提示词还没到：回放里也没有 prompt 帧
         assertThat(trace().replay()).extracting(WakeTrace.Frame::event).containsExactly("run_start");
     }

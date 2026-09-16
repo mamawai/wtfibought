@@ -2,17 +2,13 @@ package com.mawai.wiibcommon.market;
 import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
 import com.mawai.wiibcommon.config.BinanceProperties;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
-
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -21,11 +17,12 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
+
 @Slf4j
 @Component
 public class BinanceRestClient extends BaseRestTemplateConfig {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int LONG_SHORT_RATIO_5M_LIMIT = 288; // 5m * 288 = 24h，用于LSR滚动百分位
     private final RestTemplate restTemplate;
     private final BinanceProperties props;
@@ -135,17 +132,15 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
     }
 
     private String getSlimKlines(String raw) {
-        JSONArray root = JSON.parseArray(raw);
-        JSONArray result = new JSONArray(root.size());
-        for (int i = 0; i < root.size(); i++) {
-            JSONArray kline = root.getJSONArray(i);
-            JSONArray slim = new JSONArray(8);
+        ArrayNode root = MAPPER.readValue(raw, ArrayNode.class);
+        ArrayNode result = MAPPER.createArrayNode();
+        for (JsonNode kline : root) {
+            ArrayNode slim = result.addArray();
             // 保留 0-7（时间/OHLC/量/收盘时间/额）：前端蜡烛图按 Binance 原始下标取 k[5]=量、k[7]=额，
             // 只裁 8-11（笔数/taker 量额/保留位）；早期裁到 0-4 导致历史K线量额全 NaN
             for (int j = 0; j <= 7; j++) slim.add(kline.get(j));
-            result.add(slim);
         }
-        return result.toJSONString();
+        return MAPPER.writeValueAsString(result);
     }
 
     /**
@@ -443,13 +438,13 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         return getGuarded(uri);
     }
 
-    private BigDecimal[] getHighLow(String json) throws JsonProcessingException {
+    private BigDecimal[] getHighLow(String json) {
         if (json == null || json.isBlank()) return null;
         JsonNode root = MAPPER.readTree(json);
         BigDecimal high = null, low = null;
         for (JsonNode kline : root) {
-            BigDecimal h = new BigDecimal(kline.get(2).asText());
-            BigDecimal l = new BigDecimal(kline.get(3).asText());
+            BigDecimal h = kline.get(2).asDecimal();
+            BigDecimal l = kline.get(3).asDecimal();
             if (high == null || h.compareTo(high) > 0) high = h;
             if (low == null || l.compareTo(low) < 0) low = l;
         }

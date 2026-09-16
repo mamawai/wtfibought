@@ -1,6 +1,5 @@
 package com.mawai.wiibsim.campaign;
 
-import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.campaign.entity.Campaign;
 import com.mawai.wiibsim.campaign.model.CampaignScore;
@@ -15,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import tools.jackson.core.type.TypeReference;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -35,8 +36,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       {@link CampaignScoreService#scoreBoard()} 是全站唯一把交易 / 签到 / 投票三路汇到一起的
  *       地方，mock 测里三路的返回全是手搓的 —— 列名写错、类型对不上、某条在真 PG 上语法不过，
  *       一个都照不出来。<b>哪怕榜是空的，这条也在跑</b>：SQL 执行本身就是断言。</li>
- *   <li><b>record 经 fastjson2 存进真 Redis 再读回来逐字段不变。</b>{@link CampaignScore} 与
- *       {@link ScoreItem} 都是 record，fastjson2 对 record 的支持是纯运行期的事；
+ *   <li><b>record 经 JSON 存进真 Redis 再读回来逐字段不变。</b>{@link CampaignScore} 与
+ *       {@link ScoreItem} 都是 record，JSON 对 record 的支持是纯运行期的事；
  *       而缓存命中只发生在第二个访问活动页的人身上 —— 坏了的表现是
  *       "第一个人看到榜、第二个人看到一堆 null"。这条用<b>合成键 + 手搓样本</b>钉，
  *       所以不依赖真库里有没有人挣到分，任何时候跑都在验。</li>
@@ -111,7 +112,7 @@ class CampaignScoreRealRunTest {
     }
 
     /**
-     * ★ record 经 fastjson2 存进真 Redis、再读回来，逐字段（含 BigDecimal 标度）不变 ★
+     * ★ record 经 JSON 存进真 Redis、再读回来，逐字段（含 BigDecimal 标度）不变 ★
      * <p>
      * 走的是 {@link CacheService#set}/{@link CacheService#get} 这条真链路，
      * 与 {@link CampaignScoreService#scoreBoard()} 缓存那圈一模一样。
@@ -132,12 +133,12 @@ class CampaignScoreRealRunTest {
                         new BigDecimal("0.00"),
                         List.of(ScoreItem.of("RESET_EXTRA", "付费重置账户", 1, -30))));
 
-        cacheService.set(syntheticKey, JSON.toJSONString(sample), Duration.ofSeconds(60));
+        cacheService.set(syntheticKey, MAPPER.writeValueAsString(sample), Duration.ofSeconds(60));
         String raw = cacheService.get(syntheticKey);
 
         assertThat(raw).as("写进 Redis 又读不出来，缓存那圈就是白写的").isNotNull();
-        assertThat(JSON.parseArray(raw, CampaignScore.class))
-                .as("record 走 fastjson2 + Redis 转一圈必须逐字段（含 BigDecimal 标度）不变")
+        assertThat(MAPPER.readValue(raw, new TypeReference<List<CampaignScore>>() {}))
+                .as("record 走 JSON + Redis 转一圈必须逐字段（含 BigDecimal 标度）不变")
                 .isEqualTo(sample);
     }
 

@@ -1,9 +1,9 @@
 package com.mawai.wiibquant.market.service;
 
-import com.alibaba.fastjson2.JSONArray;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.KlineBar;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -11,6 +11,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -28,10 +29,10 @@ class KlineFetcherTest {
 
     /** 合成 Binance 原始格式：openTime 递增，close 用序号，方便断言切的是不是尾部那几根 */
     private static String rawKlines(int n) {
-        JSONArray arr = new JSONArray();
+        ArrayNode arr = MAPPER.createArrayNode();
         for (int i = 0; i < n; i++) {
             long t = 1_700_000_000_000L + i * 300_000L;
-            JSONArray k = new JSONArray();
+            ArrayNode k = arr.addArray();
             k.add(t);
             k.add("100");
             k.add("110");
@@ -39,9 +40,8 @@ class KlineFetcherTest {
             k.add(String.valueOf(i));   // close = 序号
             k.add("10");
             k.add(t + 299_999L);
-            arr.add(k);
         }
-        return arr.toJSONString();
+        return MAPPER.writeValueAsString(arr);
     }
 
     private final BinanceRestClient client = mock(BinanceRestClient.class);

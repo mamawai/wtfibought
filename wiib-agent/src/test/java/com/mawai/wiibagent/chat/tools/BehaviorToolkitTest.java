@@ -1,7 +1,5 @@
 package com.mawai.wiibagent.chat.tools;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisReport;
@@ -11,11 +9,14 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ToolContext;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -75,20 +76,20 @@ class BehaviorToolkitTest {
         succeeds();
         when(registry.publishBehaviorReport(any(), any())).thenReturn(true);
 
-        JSONObject out = JSON.parseObject(toolkit.analyzeMyBehavior(ctx(null)));
+        JsonNode out = MAPPER.readTree(toolkit.analyzeMyBehavior(ctx(null)));
 
-        ArgumentCaptor<JSONObject> card = ArgumentCaptor.forClass(JSONObject.class);
+        ArgumentCaptor<ObjectNode> card = ArgumentCaptor.forClass(ObjectNode.class);
         verify(registry).publishBehaviorReport(any(), card.capture());
         // 卡片要拿到 trend：那是它画资产曲线的全部依据
-        assertThat(card.getValue().getJSONObject("overview").getJSONArray("trend")).isNotEmpty();
+        assertThat(card.getValue().get("overview").get("trend")).isNotEmpty();
 
-        assertThat(out.getString("status")).isEqualTo("OK");
-        assertThat(out.getBooleanValue("cardShown")).isTrue();
-        JSONObject overview = out.getJSONObject("report").getJSONObject("overview");
-        assertThat(overview.containsKey("trend")).as("逐日快照不该喂给模型").isFalse();
+        assertThat(out.path("status").asString(null)).isEqualTo("OK");
+        assertThat(out.path("cardShown").asBoolean(false)).isTrue();
+        JsonNode overview = out.get("report").get("overview");
+        assertThat(overview.has("trend")).as("逐日快照不该喂给模型").isFalse();
         // 裁剪只砍 trend，别把结论一起砍了
-        assertThat(overview.getBigDecimal("totalAssets")).isEqualByComparingTo("12345.67");
-        assertThat(out.getJSONObject("report").getJSONArray("suggestions")).isNotEmpty();
+        assertThat(overview.path("totalAssets").asDecimal(null)).isEqualByComparingTo("12345.67");
+        assertThat(out.get("report").get("suggestions")).isNotEmpty();
     }
 
     @Test
@@ -97,12 +98,12 @@ class BehaviorToolkitTest {
         // 断连/补答轮/会话已结束都走这条
         when(registry.publishBehaviorReport(any(), any())).thenReturn(false);
 
-        JSONObject out = JSON.parseObject(toolkit.analyzeMyBehavior(ctx(null)));
+        JsonNode out = MAPPER.readTree(toolkit.analyzeMyBehavior(ctx(null)));
 
-        assertThat(out.getString("status")).isEqualTo("OK");
-        assertThat(out.getBooleanValue("cardShown")).isFalse();
+        assertThat(out.path("status").asString(null)).isEqualTo("OK");
+        assertThat(out.path("cardShown").asBoolean(false)).isFalse();
         // 数据照给：卡没了，模型得靠这份自己把结论讲出来
-        assertThat(out.getJSONObject("report")).isNotNull();
+        assertThat(out.get("report")).isNotNull();
     }
 
     @Test
@@ -110,10 +111,10 @@ class BehaviorToolkitTest {
         when(service.analyze(anyLong(), any(), any(), any()))
                 .thenReturn(Result.fail("当前分析人数已满，请稍后再试"));
 
-        JSONObject out = JSON.parseObject(toolkit.analyzeMyBehavior(ctx(null)));
+        JsonNode out = MAPPER.readTree(toolkit.analyzeMyBehavior(ctx(null)));
 
-        assertThat(out.getString("status")).isEqualTo("FAILED");
-        assertThat(out.getString("message")).isEqualTo("当前分析人数已满，请稍后再试");
+        assertThat(out.path("status").asString(null)).isEqualTo("FAILED");
+        assertThat(out.path("message").asString(null)).isEqualTo("当前分析人数已满，请稍后再试");
         verify(registry, never()).publishBehaviorReport(any(), any());
     }
 

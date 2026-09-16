@@ -1,20 +1,21 @@
 package com.mawai.wiibagent.trader;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 决策正文的读法：结论块怎么定位、按币怎么分段、被主人标记"不算数"（stale）的交易怎么从正文里剔掉。
@@ -187,21 +188,21 @@ public class DecisionText {
      * 单个动作是否属于被忽略交易（时间线摘要/chat 工具名共用同一识别核心）：
      * positionId 命中 stale 仓位绑定，或该轮是 stale 计划的开仓轮且动作开的正是该币向。
      */
-    public static boolean staleAction(JSONObject action, long wakeTime, List<AiTraderPlan> plans) {
-        JSONObject args = action == null ? null : action.getJSONObject("args");
+    public static boolean staleAction(JsonNode action, long wakeTime, List<AiTraderPlan> plans) {
+        JsonNode args = action == null || !action.hasNonNull("args") ? null : action.get("args");
         for (AiTraderPlan p : plans) {
             if (!Boolean.TRUE.equals(p.getStale())) {
                 continue;
             }
-            Long id = args == null ? null : args.getLong("positionId");
+            Long id = args == null || !args.hasNonNull("positionId") ? null : args.get("positionId").asLong();
             if (p.getPositionId() != null && id != null && id.longValue() == p.getPositionId()) {
                 return true;
             }
-            if ("open_position".equals(Objects.requireNonNull(action).getString("tool"))
+            if ("open_position".equals(Objects.requireNonNull(action).path("tool").asString(null))
                     && Objects.equals(p.getOpenedWakeTime(), wakeTime)
                     && args != null
-                    && p.getSymbol().equals(args.getString("symbol"))
-                    && p.getSide().equals(args.getString("side"))) {
+                    && p.getSymbol().equals(args.path("symbol").asString(null))
+                    && p.getSide().equals(args.path("side").asString(null))) {
                 return true;
             }
         }
@@ -214,11 +215,10 @@ public class DecisionText {
             return List.of();
         }
         try {
-            JSONArray arr = JSON.parseArray(d.getActionsJson());
+            ArrayNode arr = MAPPER.readValue(d.getActionsJson(), ArrayNode.class);
             List<String> out = new ArrayList<>(arr.size());
-            for (int i = 0; i < arr.size(); i++) {
-                JSONObject a = arr.getJSONObject(i);
-                String tool = a.getString("tool");
+            for (JsonNode a : arr) {
+                String tool = a.path("tool").asString(null);
                 if (tool == null || staleAction(a, d.getWakeTime(), plans)) {
                     continue;
                 }

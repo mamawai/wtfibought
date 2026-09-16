@@ -1,8 +1,6 @@
 package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.enums.AgentLang;
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
@@ -21,6 +19,7 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -28,6 +27,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -77,12 +77,12 @@ class ChatTurnMetaTest {
         }
 
         /** 事件帧是 "event:名字\n" + "data:JSON\n\n" 分开落的，按名字取紧随其后的那条 data */
-        JSONObject event(String name) {
+        JsonNode event(String name) {
             for (int i = 0; i < raw.size() - 1; i++) {
                 if (raw.get(i).contains(name)) {
                     String data = raw.get(i + 1).trim();
                     if (data.startsWith("{")) {
-                        return JSON.parseObject(data);
+                        return MAPPER.readTree(data);
                     }
                 }
             }
@@ -157,10 +157,10 @@ class ChatTurnMetaTest {
         assertThat(meta.latencyMs()).isNotNull().isGreaterThanOrEqualTo(0);
 
         // done 事件与落库同一份读数：前端本轮不用等刷新就能显示
-        JSONObject done = emitter.event("done");
+        JsonNode done = emitter.event("done");
         assertThat(done).isNotNull();
-        assertThat(done.getJSONObject("meta").getLongValue("totalTokens")).isEqualTo(190L);
-        assertThat(done.getJSONObject("meta").getString("modelLabel")).isEqualTo(LABEL);
+        assertThat(done.get("meta").path("totalTokens").asLong(0)).isEqualTo(190L);
+        assertThat(done.get("meta").path("modelLabel").asString(null)).isEqualTo(LABEL);
     }
 
     /** 搜索过程逐条外发；来源按 url 去重后随 done 下发并落库——刷新后答案底部的来源还在 */
@@ -178,12 +178,12 @@ class ChatTurnMetaTest {
         h.streamer().run(new SseChannel(emitter), 1L, SESSION, "BTC 新闻",
                 leaves(shared, shared), h.coordinator().openTurn(1L), null, null, null);
 
-        JSONObject search = emitter.event("search");
+        JsonNode search = emitter.event("search");
         assertThat(search).isNotNull();
-        assertThat(search.getString("phase")).isEqualTo(SearchEvent.SEARCHING);
-        assertThat(search.getString("query")).isEqualTo("BTC news");
-        JSONObject done = emitter.event("done");
-        assertThat(done.getJSONArray("sources")).extracting(s -> ((JSONObject) s).getString("url"))
+        assertThat(search.path("phase").asString(null)).isEqualTo(SearchEvent.SEARCHING);
+        assertThat(search.path("query").asString(null)).isEqualTo("BTC news");
+        JsonNode done = emitter.event("done");
+        assertThat(done.get("sources")).extracting(s -> s.path("url").asString(null))
                 .containsExactly("https://a.com/1", "https://b.com/2");
         ArgumentCaptor<List<SearchEvent.Source>> sources = ArgumentCaptor.captor();
         verify(h.history()).append(eq(SESSION), eq(1L), eq("assistant"), eq("答案正文"), any(), sources.capture());

@@ -1,13 +1,12 @@
 package com.mawai.wiibagent.trader.wakeup;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -17,6 +16,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -55,10 +55,10 @@ class TraderWakeupRunnerAccountStateTest {
         String json = TraderWakeupRunner.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
                 List.of(), List.of(order), List.of(plan), BOUNDARY);
 
-        JSONObject planJson = JSON.parseObject(json).getJSONArray("pendingOrders")
-                .getJSONObject(0).getJSONObject("plan");
-        assertThat(planJson.getString("placedAt")).isEqualTo(FMT.format(Instant.ofEpochMilli(placed)));
-        assertThat(planJson.getString("pendingFor"))
+        JsonNode planJson = MAPPER.readTree(json).get("pendingOrders")
+                .get(0).get("plan");
+        assertThat(planJson.path("placedAt").asString(null)).isEqualTo(FMT.format(Instant.ofEpochMilli(placed)));
+        assertThat(planJson.path("pendingFor").asString(null))
                 .isEqualTo(prompts.get(AgentLang.ZH, "trader.wake.held.hours", Map.of("n", 5L)));
     }
 
@@ -100,9 +100,9 @@ class TraderWakeupRunnerAccountStateTest {
         String json = TraderWakeupRunner.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
                 List.of(p), List.of(), List.of(plan), BOUNDARY);
 
-        JSONObject planJson = JSON.parseObject(json).getJSONArray("positions").getJSONObject(0).getJSONObject("plan");
-        assertThat(planJson.getString("openedAt")).isEqualTo(FMT.format(Instant.ofEpochMilli(opened)));
-        assertThat(planJson.getString("heldFor"))
+        JsonNode planJson = MAPPER.readTree(json).get("positions").get(0).get("plan");
+        assertThat(planJson.path("openedAt").asString(null)).isEqualTo(FMT.format(Instant.ofEpochMilli(opened)));
+        assertThat(planJson.path("heldFor").asString(null))
                 .isEqualTo(prompts.get(AgentLang.ZH, "trader.wake.held.hours", Map.of("n", 2L)));
     }
 

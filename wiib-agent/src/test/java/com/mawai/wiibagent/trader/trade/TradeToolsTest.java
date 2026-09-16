@@ -365,7 +365,7 @@ class TradeToolsTest {
         // 三次同一个键：sim 侧幂等据此判定是同一笔，只会成交一次
         assertThat(Set.copyOf(keys)).hasSize(1);
         assertThat(tools.actions()).singleElement()
-                .satisfies(a -> assertThat(a.getString("status")).isEqualTo("ok"));
+                .satisfies(a -> assertThat(a.path("status").asString(null)).isEqualTo("ok"));
     }
 
     /**
@@ -383,7 +383,7 @@ class TradeToolsTest {
                 .contains("get_account").contains("切勿直接重复下单");
         verify(simTradeClient, times(3)).openPosition(eq(99L), any());
         assertThat(tools.actions()).singleElement()
-                .satisfies(a -> assertThat(a.getString("status")).isEqualTo("unknown"));
+                .satisfies(a -> assertThat(a.path("status").asString(null)).isEqualTo("unknown"));
         // 结果未知就不落计划：没确认成交的仓位不该有事前承诺记录，模型要补走 write_plan
         verify(planMapper, never()).insert(any(AiTraderPlan.class));
     }
@@ -473,7 +473,7 @@ class TradeToolsTest {
                 null, 95000.0, 110000.0, "PULLBACK", "回踩确认支撑", "1h收盘跌破97000");
 
         assertThat(r).doesNotStartWith("REJECTED").contains("777");
-        assertThat(tools.actions().get(0).getString("status")).isEqualTo("ok");
+        assertThat(tools.actions().get(0).path("status").asString(null)).isEqualTo("ok");
         verify(simTradeClient).openPosition(eq(99L), any());
         // coversPlan 由同向持仓/开仓挂单推出：覆盖走 updateById，判成新立就会多插一行
         verify(planMapper).updateById(any(AiTraderPlan.class));

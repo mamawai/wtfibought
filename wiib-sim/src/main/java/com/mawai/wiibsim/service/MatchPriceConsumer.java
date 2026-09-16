@@ -1,7 +1,5 @@
 package com.mawai.wiibsim.service;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.MarketStreamChannels;
@@ -14,10 +12,13 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 撮合价格事件订阅者（sim 侧）。feed 把行情价格发到 {@link MarketStreamChannels#PRICE}，本消费者订阅后
@@ -154,26 +155,26 @@ public class MatchPriceConsumer implements MessageListener {
 
     private void dispatch(String body) {
         try {
-            JSONObject obj = JSON.parseObject(body);
-            String symbol = obj.getString("symbol");
-            String type = obj.getString("type");
+            JsonNode obj = MAPPER.readTree(body);
+            String symbol = obj.path("symbol").asString(null);
+            String type = obj.path("type").asString(null);
             if (symbol == null || type == null) return;
             switch (type) {
-                case "spot" -> cryptoOrderService.onPriceUpdate(symbol, new BigDecimal(obj.getString("price")));
-                case "futures" -> futuresSettlementService.onPriceUpdate(symbol, new BigDecimal(obj.getString("price")));
+                case "spot" -> cryptoOrderService.onPriceUpdate(symbol, new BigDecimal(obj.path("price").asString(null)));
+                case "futures" -> futuresSettlementService.onPriceUpdate(symbol, new BigDecimal(obj.path("price").asString(null)));
                 case "markprice" -> {
-                    BigDecimal mp = new BigDecimal(obj.getString("price"));
+                    BigDecimal mp = new BigDecimal(obj.path("price").asString(null));
                     String cp = redisTemplate.opsForValue().get(FUTURES_PRICE_KEY_PREFIX + symbol);
                     futuresLiquidationService.checkOnPriceUpdate(symbol, mp, cp != null ? new BigDecimal(cp) : mp);
                     crossLiquidationService.onPriceTick(symbol, mp);
                 }
                 case "spot-recover" -> cryptoOrderService.recoverLimitOrders(symbol,
-                        new BigDecimal(obj.getString("low")), new BigDecimal(obj.getString("high")));
+                        new BigDecimal(obj.path("low").asString(null)), new BigDecimal(obj.path("high").asString(null)));
                 case "futures-recover" -> futuresSettlementService.recoverLimitOrders(symbol,
-                        new BigDecimal(obj.getString("low")), new BigDecimal(obj.getString("high")));
+                        new BigDecimal(obj.path("low").asString(null)), new BigDecimal(obj.path("high").asString(null)));
                 case "liq-recover" -> checkLiquidationRange(symbol,
-                        new BigDecimal(obj.getString("markLow")), new BigDecimal(obj.getString("markHigh")),
-                        new BigDecimal(obj.getString("futLow")), new BigDecimal(obj.getString("futHigh")));
+                        new BigDecimal(obj.path("markLow").asString(null)), new BigDecimal(obj.path("markHigh").asString(null)),
+                        new BigDecimal(obj.path("futLow").asString(null)), new BigDecimal(obj.path("futHigh").asString(null)));
                 default -> { /* 非撮合 type（如 markprice 也被 quant 哨兵消费）忽略 */ }
             }
             // 放撮合之后：写键失败不能挡住撮合

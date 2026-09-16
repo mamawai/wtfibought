@@ -2,13 +2,14 @@ package com.mawai.wiibagent.toolkit;
 import com.mawai.wiibquant.market.service.MarketAssembly;
 import com.mawai.wiibquant.market.service.MarketDataService;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.Map;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -102,23 +103,23 @@ class MarketToolkitTest {
     void 盘口截到前十档() {
         when(dataService.orderbook("BTCUSDT")).thenReturn(depthWithLevels(20));
 
-        JSONObject out = JSON.parseObject(toolkit.orderbookDepth("BTCUSDT"));
+        JsonNode out = MAPPER.readTree(toolkit.orderbookDepth("BTCUSDT"));
 
-        assertThat(out.getJSONArray("bids")).hasSize(10);
-        assertThat(out.getJSONArray("asks")).hasSize(10);
-        assertThat(out.getJSONArray("bids").getJSONArray(0).getString(0)).isEqualTo("0"); // 仍是最优档打头
+        assertThat(out.get("bids")).hasSize(10);
+        assertThat(out.get("asks")).hasSize(10);
+        assertThat(out.get("bids").get(0).path(0).asString(null)).isEqualTo("0"); // 仍是最优档打头
     }
 
     private static String depthWithLevels(int levels) {
-        JSONArray bids = new JSONArray();
-        JSONArray asks = new JSONArray();
+        ArrayNode bids = MAPPER.createArrayNode();
+        ArrayNode asks = MAPPER.createArrayNode();
         for (int i = 0; i < levels; i++) {
-            bids.add(JSONArray.of(String.valueOf(i), "1"));
-            asks.add(JSONArray.of(String.valueOf(i), "1"));
+            bids.addArray().add(String.valueOf(i)).add("1");
+            asks.addArray().add(String.valueOf(i)).add("1");
         }
-        JSONObject book = new JSONObject();
-        book.put("bids", bids);
-        book.put("asks", asks);
-        return book.toJSONString();
+        ObjectNode book = MAPPER.createObjectNode();
+        book.set("bids", bids);
+        book.set("asks", asks);
+        return MAPPER.writeValueAsString(book);
     }
 }

@@ -1,7 +1,5 @@
 package com.mawai.wiibagent.toolkit;
 
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibquant.market.service.NewsCache;
 import com.mawai.wiibquant.market.service.NewsFlashLocalizer;
@@ -10,8 +8,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.List;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 新闻工具（对话 news_agent 预取 + trader 唤醒挂工具）：返回缓存里的重要快讯列表。
@@ -32,21 +34,21 @@ public class NewsToolkit {
         List<LocalizedFlash> flashes = localizer.localize(newsCache.getFlashes(), lang);
         log.info("[NewsTool] news_search 被调用（{}），BlockBeats 快讯 {} 条", lang.code(), flashes.size());
         if (flashes.isEmpty()) {
-            JSONObject out = new JSONObject();
+            ObjectNode out = MAPPER.createObjectNode();
             out.put("available", false);
             out.put("reason", "news feed unavailable");
-            return out.toJSONString();
+            return MAPPER.writeValueAsString(out);
         }
-        JSONArray arr = new JSONArray(flashes.size());
+        ArrayNode arr = MAPPER.createArrayNode();
         for (LocalizedFlash f : flashes) {
-            JSONObject o = new JSONObject();
+            ObjectNode o = MAPPER.createObjectNode();
             o.put("title", f.title());
             o.put("content", f.plain());
             o.put("source", f.url());
             o.put("time", f.createTime());
             arr.add(o);
         }
-        return arr.toJSONString();
+        return MAPPER.writeValueAsString(arr);
     }
 
     /** 建叶子时取一个绑定语言的工具视图挂上去 */

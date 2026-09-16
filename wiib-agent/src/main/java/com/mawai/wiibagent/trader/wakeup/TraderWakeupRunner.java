@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.trader.wakeup;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
@@ -49,6 +46,9 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -72,6 +72,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 唤醒回路核心：一次唤醒 = 一个无状态 ReactLoop 会话（BYOK 模型 + 数据工具 + 绑定子账户的交易工具），
@@ -347,8 +349,8 @@ public class TraderWakeupRunner {
             cancel.complete(null);
             task.cancel(true);
             // 无论成败，动作轨迹都要留：超时/异常时已执行的开平仓是真实发生的
-            List<JSONObject> actions = mergeActions(trace.calls(), tradeTools.actions());
-            decision.setActionsJson(JSON.toJSONString(actions));
+            List<ObjectNode> actions = mergeActions(trace.calls(), tradeTools.actions());
+            decision.setActionsJson(MAPPER.writeValueAsString(actions));
             decision.setToolCalls(actions.size());
             // 用量同理落在 finally：超时作废的那一轮，token 也是真烧掉了，不能不记
             UsageTrackingChatModel.UsageSnapshot usage = model.snapshot();
@@ -371,7 +373,7 @@ public class TraderWakeupRunner {
                 trader.getSimUserId(),
                 whitelist,
                 positions -> computeEquity(trader.getSimUserId(), positions),
-                sym -> JSON.parseObject(binanceRestClient.getPremiumIndex(sym)).getBigDecimal("markPrice"),
+                sym -> MAPPER.readTree(binanceRestClient.getPremiumIndex(sym)).path("markPrice").asDecimal(null),
                 planStore,
                 new TradeTools.WakeCtx(trader.getId(), trader.getRoundNo(), boundaryTime, System.currentTimeMillis() + budgetSeconds * 1000, TraderRiskConfig.of(trader), lang),
                 prompts,
@@ -639,11 +641,11 @@ public class TraderWakeupRunner {
         StringBuilder snap = new StringBuilder();
         for (String sym : whitelist.stream().sorted().toList()) {
             try {
-                JSONObject p = JSON.parseObject(binanceRestClient.getPremiumIndex(sym));
+                JsonNode p = MAPPER.readTree(binanceRestClient.getPremiumIndex(sym));
                 snap.append(prompts.get(lang, "trader.wake.snapshotRow", Map.of(
                         "symbol", sym,
-                        "price", p.getBigDecimal("markPrice").stripTrailingZeros().toPlainString(),
-                        "funding", p.getString("lastFundingRate")))).append('\n');
+                        "price", p.path("markPrice").asDecimal(null).stripTrailingZeros().toPlainString(),
+                        "funding", p.path("lastFundingRate").asString(null)))).append('\n');
             } catch (Exception e) {
                 log.debug("[Trader] 行情快照拉取失败 {} msg={}", sym, e.getMessage());
             }
@@ -655,11 +657,11 @@ public class TraderWakeupRunner {
      * 合并轨迹：顺序骨架来自轨迹收集器的全量记录（含数据工具）；交易工具用 TradeTools 的
      * 富记录（结果/拒因）按序替换轻量占位。极端中断时轨迹记录缺失，富记录兜底补尾。
      */
-    private static List<JSONObject> mergeActions(List<JSONObject> traced, List<JSONObject> tradeActions) {
-        Deque<JSONObject> rich = new ArrayDeque<>(tradeActions);
-        List<JSONObject> merged = new ArrayList<>();
-        for (JSONObject t : traced) {
-            if (TradeTools.RECORDED_TOOLS.contains(t.getString("tool")) && !rich.isEmpty()) {
+    private static List<ObjectNode> mergeActions(List<ObjectNode> traced, List<ObjectNode> tradeActions) {
+        Deque<ObjectNode> rich = new ArrayDeque<>(tradeActions);
+        List<ObjectNode> merged = new ArrayList<>();
+        for (ObjectNode t : traced) {
+            if (TradeTools.RECORDED_TOOLS.contains(t.path("tool").asString(null)) && !rich.isEmpty()) {
                 merged.add(rich.poll());
             } else {
                 merged.add(t);
@@ -700,63 +702,62 @@ public class TraderWakeupRunner {
                                            List<AiTraderPlan> plans, long boundaryTime) {
         Map<String, AiTraderPlan> planByKey = new HashMap<>();
         plans.forEach(p -> planByKey.put(TraderPlanStore.key(p.getSymbol(), p.getSide()), p));
-        JSONObject out = new JSONObject();
+        ObjectNode out = MAPPER.createObjectNode();
         out.put("equity", equity.setScale(2, RoundingMode.HALF_UP));
-        out.put("positions", positionsJson(prompts, lang, positions, planByKey, boundaryTime));
+        out.set("positions", positionsJson(prompts, lang, positions, planByKey, boundaryTime));
         // 挂单同样给足：开仓挂单占坑且带着计划（成交后计划全文随持仓回注，这里给轻量版）。
         // 挂出时刻与已挂时长必须在：限价单挂了多久只有代码知道，模型据此执行自己写的作废条件
         if (pendingOrders != null && !pendingOrders.isEmpty()) {
-            out.put("pendingOrders", pendingOrdersJson(prompts, lang, pendingOrders, planByKey, boundaryTime));
+            out.set("pendingOrders", pendingOrdersJson(prompts, lang, pendingOrders, planByKey, boundaryTime));
         }
-        return out.toJSONString();
+        return MAPPER.writeValueAsString(out);
     }
 
     /** 持仓行：仓位事实 + 当前止损止盈 + 所属计划（含修订历史）。 */
-    private static JSONArray positionsJson(PromptCatalog prompts, AgentLang lang,
+    private static ArrayNode positionsJson(PromptCatalog prompts, AgentLang lang,
                                            List<FuturesPositionDTO> positions,
                                            Map<String, AiTraderPlan> planByKey, long boundaryTime) {
-        JSONArray ps = new JSONArray();
+        ArrayNode ps = MAPPER.createArrayNode();
         for (FuturesPositionDTO p : positions) {
-            JSONObject row = new JSONObject()
-                    .fluentPut("positionId", p.getId())
-                    .fluentPut("symbol", p.getSymbol())
-                    .fluentPut("side", p.getSide())
-                    .fluentPut("quantity", p.getQuantity())
-                    .fluentPut("leverage", p.getLeverage())
-                    .fluentPut("entryPrice", p.getEntryPrice())
-                    .fluentPut("markPrice", p.getMarkPrice())
-                    .fluentPut("liquidationPrice", p.getLiquidationPrice())
-                    .fluentPut("unrealizedPnl", p.getUnrealizedPnl());
+            ObjectNode row = MAPPER.createObjectNode()
+                    .put("positionId", p.getId())
+                    .put("symbol", p.getSymbol())
+                    .put("side", p.getSide())
+                    .put("quantity", p.getQuantity())
+                    .put("leverage", p.getLeverage())
+                    .put("entryPrice", p.getEntryPrice())
+                    .put("markPrice", p.getMarkPrice())
+                    .put("liquidationPrice", p.getLiquidationPrice())
+                    .put("unrealizedPnl", p.getUnrealizedPnl());
             if (p.getStopLosses() != null && !p.getStopLosses().isEmpty()) {
-                row.put("currentStopLoss", p.getStopLosses().stream().map(FuturesStopLoss::getPrice).toList());
+                row.set("currentStopLoss", MAPPER.valueToTree(p.getStopLosses().stream().map(FuturesStopLoss::getPrice).toList()));
             }
             if (p.getTakeProfits() != null && !p.getTakeProfits().isEmpty()) {
-                row.put("currentTakeProfit", p.getTakeProfits().stream().map(FuturesTakeProfit::getPrice).toList());
+                row.set("currentTakeProfit", MAPPER.valueToTree(p.getTakeProfits().stream().map(FuturesTakeProfit::getPrice).toList()));
             }
             AiTraderPlan plan = planByKey.get(TraderPlanStore.key(p.getSymbol(), p.getSide()));
             if (plan != null) {
                 // 开仓时刻按 sim 仓位自己的，不按计划的
                 long opened = TradePairing.msOf(p.getCreatedAt());
-                JSONObject planJson = new JSONObject()
-                        .fluentPut("playType", plan.getPlayType())
-                        .fluentPut("signalsUsed", plan.getSignalsUsed())
-                        .fluentPut("invalidationCondition", plan.getInvalidationCondition())
-                        .fluentPut("entryPrice", plan.getEntryPrice())
-                        .fluentPut("originalStop", plan.getStopLossPrice())
-                        .fluentPut("target", plan.getTakeProfitPrice())
-                        .fluentPut("openedAt", TIME_FMT.format(Instant.ofEpochMilli(opened)))
-                        .fluentPut("heldFor", humanizeHeld(prompts, lang, boundaryTime - opened));
+                ObjectNode planJson = MAPPER.createObjectNode()
+                        .put("playType", plan.getPlayType())
+                        .put("signalsUsed", plan.getSignalsUsed())
+                        .put("invalidationCondition", plan.getInvalidationCondition())
+                        .put("entryPrice", plan.getEntryPrice())
+                        .put("originalStop", plan.getStopLossPrice())
+                        .put("target", plan.getTakeProfitPrice())
+                        .put("openedAt", TIME_FMT.format(Instant.ofEpochMilli(opened)))
+                        .put("heldFor", humanizeHeld(prompts, lang, boundaryTime - opened));
                 // 修订历史也回注：无记忆的模型必须看到"上轮为什么动了止损/目标"
                 if (plan.getRevisionsJson() != null && !plan.getRevisionsJson().isBlank()) {
-                    JSONArray revisions = JSON.parseArray(plan.getRevisionsJson());
-                    for (int i = 0; i < revisions.size(); i++) {
-                        JSONObject r = revisions.getJSONObject(i);
+                    ArrayNode revisions = MAPPER.readValue(plan.getRevisionsJson(), ArrayNode.class);
+                    for (JsonNode r : revisions) {
                         // 库里存 epoch 毫秒，给模型看要时刻
-                        r.put("time", TIME_FMT.format(Instant.ofEpochMilli(r.getLongValue("time"))));
+                        ((ObjectNode) r).put("time", TIME_FMT.format(Instant.ofEpochMilli(r.path("time").asLong(0))));
                     }
-                    planJson.put("revisions", revisions);
+                    planJson.set("revisions", revisions);
                 }
-                row.put("plan", planJson);
+                row.set("plan", planJson);
             }
             ps.add(row);
         }
@@ -764,29 +765,29 @@ public class TraderWakeupRunner {
     }
 
     /** 挂单行：订单事实 + 开仓挂单所属计划的轻量版。 */
-    private static JSONArray pendingOrdersJson(PromptCatalog prompts, AgentLang lang,
+    private static ArrayNode pendingOrdersJson(PromptCatalog prompts, AgentLang lang,
                                                List<FuturesOrderResponse> pendingOrders,
                                                Map<String, AiTraderPlan> planByKey, long boundaryTime) {
-        JSONArray po = new JSONArray();
+        ArrayNode po = MAPPER.createArrayNode();
         for (FuturesOrderResponse o : pendingOrders) {
-            JSONObject row = new JSONObject()
-                    .fluentPut("orderId", o.getOrderId())
-                    .fluentPut("symbol", o.getSymbol())
-                    .fluentPut("orderSide", o.getOrderSide())
-                    .fluentPut("quantity", o.getQuantity())
-                    .fluentPut("limitPrice", o.getLimitPrice())
-                    .fluentPut("leverage", o.getLeverage());
+            ObjectNode row = MAPPER.createObjectNode()
+                    .put("orderId", o.getOrderId())
+                    .put("symbol", o.getSymbol())
+                    .put("orderSide", o.getOrderSide())
+                    .put("quantity", o.getQuantity())
+                    .put("limitPrice", o.getLimitPrice())
+                    .put("leverage", o.getLeverage());
             if (o.getOrderSide() != null && o.getOrderSide().startsWith("OPEN_")) {
                 AiTraderPlan plan = planByKey.get(TraderPlanStore.key(o.getSymbol(),
                         o.getOrderSide().substring("OPEN_".length())));
                 if (plan != null) {
                     // 挂出时刻按订单自己的
                     long placed = TradePairing.msOf(o.getCreatedAt());
-                    row.put("plan", new JSONObject()
-                            .fluentPut("playType", plan.getPlayType())
-                            .fluentPut("invalidationCondition", plan.getInvalidationCondition())
-                            .fluentPut("placedAt", TIME_FMT.format(Instant.ofEpochMilli(placed)))
-                            .fluentPut("pendingFor", humanizeHeld(prompts, lang, boundaryTime - placed)));
+                    row.set("plan", MAPPER.createObjectNode()
+                            .put("playType", plan.getPlayType())
+                            .put("invalidationCondition", plan.getInvalidationCondition())
+                            .put("placedAt", TIME_FMT.format(Instant.ofEpochMilli(placed)))
+                            .put("pendingFor", humanizeHeld(prompts, lang, boundaryTime - placed)));
                 }
             }
             po.add(row);

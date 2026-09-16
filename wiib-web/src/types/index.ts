@@ -726,7 +726,7 @@ export interface WorkbenchSessionSummary {
  * 一轮的读数：用的哪个端点、烧了多少 token、花了多久。
  * <p>
  * 每一项都可能取不到值 —— 那是"上游端点没报 usage / 这一轮的账不可信"，<b>不是 0</b>，展示层必须区分。
- * 两条来路的空值形状还不一样：SSE 走 fastjson2，默认不输出 null，字段直接<b>缺席</b>；
+ * 两条来路的空值形状还不一样：SSE 帧不输出 null，字段直接<b>缺席</b>；
  * 历史接口走 Jackson，会老老实实输出 null。所以一律按 `!= null` 判，别判 0、也别只判 undefined。
  */
 /** 联网搜索命中/引用的一个来源 */

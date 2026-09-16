@@ -235,7 +235,7 @@ class KlineStructureCalculatorTest {
     @Test
     void noJudgementWordsLeakIntoOutput() {
         // 中性事实层的底线：不替 trader 定派系
-        String json = com.alibaba.fastjson2.JSON.toJSONString(compute(ramp(90)));
+        String json = com.mawai.wiibcommon.util.JsonUtils.MAPPER.writeValueAsString(compute(ramp(90)));
 
         assertThat(json).doesNotContainIgnoringCase("bullish")
                 .doesNotContainIgnoringCase("bearish")

@@ -1,8 +1,5 @@
 package com.mawai.wiibfeed;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.market.PolymarketPriceClient;
 import com.mawai.wiibcommon.market.PredictionStreamChannels;
 import com.mawai.wiibcommon.cache.CacheService;
@@ -14,6 +11,9 @@ import org.springframework.context.SmartLifecycle;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -30,6 +30,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * Polymarket WS 客户端
@@ -53,7 +55,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *     </li>
  *     <li>
  *         live-data 后续每条消息进入 {@link #onLiveDataMessage(String)}。
- *         只有 {@code crypto_prices_chainlink} 会继续进入 {@link #onChainlinkPrice(JSONObject)}：
+ *         只有 {@code crypto_prices_chainlink} 会继续进入 {@link #onChainlinkPrice(JsonNode)}：
  *         写 Redis、本地缓存、价格历史，然后广播 {@code /topic/prediction/price}。
  *     </li>
  *     <li>
@@ -83,8 +85,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *         {@code assets_ids=[upId, downId], type=market}。
  *     </li>
  *     <li>
- *         CLOB 后续消息进入 {@link #onClobMessage(String)}，再进入 {@link #handleClobEvent(JSONObject)}。
- *         当前价格只处理 {@code price_change}，进入 {@link #onPriceChange(JSONObject)}：
+ *         CLOB 后续消息进入 {@link #onClobMessage(String)}，再进入 {@link #handleClobEvent(JsonNode)}。
+ *         当前价格只处理 {@code price_change}，进入 {@link #onPriceChange(JsonNode)}：
  *         根据 {@code asset_id} 判断 UP/DOWN，更新 bid/ask 缓存，并广播 {@code /topic/prediction/market}。
  *         {@code last_trade_price} 只用于右侧实时交易流，广播 {@code /topic/prediction/activity}，
  *         不参与盘口价格更新，避免重复刷价格。
@@ -184,14 +186,11 @@ public class PolymarketWsClient implements SmartLifecycle {
         String downId = currentDownAssetId;
         if (upId == null || downId == null) { clobWs.close(); return; }
 
-        JSONObject msg = new JSONObject();
-        JSONArray assetIds = new JSONArray();
-        assetIds.add(upId);
-        assetIds.add(downId);
-        msg.put("assets_ids", assetIds);
+        ObjectNode msg = MAPPER.createObjectNode();
+        msg.putArray("assets_ids").add(upId).add(downId);
         msg.put("type", "market");
         msg.put("custom_feature_enabled", true);
-        ws.sendText(msg.toJSONString(), true);
+        ws.sendText(MAPPER.writeValueAsString(msg), true);
         log.info("已订阅CLOB market: upAssetId={}, downAssetId={}", upId, downId);
     }
 
@@ -290,16 +289,16 @@ public class PolymarketWsClient implements SmartLifecycle {
         String slug = eventSlug(windowStart);
         GammaEventSnapshot snapshot = fetchGammaEvent(slug);
         if (snapshot == null) return false;
-        JSONObject event = snapshot.event();
+        JsonNode event = snapshot.event();
 
-        JSONObject market = selectClobMarket(event, slug);
+        JsonNode market = selectClobMarket(event, slug);
         if (market == null) return false;
         syncOfficialWindowTime(windowStart, event, market, snapshot);
         // 官方时间拿到后再推一次round，避免前端初次请求早于Gamma缓存导致倒计时仍走本机取模。
         publishRoundEvent("create", windowStart);
 
-        JSONArray outcomes = parseJsonArrayField(market, "outcomes");
-        JSONArray tokenIds = parseJsonArrayField(market, "clobTokenIds");
+        ArrayNode outcomes = parseJsonArrayField(market, "outcomes");
+        ArrayNode tokenIds = parseJsonArrayField(market, "clobTokenIds");
         if (tokenIds == null || tokenIds.size() < 2) return false;
 
         String upId = null;
@@ -307,8 +306,8 @@ public class PolymarketWsClient implements SmartLifecycle {
         if (outcomes != null) {
             int count = Math.min(outcomes.size(), tokenIds.size());
             for (int i = 0; i < count; i++) {
-                String outcome = outcomes.getString(i);
-                String tokenId = tokenIds.getString(i);
+                String outcome = outcomes.path(i).asString(null);
+                String tokenId = tokenIds.path(i).asString(null);
                 if (outcome == null || tokenId == null) continue;
                 if ("Up".equalsIgnoreCase(outcome)) {
                     upId = tokenId;
@@ -317,8 +316,8 @@ public class PolymarketWsClient implements SmartLifecycle {
                 }
             }
         }
-        if (upId == null) upId = tokenIds.getString(0);
-        if (downId == null) downId = tokenIds.getString(1);
+        if (upId == null) upId = tokenIds.path(0).asString(null);
+        if (downId == null) downId = tokenIds.path(1).asString(null);
         if (upId == null || downId == null) return false;
         if (windowStart != currentWindowStart()) return false;
 
@@ -333,14 +332,14 @@ public class PolymarketWsClient implements SmartLifecycle {
         return true;
     }
 
-    private void syncOfficialWindowTime(long windowStart, JSONObject event, JSONObject market,
+    private void syncOfficialWindowTime(long windowStart, JsonNode event, JsonNode market,
                                         GammaEventSnapshot snapshot) {
-        Long startMs = parseIsoTimeMs(market.getString("eventStartTime"));
-        if (startMs == null) startMs = parseIsoTimeMs(event.getString("startTime"));
-        if (startMs == null) startMs = parseIsoTimeMs(event.getString("startDate"));
+        Long startMs = parseIsoTimeMs(market.path("eventStartTime").asString(null));
+        if (startMs == null) startMs = parseIsoTimeMs(event.path("startTime").asString(null));
+        if (startMs == null) startMs = parseIsoTimeMs(event.path("startDate").asString(null));
 
-        Long endMs = parseIsoTimeMs(market.getString("endDate"));
-        if (endMs == null) endMs = parseIsoTimeMs(event.getString("endDate"));
+        Long endMs = parseIsoTimeMs(market.path("endDate").asString(null));
+        if (endMs == null) endMs = parseIsoTimeMs(event.path("endDate").asString(null));
 
         if (startMs != null && endMs != null) {
             long referenceNowMs = snapshot.upstreamTimeMs() != null
@@ -360,7 +359,7 @@ public class PolymarketWsClient implements SmartLifecycle {
         }
     }
 
-    private record GammaEventSnapshot(JSONObject event, Long upstreamTimeMs, long localReceivedTimeMs) {}
+    private record GammaEventSnapshot(JsonNode event, Long upstreamTimeMs, long localReceivedTimeMs) {}
 
     private GammaEventSnapshot fetchGammaEvent(String slug) {
         try {
@@ -384,7 +383,7 @@ public class PolymarketWsClient implements SmartLifecycle {
             if (upstreamTimeMs != null) {
                 upstreamTimeMs += Math.max(0, receivedAt - sentAt) / 2;
             }
-            return new GammaEventSnapshot(JSON.parseObject(resp.body()), upstreamTimeMs, receivedAt);
+            return new GammaEventSnapshot(MAPPER.readTree(resp.body()), upstreamTimeMs, receivedAt);
         } catch (Exception e) {
             log.warn("Gamma事件查询失败: slug={}, err={}", slug, e.getMessage());
             return null;
@@ -399,25 +398,24 @@ public class PolymarketWsClient implements SmartLifecycle {
         }
     }
 
-    private static JSONObject selectClobMarket(JSONObject event, String slug) {
-        JSONArray markets = event.getJSONArray("markets");
-        if (markets == null || markets.isEmpty()) return null;
+    private static JsonNode selectClobMarket(JsonNode event, String slug) {
+        JsonNode markets = event.path("markets");
+        if (markets.isEmpty()) return null;
 
-        JSONObject fallback = null;
-        for (int i = 0; i < markets.size(); i++) {
-            JSONObject market = markets.getJSONObject(i);
-            if (market == null || parseJsonArrayField(market, "clobTokenIds") == null) continue;
+        JsonNode fallback = null;
+        for (JsonNode market : markets) {
+            if (!market.isObject() || parseJsonArrayField(market, "clobTokenIds") == null) continue;
             if (fallback == null) fallback = market;
-            if (slug.equals(market.getString("slug"))) return market;
+            if (slug.equals(market.path("slug").asString(null))) return market;
         }
         return fallback;
     }
 
-    private static JSONArray parseJsonArrayField(JSONObject obj, String field) {
+    private static ArrayNode parseJsonArrayField(JsonNode obj, String field) {
         try {
-            Object value = obj.get(field);
-            if (value instanceof JSONArray array) return array;
-            if (value instanceof String str && !str.isBlank()) return JSON.parseArray(str);
+            JsonNode value = obj.path(field);
+            if (value instanceof ArrayNode array) return array;
+            if (value.isString() && !value.asString().isBlank()) return MAPPER.readValue(value.asString(), ArrayNode.class);
         } catch (Exception ignored) {
             // Polymarket这些字段历史上有字符串/数组两种形态，解析失败按缺失处理。
         }
@@ -473,9 +471,8 @@ public class PolymarketWsClient implements SmartLifecycle {
 
     private void onLiveDataMessage(String raw) {
         try {
-            JSONObject msg = JSON.parseObject(raw);
-            if (msg == null) return;
-            String topic = msg.getString("topic");
+            JsonNode msg = MAPPER.readTree(raw);
+            String topic = msg.path("topic").asString(null);
             if (topic == null) return;
 
             if ("crypto_prices_chainlink".equals(topic)) {
@@ -486,11 +483,8 @@ public class PolymarketWsClient implements SmartLifecycle {
         }
     }
 
-    private void onChainlinkPrice(JSONObject msg) {
-        JSONObject payload = msg.getJSONObject("payload");
-        if (payload == null) return;
-
-        BigDecimal value = payload.getBigDecimal("value");
+    private void onChainlinkPrice(JsonNode msg) {
+        BigDecimal value = msg.path("payload").path("value").asDecimal(null);
         if (value == null) return;
 
         long now = System.currentTimeMillis();
@@ -511,22 +505,21 @@ public class PolymarketWsClient implements SmartLifecycle {
 
     private void onClobMessage(String raw) {
         try {
-            Object parsed = JSON.parse(raw);
-            if (parsed instanceof JSONArray array) {
-                for (int i = 0; i < array.size(); i++) {
-                    handleClobEvent(array.getJSONObject(i));
+            JsonNode parsed = MAPPER.readTree(raw);
+            if (parsed.isArray()) {
+                for (JsonNode event : parsed) {
+                    handleClobEvent(event);
                 }
-            } else if (parsed instanceof JSONObject obj) {
-                handleClobEvent(obj);
+            } else if (parsed.isObject()) {
+                handleClobEvent(parsed);
             }
         } catch (Exception e) {
             log.warn("解析CLOB消息失败: {}", e.getMessage());
         }
     }
 
-    private void handleClobEvent(JSONObject msg) {
-        if (msg == null) return;
-        String eventType = msg.getString("event_type");
+    private void handleClobEvent(JsonNode msg) {
+        String eventType = msg.path("event_type").asString(null);
         if ("price_change".equals(eventType)) {
             onPriceChange(msg);
         } else if ("last_trade_price".equals(eventType)) {
@@ -534,17 +527,16 @@ public class PolymarketWsClient implements SmartLifecycle {
         }
     }
 
-    private void onPriceChange(JSONObject msg) {
-        JSONArray changes = msg.getJSONArray("price_changes");
-        if (changes == null) return;
+    private void onPriceChange(JsonNode msg) {
+        JsonNode changes = msg.path("price_changes");
+        if (!changes.isArray()) return;
 
-        for (int i = 0; i < changes.size(); i++) {
-            JSONObject change = changes.getJSONObject(i);
-            String side = sideForAsset(change.getString("asset_id"));
+        for (JsonNode change : changes) {
+            String side = sideForAsset(change.path("asset_id").asString(null));
             if (side == null) continue;
 
-            BigDecimal bestBid = change.getBigDecimal("best_bid");
-            BigDecimal bestAsk = change.getBigDecimal("best_ask");
+            BigDecimal bestBid = change.path("best_bid").asDecimal(null);
+            BigDecimal bestAsk = change.path("best_ask").asDecimal(null);
             if (bestBid != null) cacheService.putPredictionBid(side, bestBid);
             if (bestAsk != null) cacheService.putPredictionAsk(side, bestAsk);
         }
@@ -552,17 +544,17 @@ public class PolymarketWsClient implements SmartLifecycle {
         broadcastPriceUpdate();
     }
 
-    private void onLastTradePrice(JSONObject msg) {
-        String side = sideForAsset(msg.getString("asset_id"));
+    private void onLastTradePrice(JsonNode msg) {
+        String side = sideForAsset(msg.path("asset_id").asString(null));
         if (side == null) return;
 
-        BigDecimal price = msg.getBigDecimal("price");
-        BigDecimal size = msg.getBigDecimal("size");
+        BigDecimal price = msg.path("price").asDecimal(null);
+        BigDecimal size = msg.path("size").asDecimal(null);
         BigDecimal amount = (price != null && size != null) ? price.multiply(size) : BigDecimal.ZERO;
         String json = "{\"outcome\":\"" + ("UP".equals(side) ? "Up" : "Down")
                 + "\",\"side\":\"" + side
                 + "\",\"amount\":" + amount.setScale(2, RoundingMode.HALF_UP)
-                + ",\"ts\":" + parseClobTimestamp(msg.getString("timestamp")) + "}";
+                + ",\"ts\":" + parseClobTimestamp(msg.path("timestamp").asString(null)) + "}";
         broadcastService.broadcastPrediction("activity", json);
     }
 

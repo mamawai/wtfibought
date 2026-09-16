@@ -1,6 +1,5 @@
 package com.mawai.wiibsim.campaign.service;
 
-import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.campaign.entity.Campaign;
 import com.mawai.wiibsim.campaign.mapper.CampaignStatsMapper;
@@ -12,6 +11,7 @@ import com.mawai.wiibsim.campaign.model.SettlementBasis;
 import com.mawai.wiibsim.campaign.score.TradeScorer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.type.TypeReference;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -21,6 +21,8 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 把交易分、日常分、投票分并成一张全站积分表，「我的积分」「排行」「预估 LDC」全从这一份结果里取。
@@ -54,7 +56,7 @@ public class CampaignScoreService {
 
         String cached = cacheService.get(BOARD_KEY + c.getId());
         if (cached != null) {
-            return JSON.parseArray(cached, CampaignScore.class);
+            return MAPPER.readValue(cached, new TypeReference<List<CampaignScore>>() {});
         }
         return computeAndCache(c);
     }
@@ -72,7 +74,7 @@ public class CampaignScoreService {
 
     private List<CampaignScore> computeAndCache(Campaign c) {
         List<CampaignScore> board = computeBoard(c);
-        cacheService.set(BOARD_KEY + c.getId(), JSON.toJSONString(board), BOARD_TTL);
+        cacheService.set(BOARD_KEY + c.getId(), MAPPER.writeValueAsString(board), BOARD_TTL);
         return board;
     }
 

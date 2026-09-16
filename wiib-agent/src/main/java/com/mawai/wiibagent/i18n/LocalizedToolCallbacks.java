@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.i18n;
 
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.enums.AgentLang;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +21,8 @@ import org.springframework.util.ReflectionUtils;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 按语言出工具描述：{@code @Tool(description=...)} 是编译期常量换不掉，所以自己拼 ToolCallback——
@@ -121,8 +122,9 @@ public class LocalizedToolCallbacks {
                 }
                 String name = inner.getToolDefinition().name();
                 log.warn("[Tool] {} 执行失败，回给模型: {}", name, reason, cause);
-                return new JSONObject().fluentPut("available", false)
-                        .fluentPut("reason", name + " failed: " + reason).toJSONString();
+                return MAPPER.writeValueAsString(MAPPER.createObjectNode().put("available", false)
+                        .put("reason", name + " failed: " + reason));
+
             }
         }
     }

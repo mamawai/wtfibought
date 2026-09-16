@@ -7,7 +7,7 @@ import java.util.List;
 
 /**
  * GET /fapi/v3/account 响应。
- * 数值字段在 Binance 响应里都是字符串，fastjson2 会自动转 BigDecimal。
+ * 数值字段在 Binance 响应里都是字符串，Jackson 会自动转 BigDecimal。
  */
 @Data
 public class AccountInfo {

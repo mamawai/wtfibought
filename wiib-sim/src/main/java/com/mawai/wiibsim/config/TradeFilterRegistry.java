@@ -1,8 +1,5 @@
 package com.mawai.wiibsim.config;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.market.BinanceRestClient;
@@ -12,11 +9,14 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 交易过滤器注册表（数量步长 / 最小数量 / 最小名义额），对齐 Binance exchangeInfo。
@@ -67,25 +67,22 @@ public class TradeFilterRegistry {
                                              String notionalFilterType, String notionalField) {
         if (json == null) return null;
         try {
-            JSONObject root = JSON.parseObject(json);
-            JSONArray symbols = root.getJSONArray("symbols");
-            if (symbols == null) return null; // 地理拦截等异常响应 {"code":0,"msg":...}
+            JsonNode symbols = MAPPER.readTree(json).path("symbols");
+            if (!symbols.isArray()) return null; // 地理拦截等异常响应 {"code":0,"msg":...}
             Map<String, Filter> result = new HashMap<>(defaults);
-            for (int i = 0; i < symbols.size(); i++) {
-                JSONObject s = symbols.getJSONObject(i);
-                String symbol = s.getString("symbol");
+            for (JsonNode s : symbols) {
+                String symbol = s.path("symbol").asString(null);
                 if (!defaults.containsKey(symbol)) continue;
                 BigDecimal step = null;
                 BigDecimal minQty = null;
                 BigDecimal minNotional = null;
-                for (Object o : s.getJSONArray("filters")) {
-                    JSONObject filter = (JSONObject) o;
-                    String type = filter.getString("filterType");
+                for (JsonNode filter : s.path("filters")) {
+                    String type = filter.path("filterType").asString(null);
                     if ("LOT_SIZE".equals(type)) {
-                        step = filter.getBigDecimal("stepSize");
-                        minQty = filter.getBigDecimal("minQty");
+                        step = filter.path("stepSize").asDecimal(null);
+                        minQty = filter.path("minQty").asDecimal(null);
                     } else if (notionalFilterType.equals(type)) {
-                        minNotional = filter.getBigDecimal(notionalField);
+                        minNotional = filter.path(notionalField).asDecimal(null);
                     }
                 }
                 if (step != null && minQty != null && minNotional != null) {

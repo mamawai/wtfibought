@@ -1,6 +1,5 @@
 package com.mawai.wiibsim.service;
 
-import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.util.Result;
@@ -11,6 +10,8 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.function.Supplier;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * internal 下单幂等：quant 的 AI Trader 读超时后会用同一 clientRequestId 重发确认结果，
@@ -44,7 +45,7 @@ public class InternalOrderIdempotency {
                 return Result.fail(ErrorCode.ORDER_IN_FLIGHT.getCode(),
                         "请求处理中，请稍后用同一 clientRequestId 重试");
             }
-            return Result.ok(JSON.parseObject(cached, FuturesOrderResponse.class));
+            return Result.ok(MAPPER.readValue(cached, FuturesOrderResponse.class));
         }
         FuturesOrderResponse resp;
         try {
@@ -58,7 +59,7 @@ public class InternalOrderIdempotency {
         // 那等于把一笔已成交的单报成失败，键还被放开让人再下一次。写不进去就留着 PENDING，
         // 对方同键重发会收到"处理中"，最坏是问不出结果去核对持仓，不会双仓
         try {
-            redis.opsForValue().set(key, JSON.toJSONString(resp), TTL);
+            redis.opsForValue().set(key, MAPPER.writeValueAsString(resp), TTL);
         } catch (RuntimeException e) {
             log.warn("[Idempotency] 成交结果回写失败，键留到过期 key={} orderId={} msg={}",
                     key, resp.getOrderId(), e.toString());

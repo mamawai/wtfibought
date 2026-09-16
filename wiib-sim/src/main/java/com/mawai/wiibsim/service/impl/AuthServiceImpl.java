@@ -2,8 +2,6 @@ package com.mawai.wiibsim.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
 import cn.hutool.crypto.digest.BCrypt;
-import cn.hutool.json.JSONObject;
-import cn.hutool.json.JSONUtil;
 import com.mawai.wiibcommon.dto.UserDTO;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
@@ -34,6 +32,8 @@ import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
 import java.util.Map;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 认证服务实现
@@ -289,12 +289,12 @@ public class AuthServiceImpl implements AuthService {
             throw new BizException(messages.get("auth.oauth.tokenEmpty"));
         }
 
-        JSONObject json = JSONUtil.parseObj(response);
-        if (json.getStr("access_token") == null) {
+        String accessToken = MAPPER.readTree(response).path("access_token").asString(null);
+        if (accessToken == null) {
             throw new BizException(messages.get("auth.oauth.tokenFailed", Map.of("reason", response)));
         }
 
-        return json.getStr("access_token");
+        return accessToken;
     }
 
     /**

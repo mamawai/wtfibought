@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.llm;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -19,6 +16,7 @@ import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.retry.TransientAiException;
 import org.springframework.ai.tool.definition.ToolDefinition;
+import tools.jackson.databind.JsonNode;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -27,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -128,8 +127,8 @@ class GeminiChatModelTest {
         return tcm;
     }
 
-    private static JSONObject body() {
-        return JSON.parseObject(lastRequestBody);
+    private static JsonNode body() {
+        return MAPPER.readTree(lastRequestBody);
     }
 
     private static final String[] PLAIN = new String[]{
@@ -150,25 +149,25 @@ class GeminiChatModelTest {
 
         assertThat(lastRequestUri).isEqualTo("/v1beta/models/gemini-test:streamGenerateContent?alt=sse");
         assertThat(lastHeaders.get("X-goog-api-key")).containsExactly("AIza-test");
-        JSONObject body = body();
-        assertThat(body.getJSONObject("systemInstruction").getJSONArray("parts").getJSONObject(0).getString("text"))
+        JsonNode body = body();
+        assertThat(body.get("systemInstruction").get("parts").get(0).path("text").asString(null))
                 .isEqualTo("你是助手");
-        assertThat(body.getJSONObject("generationConfig").getJSONObject("thinkingConfig").getString("thinkingLevel"))
+        assertThat(body.get("generationConfig").get("thinkingConfig").path("thinkingLevel").asString(null))
                 .isEqualTo("HIGH");
-        assertThat(body.getJSONArray("tools")).hasSize(1);
-        assertThat(body.getJSONArray("tools").getJSONObject(0).containsKey("google_search")).isTrue();
-        assertThat(body.getJSONArray("contents").getJSONObject(0).getString("role")).isEqualTo("user");
+        assertThat(body.get("tools")).hasSize(1);
+        assertThat(body.get("tools").get(0).has("google_search")).isTrue();
+        assertThat(body.get("contents").get(0).path("role").asString(null)).isEqualTo("user");
     }
 
     @Test
     void 请求侧_档位none为预算0_留空不传() {
         chunks = PLAIN;
         model("none", false, mock(ToolCallingManager.class)).call(new Prompt("q"));
-        assertThat(body().getJSONObject("generationConfig").getJSONObject("thinkingConfig").getIntValue("thinkingBudget"))
+        assertThat(body().get("generationConfig").get("thinkingConfig").path("thinkingBudget").asInt(0))
                 .isZero();
 
         model().call(new Prompt("q"));
-        assertThat(body().containsKey("generationConfig")).isFalse();
+        assertThat(body().has("generationConfig")).isFalse();
     }
 
     @Test
@@ -176,22 +175,22 @@ class GeminiChatModelTest {
         chunks = PLAIN;
         GeminiChatModel m = model(null, true, oneTool());
         m.call(new Prompt("q", ToolChoice.apply(m.getOptions(), ToolChoice.REQUIRED)));
-        JSONObject body = body();
-        JSONArray tools = body.getJSONArray("tools");
+        JsonNode body = body();
+        JsonNode tools = body.get("tools");
         assertThat(tools).hasSize(1);   // 端点开了搜索但本次没捎许可
-        JSONObject decl = tools.getJSONObject(0).getJSONArray("functionDeclarations").getJSONObject(0);
-        assertThat(decl.getString("name")).isEqualTo("get_price");
-        assertThat(decl.getJSONObject("parametersJsonSchema").getBooleanValue("additionalProperties")).isFalse();
-        assertThat(body.getJSONObject("toolConfig").getJSONObject("functionCallingConfig").getString("mode")).isEqualTo("ANY");
+        JsonNode decl = tools.get(0).get("functionDeclarations").get(0);
+        assertThat(decl.path("name").asString(null)).isEqualTo("get_price");
+        assertThat(decl.get("parametersJsonSchema").path("additionalProperties").asBoolean(false)).isFalse();
+        assertThat(body.get("toolConfig").get("functionCallingConfig").path("mode").asString(null)).isEqualTo("ANY");
 
         m.call(new Prompt("q", ToolChoice.apply(m.getOptions(), "get_price")));
-        JSONObject config = body().getJSONObject("toolConfig").getJSONObject("functionCallingConfig");
-        assertThat(config.getString("mode")).isEqualTo("ANY");
-        assertThat(config.getJSONArray("allowedFunctionNames")).containsExactly("get_price");
+        JsonNode config = body().get("toolConfig").get("functionCallingConfig");
+        assertThat(config.path("mode").asString(null)).isEqualTo("ANY");
+        assertThat(config.get("allowedFunctionNames")).extracting(JsonNode::asString).containsExactly("get_price");
 
         m.call(new Prompt("q", allowWebSearch(m)));
-        assertThat(body().getJSONArray("tools")).hasSize(2);
-        assertThat(body().containsKey("toolConfig")).isFalse();
+        assertThat(body().get("tools")).hasSize(2);
+        assertThat(body().has("toolConfig")).isFalse();
     }
 
     @Test
@@ -206,23 +205,23 @@ class GeminiChatModelTest {
         model().call(new Prompt(List.of(new UserMessage("问题"), new UserMessage("补充"),
                 synthetic, syntheticResult, new UserMessage("专家结论"))));
 
-        JSONArray contents = body().getJSONArray("contents");
+        JsonNode contents = body().get("contents");
         assertThat(contents).hasSize(3);
-        assertThat(contents.getJSONObject(0).getJSONArray("parts")).extracting(p -> ((JSONObject) p).getString("text"))
+        assertThat(contents.get(0).get("parts")).extracting(p -> p.path("text").asString(null))
                 .containsExactly("问题", "补充");
-        JSONObject call = contents.getJSONObject(1).getJSONArray("parts").getJSONObject(0).getJSONObject("functionCall");
-        assertThat(contents.getJSONObject(1).getString("role")).isEqualTo("model");
-        assertThat(call.getString("name")).isEqualTo("get_price");
-        assertThat(call.getJSONObject("args").getString("symbol")).isEqualTo("BTC");
-        assertThat(call.containsKey("id")).isFalse();
-        JSONArray userParts = contents.getJSONObject(2).getJSONArray("parts");
-        assertThat(contents.getJSONObject(2).getString("role")).isEqualTo("user");
-        JSONObject response = userParts.getJSONObject(0).getJSONObject("functionResponse");
-        assertThat(response.getString("name")).isEqualTo("get_price");
-        assertThat(response.containsKey("id")).isFalse();
+        JsonNode call = contents.get(1).get("parts").get(0).get("functionCall");
+        assertThat(contents.get(1).path("role").asString(null)).isEqualTo("model");
+        assertThat(call.path("name").asString(null)).isEqualTo("get_price");
+        assertThat(call.get("args").path("symbol").asString(null)).isEqualTo("BTC");
+        assertThat(call.has("id")).isFalse();
+        JsonNode userParts = contents.get(2).get("parts");
+        assertThat(contents.get(2).path("role").asString(null)).isEqualTo("user");
+        JsonNode response = userParts.get(0).get("functionResponse");
+        assertThat(response.path("name").asString(null)).isEqualTo("get_price");
+        assertThat(response.has("id")).isFalse();
         // 回执本身是 JSON 对象就直接用
-        assertThat(response.getJSONObject("response").getIntValue("price")).isEqualTo(60000);
-        assertThat(userParts.getJSONObject(1).getString("text")).isEqualTo("专家结论");
+        assertThat(response.get("response").path("price").asInt(0)).isEqualTo(60000);
+        assertThat(userParts.get(1).path("text").asString(null)).isEqualTo("专家结论");
 
         // 上游给了 id 的原样带回；文本回执包一层
         AssistantMessage real = AssistantMessage.builder().content("").toolCalls(List.of(
@@ -230,12 +229,59 @@ class GeminiChatModelTest {
         ToolResponseMessage realResult = ToolResponseMessage.builder().responses(List.of(
                 new ToolResponseMessage.ToolResponse("fc-abc", "get_price", "六万"))).build();
         model().call(new Prompt(List.of(new UserMessage("问题"), real, realResult)));
-        contents = body().getJSONArray("contents");
-        assertThat(contents.getJSONObject(1).getJSONArray("parts").getJSONObject(0).getJSONObject("functionCall")
-                .getString("id")).isEqualTo("fc-abc");
-        JSONObject wrapped = contents.getJSONObject(2).getJSONArray("parts").getJSONObject(0).getJSONObject("functionResponse");
-        assertThat(wrapped.getString("id")).isEqualTo("fc-abc");
-        assertThat(wrapped.getJSONObject("response").getString("output")).isEqualTo("六万");
+        contents = body().get("contents");
+        assertThat(contents.get(1).get("parts").get(0).get("functionCall")
+                .path("id").asString(null)).isEqualTo("fc-abc");
+        JsonNode wrapped = contents.get(2).get("parts").get(0).get("functionResponse");
+        assertThat(wrapped.path("id").asString(null)).isEqualTo("fc-abc");
+        assertThat(wrapped.get("response").path("output").asString(null)).isEqualTo("六万");
+    }
+
+    /**
+     * 请求体整串钉死：温度/档位、系统指令拼接、同角色合并、合成 id 不回传真实 id 回传、回执是对象直接用否则包 output、
+     * 工具循环里的原始 parts 原样回放（签名、小数、null 字段）、function 声明带 schema 小数、搜索声明、toolConfig、转义与 emoji
+     */
+    @Test
+    void 请求侧_请求体整串金标准() {
+        chunks = PLAIN;
+        ToolCallingManager tcm = mock(ToolCallingManager.class);
+        when(tcm.resolveToolDefinitions(any())).thenReturn(List.of(ToolDefinition.builder()
+                .name("get_price").description("查价格 <b>&\"引号\"")
+                .inputSchema("{\"type\":\"object\",\"properties\":{\"qty\":{\"type\":\"number\",\"minimum\":0.010}},"
+                        + "\"required\":[\"qty\"],\"additionalProperties\":false}").build()));
+        GeminiChatModel m = new GeminiChatModel("AIza-test", "http://127.0.0.1:" + server.getAddress().getPort() + "/v1beta",
+                "gemini-test", 0.30, "low", tcm, true);
+        String parts = """
+                [{"text":"想一下","thought":true,"thoughtSignature":"c2ln/+="},
+                 {"functionCall":{"id":"call_real","name":"get_price","args":{"qty":0.010,"n":3,"note":null}},"thoughtSignature":"c2ln2"}]""";
+        AssistantMessage plain = AssistantMessage.builder().content("旧答\n第二行").toolCalls(List.of(
+                new AssistantMessage.ToolCall(GeminiChatModel.SYNTHETIC_ID_PREFIX + "ab_1_get_price", "function", "get_price", "{\"qty\":1.50}"),
+                new AssistantMessage.ToolCall("call_0", "function", "get_price", ""))).build();
+        AssistantMessage inLoop = AssistantMessage.builder().content("").toolCalls(List.of(
+                        new AssistantMessage.ToolCall("call_real", "function", "get_price", "{\"qty\":0.010,\"n\":3}")))
+                .properties(Map.of(GeminiChatModel.PARTS_KEY, parts)).build();
+        ToolResponseMessage result0 = ToolResponseMessage.builder().responses(List.of(
+                new ToolResponseMessage.ToolResponse(GeminiChatModel.SYNTHETIC_ID_PREFIX + "ab_1_get_price", "get_price", "{\"price\":60000.10,\"ok\":true}"),
+                new ToolResponseMessage.ToolResponse("call_0", "get_price", "  {坏的json"))).build();
+        ToolResponseMessage result1 = ToolResponseMessage.builder().responses(List.of(
+                new ToolResponseMessage.ToolResponse("call_real", "get_price", "ERROR: 超时\t重试"))).build();
+
+        m.call(new Prompt(List.of(new SystemMessage("你是助手"), new UserMessage("问题 📈 \"引号\" \\ /"),
+                plain, result0, new UserMessage("再问"), new SystemMessage("【摘要】第1段"), inLoop, result1),
+                ToolChoice.apply(allowWebSearch(m), "get_price")));
+
+        assertThat(lastRequestBody).isEqualTo("{\"generationConfig\":{\"temperature\":0.3,\"thinkingConfig\":{\"thinkingLevel\":\"LOW\"}},\"systemInstruction\":{\"parts\":[{\"text\":\"你是助手\\n\\n【摘要】第1段\"}]},"
+                + "\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"问题 📈 \\\"引号\\\" \\\\ /\"}]},{\"role\":\"model\",\"parts\":[{\"text\":\"旧答\\n第二行\"},"
+                + "{\"functionCall\":{\"name\":\"get_price\",\"args\":{\"qty\":1.50}}},{\"functionCall\":{\"name\":\"get_price\","
+                + "\"args\":{},\"id\":\"call_0\"}}]},{\"role\":\"user\",\"parts\":[{\"functionResponse\":{\"name\":\"get_price\","
+                + "\"response\":{\"price\":60000.10,\"ok\":true}}},{\"functionResponse\":{\"name\":\"get_price\",\"response\":{\"output\":\"{坏的json\"},"
+                + "\"id\":\"call_0\"}},{\"text\":\"再问\"}]},{\"role\":\"model\",\"parts\":[{\"text\":\"想一下\",\"thought\":true,\"thoughtSignature\":\"c2ln/+=\"},"
+                + "{\"functionCall\":{\"id\":\"call_real\",\"name\":\"get_price\",\"args\":{\"qty\":0.010,\"n\":3}},\"thoughtSignature\":\"c2ln2\"}]},"
+                + "{\"role\":\"user\",\"parts\":[{\"functionResponse\":{\"name\":\"get_price\",\"response\":{\"output\":\"ERROR: 超时\\t重试\"},"
+                + "\"id\":\"call_real\"}}]}],\"tools\":[{\"functionDeclarations\":[{\"name\":\"get_price\",\"description\":\"查价格 <b>&\\\"引号\\\"\","
+                + "\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"qty\":{\"type\":\"number\",\"minimum\":0.010}},"
+                + "\"required\":[\"qty\"],\"additionalProperties\":false}}]},{\"google_search\":{}}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"ANY\","
+                + "\"allowedFunctionNames\":[\"get_price\"]}}}");
     }
 
     // ========== 阻塞路径 ==========
@@ -269,7 +315,7 @@ class GeminiChatModelTest {
         assertThat(assistant.getToolCalls()).hasSize(1);
         assertThat(assistant.getToolCalls().getFirst().id()).startsWith(GeminiChatModel.SYNTHETIC_ID_PREFIX);
         assertThat(assistant.getToolCalls().getFirst().name()).isEqualTo("get_price");
-        assertThat(JSON.parseObject(assistant.getToolCalls().getFirst().arguments()).getString("symbol")).isEqualTo("BTC");
+        assertThat(MAPPER.readTree(assistant.getToolCalls().getFirst().arguments()).path("symbol").asString(null)).isEqualTo("BTC");
         assertThat(response.getResult().getMetadata().getFinishReason()).isEqualTo("TOOL_CALLS");
         assertThat(assistant.getText()).isEqualTo("先查");
 
@@ -278,26 +324,26 @@ class GeminiChatModelTest {
                 new ToolResponseMessage.ToolResponse(assistant.getToolCalls().getFirst().id(), "get_price", "60000"))).build();
         m.call(new Prompt(List.of(new UserMessage("BTC 多少钱"), assistant, toolResult)));
 
-        JSONArray parts = body().getJSONArray("contents").getJSONObject(1).getJSONArray("parts");
+        JsonNode parts = body().get("contents").get(1).get("parts");
         assertThat(parts).hasSize(2);
-        assertThat(parts.getJSONObject(0).getString("thoughtSignature")).isEqualTo("sig-x");
-        assertThat(parts.getJSONObject(1).getString("thoughtSignature")).isEqualTo("sig-y");
-        assertThat(parts.getJSONObject(1).getJSONObject("functionCall").containsKey("id")).isFalse();
-        JSONObject fr = body().getJSONArray("contents").getJSONObject(2).getJSONArray("parts").getJSONObject(0)
-                .getJSONObject("functionResponse");
-        assertThat(fr.getString("name")).isEqualTo("get_price");
-        assertThat(fr.containsKey("id")).isFalse();
+        assertThat(parts.get(0).path("thoughtSignature").asString(null)).isEqualTo("sig-x");
+        assertThat(parts.get(1).path("thoughtSignature").asString(null)).isEqualTo("sig-y");
+        assertThat(parts.get(1).get("functionCall").has("id")).isFalse();
+        JsonNode fr = body().get("contents").get(2).get("parts").get(0)
+                .get("functionResponse");
+        assertThat(fr.path("name").asString(null)).isEqualTo("get_price");
+        assertThat(fr.has("id")).isFalse();
 
         // 已结束的轮次（后面是新提问）不回放原始 parts：签名不带，按文本 + functionCall 拼
         m.call(new Prompt(List.of(new UserMessage("BTC 多少钱"), assistant, toolResult,
                 AssistantMessage.builder().content("六万").properties(Map.of(GeminiChatModel.PARTS_KEY,
                         "[{\"text\":\"六万\",\"thoughtSignature\":\"sig-z\"}]")).build(),
                 new UserMessage("再问"))));
-        JSONObject ended = body().getJSONArray("contents").getJSONObject(3);
-        assertThat(ended.getString("role")).isEqualTo("model");
-        assertThat(ended.getJSONArray("parts")).hasSize(1);
-        assertThat(ended.getJSONArray("parts").getJSONObject(0).getString("text")).isEqualTo("六万");
-        assertThat(ended.getJSONArray("parts").getJSONObject(0).containsKey("thoughtSignature")).isFalse();
+        JsonNode ended = body().get("contents").get(3);
+        assertThat(ended.path("role").asString(null)).isEqualTo("model");
+        assertThat(ended.get("parts")).hasSize(1);
+        assertThat(ended.get("parts").get(0).path("text").asString(null)).isEqualTo("六万");
+        assertThat(ended.get("parts").get(0).has("thoughtSignature")).isFalse();
     }
 
     // ========== 搜索过程帧 ==========
@@ -329,9 +375,9 @@ class GeminiChatModelTest {
         ChatResponse last = frames.getLast();
         assertThat(last.getResult().getMetadata().getFinishReason()).isEqualTo("STOP");
         // 相邻纯文本 part 合并、思考 part 不存
-        JSONArray parts = JSON.parseArray((String) last.getResult().getOutput().getMetadata().get(GeminiChatModel.PARTS_KEY));
+        JsonNode parts = MAPPER.readTree((String) last.getResult().getOutput().getMetadata().get(GeminiChatModel.PARTS_KEY));
         assertThat(parts).hasSize(1);
-        assertThat(parts.getJSONObject(0).getString("text")).isEqualTo("据报道，BTC 上涨");
+        assertThat(parts.get(0).path("text").asString(null)).isEqualTo("据报道，BTC 上涨");
     }
 
     // ========== 错误归类 ==========

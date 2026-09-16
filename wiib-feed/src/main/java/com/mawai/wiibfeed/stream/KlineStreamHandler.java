@@ -1,7 +1,5 @@
 package com.mawai.wiibfeed.stream;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.market.KlineBar;
@@ -9,8 +7,9 @@ import com.mawai.wiibfeed.KlineStreamCache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
-import java.math.BigDecimal;
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /** 5m K线流：@kline_5m。每次更新(含未收盘)→广播给前端蜡烛图；收盘 bar→KlineStreamCache 喂策略。属 /market 端点。 */
 @Slf4j
@@ -42,35 +41,35 @@ public class KlineStreamHandler implements StreamHandler {
      */
     public void handle(String raw, boolean feedStrategy) {
         try {
-            JSONObject root = JSON.parseObject(raw);
-            JSONObject data = root.getJSONObject("data");
-            if (data == null) {
+            JsonNode root = MAPPER.readTree(raw);
+            JsonNode data = root.path("data");
+            if (!data.isObject()) {
                 data = root;
             }
-            JSONObject k = data.getJSONObject("k");
-            if (k == null) {
+            JsonNode k = data.path("k");
+            if (!k.isObject()) {
                 return;
             }
-            String symbol = data.getString("s");
+            String symbol = data.path("s").asString(null);
             if (symbol == null || symbol.isBlank()) {
-                symbol = k.getString("s");
+                symbol = k.path("s").asString(null);
             }
-            String interval = k.getString("i");
+            String interval = k.path("i").asString(null);
             if (symbol == null || interval == null) {
                 return;
             }
 
             broadcastKline(symbol, k);   // 每次更新都广播：前端蜡烛图实时长 + 量/额实时
 
-            if (feedStrategy && k.getBooleanValue("x")) {
+            if (feedStrategy && k.path("x").asBoolean(false)) {
                 KlineBar bar = new KlineBar(
-                        k.getLongValue("t"),
-                        k.getLongValue("T"),
-                        new BigDecimal(k.getString("o")),
-                        new BigDecimal(k.getString("h")),
-                        new BigDecimal(k.getString("l")),
-                        new BigDecimal(k.getString("c")),
-                        new BigDecimal(k.getString("v"))
+                        k.path("t").asLong(0),
+                        k.path("T").asLong(0),
+                        k.get("o").asDecimal(),
+                        k.get("h").asDecimal(),
+                        k.get("l").asDecimal(),
+                        k.get("c").asDecimal(),
+                        k.get("v").asDecimal()
                 );
                 klineStreamCache.onClosedBar(symbol, interval, bar);
             }
@@ -80,13 +79,13 @@ public class KlineStreamHandler implements StreamHandler {
     }
 
     /** 字段契约(前端 useKlineStream 按此解析)：i=interval, t=开盘ms, o/h/l/c, v=量, q=额, x=是否收盘。 */
-    private void broadcastKline(String symbol, JSONObject k) {
-        String json = "{\"i\":\"" + k.getString("i") + "\""
-                + ",\"t\":" + k.getLongValue("t")
-                + ",\"o\":\"" + k.getString("o") + "\",\"h\":\"" + k.getString("h") + "\""
-                + ",\"l\":\"" + k.getString("l") + "\",\"c\":\"" + k.getString("c") + "\""
-                + ",\"v\":\"" + k.getString("v") + "\",\"q\":\"" + k.getString("q") + "\""
-                + ",\"x\":" + k.getBooleanValue("x") + "}";
+    private void broadcastKline(String symbol, JsonNode k) {
+        String json = "{\"i\":\"" + k.path("i").asString(null) + "\""
+                + ",\"t\":" + k.path("t").asLong(0)
+                + ",\"o\":\"" + k.path("o").asString(null) + "\",\"h\":\"" + k.path("h").asString(null) + "\""
+                + ",\"l\":\"" + k.path("l").asString(null) + "\",\"c\":\"" + k.path("c").asString(null) + "\""
+                + ",\"v\":\"" + k.path("v").asString(null) + "\",\"q\":\"" + k.path("q").asString(null) + "\""
+                + ",\"x\":" + k.path("x").asBoolean(false) + "}";
         broadcaster.broadcastKline(symbol, json);
     }
 }

@@ -1,8 +1,5 @@
 package com.mawai.wiibquant.whale;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonRawValue;
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
@@ -11,11 +8,14 @@ import com.mawai.wiibquant.mapper.WhaleSnapshotMapper.Row;
 import com.mawai.wiibquant.whale.WhaleAggregator.Side;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
 import java.util.Objects;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 读每币最新快照给两个 GET（docs/hyperliquid-whale.md §7）。覆盖率与近价强平带在这里算，表里不存。
@@ -92,7 +92,7 @@ public class WhaleQueryService {
     }
 
     static CoinView view(Row r) {
-        JSONObject liq = JSON.parseObject(r.getLiqBucketsJson());
+        JsonNode liq = MAPPER.readTree(r.getLiqBucketsJson());
         return new CoinView(r.getCoin(), r.getCoin() + "USDT", r.getPrice(),
                 side(r.getLongCount(), r.getLongNotional(), r.getLongWavgEntry(), r.getLongMedianEntry(), r.getLongTop1Share(), r.getLongUpnl()),
                 side(r.getShortCount(), r.getShortNotional(), r.getShortWavgEntry(), r.getShortMedianEntry(), r.getShortTop1Share(), r.getShortUpnl()),
@@ -112,22 +112,21 @@ public class WhaleQueryService {
      * 近价强平带。桶是 [下界, 下界+宽)，与带 (价, 价×1.05] 或 (价×0.95, 价] 有交集就算；
      * 上方只取空头列、下方只取多头列（空头在上方强平、多头在下方，跨价那个桶两边各取各的列）。合计为 0 回 null。
      */
-    static LiqBand band(JSONObject liq, BigDecimal price, boolean above) {
-        BigDecimal width = liq.getBigDecimal("width");
-        JSONArray buckets = liq.getJSONArray("buckets");
+    static LiqBand band(JsonNode liq, BigDecimal price, boolean above) {
+        BigDecimal width = liq.path("width").asDecimal(null);
+        JsonNode buckets = liq.get("buckets");
         BigDecimal lo = above ? price : price.multiply(BigDecimal.ONE.subtract(BAND_PCT));
         BigDecimal hi = above ? price.multiply(BigDecimal.ONE.add(BAND_PCT)) : price;
         int col = above ? 2 : 1;
         BigDecimal total = BigDecimal.ZERO;
         BigDecimal peakNotional = BigDecimal.ZERO;
         BigDecimal peak = null;
-        for (int i = 0; i < buckets.size(); i++) {
-            JSONArray b = buckets.getJSONArray(i);
-            BigDecimal lower = b.getBigDecimal(0);
+        for (JsonNode b : buckets) {
+            BigDecimal lower = b.path(0).asDecimal(null);
             if (lower.compareTo(hi) > 0 || lower.add(width).compareTo(lo) <= 0) {
                 continue;
             }
-            BigDecimal n = b.getBigDecimal(col);
+            BigDecimal n = b.path(col).asDecimal(null);
             total = total.add(n);
             if (n.compareTo(peakNotional) > 0) {
                 peakNotional = n;

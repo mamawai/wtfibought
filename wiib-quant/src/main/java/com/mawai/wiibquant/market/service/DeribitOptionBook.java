@@ -1,8 +1,7 @@
 package com.mawai.wiibquant.market.service;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -12,6 +11,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.TreeMap;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * Deribit 期权簿(getBookSummaryByCurrency)解析：按到期日升序分组，供 ATM IV / skew / term slope 取值。
@@ -42,21 +43,19 @@ public final class DeribitOptionBook {
         if (bookSummaryJson == null || bookSummaryJson.isBlank()) {
             return new DeribitOptionBook(underlying, byExpiry);
         }
-        JSONObject root = JSON.parseObject(bookSummaryJson);
-        JSONArray results = root.getJSONArray("result");
-        if (results == null) {
+        JsonNode results = MAPPER.readValue(bookSummaryJson, ObjectNode.class).path("result");
+        if (!results.isArray()) {
             return new DeribitOptionBook(underlying, byExpiry);
         }
-        for (int i = 0; i < results.size(); i++) {
-            JSONObject item = results.getJSONObject(i);
-            double markIv = item.getDoubleValue("mark_iv");
+        for (JsonNode item : results) {
+            double markIv = item.path("mark_iv").asDouble(0);
             if (markIv <= 0) {
                 continue;
             }
             if (underlying <= 0) {
-                underlying = item.getDoubleValue("underlying_price");
+                underlying = item.path("underlying_price").asDouble(0);
             }
-            String name = item.getString("instrument_name");
+            String name = item.path("instrument_name").asString(null);
             if (name == null) {
                 continue;
             }

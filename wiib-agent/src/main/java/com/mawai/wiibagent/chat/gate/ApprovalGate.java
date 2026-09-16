@@ -1,7 +1,5 @@
 package com.mawai.wiibagent.chat.gate;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.constant.QuantConstants;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -9,12 +7,15 @@ import com.mawai.wiibagent.llm.ReactLoop;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 贵操作的 HITL 闸门，{@link ReactLoop} 执行工具前先问它。
@@ -93,11 +94,11 @@ public class ApprovalGate implements ReactLoop.ToolGate {
         registry.discardApprovals(sessionId);
         registry.requestApproval(sessionId, call.name(), symbol, reason());
         log.info("[HITL] 未授权，登记待确认 session={} tool={} symbol={}", sessionId, call.name(), symbol);
-        JSONObject out = new JSONObject();
+        ObjectNode out = MAPPER.createObjectNode();
         out.put("status", "PENDING_APPROVAL");
         out.put("message", prompts.get(lang, "chat.hitl.pendingMessage",
                 Map.of("label", label(), "reason", reason())));
-        return Optional.of(pairedReply(reply, call.id(), out.toJSONString()));
+        return Optional.of(pairedReply(reply, call.id(), MAPPER.writeValueAsString(out)));
     }
 
     /** 本批 tool_call 里受管辖的那个（一批里最多处理一个贵操作，其余的连同它一起等下一轮）。 */
@@ -113,7 +114,8 @@ public class ApprovalGate implements ReactLoop.ToolGate {
      */
     private static String normalizedSymbol(AssistantMessage.ToolCall call) {
         try {
-            return approvalSymbol(JSON.parseObject(call.arguments()).getString("symbol"));
+            return approvalSymbol(MAPPER.readTree(call.arguments()).path("symbol").asString(null));
+
         } catch (Exception e) {
             // 参数解析不了也要有个确定的键，否则授权永远对不上
             return approvalSymbol(null);

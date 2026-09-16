@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.controller;
 
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
@@ -41,6 +40,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.*;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 研判工作台对话入口（P4）：SSE 流式暴露多 agent 调度全过程。
@@ -257,7 +258,8 @@ public class ChatWorkbenchController {
                     log.error("[Workbench] 对话任务异常退出 sessionId={}", sessionId, e);
                     // 那边只兜 Exception，Error 穿到这里时通道还开着：不收口前端要挂到 10 分钟超时
                     if (!channel.isClosed()) {
-                        channel.send("error", new JSONObject().fluentPut("message", prompts.get(leaves.lang(), "llm.error.fallback")));
+                        channel.send("error", MAPPER.createObjectNode().put("message", prompts.get(leaves.lang(), "llm.error.fallback")));
+
                         channel.complete();
                     }
                 } finally {

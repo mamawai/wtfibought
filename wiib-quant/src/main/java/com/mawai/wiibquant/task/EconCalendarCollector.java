@@ -1,8 +1,5 @@
 package com.mawai.wiibquant.task;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibquant.mapper.EconCalendarMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,6 +7,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -24,6 +23,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 财经日历采集轨：拉 TradingView 日历接口（只要 High 级，服务端 minImportance=1 过滤）→ 按事件 id upsert
@@ -144,25 +145,24 @@ public class EconCalendarCollector {
 
     /** 回包 → 事件行：ISO 时间转 epoch、数字拼成显示文本；坏行跳过不拖垮整批 */
     static List<Event> parse(String json) {
-        JSONArray arr = JSON.parseObject(json).getJSONArray("result");
+        JsonNode arr = MAPPER.readValue(json, ObjectNode.class).get("result");
         List<Event> out = new ArrayList<>(arr.size());
-        for (int i = 0; i < arr.size(); i++) {
-            JSONObject o = arr.getJSONObject(i);
+        for (JsonNode o : arr) {
             try {
-                String title = o.getString("title");
-                long time = Instant.parse(o.getString("date")).toEpochMilli();
-                String scale = o.getString("scale");
-                String unit = o.getString("unit");
+                String title = o.path("title").asString(null);
+                long time = Instant.parse(o.path("date").asString(null)).toEpochMilli();
+                String scale = o.path("scale").asString(null);
+                String unit = o.path("unit").asString(null);
                 // 缺必填字段与坏日期同罪：这里不拦的话会活到 upsert 撞 NOT NULL，整批事务回滚
-                out.add(new Event(Objects.requireNonNull(o.getString("id")), time,
-                        Objects.requireNonNull(o.getString("country")),
-                        Objects.requireNonNull(o.getString("currency")),
+                out.add(new Event(Objects.requireNonNull(o.path("id").asString(null)), time,
+                        Objects.requireNonNull(o.path("country").asString(null)),
+                        Objects.requireNonNull(o.path("currency").asString(null)),
                         title.length() > MAX_TITLE_LEN ? title.substring(0, MAX_TITLE_LEN) : title,
-                        text(o.getBigDecimal("actual"), scale, unit),
-                        text(o.getBigDecimal("forecast"), scale, unit),
-                        text(o.getBigDecimal("previous"), scale, unit)));
+                        text(o.path("actual").asDecimal(null), scale, unit),
+                        text(o.path("forecast").asDecimal(null), scale, unit),
+                        text(o.path("previous").asDecimal(null), scale, unit)));
             } catch (Exception e) {
-                log.warn("[EconCalendar] 跳过坏行 id={} title={}", o.get("id"), o.get("title"));
+                log.warn("[EconCalendar] 跳过坏行 id={} title={}", o.path("id").asString(null), o.path("title").asString(null));
             }
         }
         return out;

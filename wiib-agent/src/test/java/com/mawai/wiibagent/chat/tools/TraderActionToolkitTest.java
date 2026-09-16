@@ -3,19 +3,19 @@ package com.mawai.wiibagent.chat.tools;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.ChatTestEndpoints;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
+import tools.jackson.databind.JsonNode;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -34,7 +34,7 @@ class TraderActionToolkitTest {
     private static final ToolContext CTX = new ToolContext(Map.of(ToolRunContext.SESSION_KEY, SESSION));
 
     /** 推出去的每一张卡的 data（form + prefill） */
-    private final List<JSONObject> pushed = new ArrayList<>();
+    private final List<JsonNode> pushed = new ArrayList<>();
     private final WorkbenchRunRegistry runRegistry = spy(new WorkbenchRunRegistry());
     private final TraderActionToolkit toolkit = new TraderActionToolkit(runRegistry, 42L, ChatTestEndpoints.PROMPTS, AgentLang.ZH);
 
@@ -49,8 +49,8 @@ class TraderActionToolkitTest {
         runRegistry.finish(SESSION);
     }
 
-    private static JSONObject parse(String json) {
-        return JSON.parseObject(json);
+    private static JsonNode parse(String json) {
+        return MAPPER.readTree(json);
     }
 
     /** formType 是前端认卡的唯一依据，三个工具各推各的，串了就是点唤醒弹出复盘 */
@@ -60,7 +60,7 @@ class TraderActionToolkitTest {
         toolkit.reviewTraderNow(CTX);
         toolkit.leaveNoteToTrader("仓位轻点", 3, CTX);
 
-        assertThat(pushed).extracting(d -> d.getString("form"))
+        assertThat(pushed).extracting(d -> d.path("form").asString(null))
                 .containsExactly("wake", "review", "note");
     }
 
@@ -69,10 +69,10 @@ class TraderActionToolkitTest {
     void 留言把草稿与轮次一起预填() {
         String out = toolkit.leaveNoteToTrader("今晚有 CPI，仓位放轻", 3, CTX);
 
-        JSONObject prefill = pushed.getFirst().getJSONObject("prefill");
-        assertThat(prefill.getString("note")).isEqualTo("今晚有 CPI，仓位放轻");
-        assertThat(prefill.getIntValue("rounds")).isEqualTo(3);
-        assertThat(parse(out).getBooleanValue("ok")).isTrue();
+        JsonNode prefill = pushed.getFirst().get("prefill");
+        assertThat(prefill.path("note").asString(null)).isEqualTo("今晚有 CPI，仓位放轻");
+        assertThat(prefill.path("rounds").asInt(0)).isEqualTo(3);
+        assertThat(parse(out).path("ok").asBoolean(false)).isTrue();
     }
 
     /** 模型没说几轮就别替它填：塞个空值进去，卡上会显示成"0 轮"这种谁也没要过的数 */
@@ -80,9 +80,9 @@ class TraderActionToolkitTest {
     void 不填轮次时预填里没有轮次字段() {
         toolkit.leaveNoteToTrader("仓位轻点", null, CTX);
 
-        JSONObject prefill = pushed.getFirst().getJSONObject("prefill");
-        assertThat(prefill.getString("note")).isEqualTo("仓位轻点");
-        assertThat(prefill.containsKey("rounds")).isFalse();
+        JsonNode prefill = pushed.getFirst().get("prefill");
+        assertThat(prefill.path("note").asString(null)).isEqualTo("仓位轻点");
+        assertThat(prefill.has("rounds")).isFalse();
     }
 
     /**
@@ -93,19 +93,19 @@ class TraderActionToolkitTest {
     void 推不出去时如实说没打开() {
         runRegistry.finish(SESSION);
 
-        JSONObject out = parse(toolkit.wakeTrader(CTX));
+        JsonNode out = parse(toolkit.wakeTrader(CTX));
 
-        assertThat(out.getBooleanValue("ok")).isFalse();
-        assertThat(out.getString("message")).contains("没能打开").contains("面板");
+        assertThat(out.path("ok").asBoolean(false)).isFalse();
+        assertThat(out.path("message").asString(null)).contains("没能打开").contains("面板");
         assertThat(pushed).isEmpty();
     }
 
     /** 没有会话号（state 里没带）时连推都不该推，更不能回一句"已打开" */
     @Test
     void 没有会话号时不推表单() {
-        JSONObject out = parse(toolkit.leaveNoteToTrader("仓位轻点", 1, new ToolContext(Map.of())));
+        JsonNode out = parse(toolkit.leaveNoteToTrader("仓位轻点", 1, new ToolContext(Map.of())));
 
-        assertThat(out.getBooleanValue("ok")).isFalse();
+        assertThat(out.path("ok").asBoolean(false)).isFalse();
         verify(runRegistry, never()).publishForm(any(), any(), any());
     }
 

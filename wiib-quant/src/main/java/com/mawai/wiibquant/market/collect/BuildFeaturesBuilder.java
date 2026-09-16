@@ -1,8 +1,5 @@
 package com.mawai.wiibquant.market.collect;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.enums.KlineInterval;
 import com.mawai.wiibquant.market.domain.FeatureSnapshot;
 import com.mawai.wiibquant.market.domain.MarketRegime;
@@ -10,6 +7,9 @@ import com.mawai.wiibquant.market.service.DeribitOptionBook;
 import com.mawai.wiibquant.market.indicator.CryptoIndicatorCalculator;
 import com.mawai.wiibcommon.market.OrderFlowAggregator;
 import lombok.extern.slf4j.Slf4j;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 
@@ -17,6 +17,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.Supplier;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static com.mawai.wiibquant.market.collect.IndicatorValues.toBd;
 
 /**
@@ -261,10 +262,10 @@ public final class BuildFeaturesBuilder {
     private BigDecimal extractLastPrice(String tickerJson, Map<String, List<BigDecimal>> closes) {
         if (tickerJson != null) {
             try {
-                JSONObject t = JSON.parseObject(tickerJson);
-                String p = t.getString("lastPrice");
+                ObjectNode t = MAPPER.readValue(tickerJson, ObjectNode.class);
+                String p = t.path("lastPrice").asString(null);
                 if (p == null || p.isBlank()) {
-                    p = t.getString("price");
+                    p = t.path("price").asString(null);
                 }
                 if (p != null) return new BigDecimal(p);
             } catch (Exception ignored) {}
@@ -324,20 +325,18 @@ public final class BuildFeaturesBuilder {
     static double calcBidAskImbalance(String obJson) {
         if (obJson == null) return 0;
         try {
-            JSONObject ob = JSON.parseObject(obJson);
-            double bidVol = sumDepth(ob.getJSONArray("bids"), 5);
-            double askVol = sumDepth(ob.getJSONArray("asks"), 5);
+            ObjectNode ob = MAPPER.readValue(obJson, ObjectNode.class);
+            double bidVol = sumDepth(ob.path("bids"), 5);
+            double askVol = sumDepth(ob.path("asks"), 5);
             double total = bidVol + askVol;
             return total > 0 ? (bidVol - askVol) / total : 0;
         } catch (Exception e) { return 0; }
     }
 
-    private static double sumDepth(JSONArray levels, int depth) {
-        if (levels == null) return 0;
+    private static double sumDepth(JsonNode levels, int depth) {
         double sum = 0;
         for (int i = 0; i < Math.min(levels.size(), depth); i++) {
-            JSONArray lv = levels.getJSONArray(i);
-            sum += lv.getDoubleValue(1);
+            sum += levels.get(i).path(1).asDouble(0);
         }
         return sum;
     }
@@ -370,12 +369,10 @@ public final class BuildFeaturesBuilder {
     static double calcOiChangeRate(String oiHistJson) {
         if (oiHistJson == null || oiHistJson.isBlank()) return 0;
         try {
-            JSONArray arr = JSON.parseArray(oiHistJson);
+            ArrayNode arr = MAPPER.readValue(oiHistJson, ArrayNode.class);
             if (arr == null || arr.size() < 2) return 0;
-            JSONObject oldest = arr.getJSONObject(0);
-            JSONObject latest = arr.getJSONObject(arr.size() - 1);
-            double oldOi = oldest.getDoubleValue("sumOpenInterest");
-            double newOi = latest.getDoubleValue("sumOpenInterest");
+            double oldOi = arr.get(0).path("sumOpenInterest").asDouble(0);
+            double newOi = arr.get(arr.size() - 1).path("sumOpenInterest").asDouble(0);
             if (oldOi <= 0) return 0;
             return (newOi - oldOi) / oldOi; // 正=增长，负=萎缩
         } catch (Exception e) { return 0; }
@@ -384,8 +381,8 @@ public final class BuildFeaturesBuilder {
     static double calcFundingDeviation(String fundingJson) {
         if (fundingJson == null) return 0;
         try {
-            JSONObject f = JSON.parseObject(fundingJson);
-            double rate = f.getDoubleValue("lastFundingRate");
+            ObjectNode f = MAPPER.readValue(fundingJson, ObjectNode.class);
+            double rate = f.path("lastFundingRate").asDouble(0);
             // 标准费率0.0001 (0.01%), 偏离度
             return (rate - 0.0001) / 0.0003; // 归一化到约[-1,1]
         } catch (Exception e) { return 0; }
@@ -394,14 +391,13 @@ public final class BuildFeaturesBuilder {
     static double calcLsrExtreme(String lsrJson) {
         if (lsrJson == null) return 0;
         try {
-            JSONArray arr = JSON.parseArray(lsrJson);
+            ArrayNode arr = MAPPER.readValue(lsrJson, ArrayNode.class);
             if (arr == null || arr.isEmpty()) return 0;
 
             List<Double> ratios = new ArrayList<>(arr.size());
-            for (int i = 0; i < arr.size(); i++) {
-                JSONObject item = arr.getJSONObject(i);
-                if (item == null) continue;
-                Double ratio = item.getDouble("longShortRatio");
+            for (JsonNode item : arr) {
+                if (item.isNull()) continue;
+                Double ratio = item.hasNonNull("longShortRatio") ? item.get("longShortRatio").asDouble() : null;
                 if (ratio != null && Double.isFinite(ratio) && ratio > 0) {
                     ratios.add(ratio);
                 }
@@ -532,16 +528,15 @@ public final class BuildFeaturesBuilder {
     private double[] calcLiquidationPressure(String forceOrdersJson) {
         if (forceOrdersJson == null || forceOrdersJson.isBlank()) return new double[]{0, 0};
         try {
-            JSONArray arr = JSON.parseArray(forceOrdersJson);
+            ArrayNode arr = MAPPER.readValue(forceOrdersJson, ArrayNode.class);
             if (arr == null || arr.isEmpty()) return new double[]{0, 0};
             double longLiqVol = 0, shortLiqVol = 0;
-            for (int i = 0; i < arr.size(); i++) {
-                JSONObject order = arr.getJSONObject(i);
-                double price = order.getDoubleValue("price");
-                double qty = order.getDoubleValue("origQty");
+            for (JsonNode order : arr) {
+                double price = order.path("price").asDouble(0);
+                double qty = order.path("origQty").asDouble(0);
                 double vol = price * qty;
                 // SELL=多头被强平, BUY=空头被强平
-                if ("SELL".equals(order.getString("side"))) {
+                if ("SELL".equals(order.path("side").asString(null))) {
                     longLiqVol += vol;
                 } else {
                     shortLiqVol += vol;
@@ -564,16 +559,16 @@ public final class BuildFeaturesBuilder {
     static double calcTrendBias(String json, String fieldName, double divisor) {
         if (json == null || json.isBlank()) return 0;
         try {
-            JSONArray arr = JSON.parseArray(json);
+            ArrayNode arr = MAPPER.readValue(json, ArrayNode.class);
             if (arr == null || arr.size() < 4) return 0;
             int mid = arr.size() / 2;
             double olderAvg = 0, recentAvg = 0;
             for (int i = 0; i < mid; i++) {
-                olderAvg += arr.getJSONObject(i).getDoubleValue(fieldName);
+                olderAvg += arr.get(i).path(fieldName).asDouble(0);
             }
             olderAvg /= mid;
             for (int i = mid; i < arr.size(); i++) {
-                recentAvg += arr.getJSONObject(i).getDoubleValue(fieldName);
+                recentAvg += arr.get(i).path(fieldName).asDouble(0);
             }
             recentAvg /= (arr.size() - mid);
             return Math.clamp((recentAvg - olderAvg) / divisor, -1, 1);
@@ -588,10 +583,9 @@ public final class BuildFeaturesBuilder {
     static int calcFearGreed(String fearGreedJson) {
         if (fearGreedJson == null || fearGreedJson.isBlank() || "{}".equals(fearGreedJson)) return -1;
         try {
-            JSONObject root = JSON.parseObject(fearGreedJson);
-            JSONArray data = root.getJSONArray("data");
-            if (data == null || data.isEmpty()) return -1;
-            return data.getJSONObject(0).getIntValue("value");
+            JsonNode data = MAPPER.readValue(fearGreedJson, ObjectNode.class).path("data");
+            if (data.isEmpty()) return -1;
+            return data.get(0).path("value").asInt(0);
         } catch (Exception e) {
             log.warn("[Q2] 恐惧贪婪指数解析失败: {}", e.getMessage());
             return -1;
@@ -614,13 +608,12 @@ public final class BuildFeaturesBuilder {
     static double[] calcFundingTrend(String fundingHistJson) {
         if (fundingHistJson == null || fundingHistJson.isBlank()) return new double[]{0, 0};
         try {
-            JSONArray arr = JSON.parseArray(fundingHistJson);
+            ArrayNode arr = MAPPER.readValue(fundingHistJson, ArrayNode.class);
             if (arr == null || arr.size() < 3) return new double[]{0, 0};
 
             List<Double> rates = new ArrayList<>(arr.size());
-            for (int i = 0; i < arr.size(); i++) {
-                JSONObject item = arr.getJSONObject(i);
-                rates.add(item.getDoubleValue("fundingRate"));
+            for (JsonNode item : arr) {
+                rates.add(item.path("fundingRate").asDouble(0));
             }
 
             int mid = rates.size() / 2;
@@ -647,11 +640,9 @@ public final class BuildFeaturesBuilder {
     private double parseDvol(String dvolJson) {
         if (dvolJson == null || dvolJson.isBlank()) return 0;
         try {
-            JSONObject root = JSON.parseObject(dvolJson);
-            JSONArray data = root.getJSONObject("result").getJSONArray("data");
-            if (data == null || data.isEmpty()) return 0;
-            JSONArray last = data.getJSONArray(data.size() - 1);
-            return last.getDoubleValue(4); // close
+            JsonNode data = MAPPER.readValue(dvolJson, ObjectNode.class).get("result").path("data");
+            if (data.isEmpty()) return 0;
+            return data.get(data.size() - 1).path(4).asDouble(0); // close
         } catch (Exception e) {
             log.warn("[Q2.iv] DVOL解析失败: {}", e.getMessage());
             return 0;

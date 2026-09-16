@@ -1,6 +1,5 @@
 package com.mawai.wiibsim.campaign.service;
 
-import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.exception.BizException;
@@ -25,6 +24,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
@@ -146,7 +146,7 @@ class CampaignSettleServiceTest {
      */
     @Test
     void 结算不吃六十秒缓存而是现算一份榜() {
-        when(cacheService.get(BOARD_KEY)).thenReturn(JSON.toJSONString(List.of(
+        when(cacheService.get(BOARD_KEY)).thenReturn(MAPPER.writeValueAsString(List.of(
                 new CampaignScore(ACE, "ace", true, 1000, 0, BigDecimal.ZERO, 0,
                         new BigDecimal("1000.00"), List.of()),
                 new CampaignScore(MID, "mid", true, 1000, 0, BigDecimal.ZERO, 0,

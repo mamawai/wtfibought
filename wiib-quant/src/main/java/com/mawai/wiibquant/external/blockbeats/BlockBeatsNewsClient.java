@@ -1,8 +1,5 @@
 package com.mawai.wiibquant.external.blockbeats;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.config.BaseRestTemplateConfig;
 import com.mawai.wiibquant.market.domain.news.NewsFlash;
 import lombok.extern.slf4j.Slf4j;
@@ -13,11 +10,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
+import tools.jackson.databind.JsonNode;
 
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * BlockBeats(律动)重要快讯客户端。
@@ -62,25 +61,22 @@ public class BlockBeatsNewsClient extends BaseRestTemplateConfig {
     /** 解析 {status,message,data:{page,data:[...]}}；status!=0 或结构异常返回 null。 */
     private List<NewsFlash> parse(String body) {
         if (body == null || body.isBlank()) return null;
-        // byte 模式解析：与 BuildFeaturesBuilder 同口径，绕开 fastjson2 char buffer 扩容 bug
-        JSONObject root = JSON.parseObject(body.getBytes(StandardCharsets.UTF_8));
-        if (root == null || root.getIntValue("status", -1) != 0) {
+        JsonNode root = MAPPER.readTree(body);
+        if (root.path("status").asInt(-1) != 0) {
             log.warn("[BlockBeats] 响应异常: {}", body.length() > 200 ? body.substring(0, 200) : body);
             return null;
         }
-        JSONObject data = root.getJSONObject("data");
-        JSONArray arr = data == null ? null : data.getJSONArray("data");
-        if (arr == null) return List.of();
+        JsonNode arr = root.path("data").path("data");
+        if (!arr.isArray()) return List.of();
         List<NewsFlash> out = new ArrayList<>(arr.size());
-        for (int i = 0; i < arr.size(); i++) {
-            JSONObject it = arr.getJSONObject(i);
-            if (it == null) continue;
+        for (JsonNode it : arr) {
+            if (it.isNull()) continue;
             out.add(new NewsFlash(
-                    it.getLongValue("id"),
-                    it.getString("title"),
-                    it.getString("content"),
-                    it.getString("url"),
-                    it.getString("create_time")));
+                    it.path("id").asLong(0),
+                    it.path("title").asString(null),
+                    it.path("content").asString(null),
+                    it.path("url").asString(null),
+                    it.path("create_time").asString(null)));
         }
         return out;
     }

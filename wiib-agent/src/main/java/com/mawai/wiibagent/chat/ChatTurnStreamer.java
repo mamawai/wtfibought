@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.chat;
 
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
@@ -13,6 +12,7 @@ import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -25,6 +25,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 一轮对话在 SSE 通道上的完整过程：登记运行、喂心跳、跑 {@link ChatTurnRunner}、按结局落库并发 done 帧。
@@ -119,7 +121,7 @@ public class ChatTurnStreamer {
                     channel.send(event, data);
                     return true;
                 });
-                channel.send("session", new JSONObject().fluentPut("sessionId", sessionId));
+                channel.send("session", MAPPER.createObjectNode().put("sessionId", sessionId));
                 // 用户重新生成和补答不落库
                 if (replacedAnswerId == null && deferred == null) {
                     chatHistoryService.append(sessionId, userId, "user", message);
@@ -155,8 +157,8 @@ public class ChatTurnStreamer {
             } catch (Exception e) {
                 log.error("[Workbench] 对话失败 sessionId={}", sessionId, e);
                 if (!channel.isClosed()) {
-                    channel.send("error", new JSONObject()
-                            .fluentPut("message", LlmErrorMessages.classify(e, prompts, leaves.lang())));
+                    channel.send("error", MAPPER.createObjectNode()
+                            .put("message", LlmErrorMessages.classify(e, prompts, leaves.lang())));
                     // 正常收尾而非 completeWithError：原因已随上面的 error 事件发出去了，
                     // 再把异常抛回 MVC 只会让 GlobalExceptionHandler 往 event-stream 里写 JSON，
                     // 撞 HttpMessageNotWritableException，反而把真实错误盖掉
@@ -196,20 +198,20 @@ public class ChatTurnStreamer {
          */
         private void onExpertProgress(ChatTurnRunner.ExpertProgress event) {
             switch (event.phase()) {
-                case ChatTurnRunner.ExpertProgress.START -> channel.send("agent_start", new JSONObject()
-                        .fluentPut("node", event.agent())
-                        .fluentPut("agent", event.agent()));
+                case ChatTurnRunner.ExpertProgress.START -> channel.send("agent_start", MAPPER.createObjectNode()
+                        .put("node", event.agent())
+                        .put("agent", event.agent()));
                 case ChatTurnRunner.ExpertProgress.DONE -> {
                     if (event.text() != null && !event.text().isBlank()) {
                         expertLog.append(event.text());
-                        channel.send("token", new JSONObject()
-                                .fluentPut("text", event.text())
-                                .fluentPut("agent", event.agent())
-                                .fluentPut("role", "process"));
+                        channel.send("token", MAPPER.createObjectNode()
+                                .put("text", event.text())
+                                .put("agent", event.agent())
+                                .put("role", "process"));
                     }
                 }
-                case ChatTurnRunner.ExpertProgress.ERROR -> channel.send("progress", new JSONObject()
-                        .fluentPut("text", prompts.get(leaves.lang(), "chat.progress.expertFailed",
+                case ChatTurnRunner.ExpertProgress.ERROR -> channel.send("progress", MAPPER.createObjectNode()
+                        .put("text", prompts.get(leaves.lang(), "chat.progress.expertFailed",
                                 Map.of("agent", event.agent(), "reason", event.text()))));
                 default -> log.warn("[Workbench] 未知专家进度阶段 {}", event.phase());
             }
@@ -229,13 +231,13 @@ public class ChatTurnStreamer {
             if (replacedAnswerId != null && saved && !answer.isEmpty()) {
                 chatHistoryService.deleteMessage(replacedAnswerId);
             }
-            sendDone(new JSONObject()
-                    .fluentPut("sessionId", sessionId)
-                    .fluentPut("answer", stopped)
-                    .fluentPut("cancelled", true)
-                    .fluentPut("pending", yieldCoordinator.hasPending(sessionId))
-                    .fluentPut("meta", metaJson(meta))
-                    .fluentPut("sources", SearchEvent.Source.toJson(sourceList())));
+            sendDone(MAPPER.createObjectNode()
+                    .put("sessionId", sessionId)
+                    .put("answer", stopped)
+                    .put("cancelled", true)
+                    .put("pending", yieldCoordinator.hasPending(sessionId))
+                    .set("meta", metaJson(meta))
+                    .set("sources", SearchEvent.Source.toJson(sourceList())));
         }
 
         /**
@@ -249,12 +251,12 @@ public class ChatTurnStreamer {
          */
         private void finishYielded(ChatTurnRunner.ExpertBatch inFlight) {
             yieldCoordinator.registerDeferred(userId, sessionId, message, inFlight);
-            sendDone(new JSONObject()
-                    .fluentPut("sessionId", sessionId)
-                    .fluentPut("deferred", true)
-                    .fluentPut("question", message)
-                    .fluentPut("pending", true)
-                    .fluentPut("answer", prompts.get(leaves.lang(), "chat.yieldDoneAnswer")));
+            sendDone(MAPPER.createObjectNode()
+                    .put("sessionId", sessionId)
+                    .put("deferred", true)
+                    .put("question", message)
+                    .put("pending", true)
+                    .put("answer", prompts.get(leaves.lang(), "chat.yieldDoneAnswer")));
         }
 
         /**
@@ -267,12 +269,12 @@ public class ChatTurnStreamer {
         private void sendHitlCardIfAny() {
             approvalRegistry.peekPending(sessionId)
                     .filter(pendingRequest -> pendingRequest.seq() > approvalSeqAtStart)
-                    .ifPresent(pendingRequest -> channel.send("hitl_request", new JSONObject()
-                            .fluentPut("sessionId", sessionId)
-                            .fluentPut("symbol", pendingRequest.symbol())
-                            .fluentPut("reason", pendingRequest.reason())
-                            .fluentPut("requestId", pendingRequest.requestId())
-                            .fluentPut("resumeMessage",
+                    .ifPresent(pendingRequest -> channel.send("hitl_request", MAPPER.createObjectNode()
+                            .put("sessionId", sessionId)
+                            .put("symbol", pendingRequest.symbol())
+                            .put("reason", pendingRequest.reason())
+                            .put("requestId", pendingRequest.requestId())
+                            .put("resumeMessage",
                                     prompts.get(leaves.lang(), "chat.hitl.resumeMessage"))));
         }
 
@@ -290,16 +292,16 @@ public class ChatTurnStreamer {
             if (replacedAnswerId != null && saved) {
                 chatHistoryService.deleteMessage(replacedAnswerId);
             }
-            sendDone(new JSONObject()
-                    .fluentPut("sessionId", sessionId)
-                    .fluentPut("answer", finalAnswer)
-                    .fluentPut("pending", yieldCoordinator.hasPending(sessionId))
-                    .fluentPut("meta", metaJson(meta))
-                    .fluentPut("sources", SearchEvent.Source.toJson(sourceList())));
+            sendDone(MAPPER.createObjectNode()
+                    .put("sessionId", sessionId)
+                    .put("answer", finalAnswer)
+                    .put("pending", yieldCoordinator.hasPending(sessionId))
+                    .set("meta", metaJson(meta))
+                    .set("sources", SearchEvent.Source.toJson(sourceList())));
         }
 
         /** done 是本轮最后一帧，发完就收口通道；断掉的通道什么都不写 */
-        private void sendDone(JSONObject done) {
+        private void sendDone(ObjectNode done) {
             if (channel.isClosed()) {
                 return;
             }
@@ -326,25 +328,25 @@ public class ChatTurnStreamer {
 
     /**
      * 读数 → SSE 字段，字段名与历史回放的 meta 一一对应。
-     * 形状有一处不同：fastjson2 默认不输出 null，所以没报的项在这里是<b>缺席</b>，
-     * 而历史接口走 Jackson 会输出 {@code null}——前端两边都按"取不到值=没报"判，不要判 0。
+     * 形状有一处不同：这里走 JsonUtils.MAPPER 不输出 null，没报的项是<b>缺席</b>，
+     * 而历史接口走 Spring 的 HTTP 出站会输出 {@code null}——前端两边都按"取不到值=没报"判，不要判 0。
      */
-    private static JSONObject metaJson(ChatHistoryService.TurnMeta meta) {
-        return new JSONObject()
-                .fluentPut("modelLabel", meta.modelLabel())
-                .fluentPut("modelCalls", meta.modelCalls())
-                .fluentPut("promptTokens", meta.promptTokens())
-                .fluentPut("completionTokens", meta.completionTokens())
-                .fluentPut("totalTokens", meta.totalTokens())
-                .fluentPut("latencyMs", meta.latencyMs());
+    private static ObjectNode metaJson(ChatHistoryService.TurnMeta meta) {
+        return MAPPER.createObjectNode()
+                .put("modelLabel", meta.modelLabel())
+                .put("modelCalls", meta.modelCalls())
+                .put("promptTokens", meta.promptTokens())
+                .put("completionTokens", meta.completionTokens())
+                .put("totalTokens", meta.totalTokens())
+                .put("latencyMs", meta.latencyMs());
     }
 
     /** 答案流的一帧。agent=supervisor / role=answer 是既有前端事件契约 */
-    private static JSONObject answerToken(String text) {
-        return new JSONObject()
-                .fluentPut("text", text)
-                .fluentPut("agent", "supervisor")
-                .fluentPut("role", "answer");
+    private static ObjectNode answerToken(String text) {
+        return MAPPER.createObjectNode()
+                .put("text", text)
+                .put("agent", "supervisor")
+                .put("role", "answer");
     }
 
     /** 补答标头：问题摘要截 40 字；与 chat.deferred.prefix 同源，前端按前缀认出补答行（不给重新生成） */

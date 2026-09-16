@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.llm;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -20,6 +17,8 @@ import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.retry.TransientAiException;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.ToolDefinition;
+import tools.jackson.databind.JsonNode;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -29,9 +28,12 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 钉死与框架的契约边界（这些曾被别处单测 mock 掉，真跑才暴露）：
@@ -122,9 +124,9 @@ class ResponsesChatModelTest {
         ResponsesChatModel m = model(true);
         m.call(new Prompt("过去24小时BTC新闻", allowWebSearch(m)));
 
-        JSONObject body = JSON.parseObject(lastRequestBody);
-        assertThat(body.getJSONArray("tools"))
-                .extracting(t -> ((JSONObject) t).getString("type"))
+        JsonNode body = MAPPER.readTree(lastRequestBody);
+        assertThat(body.get("tools"))
+                .extracting(t -> t.path("type").asString(null))
                 .contains("web_search");
     }
 
@@ -135,7 +137,7 @@ class ResponsesChatModelTest {
         ResponsesChatModel m = model(true);
         m.call(new Prompt("查行情", m.getOptions()));
 
-        assertThat(JSON.parseObject(lastRequestBody).containsKey("tools")).isFalse();
+        assertThat(MAPPER.readTree(lastRequestBody).has("tools")).isFalse();
     }
 
     @Test
@@ -144,7 +146,7 @@ class ResponsesChatModelTest {
         ResponsesChatModel m = model(false);
         m.call(new Prompt("过去24小时BTC新闻", allowWebSearch(m)));
 
-        assertThat(JSON.parseObject(lastRequestBody).containsKey("tools")).isFalse();
+        assertThat(MAPPER.readTree(lastRequestBody).has("tools")).isFalse();
     }
 
     @Test
@@ -207,16 +209,16 @@ class ResponsesChatModelTest {
         events = PLAIN_COMPLETED;
         ResponsesChatModel m = model();
         m.call(new Prompt(List.of(new SystemMessage("你是交易员"), new UserMessage("问题"))));
-        String key = JSON.parseObject(lastRequestBody).getString("prompt_cache_key");
+        String key = MAPPER.readTree(lastRequestBody).path("prompt_cache_key").asString(null);
         assertThat(key).isNotBlank();
 
         // 用户消息变了键不变:跨轮、跨唤醒都要落回同一台
         m.call(new Prompt(List.of(new SystemMessage("你是交易员"), new UserMessage("另一个问题"))));
-        assertThat(JSON.parseObject(lastRequestBody).getString("prompt_cache_key")).isEqualTo(key);
+        assertThat(MAPPER.readTree(lastRequestBody).path("prompt_cache_key").asString(null)).isEqualTo(key);
 
         // system 变了前缀就失效,键必须跟着变
         m.call(new Prompt(List.of(new SystemMessage("你是分析师"), new UserMessage("问题"))));
-        assertThat(JSON.parseObject(lastRequestBody).getString("prompt_cache_key")).isNotEqualTo(key);
+        assertThat(MAPPER.readTree(lastRequestBody).path("prompt_cache_key").asString(null)).isNotEqualTo(key);
 
         // 送哈希不送原文:system 里有用户自己写的自定义指令
         assertThat(key).doesNotContain("交易员");
@@ -244,6 +246,51 @@ class ResponsesChatModelTest {
         // 强制信号是逐次调用时才捎的（ToolChoice.apply），底稿里没有；本模型读的就是这个键
         assertThat(ToolChoice.of(ToolChoice.apply(options, ToolChoice.REQUIRED))).isEqualTo("required");
         assertThat(ToolChoice.of(options)).isEqualTo(ToolChoice.AUTO);
+    }
+
+    /**
+     * 请求体整串钉死：温度/档位、store/stream、instructions 拼接、已结束轮次按文本+function_call 拼、
+     * 工具循环里的原始 item 原样回放（密文、小数、null 字段）、function 工具带 schema 小数、搜索声明、tool_choice、缓存分组键、转义与 emoji
+     */
+    @Test
+    void 请求侧_请求体整串金标准() {
+        events = PLAIN_COMPLETED;
+        ToolCallingManager tcm = mock(ToolCallingManager.class);
+        when(tcm.resolveToolDefinitions(any())).thenReturn(List.of(ToolDefinition.builder()
+                .name("get_price").description("查价格 <b>&\"引号\"")
+                .inputSchema("{\"type\":\"object\",\"properties\":{\"qty\":{\"type\":\"number\",\"minimum\":0.010}},"
+                        + "\"required\":[\"qty\"],\"additionalProperties\":false}").build()));
+        ResponsesChatModel m = new ResponsesChatModel("key", "http://127.0.0.1:" + server.getAddress().getPort(),
+                "grok-test", 0.30, "medium", tcm, true);
+        String items = """
+                [{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"gAAA/+=="},
+                 {"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_price","arguments":"{\\"qty\\":0.010}","status":"completed","extra":null,"score":0.50}]""";
+        AssistantMessage plain = AssistantMessage.builder().content("旧答\n第二行").toolCalls(List.of(
+                new AssistantMessage.ToolCall("call_0", "function", "get_price", "{\"qty\":1.50}"))).build();
+        AssistantMessage inLoop = AssistantMessage.builder().content("").toolCalls(List.of(
+                        new AssistantMessage.ToolCall("call_1", "function", "get_price", "{\"qty\":0.010}")))
+                .properties(Map.of(ResponsesChatModel.ITEMS_KEY, items)).build();
+        ToolResponseMessage result0 = ToolResponseMessage.builder().responses(List.of(
+                new ToolResponseMessage.ToolResponse("call_0", "get_price", "{\"price\":60000.10}"))).build();
+        ToolResponseMessage result1 = ToolResponseMessage.builder().responses(List.of(
+                new ToolResponseMessage.ToolResponse("call_1", "get_price", "ERROR: 超时\t重试"))).build();
+
+        m.call(new Prompt(List.of(new SystemMessage("你是助手"), new UserMessage("问题 📈 \"引号\" \\ /"),
+                plain, result0, new UserMessage("再问"), new SystemMessage("【摘要】第1段"), inLoop, result1),
+                ToolChoice.apply(allowWebSearch(m), ToolChoice.REQUIRED)));
+
+        assertThat(lastRequestBody).isEqualTo("{\"model\":\"grok-test\",\"temperature\":0.3,\"reasoning\":{\"effort\":\"medium\"},\"store\":false,\"stream\":true,"
+                + "\"instructions\":\"你是助手\\n\\n【摘要】第1段\",\"input\":[{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\","
+                + "\"text\":\"问题 📈 \\\"引号\\\" \\\\ /\"}]},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\","
+                + "\"text\":\"旧答\\n第二行\"}]},{\"type\":\"function_call\",\"call_id\":\"call_0\",\"name\":\"get_price\",\"arguments\":\"{\\\"qty\\\":1.50}\"},"
+                + "{\"type\":\"function_call_output\",\"call_id\":\"call_0\",\"output\":\"{\\\"price\\\":60000.10}\"},{\"type\":\"message\","
+                + "\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"再问\"}]},{\"type\":\"reasoning\",\"id\":\"rs_1\","
+                + "\"summary\":[],\"encrypted_content\":\"gAAA/+==\"},{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\","
+                + "\"name\":\"get_price\",\"arguments\":\"{\\\"qty\\\":0.010}\",\"status\":\"completed\",\"score\":0.50},{\"type\":\"function_call_output\","
+                + "\"call_id\":\"call_1\",\"output\":\"ERROR: 超时\\t重试\"}],\"tools\":[{\"type\":\"function\",\"name\":\"get_price\","
+                + "\"description\":\"查价格 <b>&\\\"引号\\\"\",\"parameters\":{\"type\":\"object\",\"properties\":{\"qty\":{\"type\":\"number\","
+                + "\"minimum\":0.010}},\"required\":[\"qty\"],\"additionalProperties\":false}},{\"type\":\"web_search\"}],"
+                + "\"tool_choice\":\"required\",\"prompt_cache_key\":\"f6e4260cef84bb8f02adbdfc\"}");
     }
 
     // ========== 阻塞路径（call → streamOnce 帧合并） ==========
@@ -298,19 +345,19 @@ class ResponsesChatModelTest {
         ToolResponseMessage toolResult = ToolResponseMessage.builder().responses(List.of(
                 new ToolResponseMessage.ToolResponse("c1", "get_account", "{\"equity\":100}"))).build();
         model().call(new Prompt(List.of(new UserMessage("查账户"), assistant, toolResult)));
-        JSONArray input = JSON.parseObject(lastRequestBody).getJSONArray("input");
-        assertThat(input).extracting(i -> ((JSONObject) i).getString("type"))
+        JsonNode input = MAPPER.readTree(lastRequestBody).get("input");
+        assertThat(input).extracting(i -> i.path("type").asString(null))
                 .containsExactly("message", "reasoning", "function_call", "function_call_output");
-        assertThat(input.getJSONObject(1).getString("encrypted_content")).isEqualTo("enc-1");
-        assertThat(input.getJSONObject(2).getString("id")).isEqualTo("fc_1");
-        assertThat(input.getJSONObject(3).getString("call_id")).isEqualTo("c1");
+        assertThat(input.get(1).path("encrypted_content").asString(null)).isEqualTo("enc-1");
+        assertThat(input.get(2).path("id").asString(null)).isEqualTo("fc_1");
+        assertThat(input.get(3).path("call_id").asString(null)).isEqualTo("c1");
 
         // 已结束的轮次（后面是新提问）：按 function_call 现拼，reasoning 不带
         model().call(new Prompt(List.of(new UserMessage("查账户"), assistant, new UserMessage("再问"))));
-        input = JSON.parseObject(lastRequestBody).getJSONArray("input");
-        assertThat(input).extracting(i -> ((JSONObject) i).getString("type"))
+        input = MAPPER.readTree(lastRequestBody).get("input");
+        assertThat(input).extracting(i -> i.path("type").asString(null))
                 .containsExactly("message", "function_call", "message");
-        assertThat(input.getJSONObject(1).containsKey("id")).isFalse();
+        assertThat(input.get(1).has("id")).isFalse();
     }
 
     @Test
@@ -330,9 +377,9 @@ class ResponsesChatModelTest {
         assertThat(toolCalls.getFirst().name()).isEqualTo("get_account");
         assertThat(response.getResult().getMetadata().getFinishReason()).isEqualTo("TOOL_CALLS");
         // 原始 item 同样从 output 兜底
-        JSONArray items = JSON.parseArray((String) response.getResult().getOutput().getMetadata().get(ResponsesChatModel.ITEMS_KEY));
+        JsonNode items = MAPPER.readTree((String) response.getResult().getOutput().getMetadata().get(ResponsesChatModel.ITEMS_KEY));
         assertThat(items).hasSize(1);
-        assertThat(items.getJSONObject(0).getString("call_id")).isEqualTo("c9");
+        assertThat(items.get(0).path("call_id").asString(null)).isEqualTo("c9");
     }
 
     @Test

@@ -1,7 +1,5 @@
 package com.mawai.wiibsim.controller;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibsim.mapper.BlackjackAccountMapper;
 import com.mawai.wiibsim.mapper.CryptoOrderMapper;
@@ -16,11 +14,13 @@ import com.mawai.wiibsim.service.BStockService;
 import com.mawai.wiibsim.service.CryptoPositionService;
 import com.mawai.wiibsim.service.UserService;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -66,20 +66,20 @@ class FuturesStatsCategoryTest {
                 mock(BlackjackAccountMapper.class), mock(MinesGameMapper.class),
                 mock(VideoPokerGameMapper.class), mock(UserService.class), props);
 
-        JSONObject json = JSON.parseObject(controller.getFuturesTradeStats(UID));
+        JsonNode json = MAPPER.readTree(controller.getFuturesTradeStats(UID));
 
         // 总量指标不变
-        assertThat(json.getBigDecimal("realizedPnl")).isEqualByComparingTo("60");
-        assertThat(json.getLongValue("orderCount")).isEqualTo(6);
+        assertThat(json.get("realizedPnl").asDecimal()).isEqualByComparingTo("60");
+        assertThat(json.get("orderCount").asLong()).isEqualTo(6);
 
         // 分品类：BTC→crypto、XAU→commodity、SNDK→tradfi
-        JSONObject by = json.getJSONObject("byCategory");
-        assertThat(by.getJSONObject("crypto").getBigDecimal("realizedPnl")).isEqualByComparingTo("100");
-        assertThat(by.getJSONObject("crypto").getIntValue("orderCount")).isEqualTo(3);
-        assertThat(by.getJSONObject("commodity").getBigDecimal("realizedPnl")).isEqualByComparingTo("-30");
-        assertThat(by.getJSONObject("commodity").getIntValue("orderCount")).isEqualTo(2);
-        assertThat(by.getJSONObject("tradfi").getBigDecimal("realizedPnl")).isEqualByComparingTo("-10");
-        assertThat(by.getJSONObject("tradfi").getIntValue("orderCount")).isEqualTo(1);
+        JsonNode by = json.get("byCategory");
+        assertThat(by.get("crypto").get("realizedPnl").asDecimal()).isEqualByComparingTo("100");
+        assertThat(by.get("crypto").get("orderCount").asInt()).isEqualTo(3);
+        assertThat(by.get("commodity").get("realizedPnl").asDecimal()).isEqualByComparingTo("-30");
+        assertThat(by.get("commodity").get("orderCount").asInt()).isEqualTo(2);
+        assertThat(by.get("tradfi").get("realizedPnl").asDecimal()).isEqualByComparingTo("-10");
+        assertThat(by.get("tradfi").get("orderCount").asInt()).isEqualTo(1);
     }
 
     @Test
@@ -109,10 +109,10 @@ class FuturesStatsCategoryTest {
                 mock(BlackjackAccountMapper.class), mock(MinesGameMapper.class),
                 mock(VideoPokerGameMapper.class), mock(UserService.class), props);
 
-        JSONObject by = JSON.parseObject(controller.getFuturesTradeStats(UID)).getJSONObject("byCategory");
-        assertThat(by.getJSONObject("crypto").getBigDecimal("realizedPnl")).isEqualByComparingTo("5");
+        JsonNode by = MAPPER.readTree(controller.getFuturesTradeStats(UID)).get("byCategory");
+        assertThat(by.get("crypto").get("realizedPnl").asDecimal()).isEqualByComparingTo("5");
         // 没交易过的品类也要有零值桶：LLM/前端拿到的结构恒定
-        assertThat(by.getJSONObject("commodity").getIntValue("orderCount")).isZero();
-        assertThat(by.getJSONObject("tradfi").getIntValue("orderCount")).isZero();
+        assertThat(by.get("commodity").get("orderCount").asInt()).isZero();
+        assertThat(by.get("tradfi").get("orderCount").asInt()).isZero();
     }
 }

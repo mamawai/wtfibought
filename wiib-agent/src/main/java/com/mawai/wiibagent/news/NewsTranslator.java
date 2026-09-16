@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.news;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibquant.market.domain.news.NewsFlash;
@@ -11,12 +8,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 快讯批量译文：一批快讯一次轻模型调用，产出英文标题与正文。
@@ -114,15 +115,14 @@ public class NewsTranslator {
             throw new IllegalStateException("翻译输出不含 JSON 数组: "
                     + output.substring(0, Math.min(200, output.length())));
         }
-        JSONArray arr = JSON.parseArray(output.substring(from, to + 1));
+        ArrayNode arr = MAPPER.readValue(output.substring(from, to + 1), ArrayNode.class);
         Map<Long, Translated> result = new HashMap<>();
-        for (int i = 0; i < arr.size(); i++) {
-            JSONObject item = arr.getJSONObject(i);
-            if (item == null || !item.containsKey("id")) {
+        for (JsonNode item : arr) {
+            if (!item.has("id")) {
                 continue;
             }
-            result.put(item.getLongValue("id"), new Translated(
-                    translation(item.getString("title_en")), translation(item.getString("content_en"))));
+            result.put(item.path("id").asLong(0), new Translated(
+                    translation(item.path("title_en").asString(null)), translation(item.path("content_en").asString(null))));
         }
         return result;
     }

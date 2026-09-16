@@ -1,9 +1,9 @@
 package com.mawai.wiibquant.research.eval;
 
-import com.alibaba.fastjson2.JSON;
-
 import java.math.BigDecimal;
 import java.util.List;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 多策略同框样本外报告：共享窗口 + buy&hold 基准算一次，每策略一条 {@link StrategyLine}。
@@ -19,7 +19,7 @@ public record ComparisonReport(
         List<StrategyLine> strategies
 ) {
     public String toJson() {
-        return JSON.toJSONString(this);
+        return MAPPER.writeValueAsString(this);
     }
 
     /** 人眼可比的多线摘要：buy&hold 基准一行 + 每策略一行（双口径：重叠/非重叠）。 */

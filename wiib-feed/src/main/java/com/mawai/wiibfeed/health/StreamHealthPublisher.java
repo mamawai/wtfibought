@@ -1,12 +1,13 @@
 package com.mawai.wiibfeed.health;
 
-import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 流健康事件发布器：作为各 WsConnection 的状态变化回调，某条流连/断/重连时取全量快照发 Redis
@@ -32,7 +33,7 @@ public class StreamHealthPublisher {
     public void publish() {
         pub.execute(() -> {
             try {
-                broadcaster.broadcastStreamHealth(JSON.toJSONString(registry.snapshot()));
+                broadcaster.broadcastStreamHealth(MAPPER.writeValueAsString(registry.snapshot()));
             } catch (Exception e) {
                 log.warn("[流健康] 推送失败: {}", e.getMessage());
             }

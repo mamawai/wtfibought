@@ -1,8 +1,5 @@
 package com.mawai.wiibagent.llm;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONException;
-import com.alibaba.fastjson2.JSONObject;
 import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +25,9 @@ import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -37,6 +37,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeoutException;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 自研 SSE 协议 ChatModel 的公共骨架：Responses / Anthropic Messages / Gemini generateContent 三个子类共用。
@@ -123,10 +125,10 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
     /** 请求路径（相对 baseUrl），可含查询串 */
     protected abstract String requestUri(Prompt prompt);
 
-    protected abstract JSONObject requestBody(Prompt prompt);
+    protected abstract ObjectNode requestBody(Prompt prompt);
 
     /** 一个已解析的 SSE 事件 → 零到多帧；收尾事件用 {@link #finalFrame} 发带 finishReason/usage 的帧 */
-    protected abstract Flux<ChatResponse> toFrames(JSONObject event, S state);
+    protected abstract Flux<ChatResponse> toFrames(JsonNode event, S state);
 
     // ========== 框架契约 ==========
 
@@ -264,7 +266,7 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
      * state 每次订阅新建：ResilientChatService 靠重订阅实现重试，共享 state 会污染收尾帧判断。
      */
     private Flux<ChatResponse> streamOnce(Prompt prompt) {
-        JSONObject body = requestBody(prompt);
+        ObjectNode body = requestBody(prompt);
         String uri = requestUri(prompt);
         return Flux.defer(() -> {
             S state = newState();
@@ -272,7 +274,7 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
                     .uri(uri)
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.TEXT_EVENT_STREAM)
-                    .bodyValue(body.toString())
+                    .bodyValue(MAPPER.writeValueAsString(body))
                     .retrieve()
                     .onStatus(HttpStatusCode::isError, resp ->
                             resp.bodyToMono(String.class).defaultIfEmpty("")
@@ -299,10 +301,10 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
         if (data == null || data.isBlank() || "[DONE]".equals(data.trim())) {
             return Flux.empty();
         }
-        JSONObject event;
+        JsonNode event;
         try {
-            event = JSON.parseObject(data);
-        } catch (JSONException e) {
+            event = MAPPER.readValue(data, ObjectNode.class);
+        } catch (JacksonException e) {
             if (!state.sawMalformed) {
                 state.sawMalformed = true;
                 log.warn("[{}] SSE 事件非 JSON，已跳过 data={}", tag,

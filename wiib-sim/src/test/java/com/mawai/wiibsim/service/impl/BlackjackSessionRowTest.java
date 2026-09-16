@@ -1,7 +1,7 @@
 package com.mawai.wiibsim.service.impl;
 
-import com.alibaba.fastjson2.JSON;
 import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibcommon.dto.GameStateDTO;
 import com.mawai.wiibcommon.entity.BlackjackAccount;
 import com.mawai.wiibsim.mapper.BlackjackAccountMapper;
 import com.mawai.wiibsim.mapper.BlackjackConvertLogMapper;
@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
 
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -77,7 +78,7 @@ class BlackjackSessionRowTest {
         verify(accountMapper, times(1)).updateById(any(BlackjackAccount.class));   // 筹码和牌局必须同一笔
 
         BlackjackServiceImpl.BlackjackSession restored =
-                JSON.parseObject(account.getSessionJson(), BlackjackServiceImpl.BlackjackSession.class);
+                MAPPER.readValue(account.getSessionJson(), BlackjackServiceImpl.BlackjackSession.class);
         assertThat(restored.getShoe()).hasSize(52);
         assertThat(restored.getShoeIndex()).isEqualTo(4);
         assertThat(restored.getDealerCards()).hasSize(2);
@@ -116,13 +117,13 @@ class BlackjackSessionRowTest {
         seeded.setBetPerHand(50L);
         seeded.setPhase("PLAYER_TURN");
         seeded.setFirstDecisionRound(true);
-        account.setSessionJson(JSON.toJSONString(seeded));
+        account.setSessionJson(MAPPER.writeValueAsString(seeded));
         clearInvocations(accountMapper);
 
         service.hit(UID);
 
         BlackjackServiceImpl.BlackjackSession after =
-                JSON.parseObject(account.getSessionJson(), BlackjackServiceImpl.BlackjackSession.class);
+                MAPPER.readValue(account.getSessionJson(), BlackjackServiceImpl.BlackjackSession.class);
         assertThat(after.getShoeIndex()).isEqualTo(5);
         assertThat(after.getPlayerHands().get(0).getCards()).containsExactly("5H", "6C", "2H");
         assertThat(after.isFirstDecisionRound()).isFalse();    // 要过牌就关掉保险窗口
@@ -130,14 +131,14 @@ class BlackjackSessionRowTest {
     }
 
     /**
-     * fastjson2 对 lombok 生成的 boolean 读写器有坑（{@code private boolean isDoubled} 这种命名尤其），
+     * lombok 给 {@code private boolean isDoubled} 生成的是 isDoubled()/setDoubled()，JSON 键是 doubled；
      * 掉一位就是加倍/保险白买。这里把两处布尔位置真再滚一圈。
      */
     @Test
     void 快照来回序列化不丢布尔位() {
         dealUntilInProgress();
         BlackjackServiceImpl.BlackjackSession restored =
-                JSON.parseObject(account.getSessionJson(), BlackjackServiceImpl.BlackjackSession.class);
+                MAPPER.readValue(account.getSessionJson(), BlackjackServiceImpl.BlackjackSession.class);
 
         restored.setInsuranceTaken(true);
         restored.setInsuranceBet(25L);
@@ -145,7 +146,7 @@ class BlackjackSessionRowTest {
         restored.getPlayerHands().get(0).setStood(true);
 
         BlackjackServiceImpl.BlackjackSession again =
-                JSON.parseObject(JSON.toJSONString(restored), BlackjackServiceImpl.BlackjackSession.class);
+                MAPPER.readValue(MAPPER.writeValueAsString(restored), BlackjackServiceImpl.BlackjackSession.class);
 
         assertThat(again.isInsuranceTaken()).isTrue();
         assertThat(again.getInsuranceBet()).isEqualTo(25L);
@@ -153,6 +154,29 @@ class BlackjackSessionRowTest {
         assertThat(again.getPlayerHands().get(0).isStood()).isTrue();
         assertThat(again.getPlayerHands().get(0).isBusted()).isFalse();
         assertThat(again.getShoe()).isEqualTo(restored.getShoe());
+    }
+
+    /** 换库前 fastjson2 写的快照（字段字母序、布尔键 doubled、无 null），换库后接着读得回来 */
+    @Test
+    void fastjson2老快照仍能读回() {
+        account.setSessionJson("{\"activeHandIndex\":1,\"betPerHand\":50,\"dealerCards\":[\"9D\",\"7S\"],"
+                + "\"dealerHasNaturalBlackjack\":false,\"firstDecisionRound\":false,\"insuranceBet\":25,"
+                + "\"insuranceTaken\":true,\"phase\":\"PLAYER_TURN\",\"playerHands\":["
+                + "{\"bet\":100,\"busted\":false,\"cards\":[\"5H\",\"6C\",\"2H\"],\"doubled\":true,\"stood\":true},"
+                + "{\"bet\":50,\"busted\":false,\"cards\":[\"5D\",\"8C\"],\"doubled\":false,\"stood\":false}],"
+                + "\"playerHasNaturalBlackjack\":false,\"shoe\":[\"5H\",\"9D\",\"5D\",\"7S\",\"6C\",\"8C\",\"2H\",\"3S\"],"
+                + "\"shoeIndex\":7}");
+
+        GameStateDTO game = service.getStatus(UID).getActiveGame();
+
+        assertThat(game.getPhase()).isEqualTo("PLAYER_TURN");
+        assertThat(game.getActiveHandIndex()).isEqualTo(1);
+        assertThat(game.getInsurance()).isEqualTo(25L);
+        assertThat(game.getPlayerHands()).hasSize(2);
+        assertThat(game.getPlayerHands().get(0).isDoubled()).isTrue();
+        assertThat(game.getPlayerHands().get(0).getBet()).isEqualTo(100L);
+        assertThat(game.getPlayerHands().get(1).isDoubled()).isFalse();
+        assertThat(game.getPlayerHands().get(1).getCards()).containsExactly("5D", "8C");
     }
 
     /** 开局就自然 BJ 会当场结算（约 9%），本类只关心"局挂住"那条路，重开到有局为止 */

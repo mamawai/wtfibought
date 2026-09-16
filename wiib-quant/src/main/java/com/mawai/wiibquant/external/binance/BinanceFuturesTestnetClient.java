@@ -1,7 +1,5 @@
 package com.mawai.wiibquant.external.binance;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONObject;
 import com.mawai.wiibquant.external.binance.model.AccountInfo;
 import com.mawai.wiibquant.external.binance.model.OrderResponse;
 import com.mawai.wiibquant.external.binance.model.PlaceOrderRequest;
@@ -20,6 +18,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JsonNode;
 
 import java.net.URI;
 import java.net.URLEncoder;
@@ -27,6 +27,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * Binance USDT-M 合约 Testnet 客户端：仅交易，行情走主网 {@link com.mawai.wiibcommon.market.BinanceRestClient}。
@@ -74,7 +76,7 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
     /** GET /fapi/v3/account 账户信息（含余额/未实现盈亏/所有 asset/有仓位的 symbol） */
     public AccountInfo getAccount() {
         String json = signedRequest(HttpMethod.GET, "/fapi/v3/account", null);
-        return JSON.parseObject(json, AccountInfo.class);
+        return MAPPER.readValue(json, AccountInfo.class);
     }
 
     /**
@@ -88,7 +90,7 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
             params.put("symbol", symbol);
         }
         String json = signedRequest(HttpMethod.GET, "/fapi/v3/positionRisk", params);
-        return JSON.parseArray(json, PositionRisk.class);
+        return MAPPER.readValue(json, new TypeReference<List<PositionRisk>>() {});
     }
 
     // ==================== Task 3: 下单类 ====================
@@ -117,7 +119,7 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
         putIfNotNull(params, "goodTillDate", req.getGoodTillDate());
 
         String json = signedRequest(HttpMethod.POST, "/fapi/v1/order", params);
-        return JSON.parseObject(json, OrderResponse.class);
+        return MAPPER.readValue(json, OrderResponse.class);
     }
 
     /** DELETE /fapi/v1/order 撤单：orderId 与 origClientOrderId 至少一个非空 */
@@ -131,7 +133,7 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
         putIfNotNull(params, "orderId", orderId);
         putIfNotNull(params, "origClientOrderId", origClientOrderId);
         String json = signedRequest(HttpMethod.DELETE, "/fapi/v1/order", params);
-        return JSON.parseObject(json, OrderResponse.class);
+        return MAPPER.readValue(json, OrderResponse.class);
     }
 
     /** GET /fapi/v1/order 查单：orderId 与 origClientOrderId 至少一个非空 */
@@ -145,7 +147,7 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
         putIfNotNull(params, "orderId", orderId);
         putIfNotNull(params, "origClientOrderId", origClientOrderId);
         String json = signedRequest(HttpMethod.GET, "/fapi/v1/order", params);
-        return JSON.parseObject(json, OrderResponse.class);
+        return MAPPER.readValue(json, OrderResponse.class);
     }
 
     /**
@@ -157,7 +159,7 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
         LinkedHashMap<String, Object> params = new LinkedHashMap<>();
         params.put("symbol", symbol);
         String json = signedRequest(HttpMethod.GET, "/fapi/v1/openOrders", params);
-        return JSON.parseArray(json, OrderResponse.class);
+        return MAPPER.readValue(json, new TypeReference<List<OrderResponse>>() {});
     }
 
     /** DELETE /fapi/v1/allOpenOrders 撤销该 symbol 下全部挂单 */
@@ -166,7 +168,7 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
         LinkedHashMap<String, Object> params = new LinkedHashMap<>();
         params.put("symbol", symbol);
         String json = signedRequest(HttpMethod.DELETE, "/fapi/v1/allOpenOrders", params);
-        return JSON.parseObject(json, SimpleAck.class);
+        return MAPPER.readValue(json, SimpleAck.class);
     }
 
     // ==================== Task 4: 设置类 ====================
@@ -181,7 +183,7 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
         params.put("symbol", symbol);
         params.put("leverage", leverage);
         String json = signedRequest(HttpMethod.POST, "/fapi/v1/leverage", params);
-        return JSON.parseObject(json, SetLeverageResponse.class);
+        return MAPPER.readValue(json, SetLeverageResponse.class);
     }
 
     // ==================== HTTP 通用 ====================
@@ -218,10 +220,10 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
         int code = -1;
         String msg = body;
         try {
-            JSONObject json = JSON.parseObject(body);
-            if (json != null) {
-                code = json.getIntValue("code", -1);
-                if (json.containsKey("msg")) msg = json.getString("msg");
+            JsonNode json = MAPPER.readTree(body);
+            if (json.isObject()) {
+                code = json.path("code").asInt(-1);
+                if (json.has("msg")) msg = json.path("msg").asString(null);
             }
         } catch (Exception ignore) { /* 非标准错误体，保留原 body */ }
         return new BinanceApiException(e.getStatusCode().value(), code, msg);
@@ -265,7 +267,7 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
         putIfNotNull(params, "fromId", fromId);
         putIfNotNull(params, "limit", limit);
         String json = signedRequest(HttpMethod.GET, "/fapi/v1/userTrades", params);
-        return JSON.parseArray(json, UserTrade.class);
+        return MAPPER.readValue(json, new TypeReference<List<UserTrade>>() {});
     }
 
     /** GET /fapi/v1/allOrders 所有订单含 FILLED/CANCELED/EXPIRED 终态（symbol 必填；limit≤1000）。 */
@@ -278,7 +280,7 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
         putIfNotNull(params, "endTime", endTime);
         putIfNotNull(params, "limit", limit);
         String json = signedRequest(HttpMethod.GET, "/fapi/v1/allOrders", params);
-        return JSON.parseArray(json, OrderResponse.class);
+        return MAPPER.readValue(json, new TypeReference<List<OrderResponse>>() {});
     }
 
     /** GET /fapi/v1/income 损益流水（symbol 可选；窗口默认7天、可设≤200天；limit≤1000）。 */
@@ -293,6 +295,6 @@ public class BinanceFuturesTestnetClient extends BaseRestTemplateConfig {
         putIfNotNull(params, "endTime", endTime);
         putIfNotNull(params, "limit", limit);
         String json = signedRequest(HttpMethod.GET, "/fapi/v1/income", params);
-        return JSON.parseArray(json, IncomeRecord.class);
+        return MAPPER.readValue(json, new TypeReference<List<IncomeRecord>>() {});
     }
 }
