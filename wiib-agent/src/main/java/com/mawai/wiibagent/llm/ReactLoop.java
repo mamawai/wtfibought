@@ -206,17 +206,17 @@ public final class ReactLoop {
         return cancel != null && cancel.isDone();
     }
 
-    /** 逐个顺序执行，结果按 tool_call 一一配对合成一条回执 */
+    /** 逐个顺序执行，结果按 tool_call 一一配对合成一条回执；工具名对不上就回执报错 */
     private ToolResponseMessage executeTools(AssistantMessage reply, String sessionId) {
         ToolContext context = new ToolContext(sessionId == null ? Map.of() : Map.of(SESSION_KEY, sessionId));
         List<ToolResponseMessage.ToolResponse> responses = new ArrayList<>();
         for (AssistantMessage.ToolCall toolCall : reply.getToolCalls()) {
             ToolCallback callback = toolsByName.get(toolCall.name());
-            if (callback == null) {
-                throw new IllegalStateException("No tool callback found for name: " + toolCall.name());
-            }
-            responses.add(new ToolResponseMessage.ToolResponse(toolCall.id(), toolCall.name(),
-                    callback.call(toolCall.arguments(), context)));
+            String result = callback == null
+                    ? "ERROR: unknown tool \"" + toolCall.name() + "\", available tools: "
+                            + String.join(", ", toolsByName.keySet())
+                    : callback.call(toolCall.arguments(), context);
+            responses.add(new ToolResponseMessage.ToolResponse(toolCall.id(), toolCall.name(), result));
         }
         return ToolResponseMessage.builder().responses(responses).build();
     }
