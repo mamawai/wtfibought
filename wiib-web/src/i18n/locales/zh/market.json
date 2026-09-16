@@ -202,6 +202,8 @@
     "legendShort": "空头名义",
     "footer": "{{count}} 个地址 · 合约净值 ≥ $1M 或持有 ≥ $100K 仓位 · 只算单笔 ≥ $100K · 多头占全市场 {{long}} / 空头 {{short}} · 数据来自 Hyperliquid",
     "bucketTip": "{{from}} – {{to}} · 多头 {{long}} · 空头 {{short}}",
+    "axisOver": "高于 {{price}} · 多头 {{long}} · 空头 {{short}}",
+    "axisUnder": "低于 {{price}} · 多头 {{long}} · 空头 {{short}}",
     "readoutHint": "悬停或点一行，看这个价位的多空名义"
   }
 }
