@@ -70,7 +70,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *     </li>
  *     <li>
  *         {@link #prepareCurrentMarket(long)} 调用 {@link #pollMarketAssets(long)}。
- *         它最多重试 10 次，每 2 秒一次；每次通过 {@link #refreshMarketAssets(long)}
+ *         它每 2 秒重试一次，直到成功或本回合结束；每次通过 {@link #refreshMarketAssets(long)}
  *         访问 Gamma {@code events/slug/btc-updown-5m-{windowStart}}，
  *         从 {@code outcomes} 与 {@code clobTokenIds} 的相同下标解析出 UP/DOWN token。
  *     </li>
@@ -269,16 +269,15 @@ public class PolymarketWsClient implements SmartLifecycle {
                 lastSubscribedSlug = eventSlug(windowStart);
             }
             publishRoundEvent("create", windowStart);
-            pollMarketAssets(windowStart);
             Thread.startVirtualThread(() -> pollOpenPrice(windowStart));
+            pollMarketAssets(windowStart);
         } catch (Exception e) {
             log.warn("初始化当前预测市场失败: windowStart={}, err={}", windowStart, e.getMessage());
         }
     }
 
     private void pollMarketAssets(long windowStart) {
-        for (int i = 0; i < 10; i++) {
-            if (shutdown.get() || windowStart != currentWindowStart()) return;
+        while (!shutdown.get() && windowStart == currentWindowStart()) {
             if (refreshMarketAssets(windowStart)) return;
             try { Thread.sleep(2_000); } catch (InterruptedException e) { return; }
         }

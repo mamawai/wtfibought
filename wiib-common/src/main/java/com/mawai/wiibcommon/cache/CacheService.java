@@ -155,12 +155,10 @@ public class CacheService {
         BigDecimal cached = cryptoPriceCache.getIfPresent("mark:" + symbol);
         if (cached != null) return cached;
         String val = stringRedisTemplate.opsForValue().get("market:markprice:" + symbol);
-        if (val != null) {
-            BigDecimal price = new BigDecimal(val);
-            cryptoPriceCache.put("mark:" + symbol, price);
-            return price;
-        }
-        return getCryptoPrice(symbol);
+        if (val == null) return null;
+        BigDecimal price = new BigDecimal(val);
+        cryptoPriceCache.put("mark:" + symbol, price);
+        return price;
     }
 
     public BigDecimal getFuturesPrice(String symbol) {

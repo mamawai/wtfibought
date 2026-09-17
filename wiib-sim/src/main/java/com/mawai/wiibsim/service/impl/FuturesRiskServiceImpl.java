@@ -271,7 +271,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
     public void batchTriggerStopLoss(Long positionId, Collection<String> slIds, BigDecimal price) {
         String lockKey = "futures:pos:" + positionId;
         String lockValue = redisLockUtil.tryLock(lockKey, 30);
-        if (lockValue == null) return;
+        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
         try {
             SpringUtils.getAopProxy(this).doBatchTrigger(positionId, slIds, price, true);
         } finally {
@@ -283,7 +283,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
     public void batchTriggerTakeProfit(Long positionId, Collection<String> tpIds, BigDecimal price) {
         String lockKey = "futures:pos:" + positionId;
         String lockValue = redisLockUtil.tryLock(lockKey, 30);
-        if (lockValue == null) return;
+        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
         try {
             SpringUtils.getAopProxy(this).doBatchTrigger(positionId, tpIds, price, false);
         } finally {

@@ -22,7 +22,7 @@ public class KlineStreamHandler implements StreamHandler {
     private final MarketBroadcaster broadcaster;
 
     @Override public String name() { return "Kline5m"; }
-    @Override public long maxIdleSeconds() { return 360; }
+    @Override public long maxIdleSeconds() { return 90; }
 
     @Override
     public String buildUrl() {
