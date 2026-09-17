@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -200,28 +201,33 @@ class ResponsesChatModelTest {
         assertThat(frames.getLast().getResult().getMetadata().getFinishReason()).isEqualTo("STOP");
     }
 
-    /**
-     * 缓存分组键:同一份 system 的请求要拿到同一个键——xAI 按它路由到同一台机器,
-     * 换机器就等于前面存的白存(真实用量表里跨唤醒那批只命中 128 token)。
-     */
+    /** 缓存分组键：同会话跨轮不变，首条 user 或 system 不同就变，不带原文 */
     @Test
-    void 请求侧_缓存分组键按系统提示稳定且不带原文() {
+    void 请求侧_缓存分组键按会话区分且不带原文() {
         events = PLAIN_COMPLETED;
         ResponsesChatModel m = model();
-        m.call(new Prompt(List.of(new SystemMessage("你是交易员"), new UserMessage("问题"))));
-        String key = MAPPER.readTree(lastRequestBody).path("prompt_cache_key").asString(null);
+        SystemMessage system = new SystemMessage("你是交易员");
+        UserMessage opening = new UserMessage("开场白");
+        String key = cacheKey(m, List.of(system, opening));
         assertThat(key).isNotBlank();
 
-        // 用户消息变了键不变:跨轮、跨唤醒都要落回同一台
-        m.call(new Prompt(List.of(new SystemMessage("你是交易员"), new UserMessage("另一个问题"))));
-        assertThat(MAPPER.readTree(lastRequestBody).path("prompt_cache_key").asString(null)).isEqualTo(key);
+        // 同会话后续轮
+        AssistantMessage call = AssistantMessage.builder().content("").toolCalls(List.of(
+                new AssistantMessage.ToolCall("c1", "function", "get_account", "{}"))).build();
+        ToolResponseMessage result = ToolResponseMessage.builder().responses(List.of(
+                new ToolResponseMessage.ToolResponse("c1", "get_account", "{\"equity\":100}"))).build();
+        assertThat(cacheKey(m, List.of(system, opening, call, result, new UserMessage("再问")))).isEqualTo(key);
 
-        // system 变了前缀就失效,键必须跟着变
-        m.call(new Prompt(List.of(new SystemMessage("你是分析师"), new UserMessage("问题"))));
-        assertThat(MAPPER.readTree(lastRequestBody).path("prompt_cache_key").asString(null)).isNotEqualTo(key);
+        // 另一次唤醒/另一个会话
+        assertThat(cacheKey(m, List.of(system, new UserMessage("另一段开场白")))).isNotEqualTo(key);
+        assertThat(cacheKey(m, List.of(new SystemMessage("你是分析师"), opening))).isNotEqualTo(key);
 
-        // 送哈希不送原文:system 里有用户自己写的自定义指令
-        assertThat(key).doesNotContain("交易员");
+        assertThat(key).doesNotContain("交易员").doesNotContain("开场白");
+    }
+
+    private String cacheKey(ResponsesChatModel m, List<Message> messages) {
+        m.call(new Prompt(messages));
+        return MAPPER.readTree(lastRequestBody).path("prompt_cache_key").asString(null);
     }
 
     @Test
@@ -290,7 +296,7 @@ class ResponsesChatModelTest {
                 + "\"call_id\":\"call_1\",\"output\":\"ERROR: 超时\\t重试\"}],\"tools\":[{\"type\":\"function\",\"name\":\"get_price\","
                 + "\"description\":\"查价格 <b>&\\\"引号\\\"\",\"parameters\":{\"type\":\"object\",\"properties\":{\"qty\":{\"type\":\"number\","
                 + "\"minimum\":0.010}},\"required\":[\"qty\"],\"additionalProperties\":false}},{\"type\":\"web_search\"}],"
-                + "\"tool_choice\":\"required\",\"prompt_cache_key\":\"f6e4260cef84bb8f02adbdfc\"}");
+                + "\"tool_choice\":\"required\",\"prompt_cache_key\":\"e383530738341e8c1473facb\"}");
     }
 
     // ========== 阻塞路径（call → streamOnce 帧合并） ==========

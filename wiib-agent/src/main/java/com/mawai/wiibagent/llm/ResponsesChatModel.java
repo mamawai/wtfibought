@@ -34,7 +34,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * <p>
  * 思考档位走 reasoning.effort；无状态模式（store=false，历史每轮全量带），
  * 服务端搜索声明 {@code {"type":"web_search"}}。
- * 提示缓存不用声明，各家都是自动的；只捎一个分组键让同前缀的请求落到同一台机器（见 {@link #cacheKey}）。
+ * 提示缓存不用声明，各家都是自动的；只按会话捎一个分组键让同前缀的请求落到同一台机器（见 {@link #cacheKey}）。
  * 流式：正文只认 output_text.delta，工具调用整只收在 output_item.done，response.completed 发收尾帧；
  * 不发增量事件的网关，正文、工具与原始 item 都从 completed 的 output 兜底。
  * <p>
@@ -86,6 +86,7 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
 
         // system 消息进 instructions（Responses 惯例），其余按序转 input items
         StringBuilder instructions = new StringBuilder();
+        String firstUser = null;
         ArrayNode input = MAPPER.createArrayNode();
         List<Message> history = prompt.getInstructions();
         for (int i = 0; i < history.size(); i++) {
@@ -97,7 +98,12 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
                     }
                     instructions.append(message.getText());
                 }
-                case USER -> input.add(messageItem("user", "input_text", message.getText()));
+                case USER -> {
+                    if (firstUser == null) {
+                        firstUser = message.getText();
+                    }
+                    input.add(messageItem("user", "input_text", message.getText()));
+                }
                 case ASSISTANT -> input.addAll(assistantItems((AssistantMessage) message, inToolLoop(history, i)));
                 case TOOL -> {
                     for (ToolResponseMessage.ToolResponse tr : ((ToolResponseMessage) message).getResponses()) {
@@ -136,25 +142,24 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
                 body.put("tool_choice", ToolChoice.of(toolOptions));
             }
         }
-        body.put("prompt_cache_key", cacheKey(instructions.toString(), toolNames));
+        body.put("prompt_cache_key", cacheKey(instructions.toString(), toolNames, firstUser));
         logRequest(body.path("model").asString(null), body.path("tool_choice").asString(null), toolNames);
         return body;
     }
 
     /**
-     * 提示缓存的分组键：它不是缓存句柄，是个标签，告诉上游"带同一个标签的请求共用同一段前缀"。
-     * xAI 按它路由到同一台机器（缓存按机器存，不给标签就可能每次换机器，前面存的白存），
-     * OpenAI 拿它分账与隔离。
-     * <p>
-     * 取 instructions + 工具名的哈希：这两样正好决定了可复用的那段前缀，同一个 agent 跨轮跨唤醒键不变，
-     * 它们变了键跟着变（那时旧前缀本就失效）。送哈希不送原文——system 里有用户自己写的字。
+     * 提示缓存分组键：instructions + 工具名 + 首条 user 的哈希，一段会话一个键，跨轮不变、跨会话不同。
+     * xAI 按它路由机器，OpenAI 按它分账隔离，CPA 当会话 id 用。送哈希不送原文。
      */
-    private static String cacheKey(String instructions, List<String> toolNames) {
+    private static String cacheKey(String instructions, List<String> toolNames, String firstUser) {
         try {
             MessageDigest sha = MessageDigest.getInstance("SHA-256");
             sha.update(instructions.getBytes(StandardCharsets.UTF_8));
             for (String name : toolNames) {
                 sha.update(name.getBytes(StandardCharsets.UTF_8));
+            }
+            if (firstUser != null) {
+                sha.update(firstUser.getBytes(StandardCharsets.UTF_8));
             }
             return HexFormat.of().formatHex(sha.digest(), 0, 12);
         } catch (NoSuchAlgorithmException e) {
