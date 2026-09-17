@@ -14,7 +14,7 @@ class LogAspectTest {
     @Test
     void record风格_apiKey打码_其余字段保留() {
         String s = LogAspect.maskSensitive(
-                "[UpsertReq[name=小虎, baseUrl=https://api.x.ai, apiKey=sk-live-abc123, useDefaultPrompt=true]]");
+                "[UpsertReq[name=小虎, baseUrl=https://api.x.ai, apiKey=sk-live-abc123, intervalCode=5m]]");
         assertThat(s).doesNotContain("sk-live-abc123")
                 .contains("apiKey=***")
                 .contains("name=小虎")

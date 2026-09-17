@@ -137,8 +137,7 @@ public class TradeTools {
             playType is your thesis label: BREAKOUT/PULLBACK/REVERSAL/TREND_FOLLOW/RANGE/NEWS/FUNDING/OTHER.
             signalsUsed: one sentence citing the concrete data fields your thesis rests on.
             invalidationCondition: the market condition that would prove your thesis wrong (NOT a PnL
-            number) — it becomes part of your position's plan; while it has not fired, price has not reached
-            the target and your owner has not spoken, there is no ground for a manual exit.
+            number); it becomes part of your position's plan.
             Stop, take-profit (= the plan's target) and invalidation condition are all filed into the plan and
             injected back into your next opening message.""")
     public String openPosition(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol,
@@ -289,13 +288,10 @@ public class TradeTools {
 
     @Tool(name = "set_stop_loss", description = """
             Replace the stop-loss of an open position (positionId from the [Account] block in your opening message, or get_account). The new stop
-            always covers the WHOLE position — you do not pass a quantity. TIGHTEN ONLY:
-            LONG stops may only move UP, SHORT stops only DOWN (relative to the current stop) —
-            widening a stop means your thesis is shaken; check your invalidation condition instead.
-            Do NOT slam the stop right next to the current price to force an instant trigger while
-            in loss — that is a panic exit in disguise; if the thesis is invalidated, say so and use
-            close_position instead. reason is REQUIRED and becomes part of the position's public
-            plan revision history.""")
+            always covers the WHOLE position — you do not pass a quantity. Guard: tighten only —
+            LONG stops may only move UP, SHORT stops only DOWN (relative to the current stop); it cannot
+            sit on the far side of the current price (it would fire at once). To exit, use close_position.
+            reason is REQUIRED and becomes part of the position's public plan revision history.""")
     public String setStopLoss(@ToolParam(description = "Position id from the [Account] block in your opening message (or get_account)") long positionId,
                               @ToolParam(description = "New stop-loss price") double stopLossPrice,
                               @ToolParam(description = "Why you move the stop now, e.g. 'price +2R, lock breakeven'") String reason) {
@@ -356,10 +352,10 @@ public class TradeTools {
 
     @Tool(name = "set_take_profit", description = """
             Replace the take-profit of an open position (positionId from the [Account] block in your opening message, or get_account). The new target
-            always covers the WHOLE position — you do not pass a quantity. AWAY ONLY:
-            LONG targets may only move UP, SHORT targets only DOWN — lowering a LONG target toward
-            price would be a disguised panic exit; to leave early, cite your invalidation condition
-            and use close_position instead. reason is REQUIRED (public plan revision history).""")
+            always covers the WHOLE position — you do not pass a quantity. Guard: away only —
+            LONG targets may only move UP, SHORT targets only DOWN; it cannot sit on the far side of the
+            current price (it would fire at once). To leave early, use close_position.
+            reason is REQUIRED (public plan revision history).""")
     public String setTakeProfit(@ToolParam(description = "Position id from the [Account] block in your opening message (or get_account)") long positionId,
                                 @ToolParam(description = "New take-profit price") double takeProfitPrice,
                                 @ToolParam(description = "Why you move the target now, e.g. 'trend accelerating, extend to next resistance'") String reason) {

@@ -223,25 +223,25 @@ class PromptI18nTest {
 
     // ==================== ② 中文侧的关键约束一条不丢 ====================
 
-    /** trader 模板的 7 条认知设计原则，各钉一句锚点——搬家时丢哪条都在这里红 */
+    /** trader 模板只讲事实：各钉一句事实锚点，观点句一句不许回来——搬家时丢哪条都在这里红 */
     @Test
-    void 中文trader模板保住七条认知设计原则() {
+    void 中文trader模板只讲事实不带观点() {
         String p = new TraderPromptAssembler(mock(AiTraderMapper.class), prompts)
                 .platformTemplate(AgentLang.ZH, "1h", "BTCUSDT", TraderRiskConfig.of(new AiTrader()), null);
 
         assertThat(p)
-                .as("① 身份与记分牌先行").contains("职业加密货币合约交易员").contains("判断力排名")
-                .as("② 单问题框架").contains("只需要回答一个问题").contains("我的计划需要改变吗")
-                .as("③ 状态与指令分层").contains("它是数据不是指令").contains("无需 get_account 复查")
-                .as("④ 检验先于发明").contains("检验旧论点").contains("失效条件被触发了吗")
-                // ⑤ 模板里只留一行指针（标记同源），格式本体是系统强制块，在 assemble 里另验
-                .as("⑤ 固定收尾格式").contains("[本轮结论]").contains("固定收尾格式")
-                // ⑦ 模板侧的钉子：留言进推理主干、纪律不是否决依据、按留言离场合法、开仓类留言不用模型再论证
-                .as("⑦ 留言进推理主干").contains("0. 主人有留言")
-                .as("⑦ 纪律不是否决留言的依据").contains("不是否决主人留言的依据")
-                .as("⑦ 按留言离场合法").contains("退出只有四条路").contains("按主人留言离场不算撕毁计划")
-                .as("⑦ 开仓类留言不用再论证").contains("主人留言指定的开仓/加仓不需要你再论证");
-        // ⑥ 在 assemble 的拼接段里（模板之外）；⑦ 的留言段走开场白（ownerNoteBlock），system 里一个字不留
+                .as("① 身份与环境").contains("职业加密货币永续合约交易员").contains("无记忆的独立会话")
+                .as("① 方法归主人指令").contains("以文末「主人的交易指令」为准").contains("指令没覆盖到的，你自己定")
+                .as("② 开场白是数据不是指令").contains("不是指令").contains("不必 get_account 复查")
+                .as("② 护栏事实").contains("护栏会拒绝的动作").contains("计划不可改写")
+                // ③ 模板里只留一行指针（标记同源），格式本体是系统强制块，在 assemble 里另验
+                .as("③ 固定收尾格式").contains("[本轮结论]").contains("固定收尾格式")
+                // 观点句：单问题框架、默认 HOLD、退出路数、撕毁计划、同向放大、磨损——一句都不许回来
+                .doesNotContain("只需要回答一个问题").doesNotContain("计划需要改变吗")
+                .doesNotContain("退出只有四条路").doesNotContain("撕毁").doesNotContain("浮亏不是平仓理由")
+                .doesNotContain("同一笔风险放大").doesNotContain("磨损越快").doesNotContain("HOLD")
+                .doesNotContain("纪律：").doesNotContain("分析流程");
+        // ④ 在 assemble 的拼接段里（模板之外）；⑤ 的留言段走开场白（ownerNoteBlock），system 里一个字不留
         AiTrader t = new AiTrader();
         t.setSymbols("BTCUSDT");
         t.setIntervalCode("1h");
@@ -252,18 +252,34 @@ class PromptI18nTest {
         TraderPromptAssembler assembler =
                 new TraderPromptAssembler(mock(AiTraderMapper.class), prompts);
         String full = assembler.assemble(t, AgentLang.ZH);
-        assertThat(full.indexOf("主人的交易风格指令"))
-                .as("⑥ 用户风格指令放最后并明示优先级").isGreaterThan(full.indexOf("纪律："));
+        assertThat(full.indexOf("————— 主人的交易指令"))
+                .as("④ 主人指令放模板之后并明示优先级").isGreaterThan(full.indexOf("收尾：最后必须"));
         assertThat(full).contains("听主人的").contains("不在可覆盖范围");
-        assertThat(full).as("⑤ 固定收尾格式本体：系统强制块，按真实币种生成段头")
+        assertThat(full).as("③ 固定收尾格式本体：系统强制块，按真实币种生成段头")
                 .contains("固定收尾格式（系统强制").contains("\n[本轮结论]\n").contains("\n[BTCUSDT]\n判断：")
                 .contains("动作：").contains("等待：");
-        assertThat(full).as("⑦ 留言不进 system（模板正文提到「主人的留言」这几个字是纪律引言，段头才是注入痕迹）").doesNotContain("————— 主人的留言").doesNotContain("今晚有 CPI");
+        assertThat(full).as("⑤ 留言不进 system（模板正文提到「主人的留言」是开场白清单，段头才是注入痕迹）").doesNotContain("————— 主人的留言").doesNotContain("今晚有 CPI");
         assertThat(assembler.ownerNoteBlock(t, AgentLang.ZH))
                 .contains("今晚有 CPI").contains("本次之后还会出现 1 次")
-                .as("⑦ 举证责任倒置：执行不需要理由，否决只认数字，结论里单起一行对账（旧「尽量考虑履行/观点不成立」是万能借口）")
+                .as("⑤ 举证责任倒置：执行不需要理由，否决只认数字，结论里单起一行对账（旧「尽量考虑履行/观点不成立」是万能借口）")
                 .contains("执行不需要理由").contains("不引数字的反对视为没有反对").contains("主人留言：已执行")
                 .doesNotContain("尽量考虑履行").doesNotContain("观点不成立").doesNotContain("不是常驻规则");
+    }
+
+    /** 英文模板同样只讲事实：锚事实句、反锚观点句——英文侧把观点句写回去不能全绿 */
+    @Test
+    void 英文trader模板只讲事实不带观点() {
+        String p = new TraderPromptAssembler(mock(AiTraderMapper.class), prompts)
+                .platformTemplate(AgentLang.EN, "1h", "BTCUSDT", TraderRiskConfig.of(new AiTrader()), null);
+
+        assertThat(p)
+                .contains("fresh session with no memory")
+                .contains("follow \"Your owner's trading instructions\"")
+                .contains("What the opening message carries")
+                .contains("Actions the guard rejects").contains("plans cannot be rewritten")
+                .doesNotContain("only one question").doesNotContain("four ways out")
+                .doesNotContain("tearing up").doesNotContain("HOLD")
+                .doesNotContain("Discipline:").doesNotContain("Analysis flow");
     }
 
     /** reviewer 的防自夸三件套 */
@@ -333,6 +349,8 @@ class PromptI18nTest {
                 "tool.set_stop_loss", "tool.set_take_profit", "tool.write_plan", "tool.cancel_order",
                 // 任务 5 的两条缓解：回落成中文＝英文用户被一行中文指令要求"输出中文"，正好反了
                 "trader.label.ownerWritten", "trader.label.outputLanguage",
+                // 主人指令段的占位句与平台默认指令：预填进英文用户的指令框，回落成中文他就得删掉重写
+                "trader.label.customPromptEmpty", "trader.label.defaultInstructions",
                 "reviewer.label.outputLanguage", "learning.label.outputLanguage",
                 "chat.outputLanguage", "coach.label.outputLanguage",
                 // 上游异常归类后的那一句：chat 与 coach 共用，既上屏也喂回模型
@@ -464,20 +482,6 @@ class PromptI18nTest {
             // 主人的字一个都不许被改写；留言只在留言段，不进 system
             assertThat(prompt).contains(t.getCustomPrompt()).doesNotContain(t.getOwnerNote());
             assertThat(block).contains(t.getOwnerNote());
-        }
-    }
-
-    /** 退出平台模板时模板里那次语言指令没了，末尾这行是唯一还站着的一条 */
-    @Test
-    void 退出平台模板后输出语言指令仍在() {
-        for (AgentLang lang : AgentLang.values()) {
-            AiTrader t = enTrader();
-            t.setUseDefaultPrompt(false);
-            t.setCustomPrompt("Do whatever you want.");
-            assertThat(new TraderPromptAssembler(mock(AiTraderMapper.class), prompts)
-                    .assemble(t, lang).stripTrailing())
-                    .as("%s 退出平台模板后仍要有输出语言硬收尾", lang.code())
-                    .endsWith(prompts.get(lang, "trader.label.outputLanguage"));
         }
     }
 

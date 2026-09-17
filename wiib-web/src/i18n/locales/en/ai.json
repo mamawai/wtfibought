@@ -283,8 +283,8 @@
       "body": "The platform provides no model. Endpoints (protocol / base URL / key / model name) are all kept under Model config on the AI page; here you only pick one of them. Pick none and it follows your default endpoint.\n\nEvery wake-up spends your tokens — the more often it wakes, the bigger the bill."
     },
     "prompt": {
-      "title": "Trading style instructions",
-      "body": "The platform system prompt already covers role, discipline and hard rules — expand it to read the full text, word for word what the AI is fed.\n\nYour custom instructions are appended after it and set the style (\"breakouts only, never catch a falling knife\"). Where style or strategy conflicts with the platform default, yours wins; position spec, hard rules and the closing format are the exception, those are enforced by the system.\n\nSaved is live: the next candle already runs on the new text, no restart needed."
+      "title": "Trading instructions",
+      "body": "The platform system prompt only describes the environment, the tools, the position spec and what the guard rejects — expand it to read the full text, word for word what the AI is fed, and it holds no trading opinion at all.\n\nYour trading instructions are appended after it and are the only source of method, style and discipline: which timeframes to read, which setups to take, how to place the stop, how to manage a position, how to size. A new trader starts with the platform default filled in; edit or delete it as you like. Position spec, guard and closing format are enforced by the system and cannot be overridden.\n\nSaved is live: the next candle already runs on the new text, no restart needed."
     },
     "save": {
       "title": "Save, then start",
@@ -334,19 +334,14 @@
     "endpoint": "Model endpoint",
     "manageEndpoints": "Manage endpoints (AI page · Model config)",
     "endpointHint": "Wake-ups, daily reviews and peer learning all burn this endpoint's key; saving checks connectivity first",
-    "useDefaultPrompt": "Use the platform system prompt (recommended)",
-    "viewPrompt": "View the platform system prompt (follows interval/symbols, your custom text is appended after it)",
-    "promptOff": "Platform prompt is off: your custom prompt below is the only instruction source (required). The position spec above is still enforced by the guard — leverage {{levMin}}~{{levMax}}x, margin per new position {{mgMin}}%~{{mgMax}}% of equity",
-    "listSep": ", ",
-    "guardSinglePos": "one position only",
-    "guardNoHedge": "no hedging on the same coin",
-    "promptOffTail": ". Every entry must carry a stop loss, a thesis and an invalidation condition; stops may only tighten; take profits may only move away from entry. Violating calls are rejected with the reason.",
-    "customPrompt": "Custom prompt (sets style and strategy; yours wins over the platform default)",
-    "customPromptOnly": "Custom prompt (the only instruction source, required)",
+    "viewPrompt": "View the platform system prompt (environment, tools, spec and guard only; follows interval/symbols/spec/wake window; your instructions are appended after it)",
+    "customPrompt": "Your trading instructions (the only source of method, style and discipline; position spec, guard and closing format are enforced by the system)",
     "customPromptPh": "e.g. Trend breakouts only, never catch a falling knife; risk at most 2% of equity per trade; after two losses in a row, watch only for the rest of the day.",
+    "resetDefaultPrompt": "Reset to platform default",
+    "resetDefaultPromptConfirm": "Replace the current instructions with the platform default?",
     "save": "Save config",
     "create": "Create Trader",
-    "rules": "Rules: it wakes once per candle (extreme moves may wake it early, plus one review a day) on your key and your tokens. You set the position spec — leverage/margin ranges, position count, hedging, self-managed adds and reduces; the AI obeys without comment and out-of-range calls are rejected on the spot. Stop loss and invalidation are mandatory; stops may only tighten. Every entry files a trade plan, fed back verbatim on each wake-up, and there are only four ways out: stop loss, take profit, invalidation, or a message from you. Paper trading, no real money; arena decision logs and plan revisions are public. Do not expect it to make money — watching how it thinks is the point."
+    "rules": "Rules: it wakes once per candle (extreme moves may wake it early, plus one review a day) on your key and your tokens. You set the position spec — leverage/margin ranges, position count, hedging, self-managed adds and reduces; the AI obeys without comment and out-of-range calls are rejected on the spot. Stop loss and invalidation are mandatory; stops may only tighten. Every entry files a trade plan, fed back verbatim on each wake-up; how it enters and exits follows the trading instructions you write (a new trader starts with the platform default, edit or delete it as you like). Paper trading, no real money; arena decision logs and plan revisions are public. Do not expect it to make money — watching how it thinks is the point."
   },
   "skills": {
     "title": "Related skills",

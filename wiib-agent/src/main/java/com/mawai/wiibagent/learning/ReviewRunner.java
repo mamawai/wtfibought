@@ -45,9 +45,10 @@ import java.util.concurrent.TimeoutException;
  * 身份先于指令——给自己写交易日志的交易员，不是评价者，教训写给明天的自己；
  * 防自夸三件套——战绩数字只许复述、先找错误再找亮点、教训条数上限。
  * <p>
- * 学习宗旨：<b>复盘决策过程，不复盘单次运气；每条经验带证据与样本数；恐惧与贪婪交给代码闸门。</b>
- * 针对的两个真实病：看到亏损就不敢开仓（负向偏置——所以教训强制二分类、错过与亏损同罪、
+ * 学习宗旨：<b>复盘决策过程，不复盘单次运气；对错以主人的交易指令为尺子；每条经验带证据与样本数；恐惧与贪婪交给代码闸门。</b>
+ * 针对的两个真实病：看到亏损就不敢开仓（负向偏置——所以教训强制二分类、该做没做与做错同罪、
  * 保守度自检）；把学到的当铁律盲信（确证幻觉——所以记忆分已验证/假设两栏、纪律本身可被证伪淘汰）。
+ * 下期纪律不得与主人指令相抵触：它会写进 memory 每轮注入，否则复盘会和主人的指令对着干。
  */
 @Slf4j
 @Component
@@ -222,7 +223,7 @@ public class ReviewRunner {
     }
 
     /**
-     * 复盘的用户消息：四块硬事实 + 上一期复盘 + 记忆笔记 + 收尾指令。
+     * 复盘的用户消息：主人的交易指令（评判尺子）+ 四块硬事实 + 上一期复盘 + 记忆笔记 + 收尾指令。
      * <p>
      * 只回注上一期全文（不是全部历史）：每篇复盘都已经把它的上一篇吸收进去了，所以
      * 给最近这一篇＝给了全部历史的滚动浓缩。把每期都堆进来只会越喂越长，模型抓不住重点。
@@ -235,6 +236,10 @@ public class ReviewRunner {
         StringBuilder sb = new StringBuilder();
         sb.append(prompts.get(lang, "reviewer.label.window", Map.of(
                 "from", from, "to", TIME_FMT.format(Instant.ofEpochMilli(toMs))))).append("\n\n");
+        // 主人的交易指令是评判尺子，排在硬事实之前；主人亲笔原样注入不翻译
+        sb.append(prompts.get(lang, "reviewer.label.ownerInstructions")).append('\n');
+        sb.append(trader.getCustomPrompt() == null || trader.getCustomPrompt().isBlank()
+                ? prompts.get(lang, "reviewer.label.ownerInstructionsEmpty") : trader.getCustomPrompt()).append("\n\n");
         sb.append(m.statsBlock()).append('\n');
         sb.append(m.tradesBlock()).append('\n');
         sb.append(m.timelineBlock()).append('\n');

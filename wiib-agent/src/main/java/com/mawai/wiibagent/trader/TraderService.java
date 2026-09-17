@@ -75,7 +75,6 @@ public class TraderService {
     /** llmEndpointId：端点库里的一条；空=跟随用户默认端点。wakeWindow：唤醒时段"HH:mm-HH:mm"（北京时间），null=全天 */
     public record UpsertReq(String name, String symbols, String intervalCode, String customPrompt,
                             Long llmEndpointId,
-                            Boolean useDefaultPrompt,
                             Integer leverageMin, Integer leverageMax,
                             BigDecimal marginPctMin, BigDecimal marginPctMax,
                             Boolean allowMultiPosition, Boolean allowHedge,
@@ -158,7 +157,6 @@ public class TraderService {
                 .set(AiTrader::getSymbols, probe.getSymbols())
                 .set(AiTrader::getIntervalCode, probe.getIntervalCode())
                 .set(AiTrader::getCustomPrompt, probe.getCustomPrompt())
-                .set(AiTrader::getUseDefaultPrompt, probe.getUseDefaultPrompt())
                 .set(AiTrader::getLeverageMin, probe.getLeverageMin())
                 .set(AiTrader::getLeverageMax, probe.getLeverageMax())
                 .set(AiTrader::getMarginPctMin, probe.getMarginPctMin())
@@ -494,11 +492,6 @@ public class TraderService {
         if (req.customPrompt() != null && req.customPrompt().length() > 4000) {
             return messages.get("trader.config.promptTooLong");
         }
-        // 退出平台模板后自定义就是唯一指令来源，空着=模型裸奔
-        if (Boolean.FALSE.equals(req.useDefaultPrompt())
-                && (req.customPrompt() == null || req.customPrompt().isBlank())) {
-            return messages.get("trader.config.customPromptRequired");
-        }
         return null;
     }
 
@@ -541,7 +534,6 @@ public class TraderService {
         t.setSymbols(String.join(",", parseSymbols(req.symbols())));
         t.setIntervalCode(req.intervalCode());
         t.setCustomPrompt(req.customPrompt());
-        t.setUseDefaultPrompt(req.useDefaultPrompt() == null || req.useDefaultPrompt());
         t.setLeverageMin(req.leverageMin() == null ? TraderRiskConfig.DEF_LEV_MIN : req.leverageMin());
         t.setLeverageMax(req.leverageMax() == null ? TraderRiskConfig.DEF_LEV_MAX : req.leverageMax());
         t.setMarginPctMin(req.marginPctMin() == null ? TraderRiskConfig.DEF_MARGIN_MIN : req.marginPctMin());

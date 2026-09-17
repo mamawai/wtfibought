@@ -184,12 +184,31 @@ class ReviewRunnerTest {
                 .contains("仍然成立的教训与纪律要继承");
         assertThat(all).contains("独立看懂");
         // 学习宗旨四件套：教训二分类（复盘过程不复盘运气，防"亏一次就不敢开仓"）、
-        // 错过与亏损同罪+保守度自检（对称记账）、纪律可证伪淘汰（防只进不出）、
+        // 该做没做与做错同罪+保守度自检（对称记账）、纪律可证伪淘汰（防只进不出）、
         // 记忆两栏带样本数（防单次样本被当铁律盲信）
         assertThat(all).contains("【决策错】").contains("【运气差】").contains("同样条件下次照做");
-        assertThat(all).contains("该行动没行动也是错误").contains("保守度自检");
+        assertThat(all).contains("该做没做与做错同罪").contains("保守度自检");
+        // 对错的尺子是主人的交易指令：段头在场，下期纪律不许与它相抵触
+        assertThat(all).contains("【主人的交易指令】").contains("不得与主人的交易指令相抵触");
         assertThat(all).contains("削弱").contains("不许只进不出");
         assertThat(all).contains("【已验证纪律】").contains("【待验证假设】").contains("样本数");
+    }
+
+    /** 主人的交易指令原文进复盘用户消息，排在硬事实之前；没写就是占位句 */
+    @Test
+    void ownerInstructionsInjectedBeforeMaterial() {
+        AiTrader t = trader();
+        t.setCustomPrompt("只做突破，不抄底。");
+        ReviewMaterialAssembler.ReviewMaterial m = new ReviewMaterialAssembler.ReviewMaterial(
+                "统计块", "配对块", "时间线块", "路径块", 1);
+
+        String user = runner.userPrompt(t, m, 0, BOUNDARY, null, AgentLang.ZH);
+
+        assertThat(user).contains("【主人的交易指令】").contains("只做突破，不抄底。").doesNotContain("主人没写指令");
+        assertThat(user.indexOf("只做突破，不抄底。")).isLessThan(user.indexOf("统计块"));
+
+        t.setCustomPrompt(" ");
+        assertThat(runner.userPrompt(t, m, 0, BOUNDARY, null, AgentLang.ZH)).contains("主人没写指令");
     }
 
     @Test

@@ -38,12 +38,9 @@ public class AiTrader {
     /** 唤醒K线级别：5m/15m/1h/4h（1d 已下线） */
     private String intervalCode;
 
-    /** 用户自定义提示词，追加在平台系统提示词之后；每次唤醒现读现拼，改完下一根K线生效 */
+    /** 主人的交易指令（方法/风格/纪律的唯一来源），追加在平台系统提示词之后；每次唤醒现读现拼，改完下一根K线生效 */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String customPrompt;
-
-    /** 是否使用平台系统提示词（默认true）；false=自定义提示词成为唯一指令来源（护栏仍硬校验） */
-    private Boolean useDefaultPrompt;
 
     /**
      * 复盘笔记：由 reviewer 每日复盘整理写入（限长文本），每次唤醒注入提示词。

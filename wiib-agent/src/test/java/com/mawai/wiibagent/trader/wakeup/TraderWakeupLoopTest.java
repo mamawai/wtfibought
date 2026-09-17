@@ -946,7 +946,7 @@ class TraderWakeupLoopTest {
         assertThat(dec.getValue().getToolCalls()).isGreaterThanOrEqualTo(1);
     }
 
-    /** 波动警报唤醒：kind=ALERT、wake_time=触发时刻；开场白含警报事实与反锚定（未收盘不作数/不必动作） */
+    /** 波动警报唤醒：kind=ALERT、wake_time=触发时刻；开场白含警报事实（未收盘不作数/被叫醒两个方向都不是理由） */
     @Test
     void alertWakeUsesAlertInstructionAndKind() {
         stubHealthyAccount();
@@ -973,7 +973,7 @@ class TraderWakeupLoopTest {
                 .map(org.springframework.ai.chat.messages.Message::getText)
                 .reduce("", String::concat);
         assertThat(firstCall).contains("行情波动警报").contains("1.2%").contains("下跌")
-                .contains("尚未收盘").contains("不因为被叫醒而必须动作");
+                .contains("尚未收盘").contains("被叫醒本身不是动作的理由");
     }
 
     /**

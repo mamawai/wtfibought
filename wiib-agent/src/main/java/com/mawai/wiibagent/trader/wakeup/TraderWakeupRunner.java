@@ -97,7 +97,7 @@ public class TraderWakeupRunner {
      * 值给到 12 是因为并不并行差得远：会并行的模型一轮发 4~9 个 tool_call，2~3 次调用就取完数据；
      * 不并行的一轮一个，3 币多周期求证根本走不完。撞上限不算失败（见下面 setError 那段），
      * 但收束时最后一条是纯 tool_call、正文空，这轮决策就没有收尾的结论块——
-     * 下一轮的检验旧论点和复盘素材都跟着缺。
+     * 下一轮的【上一轮结论】和复盘素材都跟着缺。
      */
     public static final int MAX_MODEL_CALLS = 12;
     static final int MAX_CONSECUTIVE_FAILURES = 5;
@@ -544,7 +544,7 @@ public class TraderWakeupRunner {
     }
 
     /**
-     * 例行唤醒开场白：单问题框架 + 行情快照锚定价格水平。
+     * 例行唤醒开场白：事实区 + 本轮任务 + 行情快照锚定价格水平。
      * <p>
      * 收尾标记取 {@code trader.mark.conclusion}，与系统提示词同一条 key——两处必须同源。
      * <p>
@@ -552,7 +552,7 @@ public class TraderWakeupRunner {
      *
      * @param observation 观察包（{@link #observation}），空串=不带。紧跟头部事实，排在快照之前
      * @param calendar  财经日历块（{@link EconCalendarAssembler}），null=整块缺席。
-     *                  与快照同属事实区，排在快照之后、休眠提示与单问题框架之前
+     *                  与快照同属事实区，排在快照之后、休眠提示与本轮任务之前
      * @param ownerNote 主人留言段（{@link TraderPromptAssembler#ownerNoteBlock}），空串=无待读留言。
      *                  压在整段开场白最末：user 消息末尾是最近因位置，留言在这儿才是"本轮要回答的问题之一"
      */
@@ -568,7 +568,7 @@ public class TraderWakeupRunner {
                 + (snapshot.isEmpty() ? ""
                         : "\n" + prompts.get(lang, "trader.wake.snapshotHeader") + "\n" + snapshot)
                 + (calendar == null ? "" : "\n" + calendar)
-                // 休眠提示放快照之后（事实区）、单问题框架之前：不让"要睡了"成为模型读到的第一件事
+                // 休眠提示放快照之后（事实区）、本轮任务之前：不让"要睡了"成为模型读到的第一件事
                 + sleepNotice(prompts, lang, WakeWindow.of(trader), boundaryTime, intervalMs, nowMs.getAsLong())
                 + prompts.get(lang, "trader.wake.routineQuestion",
                         Map.of("mark", prompts.get(lang, "trader.mark.conclusion")))
@@ -599,8 +599,7 @@ public class TraderWakeupRunner {
 
     /**
      * 警报唤醒开场白：事实全代码注入（振幅/方向/上次唤醒时间/距例行还有多久），
-     * 反锚定是灵魂——被波动惊醒正是恐慌平仓的高发场景，必须明说"未收盘不作数、
-     * 止损在岗、不因被叫醒而必须动作"。
+     * 明说"未收盘不作数、止损在岗"，被叫醒本身两个方向都不是理由。
      *
      * @param lastWakeTime 本局上一次交易唤醒的时刻(ms)，null=本局还没醒过
      * @param observation 观察包，空串=不带；紧跟"上次唤醒"那行，排在日历之前
@@ -693,8 +692,7 @@ public class TraderWakeupRunner {
 
     /**
      * 账户状态一次给足（持仓+计划+挂单）：模型不必再花工具预算查户口，
-     * 预算留给行情求证。持仓携带交易计划与当前止损止盈——让模型一眼看到
-     * "浮亏离止损还远/计划没被证伪"，掐灭恐慌平仓。
+     * 预算留给行情求证。持仓携带交易计划与当前止损止盈，模型一眼看全。
      */
     static String accountStateJson(PromptCatalog prompts, AgentLang lang,
                                            BigDecimal equity, List<FuturesPositionDTO> positions,

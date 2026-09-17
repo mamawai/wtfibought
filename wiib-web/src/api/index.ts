@@ -664,6 +664,8 @@ export const traderApi = {
   /** 平台系统提示词预览（与唤醒组装同一份文本）：规格项多，走 POST 带 body */
   promptTemplate: (intervalCode: string, symbols: string, spec: TraderSpec, wakeWindow: string | null) =>
     api.post<unknown, string>('/ai/trader/prompt-template', { intervalCode, symbols, spec, wakeWindow }),
+  /** 平台默认交易指令（按用户的 agent 语言），新建时预填进指令框 */
+  defaultInstructions: () => api.get<unknown, string>('/ai/trader/default-instructions'),
   create: (req: TraderUpsertRequest) => api.post<unknown, void>('/ai/trader', req),
   updateConfig: (req: TraderUpsertRequest) => api.put<unknown, void>('/ai/trader/config', req),
   start: () => api.post<unknown, void>('/ai/trader/start'),

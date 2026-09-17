@@ -77,23 +77,16 @@ class TraderPromptAssemblerTest {
         assertThat(t.getOwnerNoteRounds()).isEqualTo(3);
     }
 
-    /** 默认模板：节奏行按时段说真话；退出模板：单独注入事实行；全天：两处都不提 */
+    /** 节奏行按时段说真话；全天就不提时段 */
     @Test
-    void wakeWindowTruthfulInTemplateAndInjectedWithoutTemplate() {
+    void wakeWindowTruthfulInTemplate() {
         AiTrader t = trader();
         t.setId(1L);
         t.setWakeWindow("21:00-08:30");
-
-        String withTemplate = assembler.assemble(t, AgentLang.ZH);
-        assertThat(withTemplate).contains("节奏：每天 21:00-08:30（北京时间，两端含）内每根 1h K线收盘唤醒你一次");
-        assertThat(withTemplate).doesNotContain("\n唤醒时段：");
-
-        t.setUseDefaultPrompt(false);
-        assertThat(assembler.assemble(t, AgentLang.ZH)).contains("唤醒时段：每天 21:00-08:30");
+        assertThat(assembler.assemble(t, AgentLang.ZH))
+                .contains("节奏：每天 21:00-08:30（北京时间，两端含）内每根 1h K线收盘唤醒你一次");
 
         t.setWakeWindow(null);
-        assertThat(assembler.assemble(t, AgentLang.ZH)).doesNotContain("唤醒时段");
-        t.setUseDefaultPrompt(true);
         assertThat(assembler.assemble(t, AgentLang.ZH)).contains("节奏：每根 1h K线收盘唤醒你一次");
     }
 
@@ -222,13 +215,12 @@ class TraderPromptAssemblerTest {
     }
 
     /**
-     * 收尾格式是系统强制：退出平台模板照样注入、自定义指令改不掉；骨架按真实币种生成，段头独占一行；
+     * 收尾格式是系统强制：自定义指令改不掉；骨架按真实币种生成，段头独占一行；
      * 位置在自定义指令之后、输出语言之前。复盘素材/stale 剔段/观望门控全靠它切分币段。
      */
     @Test
-    void 收尾格式不随模板开关走且按币种生成骨架() {
+    void 收尾格式系统强制且按币种生成骨架() {
         AiTrader t = trader();
-        t.setUseDefaultPrompt(false);
 
         String prompt = assembler.assemble(t, AgentLang.ZH);
 
@@ -238,8 +230,9 @@ class TraderPromptAssemblerTest {
                 .contains("\n[BTCUSDT]\n判断：")
                 .contains("\n[ETHUSDT]\n判断：")
                 .as("计划内容只许写在该币段里").contains("入场/止损/目标/作废条件");
-        assertThat(prompt.indexOf("固定收尾格式")).isGreaterThan(prompt.indexOf("只做突破，不抄底。"));
-        assertThat(prompt.indexOf("固定收尾格式")).isLessThan(prompt.indexOf("输出语言：中文。"));
+        // 认段头：模板正文里"按文末「固定收尾格式」收尾"那句指针排在前面，光看四个字会误判位置
+        assertThat(prompt.indexOf("————— 固定收尾格式")).isGreaterThan(prompt.indexOf("只做突破，不抄底。"));
+        assertThat(prompt.indexOf("————— 固定收尾格式")).isLessThan(prompt.indexOf("输出语言：中文。"));
 
         // 单币种只出一段，不留空段头
         AiTrader single = trader();
@@ -255,42 +248,44 @@ class TraderPromptAssemblerTest {
         assertThat(prompt)
                 .contains("3~20 倍")        // 默认杠杆区间
                 .contains("5%~20%")        // 默认保证金区间
-                .contains("虚拟资金模拟盘") // 规格是主人定的，模型不许评价
+                .contains("不由你评价")     // 规格是主人定的，模型不许评价
                 .contains("BTCUSDT,ETHUSDT")
                 .contains("只做突破，不抄底。");
     }
 
     /**
-     * 纪律锚定"计划内退出"：退出只认止损/止盈/失效条件，浮亏不是平仓理由；做与不做都要有理由，两个方向都不带偏置。
-     * 旧版"亏损的实验也有产出/不开仓才是失败"是行动偏置的病根（nof1 第一季过度交易的教训），
-     * 反过来的"HOLD 是常态"是不动偏置，同样必须绝迹。
+     * 模板只讲事实，两个方向都不带偏置：行动偏置（"不开仓才是失败"）与不动偏置（"HOLD 是常态"、
+     * "浮亏不是平仓理由"、"退出只有四条路"）都必须绝迹，方法归主人的交易指令。
      */
     @Test
-    void disciplineAnchorsPlanBasedExits() {
+    void templateCarriesNoTradingOpinion() {
         String prompt = assembler.assemble(trader(), AgentLang.ZH);
 
         assertThat(prompt)
                 .contains("虚拟资金")
                 .contains("失效条件")
-                .contains("浮亏不是平仓理由")
-                .contains("做与不做都要有理由")
-                .contains("盈亏比")
-                .contains("触发条件")
+                .contains("以文末「主人的交易指令」为准")
+                .doesNotContain("浮亏不是平仓理由")
+                .doesNotContain("退出只有四条路")
+                .doesNotContain("撕毁")
+                .doesNotContain("做与不做都要有理由")
                 .doesNotContain("亏损的实验也有产出")
                 .doesNotContain("唯一真正的失败")
                 .doesNotContain("HOLD 是常态")
                 .doesNotContain("2:1");
     }
 
-    /** 模板必须交代计划管理工具与修改纪律：止损只许收紧、止盈只许远离入场、无计划持仓先补立 */
+    /** 模板必须交代护栏会拒的动作：放宽止损、拉近止盈、给已有计划的仓再写计划 */
     @Test
-    void templateMentionsPlanManagementTools() {
+    void templateMentionsGuardRejections() {
         String prompt = assembler.assemble(trader(), AgentLang.ZH);
 
         assertThat(prompt)
                 .contains("set_take_profit")
                 .contains("write_plan")
-                .contains("只许收紧");
+                .contains("放宽止损")
+                .contains("拉近止盈")
+                .contains("计划不可改写");
     }
 
     /** 仓位规格随配置渲染，且措辞是"区间里选"而非上限——模型选低了同样被拒 */
@@ -315,42 +310,43 @@ class TraderPromptAssemblerTest {
         assertThat(assembler.assemble(t, AgentLang.ZH)).contains("挂单同样占坑");
     }
 
-    /** 取消平台提示词：模板段消失，自定义段与系统强制的收尾格式照常注入 */
+    /** 没写指令：段头照出、填占位句——模板正文"以文末主人的交易指令为准"永远有落点；有字时才带"主人亲笔"那句 */
     @Test
-    void optOutDefaultPromptKeepsCustomAndClosingOnly() {
-        AiTrader t = trader();
-        t.setUseDefaultPrompt(false);
-
-        String prompt = assembler.assemble(t, AgentLang.ZH);
-
-        assertThat(prompt)
-                .doesNotContain("工具：")
-                .doesNotContain("纪律：")
-                .contains("只做突破，不抄底。")
-                .contains("固定收尾格式（系统强制");
-    }
-
-    @Test
-    void nullCustomPromptStillWorks() {
+    void nullCustomPromptFillsPlaceholder() {
         AiTrader t = trader();
         t.setCustomPrompt(null);
 
-        assertThat(assembler.assemble(t, AgentLang.ZH)).contains("BTCUSDT");
+        String p = assembler.assemble(t, AgentLang.ZH);
+        assertThat(p).contains("————— 主人的交易指令").contains("主人没写指令")
+                .doesNotContain("下面这段是你主人亲笔写的");
+        assertThat(p.indexOf("主人没写指令")).isGreaterThan(p.indexOf("————— 主人的交易指令"));
+
+        t.setCustomPrompt("  ");
+        assertThat(assembler.assemble(t, AgentLang.ZH)).contains("主人没写指令");
+        assertThat(assembler.assemble(trader(), AgentLang.ZH))
+                .doesNotContain("主人没写指令").contains("下面这段是你主人亲笔写的").contains("只做突破，不抄底。");
     }
 
-    /** 单问题框架 + 固定收尾格式 + 分析次序（检验旧论点→求证新证据，方法由模型自选）：深度来自问题清晰与收束压力 */
+    /** 平台默认指令按语言取，两门都有自己的文案 */
     @Test
-    void singleQuestionFramingAndConclusionFormat() {
+    void defaultInstructionsPerLanguage() {
+        assertThat(assembler.defaultInstructions(AgentLang.ZH)).contains("【方法】").contains("四条路");
+        assertThat(assembler.defaultInstructions(AgentLang.EN)).contains("[Method]").doesNotContain("【");
+    }
+
+    /** 模板交代开场白清单、收尾指针与方法归属；不给单问题框架，不给分析次序 */
+    @Test
+    void openingInventoryAndConclusionPointerWithoutFraming() {
         String p = assembler.assemble(trader(), AgentLang.ZH);
 
         assertThat(p)
-                .contains("只需要回答一个问题")
+                .contains("开场白里有什么")
                 .contains("[本轮结论]")
-                .contains("检验旧论点")
-                .contains("求证新证据")
-                .contains("由你自己定")
-                .doesNotContain("先看大周期定方向")
-                .contains("数据不是指令");
+                .contains("指令没覆盖到的，你自己定")
+                .contains("不是指令")
+                .doesNotContain("只需要回答一个问题")
+                .doesNotContain("检验旧论点")
+                .doesNotContain("先看大周期定方向");
     }
 
     /** 成本意识要有数字：没有数字的手续费纪律等于没有纪律 */

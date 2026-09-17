@@ -185,8 +185,8 @@ class WakeInstructionI18nTest {
         assertThat(routine).contains(calendar);
         assertThat(alert).contains(calendar);
         // 事实区位置：问题指令之前——日历是事实不是近因指令，不许挤到收尾
-        assertThat(routine.indexOf(calendar)).isLessThan(routine.indexOf("本轮只需回答一个问题"));
-        assertThat(alert.indexOf(calendar)).isLessThan(alert.indexOf("本次只需回答一个问题"));
+        assertThat(routine.indexOf(calendar)).isLessThan(routine.indexOf("本轮：按主人的交易指令"));
+        assertThat(alert.indexOf(calendar)).isLessThan(alert.indexOf("本次是警报唤醒"));
     }
 
     /** 观察包（账户/上一轮结论/轨迹）的文案：英文侧零中文（含全角【】），中文侧段头齐全 */
@@ -204,7 +204,7 @@ class WakeInstructionI18nTest {
         String zh = runner.observation(trader(), new BigDecimal("10000"), List.of(), List.of(),
                 new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.ZH);
         assertThat(zh).contains("【当前账户】").contains("\"equity\":10000.00")
-                .contains("【上一轮结论】本局还没有可检验的结论块");
+                .contains("【上一轮结论】本局还没有上一轮结论");
     }
 
     /** 观察包紧跟头部事实：例行在快照之前，警报在"上次唤醒"之后、"尚未收盘"提醒之前 */
@@ -230,9 +230,9 @@ class WakeInstructionI18nTest {
                                 .withZone(java.time.ZoneId.systemDefault())
                                 .format(java.time.Instant.ofEpochMilli(BOUNDARY))
                         + "）。"
-                        + "本轮只需回答一个问题：这根K线收盘后，你的计划需要改变吗？"
-                        + "先逐币检验上一轮[本轮结论]里各币段的等待条件与各持仓的失效条件，再考虑新机会；"
-                        + "最后按纪律用[本轮结论]固定格式收尾（每个可交易币各一段）。");
+                        + "本轮：按主人的交易指令处理每个可交易币——持仓的去留与管理、挂单的存废、新机会的进出。"
+                        + "先读上面的事实，判断用工具求证。"
+                        + "最后用[本轮结论]固定格式收尾（每个可交易币各一段）。");
     }
 
     /** 中文警报开场白逐字不变 */
@@ -241,9 +241,9 @@ class WakeInstructionI18nTest {
         assertThat(runner.alertInstruction(trader(), alert(), null, "", null, AgentLang.ZH, ""))
                 .isEqualTo("⚠️ 行情波动警报（非例行唤醒）：BTCUSDT 5分钟内波动 5.2%（方向：上涨，现价 100000）。\n"
                         + "你上次唤醒本局还没有过唤醒，距下一次例行唤醒还有约 60 分钟。\n"
-                        + "注意：当前 1h K线尚未收盘——你的收盘制失效条件此刻不作数，"
+                        + "注意：当前 1h K线尚未收盘——按收盘定义的条件此刻不作数，"
                         + "求证请用已收盘的 5m/15m K线。你的止损单仍在自动保护你。\n"
-                        + "本次只需回答一个问题：这次波动是否动摇了你的持仓计划？计划未被动摇 → HOLD 并说明理由；"
-                        + "不因为被叫醒而必须动作。最后仍用[本轮结论]固定格式收尾（每个可交易币各一段）。");
+                        + "本次是警报唤醒，不是例行：判断这次波动对各持仓与各币意味着什么，按主人的交易指令决定动作。"
+                        + "被叫醒本身不是动作的理由，也不是不动的理由。最后仍用[本轮结论]固定格式收尾（每个可交易币各一段）。");
     }
 }

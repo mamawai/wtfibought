@@ -31,8 +31,7 @@ trader:
     symbolRequired: Pick at least one coin to trade
     tooManySymbols: "At most {{max}} symbols (each wake-up's tool budget and attention are split per symbol)"
     symbolNotAllowed: "Coin outside the tradable set: {{whitelist}}"
-    promptTooLong: A custom prompt is at most 4000 characters
-    customPromptRequired: With the platform prompt off, a custom prompt is required
+    promptTooLong: Trading instructions are at most 4000 characters
     leverageRange: The leverage range must sit within 1~{{max}}x
     leverageInverted: The lower bound of the leverage range cannot exceed the upper bound
     marginRange: Margin per position must be between 0.1% and 100%

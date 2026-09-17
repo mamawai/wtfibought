@@ -33,7 +33,7 @@ const DEFAULT_SPEC: TraderSpec = {
 // 默认 15m 起步：5m 高频唤醒对"LLM+双边taker手续费"是绞肉机，保留仅为短期测试观察
 const EMPTY_FORM: TraderUpsertRequest = {
   name: '', symbols: 'BTCUSDT', intervalCode: '15m', customPrompt: '',
-  llmEndpointId: null, useDefaultPrompt: true,
+  llmEndpointId: null,
   spec: DEFAULT_SPEC, alertEnabled: true, alertThresholdMult: 1, reviewEnabled: true, learningEnabled: true,
   wakeWindow: null,
 };
@@ -84,7 +84,7 @@ export function MyTrader() {
       if (v) {
         setForm({
           name: v.pub.name, symbols: v.pub.symbols, intervalCode: v.pub.intervalCode,
-          customPrompt: v.customPrompt ?? '', llmEndpointId: v.llmEndpointId, useDefaultPrompt: v.useDefaultPrompt,
+          customPrompt: v.customPrompt ?? '', llmEndpointId: v.llmEndpointId,
           spec: v.spec,
           alertEnabled: v.alertEnabled, alertThresholdMult: v.alertThresholdMult,
           reviewEnabled: v.reviewEnabled, learningEnabled: v.learningEnabled,
@@ -95,6 +95,18 @@ export function MyTrader() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // 平台默认交易指令按主人的 agent 语言取（与模板预览同一门），不跟界面语言
+  const [defaultInstructions, setDefaultInstructions] = useState('');
+  useEffect(() => {
+    traderApi.defaultInstructions().then(setDefaultInstructions).catch(() => setDefaultInstructions(''));
+  }, []);
+  // 新建态：指令框还空着就预填平台默认，可改可删
+  useEffect(() => {
+    if (loaded && !mine && defaultInstructions) {
+      setForm(f => f.customPrompt ? f : { ...f, customPrompt: defaultInstructions });
+    }
+  }, [loaded, mine, defaultInstructions]);
 
   // 首次进入自动跑一遍引导；标记落 localStorage，之后靠标题栏按钮重放
   useEffect(() => {
@@ -498,46 +510,33 @@ export function MyTrader() {
           </span>
         </div>
 
-        {/* 平台系统提示词：默认勾选使用；取消后自定义成为唯一指令来源（TradeGuard 护栏仍硬校验） */}
+        {/* 平台系统提示词只讲事实（环境/工具/规格/护栏），可展开看；方法与纪律全在下面主人的交易指令里 */}
         <div className="space-y-4" data-tour="prompt">
-        <div className="space-y-1.5 text-xs">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input type="checkbox" checked={form.useDefaultPrompt}
-                   onChange={e => set({ useDefaultPrompt: e.target.checked })}
-                   className="w-3.5 h-3.5 accent-[var(--primary,#6366f1)]" />
-            <span className="text-muted-foreground font-bold">{t('cfg.useDefaultPrompt')}</span>
-          </label>
-          {form.useDefaultPrompt ? (
-            <details className="rounded-lg border border-border bg-card-2/50">
-              <summary className="px-3 py-2 text-[11px] font-bold text-muted-foreground cursor-pointer">
-                {t('cfg.viewPrompt')}
-              </summary>
-              <pre className="max-h-56 overflow-y-auto px-3 pb-3 text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap font-sans">{template}</pre>
-            </details>
-          ) : (
-            <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-600 font-bold">
-              {/* 可选那几条护栏按语言各自的顿号/逗号串起来：中英分隔符不同，拼接交给词表里的 listSep */}
-              {t('cfg.promptOff', {
-                levMin: form.spec.leverageMin, levMax: form.spec.leverageMax,
-                mgMin: form.spec.marginPctMin, mgMax: form.spec.marginPctMax,
-              })}
-              {[
-                !form.spec.allowMultiPosition && t('cfg.guardSinglePos'),
-                form.spec.allowMultiPosition && !form.spec.allowHedge && t('cfg.guardNoHedge'),
-              ].filter(Boolean).map(c => `${t('cfg.listSep')}${c}`).join('')}
-              {t('cfg.promptOffTail')}
-            </p>
-          )}
-        </div>
+        <details className="rounded-lg border border-border bg-card-2/50 text-xs">
+          <summary className="px-3 py-2 text-[11px] font-bold text-muted-foreground cursor-pointer">
+            {t('cfg.viewPrompt')}
+          </summary>
+          <pre className="max-h-56 overflow-y-auto px-3 pb-3 text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap font-sans">{template}</pre>
+        </details>
 
-        <label className="space-y-1 text-xs block">
-          <span className="text-muted-foreground font-bold">
-            {form.useDefaultPrompt ? t('cfg.customPrompt') : t('cfg.customPromptOnly')}
-          </span>
-          <textarea value={form.customPrompt ?? ''} onChange={e => set({ customPrompt: e.target.value })} rows={6} maxLength={4000}
+        <div className="space-y-1 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <label htmlFor="custom-prompt" className="text-muted-foreground font-bold">{t('cfg.customPrompt')}</label>
+            {/* 整段换回平台默认；框里有字先确认 */}
+            <button type="button" disabled={!defaultInstructions}
+                    onClick={() => {
+                      if (!form.customPrompt || window.confirm(t('cfg.resetDefaultPromptConfirm'))) {
+                        set({ customPrompt: defaultInstructions });
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline shrink-0 disabled:opacity-50">
+              <RotateCcw className="w-3 h-3" />{t('cfg.resetDefaultPrompt')}
+            </button>
+          </div>
+          <textarea id="custom-prompt" value={form.customPrompt ?? ''} onChange={e => set({ customPrompt: e.target.value })} rows={10} maxLength={4000}
                     placeholder={t('cfg.customPromptPh')}
                     className="w-full rounded-lg border border-border bg-card-2 px-3 py-2 text-xs leading-relaxed" />
-        </label>
+        </div>
         </div>
 
         <button

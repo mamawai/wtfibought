@@ -22,19 +22,16 @@ import java.util.Map;
  * （条件分支、循环、插值、换行框）留在这里。<b>用户自己写的字不翻译</b>——customPrompt 与
  * ownerNote 原样注入。
  * <p>
- * 模板的认知设计（顺序即优先级）：
- * ① 身份与记分牌先行——角色决定推理先验，没有身份锚点模型会滑回"有帮助的助手"默认态；
- * ② 单问题框架——每次唤醒只回答"计划需要改变吗"，问题边界越清晰分析越聚焦；
- * ③ 状态与指令分层——账户状态、上一轮结论、事件、战绩都在开场白（user 消息）里，system 只放身份、规则与格式；
- * ④ 检验先于发明——先对上一轮的承诺（等待条件/失效条件）做检验，再考虑新机会，治翻烙饼；
- * ⑤ 固定收尾格式——结论块既是公开展示单元，也是下一轮回注后的检验基准；
- * ⑥ 用户风格指令放最后（近因权重最高）且明示优先级：风格冲突听主人的，硬规格不可覆盖；
- * ⑦ 主人留言不进系统提示词，进唤醒开场白末尾（{@link #ownerNoteBlock}）：system 里的字是"背景规则"，
- *   跟纪律同层必被纪律压过；进了 user 消息它才是"本轮要回答的问题之一"。举证责任倒置——执行不需要理由，
- *   否决只认两种：撞系统硬规则、引用具体数字的独立判断；纪律条文不是否决依据。按剩余轮次逐轮注入、减到 0 清空。
- * 这七条是 agent 行为的决定因素，不是文案——加语言时逐条对照着写，不是逐字翻译。
+ * 分层：
+ * ① 平台模板只讲事实——环境、开场白里有什么、工具、规格、护栏会拒什么、计划系统、成本、收尾格式；
+ *   交易方法/风格/纪律一个字不放，那些只在主人的交易指令里；
+ * ② 状态在开场白（user 消息）——账户、上一轮结论、事件、战绩都在那边，system 只放环境、规则与格式；
+ * ③ 固定收尾格式——结论块既是公开展示单元，也是下一轮回注的材料；
+ * ④ 主人的交易指令放最后（近因权重最高）且明示优先级：方法与纪律听主人的，规格/护栏/收尾格式不可覆盖；
+ * ⑤ 主人留言不进系统提示词，进唤醒开场白末尾（{@link #ownerNoteBlock}）：进了 user 消息它才是"本轮要回答的问题之一"。
+ *   举证责任倒置——执行不需要理由，否决只认两种：撞系统硬规则、引用具体数字的独立判断。按剩余轮次逐轮注入、减到 0 清空。
  * <p>
- * ⑧ 输出语言硬收尾排在⑥之后：⑥是主人亲笔、不翻译，可能与平台模板不同语言，且近因权重最高。
+ * ⑥ 输出语言硬收尾排在④之后：④是主人亲笔、不翻译，可能与平台模板不同语言，且近因权重最高。
  * 语言指令因此说两次——模板正文一次，整篇最末一行再一次。
  */
 @Component
@@ -48,16 +45,9 @@ public class TraderPromptAssembler {
     public String assemble(AiTrader trader, AgentLang lang) {
         StringBuilder sb = new StringBuilder();
         WakeWindow window = WakeWindow.of(trader);
-        String windowText = window == null ? null : window.text();
-        // 用户可退出平台模板（自定义成为唯一指令来源，护栏仍硬校验）；复盘笔记/学习笔记是数据不是指令，永远注入
-        if (!Boolean.FALSE.equals(trader.getUseDefaultPrompt())) {
-            sb.append(platformTemplate(lang, trader.getIntervalCode(), trader.getSymbols(),
-                    TraderRiskConfig.of(trader), windowText));
-        } else if (windowText != null) {
-            // 退出平台模板时节奏行不在了，时段是事实不是指令，单独补一行——否则模型按"每根K线都醒"管仓位，休眠 12 小时它却不知道
-            sb.append('\n').append(prompts.get(lang, "trader.label.wakeWindow",
-                    Map.of("window", windowText))).append('\n');
-        }
+        // 平台模板只讲事实，永远注入；复盘笔记/学习笔记是数据不是指令，也永远注入
+        sb.append(platformTemplate(lang, trader.getIntervalCode(), trader.getSymbols(),
+                TraderRiskConfig.of(trader), window == null ? null : window.text()));
 
         if (trader.getMemory() != null && !trader.getMemory().isBlank()) {
             sb.append('\n').append(prompts.get(lang, "trader.label.memory")).append('\n')
@@ -70,24 +60,31 @@ public class TraderPromptAssembler {
                     .append(trader.getLearningNotes()).append('\n');
         }
 
-        // 用户自己写的字：原样注入不过词表。紧跟一句 ownerWritten 交代"这段是主人亲笔、
-        // 可能是另一门语言、照意思做但输出语言不变"，位置要在他的字之前
+        // 主人的交易指令段无条件出：模板正文和开场白都指向它。有字就原样注入不过词表，
+        // 紧跟一句 ownerWritten 交代"这段是主人亲笔、可能是另一门语言、照意思做但输出语言不变"，位置在他的字之前；
+        // 没字就填占位句
+        sb.append('\n').append(prompts.get(lang, "trader.label.customPrompt")).append('\n');
         if (trader.getCustomPrompt() != null && !trader.getCustomPrompt().isBlank()) {
-            sb.append('\n').append(prompts.get(lang, "trader.label.customPrompt")).append('\n')
-                    .append(prompts.get(lang, "trader.label.ownerWritten")).append('\n')
+            sb.append(prompts.get(lang, "trader.label.ownerWritten")).append('\n')
                     .append(trader.getCustomPrompt()).append('\n');
+        } else {
+            sb.append(prompts.get(lang, "trader.label.customPromptEmpty")).append('\n');
         }
 
-        // 固定收尾格式：不看模板开关永远注入——退出模板/自定义指令都改不掉它；排在自定义指令之后压近因
+        // 固定收尾格式：系统强制，主人指令改不掉；排在主人指令之后压近因
         sb.append('\n').append(closingFormat(lang, trader.getSymbols())).append('\n');
-        // 输出语言硬收尾：整篇最末一行，排在自定义指令之后。
-        // 退出平台模板时模板正文那次不在了，只剩这一行
+        // 输出语言硬收尾：整篇最末一行，排在主人指令之后（模板正文里说过一次，这里再说一次）
         sb.append('\n').append(prompts.get(lang, "trader.label.outputLanguage")).append('\n');
         return sb.toString();
     }
 
+    /** 平台默认交易指令：新建 trader 时预填进指令框的那段，按主人语言取 */
+    public String defaultInstructions(AgentLang lang) {
+        return prompts.get(lang, "trader.label.defaultInstructions");
+    }
+
     /**
-     * 固定收尾格式块：系统强制，不随平台模板开关走。复盘素材、stale 剔段、观望门控全靠 [SYMBOL] 段切分，
+     * 固定收尾格式块：系统强制，主人指令改不掉。复盘素材、stale 剔段、观望门控全靠 [SYMBOL] 段切分，
      * 格式丢了下游全退化。骨架按 trader 真实币种生成：首币写全三行，其余只列段头——模型照着填，不用自己猜币码。
      * 预览接口也用它，MyTrader 页看到的与真喂的一致
      */
@@ -168,9 +165,8 @@ public class TraderPromptAssembler {
     }
 
     /**
-     * 平台系统提示词模板（身份/工具/规格/成本/分析流程/纪律）——前端预览与唤醒组装共用同一份文本。
-     * 措辞红线（两门语言同守）：不许出现"不开仓才是失败"式行动偏置（nof1 第一季过度交易的教训），
-     * 退出纪律必须锚定在开仓时立的计划上——恐慌平仓的根治在这段文本里。
+     * 平台系统提示词模板（环境/开场白/工具/规格/护栏/计划/成本/收尾）——前端预览与唤醒组装共用同一份文本。
+     * 只讲事实，两个方向都不带偏置：不写"该 HOLD"也不写"该动"，方法归主人的交易指令。
      *
      * @param wakeWindowText 唤醒时段"HH:mm-HH:mm"，null=全天——节奏行按它说真话，模板与事实不许打架
      */

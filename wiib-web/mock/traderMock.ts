@@ -905,7 +905,7 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
         if (path === '/api/ai/trader/mine') {
           return ok(res, {
             pub: TRADERS[0],
-            llmEndpointId: 12, customPrompt: null, useDefaultPrompt: true,
+            llmEndpointId: 12, customPrompt: null,
             spec: { leverageMin: 2, leverageMax: 10, marginPctMin: 5, marginPctMax: 25, allowMultiPosition: true, allowHedge: false },
             alertEnabled: true, alertThresholdMult: 1,
             reviewEnabled: true, learningEnabled: true, wakeWindow: null,

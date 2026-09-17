@@ -833,7 +833,6 @@ export interface TraderOwnerView {
   /** 显式绑定的端点 id，null=跟随默认端点 */
   llmEndpointId: number | null;
   customPrompt: string | null;
-  useDefaultPrompt: boolean;
   spec: TraderSpec;
   /** 波动哨兵警报开关（仅 1h/4h 档生效） */
   alertEnabled: boolean;
@@ -1054,7 +1053,6 @@ export interface TraderUpsertRequest {
   customPrompt: string | null;
   /** 端点库里的一条（AI 页模型配置维护），null=跟随用户默认端点 */
   llmEndpointId: number | null;
-  useDefaultPrompt: boolean;
   spec: TraderSpec;
   alertEnabled: boolean;
   alertThresholdMult: number;

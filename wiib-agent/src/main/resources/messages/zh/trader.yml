@@ -31,8 +31,7 @@ trader:
     symbolRequired: 至少选择一个交易币种
     tooManySymbols: 交易币种最多 {{max}} 个（一次唤醒的工具预算与注意力都按币摊）
     symbolNotAllowed: "币种超出可交易范围: {{whitelist}}"
-    promptTooLong: 自定义提示词不超过4000字符
-    customPromptRequired: 已取消平台系统提示词，自定义提示词不能为空
+    promptTooLong: 交易指令不超过4000字符
     leverageRange: 杠杆区间须在 1~{{max}} 倍之内
     leverageInverted: 杠杆区间下界不能大于上界
     marginRange: 单笔保证金占比须在 0.1~100% 之内

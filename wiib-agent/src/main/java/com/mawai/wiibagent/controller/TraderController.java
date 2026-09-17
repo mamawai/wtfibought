@@ -86,7 +86,7 @@ public class TraderController {
 
     /** 主人视图：公开视图 + 配置回显。llmEndpointId=显式绑定的端点，null=跟随默认端点；wakeWindow null=全天 */
     public record TraderOwnerView(TraderPublicView pub, Long llmEndpointId,
-                                  String customPrompt, boolean useDefaultPrompt,
+                                  String customPrompt,
                                   TraderSpec spec, boolean alertEnabled, BigDecimal alertThresholdMult,
                                   boolean reviewEnabled, boolean learningEnabled,
                                   String wakeWindow) {
@@ -117,8 +117,7 @@ public class TraderController {
         }
         return Result.ok(new TraderOwnerView(publicView(t, userId, modelName(t)),
                 endpointService.bindings(userId).get(UserLlmBinding.TRADER),
-                t.getCustomPrompt(),
-                !Boolean.FALSE.equals(t.getUseDefaultPrompt()), TraderSpec.of(t),
+                t.getCustomPrompt(), TraderSpec.of(t),
                 !Boolean.FALSE.equals(t.getAlertEnabled()),
                 t.getAlertThresholdMult() == null ? BigDecimal.ONE : t.getAlertThresholdMult(),
                 !Boolean.FALSE.equals(t.getReviewEnabled()),
@@ -145,23 +144,29 @@ public class TraderController {
             windowText = null; // 预览只是看文本，时段还没填对就按全天预览，保存时才真校验
         }
         // 预览也按当前用户语言出：MyTrader 页展示的就是这份文本，英文用户不该看到中文模板。
-        // 收尾格式块一并带上：它不随模板开关走，预览里不露面用户就不知道自己被强制了什么
+        // 收尾格式块一并带上：它是系统强制的，预览里不露面用户就不知道自己被强制了什么
         AgentLang lang = userLangResolver.of(userId);
         return Result.ok(promptAssembler.platformTemplate(lang, interval, symbols, cfg, windowText)
                 + "\n\n" + promptAssembler.closingFormat(lang, symbols));
     }
 
+    /** 按用户的 agent 语言取，与模板预览同一门，不跟界面语言 */
+    @GetMapping("/default-instructions")
+    @Operation(summary = "平台默认交易指令（新建 trader 时预填进指令框的那段）")
+    public Result<String> defaultInstructions(@CurrentUserId long userId) {
+        return Result.ok(promptAssembler.defaultInstructions(userLangResolver.of(userId)));
+    }
+
     /** llmEndpointId：端点库里的一条，空=跟随用户默认端点 */
     public record UpsertRequest(String name, String symbols, String intervalCode, String customPrompt,
-                                Long llmEndpointId,
-                                Boolean useDefaultPrompt, TraderSpec spec,
+                                Long llmEndpointId, TraderSpec spec,
                                 Boolean alertEnabled, BigDecimal alertThresholdMult,
                                 Boolean reviewEnabled, Boolean learningEnabled,
                                 String wakeWindow) {
         TraderService.UpsertReq toReq() {
             TraderSpec s = spec;
             return new TraderService.UpsertReq(name, symbols, intervalCode, customPrompt,
-                    llmEndpointId, useDefaultPrompt,
+                    llmEndpointId,
                     s == null ? null : s.leverageMin(), s == null ? null : s.leverageMax(),
                     s == null ? null : s.marginPctMin(), s == null ? null : s.marginPctMax(),
                     s == null ? null : s.allowMultiPosition(), s == null ? null : s.allowHedge(),
