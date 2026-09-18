@@ -111,7 +111,8 @@ public class WsConnection {
         httpClient.newWebSocketBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .buildAsync(URI.create(url), new Listener())
-                .thenAccept(ws -> {
+                // 回调不能落 commonPool：Lettuce 握手借 commonPool 发 HELLO，这里同步调 Redis 会互相卡死
+                .thenAcceptAsync(ws -> {
                     wsRef.set(ws);
                     // 重置时间戳，避免watchdog一启动就误判（连接刚建好还没数据到达）
                     lastMessageAt = System.currentTimeMillis();
@@ -123,14 +124,14 @@ public class WsConnection {
                     log.info("{} WS已连接", name);
                     fireStatus(); // CONNECTED
                     if (onConnected != null) onConnected.accept(ws);
-                })
-                .exceptionally(ex -> {
+                }, scheduler)
+                .exceptionallyAsync(ex -> {
                     log.error("{} WS连接失败: {}", name, ex.getMessage());
                     connecting.set(false);
                     reconnecting.set(false);
                     scheduleReconnect();
                     return null;
-                });
+                }, scheduler);
     }
 
     public void scheduleReconnect() {
