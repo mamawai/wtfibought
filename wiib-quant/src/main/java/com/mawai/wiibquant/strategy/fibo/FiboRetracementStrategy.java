@@ -6,6 +6,7 @@ import com.mawai.wiibquant.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibquant.strategy.core.SwingDetector;
 import com.mawai.wiibquant.strategy.core.StrategySignal;
 import com.mawai.wiibquant.strategy.core.StrategySignalState;
+import com.mawai.wiibquant.strategy.core.StrategySignalState.Text;
 import com.mawai.wiibquant.strategy.core.TradingStrategySpi;
 import com.mawai.wiibquant.strategy.core.TradingOperations;
 
@@ -155,15 +156,15 @@ public final class FiboRetracementStrategy implements TradingStrategySpi {
         List<KlineBar> swingBars = view.closedBars(params.swingTfMillis(), params.swingLookbackBars());
         int tfMin = (int) (params.swingTfMillis() / 60_000);
         if (swingBars.size() <= params.atrPeriod() + 2) {
-            return new StrategySignalState(ID, symbol, "攒历史数据中",
-                    StrategySignalState.kv(tfMin + "m桶", swingBars.size() + " / " + (params.atrPeriod() + 3)));
+            return new StrategySignalState(ID, symbol, Text.of("warmup"), List.of(
+                    Text.of("warmup", "tf", tfMin + "m", "have", swingBars.size(), "need", params.atrPeriod() + 3)));
         }
         KlineBar last = swingBars.getLast();
         SymbolState state = states.get(symbol);
         Leg leg = state == null ? null : state.activeLeg;
         if (leg == null || leg.key() == state.consumedLegKey) {
-            return new StrategySignalState(ID, symbol, "无有效推动腿，等 ZigZag 新腿确认",
-                    StrategySignalState.kv("现价", plain(last.close())));
+            return new StrategySignalState(ID, symbol, Text.of("fibo.noLeg"), List.of(
+                    Text.of("price", "v", plain(last.close()))));
         }
 
         FiboLevels.FiboGrid grid = new FiboLevels.FiboGrid(leg.startPrice(), leg.endPrice(), leg.upLeg());
@@ -171,25 +172,26 @@ public final class FiboRetracementStrategy implements TradingStrategySpi {
         double px = last.close().doubleValue();
         double gap = px > 0 ? (limit.doubleValue() - px) / px * 100 : Double.NaN;
 
-        String trendGateState = "未启用";
+        String trendGateState = "off";
         boolean trendBlocked = false;
         if (params.trendFilterOn()) {
             List<KlineBar> htf = view.closedBars(TREND_TF_MULT * params.swingTfMillis(), TREND_SMA_PERIOD + 1);
             trendBlocked = !trendGate(htf, leg.upLeg(), params.trendAlignOn());
-            trendGateState = trendBlocked ? "逆势·拦截" : "顺势·放行";
+            trendGateState = trendBlocked ? "blocked" : "pass";
         }
         boolean passed = leg.upLeg()
                 ? last.close().compareTo(limit) <= 0
                 : last.close().compareTo(limit) >= 0;
-        String stateText = trendBlocked ? "有腿但逆 1h 趋势，不挂单"
-                : passed ? "现价已穿过回撤位，弃单等新腿"
-                : "限价单挂 " + params.entryFib() + " 回撤位，等回踩";
-        return new StrategySignalState(ID, symbol, stateText, StrategySignalState.kv(
-                "推动腿", plain(leg.startPrice()) + " → " + plain(leg.endPrice()) + (leg.upLeg() ? " ↑多" : " ↓空"),
-                "挂单价·" + params.entryFib() + "回撤", plain(limit),
-                "现价", plain(last.close()),
-                "距挂单价", String.format(java.util.Locale.ROOT, "%+.2f%%", gap),
-                "1h趋势闸", trendGateState));
+        Text stateText = trendBlocked ? Text.of("fibo.trendBlocked")
+                : passed ? Text.of("fibo.passed")
+                : Text.of("fibo.armed", "fib", params.entryFib());
+        return new StrategySignalState(ID, symbol, stateText, List.of(
+                Text.of("fibo.leg", "context", leg.upLeg() ? "up" : "down",
+                        "from", plain(leg.startPrice()), "to", plain(leg.endPrice())),
+                Text.of("fibo.limit", "fib", params.entryFib(), "v", plain(limit)),
+                Text.of("price", "v", plain(last.close())),
+                Text.of("fibo.toLimit", "v", String.format(java.util.Locale.ROOT, "%+.2f%%", gap)),
+                Text.of("fibo.trendGate", "context", trendGateState)));
     }
 
     private static String plain(BigDecimal v) {

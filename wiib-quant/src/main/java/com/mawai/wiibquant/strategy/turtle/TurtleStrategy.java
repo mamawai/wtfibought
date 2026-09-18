@@ -6,6 +6,7 @@ import com.mawai.wiibquant.strategy.core.StrategyMarketView;
 import com.mawai.wiibquant.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibquant.strategy.core.StrategySignal;
 import com.mawai.wiibquant.strategy.core.StrategySignalState;
+import com.mawai.wiibquant.strategy.core.StrategySignalState.Text;
 import com.mawai.wiibquant.strategy.core.SwingDetector;
 import com.mawai.wiibquant.strategy.core.TradingOperations;
 import com.mawai.wiibquant.strategy.core.TradingStrategySpi;
@@ -139,8 +140,8 @@ public final class TurtleStrategy implements TradingStrategySpi {
         int need = Math.max(params.entryLookback(), params.atrPeriod() + 1);
         List<KlineBar> buckets = view.closedBars(params.decisionTfMillis(), need);
         if (buckets.size() < need) {
-            return new StrategySignalState(ID, symbol, "攒历史数据中",
-                    StrategySignalState.kv(tfHours + "H桶", buckets.size() + " / " + need));
+            return new StrategySignalState(ID, symbol, Text.of("warmup"), List.of(
+                    Text.of("warmup", "tf", tfHours + "H", "have", buckets.size(), "need", need)));
         }
         List<KlineBar> history = buckets.subList(buckets.size() - params.entryLookback(), buckets.size());
         BigDecimal upper = maxHigh(history);
@@ -152,15 +153,15 @@ public final class TurtleStrategy implements TradingStrategySpi {
         double upGap = (upper.doubleValue() - px) / px * 100;
         double dnGap = (lower.doubleValue() - px) / px * 100;
         boolean nearLong = upper.subtract(close).abs().compareTo(close.subtract(lower).abs()) <= 0;
-        String state = params.stopEntry()
-                ? "触价单挂" + (nearLong ? "上轨(等突破做多)" : "下轨(等跌破做空)")
-                : "等" + tfHours + "H收盘突破通道";
-        return new StrategySignalState(ID, symbol, state, StrategySignalState.kv(
-                "上轨·" + params.entryLookback() + "桶最高", plain(upper),
-                "下轨·" + params.entryLookback() + "桶最低", plain(lower),
-                "现价", plain(close),
-                "距上轨", String.format(Locale.ROOT, "%+.2f%%", upGap),
-                "距下轨", String.format(Locale.ROOT, "%+.2f%%", dnGap)));
+        Text state = params.stopEntry()
+                ? Text.of(nearLong ? "turtle.stopLong" : "turtle.stopShort")
+                : Text.of("turtle.waitClose", "tf", tfHours + "H");
+        return new StrategySignalState(ID, symbol, state, List.of(
+                Text.of("turtle.upper", "n", params.entryLookback(), "v", plain(upper)),
+                Text.of("turtle.lower", "n", params.entryLookback(), "v", plain(lower)),
+                Text.of("price", "v", plain(close)),
+                Text.of("turtle.toUpper", "v", String.format(Locale.ROOT, "%+.2f%%", upGap)),
+                Text.of("turtle.toLower", "v", String.format(Locale.ROOT, "%+.2f%%", dnGap))));
     }
 
     private static String plain(BigDecimal v) {

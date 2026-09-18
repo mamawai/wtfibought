@@ -44,7 +44,100 @@
     "signals": {
       "title": "Live signal state",
       "empty": "Signal snapshot unavailable",
-      "emptyHint": "The quant runtime is off, or this strategy is not active"
+      "emptyHint": "The quant runtime is off, or this strategy is not active",
+      "state": {
+        "warmup": "Collecting history",
+        "sqzmom": {
+          "full": "Squeeze is full — waiting for a downside release to short",
+          "building_one": "Squeeze building — {{count}} more bar needed",
+          "building_other": "Squeeze building — {{count}} more bars needed",
+          "fired": "Released this bar · red bar confirmed (short triggered)",
+          "skipped": "Released this bar · wrong bar color, skipped",
+          "idle": "No squeeze — waiting for volatility to contract"
+        },
+        "turtle": {
+          "stopLong": "Stop order on the upper band (long on breakout)",
+          "stopShort": "Stop order on the lower band (short on breakdown)",
+          "waitClose": "Waiting for a {{tf}} close outside the channel"
+        },
+        "fibo": {
+          "noLeg": "No valid impulse leg — waiting for ZigZag to confirm a new one",
+          "trendBlocked": "Leg found but against the 1h trend — no order",
+          "passed": "Price already crossed the retracement — order dropped, waiting for a new leg",
+          "armed": "Limit order at the {{fib}} retracement, waiting for a pullback"
+        }
+      },
+      "metric": {
+        "warmup": {
+          "label": "{{tf}} bars",
+          "value": "{{have}} / {{need}}"
+        },
+        "price": {
+          "label": "Price",
+          "value": "{{v}}"
+        },
+        "sqzmom": {
+          "squeeze": {
+            "label": "Squeeze (BB<KC)",
+            "value": "{{v}}"
+          },
+          "run": {
+            "label": "Squeeze run",
+            "value": "{{cur}} of {{need}}"
+          },
+          "momo": {
+            "label": "Momentum bar",
+            "value_na": "N/A",
+            "value_redAccel": "Bright red · accelerating down",
+            "value_redDecel": "Dark red · decelerating down",
+            "value_greenAccel": "Bright green · accelerating up",
+            "value_greenDecel": "Dark green · decelerating up"
+          },
+          "momoValue": {
+            "label": "Momentum",
+            "value": "{{v}}"
+          }
+        },
+        "turtle": {
+          "upper": {
+            "label": "Upper · {{n}}-bar high",
+            "value": "{{v}}"
+          },
+          "lower": {
+            "label": "Lower · {{n}}-bar low",
+            "value": "{{v}}"
+          },
+          "toUpper": {
+            "label": "To upper",
+            "value": "{{v}}"
+          },
+          "toLower": {
+            "label": "To lower",
+            "value": "{{v}}"
+          }
+        },
+        "fibo": {
+          "leg": {
+            "label": "Impulse leg",
+            "value_up": "{{from}} → {{to}} ↑ long",
+            "value_down": "{{from}} → {{to}} ↓ short"
+          },
+          "limit": {
+            "label": "Limit · {{fib}} retracement",
+            "value": "{{v}}"
+          },
+          "toLimit": {
+            "label": "To limit",
+            "value": "{{v}}"
+          },
+          "trendGate": {
+            "label": "1h trend gate",
+            "value_off": "Off",
+            "value_blocked": "Counter-trend · blocked",
+            "value_pass": "With trend · allowed"
+          }
+        }
+      }
     },
     "equity": {
       "empty": "No equity curve yet",

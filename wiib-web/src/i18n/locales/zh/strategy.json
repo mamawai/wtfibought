@@ -42,7 +42,99 @@
     "signals": {
       "title": "实时信号状态",
       "empty": "信号快照不可用",
-      "emptyHint": "quant 策略运行时未启用或该策略未激活"
+      "emptyHint": "quant 策略运行时未启用或该策略未激活",
+      "state": {
+        "warmup": "攒历史数据中",
+        "sqzmom": {
+          "full": "压缩已足量，等向下释放开空",
+          "building_other": "压缩蓄能中，还需 {{count}} 桶",
+          "fired": "本桶刚释放·红柱达标(已触发开空)",
+          "skipped": "本桶刚释放·柱色不符,放弃",
+          "idle": "未压缩，等波动率收缩"
+        },
+        "turtle": {
+          "stopLong": "触价单挂上轨(等突破做多)",
+          "stopShort": "触价单挂下轨(等跌破做空)",
+          "waitClose": "等{{tf}}收盘突破通道"
+        },
+        "fibo": {
+          "noLeg": "无有效推动腿，等 ZigZag 新腿确认",
+          "trendBlocked": "有腿但逆 1h 趋势，不挂单",
+          "passed": "现价已穿过回撤位，弃单等新腿",
+          "armed": "限价单挂 {{fib}} 回撤位，等回踩"
+        }
+      },
+      "metric": {
+        "warmup": {
+          "label": "{{tf}}桶",
+          "value": "{{have}} / {{need}}"
+        },
+        "price": {
+          "label": "现价",
+          "value": "{{v}}"
+        },
+        "sqzmom": {
+          "squeeze": {
+            "label": "压缩(BB<KC)",
+            "value": "{{v}}"
+          },
+          "run": {
+            "label": "连续压缩",
+            "value": "{{cur}} / 需{{need}}桶"
+          },
+          "momo": {
+            "label": "动量柱",
+            "value_na": "N/A",
+            "value_redAccel": "亮红·向下加速",
+            "value_redDecel": "暗红·下行减速",
+            "value_greenAccel": "亮绿·向上加速",
+            "value_greenDecel": "暗绿·上行减速"
+          },
+          "momoValue": {
+            "label": "动量值",
+            "value": "{{v}}"
+          }
+        },
+        "turtle": {
+          "upper": {
+            "label": "上轨·{{n}}桶最高",
+            "value": "{{v}}"
+          },
+          "lower": {
+            "label": "下轨·{{n}}桶最低",
+            "value": "{{v}}"
+          },
+          "toUpper": {
+            "label": "距上轨",
+            "value": "{{v}}"
+          },
+          "toLower": {
+            "label": "距下轨",
+            "value": "{{v}}"
+          }
+        },
+        "fibo": {
+          "leg": {
+            "label": "推动腿",
+            "value_up": "{{from}} → {{to}} ↑多",
+            "value_down": "{{from}} → {{to}} ↓空"
+          },
+          "limit": {
+            "label": "挂单价·{{fib}}回撤",
+            "value": "{{v}}"
+          },
+          "toLimit": {
+            "label": "距挂单价",
+            "value": "{{v}}"
+          },
+          "trendGate": {
+            "label": "1h趋势闸",
+            "value_off": "未启用",
+            "value_blocked": "逆势·拦截",
+            "value_pass": "顺势·放行"
+          }
+        }
+      }
     },
     "equity": {
       "empty": "暂无收益曲线",

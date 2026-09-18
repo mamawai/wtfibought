@@ -5,6 +5,7 @@ import com.mawai.wiibquant.strategy.core.StrategyMarketView;
 import com.mawai.wiibquant.strategy.core.StrategyRiskPolicy;
 import com.mawai.wiibquant.strategy.core.StrategySignal;
 import com.mawai.wiibquant.strategy.core.StrategySignalState;
+import com.mawai.wiibquant.strategy.core.StrategySignalState.Text;
 import com.mawai.wiibquant.strategy.core.TradingStrategySpi;
 
 import java.math.BigDecimal;
@@ -172,34 +173,34 @@ public final class SqueezeMomentumStrategy implements TradingStrategySpi {
         List<KlineBar> bars = view.closedBars(params.decisionTfMillis(),
                 minBars + params.squeezeMinBars() + 30);
         if (bars.size() < minBars) {
-            return new StrategySignalState(ID, symbol, "攒历史数据中",
-                    StrategySignalState.kv(tfHours + "H桶", bars.size() + " / " + minBars));
+            return new StrategySignalState(ID, symbol, Text.of("warmup"), List.of(
+                    Text.of("warmup", "tf", tfHours + "H", "have", bars.size(), "need", minBars)));
         }
         Ind ind = compute(bars, params.length());
         if (ind == null) {
-            return new StrategySignalState(ID, symbol, "攒历史数据中", StrategySignalState.kv());
+            return new StrategySignalState(ID, symbol, Text.of("warmup"), List.of());
         }
         boolean redAccel = Double.isFinite(ind.val()) && ind.val() < 0 && ind.val() < ind.valPrev();
-        String momo = !Double.isFinite(ind.val()) ? "N/A"
+        String momo = !Double.isFinite(ind.val()) ? "na"
                 : ind.val() < 0
-                    ? (redAccel ? "亮红·向下加速" : "暗红·下行减速")
-                    : (ind.val() > ind.valPrev() ? "亮绿·向上加速" : "暗绿·上行减速");
+                    ? (redAccel ? "redAccel" : "redDecel")
+                    : (ind.val() > ind.valPrev() ? "greenAccel" : "greenDecel");
         int curRun = ind.sqzNow() ? ind.sqzRunBefore() + 1 : 0;
-        String state;
+        Text state;
         if (ind.sqzNow()) {
             state = curRun >= params.squeezeMinBars()
-                    ? "压缩已足量，等向下释放开空"
-                    : "压缩蓄能中，还需 " + (params.squeezeMinBars() - curRun) + " 桶";
+                    ? Text.of("sqzmom.full")
+                    : Text.of("sqzmom.building", "count", params.squeezeMinBars() - curRun);
         } else if (ind.released() && ind.sqzRunBefore() >= params.squeezeMinBars()) {
-            state = redAccel ? "本桶刚释放·红柱达标(已触发开空)" : "本桶刚释放·柱色不符,放弃";
+            state = Text.of(redAccel ? "sqzmom.fired" : "sqzmom.skipped");
         } else {
-            state = "未压缩，等波动率收缩";
+            state = Text.of("sqzmom.idle");
         }
-        return new StrategySignalState(ID, symbol, state, StrategySignalState.kv(
-                "压缩(BB<KC)", ind.sqzNow() ? "ON" : "OFF",
-                "连续压缩", curRun + " / 需" + params.squeezeMinBars() + "桶",
-                "动量柱", momo,
-                "动量值", String.format(Locale.ROOT, "%.4f", ind.val())));
+        return new StrategySignalState(ID, symbol, state, List.of(
+                Text.of("sqzmom.squeeze", "v", ind.sqzNow() ? "ON" : "OFF"),
+                Text.of("sqzmom.run", "cur", curRun, "need", params.squeezeMinBars()),
+                Text.of("sqzmom.momo", "context", momo),
+                Text.of("sqzmom.momoValue", "v", String.format(Locale.ROOT, "%.4f", ind.val()))));
     }
 
     /** 最小二乘直线在窗口末点的取值 = Pine linreg(src, len, 0)。x=0..len-1，端点取 x=len-1。 */

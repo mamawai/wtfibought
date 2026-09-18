@@ -799,12 +799,18 @@ export type LlmPurpose = 'CHAT_MAIN' | 'CHAT_LIGHT' | 'TRADER';
 export type LlmBindings = Partial<Record<LlmPurpose, number>>;
 
 
-/** 策略×币种实时信号状态快照（/ai/strategies/signals）：一句话状态 + 有序指标表 */
+/** 词表 key + 占位值，文字在 strategy.json 的 strategies.signals 下；vars.context 选词条变体，vars.count 选单复数 */
+export interface SignalText {
+  key: string;
+  vars: Record<string, string | number>;
+}
+
+/** 策略×币种实时信号状态快照（/ai/strategies/signals）：一句话状态 + 有序指标 */
 export interface StrategySignalState {
   strategyId: string;
   symbol: string;
-  state: string;
-  metrics: Record<string, string>;
+  state: SignalText;
+  metrics: SignalText[];
 }
 
 // ========== AI Trader 竞技场 ==========

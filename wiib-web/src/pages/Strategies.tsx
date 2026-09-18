@@ -83,16 +83,20 @@ function PositionCard({ pos, canClose, closing, onClose }: {
 
 /** 单币信号状态行：一句话状态 + 指标 chips，让人看见"策略活着、离触发差多少"。 */
 function SignalStateRow({ sig }: { sig: StrategySignalState }) {
+  const { t } = useTranslation('strategy');
   return (
     <div className="rounded-md border border-border bg-card p-2.5 space-y-1.5">
       <div className="flex items-start gap-2">
         <span className="text-xs font-black shrink-0">{sig.symbol.replace('USDT', '')}</span>
-        <span className="ml-auto text-right text-[10px] font-bold text-primary/90 leading-tight">{sig.state}</span>
+        <span className="ml-auto text-right text-[10px] font-bold text-primary/90 leading-tight">
+          {t(`strategies.signals.state.${sig.state.key}`, sig.state.vars)}
+        </span>
       </div>
       <div className="flex flex-wrap gap-x-3 gap-y-1">
-        {Object.entries(sig.metrics).map(([k, v]) => (
-          <span key={k} className="text-[10px] text-muted-foreground whitespace-nowrap">
-            {k} <span className="font-bold text-foreground tabular-nums">{v}</span>
+        {sig.metrics.map(m => (
+          <span key={m.key} className="text-[10px] text-muted-foreground whitespace-nowrap">
+            {t(`strategies.signals.metric.${m.key}.label`, m.vars)}{' '}
+            <span className="font-bold text-foreground tabular-nums">{t(`strategies.signals.metric.${m.key}.value`, m.vars)}</span>
           </span>
         ))}
       </div>
