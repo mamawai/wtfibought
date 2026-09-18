@@ -8,6 +8,7 @@ import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
@@ -84,16 +85,13 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         fireHits(closeShortKey, cacheService.zRangeByScoreWithScores(closeShortKey, price.doubleValue(), Double.MAX_VALUE), price);
     }
 
-    /** 命中项逐个起虚拟线程触发；triggerPrice为null=按挂单价(score)成交，断连补漏那条路走这个 */
-    private int fireHits(String key, Set<ZSetOperations.TypedTuple<String>> hits, BigDecimal triggerPrice) {
-        if (hits == null || hits.isEmpty()) return 0;
+    /** 命中项逐个起虚拟线程触发，成交价按 tick 价 */
+    private void fireHits(String key, Set<ZSetOperations.TypedTuple<String>> hits, BigDecimal triggerPrice) {
+        if (hits == null || hits.isEmpty()) return;
         for (var tuple : hits) {
             Long orderId = Long.parseLong(Objects.requireNonNull(tuple.getValue()));
-            BigDecimal price = triggerPrice != null
-                    ? triggerPrice : BigDecimal.valueOf(Objects.requireNonNull(tuple.getScore()));
-            Thread.startVirtualThread(() -> triggerLimitOrder(key, orderId, price));
+            Thread.startVirtualThread(() -> triggerLimitOrder(key, orderId, triggerPrice));
         }
-        return hits.size();
     }
 
     private void triggerLimitOrder(String zsetKey, Long orderId, BigDecimal triggerPrice) {
@@ -463,29 +461,57 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
                 order.getId(), reason, frozenAmount);
     }
 
-    // ==================== 恢复限价单 ====================
+    // ==================== 空窗补漏 ====================
 
     @Override
-    public void recoverLimitOrders(String symbol, BigDecimal periodLow, BigDecimal periodHigh) {
+    public void recoverGap(String symbol, List<KlineBar> bars) {
+        if (bars.isEmpty()) return;
+        // 整段极值先粗筛一遍索引，逐单再按各自挂单时间算区间
+        BigDecimal[] all = KlineBar.lowHighAfter(bars, 0);
+        double low = all[0].doubleValue();
+        double high = all[1].doubleValue();
+
         String openLongKey = LIMIT_OPEN_LONG_PREFIX + symbol;
         String openShortKey = LIMIT_OPEN_SHORT_PREFIX + symbol;
         String closeLongKey = LIMIT_CLOSE_LONG_PREFIX + symbol;
         String closeShortKey = LIMIT_CLOSE_SHORT_PREFIX + symbol;
 
-        var openLongHits = cacheService.zRangeByScoreWithScores(openLongKey, periodLow.doubleValue(), Double.MAX_VALUE);
-        var openShortHits = cacheService.zRangeByScoreWithScores(openShortKey, 0, periodHigh.doubleValue());
-        var closeLongHits = cacheService.zRangeByScoreWithScores(closeLongKey, 0, periodHigh.doubleValue());
-        var closeShortHits = cacheService.zRangeByScoreWithScores(closeShortKey, periodLow.doubleValue(), Double.MAX_VALUE);
-
+        // 开多/平空看区间低点，开空/平多看高点
         int count = 0;
-        count += fireHits(openLongKey, openLongHits, null);
-        count += fireHits(openShortKey, openShortHits, null);
-        count += fireHits(closeLongKey, closeLongHits, null);
-        count += fireHits(closeShortKey, closeShortHits, null);
+        count += recoverHits(openLongKey, cacheService.zRangeByScoreWithScores(openLongKey, low, Double.MAX_VALUE), bars, true);
+        count += recoverHits(openShortKey, cacheService.zRangeByScoreWithScores(openShortKey, 0, high), bars, false);
+        count += recoverHits(closeLongKey, cacheService.zRangeByScoreWithScores(closeLongKey, 0, high), bars, false);
+        count += recoverHits(closeShortKey, cacheService.zRangeByScoreWithScores(closeShortKey, low, Double.MAX_VALUE), bars, true);
 
         if (count > 0) {
-            log.info("futures恢复触发限价单 symbol={} low={} high={} 共{}个", symbol, periodLow, periodHigh, count);
+            log.info("futures空窗补漏触发限价单 symbol={} 共{}个", symbol, count);
         }
+    }
+
+    /** 逐单按挂单时间之后的区间复核，命中才触发，成交价按挂单价 */
+    private int recoverHits(String key, Set<ZSetOperations.TypedTuple<String>> hits,
+                            List<KlineBar> bars, boolean lowSide) {
+        if (hits == null || hits.isEmpty()) return 0;
+        int count = 0;
+        for (var tuple : hits) {
+            Long orderId = Long.parseLong(Objects.requireNonNull(tuple.getValue()));
+            FuturesOrder order = orderMapper.selectById(orderId);
+            if (order == null) {
+                // DB 里没这单了，索引是过期项，摘掉
+                cacheService.zRemove(key, orderId.toString());
+                continue;
+            }
+            BigDecimal[] range = KlineBar.lowHighAfter(bars, toEpochMs(order.getCreatedAt()));
+            if (range == null) continue;   // 挂单晚于整段行情
+            BigDecimal limitPrice = order.getLimitPrice();
+            boolean hit = lowSide
+                    ? range[0].compareTo(limitPrice) <= 0
+                    : range[1].compareTo(limitPrice) >= 0;
+            if (!hit) continue;
+            Thread.startVirtualThread(() -> triggerLimitOrder(key, orderId, limitPrice));
+            count++;
+        }
+        return count;
     }
 
     // ==================== 补处理TRIGGERED孤儿单 ====================

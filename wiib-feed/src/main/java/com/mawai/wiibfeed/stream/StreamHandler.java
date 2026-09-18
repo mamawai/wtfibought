@@ -3,7 +3,6 @@ package com.mawai.wiibfeed.stream;
 import com.mawai.wiibfeed.WsConnection;
 
 import java.net.http.WebSocket;
-import java.util.concurrent.ScheduledExecutorService;
 
 /**
  * 一条 Binance 数据流的处理器：只管"这条流的 URL 怎么拼、消息怎么解析"。
@@ -24,15 +23,15 @@ public interface StreamHandler {
     /** 处理一帧业务消息 */
     void onMessage(String raw);
 
-    /** 连接成功回调，默认空。Spot/Futures 重写做"停兜底 + 补漏恢复" */
+    /** 连接成功回调，默认空。价格流重写做"发空窗事件" */
     default void onConnected(WebSocket ws) {}
 
-    /** 断开回调，默认空。Spot/Futures 重写做"启动 REST 兜底轮询" */
+    /** 断开回调，默认空。价格流重写做"广播断线帧" */
     default void onDisconnected() {}
 
     /**
-     * 装配期回填：把所属连接 + 调度器交给需要的 handler。
-     * 默认空——只有要读自身连接状态（填广播 ws 字段）、或要跑兜底轮询的 Spot/Futures 才重写。
+     * 装配期回填：把所属连接交给需要的 handler。
+     * 默认空——只有要读自身连接状态（填广播 ws 字段）、或要记空窗的价格流才重写。
      */
-    default void bind(WsConnection conn, ScheduledExecutorService scheduler) {}
+    default void bind(WsConnection conn) {}
 }

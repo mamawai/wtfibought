@@ -10,7 +10,6 @@ import org.springframework.web.util.UriComponentsBuilder;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ArrayNode;
 
-import java.math.BigDecimal;
 import java.net.URI;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -64,7 +63,7 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         long now = nowMs.getAsLong();
         long until = blockedUntil.get();
         if (now < until) {
-            // WS 回退轮询会按 symbol 循环调用，冷却期内 warn 会刷屏；熔断触发那一刻已经 error 记过一次了
+            // 补漏按 symbol 循环调用，冷却期内 warn 会刷屏；熔断触发那一刻已经 error 记过一次了
             log.debug("Binance 限流冷却中，跳过请求（剩余 {}ms）: {}", until - now, uri);
             return null;
         }
@@ -144,7 +143,7 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
     }
 
     /**
-     * 获取最新价格（WS断线兜底用）
+     * 获取最新价格（缓存没热时按 symbol 现取）
      */
     public String getTickerPrice(String symbol) {
         URI uri = UriComponentsBuilder
@@ -154,57 +153,38 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         return getGuarded(uri);
     }
 
-    /**
-     * 拉取最近1分钟 K线，返回 [periodLow, periodHigh]
-     */
-    public BigDecimal[] getRecentHighLow(String symbol) {
-        try {
-            String json = getKlines(symbol, "1s", 60, null);
-            return getHighLow(json);
-        } catch (Exception e) {
-            log.error("解析klines高低价失败 symbol={}", symbol, e);
-            return null;
-        }
+    /** 现货 1m K 线，空窗 [fromMs, toMs] 补漏用 */
+    public List<KlineBar> spotBars1m(String symbol, long fromMs, long toMs) {
+        return bars1m(props.getRestBaseUrl(), "/api/v3/klines", symbol, fromMs, toMs);
+    }
+
+    /** 合约最新价 1m K 线 */
+    public List<KlineBar> futuresBars1m(String symbol, long fromMs, long toMs) {
+        return bars1m(props.getFuturesRestBaseUrl(), "/fapi/v1/klines", symbol, fromMs, toMs);
+    }
+
+    /** 标记价 1m K 线 */
+    public List<KlineBar> markBars1m(String symbol, long fromMs, long toMs) {
+        return bars1m(props.getFuturesRestBaseUrl(), "/fapi/v1/markPriceKlines", symbol, fromMs, toMs);
     }
 
     /**
-     * 拉取future最近5分钟 K线，返回 [periodLow, periodHigh]
+     * 按时间段拉 1m K 线。startTime 往下取整到整分（那一分钟整根算进来，宁多不漏）。
+     * 空窗由调用方限在 1h 内（MatchPriceConsumer），一页装得下。请求失败/空回包 → 空列表。
      */
-    public BigDecimal[] getRecentFuturesHighLow(String symbol) {
-        try {
-            String json = getFuturesKlines(symbol, "1m", 5, null);
-            return getHighLow(json);
-        } catch (Exception e) {
-            log.error("获取合约K线高低价失败 symbol={}", symbol, e);
-            return null;
-        }
-    }
-
-    /**
-     * 按分钟数回看 1m K 线取 [periodLow, periodHigh]。
-     * 上面几个 getRecent* 是 feed 断线重连用的固定短窗（断线期间有 REST 轮询兜底，够用）；
-     * sim 自己停机时没人轮询，得按真实停机时长回看，所以走这一组。
-     * minutes 直接当 limit 传，由调用方限在 MatchPriceConsumer.RECOVER_MAX_MINUTES 内。
-     */
-    public BigDecimal[] getSpotHighLowByMinutes(String symbol, int minutes) {
-        return highLowOrNull(getKlines(symbol, "1m", minutes, null), symbol, "现货");
-    }
-
-    public BigDecimal[] getFuturesHighLowByMinutes(String symbol, int minutes) {
-        return highLowOrNull(getFuturesKlines(symbol, "1m", minutes, null), symbol, "合约");
-    }
-
-    public BigDecimal[] getMarkPriceHighLowByMinutes(String symbol, int minutes) {
-        return highLowOrNull(getMarkPriceKlines(symbol, minutes), symbol, "标记价");
-    }
-
-    private BigDecimal[] highLowOrNull(String json, String symbol, String label) {
-        try {
-            return getHighLow(json);
-        } catch (Exception e) {
-            log.error("解析{}K线高低价失败 symbol={}", label, symbol, e);
-            return null;
-        }
+    private List<KlineBar> bars1m(String baseUrl, String path, String symbol, long fromMs, long toMs) {
+        if (baseUrl == null || baseUrl.isBlank()) return List.of();
+        long startTime = fromMs / 60_000L * 60_000L;
+        URI uri = UriComponentsBuilder
+                .fromUriString(baseUrl + path)
+                .queryParam("symbol", symbol)
+                .queryParam("interval", "1m")
+                .queryParam("startTime", startTime)
+                .queryParam("endTime", toMs)
+                .queryParam("limit", (toMs - startTime) / 60_000L + 1)
+                .build().toUri();
+        log.info("Binance REST 补漏K线: {}", uri);
+        return KlineHistoryStore.parseRawFuturesKlines(getGuarded(uri));
     }
 
     /** 合约 exchangeInfo（全量，含各 symbol 的 LOT_SIZE/MIN_NOTIONAL 过滤器）；失败返回 null。 */
@@ -246,25 +226,6 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         if (baseUrl == null || baseUrl.isBlank()) return null;
         URI uri = UriComponentsBuilder.fromUriString(baseUrl + "/fapi/v1/premiumIndex").build().toUri();
         log.info("Binance REST premiumIndex 全量");
-        return getGuarded(uri);
-    }
-
-    /**
-     * 拉取最近2分钟Mark Price K线，返回 [periodLow, periodHigh]
-     */
-    public BigDecimal[] getRecentMarkPriceHighLow(String symbol) {
-        return highLowOrNull(getMarkPriceKlines(symbol, 2), symbol, "标记价");
-    }
-
-    private String getMarkPriceKlines(String symbol, int limit) {
-        String baseUrl = props.getFuturesRestBaseUrl();
-        if (baseUrl == null || baseUrl.isBlank()) return null;
-        URI uri = UriComponentsBuilder
-                .fromUriString(baseUrl + "/fapi/v1/markPriceKlines")
-                .queryParam("symbol", symbol)
-                .queryParam("interval", "1m")
-                .queryParam("limit", Math.min(limit, 1000))
-                .build().toUri();
         return getGuarded(uri);
     }
 
@@ -438,16 +399,4 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         return getGuarded(uri);
     }
 
-    private BigDecimal[] getHighLow(String json) {
-        if (json == null || json.isBlank()) return null;
-        JsonNode root = MAPPER.readTree(json);
-        BigDecimal high = null, low = null;
-        for (JsonNode kline : root) {
-            BigDecimal h = kline.get(2).asDecimal();
-            BigDecimal l = kline.get(3).asDecimal();
-            if (high == null || h.compareTo(high) > 0) high = h;
-            if (low == null || l.compareTo(low) < 0) low = l;
-        }
-        return high != null ? new BigDecimal[]{low, high} : null;
-    }
 }

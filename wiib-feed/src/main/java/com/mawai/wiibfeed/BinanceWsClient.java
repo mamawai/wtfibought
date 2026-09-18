@@ -52,7 +52,7 @@ public class BinanceWsClient implements SmartLifecycle {
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
 
-        // 每个 handler 组装成一条连接，再回填连接+调度器（兜底轮询/读连接状态用）
+        // 每个 handler 组装成一条连接，再回填连接（读连接状态/记空窗用）
         for (StreamHandler h : handlers) {
             // buildUrl 为空 = 该流无订阅符号（如未配 bStock 时的 StockKline5m），跳过不建连
             String url = h.buildUrl();
@@ -66,7 +66,7 @@ public class BinanceWsClient implements SmartLifecycle {
             // 接状态回调 + 登记，都在 connect() 之前，确保首帧 CONNECTING/CONNECTED 也被捕获推送
             conn.setOnStatusChange(healthPublisher::publish);
             registry.register(conn);
-            h.bind(conn, scheduler);
+            h.bind(conn);
             connections.add(conn);
         }
         connections.forEach(WsConnection::connect);
@@ -76,7 +76,6 @@ public class BinanceWsClient implements SmartLifecycle {
     public void stop() {
         shutdown.set(true);
         connections.forEach(WsConnection::close);
-        // fallback 轮询任务跑在 scheduler 上，shutdownNow 一并取消
         if (scheduler != null) scheduler.shutdownNow();
         if (httpClient != null) httpClient.close();
     }

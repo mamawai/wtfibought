@@ -11,10 +11,8 @@ public final class MarketStreamChannels {
     /**
      * 行情价格事件 Pub/Sub 通道。feed 发布，payload 为 JSON：
      * <pre>
-     * {"symbol","type","price"}              普通 tick：type ∈ spot|markprice|futures
-     * {"symbol","type":"spot-recover","low","high"}       现货限价单区间补漏
-     * {"symbol","type":"futures-recover","low","high"}    合约限价单区间补漏
-     * {"symbol","type":"liq-recover","markLow","markHigh","futLow","futHigh"}  强平区间补漏
+     * {"symbol","type","price"}                       普通 tick：type ∈ spot|markprice|futures
+     * {"type":"gap","kind":"spot|futures","from","to"} 价格连接的空窗区间（无 symbol），sim 拉 1m K 线补漏
      * </pre>
      * sim（MatchPriceConsumer）订阅做撮合/强平/结算；agent 两个订阅者——VolatilitySentinel 取 markprice
      * 喂波动哨兵，ExecutionPriceConsumer 取 futures tick 驱动策略触价单。

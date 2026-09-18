@@ -14,6 +14,7 @@ import com.mawai.wiibcommon.enums.OrderSide;
 import com.mawai.wiibcommon.enums.OrderStatus;
 import com.mawai.wiibcommon.enums.OrderType;
 import com.mawai.wiibcommon.exception.BizException;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
@@ -45,6 +46,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.mawai.wiibcommon.enums.LedgerBizType.*;
+import static com.mawai.wiibsim.service.impl.FuturesHelper.toEpochMs;
 
 @Slf4j
 @Service
@@ -450,30 +452,50 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         }
     }
 
-    // ==================== 重启恢复限价单 ====================
+    // ==================== 空窗补漏 ====================
 
     @Override
-    public void recoverLimitOrders(String symbol, BigDecimal periodLow, BigDecimal periodHigh) {
+    public void recoverGap(String symbol, List<KlineBar> bars) {
+        if (bars.isEmpty()) return;
+        // 整段极值先粗筛一遍索引，逐单再按各自挂单时间算区间
+        BigDecimal[] all = KlineBar.lowHighAfter(bars, 0);
         String buyKey = LIMIT_BUY_ZSET_PREFIX + symbol;
         String sellKey = LIMIT_SELL_ZSET_PREFIX + symbol;
 
         Set<ZSetOperations.TypedTuple<String>> buyHits = stringRedisTemplate.opsForZSet()
-                .rangeByScoreWithScores(buyKey, periodLow.doubleValue(), Double.MAX_VALUE);
+                .rangeByScoreWithScores(buyKey, all[0].doubleValue(), Double.MAX_VALUE);
         Set<ZSetOperations.TypedTuple<String>> sellHits = stringRedisTemplate.opsForZSet()
-                .rangeByScoreWithScores(sellKey, 0, periodHigh.doubleValue());
+                .rangeByScoreWithScores(sellKey, 0, all[1].doubleValue());
 
-        int count = triggerHits(buyKey, buyHits) + triggerHits(sellKey, sellHits);
-        if (count > 0) log.info("crypto恢复触发限价单 symbol={} low={} high={} 共{}个", symbol, periodLow, periodHigh, count);
+        int count = recoverHits(buyKey, buyHits, bars, true) + recoverHits(sellKey, sellHits, bars, false);
+        if (count > 0) log.info("crypto空窗补漏触发限价单 symbol={} 共{}个", symbol, count);
     }
 
-    // 断连期间价格已穿过，按挂单价成交；摘索引同样交给 triggerAndExecuteOrder（CAS落定后才摘）
-    private int triggerHits(String key, Set<ZSetOperations.TypedTuple<String>> hits) {
+    // 空窗里价格已穿过，按挂单价成交；摘索引同样交给 triggerAndExecuteOrder（CAS落定后才摘）
+    private int recoverHits(String key, Set<ZSetOperations.TypedTuple<String>> hits,
+                            List<KlineBar> bars, boolean buySide) {
         if (hits == null || hits.isEmpty()) return 0;
+        int count = 0;
         for (var tuple : hits) {
-            triggerAndExecuteOrder(key, Long.parseLong(Objects.requireNonNull(tuple.getValue())),
-                    BigDecimal.valueOf(Objects.requireNonNull(tuple.getScore())));
+            Long orderId = Long.parseLong(Objects.requireNonNull(tuple.getValue()));
+            CryptoOrder order = baseMapper.selectById(orderId);
+            if (order == null) {
+                // DB 里没这单了，索引是过期项，摘掉
+                stringRedisTemplate.opsForZSet().remove(key, orderId.toString());
+                continue;
+            }
+            BigDecimal[] range = KlineBar.lowHighAfter(bars, toEpochMs(order.getCreatedAt()));
+            if (range == null) continue;   // 挂单晚于整段行情
+            BigDecimal limitPrice = order.getLimitPrice();
+            // 买单看区间低点有没有穿到挂单价，卖单看高点
+            boolean hit = buySide
+                    ? range[0].compareTo(limitPrice) <= 0
+                    : range[1].compareTo(limitPrice) >= 0;
+            if (!hit) continue;
+            triggerAndExecuteOrder(key, orderId, limitPrice);
+            count++;
         }
-        return hits.size();
+        return count;
     }
 
     // ==================== ZSet索引管理 ====================

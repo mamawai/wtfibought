@@ -83,7 +83,9 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
                 validateSlPrice(item.getPrice(), position.getSide(), markPrice);
                 validateQty(item.getQuantity());
                 totalQty = totalQty.add(item.getQuantity());
-                newList.add(new FuturesStopLoss(genId(), item.getPrice(), item.getQuantity()));
+                FuturesStopLoss sl = new FuturesStopLoss(genId(), item.getPrice(), item.getQuantity());
+                sl.setCreatedAt(System.currentTimeMillis());
+                newList.add(sl);
             }
             if (totalQty.compareTo(position.getQuantity()) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
         }
@@ -135,7 +137,9 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
                 validateTpPrice(item.getPrice(), position.getSide(), markPrice);
                 validateQty(item.getQuantity());
                 totalQty = totalQty.add(item.getQuantity());
-                newList.add(new FuturesTakeProfit(genId(), item.getPrice(), item.getQuantity()));
+                FuturesTakeProfit tp = new FuturesTakeProfit(genId(), item.getPrice(), item.getQuantity());
+                tp.setCreatedAt(System.currentTimeMillis());
+                newList.add(tp);
             }
             if (totalQty.compareTo(position.getQuantity()) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
         }

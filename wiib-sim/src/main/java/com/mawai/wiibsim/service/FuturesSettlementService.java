@@ -1,12 +1,16 @@
 package com.mawai.wiibsim.service;
 
+import com.mawai.wiibcommon.market.KlineBar;
+
 import java.math.BigDecimal;
+import java.util.List;
 
 public interface FuturesSettlementService {
 
     void onPriceUpdate(String symbol, BigDecimal price);
 
-    void recoverLimitOrders(String symbol, BigDecimal periodLow, BigDecimal periodHigh);
+    /** 空窗补漏：按空窗期 1m K 线补触发限价单，逐单按创建时间过滤（挂单之后的行情才算） */
+    void recoverGap(String symbol, List<KlineBar> bars);
 
     void executeTriggeredOrders();
 

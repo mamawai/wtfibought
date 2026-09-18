@@ -2,6 +2,7 @@ package com.mawai.wiibsim.service;
 
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.market.BinanceRestClient;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.MarketStreamChannels;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -24,8 +25,9 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 撮合价格事件订阅者（sim 侧）。feed 把行情价格发到 {@link MarketStreamChannels#PRICE}，本消费者订阅后
  * 按 type 分发到现货/合约强平/合约结算撮合，替代原 feed 进程内直调——拆服务后 sim 进程靠它从 Redis 取价撮合。
  *
- * <p>可靠性（与原架构同级）：同机 Pub/Sub 正常不丢；sim 重启期间错过的价格穿越，由
- * {@link #recoverOnStartup} 启动时 REST 拉区间高低价补触发；feed 侧 WS 重连也会发 *-recover 事件补漏。
+ * <p>可靠性（与原架构同级）：同机 Pub/Sub 正常不丢；空窗（本进程重启、feed 价格连接断连）统一走
+ * {@link #recoverGap}——本进程启动时按 last-tick 算空窗，feed 侧连接重连时发 gap 事件带空窗过来，
+ * 两条路都是拉这段的 1m K 线、逐单逐仓按创建时间过滤后补触发。
  * 撮合放虚拟线程执行，不阻塞 Redis 订阅线程（与原 BinanceWsClient 每价格起虚拟线程一致）。</p>
  */
 @Slf4j
@@ -36,11 +38,11 @@ public class MatchPriceConsumer implements MessageListener {
     // 强平要 markPrice + currentPrice，后者从此 KV 读（与 BinanceWsClient 原逻辑一致）
     private static final String FUTURES_PRICE_KEY_PREFIX = "market:futures-price:";
 
-    // 本进程最后一次处理 tick 的时刻，重启后据此算停机多久、该回看多少 K 线；不设 TTL，重启要读得到
+    // 本进程最后一次处理 tick 的时刻，重启后据此算空窗从哪起；不设 TTL，重启要读得到
     private static final String LAST_TICK_KEY = "sim:match:last-tick-ms";
     private static final long LAST_TICK_WRITE_INTERVAL_MS = 5_000L;
-    /** 回看上限：Binance K 线单次最多 1000 根 */
-    private static final int RECOVER_MAX_MINUTES = 1000;
+    /** 补漏空窗上限：超过就当第一次启动，不补 */
+    private static final long MAX_GAP_MS = 60 * 60_000L;
 
     private final RedisMessageListenerContainer listenerContainer;
     private final StringRedisTemplate redisTemplate;
@@ -58,92 +60,71 @@ public class MatchPriceConsumer implements MessageListener {
 
     @PostConstruct
     public void init() {
-        // 先算停机时长再订阅：订阅一开，进来的 tick 立刻把 last-tick 刷成当前时刻，读晚了就算不出真实停机多久
-        int minutes = downtimeMinutes();
+        // 订阅生效后，每个 tick 都会走 onMessage → dispatch → touchLastTick，把 last-tick 刷成当前时刻。
+        // 要是 last-tick 在那之后才读，读到的就是刚刚写进去的值，空窗算出来接近 0，停机那一段就补不上了。所以要"先读，再让 tick 进来"
+        long last = readLastTick();
         listenerContainer.addMessageListener(this, new ChannelTopic(MarketStreamChannels.PRICE));
+        long now = System.currentTimeMillis();
+        if (last <= 0L || now - last > MAX_GAP_MS) {
+            recovered = true;
+            log.info("[MatchPrice] 订阅 {} 启动，{}，不补漏", MarketStreamChannels.PRICE,
+                    last <= 0L ? "无 last-tick" : "空窗 " + (now - last) + "ms 超 1h");
+            return;
+        }
         Thread.startVirtualThread(() -> {
             try {
-                recoverOnStartup(minutes);
+                recoverGap("spot", last, now);
+                recoverGap("futures", last, now);
             } finally {
                 recovered = true;
             }
         });
-        log.info("[MatchPrice] 订阅 {} 启动，启动补漏回看 {}", MarketStreamChannels.PRICE,
-                minutes > 0 ? minutes + " 分钟" : "短窗（无 last-tick）");
+        log.info("[MatchPrice] 订阅 {} 启动，启动补漏空窗 {}ms", MarketStreamChannels.PRICE, now - last);
     }
 
-    /**
-     * 停机时长换算成要回看的 1m K 线根数。读不到 last-tick（首次部署 / 键丢 / Redis 没起来）返回 0，
-     * 调用方退回 feed 同款固定短窗。
-     */
-    private int downtimeMinutes() {
-        long last;
+    /** 读不到（首次部署 / 键丢 / Redis 没起来）返回 0，调用方跳过补漏。 */
+    private long readLastTick() {
         try {
             String v = redisTemplate.opsForValue().get(LAST_TICK_KEY);
-            if (v == null) return 0;
-            last = Long.parseLong(v);
+            return v == null ? 0L : Long.parseLong(v);
         } catch (Exception e) {
-            log.warn("[MatchPrice] 读 last-tick 失败，启动补漏退回短窗: {}", e.toString());
-            return 0;
+            log.warn("[MatchPrice] 读 last-tick 失败，跳过启动补漏: {}", e.toString());
+            return 0L;
         }
-        long downtime = System.currentTimeMillis() - last;
-        if (downtime <= 0) return 0;
-        // +2 根缓冲：K 线按整分对齐，停机的头尾各压着半根，少拉就漏
-        long n = (downtime + 59_999) / 60_000 + 2;
-        if (n > RECOVER_MAX_MINUTES) {
-            log.warn("[MatchPrice] 停机 {} 分钟超出 K 线单次上限，只回看最近 {} 分钟",
-                    downtime / 60_000, RECOVER_MAX_MINUTES);
-            return RECOVER_MAX_MINUTES;
-        }
-        return (int) n;
     }
 
     /**
-     * sim 启动补漏：拉区间高低价补触发现货/合约限价单 + 强平，覆盖本进程宕机期间错过的价格穿越。
-     * minutes>0 按真实停机时长回看 1m K 线；=0（读不到 last-tick）退回 feed 同款固定短窗。
-     * 合约侧遍历合约全集（含金/油/TradFi 纯合约标的），现货侧只有 crypto 有现货。
+     * 空窗 [from, to] 补漏：拉这段的 1m K 线交给各撮合服务，逐单/逐仓按创建时间过滤后判穿越。
+     * spot/futures 两侧分开，对应 feed 的现货连接与两条合约连接。超 1h 的空窗当第一次启动，不补。
      */
-    private void recoverOnStartup(int minutes) {
-        List<String> spotSymbols = props.getSymbols() == null ? List.of() : props.getSymbols();
-        for (String symbol : props.getAllFuturesSymbols()) {
-            try {
-                if (spotSymbols.contains(symbol)) {
-                    BigDecimal[] spot = minutes > 0
-                            ? restClient.getSpotHighLowByMinutes(symbol, minutes)
-                            : restClient.getRecentHighLow(symbol);
-                    if (spot != null) cryptoOrderService.recoverLimitOrders(symbol, spot[0], spot[1]);
+    private void recoverGap(String kind, long from, long to) {
+        if (to - from > MAX_GAP_MS) {
+            log.info("[MatchPrice] {} 空窗 {}ms 超 1h，不补漏", kind, to - from);
+            return;
+        }
+        if ("spot".equals(kind)) {
+            for (String symbol : props.getAllSpotSymbols()) {
+                try {
+                    cryptoOrderService.recoverGap(symbol, restClient.spotBars1m(symbol, from, to));
+                } catch (Exception e) {
+                    log.warn("[MatchPrice] 现货补漏失败 symbol={}: {}", symbol, e.toString());
                 }
-                BigDecimal[] fut = minutes > 0
-                        ? restClient.getFuturesHighLowByMinutes(symbol, minutes)
-                        : restClient.getRecentFuturesHighLow(symbol);
-                if (fut != null) futuresSettlementService.recoverLimitOrders(symbol, fut[0], fut[1]);
-                // 合约区间直接传给强平复用，别再拉一次（回看上千根时这一次重复请求的权重不便宜）
-                recoverLiquidationFromRest(symbol, minutes, fut);
-            } catch (Exception e) {
-                log.warn("[MatchPrice] 启动补漏失败 symbol={}: {}", symbol, e.toString());
+            }
+            return;
+        }
+        if ("futures".equals(kind)) {
+            for (String symbol : props.getAllFuturesSymbols()) {
+                try {
+                    List<KlineBar> fut = restClient.futuresBars1m(symbol, from, to);
+                    List<KlineBar> mark = restClient.markBars1m(symbol, from, to);
+                    futuresSettlementService.recoverGap(symbol, fut);
+                    futuresLiquidationService.recoverGap(symbol, mark, fut);
+                    crossLiquidationService.recoverGap(symbol, mark);
+                } catch (Exception e) {
+                    log.warn("[MatchPrice] 合约补漏失败 symbol={}: {}", symbol, e.toString());
+                }
             }
         }
-    }
-
-    /** 强平补漏：拉 markPrice 区间，低点查多头爆、高点查空头爆（与原 recoverMissedLiquidations 一致）。 */
-    private void recoverLiquidationFromRest(String symbol, int minutes, BigDecimal[] fut) {
-        BigDecimal[] mark = minutes > 0
-                ? restClient.getMarkPriceHighLowByMinutes(symbol, minutes)
-                : restClient.getRecentMarkPriceHighLow(symbol);
-        if (mark == null) return;
-        BigDecimal futLow = fut != null ? fut[0] : mark[0];
-        BigDecimal futHigh = fut != null ? fut[1] : mark[1];
-        checkLiquidationRange(symbol, mark[0], mark[1], futLow, futHigh);
-    }
-
-    private void checkLiquidationRange(String symbol, BigDecimal markLow, BigDecimal markHigh,
-                                       BigDecimal futLow, BigDecimal futHigh) {
-        futuresLiquidationService.checkOnPriceUpdate(symbol, markLow, futLow);
-        futuresLiquidationService.checkOnPriceUpdate(symbol, markHigh, futHigh);
-        // 全仓补两端：空窗里的插针藏在区间高低点（equity 对单 symbol 价格线性 → 端点即最坏情形），
-        // 低端抓多头重的账户、高端抓空头重的，钉价语义与实时 tick 一致
-        crossLiquidationService.onPriceTick(symbol, markLow);
-        crossLiquidationService.onPriceTick(symbol, markHigh);
     }
 
     @Override
@@ -156,9 +137,11 @@ public class MatchPriceConsumer implements MessageListener {
     private void dispatch(String body) {
         try {
             JsonNode obj = MAPPER.readTree(body);
-            String symbol = obj.path("symbol").asString(null);
             String type = obj.path("type").asString(null);
-            if (symbol == null || type == null) return;
+            if (type == null) return;
+            String symbol = obj.path("symbol").asString(null);
+            // gap 事件没有 symbol，价格类才必填
+            if (symbol == null && !"gap".equals(type)) return;
             switch (type) {
                 case "spot" -> cryptoOrderService.onPriceUpdate(symbol, new BigDecimal(obj.path("price").asString(null)));
                 case "futures" -> futuresSettlementService.onPriceUpdate(symbol, new BigDecimal(obj.path("price").asString(null)));
@@ -168,14 +151,9 @@ public class MatchPriceConsumer implements MessageListener {
                     futuresLiquidationService.checkOnPriceUpdate(symbol, mp, cp != null ? new BigDecimal(cp) : mp);
                     crossLiquidationService.onPriceTick(symbol, mp);
                 }
-                case "spot-recover" -> cryptoOrderService.recoverLimitOrders(symbol,
-                        new BigDecimal(obj.path("low").asString(null)), new BigDecimal(obj.path("high").asString(null)));
-                case "futures-recover" -> futuresSettlementService.recoverLimitOrders(symbol,
-                        new BigDecimal(obj.path("low").asString(null)), new BigDecimal(obj.path("high").asString(null)));
-                case "liq-recover" -> checkLiquidationRange(symbol,
-                        new BigDecimal(obj.path("markLow").asString(null)), new BigDecimal(obj.path("markHigh").asString(null)),
-                        new BigDecimal(obj.path("futLow").asString(null)), new BigDecimal(obj.path("futHigh").asString(null)));
-                default -> { /* 非撮合 type（如 markprice 也被 quant 哨兵消费）忽略 */ }
+                case "gap" -> recoverGap(obj.path("kind").asString(null),
+                        obj.path("from").asLong(), obj.path("to").asLong());
+                default -> { /* 非撮合 type 忽略 */ }
             }
             // 放撮合之后：写键失败不能挡住撮合
             touchLastTick();
@@ -184,10 +162,10 @@ public class MatchPriceConsumer implements MessageListener {
         }
     }
 
-    /** 记"活到几点了"：节流 5s 写一次，下次重启拿它算停机多久 */
+    /** 记"活到几点了"：节流 5s 写一次，下次重启拿它算空窗从哪起 */
     private void touchLastTick() {
         // 补漏没跑完先不刷：补漏是几十个 symbol 串行 REST，几十秒起步，这中间进程再挂（部署崩溃循环）
-        // 下次读到的停机时长就只剩这几十秒，本该补的那段窗口再也补不回来
+        // 下次读到的空窗就只剩这几十秒，本该补的那段窗口再也补不回来
         if (!recovered) return;
         long now = System.currentTimeMillis();
         if (now - lastTickWriteMs < LAST_TICK_WRITE_INTERVAL_MS) return;

@@ -70,21 +70,4 @@ class MatchPriceConsumerTest {
                 .checkOnPriceUpdate(eq("BTCUSDT"), eq(new BigDecimal("50000")), eq(new BigDecimal("49950")));
     }
 
-    @Test
-    void dispatchesSpotRecoverToRecoverLimitOrders() {
-        consumer().onMessage(msg("{\"symbol\":\"BTCUSDT\",\"type\":\"spot-recover\",\"low\":\"49000\",\"high\":\"51000\"}"), null);
-        verify(cryptoOrderService, timeout(1000))
-                .recoverLimitOrders(eq("BTCUSDT"), eq(new BigDecimal("49000")), eq(new BigDecimal("51000")));
-    }
-
-    @Test
-    void dispatchesLiqRecoverToTwoRangeChecks() {
-        consumer().onMessage(msg("{\"symbol\":\"BTCUSDT\",\"type\":\"liq-recover\","
-                + "\"markLow\":\"48000\",\"markHigh\":\"52000\",\"futLow\":\"47900\",\"futHigh\":\"52100\"}"), null);
-        // 低点查多头爆、高点查空头爆
-        verify(liquidationService, timeout(1000))
-                .checkOnPriceUpdate(eq("BTCUSDT"), eq(new BigDecimal("48000")), eq(new BigDecimal("47900")));
-        verify(liquidationService, timeout(1000))
-                .checkOnPriceUpdate(eq("BTCUSDT"), eq(new BigDecimal("52000")), eq(new BigDecimal("52100")));
-    }
 }

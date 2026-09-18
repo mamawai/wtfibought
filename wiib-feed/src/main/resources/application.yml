@@ -81,7 +81,6 @@ binance:
   # 纯合约加密币(Binance 主站只有永续没现货)：与商品同链路，只进合约流
   crypto-futures-symbols:
     - HYPEUSDT
-  fallback-poll-interval: 5000
 
 # /internal/streams(流健康+重试)由共享 InternalApiFilter 校验此 token；须与 sim/quant 同值
 # (三进程读同一 .env；无默认值，不填起不来)

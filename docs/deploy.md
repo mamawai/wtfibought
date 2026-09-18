@@ -23,7 +23,7 @@ curl -s -o /dev/null -w "%{http_code}\n" https://api.binance.com/api/v3/ping   #
 curl -s -o /dev/null -w "%{http_code}\n" https://fapi.binance.com/fapi/v1/ping # 期望 200
 ```
 
-返回 451 就说明这个节点被封了。此时 feed 连不上流、REST 兜底也拿不到数，**Binance 那条链下游全是空的**：价格不动、K 线不落库、撮合与强平不触发、AI Trader 的行情工具一律 `available=false`。得换节点或让出口走代理，不是配置能绕过去的。（Polymarket 那条 BTC 预测链不吃 Binance，仍能跑。）
+返回 451 就说明这个节点被封了。此时 feed 连不上流、REST 也不通，**Binance 那条链下游全是空的**：价格不动、K 线不落库、撮合与强平不触发、AI Trader 的行情工具一律 `available=false`。得换节点或让出口走代理，不是配置能绕过去的。（Polymarket 那条 BTC 预测链不吃 Binance，仍能跑。）
 
 **② 本地 PostgreSQL 与 Redis 已经起着。** 三个进程都要连，缺一个起不来。
 

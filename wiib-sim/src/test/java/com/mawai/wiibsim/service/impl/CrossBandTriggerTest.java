@@ -2,6 +2,7 @@ package com.mawai.wiibsim.service.impl;
 
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesPosition;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
@@ -16,6 +17,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationContext;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -162,6 +166,52 @@ class CrossBandTriggerTest {
         registry.put(UID, registry.epoch(UID), Map.of(SYM, new double[]{98.425, 101.575}));
         // 模拟排队拿到锁的线程：前一个精查已重建带且钉价在带内 → 数学安全，免掉快照
         service.checkUser(UID, SYM, new BigDecimal("100"));
+        verify(crossMargin, never()).snapshot(anyLong(), any(), any());
+    }
+
+    // ==================== 空窗补漏 ====================
+
+    private static final long T0 = 1700000000000L;
+
+    /** 前一根插到 50，后一根只到 99：插针只在前一根里 */
+    private static final List<KlineBar> BARS = List.of(
+            bar(T0, T0 + 59_999L, "100", "50"),
+            bar(T0 + 60_000L, T0 + 119_999L, "101", "99"));
+
+    private static KlineBar bar(long openTime, long closeTime, String high, String low) {
+        return new KlineBar(openTime, closeTime, new BigDecimal(low), new BigDecimal(high),
+                new BigDecimal(low), new BigDecimal(high), BigDecimal.ONE);
+    }
+
+    private static FuturesPosition positionOpenedAt(long ms) {
+        FuturesPosition p = position();
+        p.setCreatedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(ms), ZoneId.systemDefault()));
+        return p;
+    }
+
+    /** 精查跑完就清带（无持仓），免得第一个钉价建的带把第二个吞掉 */
+    private static CrossAccount emptyAccount() {
+        return new CrossAccount(new BigDecimal("1000"), BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO, List.of(), Map.of());
+    }
+
+    @Test
+    void 补漏_仓位开在区间之前_低高两端各精查一次() {
+        when(positionMapper.selectList(any())).thenReturn(List.of(positionOpenedAt(T0)));
+        when(crossMargin.snapshot(eq(UID), eq(SYM), any())).thenReturn(emptyAccount());
+
+        service.recoverGap(SYM, BARS);
+
+        verify(crossMargin, timeout(2000)).snapshot(UID, SYM, new BigDecimal("50"));
+        verify(crossMargin, timeout(2000)).snapshot(UID, SYM, new BigDecimal("101"));
+    }
+
+    @Test
+    void 补漏_仓位开在区间之后_不精查() {
+        when(positionMapper.selectList(any())).thenReturn(List.of(positionOpenedAt(T0 + 119_999L)));
+
+        service.recoverGap(SYM, BARS);
+
         verify(crossMargin, never()).snapshot(anyLong(), any(), any());
     }
 

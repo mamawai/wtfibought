@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
+import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
@@ -25,6 +26,7 @@ import java.util.List;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.calculatePnl;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.markPrice;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.removeFromLimitZSet;
+import static com.mawai.wiibsim.service.impl.FuturesHelper.toEpochMs;
 
 @Slf4j
 @Service
@@ -50,6 +52,35 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
             if (!bandRegistry.shouldCheck(userId, symbol, price)) continue;
             Thread.startVirtualThread(() -> checkUser(userId, symbol, markPrice));
         }
+    }
+
+    @Override
+    public void recoverGap(String symbol, List<KlineBar> markBars) {
+        if (markBars.isEmpty()) return;
+        for (String uid : crossMarginService.usersOnSymbol(symbol)) {
+            long userId = Long.parseLong(uid);
+            long since = latestCrossOpenAt(userId, symbol);
+            if (since == 0L) continue;   // 该 symbol 上没全仓仓位
+            BigDecimal[] range = KlineBar.lowHighAfter(markBars, since);
+            if (range == null) continue; // 开仓晚于整段行情
+            // 插针藏在区间两端：低端抓多头重的账户、高端抓空头重的（equity 对单 symbol 价格线性，端点即最坏）
+            for (BigDecimal pin : List.of(range[0], range[1])) {
+                if (!bandRegistry.shouldCheck(userId, symbol, pin.doubleValue())) continue;
+                Thread.startVirtualThread(() -> checkUser(userId, symbol, pin));
+            }
+        }
+    }
+
+    /** 该用户在该 symbol 上全仓持仓的最晚开仓时间；没仓位返回 0 */
+    private long latestCrossOpenAt(long userId, String symbol) {
+        List<FuturesPosition> positions = positionMapper.selectList(new LambdaQueryWrapper<FuturesPosition>()
+                .eq(FuturesPosition::getUserId, userId)
+                .eq(FuturesPosition::getSymbol, symbol)
+                .eq(FuturesPosition::getStatus, "OPEN")
+                .eq(FuturesPosition::getMarginMode, FuturesPosition.CROSS));
+        long max = 0L;
+        for (FuturesPosition p : positions) max = Math.max(max, toEpochMs(p.getCreatedAt()));
+        return max;
     }
 
     @Override

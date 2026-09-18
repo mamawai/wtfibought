@@ -12,6 +12,8 @@ import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -19,6 +21,11 @@ import java.util.UUID;
 final class FuturesHelper {
 
     private FuturesHelper() {}
+
+    /** 实体 createdAt 换毫秒（MetaObjectHandler 用 LocalDateTime.now() 填的，按本机时区还原） */
+    static long toEpochMs(LocalDateTime t) {
+        return t.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+    }
 
     static final String LIMIT_OPEN_LONG_PREFIX = "futures:limit:open_long:";
     static final String LIMIT_OPEN_SHORT_PREFIX = "futures:limit:open_short:";
@@ -169,7 +176,9 @@ final class FuturesHelper {
             validateSlPrice(sl.getPrice(), side, refPrice);
             validateQty(sl.getQuantity());
             total = total.add(sl.getQuantity());
-            list.add(new FuturesStopLoss(genId(), sl.getPrice(), sl.getQuantity()));
+            FuturesStopLoss item = new FuturesStopLoss(genId(), sl.getPrice(), sl.getQuantity());
+            item.setCreatedAt(System.currentTimeMillis());
+            list.add(item);
         }
         if (total.compareTo(quantity) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
         return list;
@@ -186,7 +195,9 @@ final class FuturesHelper {
             validateTpPrice(tp.getPrice(), side, refPrice);
             validateQty(tp.getQuantity());
             total = total.add(tp.getQuantity());
-            list.add(new FuturesTakeProfit(genId(), tp.getPrice(), tp.getQuantity()));
+            FuturesTakeProfit item = new FuturesTakeProfit(genId(), tp.getPrice(), tp.getQuantity());
+            item.setCreatedAt(System.currentTimeMillis());
+            list.add(item);
         }
         if (total.compareTo(quantity) > 0) throw new BizException(ErrorCode.FUTURES_INVALID_QUANTITY);
         return list;

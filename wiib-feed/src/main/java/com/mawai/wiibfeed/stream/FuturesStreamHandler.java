@@ -3,24 +3,20 @@ package com.mawai.wiibfeed.stream;
 import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.config.BinanceProperties;
-import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibfeed.WsConnection;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.Setter;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.net.http.WebSocket;
-import java.util.concurrent.ScheduledExecutorService;
 
 /**
  * 合约流（重 handler）：markPrice@1s 走本 handler 主连接，miniTicker 走 FuturesMiniTick 副连接，
- * 两者共用 {@link #onMessage} 解析（靠 stream 名/字段区分 markPrice vs miniTicker）。
- * 断线启 REST 兜底；重连后补漏合约限价单 + 强平检查。
+ * 两者共用 {@link #handle} 解析（靠 stream 名区分 markPrice vs miniTicker），各自记自己的空窗。
  * <p>Binance 2026-04-23 起期货 WS 端点拆分，markPrice 与 miniTicker 必须分两条物理连接，故有副连接。
  */
-@Slf4j
 @Component
 @RequiredArgsConstructor
 public class FuturesStreamHandler implements StreamHandler {
@@ -32,23 +28,26 @@ public class FuturesStreamHandler implements StreamHandler {
     private final StringRedisTemplate redisTemplate;
     private final CacheService cacheService;
     private final MarketBroadcaster broadcastService;
-    private final BinanceRestClient restClient;
     private final MatchPricePublisher matchPricePublisher;
 
     private WsConnection conn;
-    private RestFallbackPoller fallback;
+    /** 副连接（miniTicker），bind 时由副 handler 交进来，只用于判 fws */
+    @Setter
+    private WsConnection miniTickConn;
+    private GapTracker tracker;
 
     @Override public String name() { return "Futures"; }
     @Override public long maxIdleSeconds() { return 90; }
 
     @Override
-    public void bind(WsConnection conn, ScheduledExecutorService scheduler) {
+    public void bind(WsConnection conn) {
         this.conn = conn;
-        this.fallback = new RestFallbackPoller(scheduler, props.getFallbackPollInterval(), "Futures ", this::pollOnce);
+        this.tracker = new GapTracker(name(), "futures", redisTemplate, matchPricePublisher);
     }
 
+    /** 两条合约连接都连上才算合约行情正常，缺一条前端就该看到断线 */
     private boolean isFuturesConnected() {
-        return conn != null && conn.isConnected();
+        return conn != null && conn.isConnected() && miniTickConn != null && miniTickConn.isConnected();
     }
 
     // Binance 2026-04-23起: markPrice走/market端点
@@ -59,35 +58,36 @@ public class FuturesStreamHandler implements StreamHandler {
 
     @Override
     public void onConnected(WebSocket ws) {
-        fallback.stop();
-        Thread.startVirtualThread(() -> {
-            recoverMissedFuturesLimitOrders();
-            recoverMissedLiquidations();
-        });
+        tracker.publishGap();
     }
 
     @Override
     public void onDisconnected() {
-        fallback.start();
+        broadcastFuturesDisconnected();
+    }
+
+    /** 断线帧只带 fws：前端合约分支没 fp/mp 会沿用上一价。两条连接共用 */
+    void broadcastFuturesDisconnected() {
+        for (String symbol : props.getAllFuturesSymbols()) {
+            broadcastService.broadcastFuturesQuote(symbol, "{\"fws\":false}");
+        }
     }
 
     @Override
     public void onMessage(String raw) {
-        // 真实WS组合流: {"stream":"btcusdt@markPrice@1s","data":{...,"s":"BTCUSDT","p":"..."}} / {"stream":"btcusdt@miniTicker","data":{...,"s":"BTCUSDT","c":"..."}}
-        // REST兜底伪消息: {"s":"BTCUSDT","p":"..."} / {"s":"BTCUSDT","c":"..."}
+        tracker.touch();
+        handle(raw);
+    }
+
+    /** 两条合约连接共用的解析体 */
+    void handle(String raw) {
+        // 组合流: {"stream":"btcusdt@markPrice@1s","data":{...,"s":"BTCUSDT","p":"..."}} / {"stream":"btcusdt@miniTicker","data":{...,"s":"BTCUSDT","c":"..."}}
         int streamIdx = raw.indexOf("\"stream\":\"");
-        boolean isMarkPrice;
-        if (streamIdx >= 0) {
-            int streamStart = streamIdx + 10;
-            int streamEnd = raw.indexOf('"', streamStart);
-            if (streamEnd < 0) return;
-            isMarkPrice = raw.regionMatches(streamEnd - 12, "markPrice@1s", 0, 12);
-        } else {
-            int pIdx = raw.indexOf("\"p\":\"");
-            int cIdx = raw.indexOf("\"c\":\"");
-            if (pIdx < 0 && cIdx < 0) return;
-            isMarkPrice = pIdx >= 0 && (cIdx < 0 || pIdx < cIdx);
-        }
+        if (streamIdx < 0) return;
+        int streamStart = streamIdx + 10;
+        int streamEnd = raw.indexOf('"', streamStart);
+        if (streamEnd < 0) return;
+        boolean isMarkPrice = raw.regionMatches(streamEnd - 12, "markPrice@1s", 0, 12);
 
         int sIdx = raw.indexOf("\"s\":\"");
         if (sIdx < 0) return;
@@ -116,65 +116,6 @@ public class FuturesStreamHandler implements StreamHandler {
 
             // futures 价格事件发 Redis：sim 侧消费做合约限价单结算（解耦：不再进程内直调）
             matchPricePublisher.publish("{\"symbol\":\"" + symbol + "\",\"type\":\"futures\",\"price\":\"" + price + "\"}");
-        }
-    }
-
-    // ── REST兜底：WS断开期间切REST轮询保证价格不中断 ──
-
-    private void pollOnce() {
-        for (String symbol : props.getAllFuturesSymbols()) {
-            try {
-                String json = restClient.getPremiumIndex(symbol);
-                if (json != null) {
-                    int idx = json.indexOf("\"markPrice\":\"");
-                    if (idx >= 0) {
-                        String markPrice = StreamParse.extractQuoted(json, idx + 13);
-                        onMessage("{\"s\":\"" + symbol + "\",\"p\":\"" + markPrice + "\"}");
-                    }
-                }
-                String tickerJson = restClient.getFutures24hTicker(symbol);
-                if (tickerJson != null) {
-                    int idx = tickerJson.indexOf("\"lastPrice\":\"");
-                    if (idx >= 0) {
-                        String lastPrice = StreamParse.extractQuoted(tickerJson, idx + 13);
-                        onMessage("{\"s\":\"" + symbol + "\",\"c\":\"" + lastPrice + "\"}");
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("REST轮询Futures {}失败: {}", symbol, e.getMessage());
-            }
-        }
-    }
-
-    private void recoverMissedFuturesLimitOrders() {
-        try {
-            for (String symbol : props.getAllFuturesSymbols()) {
-                BigDecimal[] futuresLowHigh = restClient.getRecentFuturesHighLow(symbol);
-                if (futuresLowHigh != null) {
-                    matchPricePublisher.publish("{\"symbol\":\"" + symbol + "\",\"type\":\"futures-recover\",\"low\":\""
-                            + futuresLowHigh[0].toPlainString() + "\",\"high\":\"" + futuresLowHigh[1].toPlainString() + "\"}");
-                }
-            }
-        } catch (Exception e) {
-            log.error("恢复合约限价单失败", e);
-        }
-    }
-
-    private void recoverMissedLiquidations() {
-        try {
-            for (String symbol : props.getAllFuturesSymbols()) {
-                BigDecimal[] markLowHigh = restClient.getRecentMarkPriceHighLow(symbol);
-                BigDecimal[] futuresLowHigh = restClient.getRecentFuturesHighLow(symbol);
-                if (markLowHigh != null) {
-                    BigDecimal futuresLow = futuresLowHigh != null ? futuresLowHigh[0] : markLowHigh[0];
-                    BigDecimal futuresHigh = futuresLowHigh != null ? futuresLowHigh[1] : markLowHigh[1];
-                    matchPricePublisher.publish("{\"symbol\":\"" + symbol + "\",\"type\":\"liq-recover\",\"markLow\":\""
-                            + markLowHigh[0].toPlainString() + "\",\"markHigh\":\"" + markLowHigh[1].toPlainString()
-                            + "\",\"futLow\":\"" + futuresLow.toPlainString() + "\",\"futHigh\":\"" + futuresHigh.toPlainString() + "\"}");
-                }
-            }
-        } catch (Exception e) {
-            log.error("恢复强平检查失败", e);
         }
     }
 }

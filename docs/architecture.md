@@ -53,7 +53,7 @@ wiib-feed（上游进程）  交易所 WS → Redis
   -> depth20@100ms          -> Redis KV(market:depth:, DepthStreamCache)
   -> K 线收盘                -> Redis Stream(stream:kline:closed) + crypto 5m 落库
   -> 所有 tick / K 线        -> Redis Pub/Sub(ws:broadcast:*) -> sim WsBroadcastRelay -> STOMP /topic/**
-  -> WS 断线                 -> REST 轮询兜底保价, 重连后按区间高低价补触发限价/强平
+  -> WS 断线                 -> 广播断线帧, 重连后发 gap 事件(空窗区间), sim 拉 1m K 线补触发限价/强平
 
 wiib-sim / wiib-agent（消费进程）  从 Redis 消费 feed 写入的行情
   sim:   撮合/强平 + 预测回合消费 + ws:broadcast:* 中继给前端
@@ -111,7 +111,7 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 ├── wiib-feed/                        # ① 数据流上游进程（:8081）
 │   ├── stream/                       # 11 个 StreamHandler（现货 / 合约 markPrice / 合约 miniTicker
 │   │                                 #   / 深度 / 成交 / 强平 / crypto·bStock·商品各周期 K 线）
-│   │                                 # + RestFallbackPoller 断线兜底 + MatchPricePublisher
+│   │                                 # + GapTracker 断连空窗记录 + MatchPricePublisher
 │   └── BinanceWsClient / PolymarketWsClient / KlineStreamCache / monitor
 │                                     # / health(内部流健康+重试)
 │

@@ -126,7 +126,6 @@ binance:
     - DOGEUSDT
     - SOLUSDT
     - XRPUSDT
-  fallback-poll-interval: 5000
 
 # 策略实盘执行下单走 testnet(行情仍主网)；key 不填则 testnet 轨不可用，sim 轨不受影响
 binance-testnet:

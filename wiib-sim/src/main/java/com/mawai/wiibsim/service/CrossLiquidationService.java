@@ -1,6 +1,9 @@
 package com.mawai.wiibsim.service;
 
+import com.mawai.wiibcommon.market.KlineBar;
+
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * 全仓强平引擎。
@@ -11,7 +14,7 @@ import java.math.BigDecimal;
  *
  * <p>插针语义：tick 价作为"钉住价"随触发一路传到判定与结算——哪怕缓存价下一秒回落，
  * 触发那一刻的插针价仍是该 symbol 的估值与强平结算价（其余 symbol 照缓存），对齐
- * "mark 触线即爆"。宕机/断连空窗由 liq-recover 的高低两端补触发 + 30s 兜底轮询覆盖。</p>
+ * "mark 触线即爆"。宕机/断连空窗由 {@link #recoverGap} 的区间高低两端补触发 + 30s 兜底轮询覆盖。</p>
  *
  * <p>爆仓 = 全组爆：equity ≤ Σ维持保证金时，该用户所有全仓仓位按 mark 价一次性强平，
  * 盈亏净额直接结算进余额钱包（可为负）；结算后余额 &lt; 0 即穿仓 → 立即破产
@@ -21,6 +24,12 @@ public interface CrossLiquidationService {
 
     /** markprice tick：对该 symbol 上持有全仓仓位且出了安全带的用户触发精查（带内直接跳过） */
     void onPriceTick(String symbol, BigDecimal markPrice);
+
+    /**
+     * 空窗补漏：按空窗期 mark 1m K 线的区间低点、高点各精查一次（插针藏在两端）。
+     * since 取该用户在该 symbol 上全仓持仓的最晚创建时间——开仓之前的行情不算数。
+     */
+    void recoverGap(String symbol, List<KlineBar> markBars);
 
     /** 单用户健康检查，无钉住价（兜底轮询/资金费后直调用这个口） */
     void checkUser(Long userId);

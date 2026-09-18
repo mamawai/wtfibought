@@ -3,22 +3,18 @@ package com.mawai.wiibfeed.stream;
 import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.config.BinanceProperties;
-import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibfeed.WsConnection;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.net.http.WebSocket;
-import java.util.concurrent.ScheduledExecutorService;
 
 /**
  * 现货 miniTicker 流（重 handler）：解析最新价写 Redis/缓存/广播 + 发撮合事件；
- * 断线时启 REST 轮询兜底，重连后用 REST 拉区间高低价补漏离线期错过的限价单。
+ * 每帧记最后一帧时间，连上时发空窗事件让 sim 补漏，断开时给前端广播断线帧。
  */
-@Slf4j
 @Component
 @RequiredArgsConstructor
 public class SpotStreamHandler implements StreamHandler {
@@ -29,19 +25,18 @@ public class SpotStreamHandler implements StreamHandler {
     private final StringRedisTemplate redisTemplate;
     private final CacheService cacheService;
     private final MarketBroadcaster broadcastService;
-    private final BinanceRestClient restClient;
     private final MatchPricePublisher matchPricePublisher;
 
     private WsConnection conn;
-    private RestFallbackPoller fallback;
+    private GapTracker tracker;
 
     @Override public String name() { return "Spot"; }
     @Override public long maxIdleSeconds() { return 90; }
 
     @Override
-    public void bind(WsConnection conn, ScheduledExecutorService scheduler) {
+    public void bind(WsConnection conn) {
         this.conn = conn;
-        this.fallback = new RestFallbackPoller(scheduler, props.getFallbackPollInterval(), "", this::pollOnce);
+        this.tracker = new GapTracker(name(), "spot", redisTemplate, matchPricePublisher);
     }
 
     private boolean isConnected() {
@@ -60,18 +55,24 @@ public class SpotStreamHandler implements StreamHandler {
 
     @Override
     public void onConnected(WebSocket ws) {
-        fallback.stop();
-        // 重连后用REST拉最近高低价，补漏离线期间错过的限价单
-        Thread.startVirtualThread(this::recoverMissedLimitOrders);
+        tracker.publishGap();
     }
 
+    /** 断线帧带缓存价（前端现货分支要 price 字段），价缺就跳过该 symbol */
     @Override
     public void onDisconnected() {
-        fallback.start();
+        long ts = System.currentTimeMillis();
+        for (String symbol : props.getAllSpotSymbols()) {
+            BigDecimal price = cacheService.getCryptoPrice(symbol);
+            if (price == null) continue;
+            broadcastService.broadcastCryptoQuote(symbol,
+                    "{\"price\":\"" + price.toPlainString() + "\",\"ts\":" + ts + ",\"ws\":false}");
+        }
     }
 
     @Override
     public void onMessage(String raw) {
+        tracker.touch();
         // 手动indexOf解析避免Jackson反序列化开销
         int sIdx = raw.indexOf("\"s\":\"");
         if (sIdx < 0) return;
@@ -94,40 +95,5 @@ public class SpotStreamHandler implements StreamHandler {
 
         // 价格事件发 Redis，sim 侧 MatchPriceConsumer 订阅后触发现货限价单撮合（解耦：不再进程内直调）
         matchPricePublisher.publish("{\"symbol\":\"" + symbol + "\",\"type\":\"spot\",\"price\":\"" + price + "\"}");
-    }
-
-    // ── REST兜底：WS断开期间切REST轮询保证价格不中断 ──
-
-    private void pollOnce() {
-        for (String symbol : props.getAllSpotSymbols()) {
-            try {
-                String json = restClient.getTickerPrice(symbol);
-                updatePriceFromJson(symbol, json);
-            } catch (Exception e) {
-                log.warn("REST轮询{}失败: {}", symbol, e.getMessage());
-            }
-        }
-    }
-
-    private void updatePriceFromJson(String symbol, String json) {
-        int idx = json.indexOf("\"price\":\"");
-        if (idx < 0) return;
-        String price = StreamParse.extractQuoted(json, idx + 9);
-        onMessage("{\"s\":\"" + symbol + "\",\"c\":\"" + price + "\"}");
-    }
-
-    private void recoverMissedLimitOrders() {
-        try {
-            for (String symbol : props.getAllSpotSymbols()) {
-                BigDecimal[] lowHigh = restClient.getRecentHighLow(symbol);
-                if (lowHigh != null) {
-                    // 发恢复事件，sim 侧按区间高低价补触发限价单（解耦：撮合不在 feed）
-                    matchPricePublisher.publish("{\"symbol\":\"" + symbol + "\",\"type\":\"spot-recover\",\"low\":\""
-                            + lowHigh[0].toPlainString() + "\",\"high\":\"" + lowHigh[1].toPlainString() + "\"}");
-                }
-            }
-        } catch (Exception e) {
-            log.error("恢复现货限价单失败", e);
-        }
     }
 }

@@ -24,7 +24,6 @@ public class BinanceProperties {
     private List<String> tradfiSymbols;
     /** 纯合约加密币（Binance 主站只有永续没现货，如 HYPE）：流处理同大宗商品，盈亏仍归 crypto 桶。 */
     private List<String> cryptoFuturesSymbols;
-    private long fallbackPollInterval;
 
     /** 现货订阅全集 = crypto symbols ∪ bStock stockSymbols。Spot 价流与现货 K线用；两组互斥，直接拼接不去重。 */
     public List<String> getAllSpotSymbols() {
