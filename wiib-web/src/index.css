@@ -84,7 +84,11 @@ html.dark {
 @layer base {
   * {
     border-color: var(--color-border);
+    /* 全站不显示滚动条，滚轮/触控板/触屏照常滚 */
+    scrollbar-width: none;
   }
+  /* 老版 Safari 不认 scrollbar-width，只认这个 */
+  *::-webkit-scrollbar { display: none; }
 }
 
 html {

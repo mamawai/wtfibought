@@ -71,7 +71,8 @@ export function TickerStrip() {
   const cells = (prefix: string) => quotes.map(q => <TickerCell key={`${prefix}-${q.key}`} q={q} onGo={navigate} />);
 
   return (
-    <div className="wrap hidden md:block">
+    // w-full 同页脚：外层 flex-col，不写会按 max-content 撑到 1800，窄屏出横向滚动条
+    <div className="wrap w-full hidden md:block">
       <div className="ticker num">
         <div className="track">
           <span className="set">{cells('a')}</span>

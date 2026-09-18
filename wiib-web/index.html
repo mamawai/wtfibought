@@ -13,11 +13,10 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="WIIB" />
     <title>WhatIfIBought</title>
-    <!-- ===== 开屏动画（噪点场 + 先写w后画圈两笔）=====
+    <!-- ===== 开屏（全宽墨线当进度，完成后沿线上下裂开）=====
          整段必须内联：它要在 bundle 之前就铺满屏幕，晚一步就是白屏。
          配色全部硬编码——index.css 的 token 跟 bundle 一起到，这时候还不存在，
          取值须同 index.css（改主题色记得同步这里） -->
-    <link rel="preload" as="image" href="/logo.png" />
     <style>
       /* 连第一帧都不能白：html 背景先于 splash 元素解析 */
       html { background: #fafaf7 }
@@ -25,45 +24,44 @@
 
       #splash {
         position: fixed; inset: 0; z-index: 9999;
-        --c-bg: #fafaf7; --c-cell: #e7e7e2;
-        --c-pri: #f25f0a; --c-mut: #7a7e88;
+        --bg: #fafaf7; --fg: #121316; --pri: #f25f0a;
       }
-      html.dark #splash {
-        --c-bg: #0f1012; --c-cell: #26282d;
-        --c-pri: #f97316; --c-mut: #8b8e97;
-      }
-      /* 退场：整块淡出，一开始就放行点击 */
-      #splash.sp-out { pointer-events: none; opacity: 0; transition: opacity .5s ease }
+      html.dark #splash { --bg: #0f1012; --fg: #f1f1ec; --pri: #f97316 }
+      #splash.out { pointer-events: none }
 
-      /* 一张 canvas 全包：不透明底色遮页面 + 背景噪点 + 标志，同一介质 */
-      #sp-cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block }
+      /* 上下两块底色，接缝在 56% 处，那根线就画在接缝上 */
+      .sp-top, .sp-bot { position: absolute; left: 0; right: 0; background: var(--bg) }
+      .sp-top { top: 0; height: 56%; z-index: 1 }
+      .sp-bot { top: calc(56% - 1px); bottom: 0 }
 
-      /* 标签的淡入由 JS 在画完后驱动，位置也由 JS 定（要贴着标志下沿） */
-      .sp-lbl {
-        position: absolute; left: 50%; translate: -50%; white-space: nowrap;
-        font-family: system-ui, "Microsoft YaHei", sans-serif;
-        font-size: 10px; letter-spacing: .12em; font-weight: 700;
-        color: var(--c-mut); opacity: 0;
+      /* logo 窗口下沿贴着线，logo 从线后面升上来（onload 才挂 .in，免得图没到过渡先播完） */
+      .sp-mark { position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); overflow: hidden; padding-bottom: 30px }
+      .sp-mark img { display: block; width: min(220px, 46vw); height: auto; transform: translateY(calc(100% + 30px)) }
+      .sp-mark img.in { transform: none; transition: transform .8s cubic-bezier(.16, 1, .3, 1) .15s }
+
+      /* 全宽墨线=进度，线头带橙方块：先慢慢走到 86%，放行时补满 */
+      .sp-rule { position: absolute; left: 0; right: 0; bottom: 0; height: 2px }
+      .sp-rule i { position: absolute; inset: 0; background: var(--fg); transform: translateX(-100%) }
+      .sp-rule i::after { content: ""; position: absolute; right: -4px; top: -3px; width: 8px; height: 8px; background: var(--pri) }
+      #splash.go .sp-rule i { transform: translateX(-14%); transition: transform 4.5s cubic-bezier(.12, .7, .2, 1) }
+      #splash.done .sp-rule i { transform: none; transition: transform .32s cubic-bezier(.77, 0, .175, 1) }
+
+      /* 退场：沿线上下裂开 */
+      #splash.out .sp-top { transform: translateY(-100%); transition: transform .75s cubic-bezier(.77, 0, .175, 1) }
+      #splash.out .sp-bot { transform: translateY(100%); transition: transform .75s cubic-bezier(.77, 0, .175, 1) }
+
+      /* 减弱动效：logo 不升、退场不裂，直接淡出 */
+      @media (prefers-reduced-motion: reduce) {
+        .sp-mark img { transform: none }
+        #splash.out { opacity: 0; transition: opacity .4s ease }
+        #splash.out .sp-top, #splash.out .sp-bot { transform: none }
       }
-      .sp-lbl b { color: var(--c-pri) }
     </style>
     <script>
       // 阻塞式执行：必须赶在首帧之前定主题，否则暗色用户每次冷启动都要闪一下白
       (function() {
         var dark = localStorage.getItem('theme') === 'dark';
         if (dark) document.documentElement.classList.add('dark');
-
-        // 语言也得在这儿定：开屏跑在 bundle 之前，i18n 还不存在，但开屏上有话要说。
-        // 判定复刻 src/i18n/index.ts 那套（localStorage 的 wiib-lang 优先，没选过就看
-        // 浏览器语言、zh-* 算中文其余算英文），两处必须同规则，否则开屏与应用会说两种语言
-        var lang = localStorage.getItem('wiib-lang');
-        if (lang !== 'zh' && lang !== 'en') {
-          var nav = (navigator.languages && navigator.languages[0]) || navigator.language || '';
-          lang = nav.toLowerCase().indexOf('zh') === 0 ? 'zh' : 'en';
-        }
-        window.__wiibLang = lang;
-        // 标签页语言从第一帧就对：浏览器断词与读屏软件都认它（bundle 起来后 i18n 会接着维护）
-        document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
 
         // 是否从桌面图标启动：安卓认 display-mode，iOS 只认 navigator.standalone。
         // 打成 html.pwa 供 CSS 用（不走 @media display-mode，iOS 支持度没把握）
@@ -80,351 +78,35 @@
     </script>
   </head>
   <body>
-    <!-- 开屏放在 #root 前：解析到就上屏，不等 bundle。画面交给紧随其后的内联脚本绘制 -->
+    <!-- 开屏放在 #root 前：解析到就上屏，不等 bundle -->
     <div id="splash" aria-hidden="true">
-      <canvas id="sp-cv"></canvas>
-      <!-- 后半句由下面的脚本按语言填（标签 opacity:0 起手、画完才淡入，填之前看不见） -->
-      <div class="sp-lbl">GRID ONLINE <b>·</b> <span id="sp-tail"></span></div>
+      <div class="sp-top">
+        <div class="sp-mark"><img src="/logo.png" alt="" fetchpriority="high" onload="this.classList.add('in')" /></div>
+        <div class="sp-rule"><i></i></div>
+      </div>
+      <div class="sp-bot"></div>
     </div>
     <script>
       (function () {
         var el = document.getElementById('splash');
-        var cv = document.getElementById('sp-cv');
-        var ctx = cv && cv.getContext ? cv.getContext('2d') : null;
-        var lbl = el.querySelector('.sp-lbl');
-        el.querySelector('#sp-tail').textContent =
-          window.__wiibLang === 'zh' ? '数据接入中' : 'LINKING FEEDS';
-        if (!ctx) {
-          // canvas 拿不到就别演了：定个短时限撤掉遮罩，绝不能挡住应用
-          window.__wiibSplashDone = function () {};
-          setTimeout(function () { el.remove(); }, 400);
-          return;
-        }
+        void el.offsetWidth;           // 先把线的起点落定，下一句挂 .go 才有过渡可播
+        el.classList.add('go');
 
-        // ===== 笔画数据：离线从 logo.png 的 alpha 抽中轴线得来，坐标在 505×265 的标志像素空间 =====
-        // left=w 主体，right=圈（含斜杠上段），blade=b 竖杆。编排是「先 w 后圈」两笔：
-        // 第一笔从 w 断头起笔绕完 w、沿斜杠一路写到顶端交接点；第二笔从交接点顺时针
-        // 绕完圈收在圈断头；竖杆在圈笔经过杆顶时向下分叉收在底钩（rsp/fork 字段已不用）。
-        // 画法是「反向遮罩」：笔迹只当遮罩，最终像素取自真 logo.png——画出来的是真标志，不是重绘的近似形。
-        var DATA = {"w":505,"h":265,"pen":80.0,"fork":0.307,"lsp":0.833,"rsp":0.832,"ew":58.0,"e":"189,213 198,213 207,209 214,205 220,198 225,191 229,183 234,175 238,167 241,159 245,151 248,142 252,134 255,126 259,118 263,109 267,101 271,93 276,86","left":"218,122 217,117 217,112 217,107 217,102 217,97 216,92 216,87 216,82 215,77 215,72 212,68 209,64 206,61 202,57 198,54 194,51 190,47 186,45 182,42 178,40 173,37 169,35 164,34 159,32 154,31 149,31 144,30 139,29 134,29 129,28 125,29 120,29 115,30 110,31 105,32 100,33 95,34 90,36 86,38 81,40 77,43 73,45 69,48 65,51 61,55 58,58 54,62 51,66 48,70 45,74 42,78 40,83 38,87 36,92 34,96 33,101 32,106 31,111 30,116 29,121 29,126 28,131 28,136 29,141 30,146 30,151 31,156 32,160 33,165 35,170 37,175 38,179 41,184 43,188 45,193 48,197 51,201 54,205 58,208 63,210 68,211 72,213 77,213 82,211 87,210 91,208 96,205 99,201 101,197 103,192 106,188 108,183 110,179 113,175 116,171 120,168 124,165 129,163 133,162 138,162 143,165 147,167 152,169 155,173 157,177 160,182 162,186 164,191 166,195 169,199 172,204 175,207 180,209 184,211 189,213 194,214 199,212 203,211 208,209 213,207 216,203 219,199 222,195 225,191 227,187 230,182 232,178 235,174 237,169 239,165 241,160 243,156","right":"285,151 285,156 285,161 286,166 286,171 286,176 287,181 287,186 288,191 288,196 291,200 295,204 298,207 302,210 306,214 310,217 314,219 318,222 323,224 327,227 332,229 337,230 341,231 346,233 351,233 356,234 361,235 366,235 371,236 376,236 381,235 386,234 391,234 396,233 401,232 405,230 410,229 415,227 419,225 424,223 428,220 431,216 433,211 435,207 437,202 439,198 444,195 448,193 452,190 455,186 459,182 462,178 464,174 467,170 469,165 470,160 472,156 472,151 473,146 474,141 474,136 474,131 474,126 473,121 472,116 472,111 471,106 470,101 469,96 467,92 465,87 463,82 461,78 458,74 455,70 452,66 449,62 445,58 441,55 437,52 433,50 429,47 424,46 419,44 414,43 409,42 405,41 400,40 395,39 390,38 385,38 380,37 375,36 370,36 365,37 360,38 356,40 351,42 347,45 343,48 338,50 333,51 328,52 324,53 319,55 314,56 309,58 304,59 300,61 295,62 291,65 288,69 285,73 282,77 279,81 276,86 274,90 271,94 268,98 266,103 264,107 262,112 260,116 258,121 256,125 254,130 252,135 250,139 248,144 246,148 244,153 243,156","blade":"427,217 424,214 420,210 417,207 413,203 409,200 411,196 415,193 418,189 416,185 411,185 406,185 401,185 396,185 391,185 386,185 381,183 377,182 372,180 368,177 364,174 360,171 357,167 353,164 350,159 348,155 345,151 344,146 342,141 341,136 340,132 339,127 338,122 338,117 337,112 337,107 337,102 337,97 337,92 337,87 337,82 337,77 338,72 339,67 340,62 341,57 340,52","bx":310,"by":49,"bw":128,"bh":172,"bm":"iVBORw0KGgoAAAANSUhEUgAAAIAAAACsCAYAAACzUKSGAAAC1ElEQVR42u3dS1bDMBAEQI8e97/ysGWTPAhxPFZXb9jGUrklf0iO49r0IZdmDZh8CC5MDTvzy5Ts3wBtSchtgL5JQwEwcMMHw2abwFcAWSJu2gC90QYWgGHX+iAMHrwOuKQFYNglHQgDNoFXbtZsFC8GMGECILgIwKSBh+DD62W73M1tgOlnmzY4EcBdBheCm98KhmAggIYgF0BrglwAOwwgBC8C2GngGgAD1gAYqAbAAAEQPvkNgEFpAASA8HW/Acje9BUAJj8aQJv8XAAmPxiAydcAJj8VgFu9GsDZD4DJB8DkAyAAOPsBEACc/QBIAIB29msAAcDZD4AAIAAIANZ/AAQAAUD9AyAACAACgAAgAAgALgEBEAAEAAFAABAABAABQAAQAAQAAUAAEAAO3/gNgAAgowF4eUIDCAACgADgUhAASQTgSkADCAD2AQAIAFogFICNoAYQACwDAEgugNICGkAA0ALJAFwOagAtAIBEAygtoAEsBQBIMoDSAhrAUhAOoCDQAJoAAAiSARQEGkAThAMoCDSAJggHUBDsd0waIA9B//y7/BbPnwaud4OsATLa4CHeUonH7r9O1mccAADzIfTZHxyCmRD6kx8YgjkQXpmL+jJXp09GTd6QlmvkW7XDu8e6yo2SbIzuAxzeCfRr3QBAAAAEAEAAgACgBZLuR6zwJ2UawONSADwzD74dvbw4oQG8PQMABABAEPk4enmHTgN4kRIACFLfRlrepNUAXqcOfhdxDfuAIHgcDMEnx3T5xwoNMFktCN4IguDM8Vs3OggQnF2H/0R68/yuGx+YRrC+aoT/zm35/p7sE3tteOCWBpdY8a1QAGRjAACIzE3gVBR1ATYAwlvmV3PrW8LClxUAwvcSAIRvHgEIv3T0DSH7Tn4D4E6pAwxvh9IAfixCA4Q3QmkAj6I1gFvCAKSCAACIx/MMwP4oNEAwDPPrp22f5xvbPngx44FR7QAAAABJRU5ErkJggg=="};
-        function parse(s) {
-          var a = s.split(' '), r = [], i, p;
-          for (i = 0; i < a.length; i++) { p = a[i].split(','); r.push([+p[0], +p[1]]); }
-          return r;
-        }
-        // Catmull-Rom 过点样条 4 倍重采样：折线转弯变圆，笔头推进连续
-        function smooth(pts, mult) {
-          var out = [], n = pts.length;
-          function P(i) { return pts[Math.max(0, Math.min(n - 1, i))]; }
-          for (var i = 0; i < n - 1; i++) {
-            var p0 = P(i - 1), p1 = P(i), p2 = P(i + 1), p3 = P(i + 2);
-            for (var j = 0; j < mult; j++) {
-              var t = j / mult, t2 = t * t, t3 = t2 * t;
-              out.push([
-                0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
-                0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
-              ]);
-            }
-          }
-          out.push(pts[n - 1]);
-          return out;
-        }
-        function pspacing(pts) {
-          var s = 0;
-          for (var i = 1; i < pts.length; i++) s += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-          return s / (pts.length - 1);
-        }
-        function cut(a, f) {
-          var k = Math.max(0, Math.round(f * (a.length - 1)));
-          return [a.slice(0, Math.max(2, k + 1)), a.slice(k)];
-        }
-        function nearestIdx(pts, x, y) {
-          var bi = 0, bd = Infinity, i, d;
-          for (i = 0; i < pts.length; i++) {
-            d = (pts[i][0] - x) * (pts[i][0] - x) + (pts[i][1] - y) * (pts[i][1] - y);
-            if (d < bd) { bd = d; bi = i; }
-          }
-          return bi;
-        }
-
-        var LEFT_R = parse(DATA.left), RIGHT_R = parse(DATA.right), BLADE_R = parse(DATA.blade);
-        var EZ = parse(DATA.e);                       // 禁区中线：交叉附近那段斜杠
-        var PEN = DATA.pen;
-
-        // 编排装配：第一笔 W = w 主体接斜杠上段（RIGHT 尾段反转），第二笔 RING = 圈（反转裁掉斜杠段）。
-        // 按「进入禁区」把 W 切两截：前半截禁止画进斜杠带（笔帽半径 40，断头离斜杠中线只有 36，
-        // 不挡就会横向啃进斜杠，一落笔先亮出中间），后半截笔已走在斜杠上，放开画。
-        // 圈同理切出尾段：尾部被抠的边等圈笔进尾段再补回收笔
-        var N = (function () {
-          var HAND = nearestIdx(RIGHT_R, 291, 65);                        // 斜杠顶端交接点
-          var wRaw = LEFT_R.concat(RIGHT_R.slice(HAND).reverse().slice(1));
-          var W = smooth(wRaw, 4);
-          var RING = smooth(RIGHT_R.slice(0, HAND + 1).reverse(), 4);
-          var BLADE = smooth(BLADE_R.slice().reverse(), 4);               // 反转：从杆顶向下写到底钩
-          var total = W.length + RING.length;                             // 等间距重采样，点数比 = 长度比 = 同笔速
-          var wEnd = W.length / total;                                    // w 笔占整段进度的比例
-          var lspW = DATA.lsp * (LEFT_R.length - 1) / (wRaw.length - 1);  // w 笔进斜杠的分段位置
-          var WC = cut(W, lspW);
-          var forkIdx = nearestIdx(RING, 340, 52);                        // 圈笔过杆顶处竖杆分叉
-          var TAIL = 11;                                                  // RIGHT 头部这几个点就是圈尾中轴
-          var rspN = nearestIdx(RING, RIGHT_R[TAIL - 1][0], RIGHT_R[TAIL - 1][1]) / (RING.length - 1);
-          var RC = cut(RING, rspN);
-          return { W1: WC[0], W2: WC[1], RING1: RC[0], RING2: RC[1], BLADE: BLADE,
-                   wEnd: wEnd, lspW: lspW, rspN: rspN,
-                   forkAt: wEnd + (1 - wEnd) * forkIdx / (RING.length - 1),
-                   SPAN_B: BLADE.length / total, sp: pspacing(W) };
-        })();
-
-        // 圈尾归属遮罩：离线从 logo alpha 洪泛抽出、按 W 笔可及范围裁剪的二值掩码（已外扩1px）。
-        // 圈尾与斜杠间隙仅 ~15px 小于笔半径，几何禁区带分不开，只能按像素归属切（同 bm 的道理）
-        var RT = { x: 246, y: 108, w: 78, h: 114, m: "iVBORw0KGgoAAAANSUhEUgAAAE4AAAByCAYAAAD9EufLAAACxElEQVR4AezXgU7DMAwE0ML//zPsBNOirVvcS+I4zk2yKGud1K9XIb4PfSgBwVFsxyE4wZECZJsSJzhSgGxT4gRHCpBtSpzgSAGyTYkTHClAtilx/eHIFTdpU+LIBy04wZECZJsSJzhSgGxT4gRHCpBtSpzgSAGyTYkTHClAtilxrnDkZpnalDjyaQpOcKQA2abECY4UINuUOMGRAmSbEic4UoBsU+IERwqQbUpcFDjyPl7afv4/LyeCfBEycTC7+5TH9+8i/AwJ9wwTES8cXESk5weJ38PB4abOKhroMnBnmDO/CwVXS1XtvCdkKDjPwVv3CgMXKU0W1DBwlpv9un0s13lcsxScB4h1jxBwltf0FrYv61Ae14WA8xi09x6ecKf3bknbaePkL6fDWeaP9prinpeAw41Gq6lwltc0YtrwEKfC4QZWrWlwK6cND3saHDZfuabArZ42PPApcNh49RIc+QTd4TK8prB2h8OmGcoVzpK2VVBd4d6jPM5E/U/hcYd/R25wmdIGOjc4bFarVdKGOVzgsqXNDQ4b1WqltGGW4YnLmDYXOGxSq9XShnmGJw6bZKyhcFlfUwRhKBw2qNWKrylmGgaXOW1D4bB4rVZNG+YakrjsaRsGh4VrZU5bbaFJ57snboe04Vl1h8OitVo9bZivK9wuaesOhwV3qW6Js6Ytw2uKcHSDw2I7VRe43dKGgHSBw0K7VTPcjmlDSJrhsEitsvxBKOdsgrOmrdwwy3ETnAUhY9owNw1nSdtoNAwwqyg4C9qsgbz2peAsN5c5bZifgsuOAphaUXBY9BPep3PozVA03Lvhd0DD7E1wuyAB6rma4LBYiVce41zmaoYDDsBQON6lusDtglXOKbhS48Kx4C5glZcKrtS4cJwV7gIBd6ngOLdDcIIjBcg2JU5wpADZpsQJjhQg25Q4wZECZNsvAAAA//+J0+qtAAAABklEQVQDANiyfOXAsvBrAAAAAElFTkSuQmCC" };
-
-        var logo = new Image(), bmask = new Image(), rmask = new Image(),
-            loaded = 0, ready = false, failed = false, drawT0 = 0;
-        var REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
-        var DRAW_START = 200, DRAW_LEN = 2100;        // 毫秒：等噪点铺开一瞬再落笔 / 两笔画完用时
-        var t0 = performance.now();
-        function onload() {
-          if (++loaded < 3) return;
-          ready = true;
-          rasterMask();
-          drawT0 = Math.max(t0 + DRAW_START, performance.now());
-          if (pending) finish();                      // 应用先就绪、图后到：现在才算得准 hold
-        }
-        logo.onload = bmask.onload = rmask.onload = onload;
-        logo.onerror = bmask.onerror = rmask.onerror = function () {
-          failed = true;                              // 图挂了就只留噪点，尽快放行
-          if (pending) finish();
-        };
-        logo.src = '/logo.png';
-        // 竖杆归属遮罩：环和竖杆的像素互相交错（环侧有像素离竖杆中线只有 13px），
-        // 统一宽度的禁区分不开，只能按像素归属精确切。已二值化——半透明边会抠不干净留淡痕
-        bmask.src = 'data:image/png;base64,' + DATA.bm;
-        rmask.src = 'data:image/png;base64,' + RT.m;
-
-        var vw, vh, C, cols, rows, dpr, mc, mx, bc, bx, bmC, bmx, rtC, rtx, LW, LH, LX, LY, SC;
-        function layout() {
-          dpr = Math.min(devicePixelRatio || 1, 2);
-          vw = innerWidth; vh = innerHeight;
-          cv.width = vw * dpr; cv.height = vh * dpr;
-          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-          C = vw >= 768 ? 9 : 6;                      // 大像素边长，768 对齐 index.css 的 md 断点
-          cols = Math.ceil(vw / C); rows = Math.ceil(vh / C);
-          LW = vw >= 768 ? Math.min(vw * 0.42, 460) : vw * 0.72;
-          SC = LW / DATA.w; LH = DATA.h * SC;
-          LX = (vw - LW) / 2; LY = (vh - LH) / 2 - 14;
-          if (!mc) {
-            mc = document.createElement('canvas'); mx = mc.getContext('2d');
-            bc = document.createElement('canvas'); bx = bc.getContext('2d');
-            bmC = document.createElement('canvas'); bmx = bmC.getContext('2d');
-            rtC = document.createElement('canvas'); rtx = rtC.getContext('2d');
-          }
-          // 竖杆层/两张遮罩缓存都与主层同尺寸同变换：合成全程 1:1，无重采样错位
-          mc.width = Math.ceil(LW * dpr); mc.height = Math.ceil(LH * dpr);
-          bc.width = mc.width; bc.height = mc.height;
-          bmC.width = mc.width; bmC.height = mc.height;
-          rtC.width = mc.width; rtC.height = mc.height;
-          rasterMask();
-          lbl.style.top = (LY + LH + 26) + 'px';
-        }
-
-        // 归属遮罩各光栅化一次：抠除与补回共用同一份 alpha，(1-a)+a 精确归一（采样两次边缘对不上就是裂纹）
-        function rasterMask() {
-          if (!bmC) return;
-          if (bmask.naturalWidth) {
-            bmx.setTransform(1, 0, 0, 1, 0, 0);
-            bmx.clearRect(0, 0, bmC.width, bmC.height);
-            bmx.setTransform(SC * dpr, 0, 0, SC * dpr, 0, 0);
-            bmx.drawImage(bmask, DATA.bx, DATA.by, DATA.bw, DATA.bh);
-          }
-          if (rmask.naturalWidth) {
-            rtx.setTransform(1, 0, 0, 1, 0, 0);
-            rtx.clearRect(0, 0, rtC.width, rtC.height);
-            rtx.setTransform(SC * dpr, 0, 0, SC * dpr, 0, 0);
-            rtx.drawImage(rmask, RT.x, RT.y, RT.w, RT.h);
-          }
-        }
-
-        // ---- 背景噪点场 ----
-        function hs(x, y) { var s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
-        function smo(t) { return t * t * (3 - 2 * t); }
-        function vn(x, y) {
-          var xi = Math.floor(x), yi = Math.floor(y), xf = smo(x - xi), yf = smo(y - yi);
-          return (hs(xi, yi) * (1 - xf) + hs(xi + 1, yi) * xf) * (1 - yf)
-               + (hs(xi, yi + 1) * (1 - xf) + hs(xi + 1, yi + 1) * xf) * yf;
-        }
-        function noise(t, PRI, CELL) {
-          for (var ry = 0; ry < rows; ry++) {
-            var y = ry * C, nyc = y / vh - 0.5;
-            for (var rx = 0; rx < cols; rx++) {
-              var n = vn(rx * 0.10 - t * 0.55, ry * 0.16);
-              if (n < 0.60) continue;
-              var a = Math.min((n - 0.60) / 0.40, 1) * 0.85;
-              var cd = Math.hypot(rx * C / vw - 0.5, nyc);
-              a *= 0.22 + 0.78 * smo(Math.min(Math.max((cd - 0.16) / 0.30, 0), 1));
-              ctx.globalAlpha = a;
-              ctx.fillStyle = hs(rx * 3.7, ry * 9.1) > 0.995 ? PRI : CELL;   // 千分之五的橙点提神
-              ctx.fillRect(rx * C, y, C - 1, C - 1);                        // 留 1px 缝，颗粒清爽
-            }
-          }
-          ctx.globalAlpha = 1;
-        }
-
-        function at(pts, f) {
-          var n = pts.length - 1, i = Math.floor(Math.min(f, n)), r = Math.min(f, n) - i;
-          if (i >= n) return pts[n];
-          return [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * r, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * r];
-        }
-
-        // ---- 把折线画到 p（0~1）处 ----
-        // soft：笔迹实画到 f-δ，最前端换径向渐变软帽——揭示前沿像墨水洇进纸面；
-        // 画满（p>=1）收成实帽，保证最终帧完整盖住 logo
-        function stroke(g, pts, p, w, soft) {
-          if (p <= 0) return;
-          var n = pts.length - 1, f = Math.min(p, 1) * n;
-          var softOn = soft && p < 1;
-          var solidF = softOn ? f - Math.min(w * 0.35 / N.sp, f) : f;
-          if (solidF > 0.001) {
-            var i = Math.floor(solidF), r = solidF - i, k;
-            g.lineWidth = w; g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = '#000';
-            g.beginPath();
-            g.moveTo(pts[0][0], pts[0][1]);
-            for (k = 1; k <= Math.min(i, n); k++) g.lineTo(pts[k][0], pts[k][1]);
-            // 末点落在两个采样点中间，补一段到插值位置——否则笔迹是逐点跳不是连续推进
-            if (i < n) g.lineTo(pts[i][0] + (pts[i + 1][0] - pts[i][0]) * r, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * r);
-            g.stroke();
-          }
-          if (softOn) {
-            var tp = at(pts, f), R = w * 0.55;
-            var gr = g.createRadialGradient(tp[0], tp[1], 0, tp[0], tp[1], R);
-            gr.addColorStop(0, 'rgba(0,0,0,1)');
-            gr.addColorStop(0.5, 'rgba(0,0,0,.9)');
-            gr.addColorStop(1, 'rgba(0,0,0,0)');
-            g.fillStyle = gr;
-            g.beginPath(); g.arc(tp[0], tp[1], R, 0, 6.2832); g.fill();
-          }
-        }
-
-        function seg(p, f) { return f <= 0 ? 1 : Math.min(p / f, 1); }
-
-        // 抠两块禁区：交叉附近那段斜杠带（平头收口，不顺中线两端多啃）+ 竖杆的全部像素
-        function eraseZones() {
-          var i;
-          mx.globalCompositeOperation = 'destination-out';
-          mx.lineWidth = DATA.ew; mx.lineCap = 'butt'; mx.lineJoin = 'round'; mx.strokeStyle = '#000';
-          mx.beginPath();
-          mx.moveTo(EZ[0][0], EZ[0][1]);
-          for (i = 1; i < EZ.length; i++) mx.lineTo(EZ[i][0], EZ[i][1]);
-          mx.stroke();
-          mx.setTransform(1, 0, 0, 1, 0, 0);
-          mx.drawImage(bmC, 0, 0);
-          mx.setTransform(SC * dpr, 0, 0, SC * dpr, 0, 0);
-        }
-
-        // 竖杆单独一层：笔迹被自己的遮罩裁一次，不糊到环上。
-        // 笔加宽 20%——竖杆最外侧像素离中线 39px，笔半径 40 刚好压线，遮罩又外扩 1px，
-        // 不加宽会沿边留一道没盖到的白丝；反正被遮罩裁着，宽点无害
-        function bladeLayer(pb) {
-          bx.setTransform(1, 0, 0, 1, 0, 0);
-          bx.clearRect(0, 0, bc.width, bc.height);
-          bx.setTransform(SC * dpr, 0, 0, SC * dpr, 0, 0);
-          stroke(bx, N.BLADE, pb, PEN * 1.2, true);
-          bx.setTransform(1, 0, 0, 1, 0, 0);
-          bx.globalCompositeOperation = 'destination-in';
-          bx.drawImage(bmC, 0, 0);
-          bx.globalCompositeOperation = 'source-over';
-          mx.setTransform(1, 0, 0, 1, 0, 0);
-          mx.drawImage(bc, 0, 0);
-          mx.setTransform(SC * dpr, 0, 0, SC * dpr, 0, 0);
-        }
-
-        function drawMark(prog) {
-          if (!logo.naturalWidth) return;
-          mx.setTransform(1, 0, 0, 1, 0, 0);
-          mx.clearRect(0, 0, mc.width, mc.height);
-          mx.setTransform(SC * dpr, 0, 0, SC * dpr, 0, 0);   // 换算到标志像素空间
-          var wp = Math.min(prog / N.wEnd, 1);               // 第一笔（w+斜杠）分段进度
-          var rp = (prog - N.wEnd) / (1 - N.wEnd);           // 第二笔（圈）分段进度
-          // ① w 前段：进斜杠之前；圈前段：起笔时斜杠已画完，无需禁区
-          stroke(mx, N.W1, seg(wp, N.lspW), PEN, true);
-          if (rp > 0) stroke(mx, N.RING1, seg(rp, N.rspN), PEN, true);
-          // ② 抠禁区。抠完一律加性叠加：遮罩边是半透明的，被抠那层剩 (1-a)、补回那层是 a，
-          //    source-over 叠出来只有 1-a+a**2（最低 0.75）——亮底看不出，暗底就是一条黑裂纹
-          eraseZones();
-          mx.globalCompositeOperation = 'lighter';
-          // ③ 竖杆：圈笔过杆顶后向下分叉，同笔速
-          var pb = (prog - N.forkAt) / N.SPAN_B;
-          if (pb > 0) bladeLayer(pb);
-          // ④ w 后段：笔已上斜杠，一路写到顶端交接点
-          if (wp > N.lspW) stroke(mx, N.W2, seg(wp - N.lspW, 1 - N.lspW), PEN, true);
-          // ⑤ 圈尾：w 笔的斜杠笔帽啃到的圈尾边逐像素抠掉（斜杠自身像素不碰），圈笔进尾段后补回收笔
-          mx.globalCompositeOperation = 'destination-out';
-          mx.setTransform(1, 0, 0, 1, 0, 0);
-          mx.drawImage(rtC, 0, 0);
-          mx.setTransform(SC * dpr, 0, 0, SC * dpr, 0, 0);
-          mx.globalCompositeOperation = 'lighter';
-          if (rp > N.rspN) stroke(mx, N.RING2, seg(rp - N.rspN, 1 - N.rspN), PEN, true);
-          // 遮罩里只留笔迹扫过的标志像素
-          mx.globalCompositeOperation = 'source-in';
-          mx.drawImage(logo, 0, 0, DATA.w, DATA.h);
-          mx.globalCompositeOperation = 'source-over';
-          mx.setTransform(1, 0, 0, 1, 0, 0);
-          ctx.drawImage(mc, LX, LY, LW, LH);
-        }
-
-        function ease(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
-
-        function render(now) {
-          var st = getComputedStyle(el);
-          var PRI = st.getPropertyValue('--c-pri').trim();
-          ctx.fillStyle = st.getPropertyValue('--c-bg').trim();
-          ctx.fillRect(0, 0, vw, vh);
-          noise(REDUCED ? 0 : (now - t0) / 1000, PRI, st.getPropertyValue('--c-cell').trim());
-          if (failed) return;                                  // 没有标志可画，留噪点就行
-          var prog = REDUCED ? 1 : (ready ? Math.min(Math.max((now - drawT0) / DRAW_LEN, 0), 1) : 0);
-          drawMark(ease(prog));
-          // 减弱动效没有"画完"时刻，标签跟定格帧一起亮
-          lbl.style.opacity = prog < 1 ? 0
-            : REDUCED ? (ready ? 1 : 0)
-            : Math.min((now - drawT0 - DRAW_LEN) / 400, 1);
-        }
-
-        // 主循环跟 rAF 原生 60fps：笔头推进的顺滑靠帧率扛（模块编译不在主线程抢饭）
-        var removed = false, frozen = false;
-        function frame(now) {
-          if (removed) return;
-          requestAnimationFrame(frame);
-          if (REDUCED && frozen) return;              // 减弱动效：定格帧已画上，退场靠 CSS 淡出
-          render(now);
-          // 图到齐的这一帧已把完整标志（或 failed 的纯噪点）画上，之后定格
-          if (REDUCED && (ready || failed)) frozen = true;
-        }
-        function onResize() { layout(); frozen = false; }
-        layout();
-        addEventListener('resize', onResize);
-        requestAnimationFrame(frame);
-
-        // 放行协议：应用就绪喊 __wiibSplashDone。等笔画完再站 0.35s（画到一半被撤掉更难看）；
-        // 图还没到就先记账、到了再收（hold 此刻才算得准，早算会切半），最长 6s 强制放行——
-        // 接口挂了也不能一直遮着页面
-        var fired = false, pending = false;
-        function finish(force) {
+        // 放行协议：应用就绪喊 __wiibSplashDone → 线补满 → 沿线裂开 → 移除。
+        // 至少亮 0.95s 等 logo 升完：缓存命中时应用秒就绪，不压一下就是一闪；
+        // 最长 6s 强制放行：接口挂了也不能一直遮着页面
+        var fired = false;
+        function finish() {
           if (fired) return;
-          if (!force && !ready && !failed) { pending = true; return; }
           fired = true;
-          var hold = (failed || !ready) ? 0
-            : Math.max(0, drawT0 + DRAW_LEN + 350 - performance.now());
           setTimeout(function () {
-            el.classList.add('sp-out');
-            setTimeout(function () {
-              removed = true;
-              removeEventListener('resize', onResize);
-              el.remove();
-            }, 700);
-          }, REDUCED ? Math.min(hold, 600) : hold);
+            el.classList.add('done');
+            setTimeout(function () { el.classList.add('out'); }, 320);
+            setTimeout(function () { el.remove(); }, 320 + 780);
+          }, Math.max(0, 950 - performance.now()));
         }
         window.__wiibSplashDone = finish;
-        setTimeout(function () { finish(true); }, 6000);
+        setTimeout(finish, 6000);
       })();
     </script>
     <div id="root"></div>
