@@ -123,7 +123,13 @@ public class WsConnection {
                     startIdleWatchdog();
                     log.info("{} WS已连接", name);
                     fireStatus(); // CONNECTED
-                    if (onConnected != null) onConnected.accept(ws);
+                    // 业务回调失败不算断线：走断线重连的话，这条好连接就泄漏了
+                    if (onConnected != null) {
+                        try { onConnected.accept(ws); }
+                        catch (Exception e) { log.warn("{} 连接回调失败: {}", name, e.getMessage()); }
+                    }
+                    // 回调跑完才开闸收帧：早来的帧 wsRef 还没就位会被丢、流就卡死；空窗也得先按断线前最后一帧算完
+                    ws.request(1);
                 }, scheduler)
                 .exceptionallyAsync(ex -> {
                     log.error("{} WS连接失败: {}", name, ex.getMessage());
@@ -140,7 +146,11 @@ public class WsConnection {
         connected.set(false);
         stopIdleWatchdog();
         fireStatus(); // RECONNECTING
-        if (onDisconnected != null) onDisconnected.run();
+        // 回调异常不能挡住下面的重连排期，否则这条流永久停住
+        if (onDisconnected != null) {
+            try { onDisconnected.run(); }
+            catch (Exception e) { log.warn("{} 断线回调失败: {}", name, e.getMessage()); }
+        }
         int attempt = reconnectAttempt.getAndIncrement();
         int delay = BACKOFF_SECONDS[Math.min(attempt, BACKOFF_SECONDS.length - 1)];
         log.info("{}秒后重连{} WS（第{}次）", delay, name, attempt + 1);
@@ -209,8 +219,8 @@ public class WsConnection {
 
         @Override
         public void onOpen(WebSocket webSocket) {
+            // 这里不 request：等 connect() 的连接回调跑完再开闸
             log.info("{} WS onOpen", name);
-            webSocket.request(1);
         }
 
         @Override
