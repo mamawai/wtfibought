@@ -15,6 +15,8 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
@@ -30,6 +32,9 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  */
 @Slf4j
 public class DeepAnalysisToolkit {
+
+    /** Bull∥Bear 并行用。不能用 supplyAsync 默认的 commonPool：容器里就一两个线程，被两路 LLM 占满会拖死 Redis 建连 */
+    private static final ExecutorService DEBATE_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 
     private final ChatModel model;
     private final DeepAnalysisService deepAnalysisService;
@@ -73,12 +78,12 @@ public class DeepAnalysisToolkit {
             String r = deepAnalysisService.bullArgue(model, normalized, newsContext, lang);
             progress(sessionId, prompts.get(lang, "chat.deepAnalysis.progress.bullDone"));
             return r;
-        });
+        }, DEBATE_EXECUTOR);
         CompletableFuture<String> bearF = CompletableFuture.supplyAsync(() -> {
             String r = deepAnalysisService.bearArgue(model, normalized, newsContext, lang);
             progress(sessionId, prompts.get(lang, "chat.deepAnalysis.progress.bearDone"));
             return r;
-        });
+        }, DEBATE_EXECUTOR);
         String bull = bullF.join();
         String bear = bearF.join();
         progress(sessionId, prompts.get(lang, "chat.deepAnalysis.progress.judging"));
