@@ -28,6 +28,11 @@
     "label": "Language",
     "switch": "Switch language"
   },
+  "datePicker": {
+    "placeholder": "Pick a date",
+    "prevMonth": "Previous month",
+    "nextMonth": "Next month"
+  },
   "time": {
     "justNow": "Just now",
     "minutesAgo_one": "{{count}} minute ago",

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Skeleton } from '../components/ui/skeleton';
+import { DatePicker } from '../components/ui/date-picker';
 import { CountryFlag } from '../components/CountryFlag';
 import { EconEventRow } from '../components/econ/EconEventRow';
 import { EconSeriesCharts } from '../components/econ/EconSeriesCharts';
@@ -53,7 +54,6 @@ export function EconCalendar() {
   const [week, setWeek] = useState(range.thisWeek);
   const [rows, setRows] = useState<EconCalendarEvent[] | null>(null);
   const [countries, setCountries] = useState<string[]>(() => JSON.parse(localStorage.getItem(COUNTRY_KEY) ?? '[]'));
-  const dateRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -64,9 +64,6 @@ export function EconCalendar() {
       .catch(() => { if (alive) setRows([]); });
     return () => { alive = false; };
   }, [week]);
-
-  // 日期框不受控，翻周后显示值同步成周一
-  useEffect(() => { dateRef.current!.value = week; }, [week]);
 
   // 换周先清成骨架；同一周不处理
   const changeWeek = (w: string) => { if (w === week) return; setRows(null); setWeek(w); };
@@ -96,16 +93,12 @@ export function EconCalendar() {
       <h1 className="text-[22px] font-extrabold tracking-[-.01em] mb-1.5">{t('title')}</h1>
       <p className="text-[13px] text-muted-foreground mb-6">{t('note')}</p>
 
-      {/* 周导航：前后一周 + 日期框跳到那天所在的周 + 回本周；日期框只认可翻范围内的日期 */}
+      {/* 周导航：前后一周 + 日期框跳到那天所在的周 + 回本周；日期框只能点可翻范围内的日期 */}
       <div className="flex flex-wrap items-center gap-1.5">
         <button type="button" className="btn xs disabled:opacity-40" disabled={week <= FIRST_WEEK}
                 onClick={() => shiftWeek(-1)}>{t('prevWeek')}</button>
-        <input ref={dateRef} type="date" defaultValue={week} min={MIN_DAY} max={range.maxDay}
-               onChange={e => {
-                 const v = e.target.value;
-                 if (v >= MIN_DAY && v <= range.maxDay) changeWeek(mondayOf(v));
-               }}
-               className="input num h-7 px-2 text-[13px]" />
+        <DatePicker value={week} min={MIN_DAY} max={range.maxDay} onChange={v => changeWeek(mondayOf(v))}
+                    className="input num h-7 px-2 text-[13px]" />
         <button type="button" className="btn xs disabled:opacity-40" disabled={week >= range.lastWeek}
                 onClick={() => shiftWeek(1)}>{t('nextWeek')}</button>
         {week !== range.thisWeek && (

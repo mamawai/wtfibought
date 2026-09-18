@@ -11,6 +11,7 @@ import { EquityChart } from '../EquityChart';
 import { LlmEndpointSelect } from '../LlmEndpointSelect';
 import { Markdown } from '../Markdown';
 import { useToast } from '../ui/use-toast';
+import { DatePicker } from '../ui/date-picker';
 import { getCoinPriceDecimals } from '../../lib/coinConfig';
 import { aggregateBars, barIndexAt, IV_OPTIONS, ivLabel } from '../../lib/klineAgg';
 import { cn, fmtDateTime, fmtNum } from '../../lib/utils';
@@ -452,8 +453,7 @@ export function ReplayPanel() {
           {!blind && (
             <div>
               <div className="microlabel uppercase mb-1">{t('replay.form.startDate')}</div>
-              <input type="date" value={customDate}
-                onChange={e => setCustomDate(e.target.value)}
+              <DatePicker value={customDate} onChange={setCustomDate}
                 className="h-9 px-2.5 rounded-md border border-border bg-input text-xs num" />
             </div>
           )}

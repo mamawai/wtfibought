@@ -28,6 +28,11 @@
     "label": "语言",
     "switch": "切换语言"
   },
+  "datePicker": {
+    "placeholder": "选择日期",
+    "prevMonth": "上个月",
+    "nextMonth": "下个月"
+  },
   "time": {
     "justNow": "刚刚",
     "minutesAgo_other": "{{count}}分钟前",

@@ -9,6 +9,7 @@ import { backtestApi } from '../../api';
 import { BacktestChart, type ChartTradeMark } from './BacktestChart';
 import { EquityChart } from '../EquityChart';
 import { useToast } from '../ui/use-toast';
+import { DatePicker } from '../ui/date-picker';
 import { getCoinPriceDecimals } from '../../lib/coinConfig';
 import { aggregateBars, barIndexAt, IV_OPTIONS, ivLabel } from '../../lib/klineAgg';
 import { STRATEGIES, strategyDisplay } from '../../lib/strategyCatalog';
@@ -468,14 +469,12 @@ export function StrategyBacktestPanel() {
           </div>
           <div>
             <div className="microlabel uppercase mb-1">{t('backtest.form.from')}</div>
-            <input type="date" value={fromDate} disabled={busy}
-              onChange={e => setFromDate(e.target.value)}
+            <DatePicker value={fromDate} disabled={busy} onChange={setFromDate}
               className="h-9 px-2.5 rounded-md border border-border bg-input text-xs num disabled:opacity-60" />
           </div>
           <div>
             <div className="microlabel uppercase mb-1">{t('backtest.form.to')}</div>
-            <input type="date" value={toDate} disabled={busy}
-              onChange={e => setToDate(e.target.value)}
+            <DatePicker value={toDate} disabled={busy} onChange={setToDate}
               className="h-9 px-2.5 rounded-md border border-border bg-input text-xs num disabled:opacity-60" />
           </div>
           <div>

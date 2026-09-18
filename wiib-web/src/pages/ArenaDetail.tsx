@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { ChevronLeft, Loader2, RefreshCw, X } from 'lucide-react';
 import { traderApi } from '../api';
 import { useToast } from '../components/ui/use-toast';
+import { DatePicker } from '../components/ui/date-picker';
 import { Markdown } from '../components/Markdown';
 import { DecisionCard } from '../components/arena/DecisionCard';
 import { EquityCurve } from '../components/arena/EquityCurve';
@@ -340,9 +341,8 @@ export function ArenaDetail() {
               {tab === 'timeline' && (
                 <div className="ml-auto flex items-center gap-1.5 pb-2 text-[13px]">
                   <button type="button" className="btn xs" onClick={() => shiftDay(-1)}>{t('detail.prevDay')}</button>
-                  <input type="date" value={day ?? ''} max={today}
-                         onChange={e => changeDay(e.target.value || null)}
-                         className="input num h-7 px-2 text-[13px]" />
+                  <DatePicker value={day ?? ''} max={today} onChange={changeDay}
+                              className="input num h-7 px-2 text-[13px]" />
                   <button type="button" className="btn xs disabled:opacity-40" disabled={!day || day >= today}
                           onClick={() => shiftDay(1)}>{t('detail.nextDay')}</button>
                   {day && (

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
 import { Skeleton } from './ui/skeleton';
+import { DatePicker } from './ui/date-picker';
 import { useStagger } from '../hooks/useStagger';
 import { quantApi, type NewsEventItem } from '../api';
 import { currentLang } from '../i18n';
@@ -50,9 +51,8 @@ export function NewsFlashCard() {
         {/* 按天翻看：前后一天 + 日期框；清掉回到最新 */}
         <div className="ml-auto self-center flex items-center gap-1.5">
           <button type="button" className="btn xs" onClick={() => shiftDay(-1)}>{t('news.prevDay')}</button>
-          <input type="date" value={day ?? ''} max={today}
-                 onChange={e => changeDay(e.target.value || null)}
-                 className="input num h-7 px-2 text-[13px]" />
+          <DatePicker value={day ?? ''} max={today} onChange={changeDay}
+                      className="input num h-7 px-2 text-[13px]" />
           <button type="button" className="btn xs disabled:opacity-40" disabled={!day || day >= today}
                   onClick={() => shiftDay(1)}>{t('news.nextDay')}</button>
           {day && (
