@@ -52,7 +52,7 @@ class TraderWakeupRunnerAccountStateTest {
         order.setLeverage(50);
         order.setCreatedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(placed), ZoneId.systemDefault()));
 
-        String json = TraderWakeupRunner.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
+        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
                 List.of(), List.of(order), List.of(plan), BOUNDARY);
 
         JsonNode planJson = MAPPER.readTree(json).get("pendingOrders")
@@ -76,7 +76,7 @@ class TraderWakeupRunnerAccountStateTest {
         p.setLiquidationPrice(new BigDecimal("58000"));
         p.setUnrealizedPnl(new BigDecimal("100"));
 
-        String json = TraderWakeupRunner.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
+        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
                 List.of(p), List.of(), List.of(), BOUNDARY);
 
         assertThat(json).contains("\"leverage\":10").contains("\"markPrice\":64000")
@@ -97,7 +97,7 @@ class TraderWakeupRunnerAccountStateTest {
         plan.setSide("LONG");
         plan.setOpenedWakeTime(BOUNDARY - 5 * 3600_000L);
 
-        String json = TraderWakeupRunner.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
+        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
                 List.of(p), List.of(), List.of(plan), BOUNDARY);
 
         JsonNode planJson = MAPPER.readTree(json).get("positions").get(0).get("plan");
@@ -122,7 +122,7 @@ class TraderWakeupRunnerAccountStateTest {
         plan.setOpenedWakeTime(BOUNDARY - 3600_000L);
         plan.setRevisionsJson("[{\"time\":1785169800000,\"type\":\"移动止盈\",\"change\":\"66000→68000\",\"reason\":\"趋势加速\"}]");
 
-        String json = TraderWakeupRunner.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
+        String json = WakeAccountState.accountStateJson(prompts, AgentLang.ZH, new BigDecimal("15833"),
                 List.of(p), List.of(), List.of(plan), BOUNDARY);
 
         assertThat(json).contains(FMT.format(Instant.ofEpochMilli(1785169800000L)))

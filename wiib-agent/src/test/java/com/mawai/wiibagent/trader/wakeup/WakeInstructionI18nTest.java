@@ -54,6 +54,10 @@ class WakeInstructionI18nTest {
     private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
     private final BinanceRestClient binance = mock(BinanceRestClient.class);
 
+    /** 观察包成文走真实词表；取数侧（决策行/战绩）给 mock，走空数据路径 */
+    private final WakeObservation wakeObservation = new WakeObservation(
+            mock(AiTraderDecisionMapper.class), mock(DecisionText.class), mock(PlayStatsAssembler.class), prompts);
+
     private final TraderWakeupRunner runner = new TraderWakeupRunner(
             mock(TraderModelFactory.class), new TraderPromptAssembler(traderMapper, prompts),
             mock(SimTradeClient.class), binance,
@@ -65,8 +69,8 @@ class WakeInstructionI18nTest {
             mock(UserLangResolver.class), prompts,
             new MessageCatalog(),
             new LocalizedToolCallbacks(prompts),
-            mock(DecisionText.class),
-            mock(EconCalendarAssembler.class), mock(PlayStatsAssembler.class), new TraderLiveHub());
+            wakeObservation,
+            mock(EconCalendarAssembler.class), new TraderLiveHub());
 
     {
         runner.nowMs = () -> BOUNDARY + 1_000L;
@@ -192,7 +196,7 @@ class WakeInstructionI18nTest {
     /** 观察包（账户/上一轮结论/轨迹）的文案：英文侧零中文（含全角【】），中文侧段头齐全 */
     @Test
     void 观察包中英文案无中文() {
-        String en = runner.observation(trader(), new BigDecimal("10000"), List.of(), List.of(),
+        String en = wakeObservation.assemble(trader(), new BigDecimal("10000"), List.of(), List.of(),
                 new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.EN);
         PromptI18nAssertions.assertNoCjk("英文观察包", en);
         PromptI18nAssertions.assertNoCjk("英文例行开场白（带观察包）",
@@ -201,7 +205,7 @@ class WakeInstructionI18nTest {
                 runner.alertInstruction(trader(), alert(), null, en, null, AgentLang.EN, ""));
         assertThat(en).contains("[Account]").contains("[Last round's conclusion]");
 
-        String zh = runner.observation(trader(), new BigDecimal("10000"), List.of(), List.of(),
+        String zh = wakeObservation.assemble(trader(), new BigDecimal("10000"), List.of(), List.of(),
                 new TraderPlanStore.Reconcile(List.of(), List.of()), List.of(), BOUNDARY, AgentLang.ZH);
         assertThat(zh).contains("【当前账户】").contains("\"equity\":10000.00")
                 .contains("【上一轮结论】本局还没有上一轮结论");

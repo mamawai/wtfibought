@@ -115,6 +115,10 @@ class TraderWakeupLoopTest {
     private final PlayStatsAssembler playStats = mock(PlayStatsAssembler.class);
     private final TraderLiveHub hub = new TraderLiveHub();
 
+    /** 与 runner 共用同一份 decisionMapper 和 playStats：selectList 打桩、insert 断言都还落在原处 */
+    private final WakeObservation wakeObservation =
+            new WakeObservation(decisionMapper, new DecisionText(prompts), playStats, prompts);
+
     private final TraderWakeupRunner runner = new TraderWakeupRunner(
             modelFactory, new TraderPromptAssembler(traderMapper, prompts),
             simTradeClient, binanceRestClient,
@@ -123,8 +127,8 @@ class TraderWakeupLoopTest {
             new NewsToolkit(mock(NewsCache.class), mock(NewsFlashLocalizer.class)),
             traderMapper, decisionMapper, new TraderPlanStore(planMapper, prompts), langResolver,
             prompts, new MessageCatalog(), new LocalizedToolCallbacks(prompts),
-            new DecisionText(prompts),
-            mock(EconCalendarAssembler.class), playStats, hub);
+            wakeObservation,
+            mock(EconCalendarAssembler.class), hub);
 
     {
         // 测试边界是固定历史时刻，墙钟钉在边界后 1s——预算充足，各用例不受真实时间影响

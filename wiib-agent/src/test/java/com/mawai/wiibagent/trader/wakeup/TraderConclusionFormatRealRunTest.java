@@ -128,7 +128,7 @@ class TraderConclusionFormatRealRunTest {
         plan.setStopLossPrice(new BigDecimal("97800"));
         plan.setOpenedWakeTime(boundary - 3 * 3_600_000L);
 
-        return TraderWakeupRunner.accountStateJson(prompts, lang, new BigDecimal("10000"),
+        return WakeAccountState.accountStateJson(prompts, lang, new BigDecimal("10000"),
                 List.of(pos), List.of(), List.of(plan), boundary);
     }
 }
