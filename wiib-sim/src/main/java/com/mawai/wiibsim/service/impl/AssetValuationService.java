@@ -54,12 +54,12 @@ public class AssetValuationService {
                 : fp.getEntryPrice().subtract(markPrice).multiply(fp.getQuantity());
     }
 
-    /** 单笔预测持仓按立刻卖出价(bid)估值；无 bid 视为不可变现计 0。 */
-    public static BigDecimal predictionBetValue(PredictionBet bet, BigDecimal bid) {
-        if (bid == null || bid.signum() <= 0 || bet.getContracts() == null) {
-            return BigDecimal.ZERO;
+    /** 单笔预测持仓估值：本回合的按立刻卖出价(bid)，无 bid 计 0；已收盘待结算的按成本。 */
+    public static BigDecimal predictionBetValue(PredictionBet bet, BigDecimal bid, long currentWindowStart) {
+        if (bet.getWindowStart() != currentWindowStart) {
+            return bet.getCost();
         }
-        return bet.getContracts().multiply(bid);
+        return bid == null ? BigDecimal.ZERO : bet.getContracts().multiply(bid);
     }
 
     /** 单用户预测持仓可变现价值。 */
@@ -76,13 +76,14 @@ public class AssetValuationService {
         if (bets == null || bets.isEmpty()) {
             return BigDecimal.ZERO;
         }
+        long ws = PredictionServiceImpl.currentWindowStart();
         BigDecimal total = BigDecimal.ZERO;
         for (PredictionBet bet : bets) {
             String side = bet.getSide();
             if (!bidBySide.containsKey(side)) {
                 bidBySide.put(side, cacheService.getPredictionBid(side));
             }
-            total = total.add(predictionBetValue(bet, bidBySide.get(side)));
+            total = total.add(predictionBetValue(bet, bidBySide.get(side), ws));
         }
         return total;
     }

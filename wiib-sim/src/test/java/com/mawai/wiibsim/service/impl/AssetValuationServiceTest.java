@@ -43,14 +43,16 @@ class AssetValuationServiceTest {
     }
 
     @Test
-    void predictionBetValueTreatsMissingBidAsZero() {
+    void predictionBetValue本回合按买一_没买一计0_已收盘按成本() {
+        long ws = 1_790_016_000L;
         PredictionBet bet = new PredictionBet();
+        bet.setWindowStart(ws);
         bet.setContracts(new BigDecimal("10"));
-        assertEquals(BigDecimal.ZERO, AssetValuationService.predictionBetValue(bet, null));
-        assertEquals(BigDecimal.ZERO, AssetValuationService.predictionBetValue(bet, BigDecimal.ZERO));
+        bet.setCost(new BigDecimal("5"));
         assertEquals(0, new BigDecimal("6.5").compareTo(
-                AssetValuationService.predictionBetValue(bet, new BigDecimal("0.65"))));
-        bet.setContracts(null);
-        assertEquals(BigDecimal.ZERO, AssetValuationService.predictionBetValue(bet, new BigDecimal("0.65")));
+                AssetValuationService.predictionBetValue(bet, new BigDecimal("0.65"), ws)));
+        assertEquals(BigDecimal.ZERO, AssetValuationService.predictionBetValue(bet, null, ws));
+        // 换回合后等结算：买一已是新回合的，不看它
+        assertEquals(new BigDecimal("5"), AssetValuationService.predictionBetValue(bet, new BigDecimal("0.10"), ws + 300));
     }
 }

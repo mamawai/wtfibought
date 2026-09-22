@@ -2,6 +2,7 @@ package com.mawai.wiibsim.service.impl;
 
 import com.mawai.wiibcommon.broadcast.MarketBroadcaster;
 import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibcommon.dto.PredictionBuyRequest;
 import com.mawai.wiibcommon.entity.PredictionBet;
 import com.mawai.wiibcommon.entity.PredictionRound;
 import com.mawai.wiibcommon.exception.BizException;
@@ -24,6 +25,7 @@ import java.util.function.Supplier;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -115,6 +117,22 @@ class PredictionSettleTest {
     }
 
     @Test
+    void 收盘价等于开盘价按Polymarket规则判UP() {
+        when(roundMapper.selectOne(any())).thenReturn(lockedRound(new BigDecimal("100"), WS));
+        when(cacheService.getPolymarketClosePrice(WS)).thenReturn(new BigDecimal("100"));
+        when(roundMapper.casSettleRound(eq(1L), any(), eq("UP"))).thenReturn(1);
+        when(betMapper.selectList(any())).thenReturn(List.of());
+
+        service.settleRound(WS);
+
+        verify(roundMapper).casSettleRound(1L, new BigDecimal("100"), "UP");
+        verify(betMapper).settleWon(1L, "UP");
+        verify(betMapper).settleLost(1L, "DOWN");
+        // 没有平局这条路了：相等不退本金
+        verify(betMapper, never()).settleDraw(anyLong());
+    }
+
+    @Test
     void 缓存缺价时回源REST并补上开盘价() {
         // 开盘价一直没回填过（建行时就是 null），定盘要先把它补上才比得出涨跌
         when(roundMapper.selectOne(any())).thenReturn(lockedRound(null, WS));
@@ -200,6 +218,43 @@ class PredictionSettleTest {
 
         verify(roundMapper).casLockRound(staleWs);
         verify(roundMapper).casSettleRound(1L, new BigDecimal("110"), "UP");
+    }
+
+    /** 买入：份数 = 金额 ÷ 卖价，手续费在金额之外另扣，扣的是 cost + fee */
+    @Test
+    void 买入按官方公式在金额之外另扣手续费() {
+        when(redisLockUtil.executeWithLock(anyString(), anyLong(), anyLong(), any()))
+                .thenAnswer(inv -> inv.getArgument(3, Supplier.class).get());
+        when(cacheService.getPredictionAsk("UP")).thenReturn(new BigDecimal("0.50"));
+        PredictionRound open = lockedRound(new BigDecimal("100"), windowAgo(0));
+        open.setStatus("OPEN");
+        when(roundMapper.selectOne(any())).thenReturn(open);
+
+        PredictionBuyRequest req = new PredictionBuyRequest();
+        req.setSide("UP");
+        req.setAmount(new BigDecimal("10"));
+        service.buy(7L, req);
+
+        // 20 份 @0.50：cost 10，fee = 20 × 0.07 × 0.5 × 0.5 = 0.35，扣 10.35
+        verify(userService).updateGameBalance(eq(7L), argThat(v -> v.compareTo(new BigDecimal("-10.35")) == 0));
+    }
+
+    /** 卖出：到手 = 份数 × 买价 − 手续费 */
+    @Test
+    void 卖出到手额扣掉官方公式的手续费() {
+        when(redisLockUtil.executeWithLock(anyString(), anyLong(), anyLong(), any()))
+                .thenAnswer(inv -> inv.getArgument(3, Supplier.class).get());
+        when(betMapper.selectById(9L)).thenReturn(bet("ACTIVE", new BigDecimal("20"), new BigDecimal("10")));
+        PredictionRound open = lockedRound(new BigDecimal("100"), windowAgo(0));
+        open.setStatus("OPEN");
+        when(roundMapper.selectById(1L)).thenReturn(open);
+        when(cacheService.getPredictionBid("UP")).thenReturn(new BigDecimal("0.60"));
+        when(betMapper.casSell(eq(9L), any())).thenReturn(1);
+
+        service.sell(7L, 9L, null);
+
+        // 20 份 @0.60：revenue 12，fee = 20 × 0.07 × 0.6 × 0.4 = 0.336，到手 11.664
+        verify(userService).updateGameBalance(eq(7L), argThat(v -> v.compareTo(new BigDecimal("11.664")) == 0));
     }
 
     @Test

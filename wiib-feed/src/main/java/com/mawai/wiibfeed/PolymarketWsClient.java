@@ -36,7 +36,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * Polymarket WS 客户端
  * <p>
- * 1. live-data WS: Chainlink BTC价格<br/>
+ * 1. live-data WS: Chainlink BTC 60 秒 TWAP（官网显示的当前价）+ BTC 现货<br/>
  * 2. CLOB WS: UP/DOWN 实时盘口价格 + 实时成交动态
  * <p>
  * 我们透传这些真实数据到前端展示，模拟交易按 Polymarket 实时价格成交。
@@ -51,17 +51,23 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *     <li>
  *         {@link #init()} 立即执行 {@code liveDataWs.connect()}。
  *         live-data 连接成功后回调 {@link #onLiveDataConnected(WebSocket)}，
- *         只订阅 {@code crypto_prices_chainlink}，用于页面 BTC 实时价格和折线图。
+ *         订阅 btc/usd 的 {@code crypto_prices_twap_sixty} 和 {@code crypto_prices_chainlink} 两个主题。
  *     </li>
  *     <li>
- *         live-data 后续每条消息进入 {@link #onLiveDataMessage(String)}。
- *         只有 {@code crypto_prices_chainlink} 会继续进入 {@link #onChainlinkPrice(JsonNode)}：
- *         写 Redis、本地缓存、价格历史，然后广播 {@code /topic/prediction/price}。
+ *         live-data 后续每条消息进入 {@link #onLiveDataMessage(String)}，按主题分开：
+ *         TWAP 进 {@link #onTwapPrice(JsonNode)}，写折线图历史并广播 {@code /topic/prediction/price}，
+ *         官网 TWAP 盘显示的当前价就是这条流；现货进 {@link #onSpotPrice(JsonNode)}，只写预测员用的现货历史。
  *     </li>
  *     <li>
- *         {@link #init()} 同时启动两条 10 秒一次的文本 {@code PING} 心跳。
+ *         {@link #init()} 同时启动两条文本 {@code PING} 心跳：live-data 每 5 秒、CLOB 每 10 秒。
  *         Polymarket WS 需要应用层心跳保活；心跳返回的 {@code PONG} 在 {@link WsConnection} 内过滤，
- *         不进入业务 JSON 解析。
+ *         不进入业务 JSON 解析。两条连接都开了 30 秒静默看门狗：PONG 不算消息，30 秒没有业务消息就重连。
+ *     </li>
+ *     <li>
+ *         {@link #init()} 还启动每 200ms 一拍的 {@link #tick()}：先 {@link #checkRoundRotation()}（见下），
+ *         再 {@link #flushBook()} 把有变化的盘口写 Redis、广播 {@code /topic/prediction/market}；
+ *         每秒一次 {@link #sampleBook()}：把盘口最后更新时刻和 UP 中间价各写一笔 Redis，并补推一次当前盘口，
+ *         预测员靠前者判断盘口是不是停了，靠后者看最近 30 秒赔率怎么动。
  *     </li>
  *     <li>
  *         {@link #init()} 启动虚拟线程执行 {@link #prepareCurrentMarket(long)}。
@@ -86,20 +92,19 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *     </li>
  *     <li>
  *         CLOB 后续消息进入 {@link #onClobMessage(String)}，再进入 {@link #handleClobEvent(JsonNode)}。
- *         当前价格只处理 {@code price_change}，进入 {@link #onPriceChange(JsonNode)}：
- *         根据 {@code asset_id} 判断 UP/DOWN，更新 bid/ask 缓存，并广播 {@code /topic/prediction/market}。
- *         {@code last_trade_price} 只用于右侧实时交易流，广播 {@code /topic/prediction/activity}，
- *         不参与盘口价格更新，避免重复刷价格。
+ *         {@code book} 全量快照进 {@link #onBookSnapshot(JsonNode)}，{@code price_change} 进 {@link #onPriceChange(JsonNode)}：
+ *         只把这个 token 的买一卖一记进内存，写 Redis 和广播交给每一拍。
+ *         {@code last_trade_price} 只用于右侧实时交易流，广播 {@code /topic/prediction/activity}，不参与盘口价格更新。
  *     </li>
  *     <li>
- *         {@link #init()} 还启动每秒一次的 {@link #checkRoundRotation()}。
+ *         每一拍里的 {@link #checkRoundRotation()}：
  *         当 {@code btc-updown-5m-{windowStart}} 发生变化时，说明进入新回合：
  *         锁定上一回合、关闭旧 CLOB、清空旧盘口并广播空盘口、创建新回合、
  *         为新回合获取 token 和 openPrice，并为上一回合轮询 closePrice 触发结算。
  *     </li>
  *     <li>
  *         {@link #pollOpenPrice(long)} 负责当前回合开盘价：
- *         每 5 秒查一次 Polymarket crypto-price API，最多 12 次；
+ *         每秒查一次 Polymarket crypto-price API，最多 60 次；
  *         成功后写缓存并发 {@code syncopen} 事件，由 sim 回填 DB。
  *     </li>
  *     <li>
@@ -131,14 +136,33 @@ public class PolymarketWsClient implements SmartLifecycle {
     private volatile String lastSubscribedSlug;
     private volatile String currentUpAssetId;
     private volatile String currentDownAssetId;
+    /** 盘口最后一次收到推送的时刻，每秒采样写 Redis */
+    private volatile long bookUpdatedAtMs;
+    /** 盘口内存最新值，按 token 存：WS 每条消息只改这里，每拍再写 Redis、推给页面 */
+    private final Map<String, Top> tops = new ConcurrentHashMap<>();
+    private volatile boolean bookDirty;
+    private long lastSampleSec;
+
+    /** 一个 token 的买一卖一，null = 这一档空 */
+    private record Top(BigDecimal bid, BigDecimal ask) {
+        static final Top EMPTY = new Top(null, null);
+    }
 
     private static final String LIVE_DATA_URL = "wss://ws-live-data.polymarket.com/";
     private static final String CLOB_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
     private static final String GAMMA_EVENT_API = "https://gamma-api.polymarket.com/events/slug/";
     private static final int WINDOW_SECONDS = 300;
-    private static final int WS_PING_SECONDS = 10;
-    private static final String CHAINLINK_REDIS_KEY = "chainlink:price:btcusd";
+    /** 官方心跳要求：live-data(RTDS) 每 5 秒发 PING，CLOB 市场频道每 10 秒 */
+    private static final int LIVE_DATA_PING_SECONDS = 5;
+    private static final int CLOB_PING_SECONDS = 10;
+    /** 结算和官网当前价都用 Chainlink 60 秒 TWAP（市场配置 btc-5m-twap-60）；现货只给预测员 */
+    private static final String TWAP_TOPIC = "crypto_prices_twap_sixty";
+    private static final String SPOT_TOPIC = "crypto_prices_chainlink";
     private static final long ROUND_STREAM_MAXLEN = 1_000L;
+    /** 连着这么久没收到业务消息（PONG 不算）就当断了重连：TCP 活着但不推数据时价会停住 */
+    private static final long WS_MAX_IDLE_SECONDS = 30;
+    /** 盘口一拍的间隔：换回合检查 + 盘口写 Redis、推页面 */
+    private static final long BOOK_TICK_MS = 200;
 
     @PostConstruct
     public void init() {
@@ -149,16 +173,63 @@ public class PolymarketWsClient implements SmartLifecycle {
                 .build();
 
         liveDataWs = new WsConnection("LiveData", () -> LIVE_DATA_URL, this::onLiveDataMessage,
-                this::onLiveDataConnected, null, httpClient, scheduler, shutdown);
+                this::onLiveDataConnected, null, httpClient, scheduler, shutdown, WS_MAX_IDLE_SECONDS);
 
         clobWs = new WsConnection("CLOB", () -> CLOB_URL, this::onClobMessage,
-                this::onClobConnected, null, httpClient, scheduler, shutdown);
+                this::onClobConnected, null, httpClient, scheduler, shutdown, WS_MAX_IDLE_SECONDS);
 
         liveDataWs.connect();
-        scheduler.scheduleAtFixedRate(() -> sendWsPing(liveDataWs), WS_PING_SECONDS, WS_PING_SECONDS, TimeUnit.SECONDS);
-        scheduler.scheduleAtFixedRate(() -> sendWsPing(clobWs), WS_PING_SECONDS, WS_PING_SECONDS, TimeUnit.SECONDS);
+        scheduler.scheduleAtFixedRate(() -> sendWsPing(liveDataWs), LIVE_DATA_PING_SECONDS, LIVE_DATA_PING_SECONDS, TimeUnit.SECONDS);
+        scheduler.scheduleAtFixedRate(() -> sendWsPing(clobWs), CLOB_PING_SECONDS, CLOB_PING_SECONDS, TimeUnit.SECONDS);
         Thread.startVirtualThread(() -> prepareCurrentMarket(currentWindowStart()));
-        scheduler.scheduleAtFixedRate(this::checkRoundRotation, 1, 1, TimeUnit.SECONDS);
+        scheduler.scheduleAtFixedRate(this::tick, BOOK_TICK_MS, BOOK_TICK_MS, TimeUnit.MILLISECONDS);
+    }
+
+    /** 一拍：先看要不要换回合，再把有变化的盘口写 Redis、推给页面，每秒采样一次 */
+    private void tick() {
+        checkRoundRotation();
+        try {
+            flushBook();
+            long sec = System.currentTimeMillis() / 1000;
+            if (sec != lastSampleSec) {
+                lastSampleSec = sec;
+                sampleBook();
+            }
+        } catch (Exception e) {
+            log.warn("盘口刷新失败: {}", e.getMessage());
+        }
+    }
+
+    /** 盘口有变化就写 Redis、推给页面 */
+    private void flushBook() {
+        if (!bookDirty) return;
+        bookDirty = false;
+        Top up = top(currentUpAssetId);
+        Top down = top(currentDownAssetId);
+        cacheService.putPredictionBid("UP", up.bid());
+        cacheService.putPredictionAsk("UP", up.ask());
+        cacheService.putPredictionBid("DOWN", down.bid());
+        cacheService.putPredictionAsk("DOWN", down.ask());
+        broadcastBook(up, down);
+    }
+
+    /** 盘口最后更新时刻、UP 中间价各写一笔，再推一次当前盘口给刚打开页面的人；预测员靠前两者判旧、看最近 30 秒赔率怎么动 */
+    private void sampleBook() {
+        long updatedAt = bookUpdatedAtMs;
+        if (updatedAt <= 0) return;
+        cacheService.putPredictionBookUpdatedAt(updatedAt);
+        Top up = top(currentUpAssetId);
+        // 一边没有报价不记
+        if (up.bid() != null && up.ask() != null) {
+            BigDecimal mid = up.bid().add(up.ask()).divide(BigDecimal.TWO, 4, RoundingMode.HALF_UP);
+            cacheService.addPredictionUpMidPoint(System.currentTimeMillis(), mid);
+        }
+        broadcastBook(up, top(currentDownAssetId));
+    }
+
+    private Top top(String assetId) {
+        Top t = assetId == null ? null : tops.get(assetId);
+        return t != null ? t : Top.EMPTY;
     }
 
     @Override
@@ -178,7 +249,7 @@ public class PolymarketWsClient implements SmartLifecycle {
 
     private void onLiveDataConnected(WebSocket ws) {
         ws.sendText(buildLiveDataSubscribeMsg(), true);
-        log.info("已发送订阅: chainlink");
+        log.info("已发送订阅: chainlink twap + spot");
     }
 
     private void onClobConnected(WebSocket ws) {
@@ -233,14 +304,16 @@ public class PolymarketWsClient implements SmartLifecycle {
 
             // 关闭旧的 CLOB WS，清除旧盘口价格并通知前端
             clobWs.close();
+            tops.clear();
+            bookUpdatedAtMs = 0;
             cacheService.clearPredictionPrices();
-            broadcastPriceUpdate();
+            broadcastBook(Top.EMPTY, Top.EMPTY);
 
             // 发事件：创建新回合（startPrice可能为null，等openPrice回填）
             publishRoundEvent("create", windowStart);
             Thread.startVirtualThread(() -> pollMarketAssets(windowStart));
 
-            // 独立线程轮询openPrice: 每5s查一次，最多12次，有数据即停
+            // 独立线程轮询openPrice: 每秒查一次，最多60次，有数据即停
             Thread.startVirtualThread(() -> pollOpenPrice(windowStart));
             // 独立线程轮询closePrice: 60s后开始，每10s查一次，最多6次，有数据即停
             Thread.startVirtualThread(() -> pollClosePrice(prevWindowStart));
@@ -292,7 +365,7 @@ public class PolymarketWsClient implements SmartLifecycle {
 
         JsonNode market = selectClobMarket(event, slug);
         if (market == null) return false;
-        syncOfficialWindowTime(windowStart, event, market, snapshot);
+        syncOfficialWindowTime(windowStart, snapshot);
         // 官方时间拿到后再推一次round，避免前端初次请求早于Gamma缓存导致倒计时仍走本机取模。
         publishRoundEvent("create", windowStart);
 
@@ -331,31 +404,17 @@ public class PolymarketWsClient implements SmartLifecycle {
         return true;
     }
 
-    private void syncOfficialWindowTime(long windowStart, JsonNode event, JsonNode market,
-                                        GammaEventSnapshot snapshot) {
-        Long startMs = parseIsoTimeMs(market.path("eventStartTime").asString(null));
-        if (startMs == null) startMs = parseIsoTimeMs(event.path("startTime").asString(null));
-        if (startMs == null) startMs = parseIsoTimeMs(event.path("startDate").asString(null));
-
-        Long endMs = parseIsoTimeMs(market.path("endDate").asString(null));
-        if (endMs == null) endMs = parseIsoTimeMs(event.path("endDate").asString(null));
-
-        if (startMs != null && endMs != null) {
-            long referenceNowMs = snapshot.upstreamTimeMs() != null
-                    ? snapshot.upstreamTimeMs()
-                    : snapshot.localReceivedTimeMs();
-            cacheService.putPredictionOfficialWindow(windowStart, startMs, endMs,
-                    referenceNowMs, snapshot.localReceivedTimeMs());
-        }
-    }
-
-    private static Long parseIsoTimeMs(String value) {
-        if (value == null || value.isBlank()) return null;
-        try {
-            return Instant.parse(value).toEpochMilli();
-        } catch (Exception ignored) {
-            return null;
-        }
+    /**
+     * 官方窗口就是 slug 里的时间戳起的整 5 分钟（eventStartTime 与之一致，event.startDate 是市场创建时间不能用）；
+     * 存它的价值在上游 Date 头这份时钟基准，前端倒计时靠它校本机时钟
+     */
+    private void syncOfficialWindowTime(long windowStart, GammaEventSnapshot snapshot) {
+        long startMs = windowStart * 1000L;
+        long referenceNowMs = snapshot.upstreamTimeMs() != null
+                ? snapshot.upstreamTimeMs()
+                : snapshot.localReceivedTimeMs();
+        cacheService.putPredictionOfficialWindow(windowStart, startMs, startMs + WINDOW_SECONDS * 1000L,
+                referenceNowMs, snapshot.localReceivedTimeMs());
     }
 
     private record GammaEventSnapshot(JsonNode event, Long upstreamTimeMs, long localReceivedTimeMs) {}
@@ -422,9 +481,9 @@ public class PolymarketWsClient implements SmartLifecycle {
     }
 
     private void pollOpenPrice(long windowStart) {
-        for (int i = 0; i < 12; i++) {
+        for (int i = 0; i < 60; i++) {
             if (shutdown.get()) return;
-            try { Thread.sleep(5_000); } catch (InterruptedException e) { return; }
+            try { Thread.sleep(1_000); } catch (InterruptedException e) { return; }
             if (cacheService.getPolymarketOpenPrice(windowStart) != null) {
                 log.info("openPrice已存在,跳过: windowStart={}", windowStart);
                 return;
@@ -439,7 +498,7 @@ public class PolymarketWsClient implements SmartLifecycle {
                 return;
             }
         }
-        log.warn("openPrice轮询12次均未获取到: windowStart={}", windowStart);
+        log.warn("openPrice轮询60次均未获取到: windowStart={}", windowStart);
     }
 
     private void pollClosePrice(long prevWindowStart) {
@@ -472,27 +531,32 @@ public class PolymarketWsClient implements SmartLifecycle {
         try {
             JsonNode msg = MAPPER.readTree(raw);
             String topic = msg.path("topic").asString(null);
-            if (topic == null) return;
-
-            if ("crypto_prices_chainlink".equals(topic)) {
-                onChainlinkPrice(msg);
+            if (TWAP_TOPIC.equals(topic)) {
+                onTwapPrice(msg);
+            } else if (SPOT_TOPIC.equals(topic)) {
+                onSpotPrice(msg);
             }
         } catch (Exception e) {
             log.warn("解析live-data消息失败: {}", e.getMessage());
         }
     }
 
-    private void onChainlinkPrice(JsonNode msg) {
+    /** TWAP 就是官网的当前价：写折线图历史并广播给页面 */
+    private void onTwapPrice(JsonNode msg) {
         BigDecimal value = msg.path("payload").path("value").asDecimal(null);
         if (value == null) return;
 
         long now = System.currentTimeMillis();
-        String priceStr = value.toPlainString();
-        cacheService.set(CHAINLINK_REDIS_KEY, priceStr);   // Redis KV：页面实时价
-        cacheService.addBtcPricePoint(now, value);          // Redis ZSet：折线图历史
+        cacheService.addBtcTwapPoint(now, value);
+        broadcastService.broadcastPrediction("price", "{\"price\":\"" + value.toPlainString() + "\",\"ts\":" + now + "}");
+    }
 
-        String json = "{\"price\":\"" + priceStr + "\",\"ts\":" + now + "}";
-        broadcastService.broadcastPrediction("price", json);
+    /** 现货只给预测员算公平价，页面不用；时刻是 Chainlink 自己的整秒时间戳 */
+    private void onSpotPrice(JsonNode msg) {
+        JsonNode payload = msg.path("payload");
+        BigDecimal value = payload.path("value").asDecimal(null);
+        if (value == null) return;
+        cacheService.addBtcPricePoint(payload.path("timestamp").asLong(), value);
     }
 
     // ==================== CLOB WS ====================
@@ -523,24 +587,47 @@ public class PolymarketWsClient implements SmartLifecycle {
             onPriceChange(msg);
         } else if ("last_trade_price".equals(eventType)) {
             onLastTradePrice(msg);
+        } else if ("book".equals(eventType)) {
+            onBookSnapshot(msg);
         }
     }
 
-    private void onPriceChange(JsonNode msg) {
-        JsonNode changes = msg.path("price_changes");
-        if (!changes.isArray()) return;
+    /** book 全量快照：取这一边的买一卖一 */
+    private void onBookSnapshot(JsonNode msg) {
+        String assetId = msg.path("asset_id").asString(null);
+        if (sideForAsset(assetId) == null) return;
+        updateTop(assetId, bestPrice(msg.path("bids"), true), bestPrice(msg.path("asks"), false));
+    }
 
-        for (JsonNode change : changes) {
-            String side = sideForAsset(change.path("asset_id").asString(null));
-            if (side == null) continue;
+    /**
+     * 一个 token 的买一卖一记进内存。每条消息都是这一边完整的最优价：
+     * WS 用买一 0、卖一 1 表示这一档空了，和快照里的空档位一样按没有报价处理
+     */
+    private void updateTop(String assetId, BigDecimal bid, BigDecimal ask) {
+        tops.put(assetId, new Top(bid != null && bid.signum() > 0 ? bid : null,
+                ask != null && ask.compareTo(BigDecimal.ONE) < 0 ? ask : null));
+        bookUpdatedAtMs = System.currentTimeMillis();
+        bookDirty = true;
+    }
 
-            BigDecimal bestBid = change.path("best_bid").asDecimal(null);
-            BigDecimal bestAsk = change.path("best_ask").asDecimal(null);
-            if (bestBid != null) cacheService.putPredictionBid(side, bestBid);
-            if (bestAsk != null) cacheService.putPredictionAsk(side, bestAsk);
+    /** 档位数组 [{price,size}]：买盘取最高价、卖盘取最低价，不假设上游排过序；空档位回 null */
+    static BigDecimal bestPrice(JsonNode levels, boolean highest) {
+        BigDecimal best = null;
+        for (JsonNode level : levels) {
+            BigDecimal price = level.path("price").asDecimal();
+            if (best == null || (highest ? price.compareTo(best) > 0 : price.compareTo(best) < 0)) {
+                best = price;
+            }
         }
+        return best;
+    }
 
-        broadcastPriceUpdate();
+    private void onPriceChange(JsonNode msg) {
+        for (JsonNode change : msg.path("price_changes")) {
+            String assetId = change.path("asset_id").asString(null);
+            if (sideForAsset(assetId) == null) continue;
+            updateTop(assetId, change.path("best_bid").asDecimal(null), change.path("best_ask").asDecimal(null));
+        }
     }
 
     private void onLastTradePrice(JsonNode msg) {
@@ -574,26 +661,28 @@ public class PolymarketWsClient implements SmartLifecycle {
         }
     }
 
-    private void broadcastPriceUpdate() {
-        BigDecimal upBid = cacheService.getPredictionBid("UP");
-        BigDecimal upAsk = cacheService.getPredictionAsk("UP");
-        BigDecimal downBid = cacheService.getPredictionBid("DOWN");
-        BigDecimal downAsk = cacheService.getPredictionAsk("DOWN");
-        String json = "{\"upBid\":" + (upBid != null ? "\"" + upBid + "\"" : "null")
-                + ",\"upAsk\":" + (upAsk != null ? "\"" + upAsk + "\"" : "null")
-                + ",\"downBid\":" + (downBid != null ? "\"" + downBid + "\"" : "null")
-                + ",\"downAsk\":" + (downAsk != null ? "\"" + downAsk + "\"" : "null")
+    private void broadcastBook(Top up, Top down) {
+        String json = "{\"upBid\":" + quoted(up.bid()) + ",\"upAsk\":" + quoted(up.ask())
+                + ",\"downBid\":" + quoted(down.bid()) + ",\"downAsk\":" + quoted(down.ask())
                 + ",\"ts\":" + System.currentTimeMillis() + "}";
         broadcastService.broadcastPrediction("market", json);
     }
 
+    private static String quoted(BigDecimal v) {
+        return v == null ? "null" : "\"" + v.toPlainString() + "\"";
+    }
+
     // ==================== 订阅消息构建 ====================
 
+    /** TWAP + 现货两个主题，filters 是 JSON 字符串 */
     private static String buildLiveDataSubscribeMsg() {
-        return "{\"action\":\"subscribe\",\"subscriptions\":["
-                + "{\"topic\":\"crypto_prices_chainlink\",\"type\":\"*\","
-                + "\"filters\":\"{\\\"symbol\\\":\\\"btc/usd\\\"}\"}"
-                + "]}";
+        ObjectNode msg = MAPPER.createObjectNode();
+        msg.put("action", "subscribe");
+        ArrayNode subs = msg.putArray("subscriptions");
+        for (String topic : new String[]{TWAP_TOPIC, SPOT_TOPIC}) {
+            subs.addObject().put("topic", topic).put("type", "*").put("filters", "{\"symbol\":\"btc/usd\"}");
+        }
+        return MAPPER.writeValueAsString(msg);
     }
 
 }

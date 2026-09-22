@@ -122,17 +122,21 @@ class CacheServiceTest {
         when(stringRedisTemplate.opsForZSet()).thenReturn(zset);
         CacheService cache = new CacheService(mock(RedisTemplate.class), stringRedisTemplate);
 
+        // 现货和 TWAP 各写各的 key
         cache.addBtcPricePoint(1700000000000L, new BigDecimal("95000.5"));
         verify(zset).add("prediction:btcprice:history", "1700000000000:95000.5", 1700000000000.0);
         // 裁掉 6 分钟外的旧点
         verify(zset).removeRangeByScore("prediction:btcprice:history", 0, 1699999640000.0);
+        cache.addBtcTwapPoint(1700000000000L, new BigDecimal("95010.25"));
+        verify(zset).add("prediction:btctwap:history", "1700000000000:95010.25", 1700000000000.0);
 
+        // 页面折线图读 TWAP
         ZSetOperations.TypedTuple<String> tuple =
-                new DefaultTypedTuple<>("1700000000000:95000.5", 1700000000000.0);
-        when(zset.rangeByScoreWithScores("prediction:btcprice:history", 1699999000000.0, Double.MAX_VALUE))
+                new DefaultTypedTuple<>("1700000000000:95010.25", 1700000000000.0);
+        when(zset.rangeByScoreWithScores("prediction:btctwap:history", 1699999000000.0, Double.MAX_VALUE))
                 .thenReturn(new LinkedHashSet<>(List.of(tuple)));
-        List<Map<String, Object>> history = cache.getBtcPriceHistory(1699999000000L);
+        List<Map<String, Object>> history = cache.getBtcTwapHistory(1699999000000L);
         assertThat(history).hasSize(1);
-        assertThat(history.get(0)).containsEntry("time", 1700000000000L).containsEntry("price", "95000.5");
+        assertThat(history.get(0)).containsEntry("time", 1700000000000L).containsEntry("price", "95010.25");
     }
 }

@@ -16,6 +16,9 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * Polymarket 5 分钟回合的开/收盘价。feed 轮询取价写缓存，sim 结算时缓存缺价回源，共用这一份。
+ * <p>
+ * 官方结算：收盘时刻的 Chainlink 60 秒 TWAP ≥ 开盘时刻的 60 秒 TWAP 判 UP。
+ * 接口要带 twapEnabled + twapLookbackSeconds=60，不带回的是边界那一刻的现价。
  */
 @Slf4j
 @Component
@@ -31,13 +34,19 @@ public class PolymarketPriceClient {
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
+    /** 取价地址：开收盘都要 60 秒 TWAP 口径，和官方结算一致 */
+    static URI uri(long windowStart) {
+        Instant start = Instant.ofEpochSecond(windowStart);
+        Instant end = start.plusSeconds(WINDOW_SECONDS);
+        return URI.create(CRYPTO_PRICE_API + "?symbol=BTC&variant=fiveminute"
+                + "&eventStartTime=" + start + "&endDate=" + end
+                + "&twapEnabled=true&twapLookbackSeconds=60");
+    }
+
     /** 超时/非200/解析失败一律返回 null，调用方按"没拿到价"降级 */
     public CryptoPrice fetch(long windowStart) {
         try {
-            Instant start = Instant.ofEpochSecond(windowStart);
-            Instant end = start.plusSeconds(WINDOW_SECONDS);
-            URI uri = URI.create(CRYPTO_PRICE_API + "?symbol=BTC&variant=fiveminute"
-                    + "&eventStartTime=" + start + "&endDate=" + end);
+            URI uri = uri(windowStart);
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(uri).timeout(Duration.ofSeconds(8))
                     .header("User-Agent", "Mozilla/5.0")

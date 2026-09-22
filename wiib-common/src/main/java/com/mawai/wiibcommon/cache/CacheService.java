@@ -2,6 +2,7 @@ package com.mawai.wiibcommon.cache;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.mawai.wiibcommon.market.TimeWeightedAverage.Point;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.*;
@@ -77,37 +78,63 @@ public class CacheService {
         return v != null ? MAPPER.readValue(v, PredictionOfficialWindow.class) : null;
     }
 
-    // ==================== BTC价格历史（feed 写 sim 读，Redis ZSet：score=ts，member=ts:price 保唯一） ====================
+    // ==================== BTC价格历史（feed 写，Redis ZSet：score=ts，member=ts:price 保唯一，按 6 分钟裁） ====================
+    // 现货给预测员算公平价；TWAP 就是官网显示的当前价，页面折线图用
 
     private static final long PRICE_HISTORY_TTL_MS = 360_000;
     private static final String BTC_PRICE_HISTORY_KEY = "prediction:btcprice:history";
+    private static final String BTC_TWAP_HISTORY_KEY = "prediction:btctwap:history";
 
-    /** chainlink BTC 价格点入 ZSet，按 score 裁掉 6 分钟外的旧点 */
+    /** Chainlink BTC 现货价点 */
     public void addBtcPricePoint(long timestampMs, BigDecimal price) {
-        ZSetOperations<String, String> zset = stringRedisTemplate.opsForZSet();
-        zset.add(BTC_PRICE_HISTORY_KEY, timestampMs + ":" + price.toPlainString(), timestampMs);
-        zset.removeRangeByScore(BTC_PRICE_HISTORY_KEY, 0, timestampMs - PRICE_HISTORY_TTL_MS);
+        addPoint(BTC_PRICE_HISTORY_KEY, timestampMs, price);
     }
 
-    public List<Map<String, Object>> getBtcPriceHistory(long fromMs) {
+    /** 现货价点按时间升序（时刻 + 价） */
+    public List<Point> getBtcPricePoints(long fromMs) {
+        return pricePoints(BTC_PRICE_HISTORY_KEY, fromMs);
+    }
+
+    /** Chainlink BTC 60 秒 TWAP 点 */
+    public void addBtcTwapPoint(long timestampMs, BigDecimal price) {
+        addPoint(BTC_TWAP_HISTORY_KEY, timestampMs, price);
+    }
+
+    /** TWAP 历史的接口形状（页面折线图用）：{time, price 字符串} */
+    public List<Map<String, Object>> getBtcTwapHistory(long fromMs) {
+        List<Point> points = pricePoints(BTC_TWAP_HISTORY_KEY, fromMs);
+        List<Map<String, Object>> result = new ArrayList<>(points.size());
+        for (Point p : points) {
+            result.add(Map.of("time", p.timeMs(), "price", p.price().toPlainString()));
+        }
+        return result;
+    }
+
+    /** 写一个点，顺手裁掉 6 分钟外的旧点 */
+    private void addPoint(String key, long timestampMs, BigDecimal price) {
+        ZSetOperations<String, String> zset = stringRedisTemplate.opsForZSet();
+        zset.add(key, timestampMs + ":" + price.toPlainString(), timestampMs);
+        zset.removeRangeByScore(key, 0, timestampMs - PRICE_HISTORY_TTL_MS);
+    }
+
+    /** 读 member=ts:price 的 ZSet，按时间升序；价格纯数字不含冒号，第一个冒号后就是价 */
+    private List<Point> pricePoints(String key, long fromMs) {
         Set<ZSetOperations.TypedTuple<String>> tuples =
-                stringRedisTemplate.opsForZSet().rangeByScoreWithScores(BTC_PRICE_HISTORY_KEY, fromMs, Double.MAX_VALUE);
-        if (tuples == null || tuples.isEmpty()) return List.of();
-        List<Map<String, Object>> result = new ArrayList<>(tuples.size());
+                stringRedisTemplate.opsForZSet().rangeByScoreWithScores(key, fromMs, Double.MAX_VALUE);
+        if (tuples == null) return List.of();
+        List<Point> result = new ArrayList<>(tuples.size());
         for (ZSetOperations.TypedTuple<String> t : tuples) {
             String member = t.getValue();
-            if (member == null || t.getScore() == null) continue;
-            // member=ts:price，价格纯数字不含冒号，取第一个冒号后即价格
-            result.add(Map.of("time", t.getScore().longValue(),
-                    "price", member.substring(member.indexOf(':') + 1)));
+            result.add(new Point(t.getScore().longValue(), new BigDecimal(member.substring(member.indexOf(':') + 1))));
         }
         return result;
     }
 
     // ==================== Polymarket UP/DOWN 价格 ====================
 
+    /** null = 这一边没有买一，删掉 */
     public void putPredictionBid(String side, BigDecimal bid) {
-        stringRedisTemplate.opsForValue().set("prediction:" + side + ":bid", bid.toPlainString(), PREDICTION_TTL);
+        putOrDelete("prediction:" + side + ":bid", bid);
     }
 
     public BigDecimal getPredictionBid(String side) {
@@ -115,8 +142,17 @@ public class CacheService {
         return v != null ? new BigDecimal(v) : null;
     }
 
+    /** null = 这一边没有卖一，删掉 */
     public void putPredictionAsk(String side, BigDecimal ask) {
-        stringRedisTemplate.opsForValue().set("prediction:" + side + ":ask", ask.toPlainString(), PREDICTION_TTL);
+        putOrDelete("prediction:" + side + ":ask", ask);
+    }
+
+    private void putOrDelete(String key, BigDecimal price) {
+        if (price == null) {
+            stringRedisTemplate.delete(key);
+        } else {
+            stringRedisTemplate.opsForValue().set(key, price.toPlainString(), PREDICTION_TTL);
+        }
     }
 
     public BigDecimal getPredictionAsk(String side) {
@@ -126,7 +162,34 @@ public class CacheService {
 
     public void clearPredictionPrices() {
         stringRedisTemplate.delete(java.util.List.of(
-                "prediction:UP:bid", "prediction:UP:ask", "prediction:DOWN:bid", "prediction:DOWN:ask"));
+                "prediction:UP:bid", "prediction:UP:ask", "prediction:DOWN:bid", "prediction:DOWN:ask",
+                PREDICTION_BOOK_UPDATED_AT_KEY));
+    }
+
+    // ==================== Polymarket 盘口新鲜度与 UP 价走势（feed 每秒采样写，预测员读） ====================
+
+    private static final String PREDICTION_BOOK_UPDATED_AT_KEY = "prediction:book:updatedAt";
+    private static final String PREDICTION_UP_MID_HISTORY_KEY = "prediction:upmid:history";
+
+    /** 盘口最后一次收到推送的时刻(ms)：盘口价本身不带时间，断线时价停住，靠它判旧 */
+    public void putPredictionBookUpdatedAt(long ms) {
+        stringRedisTemplate.opsForValue().set(PREDICTION_BOOK_UPDATED_AT_KEY, Long.toString(ms), PREDICTION_TTL);
+    }
+
+    /** 没有记录回 null */
+    public Long getPredictionBookUpdatedAt() {
+        String v = stringRedisTemplate.opsForValue().get(PREDICTION_BOOK_UPDATED_AT_KEY);
+        return v == null ? null : Long.parseLong(v);
+    }
+
+    /** UP 的买卖中间价采样点，和 BTC 价格历史同样按 6 分钟裁 */
+    public void addPredictionUpMidPoint(long timestampMs, BigDecimal mid) {
+        addPoint(PREDICTION_UP_MID_HISTORY_KEY, timestampMs, mid);
+    }
+
+    /** UP 中间价采样点按时间升序 */
+    public List<Point> getPredictionUpMidPoints(long fromMs) {
+        return pricePoints(PREDICTION_UP_MID_HISTORY_KEY, fromMs);
     }
 
     // ==================== 加密货币价格 ====================

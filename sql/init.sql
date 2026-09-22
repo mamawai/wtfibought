@@ -403,9 +403,9 @@ CREATE TABLE IF NOT EXISTS prediction_round (
 
 COMMENT ON TABLE prediction_round IS 'BTC 5min涨跌预测回合';
 COMMENT ON COLUMN prediction_round.window_start IS '窗口起始时间戳(秒)';
-COMMENT ON COLUMN prediction_round.start_price IS '起始BTC价格(Chainlink)';
-COMMENT ON COLUMN prediction_round.end_price IS '结束BTC价格(Chainlink)';
-COMMENT ON COLUMN prediction_round.outcome IS '结果：UP/DOWN/DRAW/VOID（VOID=取不到收盘价作废，注单退本金）';
+COMMENT ON COLUMN prediction_round.start_price IS '起始BTC价格(Chainlink，Polymarket 官方 openPrice)';
+COMMENT ON COLUMN prediction_round.end_price IS '结束BTC价格(窗口末 60 秒 Chainlink TWAP，Polymarket 官方 closePrice)';
+COMMENT ON COLUMN prediction_round.outcome IS '结果：UP/DOWN/VOID（相等判 UP 与 Polymarket 一致；VOID=取不到收盘价作废，注单退本金；DRAW 只在旧规则历史行里有）';
 COMMENT ON COLUMN prediction_round.status IS '状态：OPEN/LOCKED/SETTLED';
 
 -- ============================================

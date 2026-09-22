@@ -58,7 +58,7 @@ public interface PredictionBetMapper extends BaseMapper<PredictionBet> {
             "WHERE round_id = #{roundId} AND side = #{side} AND status = 'ACTIVE'")
     int settleLost(@Param("roundId") Long roundId, @Param("side") String side);
 
-    /** 平局结算: payout = cost（退本金） */
+    /** 退本金: payout = cost。只有作废走这里，DRAW 沿用作退款标记 */
     @Update("UPDATE prediction_bet SET status = 'DRAW', payout = cost, updated_at = NOW() " +
             "WHERE round_id = #{roundId} AND status = 'ACTIVE'")
     int settleDraw(@Param("roundId") Long roundId);

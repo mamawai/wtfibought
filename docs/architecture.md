@@ -65,15 +65,18 @@ wiib-sim / wiib-agent（消费进程）  从 Redis 消费 feed 写入的行情
 ### Polymarket BTC 预测
 
 ```text
-Polymarket live-data -> Chainlink BTC price -> /topic/prediction/price（展示价格线）
-Polymarket CLOB      -> UP/DOWN bid/ask     -> /topic/prediction/market
+Polymarket live-data -> Chainlink BTC 60s TWAP -> /topic/prediction/price（官网当前价：价格线 + 涨跌）
+                     -> Chainlink BTC 现货     -> Redis 现货历史（只给预测员）
+Polymarket CLOB      -> UP/DOWN bid/ask（首条 book 快照种价，买一 0 / 卖一 1 是空档，删掉）-> /topic/prediction/market
 5min window rotation -> 回合事件(lock/create/syncopen/settle)走 Redis Stream 保 FIFO
                      -> sim 锁上轮 -> 取开/收盘价 -> 结算下注
 ```
 
 开/收盘价由 feed 轮询后写缓存（`syncopen` / `settle` 两个事件），sim 只在缓存没命中时才回源 REST——结算基准要全站一份，各算各的会出现同一回合两个价。
 
-动态手续费：`effectiveRate = 0.25 * (p * (1 - p))^2`，clamp 0.1% ~ 2%。
+结算规则跟 Polymarket（结算源 Chainlink BTC/USD TWAP-60s 数据流）：开 / 收盘价是这条流在开 / 收盘时刻的值，流在 T 时刻 = 截至 T−3 秒的 60 个整秒现货价均价，所以收盘价实际是收盘前 63~3 秒的均价；收盘不低于开盘判 UP（相等算 UP），否则 DOWN；两个价都从 crypto-price 接口带 `twapEnabled=true&twapLookbackSeconds=60` 取（开盘后 2~3 秒就有，feed 每秒取一次），不带参数回的是边界时刻现价、会判反；取不到价才 VOID 退本金。页面当前价、差值、折线图都用 RTDS `crypto_prices_twap_sixty` 这条流，和官网同源；赔率按钮是各自的卖一 / 买一，空档显示 `--`。
+
+手续费按 Polymarket 吃单费公式（`PredictionFee`）：`fee = 份数 × 0.07 × p × (1 − p)`，买卖都按吃单算。
 
 ### 资金费率
 

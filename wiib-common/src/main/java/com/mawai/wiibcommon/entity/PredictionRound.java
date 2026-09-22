@@ -19,7 +19,7 @@ public class PredictionRound {
 
     private BigDecimal endPrice;
 
-    /** UP/DOWN/DRAW/VOID（VOID=取不到价作废，注单退本金） */
+    /** UP/DOWN/VOID（VOID=取不到价作废，注单退本金）。相等判 UP，与 Polymarket 一致；DRAW 只在旧规则的历史行里有 */
     private String outcome;
 
     /** OPEN/LOCKED/SETTLED */

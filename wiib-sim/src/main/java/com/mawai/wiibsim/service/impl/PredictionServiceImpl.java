@@ -16,6 +16,7 @@ import com.mawai.wiibsim.mapper.PredictionBetMapper;
 import com.mawai.wiibsim.mapper.PredictionRoundMapper;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.market.PolymarketPriceClient;
+import com.mawai.wiibcommon.market.PredictionFee;
 import com.mawai.wiibsim.service.PredictionService;
 import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.RedisLockUtil;
@@ -49,27 +50,16 @@ public class PredictionServiceImpl implements PredictionService {
     private final TransactionTemplate transactionTemplate;
     private final PolymarketPriceClient priceClient;
 
-    private static final BigDecimal FEE_RATE = new BigDecimal("0.25");
-    private static final BigDecimal MIN_FEE_RATE = new BigDecimal("0.001");
-    private static final BigDecimal MAX_FEE_RATE = new BigDecimal("0.02");
     private static final BigDecimal MIN_AMOUNT = BigDecimal.ONE;
     private static final BigDecimal MAX_AMOUNT = new BigDecimal("10000");
     private static final int WINDOW_SECONDS = 300;
     /** 缺价等这么久还等不到就作废退本金 */
     private static final long VOID_AFTER_SECONDS = 3600;
 
-    /** effectiveRate = 0.25 × (p×(1-p))², clamp [0.1%, 2%] */
-    private static BigDecimal calcFeeRate(BigDecimal p) {
-        BigDecimal pq = p.multiply(BigDecimal.ONE.subtract(p));
-        BigDecimal rate = FEE_RATE.multiply(pq.pow(2));
-        if (rate.compareTo(MIN_FEE_RATE) < 0) return MIN_FEE_RATE;
-        if (rate.compareTo(MAX_FEE_RATE) > 0) return MAX_FEE_RATE;
-        return rate;
-    }
-
     // ==================== 窗口时间 ====================
 
-    private static long currentWindowStart() {
+    /** 当前 5 分钟窗口起点(秒)；只有这个窗口的注单卖得掉、按盘口估值 */
+    static long currentWindowStart() {
         long now = Instant.now().getEpochSecond();
         return now - (now % WINDOW_SECONDS);
     }
@@ -87,13 +77,9 @@ public class PredictionServiceImpl implements PredictionService {
 
     private PredictionRoundResponse toRoundResponse(PredictionRound round) {
         PredictionRoundResponse resp = new PredictionRoundResponse();
-        BigDecimal upPrice = cacheService.getPredictionAsk("UP");
-        BigDecimal downPrice = cacheService.getPredictionAsk("DOWN");
 
         if (round == null) {
             resp.setWindowStart(currentWindowStart());
-            resp.setUpPrice(upPrice);
-            resp.setDownPrice(downPrice);
             resp.setStatus("OPEN");
             fillOfficialTime(resp);
             return resp;
@@ -104,8 +90,6 @@ public class PredictionServiceImpl implements PredictionService {
         resp.setStartPrice(round.getStartPrice());
         resp.setEndPrice(round.getEndPrice());
         resp.setOutcome(round.getOutcome());
-        resp.setUpPrice(upPrice);
-        resp.setDownPrice(downPrice);
         resp.setStatus(round.getStatus());
         fillOfficialTime(resp);
         return resp;
@@ -144,7 +128,8 @@ public class PredictionServiceImpl implements PredictionService {
         resp.setStatus(bet.getStatus());
         resp.setCreatedAt(bet.getCreatedAt());
 
-        if ("ACTIVE".equals(bet.getStatus())) {
+        // 当前价值 = 现在卖掉拿多少，只有本回合的注单有
+        if ("ACTIVE".equals(bet.getStatus()) && bet.getWindowStart() == currentWindowStart()) {
             BigDecimal valPrice = cacheService.getPredictionBid(bet.getSide());
             if (valPrice != null) {
                 resp.setCurrentValue(bet.getContracts().multiply(valPrice).setScale(4, RoundingMode.HALF_UP));
@@ -187,7 +172,7 @@ public class PredictionServiceImpl implements PredictionService {
         }
 
         BigDecimal price = cacheService.getPredictionAsk(side);
-        if (price == null || price.compareTo(BigDecimal.ZERO) <= 0) {
+        if (price == null) {
             throw new BizException(ErrorCode.PREDICTION_PRICE_UNAVAILABLE);
         }
 
@@ -208,7 +193,8 @@ public class PredictionServiceImpl implements PredictionService {
 
                 BigDecimal contracts = amount.divide(price, 4, RoundingMode.DOWN);
                 BigDecimal cost = contracts.multiply(price).setScale(4, RoundingMode.HALF_UP);
-                BigDecimal commission = cost.multiply(calcFeeRate(price)).setScale(4, RoundingMode.HALF_UP);
+                // Polymarket 吃单费，公式见 PredictionFee
+                BigDecimal commission = PredictionFee.commission(contracts, price);
                 BigDecimal totalDeduct = cost.add(commission);
 
                 userService.updateGameBalance(userId, totalDeduct.negate());
@@ -259,7 +245,7 @@ public class PredictionServiceImpl implements PredictionService {
                 }
 
                 BigDecimal currentPrice = cacheService.getPredictionBid(bet.getSide());
-                if (currentPrice == null || currentPrice.compareTo(BigDecimal.ZERO) <= 0) {
+                if (currentPrice == null) {
                     throw new BizException(ErrorCode.PREDICTION_PRICE_UNAVAILABLE);
                 }
 
@@ -269,7 +255,7 @@ public class PredictionServiceImpl implements PredictionService {
                 }
 
                 BigDecimal revenue = sellContracts.multiply(currentPrice).setScale(4, RoundingMode.HALF_UP);
-                BigDecimal commission = revenue.multiply(calcFeeRate(currentPrice)).setScale(4, RoundingMode.HALF_UP);
+                BigDecimal commission = PredictionFee.commission(sellContracts, currentPrice);
                 BigDecimal netRevenue = revenue.subtract(commission);
 
                 boolean fullSell = sellContracts.compareTo(bet.getContracts()) == 0;
@@ -370,6 +356,7 @@ public class PredictionServiceImpl implements PredictionService {
         List<PredictionBet> bets = betMapper.selectList(
                 new LambdaQueryWrapper<PredictionBet>().eq(PredictionBet::getUserId, userId));
 
+        long ws = currentWindowStart();
         int total = 0, won = 0, lost = 0, active = 0;
         BigDecimal totalCost = BigDecimal.ZERO;
         BigDecimal realizedPnl = BigDecimal.ZERO;
@@ -400,11 +387,8 @@ public class PredictionServiceImpl implements PredictionService {
                 case "ACTIVE" -> {
                     active++;
                     activeCost = activeCost.add(bet.getCost());
-                    BigDecimal bidPrice = cacheService.getPredictionBid(bet.getSide());
-                    if (bidPrice != null) {
-                        activeValue = activeValue.add(
-                                bet.getContracts().multiply(bidPrice).setScale(4, RoundingMode.HALF_UP));
-                    }
+                    activeValue = activeValue.add(AssetValuationService.predictionBetValue(
+                            bet, cacheService.getPredictionBid(bet.getSide()), ws).setScale(4, RoundingMode.HALF_UP));
                 }
                 default -> { }
             }
@@ -436,7 +420,7 @@ public class PredictionServiceImpl implements PredictionService {
     @Override
     public List<Map<String, Object>> getPriceHistory() {
         long fromMs = System.currentTimeMillis() - WINDOW_SECONDS * 1000L;
-        return cacheService.getBtcPriceHistory(fromMs);
+        return cacheService.getBtcTwapHistory(fromMs);
     }
 
     // ==================== 调度 ====================
@@ -553,11 +537,10 @@ public class PredictionServiceImpl implements PredictionService {
                 round.setStartPrice(startPrice);
             }
 
-            String outcome;
-            int cmp = endPrice.compareTo(startPrice);
-            if (cmp > 0) outcome = "UP";
-            else if (cmp < 0) outcome = "DOWN";
-            else outcome = "DRAW";
+            // Polymarket 规则：窗口末 60 秒 Chainlink TWAP 不低于开盘时的 60 秒 TWAP 判 Up（相等算 Up），否则 Down；
+            // 开收盘价都按 TWAP 口径取（PolymarketPriceClient 带了 twap 参数），没有平局
+            String outcome = endPrice.compareTo(startPrice) >= 0 ? "UP" : "DOWN";
+            String losingSide = "UP".equals(outcome) ? "DOWN" : "UP";
 
             int affected = roundMapper.casSettleRound(round.getId(), endPrice, outcome);
             if (affected == 0) return null;
@@ -565,22 +548,17 @@ public class PredictionServiceImpl implements PredictionService {
             log.info("回合结算: windowStart={}, start={}, end={}, outcome={}",
                     windowStart, startPrice, endPrice, outcome);
 
-            if ("DRAW".equals(outcome)) {
-                refundActiveBets(round.getId());
-            } else {
-                String losingSide = "UP".equals(outcome) ? "DOWN" : "UP";
-                betMapper.settleWon(round.getId(), outcome);
-                betMapper.settleLost(round.getId(), losingSide);
+            betMapper.settleWon(round.getId(), outcome);
+            betMapper.settleLost(round.getId(), losingSide);
 
-                List<PredictionBet> wonBets = betMapper.selectList(
-                        new LambdaQueryWrapper<PredictionBet>()
-                                .eq(PredictionBet::getRoundId, round.getId())
-                                .eq(PredictionBet::getStatus, "WON"));
-                // mark 在循环体内、每笔之前，理由见 refundActiveBets
-                for (PredictionBet bet : wonBets) {
-                    LedgerCtx.mark(PREDICTION_SETTLE, "PREDICTION_BET", bet.getId());
-                    userService.updateGameBalance(bet.getUserId(), bet.getContracts());
-                }
+            List<PredictionBet> wonBets = betMapper.selectList(
+                    new LambdaQueryWrapper<PredictionBet>()
+                            .eq(PredictionBet::getRoundId, round.getId())
+                            .eq(PredictionBet::getStatus, "WON"));
+            // mark 在循环体内、每笔之前，理由见 refundActiveBets
+            for (PredictionBet bet : wonBets) {
+                LedgerCtx.mark(PREDICTION_SETTLE, "PREDICTION_BET", bet.getId());
+                userService.updateGameBalance(bet.getUserId(), bet.getContracts());
             }
 
             round.setEndPrice(endPrice);
@@ -623,7 +601,7 @@ public class PredictionServiceImpl implements PredictionService {
         });
     }
 
-    /** 退本金：注单 ACTIVE→DRAW(payout=cost) 后逐笔退钱，平局和作废共用 */
+    /** 退本金：注单 ACTIVE→DRAW(payout=cost) 后逐笔退钱。只有作废走这里，DRAW 状态沿用作退款标记 */
     private void refundActiveBets(Long roundId) {
         betMapper.settleDraw(roundId);
         List<PredictionBet> refundBets = betMapper.selectList(
@@ -693,8 +671,6 @@ public class PredictionServiceImpl implements PredictionService {
         if (resp.getStartPrice() != null) sb.append(",\"startPrice\":\"").append(resp.getStartPrice()).append("\"");
         if (resp.getEndPrice() != null) sb.append(",\"endPrice\":\"").append(resp.getEndPrice()).append("\"");
         if (resp.getOutcome() != null) sb.append(",\"outcome\":\"").append(resp.getOutcome()).append("\"");
-        if (resp.getUpPrice() != null) sb.append(",\"upPrice\":\"").append(resp.getUpPrice()).append("\"");
-        if (resp.getDownPrice() != null) sb.append(",\"downPrice\":\"").append(resp.getDownPrice()).append("\"");
         sb.append(",\"status\":\"").append(resp.getStatus()).append("\"");
         sb.append(",\"remainingSeconds\":").append(resp.getRemainingSeconds());
         if (resp.getServerTimeMs() != null) sb.append(",\"serverTimeMs\":").append(resp.getServerTimeMs());
