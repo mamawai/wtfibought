@@ -64,7 +64,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *         不进入业务 JSON 解析。两条连接都开了 30 秒静默看门狗：PONG 不算消息，30 秒没有业务消息就重连。
  *     </li>
  *     <li>
- *         {@link #init()} 还启动每 200ms 一拍的 {@link #tick()}：先 {@link #checkRoundRotation()}（见下），
+ *         {@link #init()} 还启动每 50ms 一拍的 {@link #tick()}：先 {@link #checkRoundRotation()}（见下），
  *         再 {@link #flushBook()} 把有变化的盘口写 Redis、广播 {@code /topic/prediction/market}；
  *         每秒一次 {@link #sampleBook()}：把盘口最后更新时刻和 UP 中间价各写一笔 Redis，并补推一次当前盘口，
  *         预测员靠前者判断盘口是不是停了，靠后者看最近 30 秒赔率怎么动。
@@ -162,7 +162,7 @@ public class PolymarketWsClient implements SmartLifecycle {
     /** 连着这么久没收到业务消息（PONG 不算）就当断了重连：TCP 活着但不推数据时价会停住 */
     private static final long WS_MAX_IDLE_SECONDS = 30;
     /** 盘口一拍的间隔：换回合检查 + 盘口写 Redis、推页面 */
-    private static final long BOOK_TICK_MS = 200;
+    private static final long BOOK_TICK_MS = 50;
 
     @PostConstruct
     public void init() {
