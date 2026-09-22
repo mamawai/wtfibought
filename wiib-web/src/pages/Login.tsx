@@ -253,7 +253,7 @@ export function Login() {
       {/* 仓库入口 + 语言切换：登录页不在 Layout 里，顶栏那两个到不了这儿，单独摆一份（未登录也能用）。
           不留 gap，跟顶栏移动端那组图标一样贴着排 */}
       <div className="absolute top-3 right-3 z-10 flex items-center pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)]">
-        <GitHubLink className="inline-flex" />
+        <GitHubLink className="w-8 h-8 rounded-md" />
         <LanguageSwitcher />
       </div>
 

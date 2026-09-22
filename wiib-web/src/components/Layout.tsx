@@ -6,6 +6,7 @@ import { useUserStore } from '../stores/userStore';
 import { useTheme } from '../hooks/useTheme';
 import { useSystemHealth, type HealthLevel } from '../hooks/useSystemHealth';
 import { NotificationBell } from './NotificationBell';
+import { GitHubLink } from './GitHubLink';
 import { useLangToggle } from '../hooks/useLangToggle';
 import { TickerStrip } from './TickerStrip';
 import { OfflineBanner } from './OfflineBanner';
@@ -231,10 +232,12 @@ export function Layout({ children }: Props) {
               <SystemLeds />
               {langButton}
               {themeButton}
+              {user && <NotificationBell />}
+              {/* 仓库入口，登没登录都给：登录后夹在铃铛和用户名中间，游客态落在"登录"左边 */}
+              <GitHubLink iconClassName="ic" />
               {/* 有 token 但 user 还没拉回来时两边都不显示，否则每次刷新都要闪一下"登录"再变回用户名 */}
               {user ? (
                 <>
-                  <NotificationBell />
                   {/* 用户名只作标识不可点，退出就摆在旁边（「我的」页是手机端入口） */}
                   <span>{user.username}</span>
                   <button type="button" onClick={handleLogout} title={t('header.logout')} aria-label={t('header.logout')}>
