@@ -9,7 +9,6 @@ import com.mawai.wiibagent.llm.jev.JevPlatformConfig;
 import com.mawai.wiibagent.mapper.JevPredictionDecisionMapper;
 import com.mawai.wiibagent.prediction.PredictionJudge.Judgment;
 import com.mawai.wiibagent.prediction.PredictionRules.Book;
-import com.mawai.wiibagent.prediction.PredictionStateWriter.Holding;
 import com.mawai.wiibagent.prediction.PredictionStateWriter.Raw;
 import com.mawai.wiibagent.prediction.PredictionStateWriter.Snapshot;
 import com.mawai.wiibquant.external.sim.SimPredictionClient;
@@ -27,7 +26,6 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -35,7 +33,7 @@ import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 检查点时机、开关、空仓买入、持仓卖出、盘口太旧不问、失败落 ERROR 行、回填 */
+/** 检查点时机、开关、空仓买入、持仓按公平价卖出、盘口太旧不问、失败落 ERROR 行、回填 */
 class JevPredictionRunnerTest {
 
     /** 对齐 5 分钟边界的窗口起点 */
@@ -43,7 +41,7 @@ class JevPredictionRunnerTest {
     /** 和 application.yml 的起手值一致，几个测试共用 */
     static final JevPredictionConfig CFG = new JevPredictionConfig(
             List.of(30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240, 255, 270),
-            new BigDecimal("5"), 0.6, 0.85, 0.2, -0.05, new BigDecimal("0.03"), new BigDecimal("0.97"), 5000, 0.3);
+            new BigDecimal("5"), 0.6, 0.85, 0.2, 0.04, 0.06, new BigDecimal("0.03"), new BigDecimal("0.97"), 5000, 0.3);
     private static final Book BOOK = PredictionRulesTest.BOOK;
 
     private PredictionStateWriter writer;
@@ -134,7 +132,7 @@ class JevPredictionRunnerTest {
 
     @Test
     void 空仓_Jev说买就买并落库() {
-        when(writer.write(WS, null)).thenReturn(snapshot(now - 700));
+        when(writer.write(WS)).thenReturn(snapshot(now - 700));
         when(judge.judge(any(), eq(false))).thenReturn(entry("BUY_UP", 0.98));
         PredictionBetResponse placed = bet(9, "ACTIVE", "UP");
         placed.setCost(new BigDecimal("10"));
@@ -160,30 +158,30 @@ class JevPredictionRunnerTest {
     }
 
     @Test
-    void 持仓_带着持仓问_Jev说卖就卖() {
+    void 持仓_只问后劲_市场给多了就卖() {
         PredictionBetResponse active = bet(9, "ACTIVE", "UP");
         when(sim.recentBets(42L, 10)).thenReturn(List.of(active));
-        when(writer.write(eq(WS), any(Holding.class))).thenReturn(snapshot(now - 700));
-        when(judge.judge(any(), eq(true))).thenReturn(new Judgment(0.6, 0.55, -0.95, "SELL", 0.98,
-                Map.of("HOLD", 0.02, "SELL", 0.98), Map.of(), "jev-1.13.0", 850, 140));
+        // 公平 0.45，买一 0.60 扣费 0.0168 = 0.583，高出 0.133 ≥ 0.06
+        when(writer.write(WS)).thenReturn(new Snapshot(Map.of("market", "..."), new Raw(-0.1, 0.45, -1, BOOK, now - 700)));
+        when(judge.judge(any(), eq(true))).thenReturn(new Judgment(0.45, 0.4, -0.95, null, 0, Map.of(),
+                Map.of(), "jev-1.13.0", 700, 140));
 
         runner.runCheckpoint(WS, "T210");
 
-        ArgumentCaptor<Holding> holding = ArgumentCaptor.forClass(Holding.class);
-        verify(writer).write(eq(WS), holding.capture());
-        assertThat(holding.getValue().side()).isEqualTo("UP");
-        assertThat(holding.getValue().avgPrice()).isEqualByComparingTo("0.50");
         verify(sim).sell(42L, 9L, null);
         verify(sim, never()).buy(anyLong(), any(), any());
         JevPredictionDecision d = inserted();
         assertThat(d.getAction()).isEqualTo(JevPredictionDecision.ACTION_SELL);
         assertThat(d.getBetId()).isEqualTo(9L);
-        assertThat(d.getJevChoice()).isEqualTo("SELL");
+        assertThat(d.getReason()).isEqualTo("SELL over 0.133 bid 0.60");
+        assertThat(d.getJevChoice()).isNull();
+        assertThat(d.getJevChoiceP()).isNull();
+        assertThat(d.getMomentum()).isEqualByComparingTo("-0.95");
     }
 
     @Test
     void 盘口太旧_不问Jev不动() {
-        when(writer.write(WS, null)).thenReturn(snapshot(now - 9_000));
+        when(writer.write(WS)).thenReturn(snapshot(now - 9_000));
 
         runner.runCheckpoint(WS, "T150");
 
@@ -197,7 +195,7 @@ class JevPredictionRunnerTest {
 
     @Test
     void 问的时候盘口停了_不下单() {
-        when(writer.write(WS, null)).thenReturn(snapshot(now - 700));
+        when(writer.write(WS)).thenReturn(snapshot(now - 700));
         when(judge.judge(any(), eq(false))).thenReturn(entry("BUY_UP", 0.98));
         when(cache.getPredictionBookUpdatedAt()).thenReturn(now - 8_000);
 
@@ -212,7 +210,7 @@ class JevPredictionRunnerTest {
 
     @Test
     void 写state失败落ERROR行() {
-        when(writer.write(eq(WS), isNull())).thenThrow(new IllegalStateException("开盘价未到"));
+        when(writer.write(WS)).thenThrow(new IllegalStateException("开盘价未到"));
 
         runner.runCheckpoint(WS, "T150");
 
@@ -226,7 +224,7 @@ class JevPredictionRunnerTest {
 
     @Test
     void 问Jev失败_ERROR行带数学部分() {
-        when(writer.write(WS, null)).thenReturn(snapshot(now - 700));
+        when(writer.write(WS)).thenReturn(snapshot(now - 700));
         when(judge.judge(any(), eq(false))).thenThrow(new IllegalStateException("Jev 回包缺题 decide"));
 
         runner.runCheckpoint(WS, "T150");
@@ -247,7 +245,7 @@ class JevPredictionRunnerTest {
 
         runner.runCheckpoint(WS, "T150");
 
-        verify(writer, never()).write(anyLong(), any());
+        verify(writer, never()).write(anyLong());
         verify(mapper, never()).insert(any(JevPredictionDecision.class));
     }
 

@@ -20,8 +20,10 @@ public class JevPredictionConfig {
     /** 买入概率到这里、且那边明显便宜（比例到 bigValueRatio）才下两倍 */
     private final double bigThreshold;
     private final double bigValueRatio;
-    /** 要买那边的优势比例低于它算偏贵，拦下 */
-    private final double minValueRatio;
+    /** 要买那边每份优势（公平价 − 卖价 − 手续费）不到这里不算便宜，不买；和 state 里 slightly cheap 同一条线 */
+    private final double minEdge;
+    /** 持仓时买一价扣掉手续费比公平价高出这么多就卖（市场给多了），不到就拿到结算 */
+    private final double sellEdge;
     /** 卖价在这个区间外不买：太贵尾部风险大，太便宜基本是废票 */
     private final BigDecimal minAsk;
     private final BigDecimal maxAsk;
@@ -36,7 +38,8 @@ public class JevPredictionConfig {
             @Value("${jev.prediction.act-threshold:0.6}") double actThreshold,
             @Value("${jev.prediction.big-threshold:0.85}") double bigThreshold,
             @Value("${jev.prediction.big-value-ratio:0.2}") double bigValueRatio,
-            @Value("${jev.prediction.min-value-ratio:-0.05}") double minValueRatio,
+            @Value("${jev.prediction.min-edge:0.04}") double minEdge,
+            @Value("${jev.prediction.sell-edge:0.06}") double sellEdge,
             @Value("${jev.prediction.min-ask:0.03}") BigDecimal minAsk,
             @Value("${jev.prediction.max-ask:0.97}") BigDecimal maxAsk,
             @Value("${jev.prediction.book-max-age-ms:5000}") long bookMaxAgeMs,
@@ -46,7 +49,8 @@ public class JevPredictionConfig {
         this.actThreshold = actThreshold;
         this.bigThreshold = bigThreshold;
         this.bigValueRatio = bigValueRatio;
-        this.minValueRatio = minValueRatio;
+        this.minEdge = minEdge;
+        this.sellEdge = sellEdge;
         this.minAsk = minAsk;
         this.maxAsk = maxAsk;
         this.bookMaxAgeMs = bookMaxAgeMs;

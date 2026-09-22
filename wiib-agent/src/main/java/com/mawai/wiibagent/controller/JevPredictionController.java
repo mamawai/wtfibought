@@ -73,7 +73,7 @@ public class JevPredictionController {
     }
 
     /** 页面提示里要写出来的几个阈值 */
-    public record Thresholds(double actThreshold, BigDecimal minAsk, BigDecimal maxAsk) {
+    public record Thresholds(double actThreshold, BigDecimal minAsk, BigDecimal maxAsk, double minEdge, double sellEdge) {
     }
 
     /** enabled=平台 key 配了且 /admin 开关开着；gameBalance 没配 key 或 sim 不可达为 null */
@@ -96,7 +96,7 @@ public class JevPredictionController {
             }
         }
         boolean enabled = platform.enabled() && sw.isOn();
-        Thresholds t = new Thresholds(cfg.getActThreshold(), cfg.getMinAsk(), cfg.getMaxAsk());
+        Thresholds t = new Thresholds(cfg.getActThreshold(), cfg.getMinAsk(), cfg.getMaxAsk(), cfg.getMinEdge(), cfg.getSellEdge());
         return Result.ok(new Overview(enabled, platform.getModel(), t, balance, JevPredictionAccount.INITIAL_GAME_BALANCE,
                 mapper.selectStats(since), mapper.selectBrierByCheckpoint(since), mapper.selectCalibration(since)));
     }

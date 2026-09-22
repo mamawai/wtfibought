@@ -14,7 +14,7 @@ import static com.mawai.wiibagent.prediction.PredictionQuestions.DECIDE;
 import static com.mawai.wiibagent.prediction.PredictionQuestions.MOMENTUM;
 
 /**
- * 拿着 state 问 Jev：后劲 + 决定。决定取概率最高的那个选项交给规则；后劲换算成修正后的上涨概率，只记分。
+ * 拿着 state 问 Jev：后劲每次都问，空仓再问决定。决定取概率最高的那个选项交给规则；后劲换算成修正后的上涨概率，只记分。
  */
 @Component
 @RequiredArgsConstructor
@@ -27,7 +27,7 @@ public class PredictionJudge {
     /**
      * @param pTilted       后劲修正后的上涨概率，只记分
      * @param momentum      还在推减在回吐，−1 … +1
-     * @param decision      决定题概率最高的选项
+     * @param decision      决定题概率最高的选项；持仓没问决定，为 null
      * @param decisionP     它的概率
      * @param decisionProbs 决定题各选项概率
      */
@@ -44,14 +44,21 @@ public class PredictionJudge {
                 PredictionQuestions.questions(holding));
         Answer mom = r.answers().get(MOMENTUM);
         Answer dec = r.answers().get(DECIDE);
-        if (mom == null || dec == null) {
+        if (mom == null || (!holding && dec == null)) {
             throw new IllegalStateException("Jev 回包缺题，只有 " + r.answers().keySet());
         }
-        Map<String, Double> probs = dec.probabilities();
-        Map.Entry<String, Double> top = probs.entrySet().stream().max(Map.Entry.comparingByValue()).orElseThrow();
+        String decision = null;
+        double decisionP = 0;
+        Map<String, Double> probs = Map.of();
+        if (dec != null) {
+            probs = dec.probabilities();
+            Map.Entry<String, Double> top = probs.entrySet().stream().max(Map.Entry.comparingByValue()).orElseThrow();
+            decision = top.getKey();
+            decisionP = top.getValue();
+        }
         double momentum = PredictionQuestions.momentum(mom);
         double pTilted = PredictionModel.tilted(raw.pModel(), momentum, raw.driftSign(), cfg.getMomentumTilt());
-        return new Judgment(raw.pModel(), pTilted, momentum, top.getKey(), top.getValue(), probs,
+        return new Judgment(raw.pModel(), pTilted, momentum, decision, decisionP, probs,
                 r.answers(), r.model(), (int) r.inputTokens(), (int) (System.currentTimeMillis() - startedAt));
     }
 }

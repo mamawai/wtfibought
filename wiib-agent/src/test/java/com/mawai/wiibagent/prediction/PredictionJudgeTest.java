@@ -21,7 +21,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 空仓问买不买、持仓问卖不卖；决定取概率最高的选项；后劲换成修正概率；缺题按失败 */
+/** 空仓问后劲和买不买、持仓只问后劲；决定取概率最高的选项；后劲换成修正概率；缺题按失败 */
 class PredictionJudgeTest {
 
     private final JevClient client = mock(JevClient.class);
@@ -70,16 +70,16 @@ class PredictionJudgeTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void 持仓问后劲和拿不拿() {
-        answer(score(0.97, 0.01, 0.02), choice(Map.of("HOLD", 0.02, "SELL", 0.98)));
+    void 持仓只问后劲() {
+        answer(score(0.97, 0.01, 0.02), null);
 
         PredictionJudge.Judgment j = judge.judge(snapshot(1, 0.6), true);
 
         ArgumentCaptor<Map<String, Question>> qs = ArgumentCaptor.forClass(Map.class);
         verify(client).ask(any(), any(), any(), any(), qs.capture());
-        assertThat(qs.getValue().get(PredictionQuestions.DECIDE)).isSameAs(PredictionQuestions.EXIT_Q);
-        assertThat(j.decision()).isEqualTo("SELL");
-        assertThat(j.decisionProbs()).containsEntry("HOLD", 0.02);
+        assertThat(qs.getValue().keySet()).containsExactly(PredictionQuestions.MOMENTUM);
+        assertThat(j.decision()).isNull();
+        assertThat(j.decisionProbs()).isEmpty();
         assertThat(j.momentum()).isCloseTo(-0.95, within(1e-9));
         assertThat(j.pTilted()).isLessThan(0.6);
     }

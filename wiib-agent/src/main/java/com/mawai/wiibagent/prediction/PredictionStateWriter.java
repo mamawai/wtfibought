@@ -5,7 +5,6 @@ import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibcommon.market.ForceOrderService;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.OrderFlowAggregator;
-import com.mawai.wiibcommon.market.PredictionFee;
 import com.mawai.wiibcommon.market.TimeWeightedAverage;
 import com.mawai.wiibcommon.market.TimeWeightedAverage.Point;
 import com.mawai.wiibagent.prediction.PredictionRules.Book;
@@ -31,7 +30,6 @@ import java.util.function.LongSupplier;
  *   <li>btc：相对开盘均价、领先有多大、路径、形状、最近一分钟、速度（Polymarket 推的 Chainlink 现货，按 Chainlink 自己的时间戳）</li>
  *   <li>binance_flow：最近 60 秒主动买卖与大单、开盘以来强平方向（直接读 Redis 逐笔流和强平库）</li>
  *   <li>odds：谁是热门、UP/DOWN 各自划不划算（代码拿公平价比卖价加手续费）、最近 30 秒赔率怎么动</li>
- *   <li>position：只在持仓时给，持哪边、买时赔率、买后涨跌、现在卖划不划算</li>
  * </ul>
  * 余额、概率、秒数这些数字都不给：Jev 读数不准，数字交给代码，它只做玩家的判断。
  */
@@ -63,6 +61,12 @@ public class PredictionStateWriter {
     static final int FLOW_MIN_TRADES = 10;
     /** 看赔率怎么动：和这么久之前比 */
     static final long ODDS_LOOKBACK_MS = 30_000L;
+    /** 划不划算的分档线（每份优势）。模型和盘口一致时优势约 −1~−2 分（半个价差 + 手续费），合理档连同几分钱的模型误差一起盖住 */
+    static final double CLEARLY_CHEAP = 0.08;
+    /** 到这条线才算便宜，和 jev.prediction.min-edge 对齐：代码只放便宜的单 */
+    static final double SLIGHTLY_CHEAP = 0.04;
+    static final double SLIGHTLY_EXPENSIVE = -0.06;
+    static final double CLEARLY_EXPENSIVE = -0.10;
 
     static final String GAME = "Polymarket 5-minute BTC market. UP pays 1 if BTC's average price over the final minute is at or above "
             + "its average at the open, otherwise DOWN pays 1. Buying costs the quoted price plus a small fee.";
@@ -74,10 +78,6 @@ public class PredictionStateWriter {
 
     /** 墙钟注入点 */
     LongSupplier nowMs = System::currentTimeMillis;
-
-    /** 本回合手里的注：哪边、成交均价 */
-    public record Holding(String side, BigDecimal avgPrice) {
-    }
 
     /** 一次检查点：给 Jev 的 state + 代码自己留的数 */
     public record Snapshot(Map<String, Object> state, Raw raw) {
@@ -94,7 +94,7 @@ public class PredictionStateWriter {
     }
 
     /** 缺开盘价、缺 K 线、本回合还没有 tick、Chainlink 停了都抛 IllegalStateException：看不全就别问 */
-    public Snapshot write(long windowStart, Holding holding) {
+    public Snapshot write(long windowStart) {
         long now = nowMs.getAsLong();
         long windowStartMs = windowStart * 1000L;
         // 结算均价截止时刻：收盘前 3 秒
@@ -167,10 +167,6 @@ public class PredictionStateWriter {
             odds.put("odds_move", move);
         }
         state.put("odds", odds);
-
-        if (holding != null) {
-            state.put("position", positionBlock(holding, book, pModel));
-        }
 
         return new Snapshot(state, new Raw(z, pModel, driftSign, book, cacheService.getPredictionBookUpdatedAt()));
     }
@@ -324,15 +320,15 @@ public class PredictionStateWriter {
         return "neither side is favoured";
     }
 
-    /** 划不划算：公平价比卖价加手续费，按优势占最大利润的比例分五档；没有卖价就是没人卖 */
+    /** 划不划算：公平价比卖价加手续费，按每份优势分五档，热门冷门同一把尺子；没有卖价就是没人卖 */
     static String valuePhrase(String side, double pSide, BigDecimal ask) {
         if (ask == null) return side + " has no sellers right now";
-        double r = PredictionRules.edgeRatio(pSide, ask);
+        double e = PredictionRules.edge(pSide, ask);
         String word;
-        if (r >= 0.2) word = "looks clearly cheap";
-        else if (r >= 0.05) word = "looks slightly cheap";
-        else if (r > -0.05) word = "looks fairly priced";
-        else if (r > -0.2) word = "looks slightly expensive";
+        if (e >= CLEARLY_CHEAP) word = "looks clearly cheap";
+        else if (e >= SLIGHTLY_CHEAP) word = "looks slightly cheap";
+        else if (e > SLIGHTLY_EXPENSIVE) word = "looks fairly priced";
+        else if (e > CLEARLY_EXPENSIVE) word = "looks slightly expensive";
         else word = "looks clearly expensive";
         return side + " " + word + " against where BTC stands";
     }
@@ -348,44 +344,6 @@ public class PredictionStateWriter {
         if (d <= -0.08) return "UP's price fell sharply over the last 30 seconds";
         if (d <= -0.03) return "UP's price fell a little over the last 30 seconds";
         return "prices barely moved over the last 30 seconds";
-    }
-
-    /** 持仓块：卖出按买一价成交，划不划算拿扣完手续费的买一价比公平价 */
-    static Map<String, Object> positionBlock(Holding h, Book book, double pModel) {
-        boolean up = "UP".equals(h.side());
-        BigDecimal bid = up ? book.upBid() : book.downBid();
-        double pSide = up ? pModel : 1 - pModel;
-        Map<String, Object> pos = new LinkedHashMap<>();
-        pos.put("holding", h.side());
-        pos.put("bought", "when " + h.side() + " was " + oddsWord(h.avgPrice().doubleValue()));
-        if (bid == null) {
-            pos.put("since_bought", h.side() + " has no buyers right now");
-            return pos;
-        }
-        double d = bid.doubleValue() - h.avgPrice().doubleValue();
-        String moved;
-        if (d >= 0.10) moved = "risen a lot";
-        else if (d >= 0.03) moved = "risen a little";
-        else if (d <= -0.10) moved = "fallen a lot";
-        else if (d <= -0.03) moved = "fallen a little";
-        else moved = "barely moved";
-        pos.put("since_bought", h.side() + "'s price has " + moved);
-        double net = bid.doubleValue() - PredictionFee.perShare(bid).doubleValue();
-        double gap = net - pSide;
-        pos.put("sell_value", gap >= 0.05 ? "selling now pays more than BTC's position says the bet is worth"
-                : gap <= -0.05 ? "selling now pays less than BTC's position says the bet is worth"
-                : "selling now pays about what the bet is worth");
-        return pos;
-    }
-
-    /** 份额价换成赔率说法 */
-    static String oddsWord(double price) {
-        if (price < 0.35) return "an underdog";
-        if (price < 0.45) return "a slight underdog";
-        if (price < 0.55) return "about even";
-        if (price < 0.7) return "a slight favourite";
-        if (price < 0.85) return "a clear favourite";
-        return "a strong favourite";
     }
 
     // ==================== 数 ====================

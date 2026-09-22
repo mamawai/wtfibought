@@ -6,8 +6,6 @@ import com.mawai.wiibcommon.market.ForceOrderService;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.OrderFlowAggregator;
 import com.mawai.wiibcommon.market.TimeWeightedAverage.Point;
-import com.mawai.wiibagent.prediction.PredictionRules.Book;
-import com.mawai.wiibagent.prediction.PredictionStateWriter.Holding;
 import com.mawai.wiibagent.prediction.PredictionStateWriter.Snapshot;
 import com.mawai.wiibquant.market.service.KlineFetcher;
 import org.junit.jupiter.api.Test;
@@ -29,7 +27,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** 眼睛的词怎么出：路径与形状、划不划算、赔率走势、持仓块、波动，以及整份 state 怎么拼 */
+/** 眼睛的词怎么出：路径与形状、划不划算、赔率走势、波动，以及整份 state 怎么拼 */
 class PredictionStateWriterTest {
 
     private static final long WS = 1_790_016_000L;
@@ -99,17 +97,26 @@ class PredictionStateWriterTest {
     }
 
     @Test
-    void 划不划算按优势比例分五档_没有卖价是没人卖() {
-        // 公平 0.74 买 0.62：优势 0.0835，最大利润 0.3635，比例 0.23
+    void 划不划算按每份优势分五档_没有卖价是没人卖() {
+        // 公平 0.74 买 0.62：0.74 − 0.62 − 0.0165 = 0.1035
         assertThat(PredictionStateWriter.valuePhrase("UP", 0.74, new BigDecimal("0.62")))
                 .isEqualTo("UP looks clearly cheap against where BTC stands");
-        // 比例 ≈ 0.07
-        assertThat(PredictionStateWriter.valuePhrase("UP", 0.67, new BigDecimal("0.62"))).contains("slightly cheap");
-        assertThat(PredictionStateWriter.valuePhrase("UP", 0.64, new BigDecimal("0.62"))).contains("fairly priced");
-        // 比例 ≈ −0.10
-        assertThat(PredictionStateWriter.valuePhrase("DOWN", 0.60, new BigDecimal("0.62"))).contains("slightly expensive");
+        // 0.0535
+        assertThat(PredictionStateWriter.valuePhrase("UP", 0.69, new BigDecimal("0.62"))).contains("slightly cheap");
+        // 0.0335 和 −0.0365 都还在合理档
+        assertThat(PredictionStateWriter.valuePhrase("UP", 0.67, new BigDecimal("0.62"))).contains("fairly priced");
+        assertThat(PredictionStateWriter.valuePhrase("DOWN", 0.60, new BigDecimal("0.62"))).contains("fairly priced");
+        // −0.0865
+        assertThat(PredictionStateWriter.valuePhrase("DOWN", 0.55, new BigDecimal("0.62"))).contains("slightly expensive");
         assertThat(PredictionStateWriter.valuePhrase("DOWN", 0.30, new BigDecimal("0.62"))).contains("clearly expensive");
         assertThat(PredictionStateWriter.valuePhrase("UP", 0.99, null)).isEqualTo("UP has no sellers right now");
+    }
+
+    @Test
+    void 模型和盘口一致时热门冷门都算合理() {
+        // 盘口 UP 0.75/0.76、DOWN 0.24/0.25，公平价取 mid 0.755：两边每份都约 −0.018
+        assertThat(PredictionStateWriter.valuePhrase("UP", 0.755, new BigDecimal("0.76"))).contains("fairly priced");
+        assertThat(PredictionStateWriter.valuePhrase("DOWN", 0.245, new BigDecimal("0.25"))).contains("fairly priced");
     }
 
     @Test
@@ -125,27 +132,6 @@ class PredictionStateWriterTest {
         List<Point> tooShort = List.of(new Point(85_000, new BigDecimal("0.50")), new Point(99_000, new BigDecimal("0.60")));
         assertThat(PredictionStateWriter.oddsMovePhrase(tooShort, now)).isNull();
         assertThat(PredictionStateWriter.oddsMovePhrase(List.of(), now)).isNull();
-    }
-
-    @Test
-    void 持仓块_买时赔率_买后涨跌_现在卖划不划算() {
-        Book book = new Book(new BigDecimal("0.80"), new BigDecimal("0.78"), new BigDecimal("0.22"), new BigDecimal("0.20"));
-        // 公平 0.65，买价 0.78 扣费 0.012 = 0.768，高出 0.118
-        Map<String, Object> pos = PredictionStateWriter.positionBlock(new Holding("UP", new BigDecimal("0.50")), book, 0.65);
-        assertThat(pos.get("holding")).isEqualTo("UP");
-        assertThat(pos.get("bought")).isEqualTo("when UP was about even");
-        assertThat(pos.get("since_bought")).isEqualTo("UP's price has risen a lot");
-        assertThat(pos.get("sell_value")).isEqualTo("selling now pays more than BTC's position says the bet is worth");
-        // 持 DOWN：买价 0.20 扣费 ≈ 0.189，公平 0.35，低 0.16
-        Map<String, Object> down = PredictionStateWriter.positionBlock(new Holding("DOWN", new BigDecimal("0.40")), book, 0.65);
-        assertThat(down.get("bought")).isEqualTo("when DOWN was a slight underdog");
-        assertThat(down.get("since_bought")).isEqualTo("DOWN's price has fallen a lot");
-        assertThat(down.get("sell_value")).isEqualTo("selling now pays less than BTC's position says the bet is worth");
-        // 没人接盘
-        Book noBid = new Book(new BigDecimal("0.80"), null, new BigDecimal("0.22"), null);
-        Map<String, Object> stuck = PredictionStateWriter.positionBlock(new Holding("UP", new BigDecimal("0.50")), noBid, 0.65);
-        assertThat(stuck.get("since_bought")).isEqualTo("UP has no buyers right now");
-        assertThat(stuck).doesNotContainKey("sell_value");
     }
 
     @Test
@@ -208,12 +194,12 @@ class PredictionStateWriterTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void 空仓时五块里给四块_数字留在raw() {
+    void 五块都给_数字留在raw() {
         Deps d = deps(WS + 150);
-        Snapshot snap = d.writer().write(WS, null);
+        Snapshot snap = d.writer().write(WS);
 
         Map<String, Object> s = snap.state();
-        assertThat(s).containsKeys("market", "clock", "btc", "binance_flow", "odds").doesNotContainKey("position");
+        assertThat(s).containsOnlyKeys("market", "clock", "btc", "binance_flow", "odds");
         assertThat(s.get("clock")).isEqualTo("middle: one to three minutes left");
         Map<String, Object> btc = (Map<String, Object>) s.get("btc");
         assertThat(btc.get("vs_open")).isEqualTo("above the opening average");
@@ -235,17 +221,14 @@ class PredictionStateWriterTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void 持仓带持仓块_末分钟说锁了多少_逐笔流停了不给主动买卖() {
+    void 末分钟说锁了多少_逐笔流停了不给主动买卖() {
         Deps d = deps(WS + 270);
         when(d.flow().getLastUpdateMs("BTCUSDT")).thenReturn((WS + 200) * 1000L);
 
-        Snapshot snap = d.writer().write(WS, new Holding("UP", new BigDecimal("0.45")));
+        Snapshot snap = d.writer().write(WS);
 
         Map<String, Object> s = snap.state();
         assertThat(s.get("clock")).isEqualTo("final minute: about half of the settlement average is already set");
-        Map<String, Object> pos = (Map<String, Object>) s.get("position");
-        assertThat(pos.get("holding")).isEqualTo("UP");
-        assertThat(pos.get("since_bought")).isEqualTo("UP's price has risen a lot");
         Map<String, Object> flow = (Map<String, Object>) s.get("binance_flow");
         assertThat(flow).doesNotContainKeys("takers", "large_trades").containsKey("liquidations");
     }
@@ -254,15 +237,15 @@ class PredictionStateWriterTest {
     void 缺开盘价_缺K线_Chainlink停了都不问() {
         Deps noOpen = deps(WS + 150);
         when(noOpen.cache().getPolymarketOpenPrice(WS)).thenReturn(null);
-        assertThatThrownBy(() -> noOpen.writer().write(WS, null)).hasMessageContaining("开盘价未到");
+        assertThatThrownBy(() -> noOpen.writer().write(WS)).hasMessageContaining("开盘价未到");
 
         Deps noBars = deps(WS + 150);
         when(noBars.klines().fetch(eq("BTCUSDT"), eq("1m"), anyInt())).thenReturn(List.of());
-        assertThatThrownBy(() -> noBars.writer().write(WS, null)).hasMessageContaining("K 线取不到");
+        assertThatThrownBy(() -> noBars.writer().write(WS)).hasMessageContaining("K 线取不到");
 
         Deps stale = deps(WS + 150);
         when(stale.cache().getBtcPricePoints(anyLong())).thenReturn(List.of(
                 new Point((WS + 10) * 1000, new BigDecimal("100")), new Point((WS + 100) * 1000, new BigDecimal("100.02"))));
-        assertThatThrownBy(() -> stale.writer().write(WS, null)).hasMessageContaining("Chainlink 价停了");
+        assertThatThrownBy(() -> stale.writer().write(WS)).hasMessageContaining("Chainlink 价停了");
     }
 }

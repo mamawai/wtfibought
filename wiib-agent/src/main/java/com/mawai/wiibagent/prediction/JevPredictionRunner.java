@@ -10,7 +10,6 @@ import com.mawai.wiibagent.prediction.PredictionJudge.Judgment;
 import com.mawai.wiibagent.prediction.PredictionRules.Book;
 import com.mawai.wiibagent.prediction.PredictionRules.Entry;
 import com.mawai.wiibagent.prediction.PredictionRules.Review;
-import com.mawai.wiibagent.prediction.PredictionStateWriter.Holding;
 import com.mawai.wiibagent.prediction.PredictionStateWriter.Snapshot;
 import com.mawai.wiibquant.external.sim.SimPredictionClient;
 import lombok.RequiredArgsConstructor;
@@ -40,8 +39,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 预测员回路：每秒一跳对齐 5 分钟窗口，开盘后到了配置里的每个检查点秒数（起手每 15 秒）就问一次 Jev，每次一行落库；
  * 另一条每分钟的回填把结算结果、盈亏补进去。
  * <p>
- * 一次检查点：查本回合注单 → 写 state（持仓就带持仓块）→ 盘口太旧就不问不动 → 问 Jev 后劲 + 决定 →
- * 重读盘口（问的那一两百毫秒里价可能变了）→ 空仓按规则买或不买、持仓按规则卖或拿着。
+ * 一次检查点：查本回合注单 → 写 state → 盘口太旧就不问不动 → 问 Jev（后劲；空仓再加决定）→
+ * 重读盘口（问的那一两百毫秒里价可能变了）→ 空仓按 Jev 的决定买或不买、持仓代码按公平价卖或拿着。
  * 卖掉就是空仓，同回合后面的检查点照常问买不买。
  * <p>
  * 平台 Jev 没配 key 或 /admin 开关关着不开检查点；回填不看开关，关掉前的行照样补齐。
@@ -135,14 +134,13 @@ public class JevPredictionRunner {
         try {
             long userId = account.userId();
             PredictionBetResponse active = activeBet(sim.recentBets(userId, 10), ws);
-            Holding holding = active == null ? null : new Holding(active.getSide(), active.getAvgPrice());
             if (active != null) {
                 d.setBetId(active.getId());
                 d.setStake(active.getCost());
                 d.setShares(active.getContracts());
                 d.setAvgPrice(active.getAvgPrice());
             }
-            Snapshot snap = writer.write(ws, holding);
+            Snapshot snap = writer.write(ws);
             fillMath(d, snap);
             fillBook(d, snap.raw().book());
             decide(d, userId, snap, active);
@@ -209,16 +207,16 @@ public class JevPredictionRunner {
         d.setPJev(dec(j.pTilted()));
         d.setMomentum(dec(j.momentum()));
         d.setJevChoice(j.decision());
-        d.setJevChoiceP(dec(j.decisionP()));
+        d.setJevChoiceP(j.decision() == null ? null : dec(j.decisionP()));
         d.setModel(j.model());
         d.setInputTokens(j.inputTokens());
         d.setLatencyMs(j.latencyMs());
     }
 
-    /** 持仓按规则卖或拿着；空仓按规则买或不买 */
+    /** 持仓代码按公平价卖或拿着；空仓按 Jev 的决定买或不买 */
     private void act(JevPredictionDecision d, long userId, Judgment j, Book book, PredictionBetResponse active) {
         if (active != null) {
-            Review r = PredictionRules.review(j, active.getSide(), book, cfg);
+            Review r = PredictionRules.review(j.pModel(), active.getSide(), book, cfg);
             d.setReason(r.reason());
             if (ACTION_SELL.equals(r.action())) {
                 sim.sell(userId, active.getId(), null);

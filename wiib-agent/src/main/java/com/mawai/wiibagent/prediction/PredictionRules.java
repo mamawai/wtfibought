@@ -10,8 +10,6 @@ import java.util.Locale;
 import java.util.Set;
 
 import static com.mawai.wiibagent.prediction.PredictionQuestions.BUY_UP;
-import static com.mawai.wiibagent.prediction.PredictionQuestions.HOLD;
-import static com.mawai.wiibagent.prediction.PredictionQuestions.SELL;
 import static com.mawai.wiibagent.prediction.PredictionQuestions.WAIT;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_BUY_DOWN;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_BUY_UP;
@@ -20,12 +18,13 @@ import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_SELL;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_STAY_OUT;
 
 /**
- * 预测员的规则：买卖由 Jev 的决定题拍板，代码只做三件事——概率不够不动、明显不该买的拦下、定注额。
+ * 预测员的规则：买由 Jev 的决定题拍板，代码只做三件事——概率不够不动、不便宜的不买、定注额；
+ * 卖不问 Jev，买一价扣掉吃单费比公平价高出 sell-edge 就卖（市场给多了），否则拿到结算。
  * 优势 = 公平价 − 卖价 − 每份吃单费；比例 = 优势 ÷ (1 − 卖价 − 手续费)，就是 Kelly 分数。
  * <p>
  * reason 一律"代码 + 细节"，页面按首个词出中文提示：
  * BUY 下单 / WAIT Jev 选等 / UNSURE 概率不够 / NO_QUOTE 没人卖 / ASK_RANGE 卖价出区间 /
- * EXPENSIVE 偏贵 / NO_BALANCE 没钱 / HOLD 拿着 / SELL 卖出 / NO_BID 想卖没人接。
+ * NOT_CHEAP 不够便宜 / NO_BALANCE 没钱 / HOLD 拿着 / SELL 卖出 / NO_BID 没人接盘。
  */
 public final class PredictionRules {
 
@@ -50,8 +49,8 @@ public final class PredictionRules {
     }
 
     /**
-     * 空仓：Jev 选买且概率够，再过两道拦：卖价出了区间不买、那边偏贵不买。
-     * 注额：基础额；Jev 很有把握且那边明显便宜才翻倍。
+     * 空仓：Jev 选买且概率够，再过两道拦：卖价出了区间不买、那边每份优势不到 min-edge 不算便宜不买（和 state 里 slightly cheap 同一条线）。
+     * 注额：基础额；Jev 很有把握且 Kelly 比例够大才翻倍。
      */
     static Entry entry(Judgment j, Book b, BigDecimal gameBalance, JevPredictionConfig cfg) {
         String top = j.decision();
@@ -73,10 +72,10 @@ public final class PredictionRules {
         if (ask.compareTo(cfg.getMaxAsk()) > 0 || ask.compareTo(cfg.getMinAsk()) < 0) {
             return new Entry(ACTION_STAY_OUT, side, null, edge, "ASK_RANGE " + ask.toPlainString());
         }
-        double ratio = edgeRatio(pSide, ask);
-        if (ratio < cfg.getMinValueRatio()) {
-            return new Entry(ACTION_STAY_OUT, side, null, edge, "EXPENSIVE ratio " + fmt(ratio));
+        if (edge < cfg.getMinEdge()) {
+            return new Entry(ACTION_STAY_OUT, side, null, edge, "NOT_CHEAP edge " + fmt(edge));
         }
+        double ratio = edgeRatio(pSide, ask);
         boolean big = p >= cfg.getBigThreshold() && ratio >= cfg.getBigValueRatio();
         BigDecimal stake = stake(big ? cfg.getBaseStake().multiply(BigDecimal.TWO) : cfg.getBaseStake(), gameBalance, ask);
         if (stake == null) {
@@ -86,21 +85,18 @@ public final class PredictionRules {
                 "BUY " + top + " " + fmt(p) + " ratio " + fmt(ratio) + " ask " + ask.toPlainString());
     }
 
-    /** 持仓：Jev 选卖且概率够就卖，没人接盘就只能拿着；最看好卖但概率不够也拿着，单独标出来 */
-    static Review review(Judgment j, String side, Book b, JevPredictionConfig cfg) {
-        double pSell = j.decisionProbs().getOrDefault(SELL, 0.0);
-        double pHold = j.decisionProbs().getOrDefault(HOLD, 0.0);
-        if (pSell >= cfg.getActThreshold()) {
-            BigDecimal bid = "UP".equals(side) ? b.upBid() : b.downBid();
-            if (bid == null) {
-                return new Review(ACTION_HOLD, "NO_BID " + fmt(pSell));
-            }
-            return new Review(ACTION_SELL, "SELL " + fmt(pSell) + " bid " + bid.toPlainString());
+    /** 持仓：买一价扣掉吃单费比公平价高出 sell-edge 就卖（市场给多了），否则拿到结算；没人接盘只能拿着 */
+    static Review review(double pModel, String side, Book b, JevPredictionConfig cfg) {
+        boolean up = "UP".equals(side);
+        BigDecimal bid = up ? b.upBid() : b.downBid();
+        if (bid == null) {
+            return new Review(ACTION_HOLD, "NO_BID");
         }
-        if (pSell > pHold) {
-            return new Review(ACTION_HOLD, "UNSURE " + SELL + " " + fmt(pSell));
+        double over = bid.doubleValue() - PredictionFee.perShare(bid).doubleValue() - (up ? pModel : 1 - pModel);
+        if (over >= cfg.getSellEdge()) {
+            return new Review(ACTION_SELL, "SELL over " + fmt(over) + " bid " + bid.toPlainString());
         }
-        return new Review(ACTION_HOLD, "HOLD " + fmt(pHold));
+        return new Review(ACTION_HOLD, "HOLD over " + fmt(over));
     }
 
     /** 每份优势：概率 − 卖价 − 吃单费 */

@@ -11,8 +11,8 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * Jev 预测员每回合每检查点一行：发出的 state、两道题答案（后劲 + 决定）、三个概率、盘口、动作、注单；结算后回填结果与盈亏。
- * 买卖由 Jev 的决定题拍板；记分看三列：纯数学 p_model、后劲修正 p_jev、市场隐含 p_mkt，Brier 在 SQL 里现算。
+ * Jev 预测员每回合每检查点一行：发出的 state、Jev 的回答（后劲；空仓还有决定）、三个概率、盘口、动作、注单；结算后回填结果与盈亏。
+ * 买由 Jev 的决定题拍板，卖由代码按公平价定；记分看三列：纯数学 p_model、后劲修正 p_jev、市场隐含 p_mkt，Brier 在 SQL 里现算。
  */
 @Data
 @TableName("jev_prediction_decision")
@@ -31,7 +31,7 @@ public class JevPredictionDecision {
     /** 窗口起点(秒)，与 prediction_round.window_start 同 */
     private Long windowStart;
 
-    /** 检查点：开盘后第几秒，如 T150；空仓问买不买，持仓问卖不卖 */
+    /** 检查点：开盘后第几秒，如 T150；空仓问买不买，持仓只问后劲 */
     private String checkpoint;
 
     /** 决策时刻(ms) */
@@ -40,7 +40,7 @@ public class JevPredictionDecision {
     /** 发给 Jev 的 state 原文 */
     private String stateJson;
 
-    /** 两道题答案原样 */
+    /** Jev 的回答原样：后劲题，空仓还有决定题 */
     private String answersJson;
 
     /** 纯数学的上涨概率：领先 / 剩余时间 / 波动 出的 Φ(z)，末分钟含锁定；也是"划不划算"的公平价 */
@@ -58,7 +58,7 @@ public class JevPredictionDecision {
     /** Jev 后劲：还在推减在回吐，−1 … +1 */
     private BigDecimal momentum;
 
-    /** Jev 决定题概率最高的选项：BUY_UP / BUY_DOWN / WAIT / HOLD / SELL */
+    /** Jev 决定题概率最高的选项：BUY_UP / BUY_DOWN / WAIT；持仓行没问决定，为空 */
     private String jevChoice;
 
     /** 它的概率 */
@@ -79,7 +79,7 @@ public class JevPredictionDecision {
     private String action;
 
     /**
-     * 为什么这么做，"代码 + 细节"：BUY / WAIT / UNSURE / NO_QUOTE / ASK_RANGE / EXPENSIVE / NO_BALANCE /
+     * 为什么这么做，"代码 + 细节"：BUY / WAIT / UNSURE / NO_QUOTE / ASK_RANGE / NOT_CHEAP / NO_BALANCE /
      * HOLD / SELL / NO_BID / STALE_BOOK / STALE_WHILE_ASKING；页面按首个词出中文提示。异常看 error
      */
     private String reason;

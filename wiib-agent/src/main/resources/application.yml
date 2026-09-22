@@ -151,7 +151,7 @@ jev:
     api-key: ${JEV_API_KEY:}
     base-url: ${JEV_BASE_URL:https://api.typesafe.ai}
     model: ${JEV_MODEL:jev-latest}
-  # 预测员（BTC 5 分钟盘）：开关在 /admin 页面（存 Redis，默认关）。Jev 当玩家，空仓问买不买、持仓问卖不卖，代码只拦明显不该买的
+  # 预测员（BTC 5 分钟盘）：开关在 /admin 页面（存 Redis，默认关）。Jev 当玩家，空仓问买不买（只在便宜时买），代码只放便宜的单；卖不问 Jev，代码按公平价定
   # 阈值都是起手值，跑出盈亏和记分后再调，改数不用改代码
   prediction:
     checkpoint-seconds: 30,45,60,75,90,105,120,135,150,165,180,195,210,225,240,255,270   # 开盘后第几秒问一次，每次一行
@@ -159,7 +159,8 @@ jev:
     act-threshold: 0.6        # Jev 选的动作（买 UP/买 DOWN/卖）概率到这里才执行
     big-threshold: 0.85       # 买入概率到这里、且那边明显便宜（比例到 big-value-ratio）才下两倍
     big-value-ratio: 0.2      # 优势占最大利润的比例 (公平价 − 卖价 − 费) / (1 − 卖价 − 费)
-    min-value-ratio: -0.05    # 要买那边比例低于它算偏贵，拦下
+    min-edge: 0.04            # 要买那边每份优势 (公平价 − 卖价 − 费) 不到这里不算便宜，不买；和 state 里 slightly cheap 同一条线
+    sell-edge: 0.06           # 持仓时买一价扣手续费比公平价高出这么多就卖（市场给多了），不到就拿到结算；卖不问 Jev
     min-ask: 0.03             # 卖价低于它不买（基本是废票）
     max-ask: 0.97             # 卖价高于它不买（尾部风险大，按占最大利润算手续费也最贵）
     book-max-age-ms: 5000     # 盘口超过这么久没推送就不问不动

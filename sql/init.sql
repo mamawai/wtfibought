@@ -1120,22 +1120,22 @@ CREATE TABLE IF NOT EXISTS jev_prediction_decision (
     UNIQUE (window_start, checkpoint)
 );
 CREATE INDEX IF NOT EXISTS idx_jev_pred_decision_window ON jev_prediction_decision (window_start DESC);
-COMMENT ON TABLE  jev_prediction_decision IS 'Jev 预测员每回合每检查点一行：发出的 state、两道题答案（后劲+决定）、三个概率、盘口、动作、注单，结算后回填结果/盈亏';
-COMMENT ON COLUMN jev_prediction_decision.checkpoint IS '检查点：开盘后第几秒，如 T150；空仓问买不买，持仓问卖不卖';
+COMMENT ON TABLE  jev_prediction_decision IS 'Jev 预测员每回合每检查点一行：发出的 state、Jev 的回答（后劲；空仓还有决定）、三个概率、盘口、动作、注单，结算后回填结果/盈亏';
+COMMENT ON COLUMN jev_prediction_decision.checkpoint IS '检查点：开盘后第几秒，如 T150；空仓问买不买，持仓只问后劲';
 COMMENT ON COLUMN jev_prediction_decision.decided_at IS '决策时刻(ms)';
 COMMENT ON COLUMN jev_prediction_decision.state_json IS '发给 Jev 的 state 原文';
-COMMENT ON COLUMN jev_prediction_decision.answers_json IS '两道题答案原样（各档/各选项概率、置信度）';
+COMMENT ON COLUMN jev_prediction_decision.answers_json IS 'Jev 的回答原样（各档/各选项概率、置信度）：后劲题，空仓还有决定题';
 COMMENT ON COLUMN jev_prediction_decision.p_model IS '纯数学的上涨概率：领先/剩余时间/波动出的 Φ(z)，末分钟含已锁定的均价；也是"划不划算"的公平价';
 COMMENT ON COLUMN jev_prediction_decision.p_jev IS '数学概率按 Jev 后劲判断修正后的上涨概率，只记分';
 COMMENT ON COLUMN jev_prediction_decision.p_mkt IS '市场隐含上涨概率 up_mid/(up_mid+down_mid)，Brier 对照';
 COMMENT ON COLUMN jev_prediction_decision.lead_sigma IS '纯数学的 z，正=偏 UP';
 COMMENT ON COLUMN jev_prediction_decision.momentum IS 'Jev 后劲：还在推减在回吐，-1…+1';
-COMMENT ON COLUMN jev_prediction_decision.jev_choice IS 'Jev 决定题概率最高的选项：BUY_UP/BUY_DOWN/WAIT（空仓）或 HOLD/SELL（持仓）';
+COMMENT ON COLUMN jev_prediction_decision.jev_choice IS 'Jev 决定题概率最高的选项：BUY_UP/BUY_DOWN/WAIT；持仓行没问决定，为空';
 COMMENT ON COLUMN jev_prediction_decision.jev_choice_p IS '它的概率，到执行阈值才动';
 COMMENT ON COLUMN jev_prediction_decision.book_age_ms IS '盘口距上次推送的毫秒数，超龄不问不动；空=没记录';
 COMMENT ON COLUMN jev_prediction_decision.edge IS 'Jev 想买那边的绝对优势 p_model − 卖价 − 手续费；没买时也记';
 COMMENT ON COLUMN jev_prediction_decision.action IS '实际动作 BUY_UP/BUY_DOWN/STAY_OUT/HOLD/SELL/ERROR';
-COMMENT ON COLUMN jev_prediction_decision.reason IS '为什么这么做，"代码 + 细节"：BUY/WAIT/UNSURE/NO_QUOTE/ASK_RANGE/EXPENSIVE/NO_BALANCE/HOLD/SELL/NO_BID/STALE_BOOK/STALE_WHILE_ASKING，页面按首个词出提示；异常看 error';
+COMMENT ON COLUMN jev_prediction_decision.reason IS '为什么这么做，"代码 + 细节"：BUY/WAIT/UNSURE/NO_QUOTE/ASK_RANGE/NOT_CHEAP/NO_BALANCE/HOLD/SELL/NO_BID/STALE_BOOK/STALE_WHILE_ASKING，页面按首个词出提示；异常看 error';
 COMMENT ON COLUMN jev_prediction_decision.bet_id IS '本行开的注单（BUY_*）或操作的注单（SELL/HOLD）';
 COMMENT ON COLUMN jev_prediction_decision.stake IS '本金 cost（不含手续费）';
 COMMENT ON COLUMN jev_prediction_decision.outcome IS '回合结果 UP/DOWN/VOID，结算后回填';
