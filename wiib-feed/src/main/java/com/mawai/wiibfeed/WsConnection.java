@@ -46,7 +46,6 @@ public class WsConnection {
     /** 收帧和处理分开：读线程只把整条消息放进来就去要下一帧，处理由 consumer 一条线程按序做。满了丢最旧的，行情都是全量，下一条就补上 */
     static final int INBOX_CAPACITY = 4096;
     private final BlockingQueue<String> inbox = new ArrayBlockingQueue<>(INBOX_CAPACITY);
-    private final Thread consumer;
     private final AtomicLong dropped = new AtomicLong();
     // 状态变化回调（连/断/重连转换时各触发一次）：装配期由 BinanceWsClient 接到 StreamHealthPublisher；默认 null 不影响现有行为。
     // 用 Runnable 而非 Consumer<本连接>：发布器发的是全量快照，不关心是哪条变的，无需入参
@@ -78,7 +77,8 @@ public class WsConnection {
         this.scheduler = scheduler;
         this.shutdown = shutdown;
         this.maxIdleMs = maxIdleSeconds * 1000L;
-        this.consumer = Thread.ofVirtual().name("ws-consumer-" + name).start(this::drain);
+        // 跟着对象活一辈子：close 后同一对象还会再 connect（CLOB 每回合换一次），线程停了就再没人处理帧
+        Thread.ofVirtual().name("ws-consumer-" + name).start(this::drain);
     }
 
     /** 按收到的顺序逐条交给 messageHandler；处理异常只记日志，不断流 */
@@ -227,7 +227,6 @@ public class WsConnection {
 
     public void close() {
         stopIdleWatchdog();
-        consumer.interrupt();
         WebSocket ws = wsRef.getAndSet(null);
         if (ws != null) {
             try { ws.sendClose(WebSocket.NORMAL_CLOSURE, "shutdown"); }
