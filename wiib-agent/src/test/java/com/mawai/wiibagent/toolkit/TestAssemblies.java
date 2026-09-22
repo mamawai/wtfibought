@@ -17,6 +17,11 @@ final class TestAssemblies {
 
     /** 可用 assembly：只填工具/快照输出关心的字段，其余 0/null 由 compact constructor 兜底。 */
     static MarketAssembly available() {
+        return withIv(52.0, 48.0);
+    }
+
+    /** 期权面可调的版本：dvolIndex=0 模拟 SOL/XRP 这类只有期权簿、没有 DVOL 的币 */
+    static MarketAssembly withIv(double dvolIndex, double atmIv) {
         FeatureSnapshot s = new FeatureSnapshot(
                 "BTCUSDT", LocalDateTime.now(), new BigDecimal("65000"), null, null, null,
                 null, null,
@@ -26,7 +31,7 @@ final class TestAssemblies {
                 -0.2, 1_200_000,
                 0.3, -0.1, 72, "Greed",
                 null, new BigDecimal("350"), null, false,
-                52.0, 48.0, -0.05, 0.02,
+                dvolIndex, atmIv, -0.05, 0.02,
                 MarketRegime.RANGE, null);
         return new MarketAssembly("BTCUSDT", true, Map.of(),
                 Map.of("price_change_map", Map.of("24h", "+2.3%")),

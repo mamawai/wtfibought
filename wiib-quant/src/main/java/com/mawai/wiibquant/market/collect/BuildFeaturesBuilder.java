@@ -13,6 +13,8 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.Supplier;
@@ -199,7 +201,7 @@ public final class BuildFeaturesBuilder {
 
         // 6.5 期权 IV 特征（Deribit）
         double dvolIndex = parseDvol(dvolData);
-        double[] ivFeatures = parseOptionIv(bookSummaryData, lastPrice);
+        double[] ivFeatures = parseOptionIv(bookSummaryData, lastPrice, Instant.now());
         double atmIv = ivFeatures[0];
         double ivSkew25d = ivFeatures[1];
         double ivTermSlope = ivFeatures[2];
@@ -659,18 +661,21 @@ public final class BuildFeaturesBuilder {
      * - 25d skew 近似: OTM 5-8% call IV - OTM 5-8% put IV（正=call贵=看涨偏好）
      * - term slope: 次近到期 ATM IV - 最近到期 ATM IV（正=远期IV更高=contango）
      *
+     * @param now 当前时刻，距交割不足一天的到期日按它剔掉
      * @return [atmIv, skew25d, termSlope]，失败全部返回0
      */
-    private double[] parseOptionIv(String bookSummaryJson, BigDecimal lastPrice) {
+    static double[] parseOptionIv(String bookSummaryJson, BigDecimal lastPrice, Instant now) {
         double[] empty = {0, 0, 0};
         if (bookSummaryJson == null || bookSummaryJson.isBlank() || lastPrice == null) return empty;
         try {
             double spot = lastPrice.doubleValue();
             if (spot <= 0) return empty;
 
-            // 解析统一走 DeribitOptionBook(日期格式坑见其注释)；只保留合约数足够的到期日，近月/次近月
+            // 解析统一走 DeribitOptionBook(日期格式坑见其注释)；
+            // 一天内交割的不要：临近交割 IV 不稳，每天 08:00 UTC 换到下一个到期日时读数还会突跳。
+            // 再只留合约数足够的到期日，取近月/次近月
             List<List<DeribitOptionBook.Quote>> groups = DeribitOptionBook.parse(bookSummaryJson)
-                    .byExpiry().values().stream()
+                    .expiringAfter(now.plus(Duration.ofDays(1))).values().stream()
                     .filter(g -> g.size() >= 4)
                     .toList();
             if (groups.isEmpty()) return empty;

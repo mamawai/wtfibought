@@ -40,7 +40,17 @@ class MarketToolkitTest {
 
         String json = toolkit.optionIv("BTCUSDT");
 
-        assertThat(json).contains("DVOL=52");
+        assertThat(json).contains("DVOL=52").contains("\"dvolIndex\":52.0");
+    }
+
+    /** SOL/XRP 只有期权簿没有 DVOL：不许出 DVOL=0.0 或 dvolIndex:0 让模型当成读数 */
+    @Test
+    void optionIvWithoutDvolOmitsIt() {
+        when(dataService.assemble("SOLUSDT")).thenReturn(TestAssemblies.withIv(0, 78.2));
+
+        String json = toolkit.optionIv("SOLUSDT");
+
+        assertThat(json).contains("ATM_IV=78.2").doesNotContain("DVOL").doesNotContain("dvolIndex");
     }
 
     @Test

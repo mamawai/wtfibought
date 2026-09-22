@@ -5,6 +5,7 @@ import com.mawai.wiibquant.market.domain.FeatureSnapshot;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -180,5 +181,37 @@ class BuildFeaturesBuilderTest {
         assertThat(BuildFeaturesBuilder.calcTrendBias(json, "v", 40)).isEqualTo(0.25, offset(1e-9));
         // 不足 4 条 → 0
         assertThat(BuildFeaturesBuilder.calcTrendBias("[{\"v\":1},{\"v\":2},{\"v\":3}]", "v", 10)).isZero();
+    }
+
+    // ---- parseOptionIv: 距交割不足一天的到期日不参与 ----
+
+    /** 一个到期日四档：三档 call + 一档平值 put，平值 call 的 IV 取 atmIv */
+    private static String expiryRows(String expiry, double atmIv) {
+        return String.join(",",
+                "{\"instrument_name\":\"BTC-" + expiry + "-80000-C\",\"mark_iv\":60,\"underlying_price\":85700}",
+                "{\"instrument_name\":\"BTC-" + expiry + "-85500-C\",\"mark_iv\":" + atmIv + ",\"underlying_price\":85700}",
+                "{\"instrument_name\":\"BTC-" + expiry + "-90000-C\",\"mark_iv\":45,\"underlying_price\":85700}",
+                "{\"instrument_name\":\"BTC-" + expiry + "-85500-P\",\"mark_iv\":" + atmIv + ",\"underlying_price\":85700}");
+    }
+
+    @Test
+    void optionIvSkipsExpiriesSettlingWithinADay() {
+        String book = "{\"result\":[" + String.join(",",
+                expiryRows("22SEP26", 32), expiryRows("23SEP26", 35), expiryRows("24SEP26", 37)) + "]}";
+
+        // 09-22 01:30 UTC：22日 08:00 交割只剩 6.5 小时，跳过；近月=23日，次近月=24日
+        double[] iv = BuildFeaturesBuilder.parseOptionIv(book, new BigDecimal("85700"),
+                Instant.parse("2026-09-22T01:30:00Z"));
+
+        assertThat(iv[0]).isEqualTo(35);
+        assertThat(iv[2]).isEqualTo(2, offset(1e-9));
+    }
+
+    @Test
+    void optionIvEmptyWhenEveryExpirySettlesWithinADay() {
+        String book = "{\"result\":[" + expiryRows("22SEP26", 32) + "]}";
+
+        assertThat(BuildFeaturesBuilder.parseOptionIv(book, new BigDecimal("85700"),
+                Instant.parse("2026-09-22T01:30:00Z"))).containsExactly(0, 0, 0);
     }
 }

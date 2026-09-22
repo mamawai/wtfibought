@@ -50,7 +50,12 @@ tool:
     除 price_change/oiChangeRate/spotPerpBasisBps/atr 外，分值都在 [-1,1]，绝对值越大越极端。
 
   option_iv: |-
-    获取标的在 Deribit 的期权隐含波动率上下文：DVOL 指数与 ATM IV 摘要。
+    获取标的在 Deribit 的期权隐含波动率上下文。
+    覆盖范围：BTC/ETH 有 DVOL 指数与 ATM IV；SOL/XRP 只有 ATM IV（USDC 结算期权，没有 DVOL）；其他币没有期权数据。
+    - dvolIndex：Deribit 的 30 天隐含波动率指数（年化 %），只有 BTC/ETH 有这个字段
+    - ivSummary：ATM_IV＝距交割一天以上的最近到期日里，最接近平值的 call 的隐含波动率（年化 %）；
+      25d_skew＝虚值 5%~8% 的 call IV 均值 − 虚值 5%~8% 的 put IV 均值（正＝call 更贵；0＝档位不够算不出）；
+      term_slope＝次近到期日 ATM IV − 最近到期日 ATM IV（正＝远期定价更高）
     用于判断期权市场定价的波动预期是否大于已实现波动率。
 
   funding_history: |-

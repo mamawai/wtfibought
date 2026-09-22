@@ -82,9 +82,12 @@ public record FeatureSnapshot(
 
     /** @param noData 无数据时的占位文案——调用方按自己的语言/口径给（工具 JSON 给英文，深研判走词表） */
     public String toIvSummary(String noData) {
-        if (dvolIndex <= 0 && atmIv <= 0) return noData;
-        return "DVOL=%.1f ATM_IV=%.1f 25d_skew=%.2f term_slope=%.2f"
-                .formatted(dvolIndex, atmIv, ivSkew25d, ivTermSlope);
+        // 缺哪段就不出哪段：SOL/XRP 没有 DVOL，写成 DVOL=0.0 会被当成读数
+        String dvol = dvolIndex > 0 ? "DVOL=%.1f".formatted(dvolIndex) : "";
+        String atm = atmIv > 0
+                ? "ATM_IV=%.1f 25d_skew=%.2f term_slope=%.2f".formatted(atmIv, ivSkew25d, ivTermSlope) : "";
+        String summary = (dvol + " " + atm).trim();
+        return summary.isEmpty() ? noData : summary;
     }
 }
 

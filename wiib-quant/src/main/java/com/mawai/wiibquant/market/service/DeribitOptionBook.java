@@ -3,7 +3,10 @@ package com.mawai.wiibquant.market.service;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.util.ArrayList;
@@ -25,6 +28,9 @@ public final class DeribitOptionBook {
     public static final DateTimeFormatter EXPIRY_FMT = new DateTimeFormatterBuilder()
             .parseCaseInsensitive().appendPattern("dMMMuu").toFormatter(Locale.ENGLISH);
 
+    /** Deribit 期权统一在到期日 08:00 UTC 交割 */
+    private static final LocalTime EXPIRY_TIME_UTC = LocalTime.of(8, 0);
+
     /** 单档报价。call=false 即 put。 */
     public record Quote(double strike, boolean call, double markIv) {}
 
@@ -36,7 +42,10 @@ public final class DeribitOptionBook {
         this.byExpiry = byExpiry;
     }
 
-    /** 解析 bookSummary JSON。逐行跳过 mark_iv<=0 或命名不合期权格式(BTC-28MAR25-90000-C)的条目，坏行不影响其他行。 */
+    /**
+     * 解析 bookSummary JSON。逐行跳过 mark_iv<=0 或命名不合期权格式(BTC-28MAR25-90000-C / SOL_USDC-25SEP26-118-C)的条目，
+     * 坏行不影响其他行。一本簿只能装一个标的：标的价取首个有效条目的。
+     */
     public static DeribitOptionBook parse(String bookSummaryJson) {
         TreeMap<LocalDate, List<Quote>> byExpiry = new TreeMap<>();
         double underlying = 0;
@@ -70,7 +79,8 @@ public final class DeribitOptionBook {
             double strike;
             LocalDate expiry;
             try {
-                strike = Double.parseDouble(parts[2]);
+                // 小数行权价用 d 代小数点：XRP 的 1d52 即 1.52
+                strike = Double.parseDouble(parts[2].replace('d', '.'));
                 expiry = LocalDate.parse(parts[1], EXPIRY_FMT);
             } catch (RuntimeException e) {
                 continue;
@@ -92,6 +102,17 @@ public final class DeribitOptionBook {
     /** 到期日升序(按日期而非字符串——字符串序会把 27FEB 排到 3JAN 前面)的分组视图。 */
     public TreeMap<LocalDate, List<Quote>> byExpiry() {
         return byExpiry;
+    }
+
+    /** 交割时刻晚于 cutoff 的分组，仍按到期日升序 */
+    public TreeMap<LocalDate, List<Quote>> expiringAfter(Instant cutoff) {
+        TreeMap<LocalDate, List<Quote>> out = new TreeMap<>();
+        byExpiry.forEach((date, quotes) -> {
+            if (date.atTime(EXPIRY_TIME_UTC).toInstant(ZoneOffset.UTC).isAfter(cutoff)) {
+                out.put(date, quotes);
+            }
+        });
+        return out;
     }
 
     /** 组内 strike 最接近 spot 的 call 的 mark_iv；无 call 返回 0。 */

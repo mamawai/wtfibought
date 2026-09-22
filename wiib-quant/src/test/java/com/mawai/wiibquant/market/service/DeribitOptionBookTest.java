@@ -2,6 +2,7 @@ package com.mawai.wiibquant.market.service;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
@@ -68,6 +69,41 @@ class DeribitOptionBookTest {
                 row("BTC-3JAN26-90000-C", 55, 88000)));
         assertThat(parsed.byExpiry().get(LocalDate.of(2026, 1, 3)))
                 .containsExactly(new DeribitOptionBook.Quote(90000, true, 55));
+    }
+
+    @Test
+    void parsesLinearUsdcOptionsWithDecimalStrike() {
+        // USDC 线性期权：标的名带 _USDC，小数行权价用 d 代小数点（XRP 1d52 = 1.52）
+        DeribitOptionBook xrp = DeribitOptionBook.parse(book(
+                row("XRP_USDC-25SEP26-1d52-C", 79.89, 1.5167),
+                row("XRP_USDC-25SEP26-1d5-P", 79.24, 1.5167)));
+        assertThat(xrp.byExpiry().get(LocalDate.of(2026, 9, 25))).containsExactly(
+                new DeribitOptionBook.Quote(1.52, true, 79.89),
+                new DeribitOptionBook.Quote(1.5, false, 79.24));
+
+        DeribitOptionBook sol = DeribitOptionBook.parse(book(
+                row("SOL_USDC-25SEP26-118-C", 74.46, 117.83)));
+        assertThat(sol.byExpiry().get(LocalDate.of(2026, 9, 25)))
+                .containsExactly(new DeribitOptionBook.Quote(118, true, 74.46));
+        assertThat(sol.underlyingPrice()).isEqualTo(117.83);
+    }
+
+    @Test
+    void expiringAfterComparesAgainstEightUtcSettlement() {
+        DeribitOptionBook parsed = DeribitOptionBook.parse(book(
+                row("BTC-22SEP26-85500-C", 32.46, 85693),
+                row("BTC-23SEP26-85500-C", 35.31, 85693),
+                row("BTC-24SEP26-85500-C", 37.25, 85693)));
+
+        // 22日 08:00 早于截止，剔；23日 08:00 晚于截止 01:30，留
+        assertThat(parsed.expiringAfter(Instant.parse("2026-09-23T01:30:00Z")))
+                .containsOnlyKeys(LocalDate.of(2026, 9, 23), LocalDate.of(2026, 9, 24));
+        // 截止 08:01：23日 08:00 差一分钟，剔
+        assertThat(parsed.expiringAfter(Instant.parse("2026-09-23T08:01:00Z")))
+                .containsOnlyKeys(LocalDate.of(2026, 9, 24));
+        // 交割时刻正好等于截止不算晚于，剔
+        assertThat(parsed.expiringAfter(Instant.parse("2026-09-23T08:00:00Z")))
+                .containsOnlyKeys(LocalDate.of(2026, 9, 24));
     }
 
     @Test

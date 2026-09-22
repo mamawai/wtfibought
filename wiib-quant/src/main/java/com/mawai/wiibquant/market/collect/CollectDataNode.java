@@ -112,9 +112,9 @@ public class CollectDataNode {
                     : executor.submit(() -> binanceRestClient.getFearGreedIndex(2));
             String coin = symbol.replace("USDT", "").replace("USDC", "");
 
-            // Deribit 期权 IV 数据（并行采集，失败不影响主流程；只有 BTC/ETH 有期权段，其余币直接跳过）
+            // Deribit 期权 IV 数据（并行采集，失败不影响主流程；BTC/ETH 有 DVOL+期权簿，SOL/XRP 只有期权簿，其余币跳过）
             boolean deribitOk = deribitClient != null && DeribitClient.supports(coin);
-            Future<String> dvolF = deribitOk
+            Future<String> dvolF = deribitOk && DeribitClient.hasDvol(coin)
                     ? executor.submit(() -> deribitClient.getDvolIndex(coin, 3600)) : null;
             Future<String> bookSummaryF = deribitOk
                     ? executor.submit(() -> deribitClient.getBookSummaryByCurrency(coin)) : null;

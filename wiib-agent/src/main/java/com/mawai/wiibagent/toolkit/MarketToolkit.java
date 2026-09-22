@@ -86,9 +86,16 @@ public class MarketToolkit {
     }
 
     @Tool(name = "option_iv", description = """
-            Get option implied-volatility context for a crypto symbol from Deribit:
-            DVOL index and ATM IV summary. Useful for judging whether the options market
-            is pricing in larger moves than realized volatility suggests.""")
+            Get option implied-volatility context for a crypto symbol from Deribit.
+            Coverage: BTC/ETH have the DVOL index plus ATM IV; SOL/XRP have ATM IV only
+            (USDC-settled options, no DVOL); other symbols have no option data.
+            - dvolIndex: Deribit's 30-day implied volatility index (annualized %), present only for BTC/ETH
+            - ivSummary: ATM_IV = mark IV of the call nearest the money in the nearest expiry
+              more than a day away, annualized %;
+              25d_skew = avg IV of calls 5-8% OTM minus avg IV of puts 5-8% OTM
+              (positive = calls richer; 0 = not enough strikes to compute);
+              term_slope = ATM IV of the next expiry minus the nearest (positive = further expiry priced higher)
+            Useful for judging whether the options market is pricing in larger moves than realized volatility suggests.""")
     public String optionIv(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol) {
         MarketAssembly a = dataService.assemble(symbol);
         if (!a.available()) {
@@ -97,7 +104,10 @@ public class MarketToolkit {
         ObjectNode out = MAPPER.createObjectNode();
         out.put("available", true);
         out.put("symbol", a.snapshot().symbol());
-        out.put("dvolIndex", a.snapshot().dvolIndex());
+        // 没有 DVOL 的币（SOL/XRP）不出这个字段，0 不是读数
+        if (a.snapshot().dvolIndex() > 0) {
+            out.put("dvolIndex", a.snapshot().dvolIndex());
+        }
         out.put("ivSummary", a.snapshot().toIvSummary("no data"));
         return MAPPER.writeValueAsString(out);
     }
