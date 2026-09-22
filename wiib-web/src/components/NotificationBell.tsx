@@ -9,7 +9,7 @@ import { NotificationList } from './NotificationList';
 
 /**
  * 顶栏信封：未读角标 + 下拉面板。点开即全部标已读，面板仍列最近 50 条历史。
- * 按钮壳跟着 .tools button / .tools .ic 走（无底色无边框，图标 16px 灰）。
+ * 按钮壳跟着 .tools button / .tools .ic 走（无底色无边框，图标 15px 灰）。
  * 只在 PC 显示（顶栏工具区整体 hidden lg:flex），手机端的通知入口在「我的」页。
  */
 export function NotificationBell() {
@@ -27,7 +27,8 @@ export function NotificationBell() {
   if (userId == null) return null;
 
   return (
-    <div ref={ref} className="relative">
+    // flex 不能省：块级 div 会按行高撑出行盒，按钮贴着基线，图标比邻居高一截
+    <div ref={ref} className="relative flex">
       <button
         type="button"
         onClick={() => void toggle()}
