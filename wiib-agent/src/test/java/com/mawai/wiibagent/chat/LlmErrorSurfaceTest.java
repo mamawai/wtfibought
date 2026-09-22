@@ -95,7 +95,7 @@ class LlmErrorSurfaceTest {
 
         ChatContextStore contextStore = mock(ChatContextStore.class);
         List<ChatTurnRunner.ExpertProgress> progress = new CopyOnWriteArrayList<>();
-        new ChatTurnRunner(contextStore, new ApprovalRegistry(), ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS)
+        new ChatTurnRunner(contextStore, new ApprovalRegistry(), ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, mock(JevRouter.class))
                 .run(leaves, 1L, "wb-1-expert-fail", "看看行情", null, chunk -> { }, progress::add, s -> { },
                         ChatTurnRunner.TurnYield.NONE, null);
 

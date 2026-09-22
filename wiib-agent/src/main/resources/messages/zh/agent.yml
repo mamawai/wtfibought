@@ -28,6 +28,12 @@ agent:
       hostUnresolvable: baseUrl 主机名无法解析
       privateBlocked: baseUrl 不允许指向内网/本机地址
 
+  # 用户 Jev 决策模型配置（JevConfigService）
+  jev:
+    apiKeyRequired: apiKey不能为空
+    notConfigured: 尚未配置 Jev
+    connectFailed: "Jev 连通性测试失败：{{reason}}"
+
   # 管理员：LLM 配置与功能位分配
   admin:
     apiKeyRequired: apiKey不能为空

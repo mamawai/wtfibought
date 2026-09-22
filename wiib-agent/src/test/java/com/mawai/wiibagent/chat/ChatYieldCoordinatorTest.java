@@ -59,7 +59,7 @@ class ChatYieldCoordinatorTest {
     private final ChatContextStore contextStore = mock(ChatContextStore.class);
     private final ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
 
-    private final ChatTurnRunner runner = new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS);
+    private final ChatTurnRunner runner = new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, mock(JevRouter.class));
     private final ChatYieldCoordinator coordinator = new ChatYieldCoordinator();
 
     /** 会话上下文的假实现：save 真存 load 真取，补答轮读的就是让位轮存的 */

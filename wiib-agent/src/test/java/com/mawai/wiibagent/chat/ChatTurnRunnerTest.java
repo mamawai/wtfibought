@@ -28,6 +28,7 @@ import reactor.core.publisher.Flux;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -69,6 +70,8 @@ class ChatTurnRunnerTest {
     private final ChatContextStore contextStore = mock(ChatContextStore.class);
     private final NewsToolkit newsToolkit = mock(NewsToolkit.class);
     private final TraderChatService traderChatService = mock(TraderChatService.class);
+    /** Mockito 对 Optional 返回值默认给 empty = Jev 没参与，除 Jev 专属用例外全走轻模型路由 */
+    private final JevRouter jevRouter = mock(JevRouter.class);
 
     /** 专家跑在虚拟线程上，事件从别的线程进来 */
     private final List<ChatTurnRunner.ExpertProgress> progress = new CopyOnWriteArrayList<>();
@@ -137,7 +140,7 @@ class ChatTurnRunnerTest {
     }
 
     private void turn(String message, ChatIntent intent) {
-        new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS)
+        new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, jevRouter)
                 .run(leaves(), 1L, SESSION, message, intent, answer::append, progress::add, search::add,
                         ChatTurnRunner.TurnYield.NONE, null);
     }
@@ -226,6 +229,42 @@ class ChatTurnRunnerTest {
      * 去重同时是这个 {@code while(true)} 的<b>实际</b>终止条件：每轮至少吃掉一个专家名，
      * 名字用完循环必停。把 fresh 过滤删掉，router 永远想派同一个，这条会一直转下去。
      */
+    /** 用户配了 Jev 且调通：名单由 Jev 定，轻模型路由一次都不问；第二轮 Jev 答案一样，被去重挡下转汇总 */
+    @Test
+    void Jev给出名单时不问轻模型路由() {
+        when(jevRouter.route(eq(1L), any())).thenReturn(Optional.of(List.of("market_agent")));
+        lightAnswers(() -> {
+                    throw new AssertionError("Jev 已给名单，不该再问轻模型路由");
+                },
+                () -> responseOf(new AssistantMessage("市场结论")),
+                () -> responseOf(new AssistantMessage("新闻结论")));
+        summarizerAnswers("这是答案");
+
+        turn("看看行情");
+
+        assertThat(starts("market_agent")).isEqualTo(1);
+        assertThat(starts("news_agent")).isZero();
+        verify(light, never()).call(routerPrompt());
+        verify(jevRouter, times(2)).route(eq(1L), any());
+        assertThat(summarizerInput()).contains("市场结论");
+        assertThat(answer.toString()).isEqualTo("这是答案");
+    }
+
+    /** Jev 没参与（未配置 / 调用失败）就是原来的样子：轻模型路由照问 */
+    @Test
+    void Jev没参与时走轻模型路由() {
+        when(jevRouter.route(eq(1L), any())).thenReturn(Optional.empty());
+        lightAnswers(() -> route("news_agent"),
+                () -> responseOf(new AssistantMessage("市场结论")),
+                () -> responseOf(new AssistantMessage("新闻结论")));
+        summarizerAnswers("这是答案");
+
+        turn("有什么新闻");
+
+        assertThat(starts("news_agent")).isEqualTo(1);
+        verify(light, times(2)).call(routerPrompt());
+    }
+
     @Test
     void 同一专家不会被派第二次() {
         lightAnswers(() -> route("market_agent"),
@@ -531,7 +570,7 @@ class ChatTurnRunnerTest {
     @Test
     void 输出语言硬收尾恒在整轮输入末尾() {
         ChatTurnRunner runner =
-                new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS);
+                new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, jevRouter);
         for (AgentLang lang : AgentLang.values()) {
             String tail = ChatTestEndpoints.PROMPTS.get(lang, "chat.outputLanguage");
             assertThat(runner.summaryTail(lang, true, null)).as("%s 派过专家", lang.code()).endsWith(tail);
@@ -564,7 +603,7 @@ class ChatTurnRunnerTest {
         // 改桩成 openai 协议的 options（leaves() 里默认桩的是泛型那种）
         when(light.getOptions()).thenReturn(OpenAiChatOptions.builder().model("deepseek-chat").build());
 
-        new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS)
+        new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, jevRouter)
                 .run(leaves, 1L, SESSION, "BTC 怎么样", null, answer::append, progress::add, search::add,
                         ChatTurnRunner.TurnYield.NONE, null);
 
@@ -624,7 +663,7 @@ class ChatTurnRunnerTest {
     }
 
     private ChatTurnRunner.TurnResult deferredTurn(ChatTurnRunner.ExpertBatch batch, ChatTurnRunner.TurnYield yield) {
-        return new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS)
+        return new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, jevRouter)
                 .run(leaves(), 1L, SESSION, "补答指令：看看行情", null, answer::append, progress::add, search::add, yield, batch);
     }
 

@@ -79,6 +79,8 @@ public class ChatTurnRunner {
     private final ApprovalRegistry approvalRegistry;
     private final PromptCatalog prompts;
     private final LocalizedToolCallbacks localizedTools;
+    /** 路由的 Jev 层：用户配了就先问它，没配或调用失败走轻模型路由 */
+    private final JevRouter jevRouter;
     /** 专家并行用。虚拟线程：专家全程阻塞在上游 HTTP 上，池大小不该成为约束 */
     private final ExecutorService expertExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -304,7 +306,9 @@ public class ChatTurnRunner {
                 log.warn("[Workbench] 派发轮次达上限 {}，转汇总", MAX_DISPATCH_ROUNDS);
                 break;
             }
-            List<String> next = askRouter(leaves.light(), working, lang);
+            // 先问 Jev（配了且调通才有名单），否则原来的轻模型路由
+            List<String> next = jevRouter.route(userId, working)
+                    .orElseGet(() -> askRouter(leaves.light(), working, lang));
             if (next.isEmpty() || next.contains(FINISH)) {
                 // FINISH 与"解析不出专家名"（空）同型不同因，事后排查靠这行分辨；路由调用失败 askRouter 已有 warn
                 log.info("[Workbench] 路由结束派发 next={}（第 {} 轮后转汇总）", next, round);

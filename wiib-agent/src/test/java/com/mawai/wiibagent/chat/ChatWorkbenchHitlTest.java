@@ -172,7 +172,7 @@ class ChatWorkbenchHitlTest {
             return 1;
         });
         ChatContextStore contextStore = new ChatContextStore(contextMapper);
-        ChatTurnRunner turnRunner = new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS);
+        ChatTurnRunner turnRunner = new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, mock(JevRouter.class));
         ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
         WorkbenchRunRegistry runRegistry = mock(WorkbenchRunRegistry.class);
         ChatHistoryService history = mock(ChatHistoryService.class);

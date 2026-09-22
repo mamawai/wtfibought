@@ -28,6 +28,12 @@ agent:
       hostUnresolvable: baseUrl host name cannot be resolved
       privateBlocked: baseUrl must not point at a private or local address
 
+  # User Jev decision-model config (JevConfigService)
+  jev:
+    apiKeyRequired: apiKey is required
+    notConfigured: Jev is not configured yet
+    connectFailed: "Jev connectivity test failed: {{reason}}"
+
   # Admin: LLM configs and feature-slot assignment
   admin:
     apiKeyRequired: apiKey is required

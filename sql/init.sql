@@ -1059,3 +1059,21 @@ CREATE TABLE IF NOT EXISTS whale_position (
 CREATE INDEX IF NOT EXISTS idx_whale_position_addr ON whale_position (address, coin, observed_at DESC);
 COMMENT ON TABLE whale_position IS '池内地址在盯盘币上的仓位变化流水:(address,coin)的szi/entryPx变了才写一行,上轮有本轮没有写szi=0;不论大小全记,研究用;首轮轮询每键取最近一行当基线';
 COMMENT ON COLUMN whale_position.szi IS '币数量,正多负空,0=已平';
+
+-- ============================================
+-- 35. 用户 Jev 决策模型配置（BYOK，一人一份）
+-- ============================================
+-- TypeSafe Jev 只出类型化判断不生成文字，与端点库分开存：它没有思考档位/搜索/用途绑定，一个模型全站共用。
+-- 当前只给研判工作台路由用：配了且调通就用它派专家，没配或调用失败回落轻模型路由。
+CREATE TABLE IF NOT EXISTS user_jev_config (
+    id           BIGSERIAL     PRIMARY KEY,
+    user_id      BIGINT        NOT NULL UNIQUE,
+    base_url     VARCHAR(255)  NOT NULL,
+    model        VARCHAR(64)   NOT NULL,
+    api_key_enc  VARCHAR(1024) NOT NULL,
+    created_at   TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+COMMENT ON TABLE  user_jev_config IS '用户 Jev 决策模型（TypeSafe System One）BYOK 配置：一人一份，URL+模型+key；当前只给研判工作台路由用';
+COMMENT ON COLUMN user_jev_config.model IS 'jev-latest 或钉死的版本号如 jev-1.13.0';
+COMMENT ON COLUMN user_jev_config.api_key_enc IS 'AES-256-GCM 密文，密钥来自 WIIB_TRADER_KEY_SECRET';

@@ -154,7 +154,7 @@ class ChatCancelTest {
         routerFinishes();
         AtomicBoolean cancelled = new AtomicBoolean(true);   // 一进循环就已经点了停
 
-        ChatTurnRunner.TurnResult result = new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS)
+        ChatTurnRunner.TurnResult result = new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, mock(JevRouter.class))
                 .run(leaves(), 1L, SESSION, "看看行情", null, answer::append, e -> { }, s -> { }, yieldWith(cancelled), null);
 
         assertThat(result.cancelled()).isTrue();
@@ -177,7 +177,7 @@ class ChatCancelTest {
         when(deep.stream(any(Prompt.class))).thenAnswer(inv -> Flux.just(
                 responseOf("前半截"), responseOf("后半截")));
 
-        ChatTurnRunner.TurnResult result = new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS)
+        ChatTurnRunner.TurnResult result = new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, mock(JevRouter.class))
                 .run(leaves(), 1L, SESSION, "看看行情", null, chunk -> {
                     answer.append(chunk);
                     cancelled.set(true);
@@ -209,7 +209,7 @@ class ChatCancelTest {
         AtomicBoolean cancelled = new AtomicBoolean(true);
         AtomicBoolean yielded = new AtomicBoolean(true);
 
-        ChatTurnRunner.TurnResult result = new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS)
+        ChatTurnRunner.TurnResult result = new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, mock(JevRouter.class))
                 .run(leaves(), 1L, SESSION, "看看行情", null, answer::append, e -> { }, s -> { },
                         yieldWith(cancelled, yielded), null);
 
@@ -231,7 +231,7 @@ class ChatCancelTest {
                 Flux.concat(Flux.just(responseOf("半截")), Flux.<ChatResponse>never())
                         .doOnCancel(() -> upstreamCancelled.set(true)));
 
-        ChatTurnRunner.TurnResult result = new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS)
+        ChatTurnRunner.TurnResult result = new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, mock(JevRouter.class))
                 .run(leaves(), 1L, SESSION, "看看行情", null, chunk -> {
                     answer.append(chunk);
                     cancelled.set(true);
