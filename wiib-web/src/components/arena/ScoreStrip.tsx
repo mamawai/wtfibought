@@ -10,11 +10,11 @@ export interface StripCell {
 
 /**
  * 记分牌下面那条仪表条：一格一个指标，微标签在上、数在下。
- * PC 六格一行等宽，窄屏三格两行——格间细线由 .strip 自己画。
+ * PC 六格一行等宽，窄屏三格两行——格间细线由 .strip 自己画。格数不是六的传 className 改列数
  */
-export function ScoreStrip({ cells }: { cells: StripCell[] }) {
+export function ScoreStrip({ cells, className }: { cells: StripCell[]; className?: string }) {
   return (
-    <div className="strip num grid-cols-3 xl:grid-cols-6 mt-6 border-t-2 border-foreground">
+    <div className={cn('strip num grid-cols-3 xl:grid-cols-6 mt-6 border-t-2 border-foreground', className)}>
       {cells.map((c, i) => (
         <div key={i}>
           <div className="k">{c.label}</div>

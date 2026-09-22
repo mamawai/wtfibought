@@ -5,6 +5,7 @@ import type { BacktestTaskStatus, BacktestEventsPage, BacktestKlinesPage, Backte
 import type { LedgerEntry, LedgerBizTypeOption, PublicTrade, UserProfile, PositionHistoryItem, RankingSort } from '../types';
 import type { CampaignInfo, CampaignReward, CampaignScore, MyCampaignView } from '../types';
 import type { LlmEndpointView, LlmEndpointSaveRequest, LlmBindings, LlmPurpose, JevConfigView, JevSaveRequest } from '../types';
+import type { JevPredictionOverview, JevPredictionDecisionView, JevBet, JevSwitchState } from '../types';
 import type { User, PageResult, RankingItem, CommentItem, NotificationItem, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesAdjustLeverageRequest, FuturesCrossAccount, WalletTransferPreview, FuturesPosition, FuturesOrder, FuturesReverseResult, FuturesBracket, FundingRateView, TradeFilterMap, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, ForceOrder, AiKeyConfig, AiModelAssignment, InviteCode, ChatIntent, WorkbenchEvent, StrategyAccountView, TraderPublicView, TraderOwnerView, TraderDetailView, AiTraderDecisionView, TraderEquityPoint, TraderUpsertRequest, TraderSpec, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchSessionStatus, WorkbenchChatMessage, TraderActionPanel, TraderActionResult, TradeRecordView, TraderLiveEvent, WakeTrace } from '../types';
 
 const api = axios.create({
@@ -545,6 +546,17 @@ export const jevApi = {
   remove: () => api.delete<unknown, void>('/ai/jev'),
   /** 连通性探测：真发一道题 */
   test: (req: JevSaveRequest) => api.post<unknown, void>('/ai/jev/test', req),
+};
+
+// ========== Jev 预测员（平台级展示） ==========
+export const jevPredictionApi = {
+  overview: () => api.get<unknown, JevPredictionOverview>('/ai/jev-prediction/overview'),
+  /** 最近决策带 Jev 的回答，Jev 页右栏一次拿全；每回合 17 次，51 条约三个回合 */
+  feed: (limit = 51) => api.get<unknown, JevPredictionDecisionView[]>('/ai/jev-prediction/feed', { params: { limit } }),
+  bets: (limit = 30) => api.get<unknown, JevBet[]>('/ai/jev-prediction/bets', { params: { limit } }),
+  // 预测员总开关（管理员）
+  switchState: () => api.get<unknown, JevSwitchState>('/admin/ai-agent/jev-prediction'),
+  setSwitch: (enabled: boolean) => api.post<unknown, JevSwitchState>('/admin/ai-agent/jev-prediction', { enabled }),
 };
 
 /** 快讯（news_event 存档行，首页快讯卡数据源） */

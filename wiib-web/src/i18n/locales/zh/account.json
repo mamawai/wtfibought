@@ -131,6 +131,16 @@
       "placeholder": "输入百分比，例如 0.05 表示 0.05%/天",
       "hint": "输入为百分比；例如 0.05%/天 对应 decimal=0.0005。"
     },
+    "jev": {
+      "title": "Jev 预测员",
+      "hint": "打开后每个 5 分钟回合开盘后每 15 秒问一次 Jev，用机器人账户 jev-prediction 在预测盘下注。存 Redis，重启不丢。",
+      "on": "运行中",
+      "off": "已关闭",
+      "noKey": "没配平台 JEV_API_KEY，开不了",
+      "turnOn": "打开",
+      "turnOff": "关闭",
+      "view": "看 Jev 页"
+    },
     "invite": {
       "title": "邀请码",
       "maxUses": "每码可用次数",

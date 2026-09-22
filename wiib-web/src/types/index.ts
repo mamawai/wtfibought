@@ -451,8 +451,6 @@ export interface PredictionRound {
   startPrice?: string;
   endPrice?: string;
   outcome?: string;
-  upPrice?: string;
-  downPrice?: string;
   status: string;
   remainingSeconds: number;
   serverTimeMs?: number;
@@ -803,6 +801,111 @@ export interface JevConfigView {
   baseUrl: string;
   model: string;
   apiKeyTail: string;
+}
+
+// ========== Jev 预测员（平台级，BTC 5 分钟盘） ==========
+
+/** Jev 一道题的回答：choice 按选项键、score 按 "0"/"1"/"2" 给概率 */
+export interface JevAnswer {
+  probabilities: Record<string, number>;
+}
+
+/** 一张决策卡：每回合每个检查点各一行 */
+export interface JevPredictionDecisionView {
+  id: number;
+  windowStart: number;
+  /** 开盘后第几秒，如 T150 */
+  checkpoint: string;
+  decidedAt: number;
+  /** 纯数学的上涨概率，也是"划不划算"的公平价 */
+  pModel?: number;
+  /** 数学概率按 Jev 后劲修正后的上涨概率，只记分 */
+  pJev?: number;
+  /** 市场隐含 */
+  pMkt?: number;
+  /** Jev 决定题概率最高的选项 */
+  jevChoice?: 'BUY_UP' | 'BUY_DOWN' | 'WAIT' | 'HOLD' | 'SELL';
+  /** 它的概率 */
+  jevChoiceP?: number;
+  /** 盘口距上次推送的毫秒数 */
+  bookAgeMs?: number;
+  upAsk?: number;
+  downAsk?: number;
+  action: 'BUY_UP' | 'BUY_DOWN' | 'STAY_OUT' | 'HOLD' | 'SELL' | 'ERROR';
+  /** 首个词是代码（见后端 PredictionRules），页面按它出提示；ERROR 行没有 */
+  reason?: string;
+  betId?: number;
+  stake?: number;
+  outcome?: string;
+  error?: string;
+  /** 决定题 decide 与后劲题 momentum 的回答；没问 Jev 的行没有 */
+  answers?: { decide: JevAnswer; momentum: JevAnswer };
+}
+
+export interface JevPredictionStats {
+  windows: number;
+  bets: number;
+  settledBets: number;
+  wins: number;
+  pnl: number;
+  scored: number;
+  brierModel?: number;
+  brierJev?: number;
+  brierMkt?: number;
+}
+
+/** 按检查点分的三列 Brier */
+export interface JevCheckpointBrier {
+  checkpoint: string;
+  n: number;
+  brierModel?: number;
+  brierJev?: number;
+  brierMkt?: number;
+}
+
+export interface JevCalibrationBucket {
+  bucket: number;
+  n: number;
+  meanP: number;
+  hitRate: number;
+}
+
+/** Jev 账户的一笔注单 */
+export interface JevBet {
+  id: number;
+  windowStart: number;
+  side: 'UP' | 'DOWN';
+  contracts: number;
+  cost: number;
+  avgPrice: number;
+  currentValue?: number;
+  status: 'ACTIVE' | 'WON' | 'LOST' | 'SOLD' | 'DRAW';
+  /** 扣了买入手续费的盈亏，和概览合计同一算法；没到终态没有 */
+  pnl?: number;
+}
+
+/** 页面提示里要写出来的阈值 */
+export interface JevThresholds {
+  actThreshold: number;
+  minAsk: number;
+  maxAsk: number;
+}
+
+/** 预测员总开关：configured=平台 JEV_API_KEY 配了，enabled=开关开着，两个都真才跑 */
+export interface JevSwitchState {
+  configured: boolean;
+  enabled: boolean;
+}
+
+export interface JevPredictionOverview {
+  enabled: boolean;
+  model: string;
+  thresholds: JevThresholds;
+  gameBalance?: number;
+  initialGameBalance: number;
+  stats: JevPredictionStats;
+  brierByCheckpoint: JevCheckpointBrier[];
+  calibration: JevCalibrationBucket[];
 }
 
 /** 保存/探测共用；baseUrl/model 留空走默认，已有配置时 apiKey 传空=沿用已存的 */

@@ -1,107 +1,33 @@
-import { fmtNum, fmtDateTime, fmtTime } from '../lib/utils';
+import { fmtNum, fmtDateTime, fmtTime, toCents } from '../lib/utils';
 import { HelpTip } from '../components/HelpTip';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import * as echarts from 'echarts';
+import { Link } from 'react-router-dom';
 import { predictionApi } from '../api';
 import { useUserStore } from '../stores/userStore';
-import { useIsDark } from '../hooks/useIsDark';
-import { usePredictionStream } from '../hooks/usePredictionStream';
+import { usePredictionMarket, WINDOW_SECONDS } from '../hooks/usePredictionMarket';
 import { useToast } from '../components/ui/use-toast';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { WalletTransferModal } from '../components/WalletTransferModal';
-import { TrendingUp, TrendingDown, Loader2, Clock, Wallet, ArrowUpRight, ArrowDownRight, ArrowLeftRight } from 'lucide-react';
+import { PredictionHero } from '../components/PredictionHero';
+import { TrendingUp, TrendingDown, Loader2, Wallet, ArrowLeftRight, Bot } from 'lucide-react';
 import type { PredictionRound, PredictionBet, PageResult } from '../types';
 
-const WINDOW_SECONDS = 300;
-
-function RollingChar({ char, direction }: { char: string; direction: 'up' | 'down' | 'none' }) {
-  const prevRef = useRef(char);
-  const [prev, setPrev] = useState(char);
-  const [animating, setAnimating] = useState(false);
-
-  useEffect(() => {
-    if (char === prevRef.current) return;
-    setPrev(prevRef.current);
-    prevRef.current = char;
-    setAnimating(true);
-    const t = setTimeout(() => setAnimating(false), 300);
-    return () => clearTimeout(t);
-  }, [char]);
-
-  const isDigit = /\d/.test(char);
-  const w = isDigit ? '0.62em' : undefined;
-  const goUp = direction === 'up';
-  const showAnim = isDigit && direction !== 'none' && animating;
-
-  return (
-    <span className="inline-block relative overflow-hidden align-bottom" style={{ height: '1.2em', width: w, lineHeight: '1.2em' }}>
-      {showAnim ? (
-        <>
-          <span style={{
-            position: 'absolute', top: 0, left: 0, width: '100%', textAlign: 'center',
-            animation: `${goUp ? 'roll-up-out' : 'roll-down-out'} 0.3s ease-in-out forwards`
-          }}>{prev}</span>
-          <span style={{
-            position: 'absolute', top: 0, left: 0, width: '100%', textAlign: 'center',
-            animation: `${goUp ? 'roll-down-out' : 'roll-up-out'} 0.3s ease-in-out reverse forwards`
-          }}>{char}</span>
-        </>
-      ) : (
-        <span style={{ display: 'block', textAlign: 'center' }}>{char}</span>
-      )}
-    </span>
-  );
-}
-
-function diffRollingChars(oldValue: string, newValue: string) {
-  const oldChars = oldValue.split('');
-  const newChars = newValue.split('');
-  const maxLen = Math.max(oldChars.length, newChars.length);
-  const padOld = oldChars.length < maxLen ? Array(maxLen - oldChars.length).fill('').concat(oldChars) : oldChars;
-  const padNew = newChars.length < maxLen ? Array(maxLen - newChars.length).fill('').concat(newChars) : newChars;
-  return padNew.map((c, i) => {
-    const o = padOld[i];
-    if (c === o) return { char: c, dir: 'none' as const };
-    const cn = parseInt(c), on = parseInt(o);
-    if (isNaN(cn) || isNaN(on)) return { char: c, dir: 'none' as const };
-    return { char: c, dir: cn > on ? 'up' as const : 'down' as const };
-  });
-}
-
-function RollingNumber({ value, className }: { value: string; className?: string }) {
-  // 上一渲染值放 state（render 期读 ref 违反 react-hooks/refs）：过渡方向在变更瞬间算好并保留
-  const [state, setState] = useState(() => ({ value, chars: diffRollingChars(value, value) }));
-  if (state.value !== value) {
-    setState({ value, chars: diffRollingChars(state.value, value) });
-  }
-
-  return (
-    <span className={className}>
-      {state.chars.map((c, i) => <RollingChar key={i} char={c.char} direction={c.dir} />)}
-    </span>
-  );
-}
-
-function fmtCountdown(sec: number): string {
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
+/** Polymarket 吃单费：份数 × 0.07 × p × (1 − p)，与后端 PredictionFee 同一公式 */
+const FEE_RATE = 0.07;
+const feeOf = (sharesN: number, p: number) => sharesN * FEE_RATE * p * (1 - p);
+/** 按钮上的价；没有报价显示 -- */
+const cents = (p: number | null) => (p == null ? '--' : `${toCents(p)}¢`);
 
 export function Prediction() {
-  const { t, i18n } = useTranslation(['community', 'common']);
+  const { t } = useTranslation(['community', 'common']);
   const user = useUserStore(s => s.user);
   const fetchUser = useUserStore(s => s.fetchUser);
-  const isDark = useIsDark();
   const { toast } = useToast();
-  const { btcPrice, round: wsRound, upBid, upAsk, downBid, downAsk, activities } = usePredictionStream();
 
-  const [round, setRound] = useState<PredictionRound | null>(null);
-  const [countdown, setCountdown] = useState(0);
   const [amount, setAmount] = useState('');
   const [shares, setShares] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -114,26 +40,7 @@ export function Prediction() {
   const [rounds, setRounds] = useState<PredictionRound[]>([]);
   const [roundsPage, setRoundsPage] = useState(1);
   const [roundsTotalPages, setRoundsTotalPages] = useState(1);
-  const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0);
   const [transferOpen, setTransferOpen] = useState(false);
-
-  const [priceHistory, setPriceHistory] = useState<{ time: number; price: number }[]>([]);
-  const chartRef = useRef<HTMLDivElement>(null);
-  const chartInst = useRef<echarts.ECharts | null>(null);
-
-  const fetchRound = useCallback(async () => {
-    try {
-      const sentAt = Date.now();
-      const r = await predictionApi.current() as unknown as PredictionRound;
-      const receivedAt = Date.now();
-      const clockSourceMs = r.officialNowTimeMs ?? r.serverTimeMs;
-      if (clockSourceMs != null) {
-        const midpoint = sentAt + (receivedAt - sentAt) / 2;
-        setServerClockOffsetMs(clockSourceMs - midpoint);
-      }
-      setRound(r);
-    } catch { /* ignore */ }
-  }, []);
 
   const fetchBets = useCallback(async (page = betsPage) => {
     try {
@@ -151,131 +58,11 @@ export function Prediction() {
     } catch { /* ignore */ }
   }, [roundsPage]);
 
-  useEffect(() => { fetchRound(); fetchBets(); }, [fetchRound, fetchBets]);
+  // 行情、倒计时、时钟校准都在 hook 里；旧回合结算推送到了刷注单和余额
+  const market = usePredictionMarket(() => { fetchBets(); fetchUser(); });
+  const { round, fetchRound, upBid, upAsk, downBid, downAsk, activities } = market;
 
-  useEffect(() => {
-    predictionApi.priceHistory().then((data: unknown) => {
-      const arr = data as { time: number; price: string }[];
-      if (Array.isArray(arr) && arr.length > 0) {
-        setPriceHistory(arr.map(p => ({ time: p.time, price: parseFloat(p.price) })));
-      }
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!wsRound) return;
-    const clockSourceMs = wsRound.officialNowTimeMs ?? wsRound.serverTimeMs;
-    if (clockSourceMs != null) {
-      setServerClockOffsetMs(clockSourceMs - Date.now());
-    }
-    // 校准now直接取推送带的服务端时刻，不能读 serverClockOffsetMs：
-    // 一读就得进依赖，而本effect又拿 Date.now() 重算它写回，每轮值必变 → 自激死循环炸 React #185
-    const calibratedNow = clockSourceMs ?? Date.now();
-    const curWs = round?.windowStart ?? Math.floor(calibratedNow / 1000 / WINDOW_SECONDS) * WINDOW_SECONDS;
-    if (wsRound.windowStart && wsRound.windowStart < curWs) {
-      // 旧回合结算推送，不覆盖当前回合，只刷新数据
-      if (wsRound.status === 'SETTLED') { fetchBets(); fetchUser(); }
-      return;
-    }
-    setRound(prev => ({ ...prev, ...wsRound } as PredictionRound));
-  }, [wsRound, fetchBets, fetchUser, round?.windowStart]);
-
-  useEffect(() => {
-    const tick = () => {
-      const calibratedNowMs = Date.now() + serverClockOffsetMs;
-      const remaining = round?.officialEndTimeMs
-        ? Math.max(0, Math.ceil((round.officialEndTimeMs - calibratedNowMs) / 1000))
-        : WINDOW_SECONDS - (Math.floor(calibratedNowMs / 1000) % WINDOW_SECONDS);
-      setCountdown(Math.min(WINDOW_SECONDS, remaining));
-      if (remaining === 0 || remaining === WINDOW_SECONDS) {
-        fetchRound();
-      }
-    };
-    tick();
-    const iv = setInterval(tick, 1000);
-    return () => clearInterval(iv);
-  }, [fetchRound, round?.officialEndTimeMs, serverClockOffsetMs]);
-
-  useEffect(() => {
-    if (btcPrice != null) {
-      const now = Date.now();
-      setPriceHistory(prev => {
-        const cutoff = now - 90_000;
-        const next = [...prev.filter(p => p.time >= cutoff), { time: now, price: btcPrice }];
-        return next;
-      });
-    }
-  }, [btcPrice]);
-
-  useEffect(() => {
-    if (!chartRef.current) return;
-    if (!chartInst.current) {
-      chartInst.current = echarts.init(chartRef.current, isDark ? 'dark' : undefined);
-    }
-    const chart = chartInst.current;
-    const startPrice = round?.startPrice ? parseFloat(round.startPrice) : null;
-    const now = Date.now();
-    const windowMs = 60_000;
-    const visibleData = priceHistory.filter(p => p.time >= now - windowMs);
-    const data = visibleData.map(p => [p.time, p.price]);
-    const lastPoint = data.length > 0 ? data[data.length - 1] : null;
-    const lastPrice = lastPoint ? (lastPoint[1] as number) : null;
-    const isUp = startPrice != null && lastPrice != null && lastPrice >= startPrice;
-    const lineColor = isUp ? '#22c55e' : '#ef4444';
-
-    chart.setOption({
-      backgroundColor: 'transparent',
-      grid: { left: 12, right: 56, top: 16, bottom: 28 },
-      xAxis: {
-        type: 'time', min: now - windowMs, max: now,
-        axisLabel: { fontSize: 10, color: '#888' }, axisLine: { show: false }, axisTick: { show: false },
-        splitLine: { show: false },
-      },
-      yAxis: {
-        type: 'value', scale: true, position: 'right',
-        axisLabel: { fontSize: 10, color: '#888' }, axisLine: { show: false }, axisTick: { show: false },
-        splitLine: { lineStyle: { opacity: 0.08 } },
-      },
-      series: [
-        {
-          type: 'line', data, smooth: 0.3, symbol: 'none',
-          lineStyle: { width: 2.5, color: lineColor },
-          areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: lineColor + '30' }, { offset: 1, color: lineColor + '02' }
-          ]) },
-          markLine: startPrice != null ? {
-            silent: true, symbol: 'none',
-            data: [{ yAxis: startPrice, lineStyle: { color: '#666', type: 'dashed', width: 1 }, label: { formatter: t('prediction.chartTarget', { price: fmtNum(startPrice) }), fontSize: 10, position: 'insideStartTop', color: '#888' } }]
-          } : undefined,
-        },
-        {
-          type: 'effectScatter',
-          data: lastPoint ? [lastPoint] : [],
-          symbolSize: 7,
-          rippleEffect: { brushType: 'fill', scale: 3.5, period: 2.5 },
-          itemStyle: { color: lineColor, shadowBlur: 8, shadowColor: lineColor + '80' },
-          z: 10,
-        },
-      ],
-      tooltip: { trigger: 'axis', formatter: (p: unknown) => {
-        const arr = p as { data: [number, number] }[];
-        if (!arr?.[0]) return '';
-        return `${fmtTime(arr[0].data[0], true)}<br/><b>$${fmtNum(arr[0].data[1])}</b>`;
-      }},
-    }, false);
-    // 依赖带 i18n.language：切语言后 option 要重算，否则目标价那条线的标签还留着上一门语言
-  }, [priceHistory, round?.startPrice, isDark, t, i18n.language]);
-
-  useEffect(() => () => {
-    chartInst.current?.dispose();
-    chartInst.current = null;
-  }, []);
-
-  useEffect(() => {
-    const handleResize = () => chartInst.current?.resize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  useEffect(() => { fetchBets(); }, [fetchBets]);
 
   // UP / DOWN 是盘口方向代号，只有露给人看的地方换成"看涨 / 看跌"
   const sideLabel = side === 'UP' ? t('prediction.up') : t('prediction.down');
@@ -337,28 +124,23 @@ export function Prediction() {
     } finally { setSubmitting(false); }
   };
 
-  const currentPrice = btcPrice;
-  const startPrice = round?.startPrice ? parseFloat(round.startPrice) : null;
-  const diff = currentPrice != null && startPrice != null ? currentPrice - startPrice : null;
-  const isUp = diff != null && diff >= 0;
-  const displayUpAsk = upAsk ?? (round?.upPrice ? parseFloat(round.upPrice) : null);
-  const displayUpBid = upBid ?? displayUpAsk;
-  const displayDownAsk = downAsk ?? (round?.downPrice ? parseFloat(round.downPrice) : null);
-  const displayDownBid = downBid ?? displayDownAsk;
-
-  const askPrice = side === 'UP' ? displayUpAsk : displayDownAsk;
+  const askPrice = side === 'UP' ? upAsk : downAsk;
   const buyAmt = parseFloat(amount) || 0;
   const toWin = askPrice && buyAmt > 0 ? buyAmt / askPrice : 0;
+  // 买入费在金额之外另扣；全部按钮按同一公式留足费
+  const buyFee = askPrice ? feeOf(toWin, askPrice) : 0;
+  const maxBuyAmount = () => {
+    const bal = user?.gameBalance ? parseFloat(String(user.gameBalance)) : 0;
+    const feePerCost = askPrice ? FEE_RATE * (1 - askPrice) : FEE_RATE;
+    return String(Math.floor(bal / (1 + feePerCost) * 100) / 100);
+  };
 
   const activeBetsForSide = bets.filter(b => b.status === 'ACTIVE' && b.side === side);
   const totalShares = activeBetsForSide.reduce((sum, b) => sum + parseFloat(String(b.contracts ?? 0)), 0);
-  const bidPrice = side === 'UP' ? displayUpBid : displayDownBid;
+  const bidPrice = side === 'UP' ? upBid : downBid;
   const sellSharesNum = parseFloat(shares) || 0;
-  const youllReceive = bidPrice && sellSharesNum > 0 ? sellSharesNum * bidPrice : 0;
-
-  const pctElapsed = ((WINDOW_SECONDS - countdown) / WINDOW_SECONDS) * 100;
-  const urgency = countdown <= 10 ? 'from-red-500 to-red-400' : countdown <= 30 ? 'from-amber-500 to-amber-400' : 'from-emerald-500 to-emerald-400';
-  const countdownColor = countdown <= 10 ? 'text-red-500' : countdown <= 30 ? 'text-amber-500' : '';
+  // 到手 = 份数 × 卖价 − 吃单费，与后端 sell 同口径
+  const youllReceive = bidPrice && sellSharesNum > 0 ? sellSharesNum * bidPrice - feeOf(sellSharesNum, bidPrice) : 0;
 
   return (
     <div className="page-shell p-4 md:p-6 space-y-4">
@@ -368,63 +150,12 @@ export function Prediction() {
         {t('prediction.beta')}
       </div>
 
-      {/* ── Hero: 标题 + 倒计时 + 价格 + 图表 ── */}
-      <Card className="overflow-hidden">
-        <CardContent className="p-0">
-          {/* 顶栏 */}
-          <div className="flex items-center justify-between px-5 pt-4 pb-3">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center">
-                <span className="text-lg font-black text-amber-500">B</span>
-              </div>
-              <div>
-                <h1 className="text-base font-bold leading-tight">{t('prediction.title')}</h1>
-                <span className="text-[10px] text-muted-foreground font-mono">
-                  5min &middot; {round?.windowStart ?? Math.floor((Date.now() + serverClockOffsetMs) / 1000 / WINDOW_SECONDS) * WINDOW_SECONDS}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              {round?.status === 'LOCKED' && <Badge variant="outline" className="text-amber-500 border-amber-500/50 text-[10px] px-1.5 py-0">{t('prediction.locked')}</Badge>}
-              <div className="flex items-center gap-1.5">
-                <Clock className={`w-3.5 h-3.5 text-muted-foreground ${countdownColor}`} />
-                <RollingNumber value={fmtCountdown(countdown)} className={`font-mono text-xl font-black tabular-nums ${countdownColor}`} />
-              </div>
-            </div>
-          </div>
-
-          {/* 进度条 */}
-          <div className="px-5 pb-3">
-            <div className="w-full h-1 rounded-full bg-muted overflow-hidden">
-              <div className={`h-full rounded-full transition-all duration-1000 ease-linear bg-gradient-to-r ${urgency}`}
-                   style={{ width: `${pctElapsed}%` }} />
-            </div>
-          </div>
-
-          {/* 价格行 */}
-          <div className="flex items-end justify-between px-5 pb-2">
-            <div>
-              <RollingNumber value={`$${fmtNum(currentPrice)}`} className={`text-2xl font-black tabular-nums ${isUp ? 'text-green-500' : 'text-red-500'}`} />
-              {diff != null && (
-                <div className={`flex items-center gap-1 mt-0.5 text-xs font-semibold ${isUp ? 'text-green-500' : 'text-red-500'}`}>
-                  {isUp ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
-                  {isUp ? '+' : ''}{diff.toFixed(2)}
-                </div>
-              )}
-            </div>
-            <span className="px-2.5 py-1 rounded bg-muted text-xs font-bold font-mono tabular-nums text-muted-foreground flex items-center gap-1">
-              {startPrice != null
-                ? <><HelpTip side="top" iconClassName="w-3 h-3" text={t('prediction.targetTip')} />{t('prediction.targetPrice', { price: fmtNum(startPrice) })}</>
-                : <><Loader2 className="w-3 h-3 animate-spin" />{t('prediction.targetLoading')}</>}
-            </span>
-          </div>
-
-          {/* 图表 */}
-          <div className="px-3 pb-3">
-            <div ref={chartRef} style={{ height: 200, width: '100%' }} />
-          </div>
-        </CardContent>
-      </Card>
+      {/* ── Hero: 标题 + 倒计时 + 价格 + 图表；右上角进 Jev 页 ── */}
+      <PredictionHero market={market} extra={
+        <Link to="/jev" className="hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground hover:text-primary transition-colors">
+          <Bot className="w-3.5 h-3.5" />{t('prediction.jev.jevView')}
+        </Link>
+      } />
 
       {/* ── 交易面板 + Live Trades ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -452,9 +183,7 @@ export function Prediction() {
                   <TrendingUp className="mx-auto w-5 h-5 text-green-500 mb-1.5" />
                   <div className="text-[10px] text-muted-foreground tracking-wider mb-0.5 flex items-center justify-center gap-0.5">{t('prediction.up')} <HelpTip side="top" iconClassName="w-3 h-3" text={t('prediction.upTip')} /></div>
                   <div className="text-2xl font-black text-green-500 tabular-nums">
-                    {tradeTab === 'buy'
-                      ? (displayUpAsk != null ? `${(displayUpAsk * 100).toFixed(0)}¢` : '--')
-                      : (displayUpBid != null ? `${(displayUpBid * 100).toFixed(0)}¢` : '--')}
+                    {tradeTab === 'buy' ? cents(upAsk) : cents(upBid)}
                   </div>
                 </button>
                 <button onClick={() => setSide('DOWN')}
@@ -462,9 +191,7 @@ export function Prediction() {
                   <TrendingDown className="mx-auto w-5 h-5 text-red-500 mb-1.5" />
                   <div className="text-[10px] text-muted-foreground tracking-wider mb-0.5 flex items-center justify-center gap-0.5">{t('prediction.down')} <HelpTip side="top" iconClassName="w-3 h-3" text={t('prediction.downTip')} /></div>
                   <div className="text-2xl font-black text-red-500 tabular-nums">
-                    {tradeTab === 'buy'
-                      ? (displayDownAsk != null ? `${(displayDownAsk * 100).toFixed(0)}¢` : '--')
-                      : (displayDownBid != null ? `${(displayDownBid * 100).toFixed(0)}¢` : '--')}
+                    {tradeTab === 'buy' ? cents(downAsk) : cents(downBid)}
                   </div>
                 </button>
               </div>
@@ -496,13 +223,19 @@ export function Prediction() {
                       </Button>
                     ))}
                     <Button variant="outline" size="sm" className="flex-1 h-9 sm:h-7 text-xs font-semibold"
-                            onClick={() => setAmount(user?.gameBalance ? String(Math.floor(parseFloat(String(user.gameBalance)) / 1.02 * 100) / 100) : '0')}>
+                            onClick={() => setAmount(maxBuyAmount())}>
                       {t('prediction.max')}
                     </Button>
                   </div>
-                  <div className="flex items-center justify-between py-2.5 px-3 mb-4 rounded-lg bg-muted/50">
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">{t('prediction.estPayout')} <HelpTip side="top" iconClassName="w-3 h-3" text={t('prediction.estPayoutTip')} /></span>
-                    <span className="text-sm font-bold font-mono tabular-nums">${toWin > 0 ? toWin.toFixed(2) : '--'}</span>
+                  <div className="py-2.5 px-3 mb-4 rounded-lg bg-muted/50 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground flex items-center gap-1">{t('prediction.estPayout')} <HelpTip side="top" iconClassName="w-3 h-3" text={t('prediction.estPayoutTip')} /></span>
+                      <span className="text-sm font-bold font-mono tabular-nums">${toWin > 0 ? toWin.toFixed(2) : '--'}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-muted-foreground flex items-center gap-1">{t('prediction.fee')} <HelpTip side="top" iconClassName="w-3 h-3" text={t('prediction.feeTip')} /></span>
+                      <span className="text-[11px] font-mono tabular-nums text-muted-foreground">${buyFee > 0 ? buyFee.toFixed(2) : '--'}</span>
+                    </div>
                   </div>
                   <Button onClick={handleBuy} disabled={submitting || !user}
                           className={`w-full h-11 font-bold text-sm ${side === 'UP' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'} text-white`}>
@@ -633,7 +366,7 @@ export function Prediction() {
                         {b.payout > 0 ? `+$${b.payout.toFixed(2)}` : '$0'}
                       </span>
                     )}
-                    {b.status === 'ACTIVE' && round?.status === 'OPEN' && (
+                    {b.status === 'ACTIVE' && round?.status === 'OPEN' && b.windowStart === round.windowStart && (
                       <Button size="sm" variant="outline" onClick={() => handleSell(b.id)} className="text-[10px] h-6 px-2">{t('prediction.sell')}</Button>
                     )}
                   </div>

@@ -27,6 +27,11 @@ export function fmtSignedUsd(n: number, decimals = 2): string {
   return `${n < 0 ? '-$' : '+$'}${fmtNum(Math.abs(n), decimals)}`;
 }
 
+/** 预测盘份额价换成美分数，最多一位小数：0.54 → 54，0.001 → 0.1，和 Polymarket 官网一样。 */
+export function toCents(p: number): number {
+  return +(p * 100).toFixed(1);
+}
+
 /** 带正负号的百分比：+28.41% / -1.02%。 */
 export function fmtSignedPct(n: number, decimals = 2): string {
   return `${n >= 0 ? '+' : ''}${n.toFixed(decimals)}%`;

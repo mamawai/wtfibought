@@ -25,6 +25,7 @@ import { Games } from './pages/Games';
 import { Intro } from './pages/Intro';
 import { Me } from './pages/Me';
 import { Prediction } from './pages/Prediction';
+import { JevPrediction } from './pages/JevPrediction';
 import { AiAgent } from './pages/AiAgent';
 import { Arena } from './pages/Arena';
 import { ArenaDetail } from './pages/ArenaDetail';
@@ -104,6 +105,7 @@ function App() {
                   <Route path="/mines" element={<Mines />} />
                   <Route path="/videopoker" element={<VideoPoker />} />
                   <Route path="/prediction" element={<Prediction />} />
+                  <Route path="/jev" element={<JevPrediction />} />
                   <Route path="/ai" element={<AiAgent />} />
                   <Route path="/my-trader" element={<MyTrader />} />
                   <Route path="/strategies" element={<Strategies />} />

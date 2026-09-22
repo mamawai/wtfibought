@@ -135,6 +135,16 @@
       "placeholder": "Percentage, e.g. 0.05 means 0.05%/day",
       "hint": "The input is a percentage; 0.05%/day is decimal=0.0005."
     },
+    "jev": {
+      "title": "Jev predictor",
+      "hint": "When on, Jev is asked every 15 seconds after each 5-minute round opens, and the bot account jev-prediction bets on the prediction market. Stored in Redis, so it survives restarts.",
+      "on": "Running",
+      "off": "Off",
+      "noKey": "The platform JEV_API_KEY is not set, so it cannot be turned on",
+      "turnOn": "Turn on",
+      "turnOff": "Turn off",
+      "view": "Open the Jev page"
+    },
     "invite": {
       "title": "Invite codes",
       "maxUses": "Uses per code",

@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Navigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { useUserStore } from '../stores/userStore';
-import { adminApi } from '../api';
-import type { AiKeyConfig, AiModelAssignment, InviteCode } from '../types';
+import { adminApi, jevPredictionApi } from '../api';
+import type { AiKeyConfig, AiModelAssignment, InviteCode, JevSwitchState } from '../types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
@@ -43,6 +43,9 @@ export function Admin() {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteMaxUses, setInviteMaxUses] = useState('1');
   const [inviteCount, setInviteCount] = useState('1');
+
+  // Jev 预测员总开关
+  const [jevSwitch, setJevSwitch] = useState<JevSwitchState | null>(null);
 
   const fetchInterestRate = useCallback(async () => {
     setRateLoading(true);
@@ -87,6 +90,7 @@ export function Admin() {
       fetchAiKeys();
       fetchAssignments();
       fetchInviteCodes();
+      jevPredictionApi.switchState().then(setJevSwitch).catch(() => { /* ignore */ });
     }
   }, [user, fetchInterestRate, fetchAiKeys, fetchAssignments, fetchInviteCodes]);
 
@@ -127,6 +131,17 @@ export function Admin() {
       setInterestRatePct(String(updated > 0 ? updated * 100 : 0));
     } catch { /* ignore */ }
     finally { setActionLoading(null); }
+  };
+
+  const handleJevSwitch = async (enabled: boolean) => {
+    setActionLoading('jevSwitch');
+    try {
+      setJevSwitch(await jevPredictionApi.setSwitch(enabled));
+    } catch (e) {
+      toast((e as Error).message || t('admin.actionFailed'), 'error');
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   // ========== AI Key 操作 ==========
@@ -284,6 +299,32 @@ export function Admin() {
               <div className="text-xs text-muted-foreground">{t('admin.rate.hint')}</div>
             </CardContent>
           </Card>
+
+          {/* Jev 预测员总开关 */}
+          {jevSwitch && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg">{t('admin.jev.title')}</CardTitle>
+                  <Link to="/jev" className="text-xs font-bold text-primary hover:underline">{t('admin.jev.view')}</Link>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <Badge variant={jevSwitch.enabled ? 'default' : 'secondary'}>
+                    {jevSwitch.enabled ? t('admin.jev.on') : t('admin.jev.off')}
+                  </Badge>
+                  <Button size="sm" variant={jevSwitch.enabled ? 'outline' : 'default'}
+                          onClick={() => void handleJevSwitch(!jevSwitch.enabled)}
+                          disabled={actionLoading !== null || (!jevSwitch.enabled && !jevSwitch.configured)}>
+                    {jevSwitch.enabled ? t('admin.jev.turnOff') : t('admin.jev.turnOn')}
+                  </Button>
+                  {!jevSwitch.configured && <span className="text-xs text-destructive">{t('admin.jev.noKey')}</span>}
+                </div>
+                <div className="text-xs text-muted-foreground">{t('admin.jev.hint')}</div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* ========== 邀请码（注册凭证，可配次数/批量生成/作废） ========== */}
           <Card>
