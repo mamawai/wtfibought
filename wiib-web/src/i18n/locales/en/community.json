@@ -132,7 +132,7 @@
     "jev": {
       "title": "Jev predictor",
       "market": "BTC 5-minute up/down",
-      "intro": "Jev bets on BTC's 5-minute up/down market like a player: every 15 seconds after the open it looks at the market and, when flat, decides to buy UP, buy DOWN or wait; when holding, it decides to keep the bet or sell. Code only blocks clearly bad buys and sizes each bet by Jev's confidence.",
+      "intro": "Jev bets on BTC's 5-minute up/down market like a player: every 15 seconds after the open it looks at the market and, when flat, decides to buy UP, buy DOWN or wait, buying only when one side is cheap. Code decides when to sell a position by fair value, only lets cheap buys through, and sizes each bet by Jev's confidence.",
       "jevView": "How Jev plays it",
       "backToMarket": "Back to the market",
       "running": "Running",
