@@ -163,7 +163,7 @@ jev:
     sell-edge: 0.06           # 持仓时买一价扣手续费比公平价高出这么多就卖（市场给多了），不到就拿到结算；卖不问 Jev
     min-ask: 0.03             # 卖价低于它不买（基本是废票）
     max-ask: 0.97             # 卖价高于它不买（尾部风险大，按占最大利润算手续费也最贵）
-    book-max-age-ms: 5000     # 盘口超过这么久没推送就不问不动
+    book-max-age-ms: 5000     # 盘口超过这么久没更新就不问不动
     momentum-tilt: 0.3        # 后劲满格加在 z 上的量，只用于"后劲修正"那一列记分
 
 # Hyperliquid 大户持仓（WhalePoolTask / WhalePositionTask）：纯展示 + 落库，不进 trader 决策。方案见 docs/hyperliquid-whale.md

@@ -64,7 +64,7 @@ public class JevPredictionDecision {
     /** 它的概率 */
     private BigDecimal jevChoiceP;
 
-    /** 盘口距上次推送的毫秒数；空=没记录 */
+    /** 盘口距上次更新的毫秒数；空=没记录 */
     private Integer bookAgeMs;
 
     private BigDecimal upAsk;

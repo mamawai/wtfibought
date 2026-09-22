@@ -171,7 +171,7 @@ public class CacheService {
     private static final String PREDICTION_BOOK_UPDATED_AT_KEY = "prediction:book:updatedAt";
     private static final String PREDICTION_UP_MID_HISTORY_KEY = "prediction:upmid:history";
 
-    /** 盘口最后一次收到推送的时刻(ms)：盘口价本身不带时间，断线时价停住，靠它判旧 */
+    /** 盘口最近一次变化的时刻(ms)，按 Polymarket 消息自带的时间：盘口价本身不带时间，推送落后或断线时价是旧的，靠它判旧 */
     public void putPredictionBookUpdatedAt(long ms) {
         stringRedisTemplate.opsForValue().set(PREDICTION_BOOK_UPDATED_AT_KEY, Long.toString(ms), PREDICTION_TTL);
     }

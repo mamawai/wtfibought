@@ -67,7 +67,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *         {@link #init()} 还启动每 50ms 一拍的 {@link #tick()}：先 {@link #checkRoundRotation()}（见下），
  *         再 {@link #flushBook()} 把有变化的盘口写 Redis、广播 {@code /topic/prediction/market}；
  *         每秒一次 {@link #sampleBook()}：把盘口最后更新时刻和 UP 中间价各写一笔 Redis，并补推一次当前盘口，
- *         预测员靠前者判断盘口是不是停了，靠后者看最近 30 秒赔率怎么动。
+ *         预测员靠前者判断盘口是不是旧了，靠后者看最近 30 秒赔率怎么动。
  *     </li>
  *     <li>
  *         {@link #init()} 启动虚拟线程执行 {@link #prepareCurrentMarket(long)}。
@@ -136,7 +136,7 @@ public class PolymarketWsClient implements SmartLifecycle {
     private volatile String lastSubscribedSlug;
     private volatile String currentUpAssetId;
     private volatile String currentDownAssetId;
-    /** 盘口最后一次收到推送的时刻，每秒采样写 Redis */
+    /** 盘口最近一次变化的时刻，取消息自带的 timestamp（Polymarket 那边的时间）：推送落后几秒它就旧几秒。每秒采样写 Redis */
     private volatile long bookUpdatedAtMs;
     /** 盘口内存最新值，按 token 存：WS 每条消息只改这里，每拍再写 Redis、推给页面 */
     private final Map<String, Top> tops = new ConcurrentHashMap<>();
@@ -596,17 +596,18 @@ public class PolymarketWsClient implements SmartLifecycle {
     private void onBookSnapshot(JsonNode msg) {
         String assetId = msg.path("asset_id").asString(null);
         if (sideForAsset(assetId) == null) return;
-        updateTop(assetId, bestPrice(msg.path("bids"), true), bestPrice(msg.path("asks"), false));
+        updateTop(assetId, bestPrice(msg.path("bids"), true), bestPrice(msg.path("asks"), false),
+                parseClobTimestamp(msg.path("timestamp").asString(null)));
     }
 
     /**
      * 一个 token 的买一卖一记进内存。每条消息都是这一边完整的最优价：
      * WS 用买一 0、卖一 1 表示这一档空了，和快照里的空档位一样按没有报价处理
      */
-    private void updateTop(String assetId, BigDecimal bid, BigDecimal ask) {
+    private void updateTop(String assetId, BigDecimal bid, BigDecimal ask, long eventMs) {
         tops.put(assetId, new Top(bid != null && bid.signum() > 0 ? bid : null,
                 ask != null && ask.compareTo(BigDecimal.ONE) < 0 ? ask : null));
-        bookUpdatedAtMs = System.currentTimeMillis();
+        bookUpdatedAtMs = eventMs;
         bookDirty = true;
     }
 
@@ -623,10 +624,11 @@ public class PolymarketWsClient implements SmartLifecycle {
     }
 
     private void onPriceChange(JsonNode msg) {
+        long eventMs = parseClobTimestamp(msg.path("timestamp").asString(null));
         for (JsonNode change : msg.path("price_changes")) {
             String assetId = change.path("asset_id").asString(null);
             if (sideForAsset(assetId) == null) continue;
-            updateTop(assetId, change.path("best_bid").asDecimal(null), change.path("best_ask").asDecimal(null));
+            updateTop(assetId, change.path("best_bid").asDecimal(null), change.path("best_ask").asDecimal(null), eventMs);
         }
     }
 

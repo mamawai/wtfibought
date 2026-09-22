@@ -27,7 +27,7 @@ public class JevPredictionConfig {
     /** 卖价在这个区间外不买：太贵尾部风险大，太便宜基本是废票 */
     private final BigDecimal minAsk;
     private final BigDecimal maxAsk;
-    /** 盘口超过这么久没推送就不问不动 */
+    /** 盘口超过这么久没更新就不问不动 */
     private final long bookMaxAgeMs;
     /** 后劲满格加在 z 上的量，只用于记分那一列 */
     private final double momentumTilt;

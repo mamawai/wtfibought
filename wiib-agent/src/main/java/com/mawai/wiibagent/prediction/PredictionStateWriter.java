@@ -88,7 +88,7 @@ public class PredictionStateWriter {
      * @param pModel          纯数学的上涨概率
      * @param driftSign       开盘以来方向：1 涨 / -1 跌 / 0 平
      * @param book            写 state 那一刻的盘口
-     * @param bookUpdatedAtMs 盘口最后收到推送的时刻；没有为 null
+     * @param bookUpdatedAtMs 盘口最近一次变化的时刻（Polymarket 那边的时间）；没有为 null
      */
     public record Raw(double zModel, double pModel, int driftSign, Book book, Long bookUpdatedAtMs) {
     }

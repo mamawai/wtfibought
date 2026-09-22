@@ -1132,7 +1132,7 @@ COMMENT ON COLUMN jev_prediction_decision.lead_sigma IS '纯数学的 z，正=�
 COMMENT ON COLUMN jev_prediction_decision.momentum IS 'Jev 后劲：还在推减在回吐，-1…+1';
 COMMENT ON COLUMN jev_prediction_decision.jev_choice IS 'Jev 决定题概率最高的选项：BUY_UP/BUY_DOWN/WAIT；持仓行没问决定，为空';
 COMMENT ON COLUMN jev_prediction_decision.jev_choice_p IS '它的概率，到执行阈值才动';
-COMMENT ON COLUMN jev_prediction_decision.book_age_ms IS '盘口距上次推送的毫秒数，超龄不问不动；空=没记录';
+COMMENT ON COLUMN jev_prediction_decision.book_age_ms IS '盘口距上次更新的毫秒数，超龄不问不动；空=没记录';
 COMMENT ON COLUMN jev_prediction_decision.edge IS 'Jev 想买那边的绝对优势 p_model − 卖价 − 手续费；没买时也记';
 COMMENT ON COLUMN jev_prediction_decision.action IS '实际动作 BUY_UP/BUY_DOWN/STAY_OUT/HOLD/SELL/ERROR';
 COMMENT ON COLUMN jev_prediction_decision.reason IS '为什么这么做，"代码 + 细节"：BUY/WAIT/UNSURE/NO_QUOTE/ASK_RANGE/NOT_CHEAP/NO_BALANCE/HOLD/SELL/NO_BID/STALE_BOOK/STALE_WHILE_ASKING，页面按首个词出提示；异常看 error';
