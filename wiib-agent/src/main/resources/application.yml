@@ -144,6 +144,27 @@ blockbeats:
   size: 20
   expiry-ms: 600000           # 复用窗口 10min：窗口内多币种/多次调用复用同一份，超过才重拉
 
+# 平台自己的 TypeSafe Jev，只给预测员用（不走 BYOK）；key 不填预测员不启动。
+# 研判工作台的 Jev 路由走用户各自的 user_jev_config，与这里无关
+jev:
+  platform:
+    api-key: ${JEV_API_KEY:}
+    base-url: ${JEV_BASE_URL:https://api.typesafe.ai}
+    model: ${JEV_MODEL:jev-latest}
+  # 预测员（BTC 5 分钟盘）：开关在 /admin 页面（存 Redis，默认关）。Jev 当玩家，空仓问买不买、持仓问卖不卖，代码只拦明显不该买的
+  # 阈值都是起手值，跑出盈亏和记分后再调，改数不用改代码
+  prediction:
+    checkpoint-seconds: 30,45,60,75,90,105,120,135,150,165,180,195,210,225,240,255,270   # 开盘后第几秒问一次，每次一行
+    base-stake: 5             # 基础注额 USDT
+    act-threshold: 0.6        # Jev 选的动作（买 UP/买 DOWN/卖）概率到这里才执行
+    big-threshold: 0.85       # 买入概率到这里、且那边明显便宜（比例到 big-value-ratio）才下两倍
+    big-value-ratio: 0.2      # 优势占最大利润的比例 (公平价 − 卖价 − 费) / (1 − 卖价 − 费)
+    min-value-ratio: -0.05    # 要买那边比例低于它算偏贵，拦下
+    min-ask: 0.03             # 卖价低于它不买（基本是废票）
+    max-ask: 0.97             # 卖价高于它不买（尾部风险大，按占最大利润算手续费也最贵）
+    book-max-age-ms: 5000     # 盘口超过这么久没推送就不问不动
+    momentum-tilt: 0.3        # 后劲满格加在 z 上的量，只用于"后劲修正"那一列记分
+
 # Hyperliquid 大户持仓（WhalePoolTask / WhalePositionTask）：纯展示 + 落库，不进 trader 决策。方案见 docs/hyperliquid-whale.md
 whale:
   enabled: true                        # 关掉：两条任务不跑，接口回空

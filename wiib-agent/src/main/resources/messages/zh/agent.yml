@@ -50,3 +50,4 @@ agent:
     paramsIncomplete: "参数不完整: {{what}}"
     llmConfigNotFound: "LLM配置不存在(id={{id}})"
     llmConfigNoModel: "LLM配置'{{name}}'缺模型名，请先在「配置LLM」里补全"
+    jevKeyMissing: 没配平台 JEV_API_KEY，预测员开不了

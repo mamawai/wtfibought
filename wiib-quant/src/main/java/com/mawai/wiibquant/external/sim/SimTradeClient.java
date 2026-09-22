@@ -9,16 +9,12 @@ import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.util.Result;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestClient;
 import org.springframework.web.client.support.RestClientAdapter;
 import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 
 import java.math.BigDecimal;
-import java.net.http.HttpClient;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -44,18 +40,8 @@ public class SimTradeClient {
 
     public SimTradeClient(@Value("${sim.internal.base-url:http://localhost:8080}") String baseUrl,
                           @Value("${internal.api.token:}") String token) {
-        HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(1))
-                .build();
-        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
-        factory.setReadTimeout(Duration.ofSeconds(5));
-        RestClient restClient = RestClient.builder()
-                .baseUrl(baseUrl)
-                .defaultHeader("X-Internal-Token", token)
-                .requestFactory(factory)
-                .build();
         this.api = HttpServiceProxyFactory
-                .builderFor(RestClientAdapter.create(restClient))
+                .builderFor(RestClientAdapter.create(SimInternalRestClient.build(baseUrl, token)))
                 .build()
                 .createClient(SimTradeApi.class);
     }
@@ -184,8 +170,8 @@ public class SimTradeClient {
         }
     }
 
-    /** 拆 Result 壳：sim 业务失败统一转异常抛出。 */
-    private static <T> T unwrap(Result<T> result) {
+    /** 拆 Result 壳：sim 业务失败统一转异常抛出。包内其他 sim 客户端共用 */
+    static <T> T unwrap(Result<T> result) {
         if (result == null) {
             throw new IllegalStateException("sim internal api 空响应");
         }

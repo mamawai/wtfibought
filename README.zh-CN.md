@@ -88,7 +88,7 @@ WhatIfIBought 的重头戏是回测练习、量化策略模拟和 AI Trader：
 
    ```bash
    psql -U postgres -c "CREATE DATABASE wiib;"
-   psql -U postgres -d wiib -f sql/init.sql      # 业务 + 量化 + AI runtime（36 张表）
+   psql -U postgres -d wiib -f sql/init.sql      # 业务 + 量化 + AI runtime（37 张表）
    psql -U postgres -d wiib -f sql/bstock.sql    # bStock 静态表 + 10 只种子（两份合计 37 张）
    ```
 

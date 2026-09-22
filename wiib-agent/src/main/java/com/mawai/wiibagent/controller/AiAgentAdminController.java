@@ -8,6 +8,8 @@ import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibcommon.mapper.AiRuntimeConfigMapper;
+import com.mawai.wiibagent.llm.jev.JevPlatformConfig;
+import com.mawai.wiibagent.prediction.JevPredictionSwitch;
 import com.mawai.wiibagent.runtime.AiAgentRuntimeManager;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -34,6 +36,8 @@ public class AiAgentAdminController {
     private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
+    private final JevPlatformConfig jevPlatform;
+    private final JevPredictionSwitch jevSwitch;
     /** 管理页的校验与回执跟界面语言 */
     private final MessageCatalog messages;
 
@@ -177,6 +181,32 @@ public class AiAgentAdminController {
         return Result.ok(null);
     }
 
+    // ========== Jev 预测员开关 ==========
+
+    /** configured=平台 JEV_API_KEY 配了；enabled=开关开着。两个都真才真跑 */
+    public record JevPredictionState(boolean configured, boolean enabled) {
+    }
+
+    @GetMapping("/jev-prediction")
+    @Operation(summary = "Jev 预测员开关状态")
+    public Result<JevPredictionState> jevPrediction() {
+        return Result.ok(new JevPredictionState(jevPlatform.enabled(), jevSwitch.isOn()));
+    }
+
+    @PostMapping("/jev-prediction")
+    @Operation(summary = "开/关 Jev 预测员（存 Redis，重启不丢）")
+    public Result<JevPredictionState> setJevPrediction(@RequestBody JevPredictionRequest req) {
+        if (req.getEnabled() == null) {
+            return Result.fail(messages.get("agent.admin.paramsIncomplete", Map.of("what", "enabled")));
+        }
+        if (req.getEnabled() && !jevPlatform.enabled()) {
+            return Result.fail(messages.get("agent.admin.jevKeyMissing"));
+        }
+        jevSwitch.set(req.getEnabled());
+        log.info("[JevPred] 管理员{}预测员", req.getEnabled() ? "打开" : "关闭");
+        return Result.ok(new JevPredictionState(jevPlatform.enabled(), jevSwitch.isOn()));
+    }
+
     // 量化触发端点（快照/vol验证）已随预测管线下线（2026-08：生产验证无前瞻信息）。
     // quant-config 开关端点已删：开关框架自 v1 调权清理后空转（无注册开关），随死表清理一并拆除。
 
@@ -199,6 +229,11 @@ public class AiAgentAdminController {
     public static class AssignmentRequest {
         private String functionName;
         private Long configId;
+    }
+
+    @Data
+    public static class JevPredictionRequest {
+        private Boolean enabled;
     }
 
 }

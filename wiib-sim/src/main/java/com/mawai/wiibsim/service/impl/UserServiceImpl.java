@@ -100,6 +100,36 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         return user;
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public User ensureGameAccount(String username, BigDecimal initialGameBalance) {
+        User existing = baseMapper.selectOne(new LambdaQueryWrapper<User>()
+                .eq(User::getUsername, username).last("LIMIT 1"));
+        if (existing != null) {
+            return existing;
+        }
+        User user = new User();
+        user.setUsername(username);
+        user.setLinuxDoId("internal:" + username);
+        user.setBalance(BigDecimal.ZERO);
+        user.setFrozenBalance(BigDecimal.ZERO);
+        user.setGameBalance(initialGameBalance);
+        user.setIsBankrupt(false);
+        user.setBankruptCount(0);
+        baseMapper.insert(user);
+        // 建号赠送记在游戏钱包上；不变量按 (user_id, wallet) 分别成立，交易钱包是 0 不用记
+        UserLedger entry = new UserLedger();
+        entry.setUserId(user.getId());
+        entry.setWallet(LedgerWallet.GAME);
+        entry.setBizType(LedgerBizType.INITIAL_GRANT);
+        entry.setDelta(initialGameBalance);
+        entry.setBalanceAfter(initialGameBalance);
+        entry.setRemark("建号赠送（游戏钱包）");
+        userLedgerMapper.insert(entry);
+        log.info("创建游戏机器人账户 username={} userId={} gameBalance={}", username, user.getId(), initialGameBalance);
+        return user;
+    }
+
     /**
      * 补记建号赠送的初始资金。三个建号入口（OAuth 首登、邀请码注册、量化建号）加 admin 引导
      * 都走 INSERT，balance 是列值而不是 atomic* 调用，记账切面完全抓不到；

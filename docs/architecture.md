@@ -78,6 +78,8 @@ Polymarket CLOB      -> UP/DOWN bid/ask（首条 book 快照种价，买一 0 / 
 
 手续费按 Polymarket 吃单费公式（`PredictionFee`）：`fee = 份数 × 0.07 × p × (1 − p)`，买卖都按吃单算。
 
+Jev 预测员（agent `prediction/` 包，平台用自己的 Jev key，全站一个只有游戏钱包的账户 `jev-prediction`、初始 100）：Jev 当玩家，买卖由它拍板。`JevPredictionRunner` 开盘后每 15 秒（起手 30…270 秒）跑一次：查本回合注单 → `PredictionStateWriter` 写 state（全是词：时段、BTC 走势、Binance 最近 60 秒资金与开盘以来强平、赔率划不划算、持仓时加持仓块；价格取 Polymarket 推的 Chainlink 现货、按 Chainlink 时间戳，逐笔与强平直接读 Redis/库）→ 盘口超过 5 秒没推送就不问不动 → `PredictionJudge` 一次问两道题：决定（空仓买 UP / 买 DOWN / 先等，持仓拿着 / 卖掉）和后劲（在回吐 / 没方向 / 还在推）→ 重读盘口 → `PredictionRules` 执行：决定概率到 0.6 才动，要买那边偏贵、卖价出 [0.03, 0.97] 都拦下，卖掉后同回合还能再买，把握 ≥ 0.85 且明显便宜才下两倍。"划不划算"的公平价来自 `PredictionModel`：领先 / 剩余时间 / 波动出 Φ(z)，波动取一小时典型值和最近几分钟实际值的较大者，末分钟是收盘前 63~3 秒，进了以后已走过的均价按权重锁定。每次一行落 `jev_prediction_decision`（含 Jev 的选项与概率、盘口年龄），每分钟回填结果与盈亏；记分三列：数学 p_model、后劲修正 p_jev、市场 p_mkt。feed 收到盘口消息只记内存，每 200ms 一拍：先看要不要换回合，再把有变化的盘口写 Redis、推给页面；每秒把盘口最后更新时刻和 UP 中间价采样进 Redis（供判旧和"最近 30 秒赔率怎么动"），并补推一次当前盘口。下注走 sim 的 `/internal/prediction` 通道。展示在独立页 `/jev`（`pages/JevPrediction.tsx`，组件在 `components/jev/`）：左上与预测页同一张行情头卡（`PredictionHero` + `usePredictionMarket`，两页共用），左下 Jev 的交易、记分（总体 + 按检查点的三列 Brier）与校准，右栏每 15 秒一张卡：Jev 的决定与后劲、代码算的三个概率和实际动作，点开只看两道题和 Jev 每个选项的概率，一个选项一行、右边一根条按概率填满对应比例；每个回合默认只露出有动作的卡和最新一张。题目在页面上用自己的话包装，不放英文原题。
+
 ### 资金费率
 
 ```text
@@ -104,7 +106,7 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 ├── start-local.ps1 / .bat            # 本地一键启动三服务（bat 为双击入口，转调 ps1）
 ├── docker-compose.yml                # 三进程编排（无私有值，配置全在 .env）
 ├── redis-compose.yml                 # Redis 主从 + 哨兵栈（可选）
-├── sql/                              # init.sql（36 表）+ bstock.sql（bStock 静态表 + 10 只种子）
+├── sql/                              # init.sql（37 表）+ bstock.sql（bStock 静态表 + 10 只种子）
 │
 ├── wiib-common/                      # 共享层：被 feed/agent/quant/sim 共同依赖
 │   └── market/ broadcast/ cache/ aspect/ mapper/ entity/ dto/ enums/ util/ ...

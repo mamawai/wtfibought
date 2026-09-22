@@ -2,12 +2,8 @@ package com.mawai.wiibquant.external.sim;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-
-import java.net.http.HttpClient;
-import java.time.Duration;
 
 /**
  * quant → sim internal API 客户端。
@@ -23,16 +19,7 @@ public class SimInternalClient {
 
     public SimInternalClient(@Value("${sim.internal.base-url:http://localhost:8080}") String baseUrl,
                              @Value("${internal.api.token:}") String token) {
-        HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(1))
-                .build();
-        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
-        factory.setReadTimeout(Duration.ofSeconds(5));
-        this.restClient = RestClient.builder()
-                .baseUrl(baseUrl)
-                .defaultHeader("X-Internal-Token", token)
-                .requestFactory(factory)
-                .build();
+        this.restClient = SimInternalRestClient.build(baseUrl, token);
     }
 
     /**

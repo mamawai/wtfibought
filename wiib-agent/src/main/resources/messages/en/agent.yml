@@ -50,3 +50,4 @@ agent:
     paramsIncomplete: "Incomplete parameters: {{what}}"
     llmConfigNotFound: "No such LLM config (id={{id}})"
     llmConfigNoModel: "The LLM config '{{name}}' has no model name - fill it in under Configure LLM first"
+    jevKeyMissing: The platform JEV_API_KEY is not set, so the predictor cannot be turned on

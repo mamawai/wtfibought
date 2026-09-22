@@ -38,7 +38,7 @@ cd wtfibought
 
 ```bash
 psql -U postgres -c "CREATE DATABASE wiib;"
-psql -U postgres -d wiib -f sql/init.sql      # 业务 + 量化 + AI runtime（36 张表）
+psql -U postgres -d wiib -f sql/init.sql      # 业务 + 量化 + AI runtime（37 张表）
 psql -U postgres -d wiib -f sql/bstock.sql    # bStock 代币化美股静态表 + 10 只种子
 ```
 
@@ -76,6 +76,7 @@ cp .env.example .env.local    # 填 PG_USER / PG_PASSWORD / INTERNAL_API_TOKEN�
 | `BINANCE_TESTNET_API_KEY` / `BINANCE_TESTNET_SECRET_KEY` | 策略切 `target: testnet` 轨要用，Testnet 看板页也直接吃它（纯实时直拉，不落库不缓存）；不填只有 sim 模拟盘轨可用 |
 | `WIIB_TRADER_BASEURL_ALLOWLIST` | BYOK 的 baseUrl 走 SSRF 校验，默认拒绝内网/本机地址。docker 同网络的代理网关（如 `cliproxyapi`）要在这里按主机名放行 |
 | `BLOCKBEATS_API_KEY` | 快讯功能降级 |
+| `JEV_API_KEY` / `JEV_BASE_URL` / `JEV_MODEL` | 平台自己的 TypeSafe Jev，只给预测员用（不走 BYOK）。不配则预测员不启动，配了还要在 /admin 打开预测员开关；后两个默认官方地址与 `jev-latest` |
 | `LINUXDO_CLIENT_ID` / `LINUXDO_CLIENT_SECRET` / `LINUXDO_REDIRECT_URI` | 关闭 LinuxDo 登录。回调默认 `http://localhost:3000/login`，与前端 dev 端口绑死，改端口要一起改 |
 | `TRADE_ALIAS_SALT` | 全站公开成交流水的匿名昵称哈希盐，默认是硬编码公开串。线上不改等于匿名化形同虚设；同一次部署内必须稳定，改了历史昵称全变 |
 | `PG_HOST/PORT/DB`、`REDIS_HOST/PORT/DB/PASSWORD` | 各有默认值（localhost）。docker 部署里 HOST 要填容器名或宿主内网 IP，写 `localhost` 会指向容器自己 |

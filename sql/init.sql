@@ -1077,3 +1077,66 @@ CREATE TABLE IF NOT EXISTS user_jev_config (
 COMMENT ON TABLE  user_jev_config IS '用户 Jev 决策模型（TypeSafe System One）BYOK 配置：一人一份，URL+模型+key；当前只给研判工作台路由用';
 COMMENT ON COLUMN user_jev_config.model IS 'jev-latest 或钉死的版本号如 jev-1.13.0';
 COMMENT ON COLUMN user_jev_config.api_key_enc IS 'AES-256-GCM 密文，密钥来自 WIIB_TRADER_KEY_SECRET';
+
+-- ============================================
+-- 36. Jev 预测员决策记录（平台级展示，一个账户）
+-- ============================================
+-- 平台用自己的 Jev key 在 BTC 5 分钟盘上当玩家：开盘后每 15 秒（起手 30…270 秒）问一次，每次一行。
+-- 空仓问"下不下、下哪边"，持仓问"拿着还是卖"，买卖由 Jev 拍板、代码只拦明显不该买的；
+-- 同时记三个上涨概率（纯数学 p_model、后劲修正 p_jev、市场隐含 p_mkt）与当时盘口，结算后回填结果，Brier 现算。
+CREATE TABLE IF NOT EXISTS jev_prediction_decision (
+    id            BIGSERIAL     PRIMARY KEY,
+    window_start  BIGINT        NOT NULL,
+    checkpoint    VARCHAR(8)    NOT NULL,
+    decided_at    BIGINT        NOT NULL,
+    state_json    TEXT          NOT NULL,
+    answers_json  TEXT,
+    p_model       NUMERIC(6,4),
+    p_jev         NUMERIC(6,4),
+    p_mkt         NUMERIC(6,4),
+    lead_sigma    NUMERIC(8,4),
+    momentum      NUMERIC(6,4),
+    jev_choice    VARCHAR(16),
+    jev_choice_p  NUMERIC(6,4),
+    book_age_ms   INT,
+    up_ask        NUMERIC(6,4),
+    down_ask      NUMERIC(6,4),
+    up_bid        NUMERIC(6,4),
+    down_bid      NUMERIC(6,4),
+    edge          NUMERIC(8,4),
+    action        VARCHAR(16)   NOT NULL,
+    reason        VARCHAR(120),
+    bet_id        BIGINT,
+    stake         NUMERIC(12,4),
+    shares        NUMERIC(12,4),
+    avg_price     NUMERIC(6,4),
+    outcome       VARCHAR(8),
+    pnl           NUMERIC(12,4),
+    model         VARCHAR(32),
+    input_tokens  INT,
+    latency_ms    INT,
+    error         VARCHAR(500),
+    created_at    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (window_start, checkpoint)
+);
+CREATE INDEX IF NOT EXISTS idx_jev_pred_decision_window ON jev_prediction_decision (window_start DESC);
+COMMENT ON TABLE  jev_prediction_decision IS 'Jev 预测员每回合每检查点一行：发出的 state、两道题答案（后劲+决定）、三个概率、盘口、动作、注单，结算后回填结果/盈亏';
+COMMENT ON COLUMN jev_prediction_decision.checkpoint IS '检查点：开盘后第几秒，如 T150；空仓问买不买，持仓问卖不卖';
+COMMENT ON COLUMN jev_prediction_decision.decided_at IS '决策时刻(ms)';
+COMMENT ON COLUMN jev_prediction_decision.state_json IS '发给 Jev 的 state 原文';
+COMMENT ON COLUMN jev_prediction_decision.answers_json IS '两道题答案原样（各档/各选项概率、置信度）';
+COMMENT ON COLUMN jev_prediction_decision.p_model IS '纯数学的上涨概率：领先/剩余时间/波动出的 Φ(z)，末分钟含已锁定的均价；也是"划不划算"的公平价';
+COMMENT ON COLUMN jev_prediction_decision.p_jev IS '数学概率按 Jev 后劲判断修正后的上涨概率，只记分';
+COMMENT ON COLUMN jev_prediction_decision.p_mkt IS '市场隐含上涨概率 up_mid/(up_mid+down_mid)，Brier 对照';
+COMMENT ON COLUMN jev_prediction_decision.lead_sigma IS '纯数学的 z，正=偏 UP';
+COMMENT ON COLUMN jev_prediction_decision.momentum IS 'Jev 后劲：还在推减在回吐，-1…+1';
+COMMENT ON COLUMN jev_prediction_decision.jev_choice IS 'Jev 决定题概率最高的选项：BUY_UP/BUY_DOWN/WAIT（空仓）或 HOLD/SELL（持仓）';
+COMMENT ON COLUMN jev_prediction_decision.jev_choice_p IS '它的概率，到执行阈值才动';
+COMMENT ON COLUMN jev_prediction_decision.book_age_ms IS '盘口距上次推送的毫秒数，超龄不问不动；空=没记录';
+COMMENT ON COLUMN jev_prediction_decision.edge IS 'Jev 想买那边的绝对优势 p_model − 卖价 − 手续费；没买时也记';
+COMMENT ON COLUMN jev_prediction_decision.action IS '实际动作 BUY_UP/BUY_DOWN/STAY_OUT/HOLD/SELL/ERROR';
+COMMENT ON COLUMN jev_prediction_decision.reason IS '为什么这么做，"代码 + 细节"：BUY/WAIT/UNSURE/NO_QUOTE/ASK_RANGE/EXPENSIVE/NO_BALANCE/HOLD/SELL/NO_BID/STALE_BOOK/STALE_WHILE_ASKING，页面按首个词出提示；异常看 error';
+COMMENT ON COLUMN jev_prediction_decision.bet_id IS '本行开的注单（BUY_*）或操作的注单（SELL/HOLD）';
+COMMENT ON COLUMN jev_prediction_decision.stake IS '本金 cost（不含手续费）';
+COMMENT ON COLUMN jev_prediction_decision.outcome IS '回合结果 UP/DOWN/VOID，结算后回填';
+COMMENT ON COLUMN jev_prediction_decision.pnl IS '本行开的注单最终盈亏 = payout − cost − 买入手续费；只在 BUY_* 行上有';
