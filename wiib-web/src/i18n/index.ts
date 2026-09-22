@@ -7,7 +7,7 @@ import type { Resource, ResourceKey } from 'i18next';
 export const SUPPORTED_LANGS = ['zh', 'en'] as const;
 export type Lang = (typeof SUPPORTED_LANGS)[number];
 
-/** 语言选择的 localStorage 键。检测器读它、切换器写它，全站只此一个键 */
+/** 手动选的语言，localStorage 键。检测器读它、切换器写它，全站只此一个键；没值就按浏览器判 */
 export const LANG_STORAGE_KEY = 'wiib-lang';
 
 /**
@@ -39,6 +39,7 @@ const detector = new LanguageDetector();
 detector.addDetector({
   name: 'navigatorZhOrEn',
   lookup: () => {
+    // 只看首选那门：ja 在前 zh 在后也算英文
     const first = navigator.languages?.[0] ?? navigator.language ?? '';
     return first.toLowerCase().startsWith('zh') ? 'zh' : 'en';
   },
@@ -58,8 +59,8 @@ void i18n
     detection: {
       order: ['localStorage', 'navigatorZhOrEn'],
       lookupLocalStorage: LANG_STORAGE_KEY,
-      // 切换后自动回写，切换器不用自己存一遍
-      caches: ['localStorage'],
+      // 不自动回写：识别结果不落盘，只有 useLangToggle 手动切才存
+      caches: [],
     },
     // React 自带转义，i18next 再转一次会把 & < > 变成实体码显示出来
     interpolation: { escapeValue: false },

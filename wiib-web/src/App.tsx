@@ -1,7 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { useMemo, useEffect } from 'react';
 import { Layout } from './components/Layout';
-import { LanguageGate } from './components/LanguageGate';
 import { Home } from './pages/Home';
 import { BStockList } from './pages/BStockList';
 import { BStockRoute } from './pages/BStockDetail';
@@ -67,8 +66,6 @@ function App() {
 
   return (
     <BrowserRouter>
-      {/* 挂在路由外层而不是 Layout 里：/login 在 Layout 之外，挂 Layout 游客就看不到 */}
-      <LanguageGate />
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route

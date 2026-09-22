@@ -861,9 +861,8 @@ export function traderMock(): Plugin {
       return [{
         tag: 'script',
         injectTo: 'head-prepend' as const,
-        // ?dark / ?light 钉死主题，?en 切英文；语言弹层和首页公告也按"已看过"处理，截图省得手点
+        // ?dark / ?light 钉死主题，?en 切英文（不跟浏览器）；首页公告也按"已看过"处理，截图省得手点
         children: `localStorage.setItem('wiib-user', JSON.stringify({ state: { token: 'mock-token' }, version: 0 }));
-localStorage.setItem('wiib-lang-chosen', '1');
 localStorage.setItem('wiib-lang', location.search.includes('en') ? 'en' : 'zh');
 localStorage.setItem('wiib-notice-seen', '1');
 if (location.search.includes('dark')) localStorage.setItem('theme', 'dark');
