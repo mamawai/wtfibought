@@ -798,6 +798,20 @@ export interface LlmEndpointSaveRequest {
 export type LlmPurpose = 'CHAT_MAIN' | 'CHAT_LIGHT' | 'TRADER';
 export type LlmBindings = Partial<Record<LlmPurpose, number>>;
 
+/** 用户 Jev 决策模型配置（一人一份，与端点库分开）；未配置时接口回 null */
+export interface JevConfigView {
+  baseUrl: string;
+  model: string;
+  apiKeyTail: string;
+}
+
+/** 保存/探测共用；baseUrl/model 留空走默认，已有配置时 apiKey 传空=沿用已存的 */
+export interface JevSaveRequest {
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+}
+
 
 /** 词表 key + 占位值，文字在 strategy.json 的 strategies.signals 下；vars.context 选词条变体，vars.count 选单复数 */
 export interface SignalText {

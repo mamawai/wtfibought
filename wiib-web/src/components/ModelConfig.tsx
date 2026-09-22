@@ -5,6 +5,7 @@ import { Bot, KeyRound, Loader2, MessagesSquare, Pencil, Plus, Rocket, Sparkles,
 import { llmEndpointApi, traderApi } from '../api';
 import { LlmEndpointForm, type LlmEndpointValue } from './LlmEndpointForm';
 import { LlmEndpointSelect } from './LlmEndpointSelect';
+import { JevConfig } from './JevConfig';
 import { Button } from './ui/button';
 import { useToast } from './ui/use-toast';
 import i18n from '../i18n';
@@ -319,6 +320,9 @@ export function ModelConfig() {
           </div>
         </div>
       </div>
+
+      {/* ===== Jev 决策模型（可选）：与端点库分开的一份配置 ===== */}
+      <JevConfig />
 
       <p className="text-[10px] text-muted-foreground/70 px-1">
         {t('model.behaviorNote')}

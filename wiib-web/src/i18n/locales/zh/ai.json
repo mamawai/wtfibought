@@ -565,6 +565,17 @@
     "followDefault": "跟随默认（{{name}} · {{model}}）",
     "selectEmpty": "还没有可用的模型端点，<0>去 AI 页模型配置里添加</0>"
   },
+  "jev": {
+    "title": "Jev 决策模型（可选）",
+    "configured": "已配置 · {{model}} · key 尾号 {{tail}}",
+    "notConfigured": "未配置 · 路由走对话·轻模型",
+    "intro": "TypeSafe 的 Jev 只出判断不生成文字。配好后研判对话由它决定派哪些专家取数，约 100 毫秒、几乎不花钱；没配或调不通就自动回落到对话·轻模型的路由，不影响使用。费用记在你自己的账上。",
+    "baseUrl": "Base URL",
+    "model": "模型",
+    "defaultsHint": "Base URL 留空即 https://api.typesafe.ai，模型留空即 jev-latest；想钉死版本可填 jev-1.13.0 这类版本号。",
+    "remove": "删除配置",
+    "removeConfirm": "删除 Jev 配置？研判对话的路由回落到对话·轻模型。"
+  },
   "toast": {
     "analyzeDone": "分析完成",
     "analyzeFailed": "分析失败",
@@ -577,6 +588,8 @@
     "endpointAdded": "端点已添加",
     "endpointUpdated": "端点已更新",
     "endpointRemoved": "端点已删除",
+    "jevSaved": "Jev 配置已保存",
+    "jevRemoved": "Jev 配置已删除",
     "saveFailed": "保存失败",
     "bindFailed": "绑定失败",
     "setDefault": "「{{name}}」已设为默认"

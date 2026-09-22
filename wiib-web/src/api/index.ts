@@ -4,7 +4,7 @@ import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats, TnMa
 import type { BacktestTaskStatus, BacktestEventsPage, BacktestKlinesPage, BacktestResultPayload, ReplayCoverage, HistoryKlinesPayload, ReplayCoachRequest, ReplayCoachEvent } from '../types';
 import type { LedgerEntry, LedgerBizTypeOption, PublicTrade, UserProfile, PositionHistoryItem, RankingSort } from '../types';
 import type { CampaignInfo, CampaignReward, CampaignScore, MyCampaignView } from '../types';
-import type { LlmEndpointView, LlmEndpointSaveRequest, LlmBindings, LlmPurpose } from '../types';
+import type { LlmEndpointView, LlmEndpointSaveRequest, LlmBindings, LlmPurpose, JevConfigView, JevSaveRequest } from '../types';
 import type { User, PageResult, RankingItem, CommentItem, NotificationItem, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesAdjustLeverageRequest, FuturesCrossAccount, WalletTransferPreview, FuturesPosition, FuturesOrder, FuturesReverseResult, FuturesBracket, FundingRateView, TradeFilterMap, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, ForceOrder, AiKeyConfig, AiModelAssignment, InviteCode, ChatIntent, WorkbenchEvent, StrategyAccountView, TraderPublicView, TraderOwnerView, TraderDetailView, AiTraderDecisionView, TraderEquityPoint, TraderUpsertRequest, TraderSpec, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchSessionStatus, WorkbenchChatMessage, TraderActionPanel, TraderActionResult, TradeRecordView, TraderLiveEvent, WakeTrace } from '../types';
 
 const api = axios.create({
@@ -535,6 +535,16 @@ export const llmEndpointApi = {
   /** 连通性探测：与保存分离，对应表单里的"测试连通性"按钮 */
   test: (req: LlmEndpointSaveRequest, id?: number) =>
     api.post<unknown, void>('/ai/llm-endpoints/test', req, { params: id != null ? { id } : {} }),
+};
+
+// ========== 用户 Jev 决策模型配置（AI 页「模型配置」Jev 卡片；当前只给研判对话的路由用） ==========
+export const jevApi = {
+  get: () => api.get<unknown, JevConfigView | null>('/ai/jev'),
+  /** 一人一份，保存即覆盖；apiKey 传空=沿用已存的 */
+  save: (req: JevSaveRequest) => api.put<unknown, void>('/ai/jev', req),
+  remove: () => api.delete<unknown, void>('/ai/jev'),
+  /** 连通性探测：真发一道题 */
+  test: (req: JevSaveRequest) => api.post<unknown, void>('/ai/jev/test', req),
 };
 
 /** 快讯（news_event 存档行，首页快讯卡数据源） */

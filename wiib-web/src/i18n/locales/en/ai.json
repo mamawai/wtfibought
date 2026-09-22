@@ -585,6 +585,17 @@
     "followDefault": "Follow default ({{name}} · {{model}})",
     "selectEmpty": "No model endpoint yet — <0>add one under Model config on the AI page</0>"
   },
+  "jev": {
+    "title": "Jev decision model (optional)",
+    "configured": "Configured · {{model}} · key ···{{tail}}",
+    "notConfigured": "Not configured · routing runs on Chat · Light model",
+    "intro": "TypeSafe's Jev returns judgments instead of text. Once configured, the analysis chat lets it decide which experts to dispatch — about 100 ms and next to free. If it is missing or unreachable, routing falls back to the Chat · Light model automatically, so nothing breaks. The cost lands on your account.",
+    "baseUrl": "Base URL",
+    "model": "Model",
+    "defaultsHint": "Leave Base URL blank for https://api.typesafe.ai and model blank for jev-latest; enter a version such as jev-1.13.0 to pin it.",
+    "remove": "Remove config",
+    "removeConfirm": "Remove the Jev config? Analysis-chat routing falls back to the Chat · Light model."
+  },
   "toast": {
     "analyzeDone": "Analysis done",
     "analyzeFailed": "Analysis failed",
@@ -597,6 +608,8 @@
     "endpointAdded": "Endpoint added",
     "endpointUpdated": "Endpoint updated",
     "endpointRemoved": "Endpoint deleted",
+    "jevSaved": "Jev config saved",
+    "jevRemoved": "Jev config removed",
     "saveFailed": "Save failed",
     "bindFailed": "Binding failed",
     "setDefault": "“{{name}}” is now the default"
