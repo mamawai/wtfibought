@@ -47,7 +47,8 @@ function Guide({ thresholds }: { thresholds: JevThresholds }) {
   const { t } = useTranslation(['community']);
   const [open, setOpen] = useState(false);
   const act = pct(thresholds.actThreshold);
-  const vars = { act, minAsk: toCents(thresholds.minAsk), maxAsk: toCents(thresholds.maxAsk) };
+  const vars = { act, minAsk: toCents(thresholds.minAsk), maxAsk: toCents(thresholds.maxAsk),
+    minEdge: toCents(thresholds.minEdge), sellEdge: toCents(thresholds.sellEdge) };
   const opt = (k: string) => ({ label: t(`prediction.jev.choice.${k}`), cls: CHOICE_STYLE[k].text });
   return (
     <div className="border-b border-border">
@@ -81,8 +82,6 @@ function Guide({ thresholds }: { thresholds: JevThresholds }) {
             <div className="font-semibold text-foreground">{t('prediction.jev.guideQuestionsTitle')}</div>
             <QuestionNote title={t('prediction.jev.qEntryTitle')} desc={t('prediction.jev.qEntryDesc', vars)}
                           options={['BUY_UP', 'BUY_DOWN', 'WAIT'].map(opt)} />
-            <QuestionNote title={t('prediction.jev.qExitTitle')} desc={t('prediction.jev.qExitDesc', vars)}
-                          options={['HOLD', 'SELL'].map(opt)} />
             <QuestionNote title={t('prediction.jev.q1Title')} desc={t('prediction.jev.q1Desc')}
                           options={[0, 1, 2].map(i => ({ label: t(`prediction.jev.levels.momentum.${i}`), cls: MOMENTUM_TEXT[i] }))} />
           </div>

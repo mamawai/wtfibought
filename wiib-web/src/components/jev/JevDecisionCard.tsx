@@ -6,7 +6,6 @@ import { ACTION_CHIP, CHOICE_STYLE, MOMENTUM_BAR, MOMENTUM_TEXT, noticeKind, pct
 import type { JevAnswer, JevPredictionDecisionView, JevThresholds } from '../../types';
 
 const ENTRY_KEYS = ['BUY_UP', 'BUY_DOWN', 'WAIT'];
-const EXIT_KEYS = ['HOLD', 'SELL'];
 
 /** 四种提示：把握不够 / 被代码拦下 / 这次没问 / 出错 */
 const NOTICE_STYLE = {
@@ -30,6 +29,7 @@ function JevNotice({ d, thresholds }: { d: JevPredictionDecisionView; thresholds
     act: pct(thresholds.actThreshold),
     minAsk: toCents(thresholds.minAsk),
     maxAsk: toCents(thresholds.maxAsk),
+    minEdge: toCents(thresholds.minEdge),
     sec: d.bookAgeMs != null ? (d.bookAgeMs / 1000).toFixed(1) : '--',
   };
   const key = code === 'STALE_BOOK' && d.bookAgeMs == null ? 'STALE_BOOK_NONE' : code;
@@ -43,20 +43,24 @@ function JevNotice({ d, thresholds }: { d: JevPredictionDecisionView; thresholds
   );
 }
 
-/** Jev 的选择 + 把握 + 后劲最高档；跟 ProbRow 一样"名 + 值"一对不拆开 */
-function JevSays({ choice, choiceP, momentum }: { choice: string; choiceP?: number; momentum: JevAnswer }) {
+/** Jev 的选择 + 把握 + 后劲最高档；持仓行没问决定，只有后劲。跟 ProbRow 一样"名 + 值"一对不拆开 */
+function JevSays({ choice, choiceP, momentum }: { choice?: string; choiceP?: number; momentum: JevAnswer }) {
   const { t } = useTranslation(['community']);
   const ps = [0, 1, 2].map(i => momentum.probabilities[i]);
   const lv = ps.indexOf(Math.max(...ps));
   return (
     <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[14px]">
-      <span className="whitespace-nowrap">
-        <span className="mute">{t('prediction.jev.jevPicks')}</span>{' '}
-        <b className={cn('font-bold', CHOICE_STYLE[choice].text)}>{t(`prediction.jev.choice.${choice}`)}</b>
-      </span>
-      <span className="whitespace-nowrap">
-        <span className="mute">{t('prediction.jev.confidence')}</span> <b className="num font-semibold">{pct(choiceP)}</b>
-      </span>
+      {choice && (
+        <>
+          <span className="whitespace-nowrap">
+            <span className="mute">{t('prediction.jev.jevPicks')}</span>{' '}
+            <b className={cn('font-bold', CHOICE_STYLE[choice].text)}>{t(`prediction.jev.choice.${choice}`)}</b>
+          </span>
+          <span className="whitespace-nowrap">
+            <span className="mute">{t('prediction.jev.confidence')}</span> <b className="num font-semibold">{pct(choiceP)}</b>
+          </span>
+        </>
+      )}
       <span className="whitespace-nowrap">
         <span className="mute">{t('prediction.jev.momentumLabel')}</span>{' '}
         <b className={cn('font-semibold', MOMENTUM_TEXT[lv])}>{t(`prediction.jev.levels.momentum.${lv}`)}</b>
@@ -83,7 +87,7 @@ function ProbRow({ d }: { d: JevPredictionDecisionView }) {
 
 /**
  * 一个检查点一行：实际动作 / 注额 / 时间 → Jev 选了什么、多大把握、后劲 → 涨的概率三个数 → 没照 Jev 做时的一句提示。
- * 点开看两道题里 Jev 每个选项的概率条；没问 Jev 的行（盘口太旧、出错）没东西可展开。
+ * 点开看 Jev 每道题各选项的概率条（持仓行只有后劲题）；没问 Jev 的行（盘口太旧、出错）没东西可展开。
  */
 export function JevDecisionCard({ d, open, onToggle, thresholds }: {
   d: JevPredictionDecisionView;
@@ -92,9 +96,9 @@ export function JevDecisionCard({ d, open, onToggle, thresholds }: {
   thresholds: JevThresholds;
 }) {
   const { t } = useTranslation(['community']);
-  // 持仓时决定题的选项是拿着 / 卖掉
-  const holding = d.jevChoice === 'HOLD' || d.jevChoice === 'SELL';
   const expandable = !!d.answers;
+  // 决定题只认买 UP / 买 DOWN / 等，别的（旧行的拿着 / 卖掉）当没问
+  const choice = d.jevChoice && ENTRY_KEYS.includes(d.jevChoice) ? d.jevChoice : undefined;
   return (
     <div className="border-b border-border">
       <button type="button" onClick={onToggle} disabled={!expandable} aria-expanded={expandable ? open : undefined}
@@ -107,15 +111,17 @@ export function JevDecisionCard({ d, open, onToggle, thresholds }: {
           </span>
           {expandable && <ChevronDown className={cn('ml-auto w-4 h-4 mute transition-transform', open && 'rotate-180')} />}
         </div>
-        {d.jevChoice && d.answers && <JevSays choice={d.jevChoice} choiceP={d.jevChoiceP} momentum={d.answers.momentum} />}
+        {d.answers && <JevSays choice={choice} choiceP={d.jevChoiceP} momentum={d.answers.momentum} />}
         <ProbRow d={d} />
         <JevNotice d={d} thresholds={thresholds} />
       </button>
 
       {open && d.answers && (
         <div className="pb-4 space-y-4">
-          <JevAnswerBar title={t(holding ? 'prediction.jev.qExitTitle' : 'prediction.jev.qEntryTitle')} a={d.answers.decide}
-                        options={(holding ? EXIT_KEYS : ENTRY_KEYS).map(k => ({ key: k, label: t(`prediction.jev.choice.${k}`), bar: CHOICE_STYLE[k].bar }))} />
+          {choice && d.answers.decide && (
+            <JevAnswerBar title={t('prediction.jev.qEntryTitle')} a={d.answers.decide}
+                          options={ENTRY_KEYS.map(k => ({ key: k, label: t(`prediction.jev.choice.${k}`), bar: CHOICE_STYLE[k].bar }))} />
+          )}
           <JevAnswerBar title={t('prediction.jev.q1Title')} a={d.answers.momentum}
                         options={[0, 1, 2].map(i => ({ key: String(i), label: t(`prediction.jev.levels.momentum.${i}`), bar: MOMENTUM_BAR[i] }))} />
           {d.upAsk != null && d.downAsk != null && (

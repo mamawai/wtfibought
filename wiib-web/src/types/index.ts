@@ -838,8 +838,8 @@ export interface JevPredictionDecisionView {
   stake?: number;
   outcome?: string;
   error?: string;
-  /** 决定题 decide 与后劲题 momentum 的回答；没问 Jev 的行没有 */
-  answers?: { decide: JevAnswer; momentum: JevAnswer };
+  /** 后劲题 momentum 的回答，空仓行还有决定题 decide；没问 Jev 的行没有 */
+  answers?: { decide?: JevAnswer; momentum: JevAnswer };
 }
 
 export interface JevPredictionStats {
@@ -889,6 +889,10 @@ export interface JevThresholds {
   actThreshold: number;
   minAsk: number;
   maxAsk: number;
+  /** 要买那边每份优势不到这么多不算便宜，不买 */
+  minEdge: number;
+  /** 持仓时买一价扣手续费比公平价高出这么多就卖 */
+  sellEdge: number;
 }
 
 /** 预测员总开关：configured=平台 JEV_API_KEY 配了，enabled=开关开着，两个都真才跑 */

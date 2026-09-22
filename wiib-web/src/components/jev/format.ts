@@ -13,13 +13,11 @@ export const ACTION_CHIP: Record<string, string> = {
   ERROR: 'dn',
 };
 
-/** Jev 决定题各选项：文字/芯片色 + 概率条色。橙色留给强调，拿着用墨色、卖掉用琥珀 */
+/** Jev 决定题各选项：文字/芯片色 + 概率条色 */
 export const CHOICE_STYLE: Record<string, { text: string; bar: string }> = {
   BUY_UP: { text: 'up', bar: 'bg-gain' },
   BUY_DOWN: { text: 'dn', bar: 'bg-loss' },
   WAIT: { text: 'mute', bar: 'bg-muted-foreground/40' },
-  HOLD: { text: '', bar: 'bg-foreground' },
-  SELL: { text: 'wn', bar: 'bg-warning' },
 };
 
 /** 后劲三档：在回吐 / 没方向 / 还在推 */
@@ -34,7 +32,7 @@ export function reasonCode(d: { reason?: string }): string {
 /** 每种代码的分类：已执行 / Jev 选等或拿着 / 把握不够 / 被代码拦下 / 这次没问 */
 const REASON_KIND: Record<string, 'done' | 'idle' | 'unsure' | 'blocked' | 'skipped'> = {
   BUY: 'done', SELL: 'done', WAIT: 'idle', HOLD: 'idle', UNSURE: 'unsure',
-  NO_QUOTE: 'blocked', ASK_RANGE: 'blocked', EXPENSIVE: 'blocked', NO_BALANCE: 'blocked', NO_BID: 'blocked',
+  NO_QUOTE: 'blocked', ASK_RANGE: 'blocked', NOT_CHEAP: 'blocked', EXPENSIVE: 'blocked', NO_BALANCE: 'blocked', NO_BID: 'blocked',
   STALE_BOOK: 'skipped', STALE_WHILE_ASKING: 'skipped',
 };
 
