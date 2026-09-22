@@ -18,7 +18,7 @@ import { Sparkline } from '../components/fx/Sparkline';
 import { DayDetailModal } from '../components/DayDetailModal';
 import { useCountUp } from '../hooks/useCountUp';
 import { useStagger } from '../hooks/useStagger';
-import { Gamepad2, List, DollarSign, Target, Settings2, Gift, Swords } from 'lucide-react';
+import { Gamepad2, List, DollarSign, Target, Settings2, Gift, Swords, Bot } from 'lucide-react';
 import type { BuffStatus, AssetSnapshot, User } from '../types';
 import { useUserStore } from '../stores/userStore';
 import { cn, fmtDate, fmtNum, fmtSignedPct, fmtSignedUsd } from '../lib/utils';
@@ -32,17 +32,18 @@ function shouldShowNotice() {
   return !d || d !== new Date().toDateString();
 }
 
-/** 入口一排的前六格；第七格是福利，点开弹窗不跳路由，单独渲染 */
+/** 入口一排的前七格；最后一格是福利，点开弹窗不跳路由，单独渲染 */
 const ENTRIES = [
   { icon: List, k: 'stocks', to: '/bstock' },
   { icon: DollarSign, k: 'crypto', to: '/coin' },
-  { icon: Target, k: 'prediction', to: '/prediction' },
-  { icon: Settings2, k: 'ai', to: '/ai' },
   { icon: Swords, k: 'arena', to: '/arena' },
+  { icon: Target, k: 'prediction', to: '/prediction' },
+  { icon: Bot, k: 'jev', to: '/jev' },
+  { icon: Settings2, k: 'ai', to: '/ai' },
   { icon: Gamepad2, k: 'games', to: '/games' },
 ];
 
-/** 格间细线：手机两列、md 四列、xl 七列，各自把每行头一格的左线和左内边距去掉 */
+/** 格间细线：手机两列、md 四列、xl 八列，各自把每行头一格的左线和左内边距去掉 */
 const entryCls = (i: number) => cn(
   'group flex items-baseline gap-2 min-w-0 px-4 py-2 border-l border-border cursor-pointer text-left',
   i % 2 === 0 && 'pl-0 border-l-0',
@@ -246,12 +247,12 @@ export function Home() {
         </section>
       )}
 
-      {/* ====== 入口一排七格 ====== */}
+      {/* ====== 入口一排八格 ====== */}
       <section className="sec tight mt-8 pt-3.5 [&_.sec-h]:mb-3">
         <div className="sec-h">
           <h2>{t('entries.title')}</h2>
         </div>
-        <div ref={entriesRef} className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7">
+        <div ref={entriesRef} className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8">
           {ENTRIES.map(({ icon: Icon, k, to }, i) => (
             <Link key={to} to={to} className={entryCls(i)}>
               <span className={ENTRY_NAME}><Icon className={ENTRY_IC} />{t(`quick.${k}`)}</span>
@@ -259,7 +260,7 @@ export function Home() {
             </Link>
           ))}
           {/* 游客点福利直接去登录，抽奖弹窗只在登录后挂 */}
-          <button className={entryCls(6)} onClick={() => guest ? navigate('/login') : setBuffOpen(true)}>
+          <button className={entryCls(ENTRIES.length)} onClick={() => guest ? navigate('/login') : setBuffOpen(true)}>
             <span className={ENTRY_NAME}>
               <Gift className={ENTRY_IC} />
               {t('quick.buff')}
