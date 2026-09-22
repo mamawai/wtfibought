@@ -41,6 +41,8 @@ public class WsConnection {
     private final AtomicBoolean reconnecting = new AtomicBoolean(false);
     private final AtomicInteger reconnectAttempt = new AtomicInteger(0);
     private volatile long lastMessageAt;
+    /** 这条连接连上的时刻；在 connected 置 true 之前写，看到已连上就一定看到新值 */
+    private volatile long connectedAt;
     private ScheduledFuture<?> idleWatchdog;
     private volatile ScheduledFuture<?> reconnectFuture;
     /** 收帧和处理分开：读线程只把整条消息放进来就去要下一帧，处理由 consumer 一条线程按序做。满了丢最旧的，行情都是全量，下一条就补上 */
@@ -106,6 +108,8 @@ public class WsConnection {
 
     public long lastMessageAt() { return lastMessageAt; }
 
+    public long connectedAt() { return connectedAt; }
+
     public int reconnectAttempt() { return reconnectAttempt.get(); }
 
     /** 由三个原子标志推导状态：已连 > 正在连 > 等退避 > 断开。 */
@@ -142,6 +146,7 @@ public class WsConnection {
                     wsRef.set(ws);
                     // 重置时间戳，避免watchdog一启动就误判（连接刚建好还没数据到达）
                     lastMessageAt = System.currentTimeMillis();
+                    connectedAt = lastMessageAt;
                     connected.set(true);
                     connecting.set(false);
                     reconnecting.set(false);
@@ -183,10 +188,10 @@ public class WsConnection {
         reconnectFuture = scheduler.schedule(this::connect, delay, TimeUnit.SECONDS);
     }
 
-    /** 手动重试：取消待定退避、abort 当前连接、归零退避计数并立即重连。前端"重试"按钮走这条。 */
+    /** 立即重连：取消待定退避、abort 当前连接、归零退避计数并立即重连。前端"重试"按钮、CLOB 盘口落后换连接都走这条。 */
     public void reconnectNow() {
         if (shutdown.get()) return;
-        log.info("手动重试{} WS", name);
+        log.info("立即重连{} WS", name);
         ScheduledFuture<?> pending = reconnectFuture;
         if (pending != null) pending.cancel(false);
         WebSocket old = wsRef.getAndSet(null);

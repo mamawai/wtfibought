@@ -62,6 +62,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *         {@link #init()} 同时启动两条文本 {@code PING} 心跳：live-data 每 5 秒、CLOB 每 10 秒。
  *         Polymarket WS 需要应用层心跳保活；心跳返回的 {@code PONG} 在 {@link WsConnection} 内过滤，
  *         不进入业务 JSON 解析。两条连接都开了 30 秒静默看门狗：PONG 不算消息，30 秒没有业务消息就重连。
+ *         CLOB 另外每秒看一次盘口数据旧不旧（{@link #checkClobLag()}）：对方给每条连接的推送一忙就越排越长，
+ *         排满了才断开，那时已落后十几秒；新连接一开始是实时的，所以旧过 3 秒就自己换一条。
  *     </li>
  *     <li>
  *         {@link #init()} 还启动每 50ms 一拍的 {@link #tick()}：先 {@link #checkRoundRotation()}（见下），
@@ -161,6 +163,10 @@ public class PolymarketWsClient implements SmartLifecycle {
     private static final long ROUND_STREAM_MAXLEN = 1_000L;
     /** 连着这么久没收到业务消息（PONG 不算）就当断了重连：TCP 活着但不推数据时价会停住 */
     private static final long WS_MAX_IDLE_SECONDS = 30;
+    /** CLOB 盘口数据旧过这么久就主动重连 */
+    private static final long CLOB_MAX_LAG_MS = 3_000;
+    /** CLOB 连接至少活这么久才判落后：刚连上快照还没到，也免得连着重连 */
+    private static final long CLOB_MIN_LIFE_MS = 10_000;
     /** 盘口一拍的间隔：换回合检查 + 盘口写 Redis、推页面 */
     private static final long BOOK_TICK_MS = 50;
 
@@ -185,7 +191,7 @@ public class PolymarketWsClient implements SmartLifecycle {
         scheduler.scheduleAtFixedRate(this::tick, BOOK_TICK_MS, BOOK_TICK_MS, TimeUnit.MILLISECONDS);
     }
 
-    /** 一拍：先看要不要换回合，再把有变化的盘口写 Redis、推给页面，每秒采样一次 */
+    /** 一拍：先看要不要换回合，再把有变化的盘口写 Redis、推给页面；每秒采样一次、查一次 CLOB 落后 */
     private void tick() {
         checkRoundRotation();
         try {
@@ -194,6 +200,7 @@ public class PolymarketWsClient implements SmartLifecycle {
             if (sec != lastSampleSec) {
                 lastSampleSec = sec;
                 sampleBook();
+                checkClobLag();
             }
         } catch (Exception e) {
             log.warn("盘口刷新失败: {}", e.getMessage());
@@ -225,6 +232,19 @@ public class PolymarketWsClient implements SmartLifecycle {
             cacheService.addPredictionUpMidPoint(System.currentTimeMillis(), mid);
         }
         broadcastBook(up, top(currentDownAssetId));
+    }
+
+    /** CLOB 连接活够 10 秒、盘口数据还旧过 3 秒，就立即重连换一条；重连失败走 WsConnection 自己的退避 */
+    private void checkClobLag() {
+        long updatedAt = bookUpdatedAtMs;
+        long now = System.currentTimeMillis();
+        // 换回合后还没收到新盘口（0）不判：那是没数据，不是落后
+        if (updatedAt <= 0 || !clobWs.isConnected() || now - clobWs.connectedAt() < CLOB_MIN_LIFE_MS) return;
+        long lag = now - updatedAt;
+        if (lag > CLOB_MAX_LAG_MS) {
+            log.info("CLOB 盘口落后 {}ms，换一条连接", lag);
+            clobWs.reconnectNow();
+        }
     }
 
     private Top top(String assetId) {
