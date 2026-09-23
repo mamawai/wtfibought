@@ -3,62 +3,41 @@ package com.mawai.wiibagent.prediction;
 import com.mawai.wiibagent.llm.jev.JevClient;
 import com.mawai.wiibagent.llm.jev.JevClient.Answer;
 import com.mawai.wiibagent.llm.jev.JevPlatformConfig;
-import com.mawai.wiibagent.prediction.PredictionStateWriter.Raw;
 import com.mawai.wiibagent.prediction.PredictionStateWriter.Snapshot;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
 
-import static com.mawai.wiibagent.prediction.PredictionQuestions.DECIDE;
-import static com.mawai.wiibagent.prediction.PredictionQuestions.MOMENTUM;
+import static com.mawai.wiibagent.prediction.PredictionQuestions.DOWN_WINS;
+import static com.mawai.wiibagent.prediction.PredictionQuestions.UP_WINS;
 
-/**
- * 拿着 state 问 Jev：后劲每次都问，空仓再问决定。决定取概率最高的那个选项交给规则；后劲换算成修正后的上涨概率，只记分。
- */
+/** 拿着 state 问 Jev 这一回合谁会赢，正反两种问法平均成 Jev 的上涨概率 */
 @Component
 @RequiredArgsConstructor
 public class PredictionJudge {
 
     private final JevClient client;
     private final JevPlatformConfig config;
-    private final JevPredictionConfig cfg;
 
     /**
-     * @param pTilted       后劲修正后的上涨概率，只记分
-     * @param momentum      还在推减在回吐，−1 … +1
-     * @param decision      决定题概率最高的选项；持仓没问决定，为 null
-     * @param decisionP     它的概率
-     * @param decisionProbs 决定题各选项概率
+     * @param pModel 纯数学的上涨概率，原样带着给规则
+     * @param pJev   Jev 的上涨概率：UP 会赢的概率和 1 − DOWN 会赢的概率取平均
      */
-    public record Judgment(double pModel, double pTilted, double momentum,
-                           String decision, double decisionP, Map<String, Double> decisionProbs,
-                           Map<String, Answer> answers, String model, int inputTokens, int latencyMs) {
+    public record Judgment(double pModel, double pJev, Map<String, Answer> answers, String model, int inputTokens, int latencyMs) {
     }
 
     /** 回包缺题按失败抛出 */
-    public Judgment judge(Snapshot snap, boolean holding) {
+    public Judgment judge(Snapshot snap) {
         long startedAt = System.currentTimeMillis();
-        Raw raw = snap.raw();
         JevClient.Response r = client.ask(config.getBaseUrl(), config.getApiKey(), config.getModel(), snap.state(),
-                PredictionQuestions.questions(holding));
-        Answer mom = r.answers().get(MOMENTUM);
-        Answer dec = r.answers().get(DECIDE);
-        if (mom == null || (!holding && dec == null)) {
+                PredictionQuestions.QUESTIONS);
+        Answer up = r.answers().get(UP_WINS);
+        Answer down = r.answers().get(DOWN_WINS);
+        if (up == null || down == null) {
             throw new IllegalStateException("Jev 回包缺题，只有 " + r.answers().keySet());
         }
-        String decision = null;
-        double decisionP = 0;
-        Map<String, Double> probs = Map.of();
-        if (dec != null) {
-            probs = dec.probabilities();
-            Map.Entry<String, Double> top = probs.entrySet().stream().max(Map.Entry.comparingByValue()).orElseThrow();
-            decision = top.getKey();
-            decisionP = top.getValue();
-        }
-        double momentum = PredictionQuestions.momentum(mom);
-        double pTilted = PredictionModel.tilted(raw.pModel(), momentum, raw.driftSign(), cfg.getMomentumTilt());
-        return new Judgment(raw.pModel(), pTilted, momentum, decision, decisionP, probs,
-                r.answers(), r.model(), (int) r.inputTokens(), (int) (System.currentTimeMillis() - startedAt));
+        return new Judgment(snap.raw().pModel(), (up.noul() + 1 - down.noul()) / 2, r.answers(), r.model(),
+                (int) r.inputTokens(), (int) (System.currentTimeMillis() - startedAt));
     }
 }

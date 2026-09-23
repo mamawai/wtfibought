@@ -46,6 +46,8 @@ export function Admin() {
 
   // Jev 预测员总开关
   const [jevSwitch, setJevSwitch] = useState<JevSwitchState | null>(null);
+  // 重新开局的版本说明，null = 确认栏没打开
+  const [jevNewRunLabel, setJevNewRunLabel] = useState<string | null>(null);
 
   const fetchInterestRate = useCallback(async () => {
     setRateLoading(true);
@@ -137,6 +139,20 @@ export function Admin() {
     setActionLoading('jevSwitch');
     try {
       setJevSwitch(await jevPredictionApi.setSwitch(enabled));
+    } catch (e) {
+      toast((e as Error).message || t('admin.actionFailed'), 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleJevNewRun = async () => {
+    setActionLoading('jevNewRun');
+    try {
+      const s = await jevPredictionApi.newRun(jevNewRunLabel ?? '');
+      setJevSwitch(s);
+      setJevNewRunLabel(null);
+      toast(t('admin.jev.newRunDone', { n: s.run.runNo }), 'success');
     } catch (e) {
       toast((e as Error).message || t('admin.actionFailed'), 'error');
     } finally {
@@ -321,6 +337,28 @@ export function Admin() {
                   </Button>
                   {!jevSwitch.configured && <span className="text-xs text-destructive">{t('admin.jev.noKey')}</span>}
                 </div>
+                {/* 局次：关着才能重新开局 */}
+                <div className="flex flex-wrap items-center gap-3 text-sm">
+                  <span className="font-semibold">{t('admin.jev.currentRun', { n: jevSwitch.run.runNo })}</span>
+                  {jevSwitch.run.label && <span className="text-muted-foreground">{jevSwitch.run.label}</span>}
+                  <Button size="sm" variant="outline" onClick={() => setJevNewRunLabel('')}
+                          disabled={actionLoading !== null || jevSwitch.enabled || jevNewRunLabel !== null}>
+                    {t('admin.jev.newRun')}
+                  </Button>
+                  {jevSwitch.enabled && <span className="text-xs text-muted-foreground">{t('admin.jev.newRunWhileOn')}</span>}
+                </div>
+                {jevNewRunLabel !== null && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input className="max-w-xs" value={jevNewRunLabel} maxLength={60} placeholder={t('admin.jev.labelPh')}
+                           onChange={e => setJevNewRunLabel(e.target.value)} disabled={actionLoading !== null} />
+                    <Button size="sm" onClick={() => void handleJevNewRun()} disabled={actionLoading !== null}>
+                      {t('admin.jev.confirmNewRun', { n: jevSwitch.run.runNo + 1 })}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setJevNewRunLabel(null)} disabled={actionLoading !== null}>
+                      {t('common:cancel')}
+                    </Button>
+                  </div>
+                )}
                 <div className="text-xs text-muted-foreground">{t('admin.jev.hint')}</div>
               </CardContent>
             </Card>

@@ -77,9 +77,7 @@ public class OrderFlowAggregator {
     public Metrics getMetrics(String symbol, int windowSeconds) {
         try {
             long cutoff = System.currentTimeMillis() - windowSeconds * 1000L;
-            String startId = (cutoff - CLOCK_SKEW_MS) + "-0";
-            List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream()
-                    .range(KEY_PREFIX + symbol, Range.rightUnbounded(Range.Bound.inclusive(startId)));
+            List<MapRecord<String, Object, Object>> records = since(symbol, cutoff);
             if (records == null || records.isEmpty()) return null;
 
             double buyVol = 0, sellVol = 0, largeBuyVol = 0, largeSellVol = 0;
@@ -113,6 +111,34 @@ public class OrderFlowAggregator {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** 最近 windowSeconds 秒第一笔到最后一笔成交的价差（USDT）；窗口里不到两笔回 null。按交易所 ts 定窗口，同 {@link #getMetrics} */
+    public Double priceChange(String symbol, int windowSeconds) {
+        try {
+            long cutoff = System.currentTimeMillis() - windowSeconds * 1000L;
+            List<MapRecord<String, Object, Object>> records = since(symbol, cutoff);
+            if (records == null) return null;
+            Double first = null;
+            double last = 0;
+            int count = 0;
+            for (MapRecord<String, Object, Object> r : records) {
+                Map<Object, Object> v = r.getValue();
+                if (Long.parseLong(String.valueOf(v.get("ts"))) < cutoff) continue;
+                last = Double.parseDouble(String.valueOf(v.get("p")));
+                if (first == null) first = last;
+                count++;
+            }
+            return count < 2 ? null : last - first;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 按 Stream ID 粗筛 cutoff 以来的记录，起点多退 {@link #CLOCK_SKEW_MS}；精确窗口由调用方按 ts 再筛，见 {@link #getMetrics} */
+    private List<MapRecord<String, Object, Object>> since(String symbol, long cutoff) {
+        String startId = (cutoff - CLOCK_SKEW_MS) + "-0";
+        return redisTemplate.opsForStream().range(KEY_PREFIX + symbol, Range.rightUnbounded(Range.Bound.inclusive(startId)));
     }
 
     /** 是否有足够数据（至少 10 笔成交）。 */

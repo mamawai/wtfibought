@@ -61,9 +61,9 @@ public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDec
                    AVG(POWER(p_mkt - CASE outcome WHEN 'UP' THEN 1 ELSE 0 END, 2))
                        FILTER (WHERE outcome IN ('UP', 'DOWN') AND p_mkt IS NOT NULL) AS brier_mkt
             FROM jev_prediction_decision
-            WHERE decided_at > #{sinceMs}
+            WHERE run_no = #{runNo}
             """)
-    Stats selectStats(@Param("sinceMs") long sinceMs);
+    Stats selectStats(@Param("runNo") int runNo);
 
     @Select("""
             SELECT checkpoint, COUNT(*) AS n,
@@ -71,22 +71,22 @@ public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDec
                    AVG(POWER(p_jev - CASE outcome WHEN 'UP' THEN 1 ELSE 0 END, 2)) AS brier_jev,
                    AVG(POWER(p_mkt - CASE outcome WHEN 'UP' THEN 1 ELSE 0 END, 2)) AS brier_mkt
             FROM jev_prediction_decision
-            WHERE decided_at > #{sinceMs} AND outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL AND p_model IS NOT NULL
+            WHERE run_no = #{runNo} AND outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL AND p_model IS NOT NULL
             GROUP BY checkpoint ORDER BY CAST(SUBSTRING(checkpoint FROM 2) AS INT)
             """)
-    List<CheckpointBrier> selectBrierByCheckpoint(@Param("sinceMs") long sinceMs);
+    List<CheckpointBrier> selectBrierByCheckpoint(@Param("runNo") int runNo);
 
     @Select("""
             SELECT width_bucket(p_jev, 0, 1, 5) AS bucket, COUNT(*) AS n, AVG(p_jev) AS mean_p,
                    AVG(CASE outcome WHEN 'UP' THEN 1.0 ELSE 0.0 END) AS hit_rate
             FROM jev_prediction_decision
-            WHERE decided_at > #{sinceMs} AND outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL
+            WHERE run_no = #{runNo} AND outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL
             GROUP BY bucket ORDER BY bucket
             """)
-    List<CalibrationBucket> selectCalibration(@Param("sinceMs") long sinceMs);
+    List<CalibrationBucket> selectCalibration(@Param("runNo") int runNo);
 
-    @Select("SELECT * FROM jev_prediction_decision ORDER BY decided_at DESC LIMIT #{limit}")
-    List<JevPredictionDecision> selectRecent(@Param("limit") int limit);
+    @Select("SELECT * FROM jev_prediction_decision WHERE run_no = #{runNo} ORDER BY decided_at DESC LIMIT #{limit}")
+    List<JevPredictionDecision> selectRecent(@Param("runNo") int runNo, @Param("limit") int limit);
 
     @Select("SELECT COUNT(*) FROM jev_prediction_decision WHERE window_start = #{windowStart} AND checkpoint = #{checkpoint}")
     int countCheckpoint(@Param("windowStart") long windowStart, @Param("checkpoint") String checkpoint);

@@ -88,8 +88,8 @@ To self-host:
 
    ```bash
    psql -U postgres -c "CREATE DATABASE wiib;"
-   psql -U postgres -d wiib -f sql/init.sql      # business + quant + AI runtime (36 tables)
-   psql -U postgres -d wiib -f sql/bstock.sql    # bStock static table + 10 seed tickers (37 in total)
+   psql -U postgres -d wiib -f sql/init.sql      # business + quant + AI runtime (39 tables)
+   psql -U postgres -d wiib -f sql/bstock.sql    # bStock static table + 10 seed tickers (40 in total)
    ```
 
 4. Copy the environment template and fill in the three required values `PG_USER` / `PG_PASSWORD` / `INTERNAL_API_TOKEN` (generate the last one with `openssl rand -base64 24`).

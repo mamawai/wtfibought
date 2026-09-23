@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
 import { jevPredictionApi } from '../api';
-import { cn, fmtNum, fmtSignedUsd, toCents } from '../lib/utils';
+import { cn, fmtDateTime, fmtNum, fmtSignedUsd, toCents } from '../lib/utils';
 import { useCountUp } from '../hooks/useCountUp';
 import { usePredictionMarket } from '../hooks/usePredictionMarket';
 import { PredictionHero } from '../components/PredictionHero';
@@ -18,21 +18,23 @@ const POLL_MS = 5_000;
 const STRIP_SMALL = 'whitespace-nowrap max-sm:block max-sm:ml-0 max-sm:mt-1';
 
 /**
- * Jev 预测员页：记分头（名字 / 状态 / 一句话说明 / 累计盈亏）+ 四格仪表条 →
+ * Jev 预测员页：记分头（名字 / 状态 / 局次 / 一句话说明 / 本局盈亏）+ 四格仪表条 →
  * 左 Polymarket 5 分钟盘的实时走势（与预测页同一张头卡）+ Jev 的注单与记分，右 Jev 每个检查点看到什么、怎么决定。
- * 只读，登录即可看；整页一起滚，窄屏两栏堆成一列。
+ * 注单、决策和记分按局看，默认当前局；行情一直是实时的。只读，登录即可看；整页一起滚，窄屏两栏堆成一列。
  */
 export function JevPrediction() {
   const { t } = useTranslation(['community']);
   const [overview, setOverview] = useState<JevPredictionOverview | null>(null);
   const [feed, setFeed] = useState<JevPredictionDecisionView[]>([]);
   const [bets, setBets] = useState<JevBet[]>([]);
+  // 在看哪一局，undefined = 当前局
+  const [viewRun, setViewRun] = useState<number | undefined>(undefined);
 
   const load = useCallback(() => {
-    Promise.all([jevPredictionApi.overview(), jevPredictionApi.feed(51), jevPredictionApi.bets(30)])
+    Promise.all([jevPredictionApi.overview(viewRun), jevPredictionApi.feed(51, viewRun), jevPredictionApi.bets(30, viewRun)])
       .then(([o, f, b]) => { setOverview(o); setFeed(f); setBets(b); })
       .catch(() => { /* 取不到就保留上一份 */ });
-  }, []);
+  }, [viewRun]);
 
   // 旧回合结算推送到了立刻刷一次，不等下一个轮询
   const market = usePredictionMarket(load);
@@ -46,13 +48,17 @@ export function JevPrediction() {
   const { upAsk, downAsk } = market;
   const stats = overview?.stats;
   const pnl = stats?.pnl ?? 0;
+  const runs = overview?.runs ?? [];
+  const currentRunNo = runs[0]?.runNo;
+  const viewing = overview?.run;
+  const archived = viewing != null && viewing.runNo !== currentRunNo;
   // 大数滚动直接写 DOM：元素得一直挂着，没数据时 invisible 占位，不然盈亏恰好是 0 时不会重画
   const pnlRef = useCountUp<HTMLElement>(pnl, fmtSignedUsd);
   const winRate = stats && stats.settledBets > 0 ? Math.round(stats.wins / stats.settledBets * 100) : null;
 
   return (
     <div className="wrap">
-      {/* 记分头：左身份 + 状态 + 一句话说明，右累计盈亏 */}
+      {/* 记分头：左身份 + 状态 + 局次 + 一句话说明，右本局盈亏 */}
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-6 xl:gap-8 items-end pt-8">
         <div>
           <Link to="/prediction" className="inline-flex items-center gap-1 text-[13px] mute mb-2.5 hover:text-foreground transition-colors">
@@ -60,12 +66,34 @@ export function JevPrediction() {
           </Link>
           <div className="flex items-baseline gap-x-4 gap-y-2 flex-wrap">
             <b className="cond text-[44px] md:text-[56px] font-bold leading-none">{t('prediction.jev.title')}</b>
-            {overview && (overview.enabled
-              ? <span className="chip up"><i className="dot pulse" />{t('prediction.jev.running')}</span>
-              : <span className="chip mute">{t('prediction.jev.off')}</span>)}
+            {overview && (archived
+              ? <span className="chip wn">{t('prediction.jev.archived')}</span>
+              : overview.enabled
+                ? <span className="chip up"><i className="dot pulse" />{t('prediction.jev.running')}</span>
+                : <span className="chip mute">{t('prediction.jev.off')}</span>)}
             {overview && <span className="text-[14px] mute">{overview.model} · {t('prediction.jev.market')}</span>}
           </div>
+          {/* 局次：一局一个账户，重新开局后旧局留档；只有一局时不出切换 */}
+          {viewing && (
+            <div className="flex items-center gap-2.5 flex-wrap mt-3 text-[13px] mute">
+              {runs.length > 1 ? (
+                <div className="seg">
+                  {[...runs].reverse().map(r => (
+                    <button key={r.runNo} type="button" className={cn('num', r.runNo === viewing.runNo && 'on')}
+                            onClick={() => setViewRun(r.runNo === currentRunNo ? undefined : r.runNo)}>R{r.runNo}</button>
+                  ))}
+                </div>
+              ) : <b className="num text-foreground">R{viewing.runNo}</b>}
+              {viewing.label && <span>{viewing.label}</span>}
+              <span className="num">{t('prediction.jev.runSince', { at: fmtDateTime(viewing.startedAt) })}</span>
+            </div>
+          )}
           <p className="mt-3 max-w-[48rem] text-[14px] leading-relaxed mute">{t('prediction.jev.intro')}</p>
+          {archived && (
+            <div className="mt-3 border-l-4 border-warning pl-3 py-1 text-[13px] text-warning">
+              {t('prediction.jev.archivedBanner', { n: viewing.runNo })}
+            </div>
+          )}
         </div>
         <div className={cn('num xl:text-right', !stats && 'invisible')}>
           <b ref={pnlRef} className={cn('cond block text-[56px] md:text-[72px] font-bold leading-none', pnl > 0 ? 'up' : pnl < 0 ? 'dn' : '')} />

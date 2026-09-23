@@ -14,7 +14,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
-/** 买由 Jev 拍板：概率不够不动、明显不该买的拦下、注额怎么定；卖由代码按公平价定 */
+/** 买看 Jev 的胜率：两边挑优势大的、到门槛才买、到大门槛下两倍、护栏拦什么；卖由代码按公平价定 */
 class PredictionRulesTest {
 
     private static final JevPredictionConfig CFG = JevPredictionRunnerTest.CFG;
@@ -23,85 +23,51 @@ class PredictionRulesTest {
             new BigDecimal("0.40"), new BigDecimal("0.38"));
     private static final BigDecimal BALANCE = new BigDecimal("100");
 
-    private static Judgment decide(double pModel, String choice, double p) {
-        return new Judgment(pModel, pModel, 0, choice, p, Map.of(choice, p), Map.of(), "jev-1.13.0", 820, 150);
+    /** Jev 说 UP 有 pJev 的胜率；数学概率不参与买 */
+    private static Judgment jev(double pJev) {
+        return new Judgment(0.5, pJev, Map.of(), "jev-1.13.0", 820, 150);
     }
 
     @Test
-    void Jev说等或拿不准就不动_想买那边的优势照记() {
-        Entry wait = PredictionRules.entry(decide(0.74, "WAIT", 0.57), BOOK, BALANCE, CFG);
-        assertThat(wait.action()).isEqualTo(JevPredictionDecision.ACTION_STAY_OUT);
-        assertThat(wait.reason()).isEqualTo("WAIT 0.570");
-        assertThat(wait.edge()).isNull();
-
-        Entry unsure = PredictionRules.entry(decide(0.74, "BUY_UP", 0.55), BOOK, BALANCE, CFG);
-        assertThat(unsure.action()).isEqualTo(JevPredictionDecision.ACTION_STAY_OUT);
-        assertThat(unsure.reason()).isEqualTo("UNSURE BUY_UP 0.550");
-        // 0.74 − 0.62 − 0.07×0.62×0.38 = 0.1035
-        assertThat(unsure.edge()).isCloseTo(0.103508, within(1e-6));
-    }
-
-    @Test
-    void 合理价不买_便宜才买() {
-        // 0.64 − 0.62 − 0.0165 = 0.0035，不到 0.04 不算便宜
-        Entry fair = PredictionRules.entry(decide(0.64, "BUY_UP", 0.96), BOOK, BALANCE, CFG);
-        assertThat(fair.action()).isEqualTo(JevPredictionDecision.ACTION_STAY_OUT);
-        assertThat(fair.reason()).isEqualTo("NOT_CHEAP edge 0.004");
-        // 0.68 − 0.62 − 0.0165 = 0.0435；reason 里的比例是定注额用的
-        Entry e = PredictionRules.entry(decide(0.68, "BUY_UP", 0.96), BOOK, BALANCE, CFG);
+    void 优势到门槛才买_不到就等() {
+        // UP：0.70 − 0.62 − 0.07×0.62×0.38 = 0.0635；DOWN：0.30 − 0.40 − 0.0168 = −0.1168
+        Entry e = PredictionRules.entry(jev(0.70), BOOK, BALANCE, CFG);
         assertThat(e.action()).isEqualTo(JevPredictionDecision.ACTION_BUY_UP);
         assertThat(e.stake()).isEqualByComparingTo("5");
-        assertThat(e.reason()).isEqualTo("BUY BUY_UP 0.960 ratio 0.120 ask 0.62");
+        assertThat(e.edge()).isCloseTo(0.063508, within(1e-6));
+        assertThat(e.reason()).isEqualTo("BUY UP 0.064 ask 0.62");
+        // 0.66 − 0.6365 = 0.0235，不到 0.05
+        Entry wait = PredictionRules.entry(jev(0.66), BOOK, BALANCE, CFG);
+        assertThat(wait.action()).isEqualTo(JevPredictionDecision.ACTION_STAY_OUT);
+        assertThat(wait.reason()).isEqualTo("WAIT UP 0.024");
     }
 
     @Test
-    void 很有把握且明显便宜才下两倍() {
-        // 比例 0.28 ≥ 0.2 且概率 0.98 ≥ 0.85
-        Entry big = PredictionRules.entry(decide(0.74, "BUY_UP", 0.98), BOOK, BALANCE, CFG);
-        assertThat(big.stake()).isEqualByComparingTo("10");
-        // 概率够但比例只有 0.17
-        Entry small = PredictionRules.entry(decide(0.70, "BUY_UP", 0.98), BOOK, BALANCE, CFG);
-        assertThat(small.stake()).isEqualByComparingTo("5");
-        // 明显便宜但概率只有 0.7
-        Entry unsure = PredictionRules.entry(decide(0.74, "BUY_UP", 0.70), BOOK, BALANCE, CFG);
-        assertThat(unsure.stake()).isEqualByComparingTo("5");
+    void 两边挑优势大的_到大门槛下两倍() {
+        // DOWN：0.60 − 0.40 − 0.0168 = 0.1832
+        Entry down = PredictionRules.entry(jev(0.40), BOOK, BALANCE, CFG);
+        assertThat(down.action()).isEqualTo(JevPredictionDecision.ACTION_BUY_DOWN);
+        assertThat(down.side()).isEqualTo("DOWN");
+        assertThat(down.edge()).isCloseTo(0.1832, within(1e-6));
+        assertThat(down.stake()).isEqualByComparingTo("10");
+        // UP 0.1035 到 0.10 下两倍
+        assertThat(PredictionRules.entry(jev(0.74), BOOK, BALANCE, CFG).stake()).isEqualByComparingTo("10");
     }
 
     @Test
-    void 买DOWN按一减公平价算() {
-        // DOWN 公平 0.7：0.7 − 0.40 − 0.0168 = 0.2832，比例 0.486
-        Entry e = PredictionRules.entry(decide(0.30, "BUY_DOWN", 0.96), BOOK, BALANCE, CFG);
-        assertThat(e.action()).isEqualTo(JevPredictionDecision.ACTION_BUY_DOWN);
-        assertThat(e.side()).isEqualTo("DOWN");
-        assertThat(e.edge()).isCloseTo(0.2832, within(1e-6));
-        assertThat(e.stake()).isEqualByComparingTo("10");
-    }
+    void 代码拦下_卖价太低_两边没人卖_没钱() {
+        // DOWN：0.10 − 0.02 − 0.0014 = 0.0786，够了但卖价低于 0.03
+        Book tail = new Book(new BigDecimal("0.98"), new BigDecimal("0.97"), new BigDecimal("0.02"), new BigDecimal("0.01"));
+        assertThat(PredictionRules.entry(jev(0.90), tail, BALANCE, CFG).reason()).isEqualTo("ASK_LOW DOWN 0.02");
 
-    @Test
-    void 代码拦下_不便宜_卖价出区间_没报价_没钱() {
-        // 0.50 − 0.62 − 0.0165 = −0.1365
-        Entry pricey = PredictionRules.entry(decide(0.50, "BUY_UP", 0.9), BOOK, BALANCE, CFG);
-        assertThat(pricey.action()).isEqualTo(JevPredictionDecision.ACTION_STAY_OUT);
-        assertThat(pricey.reason()).isEqualTo("NOT_CHEAP edge -0.136");
+        assertThat(PredictionRules.entry(jev(0.74), new Book(null, new BigDecimal("0.60"), null, null), BALANCE, CFG).reason())
+                .isEqualTo("NO_QUOTE");
+        // 只有一边有人卖就只算那边
+        Book downOnly = new Book(null, new BigDecimal("0.60"), new BigDecimal("0.40"), new BigDecimal("0.38"));
+        assertThat(PredictionRules.entry(jev(0.40), downOnly, BALANCE, CFG).action()).isEqualTo(JevPredictionDecision.ACTION_BUY_DOWN);
 
-        Book tail = new Book(new BigDecimal("0.98"), new BigDecimal("0.97"), new BigDecimal("0.03"), new BigDecimal("0.02"));
-        Entry capped = PredictionRules.entry(decide(0.999, "BUY_UP", 0.9), tail, BALANCE, CFG);
-        assertThat(capped.reason()).isEqualTo("ASK_RANGE 0.98");
-
-        Book noQuote = new Book(null, null, new BigDecimal("0.40"), null);
-        assertThat(PredictionRules.entry(decide(0.74, "BUY_UP", 0.98), noQuote, BALANCE, CFG).reason()).isEqualTo("NO_QUOTE");
-
-        Entry broke = PredictionRules.entry(decide(0.74, "BUY_UP", 0.98), BOOK, new BigDecimal("0.5"), CFG);
-        assertThat(broke.reason()).isEqualTo("NO_BALANCE");
-    }
-
-    @Test
-    void 热门略便宜也能买() {
-        // 盘口 UP 0.75/0.76：0.815 − 0.76 − 0.0128 = 0.0422，过了 0.04
-        Book fav = new Book(new BigDecimal("0.76"), new BigDecimal("0.75"), new BigDecimal("0.25"), new BigDecimal("0.24"));
-        Entry e = PredictionRules.entry(decide(0.815, "BUY_UP", 0.9), fav, BALANCE, CFG);
-        assertThat(e.action()).isEqualTo(JevPredictionDecision.ACTION_BUY_UP);
-        assertThat(e.edge()).isCloseTo(0.042232, within(1e-6));
+        Entry broke = PredictionRules.entry(jev(0.74), BOOK, new BigDecimal("0.5"), CFG);
+        assertThat(broke.reason()).isEqualTo(PredictionRules.NO_BALANCE);
     }
 
     @Test
@@ -123,12 +89,6 @@ class PredictionRulesTest {
         Review stuck = PredictionRules.review(0.45, "UP", noBid, CFG);
         assertThat(stuck.action()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
         assertThat(stuck.reason()).isEqualTo("NO_BID");
-    }
-
-    @Test
-    void 优势比例就是Kelly分数() {
-        // (p − c) / (1 − c)，c = 卖价 + 每份费
-        assertThat(PredictionRules.edgeRatio(0.99, new BigDecimal("0.96"))).isCloseTo(0.732, within(1e-3));
     }
 
     @Test

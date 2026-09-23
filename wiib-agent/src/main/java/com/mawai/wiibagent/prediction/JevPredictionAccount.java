@@ -6,10 +6,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 预测员的 sim 账户：只有游戏钱包的机器人账户，全站一个。首次用到时向 sim 幂等建号并记住 userId，
- * sim 没起来就下次再试，不挡 agent 启动。
+ * 预测员的 sim 账户：只有游戏钱包的机器人账户，一局一个——R1 是 jev-prediction，之后 jev-prediction-r{n}，
+ * 新号注资 {@link #INITIAL_GAME_BALANCE}。首次用到时向 sim 幂等建号并记住 userId，sim 没起来就下次再试。
  */
 @Slf4j
 @Component
@@ -21,20 +23,18 @@ public class JevPredictionAccount {
 
     private final SimPredictionClient client;
 
-    private volatile Long userId;
+    private final Map<Integer, Long> userIds = new ConcurrentHashMap<>();
 
-    /** 建号成功返回 userId；sim 不可达抛异常，调用方按"本次跳过"处理 */
-    public long userId() {
-        Long id = userId;
-        if (id != null) {
+    /** 这一局账户的 userId；sim 不可达抛异常，调用方按"本次跳过"处理 */
+    public long userId(int runNo) {
+        return userIds.computeIfAbsent(runNo, n -> {
+            Long id = client.ensureAccount(username(n), INITIAL_GAME_BALANCE);
+            log.info("[JevPred] 账户就绪 R{} username={} userId={}", n, username(n), id);
             return id;
-        }
-        synchronized (this) {
-            if (userId == null) {
-                userId = client.ensureAccount(USERNAME, INITIAL_GAME_BALANCE);
-                log.info("[JevPred] 账户就绪 username={} userId={}", USERNAME, userId);
-            }
-            return userId;
-        }
+        });
+    }
+
+    static String username(int runNo) {
+        return runNo == 1 ? USERNAME : USERNAME + "-r" + runNo;
     }
 }

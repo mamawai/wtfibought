@@ -549,14 +549,17 @@ export const jevApi = {
 };
 
 // ========== Jev 预测员（平台级展示） ==========
+/** 三个读接口都按局看，run 不传是当前局 */
 export const jevPredictionApi = {
-  overview: () => api.get<unknown, JevPredictionOverview>('/ai/jev-prediction/overview'),
+  overview: (run?: number) => api.get<unknown, JevPredictionOverview>('/ai/jev-prediction/overview', { params: { run } }),
   /** 最近决策带 Jev 的回答，Jev 页右栏一次拿全；每回合 17 次，51 条约三个回合 */
-  feed: (limit = 51) => api.get<unknown, JevPredictionDecisionView[]>('/ai/jev-prediction/feed', { params: { limit } }),
-  bets: (limit = 30) => api.get<unknown, JevBet[]>('/ai/jev-prediction/bets', { params: { limit } }),
-  // 预测员总开关（管理员）
+  feed: (limit = 51, run?: number) =>
+    api.get<unknown, JevPredictionDecisionView[]>('/ai/jev-prediction/feed', { params: { limit, run } }),
+  bets: (limit = 30, run?: number) => api.get<unknown, JevBet[]>('/ai/jev-prediction/bets', { params: { limit, run } }),
+  // 预测员总开关与重新开局（管理员）
   switchState: () => api.get<unknown, JevSwitchState>('/admin/ai-agent/jev-prediction'),
   setSwitch: (enabled: boolean) => api.post<unknown, JevSwitchState>('/admin/ai-agent/jev-prediction', { enabled }),
+  newRun: (label: string) => api.post<unknown, JevSwitchState>('/admin/ai-agent/jev-prediction/new-run', { label }),
 };
 
 /** 快讯（news_event 存档行，首页快讯卡数据源） */

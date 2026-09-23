@@ -810,6 +810,11 @@ export interface JevAnswer {
   probabilities: Record<string, number>;
 }
 
+/** Jev 是非题的回答：为真的概率 */
+export interface JevNoulAnswer {
+  noul: number;
+}
+
 /** 一张决策卡：每回合每个检查点各一行 */
 export interface JevPredictionDecisionView {
   id: number;
@@ -817,29 +822,31 @@ export interface JevPredictionDecisionView {
   /** 开盘后第几秒，如 T150 */
   checkpoint: string;
   decidedAt: number;
-  /** 纯数学的上涨概率，也是"划不划算"的公平价 */
+  /** 纯数学的上涨概率，持仓按它定卖不卖 */
   pModel?: number;
-  /** 数学概率按 Jev 后劲修正后的上涨概率，只记分 */
+  /** Jev 的上涨概率（UP 会赢与 1 − DOWN 会赢的平均）；R1 旧版是按后劲修正的数学概率 */
   pJev?: number;
   /** 市场隐含 */
   pMkt?: number;
-  /** Jev 决定题概率最高的选项 */
+  /** R1 旧版决定题概率最高的选项 */
   jevChoice?: 'BUY_UP' | 'BUY_DOWN' | 'WAIT' | 'HOLD' | 'SELL';
   /** 它的概率 */
   jevChoiceP?: number;
-  /** 盘口距上次推送的毫秒数 */
+  /** 盘口距上次更新的毫秒数 */
   bookAgeMs?: number;
   upAsk?: number;
   downAsk?: number;
+  /** 按 Jev 胜率算、优势大的那边的每份优势 */
+  edge?: number;
   action: 'BUY_UP' | 'BUY_DOWN' | 'STAY_OUT' | 'HOLD' | 'SELL' | 'ERROR';
-  /** 首个词是代码（见后端 PredictionRules），页面按它出提示；ERROR 行没有 */
+  /** 首个词是代码（见后端 PredictionRules），页面按它出提示；BUY / WAIT / ASK_LOW 第二个词是哪边；ERROR 行没有 */
   reason?: string;
   betId?: number;
   stake?: number;
   outcome?: string;
   error?: string;
-  /** 后劲题 momentum 的回答，空仓行还有决定题 decide；没问 Jev 的行没有 */
-  answers?: { decide?: JevAnswer; momentum: JevAnswer };
+  /** Jev 的回答：up_wins / down_wins；R1 旧版是后劲题 momentum 和决定题 decide；没问 Jev 的行没有 */
+  answers?: { up_wins?: JevNoulAnswer; down_wins?: JevNoulAnswer; decide?: JevAnswer; momentum?: JevAnswer };
 }
 
 export interface JevPredictionStats {
@@ -886,27 +893,42 @@ export interface JevBet {
 
 /** 页面提示里要写出来的阈值 */
 export interface JevThresholds {
-  actThreshold: number;
-  minAsk: number;
-  maxAsk: number;
-  /** 要买那边每份优势不到这么多不算便宜，不买 */
+  /** 按 Jev 胜率算的每份优势到这么多才买 */
   minEdge: number;
+  /** 每份优势到这么多下两倍 */
+  bigEdge: number;
+  /** 卖价低于它不买 */
+  minAsk: number;
   /** 持仓时买一价扣手续费比公平价高出这么多就卖 */
   sellEdge: number;
 }
 
-/** 预测员总开关：configured=平台 JEV_API_KEY 配了，enabled=开关开着，两个都真才跑 */
+/** 预测员的一局：一局一个账户，重新开局加一局，旧局留档 */
+export interface JevRun {
+  runNo: number;
+  /** 版本说明，开局时填 */
+  label?: string;
+  startedAt: number;
+}
+
+/** 预测员总开关：configured=平台 JEV_API_KEY 配了，enabled=开关开着，两个都真才跑；run 是当前局 */
 export interface JevSwitchState {
   configured: boolean;
   enabled: boolean;
+  run: JevRun;
 }
 
 export interface JevPredictionOverview {
   enabled: boolean;
   model: string;
   thresholds: JevThresholds;
+  /** 在看的这一局账户的余额 */
   gameBalance?: number;
   initialGameBalance: number;
+  /** 在看的这一局 */
+  run: JevRun;
+  /** 全部局，新的在前，第一个是当前局 */
+  runs: JevRun[];
   stats: JevPredictionStats;
   brierByCheckpoint: JevCheckpointBrier[];
   calibration: JevCalibrationBucket[];

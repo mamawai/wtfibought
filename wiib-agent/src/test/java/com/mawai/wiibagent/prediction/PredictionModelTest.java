@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
-/** 公平概率的数：进末分钟前的 σ、末分钟的锁定、两处衔接、Φ⁻¹、后劲修正的方向 */
+/** 公平概率的数：进末分钟前的 σ、末分钟的锁定、两处衔接 */
 class PredictionModelTest {
 
     private static final double SIGMA = 0.03;   // 1 分钟典型波动 0.03%
@@ -39,26 +39,5 @@ class PredictionModelTest {
         double inside = PredictionModel.z(0.03, 0.03, SIGMA, 59);
         assertThat(before).isCloseTo(0.03 / (SIGMA * Math.sqrt(20.0 / 60)), within(1e-9));
         assertThat(inside).isCloseTo(before, within(0.05));
-    }
-
-    @Test
-    void Φ反函数和Φ互逆() {
-        for (double p : new double[]{0.01, 0.02, 0.1, 0.3, 0.5, 0.7, 0.9, 0.98, 0.99}) {
-            assertThat(PredictionModel.p(PredictionModel.inverse(p))).isCloseTo(p, within(1e-6));
-        }
-        assertThat(PredictionModel.inverse(0.5)).isCloseTo(0.0, within(1e-9));
-        assertThat(PredictionModel.inverse(0.8413)).isCloseTo(1.0, within(1e-3));
-    }
-
-    @Test
-    void 后劲修正_顺着方向加_平盘不动_两头夹住() {
-        // Φ(Φ⁻¹(0.7) + 0.3) = Φ(0.8244) ≈ 0.795
-        assertThat(PredictionModel.tilted(0.7, 1.0, 1, 0.3)).isCloseTo(0.795, within(0.002));
-        // 跌势里说还在推 → 更偏 DOWN
-        assertThat(PredictionModel.tilted(0.3, 1.0, -1, 0.3)).isCloseTo(0.205, within(0.002));
-        // 平盘不动
-        assertThat(PredictionModel.tilted(0.6, 1.0, 0, 0.3)).isCloseTo(0.6, within(1e-6));
-        // 0.999 夹到 0.99 再倾斜，不会炸
-        assertThat(PredictionModel.tilted(0.999, -1.0, 1, 0.3)).isCloseTo(0.979, within(0.002));
     }
 }

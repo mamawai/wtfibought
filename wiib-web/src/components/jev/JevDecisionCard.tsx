@@ -2,12 +2,12 @@ import { useTranslation } from 'react-i18next';
 import { AlertTriangle, ChevronDown, Clock, Info, ShieldAlert } from 'lucide-react';
 import { cn, fmtNum, fmtTime, toCents } from '../../lib/utils';
 import { JevAnswerBar } from './JevAnswerBar';
-import { ACTION_CHIP, CHOICE_STYLE, MOMENTUM_BAR, MOMENTUM_TEXT, noticeKind, pct, reasonCode } from './format';
+import { ACTION_CHIP, CHOICE_STYLE, MOMENTUM_BAR, MOMENTUM_TEXT, noticeKind, pct, reasonCode, reasonSide } from './format';
 import type { JevAnswer, JevPredictionDecisionView, JevThresholds } from '../../types';
 
 const ENTRY_KEYS = ['BUY_UP', 'BUY_DOWN', 'WAIT'];
 
-/** 四种提示：把握不够 / 被代码拦下 / 这次没问 / 出错 */
+/** 四种提示：把握不够（R1）/ 被代码拦下 / 这次没问 / 出错 */
 const NOTICE_STYLE = {
   unsure: { icon: Info, cls: 'mute' },
   blocked: { icon: ShieldAlert, cls: 'wn' },
@@ -15,21 +15,19 @@ const NOTICE_STYLE = {
   error: { icon: AlertTriangle, cls: 'dn' },
 } as const;
 
-/** 一句提示：没执行 Jev 的选择时说为什么；数字取决策行自己的字段 */
+/** 一句提示：被拦、没问、出错时说为什么；数字取决策行自己的字段 */
 function JevNotice({ d, thresholds }: { d: JevPredictionDecisionView; thresholds: JevThresholds }) {
   const { t } = useTranslation(['community']);
   const kind = noticeKind(d);
   if (!kind) return null;
   const code = reasonCode(d);
-  const side = d.jevChoice === 'BUY_DOWN' ? 'DOWN' : 'UP';
+  // 哪边：新版写在 reason 里，R1 旧版看 Jev 选的
+  const side = reasonSide(d) ?? (d.jevChoice === 'BUY_DOWN' ? 'DOWN' : 'UP');
   const ask = side === 'UP' ? d.upAsk : d.downAsk;
   const vars = {
     side,
     ask: ask != null ? toCents(ask) : '--',
-    act: pct(thresholds.actThreshold),
     minAsk: toCents(thresholds.minAsk),
-    maxAsk: toCents(thresholds.maxAsk),
-    minEdge: toCents(thresholds.minEdge),
     sec: d.bookAgeMs != null ? (d.bookAgeMs / 1000).toFixed(1) : '--',
   };
   const key = code === 'STALE_BOOK' && d.bookAgeMs == null ? 'STALE_BOOK_NONE' : code;
@@ -43,7 +41,21 @@ function JevNotice({ d, thresholds }: { d: JevPredictionDecisionView; thresholds
   );
 }
 
-/** Jev 的选择 + 把握 + 后劲最高档；持仓行没问决定，只有后劲。跟 ProbRow 一样"名 + 值"一对不拆开 */
+/** 按 Jev 的胜率算、更划算那边的每份优势；持仓行、没人卖、钱包不够的行没有 */
+function JevEdge({ d }: { d: JevPredictionDecisionView }) {
+  const { t } = useTranslation(['community']);
+  const side = reasonSide(d);
+  if (d.edge == null || !side) return null;
+  const c = toCents(d.edge);
+  return (
+    <div className="mt-2 text-[14px]">
+      <span className="mute">{t('prediction.jev.edgeLabel')}</span>{' '}
+      <b className={cn('num font-semibold', side === 'UP' ? 'up' : 'dn')}>{side} {c > 0 ? '+' : ''}{c}¢</b>
+    </div>
+  );
+}
+
+/** R1 旧版：Jev 的选择 + 把握 + 后劲最高档；持仓行没问决定，只有后劲。跟 ProbRow 一样"名 + 值"一对不拆开 */
 function JevSays({ choice, choiceP, momentum }: { choice?: string; choiceP?: number; momentum: JevAnswer }) {
   const { t } = useTranslation(['community']);
   const ps = [0, 1, 2].map(i => momentum.probabilities[i]);
@@ -69,7 +81,7 @@ function JevSays({ choice, choiceP, momentum }: { choice?: string; choiceP?: num
   );
 }
 
-/** 涨的概率三个数：数学 / 后劲修正 / 市场。"名 + 数"一对不拆开，窄屏在对与对之间折行 */
+/** 涨的概率三个数：数学 / Jev / 市场。"名 + 数"一对不拆开，窄屏在对与对之间折行 */
 function ProbRow({ d }: { d: JevPredictionDecisionView }) {
   const { t } = useTranslation(['community']);
   const items = [['colModel', d.pModel], ['colJev', d.pJev], ['colMkt', d.pMkt]] as const;
@@ -86,8 +98,8 @@ function ProbRow({ d }: { d: JevPredictionDecisionView }) {
 }
 
 /**
- * 一个检查点一行：实际动作 / 注额 / 时间 → Jev 选了什么、多大把握、后劲 → 涨的概率三个数 → 没照 Jev 做时的一句提示。
- * 点开看 Jev 每道题各选项的概率条（持仓行只有后劲题）；没问 Jev 的行（盘口太旧、出错）没东西可展开。
+ * 一个检查点一行：实际动作 / 注额 / 时间 → Jev 眼里的每份优势（R1 旧版是 Jev 选了什么、多大把握、后劲）→
+ * 涨的概率三个数 → 被拦、没问、出错时的一句提示。点开看 Jev 每道题的回答；没问 Jev 的行（盘口太旧、出错）没东西可展开。
  */
 export function JevDecisionCard({ d, open, onToggle, thresholds }: {
   d: JevPredictionDecisionView;
@@ -96,8 +108,9 @@ export function JevDecisionCard({ d, open, onToggle, thresholds }: {
   thresholds: JevThresholds;
 }) {
   const { t } = useTranslation(['community']);
-  const expandable = !!d.answers;
-  // 决定题只认买 UP / 买 DOWN / 等，别的（旧行的拿着 / 卖掉）当没问
+  const a = d.answers;
+  const expandable = !!a;
+  // R1 决定题只认买 UP / 买 DOWN / 等，别的（更早的拿着 / 卖掉）当没问
   const choice = d.jevChoice && ENTRY_KEYS.includes(d.jevChoice) ? d.jevChoice : undefined;
   return (
     <div className="border-b border-border">
@@ -111,19 +124,27 @@ export function JevDecisionCard({ d, open, onToggle, thresholds }: {
           </span>
           {expandable && <ChevronDown className={cn('ml-auto w-4 h-4 mute transition-transform', open && 'rotate-180')} />}
         </div>
-        {d.answers && <JevSays choice={choice} choiceP={d.jevChoiceP} momentum={d.answers.momentum} />}
+        {a?.momentum ? <JevSays choice={choice} choiceP={d.jevChoiceP} momentum={a.momentum} /> : <JevEdge d={d} />}
         <ProbRow d={d} />
         <JevNotice d={d} thresholds={thresholds} />
       </button>
 
-      {open && d.answers && (
+      {open && a && (
         <div className="pb-4 space-y-4">
-          {choice && d.answers.decide && (
-            <JevAnswerBar title={t('prediction.jev.qEntryTitle')} a={d.answers.decide}
+          {a.up_wins && a.down_wins && (
+            <JevAnswerBar title={t('prediction.jev.qWinsTitle')}
+                          a={{ probabilities: { UP: a.up_wins.noul, DOWN: a.down_wins.noul } }}
+                          options={[{ key: 'UP', label: t('prediction.jev.upWins'), bar: 'bg-gain' },
+                                    { key: 'DOWN', label: t('prediction.jev.downWins'), bar: 'bg-loss' }]} />
+          )}
+          {choice && a.decide && (
+            <JevAnswerBar title={t('prediction.jev.qEntryTitle')} a={a.decide}
                           options={ENTRY_KEYS.map(k => ({ key: k, label: t(`prediction.jev.choice.${k}`), bar: CHOICE_STYLE[k].bar }))} />
           )}
-          <JevAnswerBar title={t('prediction.jev.q1Title')} a={d.answers.momentum}
-                        options={[0, 1, 2].map(i => ({ key: String(i), label: t(`prediction.jev.levels.momentum.${i}`), bar: MOMENTUM_BAR[i] }))} />
+          {a.momentum && (
+            <JevAnswerBar title={t('prediction.jev.q1Title')} a={a.momentum}
+                          options={[0, 1, 2].map(i => ({ key: String(i), label: t(`prediction.jev.levels.momentum.${i}`), bar: MOMENTUM_BAR[i] }))} />
+          )}
           {d.upAsk != null && d.downAsk != null && (
             <p className="num text-[12.5px] mute">{t('prediction.jev.asksThen', { up: toCents(d.upAsk), down: toCents(d.downAsk) })}</p>
           )}

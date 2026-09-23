@@ -4,11 +4,13 @@ import com.mawai.wiibcommon.annotation.RequireAdmin;
 import com.mawai.wiibcommon.constant.AiProtocols;
 import com.mawai.wiibcommon.entity.AiModelAssignment;
 import com.mawai.wiibcommon.entity.AiRuntimeConfig;
+import com.mawai.wiibcommon.entity.JevPredictionRun;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibcommon.mapper.AiRuntimeConfigMapper;
 import com.mawai.wiibagent.llm.jev.JevPlatformConfig;
+import com.mawai.wiibagent.prediction.JevPredictionRuns;
 import com.mawai.wiibagent.prediction.JevPredictionSwitch;
 import com.mawai.wiibagent.runtime.AiAgentRuntimeManager;
 import io.swagger.v3.oas.annotations.Operation;
@@ -38,6 +40,7 @@ public class AiAgentAdminController {
     private final AiModelAssignmentMapper assignmentMapper;
     private final JevPlatformConfig jevPlatform;
     private final JevPredictionSwitch jevSwitch;
+    private final JevPredictionRuns jevRuns;
     /** 管理页的校验与回执跟界面语言 */
     private final MessageCatalog messages;
 
@@ -183,14 +186,29 @@ public class AiAgentAdminController {
 
     // ========== Jev 预测员开关 ==========
 
-    /** configured=平台 JEV_API_KEY 配了；enabled=开关开着。两个都真才真跑 */
-    public record JevPredictionState(boolean configured, boolean enabled) {
+    /** configured=平台 JEV_API_KEY 配了；enabled=开关开着，两个都真才真跑；run 是当前局 */
+    public record JevPredictionState(boolean configured, boolean enabled, JevPredictionRun run) {
     }
 
     @GetMapping("/jev-prediction")
-    @Operation(summary = "Jev 预测员开关状态")
+    @Operation(summary = "Jev 预测员开关状态与当前局")
     public Result<JevPredictionState> jevPrediction() {
-        return Result.ok(new JevPredictionState(jevPlatform.enabled(), jevSwitch.isOn()));
+        return Result.ok(jevState());
+    }
+
+    @PostMapping("/jev-prediction/new-run")
+    @Operation(summary = "Jev 预测员重新开局：新局新账户注资，旧局留档；开关开着不让开")
+    public Result<JevPredictionState> newJevRun(@RequestBody JevNewRunRequest req) {
+        if (jevSwitch.isOn()) {
+            return Result.fail(messages.get("agent.admin.jevRunWhileOn"));
+        }
+        JevPredictionRun run = jevRuns.startNew(req.getLabel());
+        log.info("[JevPred] 管理员重新开局 R{} label={}", run.getRunNo(), run.getLabel());
+        return Result.ok(jevState());
+    }
+
+    private JevPredictionState jevState() {
+        return new JevPredictionState(jevPlatform.enabled(), jevSwitch.isOn(), jevRuns.current());
     }
 
     @PostMapping("/jev-prediction")
@@ -204,7 +222,7 @@ public class AiAgentAdminController {
         }
         jevSwitch.set(req.getEnabled());
         log.info("[JevPred] 管理员{}预测员", req.getEnabled() ? "打开" : "关闭");
-        return Result.ok(new JevPredictionState(jevPlatform.enabled(), jevSwitch.isOn()));
+        return Result.ok(jevState());
     }
 
     // 量化触发端点（快照/vol验证）已随预测管线下线（2026-08：生产验证无前瞻信息）。
@@ -234,6 +252,12 @@ public class AiAgentAdminController {
     @Data
     public static class JevPredictionRequest {
         private Boolean enabled;
+    }
+
+    @Data
+    public static class JevNewRunRequest {
+        /** 版本说明，可空 */
+        private String label;
     }
 
 }

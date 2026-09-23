@@ -5,6 +5,7 @@ import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibcommon.market.ForceOrderService;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.OrderFlowAggregator;
+import com.mawai.wiibcommon.market.PredictionFee;
 import com.mawai.wiibcommon.market.TimeWeightedAverage;
 import com.mawai.wiibcommon.market.TimeWeightedAverage.Point;
 import com.mawai.wiibagent.prediction.PredictionRules.Book;
@@ -19,19 +20,21 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.LongSupplier;
 
 /**
- * 预测员的眼睛：把这一刻玩家能看到的东西压成 Jev 读得懂的英文短语，全部出词不出数；数字留在 {@link Raw} 给规则和记分用。
+ * 预测员的眼睛：把这一刻玩家能看到的事实写成 Jev 读得懂的英文短句，要比的数（价差、秒数、¢ 价、含费成本）由代码算好写进句子。
+ * 数学公平价和由它得出的结论不进 state，只留在 {@link Raw} 给卖出规则和记分。
  * <ul>
- *   <li>market：一句话讲清怎么赢</li>
- *   <li>clock：早段 / 中段 / 最后一分钟，最后一分钟说结算均价锁了多少</li>
- *   <li>btc：相对开盘均价、领先有多大、路径、形状、最近一分钟、速度（Polymarket 推的 Chainlink 现货，按 Chainlink 自己的时间戳）</li>
+ *   <li>market：怎么赢、怎么买卖、多久问一次</li>
+ *   <li>clock：早段 / 中段 / 最后一分钟锁了多少，加上离结算均价截止还有几秒</li>
+ *   <li>btc：Chainlink 现价相对开盘均价、谁领先多少（按剩余时间的正常波动，末分钟含已锁定部分）、末分钟已锁定部分相对开盘均价、
+ *       路径、形状、最近一分钟、速度、Chainlink 多久前更新和 Binance 最近 10 / 30 秒怎么动（Chainlink 按它自己的时间戳）</li>
  *   <li>binance_flow：最近 60 秒主动买卖与大单、开盘以来强平方向（直接读 Redis 逐笔流和强平库）</li>
- *   <li>odds：谁是热门、UP/DOWN 各自划不划算（代码拿公平价比卖价加手续费）、最近 30 秒赔率怎么动</li>
+ *   <li>odds：谁是热门和市场给 UP 的概率、UP / DOWN 各自的卖价买价与含费成本、最近 30 秒赔率怎么动</li>
  * </ul>
- * 余额、概率、秒数这些数字都不给：Jev 读数不准，数字交给代码，它只做玩家的判断。
  */
 @Component
 @RequiredArgsConstructor
@@ -53,23 +56,19 @@ public class PredictionStateWriter {
     /** 最近实际波动：看最近这么久，每 10 秒取一个价 */
     static final long RECENT_VOL_SPAN_MS = 180_000L;
     static final long RECENT_VOL_STEP_MS = 10_000L;
-    /** Chainlink 最后一跳超过这么久就当价停了，不问 */
-    static final long TICK_MAX_AGE_MS = 10_000L;
-    /** Binance 逐笔流超过这么久没更新就不给主动买卖和大单 */
+    /** Chainlink 最后一跳旧过这么久就不问 */
+    static final long TICK_MAX_AGE_MS = 5_000L;
+    /** Binance 逐笔流超过这么久没更新就不给主动买卖、大单和最近涨跌 */
     static final long FLOW_MAX_AGE_MS = 30_000L;
     static final int FLOW_WINDOW_SECONDS = 60;
     static final int FLOW_MIN_TRADES = 10;
     /** 看赔率怎么动：和这么久之前比 */
     static final long ODDS_LOOKBACK_MS = 30_000L;
-    /** 划不划算的分档线（每份优势）。模型和盘口一致时优势约 −1~−2 分（半个价差 + 手续费），合理档连同几分钱的模型误差一起盖住 */
-    static final double CLEARLY_CHEAP = 0.08;
-    /** 到这条线才算便宜，和 jev.prediction.min-edge 对齐：代码只放便宜的单 */
-    static final double SLIGHTLY_CHEAP = 0.04;
-    static final double SLIGHTLY_EXPENSIVE = -0.06;
-    static final double CLEARLY_EXPENSIVE = -0.10;
 
-    static final String GAME = "Polymarket 5-minute BTC market. UP pays 1 if BTC's average price over the final minute is at or above "
-            + "its average at the open, otherwise DOWN pays 1. Buying costs the quoted price plus a small fee.";
+    static final String GAME = "Polymarket 5-minute BTC market. UP pays 100¢ a share if BTC's average price over the final minute "
+            + "is at or above its average at the open; otherwise DOWN pays 100¢. You buy at the ask; a bet can also be sold "
+            + "before the close at the bid. Every buy and every sell pays a fee. You hold at most one bet at a time and are asked "
+            + "again every 15 seconds.";
 
     private final CacheService cacheService;
     private final KlineFetcher klineFetcher;
@@ -86,11 +85,10 @@ public class PredictionStateWriter {
     /**
      * @param zModel          纯数学的 z，正 = 偏 UP
      * @param pModel          纯数学的上涨概率
-     * @param driftSign       开盘以来方向：1 涨 / -1 跌 / 0 平
      * @param book            写 state 那一刻的盘口
      * @param bookUpdatedAtMs 盘口最近一次变化的时刻（Polymarket 那边的时间）；没有为 null
      */
-    public record Raw(double zModel, double pModel, int driftSign, Book book, Long bookUpdatedAtMs) {
+    public record Raw(double zModel, double pModel, Book book, Long bookUpdatedAtMs) {
     }
 
     /** 缺开盘价、缺 K 线、本回合还没有 tick、Chainlink 停了都抛 IllegalStateException：看不全就别问 */
@@ -121,67 +119,81 @@ public class PredictionStateWriter {
         double sigma1h = sigma1mPct(bars);
         // 刚起波的时候一小时典型值偏小，取大的那个公平价才不会过于自信
         double sigmaEff = Math.max(sigma1h, recentSigma1mPct(ticks, now));
-        double lead = pct(open, last);
-        int driftSign = Math.abs(lead) < AT_OPEN_RATIO * sigma1h ? 0 : lead > 0 ? 1 : -1;
         // 进了末分钟（收盘前 63 秒起）：已走过部分的均价已经算进结算价了
-        Double twapSoFar = null;
+        BigDecimal twapSoFar = null;
         long twapStartMs = settleEndMs - PredictionModel.TWAP_SECONDS * 1000L;
         if (now > twapStartMs) {
-            twapSoFar = pct(open, TimeWeightedAverage.of(inWindow, twapStartMs, now));
+            twapSoFar = TimeWeightedAverage.of(inWindow, twapStartMs, now);
         }
-        double z = PredictionModel.z(lead, twapSoFar, sigmaEff, untilSettleEnd);
+        double z = PredictionModel.z(pct(open, last), twapSoFar == null ? null : pct(open, twapSoFar), sigmaEff, untilSettleEnd);
         double pModel = PredictionModel.p(z);
 
         Book book = new Book(cacheService.getPredictionAsk("UP"), cacheService.getPredictionBid("UP"),
                 cacheService.getPredictionAsk("DOWN"), cacheService.getPredictionBid("DOWN"));
         BigDecimal pMkt = PredictionRules.impliedUp(book);
+        boolean flowFresh = now - orderFlowAggregator.getLastUpdateMs(SYMBOL) <= FLOW_MAX_AGE_MS;
 
         Map<String, Object> state = new LinkedHashMap<>();
         state.put("market", GAME);
-        state.put("clock", clockPhrase(untilSettleEnd));
+        state.put("clock", clockPhrase(untilSettleEnd) + "; " + Math.round(untilSettleEnd)
+                + " seconds until the settlement average is fixed");
 
         Map<String, Object> btc = new LinkedHashMap<>();
-        btc.put("vs_open", driftSign == 0 ? "at the opening average"
-                : driftSign > 0 ? "above the opening average" : "below the opening average");
+        btc.put("vs_open", gapPhrase(open, last, sigma1h));
         btc.put("lead", leadPhrase(z));
+        if (twapSoFar != null) {
+            btc.put("settlement_so_far", "the part of the settlement average already set is " + gapPhrase(open, twapSoFar, sigma1h));
+        }
         btc.put("since_open", sinceOpenSentence(inWindow, open, sigma1h, windowStartMs, now));
         String shape = shapeWord(inWindow, open, sigma1h);
         if (shape != null) {
             btc.put("shape", shape);
         }
-        btc.put("last_minute", lastMinuteWord(inWindow, now, sigma1h));
+        btc.put("last_minute", lastMinutePhrase(inWindow, now, sigma1h));
         btc.put("pace", speedSentence(bars, sigma1h));
+        btc.put("latest", latestPhrase(now - inWindow.getLast().timeMs(), flowFresh));
         state.put("btc", btc);
 
         Map<String, Object> flow = new LinkedHashMap<>();
-        putOrderFlow(flow, now);
+        if (flowFresh) {
+            putOrderFlow(flow);
+        }
         flow.put("liquidations", liquidationPhrase(windowStart, now));
         state.put("binance_flow", flow);
 
         Map<String, Object> odds = new LinkedHashMap<>();
         odds.put("standing", standingPhrase(pMkt));
-        odds.put("up_value", valuePhrase("UP", pModel, book.upAsk()));
-        odds.put("down_value", valuePhrase("DOWN", 1 - pModel, book.downAsk()));
+        odds.put("up", quotePhrase("UP", book.upAsk(), book.upBid()));
+        odds.put("down", quotePhrase("DOWN", book.downAsk(), book.downBid()));
         String move = oddsMovePhrase(cacheService.getPredictionUpMidPoints(windowStartMs), now);
         if (move != null) {
             odds.put("odds_move", move);
         }
         state.put("odds", odds);
 
-        return new Snapshot(state, new Raw(z, pModel, driftSign, book, cacheService.getPredictionBookUpdatedAt()));
+        return new Snapshot(state, new Raw(z, pModel, book, cacheService.getPredictionBookUpdatedAt()));
     }
 
-    /** 最近 60 秒主动买卖与大单；逐笔流停了或不到 10 笔就不给，几笔成交看不出方向 */
-    private void putOrderFlow(Map<String, Object> flow, long now) {
-        if (now - orderFlowAggregator.getLastUpdateMs(SYMBOL) > FLOW_MAX_AGE_MS) {
-            return;
-        }
+    /** 最近 60 秒主动买卖与大单；不到 10 笔就不给 */
+    private void putOrderFlow(Map<String, Object> flow) {
         OrderFlowAggregator.Metrics m = orderFlowAggregator.getMetrics(SYMBOL, FLOW_WINDOW_SECONDS);
         if (m == null || m.tradeCount() < FLOW_MIN_TRADES) {
             return;
         }
         flow.put("takers", takersPhrase(m.tradeDelta()));
         flow.put("large_trades", largeTradesPhrase(m.largeTradeBias()));
+    }
+
+    /** Chainlink 多久前更新；逐笔流新鲜时再加 Binance 上最近 10 秒、30 秒 BTC 涨跌多少美元 */
+    private String latestPhrase(long chainlinkAgeMs, boolean flowFresh) {
+        String chainlink = "Chainlink, which settles the market, last updated " + Math.round(chainlinkAgeMs / 1000.0) + " seconds ago";
+        Double move10 = flowFresh ? orderFlowAggregator.priceChange(SYMBOL, 10) : null;
+        Double move30 = flowFresh ? orderFlowAggregator.priceChange(SYMBOL, 30) : null;
+        if (move10 == null || move30 == null) {
+            return chainlink;
+        }
+        return chainlink + "; on Binance BTC moved " + signedUsd(move10) + " in the last 10 seconds and "
+                + signedUsd(move30) + " in the last 30 seconds";
     }
 
     /** 开盘以来强平方向，不说量级：Binance 强平流每秒只推一笔，量是少算的 */
@@ -213,13 +225,22 @@ public class PredictionStateWriter {
         return "final minute: most of the settlement average is already set";
     }
 
-    /** 领先相对剩余时间里的正常波动：用含时间、含锁定的 z 分桶，说的是守不守得住 */
+    /** 相对开盘均价：死区里说在开盘价上，否则说高 / 低多少美元和百分比 */
+    static String gapPhrase(BigDecimal open, BigDecimal price, double sigma1m) {
+        double gap = pct(open, price);
+        if (Math.abs(gap) < AT_OPEN_RATIO * sigma1m) return "at the opening average";
+        return (gap > 0 ? "above" : "below") + " the opening average by " + usd(price.subtract(open).abs().doubleValue())
+                + String.format(Locale.ROOT, " (%.3f%%)", Math.abs(gap));
+    }
+
+    /** 谁领先、领先相对剩余时间的正常波动有多大：用含时间、含锁定的 z 分桶 */
     static String leadPhrase(double z) {
         double r = Math.abs(z);
-        if (r < 0.5) return "well inside normal noise";
-        if (r < 1.5) return "about one normal move";
-        if (r < 3) return "a couple of normal moves";
-        return "several normal moves";
+        if (r < 0.5) return "neither side clearly ahead: the gap is well inside normal noise for the time left";
+        String side = z > 0 ? "UP" : "DOWN";
+        if (r < 1.5) return side + " ahead by about one normal move for the time left";
+        if (r < 3) return side + " ahead by a couple of normal moves for the time left";
+        return side + " ahead by several normal moves for the time left";
     }
 
     /** 开盘以来路径：前后两半各判方向，拼成一句话 */
@@ -271,10 +292,12 @@ public class PredictionStateWriter {
         return best;
     }
 
-    static String lastMinuteWord(List<Point> inWindow, long now, double sigma1m) {
+    /** 最近一分钟方向，加涨跌多少美元 */
+    static String lastMinutePhrase(List<Point> inWindow, long now, double sigma1m) {
         BigDecimal from = priceAt(inWindow, now - 60_000L);
-        int d = direction(pct(from, inWindow.getLast().price()), sigma1m);
-        return d > 0 ? "rising" : d < 0 ? "falling" : "flat";
+        BigDecimal last = inWindow.getLast().price();
+        int d = direction(pct(from, last), sigma1m);
+        return (d > 0 ? "rising" : d < 0 ? "falling" : "flat") + " (" + signedUsd(last.subtract(from).doubleValue()) + ")";
     }
 
     /** 最近 5 根 1 分钟的平均绝对涨跌 vs 近一小时典型值 */
@@ -287,10 +310,12 @@ public class PredictionStateWriter {
         return "unusually fast";
     }
 
+    /** 主动买卖谁占上风，加主动买占成交额的比例 */
     static String takersPhrase(double tradeDelta) {
-        if (tradeDelta >= 0.2) return "buyers ahead in the last minute";
-        if (tradeDelta <= -0.2) return "sellers ahead in the last minute";
-        return "balanced in the last minute";
+        String share = " (taker buys " + Math.round((1 + tradeDelta) / 2 * 100) + "% of volume)";
+        if (tradeDelta >= 0.2) return "buyers ahead in the last minute" + share;
+        if (tradeDelta <= -0.2) return "sellers ahead in the last minute" + share;
+        return "balanced in the last minute" + share;
     }
 
     static String largeTradesPhrase(double largeTradeBias) {
@@ -307,43 +332,58 @@ public class PredictionStateWriter {
         return "both sides liquidated since the open";
     }
 
-    /** 谁是热门：按盘口隐含上涨概率分桶 */
+    /** 谁是热门：按盘口隐含上涨概率分桶，加市场给 UP 的概率 */
     static String standingPhrase(BigDecimal pMkt) {
         if (pMkt == null) return "no quotes on one side right now";
         double p = pMkt.doubleValue();
         String side = p >= 0.5 ? "UP" : "DOWN";
         double q = Math.max(p, 1 - p);
-        if (q >= 0.93) return side + " is a near-certain favourite";
-        if (q >= 0.8) return side + " is a strong favourite";
-        if (q >= 0.65) return side + " is a clear favourite";
-        if (q >= 0.55) return side + " is a slight favourite";
-        return "neither side is favoured";
-    }
-
-    /** 划不划算：公平价比卖价加手续费，按每份优势分五档，热门冷门同一把尺子；没有卖价就是没人卖 */
-    static String valuePhrase(String side, double pSide, BigDecimal ask) {
-        if (ask == null) return side + " has no sellers right now";
-        double e = PredictionRules.edge(pSide, ask);
         String word;
-        if (e >= CLEARLY_CHEAP) word = "looks clearly cheap";
-        else if (e >= SLIGHTLY_CHEAP) word = "looks slightly cheap";
-        else if (e > SLIGHTLY_EXPENSIVE) word = "looks fairly priced";
-        else if (e > CLEARLY_EXPENSIVE) word = "looks slightly expensive";
-        else word = "looks clearly expensive";
-        return side + " " + word + " against where BTC stands";
+        if (q >= 0.93) word = side + " is a near-certain favourite";
+        else if (q >= 0.8) word = side + " is a strong favourite";
+        else if (q >= 0.65) word = side + " is a clear favourite";
+        else if (q >= 0.55) word = side + " is a slight favourite";
+        else word = "neither side is favoured";
+        return word + "; the market prices UP at about " + Math.round(p * 100) + "%";
     }
 
-    /** 最近 30 秒 UP 中间价怎么动；本回合采样还没攒够 30 秒回 null 不给 */
+    /** 一边的报价：卖价、买价、按卖价买一份连手续费要多少 */
+    static String quotePhrase(String side, BigDecimal ask, BigDecimal bid) {
+        String bidText = bid == null ? "no bid" : "bid " + cents(bid);
+        if (ask == null) return "nobody is selling " + side + " right now; " + bidText;
+        double cost = ask.doubleValue() + PredictionFee.perShare(ask).doubleValue();
+        return "ask " + cents(ask) + ", " + bidText + String.format(Locale.ROOT, "; buying costs %.1f¢", cost * 100)
+                + " a share with the fee and pays 100¢ if " + side + " wins";
+    }
+
+    /** 最近 30 秒 UP 中间价怎么动，加涨跌几美分；本回合采样还没攒够 30 秒回 null 不给 */
     static String oddsMovePhrase(List<Point> upMids, long now) {
         // 留 5 秒余量：采样从开盘后第 1 秒起，开盘后第 30 秒那次也要能比
         if (upMids.isEmpty() || upMids.getFirst().timeMs() > now - ODDS_LOOKBACK_MS + 5_000L) return null;
         double then = priceAt(upMids, now - ODDS_LOOKBACK_MS).doubleValue();
         double d = upMids.getLast().price().doubleValue() - then;
-        if (d >= 0.08) return "UP's price rose sharply over the last 30 seconds";
-        if (d >= 0.03) return "UP's price rose a little over the last 30 seconds";
-        if (d <= -0.08) return "UP's price fell sharply over the last 30 seconds";
-        if (d <= -0.03) return "UP's price fell a little over the last 30 seconds";
-        return "prices barely moved over the last 30 seconds";
+        String word;
+        if (d >= 0.08) word = "UP's price rose sharply over the last 30 seconds";
+        else if (d >= 0.03) word = "UP's price rose a little over the last 30 seconds";
+        else if (d <= -0.08) word = "UP's price fell sharply over the last 30 seconds";
+        else if (d <= -0.03) word = "UP's price fell a little over the last 30 seconds";
+        else word = "prices barely moved over the last 30 seconds";
+        return word + String.format(Locale.ROOT, " (%+d¢)", Math.round(d * 100));
+    }
+
+    /** 价格写成美分：0.62 → 62¢ */
+    static String cents(BigDecimal price) {
+        return price.movePointRight(2).stripTrailingZeros().toPlainString() + "¢";
+    }
+
+    static String usd(double amount) {
+        return "$" + Math.round(amount);
+    }
+
+    /** 带正负号的整数美元：+$18 / -$7，不到半美元是 +$0 */
+    static String signedUsd(double amount) {
+        long n = Math.round(amount);
+        return (n < 0 ? "-$" : "+$") + Math.abs(n);
     }
 
     // ==================== 数 ====================

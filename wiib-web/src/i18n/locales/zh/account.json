@@ -133,13 +133,19 @@
     },
     "jev": {
       "title": "Jev 预测员",
-      "hint": "打开后每个 5 分钟回合开盘后每 15 秒问一次 Jev，用机器人账户 jev-prediction 在预测盘下注。存 Redis，重启不丢。",
+      "hint": "打开后每个 5 分钟回合开盘后每 15 秒问一次 Jev，在预测盘下注；开关存 Redis，重启不丢，钱包付不起一注会自己关掉。一局一个机器人账户（R1 是 jev-prediction，之后是 jev-prediction-r2…），开局注资 $100；重新开局后旧局留档，Jev 页上按局看。",
       "on": "运行中",
       "off": "已关闭",
       "noKey": "没配平台 JEV_API_KEY，开不了",
       "turnOn": "打开",
       "turnOff": "关闭",
-      "view": "看 Jev 页"
+      "view": "看 Jev 页",
+      "currentRun": "当前第 {{n}} 局",
+      "newRun": "重新开局",
+      "newRunWhileOn": "先关掉才能重新开局",
+      "labelPh": "版本说明（可空），如：按 Jev 胜率下注",
+      "confirmNewRun": "开第 {{n}} 局",
+      "newRunDone": "已开第 {{n}} 局，打开开关就开始跑"
     },
     "invite": {
       "title": "邀请码",

@@ -137,13 +137,19 @@
     },
     "jev": {
       "title": "Jev predictor",
-      "hint": "When on, Jev is asked every 15 seconds after each 5-minute round opens, and the bot account jev-prediction bets on the prediction market. Stored in Redis, so it survives restarts.",
+      "hint": "When on, Jev is asked every 15 seconds after each 5-minute round opens and bets on the prediction market. The switch is stored in Redis, so it survives restarts, and turns itself off when the wallet cannot afford a bet. Each run has its own bot account (R1 is jev-prediction, then jev-prediction-r2…) funded with $100; after a new run starts, older runs are archived and can still be viewed run by run on the Jev page.",
       "on": "Running",
       "off": "Off",
       "noKey": "The platform JEV_API_KEY is not set, so it cannot be turned on",
       "turnOn": "Turn on",
       "turnOff": "Turn off",
-      "view": "Open the Jev page"
+      "view": "Open the Jev page",
+      "currentRun": "Run {{n}}",
+      "newRun": "New run",
+      "newRunWhileOn": "Turn it off before starting a new run",
+      "labelPh": "Version note (optional), e.g. bets on Jev's win chance",
+      "confirmNewRun": "Start run {{n}}",
+      "newRunDone": "Run {{n}} started; turn the switch on to begin"
     },
     "invite": {
       "title": "Invite codes",

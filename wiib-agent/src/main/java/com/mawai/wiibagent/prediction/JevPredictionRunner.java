@@ -19,6 +19,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,15 +34,16 @@ import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_ERROR;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_HOLD;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_SELL;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_STAY_OUT;
+import static com.mawai.wiibagent.prediction.PredictionRules.NO_BALANCE;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 预测员回路：每秒一跳对齐 5 分钟窗口，开盘后到了配置里的每个检查点秒数（起手每 15 秒）就问一次 Jev，每次一行落库；
  * 另一条每分钟的回填把结算结果、盈亏补进去。
  * <p>
- * 一次检查点：查本回合注单 → 写 state → 盘口太旧就不问不动 → 问 Jev（后劲；空仓再加决定）→
- * 重读盘口（问的那一两百毫秒里价可能变了）→ 空仓按 Jev 的决定买或不买、持仓代码按公平价卖或拿着。
- * 卖掉就是空仓，同回合后面的检查点照常问买不买。
+ * 一次检查点：用当前局的账户查本回合注单 → 写 state → 盘口太旧就不问不动 → 问 Jev 这一回合 UP 会不会赢 →
+ * 重读盘口（问的那一两百毫秒里价可能变了）→ 空仓拿 Jev 的胜率比两边成本定买不买、持仓代码按公平价卖或拿着。
+ * 卖掉就是空仓，同回合后面的检查点照常问买不买。钱包付不起一注、也没有等结算的注单就关掉开关，等重新开局。
  * <p>
  * 平台 Jev 没配 key 或 /admin 开关关着不开检查点；回填不看开关，关掉前的行照样补齐。
  * 写 state 失败落 ERROR 行；问 Jev 或下注失败也落 ERROR 行，但数学部分（p_model、盘口）已经填上。
@@ -63,6 +65,7 @@ public class JevPredictionRunner {
     private final PredictionStateWriter writer;
     private final PredictionJudge judge;
     private final JevPredictionAccount account;
+    private final JevPredictionRuns runs;
     private final SimPredictionClient sim;
     private final CacheService cache;
     private final JevPredictionDecisionMapper mapper;
@@ -124,7 +127,9 @@ public class JevPredictionRunner {
         if (mapper.countCheckpoint(ws, checkpoint) > 0) {
             return;
         }
+        int runNo = runs.current().getRunNo();
         JevPredictionDecision d = new JevPredictionDecision();
+        d.setRunNo(runNo);
         d.setWindowStart(ws);
         d.setCheckpoint(checkpoint);
         d.setDecidedAt(nowMs.getAsLong());
@@ -132,7 +137,7 @@ public class JevPredictionRunner {
         // state_json 不许空，写 state 之前就失败的行放空对象
         d.setStateJson("{}");
         try {
-            long userId = account.userId();
+            long userId = account.userId(runNo);
             PredictionBetResponse active = activeBet(sim.recentBets(userId, 10), ws);
             if (active != null) {
                 d.setBetId(active.getId());
@@ -151,8 +156,8 @@ public class JevPredictionRunner {
             log.warn("[JevPred] {} {} 失败: {}", ws, checkpoint, msg);
         }
         mapper.insert(d);
-        log.info("[JevPred] {} {} action={} jev={} {} pModel={} pMkt={} reason={}", ws, checkpoint, d.getAction(),
-                d.getJevChoice(), d.getJevChoiceP(), d.getPModel(), d.getPMkt(), d.getReason());
+        log.info("[JevPred] R{} {} {} action={} pJev={} pModel={} pMkt={} reason={}", runNo, ws, checkpoint, d.getAction(),
+                d.getPJev(), d.getPModel(), d.getPMkt(), d.getReason());
     }
 
     /** 盘口太旧不问；问完重读盘口，问的时候盘口停了也不动。reason 的代码页面按首个词出提示，见 PredictionRules */
@@ -163,7 +168,7 @@ public class JevPredictionRunner {
             d.setReason("STALE_BOOK " + (d.getBookAgeMs() == null ? "none" : d.getBookAgeMs()));
             return;
         }
-        Judgment j = judge.judge(snap, active != null);
+        Judgment j = judge.judge(snap);
         fillJev(d, j);
         Book book = new Book(cache.getPredictionAsk("UP"), cache.getPredictionBid("UP"),
                 cache.getPredictionAsk("DOWN"), cache.getPredictionBid("DOWN"));
@@ -204,16 +209,13 @@ public class JevPredictionRunner {
 
     private static void fillJev(JevPredictionDecision d, Judgment j) {
         d.setAnswersJson(MAPPER.writeValueAsString(j.answers()));
-        d.setPJev(dec(j.pTilted()));
-        d.setMomentum(dec(j.momentum()));
-        d.setJevChoice(j.decision());
-        d.setJevChoiceP(j.decision() == null ? null : dec(j.decisionP()));
+        d.setPJev(dec(j.pJev()));
         d.setModel(j.model());
         d.setInputTokens(j.inputTokens());
         d.setLatencyMs(j.latencyMs());
     }
 
-    /** 持仓代码按公平价卖或拿着；空仓按 Jev 的决定买或不买 */
+    /** 持仓代码按公平价卖或拿着；空仓按 Jev 的胜率买或不买，钱包付不起一注、也没有等结算的注单就关开关 */
     private void act(JevPredictionDecision d, long userId, Judgment j, Book book, PredictionBetResponse active) {
         if (active != null) {
             Review r = PredictionRules.review(j.pModel(), active.getSide(), book, cfg);
@@ -229,6 +231,12 @@ public class JevPredictionRunner {
         d.setReason(e.reason());
         if (ACTION_STAY_OUT.equals(e.action())) {
             d.setAction(ACTION_STAY_OUT);
+            // ACTIVE 的注单 = 前面回合还没结算（收盘后一分钟多才结），本金押着，结了可能回钱
+            if (NO_BALANCE.equals(e.reason())
+                    && sim.recentBets(userId, 10).stream().noneMatch(b -> "ACTIVE".equals(b.getStatus()))) {
+                sw.set(false);
+                log.warn("[JevPred] 钱包付不起一注，自动关闭预测员");
+            }
             return;
         }
         PredictionBetResponse bet = sim.buy(userId, e.side(), e.stake());
@@ -250,7 +258,7 @@ public class JevPredictionRunner {
 
     /**
      * 回填：过去 24 小时里没结果的行，回合 SETTLED 就填结果（VOID 记分时不算）；
-     * BUY 行的注单到终态就填盈亏。HOLD/SELL 行只记动作，盈亏归开仓那一行。不看开关，不调 Jev。
+     * BUY 行的注单到终态就填盈亏，注单按行所属那一局的账户查。HOLD/SELL 行只记动作，盈亏归开仓那一行。不看开关，不调 Jev。
      */
     @Scheduled(fixedDelay = 60_000, initialDelay = 30_000)
     public void settleSweep() {
@@ -263,7 +271,8 @@ public class JevPredictionRunner {
         if (pending.isEmpty()) {
             return;
         }
-        Map<Long, PredictionBetResponse> bets = null;
+        // 局号 → 这一局账户最近的注单
+        Map<Integer, Map<Long, PredictionBetResponse>> bets = new HashMap<>();
         Map<Long, List<JevPredictionDecision>> byWindow = pending.stream()
                 .collect(Collectors.groupingBy(JevPredictionDecision::getWindowStart));
         for (Map.Entry<Long, List<JevPredictionDecision>> e : byWindow.entrySet()) {
@@ -278,11 +287,10 @@ public class JevPredictionRunner {
                     }
                     if (d.getBetId() != null && d.getPnl() == null
                             && (ACTION_BUY_UP.equals(d.getAction()) || ACTION_BUY_DOWN.equals(d.getAction()))) {
-                        if (bets == null) {
-                            bets = sim.recentBets(account.userId(), 50).stream()
-                                    .collect(Collectors.toMap(PredictionBetResponse::getId, Function.identity()));
-                        }
-                        d.setPnl(PredictionRules.pnl(bets.get(d.getBetId())));
+                        Map<Long, PredictionBetResponse> runBets = bets.computeIfAbsent(d.getRunNo(),
+                                n -> sim.recentBets(account.userId(n), 50).stream()
+                                        .collect(Collectors.toMap(PredictionBetResponse::getId, Function.identity())));
+                        d.setPnl(PredictionRules.pnl(runBets.get(d.getBetId())));
                     }
                     mapper.updateById(d);
                 }

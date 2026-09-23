@@ -93,6 +93,26 @@ class OrderFlowAggregatorTest {
         assertThat(lowerMs).isBetween(before - 185_000, after - 185_000);
     }
 
+    /** 窗口里第一笔到最后一笔的价差；窗口外的不算，不到两笔回 null */
+    @Test
+    @SuppressWarnings("unchecked")
+    void priceChangeFromFirstToLastTradeInWindow() {
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        StreamOperations<String, Object, Object> streamOps = mock(StreamOperations.class);
+        when(redisTemplate.opsForStream()).thenReturn(streamOps);
+        OrderFlowAggregator agg = new OrderFlowAggregator(redisTemplate);
+
+        long now = System.currentTimeMillis();
+        MapRecord<String, Object, Object> stale = mapRecord("BTCUSDT", now - 20_000, 86_000, 1, "0");
+        MapRecord<String, Object, Object> first = mapRecord("BTCUSDT", now - 8_000, 86_010, 1, "0");
+        MapRecord<String, Object, Object> last = mapRecord("BTCUSDT", now, 86_025, 1, "1");
+        when(streamOps.range(eq("market:orderflow:BTCUSDT"), any(Range.class))).thenReturn(List.of(stale, first, last));
+        assertThat(agg.priceChange("BTCUSDT", 10)).isEqualTo(15.0);
+
+        when(streamOps.range(eq("market:orderflow:BTCUSDT"), any(Range.class))).thenReturn(List.of(stale, last));
+        assertThat(agg.priceChange("BTCUSDT", 10)).isNull();
+    }
+
     private static MapRecord<String, Object, Object> mapRecord(String symbol, long ts, double p, double q, String bm) {
         Map<Object, Object> m = new LinkedHashMap<>();
         m.put("ts", Long.toString(ts));
