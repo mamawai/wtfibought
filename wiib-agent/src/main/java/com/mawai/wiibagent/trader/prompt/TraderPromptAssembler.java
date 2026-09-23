@@ -145,7 +145,7 @@ public class TraderPromptAssembler {
      */
     private void consumeOwnerNote(AiTrader trader, String injected, int left) {
         // 条件 SQL，以"库里的正文仍是我注入的这条"为前置：trader 是调度时刻的快照，
-        // 取到这里之间隔着数次 HTTP 与多条 SQL、并发满槽时还会在信号量上等几分钟，
+        // 取到这里之间隔着数次 HTTP 与多条 SQL，
         // 期间主人可能已在面板改写或撤回。正文对不上就影响 0 行，只递减自己念过的那条。
         //
         // 两个 SET 都读旧行值（SQL 标准），CASE 判的是递减前的轮次：

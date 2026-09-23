@@ -53,7 +53,7 @@ trader 每次唤醒收到三份注入：平台系统提示词（环境 / 工具 
 
 ```mermaid
 flowchart LR
-    CLK["5m K线收盘事件"] --> SCH{"TraderScheduler<br/>对齐 interval 边界<br/>抢占 + 互斥 + 并发闸"}
+    CLK["5m K线收盘事件"] --> SCH{"TraderScheduler<br/>对齐 interval 边界<br/>抢占 + 互斥"}
     SEN["VolatilitySentinel<br/>5min 振幅超阈值<br/>且持有该币"] -->|"警报（冷静期/预算预检）"| SCH
     SCH --> PA["TraderPromptAssembler<br/>系统提示词 + 账户状态<br/>+ 复盘笔记 + 学习笔记"]
     PA --> RA(("ReactLoop<br/>ReAct 循环"))
@@ -208,6 +208,6 @@ sequenceDiagram
     L-->>T: 下一根 K 线带着两份新笔记醒来
 ```
 
-窗口是**唤醒发出即开**，不等交易跑完——晚开的话 5m 档会在等待期间又醒一次占住 inFlight，那个 trader 的复盘就被跳过了。代价是窗口把阶段 0 的交易执行也圈了进去，时长上界变成唤醒 600s + 复盘 600s + 学习 300s ≈ 25 分钟（三阶段各自内部并行、并发闸 10 槽，超过 10 人按批次再乘）。这是上界不是常态——跑完就关。5m 档 trader 最多丢 5 根 K 线、15m 档 1 根，日线交接每天只有一次，可接受。
+窗口是**唤醒发出即开**，不等交易跑完——晚开的话 5m 档会在等待期间又醒一次占住 inFlight，那个 trader 的复盘就被跳过了。代价是窗口把阶段 0 的交易执行也圈了进去，时长上界变成唤醒 600s + 复盘 600s + 学习 300s ≈ 25 分钟（三阶段各自内部全员并行，不设并发上限）。这是上界不是常态——跑完就关。5m 档 trader 最多丢 5 根 K 线、15m 档 1 根，日线交接每天只有一次，可接受。
 
 chat 与 trader 的联动只到这一步：`trader_agent` 专家只读用户自己的 trader（memory / learning_notes / 决策行 / 计划），三个动作只弹表单，真执行走 trader 动作面板的 REST。learning 只写笔记列与决策行，chat 只读同样几样东西，两边都不碰 trader 本体。

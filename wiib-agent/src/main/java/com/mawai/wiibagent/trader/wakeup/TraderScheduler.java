@@ -19,12 +19,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * trader 调度器：5m K线收盘事件当唯一时钟，对齐到各 trader 的 interval 边界触发唤醒。
- * 并发上限 10（信号量）+ 每 trader 互斥（上一唤醒未完 → 记 SKIPPED，要最新信号不排陈旧任务）；
+ * 每 trader 互斥（上一唤醒未完 → 记 SKIPPED，要最新信号不排陈旧任务），不设全局并发上限；
  * 事件是 per-symbol 的，同一边界多币多次触发靠 firedBoundary 去重。
  * 不做兜底补漏：WS/事件断流丢的K线就丢了——陈旧信号唤醒没有意义（迟到事件由唤醒预算兜底：
  * 距下一边界不足 30s 直接放弃，见 TraderWakeupRunner）。
@@ -42,7 +41,6 @@ import java.util.concurrent.atomic.AtomicLong;
 @RequiredArgsConstructor
 public class TraderScheduler {
 
-    static final int MAX_CONCURRENT_WAKEUPS = 10;
     /** interval → 毫秒；唤醒预算、建 trader 校验、提示词都共用同一份。1d 只留数学（日线交接边界用），不再是唤醒档位 */
     public static final Map<String, Long> INTERVAL_MS = Map.of(
             "5m", 300_000L, "15m", 900_000L, "1h", 3_600_000L, "4h", 14_400_000L, "1d", 86_400_000L);
@@ -69,7 +67,6 @@ public class TraderScheduler {
 
     /** 同一 trader 不并行的拒因；预检与真占位两处共用一份措辞 */
 
-    private final Semaphore slots = new Semaphore(MAX_CONCURRENT_WAKEUPS);
     private final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
     /** 每 trader 最近已触发的边界时刻：多个 watch 币在同一刻收盘会各发一次事件，靠它去重 */
     private final Map<Long, Long> firedBoundary = new ConcurrentHashMap<>();
@@ -174,7 +171,7 @@ public class TraderScheduler {
     }
 
     /**
-     * 交接的一个阶段：每 trader 一个虚拟线程（复用 slots 并发闸与 inFlight 互斥），
+     * 交接的一个阶段：每 trader 一个虚拟线程（复用 inFlight 互斥），
      * 返回线程列表由调用方 join 成屏障。
      * inFlight 抢不到＝上一边界的交易还没跑完（预算最长600s），该 trader 本阶段跳过——
      * 硬等会拖住全体，而复盘/学习明天还有机会；这也是屏障不脏读的第二道闸：
@@ -189,14 +186,7 @@ public class TraderScheduler {
             }
             threads.add(Thread.startVirtualThread(() -> {
                 try {
-                    slots.acquire();
-                    try {
-                        action.accept(t);
-                    } finally {
-                        slots.release();
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+                    action.accept(t);
                 } catch (Exception e) {
                     // 单人异常不许拖垮屏障：runner 内部已有 ERROR 行留痕，这里兜住意外逃逸的
                     log.warn("[TraderSched] {}异常逃逸 traderId={} msg={}", label, t.getId(), e.getMessage());
@@ -264,14 +254,7 @@ public class TraderScheduler {
         lastWakeAt.put(trader.getId(), nowMs.getAsLong());
         return Thread.startVirtualThread(() -> {
             try {
-                slots.acquire();
-                try {
-                    runner.wake(trader, boundary);
-                } finally {
-                    slots.release();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                runner.wake(trader, boundary);
             } finally {
                 inFlight.remove(trader.getId());
             }
@@ -316,14 +299,7 @@ public class TraderScheduler {
                 trader.getId(), trigger.symbol(), trigger.amplitudePct(), trigger.direction());
         Thread.startVirtualThread(() -> {
             try {
-                slots.acquire();
-                try {
-                    runner.wakeAlert(trader, trigger);
-                } finally {
-                    slots.release();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                runner.wakeAlert(trader, trigger);
             } finally {
                 inFlight.remove(trader.getId());
             }
@@ -404,7 +380,7 @@ public class TraderScheduler {
 
     /**
      * 手动唤醒（动作面板的按钮扣扳机）：走与例行/警报同一套治理——
-     * 预算预检 → 每 trader 互斥 → 信号量，然后虚拟线程上异步跑。
+     * 预算预检 → 每 trader 互斥，然后虚拟线程上异步跑。
      * <p>
      * <b>异步而不是同步等结果</b>：唤醒预算最长 600s，同步等于把调用方的连接压死几分钟；
      * trader 本来就是"后台醒来做完事睡去"的回路，面板只负责扣扳机，结果去竞技场看。
@@ -431,14 +407,7 @@ public class TraderScheduler {
         log.info("[TraderSched] 手动唤醒 traderId={} boundary={}", trader.getId(), boundary);
         Thread.startVirtualThread(() -> {
             try {
-                slots.acquire();
-                try {
-                    runner.wakeManual(trader, boundary);
-                } finally {
-                    slots.release();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                runner.wakeManual(trader, boundary);
             } finally {
                 inFlight.remove(trader.getId());
             }
