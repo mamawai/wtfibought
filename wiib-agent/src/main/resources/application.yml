@@ -73,7 +73,6 @@ agent:
   workbench:
     # 单个 agent 一轮 ReAct 的模型调用上限，达到即收尾，防死转烧钱。注意是"每个 agent 各自"而不是
     # 整轮总量：summarizer 与每个带工具的专家各跑各的 state、计数互不相通，一轮对话的调用数是各家相加。
-    # 这个值就是迭代账里的 L：summarizer 叶子的硬顶按 3L+8 现算(ChatAgentFactory.summarizerLeaf)，改这里那边自动跟上
     run-model-call-limit: 8
     summarize-threshold-tokens: 32000  # 历史估算 token 超此值触发压缩：浅模型把老消息总结成一段替换原文
     summarize-keep-messages: 6         # 压缩后保留的最近消息数(首条用户消息另外无条件保留原文)
