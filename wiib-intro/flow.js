@@ -54,43 +54,46 @@ const PANELS = [
       { id: 'clock', x: 16, y: 16, w: 170, h: 88, tag: 'CLOCK', icon: 'clock',
         title: { zh: 'K 线收盘事件', en: 'Candle close' },
         sub: { zh: '例行 · 对齐 interval 边界', en: 'routine · interval-aligned' },
-        detail: { zh: 'TraderScheduler 以 5m K 线收盘事件为唯一时钟，对齐到各 trader 选定的 interval（5m/15m/1h/4h）边界；同一边界多币多次触发按边界去重。丢失的 K 线不补跑——陈旧信号没有意义。', en: 'TraderScheduler uses 5m candle-close events as its sole clock, aligned to each trader’s chosen interval boundary. Duplicate fires on one boundary are deduped. Lost candles are never replayed — stale signals are worthless.' } },
+        detail: { zh: 'TraderScheduler 以 5m K 线收盘事件为唯一时钟，对齐到各 trader 选定的 interval（5m/15m/1h/4h）边界；同一边界多币多次触发按边界去重。边界撞上 High 级数据公布时刻，先过财经日历等待闸，最多等 30 秒拿到实际值再发。丢失的 K 线不补跑——陈旧信号没有意义。', en: 'TraderScheduler uses 5m candle-close events as its sole clock, aligned to each trader’s chosen interval boundary. Duplicate fires on one boundary are deduped. When a boundary lands on a High-impact data release, the econ-calendar gate waits up to 30s for the actual value first. Lost candles are never replayed — stale signals are worthless.' } },
       { id: 'sentinel', x: 16, y: 120, w: 170, h: 104, tag: 'SENTRY', icon: 'activity',
         title: { zh: '波动哨兵', en: 'Volatility sentinel' },
         rows: [
           { id: 'amp', t: { zh: '5min 振幅 > 阈值×灵敏度', en: 'range > thresh × sens' } },
           { id: 'hold', t: { zh: '持仓/挂单才惊动 · 冷静期', en: 'holders only · cooldown' } }
         ],
-        detail: { zh: '盯 markPrice tick（约 1s 一跳）的 5 分钟滚动振幅，超过「币基准阈值 × trader 灵敏度」且该 trader（1h/4h 档）持有该币仓位或挂单才触发警报唤醒；另有冷静期与预算预检。空仓者不惊动，它是例行唤醒的补充而非替代。', en: 'Watches the 5-minute rolling range of markPrice ticks. Fires an alert wakeup only when range exceeds the per-symbol threshold × trader sensitivity AND that (1h/4h) trader holds a position or order in the symbol; cooldown and budget prechecks apply. Flat traders are never disturbed.' } },
+        detail: { zh: '盯 markPrice tick（约 1s 一跳）的 5 分钟滚动振幅，超过「币基准阈值 × trader 灵敏度」且该 trader（1h/4h 档）持有该币仓位或挂单才触发警报唤醒；另有 5 分钟冷静期与预算预检，唤醒时段外也不叫。空仓者不惊动，它是例行唤醒的补充而非替代。', en: 'Watches the 5-minute rolling range of markPrice ticks. Fires an alert wakeup only when range exceeds the per-symbol threshold × trader sensitivity AND that (1h/4h) trader holds a position or order in the symbol; a 5-minute cooldown and a budget precheck apply, and nothing fires outside the wake window. Flat traders are never disturbed.' } },
       { id: 'manual', x: 16, y: 240, w: 170, h: 76, tag: 'MANUAL', icon: 'mouse-pointer-click',
         title: { zh: '手动唤醒 / 点播复盘', en: 'Manual wake / on-demand review' },
-        detail: { zh: '主人从动作面板（或研判工作台弹出的表单）手动唤醒；不受唤醒时段过滤，但同样过互斥与并发闸。', en: 'The owner triggers a wakeup from the action panel (or a form pushed into chat). It skips the wake-window filter but still passes mutex and the concurrency gate.' } },
+        detail: { zh: '主人从动作面板（或研判工作台弹出的表单）手动唤醒；不受唤醒时段过滤，但同样过互斥和预算预检——距下一根 K 线不足 30 秒不让点。', en: 'The owner triggers a wakeup from the action panel (or a form pushed into chat). It skips the wake-window filter but still passes the mutex and the budget precheck — less than 30s to the next candle and the button stays locked.' } },
       { id: 'sched', x: 216, y: 62, w: 196, h: 150, tag: 'SCHED', icon: 'timer',
         title: { zh: 'TraderScheduler 准入', en: 'Scheduler admission' },
         rows: [
           { id: 'mutex', led: true, t: { zh: '每 trader 互斥 · 忙则 SKIPPED', en: 'mutex · busy = SKIPPED' } },
-          { id: 'gate', led: true, t: { zh: '全局并发闸 10 槽', en: 'global gate · 10 slots' } },
           { id: 'window', led: true, t: { zh: '唤醒时段过滤（北京时间）', en: 'wake window (Beijing time)' } },
-          { id: 'budget', led: true, t: { zh: '预算 ≤600s · 边界前 5s 截止', en: 'budget ≤600s · −5s deadline' } }
+          { id: 'budget', led: true, t: { zh: '预算 ≤600s · 边界前 5s 截止', en: 'budget ≤600s · −5s deadline' } },
+          { id: 'hand', led: true, t: { zh: '日终交接窗口内一律拒', en: 'blocked during handover' } }
         ],
-        detail: { zh: '准入四件事：每 trader 互斥（上一轮没跑完，新信号记 SKIPPED 不排队）、全局并发闸 10 槽、唤醒时段过滤（时段外静默跳过）、预算计算——截止到下一边界前 5 秒、上限 600 秒，距边界不足 30 秒判「触发过晚」放弃且不算失败。', en: 'Four checks: per-trader mutex (a busy trader records SKIPPED, no queueing), a 10-slot global gate, the wake-window filter, and the budget — capped at 600s, ending 5s before the next boundary; under 30s left means “too late”, abandoned without counting as a failure.' } },
+        detail: { zh: '准入四件事：每 trader 互斥（上一轮没跑完，新信号记 SKIPPED 不排队）、唤醒时段过滤（时段外静默跳过）、预算计算——截止到下一边界前 5 秒、上限 600 秒，距边界不足 30 秒判「触发过晚」放弃且不算失败；日终交接的停工窗口里四个入口一律拒。不设全局并发上限，只按 trader 互斥。', en: 'Four checks: per-trader mutex (a busy trader records SKIPPED, no queueing), the wake-window filter, and the budget — capped at 600s, ending 5s before the next boundary; under 30s left means “too late”, abandoned without counting as a failure; during the daily-handover blackout all four entries are refused. There is no global concurrency cap, only the per-trader mutex.' } },
+      // 前四个进系统提示词，后五个进开场白（user 消息）
       { id: 'asm', x: 442, y: 62, w: 196, h: 148, tag: 'PROMPT', icon: 'file-text',
-        title: { zh: 'TraderPromptAssembler', en: 'TraderPromptAssembler' },
+        title: { zh: '系统提示词 + 开场白', en: 'System prompt + opening' },
         chips: [
-          { id: 'c1', t: { zh: '身份/规格/纪律', en: 'identity/spec/discipline' } },
-          { id: 'c2', t: { zh: '账户状态', en: 'account state' } },
-          { id: 'c3', t: { zh: '最近决策+论点战绩', en: 'recent decisions+thesis stats' } },
-          { id: 'c4', t: { zh: '复盘笔记', en: 'review notes' } },
-          { id: 'c5', t: { zh: '学习笔记', en: 'learning notes' } },
-          { id: 'c6', t: { zh: '财经日历', en: 'econ calendar' } },
-          { id: 'c7', t: { zh: '主人留言', en: 'owner note' } }
+          { id: 'c1', t: { zh: '平台规则', en: 'platform rules' } },
+          { id: 'c2', t: { zh: '复盘笔记', en: 'review notes' } },
+          { id: 'c3', t: { zh: '学习笔记', en: 'learning notes' } },
+          { id: 'c4', t: { zh: '交易指令', en: 'owner playbook' } },
+          { id: 'c5', t: { zh: '事件·账户', en: 'events+account' } },
+          { id: 'c6', t: { zh: '上轮结论', en: 'last conclusion' } },
+          { id: 'c7', t: { zh: '论点战绩', en: 'play stats' } },
+          { id: 'c8', t: { zh: '财经日历', en: 'econ calendar' } },
+          { id: 'c9', t: { zh: '主人留言', en: 'owner note' } }
         ],
-        detail: { zh: '每次唤醒现读现拼，零热更新机制——用户改完自定义提示词，下一根 K 线自然生效。复盘笔记与学习笔记并列注入不合并：来源分开，模型才分得清哪条是自己的教训、哪条是学来的。', en: 'Reassembled fresh on every wakeup — edit your custom prompt and the next candle simply picks it up. Review and learning notes are injected side by side, never merged: separate sources keep “my lesson” and “learned from peers” distinguishable.' } },
+        detail: { zh: '每次唤醒现读现拼，零热更新机制。系统提示词放平台规则（只讲事实：环境、工具、规格、护栏、收尾格式）、复盘笔记、学习笔记和主人的交易指令——方法与纪律只来自主人，平台不带交易观点。状态进开场白：上次醒来后的事件、账户、上一轮结论、论点战绩、财经日历，主人留言压在最末。两份笔记并列不合并，模型才分得清哪条是自己的教训、哪条是学来的。', en: 'Reassembled fresh on every wakeup, no hot-reload machinery. The system prompt carries the platform rules (facts only: environment, tools, specs, guardrails, closing format), the review notes, the learning notes and the owner’s playbook — method and discipline come only from the owner. State goes into the opening message: events since the last wake, the account, the last conclusion, play stats, the econ calendar, with the owner’s note last. The two notes stay separate so the model can tell its own lessons from borrowed ones.' } },
       { id: 'agent', x: 668, y: 84, w: 180, h: 104, tag: 'REACT', icon: 'cpu',
-        title: { zh: 'ReactAgent 决策循环', en: 'ReactAgent loop' },
-        counter: { label: { zh: '模型调用', en: 'model calls' }, max: 8 },
-        rows: [ { id: 'stateless', t: { zh: '无状态 · 每唤醒一个会话', en: 'stateless · fresh per wake' } } ],
-        detail: { zh: '一次唤醒 = 一个无状态 ReactAgent 会话，BYOK 模型（主人的 key，AES-GCM 加密存库）。单轮模型调用上限 8 次——ReAct 保险丝，挡住无限工具循环烧用户的钱；连同 600 秒预算与连败暂停，全部停止条件都在模型之外。', en: 'One wakeup = one stateless ReactAgent session on the owner’s BYOK model (key stored AES-GCM encrypted). Hard cap of 8 model calls per wake — the ReAct fuse against infinite tool loops — plus the 600s budget and failure-pause: every stop condition lives outside the model.' } },
+        title: { zh: 'ReactLoop 决策循环', en: 'ReactLoop' },
+        counter: { label: { zh: '模型调用', en: 'model calls' }, max: 12 },
+        rows: [ { id: 'stateless', t: { zh: '无状态 · 首轮强制调工具', en: 'stateless · tool call forced first' } } ],
+        detail: { zh: '一次唤醒 = 一个无状态 ReactLoop 会话（自写的 ReAct 循环），BYOK 模型（主人的 key，AES-GCM 加密存库）。首轮强制调工具：不看数据不许决策。单轮模型调用上限 12 次——会并行的模型两三次就取完数，不并行的一轮一个，多币求证要这个余量；最后一次能执行工具时贴一句收尾提示，下一次直接给结论。连同 600 秒预算与连败 5 次暂停，停止条件都在模型之外。', en: 'One wakeup = one stateless ReactLoop session (a hand-written ReAct loop) on the owner’s BYOK model (key stored AES-GCM encrypted). The first call must use a tool: no deciding without data. Cap of 12 model calls per wake — parallel callers finish in two or three, serial ones need the headroom to check several symbols; the last tool-capable call gets a wrap-up hint so the next one concludes. With the 600s budget and pause-after-5-failures, every stop condition lives outside the model.' } },
       { id: 'data', x: 888, y: 16, w: 180, h: 196, tag: 'TOOLS', icon: 'database',
         title: { zh: '数据工具 ×8', en: 'Data tools ×8' },
         rows: [
@@ -103,10 +106,10 @@ const PANELS = [
       { id: 'guard', x: 888, y: 232, w: 180, h: 100, tag: 'GUARD', icon: 'shield-check',
         title: { zh: 'TradeGuard 硬校验', en: 'TradeGuard' },
         rows: [
-          { id: 'spec', t: { zh: '杠杆/保证金/仓位数/双开', en: 'lev/margin/slots/hedge' } },
-          { id: 'veto', t: { zh: '越界一票否决 · 可修正重试', en: 'veto, not clamp · retry OK' } }
+          { id: 'spec', t: { zh: '杠杆/保证金/仓位/双开', en: 'lev/margin/slots/hedge' } },
+          { id: 'veto', t: { zh: '止损止盈必填 · 越界即拒', en: 'SL+TP required · veto' } }
         ],
-        detail: { zh: '仓位规格全部来自主人的设定，越界一律拒绝而不是悄悄截断——平台把数字改小模型不知道，后面的止损计算全是错的。拒绝原因原样返回，模型看得懂就能修正重试；所有调用（含被拒的）都记入动作轨迹。', en: 'Position specs come from the owner. Out-of-range orders are rejected, never silently clamped — a clamped size the model doesn’t know about poisons every stop-loss calculation after it. Rejection reasons go back verbatim so the model can correct and retry; every call, rejected ones included, lands in the action trace.' } },
+        detail: { zh: '开仓入口一票否决：币种白名单、杠杆区间、保证金占比、同币杠杆一致、单仓模式、禁对冲都来自主人的设定；止损和止盈必填且方向要对，限价偏离现价不超过 5%。越界一律拒绝而不是悄悄截断——平台把数字改小模型不知道，后面的止损计算全是错的。拒因原样返回，还把能用的数量区间算好给它，模型改了就能重试；所有调用（含被拒的）都记入动作轨迹。', en: 'A veto at the open: symbol whitelist, leverage range, margin share, same-symbol leverage, single-position mode and no-hedge all come from the owner; stop-loss and take-profit are both required and must sit on the right side, and a limit price may not stray more than 5% from mark. Out-of-range orders are rejected, never silently clamped — a size the model didn’t choose poisons every stop calculation after it. The reason goes back verbatim with the allowed quantity range worked out, so the model can fix and retry; every call, rejected ones included, lands in the action trace.' } },
       { id: 'trade', x: 888, y: 348, w: 180, h: 176, tag: 'TOOLS', icon: 'wrench',
         title: { zh: '交易工具 ×7', en: 'Trade tools ×7' },
         rows: [
@@ -115,7 +118,7 @@ const PANELS = [
           { id: 'tp', t: 'set_take_profit' }, { id: 'plan', t: 'write_plan' },
           { id: 'cancel', t: 'cancel_order' }
         ],
-        detail: { zh: '非 Spring bean：每次唤醒 new 一个，绑定该 trader 的 sim 子账户与币种白名单。开仓必须给论点标签、数据引用、失效条件；退出只有三条路——止损带走、止盈带走、失效条件触发后主动平。', en: 'Not Spring beans: constructed fresh per wakeup, bound to this trader’s sim sub-account and symbol whitelist. Every open requires a thesis tag, data citations and an invalidation condition; there are exactly three exits — stop-loss, take-profit, or closing when the invalidation triggers.' } },
+        detail: { zh: '非 Spring bean：每次唤醒 new 一个，绑定该 trader 的 sim 子账户与币种白名单。开仓要带止损、止盈、论点标签、数据引用和失效条件，计划随开仓落库、之后不可改；write_plan 只给没有计划的持仓补立。平仓要写一句理由。什么时候退出由主人的交易指令定，默认四条路：止损带走、到目标位、失效条件触发、主人留言让离场。', en: 'Not Spring beans: constructed fresh per wakeup, bound to this trader’s sim sub-account and symbol whitelist. An open carries its stop, target, thesis tag, data citation and invalidation; the plan is stored with the position and never edited — write_plan only backfills a position that has none. A close needs a one-line reason. When to exit is the owner’s playbook; the default lists four ways out: stop-loss, target, invalidation, or the owner’s note saying leave.' } },
       { id: 'sim', x: 888, y: 544, w: 180, h: 88, tag: 'SIM', icon: 'server',
         title: { zh: 'wiib-sim 子账户', en: 'wiib-sim account' },
         sub: { zh: '模拟盘账本 · 唯一事实源', en: 'the ledger of record' },
@@ -127,7 +130,7 @@ const PANELS = [
           { id: 'plan2', t: { zh: '计划 → ai_trader_plan 归档不删', en: 'plans → ai_trader_plan, archived' } }
         ],
         badge: { zh: '全站公开', en: 'PUBLIC' },
-        detail: { zh: '推理全文、工具轨迹、开仓论点与失效条件全部公开上决策时间线；计划了结归档不删，是每日 reviewer 复盘「论点 → 结局」配对的原料。', en: 'Full reasoning, tool trace, theses and invalidation conditions all go public on the decision timeline. Settled plans are archived, never deleted — they are the raw material for the daily reviewer’s thesis→outcome pairing.' } },
+        detail: { zh: '推理全文、交易动作、开仓论点与失效条件全部公开上决策时间线；计划了结归档不删，是每日 reviewer 复盘「论点 → 结局」配对的原料。思考过程另走一条线：逐字吐字和每次工具的入参回执实时推给主人（唤醒现场），也落库可回看，但只有主人看得到——公开的只到决策正文为止。', en: 'Full reasoning, trade actions, theses and invalidation conditions all go public on the decision timeline. Settled plans are archived, never deleted — they are the raw material for the daily reviewer’s thesis→outcome pairing. The process runs on a separate line: token-by-token output and every tool’s arguments and results stream live to the owner and are kept for replay, but only the owner can see them — the public part stops at the decision text.' } },
       { id: 'rev', x: 442, y: 460, w: 200, h: 124, tag: 'REVIEW', icon: 'file-text',
         title: { zh: 'reviewer workflow', en: 'reviewer workflow' },
         sub: { zh: '日线边界 · 自己看自己', en: 'daily · self-review' },
@@ -136,7 +139,7 @@ const PANELS = [
           { id: 'r2', t: { zh: '单次调用 · 无工具', en: 'single call · no tools' } },
           { id: 'r3', t: { zh: '复盘笔记 → memory', en: 'review note → memory' } }
         ],
-        detail: { zh: '不是 agent：素材由 ReviewMaterialAssembler 纯代码算齐（战绩表 / 论点→结局配对 / 时间线 / 价格路径），模型只负责解读，没机会挑对自己有利的行情。战绩只许复述、先找错误再找亮点、教训条数设上限；只注入上一期复盘，靠输出完成继承。', en: 'Not an agent: materials come precomputed in pure code (stats table, thesis→outcome pairs, timeline, price paths); the model only interprets — it never cherry-picks. Stats may only be quoted; errors before highlights; lesson count capped. Only the previous review is injected; inheritance happens in the output.' } },
+        detail: { zh: '不是 agent：素材由 ReviewMaterialAssembler 纯代码算齐（战绩表 / 论点→结局配对 / 时间线 / 价格路径），模型只负责解读，没机会挑对自己有利的行情。对错以主人的交易指令为尺子；战绩只许复述、先找错误再找亮点、教训条数设上限。记忆分「已验证纪律 / 待验证假设」两栏，只注入上一期，靠输出完成继承。没有新交易、或纯观望且市场平静的一天直接跳过，不白烧钱。', en: 'Not an agent: materials come precomputed in pure code (stats table, thesis→outcome pairs, timeline, price paths); the model only interprets — it never cherry-picks. Right and wrong are measured against the owner’s playbook; stats may only be quoted, errors before highlights, lessons capped. Memory has two columns, verified rules and hypotheses; only the previous one is injected, inheritance happens in the output. A day with no new trades, or pure waiting in a calm market, is skipped without spending a call.' } },
       { id: 'learn', x: 216, y: 460, w: 200, h: 124, tag: 'LEARN', icon: 'users',
         title: { zh: 'learning agent', en: 'learning agent' },
         sub: { zh: '全体复盘之后 · 向别人学', en: 'learn from peers' },
@@ -145,7 +148,7 @@ const PANELS = [
           { id: 'l2', t: { zh: '排行榜 → 深看某人', en: 'leaderboard → deep-dive' } },
           { id: 'l3', t: { zh: '学习笔记 → learning_notes', en: 'note → learning_notes' } }
         ],
-        detail: { zh: 'ReactAgent + 唯一只读工具 peer_insights：无参回排行榜，传 traderId 深看某人的复盘全文 / 论点→结局配对。同侪池 = 勾了开关 + 未暂停 + 在场；除自己不足 2 人本日不学。反照抄三条：【不学什么】必填、每条学习带证据与差距数字、引用战绩必须带笔数。', en: 'A ReactAgent with a single read-only tool, peer_insights: no args → leaderboard; a traderId → that peer’s full reviews and thesis→outcome pairs. Peer pool = opted-in, not paused, active; fewer than 2 peers → skip today. Anti-copy rules: “what not to learn” is mandatory, every lesson carries evidence and a gap number, cited stats carry trade counts.' } }
+        detail: { zh: 'ReactLoop（上限 8 次调用）+ 唯一只读工具 peer_insights：无参回排行榜，传 traderId 深看某人的复盘全文 / 论点→结局配对。同侪池 = 勾了开关 + 未暂停 + 在场；除自己不足 2 人本日不学。反照抄三条：【不学什么】必填、每条学习带证据与差距数字、引用战绩必须带笔数。', en: 'A ReactLoop (8 calls max) with a single read-only tool, peer_insights: no args → leaderboard; a traderId → that peer’s full reviews and thesis→outcome pairs. Peer pool = opted-in, not paused, active; fewer than 2 peers → skip today. Anti-copy rules: “what not to learn” is mandatory, every lesson carries evidence and a gap number, cited stats carry trade counts.' } }
     ],
     edges: [
       { id: 'ck-sch', from: 'clock', to: 'sched', pts: [[186, 60], [201, 60], [201, 112], [216, 112]] },
@@ -171,7 +174,7 @@ const PANELS = [
     id: 'chat',
     num: 'HARNESS 02',
     title: { zh: 'chat agent', en: 'chat agent' },
-    sub: { zh: '研判工作台 · 平铺编排 + ReactAgent 叶子', en: 'research workbench · flat orchestration + ReactAgent leaves' },
+    sub: { zh: '研判工作台 · 平铺编排 + ReactLoop 叶子', en: 'research workbench · flat orchestration + ReactLoop leaves' },
     w: 1180, h: 600,
     lanes: [
       { x: 496, y: 22, t: { zh: '专家并行 · EXPERTS', en: 'EXPERTS · PARALLEL' } }
@@ -191,16 +194,16 @@ const PANELS = [
         ],
         detail: { zh: '四道准入全在建流之前：解析端点、按配置指纹取/建叶子（LRU 32，指纹含 userId 做数据隔离）、用户并发闸、全局 10 槽。全过了才建 SSE 流——一旦响应变成 event-stream，再报错前端就拿不到结构化错误码了。', en: 'All four gates run before the stream exists: endpoint resolution, leaf fetch/build by config fingerprint (LRU 32; userId is in the fingerprint for data isolation), the per-user gate, the 10-slot global gate. Only then is the SSE stream created — once the response is an event-stream, errors can no longer carry structured codes.' } },
       { id: 'router', x: 226, y: 174, w: 200, h: 164, tag: 'ROUTER', icon: 'route',
-        title: { zh: '路由 · 浅模型', en: 'Router · light model' },
+        title: { zh: '路由 · Jev / 浅模型', en: 'Router · Jev / light model' },
         counter: { label: { zh: '派发轮次', en: 'dispatch round' }, max: 3 },
         chips: [
           { id: 'dm', t: 'market_agent' }, { id: 'dn', t: 'news_agent' }, { id: 'dt', t: 'trader_agent' }
         ],
         rows: [
-          { id: 'tc', t: { zh: '结构化 tool_call · 只认值', en: 'structured tool_call only' } },
+          { id: 'jev', t: { zh: '配了 Jev 先问 · 否则浅模型', en: 'Jev first · else light model' } },
           { id: 'to', t: { zh: '90s 超时 → 降级 FINISH', en: '90s timeout → FINISH' } }
         ],
-        detail: { zh: '浅模型调 route 工具给出结构化去向，循环只认这个值、不解析消息文本。同一专家整轮只派一次——去重名单才是真正让循环收敛的东西，3 轮上限兜「去重失灵」的底；超时或异常降级 FINISH，路由挂了照样作答。', en: 'The light model calls a route tool that returns a structured destination; the loop trusts only that value, never parsed text. Each expert is dispatched once per turn — the dedup list is what actually makes the loop converge; the 3-round cap backstops it. Timeouts and errors degrade to FINISH: a dead router never blocks the answer.' } },
+        detail: { zh: '用户配了 Jev 就先问它：三道是非题一次问完「要不要行情 / 新闻 / trader 专家」，概率过 0.5 的进名单；没配、调用失败、回包缺题都回落到浅模型路由——浅模型调 route 工具给出结构化去向，循环只认这个值、不解析消息文本。同一专家整轮只派一次，去重名单才是真正让循环收敛的东西，3 轮上限兜底；超时或异常降级 FINISH，路由挂了照样作答。', en: 'If the user has set up Jev, it is asked first: three yes/no questions in one call — do we need the market, news or trader expert — and anything above 0.5 gets dispatched. No Jev, a failed call or a missing answer falls back to the light-model router, which calls a route tool for a structured destination; the loop trusts only that value, never parsed text. Each expert is dispatched once per turn — the dedup list is what makes the loop converge, the 3-round cap backstops it. Timeouts and errors degrade to FINISH: a dead router never blocks the answer.' } },
       { id: 'xm', x: 496, y: 40, w: 210, h: 140, tag: 'EXPERT', icon: 'candlestick-chart',
         title: 'market_agent',
         rows: [
@@ -231,10 +234,10 @@ const PANELS = [
         ],
         rows: [
           { id: 'sfuse', t: { zh: '≤8 次调用 · 流式外发', en: '≤8 calls · streamed out' } },
-          { id: 'ws', t: { zh: 'web_search · 仅 responses 端点', en: 'web_search · responses only' } }
+          { id: 'ws', t: { zh: '服务端搜索 · 端点勾选才有', en: 'server search · if the endpoint allows' } }
         ],
         stream: 3,
-        detail: { zh: '深模型只写最终回答，提示词一个字不提「要不要再派发」——让它同时纠结作答和派发就会反复横跳。wake / review / note 三个动作只往对话里推表单，按下按钮的是用户；run_deep_analysis 当场烧钱，走 HITL 闸。', en: 'The deep model only writes the final answer; its prompt never mentions dispatching — a model juggling “answer or dispatch” oscillates forever. The three trader actions merely push a form into the chat (the user presses the button); run_deep_analysis burns money immediately, so it goes through the HITL gate.' } },
+        detail: { zh: '深模型只写最终回答，提示词一个字不提「要不要再派发」——让它同时纠结作答和派发就会反复横跳。wake / review / note 三个动作只往对话里推表单，按下按钮的是用户；run_deep_analysis 当场烧钱，走 HITL 闸。联网搜索只发给这一个叶子：端点是 responses / anthropic / gemini 协议且勾了开关才捎上许可，提示词也按能不能搜二选一，不承诺做不到的事。', en: 'The deep model only writes the final answer; its prompt never mentions dispatching — a model juggling “answer or dispatch” oscillates forever. The three trader actions merely push a form into the chat (the user presses the button); run_deep_analysis burns money immediately, so it goes through the HITL gate. Web search is granted to this leaf alone, only when the endpoint speaks responses / anthropic / gemini and has search switched on — and the prompt is picked to match, so it never promises what the endpoint cannot do.' } },
       { id: 'yq', x: 1016, y: 40, w: 150, h: 124, tag: 'QUEUE', icon: 'pause',
         title: 'ChatYieldCoordinator',
         rows: [
@@ -250,15 +253,15 @@ const PANELS = [
           { id: 'hkey', t: { zh: '键 = 会话+工具+标的', en: 'key = session+tool+symbol' } }
         ],
         btns: { ok: { zh: '确认执行', en: 'Approve' }, no: { zh: '取消', en: 'Dismiss' } },
-        detail: { zh: '闸门不在工具体内，挂在 summarizer 工具边上：授权键 = sessionId + 工具名 + 归一化标的。卡片上写 ETHUSDT、模型改口要 BTCUSDT 时键不匹配，重新弹卡——判断发生在信息完整的那一层。', en: 'The gate hangs on the summarizer’s tool edge, not inside the tool: approval key = sessionId + tool + normalized symbol. If the card says ETHUSDT and the model switches to BTCUSDT, the key mismatches and a new card pops — the judgment lives at the layer that has full information.' } },
+        detail: { zh: '闸门不在工具体内，是 summarizer 的 ReactLoop 执行工具前先问的一道关（ApprovalGate）：授权键 = sessionId + 工具名 + 归一化标的。卡片上写 ETHUSDT、模型改口要 BTCUSDT 时键不匹配，重新弹卡——判断发生在信息完整的那一层。', en: 'The gate is not inside the tool: the summarizer’s ReactLoop asks it before running any tool (ApprovalGate). Approval key = sessionId + tool + normalized symbol. If the card says ETHUSDT and the model switches to BTCUSDT, the key mismatches and a new card pops — the judgment lives at the layer that has full information.' } },
       { id: 'hist', x: 756, y: 444, w: 250, h: 108, tag: 'STORE', icon: 'database',
-        title: { zh: '会话历史 · 长期记忆', en: 'History · long-term memory' },
+        title: { zh: '会话历史', en: 'Session history' },
         rows: [
           { id: 'ow', t: { zh: '终态整体覆盖写', en: 'final state overwrites whole' } },
           { id: 'cp', t: { zh: '>32k tokens 浅模型压缩', en: '>32k tokens → light-model summary' } },
-          { id: 'mem', t: { zh: '跨会话记忆 · 规则化不烧 LLM', en: 'cross-session memory · rule-based' } }
+          { id: 'nx', t: { zh: '下一轮从这里起跑', en: 'the next turn starts here' } }
         ],
-        detail: { zh: '一轮的终态（含压缩替换后的历史）整体覆盖写入 workbench_chat_context，下一轮从这里起跑；跨会话长期记忆规则化写入，不额外烧 LLM。', en: 'The turn’s final state — compressed history included — overwrites workbench_chat_context wholesale; the next turn starts from there. Cross-session memory is written by rules, burning no extra LLM calls.' } }
+        detail: { zh: '一轮的终态（含压缩替换后的历史）整体覆盖写入 workbench_chat_context，裸 JSON 落库，下一轮从这里起跑。历史估算超过 32k tokens 时，浅模型把老消息总结成一段替换原文，只留最近几条原样。', en: 'The turn’s final state — compressed history included — overwrites workbench_chat_context wholesale as plain JSON; the next turn starts from there. Past roughly 32k tokens the light model folds the older messages into one summary and keeps only the last few verbatim.' } }
     ],
     edges: [
       { id: 'u-g', from: 'user', to: 'gates', pts: [[91, 140], [91, 174]] },
@@ -303,18 +306,9 @@ const STEP = {
 };
 
 /* ---------- 渲染 ---------- */
-const R = 9; // 导线拐角半径
+/* 导线：折线直角拐弯 */
 function orthPath(pts) {
-  let d = `M ${pts[0][0]} ${pts[0][1]}`;
-  for (let i = 1; i < pts.length - 1; i++) {
-    const [x, y] = pts[i], [px, py] = pts[i - 1], [nx, ny] = pts[i + 1];
-    const r = Math.min(R, Math.hypot(x - px, y - py) / 2, Math.hypot(nx - x, ny - y) / 2);
-    const ax = x - Math.sign(x - px) * r, ay = y - Math.sign(y - py) * r;
-    const bx = x + Math.sign(nx - x) * r, by = y + Math.sign(ny - y) * r;
-    d += ` L ${ax} ${ay} Q ${x} ${y} ${bx} ${by}`;
-  }
-  const l = pts[pts.length - 1];
-  return d + ` L ${l[0]} ${l[1]}`;
+  return pts.map(([x, y], i) => `${i ? 'L' : 'M'} ${x} ${y}`).join(' ');
 }
 
 function renderPanel(cfg, mount) {
@@ -324,12 +318,12 @@ function renderPanel(cfg, mount) {
   const head = el('div', 'panel-head');
   const led = el('span', 'led');
   const title = el('div', 'panel-title');
-  title.innerHTML = `<span class="microlabel">${cfg.num}</span><b>${esc(T(cfg.title))}</b><small>${esc(T(cfg.sub))}</small>`;
+  title.innerHTML = `<span class="pn">${cfg.num}</span><b>${esc(T(cfg.title))}</b><small>${esc(T(cfg.sub))}</small>`;
   const status = el('div', 'panel-status');
   const transport = el('div', 'transport');
-  const bPlay = el('button', 'ctl-btn'); bPlay.innerHTML = '<svg data-icon="pause"></svg>'; bPlay.title = T(UI.pause);
-  const bRe = el('button', 'ctl-btn'); bRe.innerHTML = '<svg data-icon="rotate-ccw"></svg>'; bRe.title = T(UI.restart);
-  const bSpd = el('button', 'ctl-btn'); bSpd.textContent = '1.0×';
+  const bPlay = el('button', 'ibtn'); bPlay.innerHTML = '<svg data-icon="pause"></svg>'; bPlay.title = T(UI.pause);
+  const bRe = el('button', 'ibtn'); bRe.innerHTML = '<svg data-icon="rotate-ccw"></svg>'; bRe.title = T(UI.restart);
+  const bSpd = el('button', 'ibtn txt num'); bSpd.textContent = '1.0×';
   transport.append(bPlay, bRe, bSpd);
   head.append(led, title, status, transport);
 
@@ -379,7 +373,7 @@ function renderPanel(cfg, mount) {
   if (cfg.id === 'trader') {
     const lg = UI.legend;
     const legend = el('div', 'legend');
-    legend.innerHTML = `<div class="microlabel">${esc(T(lg.title))}</div>
+    legend.innerHTML = `<div class="lg-t">${esc(T(lg.title))}</div>
       <div class="lg-row"><span class="lg-pulse"></span>${esc(T(lg.pulse))}</div>
       <div class="lg-row"><span class="lg-led"></span>${esc(T(lg.led))}</div>
       <div class="lg-row"><span class="lg-dash"></span>${esc(T(lg.back))}</div>
@@ -397,7 +391,7 @@ function renderPanel(cfg, mount) {
   wrap.appendChild(canvas);
 
   const trace = el('div', 'trace');
-  trace.innerHTML = `<div class="trace-head"><span class="microlabel">${UI.trace}</span><span class="led run" style="width:5px;height:5px"></span></div>`;
+  trace.innerHTML = `<div class="trace-head">${UI.trace}<span class="led run"></span></div>`;
   const tlines = el('div', 'trace-lines');
   trace.appendChild(tlines);
   view.tlines = tlines;
@@ -660,8 +654,10 @@ class Runner {
     const id = this.runId;
     path.classList.add('on');
     const len = path.getTotalLength();
-    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    c.setAttribute('r', opts.r || 3.5);
+    // 脉冲是个小方块，s=边长的一半，坐标按中心换算成左上角
+    const s = opts.r || 3.5;
+    const c = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    c.setAttribute('width', s * 2); c.setAttribute('height', s * 2);
     c.setAttribute('class', 'pulse' + (opts.cls ? ' ' + opts.cls : ''));
     this.v.svg.appendChild(c);
     const dur = (opts.dur || 650) / this.speed;
@@ -674,7 +670,7 @@ class Runner {
         elapsed += ts - last; last = ts;
         const k = Math.min(elapsed / dur, 1);
         const p = path.getPointAtLength((opts.reverse ? 1 - k : k) * len);
-        c.setAttribute('cx', p.x); c.setAttribute('cy', p.y);
+        c.setAttribute('x', p.x - s); c.setAttribute('y', p.y - s);
         if (k < 1) requestAnimationFrame(step);
         else { c.remove(); if (!opts.hold) setTimeout(() => { if (id === this.runId) path.classList.remove('on'); }, 350); res(); }
       };
@@ -704,7 +700,7 @@ class Runner {
     v.panel.querySelectorAll('[data-c]').forEach(b => b.textContent = '0');
     v.panel.querySelectorAll('.sline').forEach(s => s.textContent = '');
     Object.values(v.paths).forEach(p => p.classList.remove('on'));
-    v.svg.querySelectorAll('circle').forEach(c => c.remove());
+    v.svg.querySelectorAll('.pulse').forEach(c => c.remove());
   }
   async run() {
     const id = ++this.runId;
@@ -737,13 +733,21 @@ const TR_SCENES = [
 ];
 
 /* 共用前半段：触发 → 准入 → 组装 → 进循环 */
-async function trEnter(c, alert) {
+async function trEnter(c, alert, calendar) {
   if (alert) {
     c.on('sentinel');
     c.row('sentinel', 'amp', 'hit'); c.row('sentinel', 'hold', 'hit');
     c.log('SENTRY', { zh: '5min 振幅 2.4% 超阈值 · 持有 ETH → 警报唤醒', en: '5min range 2.4% over threshold · holds ETH → alert wakeup' }, 'warn');
     await c.sleep(700);
     await c.pulse('sn-sch');
+  } else if (calendar) {
+    // 边界撞上数据公布：先等实际值再发，开场白里的财经日历才带得上刚公布的数
+    c.on('clock');
+    c.log('CLOCK', { zh: '1h 边界 22:00 撞上 ISM 制造业 PMI 公布 · 先等实际值', en: '1h boundary at 22:00 lands on the ISM PMI release · waiting for the actual' }, 'warn');
+    await c.sleep(1100);
+    c.log('CLOCK', { zh: '实际值已到（等了 7s）· 例行唤醒发出', en: 'actual value in (waited 7s) · routine wakeup fired' }, 'good');
+    await c.sleep(500);
+    await c.pulse('ck-sch');
   } else {
     c.on('clock');
     c.log('CLOCK', { zh: '1h 边界到达 · 例行唤醒', en: '1h boundary hit · routine wakeup' });
@@ -751,14 +755,14 @@ async function trEnter(c, alert) {
     await c.pulse('ck-sch');
   }
   c.on('sched');
-  for (const r of ['mutex', 'gate', 'window', 'budget']) { c.ledOk('sched', r); await c.sleep(280); }
-  c.log('SCHED', { zh: '互斥 ✓ 并发闸 3/10 ✓ 时段 ✓ · 预算 600s', en: 'mutex ✓ gate 3/10 ✓ window ✓ · budget 600s' });
+  for (const r of ['mutex', 'window', 'budget', 'hand']) { c.ledOk('sched', r); await c.sleep(280); }
+  c.log('SCHED', { zh: '互斥 ✓ 时段 ✓ 预算 600s ✓ 不在交接窗口 ✓', en: 'mutex ✓ window ✓ budget 600s ✓ no handover ✓' });
   await c.sleep(400);
   c.done(alert ? 'sentinel' : 'clock');
   await c.pulse('sch-asm');
   c.done('sched'); c.on('asm');
-  for (const ch of ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7']) { c.chip('asm', ch); await c.sleep(140); }
-  c.log('PROMPT', { zh: '现读现拼：账户状态 + 复盘/学习笔记 + 财经日历', en: 'assembled fresh: account + review/learning notes + econ calendar' });
+  for (const ch of ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9']) { c.chip('asm', ch); await c.sleep(120); }
+  c.log('PROMPT', { zh: '现读现拼：系统提示词（规则 + 两份笔记 + 交易指令）+ 开场白（事件 · 账户 · 上轮结论 · 日历）', en: 'assembled fresh: system prompt (rules + both notes + playbook) + opening (events · account · last conclusion · calendar)' });
   await c.sleep(500);
   await c.pulse('asm-ag');
   c.done('asm'); c.on('agent');
@@ -816,17 +820,17 @@ async function traderScript(c, scene) {
     await c.sleep(700);
     await c.pulse('notes-asm', { dur: 1100 });
     c.done('learn'); c.on('asm');
-    c.chip('asm', 'c4'); c.chip('asm', 'c5');
+    c.chip('asm', 'c2'); c.chip('asm', 'c3');
     c.log('SCHED', { zh: '窗口结束 · 下一根 K 线带着两份新笔记醒来', en: 'blackout over · next candle wakes with two fresh notes' }, 'good');
     await c.sleep(1300);
     c.done('asm'); c.done('sched'); c.done('clock');
     return;
   }
 
-  await trEnter(c, scene === 1);
+  await trEnter(c, scene === 1, scene === 0);
 
   if (scene === 0) {
-    c.log('REACT', { zh: '模型调用 1/8 · 先检验上一轮的承诺', en: 'model call 1/8 · re-check last round’s commitments' });
+    c.log('REACT', { zh: '模型调用 1/12 · 先对照开场白里的上一轮结论', en: 'model call 1/12 · check the last conclusion from the opening first' });
     await c.sleep(900);
     await trData(c, 'klines', 2, { zh: 'klines ETHUSDT 1h ×200', en: 'klines ETHUSDT 1h ×200' });
     await trData(c, 'snap', 3, { zh: 'market_snapshot · 资金费偏离 −0.018%', en: 'market_snapshot · funding deviation −0.018%' });
@@ -851,17 +855,17 @@ async function traderScript(c, scene) {
     await c.pulse('guard-trade'); c.on('trade');
     c.row('trade', 'open');
     await c.pulse('trade-sim'); c.on('sim');
-    c.log('SIM', { zh: 'open_position ETHUSDT 空 8x · 成交', en: 'open_position ETHUSDT short 8x · filled' });
+    c.log('SIM', { zh: 'open_position ETHUSDT 空 8x · 止损 3260 · 止盈 2990 · 成交', en: 'open_position ETHUSDT short 8x · SL 3260 · TP 2990 · filled' });
     await c.pulse('trade-sim', { reverse: true, cls: 'dim' });
     c.done('sim');
-    await c.sleep(500);
-    c.row('trade', 'plan'); c.count('agent', 7);
-    c.log('TOOL', { zh: 'write_plan：论点 / 数据引用 / 失效条件 → ai_trader_plan', en: 'write_plan: thesis / citations / invalidation → ai_trader_plan' });
-    await c.sleep(700);
-    c.row('trade', 'sl'); c.count('agent', 8);
-    c.log('TOOL', { zh: 'set_stop_loss +2.1% · 挂好', en: 'set_stop_loss +2.1% · placed' });
+    await c.sleep(400);
+    // 计划跟着开仓一起落库，不再单调 write_plan
+    c.log('PLAN', { zh: '计划随开仓落库：PULLBACK · 数据引用 · 失效条件 → ai_trader_plan', en: 'plan stored with the open: PULLBACK · citation · invalidation → ai_trader_plan' });
     c.done('trade');
     await c.sleep(700);
+    c.count('agent', 7);
+    c.log('REACT', { zh: '模型调用 7/12 · 按固定格式写 [本轮结论]，每个币一段', en: 'model call 7/12 · closing [Conclusion] block, one section per symbol' });
+    await c.sleep(800);
     await c.pulse('ag-dec', { dur: 800 });
     c.done('agent'); c.on('dec');
     c.row('dec', 'full', 'hit', true); c.row('dec', 'plan2', 'hit', true);
@@ -871,34 +875,31 @@ async function traderScript(c, scene) {
     c.log('SCHED', { zh: '休眠 · 等下一根 K 线', en: 'sleeping until the next candle' }, 'dim');
 
   } else if (scene === 1) {
-    c.log('REACT', { zh: '模型调用 1/8 · 优先检验在场计划的失效条件', en: 'call 1/8 · check live plan invalidation first' });
+    c.log('REACT', { zh: '模型调用 1/12 · 先看在场计划的失效条件', en: 'call 1/12 · check the live plan’s invalidation first' });
     await c.sleep(800);
-    await trData(c, 'klines', 2, { zh: 'klines ETHUSDT 1h · 收盘 3097', en: 'klines ETHUSDT 1h · close 3097' });
+    await trData(c, 'klines', 2, { zh: 'klines ETHUSDT 15m · 已收盘 3097', en: 'klines ETHUSDT 15m · closed at 3097' });
     c.count('agent', 3);
-    c.log('REACT', { zh: '失效条件触发：1h 收盘跌破 3120', en: 'invalidation hit: 1h close below 3120' }, 'warn');
+    c.log('REACT', { zh: '失效条件触发：已收盘的 15m 跌破计划写的 3120', en: 'invalidation hit: the closed 15m broke the plan’s 3120' }, 'warn');
     await c.sleep(700);
     await c.pulse('ag-guard');   // 平仓不过 TradeGuard，它只卡开仓
     await c.pulse('guard-trade');
     c.on('trade'); c.row('trade', 'close');
     await c.pulse('trade-sim'); c.on('sim');
-    c.log('SIM', { zh: 'close_position ETHUSDT · 全平 · 已实现 −0.6%', en: 'close_position ETHUSDT · flat · realized −0.6%' });
+    c.log('SIM', { zh: 'close_position ETHUSDT · 全平 · 理由：失效条件触发 · 已实现 −0.6%', en: 'close_position ETHUSDT · flat · reason: invalidation hit · realized −0.6%' });
     await c.pulse('trade-sim', { reverse: true, cls: 'dim' });
     c.done('sim');
-    await c.sleep(400);
-    c.row('trade', 'cancel'); c.count('agent', 4);
-    c.log('TOOL', { zh: 'cancel_order · 撤掉挂着的止损/止盈', en: 'cancel_order · pull the resting SL/TP' });
     c.done('trade'); c.done('data');
     await c.sleep(600);
     await c.pulse('ag-dec', { dur: 800 });
     c.done('agent'); c.on('dec');
     c.row('dec', 'full', 'hit', true); c.row('dec', 'plan2', 'hit', true);
-    c.log('DB', { zh: '退出三条路之一：失效条件 → 决策行公开 · 计划归档给 reviewer', en: 'one of three exits: invalidation → decision public · plan archived for the reviewer' }, 'good');
+    c.log('DB', { zh: '按主人指令里的退出条件离场 → 决策行公开 · 计划归档给 reviewer', en: 'exited on one of the owner’s exit rules → decision public · plan archived for the reviewer' }, 'good');
     await c.sleep(1100);
     c.done('dec');
 
   } else {
     // 观望：多数唤醒的真实形态
-    c.log('REACT', { zh: '模型调用 1/8 · 单问题框架：计划需要改变吗？', en: 'call 1/8 · single question: does the plan need to change?' });
+    c.log('REACT', { zh: '模型调用 1/12 · 按主人指令逐币过：持仓去留 · 挂单存废 · 新机会', en: 'call 1/12 · per the playbook, symbol by symbol: positions · orders · new setups' });
     await c.sleep(800);
     await trData(c, 'klines', 2, { zh: 'klines ETHUSDT 1h ×200', en: 'klines ETHUSDT 1h ×200' });
     await trData(c, 'ind', 3, { zh: 'indicators · ATR 收缩，无新信号', en: 'indicators · ATR contracting, no new signal' });
@@ -1090,7 +1091,7 @@ async function chatScript(c, scene) {
     await c.pulse('r-s', { dur: 1000 });
     c.done('router'); c.on('sum');
     c.row('sum', 'ws', 'hit', true);
-    c.log('SUM', { zh: '端点是 responses 协议且勾了 web_search → 本轮捎上搜索许可', en: 'endpoint is responses + web_search → this call carries the search grant' });
+    c.log('SUM', { zh: '端点支持服务端搜索且勾了开关 → 本轮捎上搜索许可', en: 'endpoint supports server search and has it on → this call carries the search grant' });
     await c.sleep(700);
     c.log('SUM', { zh: '服务端搜索关不掉 · 与其硬压不如分工：清单 + 联网补充', en: 'server-side search can’t be switched off — so split the work: list + web supplement' });
     await c.type('sum', 0, { zh: '[BlockBeats] 美 CPI 今晚 21:30 公布；', en: '[BlockBeats] US CPI 21:30 tonight;' });

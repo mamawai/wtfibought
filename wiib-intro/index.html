@@ -7,8 +7,8 @@
 <meta name="description" content="Agentic trading · 让你的模型替你试一遍 每一步决策都可见 · 真实行情 真实资金费率 真实杠杆档位 · 所有数据均为模拟资金 不构成投资建议">
 <link rel="canonical" href="https://intro.wtfibought.com/">
 <meta name="robots" content="index, follow">
-<meta name="theme-color" content="#f6f6f4" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0b0c0f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#fafaf7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="WhatIfIBought">
 <meta property="og:url" content="https://intro.wtfibought.com/">
@@ -20,217 +20,219 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="apple-touch-icon-180.png">
+<!-- 首屏大标题要等 Archivo 到了才起跳，提前拉 -->
+<link rel="preload" href="fonts/archivo-latin-wdth-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="intro.css">
 <script>
   // 主题必须赶在首帧之前定，否则暗色用户每次冷启动都要闪一下白
   (function () {
+    // 有 JS 才藏住待拆字的大标题，没 JS 时照常显示
+    document.documentElement.classList.add('js');
     var t = null; try { t = localStorage.getItem('wiib-intro-theme'); } catch (e) { }
-    var dark = t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    var dark = location.search.includes('dark') || (t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches);
     if (dark) document.documentElement.classList.add('dark');
   })();
 </script>
 </head>
 <body>
 
-<!-- 全页背景：抖色烟雾 + 点阵，fixed 铺满视口，内容浮在上面 -->
-<div class="page-bg" aria-hidden="true">
-  <canvas id="smoke"></canvas>
-  <div class="dots"></div>
-</div>
-
+<!-- 顶栏：字标 + 章节导航（橙方块跟着当前章节走）+ 右侧工具；底下 2px 墨线，线上一颗橙方块跟着阅读进度走 -->
 <header class="site-head">
   <div class="wrap bar">
-    <a class="brand" href="https://wtfibought.com"><img src="logo.png" alt="">WhatIfIBought</a>
-    <nav class="head-nav">
+    <a class="logo" href="https://wtfibought.com" aria-label="WhatIfIBought"><span class="full">WHATIFIBOUGHT</span><span class="short">WIIB</span><i>.</i></a>
+    <nav class="head-nav" id="head-nav">
+      <span class="nav-dot" aria-hidden="true"></span>
       <a href="#s-dash" data-t="navDash"></a>
       <a href="#s-wake" data-t="navWake"></a>
       <a href="#s-eod" data-t="navEod"></a>
       <a href="#s-chat" data-t="navChat"></a>
       <a href="#s-base" data-t="navBase"></a>
     </nav>
-    <div class="head-controls">
-      <button class="ctl-btn" id="btn-lang" aria-label="Language"><svg data-icon="languages"></svg></button>
-      <button class="ctl-btn" id="btn-theme" aria-label="Theme"><svg data-icon="sun"></svg></button>
-      <a class="ctl-btn" href="https://github.com/mamawai/wtfibought" aria-label="GitHub"><svg data-icon="github"></svg></a>
-      <a class="head-cta" href="https://wtfibought.com"><span data-t="navCta"></span><svg data-icon="arrow-right"></svg></a>
+    <div class="tools">
+      <button class="tool" id="btn-lang" aria-label="Language"><svg data-icon="languages"></svg></button>
+      <button class="tool" id="btn-theme" aria-label="Theme"><svg data-icon="sun"></svg></button>
+      <a class="tool" href="https://github.com/mamawai/wtfibought" aria-label="GitHub"><svg data-icon="github"></svg></a>
+      <a class="btn sm fill head-cta" href="https://wtfibought.com"><span data-t="navCta"></span><svg data-icon="arrow-right"></svg></a>
     </div>
   </div>
+  <div class="rule"><i class="rule-head" aria-hidden="true"></i></div>
 </header>
 
 <main>
 
-<!-- ===== 首屏 ===== -->
+<!-- ===== 首屏：上半截是网点烟雾衬底的标题带，2px 墨线切开；下半截是一次唤醒的六步 + 行情 ===== -->
 <section class="hero" id="hero">
-  <div class="wrap">
-    <div class="hero-copy">
-      <div class="microlabel hero-kicker reveal" data-t="heroKicker"></div>
-      <h1 class="reveal" data-delay="1" aria-label="What if I bought"><span class="l1">WHAT IF</span><span class="l2">I BOUGHT</span></h1>
-      <p class="sub reveal" data-delay="2" data-t="heroSub"></p>
-      <div class="cta-row reveal" data-delay="3">
-        <a class="btn primary" href="https://wtfibought.com"><span data-t="ctaMain"></span><svg data-icon="arrow-right"></svg></a>
-        <a class="btn" href="https://github.com/mamawai/wtfibought"><svg data-icon="github"></svg><span data-t="ctaGh"></span></a>
+  <div class="hero-top">
+    <canvas id="smoke" class="hero-smoke" aria-hidden="true"></canvas>
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <div class="hero-kicker reveal" data-t="heroKicker"></div>
+        <h1 class="hero-h letters" aria-label="What if I bought"><span class="ln">WHAT IF</span><span class="ln">I BOUGHT<i>.</i></span></h1>
       </div>
-      <div class="strip reveal" data-delay="4" id="strip"></div>
+      <div class="hero-side reveal" data-delay="2">
+        <p class="sub" data-t="heroSub"></p>
+        <div class="cta-row">
+          <a class="btn lg orange" href="https://wtfibought.com"><span data-t="ctaMain"></span><svg data-icon="arrow-right"></svg></a>
+          <a class="btn lg" href="https://github.com/mamawai/wtfibought"><svg data-icon="github"></svg><span data-t="ctaGh"></span></a>
+        </div>
+        <div class="spec num" id="strip"></div>
+      </div>
     </div>
-    <div class="hero-loop reveal" data-delay="3" id="loop"></div>
-    <div class="hero-market reveal" data-delay="5" id="mount-market"></div>
   </div>
-  <a class="scroll-cue" href="#s-dash" aria-label="scroll"><svg data-icon="mouse"></svg></a>
+  <div class="wrap">
+    <div class="loop reveal" data-delay="3" id="loop"></div>
+    <div class="hero-market reveal" data-delay="4" id="mount-market"></div>
+  </div>
 </section>
+
+<!-- 章节头：墨线从左画到右（drawline），编号滚到位，标题从线下落出来 -->
 
 <!-- ===== 01 看板 ===== -->
 <section class="sec" id="s-dash">
   <div class="wrap">
-    <div class="sec-head">
-      <div>
-        <div class="kick reveal"><span class="no" data-t="s1kick"></span><span class="rule"></span></div>
-        <h2 class="reveal" data-delay="1" data-t="s1h"></h2>
-      </div>
-      <div class="reveal" data-delay="2">
+    <div class="sec-head drawline">
+      <span class="sec-no num">01</span>
+      <h2 data-t="s1h"></h2>
+      <div class="sec-lead reveal" data-delay="2">
         <p class="lead" data-t="s1lead"></p>
-        <div class="sec-note" data-t="s1note"></div>
+        <span class="chip mute sec-note" data-t="s1note"></span>
       </div>
     </div>
     <div id="mount-dash" class="reveal" data-delay="2"></div>
-    <p class="mobile-note reveal" data-delay="3" data-t="mobileNoteDash"></p>
   </div>
 </section>
 
 <!-- ===== 02 流程 ===== -->
 <section class="sec" id="s-wake">
   <div class="wrap">
-    <div class="sec-head">
-      <div>
-        <div class="kick reveal"><span class="no" data-t="s2kick"></span><span class="rule"></span></div>
-        <h2 class="reveal" data-delay="1" data-t="s2h"></h2>
+    <div class="sec-head drawline">
+      <span class="sec-no num">02</span>
+      <h2 data-t="s2h"></h2>
+      <div class="sec-lead reveal" data-delay="2">
+        <p class="lead"><span data-t="s2lead"></span><span class="pc-only"><br><span data-t="s2hint"></span></span></p>
       </div>
-      <p class="lead reveal" data-delay="2"><span data-t="s2lead"></span><span class="pc-only"><br><span data-t="s2hint"></span></span></p>
     </div>
     <div id="mount-trader" class="reveal" data-delay="2"></div>
-    <p class="mobile-note reveal" data-delay="3" data-t="mobileNoteFlow"></p>
   </div>
 </section>
 
-<!-- ===== 03 日终 ===== -->
+<!-- ===== 03 每日：三栏顶上一条交接进度线，随滚动依次点亮 复盘 → 等待 → 学习 ===== -->
 <section class="sec" id="s-eod">
   <div class="wrap">
-    <div class="sec-head">
-      <div>
-        <div class="kick reveal"><span class="no" data-t="s3kick"></span><span class="rule"></span></div>
-        <h2 class="reveal" data-delay="1" data-t="s3h"></h2>
-      </div>
-      <p class="lead reveal" data-delay="2" data-t="s3lead"></p>
+    <div class="sec-head drawline">
+      <span class="sec-no num">03</span>
+      <h2 data-t="s3h"></h2>
+      <div class="sec-lead reveal" data-delay="2"><p class="lead" data-t="s3lead"></p></div>
     </div>
-    <div class="grid three">
-      <div class="card reveal"><div class="chead"><svg data-icon="notebook-pen"></svg><span class="microlabel">01 · REVIEW</span></div><h3 data-t="e1t"></h3><p data-t="e1p"></p><div class="kv" data-t="e1k"></div></div>
-      <div class="card reveal" data-delay="1"><div class="chead"><svg data-icon="git-branch"></svg><span class="microlabel">02 · WAIT</span></div><h3 data-t="e2t"></h3><p data-t="e2p"></p><div class="kv" data-t="e2k"></div></div>
-      <div class="card reveal" data-delay="2"><div class="chead"><svg data-icon="graduation-cap"></svg><span class="microlabel">03 · LEARN</span></div><h3 data-t="e3t"></h3><p data-t="e3p"></p><div class="kv" data-t="e3k"></div></div>
+    <div class="pillars n3 track" id="handover">
+      <i class="hv-head" aria-hidden="true"></i>
+      <div class="pillar"><div class="pl-tag"><svg data-icon="notebook-pen"></svg>01 · REVIEW</div><h3 data-t="e1t"></h3><p data-t="e1p"></p><div class="facts" data-t="e1k"></div></div>
+      <div class="pillar"><div class="pl-tag"><svg data-icon="git-branch"></svg>02 · WAIT</div><h3 data-t="e2t"></h3><p data-t="e2p"></p><div class="facts" data-t="e2k"></div></div>
+      <div class="pillar"><div class="pl-tag"><svg data-icon="graduation-cap"></svg>03 · LEARN</div><h3 data-t="e3t"></h3><p data-t="e3p"></p><div class="facts" data-t="e3k"></div></div>
     </div>
   </div>
 </section>
 
-<!-- ===== 04 工作台 ===== -->
+<!-- ===== 04 对话 ===== -->
 <section class="sec" id="s-chat">
   <div class="wrap">
-    <div class="sec-head">
-      <div>
-        <div class="kick reveal"><span class="no" data-t="s4kick"></span><span class="rule"></span></div>
-        <h2 class="reveal" data-delay="1" data-t="s4h"></h2>
-      </div>
-      <p class="lead reveal" data-delay="2" data-t="s4lead"></p>
+    <div class="sec-head drawline">
+      <span class="sec-no num">04</span>
+      <h2 data-t="s4h"></h2>
+      <div class="sec-lead reveal" data-delay="2"><p class="lead" data-t="s4lead"></p></div>
     </div>
     <div id="mount-chat" class="reveal" data-delay="2"></div>
-    <p class="mobile-note reveal" data-delay="3" data-t="mobileNoteFlow"></p>
   </div>
 </section>
 
-<!-- ===== 05 底座 ===== -->
+<!-- ===== 05 底层 ===== -->
 <section class="sec" id="s-base">
   <div class="wrap">
-    <div class="sec-head">
-      <div>
-        <div class="kick reveal"><span class="no" data-t="s5kick"></span><span class="rule"></span></div>
-        <h2 class="reveal" data-delay="1" data-t="s5h"></h2>
-      </div>
-      <p class="lead reveal" data-delay="2" data-t="s5lead"></p>
+    <div class="sec-head drawline">
+      <span class="sec-no num">05</span>
+      <h2 data-t="s5h"></h2>
+      <div class="sec-lead reveal" data-delay="2"><p class="lead" data-t="s5lead"></p></div>
     </div>
-    <div class="grid">
-      <div class="card reveal"><div class="chead"><svg data-icon="candlestick-chart"></svg><span class="microlabel">MARKET</span></div><h3 data-t="b1t"></h3><p data-t="b1p"></p><div class="kv" data-t="b1k"></div></div>
-      <div class="card reveal" data-delay="1"><div class="chead"><svg data-icon="scale"></svg><span class="microlabel">RULES</span></div><h3 data-t="b2t"></h3><p data-t="b2p"></p><div class="kv" data-t="b2k"></div></div>
-      <div class="card reveal" data-delay="2"><div class="chead"><svg data-icon="layers"></svg><span class="microlabel">LEDGER</span></div><h3 data-t="b3t"></h3><p data-t="b3p"></p><div class="kv" data-t="b3k"></div></div>
-      <div class="card reveal" data-delay="3"><div class="chead"><svg data-icon="server"></svg><span class="microlabel">TOPOLOGY</span></div><h3 data-t="b4t"></h3><p data-t="b4p"></p><div class="kv" data-t="b4k"></div></div>
+    <div class="pillars n4">
+      <div class="pillar reveal"><div class="pl-tag"><svg data-icon="candlestick-chart"></svg>MARKET</div><h3 data-t="b1t"></h3><p data-t="b1p"></p><div class="facts" data-t="b1k"></div></div>
+      <div class="pillar reveal" data-delay="1"><div class="pl-tag"><svg data-icon="scale"></svg>RULES</div><h3 data-t="b2t"></h3><p data-t="b2p"></p><div class="facts" data-t="b2k"></div></div>
+      <div class="pillar reveal" data-delay="2"><div class="pl-tag"><svg data-icon="layers"></svg>LEDGER</div><h3 data-t="b3t"></h3><p data-t="b3p"></p><div class="facts" data-t="b3k"></div></div>
+      <div class="pillar reveal" data-delay="3"><div class="pl-tag"><svg data-icon="server"></svg>TOPOLOGY</div><h3 data-t="b4t"></h3><p data-t="b4p"></p><div class="facts" data-t="b4k"></div></div>
     </div>
-    <div class="pull reveal"><p data-t="pullQ"></p></div>
+    <!-- 引文：关键半句被一道墨块扫过、反白 -->
+    <blockquote class="pull reveal"><p data-t="pullQ"></p></blockquote>
   </div>
 </section>
 
-<!-- ===== 06 不止 AI ===== -->
+<!-- ===== 06 不止 AI：每格是 App 里对应功能的入口，悬停墨色从下往上填满 ===== -->
 <section class="sec" id="s-more">
   <div class="wrap">
-    <div class="sec-head">
-      <div>
-        <div class="kick reveal"><span class="no" data-t="s6kick"></span><span class="rule"></span></div>
-        <h2 class="reveal" data-delay="1" data-t="s6h"></h2>
-      </div>
+    <div class="sec-head drawline">
+      <span class="sec-no num">06</span>
+      <h2 data-t="s6h"></h2>
     </div>
     <div class="tiles">
-      <div class="tile reveal"><svg data-icon="candlestick-chart"></svg><div><h3 data-t="m1t"></h3><p data-t="m1p"></p></div></div>
-      <div class="tile reveal" data-delay="1"><svg data-icon="flask-conical"></svg><div><h3 data-t="m2t"></h3><p data-t="m2p"></p></div></div>
-      <div class="tile reveal" data-delay="2"><svg data-icon="line-chart"></svg><div><h3 data-t="m3t"></h3><p data-t="m3p"></p></div></div>
-      <div class="tile reveal"><svg data-icon="message-square"></svg><div><h3 data-t="m4t"></h3><p data-t="m4p"></p></div></div>
-      <div class="tile reveal" data-delay="1"><svg data-icon="trending-up"></svg><div><h3 data-t="m5t"></h3><p data-t="m5p"></p></div></div>
-      <div class="tile reveal" data-delay="2"><svg data-icon="smartphone"></svg><div><h3 data-t="m6t"></h3><p data-t="m6p"></p></div></div>
+      <a class="tile reveal" href="https://wtfibought.com/coin"><svg data-icon="candlestick-chart"></svg><h3 data-t="m1t"></h3><p data-t="m1p"></p><svg class="go" data-icon="arrow-up-right"></svg></a>
+      <a class="tile reveal" data-delay="1" href="https://wtfibought.com/backtest"><svg data-icon="flask-conical"></svg><h3 data-t="m2t"></h3><p data-t="m2p"></p><svg class="go" data-icon="arrow-up-right"></svg></a>
+      <a class="tile reveal" data-delay="2" href="https://wtfibought.com/strategies"><svg data-icon="line-chart"></svg><h3 data-t="m3t"></h3><p data-t="m3p"></p><svg class="go" data-icon="arrow-up-right"></svg></a>
+      <a class="tile reveal" href="https://wtfibought.com/ai"><svg data-icon="message-square"></svg><h3 data-t="m4t"></h3><p data-t="m4p"></p><svg class="go" data-icon="arrow-up-right"></svg></a>
+      <a class="tile reveal" data-delay="1" href="https://wtfibought.com/ranking"><svg data-icon="trending-up"></svg><h3 data-t="m5t"></h3><p data-t="m5p"></p><svg class="go" data-icon="arrow-up-right"></svg></a>
+      <a class="tile reveal" data-delay="2" href="https://wtfibought.com"><svg data-icon="smartphone"></svg><h3 data-t="m6t"></h3><p data-t="m6p"></p><svg class="go" data-icon="arrow-up-right"></svg></a>
     </div>
   </div>
 </section>
 
 <!-- ===== 收尾 ===== -->
-<section class="close">
+<section class="sec close">
   <div class="wrap">
-    <h2 class="reveal" data-t="closeH"></h2>
-    <p class="lead reveal" data-delay="1" data-t="closeLead"></p>
-    <div class="cta-row reveal" data-delay="2">
-      <a class="btn primary" href="https://wtfibought.com"><span data-t="ctaMain"></span><svg data-icon="arrow-right"></svg></a>
-      <a class="btn" href="https://github.com/mamawai/wtfibought"><svg data-icon="github"></svg><span data-t="ctaGh"></span></a>
+    <div class="close-in drawline">
+      <h2 class="reveal" data-t="closeH"></h2>
+      <div class="close-row reveal" data-delay="1">
+        <p class="lead" data-t="closeLead"></p>
+        <div class="cta-row">
+          <a class="btn lg orange" href="https://wtfibought.com"><span data-t="ctaMain"></span><svg data-icon="arrow-right"></svg></a>
+          <a class="btn lg" href="https://github.com/mamawai/wtfibought"><svg data-icon="github"></svg><span data-t="ctaGh"></span></a>
+        </div>
+      </div>
     </div>
   </div>
 </section>
 
 </main>
 
+<!-- 页脚：链接几栏 → 撑满整宽的巨型字标（进视口逐字升起）→ 免责一行 -->
 <footer class="site-foot">
   <div class="wrap">
-    <div class="foot-top">
+    <div class="foot-top drawline">
       <div class="foot-brand">
-        <a class="brand" href="https://wtfibought.com"><img src="logo.png" alt="">WhatIfIBought</a>
         <p data-t="footTag"></p>
-        <div class="foot-spec">PAPER TRADING <span>·</span> NO REAL FUNDS <span>·</span> BYOK</div>
       </div>
       <div class="foot-col">
-        <div class="microlabel" data-t="footProduct"></div>
+        <div class="lbl" data-t="footProduct"></div>
         <a href="https://wtfibought.com">wtfibought.com</a>
         <a href="https://wtfibought.com/arena" data-t="footArena"></a>
         <a href="https://wtfibought.com/ai" data-t="footChat"></a>
       </div>
       <div class="foot-col">
-        <div class="microlabel" data-t="footCode"></div>
+        <div class="lbl" data-t="footCode"></div>
         <a href="https://github.com/mamawai/wtfibought">GitHub</a>
         <a href="https://github.com/mamawai/wtfibought/blob/master/LICENSE">MIT License</a>
         <a href="https://github.com/mamawai/wtfibought/blob/master/docs/agent-harness/architecture.md" data-t="footDocs"></a>
       </div>
       <div class="foot-col">
-        <div class="microlabel" data-t="footContact"></div>
+        <div class="lbl" data-t="footContact"></div>
         <a href="https://linux.do">linux.do</a>
         <a href="mailto:mawai@linux.do">mawai@linux.do</a>
       </div>
     </div>
+    <a class="foot-word letters" href="https://wtfibought.com" aria-label="WhatIfIBought"><span class="ln">WHATIFIBOUGHT<i>.</i></span></a>
     <div class="foot-bottom">
       <span class="disclaim" data-t="disclaimer"></span>
-      <span class="foot-mark">WIIB<b>.</b></span>
+      <span class="foot-spec">PAPER TRADING · NO REAL FUNDS · BYOK</span>
     </div>
   </div>
 </footer>
-<noscript><p style="padding:20px;font-size:13px;font-family:var(--font-mono)">This page needs JavaScript for the animated diagrams and the sample board. 流程图与示例看板需要 JavaScript。</p></noscript>
+<noscript><p style="padding:20px;font-size:13px">This page needs JavaScript for the animated diagrams and the sample board. 流程图与示例看板需要 JavaScript。</p></noscript>
 
 <script src="flow.js"></script>
 <script src="mock-data.js"></script>

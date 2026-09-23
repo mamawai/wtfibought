@@ -1,8 +1,8 @@
 'use strict';
 /* ============================================================
    intro.wtfibought.com · 站点脚本
-   文案词表 / 主题 / 烟雾背景 / 首屏行情板 / 模拟看板 / 装配
-   依赖 flow.js（LANG · T · el · esc · icons · mountFlowPanels）与 mock-data.js（MOCK · MARKET）
+   文案词表 / 主题 / 顶栏章节导航 / 首屏网点烟雾 / 一次唤醒六步 / 行情板 / 模拟看板 / 装配
+   依赖 flow.js（LANG · T · el · esc · icons · REDUCED · store · mountFlowPanels）与 mock-data.js（MOCK · MARKET · HOUR · mockSeeded）
    ============================================================ */
 
 /* ---------- 文案：短句、直白，事实以 README / docs 为准 ---------- */
@@ -16,19 +16,17 @@ const COPY = {
   heroSub: { zh: '让你的模型替你试一遍 每一步决策都可见', en: 'Let your model try it for you and see every decision' },
   ctaMain: { zh: '前往 WIIB', en: 'Go to WIIB' },
   ctaGh: { zh: '源码', en: 'Source' },
-  marketTag: { zh: '示例数据 · 非实时', en: 'SAMPLE · NOT LIVE' },
+  marketTitle: { zh: '市场', en: 'Markets' },
+  marketTag: { zh: '示例数据 · 非实时', en: 'Sample data · not live' },
 
-  s1kick: { zh: '01 / 看板', en: '01 / BOARD' },
   s1h: { zh: 'trader 看板', en: 'The trader board' },
   s1lead: { zh: '每个 trader 一页<br>净值曲线 持仓 交易计划 决策时间线 复盘和学习笔记<br>谁都能看', en: 'One page per trader<br>Equity curve positions trade plans decision timeline review and learning notes<br>Anyone can read it' },
-  s1note: { zh: '示例数据 · 非实时', en: 'SAMPLE DATA · NOT LIVE' },
+  s1note: { zh: '示例数据 · 非实时', en: 'Sample data · not live' },
 
-  s2kick: { zh: '02 / 流程', en: '02 / FLOW' },
   s2h: { zh: '一次唤醒是怎么跑的', en: 'What one wakeup looks like' },
   s2lead: { zh: 'K 线收盘把它叫醒<br>过闸 拼提示词 查数据 下单过校验 落账 公开 跑完就睡', en: 'A candle close wakes it<br>Gates prompt data a checked order the ledger then public' },
   s2hint: { zh: '点节点看说明 顶上可以切场景', en: 'Click a node to read and switch scenes on top' },
 
-  s3kick: { zh: '03 / 每日', en: '03 / DAILY' },
   s3h: { zh: '每天复盘一次 再向别人学', en: 'Review daily then learn from others' },
   s3lead: { zh: '每日UTC零时 交易先停<br>先复盘自己 再向别人学 然后接着交易', en: 'Every day at UTC 00:00 trading pauses<br>Review yourself first then learn from others then trade on' },
   e1t: { zh: '先看自己', en: 'Look at yourself first' },
@@ -41,11 +39,9 @@ const COPY = {
   e3p: { zh: '向好的 trader 学习 向差的 trader 吸取教训<br>每条学习都要带证据 还要写明不学什么', en: 'Learn from the good traders and take warnings from the bad ones<br>Every lesson needs evidence and a note on what not to learn' },
   e3k: { zh: '<div>只读别人的复盘 不碰账户</div><div>学习笔记进下一次提示词</div>', en: '<div>Reads others’ reviews only and never touches accounts</div><div>The learning note goes into the next prompt</div>' },
 
-  s4kick: { zh: '04 / 对话', en: '04 / CHAT' },
   s4h: { zh: '有问题 问 chat agent', en: 'Ask the chat agent' },
   s4lead: { zh: '问行情 问新闻 问你自己的 trader<br>它派几个专家并行查数据 再汇总回答<br>花钱的操作先问你<br>对 trader 的操作只弹表单 按钮在你手里', en: 'Ask about prices news or your own trader<br>It sends experts to fetch data in parallel then writes the answer<br>Costly actions ask first<br>Trader actions only show a form and you press the button' },
 
-  s5kick: { zh: '05 / 底层', en: '05 / LEDGER' },
   s5h: { zh: '交易流是 tick 级别', en: 'Tick-level trade flow' },
   s5lead: { zh: '行情按 tick 接入 Binance 和 Polymarket 规则按真实交易所来<br>真人 AI 策略走同一本账', en: 'Prices stream tick by tick from Binance and Polymarket and the rules match the real venues<br>Humans AI and strategies share one ledger' },
   b1t: { zh: '真实行情', en: 'Live prices' },
@@ -60,74 +56,76 @@ const COPY = {
   b4t: { zh: '三个进程', en: 'Three processes' },
   b4p: { zh: 'feed 接行情 sim 记账交易 agent 跑 AI 和策略<br>一个挂了不影响另外两个', en: 'feed ingests prices sim keeps the ledger agent runs the AI and strategies<br>One crash does not take the others down' },
   b4k: { zh: '<div>:8081 · :8080 · :8082</div><div>开源 MIT 自己能跑一套</div>', en: '<div>:8081 · :8080 · :8082</div><div>MIT licensed and self-hostable</div>' },
-  pullQ: { zh: '重点不在预测准不准 而在于能看到模型怎么想', en: 'The point is not whether it predicts well but that you can see how it thinks' },
+  pullQ: { zh: '重点不在预测准不准 而在于<mark>能看到模型怎么想</mark>', en: 'The point is not whether it predicts well but that <mark>you can see how it thinks</mark>' },
 
-  s6kick: { zh: '06 / 不止 AI', en: '06 / MORE' },
   s6h: { zh: '除了 AI 交易 还能做什么', en: 'Beyond the AI trader' },
   m1t: { zh: '自己模拟交易', en: 'Trade it yourself' }, m1p: { zh: '美股 加密 合约 大宗 BTC 预测<br>一笔虚拟资金随便练', en: 'Equities crypto perps commodities BTC prediction<br>Practise with a virtual balance' },
   m2t: { zh: '回测练习', en: 'Replay practice' }, m2p: { zh: '随机截一段历史行情手动复盘<br>AI 局中提示 局后点评', en: 'Replay a random slice of history by hand<br>The AI hints mid-session and grades you after' },
   m3t: { zh: '量化策略', en: 'Quant strategies' }, m3p: { zh: 'FIBO / SQZMOM / TURTLE 三个策略在跑<br>账户看板可见', en: 'FIBO / SQZMOM / TURTLE run live<br>Each with its own account board' },
   m4t: { zh: 'chat agent', en: 'Chat agent' }, m4p: { zh: '研判工作台<br>问行情 问新闻 问自己的 trader', en: 'The research workbench<br>Ask about prices news or your own trader' },
   m5t: { zh: '排行榜与社区', en: 'Leaderboard & community' }, m5p: { zh: '总资产 / 盈利双榜 用户主页 留言板', en: 'Assets and profit leaderboards profiles comments' },
-  m6t: { zh: '精密终端', en: 'Precision terminal' }, m6p: { zh: '亮暗主题 中英双语 能装成 PWA', en: 'Light and dark bilingual installable as a PWA' },
+  m6t: { zh: '海报风界面', en: 'Poster-style UI' }, m6p: { zh: '亮暗主题 中英双语 能装成 PWA', en: 'Light and dark bilingual installable as a PWA' },
 
   closeH: { zh: '拿一笔模拟资金 让你的模型上场', en: 'Take a simulated balance and put your model in' },
   closeLead: { zh: '登录就有虚拟资金<br>接上模型和 key 下一根 K 线它就醒', en: 'Sign in and the balance is there<br>Plug in a model and key and it wakes on the next candle' },
   disclaimer: { zh: '所有数据均为模拟资金 不构成投资建议', en: 'All funds are simulated · not investment advice' },
   footTag: { zh: '让你的模型替你试一遍<br>每一步决策都可见', en: 'Let your model try it for you<br>Every decision visible' },
-  footProduct: { zh: '产品', en: 'PRODUCT' }, footArena: { zh: '竞技场', en: 'Arena' }, footChat: { zh: '研判工作台', en: 'Workbench' },
-  footCode: { zh: '源码', en: 'CODE' }, footDocs: { zh: '架构文档', en: 'Architecture' },
-  footContact: { zh: '联系', en: 'CONTACT' }
+  footProduct: { zh: '产品', en: 'Product' }, footArena: { zh: '竞技场', en: 'Arena' }, footChat: { zh: '研判工作台', en: 'Workbench' },
+  footCode: { zh: '源码', en: 'Code' }, footDocs: { zh: '架构文档', en: 'Architecture' },
+  footContact: { zh: '联系', en: 'Contact' }
 };
 
-/* 首屏规格行：图标 + 标签 + 一行小字 */
+/* 首屏规格：左边说法 右边出处 */
 const STRIP = [
-  { icon: 'activity', zh: '真实行情', en: 'Live prices', sub: 'BINANCE · POLYMARKET' },
-  { icon: 'percent', zh: '真实资金费率', en: 'Real funding', sub: 'EVERY 8H' },
-  { icon: 'layers', zh: '真实杠杆档位', en: 'Real leverage tiers', sub: '1–150X' },
-  { icon: 'key', zh: 'BYOK', en: 'BYOK', sub: 'YOUR MODEL · YOUR KEY' },
-  { icon: 'github', zh: '开源', en: 'Open source', sub: 'MIT LICENSE' }
+  { zh: '真实行情', en: 'Live prices', sub: 'BINANCE · POLYMARKET' },
+  { zh: '真实资金费率', en: 'Real funding', sub: 'EVERY 8H' },
+  { zh: '真实杠杆档位', en: 'Real leverage tiers', sub: '1–150X' },
+  { zh: 'BYOK', en: 'BYOK', sub: 'YOUR MODEL · YOUR KEY' },
+  { zh: '开源', en: 'Open source', sub: 'MIT LICENSE' }
 ];
 
-/* 首屏循环图：一次唤醒的闭环，六步绕一圈；desc 进中心表盘，trace 进底部一行 */
+/* 首屏六步：一次唤醒的闭环；cap 进格子小字，trace 进底下一行 */
 const LOOP_STEPS = [
-  { icon: 'clock', tag: 'CLOCK', zh: 'K 线收盘', en: 'Candle close', cap: { zh: '例行 · 对齐边界', en: 'routine · boundary' }, trace: { zh: '1h 边界到达 例行唤醒', en: '1h boundary hit · routine wakeup' } },
-  { icon: 'shield-check', tag: 'SCHED', zh: '四道准入', en: 'Four gates', cap: { zh: '互斥 · 预算', en: 'mutex · budget' }, trace: { zh: '互斥 并发闸 3/10 时段 预算 600s 全过', en: 'mutex · gate 3/10 · window · budget 600s · all clear' } },
-  { icon: 'file-text', tag: 'PROMPT', zh: '拼提示词', en: 'Build prompt', cap: { zh: '现读 · 现拼', en: 'read · assembled fresh' }, trace: { zh: '现读现拼 账户状态 + 复盘笔记 + 财经日历', en: 'assembled fresh: account + notes + econ calendar' } },
-  { icon: 'cpu', tag: 'REACT', zh: '模型决策', en: 'Model decides', cap: { zh: 'ReAct · 最多 8 次', en: 'ReAct · 8 calls max' }, trace: { zh: '模型调用 3/8 klines market_snapshot funding', en: 'model call 3/8 · klines market_snapshot funding' } },
-  { icon: 'wrench', tag: 'GUARD', zh: '校验下单', en: 'Check and order', cap: { zh: '越界 · 直接拒', en: 'veto · no clamp' }, trace: { zh: '25x 被拒 改 8x 通过 open_position ETHUSDT', en: '25x rejected · 8x passed · open_position ETHUSDT' } },
-  { icon: 'scroll-text', tag: 'SIM', zh: '落账公开', en: 'Ledger and public', cap: { zh: '记账 · 公开', en: 'ledger · public' }, trace: { zh: '成交落账 决策全文进 ai_trader_decision 公开', en: 'filled · full decision into ai_trader_decision · public' } }
+  { tag: 'CLOCK', zh: 'K 线收盘', en: 'Candle close', cap: { zh: '例行 · 对齐边界', en: 'routine · boundary' }, trace: { zh: '1h 边界到达 例行唤醒', en: '1h boundary hit · routine wakeup' } },
+  { tag: 'SCHED', zh: '四道准入', en: 'Four gates', cap: { zh: '互斥 · 预算', en: 'mutex · budget' }, trace: { zh: '互斥 时段 预算 600s 交接窗口 全过', en: 'mutex · window · budget 600s · handover · all clear' } },
+  { tag: 'PROMPT', zh: '拼提示词', en: 'Build prompt', cap: { zh: '现读 · 现拼', en: 'read · assembled fresh' }, trace: { zh: '现读现拼 账户状态 + 复盘笔记 + 财经日历', en: 'assembled fresh: account + notes + econ calendar' } },
+  { tag: 'REACT', zh: '模型决策', en: 'Model decides', cap: { zh: 'ReAct · 最多 12 次', en: 'ReAct · 12 calls max' }, trace: { zh: '模型调用 3/12 klines market_snapshot funding', en: 'model call 3/12 · klines market_snapshot funding' } },
+  { tag: 'GUARD', zh: '校验下单', en: 'Check and order', cap: { zh: '越界 · 直接拒', en: 'veto · no clamp' }, trace: { zh: '25x 被拒 改 8x 通过 open_position ETHUSDT', en: '25x rejected · 8x passed · open_position ETHUSDT' } },
+  { tag: 'SIM', zh: '落账公开', en: 'Ledger and public', cap: { zh: '记账 · 公开', en: 'ledger · public' }, trace: { zh: '成交落账 决策全文进 ai_trader_decision 公开', en: 'filled · full decision into ai_trader_decision · public' } }
 ];
-/* 六个节点绕盘一圈的位置：0 顶 1 右上 2 右下 3 底 4 左下 5 左上，标签朝外 */
-const LOOP_POS = ['t', 'r', 'r', 'b', 'l', 'l'];
+/* 每一步停多久：当前格顶上那条墨线走满这么久就跳下一格 */
+const STEP_MS = 2000;
 
 /* 看板词表（与 wiib-web ai.json 同口径） */
 const DL = {
   running: { zh: '运行中', en: 'Running' },
-  round: { zh: '第 {n} 局', en: 'Round {n}' },
-  equity: { zh: '权益 · 初始 10,000', en: 'Equity · starts at 10,000' },
+  roundN: { zh: '第 {n} 局', en: 'Round {n}' },
+  equity: { zh: '权益', en: 'Equity' }, initial: { zh: '初始 10,000', en: 'starts at 10,000' },
   thisRound: { zh: '本局', en: 'This round' }, dayN: { zh: '第 {n} 天', en: 'Day {n}' },
   closed: { zh: '已了结', en: 'Closed' }, tradesN: { zh: '{n} 笔', en: '{n} trades' },
   winRate: { zh: '胜率', en: 'Win rate' }, maxDd: { zh: '最大回撤', en: 'Max drawdown' },
-  tokToday: { zh: '今日 token', en: 'Tokens today' },
-  rangeDelta: { zh: '{n}天变化', en: '{n}d change' }, rangeAllDelta: { zh: '本局变化', en: 'Round change' },
+  tokToday: { zh: '今日 TOKEN', en: 'Tokens today' },
+  rangeDays: { zh: '{n}天', en: '{n}d' }, rangeAll: { zh: '全部', en: 'All' },
   curve: { zh: '本局净值', en: 'This round equity' },
-  r3: { zh: '3天', en: '3d' }, r7: { zh: '7天', en: '7d' }, rAll: { zh: '全部', en: 'All' },
+  lastWake: { zh: '最近一次唤醒 {t}', en: 'last wake-up {t}' },
   positions: { zh: '当前持仓 / 挂单', en: 'Open positions / orders' },
-  colSym: { zh: '标的', en: 'Symbol' }, colSide: { zh: '方向', en: 'Side' }, colQty: { zh: '数量', en: 'Qty' },
-  colEntry: { zh: '开仓', en: 'Entry' }, colMark: { zh: '标记', en: 'Mark' }, colSlTp: { zh: '止损 / 止盈', en: 'SL / TP' }, colUpnl: { zh: '浮盈', en: 'uPnL' },
+  colSym: { zh: '币种', en: 'Symbol' }, colQty: { zh: '数量', en: 'Qty' }, colSlTp: { zh: '止损 / 止盈', en: 'SL / TP' }, colUpnl: { zh: '浮盈', en: 'uPnL' },
+  entryAt: { zh: '开仓', en: 'Entry' },
   long: { zh: '多', en: 'Long' }, short: { zh: '空', en: 'Short' },
-  limitOrder: { zh: '限价挂单', en: 'Limit' }, openLong: { zh: '开多', en: 'Open long' }, openShort: { zh: '开空', en: 'Open short' },
-  plans: { zh: '交易计划 · 生效中', en: 'Trade plans · live' },
-  planTitle: { zh: '交易计划', en: 'Trade plan' }, basis: { zh: '依据：', en: 'Basis: ' }, invalidation: { zh: '失效条件：', en: 'Invalidation: ' },
+  limitOrder: { zh: '限价挂单', en: 'Limit order' }, limitPrice: { zh: '限价', en: 'Limit' },
+  openLong: { zh: '开多', en: 'Open long' }, openShort: { zh: '开空', en: 'Open short' },
+  plans: { zh: '交易计划', en: 'Trade plans' }, plansActive: { zh: '生效中 {n}', en: '{n} live' },
+  basis: { zh: '依据：', en: 'Basis: ' }, invalidation: { zh: '失效条件', en: 'Invalidation' },
   entry: { zh: '入场', en: 'Entry' }, origSl: { zh: '原始止损', en: 'Initial SL' }, target: { zh: '目标', en: 'Target' }, setAt: { zh: '{t} 立', en: 'set {t}' },
-  memory: { zh: '记忆笔记', en: 'Memory note' }, learning: { zh: '学习笔记', en: 'Learning note' }, lastAt: { zh: '最近 {t}', en: 'last {t}' },
+  revisions: { zh: '修订 {n} 次', en: 'revised {n}×' },
+  notes: { zh: '笔记', en: 'Notes' }, memory: { zh: '记忆笔记', en: 'Memory' }, learning: { zh: '学习笔记', en: 'Learning' }, lastAt: { zh: '最近 {t}', en: 'Last {t}' },
   timeline: { zh: '决策时间线', en: 'Decision timeline' }, trades: { zh: '已了结交易', en: 'Closed trades' },
   lookedAt: { zh: '看了', en: 'Read' }, expand: { zh: '展开全文', en: 'Read all' }, collapse: { zh: '收起', en: 'Collapse' },
   unfold: { zh: '展开完整看板', en: 'Expand the board' }, fold: { zh: '收起看板', en: 'Collapse the board' },
-  kind: { DECISION: { zh: '决策', en: 'Decision' }, ALERT: { zh: '波动警报', en: 'Volatility alert' }, REVIEW: { zh: '每日复盘', en: 'Daily review' }, LEARN: { zh: '向别人学', en: 'Peer learning' } },
-  rejected: { zh: '·被拒', en: '· rejected' },
-  tokTitle: { zh: '{s}s · {tools}次工具 · {calls}次模型', en: '{s}s · {tools} tool calls · {calls} model calls' },
+  decision: { zh: '决策', en: 'Decision' }, alert: { zh: '波动警报', en: 'Volatility alert' },
+  review: { zh: '每日复盘', en: 'Daily review' }, learn: { zh: '同侪学习', en: 'Peer learning' },
+  rejected: { zh: '·被拒', en: ' · rejected' },
+  toolCalls: { zh: '{n}次工具', en: '{n} tool calls' }, modelCalls: { zh: '{n}次模型', en: '{n} model calls' },
   tool: {
     klines: { zh: 'K线', en: 'Candles' }, indicators: { zh: '指标', en: 'Indicators' }, snapshot: { zh: '市场快照', en: 'Market snapshot' },
     funding: { zh: '资金费', en: 'Funding' }, depth: { zh: '盘口', en: 'Order book' }, structure: { zh: 'K线结构', en: 'Structure' },
@@ -135,15 +133,15 @@ const DL = {
     open_position: { zh: '开仓', en: 'Open' }, close_position: { zh: '平仓', en: 'Close' }, set_stop_loss: { zh: '移动止损', en: 'Move stop' },
     write_plan: { zh: '补立计划', en: 'Write plan' }, cancel_order: { zh: '撤单', en: 'Cancel order' }
   },
-  manner: { takeProfit: { zh: '止盈带走', en: 'Take-profit' }, stopLoss: { zh: '止损带走', en: 'Stop-loss' }, manual: { zh: '主动平仓', en: 'Closed by model' } },
+  manner: { takeProfit: { zh: '止盈带走', en: 'Taken by target' }, stopLoss: { zh: '止损带走', en: 'Taken by stop' }, manual: { zh: '主动平仓', en: 'Closed by hand' } },
   openedAt: { zh: '{t} 开', en: 'opened {t}' }, closedAt: { zh: '{t} 平', en: 'closed {t}' }, held: { zh: '持有 {d}', en: 'held {d}' },
-  openDecision: { zh: '开仓决策', en: 'Open decision' }, closeDecision: { zh: '平仓决策', en: 'Close decision' },
-  pnlTip: { zh: '较初始', en: 'vs. seed' }
+  openDecision: { zh: '开仓决策', en: 'Entry decision' }, closeDecision: { zh: '平仓决策', en: 'Exit decision' }
 };
 const fmt = (o, vars) => T(o).replace(/\{(\w+)\}/g, (_, k) => vars[k]);
 const fnum = (n, d = 2) => n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 const signed = (n, d = 2) => (n >= 0 ? '+' : '') + fnum(n, d);
 const ftok = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+const toolName = k => T(DL.tool[k] || { zh: k, en: k });
 const MOBILE = matchMedia('(max-width: 900px)');
 const SHOT = location.search.includes('shot');
 
@@ -163,134 +161,102 @@ function fillCopy() {
 }
 function renderStrip() {
   const host = document.getElementById('strip');
-  if (host) host.innerHTML = STRIP.map(s => `<div class="sp"><svg data-icon="${s.icon}"></svg><b>${esc(T(s))}</b><small>${s.sub}</small></div>`).join('');
+  if (host) host.innerHTML = STRIP.map(s => `<div class="kv"><b>${esc(T(s))}</b><span>${s.sub}</span></div>`).join('');
 }
 
-/* ---------- 首屏循环图：一块斜放的轨道盘，中心是标志，六个节点挂在盘沿外 ----------
-   彗星（发光 + 芯）沿盘沿顺时针跑，头触到哪个节点哪个亮；
-   盘沿是 SVG 椭圆，节点按弧长等分，芯片和标签是 HTML（字号不随盘缩放）；
-   底下一行 trace 跟着换 */
-let loopRaf = 0, loopRo = null;
+/* ---------- 首屏六步：当前格墨线走满就跳下一格（CSS 动画，animationend 接力），底下一行 trace 跟着换 ---------- */
+let loopClock = 8 * 3600;   // 假钟，08:00:00 起步，每换一格随手走几十秒
 function renderLoop() {
   const host = document.getElementById('loop');
   if (!host) return;
-  cancelAnimationFrame(loopRaf);
-  if (loopRo) loopRo.disconnect();
-  const N = LOOP_STEPS.length;
-  host.innerHTML = `
-    <svg class="lp-svg">
-      <defs>
-        <linearGradient id="lp-band" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--fg)" stop-opacity=".10"/><stop offset="1" stop-color="var(--fg)" stop-opacity=".03"/></linearGradient>
-        <radialGradient id="lp-glow"><stop offset="0" stop-color="var(--primary)" stop-opacity=".22"/><stop offset="1" stop-color="var(--primary)" stop-opacity="0"/></radialGradient>
-      </defs>
-      <ellipse class="glow"/>
-      <path class="band"/>
-      <ellipse class="inner i1"/><ellipse class="inner i2"/>
-      <g class="spokes"></g>
-      <ellipse class="rim"/>
-      <ellipse class="comet-glow" pathLength="1"/><ellipse class="comet-core" pathLength="1"/>
-      <g class="arrows"></g>
-      <g class="drops"></g>
-      <g class="dots"></g>
-      <image class="logo" href="logo.png"/>
-    </svg>
-    ${LOOP_STEPS.map((s, i) => `<div class="lp-node pos-${LOOP_POS[i]}" data-i="${i}"><span class="chip"><svg data-icon="${s.icon}"></svg></span><span class="lbl"><b>${esc(T(s))}</b><small>${esc(T(s.cap))}</small></span></div>`).join('')}
-    <div class="lp-trace"><span class="tt">08:00:00</span><span class="tg"></span><span class="tm"></span></div>`;
-  icons(host);
-  const svg = host.querySelector('.lp-svg');
-  const q = c => svg.querySelector(c);
-  const rim = q('.rim'), glow = q('.glow'), band = q('.band'), i1 = q('.i1'), i2 = q('.i2'), logo = q('.logo');
-  const cg = q('.comet-glow'), cc = q('.comet-core');
-  const gSpokes = q('.spokes'), gArrows = q('.arrows'), gDrops = q('.drops'), gDots = q('.dots');
-  const nodes = [...host.querySelectorAll('.lp-node')];
-  const trace = { tt: host.querySelector('.tt'), tg: host.querySelector('.tg'), tm: host.querySelector('.tm') };
-  let fr = [];   // 各节点在盘沿上的弧长分数
-  const setEl = (e, cx, cy, rx, ry) => { e.setAttribute('cx', cx); e.setAttribute('cy', cy); e.setAttribute('rx', rx); e.setAttribute('ry', ry); };
-  const layout = () => {
-    const W = host.clientWidth, H = host.clientHeight;
-    if (!W) return;
-    const mobile = MOBILE.matches;
-    const cx = W / 2, cy = H * .5, rx = Math.min(W * .33, 225), ry = rx * .42, th = Math.max(8, ry * .18);
-    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-    setEl(rim, cx, cy, rx, ry); setEl(cg, cx, cy, rx, ry); setEl(cc, cx, cy, rx, ry);
-    setEl(i1, cx, cy, rx * .68, ry * .68); setEl(i2, cx, cy, rx * .38, ry * .38);
-    setEl(glow, cx, cy, rx * .9, ry * 1.1);
-    band.setAttribute('d', `M ${cx - rx} ${cy} A ${rx} ${ry} 0 0 0 ${cx + rx} ${cy} L ${cx + rx} ${cy + th} A ${rx} ${ry} 0 0 1 ${cx - rx} ${cy + th} Z`);
-    const lw = Math.min(rx * .46, 104);
-    logo.setAttribute('width', lw); logo.setAttribute('x', cx - lw / 2); logo.setAttribute('y', cy - lw * .3);
-    // 节点按弧长等分，从顶点起顺时针：先找顶点的弧长分数
-    const len = rim.getTotalLength();
-    let top = 0, best = Infinity;
-    for (let s = 0; s < 400; s++) { const p = rim.getPointAtLength(len * s / 400); const d = Math.abs(p.x - cx) + (p.y > cy ? 1e9 : 0); if (d < best) { best = d; top = s / 400; } }
-    fr = LOOP_STEPS.map((_, i) => (top + i / N) % 1);
-    const pts = fr.map(f => rim.getPointAtLength(f * len));
-    gSpokes.innerHTML = pts.map(p => `<line x1="${cx}" y1="${cy}" x2="${p.x}" y2="${p.y}"/>`).join('');
-    // 芯片挂在盘沿外：按椭圆比例往外推
-    const kx = 1 + (mobile ? 46 : 62) / rx, ky = 1 + (mobile ? 40 : 52) / ry;
-    const chips = pts.map(p => ({ x: cx + (p.x - cx) * kx, y: cy + (p.y - cy) * ky }));
-    gDrops.innerHTML = pts.map((p, i) => `<line x1="${p.x}" y1="${p.y}" x2="${chips[i].x}" y2="${chips[i].y}"/>`).join('');
-    gDots.innerHTML = pts.map(p => `<circle cx="${p.x}" cy="${p.y}" r="3.2"/>`).join('');
-    // 节点之间各一枚顺时针小箭头，贴着切线
-    gArrows.innerHTML = fr.map(f => {
-      const m = (f + .5 / N) % 1, a = rim.getPointAtLength(m * len), b = rim.getPointAtLength(((m + .004) % 1) * len);
-      const ang = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
-      return `<path d="M-4 -3 L3 0 L-4 3 Z" transform="translate(${a.x} ${a.y}) rotate(${ang})"/>`;
-    }).join('');
-    nodes.forEach((n, i) => {
-      const chip = n.querySelector('.chip');
-      n.style.left = '0px'; n.style.top = '0px';
-      n.style.left = (chips[i].x - chip.offsetLeft - chip.offsetWidth / 2) + 'px';
-      n.style.top = (chips[i].y - chip.offsetTop - chip.offsetHeight / 2) + 'px';
-    });
-  };
-  layout();
-  loopRo = new ResizeObserver(layout);
-  loopRo.observe(host);
-
-  let clock = 8 * 3600;
+  host.innerHTML = `<ol class="lp-steps" style="--lp-dur:${STEP_MS}ms">${LOOP_STEPS.map((s, i) => `<li class="lp-step">
+      <span class="lp-bar"><i></i></span>
+      <b class="lp-no num">${String(i + 1).padStart(2, '0')}</b>
+      <span class="lp-name">${esc(T(s))}</span>
+      <small>${esc(T(s.cap))}</small>
+    </li>`).join('')}</ol>
+    <div class="lp-trace"><span class="tt num"></span><span class="tg"></span><span class="tm"></span></div>`;
+  const steps = [...host.querySelectorAll('.lp-step')];
+  const [tt, tg, tm] = host.querySelectorAll('.lp-trace span');
+  let cur = 0;
   const show = i => {
-    nodes.forEach((n, j) => n.classList.toggle('on', j === i));
-    [...gDots.children].forEach((d, j) => d.classList.toggle('on', j === i));
-    clock += 4 + Math.floor(Math.random() * 40);
-    trace.tt.textContent = `${String(Math.floor(clock / 3600) % 24).padStart(2, '0')}:${String(Math.floor(clock / 60) % 60).padStart(2, '0')}:${String(clock % 60).padStart(2, '0')}`;
-    trace.tg.textContent = LOOP_STEPS[i].tag;
-    trace.tm.textContent = T(LOOP_STEPS[i].trace);
+    cur = i;
+    steps.forEach((s, j) => s.classList.toggle('on', j === i));
+    loopClock += 4 + Math.floor(Math.random() * 40);
+    tt.textContent = [loopClock / 3600 % 24, loopClock / 60 % 60, loopClock % 60].map(v => String(Math.floor(v)).padStart(2, '0')).join(':');
+    tg.textContent = LOOP_STEPS[i].tag;
+    tm.textContent = T(LOOP_STEPS[i].trace);
   };
   show(0);
-  if (REDUCED || SHOT) { cg.style.display = 'none'; cc.style.display = 'none'; return; }
-  const PERIOD = 12000, TAIL = .09;
-  let t0 = null, active = 0;
-  const frame = ts => {
-    loopRaf = requestAnimationFrame(frame);
-    if (document.hidden || !fr.length) return;
-    if (t0 == null) t0 = ts;
-    const k = (fr[0] + ((ts - t0) % PERIOD) / PERIOD) % 1;   // 从顶点出发
-    for (const c of [cg, cc]) { c.setAttribute('stroke-dasharray', `${TAIL} ${1 - TAIL}`); c.setAttribute('stroke-dashoffset', -(k - TAIL)); }
-    // 彗星头刚过哪个节点，哪个亮
-    let hit = active;
-    fr.forEach((f, i) => { const d = (k - f + 1) % 1; if (d < .02) hit = i; });
-    if (hit !== active) { active = hit; show(hit); }
-  };
-  loopRaf = requestAnimationFrame(frame);
+  // 悬停某格就停在那格（墨线满格、trace 换成那一步），移开从那格重新走
+  const list = host.querySelector('.lp-steps');
+  steps.forEach((s, i) => s.addEventListener('mouseenter', () => { list.classList.add('pinned'); if (i !== cur) show(i); }));
+  list.addEventListener('mouseleave', () => {
+    list.classList.remove('pinned');
+    const s = steps[cur];
+    s.classList.remove('on'); void s.offsetWidth; s.classList.add('on');   // 摘了再挂，进度动画才会从头播
+  });
+  // 不动的场合（减弱动效 / 截图）：墨线满格由 CSS 管，这里只是不接力
+  if (REDUCED || SHOT) return;
+  // 用属性不用 addEventListener：切语言会重画，监听挂两遍就一次跳两格
+  host.onanimationend = e => { if (e.animationName === 'lp-fill') show((cur + 1) % steps.length); };
 }
 
 /* ---------- 主题 ---------- */
+let smokeDraw = null;   // 烟雾补画一帧：减弱动效时只画一帧，切主题得手动重画
 function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark);
   const b = document.getElementById('btn-theme');
   b.innerHTML = dark ? '<svg data-icon="sun"></svg>' : '<svg data-icon="moon"></svg>';
   icons(b);
+  if (smokeDraw) smokeDraw();
 }
 const savedTheme = store.get('wiib-intro-theme');
 let isDark = savedTheme ? savedTheme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
 
-/* ---------- 烟雾背景：登录页 DitherSmoke 的纯 JS 版，fixed 铺满整页 ----------
-   Perlin fbm 域扭曲出烟形 → Bayer 抖色量化；低分辨率画布 CSS pixelated 放大出大颗粒。
-   鼠标/手指靠近把烟"吹开"一个洞；reduced-motion 只画一帧；WebGL 不可用就保持透明，点阵兜底 */
+/* ---------- 顶栏章节导航：橙方块停在当前章节那项左边，悬停别的项就滑过去 ---------- */
+function setupNav() {
+  const nav = document.getElementById('head-nav');
+  const dot = nav.querySelector('.nav-dot');
+  const links = [...nav.querySelectorAll('a')];
+  const secs = links.map(a => document.querySelector(a.getAttribute('href')));
+  const end = document.getElementById('s-more');   // 导航之外的章节：滚到这里就不再点亮任何一项
+  let active = null, hover = null;
+  const place = () => {
+    const a = hover || active;
+    if (!a) { dot.style.opacity = '0'; return; }
+    dot.style.left = (a.getBoundingClientRect().left - nav.getBoundingClientRect().left - 13) + 'px';
+    dot.style.opacity = '1';
+  };
+  // 当前章节 = 顶边越过视口 40% 那条线的最后一节；还在首屏就谁都不亮
+  const spy = () => {
+    const line = innerHeight * .4;
+    let next = null;
+    secs.forEach((s, i) => { if (s && s.getBoundingClientRect().top < line) next = links[i]; });
+    if (end && end.getBoundingClientRect().top < line) next = null;
+    if (next === active) return;
+    links.forEach(a => a.classList.toggle('on', a === next));
+    active = next;
+    place();
+  };
+  let raf = 0;
+  addEventListener('scroll', () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; spy(); }); }, { passive: true });
+  addEventListener('resize', place);
+  nav.addEventListener('mouseover', e => { const a = e.target.closest('a'); if (a && a !== hover) { hover = a; place(); } });
+  nav.addEventListener('mouseleave', () => { hover = null; place(); });
+  spy();
+  return place;
+}
+
+/* ---------- 首屏网点烟雾：登录页 DitherSmoke 的纯 JS 版，只铺首屏标题带 ----------
+   Perlin fbm 域扭曲出烟形 → Bayer 抖色量化成几档灰，像印刷网点；低分辨率画布 CSS pixelated 放大出大颗粒。
+   只在纸色和浅灰之间取档，不上橙；鼠标/手指靠近把烟"吹开"一个洞；标题带滚出视口就停；
+   reduced-motion 只画一帧；WebGL 不可用就保持纸面 */
 const SMOKE_PIXEL = 2.5, SMOKE_LEVELS = 4;
 const SMOKE_PALETTE = {
-  dark: { bg: [0.043, 0.047, 0.059], ink: [0.16, 0.18, 0.23], accent: [0.976, 0.451, 0.086] },
-  light: { bg: [0.965, 0.965, 0.957], ink: [0.67, 0.67, 0.64], accent: [0.976, 0.451, 0.086] }
+  // 纸色 → 最深一档；最深那档只比分行线深一点，压在上面的墨字照样清楚
+  light: { bg: [0.980, 0.980, 0.969], ink: [0.855, 0.855, 0.831] },
+  dark: { bg: [0.059, 0.063, 0.071], ink: [0.145, 0.153, 0.169] }
 };
 const SMOKE_VERT = 'attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }';
 const SMOKE_FRAG = `
@@ -300,7 +266,6 @@ uniform float u_time;
 uniform vec2  u_mouse;
 uniform vec3  u_bg;
 uniform vec3  u_ink;
-uniform vec3  u_accent;
 vec4 mod289(vec4 x){ return x - floor(x*(1.0/289.0))*289.0; }
 vec4 permute(vec4 x){ return mod289(((x*34.0)+10.0)*x); }
 vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314*r; }
@@ -346,8 +311,7 @@ void main(){
   }
   float d = (bayer4(gl_FragCoord.xy) - 0.5) / ${SMOKE_LEVELS.toFixed(1)};
   float q = clamp(floor((f + d) * ${SMOKE_LEVELS.toFixed(1)}) / ${(SMOKE_LEVELS - 1).toFixed(1)}, 0.0, 1.0);
-  vec3 col = mix(mix(u_bg, u_ink, q), u_accent, pow(q, 3.0) * 0.22);
-  gl_FragColor = vec4(col, 1.0);
+  gl_FragColor = vec4(mix(u_bg, u_ink, q), 1.0);
 }`;
 
 function startSmoke() {
@@ -369,7 +333,7 @@ function startSmoke() {
   gl.enableVertexAttribArray(loc);
   gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
   const u = n => gl.getUniformLocation(prog, n);
-  const uRes = u('u_res'), uTime = u('u_time'), uMouse = u('u_mouse'), uBg = u('u_bg'), uInk = u('u_ink'), uAccent = u('u_accent');
+  const uRes = u('u_res'), uTime = u('u_time'), uMouse = u('u_mouse'), uBg = u('u_bg'), uInk = u('u_ink');
   const size = () => {
     cv.width = Math.max(1, Math.ceil(cv.clientWidth / SMOKE_PIXEL));
     cv.height = Math.max(1, Math.ceil(cv.clientHeight / SMOKE_PIXEL));
@@ -377,39 +341,45 @@ function startSmoke() {
   };
   size();
   const mouse = { x: -1, y: -1, tx: -1, ty: -1 };
-  const render = t => {
+  const t0 = performance.now();
+  smokeDraw = () => {
     const p = SMOKE_PALETTE[document.documentElement.classList.contains('dark') ? 'dark' : 'light'];
     gl.uniform2f(uRes, cv.width, cv.height);
-    gl.uniform1f(uTime, t);
+    gl.uniform1f(uTime, (performance.now() - t0) / 1000);
     gl.uniform2f(uMouse, mouse.x, mouse.y);
-    gl.uniform3fv(uBg, p.bg); gl.uniform3fv(uInk, p.ink); gl.uniform3fv(uAccent, p.accent);
+    gl.uniform3fv(uBg, p.bg); gl.uniform3fv(uInk, p.ink);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   };
-  // 画布是 fixed 的，视口坐标直接就是画布坐标
-  const point = (cx, cy) => { mouse.tx = cx / SMOKE_PIXEL; mouse.ty = (cv.clientHeight - cy) / SMOKE_PIXEL; };
-  const onMove = e => point(e.clientX, e.clientY);
-  const onTouch = e => { const t = e.touches[0]; if (t) point(t.clientX, t.clientY); };
-  const onLeave = () => { mouse.tx = -1; mouse.ty = -1; };
-  if (REDUCED) { render(0); }
-  else {
-    const t0 = performance.now();
-    const frame = () => {
-      requestAnimationFrame(frame);
-      if (document.hidden) return;
-      if (mouse.tx >= 0) {
-        if (mouse.x < 0) { mouse.x = mouse.tx; mouse.y = mouse.ty; }
-        mouse.x += (mouse.tx - mouse.x) * 0.08;
-        mouse.y += (mouse.ty - mouse.y) * 0.08;
-      } else { mouse.x = -1; mouse.y = -1; }
-      render((performance.now() - t0) / 1000);
-    };
-    requestAnimationFrame(frame);
-    window.addEventListener('mousemove', onMove);
-    document.documentElement.addEventListener('mouseleave', onLeave);
-    window.addEventListener('touchmove', onTouch, { passive: true });
-    window.addEventListener('touchend', onLeave);
+  if (REDUCED || SHOT) {
+    smokeDraw();
+    new ResizeObserver(() => { size(); smokeDraw(); }).observe(cv);
+    return;
   }
-  new ResizeObserver(() => { size(); if (REDUCED) render(0); }).observe(cv);
+  // 画布跟着标题带走，指针坐标换到画布自己身上（GL 的 y 从下往上）
+  const point = (cx, cy) => {
+    const r = cv.getBoundingClientRect();
+    mouse.tx = (cx - r.left) / SMOKE_PIXEL;
+    mouse.ty = (r.bottom - cy) / SMOKE_PIXEL;
+  };
+  const onLeave = () => { mouse.tx = -1; mouse.ty = -1; };
+  addEventListener('mousemove', e => point(e.clientX, e.clientY));
+  document.documentElement.addEventListener('mouseleave', onLeave);
+  addEventListener('touchmove', e => { const t = e.touches[0]; if (t) point(t.clientX, t.clientY); }, { passive: true });
+  addEventListener('touchend', onLeave);
+  let visible = true;
+  new IntersectionObserver(es => { visible = es[0].isIntersecting; }).observe(cv);
+  new ResizeObserver(size).observe(cv);
+  const frame = () => {
+    requestAnimationFrame(frame);
+    if (document.hidden || !visible) return;
+    if (mouse.tx >= 0) {
+      if (mouse.x < 0) { mouse.x = mouse.tx; mouse.y = mouse.ty; }
+      mouse.x += (mouse.tx - mouse.x) * 0.08;
+      mouse.y += (mouse.ty - mouse.y) * 0.08;
+    } else { mouse.x = -1; mouse.y = -1; }
+    smokeDraw();
+  };
+  requestAnimationFrame(frame);
 }
 
 /* ---------- 浮现：滚进视口才显影；首屏几块按 data-delay 依次浮现 ---------- */
@@ -418,6 +388,138 @@ function watchReveal() {
     for (const e of es) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
   }, { threshold: .08, rootMargin: '0px 0px -6% 0px' });
   document.querySelectorAll('.reveal').forEach(n => io.observe(n));
+}
+
+/* ---------- 逐字排版：拆成一字一格 → 从基线后面升起 → 荡一道宽度波 ---------- */
+function splitLetters(root) {
+  let i = 0;
+  root.querySelectorAll('.ln').forEach(ln => {
+    const nodes = [...ln.childNodes];
+    ln.textContent = '';
+    for (const n of nodes) {
+      if (n.nodeType !== Node.TEXT_NODE) {   // 橙色句点那个 <i> 原样当一格
+        n.classList.add('ch'); n.style.setProperty('--i', i++); ln.append(n);
+        continue;
+      }
+      for (const ch of n.textContent) {
+        if (ch === ' ') { ln.append(' '); continue; }
+        const s = document.createElement('span');
+        s.className = 'ch'; s.textContent = ch; s.style.setProperty('--i', i++);
+        ln.append(s);
+      }
+    }
+  });
+  root.classList.add('split');
+}
+function riseLetters(root, wave) {
+  root.classList.add('risen');
+  if (!wave || REDUCED || SHOT) return;
+  const chs = root.querySelectorAll('.ch');
+  // 升完再荡波；最后一个字荡完就摘掉 .wave，不然动画压着悬停时写的内联宽度
+  setTimeout(() => {
+    root.classList.add('wave');
+    chs[chs.length - 1].addEventListener('animationend', () => root.classList.remove('wave'), { once: true });
+  }, 700 + chs.length * 38);
+}
+/* 鼠标靠近哪个字哪个字变宽变粗：按距离做高斯衰减，离得远的字不动 */
+function stretchOnHover(root, band) {
+  if (REDUCED || SHOT || !matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+  const chs = [...root.querySelectorAll('.ch')];
+  let centers = [], raf = 0, px = 0, py = 0;
+  // 按页面坐标量一次静止时各字的中心；字变宽后邻居会挪，差这点不影响观感
+  const measure = () => {
+    centers = chs.map(c => { const r = c.getBoundingClientRect(); return [r.left + r.width / 2 + scrollX, r.top + r.height / 2 + scrollY]; });
+  };
+  const apply = () => {
+    raf = 0;
+    const R = parseFloat(getComputedStyle(root).fontSize) * .9;
+    chs.forEach((c, i) => {
+      const dx = px - centers[i][0], dy = py - centers[i][1];
+      const f = Math.exp(-(dx * dx + dy * dy) / (R * R));
+      c.style.fontStretch = (70 + 50 * f).toFixed(1) + '%';
+      c.style.fontWeight = String(Math.round(700 + 200 * f));
+    });
+  };
+  band.addEventListener('pointerenter', measure);
+  band.addEventListener('pointermove', e => { px = e.pageX; py = e.pageY; if (!raf) raf = requestAnimationFrame(apply); });
+  band.addEventListener('pointerleave', () => {
+    cancelAnimationFrame(raf); raf = 0;
+    chs.forEach(c => { c.style.fontStretch = ''; c.style.fontWeight = ''; });
+  });
+}
+/* 页脚巨型字标：按容器宽度算字号，刚好撑满一行 */
+function fitFootWord() {
+  const w = document.querySelector('.foot-word');
+  if (!w) return;
+  w.style.fontSize = '100px';
+  const r = document.createRange();
+  r.selectNodeContents(w.querySelector('.ln'));
+  w.style.fontSize = (100 * w.clientWidth / r.getBoundingClientRect().width).toFixed(2) + 'px';
+}
+
+/* ---------- 墨线：进视口从左画到右；章节头的编号跟着滚到位 ---------- */
+function watchDraw() {
+  const still = REDUCED || SHOT;
+  document.querySelectorAll('.sec-no').forEach(n => {
+    n.innerHTML = n.textContent.trim().split('').map(d => stripHtml(d, still ? d : randDigit())).join('');
+  });
+  const draw = el => {
+    el.classList.add('drawn');
+    el.querySelectorAll('.sec-no .dstrip').forEach((st, i) => {
+      st.style.transitionDelay = (200 + i * 90) + 'ms';
+      st.style.transform = `translateY(-${st.dataset.d}em)`;
+    });
+  };
+  const els = document.querySelectorAll('.drawline');
+  if (still) { els.forEach(draw); return; }
+  const io = new IntersectionObserver(es => {
+    for (const e of es) if (e.isIntersecting) { draw(e.target); io.unobserve(e.target); }
+  }, { rootMargin: '0px 0px -12% 0px' });
+  els.forEach(el => io.observe(el));
+}
+
+/* ---------- 滚动：顶栏底线上的阅读进度方块 + 03 的交接进度线 ---------- */
+function setupScrollBits() {
+  const rule = document.querySelector('.site-head .rule'), head = rule.querySelector('.rule-head');
+  const track = document.getElementById('handover');
+  const pillars = track ? [...track.querySelectorAll('.pillar')] : [];
+  const hv = track && track.querySelector('.hv-head');
+  let raf = 0;
+  const update = () => {
+    raf = 0;
+    const max = document.documentElement.scrollHeight - innerHeight;
+    const p = max > 0 ? Math.min(1, scrollY / max) : 0;
+    head.style.transform = `translateX(${(p * (rule.clientWidth - 8)).toFixed(1)}px)`;
+    if (!track) return;
+    // 交接线：三栏顶边到视口 85% 处开始走，到 40% 处走满；手机竖排、减弱动效、截图直接满格
+    let q = 1;
+    if (!REDUCED && !SHOT && !MOBILE.matches) {
+      q = Math.min(1, Math.max(0, (innerHeight * .85 - track.getBoundingClientRect().top) / (innerHeight * .45)));
+    }
+    // 每栏分到三分之一段：走到哪栏哪栏点亮
+    pillars.forEach((el, i) => {
+      const lp = Math.min(1, Math.max(0, q * pillars.length - i));
+      el.style.setProperty('--lp', lp.toFixed(3));
+      el.classList.toggle('lit', lp > 0);
+    });
+    hv.style.transform = `translateX(${(q * (track.clientWidth - 8)).toFixed(1)}px)`;
+    hv.style.opacity = q > 0 && q < 1 ? '1' : '0';
+  };
+  addEventListener('scroll', () => { if (!raf) raf = requestAnimationFrame(update); }, { passive: true });
+  addEventListener('resize', update);
+  MOBILE.addEventListener('change', update);
+  update();
+}
+
+/* 数字从 0 滚到终值（同 App 的 useCountUp：0.9s easeOutQuart） */
+function countUp(el, to, fmtFn, ms = 900) {
+  const t0 = performance.now();
+  const step = now => {
+    const k = Math.min((now - t0) / ms, 1);
+    el.textContent = fmtFn(to * (1 - Math.pow(1 - k, 4)));
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 /* ---------- 滚落 / 收起：高度过渡，结束后交还 auto ---------- */
@@ -443,121 +545,78 @@ function slideClose(elm, ms = 360) {
 }
 
 /* ============================================================
-   首屏行情板：四个品类，价格数位滚动，慢速随机漂移（示例数据）
+   首屏行情板：同 App 首页四类各两只，价格数位滚动，慢速随机漂移（示例数据）
    ============================================================ */
 let marketTimer = 0;
-const marketState = new Map();   // code -> { price, chg, dec }
+
+/* 一位数字的带子：0–9 竖排，start 是起始停在哪一位（滚到 data-d 那一位由调用方写 transform） */
+const stripHtml = (d, start, delay = 0) => `<span class="dg"><span class="dstrip" data-d="${d}" style="transform:translateY(-${start}em);transition-delay:${delay}ms">${'0123456789'.split('').map(x => `<i>${x}</i>`).join('')}</span></span>`;
+const randDigit = () => Math.floor(Math.random() * 10);
 
 /* 数字 → 数位带子：数字字符变成 0–9 竖排带，逗号小数点原样 */
 function digitsHtml(v, dec, from) {
-  const s = '$' + v.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
-  return s.split('').map((ch, i) => /\d/.test(ch)
-    ? `<span class="dg"><span class="dstrip" data-d="${ch}" style="transform:translateY(-${from ? Math.floor(Math.random() * 10) : ch}em);transition-delay:${i * 40}ms">${'0123456789'.split('').map(d => `<i>${d}</i>`).join('')}</span></span>`
-    : `<span class="dc">${ch}</span>`).join('');
+  const s = v.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  return s.split('').map((ch, i) => /\d/.test(ch) ? stripHtml(ch, from ? randDigit() : ch, i * 40) : `<span class="dc">${ch}</span>`).join('');
 }
 /* 只滚数位，不重建节点；位数变了才整体重画 */
 function rollTo(priceEl, v, dec) {
-  const s = '$' + v.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  const s = v.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
   const strips = priceEl.querySelectorAll('.dstrip');
   const digits = s.replace(/[^\d]/g, '');
   if (strips.length !== digits.length) { priceEl.innerHTML = digitsHtml(v, dec, false); return; }
   strips.forEach((st, i) => { st.style.transitionDelay = '0ms'; st.style.transform = `translateY(-${digits[i]}em)`; });
-}
-/* 走势线：App 首页 Sparkline 同款——单调三次插值（Fritsch–Carlson，不过冲）+ 面积渐变 + 端点光点 */
-function sparkTangents(ys) {
-  const n = ys.length, d = [];
-  for (let i = 0; i < n - 1; i++) d.push(ys[i + 1] - ys[i]);
-  const m = [d[0]];
-  for (let i = 1; i < n - 1; i++) m.push(d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2);
-  m.push(d[n - 2]);
-  for (let i = 0; i < n - 1; i++) {
-    if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
-    const a = m[i] / d[i], b = m[i + 1] / d[i], s = a * a + b * b;
-    if (s > 9) { const t = 3 / Math.sqrt(s); m[i] = t * a * d[i]; m[i + 1] = t * b * d[i]; }
-  }
-  return m;
-}
-const SPK_W = 100, SPK_H = 28, SPK_P = 2;
-function sparkGeom(data) {
-  const mn = Math.min(...data), mx = Math.max(...data), step = SPK_W / (data.length - 1);
-  const ys = data.map(v => SPK_H - SPK_P - ((v - mn) / (mx - mn || 1)) * (SPK_H - SPK_P * 2));
-  const m = sparkTangents(ys);
-  let line = `M0 ${ys[0].toFixed(2)}`;
-  for (let i = 0; i < ys.length - 1; i++) {
-    const x0 = i * step, x1 = (i + 1) * step;
-    line += ` C${(x0 + step / 3).toFixed(2)} ${(ys[i] + m[i] / 3).toFixed(2)},${(x1 - step / 3).toFixed(2)} ${(ys[i + 1] - m[i + 1] / 3).toFixed(2)},${x1.toFixed(2)} ${ys[i + 1].toFixed(2)}`;
-  }
-  return { line, endY: ys[ys.length - 1] };
-}
-function sparkSvg(data, color, gid) {
-  const { line, endY } = sparkGeom(data);
-  return `<svg class="hm-spark spark-reveal" viewBox="0 0 ${SPK_W} ${SPK_H}" preserveAspectRatio="none">
-    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".16"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
-    <path class="area" d="${line} L${SPK_W} ${SPK_H} L0 ${SPK_H} Z" fill="url(#${gid})"/>
-    <path class="line" d="${line}" stroke="${color}" vector-effect="non-scaling-stroke"/>
-    <circle class="spark-dot" cx="${SPK_W}" cy="${endY.toFixed(2)}" r="2" fill="${color}" style="filter:drop-shadow(0 0 2px ${color})"/>
-  </svg>`;
 }
 function renderMarket() {
   const mount = document.getElementById('mount-market');
   clearInterval(marketTimer);
   if (!mount) return;
   if (MOBILE.matches) { mount.innerHTML = ''; return; }
-  marketState.clear();
-  mount.innerHTML = `<div class="hm-head"><span class="microlabel">MARKETS</span><span class="hm-tag">${esc(T(COPY.marketTag))}</span></div>
-  <div class="hm-grid">${MARKET.map(cat => `<div class="hm-card">
-    <a class="hm-title" href="${cat.to}"><svg data-icon="${cat.icon}" style="color:${cat.color}"></svg><b>${esc(T(cat.title))}</b><small>${esc(T(cat.sub))}</small><span class="all">${LANG === 'zh' ? '全部' : 'All'}<svg data-icon="chevron-right"></svg></span></a>
-    ${cat.rows.map((r, i) => {
-      marketState.set(r.code, { price: r.price, chg: r.chg, closes: r.spark.slice(0, -1) });
-      const up = r.chg >= 0, color = `var(${up ? '--gain' : '--loss'})`;
-      return `<div class="hm-row" data-code="${r.code}">
-        <span class="hm-id"><span class="hm-badge">${r.code}</span><span class="hm-name"><b>${esc(T(r.name))}</b><small>${esc(T(r.pair))}</small></span></span>
-        <span class="hm-price">${digitsHtml(r.price, 2, !SHOT && !REDUCED)}</span>
-        <span class="hm-sparkbox">${sparkSvg(r.spark, color, 'spk' + cat.id + i)}</span>
-        <span class="hm-chg ${up ? 'up' : 'dn'}">${signed(r.chg)}%</span>
+  const state = new Map();   // code -> { price, base }
+  mount.innerHTML = `<div class="mk-h"><h2>${esc(T(COPY.marketTitle))}</h2><span>${esc(T(COPY.marketTag))}</span></div>
+  <div class="mk-grid">${MARKET.map(cat => `<div>
+    <div class="mk-cat">${esc(T(cat.title))}<small>${esc(T(cat.sub))}</small><a href="${cat.to}">${LANG === 'zh' ? '全部' : 'All'}</a></div>
+    ${cat.rows.map(r => {
+      // 涨跌基准价由现价和涨跌幅倒推，之后漂移都按它重算
+      state.set(r.code, { price: r.price, base: r.price / (1 + r.chg / 100) });
+      return `<div class="mk-row num" data-code="${r.code}">
+        <span class="sym"><b>${esc(T(r.name))}</b><small>${esc(T(r.pair))}</small></span>
+        <span class="mk-price">${digitsHtml(r.price, 2, !SHOT && !REDUCED)}</span>
+        <span class="mk-chg ${r.chg >= 0 ? 'up' : 'dn'}">${signed(r.chg)}%</span>
       </div>`;
     }).join('')}
   </div>`).join('')}</div>`;
-  icons(mount);
   if (SHOT || REDUCED) return;
   // 首帧从随机位滚到真实值
   requestAnimationFrame(() => requestAnimationFrame(() => {
     mount.querySelectorAll('.dstrip').forEach(st => { st.style.transform = `translateY(-${st.dataset.d}em)`; });
   }));
-  // 慢速漂移：几秒挑一行动一下——数位滚动，走势线末点跟着现价走，涨跌按首根收盘重算。全是编的，页面上标着示例数据
+  // 慢速漂移：几秒挑一行动一下。全是编的，页面上标着示例数据
   const rnd = mockSeeded(Date.now() & 0xffff);
   marketTimer = setInterval(() => {
     if (document.hidden) return;
-    const rows = [...mount.querySelectorAll('.hm-row')];
+    const rows = [...mount.querySelectorAll('.mk-row')];
     const row = rows[Math.floor(rnd() * rows.length)];
-    const st = marketState.get(row.dataset.code);
+    const st = state.get(row.dataset.code);
     st.price = Math.round(st.price * (1 + (rnd() - .5) * .005) * 100) / 100;   // ±0.25%
-    st.chg = (st.price - st.closes[0]) / st.closes[0] * 100;
-    const up = st.chg >= 0, color = `var(${up ? '--gain' : '--loss'})`;
-    rollTo(row.querySelector('.hm-price'), st.price, 2);
-    const chg = row.querySelector('.hm-chg');
-    chg.textContent = signed(st.chg) + '%';
-    chg.className = 'hm-chg ' + (up ? 'up' : 'dn');
-    const { line, endY } = sparkGeom([...st.closes, st.price]);
-    const svg = row.querySelector('.hm-spark');
-    svg.querySelector('.line').setAttribute('d', line);
-    svg.querySelector('.line').setAttribute('stroke', color);
-    svg.querySelector('.area').setAttribute('d', `${line} L${SPK_W} ${SPK_H} L0 ${SPK_H} Z`);
-    svg.querySelector('.spark-dot').setAttribute('cy', endY.toFixed(2));
-    svg.querySelector('.spark-dot').setAttribute('fill', color);
+    const chg = (st.price - st.base) / st.base * 100;
+    rollTo(row.querySelector('.mk-price'), st.price, 2);
+    const c = row.querySelector('.mk-chg');
+    c.textContent = signed(chg) + '%';
+    c.className = 'mk-chg ' + (chg >= 0 ? 'up' : 'dn');
   }, 2600);
 }
 
 /* ============================================================
-   模拟看板
+   模拟看板：照 App 的 trader 详情页
+   记分牌 → 六格仪表条 → 左主栏（净值 + 时间线）‖ 右侧栏（持仓 + 计划 + 两份笔记）
    ============================================================ */
 const RANGES = [{ id: 3, k: 'r3' }, { id: 7, k: 'r7' }, { id: 0, k: 'rAll' }];
-let dashRange = 3, dashTab = 'timeline', dashOpen = false;
+let dashRange = 3, dashTab = 'timeline', dashOpen = false, dashCounted = false;
 
-function pill(cls, text, icon) {
-  return `<span class="pill ${cls}">${icon ? `<svg data-icon="${icon}" style="width:11px;height:11px"></svg>` : ''}${esc(text)}</span>`;
-}
-const sideArrow = side => side === 'LONG' ? 'arrow-up-right' : 'arrow-down-right';
+/* 北京时间的日期 / 时刻；轴上的日期跟界面语言走 */
+const bj = t => new Date(t + 8 * HOUR);
+const hhmm = t => `${String(bj(t).getUTCHours()).padStart(2, '0')}:00`;
+const axDay = t => new Date(t).toLocaleDateString(LANG === 'zh' ? 'zh-CN' : 'en-US', { month: 'long', day: 'numeric', timeZone: 'Asia/Shanghai' });
 const curveWindow = () => dashRange === 0 ? MOCK.curve : MOCK.curve.slice(-(dashRange * 24 + 1));
 
 function renderDash() {
@@ -565,96 +624,106 @@ function renderDash() {
   if (!mount) return;
   if (MOBILE.matches) { mount.innerHTML = ''; return; }
   const tr = MOCK.trader;
-  const up = tr.pnlPct >= 0;
   // 区间锚在曲线末点：3 天 = 最后 72 小时
   const win = curveWindow();
   const delta = win[win.length - 1].v - win[0].v;
   const deltaPct = delta / win[0].v * 100;
+  const rangeLabel = dashRange === 0 ? T(DL.rangeAll) : fmt(DL.rangeDays, { n: dashRange });
 
   mount.innerHTML = `
   <div class="dash">
-    <div class="dash-head">
-      <div class="dash-id">
-        <div class="avatar"><svg data-icon="bot"></svg></div>
-        <div>
-          <h3>${esc(tr.name)} ${pill('run', T(DL.running))}</h3>
-          <div class="meta"><span>${esc(tr.model)}</span><span class="sep">·</span><span>${tr.interval}</span><span class="sep">·</span><span>${tr.wakeWindow}</span><span class="sep">·</span><span>${fmt(DL.round, { n: tr.round })}</span></div>
-        </div>
+    <div class="score">
+      <div class="who">
+        <b class="cond">${esc(tr.name)}</b>
+        <span class="chip up"><i class="dot pulse"></i>${esc(T(DL.running))}</span>
+        <span class="m">${esc(tr.model)} · ${tr.interval} · ${tr.wakeWindow} · ${fmt(DL.roundN, { n: tr.round })}</span>
       </div>
-      <div class="dash-hero">
-        <div class="big ${up ? 'up' : 'dn'}">${signed(tr.pnlPct)}%</div>
-        <div class="eq"><span class="microlabel">${T(DL.equity)}</span><b>${fnum(tr.equity)}</b></div>
+      <div class="ret num">
+        <b class="cond ${tr.pnlPct >= 0 ? 'up' : 'dn'}">${signed(tr.pnlPct)}%</b>
+        <div class="eq"><span>${esc(T(DL.equity))} <b>${fnum(tr.equity)}</b></span><span>${esc(T(DL.initial))}</span></div>
       </div>
     </div>
-    <div class="dash-strip">
-      <div class="cell"><span class="microlabel">${T(DL.thisRound)}</span><b>${fmt(DL.dayN, { n: tr.day })}</b></div>
-      <div class="cell"><span class="microlabel">${T(DL.closed)}</span><b>${fmt(DL.tradesN, { n: tr.closed })}</b></div>
-      <div class="cell"><span class="microlabel">${T(DL.winRate)}</span><b>${tr.winRate}%</b></div>
-      <div class="cell"><span class="microlabel">${T(DL.maxDd)}</span><b class="dn">${fnum(tr.maxDd, 1)}%</b></div>
-      <div class="cell"><span class="microlabel">${dashRange === 0 ? T(DL.rangeAllDelta) : fmt(DL.rangeDelta, { n: dashRange })}</span><b class="${delta >= 0 ? 'up' : 'dn'}">${signed(delta)} · ${signed(deltaPct)}%</b></div>
-      <div class="cell"><span class="microlabel">${T(DL.tokToday)}</span><b>${ftok(tr.tokensToday)}</b></div>
+    <div class="strip num">
+      <div><div class="k">${T(DL.thisRound)}</div><div class="v">${fmt(DL.dayN, { n: tr.day })}</div></div>
+      <div><div class="k">${T(DL.closed)}</div><div class="v">${fmt(DL.tradesN, { n: tr.closed })}</div></div>
+      <div><div class="k">${T(DL.winRate)}</div><div class="v">${tr.winRate}%</div></div>
+      <div><div class="k">${T(DL.maxDd)}</div><div class="v dn">${tr.maxDd.toFixed(2)}%</div></div>
+      <div><div class="k">${rangeLabel}</div><div class="v ${delta >= 0 ? 'up' : 'dn'}">${signed(delta)} · ${signed(deltaPct)}%</div></div>
+      <div><div class="k">${T(DL.tokToday)}</div><div class="v">${ftok(tr.tokensToday)}</div></div>
     </div>
     <div class="dash-grid">
       <div class="dash-main">
-        <div class="dcard">
-          <div class="dcard-head">
-            <span class="microlabel"><svg data-icon="line-chart"></svg>${T(DL.curve)}</span>
-            <div class="right">${RANGES.map(r => `<button class="seg${r.id === dashRange ? ' act' : ''}" data-range="${r.id}">${T(DL[r.k])}</button>`).join('')}</div>
+        <div>
+          <div class="blk-h">
+            <h2>${T(DL.curve)}</h2>
+            <div class="seg">${RANGES.map(r => `<button type="button" class="${r.id === dashRange ? 'on' : ''}" data-range="${r.id}">${r.id === 0 ? T(DL.rangeAll) : fmt(DL.rangeDays, { n: r.id })}</button>`).join('')}</div>
           </div>
-          <div class="dcard-body"><div class="eq-chart" id="eq-chart"></div></div>
+          <div class="eq-chart" id="eq-chart"></div>
         </div>
-        <div class="dcard" id="dash-tl">
-          <div class="dcard-head">
-            <div class="tabs">
-              <button class="tab${dashTab === 'timeline' ? ' act' : ''}" data-tab="timeline">${T(DL.timeline)}</button>
-              <button class="tab${dashTab === 'trades' ? ' act' : ''}" data-tab="trades">${T(DL.trades)}<span class="cnt">${MOCK.trades.length}</span></button>
-            </div>
+        <div id="dash-tl">
+          <div class="tabs">
+            <button type="button" class="tab${dashTab === 'timeline' ? ' on' : ''}" data-tab="timeline">${T(DL.timeline)}</button>
+            <button type="button" class="tab${dashTab === 'trades' ? ' on' : ''}" data-tab="trades">${T(DL.trades)}<span class="chip mute num">${MOCK.trades.length}</span></button>
           </div>
-          <div class="dcard-body" id="dash-list">${dashTab === 'timeline' ? renderTimeline() : renderTrades()}</div>
+          <div>${dashTab === 'timeline' ? MOCK.decisions.map(renderDecision).join('') : MOCK.trades.map(renderTrade).join('')}</div>
         </div>
       </div>
       <div class="dash-side">
-        <div class="dcard">
-          <div class="dcard-head"><span class="microlabel"><svg data-icon="wallet"></svg>${T(DL.positions)}</span></div>
-          <div class="ptable-wrap">${renderPositions()}</div>
+        <div>
+          <div class="blk-h"><h2>${T(DL.positions)}</h2></div>
+          ${renderPositions()}
         </div>
-        <div class="dcard">
-          <div class="dcard-head"><span class="microlabel"><svg data-icon="clipboard-list"></svg>${T(DL.plans)}</span></div>
-          <div class="dcard-body">${MOCK.plans.map(renderPlan).join('')}</div>
+        <div>
+          <div class="blk-h"><h2>${T(DL.plans)}<small>${fmt(DL.plansActive, { n: MOCK.plans.length })}</small></h2></div>
+          ${MOCK.plans.map(pl => renderPlan(pl)).join('')}
         </div>
-        <div class="dcard">
-          ${renderNote('violet', 'notebook-pen', T(DL.memory), MOCK.memory)}
-          ${renderNote('sky', 'graduation-cap', T(DL.learning), MOCK.learning)}
+        <div>
+          <div class="blk-h"><h2>${T(DL.notes)}</h2></div>
+          ${renderNote(T(DL.memory), MOCK.memory)}
+          ${renderNote(T(DL.learning), MOCK.learning)}
         </div>
       </div>
     </div>
-    <div class="dash-more"><button type="button" class="btn" data-fold><svg data-icon="chevrons-up"></svg>${esc(T(DL.fold))}</button></div>
-    <div class="dash-fold"><button type="button" class="btn primary" data-unfold>${esc(T(DL.unfold))}<svg data-icon="chevrons-down"></svg></button></div>
+    <div class="dash-more"><button type="button" class="btn sm" data-fold><svg data-icon="chevrons-up"></svg>${esc(T(DL.fold))}</button></div>
+    <div class="dash-fold"><button type="button" class="btn fill" data-unfold>${esc(T(DL.unfold))}<svg data-icon="chevrons-down"></svg></button></div>
   </div>`;
   icons(mount);
   drawEquity(document.getElementById('eq-chart'), win);
   setupFold(mount.querySelector('.dash'));
+  // 收益率和权益第一次进视口时从 0 滚上来；之后切区间/tab 重画就直接给终值
+  if (!dashCounted && !REDUCED && !SHOT) {
+    const pctEl = mount.querySelector('.ret > b'), eqEl = mount.querySelector('.ret .eq b');
+    pctEl.textContent = signed(0) + '%'; eqEl.textContent = fnum(0);
+    const io = new IntersectionObserver(es => {
+      if (!es[0].isIntersecting) return;
+      io.disconnect(); dashCounted = true;
+      countUp(pctEl, tr.pnlPct, v => signed(v) + '%');
+      countUp(eqEl, tr.equity, v => fnum(v));
+    }, { threshold: .4 });
+    io.observe(mount.querySelector('.score'));
+  }
 
   mount.querySelectorAll('[data-range]').forEach(b => b.addEventListener('click', () => { dashRange = Number(b.dataset.range); renderDash(); }));
   mount.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => { dashTab = b.dataset.tab; renderDash(); }));
-  mount.querySelectorAll('.note button').forEach(b => b.addEventListener('click', () => {
-    const note = b.parentElement, body = note.querySelector('.body');
-    const open = note.classList.toggle('open');
-    open ? slideOpen(body) : slideClose(body);
+  // 已了结交易里的开/平仓决策：切回时间线，那两条就在上面
+  mount.querySelectorAll('[data-jump]').forEach(b => b.addEventListener('click', () => { dashTab = 'timeline'; renderDash(); }));
+  mount.querySelectorAll('.note-row').forEach(b => b.addEventListener('click', () => {
+    const body = b.nextElementSibling;
+    b.classList.toggle('open') ? slideOpen(body) : slideClose(body);
   }));
-  mount.querySelectorAll('.tl-more').forEach(b => b.addEventListener('click', () => {
-    const box = b.previousElementSibling, full = box.querySelector('.full');
+  mount.querySelectorAll('[data-more]').forEach(b => b.addEventListener('click', () => {
+    const box = b.closest('.dec').querySelector('.reason'), full = box.querySelector('.full');
     const open = box.classList.toggle('open');
     open ? slideOpen(full) : slideClose(full);
-    b.innerHTML = open ? `${esc(T(DL.collapse))}<svg data-icon="chevron-up"></svg>` : `${esc(T(DL.expand))}<svg data-icon="chevron-down"></svg>`;
-    icons(b);
+    b.textContent = T(open ? DL.collapse : DL.expand);
   }));
 }
 
-/* 折叠线压在时间线卡顶上：折起时只剩头部、仪表条、净值曲线 */
+/* 折叠线压在时间线的 tab 下面：折起时露出记分牌、仪表条、净值曲线和 tab 那一行 */
 function setupFold(dash) {
-  const foldH = () => dash.querySelector('#dash-tl').offsetTop;
+  const tl = dash.querySelector('#dash-tl');
   const fold = dash.querySelector('.dash-fold'), more = dash.querySelector('.dash-more');
+  const foldH = () => tl.offsetTop + tl.querySelector('.tabs').offsetHeight + fold.offsetHeight + 8;
   const apply = () => {
     if (dashOpen) { dash.style.maxHeight = ''; fold.style.display = 'none'; more.style.display = ''; }
     else { dash.style.maxHeight = foldH() + 'px'; fold.style.display = ''; more.style.display = 'none'; }
@@ -679,173 +748,166 @@ function setupFold(dash) {
   });
 }
 
+/* 持仓 / 挂单：侧栏塞不下六列，压成四列 + 副行（数量下开仓价、止损下止盈、浮盈下百分比）；挂单整行浅底 */
 function renderPositions() {
   const rows = MOCK.positions.map(p => {
-    const long = p.side === 'LONG';
+    const long = p.side === 'LONG', up = p.upnl >= 0;
+    const pct = p.upnl / (p.entry * p.qty / p.lev) * 100;   // 按保证金算的收益率
     return `<tr>
-      <td><span class="sym ${long ? 'long' : 'short'}"><svg data-icon="${sideArrow(p.side)}"></svg>${p.symbol}</span></td>
-      <td>${pill(long ? 'long' : 'short', `${T(long ? DL.long : DL.short)} ${p.lev}x`)}</td>
-      <td class="r num">${p.qty}</td>
-      <td class="r num">${fnum(p.entry)}<span class="sub">${T(DL.colMark)} ${fnum(p.mark)}</span></td>
-      <td class="r num"><span class="dn">${fnum(p.sl)}</span><span class="sub up">${fnum(p.tp)}</span></td>
-      <td class="r num ${p.upnl >= 0 ? 'up' : 'dn'}"><b>${signed(p.upnl)}</b></td>
+      <td><b>${p.symbol}</b><span class="sub ${long ? 'up' : 'dn'}">${T(long ? DL.long : DL.short)} ${p.lev}x</span></td>
+      <td class="r">${p.qty}<span class="sub">${T(DL.entryAt)} ${fnum(p.entry)}</span></td>
+      <td class="r"><span class="dn">${fnum(p.sl)}</span><span class="sub up">${fnum(p.tp)}</span></td>
+      <td class="r"><b class="${up ? 'up' : 'dn'}">${signed(p.upnl)}</b><span class="sub ${up ? 'up' : 'dn'}">${signed(pct)}%</span></td>
     </tr>`;
   });
   const orders = MOCK.orders.map(o => {
     const long = o.side.includes('LONG');
     return `<tr class="order">
-      <td><span class="sym"><svg data-icon="clock"></svg>${o.symbol}</span><span class="sub">${T(DL.limitOrder)}</span></td>
-      <td>${pill(long ? 'long' : 'short', `${T(long ? DL.openLong : DL.openShort)} ${o.lev}x`)}</td>
-      <td class="r num">${o.qty}</td>
-      <td class="r num" colspan="2">${fnum(o.limit)}<span class="sub">${LANG === 'zh' ? '限价' : 'limit'}</span></td>
-      <td class="r num">—</td>
+      <td><b>${o.symbol}</b><span class="sub">${T(DL.limitOrder)}</span></td>
+      <td class="r">${o.qty}<span class="sub ${long ? 'up' : 'dn'}">${T(long ? DL.openLong : DL.openShort)} ${o.lev}x</span></td>
+      <td class="r" colspan="2">${fnum(o.limit)}<span class="sub">${T(DL.limitPrice)}</span></td>
     </tr>`;
   });
-  return `<table class="ptable">
-    <thead><tr><th>${T(DL.colSym)}</th><th>${T(DL.colSide)}</th><th class="r">${T(DL.colQty)}</th><th class="r">${T(DL.colEntry)}</th><th class="r">${T(DL.colSlTp)}</th><th class="r">${T(DL.colUpnl)}</th></tr></thead>
+  return `<table class="ptbl num">
+    <thead><tr><th>${T(DL.colSym)}</th><th class="r">${T(DL.colQty)}</th><th class="r">${T(DL.colSlTp)}</th><th class="r">${T(DL.colUpnl)}</th></tr></thead>
     <tbody>${rows.join('')}${orders.join('')}</tbody>
   </table>`;
 }
 
-function renderPlan(pl) {
+/* 交易计划：币对/方向/立的时刻 → 玩法 + 依据 → 失效条件 → 原始价位 → 修订史；embedded=挂在已了结交易里，虚线接上 */
+function renderPlan(pl, embedded) {
   const long = pl.side === 'LONG';
-  return `<div class="plan">
-    <div class="ph"><svg data-icon="${sideArrow(pl.side)}" style="width:13px;height:13px;color:var(${long ? '--gain' : '--loss'})"></svg><span class="sym">${pl.symbol}</span>${pill(long ? 'long' : 'short', T(long ? DL.long : DL.short))}${pill('pri', pl.play)}<span class="set">${fmt(DL.setAt, { t: pl.setAt })}</span></div>
-    <p class="basis">${esc(T(DL.basis))}${esc(T(pl.basis))}</p>
-    <p><b>${esc(T(DL.invalidation))}</b>${esc(T(pl.invalidation))}</p>
-    <div class="nums"><span>${T(DL.entry)} <b>${fnum(pl.entry)}</b></span><span>${T(DL.origSl)} <b>${fnum(pl.sl)}</b></span><span>${T(DL.target)} <b>${fnum(pl.tp)}</b></span></div>
-    ${pl.revisions.length ? `<div class="rev">${pl.revisions.map(r => `<span class="t">${r.time}</span><b>${r.type}</b><span class="num">${r.change}</span> — ${esc(T(r.reason))}`).join('<br>')}</div>` : ''}
+  const px = [[DL.entry, pl.entry], [DL.origSl, pl.sl], [DL.target, pl.tp]].filter(([, v]) => v != null);
+  const revs = pl.revisions || [];
+  return `<div class="plan${embedded ? ' embedded' : ''}">
+    <div class="plan-h"><b>${pl.symbol}</b><span class="chip fill ${long ? 'up' : 'dn'}">${T(long ? DL.long : DL.short)}</span><span class="num">${fmt(DL.setAt, { t: pl.setAt })}</span></div>
+    <div class="basis"><b>${esc(pl.play)}</b>${pl.basis ? esc(T(DL.basis) + T(pl.basis)) : ''}</div>
+    <div class="inv"><b>${T(DL.invalidation)}</b>${esc(T(pl.invalidation))}</div>
+    ${px.length ? `<div class="px num">${px.map(([k, v]) => `<span>${T(k)}<b>${fnum(v)}</b></span>`).join('')}</div>` : ''}
+    ${revs.length ? `<div class="rev">${revs.map((r, i) => `<p>${i === 0 ? fmt(DL.revisions, { n: revs.length }) + ' · ' : ''}<span class="num">${r.time}</span> ${r.type} <span class="num">${r.change}</span>，${esc(T(r.reason))}</p>`).join('')}</div>` : ''}
   </div>`;
 }
 
-function renderNote(tone, icon, title, note) {
+/* 笔记一行：标题 + 首句预览 + 最近时间，点开才铺全文 */
+function renderNote(title, note) {
   const text = T(note);
   const preview = text.replace(/[#*`>_-]/g, '').replace(/\s+/g, ' ').slice(0, 120);
-  return `<div class="note ${tone}">
-    <button type="button"><svg class="ic" data-icon="${icon}"></svg><span class="microlabel">${esc(title)}</span><span class="preview">${esc(preview)}</span><span class="time">${fmt(DL.lastAt, { t: note.time })}</span><svg class="chev" data-icon="chevron-down"></svg></button>
-    <div class="body"><div>${esc(text)}</div></div>
-  </div>`;
+  return `<button type="button" class="note-row"><b>${esc(title)}</b><span class="pv">${esc(preview)}</span><em class="num">${fmt(DL.lastAt, { t: note.time })}</em></button>
+    <div class="note-body"><div>${esc(text)}</div></div>`;
 }
 
-/* 推理全文：[ETHUSDT] 独占一行的分段标记渲染成小标签 */
+/* 推理全文：[ETHUSDT] 独占一行的分段标记渲染成小芯片，芯片自己占一行，正文从下一行起 */
 function renderReason(text) {
   return text.split('\n').map(line => {
     const m = /^\s*\[([A-Z0-9]{2,20})\]\s*$/.exec(line);
-    return m ? `<span class="segtag">${m[1]}</span>` : esc(line);
-  }).join('\n').replace(/\n(<span class="segtag">)/g, '$1').replace(/(<\/span>)\n/g, '$1');
+    return m ? `<span class="chip mute num">${m[1]}</span>` : esc(line);
+  }).join('\n');
 }
 
-function renderTimeline() {
-  return `<div class="tl">${MOCK.decisions.map(d => {
-    const kindMeta = { DECISION: 'pri', ALERT: 'pri', REVIEW: 'violet', LEARN: 'sky' }[d.kind];
-    const kindIcon = { REVIEW: 'notebook-pen', LEARN: 'graduation-cap' }[d.kind];
-    const [day, time] = d.time.split(' ');
-    const text = T(d.reasoning);
-    const preview = text.replace(/\[[A-Z0-9]+\]\s*/g, '').replace(/\s+/g, ' ');
-    const looked = d.looked.map((k, i) => `${i ? '<span class="dot">·</span>' : ''}<b>${esc(T(DL.tool[k] || { zh: k, en: k }))}</b>`).join('');
-    const tokTitle = fmt(DL.tokTitle, { s: d.latency, tools: d.toolCalls, calls: d.modelCalls });
-    return `<div class="tl-item ${d.kind.toLowerCase()}">
-      <div class="tl-time"><b>${time}</b>${day}</div>
-      <span class="tl-dot"></span>
-      <div class="tl-card">
-        <div class="tl-head">
-          ${pill(kindMeta, T(DL.kind[d.kind === 'ALERT' ? 'DECISION' : d.kind]), kindIcon)}
-          ${d.kind === 'ALERT' ? pill('warn', T(DL.kind.ALERT), 'zap') : ''}
-          <span class="eq">${LANG === 'zh' ? '权益' : 'Equity'} <b>${fnum(d.equity)}</b></span>
-          <span class="tok" title="${esc(tokTitle)}">${ftok(d.tokens)} tok</span>
-        </div>
-        ${looked ? `<div class="tl-looked">${esc(T(DL.lookedAt))} ${looked}</div>` : ''}
-        ${d.actions.length ? `<div class="tl-actions">${d.actions.map(a => `<div class="tl-act${a.rejected ? ' bad' : ''}"><span class="tool">${esc(T(DL.tool[a.tool] || { zh: a.tool, en: a.tool }))}${a.rejected ? esc(T(DL.rejected)) : ''}</span><span class="args">${esc(T(a.args))}</span>${a.rejected ? `<div class="why">${esc(T(a.rejected))}</div>` : ''}</div>`).join('')}</div>` : ''}
-        <div class="tl-reason"><div class="prev">${esc(preview)}</div><div class="full"><div>${renderReason(text)}</div></div></div>
-        ${text.length > 90 ? `<button type="button" class="tl-more">${esc(T(DL.expand))}<svg data-icon="chevron-down"></svg></button>` : ''}
-      </div>
-    </div>`;
-  }).join('')}</div>`;
+/* 决策卡：徽章/时间/权益/遥测 → 看了什么 → 交易动作（参数/拒因）→ 推理折叠；复盘/学习左边一道色线，正文直接铺开 */
+function renderDecision(d) {
+  const log = d.kind === 'REVIEW' || d.kind === 'LEARN';
+  // 学习行的正文就是那份学习笔记
+  const text = d.kind === 'LEARN' ? T(MOCK.learning) : T(d.reasoning);
+  const chips = log
+    ? `<span class="chip ${d.kind === 'REVIEW' ? 'rv' : 'ln'}"><svg data-icon="${d.kind === 'REVIEW' ? 'notebook-pen' : 'graduation-cap'}"></svg>${esc(T(d.kind === 'REVIEW' ? DL.review : DL.learn))}</span>`
+    : `<span class="chip">${esc(T(DL.decision))}</span>${d.kind === 'ALERT' ? `<span class="chip wn">${esc(T(DL.alert))}</span>` : ''}`;
+  // 复盘是单次调用不挂工具，不显示"0次工具"
+  const meta = [`${ftok(d.tokens)} tok`, `${d.latency.toFixed(1)}s`, d.kind !== 'REVIEW' && fmt(DL.toolCalls, { n: d.toolCalls }), fmt(DL.modelCalls, { n: d.modelCalls })].filter(Boolean).join(' · ');
+  const looked = d.looked.map(k => `<b>${esc(toolName(k))}</b>`).join(' · ');
+  const acts = d.actions.map(a => `<div class="dec-act${a.rejected ? ' bad' : ''}">
+      <b>${esc(toolName(a.tool))}${a.rejected ? esc(T(DL.rejected)) : ''}</b>
+      <span>${esc(T(a.args))}${a.rejected ? `<span class="why">${esc(T(a.rejected))}</span>` : ''}</span>
+    </div>`).join('');
+  return `<div class="dec${log ? ' log' : ''}${d.kind === 'LEARN' ? ' learn' : ''}">
+    <div class="dec-h">${chips}<span class="num">${d.time}</span><span class="eqv">${T(DL.equity)} <b class="num">${fnum(d.equity)}</b></span><span class="meta num">${meta}</span></div>
+    ${looked ? `<div class="dec-looked">${T(DL.lookedAt)} ${looked}</div>` : ''}
+    ${acts ? `<div class="dec-acts">${acts}</div>` : ''}
+    ${log
+      ? `<div class="reason log">${esc(text)}</div>`
+      : `<div class="reason"><div class="prev">${esc(text.replace(/\[[A-Z0-9]+\]\s*/g, '').replace(/\s+/g, ' '))}</div><div class="full">${renderReason(text)}</div></div>
+         <div class="links"><button type="button" class="ulink" data-more>${esc(T(DL.expand))}</button></div>`}
+  </div>`;
 }
 
-function renderTrades() {
-  return MOCK.trades.map(r => {
-    const long = r.side === 'LONG';
-    const tone = { takeProfit: 'gain', stopLoss: 'loss', manual: 'pri' }[r.manner];
-    return `<div class="trade">
-      <div class="th"><span class="sym"><svg data-icon="${sideArrow(r.side)}" style="color:var(${long ? '--gain' : '--loss'})"></svg>${r.symbol}</span>${pill(long ? 'long' : 'short', `${T(long ? DL.long : DL.short)} ${r.lev}x`)}${pill(tone, T(DL.manner[r.manner]))}<span class="px">${fnum(r.entry)} → ${fnum(r.exit)}</span><span class="pnl" style="color:var(${r.pnl >= 0 ? '--gain' : '--loss'})">${signed(r.pnl)}</span></div>
-      <div class="times"><span>${fmt(DL.openedAt, { t: r.opened })}</span><span>${fmt(DL.closedAt, { t: r.closed })}</span><span>${fmt(DL.held, { d: r.held })}</span></div>
-      <div class="plan"><div class="ph"><svg data-icon="clipboard-list" style="width:12px;height:12px;color:var(--primary)"></svg><span class="sym" style="color:var(--primary);font-size:11.5px">${T(DL.planTitle)}</span>${pill('pri', r.play)}</div><p><b>${esc(T(DL.invalidation))}</b>${esc(T(r.invalidation))}</p></div>
-      <div class="links"><b>${T(DL.openDecision)} · ${r.opened} →</b>&nbsp;&nbsp;<b>${T(DL.closeDecision)} · ${r.closed} →</b>${r.reason ? `&nbsp;&nbsp;— ${esc(T(r.reason))}` : ''}</div>
-    </div>`;
-  }).join('');
+/* 已了结交易：头行（币种·多空·了结方式·入场→出场·盈亏）→ 开/平时刻 → 计划 → 开/平仓决策跳转 */
+function renderTrade(r) {
+  const long = r.side === 'LONG';
+  const manner = { takeProfit: 'up', stopLoss: 'dn', manual: '' }[r.manner];
+  const plan = { symbol: r.symbol, side: r.side, setAt: r.opened, play: r.play, invalidation: r.invalidation };
+  return `<div class="tc">
+    <div class="tc-h num">
+      <b>${r.symbol}</b>
+      <span class="chip fill ${long ? 'up' : 'dn'}">${T(long ? DL.long : DL.short)} ${r.lev}x</span>
+      <span class="chip ${manner}">${esc(T(DL.manner[r.manner]))}</span>
+      <span class="px">${fnum(r.entry)} → ${fnum(r.exit)}</span>
+      <b class="pnl ${r.pnl >= 0 ? 'up' : 'dn'}">${signed(r.pnl)}</b>
+    </div>
+    <div class="tc-times num"><span>${fmt(DL.openedAt, { t: r.opened })}</span><span>${fmt(DL.closedAt, { t: r.closed })}</span><span>${fmt(DL.held, { d: r.held })}</span></div>
+    ${renderPlan(plan, true)}
+    <div class="tc-links">
+      <button type="button" class="btn xs" data-jump><span class="num">${T(DL.openDecision)} · ${r.opened}</span><svg data-icon="arrow-right"></svg></button>
+      <button type="button" class="btn xs" data-jump><span class="num">${T(DL.closeDecision)} · ${r.closed}</span><svg data-icon="arrow-right"></svg></button>
+      ${r.reason ? `<span class="mute">—— ${esc(T(r.reason))}</span>` : ''}
+    </div>
+  </div>`;
 }
 
-/* 净值曲线：手绘 SVG，零轴 = 初始 10,000，末点实心，悬停十字线 */
+/* 单调保形平滑曲线（Fritsch–Carlson，与 App lib/smoothPath 同算法）：不过冲，不凭空画出不存在的高低点 */
+function smoothPath(ys, x0, step) {
+  const n = ys.length, d = [];
+  for (let i = 0; i < n - 1; i++) d.push(ys[i + 1] - ys[i]);
+  const m = [d[0]];
+  for (let i = 1; i < n - 1; i++) m.push(d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2);
+  m.push(d[n - 2]);
+  for (let i = 0; i < n - 1; i++) {
+    if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
+    const a = m[i] / d[i], b = m[i + 1] / d[i], s = a * a + b * b;
+    if (s > 9) { const t = 3 / Math.sqrt(s); m[i] = t * a * d[i]; m[i + 1] = t * b * d[i]; }
+  }
+  let p = `M${x0.toFixed(2)} ${ys[0].toFixed(2)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const xa = x0 + i * step, xb = x0 + (i + 1) * step;
+    p += ` C${(xa + step / 3).toFixed(2)} ${(ys[i] + m[i] / 3).toFixed(2)},${(xb - step / 3).toFixed(2)} ${(ys[i + 1] - m[i + 1] / 3).toFixed(2)},${xb.toFixed(2)} ${ys[i + 1].toFixed(2)}`;
+  }
+  return p;
+}
+
+/* 净值曲线（同 App EquityCurve）：墨线 + 5% 墨面积 + 初始资金虚线；末值挂在末点下方，贴底就翻到上方 */
 function drawEquity(host, pts) {
   if (!host) return;
-  const seed = MOCK.trader.seed;
-  const W = Math.max(320, host.clientWidth), H = host.clientHeight || 280;
-  const padL = 52, padR = 16, padT = 14, padB = 26;
-  const xs = pts.map(p => p.t), ys = pts.map(p => p.v);
-  const x0 = xs[0], x1 = xs[xs.length - 1];
-  let yMin = Math.min(...ys, seed), yMax = Math.max(...ys, seed);
-  const span = (yMax - yMin) || 1; yMin -= span * .08; yMax += span * .08;
-  const X = t => padL + (t - x0) / (x1 - x0) * (W - padL - padR);
-  const Y = v => padT + (1 - (v - yMin) / (yMax - yMin)) * (H - padT - padB);
-  const last = pts[pts.length - 1];
-  const color = last.v >= seed ? 'var(--gain)' : 'var(--loss)';
-  // Catmull-Rom → 三次贝塞尔，曲线圆滑
-  let d = `M ${X(pts[0].t).toFixed(1)} ${Y(pts[0].v).toFixed(1)}`;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
-    const c1x = X(p1.t) + (X(p2.t) - X(p0.t)) / 6, c1y = Y(p1.v) + (Y(p2.v) - Y(p0.v)) / 6;
-    const c2x = X(p2.t) - (X(p3.t) - X(p1.t)) / 6, c2y = Y(p2.v) - (Y(p3.v) - Y(p1.v)) / 6;
-    d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${X(p2.t).toFixed(1)} ${Y(p2.v).toFixed(1)}`;
-  }
-  const area = `${d} L ${X(last.t).toFixed(1)} ${(H - padB).toFixed(1)} L ${X(pts[0].t).toFixed(1)} ${(H - padB).toFixed(1)} Z`;
-  // y 轴：取整步长（250/500/1000…），刻度落在整数上
-  const rawStep = (yMax - yMin) / 4, mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
-  const step = [10, 5, 2.5, 2, 1].map(m => m * mag).find(s => s <= rawStep) || mag;
-  const yTicks = [];
-  for (let v = Math.ceil(yMin / step) * step; v <= yMax; v += step) yTicks.push(v);
-  // x 轴：每天 00:00 一刻度
-  const xTicks = [];
-  for (const p of pts) { const dt = new Date(p.t + 8 * HOUR); if (dt.getUTCHours() === 0) xTicks.push(p.t); }
-  if (xTicks.length > 9) { const step = Math.ceil(xTicks.length / 9); xTicks.splice(0, xTicks.length, ...xTicks.filter((_, i) => i % step === 0)); }
-  const dayLabel = t => { const dt = new Date(t + 8 * HOUR); return `${String(dt.getUTCMonth() + 1).padStart(2, '0')}/${String(dt.getUTCDate()).padStart(2, '0')}`; };
-  const gid = 'eqg' + Math.random().toString(36).slice(2, 7);
-  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".22"/><stop offset="1" stop-color="${color}" stop-opacity=".02"/></linearGradient></defs>
-    ${yTicks.map(v => `<line class="gridline" x1="${padL}" x2="${W - padR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/><text class="lbl" x="${padL - 8}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end">${Math.round(v).toLocaleString('en-US')}</text>`).join('')}
-    <line class="gridline zero" x1="${padL}" x2="${W - padR}" y1="${Y(seed).toFixed(1)}" y2="${Y(seed).toFixed(1)}"/>
-    ${xTicks.map(t => `<text class="lbl" x="${X(t).toFixed(1)}" y="${H - 8}" text-anchor="middle">${dayLabel(t)}</text>`).join('')}
-    <g class="eq-reveal"><path class="area" d="${area}" fill="url(#${gid})"/><path class="line" d="${d}" stroke="${color}"/></g>
-    <circle class="dot" cx="${X(last.t).toFixed(1)}" cy="${Y(last.v).toFixed(1)}" r="4" fill="${color}"/>
-    <line class="cross" x1="0" x2="0" y1="${padT}" y2="${H - padB}"/>
-    <circle class="cross-dot" r="3.5" fill="${color}" stroke="var(--card)" stroke-width="2" opacity="0"/>
-  </svg><div class="tip"></div>`;
-  const cross = host.querySelector('.cross'), cdot = host.querySelector('.cross-dot'), tip = host.querySelector('.tip');
-  host.onmousemove = e => {
-    const r = host.getBoundingClientRect();
-    const mx = (e.clientX - r.left) / r.width * W;
-    let bi = 0, bd = Infinity;
-    pts.forEach((p, i) => { const dd = Math.abs(X(p.t) - mx); if (dd < bd) { bd = dd; bi = i; } });
-    const p = pts[bi], px = X(p.t), py = Y(p.v);
-    cross.setAttribute('x1', px); cross.setAttribute('x2', px);
-    cdot.setAttribute('cx', px); cdot.setAttribute('cy', py); cdot.setAttribute('opacity', '1');
-    const dt = new Date(p.t + 8 * HOUR);
-    const tl = `${dayLabel(p.t)} ${String(dt.getUTCHours()).padStart(2, '0')}:00`;
-    const pnl = p.v - seed;
-    tip.innerHTML = `${tl}<b style="color:${pnl >= 0 ? 'var(--gain)' : 'var(--loss)'}">${fnum(p.v)}</b>${signed(pnl)} · ${signed(pnl / seed * 100)}% ${esc(T(DL.pnlTip))}`;
-    const left = px / W * r.width;
-    tip.style.left = Math.min(Math.max(left + 12, 0), r.width - 150) + 'px';
-    tip.style.top = Math.max(py / H * r.height - 48, 0) + 'px';
-  };
-  host.onmouseleave = () => { cdot.setAttribute('opacity', '0'); };
+  const seed = MOCK.trader.seed, H = 280, PAD = 8, TAG_H = 38, TAG_GAP = 24;
+  const W = host.clientWidth;
+  if (!W || pts.length < 2) return;
+  const vals = pts.map(p => p.v);
+  const min = Math.min(...vals, seed), max = Math.max(...vals, seed);
+  const y = v => PAD + (H - 2 * PAD) * (1 - (v - min) / (max - min || 1));
+  const step = (W - 2 * PAD) / (pts.length - 1);
+  const ys = vals.map(y);
+  const line = smoothPath(ys, PAD, step);
+  const xEnd = PAD + step * (pts.length - 1);
+  const yBase = y(seed), yLast = ys[ys.length - 1], last = pts[pts.length - 1];
+  const tagTop = yLast + TAG_GAP + TAG_H > H ? yLast - TAG_GAP - TAG_H : yLast + TAG_GAP;
+  // 基准线贴顶时标签放线上方会出界，改挂线下方
+  const baseTop = yBase - 18 >= 0 ? yBase - 18 : yBase + 6;
+  host.innerHTML = `<svg class="eq-reveal" viewBox="0 0 ${W} ${H}">
+      <path d="${line} L${xEnd.toFixed(2)} ${H} L${PAD} ${H} Z" fill="var(--fg)" fill-opacity=".05"/>
+      <line x1="0" x2="${W}" y1="${yBase.toFixed(2)}" y2="${yBase.toFixed(2)}" stroke="var(--muted-fg)" stroke-dasharray="2 5"/>
+      <path d="${line}" fill="none" stroke="var(--fg)" stroke-width="2"/>
+    </svg>
+    <span class="lbl eq-late" style="left:0;top:${baseTop.toFixed(0)}px">${esc(T(DL.initial))}</span>
+    <div class="tag eq-late num" style="top:${tagTop.toFixed(0)}px"><b>${fnum(last.v)}</b><span>${fmt(DL.lastWake, { t: hhmm(last.t) })}</span></div>
+    <span class="lbl" style="left:0;bottom:-20px">${axDay(pts[0].t)}</span>
+    <span class="lbl" style="right:0;bottom:-20px">${axDay(last.t)}</span>`;
 }
 let eqTimer = 0;
 addEventListener('resize', () => {
   clearTimeout(eqTimer);
-  eqTimer = setTimeout(() => { const host = document.getElementById('eq-chart'); if (host) drawEquity(host, curveWindow()); }, 150);
+  eqTimer = setTimeout(() => drawEquity(document.getElementById('eq-chart'), curveWindow()), 150);
 });
 
 /* ---------- 装配 ---------- */
+let navPlace = () => { };
 function boot() {
   fillCopy();
   renderStrip();
@@ -855,6 +917,8 @@ function boot() {
   // 手机只放文字：面板不挂，也省掉动画开销
   if (MOBILE.matches) { stopFlowPanels(); } else { mountFlowPanels(); }
   icons();
+  // 导航文案换了语言宽度就变，橙方块重新对位
+  navPlace();
 }
 
 document.getElementById('btn-theme').addEventListener('click', () => {
@@ -866,10 +930,29 @@ document.getElementById('btn-lang').addEventListener('click', () => {
 // 跨过手机/桌面分界时整体重挂
 MOBILE.addEventListener('change', boot);
 
-// 截图钩子：?shot 时首屏不再撑满视口、入场动画全关（无头截长图用）；?dark 强制暗色
+// 截图钩子：?shot 时入场动画全关（无头截长图用）；?dark 强制暗色
 if (SHOT) document.documentElement.classList.add('shot');
 if (location.search.includes('dark')) isDark = true;
 applyTheme(isDark);
+navPlace = setupNav();
 boot();
 startSmoke();
 watchReveal();
+watchDraw();
+setupScrollBits();
+
+// 逐字排版：先拆字；字体到了再起跳（Archivo 没到时字宽不对，升起来会跳一下），最多等 0.8s
+const heroH = document.querySelector('.hero-h'), footWord = document.querySelector('.foot-word');
+splitLetters(heroH);
+splitLetters(footWord);
+Promise.race([document.fonts ? document.fonts.ready : Promise.resolve(), new Promise(r => setTimeout(r, 800))]).then(() => {
+  navPlace();
+  fitFootWord();
+  requestAnimationFrame(() => riseLetters(heroH, true));
+  stretchOnHover(heroH, heroH.closest('.hero-top'));
+});
+// 页脚字标进视口才升起
+new IntersectionObserver((es, io) => {
+  if (es[0].isIntersecting) { riseLetters(footWord, false); io.disconnect(); }
+}, { rootMargin: '0px 0px -10% 0px' }).observe(footWord);
+addEventListener('resize', fitFootWord);
