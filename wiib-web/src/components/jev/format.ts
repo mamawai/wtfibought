@@ -13,12 +13,19 @@ export const ACTION_CHIP: Record<string, string> = {
   ERROR: 'dn',
 };
 
-/** R1 旧版决定题各选项：文字/芯片色 + 概率条色 */
+/** Jev 拍板的各选项：文字色 + 概率条色；WAIT 只有 R1 旧版有 */
 export const CHOICE_STYLE: Record<string, { text: string; bar: string }> = {
   BUY_UP: { text: 'up', bar: 'bg-gain' },
   BUY_DOWN: { text: 'dn', bar: 'bg-loss' },
+  PASS: { text: 'mute', bar: 'bg-muted-foreground/40' },
   WAIT: { text: 'mute', bar: 'bg-muted-foreground/40' },
+  HOLD: { text: '', bar: 'bg-foreground' },
+  SELL: { text: 'wn', bar: 'bg-warning' },
 };
+
+/** 入场题、离场题的选项，按发给 Jev 的顺序 */
+export const ENTRY_OPTIONS = ['BUY_UP', 'BUY_DOWN', 'PASS'];
+export const EXIT_OPTIONS = ['HOLD', 'SELL'];
 
 /** R1 旧版后劲三档：在回吐 / 没方向 / 还在推 */
 export const MOMENTUM_TEXT = ['wn', 'mute', ''];
@@ -29,18 +36,21 @@ export function reasonCode(d: { reason?: string }): string {
   return d.reason?.split(' ')[0] ?? '';
 }
 
-/** reason 的第二个词：BUY / WAIT / ASK_LOW 挑中的那边；R1 旧版的行没有 */
+/** reason 的第二个词：BUY / UNSURE / NO_QUOTE / MISSED（R2 的 WAIT / ASK_LOW）是哪边；R1 旧版的行没有 */
 export function reasonSide(d: { reason?: string }): 'UP' | 'DOWN' | undefined {
   const s = d.reason?.split(' ')[1];
   return s === 'UP' || s === 'DOWN' ? s : undefined;
 }
 
-/** 每种代码的分类：已执行 / 照常不动或拿着 / 把握不够 / 被代码拦下 / 这次没问；UNSURE、NOT_CHEAP、EXPENSIVE、ASK_RANGE 只有 R1 旧版有 */
+/**
+ * 每种代码的分类：已执行 / 照常不动或拿着 / 把握不够 / 被代码拦下 / 这次没问或没成交。
+ * WAIT 只有 R1、R2 有，ASK_LOW 只有 R2 有，NOT_CHEAP、EXPENSIVE、ASK_RANGE 只有 R1 有
+ */
 const REASON_KIND: Record<string, 'done' | 'idle' | 'unsure' | 'blocked' | 'skipped'> = {
-  BUY: 'done', SELL: 'done', WAIT: 'idle', HOLD: 'idle', UNSURE: 'unsure',
+  BUY: 'done', SELL: 'done', PASS: 'idle', WAIT: 'idle', HOLD: 'idle', UNSURE: 'unsure',
   NO_QUOTE: 'blocked', ASK_LOW: 'blocked', ASK_RANGE: 'blocked', NOT_CHEAP: 'blocked', EXPENSIVE: 'blocked',
   NO_BALANCE: 'blocked', NO_BID: 'blocked',
-  STALE_BOOK: 'skipped', STALE_WHILE_ASKING: 'skipped',
+  STALE_BOOK: 'skipped', STALE_CHAINLINK: 'skipped', STALE_WHILE_ASKING: 'skipped', MISSED: 'skipped',
 };
 
 /** 提示行只在有新信息时出；照常执行和照常不动的，动作芯片和优势那行已经说清楚了 */

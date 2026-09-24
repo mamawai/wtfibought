@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.prediction;
 
 import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibcommon.dto.PredictionBetResponse;
 import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibcommon.market.ForceOrderService;
 import com.mawai.wiibcommon.market.KlineBar;
@@ -26,7 +27,7 @@ import java.util.function.LongSupplier;
 
 /**
  * 预测员的眼睛：把这一刻玩家能看到的事实写成 Jev 读得懂的英文短句，要比的数（价差、秒数、¢ 价、含费成本）由代码算好写进句子。
- * 数学公平价和由它得出的结论不进 state，只留在 {@link Raw} 给卖出规则和记分。
+ * 数学估计只当一项事实写进 estimate（两边估计胜率、含费成本比它高或低几美分），不写"便宜 / 贵"这类结论；Jev 不做算术，差值都算好。
  * <ul>
  *   <li>market：怎么赢、怎么买卖、多久问一次</li>
  *   <li>clock：早段 / 中段 / 最后一分钟锁了多少，加上离结算均价截止还有几秒</li>
@@ -34,6 +35,8 @@ import java.util.function.LongSupplier;
  *       路径、形状、最近一分钟、速度、Chainlink 多久前更新和 Binance 最近 10 / 30 秒怎么动（Chainlink 按它自己的时间戳）</li>
  *   <li>binance_flow：最近 60 秒主动买卖与大单、开盘以来强平方向（直接读 Redis 逐笔流和强平库）</li>
  *   <li>odds：谁是热门和市场给 UP 的概率、UP / DOWN 各自的卖价买价与含费成本、最近 30 秒赔率怎么动</li>
+ *   <li>estimate：随机游走估计怎么来的，两边各自的估计胜率、值多少、含费成本比它高或低几美分</li>
+ *   <li>position：持仓才有，拿着哪边多少份、均价、现在卖扣费每份能拿多少、比估计多拿还是少拿几美分</li>
  * </ul>
  */
 @Component
@@ -70,6 +73,10 @@ public class PredictionStateWriter {
             + "before the close at the bid. Every buy and every sell pays a fee. You hold at most one bet at a time and are asked "
             + "again every 15 seconds.";
 
+    static final String ESTIMATE_METHOD = "A zero-drift random-walk estimate of each side's chance of winning, using only BTC's gap to the "
+            + "opening average, the seconds left and recent volatility, plus in the final minute the part of the settlement average already set; "
+            + "it ignores order flow, liquidations and the market's prices.";
+
     private final CacheService cacheService;
     private final KlineFetcher klineFetcher;
     private final OrderFlowAggregator orderFlowAggregator;
@@ -85,14 +92,19 @@ public class PredictionStateWriter {
     /**
      * @param zModel          纯数学的 z，正 = 偏 UP
      * @param pModel          纯数学的上涨概率
-     * @param book            写 state 那一刻的盘口
+     * @param book            写 state 那一刻的盘口，Jev 看到的就是这份
      * @param bookUpdatedAtMs 盘口最近一次变化的时刻（Polymarket 那边的时间）；没有为 null
+     * @param chainlinkAgeMs  Chainlink 最后一跳离现在多久；超过 {@link #TICK_MAX_AGE_MS} 不问
      */
-    public record Raw(double zModel, double pModel, Book book, Long bookUpdatedAtMs) {
+    public record Raw(double zModel, double pModel, Book book, Long bookUpdatedAtMs, long chainlinkAgeMs) {
     }
 
-    /** 缺开盘价、缺 K 线、本回合还没有 tick、Chainlink 停了都抛 IllegalStateException：看不全就别问 */
-    public Snapshot write(long windowStart) {
+    /**
+     * 缺开盘价、缺 K 线、本回合还没有 tick 都抛 IllegalStateException：看不全就别问。Chainlink 停了不抛，年龄记在 Raw 里由回路跳过
+     *
+     * @param active 本回合在持的注单，没有为 null
+     */
+    public Snapshot write(long windowStart, PredictionBetResponse active) {
         long now = nowMs.getAsLong();
         long windowStartMs = windowStart * 1000L;
         // 结算均价截止时刻：收盘前 3 秒
@@ -108,9 +120,7 @@ public class PredictionStateWriter {
         if (inWindow.isEmpty()) {
             throw new IllegalStateException("本回合还没有 Chainlink tick windowStart=" + windowStart);
         }
-        if (now - inWindow.getLast().timeMs() > TICK_MAX_AGE_MS) {
-            throw new IllegalStateException("Chainlink 价停了 " + (now - inWindow.getLast().timeMs()) + "ms");
-        }
+        long chainlinkAgeMs = now - inWindow.getLast().timeMs();
         BigDecimal last = inWindow.getLast().price();
         List<KlineBar> bars = klineFetcher.fetch(SYMBOL, "1m", KLINE_BARS);
         if (bars.isEmpty()) {
@@ -151,7 +161,7 @@ public class PredictionStateWriter {
         }
         btc.put("last_minute", lastMinutePhrase(inWindow, now, sigma1h));
         btc.put("pace", speedSentence(bars, sigma1h));
-        btc.put("latest", latestPhrase(now - inWindow.getLast().timeMs(), flowFresh));
+        btc.put("latest", latestPhrase(chainlinkAgeMs, flowFresh));
         state.put("btc", btc);
 
         Map<String, Object> flow = new LinkedHashMap<>();
@@ -170,8 +180,12 @@ public class PredictionStateWriter {
             odds.put("odds_move", move);
         }
         state.put("odds", odds);
+        state.put("estimate", estimateSection(pModel, book));
+        if (active != null) {
+            state.put("position", positionSection(active, pModel, book));
+        }
 
-        return new Snapshot(state, new Raw(z, pModel, book, cacheService.getPredictionBookUpdatedAt()));
+        return new Snapshot(state, new Raw(z, pModel, book, cacheService.getPredictionBookUpdatedAt(), chainlinkAgeMs));
     }
 
     /** 最近 60 秒主动买卖与大单；不到 10 笔就不给 */
@@ -369,6 +383,67 @@ public class PredictionStateWriter {
         else if (d <= -0.03) word = "UP's price fell a little over the last 30 seconds";
         else word = "prices barely moved over the last 30 seconds";
         return word + String.format(Locale.ROOT, " (%+d¢)", Math.round(d * 100));
+    }
+
+    /** 估计胜率的写法：pct "62%"、worth "62¢"、比差值用的 value 62；到 99.5% 以上、0.5% 以下不写成必然，value 用原值 */
+    record Chance(String pct, String worth, double value, boolean rounded) {
+    }
+
+    /** 这一边的估计胜率；平常两边取整后加起来正好 100 */
+    static Chance chance(double pModel, String side) {
+        boolean up = "UP".equals(side);
+        double value = (up ? pModel : 1 - pModel) * 100;
+        if (pModel >= 0.995 || pModel <= 0.005) {
+            return (pModel >= 0.995) == up
+                    ? new Chance("more than 99%", "more than 99¢", value, false)
+                    : new Chance("less than 1%", "less than 1¢", value, false);
+        }
+        long upPct = Math.round(pModel * 100);
+        long n = up ? upPct : 100 - upPct;
+        return new Chance(n + "%", n + "¢", n, true);
+    }
+
+    /** 随机游走估计：怎么估的，加两边各一句 */
+    static Map<String, Object> estimateSection(double pModel, Book book) {
+        Map<String, Object> estimate = new LinkedHashMap<>();
+        estimate.put("method", ESTIMATE_METHOD);
+        estimate.put("up", estimateLine("UP", chance(pModel, "UP"), book.upAsk()));
+        estimate.put("down", estimateLine("DOWN", chance(pModel, "DOWN"), book.downAsk()));
+        return estimate;
+    }
+
+    /** 一边：估计胜率、值多少、按卖价买一份连手续费比它高或低几美分 */
+    static String estimateLine(String side, Chance c, BigDecimal ask) {
+        String head = side + ": estimated chance of winning " + c.pct() + ", worth " + c.worth() + " a share; ";
+        if (ask == null) return head + "nobody is selling " + side + " right now";
+        double cost = (ask.doubleValue() + PredictionFee.perShare(ask).doubleValue()) * 100;
+        return head + "buying " + side + String.format(Locale.ROOT, " costs %.1f¢ with the fee, ", cost) + diffPhrase(cost, c.value(), "that");
+    }
+
+    /** 持仓：拿着什么、现在卖扣费每份能拿多少、比估计多拿还是少拿；没人接盘只写没人接 */
+    static Map<String, Object> positionSection(PredictionBetResponse active, double pModel, Book book) {
+        String side = active.getSide();
+        Map<String, Object> position = new LinkedHashMap<>();
+        position.put("held", String.format(Locale.ROOT, "holding %.1f %s shares bought at an average of %s",
+                active.getContracts(), side, cents(active.getAvgPrice())));
+        BigDecimal bid = book.bid(side);
+        if (bid == null) {
+            position.put("sell_now", "nobody is bidding for " + side + " right now");
+            return position;
+        }
+        double net = (bid.doubleValue() - PredictionFee.perShare(bid).doubleValue()) * 100;
+        position.put("sell_now", "the bid is " + cents(bid) + String.format(Locale.ROOT, "; selling now returns %.1f¢ a share after the fee", net));
+        Chance c = chance(pModel, side);
+        position.put("vs_estimate", "the estimate gives " + side + " a " + c.pct() + " chance of winning; selling now returns "
+                + diffPhrase(net, c.value(), c.rounded() ? c.worth() + " a share" : "its estimated worth"));
+        return position;
+    }
+
+    /** a 比 b 多 / 少几美分，差不到 0.05¢ 算一样 */
+    static String diffPhrase(double a, double b, String than) {
+        double d = a - b;
+        if (Math.abs(d) < 0.05) return "the same as " + than;
+        return String.format(Locale.ROOT, "%.1f¢ %s than %s", Math.abs(d), d > 0 ? "more" : "less", than);
     }
 
     /** 价格写成美分：0.62 → 62¢ */

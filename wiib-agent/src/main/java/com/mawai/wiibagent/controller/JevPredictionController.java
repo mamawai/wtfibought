@@ -51,7 +51,7 @@ public class JevPredictionController {
     private final JevPredictionRuns runs;
     private final SimPredictionClient sim;
 
-    /** 一张决策卡要的字段；answers 是 Jev 的回答原样，没问 Jev 的行为 null；jevChoice 只有 R1 旧版的行有 */
+    /** 一张决策卡要的字段；answers 是 Jev 的回答原样，没问 Jev 的行为 null；jevChoice 是 Jev 拍板的选项，R2 的行没有 */
     public record DecisionView(long id, long windowStart, String checkpoint, long decidedAt,
                                BigDecimal pModel, BigDecimal pJev, BigDecimal pMkt,
                                String jevChoice, BigDecimal jevChoiceP, Integer bookAgeMs,
@@ -74,8 +74,8 @@ public class JevPredictionController {
         }
     }
 
-    /** 页面提示里要写出来的几个阈值 */
-    public record Thresholds(double minEdge, double bigEdge, BigDecimal minAsk, double sellEdge) {
+    /** 页面提示里要写出来的几个数：Jev 把握到多少才照做、拍板后等多久成交、每注本金 */
+    public record Thresholds(double actThreshold, long fillDelayMs, BigDecimal baseStake) {
     }
 
     /**
@@ -102,7 +102,7 @@ public class JevPredictionController {
             }
         }
         boolean enabled = platform.enabled() && sw.isOn();
-        Thresholds t = new Thresholds(cfg.getMinEdge(), cfg.getBigEdge(), cfg.getMinAsk(), cfg.getSellEdge());
+        Thresholds t = new Thresholds(cfg.getActThreshold(), cfg.getFillDelayMs(), cfg.getBaseStake());
         int runNo = viewing.getRunNo();
         return Result.ok(new Overview(enabled, platform.getModel(), t, balance, JevPredictionAccount.INITIAL_GAME_BALANCE,
                 viewing, all, mapper.selectStats(runNo), mapper.selectBrierByCheckpoint(runNo), mapper.selectCalibration(runNo)));

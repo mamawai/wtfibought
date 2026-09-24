@@ -16,12 +16,12 @@ import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_SELL;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_STAY_OUT;
 
 /**
- * 预测员的规则：买看 Jev 给的胜率——每份优势 = 胜率 − 卖价 − 每份吃单费，两边挑优势大的，到 min-edge 才买、到 big-edge 下两倍；
- * 卖价低于 min-ask、付不起不买。卖不问 Jev，买一价扣掉吃单费比数学公平价高出 sell-edge 就卖，否则拿到结算。
+ * 预测员的规则：Jev 拍板，代码只管执行。Jev 选的那一项概率到 act-threshold 才照做（卖还要比拿着的概率高）；
+ * 代码只拦机械问题：那边没人卖、没人接盘、钱包付不起一注。每注固定 base-stake。
  * <p>
- * reason 一律"代码 + 细节"，页面按首个词出中文提示，BUY / WAIT / ASK_LOW 第二个词是挑中的那边：
- * BUY 下单 / WAIT 优势不够 / NO_QUOTE 两边都没人卖 / ASK_LOW 卖价太低 /
- * NO_BALANCE 没钱 / HOLD 拿着 / SELL 卖出 / NO_BID 没人接盘。
+ * reason 一律"代码 + 细节"，页面按首个词出中文提示，BUY / UNSURE / NO_QUOTE / MISSED 第二个词是那一边（卖出的是 SELL）：
+ * BUY 下单 / PASS Jev 选不买 / UNSURE Jev 选了但把握不够 / NO_QUOTE 那边没人卖 / NO_BALANCE 没钱 /
+ * HOLD Jev 选拿着 / SELL 卖出 / NO_BID 没人接盘 / MISSED 等成交时价变差了没抢到。
  */
 public final class PredictionRules {
 
@@ -34,62 +34,71 @@ public final class PredictionRules {
 
     /** 当时盘口，缺一边就是 null */
     record Book(BigDecimal upAsk, BigDecimal upBid, BigDecimal downAsk, BigDecimal downBid) {
+
+        BigDecimal ask(String side) {
+            return "UP".equals(side) ? upAsk : downAsk;
+        }
+
+        BigDecimal bid(String side) {
+            return "UP".equals(side) ? upBid : downBid;
+        }
     }
 
-    /** 入场结论：action 是 BUY_UP / BUY_DOWN / STAY_OUT；edge 是按 Jev 胜率算、优势大的那边的每份优势，没买也记 */
-    record Entry(String action, String side, BigDecimal stake, Double edge, String reason) {
+    /** 入场结论：action 是 BUY_UP / BUY_DOWN / STAY_OUT；side 是 Jev 想买的那边，选不买为 null */
+    record Entry(String action, String side, BigDecimal stake, String reason) {
     }
 
-    /** 复核结论：HOLD / SELL */
+    /** 离场结论：HOLD / SELL */
     record Review(String action, String reason) {
     }
 
     private PredictionRules() {
     }
 
-    /** 空仓：按 Jev 的胜率算两边每份优势，挑大的那边；到 min-edge、卖价不低于 min-ask、付得起就买，到 big-edge 下两倍 */
+    /** 空仓：Jev 选买且把握够、那边有人卖、付得起就买；选不买或把握不够就不动 */
     static Entry entry(Judgment j, Book b, BigDecimal gameBalance, JevPredictionConfig cfg) {
-        Double upEdge = b.upAsk() == null ? null : edge(j.pJev(), b.upAsk());
-        Double downEdge = b.downAsk() == null ? null : edge(1 - j.pJev(), b.downAsk());
-        if (upEdge == null && downEdge == null) {
-            return new Entry(ACTION_STAY_OUT, null, null, null, "NO_QUOTE");
+        String choice = j.decision().choice();
+        double p = j.choiceP();
+        if (PredictionQuestions.PASS.equals(choice)) {
+            return new Entry(ACTION_STAY_OUT, null, null, "PASS " + fmt(p));
         }
-        boolean up = downEdge == null || (upEdge != null && upEdge >= downEdge);
+        boolean up = PredictionQuestions.BUY_UP.equals(choice);
         String side = up ? "UP" : "DOWN";
-        BigDecimal ask = up ? b.upAsk() : b.downAsk();
-        double edge = up ? upEdge : downEdge;
-        if (edge < cfg.getMinEdge()) {
-            return new Entry(ACTION_STAY_OUT, side, null, edge, "WAIT " + side + " " + fmt(edge));
+        if (p < cfg.getActThreshold()) {
+            return new Entry(ACTION_STAY_OUT, side, null, "UNSURE " + side + " " + fmt(p));
         }
-        if (ask.compareTo(cfg.getMinAsk()) < 0) {
-            return new Entry(ACTION_STAY_OUT, side, null, edge, "ASK_LOW " + side + " " + ask.toPlainString());
+        BigDecimal ask = b.ask(side);
+        if (ask == null) {
+            return new Entry(ACTION_STAY_OUT, side, null, "NO_QUOTE " + side);
         }
-        BigDecimal want = edge >= cfg.getBigEdge() ? cfg.getBaseStake().multiply(BigDecimal.TWO) : cfg.getBaseStake();
-        BigDecimal stake = stake(want, gameBalance, ask);
+        BigDecimal stake = stake(cfg.getBaseStake(), gameBalance, ask);
         if (stake == null) {
-            return new Entry(ACTION_STAY_OUT, side, null, edge, NO_BALANCE);
+            return new Entry(ACTION_STAY_OUT, side, null, NO_BALANCE);
         }
-        return new Entry(up ? ACTION_BUY_UP : ACTION_BUY_DOWN, side, stake, edge,
-                "BUY " + side + " " + fmt(edge) + " ask " + ask.toPlainString());
+        return new Entry(up ? ACTION_BUY_UP : ACTION_BUY_DOWN, side, stake, "BUY " + side + " " + fmt(p) + " ask " + ask.toPlainString());
     }
 
-    /** 持仓：买一价扣掉吃单费比公平价高出 sell-edge 就卖（市场给多了），否则拿到结算；没人接盘只能拿着 */
-    static Review review(double pModel, String side, Book b, JevPredictionConfig cfg) {
-        boolean up = "UP".equals(side);
-        BigDecimal bid = up ? b.upBid() : b.downBid();
-        if (bid == null) {
-            return new Review(ACTION_HOLD, "NO_BID");
+    /** 持仓：Jev 选卖、卖的概率比拿着高且到 act-threshold 才卖，否则拿着。没人接盘的回路里先拦了，不问 Jev */
+    static Review exit(Judgment j, String side, Book b, JevPredictionConfig cfg) {
+        double p = j.choiceP();
+        if (!PredictionQuestions.SELL.equals(j.decision().choice())) {
+            return new Review(ACTION_HOLD, "HOLD " + fmt(p));
         }
-        double over = bid.doubleValue() - PredictionFee.perShare(bid).doubleValue() - (up ? pModel : 1 - pModel);
-        if (over >= cfg.getSellEdge()) {
-            return new Review(ACTION_SELL, "SELL over " + fmt(over) + " bid " + bid.toPlainString());
+        double hold = j.decision().probabilities().getOrDefault(PredictionQuestions.HOLD, 0.0);
+        if (p <= hold || p < cfg.getActThreshold()) {
+            return new Review(ACTION_HOLD, "UNSURE SELL " + fmt(p));
         }
-        return new Review(ACTION_HOLD, "HOLD over " + fmt(over));
+        return new Review(ACTION_SELL, "SELL " + fmt(p) + " bid " + b.bid(side).toPlainString());
     }
 
-    /** 每份优势：概率 − 卖价 − 吃单费 */
+    /** 买入每份优势：概率 − 卖价 − 吃单费，空仓行的 edge 列用它；state 的 estimate 是同一个算式，只是估计胜率取了整 */
     static double edge(double pSide, BigDecimal ask) {
         return pSide - ask.doubleValue() - PredictionFee.perShare(ask).doubleValue();
+    }
+
+    /** 卖出每份扣掉吃单费后比概率多拿多少，持仓行的 edge 列用它；state 的 position 是同一个算式，只是估计胜率取了整 */
+    static double sellOver(double pSide, BigDecimal bid) {
+        return bid.doubleValue() - PredictionFee.perShare(bid).doubleValue() - pSide;
     }
 
     /** 想下多少和付得起多少取小；余额要留足手续费，不足 sim 最小本金就不下 */

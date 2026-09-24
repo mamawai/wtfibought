@@ -822,31 +822,34 @@ export interface JevPredictionDecisionView {
   /** 开盘后第几秒，如 T150 */
   checkpoint: string;
   decidedAt: number;
-  /** 纯数学的上涨概率，持仓按它定卖不卖 */
+  /** 纯数学的上涨概率 */
   pModel?: number;
-  /** Jev 的上涨概率（UP 会赢与 1 − DOWN 会赢的平均）；R1 旧版是按后劲修正的数学概率 */
+  /** Jev 的上涨概率（UP 会赢与 1 − DOWN 会赢的平均），只记分；R1 旧版是按后劲修正的数学概率 */
   pJev?: number;
   /** 市场隐含 */
   pMkt?: number;
-  /** R1 旧版决定题概率最高的选项 */
-  jevChoice?: 'BUY_UP' | 'BUY_DOWN' | 'WAIT' | 'HOLD' | 'SELL';
+  /** Jev 拍板的选项：空仓 BUY_UP / BUY_DOWN / PASS，持仓 HOLD / SELL；R1 旧版是 BUY_UP / BUY_DOWN / WAIT，R2 没有 */
+  jevChoice?: 'BUY_UP' | 'BUY_DOWN' | 'PASS' | 'WAIT' | 'HOLD' | 'SELL';
   /** 它的概率 */
   jevChoiceP?: number;
   /** 盘口距上次更新的毫秒数 */
   bookAgeMs?: number;
   upAsk?: number;
   downAsk?: number;
-  /** 按 Jev 胜率算、优势大的那边的每份优势 */
+  /** 按数学估计的每份优势：空仓是 Jev 选的那边估计 − 卖价 − 手续费，持仓是卖出扣费后比估计多拿多少；R2 是按 Jev 胜率算、优势大那边的 */
   edge?: number;
   action: 'BUY_UP' | 'BUY_DOWN' | 'STAY_OUT' | 'HOLD' | 'SELL' | 'ERROR';
-  /** 首个词是代码（见后端 PredictionRules），页面按它出提示；BUY / WAIT / ASK_LOW 第二个词是哪边；ERROR 行没有 */
+  /** 首个词是代码（见后端 PredictionRules），页面按它出提示；BUY / UNSURE / NO_QUOTE / MISSED（R2 的 WAIT / ASK_LOW）第二个词是哪边；ERROR 行没有 */
   reason?: string;
   betId?: number;
   stake?: number;
   outcome?: string;
   error?: string;
-  /** Jev 的回答：up_wins / down_wins；R1 旧版是后劲题 momentum 和决定题 decide；没问 Jev 的行没有 */
-  answers?: { up_wins?: JevNoulAnswer; down_wins?: JevNoulAnswer; decide?: JevAnswer; momentum?: JevAnswer };
+  /** Jev 的回答：谁赢两问 up_wins / down_wins，加入场题 entry 或离场题 exit；R1 旧版是后劲题 momentum 和决定题 decide；没问 Jev 的行没有 */
+  answers?: {
+    up_wins?: JevNoulAnswer; down_wins?: JevNoulAnswer; entry?: JevAnswer; exit?: JevAnswer;
+    decide?: JevAnswer; momentum?: JevAnswer;
+  };
 }
 
 export interface JevPredictionStats {
@@ -891,16 +894,14 @@ export interface JevBet {
   pnl?: number;
 }
 
-/** 页面提示里要写出来的阈值 */
+/** 页面提示里要写出来的几个数 */
 export interface JevThresholds {
-  /** 按 Jev 胜率算的每份优势到这么多才买 */
-  minEdge: number;
-  /** 每份优势到这么多下两倍 */
-  bigEdge: number;
-  /** 卖价低于它不买 */
-  minAsk: number;
-  /** 持仓时买一价扣手续费比公平价高出这么多就卖 */
-  sellEdge: number;
+  /** Jev 选的那一项概率到这么多才照做 */
+  actThreshold: number;
+  /** Jev 拍板后等这么久再看盘口，价没变差才成交 */
+  fillDelayMs: number;
+  /** 每注本金 */
+  baseStake: number;
 }
 
 /** 预测员的一局：一局一个账户，重新开局加一局，旧局留档 */

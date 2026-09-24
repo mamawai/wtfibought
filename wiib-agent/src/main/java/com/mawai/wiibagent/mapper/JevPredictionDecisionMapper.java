@@ -13,7 +13,7 @@ import java.util.List;
 @Mapper
 public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDecision> {
 
-    /** 记分汇总：回合数、下注数、已结注单与胜场、盈亏，三个概率各自的 Brier 均值（只算 UP/DOWN 已结的行） */
+    /** 记分汇总：回合数、下注数、已结注单与胜场、盈亏，三个概率各自的 Brier 均值（只算 UP/DOWN 已结、问过 Jev 的行，三列同一批样本） */
     @Data
     class Stats {
         private int windows;
@@ -55,11 +55,11 @@ public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDec
                    COALESCE(SUM(pnl), 0) AS pnl,
                    COUNT(*) FILTER (WHERE outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL) AS scored,
                    AVG(POWER(p_model - CASE outcome WHEN 'UP' THEN 1 ELSE 0 END, 2))
-                       FILTER (WHERE outcome IN ('UP', 'DOWN') AND p_model IS NOT NULL) AS brier_model,
+                       FILTER (WHERE outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL AND p_model IS NOT NULL) AS brier_model,
                    AVG(POWER(p_jev - CASE outcome WHEN 'UP' THEN 1 ELSE 0 END, 2))
                        FILTER (WHERE outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL) AS brier_jev,
                    AVG(POWER(p_mkt - CASE outcome WHEN 'UP' THEN 1 ELSE 0 END, 2))
-                       FILTER (WHERE outcome IN ('UP', 'DOWN') AND p_mkt IS NOT NULL) AS brier_mkt
+                       FILTER (WHERE outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL AND p_mkt IS NOT NULL) AS brier_mkt
             FROM jev_prediction_decision
             WHERE run_no = #{runNo}
             """)

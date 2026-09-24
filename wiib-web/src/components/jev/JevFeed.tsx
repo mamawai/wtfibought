@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, CircleHelp } from 'lucide-react';
-import { cn, toCents } from '../../lib/utils';
+import { cn, fmtNum } from '../../lib/utils';
 import { fmtWindow } from '../../hooks/usePredictionMarket';
 import { JevDecisionCard } from './JevDecisionCard';
-import { noteworthy } from './format';
+import { CHOICE_STYLE, ENTRY_OPTIONS, EXIT_OPTIONS, noteworthy, pct } from './format';
 import type { JevPredictionDecisionView, JevPredictionOverview, JevThresholds } from '../../types';
 
 interface Group {
@@ -42,12 +42,12 @@ function QuestionNote({ title, desc, options }: { title: string; desc: string; o
   );
 }
 
-/** 这些数字怎么看：每一行在说什么、涨的概率三个数各是什么、Jev 要答的题、代码怎么下。收起放在流的最上面 */
+/** 这些数字怎么看：每一行在说什么、涨的概率三个数各是什么、Jev 要答的题、代码怎么执行。收起放在流的最上面 */
 function Guide({ thresholds }: { thresholds: JevThresholds }) {
   const { t } = useTranslation(['community']);
   const [open, setOpen] = useState(false);
-  const vars = { minEdge: toCents(thresholds.minEdge), bigEdge: toCents(thresholds.bigEdge),
-    minAsk: toCents(thresholds.minAsk), sellEdge: toCents(thresholds.sellEdge) };
+  const vars = { act: pct(thresholds.actThreshold), delay: thresholds.fillDelayMs / 1000, stake: fmtNum(thresholds.baseStake, 0) };
+  const chips = (keys: string[]) => keys.map(k => ({ label: t(`prediction.jev.choice.${k}`), cls: CHOICE_STYLE[k].text }));
   return (
     <div className="border-b border-border">
       <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
@@ -61,7 +61,7 @@ function Guide({ thresholds }: { thresholds: JevThresholds }) {
           <div className="space-y-1.5">
             <div className="font-semibold text-foreground">{t('prediction.jev.guideCardTitle')}</div>
             <p>{t('prediction.jev.guideAction')}</p>
-            <p>{t('prediction.jev.guideEdge', vars)}</p>
+            <p>{t('prediction.jev.guideDecides')}</p>
             <p>{t('prediction.jev.guideUpChance')}</p>
             {/* 名字一列、解释一列，名字跟卡片上那行的叫法一致 */}
             <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5 border-l-2 border-foreground pl-3 my-2">
@@ -72,12 +72,15 @@ function Guide({ thresholds }: { thresholds: JevThresholds }) {
               <dt className="font-semibold text-foreground">{t('prediction.jev.colMkt')}</dt>
               <dd>{t('prediction.jev.guideMkt')}</dd>
             </dl>
-            <p>{t('prediction.jev.guideCompare', vars)}</p>
             <p>{t('prediction.jev.guideFold')}</p>
             <p>{t('prediction.jev.guideLegacy')}</p>
           </div>
           <div className="space-y-3">
             <div className="font-semibold text-foreground">{t('prediction.jev.guideQuestionsTitle')}</div>
+            <QuestionNote title={t('prediction.jev.qEntryTitle')} desc={t('prediction.jev.qEntryDesc')}
+                          options={chips(ENTRY_OPTIONS)} />
+            <QuestionNote title={t('prediction.jev.qExitTitle')} desc={t('prediction.jev.qExitDesc')}
+                          options={chips(EXIT_OPTIONS)} />
             <QuestionNote title={t('prediction.jev.qWinsTitle')} desc={t('prediction.jev.qWinsDesc')}
                           options={[{ label: t('prediction.jev.upWins'), cls: 'up' }, { label: t('prediction.jev.downWins'), cls: 'dn' }]} />
           </div>
@@ -85,6 +88,7 @@ function Guide({ thresholds }: { thresholds: JevThresholds }) {
             <div className="font-semibold text-foreground">{t('prediction.jev.guideRulesTitle')}</div>
             <p>{t('prediction.jev.guideBuy', vars)}</p>
             <p>{t('prediction.jev.guideSell', vars)}</p>
+            <p>{t('prediction.jev.guideFill', vars)}</p>
           </div>
         </div>
       )}
@@ -143,7 +147,7 @@ export function JevFeed({ overview, feed, currentWindowStart }: {
                   )}
                 </div>
                 {visible.map(d => (
-                  <JevDecisionCard key={d.id} d={d} open={!!opened[d.id]} thresholds={overview.thresholds}
+                  <JevDecisionCard key={d.id} d={d} open={!!opened[d.id]}
                                    onToggle={() => setOpened(prev => ({ ...prev, [d.id]: !prev[d.id] }))} />
                 ))}
               </div>

@@ -11,8 +11,8 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * Jev 预测员每回合每检查点一行：发出的 state、Jev 的回答（UP、DOWN 谁赢）、三个概率、盘口、动作、注单；结算后回填结果与盈亏。
- * 买看 Jev 给的胜率比成本，卖由代码按数学公平价定；记分看三列：纯数学 p_model、Jev 的 p_jev、市场隐含 p_mkt，Brier 在 SQL 里现算。
+ * Jev 预测员每回合每检查点一行：发出的 state、Jev 的回答（拍板 + 谁赢记分）、三个概率、盘口、动作、注单；结算后回填结果与盈亏。
+ * 买卖都由 Jev 拍板（R3 起）；记分看三列：纯数学 p_model、Jev 的 p_jev、市场隐含 p_mkt，Brier 在 SQL 里现算。
  */
 @Data
 @TableName("jev_prediction_decision")
@@ -43,10 +43,10 @@ public class JevPredictionDecision {
     /** 发给 Jev 的 state 原文 */
     private String stateJson;
 
-    /** Jev 的回答原样：UP 会不会赢、DOWN 会不会赢两问；R1 旧版是后劲题和决定题 */
+    /** Jev 的回答原样：UP、DOWN 谁赢两问记分，加空仓的入场题或持仓的离场题；R1 旧版是后劲题和决定题，R2 只有谁赢两问 */
     private String answersJson;
 
-    /** 纯数学的上涨概率：领先 / 剩余时间 / 波动 出的 Φ(z)，末分钟含锁定；持仓按它定卖不卖 */
+    /** 纯数学的上涨概率：领先 / 剩余时间 / 波动 出的 Φ(z)，末分钟含锁定；R3 起算好写进 state 给 Jev 比 */
     private BigDecimal pModel;
 
     /** Jev 的上涨概率：UP 会赢的概率和 1 − DOWN 会赢的概率取平均；R1 旧版是数学概率按后劲修正后的值 */
@@ -58,10 +58,10 @@ public class JevPredictionDecision {
     /** 纯数学的 z，正 = 偏 UP */
     private BigDecimal leadSigma;
 
-    /** R1 旧版决定题概率最高的选项：BUY_UP / BUY_DOWN / WAIT；之后的局不问决定题，为空 */
+    /** Jev 拍板的选项：空仓 BUY_UP / BUY_DOWN / PASS，持仓 HOLD / SELL；R1 旧版是 BUY_UP / BUY_DOWN / WAIT，R2 为空 */
     private String jevChoice;
 
-    /** 它的概率 */
+    /** 它的概率，到 act-threshold 才照做 */
     private BigDecimal jevChoiceP;
 
     /** 盘口距上次更新的毫秒数；空=没记录 */
@@ -72,16 +72,19 @@ public class JevPredictionDecision {
     private BigDecimal upBid;
     private BigDecimal downBid;
 
-    /** 按 Jev 胜率算、优势大的那边的每份优势 p_jev − 卖价 − 手续费；没买也记。R1 旧版是按 p_model 算的 */
+    /**
+     * 按数学估计的每份优势，只作参考：空仓是 Jev 选的那边 p_model − 卖价 − 手续费，持仓是卖出扣费后比 p_model 多拿多少。
+     * R2 是按 Jev 胜率算、优势大那边的，R1 按 p_model
+     */
     private BigDecimal edge;
 
     /** BUY_UP/BUY_DOWN/STAY_OUT/HOLD/SELL/ERROR */
     private String action;
 
     /**
-     * 为什么这么做，"代码 + 细节"：BUY / WAIT / NO_QUOTE / ASK_LOW / NO_BALANCE /
-     * HOLD / SELL / NO_BID / STALE_BOOK / STALE_WHILE_ASKING；R1 旧版还有 UNSURE / NOT_CHEAP / EXPENSIVE / ASK_RANGE。
-     * 页面按首个词出中文提示。异常看 error
+     * 为什么这么做，"代码 + 细节"：BUY / PASS / UNSURE / NO_QUOTE / NO_BALANCE / MISSED /
+     * HOLD / SELL / NO_BID / STALE_BOOK / STALE_CHAINLINK / STALE_WHILE_ASKING；R2 还有 WAIT / ASK_LOW，
+     * R1 还有 NOT_CHEAP / EXPENSIVE / ASK_RANGE。页面按首个词出中文提示。异常看 error
      */
     private String reason;
 
