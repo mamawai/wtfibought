@@ -50,5 +50,8 @@ agent:
     paramsIncomplete: "Incomplete parameters: {{what}}"
     llmConfigNotFound: "No such LLM config (id={{id}})"
     llmConfigNoModel: "The LLM config '{{name}}' has no model name - fill it in under Configure LLM first"
+    connectFailed: "Connectivity test failed: {{reason}}"
+    backfillCountInvalid: "The count must be between 1 and {{max}}"
+    backfillFailed: "The API failed after the latest {{fetched}} items (see the server log); {{inserted}} new items were stored"
     jevKeyMissing: The platform JEV_API_KEY is not set, so the predictor cannot be turned on
     jevRunWhileOn: Turn the predictor off before starting a new run

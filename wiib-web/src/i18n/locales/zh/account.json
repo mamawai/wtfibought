@@ -117,7 +117,8 @@
     "title": "任务管理",
     "actionFailed": "操作失败",
     "fn": {
-      "newsTranslation": "快讯翻译"
+      "newsTranslation": "快讯翻译",
+      "newsTranslationFallback": "快讯翻译（备用）"
     },
     "rate": {
       "title": "杠杆日利率",
@@ -168,16 +169,6 @@
       "effortBadge": "思考:{{value}}",
       "editTitle": "编辑 LLM 配置",
       "addTitle": "新增 LLM 配置",
-      "namePh": "名称，如 OpenAI、DeepSeek",
-      "urlPh": "Base URL，如 https://api.openai.com",
-      "modelPh": "模型名，如 gpt-4o、deepseek-chat",
-      "protoChat": "协议：OpenAI Chat Completions（/v1/chat/completions，DeepSeek 等通用）",
-      "protoResponses": "协议：OpenAI Responses（/v1/responses，CPA/OpenAI官方/xAI）",
-      "protoAnthropic": "协议：Anthropic Messages（/v1/messages）",
-      "protoGemini": "协议：Gemini generateContent（/v1beta）",
-      "effortPh": "思考档位，留空=模型默认（不传）",
-      "effortDefault": "默认",
-      "effortHint": "none=关思考最省 token（仅部分模型支持）；也可填模型认的其他档位如 xhigh。认不认查不到，存完自己试。",
       "required": "名称、API Key、Base URL、Model 不能为空",
       "saved": "LLM 配置已保存",
       "saveFailed": "保存失败",
@@ -186,8 +177,9 @@
     },
     "assign": {
       "title": "更换 LLM",
-      "hint": "每个功能位下拉选择要用的 LLM，保存后立即生效；模型名在上方「配置 LLM」维护。",
+      "hint": "每个功能位下拉选择要用的 LLM，保存后立即生效；模型名在上方「配置 LLM」维护。备用只在主位出错时才调用，可不配。",
       "select": "选择 LLM",
+      "none": "不用备用",
       "option": "{{name}}（{{model}}）",
       "noModel": "未设模型",
       "noneSelected": "{{name}} 未选择 LLM",
@@ -199,7 +191,13 @@
       "settleGroup": "结算与风控",
       "bankruptcy": "执行爆仓检查",
       "interest": "手动计息",
-      "snapshot": "资产快照"
+      "snapshot": "资产快照",
+      "newsGroup": "快讯",
+      "backfillCount": "补最近多少条",
+      "backfill": "补拉快讯",
+      "backfillBad": "条数需为 1 到 {{max}} 的整数",
+      "backfillDone": "补拉完成：拉到最近 {{fetched}} 条，新存 {{inserted}} 条，英文译文由定时任务随后补上",
+      "backfillHint": "断档超出定时拉取窗口时用。BlockBeats 只能从最新往前取，不能按时间段；每 100 条烧一次额度，最多 {{max}} 条。只存中文，已存的自动跳过。"
     }
   }
 }

@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * BlockBeats(律动)快讯 API 配置。
- * 免费额度是一次性总量(不回血)，故只由 NewsCache 的 poller 低频调用，其余消费方读缓存。
+ * 免费额度是一次性总量(不回血)，故只由 NewsCache 的 poller 低频调用，其余消费方读缓存；Admin 手动补拉除外。
  */
 @Data
 @Component
@@ -19,7 +19,7 @@ public class BlockBeatsProperties {
     private String baseUrl = "https://api-pro.theblockbeats.info";
     /** 语言 cn/en */
     private String lang = "cn";
-    /** 每次拉取条数 1-50 */
+    /** 每次拉取条数 1-100 */
     private int size = 20;
     /** 缓存过期(ms)：懒加载复用窗口——距上次成功拉取在此值内则复用不打 API，超过则重拉。默认 10min */
     private long expiryMs = 10 * 60 * 1000L;

@@ -48,7 +48,7 @@ public class DeepAnalysisService {
 
     /**
      * 新闻上下文：缓存的重要快讯拼成文本喂辩论（不再 LLM 浓缩）；无则给一句"没有新闻上下文"。
-     * <p>源是 BlockBeats 中文快讯，按语言取一份：英文取打标时同批产出的译文，缺译文回落中文原文。
+     * <p>源是 BlockBeats 中文快讯，按语言取一份：英文取采集轨补译的译文，缺译文回落中文原文。
      */
     public String buildNewsContext(AgentLang lang) {
         List<LocalizedFlash> flashes = localizer.localize(newsCache.getFlashes(), lang);

@@ -19,7 +19,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 新闻工具（对话 news_agent 预取 + trader 唤醒挂工具）：返回缓存里的重要快讯列表。
  * 快讯短、信息密——直接给全量正文，不再有单篇精读/过滤。
  * <p>
- * 源是 BlockBeats 中文快讯：按语言取一份（英文取打标时同批产出的译文，缺译文回落中文原文），
+ * 源是 BlockBeats 中文快讯：按语言取一份（英文取采集轨补译的译文，缺译文回落中文原文），
  * 与首页快讯卡取的是同一份，不会出现"用户看到译文、trader 读到原文"。
  */
 @Slf4j

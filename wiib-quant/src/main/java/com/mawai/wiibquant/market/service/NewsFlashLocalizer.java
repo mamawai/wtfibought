@@ -12,9 +12,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 快讯按语言取一份：源是 BlockBeats 中文快讯，译文在打标时同批产出、落 news_event，
- * 这里按 source_id 把译文换进来；<b>缺译文回落中文原文</b>（存量老快讯、刚拉到还没进采集轨的、
- * 模型没译成的都走这条）。
+ * 快讯按语言取一份：源是 BlockBeats 中文快讯，译文由采集轨补译回填 news_event，
+ * 这里按 source_id 把译文换进来；<b>缺译文回落中文原文</b>（存量老快讯、还没进采集轨的、
+ * 已存中文还在待译的、模型没译成的都走这条）。
  * <p>
  * 只给模型侧用（对话 news 专家的预取、深研判素材），按 agent 语言取；首页快讯卡直接读
  * news_event 存档，不经这里。

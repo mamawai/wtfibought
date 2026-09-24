@@ -121,7 +121,8 @@
     "title": "Task management",
     "actionFailed": "Action failed",
     "fn": {
-      "newsTranslation": "News translation"
+      "newsTranslation": "News translation",
+      "newsTranslationFallback": "News translation (fallback)"
     },
     "rate": {
       "title": "Daily margin interest rate",
@@ -172,16 +173,6 @@
       "effortBadge": "Effort: {{value}}",
       "editTitle": "Edit LLM config",
       "addTitle": "New LLM config",
-      "namePh": "Name, e.g. OpenAI, DeepSeek",
-      "urlPh": "Base URL, e.g. https://api.openai.com",
-      "modelPh": "Model name, e.g. gpt-4o, deepseek-chat",
-      "protoChat": "Protocol: OpenAI Chat Completions (/v1/chat/completions, for DeepSeek and most others)",
-      "protoResponses": "Protocol: OpenAI Responses (/v1/responses, CPA / OpenAI / xAI)",
-      "protoAnthropic": "Protocol: Anthropic Messages (/v1/messages)",
-      "protoGemini": "Protocol: Gemini generateContent (/v1beta)",
-      "effortPh": "Reasoning effort, blank = model default (not sent)",
-      "effortDefault": "Default",
-      "effortHint": "none turns reasoning off and uses the fewest tokens (only some models support it); you can also enter any other level the model accepts, such as xhigh. No way to check up front — save it and try.",
       "required": "Name, API Key, Base URL and Model are all required",
       "saved": "LLM config saved",
       "saveFailed": "Save failed",
@@ -190,8 +181,9 @@
     },
     "assign": {
       "title": "Switch LLM",
-      "hint": "Pick the LLM for each slot; it applies as soon as you save. Model names live under LLM configuration above.",
+      "hint": "Pick the LLM for each slot; it applies as soon as you save. Model names live under LLM configuration above. The fallback is only called when the main slot errors, and can be left unset.",
       "select": "Select LLM",
+      "none": "No fallback",
       "option": "{{name}} ({{model}})",
       "noModel": "no model set",
       "noneSelected": "No LLM selected for {{name}}",
@@ -203,7 +195,13 @@
       "settleGroup": "Settlement and risk control",
       "bankruptcy": "Run liquidation check",
       "interest": "Accrue interest",
-      "snapshot": "Asset snapshot"
+      "snapshot": "Asset snapshot",
+      "newsGroup": "News",
+      "backfillCount": "Latest items to fetch",
+      "backfill": "Backfill news",
+      "backfillBad": "The count must be a whole number from 1 to {{max}}",
+      "backfillDone": "Backfill done: fetched the latest {{fetched}} items, {{inserted}} new ones stored; English translations follow on the next scheduled runs",
+      "backfillHint": "For gaps longer than the scheduled fetch window. BlockBeats only returns the newest items going back, with no time-range filter; every 100 items uses one call, up to {{max}}. Stores Chinese only and skips items already stored."
     }
   }
 }

@@ -114,7 +114,7 @@ class ByokRedirectTest {
 
     @Test
     void 跨主机重定向的模型清单拿不到落点数据() {
-        assertThatThrownBy(() -> builder.listModels(AiProtocols.OPENAI, originBaseUrl("/cross"), keyEnc))
+        assertThatThrownBy(() -> builder.listModels(AiProtocols.OPENAI, originBaseUrl("/cross"), "sk-test"))
                 .hasStackTraceContaining("已拒绝");
     }
 
@@ -140,6 +140,6 @@ class ByokRedirectTest {
     /** 存量用户填 http:// 被 301 到 https:// 同一域名就是这种形状，不能误杀 */
     @Test
     void 同主机重定向照常放行() {
-        assertThat(builder.listModels(AiProtocols.OPENAI, originBaseUrl("/same"), keyEnc)).containsExactly("ok");
+        assertThat(builder.listModels(AiProtocols.OPENAI, originBaseUrl("/same"), "sk-test")).containsExactly("ok");
     }
 }

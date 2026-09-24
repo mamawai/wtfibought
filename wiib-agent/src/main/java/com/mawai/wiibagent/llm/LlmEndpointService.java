@@ -267,7 +267,7 @@ public class LlmEndpointService {
         }
         try {
             return new ListModelsResult(null, modelBuilder.listModels(req.apiProtocol(),
-                    stripTrailingSlash(req.baseUrl().trim()), keyEnc));
+                    stripTrailingSlash(req.baseUrl().trim()), apiKeyCrypto.decrypt(keyEnc)));
         } catch (Exception e) {
             return new ListModelsResult(truncate(e), List.of());
         }

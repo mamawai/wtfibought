@@ -12,7 +12,7 @@ import { dayBounds, fmtDate, fmtTime, DAY_MS } from '../lib/utils';
 export const FEED_MAX_H = 'max-h-[560px] overflow-y-auto';
 
 /**
- * 实时快讯（首页，与最新成交并列）：读 news_event 存档（采集轨定时打标+翻译后落库）。
+ * 实时快讯（首页，与最新成交并列）：读 news_event 存档（采集轨定时存中文，译文随后补上）。
  * <p>默认最新 100 条 + 60s 轻轮询；也可按天翻看，选了日期就只拉那一天并停掉轮询。
  * <p>中英两套一起到，切语言不重拉。英文界面只展示标题正文都译好的那些，没译完的不展示，不拿中文凑。
  */

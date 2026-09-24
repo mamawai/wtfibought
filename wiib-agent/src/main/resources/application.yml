@@ -87,7 +87,7 @@ econ:
     enabled: true
     interval-ms: 14400000  # 4h 一次：事件改期一般提前数天，再快也换不来新信息
 
-# 快讯采集打标轨（NewsEventCollector）：定时经 NewsCache 拉重要快讯，新条目轻模型打标后落 news_event
+# 快讯采集轨（NewsEventCollector）：定时经 NewsCache 拉重要快讯，新条目先存中文进 news_event，轻模型随后补译英文
 news:
   collect:
     enabled: true

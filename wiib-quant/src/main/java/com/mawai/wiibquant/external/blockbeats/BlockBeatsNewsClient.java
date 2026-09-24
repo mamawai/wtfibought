@@ -21,7 +21,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * BlockBeats(律动)重要快讯客户端。
  * GET /v1/newsflash/important，api-key 走请求头；解析 data.data[] → NewsFlash 列表。
- * 仅供 NewsCache 的 poller 调用（免费额度有限，见 {@link BlockBeatsProperties}）。
+ * 平时只经 NewsCache 调用；Admin 手动补拉直连翻页（免费额度有限，见 {@link BlockBeatsProperties}）。
  */
 @Slf4j
 @Component
@@ -36,14 +36,19 @@ public class BlockBeatsNewsClient extends BaseRestTemplateConfig {
     }
 
     /**
-     * 拉取重要快讯。
+     * 拉取重要快讯第一页。
      * 失败返回 null（区别于"成功但空列表"）——缓存层据此决定沿用旧缓存/过期置 NO_NEWS。
      */
     public List<NewsFlash> fetchImportant() {
+        return fetchImportant(1, props.getSize());
+    }
+
+    /** 按页拉，新的在前；手动补拉往前翻页用。失败返回 null */
+    public List<NewsFlash> fetchImportant(int page, int size) {
         URI uri = UriComponentsBuilder
                 .fromUriString(props.getBaseUrl() + "/v1/newsflash/important")
-                .queryParam("page", 1)
-                .queryParam("size", props.getSize())
+                .queryParam("page", page)
+                .queryParam("size", size)
                 .queryParam("lang", props.getLang())
                 .build().toUri();
         HttpHeaders headers = new HttpHeaders();

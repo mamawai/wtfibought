@@ -112,9 +112,8 @@ public class ByokModelBuilder {
                 .build();
     }
 
-    /** 拉取端点可用模型清单，按协议走各自的 /models；失败原样抛给调用方 */
-    public List<String> listModels(String protocol, String baseUrl, String apiKeyEnc) {
-        String apiKey = apiKeyCrypto.decrypt(apiKeyEnc);
+    /** 拉取端点可用模型清单，按协议走各自的 /models；失败原样抛给调用方。明文 key，BYOK 调用方自己先解密 */
+    public List<String> listModels(String protocol, String baseUrl, String apiKey) {
         return switch (AiProtocols.normalize(protocol)) {
             case AiProtocols.ANTHROPIC -> AnthropicChatModel.listModels(baseUrl, apiKey);
             case AiProtocols.GEMINI -> GeminiChatModel.listModels(baseUrl, apiKey);

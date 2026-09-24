@@ -41,17 +41,19 @@ export interface LlmEndpointFormProps {
   onDetect: () => Promise<string[]>;
   /** 连通性探测 */
   onTest: () => Promise<void>;
+  /** 不显示联网搜索那块（Admin 平台位没有搜索这回事） */
+  noWebSearch?: boolean;
 }
 
 /**
- * LLM 端点表单（BYOK 端点库里的一条：名称 + 协议 + Base URL + 模型 + 思考档位 + key）。
+ * LLM 端点表单（BYOK 端点库里的一条：名称 + 协议 + Base URL + 模型 + 思考档位 + key）。Admin 平台 LLM 配置也用它。
  * detectModels 那段有个踩过的坑（见下）。
  *
  * exists 是独立 prop 而不是从 keyTail 推导：调用方常写
  * keyTail={exists ? mine?.apiKeyTail : undefined}，一旦 apiKeyTail 恰好是 undefined，
  * 推导出的 exists 就翻成 false，key 突然变必填、"留空=不换"提示消失。
  */
-export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, onTest }: LlmEndpointFormProps) {
+export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, onTest, noWebSearch }: LlmEndpointFormProps) {
   const { toast } = useToast();
   const { t } = useTranslation('ai');
   const [models, setModels] = useState<string[]>([]);
@@ -168,7 +170,7 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
 
       {/* 服务端联网搜索：能声明搜索工具的协议才有勾选框（chat-completions 没有标准的服务端搜索）。
           端点支不支持查不到，与档位同理由用户自己勾；只有对话的汇总者会用它 */}
-      {SEARCHABLE.has(value.apiProtocol) ? (
+      {noWebSearch ? null : SEARCHABLE.has(value.apiProtocol) ? (
         <label className="flex items-start gap-2 text-xs cursor-pointer select-none">
           <input type="checkbox" checked={value.webSearch}
                  onChange={e => onChange({ webSearch: e.target.checked })}

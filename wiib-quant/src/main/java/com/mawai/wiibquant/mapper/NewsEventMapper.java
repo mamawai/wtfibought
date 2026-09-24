@@ -6,11 +6,12 @@ import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.util.List;
 
 /**
- * 快讯存档读写。刻意不建 entity 不继承 BaseMapper：写路就一条 insert，
+ * 快讯存档读写。刻意不建 entity 不继承 BaseMapper：写路就一条 insert 加一条译文回填，
  * 查询按前端契约投影到 DTO，参数直进直出。
  */
 @Mapper
@@ -26,20 +27,48 @@ public interface NewsEventMapper {
         private String contentEn;
     }
 
-    /** 冲突静默跳过：source_id 唯一键兜底并发与重复窗口，插了多少条以返回值为准。 */
+    /** 待译行：只取翻译要用的三列 */
+    @Data
+    class Untranslated {
+        private Long sourceId;
+        private String title;
+        /** 纯文本正文（入库时已去 HTML） */
+        private String content;
+    }
+
+    /**
+     * 只存中文：译文列和 translated_model 留 NULL＝待译，采集轨随后补译。
+     * 冲突静默跳过：source_id 唯一键兜底并发与重复窗口，插了多少条以返回值为准。
+     */
     @Insert("""
-            INSERT INTO news_event (source_id, title, content, title_en, content_en,
-                                    url, published_at, translated_model)
-            VALUES (#{sourceId}, #{title}, #{content}, #{titleEn}, #{contentEn},
-                    #{url}, #{publishedAt}, #{translatedModel})
+            INSERT INTO news_event (source_id, title, content, url, published_at)
+            VALUES (#{sourceId}, #{title}, #{content}, #{url}, #{publishedAt})
             ON CONFLICT (source_id) DO NOTHING
             """)
     int insertIgnore(@Param("sourceId") long sourceId, @Param("title") String title,
-                     @Param("content") String content, @Param("titleEn") String titleEn,
-                     @Param("contentEn") String contentEn, @Param("url") String url,
-                     @Param("publishedAt") long publishedAt, @Param("translatedModel") String translatedModel);
+                     @Param("content") String content, @Param("url") String url,
+                     @Param("publishedAt") long publishedAt);
 
-    /** 本批快讯里已入库的那些 id——先筛后翻译，别为存量白烧模型调用。 */
+    /** 待译行（translated_model 为 NULL），新的在前 */
+    @Select("""
+            SELECT source_id AS sourceId, title, content
+              FROM news_event
+             WHERE translated_model IS NULL
+             ORDER BY published_at DESC
+             LIMIT #{limit}
+            """)
+    List<Untranslated> selectUntranslated(@Param("limit") int limit);
+
+    /** 回填译文：translated_model 写上＝这条处理完了，译文列可以是 NULL（模型没给/正文超长） */
+    @Update("""
+            UPDATE news_event
+               SET title_en = #{titleEn}, content_en = #{contentEn}, translated_model = #{translatedModel}
+             WHERE source_id = #{sourceId} AND translated_model IS NULL
+            """)
+    int updateTranslation(@Param("sourceId") long sourceId, @Param("titleEn") String titleEn,
+                          @Param("contentEn") String contentEn, @Param("translatedModel") String translatedModel);
+
+    /** 本批快讯里已入库的那些 id：先筛再插，ON CONFLICT 也会白耗自增序列号 */
     @Select("""
             <script>
             SELECT source_id FROM news_event WHERE source_id IN
