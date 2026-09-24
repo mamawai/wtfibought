@@ -9,7 +9,9 @@ import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.mapper.AiModelAssignmentMapper;
 import com.mawai.wiibcommon.mapper.AiRuntimeConfigMapper;
+import com.mawai.wiibagent.llm.ByokModelBuilder;
 import com.mawai.wiibagent.llm.jev.JevPlatformConfig;
+import com.mawai.wiibagent.news.NewsEventCollector;
 import com.mawai.wiibagent.prediction.JevPredictionRuns;
 import com.mawai.wiibagent.prediction.JevPredictionSwitch;
 import com.mawai.wiibagent.runtime.AiAgentRuntimeManager;
@@ -18,6 +20,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -35,9 +39,14 @@ public class AiAgentAdminController {
     /** 档位列宽 VARCHAR(16)，超了留给 SQL 报错不如这里说人话 */
     private static final int MAX_EFFORT_LEN = 16;
 
+    /** 手动补拉最多补最近几条：每 100 条一次额度，防手滑 */
+    private static final int MAX_BACKFILL_COUNT = 500;
+
     private final AiAgentRuntimeManager aiAgentRuntimeManager;
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
+    private final ByokModelBuilder modelBuilder;
+    private final NewsEventCollector newsEventCollector;
     private final JevPlatformConfig jevPlatform;
     private final JevPredictionSwitch jevSwitch;
     private final JevPredictionRuns jevRuns;
@@ -69,10 +78,7 @@ public class AiAgentAdminController {
         }
         // 档位留空=不传（走模型默认）。不限白名单：各家档位名字自己定（xhigh/minimal…），
         // 认不认只有上游知道；只挡列宽 VARCHAR(16) 免得存的时候炸 SQL
-        String effort = req.getReasoningEffort() == null ? null : req.getReasoningEffort().trim().toLowerCase();
-        if (effort != null && effort.isEmpty()) {
-            effort = null;
-        }
+        String effort = effortOf(req);
         if (effort != null && effort.length() > MAX_EFFORT_LEN) {
             return Result.fail(messages.get("agent.admin.effortTooLong", Map.of("max", MAX_EFFORT_LEN)));
         }
@@ -82,10 +88,7 @@ public class AiAgentAdminController {
             return Result.fail(messages.get("agent.admin.protocolUnsupported"));
         }
 
-        String baseUrl = req.getBaseUrl().trim();
-        if (baseUrl.endsWith("/")) {
-            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
-        }
+        String baseUrl = baseUrlOf(req);
 
         AiRuntimeConfig config;
         if (req.getId() != null) {
@@ -118,6 +121,49 @@ public class AiAgentAdminController {
             return Result.fail(messages.get("agent.admin.savedButRefreshFailed"));
         }
         return Result.ok(config);
+    }
+
+    /** 探测都用表单里的明文 key，不用先保存。平台位要连内网网关（CPA），不走 BYOK 那道内网地址拦截 */
+    @PostMapping("/keys/models")
+    @Operation(summary = "拉取LLM配置可用模型清单")
+    public Result<List<String>> listModels(@RequestBody KeyRequest req) {
+        if (req.getBaseUrl() == null || req.getBaseUrl().isBlank()) {
+            return Result.fail(messages.get("agent.admin.baseUrlRequired"));
+        }
+        if (req.getApiKey() == null || req.getApiKey().isBlank()) {
+            return Result.fail(messages.get("agent.admin.apiKeyRequired"));
+        }
+        try {
+            return Result.ok(modelBuilder.listModels(req.getApiProtocol(), baseUrlOf(req), req.getApiKey().trim()));
+        } catch (Exception e) {
+            return Result.fail(reason(e));
+        }
+    }
+
+    /** 走运行时同一条建模路径发一句 ping：测的就是接下来真跑的 */
+    @PostMapping("/keys/test")
+    @Operation(summary = "测试LLM配置连通性")
+    public Result<Void> testKey(@RequestBody KeyRequest req) {
+        if (req.getBaseUrl() == null || req.getBaseUrl().isBlank()) {
+            return Result.fail(messages.get("agent.admin.baseUrlRequired"));
+        }
+        if (req.getApiKey() == null || req.getApiKey().isBlank()) {
+            return Result.fail(messages.get("agent.admin.apiKeyRequired"));
+        }
+        if (req.getModel() == null || req.getModel().isBlank()) {
+            return Result.fail(messages.get("agent.admin.modelRequired"));
+        }
+        String protocol = AiProtocols.normalize(req.getApiProtocol());
+        if (!AiProtocols.isValid(protocol)) {
+            return Result.fail(messages.get("agent.admin.protocolUnsupported"));
+        }
+        try {
+            modelBuilder.build(protocol, baseUrlOf(req), req.getApiKey().trim(), req.getModel().trim(),
+                    effortOf(req), false).call(new Prompt(new UserMessage("ping")));
+            return Result.ok(null);
+        } catch (Exception e) {
+            return Result.fail(messages.get("agent.admin.connectFailed", Map.of("reason", reason(e))));
+        }
     }
 
     @DeleteMapping("/keys/{id}")
@@ -154,7 +200,15 @@ public class AiAgentAdminController {
                 continue;
             }
             if (req.getConfigId() == null) {
-                return Result.fail(messages.get("agent.admin.paramsIncomplete", Map.of("what", req.getFunctionName())));
+                if (!AiAgentRuntimeManager.isOptionalFunction(req.getFunctionName())) {
+                    return Result.fail(messages.get("agent.admin.paramsIncomplete", Map.of("what", req.getFunctionName())));
+                }
+                // 可空位传空＝不用了，删掉分配行
+                AiModelAssignment existing = assignmentMapper.selectByFunction(req.getFunctionName());
+                if (existing != null) {
+                    assignmentMapper.deleteById(existing.getId());
+                }
+                continue;
             }
             AiRuntimeConfig target = configMapper.selectById(req.getConfigId());
             if (target == null) {
@@ -182,6 +236,24 @@ public class AiAgentAdminController {
             return Result.fail(messages.get("agent.admin.assignedButRefreshFailed"));
         }
         return Result.ok(null);
+    }
+
+    // ========== 快讯补拉 ==========
+
+    /** 断档超出定时拉取窗口时手动补：补最近 count 条只存中文，译文由定时轮补上 */
+    @PostMapping("/news/backfill")
+    @Operation(summary = "手动补拉最近 N 条 BlockBeats 重要快讯（每 100 条烧一次额度）")
+    public Result<NewsEventCollector.BackfillResult> backfillNews(@RequestBody NewsBackfillRequest req) {
+        if (req.getCount() == null || req.getCount() < 1 || req.getCount() > MAX_BACKFILL_COUNT) {
+            return Result.fail(messages.get("agent.admin.backfillCountInvalid", Map.of("max", MAX_BACKFILL_COUNT)));
+        }
+        NewsEventCollector.BackfillResult r = newsEventCollector.backfill(req.getCount());
+        log.info("[NewsCollect] 管理员补拉最近 {} 条：拉到 {} 条，新存 {} 条", req.getCount(), r.fetched(), r.inserted());
+        if (r.failed()) {
+            return Result.fail(messages.get("agent.admin.backfillFailed",
+                    Map.of("fetched", r.fetched(), "inserted", r.inserted())));
+        }
+        return Result.ok(r);
     }
 
     // ========== Jev 预测员开关 ==========
@@ -228,6 +300,23 @@ public class AiAgentAdminController {
     // 量化触发端点（快照/vol验证）已随预测管线下线（2026-08：生产验证无前瞻信息）。
     // quant-config 开关端点已删：开关框架自 v1 调权清理后空转（无注册开关），随死表清理一并拆除。
 
+    /** 档位留空=null（不传走模型默认），统一小写 */
+    private static String effortOf(KeyRequest req) {
+        String effort = req.getReasoningEffort() == null ? null : req.getReasoningEffort().trim().toLowerCase();
+        return effort == null || effort.isEmpty() ? null : effort;
+    }
+
+    private static String baseUrlOf(KeyRequest req) {
+        String baseUrl = req.getBaseUrl().trim();
+        return baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+    }
+
+    /** 上游报错原文截短回给管理员看 */
+    private static String reason(Exception e) {
+        String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+        return msg.length() > 300 ? msg.substring(0, 300) : msg;
+    }
+
     // ========== DTO ==========
 
     @Data
@@ -246,7 +335,14 @@ public class AiAgentAdminController {
     @Data
     public static class AssignmentRequest {
         private String functionName;
+        /** 可空位传 null＝清空 */
         private Long configId;
+    }
+
+    @Data
+    public static class NewsBackfillRequest {
+        /** 补最近几条 */
+        private Integer count;
     }
 
     @Data

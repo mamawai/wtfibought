@@ -11,14 +11,27 @@ import { Input } from '../components/ui/input';
 import { useToast } from '../components/ui/use-toast';
 import { FeedStreamHealthCard } from '../components/FeedStreamHealthCard';
 import { MonitorCarousel } from '../components/MonitorCarousel';
+import { LlmEndpointForm, type LlmEndpointValue } from '../components/LlmEndpointForm';
 import { RefreshCw, Calendar, Plus, Trash2, Pencil, Save, Ban } from 'lucide-react';
-import { EFFORT_PRESETS } from '../lib/llmEffort';
 
-/** 功能位名称的词表 key。常量在组件外，存翻译结果会在模块加载那一刻定死，切语言不跟着变 */
+/** 功能位名称的词表 key，顺序即页面上的行序。常量在组件外，存翻译结果会在模块加载那一刻定死，切语言不跟着变 */
 const FUNCTION_LABEL_KEYS: Record<string, string> = {
   'news-translation': 'admin.fn.newsTranslation',
+  'news-translation-fallback': 'admin.fn.newsTranslationFallback',
 };
-const MODEL_ASSIGNMENT_FUNCTIONS = new Set(Object.keys(FUNCTION_LABEL_KEYS));
+/** 可空位：下拉多一项"不用"，与后端 AiAgentRuntimeManager.OPTIONAL_FUNCTIONS 同步 */
+const OPTIONAL_FUNCTIONS = new Set(['news-translation-fallback']);
+
+/** 手动补拉最多补最近几条，与后端 MAX_BACKFILL_COUNT 同步 */
+const MAX_BACKFILL_COUNT = 500;
+
+/** 表单值（与 BYOK 同一份表单）→ 平台配置；平台位没有联网搜索 */
+function toKeyConfig(id: number | undefined, f: LlmEndpointValue): AiKeyConfig {
+  return {
+    id, configName: f.name, apiKey: f.apiKey, baseUrl: f.baseUrl, model: f.model,
+    reasoningEffort: f.reasoningEffort, apiProtocol: f.apiProtocol,
+  };
+}
 
 export function Admin() {
   const { t } = useTranslation(['account', 'common']);
@@ -32,7 +45,8 @@ export function Admin() {
   // AI Key管理
   const [aiKeys, setAiKeys] = useState<AiKeyConfig[]>([]);
   const [aiKeysLoading, setAiKeysLoading] = useState(false);
-  const [editingKey, setEditingKey] = useState<AiKeyConfig | null>(null);
+  // null=收起；没 id=新增
+  const [editingKey, setEditingKey] = useState<{ id?: number; form: LlmEndpointValue } | null>(null);
 
   // 模型分配
   const [assignmentsLoading, setAssignmentsLoading] = useState(false);
@@ -43,6 +57,9 @@ export function Admin() {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteMaxUses, setInviteMaxUses] = useState('1');
   const [inviteCount, setInviteCount] = useState('1');
+
+  // 快讯补拉：补最近几条
+  const [backfillCount, setBackfillCount] = useState('100');
 
   // Jev 预测员总开关
   const [jevSwitch, setJevSwitch] = useState<JevSwitchState | null>(null);
@@ -72,7 +89,11 @@ export function Admin() {
     setAssignmentsLoading(true);
     try {
       const list = await adminApi.listAssignments();
-      setAssignmentsDraft(list.filter(a => MODEL_ASSIGNMENT_FUNCTIONS.has(a.functionName)).map(a => ({ ...a })));
+      // 每个功能位固定一行：可空位没配时库里没行，也要给个下拉
+      setAssignmentsDraft(Object.keys(FUNCTION_LABEL_KEYS).map(functionName => ({
+        functionName,
+        configId: list.find(a => a.functionName === functionName)?.configId ?? null,
+      })));
     } catch { /* ignore */ }
     finally { setAssignmentsLoading(false); }
   }, []);
@@ -164,16 +185,16 @@ export function Admin() {
 
   const handleSaveKey = async () => {
     if (!editingKey) return;
-    const { configName, apiKey, baseUrl, model } = editingKey;
-    if (!configName?.trim() || !apiKey?.trim() || !baseUrl?.trim() || !model?.trim()) {
+    const { name, apiKey, baseUrl, model } = editingKey.form;
+    if (!name.trim() || !apiKey.trim() || !baseUrl.trim() || !model.trim()) {
       toast(t('admin.llm.required'), 'error');
       return;
     }
     setActionLoading('saveKey');
     try {
-      await adminApi.saveAiKey(editingKey);
+      await adminApi.saveAiKey(toKeyConfig(editingKey.id, editingKey.form));
       setEditingKey(null);
-      // 加第一条配置时后端会自动种出全部功能位分配，两块都要重拉
+      // 加第一条配置时后端会自动种出必配功能位分配，两块都要重拉
       await Promise.all([fetchAiKeys(), fetchAssignments()]);
       toast(t('admin.llm.saved'), 'success');
     } catch (e) {
@@ -204,7 +225,7 @@ export function Admin() {
     return key ? t(key) : functionName;
   };
 
-  const updateDraft = (functionName: string, configId: number) => {
+  const updateDraft = (functionName: string, configId: number | null) => {
     setAssignmentsDraft(prev =>
       prev.map(a => a.functionName === functionName ? { ...a, configId } : a)
     );
@@ -212,7 +233,7 @@ export function Admin() {
 
   const handleSaveAssignments = async () => {
     for (const a of assignmentsDraft) {
-      if (!a.configId) {
+      if (!a.configId && !OPTIONAL_FUNCTIONS.has(a.functionName)) {
         toast(t('admin.assign.noneSelected', { name: fnLabel(a.functionName) }), 'error');
         return;
       }
@@ -229,6 +250,25 @@ export function Admin() {
     }
   };
 
+
+  // ========== 快讯补拉 ==========
+
+  const handleBackfillNews = async () => {
+    const count = Number(backfillCount);
+    if (!Number.isInteger(count) || count < 1 || count > MAX_BACKFILL_COUNT) {
+      toast(t('admin.manual.backfillBad', { max: MAX_BACKFILL_COUNT }), 'error');
+      return;
+    }
+    setActionLoading('backfillNews');
+    try {
+      const r = await adminApi.backfillNews(count);
+      toast(t('admin.manual.backfillDone', { fetched: r.fetched, inserted: r.inserted }), 'success');
+    } catch (e) {
+      toast((e as Error).message || t('admin.actionFailed'), 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   /** 配置行上的协议徽标 */
   const PROTO_BADGE: Record<string, string> = { openai: 'ChatCompletions', responses: 'Responses', anthropic: 'Anthropic', gemini: 'Gemini' };
@@ -432,7 +472,9 @@ export function Admin() {
                   <Button variant="outline" size="sm" onClick={fetchAiKeys} disabled={aiKeysLoading}>
                     <RefreshCw className={`w-3.5 h-3.5 mr-1 ${aiKeysLoading ? 'animate-spin' : ''}`} /> {t('common:refresh')}
                   </Button>
-                  <Button size="sm" onClick={() => setEditingKey({ configName: '', apiKey: '', baseUrl: '', model: '' })}>
+                  <Button size="sm" onClick={() => setEditingKey({ form: {
+                    name: '', apiProtocol: 'openai', baseUrl: '', model: '', reasoningEffort: '', apiKey: '', webSearch: false,
+                  } })}>
                     <Plus className="w-3.5 h-3.5 mr-1" /> {t('admin.llm.add')}
                   </Button>
                 </div>
@@ -455,7 +497,10 @@ export function Admin() {
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5 truncate">{key.baseUrl}</div>
                   </div>
-                  <Button variant="ghost" size="sm" onClick={() => setEditingKey({ ...key })}>
+                  <Button variant="ghost" size="sm" onClick={() => setEditingKey({ id: key.id, form: {
+                    name: key.configName, apiProtocol: key.apiProtocol || 'openai', baseUrl: key.baseUrl,
+                    model: key.model || '', reasoningEffort: key.reasoningEffort || '', apiKey: key.apiKey, webSearch: false,
+                  } })}>
                     <Pencil className="w-3.5 h-3.5" />
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => void handleDeleteKey(key.id!)} disabled={actionLoading !== null}>
@@ -468,57 +513,16 @@ export function Admin() {
               {editingKey && (
                 <div className="p-4 rounded-lg border-2 border-primary/30 bg-primary/5 space-y-3">
                   <div className="text-sm font-bold">{editingKey.id ? t('admin.llm.editTitle') : t('admin.llm.addTitle')}</div>
-                  <Input
-                    value={editingKey.configName}
-                    onChange={e => setEditingKey(prev => prev ? { ...prev, configName: e.target.value } : prev)}
-                    placeholder={t('admin.llm.namePh')}
+                  {/* 与 BYOK 同一份表单；拉模型/测连通直接用表单里的 key，不用先存 */}
+                  {/* key：换编辑对象就重建，别把上一条检测到的模型清单带过来 */}
+                  <LlmEndpointForm
+                    key={editingKey.id ?? 'new'}
+                    value={editingKey.form}
+                    onChange={patch => setEditingKey(prev => prev ? { ...prev, form: { ...prev.form, ...patch } } : prev)}
+                    noWebSearch
+                    onDetect={() => adminApi.listAiKeyModels(toKeyConfig(editingKey.id, editingKey.form))}
+                    onTest={() => adminApi.testAiKey(toKeyConfig(editingKey.id, editingKey.form))}
                   />
-                  <Input
-                    value={editingKey.apiKey}
-                    onChange={e => setEditingKey(prev => prev ? { ...prev, apiKey: e.target.value } : prev)}
-                    placeholder="API Key"
-                  />
-                  <Input
-                    value={editingKey.baseUrl}
-                    onChange={e => setEditingKey(prev => prev ? { ...prev, baseUrl: e.target.value } : prev)}
-                    placeholder={t('admin.llm.urlPh')}
-                  />
-                  <Input
-                    value={editingKey.model || ''}
-                    onChange={e => setEditingKey(prev => prev ? { ...prev, model: e.target.value } : prev)}
-                    placeholder={t('admin.llm.modelPh')}
-                  />
-                  <select
-                    className="w-full h-9 rounded-md border bg-background px-3 text-sm"
-                    value={editingKey.apiProtocol || 'openai'}
-                    onChange={e => setEditingKey(prev => prev ? { ...prev, apiProtocol: e.target.value } : prev)}
-                  >
-                    <option value="openai">{t('admin.llm.protoChat')}</option>
-                    <option value="responses">{t('admin.llm.protoResponses')}</option>
-                    <option value="anthropic">{t('admin.llm.protoAnthropic')}</option>
-                    <option value="gemini">{t('admin.llm.protoGemini')}</option>
-                  </select>
-                  {/* 档位不写死选项：各家名字自己定（xhigh/minimal…）。输入框是真值，芯片只管往里填 */}
-                  <div className="space-y-1.5">
-                    <Input
-                      value={editingKey.reasoningEffort || ''}
-                      onChange={e => setEditingKey(prev => prev ? { ...prev, reasoningEffort: e.target.value } : prev)}
-                      placeholder={t('admin.llm.effortPh')}
-                      maxLength={16}
-                    />
-                    <div className="flex flex-wrap gap-1.5">
-                      {EFFORT_PRESETS.map(o => (
-                        <Button key={o.value} size="sm"
-                                variant={(editingKey.reasoningEffort || '') === o.value ? 'secondary' : 'outline'}
-                                onClick={() => setEditingKey(prev => prev ? { ...prev, reasoningEffort: o.value } : prev)}>
-                          {o.label ?? t('admin.llm.effortDefault')}
-                        </Button>
-                      ))}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {t('admin.llm.effortHint')}
-                    </div>
-                  </div>
                   <div className="flex gap-2">
                     <Button size="sm" onClick={() => void handleSaveKey()} disabled={actionLoading === 'saveKey'}>
                       <Save className="w-3.5 h-3.5 mr-1" /> {t('common:save')}
@@ -547,10 +551,12 @@ export function Admin() {
                   <span className="text-sm font-bold min-w-[6rem]">{fnLabel(a.functionName)}</span>
                   <select
                     className="w-full md:flex-1 h-9 rounded-md border bg-background px-3 text-sm"
-                    value={a.configId || ''}
-                    onChange={e => updateDraft(a.functionName, Number(e.target.value))}
+                    value={a.configId ?? ''}
+                    onChange={e => updateDraft(a.functionName, e.target.value ? Number(e.target.value) : null)}
                   >
-                    <option value="">{t('admin.assign.select')}</option>
+                    <option value="">
+                      {OPTIONAL_FUNCTIONS.has(a.functionName) ? t('admin.assign.none') : t('admin.assign.select')}
+                    </option>
                     {aiKeys.map(k => (
                       <option key={k.id} value={k.id} disabled={!k.model}>
                         {t('admin.assign.option', { name: k.configName, model: k.model || t('admin.assign.noModel') })}
@@ -583,6 +589,18 @@ export function Admin() {
                   {/* 活动结算：end_at 之后才会成功（服务端校验），幂等可重点 */}
                   <Button variant="outline" className="h-9 text-xs" onClick={() => void handleMessageAction(() => adminApi.settleCampaign().then(n => t('admin.manual.settled', { count: n })), 'settleCampaign')} disabled={actionLoading !== null}>{t('admin.manual.settleCampaign')}</Button>
                 </div>
+              </div>
+              {/* 快讯补拉：断档超出定时拉取窗口时用 */}
+              <div>
+                <div className="text-xs text-muted-foreground mb-2">{t('admin.manual.newsGroup')}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">{t('admin.manual.backfillCount')}</span>
+                  <Input className="w-24" value={backfillCount} onChange={e => setBackfillCount(e.target.value)} disabled={actionLoading !== null} />
+                  <Button variant="outline" className="h-9 text-xs" onClick={() => void handleBackfillNews()} disabled={actionLoading !== null}>
+                    {t('admin.manual.backfill')}
+                  </Button>
+                </div>
+                <div className="text-xs text-muted-foreground mt-2">{t('admin.manual.backfillHint', { max: MAX_BACKFILL_COUNT })}</div>
               </div>
             </CardContent>
           </Card>

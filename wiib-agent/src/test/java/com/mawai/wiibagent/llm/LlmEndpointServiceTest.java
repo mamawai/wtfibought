@@ -187,4 +187,17 @@ class LlmEndpointServiceTest {
         assertThat(service.chatEndpoints(1L)).isNull();
         assertThat(service.resolve(1L, UserLlmBinding.TRADER)).isNull();
     }
+
+    @Test
+    void 拉模型清单沿用已存key时传给上游的是解密后的明文() {
+        // 解密归调用方：漏了就会把密文当 key 发出去
+        when(endpointMapper.selectById(1L)).thenReturn(ep(1, true));
+        when(crypto.decrypt("enc1")).thenReturn("sk-plain");
+        when(builder.listModels(any(), any(), any())).thenReturn(List.of("m1"));
+
+        LlmEndpointService.ListModelsResult r = service.listModels(1L, 1L, req("openai", "", ""));
+
+        assertThat(r.models()).containsExactly("m1");
+        verify(builder).listModels("openai", "https://8.8.8.8", "sk-plain");
+    }
 }

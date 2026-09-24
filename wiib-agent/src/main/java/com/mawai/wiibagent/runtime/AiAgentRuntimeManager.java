@@ -12,6 +12,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,7 +32,11 @@ public class AiAgentRuntimeManager {
     // quant/quant-light/chat 随对话轨 BYOK 化删除、behavior 随行为分析进对话轨删除，
     // sim 是 wiib-sim 自读 DB 的位；这些名字在 ai_model_assignment 里的残行是孤儿，无害——
     // 种子、白名单、删除保护都只认这个常量
-    private static final List<String> MANAGED_FUNCTIONS = List.of(AiFunctions.NEWS_TRANSLATION);
+    private static final List<String> MANAGED_FUNCTIONS =
+            List.of(AiFunctions.NEWS_TRANSLATION, AiFunctions.NEWS_TRANSLATION_FALLBACK);
+
+    /** 可空位：不自动种子，Admin 能清空 */
+    private static final Set<String> OPTIONAL_FUNCTIONS = Set.of(AiFunctions.NEWS_TRANSLATION_FALLBACK);
 
     private final AiRuntimeConfigMapper configMapper;
     private final AiModelAssignmentMapper assignmentMapper;
@@ -65,8 +70,12 @@ public class AiAgentRuntimeManager {
         return MANAGED_FUNCTIONS.contains(functionName);
     }
 
+    public static boolean isOptionalFunction(String functionName) {
+        return OPTIONAL_FUNCTIONS.contains(functionName);
+    }
+
     /**
-     * 从DB读取所有配置和分配关系，重建 news-translation 功能位的 ChatModel（面向用户的功能位已全量 BYOK 化）；
+     * 从DB读取所有配置和分配关系，重建快讯翻译主备位的 ChatModel（面向用户的功能位已全量 BYOK 化）；
      * 返回是否刷新成功（Admin据此报错）。
      * 空库→runtime置空（合法的"未配置"态）；构建失败→保留上一份可用runtime——坏切换/瞬时DB错误不打死在跑的AI。
      */
@@ -83,9 +92,13 @@ public class AiAgentRuntimeManager {
                     Map<Long, AiRuntimeConfig> configMap = configs.stream()
                             .collect(Collectors.toMap(AiRuntimeConfig::getId, c -> c));
                     List<AiModelAssignment> assignments = assignmentMapper.selectAll();
-                    // 译文模型名随行落库（news_event.translated_model 追责用），所以这一位要留住配置行
-                    AiRuntimeConfig newsTranslation = configFor(assignments, AiFunctions.NEWS_TRANSLATION, configMap);
-                    runtimeRef.set(new AiAgentRuntime(buildChatModel(newsTranslation), newsTranslation.getModel()));
+                    // 主位在前；备用配了才排在后面，主位那批抛错才轮到它
+                    List<AiAgentRuntime.NamedModel> translators = new ArrayList<>();
+                    translators.add(namedModel(configFor(assignments, AiFunctions.NEWS_TRANSLATION, configMap)));
+                    if (assignments.stream().anyMatch(a -> AiFunctions.NEWS_TRANSLATION_FALLBACK.equals(a.getFunctionName()))) {
+                        translators.add(namedModel(configFor(assignments, AiFunctions.NEWS_TRANSLATION_FALLBACK, configMap)));
+                    }
+                    runtimeRef.set(new AiAgentRuntime(List.copyOf(translators)));
                     log.info("AI运行时已刷新，共{}个LLM配置，{}个功能位分配", configMap.size(), assignments.size());
                 }
                 ok = true;
@@ -129,7 +142,7 @@ public class AiAgentRuntimeManager {
     }
 
     /**
-     * 功能位缺行时用第一个配置补齐——放在refresh里，Admin加第一条配置即自动完成种子，无需重启。
+     * 必配位缺行时用第一个配置补齐——放在refresh里，Admin加第一条配置即自动完成种子，无需重启。可空位不补。
      * 种子失败不阻断后续建模：已有分配的功能位照常工作，只有缺失位不可用（如存量库尚未删model列时的NOT NULL违约）。
      */
     private void seedMissingAssignments(List<AiRuntimeConfig> configs) {
@@ -137,13 +150,10 @@ public class AiAgentRuntimeManager {
             List<AiModelAssignment> existing = assignmentMapper.selectAll();
             Set<String> existingFunctions = existing.stream()
                     .map(AiModelAssignment::getFunctionName).collect(Collectors.toSet());
-            if (existingFunctions.containsAll(MANAGED_FUNCTIONS)) {
-                return;
-            }
 
             AiRuntimeConfig first = configs.getFirst();
             for (String fn : MANAGED_FUNCTIONS) {
-                if (existingFunctions.contains(fn)) continue;
+                if (existingFunctions.contains(fn) || isOptionalFunction(fn)) continue;
                 AiModelAssignment a = new AiModelAssignment();
                 a.setFunctionName(fn);
                 a.setConfigId(first.getId());
@@ -154,6 +164,11 @@ public class AiAgentRuntimeManager {
         } catch (Exception e) {
             log.error("功能位种子补齐失败，缺失的功能位暂不可用", e);
         }
+    }
+
+    /** 模型名随译文落库（news_event.translated_model 追责用） */
+    private AiAgentRuntime.NamedModel namedModel(AiRuntimeConfig config) {
+        return new AiAgentRuntime.NamedModel(config.getModel(), buildChatModel(config));
     }
 
     /** 从 DB 配置手建模型，建法与 BYOK 同一份。平台轨没有搜索配置位：webSearch 恒关（服务端搜索是对话侧的能力） */

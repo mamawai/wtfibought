@@ -551,7 +551,7 @@ CREATE TABLE IF NOT EXISTS ai_model_assignment (
 );
 
 COMMENT ON TABLE ai_model_assignment IS '功能位→LLM配置指针（模型名归属ai_runtime_config）';
-COMMENT ON COLUMN ai_model_assignment.function_name IS '功能名称，白名单见AiFunctions，现只有news-translation（快讯后台批量译英文）；面向用户的功能位已全量BYOK，behavior等残行是孤儿不影响使用';
+COMMENT ON COLUMN ai_model_assignment.function_name IS '功能名称，白名单见AiFunctions，现只有news-translation（快讯后台批量译英文）及其可空备用位news-translation-fallback（主位出错才调）；面向用户的功能位已全量BYOK，behavior等残行是孤儿不影响使用';
 COMMENT ON COLUMN ai_model_assignment.config_id IS '关联ai_runtime_config.id';
 
 -- ============================================
@@ -669,7 +669,7 @@ COMMENT ON COLUMN workbench_chat_context.state IS '裸JSON {"messages":[...]}(Ja
 -- ============================================
 -- 24. 快讯存档（首页快讯卡 + 事件研究数据积累）
 -- ============================================
--- 采集轨独立于 NewsCache 懒加载：定时经缓存拉 BlockBeats（共享额度窗），新条目轻模型译成英文后落库。
+-- 采集轨独立于 NewsCache 懒加载：定时经缓存拉 BlockBeats（共享额度窗），新条目先存中文，轻模型随后补译英文回填。
 -- BlockBeats 免费额度一次性不回血，采集节奏见 application.yml 的 news.collect
 CREATE TABLE IF NOT EXISTS news_event (
     id               BIGSERIAL PRIMARY KEY,
@@ -687,8 +687,8 @@ CREATE INDEX IF NOT EXISTS idx_news_event_published ON news_event (published_at 
 COMMENT ON TABLE news_event IS '快讯存档:BlockBeats重要快讯+轻模型英文译文;首页快讯卡数据源,未来做事件研究';
 COMMENT ON COLUMN news_event.source_id IS 'BlockBeats快讯id,增量去重键';
 COMMENT ON COLUMN news_event.published_at IS '发稿时刻epoch毫秒(BlockBeats create_time按北京时间解析)';
-COMMENT ON COLUMN news_event.translated_model IS '译文用的模型名,追责用';
-COMMENT ON COLUMN news_event.title_en IS '标题英文译文;NULL=没译成(模型没给/正文超长/老行):模型侧回落中文原文,英文界面不展示这条——不许拿原文冒充译文';
+COMMENT ON COLUMN news_event.translated_model IS '译文用的模型名,追责用;NULL=待译(中文已存,采集轨每轮补译)';
+COMMENT ON COLUMN news_event.title_en IS '标题英文译文;NULL=待译或没译成(模型没给/正文超长/老行):模型侧回落中文原文,英文界面不展示这条——不许拿原文冒充译文';
 COMMENT ON COLUMN news_event.content_en IS '正文英文译文;NULL 同 title_en。正文超过译文输入上限(NewsTranslator.CONTENT_CLIP)的那条不留译文:半截译文比原文更糟';
 
 -- ============================================

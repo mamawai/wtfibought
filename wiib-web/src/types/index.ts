@@ -594,7 +594,16 @@ export interface InviteCode {
 export interface AiModelAssignment {
   id?: number;
   functionName: string;
-  configId: number;
+  /** 可空位（快讯翻译备用）null=不用 */
+  configId: number | null;
+}
+
+/** Admin 手动补拉快讯结果 */
+export interface NewsBackfillResult {
+  /** 实际拉到最近多少条（翻到头会少于要的） */
+  fetched: number;
+  /** 其中新存条数，其余是库里已有的 */
+  inserted: number;
 }
 
 

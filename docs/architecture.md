@@ -136,7 +136,7 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 │   │                                 # + 四协议适配（openai 走 Spring AI，responses/anthropic/gemini 自研 ChatModel）
 │   │                                 # + ResilientChatService / ToolChoice / CancelSignal
 │   │                                 # + 摘要 / 调用限额 / 上游异常归类（给用户看的一句话）
-│   ├── runtime/                      # 平台功能位模型分配（只剩 news-translation，Admin 热更）
+│   ├── runtime/                      # 平台功能位模型分配（只剩快讯翻译主备两位，Admin 热更）
 │   └── controller/ task/ mapper/ monitor/ config/
 │                                     # AiAgent/Trader/LlmEndpoint/ReplayCoach 接口 / 快讯采集翻译·叙事对账 / SaToken
 │

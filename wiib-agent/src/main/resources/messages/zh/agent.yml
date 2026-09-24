@@ -50,5 +50,8 @@ agent:
     paramsIncomplete: "参数不完整: {{what}}"
     llmConfigNotFound: "LLM配置不存在(id={{id}})"
     llmConfigNoModel: "LLM配置'{{name}}'缺模型名，请先在「配置LLM」里补全"
+    connectFailed: "连通性测试失败：{{reason}}"
+    backfillCountInvalid: "补拉条数需在 1 到 {{max}} 之间"
+    backfillFailed: "拉到最近 {{fetched}} 条后接口失败（详见服务日志），已新存 {{inserted}} 条"
     jevKeyMissing: 没配平台 JEV_API_KEY，预测员开不了
     jevRunWhileOn: 先关掉预测员再重新开局

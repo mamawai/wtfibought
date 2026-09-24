@@ -2,10 +2,10 @@ package com.mawai.wiibagent.news;
 
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
-import com.mawai.wiibquant.market.domain.news.NewsFlash;
+import com.mawai.wiibagent.runtime.AiAgentRuntime.NamedModel;
+import com.mawai.wiibquant.mapper.NewsEventMapper.Untranslated;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -26,8 +26,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * <p>
  * <b>缺译文只留空，绝不拿原文冒充</b>：写回原文的话，取用侧就再也分不清"没译成"和"本来就这样"。
  * <p>
- * <b>失败是批级的</b>：某一批挂了只丢那一批（这几条本轮不入库，下轮还在拉取窗口里，重试自愈），
- * 已经译好的其他批照常落库——译文出参贵，不为一批的失败把整轮成果扔掉。
+ * <b>失败是批级的</b>：每批按顺序试模型，主位抛错才换下一个；全挂只丢这一批的译文，
+ * 行还在库里待译，下轮再试。其他批照常回填。
  */
 @Slf4j
 @Component
@@ -52,9 +52,6 @@ public class NewsTranslator {
      */
     private static final int CHUNK = 5;
 
-    /** 模型在本批里漏答的条目：这批已经过过模型，缺席按"没译成"落库 */
-    private static final Translated EMPTY = new Translated(null, null);
-
     private final PromptCatalog prompts;
 
     /**
@@ -62,53 +59,61 @@ public class NewsTranslator {
      *
      * @param titleEn   标题英文译文；null=没译成，取用侧回落中文原文
      * @param contentEn 正文英文译文；null 同上
+     * @param model     实际译出这批的模型名，落 translated_model
      */
-    public record Translated(String titleEn, String contentEn) {
+    public record Translated(String titleEn, String contentEn, String model) {
     }
 
     /**
-     * @return 快讯id → 译文。<b>只含所在批调用成功的那些</b>——map 里没有的条目本轮别入库，
-     *         入了就等于永远失去译文机会（去重键挡住重入）
+     * @param models 按顺序试的模型，主位在前
+     * @return 快讯id → 译文。<b>只含译成功的那几批</b>——map 里没有的条目留着待译
      */
-    public Map<Long, Translated> translate(ChatModel model, List<NewsFlash> flashes) {
+    public Map<Long, Translated> translate(List<NamedModel> models, List<Untranslated> rows) {
         Map<Long, Translated> result = new HashMap<>();
-        for (int from = 0; from < flashes.size(); from += CHUNK) {
-            List<NewsFlash> chunk = flashes.subList(from, Math.min(from + CHUNK, flashes.size()));
-            try {
-                result.putAll(translateChunk(model, chunk));
-            } catch (Exception e) {
-                log.warn("[NewsTranslate] 本批 {} 条翻译失败，本轮跳过这几条: {}", chunk.size(), e.toString());
-            }
+        for (int from = 0; from < rows.size(); from += CHUNK) {
+            result.putAll(translateChunk(models, rows.subList(from, Math.min(from + CHUNK, rows.size()))));
         }
         return result;
     }
 
-    private Map<Long, Translated> translateChunk(ChatModel model, List<NewsFlash> chunk) {
+    /** 主位成功就不碰后面的；全挂返回空 */
+    private Map<Long, Translated> translateChunk(List<NamedModel> models, List<Untranslated> chunk) {
         StringBuilder list = new StringBuilder();
         Set<Long> clipped = new HashSet<>();
-        for (NewsFlash f : chunk) {
-            String content = f.plainContent();
+        for (Untranslated row : chunk) {
+            String content = row.getContent();
             if (content.length() > CONTENT_CLIP) {
                 content = content.substring(0, CONTENT_CLIP);
-                clipped.add(f.id());
+                clipped.add(row.getSourceId());
             }
             list.append(prompts.get(PROMPT_LANG, "news.flashLine", Map.of(
-                    "id", f.id(), "title", f.title(), "content", content))).append('\n');
+                    "id", row.getSourceId(), "title", row.getTitle(), "content", content))).append('\n');
         }
-        String output = model.call(new Prompt(prompts.get(PROMPT_LANG, "news.translate", Map.of("flashes", list))))
-                .getResult().getOutput().getText();
-        Map<Long, Translated> parsed = parse(output);
+        Prompt prompt = new Prompt(prompts.get(PROMPT_LANG, "news.translate", Map.of("flashes", list)));
 
-        Map<Long, Translated> out = new HashMap<>();
-        for (NewsFlash f : chunk) {
-            Translated t = parsed.getOrDefault(f.id(), EMPTY);
-            out.put(f.id(), clipped.contains(f.id()) ? new Translated(t.titleEn(), null) : t);
+        for (NamedModel model : models) {
+            Map<Long, Translated> parsed;
+            try {
+                parsed = parse(model.chatModel().call(prompt).getResult().getOutput().getText(), model.name());
+            } catch (Exception e) {
+                log.warn("[NewsTranslate] {} 译本批 {} 条失败: {}", model.name(), chunk.size(), e.toString());
+                continue;
+            }
+            // 整批解析成功＝这批过过模型了：漏答的按没译成算，不留到下轮白烧一次
+            Translated empty = new Translated(null, null, model.name());
+            Map<Long, Translated> out = new HashMap<>();
+            for (Untranslated row : chunk) {
+                Translated t = parsed.getOrDefault(row.getSourceId(), empty);
+                out.put(row.getSourceId(), clipped.contains(row.getSourceId())
+                        ? new Translated(t.titleEn(), null, t.model()) : t);
+            }
+            return out;
         }
-        return out;
+        return Map.of();
     }
 
     /** 宽进严出：JSON 前后可能裹着废话，截取首尾中括号；空白译文当没译。 */
-    static Map<Long, Translated> parse(String output) {
+    static Map<Long, Translated> parse(String output, String model) {
         int from = output.indexOf('[');
         int to = output.lastIndexOf(']');
         if (from < 0 || to <= from) {
@@ -122,7 +127,8 @@ public class NewsTranslator {
                 continue;
             }
             result.put(item.path("id").asLong(0), new Translated(
-                    translation(item.path("title_en").asString(null)), translation(item.path("content_en").asString(null))));
+                    translation(item.path("title_en").asString(null)),
+                    translation(item.path("content_en").asString(null)), model));
         }
         return result;
     }
