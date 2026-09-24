@@ -156,7 +156,8 @@ jev:
     checkpoint-seconds: 30,45,60,75,90,105,120,135,150,165,180,195,210,225,240,255,270   # 开盘后第几秒问一次，每次一行
     base-stake: 5             # 每注本金 USDT
     act-threshold: 0.5        # Jev 选的那一项概率到这里才照做，0.5 = 不小于其余选项加起来；卖还要比拿着的概率高
-    fill-delay-ms: 1000       # Jev 拍板后等这么久再看盘口，价没变差才成交，没抢到就算了
+    fill-delay-ms: 1000       # Jev 拍板后等这么久再看盘口，按那时的价成交
+    fill-tolerance: 0.03      # 等完的价比 Jev 看到的差 3¢ 以内照样成交，再差就算没抢到
     book-max-age-ms: 5000     # 盘口超过这么久没更新就不问不动
 
 # Hyperliquid 大户持仓（WhalePoolTask / WhalePositionTask）：纯展示 + 落库，不进 trader 决策。方案见 docs/hyperliquid-whale.md

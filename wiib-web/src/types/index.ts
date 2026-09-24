@@ -834,12 +834,18 @@ export interface JevPredictionDecisionView {
   jevChoiceP?: number;
   /** 盘口距上次更新的毫秒数 */
   bookAgeMs?: number;
+  /** Jev 看到的那份盘口：买看卖价 ask，卖看买价 bid */
   upAsk?: number;
+  upBid?: number;
   downAsk?: number;
+  downBid?: number;
   /** 按数学估计的每份优势：空仓是 Jev 选的那边估计 − 卖价 − 手续费，持仓是卖出扣费后比估计多拿多少；R2 是按 Jev 胜率算、优势大那边的 */
   edge?: number;
   action: 'BUY_UP' | 'BUY_DOWN' | 'STAY_OUT' | 'HOLD' | 'SELL' | 'ERROR';
-  /** 首个词是代码（见后端 PredictionRules），页面按它出提示；BUY / UNSURE / NO_QUOTE / MISSED（R2 的 WAIT / ASK_LOW）第二个词是哪边；ERROR 行没有 */
+  /**
+   * 首个词是代码（见后端 PredictionRules），页面按它出提示；BUY / UNSURE / NO_QUOTE / MISSED（R2 的 WAIT / ASK_LOW）第二个词是哪边；
+   * 按别的价成交或没抢到时价写成 "看到的→实际的"（没价是 none）；ERROR 行没有
+   */
   reason?: string;
   betId?: number;
   stake?: number;
@@ -898,8 +904,10 @@ export interface JevBet {
 export interface JevThresholds {
   /** Jev 选的那一项概率到这么多才照做 */
   actThreshold: number;
-  /** Jev 拍板后等这么久再看盘口，价没变差才成交 */
+  /** Jev 拍板后等这么久再看盘口，按那时的价成交 */
   fillDelayMs: number;
+  /** 等完的价比 Jev 看到的差这么多以内照样成交 */
+  fillTolerance: number;
   /** 每注本金 */
   baseStake: number;
 }

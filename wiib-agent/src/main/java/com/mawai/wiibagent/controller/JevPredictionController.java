@@ -55,12 +55,14 @@ public class JevPredictionController {
     public record DecisionView(long id, long windowStart, String checkpoint, long decidedAt,
                                BigDecimal pModel, BigDecimal pJev, BigDecimal pMkt,
                                String jevChoice, BigDecimal jevChoiceP, Integer bookAgeMs,
-                               BigDecimal upAsk, BigDecimal downAsk, BigDecimal edge, String action, String reason,
+                               BigDecimal upAsk, BigDecimal upBid, BigDecimal downAsk, BigDecimal downBid,
+                               BigDecimal edge, String action, String reason,
                                Long betId, BigDecimal stake, String outcome, String error, JsonNode answers) {
         static DecisionView of(JevPredictionDecision d) {
             return new DecisionView(d.getId(), d.getWindowStart(), d.getCheckpoint(), d.getDecidedAt(),
                     d.getPModel(), d.getPJev(), d.getPMkt(), d.getJevChoice(), d.getJevChoiceP(), d.getBookAgeMs(),
-                    d.getUpAsk(), d.getDownAsk(), d.getEdge(), d.getAction(), d.getReason(), d.getBetId(), d.getStake(),
+                    d.getUpAsk(), d.getUpBid(), d.getDownAsk(), d.getDownBid(), d.getEdge(), d.getAction(), d.getReason(),
+                    d.getBetId(), d.getStake(),
                     d.getOutcome(), d.getError(), d.getAnswersJson() == null ? null : MAPPER.readTree(d.getAnswersJson()));
         }
     }
@@ -74,8 +76,8 @@ public class JevPredictionController {
         }
     }
 
-    /** 页面提示里要写出来的几个数：Jev 把握到多少才照做、拍板后等多久成交、每注本金 */
-    public record Thresholds(double actThreshold, long fillDelayMs, BigDecimal baseStake) {
+    /** 页面提示里要写出来的几个数：Jev 把握到多少才照做、拍板后等多久成交、成交容差、每注本金 */
+    public record Thresholds(double actThreshold, long fillDelayMs, BigDecimal fillTolerance, BigDecimal baseStake) {
     }
 
     /**
@@ -102,7 +104,7 @@ public class JevPredictionController {
             }
         }
         boolean enabled = platform.enabled() && sw.isOn();
-        Thresholds t = new Thresholds(cfg.getActThreshold(), cfg.getFillDelayMs(), cfg.getBaseStake());
+        Thresholds t = new Thresholds(cfg.getActThreshold(), cfg.getFillDelayMs(), cfg.getFillTolerance(), cfg.getBaseStake());
         int runNo = viewing.getRunNo();
         return Result.ok(new Overview(enabled, platform.getModel(), t, balance, JevPredictionAccount.INITIAL_GAME_BALANCE,
                 viewing, all, mapper.selectStats(runNo), mapper.selectBrierByCheckpoint(runNo), mapper.selectCalibration(runNo)));

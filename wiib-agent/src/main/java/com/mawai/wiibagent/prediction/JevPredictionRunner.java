@@ -43,7 +43,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * <p>
  * 一次检查点：用当前局的账户查本回合注单 → 写 state（持仓就带上仓位）→ 盘口太旧、Chainlink 停了就不问不动 →
  * 问 Jev：空仓买 UP / 买 DOWN / 不买，持仓拿着 / 卖掉 → Jev 要成交的，等 fill-delay 再看盘口，
- * 价没比 Jev 看到的差才成交（跟真挂限价单一样），变差了算没抢到。
+ * 价比 Jev 看到的差不超过 fill-tolerance 就按那时的价成交，再差算没抢到。
  * 卖掉就是空仓，同回合后面的检查点照常问买不买。钱包付不起一注、也没有等结算的注单就关掉开关，等重新开局。
  * <p>
  * 平台 Jev 没配 key 或 /admin 开关关着不开检查点；回填不看开关，关掉前的行照样补齐。
@@ -224,7 +224,7 @@ public class JevPredictionRunner {
         d.setLatencyMs(j.latencyMs());
     }
 
-    /** 空仓：Jev 选买就按它看到的卖价挂限价，等一会儿价没变差才买；钱包付不起一注、也没有等结算的注单就关开关 */
+    /** 空仓：Jev 选买就等一会儿再看卖价，比它看到的贵不超过容差才买；钱包付不起一注、也没有等结算的注单就关开关 */
     private void entry(JevPredictionDecision d, long userId, Judgment j, Book seen) {
         BigDecimal balance = sim.gameBalance(userId);
         Entry e = PredictionRules.entry(j, seen, balance, cfg);
@@ -250,7 +250,7 @@ public class JevPredictionRunner {
             return;
         }
         BigDecimal askNow = now.ask(e.side());
-        if (askNow == null || askNow.compareTo(askSeen) > 0) {
+        if (askNow == null || askNow.compareTo(askSeen.add(cfg.getFillTolerance())) > 0) {
             d.setReason("MISSED " + e.side() + " ask " + askSeen.toPlainString() + "→" + plain(askNow));
             return;
         }
@@ -266,9 +266,13 @@ public class JevPredictionRunner {
         d.setShares(bet.getContracts());
         d.setAvgPrice(bet.getAvgPrice());
         d.setAction(e.action());
+        // 在容差里按别的价成交了，reason 记成 "ask 看到的→实际的"
+        if (bet.getAvgPrice().compareTo(askSeen) != 0) {
+            d.setReason(e.reason() + "→" + bet.getAvgPrice().stripTrailingZeros().toPlainString());
+        }
     }
 
-    /** 持仓：Jev 选卖就按它看到的买价挂限价，等一会儿价没变差才卖；edge 记卖出扣费后比数学估计多拿多少 */
+    /** 持仓：Jev 选卖就等一会儿再看买价，比它看到的低不超过容差才卖；edge 记卖出扣费后比数学估计多拿多少 */
     private void exit(JevPredictionDecision d, long userId, Judgment j, Book seen, PredictionBetResponse active) {
         String side = active.getSide();
         Review r = PredictionRules.exit(j, side, seen, cfg);
@@ -286,12 +290,16 @@ public class JevPredictionRunner {
             return;
         }
         BigDecimal bidNow = now.bid(side);
-        if (bidNow == null || bidNow.compareTo(bidSeen) < 0) {
+        if (bidNow == null || bidNow.compareTo(bidSeen.subtract(cfg.getFillTolerance())) < 0) {
             d.setReason("MISSED SELL bid " + bidSeen.toPlainString() + "→" + plain(bidNow));
             return;
         }
         sim.sell(userId, active.getId(), null);
         d.setAction(ACTION_SELL);
+        // sim 按同一份盘口的买价卖，价变了就记成 "bid 看到的→实际的"
+        if (bidNow.compareTo(bidSeen) != 0) {
+            d.setReason(r.reason() + "→" + bidNow.toPlainString());
+        }
     }
 
     /** 等 fill-delay 再读盘口；这时盘口旧了回 null，reason 记 STALE_WHILE_ASKING */

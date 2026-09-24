@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, CircleHelp } from 'lucide-react';
-import { cn, fmtNum } from '../../lib/utils';
+import { cn, fmtNum, toCents } from '../../lib/utils';
 import { fmtWindow } from '../../hooks/usePredictionMarket';
 import { JevDecisionCard } from './JevDecisionCard';
 import { CHOICE_STYLE, ENTRY_OPTIONS, EXIT_OPTIONS, noteworthy, pct } from './format';
@@ -46,7 +46,8 @@ function QuestionNote({ title, desc, options }: { title: string; desc: string; o
 function Guide({ thresholds }: { thresholds: JevThresholds }) {
   const { t } = useTranslation(['community']);
   const [open, setOpen] = useState(false);
-  const vars = { act: pct(thresholds.actThreshold), delay: thresholds.fillDelayMs / 1000, stake: fmtNum(thresholds.baseStake, 0) };
+  const vars = { act: pct(thresholds.actThreshold), delay: thresholds.fillDelayMs / 1000, tol: toCents(thresholds.fillTolerance),
+    stake: fmtNum(thresholds.baseStake, 0) };
   const chips = (keys: string[]) => keys.map(k => ({ label: t(`prediction.jev.choice.${k}`), cls: CHOICE_STYLE[k].text }));
   return (
     <div className="border-b border-border">

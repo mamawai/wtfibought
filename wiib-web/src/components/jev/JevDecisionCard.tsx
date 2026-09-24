@@ -10,6 +10,9 @@ import type { JevAnswer, JevPredictionDecisionView } from '../../types';
 /** R1 旧版决定题的选项 */
 const R1_ENTRY_KEYS = ['BUY_UP', 'BUY_DOWN', 'WAIT'];
 
+/** 价格写成美分数，没价是 -- */
+const cents = (p?: number) => (p != null ? String(toCents(p)) : '--');
+
 /** 四种提示：把握不够 / 被代码拦下 / 这次没问或没成交 / 出错 */
 const NOTICE_STYLE = {
   unsure: { icon: Info, cls: 'mute' },
@@ -18,11 +21,27 @@ const NOTICE_STYLE = {
   error: { icon: AlertTriangle, cls: 'dn' },
 } as const;
 
-/** MISSED 的"Jev 看到的价→等完再看的价"换成美分，没价是 -- */
-function missedPrices(reason?: string): { from: string; to: string } {
-  const [from, to] = (reason?.split(' ')[3] ?? '').split('→');
-  const c = (v?: string) => (v && v !== 'none' ? String(toCents(Number(v))) : '--');
-  return { from: c(from), to: c(to) };
+/** reason 里"Jev 看到的价→实际的价"换成美分；没有这一段为 null，实际没价时 gone */
+function pricePair(reason?: string): { from: string; to: string; gone: boolean } | null {
+  const token = reason?.split(' ').find(s => s.includes('→'));
+  if (!token) return null;
+  const [from, to] = token.split('→');
+  const c = (v: string) => String(toCents(Number(v)));
+  return { from: c(from), to: to === 'none' ? '--' : c(to), gone: to === 'none' };
+}
+
+/** 在容差里按别的价成交了：写预计和实际 */
+function FillNote({ d }: { d: JevPredictionDecisionView }) {
+  const { t } = useTranslation(['community']);
+  const code = reasonCode(d);
+  const pair = (code === 'BUY' || code === 'SELL') ? pricePair(d.reason) : null;
+  if (!pair) return null;
+  return (
+    <div className="mt-1.5 flex items-start gap-1.5 text-[13px] mute">
+      <Info className="w-3.5 h-3.5 shrink-0 mt-[3px]" />
+      <span className="break-words min-w-0">{t(`prediction.jev.notice.${code === 'BUY' ? 'FILLED_AT' : 'SOLD_AT'}`, pair)}</span>
+    </div>
+  );
 }
 
 /** 一句提示：被拦、没问、没成交、出错时说为什么；数字取决策行自己的字段 */
@@ -31,6 +50,7 @@ function JevNotice({ d }: { d: JevPredictionDecisionView }) {
   const kind = noticeKind(d);
   if (!kind) return null;
   const code = reasonCode(d);
+  const pair = pricePair(d.reason);
   // 哪边：写在 reason 里，R1 旧版看 Jev 选的
   const side = reasonSide(d) ?? (d.jevChoice === 'BUY_DOWN' ? 'DOWN' : 'UP');
   const ask = side === 'UP' ? d.upAsk : d.downAsk;
@@ -41,11 +61,13 @@ function JevNotice({ d }: { d: JevPredictionDecisionView }) {
     ask: ask != null ? toCents(ask) : '--',
     p: pct(d.jevChoiceP),
     sec: staleMs != null && Number.isFinite(staleMs) ? (staleMs / 1000).toFixed(1) : '--',
-    ...missedPrices(d.reason),
+    from: pair?.from ?? '--',
+    to: pair?.to ?? '--',
   };
   let key = code;
   if (code === 'STALE_BOOK' && d.bookAgeMs == null) key = 'STALE_BOOK_NONE';
-  if (code === 'MISSED' && d.reason?.split(' ')[1] === 'SELL') key = 'MISSED_SELL';
+  // 没卖成是 "MISSED SELL ..."；等完那边没价单独一句，不写 --¢
+  if (code === 'MISSED') key = (d.reason?.split(' ')[1] === 'SELL' ? 'MISSED_SELL' : 'MISSED') + (pair?.gone ? '_GONE' : '');
   // R2 的 NO_QUOTE 是两边都没人卖，reason 里没写哪边
   if (code === 'NO_QUOTE' && !reasonSide(d) && !d.jevChoice) key = 'NO_QUOTE_BOTH';
   const text = d.error ? t('prediction.jev.notice.error', { msg: d.error }) : t(`prediction.jev.notice.${key}`, vars);
@@ -171,6 +193,7 @@ export function JevDecisionCard({ d, open, onToggle }: {
         {decided ? <JevDecides d={d} />
           : a?.momentum ? <JevSays choice={r1Choice} choiceP={d.jevChoiceP} momentum={a.momentum} /> : <JevEdge d={d} />}
         <ProbRow d={d} />
+        <FillNote d={d} />
         <JevNotice d={d} />
       </button>
 
@@ -189,9 +212,9 @@ export function JevDecisionCard({ d, open, onToggle }: {
             <JevAnswerBar title={t('prediction.jev.q1Title')} a={a.momentum}
                           options={[0, 1, 2].map(i => ({ key: String(i), label: t(`prediction.jev.levels.momentum.${i}`), bar: MOMENTUM_BAR[i] }))} />
           )}
-          {d.upAsk != null && d.downAsk != null && (
-            <p className="num text-[12.5px] mute">{t('prediction.jev.asksThen', { up: toCents(d.upAsk), down: toCents(d.downAsk) })}</p>
-          )}
+          <p className="num text-[12.5px] mute">{t('prediction.jev.bookThen', {
+            upAsk: cents(d.upAsk), upBid: cents(d.upBid), downAsk: cents(d.downAsk), downBid: cents(d.downBid),
+          })}</p>
         </div>
       )}
     </div>

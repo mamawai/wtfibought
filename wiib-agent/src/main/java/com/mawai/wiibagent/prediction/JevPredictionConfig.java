@@ -18,8 +18,10 @@ public class JevPredictionConfig {
     private final BigDecimal baseStake;
     /** Jev 选的那一项概率到这里才照做；0.5 = 不小于其余选项加起来 */
     private final double actThreshold;
-    /** Jev 拍板后等这么久再看盘口，价没变差才成交，跟真挂限价单一样 */
+    /** Jev 拍板后等这么久再看盘口，按那时的价成交 */
     private final long fillDelayMs;
+    /** 等完的价比 Jev 看到的差这么多以内照样成交，再差就算没抢到 */
+    private final BigDecimal fillTolerance;
     /** 盘口超过这么久没更新就不问不动 */
     private final long bookMaxAgeMs;
 
@@ -28,11 +30,13 @@ public class JevPredictionConfig {
             @Value("${jev.prediction.base-stake:5}") BigDecimal baseStake,
             @Value("${jev.prediction.act-threshold:0.5}") double actThreshold,
             @Value("${jev.prediction.fill-delay-ms:1000}") long fillDelayMs,
+            @Value("${jev.prediction.fill-tolerance:0.03}") BigDecimal fillTolerance,
             @Value("${jev.prediction.book-max-age-ms:5000}") long bookMaxAgeMs) {
         this.checkpointSeconds = checkpointSeconds.stream().distinct().sorted().toList();
         this.baseStake = baseStake;
         this.actThreshold = actThreshold;
         this.fillDelayMs = fillDelayMs;
+        this.fillTolerance = fillTolerance;
         this.bookMaxAgeMs = bookMaxAgeMs;
     }
 }

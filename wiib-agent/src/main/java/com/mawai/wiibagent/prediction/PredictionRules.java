@@ -21,7 +21,8 @@ import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_STAY_OUT;
  * <p>
  * reason 一律"代码 + 细节"，页面按首个词出中文提示，BUY / UNSURE / NO_QUOTE / MISSED 第二个词是那一边（卖出的是 SELL）：
  * BUY 下单 / PASS Jev 选不买 / UNSURE Jev 选了但把握不够 / NO_QUOTE 那边没人卖 / NO_BALANCE 没钱 /
- * HOLD Jev 选拿着 / SELL 卖出 / NO_BID 没人接盘 / MISSED 等成交时价变差了没抢到。
+ * HOLD Jev 选拿着 / SELL 卖出 / NO_BID 没人接盘 / MISSED 等成交时价差过了容差没抢到。
+ * 按别的价成交或没抢到时，价写成 "看到的→实际的"（没价是 none），页面照这个写预计和实际。
  */
 public final class PredictionRules {
 
