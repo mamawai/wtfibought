@@ -13,14 +13,22 @@ import java.util.List;
 @Mapper
 public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDecision> {
 
-    /** 记分汇总：回合数、下注数、已结注单与胜场、盈亏，三个概率各自的 Brier 均值（只算 UP/DOWN 已结、问过 Jev 的行，三列同一批样本） */
+    /**
+     * 记分汇总：回合数、下注数（含加注）、卖出次数、已结注单与胜场、盈亏、手续费、全都拿到结算的盈亏，
+     * 三个概率各自的 Brier 均值（只算 UP/DOWN 已结、有 p_jev 的行，三列同一批样本；R4 起不问谁赢，没有 Brier）
+     */
     @Data
     class Stats {
         private int windows;
         private int bets;
+        private int sells;
         private int settledBets;
         private int wins;
         private BigDecimal pnl;
+        /** 买入按成交均价、卖出按 reason 里的成交买价算，费率同 PredictionFee */
+        private BigDecimal fees;
+        /** 跟 pnl 同一批买入要是都不卖、拿到结算的盈亏（扣买入手续费）；作废回合照实际盈亏算 */
+        private BigDecimal heldPnl;
         /** 有结果且有 p_jev 的行数，Brier 的样本量 */
         private int scored;
         private BigDecimal brierModel;
@@ -50,9 +58,17 @@ public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDec
     @Select("""
             SELECT COUNT(DISTINCT window_start) AS windows,
                    COUNT(*) FILTER (WHERE action IN ('BUY_UP', 'BUY_DOWN')) AS bets,
+                   COUNT(*) FILTER (WHERE action = 'SELL') AS sells,
                    COUNT(*) FILTER (WHERE action IN ('BUY_UP', 'BUY_DOWN') AND pnl IS NOT NULL) AS settled_bets,
                    COUNT(*) FILTER (WHERE action IN ('BUY_UP', 'BUY_DOWN') AND pnl > 0) AS wins,
                    COALESCE(SUM(pnl), 0) AS pnl,
+                   COALESCE(SUM(0.07 * avg_price * (1 - avg_price) * shares) FILTER (WHERE action IN ('BUY_UP', 'BUY_DOWN')), 0)
+                     + COALESCE(SUM(0.07 * sell_px * (1 - sell_px) * shares) FILTER (WHERE action = 'SELL'), 0) AS fees,
+                   COALESCE(SUM(CASE WHEN outcome IN ('UP', 'DOWN')
+                                     THEN shares * CASE WHEN (action = 'BUY_UP' AND outcome = 'UP') OR (action = 'BUY_DOWN' AND outcome = 'DOWN')
+                                                        THEN 1 ELSE 0 END - stake - 0.07 * avg_price * (1 - avg_price) * shares
+                                     ELSE pnl END)
+                       FILTER (WHERE action IN ('BUY_UP', 'BUY_DOWN') AND pnl IS NOT NULL), 0) AS held_pnl,
                    COUNT(*) FILTER (WHERE outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL) AS scored,
                    AVG(POWER(p_model - CASE outcome WHEN 'UP' THEN 1 ELSE 0 END, 2))
                        FILTER (WHERE outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL AND p_model IS NOT NULL) AS brier_model,
@@ -60,8 +76,14 @@ public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDec
                        FILTER (WHERE outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL) AS brier_jev,
                    AVG(POWER(p_mkt - CASE outcome WHEN 'UP' THEN 1 ELSE 0 END, 2))
                        FILTER (WHERE outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL AND p_mkt IS NOT NULL) AS brier_mkt
-            FROM jev_prediction_decision
-            WHERE run_no = #{runNo}
+            FROM (
+                -- 卖出行的成交买价：reason 是 "SELL p bid 看到的[→实际的]"，有箭头取实际的
+                SELECT *, CASE WHEN action = 'SELL'
+                               THEN CAST(COALESCE(SUBSTRING(reason FROM '→([0-9.]+)$'), SUBSTRING(reason FROM 'bid ([0-9.]+)')) AS NUMERIC)
+                          END AS sell_px
+                FROM jev_prediction_decision
+                WHERE run_no = #{runNo}
+            ) d
             """)
     Stats selectStats(@Param("runNo") int runNo);
 

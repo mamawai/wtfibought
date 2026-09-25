@@ -51,18 +51,22 @@ public class JevPredictionController {
     private final JevPredictionRuns runs;
     private final SimPredictionClient sim;
 
-    /** 一张决策卡要的字段；answers 是 Jev 的回答原样，没问 Jev 的行为 null；jevChoice 是 Jev 拍板的选项，R2 的行没有 */
+    /**
+     * 一张决策卡要的字段；answers 是 Jev 的回答原样，没问 Jev 的行为 null；jevChoice 是 Jev 拍板的选项，R2 的行没有；
+     * pJev 只 R1–R3 有，oddsJump 只 R4 起有
+     */
     public record DecisionView(long id, long windowStart, String checkpoint, long decidedAt,
                                BigDecimal pModel, BigDecimal pJev, BigDecimal pMkt,
                                String jevChoice, BigDecimal jevChoiceP, Integer bookAgeMs,
                                BigDecimal upAsk, BigDecimal upBid, BigDecimal downAsk, BigDecimal downBid,
+                               BigDecimal oddsJumpUp, BigDecimal oddsJumpDown,
                                BigDecimal edge, String action, String reason,
                                Long betId, BigDecimal stake, String outcome, String error, JsonNode answers) {
         static DecisionView of(JevPredictionDecision d) {
             return new DecisionView(d.getId(), d.getWindowStart(), d.getCheckpoint(), d.getDecidedAt(),
                     d.getPModel(), d.getPJev(), d.getPMkt(), d.getJevChoice(), d.getJevChoiceP(), d.getBookAgeMs(),
-                    d.getUpAsk(), d.getUpBid(), d.getDownAsk(), d.getDownBid(), d.getEdge(), d.getAction(), d.getReason(),
-                    d.getBetId(), d.getStake(),
+                    d.getUpAsk(), d.getUpBid(), d.getDownAsk(), d.getDownBid(), d.getOddsJumpUp(), d.getOddsJumpDown(),
+                    d.getEdge(), d.getAction(), d.getReason(), d.getBetId(), d.getStake(),
                     d.getOutcome(), d.getError(), d.getAnswersJson() == null ? null : MAPPER.readTree(d.getAnswersJson()));
         }
     }
@@ -76,8 +80,9 @@ public class JevPredictionController {
         }
     }
 
-    /** 页面提示里要写出来的几个数：Jev 把握到多少才照做、拍板后等多久成交、成交容差、每注本金 */
-    public record Thresholds(double actThreshold, long fillDelayMs, BigDecimal fillTolerance, BigDecimal baseStake) {
+    /** 页面提示里要写出来的几个数：Jev 把握到多少才照做、拍板后等多久成交、成交容差、每注本金、同一边最多押多少、多大的赔率突变告诉 Jev */
+    public record Thresholds(double actThreshold, long fillDelayMs, BigDecimal fillTolerance, BigDecimal baseStake,
+                             BigDecimal maxStakePerWindow, double jumpThreshold) {
     }
 
     /**
@@ -104,7 +109,8 @@ public class JevPredictionController {
             }
         }
         boolean enabled = platform.enabled() && sw.isOn();
-        Thresholds t = new Thresholds(cfg.getActThreshold(), cfg.getFillDelayMs(), cfg.getFillTolerance(), cfg.getBaseStake());
+        Thresholds t = new Thresholds(cfg.getActThreshold(), cfg.getFillDelayMs(), cfg.getFillTolerance(), cfg.getBaseStake(),
+                cfg.getMaxStakePerWindow(), cfg.getJumpThreshold());
         int runNo = viewing.getRunNo();
         return Result.ok(new Overview(enabled, platform.getModel(), t, balance, JevPredictionAccount.INITIAL_GAME_BALANCE,
                 viewing, all, mapper.selectStats(runNo), mapper.selectBrierByCheckpoint(runNo), mapper.selectCalibration(runNo)));

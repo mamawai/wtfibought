@@ -4,7 +4,7 @@ import { ChevronDown, CircleHelp } from 'lucide-react';
 import { cn, fmtNum, toCents } from '../../lib/utils';
 import { fmtWindow } from '../../hooks/usePredictionMarket';
 import { JevDecisionCard } from './JevDecisionCard';
-import { CHOICE_STYLE, ENTRY_OPTIONS, EXIT_OPTIONS, noteworthy, pct } from './format';
+import { CHOICE_STYLE, ENTRY_OPTIONS, noteworthy, pct } from './format';
 import type { JevPredictionDecisionView, JevPredictionOverview, JevThresholds } from '../../types';
 
 interface Group {
@@ -42,12 +42,12 @@ function QuestionNote({ title, desc, options }: { title: string; desc: string; o
   );
 }
 
-/** 这些数字怎么看：每一行在说什么、涨的概率三个数各是什么、Jev 要答的题、代码怎么执行。收起放在流的最上面 */
+/** 这些数字怎么看：每一行在说什么、涨的概率各是什么、Jev 要答的题、代码怎么执行。收起放在流的最上面 */
 function Guide({ thresholds }: { thresholds: JevThresholds }) {
   const { t } = useTranslation(['community']);
   const [open, setOpen] = useState(false);
   const vars = { act: pct(thresholds.actThreshold), delay: thresholds.fillDelayMs / 1000, tol: toCents(thresholds.fillTolerance),
-    stake: fmtNum(thresholds.baseStake, 0) };
+    stake: fmtNum(thresholds.baseStake, 0), max: fmtNum(thresholds.maxStakePerWindow, 0), jump: toCents(thresholds.jumpThreshold) };
   const chips = (keys: string[]) => keys.map(k => ({ label: t(`prediction.jev.choice.${k}`), cls: CHOICE_STYLE[k].text }));
   return (
     <div className="border-b border-border">
@@ -78,12 +78,8 @@ function Guide({ thresholds }: { thresholds: JevThresholds }) {
           </div>
           <div className="space-y-3">
             <div className="font-semibold text-foreground">{t('prediction.jev.guideQuestionsTitle')}</div>
-            <QuestionNote title={t('prediction.jev.qEntryTitle')} desc={t('prediction.jev.qEntryDesc')}
+            <QuestionNote title={t('prediction.jev.qEntryTitle')} desc={t('prediction.jev.qEntryDesc', vars)}
                           options={chips(ENTRY_OPTIONS)} />
-            <QuestionNote title={t('prediction.jev.qExitTitle')} desc={t('prediction.jev.qExitDesc')}
-                          options={chips(EXIT_OPTIONS)} />
-            <QuestionNote title={t('prediction.jev.qWinsTitle')} desc={t('prediction.jev.qWinsDesc')}
-                          options={[{ label: t('prediction.jev.upWins'), cls: 'up' }, { label: t('prediction.jev.downWins'), cls: 'dn' }]} />
           </div>
           <div className="space-y-1.5">
             <div className="font-semibold text-foreground">{t('prediction.jev.guideRulesTitle')}</div>

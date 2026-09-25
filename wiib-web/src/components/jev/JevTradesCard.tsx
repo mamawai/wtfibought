@@ -20,9 +20,24 @@ function Sub({ children }: { children: ReactNode }) {
   return <span className="block text-[12px] mute mt-0.5 whitespace-nowrap">{children}</span>;
 }
 
+/** 决策统计一格：名字在上、数在下 */
+function StatCell({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <div className="text-[12px] mute">{label}</div>
+      <div className="num text-[15px] font-semibold mt-0.5">{children}</div>
+    </div>
+  );
+}
+
+/** 盈亏带正负号和涨跌色 */
+function SignedUsd({ v }: { v: number }) {
+  return <span className={v > 0 ? 'up' : v < 0 ? 'dn' : undefined}>{fmtSignedUsd(v)}</span>;
+}
+
 /**
  * 左下：Jev 的注单（四列＋副行，手机也放得下：回合/何时买、方向/份数均价、结果、盈亏/成本），
- * 底下折叠的记分明细（三列 Brier 按检查点 + 校准），每块先用大白话说清楚怎么看。
+ * 底下折叠的记分明细：决策统计（买卖几次、手续费、不卖会怎样），R1–R3 另有三列 Brier 按检查点 + 校准；每块先用大白话说清楚怎么看。
  */
 export function JevTradesCard({ overview, bets, feed }: {
   overview: JevPredictionOverview | null;
@@ -45,6 +60,8 @@ export function JevTradesCard({ overview, bets, feed }: {
 
   const shown = allBets ? bets : bets.slice(0, FOLD);
   const stats = overview?.stats;
+  // R4 起不问谁赢，没有 Brier，只看决策统计
+  const scored = (stats?.scored ?? 0) > 0;
 
   return (
     <div>
@@ -108,18 +125,38 @@ export function JevTradesCard({ overview, bets, feed }: {
           <button type="button" onClick={() => setDetailsOpen(o => !o)} aria-expanded={detailsOpen}
                   className="w-full text-left py-3.5 border-y border-border flex items-center gap-3 text-[14px]">
             <b className="font-extrabold whitespace-nowrap">{t('prediction.jev.scoreDetails')}</b>
-            <span className="mute flex-1 min-w-0 truncate">{t('prediction.jev.scoreDetailsSub', { n: stats?.scored ?? 0 })}</span>
+            <span className="mute flex-1 min-w-0 truncate">
+              {scored ? t('prediction.jev.scoreDetailsSub', { n: stats?.scored ?? 0 }) : t('prediction.jev.scoreDetailsSubDecisions')}
+            </span>
             <ChevronDown className={cn('w-4 h-4 mute shrink-0 transition-transform', detailsOpen && 'rotate-180')} />
           </button>
           {detailsOpen && (
             <div className="pt-4 space-y-8">
-              <div>
-                <h3 className="text-[14px] font-bold">{t('prediction.jev.brier')}</h3>
-                <p className="text-[13.5px] leading-[1.7] mute mt-1">{t('prediction.jev.brierExplain')}</p>
-                <p className="text-[13.5px] leading-[1.7] mute mt-1 mb-3">{t('prediction.jev.brierHow')}</p>
-                <BrierTable rows={overview.brierByCheckpoint} total={stats} />
-              </div>
-              {overview.calibration.length > 0 && (
+              {stats && (
+                <div>
+                  <h3 className="text-[14px] font-bold">{t('prediction.jev.decisionStats')}</h3>
+                  <p className="text-[13.5px] leading-[1.7] mute mt-1 mb-3">{t('prediction.jev.decisionStatsExplain')}</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+                    <StatCell label={t('prediction.jev.statBuys')}>{stats.bets}</StatCell>
+                    <StatCell label={t('prediction.jev.statSells')}>{stats.sells}</StatCell>
+                    <StatCell label={t('prediction.jev.statPerWindow')}>
+                      {stats.windows > 0 ? fmtNum((stats.bets + stats.sells) / stats.windows, 1) : '—'}
+                    </StatCell>
+                    <StatCell label={t('prediction.jev.statFees')}>${fmtNum(stats.fees)}</StatCell>
+                    <StatCell label={t('prediction.jev.statPnl')}><SignedUsd v={stats.pnl} /></StatCell>
+                    <StatCell label={t('prediction.jev.statHeldPnl')}><SignedUsd v={stats.heldPnl} /></StatCell>
+                  </div>
+                </div>
+              )}
+              {scored && (
+                <div>
+                  <h3 className="text-[14px] font-bold">{t('prediction.jev.brier')}</h3>
+                  <p className="text-[13.5px] leading-[1.7] mute mt-1">{t('prediction.jev.brierExplain')}</p>
+                  <p className="text-[13.5px] leading-[1.7] mute mt-1 mb-3">{t('prediction.jev.brierHow')}</p>
+                  <BrierTable rows={overview.brierByCheckpoint} total={stats} />
+                </div>
+              )}
+              {scored && overview.calibration.length > 0 && (
                 <div>
                   <h3 className="text-[14px] font-bold">{t('prediction.jev.calibration')}</h3>
                   <p className="text-[13.5px] leading-[1.7] mute mt-1 mb-4">{t('prediction.jev.calibrationExplain')}</p>
