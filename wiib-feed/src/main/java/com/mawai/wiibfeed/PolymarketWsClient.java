@@ -69,7 +69,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *         {@link #init()} 还启动每 50ms 一拍的 {@link #tick()}：先 {@link #checkRoundRotation()}（见下），
  *         再 {@link #flushBook()} 把有变化的盘口写 Redis、广播 {@code /topic/prediction/market}；
  *         每秒一次 {@link #sampleBook()}：把盘口最后更新时刻和 UP 中间价各写一笔 Redis，并补推一次当前盘口，
- *         预测员靠前者判断盘口是不是旧了，靠后者看最近 30 秒赔率怎么动。
+ *         预测员靠前者判断盘口是不是旧了，靠后者看最近 30 秒赔率怎么动和最近 15 秒有没有突变。
  *     </li>
  *     <li>
  *         {@link #init()} 启动虚拟线程执行 {@link #prepareCurrentMarket(long)}。
@@ -225,7 +225,7 @@ public class PolymarketWsClient implements SmartLifecycle {
         broadcastBook(up, down);
     }
 
-    /** 盘口最后更新时刻、UP 中间价各写一笔，再推一次当前盘口给刚打开页面的人；预测员靠前两者判旧、看最近 30 秒赔率怎么动 */
+    /** 盘口最后更新时刻、UP 中间价各写一笔，再推一次当前盘口给刚打开页面的人；预测员靠前两者判旧、看赔率怎么动和有没有突变 */
     private void sampleBook() {
         long updatedAt = bookUpdatedAtMs;
         if (updatedAt <= 0) return;

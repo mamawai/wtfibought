@@ -9,7 +9,7 @@ import com.mawai.wiibagent.mapper.JevPredictionDecisionMapper;
 import com.mawai.wiibagent.prediction.PredictionJudge.Judgment;
 import com.mawai.wiibagent.prediction.PredictionRules.Book;
 import com.mawai.wiibagent.prediction.PredictionRules.Entry;
-import com.mawai.wiibagent.prediction.PredictionRules.Review;
+import com.mawai.wiibagent.prediction.PredictionRules.Holding;
 import com.mawai.wiibagent.prediction.PredictionStateWriter.Snapshot;
 import com.mawai.wiibquant.external.sim.SimPredictionClient;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +19,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,10 +42,10 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 预测员回路：每秒一跳对齐 5 分钟窗口，开盘后到了配置里的每个检查点秒数（起手每 15 秒）就问一次 Jev，每次一行落库；
  * 另一条每分钟的回填把结算结果、盈亏补进去。
  * <p>
- * 一次检查点：用当前局的账户查本回合注单 → 写 state（持仓就带上仓位）→ 盘口太旧、Chainlink 停了就不问不动 →
- * 问 Jev：空仓买 UP / 买 DOWN / 不买，持仓拿着 / 卖掉 → Jev 要成交的，等 fill-delay 再看盘口，
- * 价比 Jev 看到的差不超过 fill-tolerance 就按那时的价成交，再差算没抢到。
- * 卖掉就是空仓，同回合后面的检查点照常问买不买。钱包付不起一注、也没有等结算的注单就关掉开关，等重新开局。
+ * 一次检查点：用当前局的账户查本回合在持的注单 → 写 state（空仓持仓同一份）→ 盘口太旧、Chainlink 停了就不问不动 →
+ * 问 Jev 买 UP / 买 DOWN / 不买：空仓照买；持仓选手里这边加注、选另一边卖掉全部注单、不买就拿着 →
+ * Jev 要成交的，等 fill-delay 再看盘口，价比 Jev 看到的差不超过 fill-tolerance 就按那时的价成交，再差算没抢到。
+ * 卖掉就是空仓，这一格不反手，同回合后面的检查点照常问。钱包付不起一注、也没有等结算的注单就关掉开关，等重新开局。
  * <p>
  * 平台 Jev 没配 key 或 /admin 开关关着不开检查点；回填不看开关，关掉前的行照样补齐。
  * 写 state 失败落 ERROR 行；问 Jev 或下注失败也落 ERROR 行，但数学部分（p_model、盘口）已经填上。
@@ -123,6 +124,28 @@ public class JevPredictionRunner {
         return cp;
     }
 
+    /** 本回合在持的注单，按下单先后；都是同一边（选另一边就全卖了） */
+    record Position(List<PredictionBetResponse> bets) {
+
+        String side() {
+            return bets.getFirst().getSide();
+        }
+
+        /** 在持本金合计，不含手续费 */
+        BigDecimal cost() {
+            return bets.stream().map(PredictionBetResponse::getCost).reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+
+        BigDecimal shares() {
+            return bets.stream().map(PredictionBetResponse::getContracts).reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+
+        /** 加权均价 */
+        BigDecimal avgPrice() {
+            return cost().divide(shares(), 4, RoundingMode.HALF_UP);
+        }
+    }
+
     /** 一次检查点，包私有供单测直接调 */
     void runCheckpoint(long ws, String checkpoint) {
         if (mapper.countCheckpoint(ws, checkpoint) > 0) {
@@ -139,17 +162,18 @@ public class JevPredictionRunner {
         d.setStateJson("{}");
         try {
             long userId = account.userId(runNo);
-            PredictionBetResponse active = activeBet(sim.recentBets(userId, 10), ws);
-            if (active != null) {
-                d.setBetId(active.getId());
-                d.setStake(active.getCost());
-                d.setShares(active.getContracts());
-                d.setAvgPrice(active.getAvgPrice());
+            Position pos = position(sim.recentBets(userId, 10), ws);
+            // 持仓行记合计，bet_id 记第一笔
+            if (pos != null) {
+                d.setBetId(pos.bets().getFirst().getId());
+                d.setStake(pos.cost());
+                d.setShares(pos.shares());
+                d.setAvgPrice(pos.avgPrice());
             }
-            Snapshot snap = writer.write(ws, active);
+            Snapshot snap = writer.write(ws);
             fillMath(d, snap);
             fillBook(d, snap.raw().book());
-            decide(d, userId, snap, active);
+            decide(d, userId, snap, pos);
         } catch (Exception e) {
             String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
             // 下单 / 卖出失败时 action 已经先记成不动了，这里改回失败
@@ -159,13 +183,13 @@ public class JevPredictionRunner {
             log.warn("[JevPred] {} {} 失败: {}", ws, checkpoint, msg);
         }
         mapper.insert(d);
-        log.info("[JevPred] R{} {} {} action={} pJev={} pModel={} pMkt={} reason={}", runNo, ws, checkpoint, d.getAction(),
-                d.getPJev(), d.getPModel(), d.getPMkt(), d.getReason());
+        log.info("[JevPred] R{} {} {} action={} choice={} pModel={} pMkt={} reason={}", runNo, ws, checkpoint, d.getAction(),
+                d.getJevChoice(), d.getPModel(), d.getPMkt(), d.getReason());
     }
 
     /** 盘口太旧、Chainlink 停了不问；问完按 Jev 拍板走。reason 的代码页面按首个词出提示，见 PredictionRules */
-    private void decide(JevPredictionDecision d, long userId, Snapshot snap, PredictionBetResponse active) {
-        String idle = active != null ? ACTION_HOLD : ACTION_STAY_OUT;
+    private void decide(JevPredictionDecision d, long userId, Snapshot snap, Position pos) {
+        String idle = pos != null ? ACTION_HOLD : ACTION_STAY_OUT;
         Integer bookAge = ageMs(snap.raw().bookUpdatedAtMs());
         d.setBookAgeMs(bookAge);
         if (bookAge == null || bookAge > cfg.getBookMaxAgeMs()) {
@@ -180,15 +204,15 @@ public class JevPredictionRunner {
             return;
         }
         // 持仓没人接盘就卖不了，不用问
-        if (active != null && snap.raw().book().bid(active.getSide()) == null) {
+        if (pos != null && snap.raw().book().bid(pos.side()) == null) {
             d.setAction(ACTION_HOLD);
             d.setReason("NO_BID");
             return;
         }
-        Judgment j = judge.judge(snap, active != null);
+        Judgment j = judge.judge(snap);
         fillJev(d, j);
-        if (active != null) {
-            exit(d, userId, j, snap.raw().book(), active);
+        if (pos != null) {
+            holding(d, userId, j, snap.raw().book(), pos);
         } else {
             entry(d, userId, j, snap.raw().book());
         }
@@ -203,6 +227,8 @@ public class JevPredictionRunner {
         d.setStateJson(MAPPER.writeValueAsString(snap.state()));
         d.setPModel(dec(snap.raw().pModel()));
         d.setLeadSigma(dec(snap.raw().zModel()));
+        d.setOddsJumpUp(snap.raw().oddsJumpUp() == null ? null : dec(snap.raw().oddsJumpUp()));
+        d.setOddsJumpDown(snap.raw().oddsJumpDown() == null ? null : dec(snap.raw().oddsJumpDown()));
     }
 
     /** 实际拿来决策的那份盘口 */
@@ -216,7 +242,6 @@ public class JevPredictionRunner {
 
     private static void fillJev(JevPredictionDecision d, Judgment j) {
         d.setAnswersJson(MAPPER.writeValueAsString(j.answers()));
-        d.setPJev(dec(j.pJev()));
         d.setJevChoice(j.decision().choice());
         d.setJevChoiceP(dec(j.choiceP()));
         d.setModel(j.model());
@@ -245,60 +270,81 @@ public class JevPredictionRunner {
         if (ACTION_STAY_OUT.equals(e.action())) {
             return;
         }
+        fill(d, userId, e.side(), e.action(), e.stake(), askSeen, balance, e.reason());
+    }
+
+    /**
+     * 持仓：选另一边就卖掉全部注单，选手里这边就加注（跟空仓买入一样等一会儿再成交），其余拿着。
+     * edge 记卖出扣费后比数学估计多拿多少；加注成交了这一行就是买入行，edge 改按买入算
+     */
+    private void holding(JevPredictionDecision d, long userId, Judgment j, Book seen, Position pos) {
+        String side = pos.side();
+        BigDecimal balance = sim.gameBalance(userId);
+        Holding h = PredictionRules.holding(j, side, pos.cost(), seen, balance, cfg);
+        d.setAction(ACTION_HOLD);
+        d.setReason(h.reason());
+        // 没人接盘的 decide 里先拦了，这里一定有买价
+        BigDecimal bidSeen = seen.bid(side);
+        d.setEdge(dec(PredictionRules.sellOver(sideP(j.pModel(), side), bidSeen)));
+        if (ACTION_SELL.equals(h.action())) {
+            sellAll(d, userId, pos, bidSeen, h.reason());
+        } else if (h.stake() != null) {
+            BigDecimal askSeen = seen.ask(side);
+            fill(d, userId, side, h.action(), h.stake(), askSeen, balance, h.reason());
+            if (!ACTION_HOLD.equals(d.getAction())) {
+                d.setEdge(dec(PredictionRules.edge(sideP(j.pModel(), side), askSeen)));
+            }
+        }
+    }
+
+    /** 等 fill-delay 再看卖价，比 Jev 看到的贵不超过容差才按那时的价买；开仓和加注共用 */
+    private void fill(JevPredictionDecision d, long userId, String side, String action, BigDecimal want, BigDecimal askSeen,
+                      BigDecimal balance, String reason) {
         Book now = bookAfterDelay(d);
         if (now == null) {
             return;
         }
-        BigDecimal askNow = now.ask(e.side());
+        BigDecimal askNow = now.ask(side);
         if (askNow == null || askNow.compareTo(askSeen.add(cfg.getFillTolerance())) > 0) {
-            d.setReason("MISSED " + e.side() + " ask " + askSeen.toPlainString() + "→" + plain(askNow));
+            d.setReason("MISSED " + side + " ask " + askSeen.toPlainString() + "→" + plain(askNow));
             return;
         }
         // 价低了手续费占本金的比例反而高，按成交价再算一次付不付得起
-        BigDecimal stake = PredictionRules.stake(e.stake(), balance, askNow);
+        BigDecimal stake = PredictionRules.stake(want, balance, askNow);
         if (stake == null) {
             d.setReason(NO_BALANCE);
             return;
         }
-        PredictionBetResponse bet = sim.buy(userId, e.side(), stake);
+        PredictionBetResponse bet = sim.buy(userId, side, stake);
         d.setBetId(bet.getId());
         d.setStake(bet.getCost());
         d.setShares(bet.getContracts());
         d.setAvgPrice(bet.getAvgPrice());
-        d.setAction(e.action());
+        d.setAction(action);
         // 在容差里按别的价成交了，reason 记成 "ask 看到的→实际的"
         if (bet.getAvgPrice().compareTo(askSeen) != 0) {
-            d.setReason(e.reason() + "→" + bet.getAvgPrice().stripTrailingZeros().toPlainString());
+            d.setReason(reason + "→" + bet.getAvgPrice().stripTrailingZeros().toPlainString());
         }
     }
 
-    /** 持仓：Jev 选卖就等一会儿再看买价，比它看到的低不超过容差才卖；edge 记卖出扣费后比数学估计多拿多少 */
-    private void exit(JevPredictionDecision d, long userId, Judgment j, Book seen, PredictionBetResponse active) {
-        String side = active.getSide();
-        Review r = PredictionRules.exit(j, side, seen, cfg);
-        d.setAction(ACTION_HOLD);
-        d.setReason(r.reason());
-        BigDecimal bidSeen = seen.bid(side);
-        if (bidSeen != null) {
-            d.setEdge(dec(PredictionRules.sellOver(sideP(j.pModel(), side), bidSeen)));
-        }
-        if (!ACTION_SELL.equals(r.action())) {
-            return;
-        }
+    /** 等 fill-delay 再看买价，比 Jev 看到的低不超过容差才逐笔卖掉本回合全部注单；中途卖失败落 ERROR 行，没卖掉的下一格照常问 */
+    private void sellAll(JevPredictionDecision d, long userId, Position pos, BigDecimal bidSeen, String reason) {
         Book now = bookAfterDelay(d);
         if (now == null) {
             return;
         }
-        BigDecimal bidNow = now.bid(side);
+        BigDecimal bidNow = now.bid(pos.side());
         if (bidNow == null || bidNow.compareTo(bidSeen.subtract(cfg.getFillTolerance())) < 0) {
             d.setReason("MISSED SELL bid " + bidSeen.toPlainString() + "→" + plain(bidNow));
             return;
         }
-        sim.sell(userId, active.getId(), null);
+        for (PredictionBetResponse b : pos.bets()) {
+            sim.sell(userId, b.getId(), null);
+        }
         d.setAction(ACTION_SELL);
         // sim 按同一份盘口的买价卖，价变了就记成 "bid 看到的→实际的"
         if (bidNow.compareTo(bidSeen) != 0) {
-            d.setReason(r.reason() + "→" + bidNow.toPlainString());
+            d.setReason(reason + "→" + bidNow.toPlainString());
         }
     }
 
@@ -328,13 +374,13 @@ public class JevPredictionRunner {
         return v == null ? "none" : v.toPlainString();
     }
 
-    private static PredictionBetResponse activeBet(List<PredictionBetResponse> bets, long ws) {
-        for (PredictionBetResponse b : bets) {
-            if (b.getWindowStart() == ws && "ACTIVE".equals(b.getStatus())) {
-                return b;
-            }
-        }
-        return null;
+    /** 本回合 ACTIVE 的注单按下单先后排；一笔都没有回 null */
+    static Position position(List<PredictionBetResponse> bets, long ws) {
+        List<PredictionBetResponse> active = bets.stream()
+                .filter(b -> b.getWindowStart() == ws && "ACTIVE".equals(b.getStatus()))
+                .sorted(Comparator.comparingLong(PredictionBetResponse::getId))
+                .toList();
+        return active.isEmpty() ? null : new Position(active);
     }
 
     /**

@@ -150,15 +150,17 @@ jev:
     api-key: ${JEV_API_KEY:}
     base-url: ${JEV_BASE_URL:https://api.typesafe.ai}
     model: ${JEV_MODEL:jev-latest}
-  # 预测员（BTC 5 分钟盘）：开关和重新开局在 /admin 页面（开关存 Redis，默认关）。每个检查点问 Jev 一次：
-  # 空仓问买 UP / 买 DOWN / 不买，持仓问拿着 / 卖掉，Jev 拍板；代码只算数、管执行。钱包付不起一注就自动关开关
+  # 预测员（BTC 5 分钟盘）：开关和重新开局在 /admin 页面（开关存 Redis，默认关）。每个检查点问 Jev 一次买 UP / 买 DOWN / 不买，
+  # 空仓持仓同一题：空仓照买，持仓选同一边加注、选另一边卖掉、不买就拿着；代码只算数、管执行。钱包付不起一注就自动关开关
   prediction:
     checkpoint-seconds: 30,45,60,75,90,105,120,135,150,165,180,195,210,225,240,255,270   # 开盘后第几秒问一次，每次一行
     base-stake: 5             # 每注本金 USDT
-    act-threshold: 0.5        # Jev 选的那一项概率到这里才照做，0.5 = 不小于其余选项加起来；卖还要比拿着的概率高
+    max-stake-per-window: 10  # 同一回合同一边在持的本金最多这么多，持仓时再选这一边就加注到这里为止
+    act-threshold: 0.5        # Jev 选的那一项概率到这里才照做，0.5 = 不小于其余选项加起来
     fill-delay-ms: 1000       # Jev 拍板后等这么久再看盘口，按那时的价成交
     fill-tolerance: 0.03      # 等完的价比 Jev 看到的差 3¢ 以内照样成交，再差就算没抢到
     book-max-age-ms: 5000     # 盘口超过这么久没更新就不问不动
+    jump-threshold: 0.10      # 最近 15 秒里 UP 中间价 3 秒内涨或跌到 10¢ 才写进 state 告诉 Jev
 
 # Hyperliquid 大户持仓（WhalePoolTask / WhalePositionTask）：纯展示 + 落库，不进 trader 决策。方案见 docs/hyperliquid-whale.md
 whale:

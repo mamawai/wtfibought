@@ -30,16 +30,16 @@ function pricePair(reason?: string): { from: string; to: string; gone: boolean }
   return { from: c(from), to: to === 'none' ? '--' : c(to), gone: to === 'none' };
 }
 
-/** 在容差里按别的价成交了：写预计和实际 */
+/** 在容差里按别的价成交了：写预计和实际；开仓、加注、卖出都算 */
 function FillNote({ d }: { d: JevPredictionDecisionView }) {
   const { t } = useTranslation(['community']);
   const code = reasonCode(d);
-  const pair = (code === 'BUY' || code === 'SELL') ? pricePair(d.reason) : null;
+  const pair = (code === 'BUY' || code === 'ADD' || code === 'SELL') ? pricePair(d.reason) : null;
   if (!pair) return null;
   return (
     <div className="mt-1.5 flex items-start gap-1.5 text-[13px] mute">
       <Info className="w-3.5 h-3.5 shrink-0 mt-[3px]" />
-      <span className="break-words min-w-0">{t(`prediction.jev.notice.${code === 'BUY' ? 'FILLED_AT' : 'SOLD_AT'}`, pair)}</span>
+      <span className="break-words min-w-0">{t(`prediction.jev.notice.${code === 'SELL' ? 'SOLD_AT' : 'FILLED_AT'}`, pair)}</span>
     </div>
   );
 }
@@ -63,6 +63,8 @@ function JevNotice({ d }: { d: JevPredictionDecisionView }) {
     sec: staleMs != null && Number.isFinite(staleMs) ? (staleMs / 1000).toFixed(1) : '--',
     from: pair?.from ?? '--',
     to: pair?.to ?? '--',
+    // 持仓行的 stake 是这一边在持的合计
+    held: d.stake != null ? fmtNum(d.stake) : '--',
   };
   let key = code;
   if (code === 'STALE_BOOK' && d.bookAgeMs == null) key = 'STALE_BOOK_NONE';
@@ -80,11 +82,15 @@ function JevNotice({ d }: { d: JevPredictionDecisionView }) {
   );
 }
 
-/** Jev 选了什么、多大把握，后面是给它看的数学参考数：空仓是买那边每份比成本高多少，持仓是现在卖每份比估计多拿多少 */
+/**
+ * Jev 选了什么、多大把握，后面是数学参考数：买入行（开仓、加注）是买那边每份比成本高多少，持仓行（拿着、卖掉）是现在卖每份比估计多拿多少。
+ * R4 起持仓也问入场题，按这一行实际做了什么分；R3 持仓行的选项是拿着 / 卖掉，动作也是 HOLD / SELL。
+ * 出错的行带注单就是持仓行：空仓行下单成功才记注单，之后不会再出错
+ */
 function JevDecides({ d }: { d: JevPredictionDecisionView }) {
   const { t } = useTranslation(['community']);
   const choice = d.jevChoice!;
-  const holding = EXIT_OPTIONS.includes(choice);
+  const holding = d.action === 'HOLD' || d.action === 'SELL' || (d.action === 'ERROR' && d.betId != null);
   const side = choice === 'BUY_UP' ? 'UP' : choice === 'BUY_DOWN' ? 'DOWN' : undefined;
   const c = d.edge != null ? toCents(d.edge) : null;
   return (
@@ -146,10 +152,11 @@ function JevSays({ choice, choiceP, momentum }: { choice?: string; choiceP?: num
   );
 }
 
-/** 涨的概率三个数：数学 / Jev / 市场。"名 + 数"一对不拆开，窄屏在对与对之间折行 */
+/** 涨的概率：数学 / Jev / 市场，Jev 那个只 R1–R3 有，没有就不显示。"名 + 数"一对不拆开，窄屏在对与对之间折行 */
 function ProbRow({ d }: { d: JevPredictionDecisionView }) {
   const { t } = useTranslation(['community']);
-  const items = [['colModel', d.pModel], ['colJev', d.pJev], ['colMkt', d.pMkt]] as const;
+  const items = ([['colModel', d.pModel], ['colJev', d.pJev], ['colMkt', d.pMkt]] as const)
+    .filter(([k, v]) => k !== 'colJev' || v != null);
   return (
     <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[13px] mute">
       <span>{t('prediction.jev.upChance')}</span>
@@ -164,7 +171,8 @@ function ProbRow({ d }: { d: JevPredictionDecisionView }) {
 
 /**
  * 一个检查点一行：实际动作 / 注额 / 时间 → Jev 选了什么、多大把握、数学参考数（R2 是 Jev 眼里的每份优势，R1 是后劲）→
- * 涨的概率三个数 → 被拦、没问、没成交、出错时的一句提示。点开看 Jev 每道题的回答；没问 Jev 的行（盘口或 Chainlink 太旧、出错）没东西可展开。
+ * 涨的概率 → 被拦、没问、没成交、出错时的一句提示。点开看 Jev 每道题的回答、当时的盘口和最近 15 秒的赔率突变；
+ * 没问 Jev 的行（盘口或 Chainlink 太旧、出错）没东西可展开。
  */
 export function JevDecisionCard({ d, open, onToggle }: {
   d: JevPredictionDecisionView;
@@ -215,6 +223,11 @@ export function JevDecisionCard({ d, open, onToggle }: {
           <p className="num text-[12.5px] mute">{t('prediction.jev.bookThen', {
             upAsk: cents(d.upAsk), upBid: cents(d.upBid), downAsk: cents(d.downAsk), downBid: cents(d.downBid),
           })}</p>
+          {d.oddsJumpUp != null && d.oddsJumpDown != null && (
+            <p className="num text-[12.5px] mute">{t('prediction.jev.jumpThen', {
+              up: toCents(d.oddsJumpUp), down: toCents(Math.abs(d.oddsJumpDown)),
+            })}</p>
+          )}
         </div>
       )}
     </div>

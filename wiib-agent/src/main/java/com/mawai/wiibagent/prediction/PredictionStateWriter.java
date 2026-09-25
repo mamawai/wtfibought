@@ -1,7 +1,6 @@
 package com.mawai.wiibagent.prediction;
 
 import com.mawai.wiibcommon.cache.CacheService;
-import com.mawai.wiibcommon.dto.PredictionBetResponse;
 import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibcommon.market.ForceOrderService;
 import com.mawai.wiibcommon.market.KlineBar;
@@ -15,10 +14,12 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -26,17 +27,16 @@ import java.util.Map;
 import java.util.function.LongSupplier;
 
 /**
- * 预测员的眼睛：把这一刻玩家能看到的事实写成 Jev 读得懂的英文短句，要比的数（价差、秒数、¢ 价、含费成本）由代码算好写进句子。
- * 数学估计只当一项事实写进 estimate（两边估计胜率、含费成本比它高或低几美分），不写"便宜 / 贵"这类结论；Jev 不做算术，差值都算好。
+ * 预测员的眼睛：把这一刻玩家能看到的事实写成 Jev 读得懂的英文短句，要比的数（价差、秒数、¢ 价、含费成本）由代码算好写进句子，
+ * 不写"便宜 / 贵"这类结论。空仓持仓同一份 state，不写持仓；数学估计不给 Jev，只记分。涉及两边的句子两边都写，两边对调时写法也对称。
  * <ul>
  *   <li>market：怎么赢、怎么买卖、多久问一次</li>
  *   <li>clock：早段 / 中段 / 最后一分钟锁了多少，加上离结算均价截止还有几秒</li>
  *   <li>btc：Chainlink 现价相对开盘均价、谁领先多少（按剩余时间的正常波动，末分钟含已锁定部分）、末分钟已锁定部分相对开盘均价、
  *       路径、形状、最近一分钟、速度、Chainlink 多久前更新和 Binance 最近 10 / 30 秒怎么动（Chainlink 按它自己的时间戳）</li>
  *   <li>binance_flow：最近 60 秒主动买卖与大单、开盘以来强平方向（直接读 Redis 逐笔流和强平库）</li>
- *   <li>odds：谁是热门和市场给 UP 的概率、UP / DOWN 各自的卖价买价与含费成本、最近 30 秒赔率怎么动</li>
- *   <li>estimate：随机游走估计怎么来的，两边各自的估计胜率、值多少、含费成本比它高或低几美分</li>
- *   <li>position：持仓才有，拿着哪边多少份、均价、现在卖扣费每份能拿多少、比估计多拿还是少拿几美分</li>
+ *   <li>odds：谁是热门和市场给两边的概率、UP / DOWN 各自的卖价买价与含费成本、最近 30 秒两边赔率怎么动、
+ *       最近 15 秒里 3 秒内的赔率突变（到阈值才有）</li>
  * </ul>
  */
 @Component
@@ -65,22 +65,24 @@ public class PredictionStateWriter {
     static final long FLOW_MAX_AGE_MS = 30_000L;
     static final int FLOW_WINDOW_SECONDS = 60;
     static final int FLOW_MIN_TRADES = 10;
-    /** 看赔率怎么动：和这么久之前比 */
+    /** 看赔率怎么动：和这么久之前比，动到 3¢ 算一点、8¢ 算剧烈 */
     static final long ODDS_LOOKBACK_MS = 30_000L;
+    static final BigDecimal ODDS_MOVE_LITTLE = new BigDecimal("0.03");
+    static final BigDecimal ODDS_MOVE_SHARP = new BigDecimal("0.08");
+    /** 赔率突变：看最近这么久（一个检查点间隔）里 */
+    static final long ODDS_JUMP_LOOKBACK_MS = 15_000L;
+    /** 赔率突变：两个采样点相隔不超过这么久算"3 秒内"，每秒采一次，留半秒给采样时刻的抖动 */
+    static final long ODDS_JUMP_SPAN_MS = 3_500L;
 
     static final String GAME = "Polymarket 5-minute BTC market. UP pays 100¢ a share if BTC's average price over the final minute "
             + "is at or above its average at the open; otherwise DOWN pays 100¢. You buy at the ask; a bet can also be sold "
-            + "before the close at the bid. Every buy and every sell pays a fee. You hold at most one bet at a time and are asked "
-            + "again every 15 seconds.";
-
-    static final String ESTIMATE_METHOD = "A zero-drift random-walk estimate of each side's chance of winning, using only BTC's gap to the "
-            + "opening average, the seconds left and recent volatility, plus in the final minute the part of the settlement average already set; "
-            + "it ignores order flow, liquidations and the market's prices.";
+            + "before the close at the bid. Every buy and every sell pays a fee. You are asked again every 15 seconds.";
 
     private final CacheService cacheService;
     private final KlineFetcher klineFetcher;
     private final OrderFlowAggregator orderFlowAggregator;
     private final ForceOrderService forceOrderService;
+    private final JevPredictionConfig cfg;
 
     /** 墙钟注入点 */
     LongSupplier nowMs = System::currentTimeMillis;
@@ -95,16 +97,15 @@ public class PredictionStateWriter {
      * @param book            写 state 那一刻的盘口，Jev 看到的就是这份
      * @param bookUpdatedAtMs 盘口最近一次变化的时刻（Polymarket 那边的时间）；没有为 null
      * @param chainlinkAgeMs  Chainlink 最后一跳离现在多久；超过 {@link #TICK_MAX_AGE_MS} 不问
+     * @param oddsJumpUp      最近 15 秒里 UP 中间价 3 秒内的最大涨幅（没涨是 0），不管到没到阈值都记；采样不够为 null
+     * @param oddsJumpDown    同上的最大跌幅，负数（没跌是 0）
      */
-    public record Raw(double zModel, double pModel, Book book, Long bookUpdatedAtMs, long chainlinkAgeMs) {
+    public record Raw(double zModel, double pModel, Book book, Long bookUpdatedAtMs, long chainlinkAgeMs,
+                      Double oddsJumpUp, Double oddsJumpDown) {
     }
 
-    /**
-     * 缺开盘价、缺 K 线、本回合还没有 tick 都抛 IllegalStateException：看不全就别问。Chainlink 停了不抛，年龄记在 Raw 里由回路跳过
-     *
-     * @param active 本回合在持的注单，没有为 null
-     */
-    public Snapshot write(long windowStart, PredictionBetResponse active) {
+    /** 缺开盘价、缺 K 线、本回合还没有 tick 都抛 IllegalStateException：看不全就别问。Chainlink 停了不抛，年龄记在 Raw 里由回路跳过 */
+    public Snapshot write(long windowStart) {
         long now = nowMs.getAsLong();
         long windowStartMs = windowStart * 1000L;
         // 结算均价截止时刻：收盘前 3 秒
@@ -171,21 +172,26 @@ public class PredictionStateWriter {
         flow.put("liquidations", liquidationPhrase(windowStart, now));
         state.put("binance_flow", flow);
 
+        // 本回合 UP 中间价每秒一笔，赔率变动和突变共用
+        List<Point> upMids = cacheService.getPredictionUpMidPoints(windowStartMs).stream()
+                .filter(p -> p.timeMs() <= now).toList();
         Map<String, Object> odds = new LinkedHashMap<>();
         odds.put("standing", standingPhrase(pMkt));
         odds.put("up", quotePhrase("UP", book.upAsk(), book.upBid()));
         odds.put("down", quotePhrase("DOWN", book.downAsk(), book.downBid()));
-        String move = oddsMovePhrase(cacheService.getPredictionUpMidPoints(windowStartMs), now);
+        String move = oddsMovePhrase(upMids, now);
         if (move != null) {
             odds.put("odds_move", move);
         }
-        state.put("odds", odds);
-        state.put("estimate", estimateSection(pModel, book));
-        if (active != null) {
-            state.put("position", positionSection(active, pModel, book));
+        OddsJumps jumps = biggestJumps(upMids, now);
+        String jump = jumps.measured() ? oddsJumpPhrase(jumps, upMids.getLast().price(), now, cfg.getJumpThreshold()) : null;
+        if (jump != null) {
+            odds.put("jump", jump);
         }
+        state.put("odds", odds);
 
-        return new Snapshot(state, new Raw(z, pModel, book, cacheService.getPredictionBookUpdatedAt(), chainlinkAgeMs));
+        return new Snapshot(state, new Raw(z, pModel, book, cacheService.getPredictionBookUpdatedAt(), chainlinkAgeMs,
+                jumps.measured() ? jumps.riseSize() : null, jumps.measured() ? jumps.fallSize() : null));
     }
 
     /** 最近 60 秒主动买卖与大单；不到 10 笔就不给 */
@@ -346,7 +352,7 @@ public class PredictionStateWriter {
         return "both sides liquidated since the open";
     }
 
-    /** 谁是热门：按盘口隐含上涨概率分桶，加市场给 UP 的概率 */
+    /** 谁是热门：按盘口隐含上涨概率分桶，加市场给两边的概率 */
     static String standingPhrase(BigDecimal pMkt) {
         if (pMkt == null) return "no quotes on one side right now";
         double p = pMkt.doubleValue();
@@ -358,7 +364,9 @@ public class PredictionStateWriter {
         else if (q >= 0.65) word = side + " is a clear favourite";
         else if (q >= 0.55) word = side + " is a slight favourite";
         else word = "neither side is favoured";
-        return word + "; the market prices UP at about " + Math.round(p * 100) + "%";
+        // 半个百分点取偶，两边对调时取整也对称
+        long up = pMkt.movePointRight(2).setScale(0, RoundingMode.HALF_EVEN).longValue();
+        return word + "; the market prices UP at about " + up + "% and DOWN at about " + (100 - up) + "%";
     }
 
     /** 一边的报价：卖价、买价、按卖价买一份连手续费要多少 */
@@ -370,80 +378,109 @@ public class PredictionStateWriter {
                 + " a share with the fee and pays 100¢ if " + side + " wins";
     }
 
-    /** 最近 30 秒 UP 中间价怎么动，加涨跌几美分；本回合采样还没攒够 30 秒回 null 不给 */
+    /** 最近 30 秒两边赔率怎么动，各加涨跌几美分（DOWN 就是 UP 反过来）；本回合采样还没攒够 30 秒回 null 不给 */
     static String oddsMovePhrase(List<Point> upMids, long now) {
         // 留 5 秒余量：采样从开盘后第 1 秒起，开盘后第 30 秒那次也要能比
         if (upMids.isEmpty() || upMids.getFirst().timeMs() > now - ODDS_LOOKBACK_MS + 5_000L) return null;
-        double then = priceAt(upMids, now - ODDS_LOOKBACK_MS).doubleValue();
-        double d = upMids.getLast().price().doubleValue() - then;
-        String word;
-        if (d >= 0.08) word = "UP's price rose sharply over the last 30 seconds";
-        else if (d >= 0.03) word = "UP's price rose a little over the last 30 seconds";
-        else if (d <= -0.08) word = "UP's price fell sharply over the last 30 seconds";
-        else if (d <= -0.03) word = "UP's price fell a little over the last 30 seconds";
-        else word = "prices barely moved over the last 30 seconds";
-        return word + String.format(Locale.ROOT, " (%+d¢)", Math.round(d * 100));
-    }
-
-    /** 估计胜率的写法：pct "62%"、worth "62¢"、比差值用的 value 62；到 99.5% 以上、0.5% 以下不写成必然，value 用原值 */
-    record Chance(String pct, String worth, double value, boolean rounded) {
-    }
-
-    /** 这一边的估计胜率；平常两边取整后加起来正好 100 */
-    static Chance chance(double pModel, String side) {
-        boolean up = "UP".equals(side);
-        double value = (up ? pModel : 1 - pModel) * 100;
-        if (pModel >= 0.995 || pModel <= 0.005) {
-            return (pModel >= 0.995) == up
-                    ? new Chance("more than 99%", "more than 99¢", value, false)
-                    : new Chance("less than 1%", "less than 1¢", value, false);
+        // 用 BigDecimal 比分档、取整，涨跌对调时落在同一档
+        BigDecimal d = upMids.getLast().price().subtract(priceAt(upMids, now - ODDS_LOOKBACK_MS));
+        long c = d.movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValue();
+        String up = String.format(Locale.ROOT, "%+d¢", c);
+        String down = String.format(Locale.ROOT, "%+d¢", -c);
+        if (d.abs().compareTo(ODDS_MOVE_LITTLE) < 0) {
+            return "prices barely moved over the last 30 seconds (UP " + up + ", DOWN " + down + ")";
         }
-        long upPct = Math.round(pModel * 100);
-        long n = up ? upPct : 100 - upPct;
-        return new Chance(n + "%", n + "¢", n, true);
+        String degree = d.abs().compareTo(ODDS_MOVE_SHARP) >= 0 ? "sharply" : "a little";
+        boolean rose = d.signum() > 0;
+        return "UP's price " + (rose ? "rose " : "fell ") + degree + " over the last 30 seconds (" + up + "); DOWN's price "
+                + (rose ? "fell " : "rose ") + degree + " (" + down + ")";
     }
 
-    /** 随机游走估计：怎么估的，加两边各一句 */
-    static Map<String, Object> estimateSection(double pModel, Book book) {
-        Map<String, Object> estimate = new LinkedHashMap<>();
-        estimate.put("method", ESTIMATE_METHOD);
-        estimate.put("up", estimateLine("UP", chance(pModel, "UP"), book.upAsk()));
-        estimate.put("down", estimateLine("DOWN", chance(pModel, "DOWN"), book.downAsk()));
-        return estimate;
-    }
+    /** 一次突变：起点、终点的时刻和 UP 中间价 */
+    record OddsJump(long fromMs, long toMs, BigDecimal from, BigDecimal to) {
 
-    /** 一边：估计胜率、值多少、按卖价买一份连手续费比它高或低几美分 */
-    static String estimateLine(String side, Chance c, BigDecimal ask) {
-        String head = side + ": estimated chance of winning " + c.pct() + ", worth " + c.worth() + " a share; ";
-        if (ask == null) return head + "nobody is selling " + side + " right now";
-        double cost = (ask.doubleValue() + PredictionFee.perShare(ask).doubleValue()) * 100;
-        return head + "buying " + side + String.format(Locale.ROOT, " costs %.1f¢ with the fee, ", cost) + diffPhrase(cost, c.value(), "that");
-    }
-
-    /** 持仓：拿着什么、现在卖扣费每份能拿多少、比估计多拿还是少拿；没人接盘只写没人接 */
-    static Map<String, Object> positionSection(PredictionBetResponse active, double pModel, Book book) {
-        String side = active.getSide();
-        Map<String, Object> position = new LinkedHashMap<>();
-        position.put("held", String.format(Locale.ROOT, "holding %.1f %s shares bought at an average of %s",
-                active.getContracts(), side, cents(active.getAvgPrice())));
-        BigDecimal bid = book.bid(side);
-        if (bid == null) {
-            position.put("sell_now", "nobody is bidding for " + side + " right now");
-            return position;
+        double size() {
+            return to.subtract(from).doubleValue();
         }
-        double net = (bid.doubleValue() - PredictionFee.perShare(bid).doubleValue()) * 100;
-        position.put("sell_now", "the bid is " + cents(bid) + String.format(Locale.ROOT, "; selling now returns %.1f¢ a share after the fee", net));
-        Chance c = chance(pModel, side);
-        position.put("vs_estimate", "the estimate gives " + side + " a " + c.pct() + " chance of winning; selling now returns "
-                + diffPhrase(net, c.value(), c.rounded() ? c.worth() + " a share" : "its estimated worth"));
-        return position;
+
+        /**
+         * 比 best 更该写的：幅度大的；一样大取用时短的（同一次突变相邻几个窗口都看得到，最短那段最准），再一样取后发生的
+         */
+        boolean beats(OddsJump best) {
+            if (best == null) return true;
+            int cmp = to.subtract(from).abs().compareTo(best.to.subtract(best.from).abs());
+            if (cmp != 0) return cmp > 0;
+            long span = toMs - fromMs;
+            long bestSpan = best.toMs - best.fromMs;
+            if (span != bestSpan) return span < bestSpan;
+            return toMs >= best.toMs;
+        }
     }
 
-    /** a 比 b 多 / 少几美分，差不到 0.05¢ 算一样 */
-    static String diffPhrase(double a, double b, String than) {
-        double d = a - b;
-        if (Math.abs(d) < 0.05) return "the same as " + than;
-        return String.format(Locale.ROOT, "%.1f¢ %s than %s", Math.abs(d), d > 0 ? "more" : "less", than);
+    /**
+     * 最近 15 秒里 3 秒内的最大一次涨、最大一次跌，没有的为 null
+     *
+     * @param measured 最近 15 秒里至少有一对能比的采样点；false 时两项都不算数
+     */
+    record OddsJumps(OddsJump rise, OddsJump fall, boolean measured) {
+
+        double riseSize() {
+            return rise == null ? 0 : rise.size();
+        }
+
+        double fallSize() {
+            return fall == null ? 0 : fall.size();
+        }
+    }
+
+    /**
+     * 找突变的滑动窗口：右端逐个走过最近 15 秒内的采样点，左端移出离右端超过 3.5 秒的点（留下隔 1–3 次采样的），
+     * 右端和窗口里每个点比，涨的、跌的各留最大的（见 {@link OddsJump#beats}）。
+     * 窗口里最多 4 个点，直接扫；采样从开盘起，不会混进上一回合
+     */
+    static OddsJumps biggestJumps(List<Point> upMids, long now) {
+        OddsJump rise = null;
+        OddsJump fall = null;
+        boolean measured = false;
+        int left = 0;
+        for (int j = 0; j < upMids.size(); j++) {
+            Point r = upMids.get(j);
+            while (r.timeMs() - upMids.get(left).timeMs() > ODDS_JUMP_SPAN_MS) left++;
+            // 左端可以早于 15 秒，右端要在 15 秒内
+            if (r.timeMs() <= now - ODDS_JUMP_LOOKBACK_MS) continue;
+            for (int i = left; i < j; i++) {
+                Point l = upMids.get(i);
+                measured = true;
+                OddsJump x = new OddsJump(l.timeMs(), r.timeMs(), l.price(), r.price());
+                int dir = r.price().compareTo(l.price());
+                if (dir > 0 && x.beats(rise)) rise = x;
+                if (dir < 0 && x.beats(fall)) fall = x;
+            }
+        }
+        return new OddsJumps(rise, fall, measured);
+    }
+
+    /** 到阈值的涨、跌按发生先后写成一句，末尾加现在的价；都不到回 null 不给 */
+    static String oddsJumpPhrase(OddsJumps jumps, BigDecimal nowMid, long now, double threshold) {
+        List<OddsJump> big = new ArrayList<>();
+        if (jumps.rise() != null && jumps.riseSize() >= threshold) big.add(jumps.rise());
+        if (jumps.fall() != null && -jumps.fallSize() >= threshold) big.add(jumps.fall());
+        if (big.isEmpty()) return null;
+        big.sort(Comparator.comparingLong(OddsJump::toMs));
+        StringBuilder s = new StringBuilder("UP's price ");
+        for (int k = 0; k < big.size(); k++) {
+            OddsJump x = big.get(k);
+            if (k > 0) s.append(", then ");
+            s.append(x.size() > 0 ? "jumped" : "dropped").append(" from ").append(cents(x.from())).append(" to ").append(cents(x.to()))
+                    .append(" within ").append(seconds(x.toMs() - x.fromMs())).append(" (").append(seconds(now - x.toMs())).append(" ago)");
+        }
+        return s.append("; it is ").append(cents(nowMid)).append(" now").toString();
+    }
+
+    /** 毫秒写成整秒，至少 1 秒 */
+    static String seconds(long ms) {
+        long n = Math.max(1, Math.round(ms / 1000.0));
+        return n == 1 ? "1 second" : n + " seconds";
     }
 
     /** 价格写成美分：0.62 → 62¢ */

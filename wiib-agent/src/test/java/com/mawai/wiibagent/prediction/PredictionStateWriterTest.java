@@ -1,7 +1,6 @@
 package com.mawai.wiibagent.prediction;
 
 import com.mawai.wiibcommon.cache.CacheService;
-import com.mawai.wiibcommon.dto.PredictionBetResponse;
 import com.mawai.wiibcommon.entity.ForceOrder;
 import com.mawai.wiibcommon.market.ForceOrderService;
 import com.mawai.wiibcommon.market.KlineBar;
@@ -26,9 +25,10 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 眼睛的句子怎么出：路径与形状、相对开盘价与谁领先、报价与成本、赔率走势、波动，以及整份 state 怎么拼 */
+/** 眼睛的句子怎么出：路径与形状、相对开盘价与谁领先、报价与成本、赔率走势与突变、波动，以及整份 state 怎么拼 */
 class PredictionStateWriterTest {
 
     private static final long WS = 1_790_016_000L;
@@ -128,73 +128,136 @@ class PredictionStateWriterTest {
     }
 
     @Test
-    void 赔率怎么动带美分_不够三十秒不给() {
+    void 热门一句_两边的概率都写() {
+        assertThat(PredictionStateWriter.standingPhrase(new BigDecimal("0.61")))
+                .isEqualTo("UP is a slight favourite; the market prices UP at about 61% and DOWN at about 39%");
+        assertThat(PredictionStateWriter.standingPhrase(new BigDecimal("0.15")))
+                .isEqualTo("DOWN is a strong favourite; the market prices UP at about 15% and DOWN at about 85%");
+        assertThat(PredictionStateWriter.standingPhrase(null)).isEqualTo("no quotes on one side right now");
+    }
+
+    @Test
+    void 热门一句_半个百分点两边对调也对称() {
+        // 价差 1¢ 时中间价常落在半个百分点上
+        assertThat(PredictionStateWriter.standingPhrase(new BigDecimal("0.6050"))).endsWith("UP at about 60% and DOWN at about 40%");
+        assertThat(PredictionStateWriter.standingPhrase(new BigDecimal("0.3950"))).endsWith("UP at about 40% and DOWN at about 60%");
+    }
+
+    @Test
+    void 赔率怎么动_正好三美分八美分时涨跌对调落同一档() {
+        long now = 100_000;
+        assertThat(PredictionStateWriter.oddsMovePhrase(twoMids("0.5500", "0.5800"), now)).startsWith("UP's price rose a little");
+        assertThat(PredictionStateWriter.oddsMovePhrase(twoMids("0.4500", "0.4200"), now)).startsWith("UP's price fell a little");
+        assertThat(PredictionStateWriter.oddsMovePhrase(twoMids("0.5000", "0.5800"), now)).startsWith("UP's price rose sharply");
+        assertThat(PredictionStateWriter.oddsMovePhrase(twoMids("0.5000", "0.4200"), now)).startsWith("UP's price fell sharply");
+        // 半美分往远离 0 进，两边对称
+        assertThat(PredictionStateWriter.oddsMovePhrase(twoMids("0.5000", "0.5850"), now)).endsWith("(+9¢); DOWN's price fell sharply (-9¢)");
+        assertThat(PredictionStateWriter.oddsMovePhrase(twoMids("0.5000", "0.4150"), now)).endsWith("(-9¢); DOWN's price rose sharply (+9¢)");
+    }
+
+    /** 30 多秒前一个价、1 秒前一个价 */
+    private static List<Point> twoMids(String then, String last) {
+        return List.of(new Point(60_000, new BigDecimal(then)), new Point(99_000, new BigDecimal(last)));
+    }
+
+    @Test
+    void 赔率怎么动_两边都写带美分_不够三十秒不给() {
         long now = 100_000;
         List<Point> rose = List.of(new Point(60_000, new BigDecimal("0.50")), new Point(70_000, new BigDecimal("0.52")),
                 new Point(99_000, new BigDecimal("0.61")));
-        assertThat(PredictionStateWriter.oddsMovePhrase(rose, now)).isEqualTo("UP's price rose sharply over the last 30 seconds (+9¢)");
+        assertThat(PredictionStateWriter.oddsMovePhrase(rose, now))
+                .isEqualTo("UP's price rose sharply over the last 30 seconds (+9¢); DOWN's price fell sharply (-9¢)");
         List<Point> still = List.of(new Point(60_000, new BigDecimal("0.50")), new Point(99_000, new BigDecimal("0.51")));
-        assertThat(PredictionStateWriter.oddsMovePhrase(still, now)).isEqualTo("prices barely moved over the last 30 seconds (+1¢)");
+        assertThat(PredictionStateWriter.oddsMovePhrase(still, now))
+                .isEqualTo("prices barely moved over the last 30 seconds (UP +1¢, DOWN -1¢)");
+        List<Point> flat = List.of(new Point(60_000, new BigDecimal("0.50")), new Point(99_000, new BigDecimal("0.50")));
+        assertThat(PredictionStateWriter.oddsMovePhrase(flat, now))
+                .isEqualTo("prices barely moved over the last 30 seconds (UP +0¢, DOWN +0¢)");
         List<Point> fell = List.of(new Point(60_000, new BigDecimal("0.50")), new Point(99_000, new BigDecimal("0.46")));
-        assertThat(PredictionStateWriter.oddsMovePhrase(fell, now)).isEqualTo("UP's price fell a little over the last 30 seconds (-4¢)");
+        assertThat(PredictionStateWriter.oddsMovePhrase(fell, now))
+                .isEqualTo("UP's price fell a little over the last 30 seconds (-4¢); DOWN's price rose a little (+4¢)");
         List<Point> tooShort = List.of(new Point(85_000, new BigDecimal("0.50")), new Point(99_000, new BigDecimal("0.60")));
         assertThat(PredictionStateWriter.oddsMovePhrase(tooShort, now)).isNull();
         assertThat(PredictionStateWriter.oddsMovePhrase(List.of(), now)).isNull();
     }
 
-    @Test
-    void 估计胜率_平常取整两边加起来一百_极端不写成必然() {
-        assertThat(PredictionStateWriter.chance(0.746, "UP").pct()).isEqualTo("75%");
-        assertThat(PredictionStateWriter.chance(0.746, "DOWN").pct()).isEqualTo("25%");
-        PredictionStateWriter.Chance sure = PredictionStateWriter.chance(0.997, "UP");
-        assertThat(sure.pct()).isEqualTo("more than 99%");
-        assertThat(sure.worth()).isEqualTo("more than 99¢");
-        assertThat(sure.value()).isCloseTo(99.7, within(1e-9));
-        assertThat(PredictionStateWriter.chance(0.997, "DOWN").pct()).isEqualTo("less than 1%");
-        assertThat(PredictionStateWriter.chance(0.003, "UP").pct()).isEqualTo("less than 1%");
-        assertThat(PredictionStateWriter.chance(0.003, "DOWN").pct()).isEqualTo("more than 99%");
+    /** 每秒一个 UP 中间价（美分），cents[0] 是 cents.length−1 秒前，最后一个是现在 */
+    private static List<Point> perSecond(long now, int... cents) {
+        List<Point> pts = new ArrayList<>();
+        for (int i = 0; i < cents.length; i++) {
+            pts.add(new Point(now - (cents.length - 1 - i) * 1000L, BigDecimal.valueOf(cents[i], 2)));
+        }
+        return pts;
+    }
+
+    private static String jumpPhrase(List<Point> pts, long now) {
+        return PredictionStateWriter.oddsJumpPhrase(PredictionStateWriter.biggestJumps(pts, now), pts.getLast().price(), now, 0.10);
     }
 
     @Test
-    void 估计一句_含费成本比估计高或低几美分_没人卖() {
-        // 0.72 + 0.07 × 0.72 × 0.28 = 73.41¢，比 75¢ 少 1.59¢
-        assertThat(PredictionStateWriter.estimateLine("UP", PredictionStateWriter.chance(0.75, "UP"), new BigDecimal("0.72")))
-                .isEqualTo("UP: estimated chance of winning 75%, worth 75¢ a share; buying UP costs 73.4¢ with the fee, 1.6¢ less than that");
-        assertThat(PredictionStateWriter.estimateLine("DOWN", PredictionStateWriter.chance(0.75, "DOWN"), null))
-                .isEqualTo("DOWN: estimated chance of winning 25%, worth 25¢ a share; nobody is selling DOWN right now");
-        // 97.2¢ 比 99.7¢ 少 2.5¢：差值按原值算
-        assertThat(PredictionStateWriter.estimateLine("UP", PredictionStateWriter.chance(0.997, "UP"), new BigDecimal("0.97")))
-                .isEqualTo("UP: estimated chance of winning more than 99%, worth more than 99¢ a share; "
-                        + "buying UP costs 97.2¢ with the fee, 2.5¢ less than that");
-        assertThat(PredictionStateWriter.diffPhrase(62.02, 62, "that")).isEqualTo("the same as that");
-        assertThat(PredictionStateWriter.diffPhrase(64.5, 62, "that")).isEqualTo("2.5¢ more than that");
+    void 突变_涨上去还在涨() {
+        long now = 1_000_000;
+        // 15 秒前 → 现在：11 秒前到 8 秒前 3 秒里 10→30，之后慢慢涨到 38
+        List<Point> pts = perSecond(now, 10, 10, 11, 10, 10, 18, 26, 30, 33, 35, 36, 37, 38, 38, 38, 38);
+        PredictionStateWriter.OddsJumps j = PredictionStateWriter.biggestJumps(pts, now);
+        assertThat(j.riseSize()).isCloseTo(0.20, within(1e-9));
+        assertThat(j.fallSize()).isCloseTo(-0.01, within(1e-9));
+        assertThat(jumpPhrase(pts, now)).isEqualTo("UP's price jumped from 10¢ to 30¢ within 3 seconds (8 seconds ago); it is 38¢ now");
     }
 
     @Test
-    void 持仓一段_现在卖扣费能拿多少_比估计多还是少_没人接盘() {
-        PredictionBetResponse up = new PredictionBetResponse();
-        up.setSide("UP");
-        up.setContracts(new BigDecimal("19.2"));
-        up.setAvgPrice(new BigDecimal("0.52"));
-        PredictionRules.Book book = new PredictionRules.Book(new BigDecimal("0.53"), new BigDecimal("0.51"),
-                new BigDecimal("0.49"), new BigDecimal("0.47"));
+    void 突变_涨上去被压回一部分_回落不到阈值只写涨() {
+        long now = 1_000_000;
+        List<Point> pts = perSecond(now, 10, 10, 10, 10, 18, 26, 30, 28, 25, 22, 20, 20, 20, 20, 20, 20);
+        PredictionStateWriter.OddsJumps j = PredictionStateWriter.biggestJumps(pts, now);
+        assertThat(j.fallSize()).isCloseTo(-0.08, within(1e-9));
+        assertThat(jumpPhrase(pts, now)).isEqualTo("UP's price jumped from 10¢ to 30¢ within 3 seconds (9 seconds ago); it is 20¢ now");
+    }
 
-        // 0.51 − 0.07 × 0.51 × 0.49 = 49.25¢，比 50¢ 少 0.75¢
-        Map<String, Object> p = PredictionStateWriter.positionSection(up, 0.50, book);
-        assertThat(p).containsExactly(
-                Map.entry("held", "holding 19.2 UP shares bought at an average of 52¢"),
-                Map.entry("sell_now", "the bid is 51¢; selling now returns 49.3¢ a share after the fee"),
-                Map.entry("vs_estimate", "the estimate gives UP a 50% chance of winning; selling now returns 0.7¢ less than 50¢ a share"));
+    @Test
+    void 突变_涨完又砸下来_两次按先后写_同一次突变取用时最短的那段() {
+        long now = 1_000_000;
+        // 12 秒前 10¢ → 10 秒前 30¢，之后停在 30；8 秒前 30¢ → 6 秒前 12¢，之后停在 12。相邻窗口也看得到 3 秒的那几段，取 2 秒的
+        List<Point> pts = perSecond(now, 10, 10, 10, 10, 20, 30, 30, 30, 20, 12, 12, 12, 12, 12, 12, 12);
+        assertThat(jumpPhrase(pts, now)).isEqualTo("UP's price jumped from 10¢ to 30¢ within 2 seconds (10 seconds ago), "
+                + "then dropped from 30¢ to 12¢ within 2 seconds (6 seconds ago); it is 12¢ now");
+    }
 
-        Map<String, Object> sure = PredictionStateWriter.positionSection(up, 0.997,
-                new PredictionRules.Book(new BigDecimal("0.99"), new BigDecimal("0.98"), new BigDecimal("0.02"), new BigDecimal("0.01")));
-        assertThat(sure.get("vs_estimate")).isEqualTo("the estimate gives UP a more than 99% chance of winning; "
-                + "selling now returns 1.8¢ less than its estimated worth");
+    @Test
+    void 突变_两次一样大的取后发生的() {
+        long now = 1_000_000;
+        // 13 秒前 10→30 用 1 秒，回到 10；4 秒前又 10→30 用 1 秒
+        List<Point> pts = perSecond(now, 10, 10, 30, 30, 30, 30, 10, 10, 10, 10, 10, 30, 30, 30, 30, 30);
+        assertThat(jumpPhrase(pts, now)).startsWith("UP's price dropped from 30¢ to 10¢ within 1 second (9 seconds ago), "
+                + "then jumped from 10¢ to 30¢ within 1 second (4 seconds ago)");
+    }
 
-        Map<String, Object> noBid = PredictionStateWriter.positionSection(up, 0.50,
-                new PredictionRules.Book(new BigDecimal("0.53"), null, new BigDecimal("0.49"), new BigDecimal("0.47")));
-        assertThat(noBid).containsOnlyKeys("held", "sell_now");
-        assertThat(noBid.get("sell_now")).isEqualTo("nobody is bidding for UP right now");
+    @Test
+    void 突变_跨四秒的不算_不到阈值不写但照样记数() {
+        long now = 1_000_000;
+        // 每秒涨 3¢，4 秒涨 12¢，3 秒内最多 9¢
+        List<Point> pts = perSecond(now, 10, 10, 10, 13, 16, 19, 22, 22);
+        PredictionStateWriter.OddsJumps j = PredictionStateWriter.biggestJumps(pts, now);
+        assertThat(j.measured()).isTrue();
+        assertThat(j.riseSize()).isCloseTo(0.09, within(1e-9));
+        assertThat(j.fall()).isNull();
+        assertThat(j.fallSize()).isZero();
+        assertThat(jumpPhrase(pts, now)).isNull();
+    }
+
+    @Test
+    void 突变_中间缺采样_隔太远不配对_十五秒前的终点不算() {
+        long now = 1_000_000;
+        // 5 秒前、1 秒前两个点隔 4 秒，配不成对
+        List<Point> gap = List.of(new Point(now - 5_000, new BigDecimal("0.10")), new Point(now - 1_000, new BigDecimal("0.40")));
+        assertThat(PredictionStateWriter.biggestJumps(gap, now).measured()).isFalse();
+        // 突变在 20 秒前完成，之后没动：终点不在最近 15 秒里
+        List<Point> old = perSecond(now, 10, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30);
+        PredictionStateWriter.OddsJumps j = PredictionStateWriter.biggestJumps(old, now);
+        assertThat(j.measured()).isTrue();
+        assertThat(j.riseSize()).isZero();
+        assertThat(PredictionStateWriter.seconds(400)).isEqualTo("1 second");
+        assertThat(PredictionStateWriter.seconds(2_600)).isEqualTo("3 seconds");
     }
 
     @Test
@@ -224,7 +287,7 @@ class PredictionStateWriterTest {
         KlineFetcher klines = mock(KlineFetcher.class);
         OrderFlowAggregator flow = mock(OrderFlowAggregator.class);
         ForceOrderService force = mock(ForceOrderService.class);
-        PredictionStateWriter writer = new PredictionStateWriter(cache, klines, flow, force);
+        PredictionStateWriter writer = new PredictionStateWriter(cache, klines, flow, force, JevPredictionRunnerTest.CFG);
         writer.nowMs = () -> nowSec * 1000;
         when(cache.getPolymarketOpenPrice(WS)).thenReturn(new BigDecimal("100"));
         List<Point> ticks = new ArrayList<>();
@@ -259,12 +322,13 @@ class PredictionStateWriterTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void 空仓六块都给_估计只有事实没有便宜贵的结论() {
+    void 五块都给_没有估计也没有持仓_不写便宜贵的结论() {
         Deps d = deps(WS + 150);
-        Snapshot snap = d.writer().write(WS, null);
+        Snapshot snap = d.writer().write(WS);
 
         Map<String, Object> s = snap.state();
-        assertThat(s).containsOnlyKeys("market", "clock", "btc", "binance_flow", "odds", "estimate");
+        assertThat(s).containsOnlyKeys("market", "clock", "btc", "binance_flow", "odds");
+        assertThat((String) s.get("market")).doesNotContain("at most one bet").endsWith("You are asked again every 15 seconds.");
         assertThat(s.get("clock")).isEqualTo("middle: one to three minutes left; 147 seconds until the settlement average is fixed");
         Map<String, Object> btc = (Map<String, Object>) s.get("btc");
         assertThat((String) btc.get("vs_open")).startsWith("above the opening average by ");
@@ -278,32 +342,36 @@ class PredictionStateWriterTest {
         // 开盘前那笔多头强平不算
         assertThat(flow.get("liquidations")).isEqualTo("shorts liquidated since the open");
         Map<String, Object> odds = (Map<String, Object>) s.get("odds");
-        assertThat(odds.get("standing")).isEqualTo("UP is a slight favourite; the market prices UP at about 61%");
+        assertThat(odds.get("standing")).isEqualTo("UP is a slight favourite; the market prices UP at about 61% and DOWN at about 39%");
         assertThat((String) odds.get("up")).startsWith("ask 62¢, bid 60¢; ");
         assertThat((String) odds.get("down")).startsWith("ask 40¢, bid 38¢; ");
-        assertThat(odds.get("odds_move")).isEqualTo("UP's price rose a little over the last 30 seconds (+6¢)");
-        Map<String, Object> estimate = (Map<String, Object>) s.get("estimate");
-        assertThat(estimate).containsOnlyKeys("method", "up", "down");
-        assertThat((String) estimate.get("up")).startsWith("UP: estimated chance of winning ").contains("buying UP costs 63.6¢ with the fee");
-        assertThat((String) estimate.get("down")).startsWith("DOWN: estimated chance of winning ");
-        assertThat(s.toString()).doesNotContain("cheap", "expensive");
+        assertThat(odds.get("odds_move")).isEqualTo("UP's price rose a little over the last 30 seconds (+6¢); DOWN's price fell a little (-6¢)");
+        // 最近 15 秒只有一个采样点，配不成对：不写突变，也不记数
+        assertThat(odds).doesNotContainKey("jump");
+        assertThat(s.toString()).doesNotContain("cheap", "expensive", "estimate");
+        verify(d.cache()).getPredictionUpMidPoints(WS * 1000);
 
         assertThat(snap.raw().pModel()).isGreaterThan(0.5);
         assertThat(snap.raw().bookUpdatedAtMs()).isEqualTo((WS + 150) * 1000 - 800);
+        assertThat(snap.raw().oddsJumpUp()).isNull();
+        assertThat(snap.raw().oddsJumpDown()).isNull();
     }
 
     @Test
-    void 持仓再加一段仓位() {
-        Deps d = deps(WS + 150);
-        PredictionBetResponse active = new PredictionBetResponse();
-        active.setSide("DOWN");
-        active.setContracts(new BigDecimal("12.5"));
-        active.setAvgPrice(new BigDecimal("0.40"));
+    @SuppressWarnings("unchecked")
+    void 最近十五秒有突变_写进赔率_数也记下() {
+        long now = WS + 150;
+        Deps d = deps(now);
+        List<Point> mids = new ArrayList<>(List.of(new Point((now - 40) * 1000, new BigDecimal("0.40"))));
+        mids.addAll(perSecond(now * 1000, 40, 40, 40, 52, 60, 61, 61, 61, 61, 61, 61));
 
-        Map<String, Object> s = d.writer().write(WS, active).state();
+        when(d.cache().getPredictionUpMidPoints(anyLong())).thenReturn(mids);
+        Snapshot snap = d.writer().write(WS);
 
-        assertThat(s).containsKeys("estimate", "position");
-        assertThat(s.get("position").toString()).contains("holding 12.5 DOWN shares bought at an average of 40¢", "the bid is 38¢");
+        Map<String, Object> odds = (Map<String, Object>) snap.state().get("odds");
+        assertThat(odds.get("jump")).isEqualTo("UP's price jumped from 40¢ to 61¢ within 3 seconds (5 seconds ago); it is 61¢ now");
+        assertThat(snap.raw().oddsJumpUp()).isCloseTo(0.21, within(1e-9));
+        assertThat(snap.raw().oddsJumpDown()).isZero();
     }
 
     @Test
@@ -312,7 +380,7 @@ class PredictionStateWriterTest {
         Deps d = deps(WS + 270);
         when(d.flow().getLastUpdateMs("BTCUSDT")).thenReturn((WS + 200) * 1000L);
 
-        Snapshot snap = d.writer().write(WS, null);
+        Snapshot snap = d.writer().write(WS);
 
         Map<String, Object> s = snap.state();
         assertThat(s.get("clock")).isEqualTo("final minute: about half of the settlement average is already set; "
@@ -336,7 +404,7 @@ class PredictionStateWriterTest {
         }
         when(d.cache().getBtcPricePoints(anyLong())).thenReturn(ticks);
 
-        Map<String, Object> btc = (Map<String, Object>) d.writer().write(WS, null).state().get("btc");
+        Map<String, Object> btc = (Map<String, Object>) d.writer().write(WS).state().get("btc");
 
         assertThat((String) btc.get("vs_open")).startsWith("below the opening average");
         assertThat((String) btc.get("settlement_so_far")).contains("above the opening average");
@@ -347,15 +415,15 @@ class PredictionStateWriterTest {
     void 缺开盘价_缺K线都不问_Chainlink停了不抛_年龄交给回路() {
         Deps noOpen = deps(WS + 150);
         when(noOpen.cache().getPolymarketOpenPrice(WS)).thenReturn(null);
-        assertThatThrownBy(() -> noOpen.writer().write(WS, null)).hasMessageContaining("开盘价未到");
+        assertThatThrownBy(() -> noOpen.writer().write(WS)).hasMessageContaining("开盘价未到");
 
         Deps noBars = deps(WS + 150);
         when(noBars.klines().fetch(eq("BTCUSDT"), eq("1m"), anyInt())).thenReturn(List.of());
-        assertThatThrownBy(() -> noBars.writer().write(WS, null)).hasMessageContaining("K 线取不到");
+        assertThatThrownBy(() -> noBars.writer().write(WS)).hasMessageContaining("K 线取不到");
 
         Deps stale = deps(WS + 150);
         when(stale.cache().getBtcPricePoints(anyLong())).thenReturn(List.of(
                 new Point((WS + 10) * 1000, new BigDecimal("100")), new Point((WS + 100) * 1000, new BigDecimal("100.02"))));
-        assertThat(stale.writer().write(WS, null).raw().chainlinkAgeMs()).isEqualTo(50_000);
+        assertThat(stale.writer().write(WS).raw().chainlinkAgeMs()).isEqualTo(50_000);
     }
 }
