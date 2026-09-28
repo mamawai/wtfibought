@@ -36,7 +36,7 @@ export function reasonCode(d: { reason?: string }): string {
   return d.reason?.split(' ')[0] ?? '';
 }
 
-/** reason 的第二个词：BUY / ADD / UNSURE / NO_QUOTE / MISSED / MAX_STAKE（R2 的 WAIT / ASK_LOW）是哪边；R1 旧版的行没有 */
+/** reason 的第二个词：BUY / UNSURE / NO_QUOTE / MISSED（v4 的 ADD / MAX_STAKE、R2 的 WAIT / ASK_LOW）是哪边；R1 旧版的行没有 */
 export function reasonSide(d: { reason?: string }): 'UP' | 'DOWN' | undefined {
   const s = d.reason?.split(' ')[1];
   return s === 'UP' || s === 'DOWN' ? s : undefined;
@@ -44,7 +44,7 @@ export function reasonSide(d: { reason?: string }): 'UP' | 'DOWN' | undefined {
 
 /**
  * 每种代码的分类：已执行 / 照常不动或拿着 / 把握不够或加满了照常拿着（折起、灰字提示）/ 被代码拦下 / 这次没问或没成交。
- * WAIT 只有 R1、R2 有，ASK_LOW 只有 R2 有，NOT_CHEAP、EXPENSIVE、ASK_RANGE 只有 R1 有
+ * SELL、NO_BID 只有旧局有，ADD、MAX_STAKE 只有 v4 有，WAIT 只有 R1、R2 有，ASK_LOW 只有 R2 有，NOT_CHEAP、EXPENSIVE、ASK_RANGE 只有 R1 有
  */
 const REASON_KIND: Record<string, 'done' | 'idle' | 'unsure' | 'blocked' | 'skipped'> = {
   BUY: 'done', ADD: 'done', SELL: 'done', PASS: 'idle', WAIT: 'idle', HOLD: 'idle', UNSURE: 'unsure', MAX_STAKE: 'unsure',

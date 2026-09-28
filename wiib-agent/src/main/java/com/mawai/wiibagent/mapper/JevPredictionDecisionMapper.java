@@ -14,7 +14,7 @@ import java.util.List;
 public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDecision> {
 
     /**
-     * 记分汇总：回合数、下注数（含加注）、卖出次数、已结注单与胜场、盈亏、手续费、全都拿到结算的盈亏，
+     * 记分汇总：回合数、下注数（v4 那一局含加注）、卖出次数、已结注单与胜场、盈亏、手续费、全都拿到结算的盈亏，
      * 三个概率各自的 Brier 均值（只算 UP/DOWN 已结、有 p_jev 的行，三列同一批样本；R4 起不问谁赢，没有 Brier）
      */
     @Data

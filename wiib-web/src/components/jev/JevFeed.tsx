@@ -47,7 +47,7 @@ function Guide({ thresholds }: { thresholds: JevThresholds }) {
   const { t } = useTranslation(['community']);
   const [open, setOpen] = useState(false);
   const vars = { act: pct(thresholds.actThreshold), delay: thresholds.fillDelayMs / 1000, tol: toCents(thresholds.fillTolerance),
-    stake: fmtNum(thresholds.baseStake, 0), max: fmtNum(thresholds.maxStakePerWindow, 0), jump: toCents(thresholds.jumpThreshold) };
+    stake: fmtNum(thresholds.baseStake, 0), jump: toCents(thresholds.jumpThreshold) };
   const chips = (keys: string[]) => keys.map(k => ({ label: t(`prediction.jev.choice.${k}`), cls: CHOICE_STYLE[k].text }));
   return (
     <div className="border-b border-border">

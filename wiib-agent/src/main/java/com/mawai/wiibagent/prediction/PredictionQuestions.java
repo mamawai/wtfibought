@@ -7,7 +7,7 @@ import java.util.Map;
 
 /**
  * 问 Jev 的题：每个检查点只问一道，买 UP / 买 DOWN / 不买，Jev 拍板。空仓持仓同一道题、同一份 state，
- * 持仓时代码按它的选择加注、卖掉或拿着，见 {@link PredictionRules#holding}。题目一律英文。
+ * 持仓时拿到结算，它的选择只记录，见 {@link PredictionRules#holding}。题目一律英文。
  * <p>
  * 不提持仓、不给估计当参照，只说清怎么赢、state 各段是什么。选项顺序固定 UP 在前：Jev 对选项位置敏感，换顺序会改变它偏哪边。
  */

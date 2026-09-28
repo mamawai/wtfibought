@@ -9,7 +9,6 @@ import com.mawai.wiibagent.mapper.JevPredictionDecisionMapper;
 import com.mawai.wiibagent.prediction.PredictionJudge.Judgment;
 import com.mawai.wiibagent.prediction.PredictionRules.Book;
 import com.mawai.wiibagent.prediction.PredictionRules.Entry;
-import com.mawai.wiibagent.prediction.PredictionRules.Holding;
 import com.mawai.wiibagent.prediction.PredictionStateWriter.Snapshot;
 import com.mawai.wiibquant.external.sim.SimPredictionClient;
 import lombok.RequiredArgsConstructor;
@@ -33,7 +32,6 @@ import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_BUY_DOWN;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_BUY_UP;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_ERROR;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_HOLD;
-import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_SELL;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_STAY_OUT;
 import static com.mawai.wiibagent.prediction.PredictionRules.NO_BALANCE;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
@@ -43,9 +41,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 另一条每分钟的回填把结算结果、盈亏补进去。
  * <p>
  * 一次检查点：用当前局的账户查本回合在持的注单 → 写 state（空仓持仓同一份）→ 盘口太旧、Chainlink 停了就不问不动 →
- * 问 Jev 买 UP / 买 DOWN / 不买：空仓照买；持仓选手里这边加注、选另一边卖掉全部注单、不买就拿着 →
- * Jev 要成交的，等 fill-delay 再看盘口，价比 Jev 看到的差不超过 fill-tolerance 就按那时的价成交，再差算没抢到。
- * 卖掉就是空仓，这一格不反手，同回合后面的检查点照常问。钱包付不起一注、也没有等结算的注单就关掉开关，等重新开局。
+ * 问 Jev 买 UP / 买 DOWN / 不买：空仓照买，等 fill-delay 再看盘口，价比 Jev 看到的差不超过 fill-tolerance 就按那时的价成交，
+ * 再差算没抢到；持仓拿到结算，照问 Jev 只记录它的选择，不卖不加注。钱包付不起一注、也没有等结算的注单就关掉开关，等重新开局。
  * <p>
  * 平台 Jev 没配 key 或 /admin 开关关着不开检查点；回填不看开关，关掉前的行照样补齐。
  * 写 state 失败落 ERROR 行；问 Jev 或下注失败也落 ERROR 行，但数学部分（p_model、盘口）已经填上。
@@ -124,12 +121,8 @@ public class JevPredictionRunner {
         return cp;
     }
 
-    /** 本回合在持的注单，按下单先后；都是同一边（选另一边就全卖了） */
+    /** 本回合在持的注单，按下单先后 */
     record Position(List<PredictionBetResponse> bets) {
-
-        String side() {
-            return bets.getFirst().getSide();
-        }
 
         /** 在持本金合计，不含手续费 */
         BigDecimal cost() {
@@ -176,7 +169,7 @@ public class JevPredictionRunner {
             decide(d, userId, snap, pos);
         } catch (Exception e) {
             String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-            // 下单 / 卖出失败时 action 已经先记成不动了，这里改回失败
+            // 下单失败时 action 已经先记成不动了，这里改回失败
             d.setAction(ACTION_ERROR);
             // error 列 500 字，上游回包塞进异常信息时会超
             d.setError(msg.length() > 500 ? msg.substring(0, 500) : msg);
@@ -203,16 +196,12 @@ public class JevPredictionRunner {
             d.setReason("STALE_CHAINLINK " + snap.raw().chainlinkAgeMs());
             return;
         }
-        // 持仓没人接盘就卖不了，不用问
-        if (pos != null && snap.raw().book().bid(pos.side()) == null) {
-            d.setAction(ACTION_HOLD);
-            d.setReason("NO_BID");
-            return;
-        }
         Judgment j = judge.judge(snap);
         fillJev(d, j);
         if (pos != null) {
-            holding(d, userId, j, snap.raw().book(), pos);
+            // 持仓拿到结算：照问 Jev，只记录不执行
+            d.setAction(ACTION_HOLD);
+            d.setReason(PredictionRules.holding(j));
         } else {
             entry(d, userId, j, snap.raw().book());
         }
@@ -273,31 +262,7 @@ public class JevPredictionRunner {
         fill(d, userId, e.side(), e.action(), e.stake(), askSeen, balance, e.reason());
     }
 
-    /**
-     * 持仓：选另一边就卖掉全部注单，选手里这边就加注（跟空仓买入一样等一会儿再成交），其余拿着。
-     * edge 记卖出扣费后比数学估计多拿多少；加注成交了这一行就是买入行，edge 改按买入算
-     */
-    private void holding(JevPredictionDecision d, long userId, Judgment j, Book seen, Position pos) {
-        String side = pos.side();
-        BigDecimal balance = sim.gameBalance(userId);
-        Holding h = PredictionRules.holding(j, side, pos.cost(), seen, balance, cfg);
-        d.setAction(ACTION_HOLD);
-        d.setReason(h.reason());
-        // 没人接盘的 decide 里先拦了，这里一定有买价
-        BigDecimal bidSeen = seen.bid(side);
-        d.setEdge(dec(PredictionRules.sellOver(sideP(j.pModel(), side), bidSeen)));
-        if (ACTION_SELL.equals(h.action())) {
-            sellAll(d, userId, pos, bidSeen, h.reason());
-        } else if (h.stake() != null) {
-            BigDecimal askSeen = seen.ask(side);
-            fill(d, userId, side, h.action(), h.stake(), askSeen, balance, h.reason());
-            if (!ACTION_HOLD.equals(d.getAction())) {
-                d.setEdge(dec(PredictionRules.edge(sideP(j.pModel(), side), askSeen)));
-            }
-        }
-    }
-
-    /** 等 fill-delay 再看卖价，比 Jev 看到的贵不超过容差才按那时的价买；开仓和加注共用 */
+    /** 空仓买入：等 fill-delay 再看卖价，比 Jev 看到的贵不超过容差才按那时的价买 */
     private void fill(JevPredictionDecision d, long userId, String side, String action, BigDecimal want, BigDecimal askSeen,
                       BigDecimal balance, String reason) {
         Book now = bookAfterDelay(d);
@@ -324,27 +289,6 @@ public class JevPredictionRunner {
         // 在容差里按别的价成交了，reason 记成 "ask 看到的→实际的"
         if (bet.getAvgPrice().compareTo(askSeen) != 0) {
             d.setReason(reason + "→" + bet.getAvgPrice().stripTrailingZeros().toPlainString());
-        }
-    }
-
-    /** 等 fill-delay 再看买价，比 Jev 看到的低不超过容差才逐笔卖掉本回合全部注单；中途卖失败落 ERROR 行，没卖掉的下一格照常问 */
-    private void sellAll(JevPredictionDecision d, long userId, Position pos, BigDecimal bidSeen, String reason) {
-        Book now = bookAfterDelay(d);
-        if (now == null) {
-            return;
-        }
-        BigDecimal bidNow = now.bid(pos.side());
-        if (bidNow == null || bidNow.compareTo(bidSeen.subtract(cfg.getFillTolerance())) < 0) {
-            d.setReason("MISSED SELL bid " + bidSeen.toPlainString() + "→" + plain(bidNow));
-            return;
-        }
-        for (PredictionBetResponse b : pos.bets()) {
-            sim.sell(userId, b.getId(), null);
-        }
-        d.setAction(ACTION_SELL);
-        // sim 按同一份盘口的买价卖，价变了就记成 "bid 看到的→实际的"
-        if (bidNow.compareTo(bidSeen) != 0) {
-            d.setReason(reason + "→" + bidNow.toPlainString());
         }
     }
 

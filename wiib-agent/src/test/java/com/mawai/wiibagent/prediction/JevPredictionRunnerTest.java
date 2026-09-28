@@ -35,7 +35,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 检查点时机、开关、Jev 选买等一会儿再成交（差过容差或没价算没抢到，容差以内记实际价）、没钱关开关（有注单等结算不关）、
- * 持仓同一道题：改选另一边卖掉全部注单、选这边加注到上限、选不买拿着；持仓没人接盘 / 盘口太旧 / Chainlink 停了不问、
+ * 持仓拿到结算：照问 Jev 只记录，不卖不买，没人接盘也照问；盘口太旧 / Chainlink 停了不问、
  * 等成交时盘口停了不动、失败落 ERROR 行、按局回填
  */
 class JevPredictionRunnerTest {
@@ -45,7 +45,7 @@ class JevPredictionRunnerTest {
     /** 和 application.yml 一致，只是成交不等，几个测试共用 */
     static final JevPredictionConfig CFG = new JevPredictionConfig(
             List.of(30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240, 255, 270),
-            new BigDecimal("5"), new BigDecimal("10"), 0.5, 0, new BigDecimal("0.03"), 5000, 0.10);
+            new BigDecimal("5"), 0.5, 0, new BigDecimal("0.03"), 5000, 0.15);
     private static final Book BOOK = PredictionRulesTest.BOOK;
 
     private PredictionStateWriter writer;
@@ -154,7 +154,6 @@ class JevPredictionRunnerTest {
         JevPredictionRunner.Position pos = JevPredictionRunner.position(List.of(later, first, sold, prevWindow), WS);
 
         assertThat(pos.bets()).extracting(PredictionBetResponse::getId).containsExactly(10L, 11L);
-        assertThat(pos.side()).isEqualTo("UP");
         assertThat(pos.cost()).isEqualByComparingTo("10");
         assertThat(pos.shares()).isEqualByComparingTo("20");
         assertThat(pos.avgPrice()).isEqualByComparingTo("0.5");
@@ -282,26 +281,26 @@ class JevPredictionRunnerTest {
     }
 
     @Test
-    void 持仓_Jev改选另一边_价没变差就卖掉全部注单_行上记合计() {
+    void 持仓_Jev改选另一边_只记录不卖_行上记合计() {
         when(sim.recentBets(42L, 10)).thenReturn(List.of(bet(10, "ACTIVE", "UP"), bet(9, "ACTIVE", "UP")));
         when(writer.write(WS)).thenReturn(snapshot(0.45, now - 700));
         when(judge.judge(any())).thenReturn(jev(0.45, "BUY_DOWN", 0.7));
 
         runner.runCheckpoint(WS, "T210");
 
-        verify(sim).sell(42L, 9L, null);
-        verify(sim).sell(42L, 10L, null);
+        verify(sim, never()).sell(anyLong(), anyLong(), any());
         verify(sim, never()).buy(anyLong(), any(), any());
         JevPredictionDecision d = inserted();
-        assertThat(d.getAction()).isEqualTo(JevPredictionDecision.ACTION_SELL);
+        assertThat(d.getAction()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
+        assertThat(d.getReason()).isEqualTo("HOLD DOWN 0.700");
+        assertThat(d.getJevChoice()).isEqualTo("BUY_DOWN");
         assertThat(d.getBetId()).isEqualTo(9L);
         assertThat(d.getStake()).isEqualByComparingTo("10");
         assertThat(d.getShares()).isEqualByComparingTo("20");
         assertThat(d.getAvgPrice()).isEqualByComparingTo("0.5");
-        assertThat(d.getReason()).isEqualTo("SELL 0.700 bid 0.60");
-        assertThat(d.getJevChoice()).isEqualTo("BUY_DOWN");
-        // 卖出扣费 0.60 − 0.0168 比数学 0.45 多拿 0.1332
-        assertThat(d.getEdge()).isEqualByComparingTo("0.1332");
+        // 当时的买价照记
+        assertThat(d.getUpBid()).isEqualByComparingTo("0.60");
+        assertThat(d.getEdge()).isNull();
     }
 
     @Test
@@ -320,101 +319,37 @@ class JevPredictionRunnerTest {
     }
 
     @Test
-    void 持仓_Jev又选手里这边_加注一注_行上记新注单() {
+    void 持仓_Jev又选手里这边_拿着不加注() {
         when(sim.recentBets(42L, 10)).thenReturn(List.of(bet(9, "ACTIVE", "UP")));
         when(writer.write(WS)).thenReturn(snapshot(now - 700));
         when(judge.judge(any())).thenReturn(jev(0.74, "BUY_UP", 0.7));
-        PredictionBetResponse added = bet(10, "ACTIVE", "UP");
-        added.setAvgPrice(new BigDecimal("0.62"));
-        when(sim.buy(eq(42L), eq("UP"), any())).thenReturn(added);
-
-        runner.runCheckpoint(WS, "T210");
-
-        verify(sim).buy(42L, "UP", new BigDecimal("5"));
-        verify(sim, never()).sell(anyLong(), anyLong(), any());
-        JevPredictionDecision d = inserted();
-        assertThat(d.getAction()).isEqualTo(JevPredictionDecision.ACTION_BUY_UP);
-        assertThat(d.getReason()).isEqualTo("ADD UP 0.700 ask 0.62");
-        assertThat(d.getBetId()).isEqualTo(10L);
-        assertThat(d.getStake()).isEqualByComparingTo("5");
-        // 按买入算：0.74 − 0.62 − 0.0165
-        assertThat(d.getEdge()).isEqualByComparingTo("0.1035");
-    }
-
-    @Test
-    void 持仓_加注没抢到_还是持仓行_edge按卖出算() {
-        when(sim.recentBets(42L, 10)).thenReturn(List.of(bet(9, "ACTIVE", "UP")));
-        when(writer.write(WS)).thenReturn(snapshot(now - 700));
-        when(judge.judge(any())).thenReturn(jev(0.74, "BUY_UP", 0.7));
-        when(cache.getPredictionAsk("UP")).thenReturn(new BigDecimal("0.66"));
 
         runner.runCheckpoint(WS, "T210");
 
         verify(sim, never()).buy(anyLong(), any(), any());
+        verify(sim, never()).sell(anyLong(), anyLong(), any());
         JevPredictionDecision d = inserted();
         assertThat(d.getAction()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
-        assertThat(d.getReason()).isEqualTo("MISSED UP ask 0.62→0.66");
+        assertThat(d.getReason()).isEqualTo("HOLD UP 0.700");
         assertThat(d.getBetId()).isEqualTo(9L);
-        // 0.60 − 0.0168 − 0.74
-        assertThat(d.getEdge()).isEqualByComparingTo("-0.1568");
+        assertThat(d.getStake()).isEqualByComparingTo("5");
+        assertThat(d.getEdge()).isNull();
     }
 
     @Test
-    void 持仓_这一边已押满_不再加注() {
-        when(sim.recentBets(42L, 10)).thenReturn(List.of(bet(9, "ACTIVE", "UP"), bet(10, "ACTIVE", "UP")));
-        when(writer.write(WS)).thenReturn(snapshot(now - 700));
-        when(judge.judge(any())).thenReturn(jev(0.74, "BUY_UP", 0.7));
-
-        runner.runCheckpoint(WS, "T225");
-
-        verify(sim, never()).buy(anyLong(), any(), any());
-        JevPredictionDecision d = inserted();
-        assertThat(d.getAction()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
-        assertThat(d.getReason()).isEqualTo("MAX_STAKE UP 0.700");
-    }
-
-    @Test
-    void 持仓_等成交时买价跌了容差以内_照样卖_reason记实际价() {
-        when(sim.recentBets(42L, 10)).thenReturn(List.of(bet(9, "ACTIVE", "UP")));
-        when(writer.write(WS)).thenReturn(snapshot(now - 700));
-        when(judge.judge(any())).thenReturn(jev(0.45, "BUY_DOWN", 0.7));
-        when(cache.getPredictionBid("UP")).thenReturn(new BigDecimal("0.58"));
-
-        runner.runCheckpoint(WS, "T210");
-
-        verify(sim).sell(42L, 9L, null);
-        JevPredictionDecision d = inserted();
-        assertThat(d.getAction()).isEqualTo(JevPredictionDecision.ACTION_SELL);
-        assertThat(d.getReason()).isEqualTo("SELL 0.700 bid 0.60→0.58");
-    }
-
-    @Test
-    void 持仓_等成交时买价跌过容差_没卖成() {
-        when(sim.recentBets(42L, 10)).thenReturn(List.of(bet(9, "ACTIVE", "UP")));
-        when(writer.write(WS)).thenReturn(snapshot(now - 700));
-        when(judge.judge(any())).thenReturn(jev(0.45, "BUY_DOWN", 0.7));
-        when(cache.getPredictionBid("UP")).thenReturn(new BigDecimal("0.56"));
-
-        runner.runCheckpoint(WS, "T210");
-
-        verify(sim, never()).sell(anyLong(), anyLong(), any());
-        JevPredictionDecision d = inserted();
-        assertThat(d.getAction()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
-        assertThat(d.getReason()).isEqualTo("MISSED SELL bid 0.60→0.56");
-    }
-
-    @Test
-    void 持仓_没人接盘_不问Jev只能拿着() {
+    void 持仓_没人接盘_照问Jev只记录() {
         when(sim.recentBets(42L, 10)).thenReturn(List.of(bet(9, "ACTIVE", "UP")));
         Book noUpBid = new Book(new BigDecimal("0.62"), null, new BigDecimal("0.40"), new BigDecimal("0.38"));
         when(writer.write(WS)).thenReturn(new Snapshot(Map.of("market", "..."), new Raw(1.2, 0.74, noUpBid, now - 700, 800, 0.0, 0.0)));
+        when(judge.judge(any())).thenReturn(jev(0.74, "BUY_DOWN", 0.6));
 
         runner.runCheckpoint(WS, "T255");
 
-        verify(judge, never()).judge(any());
+        verify(judge).judge(any());
+        verify(sim, never()).sell(anyLong(), anyLong(), any());
         JevPredictionDecision d = inserted();
         assertThat(d.getAction()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
-        assertThat(d.getReason()).isEqualTo("NO_BID");
+        assertThat(d.getReason()).isEqualTo("HOLD DOWN 0.600");
     }
 
     @Test

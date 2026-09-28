@@ -80,9 +80,9 @@ public class JevPredictionController {
         }
     }
 
-    /** 页面提示里要写出来的几个数：Jev 把握到多少才照做、拍板后等多久成交、成交容差、每注本金、同一边最多押多少、多大的赔率突变告诉 Jev */
+    /** 页面提示里要写出来的几个数：Jev 把握到多少才照做、拍板后等多久成交、成交容差、每注本金、多大的赔率突变告诉 Jev */
     public record Thresholds(double actThreshold, long fillDelayMs, BigDecimal fillTolerance, BigDecimal baseStake,
-                             BigDecimal maxStakePerWindow, double jumpThreshold) {
+                             double jumpThreshold) {
     }
 
     /**
@@ -110,7 +110,7 @@ public class JevPredictionController {
         }
         boolean enabled = platform.enabled() && sw.isOn();
         Thresholds t = new Thresholds(cfg.getActThreshold(), cfg.getFillDelayMs(), cfg.getFillTolerance(), cfg.getBaseStake(),
-                cfg.getMaxStakePerWindow(), cfg.getJumpThreshold());
+                cfg.getJumpThreshold());
         int runNo = viewing.getRunNo();
         return Result.ok(new Overview(enabled, platform.getModel(), t, balance, JevPredictionAccount.INITIAL_GAME_BALANCE,
                 viewing, all, mapper.selectStats(runNo), mapper.selectBrierByCheckpoint(runNo), mapper.selectCalibration(runNo)));

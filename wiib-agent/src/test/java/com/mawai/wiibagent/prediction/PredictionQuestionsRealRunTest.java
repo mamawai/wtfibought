@@ -89,7 +89,8 @@ class PredictionQuestionsRealRunTest {
         odds.put("up", PredictionStateWriter.quotePhrase("UP", book.upAsk(), book.upBid()));
         odds.put("down", PredictionStateWriter.quotePhrase("DOWN", book.downAsk(), book.downBid()));
         odds.put("odds_move", PredictionStateWriter.oddsMovePhrase(mids, NOW));
-        String jump = PredictionStateWriter.oddsJumpPhrase(PredictionStateWriter.biggestJumps(mids, NOW), mid, NOW, 0.10);
+        String jump = PredictionStateWriter.oddsJumpPhrase(PredictionStateWriter.biggestJumps(mids, NOW), mid, NOW,
+                JevPredictionRunnerTest.CFG.getJumpThreshold());
         if (jump != null) {
             odds.put("jump", jump);
         }

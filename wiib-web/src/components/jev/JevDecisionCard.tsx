@@ -30,7 +30,7 @@ function pricePair(reason?: string): { from: string; to: string; gone: boolean }
   return { from: c(from), to: to === 'none' ? '--' : c(to), gone: to === 'none' };
 }
 
-/** 在容差里按别的价成交了：写预计和实际；开仓、加注、卖出都算 */
+/** 在容差里按别的价成交了：写预计和实际；开仓，以及旧局的卖出和 v4 的加注都算 */
 function FillNote({ d }: { d: JevPredictionDecisionView }) {
   const { t } = useTranslation(['community']);
   const code = reasonCode(d);
@@ -83,7 +83,8 @@ function JevNotice({ d }: { d: JevPredictionDecisionView }) {
 }
 
 /**
- * Jev 选了什么、多大把握，后面是数学参考数：买入行（开仓、加注）是买那边每份比成本高多少，持仓行（拿着、卖掉）是现在卖每份比估计多拿多少。
+ * Jev 选了什么、多大把握，后面是数学参考数：买入行（开仓、v4 的加注）是买那边每份比成本高多少，R3 和 v4 的持仓行（拿着、卖掉）是现在卖每份比估计多拿多少，
+ * 之后的持仓行没有这个数。
  * R4 起持仓也问入场题，按这一行实际做了什么分；R3 持仓行的选项是拿着 / 卖掉，动作也是 HOLD / SELL。
  * 出错的行带注单就是持仓行：空仓行下单成功才记注单，之后不会再出错
  */

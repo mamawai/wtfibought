@@ -12,7 +12,8 @@ import java.time.LocalDateTime;
 
 /**
  * Jev 预测员每回合每检查点一行：发出的 state、Jev 的回答、概率、盘口、动作、注单；结算后回填结果与盈亏。
- * 买卖都由 Jev 拍板（R3 起），R4 起空仓持仓同一道题、不再问谁赢，p_jev 为空；p_model、p_mkt 照记，Brier 在 SQL 里现算。
+ * 买卖都由 Jev 拍板（R3 起），R4 起空仓持仓同一道题、不再问谁赢，p_jev 为空；v4 之后买了拿到结算，持仓行只记 Jev 的选择。
+ * p_model、p_mkt 照记，Brier 在 SQL 里现算。
  */
 @Data
 @TableName("jev_prediction_decision")
@@ -63,7 +64,7 @@ public class JevPredictionDecision {
     /** Jev 拍板的选项 BUY_UP / BUY_DOWN / PASS，R4 起空仓持仓都是这三个；R3 持仓是 HOLD / SELL，R1 旧版是 BUY_UP / BUY_DOWN / WAIT，R2 为空 */
     private String jevChoice;
 
-    /** 它的概率，到 act-threshold 才照做 */
+    /** 它的概率，空仓时到 act-threshold 才照做 */
     private BigDecimal jevChoiceP;
 
     /** 盘口距上次更新的毫秒数；空=没记录 */
@@ -81,22 +82,22 @@ public class JevPredictionDecision {
     private BigDecimal oddsJumpDown;
 
     /**
-     * 按数学估计的每份优势，只给页面作参考：买入（含加注）是那边 p_model − 卖价 − 手续费，持仓是卖出扣费后比 p_model 多拿多少。
-     * R2 是按 Jev 胜率算、优势大那边的，R1 按 p_model
+     * 按数学估计的每份优势，只给页面作参考：买入是那边 p_model − 卖价 − 手续费；持仓行不记，
+     * R3 和 v4 的持仓行是卖出扣费后比 p_model 多拿多少。R2 是按 Jev 胜率算、优势大那边的，R1 按 p_model
      */
     private BigDecimal edge;
 
-    /** BUY_UP/BUY_DOWN/STAY_OUT/HOLD/SELL/ERROR；持仓时加注也记 BUY_* */
+    /** BUY_UP/BUY_DOWN/STAY_OUT/HOLD/ERROR；之前各版还有 SELL，v4 那一局持仓时加注也记 BUY_* */
     private String action;
 
     /**
-     * 为什么这么做，"代码 + 细节"：BUY / ADD / PASS / UNSURE / NO_QUOTE / NO_BALANCE / MAX_STAKE / MISSED /
-     * HOLD / SELL / NO_BID / STALE_BOOK / STALE_CHAINLINK / STALE_WHILE_ASKING；R2 还有 WAIT / ASK_LOW，
-     * R1 还有 NOT_CHEAP / EXPENSIVE / ASK_RANGE。页面按首个词出中文提示。异常看 error
+     * 为什么这么做，"代码 + 细节"：BUY / PASS / UNSURE / NO_QUOTE / NO_BALANCE / MISSED / HOLD /
+     * STALE_BOOK / STALE_CHAINLINK / STALE_WHILE_ASKING；之前各版还有 SELL / NO_BID，v4 那一局还有 ADD / MAX_STAKE，
+     * R2 还有 WAIT / ASK_LOW，R1 还有 NOT_CHEAP / EXPENSIVE / ASK_RANGE。页面按首个词出中文提示。异常看 error
      */
     private String reason;
 
-    /** 本行开的注单（BUY_*，含加注）；持仓行（SELL/HOLD）记本回合在持的第一笔 */
+    /** 本行开的注单（BUY_*，v4 那一局含加注）；持仓行（HOLD，之前还有 SELL）记本回合在持的第一笔 */
     private Long betId;
 
     /** 本金 cost，不含手续费；持仓行是在持的合计 */

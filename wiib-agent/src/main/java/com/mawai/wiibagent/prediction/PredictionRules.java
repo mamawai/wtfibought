@@ -11,18 +11,16 @@ import java.util.Set;
 
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_BUY_DOWN;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_BUY_UP;
-import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_HOLD;
-import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_SELL;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_STAY_OUT;
 
 /**
- * 预测员的规则：Jev 拍板，代码只管执行。空仓持仓问同一道题，Jev 选的那一项概率到 act-threshold 才照做：
- * 空仓选哪边买哪边；持仓选手里这边就加注（这一边在持本金到 max-stake-per-window 为止），选另一边卖掉，选不买就拿着。
- * 代码只拦机械问题：那边没人卖、没人接盘、钱包付不起、加满了。每注 base-stake。
+ * 预测员的规则：Jev 拍板，代码只管执行。空仓持仓问同一道题：空仓时 Jev 选的那一项概率到 act-threshold 就买那边；
+ * 买了拿到结算，持仓时 Jev 选什么都只记录，不卖不加注。代码只拦机械问题：那边没人卖、钱包付不起。每注 base-stake。
  * <p>
- * reason 一律"代码 + 细节"，页面按首个词出中文提示，BUY / ADD / UNSURE / NO_QUOTE / MISSED / MAX_STAKE 第二个词是那一边（卖出的是 SELL）：
- * BUY 下单 / ADD 加注 / PASS 空仓选不买 / HOLD 持仓选不买、拿着 / UNSURE Jev 选了但把握不够 / NO_QUOTE 那边没人卖 /
- * NO_BALANCE 没钱 / MAX_STAKE 这一边加满了 / SELL 卖出 / NO_BID 没人接盘 / MISSED 等成交时价差过了容差没抢到。
+ * reason 一律"代码 + 细节"，页面按首个词出中文提示，BUY / UNSURE / NO_QUOTE / MISSED 第二个词是那一边：
+ * BUY 下单 / PASS 空仓选不买 / UNSURE Jev 选了但把握不够 / NO_QUOTE 那边没人卖 / NO_BALANCE 没钱 /
+ * MISSED 等成交时价差过了容差没抢到 / HOLD 持仓，第二个词是 Jev 选的 PASS / UP / DOWN。
+ * 之前各版还有 SELL 卖出、NO_BID 没人接盘，v4 那一局还有 ADD 加注、MAX_STAKE 加满了。
  * 按别的价成交或没抢到时，价写成 "看到的→实际的"（没价是 none），页面照这个写预计和实际。
  */
 public final class PredictionRules {
@@ -40,18 +38,10 @@ public final class PredictionRules {
         BigDecimal ask(String side) {
             return "UP".equals(side) ? upAsk : downAsk;
         }
-
-        BigDecimal bid(String side) {
-            return "UP".equals(side) ? upBid : downBid;
-        }
     }
 
     /** 入场结论：action 是 BUY_UP / BUY_DOWN / STAY_OUT；side 是 Jev 想买的那边，选不买为 null */
     record Entry(String action, String side, BigDecimal stake, String reason) {
-    }
-
-    /** 持仓结论：action 是 HOLD / SELL（卖掉这回合全部注单），加注是 BUY_UP / BUY_DOWN、stake 是这一注本金 */
-    record Holding(String action, BigDecimal stake, String reason) {
     }
 
     private PredictionRules() {
@@ -80,46 +70,16 @@ public final class PredictionRules {
         return new Entry(up ? ACTION_BUY_UP : ACTION_BUY_DOWN, side, stake, "BUY " + side + " " + fmt(p) + " ask " + ask.toPlainString());
     }
 
-    /**
-     * 持仓（手里是 held 这边，在持本金 heldCost）：选不买拿着；把握够时选另一边卖掉、选这边加注，加满、没人卖、没钱就拿着。
-     * 没人接盘的回路里先拦了，不问 Jev
-     */
-    static Holding holding(Judgment j, String held, BigDecimal heldCost, Book b, BigDecimal gameBalance, JevPredictionConfig cfg) {
+    /** 持仓的 reason：拿到结算，Jev 选什么只记下来，HOLD 加它选的 PASS / UP / DOWN 和把握 */
+    static String holding(Judgment j) {
         String choice = j.decision().choice();
-        double p = j.choiceP();
-        if (PredictionQuestions.PASS.equals(choice)) {
-            return new Holding(ACTION_HOLD, null, "HOLD PASS " + fmt(p));
-        }
-        String side = PredictionQuestions.BUY_UP.equals(choice) ? "UP" : "DOWN";
-        if (p < cfg.getActThreshold()) {
-            return new Holding(ACTION_HOLD, null, "UNSURE " + side + " " + fmt(p));
-        }
-        if (!side.equals(held)) {
-            return new Holding(ACTION_SELL, null, "SELL " + fmt(p) + " bid " + b.bid(held).toPlainString());
-        }
-        BigDecimal room = cfg.getMaxStakePerWindow().subtract(heldCost);
-        if (room.compareTo(MIN_STAKE) < 0) {
-            return new Holding(ACTION_HOLD, null, "MAX_STAKE " + side + " " + fmt(p));
-        }
-        BigDecimal ask = b.ask(side);
-        if (ask == null) {
-            return new Holding(ACTION_HOLD, null, "NO_QUOTE " + side);
-        }
-        BigDecimal stake = stake(cfg.getBaseStake().min(room), gameBalance, ask);
-        if (stake == null) {
-            return new Holding(ACTION_HOLD, null, NO_BALANCE);
-        }
-        return new Holding("UP".equals(side) ? ACTION_BUY_UP : ACTION_BUY_DOWN, stake, "ADD " + side + " " + fmt(p) + " ask " + ask.toPlainString());
+        String pick = PredictionQuestions.PASS.equals(choice) ? "PASS" : PredictionQuestions.BUY_UP.equals(choice) ? "UP" : "DOWN";
+        return "HOLD " + pick + " " + fmt(j.choiceP());
     }
 
     /** 买入每份优势：数学概率 − 卖价 − 吃单费，买入行的 edge 列用它，只给页面当数学参考，不给 Jev */
     static double edge(double pSide, BigDecimal ask) {
         return pSide - ask.doubleValue() - PredictionFee.perShare(ask).doubleValue();
-    }
-
-    /** 卖出每份扣掉吃单费后比数学概率多拿多少，持仓行的 edge 列用它，同样只给页面 */
-    static double sellOver(double pSide, BigDecimal bid) {
-        return bid.doubleValue() - PredictionFee.perShare(bid).doubleValue() - pSide;
     }
 
     /** 想下多少和付得起多少取小；余额要留足手续费，不足 sim 最小本金就不下 */

@@ -6,7 +6,6 @@ import com.mawai.wiibagent.llm.jev.JevClient.Answer;
 import com.mawai.wiibagent.prediction.PredictionJudge.Judgment;
 import com.mawai.wiibagent.prediction.PredictionRules.Book;
 import com.mawai.wiibagent.prediction.PredictionRules.Entry;
-import com.mawai.wiibagent.prediction.PredictionRules.Holding;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -16,7 +15,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
-/** Jev 拍板、代码只管执行：选什么做什么，把握不够不动，没人卖 / 没钱 / 加满拦下 */
+/** Jev 拍板、代码只管执行：空仓选什么做什么，把握不够不动，没人卖 / 没钱拦下；持仓只记录，不卖不加注 */
 class PredictionRulesTest {
 
     private static final JevPredictionConfig CFG = JevPredictionRunnerTest.CFG;
@@ -70,60 +69,16 @@ class PredictionRulesTest {
     }
 
     @Test
-    void 持仓_选另一边就卖掉_选不买或把握不够就拿着() {
-        Holding sell = PredictionRules.holding(choose("BUY_DOWN", "BUY_UP", 0.1, "BUY_DOWN", 0.7, "PASS", 0.2),
-                "UP", new BigDecimal("5"), BOOK, BALANCE, CFG);
-        assertThat(sell.action()).isEqualTo(JevPredictionDecision.ACTION_SELL);
-        assertThat(sell.stake()).isNull();
-        assertThat(sell.reason()).isEqualTo("SELL 0.700 bid 0.60");
-        Holding down = PredictionRules.holding(choose("BUY_UP", "BUY_UP", 0.6, "BUY_DOWN", 0.1, "PASS", 0.3),
-                "DOWN", new BigDecimal("5"), BOOK, BALANCE, CFG);
-        assertThat(down.reason()).isEqualTo("SELL 0.600 bid 0.38");
-
-        Holding keep = PredictionRules.holding(choose("PASS", "BUY_UP", 0.2, "BUY_DOWN", 0.2, "PASS", 0.6),
-                "UP", new BigDecimal("5"), BOOK, BALANCE, CFG);
-        assertThat(keep.action()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
-        assertThat(keep.reason()).isEqualTo("HOLD PASS 0.600");
-
-        Holding unsure = PredictionRules.holding(choose("BUY_DOWN", "BUY_UP", 0.2, "BUY_DOWN", 0.45, "PASS", 0.35),
-                "UP", new BigDecimal("5"), BOOK, BALANCE, CFG);
-        assertThat(unsure.action()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
-        assertThat(unsure.reason()).isEqualTo("UNSURE DOWN 0.450");
+    void 持仓_选什么都只记录_reason是HOLD加它选的和把握() {
+        assertThat(PredictionRules.holding(choose("BUY_DOWN", "BUY_UP", 0.1, "BUY_DOWN", 0.7, "PASS", 0.2))).isEqualTo("HOLD DOWN 0.700");
+        assertThat(PredictionRules.holding(choose("BUY_UP", "BUY_UP", 0.45, "BUY_DOWN", 0.2, "PASS", 0.35))).isEqualTo("HOLD UP 0.450");
+        assertThat(PredictionRules.holding(choose("PASS", "BUY_UP", 0.2, "BUY_DOWN", 0.2, "PASS", 0.6))).isEqualTo("HOLD PASS 0.600");
     }
 
     @Test
-    void 持仓_选手里这边就加注_同一边合计到上限为止() {
-        Judgment again = choose("BUY_UP", "BUY_UP", 0.7, "BUY_DOWN", 0.1, "PASS", 0.2);
-        Holding add = PredictionRules.holding(again, "UP", new BigDecimal("5"), BOOK, BALANCE, CFG);
-        assertThat(add.action()).isEqualTo(JevPredictionDecision.ACTION_BUY_UP);
-        assertThat(add.stake()).isEqualByComparingTo("5");
-        assertThat(add.reason()).isEqualTo("ADD UP 0.700 ask 0.62");
-        // 已押 7，上限 10，只能再加 3
-        assertThat(PredictionRules.holding(again, "UP", new BigDecimal("7"), BOOK, BALANCE, CFG).stake()).isEqualByComparingTo("3");
-        // 剩的不到 sim 最小本金就算加满
-        Holding full = PredictionRules.holding(again, "UP", new BigDecimal("9.5"), BOOK, BALANCE, CFG);
-        assertThat(full.action()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
-        assertThat(full.reason()).isEqualTo("MAX_STAKE UP 0.700");
-    }
-
-    @Test
-    void 持仓_加注时没人卖_没钱_拿着不动() {
-        Judgment again = choose("BUY_UP", "BUY_UP", 0.7, "BUY_DOWN", 0.1, "PASS", 0.2);
-        Book noUpAsk = new Book(null, new BigDecimal("0.60"), new BigDecimal("0.40"), new BigDecimal("0.38"));
-        Holding noQuote = PredictionRules.holding(again, "UP", new BigDecimal("5"), noUpAsk, BALANCE, CFG);
-        assertThat(noQuote.action()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
-        assertThat(noQuote.reason()).isEqualTo("NO_QUOTE UP");
-        Holding broke = PredictionRules.holding(again, "UP", new BigDecimal("5"), BOOK, new BigDecimal("0.5"), CFG);
-        assertThat(broke.action()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
-        assertThat(broke.reason()).isEqualTo(PredictionRules.NO_BALANCE);
-    }
-
-    @Test
-    void 买入优势是概率减卖价减吃单费_卖出多拿是买价减吃单费减概率() {
+    void 买入优势是概率减卖价减吃单费() {
         // 0.70 − 0.62 − 0.07×0.62×0.38
         assertThat(PredictionRules.edge(0.70, new BigDecimal("0.62"))).isCloseTo(0.063508, within(1e-6));
-        // 0.60 − 0.07×0.60×0.40 − 0.45
-        assertThat(PredictionRules.sellOver(0.45, new BigDecimal("0.60"))).isCloseTo(0.1332, within(1e-6));
     }
 
     @Test

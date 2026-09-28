@@ -854,14 +854,14 @@ export interface JevPredictionDecisionView {
   oddsJumpUp?: number;
   oddsJumpDown?: number;
   /**
-   * 按数学估计的每份优势，只作参考：买入（含加注）是那边估计 − 卖价 − 手续费，持仓是卖出扣费后比估计多拿多少；
+   * 按数学估计的每份优势，只作参考：买入是那边估计 − 卖价 − 手续费；持仓行没有，R3 和 v4 的持仓行是卖出扣费后比估计多拿多少；
    * R2 是按 Jev 胜率算、优势大那边的
    */
   edge?: number;
-  /** 持仓时加注也是 BUY_UP / BUY_DOWN，reason 首词是 ADD */
+  /** SELL 只有旧局有；v4 那一局持仓时加注也是 BUY_UP / BUY_DOWN，reason 首词是 ADD */
   action: 'BUY_UP' | 'BUY_DOWN' | 'STAY_OUT' | 'HOLD' | 'SELL' | 'ERROR';
   /**
-   * 首个词是代码（见后端 PredictionRules），页面按它出提示；BUY / ADD / UNSURE / NO_QUOTE / MISSED / MAX_STAKE（R2 的 WAIT / ASK_LOW）
+   * 首个词是代码（见后端 PredictionRules），页面按它出提示；BUY / UNSURE / NO_QUOTE / MISSED（v4 的 ADD / MAX_STAKE、R2 的 WAIT / ASK_LOW）
    * 第二个词是哪边；按别的价成交或没抢到时价写成 "看到的→实际的"（没价是 none）；ERROR 行没有
    */
   reason?: string;
@@ -883,7 +883,7 @@ export interface JevPredictionDecisionView {
 
 export interface JevPredictionStats {
   windows: number;
-  /** 下注次数，含加注 */
+  /** 下注次数，v4 那一局含加注 */
   bets: number;
   sells: number;
   settledBets: number;
@@ -940,8 +940,6 @@ export interface JevThresholds {
   fillTolerance: number;
   /** 每注本金 */
   baseStake: number;
-  /** 同一回合同一边在持的本金最多这么多，持仓时再选这一边就加注到这里为止 */
-  maxStakePerWindow: number;
   /** UP 中间价 3 秒内涨或跌到这么多才写进 state 告诉 Jev */
   jumpThreshold: number;
 }
