@@ -1,17 +1,17 @@
-package com.mawai.wiibagent.prediction;
+package com.mawai.wiibagent.jev.predictor;
 
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.dto.PredictionBetResponse;
 import com.mawai.wiibcommon.dto.PredictionRoundResponse;
 import com.mawai.wiibcommon.entity.JevPredictionDecision;
 import com.mawai.wiibcommon.entity.JevPredictionRun;
-import com.mawai.wiibagent.llm.jev.JevClient.Answer;
-import com.mawai.wiibagent.llm.jev.JevPlatformConfig;
+import com.mawai.wiibagent.jev.JevClient.Answer;
+import com.mawai.wiibagent.jev.JevPlatformConfig;
+import com.mawai.wiibagent.jev.predictor.PredictionJudge.Judgment;
+import com.mawai.wiibagent.jev.predictor.PredictionRules.Book;
+import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Raw;
+import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Snapshot;
 import com.mawai.wiibagent.mapper.JevPredictionDecisionMapper;
-import com.mawai.wiibagent.prediction.PredictionJudge.Judgment;
-import com.mawai.wiibagent.prediction.PredictionRules.Book;
-import com.mawai.wiibagent.prediction.PredictionStateWriter.Raw;
-import com.mawai.wiibagent.prediction.PredictionStateWriter.Snapshot;
 import com.mawai.wiibquant.external.sim.SimPredictionClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

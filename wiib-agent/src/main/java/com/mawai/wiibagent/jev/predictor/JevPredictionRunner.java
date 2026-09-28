@@ -1,15 +1,15 @@
-package com.mawai.wiibagent.prediction;
+package com.mawai.wiibagent.jev.predictor;
 
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.dto.PredictionBetResponse;
 import com.mawai.wiibcommon.dto.PredictionRoundResponse;
 import com.mawai.wiibcommon.entity.JevPredictionDecision;
-import com.mawai.wiibagent.llm.jev.JevPlatformConfig;
+import com.mawai.wiibagent.jev.JevPlatformConfig;
 import com.mawai.wiibagent.mapper.JevPredictionDecisionMapper;
-import com.mawai.wiibagent.prediction.PredictionJudge.Judgment;
-import com.mawai.wiibagent.prediction.PredictionRules.Book;
-import com.mawai.wiibagent.prediction.PredictionRules.Entry;
-import com.mawai.wiibagent.prediction.PredictionStateWriter.Snapshot;
+import com.mawai.wiibagent.jev.predictor.PredictionJudge.Judgment;
+import com.mawai.wiibagent.jev.predictor.PredictionRules.Book;
+import com.mawai.wiibagent.jev.predictor.PredictionRules.Entry;
+import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Snapshot;
 import com.mawai.wiibquant.external.sim.SimPredictionClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,7 +33,7 @@ import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_BUY_UP;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_ERROR;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_HOLD;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_STAY_OUT;
-import static com.mawai.wiibagent.prediction.PredictionRules.NO_BALANCE;
+import static com.mawai.wiibagent.jev.predictor.PredictionRules.NO_BALANCE;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**

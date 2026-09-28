@@ -1,4 +1,4 @@
-package com.mawai.wiibagent.llm.jev;
+package com.mawai.wiibagent.jev;
 
 import lombok.Getter;
 import org.springframework.beans.factory.annotation.Value;

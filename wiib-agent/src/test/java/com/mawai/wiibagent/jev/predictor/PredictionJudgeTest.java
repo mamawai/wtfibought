@@ -1,10 +1,10 @@
-package com.mawai.wiibagent.prediction;
+package com.mawai.wiibagent.jev.predictor;
 
-import com.mawai.wiibagent.llm.jev.JevClient;
-import com.mawai.wiibagent.llm.jev.JevClient.Answer;
-import com.mawai.wiibagent.llm.jev.JevPlatformConfig;
-import com.mawai.wiibagent.prediction.PredictionStateWriter.Raw;
-import com.mawai.wiibagent.prediction.PredictionStateWriter.Snapshot;
+import com.mawai.wiibagent.jev.JevClient;
+import com.mawai.wiibagent.jev.JevClient.Answer;
+import com.mawai.wiibagent.jev.JevPlatformConfig;
+import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Raw;
+import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Snapshot;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;

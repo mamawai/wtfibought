@@ -1,4 +1,4 @@
-package com.mawai.wiibagent.prediction;
+package com.mawai.wiibagent.jev.predictor;
 
 import org.junit.jupiter.api.Test;
 

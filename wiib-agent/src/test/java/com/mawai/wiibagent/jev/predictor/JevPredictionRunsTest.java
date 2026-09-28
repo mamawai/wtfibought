@@ -1,4 +1,4 @@
-package com.mawai.wiibagent.prediction;
+package com.mawai.wiibagent.jev.predictor;
 
 import com.mawai.wiibagent.mapper.JevPredictionRunMapper;
 import com.mawai.wiibcommon.entity.JevPredictionRun;

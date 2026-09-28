@@ -1,19 +1,19 @@
-package com.mawai.wiibagent.prediction;
+package com.mawai.wiibagent.jev.predictor;
 
-import com.mawai.wiibagent.llm.jev.JevClient;
-import com.mawai.wiibagent.llm.jev.JevClient.Answer;
-import com.mawai.wiibagent.llm.jev.JevPlatformConfig;
-import com.mawai.wiibagent.prediction.PredictionStateWriter.Snapshot;
+import com.mawai.wiibagent.jev.JevClient;
+import com.mawai.wiibagent.jev.JevClient.Answer;
+import com.mawai.wiibagent.jev.JevPlatformConfig;
+import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Snapshot;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
 import java.util.Set;
 
-import static com.mawai.wiibagent.prediction.PredictionQuestions.BUY_DOWN;
-import static com.mawai.wiibagent.prediction.PredictionQuestions.BUY_UP;
-import static com.mawai.wiibagent.prediction.PredictionQuestions.ENTRY;
-import static com.mawai.wiibagent.prediction.PredictionQuestions.PASS;
+import static com.mawai.wiibagent.jev.predictor.PredictionQuestions.BUY_DOWN;
+import static com.mawai.wiibagent.jev.predictor.PredictionQuestions.BUY_UP;
+import static com.mawai.wiibagent.jev.predictor.PredictionQuestions.ENTRY;
+import static com.mawai.wiibagent.jev.predictor.PredictionQuestions.PASS;
 
 /** 拿着 state 问 Jev：买 UP / 买 DOWN / 不买，空仓持仓同一题 */
 @Component

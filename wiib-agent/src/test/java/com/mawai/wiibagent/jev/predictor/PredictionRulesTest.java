@@ -1,11 +1,11 @@
-package com.mawai.wiibagent.prediction;
+package com.mawai.wiibagent.jev.predictor;
 
 import com.mawai.wiibcommon.dto.PredictionBetResponse;
 import com.mawai.wiibcommon.entity.JevPredictionDecision;
-import com.mawai.wiibagent.llm.jev.JevClient.Answer;
-import com.mawai.wiibagent.prediction.PredictionJudge.Judgment;
-import com.mawai.wiibagent.prediction.PredictionRules.Book;
-import com.mawai.wiibagent.prediction.PredictionRules.Entry;
+import com.mawai.wiibagent.jev.JevClient.Answer;
+import com.mawai.wiibagent.jev.predictor.PredictionJudge.Judgment;
+import com.mawai.wiibagent.jev.predictor.PredictionRules.Book;
+import com.mawai.wiibagent.jev.predictor.PredictionRules.Entry;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

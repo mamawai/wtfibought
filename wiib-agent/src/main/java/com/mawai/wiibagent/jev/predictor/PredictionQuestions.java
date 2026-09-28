@@ -1,6 +1,6 @@
-package com.mawai.wiibagent.prediction;
+package com.mawai.wiibagent.jev.predictor;
 
-import com.mawai.wiibagent.llm.jev.JevClient.Question;
+import com.mawai.wiibagent.jev.JevClient.Question;
 
 import java.util.LinkedHashMap;
 import java.util.Map;

@@ -2,9 +2,9 @@ package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.entity.UserJevConfig;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibagent.jev.JevClient;
+import com.mawai.wiibagent.jev.JevConfigService;
 import com.mawai.wiibagent.llm.ApiKeyCrypto;
-import com.mawai.wiibagent.llm.jev.JevClient;
-import com.mawai.wiibagent.llm.jev.JevConfigService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;

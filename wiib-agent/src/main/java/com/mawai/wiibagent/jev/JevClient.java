@@ -1,4 +1,4 @@
-package com.mawai.wiibagent.llm.jev;
+package com.mawai.wiibagent.jev;
 
 import com.mawai.wiibagent.llm.OpenAiBaseUrl;
 import lombok.extern.slf4j.Slf4j;

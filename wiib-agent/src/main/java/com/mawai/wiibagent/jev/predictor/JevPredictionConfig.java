@@ -1,4 +1,4 @@
-package com.mawai.wiibagent.prediction;
+package com.mawai.wiibagent.jev.predictor;
 
 import lombok.Getter;
 import org.springframework.beans.factory.annotation.Value;

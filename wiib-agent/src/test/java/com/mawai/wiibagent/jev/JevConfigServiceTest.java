@@ -1,4 +1,4 @@
-package com.mawai.wiibagent.llm.jev;
+package com.mawai.wiibagent.jev;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;

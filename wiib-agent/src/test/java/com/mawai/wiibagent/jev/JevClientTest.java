@@ -1,4 +1,4 @@
-package com.mawai.wiibagent.llm.jev;
+package com.mawai.wiibagent.jev;
 
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;

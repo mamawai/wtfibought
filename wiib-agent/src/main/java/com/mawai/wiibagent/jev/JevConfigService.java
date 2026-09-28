@@ -1,4 +1,4 @@
-package com.mawai.wiibagent.llm.jev;
+package com.mawai.wiibagent.jev;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.UserJevConfig;

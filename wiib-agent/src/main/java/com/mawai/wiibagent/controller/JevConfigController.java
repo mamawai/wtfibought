@@ -3,7 +3,7 @@ package com.mawai.wiibagent.controller;
 import com.mawai.wiibcommon.annotation.CurrentUserId;
 import com.mawai.wiibcommon.entity.UserJevConfig;
 import com.mawai.wiibcommon.util.Result;
-import com.mawai.wiibagent.llm.jev.JevConfigService;
+import com.mawai.wiibagent.jev.JevConfigService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;

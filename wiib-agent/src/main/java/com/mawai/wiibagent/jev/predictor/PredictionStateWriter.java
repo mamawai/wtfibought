@@ -1,4 +1,4 @@
-package com.mawai.wiibagent.prediction;
+package com.mawai.wiibagent.jev.predictor;
 
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.ForceOrder;
@@ -8,7 +8,7 @@ import com.mawai.wiibcommon.market.OrderFlowAggregator;
 import com.mawai.wiibcommon.market.PredictionFee;
 import com.mawai.wiibcommon.market.TimeWeightedAverage;
 import com.mawai.wiibcommon.market.TimeWeightedAverage.Point;
-import com.mawai.wiibagent.prediction.PredictionRules.Book;
+import com.mawai.wiibagent.jev.predictor.PredictionRules.Book;
 import com.mawai.wiibquant.market.service.KlineFetcher;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;

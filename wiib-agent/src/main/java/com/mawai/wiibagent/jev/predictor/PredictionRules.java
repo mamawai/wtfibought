@@ -1,8 +1,8 @@
-package com.mawai.wiibagent.prediction;
+package com.mawai.wiibagent.jev.predictor;
 
 import com.mawai.wiibcommon.dto.PredictionBetResponse;
 import com.mawai.wiibcommon.market.PredictionFee;
-import com.mawai.wiibagent.prediction.PredictionJudge.Judgment;
+import com.mawai.wiibagent.jev.predictor.PredictionJudge.Judgment;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;

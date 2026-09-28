@@ -1,4 +1,4 @@
-package com.mawai.wiibagent.prediction;
+package com.mawai.wiibagent.jev.predictor;
 
 import com.mawai.wiibquant.external.sim.SimPredictionClient;
 import lombok.RequiredArgsConstructor;

@@ -1,4 +1,4 @@
-package com.mawai.wiibagent.prediction;
+package com.mawai.wiibagent.jev.predictor;
 
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.ForceOrder;
@@ -6,7 +6,7 @@ import com.mawai.wiibcommon.market.ForceOrderService;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.OrderFlowAggregator;
 import com.mawai.wiibcommon.market.TimeWeightedAverage.Point;
-import com.mawai.wiibagent.prediction.PredictionStateWriter.Snapshot;
+import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Snapshot;
 import com.mawai.wiibquant.market.service.KlineFetcher;
 import org.junit.jupiter.api.Test;
 
