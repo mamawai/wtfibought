@@ -8,26 +8,71 @@ import { useCountUp } from '../hooks/useCountUp';
 import { usePredictionMarket } from '../hooks/usePredictionMarket';
 import { PredictionHero } from '../components/PredictionHero';
 import { ScoreStrip } from '../components/arena/ScoreStrip';
-import { JevTradesCard } from '../components/jev/JevTradesCard';
+import { JevTradesCard, SignedUsd } from '../components/jev/JevTradesCard';
 import { JevFeed } from '../components/jev/JevFeed';
-import type { JevBet, JevPredictionDecisionView, JevPredictionOverview } from '../types';
+import { ARM_CODE, runName, thresholdVars } from '../components/jev/format';
+import type { JevArmStats, JevBet, JevPredictionDecisionView, JevPredictionOverview } from '../types';
 
-/** 检查点 15 秒一个，5 秒刷一次流 */
+/** v5-3 整点 30 秒一次、突变随时会来，5 秒刷一次流 */
 const POLL_MS = 5_000;
 /** 仪表条数字后的小字：手机上两格一行放不下，另起一行 */
 const STRIP_SMALL = 'whitespace-nowrap max-sm:block max-sm:ml-0 max-sm:mt-1';
 
+/** 三组对照：在跑的三局各一行，点一行切到那一局，在看的那一行底色加深；手机上横着滑 */
+function ArmsTable({ arms, viewingNo, onPick }: { arms: JevArmStats[]; viewingNo?: number; onPick: (runNo: number) => void }) {
+  const { t } = useTranslation(['community']);
+  return (
+    <div className="mt-10">
+      <div className="sec-h mb-3">
+        <h2>{t('prediction.jev.armsTitle')}<small>{t('prediction.jev.armsSub')}</small></h2>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="tbl num min-w-[560px]">
+          <thead>
+            <tr>
+              <th>{t('prediction.jev.colArm')}</th>
+              <th className="r">{t('prediction.jev.statBuys')}</th>
+              <th className="r">{t('prediction.jev.statSells')}</th>
+              <th className="r">{t('prediction.jev.colWinsSettled')}</th>
+              <th className="r">{t('prediction.jev.colPnl')}</th>
+              <th className="r">{t('prediction.jev.statFees')}</th>
+              <th className="r">{t('prediction.jev.colBalance')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {arms.map(a => (
+              <tr key={a.runNo} onClick={() => onPick(a.runNo)}
+                  className={cn('cursor-pointer', a.runNo === viewingNo && '[&>td]:bg-card-2')}>
+                <td>
+                  <b>{ARM_CODE[a.arm]}</b> <span className="text-[13px] mute">R{a.runNo}</span>
+                  <span className="sub whitespace-nowrap">{t(`prediction.jev.armName.${a.arm}`)}</span>
+                </td>
+                <td className="r">{a.bets}</td>
+                <td className="r">{a.sells}</td>
+                <td className="r">{a.wins} / {a.settledBets}</td>
+                <td className="r font-bold"><SignedUsd v={a.pnl} /></td>
+                <td className="r">${fmtNum(a.fees)}</td>
+                <td className="r">{a.balance != null ? `$${fmtNum(a.balance)}` : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /**
- * Jev 预测员页：记分头（名字 / 状态 / 局次 / 一句话说明 / 本局盈亏）+ 四格仪表条 →
- * 左 Polymarket 5 分钟盘的实时走势（与预测页同一张头卡）+ Jev 的注单与记分，右 Jev 每个检查点看到什么、怎么决定。
- * 注单、决策和记分按局看，默认当前局；行情一直是实时的。只读，登录即可看；整页一起滚，窄屏两栏堆成一列。
+ * Jev 预测员页：记分头（名字 / 状态 / 局次 / 一句话说明 / 本局盈亏）+ 四格仪表条 + 三组对照表 →
+ * 左 Polymarket 5 分钟盘的实时走势（与预测页同一张头卡）+ 这一局的注单与记分，右这一局每次被叫醒看到什么、代码怎么决定。
+ * 一组一个局号，注单、决策和记分按局看，默认看 v5-1 那一局；行情一直是实时的。只读，登录即可看；整页一起滚，窄屏两栏堆成一列。
  */
 export function JevPrediction() {
   const { t } = useTranslation(['community']);
   const [overview, setOverview] = useState<JevPredictionOverview | null>(null);
   const [feed, setFeed] = useState<JevPredictionDecisionView[]>([]);
   const [bets, setBets] = useState<JevBet[]>([]);
-  // 在看哪一局，undefined = 当前局
+  // 在看哪一局，undefined = 默认那一局（后端定：在跑的 v5-1），重新开局后跟着换到新的
   const [viewRun, setViewRun] = useState<number | undefined>(undefined);
 
   const load = useCallback(() => {
@@ -49,9 +94,13 @@ export function JevPrediction() {
   const stats = overview?.stats;
   const pnl = stats?.pnl ?? 0;
   const runs = overview?.runs ?? [];
-  const currentRunNo = runs[0]?.runNo;
+  const arms = overview?.arms ?? [];
   const viewing = overview?.run;
-  const archived = viewing != null && viewing.runNo !== currentRunNo;
+  // 在跑的是三组各自最新那一局，其余都是留档（还没开过分组的局时全是留档）
+  const archived = viewing != null && !arms.some(a => a.runNo === viewing.runNo);
+  // 默认看在跑的 v5-1；切回它记成 undefined，其余局记局号
+  const defaultRunNo = arms.find(a => a.arm === 'JUMP_CODE')?.runNo;
+  const pick = (runNo: number) => setViewRun(runNo === defaultRunNo ? undefined : runNo);
   // 大数滚动直接写 DOM：元素得一直挂着，没数据时 invisible 占位，不然盈亏恰好是 0 时不会重画
   const pnlRef = useCountUp<HTMLElement>(pnl, fmtSignedUsd);
   const winRate = stats && stats.settledBets > 0 ? Math.round(stats.wins / stats.settledBets * 100) : null;
@@ -73,22 +122,25 @@ export function JevPrediction() {
                 : <span className="chip mute">{t('prediction.jev.off')}</span>)}
             {overview && <span className="text-[14px] mute">{overview.model} · {t('prediction.jev.market')}</span>}
           </div>
-          {/* 局次：一局一个账户，重新开局后旧局留档；只有一局时不出切换 */}
+          {/* 局次：一局一个账户，分组的局标出组名；重新开局后旧局留档；只有一局时不出切换；局多了横着滑 */}
           {viewing && (
             <div className="flex items-center gap-2.5 flex-wrap mt-3 text-[13px] mute">
               {runs.length > 1 ? (
-                <div className="seg">
+                <div className="seg max-w-full overflow-x-auto">
                   {[...runs].reverse().map(r => (
-                    <button key={r.runNo} type="button" className={cn('num', r.runNo === viewing.runNo && 'on')}
-                            onClick={() => setViewRun(r.runNo === currentRunNo ? undefined : r.runNo)}>R{r.runNo}</button>
+                    <button key={r.runNo} type="button" className={cn('num shrink-0 whitespace-nowrap', r.runNo === viewing.runNo && 'on')}
+                            onClick={() => pick(r.runNo)}>{runName(r)}</button>
                   ))}
                 </div>
-              ) : <b className="num text-foreground">R{viewing.runNo}</b>}
+              ) : <b className="num text-foreground">{runName(viewing)}</b>}
               {viewing.label && <span>{viewing.label}</span>}
               <span className="num">{t('prediction.jev.runSince', { at: fmtDateTime(viewing.startedAt) })}</span>
             </div>
           )}
-          <p className="mt-3 max-w-[48rem] text-[14px] leading-relaxed mute">{t('prediction.jev.intro')}</p>
+          {/* 分组的局写这一组的规则，旧局写总的说明 */}
+          <p className="mt-3 max-w-[48rem] text-[14px] leading-relaxed mute">
+            {viewing?.arm && overview ? t(`prediction.jev.armIntro.${viewing.arm}`, thresholdVars(overview.thresholds)) : t('prediction.jev.intro')}
+          </p>
           {archived && (
             <div className="mt-3 border-l-4 border-warning pl-3 py-1 text-[13px] text-warning">
               {t('prediction.jev.archivedBanner', { n: viewing.runNo })}
@@ -115,6 +167,8 @@ export function JevPrediction() {
             ? <>${fmtNum(overview.gameBalance)}<small className={STRIP_SMALL}>{t('prediction.jev.initial', { n: fmtNum(overview.initialGameBalance, 0) })}</small></>
             : '—' },
       ]} />
+
+      {arms.length > 0 && <ArmsTable arms={arms} viewingNo={viewing?.runNo} onPick={pick} />}
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-10 mt-10">
         {/* 左：行情 + Jev 的注单 */}

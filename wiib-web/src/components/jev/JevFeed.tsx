@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, CircleHelp } from 'lucide-react';
-import { cn, fmtNum, toCents } from '../../lib/utils';
+import { cn } from '../../lib/utils';
 import { fmtWindow } from '../../hooks/usePredictionMarket';
-import { JevDecisionCard } from './JevDecisionCard';
-import { CHOICE_STYLE, ENTRY_OPTIONS, noteworthy, pct } from './format';
-import type { JevPredictionDecisionView, JevPredictionOverview, JevThresholds } from '../../types';
+import { JevDecisionCard, PathChip } from './JevDecisionCard';
+import { ARM_CODE, PATTERN_OPTIONS, PATTERN_STYLE, noteworthy, thresholdVars } from './format';
+import type { JevArm, JevPredictionDecisionView, JevPredictionOverview, JevThresholds } from '../../types';
 
 interface Group {
   windowStart: number;
@@ -29,26 +29,29 @@ function groupByWindow(feed: JevPredictionDecisionView[]): Group[] {
   return groups;
 }
 
-/** 一道题：标题 + 我们自己的话 + 选项 */
-function QuestionNote({ title, desc, options }: { title: string; desc: string; options: { label: string; cls: string }[] }) {
+/** 一道题：标题 + 我们自己的话 + 选项（是非题不列） */
+function QuestionNote({ title, desc, options }: { title: string; desc: string; options?: { label: string; cls: string }[] }) {
   return (
     <div>
       <div className="font-semibold text-foreground">{title}</div>
       <p className="mt-0.5">{desc}</p>
-      <div className="mt-1.5 flex flex-wrap gap-1.5">
-        {options.map(o => <span key={o.label} className={cn('chip', o.cls)}>{o.label}</span>)}
-      </div>
+      {options && (
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {options.map(o => <span key={o.label} className={cn('chip', o.cls)}>{o.label}</span>)}
+        </div>
+      )}
     </div>
   );
 }
 
-/** 这些数字怎么看：每一行在说什么、涨的概率各是什么、Jev 要答的题、代码怎么执行。收起放在流的最上面 */
+/** 三组按这个顺序讲；突变两组先讲 */
+const ARMS: JevArm[] = ['JUMP_CODE', 'JUMP_JEV', 'TIMER_JEV'];
+
+/** 这些数字怎么看：每一行在说什么、涨的概率各是什么、Jev 要答的六道题（哪一组用哪道）、三组各自怎么买卖。收起放在流的最上面 */
 function Guide({ thresholds }: { thresholds: JevThresholds }) {
   const { t } = useTranslation(['community']);
   const [open, setOpen] = useState(false);
-  const vars = { act: pct(thresholds.actThreshold), delay: thresholds.fillDelayMs / 1000, tol: toCents(thresholds.fillTolerance),
-    stake: fmtNum(thresholds.baseStake, 0), jump: toCents(thresholds.jumpThreshold) };
-  const chips = (keys: string[]) => keys.map(k => ({ label: t(`prediction.jev.choice.${k}`), cls: CHOICE_STYLE[k].text }));
+  const vars = thresholdVars(thresholds);
   return (
     <div className="border-b border-border">
       <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
@@ -78,13 +81,27 @@ function Guide({ thresholds }: { thresholds: JevThresholds }) {
           </div>
           <div className="space-y-3">
             <div className="font-semibold text-foreground">{t('prediction.jev.guideQuestionsTitle')}</div>
-            <QuestionNote title={t('prediction.jev.qEntryTitle')} desc={t('prediction.jev.qEntryDesc', vars)}
-                          options={chips(ENTRY_OPTIONS)} />
+            <p>{t('prediction.jev.guideQuestions')}</p>
+            <QuestionNote title={t('prediction.jev.qWinTitle')} desc={t('prediction.jev.qWinDesc', vars)} />
+            <QuestionNote title={t('prediction.jev.qPatternTitle')} desc={t('prediction.jev.qPatternDesc')}
+                          options={PATTERN_OPTIONS.map(k => ({ label: t(`prediction.jev.pattern.${k}`), cls: PATTERN_STYLE[k].text }))} />
+            <QuestionNote title={t('prediction.jev.qFadingTitle')} desc={t('prediction.jev.qFadingDesc', vars)} />
+            <QuestionNote title={t('prediction.jev.qFlowTitle')} desc={t('prediction.jev.qFlowDesc')} />
+            <QuestionNote title={t('prediction.jev.qDipTitle')} desc={t('prediction.jev.qDipDesc')} />
+            <QuestionNote title={t('prediction.jev.qAgainstTitle')} desc={t('prediction.jev.qAgainstDesc', vars)} />
           </div>
           <div className="space-y-1.5">
             <div className="font-semibold text-foreground">{t('prediction.jev.guideRulesTitle')}</div>
-            <p>{t('prediction.jev.guideBuy', vars)}</p>
-            <p>{t('prediction.jev.guideSell', vars)}</p>
+            <p>{t('prediction.jev.guideArms', vars)}</p>
+            {/* 三组各一段：代号和组名 + 叫醒方式芯片（跟卡片上那个一样）+ 规则 */}
+            {ARMS.map(arm => (
+              <p key={arm}>
+                <b className="text-foreground">{ARM_CODE[arm]} {t(`prediction.jev.armName.${arm}`)}</b>{' '}
+                <PathChip path={arm === 'TIMER_JEV' ? 'T' : 'J'} /> {t(`prediction.jev.guideArm.${arm}`, vars)}
+              </p>
+            ))}
+            <p>{t('prediction.jev.guideJumpDef', vars)}</p>
+            <p>{t('prediction.jev.guideCommon', vars)}</p>
             <p>{t('prediction.jev.guideFill', vars)}</p>
           </div>
         </div>
@@ -94,8 +111,9 @@ function Guide({ thresholds }: { thresholds: JevThresholds }) {
 }
 
 /**
- * 右栏：Jev 在看什么、怎么决定。每 15 秒一行，按回合分组、最新在上，整页一起滚。
- * 每个回合默认只露出要紧的行和最新一行，其余"先等 / 拿着"折起；点"显示全部"展开。行本身默认收起，点开看细节。
+ * 右栏：Jev 在看什么、代码怎么决定。在看的这一局被叫醒一次一行（突变两组只在合格突变时有行，v5-3 开盘后第 60 秒起每 30 秒一行），
+ * 按回合分组、最新在上，整页一起滚。
+ * 每个回合默认只露出要紧的行和最新一行，其余条件没过、照常拿着、已经买过、照常不动的折起；点"显示全部"展开。行本身默认收起，点开看细节。
  */
 export function JevFeed({ overview, feed, currentWindowStart }: {
   overview: JevPredictionOverview | null;
@@ -144,7 +162,7 @@ export function JevFeed({ overview, feed, currentWindowStart }: {
                   )}
                 </div>
                 {visible.map(d => (
-                  <JevDecisionCard key={d.id} d={d} open={!!opened[d.id]}
+                  <JevDecisionCard key={d.id} d={d} arm={overview.run.arm} open={!!opened[d.id]}
                                    onToggle={() => setOpened(prev => ({ ...prev, [d.id]: !prev[d.id] }))} />
                 ))}
               </div>

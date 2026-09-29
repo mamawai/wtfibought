@@ -10,7 +10,7 @@ function brier(v?: number): string {
   return v == null ? '--' : v.toFixed(3);
 }
 
-/** 三列 Brier，每行最低的标橙；合计行取总体统计 */
+/** 三列 Brier，每行最低的标橙；整点按秒数一行，突变行合成一行；合计行取总体统计 */
 export function BrierTable({ rows, total }: { rows: JevCheckpointBrier[]; total?: JevPredictionStats }) {
   const { t } = useTranslation(['community']);
   const all: JevCheckpointBrier[] = [...rows];
@@ -38,7 +38,11 @@ export function BrierTable({ rows, total }: { rows: JevCheckpointBrier[]; total?
           const best = Math.min(...vals.filter((v): v is number => v != null));
           return (
             <tr key={r.checkpoint} className={isTotal ? 'font-semibold' : undefined}>
-              <td className={TD}>{isTotal ? t('prediction.jev.total') : t('prediction.jev.checkpointSec', { s: r.checkpoint.slice(1) })}</td>
+              <td className={TD}>
+                {isTotal ? t('prediction.jev.total')
+                  : r.checkpoint === 'J' ? t('prediction.jev.path.J')
+                  : t('prediction.jev.checkpointSec', { s: r.checkpoint.slice(1) })}
+              </td>
               <td className={cn(TD, 'mute')}>{r.n}</td>
               {vals.map((v, i) => (
                 <td key={i} className={cn(TD, v === best ? 'font-bold text-primary' : 'mute')}>{brier(v)}</td>

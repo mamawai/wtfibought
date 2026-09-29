@@ -31,13 +31,14 @@ function StatCell({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /** 盈亏带正负号和涨跌色 */
-function SignedUsd({ v }: { v: number }) {
+export function SignedUsd({ v }: { v: number }) {
   return <span className={v > 0 ? 'up' : v < 0 ? 'dn' : undefined}>{fmtSignedUsd(v)}</span>;
 }
 
 /**
- * 左下：Jev 的注单（四列＋副行，手机也放得下：回合/何时买、方向/份数均价、结果、盈亏/成本），
- * 底下折叠的记分明细：决策统计（买卖几次、手续费、不卖会怎样），R1–R3 另有三列 Brier 按检查点 + 校准；每块先用大白话说清楚怎么看。
+ * 左下：在看这一局的注单（四列＋副行，手机也放得下：回合/何时买、方向/份数均价、结果、盈亏/成本），
+ * 底下折叠的记分明细：决策统计（买卖几次、手续费、不卖会怎样），有 Jev 胜率的局另有三列 Brier 按检查点 + 校准；
+ * 每块先用大白话说清楚怎么看。
  */
 export function JevTradesCard({ overview, bets, feed }: {
   overview: JevPredictionOverview | null;
@@ -60,7 +61,7 @@ export function JevTradesCard({ overview, bets, feed }: {
 
   const shown = allBets ? bets : bets.slice(0, FOLD);
   const stats = overview?.stats;
-  // R4 起不问谁赢，没有 Brier，只看决策统计
+  // R4 不问谁赢，没有 Brier，只看决策统计
   const scored = (stats?.scored ?? 0) > 0;
 
   return (

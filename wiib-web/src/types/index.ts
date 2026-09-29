@@ -824,21 +824,24 @@ export interface JevNoulAnswer {
   noul: number;
 }
 
-/** 一张决策卡：每回合每个检查点各一行 */
+/** 一张决策卡：一局每被叫醒一次一行 */
 export interface JevPredictionDecisionView {
   id: number;
   windowStart: number;
-  /** 开盘后第几秒，如 T150 */
+  /** 首字母是怎么叫醒的、后面是开盘后第几秒：T150 整点（旧局每个检查点都是 T），J57 突变 */
   checkpoint: string;
   decidedAt: number;
   /** 纯数学的上涨概率 */
   pModel?: number;
-  /** Jev 的上涨概率（UP 会赢与 1 − DOWN 会赢的平均），只 R2、R3 有；R1 旧版是按后劲修正的数学概率；R4 起不问 */
+  /**
+   * Jev 的上涨概率：v5 看 UP 时是 win、看 DOWN 时是 1 − win；R2、R3 是 UP 会赢与 1 − DOWN 会赢的平均；
+   * R1 旧版是按后劲修正的数学概率；R4 不问
+   */
   pJev?: number;
   /** 市场隐含 */
   pMkt?: number;
   /**
-   * Jev 拍板的选项：R4 起空仓持仓都是 BUY_UP / BUY_DOWN / PASS；R3 持仓是 HOLD / SELL，R1 旧版是 BUY_UP / BUY_DOWN / WAIT，R2 没有
+   * Jev 拍板的选项：R4 空仓持仓都是 BUY_UP / BUY_DOWN / PASS；R3 持仓是 HOLD / SELL，R1 旧版是 BUY_UP / BUY_DOWN / WAIT，R2 和 v5 没有
    */
   jevChoice?: 'BUY_UP' | 'BUY_DOWN' | 'PASS' | 'WAIT' | 'HOLD' | 'SELL';
   /** 它的概率 */
@@ -850,34 +853,48 @@ export interface JevPredictionDecisionView {
   upBid?: number;
   downAsk?: number;
   downBid?: number;
-  /** 最近 15 秒里 UP 中间价 3 秒内的最大涨幅 / 最大跌幅（负数），R4 起有，采样不够没有 */
+  /**
+   * v5 突变行是这次突变的大小：UP 涨记在 up，UP 跌记在 down（负数），另一个是 0；整点行没有。
+   * R4 是最近 15 秒里 UP 中间价 3 秒内的最大涨幅 / 最大跌幅（负数），采样不够没有
+   */
   oddsJumpUp?: number;
   oddsJumpDown?: number;
+  /** v5：这一行看的是哪一边，突变看涨起来的那一边；整点空仓看领先方，拿着看手里这一边 */
+  side?: 'UP' | 'DOWN';
+  /** v5：叫醒后 15 秒、45 秒的 UP 中间价，事后补上；过了回合末尾没有 */
+  upMid15s?: number;
+  upMid45s?: number;
   /**
    * 按数学估计的每份优势，只作参考：买入是那边估计 − 卖价 − 手续费；持仓行没有，R3 和 v4 的持仓行是卖出扣费后比估计多拿多少；
    * R2 是按 Jev 胜率算、优势大那边的
    */
   edge?: number;
-  /** SELL 只有旧局有；v4 那一局持仓时加注也是 BUY_UP / BUY_DOWN，reason 首词是 ADD */
+  /** SELL 旧局和 v5-3 有；v4 那一局持仓时加注也是 BUY_UP / BUY_DOWN，reason 首词是 ADD */
   action: 'BUY_UP' | 'BUY_DOWN' | 'STAY_OUT' | 'HOLD' | 'SELL' | 'ERROR';
   /**
    * 首个词是代码（见后端 PredictionRules），页面按它出提示；BUY / UNSURE / NO_QUOTE / MISSED（v4 的 ADD / MAX_STAKE、R2 的 WAIT / ASK_LOW）
-   * 第二个词是哪边；按别的价成交或没抢到时价写成 "看到的→实际的"（没价是 none）；ERROR 行没有
+   * 第二个词是哪边；按别的价成交或没抢到时价写成 "看到的→实际的"（没价是 none）；ERROR 行没有。
+   * v5 条件没过的 FADING（v5-2）、PRICE_BAND / NO_PULLBACK（v5-3）第二个词是看的那一边，后面是没过的那个数；
+   * v5 的 BUY 后面的数 v5-1 没有，v5-2 是在变弱，v5-3 是最新一步逆着；HOLD / SELL / NO_BID 第二个词是手里那一边，SELL 的数是会赢
    */
   reason?: string;
-  /** 买入行是这一注；持仓行是本回合在持的第一注 */
+  /** 买入行是这一注；持仓行是本回合在持的第一注，v5 的 HOLD、SELL 行是这一组这一回合在持的那一注 */
   betId?: number;
-  /** 买入行是这一注的本金；持仓行是在持的合计 */
+  /** 买入行是这一注的本金；持仓行是在持的合计，v5 是在持那一注的本金 */
   stake?: number;
   outcome?: string;
   error?: string;
   /**
-   * Jev 的回答：R4 起只有入场题 entry；R3 是谁赢两问 up_wins / down_wins 加入场题 entry 或离场题 exit；
+   * Jev 的回答：v5 是六道看盘题（这一边会赢 win、形态 pattern、在变弱 push_fading、成交在帮它 flow_confirms、缩了又拉回来 dip_recovered、
+   * 最新一步逆着 latest_against），一次叫醒涉及的几组记同一份，Jev 出错时 v5-1 那一行没有；
+   * R4 只有入场题 entry；R3 是谁赢两问 up_wins / down_wins 加入场题 entry 或离场题 exit；
    * R1 旧版是后劲题 momentum 和决定题 decide；没问 Jev 的行没有
    */
   answers?: {
     up_wins?: JevNoulAnswer; down_wins?: JevNoulAnswer; entry?: JevAnswer; exit?: JevAnswer;
     decide?: JevAnswer; momentum?: JevAnswer;
+    win?: JevNoulAnswer; pattern?: JevAnswer; push_fading?: JevNoulAnswer; flow_confirms?: JevNoulAnswer; dip_recovered?: JevNoulAnswer;
+    latest_against?: JevNoulAnswer;
   };
 }
 
@@ -893,7 +910,7 @@ export interface JevPredictionStats {
   fees: number;
   /** 已结回合的买入要是都不卖、拿到结算的盈亏 */
   heldPnl: number;
-  /** 有 p_jev 能算 Brier 的行数，R4 起为 0 */
+  /** 有 p_jev 能算 Brier 的行数，R4 为 0 */
   scored: number;
   brierModel?: number;
   brierJev?: number;
@@ -902,6 +919,7 @@ export interface JevPredictionStats {
 
 /** 按检查点分的三列 Brier */
 export interface JevCheckpointBrier {
+  /** 整点按秒数分，如 T60；突变行合成一组，是 J */
   checkpoint: string;
   n: number;
   brierModel?: number;
@@ -930,33 +948,70 @@ export interface JevBet {
   pnl?: number;
 }
 
-/** 页面提示里要写出来的几个数 */
+/** 页面说明里要写出来的几个数，都是现在的配置 */
 export interface JevThresholds {
-  /** Jev 选的那一项概率到这么多才照做 */
-  actThreshold: number;
-  /** Jev 拍板后等这么久再看盘口，按那时的价成交 */
-  fillDelayMs: number;
-  /** 等完的价比 Jev 看到的差这么多以内照样成交 */
-  fillTolerance: number;
   /** 每注本金 */
   baseStake: number;
-  /** UP 中间价 3 秒内涨或跌到这么多才写进 state 告诉 Jev */
+  /** 决定买卖以后等这么久再看盘口，按那时的价成交 */
+  fillDelayMs: number;
+  /** 等完的价比看到的差这么多以内照样成交：买入贵不超过、卖出低不超过 */
+  fillTolerance: number;
+  /** 某一边 3 秒内涨这么多算突变 */
   jumpThreshold: number;
+  /** 突变那一边起跳前的价在这个区间里才算合格突变 */
+  jumpFromMin: number;
+  jumpFromMax: number;
+  /** v5-2：Jev 判这一边在变弱不超过这么多才买 */
+  jumpFadingMax: number;
+  /** v5-3：领先方卖价在这个区间里才买 */
+  timerAskMin: number;
+  timerAskMax: number;
+  /** v5-3：Jev 判最新一步逆着领先方到这么多才买 */
+  timerAgainstMin: number;
+  /** v5-3：Jev 判手里这一边会赢不超过这么多就卖 */
+  timerSellWinMax: number;
 }
 
-/** 预测员的一局：一局一个账户，重新开局加一局，旧局留档 */
+/** 三组对照：v5-1 突变就买、v5-2 突变时 Jev 把关、v5-3 整点 Jev 买卖 */
+export type JevArm = 'JUMP_CODE' | 'JUMP_JEV' | 'TIMER_JEV';
+
+/** 在跑的一组这一局的战绩 */
+export interface JevArmStats {
+  runNo: number;
+  arm: JevArm;
+  windows: number;
+  bets: number;
+  sells: number;
+  settledBets: number;
+  /** 已结算里赚了的笔数 */
+  wins: number;
+  /** 已结算的盈亏，扣过手续费 */
+  pnl: number;
+  fees: number;
+  /** 账户余额，sim 连不上时没有 */
+  balance?: number;
+}
+
+/** 预测员的一局：一局一个账户，重新开局一次建三局（三组各一局），旧局留档 */
 export interface JevRun {
   runNo: number;
-  /** 版本说明，开局时填 */
+  /** 版本说明，开局时填，同一次开的三局一样 */
   label?: string;
   startedAt: number;
+  /** 哪一组；旧局没有 */
+  arm?: JevArm;
+  /** 这一局账户的初始资金 */
+  initialBalance: number;
 }
 
-/** 预测员总开关：configured=平台 JEV_API_KEY 配了，enabled=开关开着，两个都真才跑；run 是当前局 */
+/**
+ * 预测员总开关：configured=平台 JEV_API_KEY 配了，enabled=开关开着，两个都真才跑；
+ * runs 是在跑的三局，按 v5-1、v5-2、v5-3 排，还没开过分组的局时是空的
+ */
 export interface JevSwitchState {
   configured: boolean;
   enabled: boolean;
-  run: JevRun;
+  runs: JevRun[];
 }
 
 export interface JevPredictionOverview {
@@ -965,12 +1020,15 @@ export interface JevPredictionOverview {
   thresholds: JevThresholds;
   /** 在看的这一局账户的余额 */
   gameBalance?: number;
+  /** 在看的这一局账户的初始资金 */
   initialGameBalance: number;
-  /** 在看的这一局 */
+  /** 在看的这一局；不指定时是 v5-1 那一局 */
   run: JevRun;
-  /** 全部局，新的在前，第一个是当前局 */
+  /** 全部局，新的在前 */
   runs: JevRun[];
   stats: JevPredictionStats;
+  /** 在跑的三组各一项；还没开过分组的局时是空的 */
+  arms: JevArmStats[];
   brierByCheckpoint: JevCheckpointBrier[];
   calibration: JevCalibrationBucket[];
 }

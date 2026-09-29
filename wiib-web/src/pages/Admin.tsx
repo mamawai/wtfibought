@@ -12,6 +12,7 @@ import { useToast } from '../components/ui/use-toast';
 import { FeedStreamHealthCard } from '../components/FeedStreamHealthCard';
 import { MonitorCarousel } from '../components/MonitorCarousel';
 import { LlmEndpointForm, type LlmEndpointValue } from '../components/LlmEndpointForm';
+import { runName } from '../components/jev/format';
 import { RefreshCw, Calendar, Plus, Trash2, Pencil, Save, Ban } from 'lucide-react';
 
 /** 功能位名称的词表 key，顺序即页面上的行序。常量在组件外，存翻译结果会在模块加载那一刻定死，切语言不跟着变 */
@@ -173,7 +174,8 @@ export function Admin() {
       const s = await jevPredictionApi.newRun(jevNewRunLabel ?? '');
       setJevSwitch(s);
       setJevNewRunLabel(null);
-      toast(t('admin.jev.newRunDone', { n: s.run.runNo }), 'success');
+      // 一次建三局，局号连着
+      toast(t('admin.jev.newRunDone', { from: s.runs[0].runNo, to: s.runs[s.runs.length - 1].runNo }), 'success');
     } catch (e) {
       toast((e as Error).message || t('admin.actionFailed'), 'error');
     } finally {
@@ -377,10 +379,14 @@ export function Admin() {
                   </Button>
                   {!jevSwitch.configured && <span className="text-xs text-destructive">{t('admin.jev.noKey')}</span>}
                 </div>
-                {/* 局次：关着才能重新开局 */}
+                {/* 局次：在跑的三组各一局；关着才能重新开局 */}
                 <div className="flex flex-wrap items-center gap-3 text-sm">
-                  <span className="font-semibold">{t('admin.jev.currentRun', { n: jevSwitch.run.runNo })}</span>
-                  {jevSwitch.run.label && <span className="text-muted-foreground">{jevSwitch.run.label}</span>}
+                  <span className="font-semibold">
+                    {jevSwitch.runs.length > 0
+                      ? t('admin.jev.liveRuns', { runs: jevSwitch.runs.map(runName).join(' / ') })
+                      : t('admin.jev.noRuns')}
+                  </span>
+                  {jevSwitch.runs[0]?.label && <span className="text-muted-foreground">{jevSwitch.runs[0].label}</span>}
                   <Button size="sm" variant="outline" onClick={() => setJevNewRunLabel('')}
                           disabled={actionLoading !== null || jevSwitch.enabled || jevNewRunLabel !== null}>
                     {t('admin.jev.newRun')}
@@ -392,7 +398,7 @@ export function Admin() {
                     <Input className="max-w-xs" value={jevNewRunLabel} maxLength={60} placeholder={t('admin.jev.labelPh')}
                            onChange={e => setJevNewRunLabel(e.target.value)} disabled={actionLoading !== null} />
                     <Button size="sm" onClick={() => void handleJevNewRun()} disabled={actionLoading !== null}>
-                      {t('admin.jev.confirmNewRun', { n: jevSwitch.run.runNo + 1 })}
+                      {t('admin.jev.confirmNewRun')}
                     </Button>
                     <Button size="sm" variant="ghost" onClick={() => setJevNewRunLabel(null)} disabled={actionLoading !== null}>
                       {t('common:cancel')}

@@ -138,19 +138,20 @@
     },
     "jev": {
       "title": "Jev predictor",
-      "hint": "When on, Jev is asked every 15 seconds after each 5-minute round opens and bets on the prediction market. The switch is stored in Redis, so it survives restarts, and turns itself off when the wallet cannot afford a bet. Each run has its own bot account (R1 is jev-prediction, then jev-prediction-r2…) funded with $100; after a new run starts, older runs are archived and can still be viewed run by run on the Jev page.",
+      "hint": "When on, the three arms bet on the prediction market together: v5-1 and v5-2 wake on odds jumps, and v5-3 asks Jev every 30 seconds from 60 seconds after the open. The switch is stored in Redis, so it survives restarts; an arm whose wallet cannot afford a bet stops on its own, and the switch turns itself off only when all three have stopped. A new run creates three runs at once: one per arm, each with its own bot account (jev-prediction-r plus the run number) funded with $500, all sharing one version note. Older runs are archived and can still be viewed run by run on the Jev page.",
       "on": "Running",
       "off": "Off",
       "noKey": "The platform JEV_API_KEY is not set, so it cannot be turned on",
       "turnOn": "Turn on",
       "turnOff": "Turn off",
       "view": "Open the Jev page",
-      "currentRun": "Run {{n}}",
+      "noRuns": "No arm runs started yet",
+      "liveRuns": "Running: {{runs}}",
       "newRun": "New run",
       "newRunWhileOn": "Turn it off before starting a new run",
-      "labelPh": "Version note (optional), e.g. bets on Jev's win chance",
-      "confirmNewRun": "Start run {{n}}",
-      "newRunDone": "Run {{n}} started; turn the switch on to begin"
+      "labelPh": "Version note (optional, shared by the three runs), e.g. r5",
+      "confirmNewRun": "Start new runs (one per arm)",
+      "newRunDone": "Runs {{from}}–{{to}} started; turn the switch on to begin"
     },
     "invite": {
       "title": "Invite codes",

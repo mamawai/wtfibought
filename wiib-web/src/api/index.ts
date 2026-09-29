@@ -555,10 +555,10 @@ export const jevApi = {
 };
 
 // ========== Jev 预测员（平台级展示） ==========
-/** 三个读接口都按局看，run 不传是当前局 */
+/** 三个读接口都按局看，run 不传是在跑的 v5-1 那一局 */
 export const jevPredictionApi = {
   overview: (run?: number) => api.get<unknown, JevPredictionOverview>('/ai/jev-prediction/overview', { params: { run } }),
-  /** 最近决策带 Jev 的回答，Jev 页右栏一次拿全；每回合 17 次，51 条约三个回合 */
+  /** 这一局最近的决策带 Jev 的回答，Jev 页右栏一次拿全；v5-3 每回合最多 8 行，51 条是最近六个多回合，突变两组只在有突变时才有行 */
   feed: (limit = 51, run?: number) =>
     api.get<unknown, JevPredictionDecisionView[]>('/ai/jev-prediction/feed', { params: { limit, run } }),
   bets: (limit = 30, run?: number) => api.get<unknown, JevBet[]>('/ai/jev-prediction/bets', { params: { limit, run } }),
