@@ -9,6 +9,7 @@ import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -108,6 +109,56 @@ public class OrderFlowAggregator {
             double largeTotal = largeBuyVol + largeSellVol;
             double largeBias = largeTotal > 0 ? (largeBuyVol - largeSellVol) / largeTotal : 0;
             return new Metrics(tradeDelta, intensity, largeBias, total, count);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 一次读出 boundsMs[0] 以来的成交，按相邻两个边界切成 boundsMs.length − 1 段，每段一个指标，算法同 {@link #getMetrics}。
+     * 第 i 段是 [boundsMs[i], boundsMs[i+1])；末段不封顶，交易所时钟快一点的成交也算进最近一段。读不到数据回 null。
+     *
+     * @param boundsMs 升序的边界时刻（交易所 ts 口径）
+     */
+    public List<Metrics> getMetricsBetween(String symbol, long[] boundsMs) {
+        try {
+            List<MapRecord<String, Object, Object>> records = since(symbol, boundsMs[0]);
+            if (records == null || records.isEmpty()) return null;
+
+            int n = boundsMs.length - 1;
+            double[] buyVol = new double[n], sellVol = new double[n], largeBuyVol = new double[n], largeSellVol = new double[n];
+            int[] count = new int[n];
+            for (MapRecord<String, Object, Object> r : records) {
+                Map<Object, Object> v = r.getValue();
+                long ts = Long.parseLong(String.valueOf(v.get("ts")));
+                if (ts < boundsMs[0]) continue;
+                // 落在哪一段：过了下一个边界就往后挪，末段兜住后面所有的
+                int i = 0;
+                while (i < n - 1 && ts >= boundsMs[i + 1]) i++;
+                double usdt = Double.parseDouble(String.valueOf(v.get("p"))) * Double.parseDouble(String.valueOf(v.get("q")));
+                if ("1".equals(String.valueOf(v.get("bm")))) {
+                    sellVol[i] += usdt;
+                    if (usdt > LARGE_TRADE_USDT) largeSellVol[i] += usdt;
+                } else {
+                    buyVol[i] += usdt;
+                    if (usdt > LARGE_TRADE_USDT) largeBuyVol[i] += usdt;
+                }
+                count[i]++;
+            }
+
+            List<Metrics> out = new ArrayList<>(n);
+            for (int i = 0; i < n; i++) {
+                double total = buyVol[i] + sellVol[i];
+                if (total < 1) {
+                    out.add(new Metrics(0, 0, 0, 0, 0));
+                    continue;
+                }
+                double seconds = Math.max(1, (boundsMs[i + 1] - boundsMs[i]) / 1000.0);
+                double largeTotal = largeBuyVol[i] + largeSellVol[i];
+                out.add(new Metrics((buyVol[i] - sellVol[i]) / total, count[i] / seconds,
+                        largeTotal > 0 ? (largeBuyVol[i] - largeSellVol[i]) / largeTotal : 0, total, count[i]));
+            }
+            return out;
         } catch (Exception e) {
             return null;
         }
