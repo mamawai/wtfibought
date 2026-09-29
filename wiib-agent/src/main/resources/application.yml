@@ -150,16 +150,26 @@ jev:
     api-key: ${JEV_API_KEY:}
     base-url: ${JEV_BASE_URL:https://api.typesafe.ai}
     model: ${JEV_MODEL:jev-latest}
-  # 预测员（BTC 5 分钟盘）：开关和重新开局在 /admin 页面（开关存 Redis，默认关）。每个检查点问 Jev 一次买 UP / 买 DOWN / 不买，
-  # 空仓持仓同一题：空仓照买，买了拿到结算，持仓时照问只记录、不卖不加注；代码只算数、管执行。钱包付不起一注就自动关开关
+  # 预测员（BTC 5 分钟盘）：开关和重新开局在 /admin 页面（开关存 Redis，默认关）。三组对照各一局一个账户：
+  # v5-1 突变就买、v5-2 突变时 Jev 判不在变弱才买（都每回合最多买一次、不卖）；v5-3 整点唤醒，空仓时领先方卖价够高、
+  # Jev 判最新一步逆着它就买，持仓时 Jev 判会赢太低就卖。
+  # 一次唤醒只问一次 Jev 盘面六道题、只等一次成交，涉及的组各写一行。某一组付不起一注就停掉这一组，三组都停了才关开关
   prediction:
-    checkpoint-seconds: 30,45,60,75,90,105,120,135,150,165,180,195,210,225,240,255,270   # 开盘后第几秒问一次，每次一行
+    timer-seconds: 60,90,120,150,180,210,240,270   # v5-3 整点唤醒：开盘后第几秒
+    jump-threshold: 0.15      # 突变唤醒：开盘后 30~270 秒里任一边中间价 3 秒内涨到 15¢，看突变那一边
+    jump-from-min: 0.30       # 突变那一边的起跳价在 30~50¢ 才唤醒（含两端）
+    jump-from-max: 0.50
+    wake-cooldown-ms: 5000    # 突变唤醒后 5 秒内到点的整点跳过不补；两次突变唤醒至少隔 5 秒
     base-stake: 5             # 每注本金 USDT
-    act-threshold: 0.5        # Jev 选的那一项概率到这里才照做，0.5 = 不小于其余选项加起来
-    fill-delay-ms: 1000       # Jev 拍板后等这么久再看盘口，按那时的价成交
-    fill-tolerance: 0.03      # 等完的价比 Jev 看到的差 3¢ 以内照样成交，再差就算没抢到
+    initial-balance: 500      # 新开的局每个账户注资 USDT
+    jump-fading-max: 0.30     # v5-2：Jev 答"在变弱"不超过这里才买
+    timer-ask-min: 0.85       # v5-3 空仓：领先方卖价在 85~96¢ 才买（含两端）
+    timer-ask-max: 0.96
+    timer-against-min: 0.70   # v5-3 空仓：Jev 答"最新一步逆着领先方"到这里才买
+    timer-sell-win-max: 0.10  # v5-3 持仓：Jev 答手里这一边"会赢"不超过这里就按买一价全卖
+    fill-delay-ms: 1000       # 定了要成交后等这么久再看盘口，按那时的价成交
+    fill-tolerance: 0.03      # 等完的价买入贵 3¢、卖出低 3¢ 以内照样成交，再差就算没抢到
     book-max-age-ms: 5000     # 盘口超过这么久没更新就不问不动
-    jump-threshold: 0.15      # 最近 15 秒里 UP 中间价 3 秒内涨或跌到 15¢ 才写进 state 告诉 Jev
 
 # Hyperliquid 大户持仓（WhalePoolTask / WhalePositionTask）：纯展示 + 落库，不进 trader 决策。方案见 docs/hyperliquid-whale.md
 whale:

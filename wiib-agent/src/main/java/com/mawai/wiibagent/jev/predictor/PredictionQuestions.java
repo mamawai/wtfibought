@@ -6,39 +6,89 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 问 Jev 的题：每个检查点只问一道，买 UP / 买 DOWN / 不买，Jev 拍板。空仓持仓同一道题、同一份 state，
- * 持仓时拿到结算，它的选择只记录，见 {@link PredictionRules#holding}。题目一律英文。
- * <p>
- * 不提持仓、不给估计当参照，只说清怎么赢、state 各段是什么。选项顺序固定 UP 在前：Jev 对选项位置敏感，换顺序会改变它偏哪边。
+ * 问 Jev 的题：每次唤醒问六道盘面题，只问盘面是什么样，不问买不买。题目一律英文。
+ * 题里直接写看的那一边（UP 或 DOWN），另一边的题是这一边的镜像：UP ↔ DOWN、at or above ↔ below、buyers ↔ sellers、rise ↔ fall。
+ * <ul>
+ *   <li>win：看的那一边会赢，换算成 p_jev 记分；v5-3 持仓时太低就卖</li>
+ *   <li>pattern：BTC 现在是单边、来回还是说不上，只记录</li>
+ *   <li>push_fading：看的那一边在变弱，v5-2 太像就不买</li>
+ *   <li>flow_confirms：Binance 主动成交和看的那一边同向，只记录</li>
+ *   <li>dip_recovered：这一局逆过又顺回来，只记录</li>
+ *   <li>latest_against：最新一步逆着看的那一边，v5-3 空仓时是才买</li>
+ * </ul>
+ * 选项、判据按写的顺序发。
  */
 final class PredictionQuestions {
 
-    static final String ENTRY = "entry";
+    static final String WIN = "win";
+    static final String PATTERN = "pattern";
+    static final String PUSH_FADING = "push_fading";
+    static final String FLOW_CONFIRMS = "flow_confirms";
+    static final String DIP_RECOVERED = "dip_recovered";
+    static final String LATEST_AGAINST = "latest_against";
 
-    static final String BUY_UP = "BUY_UP";
-    static final String BUY_DOWN = "BUY_DOWN";
-    static final String PASS = "PASS";
+    static final String CASCADE = "cascade";
+    static final String CHOP = "chop";
+    static final String NEITHER = "neither";
 
-    static final Question ENTRY_Q = Question.choice(
-            "You are playing `market`. Choose the side you would buy right now, or pass. UP wins if BTC's average price over the "
-                    + "final minute ends at or above the opening average, and DOWN wins otherwise. `clock` says how long is left and how much "
-                    + "of that final-minute average is already set; `btc` says where BTC stands against the opening average and how it got "
-                    + "there; `binance_flow` says what traders on Binance are doing; `odds` says what each side costs with the fee and how "
-                    + "its price has been moving. A share pays 100¢ if its side wins and nothing if it loses. Buy a side only if you judge "
-                    + "its chance of winning to be higher than its cost; otherwise pass.",
+    /** story 的引用说明，四道过程题共用 */
+    private static final String STORY_REF =
+            "`story` lists what BTC did in each step since the open, oldest first; a rise favours UP and a fall favours DOWN.";
+
+    static final Question PATTERN_Q = Question.choice(
+            "What kind of move is BTC in right now, judging by `story`? `story` lists what BTC did in each step since the open, oldest first.",
             ordered(
-                    BUY_UP, "Buy UP now: UP's true chance of winning is higher than what a share of UP costs.",
-                    BUY_DOWN, "Buy DOWN now: DOWN's true chance of winning is higher than what a share of DOWN costs.",
-                    PASS, "Buy nothing now: neither side's true chance of winning is higher than what its share costs."));
+                    CASCADE, "A one-way cascade: price keeps pushing in one direction with little bounce, and trading pushes the same way.",
+                    CHOP, "Chopping in a range: price swings back and forth around a level, and moves against it get taken back.",
+                    NEITHER, "No clear pattern, or price is barely moving."));
 
     private PredictionQuestions() {
     }
 
-    static Map<String, Question> questions() {
-        return Map.of(ENTRY, ENTRY_Q);
+    /**
+     * 六道题，按 win、pattern、push_fading、flow_confirms、dip_recovered、latest_against 的顺序
+     *
+     * @param side    看的那一边 UP / DOWN
+     * @param hasJump 突变唤醒：state 里有 jump，win 题末尾多一句
+     */
+    static Map<String, Question> questions(String side, boolean hasJump) {
+        boolean up = "UP".equals(side);
+        String other = up ? "DOWN" : "UP";
+        String win = side + " will win this round. " + side + " wins if BTC's average price over the final minute is "
+                + (up ? "at or above" : "below") + " the opening average. `btc_now` and `lead` say where BTC stands, `story` lists what "
+                + "BTC did in each step since the open, oldest first, `odds_history` lists what the market priced each side at after "
+                + "each step, and `clock` says how much time is left."
+                + (hasJump ? " `jump` says how the market's prices just moved." : "");
+
+        Map<String, Question> q = new LinkedHashMap<>();
+        q.put(WIN, noul(win, side + " wins this round.", other + " wins this round."));
+        q.put(PATTERN, PATTERN_Q);
+        q.put(PUSH_FADING, noul(
+                side + " is losing strength: BTC's latest step is weaker in " + side + "'s favour than its earlier steps. " + STORY_REF,
+                "In the latest step BTC barely moved or moved against " + side + ", after earlier steps moved clearly in " + side + "'s favour.",
+                "In the latest step BTC moved in " + side + "'s favour at least as strongly as in the earlier steps."));
+        q.put(FLOW_CONFIRMS, noul(
+                "Right now trading on Binance is pushing in " + side + "'s favour. The latest step in `story` says who is ahead among "
+                        + "Binance takers; buyers favour UP and sellers favour DOWN.",
+                (up ? "Buyers" : "Sellers") + " are ahead among Binance takers in the latest step.",
+                "Takers are balanced, or " + (up ? "sellers" : "buyers") + " are ahead."));
+        q.put(DIP_RECOVERED, noul(
+                "During this round BTC moved against " + side + " in an earlier step and moved in " + side + "'s favour again in a later step. "
+                        + STORY_REF,
+                "An earlier step moved against " + side + ", and a later step moved in " + side + "'s favour.",
+                "No step moved against " + side + ", or no later step moved back in " + side + "'s favour."));
+        q.put(LATEST_AGAINST, noul(
+                "In the latest step BTC moved against " + side + ". " + STORY_REF,
+                "The latest step in `story` is a " + (up ? "fall" : "rise") + ", which goes against " + side + ".",
+                "The latest step in `story` is a " + (up ? "rise" : "fall") + " or barely moved."));
+        return q;
     }
 
-    /** 选项按写的顺序发给 Jev，Map.of 不保序 */
+    /** 是非题，判据 true 在前 */
+    private static Question noul(String instructions, String yes, String no) {
+        return new Question("noul", instructions, ordered("true", yes, "false", no));
+    }
+
     private static Map<String, String> ordered(String... kv) {
         Map<String, String> m = new LinkedHashMap<>();
         for (int i = 0; i < kv.length; i += 2) {

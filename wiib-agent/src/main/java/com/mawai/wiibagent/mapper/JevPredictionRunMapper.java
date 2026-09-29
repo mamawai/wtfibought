@@ -10,7 +10,7 @@ import java.util.List;
 @Mapper
 public interface JevPredictionRunMapper extends BaseMapper<JevPredictionRun> {
 
-    /** 全部局，新的在前；第一条就是当前局 */
+    /** 全部局，新的在前 */
     @Select("SELECT * FROM jev_prediction_run ORDER BY run_no DESC")
     List<JevPredictionRun> selectAllDesc();
 }

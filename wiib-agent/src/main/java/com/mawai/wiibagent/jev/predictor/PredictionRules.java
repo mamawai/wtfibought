@@ -11,17 +11,24 @@ import java.util.Set;
 
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_BUY_DOWN;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_BUY_UP;
+import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_HOLD;
+import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_SELL;
 import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_STAY_OUT;
 
 /**
- * 预测员的规则：Jev 拍板，代码只管执行。空仓持仓问同一道题：空仓时 Jev 选的那一项概率到 act-threshold 就买那边；
- * 买了拿到结算，持仓时 Jev 选什么都只记录，不卖不加注。代码只拦机械问题：那边没人卖、钱包付不起。每注 base-stake。
- * <p>
- * reason 一律"代码 + 细节"，页面按首个词出中文提示，BUY / UNSURE / NO_QUOTE / MISSED 第二个词是那一边：
- * BUY 下单 / PASS 空仓选不买 / UNSURE Jev 选了但把握不够 / NO_QUOTE 那边没人卖 / NO_BALANCE 没钱 /
- * MISSED 等成交时价差过了容差没抢到 / HOLD 持仓，第二个词是 Jev 选的 PASS / UP / DOWN。
- * 之前各版还有 SELL 卖出、NO_BID 没人接盘，v4 那一局还有 ADD 加注、MAX_STAKE 加满了。
- * 按别的价成交或没抢到时，价写成 "看到的→实际的"（没价是 none），页面照这个写预计和实际。
+ * 预测员三组的买卖规则，每注 base-stake，记第一条没过的：
+ * <ul>
+ *   <li>v5-1 {@link #jumpCodeEntry}：突变就买突变那一边，不看 Jev</li>
+ *   <li>v5-2 {@link #jumpJevEntry}：Jev 判"在变弱"不高才买突变那一边</li>
+ *   <li>v5-3 {@link #timerBuy} / {@link #timerSell}：空仓时领先方卖价够高、Jev 判最新一步逆着它就买领先方，
+ *       持仓时 Jev 判手里这边会赢太低就卖</li>
+ * </ul>
+ * reason 一律"代码 + 看的那一边 + 细节"，页面按首个词出中文提示：
+ * BUY 下单（v5-1 没有数，v5-2 的数是在变弱，v5-3 的数是最新一步逆着）/ FADING 在变弱太像 / PRICE_BAND 卖价不在区间 /
+ * NO_PULLBACK 最新一步没逆着 / HOLD 买过了或持仓没到卖出条件（第二个词是持有的那一边）/
+ * SELL 卖出（数是会赢）/ NO_BID 该卖但没人接盘 / NO_QUOTE 那边没人卖 / NO_BALANCE 没钱（不带那一边）。
+ * 回路另记 MISSED 等成交时价差过了容差没抢到（买入 "MISSED UP ask 看到的→实际的"，卖出 "MISSED SELL bid 看到的→实际的"）；
+ * 按别的价成交了，BUY 的 ask、SELL 的 bid 后面接 "→实际的"。概率三位小数，价格原样。
  */
 public final class PredictionRules {
 
@@ -38,48 +45,93 @@ public final class PredictionRules {
         BigDecimal ask(String side) {
             return "UP".equals(side) ? upAsk : downAsk;
         }
+
+        BigDecimal bid(String side) {
+            return "UP".equals(side) ? upBid : downBid;
+        }
     }
 
-    /** 入场结论：action 是 BUY_UP / BUY_DOWN / STAY_OUT；side 是 Jev 想买的那边，选不买为 null */
-    record Entry(String action, String side, BigDecimal stake, String reason) {
+    /**
+     * 规则结论：action 成交了记 BUY_UP / BUY_DOWN / SELL，不成交是 STAY_OUT / HOLD；side 是看的那一边；stake 只买入有
+     */
+    record Decision(String action, String side, BigDecimal stake, String reason) {
+
+        /** 要成交：买或卖 */
+        boolean trades() {
+            return ACTION_BUY_UP.equals(action) || ACTION_BUY_DOWN.equals(action) || ACTION_SELL.equals(action);
+        }
     }
 
     private PredictionRules() {
     }
 
-    /** 空仓：Jev 选买且把握够、那边有人卖、付得起就买；选不买或把握不够就不动 */
-    static Entry entry(Judgment j, Book b, BigDecimal gameBalance, JevPredictionConfig cfg) {
-        String choice = j.decision().choice();
-        double p = j.choiceP();
-        if (PredictionQuestions.PASS.equals(choice)) {
-            return new Entry(ACTION_STAY_OUT, null, null, "PASS " + fmt(p));
-        }
-        boolean up = PredictionQuestions.BUY_UP.equals(choice);
-        String side = up ? "UP" : "DOWN";
-        if (p < cfg.getActThreshold()) {
-            return new Entry(ACTION_STAY_OUT, side, null, "UNSURE " + side + " " + fmt(p));
-        }
+    /** v5-1：突变就买突变那一边。NO_QUOTE → NO_BALANCE → BUY */
+    static Decision jumpCodeEntry(String side, Book b, BigDecimal gameBalance, JevPredictionConfig cfg) {
         BigDecimal ask = b.ask(side);
         if (ask == null) {
-            return new Entry(ACTION_STAY_OUT, side, null, "NO_QUOTE " + side);
+            return stay(side, "NO_QUOTE " + side);
         }
+        return buy(side, ask, gameBalance, cfg, "BUY " + side + " ask " + ask.toPlainString());
+    }
+
+    /** v5-2：Jev 判"在变弱"不超过 jump-fading-max 才买突变那一边。NO_QUOTE → FADING → NO_BALANCE → BUY */
+    static Decision jumpJevEntry(Judgment j, Book b, BigDecimal gameBalance, JevPredictionConfig cfg) {
+        String side = j.side();
+        BigDecimal ask = b.ask(side);
+        if (ask == null) {
+            return stay(side, "NO_QUOTE " + side);
+        }
+        if (j.pushFading() > cfg.getJumpFadingMax()) {
+            return stay(side, "FADING " + side + " " + fmt(j.pushFading()));
+        }
+        return buy(side, ask, gameBalance, cfg, "BUY " + side + " " + fmt(j.pushFading()) + " ask " + ask.toPlainString());
+    }
+
+    /**
+     * v5-3 空仓：领先方卖价在区间里、Jev 判"最新一步逆着领先方"到 timer-against-min，就买领先方（Jev 看的就是领先方）。
+     * NO_QUOTE → PRICE_BAND → NO_PULLBACK → NO_BALANCE → BUY
+     */
+    static Decision timerBuy(Judgment j, Book b, BigDecimal gameBalance, JevPredictionConfig cfg) {
+        String side = j.side();
+        BigDecimal ask = b.ask(side);
+        if (ask == null) {
+            return stay(side, "NO_QUOTE " + side);
+        }
+        if (ask.compareTo(cfg.getTimerAskMin()) < 0 || ask.compareTo(cfg.getTimerAskMax()) > 0) {
+            return stay(side, "PRICE_BAND " + side + " ask " + ask.toPlainString());
+        }
+        if (j.latestAgainst() < cfg.getTimerAgainstMin()) {
+            return stay(side, "NO_PULLBACK " + side + " " + fmt(j.latestAgainst()));
+        }
+        return buy(side, ask, gameBalance, cfg, "BUY " + side + " " + fmt(j.latestAgainst()) + " ask " + ask.toPlainString());
+    }
+
+    /**
+     * v5-3 持仓：Jev 判手里这一边（held，Jev 看的就是它）"会赢"不超过 timer-sell-win-max，就按买一价全部卖出。
+     * 没到卖出条件 HOLD → NO_BID → SELL；不卖的 action 是 HOLD
+     */
+    static Decision timerSell(Judgment j, String held, Book b, JevPredictionConfig cfg) {
+        if (j.win() > cfg.getTimerSellWinMax()) {
+            return new Decision(ACTION_HOLD, held, null, "HOLD " + held);
+        }
+        BigDecimal bid = b.bid(held);
+        if (bid == null) {
+            return new Decision(ACTION_HOLD, held, null, "NO_BID " + held);
+        }
+        return new Decision(ACTION_SELL, held, null, "SELL " + held + " " + fmt(j.win()) + " bid " + bid.toPlainString());
+    }
+
+    /** 买入的最后两步：付不起记 NO_BALANCE，付得起就是 BUY */
+    private static Decision buy(String side, BigDecimal ask, BigDecimal gameBalance, JevPredictionConfig cfg, String reason) {
         BigDecimal stake = stake(cfg.getBaseStake(), gameBalance, ask);
         if (stake == null) {
-            return new Entry(ACTION_STAY_OUT, side, null, NO_BALANCE);
+            return stay(side, NO_BALANCE);
         }
-        return new Entry(up ? ACTION_BUY_UP : ACTION_BUY_DOWN, side, stake, "BUY " + side + " " + fmt(p) + " ask " + ask.toPlainString());
+        return new Decision("UP".equals(side) ? ACTION_BUY_UP : ACTION_BUY_DOWN, side, stake, reason);
     }
 
-    /** 持仓的 reason：拿到结算，Jev 选什么只记下来，HOLD 加它选的 PASS / UP / DOWN 和把握 */
-    static String holding(Judgment j) {
-        String choice = j.decision().choice();
-        String pick = PredictionQuestions.PASS.equals(choice) ? "PASS" : PredictionQuestions.BUY_UP.equals(choice) ? "UP" : "DOWN";
-        return "HOLD " + pick + " " + fmt(j.choiceP());
-    }
-
-    /** 买入每份优势：数学概率 − 卖价 − 吃单费，买入行的 edge 列用它，只给页面当数学参考，不给 Jev */
-    static double edge(double pSide, BigDecimal ask) {
-        return pSide - ask.doubleValue() - PredictionFee.perShare(ask).doubleValue();
+    private static Decision stay(String side, String reason) {
+        return new Decision(ACTION_STAY_OUT, side, null, reason);
     }
 
     /** 想下多少和付得起多少取小；余额要留足手续费，不足 sim 最小本金就不下 */

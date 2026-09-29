@@ -15,7 +15,7 @@ public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDec
 
     /**
      * 记分汇总：回合数、下注数（v4 那一局含加注）、卖出次数、已结注单与胜场、盈亏、手续费、全都拿到结算的盈亏，
-     * 三个概率各自的 Brier 均值（只算 UP/DOWN 已结、有 p_jev 的行，三列同一批样本；R4 起不问谁赢，没有 Brier）
+     * 三个概率各自的 Brier 均值（只算 UP/DOWN 已结、有 p_jev 的行，三列同一批样本；R4 不问谁赢，没有 Brier）
      */
     @Data
     class Stats {
@@ -36,7 +36,7 @@ public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDec
         private BigDecimal brierMkt;
     }
 
-    /** 按检查点分的 Brier：越靠后三列都该越小，看 Jev 在哪一段有用 */
+    /** 按检查点分的 Brier：越靠后三列都该越小，看 Jev 在哪一段有用；突变行合成一组 J */
     @Data
     class CheckpointBrier {
         private String checkpoint;
@@ -77,7 +77,7 @@ public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDec
                    AVG(POWER(p_mkt - CASE outcome WHEN 'UP' THEN 1 ELSE 0 END, 2))
                        FILTER (WHERE outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL AND p_mkt IS NOT NULL) AS brier_mkt
             FROM (
-                -- 卖出行的成交买价：reason 是 "SELL p bid 看到的[→实际的]"，有箭头取实际的
+                -- 卖出行的成交买价：reason 是 "SELL [那一边] p bid 看到的[→实际的]"，有箭头取实际的
                 SELECT *, CASE WHEN action = 'SELL'
                                THEN CAST(COALESCE(SUBSTRING(reason FROM '→([0-9.]+)$'), SUBSTRING(reason FROM 'bid ([0-9.]+)')) AS NUMERIC)
                           END AS sell_px
@@ -88,13 +88,18 @@ public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDec
     Stats selectStats(@Param("runNo") int runNo);
 
     @Select("""
-            SELECT checkpoint, COUNT(*) AS n,
+            SELECT grp AS checkpoint, COUNT(*) AS n,
                    AVG(POWER(p_model - CASE outcome WHEN 'UP' THEN 1 ELSE 0 END, 2)) AS brier_model,
                    AVG(POWER(p_jev - CASE outcome WHEN 'UP' THEN 1 ELSE 0 END, 2)) AS brier_jev,
                    AVG(POWER(p_mkt - CASE outcome WHEN 'UP' THEN 1 ELSE 0 END, 2)) AS brier_mkt
-            FROM jev_prediction_decision
-            WHERE run_no = #{runNo} AND outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL AND p_model IS NOT NULL
-            GROUP BY checkpoint ORDER BY CAST(SUBSTRING(checkpoint FROM 2) AS INT)
+            FROM (
+                -- 突变行合成一组 J 排在最后，整点行按秒数分
+                SELECT *, CASE WHEN checkpoint LIKE 'J%' THEN 'J' ELSE checkpoint END AS grp,
+                          CASE WHEN checkpoint LIKE 'J%' THEN 1000 ELSE CAST(SUBSTRING(checkpoint FROM 2) AS INT) END AS sort_sec
+                FROM jev_prediction_decision
+                WHERE run_no = #{runNo} AND outcome IN ('UP', 'DOWN') AND p_jev IS NOT NULL AND p_model IS NOT NULL
+            ) d
+            GROUP BY grp, sort_sec ORDER BY sort_sec
             """)
     List<CheckpointBrier> selectBrierByCheckpoint(@Param("runNo") int runNo);
 
@@ -110,8 +115,20 @@ public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDec
     @Select("SELECT * FROM jev_prediction_decision WHERE run_no = #{runNo} ORDER BY decided_at DESC LIMIT #{limit}")
     List<JevPredictionDecision> selectRecent(@Param("runNo") int runNo, @Param("limit") int limit);
 
-    @Select("SELECT COUNT(*) FROM jev_prediction_decision WHERE window_start = #{windowStart} AND checkpoint = #{checkpoint}")
-    int countCheckpoint(@Param("windowStart") long windowStart, @Param("checkpoint") String checkpoint);
+    /** 这一局这一回合这个检查点写过没有，重启后不重跑 */
+    @Select("SELECT COUNT(*) FROM jev_prediction_decision WHERE run_no = #{runNo} AND window_start = #{windowStart} "
+            + "AND checkpoint = #{checkpoint}")
+    int countCheckpoint(@Param("runNo") int runNo, @Param("windowStart") long windowStart, @Param("checkpoint") String checkpoint);
+
+    /** 这一局这一回合的买入行，v5-1、v5-2 每回合最多一行；没买过回 null */
+    @Select("SELECT * FROM jev_prediction_decision WHERE run_no = #{runNo} AND window_start = #{windowStart} "
+            + "AND action IN ('BUY_UP', 'BUY_DOWN')")
+    JevPredictionDecision selectRoundBuy(@Param("runNo") int runNo, @Param("windowStart") long windowStart);
+
+    /** 要补唤醒后 15 秒、45 秒 UP 中间价的行：定过看哪一边、两个都还空着、决策时刻在 [fromMs, toMs] */
+    @Select("SELECT * FROM jev_prediction_decision WHERE up_mid_15s IS NULL AND up_mid_45s IS NULL AND side IS NOT NULL "
+            + "AND decided_at BETWEEN #{fromMs} AND #{toMs} ORDER BY decided_at")
+    List<JevPredictionDecision> selectPendingAfterPrice(@Param("fromMs") long fromMs, @Param("toMs") long toMs);
 
     /** 回填要看的行：没结果的，或开过仓但盈亏还没填的；窗口在 (afterWs, beforeWs) 之间 */
     @Select("SELECT * FROM jev_prediction_decision WHERE window_start < #{beforeWs} AND window_start > #{afterWs} "

@@ -1,19 +1,18 @@
 package com.mawai.wiibagent.jev.predictor;
 
 import com.mawai.wiibcommon.cache.CacheService;
-import com.mawai.wiibcommon.entity.ForceOrder;
-import com.mawai.wiibcommon.market.ForceOrderService;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.OrderFlowAggregator;
+import com.mawai.wiibcommon.market.OrderFlowAggregator.Metrics;
 import com.mawai.wiibcommon.market.TimeWeightedAverage.Point;
+import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.OddsJump;
 import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Snapshot;
 import com.mawai.wiibquant.market.service.KlineFetcher;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -21,23 +20,27 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 眼睛的句子怎么出：路径与形状、相对开盘价与谁领先、报价与成本、赔率走势与突变、波动，以及整份 state 怎么拼 */
+/** state 的句子怎么出：步怎么切、每步的涨跌档与主动成交、赔率历史、突变句，UP / DOWN 对调时句子也对调，以及整份 state 怎么拼 */
 class PredictionStateWriterTest {
 
     private static final long WS = 1_790_016_000L;
+    private static final long WS_MS = WS * 1000;
+    private static final BigDecimal OPEN = new BigDecimal("86000");
 
     private static Point at(long sec, String price) {
         return new Point(sec * 1000, new BigDecimal(price));
     }
 
-    /** n 根 1m K 线，收盘价在 100 和 100.04 之间来回 */
+    /** n 根 1m K 线，收盘价在 100 和 100.04 之间来回：1 分钟典型波动 0.04% × 1.4826 */
     private static List<KlineBar> bars(int n) {
         List<KlineBar> bars = new ArrayList<>();
         for (int i = 0; i < n; i++) {
@@ -48,66 +51,67 @@ class PredictionStateWriterTest {
         return bars;
     }
 
-    // ==================== 各个词 ====================
+    // ==================== 步和各个词 ====================
 
     @Test
-    void 开盘以来路径句子() {
-        BigDecimal open = new BigDecimal("100");
-        double sigma = 0.05;   // 0.05%：0.015% 以内算平
-        List<Point> roseThenFlat = List.of(at(0, "100"), at(30, "100.10"), at(60, "100.10"));
-        assertThat(PredictionStateWriter.sinceOpenSentence(roseThenFlat, open, sigma, 0, 60_000))
-                .isEqualTo("rose early, flat since");
-        List<Point> roseThenReversed = List.of(at(0, "100"), at(30, "100.10"), at(60, "99.95"));
-        assertThat(PredictionStateWriter.sinceOpenSentence(roseThenReversed, open, sigma, 0, 60_000))
-                .isEqualTo("rose early, then reversed below the open");
-        List<Point> fellThenRecovered = List.of(at(0, "100"), at(30, "99.80"), at(60, "99.90"));
-        assertThat(PredictionStateWriter.sinceOpenSentence(fellThenRecovered, open, sigma, 0, 60_000))
-                .isEqualTo("fell early, then recovered part of it");
-        List<Point> flat = List.of(at(0, "100"), at(30, "100.005"), at(60, "100.01"));
-        assertThat(PredictionStateWriter.sinceOpenSentence(flat, open, sigma, 0, 60_000)).isEqualTo("flat since the open");
+    void story的步_从现在往回每三十秒一步_开头不到十五秒并进下一步() {
+        assertThat(PredictionStateWriter.storyBounds(WS_MS, WS_MS + 30_000)).containsExactly(WS_MS, WS_MS + 30_000);
+        assertThat(PredictionStateWriter.storyBounds(WS_MS, WS_MS + 44_000)).containsExactly(WS_MS, WS_MS + 44_000);
+        assertThat(PredictionStateWriter.storyBounds(WS_MS, WS_MS + 45_000)).containsExactly(WS_MS, WS_MS + 15_000, WS_MS + 45_000);
+        assertThat(PredictionStateWriter.storyBounds(WS_MS, WS_MS + 57_000)).containsExactly(WS_MS, WS_MS + 27_000, WS_MS + 57_000);
+        // 97 秒：往回切到 7 秒，不到 15 秒并进去，第一步 37 秒
+        assertThat(PredictionStateWriter.storyBounds(WS_MS, WS_MS + 97_000))
+                .containsExactly(WS_MS, WS_MS + 37_000, WS_MS + 67_000, WS_MS + 97_000);
+        long[] full = PredictionStateWriter.storyBounds(WS_MS, WS_MS + 270_000);
+        assertThat(full).hasSize(10);
+        for (int k = 0; k < full.length; k++) {
+            assertThat(full[k]).isEqualTo(WS_MS + k * 30_000L);
+        }
     }
 
     @Test
-    void 路径形状_一跳_台阶_来回_平盘不给() {
-        BigDecimal open = new BigDecimal("100");
-        double sigma = 0.05;
-        List<Point> jump = List.of(at(0, "100"), at(30, "100.00"), at(35, "100.10"), at(90, "100.10"));
-        assertThat(PredictionStateWriter.shapeWord(jump, open, sigma)).isEqualTo("one jump");
-        List<Point> steps = List.of(at(0, "100"), at(30, "100.025"), at(60, "100.05"), at(90, "100.075"), at(120, "100.10"));
-        assertThat(PredictionStateWriter.shapeWord(steps, open, sigma)).isEqualTo("in steps");
-        List<Point> swing = List.of(at(0, "100"), at(30, "100.15"), at(60, "99.90"), at(90, "100.02"));
-        assertThat(PredictionStateWriter.shapeWord(swing, open, sigma)).isEqualTo("back and forth");
-        List<Point> flat = List.of(at(0, "100"), at(30, "100.005"), at(60, "100.01"));
-        assertThat(PredictionStateWriter.shapeWord(flat, open, sigma)).isNull();
+    void 一步的涨跌_按三十秒正常波动分四档_带美元() {
+        double normal = 30;
+        assertThat(PredictionStateWriter.movePhrase(5, normal)).isEqualTo("barely moved (+$5)");
+        assertThat(PredictionStateWriter.movePhrase(0.4, normal)).isEqualTo("barely moved ($0)");
+        assertThat(PredictionStateWriter.movePhrase(9, normal)).isEqualTo("rose a little (+$9)");
+        assertThat(PredictionStateWriter.movePhrase(-12, normal)).isEqualTo("fell a little (-$12)");
+        assertThat(PredictionStateWriter.movePhrase(30, normal)).isEqualTo("rose (+$30)");
+        assertThat(PredictionStateWriter.movePhrase(-45, normal)).isEqualTo("fell (-$45)");
+        assertThat(PredictionStateWriter.movePhrase(60, normal)).isEqualTo("rose sharply (+$60)");
+        assertThat(PredictionStateWriter.movePhrase(-60, normal)).isEqualTo("fell sharply (-$60)");
     }
 
     @Test
-    void 十秒内最大涨跌_往前看十秒时刻生效的价() {
-        List<Point> pts = List.of(at(0, "100"), at(12, "100.05"), at(20, "100.12"));
-        assertThat(PredictionStateWriter.biggestMovePct(pts, 10_000)).isCloseTo(0.12, within(1e-9));
-        List<Point> slow = List.of(at(0, "100"), at(15, "100.03"), at(30, "100.06"));
-        assertThat(PredictionStateWriter.biggestMovePct(slow, 10_000)).isCloseTo(0.03, within(1e-6));
+    void 主动成交_按买占比取整_两边对调时p对100减p() {
+        assertThat(PredictionStateWriter.takersPhrase(0.24)).isEqualTo("buyers ahead among Binance takers (62% buys)");
+        assertThat(PredictionStateWriter.takersPhrase(-0.24)).isEqualTo("sellers ahead among Binance takers (38% buys)");
+        assertThat(PredictionStateWriter.takersPhrase(0.2)).isEqualTo("buyers ahead among Binance takers (60% buys)");
+        assertThat(PredictionStateWriter.takersPhrase(-0.2)).isEqualTo("sellers ahead among Binance takers (40% buys)");
+        assertThat(PredictionStateWriter.takersPhrase(0.18)).isEqualTo("Binance takers balanced (59% buys)");
+        assertThat(PredictionStateWriter.takersPhrase(-0.18)).isEqualTo("Binance takers balanced (41% buys)");
+        // 买占比落在半个百分点上，两边往离 50 远的方向进，还是对称
+        assertThat(PredictionStateWriter.takersPhrase(0.25)).endsWith("(63% buys)");
+        assertThat(PredictionStateWriter.takersPhrase(-0.25)).endsWith("(37% buys)");
+        assertThat(PredictionStateWriter.takersPhrase(0)).isEqualTo("Binance takers balanced (50% buys)");
     }
 
     @Test
-    void 最近一分钟方向带涨跌美元() {
-        List<Point> pts = List.of(at(0, "86000"), at(30, "86010"), at(90, "86040"));
-        assertThat(PredictionStateWriter.lastMinutePhrase(pts, 90_000, 0.02)).isEqualTo("rising (+$30)");
-        List<Point> flat = List.of(at(0, "86000"), at(90, "85998"));
-        assertThat(PredictionStateWriter.lastMinutePhrase(flat, 90_000, 0.02)).isEqualTo("flat (-$2)");
-        List<Point> still = List.of(at(0, "86000"), at(90, "85999.7"));
-        assertThat(PredictionStateWriter.lastMinutePhrase(still, 90_000, 0.02)).isEqualTo("flat (+$0)");
+    void 美元_按绝对值取整两边对称_零不带正负号() {
+        assertThat(PredictionStateWriter.signedUsd(18.4)).isEqualTo("+$18");
+        assertThat(PredictionStateWriter.signedUsd(-7.6)).isEqualTo("-$8");
+        assertThat(PredictionStateWriter.signedUsd(2.5)).isEqualTo("+$3");
+        assertThat(PredictionStateWriter.signedUsd(-2.5)).isEqualTo("-$3");
+        assertThat(PredictionStateWriter.signedUsd(0.4)).isEqualTo("$0");
+        assertThat(PredictionStateWriter.signedUsd(-0.4)).isEqualTo("$0");
     }
 
     @Test
-    void 相对开盘均价_死区里算在开盘价上() {
-        BigDecimal open = new BigDecimal("86000");
-        assertThat(PredictionStateWriter.gapPhrase(open, new BigDecimal("86037"), 0.05))
-                .isEqualTo("above the opening average by $37 (0.043%)");
-        assertThat(PredictionStateWriter.gapPhrase(open, new BigDecimal("85990"), 0.05))
-                .isEqualTo("below the opening average by $10 (0.012%)");
+    void 离开盘均价多远_死区里算在开盘价上() {
+        assertThat(PredictionStateWriter.posPhrase(OPEN, new BigDecimal("86037"), 0.05)).isEqualTo("$37 above the opening average");
+        assertThat(PredictionStateWriter.posPhrase(OPEN, new BigDecimal("85963"), 0.05)).isEqualTo("$37 below the opening average");
         // 0.0012% 不到 0.05 × 0.05% 的死区
-        assertThat(PredictionStateWriter.gapPhrase(open, new BigDecimal("86001"), 0.05)).isEqualTo("at the opening average");
+        assertThat(PredictionStateWriter.posPhrase(OPEN, new BigDecimal("86001"), 0.05)).isEqualTo("at the opening average");
     }
 
     @Test
@@ -118,146 +122,32 @@ class PredictionStateWriterTest {
     }
 
     @Test
-    void 报价写成美分_成本连手续费() {
-        // 0.62 + 0.07 × 0.62 × 0.38 = 0.6365
-        assertThat(PredictionStateWriter.quotePhrase("UP", new BigDecimal("0.62"), new BigDecimal("0.60")))
-                .isEqualTo("ask 62¢, bid 60¢; buying costs 63.6¢ a share with the fee and pays 100¢ if UP wins");
-        assertThat(PredictionStateWriter.quotePhrase("DOWN", null, new BigDecimal("0.38")))
-                .isEqualTo("nobody is selling DOWN right now; bid 38¢");
-        assertThat(PredictionStateWriter.quotePhrase("DOWN", new BigDecimal("0.405"), null)).startsWith("ask 40.5¢, no bid; ");
+    void 赔率历史_每步结束时的价_那一刻之前没有采样就跳过这一步() {
+        long[] bounds = {WS_MS, WS_MS + 37_000, WS_MS + 67_000, WS_MS + 97_000};
+        List<Point> mids = List.of(at(WS + 40, "0.55"), at(WS + 60, "0.605"), at(WS + 96, "0.62"));
+        assertThat(PredictionStateWriter.oddsHistory(bounds, mids))
+                .containsExactly("Step 2: UP 60.5¢, DOWN 39.5¢", "Step 3, the latest: UP 62¢, DOWN 38¢");
+        // 开盘之前的采样不算
+        assertThat(PredictionStateWriter.sampleAt(List.of(at(WS - 1, "0.5")), WS_MS, WS_MS + 37_000)).isNull();
     }
 
     @Test
-    void 热门一句_两边的概率都写() {
-        assertThat(PredictionStateWriter.standingPhrase(new BigDecimal("0.61")))
-                .isEqualTo("UP is a slight favourite; the market prices UP at about 61% and DOWN at about 39%");
-        assertThat(PredictionStateWriter.standingPhrase(new BigDecimal("0.15")))
-                .isEqualTo("DOWN is a strong favourite; the market prices UP at about 15% and DOWN at about 85%");
-        assertThat(PredictionStateWriter.standingPhrase(null)).isEqualTo("no quotes on one side right now");
-    }
-
-    @Test
-    void 热门一句_半个百分点两边对调也对称() {
-        // 价差 1¢ 时中间价常落在半个百分点上
-        assertThat(PredictionStateWriter.standingPhrase(new BigDecimal("0.6050"))).endsWith("UP at about 60% and DOWN at about 40%");
-        assertThat(PredictionStateWriter.standingPhrase(new BigDecimal("0.3950"))).endsWith("UP at about 40% and DOWN at about 60%");
-    }
-
-    @Test
-    void 赔率怎么动_正好三美分八美分时涨跌对调落同一档() {
-        long now = 100_000;
-        assertThat(PredictionStateWriter.oddsMovePhrase(twoMids("0.5500", "0.5800"), now)).startsWith("UP's price rose a little");
-        assertThat(PredictionStateWriter.oddsMovePhrase(twoMids("0.4500", "0.4200"), now)).startsWith("UP's price fell a little");
-        assertThat(PredictionStateWriter.oddsMovePhrase(twoMids("0.5000", "0.5800"), now)).startsWith("UP's price rose sharply");
-        assertThat(PredictionStateWriter.oddsMovePhrase(twoMids("0.5000", "0.4200"), now)).startsWith("UP's price fell sharply");
-        // 半美分往远离 0 进，两边对称
-        assertThat(PredictionStateWriter.oddsMovePhrase(twoMids("0.5000", "0.5850"), now)).endsWith("(+9¢); DOWN's price fell sharply (-9¢)");
-        assertThat(PredictionStateWriter.oddsMovePhrase(twoMids("0.5000", "0.4150"), now)).endsWith("(-9¢); DOWN's price rose sharply (+9¢)");
-    }
-
-    /** 30 多秒前一个价、1 秒前一个价 */
-    private static List<Point> twoMids(String then, String last) {
-        return List.of(new Point(60_000, new BigDecimal(then)), new Point(99_000, new BigDecimal(last)));
-    }
-
-    @Test
-    void 赔率怎么动_两边都写带美分_不够三十秒不给() {
-        long now = 100_000;
-        List<Point> rose = List.of(new Point(60_000, new BigDecimal("0.50")), new Point(70_000, new BigDecimal("0.52")),
-                new Point(99_000, new BigDecimal("0.61")));
-        assertThat(PredictionStateWriter.oddsMovePhrase(rose, now))
-                .isEqualTo("UP's price rose sharply over the last 30 seconds (+9¢); DOWN's price fell sharply (-9¢)");
-        List<Point> still = List.of(new Point(60_000, new BigDecimal("0.50")), new Point(99_000, new BigDecimal("0.51")));
-        assertThat(PredictionStateWriter.oddsMovePhrase(still, now))
-                .isEqualTo("prices barely moved over the last 30 seconds (UP +1¢, DOWN -1¢)");
-        List<Point> flat = List.of(new Point(60_000, new BigDecimal("0.50")), new Point(99_000, new BigDecimal("0.50")));
-        assertThat(PredictionStateWriter.oddsMovePhrase(flat, now))
-                .isEqualTo("prices barely moved over the last 30 seconds (UP +0¢, DOWN +0¢)");
-        List<Point> fell = List.of(new Point(60_000, new BigDecimal("0.50")), new Point(99_000, new BigDecimal("0.46")));
-        assertThat(PredictionStateWriter.oddsMovePhrase(fell, now))
-                .isEqualTo("UP's price fell a little over the last 30 seconds (-4¢); DOWN's price rose a little (+4¢)");
-        List<Point> tooShort = List.of(new Point(85_000, new BigDecimal("0.50")), new Point(99_000, new BigDecimal("0.60")));
-        assertThat(PredictionStateWriter.oddsMovePhrase(tooShort, now)).isNull();
-        assertThat(PredictionStateWriter.oddsMovePhrase(List.of(), now)).isNull();
-    }
-
-    /** 每秒一个 UP 中间价（美分），cents[0] 是 cents.length−1 秒前，最后一个是现在 */
-    private static List<Point> perSecond(long now, int... cents) {
-        List<Point> pts = new ArrayList<>();
-        for (int i = 0; i < cents.length; i++) {
-            pts.add(new Point(now - (cents.length - 1 - i) * 1000L, BigDecimal.valueOf(cents[i], 2)));
-        }
-        return pts;
-    }
-
-    private static String jumpPhrase(List<Point> pts, long now) {
-        return PredictionStateWriter.oddsJumpPhrase(PredictionStateWriter.biggestJumps(pts, now), pts.getLast().price(), now, 0.10);
-    }
-
-    @Test
-    void 突变_涨上去还在涨() {
-        long now = 1_000_000;
-        // 15 秒前 → 现在：11 秒前到 8 秒前 3 秒里 10→30，之后慢慢涨到 38
-        List<Point> pts = perSecond(now, 10, 10, 11, 10, 10, 18, 26, 30, 33, 35, 36, 37, 38, 38, 38, 38);
-        PredictionStateWriter.OddsJumps j = PredictionStateWriter.biggestJumps(pts, now);
-        assertThat(j.riseSize()).isCloseTo(0.20, within(1e-9));
-        assertThat(j.fallSize()).isCloseTo(-0.01, within(1e-9));
-        assertThat(jumpPhrase(pts, now)).isEqualTo("UP's price jumped from 10¢ to 30¢ within 3 seconds (8 seconds ago); it is 38¢ now");
-    }
-
-    @Test
-    void 突变_涨上去被压回一部分_回落不到阈值只写涨() {
-        long now = 1_000_000;
-        List<Point> pts = perSecond(now, 10, 10, 10, 10, 18, 26, 30, 28, 25, 22, 20, 20, 20, 20, 20, 20);
-        PredictionStateWriter.OddsJumps j = PredictionStateWriter.biggestJumps(pts, now);
-        assertThat(j.fallSize()).isCloseTo(-0.08, within(1e-9));
-        assertThat(jumpPhrase(pts, now)).isEqualTo("UP's price jumped from 10¢ to 30¢ within 3 seconds (9 seconds ago); it is 20¢ now");
-    }
-
-    @Test
-    void 突变_涨完又砸下来_两次按先后写_同一次突变取用时最短的那段() {
-        long now = 1_000_000;
-        // 12 秒前 10¢ → 10 秒前 30¢，之后停在 30；8 秒前 30¢ → 6 秒前 12¢，之后停在 12。相邻窗口也看得到 3 秒的那几段，取 2 秒的
-        List<Point> pts = perSecond(now, 10, 10, 10, 10, 20, 30, 30, 30, 20, 12, 12, 12, 12, 12, 12, 12);
-        assertThat(jumpPhrase(pts, now)).isEqualTo("UP's price jumped from 10¢ to 30¢ within 2 seconds (10 seconds ago), "
-                + "then dropped from 30¢ to 12¢ within 2 seconds (6 seconds ago); it is 12¢ now");
-    }
-
-    @Test
-    void 突变_两次一样大的取后发生的() {
-        long now = 1_000_000;
-        // 13 秒前 10→30 用 1 秒，回到 10；4 秒前又 10→30 用 1 秒
-        List<Point> pts = perSecond(now, 10, 10, 30, 30, 30, 30, 10, 10, 10, 10, 10, 30, 30, 30, 30, 30);
-        assertThat(jumpPhrase(pts, now)).startsWith("UP's price dropped from 30¢ to 10¢ within 1 second (9 seconds ago), "
-                + "then jumped from 10¢ to 30¢ within 1 second (4 seconds ago)");
-    }
-
-    @Test
-    void 突变_跨四秒的不算_不到阈值不写但照样记数() {
-        long now = 1_000_000;
-        // 每秒涨 3¢，4 秒涨 12¢，3 秒内最多 9¢
-        List<Point> pts = perSecond(now, 10, 10, 10, 13, 16, 19, 22, 22);
-        PredictionStateWriter.OddsJumps j = PredictionStateWriter.biggestJumps(pts, now);
-        assertThat(j.measured()).isTrue();
-        assertThat(j.riseSize()).isCloseTo(0.09, within(1e-9));
-        assertThat(j.fall()).isNull();
-        assertThat(j.fallSize()).isZero();
-        assertThat(jumpPhrase(pts, now)).isNull();
-    }
-
-    @Test
-    void 突变_中间缺采样_隔太远不配对_十五秒前的终点不算() {
-        long now = 1_000_000;
-        // 5 秒前、1 秒前两个点隔 4 秒，配不成对
-        List<Point> gap = List.of(new Point(now - 5_000, new BigDecimal("0.10")), new Point(now - 1_000, new BigDecimal("0.40")));
-        assertThat(PredictionStateWriter.biggestJumps(gap, now).measured()).isFalse();
-        // 突变在 20 秒前完成，之后没动：终点不在最近 15 秒里
-        List<Point> old = perSecond(now, 10, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30);
-        PredictionStateWriter.OddsJumps j = PredictionStateWriter.biggestJumps(old, now);
-        assertThat(j.measured()).isTrue();
-        assertThat(j.riseSize()).isZero();
-        assertThat(PredictionStateWriter.seconds(400)).isEqualTo("1 second");
-        assertThat(PredictionStateWriter.seconds(2_600)).isEqualTo("3 seconds");
+    void 突变_按涨的那一边写() {
+        OddsJump up = new OddsJump(WS_MS + 94_000, WS_MS + 96_000, new BigDecimal("0.40"), new BigDecimal("0.58"));
+        assertThat(up.side()).isEqualTo("UP");
+        assertThat(up.sideFrom()).isEqualByComparingTo("0.40");
+        assertThat(up.sideTo()).isEqualByComparingTo("0.58");
+        assertThat(PredictionStateWriter.jumpPhrase(up, new BigDecimal("0.58"), WS_MS + 97_000))
+                .isEqualTo("UP's price jumped from 40¢ to 58¢ within 2 seconds (1 second ago); DOWN's price dropped from 60¢ to 42¢. "
+                        + "UP is 58¢ now and DOWN is 42¢");
+        // UP 中间价跌 = DOWN 涨，按 DOWN 自己的价写
+        OddsJump down = new OddsJump(WS_MS + 93_000, WS_MS + 96_000, new BigDecimal("0.60"), new BigDecimal("0.42"));
+        assertThat(down.side()).isEqualTo("DOWN");
+        assertThat(down.sideFrom()).isEqualByComparingTo("0.40");
+        assertThat(down.sideTo()).isEqualByComparingTo("0.58");
+        assertThat(PredictionStateWriter.jumpPhrase(down, new BigDecimal("0.43"), WS_MS + 98_400))
+                .isEqualTo("DOWN's price jumped from 40¢ to 58¢ within 3 seconds (2 seconds ago); UP's price dropped from 60¢ to 42¢. "
+                        + "DOWN is 57¢ now and UP is 43¢");
     }
 
     @Test
@@ -277,153 +167,186 @@ class PredictionStateWriterTest {
 
     // ==================== 整份 state ====================
 
-    private record Deps(CacheService cache, KlineFetcher klines, OrderFlowAggregator flow, ForceOrderService force,
-                        PredictionStateWriter writer) {
+    private record Deps(CacheService cache, KlineFetcher klines, OrderFlowAggregator flow, PredictionStateWriter writer) {
     }
 
-    /** 开盘价 100、开盘后一路涨到 100.05、盘口和逐笔流都新鲜 */
-    private static Deps deps(long nowSec) {
+    /**
+     * 开盘后 97 秒，开盘均价 86000，BTC 每秒一跳（dir = −1 时绕开盘均价对调）：
+     * 前 37 秒涨 $50、再 30 秒跌 $5、最后 30 秒涨 $90；1 分钟典型波动 0.0593%（30 秒约 $36）。
+     * 三步的主动成交：62% 买、不到 10 笔、25% 买（对调时 38%、不到 10 笔、75%）。
+     * UP 中间价：开盘后 1 秒 0.50，30 秒 0.58，60 秒 0.555，96 秒 0.62（对调时 1 − 价）
+     */
+    private static Deps deps(int dir) {
+        long now = WS + 97;
         CacheService cache = mock(CacheService.class);
         KlineFetcher klines = mock(KlineFetcher.class);
         OrderFlowAggregator flow = mock(OrderFlowAggregator.class);
-        ForceOrderService force = mock(ForceOrderService.class);
-        PredictionStateWriter writer = new PredictionStateWriter(cache, klines, flow, force, JevPredictionRunnerTest.CFG);
-        writer.nowMs = () -> nowSec * 1000;
-        when(cache.getPolymarketOpenPrice(WS)).thenReturn(new BigDecimal("100"));
+        PredictionStateWriter writer = new PredictionStateWriter(cache, klines, flow);
+        writer.nowMs = () -> now * 1000;
+        when(cache.getPolymarketOpenPrice(WS)).thenReturn(OPEN);
         List<Point> ticks = new ArrayList<>();
-        for (long s = WS - 60; s <= nowSec; s += 5) {
-            double p = s < WS ? 100 : 100 + 0.05 * Math.min(1.0, (s - WS) / (double) (nowSec - WS));
-            ticks.add(new Point(s * 1000, BigDecimal.valueOf(p)));
+        for (long s = WS - 180; s <= now; s++) {
+            long e = s - WS;
+            double gap = e <= 0 ? 0 : e <= 37 ? 50.0 * e / 37 : e <= 67 ? 50 - 5.0 * (e - 37) / 30 : 45 + 90.0 * (e - 67) / 30;
+            ticks.add(new Point(s * 1000, BigDecimal.valueOf(86000 + dir * gap).setScale(2, RoundingMode.HALF_UP)));
         }
         when(cache.getBtcPricePoints(anyLong())).thenReturn(ticks);
         when(cache.getPredictionAsk("UP")).thenReturn(new BigDecimal("0.62"));
         when(cache.getPredictionBid("UP")).thenReturn(new BigDecimal("0.60"));
         when(cache.getPredictionAsk("DOWN")).thenReturn(new BigDecimal("0.40"));
         when(cache.getPredictionBid("DOWN")).thenReturn(new BigDecimal("0.38"));
-        when(cache.getPredictionBookUpdatedAt()).thenReturn(nowSec * 1000 - 800);
+        when(cache.getPredictionBookUpdatedAt()).thenReturn(now * 1000 - 800);
         when(cache.getPredictionUpMidPoints(anyLong())).thenReturn(List.of(
-                new Point((nowSec - 40) * 1000, new BigDecimal("0.55")), new Point((nowSec - 1) * 1000, new BigDecimal("0.61"))));
+                mid(WS + 1, "0.50", dir), mid(WS + 30, "0.58", dir), mid(WS + 60, "0.555", dir), mid(WS + 96, "0.62", dir)));
         when(klines.fetch(eq("BTCUSDT"), eq("1m"), anyInt())).thenReturn(bars(61));
-        when(flow.getLastUpdateMs("BTCUSDT")).thenReturn(nowSec * 1000 - 500);
-        when(flow.getMetrics("BTCUSDT", 60)).thenReturn(new OrderFlowAggregator.Metrics(0.35, 12, 0.5, 2_000_000, 600));
-        when(flow.priceChange("BTCUSDT", 10)).thenReturn(12.0);
-        when(flow.priceChange("BTCUSDT", 30)).thenReturn(-30.0);
-        ForceOrder shortLiq = new ForceOrder();
-        shortLiq.setSide("BUY");
-        shortLiq.setAmount(new BigDecimal("80000"));
-        shortLiq.setTradeTime(LocalDateTime.ofInstant(Instant.ofEpochSecond(WS + 20), ZoneId.systemDefault()));
-        ForceOrder beforeOpen = new ForceOrder();
-        beforeOpen.setSide("SELL");
-        beforeOpen.setAmount(new BigDecimal("900000"));
-        beforeOpen.setTradeTime(LocalDateTime.ofInstant(Instant.ofEpochSecond(WS - 30), ZoneId.systemDefault()));
-        when(force.getRecent(eq("BTCUSDT"), anyInt())).thenReturn(List.of(shortLiq, beforeOpen));
-        return new Deps(cache, klines, flow, force, writer);
+        when(flow.getLastUpdateMs("BTCUSDT")).thenReturn(now * 1000 - 500);
+        when(flow.getMetricsBetween(eq("BTCUSDT"), any())).thenReturn(List.of(
+                new Metrics(dir * 0.24, 2, 0, 500_000, 50), new Metrics(dir * 0.9, 0.2, 0, 50_000, 6),
+                new Metrics(dir * -0.5, 3, 0, 900_000, 80)));
+        return new Deps(cache, klines, flow, writer);
+    }
+
+    /** UP 中间价采样，dir = −1 时是 1 − 价 */
+    private static Point mid(long sec, String up, int dir) {
+        BigDecimal p = new BigDecimal(up);
+        return new Point(sec * 1000, dir > 0 ? p : BigDecimal.ONE.subtract(p));
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void 五块都给_没有估计也没有持仓_不写便宜贵的结论() {
-        Deps d = deps(WS + 150);
-        Snapshot snap = d.writer().write(WS);
+    void 整点_只有这几个键_story按步写_赔率历史和步对应() {
+        Deps d = deps(1);
+        Snapshot snap = d.writer().write(WS, null);
 
         Map<String, Object> s = snap.state();
-        assertThat(s).containsOnlyKeys("market", "clock", "btc", "binance_flow", "odds");
-        assertThat((String) s.get("market")).doesNotContain("at most one bet").endsWith("You are asked again every 15 seconds.");
-        assertThat(s.get("clock")).isEqualTo("middle: one to three minutes left; 147 seconds until the settlement average is fixed");
-        Map<String, Object> btc = (Map<String, Object>) s.get("btc");
-        assertThat((String) btc.get("vs_open")).startsWith("above the opening average by ");
-        assertThat((String) btc.get("lead")).startsWith("UP ahead");
-        assertThat(btc).containsKeys("since_open", "last_minute", "pace").doesNotContainKey("settlement_so_far");
-        assertThat(btc.get("latest")).isEqualTo("Chainlink, which settles the market, last updated 0 seconds ago; "
-                + "on Binance BTC moved +$12 in the last 10 seconds and -$30 in the last 30 seconds");
-        Map<String, Object> flow = (Map<String, Object>) s.get("binance_flow");
-        assertThat(flow.get("takers")).isEqualTo("buyers ahead in the last minute (taker buys 68% of volume)");
-        assertThat(flow.get("large_trades")).isEqualTo("mostly buys in the last minute");
-        // 开盘前那笔多头强平不算
-        assertThat(flow.get("liquidations")).isEqualTo("shorts liquidated since the open");
-        Map<String, Object> odds = (Map<String, Object>) s.get("odds");
-        assertThat(odds.get("standing")).isEqualTo("UP is a slight favourite; the market prices UP at about 61% and DOWN at about 39%");
-        assertThat((String) odds.get("up")).startsWith("ask 62¢, bid 60¢; ");
-        assertThat((String) odds.get("down")).startsWith("ask 40¢, bid 38¢; ");
-        assertThat(odds.get("odds_move")).isEqualTo("UP's price rose a little over the last 30 seconds (+6¢); DOWN's price fell a little (-6¢)");
-        // 最近 15 秒只有一个采样点，配不成对：不写突变，也不记数
-        assertThat(odds).doesNotContainKey("jump");
-        assertThat(s.toString()).doesNotContain("cheap", "expensive", "estimate");
-        verify(d.cache()).getPredictionUpMidPoints(WS * 1000);
+        assertThat(s.keySet()).containsExactly("market", "clock", "btc_now", "lead", "story", "odds_history");
+        assertThat(s.get("market")).isEqualTo("Polymarket 5-minute BTC market. UP wins if BTC's average price over the final "
+                + "minute is at or above its average at the open; otherwise DOWN wins.");
+        assertThat(s.get("clock")).isEqualTo("early: more than three minutes left; 200 seconds until the settlement average is fixed");
+        assertThat(s.get("btc_now")).isEqualTo("BTC is $135 above the opening average");
+        assertThat(s.get("lead")).isEqualTo(PredictionStateWriter.leadPhrase(snap.raw().zModel()));
+        assertThat((String) s.get("lead")).startsWith("UP ahead");
+        assertThat((List<String>) s.get("story")).containsExactly(
+                "Step 1 (first 37 seconds): BTC rose (+$50), ending $50 above the opening average; "
+                        + "buyers ahead among Binance takers (62% buys)",
+                "Step 2 (next 30 seconds): BTC barely moved (-$5), ending $45 above the opening average",
+                "Step 3, the latest (next 30 seconds): BTC rose sharply (+$90), ending $135 above the opening average; "
+                        + "sellers ahead among Binance takers (25% buys)");
+        assertThat((List<String>) s.get("odds_history")).containsExactly(
+                "Step 1: UP 58¢, DOWN 42¢", "Step 2: UP 55.5¢, DOWN 44.5¢", "Step 3, the latest: UP 62¢, DOWN 38¢");
+        // 主动成交整份 state 只读一次，按步的边界
+        ArgumentCaptor<long[]> bounds = ArgumentCaptor.forClass(long[].class);
+        verify(d.flow()).getMetricsBetween(eq("BTCUSDT"), bounds.capture());
+        assertThat(bounds.getValue()).containsExactly(WS_MS, WS_MS + 37_000, WS_MS + 67_000, WS_MS + 97_000);
+        verify(d.cache()).getPredictionUpMidPoints(WS_MS);
 
+        assertThat(snap.raw().zModel()).isGreaterThan(0);
         assertThat(snap.raw().pModel()).isGreaterThan(0.5);
-        assertThat(snap.raw().bookUpdatedAtMs()).isEqualTo((WS + 150) * 1000 - 800);
-        assertThat(snap.raw().oddsJumpUp()).isNull();
-        assertThat(snap.raw().oddsJumpDown()).isNull();
+        assertThat(snap.raw().bookUpdatedAtMs()).isEqualTo((WS + 97) * 1000 - 800);
+        assertThat(snap.raw().chainlinkAgeMs()).isZero();
+        assertThat(snap.raw().book().upAsk()).isEqualByComparingTo("0.62");
+        assertThat(snap.raw().jump()).isNull();
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void 最近十五秒有突变_写进赔率_数也记下() {
-        long now = WS + 150;
-        Deps d = deps(now);
-        List<Point> mids = new ArrayList<>(List.of(new Point((now - 40) * 1000, new BigDecimal("0.40"))));
-        mids.addAll(perSecond(now * 1000, 40, 40, 40, 52, 60, 61, 61, 61, 61, 61, 61));
-
-        when(d.cache().getPredictionUpMidPoints(anyLong())).thenReturn(mids);
-        Snapshot snap = d.writer().write(WS);
-
-        Map<String, Object> odds = (Map<String, Object>) snap.state().get("odds");
-        assertThat(odds.get("jump")).isEqualTo("UP's price jumped from 40¢ to 61¢ within 3 seconds (5 seconds ago); it is 61¢ now");
-        assertThat(snap.raw().oddsJumpUp()).isCloseTo(0.21, within(1e-9));
-        assertThat(snap.raw().oddsJumpDown()).isZero();
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void 末分钟说锁了多少_逐笔流停了不给Binance() {
-        Deps d = deps(WS + 270);
-        when(d.flow().getLastUpdateMs("BTCUSDT")).thenReturn((WS + 200) * 1000L);
-
-        Snapshot snap = d.writer().write(WS);
+    void 镜像_UP和DOWN对调后句子跟着对调() {
+        Snapshot snap = deps(-1).writer().write(WS, null);
 
         Map<String, Object> s = snap.state();
-        assertThat(s.get("clock")).isEqualTo("final minute: about half of the settlement average is already set; "
-                + "27 seconds until the settlement average is fixed");
-        Map<String, Object> btc = (Map<String, Object>) s.get("btc");
-        assertThat(btc).containsKey("settlement_so_far");
-        assertThat(btc.get("latest")).isEqualTo("Chainlink, which settles the market, last updated 0 seconds ago");
-        Map<String, Object> flow = (Map<String, Object>) s.get("binance_flow");
-        assertThat(flow).doesNotContainKeys("takers", "large_trades").containsKey("liquidations");
+        assertThat(s.get("btc_now")).isEqualTo("BTC is $135 below the opening average");
+        assertThat((String) s.get("lead")).startsWith("DOWN ahead");
+        assertThat(s.get("lead")).isEqualTo(deps(1).writer().write(WS, null).state().get("lead").toString().replace("UP", "DOWN"));
+        assertThat((List<String>) s.get("story")).containsExactly(
+                "Step 1 (first 37 seconds): BTC fell (-$50), ending $50 below the opening average; "
+                        + "sellers ahead among Binance takers (38% buys)",
+                "Step 2 (next 30 seconds): BTC barely moved (+$5), ending $45 below the opening average",
+                "Step 3, the latest (next 30 seconds): BTC fell sharply (-$90), ending $135 below the opening average; "
+                        + "buyers ahead among Binance takers (75% buys)");
+        assertThat((List<String>) s.get("odds_history")).containsExactly(
+                "Step 1: UP 42¢, DOWN 58¢", "Step 2: UP 44.5¢, DOWN 55.5¢", "Step 3, the latest: UP 38¢, DOWN 62¢");
+    }
+
+    @Test
+    void 突变唤醒_多一个jump键_两边都写() {
+        Deps up = deps(1);
+        OddsJump jump = new OddsJump(WS_MS + 94_000, WS_MS + 96_000, new BigDecimal("0.42"), new BigDecimal("0.62"));
+        Snapshot snap = up.writer().write(WS, jump);
+
+        assertThat(snap.state().keySet()).containsExactly("market", "clock", "btc_now", "lead", "story", "odds_history", "jump");
+        assertThat(snap.state().get("jump")).isEqualTo("UP's price jumped from 42¢ to 62¢ within 2 seconds (1 second ago); "
+                + "DOWN's price dropped from 58¢ to 38¢. UP is 62¢ now and DOWN is 38¢");
+        assertThat(snap.raw().jump()).isSameAs(jump);
+
+        OddsJump mirrored = new OddsJump(WS_MS + 94_000, WS_MS + 96_000, new BigDecimal("0.58"), new BigDecimal("0.38"));
+        assertThat(deps(-1).writer().write(WS, mirrored).state().get("jump"))
+                .isEqualTo("DOWN's price jumped from 42¢ to 62¢ within 2 seconds (1 second ago); "
+                        + "UP's price dropped from 58¢ to 38¢. DOWN is 62¢ now and UP is 38¢");
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void 末分钟现价刚跌破开盘价_已锁定部分仍在上方_UP领先() {
-        Deps d = deps(WS + 280);
-        // 末分钟从 WS+237 起：到 WS+277 一直在 100.10，最后三秒跌到 99.99
+    void 逐笔流停了_各步都不写主动成交_也不去读() {
+        Deps d = deps(1);
+        when(d.flow().getLastUpdateMs("BTCUSDT")).thenReturn((WS + 60) * 1000L);
+
+        List<String> story = (List<String>) d.writer().write(WS, null).state().get("story");
+
+        assertThat(story).hasSize(3).noneMatch(line -> line.contains("takers"));
+        assertThat(story.getLast()).isEqualTo("Step 3, the latest (next 30 seconds): BTC rose sharply (+$90), "
+                + "ending $135 above the opening average");
+        verify(d.flow(), never()).getMetricsBetween(any(), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 末分钟_说锁了多少_给已锁定部分_九步() {
+        Deps d = deps(1);
+        long now = WS + 270;
+        d.writer().nowMs = () -> now * 1000;
         List<Point> ticks = new ArrayList<>();
-        for (long sec = WS - 60; sec <= WS + 280; sec++) {
-            String p = sec < WS + 237 ? "100" : sec < WS + 278 ? "100.10" : "99.99";
-            ticks.add(at(sec, p));
+        for (long sec = WS - 60; sec <= now; sec++) {
+            ticks.add(at(sec, sec < WS ? "86000" : "86040"));
         }
         when(d.cache().getBtcPricePoints(anyLong())).thenReturn(ticks);
+        when(d.flow().getLastUpdateMs("BTCUSDT")).thenReturn(now * 1000 - 500);
+        // 前八步没成交，最后一步 65% 买
+        List<Metrics> flows = new ArrayList<>();
+        for (int k = 0; k < 8; k++) {
+            flows.add(new Metrics(0, 0, 0, 0, 0));
+        }
+        flows.add(new Metrics(0.3, 1.5, 0, 1_000_000, 40));
+        when(d.flow().getMetricsBetween(eq("BTCUSDT"), any())).thenReturn(flows);
 
-        Map<String, Object> btc = (Map<String, Object>) d.writer().write(WS).state().get("btc");
+        Map<String, Object> s = d.writer().write(WS, null).state();
 
-        assertThat((String) btc.get("vs_open")).startsWith("below the opening average");
-        assertThat((String) btc.get("settlement_so_far")).contains("above the opening average");
-        assertThat((String) btc.get("lead")).startsWith("UP ahead");
+        assertThat(s.keySet()).containsExactly("market", "clock", "btc_now", "lead", "settlement_so_far", "story", "odds_history");
+        assertThat(s.get("clock")).isEqualTo("final minute: about half of the settlement average is already set; "
+                + "27 seconds until the settlement average is fixed");
+        assertThat(s.get("settlement_so_far")).isEqualTo("the part of the settlement average already set is $40 above the opening average");
+        List<String> story = (List<String>) s.get("story");
+        assertThat(story).hasSize(9);
+        assertThat(story.getFirst()).isEqualTo("Step 1 (first 30 seconds): BTC rose (+$40), ending $40 above the opening average");
+        assertThat(story.getLast()).isEqualTo("Step 9, the latest (next 30 seconds): BTC barely moved ($0), "
+                + "ending $40 above the opening average; buyers ahead among Binance takers (65% buys)");
     }
 
     @Test
-    void 缺开盘价_缺K线都不问_Chainlink停了不抛_年龄交给回路() {
-        Deps noOpen = deps(WS + 150);
+    void 缺开盘价_缺K线_本回合没有tick都不问_Chainlink停了不抛_年龄交给回路() {
+        Deps noOpen = deps(1);
         when(noOpen.cache().getPolymarketOpenPrice(WS)).thenReturn(null);
-        assertThatThrownBy(() -> noOpen.writer().write(WS)).hasMessageContaining("开盘价未到");
+        assertThatThrownBy(() -> noOpen.writer().write(WS, null)).hasMessageContaining("开盘价未到");
 
-        Deps noBars = deps(WS + 150);
+        Deps noBars = deps(1);
         when(noBars.klines().fetch(eq("BTCUSDT"), eq("1m"), anyInt())).thenReturn(List.of());
-        assertThatThrownBy(() -> noBars.writer().write(WS)).hasMessageContaining("K 线取不到");
+        assertThatThrownBy(() -> noBars.writer().write(WS, null)).hasMessageContaining("K 线取不到");
 
-        Deps stale = deps(WS + 150);
-        when(stale.cache().getBtcPricePoints(anyLong())).thenReturn(List.of(
-                new Point((WS + 10) * 1000, new BigDecimal("100")), new Point((WS + 100) * 1000, new BigDecimal("100.02"))));
-        assertThat(stale.writer().write(WS).raw().chainlinkAgeMs()).isEqualTo(50_000);
+        Deps noTick = deps(1);
+        when(noTick.cache().getBtcPricePoints(anyLong())).thenReturn(List.of(at(WS - 5, "86000")));
+        assertThatThrownBy(() -> noTick.writer().write(WS, null)).hasMessageContaining("还没有 Chainlink tick");
+
+        Deps stale = deps(1);
+        when(stale.cache().getBtcPricePoints(anyLong())).thenReturn(List.of(at(WS + 10, "86000"), at(WS + 47, "86020")));
+        assertThat(stale.writer().write(WS, null).raw().chainlinkAgeMs()).isEqualTo(50_000);
     }
 }
