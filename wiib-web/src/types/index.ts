@@ -828,7 +828,7 @@ export interface JevNoulAnswer {
 export interface JevPredictionDecisionView {
   id: number;
   windowStart: number;
-  /** 首字母是怎么叫醒的、后面是开盘后第几秒：T150 整点（旧局每个检查点都是 T），J57 突变 */
+  /** 首字母是怎么来的、后面是开盘后第几秒：T150 整点（旧局每个检查点都是 T），J57 突变，W63 v5-1 盯完的结果 */
   checkpoint: string;
   decidedAt: number;
   /** 纯数学的上涨概率 */
@@ -859,11 +859,18 @@ export interface JevPredictionDecisionView {
    */
   oddsJumpUp?: number;
   oddsJumpDown?: number;
-  /** v5：这一行看的是哪一边，突变看涨起来的那一边；整点空仓看领先方，拿着看手里这一边 */
+  /** v5：这一行看的是哪一边，突变看涨起来的那一边（v5-1 盯完那一行也是）；整点空仓看领先方，拿着看手里这一边 */
   side?: 'UP' | 'DOWN';
-  /** v5：叫醒后 15 秒、45 秒的 UP 中间价，事后补上；过了回合末尾没有 */
+  /** v5：叫醒后 5、10、15、45 秒的 UP 中间价，事后补上；过了回合末尾没有，5、10 秒是盯盘上线后才有 */
+  upMid5s?: number;
+  upMid10s?: number;
   upMid15s?: number;
   upMid45s?: number;
+  /** v5 突变行：那一刻 Binance 上 BTC 最近 10 秒、30 秒涨跌多少（USD），逐笔流停了没有 */
+  binance10s?: number;
+  binance30s?: number;
+  /** v5 突变行：Chainlink 最后一跳 − Binance 最新价（USD），取不到 Binance 价没有 */
+  chainlinkGap?: number;
   /**
    * 按数学估计的每份优势，只作参考：买入是那边估计 − 卖价 − 手续费；持仓行没有，R3 和 v4 的持仓行是卖出扣费后比估计多拿多少；
    * R2 是按 Jev 胜率算、优势大那边的
@@ -874,8 +881,11 @@ export interface JevPredictionDecisionView {
   /**
    * 首个词是代码（见后端 PredictionRules），页面按它出提示；BUY / UNSURE / NO_QUOTE / MISSED（v4 的 ADD / MAX_STAKE、R2 的 WAIT / ASK_LOW）
    * 第二个词是哪边；按别的价成交或没抢到时价写成 "看到的→实际的"（没价是 none）；ERROR 行没有。
-   * v5 条件没过的 FADING（v5-2）、PRICE_BAND / NO_PULLBACK（v5-3）第二个词是看的那一边，后面是没过的那个数；
-   * v5 的 BUY 后面的数 v5-1 没有，v5-2 是在变弱，v5-3 是最新一步逆着；HOLD / SELL / NO_BID 第二个词是手里那一边，SELL 的数是会赢
+   * v5-1：突变行 WATCH 第二个词是突变那一边；盯完那一行 EXTEND / REJECT 第二个词是买的那一边，数是比开始盯时涨了 / 跌了多少，
+   * NO_TRIGGER 第二个词是突变那一边，数是盯完时比开始盯时差多少（可负）。
+   * v5-2：EXTEND / REJECT 第二个词是买的那一边，数是会延续 / 会被打回；NO_CALL 第二个词是突变那一边，两个数依次是会延续、会被打回。
+   * v5-3：PRICE_BAND / NO_PULLBACK 第二个词是看的那一边，后面是没过的那个数；BUY 的数是最新一步逆着。
+   * HOLD / SELL / NO_BID 第二个词是手里那一边，SELL 的数是会赢。旧的 v5 突变行是 BUY（v5-1 没数、v5-2 是在变弱）
    */
   reason?: string;
   /** 买入行是这一注；持仓行是本回合在持的第一注，v5 的 HOLD、SELL 行是这一组这一回合在持的那一注 */
@@ -885,15 +895,17 @@ export interface JevPredictionDecisionView {
   outcome?: string;
   error?: string;
   /**
-   * Jev 的回答：v5 是六道看盘题（这一边会赢 win、形态 pattern、在变弱 push_fading、成交在帮它 flow_confirms、缩了又拉回来 dip_recovered、
-   * 最新一步逆着 latest_against），一次叫醒涉及的几组记同一份，Jev 出错时 v5-1 那一行没有；
+   * Jev 的回答：v5 突变行是三道（这一边会赢 win、会延续 extend、会被打回 reject）；整点行是六道看盘题（会赢 win、形态 pattern、
+   * 在变弱 push_fading、成交在帮它 flow_confirms、缩了又拉回来 dip_recovered、最新一步逆着 latest_against），旧的突变行也是这六道；
+   * 一次叫醒涉及的几组记同一份，Jev 出错时 v5-1 那一行没有，v5-1 盯完那一行不问 Jev；
    * R4 只有入场题 entry；R3 是谁赢两问 up_wins / down_wins 加入场题 entry 或离场题 exit；
    * R1 旧版是后劲题 momentum 和决定题 decide；没问 Jev 的行没有
    */
   answers?: {
     up_wins?: JevNoulAnswer; down_wins?: JevNoulAnswer; entry?: JevAnswer; exit?: JevAnswer;
     decide?: JevAnswer; momentum?: JevAnswer;
-    win?: JevNoulAnswer; pattern?: JevAnswer; push_fading?: JevNoulAnswer; flow_confirms?: JevNoulAnswer; dip_recovered?: JevNoulAnswer;
+    win?: JevNoulAnswer; extend?: JevNoulAnswer; reject?: JevNoulAnswer;
+    pattern?: JevAnswer; push_fading?: JevNoulAnswer; flow_confirms?: JevNoulAnswer; dip_recovered?: JevNoulAnswer;
     latest_against?: JevNoulAnswer;
   };
 }
@@ -961,8 +973,16 @@ export interface JevThresholds {
   /** 突变那一边起跳前的价在这个区间里才算合格突变 */
   jumpFromMin: number;
   jumpFromMax: number;
-  /** v5-2：Jev 判这一边在变弱不超过这么多才买 */
-  jumpFadingMax: number;
+  /** v5-1：突变后盯这么多毫秒 */
+  jumpWatchMs: number;
+  /** v5-1：突变那一边比开始盯时又涨这么多就买它 */
+  jumpExtend: number;
+  /** v5-1：突变那一边跌回跳幅的这个比例就买另一边 */
+  jumpRejectRatio: number;
+  /** v5-2：Jev 判会延续到这么多（且不低于会被打回）就买突变那一边 */
+  jumpExtendMin: number;
+  /** v5-2：Jev 判会被打回到这么多就买另一边 */
+  jumpRejectMin: number;
   /** v5-3：领先方卖价在这个区间里才买 */
   timerAskMin: number;
   timerAskMax: number;
@@ -972,7 +992,7 @@ export interface JevThresholds {
   timerSellWinMax: number;
 }
 
-/** 三组对照：v5-1 突变就买、v5-2 突变时 Jev 把关、v5-3 整点 Jev 买卖 */
+/** 三组对照：v5-1 突变后盯赔率再买、v5-2 突变时 Jev 判延续还是被打回、v5-3 整点 Jev 买卖 */
 export type JevArm = 'JUMP_CODE' | 'JUMP_JEV' | 'TIMER_JEV';
 
 /** 在跑的一组这一局的战绩 */
