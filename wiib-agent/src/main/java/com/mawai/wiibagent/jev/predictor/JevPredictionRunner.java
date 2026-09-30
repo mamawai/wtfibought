@@ -42,6 +42,7 @@ import static com.mawai.wiibcommon.entity.JevPredictionDecision.ACTION_STAY_OUT;
 import static com.mawai.wiibcommon.entity.JevPredictionRun.ARM_JUMP_CODE;
 import static com.mawai.wiibcommon.entity.JevPredictionRun.ARM_JUMP_JEV;
 import static com.mawai.wiibcommon.entity.JevPredictionRun.ARM_TIMER_JEV;
+import static com.mawai.wiibagent.jev.predictor.PredictionRules.EXTEND;
 import static com.mawai.wiibagent.jev.predictor.PredictionRules.NO_BALANCE;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
@@ -51,12 +52,15 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * <ul>
  *   <li>突变唤醒（v5-1、v5-2）：开盘后 30~270 秒，每秒看最近几秒的 UP 中间价，任一边 3 秒内涨到 jump-threshold、
  *       起跳价在区间里就唤醒，看突变那一边，checkpoint 记 J + 开盘后第几秒；两次突变唤醒至少隔 wake-cooldown-ms</li>
+ *   <li>v5-1 盯：突变唤醒时不买，之后每秒先查盯再找突变，突变那一边又走够了或吐回够了就当场唤醒一次买，jump-watch-ms 没触发就停，
+ *       结果写一行，checkpoint 记 W + 开盘后第几秒，不写 state、不问 Jev；同一时刻只盯一个，没触发的被新突变换掉；只在内存里</li>
  *   <li>整点唤醒（v5-3）：到了 timer-seconds 的每一格就唤醒，空仓看数学上领先的那边、持仓看手里那一边，
  *       checkpoint 记 T + 那一格；突变唤醒后 wake-cooldown-ms 内到点的整点跳过不补；整点不挡突变</li>
  * </ul>
- * 一次唤醒：写一次 state → 盘口太旧、Chainlink 停了就不问不动 → 问一次 Jev 六道盘面题，回答写进每一行 → 各组按自己的规则定买卖 →
- * 要成交的等一次 fill-delay、读一次盘口，都按这份盘口成交：买入比看到的贵、卖出比看到的低都不超过 fill-tolerance 才成交，否则算没抢到。
- * Jev 失败时 v5-1 照常走，要看 Jev 的组落 ERROR 行。某一组付不起一注、也没有等结算的注单就停掉这一组，在跑的组都停了才关开关。
+ * 一次唤醒：写一次 state → 盘口太旧、Chainlink 停了就不问不动 → 问一次 Jev（突变三道、整点六道盘面题），回答写进每一行 →
+ * 各组按自己的规则定买卖 → 要成交的等一次 fill-delay、读一次盘口，都按这份盘口成交：
+ * 买入比看到的贵、卖出比看到的低都不超过 fill-tolerance 才成交，否则算没抢到。
+ * Jev 失败时 v5-1 照常盯，要看 Jev 的组落 ERROR 行。某一组付不起一注、也没有等结算的注单就停掉这一组，在跑的组都停了才关开关。
  * <p>
  * 平台 Jev 没配 key、/admin 开关关着、还没开过带组的局都不唤醒；回填不看开关，关掉前的行照样补齐。
  * 写 state 或查账户失败，各组都落 ERROR 行；某一组下单、卖出失败只落它自己的 ERROR 行。
@@ -81,9 +85,6 @@ public class JevPredictionRunner {
     static final List<String> TIMER_ARMS = List.of(ARM_TIMER_JEV);
     /** 回填只看这么久以内的行，更早的当死账 */
     static final long SWEEP_LOOKBACK_SECONDS = 24 * 3600;
-    /** 记唤醒后多久的 UP 中间价 */
-    static final long AFTER_SHORT_MS = 15_000L;
-    static final long AFTER_LONG_MS = 45_000L;
     /** 补唤醒后的价：决策在 5 分钟到 46 秒前的行（45 秒那一刻已经过了还多 1 秒），UP 中间价读最近 6 分钟（Redis 只存这么久） */
     static final long AFTER_FROM_MS = 300_000L;
     static final long AFTER_TO_MS = 46_000L;
@@ -110,8 +111,23 @@ public class JevPredictionRunner {
     private final Map<String, Long> timerRun = new ConcurrentHashMap<>();
     /** 上一次突变唤醒的时刻 */
     private volatile long lastJumpWakeMs;
+    /** v5-1 在盯的突变，没在盯为 null；只在内存里，重启丢了就丢了 */
+    private volatile Watch watch;
     /** 钱不够停掉的局号；重启后清空，停掉的组下一次唤醒会再记一行 NO_BALANCE 再停 */
     private final Set<Integer> stopped = ConcurrentHashMap.newKeySet();
+
+    /**
+     * v5-1 在盯的一次突变
+     *
+     * @param run      盯的那一局
+     * @param ws       突变那一回合
+     * @param side     突变那一边
+     * @param p0       那一边在唤醒那一刻的价
+     * @param jumpSize 跳幅：那一边涨了多少
+     * @param startMs  唤醒时刻
+     */
+    record Watch(JevPredictionRun run, long ws, String side, BigDecimal p0, BigDecimal jumpSize, long startMs) {
+    }
 
     @Scheduled(fixedDelay = 1000)
     public void tick() {
@@ -121,14 +137,21 @@ public class JevPredictionRunner {
         long now = nowMs.getAsLong();
         long ws = windowStart(now);
         long elapsed = now / 1000 - ws;
-        // 先找突变：在找的时段里、离上次突变唤醒够久才找
+        // 在找的时段里、离上次突变唤醒够久才找突变
         boolean jumpOpen = elapsed >= JUMP_FIRST_SECONDS && elapsed <= JUMP_LAST_SECONDS
                 && now - lastJumpWakeMs >= cfg.getWakeCooldownMs();
-        OddsJump jump = jumpOpen ? latestJump(cache.getPredictionUpMidPoints(now - JUMP_LOOKBACK_MS), now, cfg) : null;
+        Watch w = watch;
+        // 在盯或要找突变才读最近几秒的 UP 中间价
+        List<Point> upMids = w != null || jumpOpen ? cache.getPredictionUpMidPoints(now - JUMP_LOOKBACK_MS) : List.of();
+        // 先查盯再找突变
+        if (w != null) {
+            checkWatch(w, upMids, now, ws, elapsed);
+        }
+        OddsJump jump = jumpOpen ? latestJump(upMids, now, cfg) : null;
         // 开关和在跑的局到了要跑才读；突变的两组都停了就当没有突变
         List<JevPredictionRun> jumpRuns = jump != null && sw.isOn() ? liveRuns(JUMP_ARMS) : List.of();
         if (!jumpRuns.isEmpty()) {
-            start(ws, "J" + elapsed, jump, jumpRuns, () -> lastJumpWakeMs = now);
+            start(() -> runWake(ws, "J" + elapsed, jump, jumpRuns), () -> lastJumpWakeMs = now);
             return;
         }
         String slot = timerCheckpoint(elapsed, cfg);
@@ -150,18 +173,37 @@ public class JevPredictionRunner {
             timerRun.put(slot, ws);
             return;
         }
-        start(ws, slot, null, timerRuns, () -> timerRun.put(slot, ws));
+        start(() -> runWake(ws, slot, null, timerRuns), () -> timerRun.put(slot, ws));
+    }
+
+    /**
+     * 查盯：突变那一边又走够了、吐回够了或盯满了，就唤醒一次写 W 行，开关关着先不动。
+     * 最近几秒没有 UP 中间价先不查；回合过了还没盯完就丢掉
+     */
+    private void checkWatch(Watch w, List<Point> upMids, long now, long ws, long elapsed) {
+        if (w.ws() != ws) {
+            watch = null;
+            return;
+        }
+        if (upMids.isEmpty()) {
+            return;
+        }
+        BigDecimal p = sidePrice(w.side(), upMids.getLast().price());
+        boolean done = PredictionRules.watch(w.p0(), p, w.jumpSize(), cfg) != null || now - w.startMs() >= cfg.getJumpWatchMs();
+        if (done && sw.isOn()) {
+            start(() -> runWatch(ws, "W" + elapsed, w, p), () -> watch = null);
+        }
     }
 
     /** 单飞：上一次唤醒还没跑完就不开新的；开起来了才记下这次唤醒 */
-    private void start(long ws, String checkpoint, OddsJump jump, List<JevPredictionRun> wakeRuns, Runnable markRun) {
+    private void start(Runnable wake, Runnable markRun) {
         if (!busy.compareAndSet(false, true)) {
             return;
         }
         markRun.run();
         launch.accept(() -> {
             try {
-                runWake(ws, checkpoint, jump, wakeRuns);
+                wake.run();
             } finally {
                 busy.set(false);
             }
@@ -276,10 +318,51 @@ public class JevPredictionRunner {
             // 写 state、查账户、等成交这些各组共用的步骤失败，各组都落 ERROR
             legs.forEach(l -> fail(l, e));
         }
+        save(legs);
+    }
+
+    /**
+     * v5-1 盯的结果写一行 W，包私有供单测直接调：触发了按 EXTEND / REJECT 买，盯满没触发记 NO_TRIGGER。
+     * 不写 state、不问 Jev；盘口记这一刻看到的那份，要买的照唤醒的路子等一次 fill-delay 再成交
+     *
+     * @param p 突变那一边现在的价
+     */
+    void runWatch(long ws, String checkpoint, Watch w, BigDecimal p) {
+        Leg l = new Leg(w.run(), newRow(w.run().getRunNo(), ws, checkpoint, nowMs.getAsLong()));
+        l.row.setSide(w.side());
+        try {
+            Book seen = readBook();
+            fillBook(l.row, seen);
+            l.row.setBookAgeMs(ageMs(cache.getPredictionBookUpdatedAt()));
+            l.row.setAction(ACTION_STAY_OUT);
+            String call = PredictionRules.watch(w.p0(), p, w.jumpSize(), cfg);
+            if (call == null) {
+                l.row.setReason("NO_TRIGGER " + w.side() + " " + PredictionRules.fmt(p.subtract(w.p0()).doubleValue()));
+            } else {
+                l.userId = account.userId(w.run().getRunNo());
+                l.balance = sim.gameBalance(l.userId);
+                // 延续记又走了多少，回落记吐回多少
+                BigDecimal move = EXTEND.equals(call) ? p.subtract(w.p0()) : w.p0().subtract(p);
+                Decision dec = PredictionRules.jumpEntry(call, w.side(), move.doubleValue(), seen, l.balance, cfg);
+                l.row.setReason(dec.reason());
+                if (dec.trades()) {
+                    l.todo = dec;
+                    execute(List.of(l), seen);
+                }
+            }
+        } catch (Exception e) {
+            fail(l, e);
+        }
+        save(List.of(l));
+    }
+
+    /** 落库、打日志，再看付不起的组要不要停 */
+    private void save(List<Leg> legs) {
         for (Leg l : legs) {
             mapper.insert(l.row);
-            log.info("[JevPred] R{} {} {} {} side={} action={} pModel={} pJev={} pMkt={} reason={}", l.run.getRunNo(), l.arm(), ws,
-                    checkpoint, l.row.getSide(), l.row.getAction(), l.row.getPModel(), l.row.getPJev(), l.row.getPMkt(), l.row.getReason());
+            log.info("[JevPred] R{} {} {} {} side={} action={} pModel={} pJev={} pMkt={} reason={}", l.run.getRunNo(), l.arm(),
+                    l.row.getWindowStart(), l.row.getCheckpoint(), l.row.getSide(), l.row.getAction(), l.row.getPModel(),
+                    l.row.getPJev(), l.row.getPMkt(), l.row.getReason());
         }
         stopBroke(legs);
     }
@@ -346,7 +429,7 @@ public class JevPredictionRunner {
         execute(legs, snap.raw().book());
     }
 
-    /** 问一次 Jev，回答写进每一行；失败了要看 Jev 的组落 ERROR，v5-1 不看 Jev 照常走 */
+    /** 问一次 Jev，回答写进每一行；失败了要看 Jev 的组落 ERROR，v5-1 不看 Jev 照常盯 */
     private Judgment askJev(List<Leg> legs, Snapshot snap, String side) {
         try {
             Judgment j = judge.judge(snap, side);
@@ -358,7 +441,10 @@ public class JevPredictionRunner {
         }
     }
 
-    /** 按这一组的规则定：v5-1、v5-2 这一回合买过的只记录；v5-3 持仓看卖不卖、空仓看买不买。要成交的记下来一起成交 */
+    /**
+     * 按这一组的规则定：v5-1、v5-2 这一回合买过的只记录；v5-1 没买过就开始盯，v5-2 按 Jev 的回答定；
+     * v5-3 持仓看卖不卖、空仓看买不买。要成交的记下来一起成交
+     */
     private void decide(Leg l, Judgment j, Snapshot snap) {
         Book book = snap.raw().book();
         try {
@@ -374,11 +460,12 @@ public class JevPredictionRunner {
                 // 这一局这一回合买过了：照问 Jev 只记录，第二个词是买的那一边
                 dec = new Decision(ACTION_HOLD, l.row.getSide(), null,
                         "HOLD " + (ACTION_BUY_UP.equals(l.bought.getAction()) ? "UP" : "DOWN"));
+            } else if (ARM_JUMP_CODE.equals(l.arm())) {
+                startWatch(l, snap.raw().jump());
+                dec = new Decision(ACTION_STAY_OUT, l.row.getSide(), null, "WATCH " + l.row.getSide());
             } else {
                 l.balance = sim.gameBalance(l.userId);
-                dec = ARM_JUMP_CODE.equals(l.arm())
-                        ? PredictionRules.jumpCodeEntry(l.row.getSide(), book, l.balance, cfg)
-                        : PredictionRules.jumpJevEntry(j, book, l.balance, cfg);
+                dec = PredictionRules.jumpJev(j, book, l.balance, cfg);
             }
             l.row.setReason(dec.reason());
             if (dec.trades()) {
@@ -387,6 +474,20 @@ public class JevPredictionRunner {
         } catch (Exception e) {
             fail(l, e);
         }
+    }
+
+    /** v5-1 开始盯突变那一边，换掉在盯的：起点取唤醒那一刻 UP 中间价序列的最后一个点，换成那一边的价 */
+    private void startWatch(Leg l, OddsJump jump) {
+        long at = l.row.getDecidedAt();
+        BigDecimal upMid = PredictionStateWriter.sampleAt(cache.getPredictionUpMidPoints(at - JUMP_LOOKBACK_MS),
+                at - JUMP_LOOKBACK_MS, at);
+        watch = new Watch(l.run, l.row.getWindowStart(), jump.side(), sidePrice(jump.side(), upMid),
+                jump.sideTo().subtract(jump.sideFrom()), at);
+    }
+
+    /** UP 中间价换成 side 那一边的价 */
+    private static BigDecimal sidePrice(String side, BigDecimal upMid) {
+        return "UP".equals(side) ? upMid : BigDecimal.ONE.subtract(upMid);
     }
 
     /** 要成交的等一次 fill-delay、读一次盘口，各组都按这份盘口成交；这时盘口旧了都记 STALE_WHILE_ASKING */
@@ -468,6 +569,11 @@ public class JevPredictionRunner {
         if (age == null || age > cfg.getBookMaxAgeMs()) {
             return null;
         }
+        return readBook();
+    }
+
+    /** 这一刻的盘口 */
+    private Book readBook() {
         return new Book(cache.getPredictionAsk("UP"), cache.getPredictionBid("UP"),
                 cache.getPredictionAsk("DOWN"), cache.getPredictionBid("DOWN"));
     }
@@ -529,6 +635,9 @@ public class JevPredictionRunner {
         d.setStateJson(MAPPER.writeValueAsString(snap.state()));
         d.setPModel(dec(snap.raw().pModel()));
         d.setLeadSigma(dec(snap.raw().zModel()));
+        d.setBinance10s(usd(snap.raw().binance10Usd()));
+        d.setBinance30s(usd(snap.raw().binance30Usd()));
+        d.setChainlinkGap(usd(snap.raw().chainlinkGapUsd()));
         OddsJump jump = snap.raw().jump();
         if (jump != null) {
             // UP 涨记正数进 up，UP 跌记负数进 down，另一个记 0
@@ -560,8 +669,13 @@ public class JevPredictionRunner {
         return v == null ? "none" : v.toPlainString();
     }
 
+    /** 美元两位小数；没有为 null */
+    private static BigDecimal usd(Double v) {
+        return v == null ? null : BigDecimal.valueOf(v).setScale(2, RoundingMode.HALF_UP);
+    }
+
     /**
-     * 回填：先补唤醒后 15 秒、45 秒的 UP 中间价；再看过去 24 小时里没结果的行，回合 SETTLED 就填结果（VOID 记分时不算），
+     * 回填：先补唤醒后 5、10、15、45 秒的 UP 中间价；再看过去 24 小时里没结果的行，回合 SETTLED 就填结果（VOID 记分时不算），
      * BUY 行的注单到终态（含卖掉）就填盈亏，注单按行所属那一局的账户查。HOLD/SELL 行只记动作，盈亏归开仓那一行。不看开关，不调 Jev。
      */
     @Scheduled(fixedDelay = 60_000, initialDelay = 30_000)
@@ -606,8 +720,8 @@ public class JevPredictionRunner {
     }
 
     /**
-     * 补唤醒后 15 秒、45 秒的 UP 中间价：决策在 5 分钟到 46 秒前、两个都空着的行，采样一次读出，逐行算那两刻的价。
-     * 两个都算不出的行不写，过了 5 分钟自然不再查
+     * 补唤醒后 5、10、15、45 秒的 UP 中间价：决策在 5 分钟到 46 秒前、四个都空着的行，采样一次读出，逐行算那几刻的价。
+     * 都算不出的行不写，过了 5 分钟自然不再查
      */
     private void fillAfterPrices(long now) {
         try {
@@ -617,17 +731,16 @@ public class JevPredictionRunner {
             }
             List<Point> upMids = cache.getPredictionUpMidPoints(now - AFTER_SAMPLES_MS);
             for (JevPredictionDecision d : rows) {
-                BigDecimal p15 = afterPrice(upMids, d, AFTER_SHORT_MS);
-                BigDecimal p45 = afterPrice(upMids, d, AFTER_LONG_MS);
-                if (p15 == null && p45 == null) {
-                    continue;
-                }
-                // 只写这两列，别的列留给结算回填
+                // 只写这四列，别的列留给结算回填
                 JevPredictionDecision u = new JevPredictionDecision();
                 u.setId(d.getId());
-                u.setUpMid15s(p15);
-                u.setUpMid45s(p45);
-                mapper.updateById(u);
+                u.setUpMid5s(afterPrice(upMids, d, 5_000));
+                u.setUpMid10s(afterPrice(upMids, d, 10_000));
+                u.setUpMid15s(afterPrice(upMids, d, 15_000));
+                u.setUpMid45s(afterPrice(upMids, d, 45_000));
+                if (u.getUpMid5s() != null || u.getUpMid10s() != null || u.getUpMid15s() != null || u.getUpMid45s() != null) {
+                    mapper.updateById(u);
+                }
             }
         } catch (Exception e) {
             log.warn("[JevPred] 回填唤醒后的价失败: {}", e.toString());

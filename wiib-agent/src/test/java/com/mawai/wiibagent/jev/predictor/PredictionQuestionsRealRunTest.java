@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.jev.predictor;
 
 import com.mawai.wiibagent.jev.JevClient;
+import com.mawai.wiibagent.jev.JevClient.Answer;
 import com.mawai.wiibagent.jev.JevPlatformConfig;
 import com.mawai.wiibagent.jev.predictor.PredictionJudge.Judgment;
 import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.OddsJump;
@@ -24,10 +25,11 @@ import java.util.Objects;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 六道题和 state 措辞的真跑验收：真调平台 Jev，局面用 {@link PredictionStateWriter} 的同一套句子拼。
- * 人工构造 9 种典型局面加 3 种带突变句的，每种再做一份 UP / DOWN 对调的镜像，题跟着换边。过线沿用试跑 A：
+ * 盘面题和 state 措辞的真跑验收：真调平台 Jev，局面用 {@link PredictionStateWriter} 的同一套句子拼。
+ * 人工构造 9 种典型局面（整点六道题）加 3 种带突变的（突变三道题，state 换成突变那几秒的画面），
+ * 每种再做一份 UP / DOWN 对调的镜像，题跟着换边。过线沿用试跑 A：
  * 对得上事先写好的预期 ≥ 80%、每道题单独 ≥ 70%（是非题 ≥ 0.70 算是、≤ 0.30 算否，中间算没答对）；
- * 镜像 pattern 选同一项 ≥ 80%，五道是非题各自的概率平均相差 ≤ 0.10。
+ * 整点局面镜像 pattern 选同一项 ≥ 80%，每道是非题镜像的概率平均相差 ≤ 0.10。
  * <p>
  * 会烧真 token（24 次调用），默认跳过。跑法（项目根）：
  * <pre>
@@ -49,7 +51,6 @@ class PredictionQuestionsRealRunTest {
     private static final int STEPS = 6;
     private static final long NOW = STEPS * 30_000L;
     private static final int LEFT = 117;
-    private static final List<String> NOULS = List.of("win", "push_fading", "flow_confirms", "dip_recovered", "latest_against");
 
     private final PredictionJudge judge = new PredictionJudge(new JevClient(),
             new JevPlatformConfig(System.getenv("JEV_API_KEY"), JevClient.DEFAULT_BASE_URL, JevClient.DEFAULT_MODEL));
@@ -60,9 +61,22 @@ class PredictionQuestionsRealRunTest {
      * @param steps  6 步各自 BTC 涨跌多少美元
      * @param buys   6 步各自 Binance 主动买占比
      * @param expect 看 UP 时的预期：是非题 true / false，pattern 是选项；镜像看 DOWN，预期不变
-     * @param jump   最后一步的赔率突变 {用了几秒, 几秒前}，从上一步的 UP 价跳到这一步的；没有为 null
+     * @param jump   最后一步的赔率突变和那几秒 Binance 的样子；没有为 null
      */
-    private record Case(String name, int[] steps, int[] buys, Map<String, Object> expect, int[] jump) {
+    private record Case(String name, int[] steps, int[] buys, Map<String, Object> expect, Jump jump) {
+    }
+
+    /**
+     * 突变从上一步的 UP 价跳到这一步的
+     *
+     * @param span   用了几秒
+     * @param ago    几秒前
+     * @param usd10  Binance 最近 10 秒涨跌多少美元
+     * @param usd30  最近 30 秒
+     * @param gap    Chainlink 比 Binance 高多少美元
+     * @param buys10 Binance 最近 10 秒主动买占比
+     */
+    private record Jump(int span, int ago, int usd10, int usd30, int gap, int buys10) {
     }
 
     private static final List<Case> CASES = List.of(
@@ -86,14 +100,13 @@ class PredictionQuestionsRealRunTest {
                     Map.of("push_fading", false, "flow_confirms", false, "dip_recovered", false, "latest_against", false), null),
             new Case("lead_change", new int[]{-30, -28, 26, 34, 30, 36}, new int[]{38, 36, 60, 64, 62, 63},
                     Map.of("push_fading", false, "flow_confirms", true, "dip_recovered", true, "latest_against", false), null),
+            // Binance 刚猛涨、Chainlink 还没跟上、主动买占上风：突变会延续、不会被打回
             new Case("jump_with_trend", new int[]{-20, -8, 6, 5, 6, 22}, new int[]{40, 44, 55, 58, 62, 72},
-                    Map.of("push_fading", false, "flow_confirms", true, "dip_recovered", true, "latest_against", false),
-                    new int[]{2, 1}),
+                    Map.of("extend", true, "reject", false), new Jump(2, 1, 30, 45, -20, 74)),
             new Case("jump_flow_against", new int[]{-20, -8, 6, 5, 6, 22}, new int[]{42, 45, 44, 40, 38, 34},
-                    Map.of("push_fading", false, "flow_confirms", false, "dip_recovered", true, "latest_against", false),
-                    new int[]{3, 2}),
+                    Map.of(), new Jump(3, 2, -4, 10, 3, 36)),
             new Case("jump_after_chop", new int[]{25, -30, 24, -28, -4, 24}, new int[]{58, 42, 57, 43, 47, 68},
-                    Map.of("flow_confirms", true, "dip_recovered", true, "latest_against", false), new int[]{2, 1}));
+                    Map.of(), new Jump(2, 1, 12, 20, -8, 62)));
 
     /** 按离开盘均价多远、剩多少秒定的 UP 价，取两位 */
     private static BigDecimal upMid(double gapUsd, int left) {
@@ -119,31 +132,42 @@ class PredictionQuestionsRealRunTest {
             flows.add(new Metrics((buys - 50) / 50.0, 3, 0, 1_000_000, 100));
         }
         double z = dir * gapUp / (SIGMA1M_USD / Math.sqrt(60) * Math.sqrt(LEFT - 60 + 20));
+        Jump jp = c.jump();
 
         Map<String, Object> state = new LinkedHashMap<>();
-        state.put("market", PredictionStateWriter.GAME);
+        state.put("market", jp == null ? PredictionStateWriter.GAME : PredictionStateWriter.GAME + PredictionStateWriter.CHAINLINK_LAG);
         state.put("clock", PredictionStateWriter.clockPhrase(LEFT) + "; " + LEFT + " seconds until the settlement average is fixed");
         state.put("btc_now", "BTC is " + PredictionStateWriter.posPhrase(OPEN, ticks.getLast().price(), SIGMA1M_PCT));
         state.put("lead", PredictionStateWriter.leadPhrase(z));
         state.put("story", PredictionStateWriter.story(bounds, ticks, OPEN, SIGMA1M_PCT, NORMAL_30S_USD, flows));
-        state.put("odds_history", PredictionStateWriter.oddsHistory(bounds, mids));
-        OddsJump jump = null;
-        if (c.jump() != null) {
-            long to = NOW - c.jump()[1] * 1000L;
-            jump = new OddsJump(to - c.jump()[0] * 1000L, to, mids.get(STEPS - 2).price(), mids.getLast().price());
-            state.put("jump", PredictionStateWriter.jumpPhrase(jump, mids.getLast().price(), NOW));
+        if (jp == null) {
+            state.put("odds_history", PredictionStateWriter.oddsHistory(bounds, mids));
+            return new Snapshot(state, new Raw(z, PredictionModel.p(z), null, null, 0, null, null, null, null));
         }
-        return new Snapshot(state, new Raw(z, PredictionModel.p(z), null, null, 0, jump));
+        long to = NOW - jp.ago() * 1000L;
+        OddsJump jump = new OddsJump(to - jp.span() * 1000L, to, mids.get(STEPS - 2).price(), mids.getLast().price());
+        state.put("jump", PredictionStateWriter.jumpPhrase(jump, mids.getLast().price(), NOW));
+        state.put("binance_now", PredictionStateWriter.binanceNowPhrase(dir * jp.usd10(), dir * jp.usd30(), NORMAL_30S_USD));
+        state.put("chainlink_vs_binance", PredictionStateWriter.gapPhrase(dir * jp.gap(), NORMAL_30S_USD));
+        int buys10 = dir > 0 ? jp.buys10() : 100 - jp.buys10();
+        state.put("takers_now", PredictionStateWriter.takersNowPhrase((buys10 - 50) / 50.0));
+        return new Snapshot(state, new Raw(z, PredictionModel.p(z), null, null, 0, jump,
+                (double) dir * jp.usd10(), (double) dir * jp.usd30(), (double) dir * jp.gap()));
     }
 
-    /** 问一次，六个回答和 state 打日志 */
+    /** 问一次，回答和 state 打日志 */
     private Judgment ask(Case c, int dir) {
         String side = dir > 0 ? "UP" : "DOWN";
         Snapshot snap = snapshot(c, dir);
         Judgment j = judge.judge(snap, side);
         log.info("{} {} pattern={} {} | {}", c.name(), side, pattern(j),
-                NOULS.stream().map(q -> q + "=" + noul(j, q)).toList(), snap.state());
+                nouls(j).stream().map(q -> q + "=" + noul(j, q)).toList(), snap.state());
         return j;
+    }
+
+    /** 回答里的是非题：整点五道，突变三道 */
+    private static List<String> nouls(Judgment j) {
+        return j.answers().keySet().stream().filter(q -> !"pattern".equals(q)).toList();
     }
 
     /** ≥ 0.70 算是，≤ 0.30 算否，中间算没答 */
@@ -155,15 +179,19 @@ class PredictionQuestionsRealRunTest {
         return j.answers().get(q).noul();
     }
 
+    /** 突变局面没有 pattern，为 null */
     private static String pattern(Judgment j) {
-        return j.answers().get("pattern").choice();
+        Answer a = j.answers().get("pattern");
+        return a == null ? null : a.choice();
     }
 
     @Test
     void 构造局面对得上预期_镜像答得一样() {
         Map<String, int[]> perQuestion = new LinkedHashMap<>();
         int samePattern = 0;
-        Map<String, Double> mirrorDiff = new LinkedHashMap<>();
+        int timerCases = 0;
+        // 每道是非题：镜像概率差的和、局面数
+        Map<String, double[]> mirrorDiff = new LinkedHashMap<>();
         for (Case c : CASES) {
             Judgment up = ask(c, 1);
             Judgment down = ask(c, -1);
@@ -177,21 +205,26 @@ class PredictionQuestionsRealRunTest {
                     n[1]++;
                 }
             }
-            samePattern += pattern(up).equals(pattern(down)) ? 1 : 0;
-            for (String q : NOULS) {
-                mirrorDiff.merge(q, Math.abs(noul(up, q) - noul(down, q)), Double::sum);
+            if (c.jump() == null) {
+                timerCases++;
+                samePattern += pattern(up).equals(pattern(down)) ? 1 : 0;
+            }
+            for (String q : nouls(up)) {
+                double[] d = mirrorDiff.computeIfAbsent(q, k -> new double[2]);
+                d[0] += Math.abs(noul(up, q) - noul(down, q));
+                d[1]++;
             }
         }
 
         int hit = perQuestion.values().stream().mapToInt(n -> n[0]).sum();
         int total = perQuestion.values().stream().mapToInt(n -> n[1]).sum();
         perQuestion.forEach((q, n) -> log.info("对得上 {}：{}/{}", q, n[0], n[1]));
-        mirrorDiff.forEach((q, d) -> log.info("镜像 {} 概率平均相差 {}", q, d / CASES.size()));
-        log.info("总体对得上 {}/{}；镜像 pattern 同一项 {}/{}", hit, total, samePattern, CASES.size());
+        mirrorDiff.forEach((q, d) -> log.info("镜像 {} 概率平均相差 {}", q, d[0] / d[1]));
+        log.info("总体对得上 {}/{}；镜像 pattern 同一项 {}/{}", hit, total, samePattern, timerCases);
 
         assertThat((double) hit / total).as("总体对得上").isGreaterThanOrEqualTo(0.8);
         perQuestion.forEach((q, n) -> assertThat((double) n[0] / n[1]).as("对得上 " + q).isGreaterThanOrEqualTo(0.7));
-        assertThat((double) samePattern / CASES.size()).as("镜像 pattern 同一项").isGreaterThanOrEqualTo(0.8);
-        mirrorDiff.forEach((q, d) -> assertThat(d / CASES.size()).as("镜像 " + q + " 概率平均相差").isLessThanOrEqualTo(0.10));
+        assertThat((double) samePattern / timerCases).as("镜像 pattern 同一项").isGreaterThanOrEqualTo(0.8);
+        mirrorDiff.forEach((q, d) -> assertThat(d[0] / d[1]).as("镜像 " + q + " 概率平均相差").isLessThanOrEqualTo(0.10));
     }
 }

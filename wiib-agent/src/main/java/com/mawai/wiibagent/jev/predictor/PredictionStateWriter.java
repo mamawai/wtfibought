@@ -22,14 +22,20 @@ import java.util.function.LongSupplier;
  * 预测员的眼睛：把这一局写成 Jev 读得懂的英文短句，要比的数（美元、秒数、¢ 价）由代码算好写进句子，不写结论。
  * 数学估计不给 Jev，只记分。UP / DOWN 对调时句子跟着对调：涨 ↔ 跌、above ↔ below、买占比 p ↔ 100 − p、UP ↔ DOWN。
  * <ul>
- *   <li>market：怎么赢</li>
+ *   <li>market：怎么赢；突变唤醒多一句结算价是 Chainlink 的、比交易所慢几秒</li>
  *   <li>clock：早段 / 中段 / 最后一分钟锁了多少，加上离结算均价截止还有几秒</li>
  *   <li>btc_now：Chainlink 现价离开盘均价多少美元</li>
  *   <li>lead：谁领先、领先相对剩余时间的正常波动有多大（末分钟含已锁定部分）</li>
  *   <li>settlement_so_far：末分钟已锁定部分相对开盘均价，只在末分钟给</li>
  *   <li>story：开盘以来每 30 秒一步，每步 BTC 怎么动、停在哪、Binance 主动成交谁占上风，旧的在前</li>
- *   <li>odds_history：每步结束时市场给两边的价，和 story 的步一一对应</li>
- *   <li>jump：只在突变唤醒时给，突变那一边从多少跳到多少、另一边跟着掉了多少、两边现在的价</li>
+ *   <li>odds_history：每步结束时市场给两边的价，和 story 的步一一对应；只整点唤醒给</li>
+ * </ul>
+ * 突变唤醒另给这几个：
+ * <ul>
+ *   <li>jump：突变那一边从多少跳到多少、另一边跟着掉了多少、两边现在的价</li>
+ *   <li>binance_now：Binance 最近 10 秒、30 秒 BTC 动了多少；逐笔流停了或算不出不给</li>
+ *   <li>chainlink_vs_binance：Chainlink 最后一跳比 Binance 最新价高还是低多少；取不到 Binance 价不给</li>
+ *   <li>takers_now：Binance 最近 10 秒主动成交谁占上风；逐笔流停了或成交太少不给</li>
  * </ul>
  */
 @Component
@@ -57,6 +63,10 @@ public class PredictionStateWriter {
 
     static final String GAME = "Polymarket 5-minute BTC market. UP wins if BTC's average price over the final minute "
             + "is at or above its average at the open; otherwise DOWN wins.";
+    /** 突变唤醒的 market 末尾多这一句 */
+    static final String CHAINLINK_LAG = " The settlement price is Chainlink's BTC price, which updates a few seconds behind exchange prices.";
+    /** 10 秒的正常波动 = 30 秒的 × √(10/30) */
+    static final double TEN_OF_THIRTY = Math.sqrt(10.0 / 30);
 
     private final CacheService cacheService;
     private final KlineFetcher klineFetcher;
@@ -76,8 +86,12 @@ public class PredictionStateWriter {
      * @param bookUpdatedAtMs 盘口最近一次变化的时刻（Polymarket 那边的时间）；没有为 null
      * @param chainlinkAgeMs  Chainlink 最后一跳离现在多久；超过 {@link #TICK_MAX_AGE_MS} 不问
      * @param jump            这次唤醒的突变；整点唤醒为 null
+     * @param binance10Usd    Binance 最近 10 秒 BTC 涨跌（USD）；整点唤醒、逐笔流停了、算不出为 null
+     * @param binance30Usd    最近 30 秒，同上
+     * @param chainlinkGapUsd Chainlink 最后一跳 − Binance 最新价（USD）；整点唤醒、取不到 Binance 价为 null
      */
-    public record Raw(double zModel, double pModel, Book book, Long bookUpdatedAtMs, long chainlinkAgeMs, OddsJump jump) {
+    public record Raw(double zModel, double pModel, Book book, Long bookUpdatedAtMs, long chainlinkAgeMs, OddsJump jump,
+                      Double binance10Usd, Double binance30Usd, Double chainlinkGapUsd) {
     }
 
     /** 一次突变：起点、终点的时刻和 UP 中间价 */
@@ -115,7 +129,7 @@ public class PredictionStateWriter {
     /**
      * 缺开盘价、缺 K 线、本回合还没有 tick 都抛 IllegalStateException：看不全就别问。Chainlink 停了不抛，年龄记在 Raw 里由回路跳过
      *
-     * @param jump 突变唤醒时的那次突变，写进 jump；整点唤醒传 null
+     * @param jump 突变唤醒时的那次突变，写 jump 和 Binance 那几句、不写 odds_history；整点唤醒传 null
      */
     public Snapshot write(long windowStart, OddsJump jump) {
         long now = nowMs.getAsLong();
@@ -154,7 +168,7 @@ public class PredictionStateWriter {
                 cacheService.getPredictionAsk("DOWN"), cacheService.getPredictionBid("DOWN"));
 
         Map<String, Object> state = new LinkedHashMap<>();
-        state.put("market", GAME);
+        state.put("market", jump == null ? GAME : GAME + CHAINLINK_LAG);
         state.put("clock", clockPhrase(untilSettleEnd) + "; " + Math.round(untilSettleEnd)
                 + " seconds until the settlement average is fixed");
         state.put("btc_now", "BTC is " + posPhrase(open, last, sigma1h));
@@ -165,24 +179,40 @@ public class PredictionStateWriter {
         long[] bounds = storyBounds(windowStartMs, now);
         // 30 秒的正常波动折成美元，分涨跌档用
         double normalUsd = sigmaEff / 100 * open.doubleValue() * Math.sqrt(0.5);
-        state.put("story", story(bounds, inWindow, open, sigma1h, normalUsd, stepFlows(bounds, now)));
+        // 逐笔流停了：Binance 的主动成交、涨跌都不写，也不去读；每步的主动成交整份 state 只读一次
+        boolean flowLive = now - orderFlowAggregator.getLastUpdateMs(SYMBOL) <= FLOW_MAX_AGE_MS;
+        state.put("story", story(bounds, inWindow, open, sigma1h, normalUsd,
+                flowLive ? orderFlowAggregator.getMetricsBetween(SYMBOL, bounds) : null));
         // 本回合 UP 中间价每秒一笔
         List<Point> upMids = cacheService.getPredictionUpMidPoints(windowStartMs).stream()
                 .filter(p -> p.timeMs() <= now).toList();
-        state.put("odds_history", oddsHistory(bounds, upMids));
-        if (jump != null) {
+        Double usd10 = null;
+        Double usd30 = null;
+        Double gap = null;
+        if (jump == null) {
+            state.put("odds_history", oddsHistory(bounds, upMids));
+        } else {
             state.put("jump", jumpPhrase(jump, upMids.getLast().price(), now));
+            if (flowLive) {
+                usd10 = orderFlowAggregator.priceChange(SYMBOL, 10);
+                usd30 = orderFlowAggregator.priceChange(SYMBOL, 30);
+            }
+            if (usd10 != null && usd30 != null) {
+                state.put("binance_now", binanceNowPhrase(usd10, usd30, normalUsd));
+            }
+            BigDecimal binance = cacheService.getCryptoPrice(SYMBOL);
+            if (binance != null) {
+                gap = last.subtract(binance).doubleValue();
+                state.put("chainlink_vs_binance", gapPhrase(gap, normalUsd));
+            }
+            Metrics takers = flowLive ? orderFlowAggregator.getMetrics(SYMBOL, 10) : null;
+            if (takers != null && takers.tradeCount() >= FLOW_MIN_TRADES) {
+                state.put("takers_now", takersNowPhrase(takers.tradeDelta()));
+            }
         }
 
-        return new Snapshot(state, new Raw(z, pModel, book, cacheService.getPredictionBookUpdatedAt(), chainlinkAgeMs, jump));
-    }
-
-    /** 每步的 Binance 主动成交，整份 state 只读一次；逐笔流停了回 null，各步都不写这半句 */
-    private List<Metrics> stepFlows(long[] bounds, long now) {
-        if (now - orderFlowAggregator.getLastUpdateMs(SYMBOL) > FLOW_MAX_AGE_MS) {
-            return null;
-        }
-        return orderFlowAggregator.getMetricsBetween(SYMBOL, bounds);
+        return new Snapshot(state, new Raw(z, pModel, book, cacheService.getPredictionBookUpdatedAt(), chainlinkAgeMs, jump,
+                usd10, usd30, gap));
     }
 
     // ==================== story 与赔率 ====================
@@ -245,7 +275,7 @@ public class PredictionStateWriter {
         return "Step " + (k + 1) + (k == count - 1 ? ", the latest" : "");
     }
 
-    /** 一步的涨跌：美元变化 ÷ 30 秒正常波动分四档，<0.3 算没怎么动，加涨跌多少美元 */
+    /** 一段的涨跌：美元变化 ÷ 同样时长的正常波动分四档，<0.3 算没怎么动，加涨跌多少美元 */
     static String movePhrase(double usd, double normalUsd) {
         double r = Math.abs(usd) / normalUsd;
         String amount = " (" + signedUsd(usd) + ")";
@@ -278,6 +308,23 @@ public class PredictionStateWriter {
                 + other + "'s price dropped from " + cents(BigDecimal.ONE.subtract(j.sideFrom()))
                 + " to " + cents(BigDecimal.ONE.subtract(j.sideTo())) + ". "
                 + side + " is " + cents(sideNow) + " now and " + other + " is " + cents(BigDecimal.ONE.subtract(sideNow));
+    }
+
+    /** Binance 最近 10 秒、30 秒 BTC 动了多少，各按同样时长的正常波动分档 */
+    static String binanceNowPhrase(double usd10, double usd30, double normalUsd) {
+        return "In the last 10 seconds BTC on Binance " + movePhrase(usd10, normalUsd * TEN_OF_THIRTY)
+                + "; in the last 30 seconds it " + movePhrase(usd30, normalUsd) + ".";
+    }
+
+    /** Chainlink 比 Binance 高还是低多少：差不到 10 秒正常波动的 0.3 算持平 */
+    static String gapPhrase(double gapUsd, double normalUsd) {
+        if (Math.abs(gapUsd) < 0.3 * normalUsd * TEN_OF_THIRTY) return "Chainlink's BTC price is level with Binance's";
+        return "Chainlink's BTC price is " + usd(Math.abs(gapUsd)) + (gapUsd > 0 ? " above" : " below") + " Binance's";
+    }
+
+    /** Binance 最近 10 秒主动成交谁占上风 */
+    static String takersNowPhrase(double tradeDelta) {
+        return "In the last 10 seconds " + takersPhrase(tradeDelta);
     }
 
     // ==================== 词 ====================

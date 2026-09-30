@@ -29,7 +29,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** state 的句子怎么出：步怎么切、每步的涨跌档与主动成交、赔率历史、突变句，UP / DOWN 对调时句子也对调，以及整份 state 怎么拼 */
+/**
+ * state 的句子怎么出：步怎么切、每步的涨跌档与主动成交、赔率历史、突变句和突变那几秒 Binance 的几句，UP / DOWN 对调时句子也对调，
+ * 以及整点、突变两份 state 怎么拼
+ */
 class PredictionStateWriterTest {
 
     private static final long WS = 1_790_016_000L;
@@ -151,6 +154,20 @@ class PredictionStateWriterTest {
     }
 
     @Test
+    void Binance那几句_10秒按10秒的正常波动分档_差价不到0点3个10秒正常波动算持平() {
+        // 30 秒正常波动 $36，10 秒约 $20.8
+        assertThat(PredictionStateWriter.binanceNowPhrase(-3, 5, 36))
+                .isEqualTo("In the last 10 seconds BTC on Binance barely moved (-$3); in the last 30 seconds it barely moved (+$5).");
+        assertThat(PredictionStateWriter.binanceNowPhrase(-50, -30, 36))
+                .isEqualTo("In the last 10 seconds BTC on Binance fell sharply (-$50); in the last 30 seconds it fell a little (-$30).");
+        assertThat(PredictionStateWriter.gapPhrase(18, 36)).isEqualTo("Chainlink's BTC price is $18 above Binance's");
+        assertThat(PredictionStateWriter.gapPhrase(-6.3, 36)).isEqualTo("Chainlink's BTC price is $6 below Binance's");
+        assertThat(PredictionStateWriter.gapPhrase(6, 36)).isEqualTo("Chainlink's BTC price is level with Binance's");
+        assertThat(PredictionStateWriter.takersNowPhrase(-0.3))
+                .isEqualTo("In the last 10 seconds sellers ahead among Binance takers (35% buys)");
+    }
+
+    @Test
     void 一分钟典型波动与最近实际波动() {
         // 每根来回 0.04%：中位数 0.04 × 1.4826 ≈ 0.059
         assertThat(PredictionStateWriter.sigma1mPct(bars(30))).isBetween(0.055, 0.065);
@@ -172,9 +189,10 @@ class PredictionStateWriterTest {
 
     /**
      * 开盘后 97 秒，开盘均价 86000，BTC 每秒一跳（dir = −1 时绕开盘均价对调）：
-     * 前 37 秒涨 $50、再 30 秒跌 $5、最后 30 秒涨 $90；1 分钟典型波动 0.0593%（30 秒约 $36）。
+     * 前 37 秒涨 $50、再 30 秒跌 $5、最后 30 秒涨 $90；1 分钟典型波动 0.0593%（30 秒约 $36，10 秒约 $20.8）。
      * 三步的主动成交：62% 买、不到 10 笔、25% 买（对调时 38%、不到 10 笔、75%）。
-     * UP 中间价：开盘后 1 秒 0.50，30 秒 0.58，60 秒 0.555，96 秒 0.62（对调时 1 − 价）
+     * UP 中间价：开盘后 1 秒 0.50，30 秒 0.58，60 秒 0.555，96 秒 0.62（对调时 1 − 价）。
+     * Binance：最近 10 秒涨 $25、30 秒涨 $80，最新价 86153（Chainlink 86135 低 $18），最近 10 秒 70% 买（只按 UP 那一边给）
      */
     private static Deps deps(int dir) {
         long now = WS + 97;
@@ -203,6 +221,10 @@ class PredictionStateWriterTest {
         when(flow.getMetricsBetween(eq("BTCUSDT"), any())).thenReturn(List.of(
                 new Metrics(dir * 0.24, 2, 0, 500_000, 50), new Metrics(dir * 0.9, 0.2, 0, 50_000, 6),
                 new Metrics(dir * -0.5, 3, 0, 900_000, 80)));
+        when(flow.priceChange("BTCUSDT", 10)).thenReturn(25.0);
+        when(flow.priceChange("BTCUSDT", 30)).thenReturn(80.0);
+        when(flow.getMetrics("BTCUSDT", 10)).thenReturn(new Metrics(0.4, 3, 0, 900_000, 30));
+        when(cache.getCryptoPrice("BTCUSDT")).thenReturn(new BigDecimal("86153"));
         return new Deps(cache, klines, flow, writer);
     }
 
@@ -246,6 +268,13 @@ class PredictionStateWriterTest {
         assertThat(snap.raw().chainlinkAgeMs()).isZero();
         assertThat(snap.raw().book().upAsk()).isEqualByComparingTo("0.62");
         assertThat(snap.raw().jump()).isNull();
+        // 整点不看突变那几秒的 Binance
+        assertThat(snap.raw().binance10Usd()).isNull();
+        assertThat(snap.raw().binance30Usd()).isNull();
+        assertThat(snap.raw().chainlinkGapUsd()).isNull();
+        verify(d.flow(), never()).priceChange(any(), anyInt());
+        verify(d.flow(), never()).getMetrics(any(), anyInt());
+        verify(d.cache(), never()).getCryptoPrice(any());
     }
 
     @Test
@@ -267,21 +296,49 @@ class PredictionStateWriterTest {
                 "Step 1: UP 42¢, DOWN 58¢", "Step 2: UP 44.5¢, DOWN 55.5¢", "Step 3, the latest: UP 38¢, DOWN 62¢");
     }
 
+    private static final OddsJump JUMP = new OddsJump(WS_MS + 94_000, WS_MS + 96_000, new BigDecimal("0.42"), new BigDecimal("0.62"));
+
     @Test
-    void 突变唤醒_多一个jump键_两边都写() {
-        Deps up = deps(1);
-        OddsJump jump = new OddsJump(WS_MS + 94_000, WS_MS + 96_000, new BigDecimal("0.42"), new BigDecimal("0.62"));
-        Snapshot snap = up.writer().write(WS, jump);
+    void 突变唤醒_不给赔率历史_给突变那几秒Binance的样子() {
+        Snapshot snap = deps(1).writer().write(WS, JUMP);
 
-        assertThat(snap.state().keySet()).containsExactly("market", "clock", "btc_now", "lead", "story", "odds_history", "jump");
-        assertThat(snap.state().get("jump")).isEqualTo("UP's price jumped from 42¢ to 62¢ within 2 seconds (1 second ago); "
+        Map<String, Object> s = snap.state();
+        assertThat(s.keySet()).containsExactly("market", "clock", "btc_now", "lead", "story", "jump",
+                "binance_now", "chainlink_vs_binance", "takers_now");
+        assertThat(s.get("market")).isEqualTo("Polymarket 5-minute BTC market. UP wins if BTC's average price over the final "
+                + "minute is at or above its average at the open; otherwise DOWN wins. The settlement price is Chainlink's BTC price, "
+                + "which updates a few seconds behind exchange prices.");
+        assertThat(s.get("jump")).isEqualTo("UP's price jumped from 42¢ to 62¢ within 2 seconds (1 second ago); "
                 + "DOWN's price dropped from 58¢ to 38¢. UP is 62¢ now and DOWN is 38¢");
-        assertThat(snap.raw().jump()).isSameAs(jump);
+        assertThat(s.get("binance_now"))
+                .isEqualTo("In the last 10 seconds BTC on Binance rose (+$25); in the last 30 seconds it rose sharply (+$80).");
+        assertThat(s.get("chainlink_vs_binance")).isEqualTo("Chainlink's BTC price is $18 below Binance's");
+        assertThat(s.get("takers_now")).isEqualTo("In the last 10 seconds buyers ahead among Binance takers (70% buys)");
+        assertThat(snap.raw().jump()).isSameAs(JUMP);
+        assertThat(snap.raw().binance10Usd()).isEqualTo(25.0);
+        assertThat(snap.raw().binance30Usd()).isEqualTo(80.0);
+        assertThat(snap.raw().chainlinkGapUsd()).isEqualTo(-18.0);
+    }
 
-        OddsJump mirrored = new OddsJump(WS_MS + 94_000, WS_MS + 96_000, new BigDecimal("0.58"), new BigDecimal("0.38"));
-        assertThat(deps(-1).writer().write(WS, mirrored).state().get("jump"))
-                .isEqualTo("DOWN's price jumped from 42¢ to 62¢ within 2 seconds (1 second ago); "
-                        + "UP's price dropped from 58¢ to 38¢. DOWN is 62¢ now and UP is 38¢");
+    @Test
+    void 突变唤醒_逐笔流停了不写Binance涨跌和主动成交_取不到Binance价不写差价() {
+        Deps stale = deps(1);
+        when(stale.flow().getLastUpdateMs("BTCUSDT")).thenReturn((WS + 60) * 1000L);
+
+        Snapshot snap = stale.writer().write(WS, JUMP);
+
+        assertThat(snap.state().keySet()).containsExactly("market", "clock", "btc_now", "lead", "story", "jump", "chainlink_vs_binance");
+        assertThat(snap.raw().binance10Usd()).isNull();
+        assertThat(snap.raw().binance30Usd()).isNull();
+        assertThat(snap.raw().chainlinkGapUsd()).isEqualTo(-18.0);
+        verify(stale.flow(), never()).priceChange(any(), anyInt());
+        verify(stale.flow(), never()).getMetrics(any(), anyInt());
+
+        Deps noBinance = deps(1);
+        when(noBinance.cache().getCryptoPrice("BTCUSDT")).thenReturn(null);
+        Snapshot snap2 = noBinance.writer().write(WS, JUMP);
+        assertThat(snap2.state()).doesNotContainKey("chainlink_vs_binance").containsKeys("binance_now", "takers_now");
+        assertThat(snap2.raw().chainlinkGapUsd()).isNull();
     }
 
     @Test
