@@ -12,7 +12,8 @@ import java.time.LocalDateTime;
 
 /**
  * Jev 预测员每局每回合每次唤醒一行：发出的 state、Jev 的回答、概率、盘口、动作、注单；结算后回填结果与盈亏。
- * v5 起三组对照各占一局，一次唤醒按涉及的局各写一行，共用同一份 state 和 Jev 的回答；Jev 只答盘面六道题，买卖由代码按各组规则定。
+ * v5 起三组对照各占一局，一次唤醒按涉及的局各写一行，共用同一份 state 和 Jev 的回答；Jev 只答盘面题（突变三道、整点六道），
+ * 买卖由代码按各组规则定；v5-1 突变后盯的结果另写一行，不写 state、不问 Jev。
  * R3、R4 买卖由 Jev 拍板，R4 起空仓持仓同一道题、不问谁赢，p_jev 为空；v4 之后持仓行只记 Jev 的选择。
  * p_model、p_mkt 照记，Brier 在 SQL 里现算。
  */
@@ -36,11 +37,14 @@ public class JevPredictionDecision {
     /** 窗口起点(秒)，与 prediction_round.window_start 同 */
     private Long windowStart;
 
-    /** 检查点：开盘后第几秒，首字母是唤醒方式：T 整点如 T150，J 赔率突变如 J57（v5 起有）；同一局里不重复 */
+    /**
+     * 检查点：开盘后第几秒，首字母是唤醒方式：T 整点如 T150，J 赔率突变如 J57（v5 起有），W v5-1 盯的结果如 W60（触发或盯满那一秒）；
+     * 同一局里不重复
+     */
     private String checkpoint;
 
     /**
-     * 这一行看的是哪一边 UP / DOWN：突变唤醒看突变那一边，整点空仓看数学上领先的那边、持仓看手里那一边；
+     * 这一行看的是哪一边 UP / DOWN：突变唤醒和盯的结果看突变那一边，整点空仓看数学上领先的那边、持仓看手里那一边；
      * v5 起有，盘口或 Chainlink 太旧没往下走的行为空
      */
     private String side;
@@ -48,11 +52,12 @@ public class JevPredictionDecision {
     /** 决策时刻(ms) */
     private Long decidedAt;
 
-    /** 发给 Jev 的 state 原文 */
+    /** 发给 Jev 的 state 原文；盯的结果行不写 state，是 {} */
     private String stateJson;
 
     /**
-     * Jev 的回答原样：v5 是盘面六道题 win / pattern / push_fading / flow_confirms / dip_recovered / latest_against；R4 只有入场题 entry；
+     * Jev 的回答原样：v5 整点是盘面六道题 win / pattern / push_fading / flow_confirms / dip_recovered / latest_against，
+     * 突变是 win / extend / reject（早先的突变行是六道），盯的结果行为空；R4 只有入场题 entry；
      * R3 是谁赢两问加空仓入场题或持仓离场题，R2 只有谁赢两问，R1 是后劲题和决定题
      */
     private String answersJson;
@@ -98,6 +103,14 @@ public class JevPredictionDecision {
     /** v5：突变行记这次突变 UP 中间价跌了多少，负数，UP 涨的记 0；整点行为空。R4：同上的最大跌幅，负数，没跌是 0 */
     private BigDecimal oddsJumpDown;
 
+    /** 唤醒后 5 秒的 UP 中间价，回填同 15 秒；加这一列之前的行为空 */
+    @TableField("up_mid_5s")
+    private BigDecimal upMid5s;
+
+    /** 唤醒后 10 秒的 UP 中间价，同上 */
+    @TableField("up_mid_10s")
+    private BigDecimal upMid10s;
+
     /** 唤醒后 15 秒的 UP 中间价，回填任务补；越过回合末尾或没有采样为空；v5 起有 */
     @TableField("up_mid_15s")
     private BigDecimal upMid15s;
@@ -105,6 +118,17 @@ public class JevPredictionDecision {
     /** 唤醒后 45 秒的 UP 中间价，同上 */
     @TableField("up_mid_45s")
     private BigDecimal upMid45s;
+
+    /** 突变唤醒那一刻 Binance 最近 10 秒 BTC 涨跌（USD），只突变 J 行有；逐笔流停了为空 */
+    @TableField("binance_10s")
+    private BigDecimal binance10s;
+
+    /** 最近 30 秒，同上 */
+    @TableField("binance_30s")
+    private BigDecimal binance30s;
+
+    /** Chainlink 最后一跳 − Binance 最新价（USD），只突变 J 行有；取不到 Binance 价为空 */
+    private BigDecimal chainlinkGap;
 
     /**
      * 按数学估计的每份优势，只给页面作参考：R3、R4 买入行是那边 p_model − 卖价 − 手续费、持仓行不记，
@@ -116,8 +140,9 @@ public class JevPredictionDecision {
     private String action;
 
     /**
-     * 为什么这么做，"代码 + 细节"：v5 是 BUY / FADING / PRICE_BAND / NO_PULLBACK / HOLD / SELL / NO_BID / MISSED / NO_QUOTE /
-     * NO_BALANCE / STALE_BOOK / STALE_CHAINLINK / STALE_WHILE_ASKING；R3、R4 还有 PASS / UNSURE，
+     * 为什么这么做，"代码 + 细节"：v5 是 WATCH / EXTEND / REJECT / NO_TRIGGER / NO_CALL / BUY / PRICE_BAND / NO_PULLBACK / HOLD /
+     * SELL / NO_BID / MISSED / NO_QUOTE / NO_BALANCE / STALE_BOOK / STALE_CHAINLINK / STALE_WHILE_ASKING，早先的行还有 FADING；
+     * R3、R4 还有 PASS / UNSURE，
      * v4 那一局还有 ADD / MAX_STAKE，R2 还有 WAIT / ASK_LOW，R1 还有 NOT_CHEAP / EXPENSIVE / ASK_RANGE。页面按首个词出中文提示。异常看 error
      */
     private String reason;

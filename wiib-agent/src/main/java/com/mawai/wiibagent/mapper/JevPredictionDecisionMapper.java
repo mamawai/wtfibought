@@ -36,7 +36,7 @@ public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDec
         private BigDecimal brierMkt;
     }
 
-    /** 按检查点分的 Brier：越靠后三列都该越小，看 Jev 在哪一段有用；突变行合成一组 J */
+    /** 按检查点分的 Brier：越靠后三列都该越小，看 Jev 在哪一段有用；突变行合成一组 J，盯的结果行 W 没问 Jev 不算 */
     @Data
     class CheckpointBrier {
         private String checkpoint;
@@ -120,14 +120,14 @@ public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDec
             + "AND checkpoint = #{checkpoint}")
     int countCheckpoint(@Param("runNo") int runNo, @Param("windowStart") long windowStart, @Param("checkpoint") String checkpoint);
 
-    /** 这一局这一回合的买入行，v5-1、v5-2 每回合最多一行；没买过回 null */
+    /** 这一局这一回合的买入行，v5-1、v5-2 每回合最多一行（v5-1 是盯的结果行）；没买过回 null */
     @Select("SELECT * FROM jev_prediction_decision WHERE run_no = #{runNo} AND window_start = #{windowStart} "
             + "AND action IN ('BUY_UP', 'BUY_DOWN')")
     JevPredictionDecision selectRoundBuy(@Param("runNo") int runNo, @Param("windowStart") long windowStart);
 
-    /** 要补唤醒后 15 秒、45 秒 UP 中间价的行：定过看哪一边、两个都还空着、决策时刻在 [fromMs, toMs] */
-    @Select("SELECT * FROM jev_prediction_decision WHERE up_mid_15s IS NULL AND up_mid_45s IS NULL AND side IS NOT NULL "
-            + "AND decided_at BETWEEN #{fromMs} AND #{toMs} ORDER BY decided_at")
+    /** 要补唤醒后 5、10、15、45 秒 UP 中间价的行：定过看哪一边、四个都还空着、决策时刻在 [fromMs, toMs] */
+    @Select("SELECT * FROM jev_prediction_decision WHERE up_mid_5s IS NULL AND up_mid_10s IS NULL AND up_mid_15s IS NULL "
+            + "AND up_mid_45s IS NULL AND side IS NOT NULL AND decided_at BETWEEN #{fromMs} AND #{toMs} ORDER BY decided_at")
     List<JevPredictionDecision> selectPendingAfterPrice(@Param("fromMs") long fromMs, @Param("toMs") long toMs);
 
     /** 回填要看的行：没结果的，或开过仓但盈亏还没填的；窗口在 (afterWs, beforeWs) 之间 */

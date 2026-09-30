@@ -52,22 +52,27 @@ public class JevPredictionController {
     private final SimPredictionClient sim;
 
     /**
-     * 一张决策卡要的字段；answers 是 Jev 的回答原样，没问 Jev 的行为 null，v5 的键是 win / pattern / push_fading / flow_confirms /
-     * dip_recovered / latest_against；checkpoint 首字母是唤醒方式（T 整点 / J 突变）；side、upMid15s、upMid45s 只 v5 起有；
-     * jevChoice 是 Jev 拍板的选项，只 R1、R3、R4 有；pJev R4 没有；oddsJump 只 R4 起有，v5 只突变行有
+     * 一张决策卡要的字段；answers 是 Jev 的回答原样，没问 Jev 的行为 null，v5 整点行的键是 win / pattern / push_fading / flow_confirms /
+     * dip_recovered / latest_against，突变行是 win / extend / reject；checkpoint 首字母是唤醒方式（T 整点 / J 突变 / W v5-1 盯的结果）；
+     * side、upMid15s、upMid45s 只 v5 起有，upMid5s、upMid10s 更晚才有；binance10s、binance30s、chainlinkGap 只突变 J 行有；
+     * jevChoice 是 Jev 拍板的选项，只 R1、R3、R4 有；pJev R4 和 W 行没有；oddsJump 只 R4 起有，v5 只突变 J 行有
      */
     public record DecisionView(long id, long windowStart, String checkpoint, String side, long decidedAt,
                                BigDecimal pModel, BigDecimal pJev, BigDecimal pMkt,
                                String jevChoice, BigDecimal jevChoiceP, Integer bookAgeMs,
                                BigDecimal upAsk, BigDecimal upBid, BigDecimal downAsk, BigDecimal downBid,
-                               BigDecimal oddsJumpUp, BigDecimal oddsJumpDown, BigDecimal upMid15s, BigDecimal upMid45s,
+                               BigDecimal oddsJumpUp, BigDecimal oddsJumpDown,
+                               BigDecimal upMid5s, BigDecimal upMid10s, BigDecimal upMid15s, BigDecimal upMid45s,
+                               BigDecimal binance10s, BigDecimal binance30s, BigDecimal chainlinkGap,
                                BigDecimal edge, String action, String reason,
                                Long betId, BigDecimal stake, String outcome, String error, JsonNode answers) {
         static DecisionView of(JevPredictionDecision d) {
             return new DecisionView(d.getId(), d.getWindowStart(), d.getCheckpoint(), d.getSide(), d.getDecidedAt(),
                     d.getPModel(), d.getPJev(), d.getPMkt(), d.getJevChoice(), d.getJevChoiceP(), d.getBookAgeMs(),
                     d.getUpAsk(), d.getUpBid(), d.getDownAsk(), d.getDownBid(), d.getOddsJumpUp(), d.getOddsJumpDown(),
-                    d.getUpMid15s(), d.getUpMid45s(), d.getEdge(), d.getAction(), d.getReason(), d.getBetId(), d.getStake(),
+                    d.getUpMid5s(), d.getUpMid10s(), d.getUpMid15s(), d.getUpMid45s(),
+                    d.getBinance10s(), d.getBinance30s(), d.getChainlinkGap(),
+                    d.getEdge(), d.getAction(), d.getReason(), d.getBetId(), d.getStake(),
                     d.getOutcome(), d.getError(), d.getAnswersJson() == null ? null : MAPPER.readTree(d.getAnswersJson()));
         }
     }
@@ -83,10 +88,13 @@ public class JevPredictionController {
 
     /**
      * 页面提示里要写出来的几个数：每注本金、定了要成交后等多久、成交容差；突变多大、起跳价在哪个区间才唤醒；
-     * v5-2 在变弱要多低；v5-3 空仓卖价在哪个区间、最新一步逆着要多高才买，持仓会赢多低就卖
+     * v5-1 盯多久、又走多少买它、吐回跳幅的多少买另一边；v5-2 会延续、会被打回各要多高；
+     * v5-3 空仓卖价在哪个区间、最新一步逆着要多高才买，持仓会赢多低就卖
      */
     public record Thresholds(BigDecimal baseStake, long fillDelayMs, BigDecimal fillTolerance,
-                             BigDecimal jumpThreshold, BigDecimal jumpFromMin, BigDecimal jumpFromMax, double jumpFadingMax,
+                             BigDecimal jumpThreshold, BigDecimal jumpFromMin, BigDecimal jumpFromMax,
+                             long jumpWatchMs, BigDecimal jumpExtend, BigDecimal jumpRejectRatio,
+                             double jumpExtendMin, double jumpRejectMin,
                              BigDecimal timerAskMin, BigDecimal timerAskMax, double timerAgainstMin, double timerSellWinMax) {
     }
 
@@ -113,7 +121,8 @@ public class JevPredictionController {
         JevPredictionRun viewing = JevPredictionRuns.find(all, run);
         boolean enabled = platform.enabled() && sw.isOn();
         Thresholds t = new Thresholds(cfg.getBaseStake(), cfg.getFillDelayMs(), cfg.getFillTolerance(),
-                cfg.getJumpThreshold(), cfg.getJumpFromMin(), cfg.getJumpFromMax(), cfg.getJumpFadingMax(),
+                cfg.getJumpThreshold(), cfg.getJumpFromMin(), cfg.getJumpFromMax(),
+                cfg.getJumpWatchMs(), cfg.getJumpExtend(), cfg.getJumpRejectRatio(), cfg.getJumpExtendMin(), cfg.getJumpRejectMin(),
                 cfg.getTimerAskMin(), cfg.getTimerAskMax(), cfg.getTimerAgainstMin(), cfg.getTimerSellWinMax());
         List<ArmView> arms = JevPredictionRuns.active(all).stream().map(r -> {
             Stats s = mapper.selectStats(r.getRunNo());
