@@ -4,7 +4,7 @@ import { ArrowDown, ChevronsDownUp, ChevronsUpDown, History, KeyRound, Loader2, 
 import { workbenchApi } from '../../api';
 import { cn } from '../../lib/utils';
 import { useToast } from '../ui/use-toast';
-import { chatStore } from './chatStore';
+import { chatStore, isTurnQuestion } from './chatStore';
 import { AssistantAnswer, HitlCard, ProcessRail, UserBubble } from './ChatMessages';
 import { groupBlocks, HUB_NAME } from './chatView';
 import { ChatComposer } from './ChatComposer';
@@ -43,7 +43,7 @@ interface ChatPanelProps {
 export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen }: ChatPanelProps) {
   const { t } = useTranslation(['ai', 'common']);
   const { toast } = useToast();
-  const { items, loading, background, sessionId, needsConfig } = useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
+  const { items, loading, background, sessionId, needsConfig, runId } = useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
   // 在途的那张确认卡（按 requestId 认）。面板里可能同时挂着几张，用一个布尔会把别的卡一起禁掉
   const [hitlBusy, setHitlBusy] = useState<{ requestId: string; approved: boolean } | null>(null);
   const [showHistory, setShowHistory] = useState(false);
@@ -57,10 +57,10 @@ export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen 
   const scrollRef = useRef<HTMLDivElement>(null);
   // 用户往回翻时不再强行拉到底：长回答无框铺开后，往回看是常态
   const [stuckToBottom, setStuckToBottom] = useState(true);
-  // 点了停止、还没等到收尾。收尾后 loading 落下即复位；新一轮开跑也要复位——
-  // 排队消息续发这类路径下 loading 中间不会落下，只认边沿会让按钮永远卡在"收尾中"
-  const [stopping, setStopping] = useState(false);
-  useEffect(() => { if (!loading) setStopping(false); }, [loading]);
+  // 点了停止的是哪一轮（store 的 runId）。那轮收尾 loading 落下、或下一轮开跑 runId 变了，就不再算"收尾中"。
+  // 不能靠 loading 落下来复位：排队续发、补答紧接着上一轮开跑，loading 真→假→真在同一个同步链里，React 只渲染到最终值
+  const [stoppingRun, setStoppingRun] = useState<number | null>(null);
+  const stopping = loading && stoppingRun === runId;
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -106,7 +106,7 @@ export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen 
   const lastAnswerIndex = useMemo(() => {
     for (let i = items.length - 1; i >= 0; i--) {
       if (items[i].kind === 'assistant') return i;
-      if (items[i].kind === 'user') break;   // 提问之后还没有答案，这一轮没得重生成
+      if (isTurnQuestion(items[i])) break;   // 提问（含续跑指令）之后还没有答案，这一轮没得重生成
     }
     return -1;
   }, [items]);
@@ -146,21 +146,22 @@ export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen 
 
   const handleSend = useCallback((msg: string, intent?: ChatIntent) => {
     scrollToBottom();   // 自己刚发的话总要看见
-    setStopping(false);
     void chatStore.send(msg, { intent });
   }, [scrollToBottom]);
 
   const handleRegenerate = useCallback(() => {
     scrollToBottom();
-    setStopping(false);
     void chatStore.regenerate();
   }, [scrollToBottom]);
 
   /** 停止：后端跑到下一个检查点才收尾，所以按钮先进"收尾中"；后端说没轮在跑就恢复原状 */
   const handleStop = useCallback(() => {
-    setStopping(true);
-    void chatStore.cancelRun().then(running => { if (!running) setStopping(false); });
-  }, []);
+    const run = runId;
+    setStoppingRun(run);
+    void chatStore.cancelRun().then(running => {
+      if (!running) setStoppingRun(cur => (cur === run ? null : cur));
+    });
+  }, [runId]);
 
   /** HITL 决策交给 store；本地只记"哪张卡在提交"用来防连点+出转圈。按 requestId 认卡，条目挪位置也不会打偏。 */
   const handleHitl = useCallback(async (requestId: string, approved: boolean) => {

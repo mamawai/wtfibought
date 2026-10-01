@@ -506,6 +506,8 @@ export const workbenchApi = {
    */
   deferred: (sessionId: string, onEvent: (e: WorkbenchEvent) => void, signal?: AbortSignal) =>
     postSse<WorkbenchEvent>('/api/ai/workbench/deferred', { sessionId }, onEvent, signal),
+  /** 用户占不占线（不分会话）：本地没有流、又要等那轮跑完时轮询它 */
+  busy: () => api.get<unknown, boolean>('/ai/workbench/busy'),
   /** 会话运行状态（切页/刷新回来判断：还在跑→轮询；欠着补答→空闲时发起补答轮） */
   sessionStatus: (sessionId: string) =>
     api.get<unknown, WorkbenchSessionStatus>(`/ai/workbench/sessions/${sessionId}/status`),

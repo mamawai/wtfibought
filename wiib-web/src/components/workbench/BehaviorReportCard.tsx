@@ -22,6 +22,14 @@ function pnl(v: number): { text: string; tone: 'gain' | 'loss' } {
   return { text: `${v >= 0 ? '+' : ''}${v.toFixed(2)}`, tone: v >= 0 ? 'gain' : 'loss' };
 }
 
+/**
+ * 金额文本。报告是模型照 schema 填的 JSON，后端只校验了几个关键字段，
+ * 其余数字模型漏填就缺席（null 不下发），缺了显示横杠
+ */
+function usd(v: number | undefined): string {
+  return v == null ? '—' : `$${v.toLocaleString()}`;
+}
+
 function Metric({ label, value, tone }: { label: string; value: ReactNode; tone?: 'gain' | 'loss' }) {
   return (
     <div className="min-w-0">
@@ -60,7 +68,8 @@ export function BehaviorReportCard({ report }: { report: BehaviorAnalysisReport 
   const [open, setOpen] = useState(false);
 
   const { overview, tradeBehavior, gameBehavior, riskProfile, suggestions } = report;
-  const trend = overview.trend?.map(p => p.totalAssets) ?? [];
+  // 模型漏填的点跳过：混进一个缺数，整条曲线就画不出来
+  const trend = overview.trend?.map(p => p.totalAssets).filter(v => Number.isFinite(v)) ?? [];
   const up = overview.totalProfitPct >= 0;
 
   return (
@@ -106,7 +115,7 @@ export function BehaviorReportCard({ report }: { report: BehaviorAnalysisReport 
           <div className="flex flex-wrap gap-1.5">
             {overview.distribution.map((d, i) => (
               <span key={i} className="border border-border rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums">
-                <span className="text-muted-foreground">{d.category}</span> ${d.value.toLocaleString()}
+                <span className="text-muted-foreground">{d.category}</span> {usd(d.value)}
               </span>
             ))}
           </div>
@@ -149,15 +158,15 @@ export function BehaviorReportCard({ report }: { report: BehaviorAnalysisReport 
                   <CategoryBlock icon={Coins} title={t('behavior.crypto')}>
                     <Metric label={t('behavior.positions')} value={tradeBehavior.crypto.positionCount} />
                     <Metric label={t('behavior.leverage')} value={tradeBehavior.crypto.leverageUsage} />
-                    <Metric label={t('behavior.buy')} value={`$${tradeBehavior.crypto.totalBuyAmount.toLocaleString()}`} />
-                    <Metric label={t('behavior.sell')} value={`$${tradeBehavior.crypto.totalSellAmount.toLocaleString()}`} />
+                    <Metric label={t('behavior.buy')} value={usd(tradeBehavior.crypto.totalBuyAmount)} />
+                    <Metric label={t('behavior.sell')} value={usd(tradeBehavior.crypto.totalSellAmount)} />
                   </CategoryBlock>
                 )}
                 {tradeBehavior.bstock.positionCount > 0 && (
                   <CategoryBlock icon={BarChart3} title={t('behavior.bstock')}>
                     <Metric label={t('behavior.positions')} value={tradeBehavior.bstock.positionCount} />
-                    <Metric label={t('behavior.buy')} value={`$${tradeBehavior.bstock.totalBuyAmount.toLocaleString()}`} />
-                    <Metric label={t('behavior.sell')} value={`$${tradeBehavior.bstock.totalSellAmount.toLocaleString()}`} />
+                    <Metric label={t('behavior.buy')} value={usd(tradeBehavior.bstock.totalBuyAmount)} />
+                    <Metric label={t('behavior.sell')} value={usd(tradeBehavior.bstock.totalSellAmount)} />
                   </CategoryBlock>
                 )}
                 {tradeBehavior.futures.orderCount > 0 && (
@@ -213,8 +222,9 @@ export function BehaviorReportCard({ report }: { report: BehaviorAnalysisReport 
   );
 }
 
-/** Metric 的 value+tone 一对：盈亏字段每处都要这两个值，散着写四五遍 */
-function pnlProps(v: number) {
+/** Metric 的 value+tone 一对：盈亏字段每处都要这两个值，散着写四五遍。缺数同 usd 显示横杠 */
+function pnlProps(v: number | undefined) {
+  if (v == null) return { value: '—' };
   const p = pnl(v);
   return { value: p.text, tone: p.tone };
 }
