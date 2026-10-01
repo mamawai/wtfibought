@@ -289,14 +289,16 @@ public class ReviewMaterialAssembler {
     }
 
     /**
-     * 一笔已了结交易的行尾（入场→出场/盈亏/持有/了结方式）。
+     * 一笔已了结交易的行尾（入场→出场及开平时刻/盈亏/持有/了结方式），时刻格式同价格路径。
      * 与 plain/signed/nullSafe 同样对同包 {@link PeerInsightService} 开放：同一批数字两处视角，
      * 格式化各写一套迟早口径对不上。做成静态、词表当入参传——调用方不必为了借个格式化器去装配整个 bean。
      */
     static String tradeRow(PromptCatalog prompts, FuturesPositionDTO pos, AgentLang lang) {
         return prompts.get(lang, "reviewer.label.tradeRow", Map.of(
                 "entry", plain(pos.getEntryPrice()),
+                "openedAt", TIME_FMT.format(Instant.ofEpochMilli(TradePairing.msOf(pos.getCreatedAt()))),
                 "exit", plain(pos.getClosedPrice()),
+                "closedAt", TIME_FMT.format(Instant.ofEpochMilli(TradePairing.msOf(pos.getUpdatedAt()))),
                 "pnl", signed(pos.getClosedPnl()),
                 "held", humanize(prompts, TradePairing.msOf(pos.getUpdatedAt())
                         - TradePairing.msOf(pos.getCreatedAt()), lang),

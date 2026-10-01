@@ -183,10 +183,13 @@ class ReviewRunnerTest {
         assertThat(all).contains("这篇复盘是滚动的").contains("只会看到这一篇")
                 .contains("仍然成立的教训与纪律要继承");
         assertThat(all).contains("独立看懂");
-        // 学习宗旨四件套：教训二分类（复盘过程不复盘运气，防"亏一次就不敢开仓"）、
+        // 学习宗旨四件套：教训三分类（复盘过程不复盘运气，防"亏一次就不敢开仓"；
+        // 论点被行情证伪的不算运气，判不了不默认算运气）、
         // 该做没做与做错同罪+保守度自检（对称记账）、纪律可证伪淘汰（防只进不出）、
         // 记忆两栏带样本数（防单次样本被当铁律盲信）
         assertThat(all).contains("【决策错】").contains("【运气差】").contains("同样条件下次照做");
+        assertThat(all).contains("【论点错】").contains("失效条件被已收盘 1h 证实")
+                .contains("不许默认归【运气差】");
         assertThat(all).contains("该做没做与做错同罪").contains("保守度自检");
         // 对错的尺子是主人的交易指令：段头在场，下期纪律不许与它相抵触
         assertThat(all).contains("【主人的交易指令】").contains("不得与主人的交易指令相抵触");
