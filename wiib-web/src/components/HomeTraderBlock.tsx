@@ -33,10 +33,12 @@ function firstLine(reasoning: string | null | undefined): string | null {
  * 首页 hero 里的 trader 墨块：有 trader 是战报，没 trader 是入口。
  */
 export function HomeTraderBlock({ className }: { className?: string }) {
-  const { t } = useTranslation('home');
+  const { t } = useTranslation(['home', 'common']);
   // undefined=还在问，null=没有 trader
   const [pub, setPub] = useState<TraderPublicView | null | undefined>(undefined);
   const [stats, setStats] = useState<Stats | null>(null);
+  // 问 mine 失败了：不知道有没有 trader，不能当成没有去出"创建"入口
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let dead = false;
@@ -64,7 +66,7 @@ export function HomeTraderBlock({ className }: { className?: string }) {
         nextWake: panel?.nextWakeAt ? fmtTime(panel.nextWakeAt) : '—',
         last: firstLine(decisions[0]?.reasoning),
       });
-    }).catch(() => { if (!dead) setPub(null); });
+    }).catch(() => { if (!dead) setFailed(true); });
     return () => { dead = true; };
   }, []);
 
@@ -74,6 +76,7 @@ export function HomeTraderBlock({ className }: { className?: string }) {
     return (
       <div className={cn(SHELL, className)}>
         <div className="text-[13px] font-semibold">{t('trader.title')}</div>
+        {failed && <div className="mt-2 text-[12.5px] text-background/70">{t('common:loadFailed')}</div>}
       </div>
     );
   }

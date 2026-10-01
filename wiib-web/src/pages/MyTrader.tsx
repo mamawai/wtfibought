@@ -120,10 +120,14 @@ export function MyTrader() {
     setTour(false);
   }, []);
 
-  // 平台提示词预览随级别/币种/仓位规格/唤醒时段联动（与唤醒组装同一份文本，所见即所得）
+  // 平台提示词预览随级别/币种/仓位规格/唤醒时段联动（与唤醒组装同一份文本，所见即所得）。
+  // 连着改时只认最后一次请求：先发的可能后回来，盖掉的预览就跟表单对不上了
   useEffect(() => {
+    let stale = false;
     traderApi.promptTemplate(form.intervalCode, form.symbols || 'BTCUSDT', form.spec, form.wakeWindow)
-      .then(setTemplate).catch(() => setTemplate(''));
+      .then(v => { if (!stale) setTemplate(v); })
+      .catch(() => { if (!stale) setTemplate(''); });
+    return () => { stale = true; };
   }, [form.intervalCode, form.symbols, form.spec, form.wakeWindow]);
 
   const run = useCallback(async (name: string, action: () => Promise<unknown>, okMsg: string) => {

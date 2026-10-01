@@ -48,6 +48,13 @@ function maxDrawdownPct(points: TraderEquityPoint[]): number | null {
   return maxDd;
 }
 
+/** 定时刷新拉回的第一页并进已有时间线：只补新落库的（决策行只插不改），"加载更多"翻出来的旧页不动 */
+function mergeNewer(prev: AiTraderDecisionView[], page: AiTraderDecisionView[]): AiTraderDecisionView[] {
+  const known = new Set(prev.map(d => d.id));
+  const fresh = page.filter(d => !known.has(d.id));
+  return fresh.length ? [...fresh, ...prev].sort((a, b) => b.wakeTime - a.wakeTime) : prev;
+}
+
 /**
  * 笔记一行（记忆/学习）：标题 + 首句预览 + 最近时间，点开才铺 markdown。
  * 两份笔记是参考资料，不跟实时数据抢版面。
@@ -106,11 +113,28 @@ export function ArenaDetail() {
   // 现场卡报上来的"刚跑完一轮"时刻：新决策行、净值点、持仓都在那一刻落库，据此立刻重拉
   const [endedAt, setEndedAt] = useState(0);
 
+  // load 最近一次发请求时的 trader 和局，也就是当前筛选
+  const loadAtRef = useRef<{ traderId: number; round: number | null } | null>(null);
+
   const load = useCallback(() => {
     if (!Number.isFinite(traderId)) return;
-    void traderApi.detail(traderId).then(setDetail).catch(() => setDetail(null));
-    void traderApi.equityCurve(traderId, round ?? undefined).then(setCurve).catch(() => setCurve([]));
-    void traderApi.trades(traderId).then(setTrades).catch(() => setTrades([]));
+    const prev = loadAtRef.current;
+    loadAtRef.current = { traderId, round };
+    // 回来时用户已经切走（换了 trader / 局）就丢掉；详情和已了结只跟 trader 走，曲线还跟局走
+    const sameTrader = () => loadAtRef.current?.traderId === traderId;
+    const sameCurve = () => sameTrader() && loadAtRef.current?.round === round;
+    // 失败时：刚换过 trader / 局才清掉旧的，同一筛选的定时刷新失败留着旧数据
+    const traderSwitched = prev?.traderId !== traderId;
+    const curveSwitched = traderSwitched || prev?.round !== round;
+    void traderApi.detail(traderId)
+      .then(v => { if (sameTrader()) setDetail(v); })
+      .catch(() => { if (sameTrader() && traderSwitched) setDetail(null); });
+    void traderApi.equityCurve(traderId, round ?? undefined)
+      .then(v => { if (sameCurve()) setCurve(v); })
+      .catch(() => { if (sameCurve() && curveSwitched) setCurve([]); });
+    void traderApi.trades(traderId)
+      .then(v => { if (sameTrader()) setTrades(v); })
+      .catch(() => { if (sameTrader() && traderSwitched) setTrades([]); });
   }, [traderId, round]);
 
   // 忽略开关（仅主人可见）：成功后本地改写该行，不整页重拉；失败要出声——静默吞掉用户会以为已忽略
@@ -123,43 +147,87 @@ export function ArenaDetail() {
     ).catch((e: Error) => toast(e.message || t('toast.actionFailed'), 'error'));
   }, [toast, t]);
 
-  // 时间线单独拉：按天翻看只动它，持仓/曲线/已了结不跟着重拉
-  const loadDecisions = useCallback(() => {
-    if (!Number.isFinite(traderId)) return;
-    const bounds = day ? dayBounds(day) : null;
-    void traderApi.decisions(traderId, PAGE, undefined, round ?? undefined, bounds?.from, bounds?.to).then(list => {
-      setDecisions(list);
-      setHasMore(list.length >= PAGE);
-    }).catch(() => setDecisions([]));
-    // token 合计跟时间线同一套筛选，但列表是分页的、求和不能靠前端，另发一个并行请求让库去 SUM
-    void traderApi.tokenUsage(traderId, round ?? undefined, bounds?.from, bounds?.to)
-      .then(setTokens).catch(() => setTokens(null));
-  }, [traderId, round, day]);
-
   // 定时刷新之外，一轮唤醒刚结束（endedAt 变）也立刻重拉：新决策行、净值点、持仓都在那一刻落库
   useEffect(() => {
     load();
     const timer = setInterval(load, REFRESH_MS);
     return () => clearInterval(timer);
   }, [load, endedAt]);
+
+  // 时间线的请求键：局 / 天 / 手动刷新任一变了就整页重拉。请求发出时记下键，回来跟当前的对不上
+  //（用户已经切走了，连点前一天、加载更多后马上切局都会这样）就整个丢掉。
+  // 跟随当前局时拼的是当前局号：主人在别处重置开了新局，也算换了局
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const roundPart = round ?? `cur${detail?.trader.roundNo ?? ''}`;
+  const timelineKey = `${traderId}|${roundPart}|${day ?? ''}|${refreshNonce}`;
+  const timelineKeyRef = useRef<string | null>(null);
+  // 跳转要找的那条决策：整页重拉时一路往下翻到它为止（当天决策可能不止一页）
+  const jumpTargetRef = useRef<number | null>(null);
+
+  // 时间线单独拉：按天翻看只动它，持仓/曲线/已了结不跟着重拉
   useEffect(() => {
-    loadDecisions();
-    const timer = setInterval(loadDecisions, REFRESH_MS);
+    if (!Number.isFinite(traderId)) return;
+    const key = timelineKey;
+    // 键没变＝唤醒刚结束触发的重跑，跟定时刷新一样只补新的
+    const sameKey = timelineKeyRef.current === key;
+    timelineKeyRef.current = key;
+    const target = sameKey ? null : jumpTargetRef.current;
+    if (!sameKey) jumpTargetRef.current = null;
+    const bounds = day ? dayBounds(day) : null;
+    const fetchPage = (before?: number) =>
+      traderApi.decisions(traderId, PAGE, before, round ?? undefined, bounds?.from, bounds?.to);
+
+    const reload = async () => {
+      let page = await fetchPage();
+      let list = page;
+      // 跳转目标不在第一页：接着往下翻，直到翻到、翻完或用户已经切走
+      while (target != null && page.length >= PAGE && !list.some(d => d.id === target)
+        && timelineKeyRef.current === key) {
+        page = await fetchPage(list[list.length - 1].wakeTime);
+        list = [...list, ...page];
+      }
+      if (timelineKeyRef.current !== key) return;
+      setDecisions(list);
+      setHasMore(page.length >= PAGE);
+    };
+    // 定时刷新：只把新落库的并到顶上，用户"加载更多"翻出来的旧页留着
+    const refresh = async () => {
+      const page = await fetchPage();
+      if (timelineKeyRef.current === key) setDecisions(prev => mergeNewer(prev, page));
+    };
+    // token 合计跟时间线同一套筛选，但列表是分页的、求和不能靠前端，另发一个并行请求让库去 SUM。
+    // fresh=换了筛选后的头一拉，失败要清掉（不然挂着上一个筛选的数）；同一筛选的定时刷新失败就留着旧值
+    const loadTokens = (fresh: boolean) => {
+      traderApi.tokenUsage(traderId, round ?? undefined, bounds?.from, bounds?.to)
+        .then(v => { if (timelineKeyRef.current === key) setTokens(v); })
+        .catch(() => { if (fresh && timelineKeyRef.current === key) setTokens(null); });
+    };
+
+    (sameKey ? refresh() : reload()).catch(() => {
+      if (!sameKey && timelineKeyRef.current === key) setDecisions([]);
+    });
+    loadTokens(!sameKey);
+    const timer = setInterval(() => {
+      refresh().catch(() => {});
+      loadTokens(false);
+    }, REFRESH_MS);
     return () => clearInterval(timer);
-  }, [loadDecisions, endedAt]);
+  }, [traderId, round, day, timelineKey, endedAt]);
 
   const loadMore = useCallback(() => {
     const oldest = decisions[decisions.length - 1];
     if (!oldest) return;
+    const key = timelineKey;
     const bounds = day ? dayBounds(day) : null;
     setLoadingMore(true);
     traderApi.decisions(traderId, PAGE, oldest.wakeTime, round ?? undefined, bounds?.from, bounds?.to)
       .then(list => {
+        if (timelineKeyRef.current !== key) return;
         setDecisions(prev => [...prev, ...list]);
         setHasMore(list.length >= PAGE);
       })
       .finally(() => setLoadingMore(false));
-  }, [traderId, decisions, round, day]);
+  }, [traderId, decisions, round, day, timelineKey]);
 
   // 局与局的日期不重叠，切局时日期筛选一并清掉
   const pickRound = (r: number | null) => { setRound(r); setDay(null); setFocusId(null); };
@@ -168,12 +236,15 @@ export function ArenaDetail() {
   // 没选日期时从今天起步
   const shiftDay = (delta: number) => changeDay(fmtDate(dayBounds(day ?? today).from + delta * DAY_MS));
 
-  // 已了结交易 → 它的开/平仓那一轮：切回时间线、筛到那一天、当前局（已了结只有当前局的）
+  // 已了结交易 → 它的开/平仓那一轮：切回时间线、筛到那一天、当前局（已了结只有当前局的）。
+  // 总是整页重拉（同一天也拉）：目标可能在还没翻到的页里，重拉时一路翻到它
   const jumpToDecision = (d: TradeDecisionRef) => {
+    jumpTargetRef.current = d.id;
     setTab('timeline');
     setRound(null);
     setDay(fmtDate(d.wakeTime));
     setFocusId(d.id);
+    setRefreshNonce(n => n + 1);
     listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
   // 那一天的列表到位后再滚到目标那条
@@ -259,7 +330,7 @@ export function ArenaDetail() {
               </>
             )}
             <button type="button" className="ibtn" aria-label={t('common:refresh')}
-                    onClick={() => { load(); loadDecisions(); }}>
+                    onClick={() => { load(); setRefreshNonce(n => n + 1); }}>
               <RefreshCw className="ic" />
             </button>
           </div>

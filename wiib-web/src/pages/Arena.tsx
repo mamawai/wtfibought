@@ -21,12 +21,14 @@ export function Arena() {
   const { t } = useTranslation(['ai', 'common']);
   const [traders, setTraders] = useState<TraderPublicView[]>([]);
   const [loading, setLoading] = useState(true);
+  // 最近一次拉取失败了。失败保留上一份榜单，不能当成"一个 trader 都没有"
+  const [failed, setFailed] = useState(false);
   const boardRef = useStagger<HTMLElement>();
 
   const load = useCallback(() => {
     traderApi.arena()
-      .then(setTraders)
-      .catch(() => setTraders([]))
+      .then(list => { setTraders(list); setFailed(false); })
+      .catch(() => setFailed(true))
       .finally(() => setLoading(false));
   }, []);
 
@@ -36,7 +38,9 @@ export function Arena() {
     return () => clearInterval(timer);
   }, [load]);
 
-  const empty = traders.length === 0 && !loading;
+  // 手里一份榜单都没有又拉失败了：有没有 trader、有没有自己的都不知道
+  const unknown = failed && traders.length === 0;
+  const empty = traders.length === 0 && !loading && !unknown;
   const hasMine = traders.some(tr => tr.mine);
   // 表头与数据行同一套栅格：窄屏收成三列，模型/节奏/权益/局四列直接藏起来
   const row = 'grid grid-cols-[60px_1fr_1fr] xl:grid-cols-[90px_1.4fr_1fr_1.3fr_1fr_1fr_80px_1.2fr] gap-5';
@@ -54,7 +58,13 @@ export function Arena() {
         </div>
       </div>
 
-      {empty ? (
+      {unknown ? (
+        <section className="sec">
+          <div className="sec-h">
+            <h2>{t('common:loadFailed')}</h2>
+          </div>
+        </section>
+      ) : empty ? (
         <section className="sec">
           <div className="sec-h">
             <h2>{t('arena.empty')}</h2>
@@ -110,8 +120,8 @@ export function Arena() {
         </section>
       )}
 
-      {/* 自己还没有 trader 才出这一节：三步说明 + 创建入口 */}
-      {!hasMine && (
+      {/* 自己还没有 trader 才出这一节：三步说明 + 创建入口。榜单还没拿到（首拉中/拉失败）时不知道有没有，不出 */}
+      {!hasMine && !loading && !unknown && (
         <section className="sec">
           <div className="sec-h">
             <h2>{t('arena.noTraderTitle')}</h2>
