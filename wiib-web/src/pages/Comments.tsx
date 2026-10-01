@@ -12,6 +12,7 @@ import { useToast } from '../components/ui/use-toast';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogHeader, DialogContent, DialogFooter } from '../components/ui/dialog';
 import { cn, fmtDateTime } from '../lib/utils';
+import i18n from '../i18n';
 import type { CommentItem } from '../types';
 
 const ADMIN_USER_ID = 1;
@@ -304,6 +305,7 @@ export function Comments() {
   const [muteTarget, setMuteTarget] = useState<CommentItem | null>(null);
   const [muting, setMuting] = useState(false);
 
+  // 不依赖 t：切语言会换新 t，依赖了就会整页重载回第 1 页、收起展开、关掉回复框
   const load = useCallback(async () => {
     const seq = ++loadSeq.current;
     setLoading(true);
@@ -323,11 +325,11 @@ export function Comments() {
       setChildPage({});
       setReplyTo(null);
     } catch (e) {
-      if (seq === loadSeq.current) toast((e as Error).message || t('comments.toast.loadFailed'), 'error');
+      if (seq === loadSeq.current) toast((e as Error).message || i18n.t('community:comments.toast.loadFailed'), 'error');
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
-  }, [focusId, toast, t]);
+  }, [focusId, toast]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -337,7 +339,11 @@ export function Comments() {
     setLoadingMore(true);
     try {
       const list = await commentApi.list(next, ROOT_PAGE_SIZE);
-      setRoots(prev => [...prev, ...list]);
+      // 按时间倒序分页，期间有新帖会把旧帖往后挤，这一页开头可能已经显示过，按 id 去重
+      setRoots(prev => {
+        const seen = new Set(prev.map(r => r.id));
+        return [...prev, ...list.filter(r => !seen.has(r.id))];
+      });
       setPage(next);
       setHasMore(list.length === ROOT_PAGE_SIZE);
     } catch (e) {

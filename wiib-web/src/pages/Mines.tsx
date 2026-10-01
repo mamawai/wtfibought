@@ -7,6 +7,7 @@ import { Skeleton } from '../components/ui/skeleton';
 import { WalletTransferModal } from '../components/WalletTransferModal';
 import { Wallet, TrendingUp, Pickaxe, ArrowLeftRight } from 'lucide-react';
 import { cn, fmtNum } from '../lib/utils';
+import i18n from '../i18n';
 import type { MinesGameState, MinesStatus } from '../types';
 
 const BET_PRESETS = [10, 50, 100, 500, 1000, 5000];
@@ -20,35 +21,43 @@ export function Mines() {
   const [game, setGame] = useState<MinesGameState | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
-  const [betAmount, setBetAmount] = useState(100);
   const [betInput, setBetInput] = useState('100');
   const [showResult, setShowResult] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   // 记录已翻开过的格子（用于翻转动画，避免页面恢复时重播）
   const flippedRef = useRef<Set<number>>(new Set());
 
-  const balance = game?.balance ?? status?.balance ?? 0;
+  // 下注额就是输入框里的数，清空或乱填算 0
+  const betAmount = parseFloat(betInput) || 0;
+  // 顶栏余额以 status 为准：每次牌局返回都同步进来，划转后 fetchStatus 也刷它
+  const balance = status?.balance ?? 0;
 
+  // 不依赖 t：切语言会换新 t，依赖了就会重拉
   const fetchStatus = useCallback(async () => {
     try {
       const s = await minesApi.status();
       setStatus(s);
       if (s.activeGame) setGame(s.activeGame);
     } catch (e: unknown) {
-      toast((e as Error).message || t('common:loadFailed'), 'error');
+      toast((e as Error).message || i18n.t('common:loadFailed'), 'error');
     } finally {
       setLoading(false);
     }
-  }, [toast, t]);
+  }, [toast]);
 
   useEffect(() => { void fetchStatus(); }, [fetchStatus]);
+
+  const applyGame = (state: MinesGameState) => {
+    setGame(state);
+    setStatus(s => (s ? { ...s, balance: state.balance } : s));
+  };
 
   const handleBet = async () => {
     if (acting) return;
     setActing(true);
     try {
       const state = await minesApi.bet(betAmount);
-      setGame(state);
+      applyGame(state);
       setShowResult(false);
       flippedRef.current = new Set();
     } catch (e: unknown) {
@@ -64,7 +73,7 @@ export function Mines() {
     setActing(true);
     try {
       const state = await minesApi.reveal(cell);
-      setGame(state);
+      applyGame(state);
       if (state.phase === 'SETTLED') {
         setShowResult(true);
       }
@@ -80,7 +89,7 @@ export function Mines() {
     setActing(true);
     try {
       const state = await minesApi.cashout();
-      setGame(state);
+      applyGame(state);
       setShowResult(true);
     } catch (e: unknown) {
       toast((e as Error).message || t('toast.cashoutFailed'), 'error');
@@ -93,12 +102,6 @@ export function Mines() {
     setGame(null);
     setShowResult(false);
     void fetchStatus();
-  };
-
-  const handleBetInput = (val: string) => {
-    setBetInput(val);
-    const n = parseFloat(val);
-    if (!isNaN(n) && n > 0) setBetAmount(n);
   };
 
   if (loading) {
@@ -248,7 +251,7 @@ export function Mines() {
             <input
               type="number"
               value={betInput}
-              onChange={e => handleBetInput(e.target.value)}
+              onChange={e => setBetInput(e.target.value)}
               className="w-full max-w-xs mx-auto block text-center text-2xl font-bold bg-input border border-border rounded-md px-4 py-2 tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/50"
               min={10}
               max={5000}
@@ -259,7 +262,7 @@ export function Mines() {
             {BET_PRESETS.map(v => (
               <button
                 key={v}
-                onClick={() => { setBetAmount(v); setBetInput(String(v)); }}
+                onClick={() => setBetInput(String(v))}
                 disabled={v > balance}
                 className={cn(
                   'px-3 py-1.5 rounded-lg text-sm font-medium transition-all',

@@ -331,7 +331,8 @@
       "sellFailed": "Sell failed",
       "enterShares": "Enter shares to sell",
       "noPosition": "No position",
-      "maxSellable": "You can sell at most {{qty}} shares"
+      "maxSellable": "You can sell at most {{qty}} shares",
+      "partialSold": "Sold {{qty}} shares, the rest didn't fill: {{reason}}"
     }
   },
   "campaign": {
