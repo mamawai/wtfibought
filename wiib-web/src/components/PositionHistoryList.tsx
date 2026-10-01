@@ -45,6 +45,15 @@ function Pnl({ value, className }: { value: number; className?: string }) {
   );
 }
 
+/** 资金费净额：后端 fundingFeeTotal 正=付出、负=收到，显示成对钱包的影响（付出 -、收到 +） */
+function FundingFee({ value }: { value: number }) {
+  return (
+    <span className={cn('num', value > 0 ? 'text-loss' : value < 0 ? 'text-gain' : 'text-foreground')}>
+      {value > 0 ? '-' : value < 0 ? '+' : ''}{fmtNum(Math.abs(value))}
+    </span>
+  );
+}
+
 /** 一笔成交明细。分批平仓就是靠这几行还原出「0.4@110 / 0.6@120」的完整过程 */
 function FillRow({ fill, symbol }: { fill: PositionFill; symbol: string }) {
   // 这行的方向标签走 orderSideView（词表在 labels ns），组件自己订一份 t 才会跟着切语言重渲染
@@ -189,7 +198,7 @@ function Row({ item }: { item: PositionHistoryItem }) {
               {t('history.commission')} <span className="num text-loss">-{fmtNum(item.commission)}</span>
             </span>
             <span className="text-[10px] text-muted-foreground">
-              {t('history.fundingFee')} <span className="num text-loss">-{fmtNum(item.fundingFeeTotal)}</span>
+              {t('history.fundingFee')} <FundingFee value={item.fundingFeeTotal} />
             </span>
             <span className="text-[10px] text-muted-foreground">
               {t('history.closedAt')} <span className="num text-foreground">{fmtDateTime(item.closedAt)}</span>

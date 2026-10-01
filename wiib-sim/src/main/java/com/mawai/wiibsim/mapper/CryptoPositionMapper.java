@@ -10,10 +10,12 @@ import java.util.List;
 @Mapper
 public interface CryptoPositionMapper extends BaseMapper<CryptoPosition> {
 
+    /** 买入加仓：均价按总持有量（可用 + 挂限价卖单冻结的）加权 */
     @Insert("INSERT INTO crypto_position (user_id, symbol, quantity, frozen_quantity, avg_cost, total_discount, created_at, updated_at) " +
             "VALUES (#{userId}, #{symbol}, #{quantity}, 0, #{price}, #{discount}, NOW(), NOW()) " +
             "ON CONFLICT (user_id, symbol) DO UPDATE SET " +
-            "avg_cost = (crypto_position.avg_cost * crypto_position.quantity + #{price} * #{quantity}) / (crypto_position.quantity + #{quantity}), " +
+            "avg_cost = (crypto_position.avg_cost * (crypto_position.quantity + crypto_position.frozen_quantity) + #{price} * #{quantity}) " +
+            "/ (crypto_position.quantity + crypto_position.frozen_quantity + #{quantity}), " +
             "quantity = crypto_position.quantity + #{quantity}, " +
             "total_discount = crypto_position.total_discount + #{discount}, " +
             "updated_at = NOW()")

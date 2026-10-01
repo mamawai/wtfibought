@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { bstockApi } from '../api';
 import { useUserStore } from '../stores/userStore';
 import { useCryptoStream } from '../hooks/useCryptoStream';
+import { useCrossAccount } from '../hooks/useCrossAccount';
 import { useToast } from '../components/ui/use-toast';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -13,7 +14,7 @@ import { CandleChart } from '../components/CandleChart';
 import { FuturesActionButton } from '../components/FuturesActionButton';
 import { LoginPrompt } from '../components/LoginPrompt';
 import { useQuantityAnimation } from '../components/coin/useQuantityAnimation';
-import { floorToStep } from '../components/coin/futuresMath';
+import { calcMaxSpotBuyQty, calcSpotOrderEstimate } from '../components/coin/futuresMath';
 import { cn, fmtNum } from '../lib/utils';
 import { ChevronLeft, Wallet, Globe, Landmark } from 'lucide-react';
 import type { BStock, CryptoPosition } from '../types';
@@ -40,7 +41,6 @@ function BStockDetail({ symbol }: { symbol: string }) {
   const navigate = useNavigate();
   const { t } = useTranslation('market');
   const { toast } = useToast();
-  const user = useUserStore(s => s.user);
   const fetchUser = useUserStore(s => s.fetchUser);
   // 游客只看行情和公司信息，持仓不拉、交易面板换成去登录
   const loggedIn = useUserStore(s => !!s.token);
@@ -60,7 +60,8 @@ function BStockDetail({ symbol }: { symbol: string }) {
 
   const tick = useCryptoStream(symbol, 'spot');
   const livePrice = tick?.price ?? info?.price ?? 0;
-  const balance = user?.balance ?? 0;
+  // 买入能花的钱 = min(全仓可用, 余额)：后端买入先过全仓可用这道闸再扣余额
+  const available = useCrossAccount().spendable ?? 0;
 
   const load = useCallback(() => {
     bstockApi.detail(symbol).then(setInfo).catch(() => { /* keep */ });
@@ -77,20 +78,18 @@ function BStockDetail({ symbol }: { symbol: string }) {
     return () => window.clearTimeout(timer);
   }, [actionSuccess]);
 
-  // USDT 预算 ↔ 股数换算：买入现金占用 = 数量 × 价格 × (1/杠杆 + 手续费率)，
-  // 与下面 marginCost 的算式同源（bstock 输入的是总股数，保证金=成交额/杠杆、手续费按全额算）。
-  // 换算出的股数按 QTY_STEP 向下取整，预估与提交用同一个数，界面不骗人
+  // 切单位用的换算系数：买入现金占用 ≈ 数量 × 价格 × (1/杠杆 + 手续费率)
+  // （bstock 输入的是总股数，保证金=成交额/杠杆、手续费按全额算）。
+  // 预算换股数取付得起的最大股数（按 QTY_STEP 对齐、现金占用按后端取整口径算），预估与提交用同一个数，界面不骗人
   const isUsdtInput = side === 'BUY' && buyUnit === 'USDT';
   const unitFactor = livePrice * (1 / (side === 'BUY' ? leverage : 1) + COMMISSION_RATE);
   const inputNum = parseFloat(qty) || 0;
-  const qtyNum = isUsdtInput
-    ? (unitFactor > 0 ? floorToStep(inputNum / unitFactor, QTY_STEP) : 0)
-    : inputNum;
-  const amount = qtyNum * livePrice;
-  const commission = amount * COMMISSION_RATE;
+  const qtyNum = isUsdtInput ? calcMaxSpotBuyQty(inputNum, livePrice, leverage, QTY_STEP) : inputNum;
   const isLevBuy = side === 'BUY' && leverage > 1;
-  const marginCost = (isLevBuy ? amount / leverage : amount) + commission;   // 买入现金占用
-  const proceeds = amount - commission;                                       // 卖出到账
+  // 预估取整同后端：成交额、手续费四舍五入到分，杠杆单保证金向上取到分；卖出不吃杠杆
+  const est = calcSpotOrderEstimate(qtyNum, livePrice, side === 'BUY' ? leverage : 1);
+  const marginCost = est.margin + est.commission;   // 买入现金占用
+  const proceeds = est.amount - est.commission;      // 卖出到账
   const held = position?.quantity ?? 0;
   const chg = info?.changePct ?? 0;
   const up = chg >= 0;
@@ -107,10 +106,11 @@ function BStockDetail({ symbol }: { symbol: string }) {
 
   const setPct = (pct: number) => {
     if (livePrice <= 0) return;
-    // USDT 模式：% 直接取余额的百分比当预算，换算成股数的事留给预估/提交
-    if (isUsdtInput) { animateQty(Math.max(0, balance * pct), 0.01); return; }
+    // USDT 模式：% 直接取可用的百分比当预算（向下取到分），换算成股数的事留给预估/提交
+    if (isUsdtInput) { animateQty(Math.floor(available * pct * 100) / 100, 0.01); return; }
+    // 买入：现金占用 = 保证金(成交额/杠杆) + 手续费(按全额)，按后端口径取付得起的最大股数
     const target = side === 'BUY'
-      ? (balance * pct * leverage) / (livePrice * (1 + COMMISSION_RATE))
+      ? calcMaxSpotBuyQty(available * pct, livePrice, leverage, QTY_STEP)
       : held * pct;
     animateQty(Math.max(0, target), QTY_STEP);
   };
@@ -265,7 +265,7 @@ function BStockDetail({ symbol }: { symbol: string }) {
 
               {/* 余额 / 持仓 */}
               <div className="flex items-center justify-between text-xs font-bold text-muted-foreground">
-                <span className="inline-flex items-center gap-1"><Wallet className="w-3.5 h-3.5" /> {t('bstockDetail.available')} <span className="text-foreground tabular-nums">{fmtNum(balance)}</span></span>
+                <span className="inline-flex items-center gap-1"><Wallet className="w-3.5 h-3.5" /> {t('bstockDetail.available')} <span className="text-foreground tabular-nums">{fmtNum(available)}</span></span>
                 <span>{t('bstockDetail.held')} <span className="text-foreground tabular-nums">{fmtNum(held)}</span></span>
               </div>
 
@@ -335,9 +335,9 @@ function BStockDetail({ symbol }: { symbol: string }) {
                     <span className="tabular-nums font-bold">{t('bstockDetail.estShares', { qty: fmtNum(qtyNum) })}</span>
                   </div>
                 )}
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('bstockDetail.orderValue')}</span><span className="tabular-nums font-bold">{fmtNum(amount)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('bstockDetail.fee')}</span><span className="tabular-nums font-bold">{fmtNum(commission)}</span></div>
-                {isLevBuy && <div className="flex justify-between"><span className="text-muted-foreground">{t('bstockDetail.borrowed')}</span><span className="tabular-nums font-bold text-amber-400">{fmtNum(amount - amount / leverage)}</span></div>}
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('bstockDetail.orderValue')}</span><span className="tabular-nums font-bold">{fmtNum(est.amount)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('bstockDetail.fee')}</span><span className="tabular-nums font-bold">{fmtNum(est.commission)}</span></div>
+                {isLevBuy && <div className="flex justify-between"><span className="text-muted-foreground">{t('bstockDetail.borrowed')}</span><span className="tabular-nums font-bold text-amber-400">{fmtNum(est.amount - est.margin)}</span></div>}
                 <div className="flex justify-between font-black text-sm pt-1.5 border-t border-border/40">
                   <span>{side === 'BUY' ? t('bstockDetail.cashNeeded') : t('bstockDetail.proceeds')}</span>
                   <span className="tabular-nums">{fmtNum(side === 'BUY' ? marginCost : proceeds)}</span>

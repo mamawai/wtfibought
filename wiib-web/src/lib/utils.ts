@@ -15,6 +15,18 @@ const isZhLocale = () => (i18n.resolvedLanguage ?? i18n.language ?? 'zh').starts
 
 // ---- 全站统一格式化口径：数字千分位；时间固定新加坡时区（UTC+8） ----
 
+/** 不带时区的 ISO 日期时间串：2026-10-02T12:00:00 / 2026-10-02T12:00:00.123 */
+const NAIVE_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
+/**
+ * 后端时间转 Date。后端 LocalDateTime 不带时区，是服务器东八区的钟点（部署 TZ=Asia/Singapore），
+ * 这种串补 +08:00 再解析；带 Z/偏移的串、毫秒数、Date 照常解析。后端时间串都走这里，别直接 new Date。
+ */
+export function parseServerTime(ts: number | string | Date): Date {
+  if (typeof ts === 'string' && NAIVE_DATETIME.test(ts)) return new Date(`${ts}+08:00`);
+  return new Date(ts);
+}
+
 /** 千分位 + 固定小数位；string 自动 parseFloat；null/NaN 返回 '-'。 */
 export function fmtNum(n: number | string | null | undefined, decimals = 2): string {
   const v = typeof n === 'string' ? parseFloat(n) : n;
@@ -42,7 +54,7 @@ export function fmtSignedPct(n: number, decimals = 2): string {
  * en-CA 的短日期格式就是 yyyy-MM-dd；不能用 toISOString().slice(0,10)——那是 UTC，东八区早 8 点前退到前一天。
  */
 export function fmtDate(ts: number | string | Date = Date.now()): string {
-  return new Date(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+  return parseServerTime(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
 }
 
 export const DAY_MS = 86_400_000;
@@ -55,7 +67,7 @@ export function dayBounds(day: string): { from: number; to: number } {
 
 /** 新加坡时间 MM/DD HH:mm（withSeconds=true 时带秒），列表/卡片时间戳统一走这里。 */
 export function fmtDateTime(ts: number | string | Date, withSeconds = false): string {
-  return new Date(ts).toLocaleString('zh-CN', {
+  return parseServerTime(ts).toLocaleString('zh-CN', {
     timeZone: 'Asia/Singapore',
     month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit',
@@ -66,7 +78,7 @@ export function fmtDateTime(ts: number | string | Date, withSeconds = false): st
 
 /** 新加坡时间 HH:mm（withSeconds=true 时带秒），日内图表轴/tooltip 走这里。 */
 export function fmtTime(ts: number | string | Date, withSeconds = false): string {
-  return new Date(ts).toLocaleTimeString('en-GB', {
+  return parseServerTime(ts).toLocaleTimeString('en-GB', {
     timeZone: 'Asia/Singapore',
     hour: '2-digit', minute: '2-digit',
     ...(withSeconds ? { second: '2-digit' as const } : {}),
@@ -79,7 +91,7 @@ export function fmtTime(ts: number | string | Date, withSeconds = false): string
  * 通知列表用——"3分钟前"比"07-21 14:23"更快让人判断这事新不新鲜。
  */
 export function fmtRelative(ts: number | string | Date): string {
-  const then = new Date(ts).getTime();
+  const then = parseServerTime(ts).getTime();
   if (!Number.isFinite(then)) return '-';
   const diff = Date.now() - then;
   // 词表必须在函数体里现查：存成模块级常量的话切语言后不会变
@@ -96,7 +108,7 @@ export function fmtRelative(ts: number | string | Date): string {
  * 持仓时长用——精确到毫秒没人看，"拿了3天"和"拿了8分钟"的区别才是要传达的。
  */
 export function fmtDuration(from: number | string | Date, to: number | string | Date): string {
-  const ms = new Date(to).getTime() - new Date(from).getTime();
+  const ms = parseServerTime(to).getTime() - parseServerTime(from).getTime();
   if (!Number.isFinite(ms)) return '-';
   // 时钟漂移能让平仓时间早于开仓，负数按 0 处理，不显示"-3分钟"
   const s = Math.max(0, Math.floor(ms / 1000));

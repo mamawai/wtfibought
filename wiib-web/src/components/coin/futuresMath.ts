@@ -70,32 +70,32 @@ export function estimateFuturesLiqPrice(brackets: FuturesBracket[] | undefined, 
   return { price: entryBracketPrice, bracket: entryBracket };
 }
 
-/** 合约开仓预估：以保证金数量（未乘杠杆）算仓位价值/保证金/手续费/合计 */
-export function calcFuturesOpenEstimate(marginQty: number, price: number, leverage: number) {
-  const orderQty = marginQty * leverage;
+/** 合约开仓预估：orderQty 是实际下单币量（已乘杠杆、按步长取整），算仓位价值/保证金/手续费/合计，取整口径同后端 */
+export function calcFuturesOpenEstimate(orderQty: number, price: number, leverage: number) {
   const positionValue = roundHalfUp2(price * orderQty);
   const margin = roundCeil2(positionValue / leverage);
   const commission = roundHalfUp2(positionValue * FUTURES_COMMISSION_RATE);
   const fundingFee = roundHalfUp2(positionValue * 0.0001);
   const totalCost = roundHalfUp2(margin + commission);
-  return { orderQty, positionValue, margin, commission, fundingFee, totalCost };
+  return { positionValue, margin, commission, fundingFee, totalCost };
 }
 
-/** 二分逼近：预算内（余额×pct）能开的最大保证金数量 */
-export function calcMaxAffordableMarginQty(balance: number, pct: number, price: number, leverage: number, step: number): number {
-  const budget = balance * pct;
-  if (budget <= 0 || price <= 0 || leverage <= 0 || step <= 0) return 0;
+/**
+ * 步长网格上二分，找"成本 ≤ 预算"的最大数量。cost 是按后端取整口径算的真成本（随数量单调不减）；
+ * unitCost 是每个币的连续近似成本，只用来定上界：取整最多让真成本比它少约 0.01，预算多放 0.02 兜住
+ */
+function maxQtyWithinBudget(budget: number, unitCost: number, step: number, cost: (qty: number) => number): number {
+  if (!(budget > 0) || !(unitCost > 0) || !(step > 0)) return 0;
 
   const precision = getStepPrecision(step);
   let left = 0;
-  let right = Math.floor((budget / price) / step);
+  let right = Math.floor((budget + 0.02) / unitCost / step) + 1;
   let best = 0;
 
   while (left <= right) {
     const mid = Math.floor((left + right) / 2);
     const qty = Number((mid * step).toFixed(precision));
-    const estimate = calcFuturesOpenEstimate(qty, price, leverage);
-    if (estimate.totalCost <= budget + 1e-9) {
+    if (cost(qty) <= budget + 1e-9) {
       best = qty;
       left = mid + 1;
     } else {
@@ -104,4 +104,63 @@ export function calcMaxAffordableMarginQty(balance: number, pct: number, price: 
   }
 
   return best;
+}
+
+/** 合约预算内能开的最大下单量（按步长对齐）：保证金+手续费按后端取整口径 ≤ 预算 */
+export function calcMaxAffordableOrderQty(budget: number, price: number, leverage: number, step: number): number {
+  return maxQtyWithinBudget(budget, price * (1 / leverage + FUTURES_COMMISSION_RATE), step,
+    qty => calcFuturesOpenEstimate(qty, price, leverage).totalCost);
+}
+
+/**
+ * 下单量 → USDT 单位的保证金输入（两位小数）。面板会 金额÷价×杠杆 再按步长向下取整，这里保证取整后不超过这个单量：
+ * 向上取到分正好落回这个单量就用它；金额精度不够分辨一个步长时会多出一截，退回向下取到分
+ */
+export function orderQtyToMarginUsdt(orderQty: number, price: number, leverage: number, step: number): number {
+  if (!(orderQty > 0) || !(price > 0)) return 0;
+  const exact = orderQty * price / leverage;
+  const up = roundCeil2(exact);
+  if (floorToStep((up / price) * leverage, step) <= orderQty) return up;
+  return Math.floor(exact * 100 + 1e-9) / 100;
+}
+
+/**
+ * 下单量 → 币单位的保证金输入（保证金币数，常比步长细：BTC 150x 一个步长只要 0.0000067 个币）。
+ * 面板会 输入×杠杆 再按步长向下取整：从步长的小数位起逐位加，取第一个向上取整后正好落回这个单量的
+ */
+export function orderQtyToMarginCoin(orderQty: number, leverage: number, step: number): number {
+  if (!(orderQty > 0)) return 0;
+  const base = getStepPrecision(step);
+  for (let p = base; ; p++) {
+    const scale = 10 ** p;
+    const coin = Math.ceil(orderQty / leverage * scale - 1e-9) / scale;
+    // 杠杆最多三位数，比步长多 3 位小数一定落得回去
+    if (floorToStep(coin * leverage, step) === orderQty || p >= base + 3) return coin;
+  }
+}
+
+/** 现货/bStock 买入的现金占用（限价买冻结也是这个数，杠杆=1），取整同后端：成交额四舍五入到分，杠杆单保证金向上取到分，手续费四舍五入到分 */
+export function calcSpotBuyCashNeed(qty: number, price: number, leverage: number): number {
+  const amount = roundHalfUp2(price * qty);
+  const commission = roundHalfUp2(amount * COMMISSION_RATE);
+  return (leverage > 1 ? roundCeil2(amount / leverage) : amount) + commission;
+}
+
+/**
+ * 现货下单预估：orderQty 是实际下单币量（已乘杠杆、按步长取整），取整同后端。
+ * discountRate 是折扣券的折后比例（1=不打折）：成交额打折后再取整，手续费按折后成交额算
+ */
+export function calcSpotOrderEstimate(orderQty: number, price: number, leverage: number, discountRate = 1) {
+  const fullAmount = roundHalfUp2(price * orderQty);
+  const amount = discountRate < 1 ? roundHalfUp2(fullAmount * discountRate) : fullAmount;
+  const commission = roundHalfUp2(amount * COMMISSION_RATE);
+  // 杠杆单自己掏的那份；不加杠杆就是成交额
+  const margin = leverage > 1 ? roundCeil2(amount / leverage) : amount;
+  return { fullAmount, amount, margin, commission };
+}
+
+/** 预算内能买的最大总数量（已含杠杆，按步长对齐），现金占用按后端取整口径算 */
+export function calcMaxSpotBuyQty(budget: number, price: number, leverage: number, step: number): number {
+  return maxQtyWithinBudget(budget, price * (1 / leverage + COMMISSION_RATE), step,
+    qty => calcSpotBuyCashNeed(qty, price, leverage));
 }

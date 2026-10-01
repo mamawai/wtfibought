@@ -21,7 +21,7 @@ import { useStagger } from '../hooks/useStagger';
 import { Gamepad2, List, DollarSign, Target, Settings2, Gift, Swords, Bot } from 'lucide-react';
 import type { BuffStatus, AssetSnapshot, User } from '../types';
 import { useUserStore } from '../stores/userStore';
-import { cn, fmtDate, fmtNum, fmtSignedPct, fmtSignedUsd } from '../lib/utils';
+import { cn, fmtDate, fmtNum, fmtSignedPct, fmtSignedUsd, parseServerTime } from '../lib/utils';
 
 const HIDE_NOTICE_KEY = 'wiib-notice-hide-date';
 const NOTICE_SEEN_KEY = 'wiib-notice-seen';
@@ -194,7 +194,7 @@ export function Home() {
       .then(([co, fo]) => {
         const ci: TradeItem[] = co.map(o => ({ id: `c-${o.orderId}`, orderSide: o.orderSide, base: o.symbol.replace('USDT', ''), quantity: o.quantity, filledAmount: o.filledAmount, createdAt: o.createdAt }));
         const fi: TradeItem[] = fo.map(o => ({ id: `f-${o.orderId}`, orderSide: o.orderSide, base: o.symbol.replace('USDT', ''), isFutures: true, quantity: o.quantity, filledAmount: o.filledAmount, createdAt: o.createdAt, isAi: o.isAiTrader === true }));
-        setLatestTrades([...ci, ...fi].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 20));
+        setLatestTrades([...ci, ...fi].sort((a, b) => parseServerTime(b.createdAt).getTime() - parseServerTime(a.createdAt).getTime()).slice(0, 20));
       }).finally(() => setTradesLoadedNonce(refreshNonce));
   }, [refreshNonce]);
 
