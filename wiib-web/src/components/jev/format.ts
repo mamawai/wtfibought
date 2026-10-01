@@ -17,10 +17,10 @@ export function runName(r: Pick<JevRun, 'runNo' | 'arm'>): string {
 /** 说明文字里要写的数，都取现在的配置：时长写成秒，价写成美分，比例和概率写成百分比 */
 export function thresholdVars(th: JevThresholds) {
   return {
-    stake: fmtNum(th.baseStake, 0), delay: th.fillDelayMs / 1000, tol: toCents(th.fillTolerance),
+    stake: fmtNum(th.baseStake, 0), delay: th.fillDelayMs / 1000, tol: toCents(th.timerFillTolerance),
     jump: toCents(th.jumpThreshold), from: toCents(th.jumpFromMin), to: toCents(th.jumpFromMax),
     watch: th.jumpWatchMs / 1000, extend: toCents(th.jumpExtend), ratio: pct(th.jumpRejectRatio),
-    extendMin: pct(th.jumpExtendMin), rejectMin: pct(th.jumpRejectMin),
+    buyMin: pct(th.jumpBuyMin),
     askMin: toCents(th.timerAskMin), askMax: toCents(th.timerAskMax),
     against: pct(th.timerAgainstMin), sellWin: pct(th.timerSellWinMax),
   };
@@ -62,7 +62,7 @@ export const PATTERN_STYLE: Record<string, { text: string; bar: string }> = {
   neither: { text: 'mute', bar: 'bg-muted-foreground/40' },
 };
 
-/** 这一行怎么来的：checkpoint 首字母 T 整点、J 突变、W v5-1 盯完；旧局的行都是 T，只在分组的局里标 */
+/** 这一行怎么来的：checkpoint 首字母 T 整点、J 突变、W v5-1、v5-2 盯完；旧局的行都是 T，只在分组的局里标 */
 export function wakePath(d: { checkpoint: string }): 'T' | 'J' | 'W' {
   const c = d.checkpoint[0];
   return c === 'J' || c === 'W' ? c : 'T';
@@ -75,7 +75,8 @@ export function reasonCode(d: { reason?: string }): string {
 
 /**
  * reason 的第二个词：BUY / UNSURE / NO_QUOTE / MISSED（v4 的 ADD / MAX_STAKE、R2 的 WAIT / ASK_LOW、v5 条件没过的各代码）是哪边，
- * v5 的 EXTEND / REJECT 是买的那一边，WATCH / NO_TRIGGER / NO_CALL 是突变那一边，HOLD / SELL / NO_BID 是手里那一边；R1 旧版的行没有
+ * v5 的 EXTEND / REJECT 是买的那一边，WATCH / NO_GO / NO_TRIGGER / NO_CALL 是突变那一边，HOLD / SELL / NO_BID 是手里那一边
+ * （v5-2 两边都买过写 BOTH，这里回 undefined）；R1 旧版的行没有
  */
 export function reasonSide(d: { reason?: string }): 'UP' | 'DOWN' | undefined {
   const s = d.reason?.split(' ')[1];
@@ -84,7 +85,7 @@ export function reasonSide(d: { reason?: string }): 'UP' | 'DOWN' | undefined {
 
 /**
  * reason 第三个词起的数，按顺序：v5-3 条件没过时第一个是没过的那个数（PRICE_BAND 是卖价，其余是概率），SELL 是会赢；
- * v5-1 盯完是价差，v5-2 突变是概率，NO_CALL 两个依次是会延续、会被打回
+ * 盯完（EXTEND / REJECT / NO_TRIGGER）是价差，v5-2 突变行的 WATCH / NO_GO 是 Jev 判的值得下单，旧行 NO_CALL 两个依次是会延续、会被打回
  */
 export function reasonNums(d: { reason?: string }): number[] {
   return d.reason?.split(' ').slice(2).map(Number).filter(Number.isFinite) ?? [];
@@ -93,13 +94,13 @@ export function reasonNums(d: { reason?: string }): number[] {
 /**
  * 每种代码的分类：已执行 / 照常不动或拿着 / 把握不够、加满了、条件没过（折起、灰字提示）/ 被代码拦下 / 这次没问或没成交。
  * SELL、NO_BID 旧局和 v5-3 有，ADD、MAX_STAKE 只有 v4 有，WAIT 只有 R1、R2 有，ASK_LOW 只有 R2 有，NOT_CHEAP、EXPENSIVE、ASK_RANGE 只有 R1 有；
- * EXTEND、REJECT 是 v5-1 盯完和 v5-2 突变时买的，WATCH、NO_TRIGGER 只有 v5-1 有，NO_CALL 只有 v5-2 有，FADING 只有旧的 v5-2 局有，
+ * EXTEND、REJECT 是 v5-1、v5-2 盯完买的，WATCH、NO_TRIGGER 这两组都有，NO_GO 只有 v5-2 有，NO_CALL、FADING 只有旧的 v5-2 行有，
  * PRICE_BAND、NO_PULLBACK 只有 v5-3 有
  */
 const REASON_KIND: Record<string, 'done' | 'idle' | 'unsure' | 'blocked' | 'skipped'> = {
   BUY: 'done', ADD: 'done', SELL: 'done', EXTEND: 'done', REJECT: 'done',
   PASS: 'idle', WAIT: 'idle', HOLD: 'idle', WATCH: 'idle', UNSURE: 'unsure', MAX_STAKE: 'unsure',
-  NO_TRIGGER: 'unsure', NO_CALL: 'unsure', FADING: 'unsure', PRICE_BAND: 'unsure', NO_PULLBACK: 'unsure',
+  NO_TRIGGER: 'unsure', NO_GO: 'unsure', NO_CALL: 'unsure', FADING: 'unsure', PRICE_BAND: 'unsure', NO_PULLBACK: 'unsure',
   NO_QUOTE: 'blocked', ASK_LOW: 'blocked', ASK_RANGE: 'blocked', NOT_CHEAP: 'blocked', EXPENSIVE: 'blocked',
   NO_BALANCE: 'blocked', NO_BID: 'blocked',
   STALE_BOOK: 'skipped', STALE_CHAINLINK: 'skipped', STALE_WHILE_ASKING: 'skipped', MISSED: 'skipped',

@@ -35,7 +35,7 @@ const PATH_STYLE = {
   W: { icon: Eye, cls: 'mute' },
 } as const;
 
-/** 这一行怎么来的：整点 / 突变 / v5-1 盯完 */
+/** 这一行怎么来的：整点 / 突变 / v5-1、v5-2 盯完 */
 export function PathChip({ path }: { path: keyof typeof PATH_STYLE }) {
   const { t } = useTranslation(['community']);
   const { icon: Icon, cls } = PATH_STYLE[path];
@@ -51,7 +51,7 @@ function pricePair(reason?: string): { from: string; to: string; gone: boolean }
   return { from: c(from), to: to === 'none' ? '--' : c(to), gone: to === 'none' };
 }
 
-/** 在容差里按别的价成交了：写预计和实际；开仓（v5 突变两组是延续、被打回），以及卖出和 v4 的加注都算 */
+/** 按别的价成交了：写预计和实际；开仓（v5 突变两组是延续、被打回），以及卖出和 v4 的加注都算 */
 function FillNote({ d }: { d: JevPredictionDecisionView }) {
   const { t } = useTranslation(['community']);
   const code = reasonCode(d);
@@ -94,18 +94,20 @@ function JevNotice({ d, arm, thresholds }: { d: JevPredictionDecisionView; arm?:
     to: pair?.to ?? '--',
     // 持仓行的 stake 是这一边在持的合计
     held: d.stake != null ? fmtNum(d.stake) : '--',
-    // NO_PULLBACK：没过的那道题的概率；SELL：手里这一边会赢的概率；v5-2 突变：会延续或会被打回，NO_CALL 的 prob2 是会被打回
+    // NO_PULLBACK：没过的那道题的概率；SELL：手里这一边会赢的概率；v5-2 的 WATCH、NO_GO：Jev 判的值得下单；
+    // 旧行 NO_CALL：会延续，prob2 是会被打回
     prob: pct(n),
     prob2: pct(n2),
-    // v5-1 盯完：比开始盯时涨了、跌了几美分，NO_TRIGGER 带正负号
+    // 盯完：比开始盯时涨了、跌了几美分，NO_TRIGGER 带正负号
     c: n == null ? '--' : code === 'NO_TRIGGER' && n > 0 ? `+${toCents(n)}` : toCents(n),
-    watch: th.watch, extend: th.extend, ratio: th.ratio, extendMin: th.extendMin, rejectMin: th.rejectMin,
+    watch: th.watch, extend: th.extend, ratio: th.ratio, buyMin: th.buyMin,
   };
   let key = code;
-  // v5-3 的持有是没到卖的线，突变两组的持有是这一回合已经买过
+  // v5-3 的持有是没到卖的线，突变两组的持有是这一回合已经买过，v5-2 两边都买过单独一句
   if (code === 'HOLD' && arm === 'TIMER_JEV') key = 'HOLD_TIMER';
-  // 延续、被打回：v5-2 的数是 Jev 判的概率，v5-1 的是盯到的价差
-  if ((code === 'EXTEND' || code === 'REJECT') && arm === 'JUMP_JEV') key = `${code}_JEV`;
+  if (code === 'HOLD' && d.reason?.split(' ')[1] === 'BOTH') key = 'HOLD_BOTH';
+  // v5-2 开始盯是 Jev 说了值得下单，带上它判的概率
+  if (code === 'WATCH' && n != null) key = 'WATCH_JEV';
   if (code === 'STALE_BOOK' && d.bookAgeMs == null) key = 'STALE_BOOK_NONE';
   // 没卖成是 "MISSED SELL ..."；等完那边没价单独一句，不写 --¢
   if (code === 'MISSED') key = (d.reason?.split(' ')[1] === 'SELL' ? 'MISSED_SELL' : 'MISSED') + (pair?.gone ? '_GONE' : '');
@@ -193,12 +195,13 @@ function JevSays({ choice, choiceP, momentum }: { choice?: string; choiceP?: num
 }
 
 /**
- * v5：这次看的是哪一边、Jev 估它会赢多少；突变行再加会延续、会被打回，整点行（和旧的突变行）再加 Jev 看是什么形态（概率最高那项）。
- * 买卖是代码按这一组的规则定的，没有 Jev 的选择
+ * v5：这次看的是哪一边、Jev 估它会赢多少；突变行再加这次突变值得下单（旧的突变行是会延续、会被打回），
+ * 整点行（和最早的突变行）再加 Jev 看是什么形态（概率最高那项）。买卖是代码按这一组的规则定的，没有 Jev 的选择
  */
-function JevReads({ side, win, extend, reject, pattern }: {
+function JevReads({ side, win, buy, extend, reject, pattern }: {
   side: 'UP' | 'DOWN';
   win: JevNoulAnswer;
+  buy?: JevNoulAnswer;
   extend?: JevNoulAnswer;
   reject?: JevNoulAnswer;
   pattern?: JevAnswer;
@@ -214,6 +217,11 @@ function JevReads({ side, win, extend, reject, pattern }: {
       <span className="whitespace-nowrap">
         <span className="mute">{t('prediction.jev.winLabel')}</span> <b className="num font-semibold">{pct(win.noul)}</b>
       </span>
+      {buy && (
+        <span className="whitespace-nowrap">
+          <span className="mute">{t('prediction.jev.buyLabel')}</span> <b className="num font-semibold">{pct(buy.noul)}</b>
+        </span>
+      )}
       {extend && (
         <span className="whitespace-nowrap">
           <span className="mute">{t('prediction.jev.extendLabel')}</span> <b className="num font-semibold">{pct(extend.noul)}</b>
@@ -252,11 +260,11 @@ function ProbRow({ d }: { d: JevPredictionDecisionView }) {
 }
 
 /**
- * 被叫醒一次一行（v5-1 盯完再一行）：实际动作 / 注额 / 时间 / 怎么来的 → 第二行 → 涨的概率 → 条件没过、被拦、没问、没成交、出错时的一句提示。
- * arm 是在看的这一局是哪一组，旧局没有：第二行 v5 是看哪一边、会赢多少，突变行再加会延续、会被打回，整点行再加什么形态；
+ * 被叫醒一次一行（v5-1、v5-2 盯完再一行）：实际动作 / 注额 / 时间 / 怎么来的 → 第二行 → 涨的概率 → 条件没过、被拦、没问、没成交、出错时的一句提示。
+ * arm 是在看的这一局是哪一组，旧局没有：第二行 v5 是看哪一边、会赢多少，突变行再加值得下单，整点行再加什么形态；
  * 旧局是 Jev 选了什么、多大把握、数学参考数（R2 是 Jev 眼里的每份优势，R1 是后劲）。
- * 点开看 Jev 每道题的回答、当时的盘口、赔率突变（v5 突变行还有那一刻 Binance 上 BTC 怎么动、Chainlink 差多少），v5 还有之后 5、10、15、45 秒的 UP 中间价；
- * 没问 Jev 的行（盘口或 Chainlink 太旧、出错、v5-1 盯完那一行）没东西可展开。thresholds 是现在的配置，提示里写盯的规则用
+ * 点开看 Jev 每道题的回答、当时的盘口、赔率突变（v5 突变行还有那一刻 Binance、Chainlink 上 BTC 怎么动），v5 还有之后 5、10、15、45 秒的 UP 中间价；
+ * 没问 Jev 的行（盘口或 Chainlink 太旧、出错、盯完那一行）没东西可展开。thresholds 是现在的配置，提示里写盯的规则用
  */
 export function JevDecisionCard({ d, arm, thresholds, open, onToggle }: {
   d: JevPredictionDecisionView;
@@ -290,8 +298,8 @@ export function JevDecisionCard({ d, arm, thresholds, open, onToggle }: {
           {path && <PathChip path={path} />}
           {expandable && <ChevronDown className={cn('ml-auto w-4 h-4 mute transition-transform', open && 'rotate-180')} />}
         </div>
-        {/* v5 的行看 Jev 的回答，Jev 出错时 v5-1 那一行、v5-1 盯完那一行没有；旧局按各版 */}
-        {arm ? a?.win && d.side && <JevReads side={d.side} win={a.win} extend={a.extend} reject={a.reject} pattern={a.pattern} />
+        {/* v5 的行看 Jev 的回答，Jev 出错时 v5-1 那一行、盯完那一行没有；旧局按各版 */}
+        {arm ? a?.win && d.side && <JevReads side={d.side} win={a.win} buy={a.buy} extend={a.extend} reject={a.reject} pattern={a.pattern} />
           : decided ? <JevDecides d={d} />
           : a?.momentum ? <JevSays choice={r1Choice} choiceP={d.jevChoiceP} momentum={a.momentum} /> : <JevEdge d={d} />}
         <ProbRow d={d} />
@@ -301,12 +309,13 @@ export function JevDecisionCard({ d, arm, thresholds, open, onToggle }: {
 
       {open && a && (
         <div className="pb-4 space-y-4">
-          {/* v5 看盘题：突变三道 win / extend / reject，整点六道 win / pattern 往下 */}
+          {/* v5 的题：突变两道 win / buy（旧行是 win / extend / reject），整点六道 win / pattern 往下 */}
           {a.win && (
             <JevAnswerBar title={t('prediction.jev.qWinTitle')} a={yesNo(a.win)}
                           options={[{ key: 'yes', label: t('prediction.jev.thisSideWins'), bar: 'bg-foreground' },
                                     { key: 'no', label: t('prediction.jev.otherSideWins'), bar: 'bg-muted-foreground/40' }]} />
           )}
+          {a.buy && <JevAnswerBar title={t('prediction.jev.qBuyTitle')} a={yesNo(a.buy)} options={yn} />}
           {a.extend && <JevAnswerBar title={t('prediction.jev.qExtendTitle')} a={yesNo(a.extend)} options={yn} />}
           {a.reject && <JevAnswerBar title={t('prediction.jev.qRejectTitle')} a={yesNo(a.reject)} options={yn} />}
           {a.pattern && (
@@ -340,11 +349,11 @@ export function JevDecisionCard({ d, arm, thresholds, open, onToggle }: {
                 ? { side: 'UP', c: toCents(d.oddsJumpUp) } : { side: 'DOWN', c: toCents(Math.abs(d.oddsJumpDown)) })
               : t('prediction.jev.jumpThen', { up: toCents(d.oddsJumpUp), down: toCents(Math.abs(d.oddsJumpDown)) })}</p>
           )}
-          {/* v5 突变行：那一刻 Binance 上 BTC 怎么动、结算用的 Chainlink 价跟上没有 */}
-          {(d.binance10s != null || d.chainlinkGap != null) && (
-            <p className="num text-[12.5px] mute">{t('prediction.jev.binanceThen', {
-              b10: usd(d.binance10s), b30: usd(d.binance30s), gap: usd(d.chainlinkGap),
-            })}</p>
+          {/* v5 突变行：那一刻 Binance 上 BTC 怎么动、结算用的 Chainlink 这 10 秒跟了多少；旧行记的是两个价差多少 */}
+          {(d.binance10s != null || d.chainlink10s != null || d.chainlinkGap != null) && (
+            <p className="num text-[12.5px] mute">{d.chainlink10s != null
+              ? t('prediction.jev.binanceThen', { b10: usd(d.binance10s), b30: usd(d.binance30s), c10: usd(d.chainlink10s) })
+              : t('prediction.jev.binanceThenGap', { b10: usd(d.binance10s), b30: usd(d.binance30s), gap: usd(d.chainlinkGap) })}</p>
           )}
           {(d.upMid5s != null || d.upMid10s != null || d.upMid15s != null || d.upMid45s != null) && (
             <p className="num text-[12.5px] mute">{t('prediction.jev.midAfter', {

@@ -47,11 +47,11 @@ function QuestionNote({ title, desc, options }: { title: string; desc: string; o
 /** 三组按这个顺序讲；突变两组先讲 */
 const ARMS: JevArm[] = ['JUMP_CODE', 'JUMP_JEV', 'TIMER_JEV'];
 
-/** 三组的行各带哪些标签：v5-1 突变一行、盯完一行 */
-const ARM_PATHS: Record<JevArm, ('T' | 'J' | 'W')[]> = { JUMP_CODE: ['J', 'W'], JUMP_JEV: ['J'], TIMER_JEV: ['T'] };
+/** 三组的行各带哪些标签：v5-1、v5-2 突变一行、盯完一行 */
+const ARM_PATHS: Record<JevArm, ('T' | 'J' | 'W')[]> = { JUMP_CODE: ['J', 'W'], JUMP_JEV: ['J', 'W'], TIMER_JEV: ['T'] };
 
 /**
- * 这些数字怎么看：每一行在说什么、涨的概率各是什么、Jev 要答的题（突变三道、整点六道，哪一组用哪道）、三组各自怎么买卖。
+ * 这些数字怎么看：每一行在说什么、涨的概率各是什么、Jev 要答的题（突变两道、整点六道，哪一组用哪道）、三组各自怎么买卖。
  * 收起放在流的最上面
  */
 function Guide({ thresholds }: { thresholds: JevThresholds }) {
@@ -88,11 +88,10 @@ function Guide({ thresholds }: { thresholds: JevThresholds }) {
           <div className="space-y-3">
             <div className="font-semibold text-foreground">{t('prediction.jev.guideQuestionsTitle')}</div>
             <p>{t('prediction.jev.guideQuestions')}</p>
-            {/* 两种叫醒都问会赢，下面按叫醒方式分：突变另外两道、整点另外五道，芯片跟卡片上那个一样 */}
+            {/* 两种叫醒都问会赢，下面按叫醒方式分：突变另外一道、整点另外五道，芯片跟卡片上那个一样 */}
             <QuestionNote title={t('prediction.jev.qWinTitle')} desc={t('prediction.jev.qWinDesc', vars)} />
             <div className="flex items-center gap-2 text-foreground"><PathChip path="J" />{t('prediction.jev.guideJumpQuestions')}</div>
-            <QuestionNote title={t('prediction.jev.qExtendTitle')} desc={t('prediction.jev.qExtendDesc', vars)} />
-            <QuestionNote title={t('prediction.jev.qRejectTitle')} desc={t('prediction.jev.qRejectDesc', vars)} />
+            <QuestionNote title={t('prediction.jev.qBuyTitle')} desc={t('prediction.jev.qBuyDesc', vars)} />
             <div className="flex items-center gap-2 text-foreground"><PathChip path="T" />{t('prediction.jev.guideTimerQuestions')}</div>
             <QuestionNote title={t('prediction.jev.qPatternTitle')} desc={t('prediction.jev.qPatternDesc')}
                           options={PATTERN_OPTIONS.map(k => ({ label: t(`prediction.jev.pattern.${k}`), cls: PATTERN_STYLE[k].text }))} />
@@ -123,7 +122,7 @@ function Guide({ thresholds }: { thresholds: JevThresholds }) {
 }
 
 /**
- * 右栏：Jev 在看什么、代码怎么决定。在看的这一局被叫醒一次一行（突变两组只在合格突变时有行，v5-1 盯完再记一行；
+ * 右栏：Jev 在看什么、代码怎么决定。在看的这一局被叫醒一次一行（突变两组只在合格突变时有行，盯完再记一行；
  * v5-3 开盘后第 60 秒起每 30 秒一行），按回合分组、最新在上，整页一起滚。
  * 每个回合默认只露出要紧的行和最新一行，其余条件没过、照常拿着、已经买过、照常不动的折起；点"显示全部"展开。行本身默认收起，点开看细节。
  */

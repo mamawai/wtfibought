@@ -133,7 +133,7 @@
     },
     "jev": {
       "title": "Jev predictor",
-      "hint": "When on, the three arms bet on the prediction market together: v5-1 watches the odds for a while after an odds jump before picking a side, v5-2 asks Jev at the moment of a jump whether it will keep going or be undone, and v5-3 asks Jev every 30 seconds from 60 seconds after the open. The switch is stored in Redis, so it survives restarts; an arm whose wallet cannot afford a bet stops on its own, and the switch turns itself off only when all three have stopped. A new run creates three runs at once: one per arm, each with its own bot account (jev-prediction-r plus the run number) funded with $500, all sharing one version note. Older runs are archived and can still be viewed run by run on the Jev page.",
+      "hint": "When on, the three arms bet on the prediction market together: v5-1 watches the odds for a while after an odds jump before picking a side, v5-2 asks Jev at the moment of a jump whether it is worth a bet and watches only if it is, and v5-3 asks Jev every 30 seconds from 60 seconds after the open. The switch is stored in Redis, so it survives restarts; an arm whose wallet cannot afford a bet stops on its own, and the switch turns itself off only when all three have stopped. A new run creates three runs at once: one per arm, each with its own bot account (jev-prediction-r plus the run number) funded with $500, all sharing one version note. Older runs are archived and can still be viewed run by run on the Jev page.",
       "on": "Running",
       "off": "Off",
       "noKey": "The platform JEV_API_KEY is not set, so it cannot be turned on",
