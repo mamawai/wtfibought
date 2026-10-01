@@ -196,10 +196,14 @@ class ReviewMaterialAssemblerTest {
 
         ReviewMaterialAssembler.ReviewMaterial m = assembler.assemble(trader(), FROM, TO, AgentLang.ZH);
 
-        // 论点→结局配对：playType/失效条件/入场/出场/盈亏/持有时长/了结方式一行齐
+        // 论点→结局配对：playType/失效条件/入场/出场/开平时刻/盈亏/持有时长/了结方式一行齐
         assertThat(m.tradesBlock()).contains("BREAKOUT").contains("98000")
                 .contains("100000").contains("95000").contains("-50")
                 .contains("5小时").contains("止损带走");
+        // 开平时刻与价格路径同一格式，才对得上是哪根 1h
+        DateTimeFormatter hm = DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault());
+        assertThat(m.tradesBlock()).contains("入场 100000（" + hm.format(Instant.ofEpochMilli(FROM + 3600_000))
+                + "）→ 出场 95000（" + hm.format(Instant.ofEpochMilli(FROM + 21600_000)) + "）");
     }
 
     @Test

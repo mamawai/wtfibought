@@ -290,7 +290,7 @@ class PromptI18nTest {
                 .as("① 战绩数字只许复述").contains("只许原样复述，禁止自行计算或美化")
                 .as("② 先找错误再找亮点").contains("先找错误再找亮点")
                 .as("③ 教训条数上限").contains("逐笔教训：≤5 条").contains("下期纪律：≤3 条")
-                .contains("【决策错】").contains("【运气差】")
+                .contains("【决策错】").contains("【论点错】").contains("【运气差】")
                 .contains("同样条件下次照做");
     }
 
