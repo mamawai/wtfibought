@@ -1082,11 +1082,11 @@ COMMENT ON COLUMN user_jev_config.api_key_enc IS 'AES-256-GCM 密文，密钥来
 -- 36. Jev 预测员决策记录（平台级展示，一局一个账户）
 -- ============================================
 -- 平台用自己的 Jev key 在 BTC 5 分钟盘上当玩家，每次唤醒按涉及的局各写一行。
--- v5 起三组对照各占一局一个账户：v5-1 突变时不买、盯 15 秒，那一边又走 10¢ 就买它、吐回整个跳幅就买另一边，盯的结果另写一行 W；
--- v5-2 突变那一秒 Jev 判会延续就买突变那一边、判会被打回就买另一边；这两组都每回合最多买一次、不卖；
+-- v5 起三组对照各占一局一个账户：v5-1 突变时不买、盯 15 秒，那一边又走 10¢ 就买它、吐回整个跳幅就买另一边，盯的结果另写一行 W，每回合最多买一次；
+-- v5-2 突变那一秒 Jev 判这次突变值不值得下单，值得才照 v5-1 那样盯、盯到了才买，每回合 UP、DOWN 各最多一注；这两组都不卖；
 -- v5-3 整点（开盘后 60、90…270 秒）唤醒，空仓时领先方卖价够高、Jev 判最新一步逆着它就买，持仓时 Jev 判手里这边会赢太低就卖，同一时刻最多持有一笔。
--- 突变 = 30~270 秒里任一边 3 秒内涨 15¢ 以上；Jev 只答盘面题（突变三道、整点六道），一次唤醒只问一次；
--- 另记唤醒后 5、10、15、45 秒的 UP 中间价，突变行还记那一刻 Binance 的涨跌和 Chainlink 落后多少。
+-- 突变 = 30~270 秒里任一边 3 秒内涨 15¢ 以上；Jev 答突变两道、整点六道，一次唤醒只问一次；
+-- 另记唤醒后 5、10、15、45 秒的 UP 中间价，突变行还记那一刻 Binance、Chainlink 最近 10 秒的涨跌。
 -- R4 每 15 秒问一次买 UP / 买 DOWN / 不买，空仓持仓同一题，Jev 拍板（v4 那一局持仓选另一边卖掉、选同一边加注）；
 -- 都记上涨概率（纯数学 p_model、市场隐含 p_mkt，R4 以外还有 Jev 的 p_jev）、当时盘口，结算后回填结果与盈亏。
 CREATE TABLE IF NOT EXISTS jev_prediction_decision (
@@ -1117,6 +1117,7 @@ CREATE TABLE IF NOT EXISTS jev_prediction_decision (
     up_mid_45s    NUMERIC(6,4),
     binance_10s   NUMERIC(10,2),
     binance_30s   NUMERIC(10,2),
+    chainlink_10s NUMERIC(10,2),
     chainlink_gap NUMERIC(10,2),
     edge          NUMERIC(8,4),
     action        VARCHAR(16)   NOT NULL,
@@ -1138,11 +1139,11 @@ CREATE INDEX IF NOT EXISTS idx_jev_pred_decision_window ON jev_prediction_decisi
 CREATE INDEX IF NOT EXISTS idx_jev_pred_decision_run ON jev_prediction_decision (run_no, decided_at DESC);
 COMMENT ON TABLE  jev_prediction_decision IS 'Jev 预测员每局每回合每次唤醒一行：发出的 state、Jev 的回答、概率、盘口、动作、注单，结算后回填结果/盈亏';
 COMMENT ON COLUMN jev_prediction_decision.run_no IS '第几局，见 jev_prediction_run；v5 起三组各一个局号，同一次唤醒各写一行';
-COMMENT ON COLUMN jev_prediction_decision.checkpoint IS '检查点：开盘后第几秒，首字母是唤醒方式：T 整点如 T150，J 赔率突变如 J57（v5 起有），W v5-1 盯的结果如 W60（触发或盯满那一秒）';
+COMMENT ON COLUMN jev_prediction_decision.checkpoint IS '检查点：开盘后第几秒，首字母是唤醒方式：T 整点如 T150，J 赔率突变如 J57（v5 起有），W v5-1、v5-2 盯的结果如 W60（触发或盯满那一秒）';
 COMMENT ON COLUMN jev_prediction_decision.side IS '这一行看的是哪一边 UP/DOWN：突变唤醒和盯的结果看突变那一边，整点空仓看数学上领先的那边、持仓看手里那一边；v5 起有，盘口或 Chainlink 太旧没往下走的行为空';
 COMMENT ON COLUMN jev_prediction_decision.decided_at IS '决策时刻(ms)';
 COMMENT ON COLUMN jev_prediction_decision.state_json IS '发给 Jev 的 state 原文；盯的结果行不写 state，是 {}';
-COMMENT ON COLUMN jev_prediction_decision.answers_json IS 'Jev 的回答原样：v5 整点是盘面六道题 win/pattern/push_fading/flow_confirms/dip_recovered/latest_against，突变是 win/extend/reject（早先的突变行是六道），盯的结果行为空；R4 只有入场题 entry；R3 是谁赢两问加空仓入场题或持仓离场题，R2 只有谁赢两问，R1 是后劲题和决定题';
+COMMENT ON COLUMN jev_prediction_decision.answers_json IS 'Jev 的回答原样：v5 整点是盘面六道题 win/pattern/push_fading/flow_confirms/dip_recovered/latest_against，突变是 win/buy（早先的突变行是 win/extend/reject，再早是六道），盯的结果行为空；R4 只有入场题 entry；R3 是谁赢两问加空仓入场题或持仓离场题，R2 只有谁赢两问，R1 是后劲题和决定题';
 COMMENT ON COLUMN jev_prediction_decision.p_model IS '纯数学的上涨概率：领先/剩余时间/波动出的 Φ(z)，末分钟含已锁定的均价；只 R3 写进 state 给 Jev 比，R4 起只记分，R2 持仓按它定卖不卖';
 COMMENT ON COLUMN jev_prediction_decision.p_jev IS 'Jev 的上涨概率：v5 看 UP 时是 win 题的概率，看 DOWN 时是 1 − win；R2、R3 是 UP 会赢的概率和 1 − DOWN 会赢的概率取平均；R1 旧版是数学概率按后劲修正后的值；R4 不问为空';
 COMMENT ON COLUMN jev_prediction_decision.p_mkt IS '市场隐含上涨概率 up_mid/(up_mid+down_mid)，Brier 对照';
@@ -1158,10 +1159,11 @@ COMMENT ON COLUMN jev_prediction_decision.up_mid_15s IS '唤醒后 15 秒的 UP 
 COMMENT ON COLUMN jev_prediction_decision.up_mid_45s IS '唤醒后 45 秒的 UP 中间价，同上';
 COMMENT ON COLUMN jev_prediction_decision.binance_10s IS '突变唤醒那一刻 Binance 最近 10 秒 BTC 涨跌（USD），只突变 J 行有；逐笔流停了为空';
 COMMENT ON COLUMN jev_prediction_decision.binance_30s IS '最近 30 秒，同上';
-COMMENT ON COLUMN jev_prediction_decision.chainlink_gap IS 'Chainlink 最后一跳 − Binance 最新价（USD），只突变 J 行有；取不到 Binance 价为空';
+COMMENT ON COLUMN jev_prediction_decision.chainlink_10s IS '突变唤醒那一刻 Chainlink 最近 10 秒 BTC 涨跌（USD），只突变 J 行有；加这一列之前的行为空';
+COMMENT ON COLUMN jev_prediction_decision.chainlink_gap IS 'Chainlink 最后一跳 − Binance 最新价（USD），只突变 J 行有；取不到 Binance 价为空。Chainlink 报 USD、Binance 报 USDT，一直是负几十，只记录，不再写进 state';
 COMMENT ON COLUMN jev_prediction_decision.edge IS '按数学估计的每份优势，只给页面作参考：R3、R4 买入行是那边 p_model − 卖价 − 手续费、持仓行不记，R3 和 v4 的持仓行是卖出扣费后比 p_model 多拿多少。R2 是按 Jev 胜率算、优势大那边的，R1 按 p_model；v5 不记';
 COMMENT ON COLUMN jev_prediction_decision.action IS '实际动作 BUY_UP/BUY_DOWN/STAY_OUT/HOLD/SELL/ERROR；SELL 只 R3、v4 和 v5-3 有，v4 那一局持仓时加注也记 BUY_*';
-COMMENT ON COLUMN jev_prediction_decision.reason IS '为什么这么做，"代码 + 细节"：v5 是 WATCH/EXTEND/REJECT/NO_TRIGGER/NO_CALL/BUY/PRICE_BAND/NO_PULLBACK/HOLD/SELL/NO_BID/MISSED/NO_QUOTE/NO_BALANCE/STALE_BOOK/STALE_CHAINLINK/STALE_WHILE_ASKING，早先的行还有 FADING；R3、R4 还有 PASS/UNSURE，v4 那一局还有 ADD/MAX_STAKE，R2 还有 WAIT/ASK_LOW，R1 还有 NOT_CHEAP/EXPENSIVE/ASK_RANGE；页面按首个词出提示；异常看 error';
+COMMENT ON COLUMN jev_prediction_decision.reason IS '为什么这么做，"代码 + 细节"：v5 是 WATCH/NO_GO/EXTEND/REJECT/NO_TRIGGER/BUY/PRICE_BAND/NO_PULLBACK/HOLD/SELL/NO_BID/MISSED/NO_QUOTE/NO_BALANCE/STALE_BOOK/STALE_CHAINLINK/STALE_WHILE_ASKING，早先的行还有 NO_CALL/FADING；R3、R4 还有 PASS/UNSURE，v4 那一局还有 ADD/MAX_STAKE，R2 还有 WAIT/ASK_LOW，R1 还有 NOT_CHEAP/EXPENSIVE/ASK_RANGE；页面按首个词出提示；异常看 error';
 COMMENT ON COLUMN jev_prediction_decision.bet_id IS '本行开的注单（BUY_*，v4 那一局含加注）；持仓行（HOLD/SELL）v5 记这一局这一回合在持的那一注，之前各版记本回合在持的第一笔';
 COMMENT ON COLUMN jev_prediction_decision.stake IS '本金 cost（不含手续费）；v5 持仓行同 bet_id 那一注，之前各版持仓行是在持的合计';
 COMMENT ON COLUMN jev_prediction_decision.outcome IS '回合结果 UP/DOWN/VOID，结算后回填';
@@ -1182,7 +1184,7 @@ CREATE TABLE IF NOT EXISTS jev_prediction_run (
 COMMENT ON TABLE  jev_prediction_run IS 'Jev 预测员的局；v5 起每组 arm 局号最大的那一局在跑';
 COMMENT ON COLUMN jev_prediction_run.label IS '版本说明，开局时填，同一次开局的三局一样';
 COMMENT ON COLUMN jev_prediction_run.started_at IS '开局时刻(ms)';
-COMMENT ON COLUMN jev_prediction_run.arm IS '哪一组：JUMP_CODE（v5-1 突变后盯赔率）/JUMP_JEV（v5-2 突变那一秒 Jev 判延续还是打回）/TIMER_JEV（v5-3 整点 Jev 买卖）；v5 之前的旧局为空';
+COMMENT ON COLUMN jev_prediction_run.arm IS '哪一组：JUMP_CODE（v5-1 突变后盯赔率）/JUMP_JEV（v5-2 突变那一秒 Jev 判值不值得下单，值得才盯）/TIMER_JEV（v5-3 整点 Jev 买卖）；v5 之前的旧局为空';
 COMMENT ON COLUMN jev_prediction_run.initial_balance IS '这一局账户的初始资金，旧局是 100';
 INSERT INTO jev_prediction_run (run_no, label, started_at)
 SELECT 1, NULL, COALESCE(MIN(decided_at), (EXTRACT(EPOCH FROM now()) * 1000)::BIGINT) FROM jev_prediction_decision

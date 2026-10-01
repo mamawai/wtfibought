@@ -11,6 +11,7 @@ import com.mawai.wiibagent.mapper.JevPredictionDecisionMapper;
 import com.mawai.wiibagent.jev.predictor.PredictionJudge.Judgment;
 import com.mawai.wiibagent.jev.predictor.PredictionRules.Book;
 import com.mawai.wiibagent.jev.predictor.PredictionRules.Decision;
+import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Holding;
 import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.OddsJump;
 import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Snapshot;
 import com.mawai.wiibquant.external.sim.SimPredictionClient;
@@ -52,14 +53,17 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * <ul>
  *   <li>突变唤醒（v5-1、v5-2）：开盘后 30~270 秒，每秒看最近几秒的 UP 中间价，任一边 3 秒内涨到 jump-threshold、
  *       起跳价在区间里就唤醒，看突变那一边，checkpoint 记 J + 开盘后第几秒；两次突变唤醒至少隔 wake-cooldown-ms</li>
- *   <li>v5-1 盯：突变唤醒时不买，之后每秒先查盯再找突变，突变那一边又走够了或吐回够了就当场唤醒一次买，jump-watch-ms 没触发就停，
- *       结果写一行，checkpoint 记 W + 开盘后第几秒，不写 state、不问 Jev；同一时刻只盯一个，没触发的被新突变换掉；只在内存里</li>
+ *   <li>盯（v5-1、v5-2）：突变唤醒时不买。v5-1 每次突变都开始盯，v5-2 要 Jev 答"这次突变值得下单"到 jump-buy-min 才盯。
+ *       之后每秒先查盯再找突变，突变那一边又走够了或吐回够了就当场唤醒一次买，jump-watch-ms 没触发就停，
+ *       结果写一行，checkpoint 记 W + 开盘后第几秒，不写 state、不问 Jev；每组同一时刻只盯一个，没触发的被新突变换掉
+ *       （v5-2 的 Jev 说新突变不值得，旧的也不盯了）；只在内存里。
+ *       v5-1 每回合最多买一次，买过不再盯；v5-2 每回合 UP、DOWN 各最多一注，盯到的那一边买过了就不买，两边都买过不再盯</li>
  *   <li>整点唤醒（v5-3）：到了 timer-seconds 的每一格就唤醒，空仓看数学上领先的那边、持仓看手里那一边，
  *       checkpoint 记 T + 那一格；突变唤醒后 wake-cooldown-ms 内到点的整点跳过不补；整点不挡突变</li>
  * </ul>
- * 一次唤醒：写一次 state → 盘口太旧、Chainlink 停了就不问不动 → 问一次 Jev（突变三道、整点六道盘面题），回答写进每一行 →
+ * 一次唤醒：写一次 state → 盘口太旧、Chainlink 停了就不问不动 → 问一次 Jev（突变两道、整点六道），回答写进每一行 →
  * 各组按自己的规则定买卖 → 要成交的等一次 fill-delay、读一次盘口，都按这份盘口成交：
- * 买入比看到的贵、卖出比看到的低都不超过 fill-tolerance 才成交，否则算没抢到。
+ * v5-1、v5-2 那边还有人卖就按那时的价买；v5-3 买入比看到的贵、卖出比看到的低都不超过 timer-fill-tolerance 才成交，否则算没抢到。
  * Jev 失败时 v5-1 照常盯，要看 Jev 的组落 ERROR 行。某一组付不起一注、也没有等结算的注单就停掉这一组，在跑的组都停了才关开关。
  * <p>
  * 平台 Jev 没配 key、/admin 开关关着、还没开过带组的局都不唤醒；回填不看开关，关掉前的行照样补齐。
@@ -111,13 +115,13 @@ public class JevPredictionRunner {
     private final Map<String, Long> timerRun = new ConcurrentHashMap<>();
     /** 上一次突变唤醒的时刻 */
     private volatile long lastJumpWakeMs;
-    /** v5-1 在盯的突变，没在盯为 null；只在内存里，重启丢了就丢了 */
-    private volatile Watch watch;
+    /** 在盯的突变，局号 → 这一局在盯的那一次（v5-1、v5-2 各最多一个）；只在内存里，重启丢了就丢了 */
+    private final Map<Integer, Watch> watches = new ConcurrentHashMap<>();
     /** 钱不够停掉的局号；重启后清空，停掉的组下一次唤醒会再记一行 NO_BALANCE 再停 */
     private final Set<Integer> stopped = ConcurrentHashMap.newKeySet();
 
     /**
-     * v5-1 在盯的一次突变
+     * 在盯的一次突变
      *
      * @param run      盯的那一局
      * @param ws       突变那一回合
@@ -125,8 +129,10 @@ public class JevPredictionRunner {
      * @param p0       那一边在唤醒那一刻的价
      * @param jumpSize 跳幅：那一边涨了多少
      * @param startMs  唤醒时刻
+     * @param held     v5-2：这一回合已经买过的那一行，盯到这一边就不再买；没买过、v5-1 为 null
      */
-    record Watch(JevPredictionRun run, long ws, String side, BigDecimal p0, BigDecimal jumpSize, long startMs) {
+    record Watch(JevPredictionRun run, long ws, String side, BigDecimal p0, BigDecimal jumpSize, long startMs,
+                 JevPredictionDecision held) {
     }
 
     @Scheduled(fixedDelay = 1000)
@@ -140,12 +146,12 @@ public class JevPredictionRunner {
         // 在找的时段里、离上次突变唤醒够久才找突变
         boolean jumpOpen = elapsed >= JUMP_FIRST_SECONDS && elapsed <= JUMP_LAST_SECONDS
                 && now - lastJumpWakeMs >= cfg.getWakeCooldownMs();
-        Watch w = watch;
+        boolean watching = !watches.isEmpty();
         // 在盯或要找突变才读最近几秒的 UP 中间价
-        List<Point> upMids = w != null || jumpOpen ? cache.getPredictionUpMidPoints(now - JUMP_LOOKBACK_MS) : List.of();
+        List<Point> upMids = watching || jumpOpen ? cache.getPredictionUpMidPoints(now - JUMP_LOOKBACK_MS) : List.of();
         // 先查盯再找突变
-        if (w != null) {
-            checkWatch(w, upMids, now, ws, elapsed);
+        if (watching) {
+            checkWatches(upMids, now, ws, elapsed);
         }
         OddsJump jump = jumpOpen ? latestJump(upMids, now, cfg) : null;
         // 开关和在跑的局到了要跑才读；突变的两组都停了就当没有突变
@@ -177,21 +183,21 @@ public class JevPredictionRunner {
     }
 
     /**
-     * 查盯：突变那一边又走够了、吐回够了或盯满了，就唤醒一次写 W 行，开关关着先不动。
+     * 查盯：突变那一边又走够了、吐回够了或盯满了，就唤醒一次写 W 行，两组同一秒盯完的一起；开关关着先不动。
      * 最近几秒没有 UP 中间价先不查；回合过了还没盯完就丢掉
      */
-    private void checkWatch(Watch w, List<Point> upMids, long now, long ws, long elapsed) {
-        if (w.ws() != ws) {
-            watch = null;
+    private void checkWatches(List<Point> upMids, long now, long ws, long elapsed) {
+        watches.values().removeIf(w -> w.ws() != ws);
+        if (watches.isEmpty() || upMids.isEmpty() || !sw.isOn()) {
             return;
         }
-        if (upMids.isEmpty()) {
-            return;
-        }
-        BigDecimal p = sidePrice(w.side(), upMids.getLast().price());
-        boolean done = PredictionRules.watch(w.p0(), p, w.jumpSize(), cfg) != null || now - w.startMs() >= cfg.getJumpWatchMs();
-        if (done && sw.isOn()) {
-            start(() -> runWatch(ws, "W" + elapsed, w, p), () -> watch = null);
+        BigDecimal upMid = upMids.getLast().price();
+        List<Watch> done = watches.values().stream()
+                .filter(w -> PredictionRules.watch(w.p0(), sidePrice(w.side(), upMid), w.jumpSize(), cfg) != null
+                        || now - w.startMs() >= cfg.getJumpWatchMs())
+                .toList();
+        if (!done.isEmpty()) {
+            start(() -> runWatch(ws, "W" + elapsed, done, upMid), () -> done.forEach(w -> watches.remove(w.run().getRunNo(), w)));
         }
     }
 
@@ -275,8 +281,8 @@ public class JevPredictionRunner {
         final JevPredictionRun run;
         final JevPredictionDecision row;
         long userId;
-        /** v5-1、v5-2：这一局这一回合买过的那一行 */
-        JevPredictionDecision bought;
+        /** v5-1、v5-2：这一局这一回合买过的行，按买的先后；v5-1 最多一行，v5-2 最多 UP、DOWN 各一行 */
+        List<JevPredictionDecision> bought = List.of();
         /** v5-3：这一局这一回合在持的那一注 */
         PredictionBetResponse held;
         /** 买入前读到的余额，按成交价再算一次注额用 */
@@ -295,7 +301,7 @@ public class JevPredictionRunner {
         }
 
         boolean holding() {
-            return bought != null || held != null;
+            return !bought.isEmpty() || held != null;
         }
     }
 
@@ -322,38 +328,70 @@ public class JevPredictionRunner {
     }
 
     /**
-     * v5-1 盯的结果写一行 W，包私有供单测直接调：触发了按 EXTEND / REJECT 买，盯满没触发记 NO_TRIGGER。
-     * 不写 state、不问 Jev；盘口记这一刻看到的那份，要买的照唤醒的路子等一次 fill-delay 再成交
+     * 盯的结果各写一行 W，包私有供单测直接调：触发了按 EXTEND / REJECT 买，盯满没触发记 NO_TRIGGER。
+     * 不写 state、不问 Jev；盘口记这一刻看到的那份，要买的照唤醒的路子等一次 fill-delay 一起成交
      *
-     * @param p 突变那一边现在的价
+     * @param done  这一秒盯完的，每组最多一个
+     * @param upMid 现在的 UP 中间价
      */
-    void runWatch(long ws, String checkpoint, Watch w, BigDecimal p) {
-        Leg l = new Leg(w.run(), newRow(w.run().getRunNo(), ws, checkpoint, nowMs.getAsLong()));
-        l.row.setSide(w.side());
+    void runWatch(long ws, String checkpoint, List<Watch> done, BigDecimal upMid) {
+        long at = nowMs.getAsLong();
+        List<Leg> legs = done.stream().map(w -> new Leg(w.run(), newRow(w.run().getRunNo(), ws, checkpoint, at))).toList();
         try {
             Book seen = readBook();
-            fillBook(l.row, seen);
-            l.row.setBookAgeMs(ageMs(cache.getPredictionBookUpdatedAt()));
-            l.row.setAction(ACTION_STAY_OUT);
-            String call = PredictionRules.watch(w.p0(), p, w.jumpSize(), cfg);
-            if (call == null) {
-                l.row.setReason("NO_TRIGGER " + w.side() + " " + PredictionRules.fmt(p.subtract(w.p0()).doubleValue()));
-            } else {
-                l.userId = account.userId(w.run().getRunNo());
-                l.balance = sim.gameBalance(l.userId);
-                // 延续记又走了多少，回落记吐回多少
-                BigDecimal move = EXTEND.equals(call) ? p.subtract(w.p0()) : w.p0().subtract(p);
-                Decision dec = PredictionRules.jumpEntry(call, w.side(), move.doubleValue(), seen, l.balance, cfg);
-                l.row.setReason(dec.reason());
-                if (dec.trades()) {
-                    l.todo = dec;
-                    execute(List.of(l), seen);
+            Integer bookAge = ageMs(cache.getPredictionBookUpdatedAt());
+            for (int i = 0; i < legs.size(); i++) {
+                Leg l = legs.get(i);
+                try {
+                    watched(l, done.get(i), upMid, seen, bookAge);
+                } catch (Exception e) {
+                    fail(l, e);
                 }
             }
+            execute(legs, seen);
         } catch (Exception e) {
-            fail(l, e);
+            // 读盘口、等成交这些共用的步骤失败，都落 ERROR
+            legs.forEach(l -> fail(l, e));
         }
-        save(List.of(l));
+        save(legs);
+    }
+
+    /** 一个盯的结果：没触发记 NO_TRIGGER；触发了要买的那一边 v5-2 这一回合买过就记 HOLD，没买过就定下来等成交 */
+    private void watched(Leg l, Watch w, BigDecimal upMid, Book seen, Integer bookAge) {
+        JevPredictionDecision d = l.row;
+        BigDecimal p = sidePrice(w.side(), upMid);
+        d.setSide(w.side());
+        fillBook(d, seen);
+        d.setBookAgeMs(bookAge);
+        JevPredictionDecision held = w.held();
+        d.setAction(held == null ? ACTION_STAY_OUT : ACTION_HOLD);
+        if (held != null) {
+            holdFields(d, held.getBetId(), held.getStake(), held.getShares(), held.getAvgPrice());
+        }
+        String call = PredictionRules.watch(w.p0(), p, w.jumpSize(), cfg);
+        if (call == null) {
+            d.setReason("NO_TRIGGER " + w.side() + " " + PredictionRules.fmt(p.subtract(w.p0()).doubleValue()));
+            return;
+        }
+        String target = PredictionRules.target(call, w.side());
+        if (held != null && target.equals(boughtSide(held))) {
+            d.setReason("HOLD " + target);
+            return;
+        }
+        l.userId = account.userId(w.run().getRunNo());
+        l.balance = sim.gameBalance(l.userId);
+        // 延续记又走了多少，回落记吐回多少
+        BigDecimal move = EXTEND.equals(call) ? p.subtract(w.p0()) : w.p0().subtract(p);
+        Decision dec = PredictionRules.jumpEntry(call, w.side(), move.doubleValue(), seen, l.balance, cfg);
+        d.setReason(dec.reason());
+        if (dec.trades()) {
+            l.todo = dec;
+        }
+    }
+
+    /** 买入行买的是哪一边 */
+    private static String boughtSide(JevPredictionDecision buy) {
+        return ACTION_BUY_UP.equals(buy.getAction()) ? "UP" : "DOWN";
     }
 
     /** 落库、打日志，再看付不起的组要不要停 */
@@ -381,7 +419,7 @@ public class JevPredictionRunner {
 
     /**
      * 各组查这一回合的情况 → 写一次 state → 盘口太旧、Chainlink 停了就不问不动 → 定看哪一边 → 问一次 Jev →
-     * 各组按规则定买卖 → 一起成交。reason 的代码见 PredictionRules
+     * 各组按规则定（突变两组定盯不盯，v5-3 定买卖）→ 一起成交。reason 的代码见 PredictionRules
      */
     private void wake(List<Leg> legs, long ws, OddsJump jump) {
         for (Leg l : legs) {
@@ -392,13 +430,18 @@ public class JevPredictionRunner {
                     holdFields(l.row, l.held.getId(), l.held.getCost(), l.held.getContracts(), l.held.getAvgPrice());
                 }
             } else {
-                l.bought = mapper.selectRoundBuy(l.run.getRunNo(), ws);
-                if (l.bought != null) {
-                    holdFields(l.row, l.bought.getBetId(), l.bought.getStake(), l.bought.getShares(), l.bought.getAvgPrice());
+                l.bought = mapper.selectRoundBuys(l.run.getRunNo(), ws);
+                if (!l.bought.isEmpty()) {
+                    // 两边都买了记先买的那一注
+                    JevPredictionDecision b = l.bought.getFirst();
+                    holdFields(l.row, b.getBetId(), b.getStake(), b.getShares(), b.getAvgPrice());
                 }
             }
         }
-        Snapshot snap = writer.write(ws, jump);
+        // Jev 的回答只有 v5-2 用，告诉它 v5-2 这一回合已经买了什么
+        List<Holding> holdings = legs.stream().filter(l -> ARM_JUMP_JEV.equals(l.arm())).flatMap(l -> l.bought.stream())
+                .map(b -> new Holding(boughtSide(b), b.getAvgPrice())).toList();
+        Snapshot snap = writer.write(ws, jump, holdings);
         Integer bookAge = ageMs(snap.raw().bookUpdatedAtMs());
         String stale = bookAge == null || bookAge > cfg.getBookMaxAgeMs() ? "STALE_BOOK " + (bookAge == null ? "none" : bookAge)
                 // Chainlink 转发断流是 Polymarket 上游的事，照常跳过，不算出错
@@ -442,30 +485,21 @@ public class JevPredictionRunner {
     }
 
     /**
-     * 按这一组的规则定：v5-1、v5-2 这一回合买过的只记录；v5-1 没买过就开始盯，v5-2 按 Jev 的回答定；
-     * v5-3 持仓看卖不卖、空仓看买不买。要成交的记下来一起成交
+     * 按这一组的规则定：v5-3 持仓看卖不卖、空仓看买不买，要成交的记下来一起成交；v5-1、v5-2 突变这一刻都不买，只定盯不盯
      */
     private void decide(Leg l, Judgment j, Snapshot snap) {
-        Book book = snap.raw().book();
         try {
+            if (!ARM_TIMER_JEV.equals(l.arm())) {
+                l.row.setReason(decideWatch(l, j, snap.raw().jump()));
+                return;
+            }
+            Book book = snap.raw().book();
             Decision dec;
-            if (ARM_TIMER_JEV.equals(l.arm())) {
-                if (l.held != null) {
-                    dec = PredictionRules.timerSell(j, l.held.getSide(), book, cfg);
-                } else {
-                    l.balance = sim.gameBalance(l.userId);
-                    dec = PredictionRules.timerBuy(j, book, l.balance, cfg);
-                }
-            } else if (l.bought != null) {
-                // 这一局这一回合买过了：照问 Jev 只记录，第二个词是买的那一边
-                dec = new Decision(ACTION_HOLD, l.row.getSide(), null,
-                        "HOLD " + (ACTION_BUY_UP.equals(l.bought.getAction()) ? "UP" : "DOWN"));
-            } else if (ARM_JUMP_CODE.equals(l.arm())) {
-                startWatch(l, snap.raw().jump());
-                dec = new Decision(ACTION_STAY_OUT, l.row.getSide(), null, "WATCH " + l.row.getSide());
+            if (l.held != null) {
+                dec = PredictionRules.timerSell(j, l.held.getSide(), book, cfg);
             } else {
                 l.balance = sim.gameBalance(l.userId);
-                dec = PredictionRules.jumpJev(j, book, l.balance, cfg);
+                dec = PredictionRules.timerBuy(j, book, l.balance, cfg);
             }
             l.row.setReason(dec.reason());
             if (dec.trades()) {
@@ -476,13 +510,43 @@ public class JevPredictionRunner {
         }
     }
 
-    /** v5-1 开始盯突变那一边，换掉在盯的：起点取唤醒那一刻 UP 中间价序列的最后一个点，换成那一边的价 */
-    private void startWatch(Leg l, OddsJump jump) {
+    /**
+     * 突变这一刻盯不盯，回这一行的 reason。v5-1：买过了只记录，没买过开始盯。
+     * v5-2：两边都买过只记录；否则 Jev 答值得下单到线就开始盯，没到线不盯，在盯的旧突变也放掉
+     */
+    private String decideWatch(Leg l, Judgment j, OddsJump jump) {
+        String side = jump.side();
+        if (ARM_JUMP_CODE.equals(l.arm())) {
+            if (!l.bought.isEmpty()) {
+                // 第二个词是买的那一边
+                return "HOLD " + boughtSide(l.bought.getFirst());
+            }
+            startWatch(l, jump, null);
+            return "WATCH " + side;
+        }
+        if (l.bought.size() > 1) {
+            return "HOLD BOTH";
+        }
+        String p = PredictionRules.fmt(j.buy());
+        if (!PredictionRules.jumpGo(j, cfg)) {
+            watches.remove(l.run.getRunNo());
+            return "NO_GO " + side + " " + p;
+        }
+        startWatch(l, jump, l.bought.isEmpty() ? null : l.bought.getFirst());
+        return "WATCH " + side + " " + p;
+    }
+
+    /**
+     * 开始盯突变那一边，换掉这一局在盯的：起点取唤醒那一刻 UP 中间价序列的最后一个点，换成那一边的价
+     *
+     * @param held v5-2 这一回合已经买过的那一行，没有为 null
+     */
+    private void startWatch(Leg l, OddsJump jump, JevPredictionDecision held) {
         long at = l.row.getDecidedAt();
         BigDecimal upMid = PredictionStateWriter.sampleAt(cache.getPredictionUpMidPoints(at - JUMP_LOOKBACK_MS),
                 at - JUMP_LOOKBACK_MS, at);
-        watch = new Watch(l.run, l.row.getWindowStart(), jump.side(), sidePrice(jump.side(), upMid),
-                jump.sideTo().subtract(jump.sideFrom()), at);
+        watches.put(l.run.getRunNo(), new Watch(l.run, l.row.getWindowStart(), jump.side(), sidePrice(jump.side(), upMid),
+                jump.sideTo().subtract(jump.sideFrom()), at, held));
     }
 
     /** UP 中间价换成 side 那一边的价 */
@@ -514,13 +578,15 @@ public class JevPredictionRunner {
         }
     }
 
-    /** 买入：卖价比看到的贵不超过容差才按那时的价买 */
+    /** 买入：按那时的卖价买，那边没人卖了算没抢到；v5-3 还要卖价比看到的贵不超过容差 */
     private void buy(Leg l, Book seen, Book now) {
         JevPredictionDecision d = l.row;
         String side = l.todo.side();
         BigDecimal askSeen = seen.ask(side);
         BigDecimal askNow = now.ask(side);
-        if (askNow == null || askNow.compareTo(askSeen.add(cfg.getFillTolerance())) > 0) {
+        boolean tooDear = ARM_TIMER_JEV.equals(l.arm()) && askNow != null
+                && askNow.compareTo(askSeen.add(cfg.getTimerFillTolerance())) > 0;
+        if (askNow == null || tooDear) {
             d.setReason("MISSED " + side + " ask " + askSeen.toPlainString() + "→" + plain(askNow));
             return;
         }
@@ -533,19 +599,19 @@ public class JevPredictionRunner {
         PredictionBetResponse bet = sim.buy(l.userId, side, stake);
         holdFields(d, bet.getId(), bet.getCost(), bet.getContracts(), bet.getAvgPrice());
         d.setAction(l.todo.action());
-        // 在容差里按别的价成交了，reason 记成 "ask 看到的→实际的"
+        // 按别的价成交了，reason 记成 "ask 看到的→实际的"
         if (bet.getAvgPrice().compareTo(askSeen) != 0) {
             d.setReason(l.todo.reason() + "→" + bet.getAvgPrice().stripTrailingZeros().toPlainString());
         }
     }
 
-    /** 卖出：买价比看到的低不超过容差才把手里这一注全卖掉，sim 按那时的买价成交 */
+    /** 卖出（只 v5-3）：买价比看到的低不超过容差才把手里这一注全卖掉，sim 按那时的买价成交 */
     private void sell(Leg l, Book seen, Book now) {
         JevPredictionDecision d = l.row;
         String side = l.todo.side();
         BigDecimal bidSeen = seen.bid(side);
         BigDecimal bidNow = now.bid(side);
-        if (bidNow == null || bidNow.compareTo(bidSeen.subtract(cfg.getFillTolerance())) < 0) {
+        if (bidNow == null || bidNow.compareTo(bidSeen.subtract(cfg.getTimerFillTolerance())) < 0) {
             d.setReason("MISSED SELL bid " + bidSeen.toPlainString() + "→" + plain(bidNow));
             return;
         }
@@ -637,6 +703,7 @@ public class JevPredictionRunner {
         d.setLeadSigma(dec(snap.raw().zModel()));
         d.setBinance10s(usd(snap.raw().binance10Usd()));
         d.setBinance30s(usd(snap.raw().binance30Usd()));
+        d.setChainlink10s(usd(snap.raw().chainlink10Usd()));
         d.setChainlinkGap(usd(snap.raw().chainlinkGapUsd()));
         OddsJump jump = snap.raw().jump();
         if (jump != null) {
