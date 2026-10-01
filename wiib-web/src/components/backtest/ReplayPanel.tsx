@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -23,8 +23,11 @@ import type { LlmEndpointView, ReplayCoachRequest, ReplayCoverage } from '../../
 import type { TnEquityPoint } from '../../types/testnet';
 
 const M5 = 300_000;
-/** 开局前置上下文根数：给玩家一屏"过去"可看，也给画线留参照 */
-const CONTEXT_BARS = 200;
+/**
+ * 开局前置上下文根数：给玩家一屏"过去"可看，也给画线留参照。
+ * 至少一整天：开局就切 1d 时，开局前得有一根整根走完的日线当上下文，不然只剩跨开局那根（含开局后的行情）
+ */
+const CONTEXT_BARS = 288;
 const DURATIONS = [3, 7, 14, 28];
 /** 自动播放速度档（bar/秒） */
 const AUTO_SPEEDS = [1, 3, 10];
@@ -51,6 +54,12 @@ const fmtLev = (l: number) => `${Number.isInteger(l) ? l : l.toFixed(1)}x`;
 /** AI 提示送最近多少根（当前周期）；评估把整局聚合到不超过这个数（后端上限 400） */
 const HINT_BARS = 150;
 const REVIEW_BARS_MAX = 400;
+/** 评估最多送多少笔成交（后端上限 300），多了只送最近的 */
+const REVIEW_TRADES_MAX = 300;
+/** 2205（上一次 AI 调用后端还没收摊）后隔多久自动重试一次 */
+const COACH_BUSY_RETRY_MS = 2_000;
+/** 2205 最多等多久：后端要等旧连接的下一帧字、或最长 20 秒一次的心跳，才发现它已经断了 */
+const COACH_BUSY_WAIT_MS = 25_000;
 const round = (v: number, dec: number) => Number(v.toFixed(dec));
 /** K 线行 → 教练请求里的一根（价格按币种精度、量保留 2 位，省 token） */
 const toCoachBar = (r: number[], label: (ms: number) => string, dec: number) =>
@@ -58,6 +67,8 @@ const toCoachBar = (r: number[], label: (ms: number) => string, dec: number) =>
 
 /** 一次 AI 教练调用的展示态 */
 interface AiRun {
+  /** 第几次调用：被掐的那次收尾时只动自己这张卡 */
+  id: number;
   text: string;
   busy: boolean;
   error: string | null;
@@ -125,6 +136,11 @@ export function ReplayPanel() {
   const [played, setPlayed] = useState(0);      // 已揭示的可播放 bar 数（当前周期口径）
   const [ivMin, setIvMin] = useState(5);        // 回放周期（分钟），对局中可切
   const [finished, setFinished] = useState<'END' | 'LIQUIDATION' | null>(null);
+  // 本局结束那根的开盘时刻，结算面板的结束时间用它（结算后切周期会全量揭示，当前根就不是结束那根了）
+  const [endedMs, setEndedMs] = useState(0);
+  // 玩家已经看到哪个时刻了（各周期揭示过的 bar 收盘时刻取最大）。切大周期进度会往回退，
+  // 当前 bar 收盘早于它时还按旧价成交，就是拿看过的行情下单
+  const [revealedMs, setRevealedMs] = useState(0);
   const [auto, setAuto] = useState(0);          // 0=手动，其余为 bar/秒
   const [openPct, setOpenPct] = useState(100);  // 开/加仓：占可用现金的比例
   const [closePct, setClosePct] = useState(100); // 平/减仓：占该侧仓位数量的比例
@@ -139,19 +155,24 @@ export function ReplayPanel() {
   const [hint, setHint] = useState<AiRun | null>(null);
   const [review, setReview] = useState<AiRun | null>(null);
   const aiAbortRef = useRef<AbortController | null>(null);
+  const aiSeqRef = useRef(0);
   useEffect(() => {
     llmEndpointApi.list().then(setEndpoints).catch(() => setEndpoints([]));
     return () => aiAbortRef.current?.abort();
   }, []);
   const goConfig = useCallback(() => navigate('/ai'), [navigate]);
 
-  /** 当前周期视图：open < startMs 的桶算上下文（开局即揭示），其余为可播放段 */
+  /**
+   * 当前周期视图：整根在 startMs 之前走完的桶算上下文（开局即揭示），其余为可播放段。
+   * 跨 startMs 的那根桶里聚合了开局之后的 5m，只能算第一根可播放的，算进上下文就是提前揭示未来
+   */
   const derived = useMemo(() => {
     if (!session) return null;
     const aggBars = aggregateBars(session.raw, ivMin);
+    const ivMs = ivMin * 60_000;
     let ctxCount = 0;
-    while (ctxCount < aggBars.length && aggBars[ctxCount][0] < session.startMs) ctxCount++;
-    return { aggBars, ctxCount, playable: aggBars.length - ctxCount };
+    while (ctxCount < aggBars.length && aggBars[ctxCount][0] + ivMs <= session.startMs) ctxCount++;
+    return { aggBars, ivMs, ctxCount, playable: aggBars.length - ctxCount };
   }, [session, ivMin]);
 
   // doNext 被键盘/interval 调，用 ref 拿最新闭包
@@ -160,6 +181,8 @@ export function ReplayPanel() {
   const sessionRef = useRef(session);
   const finishedRef = useRef(finished);
   const derivedRef = useRef(derived);
+  // 已揭示时刻：只在开局和 doNext 里写，写 state 的同时同步写它，doNext 连按时也读得到最新值
+  const revealedRef = useRef(0);
   useEffect(() => { stateRef.current = state; }, [state]);
   useEffect(() => { playedRef.current = played; }, [played]);
   useEffect(() => { sessionRef.current = session; }, [session]);
@@ -214,6 +237,8 @@ export function ReplayPanel() {
       setState(initialState(bal));
       setPlayed(0);
       setIvMin(5);
+      revealedRef.current = startMs;
+      setRevealedMs(startMs);
       setFinished(null);
       setAuto(0);
       setSession({ symbol, blind, startMs, raw: rows, balance: bal });
@@ -232,8 +257,13 @@ export function ReplayPanel() {
     const i = d.ctxCount + playedRef.current;
     if (i >= d.aggBars.length) return;
     const bar = d.aggBars[i];
-    let st = step(stateRef.current, bar[4], i, bar[0]);
     const newPlayed = playedRef.current + 1;
+    // 回退区里的 bar 先前已经走过、盯过市：只往前挪。再拿它去给之后才开的仓盯市，会冒出"开仓之前就爆仓"
+    if (bar[0] + d.ivMs <= revealedRef.current) {
+      setPlayed(newPlayed);
+      return;
+    }
+    let st = step(stateRef.current, bar[4], i, bar[0]);
     let fin: 'END' | 'LIQUIDATION' | null = null;
     if (st.liquidated) {
       fin = 'LIQUIDATION';
@@ -241,11 +271,16 @@ export function ReplayPanel() {
       st = endSession(st, bar[4], i, bar[0]);
       fin = 'END';
     }
+    // 切大周期后这根 bar 盖住了先前小周期记过的几个点：换成它这一个，曲线时间保持单调
+    eqPointsRef.current = eqPointsRef.current.filter(p => p.time < bar[0]);
     eqPointsRef.current.push({ time: bar[0], cumPnl: equity(st, bar[4]) - ses.balance });
     setState(st);
     setPlayed(newPlayed);
+    revealedRef.current = Math.max(revealedRef.current, bar[0] + d.ivMs);
+    setRevealedMs(revealedRef.current);
     if (fin) {
       setFinished(fin);
+      setEndedMs(bar[0]);
       setAuto(0);
     }
   }, []);
@@ -258,7 +293,7 @@ export function ReplayPanel() {
     const newAgg = aggregateBars(ses.raw, min);
     const newIvMs = min * 60_000;
     let ctx = 0;
-    while (ctx < newAgg.length && newAgg[ctx][0] < ses.startMs) ctx++;
+    while (ctx < newAgg.length && newAgg[ctx][0] + newIvMs <= ses.startMs) ctx++;
     if (finished) {
       // 结算后切周期只是换视图，全量揭示
       setPlayed(newAgg.length - ctx);
@@ -271,9 +306,6 @@ export function ReplayPanel() {
     setPlayed(np);
     setIvMin(min);
     setAuto(0);
-    // 进度向下对齐会重走一小段，把重叠窗口的旧权益点裁掉，曲线保持单调
-    const nextStepMs = newAgg[ctx + np]?.[0] ?? Infinity;
-    eqPointsRef.current = eqPointsRef.current.filter(p => p.time < nextStepMs);
     toast(t('replay.toast.ivSwitched', { iv: ivLabel(min) }), 'info');
   };
 
@@ -306,26 +338,41 @@ export function ReplayPanel() {
   const curBar = session && aggBars.length > 0 ? aggBars[Math.max(0, Math.min(curIdx, aggBars.length - 1))] : null;
   const curPrice = curBar ? curBar[4] : 0;
   const curEquity = curBar ? equity(state, curPrice) : 0;
+  /** 进度退在看过的行情里（当前 bar 收盘早于已揭示时刻）：开平仓、结束本局都按旧价成交，一律暂停 */
+  const rewound = !finished && curBar != null && curBar[0] + ivMin * 60_000 < revealedMs;
 
-  /** 盲测未结算时显示 D{n} HH:mm 相对时间，其余显示真实时间 */
+  /** 盲测未结算时显示 D{n} HH:mm 相对时间（天按 UTC+8 日历日数，开局那天 D1、过午夜进位），其余显示真实时间 */
   const fmtReplayTime = useCallback((ms: number) => {
-    const ses = sessionRef.current;
-    if (ses?.blind && !finishedRef.current) {
-      const day = Math.floor((ms - ses.startMs) / 86_400_000) + 1;
+    if (session?.blind && !finished) {
+      const dayOf = (v: number) => Math.floor((v + 8 * 3_600_000) / 86_400_000);
+      const day = dayOf(ms) - dayOf(session.startMs) + 1;
       const d = new Date(ms + 8 * 3_600_000);
       return `D${day} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
     }
     return fmtDateTime(ms);
-  }, []);
+  }, [session, finished]);
 
   // ---- 交易操作（只能按当前收盘价）：同向再开=加仓；平仓按比例，不足 100% 就是减仓 ----
   const handleOpen = (side: Side) => {
-    if (!session || !curBar || finished) return;
+    if (!session || !curBar || finished || rewound) return;
     setState(s => open(s, side, openPct / 100, leverage, curPrice, curIdx, curBar[0]));
   };
   const handleClose = (side: Side) => {
-    if (!session || !curBar || finished) return;
+    if (!session || !curBar || finished || rewound) return;
     setState(s => close(s, side, closePct / 100, curPrice, curIdx, curBar[0], 'MANUAL'));
+  };
+  /** 主动结束：有仓先按当前收盘清算，结算后的权益补进权益点（回撤和曲线末点都算上平仓费） */
+  const handleEnd = () => {
+    if (!session || !curBar || finished || rewound) return;
+    const settled = endSession(state, curPrice, curIdx, curBar[0]);
+    const pts = eqPointsRef.current;
+    const lastT = pts.length ? pts[pts.length - 1].time : curBar[0];
+    // 切过大周期时末点可能是桶里最后那根 5m，比当前 bar 的 openTime 晚；取大的，曲线不往回画
+    pts.push({ time: Math.max(curBar[0], lastT), cumPnl: equity(settled, curPrice) - session.balance });
+    setState(settled);
+    setFinished('END');
+    setEndedMs(curBar[0]);
+    setAuto(0);
   };
 
   // ---- 图表标记：每次成交一条（按成交时间映射到当前周期的桶：开在 14:05 的单切 15m 后落在 14:00 蜡烛上） ----
@@ -349,23 +396,39 @@ export function ReplayPanel() {
   const st = finished && session ? stats(state, session.balance, eqPointsRef.current.map(p => p.cumPnl + session.balance)) : null;
 
   // ---- AI 教练：一次 SSE 调用 → 流式写进 AiRun。同一时刻只跑一个，再点就掐掉上一个 ----
-  const runCoach = useCallback(async (req: ReplayCoachRequest, set: (r: AiRun) => void, at?: string) => {
+  const runCoach = useCallback(async (req: ReplayCoachRequest, set: Dispatch<SetStateAction<AiRun | null>>, at?: string) => {
     aiAbortRef.current?.abort();
     const ctrl = new AbortController();
     aiAbortRef.current = ctrl;
+    const id = ++aiSeqRef.current;
     let text = '', err: string | null = null;
-    set({ text: '', busy: true, error: null, needsConfig: false, at });
+    set({ id, text: '', busy: true, error: null, needsConfig: false, at });
+    const call = () => backtestApi.replayCoach(req, e => {
+      if (e.type === 'token') { text += e.text; set({ id, text, busy: true, error: null, needsConfig: false, at }); }
+      else if (e.type === 'done') text = e.answer;
+      else if (e.type === 'error') err = e.message;
+    }, ctrl.signal);
     try {
-      await backtestApi.replayCoach(req, e => {
-        if (e.type === 'token') { text += e.text; set({ text, busy: true, error: null, needsConfig: false, at }); }
-        else if (e.type === 'done') text = e.answer;
-        else if (e.type === 'error') err = e.message;
-      }, ctrl.signal);
-      set({ text, busy: false, error: err ?? (text ? null : t('replay.emptyAnswer')), needsConfig: false, at });
+      // 2205：刚掐掉的上一次后端还占着，隔一会儿再试，直到放行或等满 COACH_BUSY_WAIT_MS
+      for (let waited = 0; ; waited += COACH_BUSY_RETRY_MS) {
+        try {
+          await call();
+          break;
+        } catch (e) {
+          if (!(e instanceof ApiError && e.code === 2205) || ctrl.signal.aborted || waited >= COACH_BUSY_WAIT_MS) throw e;
+          await new Promise(r => setTimeout(r, COACH_BUSY_RETRY_MS));
+          if (ctrl.signal.aborted) throw e;
+        }
+      }
+      set({ id, text, busy: false, error: err ?? (text ? null : t('replay.emptyAnswer')), needsConfig: false, at });
     } catch (e) {
-      if (ctrl.signal.aborted) return;   // 用户关卡片/重开一局主动掐的，不算错
+      // 被掐的（关卡片/重开一局/发了另一次）不算错：卡片还是这次的就停转，有字留着、没字收掉
+      if (ctrl.signal.aborted) {
+        set(r => (r?.id === id ? (r.text ? { ...r, busy: false } : null) : r));
+        return;
+      }
       const code = e instanceof ApiError ? e.code : -1;
-      set({ text, busy: false, error: (e as Error).message || t('errors:requestFailed'), needsConfig: code === 2201 || code === 2202, at });
+      set({ id, text, busy: false, error: (e as Error).message || t('errors:requestFailed'), needsConfig: code === 2201 || code === 2202, at });
     }
   }, [t]);
 
@@ -390,7 +453,7 @@ export function ReplayPanel() {
     }, setHint, fmtReplayTime(curBar[0]));
   };
 
-  /** 结算后评估：整局 K 线（聚合到 ≤REVIEW_BARS_MAX 根的最细周期）+ 全部成交 + 统计，AI 对着走势评操作行为；日期已揭晓用真实时间 */
+  /** 结算后评估：整局 K 线（聚合到 ≤REVIEW_BARS_MAX 根的最细周期）+ 成交（最近 ≤REVIEW_TRADES_MAX 笔）+ 统计，AI 对着走势评操作行为；日期已揭晓用真实时间 */
   const askReview = () => {
     if (!session || !st) return;
     let rows = session.raw, iv = 5;
@@ -404,7 +467,8 @@ export function ReplayPanel() {
       mode: 'REVIEW', endpointId: aiEndpointId ?? undefined, symbol: session.symbol, intervalMin: iv, blind: false,
       startAt: fmtDateTime(session.startMs),
       bars: rows.map(r => toCoachBar(r, fmtDateTime, decimals)),
-      trades: state.trades.map(tr => ({
+      // 成交只送最近 REVIEW_TRADES_MAX 笔，下面的统计仍是整局的
+      trades: state.trades.slice(-REVIEW_TRADES_MAX).map(tr => ({
         side: tr.side, qty: round(tr.qty, 4), leverage: round(tr.leverage, 1),
         entryPrice: round(tr.entryPrice, decimals), exitPrice: round(tr.exitPrice, decimals),
         pnl: round(tr.pnl, 2), openAt: fmtDateTime(tr.openTime), closeAt: fmtDateTime(tr.closeTime), reason: tr.reason, partial: tr.partial,
@@ -587,14 +651,8 @@ export function ReplayPanel() {
                     className="h-8 px-3 rounded-lg border border-primary/40 text-primary hover:bg-primary/10 text-[11px] font-bold flex items-center gap-1 disabled:opacity-50 disabled:cursor-wait">
                     {hint?.busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} {t('replay.aiHint')}
                   </button>
-                  <button type="button"
-                    onClick={() => {
-                      // 主动结束：有仓先按当前收盘清算
-                      if (curBar) setState(s => endSession(s, curPrice, curIdx, curBar[0]));
-                      setFinished('END');
-                      setAuto(0);
-                    }}
-                    className="h-8 px-3 rounded-lg border border-border hover:bg-surface-hover text-[11px] font-bold text-muted-foreground hover:text-foreground flex items-center gap-1">
+                  <button type="button" disabled={rewound} onClick={handleEnd}
+                    className="h-8 px-3 rounded-lg border border-border hover:bg-surface-hover text-[11px] font-bold text-muted-foreground hover:text-foreground flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed">
                     <Flag className="w-3.5 h-3.5" /> {t('replay.endGame')}
                   </button>
                 </div>
@@ -604,6 +662,12 @@ export function ReplayPanel() {
             {/* 交易操作条：大触区，移动端优先。开仓行常驻（有仓时变加仓）；每个已持方向一行平仓 */}
             {!finished && (
               <div className="space-y-2 pt-1 border-t border-border/40">
+                {rewound && (
+                  <div className="rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-[11px] flex items-center gap-2">
+                    <History className="w-3.5 h-3.5 text-warning shrink-0" />
+                    <span>{t('replay.rewound')}</span>
+                  </div>
+                )}
                 <div className="flex items-stretch gap-2 flex-wrap">
                   {/* 杠杆：只作用于接下来的开/加仓；已有仓位的杠杆不变（加仓换档后按保证金加权成有效杠杆） */}
                   <div className="flex items-center gap-1" title={t('replay.levTip')}>
@@ -630,12 +694,12 @@ export function ReplayPanel() {
                       套一层 w-full 强制它俩自成一行左右平分；md:contents 让这层≥768px 不生成盒子，
                       两颗按钮仍是外层 flex 的直接子项，宽屏布局不受影响 */}
                   <div className="w-full flex items-stretch gap-2 md:contents">
-                    <button type="button" onClick={() => handleOpen('LONG')}
-                      className="flex-1 min-w-[110px] h-11 rounded-lg bg-gain text-white font-black text-[13px] md:text-sm flex items-center justify-center gap-1.5 hover:brightness-105 active:scale-[.98] machined">
+                    <button type="button" onClick={() => handleOpen('LONG')} disabled={rewound}
+                      className="flex-1 min-w-[110px] h-11 rounded-lg bg-gain text-white font-black text-[13px] md:text-sm flex items-center justify-center gap-1.5 hover:brightness-105 active:scale-[.98] machined disabled:opacity-40 disabled:cursor-not-allowed">
                       <ArrowUpRight className="w-4 h-4" /> {state.positions.LONG ? t('replay.addLong') : t('replay.openLong')} {leverage}x @ {fmtNum(curPrice, decimals)}
                     </button>
-                    <button type="button" onClick={() => handleOpen('SHORT')}
-                      className="flex-1 min-w-[110px] h-11 rounded-lg bg-loss text-white font-black text-[13px] md:text-sm flex items-center justify-center gap-1.5 hover:brightness-105 active:scale-[.98] machined">
+                    <button type="button" onClick={() => handleOpen('SHORT')} disabled={rewound}
+                      className="flex-1 min-w-[110px] h-11 rounded-lg bg-loss text-white font-black text-[13px] md:text-sm flex items-center justify-center gap-1.5 hover:brightness-105 active:scale-[.98] machined disabled:opacity-40 disabled:cursor-not-allowed">
                       <ArrowDownRight className="w-4 h-4" /> {state.positions.SHORT ? t('replay.addShort') : t('replay.openShort')} {leverage}x @ {fmtNum(curPrice, decimals)}
                     </button>
                   </div>
@@ -668,8 +732,8 @@ export function ReplayPanel() {
                               {upnl >= 0 ? '+' : ''}{fmtNum(upnl)}
                             </span>
                           </div>
-                          <button type="button" onClick={() => handleClose(p.side)}
-                            className="min-w-[130px] h-10 px-3 rounded-lg bg-primary text-primary-foreground font-black text-sm flex items-center justify-center gap-1.5 hover:brightness-105 active:scale-[.98] machined">
+                          <button type="button" onClick={() => handleClose(p.side)} disabled={rewound}
+                            className="min-w-[130px] h-10 px-3 rounded-lg bg-primary text-primary-foreground font-black text-sm flex items-center justify-center gap-1.5 hover:brightness-105 active:scale-[.98] machined disabled:opacity-40 disabled:cursor-not-allowed">
                             {t(closePct >= 100 ? 'replay.closeAction' : 'replay.reduceAction',
                               { side: t(SIDE_LABEL[p.side]), pct: closePct, price: fmtNum(curPrice, decimals) })}
                           </button>
@@ -692,7 +756,7 @@ export function ReplayPanel() {
                 <span className="ml-auto text-[10px] text-muted-foreground truncate max-w-[160px]">{aiLabel}</span>
                 {/* p-2 -m-2：图标只有 14px，手指点不中——内边距把命中区撑到 30px，负外边距抵掉占位 */}
                 <button type="button" aria-label={t('common:close')}
-                  onClick={() => { aiAbortRef.current?.abort(); setHint(null); }}
+                  onClick={() => { if (hint.busy) aiAbortRef.current?.abort(); setHint(null); }}
                   className="p-2 -m-2 text-muted-foreground/60 hover:text-foreground">
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -710,7 +774,7 @@ export function ReplayPanel() {
                   : <><Flag className="w-4 h-4 text-primary" /><span className="text-sm font-black">{t('replay.settled')}</span></>}
                 <span className="ml-auto text-[10px] text-muted-foreground num">
                   {/* 盲测揭晓真实区间 */}
-                  {fmtDateTime(session.startMs)} ~ {curBar ? fmtDateTime(curBar[0]) : ''}
+                  {fmtDateTime(session.startMs)} ~ {fmtDateTime(endedMs)}
                 </span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
