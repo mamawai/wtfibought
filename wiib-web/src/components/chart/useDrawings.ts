@@ -23,21 +23,33 @@
  *    期间图表自身平移/缩放锁死、LWC 自带十字线藏起来（两套十字会打架）。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CrosshairMode, type DeepPartial, type HandleScrollOptions, type IChartApi, type ISeriesApi } from 'lightweight-charts';
+import {
+  CrosshairMode, type DeepPartial, type HandleScrollOptions, type IChartApi, type ISeriesApi, type Logical,
+} from 'lightweight-charts';
 import i18n from '../../i18n';
 import { DrawingLayer } from './DrawingLayer';
 import {
-  coordToTime, DRAW_COLOR, finalizePoints, loadDrawings, magnetPrice, newId, PLACE_POINTS, saveDrawings,
-  type Anchor, type ChartCtx, type Drawing, type DrawingKind,
+  anchorToPoint, coordToTime, DRAW_COLOR, finalizePoints, loadDrawings, magnetPrice, newId, PLACE_POINTS, saveDrawings,
+  type Anchor, type ChartCtx, type Drawing, type DrawingKind, type LineDash,
 } from '../../lib/chartDrawings';
 
 /** null = 选择模式（可选中/拖拽已有图形，图表照常平移缩放） */
 export type Tool = DrawingKind | null;
 
+/** 属性条看的选中图形快照：图层里的对象是就地改的，直接交给 React 它感知不到变化 */
+export interface DrawSelection { id: string; kind: DrawingKind; color: string; width: number; dash: LineDash }
+
+/** 属性条能改的几样 */
+export type DrawStylePatch = Partial<Pick<Drawing, 'color' | 'width' | 'dash'>>;
+
 /** 触屏设备：画线改走"十字线拖动+轻点固定"模式，手指不再直接点图落点 */
 const IS_COARSE = window.matchMedia('(pointer: coarse)').matches;
 /** 触屏轻点判定：按下到抬起位移不超过这些像素算"点"，超过算"拖" */
 const TAP_SLOP = 6;
+/** 撤销最多记几步 */
+const UNDO_MAX = 50;
+/** 复制出来的副本往右下错开多少像素，跟原图叠在一起就看不出复制了 */
+const CLONE_OFFSET = 24;
 
 export interface AttachArgs {
   chart: IChartApi;
@@ -60,8 +72,11 @@ interface Live extends AttachArgs {
   crosshairMode: CrosshairMode;
 }
 
-/** 拖拽会话。t0/p0 是按下那一刻的自由坐标，整体平移按它算增量 */
-interface Drag { id: string; pt: number; t0: number; p0: number; orig: Anchor[]; }
+/**
+ * 拖拽会话。t0/p0 是按下那一刻的自由坐标，整体平移按它算增量；cx0/cy0 是按下时的屏幕坐标，判起拖阈值用；
+ * moved=真拖动过（只是点选不改图形、不进撤销栈）
+ */
+interface Drag { id: string; pt: number; t0: number; p0: number; orig: Anchor[]; moved: boolean; cx0: number; cy0: number; }
 
 /** 触屏十字线的一次手指会话：baseX/Y=按下时十字位置，startCX/CY=按下时手指位置 */
 interface Touch { pointerId: number; startCX: number; startCY: number; baseX: number; baseY: number; moved: boolean; }
@@ -69,12 +84,16 @@ interface Touch { pointerId: number; startCX: number; startCY: number; baseX: nu
 export function useDrawings() {
   const [tool, setTool] = useState<Tool>(null);
   const [magnet, setMagnet] = useState(true);
-  const [selected, setSelected] = useState(false);
+  const [selection, setSelection] = useState<DrawSelection | null>(null);
   const [count, setCount] = useState(0);
   /** 隐藏全部画线（只切可见性不删数据；不持久化，进页面默认显示） */
   const [hiddenAll, setHiddenAll] = useState(false);
-  /** 文字标注输入浮层的位置(相对 host)，null=没在输入 */
-  const [textEdit, setTextEdit] = useState<{ x: number; y: number } | null>(null);
+  /** 文字标注输入浮层的位置(相对 host)，value=改已有标注时的原文；null=没在输入 */
+  const [textEdit, setTextEdit] = useState<{ x: number; y: number; value?: string } | null>(null);
+  /** 撤销栈：每次改动前存一份整套画线的快照（换币种时清空，见 attach） */
+  const historyRef = useRef<Drawing[][]>([]);
+  const historySymbolRef = useRef<string | null>(null);
+  const [undoCount, setUndoCount] = useState(0);
 
   const liveRef = useRef<Live | null>(null);
   const toolRef = useRef<Tool>(null);
@@ -103,12 +122,14 @@ export function useDrawings() {
   const setHiddenAllSync = useCallback((v: boolean) => {
     setHiddenAll(v);
     hiddenRef.current = v;
+    // 画到一半点了隐藏：这一笔作罢，不然落定的新线看不见却被选中着
+    if (v) setTool(null);
     const live = liveRef.current;
     if (!live) return;
     live.layer.hidden = v;
     if (v && live.layer.selectedId) {
       live.layer.selectedId = null;   // 看不见的线不该保持选中态
-      setSelected(false);
+      setSelection(null);
     }
     live.layer.update();
   }, []);
@@ -172,6 +193,35 @@ export function useDrawings() {
     setCount(live.layer.drawings.length);
   }, []);
 
+  /** 选中图形变了（换了一个/改了样式/删了）就同步给属性条 */
+  const syncSel = useCallback((live: Live) => {
+    const d = live.layer.drawings.find(x => x.id === live.layer.selectedId);
+    setSelection(d ? { id: d.id, kind: d.kind, color: d.color, width: d.width ?? 1, dash: d.dash ?? 'solid' } : null);
+  }, []);
+
+  /** 改动前调：把改之前的整套画线压进撤销栈 */
+  const remember = useCallback((live: Live) => {
+    const h = historyRef.current;
+    h.push(structuredClone(live.layer.drawings));
+    if (h.length > UNDO_MAX) h.shift();
+    setUndoCount(h.length);
+  }, []);
+
+  /** 撤销上一步。正在落点/拖拽时不撤：那一步还没落定，撤的会是再前一步 */
+  const undo = useCallback(() => {
+    const live = liveRef.current;
+    if (!live || placedRef.current.length || dragRef.current) return;
+    const prev = historyRef.current.pop();
+    if (!prev) return;
+    setUndoCount(historyRef.current.length);
+    const L = live.layer;
+    L.drawings = prev;
+    if (!prev.some(d => d.id === L.selectedId)) L.selectedId = null;
+    syncSel(live);
+    persist(live);
+    L.update();
+  }, [syncSel, persist]);
+
   /** 一次绘制结束（无论落定还是取消）：清预览、退回选择模式 */
   const endDraw = useCallback((live: Live) => {
     placedRef.current = [];
@@ -182,22 +232,24 @@ export function useDrawings() {
   }, []);
 
   const commit = useCallback((live: Live, kind: DrawingKind, pts: Anchor[], text?: string) => {
+    remember(live);
     const d: Drawing = { id: newId(), kind, pts, color: DRAW_COLOR, ...(text ? { text } : {}) };
     live.layer.drawings.push(d);
     live.layer.selectedId = d.id;
-    setSelected(true);
+    syncSel(live);
     persist(live);
     live.layer.update();
-  }, [persist]);
+  }, [remember, syncSel, persist]);
 
   const dropSelected = useCallback((live: Live) => {
     const L = live.layer;
+    remember(live);
     L.drawings = L.drawings.filter(d => d.id !== L.selectedId);
     L.selectedId = null;
-    setSelected(false);
+    setSelection(null);
     persist(live);
     L.update();
-  }, [persist]);
+  }, [remember, persist]);
 
   /** 中央"已完成"提示（触屏用）：淡入停留后自删，纯装饰不进 React 树 */
   const flashDone = useCallback((host: HTMLElement) => {
@@ -232,15 +284,19 @@ export function useDrawings() {
 
   /**
    * 落一个点。单点工具一击即成；多点工具攒够 PLACE_POINTS 才 commit（仓位工具的止盈由
-   * finalizePoints 派生），没攒够就起/更新预览。hostX/Y 只给文字工具定位输入框。
+   * finalizePoints 派生），没攒够就起/更新预览。返回 true=这一笔落定了。
    */
-  const place = useCallback((live: Live, r: { a: Anchor; snapped: boolean }, hostX: number, hostY: number) => {
+  const place = useCallback((live: Live, r: { a: Anchor; snapped: boolean }) => {
     const t = toolRef.current;
-    if (!t) return;
+    if (!t) return false;
     const L = live.layer;
     if (t === 'text') {
+      // 输入框直接摆在落定后文字出现的地方（锚点取整到 bar、磁吸过，文字在它右侧 15px 起），提交那一下不跳
+      const q = anchorToPoint(r.a, live.ctx);
+      if (!q) return false;
+      const h = paneToHost(live, q.x + 15, q.y);
       textAnchorRef.current = r.a;
-      setTextEdit({ x: hostX, y: hostY });
+      setTextEdit({ x: h.x, y: h.y });
       endDraw(live);
       return true;
     }
@@ -260,7 +316,7 @@ export function useDrawings() {
     L.snap = r.snapped ? r.a : null;
     L.update();
     return false;
-  }, [commit, endDraw]);
+  }, [commit, endDraw, paneToHost]);
 
   // ---------- 触屏十字线 ----------
 
@@ -292,9 +348,10 @@ export function useDrawings() {
     if (!cur) return;
     const r = anchorAt(live, cur.x, cur.y);
     if (!r) return;                              // 十字停在价格轴/副图上，点了不算
-    const h = paneToHost(live, cur.x, cur.y);
-    if (place(live, r, h.x, h.y)) flashDone(live.host);
-  }, [anchorAt, paneToHost, place, flashDone]);
+    // 文字工具这一点只是开始打字，不算画完
+    const t = toolRef.current;
+    if (place(live, r) && t !== 'text') flashDone(live.host);
+  }, [anchorAt, place, flashDone]);
 
   // ---------- 指针事件 ----------
 
@@ -316,6 +373,12 @@ export function useDrawings() {
     const L = live.layer;
     const d = L.drawings.find(x => x.id === drag.id);
     if (!d) return;
+    if (!drag.moved) {
+      // 没挪出 TAP_SLOP 算点选：手指/鼠标的微抖不该挪动图形，也不该记一步撤销
+      if (Math.hypot(e.clientX - drag.cx0, e.clientY - drag.cy0) <= TAP_SLOP) return;
+      drag.moved = true;
+      remember(live);
+    }
 
     if (drag.pt >= 0) {
       const r = anchorAt(live, pt.x, pt.y);
@@ -338,15 +401,15 @@ export function useDrawings() {
       L.snap = null;
     }
     L.update();
-  }, [localPt, anchorAt]);
+  }, [localPt, anchorAt, remember]);
 
   const onWinUp = useCallback(() => {
     stopDrag();
     const live = liveRef.current;
-    const had = dragRef.current !== null;
+    const moved = dragRef.current?.moved === true;
     dragRef.current = null;
     if (!live) return;
-    if (had) persist(live);
+    if (moved) persist(live);
     live.layer.snap = null;
     lock(live, toolRef.current !== null);   // 还在绘制模式就继续锁着
     live.layer.update();
@@ -364,6 +427,7 @@ export function useDrawings() {
       if (e.pointerId !== touch.pointerId) return;
       const dx = e.clientX - touch.startCX, dy = e.clientY - touch.startCY;
       if (Math.hypot(dx, dy) > TAP_SLOP) touch.moved = true;
+      if (!touch.moved) return;     // 还在轻点的抖动范围里：十字不动，轻点就固定在原处
       const r = paneEl(live)?.getBoundingClientRect();
       const w = r?.width ?? live.host.clientWidth, h = r?.height ?? live.host.clientHeight;
       moveCursor(live, Math.min(Math.max(touch.baseX + dx, 0), w), Math.min(Math.max(touch.baseY + dy, 0), h));
@@ -384,6 +448,10 @@ export function useDrawings() {
     const live = liveRef.current;
     if (!live) return;
     const L = live.layer, t = toolRef.current;
+    // 点到图上就让输入框失焦（文字标注也靠这次失焦提交）：下面多半会 preventDefault 压掉兼容 mousedown，
+    // 手机上 LWC 的轻点也会压，焦点不会自己走，Delete/Ctrl+Z 就一直被输入框吃掉
+    const ae = document.activeElement;
+    if (ae instanceof HTMLElement && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) ae.blur();
 
     // 触屏绘制模式：整块图是十字线的触控板，按下只是记起点，抬起时按"动没动"分拖/点
     if (L.cursor) {
@@ -401,25 +469,33 @@ export function useDrawings() {
       const r = anchorAt(live, pt.x, pt.y);
       if (!r) return;
       e.preventDefault();                      // 压掉兼容鼠标事件，LWC 的 mousedown 不会触发
-      const hr = live.host.getBoundingClientRect();
-      place(live, r, e.clientX - hr.left, e.clientY - hr.top);
+      place(live, r);
       return;
     }
 
     // 选择模式：主动 hitTest 而不是等 LWC 的 hover —— 触摸端没有 hover 前置态
     const hit = L.pick(pt.x, pt.y);
     if (!hit) {
-      if (L.selectedId) { L.selectedId = null; setSelected(false); L.update(); }
+      if (L.selectedId) { L.selectedId = null; setSelection(null); L.update(); }
       return;                                  // 没点中就放行，图表照常平移缩放
+    }
+    // 手机：按中还没选中的图形只选中、不起拖。斐波/水平线/大矩形铺满大片主图，手指一落上去就拖线的话页面就翻不动了；
+    // 选中之后再按住才拖。事件放行，滑动照常翻页/平移
+    if (e.pointerType === 'touch' && L.selectedId !== hit.id) {
+      L.selectedId = hit.id;
+      syncSel(live);
+      L.update();
+      return;
     }
     e.preventDefault();
     lock(live, true);
     L.selectedId = hit.id;
-    setSelected(true);
+    syncSel(live);
     const d = L.drawings.find(x => x.id === hit.id);
     const t0 = coordToTime(pt.x, live.ctx), p0 = live.ctx.series.coordinateToPrice(pt.y);
     dragRef.current = (d && t0 !== null && p0 !== null)
-      ? { id: hit.id, pt: hit.pt, t0, p0, orig: d.pts.map(a => ({ ...a })) } : null;
+      ? { id: hit.id, pt: hit.pt, t0, p0, orig: d.pts.map(a => ({ ...a })), moved: false, cx0: e.clientX, cy0: e.clientY }
+      : null;
     // 挂 window 而不是 host：手指/鼠标拖出图表范围也要跟得住
     const h = { move: onWinMove, up: onWinUp };
     dragHandlersRef.current = h;
@@ -427,7 +503,7 @@ export function useDrawings() {
     window.addEventListener('pointerup', h.up, true);
     window.addEventListener('pointercancel', h.up, true);
     L.update();
-  }, [localPt, anchorAt, lock, place, onWinMove, onWinUp]);
+  }, [localPt, anchorAt, lock, place, syncSel, onWinMove, onWinUp]);
 
   /** 触屏手指抬起：没动过 = 轻点固定；动过 = 只是拖十字线，松手不固定 */
   const onUp = useCallback((e: PointerEvent) => {
@@ -444,14 +520,46 @@ export function useDrawings() {
     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;   // 正在打字，别抢键
     if (e.key === 'Escape') {
       if (placedRef.current.length || toolRef.current) endDraw(live);
-      else if (live.layer.selectedId) { live.layer.selectedId = null; setSelected(false); live.layer.update(); }
+      else if (live.layer.selectedId) { live.layer.selectedId = null; setSelection(null); live.layer.update(); }
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      undo();
       return;
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && live.layer.selectedId) {
       e.preventDefault();
       dropSelected(live);
     }
-  }, [endDraw, dropSelected]);
+  }, [endDraw, dropSelected, undo]);
+
+  /** 改选中的文字标注：输入框带着原文盖到它原来的位置（文字在锚点右侧 15px 起） */
+  const editText = useCallback(() => {
+    const live = liveRef.current;
+    if (!live) return;
+    const L = live.layer, d = L.drawings.find(x => x.id === L.selectedId);
+    if (d?.kind !== 'text') return;
+    const q = anchorToPoint(d.pts[0], live.ctx);
+    if (!q) return;
+    const h = paneToHost(live, q.x + 15, q.y);
+    L.editingId = d.id;
+    L.update();
+    setTextEdit({ x: h.x, y: h.y, value: d.text ?? '' });
+  }, [paneToHost]);
+
+  /** 桌面双击文字标注 = 改字（手机走属性条上的编辑钮） */
+  const onDbl = useCallback((e: MouseEvent) => {
+    const live = liveRef.current;
+    if (!live || toolRef.current) return;
+    const pt = localPt(live, e.clientX, e.clientY);
+    if (!pt?.inside) return;
+    const hit = live.layer.pick(pt.x, pt.y);
+    if (!hit || live.layer.drawings.find(x => x.id === hit.id)?.kind !== 'text') return;
+    live.layer.selectedId = hit.id;
+    syncSel(live);
+    editText();
+  }, [localPt, syncSel, editText]);
 
   // ---------- 挂载 / 卸载 ----------
 
@@ -469,17 +577,29 @@ export function useDrawings() {
     liveRef.current = live;
 
     setTool(null);                     // 换 symbol/周期时不该还端着上一手的笔
-    setSelected(false);
+    setSelection(null);
     setCount(layer.drawings.length);
     setTextEdit(null);
     textAnchorRef.current = null;
     placedRef.current = [];
     touchRef.current = null;
+    // 撤销栈跟着币种走：开关副图、切主题、切周期也会重挂图层，同一个币的画线没变，撤销记录留着
+    if (historySymbolRef.current !== a.symbol) {
+      historySymbolRef.current = a.symbol;
+      historyRef.current = [];
+      setUndoCount(0);
+    }
+
+    // 手机拖已有图形：pointerdown 里才设 touch-action 已经晚了，浏览器照样滚页面、再 pointercancel 掉拖拽。
+    // 拖拽或拖十字线期间直接拦掉 touchmove 的默认滚动（必须非 passive 才拦得住）
+    const onTouchMove = (e: TouchEvent) => { if (dragRef.current || touchRef.current) e.preventDefault(); };
 
     a.host.addEventListener('pointerdown', onDown, true);
     a.host.addEventListener('pointermove', onMove, true);
     a.host.addEventListener('pointerup', onUp, true);
     a.host.addEventListener('pointercancel', onUp, true);
+    a.host.addEventListener('dblclick', onDbl, true);
+    a.host.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('keydown', onKey);
 
     return () => {
@@ -487,6 +607,8 @@ export function useDrawings() {
       a.host.removeEventListener('pointermove', onMove, true);
       a.host.removeEventListener('pointerup', onUp, true);
       a.host.removeEventListener('pointercancel', onUp, true);
+      a.host.removeEventListener('dblclick', onDbl, true);
+      a.host.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('keydown', onKey);
       // 卸载时可能正拖着：只摘监听，别走 onWinUp（那会去碰马上要被 remove 的 chart）
       stopDrag();
@@ -497,7 +619,7 @@ export function useDrawings() {
       a.series.detachPrimitive(layer);
       liveRef.current = null;
     };
-  }, [onDown, onMove, onUp, onKey, stopDrag]);
+  }, [onDown, onMove, onUp, onDbl, onKey, stopDrag]);
 
   // 工具切换：锁图表、改光标、关掉命中判定（画新线时不该被旧线抢走光标）
   useEffect(() => {
@@ -506,7 +628,10 @@ export function useDrawings() {
     if (!live) return;
     live.layer.interactive = tool === null;
     live.host.style.cursor = tool ? 'crosshair' : '';
-    if (!tool) { placedRef.current = []; live.layer.pending = null; live.layer.snap = null; }
+    // 换工具（含退出）就清掉画了一半的点：不然上一个工具落的点会被带进新工具，存出点数不对的图形
+    placedRef.current = [];
+    live.layer.pending = null;
+    live.layer.snap = null;
     // 触屏：进入绘制模式即出十字线；退出（含 Esc/完成）即收。先收再 lock：lock 按 cursor 决定藏不藏 LWC 十字
     if (IS_COARSE && tool) showCursor(live);
     if (!tool) hideCursor(live);
@@ -524,22 +649,91 @@ export function useDrawings() {
     if (L.selectedId) { dropSelected(live); return; }
     if (!L.drawings.length) return;
     if (!window.confirm(i18n.t('market:draw.clearConfirm', { symbol: live.symbol, count: L.drawings.length }))) return;
+    remember(live);
     L.drawings = [];
     persist(live);
     L.update();
-  }, [dropSelected, persist]);
+  }, [dropSelected, remember, persist]);
 
+  /**
+   * 文字输入收尾（回车/失焦）。改已有标注：清空算不改、原样放回（删标注走删除键）；
+   * 回车之后输入框卸载还会再触发一次失焦，那时 editingId 和锚点都已清掉，空转
+   */
   const commitText = useCallback((v: string) => {
     const live = liveRef.current, a = textAnchorRef.current;
     setTextEdit(null);
     textAnchorRef.current = null;
-    if (live && a && v.trim()) commit(live, 'text', [a], v.trim());
-  }, [commit]);
+    if (!live) return;
+    const L = live.layer, text = v.trim();
+    const editing = L.drawings.find(x => x.id === L.editingId);
+    if (editing) {
+      L.editingId = null;
+      if (text && text !== editing.text) {
+        remember(live);
+        editing.text = text;
+        persist(live);
+      }
+      L.update();
+      return;
+    }
+    if (a && text) commit(live, 'text', [a], text);
+  }, [commit, remember, persist]);
 
   const cancelText = useCallback(() => {
     setTextEdit(null);
     textAnchorRef.current = null;
+    const live = liveRef.current;
+    if (live?.layer.editingId) {
+      live.layer.editingId = null;
+      live.layer.update();
+    }
   }, []);
+
+  /** 属性条改颜色/线宽/线型，作用于选中的那个 */
+  const setStyle = useCallback((patch: DrawStylePatch) => {
+    const live = liveRef.current;
+    if (!live) return;
+    const d = live.layer.drawings.find(x => x.id === live.layer.selectedId);
+    if (!d) return;
+    // 点的就是当前值：什么都不变，别平白多一步撤销
+    if ((patch.color === undefined || patch.color === d.color)
+      && (patch.width === undefined || patch.width === (d.width ?? 1))
+      && (patch.dash === undefined || patch.dash === (d.dash ?? 'solid'))) return;
+    remember(live);
+    Object.assign(d, patch);
+    persist(live);
+    syncSel(live);
+    live.layer.update();
+  }, [remember, persist, syncSel]);
+
+  /** 复制选中的：副本往右下错开 CLONE_OFFSET 像素（横向按整根 bar 错），选中副本方便接着拖 */
+  const cloneSelected = useCallback(() => {
+    const live = liveRef.current;
+    if (!live) return;
+    const L = live.layer, src = L.drawings.find(x => x.id === L.selectedId);
+    if (!src) return;
+    remember(live);
+    const ts = live.ctx.timeScale;
+    const a0 = ts.logicalToCoordinate(0 as Logical), a1 = ts.logicalToCoordinate(1 as Logical);
+    const spacing = a0 !== null && a1 !== null ? a1 - a0 : 0;
+    const dt = Math.max(1, spacing > 0 ? Math.round(CLONE_OFFSET / spacing) : 1) * live.ctx.bucketSec;
+    const pts = src.pts.map(a => {
+      const y = live.ctx.series.priceToCoordinate(a.p);
+      const p = y === null ? null : live.ctx.series.coordinateToPrice(y + CLONE_OFFSET);
+      return { t: a.t + dt, p: p ?? a.p };
+    });
+    const copy: Drawing = { ...structuredClone(src), id: newId(), pts };
+    L.drawings.push(copy);
+    L.selectedId = copy.id;
+    syncSel(live);
+    persist(live);
+    L.update();
+  }, [remember, syncSel, persist]);
+
+  const deleteSelected = useCallback(() => {
+    const live = liveRef.current;
+    if (live?.layer.selectedId) dropSelected(live);
+  }, [dropSelected]);
 
   /** 工具条入口：选画线工具时若线被藏着，自动把眼睛打开（画完看不见太诡异） */
   const selectTool = useCallback((t: Tool) => {
@@ -552,10 +746,16 @@ export function useDrawings() {
     tool, setTool: selectTool,
     magnet, setMagnet,
     hiddenAll, setHiddenAll: setHiddenAllSync,
-    /** 当前有选中的图形 → 🗑 按钮是"删选中"，否则是"清空全部" */
-    selected,
+    /** 当前有选中的图形 → 删除按钮是"删选中"，否则是"清空全部" */
+    selected: selection !== null,
+    /** 选中图形的样式快照，属性条按它显示；null=没选中 */
+    selection,
+    setStyle, cloneSelected, deleteSelected, editText,
+    undo, canUndo: undoCount > 0,
     count,
     trash,
     textEdit, commitText, cancelText,
   };
 }
+
+export type DrawingsApi = ReturnType<typeof useDrawings>;
