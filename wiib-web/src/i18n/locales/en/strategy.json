@@ -300,6 +300,7 @@
     "next": "Next bar",
     "speed": "{{n}} bars/s",
     "spaceHint": "Space = next bar · No going back",
+    "rewound": "Switching to a larger interval moved progress back to bars you've already seen. Trading is paused until a new bar opens",
     "aiHint": "AI hint",
     "aiHintTip": "Ask AI ({{model}}) to read the chart: structure / key levels / volume / position risk",
     "endGame": "End session",

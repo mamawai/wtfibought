@@ -5,7 +5,7 @@ import {
   CircleSlash, Crosshair, Gauge, History, Hourglass, Loader2, LogOut, Pause, Play,
   Radar, RotateCcw, ScrollText, XCircle,
 } from 'lucide-react';
-import { backtestApi } from '../../api';
+import { ApiError, backtestApi } from '../../api';
 import { BacktestChart, type ChartTradeMark } from './BacktestChart';
 import { EquityChart } from '../EquityChart';
 import { useToast } from '../ui/use-toast';
@@ -190,7 +190,7 @@ export function StrategyBacktestPanel() {
 
   const afterRef = useRef(-1);                 // events 游标
   const taskRef = useRef<string | null>(null); // 轮询循环里判断任务是否被切换
-  const klinesBusyRef = useRef(false);
+  const klinesBusyRef = useRef<string | null>(null);   // 正在拉哪个任务的 K 线
   const klinesDoneRef = useRef<string | null>(null);   // 该任务 K 线已拉全，轮询不再重拉
   const balanceRef = useRef(100000);           // 权益曲线基线（cumPnl = equity - 基线）
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -201,6 +201,8 @@ export function StrategyBacktestPanel() {
   const busy = running || queued || submitting;
   const done = status?.state === 'DONE';
   const warmupBars = status?.warmupBars ?? 0;
+  // 结果区用任务自己的币种；表单那个币种只管下一次提交
+  const viewSymbol = status?.symbol ?? symbol;
 
   // ---- 刷新恢复：taskId 落 sessionStorage，回来接着看 ----
   useEffect(() => {
@@ -217,8 +219,8 @@ export function StrategyBacktestPanel() {
 
   // ---- K线分段拉取（RUNNING 一开始就能拉，边拉边画） ----
   const loadKlines = useCallback(async (tid: string) => {
-    if (klinesBusyRef.current || klinesDoneRef.current === tid) return;
-    klinesBusyRef.current = true;
+    if (klinesBusyRef.current === tid || klinesDoneRef.current === tid) return;
+    klinesBusyRef.current = tid;
     try {
       let acc: number[][] = [];
       let offset = 0;
@@ -232,7 +234,8 @@ export function StrategyBacktestPanel() {
         if (offset >= page.total) { klinesDoneRef.current = tid; break; }
       }
     } catch { /* 分段失败下轮 status 触发重试 */ } finally {
-      klinesBusyRef.current = false;
+      // 只清自己的占位（上个任务这轮可能收尾得晚）
+      if (klinesBusyRef.current === tid) klinesBusyRef.current = null;
     }
   }, []);
 
@@ -256,29 +259,43 @@ export function StrategyBacktestPanel() {
     };
 
     (async () => {
+      let resultLoaded = false;
+      let failing = false;     // 连续失败中：只在头一次弹提示
       for (;;) {
         if (!active || taskRef.current !== taskId) return;
+        let statusOk = false;
         try {
           const st = await backtestApi.status(taskId);
+          statusOk = true;
           if (!active || taskRef.current !== taskId) return;
           setStatus(st);
           if (st.totalBars > 0) void loadKlines(taskId);
           await pullEvents();
           if (st.state === 'DONE') {
-            const r = await backtestApi.result(taskId);
-            if (!active || taskRef.current !== taskId) return;
-            setResult(r);
-            return;
+            if (!resultLoaded) {
+              const r = await backtestApi.result(taskId);
+              if (!active || taskRef.current !== taskId) return;
+              setResult(r);
+              resultLoaded = true;
+            }
+            // K 线拉全才收工；还在拉或拉失败了就留在循环里，下一轮接着拉
+            if (st.totalBars === 0 || klinesDoneRef.current === taskId) return;
           }
           if (st.state === 'FAILED') return;
+          failing = false;     // 这一轮全都拉成了才算恢复
         } catch (e) {
-          // 任务不存在（服务重启）：清存档提示重跑
           if (!active) return;
-          toast((e as Error).message || t('backtest.toast.pollFailed'), 'error');
-          sessionStorage.removeItem(STORE_KEY);
-          setTask(null);
-          setStatus(null);
-          return;
+          // 任务不存在（服务重启/被淘汰）：status 回 500。清存档提示重跑（events/result 的 500 不算）
+          if (!statusOk && e instanceof ApiError && e.code === 500) {
+            toast(e.message || t('backtest.toast.pollFailed'), 'error');
+            sessionStorage.removeItem(STORE_KEY);
+            setTask(null);
+            setStatus(null);
+            return;
+          }
+          // 断网、网关超时这类：提示一次，照常按间隔重试
+          if (!failing) toast((e as Error).message || t('backtest.toast.pollFailed'), 'error');
+          failing = true;
         }
         await new Promise(r => setTimeout(r, POLL_MS));
       }
@@ -389,13 +406,18 @@ export function StrategyBacktestPanel() {
   // 5m 时 aggregateBars 原样返回同引用，图表增量更新路径不受影响
   const aggBars = useMemo(() => aggregateBars(bars, ivMin), [bars, ivMin]);
 
-  // 标记映射到聚合桶：marker 时间必须落在已有蜡烛的 openTime 上才会渲染
+  // 标记贴到所在蜡烛的 openTime 上（5m 也要）：后端成交时间是当根 5m 的收盘时刻（openTime+299999），
+  // 不落在蜡烛 openTime 上 LWC 会画到下一根
   const aggMarks = useMemo<ChartTradeMark[]>(() => {
-    if (ivMin === 5 || aggBars.length === 0) return marks;
-    return marks.map(m => {
-      const i = barIndexAt(aggBars, m.time);
-      return { ...m, barIndex: i, time: aggBars[i][0] };
-    });
+    if (aggBars.length === 0) return marks;
+    const loadedEnd = aggBars[aggBars.length - 1][0] + ivMin * 60_000;
+    return marks
+      // K 线还在分段拉、没拉到这笔的先不标，拉到了再贴（否则会全堆在已拉到的最后一根上）
+      .filter(m => m.time < loadedEnd)
+      .map(m => {
+        const i = barIndexAt(aggBars, m.time);
+        return { ...m, barIndex: i, time: aggBars[i][0] };
+      });
   }, [marks, aggBars, ivMin]);
 
   // ---- 成交分页 ----
@@ -543,7 +565,7 @@ export function StrategyBacktestPanel() {
           <div className="space-y-5 min-w-0">
             <div className="rounded-lg pt-card p-3 md:p-4 space-y-3">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="microlabel uppercase">{symbol} · {ivLabel(ivMin)}{status ? ` · ${strategyName(status.strategyId)}` : ''}</span>
+                <span className="microlabel uppercase">{viewSymbol} · {ivLabel(ivMin)}{status ? ` · ${strategyName(status.strategyId)}` : ''}</span>
                 <div className="flex rounded border border-border overflow-hidden">
                   {IV_OPTIONS.map(o => (
                     <button key={o.min} type="button"
@@ -567,7 +589,7 @@ export function StrategyBacktestPanel() {
               </div>
 
               <BacktestChart bars={aggBars} marks={aggMarks} cursor={chartCursor}
-                symbol={symbol} decimals={getCoinPriceDecimals(symbol)} bucketSec={ivMin * 60} />
+                symbol={viewSymbol} decimals={getCoinPriceDecimals(viewSymbol)} bucketSec={ivMin * 60} />
 
               {/* 回放控制条：done 且有数据才开放 */}
               {done && bars.length > 0 && (

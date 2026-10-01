@@ -5,7 +5,8 @@
  * - 手续费 taker 万5 双边——复盘里的开/加/平都是"看着收盘价点按钮"，全是市价语义；
  * - 双向持仓（多/空各一个槽位，可同时持有）：同向再开=加仓（均价按数量加权、保证金累加）；
  *   平仓按比例（25%~100%），部分平按比例结算盈亏/退回保证金，每次平记一笔成交；
- * - 全仓口径：权益 = 现金 + Σ(保证金 + 未实现盈亏)；权益 ≤ 0 即两侧一起爆仓（不做维持保证金梯度）。
+ * - 全仓口径：权益 = 现金 + Σ(保证金 + 未实现盈亏)；权益 ≤ 0 即两侧一起爆仓（不做维持保证金梯度），
+ *   穿仓部分平台兜底，最多亏光本金。
  *   全仓下现金允许暂时为负（一侧兑现亏损、另一侧还挂着浮盈），护栏在权益不在现金。
  */
 
@@ -48,7 +49,7 @@ export interface ReplayTrade {
   leverage: number;
   entryPrice: number;
   exitPrice: number;
-  /** 净盈亏（已扣本笔应摊的开仓费 + 平仓费，同引擎 trade.pnl 口径） */
+  /** 净盈亏（已扣本笔应摊的开仓费 + 平仓费，同引擎 trade.pnl 口径）；爆仓那笔扣掉了穿仓兜底的部分 */
   pnl: number;
   /** 本笔摊到的开仓费 + 平仓费 */
   fee: number;
@@ -162,12 +163,26 @@ export function close(s: ReplayState, side: Side, pct: number, price: number, in
   };
 }
 
-/** 两侧全平（爆仓/结算）；爆仓时现金落地为 0，不出现负权益 */
+/**
+ * 两侧全平（爆仓/结算）。
+ * 爆仓时权益已 ≤0，平完现金必然 ≤0：穿仓那截算平台兜底，现金落地为 0，
+ * 差额加回这次强平里亏得最多的那笔，各笔成交 pnl 之和才跟最终权益对得上（整局正好亏光本金）。
+ */
 function closeAll(s: ReplayState, price: number, index: number, time: number,
                   reason: 'LIQUIDATION' | 'END'): ReplayState {
   let st = s;
   for (const side of ['LONG', 'SHORT'] as const) st = close(st, side, 1, price, index, time, reason);
-  return reason === 'LIQUIDATION' ? { ...st, cash: Math.max(0, st.cash), liquidated: true } : st;
+  if (reason === 'END') return st;
+  // 这次强平新增的成交从 s.trades.length 起（多空各至多一笔），成交与 fill 一一对应着追加
+  let k = s.trades.length;
+  for (let i = k + 1; i < st.trades.length; i++) if (st.trades[i].pnl < st.trades[k].pnl) k = i;
+  const pnl = st.trades[k].pnl - st.cash;   // 现金 ≤0，减它就是把穿仓那截加回
+  const f = s.fills.length + (k - s.trades.length);
+  const trades = st.trades.slice();
+  const fills = st.fills.slice();
+  trades[k] = { ...trades[k], pnl };
+  fills[f] = { ...fills[f], pnl };
+  return { ...st, cash: 0, trades, fills, liquidated: true };
 }
 
 /** 每根新 bar 收盘调用：盯市 + 爆仓判定。爆仓按当根收盘价强平两侧、本局结束 */
@@ -195,24 +210,28 @@ export interface ReplayStats {
   finalEquity: number;
 }
 
-/** 结算统计；equitySeries = 每根已揭示 bar 收盘后的权益序列 */
+/**
+ * 结算统计，两侧都平完（endSession/爆仓之后）才调。
+ * 最终权益就是结算后的现金，净盈亏 = 最终权益 − 本金，也等于各笔成交 pnl 之和；
+ * equitySeries = 每根已揭示 bar 收盘后的权益序列（末点是结算后的），只用来算回撤。
+ */
 export function stats(s: ReplayState, initialBalance: number, equitySeries: number[]): ReplayStats {
   const wins = s.trades.filter(t => t.pnl > 0).length;
   const losses = s.trades.filter(t => t.pnl < 0).length;
-  const netProfit = s.trades.reduce((a, t) => a + t.pnl, 0);
   let peak = initialBalance, maxDd = 0;
   for (const eq of equitySeries) {
     if (eq > peak) peak = eq;
     if (peak > 0) maxDd = Math.max(maxDd, (peak - eq) / peak);
   }
-  const finalEquity = equitySeries.length ? equitySeries[equitySeries.length - 1] : initialBalance;
+  const finalEquity = s.cash;
+  const netProfit = finalEquity - initialBalance;
   return {
     totalTrades: s.trades.length,
     wins, losses,
     winRate: s.trades.length ? wins / s.trades.length : 0,
     netProfit,
     totalFees: s.trades.reduce((a, t) => a + t.fee, 0),
-    returnPct: initialBalance > 0 ? (finalEquity - initialBalance) / initialBalance : 0,
+    returnPct: initialBalance > 0 ? netProfit / initialBalance : 0,
     maxDrawdownPct: maxDd,
     finalEquity,
   };
