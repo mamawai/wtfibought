@@ -43,6 +43,11 @@ public class ChatConcurrencyGate {
         return Acquire.OK;
     }
 
+    /** 这个用户此刻有没有一轮在跑（不分会话） */
+    public boolean isBusy(long userId) {
+        return activeUsers.contains(userId);
+    }
+
     /**
      * 还名额，<b>必须与 tryAcquire 成功配对</b>：名额漏满就对所有人永久拒绝，
      * 是全套设计里唯一不可恢复的失败模式。

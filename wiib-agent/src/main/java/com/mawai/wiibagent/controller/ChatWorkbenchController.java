@@ -310,6 +310,16 @@ public class ChatWorkbenchController {
         return Result.ok(chatHistoryService.sessions(userId, 50));
     }
 
+    /**
+     * 用户占不占线（不分会话）。前端消息被 2203 拒、本地又没有流时轮询它，等那轮跑完再续发——
+     * 占线的那轮可能在别的会话或别的标签页，只查本会话的 status 会一直以为早就结束了
+     */
+    @GetMapping("/busy")
+    @Operation(summary = "当前用户是否有一轮对话在跑（不分会话）")
+    public Result<Boolean> busy(@CurrentUserId long userId) {
+        return Result.ok(concurrencyGate.isBusy(userId));
+    }
+
     @GetMapping("/sessions/{sessionId}/status")
     @Operation(summary = "会话运行状态（切页/刷新回来判断 AI 是否还在后台跑、是否欠着补答）")
     public Result<SessionStatus> sessionStatus(@CurrentUserId long userId, @PathVariable String sessionId) {

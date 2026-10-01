@@ -35,6 +35,26 @@ class ChatConcurrencyGateTest {
         assertThat(gate.tryAcquire(1L)).isEqualTo(ChatConcurrencyGate.Acquire.OK);
     }
 
+    /**
+     * 占线状态跟着名额走：前端排队等占线时轮询它，报错一次就会让排队消息一直不发或反复撞 2203。
+     * 全局满被拒的那个用户没占到位，不算占线
+     */
+    @Test
+    void 占线状态跟着名额走() {
+        ChatConcurrencyGate gate = new ChatConcurrencyGate(1);
+        assertThat(gate.isBusy(1L)).isFalse();
+
+        gate.tryAcquire(1L);
+        assertThat(gate.isBusy(1L)).isTrue();
+        assertThat(gate.isBusy(2L)).isFalse();
+
+        assertThat(gate.tryAcquire(2L)).isEqualTo(ChatConcurrencyGate.Acquire.GLOBAL_FULL);
+        assertThat(gate.isBusy(2L)).isFalse();
+
+        gate.release(1L);
+        assertThat(gate.isBusy(1L)).isFalse();
+    }
+
     /** 全局满了就拒绝，不排队——排队会让 SSE 连接挂着等，还要额外处理超时 */
     @Test
     void 全局满了拒绝新用户() {
