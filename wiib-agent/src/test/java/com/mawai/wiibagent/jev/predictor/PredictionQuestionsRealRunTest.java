@@ -4,6 +4,7 @@ import com.mawai.wiibagent.jev.JevClient;
 import com.mawai.wiibagent.jev.JevClient.Answer;
 import com.mawai.wiibagent.jev.JevPlatformConfig;
 import com.mawai.wiibagent.jev.predictor.PredictionJudge.Judgment;
+import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Holding;
 import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.OddsJump;
 import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Raw;
 import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Snapshot;
@@ -26,12 +27,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 盘面题和 state 措辞的真跑验收：真调平台 Jev，局面用 {@link PredictionStateWriter} 的同一套句子拼。
- * 人工构造 9 种典型局面（整点六道题）加 3 种带突变的（突变三道题，state 换成突变那几秒的画面），
+ * 人工构造 9 种典型局面（整点六道题）加 5 种带突变的（突变两道题，state 换成突变那几秒的画面，其中 2 种这一回合已经买过一边），
  * 每种再做一份 UP / DOWN 对调的镜像，题跟着换边。过线沿用试跑 A：
  * 对得上事先写好的预期 ≥ 80%、每道题单独 ≥ 70%（是非题 ≥ 0.70 算是、≤ 0.30 算否，中间算没答对）；
  * 整点局面镜像 pattern 选同一项 ≥ 80%，每道是非题镜像的概率平均相差 ≤ 0.10。
+ * 突变那道"值得下单"没写预期，只看镜像答得一不一样，回答打在日志里。
  * <p>
- * 会烧真 token（24 次调用），默认跳过。跑法（项目根）：
+ * 会烧真 token（28 次调用），默认跳过。跑法（项目根）：
  * <pre>
  * WIIB_REAL_RUN=1 JEV_API_KEY=... mvn test -pl wiib-agent -am -DskipTests=false \
  *   -Dtest=PredictionQuestionsRealRunTest -Dsurefire.failIfNoSpecifiedTests=false
@@ -53,7 +55,8 @@ class PredictionQuestionsRealRunTest {
     private static final int LEFT = 117;
 
     private final PredictionJudge judge = new PredictionJudge(new JevClient(),
-            new JevPlatformConfig(System.getenv("JEV_API_KEY"), JevClient.DEFAULT_BASE_URL, JevClient.DEFAULT_MODEL));
+            new JevPlatformConfig(System.getenv("JEV_API_KEY"), JevClient.DEFAULT_BASE_URL, JevClient.DEFAULT_MODEL),
+            JevPredictionRunnerTest.CFG);
 
     /**
      * 一种局面，数都按 UP 那一边的世界给
@@ -73,10 +76,12 @@ class PredictionQuestionsRealRunTest {
      * @param ago    几秒前
      * @param usd10  Binance 最近 10 秒涨跌多少美元
      * @param usd30  最近 30 秒
-     * @param gap    Chainlink 比 Binance 高多少美元
-     * @param buys10 Binance 最近 10 秒主动买占比
+     * @param cl10      Chainlink 最近 10 秒涨跌多少美元
+     * @param buys10    Binance 最近 10 秒主动买占比
+     * @param held      这一回合已经买过哪一边：0 没买过，1 突变那一边，−1 另一边
+     * @param heldCents 买过的那一注的成交价（美分）
      */
-    private record Jump(int span, int ago, int usd10, int usd30, int gap, int buys10) {
+    private record Jump(int span, int ago, int usd10, int usd30, int cl10, int buys10, int held, int heldCents) {
     }
 
     private static final List<Case> CASES = List.of(
@@ -100,13 +105,20 @@ class PredictionQuestionsRealRunTest {
                     Map.of("push_fading", false, "flow_confirms", false, "dip_recovered", false, "latest_against", false), null),
             new Case("lead_change", new int[]{-30, -28, 26, 34, 30, 36}, new int[]{38, 36, 60, 64, 62, 63},
                     Map.of("push_fading", false, "flow_confirms", true, "dip_recovered", true, "latest_against", false), null),
-            // Binance 刚猛涨、Chainlink 还没跟上、主动买占上风：突变会延续、不会被打回
+            // Binance 刚猛涨、Chainlink 只跟了一小半、主动买占上风
             new Case("jump_with_trend", new int[]{-20, -8, 6, 5, 6, 22}, new int[]{40, 44, 55, 58, 62, 72},
-                    Map.of("extend", true, "reject", false), new Jump(2, 1, 30, 45, -20, 74)),
+                    Map.of(), new Jump(2, 1, 30, 45, 10, 74, 0, 0)),
+            // Binance 这 10 秒在回落、主动卖占上风，Chainlink 没怎么动
             new Case("jump_flow_against", new int[]{-20, -8, 6, 5, 6, 22}, new int[]{42, 45, 44, 40, 38, 34},
-                    Map.of(), new Jump(3, 2, -4, 10, 3, 36)),
+                    Map.of(), new Jump(3, 2, -4, 10, 1, 36, 0, 0)),
+            // 来回震荡之后的一跳，Chainlink 和 Binance 差不多同步
             new Case("jump_after_chop", new int[]{25, -30, 24, -28, -4, 24}, new int[]{58, 42, 57, 43, 47, 68},
-                    Map.of(), new Jump(2, 1, 12, 20, -8, 62)));
+                    Map.of(), new Jump(2, 1, 12, 20, 10, 62, 0, 0)),
+            // 和 jump_with_trend 同一个局面，只是这一回合已经买过：突变那一边 48¢、另一边 55¢
+            new Case("jump_held_same", new int[]{-20, -8, 6, 5, 6, 22}, new int[]{40, 44, 55, 58, 62, 72},
+                    Map.of(), new Jump(2, 1, 30, 45, 10, 74, 1, 48)),
+            new Case("jump_held_other", new int[]{-20, -8, 6, 5, 6, 22}, new int[]{40, 44, 55, 58, 62, 72},
+                    Map.of(), new Jump(2, 1, 30, 45, 10, 74, -1, 55)));
 
     /** 按离开盘均价多远、剩多少秒定的 UP 价，取两位 */
     private static BigDecimal upMid(double gapUsd, int left) {
@@ -142,17 +154,21 @@ class PredictionQuestionsRealRunTest {
         state.put("story", PredictionStateWriter.story(bounds, ticks, OPEN, SIGMA1M_PCT, NORMAL_30S_USD, flows));
         if (jp == null) {
             state.put("odds_history", PredictionStateWriter.oddsHistory(bounds, mids));
-            return new Snapshot(state, new Raw(z, PredictionModel.p(z), null, null, 0, null, null, null, null));
+            return new Snapshot(state, new Raw(z, PredictionModel.p(z), null, null, 0, null, null, null, null, null));
         }
         long to = NOW - jp.ago() * 1000L;
         OddsJump jump = new OddsJump(to - jp.span() * 1000L, to, mids.get(STEPS - 2).price(), mids.getLast().price());
-        state.put("jump", PredictionStateWriter.jumpPhrase(jump, mids.getLast().price(), NOW));
+        state.put("jump", PredictionStateWriter.jumpPhrase(jump, mids.getLast().price(), 0, NOW));
         state.put("binance_now", PredictionStateWriter.binanceNowPhrase(dir * jp.usd10(), dir * jp.usd30(), NORMAL_30S_USD));
-        state.put("chainlink_vs_binance", PredictionStateWriter.gapPhrase(dir * jp.gap(), NORMAL_30S_USD));
+        state.put("chainlink_vs_binance", PredictionStateWriter.chainlinkPhrase(dir * jp.cl10(), dir * jp.usd10()));
         int buys10 = dir > 0 ? jp.buys10() : 100 - jp.buys10();
         state.put("takers_now", PredictionStateWriter.takersNowPhrase((buys10 - 50) / 50.0));
+        // 突变那一边：UP 的世界是 UP，镜像是 DOWN；买过的那一边跟着对调
+        String heldSide = (jp.held() > 0) == (dir > 0) ? "UP" : "DOWN";
+        state.put("position", PredictionStateWriter.positionPhrase(jp.held() == 0 ? List.of()
+                : List.of(new Holding(heldSide, BigDecimal.valueOf(jp.heldCents(), 2)))));
         return new Snapshot(state, new Raw(z, PredictionModel.p(z), null, null, 0, jump,
-                (double) dir * jp.usd10(), (double) dir * jp.usd30(), (double) dir * jp.gap()));
+                (double) dir * jp.usd10(), (double) dir * jp.usd30(), (double) dir * jp.cl10(), null));
     }
 
     /** 问一次，回答和 state 打日志 */
@@ -165,7 +181,7 @@ class PredictionQuestionsRealRunTest {
         return j;
     }
 
-    /** 回答里的是非题：整点五道，突变三道 */
+    /** 回答里的是非题：整点五道，突变两道 */
     private static List<String> nouls(Judgment j) {
         return j.answers().keySet().stream().filter(q -> !"pattern".equals(q)).toList();
     }

@@ -120,10 +120,10 @@ public interface JevPredictionDecisionMapper extends BaseMapper<JevPredictionDec
             + "AND checkpoint = #{checkpoint}")
     int countCheckpoint(@Param("runNo") int runNo, @Param("windowStart") long windowStart, @Param("checkpoint") String checkpoint);
 
-    /** 这一局这一回合的买入行，v5-1、v5-2 每回合最多一行（v5-1 是盯的结果行）；没买过回 null */
+    /** 这一局这一回合的买入行，按买的先后：v5-1 最多一行，v5-2 最多 UP、DOWN 各一行；没买过回空 */
     @Select("SELECT * FROM jev_prediction_decision WHERE run_no = #{runNo} AND window_start = #{windowStart} "
-            + "AND action IN ('BUY_UP', 'BUY_DOWN')")
-    JevPredictionDecision selectRoundBuy(@Param("runNo") int runNo, @Param("windowStart") long windowStart);
+            + "AND action IN ('BUY_UP', 'BUY_DOWN') ORDER BY decided_at")
+    List<JevPredictionDecision> selectRoundBuys(@Param("runNo") int runNo, @Param("windowStart") long windowStart);
 
     /** 要补唤醒后 5、10、15、45 秒 UP 中间价的行：定过看哪一边、四个都还空着、决策时刻在 [fromMs, toMs] */
     @Select("SELECT * FROM jev_prediction_decision WHERE up_mid_5s IS NULL AND up_mid_10s IS NULL AND up_mid_15s IS NULL "

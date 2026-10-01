@@ -12,8 +12,8 @@ import java.time.LocalDateTime;
 
 /**
  * Jev 预测员每局每回合每次唤醒一行：发出的 state、Jev 的回答、概率、盘口、动作、注单；结算后回填结果与盈亏。
- * v5 起三组对照各占一局，一次唤醒按涉及的局各写一行，共用同一份 state 和 Jev 的回答；Jev 只答盘面题（突变三道、整点六道），
- * 买卖由代码按各组规则定；v5-1 突变后盯的结果另写一行，不写 state、不问 Jev。
+ * v5 起三组对照各占一局，一次唤醒按涉及的局各写一行，共用同一份 state 和 Jev 的回答；Jev 答突变两道、整点六道，
+ * 买卖由代码按各组规则定；v5-1、v5-2 突变后盯的结果另写一行，不写 state、不问 Jev。
  * R3、R4 买卖由 Jev 拍板，R4 起空仓持仓同一道题、不问谁赢，p_jev 为空；v4 之后持仓行只记 Jev 的选择。
  * p_model、p_mkt 照记，Brier 在 SQL 里现算。
  */
@@ -38,7 +38,7 @@ public class JevPredictionDecision {
     private Long windowStart;
 
     /**
-     * 检查点：开盘后第几秒，首字母是唤醒方式：T 整点如 T150，J 赔率突变如 J57（v5 起有），W v5-1 盯的结果如 W60（触发或盯满那一秒）；
+     * 检查点：开盘后第几秒，首字母是唤醒方式：T 整点如 T150，J 赔率突变如 J57（v5 起有），W v5-1、v5-2 盯的结果如 W60（触发或盯满那一秒）；
      * 同一局里不重复
      */
     private String checkpoint;
@@ -57,7 +57,7 @@ public class JevPredictionDecision {
 
     /**
      * Jev 的回答原样：v5 整点是盘面六道题 win / pattern / push_fading / flow_confirms / dip_recovered / latest_against，
-     * 突变是 win / extend / reject（早先的突变行是六道），盯的结果行为空；R4 只有入场题 entry；
+     * 突变是 win / buy（早先的突变行是 win / extend / reject，再早是六道），盯的结果行为空；R4 只有入场题 entry；
      * R3 是谁赢两问加空仓入场题或持仓离场题，R2 只有谁赢两问，R1 是后劲题和决定题
      */
     private String answersJson;
@@ -127,7 +127,14 @@ public class JevPredictionDecision {
     @TableField("binance_30s")
     private BigDecimal binance30s;
 
-    /** Chainlink 最后一跳 − Binance 最新价（USD），只突变 J 行有；取不到 Binance 价为空 */
+    /** 突变唤醒那一刻 Chainlink 最近 10 秒 BTC 涨跌（USD），只突变 J 行有；加这一列之前的行为空 */
+    @TableField("chainlink_10s")
+    private BigDecimal chainlink10s;
+
+    /**
+     * Chainlink 最后一跳 − Binance 最新价（USD），只突变 J 行有；取不到 Binance 价为空。
+     * Chainlink 报 USD、Binance 报 USDT，这个数一直是负几十，只记录，不再写进 state
+     */
     private BigDecimal chainlinkGap;
 
     /**
@@ -140,14 +147,14 @@ public class JevPredictionDecision {
     private String action;
 
     /**
-     * 为什么这么做，"代码 + 细节"：v5 是 WATCH / EXTEND / REJECT / NO_TRIGGER / NO_CALL / BUY / PRICE_BAND / NO_PULLBACK / HOLD /
-     * SELL / NO_BID / MISSED / NO_QUOTE / NO_BALANCE / STALE_BOOK / STALE_CHAINLINK / STALE_WHILE_ASKING，早先的行还有 FADING；
+     * 为什么这么做，"代码 + 细节"：v5 是 WATCH / NO_GO / EXTEND / REJECT / NO_TRIGGER / BUY / PRICE_BAND / NO_PULLBACK / HOLD /
+     * SELL / NO_BID / MISSED / NO_QUOTE / NO_BALANCE / STALE_BOOK / STALE_CHAINLINK / STALE_WHILE_ASKING，早先的行还有 NO_CALL / FADING；
      * R3、R4 还有 PASS / UNSURE，
      * v4 那一局还有 ADD / MAX_STAKE，R2 还有 WAIT / ASK_LOW，R1 还有 NOT_CHEAP / EXPENSIVE / ASK_RANGE。页面按首个词出中文提示。异常看 error
      */
     private String reason;
 
-    /** 本行开的注单（BUY_*，v4 那一局含加注）；持仓行（HOLD / SELL）v5 记这一局这一回合在持的那一注，之前各版记本回合在持的第一笔 */
+    /** 本行开的注单（BUY_*，v4 那一局含加注）；持仓行（HOLD / SELL）v5 记这一局这一回合在持的那一注（v5-2 两边都买了记先买的），之前各版记本回合在持的第一笔 */
     private Long betId;
 
     /** 本金 cost，不含手续费；v5 持仓行同 bet_id 那一注，之前各版持仓行是在持的合计 */

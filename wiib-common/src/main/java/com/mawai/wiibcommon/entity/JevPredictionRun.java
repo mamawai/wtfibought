@@ -22,7 +22,7 @@ public class JevPredictionRun {
 
     /** v5-1：突变后盯赔率，又走就买它、吐回就买另一边，不看 Jev */
     public static final String ARM_JUMP_CODE = "JUMP_CODE";
-    /** v5-2：突变那一秒 Jev 判会延续买它、会被打回买另一边 */
+    /** v5-2：突变那一秒 Jev 判这次突变值不值得下单，值得才像 v5-1 那样盯、盯到了才买 */
     public static final String ARM_JUMP_JEV = "JUMP_JEV";
     /** v5-3：整点唤醒，Jev 参与买卖 */
     public static final String ARM_TIMER_JEV = "TIMER_JEV";

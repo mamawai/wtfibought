@@ -11,6 +11,7 @@ import com.mawai.wiibagent.jev.JevPlatformConfig;
 import com.mawai.wiibagent.jev.predictor.JevPredictionRunner.Watch;
 import com.mawai.wiibagent.jev.predictor.PredictionJudge.Judgment;
 import com.mawai.wiibagent.jev.predictor.PredictionRules.Book;
+import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Holding;
 import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.OddsJump;
 import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Raw;
 import com.mawai.wiibagent.jev.predictor.PredictionStateWriter.Snapshot;
@@ -49,7 +50,8 @@ import static org.mockito.Mockito.when;
 /**
  * 唤醒时机（整点、突变、冷却、整点不挡突变）、找突变的边界；一次突变唤醒 v5-1、v5-2 各写一行、共用一次 state / Jev，
  * v5-1 记 WATCH 不买、之后每秒盯：又走够了买它、吐回整个跳幅买另一边、盯满没触发记一行，新突变换掉旧的，买过的不盯，Jev 失败照盯；
- * v5-2 按 Jev 判延续、打回买或不买；这一局这一回合买过的只记录；v5-3 买、拿着、卖、卖后再买；贵过或低过容差没抢到；
+ * v5-2 的 Jev 说值得下单才盯、说不值得连旧的也不盯，UP、DOWN 各最多一注，两边都买过只记录；v5-3 买、拿着、卖、卖后再买；
+ * 突变两组等成交时贵了照买、没人卖了才算没抢到，v5-3 贵过或低过容差没抢到；
  * 钱不够只停那一组、三组都停才关开关；盘口太旧 / Chainlink 停了不问；失败落 ERROR 行；回填结果和唤醒后的价
  */
 class JevPredictionRunnerTest {
@@ -61,7 +63,7 @@ class JevPredictionRunnerTest {
             List.of(60, 90, 120, 150, 180, 210, 240, 270),
             new BigDecimal("0.15"), new BigDecimal("0.30"), new BigDecimal("0.50"), 5000,
             new BigDecimal("5"), new BigDecimal("500"),
-            15_000, new BigDecimal("0.10"), new BigDecimal("1.0"), 0.70, 0.70,
+            15_000, new BigDecimal("0.10"), new BigDecimal("1.0"), 0.50,
             new BigDecimal("0.85"), new BigDecimal("0.96"), 0.70, 0.10,
             0, new BigDecimal("0.03"), 5000);
     private static final Book BOOK = PredictionRulesTest.BOOK;
@@ -125,12 +127,12 @@ class JevPredictionRunnerTest {
 
     /**
      * 数学 z、上涨概率 pModel，Chainlink 0.8 秒前刚更新；jump 为 null 是整点，
-     * 突变时 Binance 最近 10 秒涨 $25、30 秒涨 $80，Chainlink 比它低 $18
+     * 突变时 Binance 最近 10 秒涨 $25、30 秒涨 $80，Chainlink 最近 10 秒涨 $12、比 Binance 低 $18
      */
     private Snapshot snapshot(double z, double pModel, Long bookUpdatedAt, OddsJump jump, Book book) {
         Raw raw = jump == null
-                ? new Raw(z, pModel, book, bookUpdatedAt, 800, null, null, null, null)
-                : new Raw(z, pModel, book, bookUpdatedAt, 800, jump, 25.0, 80.0, -18.0);
+                ? new Raw(z, pModel, book, bookUpdatedAt, 800, null, null, null, null, null)
+                : new Raw(z, pModel, book, bookUpdatedAt, 800, jump, 25.0, 80.0, 12.0, -18.0);
         return new Snapshot(Map.of("market", "..."), raw);
     }
 
@@ -141,7 +143,7 @@ class JevPredictionRunnerTest {
 
     /** 整点唤醒：UP 领先一个多正常波动，盘口是 UP 大幅领先那份，等成交时读到的也是它，买入按 0.90 成交 */
     private void timerWake() {
-        when(writer.write(WS, null)).thenReturn(snapshot(1.2, 0.74, now - 700, null, STRONG_UP));
+        when(writer.write(eq(WS), isNull(), any())).thenReturn(snapshot(1.2, 0.74, now - 700, null, STRONG_UP));
         when(cache.getPredictionAsk("UP")).thenReturn(STRONG_UP.upAsk());
         when(cache.getPredictionBid("UP")).thenReturn(STRONG_UP.upBid());
         when(cache.getPredictionAsk("DOWN")).thenReturn(STRONG_UP.downAsk());
@@ -163,7 +165,7 @@ class JevPredictionRunnerTest {
         answers.put("flow_confirms", noul(0.8));
         answers.put("dip_recovered", noul(0.4));
         answers.put("latest_against", noul(against));
-        return new Judgment(side, win, against, null, null, answers, "jev-1.14.0", 820, 140);
+        return new Judgment(side, win, against, null, answers, "jev-1.14.0", 820, 140);
     }
 
     /** 会赢 0.7、最新一步逆着 0.8：v5-3 空仓会买 */
@@ -171,13 +173,12 @@ class JevPredictionRunnerTest {
         return timerJev(side, 0.7, 0.8);
     }
 
-    /** 突变：Jev 看突变那一边的回答，会赢 0.7、会延续、会被打回 */
-    private static Judgment jumpJev(String side, double extend, double reject) {
+    /** 突变：Jev 看突变那一边的回答，会赢 0.7、这次突变值得下单 */
+    private static Judgment jumpJev(String side, double buy) {
         Map<String, Answer> answers = new LinkedHashMap<>();
         answers.put("win", noul(0.7));
-        answers.put("extend", noul(extend));
-        answers.put("reject", noul(reject));
-        return new Judgment(side, 0.7, null, extend, reject, answers, "jev-1.14.0", 820, 140);
+        answers.put("buy", noul(buy));
+        return new Judgment(side, 0.7, null, buy, answers, "jev-1.14.0", 820, 140);
     }
 
     private static PredictionBetResponse bet(long id, String status, String side, String avgPrice) {
@@ -395,16 +396,17 @@ class JevPredictionRunnerTest {
     // ==================== 突变唤醒：v5-1、v5-2 ====================
 
     @Test
-    void 一次突变唤醒_两组各写一行_state和Jev只一次_v5_1记WATCH不买_v5_2判延续就买突变那一边() {
-        when(writer.write(WS, JUMP_UP)).thenReturn(jumpSnap());
-        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82, 0.1));
+    void 一次突变唤醒_两组各写一行_state和Jev只一次_这一刻都不买_v5_1记WATCH_v5_2的Jev说值得也记WATCH() {
+        when(writer.write(eq(WS), eq(JUMP_UP), any())).thenReturn(jumpSnap());
+        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82));
 
         runner.runWake(WS, "J57", JUMP_UP, JUMP_RUNS);
 
-        verify(writer, times(1)).write(anyLong(), any());
+        // v5-2 这一回合还没买过：告诉 Jev 没有持仓
+        verify(writer, times(1)).write(WS, JUMP_UP, List.of());
         verify(judge, times(1)).judge(any(), any());
-        verify(mapper).selectRoundBuy(11, WS);
-        verify(mapper).selectRoundBuy(12, WS);
+        verify(mapper).selectRoundBuys(11, WS);
+        verify(mapper).selectRoundBuys(12, WS);
         assertThat(rows).hasSize(2);
         JevPredictionDecision code = row(11);
         assertThat(code.getCheckpoint()).isEqualTo("J57");
@@ -415,85 +417,47 @@ class JevPredictionRunnerTest {
         assertThat(code.getReason()).isEqualTo("WATCH UP");
         assertThat(code.getBetId()).isNull();
         // 不看 Jev 也把回答写上
-        assertThat(code.getAnswersJson()).contains("extend");
+        assertThat(code.getAnswersJson()).contains("buy");
         assertThat(code.getPJev()).isEqualByComparingTo("0.7");
         assertThat(code.getJevChoice()).isNull();
         assertThat(code.getOddsJumpUp()).isEqualByComparingTo("0.18");
         assertThat(code.getOddsJumpDown()).isEqualByComparingTo("0");
         assertThat(code.getBinance10s()).isEqualByComparingTo("25");
         assertThat(code.getBinance30s()).isEqualByComparingTo("80");
+        assertThat(code.getChainlink10s()).isEqualByComparingTo("12");
         assertThat(code.getChainlinkGap()).isEqualByComparingTo("-18");
         assertThat(code.getPMkt()).isEqualByComparingTo("0.61");
         assertThat(code.getBookAgeMs()).isEqualTo(700);
         JevPredictionDecision jevRow = row(12);
-        assertThat(jevRow.getAction()).isEqualTo(JevPredictionDecision.ACTION_BUY_UP);
-        assertThat(jevRow.getReason()).isEqualTo("EXTEND UP 0.820 ask 0.62");
-        assertThat(jevRow.getBetId()).isEqualTo(1112L);
-        assertThat(jevRow.getStake()).isEqualByComparingTo("5");
+        assertThat(jevRow.getAction()).isEqualTo(JevPredictionDecision.ACTION_STAY_OUT);
+        // 带上 Jev 答的值得下单
+        assertThat(jevRow.getReason()).isEqualTo("WATCH UP 0.820");
+        assertThat(jevRow.getBetId()).isNull();
         assertThat(jevRow.getAnswersJson()).isEqualTo(code.getAnswersJson());
-        verify(sim).buy(112L, "UP", new BigDecimal("5"));
-        verify(sim, never()).buy(eq(111L), any(), any());
-        verify(sim, never()).gameBalance(111L);
+        verify(sim, never()).buy(anyLong(), any(), any());
+        verify(sim, never()).gameBalance(anyLong());
     }
 
     @Test
-    void v5_2判会被打回_买另一边() {
-        when(writer.write(WS, JUMP_UP)).thenReturn(jumpSnap());
-        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.2, 0.75));
+    void v5_2的Jev说不值得_记NO_GO_正好到线算值得() {
+        when(writer.write(eq(WS), eq(JUMP_UP), any())).thenReturn(jumpSnap());
+        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.45), jumpJev("UP", 0.50));
 
         runner.runWake(WS, "J57", JUMP_UP, List.of(JEV));
-
-        JevPredictionDecision d = row(12);
-        // 看的还是突变那一边，买的是另一边
-        assertThat(d.getSide()).isEqualTo("UP");
-        assertThat(d.getAction()).isEqualTo(JevPredictionDecision.ACTION_BUY_DOWN);
-        assertThat(d.getReason()).isEqualTo("REJECT DOWN 0.750 ask 0.40");
-        verify(sim).buy(112L, "DOWN", new BigDecimal("5"));
-    }
-
-    @Test
-    void v5_2两道都不到线_不买() {
-        when(writer.write(WS, JUMP_UP)).thenReturn(jumpSnap());
-        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.45, 0.3));
-
-        runner.runWake(WS, "J57", JUMP_UP, List.of(JEV));
-
         assertThat(row(12).getAction()).isEqualTo(JevPredictionDecision.ACTION_STAY_OUT);
-        assertThat(row(12).getReason()).isEqualTo("NO_CALL UP 0.450 0.300");
+        assertThat(row(12).getSide()).isEqualTo("UP");
+        assertThat(row(12).getReason()).isEqualTo("NO_GO UP 0.450");
+
+        runner.runWake(WS, "J63", JUMP_UP, List.of(JEV));
+        assertThat(row(12).getReason()).isEqualTo("WATCH UP 0.500");
         verify(sim, never()).buy(anyLong(), any(), any());
     }
 
-    @Test
-    void 等成交时卖价贵了容差以内_照样买_reason记实际价() {
-        when(writer.write(WS, JUMP_UP)).thenReturn(jumpSnap());
-        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82, 0.1));
-        when(cache.getPredictionAsk("UP")).thenReturn(new BigDecimal("0.65"));
-        when(sim.buy(anyLong(), any(), any())).thenAnswer(inv ->
-                bet((Long) inv.getArgument(0) + 1000, "ACTIVE", inv.getArgument(1), "0.6500"));
-
-        runner.runWake(WS, "J57", JUMP_UP, JUMP_RUNS);
-
-        assertThat(row(12).getReason()).isEqualTo("EXTEND UP 0.820 ask 0.62→0.65");
-        assertThat(row(12).getAvgPrice()).isEqualByComparingTo("0.65");
-    }
-
-    @Test
-    void 等成交时那边没人卖了_没抢到() {
-        when(writer.write(WS, JUMP_UP)).thenReturn(jumpSnap());
-        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82, 0.1));
-        when(cache.getPredictionAsk("UP")).thenReturn(null);
-
-        runner.runWake(WS, "J57", JUMP_UP, List.of(JEV));
-
-        verify(sim, never()).buy(anyLong(), any(), any());
-        assertThat(row(12).getReason()).isEqualTo("MISSED UP ask 0.62→none");
-    }
-
-    // ==================== v5-1 盯 ====================
+    // ==================== 盯：v5-1、v5-2 ====================
 
     /**
      * 盯用：唤醒当场跑、开关开着；UP 中间价按 timeline 走，读到的是到那一刻为止的；state 带着 tick 找到的那次突变；
-     * 盘口 0.7 秒前更新；v5-2 两道都不到线不买
+     * 盘口 0.7 秒前更新；v5-2 的 Jev 说不值得、不盯
      */
     private AtomicLong watchRunner(List<Point> timeline) {
         AtomicLong clock = new AtomicLong();
@@ -503,8 +467,8 @@ class JevPredictionRunnerTest {
         when(cache.getPredictionUpMidPoints(anyLong())).thenAnswer(inv -> timeline.stream()
                 .filter(p -> p.timeMs() >= (Long) inv.getArgument(0) && p.timeMs() <= clock.get()).toList());
         when(cache.getPredictionBookUpdatedAt()).thenAnswer(inv -> clock.get() - 700);
-        when(writer.write(eq(WS), any())).thenAnswer(inv -> snapshot(0.1, 0.52, clock.get() - 700, inv.getArgument(1), BOOK));
-        when(judge.judge(any(), any())).thenReturn(jumpJev("UP", 0.5, 0.2));
+        when(writer.write(eq(WS), any(), any())).thenAnswer(inv -> snapshot(0.1, 0.52, clock.get() - 700, inv.getArgument(1), BOOK));
+        when(judge.judge(any(), any())).thenReturn(jumpJev("UP", 0.3));
         return clock;
     }
 
@@ -521,7 +485,8 @@ class JevPredictionRunnerTest {
         tickEverySecond(clock, 57, 64);
 
         assertThat(row(11, "J57").getReason()).isEqualTo("WATCH UP");
-        assertThat(row(12, "J57").getReason()).isEqualTo("NO_CALL UP 0.500 0.200");
+        // v5-2 的 Jev 说不值得：不盯，到线也没有它的 W 行
+        assertThat(row(12, "J57").getReason()).isEqualTo("NO_GO UP 0.300");
         assertThat(watchRows()).hasSize(1);
         JevPredictionDecision w = row(11, "W60");
         assertThat(w.getWindowStart()).isEqualTo(WS);
@@ -587,10 +552,10 @@ class JevPredictionRunnerTest {
     }
 
     @Test
-    void 这一局买过了_记HOLD不盯_另一组照买() {
+    void v5_1这一局买过了_记HOLD不盯_v5_2的Jev说值得_照盯照买() {
         AtomicLong clock = watchRunner(mids(55, 40, 40, 58, 61, 64, 68, 68));
-        when(mapper.selectRoundBuy(11, WS)).thenReturn(buyRow(JevPredictionDecision.ACTION_BUY_DOWN, 7));
-        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82, 0.1));
+        when(mapper.selectRoundBuys(11, WS)).thenReturn(List.of(buyRow(JevPredictionDecision.ACTION_BUY_DOWN, 7)));
+        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82));
 
         tickEverySecond(clock, 57, 61);
 
@@ -605,11 +570,107 @@ class JevPredictionRunnerTest {
         assertThat(code.getShares()).isEqualByComparingTo("12.5");
         assertThat(code.getAvgPrice()).isEqualByComparingTo("0.40");
         assertThat(code.getPJev()).isEqualByComparingTo("0.7");
-        assertThat(row(12, "J57").getAction()).isEqualTo(JevPredictionDecision.ACTION_BUY_UP);
-        // 60 秒又走了 10¢ 也不买
-        assertThat(watchRows()).isEmpty();
+        // 60 秒又走了 10¢：v5-1 不买，v5-2 盯到了买
+        assertThat(row(12, "J57").getReason()).isEqualTo("WATCH UP 0.820");
+        assertThat(watchRows()).extracting(JevPredictionDecision::getRunNo).containsExactly(12);
+        JevPredictionDecision w = row(12, "W60");
+        assertThat(w.getAction()).isEqualTo(JevPredictionDecision.ACTION_BUY_UP);
+        assertThat(w.getReason()).isEqualTo("EXTEND UP 0.100 ask 0.62");
+        assertThat(w.getBetId()).isEqualTo(1112L);
+        assertThat(w.getAnswersJson()).isNull();
+        verify(sim).buy(112L, "UP", new BigDecimal("5"));
         verify(sim, never()).buy(eq(111L), any(), any());
         verify(sim, never()).gameBalance(111L);
+    }
+
+    @Test
+    void 两组同一秒盯到_各写一行W_都买() {
+        AtomicLong clock = watchRunner(mids(55, 40, 40, 58, 61, 64, 68, 68));
+        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82));
+
+        tickEverySecond(clock, 57, 61);
+
+        assertThat(watchRows()).extracting(JevPredictionDecision::getRunNo).containsExactlyInAnyOrder(11, 12);
+        assertThat(watchRows()).allSatisfy(w -> {
+            assertThat(w.getCheckpoint()).isEqualTo("W60");
+            assertThat(w.getAction()).isEqualTo(JevPredictionDecision.ACTION_BUY_UP);
+            assertThat(w.getReason()).isEqualTo("EXTEND UP 0.100 ask 0.62");
+        });
+        verify(sim).buy(111L, "UP", new BigDecimal("5"));
+        verify(sim).buy(112L, "UP", new BigDecimal("5"));
+    }
+
+    @Test
+    void v5_2买过UP_告诉Jev_再盯到UP记HOLD不买() {
+        AtomicLong clock = watchRunner(mids(55, 40, 40, 58, 61, 64, 68, 68));
+        when(mapper.selectRoundBuys(12, WS)).thenReturn(List.of(buyRow(JevPredictionDecision.ACTION_BUY_UP, 7)));
+        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82));
+
+        tickEverySecond(clock, 57, 61);
+
+        verify(writer).write(eq(WS), any(), eq(List.of(new Holding("UP", new BigDecimal("0.40")))));
+        JevPredictionDecision j = row(12, "J57");
+        assertThat(j.getAction()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
+        assertThat(j.getReason()).isEqualTo("WATCH UP 0.820");
+        assertThat(j.getBetId()).isEqualTo(7L);
+        // 60 秒又走了 10¢，要买的 UP 已经买过
+        JevPredictionDecision w = row(12, "W60");
+        assertThat(w.getAction()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
+        assertThat(w.getReason()).isEqualTo("HOLD UP");
+        assertThat(w.getBetId()).isEqualTo(7L);
+        assertThat(w.getStake()).isEqualByComparingTo("5");
+        verify(sim, never()).buy(eq(112L), any(), any());
+        verify(sim, never()).gameBalance(112L);
+    }
+
+    @Test
+    void v5_2买过UP_盯到回落就买DOWN_两个方向同时拿着() {
+        // 57 秒 UP 40¢ → 58¢，59 秒跌回 40¢
+        AtomicLong clock = watchRunner(mids(55, 40, 40, 58, 50, 40));
+        when(mapper.selectRoundBuys(12, WS)).thenReturn(List.of(buyRow(JevPredictionDecision.ACTION_BUY_UP, 7)));
+        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82));
+
+        tickEverySecond(clock, 57, 59);
+
+        JevPredictionDecision w = row(12, "W59");
+        assertThat(w.getAction()).isEqualTo(JevPredictionDecision.ACTION_BUY_DOWN);
+        assertThat(w.getReason()).isEqualTo("REJECT DOWN 0.180 ask 0.40");
+        // 这一行记新买的这一注
+        assertThat(w.getBetId()).isEqualTo(1112L);
+        verify(sim).buy(112L, "DOWN", new BigDecimal("5"));
+    }
+
+    @Test
+    void v5_2两边都买过_记HOLD_BOTH不盯() {
+        AtomicLong clock = watchRunner(mids(55, 40, 40, 58, 61, 64, 68, 68));
+        when(mapper.selectRoundBuys(12, WS)).thenReturn(List.of(buyRow(JevPredictionDecision.ACTION_BUY_UP, 7),
+                buyRow(JevPredictionDecision.ACTION_BUY_DOWN, 8)));
+        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82));
+
+        tickEverySecond(clock, 57, 61);
+
+        JevPredictionDecision j = row(12, "J57");
+        assertThat(j.getAction()).isEqualTo(JevPredictionDecision.ACTION_HOLD);
+        assertThat(j.getReason()).isEqualTo("HOLD BOTH");
+        // 记先买的那一注
+        assertThat(j.getBetId()).isEqualTo(7L);
+        assertThat(watchRows()).extracting(JevPredictionDecision::getRunNo).containsExactly(11);
+        verify(sim, never()).buy(eq(112L), any(), any());
+    }
+
+    @Test
+    void v5_2在盯的时候来了新突变_Jev说不值得_旧的也不盯了() {
+        // 57 秒 40¢ → 58¢；回落到 45¢；63 秒 45¢ → 60¢ 又一次突变；64 秒 68¢（按旧的起点已经又走了 10¢），65 秒 70¢
+        AtomicLong clock = watchRunner(mids(55, 40, 40, 58, 55, 50, 45, 45, 45, 60, 68, 70, 70));
+        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82), jumpJev("UP", 0.3));
+
+        tickEverySecond(clock, 57, 66);
+
+        assertThat(row(12, "J57").getReason()).isEqualTo("WATCH UP 0.820");
+        assertThat(row(12, "J63").getReason()).isEqualTo("NO_GO UP 0.300");
+        // v5-1 换成盯新的，65 秒买；v5-2 没有 W 行
+        assertThat(watchRows()).extracting(JevPredictionDecision::getRunNo).containsExactly(11);
+        verify(sim, never()).buy(eq(112L), any(), any());
     }
 
     @Test
@@ -634,24 +695,49 @@ class JevPredictionRunnerTest {
         verify(sim, never()).buy(eq(112L), any(), any());
     }
 
-    /** v5-1 在盯 UP：起点 58¢、跳幅 18¢ */
+    /** 这一局在盯 UP：起点 58¢、跳幅 18¢，这一回合还没买过 */
+    private Watch watchUp(JevPredictionRun run) {
+        return new Watch(run, WS, "UP", new BigDecimal("0.58"), new BigDecimal("0.18"), now - 3000, null);
+    }
+
+    /** v5-1 在盯 UP */
     private Watch watchUp() {
-        return new Watch(CODE, WS, "UP", new BigDecimal("0.58"), new BigDecimal("0.18"), now - 3000);
+        return watchUp(CODE);
+    }
+
+    /** 这几局盯到 UP 又走了 10¢（现在 68¢），当场跑一次盯的结果 */
+    private void watchedUp(String checkpoint, Watch... done) {
+        runner.runWatch(WS, checkpoint, List.of(done), new BigDecimal("0.68"));
     }
 
     @Test
-    void 盯到了_等一秒后卖价贵过3美分_没抢到() {
-        // 触发时读到 0.62，等完读到 0.66
-        when(cache.getPredictionAsk("UP")).thenReturn(new BigDecimal("0.62"), new BigDecimal("0.66"));
+    void 盯到了_等一秒后卖价贵了也照买_reason记实际价() {
+        // 触发时读到 0.62，等完读到 0.75
+        when(cache.getPredictionAsk("UP")).thenReturn(new BigDecimal("0.62"), new BigDecimal("0.75"));
+        when(sim.buy(anyLong(), any(), any())).thenAnswer(inv ->
+                bet((Long) inv.getArgument(0) + 1000, "ACTIVE", inv.getArgument(1), "0.7500"));
 
-        runner.runWatch(WS, "W60", watchUp(), new BigDecimal("0.68"));
+        watchedUp("W60", watchUp());
+
+        verify(sim).buy(111L, "UP", new BigDecimal("5"));
+        JevPredictionDecision w = row(11);
+        assertThat(w.getAction()).isEqualTo(JevPredictionDecision.ACTION_BUY_UP);
+        assertThat(w.getReason()).isEqualTo("EXTEND UP 0.100 ask 0.62→0.75");
+        assertThat(w.getAvgPrice()).isEqualByComparingTo("0.75");
+        // 行上记的是触发时看到的那份盘口
+        assertThat(w.getUpAsk()).isEqualByComparingTo("0.62");
+    }
+
+    @Test
+    void 盯到了_等一秒后那边没人卖了_没抢到() {
+        when(cache.getPredictionAsk("UP")).thenReturn(new BigDecimal("0.62"), (BigDecimal) null);
+
+        watchedUp("W60", watchUp());
 
         verify(sim, never()).buy(anyLong(), any(), any());
         JevPredictionDecision w = row(11);
         assertThat(w.getAction()).isEqualTo(JevPredictionDecision.ACTION_STAY_OUT);
-        assertThat(w.getReason()).isEqualTo("MISSED UP ask 0.62→0.66");
-        // 行上记的是触发时看到的那份盘口
-        assertThat(w.getUpAsk()).isEqualByComparingTo("0.62");
+        assertThat(w.getReason()).isEqualTo("MISSED UP ask 0.62→none");
     }
 
     // ==================== 整点唤醒：v5-3 ====================
@@ -664,7 +750,7 @@ class JevPredictionRunnerTest {
         runner.runWake(WS, "T150", null, List.of(TIMER));
 
         verify(sim).recentBets(113L, 10);
-        verify(mapper, never()).selectRoundBuy(anyInt(), anyLong());
+        verify(mapper, never()).selectRoundBuys(anyInt(), anyLong());
         JevPredictionDecision d = row(13);
         assertThat(d.getSide()).isEqualTo("UP");
         assertThat(d.getAction()).isEqualTo(JevPredictionDecision.ACTION_BUY_UP);
@@ -674,6 +760,29 @@ class JevPredictionRunnerTest {
         assertThat(d.getOddsJumpUp()).isNull();
         assertThat(d.getLeadSigma()).isEqualByComparingTo("1.2");
         verify(sim).buy(113L, "UP", new BigDecimal("5"));
+    }
+
+    @Test
+    void v5_3空仓_等一秒后卖价贵过3美分_没抢到_3美分以内照买() {
+        timerWake();
+        when(judge.judge(any(), eq("UP"))).thenReturn(good("UP"));
+        // 看到 0.90，等完 0.94
+        when(cache.getPredictionAsk("UP")).thenReturn(new BigDecimal("0.94"));
+
+        runner.runWake(WS, "T150", null, List.of(TIMER));
+
+        verify(sim, never()).buy(anyLong(), any(), any());
+        assertThat(row(13).getAction()).isEqualTo(JevPredictionDecision.ACTION_STAY_OUT);
+        assertThat(row(13).getReason()).isEqualTo("MISSED UP ask 0.90→0.94");
+
+        // 等完 0.93：正好贵 3¢，照买
+        when(cache.getPredictionAsk("UP")).thenReturn(new BigDecimal("0.93"));
+        when(sim.buy(anyLong(), any(), any())).thenAnswer(inv ->
+                bet((Long) inv.getArgument(0) + 1000, "ACTIVE", inv.getArgument(1), "0.93"));
+        runner.runWake(WS, "T180", null, List.of(TIMER));
+
+        assertThat(row(13).getAction()).isEqualTo(JevPredictionDecision.ACTION_BUY_UP);
+        assertThat(row(13).getReason()).isEqualTo("BUY UP 0.800 ask 0.90→0.93");
     }
 
     /** v5-3 这一回合在持一注 DOWN（数学上是 UP 领先），前一回合还有一注没结算 */
@@ -737,7 +846,7 @@ class JevPredictionRunnerTest {
     @Test
     void v5_3持仓_该卖但没人接盘() {
         holdingDown();
-        when(writer.write(WS, null)).thenReturn(snapshot(1.2, 0.74, now - 700, null,
+        when(writer.write(eq(WS), isNull(), any())).thenReturn(snapshot(1.2, 0.74, now - 700, null,
                 new Book(new BigDecimal("0.90"), new BigDecimal("0.88"), new BigDecimal("0.12"), null)));
         when(judge.judge(any(), eq("DOWN"))).thenReturn(timerJev("DOWN", 0.05, 0.2));
 
@@ -772,14 +881,13 @@ class JevPredictionRunnerTest {
 
     @Test
     void 某一组钱不够又没有等结算的注单_只停这一组() {
-        when(writer.write(WS, JUMP_UP)).thenReturn(jumpSnap());
-        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82, 0.1));
         when(sim.gameBalance(112L)).thenReturn(BROKE);
 
-        runner.runWake(WS, "J57", JUMP_UP, JUMP_RUNS);
+        // 两组都盯到了，v5-2 付不起
+        watchedUp("W60", watchUp(), watchUp(JEV));
 
         assertThat(row(12).getReason()).isEqualTo(PredictionRules.NO_BALANCE);
-        assertThat(row(11).getReason()).isEqualTo("WATCH UP");
+        assertThat(row(11).getAction()).isEqualTo(JevPredictionDecision.ACTION_BUY_UP);
         verify(cache, never()).set(JevPredictionSwitch.KEY, "0");
         // 下一次突变只叫醒 v5-1
         AtomicLong clock = syncRunner(mids(58, 40, 40, 50, 58));
@@ -790,14 +898,12 @@ class JevPredictionRunnerTest {
 
     @Test
     void 钱不够但还有注单没结算_不停() {
-        when(writer.write(WS, JUMP_UP)).thenReturn(jumpSnap());
-        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82, 0.1));
         when(sim.gameBalance(112L)).thenReturn(BROKE);
         PredictionBetResponse prev = bet(8, "ACTIVE", "UP", "0.55");
         prev.setWindowStart(WS - 300);
         when(sim.recentBets(112L, 10)).thenReturn(List.of(prev));
 
-        runner.runWake(WS, "J57", JUMP_UP, JUMP_RUNS);
+        watchedUp("W60", watchUp(JEV));
 
         assertThat(row(12).getReason()).isEqualTo(PredictionRules.NO_BALANCE);
         AtomicLong clock = syncRunner(mids(58, 40, 40, 50, 58));
@@ -808,9 +914,7 @@ class JevPredictionRunnerTest {
     @Test
     void 三组都停了才关开关() {
         when(sim.gameBalance(anyLong())).thenReturn(BROKE);
-        when(writer.write(WS, JUMP_UP)).thenReturn(jumpSnap());
-        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82, 0.1));
-        runner.runWake(WS, "J57", JUMP_UP, JUMP_RUNS);
+        watchedUp("W60", watchUp(JEV));
         assertThat(row(12).getReason()).isEqualTo(PredictionRules.NO_BALANCE);
 
         timerWake();
@@ -820,7 +924,7 @@ class JevPredictionRunnerTest {
         verify(cache, never()).set(JevPredictionSwitch.KEY, "0");
 
         // v5-1 盯到了也付不起
-        runner.runWatch(WS, "W60", watchUp(), new BigDecimal("0.68"));
+        watchedUp("W61", watchUp());
         assertThat(row(11).getReason()).isEqualTo(PredictionRules.NO_BALANCE);
         verify(cache).set(JevPredictionSwitch.KEY, "0");
     }
@@ -846,8 +950,8 @@ class JevPredictionRunnerTest {
 
     @Test
     void 盘口太旧_不问Jev不动_买过的那组记HOLD() {
-        when(writer.write(WS, JUMP_UP)).thenReturn(snapshot(0.1, 0.52, now - 9_000, JUMP_UP, BOOK));
-        when(mapper.selectRoundBuy(11, WS)).thenReturn(buyRow(JevPredictionDecision.ACTION_BUY_UP, 7));
+        when(writer.write(eq(WS), eq(JUMP_UP), any())).thenReturn(snapshot(0.1, 0.52, now - 9_000, JUMP_UP, BOOK));
+        when(mapper.selectRoundBuys(11, WS)).thenReturn(List.of(buyRow(JevPredictionDecision.ACTION_BUY_UP, 7)));
 
         runner.runWake(WS, "J57", JUMP_UP, JUMP_RUNS);
 
@@ -866,8 +970,8 @@ class JevPredictionRunnerTest {
 
     @Test
     void Chainlink停了_不问Jev_照常跳过不算出错() {
-        when(writer.write(WS, JUMP_UP)).thenReturn(new Snapshot(Map.of("market", "..."),
-                new Raw(0.1, 0.52, BOOK, now - 700, 8_355, JUMP_UP, null, null, null)));
+        when(writer.write(eq(WS), eq(JUMP_UP), any())).thenReturn(new Snapshot(Map.of("market", "..."),
+                new Raw(0.1, 0.52, BOOK, now - 700, 8_355, JUMP_UP, null, null, null, null)));
 
         runner.runWake(WS, "J57", JUMP_UP, JUMP_RUNS);
 
@@ -884,22 +988,23 @@ class JevPredictionRunnerTest {
 
     @Test
     void 等成交时盘口停了_不成交() {
-        when(writer.write(WS, JUMP_UP)).thenReturn(jumpSnap());
-        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82, 0.1));
-        when(cache.getPredictionBookUpdatedAt()).thenReturn(now - 8_000);
+        // 盯到那一刻盘口 0.7 秒前更新，等完已经 8 秒没更新
+        when(cache.getPredictionBookUpdatedAt()).thenReturn(now - 700, now - 8_000);
 
-        runner.runWake(WS, "J57", JUMP_UP, JUMP_RUNS);
+        watchedUp("W60", watchUp(), watchUp(JEV));
 
         verify(sim, never()).buy(anyLong(), any(), any());
-        assertThat(row(12).getAction()).isEqualTo(JevPredictionDecision.ACTION_STAY_OUT);
-        assertThat(row(12).getReason()).isEqualTo("STALE_WHILE_ASKING");
-        // 行上记的是决策那一刻的盘口年龄
-        assertThat(row(12).getBookAgeMs()).isEqualTo(700);
+        for (int runNo : List.of(11, 12)) {
+            assertThat(row(runNo).getAction()).isEqualTo(JevPredictionDecision.ACTION_STAY_OUT);
+            assertThat(row(runNo).getReason()).isEqualTo("STALE_WHILE_ASKING");
+            // 行上记的是盯到那一刻的盘口年龄
+            assertThat(row(runNo).getBookAgeMs()).isEqualTo(700);
+        }
     }
 
     @Test
     void 写state失败_两组都落ERROR行() {
-        when(writer.write(WS, JUMP_UP)).thenThrow(new IllegalStateException("开盘价未到"));
+        when(writer.write(eq(WS), eq(JUMP_UP), any())).thenThrow(new IllegalStateException("开盘价未到"));
 
         runner.runWake(WS, "J57", JUMP_UP, JUMP_RUNS);
 
@@ -915,30 +1020,28 @@ class JevPredictionRunnerTest {
 
     @Test
     void 下单失败_只落这一组的ERROR行() {
-        when(writer.write(WS, JUMP_UP)).thenReturn(jumpSnap());
-        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82, 0.1));
         when(sim.buy(eq(112L), any(), any())).thenThrow(new IllegalStateException("回合已锁"));
 
-        runner.runWake(WS, "J270", JUMP_UP, JUMP_RUNS);
+        watchedUp("W270", watchUp(), watchUp(JEV));
 
         assertThat(row(12).getAction()).isEqualTo(JevPredictionDecision.ACTION_ERROR);
         assertThat(row(12).getError()).contains("回合已锁");
-        assertThat(row(12).getPJev()).isEqualByComparingTo("0.7");
-        assertThat(row(11).getReason()).isEqualTo("WATCH UP");
+        assertThat(row(12).getReason()).isEqualTo("EXTEND UP 0.100 ask 0.62");
+        assertThat(row(11).getAction()).isEqualTo(JevPredictionDecision.ACTION_BUY_UP);
         assertThat(row(11).getError()).isNull();
     }
 
     @Test
     void 这一局这一格写过就不重跑_另一组照跑() {
-        when(writer.write(WS, JUMP_UP)).thenReturn(jumpSnap());
-        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82, 0.1));
+        when(writer.write(eq(WS), eq(JUMP_UP), any())).thenReturn(jumpSnap());
+        when(judge.judge(any(), eq("UP"))).thenReturn(jumpJev("UP", 0.82));
         when(mapper.countCheckpoint(11, WS, "J57")).thenReturn(1);
 
         runner.runWake(WS, "J57", JUMP_UP, JUMP_RUNS);
 
         assertThat(rows).extracting(JevPredictionDecision::getRunNo).containsExactly(12);
-        verify(writer, times(1)).write(anyLong(), any());
-        verify(sim).buy(eq(112L), any(), any());
+        verify(writer, times(1)).write(anyLong(), any(), any());
+        assertThat(row(12).getReason()).isEqualTo("WATCH UP 0.820");
     }
 
     // ==================== 回填 ====================

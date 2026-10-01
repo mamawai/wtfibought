@@ -2,11 +2,13 @@ package com.mawai.wiibagent.jev.predictor;
 
 import com.mawai.wiibagent.jev.JevClient.Question;
 
+import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 问 Jev 的题：只问盘面是什么样，不问买不买。题目一律英文。整点唤醒问六道 {@link #questions}，突变唤醒问三道 {@link #jumpQuestions}。
+ * 问 Jev 的题。题目一律英文。整点唤醒问六道盘面题 {@link #questions}，只问盘面是什么样、不问买不买；
+ * 突变唤醒问两道 {@link #jumpQuestions}，会赢，加这次突变值不值得下单。
  * 题里直接写看的那一边（UP 或 DOWN），另一边的题是这一边的镜像：UP ↔ DOWN、at or above ↔ below、buyers ↔ sellers、rise ↔ fall。
  * <ul>
  *   <li>win：看的那一边会赢，换算成 p_jev 记分；v5-3 持仓时太低就卖。两种唤醒都问</li>
@@ -15,8 +17,9 @@ import java.util.Map;
  *   <li>flow_confirms：Binance 主动成交和看的那一边同向，只记录</li>
  *   <li>dip_recovered：这一局逆过又顺回来，只记录</li>
  *   <li>latest_against：最新一步逆着看的那一边，v5-3 空仓时是才买</li>
- *   <li>extend：突变那一边接下来 15 秒还在涨，v5-2 到线就买突变那一边</li>
- *   <li>reject：突变那一边 15 秒内跌回起跳价，v5-2 到线就买另一边</li>
+ *   <li>buy：这次突变值得下单，题里写明之后怎么盯、盯到了选哪一边、选了不能改，问要是选出了一边、它会不会赢
+ *       （没盯到不算否）；v5-2 到线才盯。
+ *       题里不用 buy、bet 这类词，Jev 见了会偏向 DOWN</li>
  * </ul>
  * 选项、判据按写的顺序发。
  */
@@ -28,8 +31,7 @@ final class PredictionQuestions {
     static final String FLOW_CONFIRMS = "flow_confirms";
     static final String DIP_RECOVERED = "dip_recovered";
     static final String LATEST_AGAINST = "latest_against";
-    static final String EXTEND = "extend";
-    static final String REJECT = "reject";
+    static final String BUY = "buy";
 
     static final String CASCADE = "cascade";
     static final String CHOP = "chop";
@@ -38,9 +40,10 @@ final class PredictionQuestions {
     /** story 的引用说明，四道过程题共用 */
     private static final String STORY_REF =
             "`story` lists what BTC did in each step since the open, oldest first; a rise favours UP and a fall favours DOWN.";
-    /** 突变那几秒 Binance 的引用说明，extend、reject 共用 */
-    private static final String BINANCE_REF = "`binance_now` and `chainlink_vs_binance` say what BTC did on Binance and whether "
-            + "the settlement price has caught up; `takers_now` says who is ahead among Binance takers.";
+    /** buy 题里 state 各句的引用说明 */
+    private static final String JUMP_REF = "`jump` says how far into the round the jump came and `clock` how much time is left; "
+            + "`position` says which side is already picked in this round; `binance_now` and `chainlink_vs_binance` say what BTC did on "
+            + "Binance and whether the settlement price has caught up; `takers_now` says who is ahead among Binance takers.";
 
     static final Question PATTERN_Q = Question.choice(
             "What kind of move is BTC in right now, judging by `story`? `story` lists what BTC did in each step since the open, oldest first.",
@@ -84,22 +87,25 @@ final class PredictionQuestions {
     }
 
     /**
-     * 突变唤醒的三道题，按 win、extend、reject 的顺序
+     * 突变唤醒的两道题，按 win、buy 的顺序。buy 题里盯多久、又走多少、吐回多少都取配置，和代码真做的一致
      *
      * @param side 突变那一边 UP / DOWN
      */
-    static Map<String, Question> jumpQuestions(String side) {
+    static Map<String, Question> jumpQuestions(String side, JevPredictionConfig cfg) {
+        String other = "UP".equals(side) ? "DOWN" : "UP";
+        BigDecimal ratio = cfg.getJumpRejectRatio();
+        String giveBack = ratio.compareTo(BigDecimal.ONE) == 0 ? "the whole jump"
+                : ratio.movePointRight(2).stripTrailingZeros().toPlainString() + "% of the jump";
         Map<String, Question> q = new LinkedHashMap<>();
         q.put(WIN, win(side, true));
-        q.put(EXTEND, noul(
-                side + "'s price will keep rising over the next 15 seconds, on top of the jump in `jump`. " + BINANCE_REF,
-                "The market keeps pushing " + side + "'s price higher after the jump.",
-                side + "'s price stalls or gives part of the jump back."));
-        q.put(REJECT, noul(
-                "The jump in `jump` will be undone: " + side + "'s price will fall back to where it was before the jump "
-                        + "within the next 15 seconds. " + BINANCE_REF,
-                "The market takes the whole jump back and " + side + "'s price returns to its pre-jump level.",
-                side + "'s price stays above its pre-jump level."));
+        q.put(BUY, noul(
+                "After " + side + "'s jump in `jump`, " + side + "'s price is watched for the next " + cfg.getJumpWatchMs() / 1000
+                        + " seconds: if it rises another " + PredictionStateWriter.cents(cfg.getJumpExtend()) + " the pick is " + side
+                        + ", if it gives back " + giveBack + " the pick is " + other + ", and if neither happens nothing is done. "
+                        + "If a side gets picked this way, it will win this round. A pick is final and cannot be changed; "
+                        + "a side already picked is not picked again. " + JUMP_REF,
+                "A side picked after this jump wins the round.",
+                "A side picked after this jump loses the round."));
         return q;
     }
 
