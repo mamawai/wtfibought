@@ -99,7 +99,14 @@ export function GuidedTour({ steps, open, onClose }: {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         close();
-      } else if (e.key === 'ArrowRight') {
+        return;
+      }
+      // 焦点在输入框里时左右键是移光标，不翻步
+      const el = e.target as HTMLElement;
+      if (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) {
+        return;
+      }
+      if (e.key === 'ArrowRight') {
         next();
       } else if (e.key === 'ArrowLeft') {
         setIdx(i => Math.max(0, i - 1));

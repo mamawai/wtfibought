@@ -9,6 +9,7 @@ import {PlayingCard} from '../components/blackjack/PlayingCard';
 import {Skeleton} from '../components/ui/skeleton';
 import {ArrowLeftRight, CopyPlus, Hand, RotateCcw, Shield, Spade, Split, Square} from 'lucide-react';
 import {cn} from '../lib/utils';
+import i18n from '../i18n';
 import type {BlackjackStatus, GameState, HandResult} from '../types';
 
 const BET_PRESETS = [50, 100, 500, 1000];
@@ -38,19 +39,21 @@ export function Blackjack() {
   const [betAmount, setBetAmount] = useState(100);
   const [convertAmount, setConvertAmount] = useState('');
   const [convertOpen, setConvertOpen] = useState(false);
+  const [converting, setConverting] = useState(false);
   const [resumeOpen, setResumeOpen] = useState(false);
 
+  // 不依赖 t：切语言会换新 t，依赖了就会重拉、又弹恢复牌局框
   const fetchStatus = useCallback(async () => {
     try {
       const s = await blackjackApi.status();
       setStatus(s);
       if (s.activeGame) setResumeOpen(true);
     } catch (e: unknown) {
-      toast((e as Error).message || t('common:loadFailed'), 'error');
+      toast((e as Error).message || i18n.t('common:loadFailed'), 'error');
     } finally {
       setLoading(false);
     }
-  }, [toast, t]);
+  }, [toast]);
 
   useEffect(() => { void fetchStatus(); }, [fetchStatus]);
 
@@ -95,7 +98,8 @@ export function Blackjack() {
 
   const handleConvert = async () => {
     const amt = parseInt(convertAmount);
-    if (!amt || amt <= 0) return;
+    if (!amt || amt <= 0 || converting) return;
+    setConverting(true);
     try {
       const result = await blackjackApi.convert(amt);
       toast(t('toast.converted', { amount: amt.toLocaleString() }), 'success');
@@ -106,6 +110,8 @@ export function Blackjack() {
       }
     } catch (e: unknown) {
       toast((e as Error).message || t('toast.convertFailed'), 'error');
+    } finally {
+      setConverting(false);
     }
   };
 
@@ -118,9 +124,10 @@ export function Blackjack() {
     );
   }
 
-  const chips = game ? game.chips : (status?.chips ?? 0);
   const isSettled = game?.phase === 'SETTLED';
   const isPlaying = game && !isSettled;
+  // 不在牌局中就认 status：转出只更新它，act 每步也会把 chips 同步进去
+  const chips = isPlaying ? game.chips : (status?.chips ?? 0);
   const poolExhausted = (status?.dailyPool ?? 1) <= 0;
 
   return (
@@ -418,7 +425,8 @@ export function Blackjack() {
       </Card>
 
       {/* 恢复牌局弹窗 */}
-      <Dialog open={resumeOpen} onClose={() => setResumeOpen(false)}>
+      {/* 点 X / 遮罩关掉 = 恢复：牌局还挂在后端，只关掉就回不去了 */}
+      <Dialog open={resumeOpen} onClose={handleResume}>
         <DialogHeader>
           <h2 className="text-lg font-bold">{t('blackjack.resume.title')}</h2>
         </DialogHeader>
@@ -486,7 +494,7 @@ export function Blackjack() {
         </DialogContent>
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={() => setConvertOpen(false)}>{t('common:cancel')}</Button>
-          <Button size="sm" onClick={handleConvert} disabled={!convertAmount || parseInt(convertAmount) <= 0}>{t('blackjack.convertDialog.confirm')}</Button>
+          <Button size="sm" onClick={handleConvert} disabled={converting || !convertAmount || parseInt(convertAmount) <= 0}>{t('blackjack.convertDialog.confirm')}</Button>
         </DialogFooter>
       </Dialog>
     </div>

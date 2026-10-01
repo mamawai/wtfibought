@@ -326,7 +326,8 @@
       "sellFailed": "卖出失败",
       "enterShares": "请输入卖出份数",
       "noPosition": "暂无持仓",
-      "maxSellable": "最多可卖出 {{qty}} 份"
+      "maxSellable": "最多可卖出 {{qty}} 份",
+      "partialSold": "已卖出 {{qty}} 份，剩余未成交：{{reason}}"
     }
   }
 }

@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Gift, Loader2, Sparkles } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader } from './ui/dialog';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { buffApi } from '../api';
+import { useUserStore } from '../stores/userStore';
 import type { BuffStatus, UserBuff } from '../types';
 
 const rarityStyles: Record<string, string> = {
@@ -57,9 +58,30 @@ export function DailyBuffModal({ status, open, onClose, onDrawn }: {
   onDrawn: () => void;
 }) {
   const { t } = useTranslation('home');
+  const guest = useUserStore(s => !s.token);
   const [drawing, setDrawing] = useState(false);
   const [result, setResult] = useState<UserBuff | null>(null);
   const [showResult, setShowResult] = useState(false);
+
+  // 父级的 status 还没到（还在拉，或者拉失败了）时，弹窗打开就自己拉一份；失败了点重试或者关掉重开再拉
+  const [ownStatus, setOwnStatus] = useState<BuffStatus | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  // 弹窗一关就把失败标记清掉，下次打开自动再拉
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (!open) setLoadFailed(false);
+  }
+  const needOwn = open && !guest && !status && !loadFailed;
+  useEffect(() => {
+    if (!needOwn) return;
+    let cancelled = false;
+    buffApi.status()
+      .then(s => { if (!cancelled) setOwnStatus(s); })
+      .catch(() => { if (!cancelled) setLoadFailed(true); });
+    return () => { cancelled = true; };
+  }, [needOwn]);
+  const shown = status ?? ownStatus;
 
   const handleDraw = async () => {
     setDrawing(true);
@@ -95,7 +117,9 @@ export function DailyBuffModal({ status, open, onClose, onDrawn }: {
               : <Gift className="w-7 h-7 text-primary" />}
           </div>
 
-          {status?.canDraw ? (
+          {guest ? (
+            <p className="text-sm text-muted-foreground">{t('buff.loginFirst')}</p>
+          ) : shown?.canDraw ? (
             drawing ? (
               <p className="text-sm text-muted-foreground">{t('buff.drawing')}</p>
             ) : showResult && result ? (
@@ -113,13 +137,20 @@ export function DailyBuffModal({ status, open, onClose, onDrawn }: {
                 </Button>
               </>
             )
-          ) : status?.todayBuff ? (
+          ) : shown?.todayBuff ? (
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground">{t('buff.drawnToday')}</p>
-              <BuffRow buff={status.todayBuff} />
+              <BuffRow buff={shown.todayBuff} />
             </div>
+          ) : loadFailed ? (
+            <>
+              <p className="text-sm text-muted-foreground">{t('common:loadFailed')}</p>
+              <Button variant="outline" size="sm" onClick={() => setLoadFailed(false)}>
+                {t('common:retry')}
+              </Button>
+            </>
           ) : (
-            <p className="text-sm text-muted-foreground">{t('buff.loginFirst')}</p>
+            <p className="text-sm text-muted-foreground">{t('common:loading')}</p>
           )}
         </div>
       </DialogContent>

@@ -58,11 +58,55 @@ function App() {
   const fetchKey = useMemo(() => (token ? `auth:current:${token}` : null), [token]);
 
   // 开屏一直遮到用户信息就位，顺带把顶栏"登录→用户名"那一下闪烁盖掉。
-  // 游客没 token 不发请求，直接放行，否则开屏要一路等到 6s 兜底
+  // 游客没 token 不发请求，直接放行，否则开屏要一路等到 6s 兜底。
+  // 拉完还是"有 token 没 user"（5xx/超时/断网）就退避重拉：2s 起翻倍、封顶 30s，网络恢复立刻补一次；
+  // 401 时 fetchUser 会清 token，key 一变这一轮就收了
   useEffect(() => {
-      if (fetchKey == null) { window.__wiibSplashDone?.(); return; }
-      void fetchUser().finally(() => window.__wiibSplashDone?.());
-    }, [fetchKey, fetchUser]);
+    if (fetchKey == null) { window.__wiibSplashDone?.(); return; }
+    let alive = true;
+    let busy = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let delay = 2000;
+    const stuck = () => { const s = useUserStore.getState(); return !!s.token && !s.user; };
+    const load = async () => {
+      busy = true;
+      await fetchUser();
+      busy = false;
+      if (!alive || !stuck()) return;
+      timer = setTimeout(() => { if (stuck()) void load(); }, delay);
+      delay = Math.min(delay * 2, 30_000);
+    };
+    // 开屏只等头一次
+    void load().finally(() => window.__wiibSplashDone?.());
+    const onOnline = () => {
+      if (busy || !stuck()) return;
+      clearTimeout(timer);
+      void load();
+    };
+    window.addEventListener('online', onOnline);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+      window.removeEventListener('online', onOnline);
+    };
+  }, [fetchKey, fetchUser]);
+
+  // 别的标签页登录、退出、换号：token 跟本页不一样就整页刷新，本页按旧身份拉的数据一起作废。
+  // 刷新前先把内存 token 对齐，不然本页刷新前再 set 一下 persist 会把旧 token 写回去；
+  // 对齐时写进去的值跟 storage 里一样，不会再触发别的页
+  useEffect(() => {
+    const key = useUserStore.persist.getOptions().name;
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== key) return;
+      const stored = e.newValue ? JSON.parse(e.newValue) as { state?: { token?: string | null } } : null;
+      const next = stored?.state?.token ?? null;
+      if (next === useUserStore.getState().token) return;
+      useUserStore.setState({ token: next });
+      window.location.reload();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   return (
     <BrowserRouter>

@@ -64,6 +64,10 @@ export function Prediction() {
 
   useEffect(() => { fetchBets(); }, [fetchBets]);
 
+  // 只有当前 OPEN 回合的注单卖得掉（跟后端同口径），锁定待结算的旧回合注单不算
+  const canSell = (b: PredictionBet) =>
+    b.status === 'ACTIVE' && round?.status === 'OPEN' && b.windowStart === round.windowStart;
+
   // UP / DOWN 是盘口方向代号，只有露给人看的地方换成"看涨 / 看跌"
   const sideLabel = side === 'UP' ? t('prediction.up') : t('prediction.down');
 
@@ -97,7 +101,7 @@ export function Prediction() {
   const handleSellSide = async () => {
     const target = parseFloat(shares) || 0;
     if (target <= 0) { toast(t('prediction.toast.enterShares'), 'error'); return; }
-    const activeBets = bets.filter(b => b.status === 'ACTIVE' && b.side === side);
+    const activeBets = bets.filter(b => canSell(b) && b.side === side);
     if (activeBets.length === 0) { toast(t('prediction.toast.noPosition'), 'error'); return; }
     const available = activeBets.reduce((sum, b) => sum + parseFloat(String(b.contracts ?? 0)), 0);
     if (target > available + 1e-8) {
@@ -105,8 +109,8 @@ export function Prediction() {
       return;
     }
     setSubmitting(true);
+    let remaining = target;
     try {
-      let remaining = target;
       for (const bet of activeBets) {
         if (remaining <= 0) break;
         const betContracts = parseFloat(String(bet.contracts ?? 0));
@@ -117,11 +121,23 @@ export function Prediction() {
       }
       toast(t('prediction.toast.sellOk', { side: sideLabel }), 'success');
       setShares('');
+    } catch (e: unknown) {
+      const reason = (e as Error).message || t('prediction.toast.sellFailed');
+      // 前面几笔已成交：报卖掉多少，输入框改成没卖掉的那些；份数后端是 4 位小数，这里取整去掉浮点尾巴
+      const sold = Math.round((target - remaining) * 1e4) / 1e4;
+      if (sold > 0) {
+        const left = Math.round(remaining * 1e4) / 1e4;
+        toast(t('prediction.toast.partialSold', { qty: sold, reason }), 'error');
+        setShares(left > 0 ? String(left) : '');
+      } else {
+        toast(reason, 'error');
+      }
+    } finally {
+      setSubmitting(false);
+      // 逐笔卖，中途失败时前面几笔已经成交了，成败都要刷
       fetchBets();
       fetchUser();
-    } catch (e: unknown) {
-      toast((e as Error).message || t('prediction.toast.sellFailed'), 'error');
-    } finally { setSubmitting(false); }
+    }
   };
 
   const askPrice = side === 'UP' ? upAsk : downAsk;
@@ -135,7 +151,7 @@ export function Prediction() {
     return String(Math.floor(bal / (1 + feePerCost) * 100) / 100);
   };
 
-  const activeBetsForSide = bets.filter(b => b.status === 'ACTIVE' && b.side === side);
+  const activeBetsForSide = bets.filter(b => canSell(b) && b.side === side);
   const totalShares = activeBetsForSide.reduce((sum, b) => sum + parseFloat(String(b.contracts ?? 0)), 0);
   const bidPrice = side === 'UP' ? upBid : downBid;
   const sellSharesNum = parseFloat(shares) || 0;
@@ -366,7 +382,7 @@ export function Prediction() {
                         {b.payout > 0 ? `+$${b.payout.toFixed(2)}` : '$0'}
                       </span>
                     )}
-                    {b.status === 'ACTIVE' && round?.status === 'OPEN' && b.windowStart === round.windowStart && (
+                    {canSell(b) && (
                       <Button size="sm" variant="outline" onClick={() => handleSell(b.id)} className="text-[10px] h-6 px-2">{t('prediction.sell')}</Button>
                     )}
                   </div>

@@ -105,7 +105,8 @@ export function usePredictionMarket(onSettled?: () => void): PredictionMarket {
             if (ws.status === 'SETTLED') onSettledRef.current?.();
             return;
           }
-          setRound(prev => ({ ...prev, ...ws } as PredictionRound));
+          // 同一回合才合并；换回合整条换掉，推送省略空字段，合并会把上一回合的开盘价、官方时间带过来
+          setRound(prev => (prev?.windowStart === ws.windowStart ? { ...prev, ...ws } : ws) as PredictionRound);
         } catch { /* ignore */ }
       }),
       subscribe('/topic/prediction/activity', (msg) => {

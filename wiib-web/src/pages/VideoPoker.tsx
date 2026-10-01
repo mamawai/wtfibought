@@ -8,6 +8,7 @@ import { WalletTransferModal } from '../components/WalletTransferModal';
 import { Wallet, ChevronDown, ArrowLeftRight } from 'lucide-react';
 import { CardContent } from '../components/ui/card';
 import { cn, fmtNum } from '../lib/utils';
+import i18n from '../i18n';
 import type { VideoPokerGameState, VideoPokerStatus } from '../types';
 
 const BET_PRESETS = [10, 50, 100, 500, 1000, 5000];
@@ -124,24 +125,29 @@ export function VideoPoker() {
 
   const prevCardsRef = useRef<string[]>([]);
 
-  const balance = game?.balance ?? status?.balance ?? 0;
+  // 顶栏余额以 status 为准：每手牌返回都同步进来，划转后 fetchStatus 也刷它
+  const balance = status?.balance ?? 0;
   const isDealing = game?.phase === 'DEALING';
   const isSettled = game?.phase === 'SETTLED';
 
+  // 不依赖 t：切语言会换新 t，依赖了就会重拉、打断牌局
+  // 不清 held：进页、再来一局时本来就空，划转后刷新还是同一手
   const fetchStatus = useCallback(async () => {
     try {
       const s = await videoPokerApi.status();
       setStatus(s);
-      if (s.activeGame) {
-        setGame(s.activeGame);
-        setHeld(new Set());
-      }
+      if (s.activeGame) setGame(s.activeGame);
     } catch (e: unknown) {
-      toast((e as Error).message || t('common:loadFailed'), 'error');
+      toast((e as Error).message || i18n.t('common:loadFailed'), 'error');
     } finally {
       setLoading(false);
     }
-  }, [toast, t]);
+  }, [toast]);
+
+  const applyGame = (state: VideoPokerGameState) => {
+    setGame(state);
+    setStatus(s => (s ? { ...s, balance: state.balance } : s));
+  };
 
   useEffect(() => { void fetchStatus(); }, [fetchStatus]);
 
@@ -168,7 +174,7 @@ export function VideoPoker() {
     prevCardsRef.current = [];
     try {
       const state = await videoPokerApi.bet(betAmount);
-      setGame(state);
+      applyGame(state);
       setHeld(new Set());
     } catch (e: unknown) {
       toast((e as Error).message || t('toast.betFailed'), 'error');
@@ -192,7 +198,7 @@ export function VideoPoker() {
     prevCardsRef.current = [...game.cards];
     try {
       const state = await videoPokerApi.draw(Array.from(held));
-      setGame(state);
+      applyGame(state);
     } catch (e: unknown) {
       toast((e as Error).message || t('toast.drawFailed'), 'error');
     } finally {
@@ -203,6 +209,8 @@ export function VideoPoker() {
   const handleNewGame = () => {
     setGame(null);
     setHeld(new Set());
+    // 换牌动画 600ms 内点再来一局，定时器被清掉没来得及收，这里收掉
+    setReplacing(new Set());
     prevCardsRef.current = [];
     void fetchStatus();
   };

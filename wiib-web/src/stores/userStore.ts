@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User } from '../types';
-import { authApi } from '../api';
+import { ApiError, authApi } from '../api';
 import { reconnectWithIdentity } from '../hooks/stompClient';
 
 interface UserState {
@@ -34,8 +34,9 @@ export const useUserStore = create<UserState>()(
           set({ loading: true });
           const user = await authApi.current();
           set({ user });
-        } catch {
-          set({ user: null, token: null });
+        } catch (e) {
+          // 只有 401（token 失效）才算登出；5xx/超时/断网是一时的，清 token 会把人踢回登录页
+          if (e instanceof ApiError && e.code === 401) set({ user: null, token: null });
         } finally {
           set({ loading: false });
         }
