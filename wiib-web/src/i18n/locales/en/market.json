@@ -149,7 +149,8 @@
     "exitFullscreen": "Exit fullscreen (Esc)",
     "fullscreen": "Fullscreen",
     "textPlaceholder": "Label text, Enter to confirm",
-    "rotate": "Rotate to landscape"
+    "rotate": "Rotate to landscape",
+    "undo": "Undo (Ctrl+Z)"
   },
   "drawTool": {
     "pick": "Select",
@@ -163,7 +164,11 @@
     "long": "Long position",
     "short": "Short position",
     "range": "Price range",
-    "text": "Text"
+    "text": "Text",
+    "hray": "Horizontal ray",
+    "arrow": "Arrow",
+    "fibext": "Fib extension",
+    "more": "Show this group"
   },
   "drawTip": {
     "pick": "Select / drag (Esc to deselect, Del to delete)",
@@ -177,7 +182,21 @@
     "long": "Long position: click entry then stop; take profit derived at 2:1 (draggable)",
     "short": "Short position: click entry then stop; take profit derived at 2:1 (draggable)",
     "range": "Price range: two clicks measure change / percent / bars / time",
-    "text": "Text note: click, then type"
+    "text": "Text note: click, then type",
+    "hray": "Horizontal ray: one click, extends right from that bar (support / resistance from a point)",
+    "arrow": "Arrow: two clicks, points from start to end",
+    "fibext": "Trend-based Fib extension: three clicks (trend start, trend end, pullback), shows 1.618 / 2.618 targets"
+  },
+  "drawProps": {
+    "color": "Color",
+    "width": "Line width",
+    "style": "Line style",
+    "solid": "Solid",
+    "dashed": "Dashed",
+    "dotted": "Dotted",
+    "editText": "Edit text (double-click on desktop)",
+    "clone": "Duplicate",
+    "delete": "Delete (Del)"
   },
   "draw": {
     "done": "Done",

@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { useIsDark } from '../../hooks/useIsDark';
 import { useDrawings } from '../chart/useDrawings';
 import { DrawToolPopover, DrawToolRail } from '../chart/DrawToolPicker';
+import { DrawOverlay } from '../chart/DrawOverlay';
 import type { ChartCtx, OhlcBar } from '../../lib/chartDrawings';
 import { lwcTheme, rgba } from '../../lib/chartTheme';
 import { fmtDateTime } from '../../lib/utils';
@@ -67,9 +68,9 @@ function toOhlc(row: number[]): OhlcBar {
   return { time: toBarTime(row[0]), open: row[1], high: row[2], low: row[3], close: row[4] };
 }
 
-/** 盲测相对时间：D{第几天} HH:mm（HH:mm 为 UTC+8 时刻，不泄露日期） */
+/** 盲测相对时间：D{第几天} HH:mm（HH:mm 为 UTC+8 时刻，不泄露日期；天按 UTC+8 日历日数，开局那天 D1、过午夜进位） */
 function blindLabel(shiftedSec: number, baseShiftedSec: number): string {
-  const day = Math.floor((shiftedSec - baseShiftedSec) / 86_400) + 1;
+  const day = Math.floor(shiftedSec / 86_400) - Math.floor(baseShiftedSec / 86_400) + 1;
   const d = new Date(shiftedSec * 1000);
   const hh = String(d.getUTCHours()).padStart(2, '0');
   const mm = String(d.getUTCMinutes()).padStart(2, '0');
@@ -89,6 +90,8 @@ export function BacktestChart({ bars, marks, cursor, symbol, decimals = 2, heigh
   const drawnRef = useRef(0);           // 已画到的 bar 数
   const lastBarsRef = useRef<number[][] | null>(null);   // bars 换引用（新任务/新分段）必须走全量重切
   const markerCountRef = useRef(-1);    // 上次 setMarkers 的条数，变了才重设
+  // 上次 setMarkers 用的那份 allMarkers：换了引用（切语言/换数据）也重设
+  const markerSrcRef = useRef<{ atBar: number; marker: SeriesMarker<Time> }[] | null>(null);
   // 画线层的只读上下文：随游标同步维护（图层活得比每帧都久，必须走 ref getter）
   const ohlcRef = useRef<OhlcBar[]>([]);
   const idxRef = useRef<Map<number, number>>(new Map());
@@ -97,10 +100,11 @@ export function BacktestChart({ bars, marks, cursor, symbol, decimals = 2, heigh
   const isDark = useIsDark();
   const { t } = useTranslation('strategy');
 
+  const drawings = useDrawings();
   const {
     attach: attachDrawings, tool, setTool, magnet, setMagnet, hiddenAll, setHiddenAll,
-    selected: hasSelection, count: drawCount, trash, textEdit, commitText, cancelText,
-  } = useDrawings();
+    selected: hasSelection, count: drawCount, trash, undo, canUndo,
+  } = drawings;
 
   // 小屏（手机竖屏）默认矮一点，给下方操作按钮留出手指空间
   const [autoHeight] = useState(() => window.innerWidth < 768
@@ -258,17 +262,20 @@ export function BacktestChart({ bars, marks, cursor, symbol, decimals = 2, heigh
       if (m.atBar < target) visible.push(m.marker);
       else break;
     }
-    if (visible.length !== markerCountRef.current) {
+    if (visible.length !== markerCountRef.current || markerSrcRef.current !== allMarkers) {
       markersRef.current?.setMarkers(visible);
       markerCountRef.current = visible.length;
+      markerSrcRef.current = allMarkers;
     }
-  }, [bars, cursor, allMarkers]);
+    // 后五项是建图依赖：图重建后 drawnRef 归零，跟着重灌一次
+  }, [bars, cursor, allMarkers, isDark, h, symbol, decimals, bucketSec]);
 
   // 磁吸/显隐/删除跟画线工具住一起（竖栏底部；手机在顶栏那一行）
   const toolProps = {
     tool, onSelect: setTool,
     magnet, onToggleMagnet: () => setMagnet(!magnet),
     hiddenAll, onToggleHidden: () => setHiddenAll(!hiddenAll), hideDisabled: !drawCount,
+    onUndo: undo, undoDisabled: !canUndo,
     onTrash: trash, trashDisabled: !hasSelection && !drawCount,
     trashTitle: hasSelection ? t('chart.deleteSelected') : t('chart.clearAll'),
   };
@@ -282,22 +289,10 @@ export function BacktestChart({ bars, marks, cursor, symbol, decimals = 2, heigh
 
       <div className="grid grid-cols-1 md:grid-cols-[34px_1fr] border-t border-foreground">
         <DrawToolRail className="hidden md:flex" {...toolProps} />
-        {/* 图表主体（relative：文字标注输入浮层的定位基准） */}
+        {/* 图表主体（relative：文字标注输入、属性条的定位基准） */}
         <div className="relative w-full" style={{ height: h }}>
           <div ref={containerRef} className="absolute inset-0" />
-          {textEdit && (
-            <input autoFocus placeholder={t('chart.textPlaceholder')}
-              onKeyDown={e => {
-                if (e.key === 'Enter') commitText(e.currentTarget.value);
-                else if (e.key === 'Escape') cancelText();
-              }}
-              onBlur={e => commitText(e.currentTarget.value)}
-              className="absolute z-[6] w-[200px] py-0.5 border-0 outline-none bg-transparent text-foreground text-[12px] font-semibold"
-              style={{
-                left: textEdit.x, top: textEdit.y - 12,
-                borderBottom: '1px dashed var(--color-primary)', caretColor: 'var(--color-primary)',
-              }} />
-          )}
+          <DrawOverlay d={drawings} />
         </div>
       </div>
     </div>

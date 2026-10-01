@@ -14,21 +14,22 @@ import type { ISeriesApi, ITimeScaleApi, Logical, Time } from 'lightweight-chart
 
 /**
  * 图形种类（对齐 TradingView 常用集）：
- * trend 趋势线 / ray 射线 / hline 水平线 / vline 垂直线 / channel 平行通道 /
- * rect 矩形 / fib 斐波回撤 / long·short 多头·空头仓位（入场+止损+止盈区间）/
+ * trend 趋势线 / ray 射线 / hray 水平射线 / arrow 箭头 / hline 水平线 / vline 垂直线 / channel 平行通道 /
+ * rect 矩形 / fib 斐波回撤 / fibext 斐波扩展（趋势型）/ long·short 多头·空头仓位（入场+止损+止盈区间）/
  * range 价格区间（量幅度·根数·时长）/ text 文字
  */
 export type DrawingKind =
-  | 'trend' | 'ray' | 'hline' | 'vline' | 'channel'
-  | 'rect' | 'fib' | 'long' | 'short' | 'range' | 'text';
+  | 'trend' | 'ray' | 'hray' | 'arrow' | 'hline' | 'vline' | 'channel'
+  | 'rect' | 'fib' | 'fibext' | 'long' | 'short' | 'range' | 'text';
 
 /** 锚点：t=bar 开盘时刻(秒，已含 CandleChart 的 UTC+8 偏移口径)，p=价格 */
 export interface Anchor { t: number; p: number; }
 
 /**
  * pts 约定：
- * - hline 只用 p，vline 只用 t，text 只用锚点定位；
- * - trend/ray/rect/fib/range 两点；channel 三点（基线两端 + 平行线过的点）；
+ * - hline 只用 p，vline 只用 t，text 只用锚点定位，hray 一点（从这根往右）；
+ * - trend/ray/arrow/rect/fib/range 两点；channel 三点（基线两端 + 平行线过的点）；
+ * - fibext 三点（趋势起点、趋势终点、回撤落点）；
  * - long/short 三点 = [入场, 止损, 止盈]，止损点的 t 同时是区间右缘，止盈点 t 恒等于止损点 t。
  */
 export interface Drawing {
@@ -37,11 +38,45 @@ export interface Drawing {
   pts: Anchor[];
   color: string;
   text?: string;
+  /** 线宽(px)，没设=1；旧存档没有这两个字段，按默认画 */
+  width?: number;
+  dash?: LineDash;
+}
+
+/** 线型：实线 / 虚线 / 点线 */
+export type LineDash = 'solid' | 'dashed' | 'dotted';
+
+/** 属性条可选的线宽 */
+export const LINE_WIDTHS = [1, 2, 3] as const;
+
+/** 属性条色板：第一个是默认蓝 */
+export const DRAW_PALETTE = ['#2962ff', '#f23645', '#089981', '#ff9800', '#9c27b0', '#00bcd4', '#e91e63', '#787b86'];
+
+/**
+ * 每种图形属性条能改哪几样。斐波/仓位/区间是多色的语义图形（档位色、盈亏色、涨跌色），
+ * 颜色和线型不给改；文字只有颜色
+ */
+export const STYLE_CAPS: Record<DrawingKind, { color: boolean; line: boolean }> = {
+  trend: { color: true, line: true }, ray: { color: true, line: true },
+  hray: { color: true, line: true }, arrow: { color: true, line: true },
+  hline: { color: true, line: true }, vline: { color: true, line: true },
+  channel: { color: true, line: true }, rect: { color: true, line: true },
+  fib: { color: false, line: false }, fibext: { color: false, line: false },
+  long: { color: false, line: false }, short: { color: false, line: false },
+  range: { color: false, line: false }, text: { color: true, line: false },
+};
+
+/** 线型 → canvas 的 setLineDash 参数，间隔跟着线宽放大，粗线的点不会糊成一条 */
+export function dashPattern(dash: LineDash | undefined, width: number): number[] {
+  if (dash === 'dashed') return [width * 5, width * 3];
+  if (dash === 'dotted') return [width, width * 2];
+  return [];
 }
 
 /** 每种图形要用户亲手落几个点（long/short 落入场+止损两点，止盈派生，见 finalizePoints） */
 export const PLACE_POINTS: Record<DrawingKind, 1 | 2 | 3> = {
-  trend: 2, ray: 2, hline: 1, vline: 1, channel: 3, rect: 2, fib: 2, long: 2, short: 2, range: 2, text: 1,
+  trend: 2, ray: 2, hray: 1, arrow: 2, hline: 1, vline: 1, channel: 3, rect: 2,
+  fib: 2, fibext: 3, long: 2, short: 2, range: 2, text: 1,
 };
 
 /** 仓位工具默认盈亏比：定完止损后止盈按 2:1 派生，之后可拖止盈手柄改 */
@@ -77,6 +112,9 @@ export function fmtDuration(sec: number): string {
 /** 斐波那契档位与配色（对齐 TradingView 惯例：0/1 端点灰，中间档暖→冷渐变） */
 export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1] as const;
 export const FIB_COLORS = ['#787b86', '#f23645', '#ff9800', '#4caf50', '#089981', '#00bcd4', '#787b86'];
+/** 斐波扩展档位：各档价 = 回撤落点 + 趋势幅度×档位；1.618/2.618 是最常盯的止盈目标 */
+export const FIBEXT_LEVELS = [0, 0.382, 0.618, 1, 1.272, 1.618, 2, 2.618] as const;
+export const FIBEXT_COLORS = ['#787b86', '#ff9800', '#4caf50', '#787b86', '#00bcd4', '#2962ff', '#9c27b0', '#e91e63'];
 
 // ========== 交互阈值（像素） ==========
 

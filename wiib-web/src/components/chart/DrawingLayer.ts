@@ -16,8 +16,9 @@ import type {
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 import i18n from '../../i18n';
 import {
-  anchorToPoint, coordToTime, distToSegment, FIB_COLORS, FIB_LEVELS, fmtDuration, GAIN_COLOR, HIT_HANDLE,
-  HIT_LINE, LOSS_COLOR, pointInPoly, POSITION_RR, rayEnd, timeToLogical,
+  anchorToPoint, coordToTime, dashPattern, distToSegment, DRAW_COLOR, FIB_COLORS, FIB_LEVELS, FIBEXT_COLORS,
+  FIBEXT_LEVELS, fmtDuration, GAIN_COLOR, HIT_HANDLE, HIT_LINE, LOSS_COLOR, pointInPoly, POSITION_RR, rayEnd,
+  timeToLogical,
   type Anchor, type ChartCtx, type Drawing,
 } from '../../lib/chartDrawings';
 
@@ -28,8 +29,8 @@ const FONT = '600 11px ui-monospace, Consolas, monospace';
 const CHIP_FG = '#e6e8ee';
 /** 斐波各档纵向间距小于这个就藏标签（手机竖屏主图只占 3/5 高度，7 条会糊成一坨） */
 const FIB_LABEL_MIN_GAP = 13;
-/** 面状图形（矩形/通道/区间）的淡填充：只是"这一块"的提示，不能盖住蜡烛 */
-const AREA_FILL = 'rgba(41,98,255,.08)';
+/** 价格区间的框高/框宽小于这个就不画那根量尺（px） */
+const RANGE_RULER_MIN = 16;
 
 /** 命中结果：pt=-1 命中线身/内部(拖整体)，>=0 命中第几个锚点(拖端点) */
 export interface Pick { id: string; pt: number; }
@@ -95,6 +96,55 @@ function seg(c: CanvasRenderingContext2D, a: Pt, b: Pt) {
   c.stroke();
 }
 
+/** w 个 CSS 像素宽的线占几个物理像素：跟 LWC 自己的线一个取法，向下取整，至少 1 */
+function hairPx(ratio: number, w = 1): number {
+  return Math.max(1, Math.floor(w * ratio));
+}
+
+/**
+ * 横/竖线的线心对齐到物理像素格（返回 media 坐标），w 是线宽（CSS 像素）。
+ * 不对齐的话 125%/150% 缩放下一条 1px 的边会糊成两格宽
+ */
+function crisp(v: number, ratio: number, w = 1): number {
+  const px = hairPx(ratio, w);
+  return (Math.round(v * ratio - px / 2) + px / 2) / ratio;
+}
+
+/** 带箭头的线段，箭头（实心三角）在 b 端；线身停在箭头底边，粗线也不会从箭尖戳出来 */
+function arrow(c: CanvasRenderingContext2D, a: Pt, b: Pt, size: number) {
+  const ang = Math.atan2(b.y - a.y, b.x - a.x);
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const body = Math.max(0, len - size * .8);
+  seg(c, a, { x: a.x + Math.cos(ang) * body, y: a.y + Math.sin(ang) * body });
+  c.beginPath();
+  c.moveTo(b.x, b.y);
+  c.lineTo(b.x - size * Math.cos(ang - Math.PI / 7), b.y - size * Math.sin(ang - Math.PI / 7));
+  c.lineTo(b.x - size * Math.cos(ang + Math.PI / 7), b.y - size * Math.sin(ang + Math.PI / 7));
+  c.closePath();
+  c.fill();
+}
+
+/** 实底读数框的尺寸：多行等宽字，左右各留 6px */
+const READOUT_LINE = 15;
+function readoutSize(c: CanvasRenderingContext2D, lines: string[]) {
+  c.font = FONT;
+  return { w: Math.max(...lines.map(s => c.measureText(s).width)) + 12, h: lines.length * READOUT_LINE + 6 };
+}
+
+/** 实底白字读数框（价格区间用），(x, y) 是框的左上角 */
+function readout(c: CanvasRenderingContext2D, lines: string[], color: string, x: number, y: number) {
+  const { w, h } = readoutSize(c, lines);
+  c.save();
+  c.fillStyle = alpha(color, .9);
+  box(c, x, y, w, h, 4);
+  c.fill();
+  c.fillStyle = '#fff';
+  c.textBaseline = 'middle';
+  c.textAlign = 'center';
+  lines.forEach((s, i) => c.fillText(s, x + w / 2, y + 3 + READOUT_LINE * (i + .5)));
+  c.restore();
+}
+
 /** 用 rgba 写不同透明度的同色：'#rrggbb' → 'rgba(r,g,b,a)' */
 function alpha(hex: string, a: number): string {
   const n = parseInt(hex.slice(1), 16);
@@ -111,10 +161,17 @@ class AxisView implements ISeriesPrimitiveAxisView {
   private _coord: () => number | null;
   private _text: () => string;
   private _color: string;
-  constructor(coord: () => number | null, text: () => string, color: string) {
-    this._coord = coord; this._text = text; this._color = color;
+  private _limit: () => number;
+  /** limit=这根轴的长度（价格轴取画布高、时间轴取画布宽） */
+  constructor(coord: () => number | null, text: () => string, color: string, limit: () => number) {
+    this._coord = coord; this._text = text; this._color = color; this._limit = limit;
   }
-  coordinate() { return this._coord() ?? -1000; }   // 算不出就丢到画布外，等价于不显示
+  coordinate() { return this._coord() ?? -1000; }
+  /** 锚点不在可视范围就不显示：坐标丢到画布外不管用，LWC 会把标签挪回轴的边缘贴着 */
+  visible() {
+    const c = this._coord();
+    return c !== null && c >= 0 && c <= this._limit();
+  }
   text() { return this._text(); }
   textColor() { return '#fff'; }
   backColor() { return this._color; }
@@ -127,8 +184,9 @@ class PaneRenderer implements IPrimitivePaneRenderer {
   constructor(layer: DrawingLayer) { this._layer = layer; }
 
   draw(target: CanvasRenderingTarget2D) {
+    const L = this._layer;
+    target.useBitmapCoordinateSpace(s => { L.hpr = s.horizontalPixelRatio; L.vpr = s.verticalPixelRatio; });
     target.useMediaCoordinateSpace(({ context: c, mediaSize }) => {
-      const L = this._layer;
       L.width = mediaSize.width;
       L.height = mediaSize.height;
       c.save();
@@ -185,9 +243,12 @@ class PaneRenderer implements IPrimitivePaneRenderer {
 
   private _one(c: CanvasRenderingContext2D, d: Drawing, sel: boolean, preview: boolean) {
     const L = this._layer;
-    c.setLineDash(preview ? [5, 4] : []);           // 未落定的画虚线，跟已有图形区分
-    c.lineWidth = sel ? 2 : 1.5;
+    if (d.id === L.editingId) return;               // 正在改字的文字标注：输入框盖在原处，底下别再画一份
+    // 选中不加粗，选中看手柄；未落定的画虚线，跟已有图形区分
+    c.lineWidth = d.width ?? 1;
+    c.setLineDash(preview ? [5, 4] : dashPattern(d.dash, c.lineWidth));
     c.strokeStyle = d.color;
+    c.fillStyle = d.color;
 
     if (d.kind === 'hline') { this._hline(c, d, sel); return; }
     if (d.kind === 'vline') { this._vline(c, d, sel); return; }
@@ -199,13 +260,16 @@ class PaneRenderer implements IPrimitivePaneRenderer {
     switch (d.kind) {
       case 'trend': this._trend(c, d, p, sel); break;
       case 'ray': this._ray(c, d, p, sel); break;
+      case 'hray': this._hray(c, d, p, sel); break;
+      case 'arrow': this._arrow(c, d, p, sel); break;
       case 'channel': this._channel(c, d, p, sel); break;
       case 'rect': this._rect(c, d, p, sel); break;
       case 'fib': this._fib(c, d, p, sel); break;
+      case 'fibext': this._fibext(c, d, p, sel); break;
       case 'long':
       case 'short': this._position(c, d, p, sel); break;
       case 'range': this._range(c, d, p, sel); break;
-      default: this._text(c, d, p[0], sel);
+      case 'text': this._text(c, d, p[0], sel); break;
     }
   }
 
@@ -228,8 +292,11 @@ class PaneRenderer implements IPrimitivePaneRenderer {
 
   private _hline(c: CanvasRenderingContext2D, d: Drawing, sel: boolean) {
     const L = this._layer;
-    const y = L.ctx.series.priceToCoordinate(d.pts[0].p);
-    if (y === null) return;
+    const raw = L.ctx.series.priceToCoordinate(d.pts[0].p);
+    if (raw === null) return;
+    const w = d.width ?? 1;
+    const y = crisp(raw, L.vpr, w);
+    c.lineWidth = hairPx(L.vpr, w) / L.vpr;
     seg(c, { x: 0, y }, { x: L.width, y });
     // 手柄画在创建时点的那一格，给用户一个"这条线是我在这儿拉的"的锚
     if (!sel) return;
@@ -241,7 +308,10 @@ class PaneRenderer implements IPrimitivePaneRenderer {
     const L = this._layer;
     const a = anchorToPoint(d.pts[0], L.ctx);
     if (!a) return;
-    seg(c, { x: a.x, y: 0 }, { x: a.x, y: L.height });
+    const w = d.width ?? 1;
+    const x = crisp(a.x, L.hpr, w);
+    c.lineWidth = hairPx(L.hpr, w) / L.hpr;
+    seg(c, { x, y: 0 }, { x, y: L.height });
     if (sel) this._handles(c, d.color, a);
   }
 
@@ -257,7 +327,7 @@ class PaneRenderer implements IPrimitivePaneRenderer {
       if (q) {
         const [q0, q1] = q;
         c.save();
-        c.fillStyle = AREA_FILL;
+        c.fillStyle = alpha(d.color, .08);
         c.beginPath();
         c.moveTo(p[0].x, p[0].y); c.lineTo(p[1].x, p[1].y); c.lineTo(q1.x, q1.y); c.lineTo(q0.x, q0.y);
         c.closePath();
@@ -274,12 +344,16 @@ class PaneRenderer implements IPrimitivePaneRenderer {
     if (sel) this._handles(c, d.color, ...p);
   }
 
+  /** 矩形：边默认 1px（选中也不加粗，选中看手柄），四条边对齐物理像素；底色跟边同色调淡 */
   private _rect(c: CanvasRenderingContext2D, d: Drawing, p: Pt[], sel: boolean) {
-    const x = Math.min(p[0].x, p[1].x), y = Math.min(p[0].y, p[1].y);
-    const w = Math.abs(p[1].x - p[0].x), h = Math.abs(p[1].y - p[0].y);
-    c.fillStyle = AREA_FILL;
-    c.fillRect(x, y, w, h);
-    c.strokeRect(x, y, w, h);
+    const L = this._layer;
+    const w = d.width ?? 1;
+    const x0 = crisp(Math.min(p[0].x, p[1].x), L.hpr, w), x1 = crisp(Math.max(p[0].x, p[1].x), L.hpr, w);
+    const y0 = crisp(Math.min(p[0].y, p[1].y), L.vpr, w), y1 = crisp(Math.max(p[0].y, p[1].y), L.vpr, w);
+    c.fillStyle = alpha(d.color, .08);
+    c.fillRect(x0, y0, x1 - x0, y1 - y0);
+    c.lineWidth = hairPx(L.hpr, w) / L.hpr;
+    c.strokeRect(x0, y0, x1 - x0, y1 - y0);
     if (sel) this._handles(c, d.color, p[0], p[1]);
   }
 
@@ -290,18 +364,43 @@ class PaneRenderer implements IPrimitivePaneRenderer {
    */
   private _fib(c: CanvasRenderingContext2D, d: Drawing, p: Pt[], sel: boolean) {
     const L = this._layer;
-    const p0 = d.pts[0].p, p1 = d.pts[1].p;
-    const x0 = Math.min(p[0].x, p[1].x), x1 = L.width;
-    const ys: (number | null)[] = FIB_LEVELS.map(lv => L.ctx.series.priceToCoordinate(p0 + (p1 - p0) * lv));
+    const x0 = Math.min(p[0].x, p[1].x);
+    const prices = fibPrices(d);
 
     // 0.382~0.618 黄金区间淡填充：看盘时最常盯的就是这一段
-    const gA = ys[2], gB = ys[4];
+    const gA = L.ctx.series.priceToCoordinate(prices[2]), gB = L.ctx.series.priceToCoordinate(prices[4]);
     if (gA !== null && gB !== null) {
       c.fillStyle = 'rgba(8,153,129,.07)';
-      c.fillRect(x0, Math.min(gA, gB), x1 - x0, Math.abs(gB - gA));
+      c.fillRect(x0, Math.min(gA, gB), L.width - x0, Math.abs(gB - gA));
     }
+    this._levels(c, x0, prices, FIB_LEVELS, FIB_COLORS, sel);
+    if (sel) this._handles(c, d.color, p[0], p[1]);
+  }
 
-    // 相邻档挤在一起就只画线不画字，否则七个标签会互相盖住
+  /**
+   * 斐波扩展（趋势型）：p0→p1 是一段趋势，p2 是回撤落点，找止盈目标用。
+   * 三点连一条虚线折线示意走势，档位线从 p2 往右延到图边；落第三点之前只有折线
+   */
+  private _fibext(c: CanvasRenderingContext2D, d: Drawing, p: Pt[], sel: boolean) {
+    c.save();
+    c.setLineDash([4, 4]);
+    c.lineWidth = 1;
+    c.strokeStyle = FIBEXT_COLORS[0];
+    seg(c, p[0], p[1]);
+    if (p.length >= 3) seg(c, p[1], p[2]);
+    c.restore();
+    if (p.length >= 3) this._levels(c, p[2].x, fibextPrices(d), FIBEXT_LEVELS, FIBEXT_COLORS, sel);
+    if (sel) this._handles(c, d.color, ...p);
+  }
+
+  /**
+   * 斐波档位线（回撤/扩展共用）：各档价已在价格空间算好，从 x0 往右延到图边，左端挂"档位% 价格"。
+   * 相邻档挤在一起就只画线不画字（选中时照画），不然一堆标签会互相盖住
+   */
+  private _levels(c: CanvasRenderingContext2D, x0: number, prices: number[], levels: readonly number[],
+                  colors: string[], sel: boolean) {
+    const L = this._layer;
+    const ys: (number | null)[] = prices.map(pr => L.ctx.series.priceToCoordinate(pr));
     const valid = ys.filter((y): y is number => y !== null).sort((a, b) => a - b);
     const gap = valid.length < 2 ? Infinity
       : valid.slice(1).reduce((m, y, i) => Math.min(m, y - valid[i]), Infinity);
@@ -310,14 +409,28 @@ class PaneRenderer implements IPrimitivePaneRenderer {
     c.lineWidth = sel ? 1.6 : 1.1;
     ys.forEach((y, i) => {
       if (y === null) return;
-      c.strokeStyle = FIB_COLORS[i];
-      seg(c, { x: x0, y }, { x: x1, y });
+      c.strokeStyle = colors[i];
+      seg(c, { x: x0, y }, { x: L.width, y });
+      // 起点滚出屏幕左边时标签贴左缘，别跟着跑到屏外
       if (showLabel) {
-        const price = p0 + (p1 - p0) * FIB_LEVELS[i];
-        chip(c, x0 + 4, y - 9, `${(FIB_LEVELS[i] * 100).toFixed(1)}% ${price.toFixed(L.opts.decimals)}`, FIB_COLORS[i]);
+        chip(c, Math.max(x0, 0) + 4, y - 9, `${(levels[i] * 100).toFixed(1)}% ${prices[i].toFixed(L.opts.decimals)}`, colors[i]);
       }
     });
+  }
 
+  /** 水平射线：从锚点那根往右一直到图边（水平线是贯穿全图的），标某根起的支撑压力常用 */
+  private _hray(c: CanvasRenderingContext2D, d: Drawing, p: Pt[], sel: boolean) {
+    const L = this._layer;
+    const w = d.width ?? 1;
+    const y = crisp(p[0].y, L.vpr, w);
+    c.lineWidth = hairPx(L.vpr, w) / L.vpr;
+    seg(c, { x: p[0].x, y }, { x: L.width, y });
+    if (sel) this._handles(c, d.color, p[0]);
+  }
+
+  /** 箭头：p0 指向 p1，箭头大小跟着线宽走 */
+  private _arrow(c: CanvasRenderingContext2D, d: Drawing, p: Pt[], sel: boolean) {
+    arrow(c, p[0], p[1], 6 + 3 * (d.width ?? 1));
     if (sel) this._handles(c, d.color, p[0], p[1]);
   }
 
@@ -360,26 +473,51 @@ class PaneRenderer implements IPrimitivePaneRenderer {
     if (sel) this._handles(c, d.color, p[0], p[1], p[2]);
   }
 
-  /** 价格区间：虚线框 + 一行读数（价差/涨跌幅/根数/时长），量一段行情用 */
+  /**
+   * 价格区间（量一段行情，从第一点量到第二点）：淡底框 + 竖横两根量尺，箭头指向终点；
+   * 实底读数框挂在终点那一侧（涨挂框上、跌挂框下），收在图内不被裁。
+   * 颜色按方向走（涨蓝跌红，同 TradingView），一眼看出量的是涨还是跌
+   */
   private _range(c: CanvasRenderingContext2D, d: Drawing, p: Pt[], sel: boolean) {
     const L = this._layer;
-    const x = Math.min(p[0].x, p[1].x), y = Math.min(p[0].y, p[1].y);
-    const w = Math.abs(p[1].x - p[0].x), h = Math.abs(p[1].y - p[0].y);
-    c.save();
-    c.setLineDash([4, 3]);
-    c.fillStyle = AREA_FILL;
-    c.fillRect(x, y, w, h);
-    c.strokeRect(x, y, w, h);
-    c.restore();
     const [a, b] = d.pts;
+    const color = drawColor(d);
+    const x0 = crisp(Math.min(p[0].x, p[1].x), L.hpr), x1 = crisp(Math.max(p[0].x, p[1].x), L.hpr);
+    const y0 = crisp(Math.min(p[0].y, p[1].y), L.vpr), y1 = crisp(Math.max(p[0].y, p[1].y), L.vpr);
+    c.save();
+    c.setLineDash([]);
+    c.fillStyle = alpha(color, .12);
+    c.fillRect(x0, y0, x1 - x0, y1 - y0);
+    c.strokeStyle = color;
+    c.fillStyle = color;
+    c.lineWidth = hairPx(L.hpr) / L.hpr;
+    // 框太扁/太窄就不画那根量尺，箭头会挤成一团
+    const mx = crisp((p[0].x + p[1].x) / 2, L.hpr), my = crisp((p[0].y + p[1].y) / 2, L.vpr);
+    if (y1 - y0 >= RANGE_RULER_MIN) arrow(c, { x: mx, y: p[0].y }, { x: mx, y: p[1].y }, 7);
+    if (x1 - x0 >= RANGE_RULER_MIN) arrow(c, { x: p[0].x, y: my }, { x: p[1].x, y: my }, 7);
+    c.restore();
+
+    // 区间整个滚出画面就不挂读数框：框会被夹回图边贴着，还点得中一个看不见的区间
+    if (x1 < 0 || x0 > L.width || y1 < 0 || y0 > L.height) {
+      L.textBoxes.delete(d.id);
+      if (sel) this._handles(c, color, p[0], p[1]);
+      return;
+    }
     const dp = b.p - a.p;
     const l0 = timeToLogical(a.t, L.ctx), l1 = timeToLogical(b.t, L.ctx);
     const bars = l0 !== null && l1 !== null ? Math.abs(Math.round(l1 - l0)) : 0;
     const sign = dp >= 0 ? '+' : '';
-    const text = `${sign}${dp.toFixed(L.opts.decimals)} (${sign}${a.p ? (dp / a.p * 100).toFixed(2) : '0.00'}%)`
-      + ` · ${i18n.t('market:draw.bars', { count: bars })} · ${fmtDuration(b.t - a.t)}`;
-    chip(c, x + w / 2, y - 10, text, d.color, 'center');
-    if (sel) this._handles(c, d.color, p[0], p[1]);
+    const lines = [
+      `${sign}${dp.toFixed(L.opts.decimals)} (${sign}${a.p ? (dp / a.p * 100).toFixed(2) : '0.00'}%)`,
+      `${i18n.t('market:draw.bars', { count: bars })} · ${fmtDuration(b.t - a.t)}`,
+    ];
+    const { w, h } = readoutSize(c, lines);
+    const gap = 6;
+    const left = Math.min(Math.max((x0 + x1) / 2 - w / 2, 2), L.width - w - 2);
+    const top = Math.min(Math.max(p[1].y <= p[0].y ? y0 - gap - h : y1 + gap, 2), L.height - h - 2);
+    readout(c, lines, color, left, top);
+    L.textBoxes.set(d.id, { x: left, y: top, w, h });   // 读数框在框外，点它也要能选中
+    if (sel) this._handles(c, color, p[0], p[1]);
   }
 
   /** 文字标注：锚点一个实心点，右侧接文本框。框的实测尺寸缓存下来给命中判定用 */
@@ -420,18 +558,38 @@ class PaneRenderer implements IPrimitivePaneRenderer {
 }
 
 /**
- * 通道第二条线的两端：过 p2、方向同 p0→p1，裁到 [x0,x1]。
- * 基线竖直（dx=0）时改按 y 裁——否则除零。
+ * 通道第二条线的两端：基线整条上下平移到过 p2，时间跨度跟基线一样（同 TradingView）。
+ * 不能按线陡不陡换算法：缩放时陡缓会翻转，第二条线就跳到别的时间段上去了。
+ * 基线两点在同一根上（dx=0）没法上下平移，只能左右平移。
  */
 function channelPair(p: Pt[]): [Pt, Pt] | null {
   const dx = p[1].x - p[0].x, dy = p[1].y - p[0].y;
   if (dx === 0 && dy === 0) return null;
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    const s0 = (p[0].x - p[2].x) / dx, s1 = (p[1].x - p[2].x) / dx;
-    return [{ x: p[0].x, y: p[2].y + s0 * dy }, { x: p[1].x, y: p[2].y + s1 * dy }];
+  if (dx !== 0) {
+    // p2 那一列上基线的高度，跟 p2 的差就是上下平移量
+    const off = p[2].y - (p[0].y + (p[2].x - p[0].x) / dx * dy);
+    return [{ x: p[0].x, y: p[0].y + off }, { x: p[1].x, y: p[1].y + off }];
   }
-  const s0 = (p[0].y - p[2].y) / dy, s1 = (p[1].y - p[2].y) / dy;
-  return [{ x: p[2].x + s0 * dx, y: p[0].y }, { x: p[2].x + s1 * dx, y: p[1].y }];
+  const off = p[2].x - p[0].x;
+  return [{ x: p[0].x + off, y: p[0].y }, { x: p[1].x + off, y: p[1].y }];
+}
+
+/** 图形实际画出来的主色：价格区间按涨跌走（涨蓝跌红），其余就是存的颜色。轴标签跟它一致 */
+function drawColor(d: Drawing): string {
+  if (d.kind === 'range') return d.pts[1].p >= d.pts[0].p ? DRAW_COLOR : LOSS_COLOR;
+  return d.color;
+}
+
+/** 斐波回撤各档价：0 端是第一点、1 端是第二点，在价格空间插值（对数价格轴下跟像素插值不等价） */
+function fibPrices(d: Drawing): number[] {
+  const p0 = d.pts[0].p, p1 = d.pts[1].p;
+  return FIB_LEVELS.map(lv => p0 + (p1 - p0) * lv);
+}
+
+/** 斐波扩展各档价 = 回撤落点 + 趋势幅度 × 档位 */
+function fibextPrices(d: Drawing): number[] {
+  const [a, b, r] = d.pts;
+  return FIBEXT_LEVELS.map(lv => r.p + (b.p - a.p) * lv);
 }
 
 class PaneView implements IPrimitivePaneView {
@@ -459,11 +617,16 @@ export class DrawingLayer implements ISeriesPrimitive<Time> {
   interactive = true;
   /** 隐藏全部画线（渲染/命中/轴标签一起藏）；数据不动，眼睛开关切回来原样恢复 */
   hidden = false;
+  /** 正在改字的文字标注 id：输入框盖在它原来的位置上，画布上先不画它 */
+  editingId: string | null = null;
 
   /** 最近一次绘制时的画布尺寸，水平线/垂直线/射线延伸到边缘要用 */
   width = 0;
   height = 0;
-  /** 文字框实测矩形（id → 矩形），命中判定读它；中文宽度靠估算会差很多 */
+  /** 最近一次绘制时的物理像素比（屏幕缩放 125% 就是 1.25），细线对齐像素要用 */
+  hpr = 1;
+  vpr = 1;
+  /** 文字框、价格区间读数框的实测矩形（id → 矩形），命中判定读它；中文宽度靠估算会差很多 */
   textBoxes = new Map<string, { x: number; y: number; w: number; h: number }>();
 
   private _views: IPrimitivePaneView[];
@@ -524,10 +687,14 @@ export class DrawingLayer implements ISeriesPrimitive<Time> {
       const whole = { id: d.id, pt: -1 };
       switch (d.kind) {
         case 'trend':
+        case 'arrow':
           if (near(p[0], p[1])) return whole;
           break;
         case 'ray':
           if (near(p[0], rayEnd(p[0], p[1], this.width, this.height))) return whole;
+          break;
+        case 'hray':
+          if (Math.abs(y - p[0].y) <= HIT_LINE && x >= p[0].x - HIT_LINE) return whole;
           break;
         case 'channel': {
           if (near(p[0], p[1])) return whole;
@@ -540,6 +707,8 @@ export class DrawingLayer implements ISeriesPrimitive<Time> {
           const x0 = Math.min(p[0].x, p[1].x) - HIT_LINE, x1 = Math.max(p[0].x, p[1].x) + HIT_LINE;
           const y0 = Math.min(p[0].y, p[1].y) - HIT_LINE, y1 = Math.max(p[0].y, p[1].y) + HIT_LINE;
           if (x >= x0 && x <= x1 && y >= y0 && y <= y1) return whole;
+          const b = d.kind === 'range' ? this.textBoxes.get(d.id) : undefined;
+          if (b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return whole;
           break;
         }
         case 'long':
@@ -552,14 +721,12 @@ export class DrawingLayer implements ISeriesPrimitive<Time> {
         }
         case 'fib': {
           const x0 = Math.min(p[0].x, p[1].x);
-          if (x >= x0 - HIT_LINE && x <= this.width) {
-            const p0 = d.pts[0].p, p1 = d.pts[1].p;
-            const hit = FIB_LEVELS.some(lv => {
-              const ly = this.ctx.series.priceToCoordinate(p0 + (p1 - p0) * lv);
-              return ly !== null && Math.abs(y - ly) <= HIT_LINE;
-            });
-            if (hit) return whole;
-          }
+          if (x >= x0 - HIT_LINE && x <= this.width && this._onLevel(y, fibPrices(d))) return whole;
+          break;
+        }
+        case 'fibext': {
+          if (near(p[0], p[1]) || (p.length >= 3 && near(p[1], p[2]))) return whole;
+          if (p.length >= 3 && x >= p[2].x - HIT_LINE && x <= this.width && this._onLevel(y, fibextPrices(d))) return whole;
           break;
         }
         default: {
@@ -571,6 +738,14 @@ export class DrawingLayer implements ISeriesPrimitive<Time> {
       }
     }
     return null;
+  }
+
+  /** 纵坐标 y 落没落在某一档的线上（斐波回撤/扩展用） */
+  private _onLevel(y: number, prices: number[]): boolean {
+    return prices.some(pr => {
+      const ly = this.ctx.series.priceToCoordinate(pr);
+      return ly !== null && Math.abs(y - ly) <= HIT_LINE;
+    });
   }
 
   hitTest(x: number, y: number): PrimitiveHoveredItem | null {
@@ -588,26 +763,29 @@ export class DrawingLayer implements ISeriesPrimitive<Time> {
   // ---- 轴标签 ----
 
   /**
-   * 价格轴：水平线常显；选中的图形把各锚点价挂上去方便读准数（斐波七档、仓位三价各按自己的色）；
+   * 价格轴：水平线/水平射线常显；选中的图形把各锚点价挂上去方便读准数（斐波各档、仓位三价各按自己的色）；
    * 触屏落点十字常显交叉点价格。
    */
   priceAxisViews(): readonly ISeriesPrimitiveAxisView[] {
     const items: { p: number; color: string }[] = [];
     for (const d of this.hidden ? [] : this.drawings) {
-      if (d.kind === 'hline') items.push({ p: d.pts[0].p, color: d.color });
+      if (d.kind === 'hline' || d.kind === 'hray') items.push({ p: d.pts[0].p, color: d.color });
       else if (d.id !== this.selectedId) continue;
       else if (d.kind === 'fib') {
-        const p0 = d.pts[0].p, p1 = d.pts[1].p;
-        FIB_LEVELS.forEach((lv, i) => items.push({ p: p0 + (p1 - p0) * lv, color: FIB_COLORS[i] }));
+        fibPrices(d).forEach((p, i) => items.push({ p, color: FIB_COLORS[i] }));
+      } else if (d.kind === 'fibext') {
+        fibextPrices(d).forEach((p, i) => items.push({ p, color: FIBEXT_COLORS[i] }));
       } else if (d.kind === 'long' || d.kind === 'short') {
         d.pts.forEach((a, i) => items.push({ p: a.p, color: i === 1 ? LOSS_COLOR : i === 2 ? GAIN_COLOR : d.color }));
       } else if (d.kind !== 'vline' && d.kind !== 'text') {
-        d.pts.forEach(a => items.push({ p: a.p, color: d.color }));
+        const color = drawColor(d);
+        d.pts.forEach(a => items.push({ p: a.p, color }));
       }
     }
     const specs = items.map(i => ({
       key: `${i.p}|${i.color}`,
-      make: () => new AxisView(() => this.ctx.series.priceToCoordinate(i.p), () => i.p.toFixed(this.opts.decimals), i.color),
+      make: () => new AxisView(() => this.ctx.series.priceToCoordinate(i.p), () => i.p.toFixed(this.opts.decimals), i.color,
+        () => this.height),
     }));
     if (this.cursor) {
       // 十字线的价读数随手指每帧变：坐标/文案都走 getter 现算，视图对象本身不用重建
@@ -616,7 +794,7 @@ export class DrawingLayer implements ISeriesPrimitive<Time> {
         make: () => new AxisView(
           () => this.cursor?.y ?? null,
           () => { const p = this.cursor ? this.ctx.series.coordinateToPrice(this.cursor.y) : null; return p === null ? '' : p.toFixed(this.opts.decimals); },
-          '#2962ff'),
+          '#2962ff', () => this.height),
       });
     }
     return this._sync(specs, '_priceViews', '_priceSig');
@@ -629,14 +807,15 @@ export class DrawingLayer implements ISeriesPrimitive<Time> {
       if (d.kind === 'vline') items.push({ a: d.pts[0], color: d.color });
       else if (d.id === this.selectedId && d.kind !== 'hline' && d.kind !== 'text') {
         // 仓位的止盈点 t 恒等于止损点 t，去重
-        for (const a of d.pts) if (!items.some(i => i.a.t === a.t && i.color === d.color)) items.push({ a, color: d.color });
+        const color = drawColor(d);
+        for (const a of d.pts) if (!items.some(i => i.a.t === a.t && i.color === color)) items.push({ a, color });
       }
     }
     const specs = items.map(i => ({
       key: `${i.a.t}|${i.color}`,
       make: () => new AxisView(
         () => { const q = anchorToPoint(i.a, this.ctx); return q ? q.x : null; },
-        () => this.opts.fmtTime(i.a.t), i.color,
+        () => this.opts.fmtTime(i.a.t), i.color, () => this.width,
       ),
     }));
     if (this.cursor) {
@@ -645,7 +824,7 @@ export class DrawingLayer implements ISeriesPrimitive<Time> {
         make: () => new AxisView(
           () => this.cursor?.x ?? null,
           () => { const t = this.cursor ? coordToTime(this.cursor.x, this.ctx) : null; return t === null ? '' : this.opts.fmtTime(t); },
-          '#2962ff'),
+          '#2962ff', () => this.width),
       });
     }
     return this._sync(specs, '_timeViews', '_timeSig');
