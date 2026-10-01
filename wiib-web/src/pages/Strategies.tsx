@@ -9,7 +9,7 @@ import { strategyAccountApi } from '../api';
 import { useUserStore } from '../stores/userStore';
 import { useToast } from '../components/ui/use-toast';
 import { EquityChart } from '../components/EquityChart';
-import { cn, fmtDateTime, fmtNum } from '../lib/utils';
+import { cn, fmtDateTime, fmtNum, parseServerTime } from '../lib/utils';
 import type { FuturesPosition, StrategyAccountView, StrategyClosedPosition, StrategySignalState } from '../types';
 import type { TnEquityPoint } from '../types/testnet';
 import { DEFAULT_ACCENT, strategyDisplay } from '../lib/strategyCatalog';
@@ -165,7 +165,7 @@ function StrategyColumn({ view, signals, canClose, closingId, onClose }: {
     // 前缀和写法：闭包内累加变量违反 react-hooks/immutability（条数少，O(n²) 无所谓）
     const pnls = asc.map(p => p.closedPnl ?? 0);
     return asc.map((p, i) => ({
-      time: new Date(p.updatedAt).getTime(),
+      time: parseServerTime(p.updatedAt).getTime(),
       cumPnl: pnls.slice(0, i + 1).reduce((a, b) => a + b, 0),
     }));
   }, [view.closedPositions]);

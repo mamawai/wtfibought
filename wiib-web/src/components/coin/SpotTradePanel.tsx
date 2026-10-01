@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cryptoOrderApi } from '../../api';
 import { useUserStore } from '../../stores/userStore';
+import { useCrossAccount } from '../../hooks/useCrossAccount';
 import { useDiscountBuff } from '../../hooks/useDiscountBuff';
 import { useToast } from '../ui/use-toast';
 import { FuturesActionButton } from '../FuturesActionButton';
@@ -13,7 +14,7 @@ import type { CryptoPosition } from '../../types';
 import { TradeModeSwitch } from './TradeModeSwitch';
 import { NumInput, PctRow } from './TradeFields';
 import { useQuantityAnimation } from './useQuantityAnimation';
-import { COMMISSION_RATE, POSITION_PCTS, SPOT_LEVERAGE_OPTIONS, floorToStep } from './futuresMath';
+import { COMMISSION_RATE, POSITION_PCTS, SPOT_LEVERAGE_OPTIONS, calcMaxSpotBuyQty, calcSpotOrderEstimate, floorToStep, getStepPrecision } from './futuresMath';
 
 const SPOT_MAX_LEVERAGE = SPOT_LEVERAGE_OPTIONS[SPOT_LEVERAGE_OPTIONS.length - 1];
 
@@ -36,6 +37,8 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
   const PRICE_STEP_TEXT = getCoinPriceStep(symbol).toFixed(getCoinPriceDecimals(symbol));
   const { toast } = useToast();
   const user = useUserStore(s => s.user);
+  // 买入能花的钱 = min(全仓可用, 余额)：后端买入先过全仓可用这道闸再扣余额
+  const { spendable } = useCrossAccount();
 
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
   const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET');
@@ -62,13 +65,19 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
     return () => window.clearTimeout(timer);
   }, [actionSuccess]);
 
-  // USDT 预算 ↔ 币数量的换算系数：现金占用 = 数量 × 价格 × (1 + 手续费率 × 杠杆)。
-  // 与仓位 % 按钮同一公式（杠杆只在市价买入生效；限价买不支持杠杆）
-  const unitLv = orderType === 'MARKET' ? leverage : 1;
-  const unitPrice = orderType === 'LIMIT' ? (parseFloat(limitPrice) || 0) : currentPrice;
-  const unitFactor = unitPrice * (1 + COMMISSION_RATE * unitLv);
   const isUsdtInput = side === 'BUY' && buyUnit === 'USDT';
   const isBuyMarket = side === 'BUY' && orderType === 'MARKET';
+  // 生效杠杆：只有市价买入吃杠杆，限价买、卖出都按 1x
+  const effLeverage = isBuyMarket ? leverage : 1;
+  // USDT 预算 ↔ 币数量的换算系数（切单位时用）：现金占用 = 数量 × 价格 × (1 + 手续费率 × 杠杆)
+  const unitPrice = orderType === 'LIMIT' ? (parseFloat(limitPrice) || 0) : currentPrice;
+  const unitFactor = unitPrice * (1 + COMMISSION_RATE * effLeverage);
+  /** USDT 预算 → 付得起的最大币数（未乘杠杆的那份），现金占用按后端取整口径算 */
+  const usdtToQty = (usdt: number) => unitPrice > 0 ? calcMaxSpotBuyQty(usdt, unitPrice, effLeverage, MIN_QTY) / effLeverage : 0;
+  /** 实际提交的下单量：×生效杠杆后按步长向下对齐；全量卖出保留精确持仓量（后端豁免步长，尘埃能清干净） */
+  const toOrderQty = (qty: number) => side === 'SELL' && qty === (position?.quantity ?? -1)
+    ? qty
+    : floorToStep(qty * effLeverage, filter.stepSize);
 
   /** 切换单位时把已输入的值按当前价换算过去，不清空 */
   const switchUnit = (u: 'COIN' | 'USDT') => {
@@ -88,18 +97,15 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
     // USDT 模式：输入是总花费预算（含手续费），先按当前价换算成数量，再走原有校验与提交。
     // 市价单实际按服务端提交时刻的价成交，与页面价的抖动差和仓位 % 按钮同级，模拟盘可接受
     const input = parseFloat(quantity);
-    const qty = isUsdtInput ? (unitFactor > 0 ? (input || 0) / unitFactor : 0) : input;
+    const qty = isUsdtInput ? usdtToQty(input || 0) : input;
     if (!qty || qty < MIN_QTY) {
       toast(isUsdtInput
         ? t('toast.amountTooSmall', { qty: MIN_QTY, unit: cfg.name })
         : t('toast.minQtySpot', { qty: MIN_QTY }), 'error');
       return;
     }
-    // ×杠杆会产生浮点尾差，按步长向下对齐；全量卖出保留精确持仓量（后端豁免步长，尘埃能清干净）
-    const isFullSell = side === 'SELL' && qty === (position?.quantity ?? -1);
     const price = orderType === 'LIMIT' ? parseFloat(limitPrice) : currentPrice;
-    let actualQty = isBuyMarket && leverage > 1 ? qty * leverage : qty;
-    if (!isFullSell) actualQty = floorToStep(actualQty, filter.stepSize);
+    const actualQty = toOrderQty(qty);
     // 买入需过最小名义额（对齐Binance；卖出为减持豁免）
     if (side === 'BUY' && price > 0 && actualQty * price < filter.minNotional) {
       toast(t('toast.minNotional', { amount: filter.minNotional }), 'error'); return;
@@ -111,7 +117,7 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
         quantity: actualQty,
         orderType,
         ...(orderType === 'LIMIT' ? { limitPrice: parseFloat(limitPrice) } : {}),
-        ...(isBuyMarket && leverage > 1 ? { leverageMultiple: leverage } : {}),
+        ...(effLeverage > 1 ? { leverageMultiple: effLeverage } : {}),
         ...(isBuyMarket && useBuff && discountBuff ? { useBuffId: discountBuff.id } : {}),
       };
       if (side === 'BUY') {
@@ -123,7 +129,8 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
       }
       setActionSuccess(true);
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-      if (useBuff && discountBuff) { setDiscountBuff(null); setUseBuff(false); }
+      // 券只有市价买入才真用掉了（限价买/卖出请求里不带券）
+      if (isBuyMarket && useBuff && discountBuff) { setDiscountBuff(null); setUseBuff(false); }
       setQuantity(isUsdtInput ? '' : String(MIN_QTY));
       setLimitPrice('');
       setLeverage(1);
@@ -133,31 +140,28 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
     } finally { setSubmitting(false); }
   };
 
-  // 预估金额。USDT 模式先把预算换算回数量，后面的估算全部照旧（合计会≈输入的预算，自证口径一致）
+  // 预估按实际提交的下单量算（已乘杠杆、按步长取整），取整同后端。USDT 模式先把预算换算回数量（合计不超过输入的预算）
   const inputNum = parseFloat(quantity) || 0;
-  const qtyNum = isUsdtInput ? (unitFactor > 0 ? inputNum / unitFactor : 0) : inputNum;
+  const qtyNum = isUsdtInput ? usdtToQty(inputNum) : inputNum;
+  const orderQty = toOrderQty(qtyNum);
   const priceForCalc = unitPrice;
-  const discountRate = useBuff && discountBuff && orderType === 'MARKET' ? Number(discountBuff.buffType.match(/DISCOUNT_(\d+)/)?.[1] ?? 100) / 100 : 1;
-  const leveragedQty = isBuyMarket && leverage > 1 ? qtyNum * leverage : qtyNum;
-  const estimatedAmount = leveragedQty * priceForCalc;
-  const marginAmount = qtyNum * priceForCalc; // 保证金部分
-  const estimatedCommission = estimatedAmount * COMMISSION_RATE;
+  // 折扣券只吃市价买入，卖出不打折
+  const discountRate = useBuff && discountBuff && isBuyMarket ? Number(discountBuff.buffType.match(/DISCOUNT_(\d+)/)?.[1] ?? 100) / 100 : 1;
+  const est = calcSpotOrderEstimate(orderQty, priceForCalc, effLeverage, discountRate);
 
-  /** 仓位 % 按钮的目标值：买入吃余额、卖出吃持仓；口径与提交一致 */
+  /** 仓位 % 按钮的目标值：买入吃可用（spendable）、卖出吃持仓；口径与提交一致 */
   const pctTarget = (pct: number) => {
     if (side === 'SELL') {
       // 卖出100%：精确全量（尘埃也能清干净，后端对全量卖豁免步长），不做步长取整
       const full = position?.quantity ?? 0;
       return pct >= 1 ? full : Math.max(MIN_QTY, floorToStep(full * pct, MIN_QTY));
     }
-    const balance = user?.balance ?? 0;
-    if (isUsdtInput) return Math.max(0, Number((balance * pct).toFixed(2)));
-    // 限价还没填价时退回现价，别让百分比按钮点了没反应
-    const factor = (unitPrice || currentPrice) * (1 + COMMISSION_RATE * unitLv);
-    if (!(factor > 0)) return 0;
-    const raw = (balance * pct) / factor;
-    const qty = Math.max(MIN_QTY, floorToStep(raw, MIN_QTY));
-    return qty <= MIN_QTY && raw < MIN_QTY ? MIN_QTY : qty;
+    const budget = (spendable ?? 0) * pct;
+    // USDT 模式填预算本身（向下取到分），换算成数量交给 usdtToQty
+    if (isUsdtInput) return Math.floor(budget * 100) / 100;
+    // 限价还没填价时退回现价，别让百分比按钮点了没反应。总量按后端口径付得起，再拆回未乘杠杆的那份
+    const total = calcMaxSpotBuyQty(budget, unitPrice || currentPrice, effLeverage, MIN_QTY);
+    return Math.max(MIN_QTY, floorToStep(total / effLeverage, MIN_QTY));
   };
   const activePct = inputNum > 0 && currentPrice > 0
     ? (POSITION_PCTS.find(p => Math.abs(pctTarget(p) - inputNum) < 1e-9) ?? null)
@@ -178,7 +182,7 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
         {user && (
           <span className="text-[12.5px] text-muted-foreground">
             {t('open.availLabel')}{' '}
-            <b className="num text-foreground font-semibold">{side === 'BUY' ? fmtNum(user.balance) : (position?.quantity ?? 0)}</b>{' '}
+            <b className="num text-foreground font-semibold">{side === 'BUY' ? fmtNum(spendable) : (position?.quantity ?? 0)}</b>{' '}
             {side === 'BUY' ? 'USDT' : cfg.name}
           </span>
         )}
@@ -270,37 +274,37 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
       )}
 
       {/* 预估 */}
-      {qtyNum > 0 && priceForCalc > 0 && (
+      {orderQty > 0 && priceForCalc > 0 && (
         <div className="num border-t border-foreground pt-1">
           {isUsdtInput && (
             <div className="kv py-[7px]">
-              <span className="k">{t('spot.estGet')}{unitLv > 1 ? ` ${t('spot.totalPosLev', { lev: unitLv })}` : ''}</span>
-              <span className="v">≈ {fmtNum(floorToStep(leveragedQty, filter.stepSize))} {cfg.name}</span>
+              <span className="k">{t('spot.estGet')}{effLeverage > 1 ? ` ${t('spot.totalPosLev', { lev: effLeverage })}` : ''}</span>
+              <span className="v">≈ {fmtNum(orderQty, getStepPrecision(filter.stepSize))} {cfg.name}</span>
             </div>
           )}
-          {side === 'BUY' && leverage > 1 && (
+          {effLeverage > 1 && (
             <div className="kv py-[7px]">
-              <span className="k">{t('spot.totalPos', { lev: leverage })}</span>
-              <span className="v">{fmtNum(estimatedAmount)}</span>
+              <span className="k">{t('spot.totalPos', { lev: effLeverage })}</span>
+              <span className="v">{fmtNum(est.amount)}</span>
             </div>
           )}
           {side === 'BUY' && (
             <div className="kv py-[7px]">
-              <span className="k">{leverage > 1 ? t('spot.margin') : t('spot.estCost')}</span>
+              <span className="k">{effLeverage > 1 ? t('spot.margin') : t('spot.estCost')}</span>
               <span className="v">
-                {useBuff && discountRate < 1 && <span className="line-through text-muted-foreground mr-1.5">{fmtNum(marginAmount)}</span>}
-                {fmtNum(marginAmount * discountRate)}
+                {discountRate < 1 && <span className="line-through text-muted-foreground mr-1.5">{fmtNum(est.fullAmount)}</span>}
+                {fmtNum(est.margin)}
               </span>
             </div>
           )}
           <div className="kv py-[7px]">
             <span className="k">{t('spot.fee')}</span>
-            <span className="v">{fmtNum(estimatedCommission * discountRate)}</span>
+            <span className="v">{fmtNum(est.commission)}</span>
           </div>
           <div className="kv py-[7px] border-b-0 text-[16px]">
             <span className="k">{side === 'BUY' ? t('spot.total') : t('spot.estProceeds')}</span>
             <span className="v text-[20px] font-bold [font-stretch:85%]">
-              {fmtNum(side === 'BUY' ? (marginAmount + estimatedCommission) * discountRate : marginAmount)} USDT
+              {fmtNum(side === 'BUY' ? est.margin + est.commission : est.amount - est.commission)} USDT
             </span>
           </div>
         </div>

@@ -16,7 +16,7 @@ import { CoinOrdersCard } from '../components/coin/CoinOrdersCard';
 import { MarketSessionBadge } from '../components/coin/MarketSessionBadge';
 import { WhaleBlock } from '../components/coin/WhaleBlock';
 import { LoginPrompt } from '../components/LoginPrompt';
-import { cn, fmtNum } from '../lib/utils';
+import { cn, fmtNum, fmtSignedUsd, parseServerTime } from '../lib/utils';
 import { COIN_MAP, getCoin, DEFAULT_SYMBOL, formatCoinPrice } from '../lib/coinConfig';
 import type { CryptoPosition, FuturesBracket, FuturesPosition } from '../types';
 
@@ -122,6 +122,11 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
     setFuturesPositionsKey(k => k + 1);
     setFuturesOrdersKey(k => k + 1);
   };
+  // 撤单：余额（含全仓可用，面板跟着 fetchUser 重拉）要刷；现货撤卖单还会把冻结的币退回持仓
+  const handleOrderCancelled = (kind: 'spot' | 'futures') => {
+    fetchUser();
+    if (kind === 'spot') fetchPosition();
+  };
 
   // 周期：图表顶栏切，记本地，下次进页沿用
   const [chartIv, setChartIv] = useState<ChartInterval>(() => {
@@ -143,7 +148,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
       setTradeMarks(page.records
         .filter(o => TERMINAL.has(o.status) && o.filledPrice != null)
         .map(o => ({
-          timeMs: new Date(o.createdAt).getTime(),
+          timeMs: parseServerTime(o.createdAt).getTime(),
           side: (o.orderSide === 'OPEN_LONG' || o.orderSide === 'CLOSE_SHORT') ? 'B' as const : 'S' as const,
           price: o.filledPrice as number,
           quantity: o.quantity,
@@ -236,7 +241,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
           </button>
 
           <div className="flex items-baseline gap-4 flex-wrap">
-            {/* data-reveal-icon：选币页飞过来的图标落在这儿（lib/coinReveal） */}
+            {/* data-reveal-icon：选币页的过渡层等它挂出来再整层淡出（lib/coinReveal） */}
             <span className="inline-flex items-center gap-3">
               <cfg.icon data-reveal-icon={symbol} className={cn('w-9 h-9 shrink-0', cfg.colorClass)} />
               <b className="cond text-[44px] font-bold leading-none">{symbol}</b>
@@ -344,30 +349,32 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
         <aside className="xl:col-span-4 flex flex-col gap-[18px]">
           {/* 现货持仓信息（两种模式都显示） */}
           {position && (position.quantity > 0 || position.frozenQuantity > 0) && (() => {
+            // 持有总量 = 可用 + 挂限价卖单冻结的，市值/盈亏按它算（同后端估值）；toFixed 抹掉浮点尾差
+            const heldQty = Number((position.quantity + position.frozenQuantity).toFixed(8));
             const pnlPct = position.avgCost > 0 && currentPrice > 0
               ? ((currentPrice - position.avgCost) / position.avgCost) * 100 : 0;
             const pnlAmount = currentPrice > 0
-              ? (currentPrice - position.avgCost) * position.quantity : 0;
+              ? (currentPrice - position.avgCost) * heldQty : 0;
             const isPnlUp = pnlPct >= 0;
             return (
               <div className="border-t-2 border-foreground pt-3.5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <b className="text-[16px] font-bold">{cfg.name}</b>
-                    <span className="num ml-2 text-[13px] font-semibold mute">{t('coin.units', { qty: position.quantity })}</span>
+                    <span className="num ml-2 text-[13px] font-semibold mute">{t('coin.units', { qty: heldQty })}</span>
                     {cfg.unitLabel && (
-                      <span className="ml-1.5 text-[12px] font-semibold wn">{t('coin.approxUnit', { value: (position.quantity * cfg.unitFactor!).toFixed(1), unit: cfg.unitLabel })}</span>
+                      <span className="ml-1.5 text-[12px] font-semibold wn">{t('coin.approxUnit', { value: (heldQty * cfg.unitFactor!).toFixed(1), unit: cfg.unitLabel })}</span>
                     )}
                   </div>
                   <div className={`num shrink-0 text-right ${isPnlUp ? 'up' : 'dn'}`}>
                     <div className="text-[16px] font-bold">{isPnlUp ? '+' : ''}{pnlPct.toFixed(2)}%</div>
-                    <div className="text-[12px] font-semibold">{isPnlUp ? '+' : ''}${fmtNum(pnlAmount)}</div>
+                    <div className="text-[12px] font-semibold">{fmtSignedUsd(pnlAmount)}</div>
                   </div>
                 </div>
                 <div className="num mt-3">
                   <div className="kv"><span className="k">{t('coin.avgCost')}</span><span className="v">${fmtPrice(position.avgCost)}</span></div>
                   <div className="kv"><span className="k">{t('coin.lastPrice')}</span><span className="v">${fmtPrice(currentPrice)}</span></div>
-                  <div className="kv"><span className="k">{t('coin.marketValue')}</span><span className="v">${fmtNum(currentPrice * position.quantity)}</span></div>
+                  <div className="kv"><span className="k">{t('coin.marketValue')}</span><span className="v">${fmtNum(currentPrice * heldQty)}</span></div>
                   {position.frozenQuantity > 0 && (
                     <div className="kv"><span className="k">{t('coin.frozen')}</span><span className="v wn">{position.frozenQuantity}</span></div>
                   )}
@@ -420,6 +427,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
           mode={mode}
           spotRefreshKey={spotOrdersKey}
           futuresRefreshKey={futuresOrdersKey}
+          onCancelled={handleOrderCancelled}
         />
       )}
     </div>

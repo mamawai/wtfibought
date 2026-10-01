@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RefreshCw } from 'lucide-react';
 import { cryptoOrderApi, futuresApi } from '../../api';
@@ -67,13 +67,15 @@ type OrderDetail = { kind: 'spot'; o: CryptoOrder } | { kind: 'futures'; o: Futu
 
 /**
  * 订单节：按模式显示现货/合约订单表（状态筛选 + 分页 + 撤单 + 详情）。
- * 父级成交后 bump 对应 refreshKey 触发回到第一页重拉。
+ * 父级成交后 bump 对应 refreshKey 触发回到第一页重拉；撤单成功调 onCancelled 让父级刷余额/持仓。
  */
-export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey }: {
+export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey, onCancelled }: {
   symbol: string;
   mode: 'spot' | 'futures';
   spotRefreshKey: number;
   futuresRefreshKey: number;
+  /** 撤单会解冻余额/持仓、释放全仓挂单占用 */
+  onCancelled?: (kind: 'spot' | 'futures') => void;
 }) {
   const { t } = useTranslation(['trade', 'common', 'market']);
   const { toast } = useToast();
@@ -109,27 +111,36 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
 
   const [detail, setDetail] = useState<OrderDetail | null>(null);
 
+  // 请求序号：翻页/筛选/成交刷新/撤单刷新可能叠着发，只认最后发出的那次
+  const spotSeqRef = useRef(0);
+  const futuresSeqRef = useRef(0);
+
   const fetchOrders = useCallback(async (status: string, page: number) => {
+    const seq = ++spotSeqRef.current;
     setOrdersLoading(true);
     try {
       const res = await cryptoOrderApi.list(status || undefined, page, 10, symbol) as unknown as PageResult<CryptoOrder>;
+      if (seq !== spotSeqRef.current) return;
       setOrders(res.records);
       setOrderPages(res.pages);
-    } catch { setOrders([]); }
-    finally { setOrdersLoading(false); }
+    } catch { if (seq === spotSeqRef.current) setOrders([]); }
+    finally { if (seq === spotSeqRef.current) setOrdersLoading(false); }
   }, [symbol]);
 
   const fetchFuturesOrders = useCallback(async (status: string, page: number) => {
+    const seq = ++futuresSeqRef.current;
     setFuturesOrdersLoading(true);
     try {
       const res = await futuresApi.orders(status || undefined, page, 10, symbol) as unknown as PageResult<FuturesOrder>;
+      if (seq !== futuresSeqRef.current) return;
       setFuturesOrders(res.records);
       setFuturesOrderPages(res.pages);
     } catch (e) {
+      if (seq !== futuresSeqRef.current) return;
       console.error('查询合约订单失败', e);
       setFuturesOrders([]);
     } finally {
-      setFuturesOrdersLoading(false);
+      if (seq === futuresSeqRef.current) setFuturesOrdersLoading(false);
     }
   }, [symbol]);
 
@@ -148,6 +159,7 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
       await cryptoOrderApi.cancel(orderId);
       toast(t('toast.cancelled'), 'success');
       fetchOrders(orderFilter, orderPage);
+      onCancelled?.('spot');
     } catch (e: unknown) {
       toast((e as Error).message || t('toast.cancelFailed'), 'error');
     }
@@ -158,6 +170,7 @@ export function CoinOrdersCard({ symbol, mode, spotRefreshKey, futuresRefreshKey
       await futuresApi.cancel(orderId);
       toast(t('toast.cancelled'), 'success');
       fetchFuturesOrders(futuresOrderFilter, futuresOrderPage);
+      onCancelled?.('futures');
     } catch (e: unknown) {
       toast((e as Error).message || t('toast.cancelFailed'), 'error');
     }

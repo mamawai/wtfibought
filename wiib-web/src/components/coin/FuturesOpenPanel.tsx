@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ChevronRight } from 'lucide-react';
 import { futuresApi } from '../../api';
 import { useUserStore } from '../../stores/userStore';
+import { useCrossAccount } from '../../hooks/useCrossAccount';
 import { useToast } from '../ui/use-toast';
 import { FuturesActionButton } from '../FuturesActionButton';
 import { LeverageSlider } from '../LeverageSlider';
@@ -10,14 +11,14 @@ import { HelpTip } from '../HelpTip';
 import { cn, fmtNum } from '../../lib/utils';
 import { getCoin, getCoinPriceDecimals, getCoinPriceStep, formatCoinPrice } from '../../lib/coinConfig';
 import { useTradeFilter } from '../../lib/tradeFilters';
-import type { FuturesBracket, FuturesCrossAccount, FuturesMarginMode, FuturesPosition, FuturesSLItem, FuturesTPItem } from '../../types';
+import type { FuturesBracket, FuturesMarginMode, FuturesPosition, FuturesSLItem, FuturesTPItem } from '../../types';
 import { TradeModeSwitch } from './TradeModeSwitch';
 import { SLTPEditor } from './SLTPEditor';
 import { NumInput, PctRow } from './TradeFields';
 import { useQuantityAnimation } from './useQuantityAnimation';
 import {
-  POSITION_PCTS, FUTURES_LEVERAGE_OPTIONS, formatRate, getStepPrecision, floorToStep, qtyByPct,
-  calcFuturesOpenEstimate, calcMaxAffordableMarginQty, estimateFuturesLiqPrice,
+  POSITION_PCTS, FUTURES_LEVERAGE_OPTIONS, formatRate, floorToStep, qtyByPct,
+  calcFuturesOpenEstimate, calcMaxAffordableOrderQty, orderQtyToMarginUsdt, orderQtyToMarginCoin, estimateFuturesLiqPrice,
   type SLTPRow,
 } from './futuresMath';
 
@@ -71,8 +72,9 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, positionsKey,
     })
     .filter(Boolean)
     .join(' · ') || t('sltp.notSet');
-  const [crossAcct, setCrossAcct] = useState<FuturesCrossAccount | null>(null);
-  // 开仓/调杠杆成功后 +1 触发全仓账户与持仓快照重拉（可用/净值/杠杆都可能变了）
+  // 全仓账户快照：预算基数和强平价兜底金都取自它，fetchUser 后自动重拉
+  const { acct: crossAcct, spendable } = useCrossAccount();
+  // 开仓/调杠杆成功后 +1 触发持仓快照重拉
   const [acctTick, setAcctTick] = useState(0);
   // 保证金输入单位：币=未乘杠杆数量；USDT=保证金金额（内部再 /price 还原成币数量）。点输入框右侧单位切换
   const [marginUnit, setMarginUnit] = useState<'COIN' | 'USDT'>('USDT');
@@ -108,12 +110,6 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, positionsKey,
     if (posLeverage != null) setLeverage(posLeverage);
   }, [posLeverage]);
 
-  // 全仓模式拉账户概览：预算基数和强平价兜底金都取自它
-  useEffect(() => {
-    if (!isCross) return;
-    futuresApi.crossAccount().then(setCrossAcct).catch(() => setCrossAcct(null));
-  }, [isCross, acctTick]);
-
   useEffect(() => {
     if (!actionSuccess) return;
     const timer = window.setTimeout(() => setActionSuccess(false), 800);
@@ -122,14 +118,16 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, positionsKey,
 
   // 估算价：限价用限价，否则现价（百分比换算、提交、单位切换共用）
   const priceForCalc = orderType === 'LIMIT' ? (parseFloat(limitPrice) || 0) : currentPrice;
-  // 输入框展示值；统一换算成「币保证金数量」喂后续估算/下单
+  // 输入框展示值；统一换算成实际下单币量喂后续估算/下单
   const inputNum = parseFloat(quantity) || 0;
-  const marginQty = marginUnit === 'USDT'
-    ? (priceForCalc > 0 ? inputNum / priceForCalc : 0)
-    : inputNum;
-  // 实际下单币量 = 保证金数量×杠杆，按步长向下对齐。SL/TP 的 100% 必须拿它算：
-  // 用未对齐的 marginQty×杠杆 会多出一截尾数，提交时正好被"止损总量超过开仓数量"挡下
-  const orderQty = floorToStep(marginQty * effLeverage, MIN_QTY);
+  /** 输入值 → 实际下单币量：先还原成币保证金数量（USDT ÷价），×杠杆后按步长向下对齐 */
+  const toOrderQty = (v: number) => {
+    const marginQty = marginUnit === 'USDT' ? (priceForCalc > 0 ? v / priceForCalc : 0) : v;
+    return floorToStep(marginQty * effLeverage, MIN_QTY);
+  };
+  // SL/TP 的 100% 必须拿对齐后的单量算：
+  // 用未对齐的 保证金数量×杠杆 会多出一截尾数，提交时正好被"止损总量超过开仓数量"挡下
+  const orderQty = toOrderQty(inputNum);
 
   /** 默认档位行：数量预填满仓(100%)。开仓量还没输入时留空，免得显示成 "0" */
   const fullSltpRow = (): SLTPRow => ({ price: '', quantity: orderQty > 0 ? String(orderQty) : '' });
@@ -153,15 +151,11 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, positionsKey,
 
   const switchMarginUnit = (next: 'COIN' | 'USDT') => {
     if (next === marginUnit) return;
-    // 有价才换算，避免除零；无输入则只切单位
+    // 有价才换算，避免除零；无输入则只切单位。按当前下单量换过去，切完单量不变；还凑不够一个步长就清空
     if (inputNum > 0 && priceForCalc > 0) {
-      if (next === 'USDT') {
-        setQuantity((inputNum * priceForCalc).toFixed(2));
-      } else {
-        const coin = inputNum / priceForCalc;
-        const precision = getStepPrecision(MIN_QTY);
-        setQuantity(coin.toFixed(precision).replace(/0+$/, '').replace(/\.$/, ''));
-      }
+      if (!(orderQty > 0)) setQuantity('');
+      else if (next === 'USDT') setQuantity(orderQtyToMarginUsdt(orderQty, priceForCalc, effLeverage, MIN_QTY).toFixed(2));
+      else setQuantity(String(orderQtyToMarginCoin(orderQty, effLeverage, MIN_QTY)));
     }
     setMarginUnit(next);
   };
@@ -234,41 +228,44 @@ export function FuturesOpenPanel({ symbol, currentPrice, brackets, positionsKey,
     } finally { setAdjustingLev(false); }
   };
 
-  // 预估（qtyNum = 币保证金数量，与单位无关；杠杆用有效值=有持仓时恒为仓位杠杆）
-  const qtyNum = marginQty;
-  const openEstimate = qtyNum > 0 && priceForCalc > 0
-    ? calcFuturesOpenEstimate(qtyNum, priceForCalc, effLeverage)
+  // 预估按实际下单量 orderQty 算（与单位无关；杠杆用有效值=有持仓时恒为仓位杠杆）
+  const openEstimate = orderQty > 0 && priceForCalc > 0
+    ? calcFuturesOpenEstimate(orderQty, priceForCalc, effLeverage)
     : null;
   // 全仓强平价：margin 参数换成兜底金 backing=equity−maintenanceMargin，即全仓拿整个账户净值兜底而非本仓保证金（无仓位时 maintenanceMargin=0，backing 就是 equity）；逐仓仍用本仓 margin
   const liqMargin = isCross
     ? (crossAcct ? crossAcct.equity - crossAcct.maintenanceMargin : null)
     : (openEstimate?.margin ?? null);
   const openLiq = openEstimate && liqMargin != null
-    ? estimateFuturesLiqPrice(brackets, side, priceForCalc, liqMargin, openEstimate.orderQty)
+    ? estimateFuturesLiqPrice(brackets, side, priceForCalc, liqMargin, orderQty)
     : null;
   // 负强平价=永不强平：显示 — 且不传给止损编辑器
   const openLiqPrice = openLiq && openLiq.price > 0 ? openLiq.price : undefined;
   const liqText = openLiqPrice ? fmtPrice(openLiqPrice) : '—';
   // 下注预算基数：全仓=账户可用 available（余额扣掉已占用+挂单预留）；
   // 逐仓要真划钱，卡两道取小——available 管"钱是不是被全仓占着"，balance 管"钱包里有没有现金"
-  // （全仓浮盈进得了 available 进不了 balance）。快照没回来就退回余额，别把可用显示成 0
+  // （全仓浮盈进得了 available 进不了 balance），即 spendable。快照没回来它先按余额算，别把可用显示成 0
   const budgetBalance = isCross
     ? (crossAcct?.available ?? 0)
-    : Math.min(crossAcct?.available ?? Infinity, user?.balance ?? 0);
+    : (spendable ?? 0);
 
-  /** 保证金按钮：当前输入正好等于某档预算时高亮那一颗 */
-  const pctTarget = (pct: number) => marginUnit === 'USDT'
-    ? Math.floor(budgetBalance * pct * 100) / 100
-    : calcMaxAffordableMarginQty(budgetBalance, pct, priceForCalc, effLeverage, MIN_QTY);
-  const activePct = inputNum > 0 && priceForCalc > 0
-    ? (POSITION_PCTS.find(p => Math.abs(pctTarget(p) - inputNum) < 1e-9) ?? null)
+  /** 保证金按钮：按"保证金+手续费 ≤ 预算"在下单量网格上取最大单量，再换回当前单位的输入值 */
+  const pctTarget = (pct: number) => {
+    const maxQty = calcMaxAffordableOrderQty(budgetBalance * pct, priceForCalc, effLeverage, MIN_QTY);
+    return marginUnit === 'USDT'
+      ? orderQtyToMarginUsdt(maxQty, priceForCalc, effLeverage, MIN_QTY)
+      : orderQtyToMarginCoin(maxQty, effLeverage, MIN_QTY);
+  };
+  // 高亮：当前输入换出的下单量正好等于某档换出的下单量
+  const activePct = orderQty > 0 && priceForCalc > 0
+    ? (POSITION_PCTS.find(p => toOrderQty(pctTarget(p)) === orderQty) ?? null)
     : null;
   const handlePct = (pct: number) => {
     const target = pctTarget(pct);
     if (!(target > 0)) { setQuantity(''); return; }
-    // USDT 模式直接填金额（两位小数），币模式走缓动
+    // USDT 模式直接填金额（两位小数）；币模式走缓动，小数位跟目标值走（保证金币数常比步长细）
     if (marginUnit === 'USDT') setQuantity(target.toFixed(2));
-    else animateQuantity(target, MIN_QTY);
+    else animateQuantity(target, target);
   };
 
   // 逐仓只能调高：滑杆下限=持仓杠杆，档位标签补持仓值作起点

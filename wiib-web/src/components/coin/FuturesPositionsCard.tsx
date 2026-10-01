@@ -5,6 +5,7 @@ import { Loader2, RefreshCw } from 'lucide-react';
 import { futuresApi } from '../../api';
 import { useUserStore } from '../../stores/userStore';
 import { useCryptoStream } from '../../hooks/useCryptoStream';
+import { useCrossAccount } from '../../hooks/useCrossAccount';
 import { useStagger } from '../../hooks/useStagger';
 import { useToast } from '../ui/use-toast';
 import { HelpTip } from '../HelpTip';
@@ -178,7 +179,6 @@ function PositionItem({ pos, brackets, onCoinPage, onMutated }: {
   const fmtPrice = useCallback((n?: number | null) => formatCoinPrice(pos.symbol, n), [pos.symbol]);
 
   const { toast } = useToast();
-  const user = useUserStore(s => s.user);
   const navigate = useNavigate();
 
   // WS 实时价：mp 驱动盈亏，fp（最新价）用于限价单提示与 SLTP 编辑；断流时退回后端快照值
@@ -212,6 +212,8 @@ function PositionItem({ pos, brackets, onCoinPage, onMutated }: {
   const isPnlUp = unrealizedPnl >= 0;
   const isLong = pos.side === 'LONG';
   const isCrossPos = pos.marginMode === 'CROSS';
+  // 追加保证金能划的钱 = min(全仓可用, 余额)：后端先过全仓可用这道闸再扣余额。只在展开加保证金时拉快照
+  const { spendable } = useCrossAccount(action === 'margin');
 
   // 操作切换：展开时重置各输入，止盈损带入已有档位；平仓默认市价全平（100%）
   const toggleAction = (type: PosActionType) => {
@@ -449,7 +451,7 @@ function PositionItem({ pos, brackets, onCoinPage, onMutated }: {
               <div className="field">
                 <label>
                   <span>{t('pos.addAmount')}</span>
-                  {user && <span className="num">{t('pos.availableBalance', { amount: fmtNum(user.balance) })}</span>}
+                  {spendable != null && <span className="num">{t('pos.availableBalance', { amount: fmtNum(spendable) })}</span>}
                 </label>
                 <NumInput value={marginAmt} onChange={setMarginAmt} step="0.01" min="0" unit="USDT" />
               </div>

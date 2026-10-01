@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { futuresApi } from '../api';
+import { parseServerTime } from '../lib/utils';
 
 const POLL_MS = 30_000;
 const WINDOW_MS = 3_600_000;
@@ -24,7 +25,7 @@ export function ForceOrdersCard() {
       .then(page => {
         if (cancelled) return;
         const since = Date.now() - WINDOW_MS;
-        const rows = (page?.records ?? []).filter(r => new Date(r.tradeTime).getTime() >= since);
+        const rows = (page?.records ?? []).filter(r => parseServerTime(r.tradeTime).getTime() >= since);
         // SELL=多头被强平，BUY=空头被强平
         setStat({
           long: rows.reduce((s, r) => s + (r.side === 'SELL' ? r.amount : 0), 0),

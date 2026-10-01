@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import { ledgerApi } from '../api';
@@ -8,7 +8,7 @@ import { Select } from '../components/ui/select';
 import { Skeleton } from '../components/ui/skeleton';
 import { useToast } from '../components/ui/use-toast';
 import { EmptyState } from '../components/EmptyState';
-import { cn, fmtNum, fmtTime } from '../lib/utils';
+import { cn, fmtNum, fmtTime, parseServerTime } from '../lib/utils';
 import { Receipt, RefreshCw, Loader2, TriangleAlert } from 'lucide-react';
 import type { LedgerEntry, LedgerBizTypeOption, LedgerWallet } from '../types';
 
@@ -55,7 +55,7 @@ function deltaTone(entry: LedgerEntry): string {
 
 /** 分组日期键。必须跟 fmtTime 同一时区（新加坡），否则跨零点的行会被分进错误的日期组 */
 function dayKey(ts: string): string {
-  return new Date(ts).toLocaleDateString('zh-CN', {
+  return parseServerTime(ts).toLocaleDateString('zh-CN', {
     timeZone: 'Asia/Singapore', year: 'numeric', month: '2-digit', day: '2-digit',
   });
 }
@@ -145,6 +145,8 @@ export function Ledger() {
   const requestKey = `${bizType}:${refreshNonce}`;
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const loading = loadedKey !== requestKey;
+  /** 当前列表是哪个筛选/哪次刷新的：「加载更多」回来时对一下，换过了就丢 */
+  const listKeyRef = useRef(requestKey);
 
   useEffect(() => {
     ledgerApi.bizTypes().then(setBizOptions).catch(() => setBizOptions([]));
@@ -156,6 +158,7 @@ export function Ledger() {
   // 等于把这个组件将来所有 hooks 问题一起屏蔽掉——为一句错误提示不值当
   useEffect(() => {
     let cancelled = false;
+    listKeyRef.current = requestKey;
     ledgerApi.list({ bizType: bizType || undefined, limit: PAGE_SIZE })
       .then(rows => {
         if (cancelled) return;
@@ -177,12 +180,14 @@ export function Ledger() {
     const last = entries[entries.length - 1];
     if (!last || loadingMore || done) return;
     setLoadingMore(true);
+    const key = requestKey;
     ledgerApi.list({ bizType: bizType || undefined, beforeId: last.id, limit: PAGE_SIZE })
       .then(rows => {
+        if (listKeyRef.current !== key) return;
         setEntries(prev => [...prev, ...rows]);
         if (rows.length === 0) setDone(true);
       })
-      .catch(() => toast(t('toast.loadMoreFailed'), 'error'))
+      .catch(() => { if (listKeyRef.current === key) toast(t('toast.loadMoreFailed'), 'error'); })
       .finally(() => setLoadingMore(false));
   };
 

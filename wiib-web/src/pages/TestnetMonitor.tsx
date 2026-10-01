@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback, useMemo, type ElementType, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type ElementType, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { testnetApi } from '../api';
 import { useToast } from '../components/ui/use-toast';
 import { useUserStore } from '../stores/userStore';
-import { cn, fmtDate, fmtDateTime, fmtNum } from '../lib/utils';
+import { cn, fmtDate, fmtDateTime, fmtNum, fmtSignedUsd } from '../lib/utils';
 import { formatCoinPrice } from '../lib/coinConfig';
 import { EquityChart } from '../components/EquityChart';
 import { DailyGrid } from '../components/DailyGrid';
@@ -311,7 +311,8 @@ export function TestnetMonitor() {
   const { toast } = useToast();
   const user = useUserStore((s) => s.user);
   const [overview, setOverview] = useState<TnOverview | null>(null);
-  const [trades, setTrades] = useState<TnTrade[]>([]);
+  const [trades, setTrades] = useState<TnTrade[]>([]);          // 近 30 天：成交列表、胜率
+  const [gridTrades, setGridTrades] = useState<TnTrade[]>([]);  // 近 90 天：跟网格同跨度，点格子下钻用
   const [daily, setDaily] = useState<TnDailyCell[]>([]);
   const [equity, setEquity] = useState<TnEquityPoint[]>([]);
   const [fill, setFill] = useState<TnFillStats | null>(null);
@@ -321,22 +322,29 @@ export function TestnetMonitor() {
   // 网格月份受控。用户没翻过就跟着数据走（落在最新有成交的那个月），翻过就听用户的
   const [pickedMonth, setPickedMonth] = useState<string | null>(null);
 
+  // 请求序号：切币种/刷新/定时器可能叠着发，只认最后一次
+  const loadSeqRef = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const sym = symbol === 'ALL' ? undefined : symbol;
       const [ov, tr, dg, eq, fs] = await Promise.all([
         testnetApi.overview(),
-        testnetApi.trades(sym, 30),
+        testnetApi.trades(sym, 90),
         testnetApi.dailyGrid(sym, 90),
         testnetApi.equity(sym, 90),
         testnetApi.fillStats(sym, 30),
       ]);
-      setOverview(ov); setTrades(tr); setDaily(dg); setEquity(eq); setFill(fs);
+      if (seq !== loadSeqRef.current) return;
+      const since = Date.now() - 30 * 86_400_000;
+      setOverview(ov); setGridTrades(tr); setTrades(tr.filter((x) => x.time >= since));
+      setDaily(dg); setEquity(eq); setFill(fs);
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       toast((e as Error).message || t('common:loadFailed'), 'error');
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [symbol, toast, t]);
 
@@ -359,8 +367,8 @@ export function TestnetMonitor() {
 
   // 选中某天的成交（东八区切日，与网格一致）
   const dayTrades = useMemo(
-    () => (selectedDate ? trades.filter((t) => cnDate(t.time) === selectedDate) : []),
-    [selectedDate, trades],
+    () => (selectedDate ? gridTrades.filter((t) => cnDate(t.time) === selectedDate) : []),
+    [selectedDate, gridTrades],
   );
 
   const isEmpty = !loading && trades.length === 0 && equity.length === 0 && (overview?.positions.length ?? 0) === 0
@@ -420,7 +428,7 @@ export function TestnetMonitor() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label={t('testnet.stat.equity')} value={`$${fmt$(equityNow, true)}`}
           sub={t('testnet.stat.available', { value: fmt$(overview?.account.availableBalance, true) })} icon={Wallet} />
-        <StatCard label={t('testnet.stat.cumPnl')} value={`${cumPnl >= 0 ? '+' : ''}$${fmt$(cumPnl)}`}
+        <StatCard label={t('testnet.stat.cumPnl')} value={fmtSignedUsd(cumPnl)}
           sub={t('testnet.stat.cumPnlSub')} icon={BarChart3} trend={cumPnl >= 0 ? 'up' : 'down'} />
         <StatCard label={t('testnet.stat.fillRate')} value={fill ? `${fillRatePct.toFixed(1)}%` : '-'}
           sub={fill ? t('testnet.stat.fillRateSub', { filled: fill.filled, placed: fill.placed, expired: fill.expired })
