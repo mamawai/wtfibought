@@ -913,7 +913,7 @@ html.dark .cr-ov.is-full ~ .cr-halo { opacity: .24; }
 .cr-meta b { display: block; font-size: 34px; font-weight: 600; font-stretch: 80%; letter-spacing: -.02em; line-height: 1.1; }
 .cr-meta i { display: block; font-style: normal; font-size: 15px; font-weight: 700; margin-top: 4px; }
 .cr-ov.is-full ~ .cr-meta { opacity: 1; transform: none; }
-/* 落地：交易页在底下挂好后整层淡出（图标另飞到页头） */
-.cr-ov.is-out, .cr-ov.is-out ~ .cr-halo, .cr-ov.is-out ~ .cr-spark, .cr-ov.is-out ~ .cr-meta {
+/* 落地：交易页在底下挂好后整层连同图标原地淡出 */
+.cr-ov.is-out, .cr-ov.is-out ~ .cr-halo, .cr-ov.is-out ~ .cr-spark, .cr-ov.is-out ~ .cr-meta, .cr-ov.is-out ~ .cr-icon {
   opacity: 0 !important; transition: opacity .4s;
 }

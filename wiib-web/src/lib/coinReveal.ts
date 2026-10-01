@@ -1,7 +1,7 @@
 /**
  * 选币页点行 → 交易页的过渡：这一行的底面从行的位置扩到整屏，图标飞到屏幕正中放大，
  * 币色光晕在落点后面晕开，行里的走势线拉大成底纹，价格和涨跌晚半拍浮到图标下面；
- * 交易页在底下挂好后整层淡出，图标再飞到页头 [data-reveal-icon] 的位置落地。
+ * 交易页在底下挂好（页头 [data-reveal-icon] 出现）后，连同正中的图标整层原地淡出。
  * 纯 DOM 操作挂在 body 下，样式见 index.css 的 .cr-* 段；同一时刻只跑一段。
  */
 
@@ -10,8 +10,6 @@ const ICON_END = 96;
 interface Running {
   nodes: HTMLElement[];
   ov: HTMLElement;
-  icon: HTMLElement;
-  iconStart: DOMRect;
 }
 
 let running: Running | null = null;
@@ -67,7 +65,7 @@ export function playCoinReveal(row: HTMLElement, opts: { color: string; price: s
   const nodes = [ov, halo, ...(spark ? [spark] : []), icon, meta];
   document.body.append(...nodes);
   row.dataset.leaving = '1';
-  running = { nodes, ov, icon, iconStart: ir };
+  running = { nodes, ov };
 
   // 两帧后再改终态，起点先画上去过渡才有起点
   return new Promise(resolve => {
@@ -80,21 +78,14 @@ export function playCoinReveal(row: HTMLElement, opts: { color: string; price: s
   });
 }
 
-/** 落地。navigate 之后调：等交易页挂上来，图标飞到页头图标处，其余整层淡出后全部移除 */
+/** 落地。navigate 之后调：等交易页挂上来（页头图标出现，最多等 20 帧），整层连同图标原地淡出后全部移除 */
 export function landCoinReveal(symbol: string) {
   const s = running;
   if (!s) return;
   running = null;
   let tries = 0;
   const tick = () => {
-    const target = document.querySelector<HTMLElement>(`[data-reveal-icon="${symbol}"]`);
-    if (!target && tries++ < 20) { requestAnimationFrame(tick); return; }
-    if (target) {
-      const tr = target.getBoundingClientRect();
-      s.icon.style.transition = 'transform .5s var(--ease-control), opacity .25s .4s';
-      s.icon.style.transform = `translate(${tr.left - s.iconStart.left}px, ${tr.top - s.iconStart.top}px) scale(${tr.width / ICON_END})`;
-    }
-    s.icon.style.opacity = '0';
+    if (!document.querySelector(`[data-reveal-icon="${symbol}"]`) && tries++ < 20) { requestAnimationFrame(tick); return; }
     s.ov.classList.add('is-out');
     setTimeout(() => s.nodes.forEach(n => n.remove()), 700);
   };
