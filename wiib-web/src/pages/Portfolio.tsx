@@ -239,12 +239,13 @@ export function Portfolio() {
     { k: t('cat.game'), v: rt?.dailyGameProfit ?? 0 },
   ];
 
+  // 余额钱包 = 余额 + 冻结（限价买单、逐仓限价开仓冻着的钱），同后端总资产口径；钱包明细、分布条、饼图都用它
+  const walletBalance = user.balance + user.frozenBalance;
   const allocRaw = [
     { k: t('alloc.crypto'), v: cryptoTotal, c: ALLOC_COLORS.crypto },
     { k: t('alloc.bstock'), v: bstockTotal, c: ALLOC_COLORS.bstock },
     { k: t('alloc.futures'), v: futuresTotal, c: ALLOC_COLORS.futures },
-    // 现金 = 余额 + 冻结（限价买单、逐仓限价开仓冻着的钱），同后端总资产口径
-    { k: t('alloc.cash'), v: user.balance + user.frozenBalance, c: ALLOC_COLORS.cash },
+    { k: t('alloc.cash'), v: walletBalance, c: ALLOC_COLORS.cash },
   ];
   // 全仓浮亏会让合约那格成负数：占比只在正数里分，负的照实显示金额、占比记 0
   const allocTotal = allocRaw.reduce((s, a) => s + Math.max(0, a.v), 0);
@@ -304,7 +305,7 @@ export function Portfolio() {
           </div>
 
           <div className="num mt-[26px] grid grid-cols-2 gap-x-10">
-            {walletRow(t('ov.balanceWallet'), fmtNum(user.balance))}
+            {walletRow(t('ov.balanceWallet'), fmtNum(walletBalance))}
             {walletRow(t('ov.gameWallet'), fmtNum(user.gameBalance))}
             {walletRow(t('ov.futuresMargin'), fmtNum(futuresMargin))}
             {walletRow(t('ov.futuresUnrealized'), signed(futuresProfit), futuresProfit >= 0 ? 'up' : 'dn')}
@@ -332,7 +333,7 @@ export function Portfolio() {
                     cryptoPositions={cryptoRows}
                     bstockRows={bstockRows}
                     futuresRows={futuresChartRows}
-                    balance={user.balance}
+                    balance={walletBalance}
                     gameBalance={user.gameBalance}
                   />
                 </div>
