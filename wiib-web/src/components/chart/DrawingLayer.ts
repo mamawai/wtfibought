@@ -580,10 +580,13 @@ function drawColor(d: Drawing): string {
   return d.color;
 }
 
-/** 斐波回撤各档价：0 端是第一点、1 端是第二点，在价格空间插值（对数价格轴下跟像素插值不等价） */
+/**
+ * 斐波回撤各档价，同 TradingView：第一点（波段起点）是 1、第二点（波段终点）是 0，各档 = 终点往回撤的比例。
+ * 从低点拉到高点时 61.8% 就是从高点回撤了 61.8%。在价格空间插值（对数价格轴下跟像素插值不等价）
+ */
 function fibPrices(d: Drawing): number[] {
-  const p0 = d.pts[0].p, p1 = d.pts[1].p;
-  return FIB_LEVELS.map(lv => p0 + (p1 - p0) * lv);
+  const start = d.pts[0].p, end = d.pts[1].p;
+  return FIB_LEVELS.map(lv => end + (start - end) * lv);
 }
 
 /** 斐波扩展各档价 = 回撤落点 + 趋势幅度 × 档位 */
