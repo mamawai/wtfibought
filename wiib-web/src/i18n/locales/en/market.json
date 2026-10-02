@@ -178,7 +178,7 @@
     "vline": "Vertical line: one click",
     "channel": "Parallel channel: three clicks (baseline ends + a parallel point)",
     "rect": "Rectangle: two clicks set opposite corners",
-    "fib": "Fibonacci retracement: two clicks set the 0/1 ends",
+    "fib": "Fibonacci retracement: click the swing start (1), then the swing end (0); levels show how far price retraces from the end",
     "long": "Long position: click entry then stop; take profit derived at 2:1 (draggable)",
     "short": "Short position: click entry then stop; take profit derived at 2:1 (draggable)",
     "range": "Price range: two clicks measure change / percent / bars / time",
