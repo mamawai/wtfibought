@@ -15,9 +15,11 @@ import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.mapper.CryptoPositionMapper;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
+import com.mawai.wiibsim.mapper.MinesGameMapper;
 import com.mawai.wiibsim.mapper.PredictionBetMapper;
 import com.mawai.wiibsim.mapper.UserLedgerMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
+import com.mawai.wiibsim.mapper.VideoPokerGameMapper;
 import com.mawai.wiibsim.campaign.service.CampaignCarryoverService;
 import com.mawai.wiibsim.service.BankruptcyService;
 import com.mawai.wiibcommon.cache.CacheService;
@@ -51,6 +53,8 @@ public class BankruptcyServiceImpl implements BankruptcyService {
     private final CacheService cacheService;
     private final FuturesPositionIndexService futuresPositionIndexService;
     private final PredictionBetMapper predictionBetMapper;
+    private final MinesGameMapper minesGameMapper;
+    private final VideoPokerGameMapper videoPokerGameMapper;
     private final AssetValuationService assetValuationService;
     private final UserLedgerMapper userLedgerMapper;
     private final ResetQuotaService resetQuotaService;
@@ -159,7 +163,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         // 所以先加行锁读快照：并发的资金 UPDATE 会在这把锁上排队，读到的就是这次清零真正抹掉的金额。
         // 全项目只有这两个低频方法这么写，正常资金路径一律走 atomic* + RETURNING，不许照抄。
         User before = userMapper.selectByIdForUpdate(userId);
-        int affected = userMapper.markBankrupt(userId, resetDate, today);
+        int affected = userMapper.markBankrupt(userId, resetDate);
         if (affected == 0) {
             return;
         }
@@ -235,6 +239,9 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         futuresPositionMapper.closeOpenByUserId(userId, futuresCloseStatus);
         // 预测: 取消活跃投注(爆仓不退款；恢复路径为防御性清残留)
         predictionBetMapper.cancelActiveByUserId(userId);
+        // 游戏: 进行中的矿工/视频扑克局作废，本金不退（21点筹码不是钱包里的钱，不动）
+        minesGameMapper.forfeitPlayingByUserId(userId);
+        videoPokerGameMapper.forfeitDealingByUserId(userId);
     }
 
     private void cleanupFuturesRedisIndexes(Long userId) {

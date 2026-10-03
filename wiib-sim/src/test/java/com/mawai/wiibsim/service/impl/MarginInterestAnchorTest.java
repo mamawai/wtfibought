@@ -3,10 +3,15 @@ package com.mawai.wiibsim.service.impl;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.UserMapper;
+import org.apache.ibatis.annotations.Update;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
 import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
@@ -20,6 +25,8 @@ import static org.mockito.Mockito.when;
  * 还清本金必须把它清掉：还清期间计息任务按"本金>0"过滤，扫不到该用户，没有任何路径会推进它，
  * 它就停在还清前最后一次计息那天。而借款侧 ensureMarginInterestLastDate 是 COALESCE 语义
  * （只在为 NULL 时才写），下次借款不会覆盖旧值——于是中间那段没欠钱的空档天数被一起算成利息。
+ * <p>
+ * 爆仓清零、破产恢复同样清空起算点，和自助重置 resetToInitial 一个口径。
  */
 class MarginInterestAnchorTest {
 
@@ -80,5 +87,16 @@ class MarginInterestAnchorTest {
         service.applyCashInflow(1L, new BigDecimal("500"), "SELL");
 
         verify(userMapper).clearMarginInterestLastDate(1L);
+    }
+
+    @Test
+    void 爆仓与破产恢复都清空起算点_同自助重置() {
+        for (String name : List.of("markBankrupt", "resetAfterBankruptcy", "resetToInitial")) {
+            Method m = Arrays.stream(UserMapper.class.getMethods())
+                    .filter(x -> x.getName().equals(name))
+                    .findFirst().orElseThrow();
+            String sql = String.join("", m.getAnnotation(Update.class).value());
+            assertThat(sql).as(name).contains("margin_interest_last_date = NULL");
+        }
     }
 }
