@@ -251,7 +251,7 @@ COMMENT ON COLUMN mines_game.mine_positions IS '雷位置(逗号分隔,0-24)';
 COMMENT ON COLUMN mines_game.revealed_cells IS '已翻开的安全格(逗号分隔)';
 COMMENT ON COLUMN mines_game.multiplier IS '最终倍率';
 COMMENT ON COLUMN mines_game.payout IS '实际支付金额';
-COMMENT ON COLUMN mines_game.status IS 'PLAYING/CASHED_OUT/EXPLODED';
+COMMENT ON COLUMN mines_game.status IS 'PLAYING/CASHED_OUT/EXPLODED/FORFEITED';
 COMMENT ON COLUMN mines_game.created_at IS '创建时间';
 COMMENT ON COLUMN mines_game.updated_at IS '更新时间';
 
@@ -383,7 +383,7 @@ COMMENT ON COLUMN video_poker_game.final_cards IS '最终5张牌(逗号分隔)';
 COMMENT ON COLUMN video_poker_game.hand_rank IS '牌型名称';
 COMMENT ON COLUMN video_poker_game.multiplier IS '赔率倍数';
 COMMENT ON COLUMN video_poker_game.payout IS '赔付金额';
-COMMENT ON COLUMN video_poker_game.status IS 'DEALING/SETTLED';
+COMMENT ON COLUMN video_poker_game.status IS 'DEALING/SETTLED/FORFEITED';
 
 CREATE INDEX IF NOT EXISTS idx_vp_game_user_status ON video_poker_game(user_id, status);
 

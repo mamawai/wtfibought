@@ -257,12 +257,11 @@ public interface UserMapper extends BaseMapper<User> {
             "game_balance = 0, " +
             "margin_loan_principal = 0, " +
             "margin_interest_accrued = 0, " +
-            "margin_interest_last_date = #{today}, " +
+            "margin_interest_last_date = NULL, " +
             "updated_at = NOW() " +
             "WHERE id = #{userId} AND is_bankrupt = FALSE")
     int markBankrupt(@Param("userId") Long userId,
-                     @Param("resetDate") LocalDate resetDate,
-                     @Param("today") LocalDate today);
+                     @Param("resetDate") LocalDate resetDate);
 
     /** 破产恢复（交易日09:00） */
     @Update("UPDATE \"user\" SET " +
@@ -272,7 +271,7 @@ public interface UserMapper extends BaseMapper<User> {
             "game_balance = 0, " +
             "margin_loan_principal = 0, " +
             "margin_interest_accrued = 0, " +
-            "margin_interest_last_date = #{today}, " +
+            "margin_interest_last_date = NULL, " +
             "bankrupt_reset_date = NULL, " +
             "updated_at = NOW() " +
             "WHERE id = #{userId} AND is_bankrupt = TRUE AND bankrupt_reset_date <= #{today}")
