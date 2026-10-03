@@ -43,6 +43,8 @@ public interface CrossMarginService {
      *
      * <p>它只管一件事：这笔钱是不是已经被全仓仓位占着。真要划走现金的场景（逐仓开仓、现货买入、
      * 划转游戏钱包）还得各自过 balance ≥ cost——浮盈算得进 available，但浮盈不是钱包里的现金。</p>
+     *
+     * <p>必须在落库占用/扣款的同一个事务里调：内部先锁 user 行再取快照，锁到事务提交才放。</p>
      */
     CrossAccount assertCanAfford(Long userId, BigDecimal cost);
 
@@ -60,10 +62,10 @@ public interface CrossMarginService {
      */
     BigDecimal estimateLiqPrice(FuturesPosition position, CrossAccount account);
 
-    /** 用户是否持有全仓仓位（Redis 集合 O(1)，流出守卫的快路径） */
+    /** 用户是否持有全仓仓位（查库，事务内能看到本事务刚开/刚平的仓位） */
     boolean hasCrossPositions(Long userId);
 
-    /** 按 DB 实况同步该用户的全仓索引（开/平/强平后调用，幂等自愈） */
+    /** 按 DB 实况同步该用户的全仓索引（开/平/强平后调用，幂等自愈）。事务内调用时等提交后才刷 */
     void refreshUserIndex(Long userId);
 
     /** 某 symbol 上持有全仓仓位的用户集合（价格 tick 定向触发健康检查用） */

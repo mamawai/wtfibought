@@ -19,9 +19,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import static com.mawai.wiibcommon.enums.LedgerBizType.CROSS_SETTLE;
@@ -45,6 +48,9 @@ public class CrossMarginServiceImpl implements CrossMarginService {
     private final BankruptcyService bankruptcyService;
     private final StringRedisTemplate redis;
     private final CrossBandRegistry bandRegistry;
+
+    /** userId → 索引刷新锁，只增不删 */
+    private final ConcurrentHashMap<Long, Object> indexLocks = new ConcurrentHashMap<>();
 
     @PostConstruct
     void init() {
@@ -124,6 +130,8 @@ public class CrossMarginServiceImpl implements CrossMarginService {
 
     @Override
     public CrossAccount assertCanAfford(Long userId, BigDecimal cost) {
+        // 先锁 user 行再读快照，锁持有到调用方事务提交
+        userMapper.selectByIdForUpdate(userId);
         CrossAccount account = snapshot(userId);
         if (account.available().compareTo(cost) < 0) {
             throw new BizException(ErrorCode.FUTURES_CROSS_AVAILABLE_NOT_ENOUGH);
@@ -167,7 +175,10 @@ public class CrossMarginServiceImpl implements CrossMarginService {
 
     @Override
     public boolean hasCrossPositions(Long userId) {
-        return Boolean.TRUE.equals(redis.opsForSet().isMember(CROSS_USERS_KEY, userId.toString()));
+        return positionMapper.exists(new LambdaQueryWrapper<FuturesPosition>()
+                .eq(FuturesPosition::getUserId, userId)
+                .eq(FuturesPosition::getStatus, "OPEN")
+                .eq(FuturesPosition::getMarginMode, FuturesPosition.CROSS));
     }
 
     @Override
@@ -175,32 +186,49 @@ public class CrossMarginServiceImpl implements CrossMarginService {
         // 全仓状态变动（开平仓/成交/SL·TP/强平/资金费/调杠杆）的汇合点：
         // 先作废安全带（事务内自动补提交后第二跳，竞态闭合见 bump 注释），再刷 Redis 索引
         bandRegistry.bump(userId);
-        Set<String> newSyms = positionMapper.selectList(new LambdaQueryWrapper<FuturesPosition>()
-                        .eq(FuturesPosition::getUserId, userId)
-                        .eq(FuturesPosition::getStatus, "OPEN")
-                        .eq(FuturesPosition::getMarginMode, FuturesPosition.CROSS)
-                        .select(FuturesPosition::getSymbol))
-                .stream().map(FuturesPosition::getSymbol).collect(Collectors.toSet());
+        // 在事务里：挂到提交后再刷，回滚不刷；不在事务里：立即刷
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    if (status == STATUS_COMMITTED) syncIndexFromDb(userId);
+                }
+            });
+        } else {
+            syncIndexFromDb(userId);
+        }
+    }
 
-        String uid = userId.toString();
-        String userSymsKey = CROSS_USER_SYMS_PREFIX + uid;
-        Set<String> oldSyms = redis.opsForSet().members(userSymsKey);
+    /** 按库里的全仓持仓重写该用户的 Redis 索引。同一用户的读库+写 Redis 整体串行 */
+    private void syncIndexFromDb(Long userId) {
+        synchronized (indexLocks.computeIfAbsent(userId, k -> new Object())) {
+            Set<String> newSyms = positionMapper.selectList(new LambdaQueryWrapper<FuturesPosition>()
+                            .eq(FuturesPosition::getUserId, userId)
+                            .eq(FuturesPosition::getStatus, "OPEN")
+                            .eq(FuturesPosition::getMarginMode, FuturesPosition.CROSS)
+                            .select(FuturesPosition::getSymbol))
+                    .stream().map(FuturesPosition::getSymbol).collect(Collectors.toSet());
 
-        if (oldSyms != null) {
-            for (String sym : oldSyms) {
-                if (!newSyms.contains(sym)) redis.opsForSet().remove(CROSS_SYM_PREFIX + sym, uid);
+            String uid = userId.toString();
+            String userSymsKey = CROSS_USER_SYMS_PREFIX + uid;
+            Set<String> oldSyms = redis.opsForSet().members(userSymsKey);
+
+            if (oldSyms != null) {
+                for (String sym : oldSyms) {
+                    if (!newSyms.contains(sym)) redis.opsForSet().remove(CROSS_SYM_PREFIX + sym, uid);
+                }
             }
+            redis.delete(userSymsKey);
+            if (newSyms.isEmpty()) {
+                redis.opsForSet().remove(CROSS_USERS_KEY, uid);
+                return;
+            }
+            for (String sym : newSyms) {
+                redis.opsForSet().add(CROSS_SYM_PREFIX + sym, uid);
+            }
+            redis.opsForSet().add(userSymsKey, newSyms.toArray(String[]::new));
+            redis.opsForSet().add(CROSS_USERS_KEY, uid);
         }
-        redis.delete(userSymsKey);
-        if (newSyms.isEmpty()) {
-            redis.opsForSet().remove(CROSS_USERS_KEY, uid);
-            return;
-        }
-        for (String sym : newSyms) {
-            redis.opsForSet().add(CROSS_SYM_PREFIX + sym, uid);
-        }
-        redis.opsForSet().add(userSymsKey, newSyms.toArray(String[]::new));
-        redis.opsForSet().add(CROSS_USERS_KEY, uid);
     }
 
     @Override
