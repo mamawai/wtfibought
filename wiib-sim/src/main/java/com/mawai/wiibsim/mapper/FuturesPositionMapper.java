@@ -205,12 +205,14 @@ public interface FuturesPositionMapper extends BaseMapper<FuturesPosition> {
      * 打满时正常 API p99 从 4ms 恶化到 47ms。合一后拿池次数 3→1，巡检吞吐上限 ~2800/s → ~8000/s。
      * <p>
      * 用户不存在返回空列表；有账号无持仓返回一行 position_id 为 NULL 的行（LEFT JOIN）。
-     * 挂单占用口径 = 原 sumPendingCrossReserved：PENDING 开/加仓限价单预留的保证金+手续费。
+     * 挂单占用口径：全仓开/加仓限价单预留的保证金+手续费，状态含 PENDING 以及触发后还没落成仓位的
+     * TRIGGERED / PROCESSING。成交事务里本单是 PROCESSING，读到的可用额度已扣掉本单预留。
      */
     @Select("""
             SELECT u.balance,
                    (SELECT COALESCE(SUM(o.frozen_amount), 0) FROM futures_order o
-                     WHERE o.user_id = u.id AND o.status = 'PENDING' AND o.margin_mode = 'CROSS'
+                     WHERE o.user_id = u.id AND o.status IN ('PENDING', 'TRIGGERED', 'PROCESSING')
+                       AND o.margin_mode = 'CROSS'
                        AND o.order_side NOT LIKE 'CLOSE%') AS pending_reserved,
                    p.id AS position_id, p.symbol, p.side, p.leverage,
                    p.quantity, p.entry_price, p.margin, p.funding_fee_total

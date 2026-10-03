@@ -9,6 +9,7 @@ import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.UserService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -25,7 +26,9 @@ public class WalletController {
     private final UserService userService;
     private final CrossMarginService crossMarginService;
 
+    // 整个划转一个事务：assertCanAfford 锁的 user 行持有到扣完款
     @PostMapping("/transfer")
+    @Transactional(rollbackFor = Exception.class)
     public Result<Map<String, Object>> transfer(@CurrentUserId Long userId,
                                                 @RequestBody WalletTransferRequest request) {
         User user = userService.getById(userId);
