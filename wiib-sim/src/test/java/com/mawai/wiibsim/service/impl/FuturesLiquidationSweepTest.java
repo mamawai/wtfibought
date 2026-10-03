@@ -3,6 +3,8 @@ package com.mawai.wiibsim.service.impl;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
+import com.mawai.wiibsim.service.CrossLiquidationService;
+import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import org.junit.jupiter.api.Test;
 
@@ -29,7 +31,8 @@ class FuturesLiquidationSweepTest {
 
     private FuturesLiquidationServiceImpl service() {
         return new FuturesLiquidationServiceImpl(mock(FuturesRiskService.class), cacheService, props,
-                mock(FuturesPositionMapper.class));
+                mock(FuturesPositionMapper.class), mock(FuturesPositionIndexService.class),
+                mock(CrossLiquidationService.class));
     }
 
     /**

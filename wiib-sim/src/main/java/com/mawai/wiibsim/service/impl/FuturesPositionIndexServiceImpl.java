@@ -70,16 +70,21 @@ public class FuturesPositionIndexServiceImpl implements FuturesPositionIndexServ
         String symbol = position.getSymbol();
         String side = position.getSide();
 
-        // 逐仓注册静态强平价；全仓强平价随账户动态变化，不走ZSet，由CrossLiquidationService账户级巡检。
         // 强平价必须先算：档位没配会在这里抛 FUTURES_SYMBOL_NOT_CONFIGURED，此时 SL/TP 一条都还没写进去
-        if (!position.isCross()) {
-            BigDecimal liqPrice = calcStaticLiqPrice(symbol, side, position.getEntryPrice(), position.getMargin(),
-                    position.getQuantity());
-            cacheService.zAdd(liqKey(symbol, side), positionId.toString(), liqPrice.doubleValue());
-        }
+        registerLiquidation(position);
 
         registerStopLosses(positionId, symbol, side, position.getStopLosses());
         registerTakeProfits(positionId, symbol, side, position.getTakeProfits());
+    }
+
+    @Override
+    public void registerLiquidation(FuturesPosition position) {
+        // 逐仓注册静态强平价；全仓强平价随账户动态变化，不走ZSet，由CrossLiquidationService账户级巡检
+        if (position.isCross()) return;
+        BigDecimal liqPrice = calcStaticLiqPrice(position.getSymbol(), position.getSide(), position.getEntryPrice(),
+                position.getMargin(), position.getQuantity());
+        cacheService.zAdd(liqKey(position.getSymbol(), position.getSide()), position.getId().toString(),
+                liqPrice.doubleValue());
     }
 
     @Override
