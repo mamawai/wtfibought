@@ -21,6 +21,7 @@ import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.MarginAccountService;
 import com.mawai.wiibsim.service.UserService;
+import com.mawai.wiibsim.util.FairLockRegistry;
 import com.mawai.wiibsim.util.RedisLockUtil;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationContext;
@@ -82,7 +83,7 @@ class LimitOrderRecoverGapTest {
                 mock(UserMapper.class), mock(FuturesPositionMapper.class), orderMapper, mock(TradingConfig.class),
                 mock(FuturesLeverageBracketRegistry.class), cacheService, mock(FuturesPositionIndexService.class),
                 mock(FuturesRiskService.class), mock(CrossMarginService.class), mock(CrossLiquidationService.class),
-                mock(RedisLockUtil.class), mock(FundingRateService.class));
+                mock(FairLockRegistry.class), mock(FundingRateService.class));
         // triggerLimitOrder 走 AOP 代理，喂个 mock 代理才看得到它被调（真触发链路不在本用例范围）
         FuturesSettlementServiceImpl proxy = mock(FuturesSettlementServiceImpl.class);
         ApplicationContext ctx = mock(ApplicationContext.class);

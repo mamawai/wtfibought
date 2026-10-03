@@ -48,6 +48,18 @@ public class ScheduledTasks {
         Thread.startVirtualThread(futuresLiquidationService::sweepAll);
     }
 
+    /** futures孤儿TRIGGERED补扫：触发了没成交掉的限价单（等锁超时、进程重启） */
+    @Scheduled(fixedRate = 30 * 1000)
+    public void sweepFuturesTriggeredOrders() {
+        Thread.startVirtualThread(() -> {
+            try {
+                futuresSettlementService.executeTriggeredOrders();
+            } catch (Exception e) {
+                log.error("futures孤儿TRIGGERED补扫失败", e);
+            }
+        });
+    }
+
     /** 交易日09:00恢复破产用户（幂等） */
     @Scheduled(cron = "0 0 9 * * MON-FRI")
     public void resetBankruptUsers() {
@@ -100,12 +112,11 @@ public class ScheduledTasks {
         });
     }
 
-    /** futures每小时：孤儿TRIGGERED执行 + 限价单索引对账 */
+    /** futures每小时：限价单索引对账 */
     @Scheduled(cron = "0 0 * * * *")
     public void futuresHourlyMaintenance() {
         Thread.startVirtualThread(() -> {
             try {
-                futuresSettlementService.executeTriggeredOrders();
                 futuresSettlementService.reconcileLimitOrderIndex();
             } catch (Exception e) {
                 log.error("futures小时维护失败", e);

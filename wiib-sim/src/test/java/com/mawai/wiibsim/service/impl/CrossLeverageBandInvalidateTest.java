@@ -15,12 +15,13 @@ import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.UserService;
-import com.mawai.wiibsim.util.RedisLockUtil;
+import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationContext;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.concurrent.locks.Lock;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.mock;
@@ -44,7 +45,7 @@ class CrossLeverageBandInvalidateTest {
         var cacheService = mock(CacheService.class);
         var bracketRegistry = mock(FuturesLeverageBracketRegistry.class);
         var crossMargin = mock(CrossMarginService.class);
-        var redisLockUtil = mock(RedisLockUtil.class);
+        var lockRegistry = mock(FairLockRegistry.class);
 
         FuturesPosition cross = new FuturesPosition();
         cross.setId(1L);
@@ -62,11 +63,11 @@ class CrossLeverageBandInvalidateTest {
         when(cacheService.getMarkPrice("BTCUSDT")).thenReturn(new BigDecimal("100"));
         when(bracketRegistry.getEffectiveMaxLeverage(eq("BTCUSDT"), any())).thenReturn(100);
         when(positionMapper.updateLeverageAndMargin(eq(1L), eq(50), any())).thenReturn(1);
-        when(redisLockUtil.tryLock(anyString(), anyLong())).thenReturn("v");
+        when(lockRegistry.tryLockAsUser(anyString())).thenReturn(mock(Lock.class));
 
         FuturesTradingServiceImpl trading = new FuturesTradingServiceImpl(
                 mock(UserService.class), userMapper, positionMapper, orderMapper,
-                new TradingConfig(), redisLockUtil, cacheService,
+                new TradingConfig(), lockRegistry, cacheService,
                 mock(FuturesPositionIndexService.class), bracketRegistry, crossMargin,
                 new TradeFilterRegistry(mock(BinanceRestClient.class)),
                 new MessageCatalog());

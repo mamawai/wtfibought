@@ -21,7 +21,7 @@ import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesTradingService;
 import com.mawai.wiibsim.service.UserService;
-import com.mawai.wiibsim.util.RedisLockUtil;
+import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -56,7 +56,7 @@ class FuturesReverseTest {
         positionMapper = mock(FuturesPositionMapper.class);
         service = spy(new FuturesTradingServiceImpl(
                 mock(UserService.class), mock(UserMapper.class), positionMapper, mock(FuturesOrderMapper.class),
-                new TradingConfig(), mock(RedisLockUtil.class), mock(CacheService.class),
+                new TradingConfig(), mock(FairLockRegistry.class), mock(CacheService.class),
                 mock(FuturesPositionIndexService.class), mock(FuturesLeverageBracketRegistry.class),
                 mock(CrossMarginService.class), new TradeFilterRegistry(mock(BinanceRestClient.class)),
                 MESSAGES));

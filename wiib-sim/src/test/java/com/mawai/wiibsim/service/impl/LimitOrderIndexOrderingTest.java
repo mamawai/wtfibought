@@ -17,6 +17,7 @@ import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.MarginAccountService;
 import com.mawai.wiibsim.service.UserService;
+import com.mawai.wiibsim.util.FairLockRegistry;
 import com.mawai.wiibsim.util.RedisLockUtil;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -102,6 +103,6 @@ class LimitOrderIndexOrderingTest {
                 mock(FuturesPositionMapper.class), mock(FuturesOrderMapper.class), mock(TradingConfig.class),
                 mock(FuturesLeverageBracketRegistry.class), cacheService, mock(FuturesPositionIndexService.class),
                 mock(FuturesRiskService.class), mock(CrossMarginService.class), mock(CrossLiquidationService.class),
-                mock(RedisLockUtil.class), mock(FundingRateService.class));
+                mock(FairLockRegistry.class), mock(FundingRateService.class));
     }
 }
