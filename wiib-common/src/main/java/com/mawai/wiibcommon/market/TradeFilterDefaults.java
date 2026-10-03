@@ -40,14 +40,25 @@ public final class TradeFilterDefaults {
             Map.entry("KORUUSDT",    f("0.01",  "5")),
             Map.entry("SPCXUSDT",    f("0.01",  "5")));
 
-    public static final Map<String, Filter> SPOT = Map.of(
-            "BTCUSDT",  f("0.00001", "5"),
-            "ETHUSDT",  f("0.0001",  "5"),
-            "DOGEUSDT", f("1",       "1"),
-            "SOLUSDT",  f("0.001",   "5"),
-            "XRPUSDT",  f("0.1",     "5"),
-            "BNBUSDT",  f("0.001",   "5"),
-            "ZECUSDT",  f("0.001",   "5"));
+    public static final Map<String, Filter> SPOT = Map.ofEntries(
+            Map.entry("BTCUSDT",   f("0.00001", "5")),
+            Map.entry("ETHUSDT",   f("0.0001",  "5")),
+            Map.entry("DOGEUSDT",  f("1",       "1")),
+            Map.entry("SOLUSDT",   f("0.001",   "5")),
+            Map.entry("XRPUSDT",   f("0.1",     "5")),
+            Map.entry("BNBUSDT",   f("0.001",   "5")),
+            Map.entry("ZECUSDT",   f("0.001",   "5")),
+            // bStock 代币化美股（纯现货，走同一套现货下单），实拉 2026-10-03
+            Map.entry("NVDABUSDT", f("0.001",   "5")),
+            Map.entry("TSLABUSDT", f("0.001",   "5")),
+            Map.entry("MUBUSDT",   f("0.001",   "5")),
+            Map.entry("SNDKBUSDT", f("0.0001",  "5")),
+            Map.entry("CRCLBUSDT", f("0.01",    "5")),
+            Map.entry("MSTRBUSDT", f("0.001",   "5")),
+            Map.entry("AMDBUSDT",  f("0.001",   "5")),
+            Map.entry("SPCXBUSDT", f("0.001",   "5")),
+            Map.entry("QQQBUSDT",  f("0.001",   "5")),
+            Map.entry("SOXLBUSDT", f("0.001",   "5")));
 
     /** 未配置 symbol 返回 null，调用方按"不校验"处理 */
     public static Filter futures(String symbol) {

@@ -14,7 +14,8 @@ import { CandleChart } from '../components/CandleChart';
 import { FuturesActionButton } from '../components/FuturesActionButton';
 import { LoginPrompt } from '../components/LoginPrompt';
 import { useQuantityAnimation } from '../components/coin/useQuantityAnimation';
-import { calcMaxSpotBuyQty, calcSpotOrderEstimate } from '../components/coin/futuresMath';
+import { calcMaxSpotBuyQty, calcSpotOrderEstimate, floorToStep } from '../components/coin/futuresMath';
+import { useTradeFilter } from '../lib/tradeFilters';
 import { cn, fmtNum } from '../lib/utils';
 import { ChevronLeft, Wallet, Globe, Landmark } from 'lucide-react';
 import type { BStock, CryptoPosition } from '../types';
@@ -22,7 +23,6 @@ import type { BStock, CryptoPosition } from '../types';
 const COMMISSION_RATE = 0.001;
 const PCTS = [0.25, 0.5, 0.75, 1];
 const LEVERAGES = [1, 2, 3, 5, 10];
-const QTY_STEP = 0.0001;   // 数量精度：与 toFixed(4) 同口径，缓动动画的步长
 
 const fmtCap = (v?: number) => {
   if (v == null) return '—';
@@ -60,6 +60,8 @@ function BStockDetail({ symbol }: { symbol: string }) {
 
   const tick = useCryptoStream(symbol, 'spot');
   const livePrice = tick?.price ?? info?.price ?? 0;
+  // 数量步长（对齐Binance现货过滤器）
+  const step = useTradeFilter('spot', symbol).stepSize;
   // 买入能花的钱 = min(全仓可用, 余额)：后端买入先过全仓可用这道闸再扣余额
   const available = useCrossAccount().spendable ?? 0;
 
@@ -80,17 +82,20 @@ function BStockDetail({ symbol }: { symbol: string }) {
 
   // 切单位用的换算系数：买入现金占用 ≈ 数量 × 价格 × (1/杠杆 + 手续费率)
   // （bstock 输入的是总股数，保证金=成交额/杠杆、手续费按全额算）。
-  // 预算换股数取付得起的最大股数（按 QTY_STEP 对齐、现金占用按后端取整口径算），预估与提交用同一个数，界面不骗人
+  // 预算换股数取付得起的最大股数（按步长对齐、现金占用按后端取整口径算），预估与提交用同一个数，界面不骗人
   const isUsdtInput = side === 'BUY' && buyUnit === 'USDT';
   const unitFactor = livePrice * (1 / (side === 'BUY' ? leverage : 1) + COMMISSION_RATE);
   const inputNum = parseFloat(qty) || 0;
-  const qtyNum = isUsdtInput ? calcMaxSpotBuyQty(inputNum, livePrice, leverage, QTY_STEP) : inputNum;
+  const held = position?.quantity ?? 0;
+  // 实际下单量按步长向下对齐；全量卖出用精确持仓量（后端对全量卖出豁免步长）
+  const qtyNum = isUsdtInput ? calcMaxSpotBuyQty(inputNum, livePrice, leverage, step)
+    : side === 'SELL' && inputNum === held ? inputNum
+    : floorToStep(inputNum, step);
   const isLevBuy = side === 'BUY' && leverage > 1;
   // 预估取整同后端：成交额、手续费四舍五入到分，杠杆单保证金向上取到分；卖出不吃杠杆
   const est = calcSpotOrderEstimate(qtyNum, livePrice, side === 'BUY' ? leverage : 1);
   const marginCost = est.margin + est.commission;   // 买入现金占用
   const proceeds = est.amount - est.commission;      // 卖出到账
-  const held = position?.quantity ?? 0;
   const chg = info?.changePct ?? 0;
   const up = chg >= 0;
 
@@ -99,7 +104,7 @@ function BStockDetail({ symbol }: { symbol: string }) {
     if (u === buyUnit) return;
     const v = parseFloat(qty);
     if (v > 0 && unitFactor > 0) {
-      setQty(u === 'USDT' ? (v * unitFactor).toFixed(2) : (v / unitFactor).toFixed(4));
+      setQty(u === 'USDT' ? (v * unitFactor).toFixed(2) : String(floorToStep(v / unitFactor, step)));
     }
     setBuyUnit(u);
   };
@@ -108,11 +113,13 @@ function BStockDetail({ symbol }: { symbol: string }) {
     if (livePrice <= 0) return;
     // USDT 模式：% 直接取可用的百分比当预算（向下取到分），换算成股数的事留给预估/提交
     if (isUsdtInput) { animateQty(Math.floor(available * pct * 100) / 100, 0.01); return; }
+    // 卖出全量直接填精确持仓量，不走缓动
+    if (side === 'SELL' && pct >= 1) { setQty(String(held)); return; }
     // 买入：现金占用 = 保证金(成交额/杠杆) + 手续费(按全额)，按后端口径取付得起的最大股数
     const target = side === 'BUY'
-      ? calcMaxSpotBuyQty(available * pct, livePrice, leverage, QTY_STEP)
-      : held * pct;
-    animateQty(Math.max(0, target), QTY_STEP);
+      ? calcMaxSpotBuyQty(available * pct, livePrice, leverage, step)
+      : floorToStep(held * pct, step);
+    animateQty(Math.max(0, target), step);
   };
 
   const submit = async () => {

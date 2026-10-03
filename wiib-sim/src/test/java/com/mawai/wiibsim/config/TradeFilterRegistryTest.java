@@ -4,14 +4,17 @@ import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -20,6 +23,7 @@ import static org.mockito.Mockito.when;
  *   <li>开仓校验三连：低于minQty拒、步长不整拒、名义额不足拒，合规放行</li>
  *   <li>reduce-only 豁免：平仓/卖出不查名义额；全量平出连步长都豁免（存量尘埃仓能清干净）</li>
  *   <li>官方刷新：正常响应按 symbol 覆盖默认；地理拦截/挂掉沿用默认快照，未配置 symbol 不混入</li>
+ *   <li>bStock 走现货下单，同样受现货过滤器约束；现货未配置的 symbol 买入直接拒</li>
  * </ol>
  */
 class TradeFilterRegistryTest {
@@ -112,5 +116,50 @@ class TradeFilterRegistryTest {
         // 现货整体失败 → 默认快照原样
         assertThat(reg.allSpot().get("SOLUSDT").stepSize()).isEqualByComparingTo("0.001");
         assertThat(reg.allSpot().get("DOGEUSDT").minNotional()).isEqualByComparingTo("1");
+    }
+
+    @Test
+    void bStock买入_受现货过滤器约束() {
+        TradeFilterRegistry reg = defaultRegistry();
+        BigDecimal price = new BigDecimal("234.46");
+
+        // NVDAB 现货：step/minQty 0.001，minNotional 5
+        assertThatThrownBy(() -> reg.validateSpotBuy("NVDABUSDT", new BigDecimal("0.0215"), price))
+                .isInstanceOf(BizException.class)
+                .extracting("code").isEqualTo(ErrorCode.TRADE_STEP_INVALID.getCode());
+        // 0.022 × 234.46 = 5.16
+        assertThatCode(() -> reg.validateSpotBuy("NVDABUSDT", new BigDecimal("0.022"), price))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void 现货买入_未配置symbol直接拒() {
+        TradeFilterRegistry reg = defaultRegistry();
+
+        assertThatThrownBy(() -> reg.validateSpotBuy("PEPEUSDT", new BigDecimal("1000"), BigDecimal.ONE))
+                .isInstanceOf(BizException.class)
+                .extracting("code").isEqualTo(ErrorCode.CRYPTO_SYMBOL_INVALID.getCode());
+    }
+
+    @Test
+    void 现货官方刷新_bStock一并拉取并覆盖() {
+        BinanceRestClient client = mock(BinanceRestClient.class);
+        // NVDAB 官方改成 step 0.01 / minNotional 10
+        when(client.getSpotExchangeInfo(anyList())).thenReturn("""
+                {"symbols":[
+                  {"symbol":"NVDABUSDT","filters":[
+                    {"filterType":"LOT_SIZE","stepSize":"0.01000000","minQty":"0.01000000"},
+                    {"filterType":"NOTIONAL","minNotional":"10.00000000"}]}
+                ]}""");
+
+        TradeFilterRegistry reg = new TradeFilterRegistry(client);
+        reg.refreshFromBinance();
+
+        ArgumentCaptor<List<String>> requested = ArgumentCaptor.captor();
+        verify(client).getSpotExchangeInfo(requested.capture());
+        assertThat(requested.getValue()).contains("NVDABUSDT", "SNDKBUSDT", "CRCLBUSDT", "BTCUSDT");
+
+        assertThat(reg.allSpot().get("NVDABUSDT").stepSize()).isEqualByComparingTo("0.01");
+        assertThat(reg.allSpot().get("NVDABUSDT").minNotional()).isEqualByComparingTo("10");
     }
 }
