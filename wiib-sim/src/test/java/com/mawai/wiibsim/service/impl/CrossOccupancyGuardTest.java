@@ -17,7 +17,8 @@ import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.UserService;
-import com.mawai.wiibsim.util.RedisLockUtil;
+import com.mawai.wiibsim.util.FairLockRegistry;
+import org.apache.ibatis.annotations.Select;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -100,6 +101,25 @@ class CrossOccupancyGuardTest {
                 .extracting("code").isEqualTo(ErrorCode.FUTURES_CROSS_AVAILABLE_NOT_ENOUGH.getCode());
     }
 
+    /** 并发闸：先锁 user 行、后读快照（锁持有到调用方事务提交） */
+    @Test
+    void 校验额度前先锁user行_锁在读快照之前() {
+        crossMargin.assertCanAfford(UID, new BigDecimal("900"));
+
+        var order = inOrder(userMapper, positionMapper);
+        order.verify(userMapper).selectByIdForUpdate(UID);
+        order.verify(positionMapper).selectCrossSnapshot(UID);
+    }
+
+    /** 快照是 tick 巡检热路径（每用户每秒），只读不锁 */
+    @Test
+    void 单纯取快照不加锁() {
+        crossMargin.snapshot(UID);
+        crossMargin.snapshot(UID, CROSS_SYMBOL, new BigDecimal("90"));
+
+        verify(userMapper, never()).selectByIdForUpdate(anyLong());
+    }
+
     /** 这条是本次修复的锚：989 恰好落在两个口径中间，旧守卫放行、新守卫必须拒 */
     @Test
     void 回归_旧维持保证金口径放行的989_现在拒() {
@@ -119,6 +139,19 @@ class CrossOccupancyGuardTest {
 
         assertThat(crossMargin.snapshot(UID).available()).isEqualByComparingTo("1400");
         assertThat(crossMargin.snapshot(UID).maxOutflow()).isEqualByComparingTo("1000");
+    }
+
+    /**
+     * 挂单占用含 PENDING 以及触发后还没落成仓位的 TRIGGERED / PROCESSING。
+     * 只钉 SQL 文本里的状态集合，真查询语义要连 PG 才验得到。
+     */
+    @Test
+    void 挂单占用口径含已触发未落仓的单() throws NoSuchMethodException {
+        String sql = String.join("\n", FuturesPositionMapper.class
+                .getMethod("selectCrossSnapshot", Long.class).getAnnotation(Select.class).value());
+        String reserved = sql.substring(0, sql.indexOf("AS pending_reserved"));
+
+        assertThat(reserved).contains("'PENDING'", "'TRIGGERED'", "'PROCESSING'");
     }
 
     /**
@@ -142,7 +175,7 @@ class CrossOccupancyGuardTest {
 
         FuturesTradingServiceImpl trading = new FuturesTradingServiceImpl(
                 mock(UserService.class), userMapper, positionMapper, orderMapper,
-                new TradingConfig(), mock(RedisLockUtil.class), cacheService,
+                new TradingConfig(), mock(FairLockRegistry.class), cacheService,
                 mock(FuturesPositionIndexService.class), bracketRegistry, crossMargin,
                 new TradeFilterRegistry(mock(BinanceRestClient.class)),
                 new MessageCatalog());

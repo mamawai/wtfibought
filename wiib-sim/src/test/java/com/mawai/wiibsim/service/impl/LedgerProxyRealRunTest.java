@@ -448,9 +448,8 @@ class LedgerProxyRealRunTest {
      * markPositionFee 带进来。切面若没织上或调用点漏标，这里一条流水都没有。
      * <p>
      * 余额刻意给 0：支付方三级兜底的第一级 atomicUpdateBalance 必然返 null，才会掉到扣保证金那级。
-     * 断言写成"delta == 实际少掉的保证金、balanceAfter == 库里当前保证金"这种相对式，
-     * 是因为 notional 用的是 Redis 里的实时 mark 价，费额不可预知；数量取 0.001 让费远小于保证金，
-     * 稳定走"够扣"那一级（价格得涨到 5 亿才会掉到扣光那级）。
+     * 断言写成"delta == 实际少掉的保证金、balanceAfter == 库里当前保证金"这种相对式；
+     * mark 价传 20000、数量取 0.001，费 0.20 远小于保证金，稳定走"够扣"那一级。
      */
     @Test
     void 资金费扣保证金走第二个切点记账() {
@@ -460,7 +459,7 @@ class LedgerProxyRealRunTest {
 
         // 正费率 + LONG = 本仓应付；protected 方法同包可见，经代理调进来才有 @Ledger/@Transactional
         SpringUtils.getAopProxy(futuresSettlementServiceImpl)
-                .doChargeFundingFeeOne(posId, new BigDecimal("0.0100"));
+                .doChargeFundingFeeOne(posId, new BigDecimal("0.0100"), new BigDecimal("20000"));
 
         BigDecimal marginAfter = positionMapper.selectById(posId).getMargin();
         assertThat(marginAfter).as("保证金必须真被扣了，否则本用例什么都没验到").isLessThan(marginBefore);
@@ -481,11 +480,10 @@ class LedgerProxyRealRunTest {
     /**
      * 第三级兜底"保证金也不够、直接扣光"：那条 SQL 是整体覆写（SET margin = 0），扣款额只能从
      * <b>锁内快照</b>来。断言 delta 恰等于建仓时那 0.01，就是在钉死"记的是 selectMarginForUpdate
-     * 读到的真实保证金"而不是 611 行那个无锁快照，也不是恒为 0 的 RETURNING 值。
+     * 读到的真实保证金"，不是那笔算出来的资金费，也不是恒为 0 的 RETURNING 值。
      * <p>
-     * 保证金给 0.01：资金费按 mark 价算最少也有 0.20（价格取不到会退回开仓价 20000 × 0.001 × 1%），
-     * 必然扣不动、掉到这一级。checkLiquidation 只有这一级返 true，用它钉住分支——
-     * 万一价格离谱到费还不够 0.01，那条断言会红而不是悄悄测成"够扣"那级。
+     * 保证金给 0.01：mark 价传 20000，资金费 20000 × 0.001 × 1% = 0.20，
+     * 必然扣不动、掉到这一级。checkLiquidation 只有这一级返 true，用它钉住分支。
      */
     @Test
     void 资金费扣光保证金记的是锁内真实扣款额() {
@@ -493,7 +491,7 @@ class LedgerProxyRealRunTest {
         Long posId = newIsolatedPosition(uid, "BTCUSDT", new BigDecimal("0.01"), new BigDecimal("0.00100000"));
 
         var result = SpringUtils.getAopProxy(futuresSettlementServiceImpl)
-                .doChargeFundingFeeOne(posId, new BigDecimal("0.0100"));
+                .doChargeFundingFeeOne(posId, new BigDecimal("0.0100"), new BigDecimal("20000"));
 
         assertThat(result.checkLiquidation())
                 .as("checkLiquidation=true 只可能来自'扣光'那一级，false 说明走成了'够扣'、本用例没测到东西")

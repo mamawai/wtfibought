@@ -19,7 +19,7 @@ import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.UserService;
-import com.mawai.wiibsim.util.RedisLockUtil;
+import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -86,7 +86,7 @@ class FuturesOpenMergeTest {
 
         service = new FuturesTradingServiceImpl(
                 userService, userMapper, positionMapper, orderMapper,
-                new TradingConfig(), mock(RedisLockUtil.class), cacheService,
+                new TradingConfig(), mock(FairLockRegistry.class), cacheService,
                 positionIndexService, bracketRegistry, crossMarginService,
                 new TradeFilterRegistry(mock(BinanceRestClient.class)),
                 new MessageCatalog());

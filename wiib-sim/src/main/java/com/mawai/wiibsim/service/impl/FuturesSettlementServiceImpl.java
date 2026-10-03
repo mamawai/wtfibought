@@ -25,7 +25,7 @@ import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesSettlementService;
 import com.mawai.wiibsim.service.UserService;
-import com.mawai.wiibsim.util.RedisLockUtil;
+import com.mawai.wiibsim.util.FairLockRegistry;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.*;
+import java.util.concurrent.locks.Lock;
 
 import static com.mawai.wiibcommon.enums.LedgerBizType.*;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.*;
@@ -58,7 +59,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final FuturesRiskService riskService;
     private final CrossMarginService crossMarginService;
     private final CrossLiquidationService crossLiquidationService;
-    private final RedisLockUtil redisLockUtil;
+    private final FairLockRegistry lockRegistry;
     private final FundingRateService fundingRateService;
 
     protected record FundingFeeChargeResult(boolean success, boolean checkLiquidation) {}
@@ -126,26 +127,24 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         if (!"TRIGGERED".equals(order.getStatus())) return;
 
         if (!order.getOrderSide().startsWith("OPEN")) {
-            String lockKey = "futures:pos:" + order.getPositionId();
-            String lockValue = redisLockUtil.tryLock(lockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
-            if (lockValue == null) {
-                log.info("futures限价成交跳过，仓位处理中 orderId={} posId={}", order.getId(), order.getPositionId());
+            Lock lock = lockRegistry.tryLockAsSystem("futures:pos:" + order.getPositionId());
+            if (lock == null) {
+                log.warn("futures限价成交获锁超时，交给补扫 orderId={} posId={}", order.getId(), order.getPositionId());
                 return;
             }
             try {
                 SpringUtils.getAopProxy(this).doProcessTriggeredOrder(order);
             } finally {
-                redisLockUtil.unlock(lockKey, lockValue);
+                lock.unlock();
             }
             return;
         }
 
         // 开仓成交可能并入同向仓位：币种锁与市价开仓/调杠杆互斥，发现同向仓位再压仓位锁
-        // （锁序 sym→pos 与交易侧一致防死锁）；拿不到锁直接放弃，TRIGGERED 孤儿补扫会重试
-        String symLockKey = "futures:sym:" + order.getUserId() + ":" + order.getSymbol();
-        String symLockValue = redisLockUtil.tryLock(symLockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
-        if (symLockValue == null) {
-            log.info("futures限价开仓成交跳过，币种处理中 orderId={}", order.getId());
+        // （锁序 sym→pos 与交易侧一致防死锁）；等锁超时留给 TRIGGERED 孤儿补扫
+        Lock symLock = lockRegistry.tryLockAsSystem("futures:sym:" + order.getUserId() + ":" + order.getSymbol());
+        if (symLock == null) {
+            log.warn("futures限价开仓成交获锁超时，交给补扫 orderId={}", order.getId());
             return;
         }
         try {
@@ -156,19 +155,18 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
                 SpringUtils.getAopProxy(this).doProcessTriggeredOrder(order);
                 return;
             }
-            String posLockKey = "futures:pos:" + sameSide.getId();
-            String posLockValue = redisLockUtil.tryLock(posLockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
-            if (posLockValue == null) {
-                log.info("futures限价开仓成交跳过，仓位处理中 orderId={} posId={}", order.getId(), sameSide.getId());
+            Lock posLock = lockRegistry.tryLockAsSystem("futures:pos:" + sameSide.getId());
+            if (posLock == null) {
+                log.warn("futures限价开仓成交获锁超时，交给补扫 orderId={} posId={}", order.getId(), sameSide.getId());
                 return;
             }
             try {
                 SpringUtils.getAopProxy(this).doProcessTriggeredOrder(order);
             } finally {
-                redisLockUtil.unlock(posLockKey, posLockValue);
+                posLock.unlock();
             }
         } finally {
-            redisLockUtil.unlock(symLockKey, symLockValue);
+            symLock.unlock();
         }
     }
 
@@ -199,7 +197,6 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         boolean isCloseOrder = order.getOrderSide().startsWith("CLOSE");
         BigDecimal executePrice = isLimitTaker(order, isCloseOrder) ? order.getFilledPrice() : order.getLimitPrice();
         if (executePrice == null) executePrice = order.getLimitPrice();
-        if (executePrice == null) return;
 
         if (order.getOrderSide().startsWith("OPEN")) {
             processTriggeredOpenOrder(order, executePrice);
@@ -247,23 +244,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         BigDecimal margin = positionValue.divide(BigDecimal.valueOf(order.getLeverage()), 2, RoundingMode.CEILING);
         boolean isTaker = isLimitTaker(order, false);
         BigDecimal commission = tradingConfig.calculateFuturesCommission(positionValue, false, isTaker);
-        BigDecimal actualCost = margin.add(commission);
-
-        if (isCross) {
-            // 全仓：挂单期间只是占用记账，成交只实扣手续费（挂单占用随状态翻转自动消失）
-            LedgerCtx.mark(FUTURES_OPEN_FEE, "FUTURES_ORDER", order.getId());
-            userMapper.atomicSettleBalance(order.getUserId(), commission.negate());
-        } else {
-            BigDecimal frozenAmount = order.getFrozenAmount();
-            LedgerCtx.mark(FUTURES_LIMIT_DEDUCT, "FUTURES_ORDER", order.getId());
-            BigDecimal afterFrozen = userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
-            if (afterFrozen == null) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
-            if (actualCost.compareTo(frozenAmount) < 0) {
-                BigDecimal refund = frozenAmount.subtract(actualCost);
-                LedgerCtx.mark(FUTURES_LIMIT_REFUND, "FUTURES_ORDER", order.getId());
-                userMapper.atomicUpdateBalance(order.getUserId(), refund);
-            }
-        }
+        if (!chargeOpenFill(order, margin, commission)) return;
 
         FuturesPosition position = new FuturesPosition();
         position.setUserId(order.getUserId());
@@ -318,22 +299,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         BigDecimal addMargin = addValue.divide(BigDecimal.valueOf(leverage), 2, RoundingMode.CEILING);
         boolean isTaker = isLimitTaker(order, false);
         BigDecimal commission = tradingConfig.calculateFuturesCommission(addValue, false, isTaker);
-        BigDecimal actualCost = addMargin.add(commission);
-
-        if (position.isCross()) {
-            // 全仓：挂单期间只是占用记账，成交只实扣手续费（挂单占用随状态翻转自动消失）
-            LedgerCtx.mark(FUTURES_OPEN_FEE, "FUTURES_ORDER", order.getId());
-            userMapper.atomicSettleBalance(order.getUserId(), commission.negate());
-        } else {
-            BigDecimal frozenAmount = order.getFrozenAmount();
-            LedgerCtx.mark(FUTURES_LIMIT_DEDUCT, "FUTURES_ORDER", order.getId());
-            BigDecimal afterFrozen = userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
-            if (afterFrozen == null) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
-            if (actualCost.compareTo(frozenAmount) < 0) {
-                LedgerCtx.mark(FUTURES_LIMIT_REFUND, "FUTURES_ORDER", order.getId());
-                userMapper.atomicUpdateBalance(order.getUserId(), frozenAmount.subtract(actualCost));
-            }
-        }
+        if (!chargeOpenFill(order, addMargin, commission)) return;
 
         BigDecimal newEntryPrice = position.getEntryPrice().multiply(oldQty)
                 .add(executePrice.multiply(addQty))
@@ -367,6 +333,49 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         log.info("futures限价开仓并入 orderId={} posId={} price={} feeType={} addMargin={} 新均价={}",
                 order.getId(), position.getId(), executePrice, isTaker ? "TAKER" : "MAKER", addMargin, newEntryPrice);
+    }
+
+    /**
+     * 限价开仓成交的资金动作，成本 = 成交价下的保证金+手续费。
+     * 成本超出挂单时冻结/预留的 frozenAmount（taker 开空按触发价成交）：超出部分要过全仓可用额度，
+     * 逐仓还要从余额补扣，过不去就撤单退款、返回 false。
+     */
+    private boolean chargeOpenFill(FuturesOrder order, BigDecimal margin, BigDecimal commission) {
+        BigDecimal frozenAmount = order.getFrozenAmount();
+        BigDecimal extra = margin.add(commission).subtract(frozenAmount);
+        // 可用额度里已扣掉本单预留，只校验超出部分
+        if (extra.signum() > 0) {
+            // 先锁 user 行再读可用额度，同 assertCanAfford，不够撤单不抛异常
+            userMapper.selectByIdForUpdate(order.getUserId());
+            if (crossMarginService.snapshot(order.getUserId()).available().compareTo(extra) < 0) {
+                cancelTriggeredOrderAndRefund(order, "insufficient_available");
+                return false;
+            }
+        }
+
+        if (FuturesPosition.CROSS.equals(order.getMarginMode())) {
+            // 全仓：挂单期间只是占用记账，成交只实扣手续费（挂单占用随状态翻转自动消失）
+            LedgerCtx.mark(FUTURES_OPEN_FEE, "FUTURES_ORDER", order.getId());
+            userMapper.atomicSettleBalance(order.getUserId(), commission.negate());
+            return true;
+        }
+
+        // 逐仓：超出部分先从余额补扣，补不上撤单退冻结；补上了再销冻结
+        if (extra.signum() > 0) {
+            LedgerCtx.mark(FUTURES_LIMIT_DEDUCT, "FUTURES_ORDER", order.getId());
+            if (userMapper.atomicUpdateBalance(order.getUserId(), extra.negate()) == null) {
+                cancelTriggeredOrderAndRefund(order, "insufficient_balance");
+                return false;
+            }
+        }
+        LedgerCtx.mark(FUTURES_LIMIT_DEDUCT, "FUTURES_ORDER", order.getId());
+        BigDecimal afterFrozen = userMapper.atomicDeductFrozenBalance(order.getUserId(), frozenAmount);
+        if (afterFrozen == null) throw new BizException(ErrorCode.CONCURRENT_UPDATE_FAILED);
+        if (extra.signum() < 0) {
+            LedgerCtx.mark(FUTURES_LIMIT_REFUND, "FUTURES_ORDER", order.getId());
+            userMapper.atomicUpdateBalance(order.getUserId(), extra.negate());
+        }
+        return true;
     }
 
     private List<FuturesPosition> openPositionsOf(Long userId, String symbol) {
@@ -569,18 +578,25 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     }
 
     protected boolean chargeFundingFeeOne(FuturesPosition pos, BigDecimal rate) {
-        String lockKey = "futures:pos:" + pos.getId();
-        String lockValue = redisLockUtil.tryLock(lockKey, tradingConfig.getFutures().getLockTimeoutSeconds());
-        if (lockValue == null) {
-            log.info("futures资金费跳过，仓位处理中 posId={}", pos.getId());
+        // 名义额按结算时刻的 mark 价算（对齐 Binance），等锁期间价格变了也不换；mark 取不到传 null，退回开仓价
+        BigDecimal markPrice;
+        try {
+            markPrice = getMarkPrice(pos.getSymbol());
+        } catch (Exception e) {
+            markPrice = null;
+        }
+
+        Lock lock = lockRegistry.tryLockAsSystem("futures:pos:" + pos.getId());
+        if (lock == null) {
+            log.warn("futures资金费获锁超时，本期未收 posId={}", pos.getId());
             return false;
         }
 
         FundingFeeChargeResult result;
         try {
-            result = SpringUtils.getAopProxy(this).doChargeFundingFeeOne(pos.getId(), rate);
+            result = SpringUtils.getAopProxy(this).doChargeFundingFeeOne(pos.getId(), rate, markPrice);
         } finally {
-            redisLockUtil.unlock(lockKey, lockValue);
+            lock.unlock();
         }
 
         if (result.checkLiquidation()) {
@@ -600,23 +616,19 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
      * 方法级 @Ledger 在这里只干两件事：给本方法内的流水挂上 symbol，以及给将来新增的资金分支一个兜底。
      * 收/付两笔各自 mark 精确类型，所以方法级这个值实际不会被用到。
      * （本方法 protected 且经 getAopProxy 走代理调进来，AOP 拦得到。）
+     * <p>
+     * 调用方拿着仓位锁；markPrice 是结算时刻的 mark 价，null 退回开仓价。
      */
     @Transactional(rollbackFor = Exception.class)
     @Ledger(FUNDING_FEE_PAY)
-    protected FundingFeeChargeResult doChargeFundingFeeOne(Long positionId, BigDecimal rate) {
+    protected FundingFeeChargeResult doChargeFundingFeeOne(Long positionId, BigDecimal rate, BigDecimal markPrice) {
         FuturesPosition pos = positionMapper.selectById(positionId);
         if (pos == null || !"OPEN".equals(pos.getStatus())) {
             return new FundingFeeChargeResult(false, false);
         }
         LedgerCtx.symbol(pos.getSymbol());
 
-        // 名义额对齐 Binance：按 mark 价×数量结算；mark 不可得退回开仓价（罕见，别让结算卡死）
-        BigDecimal notionalPrice;
-        try {
-            notionalPrice = getMarkPrice(pos.getSymbol());
-        } catch (Exception e) {
-            notionalPrice = pos.getEntryPrice();
-        }
+        BigDecimal notionalPrice = markPrice != null ? markPrice : pos.getEntryPrice();
         BigDecimal notional = notionalPrice.multiply(pos.getQuantity());
         // 真实转移机制：正=本仓应付，负=本仓应收（费率>0 多付空收，费率<0 反向）
         BigDecimal transfer = fundingTransfer(pos.getSide(), notional, rate);
@@ -665,9 +677,8 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         }
 
         // 扣光那条连金额参数都没有（SET margin = 0），扣的就是当前全部保证金，同样由调用点带进来。
-        // 但不能拿 611 行那次 selectById 的 pos.getMargin()：那是无锁快照，并发追加/减少保证金后
-        // 它就不是实际扣款额了，记出来的会是"delta=旧快照 / balanceAfter=0"这种自相矛盾的行。
-        // 按项目对整体覆写的既定做法先加行锁读一次，锁住之后 UPDATE 抹掉的就是这个数。
+        // 按项目对整体覆写的既定做法先加行锁读一次，锁住之后 UPDATE 抹掉的就是这个数，
+        // 不会记出"delta=旧快照 / balanceAfter=0"这种自相矛盾的行。
         // 读不到（仓位已关/已删）说明没什么可扣，直接返回——紧跟的 UPDATE 本来也一行不改
         BigDecimal deducted = positionMapper.selectMarginForUpdate(pos.getId());
         if (deducted == null) {
