@@ -490,7 +490,6 @@
     "commodity": "Commodities",
     "bstock": "bStock",
     "prediction": "Prediction",
-    "game": "Games",
     "betterThan": "Better than {{pct}}% of users"
   }
 }

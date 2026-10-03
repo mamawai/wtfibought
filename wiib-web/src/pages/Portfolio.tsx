@@ -230,13 +230,12 @@ export function Portfolio() {
 
   const rt = realtimeSnapshot;
   const dailyProfit = rt?.dailyProfit ?? 0;
-  // 五分类当日拆解，0 的那格压成灰
+  // 四分类当日拆解，0 的那格压成灰
   const cats = [
     { k: t('cat.crypto'), v: rt?.dailyCryptoProfit ?? 0 },
     { k: t('cat.commodity'), v: rt?.dailyCommodityProfit ?? 0 },
     { k: t('cat.bstock'), v: rt?.dailyBstockProfit ?? 0 },
     { k: t('cat.prediction'), v: rt?.dailyPredictionProfit ?? 0 },
-    { k: t('cat.game'), v: rt?.dailyGameProfit ?? 0 },
   ];
 
   // 余额钱包 = 余额 + 冻结（限价买单、逐仓限价开仓冻着的钱），同后端总资产口径；钱包明细、分布条、饼图都用它

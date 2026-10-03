@@ -38,7 +38,7 @@ public interface CryptoOrderMapper extends BaseMapper<CryptoOrder> {
             "WHERE user_id = #{userId} AND status IN ('PENDING', 'TRIGGERED')")
     int cancelOpenOrdersByUserId(@Param("userId") Long userId);
 
-    /** 用户已成交买入总额（成本，含手续费）——仅 crypto：bStock 共用现货表，按 symbol 集剔除，行为分析口径与资产五分类对齐 */
+    /** 用户已成交买入总额（成本，含手续费）——仅 crypto：bStock 共用现货表，按 symbol 集剔除，行为分析口径与资产四分类对齐 */
     @Select("SELECT COALESCE(SUM(filled_amount + COALESCE(commission, 0)), 0) FROM crypto_order " +
             "WHERE user_id = #{userId} AND order_side = 'BUY' AND status = 'FILLED' " +
             "AND symbol NOT IN (SELECT symbol FROM bstock)")
@@ -62,7 +62,7 @@ public interface CryptoOrderMapper extends BaseMapper<CryptoOrder> {
             "AND symbol IN (SELECT symbol FROM bstock)")
     BigDecimal sumBstockSellFilledAmount(@Param("userId") Long userId);
 
-    /** 分符号净现金流：SELL(净得) − BUY(净付)，配合当前持仓市值可得该符号真实盈亏。五分类归集用 */
+    /** 分符号净现金流：SELL(净得) − BUY(净付)，配合当前持仓市值可得该符号真实盈亏。四分类归集用 */
     @Select("""
             SELECT symbol,
                    COALESCE(SUM(CASE WHEN order_side = 'SELL' THEN filled_amount - COALESCE(commission, 0)

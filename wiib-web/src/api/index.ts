@@ -5,7 +5,7 @@ import type { BacktestTaskStatus, BacktestEventsPage, BacktestKlinesPage, Backte
 import type { LedgerEntry, LedgerBizTypeOption, PublicTrade, UserProfile, PositionHistoryItem, RankingSort } from '../types';
 import type { LlmEndpointView, LlmEndpointSaveRequest, LlmBindings, LlmPurpose, JevConfigView, JevSaveRequest } from '../types';
 import type { JevPredictionOverview, JevPredictionDecisionView, JevBet, JevSwitchState } from '../types';
-import type { User, PageResult, RankingItem, CommentItem, NotificationItem, BuffStatus, UserBuff, BlackjackStatus, GameState, ConvertResult, MinesStatus, MinesGameState, VideoPokerStatus, VideoPokerGameState, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesAdjustLeverageRequest, FuturesCrossAccount, WalletTransferPreview, FuturesPosition, FuturesOrder, FuturesReverseResult, FuturesBracket, FundingRateView, TradeFilterMap, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, ForceOrder, AiKeyConfig, AiModelAssignment, NewsBackfillResult, InviteCode, ChatIntent, WorkbenchEvent, StrategyAccountView, TraderPublicView, TraderOwnerView, TraderDetailView, AiTraderDecisionView, TraderEquityPoint, TraderUpsertRequest, TraderSpec, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchSessionStatus, WorkbenchChatMessage, TraderActionPanel, TraderActionResult, TradeRecordView, TraderLiveEvent, WakeTrace } from '../types';
+import type { User, PageResult, RankingItem, CommentItem, NotificationItem, BuffStatus, UserBuff, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesAdjustLeverageRequest, FuturesCrossAccount, WalletTransferPreview, FuturesPosition, FuturesOrder, FuturesReverseResult, FuturesBracket, FundingRateView, TradeFilterMap, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, ForceOrder, AiKeyConfig, AiModelAssignment, NewsBackfillResult, InviteCode, ChatIntent, WorkbenchEvent, StrategyAccountView, TraderPublicView, TraderOwnerView, TraderDetailView, AiTraderDecisionView, TraderEquityPoint, TraderUpsertRequest, TraderSpec, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchSessionStatus, WorkbenchChatMessage, TraderActionPanel, TraderActionResult, TradeRecordView, TraderLiveEvent, WakeTrace } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -101,7 +101,7 @@ export const userApi = {
   /** 指定月份逐日快照（首页月度盈亏网格）。month 形如 2026-07；快照只写到昨天，返回里没有今天 */
   assetDaily: (month: string) => api.get<unknown, AssetSnapshot[]>('/user/asset-daily', { params: { month } }),
   categoryAverages: (days = 30) => api.get<unknown, CategoryAverages>('/user/category-averages', { params: { days } }),
-  // 重置账户：清空交易与游戏数据回到初始资金。活动期每周首次免费、之后每次扣 30 活动分；
+  // 重置账户：清空交易与预测数据回到初始资金。活动期每周首次免费、之后每次扣 30 活动分；
   // 平时每周限 1 次。需逐字输入用户名确认
   resetAccount: (confirmUsername: string) =>
     api.post<unknown, void>('/user/reset', { confirmUsername }),
@@ -244,34 +244,6 @@ export const buffApi = {
   status: () => api.get<unknown, BuffStatus>('/buff/status'),
   // 抽奖
   draw: () => api.post<unknown, UserBuff>('/buff/draw'),
-};
-
-// ========== Blackjack接口 ==========
-export const blackjackApi = {
-  status: () => api.get<unknown, BlackjackStatus>('/blackjack/status'),
-  bet: (amount: number) => api.post<unknown, GameState>('/blackjack/bet', { amount }),
-  hit: () => api.post<unknown, GameState>('/blackjack/hit'),
-  stand: () => api.post<unknown, GameState>('/blackjack/stand'),
-  double: () => api.post<unknown, GameState>('/blackjack/double'),
-  split: () => api.post<unknown, GameState>('/blackjack/split'),
-  insurance: () => api.post<unknown, GameState>('/blackjack/insurance'),
-  forfeit: () => api.post<unknown, GameState>('/blackjack/forfeit'),
-  convert: (amount: number) => api.post<unknown, ConvertResult>('/blackjack/convert', { amount }),
-};
-
-// ========== 矿工游戏接口 ==========
-export const minesApi = {
-  status: () => api.get<unknown, MinesStatus>('/mines/status'),
-  bet: (amount: number) => api.post<unknown, MinesGameState>('/mines/bet', { amount }),
-  reveal: (cell: number) => api.post<unknown, MinesGameState>('/mines/reveal', { cell }),
-  cashout: () => api.post<unknown, MinesGameState>('/mines/cashout'),
-};
-
-// ========== 视频扑克接口 ==========
-export const videoPokerApi = {
-  status: () => api.get<unknown, VideoPokerStatus>('/videopoker/status'),
-  bet: (amount: number) => api.post<unknown, VideoPokerGameState>('/videopoker/bet', { amount }),
-  draw: (held: number[]) => api.post<unknown, VideoPokerGameState>('/videopoker/draw', { held }),
 };
 
 // ========== 加密货币行情接口 ==========

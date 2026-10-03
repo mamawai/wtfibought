@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  BarChart3, Bomb, ChevronRight, Coins, Dices, Gem, Rocket,
+  BarChart3, ChevronRight, Coins, Rocket,
   ShieldAlert, Target, UserSearch,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -67,7 +67,7 @@ export function BehaviorReportCard({ report }: { report: BehaviorAnalysisReport 
   const { t } = useTranslation('ai');
   const [open, setOpen] = useState(false);
 
-  const { overview, tradeBehavior, gameBehavior, riskProfile, suggestions } = report;
+  const { overview, tradeBehavior, riskProfile, suggestions } = report;
   // 模型漏填的点跳过：混进一个缺数，整条曲线就画不出来
   const trend = overview.trend?.map(p => p.totalAssets).filter(v => Number.isFinite(v)) ?? [];
   const up = overview.totalProfitPct >= 0;
@@ -190,27 +190,6 @@ export function BehaviorReportCard({ report }: { report: BehaviorAnalysisReport 
                     <Metric label={t('behavior.winRate')} value={`${tradeBehavior.prediction.winRate}%`} />
                     <Metric label={t('behavior.netPnl')} {...pnlProps(tradeBehavior.prediction.netProfit)} />
                     <Metric label={t('behavior.preference')} value={tradeBehavior.prediction.directionPreference} />
-                  </CategoryBlock>
-                )}
-                {/* gameBehavior 是软字段，模型可能整块不给 */}
-                {gameBehavior?.blackjack?.totalHands > 0 && (
-                  <CategoryBlock icon={Dices} title="Blackjack">
-                    <Metric label={t('behavior.hands')} value={gameBehavior.blackjack.totalHands} />
-                    <Metric label={t('behavior.biggestWin')} value={`$${gameBehavior.blackjack.biggestWin}`} />
-                    <Metric label={t('behavior.won')} value={gameBehavior.blackjack.totalWon} tone="gain" />
-                    <Metric label={t('behavior.lost')} value={gameBehavior.blackjack.totalLost} tone="loss" />
-                  </CategoryBlock>
-                )}
-                {gameBehavior?.mines?.frequency > 0 && (
-                  <CategoryBlock icon={Bomb} title={t('behavior.mines')}>
-                    <Metric label={t('behavior.frequency')} value={t('behavior.times', { count: gameBehavior.mines.frequency })} />
-                    <Metric label={t('behavior.netPnl')} {...pnlProps(gameBehavior.mines.netProfit)} />
-                  </CategoryBlock>
-                )}
-                {gameBehavior?.videoPoker?.frequency > 0 && (
-                  <CategoryBlock icon={Gem} title={t('behavior.videoPoker')}>
-                    <Metric label={t('behavior.frequency')} value={t('behavior.times', { count: gameBehavior.videoPoker.frequency })} />
-                    <Metric label={t('behavior.netPnl')} {...pnlProps(gameBehavior.videoPoker.netProfit)} />
                   </CategoryBlock>
                 )}
               </div>

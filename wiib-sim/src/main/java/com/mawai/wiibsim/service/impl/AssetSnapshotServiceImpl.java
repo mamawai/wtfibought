@@ -43,15 +43,12 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
     private final FuturesOrderMapper futuresOrderMapper;
     private final AssetValuationService assetValuationService;
     private final PredictionBetMapper predictionBetMapper;
-    private final MinesGameMapper minesGameMapper;
-    private final VideoPokerGameMapper videoPokerGameMapper;
-    private final BlackjackConvertLogMapper blackjackConvertLogMapper;
     private final CryptoOrderMapper cryptoOrderMapper;
     private final BStockMapper bstockMapper;
     private final BinanceProperties binanceProperties;
 
     /**
-     * 符号→五分类归属的判定集：bStock 来自 bstock 表（现货），大宗商品来自配置（金/油），
+     * 符号→四分类归属的判定集：bStock 来自 bstock 表（现货），大宗商品来自配置（金/油），
      * TradFi 合约（美股/ETF 永续）来自配置——本质是股票衍生品，盈亏归入 bstock（股票）桶。
      */
     private record CategorySets(Set<String> bstock, Set<String> commodity, Set<String> tradfi) {
@@ -208,8 +205,7 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
                     current.getBstockProfit(),
                     current.getCryptoProfit(),
                     current.getCommodityProfit(),
-                    current.getPredictionProfit(),
-                    current.getGameProfit()
+                    current.getPredictionProfit()
             });
         }
 
@@ -259,8 +255,8 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
 
         Map<Long, CategoryAveragesDTO> result = new HashMap<>();
         for (Map.Entry<Long, BigDecimal[]> entry : userTotals.entrySet()) {
-            BigDecimal[] userRank = new BigDecimal[5];
-            for (int i = 0; i < 5; i++) {
+            BigDecimal[] userRank = new BigDecimal[4];
+            for (int i = 0; i < 4; i++) {
                 BigDecimal userVal = entry.getValue()[i];
                 if (userCount == 1) {
                     userRank[i] = new BigDecimal("100");
@@ -287,7 +283,6 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
         dto.setCryptoProfit(values[1]);
         dto.setCommodityProfit(values[2]);
         dto.setPredictionProfit(values[3]);
-        dto.setGameProfit(values[4]);
         return dto;
     }
 
@@ -340,10 +335,6 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
 
         BigDecimal predictionProfit = predictionBetMapper.sumRealizedProfit(userId);
 
-        BigDecimal gameProfit = minesGameMapper.sumNetProfit(userId)
-                .add(videoPokerGameMapper.sumNetProfit(userId))
-                .add(blackjackConvertLogMapper.sumTotalConverted(userId));
-
         // 预测持仓按 bid 可变现价值计入总资产（与资产页/排行榜/破产判定同口径）
         BigDecimal predictionValue = assetValuationService.predictionMarketValue(userId);
 
@@ -373,7 +364,6 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
         snapshot.setCryptoProfit(cryptoProfit.setScale(2, RoundingMode.HALF_UP));
         snapshot.setCommodityProfit(commodityProfit.setScale(2, RoundingMode.HALF_UP));
         snapshot.setPredictionProfit(predictionProfit.setScale(2, RoundingMode.HALF_UP));
-        snapshot.setGameProfit(gameProfit.setScale(2, RoundingMode.HALF_UP));
         snapshot.setCreatedAt(LocalDateTime.now());
         return snapshot;
     }
@@ -392,7 +382,6 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
         dto.setCryptoProfit(cur.getCryptoProfit());
         dto.setCommodityProfit(cur.getCommodityProfit());
         dto.setPredictionProfit(cur.getPredictionProfit());
-        dto.setGameProfit(cur.getGameProfit());
 
         if (prev != null) {
             dto.setDailyProfit(cur.getTotalAssets().subtract(prev.getTotalAssets()));
@@ -403,7 +392,6 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
             dto.setDailyCryptoProfit(sub(cur.getCryptoProfit(), prev.getCryptoProfit()));
             dto.setDailyCommodityProfit(sub(cur.getCommodityProfit(), prev.getCommodityProfit()));
             dto.setDailyPredictionProfit(sub(cur.getPredictionProfit(), prev.getPredictionProfit()));
-            dto.setDailyGameProfit(sub(cur.getGameProfit(), prev.getGameProfit()));
         } else {
             dto.setDailyProfit(cur.getProfit());
             dto.setDailyProfitPct(cur.getProfitPct());
@@ -411,7 +399,6 @@ public class AssetSnapshotServiceImpl implements AssetSnapshotService {
             dto.setDailyCryptoProfit(cur.getCryptoProfit());
             dto.setDailyCommodityProfit(cur.getCommodityProfit());
             dto.setDailyPredictionProfit(cur.getPredictionProfit());
-            dto.setDailyGameProfit(cur.getGameProfit());
         }
         return dto;
     }

@@ -38,13 +38,13 @@ public class BehaviorAnalysisService {
     private record CacheKey(long userId, AgentLang lang) {
     }
 
-    /** 全局闸门：一次分析要打 sim 十个内部端点，10 并发就是 100 条在途 HTTP，再多没必要 */
+    /** 全局闸门：一次分析要打 sim 七个内部端点，10 并发就是 70 条在途 HTTP，再多没必要 */
     private final Semaphore behaviorSemaphore = new Semaphore(10);
     private final Cache<CacheKey, BehaviorAnalysisReport> reportCache = Caffeine.newBuilder()
             .expireAfterWrite(30, TimeUnit.MINUTES)
             .maximumSize(10_000)
             .build();
-    // 失败负缓存：失败不进 reportCache 的话，用户每问一次重试就全额烧一遍分析（10 个端点 + 一次
+    // 失败负缓存：失败不进 reportCache 的话，用户每问一次重试就全额烧一遍分析（7 个端点 + 一次
     // 大 prompt 的 LLM 调用）且永远烧不出缓存。失败也短存，把重试风暴钝化成每 2 分钟最多一次真跑；
     // TTL 刻意远短于成功缓存——给上游（模型/网络）故障恢复留窗口
     private final Cache<CacheKey, String> failCache = Caffeine.newBuilder()

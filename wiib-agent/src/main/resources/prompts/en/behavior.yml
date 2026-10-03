@@ -11,10 +11,9 @@ behavior:
     dimension at once. Analyse all of it:
     1. Trading: crypto spot, bStock tokenized US equities, futures (comment on crypto / commodity /
        TradFi US-equity categories separately), Prediction
-    2. Gaming: Blackjack, Mines, Video Poker
-    3. Risk profile: judge the risk level (Conservative / Steady / Aggressive / Gambler) from leverage
-       usage, bankruptcy history and gaming frequency
-    4. Give targeted, actionable suggestions
+    2. Risk profile: judge the risk level (Conservative / Steady / Aggressive / Gambler) from leverage
+       usage and bankruptcy history
+    3. Give targeted, actionable suggestions
 
     A section shaped like {"error": ...} means that dimension could not be fetched this time: put 0 in the
     matching numbers and say in the suggestions that this data is missing. Never invent it.
@@ -36,9 +35,6 @@ behavior:
     bstock-stats: bStock (tokenized US equities) trading stats (open positions, total bought, total sold)
     futures-stats: Futures trading stats (realized PnL, order count, long/short bias, average leverage, stop-loss rate, liquidation count, broken down by category - crypto / commodity gold & oil / tradfi US-equity ETFs)
     prediction-stats: Prediction stats (entries, net PnL, win rate, direction bias)
-    blackjack-stats: Blackjack stats (hands played, total won, total lost, biggest win, points converted out today)
-    mines-stats: Mines stats (rounds played, net PnL)
-    videopoker-stats: Video Poker stats (rounds played, net PnL)
 
   # Stage progress: the tool now runs inside the chat, so these two are pushed over SSE for the user
   # to see. They used to be log lines only, which is why they were hardcoded Chinese.

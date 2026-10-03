@@ -42,7 +42,7 @@ COMMENT ON COLUMN "user".password_hash IS 'BCrypt密码哈希（定长60，OAuth
 COMMENT ON COLUMN "user".invite_code_id IS '注册用的邀请码ID（可追溯，OAuth用户为空）';
 COMMENT ON COLUMN "user".balance IS '余额钱包（交易：现货/B股/合约/杠杆，全仓保证金池）';
 COMMENT ON COLUMN "user".frozen_balance IS '冻结余额（限价买单冻结，属余额钱包）';
-COMMENT ON COLUMN "user".game_balance IS '游戏钱包（Mines/扑克/21点/预测市场，与全仓风险隔离）';
+COMMENT ON COLUMN "user".game_balance IS '游戏钱包（预测市场用，与全仓风险隔离）';
 COMMENT ON COLUMN "user".margin_loan_principal IS '杠杆借款本金';
 COMMENT ON COLUMN "user".margin_interest_accrued IS '杠杆应计利息（未支付）';
 COMMENT ON COLUMN "user".margin_interest_last_date IS '杠杆计息上次日期（用于补记）';
@@ -105,58 +105,6 @@ COMMENT ON COLUMN user_buff.draw_date IS '抽奖日期';
 COMMENT ON COLUMN user_buff.expire_at IS '过期时间';
 COMMENT ON COLUMN user_buff.is_used IS '是否已使用（折扣类）';
 COMMENT ON COLUMN user_buff.created_at IS '创建时间';
-
--- ============================================
--- 4. Blackjack积分账户表
--- ============================================
-CREATE TABLE IF NOT EXISTS blackjack_account (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL UNIQUE REFERENCES "user"(id),
-    chips BIGINT NOT NULL DEFAULT 200,
-    today_converted BIGINT NOT NULL DEFAULT 0,
-    last_convert_date DATE,
-    last_reset_date DATE,
-    total_hands BIGINT NOT NULL DEFAULT 0,
-    total_won BIGINT NOT NULL DEFAULT 0,
-    total_lost BIGINT NOT NULL DEFAULT 0,
-    biggest_win BIGINT NOT NULL DEFAULT 0,
-    session_json TEXT,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-COMMENT ON TABLE blackjack_account IS 'Blackjack积分账户';
-COMMENT ON COLUMN blackjack_account.id IS '主键';
-COMMENT ON COLUMN blackjack_account.user_id IS '用户ID';
-COMMENT ON COLUMN blackjack_account.chips IS '当前积分';
-COMMENT ON COLUMN blackjack_account.today_converted IS '今日已转出';
-COMMENT ON COLUMN blackjack_account.last_convert_date IS '上次转出日期';
-COMMENT ON COLUMN blackjack_account.last_reset_date IS '上次积分重置日期';
-COMMENT ON COLUMN blackjack_account.total_hands IS '总局数';
-COMMENT ON COLUMN blackjack_account.total_won IS '总赢额';
-COMMENT ON COLUMN blackjack_account.total_lost IS '总输额';
-COMMENT ON COLUMN blackjack_account.biggest_win IS '单局最大赢额';
-COMMENT ON COLUMN blackjack_account.session_json IS '进行中那一局的完整快照(牌靴/各手牌/庄家牌/保险)，NULL=无牌局；与筹码同行同一笔update，钱和牌不会分叉';
-COMMENT ON COLUMN blackjack_account.created_at IS '创建时间';
-COMMENT ON COLUMN blackjack_account.updated_at IS '更新时间';
-
--- ============================================
--- 5. Blackjack 转出日志表
--- ============================================
-CREATE TABLE IF NOT EXISTS blackjack_convert_log (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL,
-    amount BIGINT NOT NULL,
-    chips_before BIGINT NOT NULL,
-    chips_after BIGINT NOT NULL,
-    balance_before DECIMAL(18,2) NOT NULL,
-    balance_after DECIMAL(18,2) NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_bj_convert_user ON blackjack_convert_log(user_id);
-
-COMMENT ON TABLE blackjack_convert_log IS 'Blackjack积分转出日志';
 
 -- ============================================
 -- 6. 加密货币持仓表
@@ -224,38 +172,6 @@ COMMENT ON COLUMN crypto_order.status IS 'PENDING/TRIGGERED/FILLED/CANCELLED；�
 CREATE INDEX IF NOT EXISTS idx_crypto_order_user ON crypto_order(user_id);
 CREATE INDEX IF NOT EXISTS idx_crypto_order_status ON crypto_order(status, order_type);
 CREATE INDEX IF NOT EXISTS idx_crypto_order_symbol ON crypto_order(symbol, status);
-
--- ============================================
--- 8. 矿工游戏记录表
--- ============================================
-CREATE TABLE IF NOT EXISTS mines_game (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL,
-    bet_amount DECIMAL(18,2) NOT NULL,
-    fee DECIMAL(18,2) NOT NULL,
-    mine_positions VARCHAR(32) NOT NULL,
-    revealed_cells VARCHAR(128) NOT NULL DEFAULT '',
-    multiplier DECIMAL(18,4) NOT NULL DEFAULT 1.0000,
-    payout DECIMAL(18,2) NOT NULL DEFAULT 0,
-    status VARCHAR(16) NOT NULL DEFAULT 'PLAYING',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-COMMENT ON TABLE mines_game IS '矿工游戏记录';
-COMMENT ON COLUMN mines_game.id IS '主键';
-COMMENT ON COLUMN mines_game.user_id IS '用户ID';
-COMMENT ON COLUMN mines_game.bet_amount IS '下注金额';
-COMMENT ON COLUMN mines_game.fee IS '手续费(下注额×1%)';
-COMMENT ON COLUMN mines_game.mine_positions IS '雷位置(逗号分隔,0-24)';
-COMMENT ON COLUMN mines_game.revealed_cells IS '已翻开的安全格(逗号分隔)';
-COMMENT ON COLUMN mines_game.multiplier IS '最终倍率';
-COMMENT ON COLUMN mines_game.payout IS '实际支付金额';
-COMMENT ON COLUMN mines_game.status IS 'PLAYING/CASHED_OUT/EXPLODED/FORFEITED';
-COMMENT ON COLUMN mines_game.created_at IS '创建时间';
-COMMENT ON COLUMN mines_game.updated_at IS '更新时间';
-
-CREATE INDEX IF NOT EXISTS idx_mines_game_user_status ON mines_game(user_id, status);
 
 -- ============================================
 -- 9. 永续合约仓位表
@@ -355,39 +271,6 @@ CREATE INDEX IF NOT EXISTS idx_fo_position ON futures_order(position_id);
 CREATE INDEX IF NOT EXISTS idx_fo_symbol_status ON futures_order(symbol, status);
 
 -- ============================================
--- 11. 视频扑克游戏记录表
--- ============================================
-CREATE TABLE IF NOT EXISTS video_poker_game (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL,
-    bet_amount DECIMAL(18,2) NOT NULL,
-    initial_cards VARCHAR(64) NOT NULL,
-    deck TEXT,
-    held_positions VARCHAR(16) NOT NULL DEFAULT '',
-    final_cards VARCHAR(64) NOT NULL DEFAULT '',
-    hand_rank VARCHAR(32) NOT NULL DEFAULT '',
-    multiplier DECIMAL(18,4) NOT NULL DEFAULT 0,
-    payout DECIMAL(18,2) NOT NULL DEFAULT 0,
-    status VARCHAR(16) NOT NULL DEFAULT 'DEALING',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-COMMENT ON TABLE video_poker_game IS '视频扑克游戏记录';
-COMMENT ON COLUMN video_poker_game.user_id IS '用户ID';
-COMMENT ON COLUMN video_poker_game.bet_amount IS '下注金额';
-COMMENT ON COLUMN video_poker_game.initial_cards IS '初始5张牌(逗号分隔)';
-COMMENT ON COLUMN video_poker_game.deck IS '本局洗好的整副52张(逗号分隔)，前5张即initial_cards，draw从第6张起补牌';
-COMMENT ON COLUMN video_poker_game.held_positions IS 'HOLD的位置(逗号分隔,0-4)';
-COMMENT ON COLUMN video_poker_game.final_cards IS '最终5张牌(逗号分隔)';
-COMMENT ON COLUMN video_poker_game.hand_rank IS '牌型名称';
-COMMENT ON COLUMN video_poker_game.multiplier IS '赔率倍数';
-COMMENT ON COLUMN video_poker_game.payout IS '赔付金额';
-COMMENT ON COLUMN video_poker_game.status IS 'DEALING/SETTLED/FORFEITED';
-
-CREATE INDEX IF NOT EXISTS idx_vp_game_user_status ON video_poker_game(user_id, status);
-
--- ============================================
 -- 12. BTC 5min 涨跌预测回合表
 -- ============================================
 CREATE TABLE IF NOT EXISTS prediction_round (
@@ -450,12 +333,11 @@ CREATE TABLE IF NOT EXISTS user_asset_snapshot (
     total_assets DECIMAL(18,2) NOT NULL,
     profit DECIMAL(18,2) NOT NULL,
     profit_pct DECIMAL(10,4) NOT NULL,
-    -- 五分类盈亏：bStock / crypto(现货+合约) / 大宗商品(金油) / 预测 / 游戏
+    -- 四分类盈亏：bStock / crypto(现货+合约) / 大宗商品(金油) / 预测
     bstock_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
     crypto_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
     commodity_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
     prediction_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
-    game_profit DECIMAL(18,2) NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uk_snapshot_user_date UNIQUE (user_id, snapshot_date)
 );

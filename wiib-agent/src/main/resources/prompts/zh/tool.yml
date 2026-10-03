@@ -178,16 +178,16 @@ tool:
 
   cancel_order: 按 orderId（见开场白【当前账户】的挂单，或 get_account 的 pendingOrders）撤掉一张未成交限价单。
 
-  # 行为分析：一次调用＝10 个内部端点 + 一次大 prompt 的深模型调用。同 run_deep_analysis，
+  # 行为分析：一次调用＝7 个内部端点 + 一次大 prompt 的深模型调用。同 run_deep_analysis，
   # 描述保持英文只换触发词——描述给模型读，触发词要匹配用户真会说的话。
   # 报告整份走 SSE 渲染成卡片，回模型的是裁剪版，所以描述里要交代"别复述数字，去谈它"
   analyze_my_behavior: |-
     Run a full behaviour analysis of THIS user's own account across every dimension of the
-    platform (crypto spot, tokenized US equities, futures, prediction, the three games) plus
+    platform (crypto spot, tokenized US equities, futures, prediction) plus
     a risk profile and targeted suggestions.
     ONLY call when the user EXPLICITLY asks about their own habits/style/risk profile, e.g.
     "分析我的行为"/"我是什么类型的交易者"/"我的风险偏好" - never call this uninvited.
-    EXPENSIVE: 10 internal data calls plus one large deep-model call. Results are cached for
+    EXPENSIVE: 7 internal data calls plus one large deep-model call. Results are cached for
     30 minutes, so calling it twice in a row gains nothing.
     The full report is rendered as a card in the chat UI. Your job afterwards is to talk about
     it, not to recite every number - unless cardShown is false, in which case the user cannot

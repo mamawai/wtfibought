@@ -15,11 +15,9 @@ import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.mapper.CryptoPositionMapper;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
-import com.mawai.wiibsim.mapper.MinesGameMapper;
 import com.mawai.wiibsim.mapper.PredictionBetMapper;
 import com.mawai.wiibsim.mapper.UserLedgerMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
-import com.mawai.wiibsim.mapper.VideoPokerGameMapper;
 import com.mawai.wiibsim.service.BankruptcyService;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.service.CryptoPositionService;
@@ -52,8 +50,6 @@ public class BankruptcyServiceImpl implements BankruptcyService {
     private final CacheService cacheService;
     private final FuturesPositionIndexService futuresPositionIndexService;
     private final PredictionBetMapper predictionBetMapper;
-    private final MinesGameMapper minesGameMapper;
-    private final VideoPokerGameMapper videoPokerGameMapper;
     private final AssetValuationService assetValuationService;
     private final UserLedgerMapper userLedgerMapper;
     private final ResetQuotaService resetQuotaService;
@@ -233,9 +229,6 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         futuresPositionMapper.closeOpenByUserId(userId, futuresCloseStatus);
         // 预测: 取消活跃投注(爆仓不退款；恢复路径为防御性清残留)
         predictionBetMapper.cancelActiveByUserId(userId);
-        // 游戏: 进行中的矿工/视频扑克局作废，本金不退（21点筹码不是钱包里的钱，不动）
-        minesGameMapper.forfeitPlayingByUserId(userId);
-        videoPokerGameMapper.forfeitDealingByUserId(userId);
     }
 
     private void cleanupFuturesRedisIndexes(Long userId) {

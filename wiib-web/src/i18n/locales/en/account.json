@@ -32,7 +32,6 @@
       "backtest": "Backtest",
       "testnet": "Testnet",
       "ranking": "Leaderboard",
-      "games": "Games",
       "comments": "Comments",
       "intro": "Project Intro"
     },
@@ -41,10 +40,10 @@
     "logout": "Log out",
     "reset": {
       "title": "Reset account",
-      "desc": "Clears all positions, orders, game records and asset history and restores your balance to the starting capital. Comments and mute status are unaffected. One reset per calendar week, refreshed on Monday.",
+      "desc": "Clears all positions, orders and asset history and restores your balance to the starting capital. Comments and mute status are unaffected. One reset per calendar week, refreshed on Monday.",
       "action": "Reset my account",
       "dialogTitle": "Confirm account reset",
-      "warnClears": "This cannot be undone. It clears: all spot and futures positions and orders, prediction bets, Blackjack / Mines / Video Poker records, asset history, daily buffs and wallet transfers.",
+      "warnClears": "This cannot be undone. It clears: all spot and futures positions and orders, prediction bets, asset history, daily buffs and wallet transfers.",
       "warnCost": "One reset per calendar week, refreshed on Monday. An automatic bankruptcy recovery counts toward the same quota.",
       "confirmName": "Type your username <0>{{name}}</0> to confirm:",
       "namePlaceholder": "Enter username",

@@ -74,11 +74,11 @@ class LedgerAspectTest {
     void 成功的资金变动消费掉标注并按标注落账() {
         when(target.atomicUpdateBalance(1L, MINUS_TEN)).thenReturn(new BigDecimal("90"));
 
-        LedgerCtx.mark(LedgerBizType.MINES_BET, 42L);
+        LedgerCtx.mark(LedgerBizType.PREDICTION_BUY, 42L);
         proxy.atomicUpdateBalance(1L, MINUS_TEN);
 
         UserLedger entry = captureEntry();
-        assertThat(entry.getBizType()).isEqualTo(LedgerBizType.MINES_BET);
+        assertThat(entry.getBizType()).isEqualTo(LedgerBizType.PREDICTION_BUY);
         assertThat(entry.getRefId()).isEqualTo(42L);
     }
 
@@ -87,7 +87,7 @@ class LedgerAspectTest {
      * <p>
      * @AfterReturning 在抛异常时整条 advice 不执行，标注就留在线程上；线程池/Tomcat 复用后，
      * 下一个请求第一笔没标注的资金变动会继承它。所以这里第二笔刻意<b>不</b>标注：
-     * 摘掉 @AfterThrowing，第二笔的 bizType 会变成 MINES_BET、refId 变成 42（实测过，见报告）。
+     * 摘掉 @AfterThrowing，第二笔的 bizType 会变成 PREDICTION_BUY、refId 变成 42（实测过，见报告）。
      */
     @Test
     void SQL抛异常时标注必须被丢弃() {
@@ -95,7 +95,7 @@ class LedgerAspectTest {
         when(target.atomicUpdateBalance(1L, MINUS_TEN))
                 .thenThrow(new RuntimeException("deadlock detected"));
 
-        LedgerCtx.mark(LedgerBizType.MINES_BET, 42L);
+        LedgerCtx.mark(LedgerBizType.PREDICTION_BUY, 42L);
         assertThatThrownBy(() -> proxy.atomicUpdateBalance(1L, MINUS_TEN))
                 .hasMessageContaining("deadlock");
 
@@ -108,7 +108,7 @@ class LedgerAspectTest {
 
         UserLedger entry = captureEntry();
         assertThat(entry.getUserId()).isEqualTo(2L);
-        assertThat(entry.getBizType()).isEqualTo(LedgerBizType.UNKNOWN);   // 泄漏则为 MINES_BET
+        assertThat(entry.getBizType()).isEqualTo(LedgerBizType.UNKNOWN);   // 泄漏则为 PREDICTION_BUY
         assertThat(entry.getRefId()).isNull();                             // 泄漏则为 42
     }
 

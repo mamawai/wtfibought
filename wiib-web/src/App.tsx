@@ -17,10 +17,6 @@ import { Ranking } from './pages/Ranking';
 import { Comments } from './pages/Comments';
 import { Login } from './pages/Login';
 import { Admin } from './pages/Admin';
-import { Blackjack } from './pages/Blackjack';
-import { Mines } from './pages/Mines';
-import { VideoPoker } from './pages/VideoPoker';
-import { Games } from './pages/Games';
 import { Intro } from './pages/Intro';
 import { Me } from './pages/Me';
 import { Prediction } from './pages/Prediction';
@@ -130,7 +126,6 @@ function App() {
                 <Route path="/tradfi" element={<TradFiSelect />} />
                 <Route path="/ranking" element={<Ranking />} />
                 <Route path="/comments" element={<Comments />} />
-                <Route path="/games" element={<Games />} />
                 <Route path="/arena" element={<Arena />} />
                 <Route path="/arena/:id" element={<ArenaDetail />} />
                 <Route path="/force-orders" element={<ForceOrders />} />
@@ -143,9 +138,6 @@ function App() {
                   <Route path="/user/:id" element={<UserProfile />} />
                   <Route path="/admin" element={<Admin />} />
                   <Route path="/me" element={<Me />} />
-                  <Route path="/blackjack" element={<Blackjack />} />
-                  <Route path="/mines" element={<Mines />} />
-                  <Route path="/videopoker" element={<VideoPoker />} />
                   <Route path="/prediction" element={<Prediction />} />
                   <Route path="/jev" element={<JevPrediction />} />
                   <Route path="/ai" element={<AiAgent />} />

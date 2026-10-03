@@ -34,7 +34,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 行为分析改成一次性 workflow 后的契约。
- * <p>最值钱的一条是"10 个端点一个都不能少"——ReAct 版本给不了这个保证：模型漏调一个工具没人知道，
+ * <p>最值钱的一条是"7 个端点一个都不能少"——ReAct 版本给不了这个保证：模型漏调一个工具没人知道，
  * 报告照出，只是那一维凭空编。
  */
 class BehaviorAnalysisWorkflowTest {
@@ -44,11 +44,11 @@ class BehaviorAnalysisWorkflowTest {
     /** 与 BehaviorDataCollector.ENDPOINTS 一一对应，顺序即 prompt 段序 */
     private static final List<String> ENDPOINTS = List.of(
             "user-profile", "portfolio-summary", "asset-snapshots", "crypto-stats", "bstock-stats",
-            "futures-stats", "prediction-stats", "blackjack-stats", "mines-stats", "videopoker-stats");
+            "futures-stats", "prediction-stats");
 
     private static final List<String> SECTION_NAMES = List.of(
             "用户基础信息", "实时资产概览", "近30日资产快照", "加密货币交易统计", "bStock(代币化美股)交易统计",
-            "合约交易统计", "Prediction统计", "Blackjack统计", "Mines统计", "Video Poker统计");
+            "合约交易统计", "Prediction统计");
 
     private final SimInternalClient simClient = mock(SimInternalClient.class);
     private final ChatModel chatModel = mock(ChatModel.class);
@@ -91,7 +91,7 @@ class BehaviorAnalysisWorkflowTest {
     }
 
     @Test
-    void 十个端点一个都不能少_且各自的数据都进了prompt() {
+    void 七个端点一个都不能少_且各自的数据都进了prompt() {
         workflow.run(chatModel, USER, AgentLang.ZH, null);
 
         for (String endpoint : ENDPOINTS) {

@@ -9,7 +9,7 @@ interface Props {
   data: AssetSnapshot[];
 }
 
-// 五分类收益曲线：crypto 含币合约，大宗商品含金/油合约
+// 四分类收益曲线：crypto 含币合约，大宗商品含金/油合约
 // 常量在组件外拿不到 t 和 token，存词表 key 和变量名，画图时再查——
 // 存翻译结果/色值会在模块加载那一刻定死，切语言、切主题都不跟着变
 const CUMULATIVE_CONFIG = [
@@ -18,7 +18,6 @@ const CUMULATIVE_CONFIG = [
   { key: 'commodityProfit', nameKey: 'cat.commodity', token: '--color-warning' },
   { key: 'bstockProfit', nameKey: 'cat.bstock', token: '--color-gain' },
   { key: 'predictionProfit', nameKey: 'cat.prediction', token: '--color-loss' },
-  { key: 'gameProfit', nameKey: 'cat.game', token: '--color-muted-foreground' },
 ] as const;
 
 const DAILY_CONFIG = [
@@ -27,7 +26,6 @@ const DAILY_CONFIG = [
   { key: 'dailyCommodityProfit', nameKey: 'cat.commodity', token: '--color-warning' },
   { key: 'dailyBstockProfit', nameKey: 'cat.bstock', token: '--color-gain' },
   { key: 'dailyPredictionProfit', nameKey: 'cat.prediction', token: '--color-loss' },
-  { key: 'dailyGameProfit', nameKey: 'cat.game', token: '--color-muted-foreground' },
 ] as const;
 
 export function ProfitChart({ data }: Props) {

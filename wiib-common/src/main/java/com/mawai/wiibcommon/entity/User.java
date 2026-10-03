@@ -44,7 +44,7 @@ public class User {
     @TableField(updateStrategy = FieldStrategy.NEVER)
     private BigDecimal frozenBalance;
 
-    /** 游戏钱包（Mines/扑克/21点/预测市场，与全仓风险隔离） */
+    /** 游戏钱包（预测市场用，与全仓风险隔离） */
     @TableField(updateStrategy = FieldStrategy.NEVER)
     private BigDecimal gameBalance;
 

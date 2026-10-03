@@ -47,8 +47,7 @@
     "crypto": "Crypto",
     "commodity": "Commodities",
     "bstock": "bStock",
-    "prediction": "Prediction",
-    "game": "Games"
+    "prediction": "Prediction"
   },
   "holdings": {
     "empty": "No holdings"
@@ -84,10 +83,10 @@
   },
   "reset": {
     "title": "Reset account",
-    "desc": "Clears all positions, orders, game records and asset history and restores the starting capital. Comments and mute status are untouched. An automatic bankruptcy recovery counts toward the same quota.",
+    "desc": "Clears all positions, orders and asset history and restores the starting capital. Comments and mute status are untouched. An automatic bankruptcy recovery counts toward the same quota.",
     "action": "Reset my account",
     "dialogTitle": "Confirm account reset",
-    "warnClears": "Cannot be undone. Clears: all spot and futures positions and orders, prediction bets, Blackjack / Mines / Video Poker records, asset history, daily buffs and wallet transfers.",
+    "warnClears": "Cannot be undone. Clears: all spot and futures positions and orders, prediction bets, asset history, daily buffs and wallet transfers.",
     "warnCost": "One reset per calendar week, refreshed on Monday. An automatic bankruptcy recovery counts toward the same quota.",
     "confirmName": "Type your username <0>{{name}}</0> to confirm:",
     "namePlaceholder": "Enter username",

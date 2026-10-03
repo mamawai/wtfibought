@@ -3,13 +3,12 @@ import { Dialog, DialogContent, DialogHeader } from './ui/dialog';
 import { cn, fmtMoney } from '../lib/utils';
 import type { AssetSnapshot } from '../types';
 
-/** 五分类日差，字段直接来自快照 DTO，不用再算。数组在组件外，标签存词表 key 渲染时再查 */
+/** 四分类日差，字段直接来自快照 DTO，不用再算。数组在组件外，标签存词表 key 渲染时再查 */
 const BUCKETS = [
   { key: 'dailyBstockProfit', labelKey: 'dayDetail.stocks' },
   { key: 'dailyCryptoProfit', labelKey: 'dayDetail.crypto' },
   { key: 'dailyCommodityProfit', labelKey: 'dayDetail.commodity' },
   { key: 'dailyPredictionProfit', labelKey: 'dayDetail.prediction' },
-  { key: 'dailyGameProfit', labelKey: 'dayDetail.games' },
 ] as const;
 
 interface Props {

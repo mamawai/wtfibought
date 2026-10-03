@@ -482,7 +482,6 @@
     "commodity": "大宗商品",
     "bstock": "bStock",
     "prediction": "预测",
-    "game": "游戏",
     "betterThan": "超过{{pct}}%的其他用户"
   }
 }

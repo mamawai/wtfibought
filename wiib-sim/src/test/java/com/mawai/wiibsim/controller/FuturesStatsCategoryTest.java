@@ -1,15 +1,12 @@
 package com.mawai.wiibsim.controller;
 
 import com.mawai.wiibcommon.config.BinanceProperties;
-import com.mawai.wiibsim.mapper.BlackjackAccountMapper;
 import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
-import com.mawai.wiibsim.mapper.MinesGameMapper;
 import com.mawai.wiibsim.mapper.PredictionBetMapper;
 import com.mawai.wiibsim.mapper.UserAssetSnapshotMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
-import com.mawai.wiibsim.mapper.VideoPokerGameMapper;
 import com.mawai.wiibsim.service.BStockService;
 import com.mawai.wiibsim.service.CryptoPositionService;
 import com.mawai.wiibsim.service.UserService;
@@ -26,7 +23,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * 行为分析合约统计的分品类拆解：与资产五分类同源的符号集归桶——
+ * 行为分析合约统计的分品类拆解：与资产四分类同源的符号集归桶——
  * crypto 永续 / 大宗商品(金油) / TradFi(美股ETF永续) 各归各桶，不再混成一个"合约"总数。
  */
 class FuturesStatsCategoryTest {
@@ -63,8 +60,7 @@ class FuturesStatsCategoryTest {
                 mock(UserAssetSnapshotMapper.class), mock(CryptoOrderMapper.class),
                 mock(CryptoPositionService.class), mock(BStockService.class),
                 futuresOrderMapper, futuresPositionMapper, mock(PredictionBetMapper.class),
-                mock(BlackjackAccountMapper.class), mock(MinesGameMapper.class),
-                mock(VideoPokerGameMapper.class), mock(UserService.class), props);
+                mock(UserService.class), props);
 
         JsonNode json = MAPPER.readTree(controller.getFuturesTradeStats(UID));
 
@@ -106,8 +102,7 @@ class FuturesStatsCategoryTest {
                 mock(UserAssetSnapshotMapper.class), mock(CryptoOrderMapper.class),
                 mock(CryptoPositionService.class), mock(BStockService.class),
                 futuresOrderMapper, futuresPositionMapper, mock(PredictionBetMapper.class),
-                mock(BlackjackAccountMapper.class), mock(MinesGameMapper.class),
-                mock(VideoPokerGameMapper.class), mock(UserService.class), props);
+                mock(UserService.class), props);
 
         JsonNode by = MAPPER.readTree(controller.getFuturesTradeStats(UID)).get("byCategory");
         assertThat(by.get("crypto").get("realizedPnl").asDecimal()).isEqualByComparingTo("5");

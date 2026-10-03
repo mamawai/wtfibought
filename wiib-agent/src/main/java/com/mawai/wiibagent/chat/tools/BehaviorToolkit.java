@@ -14,7 +14,7 @@ import tools.jackson.databind.node.ObjectNode;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 用户行为分析工具（仅对话轨）：贵操作——10 个 sim 内部端点 + 一次大 prompt 的深模型调用。
+ * 用户行为分析工具（仅对话轨）：贵操作——7 个 sim 内部端点 + 一次大 prompt 的深模型调用。
  * <p>
  * <b>不挂授权闸门</b>（对比 {@link DeepAnalysisToolkit}）：深研判一调就是 3 次深模型调用、
  * 中间没人插得上手，这里只有 1 次；而且"分析我的交易习惯"本身就是用户明说的意图，
@@ -49,11 +49,11 @@ public class BehaviorToolkit {
 
     @Tool(name = "analyze_my_behavior", description = """
             Run a full behaviour analysis of THIS user's own account across every dimension of the
-            platform (crypto spot, tokenized US equities, futures, prediction, the three games) plus
+            platform (crypto spot, tokenized US equities, futures, prediction) plus
             a risk profile and targeted suggestions.
             ONLY call when the user EXPLICITLY asks about their own habits/style/risk profile, e.g.
             "analyse my behaviour" / "what kind of trader am I" - never call this uninvited.
-            EXPENSIVE: 10 internal data calls plus one large deep-model call. Results are cached for
+            EXPENSIVE: 7 internal data calls plus one large deep-model call. Results are cached for
             30 minutes, so calling it twice in a row gains nothing.
             The full report is rendered as a card in the chat UI. Your job afterwards is to talk about
             it, not to recite every number - unless cardShown is false, in which case the user cannot
