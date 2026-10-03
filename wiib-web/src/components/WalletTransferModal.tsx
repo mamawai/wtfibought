@@ -15,12 +15,10 @@ type Direction = 'TO_GAME' | 'TO_BALANCE';
 interface Props {
   open: boolean;
   onClose: () => void;
-  /** 划转成功后页面自己的余额刷新（如 Mines/扑克的 status），user store 已由弹窗内部刷 */
-  onSuccess?: () => void;
 }
 
 /** 余额钱包 ⇌ 游戏钱包 双向划转弹窗，各页面共用 */
-export function WalletTransferModal({ open, onClose, onSuccess }: Props) {
+export function WalletTransferModal({ open, onClose }: Props) {
   const { t } = useTranslation(['trade', 'common']);
   const user = useUserStore(s => s.user);
   const fetchUser = useUserStore(s => s.fetchUser);
@@ -30,7 +28,7 @@ export function WalletTransferModal({ open, onClose, onSuccess }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [preview, setPreview] = useState<WalletTransferPreview | null>(null);
 
-  // 打开时刷一次用户：刚玩完游戏时 store 里的 gameBalance 是旧的
+  // 打开时刷一次用户：预测盘刚结算时 store 里的 gameBalance 是旧的
   useEffect(() => {
     if (open) void fetchUser();
   }, [open, fetchUser]);
@@ -71,7 +69,6 @@ export function WalletTransferModal({ open, onClose, onSuccess }: Props) {
       toast(t('toast.transferOk', { amount: fmtNum(amt), received: fmtNum(receiveAmt), target: targetWallet }), 'success');
       setAmount('');
       await fetchUser();
-      onSuccess?.();
       onClose();
     } catch (e: unknown) {
       toast((e as Error).message || t('toast.transferFailed'), 'error');

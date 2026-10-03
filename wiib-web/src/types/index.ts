@@ -3,7 +3,7 @@ export interface User {
   username: string;
   avatar?: string;
   balance: number;
-  /** 游戏钱包：Mines/扑克/21点兑现/预测市场专用，和交易 balance 分离 */
+  /** 游戏钱包：预测市场专用，和交易 balance 分离 */
   gameBalance: number;
   frozenBalance: number;
   positionMarketValue: number;
@@ -60,94 +60,6 @@ export interface UserBuff {
 export interface BuffStatus {
   canDraw: boolean;
   todayBuff: UserBuff | null;
-}
-
-// ========== Blackjack相关类型 ==========
-export interface BlackjackStatus {
-  chips: number;
-  todayConverted: number;
-  convertable: number;
-  todayConvertLimit: number;
-  totalHands: number;
-  totalWon: number;
-  totalLost: number;
-  biggestWin: number;
-  dailyPool: number;
-  activeGame: GameState | null;
-}
-
-export interface GameState {
-  phase: 'PLAYER_TURN' | 'DEALER_TURN' | 'SETTLED';
-  playerHands: HandInfo[];
-  activeHandIndex: number;
-  dealerCards: string[];
-  dealerScore: number | null;
-  chips: number;
-  insurance: number | null;
-  actions: string[];
-  results: HandResult[] | null;
-}
-
-export interface HandInfo {
-  cards: string[];
-  bet: number;
-  score: number;
-  isBust: boolean;
-  isBlackjack: boolean;
-  isDoubled: boolean;
-}
-
-export interface HandResult {
-  handIndex: number;
-  result: 'WIN' | 'LOSE' | 'PUSH' | 'BLACKJACK';
-  payout: number;
-  net: number;
-}
-
-export interface ConvertResult {
-  chips: number;
-  balance: number;
-  todayConverted: number;
-  /** 转出后仍可转出的积分，后端算好返回，前端不再自己减保底值 */
-  convertable: number;
-}
-
-// ========== 矿工游戏类型 ==========
-export interface MinesGameState {
-  gameId: number;
-  betAmount: number;
-  revealed: number[];
-  minePositions: number[] | null;
-  result: 'SAFE' | 'MINE' | 'CASHED_OUT' | null;
-  currentMultiplier: number;
-  nextMultiplier: number | null;
-  potentialPayout: number;
-  payout: number | null;
-  phase: 'PLAYING' | 'SETTLED';
-  balance: number;
-}
-
-export interface MinesStatus {
-  balance: number;
-  activeGame: MinesGameState | null;
-}
-
-// ========== 视频扑克类型 ==========
-export interface VideoPokerGameState {
-  gameId: number;
-  betAmount: number;
-  cards: string[];
-  heldPositions: number[];
-  handRank: string;
-  multiplier: number;
-  payout: number;
-  phase: 'DEALING' | 'SETTLED';
-  balance: number;
-}
-
-export interface VideoPokerStatus {
-  balance: number;
-  activeGame: VideoPokerGameState | null;
 }
 
 // ========== 加密货币行情类型 ==========
@@ -503,7 +415,7 @@ export interface PredictionBetLive {
   ts: number;
 }
 
-// ========== 资产快照类型（五分类：bStock/crypto/大宗商品/预测/游戏） ==========
+// ========== 资产快照类型（四分类：bStock/crypto/大宗商品/预测） ==========
 export interface AssetSnapshot {
   date: string;
   totalAssets: number;
@@ -513,14 +425,12 @@ export interface AssetSnapshot {
   cryptoProfit: number;
   commodityProfit: number;
   predictionProfit: number;
-  gameProfit: number;
   dailyProfit: number;
   dailyProfitPct: number;
   dailyBstockProfit: number;
   dailyCryptoProfit: number;
   dailyCommodityProfit: number;
   dailyPredictionProfit: number;
-  dailyGameProfit: number;
 }
 
 export interface CategoryAverages {
@@ -528,7 +438,6 @@ export interface CategoryAverages {
   cryptoProfit: number;
   commodityProfit: number;
   predictionProfit: number;
-  gameProfit: number;
 }
 
 // ========== AI Agent 类型 ==========
@@ -552,11 +461,6 @@ export interface BehaviorAnalysisReport {
       };
     };
     prediction: { frequency: number; netProfit: number; winRate: number; directionPreference: string };
-  };
-  gameBehavior: {
-    blackjack: { totalHands: number; totalWon: number; totalLost: number; biggestWin: number; todayConverted: number };
-    mines: { frequency: number; netProfit: number };
-    videoPoker: { frequency: number; netProfit: number };
   };
   riskProfile: {
     riskLevel: string;

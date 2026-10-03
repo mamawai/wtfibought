@@ -41,28 +41,11 @@ error:
   buffExpired: That buff has expired
   buffAlreadyUsed: That buff has been used
   discountNoLeverage: Leverage is not available while using a discount
-  # Blackjack codes 1500+
-  bjGameInProgress: You have an unfinished hand
-  bjNoActiveGame: No hand in progress
-  bjChipsNotEnough: Not enough chips
-  bjInvalidBet: Invalid bet
-  bjActionNotAllowed: That move is not available right now
-  bjConvertLimit: Over the daily transfer-out limit
-  bjConvertInsufficient: Not enough transferable chips
-  bjPoolExhausted: Today's chip pool is used up
   # Crypto codes 1600+
   cryptoPriceUnavailable: Live price unavailable
   cryptoSymbolInvalid: Invalid pair
   tradeStepInvalid: Quantity does not match the minimum step size
   tradeMinNotional: Order value is below the minimum notional
-  # Mines codes 1700+
-  minesGameInProgress: You have an unfinished Mines game
-  minesNoActiveGame: No Mines game in progress
-  minesBalanceNotEnough: Not enough balance
-  minesInvalidBet: Invalid bet
-  minesInvalidCell: Invalid cell number
-  minesCellAlreadyRevealed: That cell is already revealed
-  minesMustRevealFirst: Reveal at least one cell before cashing out
   # Futures codes 1750+
   futuresPositionNotFound: No such position
   futuresInsufficientBalance: Not enough balance
@@ -81,12 +64,6 @@ error:
   futuresLeverageOnlyUp: Leverage on an isolated position can only go up; use add-margin to top it up
   futuresLeverageMismatch: Leverage differs from your existing position on this coin - adjust it first
   futuresMarginModeConflict: Margin mode differs from your existing position on this coin
-  # VideoPoker codes 1851+
-  vpGameInProgress: You have an unfinished video poker hand
-  vpNoActiveGame: No video poker hand in progress
-  vpBalanceNotEnough: Not enough balance
-  vpInvalidBet: Invalid bet
-  vpInvalidHold: Invalid HOLD position
   # Prediction codes 1900+
   predictionRoundLocked: This round is locked
   predictionRoundNotFound: No such round

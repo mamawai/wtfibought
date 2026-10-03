@@ -37,7 +37,6 @@
       "backtest": "Backtest",
       "testnet": "Testnet",
       "ranking": "Leaderboard",
-      "games": "Games",
       "comments": "Comments",
       "intro": "Project Intro"
     },
@@ -46,10 +45,10 @@
     "logout": "Log out",
     "reset": {
       "title": "Reset account",
-      "desc": "Clears all positions, orders, game records and asset history and restores your balance to the starting capital. Comments, mute status and campaign points already earned are unaffected. During the campaign the first reset each week is free, every one after that costs 30 campaign points; after the campaign, 1 reset per week (refreshed on Monday).",
+      "desc": "Clears all positions, orders and asset history and restores your balance to the starting capital. Comments, mute status and campaign points already earned are unaffected. During the campaign the first reset each week is free, every one after that costs 30 campaign points; after the campaign, 1 reset per week (refreshed on Monday).",
       "action": "Reset my account",
       "dialogTitle": "Confirm account reset",
-      "warnClears": "This cannot be undone. It clears: all spot and futures positions and orders, prediction bets, Blackjack / Mines / Video Poker records, asset history, daily buffs and wallet transfers.",
+      "warnClears": "This cannot be undone. It clears: all spot and futures positions and orders, prediction bets, asset history, daily buffs and wallet transfers.",
       "warnCost": "During the campaign the first reset each week is free, every one after that costs 30 campaign points (automatic bankruptcy recovery counts too). Points already earned, check-ins and votes are unaffected.",
       "confirmName": "Type your username <0>{{name}}</0> to confirm:",
       "namePlaceholder": "Enter username",

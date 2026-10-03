@@ -485,16 +485,16 @@ const EQUITY_SERIES = [
   10918, 11206, 11438, 11324, 11691, 11948, 11822, 12176, 11893, 11713.93,
 ];
 
-/** 一天的资产快照：五分类按固定权重摊，够画拆解饼就行 */
+/** 一天的资产快照：四分类按固定权重摊，够画拆解饼就行 */
 const snap = (date: string, total: number, daily: number) => {
   const profit = total - START_CAPITAL;
   return {
     date, totalAssets: r2(total), profit: r2(profit), profitPct: r2(profit / START_CAPITAL * 100),
     bstockProfit: r2(profit * 0.45), cryptoProfit: r2(profit * 0.3), commodityProfit: r2(profit * 0.1),
-    predictionProfit: r2(profit * 0.1), gameProfit: r2(profit * 0.05),
+    predictionProfit: r2(profit * 0.15),
     dailyProfit: r2(daily), dailyProfitPct: r2(daily / (total - daily) * 100),
     dailyBstockProfit: r2(daily * 0.45), dailyCryptoProfit: r2(daily * 0.3), dailyCommodityProfit: r2(daily * 0.1),
-    dailyPredictionProfit: r2(daily * 0.1), dailyGameProfit: r2(daily * 0.05),
+    dailyPredictionProfit: r2(daily * 0.15),
   };
 };
 
@@ -786,10 +786,10 @@ const bstockList = () => BSTOCKS.map(b => {
   };
 });
 
-/** 持仓页五分类 30 日均值 */
+/** 持仓页四分类 30 日均值 */
 const CATEGORY_AVERAGES = {
   bstockProfit: 612.4, cryptoProfit: 408.9, commodityProfit: 136.3,
-  predictionProfit: 138.7, gameProfit: 68.2,
+  predictionProfit: 138.7,
 };
 
 const PREDICTION_PNL = {

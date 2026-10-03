@@ -25,7 +25,6 @@
     "jev": "Jev",
     "ai": "Config",
     "arena": "AI Arena",
-    "games": "Games",
     "buff": "Rewards",
     "stocksDesc": "Tokenized US stocks",
     "cryptoDesc": "Spot & perpetuals",
@@ -33,7 +32,6 @@
     "jevDesc": "Watch Jev bet 5-min rounds",
     "aiDesc": "BYOK model endpoints",
     "arenaDesc": "Watch models trade",
-    "gamesDesc": "Blackjack, poker, mines",
     "buffDesc": "Not drawn today"
   },
   "entries": {
@@ -154,8 +152,7 @@
     "stocks": "Stocks",
     "crypto": "Crypto",
     "commodity": "Commodities",
-    "prediction": "Prediction",
-    "games": "Games"
+    "prediction": "Prediction"
   },
   "faq": {
     "title": "Getting started",
@@ -209,7 +206,7 @@
     },
     "wallets": {
       "q": "Are the game wallet and the trading wallet the same?",
-      "a": "No. The main wallet is for trading (spot, futures, stocks); the game wallet funds Mines, Video Poker, Blackjack and the prediction market. They are accounted for separately, with an entry to transfer between them. Bankruptcy is judged on trading net worth alone — the game wallet cannot save you, and it is wiped along with everything else."
+      "a": "No. The main wallet is for trading (spot, futures, stocks); the game wallet funds the prediction market. They are accounted for separately, with an entry to transfer between them. Bankruptcy is judged on trading net worth alone — the game wallet cannot save you, and it is wiped along with everything else."
     },
     "coupon": {
       "q": "How do discount coupons (buffs) work?",
@@ -221,7 +218,7 @@
     },
     "resetAccount": {
       "q": "What are the rules for resetting my account?",
-      "a": "A reset clears all positions, orders, game records and asset history and returns your balance to the starting capital; comments, mute status and campaign points are unaffected. During the campaign the first reset each calendar week is free, every one after that costs 30 campaign points; after the campaign it is one per week, refreshed on Monday. An automatic bankruptcy recovery counts toward the same quota."
+      "a": "A reset clears all positions, orders and asset history and returns your balance to the starting capital; comments, mute status and campaign points are unaffected. During the campaign the first reset each calendar week is free, every one after that costs 30 campaign points; after the campaign it is one per week, refreshed on Monday. An automatic bankruptcy recovery counts toward the same quota."
     }
   },
   "intro": {
@@ -246,15 +243,12 @@
     "futures5": "<0>Fees</0>: maker 0.02%, taker 0.04%",
     "futures6": "Positions liquidate automatically once margin runs out — keep leverage in check",
     "walletTitle": "Two wallets",
-    "walletDesc": "The balance wallet funds trading, the game wallet funds games. Isolated from each other, transfer between them any time.",
+    "walletDesc": "The balance wallet funds trading, the game wallet funds the prediction market. Isolated from each other, transfer between them any time.",
     "quantTitle": "Quant strategies",
     "quantDesc": "The Strategies page shows live signals from four quant strategies (channel breakout, squeeze momentum, liquidation cascade fade, Fibonacci retracement) and their automated testnet execution.",
-    "gamesTitle": "Games and rewards",
-    "game1": "<0>Blackjack</0>: the classic, with split, double and insurance",
-    "game2": "<0>Video Poker</0>: five cards, hold what you want and draw once, paid by hand rank",
-    "game3": "<0>Mines</0>: every safe tile raises the payout, one mine wipes it out, cash out any time",
-    "game4": "<0>BTC up/down prediction</0>: a new round every 5 minutes, priced on live Polymarket probabilities, sellable any time",
-    "game5": "<0>Daily buff</0>: one draw a day — cash, shares or a discount coupon",
+    "perksTitle": "Prediction and rewards",
+    "perk1": "<0>BTC up/down prediction</0>: a new round every 5 minutes, priced on live Polymarket probabilities, sellable any time",
+    "perk2": "<0>Daily buff</0>: one draw a day — cash, shares or a discount coupon",
     "riskNotice": "Risk notice: every trade here is simulated, no real money is involved. No data, market feed or return shown constitutes investment advice. Leveraged and futures trading carry liquidation risk — proceed with care.",
     "hideToday": "Don't show today",
     "gotIt": "Got it"

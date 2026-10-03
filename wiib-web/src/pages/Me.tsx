@@ -13,7 +13,7 @@ import { ProfilePublicToggle } from '../components/ProfilePublicToggle';
 import { LanguageSettingRow } from '../components/LanguageSwitcher';
 import { useNotificationPanel } from '../hooks/useNotificationPanel';
 import { userApi } from '../api';
-import { Trophy, Gamepad2, Sun, Moon, LogOut, ChevronRight, User, LineChart, RotateCcw, MessageSquare, Bell, Receipt, Gift, FlaskConical, Swords, Info, ExternalLink, type LucideIcon } from 'lucide-react';
+import { Trophy, Sun, Moon, LogOut, ChevronRight, User, LineChart, RotateCcw, MessageSquare, Bell, Receipt, Gift, FlaskConical, Swords, Info, ExternalLink, type LucideIcon } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export function Me() {
@@ -69,11 +69,10 @@ export function Me() {
     { icon: Receipt, label: t('me.nav.ledger'), to: '/ledger', color: 'text-primary' },
     // 竞技场原先只有桌面顶栏那一个入口，手机端零入口只能手敲 URL，排第三位补上
     { icon: Swords, label: t('me.nav.arena'), to: '/arena', color: 'text-cyan-400' },
-    // 移动端底栏只有5槽，策略与排行/游戏一样从这里进（桌面走头部导航）
+    // 移动端底栏只有5槽，策略与排行一样从这里进（桌面走头部导航）
     { icon: LineChart, label: t('me.nav.strategies'), to: '/strategies', color: 'text-violet-400' },
     { icon: FlaskConical, label: t('me.nav.backtest'), to: '/backtest', color: 'text-orange-400' },
     { icon: Trophy, label: t('me.nav.ranking'), to: '/ranking', color: 'text-amber-400' },
-    { icon: Gamepad2, label: t('me.nav.games'), to: '/games', color: 'text-pink-400' },
     { icon: MessageSquare, label: t('me.nav.comments'), to: '/comments', color: 'text-teal-400' },
     // 介绍站是单独部署的静态站，手机端从这里进
     { icon: Info, label: t('me.nav.intro'), to: 'https://intro.wtfibought.com', color: 'text-sky-400', external: true },

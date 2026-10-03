@@ -17,7 +17,7 @@ import {
   BarChart3, User, ChevronDown, List, DollarSign,
   Settings2, Gem, Globe,
   ExternalLink, LogOut,
-  ChartCandlestick, Swords, Trophy, Gamepad2, Route, History, Gift, MessageSquare, BookOpen,
+  ChartCandlestick, Swords, Trophy, Route, History, Gift, MessageSquare, BookOpen,
 } from 'lucide-react';
 
 interface Props { children: React.ReactNode }
@@ -211,7 +211,6 @@ export function Layout({ children }: Props) {
               {/* 配置＝BYOK 模型端点，竞技场里的 trader 全靠它，所以紧跟竞技场 */}
               <HeaderNavItem to="/ai" icon={<Settings2 />} label={t('nav.config')} />
               <HeaderNavItem to="/ranking" icon={<Trophy />} label={t('nav.ranking')} />
-              <HeaderNavItem to="/games" icon={<Gamepad2 />} label={t('nav.games')} />
               <HeaderNavItem to="/strategies" icon={<Route />} label={t('nav.strategies')} />
               <HeaderNavItem to="/backtest" icon={<History />} label={t('nav.backtest')} />
               {/* 活动：桌面端入口。手机端底部 Tab 只有 5 格且已满，收在「我的」页里 */}

@@ -64,30 +64,11 @@ public enum ErrorCode {
     BUFF_ALREADY_USED(1404, "error.buffAlreadyUsed"),
     DISCOUNT_NO_LEVERAGE(1405, "error.discountNoLeverage"),
 
-    // Blackjack错误码 1500+
-    BJ_GAME_IN_PROGRESS(1501, "error.bjGameInProgress"),
-    BJ_NO_ACTIVE_GAME(1502, "error.bjNoActiveGame"),
-    BJ_CHIPS_NOT_ENOUGH(1503, "error.bjChipsNotEnough"),
-    BJ_INVALID_BET(1504, "error.bjInvalidBet"),
-    BJ_ACTION_NOT_ALLOWED(1505, "error.bjActionNotAllowed"),
-    BJ_CONVERT_LIMIT(1506, "error.bjConvertLimit"),
-    BJ_CONVERT_INSUFFICIENT(1507, "error.bjConvertInsufficient"),
-    BJ_POOL_EXHAUSTED(1508, "error.bjPoolExhausted"),
-
     // Crypto错误码 1600+
     CRYPTO_PRICE_UNAVAILABLE(1601, "error.cryptoPriceUnavailable"),
     CRYPTO_SYMBOL_INVALID(1602, "error.cryptoSymbolInvalid"),
     TRADE_STEP_INVALID(1603, "error.tradeStepInvalid"),
     TRADE_MIN_NOTIONAL(1604, "error.tradeMinNotional"),
-
-    // Mines错误码 1700+
-    MINES_GAME_IN_PROGRESS(1701, "error.minesGameInProgress"),
-    MINES_NO_ACTIVE_GAME(1702, "error.minesNoActiveGame"),
-    MINES_BALANCE_NOT_ENOUGH(1703, "error.minesBalanceNotEnough"),
-    MINES_INVALID_BET(1704, "error.minesInvalidBet"),
-    MINES_INVALID_CELL(1705, "error.minesInvalidCell"),
-    MINES_CELL_ALREADY_REVEALED(1706, "error.minesCellAlreadyRevealed"),
-    MINES_MUST_REVEAL_FIRST(1707, "error.minesMustRevealFirst"),
 
     // Futures错误码 1750+
     FUTURES_POSITION_NOT_FOUND(1750, "error.futuresPositionNotFound"),
@@ -107,13 +88,6 @@ public enum ErrorCode {
     FUTURES_LEVERAGE_ONLY_UP(1763, "error.futuresLeverageOnlyUp"),
     FUTURES_LEVERAGE_MISMATCH(1764, "error.futuresLeverageMismatch"),
     FUTURES_MARGIN_MODE_CONFLICT(1765, "error.futuresMarginModeConflict"),
-
-    // VideoPoker错误码 1851+
-    VP_GAME_IN_PROGRESS(1851, "error.vpGameInProgress"),
-    VP_NO_ACTIVE_GAME(1852, "error.vpNoActiveGame"),
-    VP_BALANCE_NOT_ENOUGH(1853, "error.vpBalanceNotEnough"),
-    VP_INVALID_BET(1854, "error.vpInvalidBet"),
-    VP_INVALID_HOLD(1855, "error.vpInvalidHold"),
 
     // Prediction错误码 1900+
     PREDICTION_ROUND_LOCKED(1900, "error.predictionRoundLocked"),

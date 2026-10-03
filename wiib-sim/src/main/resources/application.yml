@@ -76,7 +76,7 @@ binance:
     - XRPUSDT
     - BNBUSDT
     - ZECUSDT
-  # 五分类盈亏归集用：TradFi 永续，黄金/原油
+  # 四分类盈亏归集用：TradFi 永续，黄金/原油
   commodity-symbols:
     - XAUUSDT
     - CLUSDT

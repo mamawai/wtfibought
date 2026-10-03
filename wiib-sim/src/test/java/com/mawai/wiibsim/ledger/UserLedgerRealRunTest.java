@@ -480,11 +480,11 @@ class UserLedgerRealRunTest {
         userMapper.atomicAccrueInterest(uid, new BigDecimal("9.00"), today);    // 利息收尾也非 0
         assertInvariant(uid, "杠杆组");
 
-        // ===== 游戏：划转进去（1% 手续费销毁）→ 下注 → 派彩 → 划回 =====
+        // ===== 游戏钱包：划转进去（1% 手续费销毁）→ 预测下注 → 结算 → 划回 =====
         userService.transferToGame(uid, new BigDecimal("1000.00"));         // 扣 1000、到账 990
-        LedgerCtx.mark(LedgerBizType.MINES_BET);
+        LedgerCtx.mark(LedgerBizType.PREDICTION_BUY);
         userService.updateGameBalance(uid, new BigDecimal("-150.00"));
-        LedgerCtx.mark(LedgerBizType.MINES_CASHOUT);
+        LedgerCtx.mark(LedgerBizType.PREDICTION_SETTLE);
         userService.updateGameBalance(uid, new BigDecimal("380.00"));
         userService.transferToBalance(uid, new BigDecimal("200.00"));       // 扣 200、到账 198
         assertInvariant(uid, "游戏组");
@@ -550,11 +550,11 @@ class UserLedgerRealRunTest {
      * 串行调用<b>不会</b>断链：UPDATE 与 INSERT 一前一后紧挨着，ledger 的 id 序仍然等于时间序，
      * 别拿这条去排查串行路径。但事务外还有一笔与并发无关的账：UPDATE 已经自动提交，
      * 紧跟的 INSERT 再失败就是余额变了账没记，事后补不回来。两条都只能靠审查看调用点在不在事务里。
-     * 现状：全部 {@code atomic*} 调用点都在事务内——非游戏侧要么是 public {@code @Transactional} 入口
+     * 现状：全部 {@code atomic*} 调用点都在事务内——要么是 public {@code @Transactional} 入口
      * （CryptoOrderServiceImpl.buy/sell、UserServiceImpl.transferToGame、
      * MarginAccountServiceImpl.addLoanPrincipal/applyCashInflow…），
      * 要么是 protected {@code @Transactional} 的 doXxx 经 getAopProxy 调进来；
-     * 游戏侧走 GameLockExecutor/TransactionTemplate 的编程式事务。
+     * 预测盘走 TransactionTemplate 的编程式事务。
      * 但这一点<b>没有任何自动化守卫</b>，只有代码审查兜着；唯一相关的真跑覆盖是
      * {@code LedgerProxyRealRunTest#protected方法抛异常时资金必须回滚()} 那一条路径。
      * （刻意不加运行时检查：现存路径一条都没漏，为将来可能的回归在每笔资金变动上付常驻成本不值当。）
@@ -754,7 +754,7 @@ class UserLedgerRealRunTest {
     void bizType筛选只返回该类型() {
         Long uid = newUserWithGrant("1000.00");       // INITIAL_GRANT 1 行
         Long buy1 = insertRow(uid, LedgerBizType.SPOT_BUY);
-        insertRow(uid, LedgerBizType.MINES_BET);
+        insertRow(uid, LedgerBizType.PREDICTION_BUY);
         Long buy2 = insertRow(uid, LedgerBizType.SPOT_BUY);
 
         List<UserLedger> rows = query(uid, LedgerBizType.SPOT_BUY, null, 30);

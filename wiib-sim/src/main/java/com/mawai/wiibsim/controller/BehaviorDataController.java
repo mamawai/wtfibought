@@ -1,20 +1,15 @@
 package com.mawai.wiibsim.controller;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.config.BinanceProperties;
 import com.mawai.wiibcommon.dto.UserDTO;
-import com.mawai.wiibcommon.entity.BlackjackAccount;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.entity.UserAssetSnapshot;
-import com.mawai.wiibsim.mapper.BlackjackAccountMapper;
 import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
-import com.mawai.wiibsim.mapper.MinesGameMapper;
 import com.mawai.wiibsim.mapper.PredictionBetMapper;
 import com.mawai.wiibsim.mapper.UserAssetSnapshotMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
-import com.mawai.wiibsim.mapper.VideoPokerGameMapper;
 import com.mawai.wiibsim.service.BStockService;
 import com.mawai.wiibsim.service.CryptoPositionService;
 import com.mawai.wiibsim.service.UserService;
@@ -52,9 +47,6 @@ public class BehaviorDataController {
     private final FuturesOrderMapper futuresOrderMapper;
     private final FuturesPositionMapper futuresPositionMapper;
     private final PredictionBetMapper predictionBetMapper;
-    private final BlackjackAccountMapper blackjackAccountMapper;
-    private final MinesGameMapper minesGameMapper;
-    private final VideoPokerGameMapper videoPokerGameMapper;
     private final UserService userService;
     private final BinanceProperties binanceProperties;
 
@@ -93,7 +85,7 @@ public class BehaviorDataController {
 
     @GetMapping("/{userId}/crypto-stats")
     public String getCryptoTradeStats(@PathVariable Long userId) {
-        // bStock 共用现货引擎（同表同持仓服务），行为口径按 symbol 集拆开，与资产五分类对齐
+        // bStock 共用现货引擎（同表同持仓服务），行为口径按 symbol 集拆开，与资产四分类对齐
         long posCount = cryptoPositionService.getUserPositions(userId).stream()
                 .filter(p -> !bStockService.isBStockSymbol(p.getSymbol())).count();
         BigDecimal avgLev = cryptoOrderMapper.selectAvgLeverage(userId);
@@ -128,7 +120,7 @@ public class BehaviorDataController {
     }
 
     /**
-     * 合约分品类拆解：与资产五分类同源的符号集归桶（crypto 永续 / 大宗金油 / TradFi 美股ETF永续）。
+     * 合约分品类拆解：与资产四分类同源的符号集归桶（crypto 永续 / 大宗金油 / TradFi 美股ETF永续）。
      * 未知符号（已下架）归 crypto 默认桶不丢数据；三桶恒在，LLM/前端拿到的结构恒定。
      */
     private Map<String, Object> futuresByCategory(Long userId) {
@@ -166,35 +158,6 @@ public class BehaviorDataController {
                 .put("netProfit", predictionBetMapper.sumRealizedProfit(userId))
                 .put("winRate", predictionBetMapper.selectWinRate(userId))
                 .put("directionPreference", predictionBetMapper.selectDirectionPreference(userId)));
-    }
-
-    @GetMapping("/{userId}/blackjack-stats")
-    public String getBlackjackStats(@PathVariable Long userId) {
-        BlackjackAccount account = blackjackAccountMapper.selectOne(
-                new LambdaQueryWrapper<BlackjackAccount>().eq(BlackjackAccount::getUserId, userId));
-        if (account == null) {
-            return "{\"totalHands\":0,\"totalWon\":0,\"totalLost\":0,\"biggestWin\":0,\"todayConverted\":0}";
-        }
-        return MAPPER.writeValueAsString(MAPPER.createObjectNode()
-                .put("totalHands", account.getTotalHands())
-                .put("totalWon", account.getTotalWon())
-                .put("totalLost", account.getTotalLost())
-                .put("biggestWin", account.getBiggestWin())
-                .put("todayConverted", account.getTodayConverted()));
-    }
-
-    @GetMapping("/{userId}/mines-stats")
-    public String getMinesStats(@PathVariable Long userId) {
-        return MAPPER.writeValueAsString(MAPPER.createObjectNode()
-                .put("frequency", minesGameMapper.countFinishedGames(userId))
-                .put("netProfit", minesGameMapper.sumNetProfit(userId)));
-    }
-
-    @GetMapping("/{userId}/videopoker-stats")
-    public String getVideoPokerStats(@PathVariable Long userId) {
-        return MAPPER.writeValueAsString(MAPPER.createObjectNode()
-                .put("frequency", videoPokerGameMapper.countSettledGames(userId))
-                .put("netProfit", videoPokerGameMapper.sumNetProfit(userId)));
     }
 
     private String classifyLeverageUsage(BigDecimal avgLeverage) {

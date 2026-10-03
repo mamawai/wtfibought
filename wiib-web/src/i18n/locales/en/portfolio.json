@@ -47,8 +47,7 @@
     "crypto": "Crypto",
     "commodity": "Commodities",
     "bstock": "bStock",
-    "prediction": "Prediction",
-    "game": "Games"
+    "prediction": "Prediction"
   },
   "holdings": {
     "empty": "No holdings"
@@ -84,10 +83,10 @@
   },
   "reset": {
     "title": "Reset account",
-    "desc": "Clears all positions, orders, game records and asset history and restores the starting capital. Comments, mute status and earned campaign points are untouched. During the campaign: first reset each week free, then 30 campaign points each. After the campaign: 1 reset per week (refreshed Monday).",
+    "desc": "Clears all positions, orders and asset history and restores the starting capital. Comments, mute status and earned campaign points are untouched. During the campaign: first reset each week free, then 30 campaign points each. After the campaign: 1 reset per week (refreshed Monday).",
     "action": "Reset my account",
     "dialogTitle": "Confirm account reset",
-    "warnClears": "Cannot be undone. Clears: all spot and futures positions and orders, prediction bets, Blackjack / Mines / Video Poker records, asset history, daily buffs and wallet transfers.",
+    "warnClears": "Cannot be undone. Clears: all spot and futures positions and orders, prediction bets, asset history, daily buffs and wallet transfers.",
     "warnCost": "During the campaign: first reset each week free, then 30 campaign points each (automatic bankruptcy recovery counts too). Earned campaign points, check-ins and votes survive a reset.",
     "confirmName": "Type your username <0>{{name}}</0> to confirm:",
     "namePlaceholder": "Enter username",

@@ -40,28 +40,11 @@ error:
   buffExpired: Buff已过期
   buffAlreadyUsed: Buff已使用
   discountNoLeverage: 使用折扣时不支持杠杆
-  # Blackjack错误码 1500+
-  bjGameInProgress: 有未完成的牌局
-  bjNoActiveGame: 没有进行中的牌局
-  bjChipsNotEnough: 积分不足
-  bjInvalidBet: 下注金额无效
-  bjActionNotAllowed: 当前不可执行此操作
-  bjConvertLimit: 超出每日转出上限
-  bjConvertInsufficient: 可转出积分不足
-  bjPoolExhausted: 今日积分池已耗尽
   # Crypto错误码 1600+
   cryptoPriceUnavailable: 无法获取实时价格
   cryptoSymbolInvalid: 交易对无效
   tradeStepInvalid: 数量不符合最小交易步长
   tradeMinNotional: 下单金额低于最小名义额
-  # Mines错误码 1700+
-  minesGameInProgress: 有未完成的矿工游戏
-  minesNoActiveGame: 没有进行中的矿工游戏
-  minesBalanceNotEnough: 余额不足
-  minesInvalidBet: 下注金额无效
-  minesInvalidCell: 格子编号无效
-  minesCellAlreadyRevealed: 该格子已翻开
-  minesMustRevealFirst: 至少翻开一个格子才能提现
   # Futures错误码 1750+
   futuresPositionNotFound: 仓位不存在
   futuresInsufficientBalance: 余额不足
@@ -80,12 +63,6 @@ error:
   futuresLeverageOnlyUp: 逐仓持仓杠杆只能调高，补保证金请用追加保证金
   futuresLeverageMismatch: 杠杆与该币现有仓位不一致，请先调整杠杆
   futuresMarginModeConflict: 保证金模式与该币现有仓位不一致
-  # VideoPoker错误码 1851+
-  vpGameInProgress: 有未完成的视频扑克
-  vpNoActiveGame: 没有进行中的视频扑克
-  vpBalanceNotEnough: 余额不足
-  vpInvalidBet: 下注金额无效
-  vpInvalidHold: HOLD位置无效
   # Prediction错误码 1900+
   predictionRoundLocked: 回合已锁定
   predictionRoundNotFound: 回合不存在

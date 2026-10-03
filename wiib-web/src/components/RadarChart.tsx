@@ -9,14 +9,13 @@ interface Props {
   userData: CategoryAverages;
 }
 
-// 五分类能力轴：与后端 CategoryAveragesDTO 一一对应。表里存词表 key，渲染时现查——
+// 四分类能力轴：与后端 CategoryAveragesDTO 一一对应。表里存词表 key，渲染时现查——
 // 存成文案会在模块加载那一刻定死，切语言不跟着变
 const INDICATORS = [
   { labelKey: 'radar.crypto', key: 'cryptoProfit' },
   { labelKey: 'radar.commodity', key: 'commodityProfit' },
   { labelKey: 'radar.bstock', key: 'bstockProfit' },
   { labelKey: 'radar.prediction', key: 'predictionProfit' },
-  { labelKey: 'radar.game', key: 'gameProfit' },
 ];
 
 export function RadarChart({ userData }: Props) {

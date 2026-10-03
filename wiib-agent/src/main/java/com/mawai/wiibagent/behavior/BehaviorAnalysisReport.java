@@ -10,7 +10,6 @@ public class BehaviorAnalysisReport {
 
     private Overview overview;
     private TradeBehavior tradeBehavior;
-    private GameBehavior gameBehavior;
     private RiskProfile riskProfile;
     private List<String> suggestions;
 
@@ -66,7 +65,7 @@ public class BehaviorAnalysisReport {
         private BigDecimal avgLeverage;
         private BigDecimal stopLossRate;
         private int liquidationCount;
-        /** 分品类拆解（与资产五分类同源符号集）；软字段不参与 isValid 硬校验 */
+        /** 分品类拆解（与资产四分类同源符号集）；软字段不参与 isValid 硬校验 */
         private FuturesCategoryBreakdown byCategory;
     }
 
@@ -90,34 +89,6 @@ public class BehaviorAnalysisReport {
         private BigDecimal netProfit;
         private BigDecimal winRate;
         private String directionPreference;
-    }
-
-    @Data
-    public static class GameBehavior {
-        private BlackjackBehavior blackjack;
-        private MinesBehavior mines;
-        private VideoPokerBehavior videoPoker;
-    }
-
-    @Data
-    public static class BlackjackBehavior {
-        private long totalHands;
-        private long totalWon;
-        private long totalLost;
-        private long biggestWin;
-        private long todayConverted;
-    }
-
-    @Data
-    public static class MinesBehavior {
-        private int frequency;
-        private BigDecimal netProfit;
-    }
-
-    @Data
-    public static class VideoPokerBehavior {
-        private int frequency;
-        private BigDecimal netProfit;
     }
 
     @Data
@@ -145,6 +116,5 @@ public class BehaviorAnalysisReport {
                 || tradeBehavior.getPrediction().getNetProfit() == null
                 || tradeBehavior.getPrediction().getWinRate() == null) return false;
         return riskProfile != null && suggestions != null;
-        // gameBehavior 为可选，不参与校验
     }
 }

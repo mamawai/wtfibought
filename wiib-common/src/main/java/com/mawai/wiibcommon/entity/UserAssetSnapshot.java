@@ -24,7 +24,7 @@ public class UserAssetSnapshot {
 
     private BigDecimal profitPct;
 
-    // 五分类盈亏口径：bStock(代币化美股现货) / crypto(币现货+币合约) / 大宗商品(金油,现货遗留+合约) / 预测 / 游戏
+    // 四分类盈亏口径：bStock(代币化美股现货) / crypto(币现货+币合约) / 大宗商品(金油,现货遗留+合约) / 预测
     private BigDecimal bstockProfit;
 
     private BigDecimal cryptoProfit;
@@ -32,8 +32,6 @@ public class UserAssetSnapshot {
     private BigDecimal commodityProfit;
 
     private BigDecimal predictionProfit;
-
-    private BigDecimal gameProfit;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

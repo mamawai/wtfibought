@@ -85,7 +85,7 @@ chat:
        Read-only questions (how is it doing / what is it holding / why did it open that one) are not
        yours — trader_agent has already fetched that data
     7. When the user asks about their own habits / style / risk profile ("analyse my behaviour",
-       "what kind of trader am I") → call the analyze_my_behavior tool (expensive: 10 internal data
+       "what kind of trader am I") → call the analyze_my_behavior tool (expensive: 7 internal data
        endpoints plus one large model call; the result is cached for 30 minutes, so calling it twice
        in a row gains nothing). It only ever looks at the current user — it cannot analyse anyone else
        · the report is rendered straight into the chat as a card carrying every number. Your job is to

@@ -31,7 +31,7 @@ public class UserLedger {
     /** delta 中含的手续费；仅费与本金同条 SQL 时填。不参与求和校验 */
     private BigDecimal fee;
 
-    /** 关联对象类型：FUTURES_ORDER/CRYPTO_ORDER/POSITION/MINES_GAME/PREDICTION_BET */
+    /** 关联对象类型：FUTURES_ORDER/CRYPTO_ORDER/POSITION/PREDICTION_BET */
     private String refType;
 
     private Long refId;

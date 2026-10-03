@@ -17,7 +17,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 /**
- * 行为分析 workflow：并发拉齐 10 段数据 → 拼一个 prompt → 调一次 LLM，返回模型原文。
+ * 行为分析 workflow：并发拉齐 7 段数据 → 拼一个 prompt → 调一次 LLM，返回模型原文。
  * <p>做成固定 workflow 不用 ReAct：入参只有 userId、路径写死，模型在"查什么"上没有决策自由度，
  * 一次性给全让模型调用固定 1 次、数据请求可并发。
  * <p>提示词整套（系统指令 / 开场白 / 段标题）都在 {@link PromptCatalog}，按用户的 {@link AgentLang}
