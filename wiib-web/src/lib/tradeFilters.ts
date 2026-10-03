@@ -35,10 +35,21 @@ const DEFAULTS: TradeFilterMap = {
     XRPUSDT:  { stepSize: 0.1,     minQty: 0.1,     minNotional: 5 },
     BNBUSDT:  { stepSize: 0.001,   minQty: 0.001,   minNotional: 5 },
     ZECUSDT:  { stepSize: 0.001,   minQty: 0.001,   minNotional: 5 },
+    // bStock 代币化美股（实拉 2026-10-03）
+    NVDABUSDT: { stepSize: 0.001,  minQty: 0.001,  minNotional: 5 },
+    TSLABUSDT: { stepSize: 0.001,  minQty: 0.001,  minNotional: 5 },
+    MUBUSDT:   { stepSize: 0.001,  minQty: 0.001,  minNotional: 5 },
+    SNDKBUSDT: { stepSize: 0.0001, minQty: 0.0001, minNotional: 5 },
+    CRCLBUSDT: { stepSize: 0.01,   minQty: 0.01,   minNotional: 5 },
+    MSTRBUSDT: { stepSize: 0.001,  minQty: 0.001,  minNotional: 5 },
+    AMDBUSDT:  { stepSize: 0.001,  minQty: 0.001,  minNotional: 5 },
+    SPCXBUSDT: { stepSize: 0.001,  minQty: 0.001,  minNotional: 5 },
+    QQQBUSDT:  { stepSize: 0.001,  minQty: 0.001,  minNotional: 5 },
+    SOXLBUSDT: { stepSize: 0.001,  minQty: 0.001,  minNotional: 5 },
   },
 };
 
-// 未配置 symbol 宽松放行（后端注册表同口径）
+// 未配置 symbol 前端不设限（合约后端同口径；现货买入后端会拒）
 const OPEN_FILTER: TradeFilter = { stepSize: 0.00000001, minQty: 0.00000001, minNotional: 0 };
 
 let current: TradeFilterMap = DEFAULTS;

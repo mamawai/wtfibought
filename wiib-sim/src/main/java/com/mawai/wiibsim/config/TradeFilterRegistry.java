@@ -110,9 +110,11 @@ public class TradeFilterRegistry {
         validateOrder(futuresFilters.get(symbol), symbol, qty, price);
     }
 
-    /** 现货买入校验（市价传现价、限价传挂单价） */
+    /** 现货买入校验（市价传现价、限价传挂单价）；未配置 symbol 直接拒 */
     public void validateSpotBuy(String symbol, BigDecimal qty, BigDecimal price) {
-        validateOrder(spotFilters.get(symbol), symbol, qty, price);
+        Filter f = spotFilters.get(symbol);
+        if (f == null) throw new BizException(ErrorCode.CRYPTO_SYMBOL_INVALID);
+        validateOrder(f, symbol, qty, price);
     }
 
     private void validateOrder(Filter f, String symbol, BigDecimal qty, BigDecimal price) {
