@@ -89,7 +89,7 @@ public interface UserService extends IService<User> {
     void deductFrozenBalance(Long userId, BigDecimal amount);
 
     /**
-     * 更新游戏钱包（正数增加，负数减少，游戏模块专用）
+     * 更新游戏钱包（正数增加，负数减少，预测市场用）
      */
     void updateGameBalance(Long userId, BigDecimal amount);
 

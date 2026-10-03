@@ -246,7 +246,7 @@ export function Home() {
         </section>
       )}
 
-      {/* ====== 入口一排八格 ====== */}
+      {/* ====== 入口一排七格 ====== */}
       <section className="sec tight mt-8 pt-3.5 [&_.sec-h]:mb-3">
         <div className="sec-h">
           <h2>{t('entries.title')}</h2>

@@ -163,9 +163,9 @@ public class RankingService {
      * 没有"钱包余额"档：那是现金构成，不是成绩。
      */
     public enum RankingSort {
-        /** 总资产。默认榜，含游戏盈亏和优惠券带来的便宜 */
+        /** 总资产。默认榜，含优惠券带来的便宜 */
         ASSETS(Comparator.comparing(RankingDTO::getTotalAssets)),
-        /** 交易盈利。剔掉优惠券和游戏，只看靠交易赚到的钱 */
+        /** 交易盈利。剔掉优惠券，只看靠交易赚到的钱 */
         TRADING_PROFIT(Comparator.comparing(RankingDTO::getTradingProfit));
 
         private final Comparator<RankingDTO> comparator;
