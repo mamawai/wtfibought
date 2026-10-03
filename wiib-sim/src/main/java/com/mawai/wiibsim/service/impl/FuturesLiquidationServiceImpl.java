@@ -8,7 +8,9 @@ import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
+import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.FuturesLiquidationService;
+import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,6 +30,8 @@ public class FuturesLiquidationServiceImpl implements FuturesLiquidationService 
     private final CacheService cacheService;
     private final BinanceProperties props;
     private final FuturesPositionMapper positionMapper;
+    private final FuturesPositionIndexService positionIndexService;
+    private final CrossLiquidationService crossLiquidationService;
 
     private enum HitKind { LIQ, SL, TP }
 
@@ -98,7 +102,7 @@ public class FuturesLiquidationServiceImpl implements FuturesLiquidationService 
             BigDecimal[] posFut = KlineBar.lowHighAfter(fut, posSince);
             if (posMark == null || posFut == null) {
                 // 仓位开在整段行情之后，一项都不该触发
-                restore(group.recovery);
+                restore(pos, group.recovery, true);
                 continue;
             }
 
@@ -160,29 +164,76 @@ public class FuturesLiquidationServiceImpl implements FuturesLiquidationService 
         return posSince;
     }
 
-    private void restore(List<RecoveryEntry> recovery) {
+    /**
+     * 摘下来的项按库里现状放回：仓位还开着才放，止损/止盈档位还在才放（执行掉的库里已经没了）。
+     * withLiq=强平项也放回，按当前仓位重算；强平正常走完时 forceClose 已在锁内放回过，不用再放
+     */
+    private void restore(FuturesPosition pos, List<RecoveryEntry> recovery, boolean withLiq) {
+        if (pos == null || !"OPEN".equals(pos.getStatus())) return;
         for (RecoveryEntry re : recovery) {
-            cacheService.zAdd(re.key(), re.member(), re.score());
+            if (re.kind() == HitKind.LIQ) {
+                if (withLiq) positionIndexService.registerLiquidation(pos);
+                continue;
+            }
+            String itemId = re.member().substring(re.member().indexOf(':') + 1);
+            boolean alive = re.kind() == HitKind.SL
+                    ? pos.getStopLosses() != null && pos.getStopLosses().stream().anyMatch(s -> itemId.equals(s.getId()))
+                    : pos.getTakeProfits() != null && pos.getTakeProfits().stream().anyMatch(t -> itemId.equals(t.getId()));
+            if (alive) cacheService.zAdd(re.key(), re.member(), re.score());
         }
     }
 
-    /** 一个仓位的命中项处理体：强平优先，其次止损，再止盈；失败把摘掉的索引全回填 */
+    /**
+     * 一个仓位的命中项处理体：先处理强平/止损这一侧，同批的止盈等下一秒；
+     * 处理完（中途失败也一样）把还有效的项放回索引
+     */
     private void processGroup(String posId, PositionHitGroup group, BigDecimal markPrice, BigDecimal currentPrice) {
         Thread.startVirtualThread(() -> {
+            Long pid = Long.parseLong(posId);
+            boolean failed = false;
             try {
-                Long pid = Long.parseLong(posId);
                 if (group.liq) {
-                    futuresRiskService.forceClose(pid, markPrice);
+                    liquidateInTouchOrder(pid, group, markPrice);
                 } else if (!group.slIds.isEmpty()) {
-                    futuresRiskService.batchTriggerStopLoss(pid, group.slIds, markPrice);
-                } else if (!group.tpIds.isEmpty()) {
+                    triggerStopLoss(pid, group.slIds, markPrice);
+                } else {
                     futuresRiskService.batchTriggerTakeProfit(pid, group.tpIds, currentPrice);
                 }
             } catch (Exception e) {
                 log.error("futures仓位处理失败 posId={}, 恢复索引", posId, e);
-                restore(group.recovery);
+                failed = true;
             }
+            restore(positionMapper.selectById(pid), group.recovery, failed);
         });
+    }
+
+    /**
+     * 逐仓同批命中强平和止损：价格先触及的先执行（多头价高的先、空头价低的先，同价止损先）。
+     * 每一步都在仓位锁内按库里最新状态复核
+     */
+    private void liquidateInTouchOrder(Long pid, PositionHitGroup group, BigDecimal markPrice) {
+        RecoveryEntry liq = group.recovery.stream().filter(re -> re.kind() == HitKind.LIQ).findFirst().orElseThrow();
+        boolean isLong = liq.key().startsWith(LIQ_LONG_PREFIX);
+        List<String> before = new ArrayList<>();
+        List<String> after = new ArrayList<>();
+        for (RecoveryEntry re : group.recovery) {
+            if (re.kind() != HitKind.SL) continue;
+            boolean first = isLong ? re.score() >= liq.score() : re.score() <= liq.score();
+            (first ? before : after).add(re.member().substring(re.member().indexOf(':') + 1));
+        }
+        if (!before.isEmpty()) futuresRiskService.batchTriggerStopLoss(pid, before, markPrice);
+        futuresRiskService.forceClose(pid, markPrice);
+        if (!after.isEmpty()) futuresRiskService.batchTriggerStopLoss(pid, after, markPrice);
+    }
+
+    /** 全仓止损转给账户级处理，在用户级锁内跟强平比先后；逐仓直接执行 */
+    private void triggerStopLoss(Long pid, List<String> slIds, BigDecimal markPrice) {
+        FuturesPosition pos = positionMapper.selectById(pid);
+        if (pos != null && pos.isCross()) {
+            crossLiquidationService.triggerStopLoss(pos, slIds, markPrice);
+        } else {
+            futuresRiskService.batchTriggerStopLoss(pid, slIds, markPrice);
+        }
     }
 
     /**

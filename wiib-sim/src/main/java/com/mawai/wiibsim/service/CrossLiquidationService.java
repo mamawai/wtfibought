@@ -1,8 +1,10 @@
 package com.mawai.wiibsim.service;
 
+import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.market.KlineBar;
 
 import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -42,4 +44,11 @@ public interface CrossLiquidationService {
 
     /** 兜底轮询：检查所有持有全仓仓位的用户（无钉住价，顺带重建全员安全带） */
     void sweepAll();
+
+    /**
+     * 全仓仓位的止损命中（仓位级索引摘出来的）：在用户级锁内跟强平比先后再执行。
+     * 按 price 账户不可爆就直接执行这批止损；可爆就和 {@link #checkUser} 走同一段先后处理。
+     * 用户级锁等不到、或中途等仓位锁超时，抛 ORDER_PROCESSING。
+     */
+    void triggerStopLoss(FuturesPosition position, Collection<String> slIds, BigDecimal price);
 }

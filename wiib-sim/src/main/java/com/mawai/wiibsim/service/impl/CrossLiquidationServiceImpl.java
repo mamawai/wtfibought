@@ -4,6 +4,9 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
+import com.mawai.wiibcommon.entity.FuturesStopLoss;
+import com.mawai.wiibcommon.enums.ErrorCode;
+import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.TradingConfig;
@@ -12,8 +15,9 @@ import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.TradeNotificationService;
-import com.mawai.wiibsim.util.RedisLockUtil;
+import com.mawai.wiibsim.util.FairLockRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,7 +25,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.locks.Lock;
 
 import static com.mawai.wiibsim.service.impl.FuturesHelper.calculatePnl;
 import static com.mawai.wiibsim.service.impl.FuturesHelper.markPrice;
@@ -33,15 +42,22 @@ import static com.mawai.wiibsim.service.impl.FuturesHelper.toEpochMs;
 @RequiredArgsConstructor
 public class CrossLiquidationServiceImpl implements CrossLiquidationService {
 
+    /** 全仓用户级锁：同一账户的检查/爆仓/全仓止损串行 */
+    private static final String LIQ_LOCK_PREFIX = "futures:cross:liq:";
+
     private final CrossMarginService crossMarginService;
     private final FuturesPositionMapper positionMapper;
     private final FuturesOrderMapper orderMapper;
     private final TradingConfig tradingConfig;
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
-    private final RedisLockUtil redisLockUtil;
+    private final FairLockRegistry lockRegistry;
     private final TradeNotificationService tradeNotificationService;
     private final CrossBandRegistry bandRegistry;
+    private final FuturesRiskService futuresRiskService;
+
+    /** 已命中的止损档；distance = 离当前价的相对距离，越远越先被碰到 */
+    private record HitStop(Long positionId, String symbol, String id, BigDecimal price, BigDecimal distance) {}
 
     @Override
     public void onPriceTick(String symbol, BigDecimal markPrice) {
@@ -92,9 +108,8 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
     public void checkUser(Long userId, String pinSymbol, BigDecimal pinPrice) {
         // 用户级锁：同一账户的检查/爆仓串行。有界等待而非抢不到即弃——
         // 插针触发排在前一个精查后面时必须等到它，静默丢弃 = 漏针
-        String lockKey = "futures:cross:liq:" + userId;
-        String lockValue = redisLockUtil.tryLockWithWait(lockKey, 30, 30_000);
-        if (lockValue == null) {
+        Lock lock = lockRegistry.tryLockAsSystem(LIQ_LOCK_PREFIX + userId);
+        if (lock == null) {
             log.error("全仓精查获锁超时 userId={} pin={}@{}，交由兜底轮询重查", userId, pinSymbol, pinPrice);
             return;
         }
@@ -111,15 +126,74 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
                 return;
             }
             if (account.liquidatable()) {
-                SpringUtils.getAopProxy(this).liquidateAll(userId, pinSymbol, pinPrice);
+                liquidateInTouchOrder(userId, pinSymbol, pinPrice, account);
                 return;
             }
             rebuildBand(userId, epoch, account);
         } catch (Exception e) {
             log.error("全仓健康检查失败 userId={}", userId, e);
         } finally {
-            redisLockUtil.unlock(lockKey, lockValue);
+            lock.unlock();
         }
+    }
+
+    @Override
+    public void triggerStopLoss(FuturesPosition position, Collection<String> slIds, BigDecimal price) {
+        Long userId = position.getUserId();
+        Lock lock = lockRegistry.tryLockAsSystem(LIQ_LOCK_PREFIX + userId);
+        if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
+        try {
+            var account = crossMarginService.snapshot(userId, position.getSymbol(), price);
+            if (account.liquidatable()) {
+                liquidateInTouchOrder(userId, position.getSymbol(), price, account);
+            } else {
+                futuresRiskService.batchTriggerStopLoss(position.getId(), slIds, price);
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * 账户按触发价已可爆时，已命中的止损和强平按价格先触及的先执行。持有用户级锁时调用。
+     * 按触及先后逐个看止损：钉在止损价不可爆 = 止损先到，先执行；
+     * 可爆 = 强平点先到，先按触发价判强平，爆了止损作废，没爆接着执行剩下的止损。
+     * 止损都按这一秒的触发价成交，排序只决定先后。
+     */
+    private void liquidateInTouchOrder(Long userId, String pinSymbol, BigDecimal pinPrice,
+                                       CrossMarginService.CrossAccount account) {
+        boolean liqChecked = false;
+        for (HitStop sl : hitStopLosses(userId, account.refPrices())) {
+            if (!liqChecked && crossMarginService.snapshot(userId, sl.symbol(), sl.price()).liquidatable()) {
+                if (liquidateWithPositionLocks(userId, pinSymbol, pinPrice, account.positions())) return;
+                liqChecked = true;
+            }
+            futuresRiskService.batchTriggerStopLoss(sl.positionId(), List.of(sl.id()), account.refPrices().get(sl.symbol()));
+        }
+        if (!liqChecked) liquidateWithPositionLocks(userId, pinSymbol, pinPrice, account.positions());
+    }
+
+    /** 这组价格下已经命中的全仓止损档，按触及先后排 */
+    private List<HitStop> hitStopLosses(Long userId, Map<String, BigDecimal> prices) {
+        List<HitStop> hits = new ArrayList<>();
+        List<FuturesPosition> positions = positionMapper.selectList(new LambdaQueryWrapper<FuturesPosition>()
+                .eq(FuturesPosition::getUserId, userId)
+                .eq(FuturesPosition::getStatus, "OPEN")
+                .eq(FuturesPosition::getMarginMode, FuturesPosition.CROSS));
+        for (FuturesPosition pos : positions) {
+            BigDecimal price = prices.get(pos.getSymbol());
+            // 快照之后才开的仓不在这次的价格里
+            if (price == null || pos.getStopLosses() == null) continue;
+            boolean isLong = "LONG".equals(pos.getSide());
+            for (FuturesStopLoss sl : pos.getStopLosses()) {
+                int cmp = price.compareTo(sl.getPrice());
+                if (isLong ? cmp > 0 : cmp < 0) continue;
+                BigDecimal distance = sl.getPrice().subtract(price).abs().divide(price, 8, RoundingMode.HALF_UP);
+                hits.add(new HitStop(pos.getId(), pos.getSymbol(), sl.getId(), sl.getPrice(), distance));
+            }
+        }
+        hits.sort(Comparator.comparing(HitStop::distance).reversed());
+        return hits;
     }
 
     /** 精查末尾回填安全带；缓冲耗尽（半宽0）则清带 = 退化为每 tick 必查，方向 fail-safe */
@@ -150,29 +224,56 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
     }
 
     /**
+     * 按 id 升序拿齐这些全仓仓位的锁再爆，仓位锁在 liquidateAll 事务提交之后才放。
+     * 锁序：cross:liq 用户锁 → 仓位锁。某个仓位锁等不到就不爆，抛 ORDER_PROCESSING。
+     * 返回账户是否被爆掉。
+     */
+    private boolean liquidateWithPositionLocks(Long userId, String pinSymbol, BigDecimal pinPrice,
+                                               List<FuturesPosition> positions) {
+        List<Long> ids = positions.stream().map(FuturesPosition::getId).sorted().toList();
+        List<Lock> held = new ArrayList<>();
+        try {
+            for (Long id : ids) {
+                Lock lock = lockRegistry.tryLockAsSystem("futures:pos:" + id);
+                if (lock == null) {
+                    log.warn("全仓爆仓等仓位锁超时 userId={} posId={}，本次不爆，交由后续巡检重查", userId, id);
+                    throw new BizException(ErrorCode.ORDER_PROCESSING);
+                }
+                held.add(lock);
+            }
+            return SpringUtils.getAopProxy(this).liquidateAll(userId, pinSymbol, pinPrice, ids);
+        } finally {
+            for (int i = held.size() - 1; i >= 0; i--) {
+                held.get(i).unlock();
+            }
+        }
+    }
+
+    /**
      * 全组爆：所有全仓仓位按 mark 价强平，盈亏净额一次结算进余额（允许为负）。
      * 结算后余额 &lt; 0 = 穿仓 → 立即破产（游戏钱包也保不住，这是用户要自己控制的风险点）。
      * <p>pinSymbol 的结算价钉在 pinPrice：插针触发的爆仓按触发那一刻的价格结算，
      * 缓存价回落不影响——判定与结算同一口径，否则会出现"按50判爆、按100结算"的分裂。</p>
+     * <p>positionIds 是调用方已经锁住的全仓仓位。返回有没有平掉仓位。</p>
      */
     @Transactional(rollbackFor = Exception.class)
-    protected void liquidateAll(Long userId, String pinSymbol, BigDecimal pinPrice) {
-        var positions = positionMapper.selectList(new LambdaQueryWrapper<FuturesPosition>()
-                .eq(FuturesPosition::getUserId, userId)
-                .eq(FuturesPosition::getStatus, "OPEN")
-                .eq(FuturesPosition::getMarginMode, FuturesPosition.CROSS));
-        if (positions.isEmpty()) return;
+    protected boolean liquidateAll(Long userId, String pinSymbol, BigDecimal pinPrice, List<Long> positionIds) {
+        // 锁内按触发价重判
+        if (!crossMarginService.snapshot(userId, pinSymbol, pinPrice).liquidatable()) return false;
 
         BigDecimal settle = BigDecimal.ZERO;
         int closed = 0;
-        for (FuturesPosition pos : positions) {
+        for (Long id : positionIds) {
+            // 锁内重读，按当前持仓数量结算
+            FuturesPosition pos = positionMapper.selectById(id);
+            if (pos == null || !"OPEN".equals(pos.getStatus())) continue;
             BigDecimal price = pos.getSymbol().equals(pinSymbol)
                     ? pinPrice : markPrice(cacheService, pos.getSymbol());
             BigDecimal pnl = calculatePnl(pos.getSide(), pos.getEntryPrice(), price, pos.getQuantity());
             BigDecimal closeValue = price.multiply(pos.getQuantity()).setScale(2, RoundingMode.HALF_UP);
             BigDecimal commission = tradingConfig.calculateFuturesCommission(closeValue, true, true);
 
-            // CAS抢平仓权：并发手动平仓赢了就跳过本仓，不重复结算
+            // CAS兜底：不拿仓位锁的路径（破产清算）先关了就跳过本仓，不重复结算
             if (positionMapper.casClosePosition(pos.getId(), "LIQUIDATED", price, pnl) == 0) continue;
             positionIndexService.unregisterAll(pos); // 全仓无LIQ索引，清的是SL/TP残留
 
@@ -195,7 +296,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
             settle = settle.add(pnl).subtract(commission);
             closed++;
         }
-        if (closed == 0) return;
+        if (closed == 0) return false;
 
         int cancelled = cancelCrossOpenOrders(userId);
 
@@ -204,6 +305,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
         tradeNotificationService.crossLiquidation(userId, closed, settle);
         // 占用制下保证金没离开过余额，结算只记盈亏净额；全平后已无全仓仓位，扣穿由 settle 触发破产
         crossMarginService.settle(userId, settle);
+        return true;
     }
 
     /**

@@ -6,6 +6,8 @@ import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
+import com.mawai.wiibsim.service.CrossLiquidationService;
+import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import org.junit.jupiter.api.Test;
 
@@ -75,9 +77,14 @@ class FuturesLiquidationRecoverGapTest {
                 .thenReturn(Map.of());
         when(cacheService.zRangeByScoreAndRemove(SL_LONG_KEY, 40d, Double.MAX_VALUE))
                 .thenReturn(Map.of("1:" + SL_ID, 50d));
-        when(positionMapper.selectById(1L)).thenReturn(position(slCreatedAt, posCreatedAt));
+        // 依次是补漏复核、执行前看保证金模式、执行完放回索引时读到的仓位：止损 1 张全平，最后一次读到已关
+        FuturesPosition closed = position(slCreatedAt, posCreatedAt);
+        closed.setStatus("CLOSED");
+        when(positionMapper.selectById(1L)).thenReturn(position(slCreatedAt, posCreatedAt),
+                position(slCreatedAt, posCreatedAt), closed);
         return new FuturesLiquidationServiceImpl(riskService, cacheService,
-                mock(BinanceProperties.class), positionMapper);
+                mock(BinanceProperties.class), positionMapper, mock(FuturesPositionIndexService.class),
+                mock(CrossLiquidationService.class));
     }
 
     /** 止损挂在插针之后：不许触发，摘掉的索引得原样回填 */

@@ -15,6 +15,9 @@ public interface FuturesPositionIndexService {
     /** 平仓/强平/爆仓/重置时摘掉该仓位全部触发索引 */
     void unregisterAll(FuturesPosition position);
 
+    /** 逐仓按仓位当前保证金/数量算强平价写进强平索引（已在就覆盖）；全仓不注册 */
+    void registerLiquidation(FuturesPosition position);
+
     void updateLiquidationPrice(Long positionId, String symbol, String side, BigDecimal liqPrice);
 
     void registerStopLosses(Long positionId, String symbol, String side, List<FuturesStopLoss> stopLosses);

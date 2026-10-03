@@ -1,6 +1,9 @@
 package com.mawai.wiibsim.service.impl;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.cache.CacheService;
+import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.util.SpringUtils;
@@ -10,10 +13,15 @@ import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.CrossMarginService.CrossAccount;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
+import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.TradeNotificationService;
-import com.mawai.wiibsim.util.RedisLockUtil;
+import com.mawai.wiibsim.util.FairLockRegistry;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.context.ApplicationContext;
 
 import java.math.BigDecimal;
@@ -23,6 +31,7 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.locks.Lock;
 import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,9 +51,17 @@ class CrossBandTriggerTest {
     private FuturesPositionMapper positionMapper;
     private FuturesOrderMapper orderMapper;
     private CacheService cacheService;
-    private RedisLockUtil redisLockUtil;
+    private FairLockRegistry lockRegistry;
+    private Lock userLock;
+    private Lock posLock;
     private CrossBandRegistry registry;
     private CrossLiquidationServiceImpl service;
+
+    /** 爆仓撤单那句 LambdaQueryWrapper 用了 .in()/.notLikeRight()，裸 mock 下要先补 FuturesOrder 的表信息 */
+    @BeforeAll
+    static void initTableInfoCache() {
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), FuturesOrder.class);
+    }
 
     @BeforeEach
     void setUp() {
@@ -52,16 +69,19 @@ class CrossBandTriggerTest {
         positionMapper = mock(FuturesPositionMapper.class);
         orderMapper = mock(FuturesOrderMapper.class);
         cacheService = mock(CacheService.class);
-        redisLockUtil = mock(RedisLockUtil.class);
+        lockRegistry = mock(FairLockRegistry.class);
+        userLock = mock(Lock.class);
+        posLock = mock(Lock.class);
         registry = new CrossBandRegistry();
 
-        when(redisLockUtil.tryLock(anyString(), anyLong())).thenReturn("v");
-        when(redisLockUtil.tryLockWithWait(anyString(), anyLong(), anyLong())).thenReturn("v");
+        when(lockRegistry.tryLockAsSystem("futures:cross:liq:" + UID)).thenReturn(userLock);
+        when(lockRegistry.tryLockAsSystem("futures:pos:1")).thenReturn(posLock);
         when(crossMargin.usersOnSymbol(SYM)).thenReturn(Set.of("7"));
 
         service = new CrossLiquidationServiceImpl(crossMargin, positionMapper, orderMapper,
                 new TradingConfig(), cacheService, mock(FuturesPositionIndexService.class),
-                redisLockUtil, mock(TradeNotificationService.class), registry);
+                lockRegistry, mock(TradeNotificationService.class), registry,
+                mock(FuturesRiskService.class));
     }
 
     /** LONG 20@100、20x、占用100 */
@@ -142,7 +162,7 @@ class CrossBandTriggerTest {
         when(ctx.getBean(CrossLiquidationServiceImpl.class)).thenReturn(service);
         new SpringUtils().setApplicationContext(ctx);
 
-        when(positionMapper.selectList(any())).thenReturn(List.of(position()));
+        when(positionMapper.selectById(1L)).thenReturn(position());
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);
         when(orderMapper.selectList(any())).thenReturn(List.of());
 
@@ -226,5 +246,68 @@ class CrossBandTriggerTest {
 
         verify(crossMargin).refreshUserIndex(UID);
         assertThat(registry.shouldCheck(UID, SYM, 100.0)).isTrue(); // 带已移除
+    }
+
+    // ==================== 爆仓与止损部分平仓并发 ====================
+    // 余额 1000，全仓多 1 BTC@100000；同一个 tick 打到 99300，止损先平掉 0.5 张
+
+    private static final BigDecimal PIN = new BigDecimal("99300");
+
+    private static FuturesPosition btcLong(String qty, String margin) {
+        FuturesPosition p = position();
+        p.setLeverage(100);
+        p.setQuantity(new BigDecimal(qty));
+        p.setEntryPrice(new BigDecimal("100000"));
+        p.setMargin(new BigDecimal(margin));
+        return p;
+    }
+
+    /** 锁外快照：1 张，净值 1000−700=300 ≤ 维持保证金 397.2 → 判爆 */
+    private static CrossAccount staleLiquidatable() {
+        return new CrossAccount(new BigDecimal("1000"), new BigDecimal("-700"), new BigDecimal("1000"),
+                BigDecimal.ZERO, new BigDecimal("397.2"), List.of(btcLong("1", "1000")), Map.of(SYM, PIN));
+    }
+
+    /** 剩 0.5 张但余额更少，净值 150 ≤ 198.6 → 仍该爆 */
+    private static CrossAccount afterStopLossStillLiquidatable() {
+        return new CrossAccount(new BigDecimal("500"), new BigDecimal("-350"), new BigDecimal("500"),
+                BigDecimal.ZERO, new BigDecimal("198.6"), List.of(btcLong("0.5", "500")), Map.of(SYM, PIN));
+    }
+
+    @Test
+    void 锁内仍判爆_按锁内重读的数量结算_锁在结算之后才放() {
+        ApplicationContext ctx = mock(ApplicationContext.class);
+        when(ctx.getBean(CrossLiquidationServiceImpl.class)).thenReturn(service);
+        new SpringUtils().setApplicationContext(ctx);
+        // 锁外读到的还是 1 张
+        when(positionMapper.selectList(any())).thenReturn(List.of(btcLong("1", "1000")));
+        when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);
+        when(orderMapper.selectList(any())).thenReturn(List.of());
+        when(crossMargin.snapshot(UID, SYM, PIN)).thenReturn(staleLiquidatable(), afterStopLossStillLiquidatable());
+        when(positionMapper.selectById(1L)).thenReturn(btcLong("0.5", "500"));
+
+        service.checkUser(UID, SYM, PIN);
+
+        // 0.5 张：(99300−100000)×0.5 = −350；按旧的 1 张会是 −700
+        ArgumentCaptor<BigDecimal> pnl = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionMapper).casClosePosition(eq(1L), eq("LIQUIDATED"), eq(PIN), pnl.capture());
+        assertThat(pnl.getValue()).isEqualByComparingTo("-350");
+
+        ArgumentCaptor<FuturesOrder> order = ArgumentCaptor.forClass(FuturesOrder.class);
+        verify(orderMapper).insert(order.capture());
+        assertThat(order.getValue().getQuantity()).isEqualByComparingTo("0.5");
+
+        // −350 − 手续费 49650×0.0004=19.86
+        ArgumentCaptor<BigDecimal> settle = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(crossMargin).settle(eq(UID), settle.capture());
+        assertThat(settle.getValue()).isEqualByComparingTo("-369.86");
+
+        InOrder inOrder = inOrder(lockRegistry, positionMapper, crossMargin, posLock, userLock);
+        inOrder.verify(lockRegistry).tryLockAsSystem("futures:cross:liq:" + UID);
+        inOrder.verify(lockRegistry).tryLockAsSystem("futures:pos:1");
+        inOrder.verify(positionMapper).casClosePosition(anyLong(), anyString(), any(), any());
+        inOrder.verify(crossMargin).settle(anyLong(), any());
+        inOrder.verify(posLock).unlock();
+        inOrder.verify(userLock).unlock();
     }
 }

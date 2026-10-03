@@ -21,7 +21,7 @@ import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesPositionIndexService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.TradeNotificationService;
-import com.mawai.wiibsim.util.RedisLockUtil;
+import com.mawai.wiibsim.util.FairLockRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -30,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.*;
+import java.util.concurrent.locks.Lock;
 
 import static com.mawai.wiibcommon.enums.LedgerBizType.FUTURES_CLOSE_SETTLE;
 import static com.mawai.wiibcommon.enums.LedgerBizType.FUTURES_LIQUIDATION_RETURN;
@@ -44,7 +45,7 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
     private final FuturesOrderMapper orderMapper;
     private final UserMapper userMapper;
     private final TradingConfig tradingConfig;
-    private final RedisLockUtil redisLockUtil;
+    private final FairLockRegistry lockRegistry;
     private final CacheService cacheService;
     private final FuturesPositionIndexService positionIndexService;
     private final FuturesLeverageBracketRegistry bracketRegistry;
@@ -55,13 +56,12 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
     @Override
     public void setStopLoss(Long userId, FuturesStopLossRequest request) {
-        String lockKey = "futures:pos:" + request.getPositionId();
-        String lockValue = redisLockUtil.tryLock(lockKey, 30);
-        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
+        Lock lock = lockRegistry.tryLockAsUser("futures:pos:" + request.getPositionId());
+        if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
         try {
             SpringUtils.getAopProxy(this).doSetStopLoss(userId, request);
         } finally {
-            redisLockUtil.unlock(lockKey, lockValue);
+            lock.unlock();
         }
     }
 
@@ -110,13 +110,12 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
     @Override
     public void setTakeProfit(Long userId, FuturesTakeProfitRequest request) {
-        String lockKey = "futures:pos:" + request.getPositionId();
-        String lockValue = redisLockUtil.tryLock(lockKey, 30);
-        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
+        Lock lock = lockRegistry.tryLockAsUser("futures:pos:" + request.getPositionId());
+        if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
         try {
             SpringUtils.getAopProxy(this).doSetTakeProfit(userId, request);
         } finally {
-            redisLockUtil.unlock(lockKey, lockValue);
+            lock.unlock();
         }
     }
 
@@ -165,13 +164,12 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
     @Override
     public void forceClose(Long positionId, BigDecimal price) {
-        String lockKey = "futures:pos:" + positionId;
-        String lockValue = redisLockUtil.tryLock(lockKey, 30);
-        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
+        Lock lock = lockRegistry.tryLockAsSystem("futures:pos:" + positionId);
+        if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
         try {
             SpringUtils.getAopProxy(this).doForceClose(positionId, price);
         } finally {
-            redisLockUtil.unlock(lockKey, lockValue);
+            lock.unlock();
         }
     }
 
@@ -186,7 +184,20 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         }
         LedgerCtx.symbol(position.getSymbol());
 
+        // 锁内按传入价复核，不满足就不平，按当前保证金/数量把强平索引放回去
+        if (!reachesLiquidation(position, price)) {
+            positionIndexService.registerLiquidation(position);
+            return;
+        }
         forceCloseInCurrentTransaction(position, price);
+    }
+
+    /** 逐仓强平条件：保证金 + 浮盈亏 ≤ 维持保证金。档位没配抛 FUTURES_SYMBOL_NOT_CONFIGURED */
+    private boolean reachesLiquidation(FuturesPosition position, BigDecimal price) {
+        BigDecimal unrealizedPnl = calculatePnl(position.getSide(), position.getEntryPrice(), price, position.getQuantity());
+        BigDecimal maintenanceMargin = bracketRegistry.calcMaintenanceMargin(position.getSymbol(),
+                price.multiply(position.getQuantity()));
+        return position.getMargin().add(unrealizedPnl).compareTo(maintenanceMargin) <= 0;
     }
 
     private void forceCloseInCurrentTransaction(FuturesPosition position, BigDecimal price) {
@@ -232,13 +243,15 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
     @Override
     public void checkAndLiquidate(Long positionId, BigDecimal currentPrice) {
-        String lockKey = "futures:pos:" + positionId;
-        String lockValue = redisLockUtil.tryLock(lockKey, 30);
-        if (lockValue == null) return;
+        Lock lock = lockRegistry.tryLockAsSystem("futures:pos:" + positionId);
+        if (lock == null) {
+            log.warn("futures强平复核获锁超时，本次不查 posId={}", positionId);
+            return;
+        }
         try {
             SpringUtils.getAopProxy(this).doCheckAndLiquidate(positionId, currentPrice);
         } finally {
-            redisLockUtil.unlock(lockKey, lockValue);
+            lock.unlock();
         }
     }
 
@@ -252,19 +265,16 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
         }
         LedgerCtx.symbol(position.getSymbol());
 
-        BigDecimal unrealizedPnl = calculatePnl(position.getSide(), position.getEntryPrice(), currentPrice, position.getQuantity());
-        BigDecimal effectiveMargin = position.getMargin().add(unrealizedPnl);
-        BigDecimal positionValue = currentPrice.multiply(position.getQuantity());
-        BigDecimal maintenanceMargin;
+        boolean hit;
         try {
-            maintenanceMargin = bracketRegistry.calcMaintenanceMargin(position.getSymbol(), positionValue);
+            hit = reachesLiquidation(position, currentPrice);
         } catch (BizException e) {
             // 未配置档位的 symbol 跳过本次强平判定，避免吞错导致仓位卡死，运维需关注此告警
             log.error("强平判定跳过 posId={} symbol={} reason={}", positionId, position.getSymbol(), e.getMessage());
             return;
         }
 
-        if (effectiveMargin.compareTo(maintenanceMargin) <= 0) {
+        if (hit) {
             forceCloseInCurrentTransaction(position, currentPrice);
         }
     }
@@ -273,25 +283,23 @@ public class FuturesRiskServiceImpl implements FuturesRiskService {
 
     @Override
     public void batchTriggerStopLoss(Long positionId, Collection<String> slIds, BigDecimal price) {
-        String lockKey = "futures:pos:" + positionId;
-        String lockValue = redisLockUtil.tryLock(lockKey, 30);
-        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
+        Lock lock = lockRegistry.tryLockAsSystem("futures:pos:" + positionId);
+        if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
         try {
             SpringUtils.getAopProxy(this).doBatchTrigger(positionId, slIds, price, true);
         } finally {
-            redisLockUtil.unlock(lockKey, lockValue);
+            lock.unlock();
         }
     }
 
     @Override
     public void batchTriggerTakeProfit(Long positionId, Collection<String> tpIds, BigDecimal price) {
-        String lockKey = "futures:pos:" + positionId;
-        String lockValue = redisLockUtil.tryLock(lockKey, 30);
-        if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
+        Lock lock = lockRegistry.tryLockAsSystem("futures:pos:" + positionId);
+        if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
         try {
             SpringUtils.getAopProxy(this).doBatchTrigger(positionId, tpIds, price, false);
         } finally {
-            redisLockUtil.unlock(lockKey, lockValue);
+            lock.unlock();
         }
     }
 
