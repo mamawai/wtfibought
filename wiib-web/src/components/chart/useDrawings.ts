@@ -43,7 +43,7 @@ export interface DrawSelection { id: string; kind: DrawingKind; color: string; w
 export type DrawStylePatch = Partial<Pick<Drawing, 'color' | 'width' | 'dash'>>;
 
 /** 触屏设备：画线改走"十字线拖动+轻点固定"模式，手指不再直接点图落点 */
-const IS_COARSE = window.matchMedia('(pointer: coarse)').matches;
+export const IS_COARSE = window.matchMedia('(pointer: coarse)').matches;
 /** 触屏轻点判定：按下到抬起位移不超过这些像素算"点"，超过算"拖" */
 const TAP_SLOP = 6;
 /** 撤销最多记几步 */
@@ -94,6 +94,8 @@ export function useDrawings() {
   const historyRef = useRef<Drawing[][]>([]);
   const historySymbolRef = useRef<string | null>(null);
   const [undoCount, setUndoCount] = useState(0);
+  /** 当前这一笔已落定几个点（给绘制提示条显示进度）；跟 placedRef 同步 */
+  const [placed, setPlaced] = useState(0);
 
   const liveRef = useRef<Live | null>(null);
   const toolRef = useRef<Tool>(null);
@@ -123,7 +125,7 @@ export function useDrawings() {
     setHiddenAll(v);
     hiddenRef.current = v;
     // 画到一半点了隐藏：这一笔作罢，不然落定的新线看不见却被选中着
-    if (v) setTool(null);
+    if (v) { setTool(null); setPlaced(0); }
     const live = liveRef.current;
     if (!live) return;
     live.layer.hidden = v;
@@ -225,6 +227,7 @@ export function useDrawings() {
   /** 一次绘制结束（无论落定还是取消）：清预览、退回选择模式 */
   const endDraw = useCallback((live: Live) => {
     placedRef.current = [];
+    setPlaced(0);
     live.layer.pending = null;
     live.layer.snap = null;
     setTool(null);
@@ -312,6 +315,7 @@ export function useDrawings() {
       endDraw(live);
       return true;
     }
+    setPlaced(placedRef.current.length);
     L.pending = { id: '_pending', kind: t, pts: finalizePoints(t, [...placedRef.current, r.a]), color: DRAW_COLOR };
     L.snap = r.snapped ? r.a : null;
     L.update();
@@ -582,6 +586,7 @@ export function useDrawings() {
     setTextEdit(null);
     textAnchorRef.current = null;
     placedRef.current = [];
+    setPlaced(0);
     touchRef.current = null;
     // 撤销栈跟着币种走：开关副图、切主题、切周期也会重挂图层，同一个币的画线没变，撤销记录留着
     if (historySymbolRef.current !== a.symbol) {
@@ -738,12 +743,16 @@ export function useDrawings() {
   /** 工具条入口：选画线工具时若线被藏着，自动把眼睛打开（画完看不见太诡异） */
   const selectTool = useCallback((t: Tool) => {
     if (t !== null && hiddenRef.current) setHiddenAllSync(false);
+    // 换了工具，画了一半的点会被下面的工具切换 effect 清掉，进度跟着归零；点的还是同一个就接着画
+    if (t !== toolRef.current) setPlaced(0);
     setTool(t);
   }, [setHiddenAllSync]);
 
   return {
     attach,
     tool, setTool: selectTool,
+    /** 当前这一笔已落定的点数 */
+    placed,
     magnet, setMagnet,
     hiddenAll, setHiddenAll: setHiddenAllSync,
     /** 当前有选中的图形 → 删除按钮是"删选中"，否则是"清空全部" */

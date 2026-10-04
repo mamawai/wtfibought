@@ -11,9 +11,10 @@ const FUTURES_PRICE: Record<string, number> = {
   SNDKUSDT: 118.6, SOXLUSDT: 28.42, SKHYNIXUSDT: 142.3, MUUSDT: 108.7, KORUUSDT: 62.1, SPCXUSDT: 412,
 };
 
-/** 代币化美股：纯现货，没有合约也没有资金费率 */
+/** 代币化美股：纯现货，没有合约也没有资金费率。符号照真后端，带 B 后缀 */
 const BSTOCK_PRICE: Record<string, number> = {
-  NVDAUSDT: 182.4, TSLAUSDT: 341.2, QQQUSDT: 498.6, AAPLUSDT: 232.8,
+  NVDABUSDT: 182.4, TSLABUSDT: 341.2, MUBUSDT: 108.9, SNDKBUSDT: 118.2, CRCLBUSDT: 126.5,
+  MSTRBUSDT: 342.8, AMDBUSDT: 168.3, SPCXBUSDT: 186.4, QQQBUSDT: 498.6, SOXLBUSDT: 28.6,
 };
 
 const BASE_PRICE: Record<string, number> = { ...FUTURES_PRICE, ...BSTOCK_PRICE };

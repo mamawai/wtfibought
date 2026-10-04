@@ -543,7 +543,7 @@ const cryptoLive = () => {
   const t = now();
   return [
     { orderId: 70311, symbol: 'BTCUSDT', orderSide: 'BUY', orderType: 'MARKET', quantity: 0.12, leverage: 1, filledPrice: 109838.5, filledAmount: 13180.62, commission: 13.18, status: 'FILLED', createdAt: timeStr(t - 4 * MIN) },
-    { orderId: 70308, symbol: 'NVDAUSDT', orderSide: 'SELL', orderType: 'MARKET', quantity: 40, leverage: 1, filledPrice: 182.4, filledAmount: 7296, commission: 7.3, status: 'FILLED', createdAt: timeStr(t - 17 * MIN) },
+    { orderId: 70308, symbol: 'NVDABUSDT', orderSide: 'SELL', orderType: 'MARKET', quantity: 40, leverage: 1, filledPrice: 182.4, filledAmount: 7296, commission: 7.3, status: 'FILLED', createdAt: timeStr(t - 17 * MIN) },
     { orderId: 70302, symbol: 'SOLUSDT', orderSide: 'BUY', orderType: 'MARKET', quantity: 25, leverage: 1, filledPrice: 209.6, filledAmount: 5240, commission: 5.24, status: 'FILLED', createdAt: timeStr(t - 43 * MIN) },
   ];
 };
@@ -752,28 +752,31 @@ const CROSS_ACCOUNT = {
 const SPOT_POSITIONS = [
   { id: 1101, symbol: 'BTCUSDT', quantity: 0.24, frozenQuantity: 0, avgCost: 61240, totalDiscount: 38.5 },
   { id: 1102, symbol: 'ETHUSDT', quantity: 3.2, frozenQuantity: 0.4, avgCost: 2288.6, totalDiscount: 0 },
-  { id: 1103, symbol: 'NVDAUSDT', quantity: 40, frozenQuantity: 0, avgCost: 168.2, totalDiscount: 12.4 },
-  { id: 1104, symbol: 'TSLAUSDT', quantity: 12, frozenQuantity: 0, avgCost: 352.6, totalDiscount: 0 },
+  { id: 1103, symbol: 'NVDABUSDT', quantity: 40, frozenQuantity: 0, avgCost: 168.2, totalDiscount: 12.4 },
+  { id: 1104, symbol: 'TSLABUSDT', quantity: 12, frozenQuantity: 0, avgCost: 352.6, totalDiscount: 0 },
 ];
 
-/** 代币化美股：symbol 带 USDT 后缀，ticker 才是股票代号（行情条按市值取前四） */
+/** 代币化美股：照 sql/bstock.sql 的十只，symbol 带 B 后缀，ticker 才是股票代号（行情条按市值取前四） */
 const BSTOCKS = [
   {
-    id: 1, symbol: 'NVDAUSDT', ticker: 'NVDA', name: '英伟达', nameEn: 'NVIDIA', industry: '半导体',
-    marketCap: 4.42e12, peRatio: 52.4, week52High: 195.6, week52Low: 86.2,
+    id: 1, symbol: 'NVDABUSDT', ticker: 'NVDA', name: '英伟达', nameEn: 'Nvidia Corp', industry: '半导体',
+    marketCap: 4.42e12, peRatio: 52.4, dividendYield: 0.02, week52High: 195.6, week52Low: 86.2,
+    ceo: 'Jen-Hsun Huang', homepage: 'https://www.nvidia.com', multiplier: 1.000932,
+    description: '英伟达是图形处理单元的领先开发商。GPU 的使用案例随后发展成为人工智能中运行大型语言模型的重要半导体。英伟达不仅提供人工智能 GPU，还提供用于人工智能模型开发和训练的软件平台 Cuda。',
   },
   {
-    id: 2, symbol: 'AAPLUSDT', ticker: 'AAPL', name: '苹果', nameEn: 'Apple', industry: '消费电子',
-    marketCap: 3.51e12, peRatio: 34.1, week52High: 248.4, week52Low: 169.2,
+    id: 2, symbol: 'TSLABUSDT', ticker: 'TSLA', name: '特斯拉', nameEn: 'Tesla, Inc.', industry: '电动汽车',
+    marketCap: 1.53e12, peRatio: 396.5, dividendYield: 0, week52High: 498.8, week52Low: 297.8,
+    ceo: 'Elon R. Musk', homepage: 'https://www.tesla.com',
   },
-  {
-    id: 3, symbol: 'TSLAUSDT', ticker: 'TSLA', name: '特斯拉', nameEn: 'Tesla', industry: '汽车',
-    marketCap: 1.09e12, peRatio: 78.6, week52High: 412.8, week52Low: 214.3,
-  },
-  {
-    id: 4, symbol: 'QQQUSDT', ticker: 'QQQ', name: '纳指100ETF', nameEn: 'Invesco QQQ Trust', industry: 'ETF',
-    marketCap: 3.2e11, peRatio: 32.8, week52High: 512.4, week52Low: 402.1,
-  },
+  { id: 3, symbol: 'MUBUSDT', ticker: 'MU', name: '美光科技', nameEn: 'Micron Technology, Inc.', industry: '半导体', marketCap: 1.11e12, peRatio: 21.9 },
+  { id: 4, symbol: 'SNDKBUSDT', ticker: 'SNDK', name: '闪迪', nameEn: 'SanDisk', industry: '半导体', marketCap: 2.84e11, peRatio: 62.9 },
+  { id: 5, symbol: 'CRCLBUSDT', ticker: 'CRCL', name: 'Circle', nameEn: 'Circle Internet Group, Inc.', industry: '金融科技', marketCap: 1.64e10 },
+  { id: 6, symbol: 'MSTRBUSDT', ticker: 'MSTR', name: 'Strategy', nameEn: 'Strategy Inc', industry: '比特币金库', marketCap: 3.39e10 },
+  { id: 7, symbol: 'AMDBUSDT', ticker: 'AMD', name: 'AMD', nameEn: 'Advanced Micro Devices', industry: '半导体', marketCap: 9.09e11, peRatio: 181.6 },
+  { id: 8, symbol: 'SPCXBUSDT', ticker: 'SPCX', name: 'SpaceX', nameEn: 'SpaceX', industry: '航空航天' },
+  { id: 9, symbol: 'QQQBUSDT', ticker: 'QQQ', name: '纳指100ETF', nameEn: 'Invesco QQQ Trust', industry: 'ETF', marketCap: 4.86e11 },
+  { id: 10, symbol: 'SOXLBUSDT', ticker: 'SOXL', name: '半导体3x做多ETF', nameEn: 'Direxion Daily Semiconductor Bull 3X Shares', industry: 'ETF', marketCap: 2.55e10 },
 ];
 
 /** 列表带实时价：价格和涨跌幅现算，行情条拿到就能显示 */
@@ -994,7 +997,7 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
 
         // ---- 代币化美股 ----
         if (path === '/api/bstock/list') return ok(res, bstockList());
-        if (path === '/api/bstock/price') return ok(res, livePrice(q.get('symbol') || 'NVDAUSDT'));
+        if (path === '/api/bstock/price') return ok(res, livePrice(q.get('symbol') || 'NVDABUSDT'));
         const bstockMatch = path.match(/^\/api\/bstock\/([A-Z0-9]+)$/);
         if (bstockMatch) {
           return ok(res, bstockList().find(b => b.symbol === bstockMatch[1]) ?? bstockList()[0]);

@@ -337,15 +337,6 @@
       "ivSwitched": "已切换到 {{iv}}，回放将按 {{iv}} 周期推进"
     }
   },
-  "chart": {
-    "magnetOn": "磁吸开：端点自动贴住最近的开/高/低/收",
-    "magnetOff": "磁吸关：自由落点",
-    "showDrawings": "画线已隐藏，点击恢复显示",
-    "hideDrawings": "隐藏当前所有画线（不删除）",
-    "deleteSelected": "删除选中（Del）",
-    "clearAll": "清空本币种全部画线",
-    "textPlaceholder": "标注文字，回车确认"
-  },
   "testnet": {
     "title": "模拟盘监测",
     "subtitle": "Binance Testnet · 策略实盘验证轨 · 真实盘口撮合",

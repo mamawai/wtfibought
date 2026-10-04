@@ -12,6 +12,7 @@ import { TickerStrip } from './TickerStrip';
 import { OfflineBanner } from './OfflineBanner';
 import { ChatDock } from './workbench/ChatDock';
 import { cn } from '../lib/utils';
+import { MARKET_PATHS, lastMarket, marketOf, rememberMarket } from '../lib/markets';
 import {
   Home, Briefcase, Sun, Moon,
   BarChart3, User, ChevronDown, List, DollarSign,
@@ -21,8 +22,6 @@ import {
 } from 'lucide-react';
 
 interface Props { children: React.ReactNode }
-
-const MARKET_PATHS = ['/bstock', '/coin', '/commodity', '/tradfi'];
 
 /** 介绍站是单独部署的静态站，不是本应用的路由，只能走外链 */
 const INTRO_URL = 'https://intro.wtfibought.com';
@@ -40,6 +39,62 @@ const MENU_IC = 'size-[15px]';
 /** 当前路由是否落在这组前缀里——下拉自身要跟着亮激活态，不然进了子页顶栏就没了着落 */
 const matchPaths = (pathname: string, paths: string[]) =>
   paths.some(p => pathname === p || pathname.startsWith(p + '/'));
+
+/**
+ * 手机底部 Tab 的五格；match 判断当前页落在哪一格（市场那格认四个市场，含详情页）。
+ * 市场那格的 to 是活的（见 GlassTabBar）：在哪个市场里就回哪个市场的列表，在市场外就回上次看的那个
+ */
+const TAB_IC = 'w-[22px] h-[22px]';
+const TABS: { to: string; icon: React.ReactNode; labelKey: string; match: (p: string) => boolean; market?: true }[] = [
+  { to: '/', icon: <Home className={TAB_IC} />, labelKey: 'nav.home', match: p => p === '/' },
+  { to: MARKET_PATHS[0], icon: <BarChart3 className={TAB_IC} />, labelKey: 'nav.markets', match: p => marketOf(p) !== null, market: true },
+  { to: '/portfolio', icon: <Briefcase className={TAB_IC} />, labelKey: 'nav.portfolio', match: p => matchPaths(p, ['/portfolio']) },
+  { to: '/me', icon: <User className={TAB_IC} />, labelKey: 'nav.me', match: p => matchPaths(p, ['/me']) },
+  { to: '/ai', icon: <Settings2 className={TAB_IC} />, labelKey: 'nav.config', match: p => matchPaths(p, ['/ai']) },
+];
+
+/** 按住时透镜鼓到几倍（同 iOS：玻璃泡鼓出 Tab 栏上下沿） */
+const LENS_LIFT = 1.22;
+/** 透镜弹簧：刚度、每帧留下的速度（按 60fps 定，帧率不同按时长折算）；这组落定约 0.3s、过冲一成 */
+const LENS_K = 0.2, LENS_DAMP = 0.62;
+/** 拖出两头只跟手指走这一成，像拉橡皮筋 */
+const LENS_BAND = 0.3;
+/** 松手后浏览器补的那个 click，这么久以内都算这次手势的 */
+const TAB_CLICK_SWALLOW_MS = 500;
+const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** 一次按压里透镜的账：p/v 透镜左缘位置和速度，target 要去的位置，s 鼓起倍数；left/iw/w 按下时量的 Tab 左缘、一格宽、整排宽 */
+interface LensGesture {
+  id: number; down: boolean;
+  p: number; v: number; target: number; s: number;
+  left: number; iw: number; w: number;
+  t: number; raf: number;
+}
+
+/** 透镜左缘限在 [0, max]，拖出两头按橡皮筋算 */
+const clampLens = (x: number, max: number) =>
+  x < 0 ? x * LENS_BAND : x > max ? max + (x - max) * LENS_BAND : x;
+
+/** 推一帧弹簧并写进 CSS 变量；返回 true = 已经松手且落定 */
+function stepLens(g: LensGesture, nav: HTMLElement, now: number): boolean {
+  // 动画帧的时间戳是这一帧开始的时刻，可能比按下事件里取的 performance.now() 还早一点，负的按 0 算
+  const f = Math.min(Math.max(now - g.t, 0) / 16.7, 3);
+  g.t = now;
+  g.v = (g.v + (g.target - g.p) * LENS_K * f) * Math.pow(LENS_DAMP, f);
+  g.p += g.v * f;
+  g.s += ((g.down && !REDUCED_MOTION ? LENS_LIFT : 1) - g.s) * Math.min(1, .25 * f);
+  // 跑得越快横向拉得越长、纵向跟着收，像液体被甩出去
+  const st = REDUCED_MOTION ? 0 : Math.min(Math.abs(g.v) * .015, .28);
+  const sx = g.s * (1 + st);
+  nav.style.setProperty('--lx', `${g.p}px`);
+  nav.style.setProperty('--sx', String(sx));
+  nav.style.setProperty('--sy', String(g.s * (1 - st * .45)));
+  // 底下那排图标在泡的范围里挖空（左右各收进 4px 再渐隐），泡里只剩放大的那份，不叠影
+  const c = g.p + g.iw / 2, half = g.iw * sx / 2;
+  nav.style.setProperty('--hl', `${c - half + 4}px`);
+  nav.style.setProperty('--hr', `${c + half - 4}px`);
+  return !g.down && Math.abs(g.target - g.p) < .5 && Math.abs(g.v) < .3 && Math.abs(g.s - 1) < .005;
+}
 
 /** 模块级常量存 key 不存文案：存文案的话切语言不会变 */
 const LED_LABEL_KEY: Record<HealthLevel, string> = {
@@ -73,7 +128,7 @@ export function Layout({ children }: Props) {
   const { t, i18n } = useTranslation('layout');
   const { toggle: toggleLang } = useLangToggle();
 
-  const isMarketActive = matchPaths(location.pathname, MARKET_PATHS);
+  const isMarketActive = marketOf(location.pathname) !== null;
 
   const handleLogout = async () => {
     await logout();
@@ -249,12 +304,13 @@ export function Layout({ children }: Props) {
             </div>
           </div>
 
-          {/* 手机：logo + 语言 + 主题，其余入口在底部 Tab 和「我的」页 */}
+          {/* 手机：logo + 语言 + 主题 + 仓库，其余入口在底部 Tab 和「我的」页 */}
           <div className="flex lg:hidden items-center h-14">
             <Link to="/" className="logo" aria-label={t('header.logoHome')}>WIIB<i>.</i></Link>
             <div className="tools">
               {langButton}
               {themeButton}
+              <GitHubLink iconClassName="ic" />
             </div>
           </div>
         </div>
@@ -265,8 +321,8 @@ export function Layout({ children }: Props) {
       <TickerStrip />
       <OfflineBanner />
 
-      {/* pb-24 是给底部 Tab 让位，桌面端不留内边距，页内自己定 */}
-      <main className="flex-1 pb-24 lg:pb-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+      {/* 底部留白给悬浮 Tab 让位（再多留 1rem 呼吸），桌面端不留内边距，页内自己定 */}
+      <main className="flex-1 pb-[calc(var(--tabbar-space)+1rem)] lg:pb-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
         {children}
       </main>
 
@@ -278,14 +334,8 @@ export function Layout({ children }: Props) {
         </footer>
       </div>
 
-      {/* ===== 手机端底部 Tab：贴边实条 ===== */}
-      <nav className="fixed bottom-0 inset-x-0 lg:hidden z-50 flex items-stretch border-t-2 border-foreground bg-background pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
-        <BottomNavItem to="/" icon={<Home className="w-5 h-5" />} label={t('nav.home')} />
-        <BottomNavItem to="/bstock" icon={<BarChart3 className="w-5 h-5" />} label={t('nav.markets')} forceActive={isMarketActive} />
-        <BottomNavItem to="/portfolio" icon={<Briefcase className="w-5 h-5" />} label={t('nav.portfolio')} />
-        <BottomNavItem to="/me" icon={<User className="w-5 h-5" />} label={t('nav.me')} />
-        <BottomNavItem to="/ai" icon={<Settings2 className="w-5 h-5" />} label={t('nav.config')} />
-      </nav>
+      {/* ===== 手机端底部 Tab：iOS 液态玻璃悬浮胶囊 ===== */}
+      <GlassTabBar />
 
       {/* 全站悬浮研判对话（BYOK）：对话要登录，游客不给气泡 */}
       {user && <ChatDock />}
@@ -355,26 +405,116 @@ function NavDropdown({ icon, label, isActive, items }:
   );
 }
 
-/** 底部 Tab 项：激活 = 墨色字 + 图标上方一颗橙方块 */
-function BottomNavItem({ to, icon, label, forceActive }: { to: string; icon: React.ReactNode; label: string; forceActive?: boolean }) {
+/**
+ * 手机底部 Tab：iOS 液态玻璃胶囊（样式见 index.css .glass-tab）。
+ * 平时透镜停在当前格；手指按下它鼓成透明玻璃泡跟手走（弹簧），拖得越快拉得越长，泡里透出放大、染成主色的那一格；
+ * 松手弹到最近一格并切过去，点的是当前格就回页顶。每帧直接写 CSS 变量，不走 React 渲染。
+ * 链接留着给键盘用；指针那次的 click 吞掉（松手时已经导航过）。data-tabbar 给悬浮球量位置
+ */
+function GlassTabBar() {
+  const { t } = useTranslation('layout');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const navRef = useRef<HTMLElement>(null);
+  const gRef = useRef<LensGesture | null>(null);
+  const upAtRef = useRef(0);
+  const [lifted, setLifted] = useState(false);
+  // 松手选中的格：路由真切过去之前先按它画，免得透镜落定那一下先跳回旧格；路由一变就作废
+  const [pending, setPending] = useState<{ i: number; from: string } | null>(null);
+  if (pending && pending.from !== location.pathname) setPending(null);
+  const routeIdx = TABS.findIndex(x => x.match(location.pathname));
+  const idx = pending ? pending.i : routeIdx;
+  // 市场那格去哪：在哪个市场里（含详情页）就回哪个市场的列表，在市场外就回上次看的那个
+  const curMarket = marketOf(location.pathname);
+  const marketTo = curMarket ?? lastMarket();
+
+  useEffect(() => { if (curMarket) rememberMarket(curMarket); }, [curMarket]);
+  useEffect(() => () => cancelAnimationFrame(gRef.current?.raf ?? 0), []);
+
+  const onDown = (e: React.PointerEvent<HTMLElement>) => {
+    const nav = navRef.current;
+    if (!nav || e.button !== 0 || gRef.current?.down) return;
+    const r = nav.getBoundingClientRect();
+    const w = r.width - 8, iw = w / TABS.length;
+    const prev = gRef.current;
+    if (prev) cancelAnimationFrame(prev.raf);
+    const target = clampLens(e.clientX - r.left - 4 - iw / 2, w - iw);
+    // 从透镜眼下的位置起步：上一下还在回弹就接着走；当前页不在 Tab 里（透镜藏着）就直接从手指下冒出来
+    const p = prev ? prev.p : idx >= 0 ? idx * iw : target;
+    const g: LensGesture = {
+      id: e.pointerId, down: true, p, v: prev?.v ?? 0, target, s: prev?.s ?? 1,
+      left: r.left + 4, iw, w, t: performance.now(), raf: 0,
+    };
+    gRef.current = g;
+    nav.setPointerCapture(e.pointerId);
+    // 先把位置写好，切到鼓起样式那一帧不跳
+    stepLens(g, nav, g.t);
+    setLifted(true);
+    const tick = (now: number) => {
+      if (gRef.current !== g) return;
+      if (stepLens(g, nav, now)) { gRef.current = null; setLifted(false); return; }
+      g.raf = requestAnimationFrame(tick);
+    };
+    g.raf = requestAnimationFrame(tick);
+  };
+
+  const onMove = (e: React.PointerEvent<HTMLElement>) => {
+    const g = gRef.current;
+    if (!g?.down || e.pointerId !== g.id) return;
+    g.target = clampLens(e.clientX - g.left - g.iw / 2, g.w - g.iw);
+  };
+
+  const onUp = (e: React.PointerEvent<HTMLElement>) => {
+    const g = gRef.current;
+    if (!g?.down || e.pointerId !== g.id) return;
+    g.down = false;
+    upAtRef.current = performance.now();
+    // 被系统手势打断：回原来那格，不切页
+    if (e.type === 'pointercancel') {
+      if (idx >= 0) g.target = idx * g.iw;
+      return;
+    }
+    const i = Math.min(TABS.length - 1, Math.max(0, Math.round(g.target / g.iw)));
+    g.target = i * g.iw;
+    const to = TABS[i].market ? marketTo : TABS[i].to;
+    if (to === location.pathname) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    if (i !== routeIdx) setPending({ i, from: location.pathname });
+    navigate(to);
+  };
+
+  const onClickCapture = (e: React.MouseEvent) => {
+    if (performance.now() - upAtRef.current < TAB_CLICK_SWALLOW_MS) { e.preventDefault(); e.stopPropagation(); }
+  };
+
   return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        cn(
-          'flex-1 flex flex-col items-center gap-0.5 py-1.5 transition-colors',
-          (forceActive || isActive) ? 'text-foreground' : 'text-muted-foreground',
-        )
-      }
-    >
-      {({ isActive }) => (
-        <>
-          {/* 不激活也占着这 7px，免得切格子时整列跳一下 */}
-          <span className={cn('w-[7px] h-[7px]', (forceActive || isActive) && 'bg-primary')} />
-          {icon}
-          <span className="text-[10px] font-semibold">{label}</span>
-        </>
-      )}
-    </NavLink>
+    <nav ref={navRef} data-tabbar data-lifted={lifted || undefined} className="glass-tab lg:hidden"
+         style={{ '--n': TABS.length } as React.CSSProperties}
+         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
+         onClickCapture={onClickCapture}>
+      <span className="glass-lens" style={{ '--i': Math.max(idx, 0), opacity: idx < 0 && !lifted ? 0 : 1 } as React.CSSProperties}>
+        {/* 泡里那排：放大、染主色，只在按住时有 */}
+        {lifted && (
+          <span className="glass-lens-mag" aria-hidden>
+            {TABS.map(({ icon, labelKey }) => (
+              <span key={labelKey} className="flex-1 flex flex-col items-center justify-center gap-[3px] text-primary">
+                {icon}
+                <span className="text-[10px] font-semibold leading-none">{t(labelKey)}</span>
+              </span>
+            ))}
+          </span>
+        )}
+      </span>
+      {/* 那排真图标单独包一层：按住时在泡的位置挖空 */}
+      <div className="glass-items">
+        {TABS.map((tab, i) => (
+          <Link key={tab.labelKey} to={tab.market ? marketTo : tab.to} draggable={false} aria-current={i === routeIdx ? 'page' : undefined}
+                className={cn('relative flex-1 flex flex-col items-center justify-center gap-[3px]',
+                  i === idx ? 'text-primary' : 'text-foreground/70')}>
+            {tab.icon}
+            <span className="text-[10px] font-semibold leading-none">{t(tab.labelKey)}</span>
+          </Link>
+        ))}
+      </div>
+    </nav>
   );
 }

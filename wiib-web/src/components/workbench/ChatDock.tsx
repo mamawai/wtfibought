@@ -68,8 +68,23 @@ function loadBall(): BallPos {
   return { side: 'right', yRatio: 1 };   // 右下角：悬浮入口的常规落点，压不着主内容
 }
 
+/** 屏幕安全区（刘海/灵动岛/底部横条）。env() 只有 CSS 能取到，借一个隐形元素量出来 */
+function safeInsets() {
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding:'
+    + 'env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
+  document.body.appendChild(el);
+  const s = getComputedStyle(el);
+  const r = {
+    top: parseFloat(s.paddingTop) || 0, right: parseFloat(s.paddingRight) || 0,
+    bottom: parseFloat(s.paddingBottom) || 0, left: parseFloat(s.paddingLeft) || 0,
+  };
+  el.remove();
+  return r;
+}
+
 /**
- * 球的直径与活动范围，随视口和根字号实时算。
+ * 球的直径与活动范围，随视口和根字号实时算。四边都让开安全区：横屏时灵动岛在左右一侧。
  * <p>
  * 尺寸不写死 px：球是 w-12(3rem)、边距对齐 right-4(1rem)，而 PC 根字号是 17px——
  * 按 48/16 算的话球会比实际小 3px，贴边永远差一截。
@@ -77,14 +92,15 @@ function loadBall(): BallPos {
 function ballBounds() {
   const rem = rootFontSize();
   const size = rem * 3, edge = rem;
-  // 移动端底部压着导航栏（Layout 里 fixed bottom-0 那条，高度随内容+安全区走），
-  // 给一段宽裕的留白让开；PC 没有导航，只留视觉边距
-  const bottom = window.matchMedia('(min-width: 1024px)').matches ? edge * 1.5 : rem * 5;
+  const safe = safeInsets();
+  // 手机底部有悬浮 Tab（Layout 的 data-tabbar）：量它的上沿再留半个边距；PC 上它是 display:none，只留视觉边距
+  const bar = document.querySelector('[data-tabbar]')?.getBoundingClientRect();
+  const bottom = bar && bar.height > 0 ? window.innerHeight - bar.top + edge / 2 : edge * 1.5 + safe.bottom;
   return {
     size,
-    minX: edge,
-    maxX: window.innerWidth - size - edge,
-    minY: edge,
+    minX: edge + safe.left,
+    maxX: window.innerWidth - size - edge - safe.right,
+    minY: edge + safe.top,
     maxY: window.innerHeight - bottom - size,
   };
 }
@@ -146,7 +162,12 @@ export function ChatDock() {
       setDesktop(window.matchMedia('(min-width: 768px)').matches);
     };
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    // 挂载后再量一次：跟 Layout 同一轮首挂时，初始化那次还量不到底部 Tab
+    const raf = requestAnimationFrame(() => setBounds(ballBounds()));
+    return () => {
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(raf);
+    };
   }, []);
 
   const dockRef = useRef<HTMLDivElement>(null);
@@ -467,8 +488,9 @@ export function ChatDock() {
                   'inset-0 rounded-none pt-[env(safe-area-inset-top)]',
                   // 面板跟着球换边：球在左就从左下角长出来。竖直方向仍锚底——面板高度可变，
                   // 球拖到顶部时它必然要向下铺，锚底最稳，resize 的方向语义也才立得住
-                  'md:inset-auto md:bottom-20 md:shadow-2xl md:pt-0',
-                  ball.side === 'left' ? 'md:left-4' : 'md:right-4',
+                  // 平板/横屏手机底部还有悬浮 Tab，让开它；左右让开灵动岛
+                  'md:inset-auto md:bottom-[calc(var(--tabbar-space)+1rem)] lg:bottom-20 md:shadow-2xl md:pt-0',
+                  ball.side === 'left' ? 'md:left-[max(1rem,env(safe-area-inset-left))]' : 'md:right-[max(1rem,env(safe-area-inset-right))]',
                   'md:w-[var(--dock-w)] md:h-[var(--dock-h)]',
                   'md:max-w-[calc(100vw-2rem)] md:max-h-[calc(100vh-6.5rem)]',
                 ),

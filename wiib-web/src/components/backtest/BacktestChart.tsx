@@ -7,7 +7,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { useIsDark } from '../../hooks/useIsDark';
 import { useDrawings } from '../chart/useDrawings';
-import { DrawToolPopover, DrawToolRail } from '../chart/DrawToolPicker';
+import { DrawToolRail, DrawToolStrip } from '../chart/DrawToolPicker';
 import { DrawOverlay } from '../chart/DrawOverlay';
 import type { ChartCtx, OhlcBar } from '../../lib/chartDrawings';
 import { lwcTheme, rgba } from '../../lib/chartTheme';
@@ -101,10 +101,7 @@ export function BacktestChart({ bars, marks, cursor, symbol, decimals = 2, heigh
   const { t } = useTranslation('strategy');
 
   const drawings = useDrawings();
-  const {
-    attach: attachDrawings, tool, setTool, magnet, setMagnet, hiddenAll, setHiddenAll,
-    selected: hasSelection, count: drawCount, trash, undo, canUndo,
-  } = drawings;
+  const { attach: attachDrawings } = drawings;
 
   // 小屏（手机竖屏）默认矮一点，给下方操作按钮留出手指空间
   const [autoHeight] = useState(() => window.innerWidth < 768
@@ -270,25 +267,15 @@ export function BacktestChart({ bars, marks, cursor, symbol, decimals = 2, heigh
     // 后五项是建图依赖：图重建后 drawnRef 归零，跟着重灌一次
   }, [bars, cursor, allMarkers, isDark, h, symbol, decimals, bucketSec]);
 
-  // 磁吸/显隐/删除跟画线工具住一起（竖栏底部；手机在顶栏那一行）
-  const toolProps = {
-    tool, onSelect: setTool,
-    magnet, onToggleMagnet: () => setMagnet(!magnet),
-    hiddenAll, onToggleHidden: () => setHiddenAll(!hiddenAll), hideDisabled: !drawCount,
-    onUndo: undo, undoDisabled: !canUndo,
-    onTrash: trash, trashDisabled: !hasSelection && !drawCount,
-    trashTitle: hasSelection ? t('chart.deleteSelected') : t('chart.clearAll'),
-  };
-
   return (
     <div>
-      {/* 顶栏：桌面端画线工具在左竖栏，这行只剩手机的工具弹层 */}
+      {/* 顶栏：桌面端画线工具在左竖栏，这行只剩手机的画线开关和工具条 */}
       <div className="flex items-center gap-2.5 mb-2.5 flex-wrap md:hidden">
-        <DrawToolPopover {...toolProps} />
+        <DrawToolStrip d={drawings} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-[34px_1fr] border-t border-foreground">
-        <DrawToolRail className="hidden md:flex" {...toolProps} />
+        <DrawToolRail className="hidden md:flex" d={drawings} />
         {/* 图表主体（relative：文字标注输入、属性条的定位基准） */}
         <div className="relative w-full" style={{ height: h }}>
           <div ref={containerRef} className="absolute inset-0" />
