@@ -20,7 +20,7 @@ import { bollSeries, emaSeries, macdSeries, maSeries, rsiSeries } from '../lib/i
 import { lwcTheme, rgba } from '../lib/chartTheme';
 import type { ChartCtx } from '../lib/chartDrawings';
 import { useDrawings } from './chart/useDrawings';
-import { DrawToolPopover, DrawToolRail } from './chart/DrawToolPicker';
+import { DrawToolRail, DrawToolStrip } from './chart/DrawToolPicker';
 import { DrawOverlay } from './chart/DrawOverlay';
 import { EconMarkersLayer } from './chart/EconMarkersLayer';
 import { flagHtml } from '../lib/countryFlags';
@@ -405,10 +405,7 @@ export function CandleChart({
   const live = useKlineStream(symbol, interval);
   const fs = useFullscreen(rootRef);
   const drawings = useDrawings();
-  const {
-    attach: attachDrawings, tool, setTool, magnet, setMagnet, hiddenAll, setHiddenAll,
-    selected: hasSelection, count: drawCount, trash, undo, canUndo,
-  } = drawings;
+  const { attach: attachDrawings, tool } = drawings;
   // 财经日历标记的点击判定要知道当前有没有在画线（它挂在 document 捕获阶段，读 state 读不到新值）
   const drawToolRef = useRef(tool);
   useEffect(() => { drawToolRef.current = tool; }, [tool]);
@@ -1133,12 +1130,17 @@ export function CandleChart({
   return (
     // 全屏用的是这一层：原生模式靠 :fullscreen 的 UA 样式铺满，iPhone Safari 没有元素级
     // 全屏则退成 fixed。两种都只改类名不改 DOM 结构，图表不会被 React 卸载重建。
+    // 四边内边距取"常规留白"和"安全区"的大者：横屏时灵动岛/刘海在左右一侧，底部有横条。
+    // z-[95]：降级全屏要像原生那样独占屏幕，盖住底部 Tab(50)、AI 悬浮球(90)，弹窗(200)/toast(300) 照常在上面
     <div ref={rootRef} className={cn(
       'w-full h-full flex flex-col',
-      fs.active && 'fixed inset-0 z-50 bg-background p-4 pb-7',
+      fs.active && ['fixed inset-0 z-[95] bg-background',
+        'pt-[max(1rem,env(safe-area-inset-top))] pr-[max(1rem,env(safe-area-inset-right))]',
+        'pb-[max(1.75rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))]'],
     )}>
       {/* 顶栏：周期 / 图型 / 画线（手机）/ 指标入口 —— 撑开 —— 显示开关 / 全屏。
-          画线工具桌面收进左侧竖栏；手机上周期和图型占第一行，画线、指标、开关折到第二行 */}
+          画线工具桌面收进左侧竖栏；手机上周期和图型占第一行，画线、指标、开关折到第二行，
+          画线工具条展开时单独占最后一行、贴着图表 */}
       <div className="flex items-center gap-2.5 mb-2.5 flex-wrap">
         <div className="seg num">
           {(Object.keys(BUCKET_MS) as Interval[]).map(k => (
@@ -1165,16 +1167,7 @@ export function CandleChart({
           </button>
         </div>
 
-        {!advMode && (
-          <DrawToolPopover
-            className="md:hidden" tool={tool} onSelect={setTool}
-            magnet={magnet} onToggleMagnet={() => setMagnet(!magnet)}
-            hiddenAll={hiddenAll} onToggleHidden={() => setHiddenAll(!hiddenAll)} hideDisabled={!drawCount}
-            onUndo={undo} undoDisabled={!canUndo}
-            onTrash={trash} trashDisabled={!hasSelection && !drawCount}
-            trashTitle={hasSelection ? t('chart.deleteSelected') : t('chart.clearAll')}
-          />
-        )}
+        {!advMode && <DrawToolStrip className="md:hidden" d={drawings} />}
 
         {/* 指标弹层：主图三组、副图两组，chip 填墨=开 */}
         {indicators && (
@@ -1278,16 +1271,7 @@ export function CandleChart({
       <div className={cn('grid grid-cols-1 border-t border-foreground flex-1 min-h-0',
         advMode ? 'md:grid-cols-1' : 'md:grid-cols-[34px_1fr]',
         !fs.active && ['phone:flex-none', PHONE_PLOT_H[indicators ? Number(subs.macd) + Number(subs.rsi) : 0]])}>
-        {!advMode && (
-          <DrawToolRail
-            className="hidden md:flex" tool={tool} onSelect={setTool}
-            magnet={magnet} onToggleMagnet={() => setMagnet(!magnet)}
-            hiddenAll={hiddenAll} onToggleHidden={() => setHiddenAll(!hiddenAll)} hideDisabled={!drawCount}
-            onUndo={undo} undoDisabled={!canUndo}
-            onTrash={trash} trashDisabled={!hasSelection && !drawCount}
-            trashTitle={hasSelection ? t('chart.deleteSelected') : t('chart.clearAll')}
-          />
-        )}
+        {!advMode && <DrawToolRail className="hidden md:flex" d={drawings} />}
         <div ref={wrapRef} className="relative min-h-0">
           <div ref={chartDivRef} className="absolute inset-0" />
           {/* 文字标注输入 + 选中图形的属性条 */}

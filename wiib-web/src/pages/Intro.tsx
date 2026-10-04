@@ -108,8 +108,8 @@ export function Intro() {
         {t('intro.riskNotice')}
       </div>
 
-      {/* sticky 底部按钮；手机上叠在底部 Tab 上方，Tab 自己垫了 safe-area，这里跟着加 */}
-      <div className="fixed left-0 right-0 bottom-[calc(5rem+env(safe-area-inset-bottom))] lg:bottom-6 px-4 md:px-6 z-50">
+      {/* sticky 底部按钮；手机上叠在底部悬浮 Tab 上方，横屏时左右让开灵动岛 */}
+      <div className="fixed left-[env(safe-area-inset-left)] right-[env(safe-area-inset-right)] bottom-[calc(var(--tabbar-space)+0.75rem)] lg:bottom-6 px-4 md:px-6 z-50">
         <div className="max-w-2xl mx-auto flex gap-3">
           <Button variant="outline" className="flex-1" onClick={() => { hideNoticeToday(); goHome(); }}>{t('intro.hideToday')}</Button>
           <Button className="flex-1" onClick={() => { markNoticeSeen(); goHome(); }}>{t('intro.gotIt')}</Button>

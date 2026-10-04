@@ -1,8 +1,9 @@
 import i18n from '../i18n';
 import { fmtNum } from './utils';
-import {Coins, Cpu, Flag, Fuel, HardDrive, MemoryStick, Rocket, type LucideProps} from 'lucide-react';
+import {Coins, Fuel, type LucideProps} from 'lucide-react';
 import type {ComponentType} from "react";
 import {Bnb, Btc, Doge, Eth, Hype, Sol, Xrp, Zec} from './coinIcons';
+import {KoruPerp, MuPerp, SkhynixPerp, SndkPerp, SoxlPerp, SpcxPerp} from './perpIcons';
 import type {MarketId} from './marketSession';
 
 export interface CoinCfg {
@@ -101,38 +102,38 @@ export const COIN_MAP: Record<string, CoinCfg> = {
   },
   SNDKUSDT: {
     symbol: 'SNDKUSDT', get name() { return i18n.t('market:coinName.SNDKUSDT'); }, pair: 'SNDK / USDT', tvSymbol: 'NASDAQ:SNDK', futuresTvSymbol: 'BINANCE:SNDKUSDT.P',
-    icon: HardDrive,
-    colorClass: 'text-red-500', bgClass: 'bg-red-500/10', hoverBgClass: 'hover:bg-red-500/20', gradientClass: 'from-red-500/5',
-    chartColor: '#ef4444', category: 'tradfi', futuresOnly: true, market: 'US',
+    icon: SndkPerp,
+    colorClass: 'text-foreground', bgClass: 'bg-red-500/10', hoverBgClass: 'hover:bg-red-500/20', gradientClass: 'from-red-500/5',
+    chartColor: '#e10600', category: 'tradfi', futuresOnly: true, market: 'US',
   },
   SOXLUSDT: {
     symbol: 'SOXLUSDT', name: 'SOXL', pair: 'SOXL / USDT', tvSymbol: 'AMEX:SOXL', futuresTvSymbol: 'BINANCE:SOXLUSDT.P',
-    icon: Cpu,
-    colorClass: 'text-emerald-500', bgClass: 'bg-emerald-500/10', hoverBgClass: 'hover:bg-emerald-500/20', gradientClass: 'from-emerald-500/5',
-    chartColor: '#10b981', category: 'tradfi', futuresOnly: true, market: 'US',
+    icon: SoxlPerp,
+    colorClass: 'text-foreground', bgClass: 'bg-emerald-500/10', hoverBgClass: 'hover:bg-emerald-500/20', gradientClass: 'from-emerald-500/5',
+    chartColor: '#0063a6', category: 'tradfi', futuresOnly: true, market: 'US',
   },
   SKHYNIXUSDT: {
     symbol: 'SKHYNIXUSDT', get name() { return i18n.t('market:coinName.SKHYNIXUSDT'); }, pair: 'SKHYNIX / USDT', tvSymbol: 'KRX:000660', futuresTvSymbol: 'BINANCE:SKHYNIXUSDT.P',
-    icon: MemoryStick,
-    colorClass: 'text-orange-600', bgClass: 'bg-orange-600/10', hoverBgClass: 'hover:bg-orange-600/20', gradientClass: 'from-orange-600/5',
+    icon: SkhynixPerp,
+    colorClass: 'text-foreground', bgClass: 'bg-orange-600/10', hoverBgClass: 'hover:bg-orange-600/20', gradientClass: 'from-orange-600/5',
     chartColor: '#ea580c', category: 'tradfi', futuresOnly: true, market: 'KRX',
   },
   MUUSDT: {
     symbol: 'MUUSDT', get name() { return i18n.t('market:coinName.MUUSDT'); }, pair: 'MU / USDT', tvSymbol: 'NASDAQ:MU', futuresTvSymbol: 'BINANCE:MUUSDT.P',
-    icon: Cpu,
-    colorClass: 'text-blue-500', bgClass: 'bg-blue-500/10', hoverBgClass: 'hover:bg-blue-500/20', gradientClass: 'from-blue-500/5',
+    icon: MuPerp,
+    colorClass: 'text-foreground', bgClass: 'bg-blue-500/10', hoverBgClass: 'hover:bg-blue-500/20', gradientClass: 'from-blue-500/5',
     chartColor: '#3b82f6', category: 'tradfi', futuresOnly: true, market: 'US',
   },
   KORUUSDT: {
     symbol: 'KORUUSDT', name: 'KORU', pair: 'KORU / USDT', tvSymbol: 'AMEX:KORU', futuresTvSymbol: 'BINANCE:KORUUSDT.P',
-    icon: Flag,
-    colorClass: 'text-rose-500', bgClass: 'bg-rose-500/10', hoverBgClass: 'hover:bg-rose-500/20', gradientClass: 'from-rose-500/5',
+    icon: KoruPerp,
+    colorClass: 'text-foreground', bgClass: 'bg-rose-500/10', hoverBgClass: 'hover:bg-rose-500/20', gradientClass: 'from-rose-500/5',
     chartColor: '#f43f5e', category: 'tradfi', futuresOnly: true, market: 'US',
   },
   SPCXUSDT: {
     symbol: 'SPCXUSDT', name: 'SpaceX', pair: 'SPCX / USDT', tvSymbol: 'BINANCE:SPCXUSDT.P', futuresTvSymbol: 'BINANCE:SPCXUSDT.P',
-    icon: Rocket,
-    colorClass: 'text-violet-500', bgClass: 'bg-violet-500/10', hoverBgClass: 'hover:bg-violet-500/20', gradientClass: 'from-violet-500/5',
+    icon: SpcxPerp,
+    colorClass: 'text-foreground', bgClass: 'bg-violet-500/10', hoverBgClass: 'hover:bg-violet-500/20', gradientClass: 'from-violet-500/5',
     chartColor: '#8b5cf6', category: 'tradfi', futuresOnly: true, market: 'US',
   },
 };

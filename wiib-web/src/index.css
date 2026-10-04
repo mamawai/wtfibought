@@ -100,6 +100,15 @@ html.dark {
   color-scheme: dark;
 }
 
+/* 手机底部悬浮 Tab（Layout）：胶囊高度 + 离屏幕底边的距离。
+   全面屏 iPhone 底部横条区有 34px 安全区，胶囊压进去一点（同 iOS 原生 Tab 栏）；没有安全区就离底 10px。
+   --tabbar-space 是它一共占掉的高度，页面底部留白、toast、悬浮按钮都按它让位 */
+:root {
+  --tabbar-h: 62px;
+  --tabbar-bottom: max(10px, calc(env(safe-area-inset-bottom) - 12px));
+  --tabbar-space: calc(var(--tabbar-h) + var(--tabbar-bottom));
+}
+
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);
@@ -242,6 +251,126 @@ html.pwa nav a {
   .polaris-ball:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 4px; }
   @media (hover: hover) {
     .polaris-ball:hover:not(:disabled) { box-shadow: var(--ball-lift-shadow); }
+  }
+}
+
+/* 手机底部 Tab：iOS 液态玻璃胶囊（Layout 的 GlassTabBar）。
+   玻璃感靠三样：中间几乎透明、只轻微柔化（后面内容认得出）；边缘厚——一圈渐变镜面边 + 内侧发亮；上半截一层淡光泽。
+   激活项底下垫一颗玻璃"透镜"，按住会鼓成透明玻璃泡跟手拖。全站直角，只有这里是圆的（照搬 iOS） */
+@layer components {
+  .glass-tab {
+    position: fixed; z-index: 50; left: 50%; bottom: var(--tabbar-bottom);
+    width: min(440px, calc(100% - 32px)); height: var(--tabbar-h); padding: 4px;
+    transform: translateX(-50%);
+    display: flex; border-radius: 9999px;
+    /* 整条是拖透镜的手势区：不让浏览器拿去滚页面，长按不选字 */
+    touch-action: none; -webkit-user-select: none; user-select: none;
+    /* 上层是表面光泽，下层是极淡的底色 */
+    background:
+      linear-gradient(180deg, rgb(255 255 255 / .22), rgb(255 255 255 / 0) 50%),
+      color-mix(in srgb, var(--color-background) 12%, transparent);
+    -webkit-backdrop-filter: blur(3px) saturate(1.9) brightness(1.04);
+    backdrop-filter: blur(3px) saturate(1.9) brightness(1.04);
+    /* 玻璃的厚度：发丝亮边、上沿高光、下沿反光、内侧一圈白晕；外面一道淡投影把它从页面上托起来 */
+    box-shadow:
+      inset 0 0 0 .5px rgb(255 255 255 / .55),
+      inset 0 1px 1px rgb(255 255 255 / .9),
+      inset 0 -1px 1px rgb(255 255 255 / .4),
+      inset 0 0 16px rgb(255 255 255 / .3),
+      0 0 0 .5px rgb(18 19 22 / .08),
+      0 10px 30px -6px rgb(18 19 22 / .18),
+      0 2px 8px rgb(18 19 22 / .06);
+  }
+  /* 镜面边：一圈 1px 渐变描边（mask 抠掉中间），左上、右下最亮，像光打在玻璃厚边上 */
+  .glass-tab::before {
+    content: ""; position: absolute; inset: 0; padding: 1px; border-radius: inherit; pointer-events: none;
+    background: linear-gradient(135deg, rgb(255 255 255 / .95), rgb(255 255 255 / .15) 30%, rgb(255 255 255 / 0) 50%,
+      rgb(255 255 255 / .15) 70%, rgb(255 255 255 / .75));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+  html.dark .glass-tab {
+    background:
+      linear-gradient(180deg, rgb(255 255 255 / .07), rgb(255 255 255 / 0) 50%),
+      color-mix(in srgb, #1d1e22 18%, transparent);
+    /* 暗色把后面压暗一点，浅色字才压得住 */
+    -webkit-backdrop-filter: blur(3px) saturate(1.8) brightness(.88);
+    backdrop-filter: blur(3px) saturate(1.8) brightness(.88);
+    box-shadow:
+      inset 0 0 0 .5px rgb(255 255 255 / .16),
+      inset 0 1px 1px rgb(255 255 255 / .28),
+      inset 0 -1px 1px rgb(255 255 255 / .1),
+      inset 0 0 16px rgb(255 255 255 / .06),
+      0 0 0 .5px rgb(0 0 0 / .5),
+      0 12px 34px -6px rgb(0 0 0 / .65);
+  }
+  html.dark .glass-tab::before {
+    background: linear-gradient(135deg, rgb(255 255 255 / .45), rgb(255 255 255 / .06) 30%, rgb(255 255 255 / 0) 50%,
+      rgb(255 255 255 / .06) 70%, rgb(255 255 255 / .3));
+  }
+  /* 那排真图标 */
+  .glass-items { position: relative; flex: 1; display: flex; }
+  /* 玻璃几乎透明，后面是什么都有：图标和字带一圈同底色的柔光，花背景上也认得出（iOS 也是这么保可读性） */
+  .glass-items > a { filter: drop-shadow(0 0 3px rgb(255 255 255 / .85)) drop-shadow(0 0 1px rgb(255 255 255 / .9)); }
+  html.dark .glass-items > a { filter: drop-shadow(0 0 3px rgb(0 0 0 / .8)) drop-shadow(0 0 1px rgb(0 0 0 / .85)); }
+  /* 按住时在泡的范围（--hl ~ --hr，JS 每帧写）把真图标挖空，边上 8px 渐隐 */
+  .glass-tab[data-lifted] .glass-items {
+    -webkit-mask: linear-gradient(90deg, #000 var(--hl), transparent calc(var(--hl) + 8px),
+      transparent calc(var(--hr) - 8px), #000 var(--hr));
+    mask: linear-gradient(90deg, #000 var(--hl), transparent calc(var(--hl) + 8px),
+      transparent calc(var(--hr) - 8px), #000 var(--hr));
+  }
+
+  /* 激活项的透镜：宽 = 一格，--i 是第几格；当前页不在 Tab 里时藏掉 */
+  .glass-lens {
+    position: absolute; top: 4px; bottom: 4px; left: 4px; overflow: hidden;
+    width: calc((100% - 8px) / var(--n)); border-radius: 9999px; pointer-events: none;
+    transform: translateX(calc(var(--i) * 100%));
+    background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+    box-shadow: inset 0 1px .5px rgb(255 255 255 / .7), inset 0 0 0 .5px rgb(255 255 255 / .35), 0 1px 6px rgb(18 19 22 / .06);
+    transition: transform .5s cubic-bezier(.34, 1.3, .5, 1), opacity .2s, background-color .25s, box-shadow .25s;
+  }
+  html.dark .glass-lens {
+    background: rgb(255 255 255 / .1);
+    box-shadow: inset 0 1px .5px rgb(255 255 255 / .2), inset 0 0 0 .5px rgb(255 255 255 / .08);
+  }
+  /* 按住：透镜鼓成透明玻璃泡压到图标上面，位置和形变每帧由 JS 写 --lx/--sx/--sy（不走过渡，弹簧在 JS 里）。
+     泡底下的真图标已经挖空，泡里只有放大的那份，泡本身可以做得跟底栏一样清透 */
+  .glass-tab[data-lifted] .glass-lens {
+    z-index: 1;
+    transform: translateX(var(--lx)) scale(var(--sx), var(--sy));
+    transition: opacity .2s, background-color .25s, box-shadow .25s;
+    background: color-mix(in srgb, var(--color-background) 22%, transparent);
+    -webkit-backdrop-filter: blur(4px) saturate(1.8) brightness(1.06);
+    backdrop-filter: blur(4px) saturate(1.8) brightness(1.06);
+    box-shadow:
+      inset 0 1.5px 1px rgb(255 255 255 / .95),
+      inset 0 -1px 1px rgb(255 255 255 / .55),
+      inset 0 0 0 1px rgb(255 255 255 / .5),
+      inset 0 0 14px rgb(255 255 255 / .35),
+      0 8px 22px rgb(18 19 22 / .2),
+      0 1px 3px rgb(18 19 22 / .1);
+  }
+  html.dark .glass-tab[data-lifted] .glass-lens {
+    background: color-mix(in srgb, #2a2b30 26%, transparent);
+    box-shadow:
+      inset 0 1.5px 1px rgb(255 255 255 / .35),
+      inset 0 -1px 1px rgb(255 255 255 / .12),
+      inset 0 0 0 1px rgb(255 255 255 / .16),
+      inset 0 0 14px rgb(255 255 255 / .08),
+      0 8px 24px rgb(0 0 0 / .55);
+  }
+  /* 泡里那排放大的图标：整排铺满 Tab 宽，往左挪透镜的位置，正好对上底下那一格，跟着透镜一起放大 */
+  .glass-lens-mag {
+    position: absolute; top: 0; bottom: 0; left: calc(-1 * var(--lx, 0px));
+    width: calc(var(--n) * 100%); display: flex;
+  }
+  /* iOS 长按链接会弹预览菜单，拖到一半被它打断 */
+  .glass-tab a { -webkit-touch-callout: none; transition: color .2s; }
+  @media (prefers-reduced-motion: reduce) {
+    .glass-lens, .glass-tab a { transition: none; }
   }
 }
 

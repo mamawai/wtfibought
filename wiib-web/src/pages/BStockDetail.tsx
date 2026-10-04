@@ -1,28 +1,26 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { ChevronLeft, ExternalLink } from 'lucide-react';
 import { bstockApi } from '../api';
 import { useUserStore } from '../stores/userStore';
 import { useCryptoStream } from '../hooks/useCryptoStream';
 import { useCrossAccount } from '../hooks/useCrossAccount';
 import { useToast } from '../components/ui/use-toast';
-import { Card, CardContent } from '../components/ui/card';
-import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
 import { Skeleton } from '../components/ui/skeleton';
 import { CandleChart } from '../components/CandleChart';
 import { FuturesActionButton } from '../components/FuturesActionButton';
+import { LeverageSlider } from '../components/LeverageSlider';
 import { LoginPrompt } from '../components/LoginPrompt';
+import { NumInput, PctRow } from '../components/coin/TradeFields';
 import { useQuantityAnimation } from '../components/coin/useQuantityAnimation';
-import { calcMaxSpotBuyQty, calcSpotOrderEstimate, floorToStep } from '../components/coin/futuresMath';
+import { COMMISSION_RATE, POSITION_PCTS, SPOT_LEVERAGE_OPTIONS, calcMaxSpotBuyQty, calcSpotOrderEstimate, floorToStep } from '../components/coin/futuresMath';
 import { useTradeFilter } from '../lib/tradeFilters';
-import { cn, fmtNum } from '../lib/utils';
-import { ChevronLeft, Wallet, Globe, Landmark } from 'lucide-react';
+import { getStockBrand } from '../lib/stockConfig';
+import { cn, fmtNum, fmtSignedUsd } from '../lib/utils';
 import type { BStock, CryptoPosition } from '../types';
 
-const COMMISSION_RATE = 0.001;
-const PCTS = [0.25, 0.5, 0.75, 1];
-const LEVERAGES = [1, 2, 3, 5, 10];
+const MAX_LEVERAGE = SPOT_LEVERAGE_OPTIONS[SPOT_LEVERAGE_OPTIONS.length - 1];
 
 const fmtCap = (v?: number) => {
   if (v == null) return '—';
@@ -39,7 +37,7 @@ export function BStockRoute() {
 
 function BStockDetail({ symbol }: { symbol: string }) {
   const navigate = useNavigate();
-  const { t } = useTranslation('market');
+  const { t } = useTranslation(['market', 'trade']);
   const { toast } = useToast();
   const fetchUser = useUserStore(s => s.fetchUser);
   // 游客只看行情和公司信息，持仓不拉、交易面板换成去登录
@@ -58,6 +56,9 @@ function BStockDetail({ symbol }: { symbol: string }) {
   const [actionSuccess, setActionSuccess] = useState(false);
   const animateQty = useQuantityAnimation(qty, setQty);
 
+  // bStock 符号是股票代号加 BUSDT（NVDABUSDT），详情没回来之前先按它认 logo
+  const ticker = info?.ticker ?? symbol.replace(/BUSDT$/, '');
+  const brand = getStockBrand(ticker);
   const tick = useCryptoStream(symbol, 'spot');
   const livePrice = tick?.price ?? info?.price ?? 0;
   // 数量步长（对齐Binance现货过滤器）
@@ -73,6 +74,26 @@ function BStockDetail({ symbol }: { symbol: string }) {
       .catch(() => setPosition(null));
   }, [symbol, loggedIn]);
   useEffect(load, [load]);
+
+  // 24h 基准与高低：1h×25 根，首根收盘当基准（与列表行同口径），25 根里取最高/最低
+  const [day, setDay] = useState({ base: 0, high: 0, low: 0 });
+  useEffect(() => {
+    let cancelled = false;
+    bstockApi.klines(symbol, '1h', 25)
+      .then(rows => {
+        if (cancelled || !rows?.length) return;
+        setDay({
+          base: Number(rows[0][4]),
+          high: Math.max(...rows.map(r => Number(r[2]))),
+          low: Math.min(...rows.map(r => Number(r[3]))),
+        });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [symbol]);
+  const change = day.base > 0 && livePrice > 0 ? livePrice - day.base : 0;
+  const changePct = day.base > 0 ? (change / day.base) * 100 : 0;
+  const isUp = change >= 0;
 
   useEffect(() => {
     if (!actionSuccess) return;
@@ -96,8 +117,6 @@ function BStockDetail({ symbol }: { symbol: string }) {
   const est = calcSpotOrderEstimate(qtyNum, livePrice, side === 'BUY' ? leverage : 1);
   const marginCost = est.margin + est.commission;   // 买入现金占用
   const proceeds = est.amount - est.commission;      // 卖出到账
-  const chg = info?.changePct ?? 0;
-  const up = chg >= 0;
 
   /** 切换单位时把已输入的值按当前价换算过去，不清空 */
   const switchUnit = (u: 'SHARE' | 'USDT') => {
@@ -109,17 +128,23 @@ function BStockDetail({ symbol }: { symbol: string }) {
     setBuyUnit(u);
   };
 
+  /**
+   * 仓位 % 按钮的目标值。USDT 模式直接取可用的百分比当预算（向下取到分），换算成股数的事留给预估/提交；
+   * 买入：现金占用 = 保证金(成交额/杠杆) + 手续费(按全额)，按后端口径取付得起的最大股数；卖出按持仓
+   */
+  const pctTarget = (pct: number) => {
+    if (isUsdtInput) return Math.floor(available * pct * 100) / 100;
+    if (side === 'SELL') return pct >= 1 ? held : floorToStep(held * pct, step);
+    return calcMaxSpotBuyQty(available * pct, livePrice, leverage, step);
+  };
+  const activePct = inputNum > 0 && livePrice > 0
+    ? (POSITION_PCTS.find(p => Math.abs(pctTarget(p) - inputNum) < 1e-9) ?? null)
+    : null;
   const setPct = (pct: number) => {
     if (livePrice <= 0) return;
-    // USDT 模式：% 直接取可用的百分比当预算（向下取到分），换算成股数的事留给预估/提交
-    if (isUsdtInput) { animateQty(Math.floor(available * pct * 100) / 100, 0.01); return; }
     // 卖出全量直接填精确持仓量，不走缓动
     if (side === 'SELL' && pct >= 1) { setQty(String(held)); return; }
-    // 买入：现金占用 = 保证金(成交额/杠杆) + 手续费(按全额)，按后端口径取付得起的最大股数
-    const target = side === 'BUY'
-      ? calcMaxSpotBuyQty(available * pct, livePrice, leverage, step)
-      : floorToStep(held * pct, step);
-    animateQty(Math.max(0, target), step);
+    animateQty(Math.max(0, pctTarget(pct)), isUsdtInput ? 0.01 : step);
   };
 
   const submit = async () => {
@@ -147,122 +172,170 @@ function BStockDetail({ symbol }: { symbol: string }) {
   };
 
   return (
-    <div className="page-shell px-4 md:px-6 py-5 space-y-4">
-      {/* 头部 */}
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={() => navigate('/bstock')}>
-          <ChevronLeft className="w-5 h-5" />
-        </Button>
-        <div className="w-10 h-10 rounded-xl bg-primary/10 ring-1 ring-primary/20 flex items-center justify-center shrink-0 text-[11px] font-bold text-primary">
-          {info?.ticker?.slice(0, 4) ?? <Landmark className="w-5 h-5" />}
+    <div className="wrap">
+      {/* ====== 页头：代号 / 行情灯 / 报价大数 ====== */}
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-8 items-end pt-8">
+        <div>
+          <button
+            type="button"
+            onClick={() => navigate('/bstock')}
+            className="inline-flex items-center gap-1 mb-2.5 text-[13px] mute hover:text-foreground transition-colors cursor-pointer"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />{t('coin.backToList')}
+          </button>
+
+          <div className="flex items-baseline gap-4 flex-wrap">
+            {/* data-reveal-icon：列表页的过渡层等它挂出来再整层淡出（lib/coinReveal） */}
+            <span className="inline-flex items-center gap-3">
+              <brand.icon data-reveal-icon={symbol} className="w-9 h-9 shrink-0" />
+              <b className="cond text-[44px] font-bold leading-none">{ticker}</b>
+            </span>
+            {info && <span className="text-[15px] mute">{info.name}{info.industry && ` · ${info.industry}`}</span>}
+            {/* 行情灯：只有现货流，连上亮绿、断了闪红 */}
+            <span className="self-center text-[12.5px] font-semibold" title={t('coin.spotFeed')}>
+              <i className={cn('inline-block w-[7px] h-[7px] mr-1.5 align-[1px]', tick?.ws ? 'bg-gain' : 'bg-loss animate-pulse')} />{t('coin.spot')}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-4 flex-wrap mt-2 text-[12px] mute">
+            <span>BINANCE</span>
+            <span>{t('bstockDetail.subtitle')}</span>
+          </div>
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-lg font-extrabold tracking-tight truncate">{info?.name ?? symbol}</span>
-            <span className="text-xs text-muted-foreground shrink-0">{info?.ticker}</span>
-          </div>
-          <div className="text-xs text-muted-foreground">{t('bstockDetail.subtitle', { industry: info?.industry ?? t('bstockDetail.fallbackIndustry') })}</div>
-        </div>
-        <div className="text-right shrink-0">
-          <div className={cn("text-xl font-extrabold tabular-nums tracking-tight transition-colors", livePrice ? (up ? "text-green-400" : "text-red-400") : "")}>
-            {livePrice ? fmtNum(livePrice) : <Skeleton className="h-6 w-20" />}
-          </div>
-          <div className={cn("text-xs tabular-nums font-medium", up ? "text-green-400" : "text-red-400")}>
-            {up ? '+' : ''}{chg.toFixed(2)}% · 24h
-          </div>
+
+        <div className="num text-left xl:text-right">
+          {livePrice > 0 ? (
+            <>
+              <b className="cond block text-[64px] font-bold leading-none">${fmtNum(livePrice)}</b>
+              <div className="flex items-baseline flex-wrap gap-3 mt-2 text-[15px] font-semibold justify-start xl:justify-end">
+                <span className={isUp ? 'up' : 'dn'}>
+                  {t('coin.change', {
+                    change: `${isUp ? '+' : ''}${fmtNum(change)}`,
+                    pct: `${isUp ? '+' : ''}${changePct.toFixed(2)}`,
+                  })}
+                </span>
+                <span className="mute font-medium text-[13px]">{t('coin.h24')}</span>
+                <span className="mute font-medium text-[13px]">{t('coin.high')} <b className="text-foreground">{day.high > 0 ? fmtNum(day.high) : '-'}</b></span>
+                <span className="mute font-medium text-[13px]">{t('coin.low')} <b className="text-foreground">{day.low > 0 ? fmtNum(day.low) : '-'}</b></span>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-col items-start xl:items-end gap-2">
+              <Skeleton className="h-16 w-56" />
+              <Skeleton className="h-5 w-40" />
+            </div>
+          )}
         </div>
       </div>
 
-      {/* items-stretch + 右栏 flex：交易面板拉伸到与左栏(K线+公司信息)等高，不再"缺一块" */}
-      <div className="grid lg:grid-cols-3 gap-4 items-stretch">
-        {/* 左：图 + 公司信息 */}
-        <div className="lg:col-span-2 space-y-4">
-          <Card className="overflow-hidden">
-            <div className="px-4 pt-3 text-right text-xs text-muted-foreground tabular-nums">
-              {info?.high != null && info?.low != null && t('bstockDetail.highLow', { high: fmtNum(info.high), low: fmtNum(info.low) })}
-            </div>
-            <div className="h-[430px] sm:h-[520px] phone:h-auto p-2">
-              {/* bstock 无后端K线广播：现货价格流驱动最后一根实时跳动 */}
-              <CandleChart
-                symbol={symbol}
-                interval={chartIv}
-                marketLabel={`BINANCE ${t('coin.spot')}`}
-                klinesFn={bstockApi.klines}
-                loadHistory={loggedIn}
-                streamLive={false}
-                onIntervalChange={setChartIv}
-                tick={tick?.price != null && tick?.ts != null ? { price: tick.price, ts: tick.ts } : null}
-              />
-            </div>
-          </Card>
+      {/* ====== 图 + 公司信息 | 持仓 + 下单面板 ====== */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 mt-7 border-t-2 border-foreground pt-[18px]">
+        <div className="xl:col-span-8 flex flex-col gap-5">
+          <div className="h-[600px] xl:h-[822px] [@media(max-height:600px)]:h-[360px] phone:h-auto">
+            {/* bstock 无后端K线广播：现货价格流驱动最后一根实时跳动 */}
+            <CandleChart
+              symbol={symbol}
+              interval={chartIv}
+              marketLabel={`BINANCE ${t('coin.spot')}`}
+              klinesFn={bstockApi.klines}
+              loadHistory={loggedIn}
+              streamLive={false}
+              onIntervalChange={setChartIv}
+              tick={tick?.price != null && tick?.ts != null ? { price: tick.price, ts: tick.ts } : null}
+              indicators
+            />
+          </div>
 
           {/* 公司信息 */}
-          <Card>
-            <CardContent className="p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  <Landmark className="w-4 h-4 text-primary" /> {t('bstockDetail.companyInfo')}
-                </div>
-                {info?.homepage && (
-                  <a href={info.homepage} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-                    <Globe className="w-3 h-3" /> {t('bstockDetail.website')}
-                  </a>
-                )}
-              </div>
-              {info ? (
-                <>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    {[
-                      [t('bstockDetail.fMarketCap'), fmtCap(info.marketCap)],
-                      [t('bstockDetail.fPe'), info.peRatio != null ? String(info.peRatio) : '—'],
-                      [t('bstockDetail.fDividend'), info.dividendYield != null ? `${info.dividendYield}%` : '—'],
-                      [t('bstockDetail.fIndustry'), info.industry ?? '—'],
-                      [t('bstockDetail.fWeek52High'), info.week52High != null ? fmtNum(info.week52High) : '—'],
-                      [t('bstockDetail.fWeek52Low'), info.week52Low != null ? fmtNum(info.week52Low) : '—'],
-                      [t('bstockDetail.fCeo'), info.ceo ?? '—'],
-                      [t('bstockDetail.fNameEn'), info.nameEn ?? info.ticker ?? '—'],
-                    ].map(([k, v]) => (
-                      <div key={k} className="rounded-md border border-border bg-card-2 px-3 py-2.5">
-                        <div className="text-[10px] text-muted-foreground">{k}</div>
-                        <div className="num text-sm font-semibold tracking-tight truncate mt-0.5" title={v}>{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {info.description && <p className="text-xs leading-relaxed text-muted-foreground">{info.description}</p>}
-                  {info.multiplier != null && info.multiplier !== 1 && (
-                    <p className="text-[11px] text-muted-foreground/70">{t('bstockDetail.multiplier', { value: info.multiplier.toFixed(4) })}</p>
-                  )}
-                </>
-              ) : (
-                <div className="space-y-2"><Skeleton className="h-16 w-full" /><Skeleton className="h-12 w-full" /></div>
+          <div className="border-t-2 border-foreground pt-3.5">
+            <div className="sec-h">
+              <h2>{t('bstockDetail.companyInfo')}</h2>
+              {info?.homepage && (
+                <a href={info.homepage} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1">
+                  {t('bstockDetail.website')}<ExternalLink className="w-3 h-3" />
+                </a>
               )}
-            </CardContent>
-          </Card>
+            </div>
+            {info ? (
+              <>
+                <div className="num grid grid-cols-1 sm:grid-cols-2 gap-x-8">
+                  {[
+                    [t('bstockDetail.fMarketCap'), fmtCap(info.marketCap)],
+                    [t('bstockDetail.fPe'), info.peRatio != null ? String(info.peRatio) : '—'],
+                    [t('bstockDetail.fDividend'), info.dividendYield != null ? `${info.dividendYield}%` : '—'],
+                    [t('bstockDetail.fIndustry'), info.industry ?? '—'],
+                    [t('bstockDetail.fWeek52High'), info.week52High != null ? fmtNum(info.week52High) : '—'],
+                    [t('bstockDetail.fWeek52Low'), info.week52Low != null ? fmtNum(info.week52Low) : '—'],
+                    [t('bstockDetail.fCeo'), info.ceo ?? '—'],
+                    [t('bstockDetail.fNameEn'), info.nameEn ?? info.ticker ?? '—'],
+                  ].map(([k, v]) => (
+                    <div key={k} className="kv gap-4">
+                      <span className="k shrink-0">{k}</span>
+                      <span className="v min-w-0 truncate" title={v}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+                {info.description && <p className="mt-4 text-[13px] leading-relaxed mute">{info.description}</p>}
+                {info.multiplier != null && info.multiplier !== 1 && (
+                  <p className="mt-2 text-[12px] mute">{t('bstockDetail.multiplier', { value: info.multiplier.toFixed(4) })}</p>
+                )}
+              </>
+            ) : (
+              <div className="space-y-2"><Skeleton className="h-16 w-full" /><Skeleton className="h-12 w-full" /></div>
+            )}
+          </div>
         </div>
 
-        {/* 右：交易面板（flex 拉伸补齐左栏高度）+ 持仓；游客这格换成去登录 */}
-        <div className="flex flex-col gap-4">
+        <aside className="xl:col-span-4 flex flex-col gap-[18px]">
+          {/* 当前持仓 */}
+          {held > 0 && (() => {
+            const avgCost = position?.avgCost ?? 0;
+            const pnlPct = avgCost > 0 && livePrice > 0 ? ((livePrice - avgCost) / avgCost) * 100 : 0;
+            const pnlAmount = livePrice > 0 ? (livePrice - avgCost) * held : 0;
+            const isPnlUp = pnlPct >= 0;
+            return (
+              <div className="border-t-2 border-foreground pt-3.5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <b className="text-[16px] font-bold">{ticker}</b>
+                    <span className="num ml-2 text-[13px] font-semibold mute">{held} {t('bstockDetail.shares')}</span>
+                  </div>
+                  <div className={cn('num shrink-0 text-right', isPnlUp ? 'up' : 'dn')}>
+                    <div className="text-[16px] font-bold">{isPnlUp ? '+' : ''}{pnlPct.toFixed(2)}%</div>
+                    <div className="text-[12px] font-semibold">{fmtSignedUsd(pnlAmount)}</div>
+                  </div>
+                </div>
+                <div className="num mt-3">
+                  <div className="kv"><span className="k">{t('coin.avgCost')}</span><span className="v">${fmtNum(avgCost)}</span></div>
+                  <div className="kv"><span className="k">{t('coin.lastPrice')}</span><span className="v">${fmtNum(livePrice)}</span></div>
+                  <div className="kv"><span className="k">{t('coin.marketValue')}</span><span className="v">${fmtNum(held * livePrice)}</span></div>
+                </div>
+              </div>
+            );
+          })()}
+
           {!loggedIn ? (
-            <Card className="flex-1">
-              <CardContent className="p-5">
-                <LoginPrompt text={t('bstockDetail.loginToTrade')} />
-              </CardContent>
-            </Card>
+            <LoginPrompt text={t('bstockDetail.loginToTrade')} className="border-t-2 border-foreground pt-3.5" />
           ) : (
-          <Card className="overflow-hidden flex-1 flex flex-col">
-            <CardContent className="p-5 flex-1 flex flex-col gap-5">
-              {/* 买/卖切换：终端段控件 */}
-              <div className="flex rounded-md border border-border overflow-hidden divide-x divide-border">
+            <>
+              {/* 可用 / 持有 */}
+              <div className="flex justify-between items-center gap-4 text-[12.5px] text-muted-foreground">
+                <span>{t('bstockDetail.available')} <b className="num text-foreground font-semibold">{fmtNum(available)}</b> USDT</span>
+                <span>{t('bstockDetail.held')} <b className="num text-foreground font-semibold">{held}</b> {t('bstockDetail.shares')}</span>
+              </div>
+
+              {/* 买入 / 卖出 */}
+              <div className="grid grid-cols-2 border-[1.5px] border-foreground">
                 {(['BUY', 'SELL'] as const).map(sd => (
                   <button
                     key={sd}
                     type="button"
                     onClick={() => { setSide(sd); setQty(''); }}
                     className={cn(
-                      "flex-1 py-2.5 text-sm font-bold transition-colors cursor-pointer",
+                      'h-12 text-[17px] font-extrabold cursor-pointer transition-colors',
                       side === sd
-                        ? (sd === 'BUY' ? "bg-gain text-white" : "bg-loss text-white")
-                        : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+                        ? (sd === 'BUY' ? 'bg-gain text-white' : 'bg-loss text-white')
+                        : 'text-muted-foreground hover:text-foreground',
                     )}
                   >
                     {sd === 'BUY' ? t('bstockDetail.buy') : t('bstockDetail.sell')}
@@ -270,122 +343,65 @@ function BStockDetail({ symbol }: { symbol: string }) {
                 ))}
               </div>
 
-              {/* 余额 / 持仓 */}
-              <div className="flex items-center justify-between text-xs font-bold text-muted-foreground">
-                <span className="inline-flex items-center gap-1"><Wallet className="w-3.5 h-3.5" /> {t('bstockDetail.available')} <span className="text-foreground tabular-nums">{fmtNum(available)}</span></span>
-                <span>{t('bstockDetail.held')} <span className="text-foreground tabular-nums">{fmtNum(held)}</span></span>
-              </div>
-
-              {/* 数量 / 金额 */}
-              <div className="space-y-2">
-                {side === 'BUY' ? (
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs font-bold text-muted-foreground">{buyUnit === 'USDT' ? t('bstockDetail.amount') : t('bstockDetail.qty')}</label>
-                    {/* 输入单位切换：按股数买 / 按 USDT 预算买 */}
-                    <div className="flex rounded border border-border overflow-hidden divide-x divide-border">
-                      {(['SHARE', 'USDT'] as const).map(u => (
-                        <button
-                          key={u}
-                          type="button"
-                          onClick={() => switchUnit(u)}
-                          className={cn(
-                            'px-2 py-0.5 text-[10px] font-bold transition-colors cursor-pointer',
-                            buyUnit === u ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground',
-                          )}
-                        >
-                          {u === 'SHARE' ? t('bstockDetail.unitShare') : 'USDT'}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <label className="text-xs font-bold text-muted-foreground">{t('bstockDetail.qtyShares')}</label>
-                )}
-                <Input
+              {/* 数量：买入时右侧单位可点，股数 ↔ USDT 预算换算 */}
+              <div className="field">
+                <label>{isUsdtInput ? t('bstockDetail.amount') : t('bstockDetail.qty')}</label>
+                <NumInput
                   value={qty}
-                  onChange={e => setQty(e.target.value.replace(/[^0-9.]/g, ''))}
+                  onChange={setQty}
                   placeholder={isUsdtInput ? t('bstockDetail.amountPlaceholder') : t('bstockDetail.qty')}
-                  inputMode="decimal"
-                  className="h-11 text-base tabular-nums"
+                  step={isUsdtInput ? '0.01' : String(step)}
+                  min={0}
+                  unit={isUsdtInput ? 'USDT' : t('bstockDetail.unitShare')}
+                  unitTitle={side === 'BUY' ? t('trade:open.switchUnit') : undefined}
+                  onUnitClick={side === 'BUY' ? () => switchUnit(buyUnit === 'USDT' ? 'SHARE' : 'USDT') : undefined}
                 />
-                <div className="grid grid-cols-4 gap-1.5">
-                  {PCTS.map(p => (
-                    <Button key={p} variant="outline" size="sm" className="h-9 text-[11px] font-black" onClick={() => setPct(p)}>
-                      {p === 1 ? t('bstockDetail.pctAll') : `${p * 100}%`}
-                    </Button>
-                  ))}
-                </div>
+                {livePrice > 0 && <PctRow active={activePct} onPick={setPct} />}
               </div>
 
-              {/* 杠杆（仅买入） */}
+              {/* 杠杆借款：仅买入 */}
               {side === 'BUY' && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs font-bold text-muted-foreground">
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between items-baseline text-[12.5px] font-semibold text-muted-foreground">
                     <span>{t('bstockDetail.leverage')}</span>
-                    <span className="text-foreground">{leverage}x</span>
+                    <b className="num text-[20px] font-bold text-foreground">{leverage}x</b>
                   </div>
-                  <div className="grid grid-cols-5 gap-1.5">
-                    {LEVERAGES.map(lv => (
-                      <Button key={lv} variant={leverage === lv ? 'secondary' : 'outline'} size="sm" className="h-8 text-[11px] font-black" onClick={() => setLeverage(lv)}>
-                        {lv}x
-                      </Button>
-                    ))}
+                  <LeverageSlider value={leverage} max={MAX_LEVERAGE} ticks={SPOT_LEVERAGE_OPTIONS} onChange={setLeverage} />
+                </div>
+              )}
+
+              {/* 预估：数字随数量实时跳动（百分比按钮触发缓动） */}
+              {qtyNum > 0 && livePrice > 0 && (
+                <div className="num border-t border-foreground pt-1">
+                  {isUsdtInput && (
+                    <div className="kv py-[7px]">
+                      <span className="k">{t('bstockDetail.estFill')}{leverage > 1 ? ` (${leverage}x)` : ''}</span>
+                      <span className="v">{t('bstockDetail.estShares', { qty: fmtNum(qtyNum) })}</span>
+                    </div>
+                  )}
+                  <div className="kv py-[7px]"><span className="k">{t('bstockDetail.orderValue')}</span><span className="v">{fmtNum(est.amount)}</span></div>
+                  <div className="kv py-[7px]"><span className="k">{t('bstockDetail.fee')}</span><span className="v">{fmtNum(est.commission)}</span></div>
+                  {isLevBuy && <div className="kv py-[7px]"><span className="k">{t('bstockDetail.borrowed')}</span><span className="v wn">{fmtNum(est.amount - est.margin)}</span></div>}
+                  <div className="kv py-[7px] border-b-0 text-[16px]">
+                    <span className="k">{side === 'BUY' ? t('bstockDetail.cashNeeded') : t('bstockDetail.proceeds')}</span>
+                    <span className="v text-[20px] font-bold [font-stretch:85%]">{fmtNum(side === 'BUY' ? marginCost : proceeds)} USDT</span>
                   </div>
                 </div>
               )}
 
-              {/* 预览：次级面板，数字随数量实时跳动（百分比按钮触发缓动） */}
-              <div className="rounded-md border border-border bg-card-2 px-3.5 py-3 space-y-1.5 text-xs">
-                {isUsdtInput && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">{t('bstockDetail.estFill')}{leverage > 1 ? ` (${leverage}x)` : ''}</span>
-                    <span className="tabular-nums font-bold">{t('bstockDetail.estShares', { qty: fmtNum(qtyNum) })}</span>
-                  </div>
-                )}
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('bstockDetail.orderValue')}</span><span className="tabular-nums font-bold">{fmtNum(est.amount)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('bstockDetail.fee')}</span><span className="tabular-nums font-bold">{fmtNum(est.commission)}</span></div>
-                {isLevBuy && <div className="flex justify-between"><span className="text-muted-foreground">{t('bstockDetail.borrowed')}</span><span className="tabular-nums font-bold text-amber-400">{fmtNum(est.amount - est.margin)}</span></div>}
-                <div className="flex justify-between font-black text-sm pt-1.5 border-t border-border/40">
-                  <span>{side === 'BUY' ? t('bstockDetail.cashNeeded') : t('bstockDetail.proceeds')}</span>
-                  <span className="tabular-nums">{fmtNum(side === 'BUY' ? marginCost : proceeds)}</span>
-                </div>
-              </div>
-
               {/* 下单：与 crypto 现货同款动画按钮（悬停刷卡动效 + 成交对勾） */}
-              <div className="mt-auto space-y-2 pt-1">
-                <FuturesActionButton
-                  onClick={submit}
-                  disabled={submitting || qtyNum <= 0 || livePrice <= 0}
-                  loading={submitting}
-                  success={actionSuccess}
-                  side={side}
-                  label={info?.ticker ?? ''}
-                />
-                <p className="text-[10px] text-center text-muted-foreground/60">{t('bstockDetail.footer')}</p>
-              </div>
-            </CardContent>
-          </Card>
+              <FuturesActionButton
+                onClick={submit}
+                disabled={submitting || qtyNum <= 0 || livePrice <= 0}
+                loading={submitting}
+                success={actionSuccess}
+                side={side}
+                label={ticker}
+              />
+              <p className="text-[12px] text-muted-foreground leading-[1.6]">{t('bstockDetail.footer')}</p>
+            </>
           )}
-
-          {/* 当前持仓 */}
-          {held > 0 && (
-            <Card>
-              <CardContent className="p-4">
-                <div className="text-xs text-muted-foreground mb-2">{t('bstockDetail.currentHoldings')}</div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-base font-bold tabular-nums">{fmtNum(held)} <span className="text-xs text-muted-foreground font-normal">{t('bstockDetail.shares')}</span></div>
-                    <div className="text-xs text-muted-foreground">{t('bstockDetail.avgCost')} {fmtNum(position?.avgCost ?? 0)}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xs text-muted-foreground">{t('bstockDetail.marketValue')}</div>
-                    <div className="text-base font-bold tabular-nums">{fmtNum(held * livePrice)}</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
+        </aside>
       </div>
     </div>
   );

@@ -1,9 +1,6 @@
 {
   "select": {
-    "coinTitle": "Crypto trading",
-    "commodityTitle": "Commodities",
     "commoditySub": "TradFi perpetuals · Gold / Crude oil · 24/7",
-    "tradfiTitle": "TradFi futures",
     "tradfiSub": "US stocks / ETF perpetuals · 24/7"
   },
   "coinName": {
@@ -24,27 +21,13 @@
     "liqLow": "Low liquidity"
   },
   "bstockList": {
-    "title": "Stocks · bStock",
     "subtitle_one": "Tokenized US stocks · {{count}} listed",
     "subtitle_other": "Tokenized US stocks · {{count}} listed",
-    "searchPlaceholder": "Search name / ticker / industry",
-    "clearSearch": "Clear search",
-    "refreshed": "Refreshed",
     "loadFailed": "Failed to load bStock list",
-    "loadFailedHint": "Please try again later",
-    "sortLabel": "Sort:",
-    "sortCap": "Market cap",
-    "sortPrice": "Price",
-    "sortChange": "Change",
-    "sortDefault": "Default",
-    "cap": "Cap {{value}}",
-    "empty": "No matching stocks",
-    "clearFilter": "Clear search"
+    "loadFailedHint": "Please try again later"
   },
   "bstockDetail": {
-    "subtitle": "{{industry}} · 24/7 · instant settlement",
-    "fallbackIndustry": "Tokenized US stock",
-    "highLow": "High {{high}} · Low {{low}}",
+    "subtitle": "Tokenized US stock · 24/7",
     "companyInfo": "Company info",
     "website": "Website",
     "fMarketCap": "Market cap",
@@ -63,9 +46,7 @@
     "amount": "Amount",
     "qty": "Quantity",
     "unitShare": "Shares",
-    "qtyShares": "Quantity (shares)",
     "amountPlaceholder": "Amount to spend (USDT, incl. fee)",
-    "pctAll": "Max",
     "leverage": "Leverage (margin loan · 0.05% daily)",
     "estFill": "Est. shares",
     "estShares": "≈ {{qty}} shares",
@@ -75,10 +56,7 @@
     "cashNeeded": "Cash required",
     "proceeds": "Proceeds",
     "footer": "Spot · instant settlement · no T+1",
-    "currentHoldings": "Current holdings",
     "shares": "shares",
-    "avgCost": "Avg cost",
-    "marketValue": "Market value",
     "toastEnterAmount": "Enter an amount",
     "toastEnterQty": "Enter a quantity",
     "toastInsufficient": "Insufficient holdings",
@@ -167,8 +145,7 @@
     "text": "Text",
     "hray": "Horizontal ray",
     "arrow": "Arrow",
-    "fibext": "Fib extension",
-    "more": "Show this group"
+    "fibext": "Fib extension"
   },
   "drawTip": {
     "pick": "Select / drag (Esc to deselect, Del to delete)",
@@ -189,6 +166,7 @@
   },
   "drawProps": {
     "color": "Color",
+    "line": "Line width / style",
     "width": "Line width",
     "style": "Line style",
     "solid": "Solid",
@@ -207,7 +185,19 @@
     "long": "Long",
     "short": "Short",
     "bars_one": "{{count}} bar",
-    "bars_other": "{{count}} bars"
+    "bars_other": "{{count}} bars",
+    "hintMouse": "Click on the chart to place points",
+    "hintTouch": "Drag the crosshair, tap to set",
+    "cancel": "Cancel drawing (Esc)"
+  },
+  "drawAct": {
+    "tools": "Draw",
+    "magnet": "Magnet",
+    "hide": "Hide",
+    "show": "Show",
+    "undo": "Undo",
+    "delete": "Delete",
+    "clear": "Clear"
   },
   "whale": {
     "title": "Whale positions",

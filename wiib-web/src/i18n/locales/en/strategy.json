@@ -345,15 +345,6 @@
       "ivSwitched": "Switched to {{iv}} — replay now advances on {{iv}} candles"
     }
   },
-  "chart": {
-    "magnetOn": "Magnet on: endpoints snap to the nearest open/high/low/close",
-    "magnetOff": "Magnet off: free placement",
-    "showDrawings": "Drawings hidden — click to show them again",
-    "hideDrawings": "Hide all drawings (not deleted)",
-    "deleteSelected": "Delete selected (Del)",
-    "clearAll": "Clear every drawing for this symbol",
-    "textPlaceholder": "Label text, Enter to confirm"
-  },
   "testnet": {
     "title": "Testnet monitor",
     "subtitle": "Binance Testnet · Live validation track for strategies · Real order book matching",

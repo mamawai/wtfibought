@@ -230,8 +230,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
       {/* ====== 页头：币对 / 行情灯 / 报价大数 ====== */}
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-8 items-end pt-8">
         <div>
-          {/* 返回列表：装成 PWA 后 iOS 没有浏览器返回键，底部 Tab 的"市场"只通向股票列表，
-              不给入口就退不回币种/大宗/TradFi 列表 */}
+          {/* 返回列表：装成 PWA 后 iOS 没有浏览器返回键，桌面也没有底部 Tab，得在页里给个回列表的入口 */}
           <button
             type="button"
             onClick={() => navigate(backTo)}
