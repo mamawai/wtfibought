@@ -15,7 +15,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -34,7 +33,6 @@ public class AccountResetService {
     private static final String LIMIT_BUY_PREFIX = "crypto:limit:buy:";
     private static final String LIMIT_SELL_PREFIX = "crypto:limit:sell:";
     private static final String RANKING_KEY = "ranking:top";
-    private static final String BUFF_STATUS_PREFIX = "buff:status:";
 
     private final FuturesPositionMapper futuresPositionMapper;
     private final CryptoOrderMapper cryptoOrderMapper;
@@ -142,9 +140,5 @@ public class AccountResetService {
             String prefix = "BUY".equals(o.getOrderSide()) ? LIMIT_BUY_PREFIX : LIMIT_SELL_PREFIX;
             redis.opsForZSet().remove(prefix + o.getSymbol(), String.valueOf(o.getId()));
         }
-
-        // 今日 buff 状态缓存(TTL 1h)。user_buff 行删了但缓存还写着"今天已抽"，
-        // 不清的话用户重置完最长一小时抽不了新 buff
-        redis.delete(BUFF_STATUS_PREFIX + userId + ":" + LocalDate.now());
     }
 }

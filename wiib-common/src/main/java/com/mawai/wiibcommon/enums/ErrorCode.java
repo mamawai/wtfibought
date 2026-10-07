@@ -57,13 +57,6 @@ public enum ErrorCode {
     WEBSOCKET_CONNECTION_LIMIT(1301, "error.websocketConnectionLimit"),
     WEBSOCKET_AUTH_REQUIRED(1302, "error.websocketAuthRequired"),
 
-    // Buff错误码 1400+
-    BUFF_ALREADY_DRAWN(1401, "error.buffAlreadyDrawn"),
-    BUFF_NOT_FOUND(1402, "error.buffNotFound"),
-    BUFF_EXPIRED(1403, "error.buffExpired"),
-    BUFF_ALREADY_USED(1404, "error.buffAlreadyUsed"),
-    DISCOUNT_NO_LEVERAGE(1405, "error.discountNoLeverage"),
-
     // Crypto错误码 1600+
     CRYPTO_PRICE_UNAVAILABLE(1601, "error.cryptoPriceUnavailable"),
     CRYPTO_SYMBOL_INVALID(1602, "error.cryptoSymbolInvalid"),

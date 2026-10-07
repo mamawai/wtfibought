@@ -19,6 +19,4 @@ public class CryptoOrderRequest {
 
     /** 杠杆倍数 1-10 */
     private Integer leverageMultiple;
-
-    private Long useBuffId;
 }

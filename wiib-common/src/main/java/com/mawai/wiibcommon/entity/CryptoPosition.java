@@ -23,9 +23,6 @@ public class CryptoPosition {
 
     private BigDecimal avgCost;
 
-    /** 累计折扣节省金额 */
-    private BigDecimal totalDiscount;
-
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

@@ -42,7 +42,7 @@ export function Intro() {
         </CardContent>
       </Card>
 
-      {/* 桌面双列：左交易（重点），右预测+福利；移动端自然单列 */}
+      {/* 桌面双列：左交易（重点），右预测；移动端自然单列 */}
       <div className="grid md:grid-cols-2 gap-5 items-start">
       {/* 交易规则 */}
       <Card>
@@ -91,14 +91,13 @@ export function Intro() {
         </CardContent>
       </Card>
 
-      {/* 预测与福利 */}
+      {/* 预测市场 */}
       <Card>
         <CardContent className="pt-5 space-y-3 text-sm leading-relaxed">
           <h2 className="font-bold text-base text-primary">{t('intro.perksTitle')}</h2>
-          <ul className="list-disc list-inside text-muted-foreground space-y-1.5">
-            <TermItem i18nKey="intro.perk1" />
-            <TermItem i18nKey="intro.perk2" />
-          </ul>
+          <p className="text-muted-foreground">
+            <Trans ns="home" i18nKey="intro.perk1" components={[<strong key="term" />]} />
+          </p>
         </CardContent>
       </Card>
       </div>

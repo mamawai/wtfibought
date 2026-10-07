@@ -221,17 +221,17 @@ class LedgerProxyRealRunTest {
 
     // ==================== protected 方法上的 @Transactional 到底生效不生效 ====================
 
-    /** 带 @Ledger 的 protected 入口所在的 6 个类；下面反射自取，免得手抄清单抄漏 */
+    /** 带 @Ledger 的 protected 入口所在的 5 个类；下面反射自取，免得手抄清单抄漏 */
     private static final List<Class<?>> LEDGER_SERVICE_CLASSES = List.of(
             FuturesTradingServiceImpl.class, FuturesSettlementServiceImpl.class,
             FuturesRiskServiceImpl.class, CryptoOrderServiceImpl.class,
-            MarginAccountServiceImpl.class, BuffServiceImpl.class);
+            MarginAccountServiceImpl.class);
 
-    /** 现存 14 个「protected + @Transactional + @Ledger」入口。只作"清单别悄悄缩水"的下限，不是精确台账。 */
-    private static final int MIN_PROTECTED_TX_LEDGER = 14;
+    /** 现存 13 个「protected + @Transactional + @Ledger」入口。只作"清单别悄悄缩水"的下限，不是精确台账。 */
+    private static final int MIN_PROTECTED_TX_LEDGER = 13;
 
     /**
-     * 本次 28 处标注里有 14 处是 {@code protected @Transactional @Ledger doXxx}，全靠 getAopProxy 调进来。
+     * 现存 21 处 {@code @Ledger} 标注里有 13 处是 {@code protected @Transactional @Ledger doXxx}，全靠 getAopProxy 调进来。
      * 但 {@code @Transactional} 和自定义 {@code @Aspect} 的 {@code @annotation} 切点<b>不共享结论</b>：
      * {@code AbstractFallbackTransactionAttributeSource.computeTransactionAttribute} 第一句是
      * <pre>if (allowPublicMethodsOnly() &amp;&amp; !Modifier.isPublic(method.getModifiers())) return null;</pre>
@@ -252,7 +252,7 @@ class LedgerProxyRealRunTest {
      * 也就是说"protected 上的 @Transactional 不生效"这个广为人知的结论，在本项目<b>已经不成立</b>。
      * 但它是白捡的框架默认值，不是项目自己钉的，会让它<b>静默消失</b>的只有两件事：
      * ①有人自己声明一个<b>无参</b>的 {@code AnnotationTransactionAttributeSource} bean；
-     * ②把 Spring 降到 <b>5.3 及以下</b>。真发生了，这 14 个方法的事务边界就没了，
+     * ②把 Spring 降到 <b>5.3 及以下</b>。真发生了，这 13 个方法的事务边界就没了，
      * 而 LedgerAspect「INSERT 刻意不 catch 才能保证账实一致」那条铁律在它们身上同时变成空的。
      * <p>
      * 所以这条测试问的是<b>容器里真正在用的那个</b> TransactionAttributeSource（不是 new 一个默认实例，
@@ -261,7 +261,7 @@ class LedgerProxyRealRunTest {
      */
     @Test
     void protected方法上的Transactional必须真的有事务属性() throws Exception {
-        // 反射自取而不是手抄：初版手抄漏了 doDrawTransactional 和 accrueUserInterest 两个
+        // 反射自取而不是手抄：初版手抄就漏过两个
         List<Method> protectedTxLedger = LEDGER_SERVICE_CLASSES.stream()
                 .flatMap(c -> java.util.Arrays.stream(c.getDeclaredMethods()))
                 .filter(m -> !Modifier.isPublic(m.getModifiers()))

@@ -78,35 +78,6 @@ COMMENT ON COLUMN invite_code.used_count IS '已用次数（注册时原子+1，
 COMMENT ON COLUMN invite_code.enabled IS '是否可用（作废置 FALSE）';
 
 -- ============================================
--- 3. 每日Buff表
--- ============================================
-CREATE TABLE IF NOT EXISTS user_buff (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES "user"(id),
-    buff_type VARCHAR(32) NOT NULL,
-    buff_name VARCHAR(64) NOT NULL,
-    rarity VARCHAR(16) NOT NULL,
-    extra_data jsonb,
-    draw_date DATE NOT NULL,
-    expire_at TIMESTAMP NOT NULL,
-    is_used BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uk_user_draw_date UNIQUE (user_id, draw_date)
-);
-
-COMMENT ON TABLE user_buff IS '每日Buff表';
-COMMENT ON COLUMN user_buff.id IS '主键';
-COMMENT ON COLUMN user_buff.user_id IS '用户ID';
-COMMENT ON COLUMN user_buff.buff_type IS 'Buff类型枚举';
-COMMENT ON COLUMN user_buff.buff_name IS '显示名称';
-COMMENT ON COLUMN user_buff.rarity IS '稀有度：COMMON/RARE/EPIC/LEGENDARY';
-COMMENT ON COLUMN user_buff.extra_data IS '附加数据JSON';
-COMMENT ON COLUMN user_buff.draw_date IS '抽奖日期';
-COMMENT ON COLUMN user_buff.expire_at IS '过期时间';
-COMMENT ON COLUMN user_buff.is_used IS '是否已使用（折扣类）';
-COMMENT ON COLUMN user_buff.created_at IS '创建时间';
-
--- ============================================
 -- 6. 加密货币持仓表
 -- ============================================
 CREATE TABLE IF NOT EXISTS crypto_position (
@@ -116,7 +87,6 @@ CREATE TABLE IF NOT EXISTS crypto_position (
     quantity DECIMAL(18,8) NOT NULL DEFAULT 0,
     frozen_quantity DECIMAL(18,8) NOT NULL DEFAULT 0,
     avg_cost DECIMAL(20,8) NOT NULL,
-    total_discount DECIMAL(18,2) NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uk_crypto_user_symbol UNIQUE (user_id, symbol)
@@ -148,7 +118,6 @@ CREATE TABLE IF NOT EXISTS crypto_order (
     trigger_price DECIMAL(20,8),
     triggered_at TIMESTAMP,
     status VARCHAR(20) NOT NULL,
-    discount_percent DECIMAL(5,2),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

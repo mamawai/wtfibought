@@ -90,8 +90,7 @@
     "avgCost": "均价",
     "lastPrice": "现价",
     "marketValue": "市值",
-    "frozen": "冻结",
-    "saved": "已省"
+    "frozen": "冻结"
   },
   "chart": {
     "open": "开",

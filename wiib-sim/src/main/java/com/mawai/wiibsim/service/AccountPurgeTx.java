@@ -12,7 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 
 /**
- * 账户清除的事务段：重置路径 8 张用户表清空 + user 复位；
+ * 账户清除的事务段：重置路径 7 张用户表清空 + user 复位；
  * 销户路径清表后直接删行。全成功或全回滚。
  * <p>
  * 单独成 bean，这么写为了 @Transactional 走 Spring 代理（同类自调用会绕过代理，事务不生效）。
@@ -28,7 +28,6 @@ public class AccountPurgeTx {
     private final CryptoOrderMapper cryptoOrderMapper;
     private final PredictionBetMapper predictionBetMapper;
     private final UserAssetSnapshotMapper userAssetSnapshotMapper;
-    private final UserBuffMapper userBuffMapper;
     private final UserLedgerMapper userLedgerMapper;
     private final UserService userService;
 
@@ -81,11 +80,10 @@ public class AccountPurgeTx {
         predictionBetMapper.delete(eq(PredictionBet.class, PredictionBet::getUserId, userId));
         // 流水与快照
         userAssetSnapshotMapper.delete(eq(UserAssetSnapshot.class, UserAssetSnapshot::getUserId, userId));
-        userBuffMapper.delete(eq(UserBuff.class, UserBuff::getUserId, userId));
         userLedgerMapper.deleteByUserId(userId);   // 账本随账户一起重来
     }
 
-    /** 这 7 张表都是同一个 user_id 条件，抽掉重复的 wrapper 构造（账本第 8 张走自己的 deleteByUserId） */
+    /** 这 6 张表都是同一个 user_id 条件，抽掉重复的 wrapper 构造（账本第 7 张走自己的 deleteByUserId） */
     private static <T> LambdaQueryWrapper<T> eq(Class<T> type, SFunction<T, ?> column, long userId) {
         return new LambdaQueryWrapper<>(type).eq(column, userId);
     }

@@ -146,17 +146,13 @@ export function calcSpotBuyCashNeed(qty: number, price: number, leverage: number
   return (leverage > 1 ? roundCeil2(amount / leverage) : amount) + commission;
 }
 
-/**
- * 现货下单预估：orderQty 是实际下单币量（已乘杠杆、按步长取整），取整同后端。
- * discountRate 是折扣券的折后比例（1=不打折）：成交额打折后再取整，手续费按折后成交额算
- */
-export function calcSpotOrderEstimate(orderQty: number, price: number, leverage: number, discountRate = 1) {
-  const fullAmount = roundHalfUp2(price * orderQty);
-  const amount = discountRate < 1 ? roundHalfUp2(fullAmount * discountRate) : fullAmount;
+/** 现货下单预估：orderQty 是实际下单币量（已乘杠杆、按步长取整），取整同后端 */
+export function calcSpotOrderEstimate(orderQty: number, price: number, leverage: number) {
+  const amount = roundHalfUp2(price * orderQty);
   const commission = roundHalfUp2(amount * COMMISSION_RATE);
   // 杠杆单自己掏的那份；不加杠杆就是成交额
   const margin = leverage > 1 ? roundCeil2(amount / leverage) : amount;
-  return { fullAmount, amount, margin, commission };
+  return { amount, margin, commission };
 }
 
 /** 预算内能买的最大总数量（已含杠杆，按步长对齐），现金占用按后端取整口径算 */

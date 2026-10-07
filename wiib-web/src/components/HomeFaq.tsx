@@ -22,7 +22,6 @@ const FAQ_ITEMS: { id: string; qKey: string; aKey: string }[] = [
   // ---- 玩法 ----
   { id: 'prediction', qKey: 'faq.prediction.q', aKey: 'faq.prediction.a' },
   { id: 'wallets', qKey: 'faq.wallets.q', aKey: 'faq.wallets.a' },
-  { id: 'coupon', qKey: 'faq.coupon.q', aKey: 'faq.coupon.a' },
   // ---- 账户 ----
   { id: 'resetAccount', qKey: 'faq.resetAccount.q', aKey: 'faq.resetAccount.a' },
 ];
