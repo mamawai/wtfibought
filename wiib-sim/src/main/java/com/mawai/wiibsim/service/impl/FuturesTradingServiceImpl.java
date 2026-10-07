@@ -901,8 +901,11 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         }
         wrapper.orderByDesc(FuturesPosition::getUpdatedAt);
         wrapper.last("LIMIT " + Math.clamp(limit, 1, 500));
-        // 已平仓只出静态字段（closedPnl 即终值），不走 buildPositionDTO 的实时价计算
-        return positionMapper.selectList(wrapper).stream().map(pos -> {
+        List<FuturesPosition> rows = positionMapper.selectList(wrapper);
+        // 净盈亏按订单流水聚合
+        Map<Long, BigDecimal> realizedMap = sumRealizedByPosition(rows);
+        // 已平仓只出静态字段，不走 buildPositionDTO 的实时价计算
+        return rows.stream().map(pos -> {
             FuturesPositionDTO dto = new FuturesPositionDTO();
             dto.setId(pos.getId());
             dto.setUserId(pos.getUserId());
@@ -920,7 +923,9 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
             dto.setTakeProfits(pos.getTakeProfits());
             dto.setStatus(pos.getStatus());
             dto.setClosedPrice(pos.getClosedPrice());
-            dto.setClosedPnl(pos.getClosedPnl());
+            // 净盈亏 = 各平仓单盈亏 − 开平手续费 − 资金费；清零的仓位没有平仓单，保持 null
+            dto.setClosedPnl(pos.getClosedPnl() == null ? null
+                    : realizedMap.getOrDefault(pos.getId(), BigDecimal.ZERO).subtract(pos.getFundingFeeTotal()));
             dto.setMemo(pos.getMemo());
             dto.setCreatedAt(pos.getCreatedAt());
             dto.setUpdatedAt(pos.getUpdatedAt());

@@ -55,7 +55,7 @@ public class FuturesPosition {
 
     private BigDecimal closedPrice; // 平仓价
 
-    private BigDecimal closedPnl; // 已实现盈亏
+    private BigDecimal closedPnl; // 最后一笔平仓的毛盈亏，净额看订单流水
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
