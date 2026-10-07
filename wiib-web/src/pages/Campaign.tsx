@@ -767,13 +767,6 @@ export function Campaign() {
                 <p>
                   <Trans
                     ns="community"
-                    i18nKey="campaign.rules.spotCoupon"
-                    components={[<strong key="paid" className="font-bold text-foreground" />]}
-                  />
-                </p>
-                <p>
-                  <Trans
-                    ns="community"
                     i18nKey="campaign.rules.spotSymbols"
                     components={[<span key="crypto" className="num" />, <span key="bstock" className="num" />]}
                   />
