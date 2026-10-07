@@ -66,12 +66,12 @@ reviewer:
     statsTruncated: "Note: this period's fill count may exceed the statistics cap of {{limit}}, so the closed-trade numbers below are an incomplete count — read a tendency from them, but do not treat them as a complete record to draw conclusions from"
     statsEquity: Starting equity {{start}} → closing equity {{end}}, return over the period {{pct}}%
     statsDrawdown: Max drawdown over the period {{dd}}%
-    statsClosed: "{{n}} closed trades: {{wins}} won / {{losses}} lost (win rate {{winRate}}%), gross P&L {{pnl}} (fees and funding excluded)"
+    statsClosed: "{{n}} closed trades: {{wins}} won / {{losses}} lost (win rate {{winRate}}%), net P&L {{pnl}} (after fees and funding)"
     noClosed: No closed trades in this period
 
     # ---- closed-trade pairing table (peer detail reuses the same set; the two must not drift apart) ----
     tradesHeader: "[CLOSED-TRADE PAIRING TABLE] (thesis → outcome, paired by code)"
-    tradeRow: entry {{entry}} ({{openedAt}}) → exit {{exit}} ({{closedAt}}), gross P&L {{pnl}}, held {{held}}, {{manner}}
+    tradeRow: entry {{entry}} ({{openedAt}}) → exit {{exit}} ({{closedAt}}), net P&L {{pnl}}, held {{held}}, {{manner}}
     planLine: "thesis: {{signals}} | invalidation: {{invalidation}}"
     noPlan: (no plan record)
     orphanPlan: "plan archived but not paired to any closed position (usually an unfilled order that was cancelled); thesis: {{signals}}"

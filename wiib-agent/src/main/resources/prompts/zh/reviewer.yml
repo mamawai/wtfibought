@@ -60,12 +60,12 @@ reviewer:
     statsTruncated: 注意：本期成交笔数可能超出统计上限 {{limit}} 笔，以下已了结相关数字为不完全统计——可以据此谈倾向，别当成完整战绩下定论
     statsEquity: 起始权益 {{start}} → 期末权益 {{end}}，期间收益率 {{pct}}%
     statsDrawdown: 期间最大回撤 {{dd}}%
-    statsClosed: 已了结 {{n}} 笔：{{wins}} 胜 {{losses}} 负（胜率 {{winRate}}%），合计毛盈亏 {{pnl}}（未计手续费与资金费）
+    statsClosed: 已了结 {{n}} 笔：{{wins}} 胜 {{losses}} 负（胜率 {{winRate}}%），合计净盈亏 {{pnl}}（已计入手续费与资金费）
     noClosed: 期间无已了结交易
 
     # ---- 已了结交易配对表（同侪详情复用同一套，两处口径不许分家）----
     tradesHeader: 【已了结交易配对表】（论点→结局，代码配对）
-    tradeRow: 入场 {{entry}}（{{openedAt}}）→ 出场 {{exit}}（{{closedAt}}），毛盈亏 {{pnl}}，持有 {{held}}，{{manner}}
+    tradeRow: 入场 {{entry}}（{{openedAt}}）→ 出场 {{exit}}（{{closedAt}}），净盈亏 {{pnl}}，持有 {{held}}，{{manner}}
     planLine: "论点: {{signals}} ｜ 失效条件: {{invalidation}}"
     noPlan: （无计划记录）
     orphanPlan: "计划归档但未配对到已平仓位（多为挂单未成交撤销）；论点: {{signals}}"

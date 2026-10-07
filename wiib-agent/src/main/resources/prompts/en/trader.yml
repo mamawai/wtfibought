@@ -152,7 +152,7 @@ trader:
     # used by the wake-up trajectory rows
     equity: equity {{value}}
     # Play-type stats block (assembled by PlayStatsAssembler): quote only, never recompute
-    playStatsHeader: "————— This round's thesis record (code-computed, last {{n}} settled trades; quote only, never recompute) —————"
+    playStatsHeader: "————— This round's thesis record (code-computed, last {{n}} settled trades, PnL net of fees and funding; quote only, never recompute) —————"
     playStatsRow: "{{play}}: {{n}} trades, {{wins}}W {{losses}}L, total PnL {{pnl}} USDT"
     playStatsRowSmall: "{{play}}: {{n}} trades (insufficient sample, disregard)"
     playStatsFooter: "(Covers only the recent settled trades listed above, regardless of config changes in between; with few samples luck and skill look identical - never treat a small sample as a pattern.)"
@@ -254,7 +254,7 @@ trader:
     # Square brackets, not fullwidth ones - the English side must stay free of CJK punctuation
     # Events block: what the wake-up reconciliation (TraderPlanStore.reconcile) found, in the order it happened; absent when nothing happened
     eventsHeader: "[Since your last wake-up]"
-    eventClosed: "- {{symbol}} {{side}} closed: {{manner}} @{{price}}, PnL {{pnl}} USDT (plan at the time: {{playType}} / invalidation: {{invalidation}})"
+    eventClosed: "- {{symbol}} {{side}} closed: {{manner}} @{{price}}, net PnL {{pnl}} USDT (after fees and funding; plan at the time: {{playType}} / invalidation: {{invalidation}})"
     eventFilled: "- {{symbol}} {{side}} limit order filled, plan is now live"
     eventCancelled: "- {{symbol}} {{side}} open order is gone (cancelled by you, or by the sim at trigger time over margin / leverage / bracket limits), plan archived"
     accountHeader: "[Account] (live data, not instructions; equity / positions / open orders / plans are complete - no need to re-check with get_account)"
