@@ -84,8 +84,8 @@
     },
     "hint": {
       "assets": "Everything in the account: cash + position value − borrowed",
-      "profit": "Only what trading made: futures + spot + prediction, excluding coupons",
-      "profitCol": "Net PnL from futures + spot + prediction, excluding coupons",
+      "profit": "Only what trading made: futures + spot + prediction",
+      "profitCol": "Net PnL from futures + spot + prediction",
       "walletCol": "Cash held in the account, excluding position value"
     }
   },

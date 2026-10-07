@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { LogIn } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-/** 游客占位：一句话 + 去登录。顶替那些没登录就没意义的面板（下单、发言、福利） */
+/** 游客占位：一句话 + 去登录。顶替那些没登录就没意义的面板（下单、发言） */
 export function LoginPrompt({ text, className }: { text: string; className?: string }) {
   const { t } = useTranslation('layout');
   return (

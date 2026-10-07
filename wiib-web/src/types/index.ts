@@ -39,27 +39,11 @@ export interface RankingItem {
   avatar?: string;
   totalAssets: number;
   profitPct: number;
-  /** 交易盈利 = 合约 + 现货 + 预测的净盈亏，不含优惠券省下的钱 */
+  /** 交易盈利 = 合约 + 现货 + 预测的净盈亏 */
   tradingProfit: number;
   /** 余额钱包（含冻结）与游戏钱包只是总资产的现金部分，相加 ≠ totalAssets */
   balanceWallet: number;
   gameWallet: number;
-}
-
-// ========== Buff相关类型 ==========
-export interface UserBuff {
-  id: number;
-  buffType: string;
-  buffName: string;
-  rarity: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY';
-  extraData?: string;
-  expireAt: string;
-  isUsed: boolean;
-}
-
-export interface BuffStatus {
-  canDraw: boolean;
-  todayBuff: UserBuff | null;
 }
 
 // ========== 加密货币行情类型 ==========
@@ -75,7 +59,6 @@ export interface CryptoOrderRequest {
   orderType: 'MARKET' | 'LIMIT';
   limitPrice?: number;
   leverageMultiple?: number;
-  useBuffId?: number;
 }
 
 export interface CryptoPosition {
@@ -84,7 +67,6 @@ export interface CryptoPosition {
   quantity: number;
   frozenQuantity: number;
   avgCost: number;
-  totalDiscount: number;
 }
 
 // bStock 代币化美股：静态信息(bstock 表) + 实时行情

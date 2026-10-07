@@ -16,7 +16,7 @@
     "positionValue": "Position value",
     "startCapital": "Starting capital {{amount}}",
     "guestTitle": "Browse first, trade after login",
-    "guestDesc": "Guests can view markets, rankings, the arena and comments. Log in to trade, draw buffs and post."
+    "guestDesc": "Guests can view markets, rankings, the arena and comments. Log in to trade and post."
   },
   "quick": {
     "stocks": "Stocks",
@@ -25,14 +25,12 @@
     "jev": "Jev",
     "ai": "Config",
     "arena": "AI Arena",
-    "buff": "Rewards",
     "stocksDesc": "Tokenized US stocks",
     "cryptoDesc": "Spot & perpetuals",
     "predictionDesc": "BTC 5-min up or down",
     "jevDesc": "Watch Jev bet 5-min rounds",
     "aiDesc": "BYOK model endpoints",
-    "arenaDesc": "Watch models trade",
-    "buffDesc": "Not drawn today"
+    "arenaDesc": "Watch models trade"
   },
   "entries": {
     "title": "Entries"
@@ -112,25 +110,6 @@
     "holders_other": "{{count}} addresses",
     "none": "None"
   },
-  "buff": {
-    "title": "Daily buff",
-    "drawing": "Drawing...",
-    "congrats": "You got",
-    "notDrawn": "Not drawn today — try your luck",
-    "draw": "Draw today's buff",
-    "drawnToday": "Already drawn today",
-    "loginFirst": "Sign in to draw",
-    "unused": "Unused",
-    "drawFailed": "Draw failed",
-    "stockExtra_one": "({{name}} · {{count}} share)",
-    "stockExtra_other": "({{name}} · {{count}} shares)",
-    "rarity": {
-      "common": "Common",
-      "rare": "Rare",
-      "epic": "Epic",
-      "legendary": "Legendary"
-    }
-  },
   "grid": {
     "title": "Monthly PnL",
     "cellTitle": "Day {{day}} · {{pnl}}",
@@ -208,10 +187,6 @@
       "q": "Are the game wallet and the trading wallet the same?",
       "a": "No. The main wallet is for trading (spot, futures, stocks); the game wallet funds the prediction market. They are accounted for separately, with an entry to transfer between them. Bankruptcy is judged on trading net worth alone — the game wallet cannot save you, and it is wiped along with everything else."
     },
-    "coupon": {
-      "q": "How do discount coupons (buffs) work?",
-      "a": "Tick a coupon from the daily buff draw when you place a spot market buy and it cuts the fill amount by the coupon rate. The \"Saved\" figure on the leaderboard totals what you have discounted this way. The rarer the coupon, the steeper the discount — keep the legendary ones for large orders."
-    },
     "campaign": {
       "q": "What are campaign points and the LDC prize pool?",
       "a": "During the five-dimension trading contest you earn points from trading (ROI targets and net PnL), the daily check-in, the long-short vote, the prediction market, comments and more; the campaign page lists every task and your live breakdown. Liquidations and the like deduct points. When it ends, the LDC prize pool is split by final point weight — authorize your LinuxDo account on the campaign page to claim. Resetting your account does not clear points already earned."
@@ -246,9 +221,8 @@
     "walletDesc": "The balance wallet funds trading, the game wallet funds the prediction market. Isolated from each other, transfer between them any time.",
     "quantTitle": "Quant strategies",
     "quantDesc": "The Strategies page shows live signals from four quant strategies (channel breakout, squeeze momentum, liquidation cascade fade, Fibonacci retracement) and their automated testnet execution.",
-    "perksTitle": "Prediction and rewards",
+    "perksTitle": "Prediction market",
     "perk1": "<0>BTC up/down prediction</0>: a new round every 5 minutes, priced on live Polymarket probabilities, sellable any time",
-    "perk2": "<0>Daily buff</0>: one draw a day — cash, shares or a discount coupon",
     "riskNotice": "Risk notice: every trade here is simulated, no real money is involved. No data, market feed or return shown constitutes investment advice. Leveraged and futures trading carry liquidation risk — proceed with care.",
     "hideToday": "Don't show today",
     "gotIt": "Got it"

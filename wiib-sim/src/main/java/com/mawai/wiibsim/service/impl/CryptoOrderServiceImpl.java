@@ -21,7 +21,6 @@ import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.ledger.Ledger;
 import com.mawai.wiibsim.ledger.LedgerCtx;
 import com.mawai.wiibsim.mapper.CryptoOrderMapper;
-import com.mawai.wiibsim.service.BuffService;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.service.CryptoOrderService;
 import com.mawai.wiibsim.service.CryptoPositionService;
@@ -58,7 +57,6 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
     private final TradingConfig tradingConfig;
     private final RedisLockUtil redisLockUtil;
     private final MarginAccountService marginAccountService;
-    private final BuffService buffService;
     private final CrossMarginService crossMarginService;
     private final StringRedisTemplate stringRedisTemplate;
     private final CacheService cacheService;
@@ -107,25 +105,12 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
             BigDecimal amount = price.multiply(request.getQuantity()).setScale(2, RoundingMode.HALF_UP);
             BigDecimal commission = tradingConfig.calculateCryptoCommission(amount);
 
-            BigDecimal discountRate = null;
-            if (request.getUseBuffId() != null) {
-                if (leverageMultiple > 1) throw new BizException(ErrorCode.DISCOUNT_NO_LEVERAGE);
-                discountRate = buffService.getDiscountRate(userId, request.getUseBuffId());
-                if (discountRate != null) {
-                    amount = amount.multiply(discountRate).setScale(2, RoundingMode.HALF_UP);
-                    commission = tradingConfig.calculateCryptoCommission(amount);
-                }
-            }
-
             if (leverageMultiple <= 1) {
                 BigDecimal totalCost = amount.add(commission);
                 if (user.getBalance().compareTo(totalCost) < 0) throw new BizException(ErrorCode.BALANCE_NOT_ENOUGH);
                 // 现货买入=余额钱包流出，被全仓仓位占用的部分不能拿来买币
                 crossMarginService.assertCanAfford(userId, totalCost);
-                BigDecimal discountPercent = discountRate != null ? discountRate.multiply(BigDecimal.valueOf(100)) : null;
-                CryptoOrderResponse resp = executeMarketBuy(userId, request.getSymbol(), request.getQuantity(), price, amount, commission, discountPercent);
-                if (discountRate != null) buffService.markUsed(request.getUseBuffId());
-                return resp;
+                return executeMarketBuy(userId, request.getSymbol(), request.getQuantity(), price, amount, commission);
             }
 
             if (!tradingConfig.getMargin().isEnabled() || leverageMultiple > tradingConfig.getMargin().getMaxLeverage()) {
@@ -233,19 +218,12 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
     // ==================== 市价买入执行 ====================
 
     private CryptoOrderResponse executeMarketBuy(Long userId, String symbol, BigDecimal quantity,
-                                                  BigDecimal price, BigDecimal amount, BigDecimal commission,
-                                                  BigDecimal discountPercent) {
+                                                  BigDecimal price, BigDecimal amount, BigDecimal commission) {
         userService.updateBalance(userId, amount.add(commission).negate());
-        BigDecimal discount = BigDecimal.ZERO;
-        if (discountPercent != null) {
-            BigDecimal originalAmount = price.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
-            discount = originalAmount.subtract(amount);
-        }
-        cryptoPositionService.addPosition(userId, symbol, quantity, price, discount);
+        cryptoPositionService.addPosition(userId, symbol, quantity, price);
 
         CryptoOrder order = buildOrder(userId, symbol, OrderSide.BUY.getCode(), OrderType.MARKET.getCode(),
                 quantity, 1, null, price, amount, commission, null, OrderStatus.FILLED.getCode());
-        order.setDiscountPercent(discountPercent); // 折扣率
         baseMapper.insert(order);
         log.info("crypto市价买入 userId={} {} qty={} price={} amount={}", userId, symbol, quantity, price, amount);
         return buildResponse(order);
@@ -259,7 +237,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         LedgerCtx.mark(SPOT_BUY_LEVERAGE);
         userService.updateBalance(userId, margin.add(commission).negate());
         marginAccountService.addLoanPrincipal(userId, borrowed);
-        cryptoPositionService.addPosition(userId, symbol, quantity, price, BigDecimal.ZERO);
+        cryptoPositionService.addPosition(userId, symbol, quantity, price);
 
         CryptoOrder order = buildOrder(userId, symbol, OrderSide.BUY.getCode(), OrderType.MARKET.getCode(),
                 quantity, leverage, null, price, amount, commission, null, OrderStatus.FILLED.getCode());
@@ -403,7 +381,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
                 LedgerCtx.mark(SPOT_LIMIT_REFUND, "CRYPTO_ORDER", order.getId());
                 userService.updateBalance(order.getUserId(), refund);
             }
-            cryptoPositionService.addPosition(order.getUserId(), order.getSymbol(), order.getQuantity(), executePrice, BigDecimal.ZERO);
+            cryptoPositionService.addPosition(order.getUserId(), order.getSymbol(), order.getQuantity(), executePrice);
         } else {
             cryptoPositionService.deductFrozenPosition(order.getUserId(), order.getSymbol(), order.getQuantity());
             settleSellProceeds(order.getUserId(), order.getSymbol(), order.getId(), amount.subtract(commission));
@@ -612,7 +590,6 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         resp.setTriggerPrice(order.getTriggerPrice());
         resp.setTriggeredAt(order.getTriggeredAt());
         resp.setStatus(order.getStatus());
-        resp.setDiscountPercent(order.getDiscountPercent());
         resp.setCreatedAt(order.getCreatedAt());
         return resp;
     }

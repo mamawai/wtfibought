@@ -15,7 +15,6 @@ import org.mockito.InOrder;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 
-import java.time.LocalDate;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -96,14 +95,6 @@ class AccountResetServiceTest {
 
         // 补偿：删表失败必须把触发保护装回去，否则仓位裸奔
         verify(indexService).registerPositionIndex(p);
-    }
-
-    @Test
-    void clearsTodayBuffStatusCache() {
-        // user_buff 行删了但缓存(TTL 1h)还写着"今天已抽"，不清的话重置完最长一小时抽不了新 buff
-        service.reset(7L);
-
-        verify(redis).delete("buff:status:7:" + LocalDate.now());
     }
 
     /** 平时（无活动）每周限 1 次：第二次直接拒，额度退回，业务一步不走 */

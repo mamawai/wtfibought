@@ -35,12 +35,6 @@ error:
   # WebSocket codes 1300+
   websocketConnectionLimit: Connection limit reached
   websocketAuthRequired: Log in before connecting
-  # Buff codes 1400+
-  buffAlreadyDrawn: You already drew today
-  buffNotFound: No such buff
-  buffExpired: That buff has expired
-  buffAlreadyUsed: That buff has been used
-  discountNoLeverage: Leverage is not available while using a discount
   # Crypto codes 1600+
   cryptoPriceUnavailable: Live price unavailable
   cryptoSymbolInvalid: Invalid pair

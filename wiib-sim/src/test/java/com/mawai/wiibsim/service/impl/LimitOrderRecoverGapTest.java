@@ -12,7 +12,6 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BStockService;
-import com.mawai.wiibsim.service.BuffService;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.CryptoPositionService;
@@ -143,7 +142,7 @@ class LimitOrderRecoverGapTest {
         when(lockUtil.tryLock(anyString(), anyLong())).thenReturn("v");
         CryptoOrderServiceImpl service = new CryptoOrderServiceImpl(mock(UserService.class),
                 mock(CryptoPositionService.class), mock(TradingConfig.class), lockUtil,
-                mock(MarginAccountService.class), mock(BuffService.class), mock(CrossMarginService.class),
+                mock(MarginAccountService.class), mock(CrossMarginService.class),
                 redis, mock(CacheService.class), mock(BStockService.class), mock(TradeFilterRegistry.class));
         // ServiceImpl 的 baseMapper 靠 Spring 注入，脱离容器得自己塞
         ReflectionTestUtils.setField(service, "baseMapper", cryptoMapper);

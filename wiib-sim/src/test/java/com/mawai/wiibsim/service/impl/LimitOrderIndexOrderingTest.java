@@ -8,7 +8,6 @@ import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.BStockService;
-import com.mawai.wiibsim.service.BuffService;
 import com.mawai.wiibsim.service.CrossLiquidationService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FundingRateService;
@@ -93,7 +92,7 @@ class LimitOrderIndexOrderingTest {
 
     private CryptoOrderServiceImpl cryptoService(StringRedisTemplate redis, RedisLockUtil lockUtil) {
         return new CryptoOrderServiceImpl(mock(UserService.class), mock(CryptoPositionService.class),
-                mock(TradingConfig.class), lockUtil, mock(MarginAccountService.class), mock(BuffService.class),
+                mock(TradingConfig.class), lockUtil, mock(MarginAccountService.class),
                 mock(CrossMarginService.class), redis, mock(CacheService.class), mock(BStockService.class),
                 mock(TradeFilterRegistry.class));
     }

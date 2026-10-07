@@ -750,10 +750,10 @@ const CROSS_ACCOUNT = {
 
 /** 现货持仓（crypto_position 一张表混着币和代币化美股，持仓页按 bstock 列表拆） */
 const SPOT_POSITIONS = [
-  { id: 1101, symbol: 'BTCUSDT', quantity: 0.24, frozenQuantity: 0, avgCost: 61240, totalDiscount: 38.5 },
-  { id: 1102, symbol: 'ETHUSDT', quantity: 3.2, frozenQuantity: 0.4, avgCost: 2288.6, totalDiscount: 0 },
-  { id: 1103, symbol: 'NVDABUSDT', quantity: 40, frozenQuantity: 0, avgCost: 168.2, totalDiscount: 12.4 },
-  { id: 1104, symbol: 'TSLABUSDT', quantity: 12, frozenQuantity: 0, avgCost: 352.6, totalDiscount: 0 },
+  { id: 1101, symbol: 'BTCUSDT', quantity: 0.24, frozenQuantity: 0, avgCost: 61240 },
+  { id: 1102, symbol: 'ETHUSDT', quantity: 3.2, frozenQuantity: 0.4, avgCost: 2288.6 },
+  { id: 1103, symbol: 'NVDABUSDT', quantity: 40, frozenQuantity: 0, avgCost: 168.2 },
+  { id: 1104, symbol: 'TSLABUSDT', quantity: 12, frozenQuantity: 0, avgCost: 352.6 },
 ];
 
 /** 代币化美股：照 sql/bstock.sql 的十只，symbol 带 B 后缀，ticker 才是股票代号（行情条按市值取前四） */
@@ -902,7 +902,6 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
         if (path === '/api/crypto/order/live') return ok(res, cryptoLive());
         if (path === '/api/futures/live') return ok(res, futuresLive());
         if (path === '/api/futures/force-orders') return ok(res, forceOrders());
-        if (path === '/api/buff/status') return ok(res, { canDraw: true, todayBuff: null });
         if (path === '/api/ai/quant/news') return ok(res, news());
         if (path === '/api/ai/trader/mine') {
           return ok(res, {

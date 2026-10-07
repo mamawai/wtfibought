@@ -45,8 +45,8 @@ public class CryptoPositionServiceImpl extends ServiceImpl<CryptoPositionMapper,
     }
 
     @Override
-    public void addPosition(Long userId, String symbol, BigDecimal quantity, BigDecimal price, BigDecimal discount) {
-        baseMapper.upsertPosition(userId, symbol, quantity, price, discount != null ? discount : BigDecimal.ZERO);
+    public void addPosition(Long userId, String symbol, BigDecimal quantity, BigDecimal price) {
+        baseMapper.upsertPosition(userId, symbol, quantity, price);
         log.info("用户{}增加crypto持仓 {} 数量{} 价格{}", userId, symbol, quantity, price);
     }
 

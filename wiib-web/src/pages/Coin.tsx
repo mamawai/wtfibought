@@ -377,9 +377,6 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
                   {position.frozenQuantity > 0 && (
                     <div className="kv"><span className="k">{t('coin.frozen')}</span><span className="v wn">{position.frozenQuantity}</span></div>
                   )}
-                  {position.totalDiscount > 0 && (
-                    <div className="kv"><span className="k">{t('coin.saved')}</span><span className="v wn">${fmtNum(position.totalDiscount)}</span></div>
-                  )}
                 </div>
               </div>
             );

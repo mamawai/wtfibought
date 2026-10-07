@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
  * name() ↔ VARCHAR 映射，没有 @EnumValue 兜着。上线后只准加新的，不准改名、不准删：
  * 一改名，库里旧名字的历史行读回来 Enum.valueOf 找不到常量，直接抛
  * IllegalArgumentException，整页账单 500。中文说法要调就只改 label，名字别动。
+ * 真要下线一个类型，先把库里那个名字的行 UPDATE 成别的类型，再删常量。
  */
 @Getter
 @RequiredArgsConstructor
@@ -66,7 +67,6 @@ public enum LedgerBizType {
     CASH_INFLOW_CREDIT("结算入余额"),
 
     // ===== 其它 =====
-    BUFF_REWARD("每日Buff奖励"),
     INITIAL_GRANT("初始资金"),
     BANKRUPT_CLEAR("爆仓清零"),
     BANKRUPT_RESET("破产恢复"),

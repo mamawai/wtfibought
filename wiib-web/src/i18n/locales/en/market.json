@@ -91,8 +91,7 @@
     "avgCost": "Avg cost",
     "lastPrice": "Last",
     "marketValue": "Market value",
-    "frozen": "Frozen",
-    "saved": "Saved"
+    "frozen": "Frozen"
   },
   "chart": {
     "open": "Open",

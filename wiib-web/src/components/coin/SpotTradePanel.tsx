@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { cryptoOrderApi } from '../../api';
 import { useUserStore } from '../../stores/userStore';
 import { useCrossAccount } from '../../hooks/useCrossAccount';
-import { useDiscountBuff } from '../../hooks/useDiscountBuff';
 import { useToast } from '../ui/use-toast';
 import { FuturesActionButton } from '../FuturesActionButton';
 import { LeverageSlider } from '../LeverageSlider';
@@ -19,7 +18,7 @@ import { COMMISSION_RATE, POSITION_PCTS, SPOT_LEVERAGE_OPTIONS, calcMaxSpotBuyQt
 const SPOT_MAX_LEVERAGE = SPOT_LEVERAGE_OPTIONS[SPOT_LEVERAGE_OPTIONS.length - 1];
 
 /**
- * 现货交易面板：买卖方向、市价/限价、数量/仓位、现货杠杆、折扣券、预估与提交。
+ * 现货交易面板：买卖方向、市价/限价、数量/仓位、现货杠杆、预估与提交。
  * 状态全部内聚；成交后调 onTraded 让父级刷新持仓/用户/订单表。
  */
 export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, onTraded }: {
@@ -54,10 +53,6 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
   const [buyUnit, setBuyUnit] = useState<'COIN' | 'USDT'>('COIN');
   const [submitting, setSubmitting] = useState(false);
   const [actionSuccess, setActionSuccess] = useState(false);
-
-  // 折扣券（仅市价买入可用）
-  const [discountBuff, setDiscountBuff] = useDiscountBuff(true, `${symbol}:${orderType}`);
-  const [useBuff, setUseBuff] = useState(false);
 
   useEffect(() => {
     if (!actionSuccess) return;
@@ -118,7 +113,6 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
         orderType,
         ...(orderType === 'LIMIT' ? { limitPrice: parseFloat(limitPrice) } : {}),
         ...(effLeverage > 1 ? { leverageMultiple: effLeverage } : {}),
-        ...(isBuyMarket && useBuff && discountBuff ? { useBuffId: discountBuff.id } : {}),
       };
       if (side === 'BUY') {
         await cryptoOrderApi.buy(req);
@@ -129,8 +123,6 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
       }
       setActionSuccess(true);
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-      // 券只有市价买入才真用掉了（限价买/卖出请求里不带券）
-      if (isBuyMarket && useBuff && discountBuff) { setDiscountBuff(null); setUseBuff(false); }
       setQuantity(isUsdtInput ? '' : String(MIN_QTY));
       setLimitPrice('');
       setLeverage(1);
@@ -145,9 +137,7 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
   const qtyNum = isUsdtInput ? usdtToQty(inputNum) : inputNum;
   const orderQty = toOrderQty(qtyNum);
   const priceForCalc = unitPrice;
-  // 折扣券只吃市价买入，卖出不打折
-  const discountRate = useBuff && discountBuff && isBuyMarket ? Number(discountBuff.buffType.match(/DISCOUNT_(\d+)/)?.[1] ?? 100) / 100 : 1;
-  const est = calcSpotOrderEstimate(orderQty, priceForCalc, effLeverage, discountRate);
+  const est = calcSpotOrderEstimate(orderQty, priceForCalc, effLeverage);
 
   /** 仓位 % 按钮的目标值：买入吃可用（spendable）、卖出吃持仓；口径与提交一致 */
   const pctTarget = (pct: number) => {
@@ -239,37 +229,14 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
         {currentPrice > 0 && <PctRow active={activePct} onPick={handlePct} />}
       </div>
 
-      {/* 现货杠杆借款：仅市价买入；用了折扣券就只能 1x */}
+      {/* 现货杠杆借款：仅市价买入 */}
       {isBuyMarket && (
         <div className="flex flex-col gap-2">
           <div className="flex justify-between items-baseline text-[12.5px] font-semibold text-muted-foreground">
             <span>{t('lev.label')}</span>
             <b className="num text-[20px] font-bold text-foreground">{leverage}x</b>
           </div>
-          <div className={useBuff ? 'opacity-40 pointer-events-none' : ''}>
-            <LeverageSlider value={leverage} max={SPOT_MAX_LEVERAGE} ticks={SPOT_LEVERAGE_OPTIONS} onChange={setLeverage} />
-          </div>
-          {useBuff && <div className="text-[12px] text-warning">{t('spot.levDisabledByBuff')}</div>}
-        </div>
-      )}
-
-      {/* 折扣券：仅市价买入且有可用券；用了杠杆就不能叠 */}
-      {isBuyMarket && discountBuff && (
-        <div className="field">
-          <label>
-            <span>{t('spot.discount')}</span>
-            <button
-              type="button"
-              disabled={leverage > 1}
-              onClick={() => { if (leverage > 1) return; setUseBuff(v => !v); }}
-              className={cn('chip', useBuff && 'fill orange', leverage > 1 && 'opacity-40 cursor-not-allowed')}
-            >
-              {discountBuff.buffName}
-            </button>
-          </label>
-          <div className="text-[12px] text-muted-foreground">
-            {leverage > 1 ? t('spot.discountDisabledByLev') : t('spot.discountLine')}
-          </div>
+          <LeverageSlider value={leverage} max={SPOT_MAX_LEVERAGE} ticks={SPOT_LEVERAGE_OPTIONS} onChange={setLeverage} />
         </div>
       )}
 
@@ -291,10 +258,7 @@ export function SpotTradePanel({ symbol, currentPrice, position, onModeChange, o
           {side === 'BUY' && (
             <div className="kv py-[7px]">
               <span className="k">{effLeverage > 1 ? t('spot.margin') : t('spot.estCost')}</span>
-              <span className="v">
-                {discountRate < 1 && <span className="line-through text-muted-foreground mr-1.5">{fmtNum(est.fullAmount)}</span>}
-                {fmtNum(est.margin)}
-              </span>
+              <span className="v">{fmtNum(est.margin)}</span>
             </div>
           )}
           <div className="kv py-[7px]">

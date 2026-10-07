@@ -57,7 +57,7 @@ public class RankingService {
     private BigDecimal initialBalance;
 
     public List<RankingDTO> getRanking() {
-        // DTO 字段演进后（如去掉 buffProfit），Redis 里旧结构的缓存反序列化会抛异常，
+        // DTO 字段演进后，Redis 里旧结构的缓存反序列化会抛异常，
         // 当未命中处理刷新覆盖，别让一份 15 分钟就过期的缓存把榜打挂
         List<RankingDTO> cached = null;
         try {
@@ -99,13 +99,12 @@ public class RankingService {
                 .collect(Collectors.groupingBy(PredictionBet::getUserId));
         Map<String, BigDecimal> predictionBidCache = new HashMap<>();
 
-        // ────── 4. 交易盈利批量聚合（口径：交易净盈亏，优惠券折扣要剔掉） ──────
+        // ────── 4. 交易盈利批量聚合（口径：交易净盈亏） ──────
         Map<Long, BigDecimal> futuresNetMap = toUserAmountMap(futuresOrderMapper.sumNetPnlAfterCommissionAll());
         Map<Long, BigDecimal> futuresFundingFeeMap = toUserAmountMap(futuresPositionMapper.sumFundingFeeTotalAll());
         Map<Long, BigDecimal> predictionRealizedMap = toUserAmountMap(predictionBetMapper.sumRealizedProfitAfterBuyFeeAll());
         Map<Long, BigDecimal> cryptoBuyMap = toUserAmountMap(cryptoOrderMapper.sumBuyFilledAmountAll());
         Map<Long, BigDecimal> cryptoSellMap = toUserAmountMap(cryptoOrderMapper.sumSellFilledAmountAll());
-        Map<Long, BigDecimal> cryptoDiscountMap = toUserAmountMap(cryptoOrderMapper.sumBuyDiscountAll());
 
         // ────── 5. 逐用户聚合 ──────
         List<RankingDTO> rankings = new ArrayList<>(users.size());
@@ -127,15 +126,13 @@ public class RankingService {
                     .add(futures.value()).add(predictionValue)
                     .subtract(loanPrincipal).subtract(loanInterest);
 
-            // 交易盈利 = 合约净盈亏 + 现货现金流(扣优惠券折扣) + 预测已结算净盈亏
-            BigDecimal buffDiscount = nz(cryptoDiscountMap.get(uid));
+            // 交易盈利 = 合约净盈亏 + 现货现金流 + 预测已结算净盈亏
             BigDecimal futuresProfit = nz(futuresNetMap.get(uid))
                     .add(futures.unrealizedPnl())
                     .subtract(nz(futuresFundingFeeMap.get(uid)));
             BigDecimal cryptoProfit = nz(cryptoSellMap.get(uid))
                     .subtract(nz(cryptoBuyMap.get(uid)))
-                    .add(cryptoMarketValue)
-                    .subtract(buffDiscount);
+                    .add(cryptoMarketValue);
             BigDecimal predictionProfit = nz(predictionRealizedMap.get(uid));
             BigDecimal tradingProfit = futuresProfit.add(cryptoProfit).add(predictionProfit);
 
@@ -163,9 +160,9 @@ public class RankingService {
      * 没有"钱包余额"档：那是现金构成，不是成绩。
      */
     public enum RankingSort {
-        /** 总资产。默认榜，含优惠券带来的便宜 */
+        /** 总资产。默认榜 */
         ASSETS(Comparator.comparing(RankingDTO::getTotalAssets)),
-        /** 交易盈利。剔掉优惠券，只看靠交易赚到的钱 */
+        /** 交易盈利。只看靠交易赚到的钱 */
         TRADING_PROFIT(Comparator.comparing(RankingDTO::getTradingProfit));
 
         private final Comparator<RankingDTO> comparator;

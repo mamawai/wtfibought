@@ -47,9 +47,6 @@ public class CryptoOrder {
     /** PENDING/TRIGGERED/FILLED/CANCELLED */
     private String status;
 
-    /** 折扣率（如95表示95折，null无折扣） */
-    private BigDecimal discountPercent;
-
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

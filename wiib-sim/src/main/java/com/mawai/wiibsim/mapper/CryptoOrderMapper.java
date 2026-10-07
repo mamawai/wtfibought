@@ -83,24 +83,6 @@ public interface CryptoOrderMapper extends BaseMapper<CryptoOrder> {
             "FROM crypto_order WHERE order_side = 'SELL' AND status = 'FILLED' GROUP BY user_id")
     List<Map<String, Object>> sumSellFilledAmountAll();
 
-    /** 排行榜交易盈利：从历史买单反推优惠券节省金额，避免持仓清零后折扣记录丢失 */
-    @Select("""
-            SELECT user_id,
-                   COALESCE(SUM(
-                       CASE
-                           WHEN discount_percent IS NOT NULL
-                                AND filled_price IS NOT NULL
-                                AND filled_amount IS NOT NULL
-                           THEN ROUND(filled_price * quantity, 2) - filled_amount
-                           ELSE 0
-                       END
-                   ), 0) AS amount
-            FROM crypto_order
-            WHERE order_side = 'BUY' AND status = 'FILLED'
-            GROUP BY user_id
-            """)
-    List<Map<String, Object>> sumBuyDiscountAll();
-
     @Select("""
             SELECT COALESCE(AVG(leverage), 0)
             FROM crypto_order
