@@ -38,7 +38,7 @@
     "title": "资产分布",
     "crypto": "币种现货",
     "bstock": "bStock",
-    "futures": "合约（保证金+浮盈）",
+    "futures": "合约（保证金+浮盈亏）",
     "cash": "现金"
   },
   "cat": {
@@ -187,6 +187,8 @@
   "chart": {
     "assetAllocation": "资产分布",
     "gameWalletNote": "不可直接交易，需划转至余额钱包",
+    "futuresLoss": "合约浮亏",
+    "futuresLossNote": "合约浮亏 {{value}} 尚未扣除，平仓时从这里扣",
     "noHistory": "暂无历史数据，每日零点自动快照",
     "cumulative": "累计",
     "range": "{{days}}天",
