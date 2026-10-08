@@ -535,7 +535,7 @@
     "usageChat": "Chat · main",
     "usageChatLight": "Chat · light",
     "chatMain": "Chat · Main model",
-    "chatMainHint": "Final answers in the analysis chat and any deep analysis triggered from it run on this",
+    "chatMainHint": "Final answers in the analysis chat, plus any deep analysis or behavior analysis triggered from it, run on this",
     "chatLight": "Chat · Light model",
     "chatLightHint": "Orchestration, expert data pulls and history compaction run on this; a cheap one saves a lot",
     "sameAsMain": "Same as main model ({{name}} · {{model}})",
@@ -546,8 +546,7 @@
     "traderHint": "Every wake-up, daily review and peer learning of “{{name}}” burns this one",
     "coach": "Review coach",
     "coachValue": "Chosen in the backtest console before each round, defaults to the default endpoint",
-    "coachHint": "AI chart hints during a manual review and the post-settlement assessment",
-    "behaviorNote": "Behavior analysis runs on the platform model and does not use your key."
+    "coachHint": "AI chart hints during a manual review and the post-settlement assessment"
   },
   "endpoint": {
     "name": "Name",

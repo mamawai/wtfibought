@@ -40,7 +40,6 @@ function usagesOf(e: LlmEndpointView, bindings: LlmBindings, hasTrader: boolean)
 /**
  * 模型配置（BYOK 总配置）：端点库 + 用途绑定。
  * 全站要选模型的地方（对话 / 交易员 / 复盘教练）都从这里配的端点里选；只配一条时它就是默认，谁都用它。
- * 行为分析不在这里——它走平台管理员配的模型，不烧用户的 key。
  */
 export function ModelConfig() {
   const { toast } = useToast();
@@ -323,10 +322,6 @@ export function ModelConfig() {
 
       {/* ===== Jev 决策模型（可选）：与端点库分开的一份配置 ===== */}
       <JevConfig />
-
-      <p className="text-[10px] text-muted-foreground/70 px-1">
-        {t('model.behaviorNote')}
-      </p>
     </div>
   );
 }

@@ -516,7 +516,7 @@
     "usageChat": "对话·主模型",
     "usageChatLight": "对话·轻模型",
     "chatMain": "对话 · 主模型",
-    "chatMainHint": "研判对话的最终回答与对话里触发的深研判走它",
+    "chatMainHint": "研判对话的最终回答，以及对话里触发的深研判、行为分析都走它",
     "chatLight": "对话 · 轻模型",
     "chatLightHint": "调度、专家取数、历史压缩走它；挑条便宜的能省不少",
     "sameAsMain": "同主模型（{{name}} · {{model}}）",
@@ -527,8 +527,7 @@
     "traderHint": "「{{name}}」每次唤醒、每日复盘、同侪学习都烧这条",
     "coach": "复盘教练",
     "coachValue": "每局开始前在回测页配置台现选，缺省用默认端点",
-    "coachHint": "手动复盘里的 AI 盘面提示与结算后评估",
-    "behaviorNote": "行为分析由平台模型提供，不使用你的 key。"
+    "coachHint": "手动复盘里的 AI 盘面提示与结算后评估"
   },
   "endpoint": {
     "name": "名称",
