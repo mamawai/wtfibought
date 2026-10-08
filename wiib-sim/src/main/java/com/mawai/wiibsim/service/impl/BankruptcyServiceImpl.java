@@ -77,8 +77,14 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         LocalDate today = LocalDate.now();
         for (User user : users) {
             try {
-                if (shouldBankrupt(user.getId())) {
-                    transactionTemplate.executeWithoutResult(_ -> liquidateUser(user.getId(), today));
+                // 锁外先粗筛，命中的再锁行按最新数据重判
+                if (shouldBankrupt(userService.getById(user.getId()))) {
+                    transactionTemplate.executeWithoutResult(_ -> {
+                        User locked = userMapper.selectByIdForUpdate(user.getId());
+                        if (shouldBankrupt(locked)) {
+                            liquidateUser(locked, today);
+                        }
+                    });
                 }
             } catch (Exception e) {
                 log.error("爆仓检查失败 userId={}", user.getId(), e);
@@ -107,17 +113,17 @@ public class BankruptcyServiceImpl implements BankruptcyService {
 
     @Override
     public void bankruptNow(Long userId) {
-        transactionTemplate.executeWithoutResult(_ -> liquidateUser(userId, LocalDate.now()));
+        transactionTemplate.executeWithoutResult(_ -> liquidateUser(userMapper.selectByIdForUpdate(userId), LocalDate.now()));
     }
 
-    private boolean shouldBankrupt(Long userId) {
-        User user = userService.getById(userId);
+    private boolean shouldBankrupt(User user) {
         if (user == null) {
             throw new BizException(ErrorCode.USER_NOT_FOUND);
         }
         if (Boolean.TRUE.equals(user.getIsBankrupt())) {
             return false;
         }
+        Long userId = user.getId();
 
         BigDecimal balance = user.getBalance() != null ? user.getBalance() : BigDecimal.ZERO;
         BigDecimal frozen = user.getFrozenBalance() != null ? user.getFrozenBalance() : BigDecimal.ZERO;
@@ -150,14 +156,14 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         return netAssets.compareTo(BigDecimal.ZERO) <= 0;
     }
 
-    void liquidateUser(Long userId, LocalDate today) {
+    void liquidateUser(User before, LocalDate today) {
+        Long userId = before.getId();
         // 7×24 连续交易无休市日，破产次日即恢复
         LocalDate resetDate = today.plusDays(1);
 
         // markBankrupt 是整体覆写型 SQL（五个钱包全置 0），拿不到旧值，而算 delta 非知道旧值不可。
-        // 所以先加行锁读快照：并发的资金 UPDATE 会在这把锁上排队，读到的就是这次清零真正抹掉的金额。
+        // 所以 before 是调用方在本事务里先加行锁读的快照：并发的资金 UPDATE 会在这把锁上排队，读到的就是这次清零真正抹掉的金额。
         // 全项目只有这两个低频方法这么写，正常资金路径一律走 atomic* + RETURNING，不许照抄。
-        User before = userMapper.selectByIdForUpdate(userId);
         int affected = userMapper.markBankrupt(userId, resetDate);
         if (affected == 0) {
             return;
