@@ -596,7 +596,12 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             } else {
                 FuturesPosition latest = positionMapper.selectById(pos.getId());
                 if (latest != null && "OPEN".equals(latest.getStatus())) {
-                    riskService.checkAndLiquidate(latest.getId(), getMarkPrice(latest.getSymbol()));
+                    BigDecimal price = markPriceOrNull(latest.getSymbol());
+                    if (price == null) {
+                        log.warn("futures资金费扣光保证金后取不到mark价，本次跳过强平复核 posId={}", latest.getId());
+                    } else {
+                        riskService.checkAndLiquidate(latest.getId(), price);
+                    }
                 }
             }
         }
