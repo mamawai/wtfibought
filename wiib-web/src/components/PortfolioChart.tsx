@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { getCoin } from '../lib/coinConfig';
 import { useIsDark } from '../hooks/useIsDark';
 import { chartUi, cssVar, rgba } from '../lib/chartTheme';
+import { fmtNum } from '../lib/utils';
 
 interface CryptoRow {
   symbol: string;
@@ -36,6 +37,10 @@ export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresR
   const isDark = useIsDark();
   const { t, i18n } = useTranslation('portfolio');
 
+  // 饼图画不了负数：负的（全仓浮亏）不进扇区，红字列在图下方
+  const losses = futuresRows.filter(f => f.marketValue < 0);
+  const lossTotal = losses.reduce((s, f) => s + f.marketValue, 0);
+
   useEffect(() => {
     if (!chartRef.current) return;
     const chart = echarts.init(chartRef.current, isDark ? 'dark' : 'light');
@@ -44,7 +49,8 @@ export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresR
     const gain = cssVar('--color-gain', isDark ? '#3ecf8e' : '#0b8a5c');
     const primary = cssVar('--color-primary', isDark ? '#f97316' : '#f25f0a');
 
-    // 扇区名同时是 tooltip 里认游戏钱包的判据，先取出来，别在 formatter 里再查一次
+    // 扇区名同时是 tooltip 里认钱包的判据，先取出来，别在 formatter 里再查一次
+    const balanceWalletName = t('ov.balanceWallet');
     const gameWalletName = t('ov.gameWallet');
 
     const data = [
@@ -75,7 +81,7 @@ export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresR
             itemStyle: { color: coin.chartColor },
           };
         }),
-      { name: t('ov.balanceWallet'), value: balance, itemStyle: { color: gain } },
+      { name: balanceWalletName, value: balance, itemStyle: { color: gain } },
       ...(gameBalance > 0 ? [{ name: gameWalletName, value: gameBalance, itemStyle: { color: primary } }] : [])
     ];
 
@@ -85,11 +91,12 @@ export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresR
         trigger: 'item',
         ...ui.tooltip,
         formatter: (params: { marker: string; name: string; value: number; percent: number }) => {
-           // 游戏钱包计入总资产但不能直接下单交易，tooltip 里说清楚免得误解
-           const note = params.name === gameWalletName
-             ? `<br/><span style="font-size:0.8em;opacity:0.7">${t('chart.gameWalletNote')}</span>` : '';
+           // 游戏钱包不能直接下单；余额钱包这块还没扣合约浮亏。tooltip 里说清楚免得误解
+           const note = params.name === gameWalletName ? t('chart.gameWalletNote')
+             : params.name === balanceWalletName && lossTotal < 0 ? t('chart.futuresLossNote', { value: fmtNum(lossTotal) })
+             : '';
            return `${params.marker}${params.name}<br/>
-                   <span style="font-weight:bold; font-size:1.1em">${params.value.toFixed(2)}</span> (${params.percent}%)${note}`;
+                   <span style="font-weight:bold; font-size:1.1em">${params.value.toFixed(2)}</span> (${params.percent}%)${note && `<br/><span style="font-size:0.8em;opacity:0.7">${note}</span>`}`;
         }
       },
       legend: {
@@ -140,7 +147,16 @@ export function PortfolioChart({ cryptoPositions = [], bstockRows = [], futuresR
       chart.dispose();
     };
     // 依赖里必须带 i18n.language：少了它切语言后 option 不重算，图上还是旧文案
-  }, [cryptoPositions, bstockRows, futuresRows, balance, gameBalance, isDark, t, i18n.language]);
+  }, [cryptoPositions, bstockRows, futuresRows, balance, gameBalance, lossTotal, isDark, t, i18n.language]);
 
-  return <div ref={chartRef} className="w-full h-full" />;
+  return (
+    <div className="w-full h-full flex flex-col">
+      <div ref={chartRef} className="flex-1 min-h-0" />
+      {losses.length > 0 && (
+        <div className="num dn mt-1 text-center text-[12.5px]">
+          {t('chart.futuresLoss')} {losses.map(f => `${getCoin(f.symbol).name} ${fmtNum(f.marketValue)}`).join(' · ')}
+        </div>
+      )}
+    </div>
+  );
 }

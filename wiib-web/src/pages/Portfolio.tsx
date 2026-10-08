@@ -54,6 +54,9 @@ const ALLOC_COLORS = {
   cash: 'var(--color-border)',
 };
 
+/** 负数项（全仓浮亏）在分布条上的红斜纹，盖在条右端 */
+const ALLOC_LOSS_BG = 'repeating-linear-gradient(-45deg, var(--color-loss) 0 3px, transparent 3px 6px)';
+
 export function Portfolio() {
   const navigate = useNavigate();
   const { t } = useTranslation(['portfolio', 'common']);
@@ -246,9 +249,10 @@ export function Portfolio() {
     { k: t('alloc.futures'), v: futuresTotal, c: ALLOC_COLORS.futures },
     { k: t('alloc.cash'), v: walletBalance, c: ALLOC_COLORS.cash },
   ];
-  // 全仓浮亏会让合约那格成负数：占比只在正数里分，负的照实显示金额、占比记 0
+  // 占比按正数合计算；全仓浮亏会让合约那格成负数，照实记负占比，条上从右端用红斜纹盖掉这么一截
   const allocTotal = allocRaw.reduce((s, a) => s + Math.max(0, a.v), 0);
-  const alloc = allocRaw.map(a => ({ ...a, pct: allocTotal > 0 ? (Math.max(0, a.v) / allocTotal) * 100 : 0 }));
+  const alloc = allocRaw.map(a => ({ ...a, pct: allocTotal > 0 ? (a.v / allocTotal) * 100 : 0 }));
+  const allocLossPct = Math.min(100, -alloc.reduce((s, a) => s + Math.min(0, a.pct), 0));
 
   const togglePanel = (p: Panel) => setPanel(cur => cur === p ? null : p);
   const panelBtn = (p: Panel, label: string) => (
@@ -364,14 +368,15 @@ export function Portfolio() {
                 <div className="flex items-baseline justify-between mb-3">
                   <b className="text-[15px] font-extrabold">{t('alloc.title')}</b>
                 </div>
-                <div className="flex h-[22px] gap-0.5">
-                  {alloc.map(a => <i key={a.k} className="block h-full" style={{ width: `${a.pct}%`, background: a.c }} />)}
+                <div className="relative flex h-[22px] gap-0.5">
+                  {alloc.map(a => <i key={a.k} className="block h-full" style={{ width: `${Math.max(0, a.pct)}%`, background: a.c }} />)}
+                  {allocLossPct > 0 && <i className="absolute inset-y-0 right-0" style={{ width: `${allocLossPct}%`, background: ALLOC_LOSS_BG }} />}
                 </div>
                 <div className="num grid grid-cols-2 xl:grid-cols-4 gap-3.5 mt-3.5">
                   {alloc.map(a => (
-                    <div key={a.k} className="flex flex-col gap-0.5 pl-3 border-l-4" style={{ borderColor: a.c }}>
+                    <div key={a.k} className="flex flex-col gap-0.5 pl-3 border-l-4" style={{ borderColor: a.v < 0 ? 'var(--color-loss)' : a.c }}>
                       <span className="text-[12.5px] mute">{a.k}</span>
-                      <span className="text-[17px] font-semibold [font-stretch:85%]">
+                      <span className={cn('text-[17px] font-semibold [font-stretch:85%]', a.v < 0 && 'dn')}>
                         {fmtNum(a.v)}<small className="ml-1.5 text-[12px] font-medium mute">{a.pct.toFixed(1)}%</small>
                       </span>
                     </div>

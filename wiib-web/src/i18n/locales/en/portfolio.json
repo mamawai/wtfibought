@@ -194,6 +194,8 @@
   "chart": {
     "assetAllocation": "Asset allocation",
     "gameWalletNote": "Transfer to the balance wallet before trading",
+    "futuresLoss": "Futures unrealized loss",
+    "futuresLossNote": "Futures unrealized loss of {{value}} not yet deducted; it comes out of this wallet on close",
     "noHistory": "No history yet — a snapshot is taken every day at midnight",
     "cumulative": "Cum.",
     "range": "{{days}}d",
