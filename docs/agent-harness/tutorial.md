@@ -496,7 +496,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 | 装置 | 入口 | 要点 |
 |---|---|---|
-| **behavior** | `chat/BehaviorToolkit` → `BehaviorAnalysisService` → `BehaviorAnalysisWorkflow` | 并发拉 sim 的 10 个 internal 端点 → 拼一个 prompt → 调**一次** LLM。**准入层必须经过**（缓存 30min / 失败负缓存 / 并发闸门）——模型一轮里连点三次就是连烧三次。模型由调用方传进来，用的是用户 BYOK 的深模型：平台 behavior 功能位已退休 |
+| **behavior** | `chat/BehaviorToolkit` → `BehaviorAnalysisService` → `BehaviorAnalysisWorkflow` | 并发拉 sim 的 7 个 internal 端点 → 拼一个 prompt → 调**一次** LLM。**准入层必须经过**（缓存 30min / 失败负缓存 / 并发闸门）——模型一轮里连点三次就是连烧三次。模型由调用方传进来，用的是用户 BYOK 的深模型：平台 behavior 功能位已退休 |
 | **replay coach** | `controller/ReplayCoachController` + `analysis/ReplayCoachPrompts` | 一次 BYOK 流式调用，SSE 协议与工作台同款。**不进会话历史、不记忆、不排队**，只挡"上一次还没跑完又点"；断连即停（没有落库诉求，用户切走了就别再烧他的 token）。两个硬约束在 `ReplayCoachPrompts`：只依据给定数据（盲测局禁止猜日期）、中性不下单 |
 | **deep analysis** | `chat/DeepAnalysisToolkit` → `analysis/DeepAnalysisService` | 严格说是**固定编排**不是单次调用：Bull∥Bear 虚拟线程并行 + Judge 裁决 = 3 次深模型调用，所以它是唯一挂 HITL 闸门的工具。产物落库后由 `analysis/NarrativeVerificationService` 到期（H12）拿真实走势对账——叙事轨也要有战绩 |
 
