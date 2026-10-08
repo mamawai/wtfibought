@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -18,13 +19,14 @@ import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -86,7 +88,8 @@ class FuturesLimitOpenFillTest {
                 userService, userMapper, positionMapper, orderMapper,
                 new TradingConfig(), bracketRegistry, cacheService, positionIndexService,
                 mock(FuturesRiskService.class), crossMarginService,
-                mock(CrossLiquidationService.class), mock(FairLockRegistry.class), mock(FundingRateService.class));
+                mock(CrossLiquidationService.class), mock(FairLockRegistry.class), mock(FundingRateService.class),
+                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))));
     }
 
     private static FuturesPosition pos(long id, String side, String mode, int leverage,

@@ -11,6 +11,7 @@ import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.dto.CrossSnapshotRow;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -22,6 +23,8 @@ import org.apache.ibatis.annotations.Select;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -178,7 +181,7 @@ class CrossOccupancyGuardTest {
                 new TradingConfig(), mock(FairLockRegistry.class), cacheService,
                 mock(FuturesPositionIndexService.class), bracketRegistry, crossMargin,
                 new TradeFilterRegistry(mock(BinanceRestClient.class)),
-                new MessageCatalog());
+                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))));
 
         FuturesAddMarginRequest req = new FuturesAddMarginRequest();
         req.setPositionId(2L);

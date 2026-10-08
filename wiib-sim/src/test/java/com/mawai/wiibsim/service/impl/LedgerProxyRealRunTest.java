@@ -1,6 +1,5 @@
 package com.mawai.wiibsim.service.impl;
 
-import com.mawai.wiibcommon.dto.CryptoOrderRequest;
 import com.mawai.wiibcommon.dto.FuturesAddMarginRequest;
 import com.mawai.wiibcommon.entity.CryptoOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
@@ -13,8 +12,8 @@ import com.mawai.wiibcommon.enums.OrderSide;
 import com.mawai.wiibcommon.enums.OrderStatus;
 import com.mawai.wiibcommon.enums.OrderType;
 import com.mawai.wiibcommon.exception.BizException;
-import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.controller.InternalFuturesTradeController;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.LedgerProbeMapper;
@@ -26,11 +25,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.transaction.interceptor.TransactionAttribute;
-import org.springframework.transaction.interceptor.TransactionAttributeSource;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -40,18 +36,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * {@code @Ledger} 真跑验收：注解到底有没有生效；protected 方法上的 {@code @Transactional} 到底
- * 有没有事务边界；以及<b>切面射程外那几条路径</b>（建号 INSERT、爆仓/破产恢复的整体覆写 UPDATE、
+ * 账本真跑验收：两种压标签的方式到底生没生效（public 方法上的 {@code @Ledger}、类内事务段的 {@code LedgerTx}）；
+ * 类内事务段抛异常时钱回不回滚；以及<b>切面射程外那几条路径</b>（建号 INSERT、爆仓/破产恢复的整体覆写 UPDATE、
  * 资金费扣仓位保证金）补记得对不对——那几条全靠业务代码显式记，漏了不报错、事后补不回来。
  * <p>
  * 单测和 LedgerPlacementTest 都只能证明"注解没标在明显拦不到的位置"，证不了"真的拦到了"。
- * 而项目里的标注有 13 处落在 <b>protected + SpringUtils.getAopProxy(this).doXxx()</b> 这个形态上
- * （私有执行方法是同类自调用，注解只能往这层放）。这条链要是不通，接近一半的标注就是摆设，
- * 而且不报错——流水静默落 UNKNOWN，事后补不回来。所以两种形态各真跑一次。
+ * 两种形态哪种不通都不报错——流水静默落 UNKNOWN，事后补不回来。所以两种形态各真跑一次。
  * <p>
- * <b>为什么这个测试放在 service.impl 包而不是 ledger 包</b>：要直接打 protected 的 doCancelOrder，
- * 只有同包能编译过。跨包就得上反射，反射写错（打到目标对象而不是代理）会让用例假绿，
- * 恰好把要验的东西验没了。
+ * 放在 service.impl 包：破产恢复和资金费用例要直接调包内可见的 resetUser / doChargeFundingFeeOne。
  * <p>
  * 跑法（项目根）：
  * <pre>
@@ -96,7 +88,10 @@ class LedgerProxyRealRunTest {
     private InternalFuturesTradeController internalFuturesTradeController;
 
     @Autowired
-    private TransactionAttributeSource transactionAttributeSource;
+    private TransactionTemplate transactionTemplate;
+
+    @Autowired
+    private LedgerTx ledgerTx;
 
     private final List<Long> createdUserIds = new ArrayList<>();
     private final List<Long> createdPositionIds = new ArrayList<>();
@@ -169,22 +164,21 @@ class LedgerProxyRealRunTest {
     }
 
     /**
-     * 形态二：protected 方法 + getAopProxy 调用（CryptoOrderServiceImpl.doCancelOrder）。
-     * 这是项目绕"同类自调用"的既定范式，也是本次标注最吃重的形态。
+     * 形态二：类内事务段经 LedgerTx 压标签（CryptoOrderServiceImpl.cancel → doCancelOrder）。
+     * 这是类内事务段的统一写法，也是标签最吃重的形态。
      * <p>
-     * 选 doCancelOrder：同类同形态且金额完全确定（解冻多少就是多少），
-     * 不把"注解生效没有"和配置项绑在一起。
-     * getAopProxy 是冗余保险不是必需（注入的本就是 CGLIB 代理），写成这样只为与生产调用形态一致。
+     * 选撤单：金额完全确定（解冻多少就是多少），不把"标签生效没有"和配置项绑在一起。
+     * 走真入口 cancel，验的就是生产里那一行 ledgerTx.call。
      */
     @Test
-    void protected方法经代理调用时Ledger真的生效() {
+    void 类内事务段经LedgerTx压标签时真的生效() {
         Long uid = newUser("1000.00");
         // 垫场：先真冻结 500，否则解冻那条 SQL 的 frozen_balance >= 500 条件不满足，返 null 不记账
         userService.freezeBalance(uid, new BigDecimal("500.00"));
         Long orderId = newPendingLimitBuyOrder(uid, new BigDecimal("500.00"));
         ledgerMapper.deleteByUserId(uid);   // 冻结那笔是垫场，清掉免得混进断言
 
-        SpringUtils.getAopProxy(cryptoOrderServiceImpl).doCancelOrder(uid, orderId);
+        cryptoOrderServiceImpl.cancel(uid, orderId);
 
         List<UserLedger> rows = ledgerMapper.selectByCursor(uid, null, null, 10);
         // 一条 atomicUnfreezeBalance 动两个钱包 → 两行
@@ -219,83 +213,12 @@ class LedgerProxyRealRunTest {
         return o.getId();
     }
 
-    // ==================== protected 方法上的 @Transactional 到底生效不生效 ====================
-
-    /** 带 @Ledger 的 protected 入口所在的 5 个类；下面反射自取，免得手抄清单抄漏 */
-    private static final List<Class<?>> LEDGER_SERVICE_CLASSES = List.of(
-            FuturesTradingServiceImpl.class, FuturesSettlementServiceImpl.class,
-            FuturesRiskServiceImpl.class, CryptoOrderServiceImpl.class,
-            MarginAccountServiceImpl.class);
-
-    /** 现存 13 个「protected + @Transactional + @Ledger」入口。只作"清单别悄悄缩水"的下限，不是精确台账。 */
-    private static final int MIN_PROTECTED_TX_LEDGER = 13;
+    // ==================== 类内事务段抛异常时钱回不回滚 ====================
 
     /**
-     * 现存 21 处 {@code @Ledger} 标注里有 13 处是 {@code protected @Transactional @Ledger doXxx}，全靠 getAopProxy 调进来。
-     * 但 {@code @Transactional} 和自定义 {@code @Aspect} 的 {@code @annotation} 切点<b>不共享结论</b>：
-     * {@code AbstractFallbackTransactionAttributeSource.computeTransactionAttribute} 第一句是
-     * <pre>if (allowPublicMethodsOnly() &amp;&amp; !Modifier.isPublic(method.getModifiers())) return null;</pre>
-     * 而 {@code AnnotationTransactionAttributeSource} 的<b>无参构造</b>把 publicMethodsOnly 设成 true。
+     * 真跑一遍看"钱到底回不回滚"——失败注入。
      * <p>
-     * <b>实测结论：生效。</b> 关键不在 Spring 哪个版本"支持非 public"，而在<b>配置类用哪个构造</b>。
-     * 逐版本反编译 {@code transactionAttributeSource()}（javap 看 iconst_0）：
-     * <pre>
-     * spring-tx 5.3.31   ProxyTransactionManagementConfiguration     无参构造        → true
-     * spring-tx 6.1.15   ProxyTransactionManagementConfiguration     iconst_0 + (Z)  → false   ← 行为分界已在此之前
-     * spring-tx 6.2.1／6.2.16／7.0.8
-     *                    AbstractTransactionManagementConfiguration  iconst_0 + (Z)  → false
-     * </pre>
-     * 所以行为分界线落在 <b>5.3 与 6.1 之间</b>（手上没有 6.0.x 的 jar，无法再收窄）；6.2 起该方法从
-     * {@code ProxyTransactionManagementConfiguration} 上移到抽象基类，那只是<b>代码搬家，不是行为变更</b>——
-     * 别再把它误读成"7.x 改的"。
-     * <p>
-     * 也就是说"protected 上的 @Transactional 不生效"这个广为人知的结论，在本项目<b>已经不成立</b>。
-     * 但它是白捡的框架默认值，不是项目自己钉的，会让它<b>静默消失</b>的只有两件事：
-     * ①有人自己声明一个<b>无参</b>的 {@code AnnotationTransactionAttributeSource} bean；
-     * ②把 Spring 降到 <b>5.3 及以下</b>。真发生了，这 13 个方法的事务边界就没了，
-     * 而 LedgerAspect「INSERT 刻意不 catch 才能保证账实一致」那条铁律在它们身上同时变成空的。
-     * <p>
-     * 所以这条测试问的是<b>容器里真正在用的那个</b> TransactionAttributeSource（不是 new 一个默认实例，
-     * 那个会给出完全相反的答案）给不给得出属性。断言写成"不许有人给不出属性"，
-     * 真要是被翻回去，这条会红并把方法名全打出来。不许改成宽松断言。
-     */
-    @Test
-    void protected方法上的Transactional必须真的有事务属性() throws Exception {
-        // 反射自取而不是手抄：初版手抄就漏过两个
-        List<Method> protectedTxLedger = LEDGER_SERVICE_CLASSES.stream()
-                .flatMap(c -> java.util.Arrays.stream(c.getDeclaredMethods()))
-                .filter(m -> !Modifier.isPublic(m.getModifiers()))
-                .filter(m -> m.isAnnotationPresent(com.mawai.wiibsim.ledger.Ledger.class))
-                .filter(m -> m.isAnnotationPresent(
-                        org.springframework.transaction.annotation.Transactional.class))
-                .toList();
-
-        assertThat(protectedTxLedger)
-                .as("非 public 的 @Transactional @Ledger 入口少于 %d 个，八成是反射没取到而不是真变少了",
-                        MIN_PROTECTED_TX_LEDGER)
-                .hasSizeGreaterThanOrEqualTo(MIN_PROTECTED_TX_LEDGER);
-
-        List<String> noTx = protectedTxLedger.stream()
-                .filter(m -> transactionAttributeSource.getTransactionAttribute(m, m.getDeclaringClass()) == null)
-                .map(m -> m.getDeclaringClass().getSimpleName() + "#" + m.getName())
-                .toList();
-
-        assertThat(noTx)
-                .as("这些 protected @Transactional 方法拿不到事务属性 = 根本没有事务边界")
-                .isEmpty();
-
-        // 公共方法当对照：它必须拿得到，否则说明是本用例问错了对象而不是 protected 的问题。
-        // 对照组要挑事务边界真在自己身上的 public 方法（拆成"壳 + protected 实现"的那些不行）
-        TransactionAttribute publicAttr = transactionAttributeSource.getTransactionAttribute(
-                CryptoOrderServiceImpl.class.getDeclaredMethod("buy", Long.class, CryptoOrderRequest.class),
-                CryptoOrderServiceImpl.class);
-        assertThat(publicAttr).as("对照组：public 的 buy 必须拿得到事务属性").isNotNull();
-    }
-
-    /**
-     * 上一条问的是"框架说给不给"，这条真跑一遍看"钱到底回不回滚"——失败注入。
-     * <p>
-     * 打 {@code FuturesTradingServiceImpl.doAddMargin}，它的执行顺序天然适合注入：
+     * 打 {@code FuturesTradingServiceImpl.addMargin}，它经 LedgerTx 进的 doAddMargin 执行顺序天然适合注入：
      * <pre>
      * atomicUpdateBalance(-amount)   ← 钱动了，切面同时插了账本行
      * atomicAddMargin(+amount)       ← 仓位 margin 也动了
@@ -307,7 +230,7 @@ class LedgerProxyRealRunTest {
      * 事务生效 → 余额、仓位 margin、账本三样全回滚；不生效 → 三样都留下痕迹。
      */
     @Test
-    void protected方法抛异常时资金必须回滚() {
+    void 类内事务段抛异常时资金必须回滚() {
         Long uid = newUser("1000.00");
         // bracket 表里绝不会有的 symbol，让 calcStaticLiqPrice 在动钱之后抛
         Long posId = newIsolatedPosition(uid, "NOSUCHSYMBOLUSDT", new BigDecimal("200.00"));
@@ -318,7 +241,7 @@ class LedgerProxyRealRunTest {
 
         // 必须钉住是哪个异常：FUTURES_SYMBOL_NOT_CONFIGURED 只可能来自 calcStaticLiqPrice（两次动钱之后），
         // 只断言"抛了"的话前置校验抛出也假绿
-        assertThatThrownBy(() -> SpringUtils.getAopProxy(futuresTradingServiceImpl).doAddMargin(uid, req))
+        assertThatThrownBy(() -> futuresTradingServiceImpl.addMargin(uid, req))
                 .isInstanceOf(BizException.class)
                 .extracting(e -> ((BizException) e).getCode())
                 .as("失败注入必须落在 calcStaticLiqPrice（动钱之后），否则本用例什么都没验到")
@@ -326,7 +249,7 @@ class LedgerProxyRealRunTest {
 
         // 三样一起看：只看余额的话，万一 atomicAddMargin 那步就失败了也会"余额没变"，假绿
         assertThat(userMapper.selectById(uid).getBalance())
-                .as("余额必须回滚到 1000（若为 900 则 protected 上的 @Transactional 是空的）")
+                .as("余额必须回滚到 1000（若为 900 则 LedgerTx 没把事务开起来）")
                 .isEqualByComparingTo("1000.00");
         assertThat(positionMapper.selectById(posId).getMargin())
                 .as("仓位保证金必须回滚到 200")
@@ -423,7 +346,7 @@ class LedgerProxyRealRunTest {
     /**
      * 破产恢复：balance 被整体覆写成初始资金，delta 是"目标值 − 快照旧值"而不是初始资金本身。
      * 恢复要求 bankrupt_reset_date <= today，所以 today 传爆仓时算出来的那个恢复日。
-     * 走 getAopProxy(resetUser) 而不是 resetBankruptUsers——后者扫全库，会恢复所有者的真实破产账号。
+     * 照 resetBankruptUsers 循环体那一行调 resetUser；resetBankruptUsers 扫全库，会恢复所有者的真实破产账号。
      */
     @Test
     void 破产恢复后不变量仍成立() {
@@ -431,7 +354,7 @@ class LedgerProxyRealRunTest {
         bankruptcyServiceImpl.bankruptNow(uid);
         LocalDate resetDate = userMapper.selectById(uid).getBankruptResetDate();
 
-        SpringUtils.getAopProxy(bankruptcyServiceImpl).resetUser(uid, resetDate);
+        transactionTemplate.executeWithoutResult(_ -> bankruptcyServiceImpl.resetUser(uid, resetDate));
 
         User after = userMapper.selectById(uid);
         assertThat(after.getIsBankrupt()).isFalse();
@@ -449,7 +372,8 @@ class LedgerProxyRealRunTest {
      * <p>
      * 余额刻意给 0：支付方三级兜底的第一级 atomicUpdateBalance 必然返 null，才会掉到扣保证金那级。
      * 断言写成"delta == 实际少掉的保证金、balanceAfter == 库里当前保证金"这种相对式；
-     * mark 价传 20000、数量取 0.001，费 0.20 远小于保证金，稳定走"够扣"那一级。
+     * mark 价取实时缓存（取不到退回开仓价 20000）、数量 0.001、费率 1%，费只有几块钱，
+     * 远小于 5000 保证金，稳定走"够扣"那一级（这一级之后不做强平复核）。
      */
     @Test
     void 资金费扣保证金走第二个切点记账() {
@@ -457,9 +381,8 @@ class LedgerProxyRealRunTest {
         Long posId = newIsolatedPosition(uid, "BTCUSDT", new BigDecimal("5000.00"), new BigDecimal("0.00100000"));
         BigDecimal marginBefore = positionMapper.selectById(posId).getMargin();
 
-        // 正费率 + LONG = 本仓应付；protected 方法同包可见，经代理调进来才有 @Ledger/@Transactional
-        SpringUtils.getAopProxy(futuresSettlementServiceImpl)
-                .doChargeFundingFeeOne(posId, new BigDecimal("0.0100"), new BigDecimal("20000"));
+        // 正费率 + LONG = 本仓应付；生产入口：拿仓位锁，经 ledgerTx 进事务段
+        futuresSettlementServiceImpl.chargeFundingFeeOne(positionMapper.selectById(posId), new BigDecimal("0.0100"));
 
         BigDecimal marginAfter = positionMapper.selectById(posId).getMargin();
         assertThat(marginAfter).as("保证金必须真被扣了，否则本用例什么都没验到").isLessThan(marginBefore);
@@ -490,8 +413,9 @@ class LedgerProxyRealRunTest {
         Long uid = newUser("0.00");
         Long posId = newIsolatedPosition(uid, "BTCUSDT", new BigDecimal("0.01"), new BigDecimal("0.00100000"));
 
-        var result = SpringUtils.getAopProxy(futuresSettlementServiceImpl)
-                .doChargeFundingFeeOne(posId, new BigDecimal("0.0100"), new BigDecimal("20000"));
+        // chargeFundingFeeOne 里的事务段，不含之后的强平复核
+        var result = ledgerTx.call(LedgerBizType.FUNDING_FEE_PAY, () -> futuresSettlementServiceImpl
+                .doChargeFundingFeeOne(posId, new BigDecimal("0.0100"), new BigDecimal("20000")));
 
         assertThat(result.checkLiquidation())
                 .as("checkLiquidation=true 只可能来自'扣光'那一级，false 说明走成了'够扣'、本用例没测到东西")

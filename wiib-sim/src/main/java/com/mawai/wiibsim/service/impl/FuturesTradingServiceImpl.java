@@ -12,12 +12,11 @@ import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
-import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
-import com.mawai.wiibsim.ledger.Ledger;
 import com.mawai.wiibsim.ledger.LedgerCtx;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -30,7 +29,6 @@ import com.mawai.wiibsim.util.FairLockRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -64,6 +62,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
     private final TradeFilterRegistry tradeFilterRegistry;
     /** 反手的半成功要把开仓失败的原因成文带回前端，绕开了全局处理器，只能自己查词表 */
     private final MessageCatalog messages;
+    private final LedgerTx ledgerTx;
 
     // ==================== 开仓 ====================
 
@@ -78,12 +77,12 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
             FuturesPosition sameSide = openPositionsOf(userId, request.getSymbol()).stream()
                     .filter(p -> p.getSide().equals(request.getSide())).findFirst().orElse(null);
             if (sameSide == null) {
-                return SpringUtils.getAopProxy(this).doOpenPosition(userId, request);
+                return openLocked(userId, request);
             }
             Lock posLock = lockRegistry.tryLockAsUser("futures:pos:" + sameSide.getId());
             if (posLock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
             try {
-                return SpringUtils.getAopProxy(this).doOpenPosition(userId, request);
+                return openLocked(userId, request);
             } finally {
                 posLock.unlock();
             }
@@ -92,13 +91,12 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         }
     }
 
-    /**
-     * @Ledger 只能标在这层：三条开仓执行方法是私有自调用、AOP 拦不到，
-     * 本方法经 getAopProxy 真走代理；每笔精确类型由执行方法内的 LedgerCtx.mark 覆盖。
-     */
-    @Transactional(rollbackFor = Exception.class)
-    @Ledger(FUTURES_OPEN_MARGIN)
-    protected FuturesOrderResponse doOpenPosition(Long userId, FuturesOpenRequest request) {
+    // 锁内开仓。每笔的精确类型由三条开仓执行方法里的 LedgerCtx.mark 给，FUTURES_OPEN_MARGIN 只是默认
+    private FuturesOrderResponse openLocked(Long userId, FuturesOpenRequest request) {
+        return ledgerTx.call(FUTURES_OPEN_MARGIN, () -> doOpenPosition(userId, request));
+    }
+
+    FuturesOrderResponse doOpenPosition(Long userId, FuturesOpenRequest request) {
         // 挂一次，本方法内所有流水都带上币种（symbol 挂在方法级 frame 上）
         LedgerCtx.symbol(request.getSymbol());
         getAndValidateUser(userId);
@@ -375,18 +373,15 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         Lock lock = lockRegistry.tryLockAsUser("futures:pos:" + request.getPositionId());
         if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
         try {
-            return SpringUtils.getAopProxy(this).doClosePosition(userId, request);
+            return ledgerTx.call(FUTURES_CLOSE_SETTLE, () -> doClosePosition(userId, request));
         } finally {
             lock.unlock();
         }
     }
 
-    // 标这一层不标 executeMarketClose：后者是私有 + 同类自调用，AOP 拦不到。
     // 本方法唯一的资金动作就是逐仓平仓返还（全仓走 crossMarginService.settle，自带 CROSS_SETTLE），
     // 一个类型盖得住，不需要逐笔 mark。
-    @Transactional(rollbackFor = Exception.class)
-    @Ledger(FUTURES_CLOSE_SETTLE)
-    protected FuturesOrderResponse doClosePosition(Long userId, FuturesCloseRequest request) {
+    FuturesOrderResponse doClosePosition(Long userId, FuturesCloseRequest request) {
         FuturesPosition position = getUserPosition(userId, request.getPositionId());
         LedgerCtx.symbol(position.getSymbol());
 
@@ -586,16 +581,13 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
 
     @Override
     public FuturesOrderResponse cancelOrder(Long userId, Long orderId) {
-        FuturesOrder order = SpringUtils.getAopProxy(this).doCancelOrder(userId, orderId);
+        FuturesOrder order = ledgerTx.call(FUTURES_LIMIT_UNFREEZE, () -> doCancelOrder(userId, orderId));
         // 索引跟着DB走：事务提交后才摘索引。搁事务里解冻一失败回滚，单子退回PENDING而索引已没了=悬空
         removeFromLimitZSet(order, cacheService);
         return buildOrderResponse(order);
     }
 
-    // 标这一层：protected 且经 getAopProxy 走代理调进来，AOP 拦得到（cancelOrder() 只负责摘索引）
-    @Transactional(rollbackFor = Exception.class)
-    @Ledger(FUTURES_LIMIT_UNFREEZE)
-    protected FuturesOrder doCancelOrder(Long userId, Long orderId) {
+    FuturesOrder doCancelOrder(Long userId, Long orderId) {
         FuturesOrder order = orderMapper.selectById(orderId);
         if (order == null || !order.getUserId().equals(userId)) {
             throw new BizException(ErrorCode.ORDER_NOT_FOUND);
@@ -625,15 +617,13 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         Lock lock = lockRegistry.tryLockAsUser("futures:pos:" + request.getPositionId());
         if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
         try {
-            SpringUtils.getAopProxy(this).doAddMargin(userId, request);
+            ledgerTx.run(FUTURES_ADD_MARGIN, () -> doAddMargin(userId, request));
         } finally {
             lock.unlock();
         }
     }
 
-    @Transactional(rollbackFor = Exception.class)
-    @Ledger(FUTURES_ADD_MARGIN)
-    protected void doAddMargin(Long userId, FuturesAddMarginRequest request) {
+    void doAddMargin(Long userId, FuturesAddMarginRequest request) {
         FuturesPosition position = getUserPosition(userId, request.getPositionId());
         LedgerCtx.symbol(position.getSymbol());
         if (position.isCross()) throw new BizException(ErrorCode.FUTURES_CROSS_MARGIN_ADJUST);
@@ -666,15 +656,13 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         Lock lock = lockRegistry.tryLockAsUser("futures:pos:" + request.getPositionId());
         if (lock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
         try {
-            SpringUtils.getAopProxy(this).doReduceMargin(userId, request);
+            ledgerTx.run(FUTURES_REDUCE_MARGIN, () -> doReduceMargin(userId, request));
         } finally {
             lock.unlock();
         }
     }
 
-    @Transactional(rollbackFor = Exception.class)
-    @Ledger(FUTURES_REDUCE_MARGIN)
-    protected void doReduceMargin(Long userId, FuturesReduceMarginRequest request) {
+    void doReduceMargin(Long userId, FuturesReduceMarginRequest request) {
         FuturesPosition position = getUserPosition(userId, request.getPositionId());
         LedgerCtx.symbol(position.getSymbol());
         if (position.isCross()) throw new BizException(ErrorCode.FUTURES_CROSS_MARGIN_ADJUST);
@@ -743,7 +731,7 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
                     if (posLock == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
                     posLocks.add(posLock);
                 }
-                SpringUtils.getAopProxy(this).doAdjustLeverage(userId, request);
+                ledgerTx.run(FUTURES_LEVERAGE_RELEASE, () -> doAdjustLeverage(userId, request));
             } finally {
                 for (int i = posLocks.size() - 1; i >= 0; i--) {
                     posLocks.get(i).unlock();
@@ -754,11 +742,8 @@ public class FuturesTradingServiceImpl implements FuturesTradingService {
         }
     }
 
-    // 标这一层不标 adjustIsolatedLeverage：后者是私有 + 同类自调用，AOP 拦不到。
     // 本方法唯一的资金动作就是逐仓调高杠杆释放多余保证金（全仓只改占用数字，钱不动），一个类型盖得住。
-    @Transactional(rollbackFor = Exception.class)
-    @Ledger(FUTURES_LEVERAGE_RELEASE)
-    protected void doAdjustLeverage(Long userId, FuturesAdjustLeverageRequest request) {
+    void doAdjustLeverage(Long userId, FuturesAdjustLeverageRequest request) {
         LedgerCtx.symbol(request.getSymbol());
         // 锁内重查：拿锁前仓位可能已被平掉/强平
         List<FuturesPosition> positions = positionMapper.selectList(new LambdaQueryWrapper<FuturesPosition>()

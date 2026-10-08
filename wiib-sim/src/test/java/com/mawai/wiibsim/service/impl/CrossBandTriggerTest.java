@@ -6,7 +6,6 @@ import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.market.KlineBar;
-import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
@@ -22,7 +21,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
-import org.springframework.context.ApplicationContext;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -81,7 +81,7 @@ class CrossBandTriggerTest {
         service = new CrossLiquidationServiceImpl(crossMargin, positionMapper, orderMapper,
                 new TradingConfig(), cacheService, mock(FuturesPositionIndexService.class),
                 lockRegistry, mock(TradeNotificationService.class), registry,
-                mock(FuturesRiskService.class));
+                mock(FuturesRiskService.class), new TransactionTemplate(mock(PlatformTransactionManager.class)));
     }
 
     /** LONG 20@100、20x、占用100 */
@@ -157,10 +157,6 @@ class CrossBandTriggerTest {
         // 插针到50（出带且该价下已爆）；缓存价已回落到100
         when(crossMargin.snapshot(UID, SYM, new BigDecimal("50"))).thenReturn(liquidatableAt50());
         when(cacheService.getMarkPrice(SYM)).thenReturn(new BigDecimal("100"));
-
-        ApplicationContext ctx = mock(ApplicationContext.class);
-        when(ctx.getBean(CrossLiquidationServiceImpl.class)).thenReturn(service);
-        new SpringUtils().setApplicationContext(ctx);
 
         when(positionMapper.selectById(1L)).thenReturn(position());
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);
@@ -276,9 +272,6 @@ class CrossBandTriggerTest {
 
     @Test
     void 锁内仍判爆_按锁内重读的数量结算_锁在结算之后才放() {
-        ApplicationContext ctx = mock(ApplicationContext.class);
-        when(ctx.getBean(CrossLiquidationServiceImpl.class)).thenReturn(service);
-        new SpringUtils().setApplicationContext(ctx);
         // 锁外读到的还是 1 张
         when(positionMapper.selectList(any())).thenReturn(List.of(btcLong("1", "1000")));
         when(positionMapper.casClosePosition(anyLong(), anyString(), any(), any())).thenReturn(1);

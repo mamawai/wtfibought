@@ -9,7 +9,6 @@ import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.enums.LedgerBizType;
 import com.mawai.wiibcommon.enums.LedgerWallet;
 import com.mawai.wiibcommon.exception.BizException;
-import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.mapper.CryptoPositionMapper;
@@ -29,7 +28,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -55,6 +54,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
     private final UserLedgerMapper userLedgerMapper;
     private final ResetQuotaService resetQuotaService;
     private final CampaignCarryoverService campaignCarryoverService;
+    private final TransactionTemplate transactionTemplate;
 
     @Value("${trading.initial-balance:10000}")
     private BigDecimal initialBalance;
@@ -78,7 +78,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         for (User user : users) {
             try {
                 if (shouldBankrupt(user.getId())) {
-                    SpringUtils.getAopProxy(this).liquidateUser(user.getId(), today);
+                    transactionTemplate.executeWithoutResult(_ -> liquidateUser(user.getId(), today));
                 }
             } catch (Exception e) {
                 log.error("爆仓检查失败 userId={}", user.getId(), e);
@@ -98,7 +98,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
 
         for (User user : users) {
             try {
-                SpringUtils.getAopProxy(this).resetUser(user.getId(), today);
+                transactionTemplate.executeWithoutResult(_ -> resetUser(user.getId(), today));
             } catch (Exception e) {
                 log.error("破产恢复失败 userId={}", user.getId(), e);
             }
@@ -107,7 +107,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
 
     @Override
     public void bankruptNow(Long userId) {
-        SpringUtils.getAopProxy(this).liquidateUser(userId, LocalDate.now());
+        transactionTemplate.executeWithoutResult(_ -> liquidateUser(userId, LocalDate.now()));
     }
 
     private boolean shouldBankrupt(Long userId) {
@@ -150,8 +150,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         return netAssets.compareTo(BigDecimal.ZERO) <= 0;
     }
 
-    @Transactional(rollbackFor = Exception.class)
-    protected void liquidateUser(Long userId, LocalDate today) {
+    void liquidateUser(Long userId, LocalDate today) {
         // 7×24 连续交易无休市日，破产次日即恢复
         LocalDate resetDate = today.plusDays(1);
 
@@ -169,8 +168,7 @@ public class BankruptcyServiceImpl implements BankruptcyService {
         log.warn("用户爆仓 userId={} resetDate={}", userId, resetDate);
     }
 
-    @Transactional(rollbackFor = Exception.class)
-    protected void resetUser(Long userId, LocalDate today) {
+    void resetUser(Long userId, LocalDate today) {
         // 同 liquidateUser：resetAfterBankruptcy 也是整体覆写，先加行锁读快照才算得出 delta
         User before = userMapper.selectByIdForUpdate(userId);
         int affected = userMapper.resetAfterBankruptcy(userId, initialBalance, today);

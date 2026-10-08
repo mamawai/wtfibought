@@ -4,6 +4,8 @@ import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
+import com.mawai.wiibsim.ledger.LedgerTx;
+import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -21,12 +23,16 @@ import com.mawai.wiibsim.util.RedisLockUtil;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.Set;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -71,10 +77,15 @@ class LimitOrderIndexOrderingTest {
         when(zset.rangeByScore("crypto:limit:buy:BTCUSDT", 50000d, Double.MAX_VALUE)).thenReturn(Set.of("1"));
         RedisLockUtil lockUtil = mock(RedisLockUtil.class);
         when(lockUtil.tryLock("crypto:order:execute:1", 30)).thenReturn("lock-val");
+        CryptoOrderMapper mapper = mock(CryptoOrderMapper.class);
+        when(mapper.casUpdateToTriggered(anyLong(), any())).thenThrow(new RuntimeException("CAS 炸了"));
 
-        // 拿到锁之后 markOrderTriggered 走 AOP 代理，代理拿不到就抛——等价于 CAS 那步炸了
-        cryptoService(redis, lockUtil).onPriceUpdate("BTCUSDT", new BigDecimal("50000"));
+        CryptoOrderServiceImpl service = cryptoService(redis, lockUtil);
+        // ServiceImpl 的 baseMapper 靠 Spring 注入，脱离容器得自己塞
+        ReflectionTestUtils.setField(service, "baseMapper", mapper);
+        service.onPriceUpdate("BTCUSDT", new BigDecimal("50000"));
 
+        verify(mapper).casUpdateToTriggered(anyLong(), any());
         verify(zset, never()).remove(anyString(), any());
     }
 
@@ -91,10 +102,11 @@ class LimitOrderIndexOrderingTest {
     }
 
     private CryptoOrderServiceImpl cryptoService(StringRedisTemplate redis, RedisLockUtil lockUtil) {
+        TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
         return new CryptoOrderServiceImpl(mock(UserService.class), mock(CryptoPositionService.class),
                 mock(TradingConfig.class), lockUtil, mock(MarginAccountService.class),
                 mock(CrossMarginService.class), redis, mock(CacheService.class), mock(BStockService.class),
-                mock(TradeFilterRegistry.class));
+                mock(TradeFilterRegistry.class), tx, new LedgerTx(tx));
     }
 
     private FuturesSettlementServiceImpl futuresService(CacheService cacheService) {
@@ -102,6 +114,7 @@ class LimitOrderIndexOrderingTest {
                 mock(FuturesPositionMapper.class), mock(FuturesOrderMapper.class), mock(TradingConfig.class),
                 mock(FuturesLeverageBracketRegistry.class), cacheService, mock(FuturesPositionIndexService.class),
                 mock(FuturesRiskService.class), mock(CrossMarginService.class), mock(CrossLiquidationService.class),
-                mock(FairLockRegistry.class), mock(FundingRateService.class));
+                mock(FairLockRegistry.class), mock(FundingRateService.class),
+                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))));
     }
 }

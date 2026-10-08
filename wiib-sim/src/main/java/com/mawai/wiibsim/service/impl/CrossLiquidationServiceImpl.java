@@ -8,7 +8,6 @@ import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.market.KlineBar;
-import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
@@ -21,7 +20,7 @@ import com.mawai.wiibsim.util.FairLockRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -55,6 +54,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
     private final TradeNotificationService tradeNotificationService;
     private final CrossBandRegistry bandRegistry;
     private final FuturesRiskService futuresRiskService;
+    private final TransactionTemplate transactionTemplate;
 
     /** 已命中的止损档；distance = 离当前价的相对距离，越远越先被碰到 */
     private record HitStop(Long positionId, String symbol, String id, BigDecimal price, BigDecimal distance) {}
@@ -241,7 +241,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
                 }
                 held.add(lock);
             }
-            return SpringUtils.getAopProxy(this).liquidateAll(userId, pinSymbol, pinPrice, ids);
+            return Boolean.TRUE.equals(transactionTemplate.execute(_ -> liquidateAll(userId, pinSymbol, pinPrice, ids)));
         } finally {
             for (int i = held.size() - 1; i >= 0; i--) {
                 held.get(i).unlock();
@@ -256,8 +256,7 @@ public class CrossLiquidationServiceImpl implements CrossLiquidationService {
      * 缓存价回落不影响——判定与结算同一口径，否则会出现"按50判爆、按100结算"的分裂。</p>
      * <p>positionIds 是调用方已经锁住的全仓仓位。返回有没有平掉仓位。</p>
      */
-    @Transactional(rollbackFor = Exception.class)
-    protected boolean liquidateAll(Long userId, String pinSymbol, BigDecimal pinPrice, List<Long> positionIds) {
+    boolean liquidateAll(Long userId, String pinSymbol, BigDecimal pinPrice, List<Long> positionIds) {
         // 锁内按触发价重判
         if (!crossMarginService.snapshot(userId, pinSymbol, pinPrice).liquidatable()) return false;
 

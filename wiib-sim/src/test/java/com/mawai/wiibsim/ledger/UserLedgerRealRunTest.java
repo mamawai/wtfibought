@@ -553,10 +553,9 @@ class UserLedgerRealRunTest {
      * 现状：全部 {@code atomic*} 调用点都在事务内——要么是 public {@code @Transactional} 入口
      * （CryptoOrderServiceImpl.buy/sell、UserServiceImpl.transferToGame、
      * MarginAccountServiceImpl.addLoanPrincipal/applyCashInflow…），
-     * 要么是 protected {@code @Transactional} 的 doXxx 经 getAopProxy 调进来；
-     * 预测盘走 TransactionTemplate 的编程式事务。
+     * 要么是类内事务段经 TransactionTemplate / LedgerTx 开的编程式事务（预测盘也是 TransactionTemplate）。
      * 但这一点<b>没有任何自动化守卫</b>，只有代码审查兜着；唯一相关的真跑覆盖是
-     * {@code LedgerProxyRealRunTest#protected方法抛异常时资金必须回滚()} 那一条路径。
+     * {@code LedgerProxyRealRunTest#类内事务段抛异常时资金必须回滚()} 那一条路径。
      * （刻意不加运行时检查：现存路径一条都没漏，为将来可能的回归在每笔资金变动上付常驻成本不值当。）
      * <p>
      * 刻意混两种资金 SQL（扣余额 / 冻结）而不是同一句打 20 遍：要验的是不同语句抢同一行时

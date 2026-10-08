@@ -7,6 +7,7 @@ import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
@@ -23,10 +24,11 @@ import com.mawai.wiibsim.service.UserService;
 import com.mawai.wiibsim.util.FairLockRegistry;
 import com.mawai.wiibsim.util.RedisLockUtil;
 import org.junit.jupiter.api.Test;
-import org.springframework.context.ApplicationContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -78,17 +80,12 @@ class LimitOrderRecoverGapTest {
     private final CacheService cacheService = mock(CacheService.class);
 
     private FuturesSettlementServiceImpl futuresService() {
-        FuturesSettlementServiceImpl service = new FuturesSettlementServiceImpl(mock(UserService.class),
+        return new FuturesSettlementServiceImpl(mock(UserService.class),
                 mock(UserMapper.class), mock(FuturesPositionMapper.class), orderMapper, mock(TradingConfig.class),
                 mock(FuturesLeverageBracketRegistry.class), cacheService, mock(FuturesPositionIndexService.class),
                 mock(FuturesRiskService.class), mock(CrossMarginService.class), mock(CrossLiquidationService.class),
-                mock(FairLockRegistry.class), mock(FundingRateService.class));
-        // triggerLimitOrder 走 AOP 代理，喂个 mock 代理才看得到它被调（真触发链路不在本用例范围）
-        FuturesSettlementServiceImpl proxy = mock(FuturesSettlementServiceImpl.class);
-        ApplicationContext ctx = mock(ApplicationContext.class);
-        when(ctx.getBean(FuturesSettlementServiceImpl.class)).thenReturn(proxy);
-        new com.mawai.wiibcommon.util.SpringUtils().setApplicationContext(ctx);
-        return service;
+                mock(FairLockRegistry.class), mock(FundingRateService.class),
+                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))));
     }
 
     private FuturesOrder futuresOrder(long createdAtMs) {
@@ -140,16 +137,14 @@ class LimitOrderRecoverGapTest {
         when(redis.opsForZSet()).thenReturn(zset);
         RedisLockUtil lockUtil = mock(RedisLockUtil.class);
         when(lockUtil.tryLock(anyString(), anyLong())).thenReturn("v");
+        TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
         CryptoOrderServiceImpl service = new CryptoOrderServiceImpl(mock(UserService.class),
                 mock(CryptoPositionService.class), mock(TradingConfig.class), lockUtil,
                 mock(MarginAccountService.class), mock(CrossMarginService.class),
-                redis, mock(CacheService.class), mock(BStockService.class), mock(TradeFilterRegistry.class));
+                redis, mock(CacheService.class), mock(BStockService.class), mock(TradeFilterRegistry.class),
+                tx, new LedgerTx(tx));
         // ServiceImpl 的 baseMapper 靠 Spring 注入，脱离容器得自己塞
         ReflectionTestUtils.setField(service, "baseMapper", cryptoMapper);
-        CryptoOrderServiceImpl proxy = mock(CryptoOrderServiceImpl.class);
-        ApplicationContext ctx = mock(ApplicationContext.class);
-        when(ctx.getBean(CryptoOrderServiceImpl.class)).thenReturn(proxy);
-        new com.mawai.wiibcommon.util.SpringUtils().setApplicationContext(ctx);
         return service;
     }
 

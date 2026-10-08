@@ -4,9 +4,9 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
-import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.ledger.Ledger;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.UserMapper;
 import com.mawai.wiibsim.service.MarginAccountService;
 import com.mawai.wiibsim.service.model.MarginRepayResult;
@@ -31,6 +31,7 @@ public class MarginAccountServiceImpl implements MarginAccountService {
 
     private final UserMapper userMapper;
     private final TradingConfig tradingConfig;
+    private final LedgerTx ledgerTx;
 
     @Override
     public int normalizeLeverageMultiple(Integer leverageMultiple) {
@@ -128,18 +129,15 @@ public class MarginAccountServiceImpl implements MarginAccountService {
 
         for (User user : users) {
             try {
-                SpringUtils.getAopProxy(this).accrueUserInterest(user.getId(), today);
+                ledgerTx.run(MARGIN_INTEREST_ACCRUE, () -> accrueUserInterest(user.getId(), today));
             } catch (Exception e) {
                 log.error("计息失败 userId={}", user.getId(), e);
             }
         }
     }
 
-    // 标这一层：protected 且经 getAopProxy 走代理调进来（accrueDailyInterest 那个循环），AOP 拦得到。
-    // 计息是逐用户一个事务，标在这里正好一笔一账。
-    @Transactional(rollbackFor = Exception.class)
-    @Ledger(MARGIN_INTEREST_ACCRUE)
-    protected void accrueUserInterest(Long userId, LocalDate today) {
+    // 计息是逐用户一个事务，一笔一账
+    void accrueUserInterest(Long userId, LocalDate today) {
         User user = userMapper.selectByIdForUpdate(userId);
         if (user == null) {
             return;

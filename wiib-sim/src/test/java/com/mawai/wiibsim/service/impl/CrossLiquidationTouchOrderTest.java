@@ -8,7 +8,6 @@ import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
-import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
@@ -23,7 +22,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
-import org.springframework.context.ApplicationContext;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -72,11 +72,7 @@ class CrossLiquidationTouchOrderTest {
         service = new CrossLiquidationServiceImpl(crossMargin, positionMapper, mock(FuturesOrderMapper.class),
                 new TradingConfig(), mock(CacheService.class), mock(FuturesPositionIndexService.class),
                 lockRegistry, mock(TradeNotificationService.class), new CrossBandRegistry(),
-                riskService);
-
-        ApplicationContext ctx = mock(ApplicationContext.class);
-        when(ctx.getBean(CrossLiquidationServiceImpl.class)).thenReturn(service);
-        new SpringUtils().setApplicationContext(ctx);
+                riskService, new TransactionTemplate(mock(PlatformTransactionManager.class)));
     }
 
     /** 全仓多 qty BTC@100000、100x，带止损档 */

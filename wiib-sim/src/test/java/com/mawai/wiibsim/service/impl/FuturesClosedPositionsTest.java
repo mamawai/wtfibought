@@ -10,6 +10,7 @@ import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -22,6 +23,8 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -56,7 +59,7 @@ class FuturesClosedPositionsTest {
                 new TradingConfig(), mock(FairLockRegistry.class), mock(CacheService.class),
                 mock(FuturesPositionIndexService.class), mock(FuturesLeverageBracketRegistry.class),
                 mock(CrossMarginService.class), new TradeFilterRegistry(mock(BinanceRestClient.class)),
-                new MessageCatalog());
+                new MessageCatalog(), new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))));
     }
 
     private static FuturesPosition closed(long id, String lastClosePnl, String funding) {

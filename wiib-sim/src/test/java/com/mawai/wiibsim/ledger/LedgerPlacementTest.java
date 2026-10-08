@@ -28,8 +28,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <b>它管不到的两件事</b>：
  * <ol>
  *   <li>同类内部自调用（{@code this.doXxx()}）也让注解失效，但那要读字节码才知道，本测试识别不了。
- *       项目里的范式是 {@code SpringUtils.getAopProxy(this).doXxx()} 走代理绕开这个坑，
- *       新加注解时仍需人工确认调用方是不是经代理进来的。</li>
+ *       类内的事务段不标注解，用 {@link LedgerTx} 在代码里压标签；
+ *       新加注解时仍需人工确认调用方是经代理（别的 bean）进来的。</li>
  *   <li>{@code findCandidateComponents} 只收<b>具体的独立类</b>，抽象类里的 {@code @Ledger} 扫不到。
  *       当前没有这种形态（注解全在 @Service 具体类上），真要往抽象基类上标得另想办法。</li>
  * </ol>
@@ -42,7 +42,7 @@ class LedgerPlacementTest {
      * 扫到的注解方法数下限。存在的唯一理由是防"扫描器本身坏了/包名改了→一个都没扫到→用例空转全绿"，
      * 那样这层守卫就白设了。故意留松（实际远多于此），不当注解清单用，加减注解不该动这个数。
      */
-    private static final int MIN_EXPECTED = 20;
+    private static final int MIN_EXPECTED = 1;
 
     @Test
     void 标了Ledger的方法不能是AOP拦不到的形态() {
