@@ -2,9 +2,12 @@ package com.mawai.wiibsim.service.impl;
 
 import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibsim.config.TradingConfig;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.UserMapper;
 import org.apache.ibatis.annotations.Update;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
@@ -32,7 +35,8 @@ class MarginInterestAnchorTest {
 
     private final UserMapper userMapper = mock(UserMapper.class);
     private final MarginAccountServiceImpl service =
-            new MarginAccountServiceImpl(userMapper, new TradingConfig());
+            new MarginAccountServiceImpl(userMapper, new TradingConfig(),
+                    new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))));
 
     /** 造一个欠着 interest 利息、principal 本金的用户 */
     private void givenDebt(String interest, String principal) {

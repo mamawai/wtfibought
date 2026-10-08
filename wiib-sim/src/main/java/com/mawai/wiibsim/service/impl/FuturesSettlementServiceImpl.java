@@ -9,11 +9,10 @@ import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.market.KlineBar;
-import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
-import com.mawai.wiibsim.ledger.Ledger;
 import com.mawai.wiibsim.ledger.LedgerCtx;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -31,7 +30,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -61,8 +59,9 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     private final CrossLiquidationService crossLiquidationService;
     private final FairLockRegistry lockRegistry;
     private final FundingRateService fundingRateService;
+    private final LedgerTx ledgerTx;
 
-    protected record FundingFeeChargeResult(boolean success, boolean checkLiquidation) {}
+    record FundingFeeChargeResult(boolean success, boolean checkLiquidation) {}
 
     @PostConstruct
     void init() {
@@ -97,24 +96,22 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
     private void triggerLimitOrder(String zsetKey, Long orderId, BigDecimal triggerPrice) {
         try {
-            var proxy = SpringUtils.getAopProxy(this);
             // 同一单被多个tick并发打进来也只有一个CAS成功，其余affected=0，无害
-            boolean triggered = proxy.markOrderTriggered(orderId, triggerPrice);
+            boolean triggered = markOrderTriggered(orderId, triggerPrice);
             // CAS正常返回才摘索引：没改到说明这单早不是PENDING，索引是过期项，一样该清；
             // 抛异常不摘，单子还是PENDING、索引还在，下个tick重来
             cacheService.zRemove(zsetKey, orderId.toString());
             if (!triggered) return;
             FuturesOrder order = orderMapper.selectById(orderId);
             if (order != null) {
-                proxy.processTriggeredOrder(order);
+                processTriggeredOrder(order);
             }
         } catch (Exception e) {
             log.error("futures限价单触发失败 orderId={}", orderId, e);
         }
     }
 
-    @Transactional(rollbackFor = Exception.class)
-    protected boolean markOrderTriggered(Long orderId, BigDecimal triggerPrice) {
+    boolean markOrderTriggered(Long orderId, BigDecimal triggerPrice) {
         int affected = orderMapper.casUpdateToTriggered(orderId, triggerPrice);
         if (affected > 0) {
             log.info("futures限价单触发 orderId={} triggerPrice={}", orderId, triggerPrice);
@@ -123,7 +120,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         return false;
     }
 
-    protected void processTriggeredOrder(FuturesOrder order) {
+    void processTriggeredOrder(FuturesOrder order) {
         if (!"TRIGGERED".equals(order.getStatus())) return;
 
         if (!order.getOrderSide().startsWith("OPEN")) {
@@ -133,7 +130,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
                 return;
             }
             try {
-                SpringUtils.getAopProxy(this).doProcessTriggeredOrder(order);
+                processLocked(order);
             } finally {
                 lock.unlock();
             }
@@ -152,7 +149,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
             FuturesPosition sameSide = openPositionsOf(order.getUserId(), order.getSymbol()).stream()
                     .filter(p -> p.getSide().equals(side)).findFirst().orElse(null);
             if (sameSide == null) {
-                SpringUtils.getAopProxy(this).doProcessTriggeredOrder(order);
+                processLocked(order);
                 return;
             }
             Lock posLock = lockRegistry.tryLockAsSystem("futures:pos:" + sameSide.getId());
@@ -161,7 +158,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
                 return;
             }
             try {
-                SpringUtils.getAopProxy(this).doProcessTriggeredOrder(order);
+                processLocked(order);
             } finally {
                 posLock.unlock();
             }
@@ -170,13 +167,12 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         }
     }
 
-    /**
-     * @Ledger 只能标在这层：四个执行方法是私有自调用、AOP 拦不到，
-     * 本方法经 getAopProxy 真走代理；每笔精确类型由执行方法内的 LedgerCtx.mark 覆盖。
-     */
-    @Transactional(rollbackFor = Exception.class)
-    @Ledger(FUTURES_LIMIT_DEDUCT)
-    protected void doProcessTriggeredOrder(FuturesOrder order) {
+    // 锁内处理一单。每笔的精确类型由四个执行方法里的 LedgerCtx.mark 给，FUTURES_LIMIT_DEDUCT 只是默认
+    private void processLocked(FuturesOrder order) {
+        ledgerTx.run(FUTURES_LIMIT_DEDUCT, () -> doProcessTriggeredOrder(order));
+    }
+
+    void doProcessTriggeredOrder(FuturesOrder order) {
         LedgerCtx.symbol(order.getSymbol());
         if (!"TRIGGERED".equals(order.getStatus())) return;
 
@@ -535,7 +531,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         for (FuturesOrder order : triggeredOrders) {
             Thread.startVirtualThread(() -> {
                 try {
-                    SpringUtils.getAopProxy(this).processTriggeredOrder(order);
+                    processTriggeredOrder(order);
                 } catch (Exception e) {
                     log.error("补处理TRIGGERED订单失败 orderId={}", order.getId(), e);
                 }
@@ -562,7 +558,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         for (FuturesPosition pos : positions) {
             try {
                 BigDecimal rate = rateBySymbol.computeIfAbsent(pos.getSymbol(), fundingRateService::rateForSettlement);
-                boolean success = SpringUtils.getAopProxy(this).chargeFundingFeeOne(pos, rate);
+                boolean success = chargeFundingFeeOne(pos, rate);
                 if (success) {
                     successCount++;
                 } else {
@@ -577,14 +573,9 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
         log.info("futures资金费率结算完成 成功{} 失败{} 费率={}", successCount, failCount, rateBySymbol);
     }
 
-    protected boolean chargeFundingFeeOne(FuturesPosition pos, BigDecimal rate) {
+    boolean chargeFundingFeeOne(FuturesPosition pos, BigDecimal rate) {
         // 名义额按结算时刻的 mark 价算（对齐 Binance），等锁期间价格变了也不换；mark 取不到传 null，退回开仓价
-        BigDecimal markPrice;
-        try {
-            markPrice = getMarkPrice(pos.getSymbol());
-        } catch (Exception e) {
-            markPrice = null;
-        }
+        BigDecimal markPrice = markPriceOrNull(pos.getSymbol());
 
         Lock lock = lockRegistry.tryLockAsSystem("futures:pos:" + pos.getId());
         if (lock == null) {
@@ -594,7 +585,7 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
         FundingFeeChargeResult result;
         try {
-            result = SpringUtils.getAopProxy(this).doChargeFundingFeeOne(pos.getId(), rate, markPrice);
+            result = ledgerTx.call(FUNDING_FEE_PAY, () -> doChargeFundingFeeOne(pos.getId(), rate, markPrice));
         } finally {
             lock.unlock();
         }
@@ -613,15 +604,12 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
     }
 
     /**
-     * 方法级 @Ledger 在这里只干两件事：给本方法内的流水挂上 symbol，以及给将来新增的资金分支一个兜底。
-     * 收/付两笔各自 mark 精确类型，所以方法级这个值实际不会被用到。
-     * （本方法 protected 且经 getAopProxy 走代理调进来，AOP 拦得到。）
+     * 调用方压的 FUNDING_FEE_PAY 在这里只干两件事：让本方法内的流水挂得上 symbol，以及给将来新增的资金分支一个兜底。
+     * 收/付两笔各自 mark 精确类型，所以这个默认值实际不会被用到。
      * <p>
      * 调用方拿着仓位锁；markPrice 是结算时刻的 mark 价，null 退回开仓价。
      */
-    @Transactional(rollbackFor = Exception.class)
-    @Ledger(FUNDING_FEE_PAY)
-    protected FundingFeeChargeResult doChargeFundingFeeOne(Long positionId, BigDecimal rate, BigDecimal markPrice) {
+    FundingFeeChargeResult doChargeFundingFeeOne(Long positionId, BigDecimal rate, BigDecimal markPrice) {
         FuturesPosition pos = positionMapper.selectById(positionId);
         if (pos == null || !"OPEN".equals(pos.getStatus())) {
             return new FundingFeeChargeResult(false, false);
@@ -725,6 +713,14 @@ public class FuturesSettlementServiceImpl implements FuturesSettlementService {
 
     private BigDecimal getMarkPrice(String symbol) {
         return FuturesHelper.markPrice(cacheService, symbol);
+    }
+
+    private BigDecimal markPriceOrNull(String symbol) {
+        try {
+            return getMarkPrice(symbol);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private boolean isLimitTaker(FuturesOrder order, boolean isClose) {

@@ -10,7 +10,7 @@ import java.util.Deque;
 /**
  * 账本语义上下文。两层：
  * <ul>
- *   <li>方法级：@Ledger 进入时压栈、退出弹栈（栈是为了嵌套调用互不干扰）</li>
+ *   <li>方法级：@Ledger 或 LedgerTx 进入时压栈、退出弹栈（栈是为了嵌套调用互不干扰）</li>
  *   <li>一次性：mark() 设置，被下一笔资金变动取走后立即失效</li>
  * </ul>
  * 一次性标注刻意做成"消费即清"——漏标只会退化成方法级语义，
@@ -71,19 +71,19 @@ public final class LedgerCtx {
 
     /**
      * 补充当前方法内所有资金变动的 symbol（账单显示"BTC永续"这类）。
-     * symbol 挂在方法级 frame 上，所以只有在 @Ledger 方法内调用才有效；
-     * 没 frame 说明调用方没标 @Ledger，此时静默丢掉 symbol 会让账单少字段还查不出原因，故打 WARN。
+     * symbol 挂在方法级 frame 上，所以只有在 @Ledger 方法或 LedgerTx 段内调用才有效；
+     * 没 frame 说明调用方两样都没走，此时静默丢掉 symbol 会让账单少字段还查不出原因，故打 WARN。
      */
     public static void symbol(String symbol) {
         Frame f = currentFrame();
         if (f == null) {
-            log.warn("[Ledger] symbol({}) 落空：当前方法没标 @Ledger，没有方法级上下文可挂", symbol);
+            log.warn("[Ledger] symbol({}) 落空：当前不在 @Ledger 方法或 LedgerTx 段内，没有方法级上下文可挂", symbol);
             return;
         }
         f.symbol = symbol;
     }
 
-    // ===== 切面用 =====
+    // ===== 切面和 LedgerTx 用 =====
 
     static void push(LedgerBizType type) {
         Deque<Frame> stack = FRAMES.get();
@@ -118,7 +118,7 @@ public final class LedgerCtx {
         return f == null ? null : f.symbol;
     }
 
-    /** 读侧统一走这里：栈可能压根没建（没进过 @Ledger 方法），不能直接 get().peek() */
+    /** 读侧统一走这里：栈可能压根没建（没进过 @Ledger 方法或 LedgerTx 段），不能直接 get().peek() */
     private static Frame currentFrame() {
         Deque<Frame> stack = FRAMES.get();
         return stack == null ? null : stack.peek();

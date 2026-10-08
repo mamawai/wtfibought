@@ -152,7 +152,7 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 │   └── controller/ task/ mapper/     # ResearchEval/Strategy/Testnet/Backtest/Whale 接口 / 日历·K线采集
 │
 ├── wiib-sim/                         # ④ 真人模拟交易进程（:8080，账本=自研模拟盘 DB，对外）
-│   ├── ledger/                       # 资金记账切面：@Ledger + LedgerAspect + 行映射
+│   ├── ledger/                       # 资金记账：@Ledger + LedgerAspect + LedgerTx（类内事务段压标签）+ 行映射
 │   └── controller/ service/ mapper/ config/ task/
 │                                     # 交易(bStock/crypto/futures) / 游戏 / 预测 / 结算 / WS 网关
 │                                     # + 账单·排行·全站成交·仓位历史

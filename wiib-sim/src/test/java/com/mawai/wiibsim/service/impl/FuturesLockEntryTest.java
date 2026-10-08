@@ -16,10 +16,10 @@ import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.market.BinanceRestClient;
-import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -33,7 +33,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
-import org.springframework.context.ApplicationContext;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -81,19 +82,17 @@ class FuturesLockEntryTest {
         FuturesPositionIndexService indexService = mock(FuturesPositionIndexService.class);
         CrossMarginService crossMargin = mock(CrossMarginService.class);
         FuturesLeverageBracketRegistry brackets = mock(FuturesLeverageBracketRegistry.class);
+        TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
+        LedgerTx ledgerTx = new LedgerTx(tx);
 
         trading = new FuturesTradingServiceImpl(
                 mock(UserService.class), userMapper, positionMapper, orderMapper,
                 new TradingConfig(), lockRegistry, cacheService,
                 indexService, brackets, crossMargin,
-                new TradeFilterRegistry(mock(BinanceRestClient.class)), new MessageCatalog());
+                new TradeFilterRegistry(mock(BinanceRestClient.class)), new MessageCatalog(), ledgerTx);
         risk = new FuturesRiskServiceImpl(positionMapper, orderMapper, userMapper,
                 new TradingConfig(), lockRegistry, cacheService, indexService, brackets,
-                crossMargin, mock(TradeNotificationService.class));
-
-        ApplicationContext ctx = mock(ApplicationContext.class);
-        when(ctx.getBean(FuturesRiskServiceImpl.class)).thenReturn(risk);
-        new SpringUtils().setApplicationContext(ctx);
+                crossMargin, mock(TradeNotificationService.class), tx, ledgerTx);
     }
 
     /** 逐仓多 1 张 @100，保证金 10 */

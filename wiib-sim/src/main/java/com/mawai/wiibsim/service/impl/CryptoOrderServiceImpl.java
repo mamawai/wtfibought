@@ -15,11 +15,11 @@ import com.mawai.wiibcommon.enums.OrderStatus;
 import com.mawai.wiibcommon.enums.OrderType;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.market.KlineBar;
-import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.TradeFilterRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
 import com.mawai.wiibsim.ledger.Ledger;
 import com.mawai.wiibsim.ledger.LedgerCtx;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.CryptoOrderMapper;
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibsim.service.CryptoOrderService;
@@ -36,6 +36,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -62,6 +63,8 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
     private final CacheService cacheService;
     private final BStockService bStockService;
     private final TradeFilterRegistry tradeFilterRegistry;
+    private final TransactionTemplate transactionTemplate;
+    private final LedgerTx ledgerTx;
 
     private static final int TRIGGERED_ORDER_BATCH_SIZE = 200;
     private static final String LIMIT_BUY_ZSET_PREFIX = "crypto:limit:buy:";
@@ -170,7 +173,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         String lockValue = redisLockUtil.tryLock(lockKey, 30);
         if (lockValue == null) throw new BizException(ErrorCode.ORDER_PROCESSING);
         try {
-            CryptoOrder order = SpringUtils.getAopProxy(this).doCancelOrder(userId, orderId);
+            CryptoOrder order = ledgerTx.call(SPOT_LIMIT_UNFREEZE, () -> doCancelOrder(userId, orderId));
             // 索引跟着DB走：事务提交后才摘索引。搁事务里解冻一失败回滚，单子退回PENDING而索引已没了=悬空
             removeFromLimitZSet(order);
             return buildResponse(order);
@@ -179,10 +182,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         }
     }
 
-    // 标这一层：protected 且经 getAopProxy 走代理调进来，AOP 拦得到（cancel() 只负责抢锁和摘索引）
-    @Transactional(rollbackFor = Exception.class)
-    @Ledger(SPOT_LIMIT_UNFREEZE)
-    protected CryptoOrder doCancelOrder(Long userId, Long orderId) {
+    CryptoOrder doCancelOrder(Long userId, Long orderId) {
         getAndValidateUser(userId);
         CryptoOrder order = baseMapper.selectById(orderId);
         if (order == null || !order.getUserId().equals(userId)) throw new BizException(ErrorCode.ORDER_NOT_FOUND);
@@ -313,8 +313,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
 
     // ==================== 触发限价单 ====================
 
-    @Transactional(rollbackFor = Exception.class)
-    protected void markOrderTriggered(Long orderId, BigDecimal triggerPrice) {
+    void markOrderTriggered(Long orderId, BigDecimal triggerPrice) {
         int affected = baseMapper.casUpdateToTriggered(orderId, triggerPrice);
         if (affected > 0) log.info("crypto限价单触发 orderId={} triggerPrice={}", orderId, triggerPrice);
     }
@@ -338,7 +337,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
 
             for (CryptoOrder order : batch) {
                 try {
-                    if (SpringUtils.getAopProxy(this).processTriggeredOrder(order)) successCount++;
+                    if (Boolean.TRUE.equals(transactionTemplate.execute(_ -> processTriggeredOrder(order)))) successCount++;
                 } catch (Exception e) {
                     log.error("crypto执行触发订单失败 orderId={}", order.getId(), e);
                     failCount++;
@@ -350,8 +349,7 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         }
     }
 
-    @Transactional(rollbackFor = Exception.class)
-    protected boolean processTriggeredOrder(CryptoOrder order) {
+    boolean processTriggeredOrder(CryptoOrder order) {
         if (!OrderStatus.TRIGGERED.getCode().equals(order.getStatus())) return false;
 
         User user = userService.getById(order.getUserId());
@@ -415,13 +413,12 @@ public class CryptoOrderServiceImpl extends ServiceImpl<CryptoOrderMapper, Crypt
         String lockValue = redisLockUtil.tryLock(lockKey, 30);
         if (lockValue == null) return;   // 有人正在处理这单，索引不动，下个tick再来
         try {
-            var proxy = SpringUtils.getAopProxy(this);
-            proxy.markOrderTriggered(orderId, triggerPrice);
+            markOrderTriggered(orderId, triggerPrice);
             // CAS正常返回才摘索引：没改到说明这单早不是PENDING，索引是过期项，一样该清
             stringRedisTemplate.opsForZSet().remove(zsetKey, orderId.toString());
             CryptoOrder order = baseMapper.selectById(orderId);
             if (order != null && OrderStatus.TRIGGERED.getCode().equals(order.getStatus())) {
-                proxy.processTriggeredOrder(order);
+                transactionTemplate.executeWithoutResult(_ -> processTriggeredOrder(order));
             }
         } catch (Exception e) {
             log.error("crypto限价单即时执行失败 orderId={}", orderId, e);

@@ -9,6 +9,7 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -20,6 +21,8 @@ import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -79,13 +82,14 @@ class TradeNotificationAnchorTest {
         // 强平复核一律判满足（维持保证金给到 50 ≥ 50−5），这里只验通知锚点
         when(bracketRegistry.calcMaintenanceMargin(anyString(), any())).thenReturn(new BigDecimal("50"));
 
+        TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
         riskService = new FuturesRiskServiceImpl(positionMapper, orderMapper, userMapper, tradingConfig,
                 mock(FairLockRegistry.class), cacheService, indexService,
-                bracketRegistry, crossMarginService, tradeNotification);
+                bracketRegistry, crossMarginService, tradeNotification, tx, new LedgerTx(tx));
 
         crossLiquidation = new CrossLiquidationServiceImpl(crossMarginService, positionMapper, orderMapper,
                 tradingConfig, cacheService, indexService, mock(FairLockRegistry.class),
-                tradeNotification, new CrossBandRegistry(), riskService);
+                tradeNotification, new CrossBandRegistry(), riskService, tx);
     }
 
     private static FuturesPosition isolatedLong() {

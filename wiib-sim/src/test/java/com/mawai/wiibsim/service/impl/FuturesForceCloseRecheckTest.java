@@ -2,9 +2,9 @@ package com.mawai.wiibsim.service.impl;
 
 import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesPosition;
-import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -14,7 +14,8 @@ import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.context.ApplicationContext;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.concurrent.locks.Lock;
@@ -56,13 +57,10 @@ class FuturesForceCloseRecheckTest {
 
         FuturesLeverageBracketRegistry brackets = new FuturesLeverageBracketRegistry();
         indexService = new FuturesPositionIndexServiceImpl(positionMapper, cacheService, brackets);
+        TransactionTemplate tx = new TransactionTemplate(mock(PlatformTransactionManager.class));
         riskService = new FuturesRiskServiceImpl(positionMapper, mock(FuturesOrderMapper.class), mock(UserMapper.class),
                 new TradingConfig(), lockRegistry, cacheService, indexService, brackets,
-                mock(CrossMarginService.class), mock(TradeNotificationService.class));
-
-        ApplicationContext ctx = mock(ApplicationContext.class);
-        when(ctx.getBean(FuturesRiskServiceImpl.class)).thenReturn(riskService);
-        new SpringUtils().setApplicationContext(ctx);
+                mock(CrossMarginService.class), mock(TradeNotificationService.class), tx, new LedgerTx(tx));
     }
 
     private static FuturesPosition isolatedLong(String margin) {

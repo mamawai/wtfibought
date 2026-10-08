@@ -4,9 +4,9 @@ import com.mawai.wiibcommon.cache.CacheService;
 import com.mawai.wiibcommon.entity.FuturesOrder;
 import com.mawai.wiibcommon.entity.FuturesPosition;
 import com.mawai.wiibcommon.entity.User;
-import com.mawai.wiibcommon.util.SpringUtils;
 import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.config.TradingConfig;
+import com.mawai.wiibsim.ledger.LedgerTx;
 import com.mawai.wiibsim.mapper.FuturesOrderMapper;
 import com.mawai.wiibsim.mapper.FuturesPositionMapper;
 import com.mawai.wiibsim.mapper.UserMapper;
@@ -20,7 +20,8 @@ import com.mawai.wiibsim.util.FairLockRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
-import org.springframework.context.ApplicationContext;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -91,11 +92,8 @@ class FuturesSettlementLockWaitTest {
                 userService, userMapper, positionMapper, orderMapper,
                 new TradingConfig(), bracketRegistry, cacheService, positionIndexService,
                 riskService, crossMarginService,
-                crossLiquidationService, lockRegistry, mock(FundingRateService.class));
-        // getAopProxy(this) 拿回自己：单测里没有代理，直接调真实现
-        ApplicationContext ctx = mock(ApplicationContext.class);
-        when(ctx.getBean(FuturesSettlementServiceImpl.class)).thenReturn(service);
-        new SpringUtils().setApplicationContext(ctx);
+                crossLiquidationService, lockRegistry, mock(FundingRateService.class),
+                new LedgerTx(new TransactionTemplate(mock(PlatformTransactionManager.class))));
     }
 
     private static FuturesPosition isolatedLong(long id) {
