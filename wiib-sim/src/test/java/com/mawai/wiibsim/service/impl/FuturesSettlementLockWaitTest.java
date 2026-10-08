@@ -294,4 +294,24 @@ class FuturesSettlementLockWaitTest {
         inOrder.verify(posLock).unlock();
         inOrder.verify(riskService).checkAndLiquidate(eq(1L), any());
     }
+
+    /** 同上扣光，但 mark 价取不到：资金费照样算收成功，强平复核这次跳过，强平索引已按扣光后的保证金更新 */
+    @Test
+    void 资金费_保证金扣光后取不到mark价_算成功_跳过强平复核() {
+        FuturesPosition pos = isolatedLong(1L);
+        pos.setMargin(new BigDecimal("0.5"));
+        when(positionMapper.selectById(1L)).thenReturn(pos);
+        when(userMapper.atomicUpdateBalance(anyLong(), any())).thenReturn(null);
+        when(positionMapper.atomicDeductFundingFee(anyLong(), any())).thenReturn(null);
+        when(positionMapper.selectMarginForUpdate(1L)).thenReturn(new BigDecimal("0.5"));
+        when(positionMapper.atomicDeductFundingFeePartial(1L)).thenReturn(BigDecimal.ZERO);
+        when(cacheService.getMarkPrice(SYMBOL)).thenReturn(null);
+
+        boolean charged = service.chargeFundingFeeOne(pos, RATE);
+
+        assertThat(charged).isTrue();
+        verify(positionMapper).atomicDeductFundingFeePartial(1L);
+        verify(positionIndexService).updateLiquidationPrice(eq(1L), eq(SYMBOL), eq("LONG"), any());
+        verifyNoInteractions(riskService);
+    }
 }
