@@ -299,8 +299,8 @@ public class CampaignVoteService {
     }
 
     /**
-     * 收盘价固定在下标 4：getFuturesKlinesLight 只裁 Binance 12 元组的尾部 8-11，
-     * 前 8 位原序原位，精简失败回退原始串 close 也在 4。
+     * 收盘价固定在下标 4：getFuturesKlinesLight 只裁 Binance 12 元组的尾部 10-11，
+     * 前 10 位原序原位。
      */
     private static BigDecimal closeOf(JsonNode row) {
         return row.size() < 5 ? null : row.path(4).asDecimal(null);
