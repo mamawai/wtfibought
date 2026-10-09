@@ -16,7 +16,7 @@ import {
   type VolumeProfile, type VpBar, type VpRow,
 } from '../../lib/volumeProfile';
 
-export interface VpPalette { gain: string; loss: string; line: string; mute: string; fg: string; bg: string; }
+export interface VpPalette { gain: string; loss: string; line: string; mute: string; fg: string; bg: string; font: string; }
 
 /** 横柱最长占主图宽度的比例 */
 const WIDTH_RATIO = 0.25;
@@ -93,9 +93,22 @@ class PaneRenderer implements IPrimitivePaneRenderer {
   draw(target: CanvasRenderingTarget2D) {
     target.useMediaCoordinateSpace(({ context: c, mediaSize }) => {
       const L = this._layer, series = L.series;
-      const { gain, loss, line, mute, fg, bg } = L.palette;
+      const { gain, loss, line, mute, fg, bg, font } = L.palette;
       const W = mediaSize.width, maxW = W * WIDTH_RATIO;
       const p = L.profile;
+
+      /** 带底色的小标签，垂直居中压在 y 上，盖住底下的线；align 是 x 在标签的哪一边 */
+      const tag = (text: string, x: number, y: number, align: 'left' | 'right', px: number) => {
+        c.font = `500 ${px}px ${font}`;
+        const w = c.measureText(text).width + 10, h = px + 8;
+        const x0 = align === 'left' ? x : x - w;
+        c.fillStyle = rgba(bg, .92);
+        c.fillRect(x0, y - h / 2, w, h);
+        c.fillStyle = fg;
+        c.textAlign = 'left';
+        c.textBaseline = 'middle';
+        c.fillText(text, x0 + 5, y);
+      };
 
       if (p) {
         // profile 刚换过时 hover 可能越界，下一次鼠标动会修正
@@ -130,55 +143,34 @@ class PaneRenderer implements IPrimitivePaneRenderer {
           c.moveTo(0, Math.round(y) + 0.5);
           c.lineTo(W, Math.round(y) + 0.5);
           c.stroke();
-          // 线左端标 POC 和价位
-          c.font = '600 10px system-ui, sans-serif';
-          c.fillStyle = line;
-          c.textAlign = 'left';
-          c.textBaseline = 'bottom';
-          c.fillText(`POC ${L.fmtPrice((poc.lo + poc.hi) / 2)}`, 4, Math.round(y) - 2);
           c.restore();
+          // 线左端标 POC 和价位
+          tag(`POC ${L.fmtPrice((poc.lo + poc.hi) / 2)}`, 4, Math.round(y) + 0.5, 'left', 11);
         }
 
         if (hover !== null) {
           c.save();
-          c.font = '600 10px system-ui, sans-serif';
           c.strokeStyle = line;
-          c.fillStyle = line;
           c.lineWidth = 1;
-          c.textAlign = 'right';
-          // 价值区上下沿：VP 区宽的一段横线，标 VAH / VAL 价位
+          // 价值区上下沿：VP 区宽的一段横线，右端标 VAH / VAL 价位
           const vah = p.rows[p.vaHi].hi, val = p.rows[p.vaLo].lo;
-          const yH = series.priceToCoordinate(vah), yL = series.priceToCoordinate(val);
-          if (yH !== null) {
-            c.beginPath(); c.moveTo(W - maxW, Math.round(yH) + 0.5); c.lineTo(W, Math.round(yH) + 0.5); c.stroke();
-            c.textBaseline = 'bottom';
-            c.fillText(`VAH ${L.fmtPrice(vah)}`, W - 4, Math.round(yH) - 2);
-          }
-          if (yL !== null) {
-            c.beginPath(); c.moveTo(W - maxW, Math.round(yL) + 0.5); c.lineTo(W, Math.round(yL) + 0.5); c.stroke();
-            c.textBaseline = 'top';
-            c.fillText(`VAL ${L.fmtPrice(val)}`, W - 4, Math.round(yL) + 3);
+          for (const [name, price] of [['VAH', vah], ['VAL', val]] as const) {
+            const y = series.priceToCoordinate(price);
+            if (y === null) continue;
+            c.beginPath(); c.moveTo(W - maxW, Math.round(y) + 0.5); c.lineTo(W, Math.round(y) + 0.5); c.stroke();
+            tag(`${name} ${L.fmtPrice(price)}`, W - 4, Math.round(y) + 0.5, 'right', 11);
           }
           // 悬停那档的读数：放在 VP 区左边，不压柱子
           const row = p.rows[hover];
           const yTop = series.priceToCoordinate(row.hi), yBot = series.priceToCoordinate(row.lo);
-          if (yTop !== null && yBot !== null) {
-            const text = L.rowText(row), yMid = (yTop + yBot) / 2, x = W - maxW - 8;
-            c.font = '600 11px system-ui, sans-serif';
-            const tw = c.measureText(text).width;
-            c.fillStyle = rgba(bg, .9);
-            c.fillRect(x - tw - 5, yMid - 9, tw + 10, 18);
-            c.fillStyle = fg;
-            c.textBaseline = 'middle';
-            c.fillText(text, x, yMid);
-          }
+          if (yTop !== null && yBot !== null) tag(L.rowText(row), W - maxW - 8, (yTop + yBot) / 2, 'right', 12);
           c.restore();
         }
       }
 
       if (L.status) {
         c.save();
-        c.font = '600 11px system-ui, sans-serif';
+        c.font = `500 11px ${font}`;
         c.fillStyle = mute;
         c.textAlign = 'right';
         c.textBaseline = 'bottom';
