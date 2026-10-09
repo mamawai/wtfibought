@@ -159,8 +159,8 @@ interface VpOptions {
   failText: () => string;
 }
 
-/** 块尾早于服务器时间这么久才算收完：后端对离现在不到 60s 的 endTime 只缓存 10s，再留 5s */
-const DONE_LAG_MS = 75_000;
+/** 块尾早于服务器时间这么久才算收完：后端刚过边界 2 秒内只缓存 2 秒，再留余量 */
+const DONE_LAG_MS = 10_000;
 /** 还在长的块隔多久重拉 */
 const REFRESH_MS = 30_000;
 /** 拖动/缩放停下多久再算 */

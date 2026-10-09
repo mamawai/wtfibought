@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -39,12 +40,13 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * K 线缓存：合约分 100 / 500 两档、现货只用 500 档、游客和登录用户走不同回源、按 endTime 选 TTL、
+ * K 线缓存：合约分 100 / 500 两档、现货只用 500 档、游客和登录用户走不同回源、TTL 按 K 线边界算、
  * 熔断中不回源、同一个 key 同时 miss 只回源一次
  */
 class KlineCacheServiceTest {
 
     private static final String FIVE = "[[1,\"a\"],[2,\"b\"],[3,\"c\"],[4,\"d\"],[5,\"e\"]]";
+    private static final long MIN = 60_000L, HOUR = 60 * MIN;
 
     private final KlineOrigin origin = mock(KlineOrigin.class);
     /** 假 Redis：值和 TTL 各一个 HashMap */
@@ -79,7 +81,8 @@ class KlineCacheServiceTest {
     }
 
     @Test
-    void 游客合约小请求共用100档一次回源_各截各的() {
+    void 游客合约小请求共用100档一次回源_各截各的_最新页缓存到下一根边界() {
+        service.nowMs = () -> 1000 * HOUR + 25 * MIN;
         when(origin.guest(true, "BTCUSDT", "1h", 100)).thenReturn(FIVE);
 
         assertThat(service.futuresKlines("BTCUSDT", "1h", 3, null)).isEqualTo("[[3,\"c\"],[4,\"d\"],[5,\"e\"]]");
@@ -87,7 +90,7 @@ class KlineCacheServiceTest {
 
         verify(origin, times(1)).guest(true, "BTCUSDT", "1h", 100);
         assertThat(store).containsOnlyKeys("kline:v2:fut:BTCUSDT:1h:100:latest");
-        assertThat(ttls.get("kline:v2:fut:BTCUSDT:1h:100:latest")).isEqualTo(Duration.ofSeconds(10));
+        assertThat(ttls.get("kline:v2:fut:BTCUSDT:1h:100:latest")).isEqualTo(Duration.ofMinutes(35));
     }
 
     @Test
@@ -119,16 +122,33 @@ class KlineCacheServiceTest {
     }
 
     @Test
-    void 带endTime走登录用户回源_按离现在多远选TTL() {
-        long old = 1_700_000_000_000L, recent = System.currentTimeMillis() - 10_000;
-        when(origin.member(true, "BTCUSDT", "1m", 500, old)).thenReturn(FIVE);
-        when(origin.member(true, "BTCUSDT", "1m", 500, recent)).thenReturn(FIVE);
+    void 带endTime走登录用户回源_那根没收完就缓存到它收完_未来的按现在算_收完的存1小时() {
+        long now = 1000 * HOUR + 25 * MIN + 30_000;   // 1m 边界后 30 秒
+        service.nowMs = () -> now;
+        when(origin.member(eq(true), eq("BTCUSDT"), eq("1m"), eq(500), any())).thenReturn(FIVE);
 
-        assertThat(service.futuresKlines("BTCUSDT", "1m", 500, old)).isSameAs(FIVE);
-        service.futuresKlines("BTCUSDT", "1m", 500, recent);
+        service.futuresKlines("BTCUSDT", "1m", 500, now - 10_000);    // 当前这根
+        service.futuresKlines("BTCUSDT", "1m", 500, now + HOUR);      // VP 在长的块，endTime 在未来
+        service.futuresKlines("BTCUSDT", "1m", 500, now - 10 * MIN);  // 早收完的
 
-        assertThat(ttls.get("kline:v2:fut:BTCUSDT:1m:500:" + old)).isEqualTo(Duration.ofHours(1));
-        assertThat(ttls.get("kline:v2:fut:BTCUSDT:1m:500:" + recent)).isEqualTo(Duration.ofSeconds(10));
+        verify(origin, never()).guest(anyBoolean(), anyString(), anyString(), anyInt());
+        assertThat(ttls.get("kline:v2:fut:BTCUSDT:1m:500:" + (now - 10_000))).isEqualTo(Duration.ofSeconds(30));
+        assertThat(ttls.get("kline:v2:fut:BTCUSDT:1m:500:" + (now + HOUR))).isEqualTo(Duration.ofSeconds(30));
+        assertThat(ttls.get("kline:v2:fut:BTCUSDT:1m:500:" + (now - 10 * MIN))).isEqualTo(Duration.ofHours(1));
+    }
+
+    @Test
+    void 刚过边界2秒内只存2秒() {
+        long now = 1000 * HOUR + 25 * MIN + 1_000;   // 1m 边界后 1 秒
+        service.nowMs = () -> now;
+        when(origin.guest(true, "BTCUSDT", "1m", 500)).thenReturn(FIVE);
+        when(origin.member(eq(true), eq("BTCUSDT"), eq("1m"), eq(500), any())).thenReturn(FIVE);
+
+        service.futuresKlines("BTCUSDT", "1m", 500, null);         // 最新页，这根刚开
+        service.futuresKlines("BTCUSDT", "1m", 500, now - 5_000);  // 上一根刚收
+
+        assertThat(ttls.get("kline:v2:fut:BTCUSDT:1m:500:latest")).isEqualTo(Duration.ofSeconds(2));
+        assertThat(ttls.get("kline:v2:fut:BTCUSDT:1m:500:" + (now - 5_000))).isEqualTo(Duration.ofSeconds(2));
     }
 
     @Test
