@@ -1,6 +1,6 @@
 /**
  * 成交量分布（VP）图层：以 ISeriesPrimitive 挂在蜡烛 series 上，横柱从主图右缘往左画、压在蜡烛下面。
- * 每档横柱左段主动买（涨色）、右段主动卖（跌色）；价值区内深、区外浅；POC 一条虚线横贯主图。
+ * 每档横柱左段主动买（涨色）、右段主动卖（跌色）；价值区内深、区外浅；POC 一条虚线横贯主图，左端标字。
  * <p>{@link attachVolumeProfile} 管数据：按可见范围选子周期、按整块拉子 K、算 profile 交给图层画。
  */
 import type {
@@ -114,6 +114,12 @@ class PaneRenderer implements IPrimitivePaneRenderer {
           c.moveTo(0, Math.round(y) + 0.5);
           c.lineTo(W, Math.round(y) + 0.5);
           c.stroke();
+          // 线左端标 POC
+          c.font = '600 10px system-ui, sans-serif';
+          c.fillStyle = line;
+          c.textAlign = 'left';
+          c.textBaseline = 'bottom';
+          c.fillText('POC', 4, Math.round(y) - 2);
           c.restore();
         }
       }
