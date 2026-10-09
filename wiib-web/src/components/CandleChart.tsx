@@ -10,7 +10,7 @@ import {
 import {
   CalendarClock, ChartCandlestick, ChartLine, ChartNoAxesCombined, ChevronDown, Expand, History, Layers, Shrink,
 } from 'lucide-react';
-import { futuresApi, quantApi, type EconCalendarEvent } from '../api';
+import { ApiError, futuresApi, quantApi, type EconCalendarEvent } from '../api';
 import { useKlineStream } from '../hooks/useKlineStream';
 import { useIsDark } from '../hooks/useIsDark';
 import { useFullscreen } from '../hooks/useFullscreen';
@@ -23,19 +23,21 @@ import { useDrawings } from './chart/useDrawings';
 import { DrawToolRail, DrawToolStrip } from './chart/DrawToolPicker';
 import { DrawOverlay } from './chart/DrawOverlay';
 import { EconMarkersLayer } from './chart/EconMarkersLayer';
+import { attachVolumeProfile, type VpController, type VpPalette } from './chart/VolumeProfileLayer';
+import { VP_ROWS, type VpBar } from '../lib/volumeProfile';
 import { flagHtml } from '../lib/countryFlags';
 
-/** 一根 K：series 只用 OHLC，量/额留给读数和成交量柱。 */
-interface Bar { time: number; openMs: number; open: number; high: number; low: number; close: number; volume: number; quote: number; }
+/** 一根 K：series 只用 OHLC，量/额留给读数和成交量柱，主动买入量留给 VP 分买卖。 */
+interface Bar { time: number; openMs: number; open: number; high: number; low: number; close: number; volume: number; quote: number; buy: number; }
 
 const TZ = -8 * 3600;                                       // 固定 UTC+8 偏移(秒)：横轴统一显示新加坡时间且边界对齐
 const toBarTime = (ms: number) => Math.floor(ms / 1000) - TZ;
 const barDate = (t: number) => new Date((t + TZ) * 1000);   // 反算真实时刻用于格式化
 const fmtVol = (n: number) => n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(2) + 'K' : n.toFixed(2);
-/** 币安原始行 → Bar：k[0]=开盘ms，1-4=OHLC，5=量(基础币)，7=额(USDT) */
+/** 币安原始行 → Bar：k[0]=开盘ms，1-4=OHLC，5=量(基础币)，7=额(USDT)，9=主动买入量(基础币) */
 const toBar = (k: number[]): Bar => ({
   time: toBarTime(k[0]), openMs: k[0],
-  open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5], quote: +k[7],
+  open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5], quote: +k[7], buy: +k[9],
 });
 
 /** 成交弹窗里每笔的时刻，只要时分（哪一天由弹窗标题那根 K 线交代） */
@@ -270,8 +272,10 @@ export interface TradeMark {
 type Fill = { timeMs: number; price: number; quantity: number };
 
 // ========== 向左翻历史的三个阈值 ==========
-/** 每次往回翻的根数，与首屏同量级 */
+/** 每次往回翻的根数，和后端回源的大档一样 */
 const PAGE_SIZE = 500;
+/** 翻历史失败后冷却多久 */
+const LOAD_FAIL_COOLDOWN_MS = 3000;
 /** 左边还剩这么多根就预取。默认视口 110 根≈留一屏缓冲，让加载在用户拖到墙之前就完成 */
 const LOAD_THRESHOLD = 100;
 /**
@@ -306,6 +310,12 @@ const LABEL_GAP = 16;
 const econPalette = () => {
   const th = lwcTheme();
   return { fg: th.mute, border: rgba(th.mute, .45), bg: th.bg };
+};
+
+/** VP 配色：买卖跟涨跌色，POC 线用淡一点的正文色 */
+const vpPalette = (): VpPalette => {
+  const th = lwcTheme();
+  return { gain: th.gain, loss: th.loss, line: rgba(th.fg, .55), mute: th.mute };
 };
 
 export interface CandleChartProps {
@@ -396,6 +406,16 @@ export function CandleChart({
   const [showEcon, setShowEcon] = useState(() => localStorage.getItem('wiib-chart-econ') !== '0');
   const econLayerRef = useRef<EconMarkersLayer | null>(null);
   const econTipRef = useRef<HTMLDivElement>(null);
+  // 成交量分布 VP：要拉历史子 K，只给登录用户。开关和行数记 localStorage
+  const [vpOn, setVpOn] = useState(() => localStorage.getItem('wiib-chart-vp') === '1');
+  const [vpRows, setVpRows] = useState<number>(() => {
+    const n = Number(localStorage.getItem('wiib-chart-vp-rows'));
+    return (VP_ROWS as readonly number[]).includes(n) ? n : VP_ROWS[0];
+  });
+  const vpRowsRef = useRef(vpRows);
+  const vpRef = useRef<VpController | null>(null);
+  /** VP 已收盘块的缓存：同品种切周期复用，换品种换新的 */
+  const vpCacheRef = useRef(new Map<string, VpBar[]>());
   const cdRef = useRef<HTMLDivElement>(null);
   /** 仓位参考线的贴轴小签，由 250ms 循环随缩放平移重新定位 */
   const posLabelElsRef = useRef<{ el: HTMLDivElement; price: number }[]>([]);
@@ -734,15 +754,20 @@ export function CandleChart({
     };
     const hideHint = () => { clearTimeout(hintTimer); if (hintRef.current) hintRef.current.style.display = 'none'; };
 
+    /** 上次翻历史失败的时刻，冷却期内不再翻 */
+    let failedAt = 0;
     const loadMore = () => {
       if (loadingRef.current || exhaustedRef.current || !readyRef.current || !barsRef.current.length) return;
+      if (Date.now() - failedAt < LOAD_FAIL_COOLDOWN_MS) return;
       if (!loadHistory) { exhaustedRef.current = true; showHint(i18n.t('market:chart.loginForHistory')); return; }
       if (barsRef.current.length >= MAX_BARS) { exhaustedRef.current = true; showHint(i18n.t('market:chart.limitReached')); return; }
 
       loadingRef.current = true;
       showHint(i18n.t('market:chart.loadingHistory'), 0);
       // endTime = 现有最早那根开盘前 1ms；后端按 endTime 缓存 1h（闭合 bar 不可变），多人翻同一页共享同一个 key
-      klinesFn(symbol, interval, PAGE_SIZE, barsRef.current[0].openMs - 1).then(raw => {
+      // 根数不超过 MAX_BARS 剩下的
+      const n = Math.min(PAGE_SIZE, MAX_BARS - barsRef.current.length);
+      klinesFn(symbol, interval, n, barsRef.current[0].openMs - 1).then(raw => {
         if (disposed) return;
         // 去重：币安边界可能回一根重叠的，LWC 遇到重复时间会抛
         const oldest = barsRef.current[0].time;
@@ -761,7 +786,12 @@ export function CandleChart({
           chart.timeScale().setVisibleLogicalRange({ from: before.from + older.length, to: before.to + older.length });
         }
         hideHint();
-      }).catch(() => { if (!disposed) hideHint(); })
+      }).catch((e: unknown) => {
+        if (disposed) return;
+        failedAt = Date.now();
+        // 后端回的错（如请求过于频繁）给用户看一眼，其余静默
+        if (e instanceof ApiError) showHint(e.message); else hideHint();
+      })
         // disposed 时新一轮 effect 已经重置过锁了，这里别再动，否则会把新请求的锁误清
         .finally(() => { if (!disposed) loadingRef.current = false; });
     };
@@ -1018,6 +1048,27 @@ export function CandleChart({
     };
   }, [econMarks, showEcon, interval, chartEpoch, uiLang]);
 
+  // 换品种换一份 VP 缓存（得排在下面挂 VP 的 effect 前面）
+  useEffect(() => { vpCacheRef.current = new Map(); }, [symbol]);
+
+  // 成交量分布：挂在蜡烛 series 上，跟着图重建；行数、配色变只改不重挂
+  useEffect(() => {
+    const chart = chartRef.current, candle = candleRef.current;
+    if (!vpOn || !loadHistory || !indicators || !chart || !candle) return;
+    const vp = attachVolumeProfile({
+      chart, series: candle, symbol, mainMs: BUCKET_MS[interval], klinesFn, toBar,
+      bars: () => barsRef.current, rows: vpRowsRef.current, palette: vpPalette(),
+      cache: vpCacheRef.current, failText: () => i18n.t('market:chart.vpFailed'),
+    });
+    vpRef.current = vp;
+    return () => { vpRef.current = null; vp.dispose(); };
+  }, [vpOn, loadHistory, indicators, symbol, interval, klinesFn, chartEpoch]);
+
+  useEffect(() => {
+    vpRowsRef.current = vpRows;
+    vpRef.current?.setRows(vpRows);
+  }, [vpRows]);
+
   // 「最新价 + 收盘倒计时」墨块：顶在价格轴上原生最新价标签的位置（原生标签已关），
   // 上行价格、下行倒计时，一个框解决"倒计时和价格分家"。
   // 250ms 循环重取 Y 坐标与文案，价格跳动/缩放平移都跟得上；顺带把仓位参考线的贴轴小签
@@ -1079,6 +1130,7 @@ export function CandleChart({
     applyThemeRef.current?.();
     const econ = econLayerRef.current;
     if (econ) { econ.palette = econPalette(); econ.update(); }
+    vpRef.current?.setPalette(vpPalette());
   }, [isDark]);
 
   // 外部价格 tick 驱动（streamLive=false）：桶对齐后更新/追加最后一根，量额保持历史值（价格流无量数据）
@@ -1093,7 +1145,7 @@ export function CandleChart({
     const i = idxRef.current.get(time);
     let bar: Bar;
     if (i == null) {
-      bar = { time, openMs, open: tick.price, high: tick.price, low: tick.price, close: tick.price, volume: 0, quote: 0 };
+      bar = { time, openMs, open: tick.price, high: tick.price, low: tick.price, close: tick.price, volume: 0, quote: 0, buy: 0 };
       idxRef.current.set(time, barsRef.current.length);
       barsRef.current.push(bar);
     } else {
@@ -1112,7 +1164,7 @@ export function CandleChart({
     // 防乱序：忽略比最后一根更早的(重连/迟到)消息，否则 LWC update(time<lastTime) 会抛异常
     const last = barsRef.current[barsRef.current.length - 1];
     if (last && time < last.time) return;
-    const bar: Bar = { time, openMs: live.t, open: live.o, high: live.h, low: live.l, close: live.c, volume: live.v, quote: live.q };
+    const bar: Bar = { time, openMs: live.t, open: live.o, high: live.h, low: live.l, close: live.c, volume: live.v, quote: live.q, buy: live.V };
     const i = idxRef.current.get(time);
     if (i == null) { idxRef.current.set(time, barsRef.current.length); barsRef.current.push(bar); }
     else barsRef.current[i] = bar;
@@ -1126,6 +1178,12 @@ export function CandleChart({
     return next;
   });
   const pickType = (v: 'candle' | 'line') => { setChartType(v); localStorage.setItem('wiib-chart-type', v); };
+  const toggleVp = () => {
+    const v = !vpOn;
+    setVpOn(v);
+    localStorage.setItem('wiib-chart-vp', v ? '1' : '0');
+  };
+  const pickVpRows = (n: number) => { setVpRows(n); localStorage.setItem('wiib-chart-vp-rows', String(n)); };
 
   return (
     // 全屏用的是这一层：原生模式靠 :fullscreen 的 UA 样式铺满，iPhone Safari 没有元素级
@@ -1190,7 +1248,25 @@ export function CandleChart({
                     {k.toUpperCase()}
                   </button>
                 ))}
+                {/* VP 要拉历史子 K，游客置灰 */}
+                <button type="button" onClick={toggleVp} disabled={!loadHistory}
+                        title={loadHistory ? t('chart.vpTitle') : t('chart.vpLogin')}
+                        className={cn('chip', loadHistory ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed',
+                          loadHistory && vpOn && 'fill')}>
+                  VP
+                </button>
               </div>
+              {loadHistory && vpOn && (
+                <div className="flex items-center gap-1.5 py-1.5">
+                  <b className="w-[34px] text-[11.5px] font-semibold text-muted-foreground">{t('chart.vpRows')}</b>
+                  {VP_ROWS.map(n => (
+                    <button key={n} type="button" onClick={() => pickVpRows(n)}
+                            className={cn('chip cursor-pointer num', vpRows === n && 'fill')}>
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="flex items-center gap-1.5 py-1.5">
                 <b className="w-[34px] text-[11.5px] font-semibold text-muted-foreground">{t('chart.subPane')}</b>
                 {(['macd', 'rsi'] as const).map(k => (
