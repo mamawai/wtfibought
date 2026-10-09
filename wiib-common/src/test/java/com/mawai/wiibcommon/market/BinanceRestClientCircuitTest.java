@@ -2,6 +2,7 @@ package com.mawai.wiibcommon.market;
 
 import com.mawai.wiibcommon.config.BinanceProperties;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.ClientHttpRequest;
@@ -39,7 +40,7 @@ class BinanceRestClientCircuitTest {
             protected String get(String uri) {
                 calls.incrementAndGet();
                 throw HttpClientErrorException.create(HttpStatus.TOO_MANY_REQUESTS,
-                        "Too Many Requests", null, null, null);
+                        "Too Many Requests", new HttpHeaders(), null, null);
             }
         };
 
@@ -60,7 +61,7 @@ class BinanceRestClientCircuitTest {
             protected String get(String uri) {
                 if (calls.incrementAndGet() == 1) {
                     throw HttpClientErrorException.create(HttpStatus.TOO_MANY_REQUESTS,
-                            "Too Many Requests", null, null, null);
+                            "Too Many Requests", new HttpHeaders(), null, null);
                 }
                 return "[]";
             }
@@ -74,6 +75,33 @@ class BinanceRestClientCircuitTest {
         assertThat(calls.get()).isEqualTo(2);
     }
 
+    /** 回包带的 Retry-After 比 COOLDOWN_MS 长时按 Retry-After 冷却 */
+    @Test
+    void Retry_After更长时按它冷却() {
+        AtomicInteger calls = new AtomicInteger();
+        HttpHeaders headers = new HttpHeaders();
+        headers.add("Retry-After", "300");
+        BinanceRestClient client = new BinanceRestClient(props()) {
+            @Override
+            protected String get(String uri) {
+                if (calls.incrementAndGet() == 1) {
+                    throw HttpClientErrorException.create(HttpStatus.I_AM_A_TEAPOT,
+                            "I'm a teapot", headers, null, null);
+                }
+                return "[]";
+            }
+        };
+        client.nowMs = fixedClock(0L);
+
+        assertThat(client.getFuturesKlines("BTCUSDT", "5m", 100, null)).isNull();
+        client.nowMs = fixedClock(BinanceRestClient.COOLDOWN_MS + 1);
+        assertThat(client.getFuturesKlines("BTCUSDT", "5m", 100, null)).isNull();
+        client.nowMs = fixedClock(300_001L);
+        assertThat(client.getFuturesKlines("BTCUSDT", "5m", 100, null)).isEqualTo("[]");
+
+        assertThat(calls.get()).isEqualTo(2);
+    }
+
     /** 普通 4xx（比如参数错）不该触发熔断，否则一个笔误就把全局行情停了 */
     @Test
     void 普通4xx不触发熔断() {
@@ -83,7 +111,7 @@ class BinanceRestClientCircuitTest {
             protected String get(String uri) {
                 calls.incrementAndGet();
                 throw HttpClientErrorException.create(HttpStatus.BAD_REQUEST,
-                        "Bad Request", null, null, null);
+                        "Bad Request", new HttpHeaders(), null, null);
             }
         };
 
@@ -102,7 +130,7 @@ class BinanceRestClientCircuitTest {
             protected String get(String uri) {
                 calls.incrementAndGet();
                 throw HttpClientErrorException.create(HttpStatus.I_AM_A_TEAPOT,
-                        "I'm a teapot", null, null, null);
+                        "I'm a teapot", new HttpHeaders(), null, null);
             }
         };
 
@@ -147,7 +175,7 @@ class BinanceRestClientCircuitTest {
                     return "{\"data\":[]}";
                 }
                 throw HttpClientErrorException.create(HttpStatus.TOO_MANY_REQUESTS,
-                        "Too Many Requests", null, null, null);
+                        "Too Many Requests", new HttpHeaders(), null, null);
             }
         };
 
@@ -165,7 +193,7 @@ class BinanceRestClientCircuitTest {
             protected String get(String uri) {
                 if (uri.contains("alternative.me")) {
                     throw HttpClientErrorException.create(HttpStatus.TOO_MANY_REQUESTS,
-                            "Too Many Requests", null, null, null);
+                            "Too Many Requests", new HttpHeaders(), null, null);
                 }
                 return "[]";
             }
