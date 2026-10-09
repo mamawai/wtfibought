@@ -17,7 +17,7 @@ import { useFullscreen } from '../hooks/useFullscreen';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { getCoinPriceDecimals } from '../lib/coinConfig';
 import { bollSeries, emaSeries, macdSeries, maSeries, rsiSeries } from '../lib/indicators';
-import { lwcTheme, rgba } from '../lib/chartTheme';
+import { cssVar, lwcTheme, rgba } from '../lib/chartTheme';
 import type { ChartCtx } from '../lib/chartDrawings';
 import { useDrawings } from './chart/useDrawings';
 import { DrawToolRail, DrawToolStrip } from './chart/DrawToolPicker';
@@ -312,10 +312,13 @@ const econPalette = () => {
   return { fg: th.mute, border: rgba(th.mute, .45), bg: th.bg };
 };
 
-/** VP 配色：买卖跟涨跌色，POC 线用淡一点的正文色，悬停读数用正文色和底色 */
+/** VP 配色：买卖跟涨跌色，POC 线用淡一点的正文色，标签用正文色和底色、图表同款字体 */
 const vpPalette = (): VpPalette => {
   const th = lwcTheme();
-  return { gain: th.gain, loss: th.loss, line: rgba(th.fg, .55), mute: th.mute, fg: th.fg, bg: th.bg };
+  return {
+    gain: th.gain, loss: th.loss, line: rgba(th.fg, .55), mute: th.mute, fg: th.fg, bg: th.bg,
+    font: cssVar('--font-sans', 'system-ui, sans-serif'),
+  };
 };
 
 /** 悬停某一档时的读数：价位区间、总量、主动买卖各多少和占比 */
