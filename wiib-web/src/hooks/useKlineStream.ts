@@ -11,6 +11,7 @@ export interface KlineTick {
   c: number;
   v: number;       // 成交量（基础币，如 ETH）
   q: number;       // 成交额（USDT）
+  V: number;       // 主动买入量（基础币）
   x: boolean;      // 是否已收盘
 }
 
@@ -30,7 +31,7 @@ export function useKlineStream(symbol: string | undefined, interval: string): Kl
       try {
         const d = JSON.parse(msg.body);
         if (d.i !== interval) return;   // 过滤：只要当前 interval
-        setState({ key: k, tick: { i: d.i, t: d.t, o: +d.o, h: +d.h, l: +d.l, c: +d.c, v: +d.v, q: +d.q, x: !!d.x } });
+        setState({ key: k, tick: { i: d.i, t: d.t, o: +d.o, h: +d.h, l: +d.l, c: +d.c, v: +d.v, q: +d.q, V: +d.V, x: !!d.x } });
       } catch { /* ignore */ }
     });
     return unsub;
