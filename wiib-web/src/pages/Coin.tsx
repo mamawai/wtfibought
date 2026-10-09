@@ -180,7 +180,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
     let cancelled = false;
     const fn = isFuturesMode ? futuresApi.klines : cryptoApi.klines;
     fn(symbol, '5m', 1)
-      .then(rows => { if (!cancelled && rows?.length) setRestPrice(Number(rows[rows.length - 1][4])); })
+      .then(rows => { if (!cancelled && rows.length) setRestPrice(Number(rows[rows.length - 1][4])); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [symbol, isFuturesMode]);
@@ -193,7 +193,7 @@ export function Coin({ symbol = DEFAULT_SYMBOL }: { symbol?: string }) {
     const fn = isFuturesMode ? futuresApi.klines : cryptoApi.klines;
     fn(symbol, '1h', 25)
       .then(rows => {
-        if (cancelled || !rows?.length) return;
+        if (cancelled || !rows.length) return;
         setDay({
           base: Number(rows[0][4]),
           high: Math.max(...rows.map(r => Number(r[2]))),
