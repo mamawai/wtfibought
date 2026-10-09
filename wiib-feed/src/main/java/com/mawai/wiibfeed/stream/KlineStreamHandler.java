@@ -78,13 +78,14 @@ public class KlineStreamHandler implements StreamHandler {
         }
     }
 
-    /** 字段契约(前端 useKlineStream 按此解析)：i=interval, t=开盘ms, o/h/l/c, v=量, q=额, x=是否收盘。 */
+    /** 字段契约(前端 useKlineStream 按此解析)：i=interval, t=开盘ms, o/h/l/c, v=量, q=额, V=主动买入量, x=是否收盘。 */
     private void broadcastKline(String symbol, JsonNode k) {
         String json = "{\"i\":\"" + k.path("i").asString(null) + "\""
                 + ",\"t\":" + k.path("t").asLong(0)
                 + ",\"o\":\"" + k.path("o").asString(null) + "\",\"h\":\"" + k.path("h").asString(null) + "\""
                 + ",\"l\":\"" + k.path("l").asString(null) + "\",\"c\":\"" + k.path("c").asString(null) + "\""
                 + ",\"v\":\"" + k.path("v").asString(null) + "\",\"q\":\"" + k.path("q").asString(null) + "\""
+                + ",\"V\":\"" + k.path("V").asString(null) + "\""
                 + ",\"x\":" + k.path("x").asBoolean(false) + "}";
         broadcaster.broadcastKline(symbol, json);
     }
