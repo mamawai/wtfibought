@@ -16,7 +16,7 @@ export function useCoinQuote(symbol: string): Quote {
     let cancelled = false;
     const load = cfg.futuresOnly ? futuresApi.klines : cryptoApi.klines;
     load(symbol, '1h', 25)
-      .then(rows => { if (!cancelled && rows?.length) setBase(Number(rows[0][4])); })
+      .then(rows => { if (!cancelled && rows.length) setBase(Number(rows[0][4])); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [symbol, cfg.futuresOnly]);
@@ -40,7 +40,7 @@ export function useStockQuote(stock: BStock | undefined): Quote {
     if (!symbol) return;
     let cancelled = false;
     bstockApi.klines(symbol, '1h', 25)
-      .then(rows => { if (!cancelled && rows?.length) setBase(Number(rows[0][4])); })
+      .then(rows => { if (!cancelled && rows.length) setBase(Number(rows[0][4])); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [symbol]);

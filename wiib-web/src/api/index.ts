@@ -274,13 +274,18 @@ const parseChatStreamEvent = (block: string): ChatStreamEvent => {
 
 // K线数据（直接返回Binance原始数组，不走拦截器解包）；现货/合约仅路径不同
 const rawKlines = (path: string) =>
-  (symbol = 'BTCUSDT', interval = '1m', limit = 500, endTime?: number) => {
-    const token = getToken();
-    return axios.get<number[][]>(path, {
+  (symbol = 'BTCUSDT', interval = '1m', limit = 500, endTime?: number) =>
+    axios.get<number[][]>(path, {
       params: { symbol, interval, limit, ...(endTime ? { endTime } : {}) },
-      ...(token ? { headers: { satoken: token } } : {}),
-    }).then(res => res.data);
-  };
+      headers: sseHeaders(),
+    }).then(res => {
+      // 不是数组 = 后端回的 Result（被限流/参数错）或空体（币安没拉到），带后端文案报错
+      if (!Array.isArray(res.data)) {
+        const r = res.data as { code?: number; msg?: string };
+        throw new ApiError(r.msg || i18n.t('errors:requestFailed'), r.code ?? -1);
+      }
+      return res.data;
+    });
 
 export const cryptoApi = {
   klines: rawKlines('/api/crypto/klines'),
@@ -405,7 +410,7 @@ const streamSseEvents = async <E,>(
   }
 };
 
-/** fetch 走 SSE 时的鉴权与语言头（satoken 只认 header 不认 cookie） */
+/** 不走 api 实例时的鉴权与语言头（satoken 只认 header 不认 cookie）：SSE 的 fetch、直取 K 线共用 */
 const sseHeaders = (): Record<string, string> => {
   const token = getToken();
   return { [LANG_HEADER]: currentLang(), ...(token ? { satoken: token } : {}) };

@@ -81,7 +81,7 @@ function BStockDetail({ symbol }: { symbol: string }) {
     let cancelled = false;
     bstockApi.klines(symbol, '1h', 25)
       .then(rows => {
-        if (cancelled || !rows?.length) return;
+        if (cancelled || !rows.length) return;
         setDay({
           base: Number(rows[0][4]),
           high: Math.max(...rows.map(r => Number(r[2]))),

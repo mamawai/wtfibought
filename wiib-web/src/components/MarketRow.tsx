@@ -74,7 +74,7 @@ export function CoinMarketRow({ cfg }: { cfg: CoinCfg }) {
     let cancelled = false;
     const loadKlines = cfg.futuresOnly ? futuresApi.klines : cryptoApi.klines;
     loadKlines(cfg.symbol, '1h', 25)
-      .then(rows => { if (!cancelled && rows?.length) setCloses(rows.map(r => Number(r[4]))); })
+      .then(rows => { if (!cancelled && rows.length) setCloses(rows.map(r => Number(r[4]))); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [cfg.symbol, cfg.futuresOnly]);
@@ -122,7 +122,7 @@ export function StockMarketRow({ stock }: { stock: BStock }) {
   useEffect(() => {
     let cancelled = false;
     bstockApi.klines(stock.symbol, '1h', 25)
-      .then(rows => { if (!cancelled && rows?.length) setCloses(rows.map(r => Number(r[4]))); })
+      .then(rows => { if (!cancelled && rows.length) setCloses(rows.map(r => Number(r[4]))); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [stock.symbol]);
