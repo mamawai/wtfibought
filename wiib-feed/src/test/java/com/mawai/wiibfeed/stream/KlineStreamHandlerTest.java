@@ -35,7 +35,7 @@ class KlineStreamHandlerTest {
 
         verify(broadcaster).broadcastKline("BTCUSDT",
                 "{\"i\":\"5m\",\"t\":1700000100000,\"o\":\"37000.10\",\"h\":\"37020.00\",\"l\":\"36990.00\","
-                        + "\"c\":\"37010.50\",\"v\":\"12.345\",\"q\":\"456789.12\",\"x\":false}");
+                        + "\"c\":\"37010.50\",\"v\":\"12.345\",\"q\":\"456789.12\",\"V\":\"6.1\",\"x\":false}");
         verify(cache, never()).onClosedBar(anyString(), anyString(), any());
     }
 
@@ -59,11 +59,11 @@ class KlineStreamHandlerTest {
     @Test
     void 单流格式没有data包装也能解析() {
         String raw = "{\"e\":\"kline\",\"s\":\"ETHUSDT\",\"k\":{\"t\":1,\"T\":2,\"s\":\"ETHUSDT\",\"i\":\"5m\","
-                + "\"o\":\"1\",\"c\":\"2\",\"h\":\"3\",\"l\":\"0.5\",\"v\":\"9\",\"x\":true,\"q\":\"10\"}}";
+                + "\"o\":\"1\",\"c\":\"2\",\"h\":\"3\",\"l\":\"0.5\",\"v\":\"9\",\"x\":true,\"q\":\"10\",\"V\":\"4\"}}";
         handler.handle(raw, true);
 
         verify(broadcaster).broadcastKline("ETHUSDT",
-                "{\"i\":\"5m\",\"t\":1,\"o\":\"1\",\"h\":\"3\",\"l\":\"0.5\",\"c\":\"2\",\"v\":\"9\",\"q\":\"10\",\"x\":true}");
+                "{\"i\":\"5m\",\"t\":1,\"o\":\"1\",\"h\":\"3\",\"l\":\"0.5\",\"c\":\"2\",\"v\":\"9\",\"q\":\"10\",\"V\":\"4\",\"x\":true}");
         verify(cache).onClosedBar("ETHUSDT", "5m", new KlineBar(1L, 2L,
                 new BigDecimal("1"), new BigDecimal("3"), new BigDecimal("0.5"), new BigDecimal("2"), new BigDecimal("9")));
     }
