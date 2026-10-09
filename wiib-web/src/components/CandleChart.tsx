@@ -24,7 +24,7 @@ import { DrawToolRail, DrawToolStrip } from './chart/DrawToolPicker';
 import { DrawOverlay } from './chart/DrawOverlay';
 import { EconMarkersLayer } from './chart/EconMarkersLayer';
 import { attachVolumeProfile, type VpController, type VpPalette } from './chart/VolumeProfileLayer';
-import { VP_ROWS, type VpBar } from '../lib/volumeProfile';
+import { VP_ROWS, type VpBar, type VpRow } from '../lib/volumeProfile';
 import { flagHtml } from '../lib/countryFlags';
 
 /** 一根 K：series 只用 OHLC，量/额留给读数和成交量柱，主动买入量留给 VP 分买卖。 */
@@ -312,10 +312,18 @@ const econPalette = () => {
   return { fg: th.mute, border: rgba(th.mute, .45), bg: th.bg };
 };
 
-/** VP 配色：买卖跟涨跌色，POC 线用淡一点的正文色 */
+/** VP 配色：买卖跟涨跌色，POC 线用淡一点的正文色，悬停读数用正文色和底色 */
 const vpPalette = (): VpPalette => {
   const th = lwcTheme();
-  return { gain: th.gain, loss: th.loss, line: rgba(th.fg, .55), mute: th.mute };
+  return { gain: th.gain, loss: th.loss, line: rgba(th.fg, .55), mute: th.mute, fg: th.fg, bg: th.bg };
+};
+
+/** 悬停某一档时的读数：价位区间、总量、主动买卖各多少和占比 */
+const vpRowText = (r: VpRow, decimals: number) => {
+  const buyPct = r.vol > 0 ? Math.round(r.buy / r.vol * 100) : 0;
+  return `${fmtNum(r.lo, decimals)} – ${fmtNum(r.hi, decimals)}  ${fmtVol(r.vol)}  `
+    + `${i18n.t('market:chart.vpBuy')} ${fmtVol(r.buy)} (${buyPct}%)  `
+    + `${i18n.t('market:chart.vpSell')} ${fmtVol(r.vol - r.buy)} (${100 - buyPct}%)`;
 };
 
 export interface CandleChartProps {
@@ -1059,10 +1067,11 @@ export function CandleChart({
       chart, series: candle, symbol, mainMs: BUCKET_MS[interval], klinesFn, toBar,
       bars: () => barsRef.current, rows: vpRowsRef.current, palette: vpPalette(),
       cache: vpCacheRef.current, failText: () => i18n.t('market:chart.vpFailed'),
+      fmtPrice: p => fmtNum(p, decimals), rowText: r => vpRowText(r, decimals),
     });
     vpRef.current = vp;
     return () => { vpRef.current = null; vp.dispose(); };
-  }, [vpOn, loadHistory, indicators, symbol, interval, klinesFn, chartEpoch]);
+  }, [vpOn, loadHistory, indicators, symbol, interval, decimals, klinesFn, chartEpoch]);
 
   useEffect(() => {
     vpRowsRef.current = vpRows;

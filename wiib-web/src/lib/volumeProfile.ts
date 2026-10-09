@@ -6,7 +6,7 @@
 /** 算 VP 用到的一根 K 线；CandleChart 的 Bar 天然满足 */
 export interface VpBar { openMs: number; high: number; low: number; volume: number; buy: number; }
 
-interface VpRow { lo: number; hi: number; vol: number; buy: number; }
+export interface VpRow { lo: number; hi: number; vol: number; buy: number; }
 
 export interface VolumeProfile {
   rows: VpRow[];
