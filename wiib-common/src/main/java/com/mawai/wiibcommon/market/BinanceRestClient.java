@@ -72,9 +72,11 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         } catch (HttpClientErrorException e) {
             int code = e.getStatusCode().value();
             if (code == 429 || code == 418) {
+                // 冷却取 Retry-After 和 COOLDOWN_MS 的大者
+                long wait = Math.max(COOLDOWN_MS, retryAfterMs(e));
                 // now 是入口处读的，这里必须现读：请求本身可能耗了 10s，用旧时间戳会把冷却期截短
-                blockedUntil.accumulateAndGet(nowMs.getAsLong() + COOLDOWN_MS, Math::max);
-                log.error("Binance 限流 {}，熔断 {}ms —— 继续打会升级成 IP ban 并连累策略轨", code, COOLDOWN_MS);
+                blockedUntil.accumulateAndGet(nowMs.getAsLong() + wait, Math::max);
+                log.error("Binance 限流 {}，熔断 {}ms —— 继续打会升级成 IP ban 并连累策略轨", code, wait);
             } else {
                 log.warn("Binance 请求失败 {}: {}", code, uri);
             }
@@ -85,8 +87,24 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
         }
     }
 
+    /** 429/418 回包头里的 Retry-After（秒）转毫秒；没有或不是整数按 0 */
+    private static long retryAfterMs(HttpClientErrorException e) {
+        String v = e.getResponseHeaders().getFirst("Retry-After");
+        if (v == null) return 0;
+        try {
+            return Long.parseLong(v) * 1000;
+        } catch (NumberFormatException ex) {
+            return 0;
+        }
+    }
+
     private String getGuarded(URI uri) {
         return getGuarded(uri.toString());
+    }
+
+    /** 熔断冷却中 */
+    public boolean blocked() {
+        return nowMs.getAsLong() < blockedUntil.get();
     }
 
     /**
@@ -111,33 +129,23 @@ public class BinanceRestClient extends BaseRestTemplateConfig {
     }
 
     public String getKlinesLight(String symbol, String interval, int limit, Long endTime) {
-        String raw = getKlines(symbol, interval, limit, endTime);
-        try {
-            return getSlimKlines(raw);
-        } catch (Exception e) {
-            log.warn("klines精简失败，返回原始数据", e);
-            return raw;
-        }
+        return getSlimKlines(getKlines(symbol, interval, limit, endTime));
     }
 
     public String getFuturesKlinesLight(String symbol, String interval, int limit, Long endTime) {
-        String raw = getFuturesKlines(symbol, interval, limit, endTime);
-        try {
-            return getSlimKlines(raw);
-        } catch (Exception e) {
-            log.warn("futures klines精简失败，返回原始数据", e);
-            return raw;
-        }
+        return getSlimKlines(getFuturesKlines(symbol, interval, limit, endTime));
     }
 
+    /** 拉失败（null）回 null */
     private String getSlimKlines(String raw) {
+        if (raw == null) return null;
         ArrayNode root = MAPPER.readValue(raw, ArrayNode.class);
         ArrayNode result = MAPPER.createArrayNode();
         for (JsonNode kline : root) {
             ArrayNode slim = result.addArray();
-            // 保留 0-7（时间/OHLC/量/收盘时间/额）：前端蜡烛图按 Binance 原始下标取 k[5]=量、k[7]=额，
-            // 只裁 8-11（笔数/taker 量额/保留位）；早期裁到 0-4 导致历史K线量额全 NaN
-            for (int j = 0; j <= 7; j++) slim.add(kline.get(j));
+            // 保留 0-9（时间/OHLC/量/收盘时间/额/笔数/主动买入量）：前端按 Binance 原始下标取
+            // k[5]=量、k[7]=额、k[9]=主动买入量（VP 分买卖），只裁 10-11（主动买入额/保留位）
+            for (int j = 0; j <= 9; j++) slim.add(kline.get(j));
         }
         return MAPPER.writeValueAsString(result);
     }
