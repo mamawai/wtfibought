@@ -1,7 +1,8 @@
 /**
  * 成交量分布（VP）图层：以 ISeriesPrimitive 挂在蜡烛 series 上，横柱从主图右缘往左画、压在蜡烛下面。
  * 每档横柱左段主动买（涨色）、右段主动卖（跌色）；价值区内深、区外浅；POC 一条虚线横贯主图，左端标字和价位。
- * 鼠标悬在 VP 区上：那一档不透明加描边，左边给读数，价值区上下沿标 VAH / VAL 价位。
+ * 鼠标悬在 VP 区上：那一档不透明加描边，十字线上方给读数，价值区上下沿标 VAH / VAL 价位。
+ * 标签单独一层画在最上面，十字线不会穿字。
  * <p>{@link attachVolumeProfile} 管数据：按可见范围选子周期、按整块拉子 K、算 profile 交给图层画。
  */
 import type {
@@ -31,6 +32,8 @@ class VolumeProfileLayer implements ISeriesPrimitive<Time> {
   palette: VpPalette;
   /** 鼠标悬在哪一档上，没悬在 VP 区上是 null */
   hover: number | null = null;
+  /** 悬停时鼠标的 y，读数贴着它放 */
+  hoverY = 0;
   /** 挂在哪条 series 上，价格换纵坐标用它 */
   readonly series: ISeriesApi<SeriesType>;
   readonly fmtPrice: (p: number) => string;
@@ -46,7 +49,12 @@ class VolumeProfileLayer implements ISeriesPrimitive<Time> {
     this.palette = palette;
     this.fmtPrice = fmtPrice;
     this.rowText = rowText;
-    this._views = [new PaneView(this)];
+    this._views = [new PaneView(this, 'bottom'), new PaneView(this, 'top')];
+  }
+
+  /** 悬停的那一档；profile 刚换过时 hover 可能越界，下一次鼠标动会修正 */
+  hoverRow(): number | null {
+    return this.hover !== null && this.profile && this.hover < this.profile.rows.length ? this.hover : null;
   }
 
   attached(p: SeriesAttachedParameter<Time, SeriesType>) {
@@ -67,15 +75,18 @@ class VolumeProfileLayer implements ISeriesPrimitive<Time> {
   }
 }
 
+/** 两层：柱子和线压在蜡烛下面；标签在最上面（十字线之上），底色块把穿过的线盖住 */
 class PaneView implements IPrimitivePaneView {
-  private readonly _r: PaneRenderer;
+  private readonly _z: 'bottom' | 'top';
+  private readonly _r: IPrimitivePaneRenderer;
 
-  constructor(layer: VolumeProfileLayer) {
-    this._r = new PaneRenderer(layer);
+  constructor(layer: VolumeProfileLayer, z: 'bottom' | 'top') {
+    this._z = z;
+    this._r = z === 'bottom' ? new BarsRenderer(layer) : new LabelsRenderer(layer);
   }
 
   zOrder() {
-    return 'bottom' as const;   // 压在蜡烛下面，不挡 K 线
+    return this._z;
   }
 
   renderer() {
@@ -83,7 +94,8 @@ class PaneView implements IPrimitivePaneView {
   }
 }
 
-class PaneRenderer implements IPrimitivePaneRenderer {
+/** 柱子、POC 虚线、悬停时价值区上下沿的短横线 */
+class BarsRenderer implements IPrimitivePaneRenderer {
   private readonly _layer: VolumeProfileLayer;
 
   constructor(layer: VolumeProfileLayer) {
@@ -92,12 +104,74 @@ class PaneRenderer implements IPrimitivePaneRenderer {
 
   draw(target: CanvasRenderingTarget2D) {
     target.useMediaCoordinateSpace(({ context: c, mediaSize }) => {
-      const L = this._layer, series = L.series;
-      const { gain, loss, line, mute, fg, bg, font } = L.palette;
+      const L = this._layer, series = L.series, p = L.profile;
+      if (!p) return;
+      const { gain, loss, line, fg } = L.palette;
       const W = mediaSize.width, maxW = W * WIDTH_RATIO;
-      const p = L.profile;
+      const hover = L.hoverRow();
 
-      /** 带底色的小标签，垂直居中压在 y 上，盖住底下的线；align 是 x 在标签的哪一边 */
+      p.rows.forEach((row, i) => {
+        if (!(row.vol > 0)) return;
+        const yTop = series.priceToCoordinate(row.hi), yBot = series.priceToCoordinate(row.lo);
+        if (yTop === null || yBot === null) return;
+        const h = Math.max(1, yBot - yTop - 1);   // 档间留 1px 缝
+        const w = row.vol / p.maxVol * maxW, wBuy = w * row.buy / row.vol;
+        // 悬停那档不透明，其余区内深、区外浅
+        const a = i === hover ? 1 : i >= p.vaLo && i <= p.vaHi ? VA_ALPHA : OUT_ALPHA;
+        c.fillStyle = rgba(gain, a);
+        c.fillRect(W - w, yTop, wBuy, h);
+        c.fillStyle = rgba(loss, a);
+        c.fillRect(W - w + wBuy, yTop, w - wBuy, h);
+        if (i === hover) {
+          c.strokeStyle = fg;
+          c.lineWidth = 1;
+          c.strokeRect(W - w + 0.5, yTop + 0.5, w - 1, h - 1);
+        }
+      });
+
+      const poc = p.rows[p.poc];
+      const y = series.priceToCoordinate((poc.lo + poc.hi) / 2);
+      if (y !== null) {
+        c.save();
+        c.strokeStyle = line;
+        c.lineWidth = 1;
+        c.setLineDash([4, 3]);
+        c.beginPath();
+        c.moveTo(0, Math.round(y) + 0.5);
+        c.lineTo(W, Math.round(y) + 0.5);
+        c.stroke();
+        c.restore();
+      }
+
+      if (hover !== null) {
+        // 价值区上下沿：VP 区宽的一段横线
+        c.strokeStyle = line;
+        c.lineWidth = 1;
+        for (const price of [p.rows[p.vaHi].hi, p.rows[p.vaLo].lo]) {
+          const y = series.priceToCoordinate(price);
+          if (y === null) continue;
+          c.beginPath(); c.moveTo(W - maxW, Math.round(y) + 0.5); c.lineTo(W, Math.round(y) + 0.5); c.stroke();
+        }
+      }
+    });
+  }
+}
+
+/** POC 标签、悬停时的 VAH / VAL 标签和读数、出错提示 */
+class LabelsRenderer implements IPrimitivePaneRenderer {
+  private readonly _layer: VolumeProfileLayer;
+
+  constructor(layer: VolumeProfileLayer) {
+    this._layer = layer;
+  }
+
+  draw(target: CanvasRenderingTarget2D) {
+    target.useMediaCoordinateSpace(({ context: c, mediaSize }) => {
+      const L = this._layer, series = L.series, p = L.profile;
+      const { mute, fg, bg, font } = L.palette;
+      const W = mediaSize.width, maxW = W * WIDTH_RATIO;
+
+      /** 带底色的小标签，垂直居中在 y 上；align 是 x 在标签的哪一边 */
       const tag = (text: string, x: number, y: number, align: 'left' | 'right', px: number) => {
         c.font = `500 ${px}px ${font}`;
         const w = c.measureText(text).width + 10, h = px + 8;
@@ -111,72 +185,29 @@ class PaneRenderer implements IPrimitivePaneRenderer {
       };
 
       if (p) {
-        // profile 刚换过时 hover 可能越界，下一次鼠标动会修正
-        const hover = L.hover !== null && L.hover < p.rows.length ? L.hover : null;
-        p.rows.forEach((row, i) => {
-          if (!(row.vol > 0)) return;
-          const yTop = series.priceToCoordinate(row.hi), yBot = series.priceToCoordinate(row.lo);
-          if (yTop === null || yBot === null) return;
-          const h = Math.max(1, yBot - yTop - 1);   // 档间留 1px 缝
-          const w = row.vol / p.maxVol * maxW, wBuy = w * row.buy / row.vol;
-          // 悬停那档不透明，其余区内深、区外浅
-          const a = i === hover ? 1 : i >= p.vaLo && i <= p.vaHi ? VA_ALPHA : OUT_ALPHA;
-          c.fillStyle = rgba(gain, a);
-          c.fillRect(W - w, yTop, wBuy, h);
-          c.fillStyle = rgba(loss, a);
-          c.fillRect(W - w + wBuy, yTop, w - wBuy, h);
-          if (i === hover) {
-            c.strokeStyle = fg;
-            c.lineWidth = 1;
-            c.strokeRect(W - w + 0.5, yTop + 0.5, w - 1, h - 1);
-          }
-        });
+        const poc = p.rows[p.poc], pocPrice = (poc.lo + poc.hi) / 2;
+        const y = series.priceToCoordinate(pocPrice);
+        if (y !== null) tag(`POC ${L.fmtPrice(pocPrice)}`, 4, Math.round(y) + 0.5, 'left', 11);
 
-        const poc = p.rows[p.poc];
-        const y = series.priceToCoordinate((poc.lo + poc.hi) / 2);
-        if (y !== null) {
-          c.save();
-          c.strokeStyle = line;
-          c.lineWidth = 1;
-          c.setLineDash([4, 3]);
-          c.beginPath();
-          c.moveTo(0, Math.round(y) + 0.5);
-          c.lineTo(W, Math.round(y) + 0.5);
-          c.stroke();
-          c.restore();
-          // 线左端标 POC 和价位
-          tag(`POC ${L.fmtPrice((poc.lo + poc.hi) / 2)}`, 4, Math.round(y) + 0.5, 'left', 11);
-        }
-
+        const hover = L.hoverRow();
         if (hover !== null) {
-          c.save();
-          c.strokeStyle = line;
-          c.lineWidth = 1;
-          // 价值区上下沿：VP 区宽的一段横线，右端标 VAH / VAL 价位
-          const vah = p.rows[p.vaHi].hi, val = p.rows[p.vaLo].lo;
-          for (const [name, price] of [['VAH', vah], ['VAL', val]] as const) {
+          for (const [name, price] of [['VAH', p.rows[p.vaHi].hi], ['VAL', p.rows[p.vaLo].lo]] as const) {
             const y = series.priceToCoordinate(price);
-            if (y === null) continue;
-            c.beginPath(); c.moveTo(W - maxW, Math.round(y) + 0.5); c.lineTo(W, Math.round(y) + 0.5); c.stroke();
-            tag(`${name} ${L.fmtPrice(price)}`, W - 4, Math.round(y) + 0.5, 'right', 11);
+            if (y !== null) tag(`${name} ${L.fmtPrice(price)}`, W - 4, Math.round(y) + 0.5, 'right', 11);
           }
-          // 悬停那档的读数：放在 VP 区左边，不压柱子
-          const row = p.rows[hover];
-          const yTop = series.priceToCoordinate(row.hi), yBot = series.priceToCoordinate(row.lo);
-          if (yTop !== null && yBot !== null) tag(L.rowText(row), W - maxW - 8, (yTop + yBot) / 2, 'right', 12);
-          c.restore();
+          // 悬停那档的读数：VP 区左边、十字线上方 6px，贴近顶部时翻到下方；不压柱子也不压十字线
+          const yc = L.hoverY >= 28 ? L.hoverY - 16 : L.hoverY + 16;
+          tag(L.rowText(p.rows[hover]), W - maxW - 8, yc, 'right', 12);
         }
       }
 
       if (L.status) {
-        c.save();
         c.font = `500 11px ${font}`;
         c.fillStyle = mute;
         c.textAlign = 'right';
         c.textBaseline = 'bottom';
         // 量柱占底部 18%，字压在它上面
         c.fillText(L.status, W - 6, mediaSize.height * 0.82 - 6);
-        c.restore();
       }
     });
   }
@@ -343,7 +374,11 @@ export function attachVolumeProfile(o: VpOptions): VpController {
         if (i >= 0 && i < p.rows.length) hover = i;
       }
     }
-    if (hover !== layer.hover) { layer.hover = hover; layer.update(); }
+    // 悬着时每次移动都重画（读数跟着鼠标走），离开只画一次
+    if (hover === null && layer.hover === null) return;
+    layer.hover = hover;
+    layer.hoverY = pt?.y ?? 0;
+    layer.update();
   };
   o.chart.subscribeCrosshairMove(onMove);
   plan();
