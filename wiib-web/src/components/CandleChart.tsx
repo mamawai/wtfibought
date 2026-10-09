@@ -8,7 +8,7 @@ import {
   type DeepPartial, type HandleScrollOptions, type IPriceLine, type SeriesMarker,
 } from 'lightweight-charts';
 import {
-  CalendarClock, ChartCandlestick, ChartLine, ChartNoAxesCombined, ChevronDown, Expand, History, Layers, Shrink,
+  CalendarClock, ChartCandlestick, ChartLine, ChartNoAxesCombined, ChevronDown, Expand, History, Info, Layers, Shrink,
 } from 'lucide-react';
 import { ApiError, futuresApi, quantApi, type EconCalendarEvent } from '../api';
 import { useKlineStream } from '../hooks/useKlineStream';
@@ -1257,15 +1257,27 @@ export function CandleChart({
                 </button>
               </div>
               {loadHistory && vpOn && (
-                <div className="flex items-center gap-1.5 py-1.5">
-                  <b className="w-[34px] text-[11.5px] font-semibold text-muted-foreground">{t('chart.vpRows')}</b>
-                  {VP_ROWS.map(n => (
-                    <button key={n} type="button" onClick={() => pickVpRows(n)}
-                            className={cn('chip cursor-pointer num', vpRows === n && 'fill')}>
-                      {n}
-                    </button>
-                  ))}
-                </div>
+                <>
+                  <div className="flex items-center gap-1.5 py-1.5">
+                    <b className="w-[34px] text-[11.5px] font-semibold text-muted-foreground">{t('chart.vpRows')}</b>
+                    {VP_ROWS.map(n => (
+                      <button key={n} type="button" onClick={() => pickVpRows(n)}
+                              className={cn('chip cursor-pointer num', vpRows === n && 'fill')}>
+                        {n}
+                      </button>
+                    ))}
+                    <span className="ml-auto inline-flex" title={t('chart.vpTitle')}>
+                      <Info className="w-3 h-3 text-muted-foreground" />
+                    </span>
+                  </div>
+                  {/* VP 图例：柱子的绿红、深浅、虚线各是什么 */}
+                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 pb-1.5 text-[11px] text-muted-foreground">
+                    <span className="inline-flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 bg-gain" />{t('chart.vpBuy')}</span>
+                    <span className="inline-flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 bg-loss" />{t('chart.vpSell')}</span>
+                    <span className="inline-flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 bg-foreground/45" />{t('chart.vpValueArea')}</span>
+                    <span className="inline-flex items-center gap-1"><i className="inline-block w-3 border-t border-dashed border-foreground/60" />{t('chart.vpPoc')}</span>
+                  </div>
+                </>
               )}
               <div className="flex items-center gap-1.5 py-1.5">
                 <b className="w-[34px] text-[11.5px] font-semibold text-muted-foreground">{t('chart.subPane')}</b>
