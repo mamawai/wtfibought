@@ -47,8 +47,7 @@ class RateLimiterAspectTest {
         @RateLimiter(RateLimiterType.KLINE_MEMBER)
         public void global() { calls++; }
 
-        @RateLimiter(RateLimiterType.KLINE_USER)
-        @RateLimiter(RateLimiterType.KLINE_MEMBER)
+        @RateLimiter({RateLimiterType.KLINE_USER, RateLimiterType.KLINE_MEMBER})
         public void both() { calls++; }
     }
 
@@ -84,7 +83,7 @@ class RateLimiterAspectTest {
     }
 
     @Test
-    void 叠用一次脚本传全部桶_每人桶key带登录ID() {
+    void 多个桶一次脚本传全部_每人桶key带登录ID() {
         redis.results.add(0L);
 
         asUser42(proxy::both);

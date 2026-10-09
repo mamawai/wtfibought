@@ -9,7 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
-import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -20,10 +19,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-/**
- * 令牌桶限流切面，见 {@link RateLimiter}。
- * 单个注解和叠用（编译成 RateLimiters 容器）都要拦，所以切点写两个。
- */
+/** 令牌桶限流切面，见 {@link RateLimiter} */
 @Aspect
 @Component
 @Slf4j
@@ -38,11 +34,9 @@ public class RateLimiterAspect {
         tokenBucket.setResultType(Long.class);
     }
 
-    @Around("@annotation(com.mawai.wiibcommon.annotation.RateLimiter) "
-            + "|| @annotation(com.mawai.wiibcommon.annotation.RateLimiters)")
-    public Object around(ProceedingJoinPoint point) throws Throwable {
-        RateLimiterType[] types = Arrays.stream(((MethodSignature) point.getSignature()).getMethod()
-                .getAnnotationsByType(RateLimiter.class)).map(RateLimiter::value).toArray(RateLimiterType[]::new);
+    @Around("@annotation(rateLimiter)")
+    public Object around(ProceedingJoinPoint point, RateLimiter rateLimiter) throws Throwable {
+        RateLimiterType[] types = rateLimiter.value();
         int rejected = tryAcquire(types);
         if (rejected > 0) {
             log.warn("[RateLimiter] 拒绝 type={} method={}", types[rejected - 1], point.getSignature().toShortString());

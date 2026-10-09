@@ -24,9 +24,8 @@ public class KlineOrigin {
         return fetch(futures, symbol, interval, limit, null);
     }
 
-    /** 登录用户：先过每人桶再过登录用户总桶 */
-    @RateLimiter(RateLimiterType.KLINE_USER)
-    @RateLimiter(RateLimiterType.KLINE_MEMBER)
+    /** 登录用户：每人桶和登录用户总桶一起过 */
+    @RateLimiter({RateLimiterType.KLINE_USER, RateLimiterType.KLINE_MEMBER})
     public String member(boolean futures, String symbol, String interval, int limit, Long endTime) {
         return fetch(futures, symbol, interval, limit, endTime);
     }
