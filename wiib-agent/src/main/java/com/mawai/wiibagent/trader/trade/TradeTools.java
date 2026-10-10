@@ -65,13 +65,15 @@ public class TradeTools {
     private final PromptCatalog prompts;
     /** sim 那侧的拒因按错误码在这儿成文（余额不足/止损价非法等），同样跟 {@code ctx.lang()} */
     private final MessageCatalog messages;
+    /** 开仓那一刻的上下文快照，随计划落库 */
+    private final EntryContext entryContext;
     /** 本次唤醒的动作轨迹，唤醒回路收走序列化进 ai_trader_decision.actions_json */
     private final List<ObjectNode> actions = new ArrayList<>();
 
     public TradeTools(SimTradeClient simTradeClient, long simUserId, Set<String> symbolWhitelist,
                       Function<List<FuturesPositionDTO>, BigDecimal> equityOf, Function<String, BigDecimal> markPrice,
                       TraderPlanStore planStore, WakeCtx ctx,
-                      PromptCatalog prompts, MessageCatalog messages) {
+                      PromptCatalog prompts, MessageCatalog messages, EntryContext entryContext) {
         this.simTradeClient = simTradeClient;
         this.simUserId = simUserId;
         this.symbolWhitelist = symbolWhitelist;
@@ -81,6 +83,7 @@ public class TradeTools {
         this.ctx = ctx;
         this.prompts = prompts;
         this.messages = messages;
+        this.entryContext = entryContext;
     }
 
     public List<ObjectNode> actions() {
@@ -233,7 +236,8 @@ public class TradeTools {
             plan.setPlayType(req.playType());
             plan.setSignalsUsed(req.signalsUsed());
             plan.setInvalidationCondition(req.invalidationCondition());
-            plan.setEntryPrice("LIMIT".equals(req.orderType()) ? req.limitPrice() : mark);
+            BigDecimal entryRef = "LIMIT".equals(req.orderType()) ? req.limitPrice() : mark;
+            plan.setEntryPrice(entryRef);
             plan.setStopLossPrice(req.stopLossPrice());
             plan.setTakeProfitPrice(req.takeProfitPrice());
             plan.setOpenedWakeTime(ctx.boundaryTime());
@@ -244,8 +248,21 @@ public class TradeTools {
             } else {
                 planStore.open(plan);
             }
+            // 入场上下文要出网取，异步抓完按列补写到这条计划（覆盖时 id 是旧条目的）
+            long nowMs = System.currentTimeMillis();
+            Thread.startVirtualThread(() -> captureEntryContext(plan.getId(), req, entryRef, nowMs));
         } catch (Exception e) {
             log.warn("[TradeTools] 计划落库失败 traderId={} {} msg={}", ctx.traderId(), req.symbol(), e.getMessage());
+        }
+    }
+
+    /** 抓开仓那一刻的上下文写进计划的 entry_ctx_json；抓不到只记 warn */
+    void captureEntryContext(Long planId, TradeGuard.OpenReq req, BigDecimal entryRef, long nowMs) {
+        try {
+            planStore.setEntryContext(planId, entryContext.capture(req.symbol(), req.orderType(), entryRef,
+                    req.stopLossPrice(), req.leverage(), nowMs));
+        } catch (Exception e) {
+            log.warn("[TradeTools] 入场上下文抓取失败 traderId={} {} msg={}", ctx.traderId(), req.symbol(), e.getMessage());
         }
     }
 

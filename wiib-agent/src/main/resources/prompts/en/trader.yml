@@ -27,7 +27,7 @@ trader:
     Every wake-up is a fresh session with no memory: everything you know about the past comes from the
     opening message and the notes below.
     Write everything in English; your full reasoning and your actions are on public display in the arena
-    timeline. The review notes, learning notes and past decisions injected below may have been written
+    timeline. The experience ledger, learning notes and past decisions injected below may have been written
     in another language; read and use them as they are, but this round's output is English only.
 
     Your trading method, style and discipline follow "Your owner's trading instructions" at the end of
@@ -156,7 +156,35 @@ trader:
     playStatsRow: "{{play}}: {{n}} trades, {{wins}}W {{losses}}L, total PnL {{pnl}} USDT"
     playStatsRowSmall: "{{play}}: {{n}} trades (insufficient sample, disregard)"
     playStatsFooter: "(Covers only the recent settled trades listed above, regardless of config changes in between; with few samples luck and skill look identical - never treat a small sample as a pattern.)"
-    memory: ————— Review notes (your own lessons from past trades, for reference) —————
+    memory: "————— Experience ledger (what your reviews have distilled, kept by code; cite entries by #id in your conclusion) —————"
+    # Rendered ledger text (ExperienceLedger.render): the first line is the marker that says "this memory is a ledger", recognised in both languages
+    ledgerTitle: "[EXPERIENCE LEDGER]"
+    # Two usage texts, picked by the owner's switch: the only difference is whether a "restriction" rule may by itself justify staying flat
+    ledgerHoldAllowed: |-
+      These are lessons from your own daily reviews. Each has an #id; when you use one, cite its id in your conclusion.
+      Hypothesis: not verified enough yet, reference only.
+      Rule: verified, act on it. A "restriction" rule says not to open in some situation; your owner allows you to use that kind as your reason to stay flat.
+      Execution gap: owner instructions you keep failing to follow; follow them.
+    ledgerHoldDenied: |-
+      These are lessons from your own daily reviews. Each has an #id; when you use one, cite its id in your conclusion.
+      Hypothesis: not verified enough yet, reference only.
+      Rule: verified, act on it. A "restriction" rule says not to open in some situation; that kind cannot by itself be your reason to stay flat — whether to open still follows your owner's instructions.
+      Execution gap: owner instructions you keep failing to follow; follow them.
+    ledgerGroup: "— {{play}} —"
+    ledgerGeneral: general
+    # dir arrives from code with a "·" prefix; execution gaps carry no direction
+    ledgerRow: "#{{id}} {{kind}}{{dir}} | {{text}} | supported {{supports}} opposed {{opposes}}{{recent}}{{flagged}}"
+    # Only after more than 5 checks is the last-5 breakdown added; below that the totals are the whole story
+    ledgerRecent: " (last {{n}}: {{s}} supported, {{o}} opposed)"
+    ledgerFlagged: " | under review"
+    ledgerKind:
+      gap: execution gap
+      hypothesis: hypothesis
+      rule: rule
+    ledgerDir:
+      opportunity: opportunity
+      restriction: restriction
+      execution: execution
     learningNotes: ————— Learning notes (what you wrote up after studying peers — other people's experience, for reference) —————
     customPrompt: "————— Your owner's trading instructions (your method, style and discipline follow these; your owner wins. The position spec, the guard and the closing format are enforced by the system and are not overridable) —————"
     # The instructions section is always emitted: the template and the opening both point at it, so it needs a landing spot even when empty

@@ -51,7 +51,7 @@ flowchart LR
 
 ## 第 1 章 · 热身：两个小文件（20 分钟）
 
-目的是熟悉这个仓库的代码风格和注释密度，别一上来就啃上千行的大文件（最大的三个是 `ReviewMaterialAssembler` 1143 行、`TraderWakeupRunner` 897 行、`ChatTurnRunner` 629 行）。
+目的是熟悉这个仓库的代码风格和注释密度，别一上来就啃上千行的大文件（最大的三个是 `TraderWakeupRunner` 639 行、`ChatTurnRunner` 615 行、`ExperienceLedger` 551 行）。
 
 | 文件 | 行数 | 读它干什么 |
 |---|---|---|
@@ -291,8 +291,8 @@ POST /api/ai/workbench/chat
 
 1. **给模型看的走 `PromptCatalog`，给用户看的走 `MessageCatalog`**。两者语言来源不同：前者跟 trader 主人 / 叶子的语言，后者跟当次请求的界面语言。
 2. **读旧数据认全部语言，校验本轮输出只认当前那门**。这条有两面，别用反：
-   - 库里的旧数据是写入时那门语言落的，所以 `ChatRowKind.of`、`ConversationSummarizer.isSummary`、`ChatTurnRewinder.cutAt`、`ReviewMaterialAssembler.locateConclusion` 全都逐语言各认一遍。认死一门就会静默失配——补答行冒出"重新生成"按钮、整条时间线被判成"没给等待条件"。
-   - 反过来，`ReviewRunner.parse` / `LearningRunner.missingMarks` 校验的是**模型本轮刚交出来的东西**，只认本轮提示词那一门的标记：提示词刚让它用英文标记、它交回中文标记，那就是没照格式走，按格式失守降级才对。两门都认会把真失守悄悄放过。
+   - 库里的旧数据是写入时那门语言落的，所以 `ChatRowKind.of`、`ConversationSummarizer.isSummary`、`ChatTurnRewinder.cutAt`、`DecisionText.locateConclusion`、`ExperienceLedger.isRendered` 全都逐语言各认一遍。认死一门就会静默失配——补答行冒出"重新生成"按钮、整段结论被判成"没写结论块"。
+   - 反过来，`ExperienceOpParser.parse` / `LearningRunner.missingMarks` 校验的是**模型本轮刚交出来的东西**，只认本轮提示词那一门的标记与行首固定词：提示词刚让它用英文标记、它交回中文标记，那就是没照格式走，按格式失守降级才对。两门都认会把真失守悄悄放过。
 3. **用户自己写的字不翻译**：`customPrompt`、`ownerNote` 原样注入，前面垫一句"这段是主人亲笔、可能是另一门语言、照意思做但输出语言不变"。
 
 `@ToolParam` 的参数描述**不跟语言走**（嵌在自动推导的 inputSchema 里，换语言要在 schema 层逐字段改写，复杂度不值），全仓统一写英文。
@@ -392,7 +392,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 `closingFormat` 是**系统强制块**，不看平台模板开关：
 
-> 复盘素材、stale 剔段、观望对账全靠结论块里的 `[SYMBOL]` 段切分（`ReviewMaterialAssembler.splitSegments`），格式丢了下游全退化。所以骨架按 trader 真实币种生成——模型照着填，不用自己猜币码。
+> stale 剔段、唤醒回注全靠结论块里的 `[SYMBOL]` 段切分（`DecisionText.splitSegments`），格式丢了下游全退化。所以骨架按 trader 真实币种生成——模型照着填，不用自己猜币码。结论块还是账本引用计数的来源：里面出现的 `#编号` 由 `TraderWakeupRunner.recordCitations` 记到对应条目上（开仓轮 / 观望轮分开数）。
 
 其余注入块：
 
@@ -403,7 +403,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 | 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 两处共吃 `recentWakes` 一次查齐的那份 `List<RecentWake>`（别各查各的）：结论完整回注（最近一条写出结论块的 OK 行，整块不截断）+ 轨迹一行一轮（时刻/状态/权益/工具名或失败原因）。只回注交易类（TRADE/ALERT/MANUAL），REVIEW/LEARN 已走笔记注入。被主人标记忽略的交易在 `RecentWake` 里就已剔掉内容，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
 | 论点战绩 | `PlayStatsAssembler` | 纯代码算，模型只许引用不许自算；stale 过滤在**配对之后** |
 | 财经日历 | `EconCalendarAssembler` | 三段：刚公布（上一边界以来新落地的实际值，置顶）→ 过去 3 天已公布 → 今天剩余即将公布，只给事实不给指令 |
-| 复盘笔记 / 学习笔记 | `ai_trader.memory` / `learning_notes` | **并列注入不合并**：来源分开，模型才分得清"自己的教训"与"从别人学的" |
+| 经验账本 / 学习笔记 | `ai_trader.memory`（`ExperienceLedger.render` 的渲染文本）/ `learning_notes` | **并列注入不合并**：来源分开，模型才分得清"自己的经验"与"从别人学的"。账本首行带用法说明：假设只供参考，限制型规律能否当观望理由看主人的 `learned_restriction_hold` 开关 |
 | 休眠提示 | `sleepNotice` | 时段内末次唤醒才有。明说休眠本身不是任何方向动作的理由——"13 小时看不见"既诱导睡前减仓，也诱导赶在休眠前多开一笔 |
 
 ### 5.5 动手面
@@ -454,15 +454,17 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 | 位置 | 看什么 |
 |---|---|
-| `ReviewMaterialAssembler.assemble` | 纯代码算四块硬事实：战绩表 / 已了结交易配对表 / 决策时间线摘编 / 各币价格路径。素材窗口 =（上次成功 REVIEW 的 wake_time, 本日线边界] |
-| `ReviewMaterialAssembler.quietHoldWindow` | 纯观望且各币振幅全 <2% 的窗口**跳过复盘不烧钱**。被拒的开仓尝试也算动过手（宁可多复盘不漏评）；任一币无 K 线不算平静 |
-| `ReviewRunner.review` | 一次调用进去出来，无工具无循环，超时 600s |
-| `ReviewRunner.parse` | 两段固定格式：【本期复盘】→ REVIEW 决策行公开上时间线；【记忆更新】→ 覆盖 `ai_trader.memory`。**缺分隔符时 REVIEW 行照存、memory 不动**——一次格式失守不污染记忆 |
-| `reviewer.system` 词表 | **防自夸三件套**：战绩数字代码注入且只许复述、"先找错误再找亮点"、教训条数上限 |
+| `ReviewMaterialAssembler.hasNewMaterial` | 窗口内有了结仓位、或有过 `open_position` 动作（被拒的也算）才复盘；都没有**静默跳过不烧钱**，窗口并入下次 |
+| `ReviewMaterialAssembler.assemble` | 纯代码算五块素材：战绩表 / 本局论点战绩 / 案例事实表 / 本期行情 / 经验账本。素材窗口 =（上次成功 REVIEW 的 wake_time, 本日线边界]。案例按单子类型分组，两笔以上的组在前、再按净额绝对值，只展开前两组（★），其余一行带过 |
+| `CaseFileBuilder.path` | 一笔交易在 5m K 线上的路径指标：最大浮盈 / 最大逆向（占计划目标 / 止损距离的比例）、到目标 25%·50% 用时、首次收回入场价、出场后 4h·24h 最有利价。配上 `EntryContext` 在开仓那一刻存下的 regime / ATR / 事件距离 / 时段 / 资金费，模型才答得出"赢单和亏单差在哪" |
+| `ReviewRunner.review` | 一次调用进去出来，无工具无循环；有待复审条目再调一次 `audit`；旧自由文本 memory 第一次跑时 `needsMigration` / `migrate` 压成账本行。迁移 / 复盘 / 复审三次调用共用 600 秒总预算 |
+| `ExperienceOpParser` | 两段固定格式：【本期复盘】→ REVIEW 决策行公开上时间线；【经验更新】→ 逐行翻成账本操作（`#id 支持/反对/未测试/守/破`、`新增 …`、`发现 …`、`删除 #id`），认不出的行丢掉。**一行都解析不出时 REVIEW 行照存、账本不动**——一次格式失守不污染记忆 |
+| `ExperienceLedger` | 记账规则全在代码：假设支持满 3 次升规律；近 5 次反对 ≥3 / 反对追平支持且核对 ≥4 / 连续 6 次未测试 → 举旗；复审保留后不满 3 次新结论不重举；现役 10 / 同类 3 / 限制型 2 的上限；删除只对假设；退役不删行。`render` 把现役条目渲染成 trader 注入的文本并写回 `ai_trader.memory` |
+| `reviewer.system` 词表 | **事实纪律三件套**：数字只许引用事实表、失败界定与处理必须是可观察的价格/根数/时间、主人指令里已有的不进账本且上期教训不许重抄 |
 
 **为什么不给它工具**：给了它就能自己去查一段对自己有利的行情来自证。素材由代码算齐、模型只负责解读，这是有意的约束。
 
-**滚动继承**值得单独想一想：只回注**上一期**复盘，但要求这一期必须把仍然成立的教训继承进来——因为下一期同样只看得到这一篇。**输入不膨胀的前提，是输出完成了继承。**
+**为什么账本不交给模型整份重写**：原来的滚动继承（只回注上一期、要求模型把仍成立的教训抄过来）让"进化"变成每天重抄一遍；换成代码记账后，模型每期只对现役条目给结论、只提议新增，计数与升降级都不由它说了算。退役也不自动：代码只举旗，模型拿着整条结论流水复审四选一（保留 / 修订 / 拆分 / 退役），一条支持过 100 次的规律不会因为连输 3 天就消失。
 
 ### learning：向别人学
 
@@ -479,14 +481,14 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 两者共有的降级安全：**失败不计连败**（没有资金风险，不值得暂停机制）、格式失守时留 ERROR 行但不动笔记、同侪不足整体静默跳过（不写空话也不留 ERROR 行）。
 
-### 顺带：`ReviewMaterialAssembler` 是全包最大的一个类（1143 行）
+### 顺带：配对与结论块的两个共用件
 
-它现在同时服务四个地方（复盘 / 同侪学习 / 竞技场已了结交易 / 论点战绩统计），所以配对算法只能有一套：`pairAll` + `bestMatch` + `closeMannerKey`。各配一套会自相矛盾。
+`TradePairing` 同时服务四个地方（复盘案例 / 同侪学习 / 竞技场已了结交易 / 论点战绩统计），所以配对算法只能有一套：`pairAll` + `bestMatch` + `closeMannerKey`。各配一套会自相矛盾。
 
-另外两组方法是"结论块格式"的下游，读完第 5.4 节的 `closingFormat` 再回来看：
+`DecisionText` 是"结论块格式"的下游，读完第 5.4 节的 `closingFormat` 再回来看：
 
-- `splitSegments` / `waitsBySymbol`：结论块按 `[SYMBOL]` 切段，观望轮的等待条件按币抽取做对账。
-- `staleFiltered` / `staleFilteredToolNames`：主人标记忽略某笔交易后，**新格式剔掉对应的 `[SYMBOL]` 段；错误格式（模型没按币分段）无段可剔，落在 stale 计划生命期内的轮整行剔除**。没人标忽略时错误格式的行原样保留。时间线 / 唤醒回注 / chat 三处共用这一套。
+- `splitSegments`：结论块按 `[SYMBOL]` 切段。
+- `staleFiltered` / `staleFilteredToolNames`：主人标记忽略某笔交易后，**新格式剔掉对应的 `[SYMBOL]` 段；错误格式（模型没按币分段）无段可剔，落在 stale 计划生命期内的轮整行剔除**。没人标忽略时错误格式的行原样保留。唤醒回注 / chat 共用这一套；复盘素材不再读决策时间线，stale 在它那边是"配对之后把计划被忽略的交易整笔从案例与统计里拿掉"。
 
 ---
 
@@ -558,7 +560,8 @@ trader 那条链的前端另在两处：
 | `ResilientChatServiceTest` | 韧性分层、options 契约、中断掐流与不反向取消信号（用 mock 模型跑，真到 WebClient 那一段只能真跑验，见附录 B） |
 | `TraderLiveHubTest` / `WakeTraceTest` | 现场扇出与轨迹帧、落库形状（见 5.7） |
 | `TraderPlanStoreTest` | 计划对账 `reconcile` 的三条规则（了结报结局并归档/续立、限价成交绑仓、无仓无挂单归档）与 `open`/`cover` 写路径 |
-| `ReviewMaterialAssemblerTest` | 全包最大那个类的配对算法与 stale 剔段 |
+| `ReviewMaterialAssemblerTest` / `CaseFileBuilderTest` | 复盘五块素材的数字与成文（战绩 / 案例事实表与路径指标 / 行情 / 账本）、stale 在配对之后过滤、`TradePairing` 配对算法 |
+| `ExperienceLedgerTest` / `ReviewRunnerTest` / `ReviewLoopTest` | 账本记账规则（升级 / 举旗 / 上限 / 复审四结论 / 带入 / 清理）、复盘回路的落账与降级、真 assembler + 真账本 + mock 模型贯通一遍 |
 | `TraderWakeupLoopTest` | mock 模型跑通真 ReactLoop 唤醒回路 |
 | `TraderSchedulerTest` | 三阶段时序、屏障不漏人、停工窗口挡四入口、异常不卡死窗口 |
 | `TraderPromptAssemblerTest` / `WakeInstructionI18nTest` | 注入面成文、收尾标记两处同源 |

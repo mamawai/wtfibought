@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.dto.FuturesOrderResponse;
 import com.mawai.wiibcommon.dto.FuturesPositionDTO;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
+import com.mawai.wiibcommon.entity.AiTraderExperience;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.entity.UserLlmBinding;
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
@@ -15,6 +16,7 @@ import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.SseChannel;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
@@ -24,7 +26,6 @@ import com.mawai.wiibagent.trader.TraderService;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
 import com.mawai.wiibagent.trader.wakeup.TraderLiveHub;
-import com.mawai.wiibagent.trader.wakeup.WakeTrace;
 import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -40,6 +41,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
@@ -72,6 +74,7 @@ public class TraderController {
     private final UserLangResolver userLangResolver;
     private final MessageCatalog messages;
     private final TraderLiveHub liveHub;
+    private final ExperienceLedger ledger;
 
     // ========== 我的 trader ==========
 
@@ -84,11 +87,14 @@ public class TraderController {
                                    BigDecimal equity, BigDecimal pnlPct, boolean mine, String wakeWindow) {
     }
 
-    /** 主人视图：公开视图 + 配置回显。llmEndpointId=显式绑定的端点，null=跟随默认端点；wakeWindow null=全天 */
+    /**
+     * 主人视图：公开视图 + 配置回显。llmEndpointId=显式绑定的端点，null=跟随默认端点；wakeWindow null=全天；
+     * learnedRestrictionHold=账本里限制型规律能否作为观望理由
+     */
     public record TraderOwnerView(TraderPublicView pub, Long llmEndpointId,
                                   String customPrompt,
                                   TraderSpec spec, boolean alertEnabled, BigDecimal alertThresholdMult,
-                                  boolean reviewEnabled, boolean learningEnabled,
+                                  boolean reviewEnabled, boolean learningEnabled, boolean learnedRestrictionHold,
                                   String wakeWindow) {
     }
 
@@ -122,6 +128,7 @@ public class TraderController {
                 t.getAlertThresholdMult() == null ? BigDecimal.ONE : t.getAlertThresholdMult(),
                 !Boolean.FALSE.equals(t.getReviewEnabled()),
                 !Boolean.FALSE.equals(t.getLearningEnabled()),
+                Boolean.TRUE.equals(t.getLearnedRestrictionHold()),
                 t.getWakeWindow()));
     }
 
@@ -161,7 +168,7 @@ public class TraderController {
     public record UpsertRequest(String name, String symbols, String intervalCode, String customPrompt,
                                 Long llmEndpointId, TraderSpec spec,
                                 Boolean alertEnabled, BigDecimal alertThresholdMult,
-                                Boolean reviewEnabled, Boolean learningEnabled,
+                                Boolean reviewEnabled, Boolean learningEnabled, Boolean learnedRestrictionHold,
                                 String wakeWindow) {
         TraderService.UpsertReq toReq() {
             TraderSpec s = spec;
@@ -170,7 +177,7 @@ public class TraderController {
                     s == null ? null : s.leverageMin(), s == null ? null : s.leverageMax(),
                     s == null ? null : s.marginPctMin(), s == null ? null : s.marginPctMax(),
                     s == null ? null : s.allowMultiPosition(), s == null ? null : s.allowHedge(),
-                    alertEnabled, alertThresholdMult, reviewEnabled, learningEnabled, wakeWindow);
+                    alertEnabled, alertThresholdMult, reviewEnabled, learningEnabled, learnedRestrictionHold, wakeWindow);
         }
     }
 
@@ -239,6 +246,68 @@ public class TraderController {
         }
         String err = traderService.setPlanStale(userId, planId, req.stale());
         return err == null ? Result.ok(null) : Result.fail(err);
+    }
+
+    // ========== 经验账本（主人管理） ==========
+
+    @GetMapping("/mine/experiences")
+    @Operation(summary = "我的经验账本（本局全部条目：现役、发现、退役）")
+    public Result<List<AiTraderExperience>> experiences(@CurrentUserId long userId) {
+        AiTrader t = traderService.mine(userId);
+        if (t == null) {
+            return Result.fail(messages.get("trader.notCreated"));
+        }
+        return Result.ok(ledger.all(t.getId(), t.getRoundNo()));
+    }
+
+    /** 包装 Boolean：缺字段是格式错误要拒 */
+    public record PinRequest(Boolean pinned) {
+    }
+
+    public record RetireRequest(String reason) {
+    }
+
+    @PostMapping("/experience/{id}/pin")
+    @Operation(summary = "钉住/取消钉住一条经验（钉住的不会被代码举旗复审）")
+    public Result<Void> pinExperience(@CurrentUserId long userId, @PathVariable long id, @RequestBody PinRequest req) {
+        if (req.pinned() == null) {
+            return Result.fail(messages.get("trader.experience.pinnedRequired"));
+        }
+        return experienceOp(userId, t -> ledger.pin(t.getId(), id, req.pinned()));
+    }
+
+    @PostMapping("/experience/{id}/retire")
+    @Operation(summary = "主人退役一条经验（留在退役名单，不再注入；理由会给复盘看）")
+    public Result<Void> retireExperience(@CurrentUserId long userId, @PathVariable long id, @RequestBody RetireRequest req) {
+        if (req.reason() == null || req.reason().isBlank()) {
+            return Result.fail(messages.get("trader.experience.reasonRequired"));
+        }
+        return experienceOp(userId, t -> ledger.retireByOwner(t.getId(), id, req.reason()));
+    }
+
+    @PostMapping("/experience/{id}/revive")
+    @Operation(summary = "把退役的经验恢复为现役")
+    public Result<Void> reviveExperience(@CurrentUserId long userId, @PathVariable long id) {
+        return experienceOp(userId, t -> ledger.revive(t.getId(), id));
+    }
+
+    @DeleteMapping("/experience/{id}")
+    @Operation(summary = "物理删除一条经验及其结论流水")
+    public Result<Void> deleteExperience(@CurrentUserId long userId, @PathVariable long id) {
+        return experienceOp(userId, t -> ledger.delete(t.getId(), id));
+    }
+
+    /** 主人改了账本就重渲染 memory，trader 下一轮读到的是改后的 */
+    private Result<Void> experienceOp(long userId, Predicate<AiTrader> op) {
+        AiTrader t = traderService.mine(userId);
+        if (t == null) {
+            return Result.fail(messages.get("trader.notCreated"));
+        }
+        if (!op.test(t)) {
+            return Result.fail(messages.get("trader.experience.notFound"));
+        }
+        ledger.writeMemory(t, userLangResolver.of(userId));
+        return Result.ok(null);
     }
 
     // ========== 动作面板（留言 / 手动唤醒 / 点播复盘） ==========

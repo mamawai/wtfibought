@@ -20,6 +20,7 @@ import com.mawai.wiibquant.market.service.NewsCache;
 import com.mawai.wiibquant.market.service.NewsFlashLocalizer;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
+import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
@@ -29,6 +30,7 @@ import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
+import com.mawai.wiibagent.trader.trade.EntryContext;
 import com.mawai.wiibagent.trader.trade.TradeGuard;
 import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
@@ -111,16 +113,18 @@ class TraderWakeupLoopTest {
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
 
     private final PromptCatalog prompts = new PromptCatalog();
+    private final DecisionText decisionText = new DecisionText(prompts);
     /** 默认（未打桩）返回 null = 本局无统计不注入 */
     private final PlayStatsAssembler playStats = mock(PlayStatsAssembler.class);
     private final TraderLiveHub hub = new TraderLiveHub();
+    private final ExperienceLedger ledger = mock(ExperienceLedger.class);
 
     /** 与 runner 共用同一份 decisionMapper 和 playStats：selectList 打桩、insert 断言都还落在原处 */
     private final WakeObservation wakeObservation =
-            new WakeObservation(decisionMapper, new DecisionText(prompts), playStats, prompts);
+            new WakeObservation(decisionMapper, decisionText, playStats, prompts);
 
     private final TraderWakeupRunner runner = new TraderWakeupRunner(
-            modelFactory, new TraderPromptAssembler(traderMapper, prompts),
+            modelFactory, new TraderPromptAssembler(traderMapper, prompts, ledger),
             simTradeClient, binanceRestClient,
             new IndicatorToolkit(new KlineFetcher(binanceRestClient, 60_000)),
             new MarketToolkit(mock(MarketDataService.class)),
@@ -128,7 +132,7 @@ class TraderWakeupLoopTest {
             traderMapper, decisionMapper, new TraderPlanStore(planMapper, prompts), langResolver,
             prompts, new MessageCatalog(), new LocalizedToolCallbacks(prompts),
             wakeObservation,
-            mock(EconCalendarAssembler.class), hub);
+            mock(EconCalendarAssembler.class), hub, mock(EntryContext.class), decisionText, ledger);
 
     {
         // 测试边界是固定历史时刻，墙钟钉在边界后 1s——预算充足，各用例不受真实时间影响
@@ -282,6 +286,71 @@ class TraderWakeupLoopTest {
         assertThat(owner.last("run_end").path("decisionId").asLong()).isEqualTo(1234L);
         assertThat(owner.last("tool_result").path("name").asString(null)).isEqualTo("open_position");
         assertThat(owner.last("token").path("text").asString(null)).contains("本轮结束");
+    }
+
+    /** 结论块里引用的账本 #编号各计一次引用：本轮开了仓算开仓引用 */
+    @Test
+    void ledgerCitationsCountedAsOpenWhenPositionOpened() {
+        stubHealthyAccount();
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        AssistantMessage openCall = AssistantMessage.builder().content("")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("c1", "function", "open_position", """
+                        {"symbol":"BTCUSDT","side":"LONG","orderType":"MARKET","quantity":0.01,"leverage":10,
+                         "limitPrice":null,"stopLossPrice":95000,"takeProfitPrice":110000,
+                         "playType":"BREAKOUT","signalsUsed":"突破前高+量比1.8",
+                         "invalidationCondition":"1h收盘跌回前高98000下方"}""")))
+                .build();
+        when(model.stream(any(Prompt.class))).thenReturn(
+                frameOf(openCall),
+                frameOf(new AssistantMessage("放量突破。[本轮结论]\n判断：账本 #3 的入场条件成立，#7 的限制没触发，#3 再提一次\n动作：开多\n等待：无")));
+        when(modelFactory.modelFor(any())).thenReturn(model);
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(new FuturesOrderResponse());
+
+        runner.wake(trader(), 1785171600000L);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Collection<Long>> ids = ArgumentCaptor.forClass((Class) java.util.Collection.class);
+        verify(ledger).recordCitations(eq(7L), eq(1), ids.capture(), eq(true));
+        assertThat(ids.getValue()).containsExactly(3L, 7L);
+    }
+
+    /** 编号超过 18 位不算引用 */
+    @Test
+    void overlongLedgerIdsAreIgnored() {
+        stubHealthyAccount();
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        AssistantMessage check = AssistantMessage.builder().content("")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("c1", "function", "get_account", "{}")))
+                .build();
+        when(model.stream(any(Prompt.class))).thenReturn(
+                frameOf(check),
+                frameOf(new AssistantMessage("[本轮结论]\n判断：账本 #12345678901234567890 说的\n动作：HOLD\n等待：无")));
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.wake(trader(), 1785171600000L);
+
+        verify(ledger, never()).recordCitations(anyLong(), org.mockito.ArgumentMatchers.anyInt(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    /** 没开仓的轮算观望引用；正文里（结论块之外）的 #编号不算 */
+    @Test
+    void ledgerCitationsCountedAsHoldWithoutOpen() {
+        stubHealthyAccount();
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        AssistantMessage check = AssistantMessage.builder().content("")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("c1", "function", "get_account", "{}")))
+                .build();
+        when(model.stream(any(Prompt.class))).thenReturn(
+                frameOf(check),
+                frameOf(new AssistantMessage("先看 #9 不相关。[本轮结论]\n判断：账本 #2 说回踩没确认不追\n动作：HOLD\n等待：回踩 99000")));
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.wake(trader(), 1785171600000L);
+
+        verify(ledger).recordCitations(eq(7L), eq(1), eq(java.util.Set.of(2L)), eq(false));
     }
 
     /** 唤醒"最近决策"回注同样过 stale：被忽略交易的分段不注入；行本身保留——行头时刻是唤醒事实 */

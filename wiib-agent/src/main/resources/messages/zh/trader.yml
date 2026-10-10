@@ -23,6 +23,12 @@ trader:
     notClosed: 只能忽略已了结的交易
     staleRequired: 请求缺少 stale 参数
 
+  # 经验账本的主人操作
+  experience:
+    notFound: 找不到这条经验，或它当前状态不允许这样操作
+    pinnedRequired: 请求缺少 pinned 参数
+    reasonRequired: 退役要写理由（复盘时会告诉模型别再提这个念头）
+
   # 创建 / 改配置的入口校验
   config:
     nameRequired: 名字必填且不超过32字符

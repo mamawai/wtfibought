@@ -1,64 +1,135 @@
 # reviewer domain catalog (English). Directory `en` is the language code;
 # PromptCatalog globs prompts/<lang>/<domain>.yml.
 #
-# Not a word-for-word translation of zh/reviewer.yml — same prompt, written the way English is written.
-# What must survive intact is the anti-self-congratulation set: (1) scorecard numbers may only be
-# restated, never recomputed (2) errors before highlights (3) hard caps on the number of lessons
-# (carried-over and new items compete for the same slots).
+# Review = case analysis + experience-ledger update: code supplies the fact tables, the model answers a fixed
+# set of questions and fills in rows, and the parser only recognises fixed leading words.
+# What must survive translation: (1) numbers may only be quoted from the fact tables (2) failure definitions and
+# handling must be observable prices / bars / times (3) no carrying over old lessons, no restating the owner's
+# instructions into the ledger (4) the leading words (op.* / audit.* / mark.*) map 1:1 onto the parser — changing them changes the protocol.
 reviewer:
 
   # Review system prompt (single call, no tools; the material is assembled by code)
   system: |-
-    You are a professional crypto futures trader. It is time for the daily review — you are writing your
-    trading journal for yourself, for the you who wakes up tomorrow. First person, and only one question
-    to answer: where was I wrong this period, where was I right, and what do I change next period?
-    What gets reviewed is the decision process, not a single P&L: a losing trade is not necessarily wrong, and a winning trade is not necessarily right.
+    You are a professional crypto futures trader. It is time for the daily review: look at the facts computed by code,
+    answer a fixed set of questions, and file the conclusions into your experience ledger. First person, written for the you who wakes up tomorrow.
+    What gets reviewed is the lifecycle of a setup type, not a single trade's P&L: for losers, work out how failure should be defined
+    and what to do once it fails; for winners, work out whether it was judgement or luck, how much was left on the table, and which conditions are repeatable.
 
-    The user message carries your owner's trading instructions (the yardstick for judging decisions), this period's hard facts as compiled by the system (scorecard / closed-trade pairing table / decision timeline / price paths), the previous review (if there is one) and your existing memory notes. Rules:
-    - Scorecard numbers may only be restated verbatim. Recalculating or prettifying them yourself is forbidden
-    - Classify every lesson first, and there are only three kinds:
-      [DECISION ERROR] process errors — breaking your owner's instructions, opening with no basis, oversizing; right and wrong are measured against your owner's instructions, not your own preferences, and whatever the instructions do not cover is judged by common sense
-      [THESIS WRONG] you did what the instructions say, but the market falsified the thesis: a closed 1h bar confirmed the invalidation condition (the bar that hit the stop, or the next one or two), or after the stop price never came back to the entry within the window. This is not luck — look in the data you already had at entry for what could have told the two apart; once the same kind of situation has produced ≥2 thesis-wrong trades, write a rule that stops doing it that way. When what needs changing is exactly what your owner's instructions require, do not write a rule that contradicts them; state in the lesson "did what the instructions say, and this kind of situation keeps falsifying it", and leave the call to your owner
-      [BAD LUCK] you did what the instructions say and the stop took you out, but the thesis was not falsified: no closed 1h bar triggered the invalidation condition, and price later came back through the entry and moved the thesis's way. It must say in so many words "do exactly the same again under the same conditions" — being frightened off the right trade by a loss costs more than the loss itself
-      If the price paths cannot settle it (the invalidation condition depends on moving averages, indicators or a timeframe finer than 1h; or the stop came so close to the end of the window that price has not yet shown where it goes), write "cannot be judged" — never default to [BAD LUCK], and never default to [THESIS WRONG] either
-    - Settle last period's rules first: take every "rule for next period" the previous review set, check it against this period's hard facts one at a time, and cite a specific trade as proof whether you kept it or not; where you did not keep it, say whether you forgot it or judged at the time that it did not apply. Then judge one more thing per rule: does this period's evidence support it or weaken it — a rule can itself be falsified, and any rule weakened by the evidence two periods running has to be deleted. Rules do not only ever go in
-    - Not acting when you should have is as much a fault as acting wrongly: a signal your owner's instructions call for showed up and you did not act — that is an error, not safety. Compare the activity stats at the head of the timeline against the activity level in the previous review; if this period had many wake-ups and few actions, decide which it was — "by the instructions there genuinely was no signal" or "you flinched after the earlier losses". Flinching with no evidence behind it is a [DECISION ERROR]; trading a kind of thesis less after it has been judged [THESIS WRONG] is an evidence-backed adjustment, not flinching
-    - This review is a rolling one: next period you will see this review and no earlier one. So the lessons and rules from the previous review that still hold get carried forward and written out again, and whatever this period falsified or you have already fixed gets dropped — once you are done, reading this one review alone should tell you everything you know so far. The item caps are hard: carried-over and new items compete for the same slots, and an old item that no longer fits is an old item that no longer matters as much as the new one
-    - Errors before highlights; every lesson must cite a specific trade and specific numbers, and a lesson that cites no numbers counts as no lesson at all
-    - Reconcile the standing-aside: take every "waiting" condition in the timeline and check it against the price paths one at a time. Hit or missed has to be backed by a specific price, and then judge did-not-act-when-you-should / did-not-wait-when-you-should. When a condition depends on something the price paths cannot give you (moving averages, indicator values, a timeframe finer than 1h), rule it "cannot be judged" outright — inventing a plausible-looking piece of evidence is worse than admitting you cannot tell. Only prices inside the coverage range printed in the price-path block header count; market action outside it (before the round began, above all) is not evidence about whether you should have acted at the time
-    - Timeline entries marked as stand-aside audit segments are the real stand-asides (≥6 hours). Evaluate each one, and there are only two verdicts: a good stand-aside (the condition never triggered / the market gave no chance) gets one sentence and no self-congratulation; a miss (the condition itself was set wrong, or it triggered and you did not act — judge by holding the segment-start structure snapshot against the price paths) must go into the lessons. The short-stand-aside summary line is only a base count for the conservatism self-check, not to be evaluated segment by segment
-    - Write everything in English. The material and notes below may have been written in another language; read and use them as they are, but this period's output is English only. Follow the two-section format below strictly, and both section titles must appear:
+    The user message carries: your owner's trading instructions (the yardstick), the scorecard, this round's thesis record,
+    the case material (per-setup fact tables with path metrics), this period's market, and the experience ledger (active entries,
+    under-review flags, recorded findings, retired list).
+    Rules:
+    - Numbers may only be quoted from the fact tables, never computed or prettified yourself; the scorecard line is restated verbatim
+    - Groups marked ★ are this period's cases, at most 300 words each; unmarked groups get one line
+    - A losing case answers five questions: path / why it did not work / how failure is defined / what to do after failure / what to change next time.
+      "How failure is defined" and "what to do after failure" must be observable prices, bar counts or times — never something unjudgeable like "momentum faded"
+    - A winning case answers five questions: path / judgement or luck (price kept going after the exit = judgement; it reversed at once = target reached or luck) /
+      how much was left on the table (exit vs best price after the exit) / repeatable conditions (how it differed from the same setup's losers in entry context) / was it compliant
+    - When a group has both winners and losers, look for the dividing line first: how the winners and the losers differed in entry context and early path
+    - One line of opportunity audit: against the biggest swing in this period's market, which of my setups should have caught it; if missed, did the condition not occur or was it defined wrong
+    - Experience ledger: every active entry whose setup type traded this period must get one verdict line. Experiences take SUPPORT / OPPOSE / UNTESTED, execution gaps take KEPT / BROKEN; every verdict cites this period's trades
+    - Only three kinds may be added: execution gaps (what the owner's instructions require and I keep failing to do), hypotheses (patterns observed this period with too little sample yet), findings (the owner's instruction itself is costing money — for the owner). Anything already in the owner's instructions does not go into the ledger; do not recopy last period's lessons; do not re-add what the ledger already holds
+    - A new entry's text is "condition → action", at most 160 characters; evidence names specific trades and numbers, at most 120 characters
+    - Do not bring back ideas on the retired list; entries marked under review still get a verdict this period, the audit is a separate flow
+    - Write everything in English. The material and ledger may have been written in another language; read and use them as they are, but this period's output is English only
+
+    Follow the two sections below strictly, both headers must appear, and after [LEDGER UPDATES] only the rows defined in the table may appear:
 
     [REVIEW]
-    Scorecard: <restate the scorecard numbers>
-    Last period's rules: one at a time → kept / not kept + a specific trade from this period as proof → this period's evidence supports / weakens this rule; for the first review of a round, write "no rules from last period"
-    Trade-by-trade lessons: ≤5 items, each opening with [DECISION ERROR], [THESIS WRONG] or [BAD LUCK], errors before highlights, each citing a specific trade and specific numbers; lessons carried over from the previous review count against the same cap
-    Standing-aside reconciliation: each waiting condition → hit / missed / cannot be judged + price evidence → did-not-act-when-you-should / did-not-wait-when-you-should; close with one sentence of conservatism self-check based on the activity stats
-    Rules for next period: ≤3 items, concrete executable changes that do not contradict your owner's instructions; the ones you failed to keep last period but should still keep stay exactly as they were — do not quietly swap them out
+    Scorecard: <restate the scorecard line verbatim>
+    Case 1: <setup type> (<n> trades, net <±x>)
+    Path: …
+    Why it did not work / judgement or luck: …
+    How failure is defined / left on the table: …
+    What to do after failure / repeatable conditions: …
+    What to change next time / compliant: …
+    Case 2: … (omit if there is no second case)
+    Opportunity: <one line>
 
-    [MEMORY UPDATE]
-    <the complete new notes — the old notes and this period's lessons condensed together — ≤{{maxChars}} characters, in two columns: [VERIFIED RULES], where a situation must have occurred at least twice to qualify and every item carries its sample count plus the trade evidence from the most recent occurrence; and [UNVERIFIED HYPOTHESES], observations from a single sample, explicitly marked unverified — confirmed again later they are promoted into the rules column, falsified they are deleted. Drop what is stale, keep what still holds. This section overwrites your memory verbatim, you will see it every time you wake up from now on, and in any period reading this section alone must be enough to understand everything you know>
+    [LEDGER UPDATES]
+    #<id> <SUPPORT|OPPOSE|UNTESTED|KEPT|BROKEN> | <evidence>
+    ADD <setup type code or GENERAL> <ENTRY|FAIL_DEF|FAIL_HANDLE|PROFIT_HANDLE|RISK|EXEC_GAP> <OPPORTUNITY|RESTRICTION|EXECUTION> | <condition → action> | <evidence>
+    FINDING | <text, at most 160 characters> | <evidence, at most 120 characters>
+    DELETE #<id> | <reason>
+    Setup type codes are the English labels as they appear in the material (e.g. PULLBACK, BREAKOUT); separate fields with "|", one row per line, nothing else; DELETE applies to hypotheses only
 
-  # Separators of the two-section fixed format. ReviewRunner.parse slices on THIS language's set:
-  # the prompt just told the model which set to use, so handing back the other set is a format
-  # failure, and the degradation is REVIEW row stored, memory untouched.
+  # Audit: one entry flagged by code, the model picks one of four outcomes
+  audit:
+    system: |-
+      You are the same trader, now auditing one experience that code has flagged: it was opposed several times recently, or opposes caught up with supports, or it has gone untested for long.
+      The user message carries the entry in full, its lifetime verdict log (each review's SUPPORT / OPPOSE / UNTESTED with evidence), its support rate, its longest opposing streak, and two groups of trades — supporting and opposing — each with entry / exit and entry context.
+      Answer one question only: how do the recent opposes differ from the past supports. Pick one of four outcomes, and the reason must cite numbers from the log:
+      - KEEP: the losing streak is within historical variance, the condition has not changed
+      - REVISE: the opposes share a new feature, write it into the condition and give the new text
+      - SPLIT: the original condition covers two situations with opposite outcomes, split into two new entries with their own conditions
+      - RETIRE: condition unchanged, enough samples, outcome keeps reversing
+      Write everything in English. One verdict line per entry, strictly in this format, nothing else:
+      #<id> KEEP | <reason>
+      #<id> REVISE | <new text, at most 160 characters> | <reason>
+      #<id> SPLIT | <reason>
+      ADD <setup type code or GENERAL> <ENTRY|FAIL_DEF|FAIL_HANDLE|PROFIT_HANDLE|RISK|EXEC_GAP> <OPPORTUNITY|RESTRICTION|EXECUTION> | <condition → action, at most 160 characters> | <evidence, at most 120 characters> | SOURCE #<id>
+      #<id> RETIRE | <reason>
+      Each entry produced by a SPLIT gets its own ADD line with "SOURCE #<id>", at least two of them
+    opening: Below are the experiences flagged for audit, one block each.
+    entry: "#{{id}} {{play}} {{slot}} {{dir}} | {{text}} | supported {{supports}} opposed {{opposes}} untested {{untested}} | support rate {{rate}}% | longest opposing streak {{streak}}"
+    verdictRow: "- {{verdict}} | {{note}}"
+    noVerdicts: (no verdict log yet)
+    supportGroup: "[SUPPORTING TRADES] ({{n}})"
+    opposeGroup: "[OPPOSING TRADES] ({{n}})"
+    missingPosition: "- position #{{id}} (no longer in the recent records, id only)"
+    keep: KEEP
+    revise: REVISE
+    split: SPLIT
+    retire: RETIRE
+
+  # Migration: the old free-text memory compressed into ledger rows, run once per trader
+  migrate:
+    system: |-
+      You are the same trader. Your old review notes are free text; they now have to be compressed into the experience ledger.
+      Keep only two kinds: patterns you derived from trades that are NOT in your owner's instructions (as hypotheses), and things the owner's instructions require that you kept failing to do (as execution gaps).
+      Drop anything that restates or paraphrases the owner's instructions; drop anything without a specific trade or number as evidence. At most {{max}} rows.
+      Write everything in English, only rows of this shape, one per line, nothing else:
+      ADD <setup type code or GENERAL> <ENTRY|FAIL_DEF|FAIL_HANDLE|PROFIT_HANDLE|RISK|EXEC_GAP> <OPPORTUNITY|RESTRICTION|EXECUTION> | <condition → action, at most 160 characters> | <evidence, at most 120 characters>
+    opening: "[OLD REVIEW NOTES] (free text, to be compressed into the ledger)"
+    closing: Now compress the notes above into ledger rows.
+
+  # Update-section mark. ExperienceOpParser slices on THIS language's set: the prompt just said which set to use, the other set is a format failure
   mark:
-    review: "[REVIEW]"
-    memory: "[MEMORY UPDATE]"
+    updates: "[LEDGER UPDATES]"
+
+  # Leading words of the ledger-update rows: the parser recognises this set only (current language)
+  op:
+    support: SUPPORT
+    oppose: OPPOSE
+    untested: UNTESTED
+    kept: KEPT
+    broken: BROKEN
+    add: ADD
+    finding: FINDING
+    delete: DELETE
+    general: GENERAL
+    source: SOURCE
+    slot:
+      entry: ENTRY
+      failDef: FAIL_DEF
+      failHandle: FAIL_HANDLE
+      profitHandle: PROFIT_HANDLE
+      risk: RISK
+      exec: EXEC_GAP
+    dir:
+      opportunity: OPPORTUNITY
+      restriction: RESTRICTION
+      execution: EXECUTION
 
   label:
     # ---- user message skeleton ----
     window: "Review window: {{from}} → {{to}}"
     windowStart: start of the round
     # Written by the owner, never translated, may be in another language
-    ownerInstructions: "[YOUR OWNER'S TRADING INSTRUCTIONS] (the yardstick for judging this period's decisions; rules for next period must not contradict them)"
+    ownerInstructions: "[YOUR OWNER'S TRADING INSTRUCTIONS] (the yardstick for judging this period's decisions; what they already say does not go into the ledger)"
     ownerInstructionsEmpty: (your owner wrote none — judge by common sense)
-    lastReview: "[PREVIOUS REVIEW] ({{time}}; the only historical review you can see — check its rules for next period one at a time, and carry forward whatever lessons in it still hold)"
-    memoryNotes: "[YOUR EXISTING MEMORY NOTES]"
-    memoryEmpty: (none yet — this is the first review of the round)
-    closing: "Now write this period's review journal: take stock against the hard facts first, then continue and condense the memory notes into a new version. The [REVIEW] you write has to stand on its own — it is the only history the next period gets to see. Follow the two-section fixed format strictly."
-    # The very last line of the user message, after the material, the previous review and the memory
-    # notes — any of which may be in another language
+    closing: "Now write this period's review: answer the fixed questions per case first, then fill in the ledger-update table. Follow the two-section fixed format strictly."
+    # The very last line of the user message, after the material and the ledger — which may be in another language
     outputLanguage: "Output language: English."
 
     # ---- scorecard ----
@@ -69,12 +140,10 @@ reviewer:
     statsClosed: "{{n}} closed trades: {{wins}} won / {{losses}} lost (win rate {{winRate}}%), net P&L {{pnl}} (after fees and funding)"
     noClosed: No closed trades in this period
 
-    # ---- closed-trade pairing table (peer detail reuses the same set; the two must not drift apart) ----
-    tradesHeader: "[CLOSED-TRADE PAIRING TABLE] (thesis → outcome, paired by code)"
+    # ---- one trade's row tail and thesis line (peer detail reuses the same set; the two must not drift apart) ----
     tradeRow: entry {{entry}} ({{openedAt}}) → exit {{exit}} ({{closedAt}}), net P&L {{pnl}}, held {{held}}, {{manner}}
     planLine: "thesis: {{signals}} | invalidation: {{invalidation}}"
     noPlan: (no plan record)
-    orphanPlan: "plan archived but not paired to any closed position (usually an unfilled order that was cancelled); thesis: {{signals}}"
     closeManner:
       liquidated: liquidated
       stopLoss: taken by stop
@@ -85,39 +154,44 @@ reviewer:
       hours: "{{n}}h"
       days: "{{n}}d"
 
-    # ---- decision timeline digest ----
-    timelineHeader: "[DECISION TIMELINE DIGEST] (oldest first; action rows carry a tool summary; stand-aside rounds are merged per symbol — consecutive rounds of one symbol with the same waiting condition become one segment)"
-    timelineActivity: "This period: {{rounds}} wake-ups, {{actionRounds}} with an action, {{opens}} opening actions"
-    timelineOmitted: ({{n}} early stand-aside segments omitted)
-    timelineEmpty: No decision records in this period
-    timelineOthers: "Also in this period: {{parts}}"
-    timelineErrors: "{{n}} ERROR rounds"
-    timelineSkipped: "{{n}} SKIPPED rounds"
-    timelineOthersSep: ", "
-    alertTag: "[ALERT]"
-    actionRow: "{{actions}} | {{conclusion}}"
-    actionJoin: "; "
-    outcomeRejected: →rejected
-    outcomeFailed: →failed
-    outcomePending: →awaiting approval
-    holdRounds: ({{rounds}} rounds)
-    noWait: (no waiting condition given this round)
-    waiting: "Waiting: {{wait}}"
-    # ---- stand-aside layering (≥6h segments become audit blocks, shorter ones fold into one summary line) ----
-    holdAuditTag: stand-aside audit segment (≥6 hours, evaluate one by one)
-    holdSnapshot: "structure at segment start, {{symbol}}: price {{close}}, prior {{hours}}h change {{pct}}%, recent swing highs {{highs}} / lows {{lows}}"
-    holdSnapshotNoBars: "structure at segment start, {{symbol}}: no candle data in the window"
-    shortHolds: "(plus {{n}} short stand-aside segments over {{rounds}} rounds, longest {{hours}}h, conditions omitted — stand-asides under 6 hours are not listed individually)"
+    # ---- case material ----
+    casesHeader: "[CASE MATERIAL] (facts computed by code. Groups marked ★ are this period's cases, other groups get one line; fractions use the plan's original target / stop distance as denominator)"
+    casesNone: No closed trades in the window
+    caseGroup: "★ {{play}} ({{n}} trades, {{wins}} won, net {{net}})"
+    caseGroupOther: "{{play}} ({{n}} trades, {{wins}} won, net {{net}})"
+    caseGeneral: untyped
+    caseTrade: "- {{symbol}} {{side}} {{opened}} → {{closed}} (held {{held}}) | entry {{entry}} stop {{stop}} target {{target}} exit {{exit}}, {{manner}} | net {{pnl}}, funding {{funding}}"
+    casePath: "  Path: max favourable {{mfe}} ({{mfeAt}}, {{mfeFrac}} of target) | max adverse {{mae}} ({{maeFrac}} of stop) | minutes to 25% / 50% of target {{t25}} / {{t50}} | first close back through entry {{firstBack}} | best price 4h / 24h after exit {{best4}} / {{best24}}, {{targetAfter}}"
+    caseTargetHit: later reached the original target
+    caseTargetMiss: never reached the original target afterwards
+    caseAfterShort: not enough data after the exit
+    caseHourly: "  1h closes: {{closes}}"
+    casePlan: "  Plan: thesis {{signals}} | invalidation {{invalidation}} | revisions {{revisions}}"
+    caseNoPlan: "  Plan: (no plan record)"
+    caseRevision: "{{type}} {{change}} ({{reason}})"
+    caseCtx: "  Entry context: regime {{regime}} | 1h ATR {{atr}} | stop {{stopAtr}} ATR ({{stopPct}}%) | nearest High event {{eventMin}} min {{eventTitle}} | Beijing hour {{hour}} | funding {{funding}} | {{orderType}} {{leverage}}x"
+    none: —
 
-    # ---- per-symbol price paths ----
-    pathHeader: "[1h PRICE PATHS PER SYMBOL] (the reference for reconciling stand-asides; covers {{from}} → {{to}})"
-    pathFirstNote: "Note: this is the first review of the round, so this path may start before the round did — prices from before the round are background only, not evidence for reconciliation"
-    pathNoBars: no candle data in the window
-    pathRow: open {{open}} → close {{close}} ({{pct}}%); high {{high}} ({{highAt}}) low {{low}} ({{lowAt}})
-    pathBars: "1h high/low/close (time = start of the hour): {{bars}}"
+    # ---- this period's market ----
+    marketHeader: "[THIS PERIOD'S MARKET] (per-symbol OHLC in the window, Beijing time; the low-to-high range is the reference for the opportunity audit)"
+    marketRow: "- {{symbol}} {{open}} → {{close}}, low {{low}} ({{lowAt}}) high {{high}} ({{highAt}}), low to high {{range}}%"
+    marketNoBars: "- {{symbol}}: no candle data in the window"
+
+    # ---- experience ledger ----
+    ledgerHeader: "[EXPERIENCE LEDGER] ({{n}} active; #id is what the ledger updates refer to; entries marked under review still get a verdict this period)"
+    ledgerEmpty: "(the ledger is empty: this period can only add)"
+    ledgerRow: "#{{id}} {{kind}} {{slot}} {{dir}} {{play}} | {{text}} | supported {{supports}} opposed {{opposes}} untested {{untested}} | evidence {{evidence}}{{flagged}}"
+    ledgerFlagged: " | under review"
+    findingsHeader: "[RECORDED FINDINGS] (already handed to the owner, do not add them again)"
+    findingRow: "#{{id}} {{text}} | {{evidence}}"
+    retiredHeader: "[RETIRED] (do not bring these ideas back)"
+    retiredRow: "#{{id}} {{text}} | {{reason}}"
+    # Header of the audit verdicts appended to the review body (written by code)
+    auditAppendix: "[AUDIT VERDICTS]"
 
   # Persisted text: goes into ai_trader_decision.error and is on public display in the arena timeline
   error:
     timeout: Review timed out ({{seconds}}s)
     emptyOutput: The model returned nothing
-    quietSkip: "Standing aside in a calm market: no trades closed and no opening actions in the window, and every symbol's amplitude stayed below {{pct}}%, so this period's review was skipped (no model call spent)"
+    noOps: No ledger-update row could be parsed, the ledger was not updated
+    auditFailed: The audit call failed, the under-review flags stay until next period

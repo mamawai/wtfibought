@@ -12,6 +12,7 @@ import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
@@ -20,7 +21,6 @@ import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
 import com.mawai.wiibagent.trader.wakeup.TraderLiveHub;
 import com.mawai.wiibagent.trader.wakeup.TraderScheduler;
-import com.mawai.wiibagent.trader.wakeup.TraderWakeupRunner;
 import com.mawai.wiibagent.trader.wakeup.WakeWindow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -71,6 +71,8 @@ public class TraderService {
     private final UserLangResolver langResolver;
     /** 校验回执是当场给用户看的话，跟当次请求的界面语言，与上面那份落库文案不是一个来源 */
     private final MessageCatalog messages;
+    /** 经验账本：开新局带入、清旧局、删 trader 时一并清 */
+    private final ExperienceLedger ledger;
 
     /** llmEndpointId：端点库里的一条；空=跟随用户默认端点。wakeWindow：唤醒时段"HH:mm-HH:mm"（北京时间），null=全天 */
     public record UpsertReq(String name, String symbols, String intervalCode, String customPrompt,
@@ -79,7 +81,7 @@ public class TraderService {
                             BigDecimal marginPctMin, BigDecimal marginPctMax,
                             Boolean allowMultiPosition, Boolean allowHedge,
                             Boolean alertEnabled, BigDecimal alertThresholdMult,
-                            Boolean reviewEnabled, Boolean learningEnabled,
+                            Boolean reviewEnabled, Boolean learningEnabled, Boolean learnedRestrictionHold,
                             String wakeWindow) {
     }
 
@@ -167,6 +169,7 @@ public class TraderService {
                 .set(AiTrader::getAlertThresholdMult, probe.getAlertThresholdMult())
                 .set(AiTrader::getReviewEnabled, probe.getReviewEnabled())
                 .set(AiTrader::getLearningEnabled, probe.getLearningEnabled())
+                .set(AiTrader::getLearnedRestrictionHold, probe.getLearnedRestrictionHold())
                 .set(AiTrader::getWakeWindow, probe.getWakeWindow())
                 .set(AiTrader::getUpdatedAt, LocalDateTime.now()));
         endpointService.bind(userId, UserLlmBinding.TRADER, req.llmEndpointId());
@@ -261,6 +264,9 @@ public class TraderService {
                 .set(AiTrader::getUpdatedAt, LocalDateTime.now());
         if (!carryNotes) {
             upd.set(AiTrader::getMemory, null).set(AiTrader::getLearningNotes, null);
+        } else if (ledger.carryOver(t.getId(), t.getRoundNo(), newRound) > 0) {
+            // 账本行按局号存，带入=复制到新局；memory 文本按新局编号重渲染
+            upd.set(AiTrader::getMemory, ledger.render(t.getId(), newRound, langResolver.of(userId)));
         }
         traderMapper.update(null, upd);
         purgeExpiredRounds(t.getId(), userId, newRound);
@@ -290,6 +296,7 @@ public class TraderService {
         decisionMapper.delete(new LambdaQueryWrapper<AiTraderDecision>()
                 .eq(AiTraderDecision::getTraderId, t.getId()));
         planStore.purgeAll(t.getId());
+        ledger.purgeAll(t.getId());
         traderMapper.deleteById(t.getId());
         endpointService.bind(userId, UserLlmBinding.TRADER, null);
         modelFactory.evict(t.getId());
@@ -323,6 +330,7 @@ public class TraderService {
                 .eq(AiTraderDecision::getTraderId, traderId)
                 .le(AiTraderDecision::getRoundNo, expired));
         planStore.purgeRounds(traderId, expired);
+        ledger.purgeRounds(traderId, expired);
         try {
             simTradeClient.deleteAccount(accountName(userId, expired));
         } catch (Exception e) {
@@ -545,6 +553,7 @@ public class TraderService {
         t.setAlertThresholdMult(req.alertThresholdMult() == null ? BigDecimal.ONE : req.alertThresholdMult());
         t.setReviewEnabled(!Boolean.FALSE.equals(req.reviewEnabled()));
         t.setLearningEnabled(!Boolean.FALSE.equals(req.learningEnabled()));
+        t.setLearnedRestrictionHold(Boolean.TRUE.equals(req.learnedRestrictionHold()));
         // 存归一化文本（validate 已 parse 过），全天存 null
         WakeWindow window = WakeWindow.parse(req.wakeWindow());
         t.setWakeWindow(window == null ? null : window.text());

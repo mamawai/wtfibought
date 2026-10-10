@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.trader.trade;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.enums.AgentLang;
@@ -34,8 +35,10 @@ import static org.assertj.core.api.InstanceOfAssertFactories.BIG_DECIMAL;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -65,7 +68,7 @@ class TradeToolsTest {
             new TraderPlanStore(planMapper, PROMPTS),
             new TradeTools.WakeCtx(7L, 1, 1785171600000L, DEADLINE,
                     new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
-                            true, true), AgentLang.ZH), PROMPTS, MESSAGES);
+                            true, true), AgentLang.ZH), PROMPTS, MESSAGES, mock(EntryContext.class));
 
     /** 多单：入场10万，当前止损9.5万、止盈11万 */
     private FuturesPositionDTO longPosition() {
@@ -326,6 +329,45 @@ class TradeToolsTest {
         ArgumentCaptor<AiTraderPlan> cap = ArgumentCaptor.forClass(AiTraderPlan.class);
         verify(planMapper).insert(cap.capture());
         assertThat(cap.getValue().getPositionId()).isEqualTo(42L);
+        // 上下文异步补写，落库那一刻为空
+        assertThat(cap.getValue().getEntryCtxJson()).isNull();
+    }
+
+    /** 开仓上下文异步补写：计划先落库拿 id，虚拟线程抓到后按列写回这条计划的 entry_ctx_json */
+    @Test
+    void entryContextWrittenAsyncAfterPlanPersisted() {
+        EntryContext entryContext = mock(EntryContext.class);
+        when(entryContext.capture(eq("BTCUSDT"), eq("MARKET"), eq(new BigDecimal("100000")),
+                eq(BigDecimal.valueOf(95000.0)), eq(10), anyLong()))
+                .thenReturn("{\"regime\":\"RANGE\"}");
+        when(planMapper.insert(any(AiTraderPlan.class))).thenAnswer(inv -> {
+            inv.<AiTraderPlan>getArgument(0).setId(43L);
+            return 1;
+        });
+        TradeTools withCtx = new TradeTools(simTradeClient, 99L, Set.of("BTCUSDT"),
+                positions -> new BigDecimal("10000"), sym -> new BigDecimal("100000"),
+                new TraderPlanStore(planMapper, PROMPTS),
+                new TradeTools.WakeCtx(7L, 1, 1785171600000L, DEADLINE,
+                        new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
+                                true, true), AgentLang.ZH), PROMPTS, MESSAGES, entryContext);
+        FuturesOrderResponse resp = new FuturesOrderResponse();
+        resp.setOrderId(889L);
+        resp.setPositionId(43L);
+        when(simTradeClient.openPosition(eq(99L), any())).thenReturn(resp);
+        when(planMapper.selectOne(any())).thenReturn(null);
+
+        openOnce(withCtx);
+
+        ArgumentCaptor<AiTraderPlan> inserted = ArgumentCaptor.forClass(AiTraderPlan.class);
+        verify(planMapper).insert(inserted.capture());
+        assertThat(inserted.getValue().getEntryCtxJson()).isNull();
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        ArgumentCaptor<LambdaUpdateWrapper<AiTraderPlan>> up = ArgumentCaptor.forClass((Class) LambdaUpdateWrapper.class);
+        verify(planMapper, timeout(2000)).update(isNull(), up.capture());
+        assertThat(up.getValue().getSqlSet()).contains("entry_ctx_json");
+        // 条件值要先拼一次 where 才落进参数表
+        assertThat(up.getValue().getSqlSegment()).contains("id = ");
+        assertThat(up.getValue().getParamNameValuePairs()).containsValue("{\"regime\":\"RANGE\"}").containsValue(43L);
     }
 
     // ---------- 下单结果未知：幂等键 + 同键重发 ----------
@@ -411,7 +453,7 @@ class TradeToolsTest {
                 new TraderPlanStore(planMapper, PROMPTS),
                 new TradeTools.WakeCtx(7L, 1, 1785171600000L, System.currentTimeMillis() - 1,
                         new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
-                                true, true), AgentLang.ZH), PROMPTS, MESSAGES);
+                                true, true), AgentLang.ZH), PROMPTS, MESSAGES, mock(EntryContext.class));
 
         assertThat(openOnce(late)).startsWith("REJECTED").contains("本轮已超时");
         assertThat(late.closePosition(5L, 0.01, "失效条件触发")).contains("本轮已超时");
@@ -434,7 +476,7 @@ class TradeToolsTest {
                 new TraderPlanStore(planMapper, PROMPTS),
                 new TradeTools.WakeCtx(7L, 1, 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
-                                true, true), AgentLang.ZH), PROMPTS, MESSAGES);
+                                true, true), AgentLang.ZH), PROMPTS, MESSAGES, mock(EntryContext.class));
 
         String r = strict.openPosition(null, "SHORT", "MARKET", 0.64, 20,
                 null, 64980.0, 64640.0, "BREAKOUT", "突破", "收回箱体");
@@ -563,7 +605,7 @@ class TradeToolsTest {
                 new TraderPlanStore(planMapper, PROMPTS),
                 new TradeTools.WakeCtx(7L, 1, 1785171600000L, DEADLINE,
                         new TraderRiskConfig(1, 20, new BigDecimal("1"), new BigDecimal("50"),
-                                true, true), AgentLang.ZH), PROMPTS, MESSAGES);
+                                true, true), AgentLang.ZH), PROMPTS, MESSAGES, mock(EntryContext.class));
 
         String r = poorer.openPosition("BTCUSDT", "LONG", "MARKET", 0.4, 10,
                 null, 95000.0, null, "BREAKOUT", "突破前高", "1h收盘跌回箱体内");

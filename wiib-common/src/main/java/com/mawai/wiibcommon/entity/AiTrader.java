@@ -78,6 +78,9 @@ public class AiTrader {
     /** 同侪学习开关：learning agent 在全体复盘完成后向同侪学习并整理 learningNotes；关掉只停学习，已有笔记照常注入 */
     private Boolean learningEnabled;
 
+    /** 经验账本里限制型规律能否作为观望理由；false=只供参考 */
+    private Boolean learnedRestrictionHold;
+
     /** 波动哨兵警报开关（仅 1h/4h 档生效） */
     private Boolean alertEnabled;
 

@@ -13,6 +13,7 @@ import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
@@ -37,6 +38,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -61,11 +63,12 @@ class TraderServiceTest {
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
     private final TraderScheduler scheduler = mock(TraderScheduler.class);
     private final TraderLiveHub hub = mock(TraderLiveHub.class);
+    private final ExperienceLedger ledger = mock(ExperienceLedger.class);
 
     private final TraderService service = new TraderService(
             traderMapper, decisionMapper, modelFactory, endpointService,
             simTradeClient, binanceProperties, planStore, scheduler, hub,
-            new PromptCatalog(), langResolver, new MessageCatalog());
+            new PromptCatalog(), langResolver, new MessageCatalog(), ledger);
 
     /** 端点库里的一条 */
     private static UserLlmEndpoint endpoint(long id, String model) {
@@ -85,7 +88,7 @@ class TraderServiceTest {
                                                Boolean multi, Boolean hedge,
                                                Boolean alertEnabled, java.math.BigDecimal alertMult) {
         return new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", customPrompt, null,
-                levMin, levMax, null, null, multi, hedge, alertEnabled, alertMult, null, null, null);
+                levMin, levMax, null, null, multi, hedge, alertEnabled, alertMult, null, null, null, null);
     }
 
     /** 币种上限 3：单轮工具预算按币摊，4 个被拦；3 个过这道校验（后面才卡在端点上） */
@@ -96,9 +99,9 @@ class TraderServiceTest {
         when(endpointService.defaultOf(1L)).thenReturn(null);
 
         String four = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT", "5m",
-                null, null, null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null));
         String three = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT", "5m",
-                null, null, null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null));
 
         assertThat(four).isEqualTo(new MessageCatalog().get("trader.config.tooManySymbols", Map.of("max", 3)));
         assertThat(three).doesNotContain("最多").contains("模型端点");
@@ -173,7 +176,7 @@ class TraderServiceTest {
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", null, 5L,
-                null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null, null));
 
         assertThat(err).isNull();
         verify(modelFactory).testConnection(chosen);
@@ -188,7 +191,7 @@ class TraderServiceTest {
         when(traderMapper.selectOne(any())).thenReturn(null);
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", null, null,
-                null, null, null, null, null, null, null, null, null, null, "21:03-08:30"));
+                null, null, null, null, null, null, null, null, null, null, null, "21:03-08:30"));
 
         assertThat(err).contains("0/5");
         verify(traderMapper, never()).insert(any(AiTrader.class));
@@ -201,7 +204,7 @@ class TraderServiceTest {
         when(traderMapper.selectOne(any())).thenReturn(null);
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "4h", null, null,
-                null, null, null, null, null, null, null, null, null, null, "21:00-23:00"));
+                null, null, null, null, null, null, null, null, null, null, null, "21:00-23:00"));
 
         assertThat(err).contains("永远不会醒");
         verify(traderMapper, never()).insert(any(AiTrader.class));
@@ -218,7 +221,7 @@ class TraderServiceTest {
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", null, 5L,
-                null, null, null, null, null, null, null, null, null, null, " 21:00-08:30 "));
+                null, null, null, null, null, null, null, null, null, null, null, " 21:00-08:30 "));
 
         assertThat(err).isNull();
         ArgumentCaptor<AiTrader> captor = ArgumentCaptor.forClass(AiTrader.class);
@@ -424,7 +427,7 @@ class TraderServiceTest {
         when(modelFactory.testConnection(next)).thenReturn(null);
 
         String err = service.updateConfig(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", null, 6L,
-                null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null, null));
 
         assertThat(err).isNull();
         verify(modelFactory).testConnection(next);
@@ -450,7 +453,30 @@ class TraderServiceTest {
         assertThat(cap.getValue().getSqlSet()).contains("memory").contains("learning_notes");
     }
 
-    /** 默认带入（carryNotes=true）：两份笔记不进 set 列表，跨局认知积累照旧 */
+    /** 带入时现役账本行复制到新局、memory 按新局编号重渲染（账本空着就不碰 memory，旧自由文本留给首次复盘迁移） */
+    @Test
+    void resetWithCarryCopiesLedgerAndRerendersMemory() {
+        AiTrader t = new AiTrader();
+        t.setId(7L);
+        t.setUserId(1L);
+        t.setRoundNo(3);
+        t.setLearnedRestrictionHold(true);
+        when(traderMapper.selectOne(any())).thenReturn(t);
+        when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
+        when(langResolver.of(1L)).thenReturn(AgentLang.ZH);
+        when(ledger.carryOver(7L, 3, 4)).thenReturn(2);
+        when(ledger.render(7L, 4, AgentLang.ZH)).thenReturn("【经验账本】\n#9 规律");
+
+        assertThat(service.reset(1L, true)).isNull();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> cap = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(traderMapper).update(isNull(), cap.capture());
+        assertThat(cap.getValue().getSqlSet()).contains("memory").doesNotContain("learning_notes");
+        assertThat(cap.getValue().getParamNameValuePairs()).containsValue("【经验账本】\n#9 规律");
+    }
+
+    /** 默认带入（carryNotes=true）：账本空着时两份笔记都不进 set 列表，跨局认知积累照旧 */
     @Test
     void resetWithCarryKeepsNotes() {
         AiTrader t = new AiTrader();

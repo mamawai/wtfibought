@@ -6,7 +6,7 @@ import type { LedgerEntry, LedgerBizTypeOption, PublicTrade, UserProfile, Positi
 import type { CampaignInfo, CampaignReward, CampaignScore, MyCampaignView } from '../types';
 import type { LlmEndpointView, LlmEndpointSaveRequest, LlmBindings, LlmPurpose, JevConfigView, JevSaveRequest } from '../types';
 import type { JevPredictionOverview, JevPredictionDecisionView, JevBet, JevSwitchState } from '../types';
-import type { User, PageResult, RankingItem, CommentItem, NotificationItem, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesAdjustLeverageRequest, FuturesCrossAccount, WalletTransferPreview, FuturesPosition, FuturesOrder, FuturesReverseResult, FuturesBracket, FundingRateView, TradeFilterMap, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, ForceOrder, AiKeyConfig, AiModelAssignment, NewsBackfillResult, InviteCode, ChatIntent, WorkbenchEvent, StrategyAccountView, TraderPublicView, TraderOwnerView, TraderDetailView, AiTraderDecisionView, TraderEquityPoint, TraderUpsertRequest, TraderSpec, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchSessionStatus, WorkbenchChatMessage, TraderActionPanel, TraderActionResult, TradeRecordView, TraderLiveEvent, WakeTrace } from '../types';
+import type { User, PageResult, RankingItem, CommentItem, NotificationItem, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesAdjustLeverageRequest, FuturesCrossAccount, WalletTransferPreview, FuturesPosition, FuturesOrder, FuturesReverseResult, FuturesBracket, FundingRateView, TradeFilterMap, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, ForceOrder, AiKeyConfig, AiModelAssignment, NewsBackfillResult, InviteCode, ChatIntent, WorkbenchEvent, StrategyAccountView, TraderPublicView, TraderOwnerView, TraderDetailView, AiTraderDecisionView, TraderEquityPoint, TraderUpsertRequest, TraderExperience, TraderSpec, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchSessionStatus, WorkbenchChatMessage, TraderActionPanel, TraderActionResult, TradeRecordView, TraderLiveEvent, WakeTrace } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -694,6 +694,12 @@ export const traderApi = {
   trades: (id: number) => api.get<unknown, TradeRecordView[]>(`/ai/trader/${id}/trades`),
   /** 标记/取消忽略一笔已了结交易（仅本人、仅CLOSED）：AI 统计与复盘不再参考，公开记录不变 */
   setPlanStale: (planId: number, stale: boolean) => api.post<unknown, void>(`/ai/trader/plan/${planId}/stale`, { stale }),
+  // 经验账本（主人管理）：本局全部条目；钉住/退役/恢复/删除
+  experiences: () => api.get<unknown, TraderExperience[]>('/ai/trader/mine/experiences'),
+  pinExperience: (id: number, pinned: boolean) => api.post<unknown, void>(`/ai/trader/experience/${id}/pin`, { pinned }),
+  retireExperience: (id: number, reason: string) => api.post<unknown, void>(`/ai/trader/experience/${id}/retire`, { reason }),
+  reviveExperience: (id: number) => api.post<unknown, void>(`/ai/trader/experience/${id}/revive`),
+  deleteExperience: (id: number) => api.delete<unknown, void>(`/ai/trader/experience/${id}`),
 
   // ---- 唤醒过程实时流：只有主人连得进来，非主人后端直接拒 ----
   /**

@@ -692,6 +692,7 @@ CREATE TABLE IF NOT EXISTS ai_trader (
     allow_hedge     BOOLEAN NOT NULL DEFAULT FALSE,
     review_enabled  BOOLEAN NOT NULL DEFAULT TRUE,
     learning_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    learned_restriction_hold BOOLEAN NOT NULL DEFAULT FALSE,
     alert_enabled   BOOLEAN NOT NULL DEFAULT TRUE,
     alert_threshold_mult NUMERIC(4,2) NOT NULL DEFAULT 1.0,
     wake_window     VARCHAR(11),
@@ -706,10 +707,11 @@ COMMENT ON COLUMN ai_trader.interval_code IS '唤醒K线级别 5m/15m/1h/4h（5m
 COMMENT ON COLUMN ai_trader.custom_prompt IS '主人的交易指令：方法/风格/纪律的唯一来源（平台模板只讲事实），≤4000字符，原样注入系统提示词不翻译，复盘拿它当评判尺子；新建时前端预填平台默认指令（prompts trader.label.defaultInstructions），空=模型自定';
 COMMENT ON COLUMN ai_trader.review_enabled IS '每日复盘开关：reviewer日线边界复盘写REVIEW决策行并整理memory；关掉只停复盘，已有笔记照常注入';
 COMMENT ON COLUMN ai_trader.learning_enabled IS '同侪学习开关：learning agent在全体复盘完成后向同侪学习写LEARN行并整理learning_notes；关掉只停学习，已有笔记照常注入';
+COMMENT ON COLUMN ai_trader.learned_restriction_hold IS '主人开关：经验账本里限制型规律能否作为观望理由；FALSE=注入时标明只供参考';
 COMMENT ON COLUMN ai_trader.alert_enabled IS '波动哨兵警报开关（仅1h/4h档生效）：5分钟振幅超过 币基准阈值×灵敏度系数 且持有该币仓位/挂单时临时唤醒';
 COMMENT ON COLUMN ai_trader.alert_threshold_mult IS '警报灵敏度系数≥1.0只能调高：生效阈值=每币基准(BTC0.6/ETH0.8/XRP0.8/SOL0.9/DOGE1.0%)×本系数，180天历史校准见VolatilitySentinel';
 COMMENT ON COLUMN ai_trader.wake_window IS '唤醒时段（北京时间，HH:mm-HH:mm，5分钟粒度，两端含，可跨午夜），NULL=全天。只管例行唤醒与波动警报；手动唤醒不受限；每日复盘/学习仍在08:00照常。时段外静默不唤醒不写SKIPPED行';
-COMMENT ON COLUMN ai_trader.memory IS '复盘笔记：reviewer每日复盘整理写入（限长文本，≤2000字覆盖写），每次唤醒注入提示词——trader侧只读只注入，本列即记忆学习的接口';
+COMMENT ON COLUMN ai_trader.memory IS '经验账本的渲染文本：reviewer每日复盘后由代码从ai_trader_experience渲染覆盖写，每次唤醒注入提示词——trader侧只读只注入；账本本体在ai_trader_experience';
 COMMENT ON COLUMN ai_trader.learning_notes IS '学习笔记：learning agent向同侪学习后整理写入（≤2000字覆盖写），每次唤醒与复盘笔记并列注入；与memory分开存——来源分开模型才分得清"自己的教训"与"从别人学的"';
 COMMENT ON COLUMN ai_trader.owner_note IS '主人留言：trader动作面板写入，随提示词注入，每注入一次owner_note_rounds减1，减到0连同本列一起清空（注入与递减在TraderPromptAssembler同一处）。与memory的分工：memory是复盘沉淀的长期笔记，本列是主人阶段性交代的一句话';
 COMMENT ON COLUMN ai_trader.owner_note_rounds IS '留言剩余注入轮次，0=无待读留言。1即"念一次就清"，上限24（15m档≈6小时）。递减走条件SQL(正文匹配作前置+原子递减)：唤醒读的是调度时刻的快照，以正文匹配保证只递减自己注入的那条';
@@ -779,6 +781,7 @@ CREATE TABLE IF NOT EXISTS ai_trader_plan (
     closed_wake_time BIGINT,
     stale           BOOLEAN NOT NULL DEFAULT FALSE,
     position_id     BIGINT,
+    entry_ctx_json  TEXT,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -794,6 +797,66 @@ COMMENT ON COLUMN ai_trader_plan.status IS 'LIVE=仓位/挂单存活 CLOSED=已�
 COMMENT ON COLUMN ai_trader_plan.closed_wake_time IS '归档时刻(ms)：唤醒开头对账发现仓位已了结的边界/重置时刻，与opened_wake_time围出计划生命期';
 COMMENT ON COLUMN ai_trader_plan.stale IS '主人标记忽略:true=本笔不进论点战绩统计与复盘教材(配对表/了结统计行);权益/排行榜/同侪学习照常。仅CLOSED可标,可随时取消';
 COMMENT ON COLUMN ai_trader_plan.position_id IS 'sim仓位id:市价开仓/加仓从下单响应落盘,限价单成交后唤醒开头对账补绑;一行计划对应一个仓位生命期,同论点下一笔另起一行;计划↔仓位配对的精确键,NULL(历史行/未成交挂单)走bestMatch时间就近兜底';
+COMMENT ON COLUMN ai_trader_plan.entry_ctx_json IS '开仓那一刻的上下文快照JSON：orderType/leverage/hourBj/stopPct/regime/atr1h/stopAtr/eventMin/eventTitle/funding（EntryContext）；复盘按维度对照用，取不到的字段缺席';
+
+-- ============================================
+-- 31.1 AI Trader 经验账本（复盘沉淀的经验，一条一行，代码记账）
+-- ============================================
+CREATE TABLE IF NOT EXISTS ai_trader_experience (
+    id              BIGSERIAL PRIMARY KEY,
+    trader_id       BIGINT NOT NULL,
+    round_no        INT NOT NULL,
+    play_type       VARCHAR(20),
+    kind            VARCHAR(12) NOT NULL,
+    slot            VARCHAR(16) NOT NULL,
+    direction       VARCHAR(12) NOT NULL,
+    text            VARCHAR(255) NOT NULL,
+    evidence        VARCHAR(255),
+    supports        INT NOT NULL DEFAULT 0,
+    opposes         INT NOT NULL DEFAULT 0,
+    untested        INT NOT NULL DEFAULT 0,
+    cited_open      INT NOT NULL DEFAULT 0,
+    cited_hold      INT NOT NULL DEFAULT 0,
+    status          VARCHAR(12) NOT NULL DEFAULT 'ACTIVE',
+    flagged         BOOLEAN NOT NULL DEFAULT FALSE,
+    verdicts_since_audit INT NOT NULL DEFAULT 0,
+    pinned          BOOLEAN NOT NULL DEFAULT FALSE,
+    source_id       BIGINT,
+    created_review_id BIGINT,
+    retired_review_id BIGINT,
+    retire_reason   VARCHAR(255),
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ate_trader_round_status ON ai_trader_experience (trader_id, round_no, status);
+COMMENT ON TABLE ai_trader_experience IS 'AI Trader经验账本：复盘写入的执行缺口/假设/规律/发现，一条一行；代码记支持反对次数、升级、举旗，退役不删；渲染文本写回ai_trader.memory注入trader';
+COMMENT ON COLUMN ai_trader_experience.play_type IS '所属单子类型（TradeGuard.PLAY_TYPES），NULL=通用';
+COMMENT ON COLUMN ai_trader_experience.kind IS 'GAP=执行缺口（主人指令要求了却反复没做到） HYPOTHESIS=假设 RULE=规律（假设被支持够多次升级） FINDING=发现（指令本身在花钱，只给主人看不注入）';
+COMMENT ON COLUMN ai_trader_experience.slot IS '格子：ENTRY入场条件/FAIL_DEF失败判定/FAIL_HANDLE失败处理/PROFIT_HANDLE盈利处理/RISK风险限制/EXEC执行缺口';
+COMMENT ON COLUMN ai_trader_experience.direction IS 'OPPORTUNITY机会型(某条件下该做)/RESTRICTION限制型(某条件下不做)/EXECUTION执行型(怎么做)；限制型全账户≤2条，能否作观望理由看ai_trader.learned_restriction_hold';
+COMMENT ON COLUMN ai_trader_experience.status IS 'ACTIVE现役（注入trader） RETIRED退役（不注入，复盘可见退役名单，主人可复活）';
+COMMENT ON COLUMN ai_trader_experience.flagged IS '待复审：近5次反对≥3 / 反对≥支持且核对≥4 / 近6次全未测试，由代码举旗，模型复审后四选一保留/修订/拆分/退役';
+COMMENT ON COLUMN ai_trader_experience.verdicts_since_audit IS '上次复审之后积累的结论数，复审保留后不满3次不重举旗';
+COMMENT ON COLUMN ai_trader_experience.pinned IS '主人钉住：不举旗不退役';
+COMMENT ON COLUMN ai_trader_experience.source_id IS '修订/拆分来源条目id，账不断';
+COMMENT ON COLUMN ai_trader_experience.cited_open IS 'trader结论里作为开仓依据引用本条的次数（结论块里的#编号，开仓轮计这里）';
+COMMENT ON COLUMN ai_trader_experience.cited_hold IS 'trader结论里在观望轮引用本条的次数';
+
+-- ============================================
+-- 31.2 经验结论流水（每次复盘对每条经验的支持/反对/未测试）
+-- ============================================
+CREATE TABLE IF NOT EXISTS ai_trader_experience_verdict (
+    id              BIGSERIAL PRIMARY KEY,
+    experience_id   BIGINT NOT NULL,
+    review_id       BIGINT NOT NULL,
+    verdict         VARCHAR(12) NOT NULL,
+    position_ids    VARCHAR(255),
+    note            VARCHAR(255),
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_atev_exp ON ai_trader_experience_verdict (experience_id, id);
+COMMENT ON TABLE ai_trader_experience_verdict IS '经验结论流水：哪篇复盘(review_id=ai_trader_decision的REVIEW行)对哪条经验给了什么结论，附涉及仓位与一句证据；复审的对照表和历史最长连败从这里算';
+COMMENT ON COLUMN ai_trader_experience_verdict.verdict IS 'SUPPORT支持/OPPOSE反对/UNTESTED未测试（执行缺口的守/破内部同一套）';
 
 -- ============================================
 -- 32. 用户 BYOK 端点库

@@ -79,6 +79,7 @@ public class TraderChatService {
                 .put("consecutiveFailures", t.getConsecutiveFailures())
                 .put("reviewEnabled", t.getReviewEnabled())
                 .put("learningEnabled", t.getLearningEnabled())
+                .put("learnedRestrictionHold", t.getLearnedRestrictionHold())
                 .put("alertEnabled", t.getAlertEnabled())
                 .put("wakeWindow", t.getWakeWindow() == null
                         ? prompts.get(lang, "chat.traderQuery.wakeWindowAllDay")

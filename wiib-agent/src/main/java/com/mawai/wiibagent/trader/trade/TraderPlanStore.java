@@ -92,6 +92,13 @@ public class TraderPlanStore {
         mapper.insert(plan);
     }
 
+    /** 按列写入场上下文 */
+    public void setEntryContext(Long planId, String entryCtxJson) {
+        mapper.update(null, new LambdaUpdateWrapper<AiTraderPlan>()
+                .eq(AiTraderPlan::getId, planId)
+                .set(AiTraderPlan::getEntryCtxJson, entryCtxJson));
+    }
+
     /**
      * 加仓覆盖：同键已有持仓或开仓挂单时再下单。新论点上位，旧论点进修订史，仓龄按最初开仓算，
      * 仓位绑定保留（sim 同向并仓 id 不变；限价加仓响应无 id）。模型下单前已在提示词里看过旧计划，知情覆盖。
@@ -309,6 +316,7 @@ public class TraderPlanStore {
         row.setStopLossPrice(from.getStopLossPrice());
         row.setTakeProfitPrice(from.getTakeProfitPrice());
         row.setRevisionsJson(from.getRevisionsJson());
+        row.setEntryCtxJson(from.getEntryCtxJson());
         row.setCreatedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(boundaryTime), ZoneId.systemDefault()));
         appendRevision(row, boundaryTime, prompts.get(lang, "trader.revise.carry"),
                 prompts.get(lang, "trader.revise.carryChange", Map.of("positionId", String.valueOf(from.getPositionId()))),

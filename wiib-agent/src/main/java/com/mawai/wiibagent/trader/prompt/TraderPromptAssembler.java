@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
 import com.mawai.wiibagent.trader.wakeup.TraderWakeupRunner;
@@ -15,7 +16,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
- * trader 系统提示词组装：平台模板 + 复盘笔记 + 学习笔记 + 用户自定义段 + 固定收尾格式 + 输出语言。
+ * trader 系统提示词组装：平台模板 + 经验账本 + 学习笔记 + 用户自定义段 + 固定收尾格式 + 输出语言。
  * 每次唤醒现读现拼——用户改完 customPrompt，下一根 K 线自然生效，热更新零机制。
  * <p>
  * 文本全在 {@link PromptCatalog} 的 {@code trader.*}，按用户的 {@link AgentLang} 取；骨架
@@ -41,17 +42,24 @@ public class TraderPromptAssembler {
     /** 只为留言而来：注入的同一处就得把轮次减掉，见 {@link #consumeOwnerNote} */
     private final AiTraderMapper traderMapper;
     private final PromptCatalog prompts;
+    /** 只为认 memory 是不是账本渲染文本：是才加用法说明 */
+    private final ExperienceLedger ledger;
 
     public String assemble(AiTrader trader, AgentLang lang) {
         StringBuilder sb = new StringBuilder();
         WakeWindow window = WakeWindow.of(trader);
-        // 平台模板只讲事实，永远注入；复盘笔记/学习笔记是数据不是指令，也永远注入
+        // 平台模板只讲事实，永远注入；经验账本/学习笔记是数据不是指令，也永远注入
         sb.append(platformTemplate(lang, trader.getIntervalCode(), trader.getSymbols(),
                 TraderRiskConfig.of(trader), window == null ? null : window.text()));
 
         if (trader.getMemory() != null && !trader.getMemory().isBlank()) {
-            sb.append('\n').append(prompts.get(lang, "trader.label.memory")).append('\n')
-                    .append(trader.getMemory()).append('\n');
+            sb.append('\n').append(prompts.get(lang, "trader.label.memory")).append('\n');
+            // 账本的用法说明按主人的观望理由开关二选一；还没迁移的旧文本不加
+            if (ledger.isRendered(trader.getMemory())) {
+                sb.append(prompts.get(lang, Boolean.TRUE.equals(trader.getLearnedRestrictionHold())
+                        ? "trader.label.ledgerHoldAllowed" : "trader.label.ledgerHoldDenied")).append('\n');
+            }
+            sb.append(trader.getMemory()).append('\n');
         }
 
         // 与复盘笔记并列注入不合并：来源分开，模型才分得清"自己的教训"与"从别人学的"

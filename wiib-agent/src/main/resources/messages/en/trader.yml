@@ -23,6 +23,12 @@ trader:
     notClosed: Only settled trades can be ignored
     staleRequired: Missing required field 'stale'
 
+  # Owner actions on the experience ledger
+  experience:
+    notFound: That experience entry was not found, or its current state does not allow this action
+    pinnedRequired: Missing required field 'pinned'
+    reasonRequired: Retiring needs a reason (the review model is told not to bring the idea back)
+
   # Entry validation for create / update config
   config:
     nameRequired: A name is required, up to 32 characters

@@ -19,16 +19,19 @@ import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.ResilientChatService;
 import com.mawai.wiibagent.llm.ToolCallTraceHook;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
+import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
+import com.mawai.wiibagent.trader.trade.EntryContext;
 import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
@@ -54,6 +57,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -63,6 +67,8 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.LongSupplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
@@ -100,6 +106,8 @@ public class TraderWakeupRunner {
     /** 休眠提示里的时刻按北京时间（与 WakeWindow.ZONE 同源）：时段是北京时间，下次时刻也得是，否则容器 TZ 非 +8 时两句会错位 */
     private static final DateTimeFormatter BJ_FMT =
             DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(WakeWindow.ZONE);
+    /** 结论里引用账本条目的写法：#编号 */
+    private static final Pattern LEDGER_REF = Pattern.compile("#(\\d{1,18})(?!\\d)");
 
     private final TraderModelFactory modelFactory;
     private final TraderPromptAssembler promptAssembler;
@@ -122,6 +130,11 @@ public class TraderWakeupRunner {
     private final EconCalendarAssembler econCalendar;
     /** 唤醒现场：过程逐帧推给竞技场订阅者，轨迹落 trace_json */
     private final TraderLiveHub hub;
+    /** 开仓那一刻的上下文快照，随计划落库 */
+    private final EntryContext entryContext;
+    private final DecisionText decisionText;
+    /** 经验账本：结论里引用的 #编号计一次引用 */
+    private final ExperienceLedger ledger;
 
     /** 墙钟注入点：预算计算要可测（测试里把"现在"钉在边界附近） */
     LongSupplier nowMs = System::currentTimeMillis;
@@ -214,6 +227,7 @@ public class TraderWakeupRunner {
             decisionMapper.insert(decision);
             run.end(decision.getId()); // insert后发run_end，目的是为了能够被查询到
             clearFailures(trader);
+            recordCitations(trader, decision);
         } catch (Exception e) {
             boolean keyInvalid = false;
             String msg;
@@ -241,6 +255,33 @@ public class TraderWakeupRunner {
                 run.end(decision.getId());
             }
             recordFailure(trader, msg, lang, keyInvalid);
+        }
+    }
+
+    /** 结论块里引用的账本 #编号各计一次：本轮有成交的 open_position 算开仓引用，否则算观望引用；记不上只 warn */
+    private void recordCitations(AiTrader trader, AiTraderDecision decision) {
+        try {
+            String block = decisionText.conclusionBlock(decision.getReasoning());
+            if (block == null) {
+                return;
+            }
+            Set<Long> ids = new LinkedHashSet<>();
+            Matcher m = LEDGER_REF.matcher(block);
+            while (m.find()) {
+                ids.add(Long.parseLong(m.group(1)));
+            }
+            if (ids.isEmpty()) {
+                return;
+            }
+            boolean opened = false;
+            for (JsonNode a : MAPPER.readTree(decision.getActionsJson())) {
+                if ("open_position".equals(a.path("tool").asString(null)) && "ok".equals(a.path("status").asString(null))) {
+                    opened = true;
+                }
+            }
+            ledger.recordCitations(trader.getId(), trader.getRoundNo(), ids, opened);
+        } catch (Exception e) {
+            log.warn("[Trader] 账本引用计数失败 traderId={} msg={}", trader.getId(), e.toString());
         }
     }
 
@@ -366,7 +407,8 @@ public class TraderWakeupRunner {
                 planStore,
                 new TradeTools.WakeCtx(trader.getId(), trader.getRoundNo(), boundaryTime, System.currentTimeMillis() + budgetSeconds * 1000, TraderRiskConfig.of(trader), lang),
                 prompts,
-                messages
+                messages,
+                entryContext
         );
     }
 

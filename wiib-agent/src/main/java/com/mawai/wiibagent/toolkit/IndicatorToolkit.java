@@ -176,7 +176,7 @@ public class IndicatorToolkit {
     }
 
     /** → calcAll 的契约行 [high, low, close, volume]。 */
-    static List<BigDecimal[]> toCalcRows(List<KlineBar> bars) {
+    public static List<BigDecimal[]> toCalcRows(List<KlineBar> bars) {
         List<BigDecimal[]> rows = new ArrayList<>(bars.size());
         for (KlineBar b : bars) {
             rows.add(new BigDecimal[]{b.high(), b.low(), b.close(), b.volume()});

@@ -6,6 +6,9 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.learning.ExperienceLedger;
+import com.mawai.wiibagent.mapper.AiTraderExperienceMapper;
+import com.mawai.wiibagent.mapper.AiTraderExperienceVerdictMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -30,8 +33,10 @@ class TraderPromptAssemblerTest {
     }
 
     private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
-    private final TraderPromptAssembler assembler =
-            new TraderPromptAssembler(traderMapper, new PromptCatalog());
+    private final PromptCatalog prompts = new PromptCatalog();
+    /** 真账本只为认 memory 是不是渲染文本，三个 mapper 都是 mock */
+    private final TraderPromptAssembler assembler = new TraderPromptAssembler(traderMapper, prompts,
+            new ExperienceLedger(mock(AiTraderExperienceMapper.class), mock(AiTraderExperienceVerdictMapper.class), traderMapper, prompts));
 
     private AiTrader trader() {
         AiTrader t = new AiTrader();
@@ -357,17 +362,44 @@ class TraderPromptAssemblerTest {
         assertThat(p).contains("0.04%").contains("0.08%");
     }
 
-    /** 复盘笔记（reviewer 写入 memory 列）非空即注入；为空不渲染该节 */
+    /** 经验账本（reviewer 渲染后写入 memory 列）非空即注入；为空不渲染该节 */
     @Test
     void memoryInjectedWhenPresent() {
         AiTrader t = trader();
+        t.setMemory("【经验账本】\n#1 规律 执行型 ｜ 突破回踩不守住颈线就别追 ｜ 支持 3 反对 0");
+
+        // 认段头
+        assertThat(assembler.assemble(t, AgentLang.ZH))
+                .contains("————— 经验账本（").contains("别追");
+        assertThat(assembler.assemble(trader(), AgentLang.ZH))
+                .doesNotContain("————— 经验账本（");
+    }
+
+    /** 账本的用法说明夹在段头与账本正文之间，按主人的观望理由开关二选一 */
+    @Test
+    void ledgerUsageLineFollowsHoldSwitch() {
+        AiTrader t = trader();
+        t.setMemory("【经验账本】\n〔PULLBACK〕\n#1 规律·限制型 ｜ ADX<30 不做回踩 ｜ 支持 3 反对 0");
+
+        t.setLearnedRestrictionHold(false);
+        String denied = assembler.assemble(t, AgentLang.ZH);
+        assertThat(denied).contains("这一类不能单独当作不开仓的理由").doesNotContain("主人已允许");
+        assertThat(denied.indexOf("————— 经验账本（")).isLessThan(denied.indexOf("这一类不能单独当作不开仓的理由"));
+        assertThat(denied.indexOf("这一类不能单独当作不开仓的理由")).isLessThan(denied.indexOf("【经验账本】"));
+
+        t.setLearnedRestrictionHold(true);
+        assertThat(assembler.assemble(t, AgentLang.ZH))
+                .contains("主人已允许你拿这一类当不开仓的理由").doesNotContain("不能单独当作不开仓的理由");
+    }
+
+    /** 还没迁移的旧自由文本：只注入正文，不加用法说明 */
+    @Test
+    void legacyMemoryGetsNoLedgerUsageLine() {
+        AiTrader t = trader();
         t.setMemory("教训：突破回踩不守住颈线就别追。");
 
-        // 认段头而不是"复盘笔记"四个字：模板里那句跨语言交代也提到它，光看词会误判
         assertThat(assembler.assemble(t, AgentLang.ZH))
-                .contains("————— 复盘笔记（").contains("别追");
-        assertThat(assembler.assemble(trader(), AgentLang.ZH))
-                .doesNotContain("————— 复盘笔记（");
+                .contains("别追").doesNotContain("不开仓的理由");
     }
 
     /**
@@ -381,7 +413,7 @@ class TraderPromptAssemblerTest {
         t.setLearningNotes("同侪A的BREAKOUT 12笔8胜靠等回踩确认，我9笔2胜差在追价。");
 
         assertThat(assembler.assemble(t, AgentLang.ZH))
-                .contains("————— 复盘笔记（").contains("别追")
+                .contains("————— 经验账本（").contains("别追")
                 .contains("————— 学习笔记（").contains("差在追价");
         assertThat(assembler.assemble(trader(), AgentLang.ZH))
                 .doesNotContain("————— 学习笔记（");
@@ -407,6 +439,6 @@ class TraderPromptAssemblerTest {
                 .doesNotContain("\"equity\"")
                 .doesNotContain("最近决策（最新在前")
                 .doesNotContain("本局论点战绩")
-                .contains("————— 复盘笔记（");
+                .contains("————— 经验账本（");
     }
 }

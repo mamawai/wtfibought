@@ -17,11 +17,13 @@ import com.mawai.wiibquant.external.sim.SimTradeClient;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
 import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
+import com.mawai.wiibagent.learning.ExperienceLedger;
 import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
+import com.mawai.wiibagent.trader.trade.EntryContext;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibagent.trader.trade.TraderRiskConfig;
 import com.mawai.wiibquant.market.service.KlineFetcher;
@@ -59,7 +61,7 @@ class WakeInstructionI18nTest {
             mock(AiTraderDecisionMapper.class), mock(DecisionText.class), mock(PlayStatsAssembler.class), prompts);
 
     private final TraderWakeupRunner runner = new TraderWakeupRunner(
-            mock(TraderModelFactory.class), new TraderPromptAssembler(traderMapper, prompts),
+            mock(TraderModelFactory.class), new TraderPromptAssembler(traderMapper, prompts, mock(ExperienceLedger.class)),
             mock(SimTradeClient.class), binance,
             new IndicatorToolkit(new KlineFetcher(binance, 60_000)),
             new MarketToolkit(mock(MarketDataService.class)),
@@ -70,7 +72,8 @@ class WakeInstructionI18nTest {
             new MessageCatalog(),
             new LocalizedToolCallbacks(prompts),
             wakeObservation,
-            mock(EconCalendarAssembler.class), new TraderLiveHub());
+            mock(EconCalendarAssembler.class), new TraderLiveHub(), mock(EntryContext.class),
+            mock(DecisionText.class), mock(ExperienceLedger.class));
 
     {
         runner.nowMs = () -> BOUNDARY + 1_000L;
@@ -87,7 +90,7 @@ class WakeInstructionI18nTest {
         AiTrader t = trader();
         t.setOwnerNote(note);
         t.setOwnerNoteRounds(2);
-        return new TraderPromptAssembler(traderMapper, prompts).ownerNoteBlock(t, lang);
+        return new TraderPromptAssembler(traderMapper, prompts, mock(ExperienceLedger.class)).ownerNoteBlock(t, lang);
     }
 
     private static AiTrader trader() {
@@ -109,7 +112,7 @@ class WakeInstructionI18nTest {
     void 例行开场白的收尾标记与系统提示词同源() {
         for (AgentLang lang : AgentLang.values()) {
             String mark = prompts.get(lang, "trader.mark.conclusion");
-            String template = new TraderPromptAssembler(traderMapper, prompts)
+            String template = new TraderPromptAssembler(traderMapper, prompts, mock(ExperienceLedger.class))
                     .platformTemplate(lang, "1h", "BTCUSDT", TraderRiskConfig.of(new AiTrader()), null);
             String opening = runner.routineInstruction(trader(), BOUNDARY, "", "", null, lang, "");
 

@@ -1,21 +1,24 @@
 package com.mawai.wiibagent.learning;
 
-import com.mawai.wiibagent.i18n.UserLangResolver;
-import com.mawai.wiibagent.i18n.PromptCatalog;
-import com.mawai.wiibcommon.enums.AgentLang;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.i18n.UserLangResolver;
+import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
+import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
-import com.mawai.wiibagent.trader.TraderModelFactory;
-import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
-import com.mawai.wiibagent.mapper.AiTraderMapper;
+import com.mawai.wiibcommon.entity.AiTraderExperience;
+import com.mawai.wiibcommon.entity.AiTraderExperienceVerdict;
+import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibquant.external.sim.SimTradeClient;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.DefaultUsage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -24,20 +27,23 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * ReviewRunner 回路测试：两段解析/降级安全（缺分隔符不动 memory）/超预算照存全文/
- * 无素材跳过/失败只留 ERROR 行不计连败。提示词按习惯配套断言。
+ * ReviewRunner 回路：解析落账 / 账本渲染写回 memory / 一行解析不出账本不动 / 无素材跳过 /
+ * 失败只留 ERROR 行不计连败 / 有旗再调一次复审 / 旧记忆先迁移。
  */
 class ReviewRunnerTest {
 
@@ -49,19 +55,31 @@ class ReviewRunnerTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AiTraderDecision.class);
     }
 
+    private final PromptCatalog prompts = new PromptCatalog();
     private final ReviewMaterialAssembler assembler = mock(ReviewMaterialAssembler.class);
     private final TraderModelFactory modelFactory = mock(TraderModelFactory.class);
-    private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
     private final AiTraderDecisionMapper decisionMapper = mock(AiTraderDecisionMapper.class);
-
-    /** 语言解析钉在中文：本类钉的是复盘回路行为，双语文案由 PromptI18nTest 单管 */
+    private final ExperienceLedger ledger = mock(ExperienceLedger.class);
     private final UserLangResolver langResolver = mock(UserLangResolver.class);
 
-    private final ReviewRunner runner = new ReviewRunner(assembler, modelFactory, traderMapper,
-            decisionMapper, new PromptCatalog(), langResolver);
+    private final SimTradeClient simTradeClient = mock(SimTradeClient.class);
+
+    private final ReviewRunner runner = new ReviewRunner(assembler, modelFactory,
+            decisionMapper, prompts, langResolver, ledger, new ExperienceOpParser(prompts), simTradeClient);
 
     {
         when(langResolver.of(anyLong())).thenReturn(AgentLang.ZH);
+        // insert 回填 id：结论流水要挂在这篇复盘上
+        when(decisionMapper.insert(any(AiTraderDecision.class))).thenAnswer(inv -> {
+            ((AiTraderDecision) inv.getArgument(0)).setId(900L);
+            return 1;
+        });
+        when(ledger.isRendered(any())).thenAnswer(inv -> {
+            String m = inv.getArgument(0);
+            return m != null && m.startsWith("【经验账本】");
+        });
+        when(ledger.apply(anyLong(), anyInt(), any(), any(), any(), any())).thenReturn(new ExperienceLedger.Applied(2, 0));
+        when(ledger.writeMemory(any(), any())).thenReturn("【经验账本】\n#1 规律 执行型 ｜ 出场只认目标位");
     }
 
     private AiTrader trader() {
@@ -72,54 +90,51 @@ class ReviewRunnerTest {
         t.setSimUserId(99L);
         t.setSymbols("BTCUSDT");
         t.setIntervalCode("1h");
-        t.setMemory("旧笔记：追高是我的老毛病");
+        t.setMemory("【经验账本】\n#1 规律 执行型 ｜ 出场只认目标位");
         return t;
     }
 
-    /** 上一期复盘行：窗口起点 + 本期要承接检验的全文 */
-    private AiTraderDecision priorReview() {
-        AiTraderDecision d = new AiTraderDecision();
-        d.setWakeTime(BOUNDARY - 86_400_000L);
-        d.setReasoning("""
-                【本期复盘】
-                战绩：起始权益 10200.00 → 期末权益 10000.00
-                下期纪律：1. 突破必须等回踩确认 2. 单日最多开两笔""");
-        return d;
-    }
-
     private void stubMaterial() {
-        when(assembler.lastReview(7L, 1)).thenReturn(priorReview());
-        when(assembler.hasNewMaterial(eq(7L), eq(1), anyLong(), anyLong())).thenReturn(true);
+        when(assembler.lastReview(7L, 1)).thenReturn(null);
+        when(assembler.hasNewMaterial(any(), anyLong(), anyLong())).thenReturn(true);
         when(assembler.assemble(any(), anyLong(), anyLong(), any())).thenReturn(
                 new ReviewMaterialAssembler.ReviewMaterial(
                         "【战绩表】起始权益 10000.00 → 期末权益 9800.00，期间收益率 -2.00%\n",
-                        "【已了结交易配对表】1. BTCUSDT LONG [BREAKOUT] …止损带走\n",
-                        "【决策时间线摘编】- 08-07 16:00 …等待：跌破100500减仓\n",
-                        "【各币1h价格路径】- BTCUSDT: 开 61000 → 收 60000（-1.64%）\n", 1));
+                        "————— 本局论点战绩 —————\nPULLBACK：6笔 4胜2负 盈亏合计+7946 USDT\n",
+                        "【案例素材】\n★ PULLBACK（2 笔，1 胜，净 -300）\n- BTCUSDT LONG …\n",
+                        "【本期行情】\n- BTCUSDT 81144 → 86579，低到高 8.1%\n",
+                        "【经验账本】（现役 1 条）\n#1 规律 盈利处理 执行型 PULLBACK ｜ 出场只认目标位 ｜ 支持 5 反对 1 未测试 0 ｜ 证据 x\n", 2,
+                        Map.of("PULLBACK", List.of(42L))));
     }
 
-    private ChatModel modelReturning(String text) {
+    private ChatModel modelReturning(String... texts) {
         ChatModel model = mock(ChatModel.class);
-        when(model.call(any(Prompt.class))).thenReturn(
-                new ChatResponse(List.of(new Generation(new AssistantMessage(text))),
-                        ChatResponseMetadata.builder().usage(new DefaultUsage(1000, 400)).build()));
+        var stub = when(model.call(any(Prompt.class)));
+        for (String text : texts) {
+            stub = stub.thenReturn(new ChatResponse(List.of(new Generation(new AssistantMessage(text))),
+                    ChatResponseMetadata.builder().usage(new DefaultUsage(1000, 400)).build()));
+        }
         return model;
     }
 
-    private static final String TWO_PART_OUTPUT = """
+    private static final String OUTPUT = """
             【本期复盘】
             战绩：起始权益 10000.00 → 期末权益 9800.00，期间收益率 -2.00%
-            逐笔教训：1. BTCUSDT 多单追高被止损带走，入场即峰值
-            观望对账：等待跌破100500减仓 → 未命中（最低100800）→ 该等没等，对
-            下期纪律：突破回踩确认再进
-            【记忆更新】
-            旧毛病仍在：追高。下期只做回踩确认。""";
+            案例一：PULLBACK（2 笔，净 -300）
+            路径：…
+            机会：没错过
+            【经验更新】
+            #1 支持 ｜ 09-21 BTC 平在目标位
+            新增 PULLBACK 失败判定 执行型 ｜ 90 分钟没到目标 25% 即判失败 ｜ ETH 09:32、SOL 23:33""";
+
+    private static String allText(Prompt p) {
+        return p.getInstructions().stream().map(Message::getText).reduce("", String::concat);
+    }
 
     @Test
-    void successfulReviewPersistsReviewRowAndOverwritesMemory() {
+    void successfulReviewAppliesOpsRendersLedgerAndWritesMemory() {
         stubMaterial();
-        // 先建好再 stub：thenReturn 参数里嵌套 when() 是 UnfinishedStubbing
-        ChatModel model = modelReturning(TWO_PART_OUTPUT);
+        ChatModel model = modelReturning(OUTPUT);
         when(modelFactory.modelFor(any())).thenReturn(model);
 
         runner.review(trader(), BOUNDARY);
@@ -131,93 +146,65 @@ class ReviewRunnerTest {
         assertThat(d.getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
         assertThat(d.getWakeTime()).isEqualTo(BOUNDARY);
         assertThat(d.getIntervalCode()).isEqualTo("1d");
-        // REVIEW 行存【本期复盘】段（不含记忆段），不记 equity（净值曲线 isNotNull 过滤天然不受影响）
-        assertThat(d.getReasoning()).contains("逐笔教训").contains("观望对账").doesNotContain("旧毛病仍在");
+        // 正文 + 更新表整篇存进 REVIEW 行，公开上时间线
+        assertThat(d.getReasoning()).contains("案例一").contains("#1 支持");
         assertThat(d.getEquity()).isNull();
-        // 学习快照随行存档：memory 是滚动覆盖的，历史版本只活在这一列
-        assertThat(d.getMemoryAfter()).isEqualTo("旧毛病仍在：追高。下期只做回踩确认。");
-        // 用量照记：复盘也烧用户的钱
+        assertThat(d.getError()).isNull();
         assertThat(d.getModelCalls()).isEqualTo(1);
         assertThat(d.getPromptTokens()).isEqualTo(1000L);
-        assertThat(d.getCompletionTokens()).isEqualTo(400L);
 
-        // memory 全文覆盖写（列级更新）
+        // 两行操作带着复盘行 id 与本期仓位分组落账
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ExperienceLedger.Op>> ops = ArgumentCaptor.forClass((Class) List.class);
+        verify(ledger).apply(eq(7L), eq(1), eq(900L), ops.capture(), eq(AgentLang.ZH), eq(Map.of("PULLBACK", List.of(42L))));
+        assertThat(ops.getValue()).hasSize(2);
+        assertThat(ops.getValue().get(0)).isEqualTo(new ExperienceLedger.Verdict(1L, AiTraderExperienceVerdict.SUPPORT, "09-21 BTC 平在目标位"));
+
+        // 账本自己把渲染文本写回 ai_trader.memory；复盘行的快照按列写 memory_after
+        assertThat(d.getMemoryAfter()).startsWith("【经验账本】");
+        verify(ledger).writeMemory(any(), eq(AgentLang.ZH));
         @SuppressWarnings({"unchecked", "rawtypes"})
-        ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> up =
-                ArgumentCaptor.forClass((Class) LambdaUpdateWrapper.class);
-        verify(traderMapper).update(any(), up.capture());
-        assertThat(up.getValue().getSqlSet()).contains("memory");
-        assertThat(up.getValue().getParamNameValuePairs())
-                .containsValue("旧毛病仍在：追高。下期只做回踩确认。");
+        ArgumentCaptor<LambdaUpdateWrapper<AiTraderDecision>> up = ArgumentCaptor.forClass((Class) LambdaUpdateWrapper.class);
+        verify(decisionMapper).update(isNull(), up.capture());
+        assertThat(up.getValue().getSqlSet()).contains("memory_after");
+        assertThat(up.getValue().getParamNameValuePairs()).containsValue("【经验账本】\n#1 规律 执行型 ｜ 出场只认目标位");
+        verify(decisionMapper, never()).updateById(any(AiTraderDecision.class));
+        // 没有旗就不复审
+        verify(model, times(1)).call(any(Prompt.class));
     }
 
     @Test
-    void promptCarriesIdentityMaterialOldMemoryAndContract() {
+    void promptCarriesInstructionsMaterialLedgerAndContract() {
         stubMaterial();
-        ChatModel model = modelReturning(TWO_PART_OUTPUT);
+        ChatModel model = modelReturning(OUTPUT);
         when(modelFactory.modelFor(any())).thenReturn(model);
-
-        runner.review(trader(), BOUNDARY);
-
-        ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
-        verify(model).call(prompts.capture());
-        String all = prompts.getValue().getInstructions().stream()
-                .map(org.springframework.ai.chat.messages.Message::getText)
-                .reduce("", String::concat);
-        // 身份：给自己写日志的交易员而非评价者；单问题框架；防自夸三件套
-        assertThat(all).contains("写给明天").contains("哪里错了");
-        assertThat(all).contains("只许原样复述").contains("先找错误");
-        // 两段输出契约 + 条数上限
-        assertThat(all).contains("【本期复盘】").contains("【记忆更新】").contains("2000");
-        // 四块素材 + 旧笔记全文在场
-        assertThat(all).contains("【战绩表】").contains("止损带走")
-                .contains("等待：跌破100500减仓").contains("1h价格路径");
-        assertThat(all).contains("追高是我的老毛病");
-        // 观望对账的对照物有边界：范围外（尤其开局前）的价格不算证据，否则首篇复盘会拿开局前行情自证
-        assertThat(all).contains("覆盖范围内的价格").contains("开局前");
-        // 闭环：上一期复盘全文在场 + 本期必须给上期纪律逐条结账（只回注上一期，不堆全部历史）
-        assertThat(all).contains("【上一期复盘】").contains("突破必须等回踩确认");
-        assertThat(all).contains("上期纪律先结账").contains("逐条对照");
-        // 滚动继承：下一期只看得到这一篇，所以这一篇必须自带全部有效认知，
-        // 否则"只回注上一期"就会把更早的教训丢掉
-        assertThat(all).contains("这篇复盘是滚动的").contains("只会看到这一篇")
-                .contains("仍然成立的教训与纪律要继承");
-        assertThat(all).contains("独立看懂");
-        // 学习宗旨四件套：教训三分类（复盘过程不复盘运气，防"亏一次就不敢开仓"；
-        // 论点被行情证伪的不算运气，判不了不默认算运气）、
-        // 该做没做与做错同罪+保守度自检（对称记账）、纪律可证伪淘汰（防只进不出）、
-        // 记忆两栏带样本数（防单次样本被当铁律盲信）
-        assertThat(all).contains("【决策错】").contains("【运气差】").contains("同样条件下次照做");
-        assertThat(all).contains("【论点错】").contains("失效条件被已收盘 1h 证实")
-                .contains("不许默认归【运气差】");
-        assertThat(all).contains("该做没做与做错同罪").contains("保守度自检");
-        // 对错的尺子是主人的交易指令：段头在场，下期纪律不许与它相抵触
-        assertThat(all).contains("【主人的交易指令】").contains("不得与主人的交易指令相抵触");
-        assertThat(all).contains("削弱").contains("不许只进不出");
-        assertThat(all).contains("【已验证纪律】").contains("【待验证假设】").contains("样本数");
-    }
-
-    /** 主人的交易指令原文进复盘用户消息，排在硬事实之前；没写就是占位句 */
-    @Test
-    void ownerInstructionsInjectedBeforeMaterial() {
         AiTrader t = trader();
         t.setCustomPrompt("只做突破，不抄底。");
-        ReviewMaterialAssembler.ReviewMaterial m = new ReviewMaterialAssembler.ReviewMaterial(
-                "统计块", "配对块", "时间线块", "路径块", 1);
 
-        String user = runner.userPrompt(t, m, 0, BOUNDARY, null, AgentLang.ZH);
+        runner.review(t, BOUNDARY);
 
-        assertThat(user).contains("【主人的交易指令】").contains("只做突破，不抄底。").doesNotContain("主人没写指令");
-        assertThat(user.indexOf("只做突破，不抄底。")).isLessThan(user.indexOf("统计块"));
-
-        t.setCustomPrompt(" ");
-        assertThat(runner.userPrompt(t, m, 0, BOUNDARY, null, AgentLang.ZH)).contains("主人没写指令");
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(model).call(prompt.capture());
+        String all = allText(prompt.getValue());
+        // 身份与五问
+        assertThat(all).contains("写给明天").contains("失败怎么界定").contains("赢在判断还是运气").contains("少赚了多少");
+        // 事实纪律：数字只许引用、界定要可观察、不复述指令、不继承旧教训
+        assertThat(all).contains("只许原样复述").contains("可观察的价格、根数或时间")
+                .contains("主人指令里已经有的不写进账本").contains("上期的教训不许重抄");
+        // 输出契约
+        assertThat(all).contains("【本期复盘】").contains("【经验更新】").contains("新增 <单子类型代码或 通用>");
+        // 五块素材 + 主人指令在场，指令排在素材前
+        assertThat(all).contains("【战绩表】").contains("本局论点战绩").contains("★ PULLBACK")
+                .contains("【本期行情】").contains("#1 规律 盈利处理");
+        assertThat(all).contains("【主人的交易指令】").contains("只做突破，不抄底。");
+        assertThat(all.indexOf("只做突破，不抄底。")).isLessThan(all.indexOf("【战绩表】"));
+        assertThat(all.stripTrailing()).endsWith("输出语言：中文。");
     }
 
     @Test
-    void missingSeparatorStoresReviewButKeepsMemory() {
+    void noParsableOpsKeepsReviewRowButLeavesLedgerAlone() {
         stubMaterial();
-        ChatModel model = modelReturning("【本期复盘】\n战绩：……格式失守没写记忆段");
+        ChatModel model = modelReturning("【本期复盘】\n战绩：……\n【经验更新】\n写了一段散文，没有一行是表里的");
         when(modelFactory.modelFor(any())).thenReturn(model);
 
         runner.review(trader(), BOUNDARY);
@@ -225,74 +212,22 @@ class ReviewRunnerTest {
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
         assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
-        assertThat(dec.getValue().getReasoning()).contains("格式失守");
-        assertThat(dec.getValue().getMemoryAfter()).isNull();   // 没产出记忆段，快照列同样空着
-        // 降级安全：一次格式失守不许污染记忆
-        verify(traderMapper, never()).update(any(), any());
-    }
-
-    /** 篇幅只由提示词那句"≤N"约束：模型写超了照样整段落库，代码不替它裁 */
-    @Test
-    void memoryStoredInFullEvenOverBudget() {
-        stubMaterial();
-        String longMemory = "记忆里每一句都以句号收尾。".repeat(160);
-        ChatModel model = modelReturning("【本期复盘】\n战绩：……\n【记忆更新】\n" + longMemory);
-        when(modelFactory.modelFor(any())).thenReturn(model);
-
-        runner.review(trader(), BOUNDARY);
-
-        @SuppressWarnings({"unchecked", "rawtypes"})
-        ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> up =
-                ArgumentCaptor.forClass((Class) LambdaUpdateWrapper.class);
-        verify(traderMapper).update(any(), up.capture());
-        String written = up.getValue().getParamNameValuePairs().values().stream()
-                .filter(v -> v instanceof String s && s.startsWith("记"))
-                .map(String.class::cast).findFirst().orElseThrow();
-        assertThat(written.length()).isGreaterThan(NoteBudget.maxChars(AgentLang.ZH));   // 确实超了预算
-        assertThat(written).isEqualTo(longMemory);
+        assertThat(dec.getValue().getReasoning()).contains("散文");
+        assertThat(dec.getValue().getError()).contains("账本未更新");
+        assertThat(dec.getValue().getMemoryAfter()).isNull();
+        verify(ledger, never()).apply(anyLong(), anyInt(), any(), any(), any(), any());
+        verify(ledger, never()).writeMemory(any(), any());
     }
 
     @Test
     void noMaterialSkipsWithoutModelCallOrRow() {
         when(assembler.lastReview(7L, 1)).thenReturn(null);
-        when(assembler.hasNewMaterial(eq(7L), eq(1), anyLong(), anyLong())).thenReturn(false);
+        when(assembler.hasNewMaterial(any(), anyLong(), anyLong())).thenReturn(false);
 
         runner.review(trader(), BOUNDARY);
 
         verify(modelFactory, never()).modelFor(any());
         verify(decisionMapper, never()).insert(any(AiTraderDecision.class));
-    }
-
-    /** 门控自己抖了（sim/K线故障）也得落 ERROR 行——review.started 承诺"失败也会留记录，不会没有下文" */
-    @Test
-    void quietHoldWindowFailureStillWritesErrorRow() {
-        when(assembler.lastReview(7L, 1)).thenReturn(priorReview());
-        when(assembler.hasNewMaterial(eq(7L), eq(1), anyLong(), anyLong())).thenReturn(true);
-        when(assembler.quietHoldWindow(any(), anyLong(), anyLong()))
-                .thenThrow(new IllegalStateException("sim down"));
-
-        runner.review(trader(), BOUNDARY);
-
-        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
-        verify(decisionMapper).insert(dec.capture());
-        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_ERROR);
-    }
-
-    /** 观望门控（口径8）：纯观望且各币平静 → 留 SKIPPED 行注明缘由，不烧模型调用 */
-    @Test
-    void quietHoldWindowLeavesSkippedRowWithoutModelCall() {
-        when(assembler.lastReview(7L, 1)).thenReturn(priorReview());
-        when(assembler.hasNewMaterial(eq(7L), eq(1), anyLong(), anyLong())).thenReturn(true);
-        when(assembler.quietHoldWindow(any(), anyLong(), anyLong())).thenReturn(true);
-
-        runner.review(trader(), BOUNDARY);
-
-        verify(modelFactory, never()).modelFor(any());
-        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
-        verify(decisionMapper).insert(dec.capture());
-        assertThat(dec.getValue().getKind()).isEqualTo(AiTraderDecision.KIND_REVIEW);
-        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_SKIPPED);
-        assertThat(dec.getValue().getError()).contains("平静").contains("2%");
     }
 
     @Test
@@ -304,20 +239,18 @@ class ReviewRunnerTest {
 
         ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
         verify(decisionMapper).insert(dec.capture());
-        assertThat(dec.getValue().getKind()).isEqualTo(AiTraderDecision.KIND_REVIEW);
         assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_ERROR);
         // 公开行只存归类文案，上游原文不落库
         assertThat(dec.getValue().getError()).contains("API key").doesNotContain("上游401");
-        // 不动 memory、不计连败（复盘失败没有资金风险，trader 行一个字段都不碰）
-        verify(traderMapper, never()).update(any(), any());
+        verify(ledger, never()).writeMemory(any(), any());
+        verify(ledger, never()).apply(anyLong(), anyInt(), any(), any(), any(), any());
     }
 
-    /** 模型空输出：ERROR 行写"输出为空"这句给用户看的话，不走异常归类 */
     @Test
     void emptyOutputWritesErrorRow() {
         stubMaterial();
-        ChatModel model = modelReturning("");
-        when(modelFactory.modelFor(any())).thenReturn(model);
+        ChatModel empty = modelReturning("");
+        when(modelFactory.modelFor(any())).thenReturn(empty);
 
         runner.review(trader(), BOUNDARY);
 
@@ -325,7 +258,6 @@ class ReviewRunnerTest {
         verify(decisionMapper).insert(dec.capture());
         assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_ERROR);
         assertThat(dec.getValue().getError()).contains("输出为空");
-        verify(traderMapper, never()).update(any(), any());
     }
 
     @Test
@@ -345,6 +277,166 @@ class ReviewRunnerTest {
         verify(decisionMapper).insert(dec.capture());
         assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_ERROR);
         assertThat(dec.getValue().getError()).contains("超时");
-        verify(traderMapper, never()).update(any(), any());
+        verify(ledger, never()).writeMemory(any(), any());
+    }
+
+    /** 有旗：第二次调用复审，结论落账，正文末尾追加复审段，记忆重渲染 */
+    @Test
+    void flaggedEntriesTriggerAuditCall() {
+        stubMaterial();
+        AiTraderExperience flagged = new AiTraderExperience();
+        flagged.setId(5L);
+        flagged.setPlayType("PULLBACK");
+        flagged.setText("动能变小即落袋");
+        flagged.setSupports(1);
+        flagged.setOpposes(3);
+        flagged.setUntested(0);
+        when(ledger.flagged(7L, 1)).thenReturn(List.of(flagged));
+        when(assembler.auditBlock(any(), eq(flagged), any(), any())).thenReturn("#5 PULLBACK ｜ 动能变小即落袋 ｜ 支持 1 反对 3 未测试 0 ｜ 支持率 25% ｜ 历史最长连续反对 3 次\n- 反对 ｜ 出场后 4h 再走 1.1%\n");
+        when(ledger.applyAudit(eq(7L), eq(1), eq(900L), any(), eq(AgentLang.ZH))).thenReturn(true);
+        ChatModel model = modelReturning(OUTPUT, "#5 退役 ｜ 近 4 次 1 支持 3 反对，出场后均续涨");
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.review(trader(), BOUNDARY);
+
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, times(2)).call(prompt.capture());
+        String audit = allText(prompt.getAllValues().get(1));
+        assertThat(audit).contains("复审").contains("保留").contains("修订").contains("拆分").contains("退役")
+                .contains("动能变小即落袋").contains("历史最长连续反对 3 次");
+        verify(ledger).applyAudit(eq(7L), eq(1), eq(900L),
+                eq(new ExperienceLedger.Audit(5L, ExperienceLedger.AUDIT_RETIRE, null, "近 4 次 1 支持 3 反对，出场后均续涨")), eq(AgentLang.ZH));
+        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).updateById(dec.capture());
+        assertThat(dec.getValue().getReasoning()).contains("【复审结论】").contains("#5 退役");
+        // 两次调用的用量累加
+        assertThat(dec.getValue().getModelCalls()).isEqualTo(2);
+        // 复审改了账本 → 复盘后、复审后各渲染一次
+        verify(ledger, times(2)).writeMemory(any(), eq(AgentLang.ZH));
+    }
+
+    /** 拆分：来源对上的子条一起交给账本，账本没收下（如子条不够）就不重渲染，旗留到下期 */
+    @Test
+    void splitRejectedByLedgerKeepsFlagAndMemory() {
+        stubMaterial();
+        AiTraderExperience flagged = flaggedEntry();
+        when(ledger.flagged(7L, 1)).thenReturn(List.of(flagged));
+        when(assembler.auditBlock(any(), eq(flagged), any(), any())).thenReturn("#5 PULLBACK ｜ 动能变小即落袋\n");
+        ChatModel model = modelReturning(OUTPUT,
+                "#5 拆分 ｜ ADX 高低结局相反\n新增 PULLBACK 入场条件 机会型 ｜ ADX>40 时回踩做多 ｜ 6 笔 5 胜 ｜ 来源 #5");
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.review(trader(), BOUNDARY);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ExperienceLedger.Add>> children = ArgumentCaptor.forClass((Class) List.class);
+        verify(ledger).split(eq(7L), eq(1), eq(900L),
+                eq(new ExperienceLedger.Audit(5L, ExperienceLedger.AUDIT_SPLIT, null, "ADX 高低结局相反")), children.capture(), eq(AgentLang.ZH));
+        assertThat(children.getValue()).hasSize(1);
+        verify(ledger, never()).applyAudit(anyLong(), anyInt(), any(), any(), any());
+        // 子条不走 apply；拆分没生效就只有复盘后那一次渲染
+        verify(ledger, times(1)).apply(anyLong(), anyInt(), any(), any(), any(), any());
+        verify(ledger, times(1)).writeMemory(any(), any());
+    }
+
+    /** 拆分：只有来源对上的子条交给账本，账本收下就重渲染 */
+    @Test
+    void splitPassesMatchingChildrenAndRerendersOnSuccess() {
+        stubMaterial();
+        AiTraderExperience flagged = flaggedEntry();
+        when(ledger.flagged(7L, 1)).thenReturn(List.of(flagged));
+        when(assembler.auditBlock(any(), eq(flagged), any(), any())).thenReturn("#5 PULLBACK ｜ 动能变小即落袋\n");
+        when(ledger.split(eq(7L), eq(1), eq(900L), any(), any(), eq(AgentLang.ZH))).thenReturn(true);
+        ChatModel model = modelReturning(OUTPUT, """
+                #5 拆分 ｜ ADX 高低结局相反
+                新增 PULLBACK 入场条件 机会型 ｜ ADX>40 时回踩做多 ｜ 6 笔 5 胜 ｜ 来源 #5
+                新增 PULLBACK 入场条件 限制型 ｜ ADX<30 不做回踩 ｜ 4 笔 0 胜 ｜ 来源 #5
+                新增 BREAKOUT 入场条件 机会型 ｜ 没人拆分它 ｜ x ｜ 来源 #8""");
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.review(trader(), BOUNDARY);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ExperienceLedger.Add>> children = ArgumentCaptor.forClass((Class) List.class);
+        verify(ledger).split(eq(7L), eq(1), eq(900L),
+                eq(new ExperienceLedger.Audit(5L, ExperienceLedger.AUDIT_SPLIT, null, "ADX 高低结局相反")), children.capture(), eq(AgentLang.ZH));
+        assertThat(children.getValue()).hasSize(2).allMatch(a -> a.sourceId() == 5L);
+        verify(ledger, times(1)).apply(anyLong(), anyInt(), any(), any(), any(), any());
+        verify(ledger, times(2)).writeMemory(any(), eq(AgentLang.ZH));
+    }
+
+    /** 旧记忆一条都没压出来：memory 不动、复盘照常跑，memory 只在复盘落账后渲染一次，下次复盘再迁 */
+    @Test
+    void migrationWithNoRowsLeavesMemoryAndReviewGoesOn() {
+        stubMaterial();
+        AiTrader t = trader();
+        t.setMemory("【已验证纪律】\n全是主人指令的复述");
+        when(ledger.active(7L, 1)).thenReturn(List.of());
+        when(ledger.retired(7L, 1)).thenReturn(List.of());
+        when(ledger.apply(anyLong(), anyInt(), isNull(), any(), any(), any())).thenReturn(new ExperienceLedger.Applied(0, 2));
+        ChatModel model = modelReturning("新增 BREAKOUT 入场条件 机会型 ｜ 指令里已有的 ｜ 没证据", OUTPUT);
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.review(t, BOUNDARY);
+
+        verify(model, times(2)).call(any(Prompt.class));
+        ArgumentCaptor<AiTraderDecision> dec = ArgumentCaptor.forClass(AiTraderDecision.class);
+        verify(decisionMapper).insert(dec.capture());
+        assertThat(dec.getValue().getStatus()).isEqualTo(AiTraderDecision.STATUS_OK);
+        verify(ledger, times(1)).writeMemory(any(), eq(AgentLang.ZH));
+    }
+
+    private static AiTraderExperience flaggedEntry() {
+        AiTraderExperience flagged = new AiTraderExperience();
+        flagged.setId(5L);
+        flagged.setPlayType("PULLBACK");
+        flagged.setText("动能变小即落袋");
+        flagged.setSupports(1);
+        flagged.setOpposes(3);
+        flagged.setUntested(0);
+        return flagged;
+    }
+
+    /** 旧的自由文本记忆、账本还空着：先迁移一次，再复盘；迁移条目不挂复盘行 */
+    @Test
+    void legacyMemoryIsMigratedBeforeFirstLedgerReview() {
+        stubMaterial();
+        AiTrader t = trader();
+        t.setMemory("【已验证纪律】\n1. 突破回踩单：浮盈过目标一半又收回入场价即判失败（样本 3）");
+        when(ledger.active(7L, 1)).thenReturn(List.of());
+        when(ledger.retired(7L, 1)).thenReturn(List.of());
+        ChatModel model = modelReturning(
+                "新增 BREAKOUT 失败判定 执行型 ｜ 浮盈过目标一半又收回入场价即判失败 ｜ 样本 3",
+                OUTPUT);
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.review(t, BOUNDARY);
+
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, times(2)).call(prompt.capture());
+        String migrate = allText(prompt.getAllValues().get(0));
+        assertThat(migrate).contains("旧复盘笔记").contains("浮盈过目标一半").contains("最多 10 条")
+                .contains("主人指令里已经有的");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ExperienceLedger.Op>> ops = ArgumentCaptor.forClass((Class) List.class);
+        verify(ledger).apply(eq(7L), eq(1), isNull(), ops.capture(), eq(AgentLang.ZH), eq(Map.of()));
+        assertThat(ops.getValue()).containsExactly(new ExperienceLedger.Add("BREAKOUT", AiTraderExperience.SLOT_FAIL_DEF,
+                AiTraderExperience.DIR_EXECUTION, "浮盈过目标一半又收回入场价即判失败", "样本 3", null));
+        // 复盘本身照常落账；迁移成功后先渲染一次 memory，复盘后再一次
+        verify(ledger).apply(eq(7L), eq(1), eq(900L), any(), eq(AgentLang.ZH), any());
+        verify(ledger, times(2)).writeMemory(any(), eq(AgentLang.ZH));
+    }
+
+    /** 记忆已经是账本渲染的文本：不再迁移 */
+    @Test
+    void renderedMemoryIsNotMigratedAgain() {
+        stubMaterial();
+        ChatModel model = modelReturning(OUTPUT);
+        when(modelFactory.modelFor(any())).thenReturn(model);
+
+        runner.review(trader(), BOUNDARY);
+
+        verify(model, times(1)).call(any(Prompt.class));
+        verify(ledger, never()).apply(anyLong(), anyInt(), isNull(), any(), any(), any());
     }
 }

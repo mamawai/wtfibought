@@ -998,8 +998,36 @@ export interface TraderOwnerView {
   reviewEnabled: boolean;
   /** 同侪学习开关：learning agent 在全体复盘完成后向同侪学习写 LEARN 行并整理学习笔记 */
   learningEnabled: boolean;
+  /** 经验账本里限制型规律能否作为观望理由；false=只供参考 */
+  learnedRestrictionHold: boolean;
   /** 唤醒时段 "HH:mm-HH:mm"，null=全天 */
   wakeWindow: string | null;
+}
+
+/** 经验账本一条（ai_trader_experience 原样）。复盘落账，代码计数；RETIRED 的留在退役名单不注入 */
+export interface TraderExperience {
+  id: number;
+  roundNo: number;
+  /** 单子类型代码；null=通用 */
+  playType: string | null;
+  kind: 'GAP' | 'HYPOTHESIS' | 'RULE' | 'FINDING';
+  slot: 'ENTRY' | 'FAIL_DEF' | 'FAIL_HANDLE' | 'PROFIT_HANDLE' | 'RISK' | 'EXEC';
+  direction: 'OPPORTUNITY' | 'RESTRICTION' | 'EXECUTION';
+  text: string;
+  evidence: string | null;
+  supports: number;
+  opposes: number;
+  untested: number;
+  /** trader 结论里引用过它的次数：开仓轮 / 观望轮 */
+  citedOpen: number;
+  citedHold: number;
+  status: 'ACTIVE' | 'RETIRED';
+  /** 代码举旗待复审 */
+  flagged: boolean;
+  /** 主人钉住：不举旗 */
+  pinned: boolean;
+  retireReason: string | null;
+  createdAt: string;
 }
 
 /**
@@ -1214,6 +1242,7 @@ export interface TraderUpsertRequest {
   alertThresholdMult: number;
   reviewEnabled: boolean;
   learningEnabled: boolean;
+  learnedRestrictionHold: boolean;
   /** 唤醒时段 "HH:mm-HH:mm"（北京时间），null=全天 */
   wakeWindow: string | null;
 }

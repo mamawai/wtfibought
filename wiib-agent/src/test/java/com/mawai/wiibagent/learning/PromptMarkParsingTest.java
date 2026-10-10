@@ -1,69 +1,168 @@
 package com.mawai.wiibagent.learning;
 
-import com.mawai.wiibcommon.entity.AiTrader;
-import com.mawai.wiibcommon.enums.AgentLang;
-import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
-import com.mawai.wiibquant.external.sim.SimTradeClient;
-import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
-import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
-import com.mawai.wiibagent.trader.DecisionText;
+import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.entity.AiTraderExperience;
+import com.mawai.wiibcommon.entity.AiTraderExperienceVerdict;
+import com.mawai.wiibcommon.enums.AgentLang;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 /**
- * 段标记的双语解析——这批最容易出的 bug 就钉在这里：英文提示词让模型输出英文标记，
- * 解析却还在找中文标记，于是每次都判"格式失守"，memory / learning_notes 永远不更新，
- * 而日志只说一句"缺分隔符"，从产出上完全看不出是解析侧掉队了。
- * <p>
- * 两套判据刻意不同，分别对应两种真实场景：
- * <ul>
- *   <li><b>模型这一轮刚交回的输出</b>（{@link ReviewRunner#parse} / {@link LearningRunner#missingMarks}）
- *       只认当前语言那一套：提示词刚说了用哪套标记，交回另一套就是没照格式走，该判失守。
- *       两套都认的话，"英文提示词却输出中文"这种真失守会被悄悄放过。</li>
- *   <li><b>库里的历史决策</b>（{@link ReviewMaterialAssembler#waitsBySymbol}）两套都认：决策是
- *       写入时那门语言落库的，用户切过语言后只认当前这套，整条时间线会变成"未给等待条件"，
- *       观望对账当场没了原料。两套标记字面不同，多认一套不会误伤。</li>
- * </ul>
+ * 段标记与行首固定词的双语解析。模型这一轮刚交回的输出只认当前语言那一套：
+ * 提示词刚说了用哪套，交回另一套就是没照格式走，该判失守（账本不动）。两套都认的话，
+ * "英文提示词却输出中文"这种真失守会被悄悄放过。
  */
 class PromptMarkParsingTest {
 
     private final PromptCatalog prompts = new PromptCatalog();
+    private final ExperienceOpParser parser = new ExperienceOpParser(prompts);
 
-    private static final String ZH_REVIEW = "【本期复盘】战绩：起始 10000 → 期末 9800\n【记忆更新】已验证纪律：等回踩";
-    private static final String EN_REVIEW = "[REVIEW] Scorecard: 10000 -> 9800\n[MEMORY UPDATE] verified: wait for the retest";
+    private static final String ZH_REVIEW = """
+            【本期复盘】
+            战绩：起始权益 10000 → 期末 9800
+            案例一：PULLBACK（2 笔，净 -300）
+            【经验更新】
+            #3 支持 ｜ 09-21 BTC +3073
+            #1 破 ｜ SOL 止损 0.87% 小于 1.0%
+            新增 PULLBACK 盈利处理 执行型 ｜ 出场只认目标位或已收盘 1h 跌破最近 1h 低点 ｜ 样本 5
+            新增 通用 执行缺口 执行型 ｜ 止损不小于缓冲 ｜ SOL 23:33
+            发现 ｜ 指令第六条少赚 4800 ｜ 5 笔
+            删除 #2 ｜ 与指令第五节重复
+            随口一句不是表里的行""";
+    private static final String EN_REVIEW = """
+            [REVIEW]
+            Scorecard: 10000 -> 9800
+            [LEDGER UPDATES]
+            #3 SUPPORT | 09-21 BTC +3073
+            #1 BROKEN | SOL stop 0.87% under 1.0%
+            ADD pullback PROFIT_HANDLE EXECUTION | exit only at target or a closed 1h below the last 1h low | 5 trades
+            FINDING | rule six left 4800 on the table | 5 trades
+            DELETE #2 | duplicates instruction five""";
     private static final String ZH_LEARN = "【本期学习】看了谁：id=8\n【不学什么】样本 1 笔\n【前车之鉴】爆仓链条";
     private static final String EN_LEARN = "[WHAT I LEARNED] id=8\n[WHAT I AM NOT TAKING] sample of 1\n[CAUTIONARY TALES] blow-up chain";
 
-    // ==================== reviewer 两段分隔符 ====================
+    // ==================== reviewer 经验更新 ====================
 
     @Test
-    void 中文复盘_认中文标记切两段() {
-        ReviewRunner.Parsed p = ReviewRunner.parse(ZH_REVIEW, prompts.get(AgentLang.ZH, "reviewer.mark.memory"));
+    void 中文复盘_认中文标记与固定词() {
+        List<ExperienceLedger.Op> ops = parser.parse(ZH_REVIEW, AgentLang.ZH);
 
-        assertThat(p.review()).isEqualTo("【本期复盘】战绩：起始 10000 → 期末 9800");
-        assertThat(p.memory()).isEqualTo("已验证纪律：等回踩");
+        assertThat(ops).hasSize(6);
+        assertThat(ops.get(0)).isEqualTo(new ExperienceLedger.Verdict(3L, AiTraderExperienceVerdict.SUPPORT, "09-21 BTC +3073"));
+        assertThat(ops.get(1)).isEqualTo(new ExperienceLedger.Verdict(1L, AiTraderExperienceVerdict.OPPOSE, "SOL 止损 0.87% 小于 1.0%"));
+        assertThat(ops.get(2)).isEqualTo(new ExperienceLedger.Add("PULLBACK", AiTraderExperience.SLOT_PROFIT_HANDLE,
+                AiTraderExperience.DIR_EXECUTION, "出场只认目标位或已收盘 1h 跌破最近 1h 低点", "样本 5", null));
+        assertThat(ops.get(3)).isEqualTo(new ExperienceLedger.Add(null, AiTraderExperience.SLOT_EXEC,
+                AiTraderExperience.DIR_EXECUTION, "止损不小于缓冲", "SOL 23:33", null));
+        assertThat(ops.get(4)).isEqualTo(new ExperienceLedger.Finding("指令第六条少赚 4800", "5 笔"));
+        assertThat(ops.get(5)).isEqualTo(new ExperienceLedger.Delete(2L, "与指令第五节重复"));
     }
 
     @Test
-    void 英文复盘_认英文标记切两段() {
-        ReviewRunner.Parsed p = ReviewRunner.parse(EN_REVIEW, prompts.get(AgentLang.EN, "reviewer.mark.memory"));
+    void 英文复盘_认英文标记与固定词() {
+        List<ExperienceLedger.Op> ops = parser.parse(EN_REVIEW, AgentLang.EN);
 
-        assertThat(p.review()).isEqualTo("[REVIEW] Scorecard: 10000 -> 9800");
-        assertThat(p.memory()).isEqualTo("verified: wait for the retest");
+        assertThat(ops).hasSize(5);
+        assertThat(ops.get(1)).isEqualTo(new ExperienceLedger.Verdict(1L, AiTraderExperienceVerdict.OPPOSE, "SOL stop 0.87% under 1.0%"));
+        assertThat(ops.get(2)).isEqualTo(new ExperienceLedger.Add("PULLBACK", AiTraderExperience.SLOT_PROFIT_HANDLE,
+                AiTraderExperience.DIR_EXECUTION, "exit only at target or a closed 1h below the last 1h low", "5 trades", null));
     }
 
-    /** 反例：语言与标记交叉 → 判格式失守，memory 返回 null（REVIEW 行照存、记忆不动） */
+    /** 反例：语言与标记交叉 → 一行都解析不出，账本不动 */
     @Test
-    void 复盘标记与语言对不上_判格式失守不污染记忆() {
-        assertThat(ReviewRunner.parse(EN_REVIEW, prompts.get(AgentLang.ZH, "reviewer.mark.memory")).memory())
-                .as("中文用户交回英文标记").isNull();
-        assertThat(ReviewRunner.parse(ZH_REVIEW, prompts.get(AgentLang.EN, "reviewer.mark.memory")).memory())
-                .as("英文用户交回中文标记——最容易被漏掉的那一种").isNull();
+    void 复盘标记与语言对不上_判格式失守不污染账本() {
+        assertThat(parser.parse(EN_REVIEW, AgentLang.ZH)).as("中文用户交回英文").isEmpty();
+        assertThat(parser.parse(ZH_REVIEW, AgentLang.EN)).as("英文用户交回中文——最容易被漏掉的那一种").isEmpty();
+    }
+
+    /** 行首的列表符号剥掉再认；编号后紧贴固定词也认 */
+    @Test
+    void 列表符号与紧贴编号的写法照常解析() {
+        List<ExperienceLedger.Op> ops = parser.parseOps("""
+                - #3 支持 ｜ a
+                * 新增 PULLBACK 入场条件 机会型 ｜ x ｜ y
+                2. 删除 #4 ｜ 重复
+                #12反对｜b""", AgentLang.ZH);
+
+        assertThat(ops).containsExactly(
+                new ExperienceLedger.Verdict(3L, AiTraderExperienceVerdict.SUPPORT, "a"),
+                new ExperienceLedger.Add("PULLBACK", AiTraderExperience.SLOT_ENTRY, AiTraderExperience.DIR_OPPORTUNITY, "x", "y", null),
+                new ExperienceLedger.Delete(4L, "重复"),
+                new ExperienceLedger.Verdict(12L, AiTraderExperienceVerdict.OPPOSE, "b"));
+        assertThat(parser.parseAudit("1. #5保留 ｜ 理由", AgentLang.ZH).audits())
+                .containsExactly(new ExperienceLedger.Audit(5L, ExperienceLedger.AUDIT_KEEP, null, "理由"));
+    }
+
+    /** 编号最多 18 位：超长的编号整行不认，来源也不认 */
+    @Test
+    void 超长编号的行被忽略() {
+        assertThat(parser.parseOps("#12345678901234567890 支持 ｜ x\n删除 #12345678901234567890 ｜ y", AgentLang.ZH)).isEmpty();
+
+        ExperienceOpParser.AuditParsed audit = parser.parseAudit(
+                "#12345678901234567890 保留 ｜ 理由\n新增 PULLBACK 入场条件 机会型 ｜ a ｜ b ｜ 来源 #12345678901234567890", AgentLang.ZH);
+        assertThat(audit.audits()).isEmpty();
+        assertThat(audit.adds()).isEmpty();
+    }
+
+    @Test
+    void 复审输出_四种结论与拆分新增() {
+        String zh = """
+                #5 保留 ｜ 支持率 85%，历史最长连败 4 次
+                #6 修订 ｜ regime 非 SHOCK 时才成立 ｜ 3 次反对全在 SHOCK
+                #7 拆分 ｜ ADX 大于 40 与 30 以下结局相反
+                新增 PULLBACK 入场条件 机会型 ｜ ADX>40 时回踩做多 ｜ 6 笔 5 胜 ｜ 来源 #7
+                新增 PULLBACK 入场条件 限制型 ｜ ADX<30 不做回踩 ｜ 4 笔 0 胜 ｜ 来源 #7
+                #8 退役 ｜ 近 20 次支持 6 反对 14""";
+
+        ExperienceOpParser.AuditParsed p = parser.parseAudit(zh, AgentLang.ZH);
+
+        assertThat(p.audits()).containsExactly(
+                new ExperienceLedger.Audit(5L, ExperienceLedger.AUDIT_KEEP, null, "支持率 85%，历史最长连败 4 次"),
+                new ExperienceLedger.Audit(6L, ExperienceLedger.AUDIT_REVISE, "regime 非 SHOCK 时才成立", "3 次反对全在 SHOCK"),
+                new ExperienceLedger.Audit(7L, ExperienceLedger.AUDIT_SPLIT, null, "ADX 大于 40 与 30 以下结局相反"),
+                new ExperienceLedger.Audit(8L, ExperienceLedger.AUDIT_RETIRE, null, "近 20 次支持 6 反对 14"));
+        assertThat(p.adds()).hasSize(2);
+        assertThat(p.adds().get(0).sourceId()).isEqualTo(7L);
+        assertThat(p.adds().get(1).direction()).isEqualTo(AiTraderExperience.DIR_RESTRICTION);
+
+        ExperienceOpParser.AuditParsed en = parser.parseAudit(
+                "#5 KEEP | within variance\nADD GENERAL RISK RESTRICTION | x | y | SOURCE #5", AgentLang.EN);
+        assertThat(en.audits()).containsExactly(new ExperienceLedger.Audit(5L, ExperienceLedger.AUDIT_KEEP, null, "within variance"));
+        assertThat(en.adds().getFirst().sourceId()).isEqualTo(5L);
+    }
+
+    /** 复盘路径的新增不认来源：写了「来源 #3」也是普通新增，来源只属于复审 */
+    @Test
+    void 复盘路径的新增不继承来源() {
+        List<ExperienceLedger.Op> ops = parser.parseOps(
+                "新增 PULLBACK 入场条件 机会型 ｜ ADX>40 时回踩做多 ｜ 6 笔 5 胜 ｜ 来源 #3", AgentLang.ZH);
+
+        assertThat(ops).containsExactly(new ExperienceLedger.Add("PULLBACK", AiTraderExperience.SLOT_ENTRY,
+                AiTraderExperience.DIR_OPPORTUNITY, "ADX>40 时回踩做多", "6 笔 5 胜", null));
+    }
+
+    /** 全角空格当普通空格：复盘与复审两条路都认 */
+    @Test
+    void 全角空格分隔的行照常解析() {
+        List<ExperienceLedger.Op> ops = parser.parseOps(
+                "新增　PULLBACK　盈利处理　执行型 ｜ 出场只认目标位 ｜ 样本 5\n#3　支持 ｜ 证据", AgentLang.ZH);
+        assertThat(ops).containsExactly(
+                new ExperienceLedger.Add("PULLBACK", AiTraderExperience.SLOT_PROFIT_HANDLE, AiTraderExperience.DIR_EXECUTION,
+                        "出场只认目标位", "样本 5", null),
+                new ExperienceLedger.Verdict(3L, AiTraderExperienceVerdict.SUPPORT, "证据"));
+
+        ExperienceOpParser.AuditParsed audit = parser.parseAudit(
+                "#5　保留 ｜ 理由\n新增　通用　风险限制　限制型 ｜ x ｜ y ｜ 来源　#5", AgentLang.ZH);
+        assertThat(audit.audits()).containsExactly(new ExperienceLedger.Audit(5L, ExperienceLedger.AUDIT_KEEP, null, "理由"));
+        assertThat(audit.adds().getFirst().sourceId()).isEqualTo(5L);
     }
 
     // ==================== learning 三段必需标记 ====================
@@ -98,81 +197,33 @@ class PromptMarkParsingTest {
                 .containsExactly("[WHAT I AM NOT TAKING]");
     }
 
-    // ==================== 历史决策的结论块：两套都认 ====================
-
-    private static final String ZH_CONCLUSION =
-            "行情铺垫一大段\n[本轮结论]\n判断：突破确认\n动作：HOLD\n等待：回踩 99000 站稳";
-    private static final String EN_CONCLUSION =
-            "some market context\n[ROUND CONCLUSION]\nJudgement: breakout confirmed\nAction: HOLD\nWaiting: retest 99000 holds";
-
-    /** 错误格式（无分段标记）整块的等待条件从 waitsBySymbol 的 WHOLE 伪键取 */
-    private String wholeWait(String reasoning, AgentLang lang) {
-        return assembler().waitsBySymbol(reasoning, lang).get(ReviewMaterialAssembler.WHOLE);
-    }
-
-    @Test
-    void 结论块_同语言取得出等待条件() {
-        assertThat(wholeWait(ZH_CONCLUSION, AgentLang.ZH)).isEqualTo("回踩 99000 站稳");
-        assertThat(wholeWait(EN_CONCLUSION, AgentLang.EN)).isEqualTo("retest 99000 holds");
-    }
-
-    /** 用户切了语言：旧决策还是旧语言写的，reviewer 照样得读得出来，否则观望对账整段空转 */
-    @Test
-    void 结论块_切语言后旧决策照样读得出() {
-        assertThat(wholeWait(ZH_CONCLUSION, AgentLang.EN)).isEqualTo("回踩 99000 站稳");
-        assertThat(wholeWait(EN_CONCLUSION, AgentLang.ZH)).isEqualTo("retest 99000 holds");
-    }
-
-    /** "等待条件："全称与"等待："都得认（中文侧原有的容忍不许在搬家时丢） */
-    @Test
-    void 结论块_等待条件全称也认() {
-        assertThat(wholeWait("[本轮结论]\n判断：观望\n等待条件：站稳 99000", AgentLang.ZH))
-                .isEqualTo("站稳 99000");
-        assertThat(wholeWait("[ROUND CONCLUSION]\nAction: HOLD\nWaiting for: 99000 holds", AgentLang.EN))
-                .isEqualTo("99000 holds");
-    }
-
-    /** 没有结论块就是没有条件：不拿正文冒充，否则对账只能编出假结论 */
-    @Test
-    void 没有结论块_两门语言都返回空() {
-        assertThat(wholeWait("BTC 走强，我先看着。", AgentLang.ZH)).isEmpty();
-        assertThat(wholeWait("BTC looks strong, watching for now.", AgentLang.EN)).isEmpty();
-    }
-
     // ==================== 输出语言硬收尾：恒在用户消息最末一行 ====================
 
     /**
      * 复盘与学习的用户消息都以输出语言硬收尾结尾，两门语言各钉一遍。
-     * 注入的素材（历史决策、旧笔记、同侪材料含别人给 trader 起的名字）可能是另一门语言，
-     * 而它们排在这行之前。
+     * 注入的素材（账本、同侪材料含别人给 trader 起的名字）可能是另一门语言，而它们排在这行之前。
      */
     @Test
     void 复盘与学习的用户消息都以输出语言收尾() {
         AiTrader t = new AiTrader();
         t.setId(7L);
         t.setRoundNo(1);
-        t.setMemory("旧笔记：等回踩");
+        t.setMemory("【经验账本】\n#1 规律");
         t.setLearningNotes("Peer A: BREAKOUT 12 trades 8 wins.");
         ReviewMaterialAssembler.ReviewMaterial material = new ReviewMaterialAssembler.ReviewMaterial(
-                "stats", "trades", "timeline", "path", 1);
-        ReviewRunner review = new ReviewRunner(assembler(), null, null, null,
-                prompts, mock(UserLangResolver.class));
+                "stats", "plays", "cases", "market", "ledger", 1, Map.of());
+        ReviewRunner review = new ReviewRunner(mock(ReviewMaterialAssembler.class), null, null,
+                prompts, mock(UserLangResolver.class), mock(ExperienceLedger.class), parser, null);
         LearningRunner learn = learningRunner();
 
         for (AgentLang lang : AgentLang.values()) {
-            assertThat(review.userPrompt(t, material, 0, 86_400_000L, null, lang).stripTrailing())
+            assertThat(review.userPrompt(t, material, 0, 86_400_000L, lang).stripTrailing())
                     .as("%s 复盘用户消息", lang.code())
                     .endsWith(prompts.get(lang, "reviewer.label.outputLanguage"));
             assertThat(learn.userPrompt(t, 86_400_000L, "leaderboard", lang).stripTrailing())
                     .as("%s 学习用户消息", lang.code())
                     .endsWith(prompts.get(lang, "learning.label.outputLanguage"));
         }
-    }
-
-    private ReviewMaterialAssembler assembler() {
-        return new ReviewMaterialAssembler(mock(AiTraderDecisionMapper.class), mock(AiTraderPlanMapper.class),
-                mock(SimTradeClient.class), mock(KlineHistoryStore.class), prompts,
-                new DecisionText(prompts));
     }
 
     private LearningRunner learningRunner() {

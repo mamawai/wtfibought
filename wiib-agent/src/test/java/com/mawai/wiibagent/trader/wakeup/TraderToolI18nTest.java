@@ -17,6 +17,9 @@ import com.mawai.wiibagent.mapper.AiTraderPlanMapper;
 import com.mawai.wiibagent.trader.TraderModelFactory;
 import com.mawai.wiibagent.trader.prompt.EconCalendarAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
+import com.mawai.wiibagent.learning.ExperienceLedger;
+import com.mawai.wiibagent.trader.DecisionText;
+import com.mawai.wiibagent.trader.trade.EntryContext;
 import com.mawai.wiibagent.trader.trade.TradeTools;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import com.mawai.wiibquant.market.service.KlineFetcher;
@@ -51,7 +54,7 @@ class TraderToolI18nTest {
 
     private final TraderWakeupRunner runner = new TraderWakeupRunner(
             mock(TraderModelFactory.class),
-            new TraderPromptAssembler(mock(AiTraderMapper.class), prompts),
+            new TraderPromptAssembler(mock(AiTraderMapper.class), prompts, mock(ExperienceLedger.class)),
             mock(SimTradeClient.class), binance,
             new IndicatorToolkit(new KlineFetcher(binance, 60_000)),
             new MarketToolkit(mock(MarketDataService.class)),
@@ -62,14 +65,16 @@ class TraderToolI18nTest {
             new MessageCatalog(),
             new LocalizedToolCallbacks(prompts),
             mock(WakeObservation.class),
-            mock(EconCalendarAssembler.class), new TraderLiveHub());
+            mock(EconCalendarAssembler.class), new TraderLiveHub(), mock(EntryContext.class),
+            mock(DecisionText.class), mock(ExperienceLedger.class));
 
     /** 只做反射扫描的壳：工具方法一个都不会被调起来，依赖给 null 即可 */
     private final TradeTools tradeTools = new TradeTools(
             mock(SimTradeClient.class), 1L, Set.of("BTCUSDT"), positions -> BigDecimal.TEN,
             sym -> BigDecimal.ONE,
             new TraderPlanStore(mock(AiTraderPlanMapper.class), prompts),
-            new TradeTools.WakeCtx(1L, 1, 0L, Long.MAX_VALUE, null, AgentLang.ZH), prompts, new MessageCatalog());
+            new TradeTools.WakeCtx(1L, 1, 0L, Long.MAX_VALUE, null, AgentLang.ZH), prompts, new MessageCatalog(),
+            mock(EntryContext.class));
 
     private Map<String, String> descriptions(AgentLang lang) {
         return runner.wakeTools(lang, tradeTools).stream().collect(Collectors.toMap(

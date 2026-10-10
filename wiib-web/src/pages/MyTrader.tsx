@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Trans, useTranslation } from 'react-i18next';
 import { BookOpen, Bot, ChevronDown, ChevronLeft, Database, GraduationCap, Loader2, Pause, Play, RotateCcw, Save, Trash2, Wrench } from 'lucide-react';
 import { llmEndpointApi, traderApi } from '../api';
+import { ExperienceLedgerCard } from '../components/arena/ExperienceLedgerCard';
 import { DATA_TOOLS, TRADE_TOOLS, toolName } from '../components/arena/traderTools';
 import { GuidedTour, type TourStep } from '../components/GuidedTour';
 import { LlmEndpointSelect } from '../components/LlmEndpointSelect';
@@ -35,6 +36,7 @@ const EMPTY_FORM: TraderUpsertRequest = {
   name: '', symbols: 'BTCUSDT', intervalCode: '15m', customPrompt: '',
   llmEndpointId: null,
   spec: DEFAULT_SPEC, alertEnabled: true, alertThresholdMult: 1, reviewEnabled: true, learningEnabled: true,
+  learnedRestrictionHold: false,
   wakeWindow: null,
 };
 
@@ -88,6 +90,7 @@ export function MyTrader() {
           spec: v.spec,
           alertEnabled: v.alertEnabled, alertThresholdMult: v.alertThresholdMult,
           reviewEnabled: v.reviewEnabled, learningEnabled: v.learningEnabled,
+          learnedRestrictionHold: v.learnedRestrictionHold,
           wakeWindow: v.wakeWindow,
         });
       }
@@ -296,6 +299,9 @@ export function MyTrader() {
         </div>
       )}
 
+      {/* 经验账本：每日复盘沉淀的经验，主人可钉住/退役/恢复/删除 */}
+      {exists && <ExperienceLedgerCard />}
+
       {/* 相关 skills：它每次唤醒拿到的全部工具——配置前先知道它会什么；默认折叠 */}
       <details className="rounded-lg pt-card group">
         <summary className="list-none cursor-pointer px-4 py-3 flex items-center gap-2.5 flex-wrap">
@@ -478,7 +484,7 @@ export function MyTrader() {
 
         {/* 两条学习轨并列：复盘看自己（reviewer），学习看同侪（learning agent），各自单独开关、各自一份笔记 */}
         <div className="grid sm:grid-cols-2 gap-3 items-start">
-          {/* 每日复盘：reviewer 在日线边界读全天交易痕迹，复盘上时间线、教训写进记忆笔记 */}
+          {/* 每日复盘：reviewer 在日线边界按案例分析全天交易，复盘上时间线、结论记进经验账本 */}
           <div className="space-y-2 rounded-lg border border-border/60 bg-card-2/40 p-3">
             <div className="flex flex-wrap items-baseline justify-between gap-x-2">
               <span className="microlabel">{t('term.dailyReview')}</span>
@@ -487,6 +493,10 @@ export function MyTrader() {
             <SpecToggle checked={form.reviewEnabled} onChange={v => set({ reviewEnabled: v })}
                         label={t('cfg.reviewOn')}
                         hint={t('cfg.reviewOnHint')} />
+            {/* 账本里限制型规律能不能单独当观望理由，默认只供参考 */}
+            <SpecToggle checked={form.learnedRestrictionHold} onChange={v => set({ learnedRestrictionHold: v })}
+                        label={t('cfg.restrictionHold')}
+                        hint={t('cfg.restrictionHoldHint')} />
           </div>
 
           {/* 同侪学习：全体复盘跑完后 learning agent 读别人的成绩与复盘，学到的写进学习笔记 */}
