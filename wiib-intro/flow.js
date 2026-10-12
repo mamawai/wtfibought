@@ -79,7 +79,7 @@ const PANELS = [
         title: { zh: '系统提示词 + 开场白', en: 'System prompt + opening' },
         chips: [
           { id: 'c1', t: { zh: '平台规则', en: 'platform rules' } },
-          { id: 'c2', t: { zh: '复盘笔记', en: 'review notes' } },
+          { id: 'c2', t: { zh: '经验账本', en: 'experience ledger' } },
           { id: 'c4', t: { zh: '交易指令', en: 'owner playbook' } },
           { id: 'c5', t: { zh: '事件·账户', en: 'events+account' } },
           { id: 'c6', t: { zh: '上轮结论', en: 'last conclusion' } },
@@ -87,7 +87,7 @@ const PANELS = [
           { id: 'c8', t: { zh: '财经日历', en: 'econ calendar' } },
           { id: 'c9', t: { zh: '主人留言', en: 'owner note' } }
         ],
-        detail: { zh: '每次唤醒现读现拼，零热更新机制。系统提示词放平台规则（只讲事实：环境、工具、规格、护栏、收尾格式）、复盘笔记和主人的交易指令——方法与纪律只来自主人，平台不带交易观点。状态进开场白：上次醒来后的事件、账户、上一轮结论、论点战绩、财经日历，主人留言压在最末。', en: 'Reassembled fresh on every wakeup, no hot-reload machinery. The system prompt carries the platform rules (facts only: environment, tools, specs, guardrails, closing format), the review notes and the owner’s playbook — method and discipline come only from the owner. State goes into the opening message: events since the last wake, the account, the last conclusion, play stats, the econ calendar, with the owner’s note last.' } },
+        detail: { zh: '每次唤醒现读现拼，零热更新机制。系统提示词放平台规则（只讲事实：环境、工具、规格、护栏、收尾格式）、经验账本和主人的交易指令——方法与纪律只来自主人，平台不带交易观点。状态进开场白：上次醒来后的事件、账户（持仓附自上次决策以来的波动）、上一轮结论、论点战绩、财经日历，主人留言压在最末。', en: 'Reassembled fresh on every wakeup, no hot-reload machinery. The system prompt carries the platform rules (facts only: environment, tools, specs, guardrails, closing format), the experience ledger and the owner’s playbook — method and discipline come only from the owner. State goes into the opening message: events since the last wake, the account (each position with what it went through since the last decision), the last conclusion, play stats, the econ calendar, with the owner’s note last.' } },
       { id: 'agent', x: 668, y: 84, w: 180, h: 104, tag: 'REACT', icon: 'cpu',
         title: { zh: 'ReactLoop 决策循环', en: 'ReactLoop' },
         counter: { label: { zh: '模型调用', en: 'model calls' }, max: 12 },
@@ -134,11 +134,11 @@ const PANELS = [
         title: { zh: 'reviewer workflow', en: 'reviewer workflow' },
         sub: { zh: '日线边界 · 自己看自己', en: 'daily · self-review' },
         rows: [
-          { id: 'r1', t: { zh: '四块硬事实代码算好', en: 'hard facts precomputed' } },
+          { id: 'r1', t: { zh: '案例事实表代码算好', en: 'case facts precomputed' } },
           { id: 'r2', t: { zh: '单次调用 · 无工具', en: 'single call · no tools' } },
-          { id: 'r3', t: { zh: '复盘笔记 → memory', en: 'review note → memory' } }
+          { id: 'r3', t: { zh: '经验更新 → 账本记账', en: 'ledger updates → booked by code' } }
         ],
-        detail: { zh: '不是 agent：素材由 ReviewMaterialAssembler 纯代码算齐（战绩表 / 论点→结局配对 / 时间线 / 价格路径），模型只负责解读，没机会挑对自己有利的行情。对错以主人的交易指令为尺子；战绩只许复述、先找错误再找亮点、教训条数设上限。记忆分「已验证纪律 / 待验证假设」两栏，只注入上一期，靠输出完成继承。没有新交易、或纯观望且市场平静的一天直接跳过，不白烧钱。', en: 'Not an agent: materials come precomputed in pure code (stats table, thesis→outcome pairs, timeline, price paths); the model only interprets — it never cherry-picks. Right and wrong are measured against the owner’s playbook; stats may only be quoted, errors before highlights, lessons capped. Memory has two columns, verified rules and hypotheses; only the previous one is injected, inheritance happens in the output. A day with no new trades, or pure waiting in a calm market, is skipped without spending a call.' } }
+        detail: { zh: '不是 agent：素材由代码算齐（战绩表 / 本局论点战绩 / 按单子类型分组的案例事实表与路径指标 / 本期行情 / 账本现状），模型只负责解读，没机会挑对自己有利的行情。复盘按单子类型做案例：亏单答失败怎么界定、失败后怎么处理，赢单答赢在判断还是运气、少赚了多少，界定必须是可观察的价格、根数或时间。产出落进经验账本：支持 / 反对由代码计数，假设攒够支持升为规律，反对多了或久不验证就举旗、交第二次调用复审，退役不删；主人可钉住、退役、否决。窗口内没了结也没开仓的一天直接跳过。', en: 'Not an agent: materials come precomputed in code (scorecard, this round’s play stats, case fact tables with path metrics grouped by setup type, the day’s market, the ledger as it stands); the model only interprets — it never cherry-picks. Reviews are case studies by setup type: a losing trade answers how failure is defined and what to do after it, a winner answers judgement or luck and what was left on the table, and every definition must be an observable price, candle count or time. The output lands in the experience ledger: code counts support and opposition, a hypothesis becomes a rule once support piles up, too much opposition or a long silence raises a flag for a second audit call, retired entries are kept; the owner can pin, retire or veto. A day with nothing settled and nothing opened is skipped.' } }
     ],
     edges: [
       { id: 'ck-sch', from: 'clock', to: 'sched', pts: [[186, 60], [201, 60], [201, 112], [216, 112]] },
@@ -748,7 +748,7 @@ async function trEnter(c, alert, calendar) {
   await c.pulse('sch-asm');
   c.done('sched'); c.on('asm');
   for (const ch of ['c1', 'c2', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9']) { c.chip('asm', ch); await c.sleep(120); }
-  c.log('PROMPT', { zh: '现读现拼：系统提示词（规则 + 复盘笔记 + 交易指令）+ 开场白（事件 · 账户 · 上轮结论 · 日历）', en: 'assembled fresh: system prompt (rules + review notes + playbook) + opening (events · account · last conclusion · calendar)' });
+  c.log('PROMPT', { zh: '现读现拼：系统提示词（规则 + 经验账本 + 交易指令）+ 开场白（事件 · 账户 · 上轮结论 · 日历）', en: 'assembled fresh: system prompt (rules + experience ledger + playbook) + opening (events · account · last conclusion · calendar)' });
   await c.sleep(500);
   await c.pulse('asm-ag');
   c.done('asm'); c.on('agent');
@@ -768,7 +768,7 @@ async function traderScript(c, scene) {
   c.scene(TR_SCENES[scene]);
 
   if (scene === 3) {
-    // 日线交接：交易定格 → 全体复盘 → 笔记注入下一唤醒
+    // 日线交接：交易定格 → 全体复盘 → 账本注入下一唤醒
     c.on('clock');
     c.log('CLOCK', { zh: '日线边界（UTC0 / 北京 08:00）', en: 'daily boundary (UTC0 / 08:00 Beijing)' });
     await c.sleep(600);
@@ -782,20 +782,20 @@ async function traderScript(c, scene) {
     await c.pulse('dec-rev', { dur: 900 });
     c.done('dec'); c.on('rev');
     c.row('rev', 'r1', 'hit');
-    c.log('REVIEW', { zh: '四块硬事实代码算好 · 战绩只许复述禁止自算', en: 'hard facts precomputed · stats quoted, never self-graded' });
+    c.log('REVIEW', { zh: '案例事实表代码算好 · 战绩只许复述禁止自算', en: 'case facts precomputed · stats quoted, never self-graded' });
     await c.sleep(900);
     c.row('rev', 'r2', 'hit');
-    c.log('REVIEW', { zh: '单次调用无工具 · 【本期复盘】+【记忆更新】', en: 'one call, no tools · review section + memory update' });
+    c.log('REVIEW', { zh: '单次调用无工具 · 【本期复盘】+【经验更新】', en: 'one call, no tools · review section + ledger updates' });
     await c.sleep(900);
     c.row('rev', 'r3', 'hit', true);
-    c.log('REVIEW', { zh: '复盘笔记覆盖 memory · REVIEW 决策行公开', en: 'note overwrites memory · REVIEW row goes public' }, 'good');
+    c.log('REVIEW', { zh: '经验更新逐行记账 · 渲染文本写回 memory · REVIEW 决策行公开', en: 'ledger updates booked row by row · rendered text back to memory · REVIEW row goes public' }, 'good');
     await c.sleep(700);
     c.log('SCHED', { zh: '等所有 trader 的复盘写完', en: 'wait for every trader’s review' }, 'warn');
     await c.sleep(1100);
     await c.pulse('notes-asm', { dur: 1100 });
     c.done('rev'); c.on('asm');
     c.chip('asm', 'c2');
-    c.log('SCHED', { zh: '窗口结束 · 下一根 K 线带着新笔记醒来', en: 'blackout over · next candle wakes with a fresh note' }, 'good');
+    c.log('SCHED', { zh: '窗口结束 · 下一根 K 线带着新账本醒来', en: 'blackout over · next candle wakes with a fresh ledger' }, 'good');
     await c.sleep(1300);
     c.done('asm'); c.done('sched'); c.done('clock');
     return;

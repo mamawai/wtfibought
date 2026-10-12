@@ -3,7 +3,7 @@
    模拟看板的示例数据：一只虚构 trader 的公开主页
    全部手编，只为展示版面与信息密度；不是实时，不对应任何真实账户
    格式对齐现行口径：论点标签取 TradeGuard.PLAY_TYPES，决策正文是 [本轮结论] + 逐币 判断/动作/等待，
-   复盘笔记分【已验证纪律】【待验证假设】
+   经验账本是代码渲染的文本（ExperienceLedger.render）：按单子类型分组，一条一行带 #编号与支持/反对次数
    ============================================================ */
 
 /* 北京时间 2026-08-25 00:00 起，每小时一个点，到 09-02 10:00 */
@@ -81,21 +81,27 @@ const MOCK = {
     }
   ],
 
-  /* 记忆笔记 = 复盘产出的【记忆更新】那段，整份覆盖 ai_trader.memory */
+  /* 经验账本 = 复盘后代码从 ai_trader_experience 渲染的文本，整份覆盖 ai_trader.memory */
   memory: {
     time: '09/02 08:00',
-    zh: `【已验证纪律】
-1. 失效条件触发＝当根收盘就执行，不加"确认根"。（2 次：08/27 SOL、09/01 BTC；最近一次多亏 0.3%）
-2. 资金费连续为负时空头拥挤，做空只做反弹结束，不追跌。（2 次：08/26、08/29 ETH 追跌止损，最近一次 −119.6）
-【待验证假设】
-- 目标位按 2×ATR 挂、止盈前不手动缩目标，盈亏比能从 1.6 提到 2 以上。（待验证，来自 09/01 复盘）
-- 4h ADX > 30 时逆势单胜率明显偏低。（待验证，单次样本 08/30）`,
-    en: `[Verified rules]
-1. Invalidation triggered = execute on that candle's close, no confirmation candle. (2×: 08/27 SOL, 09/01 BTC; the last one cost an extra 0.3%)
-2. With funding negative several periods, shorts are crowded: short only the end of a bounce, never chase a drop. (2×: 08/26 and 08/29 ETH chases stopped out, the last one −119.6)
-[Hypotheses]
-- Setting targets at 2×ATR and not trimming them before the take-profit lifts the payoff ratio from 1.6 to above 2. (unverified, from the 09/01 review)
-- Counter-trend trades win noticeably less when 4h ADX > 30. (unverified, one sample on 08/30)`
+    zh: `【经验账本】
+〔BREAKOUT〕
+#3 规律·执行型 ｜ 失效条件触发 → 当根收盘就平，不等确认根 ｜ 支持 3 反对 0
+#7 假设·限制型 ｜ 4h ADX > 30 → 不做逆势突破单 ｜ 支持 1 反对 0
+〔PULLBACK〕
+#5 规律·机会型 ｜ 资金费连续 3 期为负且反弹停在前高下方 → 做空反弹结束，不追跌 ｜ 支持 3 反对 1
+#12 假设·机会型 ｜ 回踩到通道下沿且 4h 结构未坏 → 挂限价不追现价 ｜ 支持 0 反对 0
+〔通用〕
+#9 执行缺口 ｜ 目标按 2×ATR 挂后不手动缩目标 ｜ 支持 1 反对 3 ｜ 待复审`,
+    en: `[EXPERIENCE LEDGER]
+— BREAKOUT —
+#3 rule·execution | invalidation triggered → close on that candle's close, no confirmation candle | supported 3 opposed 0
+#7 hypothesis·restriction | 4h ADX > 30 → no counter-trend breakout trades | supported 1 opposed 0
+— PULLBACK —
+#5 rule·opportunity | funding negative 3 periods and the bounce stalls below the prior high → short the end of the bounce, never chase the drop | supported 3 opposed 1
+#12 hypothesis·opportunity | pullback to the channel floor with the 4h structure intact → bid with a limit, never chase | supported 0 opposed 0
+— general —
+#9 execution gap | targets set at 2×ATR are not trimmed by hand | supported 1 opposed 3 | under review`
   },
 
   /* 决策时间线，新在前 */
@@ -177,14 +183,48 @@ Waiting for: unchanged.`
       looked: [],
       actions: [],
       reasoning: {
-        zh: `【本期复盘 · 09/01】
-- 错误：BTC 突破单在失效位 78,900 上方 0.4% 处犹豫了一根 K 线才平，多亏 0.3%。失效条件写了就该当根收盘执行。
-- 亮点：ETH 空单等 1h 收盘确认未破前高才进，没追 20:00 那根假突破。
-- 战绩（复述）：本局已了结 14 笔，胜率 57%，盈亏比 1.6。`,
-        en: `[Review · 09/01]
-- Error: the BTC breakout trade sat one full candle 0.4% above its invalidation at 78,900 before closing — an extra −0.3%. A written invalidation executes on the candle close it triggers on.
-- Highlight: the ETH short waited for the 1h close to confirm the failed high instead of chasing the 20:00 fake breakout.
-- Stats (quoted): 14 closed this round, 57% win rate, 1.6 payoff ratio.`
+        zh: `【本期复盘】
+战绩：本局已了结 14 笔，胜 8 负 6，净 +1,804.9，盈亏比 1.6
+案例一：BREAKOUT（1 笔，净 −212.4）
+路径：BTC 多单 09/01 14:00 进 79,340，最大浮盈 79,910（目标的 35%），16:00 收 78,870 跌破失效位 78,900，17:00 才平在 78,640。
+为什么没走成：突破后量没跟上，1h 收盘回到箱体内。
+失败怎么界定：1h 收盘低于 78,900。
+失败后怎么处理：触发那根收盘即市价平，不等下一根；本笔多拿一根多亏 0.3%。
+下次改什么：失效条件写了就当根执行，不再加"确认根"。
+案例二：PULLBACK（2 笔，净 +486.1）
+路径：ETH 空单 09/01 21:00 进 3,142，反弹停在 3,160 下方，出场 3,055，出场后 4h 最有利价 3,021，没到目标 2,990。
+赢在判断还是运气：出场后继续顺向走 1.1%，是判断对。
+少赚了多少：出场 3,055 对最有利 3,021，少赚 1.1%。
+可复制条件：资金费连续 3 期为负、4h ADX 31、反弹未过前高；同类亏单 08/29 那笔是追跌进的。
+合规吗：杠杆 8x 在主人区间内，止损按指令挂了；目标 2,990 提前手动平，不合规。
+机会：SOL 09/01 10:00 到 18:00 从 181 走到 189.6，PULLBACK 本该抓到；回踩只到 183.2 没碰通道下沿，是条件没出现。
+
+【经验更新】
+#3 支持 ｜ BTC 突破单触发失效后多拿一根，多亏 0.3%
+#5 支持 ｜ ETH 空单在反弹结束位进，出场后继续走 1.1%
+#9 破 ｜ ETH 空单目标 2,990，提前在 3,055 手动平
+新增 PULLBACK 入场条件 机会型 ｜ 回踩到通道下沿且 4h 结构未坏 → 挂限价不追现价 ｜ SOL 09/01 回踩 183.2 未到下沿没进，涨 4.7%`,
+        en: `[REVIEW]
+Scorecard: 14 closed this round, 8 won 6 lost, net +1,804.9, payoff ratio 1.6
+Case 1: BREAKOUT (1 trade, net −212.4)
+Path: BTC long entered 09/01 14:00 at 79,340, best 79,910 (35% of the way to target), 16:00 closed 78,870 below the 78,900 invalidation, closed only at 17:00 at 78,640.
+Why it did not work: no volume behind the breakout, the 1h close fell back inside the box.
+How failure is defined: a 1h close below 78,900.
+What to do after failure: market close on the candle that triggers it, not the next one; holding one extra candle cost 0.3%.
+What to change next time: a written invalidation executes on its own candle, no more "confirmation candle".
+Case 2: PULLBACK (2 trades, net +486.1)
+Path: ETH short entered 09/01 21:00 at 3,142, the bounce stalled below 3,160, exited 3,055; best price in the 4h after exit 3,021, target 2,990 never reached.
+Judgement or luck: price kept going 1.1% after the exit, so judgement.
+Left on the table: exit 3,055 against best 3,021, 1.1% left.
+Repeatable conditions: funding negative 3 periods, 4h ADX 31, bounce failed below the prior high; the losing trade of this type on 08/29 chased the drop instead.
+Compliant: 8x inside the owner's range, stop set per instructions; closing by hand at 3,055 ahead of the 2,990 target was not.
+Opportunity: SOL ran 181 → 189.6 between 09/01 10:00 and 18:00, a PULLBACK should have caught it; the pullback stopped at 183.2 without touching the channel floor, so the condition never appeared.
+
+[LEDGER UPDATES]
+#3 SUPPORT | BTC breakout held one extra candle after invalidation, cost 0.3%
+#5 SUPPORT | ETH short entered at the end of the bounce, price kept going 1.1% after exit
+#9 BROKEN | ETH short target 2,990, closed by hand at 3,055
+ADD PULLBACK ENTRY OPPORTUNITY | pullback to the channel floor with the 4h structure intact → bid with a limit, never chase | SOL 09/01 pulled back to 183.2 short of the floor, no entry, +4.7%`
       }
     },
     {

@@ -88,7 +88,7 @@ const STRIP = [
 const LOOP_STEPS = [
   { tag: 'CLOCK', zh: 'K 线收盘', en: 'Candle close', cap: { zh: '例行 · 对齐边界', en: 'routine · boundary' }, trace: { zh: '1h 边界到达 例行唤醒', en: '1h boundary hit · routine wakeup' } },
   { tag: 'SCHED', zh: '四道准入', en: 'Four gates', cap: { zh: '互斥 · 预算', en: 'mutex · budget' }, trace: { zh: '互斥 时段 预算 600s 交接窗口 全过', en: 'mutex · window · budget 600s · handover · all clear' } },
-  { tag: 'PROMPT', zh: '拼提示词', en: 'Build prompt', cap: { zh: '现读 · 现拼', en: 'read · assembled fresh' }, trace: { zh: '现读现拼 账户状态 + 复盘笔记 + 财经日历', en: 'assembled fresh: account + notes + econ calendar' } },
+  { tag: 'PROMPT', zh: '拼提示词', en: 'Build prompt', cap: { zh: '现读 · 现拼', en: 'read · assembled fresh' }, trace: { zh: '现读现拼 账户状态 + 经验账本 + 财经日历', en: 'assembled fresh: account + ledger + econ calendar' } },
   { tag: 'REACT', zh: '模型决策', en: 'Model decides', cap: { zh: 'ReAct · 最多 12 次', en: 'ReAct · 12 calls max' }, trace: { zh: '模型调用 3/12 klines market_snapshot funding', en: 'model call 3/12 · klines market_snapshot funding' } },
   { tag: 'GUARD', zh: '校验下单', en: 'Check and order', cap: { zh: '越界 · 直接拒', en: 'veto · no clamp' }, trace: { zh: '25x 被拒 改 8x 通过 open_position ETHUSDT', en: '25x rejected · 8x passed · open_position ETHUSDT' } },
   { tag: 'SIM', zh: '落账公开', en: 'Ledger and public', cap: { zh: '记账 · 公开', en: 'ledger · public' }, trace: { zh: '成交落账 决策全文进 ai_trader_decision 公开', en: 'filled · full decision into ai_trader_decision · public' } }
@@ -118,7 +118,7 @@ const DL = {
   basis: { zh: '依据：', en: 'Basis: ' }, invalidation: { zh: '失效条件', en: 'Invalidation' },
   entry: { zh: '入场', en: 'Entry' }, origSl: { zh: '原始止损', en: 'Initial SL' }, target: { zh: '目标', en: 'Target' }, setAt: { zh: '{t} 立', en: 'set {t}' },
   revisions: { zh: '修订 {n} 次', en: 'revised {n}×' },
-  notes: { zh: '笔记', en: 'Notes' }, memory: { zh: '记忆笔记', en: 'Memory' }, lastAt: { zh: '最近 {t}', en: 'Last {t}' },
+  notes: { zh: '经验账本', en: 'Experience ledger' }, memory: { zh: '现役条目', en: 'Active entries' }, lastAt: { zh: '最近 {t}', en: 'Last {t}' },
   timeline: { zh: '决策时间线', en: 'Decision timeline' }, trades: { zh: '已了结交易', en: 'Closed trades' },
   lookedAt: { zh: '看了', en: 'Read' }, expand: { zh: '展开全文', en: 'Read all' }, collapse: { zh: '收起', en: 'Collapse' },
   unfold: { zh: '展开完整看板', en: 'Expand the board' }, fold: { zh: '收起看板', en: 'Collapse the board' },
