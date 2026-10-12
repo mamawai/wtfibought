@@ -121,7 +121,7 @@ class TraderWakeupLoopTest {
 
     /** 与 runner 共用同一份 decisionMapper 和 playStats：selectList 打桩、insert 断言都还落在原处 */
     private final WakeObservation wakeObservation =
-            new WakeObservation(decisionMapper, decisionText, playStats, prompts);
+            new WakeObservation(decisionMapper, decisionText, playStats, prompts, mock(PositionPath.class));
 
     private final TraderWakeupRunner runner = new TraderWakeupRunner(
             modelFactory, new TraderPromptAssembler(traderMapper, prompts, ledger),

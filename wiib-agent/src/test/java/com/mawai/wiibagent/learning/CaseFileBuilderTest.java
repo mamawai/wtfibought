@@ -168,6 +168,9 @@ class CaseFileBuilderTest {
 
         CaseFileBuilder.MarketWindow w = builder.market("BTCUSDT", T0, T0 + 3 * M5);
 
+        assertThat(w.from()).isEqualTo(T0);
+        assertThat(w.to()).isEqualTo(T0 + 3 * M5);
+        assertThat(w.changePct()).isEqualByComparingTo("-1.00");
         assertThat(w.open()).isEqualByComparingTo("100");
         assertThat(w.high()).isEqualByComparingTo("108");
         assertThat(w.highAt()).isEqualTo(T0 + M5);

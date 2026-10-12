@@ -58,7 +58,8 @@ class WakeInstructionI18nTest {
 
     /** 观察包成文走真实词表；取数侧（决策行/战绩）给 mock，走空数据路径 */
     private final WakeObservation wakeObservation = new WakeObservation(
-            mock(AiTraderDecisionMapper.class), mock(DecisionText.class), mock(PlayStatsAssembler.class), prompts);
+            mock(AiTraderDecisionMapper.class), mock(DecisionText.class), mock(PlayStatsAssembler.class), prompts,
+            mock(PositionPath.class));
 
     private final TraderWakeupRunner runner = new TraderWakeupRunner(
             mock(TraderModelFactory.class), new TraderPromptAssembler(traderMapper, prompts, mock(ExperienceLedger.class)),

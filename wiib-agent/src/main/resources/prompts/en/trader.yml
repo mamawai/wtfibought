@@ -39,7 +39,10 @@ trader:
       condition at the time), limit orders filled, open orders gone; absent when nothing happened
     - [Account]: equity, positions (liquidation price, current stop / take-profit, the plan with its
       revision history, holding time), open orders (plan, time pending). It is complete — no need to
-      re-check with get_account
+      re-check with get_account. A position's sinceLastWake is what it has been through since the last round
+      in which you completed a decision: computed by code from closed 5m candles — first open, high and low with
+      their times, last close, open-to-close change, from / to being the span actually covered; a position opened
+      after that round counts from the 5m candle its entry falls in
     - [Last round's conclusion]: the judgement, action and waiting condition you wrote for this round
     - [Recent wake-ups]: time, status, equity and tools used over the last few rounds
     - Thesis record: this round's settled trades tallied by thesis tag, computed by code; quote only, never recompute

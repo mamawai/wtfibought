@@ -7,6 +7,7 @@ import com.mawai.wiibcommon.entity.FuturesStopLoss;
 import com.mawai.wiibcommon.entity.FuturesTakeProfit;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.learning.CaseFileBuilder;
 import com.mawai.wiibagent.trader.TradePairing;
 import com.mawai.wiibagent.trader.trade.TraderPlanStore;
 import tools.jackson.databind.JsonNode;
@@ -43,12 +44,13 @@ final class WakeAccountState {
     static String accountStateJson(PromptCatalog prompts, AgentLang lang,
                                    BigDecimal equity, List<FuturesPositionDTO> positions,
                                    List<FuturesOrderResponse> pendingOrders,
-                                   List<AiTraderPlan> plans, long boundaryTime) {
+                                   List<AiTraderPlan> plans, long boundaryTime,
+                                   Map<Long, CaseFileBuilder.MarketWindow> paths) {
         Map<String, AiTraderPlan> planByKey = new HashMap<>();
         plans.forEach(p -> planByKey.put(TraderPlanStore.key(p.getSymbol(), p.getSide()), p));
         ObjectNode out = MAPPER.createObjectNode();
         out.put("equity", equity.setScale(2, RoundingMode.HALF_UP));
-        out.set("positions", positionsJson(prompts, lang, positions, planByKey, boundaryTime));
+        out.set("positions", positionsJson(prompts, lang, positions, planByKey, boundaryTime, paths));
         // 挂单同样给足：开仓挂单占坑且带着计划（成交后计划全文随持仓回注，这里给轻量版）。
         // 挂出时刻与已挂时长必须在：限价单挂了多久只有代码知道，模型据此执行自己写的作废条件
         if (pendingOrders != null && !pendingOrders.isEmpty()) {
@@ -57,10 +59,11 @@ final class WakeAccountState {
         return MAPPER.writeValueAsString(out);
     }
 
-    /** 持仓行：仓位事实 + 当前止损止盈 + 所属计划（含修订历史）。 */
+    /** 持仓行：仓位事实 + 当前止损止盈 + 自上次完成决策以来的波动（paths 按 positionId，没有就不带）+ 所属计划（含修订历史）。 */
     private static ArrayNode positionsJson(PromptCatalog prompts, AgentLang lang,
                                            List<FuturesPositionDTO> positions,
-                                           Map<String, AiTraderPlan> planByKey, long boundaryTime) {
+                                           Map<String, AiTraderPlan> planByKey, long boundaryTime,
+                                           Map<Long, CaseFileBuilder.MarketWindow> paths) {
         ArrayNode ps = MAPPER.createArrayNode();
         for (FuturesPositionDTO p : positions) {
             ObjectNode row = MAPPER.createObjectNode()
@@ -78,6 +81,19 @@ final class WakeAccountState {
             }
             if (p.getTakeProfits() != null && !p.getTakeProfits().isEmpty()) {
                 row.set("currentTakeProfit", MAPPER.valueToTree(p.getTakeProfits().stream().map(FuturesTakeProfit::getPrice).toList()));
+            }
+            CaseFileBuilder.MarketWindow w = paths.get(p.getId());
+            if (w != null) {
+                row.set("sinceLastWake", MAPPER.createObjectNode()
+                        .put("from", TIME_FMT.format(Instant.ofEpochMilli(w.from())))
+                        .put("to", TIME_FMT.format(Instant.ofEpochMilli(w.to())))
+                        .put("open", w.open())
+                        .put("high", w.high())
+                        .put("highAt", TIME_FMT.format(Instant.ofEpochMilli(w.highAt())))
+                        .put("low", w.low())
+                        .put("lowAt", TIME_FMT.format(Instant.ofEpochMilli(w.lowAt())))
+                        .put("close", w.close())
+                        .put("changePct", w.changePct()));
             }
             AiTraderPlan plan = planByKey.get(TraderPlanStore.key(p.getSymbol(), p.getSide()));
             if (plan != null) {

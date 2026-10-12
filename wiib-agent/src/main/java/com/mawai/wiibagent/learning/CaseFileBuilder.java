@@ -71,11 +71,16 @@ public class CaseFileBuilder {
     public record SetupGroup(String playType, List<TradeCase> trades, int wins, BigDecimal net) {
     }
 
-    /** 一个币在窗口内的 OHLC 与极值时刻 */
-    public record MarketWindow(String symbol, BigDecimal open, BigDecimal high, long highAt,
+    /** 一个币在窗口内的 OHLC 与极值时刻；from / to 是实际有 K 线的首根开盘与末根收盘时刻 */
+    public record MarketWindow(String symbol, long from, long to, BigDecimal open, BigDecimal high, long highAt,
                                BigDecimal low, long lowAt, BigDecimal close) {
         public BigDecimal lowToHighPct() {
             return high.subtract(low).multiply(BigDecimal.valueOf(100)).divide(low, 2, RoundingMode.HALF_UP);
+        }
+
+        /** 首根开盘到末根收盘的涨跌 % */
+        public BigDecimal changePct() {
+            return close.subtract(open).multiply(BigDecimal.valueOf(100)).divide(open, 2, RoundingMode.HALF_UP);
         }
     }
 
@@ -119,8 +124,8 @@ public class CaseFileBuilder {
         }
         KlineBar hi = bars.stream().max(Comparator.comparing(KlineBar::high)).orElseThrow();
         KlineBar lo = bars.stream().min(Comparator.comparing(KlineBar::low)).orElseThrow();
-        return new MarketWindow(symbol, bars.getFirst().open(), hi.high(), hi.openTime(),
-                lo.low(), lo.openTime(), bars.getLast().close());
+        return new MarketWindow(symbol, bars.getFirst().openTime(), bars.getLast().openTime() + BAR_MS,
+                bars.getFirst().open(), hi.high(), hi.openTime(), lo.low(), lo.openTime(), bars.getLast().close());
     }
 
     private Path path(FuturesPositionDTO pos, AiTraderPlan plan) {

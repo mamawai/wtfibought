@@ -8,6 +8,7 @@ import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibcommon.entity.AiTraderPlan;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.learning.CaseFileBuilder;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
 import com.mawai.wiibagent.trader.DecisionText;
 import com.mawai.wiibagent.trader.TradePairing;
@@ -22,13 +23,14 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * 开场白里的观察包：上次醒来后的事件 + 账户状态 + 上一轮结论 + 最近轨迹 + 论点战绩。
+ * 开场白里的观察包：上次醒来后的事件 + 账户状态（持仓带自上次完成决策以来的波动）+ 上一轮结论 + 最近轨迹 + 论点战绩。
  * 例行/警报两种开场白共用这一份。只读不写，取数和成文都在这里。
  */
 @Component
@@ -45,6 +47,8 @@ public class WakeObservation {
     /** 论点战绩统计块，进观察包；null=本局无可统计或取数失败，整块缺席 */
     private final PlayStatsAssembler playStats;
     private final PromptCatalog prompts;
+    /** 持仓自上次完成决策以来的波动，进持仓行 */
+    private final PositionPath positionPath;
 
     /**
      * 回注给下一轮看的一轮唤醒：决策行里只留提示词用得到的几列。
@@ -83,8 +87,18 @@ public class WakeObservation {
                     List<RecentWake> recent, long boundaryTime, AgentLang lang) {
         StringBuilder sb = new StringBuilder();
         sb.append(events(reconcile.events(), lang));
+        Map<Long, CaseFileBuilder.MarketWindow> paths = new HashMap<>();
+        if (!positions.isEmpty()) {
+            Long lastOk = lastOkWakeTime(trader, boundaryTime);
+            for (FuturesPositionDTO p : positions) {
+                CaseFileBuilder.MarketWindow w = positionPath.build(p, lastOk, boundaryTime);
+                if (w != null) {
+                    paths.put(p.getId(), w);
+                }
+            }
+        }
         sb.append('\n').append(prompts.get(lang, "trader.wake.accountHeader")).append('\n')
-                .append(WakeAccountState.accountStateJson(prompts, lang, equity, positions, pendingOrders, reconcile.live(), boundaryTime)).append('\n');
+                .append(WakeAccountState.accountStateJson(prompts, lang, equity, positions, pendingOrders, reconcile.live(), boundaryTime, paths)).append('\n');
         sb.append('\n').append(lastConclusion(recent, lang));
         String trajectory = trajectory(recent, lang);
         if (!trajectory.isEmpty()) {
@@ -95,6 +109,19 @@ public class WakeObservation {
             sb.append('\n').append(stats);
         }
         return sb.toString();
+    }
+
+    /** 本局最近一条 OK 决策行（例行/警报/手动）的唤醒时刻，不限于 recent 那几条；一条都没有给 null */
+    private Long lastOkWakeTime(AiTrader trader, long boundaryTime) {
+        List<AiTraderDecision> rows = decisionMapper.selectList(new LambdaQueryWrapper<AiTraderDecision>()
+                .eq(AiTraderDecision::getTraderId, trader.getId())
+                .eq(AiTraderDecision::getRoundNo, trader.getRoundNo())
+                .in(AiTraderDecision::getKind, AiTraderDecision.KIND_TRADE, AiTraderDecision.KIND_ALERT, AiTraderDecision.KIND_MANUAL)
+                .eq(AiTraderDecision::getStatus, AiTraderDecision.STATUS_OK)
+                .lt(AiTraderDecision::getWakeTime, boundaryTime)
+                .orderByDesc(AiTraderDecision::getWakeTime)
+                .last("LIMIT 1"));
+        return rows.isEmpty() ? null : rows.getFirst().getWakeTime();
     }
 
     /** 自上次唤醒以来：对账事件逐条成文（了结说结局、成交说成交、挂单没了说没了），同一计划内先结局后成交；没事件返回空串 */
