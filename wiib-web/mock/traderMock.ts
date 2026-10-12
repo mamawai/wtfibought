@@ -111,18 +111,6 @@ const MEMORY = `## 已经吃过的亏
 2. 止损必须挂在结构位外侧，不是整数关口
 3. 计划写了失效条件，触发就走，不给自己找补充理由`;
 
-const LEARNING_NOTES = `## 从 Nomad 学到的
-
-它的胜率只有 41%，但收益比我稳。看了它 R4 的时间线，差别在**加仓节奏**：
-
-- 我是一次把仓位铺满，它是先试 1/3，结构确认了再补
-- 它平仓极快——计划失效条件一触发，下一轮直接平，不等反弹
-- 它在震荡区间里干脆不做，一天可以三轮都是空仓
-
-## 从 Basilisk 的爆仓学到的
-
-15m 级别 + 5 倍杠杆，一根插针就没了。周期越短，杠杆越要低。`;
-
 // ==================== 净值曲线 ====================
 // 3 天、每 4h 一个点。手写一串涨跌互现的数，比 random 更可控——每次刷新形状一样，好对比改动
 
@@ -210,20 +198,6 @@ const decisions = () => {
       actionsJson: null,
       toolCalls: 0, modelCalls: 1, promptTokens: 22400, completionTokens: 2100, totalTokens: 24500,
       latencyMs: 18900, error: null, createdAt: '2026-09-04 22:00:00', hasTrace: false,
-    },
-    {
-      id: 8996, traderId: 1, roundNo: 3, wakeTime: t - 18 * HOUR, intervalCode: '4h',
-      kind: 'LEARN', status: 'OK', equity: null,
-      reasoning: `## 向 Nomad 学习
-
-看了 Nomad 最近 20 轮。它胜率 41%，比我低，但净值比我稳，差别在**试仓**：
-
-先开计划仓位的 1/3，等结构确认再补两次。我是一次铺满，方向对了收益一样，方向错了亏三倍。
-
-另外它在震荡区间会连续三轮空仓——**不做也是一种决策**，我目前每轮都想找点事做，这是扣分项。`,
-      actionsJson: null,
-      toolCalls: 0, modelCalls: 1, promptTokens: 31200, completionTokens: 1800, totalTokens: 33000,
-      latencyMs: 22100, error: null, createdAt: '2026-09-04 18:00:00', hasTrace: false,
     },
   ];
 };
@@ -909,7 +883,7 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
             llmEndpointId: 12, customPrompt: null,
             spec: { leverageMin: 2, leverageMax: 10, marginPctMin: 5, marginPctMax: 25, allowMultiPosition: true, allowHedge: false },
             alertEnabled: true, alertThresholdMult: 1,
-            reviewEnabled: true, learningEnabled: true, wakeWindow: null,
+            reviewEnabled: true, wakeWindow: null,
           });
         }
         if (path === '/api/ai/trader/action-panel') {
@@ -947,9 +921,7 @@ else if (location.search.includes('light')) localStorage.setItem('theme', 'light
             pendingOrders: mine ? PENDING_ORDERS : [],
             plans: mine ? PLANS : [],
             memory: mine ? MEMORY : null,
-            learningNotes: mine ? LEARNING_NOTES : null,
             lastReviewAt: mine ? now() - 14 * HOUR : null,
-            lastLearnAt: mine ? now() - 18 * HOUR : null,
           });
         }
 

@@ -495,29 +495,6 @@ public class ReviewMaterialAssembler {
         });
     }
 
-    // ==================== 同侪详情共用 ====================
-
-    /** 一笔已了结交易的行尾（入场→出场及开平时刻/盈亏/持有/了结方式）；同侪详情共用 */
-    static String tradeRow(PromptCatalog prompts, FuturesPositionDTO pos, AgentLang lang) {
-        return prompts.get(lang, "reviewer.label.tradeRow", Map.of(
-                "entry", plain(pos.getEntryPrice()),
-                "openedAt", TIME_FMT.format(Instant.ofEpochMilli(TradePairing.msOf(pos.getCreatedAt()))),
-                "exit", plain(pos.getClosedPrice()),
-                "closedAt", TIME_FMT.format(Instant.ofEpochMilli(TradePairing.msOf(pos.getUpdatedAt()))),
-                "pnl", signed(pos.getClosedPnl()),
-                "held", humanize(prompts, TradePairing.msOf(pos.getUpdatedAt())
-                        - TradePairing.msOf(pos.getCreatedAt()), lang),
-                "manner", TradePairing.closeManner(prompts, pos, lang)));
-    }
-
-    /** 论点/失效条件那一行，同样对同侪详情开放 */
-    static String planLine(PromptCatalog prompts, String signalsUsed, String invalidationCondition,
-                           AgentLang lang) {
-        return prompts.get(lang, "reviewer.label.planLine", Map.of(
-                "signals", nullSafe(signalsUsed),
-                "invalidation", nullSafe(invalidationCondition)));
-    }
-
     // ==================== 小工具 ====================
 
     static List<FuturesPositionDTO> inWindow(List<FuturesPositionDTO> fetched, long fromMs, long toMs) {

@@ -996,8 +996,6 @@ export interface TraderOwnerView {
   alertThresholdMult: number;
   /** 每日复盘开关：reviewer 日线边界复盘写 REVIEW 行并整理记忆笔记 */
   reviewEnabled: boolean;
-  /** 同侪学习开关：learning agent 在全体复盘完成后向同侪学习写 LEARN 行并整理学习笔记 */
-  learningEnabled: boolean;
   /** 经验账本里限制型规律能否作为观望理由；false=只供参考 */
   learnedRestrictionHold: boolean;
   /** 唤醒时段 "HH:mm-HH:mm"，null=全天 */
@@ -1071,7 +1069,7 @@ export interface AiTraderPlanView {
   openedWakeTime: number;
   /** [{time,type,change,reason}] */
   revisionsJson: string | null;
-  /** 主人标记忽略：true=AI 统计与复盘不再参考；公开战绩/同侪视角照常 */
+  /** 主人标记忽略：true=AI 统计与复盘不再参考；公开战绩照常 */
   stale: boolean | null;
 }
 
@@ -1106,19 +1104,16 @@ export interface TradeRecordView {
   closeDecision: TradeDecisionRef | null;
 }
 
-/** trader 详情：公开视图 + 实时持仓/挂单 + 本局生效中的交易计划 + 两份笔记 */
+/** trader 详情：公开视图 + 实时持仓/挂单 + 本局生效中的交易计划 + 经验账本 */
 export interface TraderDetailView {
   trader: TraderPublicView;
   positions: FuturesPosition[];
   pendingOrders: FuturesOrder[];
   plans: AiTraderPlanView[];
-  /** 记忆笔记：reviewer 每日复盘沉淀的，跨局累积；trader 每次唤醒都读 */
+  /** 经验账本渲染文本：reviewer 每日复盘后由代码渲染；trader 每次唤醒都读 */
   memory: string | null;
-  /** 学习笔记：learning agent 向同侪学的，跨局累积；trader 每次唤醒都读 */
-  learningNotes: string | null;
-  /** 最近一次成功复盘 / 学习的 wakeTime(ms)，没有=null */
+  /** 最近一次复盘写 memory 的 wakeTime(ms)，没有=null */
   lastReviewAt: number | null;
-  lastLearnAt: number | null;
 }
 
 /** 每次唤醒一条决策（竞技场时间线） */
@@ -1130,9 +1125,9 @@ export interface AiTraderDecisionView {
   intervalCode: string;
   /**
    * TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒 MANUAL=主人手动唤醒（对话轨 wake_trader）
-   * REVIEW=每日复盘（reasoning=复盘全文，无equity） LEARN=向同侪学习（reasoning=学习全文，无equity）
+   * REVIEW=每日复盘（reasoning=复盘全文，无equity）
    */
-  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'REVIEW' | 'LEARN';
+  kind: 'TRADE' | 'ALERT' | 'MANUAL' | 'REVIEW';
   status: 'OK' | 'ERROR' | 'SKIPPED';
   equity: number | null;
   reasoning: string | null;
@@ -1159,7 +1154,7 @@ export interface TraderEquityPoint {
 
 // ---- 唤醒过程：实时流（/ai/trader/{id}/live、/ai/trader/live）与落库轨迹（trace_json）----
 
-/** 会走实时流的唤醒类型（复盘/学习不进这条通道） */
+/** 会走实时流的唤醒类型（复盘不进这条通道） */
 export type WakeKind = 'TRADE' | 'ALERT' | 'MANUAL';
 /** 工具回执状态：按回执前缀 REJECTED: / ERROR: 判，其余 ok */
 export type WakeToolStatus = 'ok' | 'rejected' | 'error';
@@ -1241,7 +1236,6 @@ export interface TraderUpsertRequest {
   alertEnabled: boolean;
   alertThresholdMult: number;
   reviewEnabled: boolean;
-  learningEnabled: boolean;
   learnedRestrictionHold: boolean;
   /** 唤醒时段 "HH:mm-HH:mm"（北京时间），null=全天 */
   wakeWindow: string | null;

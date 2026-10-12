@@ -131,10 +131,7 @@ reviewer:
     statsClosed: 已了结 {{n}} 笔：{{wins}} 胜 {{losses}} 负（胜率 {{winRate}}%），合计净盈亏 {{pnl}}（已计入手续费与资金费）
     noClosed: 期间无已了结交易
 
-    # ---- 一笔交易的行尾与论点行（同侪详情复用，两处口径不许分家）----
-    tradeRow: 入场 {{entry}}（{{openedAt}}）→ 出场 {{exit}}（{{closedAt}}），净盈亏 {{pnl}}，持有 {{held}}，{{manner}}
-    planLine: "论点: {{signals}} ｜ 失效条件: {{invalidation}}"
-    noPlan: （无计划记录）
+    # ---- 了结方式与持有时长 ----
     closeManner:
       liquidated: 强平
       stopLoss: 止损带走

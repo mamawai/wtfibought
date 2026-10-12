@@ -402,23 +402,6 @@ class TraderPromptAssemblerTest {
                 .contains("别追").doesNotContain("不开仓的理由");
     }
 
-    /**
-     * 学习笔记（learning agent 写入 learning_notes 列）非空即注入；为空不渲染。
-     * 两份笔记必须并列出现且标题分开——来源分开模型才分得清"自己的教训"与"从别人学的"。
-     */
-    @Test
-    void learningNotesInjectedAlongsideMemory() {
-        AiTrader t = trader();
-        t.setMemory("教训：突破回踩不守住颈线就别追。");
-        t.setLearningNotes("同侪A的BREAKOUT 12笔8胜靠等回踩确认，我9笔2胜差在追价。");
-
-        assertThat(assembler.assemble(t, AgentLang.ZH))
-                .contains("————— 经验账本（").contains("别追")
-                .contains("————— 学习笔记（").contains("差在追价");
-        assertThat(assembler.assemble(trader(), AgentLang.ZH))
-                .doesNotContain("————— 学习笔记（");
-    }
-
     /** 用户风格指令的优先级必须明示：风格冲突听主人的，仓位规格与硬性规则不可覆盖 */
     @Test
     void customPromptPriorityDeclared() {

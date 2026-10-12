@@ -312,7 +312,7 @@ public class TraderWakeupRunner {
         List<AiTraderPlan> plans = planStore.listAll(trader.getId(), trader.getRoundNo());
         // 获取最近的唤醒轮，并过滤掉stale内容
         List<WakeObservation.RecentWake> recent = wakeObservation.recentWakes(trader, boundaryTime, plans);
-        // system 提示词：平台模板 + 复盘/学习笔记 + 自定义指令 + 固定收尾格式 + 输出语言
+        // system 提示词：平台模板 + 经验账本 + 自定义指令 + 固定收尾格式 + 输出语言
         String prompt = promptAssembler.assemble(trader, lang);
         // 观察包：自己的状态事实，进开场白。上次醒来后的事件 + 账户（持仓/挂单带计划）+ 上一轮结论 + 最近轨迹 + 论点战绩
         String observation = wakeObservation.assemble(trader, equity, positions, pendingOrders, reconcile, recent, boundaryTime, lang);

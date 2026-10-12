@@ -81,7 +81,7 @@ public class TraderService {
                             BigDecimal marginPctMin, BigDecimal marginPctMax,
                             Boolean allowMultiPosition, Boolean allowHedge,
                             Boolean alertEnabled, BigDecimal alertThresholdMult,
-                            Boolean reviewEnabled, Boolean learningEnabled, Boolean learnedRestrictionHold,
+                            Boolean reviewEnabled, Boolean learnedRestrictionHold,
                             String wakeWindow) {
     }
 
@@ -168,7 +168,6 @@ public class TraderService {
                 .set(AiTrader::getAlertEnabled, probe.getAlertEnabled())
                 .set(AiTrader::getAlertThresholdMult, probe.getAlertThresholdMult())
                 .set(AiTrader::getReviewEnabled, probe.getReviewEnabled())
-                .set(AiTrader::getLearningEnabled, probe.getLearningEnabled())
                 .set(AiTrader::getLearnedRestrictionHold, probe.getLearnedRestrictionHold())
                 .set(AiTrader::getWakeWindow, probe.getWakeWindow())
                 .set(AiTrader::getUpdatedAt, LocalDateTime.now()));
@@ -220,7 +219,7 @@ public class TraderService {
 
     /**
      * 标记/取消忽略一笔已归档计划：只有主人能标；LIVE 是在场纪律不许藏，只有 CLOSED 可标。
-     * stale 只作用于教材层（论点战绩统计、复盘素材），权益/排行榜/同侪学习照常。
+     * stale 只作用于教材层（论点战绩统计、复盘素材），权益/排行榜照常。
      */
     public String setPlanStale(long userId, long planId, boolean stale) {
         AiTrader t = mine(userId);
@@ -240,8 +239,8 @@ public class TraderService {
 
     /**
      * 重置开新局：round+1、新 sim 子账户注资、PAUSED 待手动启动；旧账户与决策历史留档。
-     * carryNotes=false 时连两份笔记的生效版本一并清空——历届存档在 REVIEW 行 memory_after /
-     * LEARN 行 reasoning 里，永远查得到，清的只是"下局还注不注入"。
+     * carryNotes=false 时 memory 生效版本一并清空——历届存档在 REVIEW 行 memory_after 里，
+     * 永远查得到，清的只是"下局还注不注入"。
      */
     public String reset(long userId, boolean carryNotes) {
         AiTrader t = mine(userId);
@@ -263,7 +262,7 @@ public class TraderService {
                 .set(AiTrader::getOwnerNoteRounds, 0)
                 .set(AiTrader::getUpdatedAt, LocalDateTime.now());
         if (!carryNotes) {
-            upd.set(AiTrader::getMemory, null).set(AiTrader::getLearningNotes, null);
+            upd.set(AiTrader::getMemory, null);
         } else if (ledger.carryOver(t.getId(), t.getRoundNo(), newRound) > 0) {
             // 账本行按局号存，带入=复制到新局；memory 文本按新局编号重渲染
             upd.set(AiTrader::getMemory, ledger.render(t.getId(), newRound, langResolver.of(userId)));
@@ -425,22 +424,19 @@ public class TraderService {
     }
 
     /**
-     * 最近一条写了笔记的 REVIEW / LEARN 行的 wakeTime，没有=null。
-     * REVIEW 以 memoryAfter 非空为准（缺分隔符的复盘 OK 行照存但笔记没动）；LEARN 的 OK 行本身就是笔记全文。
-     * 不按局过滤：memory / learningNotes 是跨局累积的，"最近一次复盘/学习"也就跨局看。
+     * 最近一条写了 memory 的 REVIEW 行的 wakeTime，没有=null。
+     * 以 memoryAfter 非空为准（经验更新解析不出的复盘 OK 行照存但 memory 没动）。
+     * 不按局过滤：memory 能带入新局，"最近一次复盘"也就跨局看。
      */
-    public Long latestNoteTime(long traderId, String kind) {
-        LambdaQueryWrapper<AiTraderDecision> q = new LambdaQueryWrapper<AiTraderDecision>()
+    public Long latestReviewTime(long traderId) {
+        AiTraderDecision d = decisionMapper.selectOne(new LambdaQueryWrapper<AiTraderDecision>()
                 .select(AiTraderDecision::getWakeTime)
                 .eq(AiTraderDecision::getTraderId, traderId)
-                .eq(AiTraderDecision::getKind, kind)
+                .eq(AiTraderDecision::getKind, AiTraderDecision.KIND_REVIEW)
                 .eq(AiTraderDecision::getStatus, AiTraderDecision.STATUS_OK)
+                .isNotNull(AiTraderDecision::getMemoryAfter)
                 .orderByDesc(AiTraderDecision::getWakeTime)
-                .last("LIMIT 1");
-        if (AiTraderDecision.KIND_REVIEW.equals(kind)) {
-            q.isNotNull(AiTraderDecision::getMemoryAfter);
-        }
-        AiTraderDecision d = decisionMapper.selectOne(q);
+                .last("LIMIT 1"));
         return d == null ? null : d.getWakeTime();
     }
 
@@ -552,7 +548,6 @@ public class TraderService {
         t.setAlertEnabled(!Boolean.FALSE.equals(req.alertEnabled()));
         t.setAlertThresholdMult(req.alertThresholdMult() == null ? BigDecimal.ONE : req.alertThresholdMult());
         t.setReviewEnabled(!Boolean.FALSE.equals(req.reviewEnabled()));
-        t.setLearningEnabled(!Boolean.FALSE.equals(req.learningEnabled()));
         t.setLearnedRestrictionHold(Boolean.TRUE.equals(req.learnedRestrictionHold()));
         // 存归一化文本（validate 已 parse 过），全天存 null
         WakeWindow window = WakeWindow.parse(req.wakeWindow());

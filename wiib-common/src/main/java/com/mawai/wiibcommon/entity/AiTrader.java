@@ -50,13 +50,6 @@ public class AiTrader {
     private String memory;
 
     /**
-     * 学习笔记：learning agent 向同侪学习后整理写入（≤2000字覆盖写），每次唤醒与复盘笔记并列注入。
-     * 与 memory 分开存——来源分开模型才分得清"自己的教训"与"从别人学的"。ALWAYS：清空=写 null
-     */
-    @TableField(updateStrategy = FieldStrategy.ALWAYS)
-    private String learningNotes;
-
-    /**
      * 主人留言：trader 动作面板写入，随提示词注入，每注入一次 {@link #ownerNoteRounds} 减 1，
      * 减到 0 连同本列一起清空。与 memory 的分工：memory 是复盘沉淀的长期笔记，
      * 这里是主人阶段性交代的一句话。
@@ -75,9 +68,6 @@ public class AiTrader {
     /** 每日复盘开关：reviewer 日线边界复盘并整理 memory；关掉只停复盘，已有笔记照常注入 */
     private Boolean reviewEnabled;
 
-    /** 同侪学习开关：learning agent 在全体复盘完成后向同侪学习并整理 learningNotes；关掉只停学习，已有笔记照常注入 */
-    private Boolean learningEnabled;
-
     /** 经验账本里限制型规律能否作为观望理由；false=只供参考 */
     private Boolean learnedRestrictionHold;
 
@@ -89,7 +79,7 @@ public class AiTrader {
 
     /**
      * 唤醒时段（北京时间）"HH:mm-HH:mm"，5 分钟粒度、两端含、可跨午夜；null=全天。
-     * 只管交易类唤醒（例行/警报），手动唤醒不拦；日线交接的复盘/学习不看它——夜里交易了就该复盘夜里的交易。
+     * 只管交易类唤醒（例行/警报），手动唤醒不拦；日线交接的复盘不看它——夜里交易了就该复盘夜里的交易。
      * 解析与判断见 WakeWindow。改回全天=写 null（updateConfig 列级 set）
      */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)

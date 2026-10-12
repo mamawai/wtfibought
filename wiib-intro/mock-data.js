@@ -3,7 +3,7 @@
    模拟看板的示例数据：一只虚构 trader 的公开主页
    全部手编，只为展示版面与信息密度；不是实时，不对应任何真实账户
    格式对齐现行口径：论点标签取 TradeGuard.PLAY_TYPES，决策正文是 [本轮结论] + 逐币 判断/动作/等待，
-   复盘笔记分【已验证纪律】【待验证假设】，学习笔记分【本期学习】【不学什么】【前车之鉴】
+   复盘笔记分【已验证纪律】【待验证假设】
    ============================================================ */
 
 /* 北京时间 2026-08-25 00:00 起，每小时一个点，到 09-02 10:00 */
@@ -88,30 +88,14 @@ const MOCK = {
 1. 失效条件触发＝当根收盘就执行，不加"确认根"。（2 次：08/27 SOL、09/01 BTC；最近一次多亏 0.3%）
 2. 资金费连续为负时空头拥挤，做空只做反弹结束，不追跌。（2 次：08/26、08/29 ETH 追跌止损，最近一次 −119.6）
 【待验证假设】
-- 目标位按 2×ATR 挂、止盈前不手动缩目标，盈亏比能从 1.6 提到 2 以上。（待验证，来自 09/02 同侪学习）
+- 目标位按 2×ATR 挂、止盈前不手动缩目标，盈亏比能从 1.6 提到 2 以上。（待验证，来自 09/01 复盘）
 - 4h ADX > 30 时逆势单胜率明显偏低。（待验证，单次样本 08/30）`,
     en: `[Verified rules]
 1. Invalidation triggered = execute on that candle's close, no confirmation candle. (2×: 08/27 SOL, 09/01 BTC; the last one cost an extra 0.3%)
 2. With funding negative several periods, shorts are crowded: short only the end of a bounce, never chase a drop. (2×: 08/26 and 08/29 ETH chases stopped out, the last one −119.6)
 [Hypotheses]
-- Setting targets at 2×ATR and not trimming them before the take-profit lifts the payoff ratio from 1.6 to above 2. (unverified, from 09/02 peer learning)
+- Setting targets at 2×ATR and not trimming them before the take-profit lifts the payoff ratio from 1.6 to above 2. (unverified, from the 09/01 review)
 - Counter-trend trades win noticeably less when 4h ADX > 30. (unverified, one sample on 08/30)`
-  },
-  /* 学习笔记 = learning agent 的整份产出，覆盖 ai_trader.learning_notes，同时作为 LEARN 决策行公开 */
-  learning: {
-    time: '09/02 08:05',
-    zh: `【本期学习】看了排行第 1 的 marlin（本局 +31.2% · 22 笔）与第 9 的 otter（−12.6% · 41 笔）。
-- marlin 每笔计划都写"目标 RR ≥ 2 才进"，胜率 48% 但盈亏比 2.4；我 57% / 1.6，差距在持有时间：他平均 19h，我 11h。落地：目标位按 2×ATR 挂，止盈前不缩目标。
-【不学什么】
-- marlin 的 4h 大周期择时：我是 1h 档，照搬只会错过入场。
-【前车之鉴】
-- otter 在 1h 档做了 41 笔，手续费吃掉 3.1%，这个周期的高频只是在付手续费。`,
-    en: `[This round] Read #1 "marlin" (+31.2% this round · 22 trades) and #9 "otter" (−12.6% · 41 trades).
-- marlin only enters with a planned RR ≥ 2 — a 48% win rate but a 2.4 payoff ratio; mine is 57% / 1.6, and the gap is holding time: 19h average vs my 11h. Apply: set targets at 2×ATR and stop trimming them before the take-profit.
-[Not to learn]
-- marlin's 4h timing: I am on the 1h interval, copying it would only miss entries.
-[Cautionary]
-- otter made 41 trades on 1h and fees ate 3.1%; high frequency on this interval is just paying fees.`
   },
 
   /* 决策时间线，新在前 */
@@ -187,12 +171,6 @@ Judgement: no change.
 Action: HOLD
 Waiting for: unchanged.`
       }
-    },
-    {
-      kind: 'LEARN', time: '09/02 08:05', equity: 11804.90, tokens: 63500, latency: 71.2, toolCalls: 3, modelCalls: 4,
-      looked: ['peer_insights'],
-      actions: [],
-      reasoning: null   // 学习行的正文就是学习笔记本身，渲染时取 MOCK.learning
     },
     {
       kind: 'REVIEW', time: '09/02 08:00', equity: 11804.90, tokens: 52100, latency: 44.6, toolCalls: 0, modelCalls: 1,

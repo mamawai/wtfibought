@@ -140,10 +140,7 @@ reviewer:
     statsClosed: "{{n}} closed trades: {{wins}} won / {{losses}} lost (win rate {{winRate}}%), net P&L {{pnl}} (after fees and funding)"
     noClosed: No closed trades in this period
 
-    # ---- one trade's row tail and thesis line (peer detail reuses the same set; the two must not drift apart) ----
-    tradeRow: entry {{entry}} ({{openedAt}}) → exit {{exit}} ({{closedAt}}), net P&L {{pnl}}, held {{held}}, {{manner}}
-    planLine: "thesis: {{signals}} | invalidation: {{invalidation}}"
-    noPlan: (no plan record)
+    # ---- close manner and holding time ----
     closeManner:
       liquidated: liquidated
       stopLoss: taken by stop

@@ -13,7 +13,6 @@
     "manualWake": "Manual wake-up",
     "reviewNow": "Review now",
     "dailyReview": "Daily review",
-    "peerLearn": "Peer learning",
     "reject": "Reject"
   },
   "tab": {
@@ -80,7 +79,7 @@
     "step2Title": "2. Pick symbols and cadence",
     "step2": "One to three of BTC, ETH, SOL, waking anywhere from 5m to 4h. You can limit the wake window too, say only between 08:00 and 23:00.",
     "step3Title": "3. Start it and enter the arena",
-    "step3": "Each gets a 10,000U virtual futures account. Wakes on every candle, reviews once a day, learns from its peers once a day. Blow up and the next round funds it again."
+    "step3": "Each gets a 10,000U virtual futures account. Wakes on every candle, reviews once a day. Blow up and the next round funds it again."
   },
   "status": {
     "running": "Running",
@@ -109,12 +108,10 @@
     "closeLong": "Close long",
     "closeShort": "Close short",
     "limitPrice": "Limit",
-    "learnNotesTitle": "Learning notes",
     "memoryTitle": "Experience ledger",
     "plansTitle": "Trade plans",
     "plansActive": "{{n}} live",
     "lastAt": "Last {{time}}",
-    "noLearnNotes": "No learning notes yet — comes after the learning round that follows everyone's daily review",
     "noMemory": "The experience ledger is still empty — it fills after the first daily review with trades",
     "noPlans": "No live plans",
     "tradesTitle": "Closed trades",
@@ -132,7 +129,6 @@
     "lastWake": "last wake-up {{time}}",
     "notesTitle": "Notes",
     "memoryShort": "Ledger",
-    "learnShort": "Learning",
     "dayN": "Day {{n}}",
     "closedCount": "Closed",
     "tradesN_one": "{{count}} trade",
@@ -177,7 +173,6 @@
     "error": "Failed",
     "skipped": "Skipped",
     "reviewFailed": "Review failed",
-    "learnFailed": "Learning failed",
     "alert": "Volatility alert"
   },
   "live": {
@@ -225,7 +220,7 @@
     "staleMark": "Ignore this trade",
     "staleUnmark": "Unignore",
     "staleBadge": "Ignored",
-    "staleHint": "Once ignored, your AI no longer references this trade in thesis stats, reviews or its narrative; lessons already written into its notes fade out through the rolling daily review. The equity curve is the real record and stays untouched. Public record, leaderboard and peer learning carry on as usual. Reversible anytime."
+    "staleHint": "Once ignored, your AI no longer references this trade in thesis stats, reviews or its narrative; lessons already written into its notes fade out through the rolling daily review. The equity curve is the real record and stays untouched. Public record and leaderboard carry on as usual. Reversible anytime."
   },
   "trader": {
     "tourBtn": "Setup guide",
@@ -235,8 +230,8 @@
     "reset": "Reset to a new round",
     "resetConfirm": "Reset opens a new round (R{{round}}): a fresh account with 10000, past rounds archived (latest 10 kept, older ones wiped). Continue?",
     "viewTimeline": "See its decision timeline →",
-    "resetCarryNotes": "Carry the experience ledger & learning notes into the new round",
-    "resetCarryHint": "Carrying copies the active entries into the new round (counts included); unchecking starts the new round with an empty ledger and stops injecting the learning notes. Archived notes remain viewable on the decision timeline and are never deleted.",
+    "resetCarryNotes": "Carry the experience ledger into the new round",
+    "resetCarryHint": "Carrying copies the active entries into the new round (counts included); unchecking starts the new round with an empty ledger. Archived notes remain viewable on the decision timeline and are never deleted.",
     "delete": "Delete trader",
     "deleteConfirm": "Deleting is permanent — none of this comes back.",
     "deleteWarn": "This removes: every round's decisions and wake traces, every trade plan (including archived theses and invalidation conditions), and each round's simulated sub-account (positions, orders, fills, ledger). Its arena ranking, equity curve and decision timeline disappear for everyone else too. Your model endpoints are untouched, and you can create a new trader afterwards.",
@@ -253,7 +248,7 @@
     },
     "wakeWindow": {
       "title": "When it wakes up",
-      "body": "Round the clock by default: it wakes on every candle close. Set a window and it only wakes inside it (Beijing time, may cross midnight, e.g. 21:00–08:30 for the night session only).\nOutside the window both scheduled wake-ups and volatility alerts stop; positions rely on stop-loss and take-profit orders. Manual wake-ups are never blocked.\nDaily review and peer learning ignore the window and still run at 08:00."
+      "body": "Round the clock by default: it wakes on every candle close. Set a window and it only wakes inside it (Beijing time, may cross midnight, e.g. 21:00–08:30 for the night session only).\nOutside the window both scheduled wake-ups and volatility alerts stop; positions rely on stop-loss and take-profit orders. Manual wake-ups are never blocked.\nDaily review ignores the window and still runs at 08:00."
     },
     "symbols": {
       "title": "Which coins it may trade",
@@ -292,7 +287,7 @@
     "interval": "Wake-up interval",
     "interval5mWarn": "5m is for test runs; 15m or higher for real ones — frequent wake-ups grind on two-sided fees",
     "wakeWindow": "Wake-up window (Beijing time)",
-    "wakeWindowHint": "Outside the window: no scheduled wake-ups, no alerts. Manual is never blocked; review and learning still run at 08:00.",
+    "wakeWindowHint": "Outside the window: no scheduled wake-ups, no alerts. Manual is never blocked; review still runs at 08:00.",
     "windowOn": "Wake up inside the window only",
     "windowOff": "Wake up around the clock",
     "windowHint": "Both ends inclusive, may cross midnight (start later than end rolls to the next day); minutes must be multiples of 0/5",
@@ -323,12 +318,9 @@
     "reviewOnHint": "Runs once at the daily boundary (burns your key, one or two calls); skipped on days with no closed trades and no open attempts; turning it off only stops new reviews, the existing ledger still injects",
     "restrictionHold": "Let it use learned \"do not open\" rules as a reason to stay flat",
     "restrictionHoldHint": "One kind of ledger rule says \"do not open in this situation\". Off: those are reference only and whether to open still follows your instructions. On: it may use such a rule as its reason to stay flat. Other entries are unaffected",
-    "learnHint": "The leaderboard and peer reviews are its material",
-    "learnOn": "Enable peer learning",
-    "learnOnHint": "Runs once after all reviews finish (burns your key, several calls); needs 2+ peers in the pool besides you, skipped otherwise (pool = opted in, not paused, and in play: holding a position or closed one within 24h); opting out is mutual — you do not learn from others and your data is not learned from either; learning notes inject into every later wake-up; turning it off only stops new learning, existing notes still inject",
     "endpoint": "Model endpoint",
     "manageEndpoints": "Manage endpoints (AI page · Model config)",
-    "endpointHint": "Wake-ups, daily reviews and peer learning all burn this endpoint's key; saving checks connectivity first",
+    "endpointHint": "Wake-ups and daily reviews both burn this endpoint's key; saving checks connectivity first",
     "viewPrompt": "View the platform system prompt (environment, tools, spec and guard only; follows interval/symbols/spec/wake window; your instructions are appended after it)",
     "customPrompt": "Your trading instructions (the only source of method, style and discipline; position spec, guard and closing format are enforced by the system)",
     "customPromptPh": "e.g. Trend breakouts only, never catch a falling knife; risk at most 2% of equity per trade; after two losses in a row, watch only for the rest of the day.",
@@ -374,7 +366,7 @@
     "tradeHint": "Touch the book; anything outside your spec is rejected on the spot with the reason",
     "data": "Market data",
     "dataHint": "Read-only; interval 5m / 15m / 1h / 4h / 1d on all of them",
-    "foot": "Each wake it picks tools on its own — higher timeframe for direction, own timeframe for location, verify, decide. Account state, plans, memory and learning notes are injected every round and cost no calls. Every timeline entry lists what it read and what it did.",
+    "foot": "Each wake it picks tools on its own — higher timeframe for direction, own timeframe for location, verify, decide. Account state, plans and the experience ledger are injected every round and cost no calls. Every timeline entry lists what it read and what it did.",
     "desc": {
       "open_position": "Market/limit long or short; a trade plan (thesis · evidence · invalidation) is filed on entry. <0>Stop-loss required</0>; leverage and new-position margin must land inside your bands; limit price within 5% of mark.",
       "close_position": "Close all or part of a position at market, with a one-line reason. With self-reduce off it becomes a request awaiting your approval.",
@@ -574,7 +566,7 @@
     "noEndpoint": "(no endpoint available)",
     "editInMyTrader": "Change it in My Trader",
     "noTrader": "No AI trader yet — pick one when you <0>create</0> it",
-    "traderHint": "Every wake-up, daily review and peer learning of “{{name}}” burns this one",
+    "traderHint": "Every wake-up and daily review of “{{name}}” burns this one",
     "coach": "Review coach",
     "coachValue": "Chosen in the backtest console before each round, defaults to the default endpoint",
     "coachHint": "AI chart hints during a manual review and the post-settlement assessment"

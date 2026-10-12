@@ -44,7 +44,7 @@ const PANELS = [
     id: 'trader',
     num: 'HARNESS 01',
     title: { zh: 'trader agent', en: 'trader agent' },
-    sub: { zh: '唯一会动真账本的 · 配套每日复盘与同侪学习', en: 'touches the real ledger · with daily review & peer learning' },
+    sub: { zh: '唯一会动真账本的 · 配套每日复盘', en: 'touches the real ledger · with daily review' },
     w: 1180, h: 648,
     lanes: [
       { x: 216, y: 34, t: { zh: '一次唤醒 · ONE WAKEUP', en: 'ONE WAKEUP' } },
@@ -74,13 +74,12 @@ const PANELS = [
           { id: 'hand', led: true, t: { zh: '日终交接窗口内一律拒', en: 'blocked during handover' } }
         ],
         detail: { zh: '准入四件事：每 trader 互斥（上一轮没跑完，新信号记 SKIPPED 不排队）、唤醒时段过滤（时段外静默跳过）、预算计算——截止到下一边界前 5 秒、上限 600 秒，距边界不足 30 秒判「触发过晚」放弃且不算失败；日终交接的停工窗口里四个入口一律拒。不设全局并发上限，只按 trader 互斥。', en: 'Four checks: per-trader mutex (a busy trader records SKIPPED, no queueing), the wake-window filter, and the budget — capped at 600s, ending 5s before the next boundary; under 30s left means “too late”, abandoned without counting as a failure; during the daily-handover blackout all four entries are refused. There is no global concurrency cap, only the per-trader mutex.' } },
-      // 前四个进系统提示词，后五个进开场白（user 消息）
+      // 前三个进系统提示词，后五个进开场白（user 消息）
       { id: 'asm', x: 442, y: 62, w: 196, h: 148, tag: 'PROMPT', icon: 'file-text',
         title: { zh: '系统提示词 + 开场白', en: 'System prompt + opening' },
         chips: [
           { id: 'c1', t: { zh: '平台规则', en: 'platform rules' } },
           { id: 'c2', t: { zh: '复盘笔记', en: 'review notes' } },
-          { id: 'c3', t: { zh: '学习笔记', en: 'learning notes' } },
           { id: 'c4', t: { zh: '交易指令', en: 'owner playbook' } },
           { id: 'c5', t: { zh: '事件·账户', en: 'events+account' } },
           { id: 'c6', t: { zh: '上轮结论', en: 'last conclusion' } },
@@ -88,7 +87,7 @@ const PANELS = [
           { id: 'c8', t: { zh: '财经日历', en: 'econ calendar' } },
           { id: 'c9', t: { zh: '主人留言', en: 'owner note' } }
         ],
-        detail: { zh: '每次唤醒现读现拼，零热更新机制。系统提示词放平台规则（只讲事实：环境、工具、规格、护栏、收尾格式）、复盘笔记、学习笔记和主人的交易指令——方法与纪律只来自主人，平台不带交易观点。状态进开场白：上次醒来后的事件、账户、上一轮结论、论点战绩、财经日历，主人留言压在最末。两份笔记并列不合并，模型才分得清哪条是自己的教训、哪条是学来的。', en: 'Reassembled fresh on every wakeup, no hot-reload machinery. The system prompt carries the platform rules (facts only: environment, tools, specs, guardrails, closing format), the review notes, the learning notes and the owner’s playbook — method and discipline come only from the owner. State goes into the opening message: events since the last wake, the account, the last conclusion, play stats, the econ calendar, with the owner’s note last. The two notes stay separate so the model can tell its own lessons from borrowed ones.' } },
+        detail: { zh: '每次唤醒现读现拼，零热更新机制。系统提示词放平台规则（只讲事实：环境、工具、规格、护栏、收尾格式）、复盘笔记和主人的交易指令——方法与纪律只来自主人，平台不带交易观点。状态进开场白：上次醒来后的事件、账户、上一轮结论、论点战绩、财经日历，主人留言压在最末。', en: 'Reassembled fresh on every wakeup, no hot-reload machinery. The system prompt carries the platform rules (facts only: environment, tools, specs, guardrails, closing format), the review notes and the owner’s playbook — method and discipline come only from the owner. State goes into the opening message: events since the last wake, the account, the last conclusion, play stats, the econ calendar, with the owner’s note last.' } },
       { id: 'agent', x: 668, y: 84, w: 180, h: 104, tag: 'REACT', icon: 'cpu',
         title: { zh: 'ReactLoop 决策循环', en: 'ReactLoop' },
         counter: { label: { zh: '模型调用', en: 'model calls' }, max: 12 },
@@ -131,7 +130,7 @@ const PANELS = [
         ],
         badge: { zh: '全站公开', en: 'PUBLIC' },
         detail: { zh: '推理全文、交易动作、开仓论点与失效条件全部公开上决策时间线；计划了结归档不删，是每日 reviewer 复盘「论点 → 结局」配对的原料。思考过程另走一条线：逐字吐字和每次工具的入参回执实时推给主人（唤醒现场），也落库可回看，但只有主人看得到——公开的只到决策正文为止。', en: 'Full reasoning, trade actions, theses and invalidation conditions all go public on the decision timeline. Settled plans are archived, never deleted — they are the raw material for the daily reviewer’s thesis→outcome pairing. The process runs on a separate line: token-by-token output and every tool’s arguments and results stream live to the owner and are kept for replay, but only the owner can see them — the public part stops at the decision text.' } },
-      { id: 'rev', x: 442, y: 460, w: 200, h: 124, tag: 'REVIEW', icon: 'file-text',
+      { id: 'rev', x: 216, y: 460, w: 200, h: 124, tag: 'REVIEW', icon: 'file-text',
         title: { zh: 'reviewer workflow', en: 'reviewer workflow' },
         sub: { zh: '日线边界 · 自己看自己', en: 'daily · self-review' },
         rows: [
@@ -139,16 +138,7 @@ const PANELS = [
           { id: 'r2', t: { zh: '单次调用 · 无工具', en: 'single call · no tools' } },
           { id: 'r3', t: { zh: '复盘笔记 → memory', en: 'review note → memory' } }
         ],
-        detail: { zh: '不是 agent：素材由 ReviewMaterialAssembler 纯代码算齐（战绩表 / 论点→结局配对 / 时间线 / 价格路径），模型只负责解读，没机会挑对自己有利的行情。对错以主人的交易指令为尺子；战绩只许复述、先找错误再找亮点、教训条数设上限。记忆分「已验证纪律 / 待验证假设」两栏，只注入上一期，靠输出完成继承。没有新交易、或纯观望且市场平静的一天直接跳过，不白烧钱。', en: 'Not an agent: materials come precomputed in pure code (stats table, thesis→outcome pairs, timeline, price paths); the model only interprets — it never cherry-picks. Right and wrong are measured against the owner’s playbook; stats may only be quoted, errors before highlights, lessons capped. Memory has two columns, verified rules and hypotheses; only the previous one is injected, inheritance happens in the output. A day with no new trades, or pure waiting in a calm market, is skipped without spending a call.' } },
-      { id: 'learn', x: 216, y: 460, w: 200, h: 124, tag: 'LEARN', icon: 'users',
-        title: { zh: 'learning agent', en: 'learning agent' },
-        sub: { zh: '全体复盘之后 · 向别人学', en: 'learn from peers' },
-        rows: [
-          { id: 'l1', t: { zh: 'peer_insights 只读同侪', en: 'peer_insights · read-only' } },
-          { id: 'l2', t: { zh: '排行榜 → 深看某人', en: 'leaderboard → deep-dive' } },
-          { id: 'l3', t: { zh: '学习笔记 → learning_notes', en: 'note → learning_notes' } }
-        ],
-        detail: { zh: 'ReactLoop（上限 8 次调用）+ 唯一只读工具 peer_insights：无参回排行榜，传 traderId 深看某人的复盘全文 / 论点→结局配对。同侪池 = 勾了开关 + 未暂停 + 在场；除自己不足 2 人本日不学。反照抄三条：【不学什么】必填、每条学习带证据与差距数字、引用战绩必须带笔数。', en: 'A ReactLoop (8 calls max) with a single read-only tool, peer_insights: no args → leaderboard; a traderId → that peer’s full reviews and thesis→outcome pairs. Peer pool = opted-in, not paused, active; fewer than 2 peers → skip today. Anti-copy rules: “what not to learn” is mandatory, every lesson carries evidence and a gap number, cited stats carry trade counts.' } }
+        detail: { zh: '不是 agent：素材由 ReviewMaterialAssembler 纯代码算齐（战绩表 / 论点→结局配对 / 时间线 / 价格路径），模型只负责解读，没机会挑对自己有利的行情。对错以主人的交易指令为尺子；战绩只许复述、先找错误再找亮点、教训条数设上限。记忆分「已验证纪律 / 待验证假设」两栏，只注入上一期，靠输出完成继承。没有新交易、或纯观望且市场平静的一天直接跳过，不白烧钱。', en: 'Not an agent: materials come precomputed in pure code (stats table, thesis→outcome pairs, timeline, price paths); the model only interprets — it never cherry-picks. Right and wrong are measured against the owner’s playbook; stats may only be quoted, errors before highlights, lessons capped. Memory has two columns, verified rules and hypotheses; only the previous one is injected, inheritance happens in the output. A day with no new trades, or pure waiting in a calm market, is skipped without spending a call.' } }
     ],
     edges: [
       { id: 'ck-sch', from: 'clock', to: 'sched', pts: [[186, 60], [201, 60], [201, 112], [216, 112]] },
@@ -161,12 +151,11 @@ const PANELS = [
       { id: 'guard-trade', from: 'guard', to: 'trade', pts: [[978, 332], [978, 348]] },
       { id: 'trade-sim', from: 'trade', to: 'sim', pts: [[978, 524], [978, 544]] },
       { id: 'ag-dec', from: 'agent', to: 'dec', pts: [[758, 188], [758, 246]] },
-      { id: 'dec-rev', from: 'dec', to: 'rev', pts: [[758, 364], [758, 522], [642, 522]] },
-      { id: 'rev-learn', from: 'rev', to: 'learn', pts: [[442, 522], [416, 522]] },
-      { id: 'notes-asm', from: 'learn', to: 'asm', cls: 'back', pts: [[316, 460], [316, 412], [540, 412], [540, 210]] }
+      { id: 'dec-rev', from: 'dec', to: 'rev', pts: [[758, 364], [758, 522], [416, 522]] },
+      { id: 'notes-asm', from: 'rev', to: 'asm', cls: 'back', pts: [[316, 460], [316, 412], [540, 412], [540, 210]] }
     ],
     foot: [
-      { zh: '日线交接：交易 ▸ 全体复盘 ▸ 屏障 ▸ 全体学习 · 停工窗口拒绝一切唤醒', en: 'Daily handover: trade ▸ all reviews ▸ barrier ▸ all learning · blackout window rejects every wakeup' },
+      { zh: '日线交接：交易 ▸ 全体复盘 · 停工窗口拒绝一切唤醒', en: 'Daily handover: trade ▸ all reviews · blackout window rejects every wakeup' },
       { zh: '连败 5 次 → PAUSED · 权益 < 初始 1% → LIQUIDATED', en: '5 straight failures → PAUSED · equity < 1% of seed → LIQUIDATED' }
     ]
   },
@@ -287,12 +276,12 @@ const PANELS = [
 /* 窄屏 stepper：卡片顺序 + 缩进层级。所有边都走左侧同一条总线，不再分左右廊道 */
 const STEP = {
   trader: {
-    order: ['clock', 'sentinel', 'manual', 'sched', 'asm', 'agent', 'data', 'guard', 'trade', 'sim', 'dec', 'rev', 'learn'],
+    order: ['clock', 'sentinel', 'manual', 'sched', 'asm', 'agent', 'data', 'guard', 'trade', 'sim', 'dec', 'rev'],
     indent: { data: 1, guard: 1, trade: 1, sim: 2 },
     groups: [
       { from: 'clock', to: 'manual', t: { zh: '三种唤醒源 · 任一即可', en: 'three wake sources' } },
       { from: 'data', to: 'sim', t: { zh: '决策循环里被调用', en: 'called from inside the loop' } },
-      { from: 'rev', to: 'learn', t: { zh: '日终交接 · 一天一次', en: 'end of day · once daily' } }
+      { from: 'rev', to: 'rev', t: { zh: '日终交接 · 一天一次', en: 'end of day · once daily' } }
     ]
   },
   chat: {
@@ -556,7 +545,6 @@ const ICONS = {
   'newspaper': '<path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/>',
   'bot': '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
   'zap': '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
-  'users': '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
   'arrow-right': '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
   'arrow-up-right': '<path d="M7 7h10v10"/><path d="M7 17 17 7"/>',
   'arrow-down-right': '<path d="m7 7 10 10"/><path d="M17 7v10H7"/>',
@@ -565,9 +553,7 @@ const ICONS = {
   'scale': '<path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/>',
   'trending-up': '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
   'key': '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
-  'git-branch': '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
   'notebook-pen': '<path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><path d="M21.4 4.6a2 2 0 0 0-2.8 0L12 11.2V14h2.8l6.6-6.6a2 2 0 0 0 0-2.8Z"/>',
-  'graduation-cap': '<path d="M21.42 10.92a1 1 0 0 0 0-1.84l-8.6-3.91a2 2 0 0 0-1.66 0l-8.58 3.9a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0Z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5"/>',
   'clipboard-list': '<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>',
   'chevron-down': '<path d="m6 9 6 6 6-6"/>',
   'chevron-up': '<path d="m18 15-6-6-6 6"/>',
@@ -729,7 +715,7 @@ const TR_SCENES = [
   { zh: 'A · 例行唤醒 → 开仓', en: 'A · routine wake → open' },
   { zh: 'B · 警报唤醒 → 失效退出', en: 'B · alert wake → invalidation exit' },
   { zh: 'C · 例行唤醒 → 观望', en: 'C · routine wake → wait' },
-  { zh: 'D · 日线交接 → 复盘与学习', en: 'D · daily handover → review & learning' }
+  { zh: 'D · 日线交接 → 复盘', en: 'D · daily handover → review' }
 ];
 
 /* 共用前半段：触发 → 准入 → 组装 → 进循环 */
@@ -761,8 +747,8 @@ async function trEnter(c, alert, calendar) {
   c.done(alert ? 'sentinel' : 'clock');
   await c.pulse('sch-asm');
   c.done('sched'); c.on('asm');
-  for (const ch of ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9']) { c.chip('asm', ch); await c.sleep(120); }
-  c.log('PROMPT', { zh: '现读现拼：系统提示词（规则 + 两份笔记 + 交易指令）+ 开场白（事件 · 账户 · 上轮结论 · 日历）', en: 'assembled fresh: system prompt (rules + both notes + playbook) + opening (events · account · last conclusion · calendar)' });
+  for (const ch of ['c1', 'c2', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9']) { c.chip('asm', ch); await c.sleep(120); }
+  c.log('PROMPT', { zh: '现读现拼：系统提示词（规则 + 复盘笔记 + 交易指令）+ 开场白（事件 · 账户 · 上轮结论 · 日历）', en: 'assembled fresh: system prompt (rules + review notes + playbook) + opening (events · account · last conclusion · calendar)' });
   await c.sleep(500);
   await c.pulse('asm-ag');
   c.done('asm'); c.on('agent');
@@ -782,7 +768,7 @@ async function traderScript(c, scene) {
   c.scene(TR_SCENES[scene]);
 
   if (scene === 3) {
-    // 日线交接：交易定格 → 全体复盘 → 屏障 → 全体学习 → 笔记注入下一唤醒
+    // 日线交接：交易定格 → 全体复盘 → 笔记注入下一唤醒
     c.on('clock');
     c.log('CLOCK', { zh: '日线边界（UTC0 / 北京 08:00）', en: 'daily boundary (UTC0 / 08:00 Beijing)' });
     await c.sleep(600);
@@ -804,24 +790,12 @@ async function traderScript(c, scene) {
     c.row('rev', 'r3', 'hit', true);
     c.log('REVIEW', { zh: '复盘笔记覆盖 memory · REVIEW 决策行公开', en: 'note overwrites memory · REVIEW row goes public' }, 'good');
     await c.sleep(700);
-    c.log('BARRIER', { zh: '全局屏障：等所有 trader 的复盘写完', en: 'global barrier: wait for every trader’s review' }, 'warn');
+    c.log('SCHED', { zh: '等所有 trader 的复盘写完', en: 'wait for every trader’s review' }, 'warn');
     await c.sleep(1100);
-    c.done('rev');
-    await c.pulse('rev-learn');
-    c.on('learn');
-    c.row('learn', 'l1', 'hit');
-    c.log('LEARN', { zh: 'peer_insights：排行榜 → 深看排名靠前/靠后的人', en: 'peer_insights: leaderboard → deep-dive top and bottom peers' });
-    await c.sleep(900);
-    c.row('learn', 'l2', 'hit');
-    c.log('LEARN', { zh: '【不学什么】必填 · 引用战绩必须带笔数', en: '“what not to learn” mandatory · cited stats carry trade counts' });
-    await c.sleep(900);
-    c.row('learn', 'l3', 'hit', true);
-    c.log('LEARN', { zh: '学习笔记覆盖 learning_notes · LEARN 决策行公开', en: 'note overwrites learning_notes · LEARN row goes public' }, 'good');
-    await c.sleep(700);
     await c.pulse('notes-asm', { dur: 1100 });
-    c.done('learn'); c.on('asm');
-    c.chip('asm', 'c2'); c.chip('asm', 'c3');
-    c.log('SCHED', { zh: '窗口结束 · 下一根 K 线带着两份新笔记醒来', en: 'blackout over · next candle wakes with two fresh notes' }, 'good');
+    c.done('rev'); c.on('asm');
+    c.chip('asm', 'c2');
+    c.log('SCHED', { zh: '窗口结束 · 下一根 K 线带着新笔记醒来', en: 'blackout over · next candle wakes with a fresh note' }, 'good');
     await c.sleep(1300);
     c.done('asm'); c.done('sched'); c.done('clock');
     return;

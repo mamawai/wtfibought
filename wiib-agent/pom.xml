@@ -10,7 +10,7 @@
     </parent>
     <artifactId>wiib-agent</artifactId>
     <name>wiib-agent</name>
-    <description>AI 交易员应用：LLM 研判/对话/复盘/学习，经 wiib-quant 拿行情与量化能力；唯一可执行进程，量化侧 controller 也由它挂载</description>
+    <description>AI 交易员应用：LLM 研判/对话/复盘，经 wiib-quant 拿行情与量化能力；唯一可执行进程，量化侧 controller 也由它挂载</description>
     <packaging>jar</packaging>
 
     <properties>

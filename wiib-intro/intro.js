@@ -20,24 +20,24 @@ const COPY = {
   marketTag: { zh: '示例数据 · 非实时', en: 'Sample data · not live' },
 
   s1h: { zh: 'trader 看板', en: 'The trader board' },
-  s1lead: { zh: '每个 trader 一页<br>净值曲线 持仓 交易计划 决策时间线 复盘和学习笔记<br>谁都能看', en: 'One page per trader<br>Equity curve positions trade plans decision timeline review and learning notes<br>Anyone can read it' },
+  s1lead: { zh: '每个 trader 一页<br>净值曲线 持仓 交易计划 决策时间线 复盘和经验账本<br>谁都能看', en: 'One page per trader<br>Equity curve positions trade plans decision timeline reviews and the experience ledger<br>Anyone can read it' },
   s1note: { zh: '示例数据 · 非实时', en: 'Sample data · not live' },
 
   s2h: { zh: '一次唤醒是怎么跑的', en: 'What one wakeup looks like' },
   s2lead: { zh: 'K 线收盘把它叫醒<br>过闸 拼提示词 查数据 下单过校验 落账 公开 跑完就睡', en: 'A candle close wakes it<br>Gates prompt data a checked order the ledger then public' },
   s2hint: { zh: '点节点看说明 顶上可以切场景', en: 'Click a node to read and switch scenes on top' },
 
-  s3h: { zh: '每天复盘一次 再向别人学', en: 'Review daily then learn from others' },
-  s3lead: { zh: '每日UTC零时 交易先停<br>先复盘自己 再向别人学 然后接着交易', en: 'Every day at UTC 00:00 trading pauses<br>Review yourself first then learn from others then trade on' },
-  e1t: { zh: '先看自己', en: 'Look at yourself first' },
-  e1p: { zh: '当天战绩由代码算好 模型只负责解读 不能自己算分<br>先找错 再找亮点', en: 'The day’s stats are computed in code and the model only interprets<br>Errors first highlights second' },
-  e1k: { zh: '<div>一天一次 一次调用</div><div>复盘笔记进记忆</div>', en: '<div>Once a day one call</div><div>The review note goes into memory</div>' },
-  e2t: { zh: '等大家写完', en: 'Wait for everyone' },
-  e2p: { zh: '所有 trader 的复盘都写完 才开始学习<br>这样每个人读到的都是同一份材料', en: 'Learning starts only when every trader has written its review<br>That way everyone reads the same material' },
-  e2k: { zh: '<div>复盘和学习期间不交易</div><div>最多丢几根 K 线</div>', en: '<div>No trading during review and learning</div><div>A few candles at most are skipped</div>' },
-  e3t: { zh: '向别人学', en: 'Learn from others' },
-  e3p: { zh: '向好的 trader 学习 向差的 trader 吸取教训<br>每条学习都要带证据 还要写明不学什么', en: 'Learn from the good traders and take warnings from the bad ones<br>Every lesson needs evidence and a note on what not to learn' },
-  e3k: { zh: '<div>只读别人的复盘 不碰账户</div><div>学习笔记进下一次提示词</div>', en: '<div>Reads others’ reviews only and never touches accounts</div><div>The learning note goes into the next prompt</div>' },
+  s3h: { zh: '每天复盘一次 经验记进账本', en: 'Review daily and keep a ledger of lessons' },
+  s3lead: { zh: '每日UTC零时 交易先停<br>复盘当天的单子 把经验记进账本 然后接着交易', en: 'Every day at UTC 00:00 trading pauses<br>Review the day’s trades log the lessons in a ledger then trade on' },
+  e1t: { zh: '交易先停', en: 'Trading stops first' },
+  e1p: { zh: '日线边界一到 例行唤醒发完就关门<br>警报 手动唤醒 点播复盘一律拒 复盘读的是定格的一天', en: 'At the daily boundary the routine wakeups go out and the door closes<br>Alerts manual wakeups and on-demand reviews are refused so the review reads a frozen day' },
+  e1k: { zh: '<div>在途的交易先跑完</div><div>最多丢几根 K 线</div>', en: '<div>In-flight trades finish first</div><div>A few candles at most are skipped</div>' },
+  e2t: { zh: '按单子类型复盘', en: 'Review by setup type' },
+  e2p: { zh: '每笔的路径由代码从 5 分钟 K 线算好 最大浮盈 最大逆向 出场后走到哪<br>模型只答固定几问 失败怎么界定 赢在判断还是运气', en: 'Each trade’s path is computed in code from 5-minute candles max favorable move max adverse move where price went after the exit<br>The model only answers fixed questions how failure is defined and whether a win was judgment or luck' },
+  e2k: { zh: '<div>一天一次 当天没交易就跳过</div><div>复盘全文公开上时间线</div>', en: '<div>Once a day skipped when nothing traded</div><div>The full review goes public on the timeline</div>' },
+  e3t: { zh: '经验记进账本', en: 'Lessons go into a ledger' },
+  e3p: { zh: '每条经验被支持几次 被反对几次 由代码计数 假设攒够支持才升为规律<br>反对多了或久不验证就举旗复审 退役不删 主人能钉住也能否决', en: 'Code counts how often each lesson is supported or opposed and a hypothesis becomes a rule only once support piles up<br>Too much opposition or a long silence flags it for re-review retired entries are kept and the owner can pin or veto' },
+  e3k: { zh: '<div>账本每次唤醒都注入</div><div>结论里引用的编号也计数</div>', en: '<div>The ledger goes into every wakeup</div><div>Entry numbers cited in conclusions are counted too</div>' },
 
   s4h: { zh: '有问题 问 chat agent', en: 'Ask the chat agent' },
   s4lead: { zh: '问行情 问新闻 问你自己的 trader<br>它派几个专家并行查数据 再汇总回答<br>花钱的操作先问你<br>对 trader 的操作只弹表单 按钮在你手里', en: 'Ask about prices news or your own trader<br>It sends experts to fetch data in parallel then writes the answer<br>Costly actions ask first<br>Trader actions only show a form and you press the button' },
@@ -118,18 +118,17 @@ const DL = {
   basis: { zh: '依据：', en: 'Basis: ' }, invalidation: { zh: '失效条件', en: 'Invalidation' },
   entry: { zh: '入场', en: 'Entry' }, origSl: { zh: '原始止损', en: 'Initial SL' }, target: { zh: '目标', en: 'Target' }, setAt: { zh: '{t} 立', en: 'set {t}' },
   revisions: { zh: '修订 {n} 次', en: 'revised {n}×' },
-  notes: { zh: '笔记', en: 'Notes' }, memory: { zh: '记忆笔记', en: 'Memory' }, learning: { zh: '学习笔记', en: 'Learning' }, lastAt: { zh: '最近 {t}', en: 'Last {t}' },
+  notes: { zh: '笔记', en: 'Notes' }, memory: { zh: '记忆笔记', en: 'Memory' }, lastAt: { zh: '最近 {t}', en: 'Last {t}' },
   timeline: { zh: '决策时间线', en: 'Decision timeline' }, trades: { zh: '已了结交易', en: 'Closed trades' },
   lookedAt: { zh: '看了', en: 'Read' }, expand: { zh: '展开全文', en: 'Read all' }, collapse: { zh: '收起', en: 'Collapse' },
   unfold: { zh: '展开完整看板', en: 'Expand the board' }, fold: { zh: '收起看板', en: 'Collapse the board' },
   decision: { zh: '决策', en: 'Decision' }, alert: { zh: '波动警报', en: 'Volatility alert' },
-  review: { zh: '每日复盘', en: 'Daily review' }, learn: { zh: '同侪学习', en: 'Peer learning' },
+  review: { zh: '每日复盘', en: 'Daily review' },
   rejected: { zh: '·被拒', en: ' · rejected' },
   toolCalls: { zh: '{n}次工具', en: '{n} tool calls' }, modelCalls: { zh: '{n}次模型', en: '{n} model calls' },
   tool: {
     klines: { zh: 'K线', en: 'Candles' }, indicators: { zh: '指标', en: 'Indicators' }, snapshot: { zh: '市场快照', en: 'Market snapshot' },
     funding: { zh: '资金费', en: 'Funding' }, depth: { zh: '盘口', en: 'Order book' }, structure: { zh: 'K线结构', en: 'Structure' },
-    peer_insights: { zh: '别人的复盘', en: 'peer_insights' },
     open_position: { zh: '开仓', en: 'Open' }, close_position: { zh: '平仓', en: 'Close' }, set_stop_loss: { zh: '移动止损', en: 'Move stop' },
     write_plan: { zh: '补立计划', en: 'Write plan' }, cancel_order: { zh: '撤单', en: 'Cancel order' }
   },
@@ -608,7 +607,7 @@ function renderMarket() {
 
 /* ============================================================
    模拟看板：照 App 的 trader 详情页
-   记分牌 → 六格仪表条 → 左主栏（净值 + 时间线）‖ 右侧栏（持仓 + 计划 + 两份笔记）
+   记分牌 → 六格仪表条 → 左主栏（净值 + 时间线）‖ 右侧栏（持仓 + 计划 + 经验账本）
    ============================================================ */
 const RANGES = [{ id: 3, k: 'r3' }, { id: 7, k: 'r7' }, { id: 0, k: 'rAll' }];
 let dashRange = 3, dashTab = 'timeline', dashOpen = false, dashCounted = false;
@@ -680,7 +679,6 @@ function renderDash() {
         <div>
           <div class="blk-h"><h2>${T(DL.notes)}</h2></div>
           ${renderNote(T(DL.memory), MOCK.memory)}
-          ${renderNote(T(DL.learning), MOCK.learning)}
         </div>
       </div>
     </div>
@@ -804,13 +802,12 @@ function renderReason(text) {
   }).join('\n');
 }
 
-/* 决策卡：徽章/时间/权益/遥测 → 看了什么 → 交易动作（参数/拒因）→ 推理折叠；复盘/学习左边一道色线，正文直接铺开 */
+/* 决策卡：徽章/时间/权益/遥测 → 看了什么 → 交易动作（参数/拒因）→ 推理折叠；复盘左边一道色线，正文直接铺开 */
 function renderDecision(d) {
-  const log = d.kind === 'REVIEW' || d.kind === 'LEARN';
-  // 学习行的正文就是那份学习笔记
-  const text = d.kind === 'LEARN' ? T(MOCK.learning) : T(d.reasoning);
+  const log = d.kind === 'REVIEW';
+  const text = T(d.reasoning);
   const chips = log
-    ? `<span class="chip ${d.kind === 'REVIEW' ? 'rv' : 'ln'}"><svg data-icon="${d.kind === 'REVIEW' ? 'notebook-pen' : 'graduation-cap'}"></svg>${esc(T(d.kind === 'REVIEW' ? DL.review : DL.learn))}</span>`
+    ? `<span class="chip rv"><svg data-icon="notebook-pen"></svg>${esc(T(DL.review))}</span>`
     : `<span class="chip">${esc(T(DL.decision))}</span>${d.kind === 'ALERT' ? `<span class="chip wn">${esc(T(DL.alert))}</span>` : ''}`;
   // 复盘是单次调用不挂工具，不显示"0次工具"
   const meta = [`${ftok(d.tokens)} tok`, `${d.latency.toFixed(1)}s`, d.kind !== 'REVIEW' && fmt(DL.toolCalls, { n: d.toolCalls }), fmt(DL.modelCalls, { n: d.modelCalls })].filter(Boolean).join(' · ');
@@ -819,7 +816,7 @@ function renderDecision(d) {
       <b>${esc(toolName(a.tool))}${a.rejected ? esc(T(DL.rejected)) : ''}</b>
       <span>${esc(T(a.args))}${a.rejected ? `<span class="why">${esc(T(a.rejected))}</span>` : ''}</span>
     </div>`).join('');
-  return `<div class="dec${log ? ' log' : ''}${d.kind === 'LEARN' ? ' learn' : ''}">
+  return `<div class="dec${log ? ' log' : ''}">
     <div class="dec-h">${chips}<span class="num">${d.time}</span><span class="eqv">${T(DL.equity)} <b class="num">${fnum(d.equity)}</b></span><span class="meta num">${meta}</span></div>
     ${looked ? `<div class="dec-looked">${T(DL.lookedAt)} ${looked}</div>` : ''}
     ${acts ? `<div class="dec-acts">${acts}</div>` : ''}

@@ -2,8 +2,6 @@ package com.mawai.wiibagent.trader.wakeup;
 
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
-import com.mawai.wiibagent.learning.LearningRunner;
-import com.mawai.wiibagent.learning.PeerInsightService;
 import com.mawai.wiibagent.learning.ReviewRunner;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import com.mawai.wiibquant.mapper.EconCalendarMapper;
@@ -44,8 +42,6 @@ class TraderSchedulerTest {
     private final AiTraderMapper traderMapper = mock(AiTraderMapper.class);
     private final TraderWakeupRunner runner = mock(TraderWakeupRunner.class);
     private final ReviewRunner reviewRunner = mock(ReviewRunner.class);
-    private final LearningRunner learningRunner = mock(LearningRunner.class);
-    private final PeerInsightService peers = mock(PeerInsightService.class);
 
     /** 闸用真类配空 mock：查不到待公布事件就是已完成的放行信号，例行触发与没有闸时一样就地同步发 */
     private TraderScheduler sched() {
@@ -53,7 +49,7 @@ class TraderSchedulerTest {
     }
 
     private TraderScheduler sched(EconCalendarGate gate) {
-        return new TraderScheduler(traderMapper, runner, reviewRunner, learningRunner, peers, new MessageCatalog(), gate);
+        return new TraderScheduler(traderMapper, runner, reviewRunner, new MessageCatalog(), gate);
     }
 
     private AiTrader trader1h() {
@@ -61,17 +57,6 @@ class TraderSchedulerTest {
         t.setId(7L);
         t.setIntervalCode("1h");
         return t;
-    }
-
-    /** 同侪池（只有 id 有意义：门槛看的是池里有没有自己、除自己外还剩几个） */
-    private static List<AiTrader> pool(long... ids) {
-        List<AiTrader> list = new java.util.ArrayList<>();
-        for (long id : ids) {
-            AiTrader t = new AiTrader();
-            t.setId(id);
-            list.add(t);
-        }
-        return list;
     }
 
     private AlertTrigger trig() {
@@ -147,19 +132,17 @@ class TraderSchedulerTest {
         assertThat(s.nextRoutineWakeAt(trader1h())).isEqualTo(bj(13, 0));
     }
 
-    /** 时段不覆盖 08:00（21:00-07:00）：日线交接照样复盘+学习，只是 08:00 那根不做交易唤醒 */
+    /** 时段不覆盖 08:00（21:00-07:00）：日线交接照样复盘，只是 08:00 那根不做交易唤醒 */
     @Test
     void dailyHandoverIgnoresWindowButPhase0Respects() {
         AiTrader t = trader1h();
         t.setWakeWindow("21:00-07:00");
         when(traderMapper.selectList(any())).thenReturn(List.of(t));
-        when(peers.peers()).thenReturn(pool(8L, 9L));
         TraderScheduler s = sched();
 
         s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
 
-        verify(learningRunner, timeout(2_000)).learn(any(AiTrader.class), eq(DAY_BOUNDARY));
-        verify(reviewRunner).review(any(AiTrader.class), eq(DAY_BOUNDARY));
+        verify(reviewRunner, timeout(2_000)).review(any(AiTrader.class), eq(DAY_BOUNDARY));
         verify(runner, never()).wake(any(), anyLong());
     }
 
@@ -299,23 +282,21 @@ class TraderSchedulerTest {
         verify(runner, after(300).never()).wakeAlert(any(), any());
     }
 
-    // ---------- 日线交接：三阶段 + 屏障 + 停工窗口 ----------
+    // ---------- 日线交接：两阶段 + 停工窗口 ----------
 
-    /** 日线边界走三阶段交接：交易→复盘→学习都发生，且边界一致 */
+    /** 日线边界走两阶段交接：交易→复盘都发生，且边界一致 */
     @Test
-    void dailyBoundaryRunsThreePhases() {
+    void dailyBoundaryRunsTradeThenReview() {
         when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
-        when(peers.peers()).thenReturn(pool(8L, 9L));
         TraderScheduler s = sched();
 
         s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
 
-        verify(learningRunner, timeout(2_000)).learn(any(AiTrader.class), eq(DAY_BOUNDARY));
-        verify(reviewRunner).review(any(AiTrader.class), eq(DAY_BOUNDARY));
+        verify(reviewRunner, timeout(2_000)).review(any(AiTrader.class), eq(DAY_BOUNDARY));
         verify(runner).wake(any(AiTrader.class), eq(DAY_BOUNDARY));
     }
 
-    /** 非日线边界（普通整点）只有例行唤醒，没有复盘也没有学习 */
+    /** 非日线边界（普通整点）只有例行唤醒，没有复盘 */
     @Test
     void nonDailyBoundaryDoesNotReview() {
         when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
@@ -325,10 +306,9 @@ class TraderSchedulerTest {
 
         verify(runner, timeout(2_000)).wake(any(AiTrader.class), eq(H1_BOUNDARY));
         verify(reviewRunner, after(300).never()).review(any(), anyLong());
-        verify(learningRunner, after(1).never()).learn(any(), anyLong());
     }
 
-    /** review_enabled=false：交易照常，复盘不跑（学习开关独立，这里同侪不足学习也跳过） */
+    /** review_enabled=false：交易照常，复盘不跑 */
     @Test
     void reviewDisabledSkipsReview() {
         AiTrader t = trader1h();
@@ -389,33 +369,6 @@ class TraderSchedulerTest {
         awaitWindowClosed(s);
     }
 
-    /**
-     * 复盘→学习之间的全局屏障：任何一个 trader 的复盘没落库，全体学习都不许开始。
-     * 没有屏障，先学的人读到的是同侪昨天的复盘，同一轮学习里各人看到的世界不一样。
-     */
-    @Test
-    void learningWaitsForAllReviewsBarrier() throws Exception {
-        AiTrader fast = trader1h();
-        AiTrader slow = trader1h();
-        slow.setId(8L);
-        when(traderMapper.selectList(any())).thenReturn(List.of(fast, slow));
-        when(peers.peers()).thenReturn(pool(9L, 10L));   // 两个 learner 都在池外，各有 2 个同侪
-        TraderScheduler s = sched();
-        CountDownLatch slowReview = new CountDownLatch(1);
-        doAnswer(inv -> {
-            slowReview.await();
-            return null;
-        }).when(reviewRunner).review(argThat(t -> t.getId() == 8L), anyLong());
-
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
-
-        // 快的那个复盘早完成了，但慢的还卡着：屏障必须拦住所有人的学习
-        verify(reviewRunner, timeout(2_000)).review(argThat(t -> t.getId() == 7L), anyLong());
-        verify(learningRunner, after(300).never()).learn(any(), anyLong());
-        slowReview.countDown();
-        verify(learningRunner, timeout(2_000).times(2)).learn(any(), eq(DAY_BOUNDARY));
-    }
-
     /** 停工窗口拒绝例行：窗口内的K线事件整个丢弃不补跑；窗口关闭后例行恢复 */
     @Test
     void handoverWindowDropsKlineEventsAndRecovers() throws Exception {
@@ -467,72 +420,19 @@ class TraderSchedulerTest {
         awaitWindowClosed(s);
     }
 
-    /** 有效同侪不足 2 人：学习整体静默跳过（一个人的竞技场没有同侪可学，不写空话不留 ERROR） */
+    /** 一个人的复盘异常逃逸不许卡死窗口也不许拖垮别人：另一个照常复盘、窗口最终关闭 */
     @Test
-    void learningSkippedWhenTooFewPeers() {
-        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
-        when(peers.peers()).thenReturn(pool(8L));
+    void reviewExceptionDoesNotJamWindowOrOthers() throws Exception {
+        AiTrader broken = trader1h();
+        AiTrader other = trader1h();
+        other.setId(8L);
+        when(traderMapper.selectList(any())).thenReturn(List.of(broken, other));
+        doThrow(new RuntimeException("复盘炸了")).when(reviewRunner).review(argThat(t -> t.getId() == 7L), anyLong());
         TraderScheduler s = sched();
 
         s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
 
-        verify(reviewRunner, timeout(2_000)).review(any(), anyLong());
-        verify(learningRunner, after(500).never()).learn(any(), anyLong());
-    }
-
-    /** 门槛数的是同侪不含自己：池里 [自己, 甲] 只有 1 个同侪，不学 */
-    @Test
-    void selfInPoolDoesNotCountAsPeer() {
-        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
-        when(peers.peers()).thenReturn(pool(7L, 8L));
-        TraderScheduler s = sched();
-
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
-
-        verify(reviewRunner, timeout(2_000)).review(any(), anyLong());
-        verify(learningRunner, after(500).never()).learn(any(), anyLong());
-    }
-
-    /** 自己在池里且另有 2 个同侪：学 */
-    @Test
-    void selfInPoolWithTwoPeersLearns() {
-        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
-        when(peers.peers()).thenReturn(pool(7L, 8L, 9L));
-        TraderScheduler s = sched();
-
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
-
-        verify(learningRunner, timeout(2_000)).learn(argThat(t -> t.getId() == 7L), eq(DAY_BOUNDARY));
-    }
-
-    /** learning_enabled=false 的不学习，其他人照学（开关是每人自己的） */
-    @Test
-    void learningDisabledSkipsOnlyThatTrader() {
-        AiTrader on = trader1h();
-        AiTrader off = trader1h();
-        off.setId(8L);
-        off.setLearningEnabled(false);
-        when(traderMapper.selectList(any())).thenReturn(List.of(on, off));
-        when(peers.peers()).thenReturn(pool(8L, 9L));
-        TraderScheduler s = sched();
-
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
-
-        verify(learningRunner, timeout(2_000)).learn(argThat(t -> t.getId() == 7L), anyLong());
-        verify(learningRunner, after(300).never()).learn(argThat(t -> t.getId() == 8L), anyLong());
-    }
-
-    /** 复盘异常逃逸不许卡死窗口也不许拖垮别人：学习照常发生、窗口最终关闭 */
-    @Test
-    void reviewExceptionDoesNotJamWindowOrBarrier() throws Exception {
-        when(traderMapper.selectList(any())).thenReturn(List.of(trader1h()));
-        when(peers.peers()).thenReturn(pool(8L, 9L));
-        doThrow(new RuntimeException("复盘炸了")).when(reviewRunner).review(any(), anyLong());
-        TraderScheduler s = sched();
-
-        s.onKlineClosed(new KlineClosedEvent(this, "BTCUSDT", "5m", DAY_BOUNDARY - 1));
-
-        verify(learningRunner, timeout(2_000)).learn(any(), eq(DAY_BOUNDARY));
+        verify(reviewRunner, timeout(2_000)).review(argThat(t -> t.getId() == 8L), eq(DAY_BOUNDARY));
         awaitWindowClosed(s);
     }
 

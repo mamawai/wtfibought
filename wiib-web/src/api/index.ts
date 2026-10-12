@@ -672,7 +672,7 @@ export const traderApi = {
   updateConfig: (req: TraderUpsertRequest) => api.put<unknown, void>('/ai/trader/config', req),
   start: () => api.post<unknown, void>('/ai/trader/start'),
   pause: () => api.post<unknown, void>('/ai/trader/pause'),
-  /** carryNotes=false 不带入复盘/学习笔记（只清生效版本，历届存档保留） */
+  /** carryNotes=false 不带入经验账本（只清生效版本，历届存档保留） */
   reset: (carryNotes: boolean) => api.post<unknown, void>('/ai/trader/reset', { carryNotes }),
   /** 删 trader：决策/计划/每局 sim 子账户全物理删除，不可逆；confirmName 要与 trader 名字一字不差 */
   remove: (confirmName: string) =>

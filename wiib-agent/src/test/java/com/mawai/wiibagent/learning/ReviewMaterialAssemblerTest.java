@@ -587,7 +587,7 @@ class ReviewMaterialAssemblerTest {
         assertThat(assembler.hasNewMaterial(trader(), FROM, TO)).isFalse();
     }
 
-    /** 开仓动作只数交易行白名单（TRADE/ALERT/MANUAL）且 actions 里带 open_position；LEARN/REVIEW 行天天有，不许充当素材 */
+    /** 开仓动作只数交易行白名单（TRADE/ALERT/MANUAL）且 actions 里带 open_position；REVIEW 行天天有，不许充当素材 */
     @Test
     void openAttemptQueryFiltersByKindWhitelistAndAction() {
         when(decisionMapper.selectCount(any())).thenAnswer(inv -> {
@@ -596,7 +596,7 @@ class ReviewMaterialAssemblerTest {
             w.getTargetSql();
             var values = w.getParamNameValuePairs().values();
             assertThat(values).contains(AiTraderDecision.KIND_TRADE, AiTraderDecision.KIND_ALERT, AiTraderDecision.KIND_MANUAL);
-            assertThat(values).doesNotContain(AiTraderDecision.KIND_REVIEW, AiTraderDecision.KIND_LEARN);
+            assertThat(values).doesNotContain(AiTraderDecision.KIND_REVIEW);
             assertThat(values.stream().anyMatch(v -> String.valueOf(v).contains("open_position"))).isTrue();
             return 1L;
         });

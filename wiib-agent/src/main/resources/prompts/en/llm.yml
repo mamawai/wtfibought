@@ -24,5 +24,5 @@ llm:
     # executed" rather than faking a success - the model and the retrospective both read it, and it is
     # persisted with the conversation context
     notExecuted: "Not executed: the model-call limit for this run was reached and the tool was skipped."
-    # Appended to the last tool receipt the fuse still lets through (shared by chat leaves / trader wake-ups / learning; names no one's closing format)
+    # Appended to the last tool receipt the fuse still lets through (shared by chat leaves / trader wake-ups; names no one's closing format)
     lastCall: "(System notice: this round's tool-call budget is used up - give your final answer in the next reply and call no more tools.)"

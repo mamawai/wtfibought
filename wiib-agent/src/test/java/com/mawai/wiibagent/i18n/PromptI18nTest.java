@@ -15,7 +15,6 @@ import com.mawai.wiibcommon.market.KlineBar;
 import com.mawai.wiibcommon.market.KlineHistoryStore;
 import com.mawai.wiibagent.learning.CaseFileBuilder;
 import com.mawai.wiibagent.learning.ExperienceLedger;
-import com.mawai.wiibagent.learning.PeerInsightService;
 import com.mawai.wiibagent.learning.ReviewMaterialAssembler;
 import com.mawai.wiibagent.trader.prompt.PlayStatsAssembler;
 import com.mawai.wiibagent.trader.prompt.TraderPromptAssembler;
@@ -51,7 +50,7 @@ import static org.mockito.Mockito.when;
  *   <li><b>中文侧的关键约束一条都不许在搬家时丢</b>——这批是"外置 + 加英文版"，不是重写中文提示词。
  *       钉住的是行为约束句，不是文案措辞。</li>
  *   <li><b>分隔符按语言认对应那一套</b>——见 {@code PromptMarkParsingTest}（要包内可见的
- *       parse/missingMarks/waitSection，放在 learning 包里）。</li>
+ *       parse/userPrompt，放在 learning 包里）。</li>
  * </ul>
  */
 class PromptI18nTest {
@@ -69,10 +68,6 @@ class PromptI18nTest {
     private final PromptCatalog prompts = new PromptCatalog();
     private final ReplayCoachPrompts coach = new ReplayCoachPrompts(prompts);
 
-    /** 笔记上限按语言给（见 NoteBudget）；提示词里那句"≤N"就是这个数注进去的 */
-    private static final Map<String, Object> NOTE_CAP_ZH = Map.of("maxChars", 2000);
-    private static final Map<String, Object> NOTE_CAP_EN = Map.of("maxChars", 4000);
-
     /** 逐码点扫 CJK 的实现在 {@link PromptI18nAssertions}：唤醒开场白那条钉子在 trader 包，两边共用一份 */
     private static void assertNoCjk(String label, String text) {
         PromptI18nAssertions.assertNoCjk(label, text);
@@ -86,7 +81,6 @@ class PromptI18nTest {
                 new TraderPromptAssembler(mock(AiTraderMapper.class), prompts, mock(ExperienceLedger.class));
         AiTrader t = enTrader();
         t.setMemory("突破回踩不守住颈线就别追。");            // 旧笔记是中文：原样注入不算违规
-        t.setLearningNotes("同侪A的BREAKOUT 12笔8胜。");
         t.setCustomPrompt("Breakouts only.");
         t.setOwnerNote("Watch CPI tonight.");
         t.setOwnerNoteRounds(3);
@@ -94,7 +88,7 @@ class PromptI18nTest {
 
         String full = assembler.assemble(t, AgentLang.EN);
         // 用户自己写的字与旧笔记原样注入，扫描前剥掉——它们本来就不该被翻译
-        String platform = full.replace(t.getMemory(), "").replace(t.getLearningNotes(), "");
+        String platform = full.replace(t.getMemory(), "");
         assertNoCjk("英文 trader 提示词", platform);
         // 留言段走开场白不走 system：段头/亲笔提示/footer 同样零中文
         assertNoCjk("英文留言段", assembler.ownerNoteBlock(t, AgentLang.EN));
@@ -125,20 +119,6 @@ class PromptI18nTest {
     }
 
     @Test
-    void 英文learning提示词与同侪块全文无中文() {
-        assertNoCjk("英文 learning 系统提示词", prompts.get(AgentLang.EN, "learning.system", NOTE_CAP_EN));
-        assertNoCjk("英文 peer_insights 工具描述", prompts.get(AgentLang.EN, "tool.peer_insights"));
-        assertNoCjk("英文 learning 收尾指令", prompts.get(AgentLang.EN, "learning.label.closing"));
-        assertNoCjk("英文 learning 输出语言硬收尾",
-                prompts.get(AgentLang.EN, "learning.label.outputLanguage"));
-
-        PeerInsightService peers = enPeers();
-        assertNoCjk("英文同侪排行榜", peers.leaderboard(7L, AgentLang.EN));
-        assertNoCjk("英文同侪详情", peers.detail(8L, AgentLang.EN));
-        assertNoCjk("英文查无此人", peers.detail(404L, AgentLang.EN));
-    }
-
-    @Test
     void 英文chat全链路提示词与过程文案全文无中文() {
         for (String key : List.of("chat.expert.market", "chat.expert.news", "chat.expert.trader",
                 "chat.router", "chat.expertHandoff", "chat.yieldPlaceholder", "chat.cancelledNote",
@@ -156,7 +136,7 @@ class PromptI18nTest {
                 "chat.deepAnalysis.progress.judged", "chat.outputLanguage",
                 "chat.turn.timePrefix", "chat.turn.questionPrefix",
                 "chat.traderQuery.wakeWindowAllDay", "chat.traderQuery.memoryNote",
-                "chat.traderQuery.learningNotesNote", "chat.traderQuery.kindNote",
+                "chat.traderQuery.kindNote",
                 "chat.traderQuery.planNote", "chat.traderQuery.noTrader",
                 "llm.callLimit.notExecuted",
                 "tool.route", "tool.run_deep_analysis",
@@ -301,27 +281,14 @@ class PromptI18nTest {
                 .contains("【本期复盘】").contains("【经验更新】");
     }
 
-    /** learning 的反照抄三件套 */
+    /** 两处都要显式交代"笔记可能是另一门语言，照读照用，输出用当前语言" */
     @Test
-    void 中文learning保住反照抄三条() {
-        String p = prompts.get(AgentLang.ZH, "learning.system", NOTE_CAP_ZH);
-        assertThat(p)
-                .as("①【不学什么】必填").contains("【不学什么】是必填段").contains("你就只是在抄")
-                .as("② 每条学习带证据与差距数字").contains("每条学习必须落在证据与差距上")
-                .as("③ 引用战绩带笔数").contains("引用同侪战绩必须带笔数")
-                .contains("【本期学习】").contains("【前车之鉴】");
-    }
-
-    /** 三处都要显式交代"笔记可能是另一门语言，照读照用，输出用当前语言" */
-    @Test
-    void 三处提示词都交代了跨语言笔记() {
+    void 两处提示词都交代了跨语言笔记() {
         assertThat(new TraderPromptAssembler(mock(AiTraderMapper.class), prompts, mock(ExperienceLedger.class))
                 .platformTemplate(AgentLang.ZH, "1h", "BTCUSDT", TraderRiskConfig.of(new AiTrader()), null))
                 .contains("可能是另一门语言写的").contains("本轮输出一律用中文");
         assertThat(prompts.get(AgentLang.ZH, "reviewer.system")).contains("可能是另一门语言写的");
-        assertThat(prompts.get(AgentLang.ZH, "learning.system", NOTE_CAP_ZH)).contains("可能是另一门语言写的");
         assertThat(prompts.get(AgentLang.EN, "reviewer.system")).contains("another language");
-        assertThat(prompts.get(AgentLang.EN, "learning.system", NOTE_CAP_EN)).contains("another language");
     }
 
     /** 解析器靠行首固定词分流：同一门语言里结论词 / 格子词 / 方向词 / 复审结论词各组内不许撞 */
@@ -348,8 +315,7 @@ class PromptI18nTest {
     void 三个域的英文词表都真有自己的文案() {
         for (String key : List.of("trader.template", "trader.label.memory", "trader.mark.conclusion",
                 "reviewer.system", "reviewer.mark.updates", "reviewer.label.statsHeader",
-                "learning.system", "learning.mark.skip", "learning.label.peer.leaderboardHeader",
-                "tool.peer_insights", "tool.route", "tool.run_deep_analysis", "tool.news_search",
+                "tool.route", "tool.run_deep_analysis", "tool.news_search",
                 "chat.summarizer", "chat.router", "chat.expert.market", "chat.expert.news",
                 "chat.expert.trader", "chat.compress.prompt", "chat.deepAnalysis.judgePrompt",
                 "chat.hitl.reason", "chat.deferred.prefix",
@@ -376,7 +342,7 @@ class PromptI18nTest {
                 "trader.label.ownerWritten", "trader.label.outputLanguage",
                 // 主人指令段的占位句与平台默认指令：预填进英文用户的指令框，回落成中文他就得删掉重写
                 "trader.label.customPromptEmpty", "trader.label.defaultInstructions",
-                "reviewer.label.outputLanguage", "learning.label.outputLanguage",
+                "reviewer.label.outputLanguage",
                 "chat.outputLanguage", "coach.label.outputLanguage",
                 // 上游异常归类后的那一句：chat 与 coach 共用，既上屏也喂回模型
                 "llm.error.unauthorized", "llm.error.quota", "llm.error.modelNotFound",
@@ -454,13 +420,6 @@ class PromptI18nTest {
         assertThat(en).as("英文侧的触发词").contains(enTrigger);
         assertThat(zh.replace(zhTrigger, enTrigger))
                 .as("除触发词外两侧必须逐字相同").isEqualTo(en);
-    }
-
-    /** 学习笔记上限按语言给，且提示词里那句"≤N"就是代码真截断的那个数 */
-    @Test
-    void 笔记上限按语言注入提示词() {
-        assertThat(prompts.get(AgentLang.ZH, "learning.system", NOTE_CAP_ZH)).contains("2000 字以内");
-        assertThat(prompts.get(AgentLang.EN, "learning.system", NOTE_CAP_EN)).contains("under 4000 characters");
     }
 
     // ==================== ③ 混语言提示词的缓解（任务 5）====================
@@ -640,39 +599,6 @@ class PromptI18nTest {
         return new ReviewMaterialAssembler(decisionMapper, planMapper, sim, prompts, new CaseFileBuilder(store),
                 ledger, new PlayStatsAssembler(sim, planMapper, prompts))
                 .assemble(t, FROM, TO, AgentLang.EN);
-    }
-
-    private PeerInsightService enPeers() {
-        AiTraderMapper traderMapper = mock(AiTraderMapper.class);
-        AiTraderDecisionMapper decisionMapper = mock(AiTraderDecisionMapper.class);
-        AiTraderPlanMapper planMapper = mock(AiTraderPlanMapper.class);
-        SimTradeClient sim = mock(SimTradeClient.class);
-        ReviewMaterialAssembler assembler = mock(ReviewMaterialAssembler.class);
-
-        AiTrader me = enTrader();
-        me.setStatus(AiTrader.STATUS_RUNNING);
-        AiTrader other = enTrader();
-        other.setId(8L);
-        other.setName("Beta");
-        other.setSimUserId(80L);
-        other.setStatus(AiTrader.STATUS_LIQUIDATED);
-        other.setLearningNotes("what I took from peers");
-
-        when(traderMapper.selectList(any())).thenReturn(List.of(me, other));
-        when(traderMapper.selectById(8L)).thenReturn(other);
-        when(traderMapper.selectById(404L)).thenReturn(null);
-        AiTraderDecision review = new AiTraderDecision();
-        review.setWakeTime(TO);
-        review.setReasoning("[REVIEW]\nScorecard: 10000 -> 11500\nRules: wait for the retest");
-        when(assembler.lastReview(anyLong(), anyInt())).thenReturn(review);
-        when(decisionMapper.selectOne(any())).thenReturn(equityRow(TO, "11500"));
-        when(sim.getClosedPositions(anyLong(), anyInt())).thenReturn(List.of(
-                closedPos("300", FROM + 3600_000, FROM + 7200_000)));
-        when(planMapper.selectList(any())).thenReturn(List.of(
-                plan(AiTraderPlan.STATUS_LIVE), plan(AiTraderPlan.STATUS_CLOSED)));
-        // 两人都挂着仓 → 都在同侪池里（在场判据不依赖墙钟）
-        when(sim.getAllPositions(anyLong())).thenReturn(List.of(new FuturesPositionDTO()));
-        return new PeerInsightService(traderMapper, decisionMapper, planMapper, sim, assembler, prompts);
     }
 
 }

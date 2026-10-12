@@ -176,8 +176,7 @@ chat:
     wakeWindowNote: "{{window}} (Beijing time; outside the window there are no scheduled wake-ups and no alerts)"
     leverage: "{{min}}~{{max}}x"
     memoryNote: "Full review notes: written by the reviewer at the daily retrospective; the trader sees them on every wake-up"
-    learningNotesNote: "Full learning notes: written by the learning agent studying its peers; the trader sees them on every wake-up"
-    kindNote: "TRADE=candle-close wake-up ALERT=volatility-alert wake-up MANUAL=owner's manual wake-up REVIEW=daily retrospective (reasoning is the full review text) LEARN=peer learning (reasoning is the full learning text)"
+    kindNote: "TRADE=candle-close wake-up ALERT=volatility-alert wake-up MANUAL=owner's manual wake-up REVIEW=daily retrospective (reasoning is the full review text)"
     planNote: "invalidationCondition is the invalidation clause set when the position was opened - only when it triggers may the position be closed proactively; revisions is the audit trail of stop-loss/take-profit moves"
     noTrader: "This user has not created an AI Trader yet; one can be created on the \"My Trader\" page"
 

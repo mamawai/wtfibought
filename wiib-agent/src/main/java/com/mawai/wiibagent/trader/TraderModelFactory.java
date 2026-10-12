@@ -35,7 +35,7 @@ public class TraderModelFactory {
 
     /**
      * 取这个 trader 当前该用的模型。用户一条端点都没有时抛 IllegalStateException——
-     * 唤醒/复盘/学习三个 runner 都把 modelFor 包在自己的失败处理里（连败计数、暂停），不需要在这里兜。
+     * 唤醒/复盘两个 runner 都把 modelFor 包在自己的失败处理里（连败计数、暂停），不需要在这里兜。
      */
     public ChatModel modelFor(AiTrader trader) {
         UserLlmEndpoint endpoint = endpointFor(trader);

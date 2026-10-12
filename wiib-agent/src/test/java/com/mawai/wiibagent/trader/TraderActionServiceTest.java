@@ -358,7 +358,7 @@ class TraderActionServiceTest {
         verify(reviewRunner, never()).review(any(), anyLong());
     }
 
-    /** 停工窗口内旁路写复盘，learner 会读到"半天"的复盘、脏读进记忆——连素材都不该去查 */
+    /** 停工窗口内点播会抢掉日线复盘的位子——连素材都不该去查 */
     @Test
     void 停工窗口内拒绝点播复盘() {
         mine(running());

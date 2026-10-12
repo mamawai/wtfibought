@@ -16,7 +16,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
- * trader 系统提示词组装：平台模板 + 经验账本 + 学习笔记 + 用户自定义段 + 固定收尾格式 + 输出语言。
+ * trader 系统提示词组装：平台模板 + 经验账本 + 用户自定义段 + 固定收尾格式 + 输出语言。
  * 每次唤醒现读现拼——用户改完 customPrompt，下一根 K 线自然生效，热更新零机制。
  * <p>
  * 文本全在 {@link PromptCatalog} 的 {@code trader.*}，按用户的 {@link AgentLang} 取；骨架
@@ -48,7 +48,7 @@ public class TraderPromptAssembler {
     public String assemble(AiTrader trader, AgentLang lang) {
         StringBuilder sb = new StringBuilder();
         WakeWindow window = WakeWindow.of(trader);
-        // 平台模板只讲事实，永远注入；经验账本/学习笔记是数据不是指令，也永远注入
+        // 平台模板只讲事实，永远注入；经验账本是数据不是指令，也永远注入
         sb.append(platformTemplate(lang, trader.getIntervalCode(), trader.getSymbols(),
                 TraderRiskConfig.of(trader), window == null ? null : window.text()));
 
@@ -60,12 +60,6 @@ public class TraderPromptAssembler {
                         ? "trader.label.ledgerHoldAllowed" : "trader.label.ledgerHoldDenied")).append('\n');
             }
             sb.append(trader.getMemory()).append('\n');
-        }
-
-        // 与复盘笔记并列注入不合并：来源分开，模型才分得清"自己的教训"与"从别人学的"
-        if (trader.getLearningNotes() != null && !trader.getLearningNotes().isBlank()) {
-            sb.append('\n').append(prompts.get(lang, "trader.label.learningNotes")).append('\n')
-                    .append(trader.getLearningNotes()).append('\n');
         }
 
         // 主人的交易指令段无条件出：模板正文和开场白都指向它。有字就原样注入不过词表，

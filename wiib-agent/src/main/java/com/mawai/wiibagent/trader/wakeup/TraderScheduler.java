@@ -3,8 +3,6 @@ package com.mawai.wiibagent.trader.wakeup;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
-import com.mawai.wiibagent.learning.LearningRunner;
-import com.mawai.wiibagent.learning.PeerInsightService;
 import com.mawai.wiibagent.learning.ReviewRunner;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
@@ -28,13 +26,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * 不做兜底补漏：WS/事件断流丢的K线就丢了——陈旧信号唤醒没有意义（迟到事件由唤醒预算兜底：
  * 距下一边界不足 30s 直接放弃，见 TraderWakeupRunner）。
  * 唤醒时段（ai_trader.wake_window，见 {@link WakeWindow}）只在这里过滤：例行/警报时段外静默跳过（不写 SKIPPED，
- * 5m 档一天会写 150 行"休眠中"），手动唤醒不拦，日线交接的复盘/学习不看它。
+ * 5m 档一天会写 150 行"休眠中"），手动唤醒不拦，日线交接的复盘不看它。
  * 边界撞上 High 级数据公布时刻，例行触发先过 {@link EconCalendarGate}（最多等 30s 拿实际值）再发。
  * <p>
- * 日线边界走三阶段交接（见 {@link #startDailyHandover}）：先交易、再全体复盘、最后全体学习，
- * 复盘与学习之间是全局屏障——learning 读的是同侪<b>刚写好</b>的复盘，没有屏障，同一轮学习里
- * 各人看到的世界就不一样。停工窗口在阶段0的唤醒发出后就开、交接结束才关，期间拒绝一切新唤醒
- * （例行/警报/手动/点播复盘），复盘与学习读的必须是"已定格的一天"，边写边读的脏读会进记忆污染后续每一轮。
+ * 日线边界走两阶段交接（见 {@link #startDailyHandover}）：先交易、再全体复盘。
+ * 停工窗口在阶段0的唤醒发出后就开、交接结束才关，期间拒绝一切新唤醒（例行/警报/手动/点播复盘），
+ * 复盘读的必须是"已定格的一天"，边写边读的脏读会进记忆污染后续每一轮。
  */
 @Slf4j
 @Component
@@ -46,18 +43,10 @@ public class TraderScheduler {
             "5m", 300_000L, "15m", 900_000L, "1h", 3_600_000L, "4h", 14_400_000L, "1d", 86_400_000L);
     /** 例行唤醒只遍历四档（1d 档位已下线，存量 1d trader 自然停摆） */
     static final Set<String> WAKE_INTERVALS = Set.of("5m", "15m", "1h", "4h");
-    /**
-     * 学习的同侪门槛：同侪池（{@link PeerInsightService#peers()}：同意学习 + 未暂停 + 在场）里
-     * 除自己外不足 2 人，该 learner 本日不学。池是同一把尺子：不在池里的既凑不了人数，也进不了任何人的素材。
-     * 学习者自己不必在池里——刚开局还没开过仓的新人恰恰最该学。
-     */
-    static final int MIN_PEERS_FOR_LEARNING = 2;
 
     private final AiTraderMapper traderMapper;
     private final TraderWakeupRunner runner;
     private final ReviewRunner reviewRunner;
-    private final LearningRunner learningRunner;
-    private final PeerInsightService peerInsightService;
     /** 手动唤醒的拦因当场回给用户，跟界面语言 */
     private final MessageCatalog messages;
     private final EconCalendarGate calendarGate;
@@ -76,7 +65,7 @@ public class TraderScheduler {
     private final AtomicLong lastHandoverBoundary = new AtomicLong(-1);
     /** 停工窗口位：交接编排线程独写，事件/警报/手动入口只读
      * -- GETTER --
-     * 停工窗口是否开着：点播复盘（chat 轨）入场前也要看它，三阶段期间不许旁路写复盘
+     * 停工窗口是否开着：点播复盘（chat 轨）入场前也要看它，交接期间不许旁路写复盘
      */
     @Getter
     private volatile boolean handoverActive = false;
@@ -92,7 +81,7 @@ public class TraderScheduler {
         }
         if (handoverActive) {
             // 窗口内的K线事件直接丢弃不补跑：与"不做兜底补漏"同一条哲学——陈旧信号没有意义。
-            // 代价是 5m 档最多跳过 5 根K线（窗口上界＝唤醒600s＋复盘600s＋学习300s），每天只有一次，可接受
+            // 代价是 5m 档最多跳过 4 根K线（窗口上界＝唤醒600s＋复盘600s），每天只有一次，可接受
             log.info("[TraderSched] 日线交接中，丢弃K线事件 {} closeTime={}", event.symbol(), event.closeTime());
             return;
         }
@@ -117,10 +106,8 @@ public class TraderScheduler {
 
     /**
      * 日线交接编排（本功能唯一的全局同步点）：
-     * 阶段0 全体例行唤醒发出 → 【停工窗口开】→ 等交易跑完 → 阶段1 全体复盘并行 →
-     * 屏障（等全部复盘落库）→ 阶段2 全体学习并行 → 【停工窗口关】。
-     * 屏障保证每个 learner 读到的是同侪同一天的复盘；窗口保证复盘/学习读的是定格数据。
-     * 各阶段单人超时都有硬顶（唤醒600s/复盘600s/学习300s），join 不会永久卡住。
+     * 阶段0 全体例行唤醒发出 → 【停工窗口开】→ 等交易跑完 → 阶段1 全体复盘并行 → 等全部复盘落库 → 【停工窗口关】。
+     * 窗口保证复盘读的是定格数据。各阶段单人超时都有硬顶（唤醒600s/复盘600s），join 不会永久卡住。
      */
     private void startDailyHandover(long boundary) {
         // 原子抢占：日线边界的多 symbol 事件里只有一个赢家启动交接
@@ -147,21 +134,6 @@ public class TraderScheduler {
                 joinAll(phase(running().stream()
                         .filter(t -> !Boolean.FALSE.equals(t.getReviewEnabled())).toList(),
                         t -> reviewRunner.review(t, boundary), "复盘"));
-                // ===== 屏障已过：全部复盘落库，learning 读到的同侪世界是同一天的 =====
-                List<AiTrader> pool = peerInsightService.peers();
-                if (pool.size() < MIN_PEERS_FOR_LEARNING) {
-                    // 设计定案的降级：同侪不足整体静默跳过，不写空话也不留 ERROR 行
-                    log.info("[TraderSched] 同侪池不足{}人（现{}人），本日学习整体跳过", MIN_PEERS_FOR_LEARNING, pool.size());
-                    return;
-                }
-                Set<Long> poolIds = pool.stream().map(AiTrader::getId).collect(java.util.stream.Collectors.toSet());
-                // 阶段2：全体学习并行。再 fresh 一次——阶段1刚写完 memory，learner 注入要拿最新的
-                joinAll(phase(running().stream()
-                        .filter(t -> !Boolean.FALSE.equals(t.getLearningEnabled()))
-                        // 自己在池里就占一格，剩下的才是同侪
-                        .filter(t -> pool.size() - (poolIds.contains(t.getId()) ? 1 : 0) >= MIN_PEERS_FOR_LEARNING)
-                        .toList(),
-                        t -> learningRunner.learn(t, boundary), "学习"));
             } finally {
                 // 异常也不许卡死窗口：窗口关不上，全体 trader 就永久停摆了
                 handoverActive = false;
@@ -174,7 +146,7 @@ public class TraderScheduler {
      * 交接的一个阶段：每 trader 一个虚拟线程（复用 inFlight 互斥），
      * 返回线程列表由调用方 join 成屏障。
      * inFlight 抢不到＝上一边界的交易还没跑完（预算最长600s），该 trader 本阶段跳过——
-     * 硬等会拖住全体，而复盘/学习明天还有机会；这也是屏障不脏读的第二道闸：
+     * 硬等会拖住全体，而复盘明天还有机会；这也是复盘不脏读的第二道闸：
      * 停工窗口挡住新唤醒，inFlight 挡住残留的旧唤醒。
      */
     private List<Thread> phase(List<AiTrader> traders, java.util.function.Consumer<AiTrader> action, String label) {
@@ -267,7 +239,7 @@ public class TraderScheduler {
      */
     public void tryAlertWake(AiTrader trader, AlertTrigger trigger) {
         if (handoverActive) {
-            // 停工窗口挡警报：复盘/学习读的是定格数据，警报唤醒一开仓就是脏读
+            // 停工窗口挡警报：复盘读的是定格数据，警报唤醒一开仓就是脏读
             log.info("[TraderSched] 日线交接中，警报放弃 traderId={} {}", trader.getId(), trigger.symbol());
             return;
         }

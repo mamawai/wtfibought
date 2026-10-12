@@ -16,13 +16,12 @@
 2. **选型只有一条准则**：固定步骤写死成代码，开放决策才交给模型循环。同一条准则也管形态内部——chat 的**编排**是普通 Java 循环（`ChatTurnRunner`），只有**叶子**是 `ReactLoop`。
 3. **模型来源两条轨**：面向用户的全部 BYOK（用户自带 key，AES-GCM 加密存库）；平台自己只剩 `newsTranslation` 一个功能位（外加可空备用位）买单（见 `runtime/AiAgentRuntime`）——行为分析已在 2026-08 切到用户自己的 key。
 
-### 六处装置速查
+### 五处装置速查
 
 | 装置 | 形态 | 循环 | 触发 | 代码在 |
 |---|---|:---:|---|---|
 | **trader agent** | ReAct 循环（15 工具） | ✓ | K 线收盘 / 波动警报 / 手动 | `trader/`（现场流与轨迹见 5.7） |
 | **chat agent** | 平铺编排 + ReAct 循环叶子 | ✓ 带回环 | 用户提问 | `chat/` |
-| **learning agent** | ReAct 循环（1 只读工具） | ✓ | 日线交接第三阶段 | `learning/LearningRunner` |
 | **reviewer workflow** | 单次调用，无工具 | ✗ | 日线交接第二阶段 / 点播 | `learning/ReviewRunner` |
 | **behavior workflow** | 单次调用，无工具 | ✗ | 对话里的 `analyze_my_behavior` | `behavior/` |
 | **replay coach** | 单次流式调用，无工具 | ✗ | 手动复盘点「AI 提示 / AI 评估」 | `controller/ReplayCoachController` |
@@ -37,7 +36,7 @@ flowchart LR
     C --> T["③ ReactLoop 读法<br/>（必须在主线之后）"]
     T --> I["④ i18n<br/>（横跨两条链）"]
     I --> TR["⑤ trader agent"]
-    TR --> L["⑥ reviewer / learning<br/>选型准则教材"]
+    TR --> L["⑥ reviewer<br/>选型准则教材"]
     L --> ONE["⑦ 三处一次性调用"]
     ONE --> FE["⑧ 前端"]
     FE --> TEST["⑨ 拿测试当说明书"]
@@ -292,7 +291,7 @@ POST /api/ai/workbench/chat
 1. **给模型看的走 `PromptCatalog`，给用户看的走 `MessageCatalog`**。两者语言来源不同：前者跟 trader 主人 / 叶子的语言，后者跟当次请求的界面语言。
 2. **读旧数据认全部语言，校验本轮输出只认当前那门**。这条有两面，别用反：
    - 库里的旧数据是写入时那门语言落的，所以 `ChatRowKind.of`、`ConversationSummarizer.isSummary`、`ChatTurnRewinder.cutAt`、`DecisionText.locateConclusion`、`ExperienceLedger.isRendered` 全都逐语言各认一遍。认死一门就会静默失配——补答行冒出"重新生成"按钮、整段结论被判成"没写结论块"。
-   - 反过来，`ExperienceOpParser.parse` / `LearningRunner.missingMarks` 校验的是**模型本轮刚交出来的东西**，只认本轮提示词那一门的标记与行首固定词：提示词刚让它用英文标记、它交回中文标记，那就是没照格式走，按格式失守降级才对。两门都认会把真失守悄悄放过。
+   - 反过来，`ExperienceOpParser.parse` 校验的是**模型本轮刚交出来的东西**，只认本轮提示词那一门的标记与行首固定词：提示词刚让它用英文标记、它交回中文标记，那就是没照格式走，按格式失守降级才对。两门都认会把真失守悄悄放过。
 3. **用户自己写的字不翻译**：`customPrompt`、`ownerNote` 原样注入，前面垫一句"这段是主人亲笔、可能是另一门语言、照意思做但输出语言不变"。
 
 `@ToolParam` 的参数描述**不跟语言走**（嵌在自动推导的 inputSchema 里，换语言要在 schema 层逐字段改写，复杂度不值），全仓统一写英文。
@@ -322,15 +321,13 @@ POST /api/ai/workbench/chat
 阶段0 全体例行唤醒**发出**（不等结果）
   →【停工窗口开】挡住全部四个入口  ← 发完就开，不是跑完才开
   → join 等在途交易全部结束（复盘读的才是定格的一天）
-阶段1 全体复盘并行
-  → 屏障（等全部复盘落库）  ← 没有它，同一轮学习里各人看到的世界就不一样
-阶段2 全体学习并行（同侪池不足 2 人整体静默跳过）
+阶段1 全体复盘并行，join 等全部复盘落库
   →【停工窗口关，在 finally 里】 ← 关不上全体 trader 就永久停摆了
 ```
 
-**窗口为什么要在 join 之前开**：晚开的话，5m 档会在阶段 0 等待期间又撞上一次边界醒来、占住 inFlight，那个 trader 的复盘就被 `phase()` 跳过了。代价是窗口把阶段 0 的交易执行也圈了进去，上界从「复盘 600s + 学习 300s」变成「唤醒 600s + 复盘 600s + 学习 300s」。
+**窗口为什么要在 join 之前开**：晚开的话，5m 档会在阶段 0 等待期间又撞上一次边界醒来、占住 inFlight，那个 trader 的复盘就被 `phase()` 跳过了。代价是窗口把阶段 0 的交易执行也圈了进去，上界从「复盘 600s」变成「唤醒 600s + 复盘 600s」。
 
-`phase()` 里 inFlight 抢不到就跳过该 trader 本阶段：硬等会拖住全体，而复盘/学习明天还有机会；这也是屏障不脏读的第二道闸（窗口挡新唤醒，inFlight 挡残留的旧唤醒）。
+`phase()` 里 inFlight 抢不到就跳过该 trader 本阶段：硬等会拖住全体，而复盘明天还有机会；这也是复盘不脏读的第二道闸（窗口挡新唤醒，inFlight 挡残留的旧唤醒）。
 
 配套读 `VolatilitySentinel`（探测层，5min 滚动窗口振幅，阈值 180 天历史校准过，类注释里附了重跑校准的 SQL）、`AlertTrigger`、`WakeWindow`（北京时间写死 `Asia/Shanghai`，不跟 systemDefault 漂）。
 
@@ -382,7 +379,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 ### 5.4 注入面（最该细读的一段）
 
-一次唤醒喂给模型的东西分两块：**系统提示词**（`TraderPromptAssembler.assemble`）和**开场白**（`routineInstruction` / `alertInstruction`）。分工是：system 只放"你是谁、怎么答"——模板 / 复盘笔记 / 学习笔记 / 主人风格指令 / 固定收尾格式 / 输出语言；开场白只放"这轮发生了什么，回答问题"——头部事实 + 观察包（`TraderWakeupRunner.observation`：事件 / 账户 / 上一轮结论 / 轨迹 / 战绩）+ 快照 / 日历 / 休眠提示 + 单问题 + 留言。模型要"重建"的东西（上一轮等的是什么、仓位为什么不见了、现有杠杆几倍）全部由代码算好直接给。
+一次唤醒喂给模型的东西分两块：**系统提示词**（`TraderPromptAssembler.assemble`）和**开场白**（`routineInstruction` / `alertInstruction`）。分工是：system 只放"你是谁、怎么答"——模板 / 经验账本 / 主人风格指令 / 固定收尾格式 / 输出语言；开场白只放"这轮发生了什么，回答问题"——头部事实 + 观察包（`TraderWakeupRunner.observation`：事件 / 账户 / 上一轮结论 / 轨迹 / 战绩）+ 快照 / 日历 / 休眠提示 + 单问题 + 留言。模型要"重建"的东西（上一轮等的是什么、仓位为什么不见了、现有杠杆几倍）全部由代码算好直接给。
 
 `TraderPromptAssembler` 的类注释里那**七条认知设计**是这套东西的设计文档，逐条对着代码读。特别注意第 ⑦ 条（最近改的）：
 
@@ -400,10 +397,10 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 |---|---|---|
 | 自上次唤醒以来 | `events` | 素材就是上一步 `reconcile` 按发生顺序给出的事件：`Closed` 说结局（止损/止盈/主动平、成交价、盈亏、当时的失效条件），`Filled` 说限价单成交计划绑上仓位，`Cancelled` 说挂单撤了计划归档；一份计划对应一个仓位生命期，旧仓了结而同键加仓单还挂着时旧计划归档、论点续立一份新计划接着等；没事件整块缺席 |
 | 账户状态 | `accountStateJson` | 持仓带杠杆/标记价/强平价、计划与修订历史（时刻可读）、挂单带已挂时长。一次给足，工具预算才能留给行情求证 |
-| 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 两处共吃 `recentWakes` 一次查齐的那份 `List<RecentWake>`（别各查各的）：结论完整回注（最近一条写出结论块的 OK 行，整块不截断）+ 轨迹一行一轮（时刻/状态/权益/工具名或失败原因）。只回注交易类（TRADE/ALERT/MANUAL），REVIEW/LEARN 已走笔记注入。被主人标记忽略的交易在 `RecentWake` 里就已剔掉内容，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
+| 上一轮结论 + 轨迹 | `lastConclusion` / `trajectory` | 两处共吃 `recentWakes` 一次查齐的那份 `List<RecentWake>`（别各查各的）：结论完整回注（最近一条写出结论块的 OK 行，整块不截断）+ 轨迹一行一轮（时刻/状态/权益/工具名或失败原因）。只回注交易类（TRADE/ALERT/MANUAL），REVIEW 已走账本注入。被主人标记忽略的交易在 `RecentWake` 里就已剔掉内容，行头的时刻/状态/权益原样留着——那是唤醒事实，不是教材 |
 | 论点战绩 | `PlayStatsAssembler` | 纯代码算，模型只许引用不许自算；stale 过滤在**配对之后** |
 | 财经日历 | `EconCalendarAssembler` | 三段：刚公布（上一边界以来新落地的实际值，置顶）→ 过去 3 天已公布 → 今天剩余即将公布，只给事实不给指令 |
-| 经验账本 / 学习笔记 | `ai_trader.memory`（`ExperienceLedger.render` 的渲染文本）/ `learning_notes` | **并列注入不合并**：来源分开，模型才分得清"自己的经验"与"从别人学的"。账本首行带用法说明：假设只供参考，限制型规律能否当观望理由看主人的 `learned_restriction_hold` 开关 |
+| 经验账本 | `ai_trader.memory`（`ExperienceLedger.render` 的渲染文本） | 账本首行带用法说明：假设只供参考，限制型规律能否当观望理由看主人的 `learned_restriction_hold` 开关 |
 | 休眠提示 | `sleepNotice` | 时段内末次唤醒才有。明说休眠本身不是任何方向动作的理由——"13 小时看不见"既诱导睡前减仓，也诱导赶在休眠前多开一笔 |
 
 ### 5.5 动手面
@@ -446,9 +443,9 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 ---
 
-## 第 6 章 · reviewer 与 learning：什么时候该/不该用 agent（2 小时）
+## 第 6 章 · reviewer：素材算得齐就不给模型循环（1.5 小时）
 
-`learning/` 包里住着一对形态相反的东西：reviewer 是单次调用的 workflow，learning 是带工具循环的 ReactLoop。**对比读这两个，就是"选型准则"最好的教材**——素材算得齐的（复盘自己）不给模型循环，需要甄别的（向同侪学）才给。
+`learning/` 包里住的是 reviewer：单次调用的 workflow，没有工具也没有循环。**它是"选型准则"的正面教材**——素材能由代码算齐的（复盘自己），就不给模型循环，模型只负责解读与填表。
 
 ### reviewer：自己看自己
 
@@ -466,24 +463,11 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
 
 **为什么账本不交给模型整份重写**：原来的滚动继承（只回注上一期、要求模型把仍成立的教训抄过来）让"进化"变成每天重抄一遍；换成代码记账后，模型每期只对现役条目给结论、只提议新增，计数与升降级都不由它说了算。退役也不自动：代码只举旗，模型拿着整条结论流水复审四选一（保留 / 修订 / 拆分 / 退役），一条支持过 100 次的规律不会因为连输 3 天就消失。
 
-### learning：向别人学
-
-| 位置 | 看什么 |
-|---|---|
-| `PeerInsightService.peers()` | **同侪池一把尺子**：同意学习 + 未暂停 + 在场（手里有仓，或最近一笔了结在 24h 内）。调度门槛计数、排行榜、detail 三处同一口径 |
-| `PeerInsightService.leaderboard` / `detail` | 纯代码只读查询，吐拼好的文本块。**每行硬带已了结笔数**是设计红线——样本量不摆出来，模型就会把 1 笔的运气当方法论 |
-| `PeerInsightToolkit` | 单工具双模式（无参=排行榜，传 traderId=详情）；每次会话 new 一个绑定"我是谁"（不标出自己那行，模型会把自己的战绩当外人的经验学一遍） |
-| `LearningRunner.learn` | ReactLoop 用法与 `TraderWakeupRunner.runAgentSession` 同构；超时 300s、上限 8 次调用 |
-| `LearningRunner.missingMarks` | 输出契约校验——缺【不学什么】就是格式失守，ERROR 行留痕、笔记不动 |
-| `learning.system` 词表 | **反照抄三件套**：①【不学什么】必填 ②每条带证据与差距数字 ③引用同侪战绩必须带笔数 |
-
-**谁能去学 ≠ 谁能被学**：学习者只要 RUNNING + 勾了开关，自己不必在池里——刚开局没开过仓的新人恰恰最该学。
-
-两者共有的降级安全：**失败不计连败**（没有资金风险，不值得暂停机制）、格式失守时留 ERROR 行但不动笔记、同侪不足整体静默跳过（不写空话也不留 ERROR 行）。
+**降级安全**：复盘失败**不计连败**（没有资金风险，不值得暂停机制），只留 ERROR 行。
 
 ### 顺带：配对与结论块的两个共用件
 
-`TradePairing` 同时服务四个地方（复盘案例 / 同侪学习 / 竞技场已了结交易 / 论点战绩统计），所以配对算法只能有一套：`pairAll` + `bestMatch` + `closeMannerKey`。各配一套会自相矛盾。
+`TradePairing` 同时服务三个地方（复盘案例 / 竞技场已了结交易 / 论点战绩统计），所以配对算法只能有一套：`pairAll` + `bestMatch` + `closeMannerKey`。各配一套会自相矛盾。
 
 `DecisionText` 是"结论块格式"的下游，读完第 5.4 节的 `closingFormat` 再回来看：
 
@@ -540,7 +524,7 @@ behavior 和 replay coach 直接建 `ResilientChatService` 用（不进 `ReactLo
 trader 那条链的前端另在两处：
 
 - `pages/MyTrader.tsx`（585 行）：trader 配置 + 动作面板 + 提示词预览。预览用的就是后端那份 `closingFormat`，看到的与真喂的一致；`MAX_SYMBOLS` 与后端 `TraderService.MAX_SYMBOLS` 是同一个 3。
-- `pages/ArenaDetail.tsx`（427 行）+ `components/arena/`（9 个件，共 762 行）：记分头 → 六格 `.strip` → 左主栏（净值曲线 / 现场 / 决策时间线）‖ 右侧栏（持仓 / 计划 / 两份笔记）。**现场只给主人的门控在这一层**（见 5.7），`LiveRunCard.tsx` + `WakeTraceView.tsx` + `hooks/useTraderLive.ts` 是 5.7 那条链的前端一侧。
+- `pages/ArenaDetail.tsx`（427 行）+ `components/arena/`（9 个件，共 762 行）：记分头 → 六格 `.strip` → 左主栏（净值曲线 / 现场 / 决策时间线）‖ 右侧栏（持仓 / 计划 / 经验账本）。**现场只给主人的门控在这一层**（见 5.7），`LiveRunCard.tsx` + `WakeTraceView.tsx` + `hooks/useTraderLive.ts` 是 5.7 那条链的前端一侧。
 
 ---
 
@@ -563,9 +547,8 @@ trader 那条链的前端另在两处：
 | `ReviewMaterialAssemblerTest` / `CaseFileBuilderTest` | 复盘五块素材的数字与成文（战绩 / 案例事实表与路径指标 / 行情 / 账本）、stale 在配对之后过滤、`TradePairing` 配对算法 |
 | `ExperienceLedgerTest` / `ReviewRunnerTest` / `ReviewLoopTest` | 账本记账规则（升级 / 举旗 / 上限 / 复审四结论 / 带入 / 清理）、复盘回路的落账与降级、真 assembler + 真账本 + mock 模型贯通一遍 |
 | `TraderWakeupLoopTest` | mock 模型跑通真 ReactLoop 唤醒回路 |
-| `TraderSchedulerTest` | 三阶段时序、屏障不漏人、停工窗口挡四入口、异常不卡死窗口 |
+| `TraderSchedulerTest` | 交接两阶段时序、停工窗口挡四入口、异常不卡死窗口 |
 | `TraderPromptAssemblerTest` / `WakeInstructionI18nTest` | 注入面成文、收尾标记两处同源 |
-| `LearningLoopTest` / `LearningHandoverLoopTest` | 学习单人回路 / 日线交接整链（真调度 + 真 runner + 真查询，3 learner 并发） |
 | `PromptI18nTest` / `PromptParityTest` / `AgentMessageParityTest` | 两门语言词表的 key 对齐与占位符校验 |
 
 ### 判断一条测试值不值得信

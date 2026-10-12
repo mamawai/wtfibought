@@ -88,7 +88,7 @@ class TraderServiceTest {
                                                Boolean multi, Boolean hedge,
                                                Boolean alertEnabled, java.math.BigDecimal alertMult) {
         return new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", customPrompt, null,
-                levMin, levMax, null, null, multi, hedge, alertEnabled, alertMult, null, null, null, null);
+                levMin, levMax, null, null, multi, hedge, alertEnabled, alertMult, null, null, null);
     }
 
     /** 币种上限 3：单轮工具预算按币摊，4 个被拦；3 个过这道校验（后面才卡在端点上） */
@@ -99,9 +99,9 @@ class TraderServiceTest {
         when(endpointService.defaultOf(1L)).thenReturn(null);
 
         String four = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT,DOGEUSDT", "5m",
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null, null, null));
         String three = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT,ETHUSDT,SOLUSDT", "5m",
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null, null, null));
 
         assertThat(four).isEqualTo(new MessageCatalog().get("trader.config.tooManySymbols", Map.of("max", 3)));
         assertThat(three).doesNotContain("最多").contains("模型端点");
@@ -176,7 +176,7 @@ class TraderServiceTest {
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", null, 5L,
-                null, null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null));
 
         assertThat(err).isNull();
         verify(modelFactory).testConnection(chosen);
@@ -191,7 +191,7 @@ class TraderServiceTest {
         when(traderMapper.selectOne(any())).thenReturn(null);
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", null, null,
-                null, null, null, null, null, null, null, null, null, null, null, "21:03-08:30"));
+                null, null, null, null, null, null, null, null, null, null, "21:03-08:30"));
 
         assertThat(err).contains("0/5");
         verify(traderMapper, never()).insert(any(AiTrader.class));
@@ -204,7 +204,7 @@ class TraderServiceTest {
         when(traderMapper.selectOne(any())).thenReturn(null);
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "4h", null, null,
-                null, null, null, null, null, null, null, null, null, null, null, "21:00-23:00"));
+                null, null, null, null, null, null, null, null, null, null, "21:00-23:00"));
 
         assertThat(err).contains("永远不会醒");
         verify(traderMapper, never()).insert(any(AiTrader.class));
@@ -221,7 +221,7 @@ class TraderServiceTest {
         when(simTradeClient.ensureAccount(any(), any())).thenReturn(99L);
 
         String err = service.create(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", null, 5L,
-                null, null, null, null, null, null, null, null, null, null, null, " 21:00-08:30 "));
+                null, null, null, null, null, null, null, null, null, null, " 21:00-08:30 "));
 
         assertThat(err).isNull();
         ArgumentCaptor<AiTrader> captor = ArgumentCaptor.forClass(AiTrader.class);
@@ -427,7 +427,7 @@ class TraderServiceTest {
         when(modelFactory.testConnection(next)).thenReturn(null);
 
         String err = service.updateConfig(1L, new TraderService.UpsertReq("小虎", "BTCUSDT", "5m", null, 6L,
-                null, null, null, null, null, null, null, null, null, null, null, null));
+                null, null, null, null, null, null, null, null, null, null, null));
 
         assertThat(err).isNull();
         verify(modelFactory).testConnection(next);
@@ -435,7 +435,7 @@ class TraderServiceTest {
         verify(modelFactory).evict(7L);
     }
 
-    /** 不带入笔记的重置：memory/learning_notes 只清生效版本（历届存档在 REVIEW/LEARN 决策行里，不动） */
+    /** 不带入笔记的重置：memory 只清生效版本（历届存档在 REVIEW 决策行里，不动） */
     @Test
     void resetWithoutCarryClearsNotes() {
         AiTrader t = new AiTrader();
@@ -450,7 +450,7 @@ class TraderServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> cap = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
         verify(traderMapper).update(isNull(), cap.capture());
-        assertThat(cap.getValue().getSqlSet()).contains("memory").contains("learning_notes");
+        assertThat(cap.getValue().getSqlSet()).contains("memory");
     }
 
     /** 带入时现役账本行复制到新局、memory 按新局编号重渲染（账本空着就不碰 memory，旧自由文本留给首次复盘迁移） */
@@ -472,11 +472,11 @@ class TraderServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> cap = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
         verify(traderMapper).update(isNull(), cap.capture());
-        assertThat(cap.getValue().getSqlSet()).contains("memory").doesNotContain("learning_notes");
+        assertThat(cap.getValue().getSqlSet()).contains("memory");
         assertThat(cap.getValue().getParamNameValuePairs()).containsValue("【经验账本】\n#9 规律");
     }
 
-    /** 默认带入（carryNotes=true）：账本空着时两份笔记都不进 set 列表，跨局认知积累照旧 */
+    /** 默认带入（carryNotes=true）：账本空着时 memory 不进 set 列表，跨局认知积累照旧 */
     @Test
     void resetWithCarryKeepsNotes() {
         AiTrader t = new AiTrader();
@@ -491,7 +491,7 @@ class TraderServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<LambdaUpdateWrapper<AiTrader>> cap = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
         verify(traderMapper).update(isNull(), cap.capture());
-        assertThat(cap.getValue().getSqlSet()).doesNotContain("memory").doesNotContain("learning_notes");
+        assertThat(cap.getValue().getSqlSet()).doesNotContain("memory");
     }
 
     /** stale 标记：本人的 CLOSED 计划可标可取消（教材层忽略，钱账与公开记录不动） */

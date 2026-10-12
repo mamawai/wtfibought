@@ -35,7 +35,7 @@ const DEFAULT_SPEC: TraderSpec = {
 const EMPTY_FORM: TraderUpsertRequest = {
   name: '', symbols: 'BTCUSDT', intervalCode: '15m', customPrompt: '',
   llmEndpointId: null,
-  spec: DEFAULT_SPEC, alertEnabled: true, alertThresholdMult: 1, reviewEnabled: true, learningEnabled: true,
+  spec: DEFAULT_SPEC, alertEnabled: true, alertThresholdMult: 1, reviewEnabled: true,
   learnedRestrictionHold: false,
   wakeWindow: null,
 };
@@ -89,7 +89,7 @@ export function MyTrader() {
           customPrompt: v.customPrompt ?? '', llmEndpointId: v.llmEndpointId,
           spec: v.spec,
           alertEnabled: v.alertEnabled, alertThresholdMult: v.alertThresholdMult,
-          reviewEnabled: v.reviewEnabled, learningEnabled: v.learningEnabled,
+          reviewEnabled: v.reviewEnabled,
           learnedRestrictionHold: v.learnedRestrictionHold,
           wakeWindow: v.wakeWindow,
         });
@@ -364,7 +364,7 @@ export function MyTrader() {
           </label>
         </div>
 
-        {/* 唤醒时段：只管例行/警报唤醒；复盘学习不看它；末次唤醒时模型会被告知即将休眠 */}
+        {/* 唤醒时段：只管例行/警报唤醒；复盘不看它；末次唤醒时模型会被告知即将休眠 */}
         <div className="space-y-2 rounded-lg border border-border/60 bg-card-2/40 p-3" data-tour="wake-window">
           <div className="flex flex-wrap items-baseline justify-between gap-x-2">
             <span className="microlabel">{t('cfg.wakeWindow')}</span>
@@ -482,14 +482,13 @@ export function MyTrader() {
           </p>
         </div>
 
-        {/* 两条学习轨并列：复盘看自己（reviewer），学习看同侪（learning agent），各自单独开关、各自一份笔记 */}
-        <div className="grid sm:grid-cols-2 gap-3 items-start">
-          {/* 每日复盘：reviewer 在日线边界按案例分析全天交易，复盘上时间线、结论记进经验账本 */}
-          <div className="space-y-2 rounded-lg border border-border/60 bg-card-2/40 p-3">
-            <div className="flex flex-wrap items-baseline justify-between gap-x-2">
-              <span className="microlabel">{t('term.dailyReview')}</span>
-              <span className="text-[10px] text-muted-foreground">{t('cfg.reviewHint')}</span>
-            </div>
+        {/* 每日复盘：reviewer 在日线边界按案例分析全天交易，复盘上时间线、结论记进经验账本 */}
+        <div className="space-y-2 rounded-lg border border-border/60 bg-card-2/40 p-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+            <span className="microlabel">{t('term.dailyReview')}</span>
+            <span className="text-[10px] text-muted-foreground">{t('cfg.reviewHint')}</span>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3 items-start">
             <SpecToggle checked={form.reviewEnabled} onChange={v => set({ reviewEnabled: v })}
                         label={t('cfg.reviewOn')}
                         hint={t('cfg.reviewOnHint')} />
@@ -497,17 +496,6 @@ export function MyTrader() {
             <SpecToggle checked={form.learnedRestrictionHold} onChange={v => set({ learnedRestrictionHold: v })}
                         label={t('cfg.restrictionHold')}
                         hint={t('cfg.restrictionHoldHint')} />
-          </div>
-
-          {/* 同侪学习：全体复盘跑完后 learning agent 读别人的成绩与复盘，学到的写进学习笔记 */}
-          <div className="space-y-2 rounded-lg border border-border/60 bg-card-2/40 p-3">
-            <div className="flex flex-wrap items-baseline justify-between gap-x-2">
-              <span className="microlabel">{t('term.peerLearn')}</span>
-              <span className="text-[10px] text-muted-foreground">{t('cfg.learnHint')}</span>
-            </div>
-            <SpecToggle checked={form.learningEnabled} onChange={v => set({ learningEnabled: v })}
-                        label={t('cfg.learnOn')}
-                        hint={t('cfg.learnOnHint')} />
           </div>
         </div>
 

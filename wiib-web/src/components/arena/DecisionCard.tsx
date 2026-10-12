@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { GraduationCap, Loader2, NotebookPen } from 'lucide-react';
+import { Loader2, NotebookPen } from 'lucide-react';
 import { traderApi } from '../../api';
 import { cn, fmtDateTime, fmtNum, fmtTokens } from '../../lib/utils';
 import type { AiTraderDecisionView, WakeTrace } from '../../types';
@@ -16,16 +16,15 @@ const STATUS_CHIP: Record<string, { labelKey: string; cls: string }> = {
   SKIPPED: { labelKey: 'decision.skipped', cls: 'mute' },
 };
 
-/** 复盘紫 / 学习蓝：两种日志行混在时间线上要能一眼分清 */
+/** 复盘紫：复盘行混在时间线上要能一眼分清 */
 const REVIEW_INK = '#7c5cff';
-const LEARN_INK = '#2f8fd6';
 
 /** "看了什么"一行最多点名几个工具，其余折成 +N */
 const LOOKED_MAX = 4;
 
 /**
  * 单条决策卡：徽章/时间/权益/遥测 → "看了什么"一句 → 交易动作行（参数/拒因）→ 推理折叠 + 过程。
- * 复盘/学习不交易，左边一道色线，正文直接铺 markdown。
+ * 复盘不交易，左边一道色线，正文直接铺 markdown。
  * highlight=从已了结交易跳过来的那一条，描个边让人找得到。
  * mine=看的是自己的 trader，只有这时才出"过程"入口——轨迹接口对别人一律回 null。
  */
@@ -42,10 +41,6 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
     void traderApi.decisionTrace(d.traderId, d.id).then(setTrace, () => { traceRequested.current = false; });
   };
   const isReview = d.kind === 'REVIEW';
-  const isLearn = d.kind === 'LEARN';
-  const isLog = isReview || isLearn;
-  const logInk = isReview ? REVIEW_INK : LEARN_INK;
-  const LogIcon = isReview ? NotebookPen : GraduationCap;
   const status = STATUS_CHIP[d.status] ?? STATUS_CHIP.OK;
   const actions = useMemo<ActionRow[]>(() => {
     try {
@@ -66,7 +61,7 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
     // token 为 null＝上游端点没报 usage，显示「—」而不是 0：0 会被读成"这轮没花钱"
     d.modelCalls != null && `${d.totalTokens == null ? '—' : fmtTokens(d.totalTokens)} tok`,
     d.latencyMs != null && `${(d.latencyMs / 1000).toFixed(1)}s`,
-    // 复盘无工具（单次调用）不显示"0次工具"占位；学习是 ReactAgent 有 peer_insights 工具，照常显示
+    // 复盘无工具（单次调用）不显示"0次工具"占位
     !isReview && t('detail.toolCalls', { count: d.toolCalls }),
     d.modelCalls != null && t('detail.modelCalls', { count: d.modelCalls }),
   ].filter(Boolean).join(' · ');
@@ -74,18 +69,18 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
   return (
     <div id={`decision-${d.id}`}
          className={cn('py-5 border-b border-border',
-           isLog && 'border-l-[3px] pl-[18px]',
+           isReview && 'border-l-[3px] pl-[18px]',
            highlight && 'outline outline-2 outline-primary -outline-offset-2')}
-         style={isLog ? { borderLeftColor: logInk } : undefined}>
+         style={isReview ? { borderLeftColor: REVIEW_INK } : undefined}>
       <div className="flex items-center gap-2.5 flex-wrap">
-        {isLog ? (
+        {isReview ? (
           d.status === 'OK' ? (
-            <span className="chip" style={{ borderColor: logInk, color: logInk }}>
-              <LogIcon className="w-3 h-3" />{t(isReview ? 'term.dailyReview' : 'term.peerLearn')}
+            <span className="chip" style={{ borderColor: REVIEW_INK, color: REVIEW_INK }}>
+              <NotebookPen className="w-3 h-3" />{t('term.dailyReview')}
             </span>
           // 观望门控跳过的复盘行（SKIPPED）不是失败：灰徽章，error 字段带着跳过缘由
           ) : d.status === 'SKIPPED' ? <span className="chip mute">{t('decision.skipped')}</span>
-            : <span className="chip dn">{t(isReview ? 'decision.reviewFailed' : 'decision.learnFailed')}</span>
+            : <span className="chip dn">{t('decision.reviewFailed')}</span>
         ) : (
           <>
             <span className={cn('chip', status.cls)}>{t(status.labelKey)}</span>
@@ -149,7 +144,7 @@ export function DecisionCard({ d, mine, highlight }: { d: AiTraderDecisionView; 
       {/* SKIPPED 的缘由（调度跳过/观望门控跳过复盘）：灰字注明，不是错误 */}
       {d.status === 'SKIPPED' && d.error && <p className="text-[13.5px] mute mt-2.5">{d.error}</p>}
 
-      {isLog
+      {isReview
         ? d.reasoning && <div className="text-[15px] leading-[1.7] mt-3 max-w-[80ch]"><Markdown content={d.reasoning} /></div>
         : (
           <ReasoningFold reasoning={d.reasoning}>

@@ -678,7 +678,6 @@ CREATE TABLE IF NOT EXISTS ai_trader (
     interval_code   VARCHAR(8) NOT NULL DEFAULT '1h',
     custom_prompt   TEXT,
     memory          TEXT,
-    learning_notes  TEXT,
     owner_note      TEXT,
     owner_note_rounds INT NOT NULL DEFAULT 0,
     sim_user_id     BIGINT,
@@ -691,7 +690,6 @@ CREATE TABLE IF NOT EXISTS ai_trader (
     allow_multi_position BOOLEAN NOT NULL DEFAULT TRUE,
     allow_hedge     BOOLEAN NOT NULL DEFAULT FALSE,
     review_enabled  BOOLEAN NOT NULL DEFAULT TRUE,
-    learning_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     learned_restriction_hold BOOLEAN NOT NULL DEFAULT FALSE,
     alert_enabled   BOOLEAN NOT NULL DEFAULT TRUE,
     alert_threshold_mult NUMERIC(4,2) NOT NULL DEFAULT 1.0,
@@ -706,13 +704,11 @@ COMMENT ON COLUMN ai_trader.symbols IS '交易币种白名单子集，逗号分�
 COMMENT ON COLUMN ai_trader.interval_code IS '唤醒K线级别 5m/15m/1h/4h（5m烧token快，适合短期测试）';
 COMMENT ON COLUMN ai_trader.custom_prompt IS '主人的交易指令：方法/风格/纪律的唯一来源（平台模板只讲事实），≤4000字符，原样注入系统提示词不翻译，复盘拿它当评判尺子；新建时前端预填平台默认指令（prompts trader.label.defaultInstructions），空=模型自定';
 COMMENT ON COLUMN ai_trader.review_enabled IS '每日复盘开关：reviewer日线边界复盘写REVIEW决策行并整理memory；关掉只停复盘，已有笔记照常注入';
-COMMENT ON COLUMN ai_trader.learning_enabled IS '同侪学习开关：learning agent在全体复盘完成后向同侪学习写LEARN行并整理learning_notes；关掉只停学习，已有笔记照常注入';
 COMMENT ON COLUMN ai_trader.learned_restriction_hold IS '主人开关：经验账本里限制型规律能否作为观望理由；FALSE=注入时标明只供参考';
 COMMENT ON COLUMN ai_trader.alert_enabled IS '波动哨兵警报开关（仅1h/4h档生效）：5分钟振幅超过 币基准阈值×灵敏度系数 且持有该币仓位/挂单时临时唤醒';
 COMMENT ON COLUMN ai_trader.alert_threshold_mult IS '警报灵敏度系数≥1.0只能调高：生效阈值=每币基准(BTC0.6/ETH0.8/XRP0.8/SOL0.9/DOGE1.0%)×本系数，180天历史校准见VolatilitySentinel';
-COMMENT ON COLUMN ai_trader.wake_window IS '唤醒时段（北京时间，HH:mm-HH:mm，5分钟粒度，两端含，可跨午夜），NULL=全天。只管例行唤醒与波动警报；手动唤醒不受限；每日复盘/学习仍在08:00照常。时段外静默不唤醒不写SKIPPED行';
+COMMENT ON COLUMN ai_trader.wake_window IS '唤醒时段（北京时间，HH:mm-HH:mm，5分钟粒度，两端含，可跨午夜），NULL=全天。只管例行唤醒与波动警报；手动唤醒不受限；每日复盘仍在08:00照常。时段外静默不唤醒不写SKIPPED行';
 COMMENT ON COLUMN ai_trader.memory IS '经验账本的渲染文本：reviewer每日复盘后由代码从ai_trader_experience渲染覆盖写，每次唤醒注入提示词——trader侧只读只注入；账本本体在ai_trader_experience';
-COMMENT ON COLUMN ai_trader.learning_notes IS '学习笔记：learning agent向同侪学习后整理写入（≤2000字覆盖写），每次唤醒与复盘笔记并列注入；与memory分开存——来源分开模型才分得清"自己的教训"与"从别人学的"';
 COMMENT ON COLUMN ai_trader.owner_note IS '主人留言：trader动作面板写入，随提示词注入，每注入一次owner_note_rounds减1，减到0连同本列一起清空（注入与递减在TraderPromptAssembler同一处）。与memory的分工：memory是复盘沉淀的长期笔记，本列是主人阶段性交代的一句话';
 COMMENT ON COLUMN ai_trader.owner_note_rounds IS '留言剩余注入轮次，0=无待读留言。1即"念一次就清"，上限24（15m档≈6小时）。递减走条件SQL(正文匹配作前置+原子递减)：唤醒读的是调度时刻的快照，以正文匹配保证只递减自己注入的那条';
 COMMENT ON COLUMN ai_trader.sim_user_id IS '当前局sim子账户userId，每局独立，重置开新账户';
@@ -753,7 +749,7 @@ CREATE TABLE IF NOT EXISTS ai_trader_decision (
 CREATE INDEX IF NOT EXISTS idx_atd_trader_time ON ai_trader_decision(trader_id, wake_time DESC);
 COMMENT ON TABLE ai_trader_decision IS 'AI Trader每次唤醒一行：推理全文+动作(含play_type论点标签)+权益快照——竞技场决策时间线与净值曲线数据源';
 COMMENT ON COLUMN ai_trader_decision.status IS 'OK/ERROR/SKIPPED（上一唤醒未完被跳过）';
-COMMENT ON COLUMN ai_trader_decision.kind IS 'TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒（wake_time=触发时刻非边界） MANUAL=主人手动唤醒（对话轨wake_trader，回路同例行） REVIEW=reviewer复盘（reasoning=复盘全文，无equity） LEARN=learning agent向同侪学习（reasoning=学习全文，无equity）';
+COMMENT ON COLUMN ai_trader_decision.kind IS 'TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒（wake_time=触发时刻非边界） MANUAL=主人手动唤醒（对话轨wake_trader，回路同例行） REVIEW=reviewer复盘（reasoning=复盘全文，无equity）';
 COMMENT ON COLUMN ai_trader_decision.memory_after IS '仅REVIEW行：本期学习完的记忆快照存档（学习演进史,append-only）；ai_trader.memory是滚动覆盖的生效版本,历史版本只在这里';
 COMMENT ON COLUMN ai_trader_decision.equity IS '本轮动作落地后的账户权益USDT';
 COMMENT ON COLUMN ai_trader_decision.model_calls IS '本轮模型调用次数：ReAct是循环，一次唤醒会调很多次（上限见ModelCallLimiter）';
@@ -795,7 +791,7 @@ COMMENT ON COLUMN ai_trader_plan.opened_wake_time IS '开仓所在唤醒边界(m
 COMMENT ON COLUMN ai_trader_plan.revisions_json IS '修订历史追加式JSON [{time,type,change,reason}]：加仓覆盖/移动止盈/移动止损/补立——修改必须留痕带理由，计划本体价格字段永远是原始快照';
 COMMENT ON COLUMN ai_trader_plan.status IS 'LIVE=仓位/挂单存活 CLOSED=已了结归档。归档不删：论点→结局的配对数据是reviewer每日复盘的原料（结局按position_id join sim已平仓位，历史无id行按symbol/side/时间就近兜底）';
 COMMENT ON COLUMN ai_trader_plan.closed_wake_time IS '归档时刻(ms)：唤醒开头对账发现仓位已了结的边界/重置时刻，与opened_wake_time围出计划生命期';
-COMMENT ON COLUMN ai_trader_plan.stale IS '主人标记忽略:true=本笔不进论点战绩统计与复盘教材(配对表/了结统计行);权益/排行榜/同侪学习照常。仅CLOSED可标,可随时取消';
+COMMENT ON COLUMN ai_trader_plan.stale IS '主人标记忽略:true=本笔不进论点战绩统计与复盘教材(配对表/了结统计行);权益/排行榜照常。仅CLOSED可标,可随时取消';
 COMMENT ON COLUMN ai_trader_plan.position_id IS 'sim仓位id:市价开仓/加仓从下单响应落盘,限价单成交后唤醒开头对账补绑;一行计划对应一个仓位生命期,同论点下一笔另起一行;计划↔仓位配对的精确键,NULL(历史行/未成交挂单)走bestMatch时间就近兜底';
 COMMENT ON COLUMN ai_trader_plan.entry_ctx_json IS '开仓那一刻的上下文快照JSON：orderType/leverage/hourBj/stopPct/regime/atr1h/stopAtr/eventMin/eventTitle/funding（EntryContext）；复盘按维度对照用，取不到的字段缺席';
 

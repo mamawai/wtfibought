@@ -58,7 +58,7 @@ public class TraderChatService {
 
     // ===== 查询（纯读库） =====
 
-    /** 概况：状态/权益/轮次/配置 + 复盘与学习两份笔记全文（笔记是"它学到了什么"的唯一载体，必须给全）。 */
+    /** 概况：状态/权益/轮次/配置 + 经验账本全文（账本是"它学到了什么"的唯一载体，必须给全）。 */
     public String overview(long userId, AgentLang lang) {
         AiTrader t = traderService.mine(userId);
         if (t == null) {
@@ -78,7 +78,6 @@ public class TraderChatService {
                 .put("model", endpoint == null ? null : endpoint.getModel())
                 .put("consecutiveFailures", t.getConsecutiveFailures())
                 .put("reviewEnabled", t.getReviewEnabled())
-                .put("learningEnabled", t.getLearningEnabled())
                 .put("learnedRestrictionHold", t.getLearnedRestrictionHold())
                 .put("alertEnabled", t.getAlertEnabled())
                 .put("wakeWindow", t.getWakeWindow() == null
@@ -89,8 +88,6 @@ public class TraderChatService {
                 .put("marginPctRange", plain(t.getMarginPctMin()) + "~" + plain(t.getMarginPctMax()) + "%")
                 .put("memory", t.getMemory())
                 .put("memoryNote", prompts.get(lang, "chat.traderQuery.memoryNote"))
-                .put("learningNotes", t.getLearningNotes())
-                .put("learningNotesNote", prompts.get(lang, "chat.traderQuery.learningNotesNote"))
                 .put("customPrompt", t.getCustomPrompt())
                 .put("pendingOwnerNote", t.getOwnerNote())
                 // 剩余轮次一并给：模型答"我刚留的话还剩几次"只能靠库里这个数，卡片本身不进对话历史

@@ -94,7 +94,7 @@ public class TraderController {
     public record TraderOwnerView(TraderPublicView pub, Long llmEndpointId,
                                   String customPrompt,
                                   TraderSpec spec, boolean alertEnabled, BigDecimal alertThresholdMult,
-                                  boolean reviewEnabled, boolean learningEnabled, boolean learnedRestrictionHold,
+                                  boolean reviewEnabled, boolean learnedRestrictionHold,
                                   String wakeWindow) {
     }
 
@@ -127,7 +127,6 @@ public class TraderController {
                 !Boolean.FALSE.equals(t.getAlertEnabled()),
                 t.getAlertThresholdMult() == null ? BigDecimal.ONE : t.getAlertThresholdMult(),
                 !Boolean.FALSE.equals(t.getReviewEnabled()),
-                !Boolean.FALSE.equals(t.getLearningEnabled()),
                 Boolean.TRUE.equals(t.getLearnedRestrictionHold()),
                 t.getWakeWindow()));
     }
@@ -168,7 +167,7 @@ public class TraderController {
     public record UpsertRequest(String name, String symbols, String intervalCode, String customPrompt,
                                 Long llmEndpointId, TraderSpec spec,
                                 Boolean alertEnabled, BigDecimal alertThresholdMult,
-                                Boolean reviewEnabled, Boolean learningEnabled, Boolean learnedRestrictionHold,
+                                Boolean reviewEnabled, Boolean learnedRestrictionHold,
                                 String wakeWindow) {
         TraderService.UpsertReq toReq() {
             TraderSpec s = spec;
@@ -177,7 +176,7 @@ public class TraderController {
                     s == null ? null : s.leverageMin(), s == null ? null : s.leverageMax(),
                     s == null ? null : s.marginPctMin(), s == null ? null : s.marginPctMax(),
                     s == null ? null : s.allowMultiPosition(), s == null ? null : s.allowHedge(),
-                    alertEnabled, alertThresholdMult, reviewEnabled, learningEnabled, learnedRestrictionHold, wakeWindow);
+                    alertEnabled, alertThresholdMult, reviewEnabled, learnedRestrictionHold, wakeWindow);
         }
     }
 
@@ -214,7 +213,7 @@ public class TraderController {
     }
 
     @PostMapping("/reset")
-    @Operation(summary = "重置开新局（round+1，新子账户注资10000，历史留档；carryNotes=false不带入复盘/学习笔记）")
+    @Operation(summary = "重置开新局（round+1，新子账户注资10000，历史留档；carryNotes=false不带入经验账本）")
     public Result<Void> reset(@CurrentUserId long userId, @RequestBody(required = false) ResetRequest req) {
         boolean carry = req == null || req.carryNotes() == null || req.carryNotes();
         String err = traderService.reset(userId, carry);
@@ -367,21 +366,19 @@ public class TraderController {
     }
 
     /**
-     * 详情视图：公开视图 + 实时持仓/挂单 + 本局存活计划 + 两份笔记。
-     * memory=reviewer 复盘沉淀的记忆笔记，learningNotes=learning agent 向同侪学的笔记，
-     * 都是 trader 每次唤醒真正读到的东西；lastReviewAt / lastLearnAt 是最近一次成功写笔记的时刻（ms），没有=null。
-     * 两份笔记公开与时间线口径一致：REVIEW 行本就带 memoryAfter 快照，LEARN 行的 reasoning 就是学习笔记全文。
+     * 详情视图：公开视图 + 实时持仓/挂单 + 本局存活计划 + 经验账本。
+     * memory=账本渲染文本，trader 每次唤醒真正读到的东西；lastReviewAt 是最近一次复盘写 memory 的时刻（ms），没有=null。
+     * 公开口径与时间线一致：REVIEW 行本就带 memoryAfter 快照。
      */
     public record TraderDetailView(TraderPublicView trader,
                                    List<FuturesPositionDTO> positions,
                                    List<FuturesOrderResponse> pendingOrders,
                                    List<AiTraderPlan> plans,
-                                   String memory, String learningNotes,
-                                   Long lastReviewAt, Long lastLearnAt) {
+                                   String memory, Long lastReviewAt) {
     }
 
     @GetMapping("/{id}")
-    @Operation(summary = "trader详情（当前持仓/挂单实时现查 + 各持仓的交易计划 + 复盘/学习笔记）")
+    @Operation(summary = "trader详情（当前持仓/挂单实时现查 + 各持仓的交易计划 + 经验账本）")
     public Result<TraderDetailView> detail(@PathVariable long id) {
         long viewer = viewerId();
         AiTrader t = traderService.byId(id);
@@ -397,9 +394,7 @@ public class TraderController {
             log.warn("[Trader] 详情持仓查询失败 traderId={} msg={}", id, e.getMessage());
         }
         return Result.ok(new TraderDetailView(publicView(t, viewer, modelName(t)), positions, pending,
-                traderService.plans(t), t.getMemory(), t.getLearningNotes(),
-                traderService.latestNoteTime(id, AiTraderDecision.KIND_REVIEW),
-                traderService.latestNoteTime(id, AiTraderDecision.KIND_LEARN)));
+                traderService.plans(t), t.getMemory(), traderService.latestReviewTime(id)));
     }
 
     @GetMapping("/{id}/decisions")

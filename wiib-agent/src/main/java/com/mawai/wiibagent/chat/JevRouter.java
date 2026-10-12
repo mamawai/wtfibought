@@ -67,7 +67,7 @@ public class JevRouter {
                 "The question does not depend on recent news."));
         QUESTIONS.put("need_trader", Question.noul(
                 "`latest_question` is about the user's own AI trader: its status, positions, trades, "
-                        + "trade plans, reviews or learning notes.",
+                        + "trade plans or reviews.",
                 "The user asks about their own AI trader (\"my trader\", what it holds, why it traded, its plan or review).",
                 "The question is not about the user's own AI trader."));
     }

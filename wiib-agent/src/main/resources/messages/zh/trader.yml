@@ -66,7 +66,7 @@ trader:
     paused: trader 当前是暂停状态{{why}}，手动唤醒不绕过暂停：请先去「我的 Trader」页启动它
     pausedWhy: （{{reason}}）
     liquidated: 本局已爆仓终局，要先在配置页重置开新一局才能继续交易
-    handover: 全体复盘与学习进行中（日线交接的停工窗口），几分钟后窗口关闭再试
+    handover: 全体复盘进行中（日线交接的停工窗口），几分钟后窗口关闭再试
     intervalRetired: 该 trader 的唤醒档位已下线，无法唤醒
     budgetTooTight: 距下一根K线收盘不足{{seconds}}秒，这一轮时间预算不够，等这根K线收了再点
     busy: 上一轮唤醒还在跑，本次手动唤醒跳过（同一 trader 不并行）
@@ -76,4 +76,4 @@ trader:
     started: 已开始复盘，几分钟后会在竞技场的决策时间线上出现一篇 REVIEW；失败也会留一条 ERROR 记录，不会没有下文
     noMaterial: 自上次复盘以来没有新的交易活动记录（一次交易唤醒都没有），已跳过（没有消耗模型调用）
     busy: 这个 trader 手上还有活（唤醒或复盘在跑），等它跑完再点
-    handover: 全体复盘与学习进行中（日线交接），几分钟后窗口关闭再试
+    handover: 全体复盘进行中（日线交接），几分钟后窗口关闭再试

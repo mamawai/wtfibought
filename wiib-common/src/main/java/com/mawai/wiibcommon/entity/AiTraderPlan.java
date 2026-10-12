@@ -78,7 +78,7 @@ public class AiTraderPlan {
     /** 归档时刻(ms)：唤醒开头发现仓位已了结的那根边界，或重置时刻 */
     private Long closedWakeTime;
 
-    /** 主人标记忽略：true=不进论点战绩统计与复盘教材；权益/排行榜/同侪视角照常。仅 CLOSED 可标，可逆 */
+    /** 主人标记忽略：true=不进论点战绩统计与复盘教材；权益/排行榜照常。仅 CLOSED 可标，可逆 */
     private Boolean stale;
 
     /**

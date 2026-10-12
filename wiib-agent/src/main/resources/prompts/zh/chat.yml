@@ -134,8 +134,7 @@ chat:
     wakeWindowNote: "{{window}}（北京时间，时段外不例行唤醒也不警报）"
     leverage: "{{min}}~{{max}}倍"
     memoryNote: 复盘笔记全文：reviewer 每日复盘写的，trader 每次唤醒都会看到
-    learningNotesNote: 学习笔记全文：learning agent 向同侪学习写的，trader 每次唤醒都会看到
-    kindNote: TRADE=K线收盘唤醒 ALERT=波动警报唤醒 MANUAL=主人手动唤醒 REVIEW=每日复盘（reasoning是复盘全文） LEARN=向同侪学习（reasoning是学习全文）
+    kindNote: TRADE=K线收盘唤醒 ALERT=波动警报唤醒 MANUAL=主人手动唤醒 REVIEW=每日复盘（reasoning是复盘全文）
     planNote: invalidationCondition 是开仓时立的失效条件——它被触发才允许主动平仓；revisions 是止损止盈的修订留痕
     noTrader: 这位用户还没有创建 AI Trader，可以去「我的 Trader」页创建一个
 

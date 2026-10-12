@@ -66,7 +66,7 @@ trader:
     paused: The trader is paused{{why}}, and a manual wake-up does not bypass that - start it on the My Trader page first
     pausedWhy: " ({{reason}})"
     liquidated: This round ended in liquidation - reset for a new round on the config page before trading again
-    handover: The daily review-and-learning handover is running (a short stop-the-world window); try again once it closes in a few minutes
+    handover: The daily review handover is running (a short stop-the-world window); try again once it closes in a few minutes
     intervalRetired: This trader's wake interval has been retired, so it cannot be woken
     budgetTooTight: Less than {{seconds}}s to the next candle close - there is not enough time budget for this round. Wait for the candle to close
     busy: The previous wake-up is still running, so this manual one is skipped (no trader runs twice at once)
@@ -76,4 +76,4 @@ trader:
     started: Review started; a REVIEW entry will appear on the arena decision timeline in a few minutes. A failure leaves an ERROR entry, so it never just goes quiet
     noMaterial: No trading activity has been recorded since the last review (not a single trading wake-up), so it was skipped (no model call spent)
     busy: This trader is still busy (a wake-up or review is running) - try again once it finishes
-    handover: The daily review-and-learning handover is running; try again once the window closes in a few minutes
+    handover: The daily review handover is running; try again once the window closes in a few minutes

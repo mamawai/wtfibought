@@ -1,6 +1,5 @@
 package com.mawai.wiibagent.learning;
 
-import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibcommon.entity.AiTrader;
@@ -46,8 +45,6 @@ class PromptMarkParsingTest {
             ADD pullback PROFIT_HANDLE EXECUTION | exit only at target or a closed 1h below the last 1h low | 5 trades
             FINDING | rule six left 4800 on the table | 5 trades
             DELETE #2 | duplicates instruction five""";
-    private static final String ZH_LEARN = "【本期学习】看了谁：id=8\n【不学什么】样本 1 笔\n【前车之鉴】爆仓链条";
-    private static final String EN_LEARN = "[WHAT I LEARNED] id=8\n[WHAT I AM NOT TAKING] sample of 1\n[CAUTIONARY TALES] blow-up chain";
 
     // ==================== reviewer 经验更新 ====================
 
@@ -165,69 +162,27 @@ class PromptMarkParsingTest {
         assertThat(audit.adds().getFirst().sourceId()).isEqualTo(5L);
     }
 
-    // ==================== learning 三段必需标记 ====================
-
-    @Test
-    void 学习必需段_两门语言各认各的() {
-        LearningRunner runner = learningRunner();
-
-        assertThat(runner.missingMarks(ZH_LEARN, AgentLang.ZH)).isEmpty();
-        assertThat(runner.missingMarks(EN_LEARN, AgentLang.EN)).isEmpty();
-    }
-
-    /** 反例：交叉就是两段都缺，笔记一个字不动；error 里报的是当前语言的段名 */
-    @Test
-    void 学习标记与语言对不上_两段都判缺() {
-        LearningRunner runner = learningRunner();
-
-        assertThat(runner.missingMarks(EN_LEARN, AgentLang.ZH))
-                .containsExactly("【本期学习】", "【不学什么】");
-        assertThat(runner.missingMarks(ZH_LEARN, AgentLang.EN))
-                .containsExactly("[WHAT I LEARNED]", "[WHAT I AM NOT TAKING]");
-    }
-
-    /** 缺【不学什么】＝没做否定判断＝在抄：两门语言都得单独认出来 */
-    @Test
-    void 只缺不学什么那一段_两门语言都指名道姓() {
-        LearningRunner runner = learningRunner();
-
-        assertThat(runner.missingMarks("【本期学习】看了谁\n【前车之鉴】坑", AgentLang.ZH))
-                .containsExactly("【不学什么】");
-        assertThat(runner.missingMarks("[WHAT I LEARNED] who\n[CAUTIONARY TALES] trap", AgentLang.EN))
-                .containsExactly("[WHAT I AM NOT TAKING]");
-    }
-
     // ==================== 输出语言硬收尾：恒在用户消息最末一行 ====================
 
     /**
-     * 复盘与学习的用户消息都以输出语言硬收尾结尾，两门语言各钉一遍。
-     * 注入的素材（账本、同侪材料含别人给 trader 起的名字）可能是另一门语言，而它们排在这行之前。
+     * 复盘的用户消息以输出语言硬收尾结尾，两门语言各钉一遍。
+     * 注入的素材（账本、主人指令）可能是另一门语言，而它们排在这行之前。
      */
     @Test
-    void 复盘与学习的用户消息都以输出语言收尾() {
+    void 复盘用户消息以输出语言收尾() {
         AiTrader t = new AiTrader();
         t.setId(7L);
         t.setRoundNo(1);
         t.setMemory("【经验账本】\n#1 规律");
-        t.setLearningNotes("Peer A: BREAKOUT 12 trades 8 wins.");
         ReviewMaterialAssembler.ReviewMaterial material = new ReviewMaterialAssembler.ReviewMaterial(
                 "stats", "plays", "cases", "market", "ledger", 1, Map.of());
         ReviewRunner review = new ReviewRunner(mock(ReviewMaterialAssembler.class), null, null,
                 prompts, mock(UserLangResolver.class), mock(ExperienceLedger.class), parser, null);
-        LearningRunner learn = learningRunner();
 
         for (AgentLang lang : AgentLang.values()) {
             assertThat(review.userPrompt(t, material, 0, 86_400_000L, lang).stripTrailing())
                     .as("%s 复盘用户消息", lang.code())
                     .endsWith(prompts.get(lang, "reviewer.label.outputLanguage"));
-            assertThat(learn.userPrompt(t, 86_400_000L, "leaderboard", lang).stripTrailing())
-                    .as("%s 学习用户消息", lang.code())
-                    .endsWith(prompts.get(lang, "learning.label.outputLanguage"));
         }
-    }
-
-    private LearningRunner learningRunner() {
-        return new LearningRunner(mock(PeerInsightService.class), null, null, null,
-                prompts, new LocalizedToolCallbacks(prompts), mock(UserLangResolver.class));
     }
 }

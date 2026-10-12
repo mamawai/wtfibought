@@ -1050,8 +1050,8 @@ class TraderWakeupLoopTest {
     }
 
     /**
-     * recent 回注窗口只认交易行白名单（TRADE/ALERT/MANUAL）：REVIEW/LEARN 的产出已经走
-     * memory/learning_notes 注入，混进 5 条窗口就是重复占字数；ALERT/MANUAL 是真实交易决策必须保留。
+     * recent 回注窗口只认交易行白名单（TRADE/ALERT/MANUAL）：REVIEW 的产出已经走
+     * memory 注入，混进 5 条窗口就是重复占字数；ALERT/MANUAL 是真实交易决策必须保留。
      */
     @Test
     void recentDecisionsQueryExcludesReviewRows() {
@@ -1069,7 +1069,7 @@ class TraderWakeupLoopTest {
         var values = q.getValue().getParamNameValuePairs().values();
         assertThat(values).contains(AiTraderDecision.KIND_TRADE,
                 AiTraderDecision.KIND_ALERT, AiTraderDecision.KIND_MANUAL);
-        assertThat(values).doesNotContain(AiTraderDecision.KIND_REVIEW, AiTraderDecision.KIND_LEARN);
+        assertThat(values).doesNotContain(AiTraderDecision.KIND_REVIEW);
     }
 
     @Test

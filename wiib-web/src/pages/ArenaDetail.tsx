@@ -56,8 +56,8 @@ function mergeNewer(prev: AiTraderDecisionView[], page: AiTraderDecisionView[]):
 }
 
 /**
- * 笔记一行（记忆/学习）：标题 + 首句预览 + 最近时间，点开才铺 markdown。
- * 两份笔记是参考资料，不跟实时数据抢版面。
+ * 笔记一行（经验账本）：标题 + 首句预览 + 最近时间，点开才铺 markdown。
+ * 笔记是参考资料，不跟实时数据抢版面。
  */
 function NotesCard({ title, time, content, empty }: {
   title: string; time: number | null | undefined; content: string | null | undefined; empty: string;
@@ -83,7 +83,7 @@ function NotesCard({ title, time, content, empty }: {
 }
 
 /**
- * trader 详情：记分牌 → 六格仪表条 → 左主栏（净值 + 现场 + 时间线）‖ 右侧栏（持仓 + 计划 + 两份笔记）。
+ * trader 详情：记分牌 → 六格仪表条 → 左主栏（净值 + 现场 + 时间线）‖ 右侧栏（持仓 + 计划 + 经验账本）。
  * 决策时间线是这页的正餐，整页滚不封顶；窄屏两栏堆成一列，卡序另排（见布局处注释）。
  */
 export function ArenaDetail() {
@@ -371,7 +371,7 @@ export function ArenaDetail() {
         </div>
       )}
 
-      {/* 贯通两栏：左主栏 曲线 + 现场（唤醒中才有）+ 时间线，右侧栏 持仓 + 计划 + 两份笔记。
+      {/* 贯通两栏：左主栏 曲线 + 现场（唤醒中才有）+ 时间线，右侧栏 持仓 + 计划 + 经验账本。
           窄屏两个栏 div 退成 contents，六块直接落进外层单列 grid，再靠 order 排成
           曲线 → 现场 → 持仓 → 计划 → 笔记 → 时间线：时间线能一直往下加载，压在最后才不会把别的挤没 */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 mt-10">
@@ -465,7 +465,7 @@ export function ArenaDetail() {
               : <PositionsTable positions={detail.positions} orders={detail.pendingOrders} />)}
           </div>
 
-          {/* 计划是本局存活的，归档的配在已了结卡里；两份笔记跨局累积不随局次切换 */}
+          {/* 计划是本局存活的，归档的配在已了结卡里；经验账本跨局累积不随局次切换 */}
           <div className="order-4 xl:order-none">
             <div className={BLK_H}>
               <h2>{t('detail.plansTitle')}<small>{t('detail.plansActive', { n: detail?.plans.length ?? 0 })}</small></h2>
@@ -481,8 +481,6 @@ export function ArenaDetail() {
             </div>
             <NotesCard title={t('detail.memoryShort')} time={detail?.lastReviewAt}
                        content={detail?.memory} empty={t('detail.noMemory')} />
-            <NotesCard title={t('detail.learnShort')} time={detail?.lastLearnAt}
-                       content={detail?.learningNotes} empty={t('detail.noLearnNotes')} />
           </div>
         </div>
       </div>

@@ -27,7 +27,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 竞技场「已了结交易 · 论点→结局」：sim 已平仓位 ⟵配对⟶ 交易计划 ⟵关联⟶ 开仓/平仓那一轮的决策全文。
- * 配对与了结方式推断复用 {@link TradePairing} 的同一套算法（复盘/同侪学习/竞技场三处一致，各配一套会自相矛盾）。
+ * 配对与了结方式推断复用 {@link TradePairing} 的同一套算法（复盘/竞技场/统计三处一致，各配一套会自相矛盾）。
  * 只看当前局：每局独立 sim 子账户，AiTrader 只存当前局 simUserId，历史局查不回来。
  */
 @Service

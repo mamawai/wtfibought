@@ -191,7 +191,7 @@ public class TraderActionService {
     /** 不能复盘的原因，null=可以。素材有无另看 {@link ReviewRunner#hasMaterial} */
     public String reviewBlockedReason(AiTrader t) {
         if (scheduler.isHandoverActive()) {
-            // 三阶段交接期间旁路写复盘，会让 learner 读到"半天"的复盘并脏读进记忆
+            // 交接期间点播会抢掉日线复盘的 inFlight 位子，日线那篇就被跳过了
             return messages.get("trader.review.handover");
         }
         if (scheduler.isBusy(t.getId())) {

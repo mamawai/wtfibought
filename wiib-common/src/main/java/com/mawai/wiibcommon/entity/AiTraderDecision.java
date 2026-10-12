@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
  * 当时权益多少。wake_time 就是那次唤醒的K线边界。
  * <p>
  * kind 两类：TRADE/ALERT/MANUAL 是唤醒（例行K线/波动警报/主人手动叫醒），有权益；
- * REVIEW/LEARN 是复盘和学习，reasoning 装的是笔记全文，没权益。
+ * REVIEW 是复盘，reasoning 装的是复盘全文，没权益。
  * status：OK 正常、ERROR 失败、SKIPPED 上轮没跑完或信号迟到——跳过也照写，时间线上不藏。
  * <p>
  * 三处在用：竞技场的时间线与净值曲线；下一轮唤醒回注最近几行轨迹和上一轮结论；每日复盘拼素材。
@@ -29,7 +29,6 @@ public class AiTraderDecision {
     public static final String KIND_ALERT = "ALERT";
     public static final String KIND_MANUAL = "MANUAL";
     public static final String KIND_REVIEW = "REVIEW";
-    public static final String KIND_LEARN = "LEARN";
 
     @TableId(type = IdType.AUTO)
     private Long id;
@@ -45,7 +44,7 @@ public class AiTraderDecision {
 
     /**
      * TRADE=例行K线唤醒 ALERT=波动哨兵警报唤醒 MANUAL=主人手动唤醒（对话轨 wake_trader，回路与例行相同）
-     * REVIEW=reviewer复盘（reasoning=复盘全文，无equity） LEARN=learning agent 向同侪学习（reasoning=学习全文，无equity）
+     * REVIEW=reviewer复盘（reasoning=复盘全文，无equity）
      */
     private String kind;
 
