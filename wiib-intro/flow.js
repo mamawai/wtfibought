@@ -24,7 +24,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 
 const UI = {
   trace: 'TRACE',
-  st: { idle: { zh: 'IDLE · 待机', en: 'IDLE' }, run: { zh: 'RUN · 运行中', en: 'RUNNING' }, sleep: { zh: 'SLEEP · 休眠', en: 'SLEEPING' }, hitl: { zh: 'HITL · 等用户确认', en: 'HITL · AWAITING USER' }, paused: { zh: 'PAUSED · 已暂停', en: 'PAUSED' }, yield: { zh: 'YIELD · 已让位', en: 'YIELDED' } },
+  st: { idle: { zh: 'IDLE · 待机', en: 'IDLE' }, run: { zh: 'RUN · 运行中', en: 'RUNNING' }, sleep: { zh: 'SLEEP · 休眠', en: 'SLEEPING' }, hitl: { zh: 'HITL · 等用户确认', en: 'HITL · AWAITING USER' }, paused: { zh: 'PAUSED · 已暂停', en: 'PAUSED' }, bg: { zh: 'BG · 后台子运行在跑', en: 'BG · CHILD RUNS ACTIVE' }, wake: { zh: 'WAKE · 唤醒轮', en: 'WAKE · FOLLOW-UP TURN' } },
   play: { zh: '播放', en: 'Play' }, pause: { zh: '暂停', en: 'Pause' }, restart: { zh: '重放', en: 'Replay' },
   auto: { zh: '轮播', en: 'AUTO' },
   reduced: { zh: '系统开了「减少动态效果」，展示静态全图。', en: 'Reduced motion is on — showing the static diagram.' },
@@ -163,10 +163,10 @@ const PANELS = [
     id: 'chat',
     num: 'HARNESS 02',
     title: { zh: 'chat agent', en: 'chat agent' },
-    sub: { zh: '研判工作台 · 平铺编排 + ReactLoop 叶子', en: 'research workbench · flat orchestration + ReactLoop leaves' },
+    sub: { zh: '研判工作台 · 单 ReAct 主 agent + 后台子运行', en: 'research workbench · one ReAct main agent + background child runs' },
     w: 1180, h: 600,
     lanes: [
-      { x: 496, y: 22, t: { zh: '专家并行 · EXPERTS', en: 'EXPERTS · PARALLEL' } }
+      { x: 556, y: 22, t: { zh: '后台子运行 · CHILD RUNS', en: 'CHILD RUNS · BACKGROUND' } }
     ],
     nodes: [
       { id: 'user', x: 16, y: 64, w: 150, h: 76, tag: 'USER', icon: 'user',
@@ -182,50 +182,50 @@ const PANELS = [
           { id: 'g4', led: true, t: { zh: '全局闸 10 槽 · 2204', en: 'global ×10 · 2204' } }
         ],
         detail: { zh: '四道准入全在建流之前：解析端点、按配置指纹取/建叶子（LRU 32，指纹含 userId 做数据隔离）、用户并发闸、全局 10 槽。全过了才建 SSE 流——一旦响应变成 event-stream，再报错前端就拿不到结构化错误码了。', en: 'All four gates run before the stream exists: endpoint resolution, leaf fetch/build by config fingerprint (LRU 32; userId is in the fingerprint for data isolation), the per-user gate, the 10-slot global gate. Only then is the SSE stream created — once the response is an event-stream, errors can no longer carry structured codes.' } },
-      { id: 'router', x: 226, y: 174, w: 200, h: 164, tag: 'ROUTER', icon: 'route',
-        title: { zh: '路由 · Jev / 浅模型', en: 'Router · Jev / light model' },
-        counter: { label: { zh: '派发轮次', en: 'dispatch round' }, max: 3 },
+      { id: 'main', x: 226, y: 120, w: 270, h: 300, tag: 'MAIN AGENT', icon: 'zap',
+        title: { zh: '主 agent · 深模型', en: 'main agent · deep model' },
+        counter: { label: { zh: '模型调用', en: 'model calls' }, max: 8 },
         chips: [
-          { id: 'dm', t: 'market_agent' }, { id: 'dn', t: 'news_agent' }
+          { id: 'cmk', t: 'market ×4' }, { id: 'cnw', t: 'news_search' }, { id: 'ctr', t: 'trader_* ×5' },
+          { id: 'cfm', t: 'wake / review / note' }, { id: 'cbh', t: 'analyze_my_behavior' },
+          { id: 'cda', t: 'run_deep_analysis' }, { id: 'cdg', t: 'delegate' }
         ],
         rows: [
-          { id: 'jev', t: { zh: '配了 Jev 先问 · 否则浅模型', en: 'Jev first · else light model' } },
-          { id: 'to', t: { zh: '90s 超时 → 降级 FINISH', en: '90s timeout → FINISH' } }
-        ],
-        detail: { zh: '用户配了 Jev 就先问它：两道是非题一次问完「要不要行情 / 新闻专家」，概率过 0.5 的进名单；没配、调用失败、回包缺题都回落到浅模型路由——浅模型调 route 工具给出结构化去向（tool_choice 不强制，Opus 5.5 这类模型不收强制），循环只认这个值、不解析消息文本。问自己 trader 的问题直接 FINISH，summarizer 自己有只读工具。同一专家整轮只派一次，去重名单才是真正让循环收敛的东西，3 轮上限兜底；超时或异常降级 FINISH，路由挂了照样作答。', en: 'If the user has set up Jev, it is asked first: two yes/no questions in one call — do we need the market or news expert — and anything above 0.5 gets dispatched. No Jev, a failed call or a missing answer falls back to the light-model router, which calls a route tool for a structured destination (tool_choice is never forced; models like Opus 5.5 reject forcing); the loop trusts only that value, never parsed text. Questions about the user’s own trader go straight to FINISH — the summarizer has the read-only tools itself. Each expert is dispatched once per turn — the dedup list is what makes the loop converge, the 3-round cap backstops it. Timeouts and errors degrade to FINISH: a dead router never blocks the answer.' } },
-      { id: 'xm', x: 496, y: 40, w: 210, h: 140, tag: 'EXPERT', icon: 'candlestick-chart',
-        title: 'market_agent',
-        rows: [
-          { id: 'snap', t: 'market_snapshot' }, { id: 'iv', t: 'option_iv' },
-          { id: 'fund', t: 'funding_history' }, { id: 'depth', t: 'orderbook_depth' }
-        ],
-        sub: { zh: '提示词要求先调工具', en: 'prompt says tools first' },
-        detail: { zh: '行情专家：浅模型 + 4 个行情工具的 ReAct 循环。不强制 tool_choice（Opus 5.5 这类模型不收强制），「第一步先调工具取数、不凭记忆给数字」写在系统提示词里。', en: 'The market expert: light model + 4 market tools in a ReAct loop. tool_choice is never forced (models like Opus 5.5 reject it); “call the tools first, never quote a number from memory” lives in the system prompt.' } },
-      { id: 'xn', x: 496, y: 204, w: 210, h: 92, tag: 'EXPERT', icon: 'newspaper',
-        title: 'news_agent',
-        rows: [ { id: 'pre', t: { zh: 'BlockBeats 无参预取', en: 'BlockBeats prefetched' } } ],
-        sub: { zh: '不挂工具 · 预取 100% 到位', en: 'no tools · prefetch always lands' },
-        detail: { zh: '新闻专家不挂 function tool：news_search 无参数，挂成工具模型未必调，预取随消息直接喂进去才 100% 保证数据到位。', en: 'The news expert carries no function tools: news_search takes no arguments, and a model may skip an attached tool — prefetching the feed into the message guarantees the data arrives.' } },
-      { id: 'sum', x: 756, y: 174, w: 250, h: 228, tag: 'SUMMARIZER', icon: 'zap',
-        title: { zh: 'summarizer · 深模型', en: 'summarizer · deep model' },
-        chips: [
-          { id: 'sda', t: 'run_deep_analysis' }, { id: 'srd', t: 'trader_* ×5' }, { id: 'swk', t: 'wake_trader' },
-          { id: 'srv', t: 'review_trader_now' }, { id: 'snt', t: 'leave_note_to_trader' },
-          { id: 'sbh', t: 'analyze_my_behavior' }
-        ],
-        rows: [
-          { id: 'sfuse', t: { zh: '≤8 次调用 · 流式外发', en: '≤8 calls · streamed out' } },
+          { id: 'par', t: { zh: '同批 tool_call 并发执行', en: 'same-batch tool calls run in parallel' } },
+          { id: 'inbox', t: { zh: '收件箱 · 调模型前先排报告', en: 'inbox · reports queued before each call' } },
           { id: 'ws', t: { zh: '服务端搜索 · 端点勾选才有', en: 'server search · if the endpoint allows' } }
         ],
         stream: 3,
-        detail: { zh: '深模型只写最终回答，提示词一个字不提「要不要再派发」——让它同时纠结作答和派发就会反复横跳。用户自己的 trader 由它直接查：五个只读工具（概况与账本 / 持仓 / 决策 / 计划 / 已了结交易），按 userId 烤死在叶子里——这也是 userId 必须进缓存指纹的原因。wake / review / note 三个动作只往对话里推表单，按下按钮的是用户；run_deep_analysis 当场烧钱，走 HITL 闸。联网搜索只发给这一个叶子：端点是 responses / anthropic / gemini 协议且勾了开关才捎上许可，提示词也按能不能搜二选一，不承诺做不到的事。', en: 'The deep model only writes the final answer; its prompt never mentions dispatching — a model juggling “answer or dispatch” oscillates forever. The user’s own trader it reads directly: five read-only tools (overview and ledger / positions / decisions / plans / closed trades), baked to the userId inside the leaf — which is exactly why userId must be part of the cache fingerprint. The three trader actions merely push a form into the chat (the user presses the button); run_deep_analysis burns money immediately, so it goes through the HITL gate. Web search is granted to this leaf alone, only when the endpoint speaks responses / anthropic / gemini and has search switched on — and the prompt is picked to match, so it never promises what the endpoint cannot do.' } },
-      { id: 'yq', x: 1016, y: 40, w: 150, h: 124, tag: 'QUEUE', icon: 'pause',
-        title: 'ChatYieldCoordinator',
+        detail: { zh: '一轮只有这一个 agent：深模型 + 16 个工具的 ReactLoop，流式作答。取什么数它自己定，同一批 tool_call 在虚拟线程上并发、回执按原顺序接回；不强制 tool_choice（Opus 5.5 这类模型不收强制），「先取数再答」写在系统提示词里。用户自己的 trader 由它直接查：五个只读工具按 userId 烤死在叶子里——这也是 userId 必须进缓存指纹的原因。wake / review / note 三个动作只往对话里推表单，按下按钮的是用户；run_deep_analysis 当场烧钱，走 HITL 闸，批准后转后台子运行；读得多的活用 delegate 派给后台 worker。每次调模型前先把收件箱里到的子运行报告排进上下文。', en: 'The only agent in a turn: a ReactLoop on the deep model with 16 tools, streaming its answer. It decides what to fetch; tool calls in one batch run in parallel on virtual threads and their results are paired back in order. tool_choice is never forced (models like Opus 5.5 reject it); “fetch first, then answer” lives in the system prompt. It reads the user’s own trader directly through five read-only tools baked to the userId inside the leaf — which is why userId must be part of the cache fingerprint. The three trader actions merely push a form into the chat (the user presses the button); run_deep_analysis burns money at once, so it passes the HITL gate and then runs as a background child run; heavy reading goes to background workers via delegate. Before every model call, the inbox of arrived child-run reports is appended to the context.' } },
+      { id: 'cr', x: 556, y: 40, w: 230, h: 150, tag: 'CHILD RUNS', icon: 'layers',
+        title: 'ChildRunRegistry',
         rows: [
-          { id: 'q1', t: { zh: '让位窗口 = 专家等待期', en: 'window = expert wait' } },
-          { id: 'q2', t: { zh: '在途 market_agent ×1', en: 'market_agent ×1' } }
+          { id: 'c1', t: { zh: '用户开关 · 上限 3 · 全局 20', en: 'user switch · limit 3 · global 20' } },
+          { id: 'c2', t: { zh: '轮在跑 → 进收件箱', en: 'turn running → inbox' } },
+          { id: 'c3', t: { zh: '没轮 → 落库标 pending', en: 'no turn → stored, pending' } }
         ],
-        detail: { zh: '用户消息优先于专家返回。只有专家等待期可让——路由/汇总在烧模型调用，中断只会浪费；专家等待纯粹在等 IO，让出去的只是「接着等」这件事。在途批次在这里排队，会话空闲时前端发起补答轮接回。', en: 'User messages outrank expert returns. Only the expert wait may yield — router and summarizer are burning model calls, so interrupting them wastes money; the expert wait is pure IO, and what is given up is merely “keep waiting”. The in-flight batch queues here; when the session goes idle, the frontend starts a follow-up turn to reclaim it.' } },
+        detail: { zh: '主 agent 派出去的长活都在这里登记：深研判（批准后）与 delegate 派的 worker 共用一套运行时，区别只在任务书是代码写死还是模型现写。派发前三道检查：用户开关（只管 delegate，深研判是用户点过头的）→ 该用户在跑数不超上限（默认 3，可调到 5）→ 全局 20 个的信号量（子运行在对话名额之外，行情配额得另有一道闸）；拒了把拒因原样回给模型，它自己做。报告回来只有一条规则：会话正挂着一轮就进收件箱，没挂就在会话锁里直接落进上下文并标 pending。超时、失败也回灌一条失败报告，取消的不回灌。', en: 'Every slow job the main agent hands off is registered here: deep analysis (once approved) and delegate workers share one runtime; the only difference is whether the brief is hard-coded or written by the model. Three checks before dispatch: the user’s switch (delegate only — deep analysis was approved on the card) → this user’s running count under the limit (3 by default, up to 5) → a global semaphore of 20 (child runs sit outside the chat slot, so the market-data quota needs its own gate); a refusal goes back to the model verbatim and it does the work itself. One rule for returning reports: if a turn is attached the report goes into its inbox, otherwise it is appended to the context under the session lock and marked pending. Timeouts and failures still deliver a failure report; cancelled runs deliver nothing.' } },
+      { id: 'wr', x: 836, y: 40, w: 170, h: 92, tag: 'WORKER', icon: 'globe',
+        title: { zh: 'researcher · 浅模型', en: 'researcher · light model' },
+        rows: [
+          { id: 'rn', t: 'news_search' },
+          { id: 'rw', t: { zh: '联网搜索 · 端点允许时', en: 'web search · if allowed' } }
+        ],
+        detail: { zh: '调研员预设：浅模型 + news_search + 服务端搜索许可（看浅模型那条端点）。任务书是它唯一的用户消息，看不到主对话；先调快讯再按需联网，报告先结论后依据、每条事实注明来源。没有 delegate、没有动作工具——深度只有一层。独享账本，用量只打日志不进主轮的账。', en: 'The researcher preset: light model + news_search + the server-search grant (taken from the light-model endpoint). The brief is its only user message; it never sees the main conversation. Flashes first, then the web as needed; the report leads with conclusions and cites a source for every fact. No delegate, no action tools — depth is one level. It has its own usage ledger, logged only, never mixed into the turn’s bill.' } },
+      { id: 'wa', x: 836, y: 150, w: 170, h: 92, tag: 'WORKER', icon: 'candlestick-chart',
+        title: { zh: 'analyst · 浅模型', en: 'analyst · light model' },
+        rows: [
+          { id: 'am', t: { zh: '行情 ×4 · 指标 ×3', en: 'market ×4 · indicators ×3' } },
+          { id: 'ab', t: { zh: '只读 · 不许再派', en: 'read-only · no further dispatch' } }
+        ],
+        detail: { zh: '行情分析员预设：浅模型 + 行情 4 个 + 指标 3 个（klines / indicators / kline_structure）。按任务书涉及的币和周期逐个取数，不凭记忆给数字；简报先结论后数据、给出失效条件。同样看不到主对话、没有 delegate。', en: 'The analyst preset: light model + 4 market tools + 3 indicator tools (klines / indicators / kline_structure). It fetches symbol by symbol and timeframe by timeframe as the brief requires and never quotes a number from memory; the brief leads with conclusions, backs them with the data and names an invalidation. It too is blind to the main conversation and has no delegate.' } },
+      { id: 'da', x: 836, y: 260, w: 170, h: 92, tag: 'CHILD', icon: 'scale',
+        title: { zh: '深研判子运行', en: 'deep-analysis run' },
+        rows: [
+          { id: 'd1', t: 'Bull ∥ Bear → Judge' },
+          { id: 'd2', t: { zh: '3 次深模型调用', en: '3 deep-model calls' } }
+        ],
+        detail: { zh: 'run_deep_analysis 过了 HITL 闸门不再同步跑：spawn 一个子运行立刻返回 RUNNING，主 agent 先答能答的。子运行里 Bull 与 Bear 在虚拟线程上并行辩论，再由 Judge 裁决，阶段进度挂在过程轨的子运行条目上；裁决作为报告回灌，主 agent 被唤醒补答。', en: 'Once through the HITL gate, run_deep_analysis no longer runs inline: it spawns a child run and returns RUNNING at once, and the main agent answers what it can. Inside, Bull and Bear argue in parallel on virtual threads, then the Judge rules; stage progress shows on the child-run entry of the process rail. The verdict comes back as a report and the main agent is woken to follow up.' } },
       { id: 'hitl', x: 1016, y: 190, w: 150, h: 184, tag: 'HITL', icon: 'shield-check', hitl: true,
         title: 'run_deep_analysis',
         rows: [
@@ -234,31 +234,41 @@ const PANELS = [
           { id: 'hkey', t: { zh: '键 = 会话+工具+标的', en: 'key = session+tool+symbol' } }
         ],
         btns: { ok: { zh: '确认执行', en: 'Approve' }, no: { zh: '取消', en: 'Dismiss' } },
-        detail: { zh: '闸门不在工具体内，是 summarizer 的 ReactLoop 执行工具前先问的一道关（ApprovalGate）：授权键 = sessionId + 工具名 + 归一化标的。卡片上写 ETHUSDT、模型改口要 BTCUSDT 时键不匹配，重新弹卡——判断发生在信息完整的那一层。', en: 'The gate is not inside the tool: the summarizer’s ReactLoop asks it before running any tool (ApprovalGate). Approval key = sessionId + tool + normalized symbol. If the card says ETHUSDT and the model switches to BTCUSDT, the key mismatches and a new card pops — the judgment lives at the layer that has full information.' } },
-      { id: 'hist', x: 756, y: 444, w: 250, h: 108, tag: 'STORE', icon: 'database',
+        detail: { zh: '闸门不在工具体内，是主 agent 的 ReactLoop 执行工具前先问的一道关（ApprovalGate）：授权键 = sessionId + 工具名 + 归一化标的。卡片上写 ETHUSDT、模型改口要 BTCUSDT 时键不匹配，重新弹卡——判断发生在信息完整的那一层。', en: 'The gate is not inside the tool: the main agent’s ReactLoop asks it before running any tool (ApprovalGate). Approval key = sessionId + tool + normalized symbol. If the card says ETHUSDT and the model switches to BTCUSDT, the key mismatches and a new card pops — the judgment lives at the layer that has full information.' } },
+      { id: 'hist', x: 226, y: 460, w: 270, h: 100, tag: 'STORE', icon: 'database',
         title: { zh: '会话历史', en: 'Session history' },
         rows: [
           { id: 'ow', t: { zh: '终态整体覆盖写', en: 'final state overwrites whole' } },
           { id: 'cp', t: { zh: '>32k tokens 浅模型压缩', en: '>32k tokens → light-model summary' } },
           { id: 'nx', t: { zh: '下一轮从这里起跑', en: 'the next turn starts here' } }
         ],
-        detail: { zh: '一轮的终态（含压缩替换后的历史）整体覆盖写入 workbench_chat_context，裸 JSON 落库，下一轮从这里起跑。历史估算超过 32k tokens 时，浅模型把老消息总结成一段替换原文，只留最近几条原样。', en: 'The turn’s final state — compressed history included — overwrites workbench_chat_context wholesale as plain JSON; the next turn starts from there. Past roughly 32k tokens the light model folds the older messages into one summary and keeps only the last few verbatim.' } }
+        detail: { zh: '一轮的终态（含压缩替换后的历史）整体覆盖写入 workbench_chat_context，裸 JSON 落库，下一轮从这里起跑。历史估算超过 32k tokens 时，浅模型把老消息总结成一段替换原文，只留最近几条原样。', en: 'The turn’s final state — compressed history included — overwrites workbench_chat_context wholesale as plain JSON; the next turn starts from there. Past roughly 32k tokens the light model folds the older messages into one summary and keeps only the last few verbatim.' } },
+      { id: 'wake', x: 16, y: 444, w: 150, h: 108, tag: 'WAKE', icon: 'activity',
+        title: { zh: '唤醒轮 · /wake', en: 'follow-up · /wake' },
+        rows: [
+          { id: 'w1', t: 'done.pending = true' },
+          { id: 'w2', t: { zh: '前端本地空闲时发起', en: 'fired when the client is idle' } },
+          { id: 'w3', t: { zh: '答案带【补充回答】标头', en: 'answer headed [Follow-up]' } }
+        ],
+        detail: { zh: '报告落进上下文而没有哪一轮答过，后端就标 pending，随 done 帧与 status 接口一起下发。唤醒由前端发起：本地没有轮在跑、排队消息也发完了，才 POST /wake；不欠就 2208（别的标签页先接走了，或后端重启丢了标记）。唤醒轮不落 user 行，用户侧消息是一条唤醒指令，答案带【补充回答】标头、不给重新生成；其余与普通轮一样收尾。', en: 'When a report lands in the context and no turn has answered it, the backend marks pending and sends it with the done frame and the status endpoint. The client starts the follow-up: only when nothing runs locally and the queue is drained does it POST /wake; if nothing is owed the call gets 2208 (another tab took it, or a restart lost the flag). The follow-up turn stores no user row — its user-side message is a wake instruction — and its answer carries the [Follow-up] header and cannot be regenerated; otherwise it ends like any other turn.' } }
     ],
     edges: [
       { id: 'u-g', from: 'user', to: 'gates', pts: [[91, 140], [91, 174]] },
-      { id: 'g-r', from: 'gates', to: 'router', pts: [[166, 250], [226, 250]] },
-      { id: 'r-m', from: 'router', to: 'xm', pts: [[426, 210], [456, 210], [456, 110], [496, 110]] },
-      { id: 'r-n', from: 'router', to: 'xn', pts: [[426, 250], [496, 250]] },
-      { id: 'm-r', from: 'xm', to: 'router', cls: 'back', pts: [[496, 126], [468, 126], [468, 224], [426, 224]] },
-      { id: 'n-r', from: 'xn', to: 'router', cls: 'back', pts: [[496, 266], [426, 266]] },
-      { id: 'r-s', from: 'router', to: 'sum', pts: [[326, 338], [326, 480], [726, 480], [726, 288], [756, 288]] },
-      { id: 's-h', from: 'sum', to: 'hist', pts: [[881, 402], [881, 444]] },
-      { id: 's-u', from: 'sum', to: 'user', cls: 'answer', pts: [[881, 174], [881, 16], [91, 16], [91, 64]] },
-      { id: 'xm-yq', from: 'xm', to: 'yq', cls: 'back', pts: [[706, 110], [1016, 110]] }
+      { id: 'g-m', from: 'gates', to: 'main', pts: [[166, 250], [226, 250]] },
+      { id: 'm-cr', from: 'main', to: 'cr', pts: [[496, 160], [526, 160], [526, 115], [556, 115]] },
+      { id: 'cr-wr', from: 'cr', to: 'wr', pts: [[786, 86], [836, 86]] },
+      { id: 'cr-wa', from: 'cr', to: 'wa', pts: [[786, 130], [811, 130], [811, 196], [836, 196]] },
+      { id: 'cr-da', from: 'cr', to: 'da', pts: [[786, 160], [801, 160], [801, 306], [836, 306]] },
+      { id: 'cr-m', from: 'cr', to: 'main', cls: 'back', pts: [[556, 170], [516, 170], [516, 300], [496, 300]] },
+      { id: 'cr-h', from: 'cr', to: 'hist', cls: 'back', pts: [[671, 190], [671, 510], [496, 510]] },
+      { id: 'm-h', from: 'main', to: 'hist', pts: [[361, 420], [361, 460]] },
+      { id: 'h-w', from: 'hist', to: 'wake', cls: 'back', pts: [[226, 510], [166, 510]] },
+      { id: 'w-m', from: 'wake', to: 'main', cls: 'back', pts: [[91, 444], [91, 430], [200, 430], [200, 380], [226, 380]] },
+      { id: 's-u', from: 'main', to: 'user', cls: 'answer', pts: [[361, 120], [361, 16], [91, 16], [91, 64]] }
     ],
     foot: [
-      { zh: '让位：专家等待期是唯一窗口 · 新消息到达 → 在途批次排队 · 空闲时补答轮接回', en: 'Yielding: the expert-wait is the only window · new message → in-flight batch queued · resumed in a follow-up turn' },
-      { zh: '每叶子 ≤8 次调用各自计数 · 未吐帧才重订阅 · 不挂兜底模型', en: 'each leaf counts its own ≤8 calls · re-subscribe only before first frame · no fallback model' }
+      { zh: '长活不在轮里等：深研判 / 调研 / 行情分析派成后台子运行 · 报告回灌上下文 · 本地空闲时唤醒轮补答', en: 'Slow work never blocks a turn: deep analysis / research / market analysis run as child runs · reports flow back into the context · a follow-up turn answers once the client is idle' },
+      { zh: '主 agent 与每个 worker 各自 ≤8 次调用 · 同批工具并发 · 未吐帧才重订阅 · 不挂兜底模型', en: 'the main agent and each worker count their own ≤8 calls · same-batch tools in parallel · re-subscribe only before the first frame · no fallback model' }
     ]
   }
 ];
@@ -275,11 +285,11 @@ const STEP = {
     ]
   },
   chat: {
-    order: ['user', 'gates', 'router', 'xm', 'xn', 'yq', 'sum', 'hist'],
-    indent: { xm: 1, xn: 1, yq: 2 },
-    float: { hitl: { over: 'sum', dy: 0, inset: 0 } },   // 窄屏卡片只剩标题，HITL 卡直接盖在 summarizer 上
+    order: ['user', 'gates', 'main', 'cr', 'wr', 'wa', 'da', 'hist', 'wake'],
+    indent: { cr: 1, wr: 2, wa: 2, da: 2, wake: 1 },
+    float: { hitl: { over: 'main', dy: 0, inset: 0 } },   // 窄屏卡片只剩标题，HITL 卡直接盖在主 agent 上
     groups: [
-      { from: 'xm', to: 'yq', t: { zh: '专家并行取数', en: 'experts run in parallel' } }
+      { from: 'cr', to: 'da', t: { zh: '后台子运行 · 并行', en: 'child runs · in parallel' } }
     ]
   }
 };
@@ -882,12 +892,12 @@ async function traderScript(c, scene) {
 
 /* ---------- 剧本：chat 三个场景轮播 ---------- */
 const CH_SCENES = [
-  { zh: 'A · 完整一轮：路由 → 专家 → HITL → 汇总', en: 'A · full turn: route → experts → HITL → answer' },
-  { zh: 'B · 让位 → 补答轮', en: 'B · yield → follow-up turn' },
-  { zh: 'C · 新闻双源：BlockBeats + 联网搜索', en: 'C · dual-source news: BlockBeats + web search' }
+  { zh: 'A · 完整一轮：取数 → HITL → 深研判转后台 → 唤醒补答', en: 'A · full turn: tools → HITL → deep analysis in background → follow-up' },
+  { zh: 'B · 派子 agent：researcher ∥ analyst → 报告回灌 → 补充回答', en: 'B · delegate: researcher ∥ analyst → reports back → follow-up' },
+  { zh: 'C · 新闻双源：news_search + 联网搜索', en: 'C · dual-source news: news_search + web search' }
 ];
 
-/* 共用开场：提问 → 四道准入 → SSE → 路由亮起 */
+/* 共用开场：提问 → 四道准入 → SSE → 主 agent 亮起 */
 async function chGates(c, qMsg, fast) {
   c.on('user');
   c.log('USER', qMsg);
@@ -898,166 +908,171 @@ async function chGates(c, qMsg, fast) {
   c.log('GATE', { zh: '端点 ✓ 叶子缓存命中 ✓ 用户闸 ✓ 全局 3/10 ✓ → SSE 建流', en: 'endpoint ✓ leaf cache hit ✓ user gate ✓ global 3/10 ✓ → SSE opened' });
   await c.sleep(400);
   c.done('gates'); c.done('user');
-  await c.pulse('g-r');
-  c.on('router');
+  await c.pulse('g-m');
+  c.on('main');
 }
 
 /* 共用收尾：终态覆盖写 */
 async function chStore(c, msg) {
-  await c.pulse('s-h');
-  c.done('sum'); c.on('hist');
+  await c.pulse('m-h');
+  c.done('main'); c.on('hist');
   c.row('hist', 'ow', 'hit', true);
   c.log('DB', msg, 'good');
   await c.sleep(1000);
   c.done('hist');
 }
 
+/* 共用：报告到了没轮在跑 → 落库标 pending → 前端空闲发起唤醒轮，主 agent 重新亮起 */
+async function chWake(c, storeMsg) {
+  c.row('cr', 'c3', 'hit', true);
+  await c.pulse('cr-h');
+  c.on('hist'); c.row('hist', 'ow', 'hit', true);
+  c.log('DB', storeMsg, 'good');
+  await c.sleep(700);
+  c.done('hist');
+  await c.pulse('h-w');
+  c.on('wake'); c.row('wake', 'w1', 'hit', true); c.row('wake', 'w2', 'hit', true);
+  c.status('wake');
+  c.log('WAKE', { zh: 'done / status 带 pending · 本地没有轮在跑 → POST /wake', en: 'done / status carry pending · nothing running locally → POST /wake' }, 'good');
+  await c.sleep(700);
+  c.row('wake', 'w3', 'hit', true);
+  await c.pulse('w-m');
+  c.done('wake'); c.on('main'); c.clearStream('main'); c.count('main', 1);
+  c.log('MAIN', { zh: '唤醒轮：不落 user 行 · 用户侧消息是唤醒指令 · 据报告补充回答', en: 'follow-up turn: no user row · the user-side message is a wake instruction · it answers from the reports' });
+}
+
 async function chatScript(c, scene) {
   c.scene(CH_SCENES[scene]);
 
   if (scene === 0) {
-    await chGates(c, { zh: '「ETH 永续现在适合做空吗？」', en: '“Is ETH perp a short right now?”' });
+    await chGates(c, { zh: '「ETH 永续现在适合做空吗？给我来个深度研判」', en: '“Is ETH perp a short right now? Run a deep analysis.”' });
 
-    // 第 1 轮：market + news 并行
-    c.count('router', 1);
-    c.log('ROUTE', { zh: 'tool_call → [market_agent, news_agent] · 轮次 1/3', en: 'tool_call → [market_agent, news_agent] · round 1/3' });
-    c.chip('router', 'dm'); c.chip('router', 'dn');
-    await c.sleep(500);
-    await Promise.all([
-      (async () => {
-        await c.pulse('r-m'); c.on('xm');
-        c.row('xm', 'snap'); await c.sleep(500);
-        c.row('xm', 'fund'); await c.sleep(500);
-        c.row('xm', 'depth');
-        c.log('EXPERT', { zh: 'market_agent：snapshot + funding + 盘口（虚拟线程）', en: 'market_agent: snapshot + funding + depth (virtual thread)' });
-        await c.sleep(400);
-        await c.pulse('m-r', { cls: 'dim', dur: 750 }); c.done('xm');
-      })(),
-      (async () => {
-        await c.pulse('r-n'); c.on('xn');
-        c.row('xn', 'pre');
-        c.log('EXPERT', { zh: 'news_agent：BlockBeats 预取 12 条', en: 'news_agent: 12 BlockBeats items prefetched' });
-        await c.sleep(900);
-        await c.pulse('n-r', { cls: 'dim', dur: 600 }); c.done('xn');
-      })()
-    ]);
-    c.log('ROUTE', { zh: '结论按派发顺序并入 working', en: 'conclusions merged into working, dispatch order' });
-    await c.sleep(600);
+    // 第 1 次调用：一批 tool_call 并发取数
+    c.count('main', 1);
+    c.chip('main', 'cmk'); c.chip('main', 'ctr'); c.row('main', 'par', 'hit', true);
+    c.log('MAIN', { zh: 'tool_call ×4：market_snapshot + funding_history + orderbook_depth + trader_positions · 同批并发（虚拟线程）', en: 'tool_call ×4: market_snapshot + funding_history + orderbook_depth + trader_positions · one batch, in parallel (virtual threads)' });
+    await c.sleep(1100);
+    c.log('TOOL', { zh: '回执按 tool_call 顺序配对成一条接回历史', en: 'results paired back in call order as one message' });
+    c.count('main', 2);
+    await c.type('main', 0, { zh: '资金费连续 3 期为负，空头已拥挤；', en: 'Funding negative 3 straight periods, shorts crowded;' });
 
-    // 第 2 轮：专家数据已够 → FINISH，转汇总
-    c.count('router', 2);
-    c.log('ROUTE', { zh: 'tool_call → [FINISH] · 轮次 2/3 · 专家数据已够', en: 'tool_call → [FINISH] · round 2/3 · expert data suffices' });
-    await c.sleep(400);
-    await c.pulse('r-s', { dur: 1000 });
-    c.done('router'); c.on('sum');
-    c.log('SUM', { zh: 'summarizer 深模型 · 流式作答', en: 'summarizer, deep model · streaming' });
-    // 用户自己的 trader 由 summarizer 直接查，不经路由
-    c.chip('sum', 'srd');
-    c.log('SUM', { zh: 'summarizer 调 trader_overview / trader_positions（只读，userId 烤死）', en: 'summarizer calls trader_overview / trader_positions (read-only, userId baked in)' });
-    await c.sleep(450);
-    await c.type('sum', 0, { zh: '资金费连续 3 期为负，空头已拥挤；', en: 'Funding negative 3 straight periods;' });
-
-    // HITL：深研判要用户点头
-    c.chip('sum', 'sda');
+    // HITL：深研判要用户点头，本轮先收尾弹卡
+    c.chip('main', 'cda');
     c.status('hitl');
     c.hitl(true);
-    c.log('HITL', { zh: 'run_deep_analysis 需确认 · 键 = 会话+工具+标的', en: 'run_deep_analysis needs approval · key = session+tool+symbol' }, 'warn');
+    c.log('HITL', { zh: 'run_deep_analysis 需确认 · 键 = 会话+工具+标的 · 本轮先收尾、弹卡', en: 'run_deep_analysis needs approval · key = session+tool+symbol · the turn ends and the card pops' }, 'warn');
     await c.sleep(1800);
     c.hitlPress();
     await c.sleep(600);
     c.hitl(false);
     c.status('run');
-    c.log('HITL', { zh: '用户已确认 · 深研判执行（3 次深模型调用）', en: 'approved · deep analysis runs (3 deep calls)' }, 'good');
-    await c.sleep(900);
+    c.log('HITL', { zh: '用户已确认 · 前端补发「请继续」· 新一轮里闸门放行', en: 'approved · the client sends “continue” · the gate lets it through in the next turn' }, 'good');
+    c.count('main', 1);
 
-    await c.type('sum', 1, { zh: '盘口 25bp 内买盘压卖盘 3.2×，急跌有接；', en: 'Bids 3.2× asks within 25bp;' });
+    // 批准后不同步跑：转后台子运行，主 agent 先答能答的
+    await c.pulse('m-cr');
+    c.on('cr'); c.row('cr', 'c1', 'hit', true);
+    c.log('CHILD', { zh: 'spawn #1 深研判 ETHUSDT · 开关 ✓ 在跑 0/3 ✓ 全局 4/20 ✓ → 工具立即返回 RUNNING', en: 'spawn #1 deep analysis ETHUSDT · switch ✓ running 0/3 ✓ global 4/20 ✓ → the tool returns RUNNING at once' });
+    await c.pulse('cr-da');
+    c.on('da'); c.row('da', 'd1', 'hit', true);
+    c.count('main', 2);
+    await c.type('main', 1, { zh: '盘口 25bp 内买盘压卖盘 3.2×，急跌有接；', en: 'Bids 3.2× asks within 25bp, dips get bought;' });
     c.pulse('s-u', { dur: 1400, cls: 'dim', r: 2.5 });
-    await c.type('sum', 2, { zh: '结论：不追空，等 4H 供给区再评估。', en: 'Don’t chase; reassess at 4H supply.' });
+    await c.type('main', 2, { zh: '深度研判已在后台跑，裁决稍后补上。', en: 'Deep analysis is running in the background; verdict to follow.' });
     c.pulse('s-u', { dur: 1400, cls: 'dim', r: 2.5 });
-    c.log('SUM', { zh: '答案逐帧外发', en: 'answer streamed frame by frame' });
-    await c.sleep(900);
+    c.log('MAIN', { zh: '主 agent 不等、不轮询：先答能答的，本轮结束', en: 'the main agent neither waits nor polls: it answers what it can and the turn ends' });
+    await c.sleep(700);
+    await chStore(c, { zh: '终态覆盖写 · done.pending=false · 名额释放，期间用户可以继续问', en: 'final state overwritten · done.pending=false · slot released, the user can keep asking meanwhile' });
 
-    await chStore(c, { zh: '终态覆盖写 workbench_chat_context · 28.4k < 32k 不压缩', en: 'final state overwrites workbench_chat_context · 28.4k < 32k, no compression' });
+    // 子运行在跑：Bull ∥ Bear → Judge
+    c.status('bg');
+    c.log('CHILD', { zh: '#1 Bull ∥ Bear 并行辩论 → Judge 裁决 · 3 次深模型调用 · 进度推到过程轨', en: '#1 Bull ∥ Bear argue in parallel → Judge rules · 3 deep-model calls · progress on the process rail' });
+    c.row('da', 'd2', 'hit', true);
+    await c.sleep(1800);
+    c.done('da');
+    c.log('CHILD', { zh: '#1 完成 · 没轮在跑 → 报告以用户侧消息追加进上下文、标 pending', en: '#1 done · no turn running → the report is appended to the context as a user-side message, pending set' }, 'good');
+    await chWake(c, { zh: '【后台任务#1 深研判 ETHUSDT 已完成】+ 裁决 JSON 落进 workbench_chat_context', en: '[Background task #1 deep analysis ETHUSDT done] + verdict JSON stored in workbench_chat_context' });
+    c.done('cr');
+    await c.type('main', 0, { zh: '【补充回答】裁决：bull 30 / range 50 / bear 20，倾向不追空；', en: '[Follow-up] Verdict: bull 30 / range 50 / bear 20 — don’t chase the short;' });
+    c.pulse('s-u', { dur: 1200, cls: 'dim', r: 2.5 });
+    await c.type('main', 1, { zh: '失效条件：4H 收在 3,180 供给区上方。', en: 'Invalidation: a 4H close above the 3,180 supply zone.' });
+    c.pulse('s-u', { dur: 1200, cls: 'dim', r: 2.5 });
+    await c.sleep(700);
+    c.status('run');
+    await chStore(c, { zh: '唤醒轮与普通轮同款收尾：终态覆盖写 · pending 清零', en: 'a follow-up turn ends like any other: final state overwritten · pending cleared' });
     c.log('GATE', { zh: '闸门释放 · 等下一条消息', en: 'gates released · waiting for the next message' }, 'dim');
 
   } else if (scene === 1) {
-    // 三幕：派发中 → 新消息插队（让位）→ 空闲后补答
-    await chGates(c, { zh: '「BTC 现在资金费什么水平？」', en: '“Where is BTC funding right now?”' }, true);
-    c.count('router', 1); c.chip('router', 'dm');
-    c.log('ROUTE', { zh: 'tool_call → [market_agent] · 轮次 1/3', en: 'tool_call → [market_agent] · round 1/3' });
-    await c.pulse('r-m'); c.on('xm'); c.row('xm', 'fund');
-    c.log('EXPERT', { zh: 'market_agent 上游还没回 · 编排阻塞在等 IO——唯一可让位的窗口', en: 'market_agent still waiting upstream · the loop blocks on IO — the only yieldable window' });
-    await c.sleep(1600);
-
-    // 幕 2：新消息到达，当前轮立刻让位
-    c.on('user'); c.status('yield');
-    c.log('USER', { zh: '新消息插队：「先说下 ETH 价格！」', en: 'new message cuts in: “ETH price first!”' }, 'warn');
-    await c.sleep(700);
-    c.hold('xm'); c.hold('yq'); c.row('yq', 'q2', 'hit', true);
-    c.done('router');
-    await c.pulse('xm-yq', { dur: 900 });
-    c.log('TURN', { zh: '让位：本轮结束 · working 存档 · 在途的 market_agent 批次进队列', en: 'yield: turn ends · working archived · the in-flight market_agent batch is queued' }, 'warn');
-    await c.sleep(1000);
-
-    // 新消息先被服务——这就是让位的意义
-    c.status('run');
-    c.log('TURN', { zh: '新消息开新一轮，插队先答', en: 'the new message runs first as its own turn' }, 'good');
-    await c.pulse('u-g');
-    c.on('gates'); await c.sleep(300); c.done('gates'); c.done('user');
-    await c.pulse('g-r'); c.on('router'); c.count('router', 1);
-    c.log('ROUTE', { zh: '轻问题 → FINISH 直接作答，不派专家', en: 'light question → FINISH, no experts needed' });
-    await c.pulse('r-s', { dur: 900 });
-    c.done('router'); c.on('sum');
-    await c.type('sum', 0, { zh: 'ETH 现价 3097，1h −1.2%。', en: 'ETH at 3097, −1.2% on the hour.' });
+    // 三幕：派两个 worker 并行 → 本轮先答能答的 → 报告分两路回来（落库唤醒 / 轮内收件箱）
+    await chGates(c, { zh: '「开两个子 agent：一个查本周 ETF 资金流和监管动态，一个看 BTC / ETH 的四小时结构」', en: '“Spin up two sub-agents: one on this week’s ETF flows and regulation, one on the BTC / ETH 4H structure.”' }, true);
+    c.count('main', 1);
+    c.chip('main', 'cdg'); c.row('main', 'par', 'hit', true);
+    c.log('MAIN', { zh: 'tool_call ×2：delegate(researcher, 任务书 A) ∥ delegate(analyst, 任务书 B) · 任务书自足：目标 / 范围 / 报告要什么', en: 'tool_call ×2: delegate(researcher, brief A) ∥ delegate(analyst, brief B) · each brief stands alone: objective / scope / what the report must contain' });
+    await c.pulse('m-cr');
+    c.on('cr'); c.row('cr', 'c1', 'hit', true);
+    c.log('CHILD', { zh: '三道检查：开关开 ✓ 在跑 0/3 ✓ 全局 2/20 ✓ → spawn #2 #3，各建一个 worker（浅模型 · 独享账本）', en: 'three checks: switch on ✓ running 0/3 ✓ global 2/20 ✓ → spawn #2 #3, one fresh worker each (light model · own ledger)' });
+    await Promise.all([
+      (async () => {
+        await c.pulse('cr-wr'); c.on('wr');
+        c.row('wr', 'rn', 'hit', true); await c.sleep(700);
+        c.row('wr', 'rw', 'hit', true);
+        c.log('WORKER', { zh: '#2 researcher：news_search → 联网补充 · 看不到主对话 · ≤8 次调用', en: '#2 researcher: news_search → web supplement · blind to the main chat · ≤8 calls' });
+      })(),
+      (async () => {
+        await c.pulse('cr-wa'); c.on('wa');
+        c.row('wa', 'am', 'hit', true);
+        c.log('WORKER', { zh: '#3 analyst：klines ×2 + indicators + kline_structure · 不凭记忆给数字', en: '#3 analyst: klines ×2 + indicators + kline_structure · never quotes a number from memory' });
+      })()
+    ]);
+    c.count('main', 2);
+    c.log('MAIN', { zh: '两个 delegate 都回 {runId, status: running} · 主 agent 不等、不轮询、不重复派', en: 'both delegates return {runId, status: running} · the main agent neither waits, polls nor re-dispatches' });
+    await c.type('main', 0, { zh: '两项已派后台子 agent 并行去查，先说现在能答的：', en: 'Both parts are with background sub-agents; what I can say now:' });
+    c.pulse('s-u', { dur: 1100, cls: 'dim', r: 2.5 });
+    await c.type('main', 1, { zh: 'BTC 现价 97,420，4H 仍在区间内。', en: 'BTC at 97,420, still inside the 4H range.' });
     c.pulse('s-u', { dur: 1100, cls: 'dim', r: 2.5 });
     await c.sleep(500);
-    await chStore(c, { zh: '插队轮落库 · 会话转入空闲', en: 'the cut-in turn stored · session goes idle' });
+    await chStore(c, { zh: '本轮结束 · done.pending=false（报告还没到）', en: 'turn ends · done.pending=false (no report yet)' });
 
-    // 幕 3：空闲 → 补答轮把批次取回来，第一个问题这才答完
-    c.clearStream('sum');
-    c.log('TURN', { zh: '会话空闲 → 前端发起补答轮：先接回让位那批在途专家', en: 'idle → the frontend starts a follow-up turn: reclaim the parked batch first' }, 'good');
-    await c.pulse('xm-yq', { dur: 900, reverse: true });
-    c.unhold('yq'); c.done('yq');
-    c.unhold('xm'); c.on('xm');
-    await c.sleep(400);
-    await c.pulse('m-r', { cls: 'dim', dur: 750 }); c.done('xm');
-    c.on('router'); c.count('router', 1);
-    c.log('EXPERT', { zh: 'market_agent 结论并入 working · 之后与普通轮完全一样', en: 'market_agent conclusion merged · from here it is a normal turn' });
-    await c.sleep(500);
-    c.log('ROUTE', { zh: '→ FINISH · 转汇总，补答第一个问题', en: '→ FINISH · summarize the first question at last' });
-    await c.pulse('r-s', { dur: 900 });
-    c.done('router'); c.on('sum');
-    await c.type('sum', 0, { zh: 'BTC 资金费 +0.008%，中性偏多；', en: 'BTC funding +0.008%, mildly long;' });
+    // 幕 2：analyst 先回，没轮在跑 → 落库标 pending → 唤醒轮
+    c.status('bg');
+    await c.sleep(900);
+    c.done('wa');
+    c.log('CHILD', { zh: '#3 analyst 完成 · 没轮在跑 → 落库标 pending', en: '#3 analyst done · no turn running → stored, pending set' }, 'good');
+    await chWake(c, { zh: '【后台任务#3 行情分析 已完成】追加进上下文', en: '[Background task #3 market analysis done] appended to the context' });
+    c.row('main', 'inbox', 'hit', true);
+
+    // 幕 3：researcher 在唤醒轮进行中回来 → 进收件箱，下一次调模型前排进上下文
+    await c.sleep(600);
+    c.done('wr'); c.row('cr', 'c2', 'hit', true);
+    c.log('CHILD', { zh: '#2 researcher 完成 · 轮正在跑 → 进收件箱 · 下一次调模型前排进上下文（不直接落库，由轮自己落）', en: '#2 researcher done · a turn is running → into its inbox · queued before the next model call (the turn stores it, not the registry)' }, 'good');
+    await c.pulse('cr-m');
+    c.count('main', 2);
+    c.done('cr');
+    await c.type('main', 0, { zh: '【补充回答】结构：BTC 4H 高点压低，ETH 守住 3,050 需求区；', en: '[Follow-up] Structure: BTC 4H highs stepping down, ETH holding the 3,050 demand zone;' });
     c.pulse('s-u', { dur: 1200, cls: 'dim', r: 2.5 });
-    await c.type('sum', 1, { zh: '8h 内无极端值，不构成信号。', en: 'no extremes in 8h — not a signal.' });
+    await c.type('main', 1, { zh: '资金流：ETF 本周净流出 4.1 亿 [BlockBeats]，SEC 听证推迟 [Web]。', en: 'Flows: ETF net outflow $410M this week [BlockBeats]; SEC hearing postponed [Web].' });
     c.pulse('s-u', { dur: 1200, cls: 'dim', r: 2.5 });
     await c.sleep(600);
-    await chStore(c, { zh: '补答轮与普通轮同款收尾：终态覆盖写', en: 'a follow-up turn ends like any other: final state overwritten' });
+    c.status('run');
+    await chStore(c, { zh: '两份报告一轮答完 · pending 清零', en: 'both reports answered in one turn · pending cleared' });
 
   } else {
     await chGates(c, { zh: '「今晚有什么可能砸盘的消息？」', en: '“Any news tonight that could dump the market?”' });
-    c.count('router', 1); c.chip('router', 'dn');
-    c.log('ROUTE', { zh: 'tool_call → [news_agent] · 轮次 1/3', en: 'tool_call → [news_agent] · round 1/3' });
-    await c.pulse('r-n'); c.on('xn'); c.row('xn', 'pre');
-    c.log('EXPERT', { zh: 'news_agent：BlockBeats 预取 12 条 · 无参工具不挂、直接喂', en: 'news_agent: 12 BlockBeats items prefetched, fed straight in' });
+    c.count('main', 1); c.chip('main', 'cnw');
+    c.log('MAIN', { zh: 'tool_call → news_search · BlockBeats 近 24h 快讯 12 条（按叶子语言给译文）', en: 'tool_call → news_search · 12 BlockBeats flashes from the last 24h (in the leaf’s language)' });
     await c.sleep(900);
-    await c.pulse('n-r', { cls: 'dim', dur: 600 }); c.done('xn');
-    await c.sleep(400);
-    c.count('router', 2);
-    c.log('ROUTE', { zh: '→ FINISH · 转汇总', en: '→ FINISH · to summarizer' });
-    await c.pulse('r-s', { dur: 1000 });
-    c.done('router'); c.on('sum');
-    c.row('sum', 'ws', 'hit', true);
-    c.log('SUM', { zh: '端点支持服务端搜索且勾了开关 → 本轮捎上搜索许可', en: 'endpoint supports server search and has it on → this call carries the search grant' });
+    c.count('main', 2);
+    c.row('main', 'ws', 'hit', true);
+    c.log('MAIN', { zh: '端点支持服务端搜索且勾了开关 → 这次调用捎上搜索许可', en: 'endpoint supports server search and has it on → this call carries the search grant' });
     await c.sleep(700);
-    c.log('SUM', { zh: '服务端搜索关不掉 · 与其硬压不如分工：清单 + 联网补充', en: 'server-side search can’t be switched off — so split the work: list + web supplement' });
-    await c.type('sum', 0, { zh: '[BlockBeats] 美 CPI 今晚 21:30 公布；', en: '[BlockBeats] US CPI 21:30 tonight;' });
+    c.log('MAIN', { zh: '服务端搜索关不掉 · 与其硬压不如分工：快讯清单 + 联网补充', en: 'server-side search can’t be switched off — so split the work: flash list + web supplement' });
+    await c.type('main', 0, { zh: '[BlockBeats] 美 CPI 今晚 21:30 公布；', en: '[BlockBeats] US CPI 21:30 tonight;' });
     c.pulse('s-u', { dur: 1200, cls: 'dim', r: 2.5 });
-    await c.type('sum', 1, { zh: '[X] 某 L1 主网升级窗口撞同一时段；', en: '[X] L1 mainnet upgrade, same window;' });
+    await c.type('main', 1, { zh: '[Web] 某 L1 主网升级窗口撞同一时段；', en: '[Web] L1 mainnet upgrade, same window;' });
     c.pulse('s-u', { dur: 1200, cls: 'dim', r: 2.5 });
-    await c.type('sum', 2, { zh: '[BlockBeats+X] ETF 连续两日净流出。', en: '[BlockBeats+X] ETF outflows continue.' });
+    await c.type('main', 2, { zh: '[BlockBeats+Web] ETF 连续两日净流出。', en: '[BlockBeats+Web] ETF outflows continue.' });
     c.pulse('s-u', { dur: 1200, cls: 'dim', r: 2.5 });
-    c.log('SUM', { zh: '两边都有的合并 · 独有条目带源标签', en: 'overlaps merged · unique items keep their source tag' });
+    c.log('MAIN', { zh: '两边都有的合并 · 独有条目带源标签', en: 'overlaps merged · unique items keep their source tag' });
     await c.sleep(700);
     await chStore(c, { zh: '终态覆盖写 workbench_chat_context', en: 'final state overwrites workbench_chat_context' });
   }

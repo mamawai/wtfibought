@@ -127,8 +127,8 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 │   │                                 # + 计划存取 + 波动哨兵 + 交易员模型工厂
 │   │                                 # + 唤醒现场（TraderLiveHub 扇出 / WakeTrace 轨迹，只给主人）
 │   ├── learning/                     # reviewer workflow：素材组装（硬事实）+ 复盘回路 + 经验账本
-│   ├── chat/                         # chat agent：router + 子 agent 并行 + summarizer + checkpoint
-│   │                                 # + HITL 授权闸门 + 并发闸门
+│   ├── chat/                         # chat agent：单 ReAct 主 agent + 后台子运行（run/）+ 对话工具（tools/）
+│   │                                 # + HITL 授权闸门 + 并发闸门（gate/）+ 会话上下文存取（store/）
 │   ├── behavior/                     # 行为分析 workflow
 │   ├── analysis/                     # 深研判（工作台触发）+ 叙事对账 + 手动复盘的 AI 教练提示词
 │   ├── toolkit/                      # LLM 工具类（trader / chat 两处共用，取数底座在 quant 的 market/）

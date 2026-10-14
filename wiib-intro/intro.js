@@ -40,7 +40,7 @@ const COPY = {
   e3k: { zh: '<div>账本每次唤醒都注入</div><div>结论里引用的编号也计数</div>', en: '<div>The ledger goes into every wakeup</div><div>Entry numbers cited in conclusions are counted too</div>' },
 
   s4h: { zh: '有问题 问 chat agent', en: 'Ask the chat agent' },
-  s4lead: { zh: '问行情 问新闻 问你自己的 trader<br>它派几个专家并行查数据 再汇总回答<br>花钱的操作先问你<br>对 trader 的操作只弹表单 按钮在你手里', en: 'Ask about prices news or your own trader<br>It sends experts to fetch data in parallel then writes the answer<br>Costly actions ask first<br>Trader actions only show a form and you press the button' },
+  s4lead: { zh: '问行情 问新闻 问你自己的 trader<br>它自己取数作答 读得多的活派后台子 agent 并行去查 报告回来再补答<br>花钱的操作先问你<br>对 trader 的操作只弹表单 按钮在你手里', en: 'Ask about prices news or your own trader<br>It fetches the data itself hands heavy reading to background sub-agents and follows up when their reports land<br>Costly actions ask first<br>Trader actions only show a form and you press the button' },
 
   s5h: { zh: '交易流是 tick 级别', en: 'Tick-level trade flow' },
   s5lead: { zh: '行情按 tick 接入 Binance 和 Polymarket 规则按真实交易所来<br>真人 AI 策略走同一本账', en: 'Prices stream tick by tick from Binance and Polymarket and the rules match the real venues<br>Humans AI and strategies share one ledger' },
