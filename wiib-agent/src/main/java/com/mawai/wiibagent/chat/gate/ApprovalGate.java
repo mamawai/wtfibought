@@ -89,8 +89,7 @@ public class ApprovalGate implements ReactLoop.ToolGate {
         }
 
         // 又要弹卡 = 上一条授权已经用不上了（模型改口换了 symbol）。留着它，
-        // ChatTurnRunner 会在 TTL 内一直跳过专家派发，用户之后每问一句都拿不到真数据，
-        // 且没有任何日志说明原因
+        // TTL 内模型若又调回原来那件事会被直接放行，用户以为自己没点过头
         registry.discardApprovals(sessionId);
         registry.requestApproval(sessionId, call.name(), symbol, reason());
         log.info("[HITL] 未授权，登记待确认 session={} tool={} symbol={}", sessionId, call.name(), symbol);

@@ -75,8 +75,8 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
      * toolContext 键：本次调用允许服务端搜索（Boolean.TRUE 时生效）。
      * 与端点配置构成双闸门——{@code webSearch}（端点声明支持）∧ 本键（这个 agent 被授权搜）
      * 同时成立才往 tools 里加该协议的服务端搜索工具。搜索是 opt-in 语义：不声明上游就不搜，
-     * 只有 chat 的 summarizer 捎这个键（ResilientChatService.Builder#webSearch），
-     * 专家与 trader 链路的数据源必须可控，拿不到搜索。
+     * 只有 chat 的主 agent 与 researcher worker 捎这个键（ResilientChatService.Builder#webSearch），
+     * analyst worker 与 trader 链路的数据源必须可控，拿不到搜索。
      */
     public static final String WEB_SEARCH_KEY = "wiib_web_search";
 

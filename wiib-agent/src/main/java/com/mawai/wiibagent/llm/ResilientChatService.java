@@ -39,8 +39,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *       任何帧时重试（吐过帧再重订阅会让下游聚合器拼出重复文本），NonTransient（4xx 配置类
  *       错误）不重试；耗尽则错误透传，交上层 SSE error，用户重发</li>
  * </ul>
- * 流式路径另有一层<b>搜索降级</b>（{@link #searchRejected}）：上游拒收服务端搜索工具时去掉许可重发
- * （只有 summarizer 捎许可且它是流式的，阻塞路径用不上）。它不是重试——换的是请求本身，原样再发多少次都一样。
+ * 两条路径都另有一层<b>搜索降级</b>（{@link #searchRejected}）：上游拒收服务端搜索工具时去掉许可重发
+ * （主 agent 走流式、researcher worker 走阻塞，都捎许可）。它不是重试——换的是请求本身，原样再发多少次都一样。
  * 工具一律不传 tool_choice（auto），"先调工具再答"靠各 agent 的系统提示词；为什么不强制见 {@link ToolOptions} 类头。
  * <b>中断</b>：{@link #streamingExecute} 的 cancel 完成时掐断整条流水线，取消传到模型层。
  * <p>
@@ -127,7 +127,7 @@ public class ResilientChatService {
             return stream;
         } else {
             // 用户中断：整条流水线（含重试与降级）在这儿被掐断，取消向上游传到 WebClient / SDK 流
-            // （Spring AI 2.0.1 起 SDK 流随 dispose 关闭）。suppressCancel=true 必须给：缺省会在流正常结束时反向 cancel 这个 future，专家等待期挂在它上面的 anyOf 会被误唤醒
+            // （Spring AI 2.0.1 起 SDK 流随 dispose 关闭）。suppressCancel=true 必须给：缺省会在流正常结束时反向 cancel 这个 future，循环的中断检查点会把一次正常收尾当成用户中断
             Mono<Void> other = Mono.fromFuture(cancel, true); // 包装成Mono
             return stream.takeUntilOther(other); // 如果other complete就直接cancel掉stream 见内部的onComplete和cancelMainAndComplete
         }
@@ -160,12 +160,22 @@ public class ResilientChatService {
      * 流式路径相反：模型层不重试，重试全在上面的 streamingExecute 里。
      */
     public ChatResponse execute(List<Message> messages) {
-        return callPrimary(withSystem(messages));
+        List<Message> withSystem = withSystem(messages);
+        try {
+            return callPrimary(withSystem, chatOptions);
+        } catch (RuntimeException e) {
+            // 搜索工具被拒：去掉许可重发一次，这一轮就不搜（与流式路径同一条降级）
+            if (!searchRejected(e, chatOptions)) {
+                throw e;
+            }
+            log.warn("上游拒收服务端搜索工具，本次降级为不搜重发: {}", e.toString());
+            return callPrimary(withSystem, withoutWebSearch(chatOptions));
+        }
     }
 
     /** 一处就地补救，其余异常原样抛：读响应失败是 SDK 重试盲区（类头注释的唯一豁免），再试一次 */
-    private ChatResponse callPrimary(List<Message> withSystem) {
-        Prompt prompt = promptOf(primaryModel, withSystem, chatOptions);
+    private ChatResponse callPrimary(List<Message> withSystem, ChatOptions options) {
+        Prompt prompt = promptOf(primaryModel, withSystem, options);
         try {
             return primaryModel.call(prompt);
         } catch (OpenAIInvalidDataException e) {
@@ -199,7 +209,7 @@ public class ResilientChatService {
         private boolean webSearch;
 
         /**
-         * 授权本 agent 使用服务端联网搜索（每次调用都生效）。只给 chat 的 summarizer 开——
+         * 授权本 agent 使用服务端联网搜索（每次调用都生效）。只给 chat 的主 agent 与 researcher worker 开——
          * 真正搜不搜还要过端点那道闸（{@link SseChatModel} 的 webSearch 构造参数），双闸门缺一不可。
          */
         public Builder webSearch(boolean webSearch) {

@@ -80,7 +80,7 @@ class ApprovalRegistryTest {
         assertThat(registry.peekPending("s1").orElseThrow().requestId()).isNotEqualTo(first);
     }
 
-    /** hasApproval 是路由侧的"只探不消费"：探完授权还在，工具闸门照常消费 */
+    /** hasApproval 只探不消费：探完授权还在，工具闸门照常消费 */
     @Test
     void 探测授权不消费() {
         registry.requestApproval("s1", TOOL, "BTCUSDT", "贵操作");
@@ -120,12 +120,11 @@ class ApprovalRegistryTest {
 
     /**
      * 未被消费的授权必须能主动丢弃。三元组化之后 consumeApproval 有可能一直对不上
-     *（模型改口换 symbol、或续跑轮压根没调工具），而 route() 见 hasApproval 为真就跳过
-     * 全部专家派发——残留一条授权就等于该会话十分钟内每一条新提问都不取数据、
-     * 让 summarizer 凭空作答，且没有任何日志会说明原因
+     *（模型改口换 symbol、或续跑轮压根没调工具），残留的那条会在十分钟内放行模型再调同一件事，
+     * 用户以为自己没点过头
      */
     @Test
-    void 丢弃授权后路由不再被跳过派发() {
+    void 丢弃授权后不再残留() {
         registry.requestApproval("s1", TOOL, "BTCUSDT", "贵操作");
         registry.approve("s1", registry.peekPending("s1").orElseThrow().requestId());
 

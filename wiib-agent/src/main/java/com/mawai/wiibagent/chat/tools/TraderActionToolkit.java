@@ -14,7 +14,7 @@ import java.util.Map;
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 对 trader 动手的三个入口，挂在 summarizer 叶子上（与 {@link DeepAnalysisToolkit} 并列）。
+ * 对 trader 动手的三个入口，挂在主 agent 上（与 {@link DeepAnalysisToolkit} 并列）。
  * <p>
  * <b>它们只开表单，不执行</b>：每个工具都只往 SSE 推一张待填的卡，用户在卡上按下按钮才真动手，
  * 执行走 REST 打到 TraderActionService。所以模型没有能力唤醒、复盘或落库留言——
@@ -86,7 +86,7 @@ public class TraderActionToolkit {
     }
 
     /**
-     * 推一张待填的卡。推不出去要如实回报——补答轮与断连后都没有 SSE 通道，
+     * 推一张待填的卡。推不出去要如实回报——断连后没有 SSE 通道，
      * 这时候答"表单已打开"就是一句用户永远兑现不了的话，而它还会落进对话历史。
      */
     private String openForm(String sessionId, String formType, ObjectNode prefill, String labelKey) {

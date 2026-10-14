@@ -60,7 +60,7 @@ public class ByokModelBuilder {
 
     /** BYOK 建模。纯本地构造不发网络请求；key 现解现用，明文不留存字段 */
     public ChatModel build(UserLlmEndpoint e) {
-        // webSearch 只是端点能力声明：真发不发搜索工具还要看调用方授权（summarizer 独有），见 SseChatModel.WEB_SEARCH_KEY
+        // webSearch 只是端点能力声明：真发不发搜索工具还要看调用方授权（chat 主 agent 与 researcher worker），见 SseChatModel.WEB_SEARCH_KEY
         return build(e.getApiProtocol(), e.getBaseUrl(), apiKeyCrypto.decrypt(e.getApiKeyEnc()), e.getModel(),
                 e.getReasoningEffort(), Boolean.TRUE.equals(e.getWebSearch()));
     }

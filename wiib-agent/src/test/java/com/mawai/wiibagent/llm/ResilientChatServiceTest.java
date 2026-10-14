@@ -188,6 +188,30 @@ class ResilientChatServiceTest {
         verify(primary, times(1)).stream(any(Prompt.class));
     }
 
+    /** 阻塞路径同一条降级：researcher worker 不走流式，也捎搜索许可 */
+    @Test
+    void 阻塞路径搜索被拒时也去掉许可重发一次() {
+        when(primary.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        List<Prompt> prompts = new ArrayList<>();
+        when(primary.call(any(Prompt.class))).thenAnswer(inv -> {
+            prompts.add(inv.getArgument(0));
+            if (prompts.size() == 1) {
+                throw new NonTransientAiException("400: web_search tool is not supported by this model");
+            }
+            return responseOf("不搜也答");
+        });
+        ResilientChatService service = ResilientChatService.builder()
+                .model(primary).systemPrompt("你是助手").tools(List.of(mock(ToolCallback.class)))
+                .webSearch(true).build();
+
+        assertThat(service.execute(ASK).getResult().getOutput().getText()).isEqualTo("不搜也答");
+        assertThat(prompts).hasSize(2);
+        assertThat(((ToolCallingChatOptions) prompts.get(0).getOptions()).getToolContext())
+                .containsEntry(SseChatModel.WEB_SEARCH_KEY, true);
+        assertThat(((ToolCallingChatOptions) prompts.get(1).getOptions()).getToolContext())
+                .containsEntry(SseChatModel.WEB_SEARCH_KEY, false);
+    }
+
     // ========== 中断 ==========
 
     @Test

@@ -76,7 +76,7 @@ public class BehaviorToolkit {
 
         ObjectNode out = MAPPER.createObjectNode();
         out.put("status", "OK");
-        // 如实答"卡上没上屏"：断连、补答轮、会话已结束都会走到这里，模型据此改口自己讲结论
+        // 如实答"卡上没上屏"：断连后没有通道可推就会走到这里，模型据此改口自己讲结论
         out.put("cardShown", shown);
         out.set("report", trimmed(full));
         return MAPPER.writeValueAsString(out);
