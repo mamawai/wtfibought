@@ -33,8 +33,11 @@ chat:
     5. Call the run_deep_analysis tool ONLY when the user explicitly asks in those words ("deep dive",
        "full analysis" and the like). It is expensive and needs the user's approval: when it returns
        PENDING_APPROVAL, tell the user a confirmation card has popped up and that you will run once they
-       approve. Ordinary questions like "what do you make of the trend" must not trigger it, and never
-       pitch it unprompted — just answer from the tool data
+       approve. Called again after approval it returns status=RUNNING, meaning it is now running in the
+       background: answer what you can now, tell the user the verdict follows, and neither wait for it nor
+       call it again — you will be woken with the report to add the verdict. Ordinary questions like
+       "what do you make of the trend" must not trigger it, and never pitch it unprompted — just answer
+       from the tool data
     6. The user's own AI trader is yours, both reading and acting:
        · Read-only questions go straight to the read tools — pick by question, several at once is fine:
          how is it doing / up or down / what has it learned / when does it wake next → trader_overview;
@@ -134,6 +137,23 @@ chat:
     prefix: '[Deferred answer to "'
     header: '[Deferred answer to "{{question}}"]'
 
+  # ---- Background child runs: the dispatch tool's immediate reply, the tag on a report fed back in, the wake-up turn's instruction and header ----
+  childRun:
+    started: "Started in the background; you will be woken when its report arrives. Answer what you can now and tell the user the rest follows - do not wait and do not call it again"
+    refused:
+      limit: "Already {{limit}} background tasks running, the limit; dispatch again once they finish"
+      busy: Background tasks are at capacity on the server, try again later
+    # A report enters the context as a user-side message (a bare assistant message reads as "something I said"); the tag says whose report it is
+    tag: "[Background task #{{id}} {{label}} {{status}}]"
+    status:
+      done: done
+      failed: failed
+    timeout: Background task timed out
+  # Wake-up turn: with no turn running the report lands straight in the context and the front end starts this turn when idle. The header is recognised like deferred.prefix: such rows get no regenerate
+  wake:
+    instruction: "[SYSTEM] The messages tagged [Background task #...] above are reports that just came back, not things you said. Add to your earlier answer from them now: give the conclusion directly, do not restate the question, and do not repeat what you already said."
+    header: "[Follow-up]"
+
   # ---- HITL approval (deep analysis only) ----
   hitl:
     label: deep analysis
@@ -181,6 +201,8 @@ chat:
 
   # ---- Deep analysis (Bull vs Bear debate + Judge verdict) ----
   deepAnalysis:
+    # The child run's name on the process rail and in the report tag
+    label: "Deep analysis {{symbol}}"
     noNews: no news context
     noIv: no data
     bullStance: |-
@@ -248,4 +270,4 @@ chat:
       bullDone: Bull case complete
       bearDone: Bear case complete
       judging: Debate collected, Judge deliberating
-      judged: Verdict in, writing the answer
+      judged: Verdict in, report delivered

@@ -435,7 +435,13 @@
     "searched_one": "Searched {{count}} site",
     "searched_other": "Searched {{count}} sites",
     "searchedNone": "Search finished",
-    "sumWorking": "Working…"
+    "sumWorking": "Working…",
+    "child": {
+      "running": "Background task · {{label}} running",
+      "done": "Background task · {{label}} done, follow-up coming",
+      "failed": "Background task · {{label}} failed",
+      "cancelled": "Background task · {{label}} cancelled"
+    }
   },
   "hitl": {
     "title": "Deep analysis approval",

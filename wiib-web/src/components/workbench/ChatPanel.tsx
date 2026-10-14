@@ -312,7 +312,8 @@ export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen 
               {blocks.map(block => {
                 if (block.kind === 'rail') {
                   const active = block.steps.some(({ item }) =>
-                    (item.kind === 'progress' && item.active) || (item.kind === 'search' && item.active));
+                    (item.kind === 'progress' && item.active) || (item.kind === 'search' && item.active)
+                    || (item.kind === 'child' && item.status === 'running'));
                   return (
                     <ProcessRail
                       key={block.key}

@@ -112,7 +112,8 @@ class ChatRegenerateTest {
                 approvals, ChatTestEndpoints.PROMPTS);
         ChatTurnRewinder rewinder = new ChatTurnRewinder(history, contextStore, ChatTestEndpoints.PROMPTS);
         ChatWorkbenchController controller = new ChatWorkbenchController(agentFactory, endpointService,
-                approvals, history, contextStore, streamer, rewinder, runRegistry, gate, new MessageCatalog(),
+                approvals, history, contextStore, streamer, rewinder, runRegistry,
+                ChatTestEndpoints.childRuns(contextStore), gate, new MessageCatalog(),
                 ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
                 Executors.newVirtualThreadPerTaskExecutor());
         return new Harness(controller, history, contextStore, turnRunner, gate);

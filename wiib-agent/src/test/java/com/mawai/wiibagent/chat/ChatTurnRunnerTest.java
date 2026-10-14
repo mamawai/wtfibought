@@ -3,6 +3,7 @@ package com.mawai.wiibagent.chat;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.SearchEvent;
@@ -55,6 +56,7 @@ class ChatTurnRunnerTest {
     private final ChatModel light = mock(ChatModel.class);
     private final ApprovalRegistry registry = new ApprovalRegistry();
     private final ChatContextStore contextStore = mock(ChatContextStore.class);
+    private final ChildRunRegistry childRuns = ChatTestEndpoints.childRuns(contextStore);
     private final NewsToolkit newsToolkit = ChatTestEndpoints.newsToolkit();
     private final TraderChatService traderChatService = mock(TraderChatService.class);
 
@@ -107,14 +109,14 @@ class ChatTurnRunnerTest {
         ChatEndpoints llmConfig = ChatTestEndpoints.eps(1L, "gpt-5");   // 叶子指纹含 userId（trader 工具按它认人）
         return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), newsToolkit,
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), traderChatService,
-                mock(WorkbenchRunRegistry.class),
+                mock(WorkbenchRunRegistry.class), childRuns,
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
                 LIMIT, NO_COMPRESSION, 6, "X")
                 .leavesFor(llmConfig, AgentLang.ZH);
     }
 
     private ChatTurnRunner runner() {
-        return new ChatTurnRunner(contextStore, ChatTestEndpoints.PROMPTS);
+        return new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS);
     }
 
     private void turn(String message) {

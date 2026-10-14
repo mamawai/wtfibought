@@ -16,13 +16,16 @@ tool:
   run_deep_analysis: |-
     Run a full deep market analysis (Bull vs Bear adversarial debate + Judge verdict) for a symbol.
     ONLY call when the user EXPLICITLY asks with words like "deep dive"/"full analysis"; for ordinary
-    trend/outlook questions answer from expert data directly - never call this uninvited.
+    trend/outlook questions answer from your tools directly - never call this uninvited.
     EXPENSIVE: costs 3 deep-model LLM calls. Requires user approval per session.
     If the result status is PENDING_APPROVAL, tell the user approval is needed and why - the UI
     will show a confirmation card; after they approve, call this tool again to execute.
-    Returns: narrative, bull/range/bear scenario distribution, invalidation condition, noDirection flag.
+    Once approved it runs in the background: status RUNNING means it has started. Answer what you
+    can now and tell the user the verdict follows; do not call it again or wait for it - you will
+    be woken with the report (narrative, bull/range/bear scenario distribution, invalidation
+    condition, noDirection flag) when it is done.
 
-  # ---- Market/indicator data tools (shared by the chat market expert and trader wake-ups) ----
+  # ---- Market/indicator data tools (shared by the chat main agent and trader wake-ups) ----
   # English entries are the annotation text verbatim; the annotation stays as the last-resort fallback.
   market_snapshot: |-
     Get a real-time cross-section of a crypto perpetual symbol (short-timeframe view, not candles).

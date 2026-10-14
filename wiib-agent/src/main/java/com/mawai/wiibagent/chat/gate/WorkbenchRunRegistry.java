@@ -1,5 +1,6 @@
 package com.mawai.wiibagent.chat.gate;
 
+import com.mawai.wiibagent.chat.run.ChildRun;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -14,8 +15,9 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 工作台运行注册表：sessionId → 在跑的那一轮（SSE 事件出口 + 中断信号）。
  * <ul>
  *   <li>运行状态：切页/刷新回来后前端查 status 得知"AI 还在后台跑"（不随 SSE 断连中止）</li>
- *   <li>事件总线：深研判等长耗时工具同步阻塞跑，经此把阶段进度推给 SSE 通道，
- *       解决"几分钟零输出不知道卡在哪"；trader 动作类工具经此推表单卡，把执行权交回用户点击</li>
+ *   <li>事件总线：子运行的开始/进度/结束、行为分析的阶段进度经此推给 SSE 通道；
+ *       trader 动作类工具经此推表单卡，把执行权交回用户点击。没轮在跑时推不出去（返回 false），
+ *       子运行的事件丢了也不要紧，前端靠 status 的 children/pending 补</li>
  *   <li>中断：/cancel 完成那轮的信号，轮在下一个检查点收尾</li>
  * </ul>
  * 进程内存级即可：单实例部署，重启即无运行中会话，无需持久化。
@@ -93,6 +95,26 @@ public class WorkbenchRunRegistry {
      */
     public boolean publishBehaviorReport(String sessionId, ObjectNode report) {
         return publish(sessionId, "behavior_report", MAPPER.createObjectNode().set("report", report));
+    }
+
+    /** 子运行开跑：过程轨立一条 */
+    public void publishChildStart(String sessionId, ChildRun run) {
+        publish(sessionId, "child_start", MAPPER.createObjectNode()
+                .put("runId", run.id()).put("kind", run.kind().name()).put("label", run.label()));
+    }
+
+    /** 子运行的阶段进度（深研判的 Bull/Bear/Judge 等），挂在那条过程轨条目上 */
+    public void publishChildProgress(String sessionId, String runId, String text) {
+        publish(sessionId, "child_progress", MAPPER.createObjectNode().put("runId", runId).put("text", text));
+    }
+
+    /** 子运行结束：status 是 DONE / FAILED / CANCELLED，失败带原因 */
+    public void publishChildDone(String sessionId, ChildRun run, String error) {
+        ObjectNode data = MAPPER.createObjectNode().put("runId", run.id()).put("status", run.status().name());
+        if (error != null) {
+            data.put("error", error);
+        }
+        publish(sessionId, "child_done", data);
     }
 
     /** 统一出口：会话已结束、通道已断连，两种都返回 false。 */

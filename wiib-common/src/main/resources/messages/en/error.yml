@@ -84,7 +84,7 @@ error:
   replayAiBusy: The previous AI analysis is still running
   chatRegenerateUnavailable: This answer cannot be regenerated
   chatMessageTooLong: Message too long (limit 10000 characters) - trim it and resend
-  chatNothingDeferred: This session has no deferred answer pending
+  chatNothingPending: This session has nothing pending to answer
 
   # Login-state failures: the various sa-token NotLoginException types, all returned as 401
   token:

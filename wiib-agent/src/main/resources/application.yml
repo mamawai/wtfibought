@@ -71,14 +71,19 @@ agent:
     enabled: true
   # 研判工作台对话轨(ChatAgentFactory)
   workbench:
-    # 单个 agent 一轮 ReAct 的模型调用上限，达到即收尾，防死转烧钱。注意是"每个 agent 各自"而不是
-    # 整轮总量：summarizer 与每个带工具的专家各跑各的 state、计数互不相通，一轮对话的调用数是各家相加。
+    # 主 agent（以及每个子 agent）各自一轮 ReAct 的模型调用上限，达到即收尾，防死转烧钱
     run-model-call-limit: 8
     summarize-threshold-tokens: 32000  # 历史估算 token 超此值触发压缩：浅模型把老消息总结成一段替换原文
     summarize-keep-messages: 6         # 压缩后保留的最近消息数(首条用户消息另外无条件保留原文)
-    # summarizer 在 BlockBeats 之外补的新闻来自服务端 web_search 工具(端点勾选开启)，搜到什么平台随上游走。
+    # 主 agent 在 BlockBeats 之外补的新闻来自服务端 web_search 工具(端点勾选开启)，搜到什么平台随上游走。
     # 这里配的是来源标签名，只影响补充条目怎么标；换源改这里，提示词不用动。留空标 [Web]
     news-supplement-source:
+    # 后台子运行（深研判、delegate 派出的子 agent）：全站同时在跑上限 / 单个超时 / 报告回灌主 agent 的字数上限
+    max-concurrent-children: 20
+    child-timeout-seconds: 300
+    child-report-max-chars: 4000
+    # 同一用户同时在跑的子运行数上限
+    sub-agent-limit: 3
 
 # 财经日历采集轨（EconCalendarCollector）：每 4h 拉 TradingView 日历接口（只收 High 级）按事件 id upsert econ_calendar_event，
 # 唤醒开场白注入"刚公布 / 过去3天已公布 / 今天剩余即将公布"。公布时刻的实际值由等待闸窄窗口轮询补齐，不靠这个周期

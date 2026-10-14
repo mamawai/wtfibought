@@ -6,6 +6,7 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.gate.ApprovalGate;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.tools.BehaviorToolkit;
 import com.mawai.wiibagent.chat.tools.DeepAnalysisToolkit;
 import com.mawai.wiibagent.chat.tools.TraderActionToolkit;
@@ -85,6 +86,8 @@ public class ChatAgentFactory {
     /** 对话轨读写 trader 的唯一入口；两条 agent 链路只经它与 DB 打交道，从不互相对话 */
     private final TraderChatService traderChatService;
     private final WorkbenchRunRegistry runRegistry;
+    /** 后台子运行（深研判等）从这里派，报告经它回灌会话 */
+    private final ChildRunRegistry childRuns;
     private final ApprovalRegistry approvalRegistry;
     private final PromptCatalog prompts;
     private final LocalizedToolCallbacks localizedTools;
@@ -127,6 +130,7 @@ public class ChatAgentFactory {
                             BehaviorAnalysisService behaviorAnalysisService,
                             TraderChatService traderChatService,
                             WorkbenchRunRegistry runRegistry,
+                            ChildRunRegistry childRuns,
                             ApprovalRegistry approvalRegistry,
                             PromptCatalog prompts,
                             LocalizedToolCallbacks localizedTools,
@@ -141,6 +145,7 @@ public class ChatAgentFactory {
         this.behaviorAnalysisService = behaviorAnalysisService;
         this.traderChatService = traderChatService;
         this.runRegistry = runRegistry;
+        this.childRuns = childRuns;
         this.approvalRegistry = approvalRegistry;
         this.prompts = prompts;
         this.localizedTools = localizedTools;
@@ -236,7 +241,7 @@ public class ChatAgentFactory {
                         // 行情 ×4 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作表单 ×3 / 行为分析
                         marketToolkit,
                         newsToolkit.boundTo(lang),
-                        new DeepAnalysisToolkit(deep, deepAnalysisService, runRegistry, prompts, lang),
+                        new DeepAnalysisToolkit(deep, deepAnalysisService, runRegistry, childRuns, prompts, userId, lang),
                         new TraderQueryToolkit(traderChatService, userId, lang),
                         new TraderActionToolkit(runRegistry, userId, prompts, lang),
                         new BehaviorToolkit(deep, behaviorAnalysisService, runRegistry, userId, lang)))

@@ -13,13 +13,16 @@ tool:
   run_deep_analysis: |-
     Run a full deep market analysis (Bull vs Bear adversarial debate + Judge verdict) for a symbol.
     ONLY call when the user EXPLICITLY asks with words like "深度研判"/"全面分析"; for ordinary
-    trend/outlook questions answer from expert data directly - never call this uninvited.
+    trend/outlook questions answer from your tools directly - never call this uninvited.
     EXPENSIVE: costs 3 deep-model LLM calls. Requires user approval per session.
     If the result status is PENDING_APPROVAL, tell the user approval is needed and why - the UI
     will show a confirmation card; after they approve, call this tool again to execute.
-    Returns: narrative, bull/range/bear scenario distribution, invalidation condition, noDirection flag.
+    Once approved it runs in the background: status RUNNING means it has started. Answer what you
+    can now and tell the user the verdict follows; do not call it again or wait for it - you will
+    be woken with the report (narrative, bull/range/bear scenario distribution, invalidation
+    condition, noDirection flag) when it is done.
 
-  # ---- 行情/指标数据工具（chat 的 market 专家与 trader 唤醒共用）----
+  # ---- 行情/指标数据工具（chat 主 agent 与 trader 唤醒共用）----
   market_snapshot: |-
     获取加密永续合约标的的实时行情横截面（短周期视角，不是 K 线）。字段与符号约定：
     - lastPrice 现价；atr 是 5m 周期的 atr14，止损距离请用 indicators 里你交易周期的 atr14

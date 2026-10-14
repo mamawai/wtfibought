@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.llm.ConversationSummarizer;
@@ -15,21 +16,27 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Consumer;
 
 /**
  * 一轮对话的编排：载入历史 → 加本轮提问与收尾指令 → 主 agent 流式作答 → 终态落库。
  * <pre>
- * 载入历史 + 本轮提问 + 收尾指令 → working
+ * 挂上子运行收件箱 → 载入历史 + 本轮提问 + 收尾指令 → working
  *   ↓
  * 主 agent（ReactLoop · 深模型 · 流式；行情/新闻/trader/深研判/行为分析全是它手里的工具）
- *   ├ 用户点停止 ──► 半截答案落库，本轮结束
+ *   ├ 子运行报告到达 ──► 下一次调模型前排进上下文
+ *   ├ 用户点停止 ──────► 半截答案落库，本轮结束
+ *   ↓
+ * 摘掉收件箱（剩余报告并进落库消息，剩余非空即欠一次唤醒）
  *   ↓
  * 终态（含压缩替换 + 本轮全部新消息）整体覆盖会话历史，下一轮从这里起跑
  * </pre>
  * 没有路由、没有专家派发：取什么数由主 agent 自己定，同一批 tool_call 并发执行（见 {@link ReactLoop}）。
+ * 长活走后台子运行（{@link ChildRunRegistry}），轮里只剩模型思考和快工具。
  */
 @Slf4j
 @Component
@@ -37,12 +44,18 @@ import java.util.function.Consumer;
 public class ChatTurnRunner {
 
     private final ChatContextStore contextStore;
+    private final ChildRunRegistry childRuns;
     private final PromptCatalog prompts;
 
-    /** 一轮的结局：完整跑完，或被用户中断（半截答案就是最终答案） */
-    public record TurnResult(boolean cancelled) {
-        public static final TurnResult COMPLETED = new TurnResult(false);
-        public static final TurnResult CANCELLED = new TurnResult(true);
+    /**
+     * 一轮的结局。
+     *
+     * @param cancelled 用户中断：半截答案就是最终答案
+     * @param pending   最后一次模型调用之后还到了子运行报告、这轮没答：前端空闲时发起唤醒轮
+     */
+    public record TurnResult(boolean cancelled, boolean pending) {
+        public static final TurnResult COMPLETED = new TurnResult(false, false);
+        public static final TurnResult CANCELLED = new TurnResult(true, false);
     }
 
     /** 中断这一轮的最终文本：半截答案照留（token 已经烧掉了），一个字都没出就立块牌子。
@@ -59,8 +72,8 @@ public class ChatTurnRunner {
      * 两个 sink 是这一层与 SSE 的唯一接口：调用方断连后照样让这轮跑完（答案要落历史），
      * 只是不再往通道里写——那是调用方在 sink 里自己判断的事。
      *
-     * @param enrichedMessage 带时间行与提问标记的用户消息（拼法见 ChatTurnStreamer 的两个
-     *                        MARKER 常量，重新生成靠它们在上下文里定位本轮提问）
+     * @param enrichedMessage 带时间行与提问标记的用户消息（拼法见 ChatTurnStreamer，重新生成靠标记在上下文里定位本轮提问）；
+     *                        唤醒轮给的是唤醒指令
      * @param intent          功能按钮直发的意图，可空（用户自己打字的普通一轮就是空）
      * @param answerTokenSink 答案增量，逐帧
      * @param searchSink      服务端搜索过程（模型层挂在帧 metadata 上，见 {@link SearchEvent}）
@@ -72,6 +85,9 @@ public class ChatTurnRunner {
         long startedAt = System.currentTimeMillis();
         // 语言取自叶子：它是建叶子时按用户语言写死的，已经在叶子缓存键里，不必再查一次
         AgentLang lang = leaves.lang();
+        // 先挂收件箱再读历史：之后到的报告进收件箱，之前到的已经在库里、随历史读进来
+        Deque<Message> inbox = new ConcurrentLinkedDeque<>();
+        childRuns.attachTurn(sessionId, inbox);
         List<Message> history = contextStore.load(sessionId);
         List<Message> working = new ArrayList<>(history);
         working.add(new UserMessage(enrichedMessage));
@@ -83,7 +99,7 @@ public class ChatTurnRunner {
 
         // 中断时半截答案已经攒在这儿：token 逐帧进来，掐断在哪一帧就攒到哪一帧
         StringBuilder emitted = new StringBuilder();
-        ReactLoop.Result result = streamMain(leaves, working, userId, sessionId, chunk -> {
+        ReactLoop.Result result = streamMain(leaves, working, userId, sessionId, inbox, chunk -> {
             emitted.append(chunk);
             answerTokenSink.accept(chunk);
         }, searchSink, cancel);
@@ -96,15 +112,15 @@ public class ChatTurnRunner {
         }
 
         // 终态含压缩替换 + 本轮全部新消息，整体覆盖会话历史（下一轮从这里起跑）
-        List<Message> finalMessages = result.messages();
-        contextStore.save(sessionId, userId, finalMessages);
+        List<Message> finalMessages = new ArrayList<>(result.messages());
+        boolean pending = settle(sessionId, userId, finalMessages);
 
-        log.info("[TurnMetrics] session={} modelCalls={} historyIn={} historyOut={} estTokensIn={} durationMs={}",
+        log.info("[TurnMetrics] session={} modelCalls={} historyIn={} historyOut={} estTokensIn={} pending={} durationMs={}",
                 sessionId, result.modelCalls(), history.size(), finalMessages.size(),
                 // 估算不是计费口径：按 CJK 1 字≈1 token 折的，只用来看"这轮喂进去多大"
-                ConversationSummarizer.estimateTokens(working),
+                ConversationSummarizer.estimateTokens(working), pending,
                 System.currentTimeMillis() - startedAt);
-        return TurnResult.COMPLETED;
+        return new TurnResult(false, pending);
     }
 
     private static boolean cancelled(CompletableFuture<Void> cancel) {
@@ -136,9 +152,21 @@ public class ChatTurnRunner {
     private TurnResult cancelTurn(long userId, String sessionId, List<Message> working, String partial,
                                   AgentLang lang) {
         working.add(new AssistantMessage(cancelledAnswer(prompts, lang, partial)));
-        contextStore.save(sessionId, userId, working);
+        boolean pending = settle(sessionId, userId, working);
         log.info("[Workbench] 用户中断 session={} 已产出={}字", sessionId, partial.length());
-        return TurnResult.CANCELLED;
+        return new TurnResult(true, pending);
+    }
+
+    /**
+     * 一轮的每条出路都从这里走：摘掉收件箱，剩余报告并进落库消息，整体覆盖会话历史。
+     *
+     * @return 剩余报告非空——这些报告这轮没答过，欠一次唤醒
+     */
+    private boolean settle(String sessionId, long userId, List<Message> messages) {
+        List<Message> leftover = childRuns.detachTurn(sessionId);
+        messages.addAll(leftover);
+        contextStore.save(sessionId, userId, messages);
+        return !leftover.isEmpty();
     }
 
     /**
@@ -146,7 +174,7 @@ public class ChatTurnRunner {
      * 摔了先把 working 落库再抛：用户消息此刻只在内存里，不落库的话下一轮就不知道这句问过。
      */
     private ReactLoop.Result streamMain(ChatAgentFactory.Leaves leaves, List<Message> working, long userId,
-                                        String sessionId, Consumer<String> tokenSink,
+                                        String sessionId, Deque<Message> inbox, Consumer<String> tokenSink,
                                         Consumer<SearchEvent> searchSink, CompletableFuture<Void> cancel) {
         ReactLoop.Listener listener = new ReactLoop.Listener() {
             @Override
@@ -161,12 +189,17 @@ public class ChatTurnRunner {
                     searchSink.accept(SearchEvent.parse(json));
                 }
             }
+
+            @Override
+            public List<Message> inbox() {
+                return ChildRunRegistry.drain(inbox);
+            }
         };
         try {
             // 会话号进 ToolContext 与闸门；中断信号直接掐模型流，点停止就在下一个检查点退出
             return leaves.main().run(working, sessionId, cancel, listener);
         } catch (RuntimeException e) {
-            contextStore.save(sessionId, userId, working);
+            settle(sessionId, userId, working);
             throw e;
         }
     }

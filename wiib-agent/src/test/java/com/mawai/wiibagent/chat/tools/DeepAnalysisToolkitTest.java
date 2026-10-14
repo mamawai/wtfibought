@@ -7,8 +7,13 @@ import com.mawai.wiibagent.chat.ChatTestEndpoints;
 import com.mawai.wiibagent.chat.gate.ApprovalGate;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.run.ChildRun;
+import com.mawai.wiibagent.chat.run.ChildRunRegistry;
+import com.mawai.wiibagent.chat.store.ChatContextStore;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ToolContext;
 
@@ -22,12 +27,13 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 工具本体只剩"执行"这一件事：HITL 判断已经上移到 {@link ApprovalGate}
- * （工具方法体看不到 sessionId 和 tool_call 参数，判断做在这里就绑不住标的），
+ * 工具本体两件事：工具调用只是派一个子运行、立刻回 RUNNING；子运行主体真跑辩论与裁决。
+ * HITL 判断已经上移到 {@link ApprovalGate}（工具方法体看不到 sessionId 和 tool_call 参数，判断做在这里就绑不住标的），
  * 授权语义的用例全在 {@link ApprovalGateTest}。
  */
 class DeepAnalysisToolkitTest {
@@ -39,12 +45,18 @@ class DeepAnalysisToolkitTest {
     private final ChatModel model = mock(ChatModel.class);
     private final DeepAnalysisService deepAnalysisService = mock(DeepAnalysisService.class);
     private final WorkbenchRunRegistry runRegistry = new WorkbenchRunRegistry();
+    private final ChatContextStore contextStore = mock(ChatContextStore.class);
+    private final ChildRunRegistry childRuns =
+            new ChildRunRegistry(contextStore, runRegistry, ChatTestEndpoints.PROMPTS, 20, 3, 300, 4000);
 
-    private final DeepAnalysisToolkit toolkit =
-            new DeepAnalysisToolkit(model, deepAnalysisService, runRegistry, ChatTestEndpoints.PROMPTS, AgentLang.ZH);
+    private final DeepAnalysisToolkit toolkit = new DeepAnalysisToolkit(model, deepAnalysisService, runRegistry,
+            childRuns, ChatTestEndpoints.PROMPTS, 1L, AgentLang.ZH);
 
-    @Test
-    void 执行成功时输出研判结论并落库() {
+    private static ChildRun run() {
+        return new ChildRun("1", SESSION, 1L, ChildRun.Kind.DEEP_ANALYSIS, "深研判 BTCUSDT", null, AgentLang.ZH);
+    }
+
+    private void debateSucceeds() {
         when(deepAnalysisService.buildNewsContext(any())).thenReturn("ctx");
         when(deepAnalysisService.bullArgue(model, "BTCUSDT", "ctx", AgentLang.ZH)).thenReturn("bull");
         when(deepAnalysisService.bearArgue(model, "BTCUSDT", "ctx", AgentLang.ZH)).thenReturn("bear");
@@ -55,11 +67,16 @@ class DeepAnalysisToolkitTest {
         analysis.setInvalidation("若X则作废");
         when(deepAnalysisService.judge(eq(model), eq("BTCUSDT"), anyLong(), eq("chat"),
                 eq("ctx"), eq("bull"), eq("bear"), eq(AgentLang.ZH))).thenReturn(analysis);
+    }
 
-        String result = toolkit.runDeepAnalysis("BTCUSDT", CTX);
+    @Test
+    void 执行成功时输出研判结论并落库() {
+        debateSucceeds();
+
+        String result = toolkit.execute(run(), "BTCUSDT");
 
         assertThat(result).contains("\"status\":\"OK\"").contains("研判叙事").contains("作废");
-        verify(deepAnalysisService).persist(analysis);
+        verify(deepAnalysisService).persist(any());
     }
 
     @Test
@@ -70,10 +87,26 @@ class DeepAnalysisToolkitTest {
         when(deepAnalysisService.judge(any(), anyString(), anyLong(), anyString(),
                 anyString(), anyString(), anyString(), any())).thenReturn(null);
 
-        String result = toolkit.runDeepAnalysis("BTCUSDT", CTX);
+        String result = toolkit.execute(run(), "BTCUSDT");
 
         assertThat(result).contains("FAILED");
         verify(deepAnalysisService, never()).persist(any());
+    }
+
+    /** 工具调用不等几分钟：立刻回 RUNNING，研判结论稍后作为报告落进会话上下文（没轮在跑的那条路） */
+    @Test
+    void 工具调用立即返回RUNNING_报告异步回灌() {
+        debateSucceeds();
+        when(contextStore.load(SESSION)).thenReturn(List.of());
+
+        String reply = toolkit.runDeepAnalysis("BTCUSDT", CTX);
+
+        assertThat(reply).contains("\"status\":\"RUNNING\"").contains("\"runId\"");
+        ArgumentCaptor<List<Message>> saved = ArgumentCaptor.captor();
+        verify(contextStore, timeout(5_000)).save(eq(SESSION), eq(1L), saved.capture());
+        assertThat(saved.getValue()).singleElement().satisfies(m -> assertThat(m.getText())
+                .startsWith("【后台任务#").contains("深研判 BTCUSDT").contains("研判叙事"));
+        assertThat(childRuns.state(SESSION).pending()).isTrue();
     }
 
     /**
@@ -92,12 +125,13 @@ class DeepAnalysisToolkitTest {
                 .intercept(SESSION, deepCall("btc"));
         String gateSymbol = registry.peekPending(SESSION).orElseThrow().symbol();
         when(deepAnalysisService.buildNewsContext(any())).thenReturn("ctx");
+        when(contextStore.load(SESSION)).thenReturn(List.of());
 
         toolkit.runDeepAnalysis("btc", CTX);
 
-        verify(deepAnalysisService).bullArgue(model, gateSymbol, "ctx", AgentLang.ZH);
-        verify(deepAnalysisService).bearArgue(model, gateSymbol, "ctx", AgentLang.ZH);
-        verify(deepAnalysisService).judge(eq(model), eq(gateSymbol), anyLong(), eq("chat"),
+        verify(deepAnalysisService, timeout(5_000)).bullArgue(model, gateSymbol, "ctx", AgentLang.ZH);
+        verify(deepAnalysisService, timeout(5_000)).bearArgue(model, gateSymbol, "ctx", AgentLang.ZH);
+        verify(deepAnalysisService, timeout(5_000)).judge(eq(model), eq(gateSymbol), anyLong(), eq("chat"),
                 anyString(), any(), any(), any());
     }
 

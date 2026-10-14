@@ -463,6 +463,12 @@ export const workbenchApi = {
   regenerate: (sessionId: string, onEvent: (e: WorkbenchEvent) => void, signal?: AbortSignal) =>
     postSse<WorkbenchEvent>('/api/ai/workbench/regenerate', { sessionId }, onEvent, signal),
   /**
+   * 唤醒轮：后台子运行的报告落进了上下文，这一轮据此补充回答，事件协议与 chat 一致（标头是第一帧答案 token）。
+   * 后端只在会话空闲时放行：占线回 2203，不欠回 2208
+   */
+  wake: (sessionId: string, onEvent: (e: WorkbenchEvent) => void, signal?: AbortSignal) =>
+    postSse<WorkbenchEvent>('/api/ai/workbench/wake', { sessionId }, onEvent, signal),
+  /**
    * 中断在跑的这一轮：后端跑到下一个检查点收尾，半截答案照落库。
    * 返回 false=没有轮在跑（按钮点晚了），前端据此把按钮恢复原状。
    */
@@ -475,7 +481,7 @@ export const workbenchApi = {
   sessions: () => api.get<unknown, WorkbenchSessionSummary[]>('/ai/workbench/sessions'),
   /** 用户占不占线（不分会话）：本地没有流、又要等那轮跑完时轮询它 */
   busy: () => api.get<unknown, boolean>('/ai/workbench/busy'),
-  /** 会话运行状态（切页/刷新回来判断：还在跑→轮询） */
+  /** 会话运行状态（切页/刷新回来判断：还在跑→轮询；欠着唤醒→空闲时发起 wake） */
   sessionStatus: (sessionId: string) =>
     api.get<unknown, WorkbenchSessionStatus>(`/ai/workbench/sessions/${sessionId}/status`),
   /** 单会话消息记录；续聊仍走 chat 带同一 sessionId */

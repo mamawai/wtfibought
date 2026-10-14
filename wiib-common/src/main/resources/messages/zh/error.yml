@@ -83,7 +83,7 @@ error:
   replayAiBusy: 上一次 AI 分析还在进行中
   chatRegenerateUnavailable: 这条回答无法重新生成
   chatMessageTooLong: 消息太长（上限 10000 字），请精简后再发
-  chatNothingDeferred: 这个会话没有欠着的补答
+  chatNothingPending: 这个会话没有待补充的回答
 
   # 登录态异常：sa-token 的各类 NotLoginException，统一按 401 下发
   token:

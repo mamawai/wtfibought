@@ -5,6 +5,7 @@ import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibagent.chat.gate.ApprovalGate;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
@@ -62,6 +63,7 @@ class SummarizerLeafTest {
     private final ApprovalRegistry registry = new ApprovalRegistry();
     private final DeepAnalysisService deepAnalysisService = mock(DeepAnalysisService.class);
     private final WorkbenchRunRegistry runRegistry = mock(WorkbenchRunRegistry.class);
+    private final TraderChatService traderChatService = mock(TraderChatService.class);
 
     private static ChatResponse responseOf(AssistantMessage message) {
         return new ChatResponse(List.of(new Generation(message)));
@@ -92,7 +94,7 @@ class SummarizerLeafTest {
         ChatEndpoints llmConfig = ChatTestEndpoints.eps(1L, "gpt-5");   // 叶子指纹含 userId（trader 工具按它认人）
         return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), ChatTestEndpoints.newsToolkit(),
                 deepAnalysisService, mock(BehaviorAnalysisService.class),
-                mock(TraderChatService.class), runRegistry,
+                traderChatService, runRegistry, ChatTestEndpoints.childRuns(mock(ChatContextStore.class)),
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, limit, threshold, keep, "X")
                 .leavesFor(llmConfig, AgentLang.ZH);
     }
@@ -108,26 +110,6 @@ class SummarizerLeafTest {
                 }
             }
         });
-    }
-
-    /** 深研判工具的回包：narrative 撑得够大，一条回执就把历史顶过压缩阈值 */
-    private void deepAnalysisReturnsBigResult() {
-        QuantDeepAnalysis analysis = new QuantDeepAnalysis();
-        analysis.setNarrative("行情研判正文".repeat(200));
-        analysis.setScenariosJson("{\"bullPct\":40,\"rangePct\":35,\"bearPct\":25}");
-        analysis.setNoDirection(Boolean.FALSE);
-        analysis.setInvalidation("跌破前低即失效");
-        analysis.setJudgeReasoning("裁决理由");
-        when(deepAnalysisService.buildNewsContext(any())).thenReturn("新闻上下文");
-        when(deepAnalysisService.bullArgue(any(), anyString(), anyString(), any())).thenReturn("多方论证");
-        when(deepAnalysisService.bearArgue(any(), anyString(), anyString(), any())).thenReturn("空方论证");
-        when(deepAnalysisService.judge(any(), anyString(), anyLong(), anyString(),
-                anyString(), anyString(), anyString(), any())).thenReturn(analysis);
-    }
-
-    private void approveDeepAnalysis() {
-        registry.requestApproval(SESSION, "run_deep_analysis", "BTCUSDT", "贵操作");
-        registry.approve(SESSION, registry.peekPending(SESSION).orElseThrow().requestId());
     }
 
     /** 工具方法体的会话号来自 run 的 sessionId 入参：循环执行工具时放进 ToolContext，不靠 ThreadLocal */
@@ -174,8 +156,8 @@ class SummarizerLeafTest {
      */
     @Test
     void 压缩发生且不切断工具调用配对() {
-        approveDeepAnalysis();
-        deepAnalysisReturnsBigResult();
+        // trader 概况的回包撑得够大，一条回执就把历史顶过压缩阈值
+        when(traderChatService.overview(1L, AgentLang.ZH)).thenReturn("行情研判正文".repeat(200));
         when(light.call(any(Prompt.class))).thenAnswer(inv -> {
             // 浅模型在这条链上只干一件事：出摘要
             assertThat(((Prompt) inv.getArgument(0)).getContents()).contains(SUMMARY_PROMPT_MARK);
@@ -187,7 +169,7 @@ class SummarizerLeafTest {
             deepPrompts.add(inv.getArgument(0));
             // 第一轮要工具（制造一对 tool_call/回执 + 一大坨内容），第二轮出答案收尾
             return Flux.just(responseOf(round.incrementAndGet() == 1
-                    ? deepAnalysisCall("c1")
+                    ? toolCall("c1", "trader_overview", "{}")
                     : new AssistantMessage("这是答案")));
         });
         // keep=2：第二次调用时历史 5 条，理想切点落在 tool_call 之前，正好检验它切得安不安全
@@ -196,7 +178,7 @@ class SummarizerLeafTest {
         List<String> chunks = new ArrayList<>();
         ReactLoop.Result result = consume(leaves, List.of(
                 new UserMessage("上轮问题"), new AssistantMessage("上轮回答"),
-                new UserMessage("深度研判 BTC")), chunks);
+                new UserMessage("我的 trader 怎么样")), chunks);
 
         assertThat(deepPrompts).hasSize(2);
         List<Message> second = deepPrompts.getLast().getInstructions();

@@ -142,7 +142,7 @@ class ChatTurnMetaTest {
 
         RecordingEmitter emitter = new RecordingEmitter();
         h.streamer().run(new SseChannel(emitter), 1L, SESSION, "看看行情",
-                leaves(deep, light), null, null);
+                leaves(deep, light), null, null, false);
 
         ChatHistoryService.TurnMeta meta = capturedMeta(h.history());
         assertThat(meta.modelLabel()).isEqualTo(LABEL);
@@ -172,7 +172,7 @@ class ChatTurnMetaTest {
 
         RecordingEmitter emitter = new RecordingEmitter();
         h.streamer().run(new SseChannel(emitter), 1L, SESSION, "BTC 新闻",
-                leaves(shared, shared), null, null);
+                leaves(shared, shared), null, null, false);
 
         JsonNode search = emitter.event("search");
         assertThat(search).isNotNull();
@@ -193,7 +193,7 @@ class ChatTurnMetaTest {
         Harness h = harness(() -> shared.call(new Prompt("one")));
 
         h.streamer().run(new SseChannel(new RecordingEmitter()), 1L, SESSION, "看看行情",
-                leaves(shared, shared), null, null);
+                leaves(shared, shared), null, null, false);
 
         ChatHistoryService.TurnMeta meta = capturedMeta(h.history());
         assertThat(meta.modelCalls()).isEqualTo(1);
@@ -211,9 +211,9 @@ class ChatTurnMetaTest {
         ChatAgentFactory.Leaves leaves = leaves(deep, light);
 
         h.streamer().run(new SseChannel(new RecordingEmitter()), 1L, SESSION, "第一问",
-                leaves, null, null);
+                leaves, null, null, false);
         h.streamer().run(new SseChannel(new RecordingEmitter()), 1L, SESSION, "第二问",
-                leaves, null, null);
+                leaves, null, null, false);
 
         ArgumentCaptor<ChatHistoryService.TurnMeta> captor =
                 ArgumentCaptor.forClass(ChatHistoryService.TurnMeta.class);

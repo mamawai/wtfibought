@@ -70,7 +70,7 @@ class ChatWorkbenchStreamTest {
         UsageTrackingChatModel model = new UsageTrackingChatModel(mock(ChatModel.class));
         ChatAgentFactory.Leaves leaves = new ChatAgentFactory.Leaves("test", model, model, null, AgentLang.ZH);
 
-        streamer.run(channel, 1L, SESSION, "看看行情", leaves, null, null);
+        streamer.run(channel, 1L, SESSION, "看看行情", leaves, null, null, false);
 
         // 答案完整进历史——这是断连用户唯一还拿得到东西的途径
         verify(historyService).append(eq(SESSION), eq(1L), eq("assistant"), eq("前半段后半段"), any(), any());

@@ -30,7 +30,9 @@ public final class ChatRowKind {
         if ("user".equals(role)) {
             return anyLang(content, prompts, "chat.hitl.resumeMessage", true) ? HITL_RESUME : null;
         }
-        return anyLang(content, prompts, "chat.deferred.prefix", false) ? DEFERRED : null;
+        // 老的补答标头与唤醒轮的补充标头都算：对应提问都不在会话末尾
+        return anyLang(content, prompts, "chat.deferred.prefix", false)
+                || anyLang(content, prompts, "chat.wake.header", false) ? DEFERRED : null;
     }
 
     /** 续跑指令是整句照发，全等比；补答标头后面接着问题摘要，只能前缀比 */

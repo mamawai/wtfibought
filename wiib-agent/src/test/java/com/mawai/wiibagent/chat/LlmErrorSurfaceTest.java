@@ -50,7 +50,7 @@ class LlmErrorSurfaceTest {
         UsageTrackingChatModel model = new UsageTrackingChatModel(mock(ChatModel.class));
         ChatAgentFactory.Leaves leaves = new ChatAgentFactory.Leaves("test", model, model, null, AgentLang.ZH);
 
-        streamer.run(new SseChannel(emitter), 1L, "wb-1-boom", "看看行情", leaves, null, null);
+        streamer.run(new SseChannel(emitter), 1L, "wb-1-boom", "看看行情", leaves, null, null, false);
 
         String errorEvent = sent.stream().filter(text -> text.startsWith("{") && text.contains("message"))
                 .reduce((first, second) -> second).orElseThrow();

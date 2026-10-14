@@ -427,7 +427,13 @@
     "searchingNoQuery": "正在搜索…",
     "searched_other": "搜索了 {{count}} 个网站",
     "searchedNone": "搜索完成",
-    "sumWorking": "正在研判…"
+    "sumWorking": "正在研判…",
+    "child": {
+      "running": "后台任务 · {{label}} 进行中",
+      "done": "后台任务 · {{label}} 完成，结论稍后补充",
+      "failed": "后台任务 · {{label}} 失败",
+      "cancelled": "后台任务 · {{label}} 已取消"
+    }
   },
   "hitl": {
     "title": "深度研判确认",

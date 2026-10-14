@@ -5,6 +5,7 @@ import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.controller.ChatWorkbenchController;
@@ -83,8 +84,10 @@ class ChatWorkbenchHitlTest {
     /** 会话上下文表的假实现：字节真存真取，跨轮上下文这条链才算真的被跑到 */
     private final Map<String, byte[]> contextRows = new HashMap<>();
 
-    /** controller() 里装配：turn() 用 streamer 跑轮 */
+    /** controller() 里装配：turn() 用 streamer 跑轮；叶子里的深研判工具经 childRuns 派子运行 */
     private ChatTurnStreamer streamer;
+    private ChatContextStore contextStore;
+    private ChildRunRegistry childRuns;
 
     /** 记账用的 emitter：SseChannel 的每一次 send 都从这里过，事件原文攒起来供断言 */
     private static final class RecordingEmitter extends SseEmitter {
@@ -140,7 +143,7 @@ class ChatWorkbenchHitlTest {
         ChatEndpoints llmConfig = ChatTestEndpoints.eps(1L, "gpt-5");   // 叶子指纹含 userId（trader 工具按它认人）
         return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), ChatTestEndpoints.newsToolkit(),
                 deepAnalysisService, mock(BehaviorAnalysisService.class),
-                mock(TraderChatService.class), mock(WorkbenchRunRegistry.class),
+                mock(TraderChatService.class), mock(WorkbenchRunRegistry.class), childRuns,
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
                 PRODUCTION_LIMIT, NO_COMPRESSION, 6, "X")
                 .leavesFor(llmConfig, AgentLang.ZH);
@@ -157,15 +160,16 @@ class ChatWorkbenchHitlTest {
             contextRows.put(inv.getArgument(0), inv.getArgument(2));
             return 1;
         });
-        ChatContextStore contextStore = new ChatContextStore(contextMapper);
-        ChatTurnRunner turnRunner = new ChatTurnRunner(contextStore, ChatTestEndpoints.PROMPTS);
+        contextStore = new ChatContextStore(contextMapper);
+        childRuns = ChatTestEndpoints.childRuns(contextStore);
+        ChatTurnRunner turnRunner = new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS);
         ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
         WorkbenchRunRegistry runRegistry = mock(WorkbenchRunRegistry.class);
         ChatHistoryService history = mock(ChatHistoryService.class);
         streamer = new ChatTurnStreamer(turnRunner, history, runRegistry, registry, ChatTestEndpoints.PROMPTS);
         return new ChatWorkbenchController(mock(ChatAgentFactory.class), mock(LlmEndpointService.class),
                 registry, history, contextStore, streamer, mock(ChatTurnRewinder.class),
-                runRegistry, gate, new MessageCatalog(), ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
+                runRegistry, childRuns, gate, new MessageCatalog(), ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
                 Executors.newVirtualThreadPerTaskExecutor());
     }
 
@@ -173,7 +177,7 @@ class ChatWorkbenchHitlTest {
     private RecordingEmitter turn(ChatAgentFactory.Leaves leaves, String message) {
         deepCallsThisTurn.set(0);
         RecordingEmitter emitter = new RecordingEmitter();
-        streamer.run(new SseChannel(emitter), 1L, SESSION, message, leaves, null, null);
+        streamer.run(new SseChannel(emitter), 1L, SESSION, message, leaves, null, null, false);
         return emitter;
     }
 

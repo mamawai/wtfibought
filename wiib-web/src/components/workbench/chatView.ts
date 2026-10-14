@@ -6,8 +6,9 @@ export const HUB_NAME = 'Polaris';
 /** 带 rid 的那几种条目就是过程条目 */
 type RailItem = Extract<ChatItem, { rid: number }>;
 
-/** 过程类条目（进度/搜索）归进工作过程轨；其余各自成块 */
-const isRailKind = (it: ChatItem): it is RailItem => it.kind === 'progress' || it.kind === 'search';
+/** 过程类条目（进度/搜索/后台子运行）归进工作过程轨；其余各自成块 */
+const isRailKind = (it: ChatItem): it is RailItem =>
+  it.kind === 'progress' || it.kind === 'search' || it.kind === 'child';
 
 export type RailStep = { item: ChatItem; index: number };
 export type Block =

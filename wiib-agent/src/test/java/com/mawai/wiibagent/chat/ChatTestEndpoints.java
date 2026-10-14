@@ -2,6 +2,9 @@ package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.run.ChildRunRegistry;
+import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
@@ -38,6 +41,11 @@ public final class ChatTestEndpoints {
         NewsToolkit toolkit = mock(NewsToolkit.class);
         when(toolkit.boundTo(any())).thenAnswer(inv -> new NewsToolkit.NewsSearchTool(toolkit, inv.getArgument(0)));
         return toolkit;
+    }
+
+    /** 子运行注册表的真实现：没轮在跑时报告落进传进来的 contextStore；SSE 没通道可推 */
+    public static ChildRunRegistry childRuns(ChatContextStore contextStore) {
+        return new ChildRunRegistry(contextStore, new WorkbenchRunRegistry(), PROMPTS, 20, 3, 300, 4000);
     }
 
     public static UserLlmEndpoint endpoint(String model) {

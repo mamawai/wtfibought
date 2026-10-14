@@ -5,6 +5,7 @@ import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibcommon.enums.AgentLang;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -29,7 +30,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 执行工具：拼错工具名回执报错；同批多个 tool_call 并发跑、回执按 tool_call 顺序；
- * 批里有串行工具就整批串行。
+ * 批里有串行工具就整批串行；收件箱里的消息在下一次调模型前追加进历史。
  */
 class ReactLoopTest {
 
@@ -123,6 +124,47 @@ class ReactLoopTest {
         // 字符串返回值经 Spring AI 默认转换器 JSON 编码，带引号
         assertThat(responses).extracting(ToolResponseMessage.ToolResponse::responseData)
                 .containsExactly("\"ok left\"", "\"ok right\"");
+    }
+
+    /** 收件箱在每次调模型前取一次，追加在历史尾部：第一次调用之后到的消息，第二次调用就看得见 */
+    @Test
+    void inboxMessagesAppendedBeforeNextModelCall() {
+        List<Prompt> prompts = new ArrayList<>();
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        AtomicInteger round = new AtomicInteger();
+        when(model.call(any(Prompt.class))).thenAnswer(inv -> {
+            prompts.add(inv.getArgument(0));
+            return round.incrementAndGet() == 1
+                    ? new ChatResponse(List.of(new Generation(AssistantMessage.builder().content("")
+                            .toolCalls(List.of(call("c1", "echo", "{\"text\":\"hi\"}"))).build())))
+                    : new ChatResponse(List.of(new Generation(AssistantMessage.builder().content("收尾").build())));
+        });
+        java.util.Deque<Message> inbox = new java.util.ArrayDeque<>();
+        ReactLoop.Listener listener = new ReactLoop.Listener() {
+            @Override
+            public List<Message> inbox() {
+                List<Message> arrived = new ArrayList<>(inbox);
+                inbox.clear();
+                return arrived;
+            }
+
+            @Override
+            public void message(Message message) {
+                // 第一次模型回复之后"到达"一条报告
+                if (message instanceof AssistantMessage assistant && assistant.hasToolCalls()) {
+                    inbox.add(new UserMessage("【后台任务#1 完成】报告正文"));
+                }
+            }
+        };
+
+        ReactLoop.Result result = loop(model, Set.of(), new EchoTools())
+                .run(List.of(new UserMessage("开始")), null, null, listener);
+
+        // 第一次调用还没有报告，第二次调用的输入末尾（工具回执之后）有它
+        assertThat(prompts.getFirst().getInstructions()).noneMatch(m -> "【后台任务#1 完成】报告正文".equals(m.getText()));
+        assertThat(prompts.get(1).getInstructions().getLast().getText()).isEqualTo("【后台任务#1 完成】报告正文");
+        assertThat(result.messages()).anyMatch(m -> "【后台任务#1 完成】报告正文".equals(m.getText()));
     }
 
     @Test

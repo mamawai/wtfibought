@@ -7,6 +7,14 @@ import { type ChatItem } from './chatStore';
 import type { SearchSource } from '../../types';
 import { HUB_NAME, type RailStep } from './chatView';
 
+/** 后台子运行条目按状态取的词表 key */
+const CHILD_STATUS_KEY = {
+  running: 'rail.child.running',
+  done: 'rail.child.done',
+  failed: 'rail.child.failed',
+  cancelled: 'rail.child.cancelled',
+} as const;
+
 /** 来源链接的展示名：域名（去 www.），解析不了的原样给 */
 function domainOf(url: string): string {
   try {
@@ -252,7 +260,8 @@ export function ProcessRail({ steps, active, open, onToggle }: {
         <div className="overflow-hidden min-h-0">
           <div className="ml-[5px] mt-1.5 border-l-2 border-border pl-3.5 space-y-2.5 py-0.5">
             {steps.map(({ item, index }) => {
-              const hot = (item.kind === 'progress' && item.active) || (item.kind === 'search' && item.active);
+              const hot = (item.kind === 'progress' && item.active) || (item.kind === 'search' && item.active)
+                || (item.kind === 'child' && item.status === 'running');
               return (
                 <div key={index} className="relative text-[11.5px] leading-relaxed text-muted-foreground">
                   <span className={cn(
@@ -266,6 +275,12 @@ export function ProcessRail({ steps, active, open, onToggle }: {
                     </span>
                   )}
                   {item.kind === 'search' && <SearchStep item={item} />}
+                  {item.kind === 'child' && (
+                    <span className={cn(hot && 'text-foreground font-bold')}>
+                      {t(CHILD_STATUS_KEY[item.status], { label: item.label })}
+                      {item.text && <span className="ml-1 font-normal text-muted-foreground">· {item.text}</span>}
+                    </span>
+                  )}
                 </div>
               );
             })}

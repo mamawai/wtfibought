@@ -51,6 +51,8 @@ import java.util.stream.Stream;
  * 中断信号两个检查点：模型答完之后（不再执行工具）、工具回执入历史之后（不再调模型）。
  * 两处都是正常退出循环，把已有历史交出去，不抛异常。
  * <p>
+ * 每次调模型前从 {@link Listener#inbox()} 取一次外部到达的消息追加到尾部（子运行报告），只追加不插入。
+ * <p>
  * ToolContext 只带会话号（{@link #SESSION_KEY}）：仓库里所有工具就读这一个键。
  */
 public final class ReactLoop {
@@ -74,6 +76,11 @@ public final class ReactLoop {
 
         /** 每条新进历史的消息，含保险丝补的占位回执 */
         default void message(Message message) {
+        }
+
+        /** 每次调模型前取一次：这段时间到达的外部消息（子运行报告），追加到历史尾部再调；缺省没有 */
+        default List<Message> inbox() {
+            return List.of();
         }
     }
 
@@ -182,6 +189,11 @@ public final class ReactLoop {
         Listener sink = listener == null ? NONE : listener;
         int calls = 0;
         while (true) {
+            // 收件箱只追加在尾部，不往中间插
+            for (Message arrived : sink.inbox()) {
+                messages.add(arrived);
+                sink.message(arrived);
+            }
             if (summarizer != null) {
                 // 压缩是整体替换历史，之后本轮都用压缩后的这份
                 messages = summarizer.compress(messages).<List<Message>>map(ArrayList::new).orElse(messages);

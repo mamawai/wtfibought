@@ -12,6 +12,7 @@ import com.mawai.wiibagent.chat.ChatTurnStreamer;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -44,7 +45,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * 研判工作台对话入口：SSE 流式暴露主 agent 的作答过程。
  * 事件协议：session(会话号) / token(答案流) / progress(长工具阶段进度) / search(服务端搜索过程)
- * / hitl_request(贵操作确认卡) / form_request(模型请求弹一张表单卡，执行权归用户点击) / behavior_report / done / error。
+ * / child_start·child_progress·child_done(后台子运行) / hitl_request(贵操作确认卡)
+ * / form_request(模型请求弹一张表单卡，执行权归用户点击) / behavior_report / done(带 pending：子运行报告到了还没答，前端空闲时经 /wake 发起唤醒轮) / error。
  * 续聊上下文按 sessionId 存在自建的 {@link ChatContextStore} 表里，带同一 sessionId 再发即续聊；
  * 断连不中止本轮：{@link ChatTurnStreamer} 跑完照样落历史，前端靠 status 接口+历史回放补答案。
  */
@@ -64,6 +66,7 @@ public class ChatWorkbenchController {
     /** 重新生成前的上下文回退，见 {@link ChatTurnRewinder} */
     private final ChatTurnRewinder rewinder;
     private final WorkbenchRunRegistry runRegistry;
+    private final ChildRunRegistry childRuns;
     private final ChatConcurrencyGate concurrencyGate;
     /** 会话归属与确认失效的提示跟界面语言 */
     private final MessageCatalog messages;
@@ -94,8 +97,19 @@ public class ChatWorkbenchController {
         private String sessionId;
     }
 
-    /** 会话运行状态：running=有轮在跑 */
-    public record SessionStatus(boolean running) {
+    @Data
+    public static class WakeRequest {
+        private String sessionId;
+    }
+
+    /**
+     * 会话运行状态。
+     *
+     * @param running  有轮在跑
+     * @param pending  子运行报告到了还没答：前端本地空闲时发起 /wake
+     * @param children 在跑的后台子运行数
+     */
+    public record SessionStatus(boolean running, boolean pending, int children) {
     }
 
     /** 清空全部会话的结果：deleted=删掉几个，skipped=在跑被跳过几个 */
@@ -121,19 +135,41 @@ public class ChatWorkbenchController {
             throw new BizException(ErrorCode.CHAT_MESSAGE_TOO_LONG);
         }
         ChatAgentFactory.Leaves leaves = leavesFor(userId);
-        // 名额：每用户同时一轮。占线直接拒，前端把消息排队、这轮结束自动续发
-        ChatConcurrencyGate.Acquire acquired = concurrencyGate.tryAcquire(userId);
-        if (acquired != ChatConcurrencyGate.Acquire.OK) {
-            throw new BizException(acquired == ChatConcurrencyGate.Acquire.USER_BUSY
-                    ? ErrorCode.CHAT_ALREADY_RUNNING : ErrorCode.CHAT_CAPACITY_FULL);
-        }
+        acquireSlot(userId);
 
         // sessionId 绑定 userId 前缀，防跨用户续聊他人会话
         String sessionId = request.getSessionId() != null && request.getSessionId().startsWith("wb-" + userId + "-")
                 ? request.getSessionId()
                 : "wb-" + userId + "-" + UUID.randomUUID();
 
-        return streamTurn(userId, sessionId, request.getMessage(), leaves, null, request.getIntent());
+        return streamTurn(userId, sessionId, request.getMessage(), leaves, null, request.getIntent(), false);
+    }
+
+    /**
+     * 唤醒轮：后台子运行的报告落进了上下文、还没有哪一轮答过，前端在本地空闲时发起这一轮补答。
+     * 不欠就拒（2208）：别的标签页先接走了，或后端重启丢了标记。
+     */
+    @PostMapping(value = "/wake", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @Operation(summary = "唤醒轮：据已回来的子运行报告补充回答（SSE，事件协议同 /chat）")
+    public SseEmitter wake(@CurrentUserId long userId, @RequestBody WakeRequest request, HttpServletResponse response) {
+        SseChannel.noProxyBuffering(response);
+        String sessionId = request.getSessionId();
+        if (sessionId == null || !sessionId.startsWith("wb-" + userId + "-")
+                || !childRuns.state(sessionId).pending()) {
+            throw new BizException(ErrorCode.CHAT_NOTHING_PENDING);
+        }
+        ChatAgentFactory.Leaves leaves = leavesFor(userId);
+        acquireSlot(userId);
+        return streamTurn(userId, sessionId, null, leaves, null, null, true);
+    }
+
+    /** 名额：每用户同时一轮。占线直接拒，前端把消息排队、这轮结束自动续发 */
+    private void acquireSlot(long userId) {
+        ChatConcurrencyGate.Acquire acquired = concurrencyGate.tryAcquire(userId);
+        if (acquired != ChatConcurrencyGate.Acquire.OK) {
+            throw new BizException(acquired == ChatConcurrencyGate.Acquire.USER_BUSY
+                    ? ErrorCode.CHAT_ALREADY_RUNNING : ErrorCode.CHAT_CAPACITY_FULL);
+        }
     }
 
     /**
@@ -162,11 +198,7 @@ public class ChatWorkbenchController {
             throw new BizException(ErrorCode.CHAT_REGENERATE_UNAVAILABLE);
         }
         ChatAgentFactory.Leaves leaves = leavesFor(userId);
-        ChatConcurrencyGate.Acquire acquired = concurrencyGate.tryAcquire(userId);
-        if (acquired != ChatConcurrencyGate.Acquire.OK) {
-            throw new BizException(acquired == ChatConcurrencyGate.Acquire.USER_BUSY
-                    ? ErrorCode.CHAT_ALREADY_RUNNING : ErrorCode.CHAT_CAPACITY_FULL);
-        }
+        acquireSlot(userId);
         ChatTurnRewinder.Rollback rollback;
         try {
             // 名额到手后才回退，理由见 rewind 的 javadoc；回不去的几种原因在 HTTP 上是同一个码
@@ -176,18 +208,22 @@ public class ChatWorkbenchController {
             concurrencyGate.release(userId);
             throw e;
         }
+        // 被顶掉的那轮派出去的子运行跟着作废：报告回灌到重跑后的上下文里会答非所问
+        childRuns.cancelAll(sessionId);
         // 重新生成不带意图：库里存的是提问原文，按钮意图是请求级的、没落库。
         // 行为分析这类提问原文本身就够明确，主 agent 的成文规则接得住
-        return streamTurn(userId, sessionId, rollback.question(), leaves, rollback.answerId(), null);
+        return streamTurn(userId, sessionId, rollback.question(), leaves, rollback.answerId(), null, false);
     }
 
     /**
-     * 建流并把这一轮丢给执行器。/chat、/regenerate 共用。
+     * 建流并把这一轮丢给执行器。/chat、/regenerate、/wake 共用。
      *
      * @param replacedAnswerId null=普通轮；非空=重新生成轮，它在顶替这条旧答案——提问已在库里不再落一遍
+     * @param wake             唤醒轮：message 为 null，用户侧消息是唤醒指令
      */
     private SseEmitter streamTurn(long userId, String sessionId, String message,
-                                  ChatAgentFactory.Leaves leaves, Long replacedAnswerId, ChatIntent intent) {
+                                  ChatAgentFactory.Leaves leaves, Long replacedAnswerId, ChatIntent intent,
+                                  boolean wake) {
         // 给足 10 分钟
         SseEmitter emitter = new SseEmitter(600_000L);
         SseChannel channel = new SseChannel(emitter);
@@ -202,7 +238,7 @@ public class ChatWorkbenchController {
             streamExecutor.execute(() -> {
                 // 名额在这一层 try/finally 归还
                 try {
-                    turnStreamer.run(channel, userId, sessionId, message, leaves, replacedAnswerId, intent);
+                    turnStreamer.run(channel, userId, sessionId, message, leaves, replacedAnswerId, intent, wake);
                 } catch (Throwable e) {
                     log.error("[Workbench] 对话任务异常退出 sessionId={}", sessionId, e);
                     // 那边只兜 Exception，Error 穿到这里时通道还开着：不收口前端要挂到 10 分钟超时
@@ -223,14 +259,16 @@ public class ChatWorkbenchController {
     }
 
     @PostMapping("/cancel")
-    @Operation(summary = "中断在跑的这一轮（跑到下一个检查点收尾，半截答案照落库）")
+    @Operation(summary = "中断在跑的这一轮与它派出的后台子运行（轮跑到下一个检查点收尾，半截答案照落库）")
     public Result<Boolean> cancel(@CurrentUserId long userId, @RequestBody CancelRequest request) {
         String sessionId = request.getSessionId();
         if (sessionId == null || !sessionId.startsWith("wb-" + userId + "-")) {
             return Result.ok(false);
         }
-        // 没在跑就是按钮点晚了，如实回 false
-        return Result.ok(runRegistry.requestCancel(sessionId));
+        boolean children = childRuns.state(sessionId).running() > 0;
+        childRuns.cancelAll(sessionId);
+        // 轮和子运行都没在跑就是按钮点晚了，如实回 false
+        return Result.ok(runRegistry.requestCancel(sessionId) || children);
     }
 
     @GetMapping("/sessions")
@@ -250,12 +288,13 @@ public class ChatWorkbenchController {
     }
 
     @GetMapping("/sessions/{sessionId}/status")
-    @Operation(summary = "会话运行状态（切页/刷新回来判断 AI 是否还在后台跑）")
+    @Operation(summary = "会话运行状态（切页/刷新回来判断 AI 是否还在后台跑、有没有欠着的唤醒、几个子运行在跑）")
     public Result<SessionStatus> sessionStatus(@CurrentUserId long userId, @PathVariable String sessionId) {
         if (sessionId == null || !sessionId.startsWith("wb-" + userId + "-")) {
             return Result.fail(messages.get("agent.chat.sessionNotFound"));
         }
-        return Result.ok(new SessionStatus(runRegistry.isRunning(sessionId)));
+        ChildRunRegistry.SessionState children = childRuns.state(sessionId);
+        return Result.ok(new SessionStatus(runRegistry.isRunning(sessionId), children.pending(), children.running()));
     }
 
     @GetMapping("/sessions/{sessionId}/messages")
@@ -278,10 +317,7 @@ public class ChatWorkbenchController {
         if (runRegistry.isRunning(sessionId)) {
             return Result.fail(messages.get("agent.chat.sessionRunning"));
         }
-        chatHistoryService.deleteSession(sessionId);
-        // 展示记录与续聊上下文是两套存储，删会话得都清；挂着的确认卡/授权一并清
-        contextStore.purge(sessionId);
-        approvalRegistry.purgeSession(sessionId);
+        purgeSession(sessionId);
         return Result.ok(null);
     }
 
@@ -296,12 +332,18 @@ public class ChatWorkbenchController {
                 skipped++;
                 continue;
             }
-            chatHistoryService.deleteSession(sessionId);
-            contextStore.purge(sessionId);
-            approvalRegistry.purgeSession(sessionId);
+            purgeSession(sessionId);
             deleted++;
         }
         return Result.ok(new DeleteAllResult(deleted, skipped));
+    }
+
+    /** 展示记录与续聊上下文是两套存储，删会话得都清；在跑的子运行停掉，挂着的确认卡/授权一并清 */
+    private void purgeSession(String sessionId) {
+        childRuns.purge(sessionId);
+        chatHistoryService.deleteSession(sessionId);
+        contextStore.purge(sessionId);
+        approvalRegistry.purgeSession(sessionId);
     }
 
     /** HITL 确认回执：approve 后前端自动补发"请继续执行深度研判"，agent 重调工具时闸门放行。 */

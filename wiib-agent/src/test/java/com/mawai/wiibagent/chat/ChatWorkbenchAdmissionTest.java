@@ -56,9 +56,10 @@ class ChatWorkbenchAdmissionTest {
         ApprovalRegistry approvals = new ApprovalRegistry();
         ChatTurnStreamer streamer = new ChatTurnStreamer(turnRunner, history, runRegistry,
                 approvals, ChatTestEndpoints.PROMPTS);
+        ChatContextStore contextStore = mock(ChatContextStore.class);
         return new ChatWorkbenchController(factory, llmConfigService, approvals,
-                history, mock(ChatContextStore.class), streamer, mock(ChatTurnRewinder.class),
-                runRegistry, gate, new MessageCatalog(),
+                history, contextStore, streamer, mock(ChatTurnRewinder.class),
+                runRegistry, ChatTestEndpoints.childRuns(contextStore), gate, new MessageCatalog(),
                 ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), streamExecutor);
     }
 

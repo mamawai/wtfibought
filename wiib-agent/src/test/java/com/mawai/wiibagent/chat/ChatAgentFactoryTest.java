@@ -9,6 +9,7 @@ import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.trader.TraderChatService;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -50,7 +51,7 @@ class ChatAgentFactoryTest {
         return new ChatAgentFactory(chatModelFactory,
                 mock(MarketToolkit.class), ChatTestEndpoints.newsToolkit(),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), mock(TraderChatService.class),
-                mock(WorkbenchRunRegistry.class),
+                mock(WorkbenchRunRegistry.class), ChatTestEndpoints.childRuns(mock(ChatContextStore.class)),
                 new ApprovalRegistry(), ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
                 12, 32000, 6, "X");
     }

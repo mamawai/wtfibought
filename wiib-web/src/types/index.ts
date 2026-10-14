@@ -520,6 +520,11 @@ export type WorkbenchEvent =
   | { type: 'session'; sessionId: string }
   | { type: 'token'; text: string; agent: string; role: 'answer' }
   | { type: 'progress'; text: string }
+  // 后台子运行（深研判、派出去的子 agent）：开跑 / 阶段进度 / 结束。
+  // 没轮在跑时推不出来，前端靠 status 的 children/pending 补
+  | { type: 'child_start'; runId: string; kind: string; label: string }
+  | { type: 'child_progress'; runId: string; text: string }
+  | { type: 'child_done'; runId: string; status: 'DONE' | 'FAILED' | 'CANCELLED'; error?: string }
   // requestId：这张卡的唯一标识，点同意/拒绝时原样回传，服务端据此确认"点的是哪张卡"
   | { type: 'hitl_request'; sessionId: string; symbol: string; reason: string; requestId: string; resumeMessage: string }
   // 模型请求给用户弹一张待填的表单卡；执行权在用户点击，模型只能开卡不能动手。
@@ -533,8 +538,9 @@ export type WorkbenchEvent =
   | { type: 'search'; phase: 'searching' | 'searched' | 'cited'; query?: string | null; sources: SearchSource[] }
   // meta 是本轮读数。
   // cancelled=用户中断，answer 是"半截 + （已中断）"的定稿，前端要整段用它覆盖屏上那半截
+  // pending=子运行报告到了这轮没答：本地空闲时发起 /wake 补答
   // sources=这一轮搜到/引用的来源（按 url 去重），答案底部展示；没搜过为空数组
-  | { type: 'done'; sessionId: string; answer: string; cancelled?: boolean; meta?: TurnMeta; sources?: SearchSource[] }
+  | { type: 'done'; sessionId: string; answer: string; cancelled?: boolean; pending?: boolean; meta?: TurnMeta; sources?: SearchSource[] }
   | { type: 'error'; message: string };
 
 /**
@@ -597,9 +603,11 @@ export interface StrategyAccountView {
   closedPositions: StrategyClosedPosition[];
 }
 
-/** 会话运行状态（/ai/workbench/sessions/{id}/status）：running=有轮在跑 */
+/** 会话运行状态（/ai/workbench/sessions/{id}/status）：running=有轮在跑；pending=欠着唤醒；children=在跑的后台子运行数 */
 export interface WorkbenchSessionStatus {
   running: boolean;
+  pending: boolean;
+  children: number;
 }
 
 /** 工作台历史会话摘要（/ai/workbench/sessions） */

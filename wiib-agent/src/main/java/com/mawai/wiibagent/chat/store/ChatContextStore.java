@@ -12,7 +12,7 @@ import java.util.List;
  * 会话模型侧上下文的存取口：{@code workbench_chat_context} 表一会话一行，
  * 整体替换，没有增量语义。对话链路只经这里读写模型上下文。
  * <p>
- * 存的是每轮结束时 summarizer 叶子的最终 messages——专家结论、tool_call/tool_response 配对、
+ * 存的是每轮结束时主 agent 的最终 messages——tool_call/tool_response 配对、子运行报告、
  * 压缩后的摘要状态都在里面。下一轮 {@link #load} 出来直接当起跑历史。
  * <p>
  * 序列化经 {@link ChatContextCodec}：读兼容老的对象流格式，写裸 JSON。

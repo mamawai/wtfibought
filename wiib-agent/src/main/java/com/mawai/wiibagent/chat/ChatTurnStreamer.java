@@ -31,10 +31,12 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 一轮对话在 SSE 通道上的完整过程：登记运行、喂心跳、跑 {@link ChatTurnRunner}、按结局落库并发 done 帧。
- * /chat、/regenerate 在 {@link ChatWorkbenchController} 做完准入后都交到 {@link #run}；名额的开闭归调用方。
+ * /chat、/regenerate、/wake 在 {@link ChatWorkbenchController} 做完准入后都交到 {@link #run}；名额的开闭归调用方。
  * <p>
  * 一轮两种结局，各自一个 finish 方法（见 {@link Turn}）：用户点停止——半截答案落库；
- * 正常作答——可能先弹一张 HITL 确认卡。
+ * 正常作答——可能先弹一张 HITL 确认卡。两种 done 都带 pending：最后一次模型调用之后又到了子运行报告，前端空闲时发起唤醒轮。
+ * <p>
+ * 唤醒轮（wake=true）：没有用户提问，用户侧消息是唤醒指令，答案带【补充回答】标头、不落 user 行。
  * <p>
  * 断连不中止本轮：通道关了照样跑完并落历史，只是不再往通道里写帧，前端回来靠 status 接口+历史回放补。
  */
@@ -47,7 +49,7 @@ public class ChatTurnStreamer {
     private static final DateTimeFormatter TIME_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
-    /** 深研判期间 SSE 通道会静默数分钟，nginx 默认 proxy_read_timeout 60s 会掐断——20s 一帧留 3 倍余量 */
+    /** 模型思考期间 SSE 通道可能静默较久，nginx 默认 proxy_read_timeout 60s 会掐断——20s 一帧留 3 倍余量 */
     private static final long HEARTBEAT_SECONDS = 20;
 
     private final ChatTurnRunner turnRunner;
@@ -72,11 +74,13 @@ public class ChatTurnStreamer {
     /**
      * 跑一轮到底。
      *
+     * @param message          用户提问；唤醒轮为 null
      * @param replacedAnswerId null=普通轮；非空=重新生成轮，它在顶替这条旧答案——提问已在库里不再落一遍
+     * @param wake             唤醒轮：子运行报告已落进上下文，这一轮据此补充回答
      */
     public void run(SseChannel channel, long userId, String sessionId, String message,
-                    ChatAgentFactory.Leaves leaves, Long replacedAnswerId, ChatIntent intent) {
-        new Turn(channel, userId, sessionId, message, leaves, replacedAnswerId, intent).run();
+                    ChatAgentFactory.Leaves leaves, Long replacedAnswerId, ChatIntent intent, boolean wake) {
+        new Turn(channel, userId, sessionId, message, leaves, replacedAnswerId, intent, wake).run();
     }
 
     /** 一轮的执行现场：入参与跑出来的中间量都在这儿，各种结局收尾时直接取用。 */
@@ -89,6 +93,7 @@ public class ChatTurnStreamer {
         private final ChatAgentFactory.Leaves leaves;
         private final Long replacedAnswerId;
         private final ChatIntent intent;
+        private final boolean wake;
 
         private final long startedAt = System.currentTimeMillis();
         /** 轮开始时的确认卡登记水位：只发本轮新登记的卡。序号不是墙钟，毫秒粒度挤不出误判 */
@@ -96,6 +101,8 @@ public class ChatTurnStreamer {
         /** 中断信号：登记进运行注册表，/cancel 完成它；runner 在检查点看它、ReactLoop 用它掐在途流 */
         private final CompletableFuture<Void> cancel = new CompletableFuture<>();
         private final StringBuilder answer = new StringBuilder();
+        /** 唤醒轮的答案标头：随首个答案 chunk 推出，落库时拼在答案前面；普通轮为空串 */
+        private String prefix = "";
         /** 本轮搜到/引用到的来源，按 url 去重保序：随 done 下发并落库，刷新后答案底部还在 */
         private final Map<String, SearchEvent.Source> sources = new LinkedHashMap<>();
 
@@ -104,7 +111,7 @@ public class ChatTurnStreamer {
                     channel::heartbeat, HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
             try {
                 // 运行中标记：status 接口、拒删会话都看它
-                // 事件出口：工具手里只有 sessionId，进度/表单卡经这转成 SSE 帧
+                // 事件出口：工具手里只有 sessionId，进度/表单卡/子运行事件经这转成 SSE 帧
                 runRegistry.start(sessionId, (event, data) -> {
                     if (channel.isClosed()) {
                         return false;
@@ -113,26 +120,32 @@ public class ChatTurnStreamer {
                     return true;
                 }, cancel);
                 channel.send("session", MAPPER.createObjectNode().put("sessionId", sessionId));
-                // 重新生成不落库：提问行已经在了
-                if (replacedAnswerId == null) {
+                // 重新生成不落库：提问行已经在了；唤醒轮没有提问
+                if (replacedAnswerId == null && !wake) {
                     chatHistoryService.append(sessionId, userId, "user", message);
                 }
 
-                // 补充时间信息。轮起始标记按语言取自词表（chat.turn.*）：重新生成靠它从尾部找到
-                // "本轮提问"那条，认的一侧在 ChatTurnRewinder.cutAt，遍历全部语言
-                String enriched = prompts.get(leaves.lang(), "chat.turn.timeMark",
-                        Map.of("time", TIME_FMT.format(Instant.now()))) + "\n"
-                        + prompts.get(leaves.lang(), "chat.turn.questionPrefix") + message;
+                String enriched;
+                if (wake) {
+                    enriched = prompts.get(leaves.lang(), "chat.wake.instruction");
+                    prefix = prompts.get(leaves.lang(), "chat.wake.header") + "\n\n";
+                } else {
+                    // 补充时间信息。轮起始标记按语言取自词表（chat.turn.*）：重新生成靠它从尾部找到
+                    // "本轮提问"那条，认的一侧在 ChatTurnRewinder.cutAt，遍历全部语言
+                    enriched = prompts.get(leaves.lang(), "chat.turn.timeMark",
+                            Map.of("time", TIME_FMT.format(Instant.now()))) + "\n"
+                            + prompts.get(leaves.lang(), "chat.turn.questionPrefix") + message;
+                }
 
                 leaves.resetUsage();
                 ChatTurnRunner.TurnResult result = turnRunner.run(leaves, userId, sessionId, enriched, intent,
                         this::onAnswerChunk, this::onSearch, cancel);
 
                 if (result.cancelled()) {
-                    finishCancelled();
+                    finishCancelled(result.pending());
                 } else {
                     sendHitlCardIfAny();
-                    finishAnswered();
+                    finishAnswered(result.pending());
                 }
             } catch (Exception e) {
                 log.error("[Workbench] 对话失败 sessionId={}", sessionId, e);
@@ -152,6 +165,9 @@ public class ChatTurnStreamer {
 
         /** 攒答案在断连判断之外：断连后这轮照跑完，答案仍要进历史，只是不再往已经断掉的通道里写帧 */
         private void onAnswerChunk(String chunk) {
+            if (answer.isEmpty() && !prefix.isEmpty() && !channel.isClosed()) {
+                channel.send("token", answerToken(prefix));
+            }
             answer.append(chunk);
             if (!channel.isClosed()) {
                 channel.send("token", answerToken(chunk));
@@ -170,11 +186,16 @@ public class ChatTurnStreamer {
             }
         }
 
+        /** 答案全文：唤醒轮带标头，一个字没出就不带（空产出不落行） */
+        private String fullAnswer() {
+            return answer.isEmpty() ? "" : prefix + answer;
+        }
+
         /**
          * 用户点了停止：半截答案照落库（token 已经烧掉了，屏幕上那段也该留得住），done 收尾即完结。
          */
-        private void finishCancelled() {
-            String stopped = ChatTurnRunner.cancelledAnswer(prompts, leaves.lang(), answer.toString());
+        private void finishCancelled(boolean pending) {
+            String stopped = ChatTurnRunner.cancelledAnswer(prompts, leaves.lang(), fullAnswer());
             ChatHistoryService.TurnMeta meta = turnMeta();
             boolean saved = chatHistoryService.append(sessionId, userId, "assistant", stopped, meta, sourceList());
             // 重生成轮：出了半截才顶掉旧答案，半截也是这一次重生成的产物，留着旧的同一个提问下
@@ -187,6 +208,7 @@ public class ChatTurnStreamer {
                     .put("sessionId", sessionId)
                     .put("answer", stopped)
                     .put("cancelled", true)
+                    .put("pending", pending)
                     .set("meta", metaJson(meta))
                     .set("sources", SearchEvent.Source.toJson(sourceList())));
         }
@@ -211,8 +233,8 @@ public class ChatTurnStreamer {
         }
 
         /** 正常作答收尾：答案落库、顶掉旧答案（重生成轮）、发 done。 */
-        private void finishAnswered() {
-            String finalAnswer = answer.toString();
+        private void finishAnswered(boolean pending) {
+            String finalAnswer = fullAnswer();
             ChatHistoryService.TurnMeta meta = turnMeta();
             // 历史不看连接死活：切页断连后这一轮照跑完，答案必须落库（前端回来靠 status+历史补）。
             // 且必须在 finally 摘运行标记之前写完——轮询端不能出现"已结束但查不到答案"的空窗
@@ -226,6 +248,7 @@ public class ChatTurnStreamer {
             sendDone(MAPPER.createObjectNode()
                     .put("sessionId", sessionId)
                     .put("answer", finalAnswer)
+                    .put("pending", pending)
                     .set("meta", metaJson(meta))
                     .set("sources", SearchEvent.Source.toJson(sourceList())));
         }

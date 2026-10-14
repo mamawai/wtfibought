@@ -9,8 +9,8 @@ export const CHAT_ERROR = {
   CAPACITY_FULL: 2204,
   /** 这条回答回不去（末尾不是答案／补答行／本轮触发过历史压缩），重新生成被拒 */
   REGENERATE_UNAVAILABLE: 2206,
-  /** 发起补答轮时会话已不欠账（别的标签页接走了，或后端重启丢了队列） */
-  NOTHING_DEFERRED: 2208,
+  /** 发起唤醒轮时会话已不欠（别的标签页接走了，或后端重启丢了标记） */
+  NOTHING_PENDING: 2208,
 } as const;
 
 /**
@@ -40,6 +40,9 @@ export type ChatItem =
   // store 是纯 ts 模块、条目一存就是一整场会话，存翻好的字面量切了语言会僵在旧语言里。
   // 后端下发的阶段文案 keyed 为假，原样显示（那是后端数据，不进词表）
   | { kind: 'progress'; rid: number; text: string; keyed?: boolean; active: boolean }
+  // 后台子运行（深研判、派出去的子 agent）：跑着亮点，结束变状态；text 是最近一条阶段进度或失败原因。
+  // 它可以跨轮活着——轮结束了它还在跑，报告到了后端标 pending，本地空闲时发起唤醒轮
+  | { kind: 'child'; rid: number; runId: string; label: string; status: 'running' | 'done' | 'failed' | 'cancelled'; text?: string }
   // 汇总者的一次联网搜索：active=还在搜（亮着转圈），搜完回填 sources 熄灭；query 开搜时可能还没有
   | { kind: 'search'; rid: number; query: string | null; sources: SearchSource[]; active: boolean }
   // requestId 存在 item 上：hitlDecide 按它取回本条再原样回传，服务端据此确认"点的是哪张卡"
@@ -98,6 +101,11 @@ let initialized = false;
 type QueuedMessage = { id: number; text: string; bubbled: boolean; intent?: ChatIntent; noteRid?: number };
 let sendQueue: QueuedMessage[] = [];
 let queueSeq = 0;
+/**
+ * 会话欠着唤醒：后台子运行的报告到了、还没有哪一轮答过。跟着后端口径走：done 事件与 status 都带 pending，
+ * 前端只转抄不推断。为真且本地空闲时由 settle() 发起唤醒轮
+ */
+let wakePending = false;
 /** 表单卡只活在本地 items 里（不落历史），自增序号足够把几张卡区分开 */
 let formSeq = 0;
 function nextFormId() {
@@ -240,6 +248,17 @@ function fillSearched(items: ChatItem[], query: string | null, sources: SearchSo
   return appendTail(next, { kind: 'search', rid: nextRid(), query, sources, active: false });
 }
 
+/** 唤醒轮的实时答案气泡：对应提问不在会话末尾，与历史回放的补答行一样不给重新生成 */
+function markLastAnswerDeferred(items: ChatItem[]): ChatItem[] {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind === 'assistant') {
+      return [...items.slice(0, i), { ...it, deferred: true }, ...items.slice(i + 1)];
+    }
+  }
+  return items;
+}
+
 function handleEvent(e: WorkbenchEvent) {
   switch (e.type) {
     case 'session':
@@ -250,6 +269,17 @@ function handleEvent(e: WorkbenchEvent) {
       break;
     case 'progress':
       updateItems(prev => appendTail(deactivateProgress(prev), { kind: 'progress', rid: nextRid(), text: e.text, active: true }));
+      break;
+    case 'child_start':
+      updateItems(prev => appendTail(prev, { kind: 'child', rid: nextRid(), runId: e.runId, label: e.label, status: 'running' }));
+      break;
+    case 'child_progress':
+      updateItems(prev => prev.map(it => it.kind === 'child' && it.runId === e.runId ? { ...it, text: e.text } : it));
+      break;
+    case 'child_done':
+      updateItems(prev => prev.map(it => it.kind === 'child' && it.runId === e.runId
+        ? { ...it, status: e.status === 'DONE' ? 'done' : e.status === 'FAILED' ? 'failed' : 'cancelled', text: e.error ?? it.text }
+        : it));
       break;
     case 'token':
       updateItems(prev => {
@@ -289,6 +319,8 @@ function handleEvent(e: WorkbenchEvent) {
         : fillSearched(deactivateProgress(prev), e.query ?? null, e.sources ?? []));
       break;
     case 'done':
+      // 欠不欠唤醒以后端此刻的口径为准：最后一次模型调用之后又到了报告就欠
+      wakePending = e.pending === true;
       updateItems(prev => {
         // 本轮出过答案流＝还挂着一个流式中的答案气泡（排队气泡也是 user 项，不能按"最后一条提问之后"找）
         const streamed = prev.some(it => it.kind === 'assistant' && it.streaming);
@@ -341,7 +373,7 @@ function stopPolling() {
 
 /**
  * 本地没有流、可这个用户有轮在跑（刷新前的那轮 / 另一个标签页 / 别的会话 / 新对话撞上占线）：
- * 轮询用户占不占线，等那轮跑完再拉一次历史补出完整答案，按 settle() 的规则续发排队消息。
+ * 轮询用户占不占线，等那轮跑完再拉一次历史补出完整答案，按 settle() 的规则续发排队消息或发起唤醒轮。
  * 查用户不查本会话：占线的那轮可能不在本会话，只看本会话会以为早就结束了，一遍遍重发撞 2203
  */
 function startPolling() {
@@ -360,9 +392,10 @@ function startPolling() {
           : [null, null];
         // 等的这段时间开了新一轮流式对话、切了会话或新建了对话（都会先停掉轮询）：这次结果作废
         if (pollTimer !== timer) return;
-        // 用户刚空下来、本会话又跑起来了（别的标签页紧接着续发）：历史是半截的，等下一跳
+        // 用户刚空下来、本会话又跑起来了（别的标签页紧接着续发/唤醒）：历史是半截的，等下一跳
         if (status?.running) return;
         stopPolling();
+        if (status) wakePending = status.pending;
         // 历史回放会整体重建 items：排队气泡和没填完的表单卡都不在后端历史里，得补回尾部（排队气泡压最后）
         const queued = sendQueue.filter(q => q.bubbled)
           .map(q => ({ kind: 'user' as const, content: q.text, at: Date.now(), queued: true, queuedId: q.id }));
@@ -484,9 +517,72 @@ async function send(message: string, opts?: { noBubble?: boolean; requeueAs?: Qu
   }
 }
 
-/** 一轮在本地收尾后的下一步：续发排队消息 */
+/**
+ * 一轮在本地收尾后的下一步：排队消息先发（用户消息永远优先），一条都没有了再发起欠着的唤醒轮。
+ * 唤醒轮自己收尾也走这里——它跑的时候可能又到了新报告。
+ */
 function settle() {
-  if (sendQueue.length > 0) drainQueue();
+  if (sendQueue.length > 0) {
+    drainQueue();
+    return;
+  }
+  if (wakePending && state.sessionId) void runWake(state.sessionId);
+}
+
+/**
+ * 唤醒轮：后台子运行的报告落进了上下文、还没有哪一轮答过，本地空闲时发起这一轮补充回答。
+ * 事件与普通轮同一套处理（标头是第一帧答案 token）；答案气泡标成补答，与历史回放的补答行一个待遇（不给重新生成）。
+ * 后端占线（另一个标签页正跑着用户的轮）直接拒，这边转后台轮询等那轮结束再来；
+ * 不欠了（被别的标签页接走 / 后端重启丢了标记）就清标记作罢。
+ */
+async function runWake(sid: string) {
+  if (abortCtrl || state.sessionId !== sid) return;
+  stopPolling();
+  set({ loading: true, background: false, runId: state.runId + 1 });
+  const abort = new AbortController();
+  abortCtrl = abort;
+  liveStreams.add(abort);
+  let busy = false;
+  const watch = watchEnd(e => {
+    handleEvent(e);
+    if (e.type === 'done') updateItems(markLastAnswerDeferred);
+  });
+  try {
+    await workbenchApi.wake(sid, watch.onEvent, abort.signal);
+  } catch (err) {
+    if (!abort.signal.aborted) {
+      const code = err instanceof ApiError ? err.code : 0;
+      if (code === CHAT_ERROR.ALREADY_RUNNING) {
+        busy = true;
+      } else {
+        wakePending = false;
+        if (code !== CHAT_ERROR.NOTHING_PENDING) {
+          const msg = (err as Error).message;
+          updateItems(prev => appendTail(prev, msg
+            ? { kind: 'error', message: msg }
+            : { kind: 'error', message: 'err.disconnected', keyed: true }));
+          if (code === CHAT_ERROR.CONFIG_MISSING || code === CHAT_ERROR.CONFIG_INVALID) {
+            set({ needsConfig: true });
+          }
+        }
+      }
+    }
+  } finally {
+    liveStreams.delete(abort);
+    // 断流同 send：后端那轮还在跑或已落库，转后台轮询等它、回放历史补齐
+    const broken = watch.broken() && !abort.signal.aborted;
+    if (broken) updateItems(endStreaming);
+    if (abortCtrl === abort) {
+      abortCtrl = null;
+      if (busy || broken) {
+        set({ loading: true, background: true });
+        startPolling();
+      } else {
+        set({ loading: false });
+        settle();
+      }
+    }
+  }
 }
 
 /**
@@ -639,13 +735,13 @@ function drainQueue() {
   void send(next.text, { noBubble: true, requeueAs: next, intent: next.intent });
 }
 
-/** 载入会话：消息回放 + 运行状态感知（还在跑→轮询等结果；新消息照常可排队） */
+/** 载入会话：消息回放 + 运行状态感知（还在跑→轮询等结果；欠着唤醒→立刻发起；新消息照常可排队） */
 async function openSession(sid: string) {
   abortAll();
   stopPolling();
   const [msgs, status] = await Promise.all([
     workbenchApi.sessionMessages(sid),
-    workbenchApi.sessionStatus(sid).catch(() => ({ running: false })),
+    workbenchApi.sessionStatus(sid).catch(() => ({ running: false, pending: false, children: 0 })),
   ]).catch((err: unknown) => {
     // 拉不到就留在原会话。它被掐掉的流、停掉的轮询没人接手了（await 期间用户又发了新的除外）：
     // 转后台轮询，等那轮跑完回放历史补齐
@@ -659,6 +755,7 @@ async function openSession(sid: string) {
   // await 期间用户已发起新对话流：别用旧快照覆盖在途状态
   if (abortCtrl) return;
   sendQueue = [];   // 排队的消息属于上一个会话语境，跟着带过去只会答非所问
+  wakePending = status.pending;   // 欠账归会话：以后端口径为准
   // 表单卡是 trader 动作、不属于哪个会话（跟排队消息不同），换会话也带过去，别抹掉填一半的
   const forms = pendingForms();
   setSession(sid);
@@ -688,6 +785,7 @@ function newSession() {
   abortAll();
   stopPolling();
   sendQueue = [];
+  wakePending = false;
   setSession(null);
   set({ items: [], loading: false, background: false });
 }

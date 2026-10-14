@@ -31,6 +31,17 @@ class ChatRowKindTest {
         }
     }
 
+    /** 唤醒轮的补充回答同理：对应提问不在会话末尾，与补答行同一个码 */
+    @Test
+    void 两门语言的唤醒补充行都认得出() {
+        for (AgentLang lang : AgentLang.values()) {
+            String header = ChatTestEndpoints.PROMPTS.get(lang, "chat.wake.header");
+            assertThat(ChatRowKind.of("assistant", header + "\n\n补充的答案", ChatTestEndpoints.PROMPTS))
+                    .as("%s 的唤醒补充行", lang.code())
+                    .isEqualTo(ChatRowKind.DEFERRED);
+        }
+    }
+
     @Test
     void 两门语言的续跑指令都认得出() {
         for (AgentLang lang : AgentLang.values()) {
