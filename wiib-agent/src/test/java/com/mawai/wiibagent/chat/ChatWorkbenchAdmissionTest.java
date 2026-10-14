@@ -59,7 +59,7 @@ class ChatWorkbenchAdmissionTest {
         ChatContextStore contextStore = mock(ChatContextStore.class);
         return new ChatWorkbenchController(factory, llmConfigService, approvals,
                 history, contextStore, streamer, mock(ChatTurnRewinder.class),
-                runRegistry, ChatTestEndpoints.childRuns(contextStore), gate, new MessageCatalog(),
+                runRegistry, ChatTestEndpoints.childRuns(contextStore), ChatTestEndpoints.prefs(), gate, new MessageCatalog(),
                 ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), streamExecutor);
     }
 

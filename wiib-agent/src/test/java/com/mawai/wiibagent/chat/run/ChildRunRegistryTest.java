@@ -35,9 +35,13 @@ class ChildRunRegistryTest {
     private final ChatContextStore contextStore = mock(ChatContextStore.class);
 
     private ChildRunRegistry registry(int perUser, int global) {
+        return registry(ChatTestEndpoints.prefs(true, perUser), global);
+    }
+
+    private ChildRunRegistry registry(WorkbenchPrefService prefs, int global) {
         when(contextStore.load(any())).thenReturn(List.of());
-        return new ChildRunRegistry(contextStore, new WorkbenchRunRegistry(), ChatTestEndpoints.PROMPTS,
-                global, perUser, 5, 20);
+        return new ChildRunRegistry(contextStore, new WorkbenchRunRegistry(), prefs, ChatTestEndpoints.PROMPTS,
+                global, 5, 20);
     }
 
     private static ChildRunRegistry.Spec spec(String sessionId) {
@@ -118,6 +122,21 @@ class ChildRunRegistryTest {
         assertThat(second.refusal()).contains("1");
         release.countDown();
         waitUntil(() -> first.run().status() == ChildRun.Status.DONE);
+    }
+
+    /** 开关只管 delegate：深研判是用户在确认卡上点过头的，关了开关照派 */
+    @Test
+    void 用户关了开关时只拒delegate不拒深研判() {
+        ChildRunRegistry registry = registry(ChatTestEndpoints.prefs(false, 3), 3);
+
+        ChildRunRegistry.Spawn delegate = registry.spawn(spec(SESSION), run -> "x");
+        ChildRunRegistry.Spawn deep = registry.spawn(new ChildRunRegistry.Spec(SESSION, 1L,
+                ChildRun.Kind.DEEP_ANALYSIS, "深研判 BTCUSDT", null, AgentLang.ZH), run -> "研判");
+
+        assertThat(delegate.started()).isFalse();
+        assertThat(delegate.refusal()).contains("关闭");
+        assertThat(deep.started()).isTrue();
+        waitUntil(() -> deep.run().status() == ChildRun.Status.DONE);
     }
 
     @Test

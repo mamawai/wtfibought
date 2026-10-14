@@ -15,6 +15,7 @@ import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
+import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.trader.TraderChatService;
 import com.mawai.wiibagent.mapper.WorkbenchChatContextMapper;
@@ -141,7 +142,7 @@ class ChatWorkbenchHitlTest {
         });
 
         ChatEndpoints llmConfig = ChatTestEndpoints.eps(1L, "gpt-5");   // 叶子指纹含 userId（trader 工具按它认人）
-        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), ChatTestEndpoints.newsToolkit(),
+        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(),
                 deepAnalysisService, mock(BehaviorAnalysisService.class),
                 mock(TraderChatService.class), mock(WorkbenchRunRegistry.class), childRuns,
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
@@ -169,8 +170,8 @@ class ChatWorkbenchHitlTest {
         streamer = new ChatTurnStreamer(turnRunner, history, runRegistry, registry, ChatTestEndpoints.PROMPTS);
         return new ChatWorkbenchController(mock(ChatAgentFactory.class), mock(LlmEndpointService.class),
                 registry, history, contextStore, streamer, mock(ChatTurnRewinder.class),
-                runRegistry, childRuns, gate, new MessageCatalog(), ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
-                Executors.newVirtualThreadPerTaskExecutor());
+                runRegistry, childRuns, ChatTestEndpoints.prefs(), gate, new MessageCatalog(),
+                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(), Executors.newVirtualThreadPerTaskExecutor());
     }
 
     /** 跑一轮，返回这一轮发出去的全部 SSE 事件 */

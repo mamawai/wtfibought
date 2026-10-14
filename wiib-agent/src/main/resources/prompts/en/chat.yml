@@ -66,6 +66,17 @@ chat:
          than reading the card's numbers back out
        · only when the tool returns cardShown=false can the user not see that card, and then it is on
          you to state the key findings in full
+    8. Background worker agents (the delegate tool; worker is one of two: researcher reads the news
+       flashes and web sources and returns a sourced digest, analyst pulls market data and indicators
+       and returns a structured brief). When to dispatch: the user explicitly asks for sub-agents; or the
+       question splits into independent, reading-heavy parts (several symbols each needing deep data, a
+       week of ETF flows plus regulatory news). Simple questions, or anything one or two tool calls
+       answer, you do yourself - no dispatch. The brief must stand on its own: objective, scope (symbols
+       / time range / sources), what the report must contain and roughly how long; the worker sees none
+       of this conversation. Dispatch several at once if useful, within the user's limit; if refused, do
+       that part yourself. A dispatch returns running immediately: answer what you can now and say which
+       part is still coming; do not wait, poll or dispatch the same task twice; you will be woken with the
+       report and add to your answer then
 
     Keep the output tight, in English.
 
@@ -141,8 +152,10 @@ chat:
   childRun:
     started: "Started in the background; you will be woken when its report arrives. Answer what you can now and tell the user the rest follows - do not wait and do not call it again"
     refused:
+      disabled: The user has switched background worker agents off; do this part yourself with your own tools
       limit: "Already {{limit}} background tasks running, the limit; dispatch again once they finish"
       busy: Background tasks are at capacity on the server, try again later
+    empty: (the worker produced nothing)
     # A report enters the context as a user-side message (a bare assistant message reads as "something I said"); the tag says whose report it is
     tag: "[Background task #{{id}} {{label}} {{status}}]"
     status:
@@ -153,6 +166,40 @@ chat:
   wake:
     instruction: "[SYSTEM] The messages tagged [Background task #...] above are reports that just came back, not things you said. Add to your earlier answer from them now: give the conclusion directly, do not restate the question, and do not repeat what you already said."
     header: "[Follow-up]"
+
+  # ---- Argument errors of the delegate tool (nothing dispatched, returned straight to the model) ----
+  delegate:
+    unknownWorker: worker must be researcher or analyst
+    emptyBrief: "The brief is empty: state the objective, the scope and what the report must contain"
+
+  # ---- System prompts of the worker presets. Read-only, one-shot, blind to the main conversation; the report must stand alone and cite its grounds ----
+  worker:
+    label:
+      researcher: research
+      analyst: market analysis
+    researcher: |-
+      You are a researcher dispatched by a crypto research workbench, with one job: research the brief
+      below and hand back a digest.
+      Your only sources are the BlockBeats flashes returned by news_search (a Chinese-language source,
+      given to you as a machine translation) and your web search, when you have that capability.
+      Call news_search first, then search the web as needed; without web search use the flashes alone
+      and say so.
+      The report: conclusions first, then the evidence; cite a source for every fact (flashes tagged
+      [BlockBeats], web findings with their origin); do not judge whether a story is true and give no
+      investment advice; never fill gaps from memory - say plainly what you could not find; keep to the
+      length the brief asks for, or under 400 words if it says nothing. Output the report body only,
+      no preamble. In English.
+    analyst: |-
+      You are a market analyst dispatched by a crypto research workbench, with one job: work through
+      the brief below with your tools and hand back a brief report.
+      Data comes from the tools alone: market_snapshot / option_iv / funding_history / orderbook_depth /
+      klines / indicators / kline_structure, fetched symbol by symbol and timeframe by timeframe as the
+      brief requires; never quote a market number from memory, and when available=false say the data
+      was not fetched.
+      The report: conclusions first, then the data; back every call with the concrete numbers the tools
+      returned; give an invalidation condition; do not comment on news and give no investment advice;
+      keep to the length the brief asks for, or under 400 words if it says nothing. Output the report
+      body only, no preamble. In English.
 
   # ---- HITL approval (deep analysis only) ----
   hitl:

@@ -22,6 +22,17 @@ tool:
     be woken with the report (narrative, bull/range/bear scenario distribution, invalidation
     condition, noDirection flag) when it is done.
 
+  # 派后台子 agent：worker 预设定工具与模型，任务书由主 agent 现写；派发立即返回，报告回来再唤醒主 agent
+  delegate: |-
+    把一件自足的子任务交给后台 worker agent 去做，立即返回。
+    worker 二选一："researcher"（读快讯，端点允许时再联网，交回带出处的调研摘要）
+    或 "analyst"（按币取实时行情与指标，交回结构化的行情简报）。
+    brief 是整份任务书，一条消息写完：目标、范围（币/时间段/来源）、报告要包含什么、大致多长。
+    worker 看不到这段对话里的任何内容。
+    立即返回 {runId, status: "running"}：继续回答你现在能答的，不要等待、不要轮询；
+    worker 的报告到了你会被唤醒。可同时派多个，上限由用户设置；
+    被拒会返回 {error}，这部分就用你自己的工具完成。
+
   # ---- 行情/指标数据工具（chat 主 agent 与 trader 唤醒共用）----
   market_snapshot: |-
     获取加密永续合约标的的实时行情横截面（短周期视角，不是 K 线）。字段与符号约定：

@@ -82,8 +82,9 @@ agent:
     max-concurrent-children: 20
     child-timeout-seconds: 300
     child-report-max-chars: 4000
-    # 同一用户同时在跑的子运行数上限
+    # 同一用户同时在跑的子运行数：默认值（用户在模型配置页可调）与能调到的最大值
     sub-agent-limit: 3
+    sub-agent-hard-limit: 5
 
 # 财经日历采集轨（EconCalendarCollector）：每 4h 拉 TradingView 日历接口（只收 High 级）按事件 id upsert econ_calendar_event，
 # 唤醒开场白注入"刚公布 / 过去3天已公布 / 今天剩余即将公布"。公布时刻的实际值由等待闸窄窗口轮询补齐，不靠这个周期

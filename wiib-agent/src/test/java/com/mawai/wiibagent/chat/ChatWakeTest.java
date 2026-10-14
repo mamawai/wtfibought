@@ -17,6 +17,7 @@ import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.LlmEndpointService;
 import com.mawai.wiibagent.llm.SseChannel;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
+import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.trader.TraderChatService;
 import jakarta.servlet.http.HttpServletResponse;
@@ -85,7 +86,7 @@ class ChatWakeTest {
         when(light.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
         ChatModelFactory chatModelFactory = mock(ChatModelFactory.class);
         when(chatModelFactory.modelsFor(any())).thenReturn(new ChatModelFactory.Models(deep, light));
-        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), ChatTestEndpoints.newsToolkit(),
+        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), traderChatService,
                 mock(WorkbenchRunRegistry.class), childRuns, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
                 8, NO_COMPRESSION, 6, "X")
@@ -211,8 +212,8 @@ class ChatWakeTest {
         ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
         ChatWorkbenchController controller = new ChatWorkbenchController(agentFactory, endpointService, registry,
                 history, contextStore, streamer, mock(ChatTurnRewinder.class), mock(WorkbenchRunRegistry.class),
-                childRuns, gate, new MessageCatalog(), ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
-                Executors.newVirtualThreadPerTaskExecutor());
+                childRuns, ChatTestEndpoints.prefs(), gate, new MessageCatalog(), ChatTestEndpoints.PROMPTS,
+                ChatTestEndpoints.zhLang(), Executors.newVirtualThreadPerTaskExecutor());
         ChatWorkbenchController.WakeRequest request = new ChatWorkbenchController.WakeRequest();
         request.setSessionId(SESSION);
 

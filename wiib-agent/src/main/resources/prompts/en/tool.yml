@@ -25,6 +25,17 @@ tool:
     be woken with the report (narrative, bull/range/bear scenario distribution, invalidation
     condition, noDirection flag) when it is done.
 
+  # Dispatch a background worker agent: the preset fixes tools and model, the main agent writes the brief; returns at once, the report wakes the main agent
+  delegate: |-
+    Hand a self-contained sub-task to a background worker agent and return at once.
+    worker: "researcher" (reads the news flashes and, when the endpoint allows, the web; returns a sourced
+    digest) or "analyst" (pulls live market data and indicators for symbols; returns a structured brief).
+    brief: the whole task in one message - objective, scope (symbols / time range / sources), what the
+    report must contain and roughly how long it may be. The worker sees nothing of this conversation.
+    Returns {runId, status: "running"} immediately: keep answering what you can, do not wait or poll;
+    you will be woken with the worker's report. Several may run at once up to the user's limit;
+    a refusal comes back as {error} - then do that part yourself with your own tools.
+
   # ---- Market/indicator data tools (shared by the chat main agent and trader wake-ups) ----
   # English entries are the annotation text verbatim; the annotation stays as the last-resort fallback.
   market_snapshot: |-

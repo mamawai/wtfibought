@@ -541,7 +541,7 @@
     "chatMain": "对话 · 主模型",
     "chatMainHint": "研判对话的最终回答，以及对话里触发的深研判、行为分析都走它",
     "chatLight": "对话 · 轻模型",
-    "chatLightHint": "调度、专家取数、历史压缩走它；挑条便宜的能省不少",
+    "chatLightHint": "历史压缩和派出去的调研/行情分析子 agent 走它；挑条便宜的能省不少",
     "sameAsMain": "同主模型（{{name}} · {{model}}）",
     "sameAsMainPlain": "同主模型",
     "noEndpoint": "（无可用端点）",
@@ -550,7 +550,13 @@
     "traderHint": "「{{name}}」每次唤醒、每日复盘都烧这条",
     "coach": "复盘教练",
     "coachValue": "每局开始前在回测页配置台现选，缺省用默认端点",
-    "coachHint": "手动复盘里的 AI 盘面提示与结算后评估"
+    "coachHint": "手动复盘里的 AI 盘面提示与结算后评估",
+    "subAgentTitle": "后台子 agent",
+    "subAgentIntro": "研判对话里，主模型可以把调研（快讯 + 联网）或行情分析这类读得多的活派给后台子 agent 并行去做，报告回来再补充回答。子 agent 跑在对话·轻模型上，烧的是你自己的额度。",
+    "subAgentOn": "允许派后台子 agent",
+    "subAgentOnHint": "关掉后主模型只用自己的工具作答；深度研判不受影响（那是你在确认卡上点过头的）",
+    "subAgentLimit": "同时最多几个",
+    "subAgentLimitHint": "同一时间在跑的后台任务上限（1–{{max}}），超过的派发会被拒、主模型自己做"
   },
   "endpoint": {
     "name": "名称",
@@ -592,6 +598,7 @@
     "endpointAdded": "端点已添加",
     "endpointUpdated": "端点已更新",
     "endpointRemoved": "端点已删除",
+    "prefsSaved": "已保存",
     "saveFailed": "保存失败",
     "bindFailed": "绑定失败",
     "setDefault": "「{{name}}」已设为默认"

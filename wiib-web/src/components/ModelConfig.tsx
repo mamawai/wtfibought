@@ -2,14 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Trans, useTranslation } from 'react-i18next';
 import { Bot, KeyRound, Loader2, MessagesSquare, Pencil, Plus, Rocket, Sparkles, Star, Trash2, X } from 'lucide-react';
-import { llmEndpointApi, traderApi } from '../api';
+import { llmEndpointApi, traderApi, workbenchApi } from '../api';
 import { LlmEndpointForm, type LlmEndpointValue } from './LlmEndpointForm';
 import { LlmEndpointSelect } from './LlmEndpointSelect';
 import { Button } from './ui/button';
 import { useToast } from './ui/use-toast';
 import i18n from '../i18n';
 import { cn } from '../lib/utils';
-import type { LlmBindings, LlmEndpointView, LlmPurpose, TraderOwnerView } from '../types';
+import type { LlmBindings, LlmEndpointView, LlmPurpose, TraderOwnerView, WorkbenchPrefs } from '../types';
 
 // webSearch 默认勾上：能声明搜索的协议就声明，上游不支持会自动退回不搜；openai 协议后端归一 false
 const EMPTY: LlmEndpointValue = { name: '', apiProtocol: 'openai', baseUrl: '', model: '', reasoningEffort: '', apiKey: '', webSearch: true };
@@ -46,6 +46,7 @@ export function ModelConfig() {
   const [endpoints, setEndpoints] = useState<LlmEndpointView[]>([]);
   const [bindings, setBindings] = useState<LlmBindings>({});
   const [trader, setTrader] = useState<TraderOwnerView | null>(null);
+  const [prefs, setPrefs] = useState<WorkbenchPrefs | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   // 表单：null=收起；{ id: null }=新增；{ id: n }=编辑
@@ -59,12 +60,28 @@ export function ModelConfig() {
       llmEndpointApi.list().catch(() => [] as LlmEndpointView[]),
       llmEndpointApi.bindings().catch(() => ({} as LlmBindings)),
       traderApi.mine().catch(() => null),
-    ]).then(([eps, b, t]) => {
+      workbenchApi.prefs().catch(() => null),
+    ]).then(([eps, b, t, p]) => {
       setEndpoints(eps);
       setBindings(b);
       setTrader(t);
+      setPrefs(p);
     }).finally(() => setLoaded(true));
   }, []);
+
+  /** 后台子 agent 的开关/上限：先落界面，失败再滚回 */
+  const savePrefs = async (patch: Partial<Pick<WorkbenchPrefs, 'subAgentsEnabled' | 'subAgentLimit'>>) => {
+    if (!prefs) return;
+    const next = { ...prefs, ...patch };
+    setPrefs(next);
+    try {
+      setPrefs(await workbenchApi.savePrefs({ subAgentsEnabled: next.subAgentsEnabled, subAgentLimit: next.subAgentLimit }));
+      toast(t('toast.prefsSaved'), 'success');
+    } catch (e) {
+      setPrefs(prefs);
+      toast((e as Error).message || t('toast.saveFailed'), 'error');
+    }
+  };
 
   useEffect(() => { load(); }, [load]);
 
@@ -318,6 +335,38 @@ export function ModelConfig() {
           </div>
         </div>
       </div>
+
+      {/* ===== 后台子 agent：主 agent 能不能派、同时最多几个 ===== */}
+      {prefs && (
+        <div className="rounded-lg pt-card p-4 sm:p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <Bot className="w-4 h-4 text-primary" />
+            <span className="text-sm font-black">{t('model.subAgentTitle')}</span>
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">{t('model.subAgentIntro')}</p>
+          <div className="grid sm:grid-cols-2 gap-3 items-start">
+            <label className="flex items-start gap-2 text-xs cursor-pointer select-none">
+              <input type="checkbox" checked={prefs.subAgentsEnabled}
+                     onChange={e => void savePrefs({ subAgentsEnabled: e.target.checked })} className="mt-0.5" />
+              <span className="space-y-0.5">
+                <span className="font-bold block">{t('model.subAgentOn')}</span>
+                <span className="text-[10px] text-muted-foreground leading-relaxed block">{t('model.subAgentOnHint')}</span>
+              </span>
+            </label>
+            <label className="space-y-1 text-xs">
+              <span className="text-muted-foreground font-bold">{t('model.subAgentLimit')}</span>
+              <select value={prefs.subAgentLimit} disabled={!prefs.subAgentsEnabled}
+                      onChange={e => void savePrefs({ subAgentLimit: Number(e.target.value) })}
+                      className="h-9 w-full rounded-lg border border-border bg-card-2 px-2.5 text-xs disabled:opacity-45">
+                {Array.from({ length: prefs.maxLimit }, (_, i) => i + 1).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              <span className="text-[10px] text-muted-foreground/70 block">{t('model.subAgentLimitHint', { max: prefs.maxLimit })}</span>
+            </label>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

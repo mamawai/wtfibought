@@ -9,7 +9,9 @@ import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.run.WorkerKind;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
+import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.trader.TraderChatService;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -49,11 +51,33 @@ class ChatAgentFactoryTest {
     private ChatAgentFactory factory(ChatModel model) {
         when(chatModelFactory.modelsFor(any())).thenReturn(new ChatModelFactory.Models(model, model));
         return new ChatAgentFactory(chatModelFactory,
-                mock(MarketToolkit.class), ChatTestEndpoints.newsToolkit(),
+                mock(MarketToolkit.class), mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), mock(TraderChatService.class),
                 mock(WorkbenchRunRegistry.class), ChatTestEndpoints.childRuns(mock(ChatContextStore.class)),
                 new ApprovalRegistry(), ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
                 12, 32000, 6, "X");
+    }
+
+    /** worker 真跑一次（阻塞调用），抓它挂给模型的那个 Prompt */
+    private static Prompt workerPrompt(ChatModel model, ChatAgentFactory.Worker worker) {
+        List<Prompt> prompts = new ArrayList<>();
+        when(model.call(any(Prompt.class))).thenAnswer(inv -> {
+            prompts.add(inv.getArgument(0));
+            return new ChatResponse(List.of(new Generation(new AssistantMessage("报告"))));
+        });
+        worker.loop().run(List.of(new UserMessage("任务书")), "wb-w", null, null);
+        return prompts.getFirst();
+    }
+
+    private static List<String> toolNames(Prompt prompt) {
+        return ((ToolCallingChatOptions) prompt.getOptions()).getToolCallbacks().stream()
+                .map(ToolCallback::getToolDefinition).map(d -> d.name()).toList();
+    }
+
+    /** 这次调用捎没捎服务端搜索许可 */
+    private static boolean carriesSearch(Prompt p) {
+        return p.getOptions() instanceof ToolCallingChatOptions t && t.getToolContext() != null
+                && Boolean.TRUE.equals(t.getToolContext().get(SseChatModel.WEB_SEARCH_KEY));
     }
 
     private static ChatEndpoints config(String model) {
@@ -72,7 +96,7 @@ class ChatAgentFactoryTest {
                 .map(ToolCallback::getToolDefinition).map(d -> d.name()).toList();
     }
 
-    /** 行情 ×4 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作 ×3 / 行为分析，全在主 agent 一张表上 */
+    /** 行情 ×4 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作 ×3 / 行为分析 / 派子 agent，全在主 agent 一张表上 */
     @Test
     void 主agent工具表齐全() {
         ChatModel model = mock(ChatModel.class);
@@ -88,7 +112,32 @@ class ChatAgentFactoryTest {
                 "run_deep_analysis",
                 "trader_overview", "trader_positions", "trader_decisions", "trader_plans", "trader_trades",
                 "wake_trader", "review_trader_now", "leave_note_to_trader",
-                "analyze_my_behavior");
+                "analyze_my_behavior",
+                "delegate");
+    }
+
+    /**
+     * worker 预设各管各的只读工具，都没有 delegate、动作表单与深研判（深度一层、不许动手）；
+     * 搜索许可只给 researcher，且随浅模型端点走
+     */
+    @Test
+    void worker预设各自的工具表与搜索许可() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        ChatAgentFactory factory = factory(model);
+
+        Prompt researcher = workerPrompt(model, factory.newWorker(WorkerKind.RESEARCHER, AgentLang.ZH, true, model));
+        Prompt analyst = workerPrompt(model, factory.newWorker(WorkerKind.ANALYST, AgentLang.ZH, true, model));
+
+        assertThat(toolNames(researcher)).containsExactly("news_search");
+        assertThat(carriesSearch(researcher)).isTrue();
+        assertThat(toolNames(analyst)).containsExactlyInAnyOrder(
+                "market_snapshot", "option_iv", "funding_history", "orderbook_depth",
+                "klines", "indicators", "kline_structure");
+        assertThat(carriesSearch(analyst)).isFalse();
+        // 系统提示词是预设自己的那份
+        assertThat(researcher.getInstructions().getFirst().getText()).contains("调研员");
+        assertThat(analyst.getInstructions().getFirst().getText()).contains("行情分析员");
     }
 
     /**
@@ -173,8 +222,6 @@ class ChatAgentFactoryTest {
         leaves.main().run(List.of(new UserMessage("过去24小时BTC新闻")), "wb-ws", null, null);
 
         assertThat(prompts).isNotEmpty();
-        assertThat(prompts).allMatch(p ->
-                p.getOptions() instanceof ToolCallingChatOptions t && t.getToolContext() != null
-                        && Boolean.TRUE.equals(t.getToolContext().get(SseChatModel.WEB_SEARCH_KEY)));
+        assertThat(prompts).allMatch(ChatAgentFactoryTest::carriesSearch);
     }
 }

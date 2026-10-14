@@ -8,6 +8,7 @@ import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibagent.llm.ChatEndpoints;
+import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.trader.TraderChatService;
 import org.junit.jupiter.api.Test;
@@ -66,7 +67,7 @@ class ChatCancelTest {
         ChatModelFactory chatModelFactory = mock(ChatModelFactory.class);
         when(chatModelFactory.modelsFor(any())).thenReturn(new ChatModelFactory.Models(deep, light));
         ChatEndpoints eps = ChatTestEndpoints.eps(1L, "gpt-5");
-        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), ChatTestEndpoints.newsToolkit(),
+        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), mock(TraderChatService.class),
                 mock(WorkbenchRunRegistry.class), childRuns, registry,
                 ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, LIMIT, NO_COMPRESSION, 6, "X")

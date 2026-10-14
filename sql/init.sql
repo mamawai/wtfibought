@@ -1081,3 +1081,17 @@ COMMENT ON COLUMN jev_prediction_run.initial_balance IS '这一局账户的初�
 INSERT INTO jev_prediction_run (run_no, label, started_at)
 SELECT 1, NULL, COALESCE(MIN(decided_at), (EXTRACT(EPOCH FROM now()) * 1000)::BIGINT) FROM jev_prediction_decision
 ON CONFLICT DO NOTHING;
+
+-- ============================================
+-- 38. 研判工作台用户偏好（一人一行，没行按默认）
+-- ============================================
+CREATE TABLE IF NOT EXISTS user_workbench_pref (
+    user_id            BIGINT    PRIMARY KEY,
+    sub_agents_enabled BOOLEAN   NOT NULL DEFAULT TRUE,
+    sub_agent_limit    SMALLINT  NOT NULL DEFAULT 3,
+    created_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+COMMENT ON TABLE  user_workbench_pref IS '研判工作台用户偏好：后台子 agent（delegate）开关与同一用户同时在跑的子运行上限';
+COMMENT ON COLUMN user_workbench_pref.sub_agents_enabled IS '允许主 agent 派后台子 agent；深研判不受它管（用户点头过的）';
+COMMENT ON COLUMN user_workbench_pref.sub_agent_limit IS '同时在跑的子运行数上限，1..agent.workbench.sub-agent-hard-limit';

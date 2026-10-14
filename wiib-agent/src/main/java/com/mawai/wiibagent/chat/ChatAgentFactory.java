@@ -7,8 +7,10 @@ import com.mawai.wiibagent.chat.gate.ApprovalGate;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
+import com.mawai.wiibagent.chat.run.WorkerKind;
 import com.mawai.wiibagent.chat.tools.BehaviorToolkit;
 import com.mawai.wiibagent.chat.tools.DeepAnalysisToolkit;
+import com.mawai.wiibagent.chat.tools.DelegateToolkit;
 import com.mawai.wiibagent.chat.tools.TraderActionToolkit;
 import com.mawai.wiibagent.chat.tools.TraderQueryToolkit;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
@@ -21,6 +23,7 @@ import com.mawai.wiibagent.llm.ModelCallLimiter;
 import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.ResilientChatService;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
+import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.trader.TraderChatService;
@@ -34,7 +37,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 对话链路的叶子工厂：按用户的 BYOK 配置建出主 agent（一个 {@link ReactLoop}，全部对话工具挂在它身上）。
+ * 对话链路的叶子工厂：按用户的 BYOK 配置建出主 agent（一个 {@link ReactLoop}，全部对话工具挂在它身上），
+ * 以及主 agent 派后台子 agent 时按预设现建的 worker（{@link #newWorker}）。
  * <p>
  * <b>这里只管"造"，不管"怎么用"</b>：一轮怎么跑、历史怎么存，在 {@link ChatTurnRunner}。
  * <p>
@@ -77,8 +81,13 @@ public class ChatAgentFactory {
         }
     }
 
+    /** 一个现建的 worker：循环 + 它独享的账本（子运行的用量不混进主 agent 那一轮的账） */
+    public record Worker(ReactLoop loop, UsageTrackingChatModel usage) {
+    }
+
     private final ChatModelFactory chatModelFactory;
     private final MarketToolkit marketToolkit;
+    private final IndicatorToolkit indicatorToolkit;
     private final NewsToolkit newsToolkit;
     private final DeepAnalysisService deepAnalysisService;
     /** 行为分析的准入层（缓存/负缓存/并发闸门都在它那儿），工具只经它跑 */
@@ -86,12 +95,12 @@ public class ChatAgentFactory {
     /** 对话轨读写 trader 的唯一入口；两条 agent 链路只经它与 DB 打交道，从不互相对话 */
     private final TraderChatService traderChatService;
     private final WorkbenchRunRegistry runRegistry;
-    /** 后台子运行（深研判等）从这里派，报告经它回灌会话 */
+    /** 后台子运行（深研判、delegate）从这里派，报告经它回灌会话 */
     private final ChildRunRegistry childRuns;
     private final ApprovalRegistry approvalRegistry;
     private final PromptCatalog prompts;
     private final LocalizedToolCallbacks localizedTools;
-    /** 主 agent 一轮 ReAct 的模型调用上限：到数即收尾，防死转烧钱 */
+    /** 主 agent 与每个 worker 各自一轮 ReAct 的模型调用上限：到数即收尾，防死转烧钱 */
     private final int runModelCallLimit;
     private final int summarizeThresholdTokens;
     private final int summarizeKeepMessages;
@@ -125,6 +134,7 @@ public class ChatAgentFactory {
      */
     public ChatAgentFactory(ChatModelFactory chatModelFactory,
                             MarketToolkit marketToolkit,
+                            IndicatorToolkit indicatorToolkit,
                             NewsToolkit newsToolkit,
                             DeepAnalysisService deepAnalysisService,
                             BehaviorAnalysisService behaviorAnalysisService,
@@ -140,6 +150,7 @@ public class ChatAgentFactory {
                             @Value("${agent.workbench.news-supplement-source:}") String supplementSource) {
         this.chatModelFactory = chatModelFactory;
         this.marketToolkit = marketToolkit;
+        this.indicatorToolkit = indicatorToolkit;
         this.newsToolkit = newsToolkit;
         this.deepAnalysisService = deepAnalysisService;
         this.behaviorAnalysisService = behaviorAnalysisService;
@@ -195,16 +206,22 @@ public class ChatAgentFactory {
         return ChatModelFactory.fingerprint(eps) + ':' + lang.code();
     }
 
+    /** 端点声明了服务端搜索：协议支持且用户勾了 */
+    private static boolean serverSearch(UserLlmEndpoint endpoint) {
+        return AiProtocols.supportsServerSearch(endpoint.getApiProtocol()) && Boolean.TRUE.equals(endpoint.getWebSearch());
+    }
+
     private Leaves build(ChatEndpoints eps, AgentLang lang) {
         ChatModelFactory.Models models = chatModelFactory.modelsFor(eps);
-        // 是否允许网络搜索
-        boolean webSearch = AiProtocols.supportsServerSearch(eps.deep().getApiProtocol())
-                && Boolean.TRUE.equals(eps.deep().getWebSearch());
         // 用量装饰器进行包装
         UsageTrackingChatModel deep = new UsageTrackingChatModel(models.deep());
         // 没单独绑轻模型时工厂给的是同一个实例，装饰器也得共用一个，否则同一次调用记两遍账
         UsageTrackingChatModel light = models.light() == models.deep() ? deep : new UsageTrackingChatModel(models.light());
-        return new Leaves(modelLabel(eps.deep()), deep, light, mainLeaf(deep, light, eps.userId(), lang, webSearch), lang);
+        // worker 跑在浅模型上：它的搜索许可看浅模型那条端点
+        boolean lightSearch = serverSearch(eps.lightOrDeep());
+        ReactLoop main = mainLeaf(deep, light, eps.userId(), lang, serverSearch(eps.deep()),
+                kind -> newWorker(kind, lang, lightSearch, models.light()));
+        return new Leaves(modelLabel(eps.deep()), deep, light, main, lang);
     }
 
     /**
@@ -226,25 +243,28 @@ public class ChatAgentFactory {
     }
 
     /**
-     * 主 agent：深模型 + 全部对话工具，自己取数自己作答。
+     * 主 agent：深模型 + 全部对话工具，自己取数自己作答，长活派子运行。
      *
      * @param light     压缩用浅模型：摘要是简单活，用深模型纯烧钱
-     * @param userId    trader 工具（只读与动作）与行为分析烤死的归属，理由见 {@link TraderQueryToolkit}
+     * @param userId    trader 工具（只读与动作）、行为分析、子运行烤死的归属，理由见 {@link TraderQueryToolkit}
      * @param webSearch 端点声明了服务端搜索：提示词用承诺联网的那版，且每次调用捎搜索许可
+     * @param workers   delegate 按预设现建 worker 的办法
      */
-    private ReactLoop mainLeaf(ChatModel deep, ChatModel light, long userId, AgentLang lang, boolean webSearch) {
+    private ReactLoop mainLeaf(ChatModel deep, ChatModel light, long userId, AgentLang lang, boolean webSearch,
+                               java.util.function.Function<WorkerKind, Worker> workers) {
         // 工具的模型在这一层绑死："当前用的是谁的 key"只有这里知道
         ResilientChatService chat = ResilientChatService.builder()
                 .model(deep)
                 .systemPrompt(mainInstruction(lang, webSearch))
                 .tools(localizedTools.of(lang,
-                        // 行情 ×4 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作表单 ×3 / 行为分析
+                        // 行情 ×4 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作表单 ×3 / 行为分析 / 派子 agent
                         marketToolkit,
                         newsToolkit.boundTo(lang),
                         new DeepAnalysisToolkit(deep, deepAnalysisService, runRegistry, childRuns, prompts, userId, lang),
                         new TraderQueryToolkit(traderChatService, userId, lang),
                         new TraderActionToolkit(runRegistry, userId, prompts, lang),
-                        new BehaviorToolkit(deep, behaviorAnalysisService, runRegistry, userId, lang)))
+                        new BehaviorToolkit(deep, behaviorAnalysisService, runRegistry, userId, lang),
+                        new DelegateToolkit(childRuns, workers, prompts, userId, lang)))
                 .webSearch(webSearch)
                 .maxAttempts(3).initialDelay(500).maxDelay(4000)
                 .build();
@@ -257,5 +277,30 @@ public class ChatAgentFactory {
                 .summarizer(new ConversationSummarizer(light, summarizeThresholdTokens,
                         summarizeKeepMessages, prompts, lang))
                 .build();
+    }
+
+    /**
+     * 按预设现建一个 worker：浅模型 + 预设的只读工具集，独享账本，没有闸门与压缩（任务书短、一次性）。
+     * 每次派发现建而不是建叶子时缓存：账本要独享，循环又是把模型绑死的，只能连循环一起新建。
+     *
+     * @param lightSearch researcher 的服务端搜索许可：浅模型端点声明了才给
+     */
+    // 包私有非 private：ChatAgentFactoryTest 要直接验两个预设的工具表与许可
+    Worker newWorker(WorkerKind kind, AgentLang lang, boolean lightSearch, ChatModel lightBase) {
+        UsageTrackingChatModel model = new UsageTrackingChatModel(lightBase);
+        ResilientChatService.Builder chat = ResilientChatService.builder()
+                .model(model)
+                .systemPrompt(prompts.get(lang, kind.promptKey()))
+                .maxAttempts(3).initialDelay(500).maxDelay(4000);
+        switch (kind) {
+            case RESEARCHER -> chat.tools(localizedTools.of(lang, newsToolkit.boundTo(lang))).webSearch(lightSearch);
+            case ANALYST -> chat.tools(localizedTools.of(lang, marketToolkit, indicatorToolkit));
+        }
+        ReactLoop loop = ReactLoop.builder().chat(chat.build())
+                .limiter(new ModelCallLimiter(runModelCallLimit,
+                        prompts.get(lang, "llm.callLimit.notExecuted"),
+                        prompts.get(lang, "llm.callLimit.lastCall")))
+                .build();
+        return new Worker(loop, model);
     }
 }

@@ -610,6 +610,13 @@ export interface WorkbenchSessionStatus {
   children: number;
 }
 
+/** 工作台用户偏好（/ai/workbench/prefs）：后台子 agent 开关与同时在跑上限；maxLimit 是能调到的最大值 */
+export interface WorkbenchPrefs {
+  subAgentsEnabled: boolean;
+  subAgentLimit: number;
+  maxLimit: number;
+}
+
 /** 工作台历史会话摘要（/ai/workbench/sessions） */
 export interface WorkbenchSessionSummary {
   sessionId: string;

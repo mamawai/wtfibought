@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.entity.UserLlmEndpoint;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
+import com.mawai.wiibagent.chat.run.WorkbenchPrefService;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -43,9 +44,21 @@ public final class ChatTestEndpoints {
         return toolkit;
     }
 
-    /** 子运行注册表的真实现：没轮在跑时报告落进传进来的 contextStore；SSE 没通道可推 */
+    /** 用户偏好的 mock：开关开、上限 limit、硬上限 5 */
+    public static WorkbenchPrefService prefs(boolean enabled, int limit) {
+        WorkbenchPrefService prefs = mock(WorkbenchPrefService.class);
+        when(prefs.of(anyLong())).thenReturn(new WorkbenchPrefService.Prefs(enabled, limit));
+        when(prefs.hardLimit()).thenReturn(5);
+        return prefs;
+    }
+
+    public static WorkbenchPrefService prefs() {
+        return prefs(true, 3);
+    }
+
+    /** 子运行注册表的真实现：没轮在跑时报告落进传进来的 contextStore；SSE 没通道可推；偏好按默认 */
     public static ChildRunRegistry childRuns(ChatContextStore contextStore) {
-        return new ChildRunRegistry(contextStore, new WorkbenchRunRegistry(), PROMPTS, 20, 3, 300, 4000);
+        return new ChildRunRegistry(contextStore, new WorkbenchRunRegistry(), prefs(), PROMPTS, 20, 300, 4000);
     }
 
     public static UserLlmEndpoint endpoint(String model) {

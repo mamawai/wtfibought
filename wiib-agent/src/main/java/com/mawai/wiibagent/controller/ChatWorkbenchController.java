@@ -13,6 +13,7 @@ import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
+import com.mawai.wiibagent.chat.run.WorkbenchPrefService;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -31,6 +32,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -67,6 +69,7 @@ public class ChatWorkbenchController {
     private final ChatTurnRewinder rewinder;
     private final WorkbenchRunRegistry runRegistry;
     private final ChildRunRegistry childRuns;
+    private final WorkbenchPrefService prefService;
     private final ChatConcurrencyGate concurrencyGate;
     /** 会话归属与确认失效的提示跟界面语言 */
     private final MessageCatalog messages;
@@ -122,6 +125,31 @@ public class ChatWorkbenchController {
         private boolean approved;
         /** 从 hitl_request 事件原样回传，唯一标识"点的是哪张卡" */
         private String requestId;
+    }
+
+    @Data
+    public static class PrefsRequest {
+        private boolean subAgentsEnabled;
+        /** 空=保持默认 */
+        private Integer subAgentLimit;
+    }
+
+    /** 工作台用户偏好：后台子 agent 开关与同时在跑上限；maxLimit 是用户能调到的最大值 */
+    public record PrefsView(boolean subAgentsEnabled, int subAgentLimit, int maxLimit) {
+    }
+
+    @GetMapping("/prefs")
+    @Operation(summary = "我的工作台偏好（后台子 agent 开关与上限）")
+    public Result<PrefsView> prefs(@CurrentUserId long userId) {
+        WorkbenchPrefService.Prefs prefs = prefService.of(userId);
+        return Result.ok(new PrefsView(prefs.subAgentsEnabled(), prefs.subAgentLimit(), prefService.hardLimit()));
+    }
+
+    @PutMapping("/prefs")
+    @Operation(summary = "保存工作台偏好（上限钳在 1..maxLimit）")
+    public Result<PrefsView> savePrefs(@CurrentUserId long userId, @RequestBody PrefsRequest request) {
+        WorkbenchPrefService.Prefs prefs = prefService.save(userId, request.isSubAgentsEnabled(), request.getSubAgentLimit());
+        return Result.ok(new PrefsView(prefs.subAgentsEnabled(), prefs.subAgentLimit(), prefService.hardLimit()));
     }
 
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

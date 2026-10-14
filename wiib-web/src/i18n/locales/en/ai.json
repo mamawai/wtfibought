@@ -559,7 +559,7 @@
     "chatMain": "Chat · Main model",
     "chatMainHint": "Final answers in the analysis chat, plus any deep analysis or behavior analysis triggered from it, run on this",
     "chatLight": "Chat · Light model",
-    "chatLightHint": "Orchestration, expert data pulls and history compaction run on this; a cheap one saves a lot",
+    "chatLightHint": "History compaction and the research / market-analysis sub-agents it delegates run on this; a cheap one saves a lot",
     "sameAsMain": "Same as main model ({{name}} · {{model}})",
     "sameAsMainPlain": "Same as main model",
     "noEndpoint": "(no endpoint available)",
@@ -568,7 +568,13 @@
     "traderHint": "Every wake-up and daily review of “{{name}}” burns this one",
     "coach": "Review coach",
     "coachValue": "Chosen in the backtest console before each round, defaults to the default endpoint",
-    "coachHint": "AI chart hints during a manual review and the post-settlement assessment"
+    "coachHint": "AI chart hints during a manual review and the post-settlement assessment",
+    "subAgentTitle": "Background sub-agents",
+    "subAgentIntro": "In the analysis chat, the main model can hand read-heavy work — research (news flashes + web) or market analysis — to background sub-agents that run in parallel, then follow up once their reports come back. Sub-agents run on the Chat · Light model and burn your own quota.",
+    "subAgentOn": "Allow background sub-agents",
+    "subAgentOnHint": "When off, the main model answers with its own tools only; deep analysis is unaffected (you approve that on its confirmation card)",
+    "subAgentLimit": "Max running at once",
+    "subAgentLimitHint": "Cap on background tasks running at the same time (1–{{max}}); anything beyond is refused and the main model does it itself"
   },
   "endpoint": {
     "name": "Name",
@@ -611,6 +617,7 @@
     "endpointAdded": "Endpoint added",
     "endpointUpdated": "Endpoint updated",
     "endpointRemoved": "Endpoint deleted",
+    "prefsSaved": "Saved",
     "saveFailed": "Save failed",
     "bindFailed": "Binding failed",
     "setDefault": "“{{name}}” is now the default"

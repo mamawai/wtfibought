@@ -71,40 +71,45 @@ public class ChildRunRegistry {
 
     private final ChatContextStore contextStore;
     private final WorkbenchRunRegistry runRegistry;
+    private final WorkbenchPrefService prefs;
     private final PromptCatalog prompts;
     /** 全站同时在跑的子运行上限：行情配额按出口 IP 算，子运行不占对话名额，得另有一道闸 */
     private final Semaphore globalSlots;
-    /** 同一用户同时在跑的子运行上限 */
-    private final int perUserLimit;
     private final long timeoutSeconds;
     /** 报告正文回灌主 agent 的字数上限 */
     private final int reportMaxChars;
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();
     private final AtomicLong seq = new AtomicLong();
 
-    public ChildRunRegistry(ChatContextStore contextStore, WorkbenchRunRegistry runRegistry, PromptCatalog prompts,
+    public ChildRunRegistry(ChatContextStore contextStore, WorkbenchRunRegistry runRegistry,
+                            WorkbenchPrefService prefs, PromptCatalog prompts,
                             @Value("${agent.workbench.max-concurrent-children:20}") int maxConcurrentChildren,
-                            @Value("${agent.workbench.sub-agent-limit:3}") int perUserLimit,
                             @Value("${agent.workbench.child-timeout-seconds:300}") long timeoutSeconds,
                             @Value("${agent.workbench.child-report-max-chars:4000}") int reportMaxChars) {
         this.contextStore = contextStore;
         this.runRegistry = runRegistry;
+        this.prefs = prefs;
         this.prompts = prompts;
         this.globalSlots = new Semaphore(maxConcurrentChildren);
-        this.perUserLimit = perUserLimit;
         this.timeoutSeconds = timeoutSeconds;
         this.reportMaxChars = reportMaxChars;
     }
 
     /**
-     * 派一个子运行。三道检查按序：单用户在跑数 → 全局信号量；过了就登记并立即提交执行，调用方马上拿到 run。
+     * 派一个子运行。三道检查按序：用户开关（只管 delegate，深研判是用户点头过的）→ 单用户在跑数 → 全局信号量；
+     * 过了就登记并立即提交执行，调用方马上拿到 run。
      *
      * @param body 子运行主体，返回报告正文；抛出即失败。主体要看 {@link ChildRun#cancel()}，取消了就早点退出
      */
     public Spawn spawn(Spec spec, Function<ChildRun, String> body) {
         Objects.requireNonNull(spec.sessionId(), "子运行必须挂在会话上");
-        if (runningOf(spec.userId()) >= perUserLimit) {
-            return new Spawn(null, prompts.get(spec.lang(), "chat.childRun.refused.limit", Map.of("limit", perUserLimit)));
+        WorkbenchPrefService.Prefs userPrefs = prefs.of(spec.userId());
+        if (spec.kind() == ChildRun.Kind.DELEGATE && !userPrefs.subAgentsEnabled()) {
+            return new Spawn(null, prompts.get(spec.lang(), "chat.childRun.refused.disabled"));
+        }
+        if (runningOf(spec.userId()) >= userPrefs.subAgentLimit()) {
+            return new Spawn(null, prompts.get(spec.lang(), "chat.childRun.refused.limit",
+                    Map.of("limit", userPrefs.subAgentLimit())));
         }
         if (!globalSlots.tryAcquire()) {
             return new Spawn(null, prompts.get(spec.lang(), "chat.childRun.refused.busy"));

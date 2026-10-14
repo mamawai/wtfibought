@@ -47,7 +47,7 @@ class DeepAnalysisToolkitTest {
     private final WorkbenchRunRegistry runRegistry = new WorkbenchRunRegistry();
     private final ChatContextStore contextStore = mock(ChatContextStore.class);
     private final ChildRunRegistry childRuns =
-            new ChildRunRegistry(contextStore, runRegistry, ChatTestEndpoints.PROMPTS, 20, 3, 300, 4000);
+            new ChildRunRegistry(contextStore, runRegistry, ChatTestEndpoints.prefs(), ChatTestEndpoints.PROMPTS, 20, 300, 4000);
 
     private final DeepAnalysisToolkit toolkit = new DeepAnalysisToolkit(model, deepAnalysisService, runRegistry,
             childRuns, ChatTestEndpoints.PROMPTS, 1L, AgentLang.ZH);

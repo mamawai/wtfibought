@@ -121,6 +121,12 @@ class PromptI18nTest {
     @Test
     void 英文chat全链路提示词与过程文案全文无中文() {
         for (String key : List.of("chat.cancelledNote", "chat.cancelledEmpty",
+                "chat.childRun.started", "chat.childRun.refused.disabled", "chat.childRun.refused.busy",
+                "chat.childRun.timeout", "chat.childRun.empty", "chat.childRun.status.done", "chat.childRun.status.failed",
+                "chat.wake.instruction", "chat.wake.header",
+                "chat.delegate.unknownWorker", "chat.delegate.emptyBrief",
+                "chat.worker.researcher", "chat.worker.analyst", "chat.worker.label.researcher", "chat.worker.label.analyst",
+                "tool.delegate",
                 "chat.deferred.prefix", "chat.hitl.label", "chat.hitl.reason", "chat.hitl.notExecuted",
                 "chat.hitl.resumeMessage", "chat.form.wake", "chat.form.review", "chat.form.note",
                 "chat.compress.summaryPrefix", "chat.compress.role.user", "chat.compress.role.assistant",
@@ -154,6 +160,10 @@ class PromptI18nTest {
                 prompts.get(AgentLang.EN, "chat.compress.prompt", Map.of("history", "u: hi")));
         assertNoCjk("英文补答标头",
                 prompts.get(AgentLang.EN, "chat.deferred.header", Map.of("question", "btc?")));
+        assertNoCjk("英文后台任务标注", prompts.get(AgentLang.EN, "chat.childRun.tag",
+                Map.of("id", "1", "label", "research", "status", "done")));
+        assertNoCjk("英文后台任务上限拒因", prompts.get(AgentLang.EN, "chat.childRun.refused.limit", Map.of("limit", 3)));
+        assertNoCjk("英文深研判子运行名", prompts.get(AgentLang.EN, "chat.deepAnalysis.label", Map.of("symbol", "BTCUSDT")));
         assertNoCjk("英文 HITL 待确认", prompts.get(AgentLang.EN, "chat.hitl.pendingMessage",
                 Map.of("label", "deep analysis", "reason", "3 calls")));
         assertNoCjk("英文 HITL 已拒绝", prompts.get(AgentLang.EN, "chat.hitl.rejectedReply",
@@ -308,8 +318,9 @@ class PromptI18nTest {
     void 三个域的英文词表都真有自己的文案() {
         for (String key : List.of("trader.template", "trader.label.memory", "trader.mark.conclusion",
                 "reviewer.system", "reviewer.mark.updates", "reviewer.label.statsHeader",
-                "tool.run_deep_analysis", "tool.news_search",
+                "tool.run_deep_analysis", "tool.news_search", "tool.delegate",
                 "chat.main", "chat.newsRule.search", "chat.newsRule.noSearch",
+                "chat.worker.researcher", "chat.worker.analyst", "chat.wake.instruction",
                 "chat.compress.prompt", "chat.deepAnalysis.judgePrompt",
                 "chat.hitl.reason", "chat.deferred.prefix",
                 "coach.hint.system", "coach.review.system", "coach.label.barsHeader",
@@ -366,7 +377,8 @@ class PromptI18nTest {
                 .as("⑤ 深研判要明说才调").contains("仅当用户明确说出").contains("run_deep_analysis")
                 .as("⑥-查 trader 只读工具").contains("trader_overview").contains("trader_decisions").contains("trader_trades")
                 .as("⑥-动 三个动作工具只弹表单").contains("绝不能说已经唤醒了／已经复盘了／留言已记下")
-                .as("⑦ 行为分析").contains("analyze_my_behavior");
+                .as("⑦ 行为分析").contains("analyze_my_behavior")
+                .as("⑧ 派子 agent 是条件式的，派了不等").contains("delegate").contains("简单问题").contains("不要等待、不要轮询");
         // 没搜索能力的那版：只用快讯，且如实说没有检索能力
         assertThat(main(AgentLang.ZH, "chat.newsRule.noSearch"))
                 .contains("新闻只用 news_search 返回的 BlockBeats 快讯").contains("没有联网检索能力");

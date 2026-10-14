@@ -9,6 +9,7 @@ import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
+import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.trader.TraderChatService;
@@ -92,7 +93,7 @@ class SummarizerLeafTest {
         // run_deep_analysis 必须是能执行的真工具（要真走到工具边）——
         // 工厂内部自己 new DeepAnalysisToolkit，天然就是真的，这里只喂它的依赖
         ChatEndpoints llmConfig = ChatTestEndpoints.eps(1L, "gpt-5");   // 叶子指纹含 userId（trader 工具按它认人）
-        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), ChatTestEndpoints.newsToolkit(),
+        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(),
                 deepAnalysisService, mock(BehaviorAnalysisService.class),
                 traderChatService, runRegistry, ChatTestEndpoints.childRuns(mock(ChatContextStore.class)),
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, limit, threshold, keep, "X")

@@ -9,6 +9,7 @@ import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
+import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.trader.TraderChatService;
@@ -107,7 +108,7 @@ class ChatTurnRunnerTest {
         ChatModelFactory chatModelFactory = mock(ChatModelFactory.class);
         when(chatModelFactory.modelsFor(any())).thenReturn(new ChatModelFactory.Models(deep, light));
         ChatEndpoints llmConfig = ChatTestEndpoints.eps(1L, "gpt-5");   // 叶子指纹含 userId（trader 工具按它认人）
-        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), newsToolkit,
+        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), newsToolkit,
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), traderChatService,
                 mock(WorkbenchRunRegistry.class), childRuns,
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
