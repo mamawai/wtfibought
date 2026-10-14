@@ -48,11 +48,10 @@ class JevRouterTest {
         return new JevClient.Answer("noul", p, null, null, null, null);
     }
 
-    private static JevClient.Response answers(double market, double news, double trader) {
+    private static JevClient.Response answers(double market, double news) {
         Map<String, JevClient.Answer> a = new LinkedHashMap<>();
         a.put("need_market", noul(market));
         a.put("need_news", noul(news));
-        a.put("need_trader", noul(trader));
         return new JevClient.Response("jev-1.13.0", a, 100);
     }
 
@@ -79,24 +78,26 @@ class JevRouterTest {
     void 过线的按固定顺序进名单() {
         configured();
         when(client.ask(eq("https://8.8.8.8"), eq("sk-plain"), eq("jev-latest"), any(), eq(JevRouter.QUESTIONS)))
-                .thenReturn(answers(0.8, 0.3, 0.6));
+                .thenReturn(answers(0.6, 0.8));
 
-        Optional<List<String>> next = router.route(1L, List.of(new UserMessage(enriched("我的 trader 拿了什么仓，现在行情如何"))));
+        Optional<List<String>> next = router.route(1L, List.of(new UserMessage(enriched("现在行情如何，有什么新闻"))));
 
-        assertThat(next).contains(List.of("market_agent", "trader_agent"));
+        // 顺序是题目顺序不是概率高低
+        assertThat(next).contains(List.of("market_agent", "news_agent"));
         // 发出去的 state 就是剥掉标记的提问
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> state = ArgumentCaptor.forClass(Map.class);
         verify(client).ask(any(), any(), any(), state.capture(), any());
-        assertThat(state.getValue()).containsEntry("latest_question", "我的 trader 拿了什么仓，现在行情如何");
+        assertThat(state.getValue()).containsEntry("latest_question", "现在行情如何，有什么新闻");
     }
 
+    /** 问自己 trader 的也在这里：汇总者自己有只读工具，Jev 两题都不过线就是 FINISH */
     @Test
-    void 三题都不过线是FINISH() {
+    void 两题都不过线是FINISH() {
         configured();
-        when(client.ask(any(), any(), any(), any(), any())).thenReturn(answers(0.1, 0.2, 0.3));
+        when(client.ask(any(), any(), any(), any(), any())).thenReturn(answers(0.1, 0.2));
 
-        assertThat(router.route(1L, List.of(new UserMessage(enriched("分析我的行为")))))
+        assertThat(router.route(1L, List.of(new UserMessage(enriched("我的 trader 拿了什么仓")))))
                 .contains(List.of(ChatTurnRunner.FINISH));
     }
 
@@ -113,7 +114,6 @@ class JevRouterTest {
         configured();
         Map<String, JevClient.Answer> partial = new LinkedHashMap<>();
         partial.put("need_market", noul(0.9));
-        partial.put("need_news", noul(0.1));
         when(client.ask(any(), any(), any(), any(), any())).thenReturn(new JevClient.Response("jev-1.13.0", partial, 100));
 
         assertThat(router.route(1L, List.of(new UserMessage(enriched("看看行情"))))).isEmpty();

@@ -17,7 +17,6 @@ import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.retry.TransientAiException;
-import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import tools.jackson.databind.JsonNode;
 
@@ -237,26 +236,9 @@ class ResponsesChatModelTest {
         assertThat(model().getOptions().getModel()).isEqualTo("grok-test");
     }
 
-    @Test
-    void 与ResilientChatService组合时工具挂得上() {
-        // 复刻专家叶子的装配路径：真实模型 + 真实工具表，工具必须进 chatOptions
-        ResilientChatService service = ResilientChatService.builder()
-                .model(model())
-                .systemPrompt("你是专家")
-                .tools(List.of(mock(ToolCallback.class)))
-                .forceFirstToolChoice("required")
-                .build();
-
-        ToolCallingChatOptions options = (ToolCallingChatOptions) service.chatOptions().orElseThrow();
-        assertThat(options.getToolCallbacks()).hasSize(1);
-        // 强制信号是逐次调用时才捎的（ToolChoice.apply），底稿里没有；本模型读的就是这个键
-        assertThat(ToolChoice.of(ToolChoice.apply(options, ToolChoice.REQUIRED))).isEqualTo("required");
-        assertThat(ToolChoice.of(options)).isEqualTo(ToolChoice.AUTO);
-    }
-
     /**
      * 请求体整串钉死：温度/档位、store/stream、instructions 拼接、已结束轮次按文本+function_call 拼、
-     * 工具循环里的原始 item 原样回放（密文、小数、null 字段）、function 工具带 schema 小数、搜索声明、tool_choice、缓存分组键、转义与 emoji
+     * 工具循环里的原始 item 原样回放（密文、小数、null 字段）、function 工具带 schema 小数、搜索声明、不传 tool_choice、缓存分组键、转义与 emoji
      */
     @Test
     void 请求侧_请求体整串金标准() {
@@ -283,7 +265,7 @@ class ResponsesChatModelTest {
 
         m.call(new Prompt(List.of(new SystemMessage("你是助手"), new UserMessage("问题 📈 \"引号\" \\ /"),
                 plain, result0, new UserMessage("再问"), new SystemMessage("【摘要】第1段"), inLoop, result1),
-                ToolChoice.apply(allowWebSearch(m), ToolChoice.REQUIRED)));
+                allowWebSearch(m)));
 
         assertThat(lastRequestBody).isEqualTo("{\"model\":\"grok-test\",\"temperature\":0.3,\"reasoning\":{\"effort\":\"medium\"},\"store\":false,\"stream\":true,"
                 + "\"instructions\":\"你是助手\\n\\n【摘要】第1段\",\"input\":[{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\","
@@ -296,7 +278,7 @@ class ResponsesChatModelTest {
                 + "\"call_id\":\"call_1\",\"output\":\"ERROR: 超时\\t重试\"}],\"tools\":[{\"type\":\"function\",\"name\":\"get_price\","
                 + "\"description\":\"查价格 <b>&\\\"引号\\\"\",\"parameters\":{\"type\":\"object\",\"properties\":{\"qty\":{\"type\":\"number\","
                 + "\"minimum\":0.010}},\"required\":[\"qty\"],\"additionalProperties\":false}},{\"type\":\"web_search\"}],"
-                + "\"tool_choice\":\"required\",\"prompt_cache_key\":\"e383530738341e8c1473facb\"}");
+                + "\"prompt_cache_key\":\"e383530738341e8c1473facb\"}");
     }
 
     // ========== 阻塞路径（call → streamOnce 帧合并） ==========

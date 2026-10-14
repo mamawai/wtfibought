@@ -405,7 +405,7 @@ public class TraderController {
                                                     @RequestParam(required = false) Integer round,
                                                     @RequestParam(required = false) Long from,
                                                     @RequestParam(required = false) Long to) {
-        return Result.ok(traderService.decisions(id, limit, before, round, from, to));
+        return Result.ok(traderService.decisions(id, limit, before, round, from, to, null));
     }
 
     // ========== 唤醒现场 ==========

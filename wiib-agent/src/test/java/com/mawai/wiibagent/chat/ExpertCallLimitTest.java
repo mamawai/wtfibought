@@ -76,7 +76,7 @@ class ExpertCallLimitTest {
         });
 
         ReactLoop expert = factory()
-                .expertLoop(AgentLang.ZH, model, new FakeMarketTools(), "required", "你是市场状态专家");
+                .expertLoop(AgentLang.ZH, model, new FakeMarketTools(), "你是市场状态专家");
         expert.run(List.of(new UserMessage("看看行情")), null, null, null);
 
         // 恰好等于而非"不超过"：到上限就补占位回执收尾，触发那一刻模型正好被调 runLimit 次。

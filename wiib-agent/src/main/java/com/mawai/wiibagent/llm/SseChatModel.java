@@ -53,7 +53,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *       它把<b>最后一帧</b> AssistantMessage 的 metadata 当作最终消息的 metadata，子类靠这一点把原始内容块挂回去
  *       （阻塞路径的 {@link #mergeFrames} 同样取最后一帧的）；空文本帧也必须带一个 Generation，否则被它过滤</li>
  * </ul>
- * toolContext 三个键：{@link #TIMEOUT_KEY}、{@link #WEB_SEARCH_KEY}、{@link ToolChoice#CONTEXT_KEY}。
+ * toolContext 两个键：{@link #TIMEOUT_KEY}、{@link #WEB_SEARCH_KEY}。
  *
  * @param <S> 单次订阅的累计状态，子类按需扩展 {@link StreamState}
  */
@@ -394,10 +394,10 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
 
     /**
      * 请求侧证据日志，与响应侧 toolCalls 日志对称：排"模型不调工具"先看这——
-     * tools 空即压根没发工具定义，tool_choice 是强制与否的实据；服务端工具无 name 记 type
+     * tools 空即压根没发工具定义；服务端工具无 name 记 type
      */
-    protected void logRequest(String model, Object toolChoice, List<String> tools) {
-        log.info("[{}] 请求 model={} tool_choice={} tools={}", tag, model, toolChoice, tools);
+    protected void logRequest(String model, List<String> tools) {
+        log.info("[{}] 请求 model={} tools={}", tag, model, tools);
     }
 
     /** 429/5xx 归为瞬时（可重试），其余 4xx 直接失败——配置错误重试也没用 */

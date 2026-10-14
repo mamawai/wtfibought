@@ -134,7 +134,7 @@ whatifibought/                        # Maven 多 module 聚合 reactor
 │   ├── toolkit/                      # LLM 工具类（trader / chat 两处共用，取数底座在 quant 的 market/）
 │   ├── llm/                          # BYOK 端点库（LlmEndpointService / ByokModelBuilder）
 │   │                                 # + 四协议适配（openai 走 Spring AI，responses/anthropic/gemini 自研 ChatModel）
-│   │                                 # + ResilientChatService / ToolChoice / CancelSignal
+│   │                                 # + ResilientChatService / ToolOptions / CancelSignal
 │   │                                 # + 摘要 / 调用限额 / 上游异常归类（给用户看的一句话）
 │   ├── runtime/                      # 平台功能位模型分配（只剩快讯翻译主备两位，Admin 热更）
 │   └── controller/ task/ mapper/ monitor/ config/

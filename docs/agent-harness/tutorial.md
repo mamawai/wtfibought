@@ -122,17 +122,16 @@ POST /api/ai/workbench/chat
 
 `ChatAgentFactory.leavesFor` 的缓存策略与 `ChatModelFactory` 同款（LRU 32、锁外建）。键是 `leafKey` = **配置指纹 + 语言码**：
 
-- **userId 进指纹不是为了缓存粒度，是数据隔离**：叶子里有按用户烤死的工具（`trader_agent` 读的是"这个人的 trader"），两人共用一份叶子就会看到别人的持仓。隔离要靠键本身，不能指望密文的随机性。
+- **userId 进指纹不是为了缓存粒度，是数据隔离**：叶子里有按用户烤死的工具（summarizer 的 trader_* 工具读的是"这个人的 trader"），两人共用一份叶子就会看到别人的持仓。隔离要靠键本身，不能指望密文的随机性。
 - **语言只加在叶子这一层，不进模型指纹**：系统提示词与工具描述按语言烤进叶子里，语言变则叶子必须重建；但模型实例与语言无关，切语言不该重建 SDK 客户端与连接池。
 
-`build()` 造出四个叶子：
+`build()` 造出三个叶子：
 
 | 叶子 | 模型 | 工具 | 特别之处 |
 |---|---|---|---|
-| `market_agent` | 轻 | `MarketToolkit` 4 个 | 首轮 `tool_choice=required`——不强制的话模型会用自带内置搜索直接答，数据源就失控了 |
+| `market_agent` | 轻 | `MarketToolkit` 4 个 | 不强制 `tool_choice`（Opus 5.5 这类模型不收 any / required）；"先调工具再答"写在系统提示词里 |
 | `news_agent` | 轻 | **不挂 tool** | 靠 `preload` 预取 BlockBeats：无参工具挂成 function tool 模型未必调，预取才 100% 保证数据到位 |
-| `trader_agent` | 轻 | `TraderQueryToolkit` 4 个只读 | userId 建叶子时烤死 |
-| `summarizer` | 深 | 5 个（深研判 1 + trader 动作 3 + 行为分析 1） | `streaming(true)`，带压缩、HITL 闸门、保险丝三样 |
+| `summarizer` | 深 | 10 个（深研判 1 + trader 只读 5 + trader 动作 3 + 行为分析 1） | `streaming(true)`，带压缩、HITL 闸门、保险丝三样；trader 工具的 userId 建叶子时烤死 |
 
 **同一个 `runModelCallLimit` 管的是"每个 agent 各自的上限"而不是"整轮总量"**：summarizer 和每个带工具的专家各跑各的循环，计数互不相通。一轮对话的模型调用是各家相加，不是 8 次封顶。
 
@@ -165,9 +164,9 @@ POST /api/ai/workbench/chat
 
 三个零件：
 
-- **路由**（`askRouter`）：浅模型调 `route` 工具给出结构化去向，循环只认这个值，**一个字都不解析消息文本**。为什么不让模型输出 JSON 数组再解析——后者的代价实测过：路由指令混在文本里会泄漏给用户、会作为 AssistantMessage 进历史被模型照抄、解析还脆。超时 90s，任何异常降级成 `FINISH`（路由挂了照样作答）。
+- **路由**（`askRouter`）：浅模型调 `route` 工具给出结构化去向，循环只认这个值，**一个字都不解析消息文本**。为什么不让模型输出 JSON 数组再解析——后者的代价实测过：路由指令混在文本里会泄漏给用户、会作为 AssistantMessage 进历史被模型照抄、解析还脆。tool_choice 不强制（auto）：Opus 5.5 / Sonnet 5.5 / Fable 5.1 不收 any / required，模型没调 route 就按不派发处理。问自己 trader 的问题路由直接 FINISH，summarizer 自己有只读工具。超时 90s，任何异常降级成 `FINISH`（路由挂了照样作答）。
 - **并行**（`dispatchAsync` → `awaitBatch`）：专家跑在虚拟线程上，收齐后**按派发顺序**接进历史——顺序稳定，产出才可复现。专家产出接进上下文的形态是**带出处标注的用户侧消息**，不是裸 AssistantMessage（那样模型会以为是"我自己刚说过的话"，整段输入还以 assistant 结尾，于是倾向于答"没有数据"）。
-- **停止**：真正让循环停下来的是**去重**（每轮至少吃掉一个专家名，名字用完必停）；`MAX_DISPATCH_ROUNDS = 3` 兜的是"去重失灵"。现在正好三个专家，这个数没有余量，加专家要一起抬。
+- **停止**：真正让循环停下来的是**去重**（每轮至少吃掉一个专家名，名字用完必停）；`MAX_DISPATCH_ROUNDS = 3` 兜的是"去重失灵"。现在两个专家，有 1 轮余量，专家加到 3 个以上要一起抬。
 
 出循环前还有五个直通汇总的分支，各自的理由不同，值得逐个看：有未消费的 HITL 授权 / 按钮意图（`ChatIntent`，该做什么已写死，让路由再猜一遍是白烧）/ 中断 / 让位 / 轮次上限。
 
@@ -367,7 +366,7 @@ UsageTrackingChatModel 每轮新建（工厂里的模型实例是跨唤醒缓存
   → TradeTools 每轮 new（绑 sim 子账户 / 白名单 / 风险规格 / 本轮截止时刻）
   → 计划对账（TraderPlanStore.reconcile：逐份 LIVE 计划对 sim 持仓/挂单，出 Reconcile(live, events)；已平仓位懒取）
   → 组装系统提示词（promptAssembler.assemble）、观察包（observation）与开场白（routine / alert instruction）
-  → ResilientChatService（系统提示 + 15 工具 + 首轮 forceFirstToolChoice=required：不看数据不许决策）
+  → ResilientChatService（系统提示 + 15 工具；不强制 tool_choice，"先读事实、用工具求证"在开场白里）
      + ReactLoop（streaming(true)：模型文本逐字推给唤醒现场，见 5.7；ModelCallLimiter 保险丝；ToolCallTraceHook 轨迹）
   → FutureTask 限时执行
   → finally：动作轨迹与用量**无论成败都要落**（超时作废那轮，单和 token 都是真发生的）
@@ -540,7 +539,7 @@ trader 那条链的前端另在两处：
 | `ChatYieldCoordinatorTest` | 让位握手与队列本身 |
 | `SummarizerLeafTest` / `ChatWorkbenchHitlTest` | 闸门、压缩、保险丝在真叶子上真的传上了；后者跑 HITL 端到端 |
 | `ExpertCallLimitTest` | 专家的调用上限怎么生效（直接调 `expertLoop` 真跑，验的才是生产建叶子时挂没挂） |
-| `AnthropicChatModelTest` / `GeminiChatModelTest` / `ResponsesChatModelTest` | 三条自研协议各自的请求体、流式解析、工具与 tool_choice |
+| `AnthropicChatModelTest` / `GeminiChatModelTest` / `ResponsesChatModelTest` | 三条自研协议各自的请求体、流式解析、工具声明（不传 tool_choice） |
 | `ResilientChatServiceTest` | 韧性分层、options 契约、中断掐流与不反向取消信号（用 mock 模型跑，真到 WebClient 那一段只能真跑验，见附录 B） |
 | `TraderLiveHubTest` / `WakeTraceTest` | 现场扇出与轨迹帧、落库形状（见 5.7） |
 | `TraderPlanStoreTest` | 计划对账 `reconcile` 的三条规则（了结报结局并归档/续立、限价成交绑仓、无仓无挂单归档）与 `open`/`cover` 写路径 |

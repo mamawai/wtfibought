@@ -33,7 +33,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Gemini generateContent 协议的形状钉子：路径/头/thinkingConfig/搜索声明/toolConfig 映射、同角色合并、
+ * Gemini generateContent 协议的形状钉子：路径/头/thinkingConfig/搜索声明/function 声明、同角色合并、
  * functionCall 无 id 时的合成与回传、parts 原样回放（thoughtSignature）、chunk→帧（文本、工具、grounding）、错误归类。
  * 手法同 ResponsesChatModelTest：JDK HttpServer 伪造 SSE 服务端。
  */
@@ -170,23 +170,19 @@ class GeminiChatModelTest {
         assertThat(body().has("generationConfig")).isFalse();
     }
 
+    /** 工具只声明不强制：toolConfig 一律不传（mode=ANY 是强制，这里不用） */
     @Test
-    void 请求侧_function声明与toolConfig映射_未捎许可不声明搜索() {
+    void 请求侧_function声明且不传toolConfig_未捎许可不声明搜索() {
         chunks = PLAIN;
         GeminiChatModel m = model(null, true, oneTool());
-        m.call(new Prompt("q", ToolChoice.apply(m.getOptions(), ToolChoice.REQUIRED)));
+        m.call(new Prompt("q", m.getOptions()));
         JsonNode body = body();
         JsonNode tools = body.get("tools");
         assertThat(tools).hasSize(1);   // 端点开了搜索但本次没捎许可
         JsonNode decl = tools.get(0).get("functionDeclarations").get(0);
         assertThat(decl.path("name").asString(null)).isEqualTo("get_price");
         assertThat(decl.get("parametersJsonSchema").path("additionalProperties").asBoolean(false)).isFalse();
-        assertThat(body.get("toolConfig").get("functionCallingConfig").path("mode").asString(null)).isEqualTo("ANY");
-
-        m.call(new Prompt("q", ToolChoice.apply(m.getOptions(), "get_price")));
-        JsonNode config = body().get("toolConfig").get("functionCallingConfig");
-        assertThat(config.path("mode").asString(null)).isEqualTo("ANY");
-        assertThat(config.get("allowedFunctionNames")).extracting(JsonNode::asString).containsExactly("get_price");
+        assertThat(body.has("toolConfig")).isFalse();
 
         m.call(new Prompt("q", allowWebSearch(m)));
         assertThat(body().get("tools")).hasSize(2);
@@ -239,7 +235,7 @@ class GeminiChatModelTest {
 
     /**
      * 请求体整串钉死：温度/档位、系统指令拼接、同角色合并、合成 id 不回传真实 id 回传、回执是对象直接用否则包 output、
-     * 工具循环里的原始 parts 原样回放（签名、小数、null 字段）、function 声明带 schema 小数、搜索声明、toolConfig、转义与 emoji
+     * 工具循环里的原始 parts 原样回放（签名、小数、null 字段）、function 声明带 schema 小数、搜索声明、转义与 emoji
      */
     @Test
     void 请求侧_请求体整串金标准() {
@@ -268,7 +264,7 @@ class GeminiChatModelTest {
 
         m.call(new Prompt(List.of(new SystemMessage("你是助手"), new UserMessage("问题 📈 \"引号\" \\ /"),
                 plain, result0, new UserMessage("再问"), new SystemMessage("【摘要】第1段"), inLoop, result1),
-                ToolChoice.apply(allowWebSearch(m), "get_price")));
+                allowWebSearch(m)));
 
         assertThat(lastRequestBody).isEqualTo("{\"generationConfig\":{\"temperature\":0.3,\"thinkingConfig\":{\"thinkingLevel\":\"LOW\"}},\"systemInstruction\":{\"parts\":[{\"text\":\"你是助手\\n\\n【摘要】第1段\"}]},"
                 + "\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"问题 📈 \\\"引号\\\" \\\\ /\"}]},{\"role\":\"model\",\"parts\":[{\"text\":\"旧答\\n第二行\"},"
@@ -280,8 +276,7 @@ class GeminiChatModelTest {
                 + "{\"role\":\"user\",\"parts\":[{\"functionResponse\":{\"name\":\"get_price\",\"response\":{\"output\":\"ERROR: 超时\\t重试\"},"
                 + "\"id\":\"call_real\"}}]}],\"tools\":[{\"functionDeclarations\":[{\"name\":\"get_price\",\"description\":\"查价格 <b>&\\\"引号\\\"\","
                 + "\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"qty\":{\"type\":\"number\",\"minimum\":0.010}},"
-                + "\"required\":[\"qty\"],\"additionalProperties\":false}}]},{\"google_search\":{}}],\"toolConfig\":{\"functionCallingConfig\":{\"mode\":\"ANY\","
-                + "\"allowedFunctionNames\":[\"get_price\"]}}}");
+                + "\"required\":[\"qty\"],\"additionalProperties\":false}}]},{\"google_search\":{}}]}");
     }
 
     // ========== 阻塞路径 ==========

@@ -97,10 +97,11 @@ tool:
     给到你的是算好的路径加 focus_bars——最近 N 根与各关键点附近的原始 K 线；
     要每一根原始 K 线请用 `klines`。
 
-  # ---- trader 专家的只读档案工具（chat 侧，userId 建叶子时烤死）----
+  # ---- trader 只读档案工具（chat 汇总者持有；userId 建叶子时烤死）----
   trader_overview: |-
     获取当前用户 AI 交易员的概况：状态（RUNNING/PAUSED/LIQUIDATED 及原因）、权益与初始资金、
-    轮次、交易标的、唤醒周期、仓位规格，以及完整的复盘笔记（它至今学到了什么）。
+    轮次、交易标的、唤醒周期、仓位规格、上次/下次唤醒时刻与当前不能唤醒的原因（能唤醒为 null），
+    以及完整的复盘笔记（它至今学到了什么）。
     用户还没创建交易员时返回 hasTrader=false。
 
   trader_positions: |-
@@ -109,12 +110,19 @@ tool:
 
   trader_decisions: |-
     获取当前用户 AI 交易员最近的决策时间线，新的在前。每条含 kind（TRADE=例行唤醒 /
-    ALERT=波动警报唤醒 / REVIEW=每日复盘）、状态、权益、调过的工具，以及完整的推理全文。
+    ALERT=波动警报唤醒 / MANUAL=主人手动唤醒 / REVIEW=每日复盘）、状态、权益、调过的工具，
+    以及完整的推理全文。可按 kind 只取一类。
     回答"它那笔为什么这么做"就用它——推理全文就是答案。
 
   trader_plans: |-
     获取当前用户 AI 交易员的交易计划：全部在场计划外加最近归档的几条。每条计划带论点
     （playType）、引用的数据（signalsUsed）、失效条件、开仓/止损/目标价，以及止损移动的修订史。
+
+  trader_trades: |-
+    获取当前用户 AI 交易员已了结的交易，新的在前：标的、方向、杠杆、开仓价/平仓价、已实现盈亏、
+    开平时刻、了结方式（closeManner：stopLoss/takeProfit/manual/liquidated）、背后的计划（论点 playType、
+    引用的数据、失效条件、原始止损与目标价），主动平仓的还带它写的平仓理由。
+    另给本次返回这几笔的笔数、盈利笔数与盈亏合计。用户还没创建交易员时返回 hasTrader=false。
 
   # ---- 对 trader 动手的三个表单工具（chat 汇总者持有；只弹表单，执行权在用户手指上）----
   wake_trader: |-

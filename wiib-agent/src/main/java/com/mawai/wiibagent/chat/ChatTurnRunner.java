@@ -10,7 +10,7 @@ import com.mawai.wiibagent.llm.LlmErrorMessages;
 import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.llm.SseChatModel;
-import com.mawai.wiibagent.llm.ToolChoice;
+import com.mawai.wiibagent.llm.ToolOptions;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -91,8 +91,8 @@ public class ChatTurnRunner {
      * 派发轮次上限，{@code while(true)} 的第二道闸。
      * <p>
      * <b>今天真正让循环停下来的是去重</b>（每轮至少吃掉一个专家名，名字用完必停）。
-     * 现在正好三个专家，最坏情况（一轮派一个）恰好用满 3 轮，这个数不再有余量——
-     * 再加专家就得把它一起抬，否则最后那个永远派不出去。
+     * 现在两个专家，最坏情况（一轮派一个）用 2 轮，还剩 1 轮余量——
+     * 专家加到 3 个以上就得把它一起抬，否则最后那个永远派不出去。
      * 留着它的理由是它兜的正是"去重失灵"：把 fresh 过滤删掉做变异跑，
      * 路由永远想派同一个专家，靠的就是这条闸收的场（实测）。
      */
@@ -220,8 +220,7 @@ public class ChatTurnRunner {
                 give ["FINISH"] once the expert data is enough to answer.""")
         public String route(@ToolParam(description = """
                 Where to go next: market_agent (prices/positions/liquidations/options),
-                news_agent (crypto news flashes), trader_agent (the user's own AI trader:
-                status/positions/decisions/plans/retrospective notes),
+                news_agent (crypto news flashes),
                 or ["FINISH"] to stop dispatching and answer directly.""") List<String> next) {
             return "";
         }
@@ -560,11 +559,13 @@ public class ChatTurnRunner {
     }
 
     /**
-     * 问轻模型"下一步派谁"：单次调用，tool_choice 无条件 required，模型只能用 route 工具作答。
+     * 问轻模型"下一步派谁"：单次调用，模型用 route 工具作答。
+     * <p>
+     * tool_choice 不传（auto，理由见 {@link ToolOptions}）；"只用 route 作答、不写字"靠系统提示词约束，模型没调工具就当不派发。
      * <p>
      * 返回本轮该派的专家名单；{@link #FINISH} 或空表示不再派发、转汇总——调用方据此出循环。
      * 超时（{@link #ROUTER_TIMEOUT}）与任何异常也返回 FINISH：路由挂了照样作答，不拖死整轮。
-     * options 的派生与 tool_choice 的协议落地都归 {@link ToolChoice}。
+     * options 一律从浅模型自己的派生（{@link ToolOptions#withTools}），类型跟着协议走。
      */
     private List<String> askRouter(ChatModel model, List<Message> history, AgentLang lang) {
         List<Message> messages = new ArrayList<>(history.size() + 1);
@@ -572,11 +573,15 @@ public class ChatTurnRunner {
         messages.addAll(history);
         long startedAt = System.currentTimeMillis();
         try {
-            ChatOptions options = SseChatModel.withCallTimeout(
-                    ToolChoice.apply(ToolChoice.withTools(model, routerTools(lang)), ToolChoice.REQUIRED),
-                    ROUTER_TIMEOUT);
+            ChatOptions options = SseChatModel.withCallTimeout(ToolOptions.withTools(model, routerTools(lang)), ROUTER_TIMEOUT);
             ChatResponse response = model.call(new Prompt(messages, options));
-            List<String> next = parseRouteCall(Objects.requireNonNull(response.getResult()).getOutput());
+            AssistantMessage reply = Objects.requireNonNull(response.getResult()).getOutput();
+            List<String> next = parseRouteCall(reply);
+            if (!reply.hasToolCalls()) {
+                // 文本答复不解析。留痕是为了分辨"模型不肯调工具"与真 FINISH，两者都是空名单
+                String text = reply.getText() == null ? "" : reply.getText();
+                log.info("[Workbench] 路由没调 route 工具，按不派发处理 text={}", text.substring(0, Math.min(200, text.length())));
+            }
             // openai 协议路没有 [Responses] 那样的请求日志，路由慢在模型还是慢在别处只能靠这行分辨
             log.info("[Workbench] 路由回答 next={} 耗时={}ms", next, System.currentTimeMillis() - startedAt);
             return next;

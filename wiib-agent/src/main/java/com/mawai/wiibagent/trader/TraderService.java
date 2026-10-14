@@ -352,10 +352,10 @@ public class TraderService {
     /**
      * 决策时间线。必须按局过滤：局与局之间是两个互不相干的 sim 子账户（各自注资 10000），
      * 混排会出现"曲线上没有的决策"，权益数字也在两条基线之间跳。round 传空=当前局。
-     * from/to 是 wakeTime 区间 [from, to)，竞技场按天翻看用；与 before 分页可叠加。
+     * from/to 是 wakeTime 区间 [from, to)，竞技场按天翻看用；与 before 分页可叠加。kind 传空=全部类型。
      */
     public List<AiTraderDecision> decisions(long traderId, int limit, Long before, Integer round,
-                                            Long from, Long to) {
+                                            Long from, Long to, String kind) {
         AiTrader t = traderMapper.selectById(traderId);
         if (t == null) {
             return List.of();
@@ -365,6 +365,9 @@ public class TraderService {
                 .eq(AiTraderDecision::getRoundNo, round != null ? round : t.getRoundNo())
                 .orderByDesc(AiTraderDecision::getWakeTime)
                 .last("LIMIT " + Math.clamp(limit, 1, 100));
+        if (kind != null) {
+            q.eq(AiTraderDecision::getKind, kind);
+        }
         if (before != null) {
             q.lt(AiTraderDecision::getWakeTime, before);
         }

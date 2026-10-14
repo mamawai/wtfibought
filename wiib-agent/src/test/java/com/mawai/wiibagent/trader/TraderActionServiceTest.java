@@ -271,7 +271,7 @@ class TraderActionServiceTest {
     void 调度器给出拒因时不触发唤醒() {
         AiTrader t = running();
         mine(t);
-        when(scheduler.manualWakeBlockedReason(t)).thenReturn("距下一次例行唤醒不足30秒");
+        when(scheduler.manualWakeBlockedReason(eq(t), any())).thenReturn("距下一次例行唤醒不足30秒");
 
         ActionResult r = service.wake(ME);
 
@@ -433,7 +433,7 @@ class TraderActionServiceTest {
         t.setOwnerNote("今晚有 CPI");
         t.setOwnerNoteRounds(3);
         mine(t);
-        when(scheduler.manualWakeBlockedReason(t)).thenReturn("距下一次例行唤醒不足30秒");
+        when(scheduler.manualWakeBlockedReason(eq(t), any())).thenReturn("距下一次例行唤醒不足30秒");
         when(scheduler.nextRoutineWakeAt(t)).thenReturn(1_700_000_000_000L);
         when(reviewRunner.hasMaterial(eq(t), anyLong())).thenReturn(true);
 

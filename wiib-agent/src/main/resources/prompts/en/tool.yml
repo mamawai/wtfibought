@@ -124,10 +124,11 @@ tool:
     What you get is the computed path plus focus_bars — the last N candles and the ones
     around each key point; `klines` is the tool that hands you every raw bar instead.
 
-  # ---- The trader expert's read-only profile tools (chat side; userId baked in at leaf build) ----
+  # ---- The trader read-only profile tools (held by the chat summarizer; userId baked in at leaf build) ----
   trader_overview: |-
     Get the current user's AI trader profile: status (RUNNING/PAUSED/LIQUIDATED and why),
     equity vs initial balance, round number, traded symbols, wake interval, risk spec,
+    last / next wake-up time and why it cannot be woken right now (null when it can),
     and the FULL review memory notes (what it has learned so far).
     Returns hasTrader=false when the user has not created a trader yet.
 
@@ -138,14 +139,21 @@ tool:
 
   trader_decisions: |-
     Get the recent decision timeline of the user's AI trader, newest first. Each entry has
-    kind (TRADE=scheduled wake / ALERT=volatility wake / REVIEW=daily retrospective),
-    status, equity, the tools it called, and its FULL reasoning text.
+    kind (TRADE=scheduled wake / ALERT=volatility wake / MANUAL=owner's manual wake / REVIEW=daily retrospective),
+    status, equity, the tools it called, and its FULL reasoning text. Can be narrowed to one kind.
     Use this to answer "why did it do that trade" - the reasoning text is the answer.
 
   trader_plans: |-
     Get the trading plans of the user's AI trader: all live plans plus the recently closed ones.
     Each plan carries the thesis (playType), the data it cited (signalsUsed), the invalidation
     condition, entry/stop/target prices and the revision history of stop-loss moves.
+
+  trader_trades: |-
+    Get the closed trades of the user's AI trader, newest first: symbol, side, leverage, entry and
+    close price, realized PnL, open/close time, how it was closed (closeManner: stopLoss / takeProfit /
+    manual / liquidated), the plan behind it (playType, signalsUsed, invalidation condition, original
+    stop and target) and, for a manual close, the close reason it wrote. Also count, wins and total
+    realized PnL over the returned trades. Returns hasTrader=false when the user has not created a trader yet.
 
   # ---- The three form tools that act on the trader (held by the chat summarizer; they only open a form) ----
   wake_trader: |-

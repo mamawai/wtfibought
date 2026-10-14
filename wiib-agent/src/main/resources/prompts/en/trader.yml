@@ -305,7 +305,7 @@ trader:
     alertNoWake: nowhere yet this round
     alertWakeAt: at {{time}} (about {{minutes}} minutes ago)
     alertNotice: "Note: the current {{interval}} candle has NOT closed — conditions defined on the close do not count right now, so verify on closed 5m/15m candles. Your stop-loss order is still protecting you automatically."
-    alertQuestion: "This is an alert wake-up, not a routine one: work out what this move means for each position and each symbol, and decide your actions by your owner's trading instructions. Being woken is neither a reason to act nor a reason to stand still. Close with the fixed {{mark}} format as before, one section per tradable symbol."
+    alertQuestion: "This is an alert wake-up, not a routine one: check the move with your tools first, then work out what it means for each position and each symbol, and decide your actions by your owner's trading instructions. Being woken is neither a reason to act nor a reason to stand still. Close with the fixed {{mark}} format as before, one section per tradable symbol."
     # Self-produced values inside the account-state JSON; they follow the language
     held:
       minutes: "{{n}} minutes"

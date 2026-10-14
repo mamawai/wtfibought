@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.model.ChatModel;
@@ -203,16 +204,9 @@ class ChatTurnRunnerTest {
                 .containsExactly("news_agent");
     }
 
-    /** 新专家要被路由认得：不在 EXPERT_AGENTS 里就会被当成不认识的名字静默丢掉，永远派不出去 */
-    @Test
-    void parsesTraderAgentFromRouteToolCall() {
-        assertThat(ChatTurnRunner.parseRouteCall(toolCall("route", "{\"next\":[\"trader_agent\"]}")))
-                .containsExactly("trader_agent");
-    }
-
     @Test
     void noToolCallMeansNoDispatch() {
-        // 模型没调 route（理论上被 tool_choice=required 挡住，兜底也要安全）→ 空名单 → 转汇总
+        // tool_choice 是 auto，模型可能不调 route 直接写字：文本不解析 → 空名单 → 转汇总
         assertThat(ChatTurnRunner.parseRouteCall(new AssistantMessage("我直接回答吧"))).isEmpty();
     }
 
@@ -302,35 +296,37 @@ class ChatTurnRunnerTest {
     }
 
     /**
-     * "我的 trader 怎么样"要派给 trader 专家，而且它得真调到只读工具。
+     * "我的 trader 怎么样"不派专家：汇总者自己调只读工具。
      * <p>
-     * 这条同时钉住三件容易各自坏掉的事：路由认得这个名字、生产叶子上真挂着
-     * {@link TraderQueryToolkit}、以及 <b>userId 是建叶子时烤死的</b>——
-     * 工具签名里没有用户参数，模型没有任何办法去读别人的 trader。
+     * 这条同时钉住两件容易各自坏掉的事：生产叶子的汇总者上真挂着 {@link TraderQueryToolkit}、
+     * 以及 <b>userId 是建叶子时烤死的</b>——工具签名里没有用户参数，模型没有任何办法去读别人的 trader。
      */
     @Test
-    void trader专家被派发且工具只读自己那份() {
-        when(traderChatService.overview(1L, AgentLang.ZH)).thenReturn("{\"hasTrader\":true,\"status\":\"RUNNING\"}");
-        AtomicInteger traderTurns = new AtomicInteger();
-        when(light.call(any(Prompt.class))).thenAnswer(inv -> {
-            Prompt prompt = inv.getArgument(0);
-            if (prompt.getInstructions().getFirst().getText().contains(ROUTER_MARK)) {
-                return route("trader_agent");
-            }
-            expertPrompts.add(prompt);
-            // 先调工具再给结论：真走一遍 ReAct 的工具边，否则验不到工具挂没挂上
-            return traderTurns.getAndIncrement() == 0
+    void 汇总者直接调trader只读工具且只读自己那份() {
+        String overview = "{\"hasTrader\":true,\"status\":\"RUNNING\"}";
+        when(traderChatService.overview(1L, AgentLang.ZH)).thenReturn(overview);
+        lightAnswers(() -> route("FINISH"),
+                () -> responseOf(new AssistantMessage("不该跑的市场结论")),
+                () -> responseOf(new AssistantMessage("不该跑的新闻结论")));
+        AtomicInteger calls = new AtomicInteger();
+        when(deep.stream(any(Prompt.class))).thenAnswer(inv -> {
+            summarizerPrompts.add(inv.getArgument(0));
+            // 先调工具再作答：真走一遍 ReAct 的工具边，否则验不到工具挂没挂上
+            return Flux.just(calls.getAndIncrement() == 0
                     ? responseOf(toolCall("trader_overview", "{}"))
-                    : responseOf(new AssistantMessage("你的 trader 正在运行"));
+                    : responseOf(new AssistantMessage("你的 trader 正在运行")));
         });
-        summarizerAnswers("这是答案");
 
         turn("我的 trader 怎么样");
 
-        assertThat(starts("trader_agent")).isEqualTo(1);
+        assertThat(progress).isEmpty();
         verify(traderChatService).overview(1L, AgentLang.ZH);
-        // 专家结论进了上下文，汇总者才写得出答案
-        assertThat(summarizerInput()).contains("你的 trader 正在运行");
+        // 工具回执进了汇总者的上下文，第二次调用才写得出答案
+        assertThat(summarizerPrompts.getLast().getInstructions())
+                .filteredOn(m -> m instanceof ToolResponseMessage)
+                .extracting(m -> ((ToolResponseMessage) m).getResponses().getFirst().responseData())
+                .containsExactly(overview);
+        assertThat(answer.toString()).isEqualTo("你的 trader 正在运行");
     }
 
     /** 模型层把搜索过程挂在帧 metadata 上（空文本帧），runner 逐帧取出交给 searchSink，正文不受影响 */
@@ -387,7 +383,7 @@ class ChatTurnRunnerTest {
 
     /**
      * 功能按钮直发的一轮：同样直通汇总，且末尾带上"本轮必须调这个工具"的动作指令。
-     * 真跑实证过按钮那句话交给路由会先派 trader_agent 取一堆无关数据。
+     * 真跑实证过按钮那句话交给路由会先派专家取一堆无关数据。
      */
     @Test
     void 按钮意图轮不问路由且垫动作指令() {
@@ -590,12 +586,13 @@ class ChatTurnRunnerTest {
     }
 
     /**
-     * 路由那一次调用的 options 必须从浅模型自己的派生并强制 required：openai 协议下 Spring AI 2.0 的
+     * 路由那一次调用的 options 必须从浅模型自己的派生：openai 协议下 Spring AI 2.0 的
      * OpenAiChatModel 把 prompt 的 options 硬转 OpenAiChatOptions，泛型 builder 造的当场 ClassCastException，
      * 被兜成 FINISH → 整轮零派发 → 用户只看到"没有可用数据"（真跑实证的病，钉在这）。
+     * 同时钉住不强制：tool_choice 留空走 auto。
      */
     @Test
-    void 路由options跟着浅模型的协议走并强制required() {
+    void 路由options跟着浅模型的协议走且不强制() {
         lightAnswers(() -> route("FINISH"), () -> responseOf(new AssistantMessage("市场结论")),
                 () -> responseOf(new AssistantMessage("新闻结论")));
         summarizerAnswers("这是答案");
@@ -611,7 +608,7 @@ class ChatTurnRunnerTest {
         verify(light).call(prompt.capture());
         assertThat(prompt.getValue().getOptions()).isInstanceOf(OpenAiChatOptions.class);
         OpenAiChatOptions options = (OpenAiChatOptions) prompt.getValue().getOptions();
-        assertThat(options.getToolChoice()).isEqualTo("required");
+        assertThat(options.getToolChoice()).isNull();
         assertThat(options.getToolCallbacks()).extracting(t -> t.getToolDefinition().name()).containsExactly("route");
         assertThat(options.getModel()).isEqualTo("deepseek-chat");
     }

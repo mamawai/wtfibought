@@ -3,7 +3,9 @@ package com.mawai.wiibagent.trader;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
+import com.mawai.wiibcommon.i18n.RequestLang;
 import com.mawai.wiibcommon.entity.AiTraderDecision;
 import com.mawai.wiibagent.learning.ReviewRunner;
 import com.mawai.wiibagent.mapper.AiTraderDecisionMapper;
@@ -122,7 +124,7 @@ public class TraderActionService {
         if (t == null) {
             return new ActionResult(false, messages.get("trader.notCreated"));
         }
-        String blocked = wakeBlockedReason(t);
+        String blocked = wakeBlockedReason(t, RequestLang.current());
         if (blocked != null) {
             return new ActionResult(false, blocked);
         }
@@ -132,17 +134,32 @@ public class TraderActionService {
                 : new ActionResult(false, why);
     }
 
-    /** 不能唤醒的原因，null=可以。面板与真执行共用，显示的拒因就是点下去会拿到的那一句 */
-    public String wakeBlockedReason(AiTrader t) {
+    /**
+     * 不能唤醒的原因，null=可以。面板与真执行共用，显示的拒因就是点下去会拿到的那一句。
+     * 文案按 lang 取：chat 的 trader_overview 在非请求线程上调它，取不到请求语言。
+     */
+    public String wakeBlockedReason(AiTrader t, AgentLang lang) {
         if (AiTrader.STATUS_LIQUIDATED.equals(t.getStatus())) {
-            return messages.get("trader.wake.liquidated");
+            return messages.get(lang, "trader.wake.liquidated");
         }
         if (!AiTrader.STATUS_RUNNING.equals(t.getStatus())) {
             String why = t.getPausedReason() == null ? ""
-                    : messages.get("trader.wake.pausedWhy", Map.of("reason", t.getPausedReason()));
-            return messages.get("trader.wake.paused", Map.of("why", why));
+                    : messages.get(lang, "trader.wake.pausedWhy", Map.of("reason", t.getPausedReason()));
+            return messages.get(lang, "trader.wake.paused", Map.of("why", why));
         }
-        return scheduler.manualWakeBlockedReason(t);
+        return scheduler.manualWakeBlockedReason(t, lang);
+    }
+
+    /** 唤醒三项：上次唤醒时刻、下次例行唤醒时刻、不能唤醒的原因（null=可以）。面板与 chat 的 trader_overview 共用 */
+    public record WakeState(Long lastWakeAt, Long nextWakeAt, String blockedReason) {
+    }
+
+    public WakeState wakeState(AiTrader t, AgentLang lang) {
+        // 时刻取 created_at
+        AiTraderDecision lastWake = latestDecision(t, AiTraderDecision.KIND_TRADE,
+                AiTraderDecision.KIND_ALERT, AiTraderDecision.KIND_MANUAL);
+        return new WakeState(lastWake == null ? null : epochMs(lastWake.getCreatedAt()),
+                scheduler.nextRoutineWakeAt(t), wakeBlockedReason(t, lang));
     }
 
     // ========== 点播复盘 ==========
@@ -209,16 +226,13 @@ public class TraderActionService {
             return new ActionPanel(false, null, null, null, null, null, null, null, null,
                     false, null, null, 0, MAX_NOTE_ROUNDS, MAX_NOTE_CHARS);
         }
+        WakeState wake = wakeState(t, RequestLang.current());
         // 时刻取 created_at
-        AiTraderDecision lastWake = latestDecision(t, AiTraderDecision.KIND_TRADE,
-                AiTraderDecision.KIND_ALERT, AiTraderDecision.KIND_MANUAL);
         AiTraderDecision lastReview = latestDecision(t, AiTraderDecision.KIND_REVIEW);
         String reviewBlocked = reviewBlockedReason(t);
         return new ActionPanel(
                 true, t.getName(), t.getStatus(), t.getPausedReason(),
-                lastWake == null ? null : epochMs(lastWake.getCreatedAt()),
-                scheduler.nextRoutineWakeAt(t),
-                wakeBlockedReason(t),
+                wake.lastWakeAt(), wake.nextWakeAt(), wake.blockedReason(),
                 lastReview == null ? null : epochMs(lastReview.getCreatedAt()),
                 lastReview == null ? null : lastReview.getStatus(),
                 reviewRunner.hasMaterial(t, System.currentTimeMillis()),

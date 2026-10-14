@@ -91,8 +91,8 @@ const PANELS = [
       { id: 'agent', x: 668, y: 84, w: 180, h: 104, tag: 'REACT', icon: 'cpu',
         title: { zh: 'ReactLoop 决策循环', en: 'ReactLoop' },
         counter: { label: { zh: '模型调用', en: 'model calls' }, max: 12 },
-        rows: [ { id: 'stateless', t: { zh: '无状态 · 首轮强制调工具', en: 'stateless · tool call forced first' } } ],
-        detail: { zh: '一次唤醒 = 一个无状态 ReactLoop 会话（自写的 ReAct 循环），BYOK 模型（主人的 key，AES-GCM 加密存库）。首轮强制调工具：不看数据不许决策。单轮模型调用上限 12 次——会并行的模型两三次就取完数，不并行的一轮一个，多币求证要这个余量；最后一次能执行工具时贴一句收尾提示，下一次直接给结论。连同 600 秒预算与连败 5 次暂停，停止条件都在模型之外。', en: 'One wakeup = one stateless ReactLoop session (a hand-written ReAct loop) on the owner’s BYOK model (key stored AES-GCM encrypted). The first call must use a tool: no deciding without data. Cap of 12 model calls per wake — parallel callers finish in two or three, serial ones need the headroom to check several symbols; the last tool-capable call gets a wrap-up hint so the next one concludes. With the 600s budget and pause-after-5-failures, every stop condition lives outside the model.' } },
+        rows: [ { id: 'stateless', t: { zh: '无状态 · 不强制 tool_choice', en: 'stateless · tool_choice never forced' } } ],
+        detail: { zh: '一次唤醒 = 一个无状态 ReactLoop 会话（自写的 ReAct 循环），BYOK 模型（主人的 key，AES-GCM 加密存库）。不强制 tool_choice（Opus 5.5 这类模型不收 any / required）：「先读事实、用工具求证」写在开场白里。单轮模型调用上限 12 次——会并行的模型两三次就取完数，不并行的一轮一个，多币求证要这个余量；最后一次能执行工具时贴一句收尾提示，下一次直接给结论。连同 600 秒预算与连败 5 次暂停，停止条件都在模型之外。', en: 'One wakeup = one stateless ReactLoop session (a hand-written ReAct loop) on the owner’s BYOK model (key stored AES-GCM encrypted). tool_choice is never forced (models like Opus 5.5 reject any / required): “read the facts, verify with tools” lives in the opening message. Cap of 12 model calls per wake — parallel callers finish in two or three, serial ones need the headroom to check several symbols; the last tool-capable call gets a wrap-up hint so the next one concludes. With the 600s budget and pause-after-5-failures, every stop condition lives outside the model.' } },
       { id: 'data', x: 888, y: 16, w: 180, h: 196, tag: 'TOOLS', icon: 'database',
         title: { zh: '数据工具 ×8', en: 'Data tools ×8' },
         rows: [
@@ -186,38 +186,30 @@ const PANELS = [
         title: { zh: '路由 · Jev / 浅模型', en: 'Router · Jev / light model' },
         counter: { label: { zh: '派发轮次', en: 'dispatch round' }, max: 3 },
         chips: [
-          { id: 'dm', t: 'market_agent' }, { id: 'dn', t: 'news_agent' }, { id: 'dt', t: 'trader_agent' }
+          { id: 'dm', t: 'market_agent' }, { id: 'dn', t: 'news_agent' }
         ],
         rows: [
           { id: 'jev', t: { zh: '配了 Jev 先问 · 否则浅模型', en: 'Jev first · else light model' } },
           { id: 'to', t: { zh: '90s 超时 → 降级 FINISH', en: '90s timeout → FINISH' } }
         ],
-        detail: { zh: '用户配了 Jev 就先问它：三道是非题一次问完「要不要行情 / 新闻 / trader 专家」，概率过 0.5 的进名单；没配、调用失败、回包缺题都回落到浅模型路由——浅模型调 route 工具给出结构化去向，循环只认这个值、不解析消息文本。同一专家整轮只派一次，去重名单才是真正让循环收敛的东西，3 轮上限兜底；超时或异常降级 FINISH，路由挂了照样作答。', en: 'If the user has set up Jev, it is asked first: three yes/no questions in one call — do we need the market, news or trader expert — and anything above 0.5 gets dispatched. No Jev, a failed call or a missing answer falls back to the light-model router, which calls a route tool for a structured destination; the loop trusts only that value, never parsed text. Each expert is dispatched once per turn — the dedup list is what makes the loop converge, the 3-round cap backstops it. Timeouts and errors degrade to FINISH: a dead router never blocks the answer.' } },
+        detail: { zh: '用户配了 Jev 就先问它：两道是非题一次问完「要不要行情 / 新闻专家」，概率过 0.5 的进名单；没配、调用失败、回包缺题都回落到浅模型路由——浅模型调 route 工具给出结构化去向（tool_choice 不强制，Opus 5.5 这类模型不收强制），循环只认这个值、不解析消息文本。问自己 trader 的问题直接 FINISH，summarizer 自己有只读工具。同一专家整轮只派一次，去重名单才是真正让循环收敛的东西，3 轮上限兜底；超时或异常降级 FINISH，路由挂了照样作答。', en: 'If the user has set up Jev, it is asked first: two yes/no questions in one call — do we need the market or news expert — and anything above 0.5 gets dispatched. No Jev, a failed call or a missing answer falls back to the light-model router, which calls a route tool for a structured destination (tool_choice is never forced; models like Opus 5.5 reject forcing); the loop trusts only that value, never parsed text. Questions about the user’s own trader go straight to FINISH — the summarizer has the read-only tools itself. Each expert is dispatched once per turn — the dedup list is what makes the loop converge, the 3-round cap backstops it. Timeouts and errors degrade to FINISH: a dead router never blocks the answer.' } },
       { id: 'xm', x: 496, y: 40, w: 210, h: 140, tag: 'EXPERT', icon: 'candlestick-chart',
         title: 'market_agent',
         rows: [
           { id: 'snap', t: 'market_snapshot' }, { id: 'iv', t: 'option_iv' },
           { id: 'fund', t: 'funding_history' }, { id: 'depth', t: 'orderbook_depth' }
         ],
-        sub: { zh: '首轮强制调工具', en: 'first tool call forced' },
-        detail: { zh: '行情专家：浅模型 + 4 个行情工具的 ReAct 循环，首轮强制 tool_choice——不强制的话模型可能拿内置知识直接答，数据源就失控了。', en: 'The market expert: light model + 4 market tools in a ReAct loop, with the first tool call forced — otherwise the model may answer from built-in knowledge and the data source is no longer controlled.' } },
+        sub: { zh: '提示词要求先调工具', en: 'prompt says tools first' },
+        detail: { zh: '行情专家：浅模型 + 4 个行情工具的 ReAct 循环。不强制 tool_choice（Opus 5.5 这类模型不收强制），「第一步先调工具取数、不凭记忆给数字」写在系统提示词里。', en: 'The market expert: light model + 4 market tools in a ReAct loop. tool_choice is never forced (models like Opus 5.5 reject it); “call the tools first, never quote a number from memory” lives in the system prompt.' } },
       { id: 'xn', x: 496, y: 204, w: 210, h: 92, tag: 'EXPERT', icon: 'newspaper',
         title: 'news_agent',
         rows: [ { id: 'pre', t: { zh: 'BlockBeats 无参预取', en: 'BlockBeats prefetched' } } ],
         sub: { zh: '不挂工具 · 预取 100% 到位', en: 'no tools · prefetch always lands' },
         detail: { zh: '新闻专家不挂 function tool：news_search 无参数，挂成工具模型未必调，预取随消息直接喂进去才 100% 保证数据到位。', en: 'The news expert carries no function tools: news_search takes no arguments, and a model may skip an attached tool — prefetching the feed into the message guarantees the data arrives.' } },
-      { id: 'xt', x: 496, y: 320, w: 210, h: 140, tag: 'EXPERT', icon: 'bot',
-        title: 'trader_agent',
-        rows: [
-          { id: 'ov', t: 'trader_overview' }, { id: 'pos', t: 'trader_positions' },
-          { id: 'dc', t: 'trader_decisions' }, { id: 'pl', t: 'trader_plans' }
-        ],
-        sub: { zh: '只读自己的 AI Trader', en: 'read-only, your own trader' },
-        detail: { zh: '只读感知这个用户自己的 AI Trader：概况 / 持仓 / 决策 / 计划。工具按 userId 烤死在叶子里——这也是 userId 必须进缓存指纹的原因。', en: 'Read-only view of this user’s own AI Trader: overview / positions / decisions / plans. The tools are baked to the userId inside the leaf — which is exactly why userId must be part of the cache fingerprint.' } },
       { id: 'sum', x: 756, y: 174, w: 250, h: 228, tag: 'SUMMARIZER', icon: 'zap',
         title: { zh: 'summarizer · 深模型', en: 'summarizer · deep model' },
         chips: [
-          { id: 'sda', t: 'run_deep_analysis' }, { id: 'swk', t: 'wake_trader' },
+          { id: 'sda', t: 'run_deep_analysis' }, { id: 'srd', t: 'trader_* ×5' }, { id: 'swk', t: 'wake_trader' },
           { id: 'srv', t: 'review_trader_now' }, { id: 'snt', t: 'leave_note_to_trader' },
           { id: 'sbh', t: 'analyze_my_behavior' }
         ],
@@ -226,7 +218,7 @@ const PANELS = [
           { id: 'ws', t: { zh: '服务端搜索 · 端点勾选才有', en: 'server search · if the endpoint allows' } }
         ],
         stream: 3,
-        detail: { zh: '深模型只写最终回答，提示词一个字不提「要不要再派发」——让它同时纠结作答和派发就会反复横跳。wake / review / note 三个动作只往对话里推表单，按下按钮的是用户；run_deep_analysis 当场烧钱，走 HITL 闸。联网搜索只发给这一个叶子：端点是 responses / anthropic / gemini 协议且勾了开关才捎上许可，提示词也按能不能搜二选一，不承诺做不到的事。', en: 'The deep model only writes the final answer; its prompt never mentions dispatching — a model juggling “answer or dispatch” oscillates forever. The three trader actions merely push a form into the chat (the user presses the button); run_deep_analysis burns money immediately, so it goes through the HITL gate. Web search is granted to this leaf alone, only when the endpoint speaks responses / anthropic / gemini and has search switched on — and the prompt is picked to match, so it never promises what the endpoint cannot do.' } },
+        detail: { zh: '深模型只写最终回答，提示词一个字不提「要不要再派发」——让它同时纠结作答和派发就会反复横跳。用户自己的 trader 由它直接查：五个只读工具（概况与账本 / 持仓 / 决策 / 计划 / 已了结交易），按 userId 烤死在叶子里——这也是 userId 必须进缓存指纹的原因。wake / review / note 三个动作只往对话里推表单，按下按钮的是用户；run_deep_analysis 当场烧钱，走 HITL 闸。联网搜索只发给这一个叶子：端点是 responses / anthropic / gemini 协议且勾了开关才捎上许可，提示词也按能不能搜二选一，不承诺做不到的事。', en: 'The deep model only writes the final answer; its prompt never mentions dispatching — a model juggling “answer or dispatch” oscillates forever. The user’s own trader it reads directly: five read-only tools (overview and ledger / positions / decisions / plans / closed trades), baked to the userId inside the leaf — which is exactly why userId must be part of the cache fingerprint. The three trader actions merely push a form into the chat (the user presses the button); run_deep_analysis burns money immediately, so it goes through the HITL gate. Web search is granted to this leaf alone, only when the endpoint speaks responses / anthropic / gemini and has search switched on — and the prompt is picked to match, so it never promises what the endpoint cannot do.' } },
       { id: 'yq', x: 1016, y: 40, w: 150, h: 124, tag: 'QUEUE', icon: 'pause',
         title: 'ChatYieldCoordinator',
         rows: [
@@ -257,10 +249,8 @@ const PANELS = [
       { id: 'g-r', from: 'gates', to: 'router', pts: [[166, 250], [226, 250]] },
       { id: 'r-m', from: 'router', to: 'xm', pts: [[426, 210], [456, 210], [456, 110], [496, 110]] },
       { id: 'r-n', from: 'router', to: 'xn', pts: [[426, 250], [496, 250]] },
-      { id: 'r-t', from: 'router', to: 'xt', pts: [[426, 300], [456, 300], [456, 390], [496, 390]] },
       { id: 'm-r', from: 'xm', to: 'router', cls: 'back', pts: [[496, 126], [468, 126], [468, 224], [426, 224]] },
       { id: 'n-r', from: 'xn', to: 'router', cls: 'back', pts: [[496, 266], [426, 266]] },
-      { id: 't-r', from: 'xt', to: 'router', cls: 'back', pts: [[496, 406], [468, 406], [468, 314], [426, 314]] },
       { id: 'r-s', from: 'router', to: 'sum', pts: [[326, 338], [326, 480], [726, 480], [726, 288], [756, 288]] },
       { id: 's-h', from: 'sum', to: 'hist', pts: [[881, 402], [881, 444]] },
       { id: 's-u', from: 'sum', to: 'user', cls: 'answer', pts: [[881, 174], [881, 16], [91, 16], [91, 64]] },
@@ -285,8 +275,8 @@ const STEP = {
     ]
   },
   chat: {
-    order: ['user', 'gates', 'router', 'xm', 'xn', 'xt', 'yq', 'sum', 'hist'],
-    indent: { xm: 1, xn: 1, xt: 1, yq: 2 },
+    order: ['user', 'gates', 'router', 'xm', 'xn', 'yq', 'sum', 'hist'],
+    indent: { xm: 1, xn: 1, yq: 2 },
     float: { hitl: { over: 'sum', dy: 0, inset: 0 } },   // 窄屏卡片只剩标题，HITL 卡直接盖在 summarizer 上
     groups: [
       { from: 'xm', to: 'yq', t: { zh: '专家并行取数', en: 'experts run in parallel' } }
@@ -954,24 +944,17 @@ async function chatScript(c, scene) {
     c.log('ROUTE', { zh: '结论按派发顺序并入 working', en: 'conclusions merged into working, dispatch order' });
     await c.sleep(600);
 
-    // 第 2 轮：trader_agent
-    c.count('router', 2); c.chip('router', 'dt');
-    c.log('ROUTE', { zh: 'tool_call → [trader_agent] · 轮次 2/3', en: 'tool_call → [trader_agent] · round 2/3' });
-    await c.pulse('r-t'); c.on('xt');
-    c.row('xt', 'pos'); await c.sleep(450);
-    c.row('xt', 'pl');
-    c.log('EXPERT', { zh: 'trader_agent：持仓 / 计划 / 最近决策（只读）', en: 'trader_agent: positions / plans / recent decisions (read-only)' });
-    await c.sleep(450);
-    await c.pulse('t-r', { cls: 'dim', dur: 750 }); c.done('xt');
-    await c.sleep(500);
-
-    // FINISH → 汇总
-    c.count('router', 3);
-    c.log('ROUTE', { zh: '→ FINISH · 转汇总', en: '→ FINISH · hand off to summarizer' });
+    // 第 2 轮：专家数据已够 → FINISH，转汇总
+    c.count('router', 2);
+    c.log('ROUTE', { zh: 'tool_call → [FINISH] · 轮次 2/3 · 专家数据已够', en: 'tool_call → [FINISH] · round 2/3 · expert data suffices' });
     await c.sleep(400);
     await c.pulse('r-s', { dur: 1000 });
     c.done('router'); c.on('sum');
     c.log('SUM', { zh: 'summarizer 深模型 · 流式作答', en: 'summarizer, deep model · streaming' });
+    // 用户自己的 trader 由 summarizer 直接查，不经路由
+    c.chip('sum', 'srd');
+    c.log('SUM', { zh: 'summarizer 调 trader_overview / trader_positions（只读，userId 烤死）', en: 'summarizer calls trader_overview / trader_positions (read-only, userId baked in)' });
+    await c.sleep(450);
     await c.type('sum', 0, { zh: '资金费连续 3 期为负，空头已拥挤；', en: 'Funding negative 3 straight periods;' });
 
     // HITL：深研判要用户点头

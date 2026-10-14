@@ -156,26 +156,10 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
             }
             if (!tools.isEmpty()) {
                 body.set("tools", tools);
-                ObjectNode config = functionCallingConfig(ToolChoice.of(toolOptions));
-                if (config != null) {
-                    body.set("toolConfig", MAPPER.createObjectNode().set("functionCallingConfig", config));
-                }
             }
         }
-        logRequest(effectiveModel(prompt), body.get("toolConfig"), toolNames);
+        logRequest(effectiveModel(prompt), toolNames);
         return body;
-    }
-
-    /** required → ANY；具体工具名 → ANY + allowedFunctionNames；auto 不传 */
-    private static ObjectNode functionCallingConfig(String choice) {
-        if (ToolChoice.AUTO.equals(choice)) {
-            return null;
-        }
-        ObjectNode config = MAPPER.createObjectNode().put("mode", "ANY");
-        if (!ToolChoice.REQUIRED.equals(choice)) {
-            config.set("allowedFunctionNames", MAPPER.createArrayNode().add(choice));
-        }
-        return config;
     }
 
     private static void append(ArrayNode contents, String role, List<ObjectNode> parts) {

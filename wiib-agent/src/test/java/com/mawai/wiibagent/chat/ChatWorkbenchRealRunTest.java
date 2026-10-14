@@ -31,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * WIIB_REAL_RUN=1 mvn -o test -pl wiib-agent -am -DskipTests=false \
  *   -Dtest=ChatWorkbenchRealRunTest -Dsurefire.failIfNoSpecifiedTests=false
  * </pre>
- * 日志看点：[Responses] 请求 tool_choice=… / toolCalls=…、[NewsTool] 预取、[Workbench] 派发、[TurnMetrics]。
+ * 日志看点：[Responses] 请求 tools=… / toolCalls=…、[NewsTool] 预取、[Workbench] 派发、[TurnMetrics]。
  */
 @SpringBootTest(properties = {
         // 只验对话链路：策略信号/实盘执行/AI 分析轨全关，测试期间不许背景任务下单写库
@@ -97,15 +97,15 @@ class ChatWorkbenchRealRunTest {
     }
 
     /**
-     * 专家把 trader 数据取回来了，summarizer 却答"没有 trader 的最新表现数据"。
+     * "我的交易员表现如何"不派专家：summarizer 自己调 trader 只读工具，答案里要有库里的权益数字。
      * <p>
-     * <b>只有真跑验得到</b>：病根在喂进去的上下文形态，而单测的 ChatModel 是 mock、照剧本吐字，
-     * 不会像真模型那样把上一条助手消息当成"我已经答过了"，对形态完全无感。
+     * <b>只有真跑验得到</b>：真模型肯不肯在 auto 下调这几个工具、回执形态它认不认，
+     * 单测的 ChatModel 是 mock、照剧本吐字，对这些完全无感。
      * <p>
      * trader 链路纯读库不打 Binance，本机可验（行情链路仍要上服务器，见 tutorial 附录 A）。
      */
     @Test
-    void trader表现提问真跑不再答没有数据() {
+    void trader表现提问真跑答出权益() {
         ChatEndpoints llmConfig = endpointService.chatEndpoints(ADMIN_USER_ID);
         assertThat(llmConfig).as("先用管理员账号在 AI 页「模型配置」加一条 BYOK 端点再跑").isNotNull();
         // 期望值取自库里那份真数据，不在测试里另造一份：造了就变成"自己写的自己验"
@@ -128,22 +128,12 @@ class ChatWorkbenchRealRunTest {
         }
         log.info("[RealRun] 最终回答（{}字）：{}", answer.length(), answer);
 
-        // 收尾事件（done/error）分开断言：合成一条 orElseThrow 会把上游取数失败误报成
-        // "路由没派专家"，排查方向带偏
-        ChatTurnRunner.ExpertProgress settled = events.stream()
-                .filter(e -> ChatAgentFactory.TRADER_AGENT.equals(e.agent())
-                        && !ChatTurnRunner.ExpertProgress.START.equals(e.phase()))
-                .findFirst().orElseThrow(() -> new AssertionError("路由没把 trader_agent 派出去"));
-        assertThat(settled.phase())
-                .as("trader_agent 取数失败：%s（上游瞬时故障就重跑）", settled.text())
-                .isEqualTo(ChatTurnRunner.ExpertProgress.DONE);
-        assertThat(settled.text()).isNotBlank();
-        // 库里那个权益数字出现在回答里，才算数据真穿过了汇总这一跳。
+        // 库里那个权益数字出现在回答里，才算 trader_overview 真被调了、数据真进了回答。
         // 不锚 status：库里存 RUNNING、模型多半写"运行中"，锚它是在考措辞不是考链路。
         // 前后各读一次取并集：权益随唤醒（5m 一次）落库刷新，单值会偶发红
         String equityAfter = equityDigits(traderChatService.overview(ADMIN_USER_ID, AgentLang.ZH));
         assertThat(answer.toString().replace(",", ""))
-                .as("汇总否认了专家数据")
+                .as("汇总没有拿到 trader 数据（看日志里 summarizer 有没有调 trader_overview）")
                 .containsAnyOf(equityBefore, equityAfter);
     }
 

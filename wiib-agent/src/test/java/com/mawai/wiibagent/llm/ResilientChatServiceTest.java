@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -34,7 +33,7 @@ import static org.mockito.Mockito.when;
 /**
  * 韧性分层的契约：阻塞路径的重试归模型层（ResponsesChatModel 自带 / OpenAI SDK），
  * 本层不再来一轮——两层都重试会叠乘成 3×3=9 次，白白放大尾延迟。
- * 另钉两条 options 契约：首轮强制逐次落地、options 类型跟着模型走（openai 协议硬转 OpenAiChatOptions）；
+ * 另钉一条 options 契约：options 类型跟着模型走（openai 协议硬转 OpenAiChatOptions）；
  * 以及中断两条：信号完成时掐断在途流并把取消传到上游、流正常结束不能反过来把信号 future 取消掉。
  */
 class ResilientChatServiceTest {
@@ -72,7 +71,7 @@ class ResilientChatServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    /** 主模型收到的 Prompt 的 options（逐次调用现算，chatOptions() 那份是不带强制的底稿） */
+    /** 主模型收到的 Prompt 的 options */
     private ChatOptions optionsSentTo(ChatModel model) {
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(model).call(prompt.capture());
@@ -80,67 +79,30 @@ class ResilientChatServiceTest {
     }
 
     /**
-     * 首轮强制是<b>逐次</b>落地的：只有"最后一条用户消息之后还没有工具回执"那一次调用带 required，
-     * 拿到工具结果后必须放开否则 ReactLoop 收不了尾。responses 协议经 toolContext 捎信号。
-     */
-    @Test
-    void 专家可要求首轮强制用工具_只在首轮() {
-        when(primary.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
-        when(primary.call(any(Prompt.class))).thenReturn(responseOf("ok"));
-        ResilientChatService service = ResilientChatService.builder()
-                .model(primary).systemPrompt("你是助手").tools(List.of(mock(ToolCallback.class)))
-                .forceFirstToolChoice("required").build();
-
-        service.execute(ASK);
-        assertThat(ToolChoice.of(optionsSentTo(primary))).isEqualTo(ToolChoice.REQUIRED);
-
-        // 同一 agent 第二次调用：本轮已有工具回执 → 放开
-        org.mockito.Mockito.clearInvocations(primary);
-        Message toolResponse = ToolResponseMessage.builder()
-                .responses(List.of(new ToolResponseMessage.ToolResponse("c1", "market_snapshot", "{}")))
-                .build();
-        service.execute(List.of(ASK.getFirst(), new AssistantMessage(""), toolResponse));
-        assertThat(ToolChoice.of(optionsSentTo(primary))).isEqualTo(ToolChoice.AUTO);
-    }
-
-    /**
      * options 的具体类型必须跟着模型走：Spring AI 2.0 的 OpenAiChatModel 把 prompt 的 options 硬转
      * OpenAiChatOptions（不再合并运行时 options），泛型 builder 造的会当场 ClassCastException。
-     * 首轮强制在这条协议上落的是 toolChoice 字段，不是 toolContext 信号。
+     * tool_choice 留空走 auto，不强制。
      */
     @Test
-    void openai协议下options保持OpenAiChatOptions且强制落在toolChoice() {
+    void openai协议下options保持OpenAiChatOptions且不强制() {
         when(primary.getOptions()).thenReturn(OpenAiChatOptions.builder().model("deepseek-chat").build());
         when(primary.call(any(Prompt.class))).thenReturn(responseOf("ok"));
         ResilientChatService service = ResilientChatService.builder()
-                .model(primary).systemPrompt("你是助手").tools(List.of(mock(ToolCallback.class)))
-                .forceFirstToolChoice("required").build();
+                .model(primary).systemPrompt("你是助手").tools(List.of(mock(ToolCallback.class))).build();
 
         service.execute(ASK);
 
         ChatOptions sent = optionsSentTo(primary);
         assertThat(sent).isInstanceOf(OpenAiChatOptions.class);
         OpenAiChatOptions openAi = (OpenAiChatOptions) sent;
-        assertThat(openAi.getToolChoice()).isEqualTo("required");
+        assertThat(openAi.getToolChoice()).isNull();
         assertThat(openAi.getToolCallbacks()).hasSize(1);
         assertThat(openAi.getModel()).isEqualTo("deepseek-chat");   // 生成参数沿用模型自己的
     }
 
-    @Test
-    void 不要求时不塞信号() {
-        when(primary.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
-
-        ResilientChatService service = ResilientChatService.builder()
-                .model(primary).systemPrompt("你是助手").tools(List.of(mock(ToolCallback.class))).build();
-
-        ToolCallingChatOptions options = (ToolCallingChatOptions) service.chatOptions().orElseThrow();
-        // 不要求时压根不碰 toolContext，保持框架给的原样（这里就是 null）
-        assertThat(options.getToolContext()).isNull();
-    }
-
     /**
-     * 服务端搜索许可（只有 chat 的 summarizer 开）：与首轮强制不同，它对本 agent 的<b>每次</b>调用
-     * 都生效——联网补充不限于首轮。经 toolContext 捎带，ResponsesChatModel 建请求体时读回。
+     * 服务端搜索许可（只有 chat 的 summarizer 开）：对本 agent 的<b>每次</b>调用都生效。
+     * 经 toolContext 捎带，ResponsesChatModel 建请求体时读回。
      */
     @Test
     void webSearch开关_许可落进chatOptions的toolContext() {

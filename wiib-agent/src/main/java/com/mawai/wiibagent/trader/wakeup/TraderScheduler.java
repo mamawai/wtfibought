@@ -2,7 +2,9 @@ package com.mawai.wiibagent.trader.wakeup;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.AiTrader;
+import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
+import com.mawai.wiibcommon.i18n.RequestLang;
 import com.mawai.wiibagent.learning.ReviewRunner;
 import com.mawai.wiibquant.market.domain.KlineClosedEvent;
 import com.mawai.wiibagent.mapper.AiTraderMapper;
@@ -284,25 +286,26 @@ public class TraderScheduler {
      * 面板显示的拒因就是真点下去会拿到的那一句。
      * <p>
      * inFlight 这条只查不占：面板是轮询刷新的，占位会把 trader 锁死。
+     * 拒因文案按 lang 取：chat 的 trader_overview 在非请求线程上调它，取不到请求语言。
      */
-    public String manualWakeBlockedReason(AiTrader trader) {
+    public String manualWakeBlockedReason(AiTrader trader, AgentLang lang) {
         if (handoverActive) {
-            return messages.get("trader.wake.handover");
+            return messages.get(lang, "trader.wake.handover");
         }
         Long intervalMs = INTERVAL_MS.get(trader.getIntervalCode());
         if (intervalMs == null) {
-            return messages.get("trader.wake.intervalRetired");
+            return messages.get(lang, "trader.wake.intervalRetired");
         }
         long now = nowMs.getAsLong();
         long boundary = now - Math.floorMod(now, intervalMs);
         // 距下一根K线太近就别烧这一次：例行唤醒马上到，内容几乎一样
         if (TraderWakeupRunner.wakeBudgetSeconds(boundary, intervalMs, now) < TraderWakeupRunner.MIN_WAKE_SECONDS) {
             // 措辞不提"例行马上来"：休眠时段里没有"稍等就来"的例行唤醒，手动是那时唯一的通道；拦本身保留（预算不够会落 SKIPPED）
-            return messages.get("trader.wake.budgetTooTight",
+            return messages.get(lang, "trader.wake.budgetTooTight",
                     Map.of("seconds", TraderWakeupRunner.MIN_WAKE_SECONDS));
         }
         if (inFlight.contains(trader.getId())) {
-            return messages.get("trader.wake.busy");
+            return messages.get(lang, "trader.wake.busy");
         }
         return null;
     }
@@ -363,7 +366,8 @@ public class TraderScheduler {
      * @return null=已触发；非空=没触发的原因（原样给用户看）
      */
     public String tryManualWake(AiTrader trader) {
-        String blocked = manualWakeBlockedReason(trader);
+        // 面板按钮打过来的，在请求线程上，拒因跟界面语言
+        String blocked = manualWakeBlockedReason(trader, RequestLang.current());
         if (blocked != null) {
             return blocked;
         }

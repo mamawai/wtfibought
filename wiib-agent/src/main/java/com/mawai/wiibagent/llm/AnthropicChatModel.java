@@ -125,10 +125,6 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
             }
             if (!tools.isEmpty()) {
                 body.set("tools", tools);
-                ObjectNode choice = toolChoice(ToolChoice.of(toolOptions));
-                if (choice != null) {
-                    body.set("tool_choice", choice);
-                }
             }
         }
 
@@ -162,7 +158,7 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
         }
         markCacheTail(messages);
         body.set("messages", messages);
-        logRequest(body.path("model").asString(null), body.get("tool_choice"), toolNames);
+        logRequest(body.path("model").asString(null), toolNames);
         return body;
     }
 
@@ -179,17 +175,6 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
     private static void markCacheTail(ArrayNode messages) {
         JsonNode content = messages.get(messages.size() - 1).get("content");
         ((ObjectNode) content.get(content.size() - 1)).set(CACHE_CONTROL, cacheControl(null));
-    }
-
-    /** required → any；具体工具名 → tool；auto 不传（默认就是 auto） */
-    private static ObjectNode toolChoice(String choice) {
-        if (ToolChoice.REQUIRED.equals(choice)) {
-            return MAPPER.createObjectNode().put("type", "any");
-        }
-        if (ToolChoice.AUTO.equals(choice)) {
-            return null;
-        }
-        return MAPPER.createObjectNode().put("type", "tool").put("name", choice);
     }
 
     /** 同角色连续消息并成一条：块接到上一条尾巴上。空块列表整条不发（Messages 不收空消息） */

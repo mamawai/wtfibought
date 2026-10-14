@@ -10,7 +10,6 @@ export const HUB_NAME = 'Polaris';
 export const AGENT_LABEL_KEY: Record<string, string> = {
   market_agent: 'rail.marketAgent',
   news_agent: 'rail.newsAgent',
-  trader_agent: 'term.trader',
 };
 
 /** 带 rid 的那几种条目就是过程条目 */

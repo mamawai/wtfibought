@@ -60,18 +60,15 @@ class ChatAgentFactoryTest {
     }
 
     @Test
-    void 建出三个专家和一个汇总叶子() {
+    void 建出两个专家和一个汇总叶子() {
         ChatAgentFactory.Leaves leaves = factory().leavesFor(config("gpt-5"), AgentLang.ZH);
 
-        // 保序：派发顺序、结论进历史的顺序都跟着它
-        assertThat(leaves.experts()).containsOnlyKeys("market_agent", "news_agent", "trader_agent");
-        assertThat(leaves.experts().keySet())
-                .containsExactly("market_agent", "news_agent", "trader_agent");
-        // news 走预取（无参工具，不指望模型自己调）；market 的工具要按问题选 symbol 只能现取，
-        // trader 的四个工具各答一类问题，取哪个也得看问题
+        // 保序：派发顺序、结论进历史的顺序都跟着它。trader 不是专家，只读工具在汇总者上（ChatTurnRunnerTest 钉）
+        assertThat(leaves.experts()).containsOnlyKeys("market_agent", "news_agent");
+        assertThat(leaves.experts().keySet()).containsExactly("market_agent", "news_agent");
+        // news 走预取（无参工具，不指望模型自己调）；market 的工具要按问题选 symbol 只能现取
         assertThat(leaves.experts().get("news_agent").preload()).isNotNull();
         assertThat(leaves.experts().get("market_agent").preload()).isNull();
-        assertThat(leaves.experts().get("trader_agent").preload()).isNull();
         assertThat(leaves.summarizer()).isNotNull();
         assertThat(leaves.light()).isNotNull();
     }

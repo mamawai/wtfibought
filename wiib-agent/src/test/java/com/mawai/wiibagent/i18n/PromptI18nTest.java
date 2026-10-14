@@ -120,7 +120,7 @@ class PromptI18nTest {
 
     @Test
     void 英文chat全链路提示词与过程文案全文无中文() {
-        for (String key : List.of("chat.expert.market", "chat.expert.news", "chat.expert.trader",
+        for (String key : List.of("chat.expert.market", "chat.expert.news",
                 "chat.router", "chat.expertHandoff", "chat.yieldPlaceholder", "chat.cancelledNote",
                 "chat.cancelledEmpty", "chat.yieldDoneAnswer", "chat.preloadHeader",
                 "chat.expertStatus.data", "chat.expertStatus.failed", "chat.expertStatus.noContent",
@@ -137,13 +137,14 @@ class PromptI18nTest {
                 "chat.turn.timePrefix", "chat.turn.questionPrefix",
                 "chat.traderQuery.wakeWindowAllDay", "chat.traderQuery.memoryNote",
                 "chat.traderQuery.kindNote",
-                "chat.traderQuery.planNote", "chat.traderQuery.noTrader",
+                "chat.traderQuery.planNote", "chat.traderQuery.tradeNote", "chat.traderQuery.noTrader",
                 "llm.callLimit.notExecuted",
                 "tool.route", "tool.run_deep_analysis",
                 // 已搬进词表的工具描述：英文侧不许混中文
                 "tool.market_snapshot", "tool.option_iv", "tool.funding_history", "tool.orderbook_depth",
                 "tool.klines", "tool.indicators", "tool.kline_structure",
                 "tool.trader_overview", "tool.trader_positions", "tool.trader_decisions", "tool.trader_plans",
+                "tool.trader_trades",
                 "tool.wake_trader", "tool.review_trader_now", "tool.leave_note_to_trader",
                 "tool.get_account", "tool.open_position", "tool.close_position",
                 "tool.set_stop_loss", "tool.set_take_profit", "tool.write_plan", "tool.cancel_order")) {
@@ -182,6 +183,8 @@ class PromptI18nTest {
                 Map.of("window", "21:00-08:30")));
         assertNoCjk("英文杠杆区间", prompts.get(AgentLang.EN, "chat.traderQuery.leverage",
                 Map.of("min", 3, "max", 20)));
+        assertNoCjk("英文 kind 参数说明", prompts.get(AgentLang.EN, "chat.traderQuery.unknownKind",
+                Map.of("kind", "RETRO")));
         assertNoCjk("英文加仓覆盖留痕", prompts.get(AgentLang.EN, "trader.revise.addOnNote",
                 Map.of("playType", "BREAKOUT", "invalidation", "loses 99000")));
     }
@@ -317,7 +320,7 @@ class PromptI18nTest {
                 "reviewer.system", "reviewer.mark.updates", "reviewer.label.statsHeader",
                 "tool.route", "tool.run_deep_analysis", "tool.news_search",
                 "chat.summarizer", "chat.router", "chat.expert.market", "chat.expert.news",
-                "chat.expert.trader", "chat.compress.prompt", "chat.deepAnalysis.judgePrompt",
+                "chat.compress.prompt", "chat.deepAnalysis.judgePrompt",
                 "chat.hitl.reason", "chat.deferred.prefix",
                 "coach.hint.system", "coach.review.system", "coach.label.barsHeader",
                 "trader.wake.routineQuestion", "trader.wake.sleepNotice", "trader.error.wakeTimeout",
@@ -335,6 +338,7 @@ class PromptI18nTest {
                 "tool.market_snapshot", "tool.option_iv", "tool.funding_history", "tool.orderbook_depth",
                 "tool.klines", "tool.indicators", "tool.kline_structure",
                 "tool.trader_overview", "tool.trader_positions", "tool.trader_decisions", "tool.trader_plans",
+                "tool.trader_trades",
                 "tool.wake_trader", "tool.review_trader_now", "tool.leave_note_to_trader",
                 "tool.get_account", "tool.open_position", "tool.close_position",
                 "tool.set_stop_loss", "tool.set_take_profit", "tool.write_plan", "tool.cancel_order",
@@ -360,17 +364,19 @@ class PromptI18nTest {
         return prompts.get(lang, "chat.summarizer", Map.of("newsRule", newsRule));
     }
 
-    /** chat：汇总者的六条回答原则 + news/summarizer 的分工红线，搬家时丢哪条都在这里红 */
+    /** chat：汇总者的七条回答原则 + news/summarizer 的分工红线，搬家时丢哪条都在这里红 */
     @Test
-    void 中文chat保住汇总者六原则与新闻分工() {
+    void 中文chat保住汇总者七原则与新闻分工() {
         String p = summarizer(AgentLang.ZH, "chat.newsRule.search");
         assertThat(p)
-                .as("① 结论可追溯").contains("结论必须可追溯到专家给的数据，不编造")
+                .as("① 结论可追溯").contains("结论必须可追溯到专家给的数据或你用工具取回的数据，不编造")
                 .as("② 新闻分工").contains("news_agent 只管 BlockBeats，联网补充归你")
                 .as("③ 鼓励表态").contains("鼓励表态")
                 .as("④ 看不清是例外").contains("不是回避表态的出口")
                 .as("⑤ 深研判要明说才调").contains("仅当用户明确说出").contains("run_deep_analysis")
-                .as("⑥ 动手三工具只弹表单").contains("绝不能说已经唤醒了／已经复盘了／留言已记下");
+                .as("⑥-查 trader 只读工具归汇总者").contains("trader_overview").contains("trader_decisions").contains("trader_trades")
+                .as("⑥-动 三个动作工具只弹表单").contains("绝不能说已经唤醒了／已经复盘了／留言已记下")
+                .as("⑦ 行为分析").contains("analyze_my_behavior");
         // 另一半分工写在 news 专家那边，两处必须同时在
         assertThat(prompts.get(AgentLang.ZH, "chat.expert.news"))
                 .contains("严禁把你联网搜索到的任何内容写进回答");

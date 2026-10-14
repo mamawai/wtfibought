@@ -33,7 +33,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Anthropic Messages 协议的形状钉子：请求头/思考档位/搜索声明/tool_choice 映射、同角色合并、
+ * Anthropic Messages 协议的形状钉子：请求头/思考档位/搜索声明/工具声明、同角色合并、
  * 内容块原样回放（思考块 signature 必须原样回去）、流式事件→帧（文本、工具、搜索过程）、错误归类。
  * 手法同 ResponsesChatModelTest：JDK HttpServer 伪造 SSE 服务端。
  */
@@ -216,21 +216,15 @@ class AnthropicChatModelTest {
         assertThat(body().has("tools")).isFalse();
     }
 
+    /** 工具只声明不强制：tool_choice 一律不传 */
     @Test
-    void 请求侧_function工具与tool_choice映射() {
+    void 请求侧_function工具声明且不传tool_choice() {
         events = PLAIN;
         AnthropicChatModel m = model(null, false, oneTool());
-        m.call(new Prompt("q", ToolChoice.apply(m.getOptions(), ToolChoice.REQUIRED)));
+        m.call(new Prompt("q", m.getOptions()));
         JsonNode tool = body().get("tools").get(0);
         assertThat(tool.path("name").asString(null)).isEqualTo("get_price");
         assertThat(tool.get("input_schema").path("type").asString(null)).isEqualTo("object");
-        assertThat(body().get("tool_choice").path("type").asString(null)).isEqualTo("any");
-
-        m.call(new Prompt("q", ToolChoice.apply(m.getOptions(), "get_price")));
-        assertThat(body().get("tool_choice").path("type").asString(null)).isEqualTo("tool");
-        assertThat(body().get("tool_choice").path("name").asString(null)).isEqualTo("get_price");
-
-        m.call(new Prompt("q", m.getOptions()));
         assertThat(body().has("tool_choice")).isFalse();
     }
 
@@ -267,7 +261,7 @@ class AnthropicChatModelTest {
     }
 
     /**
-     * 请求体整串钉死：温度/档位、工具定义与 schema 里的小数、搜索声明、tool_choice、系统块与断点、
+     * 请求体整串钉死：温度/档位、工具定义与 schema 里的小数、搜索声明、系统块与断点、
      * 没原始块的按文本+tool_use 拼、工具循环里的原始块原样回放（签名、密文、小数、null 字段）、转义与 emoji
      */
     @Test
@@ -299,13 +293,13 @@ class AnthropicChatModelTest {
 
         m.call(new Prompt(List.of(new SystemMessage("你是助手"), new UserMessage("问题 📈 \"引号\" \\ /"),
                 plain, result0, new UserMessage("再问"), new SystemMessage("【摘要】第1段"), inLoop, result1),
-                ToolChoice.apply(allowWebSearch(m), "get_price")));
+                allowWebSearch(m)));
 
         assertThat(lastRequestBody).isEqualTo("{\"model\":\"claude-test\",\"max_tokens\":64000,\"stream\":true,\"temperature\":0.3,\"thinking\":{\"type\":\"adaptive\"},"
                 + "\"output_config\":{\"effort\":\"high\"},\"tools\":[{\"name\":\"get_price\",\"description\":\"查价格 <b>&\\\"引号\\\"\","
                 + "\"input_schema\":{\"type\":\"object\",\"properties\":{\"qty\":{\"type\":\"number\",\"minimum\":0.010}},\"required\":[\"qty\"],"
-                + "\"additionalProperties\":false}},{\"type\":\"web_search_20250305\",\"name\":\"web_search\"}],\"tool_choice\":{\"type\":\"tool\","
-                + "\"name\":\"get_price\"},\"system\":[{\"type\":\"text\",\"text\":\"你是助手\",\"cache_control\":{\"type\":\"ephemeral\","
+                + "\"additionalProperties\":false}},{\"type\":\"web_search_20250305\",\"name\":\"web_search\"}],"
+                + "\"system\":[{\"type\":\"text\",\"text\":\"你是助手\",\"cache_control\":{\"type\":\"ephemeral\","
                 + "\"ttl\":\"1h\"}},{\"type\":\"text\",\"text\":\"【摘要】第1段\"}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\","
                 + "\"text\":\"问题 📈 \\\"引号\\\" \\\\ /\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"旧答\\n第二行\"},"
                 + "{\"type\":\"tool_use\",\"id\":\"toolu_0\",\"name\":\"get_price\",\"input\":{\"qty\":1.50}}]},{\"role\":\"user\","

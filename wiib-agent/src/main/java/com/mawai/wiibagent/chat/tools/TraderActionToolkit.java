@@ -20,7 +20,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 执行走 REST 打到 TraderActionService。所以模型没有能力唤醒、复盘或落库留言——
  * 这正是这层存在的意义，误触最多是多弹一张卡。
  * <p>
- * 挂在汇总者不挂 trader 专家：查询归专家，动手归汇总者——收尾动作由写最终回答的那个人做。
+ * 与 {@link TraderQueryToolkit} 并列挂在汇总者上：查归那边、动手归这边，都由写最终回答的那个人做。
  * <p>
  * 会话号从执行工具时交进来的 ToolContext 里取（{@link ToolRunContext#sessionId}）：
  * ChatTurnRunner 把它传给 ReactLoop，循环执行工具时放进 ToolContext。

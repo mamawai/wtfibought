@@ -32,8 +32,8 @@ import java.util.*;
 import java.util.function.Supplier;
 
 /**
- * 对话链路的叶子 agent 工厂：按用户的 BYOK 配置建出三个专家（market/news/trader）和一个汇总 agent，
- * 每个都是一个 {@link ReactLoop}。
+ * 对话链路的叶子 agent 工厂：按用户的 BYOK 配置建出两个专家（market/news）和一个汇总 agent，
+ * 每个都是一个 {@link ReactLoop}。用户自己 trader 的只读工具挂在汇总者上，不单设专家。
  * <p>
  * <b>这里只管"造"，不管"怎么用"</b>：派谁、派几轮、结果怎么拼、历史怎么存，全在
  * {@link ChatTurnRunner} 的平铺 Java 循环里。
@@ -49,8 +49,7 @@ public class ChatAgentFactory {
 
     public static final String MARKET_AGENT = "market_agent";
     public static final String NEWS_AGENT = "news_agent";
-    public static final String TRADER_AGENT = "trader_agent";
-    public static final Set<String> EXPERT_AGENTS = Set.of(MARKET_AGENT, NEWS_AGENT, TRADER_AGENT);
+    public static final Set<String> EXPERT_AGENTS = Set.of(MARKET_AGENT, NEWS_AGENT);
 
     /**
      * 一个专家叶子。
@@ -222,15 +221,11 @@ public class ChatAgentFactory {
         // LinkedHashMap 保序：派发顺序、结论拼进历史的顺序都跟着它，market 在前 news 在后
         Map<String, Expert> experts = new LinkedHashMap<>();
         // market 的工具要按问题选 symbol，只能交给模型现取，所以没有 preload
-        experts.put(MARKET_AGENT, new Expert(expertLoop(lang, light, marketToolkit, "required",
+        experts.put(MARKET_AGENT, new Expert(expertLoop(lang, light, marketToolkit,
                 prompts.get(lang, "chat.expert.market")), null));
         // 新闻只预取 BlockBeats（news_search 入参语言，不挂 tool），这里不进行联网搜索
-        experts.put(NEWS_AGENT, new Expert(expertLoop(lang, light, null, null,
+        experts.put(NEWS_AGENT, new Expert(expertLoop(lang, light, null,
                 prompts.get(lang, "chat.expert.news")), () -> newsToolkit.newsSearch(lang)));
-        // trader 专家只读这个用户自己的 trader
-        experts.put(TRADER_AGENT, new Expert(expertLoop(lang, light,
-                new TraderQueryToolkit(traderChatService, eps.userId(), lang), "required",
-                prompts.get(lang, "chat.expert.trader")), null));
 
         return new Leaves(modelLabel(eps.deep()), deep, light, experts,
                 summarizerLeaf(deep, light, eps.userId(), lang, webSearch), lang);
@@ -259,18 +254,15 @@ public class ChatAgentFactory {
      * <p>
      * 包私有而非 private：ExpertCallLimitTest 要直接调它真跑一遍，才验得到"生产代码里保险丝挂没挂"。
      *
-     * @param toolkit              可空。null=纯预取/纯模型能力的专家（如 news），不挂任何 function tool
-     * @param forceFirstToolChoice "required"=首轮强制调工具（工具带参数、数据必须模型现取的专家）；
-     *                             null=不强制
+     * @param toolkit 可空。null=纯预取/纯模型能力的专家（如 news），不挂任何 function tool。
+     *                挂了工具也不强制 tool_choice，"先取数再答"写在各自的系统提示词里
      */
-    ReactLoop expertLoop(AgentLang lang, ChatModel model, Object toolkit,
-                         String forceFirstToolChoice, String instruction) {
+    ReactLoop expertLoop(AgentLang lang, ChatModel model, Object toolkit, String instruction) {
         ResilientChatService chat = ResilientChatService.builder()
                 .model(model)
                 .systemPrompt(instruction)
                 // 按照 lang 设置 tool 的 description 语言
                 .tools(toolkit == null ? List.of() : localizedTools.of(lang, toolkit))
-                .forceFirstToolChoice(forceFirstToolChoice)
                 .build();
         // 没工具的纯模型 agent 也挂保险丝：一次就收尾，触发不到
         return ReactLoop.builder().chat(chat)
@@ -281,13 +273,13 @@ public class ChatAgentFactory {
     }
 
     /**
-     * 汇总 agent：深模型 + 深研判工具，只管把专家数据写成最终回答。
+     * 汇总 agent：深模型 + 深研判 / trader 只读与动作 / 行为分析工具，只管把数据写成最终回答。
      * <p>
      * 派谁、还要不要再派，全归 {@link ChatTurnRunner} 的显式循环管，这里一个字都不提——
      * 角色单一，模型不会再纠结"该作答还是该派发"（那正是之前无限循环的病根）。
      *
      * @param light  压缩用浅模型：摘要是简单活，用深模型纯烧钱
-     * @param userId 动作类工具烤死的归属；查询归专家，动手归汇总者，理由见 {@link TraderActionToolkit}
+     * @param userId trader 工具（只读与动作）烤死的归属，理由见 {@link TraderQueryToolkit}
      * @param webSearch 端点声明了服务端搜索：提示词用承诺联网的那版，且每次调用捎搜索许可。
      *                  许可只在这一个叶子发——专家与 trader 链路的数据源必须可控，物理拿不到搜索
      */
@@ -298,8 +290,9 @@ public class ChatAgentFactory {
                 .model(deep)
                 .systemPrompt(summarizerInstruction(lang, webSearch))
                 .tools(localizedTools.of(lang,
-                        // 三套工具 研判/trader/行为分析
+                        // 四套工具：研判 / trader 只读 / trader 动作 / 行为分析
                         new DeepAnalysisToolkit(deep, deepAnalysisService, runRegistry, prompts, lang),
+                        new TraderQueryToolkit(traderChatService, userId, lang),
                         new TraderActionToolkit(runRegistry, userId, prompts, lang),
                         new BehaviorToolkit(deep, behaviorAnalysisService, runRegistry, userId, lang)))
                 .webSearch(webSearch)

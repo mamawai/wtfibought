@@ -138,12 +138,10 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
             }
             if (!tools.isEmpty()) {
                 body.set("tools", tools);
-                // 强不强制用工具由调用方按次决定（首轮强制/单次结构化调用），经 toolContext 捎进来（ToolChoice）
-                body.put("tool_choice", ToolChoice.of(toolOptions));
             }
         }
         body.put("prompt_cache_key", cacheKey(instructions.toString(), toolNames, firstUser));
-        logRequest(body.path("model").asString(null), body.path("tool_choice").asString(null), toolNames);
+        logRequest(body.path("model").asString(null), toolNames);
         return body;
     }
 

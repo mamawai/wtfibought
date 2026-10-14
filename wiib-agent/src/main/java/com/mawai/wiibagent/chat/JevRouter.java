@@ -23,12 +23,13 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
- * 路由的 Jev 层：用户配了 Jev 就先问它"这个问题需要哪些专家"，三道英文是非题一次问完，
+ * 路由的 Jev 层：用户配了 Jev 就先问它"这个问题需要哪些专家"，两道英文是非题一次问完，
  * 概率过线的进名单。Jev 答的是提问本身的分类，不看专家已经取回什么——去重与轮次上限在
  * {@link ChatTurnRunner} 的循环里，第二轮再问答案一样，名单被去重吃空就转汇总。
  * <p>
  * 空 = Jev 没参与（未配置 / 调用失败 / 回包缺题），调用方走原来的轻模型路由。
- * 三题都不过线是 Jev 的正常判断（闲聊、行为分析这类不需要专家），返回 FINISH 不算失败。
+ * 两题都不过线是 Jev 的正常判断（闲聊、行为分析、问自己 trader 这类不需要专家，汇总者自己有工具），
+ * 返回 FINISH 不算失败。
  * <p>
  * state 只放本轮提问与最近几条用户/助手原文。专家回填的大段数据、系统收尾指令、摘要、工具回执
  * 都不进：Jev 官方明说无关内容多了准确率掉。用户的中文原样给，题目与 criteria 一律英文。
@@ -38,7 +39,7 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class JevRouter {
 
-    /** 概率过这条线就派。先按多数信念定 0.5，三个概率都打日志，跑一阵再调 */
+    /** 概率过这条线就派。先按多数信念定 0.5，两个概率都打日志，跑一阵再调 */
     static final double THRESHOLD = 0.5;
     /** 本轮提问之前再带几条用户/助手原文，够解开"那它现在呢"这类指代 */
     static final int RECENT_MESSAGES = 4;
@@ -53,7 +54,6 @@ public class JevRouter {
     static {
         EXPERT_BY_QUESTION.put("need_market", ChatAgentFactory.MARKET_AGENT);
         EXPERT_BY_QUESTION.put("need_news", ChatAgentFactory.NEWS_AGENT);
-        EXPERT_BY_QUESTION.put("need_trader", ChatAgentFactory.TRADER_AGENT);
 
         QUESTIONS.put("need_market", Question.noul(
                 "Answering `latest_question` well requires fetching live crypto market data now: current prices, "
@@ -65,14 +65,9 @@ public class JevRouter {
                 "Answering `latest_question` well requires recent crypto news flashes or market events.",
                 "The question asks what happened, why the market moved, or about news, events or announcements.",
                 "The question does not depend on recent news."));
-        QUESTIONS.put("need_trader", Question.noul(
-                "`latest_question` is about the user's own AI trader: its status, positions, trades, "
-                        + "trade plans or reviews.",
-                "The user asks about their own AI trader (\"my trader\", what it holds, why it traded, its plan or review).",
-                "The question is not about the user's own AI trader."));
     }
 
-    /** 专家回填的消息以出处标注开头，中英两套括号都认 */
+    /** 专家回填的消息以出处标注开头，中英两套括号都认；老历史里的 trader_agent 标注也认 */
     private static final Pattern EXPERT_TAG = Pattern.compile("^\\s*[\\[【](market_agent|news_agent|trader_agent)\\b");
 
     private final JevConfigService configService;

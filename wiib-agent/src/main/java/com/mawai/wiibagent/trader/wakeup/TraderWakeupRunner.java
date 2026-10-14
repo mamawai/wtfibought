@@ -321,10 +321,9 @@ public class TraderWakeupRunner {
 
         // 全量工具轨迹（含数据工具）：收集器在本方法手里，超时 cancel 也保得住已发生的记录
         ToolCallTraceHook trace = new ToolCallTraceHook();
+        // 不强制 tool_choice："先读事实、用工具求证"写在开场白里（routineQuestion / alertQuestion）
         ResilientChatService chat = ResilientChatService.builder().model(model).systemPrompt(prompt)
-                .tools(wakeTools(lang, tradeTools))
-                // 首轮强制调工具：不看数据不许决策；弱模型不支持 tool_choice 会以 ERROR 落库并最终自动暂停
-                .forceFirstToolChoice("required").build();
+                .tools(wakeTools(lang, tradeTools)).build();
         ReactLoop loop = ReactLoop.builder().chat(chat)
                 .streaming(true)      // 模型文本逐字推给现场
                 .limiter(new ModelCallLimiter(MAX_MODEL_CALLS, prompts.get(lang, "llm.callLimit.notExecuted"),

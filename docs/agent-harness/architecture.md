@@ -40,7 +40,7 @@ flowchart TB
     DB -->|"五块素材（代码算好）<br/>战绩 / 论点战绩 / 案例事实表 / 行情 / 账本"| RW
     RW -->|"经验更新表 → 账本落账（代码计数）<br/>账本渲染文本 → memory"| DB
     DB ==>|"注入两份：系统提示词<br/>+ 经验账本"| TA
-    CA -->|"只读感知 trader<br/>（trader_agent 专家）<br/>动作只弹表单，用户自己按"| DB
+    CA -->|"只读感知 trader<br/>（summarizer 的 trader_* 工具）<br/>动作只弹表单，用户自己按"| DB
 ```
 
 trader 每次唤醒收到两份注入：平台系统提示词（环境 / 工具 / 规格 / 护栏，只讲事实，不带交易观点）、经验账本（自己复盘沉淀的规律与执行缺口，代码记账后渲染成文本），再加主人的交易指令（方法 / 风格 / 纪律的唯一来源，用户自己写，新建时预填平台默认那套）。几份并列不合并，来源分开模型才分得清哪条是自己的经验、哪条是主人定的。trader 只读这些文本，不关心是谁写的，以后再加一份新笔记也不用改 trader；结论里写了账本的 `#编号`，代码只做引用计数，不影响决策。
@@ -113,27 +113,26 @@ flowchart LR
 ```mermaid
 flowchart LR
     S((start))
-    R{"路由 · 浅模型<br/>结构化 tool_call 给出去向"}
+    R{"路由 · Jev 或浅模型<br/>route 工具给出去向（不强制）"}
     M["market_agent<br/>行情/持仓/清算/资金费"]
     N["news_agent<br/>BlockBeats 快讯（无参预取）"]
-    T["trader_agent<br/>只读感知自己的 AI Trader"]
-    SUM["summarizer 叶子<br/>深模型 · 深研判工具 · 流式作答"]
+    SUM["summarizer 叶子<br/>深模型 · 深研判 / trader 只读与动作 / 行为分析工具 · 流式作答"]
     E((end))
     S --> R
-    R -->|"派新专家（虚拟线程并行）"| M & N & T
-    M & N & T -.->|"结论接进历史，回到循环开头"| R
+    R -->|"派新专家（虚拟线程并行）"| M & N
+    M & N -.->|"结论接进历史，回到循环开头"| R
     R -->|"FINISH / 已派过 / 轮次上限"| SUM
     SUM --> E
 ```
 
-- 路由：浅模型调 route 工具给出结构化去向，循环只认这个值，不解析消息文本。summarizer 一个字都不提"要不要再派发"，让它同时纠结作答和派发就会在两者之间反复横跳。
-- 路由的 Jev 层（`JevRouter`）：用户在模型配置页配了 TypeSafe Jev（BYOK，一人一份 `user_jev_config`）就先问它——三道英文是非题一次问完"需不需要 market / news / trader 专家"，概率过 0.5 的进名单，都不过就是 FINISH。state 只带本轮提问与最近几条用户/助手原文，专家回填的数据不进。没配、调用失败、回包缺题都回落到上面那条浅模型路由，去重与 3 轮上限两条路共用。
+- 路由：浅模型调 route 工具给出结构化去向，循环只认这个值，不解析消息文本。tool_choice 不强制（auto）：Opus 5.5 / Sonnet 5.5 / Fable 5.1 这类模型不收 any / required，"只用 route 作答"靠系统提示词，模型没调工具就按不派发处理。summarizer 一个字都不提"要不要再派发"，让它同时纠结作答和派发就会在两者之间反复横跳。
+- 路由的 Jev 层（`JevRouter`）：用户在模型配置页配了 TypeSafe Jev（BYOK，一人一份 `user_jev_config`）就先问它——两道英文是非题一次问完"需不需要 market / news 专家"，概率过 0.5 的进名单，都不过就是 FINISH。state 只带本轮提问与最近几条用户/助手原文，专家回填的数据不进。没配、调用失败、回包缺题都回落到上面那条浅模型路由，去重与 3 轮上限两条路共用。
 - 并行与停止：专家在虚拟线程上并行跑；同一专家整轮只派一次（去重名单），另设 3 轮派发上限兜底。
-- trader 联动：`trader_agent` 专家只读用户自己的 AI Trader（概况 / 持仓 / 决策 / 计划）；`wake_trader` / `review_trader_now` / `leave_note_to_trader` 只往对话里推一张表单（留言连草稿带轮次一起预填），按下按钮的是用户，模型碰不到执行路径；只有当场就烧钱的 `run_deep_analysis` 走 HITL 闸。
-- 韧性：`ResilientChatService` 是叶子的模型调用层（系统提示、工具、首轮强制、搜索许可、重试）。流式路径带退避重试，仅在尚未吐帧时重订阅。不挂兜底模型：BYOK 只有一个端点，切到同端点的另一个模型没有意义。
+- trader 联动：summarizer 自己持有 trader 的只读工具（`trader_overview` / `trader_positions` / `trader_decisions` / `trader_plans` / `trader_trades`），问自己 trader 的问题不派专家、路由直接 FINISH；`wake_trader` / `review_trader_now` / `leave_note_to_trader` 只往对话里推一张表单（留言连草稿带轮次一起预填），按下按钮的是用户，模型碰不到执行路径；只有当场就烧钱的 `run_deep_analysis` 走 HITL 闸。
+- 韧性：`ResilientChatService` 是叶子的模型调用层（系统提示、工具、搜索许可、重试）。流式路径带退避重试，仅在尚未吐帧时重订阅。不挂兜底模型：BYOK 只有一个端点，切到同端点的另一个模型没有意义。
 - 横切：会话历史落 `workbench_chat_context` 自建表（终态整体覆盖写入），裸 JSON（`ChatContextCodec`，读兼容老的对象流格式）、调用限额 + 历史摘要压缩控预算。
 - 新闻双源分工：`news_agent` 只预取 BlockBeats 出清单（它自己不联网搜索），summarizer 用服务端搜索补充合并，独有条目带源标签。搜索是端点显式勾选的能力，不是默认开着的——所以 summarizer 的系统提示词按能力二选一拼：能搜就承诺联网补充，不能搜就如实说没有检索能力。提示词不许承诺端点给不了的事。
-- 协议适配：四条协议——openai（chat/completions，走 Spring AI `OpenAiChatModel`）、responses、anthropic（Messages）、gemini（generateContent），后三条是自研 `ResponsesChatModel` / `AnthropicChatModel` / `GeminiChatModel`。挂工具与 tool_choice 由 `ToolChoice` 统一处理，首轮强制用工具按次落地，四条路行为一致。服务端搜索只有后三条声明得了，openai 的 chat-completions 没有标准的服务端搜索——所以"能不能搜"是协议能力与用户勾选的与。
+- 协议适配：四条协议——openai（chat/completions，走 Spring AI `OpenAiChatModel`）、responses、anthropic（Messages）、gemini（generateContent），后三条是自研 `ResponsesChatModel` / `AnthropicChatModel` / `GeminiChatModel`。挂工具的 options 由 `ToolOptions` 从模型自己的 options 派生；tool_choice 一律不传（auto），四条路行为一致。服务端搜索只有后三条声明得了，openai 的 chat-completions 没有标准的服务端搜索——所以"能不能搜"是协议能力与用户勾选的与。
 
 ### 模型来自用户，所以叶子也跟着用户走
 
@@ -147,7 +146,7 @@ POST /api/ai/workbench/chat
 
 四道准入都在建流之前：一旦返回 `SseEmitter`，响应就是 `text/event-stream`，再报错只能推 error 事件，前端拿不到结构化错误码、没法自动引导去配置。
 
-- 叶子按指纹缓存，userId 必须进指纹：指纹 = `SHA-256(userId + 主/轻两条端点各自的协议 / baseUrl / 模型 / 思考档位 / 搜索开关 / 密文)`（分量间拿 NUL 分隔——model 是用户自由输入，用空格的话 `("gpt-5 x","y")` 和 `("gpt-5","x y")` 会撞；NUL 是 Postgres 的 text 存不下的字节，绝不会出现在任何一个从库里读出来的值里）。搜索开关也是建模要素：它既进 `ResponsesChatModel` 的构造参数，也决定 summarizer 提示词拼哪版，勾了必须换指纹。用户改配置指纹就变，自然拿到新叶子，不需要显式失效。userId 进指纹不是为了缓存粒度，是数据隔离：叶子里有按用户烤死的工具（trader_agent 读的是"这个人的 trader"），两人共用一份叶子就会看到别人的持仓；隔离要靠键本身，不能指望密文的随机性。
+- 叶子按指纹缓存，userId 必须进指纹：指纹 = `SHA-256(userId + 主/轻两条端点各自的协议 / baseUrl / 模型 / 思考档位 / 搜索开关 / 密文)`（分量间拿 NUL 分隔——model 是用户自由输入，用空格的话 `("gpt-5 x","y")` 和 `("gpt-5","x y")` 会撞；NUL 是 Postgres 的 text 存不下的字节，绝不会出现在任何一个从库里读出来的值里）。搜索开关也是建模要素：它既进 `ResponsesChatModel` 的构造参数，也决定 summarizer 提示词拼哪版，勾了必须换指纹。用户改配置指纹就变，自然拿到新叶子，不需要显式失效。userId 进指纹不是为了缓存粒度，是数据隔离：叶子里有按用户烤死的工具（summarizer 的 trader_* 工具读的是"这个人的 trader"），两人共用一份叶子就会看到别人的持仓；隔离要靠键本身，不能指望密文的随机性。
 - 主模型 + 轻模型：轻模型（可选绑定 CHAT_LIGHT）跑 router / 专家 / 历史压缩，主模型只写最终回答。不绑就复用主模型实例本身，省一份客户端和连接池。
 - 思考档位是端点属性，每条端点各自配；轻模型绑到别的端点就用那条自己的档位。**不设白名单**：`none/low/medium/high` 只是前端给的快捷选项，各家还有 `xhigh` / `minimal` 之类自己起的名，认不认只有上游知道，代码只抹平大小写空白、只挡列宽（VARCHAR(16)）。模型支不支持这个参数也查不到（OpenAI 标准 `/v1/models` 只回 id/object/created/owned_by），所以默认留空不传，由用户自己填，配套一个「测试连通性」按钮真发一次请求验——探测走的是生产建模路径，测什么就得是接下来真跑什么。
 - 错误归类：401/403、429、404+model、超时 / 连不上各给一句能照着做的话；认不出来的不替用户判病因，因为那个 catch 罩着落历史、写记忆、上下文落库，数据库挂了也走这条路，兜底要是说"请检查端点与模型配置"，用户会去乱改一把本来没问题的 key。任何分支都不回显上游原文：中转网关的异常里经常带完整请求 URL（`?api_key=…`），正则追不全 key 的形态。
@@ -183,4 +182,4 @@ sequenceDiagram
 
 窗口是**唤醒发出即开**，不等交易跑完——晚开的话 5m 档会在等待期间又醒一次占住 inFlight，那个 trader 的复盘就被跳过了。代价是窗口把阶段 0 的交易执行也圈了进去，时长上界变成唤醒 600s + 复盘 600s ≈ 20 分钟（两阶段各自内部全员并行，不设并发上限）。这是上界不是常态——跑完就关。5m 档 trader 最多丢 4 根 K 线、15m 档 1 根，日线交接每天只有一次，可接受。
 
-chat 与 trader 的联动只到这一步：`trader_agent` 专家只读用户自己的 trader（memory / 决策行 / 计划），三个动作只弹表单，真执行走 trader 动作面板的 REST，chat 自己不碰 trader 本体。
+chat 与 trader 的联动只到这一步：summarizer 的 trader_* 工具只读用户自己的 trader（概况与账本 / 持仓 / 决策行 / 计划 / 已了结交易），三个动作只弹表单，真执行走 trader 动作面板的 REST，chat 自己不碰 trader 本体。
