@@ -518,8 +518,7 @@ export interface FeedStreamHealth {
 /** 工作台 SSE 事件（与 ChatWorkbenchController 协议一一对应） */
 export type WorkbenchEvent =
   | { type: 'session'; sessionId: string }
-  | { type: 'agent_start'; node: string; agent: string }
-  | { type: 'token'; text: string; agent: string; role: 'answer' | 'process' }
+  | { type: 'token'; text: string; agent: string; role: 'answer' }
   | { type: 'progress'; text: string }
   // requestId：这张卡的唯一标识，点同意/拒绝时原样回传，服务端据此确认"点的是哪张卡"
   | { type: 'hitl_request'; sessionId: string; symbol: string; reason: string; requestId: string; resumeMessage: string }
@@ -532,18 +531,15 @@ export type WorkbenchEvent =
   // 汇总者的服务端搜索过程：searching=开搜（query 可能还没有）、searched=搜完（sources 是命中站点）、
   // cited=正文引用了某来源（只并入后端攒的来源随 done 回来，过程轨不画）
   | { type: 'search'; phase: 'searching' | 'searched' | 'cited'; query?: string | null; sources: SearchSource[] }
-  // deferred=true：让位收尾（专家还在取数就来了新消息），answer 只是过渡话术；
-  // 真答案由后端补答轮落历史，前端靠 status 轮询等它落库后整体回放补显
-  // meta 是本轮读数，让位收尾那条 done 不带（答案还没出，无账可报）。
+  // meta 是本轮读数。
   // cancelled=用户中断，answer 是"半截 + （已中断）"的定稿，前端要整段用它覆盖屏上那半截
-  // deferred=让位收尾（answer 只是过渡话术，question=被让位的原问题）；pending=此刻会话还欠着补答，前端空闲时发起补答轮
   // sources=这一轮搜到/引用的来源（按 url 去重），答案底部展示；没搜过为空数组
-  | { type: 'done'; sessionId: string; answer: string; deferred?: boolean; question?: string; cancelled?: boolean; pending?: boolean; meta?: TurnMeta; sources?: SearchSource[] }
+  | { type: 'done'; sessionId: string; answer: string; cancelled?: boolean; meta?: TurnMeta; sources?: SearchSource[] }
   | { type: 'error'; message: string };
 
 /**
  * 功能按钮直发的一轮带的意图（与后端 ChatIntent 同名同值）。
- * 带它的一轮后端不派专家，直接让汇总者调对应工具——按钮已经说明了要什么，不必再让路由猜。
+ * 带它的一轮后端在收尾指令里钉死本轮必须调的工具——按钮已经说明了要什么。
  */
 export type ChatIntent = 'BEHAVIOR';
 
@@ -601,10 +597,9 @@ export interface StrategyAccountView {
   closedPositions: StrategyClosedPosition[];
 }
 
-/** 会话运行状态（/ai/workbench/sessions/{id}/status）：running=有轮在跑；pending=欠着补答 */
+/** 会话运行状态（/ai/workbench/sessions/{id}/status）：running=有轮在跑 */
 export interface WorkbenchSessionStatus {
   running: boolean;
-  pending: boolean;
 }
 
 /** 工作台历史会话摘要（/ai/workbench/sessions） */
@@ -691,12 +686,6 @@ export interface LlmEndpointSaveRequest {
 export type LlmPurpose = 'CHAT_MAIN' | 'CHAT_LIGHT' | 'TRADER';
 export type LlmBindings = Partial<Record<LlmPurpose, number>>;
 
-/** 用户 Jev 决策模型配置（一人一份，与端点库分开）；未配置时接口回 null */
-export interface JevConfigView {
-  baseUrl: string;
-  model: string;
-  apiKeyTail: string;
-}
 
 // ========== Jev 预测员（平台级，BTC 5 分钟盘） ==========
 
@@ -941,12 +930,6 @@ export interface JevPredictionOverview {
   calibration: JevCalibrationBucket[];
 }
 
-/** 保存/探测共用；baseUrl/model 留空走默认，已有配置时 apiKey 传空=沿用已存的 */
-export interface JevSaveRequest {
-  baseUrl: string;
-  model: string;
-  apiKey: string;
-}
 
 
 /** 词表 key + 占位值，文字在 strategy.json 的 strategies.signals 下；vars.context 选词条变体，vars.count 选单复数 */

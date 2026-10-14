@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -30,11 +31,10 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
  * 一轮对话在 SSE 通道上的完整过程：登记运行、喂心跳、跑 {@link ChatTurnRunner}、按结局落库并发 done 帧。
- * /chat、/regenerate、/deferred 在 {@link ChatWorkbenchController} 做完准入后都交到 {@link #run}；
- * 名额与让位句柄的开闭归调用方。
+ * /chat、/regenerate 在 {@link ChatWorkbenchController} 做完准入后都交到 {@link #run}；名额的开闭归调用方。
  * <p>
- * 一轮三种结局，各自一个 finish 方法（见 {@link Turn}）：用户点停止——半截答案落库、不欠补答；
- * 专家等待期让位——答案欠着、在途批次交协调器排队；正常作答——可能先弹一张 HITL 确认卡。
+ * 一轮两种结局，各自一个 finish 方法（见 {@link Turn}）：用户点停止——半截答案落库；
+ * 正常作答——可能先弹一张 HITL 确认卡。
  * <p>
  * 断连不中止本轮：通道关了照样跑完并落历史，只是不再往通道里写帧，前端回来靠 status 接口+历史回放补。
  */
@@ -53,7 +53,6 @@ public class ChatTurnStreamer {
     private final ChatTurnRunner turnRunner;
     private final ChatHistoryService chatHistoryService;
     private final WorkbenchRunRegistry runRegistry;
-    private final ChatYieldCoordinator yieldCoordinator;
     private final ApprovalRegistry approvalRegistry;
     private final PromptCatalog prompts;
     /** 心跳专用：只发注释帧(微秒级)，单线程够所有会话用；虚拟线程不支持定时调度故用平台线程 */
@@ -74,12 +73,10 @@ public class ChatTurnStreamer {
      * 跑一轮到底。
      *
      * @param replacedAnswerId null=普通轮；非空=重新生成轮，它在顶替这条旧答案——提问已在库里不再落一遍
-     * @param deferred         非空=补答轮，message 是被让位的原问题，这批是替它派的专家
      */
     public void run(SseChannel channel, long userId, String sessionId, String message,
-                    ChatAgentFactory.Leaves leaves, ChatYieldCoordinator.TurnHandle handle, Long replacedAnswerId,
-                    ChatIntent intent, ChatTurnRunner.ExpertBatch deferred) {
-        new Turn(channel, userId, sessionId, message, leaves, handle, replacedAnswerId, intent, deferred).run();
+                    ChatAgentFactory.Leaves leaves, Long replacedAnswerId, ChatIntent intent) {
+        new Turn(channel, userId, sessionId, message, leaves, replacedAnswerId, intent).run();
     }
 
     /** 一轮的执行现场：入参与跑出来的中间量都在这儿，各种结局收尾时直接取用。 */
@@ -90,21 +87,15 @@ public class ChatTurnStreamer {
         private final String sessionId;
         private final String message;
         private final ChatAgentFactory.Leaves leaves;
-        private final ChatYieldCoordinator.TurnHandle handle;
         private final Long replacedAnswerId;
         private final ChatIntent intent;
-        private final ChatTurnRunner.ExpertBatch deferred;
 
         private final long startedAt = System.currentTimeMillis();
         /** 轮开始时的确认卡登记水位：只发本轮新登记的卡。序号不是墙钟，毫秒粒度挤不出误判 */
         private final long approvalSeqAtStart = approvalRegistry.currentSeq();
-        // 答案流/过程流分离：专家的结论是"工作过程"（前端折叠展示、不落历史），只有 summarizer 的汇总才是答案
+        /** 中断信号：登记进运行注册表，/cancel 完成它；runner 在检查点看它、ReactLoop 用它掐在途流 */
+        private final CompletableFuture<Void> cancel = new CompletableFuture<>();
         private final StringBuilder answer = new StringBuilder();
-        private final StringBuilder expertLog = new StringBuilder();
-        /** 补答标头：随首个答案 chunk 推出，落库时拼在答案前面；普通轮为空串 */
-        private String prefix = "";
-        /** 账本里混着别轮在途专家的账：本轮只报耗时不报 token */
-        private boolean dirtyBook;
         /** 本轮搜到/引用到的来源，按 url 去重保序：随 done 下发并落库，刷新后答案底部还在 */
         private final Map<String, SearchEvent.Source> sources = new LinkedHashMap<>();
 
@@ -120,10 +111,10 @@ public class ChatTurnStreamer {
                     }
                     channel.send(event, data);
                     return true;
-                });
+                }, cancel);
                 channel.send("session", MAPPER.createObjectNode().put("sessionId", sessionId));
-                // 用户重新生成和补答不落库
-                if (replacedAnswerId == null && deferred == null) {
+                // 重新生成不落库：提问行已经在了
+                if (replacedAnswerId == null) {
                     chatHistoryService.append(sessionId, userId, "user", message);
                 }
 
@@ -131,25 +122,14 @@ public class ChatTurnStreamer {
                 // "本轮提问"那条，认的一侧在 ChatTurnRewinder.cutAt，遍历全部语言
                 String enriched = prompts.get(leaves.lang(), "chat.turn.timeMark",
                         Map.of("time", TIME_FMT.format(Instant.now()))) + "\n"
-                        + (deferred == null
-                        ? prompts.get(leaves.lang(), "chat.turn.questionPrefix") + message
-                        : prompts.get(leaves.lang(), "chat.deferred.instruction", Map.of("question", message)));
+                        + prompts.get(leaves.lang(), "chat.turn.questionPrefix") + message;
 
-                if (deferred != null) {
-                    prefix = deferredHeader(leaves.lang(), message);
-                }
-
-                // dirtyBook = 有没有停不下来、会往这份账本上继续加 token 的在途专家，如果有就不报token计数
-                dirtyBook = yieldCoordinator.hasInFlightExperts(userId) || (deferred != null && !deferred.isDone());
                 leaves.resetUsage();
-
                 ChatTurnRunner.TurnResult result = turnRunner.run(leaves, userId, sessionId, enriched, intent,
-                        this::onAnswerChunk, this::onExpertProgress, this::onSearch, handle, deferred);
+                        this::onAnswerChunk, this::onSearch, cancel);
 
                 if (result.cancelled()) {
                     finishCancelled();
-                } else if (result.yielded()) {
-                    finishYielded(result.deferredExperts());
                 } else {
                     sendHitlCardIfAny();
                     finishAnswered();
@@ -172,9 +152,6 @@ public class ChatTurnStreamer {
 
         /** 攒答案在断连判断之外：断连后这轮照跑完，答案仍要进历史，只是不再往已经断掉的通道里写帧 */
         private void onAnswerChunk(String chunk) {
-            if (answer.isEmpty() && !prefix.isEmpty() && !channel.isClosed()) {
-                channel.send("token", answerToken(prefix));
-            }
             answer.append(chunk);
             if (!channel.isClosed()) {
                 channel.send("token", answerToken(chunk));
@@ -194,35 +171,10 @@ public class ChatTurnStreamer {
         }
 
         /**
-         * 给前端发一帧专家的进度
-         */
-        private void onExpertProgress(ChatTurnRunner.ExpertProgress event) {
-            switch (event.phase()) {
-                case ChatTurnRunner.ExpertProgress.START -> channel.send("agent_start", MAPPER.createObjectNode()
-                        .put("node", event.agent())
-                        .put("agent", event.agent()));
-                case ChatTurnRunner.ExpertProgress.DONE -> {
-                    if (event.text() != null && !event.text().isBlank()) {
-                        expertLog.append(event.text());
-                        channel.send("token", MAPPER.createObjectNode()
-                                .put("text", event.text())
-                                .put("agent", event.agent())
-                                .put("role", "process"));
-                    }
-                }
-                case ChatTurnRunner.ExpertProgress.ERROR -> channel.send("progress", MAPPER.createObjectNode()
-                        .put("text", prompts.get(leaves.lang(), "chat.progress.expertFailed",
-                                Map.of("agent", event.agent(), "reason", event.text()))));
-                default -> log.warn("[Workbench] 未知专家进度阶段 {}", event.phase());
-            }
-        }
-
-        /**
-         * 用户点了停止：半截答案照落库（token 已经烧掉了，屏幕上那段也该留得住）。
-         * 与让位不同，这一轮不欠补答，done 收尾即完结。
+         * 用户点了停止：半截答案照落库（token 已经烧掉了，屏幕上那段也该留得住），done 收尾即完结。
          */
         private void finishCancelled() {
-            String stopped = ChatTurnRunner.cancelledAnswer(prompts, leaves.lang(), prefix + answer);
+            String stopped = ChatTurnRunner.cancelledAnswer(prompts, leaves.lang(), answer.toString());
             ChatHistoryService.TurnMeta meta = turnMeta();
             boolean saved = chatHistoryService.append(sessionId, userId, "assistant", stopped, meta, sourceList());
             // 重生成轮：出了半截才顶掉旧答案，半截也是这一次重生成的产物，留着旧的同一个提问下
@@ -235,28 +187,8 @@ public class ChatTurnStreamer {
                     .put("sessionId", sessionId)
                     .put("answer", stopped)
                     .put("cancelled", true)
-                    .put("pending", yieldCoordinator.hasPending(sessionId))
                     .set("meta", metaJson(meta))
                     .set("sources", SearchEvent.Source.toJson(sourceList())));
-        }
-
-        /**
-         * 让位收尾：答案欠着（记账给协调器排队），本轮不落 assistant 历史——补答轮会补齐。
-         * 补答轮自己再被让位时 message 仍是原问题，再排的还是原问题那一单。
-         * registerDeferred 必须在本轮结束（runRegistry.finish）之前：status 是 running/pending 两个口径，
-         * 先摘运行标记再记账会闪出两者皆假的空窗，轮询端误判"已结束且不欠账"。
-         * done 带 deferred 标记：前端据此记下欠账、空闲时发起补答轮，answer 只是过渡话术不进历史；
-         * question 是被让位的原问题，前端按它把"稍后补答"的说明行挂到正确的提问名下。
-         * 每种 done 都带 pending（此刻会话还欠不欠补答）：补答轮跑完后队列里可能还排着下一单。
-         */
-        private void finishYielded(ChatTurnRunner.ExpertBatch inFlight) {
-            yieldCoordinator.registerDeferred(userId, sessionId, message, inFlight);
-            sendDone(MAPPER.createObjectNode()
-                    .put("sessionId", sessionId)
-                    .put("deferred", true)
-                    .put("question", message)
-                    .put("pending", true)
-                    .put("answer", prompts.get(leaves.lang(), "chat.yieldDoneAnswer")));
         }
 
         /**
@@ -280,14 +212,13 @@ public class ChatTurnStreamer {
 
         /** 正常作答收尾：答案落库、顶掉旧答案（重生成轮）、发 done。 */
         private void finishAnswered() {
-            // 极端场景（调用上限截停等）summarizer 没产出汇总，退专家结论，答案不至于丢
-            String finalAnswer = prefix + (!answer.isEmpty() ? answer : expertLog);
+            String finalAnswer = answer.toString();
             ChatHistoryService.TurnMeta meta = turnMeta();
             // 历史不看连接死活：切页断连后这一轮照跑完，答案必须落库（前端回来靠 status+历史补）。
             // 且必须在 finally 摘运行标记之前写完——轮询端不能出现"已结束但查不到答案"的空窗
             boolean saved = chatHistoryService.append(sessionId, userId, "assistant", finalAnswer, meta, sourceList());
             // 旧答案留到新答案确实落库之后才删（append 落没落库看返回值，空产出压根不落行）：
-            // 重跑抛异常、产出为空、insert 失败、中途被让位的任何一条路上，用户至少还留着原来那条，
+            // 重跑抛异常、产出为空、insert 失败的任何一条路上，用户至少还留着原来那条，
             // 也还能再点一次重新生成——两条都没了的话末尾是 user 行，连重新生成都点不了
             if (replacedAnswerId != null && saved) {
                 chatHistoryService.deleteMessage(replacedAnswerId);
@@ -295,7 +226,6 @@ public class ChatTurnStreamer {
             sendDone(MAPPER.createObjectNode()
                     .put("sessionId", sessionId)
                     .put("answer", finalAnswer)
-                    .put("pending", yieldCoordinator.hasPending(sessionId))
                     .set("meta", metaJson(meta))
                     .set("sources", SearchEvent.Source.toJson(sourceList())));
         }
@@ -313,14 +243,10 @@ public class ChatTurnStreamer {
             return new ArrayList<>(sources.values());
         }
 
-        /**
-         * 本轮读数。账本被别轮的在途专家写脏时只报耗时：读到的数混着别人的账——
-         * 宁可不报，也不能报个错的（null=没报，与全站 token 语义一致）。
-         */
+        /** 本轮读数。中断丢下的在途流会在读数之后才入账，账本不可信时只报耗时（null=没报，与全站 token 语义一致） */
         private ChatHistoryService.TurnMeta turnMeta() {
             int latencyMs = (int) (System.currentTimeMillis() - startedAt);
-            // usageUntrusted：中断丢下的在途流会在读数之后才入账，这一轮和下一轮的数都不可信
-            return dirtyBook || leaves.usageUntrusted()
+            return leaves.usageUntrusted()
                     ? ChatHistoryService.TurnMeta.latencyOnly(leaves.modelLabel(), latencyMs)
                     : ChatHistoryService.TurnMeta.of(leaves.modelLabel(), leaves.usageSnapshot(), latencyMs);
         }
@@ -347,14 +273,5 @@ public class ChatTurnStreamer {
                 .put("text", text)
                 .put("agent", "supervisor")
                 .put("role", "answer");
-    }
-
-    /** 补答标头：问题摘要截 40 字；与 chat.deferred.prefix 同源，前端按前缀认出补答行（不给重新生成） */
-    private String deferredHeader(AgentLang lang, String question) {
-        String q = question.strip().replaceAll("\\s+", " ");
-        if (q.length() > 40) {
-            q = q.substring(0, 40) + "…";
-        }
-        return prompts.get(lang, "chat.deferred.header", Map.of("question", q)) + "\n\n";
     }
 }

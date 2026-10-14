@@ -7,7 +7,6 @@ import com.mawai.wiibagent.llm.SseChatModel;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
-import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.trader.TraderChatService;
@@ -19,6 +18,7 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
+import org.springframework.ai.tool.ToolCallback;
 import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
@@ -31,8 +31,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 叶子工厂本身：建出来的东西齐不齐、缓存有没有生效、搜索许可投放面对不对。
- * 编排（派发/去重/汇总/落库）在 {@link ChatTurnRunnerTest}，不在这里。
+ * 叶子工厂本身：主 agent 的工具表齐不齐、缓存有没有生效、提示词与搜索许可跟不跟端点能力走。
+ * 编排（一轮怎么跑、落库）在 {@link ChatTurnRunnerTest}，不在这里。
  */
 class ChatAgentFactoryTest {
 
@@ -48,7 +48,7 @@ class ChatAgentFactoryTest {
     private ChatAgentFactory factory(ChatModel model) {
         when(chatModelFactory.modelsFor(any())).thenReturn(new ChatModelFactory.Models(model, model));
         return new ChatAgentFactory(chatModelFactory,
-                mock(MarketToolkit.class), mock(NewsToolkit.class),
+                mock(MarketToolkit.class), ChatTestEndpoints.newsToolkit(),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), mock(TraderChatService.class),
                 mock(WorkbenchRunRegistry.class),
                 new ApprovalRegistry(), ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
@@ -59,18 +59,35 @@ class ChatAgentFactoryTest {
         return ChatTestEndpoints.eps(1L, model);
     }
 
-    @Test
-    void 建出两个专家和一个汇总叶子() {
-        ChatAgentFactory.Leaves leaves = factory().leavesFor(config("gpt-5"), AgentLang.ZH);
+    /** 主 agent 真跑一次，把它挂给模型的工具表抓出来 */
+    private static List<String> toolNamesOf(ChatModel model, ChatAgentFactory.Leaves leaves) {
+        List<Prompt> prompts = new ArrayList<>();
+        when(model.stream(any(Prompt.class))).thenAnswer(inv -> {
+            prompts.add(inv.getArgument(0));
+            return Flux.just(new ChatResponse(List.of(new Generation(new AssistantMessage("答")))));
+        });
+        leaves.main().run(List.of(new UserMessage("你好")), "wb-tools", null, null);
+        return ((ToolCallingChatOptions) prompts.getFirst().getOptions()).getToolCallbacks().stream()
+                .map(ToolCallback::getToolDefinition).map(d -> d.name()).toList();
+    }
 
-        // 保序：派发顺序、结论进历史的顺序都跟着它。trader 不是专家，只读工具在汇总者上（ChatTurnRunnerTest 钉）
-        assertThat(leaves.experts()).containsOnlyKeys("market_agent", "news_agent");
-        assertThat(leaves.experts().keySet()).containsExactly("market_agent", "news_agent");
-        // news 走预取（无参工具，不指望模型自己调）；market 的工具要按问题选 symbol 只能现取
-        assertThat(leaves.experts().get("news_agent").preload()).isNotNull();
-        assertThat(leaves.experts().get("market_agent").preload()).isNull();
-        assertThat(leaves.summarizer()).isNotNull();
+    /** 行情 ×4 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作 ×3 / 行为分析，全在主 agent 一张表上 */
+    @Test
+    void 主agent工具表齐全() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+
+        ChatAgentFactory.Leaves leaves = factory(model).leavesFor(config("gpt-5"), AgentLang.ZH);
+
+        assertThat(leaves.main()).isNotNull();
         assertThat(leaves.light()).isNotNull();
+        assertThat(toolNamesOf(model, leaves)).containsExactlyInAnyOrder(
+                "market_snapshot", "option_iv", "funding_history", "orderbook_depth",
+                "news_search",
+                "run_deep_analysis",
+                "trader_overview", "trader_positions", "trader_decisions", "trader_plans", "trader_trades",
+                "wake_trader", "review_trader_now", "leave_note_to_trader",
+                "analyze_my_behavior");
     }
 
     /**
@@ -94,8 +111,7 @@ class ChatAgentFactoryTest {
     }
 
     /**
-     * 语言在叶子缓存键里：三个专家与 summarizer 的系统提示词、工具描述都是建叶子那一刻按语言
-     * 烤死写进图里的，语言变则叶子须重建。
+     * 语言在叶子缓存键里：主 agent 的系统提示词、工具描述都是建叶子那一刻按语言烤死的，语言变则叶子须重建。
      */
     @Test
     void 同一用户切语言拿到不同叶子() {
@@ -117,60 +133,47 @@ class ChatAgentFactoryTest {
                 .startsWith(ChatModelFactory.fingerprint(config("gpt-5")));
     }
 
-    // ===== 服务端搜索：提示词跟着端点能力走，许可只给 summarizer =====
+    // ===== 服务端搜索：提示词跟着端点能力走，许可随每次调用捎上 =====
 
     /** 提示词不许承诺端点给不了的能力——搜索静默失效一个月才被发现，病根之一就是文案与能力脱节 */
     @Test
-    void summarizer提示词按端点搜索能力拼装() {
+    void 主agent提示词按端点搜索能力拼装() {
         ChatAgentFactory factory = factory();
 
-        String withSearch = factory.summarizerInstruction(AgentLang.ZH, true);
-        String withoutSearch = factory.summarizerInstruction(AgentLang.ZH, false);
+        String withSearch = factory.mainInstruction(AgentLang.ZH, true);
+        String withoutSearch = factory.mainInstruction(AgentLang.ZH, false);
 
         assertThat(withSearch).contains("用你的联网搜索").contains("[X]");
         assertThat(withoutSearch).doesNotContain("用你的联网搜索");
         assertThat(withoutSearch).contains("没有联网检索能力");
         // 其余原则两版共有：拼装只换新闻那一条，别的不许跟着丢
-        assertThat(withSearch).contains("run_deep_analysis");
-        assertThat(withoutSearch).contains("run_deep_analysis");
+        assertThat(withSearch).contains("run_deep_analysis").contains("news_search");
+        assertThat(withoutSearch).contains("run_deep_analysis").contains("news_search");
     }
 
     /**
-     * 许可的投放面：端点声明了搜索时，summarizer 的每次模型调用都捎
-     * {@link com.mawai.wiibagent.llm.SseChatModel#WEB_SEARCH_KEY}，
-     * 专家（数据源必须可控）一个都不捎——双闸门里"调用方授权"这一半就是这里发的。
+     * 许可的投放面：端点声明了搜索时，主 agent 的每次模型调用都捎
+     * {@link com.mawai.wiibagent.llm.SseChatModel#WEB_SEARCH_KEY}——双闸门里"调用方授权"这一半就是这里发的。
      */
     @Test
-    void 端点声明搜索时只有summarizer的调用捎许可() {
+    void 端点声明搜索时主agent的调用捎许可() {
         ChatModel model = mock(ChatModel.class);
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
-        List<Prompt> summarizerPrompts = new ArrayList<>();
-        List<Prompt> expertPrompts = new ArrayList<>();
-        // summarizer 是流式（stream），专家是阻塞（call）：同一个 mock 模型按调用方式分桶
+        List<Prompt> prompts = new ArrayList<>();
         when(model.stream(any(Prompt.class))).thenAnswer(inv -> {
-            summarizerPrompts.add(inv.getArgument(0));
+            prompts.add(inv.getArgument(0));
             return Flux.just(new ChatResponse(List.of(new Generation(new AssistantMessage("答")))));
-        });
-        when(model.call(any(Prompt.class))).thenAnswer(inv -> {
-            expertPrompts.add(inv.getArgument(0));
-            return new ChatResponse(List.of(new Generation(new AssistantMessage("专家答"))));
         });
         UserLlmEndpoint e = ChatTestEndpoints.endpoint("grok-4.6");
         e.setApiProtocol("responses");
         e.setWebSearch(true);
 
         ChatAgentFactory.Leaves leaves = factory(model).leavesFor(new ChatEndpoints(1L, e, null), AgentLang.ZH);
-        leaves.summarizer().run(List.of(new UserMessage("过去24小时BTC新闻")), "wb-ws", null, null);
-        leaves.experts().get(ChatAgentFactory.MARKET_AGENT).loop()
-                .run(List.of(new UserMessage("BTC行情")), null, null, null);
+        leaves.main().run(List.of(new UserMessage("过去24小时BTC新闻")), "wb-ws", null, null);
 
-        assertThat(summarizerPrompts).isNotEmpty();
-        assertThat(summarizerPrompts).allMatch(p ->
+        assertThat(prompts).isNotEmpty();
+        assertThat(prompts).allMatch(p ->
                 p.getOptions() instanceof ToolCallingChatOptions t && t.getToolContext() != null
                         && Boolean.TRUE.equals(t.getToolContext().get(SseChatModel.WEB_SEARCH_KEY)));
-        assertThat(expertPrompts).isNotEmpty();
-        assertThat(expertPrompts).allMatch(p ->
-                !(p.getOptions() instanceof ToolCallingChatOptions t) || t.getToolContext() == null
-                        || t.getToolContext().get(SseChatModel.WEB_SEARCH_KEY) == null);
     }
 }

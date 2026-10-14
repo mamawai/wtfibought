@@ -41,7 +41,7 @@ class TraderActionToolkitTest {
     /** 常态：这一轮有 SSE 通道 */
     @BeforeEach
     void openChannel() {
-        runRegistry.start(SESSION, (event, data) -> pushed.add(data));
+        runRegistry.start(SESSION, (event, data) -> pushed.add(data), new java.util.concurrent.CompletableFuture<>());
     }
 
     @AfterEach

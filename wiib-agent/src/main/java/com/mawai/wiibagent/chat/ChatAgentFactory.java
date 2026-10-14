@@ -28,15 +28,14 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.util.*;
-import java.util.function.Supplier;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
- * 对话链路的叶子 agent 工厂：按用户的 BYOK 配置建出两个专家（market/news）和一个汇总 agent，
- * 每个都是一个 {@link ReactLoop}。用户自己 trader 的只读工具挂在汇总者上，不单设专家。
+ * 对话链路的叶子工厂：按用户的 BYOK 配置建出主 agent（一个 {@link ReactLoop}，全部对话工具挂在它身上）。
  * <p>
- * <b>这里只管"造"，不管"怎么用"</b>：派谁、派几轮、结果怎么拼、历史怎么存，全在
- * {@link ChatTurnRunner} 的平铺 Java 循环里。
+ * <b>这里只管"造"，不管"怎么用"</b>：一轮怎么跑、历史怎么存，在 {@link ChatTurnRunner}。
  * <p>
  * 模型是建叶子时绑死的（工具方法体里拿不到用户身份），所以叶子按配置指纹缓存，见 {@link #leavesFor}。
  * <p>
@@ -47,31 +46,18 @@ import java.util.function.Supplier;
 @Component
 public class ChatAgentFactory {
 
-    public static final String MARKET_AGENT = "market_agent";
-    public static final String NEWS_AGENT = "news_agent";
-    public static final Set<String> EXPERT_AGENTS = Set.of(MARKET_AGENT, NEWS_AGENT);
-
     /**
-     * 一个专家叶子。
-     *
-     * @param preload 可空。非空则每次执行前先把数据取好、随消息喂进去——无参工具（news_search）
-     *                挂成 function tool 的话模型未必调，预取才 100% 保证数据到位
-     */
-    public record Expert(ReactLoop loop, Supplier<String> preload) {
-    }
-
-    /**
-     * 一份用户配置对应的全套叶子。
+     * 一份用户配置对应的叶子。
      *
      * @param modelLabel 这份配置的对外名字（端点名 · 模型名），随每条答案落库给前端显示
-     * @param deep       深模型（summarizer 作答与深研判走它）。透出来是为了取用量——它本身就是本轮的账本
-     * @param light      浅模型本体：{@link ChatTurnRunner} 的路由问答是一次性的结构化调用，
-     *                   没有 ReAct 循环也没有工具执行，用不上包一层 agent
+     * @param deep       深模型（主 agent 作答与深研判走它）。透出来是为了取用量——它本身就是本轮的账本
+     * @param light      浅模型：历史压缩用。没单独绑轻模型时与 deep 是同一个实例
+     * @param main       主 agent：深模型 + 全部对话工具的 ReactLoop，流式作答
      * @param lang       这套叶子按哪门语言建的。它在缓存键里（见 {@link #leafKey}），拿到的叶子
-     *                   必与请求语言一致；带出来供编排层（过程文案、路由工具描述）直接用
+     *                   必与请求语言一致；带出来供编排层（过程文案）直接用
      */
     public record Leaves(String modelLabel, UsageTrackingChatModel deep, UsageTrackingChatModel light,
-                         Map<String, Expert> experts, ReactLoop summarizer, AgentLang lang) {
+                         ReactLoop main, AgentLang lang) {
 
         /** 轮开始清零，划出本轮账本的起点 */
         public void resetUsage() {
@@ -102,12 +88,7 @@ public class ChatAgentFactory {
     private final ApprovalRegistry approvalRegistry;
     private final PromptCatalog prompts;
     private final LocalizedToolCallbacks localizedTools;
-    /**
-     * 这一个配置项管的是<b>每个 agent 各自的上限</b>而不是整轮总量：summarizer 与每个带工具的专家
-     * 各跑各的循环，计数互不相通。所以一轮对话的模型调用是各家相加（summarizer ≤8、
-     * 每个带工具的专家各 ≤8，再加上路由每轮一次），不是 8 次封顶。
-     * 想收总量得另立机制，不是把这个数调小。
-     */
+    /** 主 agent 一轮 ReAct 的模型调用上限：到数即收尾，防死转烧钱 */
     private final int runModelCallLimit;
     private final int summarizeThresholdTokens;
     private final int summarizeKeepMessages;
@@ -134,7 +115,7 @@ public class ChatAgentFactory {
                     });
 
     /**
-     * @param supplementSource 补充源名。BlockBeats 之外那一路是 summarizer 经服务端 web_search 工具搜的
+     * @param supplementSource 补充源名。BlockBeats 之外那一路是主 agent 经服务端 web_search 工具搜的
      *                         （端点勾选开启，见 {@link #build} 的 webSearch），搜到什么平台随上游走。
      *                         所以提示词里一律只说"联网搜索"不点名平台，只有输出标签用这个名字——
      *                         换源改配置一处，提示词不用动；留空标 [Web]
@@ -218,29 +199,19 @@ public class ChatAgentFactory {
         UsageTrackingChatModel deep = new UsageTrackingChatModel(models.deep());
         // 没单独绑轻模型时工厂给的是同一个实例，装饰器也得共用一个，否则同一次调用记两遍账
         UsageTrackingChatModel light = models.light() == models.deep() ? deep : new UsageTrackingChatModel(models.light());
-        // LinkedHashMap 保序：派发顺序、结论拼进历史的顺序都跟着它，market 在前 news 在后
-        Map<String, Expert> experts = new LinkedHashMap<>();
-        // market 的工具要按问题选 symbol，只能交给模型现取，所以没有 preload
-        experts.put(MARKET_AGENT, new Expert(expertLoop(lang, light, marketToolkit,
-                prompts.get(lang, "chat.expert.market")), null));
-        // 新闻只预取 BlockBeats（news_search 入参语言，不挂 tool），这里不进行联网搜索
-        experts.put(NEWS_AGENT, new Expert(expertLoop(lang, light, null,
-                prompts.get(lang, "chat.expert.news")), () -> newsToolkit.newsSearch(lang)));
-
-        return new Leaves(modelLabel(eps.deep()), deep, light, experts,
-                summarizerLeaf(deep, light, eps.userId(), lang, webSearch), lang);
+        return new Leaves(modelLabel(eps.deep()), deep, light, mainLeaf(deep, light, eps.userId(), lang, webSearch), lang);
     }
 
     /**
-     * summarizer 系统提示词按端点搜索能力拼装：新闻条款二选一（{@code chat.newsRule.search} 承诺联网补充 /
+     * 主 agent 系统提示词按端点搜索能力拼装：新闻条款二选一（{@code chat.newsRule.search} 承诺联网补充 /
      * {@code chat.newsRule.noSearch} 如实说没有检索能力），其余原则两版共有。
      * 提示词不许承诺端点给不了的能力——文案跟着能力走，能力跟着端点走。
      */
     // 包私有非 private：ChatAgentFactoryTest 要直接断言两版文案
-    String summarizerInstruction(AgentLang lang, boolean webSearch) {
+    String mainInstruction(AgentLang lang, boolean webSearch) {
         String newsRule = prompts.get(lang, webSearch ? "chat.newsRule.search" : "chat.newsRule.noSearch",
                 Map.of("supplementTag", supplementTag, "mergedTag", mergedTag));
-        return prompts.get(lang, "chat.summarizer", Map.of("newsRule", newsRule));
+        return prompts.get(lang, "chat.main", Map.of("newsRule", newsRule));
     }
 
     /** 端点名 · 模型名：站内展示模型的统一口径（见 LlmEndpointSelect / ReplayPanel）；没起名就只报模型 */
@@ -250,47 +221,21 @@ public class ChatAgentFactory {
     }
 
     /**
-     * 专家 agent：浅模型 + 自己那套工具的 ReAct 循环。
-     * <p>
-     * 包私有而非 private：ExpertCallLimitTest 要直接调它真跑一遍，才验得到"生产代码里保险丝挂没挂"。
+     * 主 agent：深模型 + 全部对话工具，自己取数自己作答。
      *
-     * @param toolkit 可空。null=纯预取/纯模型能力的专家（如 news），不挂任何 function tool。
-     *                挂了工具也不强制 tool_choice，"先取数再答"写在各自的系统提示词里
+     * @param light     压缩用浅模型：摘要是简单活，用深模型纯烧钱
+     * @param userId    trader 工具（只读与动作）与行为分析烤死的归属，理由见 {@link TraderQueryToolkit}
+     * @param webSearch 端点声明了服务端搜索：提示词用承诺联网的那版，且每次调用捎搜索许可
      */
-    ReactLoop expertLoop(AgentLang lang, ChatModel model, Object toolkit, String instruction) {
-        ResilientChatService chat = ResilientChatService.builder()
-                .model(model)
-                .systemPrompt(instruction)
-                // 按照 lang 设置 tool 的 description 语言
-                .tools(toolkit == null ? List.of() : localizedTools.of(lang, toolkit))
-                .build();
-        // 没工具的纯模型 agent 也挂保险丝：一次就收尾，触发不到
-        return ReactLoop.builder().chat(chat)
-                .limiter(new ModelCallLimiter(runModelCallLimit,
-                        prompts.get(lang, "llm.callLimit.notExecuted"),
-                        prompts.get(lang, "llm.callLimit.lastCall")))
-                .build();
-    }
-
-    /**
-     * 汇总 agent：深模型 + 深研判 / trader 只读与动作 / 行为分析工具，只管把数据写成最终回答。
-     * <p>
-     * 派谁、还要不要再派，全归 {@link ChatTurnRunner} 的显式循环管，这里一个字都不提——
-     * 角色单一，模型不会再纠结"该作答还是该派发"（那正是之前无限循环的病根）。
-     *
-     * @param light  压缩用浅模型：摘要是简单活，用深模型纯烧钱
-     * @param userId trader 工具（只读与动作）烤死的归属，理由见 {@link TraderQueryToolkit}
-     * @param webSearch 端点声明了服务端搜索：提示词用承诺联网的那版，且每次调用捎搜索许可。
-     *                  许可只在这一个叶子发——专家与 trader 链路的数据源必须可控，物理拿不到搜索
-     */
-    private ReactLoop summarizerLeaf(ChatModel deep, ChatModel light, long userId, AgentLang lang,
-                                     boolean webSearch) {
+    private ReactLoop mainLeaf(ChatModel deep, ChatModel light, long userId, AgentLang lang, boolean webSearch) {
         // 工具的模型在这一层绑死："当前用的是谁的 key"只有这里知道
         ResilientChatService chat = ResilientChatService.builder()
                 .model(deep)
-                .systemPrompt(summarizerInstruction(lang, webSearch))
+                .systemPrompt(mainInstruction(lang, webSearch))
                 .tools(localizedTools.of(lang,
-                        // 四套工具：研判 / trader 只读 / trader 动作 / 行为分析
+                        // 行情 ×4 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作表单 ×3 / 行为分析
+                        marketToolkit,
+                        newsToolkit.boundTo(lang),
                         new DeepAnalysisToolkit(deep, deepAnalysisService, runRegistry, prompts, lang),
                         new TraderQueryToolkit(traderChatService, userId, lang),
                         new TraderActionToolkit(runRegistry, userId, prompts, lang),
@@ -308,5 +253,4 @@ public class ChatAgentFactory {
                         summarizeKeepMessages, prompts, lang))
                 .build();
     }
-
 }

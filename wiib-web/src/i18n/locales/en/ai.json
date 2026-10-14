@@ -429,19 +429,12 @@
   "rail": {
     "title_one": "Process · {{count}} step",
     "title_other": "Process · {{count}} steps",
-    "handoff": "<0>{{hub}}</0> → <1>{{agent}}</1> takes over",
-    "expertWorking": "<0>{{agent}}</0> is gathering data",
-    "marketAgent": "Market expert",
-    "newsAgent": "News expert",
-    "deferredNote": "The expert is still gathering data; this answer follows automatically",
     "hitlResume": "Resuming the deep analysis",
     "searching": "Searching: {{query}}",
     "searchingNoQuery": "Searching…",
     "searched_one": "Searched {{count}} site",
     "searched_other": "Searched {{count}} sites",
     "searchedNone": "Search finished",
-    "sumExperts_one": "Called {{count}} expert",
-    "sumExperts_other": "Called {{count}} experts",
     "sumWorking": "Working…"
   },
   "hitl": {
@@ -600,17 +593,6 @@
     "followDefault": "Follow default ({{name}} · {{model}})",
     "selectEmpty": "No model endpoint yet — <0>add one under Model config on the AI page</0>"
   },
-  "jev": {
-    "title": "Jev decision model (optional)",
-    "configured": "Configured · {{model}} · key ···{{tail}}",
-    "notConfigured": "Not configured · routing runs on Chat · Light model",
-    "intro": "TypeSafe's Jev returns judgments instead of text. Once configured, the analysis chat lets it decide which experts to dispatch — about 100 ms and next to free. If it is missing or unreachable, routing falls back to the Chat · Light model automatically, so nothing breaks. The cost lands on your account.",
-    "baseUrl": "Base URL",
-    "model": "Model",
-    "defaultsHint": "Leave Base URL blank for https://api.typesafe.ai and model blank for jev-latest; enter a version such as jev-1.13.0 to pin it.",
-    "remove": "Remove config",
-    "removeConfirm": "Remove the Jev config? Analysis-chat routing falls back to the Chat · Light model."
-  },
   "toast": {
     "analyzeDone": "Analysis done",
     "analyzeFailed": "Analysis failed",
@@ -623,8 +605,6 @@
     "endpointAdded": "Endpoint added",
     "endpointUpdated": "Endpoint updated",
     "endpointRemoved": "Endpoint deleted",
-    "jevSaved": "Jev config saved",
-    "jevRemoved": "Jev config removed",
     "saveFailed": "Save failed",
     "bindFailed": "Binding failed",
     "setDefault": "“{{name}}” is now the default"

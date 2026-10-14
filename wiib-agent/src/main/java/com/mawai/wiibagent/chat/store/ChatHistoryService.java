@@ -52,7 +52,7 @@ public class ChatHistoryService {
                     usage.completionTokens(), usage.totalTokens(), latencyMs);
         }
 
-        /** 只报耗时：账本里混着别轮的账时用它，判据见 {@code ChatYieldCoordinator.hasInFlightExperts} */
+        /** 只报耗时：账本不可信（用户中断丢下的在途流会在读数之后才入账）时用它 */
         public static TurnMeta latencyOnly(String modelLabel, int latencyMs) {
             return new TurnMeta(modelLabel, null, null, null, null, latencyMs);
         }

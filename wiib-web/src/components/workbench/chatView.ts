@@ -1,23 +1,13 @@
 import type { ChatItem } from './chatStore';
 
-/** 调度中枢的对外名字：后端事件里仍叫 supervisor，只在展示层换 */
+/** 主 agent 的对外名字：后端事件里仍叫 supervisor，只在展示层换 */
 export const HUB_NAME = 'Polaris';
-
-/**
- * 专家 agent 的展示名（存词表 key，渲染时现翻——模块级常量存翻好的字面量切了语言不会变）。
- * supervisor 不在表里：它显示的是 HUB_NAME 这个品牌名，不翻。
- */
-export const AGENT_LABEL_KEY: Record<string, string> = {
-  market_agent: 'rail.marketAgent',
-  news_agent: 'rail.newsAgent',
-};
 
 /** 带 rid 的那几种条目就是过程条目 */
 type RailItem = Extract<ChatItem, { rid: number }>;
 
-/** 过程类条目（调度/专家/进度/搜索）归进工作过程轨；其余各自成块 */
-const isRailKind = (it: ChatItem): it is RailItem =>
-  it.kind === 'agent' || it.kind === 'expert' || it.kind === 'progress' || it.kind === 'search';
+/** 过程类条目（进度/搜索）归进工作过程轨；其余各自成块 */
+const isRailKind = (it: ChatItem): it is RailItem => it.kind === 'progress' || it.kind === 'search';
 
 export type RailStep = { item: ChatItem; index: number };
 export type Block =
@@ -33,8 +23,8 @@ export function groupBlocks(items: ChatItem[]): Block[] {
     if (isRailKind(item)) {
       const last = out[out.length - 1];
       if (last?.kind === 'rail') last.steps.push({ item, index });
-      // 键取轨首条目的 rid 而不是下标：条目在 items 里挪位置（让位说明行插队、
-      // 重新生成砍尾巴）时下标会整体错位，收着的轨会自己弹开
+      // 键取轨首条目的 rid 而不是下标：条目在 items 里挪位置（重新生成砍尾巴）时下标会整体错位，
+      // 收着的轨会自己弹开
       else out.push({ kind: 'rail', steps: [{ item, index }], key: `rail-${item.rid}` });
     } else {
       out.push({ kind: 'single', item, index });
@@ -42,4 +32,3 @@ export function groupBlocks(items: ChatItem[]): Block[] {
   });
   return out;
 }
-

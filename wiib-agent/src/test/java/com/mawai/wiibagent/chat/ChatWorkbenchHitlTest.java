@@ -15,7 +15,6 @@ import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
-import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.trader.TraderChatService;
 import com.mawai.wiibagent.mapper.WorkbenchChatContextMapper;
 import org.junit.jupiter.api.Test;
@@ -72,22 +71,19 @@ class ChatWorkbenchHitlTest {
     private final DeepAnalysisService deepAnalysisService = mock(DeepAnalysisService.class);
     private final ChatModel deep = mock(ChatModel.class);
     private final ChatModel light = mock(ChatModel.class);
-    /** 每轮 summarizer 的第几次模型调用（每轮开跑前归零） */
+    /** 每轮主 agent 的第几次模型调用（每轮开跑前归零） */
     private final AtomicInteger deepCallsThisTurn = new AtomicInteger();
-    /** 本轮 summarizer 要不要调深研判工具（false=直接给答案） */
+    /** 本轮主 agent 要不要调深研判工具（false=直接给答案） */
     private final AtomicBoolean wantsDeepAnalysis = new AtomicBoolean(true);
-    /** 本轮路由要不要派一次 market 专家（用来给"上一轮的专家数据"造实体） */
-    private final AtomicBoolean wantsMarketExpert = new AtomicBoolean(false);
     /** 消息去重用的全局序号，见下面 productionLeaves 的说明 */
     private final AtomicInteger seq = new AtomicInteger();
-    /** summarizer 每次收到的 Prompt：跨轮上下文只能从这里看 */
-    private final List<Prompt> summarizerPrompts = new CopyOnWriteArrayList<>();
+    /** 主 agent 每次收到的 Prompt：跨轮上下文只能从这里看 */
+    private final List<Prompt> mainPrompts = new CopyOnWriteArrayList<>();
 
     /** 会话上下文表的假实现：字节真存真取，跨轮上下文这条链才算真的被跑到 */
     private final Map<String, byte[]> contextRows = new HashMap<>();
 
-    /** controller() 里装配：turn() 用 streamer 跑轮、用 yieldCoordinator 造让位句柄 */
-    private ChatYieldCoordinator yieldCoordinator;
+    /** controller() 里装配：turn() 用 streamer 跑轮 */
     private ChatTurnStreamer streamer;
 
     /** 记账用的 emitter：SseChannel 的每一次 send 都从这里过，事件原文攒起来供断言 */
@@ -130,20 +126,10 @@ class ChatWorkbenchHitlTest {
         when(light.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
         ChatModelFactory chatModelFactory = mock(ChatModelFactory.class);
         when(chatModelFactory.modelsFor(any())).thenReturn(new ChatModelFactory.Models(deep, light));
-        // 浅模型同时服务路由与专家，靠系统提示词首句分辨
-        when(light.call(any(Prompt.class))).thenAnswer(inv -> {
-            String head = ((Prompt) inv.getArgument(0)).getInstructions().getFirst().getText();
-            if (!head.contains("你是研判工作台的调度器")) {
-                return responseOf(new AssistantMessage("BTC 现价 97000（第 " + seq.incrementAndGet() + " 条）"));
-            }
-            // 派过一次之后 fresh 为空，循环自然收口，不必自己数轮次
-            return responseOf(toolCall("r", "route",
-                    wantsMarketExpert.get() ? "{\"next\":[\"market_agent\"]}" : "{\"next\":[\"FINISH\"]}"));
-        });
         // 每轮：先要一次深研判（闸门在这儿拦），拿到回执后再说一句话收尾。
         // 每条消息带序号：几轮回同一句话时，断言按内容分得清是哪一轮的
         when(deep.stream(any(Prompt.class))).thenAnswer(inv -> {
-            summarizerPrompts.add(inv.getArgument(0));
+            mainPrompts.add(inv.getArgument(0));
             return Flux.just(responseOf(
                     wantsDeepAnalysis.get() && deepCallsThisTurn.incrementAndGet() == 1
                             ? toolCall("c" + seq.incrementAndGet(), "run_deep_analysis",
@@ -152,7 +138,7 @@ class ChatWorkbenchHitlTest {
         });
 
         ChatEndpoints llmConfig = ChatTestEndpoints.eps(1L, "gpt-5");   // 叶子指纹含 userId（trader 工具按它认人）
-        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(NewsToolkit.class),
+        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), ChatTestEndpoints.newsToolkit(),
                 deepAnalysisService, mock(BehaviorAnalysisService.class),
                 mock(TraderChatService.class), mock(WorkbenchRunRegistry.class),
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
@@ -172,16 +158,14 @@ class ChatWorkbenchHitlTest {
             return 1;
         });
         ChatContextStore contextStore = new ChatContextStore(contextMapper);
-        ChatTurnRunner turnRunner = new ChatTurnRunner(contextStore, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, mock(JevRouter.class));
+        ChatTurnRunner turnRunner = new ChatTurnRunner(contextStore, ChatTestEndpoints.PROMPTS);
         ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
         WorkbenchRunRegistry runRegistry = mock(WorkbenchRunRegistry.class);
         ChatHistoryService history = mock(ChatHistoryService.class);
-        yieldCoordinator = new ChatYieldCoordinator();
-        streamer = new ChatTurnStreamer(turnRunner, history, runRegistry, yieldCoordinator, registry,
-                ChatTestEndpoints.PROMPTS);
+        streamer = new ChatTurnStreamer(turnRunner, history, runRegistry, registry, ChatTestEndpoints.PROMPTS);
         return new ChatWorkbenchController(mock(ChatAgentFactory.class), mock(LlmEndpointService.class),
                 registry, history, contextStore, streamer, mock(ChatTurnRewinder.class),
-                runRegistry, gate, new MessageCatalog(), yieldCoordinator, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
+                runRegistry, gate, new MessageCatalog(), ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
                 Executors.newVirtualThreadPerTaskExecutor());
     }
 
@@ -189,8 +173,7 @@ class ChatWorkbenchHitlTest {
     private RecordingEmitter turn(ChatAgentFactory.Leaves leaves, String message) {
         deepCallsThisTurn.set(0);
         RecordingEmitter emitter = new RecordingEmitter();
-        streamer.run(new SseChannel(emitter), 1L, SESSION, message, leaves,
-                yieldCoordinator.openTurn(1L), null, null, null);
+        streamer.run(new SseChannel(emitter), 1L, SESSION, message, leaves, null, null);
         return emitter;
     }
 
@@ -274,36 +257,31 @@ class ChatWorkbenchHitlTest {
     }
 
     /**
-     * <b>验收硬条件</b>：续聊上下文来自会话上下文表而不是 checkpoint。
+     * <b>验收硬条件</b>：续聊上下文来自会话上下文表。
      * <p>
-     * 第一轮派一次 market 专家，让"上一轮的数据"有实体；approve 之后跑第二轮，
-     * 断言 summarizer 这一轮收到的 Prompt 里既有上一轮的专家结论、也有上一轮的答案。
-     * 落库或读取任一头断了这条就红——而用户遭的罪是"AI 完全不记得刚才说过什么"。
+     * 第一轮弹卡并给出答案，approve 之后跑第二轮，断言主 agent 这一轮收到的 Prompt 里
+     * 既有上一轮的提问、也有上一轮的答案。落库或读取任一头断了这条就红——
+     * 而用户遭的罪是"AI 完全不记得刚才说过什么"。
      */
     @Test
     void 确认后的续跑轮仍看得见上一轮的上下文() {
-        wantsMarketExpert.set(true);
         ChatAgentFactory.Leaves leaves = productionLeaves();
         ChatWorkbenchController controller = controller();
 
-        RecordingEmitter first = turn(leaves, "先看行情，再深度研判 BTC");
+        RecordingEmitter first = turn(leaves, "深度研判 BTC");
         JsonNode card = first.events("hitl_request").getFirst();
-        String expertConclusion = first.events("token").stream()
-                .filter(e -> "process".equals(e.path("role").asString(null)))
-                .map(e -> e.path("text").asString(null)).findFirst().orElseThrow();
         String firstAnswer = first.events("done").getFirst().path("answer").asString(null);
+        assertThat(firstAnswer).isNotBlank();
         assertThat(controller.approve(1L, decision(card.path("requestId").asString(null), true)).getCode()).isZero();
 
-        // 授权还在 → 第二轮直通汇总，专家不再派；上下文只能从存储来
-        wantsMarketExpert.set(false);
-        summarizerPrompts.clear();
+        // 上下文只能从存储来
+        mainPrompts.clear();
         turn(leaves, "已确认，请继续执行深度研判");
 
-        String secondTurnInput = summarizerPrompts.getFirst().getInstructions().stream()
+        String secondTurnInput = mainPrompts.getFirst().getInstructions().stream()
                 .map(m -> m.getText() == null ? "" : m.getText())
                 .reduce("", (a, b) -> a + "\n" + b);
-        assertThat(secondTurnInput).contains(expertConclusion);
         assertThat(secondTurnInput).contains(firstAnswer);
-        assertThat(secondTurnInput).contains("先看行情，再深度研判 BTC");
+        assertThat(secondTurnInput).contains("深度研判 BTC");
     }
 }

@@ -10,9 +10,6 @@ tool:
     Get the recent important news flashes (title + full body + source + time). A flash is already
     the complete text — there is no such thing as deep-reading a single one.
 
-  # Router tool: it exists only so the model can say "who goes next" structurally; the method body never runs
-  route: Decide what comes next. Name the experts when real data is still needed; give ["FINISH"] once the expert data is enough to answer.
-
   # Deep analysis: one call = 3 deep-model calls; the description nails down "expensive" and "needs the user's nod".
   # Word for word the same as the zh entry apart from the trigger phrases: the description is read by the
   # model, the trigger phrases have to match what the user actually types, so only those follow the language.

@@ -13,7 +13,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -59,10 +58,9 @@ class ChatWorkbenchStreamTest {
             sink.accept("前半段");
             sink.accept("后半段");
             return ChatTurnRunner.TurnResult.COMPLETED;
-        }).when(turnRunner).run(any(), anyLong(), any(), any(), any(), any(), any(), any(), any(), any());
-        ChatYieldCoordinator coordinator = new ChatYieldCoordinator();
+        }).when(turnRunner).run(any(), anyLong(), any(), any(), any(), any(), any(), any());
         ChatTurnStreamer streamer = new ChatTurnStreamer(turnRunner, historyService,
-                mock(WorkbenchRunRegistry.class), coordinator, new ApprovalRegistry(), ChatTestEndpoints.PROMPTS);
+                mock(WorkbenchRunRegistry.class), new ApprovalRegistry(), ChatTestEndpoints.PROMPTS);
 
         RecordingEmitter emitter = new RecordingEmitter();
         SseChannel channel = new SseChannel(emitter);
@@ -70,10 +68,9 @@ class ChatWorkbenchStreamTest {
 
         // run() 要拿叶子清账本、取模型名落库，给不了 null；这条用例不看模型本身，深浅共用一个装饰器
         UsageTrackingChatModel model = new UsageTrackingChatModel(mock(ChatModel.class));
-        ChatAgentFactory.Leaves leaves =
-                new ChatAgentFactory.Leaves("test", model, model, Map.of(), null, AgentLang.ZH);
+        ChatAgentFactory.Leaves leaves = new ChatAgentFactory.Leaves("test", model, model, null, AgentLang.ZH);
 
-        streamer.run(channel, 1L, SESSION, "看看行情", leaves, coordinator.openTurn(1L), null, null, null);
+        streamer.run(channel, 1L, SESSION, "看看行情", leaves, null, null);
 
         // 答案完整进历史——这是断连用户唯一还拿得到东西的途径
         verify(historyService).append(eq(SESSION), eq(1L), eq("assistant"), eq("前半段后半段"), any(), any());

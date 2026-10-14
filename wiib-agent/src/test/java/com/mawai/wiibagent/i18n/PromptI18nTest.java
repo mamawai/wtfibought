@@ -120,11 +120,7 @@ class PromptI18nTest {
 
     @Test
     void 英文chat全链路提示词与过程文案全文无中文() {
-        for (String key : List.of("chat.expert.market", "chat.expert.news",
-                "chat.router", "chat.expertHandoff", "chat.yieldPlaceholder", "chat.cancelledNote",
-                "chat.cancelledEmpty", "chat.yieldDoneAnswer", "chat.preloadHeader",
-                "chat.expertStatus.data", "chat.expertStatus.failed", "chat.expertStatus.noContent",
-                "chat.expertNoContentBody", "chat.expertNoContentReason",
+        for (String key : List.of("chat.cancelledNote", "chat.cancelledEmpty",
                 "chat.deferred.prefix", "chat.hitl.label", "chat.hitl.reason", "chat.hitl.notExecuted",
                 "chat.hitl.resumeMessage", "chat.form.wake", "chat.form.review", "chat.form.note",
                 "chat.compress.summaryPrefix", "chat.compress.role.user", "chat.compress.role.assistant",
@@ -139,7 +135,7 @@ class PromptI18nTest {
                 "chat.traderQuery.kindNote",
                 "chat.traderQuery.planNote", "chat.traderQuery.tradeNote", "chat.traderQuery.noTrader",
                 "llm.callLimit.notExecuted",
-                "tool.route", "tool.run_deep_analysis",
+                "tool.run_deep_analysis", "tool.news_search",
                 // 已搬进词表的工具描述：英文侧不许混中文
                 "tool.market_snapshot", "tool.option_iv", "tool.funding_history", "tool.orderbook_depth",
                 "tool.klines", "tool.indicators", "tool.kline_structure",
@@ -151,19 +147,13 @@ class PromptI18nTest {
             assertNoCjk("英文 " + key, prompts.get(AgentLang.EN, key));
         }
         // 带占位符的那些：真填一遍再扫，模板里的中文标点藏在占位符两边。
-        // summarizer 两版新闻条款（有无联网搜索）都要扫，哪版被建出来取决于用户端点配置
-        assertNoCjk("英文 summarizer(search)", summarizer(AgentLang.EN, "chat.newsRule.search"));
-        assertNoCjk("英文 summarizer(noSearch)", summarizer(AgentLang.EN, "chat.newsRule.noSearch"));
+        // 主 agent 两版新闻条款（有无联网搜索）都要扫，哪版被建出来取决于用户端点配置
+        assertNoCjk("英文主 agent(search)", main(AgentLang.EN, "chat.newsRule.search"));
+        assertNoCjk("英文主 agent(noSearch)", main(AgentLang.EN, "chat.newsRule.noSearch"));
         assertNoCjk("英文历史压缩提示词",
                 prompts.get(AgentLang.EN, "chat.compress.prompt", Map.of("history", "u: hi")));
-        assertNoCjk("英文专家出处标注", prompts.get(AgentLang.EN, "chat.expertTag",
-                Map.of("agent", "market_agent", "status", prompts.get(AgentLang.EN, "chat.expertStatus.data"))));
         assertNoCjk("英文补答标头",
                 prompts.get(AgentLang.EN, "chat.deferred.header", Map.of("question", "btc?")));
-        assertNoCjk("英文补答指令",
-                prompts.get(AgentLang.EN, "chat.deferred.instruction", Map.of("question", "btc?")));
-        assertNoCjk("英文专家失败进度", prompts.get(AgentLang.EN, "chat.progress.expertFailed",
-                Map.of("agent", "market_agent", "reason", "timeout")));
         assertNoCjk("英文 HITL 待确认", prompts.get(AgentLang.EN, "chat.hitl.pendingMessage",
                 Map.of("label", "deep analysis", "reason", "3 calls")));
         assertNoCjk("英文 HITL 已拒绝", prompts.get(AgentLang.EN, "chat.hitl.rejectedReply",
@@ -318,8 +308,8 @@ class PromptI18nTest {
     void 三个域的英文词表都真有自己的文案() {
         for (String key : List.of("trader.template", "trader.label.memory", "trader.mark.conclusion",
                 "reviewer.system", "reviewer.mark.updates", "reviewer.label.statsHeader",
-                "tool.route", "tool.run_deep_analysis", "tool.news_search",
-                "chat.summarizer", "chat.router", "chat.expert.market", "chat.expert.news",
+                "tool.run_deep_analysis", "tool.news_search",
+                "chat.main", "chat.newsRule.search", "chat.newsRule.noSearch",
                 "chat.compress.prompt", "chat.deepAnalysis.judgePrompt",
                 "chat.hitl.reason", "chat.deferred.prefix",
                 "coach.hint.system", "coach.review.system", "coach.label.barsHeader",
@@ -358,45 +348,37 @@ class PromptI18nTest {
     }
 
     /** 生产同款两步渲染：先按变体键出新闻条款，再填进 summarizer 的 {{newsRule}} 槽位 */
-    private String summarizer(AgentLang lang, String newsRuleKey) {
+    private String main(AgentLang lang, String newsRuleKey) {
         String newsRule = prompts.get(lang, newsRuleKey,
                 Map.of("supplementTag", "[X]", "mergedTag", "[BlockBeats+X]"));
-        return prompts.get(lang, "chat.summarizer", Map.of("newsRule", newsRule));
+        return prompts.get(lang, "chat.main", Map.of("newsRule", newsRule));
     }
 
-    /** chat：汇总者的七条回答原则 + news/summarizer 的分工红线，搬家时丢哪条都在这里红 */
+    /** chat：主 agent 的七条回答原则 + 新闻条款，搬家时丢哪条都在这里红 */
     @Test
-    void 中文chat保住汇总者七原则与新闻分工() {
-        String p = summarizer(AgentLang.ZH, "chat.newsRule.search");
+    void 中文chat保住主agent七原则与新闻条款() {
+        String p = main(AgentLang.ZH, "chat.newsRule.search");
         assertThat(p)
-                .as("① 结论可追溯").contains("结论必须可追溯到专家给的数据或你用工具取回的数据，不编造")
-                .as("② 新闻分工").contains("news_agent 只管 BlockBeats，联网补充归你")
+                .as("① 行情先调工具再答").contains("先调 market_snapshot").contains("结论必须引用工具返回的具体数字")
+                .as("② 新闻先调工具再补联网").contains("新闻先调 news_search 拿 BlockBeats 快讯").contains("再用你的联网搜索")
                 .as("③ 鼓励表态").contains("鼓励表态")
                 .as("④ 看不清是例外").contains("不是回避表态的出口")
                 .as("⑤ 深研判要明说才调").contains("仅当用户明确说出").contains("run_deep_analysis")
-                .as("⑥-查 trader 只读工具归汇总者").contains("trader_overview").contains("trader_decisions").contains("trader_trades")
+                .as("⑥-查 trader 只读工具").contains("trader_overview").contains("trader_decisions").contains("trader_trades")
                 .as("⑥-动 三个动作工具只弹表单").contains("绝不能说已经唤醒了／已经复盘了／留言已记下")
                 .as("⑦ 行为分析").contains("analyze_my_behavior");
-        // 另一半分工写在 news 专家那边，两处必须同时在
-        assertThat(prompts.get(AgentLang.ZH, "chat.expert.news"))
-                .contains("严禁把你联网搜索到的任何内容写进回答");
-        assertThat(prompts.get(AgentLang.ZH, "chat.router")).contains("只调用 route 工具，不要输出任何文字");
+        // 没搜索能力的那版：只用快讯，且如实说没有检索能力
+        assertThat(main(AgentLang.ZH, "chat.newsRule.noSearch"))
+                .contains("新闻只用 news_search 返回的 BlockBeats 快讯").contains("没有联网检索能力");
     }
 
-    /**
-     * 快讯译文口径是<b>配对</b>的：news 专家那句"材料就这么多、是原文还是译文"与 summarizer 那句
-     * "[BlockBeats] 那批来自中文源，按事件去重"必须同时在。只改一处，另一处的模型就会出事——
-     * news 专家以为材料不全自己去搜（它明令禁搜），summarizer 把同一件事当成两件事。
-     */
+    /** 快讯是中文源原文/译文这件事写在新闻条款里：少了它模型会把同一件事的中英报道当成两件事 */
     @Test
-    void 快讯译文口径在news专家与summarizer两处同时钉住() {
+    void 快讯译文口径钉在新闻条款里() {
         for (AgentLang lang : AgentLang.values()) {
             String anchor = lang == AgentLang.ZH ? "中文源" : "machine translation";
-            assertThat(prompts.get(lang, "chat.expert.news"))
-                    .as("%s 的 news 专家没交代快讯是原文还是译文", lang.code()).contains(anchor);
-            // 译文口径只在承诺联网的那版新闻条款里有意义（noSearch 版没有第二个来源要去重）
-            assertThat(summarizer(lang, "chat.newsRule.search"))
-                    .as("%s 的 summarizer 没交代 [BlockBeats] 那批是原文还是译文", lang.code()).contains(anchor);
+            assertThat(main(lang, "chat.newsRule.search"))
+                    .as("%s 的新闻条款没交代快讯是原文还是译文", lang.code()).contains(anchor);
         }
     }
 

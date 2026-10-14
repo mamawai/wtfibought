@@ -125,7 +125,7 @@ public class ApprovalRegistry {
     }
 
     /**
-     * 路由侧：只探不消费。续跑轮（用户刚确认贵操作）据此直通汇总不再派专家。
+     * 只探不消费：这个会话有没有还没用掉的授权。
      * 顺手清理过期条目——用户批了但后续没触发工具的记录不清理会一直累积。
      */
     public boolean hasApproval(String sessionId) {
@@ -145,8 +145,7 @@ public class ApprovalRegistry {
      * <p>
      * 三元组化<b>新引入</b>的洞：旧的 {@code consumeApproval(sessionId)} 不带参数，必然消费掉；
      * 现在只要有一次对不上（模型改口换 symbol、或续跑轮压根没调工具），那条授权就一直躺到 TTL 结束，
-     * 而 {@link #hasApproval} 为真时 {@link ChatTurnRunner} 会跳过全部专家派发——这 10 分钟内该会话每一条新提问
-     * 都不取数据、直接让 summarizer 凭空作答，且没有任何日志说明原因。
+     * 之后 10 分钟内模型若又调同一件事就会被它放行，用户以为自己没点过头。
      * 所以"又要弹卡"就意味着上一条授权已经用不上了，弹卡前先丢掉它。
      */
     public void discardApprovals(String sessionId) {

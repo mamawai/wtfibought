@@ -40,12 +40,10 @@ import static org.mockito.Mockito.when;
 /**
  * 每轮读数（模型端点 / 耗时 / token）的口径。
  * <p>
- * 三件必须钉住的事：
+ * 两件必须钉住的事：
  * <ol>
- *   <li><b>深浅两条端点合账</b>——路由和专家烧的是浅模型，汇总烧的是深模型，前端要的是一轮的总数；</li>
- *   <li><b>轮边界靠 reset 划</b>——装饰器跟着叶子跨轮缓存，不清零就是上一轮的账接着涨；</li>
- *   <li><b>账本脏了就不报用量</b>——让位交出去的专家批次没人取消，它还在往同一份账本上记，
- *       这时候报出去的是个错的数。</li>
+ *   <li><b>深浅两条端点合账</b>——历史压缩烧的是浅模型，作答烧的是深模型，前端要的是一轮的总数；</li>
+ *   <li><b>轮边界靠 reset 划</b>——装饰器跟着叶子跨轮缓存，不清零就是上一轮的账接着涨。</li>
  * </ol>
  * 用真 {@link UsageTrackingChatModel} 包 mock 模型，在 runner 的替身里真调几次模型来"烧"token，
  * 这样账本走的是生产同一条路，而不是测试自己塞一个数进去。
@@ -90,14 +88,13 @@ class ChatTurnMetaTest {
         }
     }
 
-    /** 只有账本是真的：图用不上（runner 被替身顶了），所以 experts/summarizer 给空 */
+    /** 只有账本是真的：主 agent 用不上（runner 被替身顶了），给空 */
     private static ChatAgentFactory.Leaves leaves(UsageTrackingChatModel deep, UsageTrackingChatModel light) {
-        return new ChatAgentFactory.Leaves(LABEL, deep, light, Map.of(), null, AgentLang.ZH);
+        return new ChatAgentFactory.Leaves(LABEL, deep, light, null, AgentLang.ZH);
     }
 
     /** 一套能真跑 {@code ChatTurnStreamer.run} 的最小装配 */
-    private record Harness(ChatTurnStreamer streamer, ChatHistoryService history,
-                           ChatYieldCoordinator coordinator) {
+    private record Harness(ChatTurnStreamer streamer, ChatHistoryService history) {
     }
 
     /**
@@ -113,16 +110,15 @@ class ChatTurnMetaTest {
         ChatTurnRunner turnRunner = mock(ChatTurnRunner.class);
         doAnswer((Answer<ChatTurnRunner.TurnResult>) inv -> {
             burn.run();
-            search.accept(inv.getArgument(7));            // progressSink 之后是 searchSink
+            search.accept(inv.getArgument(6));            // 答案 sink 之后是 searchSink
             Consumer<String> sink = inv.getArgument(5);   // leaves/userId/session/message/intent 之后才是答案 sink
             sink.accept("答案正文");
             return ChatTurnRunner.TurnResult.COMPLETED;
-        }).when(turnRunner).run(any(), anyLong(), any(), any(), any(), any(), any(), any(), any(), any());
+        }).when(turnRunner).run(any(), anyLong(), any(), any(), any(), any(), any(), any());
 
-        ChatYieldCoordinator coordinator = new ChatYieldCoordinator();
         ChatTurnStreamer streamer = new ChatTurnStreamer(turnRunner, history, mock(WorkbenchRunRegistry.class),
-                coordinator, new ApprovalRegistry(), ChatTestEndpoints.PROMPTS);
-        return new Harness(streamer, history, coordinator);
+                new ApprovalRegistry(), ChatTestEndpoints.PROMPTS);
+        return new Harness(streamer, history);
     }
 
     /** 落库时那条 assistant 行带的读数 */
@@ -146,7 +142,7 @@ class ChatTurnMetaTest {
 
         RecordingEmitter emitter = new RecordingEmitter();
         h.streamer().run(new SseChannel(emitter), 1L, SESSION, "看看行情",
-                leaves(deep, light), h.coordinator().openTurn(1L), null, null, null);
+                leaves(deep, light), null, null);
 
         ChatHistoryService.TurnMeta meta = capturedMeta(h.history());
         assertThat(meta.modelLabel()).isEqualTo(LABEL);
@@ -176,7 +172,7 @@ class ChatTurnMetaTest {
 
         RecordingEmitter emitter = new RecordingEmitter();
         h.streamer().run(new SseChannel(emitter), 1L, SESSION, "BTC 新闻",
-                leaves(shared, shared), h.coordinator().openTurn(1L), null, null, null);
+                leaves(shared, shared), null, null);
 
         JsonNode search = emitter.event("search");
         assertThat(search).isNotNull();
@@ -197,7 +193,7 @@ class ChatTurnMetaTest {
         Harness h = harness(() -> shared.call(new Prompt("one")));
 
         h.streamer().run(new SseChannel(new RecordingEmitter()), 1L, SESSION, "看看行情",
-                leaves(shared, shared), h.coordinator().openTurn(1L), null, null, null);
+                leaves(shared, shared), null, null);
 
         ChatHistoryService.TurnMeta meta = capturedMeta(h.history());
         assertThat(meta.modelCalls()).isEqualTo(1);
@@ -215,9 +211,9 @@ class ChatTurnMetaTest {
         ChatAgentFactory.Leaves leaves = leaves(deep, light);
 
         h.streamer().run(new SseChannel(new RecordingEmitter()), 1L, SESSION, "第一问",
-                leaves, h.coordinator().openTurn(1L), null, null, null);
+                leaves, null, null);
         h.streamer().run(new SseChannel(new RecordingEmitter()), 1L, SESSION, "第二问",
-                leaves, h.coordinator().openTurn(1L), null, null, null);
+                leaves, null, null);
 
         ArgumentCaptor<ChatHistoryService.TurnMeta> captor =
                 ArgumentCaptor.forClass(ChatHistoryService.TurnMeta.class);
@@ -226,35 +222,5 @@ class ChatTurnMetaTest {
         // 两轮各烧一次浅一次深；没清零的话第二轮会是 310
         assertThat(captor.getAllValues().get(0).totalTokens()).isEqualTo(155L);
         assertThat(captor.getAllValues().get(1).totalTokens()).isEqualTo(155L);
-    }
-
-    /**
-     * 判据是"账本上有没有别轮的在途调用"，不是"这一轮的名额是不是抢来的"——
-     * 让位交出去的专家批次没人取消，它能跨过好几轮继续往同一份账本上记 token。
-     */
-    @Test
-    void 账本被别轮在途专家写脏时只报耗时() {
-        UsageTrackingChatModel deep = new UsageTrackingChatModel(modelReporting(100, 20, 120));
-        UsageTrackingChatModel light = new UsageTrackingChatModel(modelReporting(30, 5, 35));
-        Harness h = harness(() -> {
-            light.call(new Prompt("route"));
-            deep.call(new Prompt("summarize"));
-        });
-        ChatAgentFactory.Leaves leaves = leaves(deep, light);
-        // 上一轮让位时交出去的批次还没跑完：那些专家仍在往这同一份账本上记账
-        h.coordinator().registerDeferred(1L, SESSION, "上一个问题",
-                new ChatTurnRunner.ExpertBatch(List.of("market_agent"), List.of(new CompletableFuture<Message>())));
-
-        h.streamer().run(new SseChannel(new RecordingEmitter()), 1L, SESSION, "插话",
-                leaves, h.coordinator().openTurn(1L), null, null, null);
-
-        ChatHistoryService.TurnMeta meta = capturedMeta(h.history());
-        // 端点名与耗时是这一轮自己的，照报；用量混着别轮的账，一律不报
-        assertThat(meta.modelLabel()).isEqualTo(LABEL);
-        assertThat(meta.latencyMs()).isNotNull();
-        assertThat(meta.modelCalls()).isNull();
-        assertThat(meta.promptTokens()).isNull();
-        assertThat(meta.completionTokens()).isNull();
-        assertThat(meta.totalTokens()).isNull();
     }
 }

@@ -214,7 +214,7 @@ export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen 
 
   // 有 token 流或亮着的进度行时，答案卡/过程轨自带动效，底部指示条只在"纯静默"时出现
   const streamingNow = items.some(it =>
-    ((it.kind === 'assistant' || it.kind === 'expert') && it.streaming) || (it.kind === 'progress' && it.active));
+    (it.kind === 'assistant' && it.streaming) || (it.kind === 'progress' && it.active));
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -312,8 +312,7 @@ export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen 
               {blocks.map(block => {
                 if (block.kind === 'rail') {
                   const active = block.steps.some(({ item }) =>
-                    (item.kind === 'expert' && item.streaming) || (item.kind === 'progress' && item.active)
-                    || (item.kind === 'search' && item.active));
+                    (item.kind === 'progress' && item.active) || (item.kind === 'search' && item.active));
                   return (
                     <ProcessRail
                       key={block.key}

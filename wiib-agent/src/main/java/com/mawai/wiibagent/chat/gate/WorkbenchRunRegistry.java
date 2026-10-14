@@ -4,17 +4,19 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiPredicate;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
 /**
- * 工作台运行注册表：sessionId → 运行中标记 + SSE 事件出口。
+ * 工作台运行注册表：sessionId → 在跑的那一轮（SSE 事件出口 + 中断信号）。
  * <ul>
- *   <li>运行状态：切页/刷新回来后前端查 status 得知"AI 还在后台跑"（图不随 SSE 断连中止）</li>
- *   <li>事件总线：深研判等长耗时工具在图内同步阻塞跑，经此把阶段进度推给 SSE 通道，
+ *   <li>运行状态：切页/刷新回来后前端查 status 得知"AI 还在后台跑"（不随 SSE 断连中止）</li>
+ *   <li>事件总线：深研判等长耗时工具同步阻塞跑，经此把阶段进度推给 SSE 通道，
  *       解决"几分钟零输出不知道卡在哪"；trader 动作类工具经此推表单卡，把执行权交回用户点击</li>
+ *   <li>中断：/cancel 完成那轮的信号，轮在下一个检查点收尾</li>
  * </ul>
  * 进程内存级即可：单实例部署，重启即无运行中会话，无需持久化。
  */
@@ -27,12 +29,16 @@ public class WorkbenchRunRegistry {
     public interface Emitter extends BiPredicate<String, ObjectNode> {
     }
 
-    /** value=SSE 事件出口（key 存在即"运行中"） */
-    private final Map<String, Emitter> runs = new ConcurrentHashMap<>();
+    /** 一轮在跑的现场 */
+    private record Run(Emitter emitter, CompletableFuture<Void> cancel) {
+    }
 
-    /** 一轮对话开跑：登记运行中 + 挂事件出口。 */
-    public void start(String sessionId, Emitter emitter) {
-        runs.put(sessionId, emitter);
+    /** key 存在即"运行中" */
+    private final Map<String, Run> runs = new ConcurrentHashMap<>();
+
+    /** 一轮对话开跑：登记运行中 + 挂事件出口 + 挂中断信号 */
+    public void start(String sessionId, Emitter emitter, CompletableFuture<Void> cancel) {
+        runs.put(sessionId, new Run(emitter, cancel));
     }
 
     /** 一轮对话结束（含异常路径）。 */
@@ -42,6 +48,16 @@ public class WorkbenchRunRegistry {
 
     public boolean isRunning(String sessionId) {
         return runs.containsKey(sessionId);
+    }
+
+    /** 用户点停止：完成那轮的中断信号。没轮在跑返回 false，调用方如实告诉用户按钮点晚了 */
+    public boolean requestCancel(String sessionId) {
+        Run run = runs.get(sessionId);
+        if (run == null) {
+            return false;
+        }
+        run.cancel().complete(null);
+        return true;
     }
 
     /** 工具侧：推一条阶段进度。data 字段名 {@code text} 是既有前端契约，别改。 */
@@ -81,7 +97,7 @@ public class WorkbenchRunRegistry {
 
     /** 统一出口：会话已结束、通道已断连，两种都返回 false。 */
     private boolean publish(String sessionId, String event, ObjectNode data) {
-        Emitter emitter = runs.get(sessionId);
-        return emitter != null && emitter.test(event, data);
+        Run run = runs.get(sessionId);
+        return run != null && run.emitter().test(event, data);
     }
 }

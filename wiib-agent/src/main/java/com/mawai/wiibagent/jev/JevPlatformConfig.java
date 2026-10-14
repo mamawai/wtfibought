@@ -5,8 +5,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * 平台自己的 Jev（环境变量 JEV_API_KEY / JEV_BASE_URL / JEV_MODEL），只给预测员用，
- * 与用户 BYOK 的 user_jev_config 是两回事。key 为空即未启用。
+ * 平台自己的 Jev（环境变量 JEV_API_KEY / JEV_BASE_URL / JEV_MODEL），只给预测员用。key 为空即未启用。
  */
 @Getter
 @Component

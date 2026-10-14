@@ -6,7 +6,9 @@ import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.llm.ChatEndpoints;
+import com.mawai.wiibagent.toolkit.NewsToolkit;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -26,6 +28,16 @@ public final class ChatTestEndpoints {
         UserLangResolver resolver = mock(UserLangResolver.class);
         when(resolver.of(anyLong())).thenReturn(AgentLang.ZH);
         return resolver;
+    }
+
+    /**
+     * NewsToolkit 的 mock：boundTo 要返回真的工具视图，建主 agent 时才挂得上 news_search；
+     * newsSearch 本身仍是 mock，要喂快讯的用例自己 stub
+     */
+    public static NewsToolkit newsToolkit() {
+        NewsToolkit toolkit = mock(NewsToolkit.class);
+        when(toolkit.boundTo(any())).thenAnswer(inv -> new NewsToolkit.NewsSearchTool(toolkit, inv.getArgument(0)));
+        return toolkit;
     }
 
     public static UserLlmEndpoint endpoint(String model) {

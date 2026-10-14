@@ -14,7 +14,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Stream;
 
 /**
@@ -24,7 +29,11 @@ import java.util.stream.Stream;
  * <p>
  * 建造参数：{@code chat} 模型调用层（必填）、{@code limiter} 调用保险丝（必填）、
  * {@code streaming} 走流式还是阻塞（缺省阻塞）、{@code gate} 工具执行前的闸门（可空，如审批卡）、
- * {@code summarizer} 长对话压缩（可空）、{@code trace} 工具调用轨迹（可空）。
+ * {@code summarizer} 长对话压缩（可空）、{@code trace} 工具调用轨迹（可空）、
+ * {@code serialTools} 不许与同批别的调用并发的工具名（缺省空）。
+ * <p>
+ * 同一条回复里的多个 tool_call 并发执行（虚拟线程），回执仍按 tool_call 顺序配对合成一条；
+ * 批内出现 serialTools 里的任一工具，整批退回按原顺序串行。
  * <p>
  * 三条顺序约束，写反了代码照跑什么都不报错：
  * <ul>
@@ -71,6 +80,9 @@ public final class ReactLoop {
     private static final Listener NONE = new Listener() {
     };
 
+    /** 同批工具并发用。工具全程阻塞在上游 IO 上，不能用 commonPool：容器里就一两个线程 */
+    private static final ExecutorService TOOL_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
+
     /** @param messages 收束时的完整历史（含入参那几条） @param modelCalls 本次运行模型被调了几次 */
     public record Result(List<Message> messages, int modelCalls) {
     }
@@ -83,6 +95,7 @@ public final class ReactLoop {
     private final ToolGate gate;
     private final ConversationSummarizer summarizer;
     private final ToolCallTraceHook trace;
+    private final Set<String> serialTools;
 
     private ReactLoop(Builder builder) {
         this.chat = builder.chat;
@@ -92,6 +105,7 @@ public final class ReactLoop {
         this.gate = builder.gate;
         this.summarizer = builder.summarizer;
         this.trace = builder.trace;
+        this.serialTools = builder.serialTools;
     }
 
     public static Builder builder() {
@@ -106,6 +120,7 @@ public final class ReactLoop {
         private ToolGate gate;
         private ConversationSummarizer summarizer;
         private ToolCallTraceHook trace;
+        private Set<String> serialTools = Set.of();
 
         /** 模型调用层，必填 */
         public Builder chat(ResilientChatService chat) {
@@ -140,6 +155,12 @@ public final class ReactLoop {
         /** 工具调用轨迹，可空 */
         public Builder trace(ToolCallTraceHook trace) {
             this.trace = trace;
+            return this;
+        }
+
+        /** 不许与同批别的调用并发的工具名（改账户状态那类）；批内出现任一个，整批按原顺序串行 */
+        public Builder serialTools(Set<String> serialTools) {
+            this.serialTools = Set.copyOf(serialTools);
             return this;
         }
 
@@ -206,19 +227,57 @@ public final class ReactLoop {
         return cancel != null && cancel.isDone();
     }
 
-    /** 逐个顺序执行，结果按 tool_call 一一配对合成一条回执；工具名对不上就回执报错 */
+    /**
+     * 执行一批工具，结果按 tool_call 顺序一一配对合成一条回执。
+     * 批内没有串行工具就并发跑；有一个就整批按原顺序串行，不拆成"并行的先跑、串行的排后面"——
+     * 账户状态类工具不该和同批任何别的调用交错。
+     */
     private ToolResponseMessage executeTools(AssistantMessage reply, String sessionId) {
         ToolContext context = new ToolContext(sessionId == null ? Map.of() : Map.of(SESSION_KEY, sessionId));
-        List<ToolResponseMessage.ToolResponse> responses = new ArrayList<>();
-        for (AssistantMessage.ToolCall toolCall : reply.getToolCalls()) {
-            ToolCallback callback = toolsByName.get(toolCall.name());
-            String result = callback == null
-                    ? "ERROR: unknown tool \"" + toolCall.name() + "\", available tools: "
-                            + String.join(", ", toolsByName.keySet())
-                    : callback.call(toolCall.arguments(), context);
-            responses.add(new ToolResponseMessage.ToolResponse(toolCall.id(), toolCall.name(), result));
+        List<AssistantMessage.ToolCall> calls = reply.getToolCalls();
+        boolean parallel = calls.size() > 1 && calls.stream().noneMatch(call -> serialTools.contains(call.name()));
+        List<String> results = parallel
+                ? callInParallel(calls, context)
+                : calls.stream().map(call -> callTool(call, context)).toList();
+        List<ToolResponseMessage.ToolResponse> responses = new ArrayList<>(calls.size());
+        for (int i = 0; i < calls.size(); i++) {
+            AssistantMessage.ToolCall call = calls.get(i);
+            responses.add(new ToolResponseMessage.ToolResponse(call.id(), call.name(), results.get(i)));
         }
         return ToolResponseMessage.builder().responses(responses).build();
+    }
+
+    /** 单个工具调用；工具名对不上就回执报错并列出可用工具 */
+    private String callTool(AssistantMessage.ToolCall toolCall, ToolContext context) {
+        ToolCallback callback = toolsByName.get(toolCall.name());
+        return callback == null
+                ? "ERROR: unknown tool \"" + toolCall.name() + "\", available tools: "
+                        + String.join(", ", toolsByName.keySet())
+                : callback.call(toolCall.arguments(), context);
+    }
+
+    /**
+     * 全部提交再按提交顺序收，谁先完成不影响回执顺序。
+     * 工具失败正常是回执不是异常（LocalizedToolCallbacks.FailureAsResult），这里收到的异常原样抛出，其余在途调用取消。
+     */
+    private List<String> callInParallel(List<AssistantMessage.ToolCall> calls, ToolContext context) {
+        List<Future<String>> futures = calls.stream()
+                .map(call -> TOOL_EXECUTOR.submit(() -> callTool(call, context)))
+                .toList();
+        List<String> results = new ArrayList<>(futures.size());
+        try {
+            for (Future<String> future : futures) {
+                results.add(future.get());
+            }
+        } catch (InterruptedException e) {
+            futures.forEach(future -> future.cancel(true));
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("工具执行被中断", e);
+        } catch (ExecutionException e) {
+            futures.forEach(future -> future.cancel(true));
+            throw e.getCause() instanceof RuntimeException cause ? cause : new IllegalStateException(e.getCause());
+        }
+        return results;
     }
 
     /**

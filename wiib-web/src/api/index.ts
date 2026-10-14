@@ -4,7 +4,7 @@ import type { TnOverview, TnTrade, TnDailyCell, TnEquityPoint, TnFillStats, TnMa
 import type { BacktestTaskStatus, BacktestEventsPage, BacktestKlinesPage, BacktestResultPayload, ReplayCoverage, HistoryKlinesPayload, ReplayCoachRequest, ReplayCoachEvent } from '../types';
 import type { LedgerEntry, LedgerBizTypeOption, PublicTrade, UserProfile, PositionHistoryItem, RankingSort } from '../types';
 import type { CampaignInfo, CampaignReward, CampaignScore, MyCampaignView } from '../types';
-import type { LlmEndpointView, LlmEndpointSaveRequest, LlmBindings, LlmPurpose, JevConfigView, JevSaveRequest } from '../types';
+import type { LlmEndpointView, LlmEndpointSaveRequest, LlmBindings, LlmPurpose } from '../types';
 import type { JevPredictionOverview, JevPredictionDecisionView, JevBet, JevSwitchState } from '../types';
 import type { User, PageResult, RankingItem, CommentItem, NotificationItem, CryptoPrice, CryptoOrderRequest, CryptoOrder, CryptoPosition, BStock, FuturesOpenRequest, FuturesCloseRequest, FuturesAddMarginRequest, FuturesReduceMarginRequest, FuturesStopLossRequest, FuturesTakeProfitRequest, FuturesAdjustLeverageRequest, FuturesCrossAccount, WalletTransferPreview, FuturesPosition, FuturesOrder, FuturesReverseResult, FuturesBracket, FundingRateView, TradeFilterMap, PredictionRound, PredictionBet, PredictionBuyRequest, PredictionBetLive, PredictionPnl, AssetSnapshot, CategoryAverages, ForceOrder, AiKeyConfig, AiModelAssignment, NewsBackfillResult, InviteCode, ChatIntent, WorkbenchEvent, StrategyAccountView, TraderPublicView, TraderOwnerView, TraderDetailView, AiTraderDecisionView, TraderEquityPoint, TraderUpsertRequest, TraderExperience, TraderSpec, StrategySignalState, FeedStreamHealth, WorkbenchSessionSummary, WorkbenchSessionStatus, WorkbenchChatMessage, TraderActionPanel, TraderActionResult, TradeRecordView, TraderLiveEvent, WakeTrace } from '../types';
 
@@ -450,8 +450,8 @@ const getSse = async <E,>(url: string, onEvent: (e: E) => void, signal?: AbortSi
 
 export const workbenchApi = {
   /**
-   * 工作台 SSE：POST /ai/workbench/chat，事件 session/agent_start/token/hitl_request/done/error。
-   * intent 只有功能按钮直发时带（后端据此跳过专家派发直奔对应工具）
+   * 工作台 SSE：POST /ai/workbench/chat，事件 session/token/progress/search/hitl_request/form_request/behavior_report/done/error。
+   * intent 只有功能按钮直发时带（后端据此在收尾指令里钉死本轮必须调的工具）
    */
   chat: (sessionId: string | null, message: string, onEvent: (e: WorkbenchEvent) => void,
          signal?: AbortSignal, intent?: ChatIntent) =>
@@ -473,15 +473,9 @@ export const workbenchApi = {
     api.post<unknown, void>('/ai/workbench/approve', { sessionId, approved, requestId }),
   /** 历史会话列表（标题=首条提问，按最后活跃倒序） */
   sessions: () => api.get<unknown, WorkbenchSessionSummary[]>('/ai/workbench/sessions'),
-  /**
-   * 补答轮：让位时交出去的专家批次由这一轮接回，事件协议与 chat 一致（标头是第一帧答案 token）。
-   * 后端只在会话空闲时放行：占线回 2203（不做让位握手），没欠账回 2208
-   */
-  deferred: (sessionId: string, onEvent: (e: WorkbenchEvent) => void, signal?: AbortSignal) =>
-    postSse<WorkbenchEvent>('/api/ai/workbench/deferred', { sessionId }, onEvent, signal),
   /** 用户占不占线（不分会话）：本地没有流、又要等那轮跑完时轮询它 */
   busy: () => api.get<unknown, boolean>('/ai/workbench/busy'),
-  /** 会话运行状态（切页/刷新回来判断：还在跑→轮询；欠着补答→空闲时发起补答轮） */
+  /** 会话运行状态（切页/刷新回来判断：还在跑→轮询） */
   sessionStatus: (sessionId: string) =>
     api.get<unknown, WorkbenchSessionStatus>(`/ai/workbench/sessions/${sessionId}/status`),
   /** 单会话消息记录；续聊仍走 chat 带同一 sessionId */
@@ -490,7 +484,7 @@ export const workbenchApi = {
   /** 删除历史会话（展示记录 + 后端续聊上下文） */
   deleteSession: (sessionId: string) =>
     api.delete<unknown, void>(`/ai/workbench/sessions/${sessionId}`),
-  /** 清空全部历史会话：skipped=在跑或欠补答的那些，后端保留不删 */
+  /** 清空全部历史会话：skipped=在跑的那些，后端保留不删 */
   deleteAllSessions: () =>
     api.delete<unknown, { deleted: number; skipped: number }>('/ai/workbench/sessions'),
 };
@@ -513,16 +507,6 @@ export const llmEndpointApi = {
   /** 连通性探测：与保存分离，对应表单里的"测试连通性"按钮 */
   test: (req: LlmEndpointSaveRequest, id?: number) =>
     api.post<unknown, void>('/ai/llm-endpoints/test', req, { params: id != null ? { id } : {} }),
-};
-
-// ========== 用户 Jev 决策模型配置（AI 页「模型配置」Jev 卡片；当前只给研判对话的路由用） ==========
-export const jevApi = {
-  get: () => api.get<unknown, JevConfigView | null>('/ai/jev'),
-  /** 一人一份，保存即覆盖；apiKey 传空=沿用已存的 */
-  save: (req: JevSaveRequest) => api.put<unknown, void>('/ai/jev', req),
-  remove: () => api.delete<unknown, void>('/ai/jev'),
-  /** 连通性探测：真发一道题 */
-  test: (req: JevSaveRequest) => api.post<unknown, void>('/ai/jev/test', req),
 };
 
 // ========== Jev 预测员（平台级展示） ==========

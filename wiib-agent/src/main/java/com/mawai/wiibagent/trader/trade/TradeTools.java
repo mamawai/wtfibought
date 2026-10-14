@@ -52,6 +52,10 @@ public class TradeTools {
             "get_account", "open_position", "close_position", "set_stop_loss",
             "set_take_profit", "cancel_order", "write_plan");
 
+    /** 改账户状态的工具名：同一批 tool_call 里有它们就整批串行，不和别的调用交错（ReactLoop.serialTools） */
+    public static final Set<String> SERIAL_TOOLS = Set.of(
+            "open_position", "close_position", "set_stop_loss", "set_take_profit", "write_plan", "cancel_order");
+
     private final SimTradeClient simTradeClient;
     private final long simUserId;
     private final Set<String> symbolWhitelist;

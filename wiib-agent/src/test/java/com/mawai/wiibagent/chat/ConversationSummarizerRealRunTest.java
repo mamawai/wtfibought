@@ -269,9 +269,7 @@ class ConversationSummarizerRealRunTest {
     /** 一轮对话，走的就是 Controller 那条路（{@link ChatTurnRunner#run}） */
     private String ask(ChatAgentFactory.Leaves leaves, String sessionId, String question) {
         StringBuilder answer = new StringBuilder();
-        chatTurnRunner.run(leaves, ADMIN_USER_ID, sessionId, question, null, answer::append,
-                event -> log.info("[SummarizeRealRun] 专家 {} {}", event.agent(), event.phase()),
-                s -> { }, ChatTurnRunner.TurnYield.NONE, null);
+        chatTurnRunner.run(leaves, ADMIN_USER_ID, sessionId, question, null, answer::append, s -> { }, null);
         return answer.toString();
     }
 

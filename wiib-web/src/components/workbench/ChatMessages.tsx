@@ -1,11 +1,11 @@
 import { useCallback, useState } from 'react';
-import { Trans, useTranslation } from 'react-i18next';
+import { useTranslation } from 'react-i18next';
 import { Check, ChevronRight, Copy, Globe, Loader2, RefreshCw, ShieldQuestion, X } from 'lucide-react';
 import { Markdown } from '../Markdown';
 import { cn, fmtTime, fmtTokens } from '../../lib/utils';
 import { type ChatItem } from './chatStore';
 import type { SearchSource } from '../../types';
-import { AGENT_LABEL_KEY, HUB_NAME, type RailStep } from './chatView';
+import { HUB_NAME, type RailStep } from './chatView';
 
 /** 来源链接的展示名：域名（去 www.），解析不了的原样给 */
 function domainOf(url: string): string {
@@ -213,24 +213,18 @@ export function AssistantAnswer({ item, canRegenerate, onRegenerate }: {
 }
 
 /**
- * 工作过程轨：一行摘要 + 展开后的竖轨节点。默认展开——收不收由用户点，别在他正看专家分析时自己收起来。
+ * 工作过程轨：一行摘要 + 展开后的竖轨节点。默认展开——收不收由用户点，别在他正看过程时自己收起来。
  * <p>
- * 摘要按轨里有什么现挑：跑着就说正在做什么，跑完优先报搜了几个站，其次报调度了几位专家，
- * 都没有才退回"N 步"。
+ * 摘要按轨里有什么现挑：跑着就说正在做什么，跑完优先报搜了几个站，没搜过就退回"N 步"。
  */
 export function ProcessRail({ steps, active, open, onToggle }: {
   steps: RailStep[]; active: boolean; open: boolean; onToggle: () => void;
 }) {
   const { t } = useTranslation('ai');
-  // 认得出的 agent 翻成展示名，认不出的（后端加了新 agent）原样显示 id
-  const agentName = (id: string) =>
-    (id === 'supervisor' ? HUB_NAME : AGENT_LABEL_KEY[id] ? t(AGENT_LABEL_KEY[id]) : null);
 
-  const experts = new Set<string>();
   const sites = new Set<string>();
   let searching = false;
   for (const { item } of steps) {
-    if (item.kind === 'expert') experts.add(item.agent);
     if (item.kind === 'search') {
       item.sources.forEach(s => sites.add(s.url));
       if (item.active) searching = true;
@@ -239,8 +233,7 @@ export function ProcessRail({ steps, active, open, onToggle }: {
   const summary = active
     ? (searching ? t('rail.searchingNoQuery') : t('rail.sumWorking'))
     : sites.size > 0 ? t('rail.searched', { count: sites.size })
-      : experts.size > 0 ? t('rail.sumExperts', { count: experts.size })
-        : t('rail.title', { count: steps.length });
+      : t('rail.title', { count: steps.length });
 
   return (
     <div>
@@ -259,44 +252,13 @@ export function ProcessRail({ steps, active, open, onToggle }: {
         <div className="overflow-hidden min-h-0">
           <div className="ml-[5px] mt-1.5 border-l-2 border-border pl-3.5 space-y-2.5 py-0.5">
             {steps.map(({ item, index }) => {
-              const hot = (item.kind === 'expert' && item.streaming) || (item.kind === 'progress' && item.active)
-                || (item.kind === 'search' && item.active);
+              const hot = (item.kind === 'progress' && item.active) || (item.kind === 'search' && item.active);
               return (
                 <div key={index} className="relative text-[11.5px] leading-relaxed text-muted-foreground">
                   <span className={cn(
                     'absolute -left-[18.5px] top-[5px] w-[7px] h-[7px] rounded-full border-2',
                     hot ? 'bg-primary border-primary shadow-[0_0_6px_var(--color-primary)]' : 'bg-card border-border',
                   )} />
-                  {item.kind === 'agent' && (
-                    <span>
-                      {/* 整句进词表：中英语序不同，拆成"前半 + 名字 + 后半"必拼出病句 */}
-                      <Trans
-                        ns="ai"
-                        i18nKey="rail.handoff"
-                        values={{
-                          hub: HUB_NAME,
-                          agent: agentName(item.agent) || agentName(item.node) || item.agent || item.node,
-                        }}
-                        components={[
-                          <span className="font-bold text-foreground" />,
-                          <span className="font-bold text-primary" />,
-                        ]}
-                      />
-                    </span>
-                  )}
-                  {item.kind === 'expert' && (
-                    <>
-                      <Trans
-                        ns="ai"
-                        i18nKey="rail.expertWorking"
-                        values={{ agent: agentName(item.agent) || item.agent }}
-                        components={[<span className="font-bold text-foreground" />]}
-                      />
-                      <div className="mt-1 rounded-lg border border-border bg-card-2 px-2.5 py-2 text-[11px] max-h-44 overflow-y-auto">
-                        <Markdown content={item.content} />
-                      </div>
-                    </>
-                  )}
                   {/* keyed=前端自己立的说明行，存的是 key，这里现翻；其余是后端下发的阶段文案，原样显示 */}
                   {item.kind === 'progress' && (
                     <span className={cn(hot && 'text-foreground font-bold')}>

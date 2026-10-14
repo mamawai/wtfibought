@@ -344,6 +344,8 @@ POST /api/ai/workbench/chat
 
 `MAX_MODEL_CALLS` 的值要连着常量注释一起读：给到 12 是因为**并不并行差得远**——会并行的模型一轮发 4~9 个 tool_call，两三次就取完数据；不并行的一轮一个，多币多周期求证根本走不完。（注释里写的是「5 币」，那是上限改 12 那会儿的旧币种档，币种上限后来才收到 3。）撞上限本身不算失败，但收束时最后一条若是纯 tool_call、正文为空，这轮就没有收尾的结论块，下一轮的检验旧论点和复盘素材都跟着缺。所以 `ModelCallLimiter` 除了拒，还会在**最后一次能执行工具**时往回执末尾贴一句收尾提示（`llm.callLimit.lastCall`），让模型下一次调用直接给结论。
 
+同一条回复里的多个 tool_call 由 `ReactLoop` 在虚拟线程上**并发执行**，回执仍按 tool_call 顺序配对；批里出现 `TradeTools.SERIAL_TOOLS` 里的任一动作工具（开平仓、止损止盈、写计划、撤单），整批退回按原顺序串行——账户状态类调用不和同批别的调用交错。
+
 同一笔账还管着币种上限：`TraderService.MAX_SYMBOLS = 3`（一个币扎实求证约 3 次），在**保存配置**时就挡住，不在 `TradeGuard` 里；前端 `MyTrader.MAX_SYMBOLS` 是同一个数，改要一起改。
 
 `BUST_OUT_FLOOR` 只是常量改了名（原 `LIQUIDATION_FLOOR`，类型也换成了 `BigDecimal`），**状态枚举仍是 `AiTrader.STATUS_LIQUIDATED`**、词表里仍写「爆仓」——别顺手一起改。

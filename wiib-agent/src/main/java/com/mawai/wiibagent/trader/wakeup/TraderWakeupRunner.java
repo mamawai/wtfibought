@@ -328,7 +328,9 @@ public class TraderWakeupRunner {
                 .streaming(true)      // 模型文本逐字推给现场
                 .limiter(new ModelCallLimiter(MAX_MODEL_CALLS, prompts.get(lang, "llm.callLimit.notExecuted"),
                         prompts.get(lang, "llm.callLimit.lastCall")))
-                .trace(trace).build();
+                .trace(trace)
+                // 数据工具同批并行，批里有动作工具就整批串行
+                .serialTools(TradeTools.SERIAL_TOOLS).build();
 
         // 上一边界之后公布的算"刚公布"：例行轮就是上次唤醒以来；警报/手动的 boundaryTime 是触发时刻，对齐后同一个意思
         long intervalMs = TraderScheduler.INTERVAL_MS.getOrDefault(trader.getIntervalCode(), 300_000L);

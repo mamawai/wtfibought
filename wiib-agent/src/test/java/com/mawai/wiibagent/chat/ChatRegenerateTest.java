@@ -46,13 +46,12 @@ import static org.mockito.Mockito.when;
 /**
  * 重新生成最后一条回答：回退到"提问已在、回答未出"，再用原提问重跑。
  * <p>
- * 四件必须钉住的事：
+ * 三件必须钉住的事：
  * <ol>
  *   <li><b>轮起始标记只是候选</b>——历史压缩会把首条用户消息原样放回队首，那条也带标记；
  *       不拿提问原文核对就会切错位置，把中间几轮连同摘要一起抹掉。</li>
- *   <li><b>旧答案要留到新答案确实落库之后才删</b>——重跑失败/空产出/被让位的路上，
+ *   <li><b>旧答案要留到新答案确实落库之后才删</b>——重跑失败/空产出的路上，
  *       用户至少还留着原来那条，也还能再点一次。</li>
- *   <li><b>重新生成轮不许被新消息挤走</b>——旧答案的位置已经腾出来了，被挤掉就没处放新答案。</li>
  *   <li><b>拒绝时名额必须还回去</b>——不还的话这个用户此后永久占线，比不给重新生成严重得多。</li>
  * </ol>
  */
@@ -79,7 +78,7 @@ class ChatRegenerateTest {
 
     private record Harness(ChatWorkbenchController controller, ChatHistoryService history,
                            ChatContextStore contextStore, ChatTurnRunner turnRunner,
-                           ChatConcurrencyGate gate, ChatYieldCoordinator coordinator) {
+                           ChatConcurrencyGate gate) {
     }
 
     private static Harness harness(List<ChatHistoryService.ChatMessage> stored, List<Message> context) {
@@ -95,7 +94,7 @@ class ChatRegenerateTest {
             Consumer<String> sink = inv.getArgument(5);   // leaves/userId/session/message/intent 之后才是答案 sink
             sink.accept("新答案");
             return ChatTurnRunner.TurnResult.COMPLETED;
-        }).when(turnRunner).run(any(), anyLong(), any(), any(), any(), any(), any(), any(), any(), any());
+        }).when(turnRunner).run(any(), anyLong(), any(), any(), any(), any(), any(), any());
 
         LlmEndpointService endpointService = mock(LlmEndpointService.class);
         when(endpointService.chatEndpoints(1L)).thenReturn(ChatTestEndpoints.eps(1L, "gpt-5"));
@@ -104,20 +103,19 @@ class ChatRegenerateTest {
         UsageTrackingChatModel model = new UsageTrackingChatModel(mock(ChatModel.class));
         ChatAgentFactory agentFactory = mock(ChatAgentFactory.class);
         when(agentFactory.leavesFor(any(), any()))
-                .thenReturn(new ChatAgentFactory.Leaves("端点 · gpt-5", model, model, Map.of(), null, AgentLang.ZH));
+                .thenReturn(new ChatAgentFactory.Leaves("端点 · gpt-5", model, model, null, AgentLang.ZH));
 
         ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
         WorkbenchRunRegistry runRegistry = mock(WorkbenchRunRegistry.class);
-        ChatYieldCoordinator coordinator = new ChatYieldCoordinator();
         ApprovalRegistry approvals = new ApprovalRegistry();
-        ChatTurnStreamer streamer = new ChatTurnStreamer(turnRunner, history, runRegistry, coordinator,
+        ChatTurnStreamer streamer = new ChatTurnStreamer(turnRunner, history, runRegistry,
                 approvals, ChatTestEndpoints.PROMPTS);
         ChatTurnRewinder rewinder = new ChatTurnRewinder(history, contextStore, ChatTestEndpoints.PROMPTS);
         ChatWorkbenchController controller = new ChatWorkbenchController(agentFactory, endpointService,
                 approvals, history, contextStore, streamer, rewinder, runRegistry, gate, new MessageCatalog(),
-                coordinator, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
+                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.zhLang(),
                 Executors.newVirtualThreadPerTaskExecutor());
-        return new Harness(controller, history, contextStore, turnRunner, gate, coordinator);
+        return new Harness(controller, history, contextStore, turnRunner, gate);
     }
 
     private static void regenerate(Harness h) {
@@ -157,7 +155,7 @@ class ChatRegenerateTest {
         // 重跑喂给 runner 的是库里那条原提问
         ArgumentCaptor<String> enriched = ArgumentCaptor.captor();
         verify(h.turnRunner(), timeout(5_000))
-                .run(any(), anyLong(), eq(SESSION), enriched.capture(), any(), any(), any(), any(), any(), any());
+                .run(any(), anyLong(), eq(SESSION), enriched.capture(), any(), any(), any(), any());
         assertThat(enriched.getValue()).endsWith(
                 ChatTestEndpoints.PROMPTS.get(AgentLang.ZH, "chat.turn.questionPrefix") + "BTC 怎么样");
         // 提问行已经在库里，再落一遍历史里就成了连问两遍
@@ -209,7 +207,7 @@ class ChatRegenerateTest {
                 List.of(msg(1, "user", "BTC 怎么样"), msg(2, "assistant", "旧答案")),
                 List.of(turnStart("BTC 怎么样"), new AssistantMessage("旧答案")));
         doReturn(ChatTurnRunner.TurnResult.CANCELLED)
-                .when(h.turnRunner()).run(any(), anyLong(), any(), any(), any(), any(), any(), any(), any(), any());
+                .when(h.turnRunner()).run(any(), anyLong(), any(), any(), any(), any(), any(), any());
 
         regenerate(h);
 
@@ -223,27 +221,13 @@ class ChatRegenerateTest {
                 List.of(msg(1, "user", "BTC 怎么样"), msg(2, "assistant", "旧答案")),
                 List.of(turnStart("BTC 怎么样"), new AssistantMessage("旧答案")));
         doThrow(new RuntimeException("上游挂了"))
-                .when(h.turnRunner()).run(any(), anyLong(), any(), any(), any(), any(), any(), any(), any(), any());
+                .when(h.turnRunner()).run(any(), anyLong(), any(), any(), any(), any(), any(), any());
 
         regenerate(h);
 
         // 这一轮不落 assistant 行；旧答案要是已经删了，用户点一次重新生成就把好答案弄丢了，还没法再点
         verify(h.history(), after(500).never()).deleteMessage(anyLong());
         verify(h.history(), never()).append(any(), anyLong(), eq("assistant"), any(), any(), any());
-    }
-
-    @Test
-    void 重新生成轮不许被新消息挤走() {
-        Harness h = harness(List.of(), List.of());
-
-        ChatYieldCoordinator.TurnHandle regen = h.coordinator().openTurn(1L, false);
-        regen.enterExpertWait();
-        // 它把旧答案的位置腾出来了，被挤掉的话新答案只能由补答轮追加到会话末尾，位置错还再也不能重新生成
-        assertThat(h.coordinator().requestYield(1L)).isNull();
-
-        ChatYieldCoordinator.TurnHandle normal = h.coordinator().openTurn(1L);
-        normal.enterExpertWait();
-        assertThat(h.coordinator().requestYield(1L)).isNotNull();
     }
 
     @Test
@@ -261,7 +245,7 @@ class ChatRegenerateTest {
 
     @Test
     void 末尾是没答过的提问时拒绝() {
-        // 上一轮让位不落 assistant 行，末尾就是一条没答案的提问。这里两轮问的是同一句，
+        // 上一轮摔了没落 assistant 行，末尾就是一条没答案的提问。这里两轮问的是同一句，
         // 好让"提问原文核对"那一关也能过——否则 role 判据形同虚设也看不出来
         Harness h = harness(
                 List.of(msg(1, "user", "BTC 怎么样"), msg(2, "assistant", "旧答案"), msg(3, "user", "BTC 怎么样")),

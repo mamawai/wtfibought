@@ -9,7 +9,6 @@ import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
-import com.mawai.wiibagent.toolkit.NewsToolkit;
 import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.trader.TraderChatService;
 import org.junit.jupiter.api.Test;
@@ -43,7 +42,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * summarizer 那三样的装配：压缩 + HITL 闸门 + 保险丝，一样都不能漏传给它的 {@link ReactLoop}。
+ * 主 agent 那三样的装配：压缩 + HITL 闸门 + 保险丝，一样都不能漏传给它的 {@link ReactLoop}。
  * <p>
  * <b>建的是生产的 {@link ChatAgentFactory#leavesFor} 并真跑</b>——自己搭个循环自己塞这三样，
  * 只能证明它们各自好使（那件事 ModelCallLimiterTest/ConversationSummarizerTest 已经证过），
@@ -91,7 +90,7 @@ class SummarizerLeafTest {
         // run_deep_analysis 必须是能执行的真工具（要真走到工具边）——
         // 工厂内部自己 new DeepAnalysisToolkit，天然就是真的，这里只喂它的依赖
         ChatEndpoints llmConfig = ChatTestEndpoints.eps(1L, "gpt-5");   // 叶子指纹含 userId（trader 工具按它认人）
-        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(NewsToolkit.class),
+        return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), ChatTestEndpoints.newsToolkit(),
                 deepAnalysisService, mock(BehaviorAnalysisService.class),
                 mock(TraderChatService.class), runRegistry,
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, limit, threshold, keep, "X")
@@ -100,7 +99,7 @@ class SummarizerLeafTest {
 
     /** 与 {@code ChatTurnRunner} 同款跑法：会话号一份进闸门、一份进工具的 ToolContext；答案 token 逐帧收进 chunks */
     private ReactLoop.Result consume(ChatAgentFactory.Leaves leaves, List<Message> input, List<String> chunks) {
-        return leaves.summarizer().run(input, SESSION, null, new ReactLoop.Listener() {
+        return leaves.main().run(input, SESSION, null, new ReactLoop.Listener() {
             @Override
             public void chunk(ChatResponse frame) {
                 String text = frame.getResults().getFirst().getOutput().getText();
@@ -158,7 +157,7 @@ class SummarizerLeafTest {
                 .thenReturn(Flux.just(responseOf(deepAnalysisCall("c1"))))
                 .thenReturn(Flux.just(responseOf(new AssistantMessage("已请你确认"))));
 
-        leaves(NO_COMPRESSION, 6, 8).summarizer()
+        leaves(NO_COMPRESSION, 6, 8).main()
                 .run(List.of(new UserMessage("深度研判 BTC")), SESSION, null, null);
 
         assertThat(registry.peekPending(SESSION)).isPresent()
