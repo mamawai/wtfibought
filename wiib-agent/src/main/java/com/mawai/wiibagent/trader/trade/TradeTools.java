@@ -90,8 +90,9 @@ public class TradeTools {
         this.entryContext = entryContext;
     }
 
-    public List<ObjectNode> actions() {
-        return actions;
+    /** 唤醒回路收轨迹：超时那条路上被中断的工具可能还在往里记，拷一份出去 */
+    public synchronized List<ObjectNode> actions() {
+        return List.copyOf(actions);
     }
 
     // 描述只客观说"返回什么"，不下行为指令：系统提示词明说账户状态每轮已注入、
@@ -187,7 +188,7 @@ public class TradeTools {
         String reject = TradeGuard.validateOpen(req, equity, mark, symbolWhitelist, ctx.risk(), acct.snaps(),
                 prompts, ctx.lang());
         if (reject != null) {
-            // action() 内部已入轨迹列表，不许再包一层 add——否则拒绝动作双计
+            // rejected() 自己入轨迹，不许再包一层 record——否则拒绝动作双计
             return rejected("open_position", argSummary, reject);
         }
         // 同向已有仓位或开仓挂单：计划走覆盖而不是新立，旧论点进修订历史
@@ -576,14 +577,14 @@ public class TradeTools {
         if (cause.length() > 200) {
             cause = cause.substring(0, 200) + "…";
         }
-        action(tool, args).put("status", "unknown").put("error", cause);
+        record(action(tool, args).put("status", "unknown").put("error", cause));
         log.warn("[TradeTools] {} 结果未知 simUserId={} msg={}", tool, simUserId, cause);
         return prompts.get(ctx.lang(), "trader.reject.unknown", Map.of("cause", String.valueOf(cause)));
     }
 
     /** 护栏拒绝：与 open_position 的 REJECTED 同一语义，进动作轨迹，模型可修正重试。 */
     private String rejected(String tool, ObjectNode args, String reason) {
-        action(tool, args).put("rejected", reason);
+        record(action(tool, args).put("rejected", reason));
         return "REJECTED: " + reason;
     }
 
@@ -616,13 +617,17 @@ public class TradeTools {
                 .put("invalidationCondition", req.invalidationCondition());
     }
 
-    private ObjectNode action(String tool, ObjectNode args) {
+    private static ObjectNode action(String tool, ObjectNode args) {
         ObjectNode a = MAPPER.createObjectNode().put("tool", tool);
         if (args != null) {
             a.set("args", args);
         }
-        actions.add(a);
         return a;
+    }
+
+    /** 动作填完整了再入轨迹：同一批里两个 get_account 会并发到这儿（别的工具都在 SERIAL_TOOLS 里） */
+    private synchronized void record(ObjectNode action) {
+        actions.add(action);
     }
 
     /** 成功：结果同时写进动作轨迹（摘要）与工具返回值（全文）。 */
@@ -639,6 +644,7 @@ public class TradeTools {
                 action.put("result", s); // 不是 JSON 的结果原样入轨迹
             }
         }
+        record(action);
         return s;
     }
 
@@ -650,7 +656,7 @@ public class TradeTools {
         if (msg.length() > 300) {
             msg = msg.substring(0, 300) + "…";
         }
-        action(tool, args).put("status", "error").put("error", msg);
+        record(action(tool, args).put("status", "error").put("error", msg));
         log.warn("[TradeTools] {} 失败 simUserId={} msg={}", tool, simUserId, msg);
         return "ERROR: " + msg;
     }

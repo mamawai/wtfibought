@@ -168,14 +168,14 @@ childRuns.attachTurn(sessionId, inbox)   先挂收件箱
   → contextStore.load                   再读历史
   → working = 历史 + 本轮提问 + turnTail
   → streamMain：leaves.main().run(working, sessionId, cancel, listener)
-  → settle：detachTurn 摘收件箱，剩余报告并进落库消息，整体覆盖会话历史
+  → childRuns.settle：会话锁里摘收件箱，剩余报告并进终态消息，整体覆盖会话历史
 ```
 
 三个要点：
 
 - **先挂收件箱再读历史**：挂上之后到的报告进收件箱，`ReactLoop` 下一次调模型前追加到尾部；挂上之前到的已经在库里，随历史读进来。顺序反了就有一个窗口的报告两头都接不到。
 - **取什么数由主 agent 自己定**：行情、快讯、trader 只读全是它手里的工具，同一批 tool_call 并发执行（第 3 章）。以前的路由 + 专家那一层没了——路由本身每轮要烧一次浅模型调用，而"要不要查行情"这个判断深模型顺手就做了。
-- **`settle()` 是每条出路的必经**：正常收尾、用户中断、`streamMain` 抛异常都从它走。剩余报告非空就是这轮没答过的，`TurnResult.pending` 为真，前端空闲时发起唤醒轮。摔了先把 working 落库再抛：用户消息此刻只在内存里，不落库的话下一轮就不知道这句问过。
+- **`childRuns.settle()` 是每条出路的必经**：正常收尾、用户中断、`streamMain` 抛异常都从它走。剩余报告非空就是这轮没答过的，`TurnResult.pending` 为真，前端空闲时发起唤醒轮。摔了先把 working 落库再抛：用户消息此刻只在内存里，不落库的话下一轮就不知道这句问过。
 
 进模型前垫的最后一条消息（`turnTail`）恒为**用户侧**——整段输入以 assistant 结尾，模型只会补一句"没什么可补充的"。按钮意图（`ChatIntent`）的动作指令也垫在这条里：该做什么已写死，不让模型再猜。这条消息里的**输出语言硬收尾必须排在最后**：用户打的字不翻译，聊天输入随时是另一门语言，而近因权重最高。
 
@@ -207,12 +207,13 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 
 读的时候盯这几处：
 
-- **为什么要会话锁分两条路**：`ChatContextStore.save` 是整体覆盖。轮进行中直接写库，会被那轮结束时的保存抹掉；所以轮在跑就只能进收件箱，由轮自己落库。
+- **为什么要会话锁分两条路**：`ChatContextStore.save` 是整体覆盖。轮进行中直接写库，会被那轮结束时的保存抹掉；所以轮在跑就只能进收件箱，由轮自己落库。轮结束那次保存（`settle`）也在同一把锁里：报告正赶在摘收件箱和落库之间到，锁外就会被这次保存盖掉。
 - **报告为什么是用户侧消息**：裸 AssistantMessage 模型会当成"我自己说过的话"，整段输入还以 assistant 结尾，于是倾向于答"没有数据"。标注说明它是谁回来的，唤醒指令（`chat.wake.instruction`）再点一遍"这不是你说过的话"。
 - **失败也回灌**：超时、worker 抛异常都拼成一条失败报告（`chat.childRun.status.failed`），主 agent 得知道这件事黄了才能改口；只有**取消**的不回灌。
 - **谁取消**：`/cancel`、重新生成、删会话都 `cancelAll` / `purge`。重新生成必须取消：被顶掉那轮派出去的报告回灌到重跑后的上下文里会答非所问。
 - **唤醒由前端发起**，后端只标 pending 不偷跑：不欠就 `2208`（别的标签页先接走了，或后端重启丢了标记）。唤醒轮不落 user 行，答案带【补充回答】标头，`ChatRowKind` 把这种行与老的补答行归成一类，不给重新生成。
-- **worker 的账单独算**：每个 worker 独享一个 `UsageTrackingChatModel`，用量只打日志，不进主轮的账本——主轮 done 里报的 token 是主 agent 自己的。
+- **子运行的账单独算**：每个 worker、每次深研判各自现包一个 `UsageTrackingChatModel`，用量只打日志，不进主轮的账本——主轮 done 里报的 token 是主 agent 自己的。子运行跨轮活着，记进主轮那本会串到下一轮（下一轮开头 `resetUsage` 换了账本，晚发起的调用就记到新账上）。
+- **主体要看取消信号**：`spawn` 的约定。worker 把 `run.cancel()` 交给自己的 `ReactLoop`，在检查点停；深研判在 Bull/Bear 收齐、裁决之前看一眼 `run.cancelled()`，取消了就不烧裁决那次（单次模型调用是阻塞的掐不断，能省的只有这一次）。
 - **开关不进叶子缓存键**：每次 `spawn` 现读 `user_workbench_pref`，开关只影响拒不拒，工具表不随它变；关了开关模型照样看得见 `delegate`，调了会收到拒因。
 - **行为分析有意不走子运行**：它只有一次模型调用，而且报告卡片事件靠本轮通道推，放后台就没通道可推了。
 - 一切都是**进程内存级**：重启丢在跑的子运行与 pending 标记，已落库的报告还在上下文里，重问即可。
@@ -227,6 +228,7 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 
 - **管辖范围只剩深研判一个工具**（`GUARDED_TOOLS`）。trader 那三个工具只弹表单、真正的执行扳机在用户手指上，再批准一次等于让用户确认两遍。
 - **不受管辖的工具原样放行**。工具方法体自己的 sessionId 不经闸门：`ChatTurnRunner` 把它传给 `ReactLoop.run`，循环执行工具时放进 `ToolContext`（`ToolRunContext.SESSION_KEY`）。
+- **一批里两个以上贵操作整批不跑**（`chat.hitl.oneAtATime`）。闸门放行是整批放、授权却只对一件事：BTC 已批、模型把 ETH 捎在同一批里，按第一个命中就放行的话 ETH 也跟着烧三次深模型。整批回"一次只能一个"，模型拆开重调，BTC 放行、ETH 弹卡。
 
 再看 `discardApprovals` 那段注释：又要弹卡就说明上一条授权已经用不上了（用户批了 BTC、模型又改口要 ETH），不丢的话它会一直躺到 TTL 结束，之后 10 分钟内模型若又调 BTC 那件事会被它放行，用户以为自己没点过头。
 

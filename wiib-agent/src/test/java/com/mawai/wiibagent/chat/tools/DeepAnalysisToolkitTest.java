@@ -56,16 +56,17 @@ class DeepAnalysisToolkitTest {
         return new ChildRun("1", SESSION, 1L, ChildRun.Kind.DEEP_ANALYSIS, "深研判 BTCUSDT", null, AgentLang.ZH);
     }
 
+    // 模型参数一律 any()：主体每次把裸模型包进自己的账本再往下传，不是构造时那个实例
     private void debateSucceeds() {
         when(deepAnalysisService.buildNewsContext(any())).thenReturn("ctx");
-        when(deepAnalysisService.bullArgue(model, "BTCUSDT", "ctx", AgentLang.ZH)).thenReturn("bull");
-        when(deepAnalysisService.bearArgue(model, "BTCUSDT", "ctx", AgentLang.ZH)).thenReturn("bear");
+        when(deepAnalysisService.bullArgue(any(), eq("BTCUSDT"), eq("ctx"), eq(AgentLang.ZH))).thenReturn("bull");
+        when(deepAnalysisService.bearArgue(any(), eq("BTCUSDT"), eq("ctx"), eq(AgentLang.ZH))).thenReturn("bear");
         QuantDeepAnalysis analysis = new QuantDeepAnalysis();
         analysis.setNarrative("研判叙事");
         analysis.setScenariosJson("{\"bullPct\":40,\"rangePct\":35,\"bearPct\":25}");
         analysis.setNoDirection(false);
         analysis.setInvalidation("若X则作废");
-        when(deepAnalysisService.judge(eq(model), eq("BTCUSDT"), anyLong(), eq("chat"),
+        when(deepAnalysisService.judge(any(), eq("BTCUSDT"), anyLong(), eq("chat"),
                 eq("ctx"), eq("bull"), eq("bear"), eq(AgentLang.ZH))).thenReturn(analysis);
     }
 
@@ -91,6 +92,22 @@ class DeepAnalysisToolkitTest {
 
         assertThat(result).contains("FAILED");
         verify(deepAnalysisService, never()).persist(any());
+    }
+
+    /** 辩论期间被停掉（停止/重新生成/删会话/超时）：报告反正不回灌，裁决那次深模型调用省下 */
+    @Test
+    void 取消后不裁决() {
+        debateSucceeds();
+        ChildRun run = run();
+        when(deepAnalysisService.bearArgue(any(), eq("BTCUSDT"), eq("ctx"), eq(AgentLang.ZH))).thenAnswer(inv -> {
+            run.cancel().complete(null);
+            return "bear";
+        });
+
+        assertThat(toolkit.execute(run, "BTCUSDT")).isNull();
+
+        verify(deepAnalysisService, never()).judge(any(), anyString(), anyLong(), anyString(),
+                anyString(), anyString(), anyString(), any());
     }
 
     /** 工具调用不等几分钟：立刻回 RUNNING，研判结论稍后作为报告落进会话上下文（没轮在跑的那条路） */
@@ -129,9 +146,9 @@ class DeepAnalysisToolkitTest {
 
         toolkit.runDeepAnalysis("btc", CTX);
 
-        verify(deepAnalysisService, timeout(5_000)).bullArgue(model, gateSymbol, "ctx", AgentLang.ZH);
-        verify(deepAnalysisService, timeout(5_000)).bearArgue(model, gateSymbol, "ctx", AgentLang.ZH);
-        verify(deepAnalysisService, timeout(5_000)).judge(eq(model), eq(gateSymbol), anyLong(), eq("chat"),
+        verify(deepAnalysisService, timeout(5_000)).bullArgue(any(), eq(gateSymbol), eq("ctx"), eq(AgentLang.ZH));
+        verify(deepAnalysisService, timeout(5_000)).bearArgue(any(), eq(gateSymbol), eq("ctx"), eq(AgentLang.ZH));
+        verify(deepAnalysisService, timeout(5_000)).judge(any(), eq(gateSymbol), anyLong(), eq("chat"),
                 anyString(), any(), any(), any());
     }
 

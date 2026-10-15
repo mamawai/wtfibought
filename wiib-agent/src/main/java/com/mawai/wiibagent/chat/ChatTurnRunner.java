@@ -113,7 +113,7 @@ public class ChatTurnRunner {
 
         // 终态含压缩替换 + 本轮全部新消息，整体覆盖会话历史（下一轮从这里起跑）
         List<Message> finalMessages = new ArrayList<>(result.messages());
-        boolean pending = settle(sessionId, userId, finalMessages);
+        boolean pending = childRuns.settle(sessionId, userId, finalMessages);
 
         log.info("[TurnMetrics] session={} modelCalls={} historyIn={} historyOut={} estTokensIn={} pending={} durationMs={}",
                 sessionId, result.modelCalls(), history.size(), finalMessages.size(),
@@ -152,21 +152,9 @@ public class ChatTurnRunner {
     private TurnResult cancelTurn(long userId, String sessionId, List<Message> working, String partial,
                                   AgentLang lang) {
         working.add(new AssistantMessage(cancelledAnswer(prompts, lang, partial)));
-        boolean pending = settle(sessionId, userId, working);
+        boolean pending = childRuns.settle(sessionId, userId, working);
         log.info("[Workbench] 用户中断 session={} 已产出={}字", sessionId, partial.length());
         return new TurnResult(true, pending);
-    }
-
-    /**
-     * 一轮的每条出路都从这里走：摘掉收件箱，剩余报告并进落库消息，整体覆盖会话历史。
-     *
-     * @return 剩余报告非空——这些报告这轮没答过，欠一次唤醒
-     */
-    private boolean settle(String sessionId, long userId, List<Message> messages) {
-        List<Message> leftover = childRuns.detachTurn(sessionId);
-        messages.addAll(leftover);
-        contextStore.save(sessionId, userId, messages);
-        return !leftover.isEmpty();
     }
 
     /**
@@ -192,14 +180,17 @@ public class ChatTurnRunner {
 
             @Override
             public List<Message> inbox() {
-                return ChildRunRegistry.drain(inbox);
+                List<Message> arrived = ChildRunRegistry.drain(inbox);
+                // 中断/摔了那两条出路落库的是 working（循环拿的是它的副本），排进循环的报告得跟着进去
+                working.addAll(arrived);
+                return arrived;
             }
         };
         try {
             // 会话号进 ToolContext 与闸门；中断信号直接掐模型流，点停止就在下一个检查点退出
             return leaves.main().run(working, sessionId, cancel, listener);
         } catch (RuntimeException e) {
-            settle(sessionId, userId, working);
+            childRuns.settle(sessionId, userId, working);
             throw e;
         }
     }

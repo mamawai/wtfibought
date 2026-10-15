@@ -55,7 +55,8 @@ public class ChatAgentFactory {
      * 一份用户配置对应的叶子。
      *
      * @param modelLabel 这份配置的对外名字（端点名 · 模型名），随每条答案落库给前端显示
-     * @param deep       深模型（主 agent 作答与深研判走它）。透出来是为了取用量——它本身就是本轮的账本
+     * @param deep       深模型（主 agent 作答走它）。透出来是为了取用量——它本身就是本轮的账本；
+     *                   深研判子运行跨轮活着，另记账，见 {@link DeepAnalysisToolkit}
      * @param light      浅模型：历史压缩用。没单独绑轻模型时与 deep 是同一个实例
      * @param main       主 agent：深模型 + 全部对话工具的 ReactLoop，流式作答
      * @param lang       这套叶子按哪门语言建的。它在缓存键里（见 {@link #leafKey}），拿到的叶子
@@ -219,7 +220,7 @@ public class ChatAgentFactory {
         UsageTrackingChatModel light = models.light() == models.deep() ? deep : new UsageTrackingChatModel(models.light());
         // worker 跑在浅模型上：它的搜索许可看浅模型那条端点
         boolean lightSearch = serverSearch(eps.lightOrDeep());
-        ReactLoop main = mainLeaf(deep, light, eps.userId(), lang, serverSearch(eps.deep()),
+        ReactLoop main = mainLeaf(deep, models.deep(), light, eps.userId(), lang, serverSearch(eps.deep()),
                 kind -> newWorker(kind, lang, lightSearch, models.light()));
         return new Leaves(modelLabel(eps.deep()), deep, light, main, lang);
     }
@@ -245,13 +246,14 @@ public class ChatAgentFactory {
     /**
      * 主 agent：深模型 + 全部对话工具，自己取数自己作答，长活派子运行。
      *
+     * @param deepBase  裸深模型，给深研判子运行：它每次自己包账本，不走主轮那本
      * @param light     压缩用浅模型：摘要是简单活，用深模型纯烧钱
      * @param userId    trader 工具（只读与动作）、行为分析、子运行烤死的归属，理由见 {@link TraderQueryToolkit}
      * @param webSearch 端点声明了服务端搜索：提示词用承诺联网的那版，且每次调用捎搜索许可
      * @param workers   delegate 按预设现建 worker 的办法
      */
-    private ReactLoop mainLeaf(ChatModel deep, ChatModel light, long userId, AgentLang lang, boolean webSearch,
-                               java.util.function.Function<WorkerKind, Worker> workers) {
+    private ReactLoop mainLeaf(ChatModel deep, ChatModel deepBase, ChatModel light, long userId, AgentLang lang,
+                               boolean webSearch, java.util.function.Function<WorkerKind, Worker> workers) {
         // 工具的模型在这一层绑死："当前用的是谁的 key"只有这里知道
         ResilientChatService chat = ResilientChatService.builder()
                 .model(deep)
@@ -260,7 +262,7 @@ public class ChatAgentFactory {
                         // 行情 ×4 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作表单 ×3 / 行为分析 / 派子 agent
                         marketToolkit,
                         newsToolkit.boundTo(lang),
-                        new DeepAnalysisToolkit(deep, deepAnalysisService, runRegistry, childRuns, prompts, userId, lang),
+                        new DeepAnalysisToolkit(deepBase, deepAnalysisService, runRegistry, childRuns, prompts, userId, lang),
                         new TraderQueryToolkit(traderChatService, userId, lang),
                         new TraderActionToolkit(runRegistry, userId, prompts, lang),
                         new BehaviorToolkit(deep, behaviorAnalysisService, runRegistry, userId, lang),

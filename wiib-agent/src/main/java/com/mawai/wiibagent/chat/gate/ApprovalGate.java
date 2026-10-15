@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
@@ -66,11 +67,19 @@ public class ApprovalGate implements ReactLoop.ToolGate {
      */
     @Override
     public Optional<ToolResponseMessage> intercept(String sessionId, AssistantMessage reply) {
-        Optional<AssistantMessage.ToolCall> guarded = guardedCall(reply);
+        List<AssistantMessage.ToolCall> guarded = guardedCalls(reply);
         if (sessionId == null || guarded.isEmpty()) {
             return Optional.empty();
         }
-        AssistantMessage.ToolCall call = guarded.get();
+        if (guarded.size() > 1) {
+            // 放行是整批放，授权却只对一件事：一批里两个贵操作就整批不跑，让模型一次调一个。
+            // 不登记 pending、不弹卡，所以同批别的调用也回这句，不能回"有贵操作待确认"
+            log.info("[HITL] 一批 {} 个贵操作，整批不执行 session={}", guarded.size(), sessionId);
+            Set<String> all = reply.getToolCalls().stream().map(AssistantMessage.ToolCall::id).collect(Collectors.toSet());
+            return Optional.of(pairedReply(reply, all,
+                    prompts.get(lang, "chat.hitl.oneAtATime", Map.of("label", label()))));
+        }
+        AssistantMessage.ToolCall call = guarded.getFirst();
         String symbol = normalizedSymbol(call);
 
         // 用户上一轮拒绝过同一件事：如实告诉模型，别再弹一次卡（标记是一次性的，
@@ -79,7 +88,7 @@ public class ApprovalGate implements ReactLoop.ToolGate {
         if (rejected.isPresent() && sameRequest(rejected.get(), call.name(), symbol)) {
             log.info("[HITL] 用户已拒绝，回执告知模型 session={} tool={} symbol={}",
                     sessionId, call.name(), symbol);
-            return Optional.of(pairedReply(reply, call.id(),
+            return Optional.of(pairedReply(reply, Set.of(call.id()),
                     prompts.get(lang, "chat.hitl.rejectedReply", Map.of("label", label()))));
         }
 
@@ -97,14 +106,14 @@ public class ApprovalGate implements ReactLoop.ToolGate {
         out.put("status", "PENDING_APPROVAL");
         out.put("message", prompts.get(lang, "chat.hitl.pendingMessage",
                 Map.of("label", label(), "reason", reason())));
-        return Optional.of(pairedReply(reply, call.id(), MAPPER.writeValueAsString(out)));
+        return Optional.of(pairedReply(reply, Set.of(call.id()), MAPPER.writeValueAsString(out)));
     }
 
-    /** 本批 tool_call 里受管辖的那个（一批里最多处理一个贵操作，其余的连同它一起等下一轮）。 */
-    private static Optional<AssistantMessage.ToolCall> guardedCall(AssistantMessage reply) {
+    /** 本批 tool_call 里受管辖的那些 */
+    private static List<AssistantMessage.ToolCall> guardedCalls(AssistantMessage reply) {
         return reply.getToolCalls().stream()
                 .filter(c -> GUARDED_TOOLS.contains(c.name()))
-                .findFirst();
+                .toList();
     }
 
     /**
@@ -155,15 +164,15 @@ public class ApprovalGate implements ReactLoop.ToolGate {
      * 拦下时必须给**这一批**每个 tool_call 都配对回执。只回一条 = 留下孤儿 tool_call，
      * 这段历史被 {@link ChatContextStore} 持久化后，续聊重放时上游直接 400，会话只能删掉重开。
      * <p>
-     * 按 id 而不是按工具名认领正主：一批里可能同时来两个受管辖的调用（比如模型一口气研判
-     * BTC 和 ETH），按名字匹配会把只针对其中一个的说明同时发给两个——工具名一样，
-     * 用户批的是 BTC，模型会以为 ETH 也批了。
+     * 按 id 认领正主，不按工具名：受管辖的调用名字都一样，按名字认不出哪个是哪个。
+     *
+     * @param guardedCallIds 拿到 body 的那些 tool_call；其余回"未执行"
      */
-    private ToolResponseMessage pairedReply(AssistantMessage reply, String guardedCallId, String body) {
+    private ToolResponseMessage pairedReply(AssistantMessage reply, Set<String> guardedCallIds, String body) {
         List<ToolResponseMessage.ToolResponse> responses = new ArrayList<>();
         for (AssistantMessage.ToolCall c : reply.getToolCalls()) {
             responses.add(new ToolResponseMessage.ToolResponse(c.id(), c.name(),
-                    c.id().equals(guardedCallId) ? body : prompts.get(lang, "chat.hitl.notExecuted")));
+                    guardedCallIds.contains(c.id()) ? body : prompts.get(lang, "chat.hitl.notExecuted")));
         }
         return ToolResponseMessage.builder().responses(responses).build();
     }

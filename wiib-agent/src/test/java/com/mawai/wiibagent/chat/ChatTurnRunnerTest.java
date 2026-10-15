@@ -3,6 +3,7 @@ package com.mawai.wiibagent.chat;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.run.ChildRun;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.llm.ChatEndpoints;
@@ -28,6 +29,7 @@ import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -237,6 +239,38 @@ class ChatTurnRunnerTest {
         verify(contextStore).save(eq(SESSION), eq(1L), saved.capture());
         assertThat(savedText(saved))
                 .contains("上轮问题").contains("这一轮问题").contains("这是本轮答案");
+    }
+
+    /**
+     * 循环里排进上下文的子运行报告，中断收尾落库的是 working：报告得跟着进去。
+     * 不然它既不在 working 也不再在收件箱，落库就没了，pending 还是假，再也不会被唤醒
+     */
+    @Test
+    void 中断时循环里排进的报告也落库() {
+        when(newsToolkit.newsSearch(AgentLang.ZH)).thenReturn("快讯");
+        CompletableFuture<Void> cancel = new CompletableFuture<>();
+        AtomicInteger calls = new AtomicInteger();
+        when(deep.stream(any(Prompt.class))).thenAnswer(inv -> {
+            mainPrompts.add(inv.getArgument(0));
+            if (calls.getAndIncrement() == 0) {
+                // 第一次调用期间子运行跑完：报告进收件箱，第二次调用前被排进上下文
+                ChildRunRegistry.Spawn spawn = childRuns.spawn(new ChildRunRegistry.Spec(SESSION, 1L,
+                        ChildRun.Kind.DELEGATE, "调研", "任务书", AgentLang.ZH), run -> "报告正文");
+                while (spawn.run().status() == ChildRun.Status.RUNNING) {
+                    Thread.sleep(10);
+                }
+                return Flux.just(responseOf(toolCall("news_search", "{}")));
+            }
+            cancel.complete(null);   // 报告刚排进去，用户点了停止
+            return Flux.just(responseOf(new AssistantMessage("不该出现的答案")));
+        });
+
+        runner().run(leaves(), 1L, SESSION, "看看", null, answer::append, search::add, cancel);
+
+        assertThat(mainInput()).contains("报告正文");
+        ArgumentCaptor<List<Message>> saved = ArgumentCaptor.captor();
+        verify(contextStore).save(eq(SESSION), eq(1L), saved.capture());
+        assertThat(savedText(saved)).contains("报告正文").doesNotContain("不该出现的答案");
     }
 
     /** 作答摔了也要把提问留住：不落库的话下一轮不知道这句问过 */

@@ -168,6 +168,8 @@ class PromptI18nTest {
                 Map.of("label", "deep analysis", "reason", "3 calls")));
         assertNoCjk("英文 HITL 已拒绝", prompts.get(AgentLang.EN, "chat.hitl.rejectedReply",
                 Map.of("label", "deep analysis")));
+        assertNoCjk("英文 HITL 一次一个", prompts.get(AgentLang.EN, "chat.hitl.oneAtATime",
+                Map.of("label", "deep analysis")));
         assertNoCjk("英文表单回执", prompts.get(AgentLang.EN, "chat.form.opened", Map.of("label", "wake-up")));
         assertNoCjk("英文表单回执（失败）",
                 prompts.get(AgentLang.EN, "chat.form.failed", Map.of("label", "wake-up")));

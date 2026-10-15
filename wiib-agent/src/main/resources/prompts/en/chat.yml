@@ -209,6 +209,8 @@ chat:
     rejectedReply: The user declined this {{label}}. Say so plainly, answer from the data you already have, and do not ask again.
     pendingMessage: "A {{label}} is an expensive operation ({{reason}}), so the user has been asked to confirm. Tell them to wait for the confirmation card; you will be called again once they approve."
     notExecuted: "Not executed: an expensive operation is awaiting confirmation this turn."
+    # Two or more expensive operations in one batch: an approval covers one thing, so none of the batch runs; the other calls in the batch get this line too
+    oneAtATime: "Not executed: only one {{label}} may be requested per reply; request them one at a time."
     # The front end recognises this line as "not something the user typed" and replays it as a process-rail entry; change it here and change it there
     resumeMessage: Approved, go ahead with the deep analysis
 

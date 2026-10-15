@@ -9,16 +9,24 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.Message;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.after;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -93,12 +101,47 @@ class ChildRunRegistryTest {
         verify(contextStore, never()).save(any(), anyLong(), any());
         assertThat(registry.state(SESSION).pending()).isFalse();
 
-        // 轮结束时收件箱里还剩着：交回给轮并进落库，同时欠一次唤醒
-        assertThat(registry.detachTurn(SESSION)).hasSize(1);
+        // 轮结束时收件箱里还剩着：并进终态一起落库，同时欠一次唤醒
+        assertThat(registry.settle(SESSION, 1L, new ArrayList<>())).isTrue();
+        assertThat(savedMessages()).singleElement().satisfies(m -> assertThat(m.getText()).startsWith("【后台任务#"));
         assertThat(registry.state(SESSION).pending()).isTrue();
         // 下一轮挂上收件箱就不欠了：落库的报告它随历史读得到
         registry.attachTurn(SESSION, new ArrayDeque<>());
         assertThat(registry.state(SESSION).pending()).isFalse();
+    }
+
+    /** 报告正赶在轮结束保存的当口到：存储是整体覆盖，不能被那次保存盖掉 */
+    @Test
+    void 轮结束保存期间到的报告不丢() {
+        ChildRunRegistry registry = registry(3, 3);
+        registry.attachTurn(SESSION, new ArrayDeque<>());
+        // 模拟库：写完才可见；轮那次保存慢一拍，子运行就在这期间跑完
+        AtomicReference<List<Message>> db = new AtomicReference<>(List.of());
+        CountDownLatch turnSaving = new CountDownLatch(1);
+        when(contextStore.load(SESSION)).thenAnswer(inv -> db.get());
+        doAnswer(inv -> {
+            List<Message> messages = List.copyOf(inv.getArgument(2));
+            if (turnSaving.getCount() > 0) {
+                turnSaving.countDown();
+                Thread.sleep(300);
+            }
+            db.set(messages);
+            return null;
+        }).when(contextStore).save(eq(SESSION), eq(1L), any());
+        ChildRunRegistry.Spawn spawn = registry.spawn(spec(SESSION), run -> {
+            try {
+                turnSaving.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return "报告正文";
+        });
+
+        registry.settle(SESSION, 1L, new ArrayList<>());
+        waitUntil(() -> spawn.run().status() == ChildRun.Status.DONE);
+
+        assertThat(db.get()).singleElement().satisfies(m -> assertThat(m.getText()).endsWith("报告正文"));
+        assertThat(registry.state(SESSION).pending()).isTrue();
     }
 
     @Test
@@ -122,6 +165,42 @@ class ChildRunRegistryTest {
         assertThat(second.refusal()).contains("1");
         release.countDown();
         waitUntil(() -> first.run().status() == ChildRun.Status.DONE);
+    }
+
+    /** 主 agent 一条回复里并发派几个：数在跑的和登记要一气做完，不然都数到 0 一起过闸 */
+    @Test
+    void 同批并发派发不越单用户上限() throws Exception {
+        ChildRunRegistry registry = registry(1, 10);
+        CountDownLatch release = new CountDownLatch(1);
+        Function<ChildRun, String> body = run -> {
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return "ok";
+        };
+        // 8 条虚拟线程等同一个发令枪，一起冲 spawn
+        CountDownLatch go = new CountDownLatch(1);
+        long started;
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<ChildRunRegistry.Spawn>> spawns = IntStream.range(0, 8)
+                    .mapToObj(i -> pool.submit(() -> {
+                        go.await();
+                        return registry.spawn(spec(SESSION), body);
+                    }))
+                    .toList();
+            go.countDown();
+            started = 0;
+            for (Future<ChildRunRegistry.Spawn> spawn : spawns) {
+                if (spawn.get().started()) {
+                    started++;
+                }
+            }
+        }
+
+        assertThat(started).isEqualTo(1);
+        release.countDown();
     }
 
     /** 开关只管 delegate：深研判是用户在确认卡上点过头的，关了开关照派 */

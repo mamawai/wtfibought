@@ -80,18 +80,6 @@ class ApprovalRegistryTest {
         assertThat(registry.peekPending("s1").orElseThrow().requestId()).isNotEqualTo(first);
     }
 
-    /** hasApproval 只探不消费：探完授权还在，工具闸门照常消费 */
-    @Test
-    void 探测授权不消费() {
-        registry.requestApproval("s1", TOOL, "BTCUSDT", "贵操作");
-        registry.approve("s1", registry.peekPending("s1").orElseThrow().requestId());
-
-        assertThat(registry.hasApproval("s1")).isTrue();
-        assertThat(registry.hasApproval("s1")).isTrue();
-        assertThat(registry.consumeApproval("s1", TOOL, "BTCUSDT")).isTrue();
-        assertThat(registry.hasApproval("s1")).isFalse();
-    }
-
     /** 拒绝后 pending 清掉，并留一条一次性标记让模型知道"用户拒了"，避免反复弹卡 */
     @Test
     void 拒绝后留下一次性标记() {
@@ -130,7 +118,7 @@ class ApprovalRegistryTest {
 
         registry.discardApprovals("s1");
 
-        assertThat(registry.hasApproval("s1")).isFalse();
+        assertThat(registry.consumeApproval("s1", TOOL, "BTCUSDT")).isFalse();
     }
 
     /**
@@ -155,7 +143,7 @@ class ApprovalRegistryTest {
         // 新卡片素材必须完好无损，且旧卡片没有偷偷发出授权
         assertThat(registry.peekPending("s1")).isPresent()
                 .get().satisfies(p -> assertThat(p.symbol()).isEqualTo("ETHUSDT"));
-        assertThat(registry.hasApproval("s1")).isFalse();
+        assertThat(registry.consumeApproval("s1", TOOL, "BTCUSDT")).isFalse();
     }
 
     /** 用户点了被覆盖掉的旧卡片：授权不能落到新标的上，新卡片也不能被这一点给清掉 */
@@ -171,23 +159,21 @@ class ApprovalRegistryTest {
                 .get().satisfies(p -> assertThat(p.symbol()).isEqualTo("ETHUSDT"));
     }
 
-    /** 探测路径也要自己判 TTL：过了期的授权探测不到（顺手清理是内部行为，这里只钉对外口径） */
+    /** 批了但一直没被消费的过期票，下一次批准时顺手清掉，不然一直堆着 */
     @Test
-    void 过期授权探测不到() {
+    void 批准时清掉过期票() {
         registry.nowMs = () -> 0L;
         registry.requestApproval("s1", TOOL, "BTCUSDT", "贵操作");
         registry.approve("s1", registry.peekPending("s1").orElseThrow().requestId());
 
         registry.nowMs = () -> ApprovalRegistry.APPROVAL_TTL_MS + 1;
+        registry.requestApproval("s2", TOOL, "ETHUSDT", "贵操作");
+        registry.approve("s2", registry.peekPending("s2").orElseThrow().requestId());
 
-        assertThat(registry.hasApproval("s1")).isFalse();
+        assertThat(registry.approvedCount()).isEqualTo(1);
     }
 
-    /**
-     * 过期票不是票。惰性清理只在 hasApproval 被调时才跑，而闸门这条路径
-     * （consumeApproval）可以先于任何一次 hasApproval 到达——TTL 必须在消费时自己判一遍，
-     * 否则十分钟前批的那次同意能在任意久之后放行一次深研判
-     */
+    /** 过期票不是票：消费时自己判 TTL，否则十分钟前批的那次同意能在任意久之后放行一次深研判 */
     @Test
     void 过期授权不能被消费() {
         registry.nowMs = () -> 0L;

@@ -207,13 +207,13 @@ class ChatWorkbenchHitlTest {
         Result<Void> stale = controller.approve(1L, decision("别的卡片的标识", true));
 
         assertThat(stale.getMsg()).contains("已失效");
-        assertThat(registry.hasApproval(SESSION)).isFalse();   // 一分授权都没给出去
+        assertThat(registry.consumeApproval(SESSION, "run_deep_analysis", "BTCUSDT")).isFalse();   // 一分授权都没给出去
 
         // 原样回传那张卡的标识才算数
         Result<Void> ok = controller.approve(1L, decision(card.path("requestId").asString(null), true));
 
         assertThat(ok.getCode()).isZero();
-        assertThat(registry.hasApproval(SESSION)).isTrue();
+        assertThat(registry.consumeApproval(SESSION, "run_deep_analysis", "BTCUSDT")).isTrue();
     }
 
     /**

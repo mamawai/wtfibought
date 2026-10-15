@@ -169,9 +169,8 @@ public class UsageTrackingChatModel implements ChatModel {
     }
 
     /**
-     * 标记"这一轮丢下了在途调用"（用户中断时会发生）：答案流被掐断后收尾帧没到、token 未知；
-     * 专家批次是阻塞调用掐不断，它们的账在读数之后才到。两种都让本轮的账不能报，见 {@link #untrusted()}。
-     * 下一轮不受影响：账本已换新，晚到的只会写进旧的那本。
+     * 标记"这一轮丢下了在途调用"（用户中断时会发生）：答案流被掐断后收尾帧没到、token 未知，
+     * 这本账不能报，见 {@link #untrusted()}。下一轮不受影响：账本已换新，晚到的只会写进旧的那本。
      */
     public void markAbandoned() {
         ledger.markAbandoned();

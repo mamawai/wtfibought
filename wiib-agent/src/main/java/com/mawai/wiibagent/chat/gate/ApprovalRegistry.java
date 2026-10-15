@@ -92,8 +92,10 @@ public class ApprovalRegistry {
         PendingRequest req = taken.get();
         // 拒绝标记是一次性的，但残留时会盖住这次新授权，顺手清掉
         rejected.remove(sessionId);
-        approvedUntil.put(new ApprovalKey(sessionId, req.toolName(), req.symbol()),
-                nowMs.getAsLong() + APPROVAL_TTL_MS);
+        long now = nowMs.getAsLong();
+        // 批了但一直没被消费的过期票，趁这儿清掉
+        approvedUntil.values().removeIf(until -> until < now);
+        approvedUntil.put(new ApprovalKey(sessionId, req.toolName(), req.symbol()), now + APPROVAL_TTL_MS);
         return true;
     }
 
@@ -124,17 +126,12 @@ public class ApprovalRegistry {
         return pending.remove(sessionId, req) ? Optional.of(req) : Optional.empty();
     }
 
-    /**
-     * 只探不消费：这个会话有没有还没用掉的授权。
-     * 顺手清理过期条目——用户批了但后续没触发工具的记录不清理会一直累积。
-     */
-    public boolean hasApproval(String sessionId) {
-        long now = nowMs.getAsLong();
-        approvedUntil.entrySet().removeIf(e -> e.getValue() < now);
-        return approvedUntil.keySet().stream().anyMatch(k -> k.sessionId().equals(sessionId));
+    /** 测试探针：还挂着几张票 */
+    int approvedCount() {
+        return approvedUntil.size();
     }
 
-    /** 闸门侧：按三元组精确消费（一次授权只放行一次执行）。 */
+    /** 闸门侧：按三元组精确消费（一次授权只放行一次执行）；过期的不算票。 */
     public boolean consumeApproval(String sessionId, String toolName, String symbol) {
         Long until = approvedUntil.remove(new ApprovalKey(sessionId, toolName, symbol));
         return until != null && until >= nowMs.getAsLong();

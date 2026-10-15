@@ -8,6 +8,7 @@ import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRun;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.llm.UsageTrackingChatModel;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ToolContext;
@@ -31,6 +32,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * <p>
  * 闸门放行后不在工具调用里同步跑几分钟：起一个子运行（{@link ChildRunRegistry}）立刻返回 RUNNING，
  * 研判结论作为报告回灌会话，主 agent 被唤醒补答，期间用户不被锁住。
+ * 子运行的账单独记（每次现包一个 {@link UsageTrackingChatModel}，用量只打日志）：它跨轮活着，记进主轮的账本会串到下一轮。
  * <p>
  * 模型建叶子时构造注入（同配置的用户共享同一个叶子和同一个模型实例）；
  * sessionId 是请求级的，从执行工具时交进来的 ToolContext 里取（{@link ToolRunContext#sessionId}）。
@@ -41,7 +43,8 @@ public class DeepAnalysisToolkit {
     /** Bull∥Bear 并行用。不能用 supplyAsync 默认的 commonPool：容器里就一两个线程，被两路 LLM 占满会拖死 Redis 建连 */
     private static final ExecutorService DEBATE_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 
-    private final ChatModel model;
+    /** 裸深模型，不是主轮那个记账的装饰器 */
+    private final ChatModel base;
     private final DeepAnalysisService deepAnalysisService;
     private final WorkbenchRunRegistry runRegistry;
     private final ChildRunRegistry childRuns;
@@ -54,7 +57,7 @@ public class DeepAnalysisToolkit {
     public DeepAnalysisToolkit(ChatModel model, DeepAnalysisService deepAnalysisService,
                                WorkbenchRunRegistry runRegistry, ChildRunRegistry childRuns,
                                PromptCatalog prompts, long userId, AgentLang lang) {
-        this.model = model;
+        this.base = model;
         this.deepAnalysisService = deepAnalysisService;
         this.runRegistry = runRegistry;
         this.childRuns = childRuns;
@@ -100,6 +103,7 @@ public class DeepAnalysisToolkit {
     /** 子运行主体：Bull∥Bear 并行 + Judge 裁决，阶段进度挂在过程轨的子运行条目上；返回回灌主 agent 的报告（JSON） */
     String execute(ChildRun run, String symbol) {
         long closeTime = System.currentTimeMillis();
+        UsageTrackingChatModel model = new UsageTrackingChatModel(base);   // 这一次研判自己的账
         progress(run, prompts.get(lang, "chat.deepAnalysis.progress.start", Map.of("symbol", symbol)));
         String newsContext = deepAnalysisService.buildNewsContext(lang);
         // Bull∥Bear 虚拟线程并行（对话场景无图结构，服务级并行等价）
@@ -115,9 +119,15 @@ public class DeepAnalysisToolkit {
         }, DEBATE_EXECUTOR);
         String bull = bullF.join();
         String bear = bearF.join();
+        if (run.cancelled()) {
+            // 停止/重新生成/删会话/超时：报告不会回灌了，裁决那次别烧
+            log.info("[DeepTool] #{} 已取消，不裁决 symbol={} usage={}", run.id(), symbol, model.snapshot());
+            return null;
+        }
         progress(run, prompts.get(lang, "chat.deepAnalysis.progress.judging"));
         QuantDeepAnalysis analysis = deepAnalysisService.judge(model, symbol, closeTime, "chat",
                 newsContext, bull, bear, lang);
+        log.info("[DeepTool] #{} 研判跑完 symbol={} usage={}", run.id(), symbol, model.snapshot());
         if (analysis == null) {
             ObjectNode out = MAPPER.createObjectNode();
             out.put("status", "FAILED");

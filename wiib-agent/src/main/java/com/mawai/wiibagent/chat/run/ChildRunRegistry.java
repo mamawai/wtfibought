@@ -13,7 +13,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Deque;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -33,7 +32,8 @@ import java.util.function.Function;
  * <p>
  * 报告回灌只有一条规则（{@link #deliver}）：会话正挂着一轮（{@link #attachTurn}）就塞进那轮的收件箱，
  * 下一次调模型前排进上下文；没挂就直接追加进会话上下文并标 {@code pending}，前端空闲时发起唤醒轮。
- * 必须用会话锁分这两条路：{@link ChatContextStore#save} 是整体覆盖，轮进行中直接写库会被那轮结束时的保存抹掉。
+ * 分这两条路和轮结束的保存（{@link #settle}）都在会话锁里：{@link ChatContextStore#save} 是整体覆盖，
+ * 报告在锁外写库会被轮结束时的保存抹掉。
  * <p>
  * 进程内存级，与 {@link WorkbenchRunRegistry} 同哲学：重启丢在跑的子运行与 pending 标记，已落库的报告还在上下文里。
  */
@@ -58,8 +58,8 @@ public class ChildRunRegistry {
 
     /** 一个会话的现场 */
     private static final class Session {
-        /** 在跑的子运行，id → run；结束的立刻摘掉 */
-        final Map<String, ChildRun> running = new LinkedHashMap<>();
+        /** 在跑的子运行，id → run；结束的立刻摘掉。并发表：数在跑数不拿会话锁 */
+        final Map<String, ChildRun> running = new ConcurrentHashMap<>();
         /** 非空=有轮挂着，报告进它 */
         Deque<Message> inbox;
         /** 有报告落在上下文里、还没有哪一轮答过 */
@@ -107,18 +107,22 @@ public class ChildRunRegistry {
         if (spec.kind() == ChildRun.Kind.DELEGATE && !userPrefs.subAgentsEnabled()) {
             return new Spawn(null, prompts.get(spec.lang(), "chat.childRun.refused.disabled"));
         }
-        if (runningOf(spec.userId()) >= userPrefs.subAgentLimit()) {
-            return new Spawn(null, prompts.get(spec.lang(), "chat.childRun.refused.limit",
-                    Map.of("limit", userPrefs.subAgentLimit())));
-        }
-        if (!globalSlots.tryAcquire()) {
-            return new Spawn(null, prompts.get(spec.lang(), "chat.childRun.refused.busy"));
-        }
-        ChildRun run = new ChildRun(String.valueOf(seq.incrementAndGet()), spec.sessionId(), spec.userId(),
-                spec.kind(), spec.label(), spec.brief(), spec.lang());
-        Session session = sessions.computeIfAbsent(spec.sessionId(), k -> new Session());
-        synchronized (session) {
-            session.running.put(run.id(), run);
+        ChildRun run;
+        // 数在跑的和登记一气做完：同一批 tool_call 并发派几个，不然都数到旧值一起过闸
+        synchronized (this) {
+            if (runningOf(spec.userId()) >= userPrefs.subAgentLimit()) {
+                return new Spawn(null, prompts.get(spec.lang(), "chat.childRun.refused.limit",
+                        Map.of("limit", userPrefs.subAgentLimit())));
+            }
+            if (!globalSlots.tryAcquire()) {
+                return new Spawn(null, prompts.get(spec.lang(), "chat.childRun.refused.busy"));
+            }
+            run = new ChildRun(String.valueOf(seq.incrementAndGet()), spec.sessionId(), spec.userId(),
+                    spec.kind(), spec.label(), spec.brief(), spec.lang());
+            Session session = sessions.computeIfAbsent(spec.sessionId(), k -> new Session());
+            synchronized (session) {
+                session.running.put(run.id(), run);
+            }
         }
         log.info("[ChildRun] 派发 #{} session={} kind={} label={}", run.id(), run.sessionId(), run.kind(), run.label());
         runRegistry.publishChildStart(run.sessionId(), run);
@@ -137,17 +141,21 @@ public class ChildRunRegistry {
         }
     }
 
-    /** 一轮结束：摘掉收件箱，剩余报告交回给轮并进落库消息；剩余非空即欠一次唤醒 */
-    public List<Message> detachTurn(String sessionId) {
-        Session session = sessions.get(sessionId);
-        if (session == null) {
-            return List.of();
-        }
+    /**
+     * 一轮结束（每条出路都走这里）：摘掉收件箱，剩余报告并进终态消息，整体覆盖会话历史。
+     * 摘和存在同一把锁里：这当口到的报告要么还赶上进收件箱随这次一起落库，要么排在这次之后自己落库。
+     *
+     * @return 剩余报告非空——这些报告这轮没答过，欠一次唤醒
+     */
+    public boolean settle(String sessionId, long userId, List<Message> messages) {
+        Session session = sessions.computeIfAbsent(sessionId, k -> new Session());
         synchronized (session) {
             List<Message> leftover = session.inbox == null ? List.of() : List.copyOf(session.inbox);
             session.inbox = null;
+            messages.addAll(leftover);
+            contextStore.save(sessionId, userId, messages);
             session.pending = !leftover.isEmpty();
-            return leftover;
+            return session.pending;
         }
     }
 
@@ -179,14 +187,13 @@ public class ChildRunRegistry {
         sessions.remove(sessionId);
     }
 
+    /** 不拿会话锁：会话锁里有落库，一个会话的慢保存不该卡住全站的派发。刚结束还没摘的多数一个无妨 */
     private int runningOf(long userId) {
         int n = 0;
         for (Session session : sessions.values()) {
-            synchronized (session) {
-                for (ChildRun run : session.running.values()) {
-                    if (run.userId() == userId) {
-                        n++;
-                    }
+            for (ChildRun run : session.running.values()) {
+                if (run.userId() == userId) {
+                    n++;
                 }
             }
         }

@@ -116,8 +116,7 @@ class ApprovalGateTest {
 
     /**
      * 又要弹卡说明上一条授权已经用不上了（模型改口换了 symbol）。留着它，
-     * route() 十分钟内会一直"跳过专家派发直通汇总"，用户每问一句都拿不到真数据——
-     * 静默降级，日志里一个字都不会提
+     * TTL 内模型若又调回 BTC 那件事会被直接放行，用户以为自己没点过头
      */
     @Test
     void 重新弹卡前丢弃用不上的旧授权() {
@@ -127,7 +126,7 @@ class ApprovalGateTest {
         // 模型改口要 ETH：授权对不上 → 重新弹卡，此时 BTC 那条授权必须被丢掉
         gate.intercept(SESSION, toolCallOf("run_deep_analysis", "{\"symbol\":\"ETHUSDT\"}"));
 
-        assertThat(registry.hasApproval(SESSION)).isFalse();
+        assertThat(registry.consumeApproval(SESSION, "run_deep_analysis", "BTCUSDT")).isFalse();
     }
 
     /**
@@ -238,27 +237,39 @@ class ApprovalGateTest {
                         .contains("深度研判").contains("3 次深模型调用"));
     }
 
+    /** 模型一口气要研判 BTC 和 ETH：放行是整批放、授权却只对一件事，所以整批不跑，让它拆开 */
+    private static final AssistantMessage TWO_DEEP_CALLS = AssistantMessage.builder().content("")
+            .toolCalls(List.of(
+                    new AssistantMessage.ToolCall("c1", "function",
+                            "run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
+                    new AssistantMessage.ToolCall("c2", "function",
+                            "run_deep_analysis", "{\"symbol\":\"ETHUSDT\"}"),
+                    new AssistantMessage.ToolCall("c3", "function",
+                            "market_snapshot", "{\"symbol\":\"BTCUSDT\"}")))
+            .build();
+
+    @Test
+    void 同批两个受管辖调用整批不执行() {
+        Optional<ToolResponseMessage> out = gate.intercept(SESSION, TWO_DEEP_CALLS);
+
+        // 不弹卡，所以同批的快照也不能回"有贵操作待确认"——模型会让用户干等一张不存在的卡
+        assertThat(out.orElseThrow().getResponses()).hasSize(3)
+                .allSatisfy(r -> assertThat(r.responseData()).contains("只能请求一个"));
+        assertThat(registry.peekPending(SESSION)).isEmpty();   // 拆开重调再说
+    }
+
     /**
-     * 一批里同时来了两个受管辖的调用（模型一口气要研判 BTC 和 ETH）：只有被登记的那个
-     * 拿到 PENDING_APPROVAL 说明，另一个必须是"未执行"。按工具名认领的话两个都会拿到
-     * 同一份说明——名字还一模一样——用户批的是 BTC，模型会以为 ETH 也批了。
+     * BTC 已批、模型把 ETH 捎在同一批里：按第一个命中就放行，整批执行时没批的 ETH 也跟着烧三次深模型。
+     * 整批不跑，BTC 那条授权也不消费，拆开单独调 BTC 时照常放行
      */
     @Test
-    void 同批两个受管辖调用只有正主拿到说明() {
-        AssistantMessage reply = AssistantMessage.builder().content("")
-                .toolCalls(List.of(
-                        new AssistantMessage.ToolCall("c1", "function",
-                                "run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"),
-                        new AssistantMessage.ToolCall("c2", "function",
-                                "run_deep_analysis", "{\"symbol\":\"ETHUSDT\"}")))
-                .build();
+    void 已批的和没批的在同一批时不借道放行() {
+        gate.intercept(SESSION, toolCallOf("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"));
+        registry.approve(SESSION, registry.peekPending(SESSION).orElseThrow().requestId());
 
-        Optional<ToolResponseMessage> out = gate.intercept(SESSION, reply);
+        assertThat(gate.intercept(SESSION, TWO_DEEP_CALLS)).isPresent();
 
-        assertThat(out.orElseThrow().getResponses()).satisfiesExactly(
-                first -> assertThat(first.responseData()).contains("PENDING_APPROVAL"),
-                second -> assertThat(second.responseData()).isEqualTo("未执行：本轮存在待确认的贵操作。"));
-        assertThat(registry.peekPending(SESSION).orElseThrow().symbol()).isEqualTo("BTCUSDT");
+        assertThat(gate.intercept(SESSION, toolCallOf("run_deep_analysis", "{\"symbol\":\"BTCUSDT\"}"))).isEmpty();
     }
 
     /**
