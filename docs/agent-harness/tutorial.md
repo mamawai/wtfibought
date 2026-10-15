@@ -203,6 +203,7 @@ deliver（会话锁内）
   ├─ 会话挂着一轮（attachTurn 过）→ 进收件箱，ReactLoop 下一次调模型前追加到尾部
   └─ 没挂 → load + add + save 直接落进会话上下文，标 pending
 pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤醒轮据报告补充回答
+子运行比那轮活得久 → 事件推不出去 → status 报每个子运行的结局与步骤 → 前端空闲时轮询它补过程轨、见 pending 唤醒
 ```
 
 读的时候盯这几处：
@@ -522,7 +523,7 @@ behavior 和 replay coach 直接建 `ResilientChatService` 用（不进 `ReactLo
 | 顺序 | 文件 | 行数 | 看什么 |
 |---|---|---|---|
 | 1 | `components/workbench/chatStore.ts` | 920 | **手写的外部 store，不是 zustand**（`subscribe`/`getSnapshot` + `useSyncExternalStore`）。状态与 SSE 消费脱离组件生命周期：切页只是面板卸载，流在这里继续收。`handleEvent` 是全部事件的唯一落点：`tool_calls`（主 agent 每批工具调用）落成过程条目，带 runId 的挂进对应子运行的内部；`child_start / child_progress / child_done` 落成子运行条目 |
-| 2 | 同上，`settle()` / `runWake()` | — | **唤醒由前端发起**，后端只标 pending 不偷跑。时机只有一条规则：本地没有轮在跑、排队消息也发完了。`wakePending` 只转抄后端 done / status 里的 pending，不自己推断 |
+| 2 | 同上，`settle()` / `runWake()` / `watchChildren()` | — | **唤醒由前端发起**，后端只标 pending 不偷跑。时机只有一条规则：本地没有轮在跑、排队消息也发完了。`wakePending` 只转抄后端 done / status 里的 pending，不自己推断。不欠但还有子运行亮着就轮询 status 盯着它们（那轮结束后它们的事件推不出来），见 pending 再走唤醒 |
 | 3 | 同上，`sendQueue` / `queuedId` | — | 后端占线（2203）时消息先上屏排队，本轮结束自动真发。`queuedId` 是气泡与队列条目共用的身份——靠下标对应的话，流式插条目/回放重建/重生成砍尾任一处都会错位 |
 | 4 | `components/workbench/chatView.ts` | 42 | 过程条目（进度/工具调用/搜索/后台子运行）归并成"工作过程"块，折叠状态用 `rid` 当键而不是下标（同上，下标会错位）；派发类工具的条目本身不画（屏上另有子运行条目/确认卡/表单卡） |
 | 5 | `components/workbench/ChatPanel.tsx` | 465 | 渲染主体：消息流、历史栏、全屏；哪条过程块算"正在跑"（`liveRailKey`）、什么时候出"分析问题中"那行都在这儿定 |

@@ -69,7 +69,7 @@ class DelegateToolkitTest {
             return new ChatAgentFactory.Worker(ReactLoop.builder().chat(chat)
                     .limiter(new ModelCallLimiter(3, "未执行", "收尾")).build(), usage);
         };
-        return new DelegateToolkit(childRuns, runRegistry, workers, ChatTestEndpoints.PROMPTS, 1L, AgentLang.ZH);
+        return new DelegateToolkit(childRuns, workers, ChatTestEndpoints.PROMPTS, 1L, AgentLang.ZH);
     }
 
     private List<ObjectNode> eventsOf(String type) {

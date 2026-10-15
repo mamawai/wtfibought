@@ -12,6 +12,7 @@ import com.mawai.wiibagent.chat.ChatTurnStreamer;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.ChatConcurrencyGate;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
+import com.mawai.wiibagent.chat.run.ChildRun;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.run.WorkbenchPrefService;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
@@ -110,9 +111,9 @@ public class ChatWorkbenchController {
      *
      * @param running  有轮在跑
      * @param pending  子运行报告到了还没答：前端本地空闲时发起 /wake
-     * @param children 在跑的后台子运行数
+     * @param children 这个会话派过的后台子运行（结局与内部步骤），按派发先后；前端空闲时轮询它补过程轨，刷新后据它重建在跑的
      */
-    public record SessionStatus(boolean running, boolean pending, int children) {
+    public record SessionStatus(boolean running, boolean pending, List<ChildRun.View> children) {
     }
 
     /** 清空全部会话的结果：deleted=删掉几个，skipped=在跑被跳过几个 */
@@ -316,13 +317,13 @@ public class ChatWorkbenchController {
     }
 
     @GetMapping("/sessions/{sessionId}/status")
-    @Operation(summary = "会话运行状态（切页/刷新回来判断 AI 是否还在后台跑、有没有欠着的唤醒、几个子运行在跑）")
+    @Operation(summary = "会话运行状态（切页/刷新回来判断 AI 是否还在后台跑、有没有欠着的唤醒、后台子运行各自的进展）")
     public Result<SessionStatus> sessionStatus(@CurrentUserId long userId, @PathVariable String sessionId) {
         if (sessionId == null || !sessionId.startsWith("wb-" + userId + "-")) {
             return Result.fail(messages.get("agent.chat.sessionNotFound"));
         }
         ChildRunRegistry.SessionState children = childRuns.state(sessionId);
-        return Result.ok(new SessionStatus(runRegistry.isRunning(sessionId), children.pending(), children.running()));
+        return Result.ok(new SessionStatus(runRegistry.isRunning(sessionId), children.pending(), children.runs()));
     }
 
     @GetMapping("/sessions/{sessionId}/messages")

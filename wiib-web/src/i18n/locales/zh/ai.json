@@ -431,6 +431,7 @@
     "childrenRunning_other": "{{count}} 个后台任务进行中",
     "brief": "任务书",
     "reportDelivered": "报告已交给 {{hub}}，结论稍后补充",
+    "childLost": "服务重启，这个后台任务没跑完",
     "status": {
       "running": "进行中",
       "done": "完成",

@@ -262,11 +262,11 @@ public class ChatAgentFactory {
                         // 行情 ×4 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作表单 ×3 / 行为分析 / 派子 agent
                         marketToolkit,
                         newsToolkit.boundTo(lang),
-                        new DeepAnalysisToolkit(deepBase, deepAnalysisService, runRegistry, childRuns, prompts, userId, lang),
+                        new DeepAnalysisToolkit(deepBase, deepAnalysisService, childRuns, prompts, userId, lang),
                         new TraderQueryToolkit(traderChatService, userId, lang),
                         new TraderActionToolkit(runRegistry, userId, prompts, lang),
                         new BehaviorToolkit(deep, behaviorAnalysisService, runRegistry, userId, lang),
-                        new DelegateToolkit(childRuns, runRegistry, workers, prompts, userId, lang)))
+                        new DelegateToolkit(childRuns, workers, prompts, userId, lang)))
                 .webSearch(webSearch)
                 .maxAttempts(3).initialDelay(500).maxDelay(4000)
                 .build();

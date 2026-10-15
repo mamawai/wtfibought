@@ -217,7 +217,8 @@ function ChildRow({ item, open, onToggle }: { item: ChildItem; open: boolean; on
   const stepText = (s: ChildStep) =>
     s.kind === 'tool' ? [toolLabel(s.name), argsSummary(s.args)].filter(Boolean).join(' · ') : s.text;
   const current = !open && running ? lastActive(item.steps) : undefined;
-  const detail = current ? stepText(current) : !open && item.status === 'failed' ? item.error : undefined;
+  const error = item.keyed && item.error ? t(item.error) : item.error;
+  const detail = current ? stepText(current) : !open && item.status === 'failed' ? error : undefined;
   const timed = item.status === 'running' || item.status === 'done';
 
   return (
@@ -248,7 +249,7 @@ function ChildRow({ item, open, onToggle }: { item: ChildItem; open: boolean; on
               <Check className="w-3 h-3 shrink-0" />{t('rail.reportDelivered', { hub: HUB_NAME })}
             </p>
           )}
-          {item.status === 'failed' && <p className="text-[11px] text-loss">{item.error ?? t('rail.status.failed')}</p>}
+          {item.status === 'failed' && <p className="text-[11px] text-loss">{error ?? t('rail.status.failed')}</p>}
           {item.status === 'cancelled' && <p className="text-[11px] text-muted-foreground">{t('rail.status.cancelled')}</p>}
         </div>
       )}

@@ -1,5 +1,5 @@
 import { ApiError, workbenchApi } from '../../api';
-import type { BehaviorAnalysisReport, ChatIntent, ChildRunKind, SearchSource, TraderFormKind, TurnMeta, WorkbenchChatMessage, WorkbenchEvent } from '../../types';
+import type { BehaviorAnalysisReport, ChatIntent, ChildRunKind, ChildRunStatus, ChildRunStepView, ChildRunView, SearchSource, TraderFormKind, TurnMeta, WorkbenchChatMessage, WorkbenchEvent } from '../../types';
 
 /** 与后端 ErrorCode 对齐：2200 段是研判工作台（1600 段是 Crypto，别复用） */
 export const CHAT_ERROR = {
@@ -50,11 +50,11 @@ export type ChatItem =
   // 主 agent 的一次工具调用（同一批的几条一起到）：模型的下一步（下一批工具 / 答案 token / 搜索）到了就算做完
   | { kind: 'tool'; rid: number; id: string; name: string; args?: Record<string, unknown>; active: boolean }
   // 后台子运行（深研判、派出去的子 agent）：跑着亮点，结束变状态。brief 是任务书（delegate 才有），
-  // steps 是它内部的每一步（它调的工具、它报的阶段），at 开跑时刻，endedAt 结束时刻，error 失败原因。
-  // 它可以跨轮活着——轮结束了它还在跑，报告到了后端标 pending，本地空闲时发起唤醒轮
+  // steps 是它内部的每一步（它调的工具、它报的阶段），at 开跑时刻，endedAt 结束时刻，error 失败原因（keyed 同 progress）。
+  // 它可以跨轮活着——轮结束了它还在跑，本地空闲时轮询 status 补它的进展，报告到了后端标 pending，就发起唤醒轮
   | {
       kind: 'child'; rid: number; at: number; runId: string; runKind: ChildRunKind; label: string; brief?: string | null;
-      status: ChildStatus; steps: ChildStep[]; endedAt?: number; error?: string;
+      status: ChildStatus; steps: ChildStep[]; endedAt?: number; error?: string; keyed?: boolean;
     }
   // 汇总者的一次联网搜索：active=还在搜（亮着转圈），搜完回填 sources 熄灭；query 开搜时可能还没有
   | { kind: 'search'; rid: number; query: string | null; sources: SearchSource[]; active: boolean }
@@ -106,6 +106,8 @@ const liveStreams = new Set<AbortController>();
  */
 const unopenedBubbles = new Set<number>();
 let pollTimer: number | null = null;
+/** 本地空闲时盯后台子运行的轮询，见 watchChildren */
+let childTimer: number | null = null;
 let initialized = false;
 /**
  * 后端占线（有轮在跑）时排队的待发消息。
@@ -244,6 +246,51 @@ function updateChild(items: ChatItem[], runId: string,
   return items.map(it => (it.kind === 'child' && it.runId === runId ? patch(it) : it));
 }
 
+const CHILD_STATUS: Record<ChildRunStatus, ChildStatus> = {
+  RUNNING: 'running', DONE: 'done', FAILED: 'failed', CANCELLED: 'cancelled',
+};
+
+function stepFromView(s: ChildRunStepView): ChildStep {
+  return s.kind === 'tool'
+    ? { kind: 'tool', id: s.id, name: s.name, args: s.args ?? undefined, active: s.active }
+    : { kind: 'phase', text: s.text, active: s.active };
+}
+
+/** status 里在跑的子运行重建成过程轨条目：过程轨不落库，回放历史整体重建 items 时接在历史后面 */
+function runningChildren(runs: ChildRunView[]): ChatItem[] {
+  return runs.filter(r => r.status === 'RUNNING').map(r => ({
+    kind: 'child' as const, rid: nextRid(), at: r.startedAt, runId: r.runId, runKind: r.kind, label: r.label,
+    brief: r.brief, status: 'running' as const, steps: r.steps.map(stepFromView),
+  }));
+}
+
+/**
+ * 按 status 对齐本地还亮着的子运行：状态、步骤、失败原因以后端为准，耗时按后端的起止算；
+ * 后端没有这条了（服务重启丢了）判失败。已经结束的不动
+ */
+function syncChildren(items: ChatItem[], runs: ChildRunView[]): ChatItem[] {
+  const byId = new Map(runs.map(r => [r.runId, r]));
+  return items.map((it): ChatItem => {
+    if (it.kind !== 'child' || it.status !== 'running') return it;
+    const run = byId.get(it.runId);
+    if (!run) {
+      return { ...it, status: 'failed', error: 'rail.childLost', keyed: true, endedAt: Date.now(), steps: settleChildSteps(it.steps) };
+    }
+    return {
+      ...it,
+      status: CHILD_STATUS[run.status],
+      steps: run.steps.map(stepFromView),
+      error: run.error ?? undefined,
+      endedAt: run.endedAt != null ? it.at + run.endedAt - run.startedAt : undefined,
+    };
+  });
+}
+
+/** 本地有子运行还亮着 */
+function hasRunningChild(): boolean {
+  return state.items.some(it => it.kind === 'child' && it.status === 'running');
+}
+
 /** 来源按 url 去重合并（同一个网站可能被几次搜索重复命中） */
 function mergeSources(a: SearchSource[], b: SearchSource[]): SearchSource[] {
   const seen = new Set(a.map(s => s.url));
@@ -344,7 +391,7 @@ function handleEvent(e: WorkbenchEvent) {
     case 'child_done':
       updateItems(prev => updateChild(prev, e.runId, it => ({
         ...it,
-        status: e.status === 'DONE' ? 'done' : e.status === 'FAILED' ? 'failed' : 'cancelled',
+        status: CHILD_STATUS[e.status],
         endedAt: Date.now(), error: e.error, steps: settleChildSteps(it.steps),
       })));
       break;
@@ -431,10 +478,15 @@ function abortAll() {
   abortCtrl = null;
 }
 
+/** 两种轮询一起停：等别处那轮的、盯后台子运行的 */
 function stopPolling() {
   if (pollTimer !== null) {
     window.clearInterval(pollTimer);
     pollTimer = null;
+  }
+  if (childTimer !== null) {
+    window.clearInterval(childTimer);
+    childTimer = null;
   }
 }
 
@@ -463,11 +515,11 @@ function startPolling() {
         if (status?.running) return;
         stopPolling();
         if (status) wakePending = status.pending;
-        // 历史回放会整体重建 items：排队气泡和没填完的表单卡都不在后端历史里，得补回尾部（排队气泡压最后）
+        // 历史回放会整体重建 items：在跑的子运行、排队气泡和没填完的表单卡都不在后端历史里，得补回尾部（排队气泡压最后）
         const queued = sendQueue.filter(q => q.bubbled)
           .map(q => ({ kind: 'user' as const, content: q.text, at: Date.now(), queued: true, queuedId: q.id }));
         set({
-          ...(msgs ? { items: [...toItems(msgs), ...pendingForms(), ...queued] } : {}),
+          ...(msgs && status ? { items: [...toItems(msgs), ...runningChildren(status.children), ...pendingForms(), ...queued] } : {}),
           loading: false, background: false,
         });
         settle();
@@ -477,6 +529,34 @@ function startPolling() {
     })();
   }, POLL_MS);
   pollTimer = timer;
+}
+
+/** 本地空闲、还有子运行亮着：轮询 status 对齐它们，见 pending 交给 settle() 发起唤醒轮，都结束了就停 */
+function watchChildren(sid: string) {
+  stopPolling();
+  let checking = false;
+  const timer = window.setInterval(() => {
+    if (checking) return;
+    checking = true;
+    void (async () => {
+      try {
+        const status = await workbenchApi.sessionStatus(sid);
+        // 等的这段时间开了新一轮、切了会话或新建了对话（都会先停掉轮询）：这次结果作废
+        if (childTimer !== timer) return;
+        updateItems(prev => syncChildren(prev, status.children));
+        // 本会话有轮在别处跑（别的标签页）：报告归那轮答，接着盯
+        if (status.running) return;
+        wakePending = status.pending;
+        if (wakePending || !hasRunningChild()) {
+          stopPolling();
+          settle();
+        }
+      } catch { /* 网络抖动下轮再试 */ } finally {
+        checking = false;
+      }
+    })();
+  }, POLL_MS);
+  childTimer = timer;
 }
 
 /**
@@ -585,15 +665,17 @@ async function send(message: string, opts?: { noBubble?: boolean; requeueAs?: Qu
 }
 
 /**
- * 一轮在本地收尾后的下一步：排队消息先发（用户消息永远优先），一条都没有了再发起欠着的唤醒轮。
- * 唤醒轮自己收尾也走这里——它跑的时候可能又到了新报告。
+ * 一轮在本地收尾后的下一步：排队消息先发（用户消息永远优先），一条都没有了再发起欠着的唤醒轮，
+ * 不欠但还有子运行在跑就盯着它们。唤醒轮自己收尾也走这里——它跑的时候可能又到了新报告。
  */
 function settle() {
   if (sendQueue.length > 0) {
     drainQueue();
     return;
   }
-  if (wakePending && state.sessionId) void runWake(state.sessionId);
+  if (!state.sessionId) return;
+  if (wakePending) void runWake(state.sessionId);
+  else if (hasRunningChild()) watchChildren(state.sessionId);
 }
 
 /**
@@ -802,13 +884,13 @@ function drainQueue() {
   void send(next.text, { noBubble: true, requeueAs: next, intent: next.intent });
 }
 
-/** 载入会话：消息回放 + 运行状态感知（还在跑→轮询等结果；欠着唤醒→立刻发起；新消息照常可排队） */
+/** 载入会话：消息回放 + 运行状态感知（还在跑→轮询等结果；欠着唤醒→立刻发起；在跑的子运行补回过程轨并盯着；新消息照常可排队） */
 async function openSession(sid: string) {
   abortAll();
   stopPolling();
   const [msgs, status] = await Promise.all([
     workbenchApi.sessionMessages(sid),
-    workbenchApi.sessionStatus(sid).catch(() => ({ running: false, pending: false, children: 0 })),
+    workbenchApi.sessionStatus(sid).catch(() => ({ running: false, pending: false, children: [] })),
   ]).catch((err: unknown) => {
     // 拉不到就留在原会话。它被掐掉的流、停掉的轮询没人接手了（await 期间用户又发了新的除外）：
     // 转后台轮询，等那轮跑完回放历史补齐
@@ -826,7 +908,7 @@ async function openSession(sid: string) {
   // 表单卡是 trader 动作、不属于哪个会话（跟排队消息不同），换会话也带过去，别抹掉填一半的
   const forms = pendingForms();
   setSession(sid);
-  set({ items: [...toItems(msgs), ...forms], loading: status.running, background: status.running });
+  set({ items: [...toItems(msgs), ...runningChildren(status.children), ...forms], loading: status.running, background: status.running });
   if (status.running) startPolling();
   else settle();
 }

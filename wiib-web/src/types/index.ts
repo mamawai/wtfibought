@@ -518,6 +518,27 @@ export interface FeedStreamHealth {
 /** 后台子运行的种类：DELEGATE=主 agent 现写任务书派出去的 worker；DEEP_ANALYSIS=深研判固定流水线 */
 export type ChildRunKind = 'DELEGATE' | 'DEEP_ANALYSIS';
 
+/** 后台子运行的状态（与后端 ChildRun.Status 同名同值） */
+export type ChildRunStatus = 'RUNNING' | 'DONE' | 'FAILED' | 'CANCELLED';
+
+/** status 里一个子运行内部的一步：tool 是它调的工具，phase 是它报的阶段文案（另一种的字段后端给 null，这里不列） */
+export type ChildRunStepView =
+  | { kind: 'tool'; id: string; name: string; args: Record<string, unknown> | null; active: boolean }
+  | { kind: 'phase'; text: string; active: boolean };
+
+/** status 里一个子运行的快照（后端 ChildRun.View）：时刻是服务端时钟 */
+export interface ChildRunView {
+  runId: string;
+  kind: ChildRunKind;
+  label: string;
+  brief: string | null;
+  startedAt: number;
+  endedAt: number | null;
+  status: ChildRunStatus;
+  error: string | null;
+  steps: ChildRunStepView[];
+}
+
 /** 模型要调的一个工具：args 是它给的参数（不是合法 JSON 时后端不带） */
 export interface ToolCall {
   id: string;
@@ -533,10 +554,10 @@ export type WorkbenchEvent =
   // 模型这一批要调的工具（连名带参）：带 runId 的是某个子运行里的，不带的是主 agent 自己的
   | { type: 'tool_calls'; runId?: string; calls: ToolCall[] }
   // 后台子运行（深研判、派出去的子 agent）：开跑 / 阶段进度 / 结束。brief 是任务书（delegate 才有）。
-  // 没轮在跑时推不出来，前端靠 status 的 children/pending 补
+  // 没轮在跑时推不出来，前端本地空闲时轮询 status 的 children/pending 补
   | { type: 'child_start'; runId: string; kind: ChildRunKind; label: string; brief?: string }
   | { type: 'child_progress'; runId: string; text: string }
-  | { type: 'child_done'; runId: string; status: 'DONE' | 'FAILED' | 'CANCELLED'; error?: string }
+  | { type: 'child_done'; runId: string; status: Exclude<ChildRunStatus, 'RUNNING'>; error?: string }
   // requestId：这张卡的唯一标识，点同意/拒绝时原样回传，服务端据此确认"点的是哪张卡"
   | { type: 'hitl_request'; sessionId: string; symbol: string; reason: string; requestId: string; resumeMessage: string }
   // 模型请求给用户弹一张待填的表单卡；执行权在用户点击，模型只能开卡不能动手。
@@ -615,11 +636,11 @@ export interface StrategyAccountView {
   closedPositions: StrategyClosedPosition[];
 }
 
-/** 会话运行状态（/ai/workbench/sessions/{id}/status）：running=有轮在跑；pending=欠着唤醒；children=在跑的后台子运行数 */
+/** 会话运行状态（/ai/workbench/sessions/{id}/status）：running=有轮在跑；pending=欠着唤醒；children=这个会话派过的后台子运行，按派发先后 */
 export interface WorkbenchSessionStatus {
   running: boolean;
   pending: boolean;
-  children: number;
+  children: ChildRunView[];
 }
 
 /** 工作台用户偏好（/ai/workbench/prefs）：后台子 agent 开关与同时在跑上限；maxLimit 是能调到的最大值 */

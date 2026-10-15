@@ -4,7 +4,6 @@ import com.mawai.wiibcommon.entity.QuantDeepAnalysis;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.chat.gate.ApprovalGate;
-import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRun;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -46,7 +45,6 @@ public class DeepAnalysisToolkit {
     /** 裸深模型，不是主轮那个记账的装饰器 */
     private final ChatModel base;
     private final DeepAnalysisService deepAnalysisService;
-    private final WorkbenchRunRegistry runRegistry;
     private final ChildRunRegistry childRuns;
     private final PromptCatalog prompts;
     /** 子运行按用户计上限，归属建叶子时烤死 */
@@ -54,12 +52,10 @@ public class DeepAnalysisToolkit {
     /** 辩论/裁决的提示词与推给用户的阶段进度都按它取；工具是建叶子时造的，语言跟着叶子走 */
     private final AgentLang lang;
 
-    public DeepAnalysisToolkit(ChatModel model, DeepAnalysisService deepAnalysisService,
-                               WorkbenchRunRegistry runRegistry, ChildRunRegistry childRuns,
+    public DeepAnalysisToolkit(ChatModel model, DeepAnalysisService deepAnalysisService, ChildRunRegistry childRuns,
                                PromptCatalog prompts, long userId, AgentLang lang) {
         this.base = model;
         this.deepAnalysisService = deepAnalysisService;
-        this.runRegistry = runRegistry;
         this.childRuns = childRuns;
         this.prompts = prompts;
         this.userId = userId;
@@ -149,6 +145,6 @@ public class DeepAnalysisToolkit {
     }
 
     private void progress(ChildRun run, String text) {
-        runRegistry.publishChildProgress(run.sessionId(), run.id(), text);
+        childRuns.phase(run, text);
     }
 }

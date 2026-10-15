@@ -6,6 +6,7 @@ import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.llm.LlmErrorMessages;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,6 +20,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -34,6 +36,9 @@ import java.util.function.Function;
  * 下一次调模型前排进上下文；没挂就直接追加进会话上下文并标 {@code pending}，前端空闲时发起唤醒轮。
  * 分这两条路和轮结束的保存（{@link #settle}）都在会话锁里：{@link ChatContextStore#save} 是整体覆盖，
  * 报告在锁外写库会被轮结束时的保存抹掉。
+ * <p>
+ * 子运行的事件只能借在跑的那轮推出去，轮结束后就推不出了。会话派过的子运行都留着，
+ * {@link #state} 报每个的结局与内部步骤，前端本地空闲时轮询它补过程轨、见 pending 发唤醒。
  * <p>
  * 进程内存级，与 {@link WorkbenchRunRegistry} 同哲学：重启丢在跑的子运行与 pending 标记，已落库的报告还在上下文里。
  */
@@ -52,14 +57,17 @@ public class ChildRunRegistry {
         }
     }
 
-    /** 会话的子运行状况：在跑几个、有没有没答过的报告 */
-    public record SessionState(int running, boolean pending) {
+    /** 会话的子运行状况：有没有没答过的报告、派过的每个子运行的快照（按派发先后） */
+    public record SessionState(boolean pending, List<ChildRun.View> runs) {
+        public int running() {
+            return (int) runs.stream().filter(r -> r.status() == ChildRun.Status.RUNNING).count();
+        }
     }
 
     /** 一个会话的现场 */
     private static final class Session {
-        /** 在跑的子运行，id → run；结束的立刻摘掉。并发表：数在跑数不拿会话锁 */
-        final Map<String, ChildRun> running = new ConcurrentHashMap<>();
+        /** 派过的子运行，按派发先后，跑完的也留着。写时复制：数在跑数不拿会话锁 */
+        final List<ChildRun> runs = new CopyOnWriteArrayList<>();
         /** 非空=有轮挂着，报告进它 */
         Deque<Message> inbox;
         /** 有报告落在上下文里、还没有哪一轮答过 */
@@ -119,10 +127,7 @@ public class ChildRunRegistry {
             }
             run = new ChildRun(String.valueOf(seq.incrementAndGet()), spec.sessionId(), spec.userId(),
                     spec.kind(), spec.label(), spec.brief(), spec.lang());
-            Session session = sessions.computeIfAbsent(spec.sessionId(), k -> new Session());
-            synchronized (session) {
-                session.running.put(run.id(), run);
-            }
+            sessions.computeIfAbsent(spec.sessionId(), k -> new Session()).runs.add(run);
         }
         log.info("[ChildRun] 派发 #{} session={} kind={} label={}", run.id(), run.sessionId(), run.kind(), run.label());
         runRegistry.publishChildStart(run.sessionId(), run);
@@ -159,14 +164,27 @@ public class ChildRunRegistry {
         }
     }
 
+    /** 在会话锁里取，结局和 pending 对得上 */
     public SessionState state(String sessionId) {
         Session session = sessions.get(sessionId);
         if (session == null) {
-            return new SessionState(0, false);
+            return new SessionState(false, List.of());
         }
         synchronized (session) {
-            return new SessionState(session.running.size(), session.pending);
+            return new SessionState(session.pending, session.runs.stream().map(ChildRun::view).toList());
         }
+    }
+
+    /** 子运行报了一个阶段：记进它的步骤再推给前端 */
+    public void phase(ChildRun run, String text) {
+        run.addPhase(text);
+        runRegistry.publishChildProgress(run.sessionId(), run.id(), text);
+    }
+
+    /** 子运行要调一批工具：记进它的步骤再推给前端 */
+    public void toolCalls(ChildRun run, List<AssistantMessage.ToolCall> calls) {
+        run.addToolCalls(calls);
+        runRegistry.publishToolCalls(run.sessionId(), run.id(), calls);
     }
 
     /** 停掉这个会话全部在跑的子运行（停止按钮、重新生成）；它们的报告不再回灌 */
@@ -176,8 +194,7 @@ public class ChildRunRegistry {
             return;
         }
         synchronized (session) {
-            session.running.values().forEach(ChildRun::markCancelled);
-            session.running.clear();
+            session.runs.stream().filter(r -> r.status() == ChildRun.Status.RUNNING).forEach(ChildRun::markCancelled);
         }
     }
 
@@ -187,12 +204,12 @@ public class ChildRunRegistry {
         sessions.remove(sessionId);
     }
 
-    /** 不拿会话锁：会话锁里有落库，一个会话的慢保存不该卡住全站的派发。刚结束还没摘的多数一个无妨 */
+    /** 不拿会话锁：会话锁里有落库，一个会话的慢保存不该卡住全站的派发。正赶上结束的多数一个无妨 */
     private int runningOf(long userId) {
         int n = 0;
         for (Session session : sessions.values()) {
-            for (ChildRun run : session.running.values()) {
-                if (run.userId() == userId) {
+            for (ChildRun run : session.runs) {
+                if (run.userId() == userId && run.status() == ChildRun.Status.RUNNING) {
                     n++;
                 }
             }
@@ -200,12 +217,12 @@ public class ChildRunRegistry {
         return n;
     }
 
-    /** 主体跑完：取消的直接丢；否则拼报告回灌，再推 child_done */
+    /** 主体跑完：取消的直接丢；否则拼报告回灌、记结局，再推 child_done */
     private void finish(ChildRun run, String text, Throwable err) {
         globalSlots.release();
         Session session = sessions.get(run.sessionId());
         if (run.status() == ChildRun.Status.CANCELLED) {
-            runRegistry.publishChildDone(run.sessionId(), run, null);
+            runRegistry.publishChildDone(run);
             return;
         }
         Throwable cause = err instanceof CompletionException && err.getCause() != null ? err.getCause() : err;
@@ -217,30 +234,38 @@ public class ChildRunRegistry {
         String status = prompts.get(run.lang(), failed ? "chat.childRun.status.failed" : "chat.childRun.status.done");
         Message report = new UserMessage(prompts.get(run.lang(), "chat.childRun.tag",
                 Map.of("id", run.id(), "label", run.label(), "status", status)) + "\n" + body);
-        if (failed) {
-            log.warn("[ChildRun] #{} 失败 session={} label={}", run.id(), run.sessionId(), run.label(), cause);
-        } else {
-            log.info("[ChildRun] #{} 完成 session={} label={} 报告{}字", run.id(), run.sessionId(), run.label(), body.length());
+        if (deliver(session, run, report, failed ? body : null)) {
+            if (failed) {
+                log.warn("[ChildRun] #{} 失败 session={} label={}", run.id(), run.sessionId(), run.label(), cause);
+            } else {
+                log.info("[ChildRun] #{} 完成 session={} label={} 报告{}字", run.id(), run.sessionId(), run.label(), body.length());
+            }
         }
-        deliver(session, run, report);
-        run.status(failed ? ChildRun.Status.FAILED : ChildRun.Status.DONE);
-        synchronized (session) {
-            session.running.remove(run.id());
-        }
-        runRegistry.publishChildDone(run.sessionId(), run, failed ? body : null);
+        runRegistry.publishChildDone(run);
     }
 
-    private void deliver(Session session, ChildRun run, Message report) {
+    /**
+     * 报告放到该去的地方，再记结局，和 pending 同一把锁。
+     *
+     * @param error 非空=失败，给用户看的原因
+     * @return false=这当口被停掉了（停止/重新生成/删会话），报告不回灌
+     */
+    private boolean deliver(Session session, ChildRun run, Message report, String error) {
         synchronized (session) {
+            if (run.status() == ChildRun.Status.CANCELLED) {
+                return false;
+            }
             if (session.inbox != null) {
                 session.inbox.add(report);
-                return;
+            } else {
+                // 没轮在跑：直接追加进会话上下文。整体覆盖式存储，读-加-写要在锁里
+                List<Message> messages = new ArrayList<>(contextStore.load(run.sessionId()));
+                messages.add(report);
+                contextStore.save(run.sessionId(), run.userId(), messages);
+                session.pending = true;
             }
-            // 没轮在跑：直接追加进会话上下文。整体覆盖式存储，读-加-写要在锁里
-            List<Message> messages = new ArrayList<>(contextStore.load(run.sessionId()));
-            messages.add(report);
-            contextStore.save(run.sessionId(), run.userId(), messages);
-            session.pending = true;
+            run.end(error == null ? ChildRun.Status.DONE : ChildRun.Status.FAILED, error);
+            return true;
         }
     }
 

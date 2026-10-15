@@ -6,6 +6,7 @@ import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 
 import java.util.ArrayDeque;
@@ -75,8 +76,9 @@ class ChildRunRegistryTest {
         return saved.getValue();
     }
 
+    /** 没轮在跑时 child_done 推不出去：跑完的子运行留在 status 里，结局与 pending 一起看得到 */
     @Test
-    void 没轮在跑时报告落库并标pending() {
+    void 没轮在跑时报告落库并标pending_status报出结局() {
         ChildRunRegistry registry = registry(3, 3);
 
         ChildRunRegistry.Spawn spawn = registry.spawn(spec(SESSION), run -> "报告正文");
@@ -84,8 +86,41 @@ class ChildRunRegistryTest {
         assertThat(spawn.started()).isTrue();
         assertThat(savedMessages()).singleElement().satisfies(m -> assertThat(m.getText())
                 .startsWith("【后台任务#" + spawn.run().id()).contains("调研").contains("已完成").endsWith("报告正文"));
+        ChildRunRegistry.SessionState state = registry.state(SESSION);
+        assertThat(state.pending()).isTrue();
+        assertThat(state.runs()).singleElement().satisfies(view -> {
+            assertThat(view.status()).isEqualTo(ChildRun.Status.DONE);
+            assertThat(view.endedAt()).isNotNull();
+        });
+    }
+
+    @Test
+    void status报内部步骤_在跑时最后一批算做着() {
+        ChildRunRegistry registry = registry(3, 3);
+        CountDownLatch release = new CountDownLatch(1);
+        ChildRunRegistry.Spawn spawn = registry.spawn(spec(SESSION), run -> {
+            registry.phase(run, "开跑");
+            registry.toolCalls(run, List.of(
+                    new AssistantMessage.ToolCall("c1", "function", "klines", "{\"symbol\":\"BTCUSDT\"}"),
+                    new AssistantMessage.ToolCall("c2", "function", "news_search", "不是JSON")));
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return "报告正文";
+        });
+        waitUntil(() -> registry.state(SESSION).runs().getFirst().steps().size() == 3);
+
+        List<ChildRun.Step> steps = registry.state(SESSION).runs().getFirst().steps();
+        assertThat(steps).extracting(ChildRun.Step::kind).containsExactly("phase", "tool", "tool");
+        assertThat(steps).extracting(ChildRun.Step::active).containsExactly(false, true, true);
+        assertThat(steps.get(1).args().get("symbol").asString(null)).isEqualTo("BTCUSDT");
+        assertThat(steps.get(2).args()).isNull();
+
+        release.countDown();
         waitUntil(() -> spawn.run().status() == ChildRun.Status.DONE);
-        assertThat(registry.state(SESSION)).isEqualTo(new ChildRunRegistry.SessionState(0, true));
+        assertThat(registry.state(SESSION).runs().getFirst().steps()).noneMatch(ChildRun.Step::active);
     }
 
     @Test
@@ -247,8 +282,10 @@ class ChildRunRegistryTest {
 
         registry.cancelAll(SESSION);
 
-        assertThat(spawn.run().status()).isEqualTo(ChildRun.Status.CANCELLED);
-        assertThat(registry.state(SESSION)).isEqualTo(new ChildRunRegistry.SessionState(0, false));
+        ChildRunRegistry.SessionState state = registry.state(SESSION);
+        assertThat(state.pending()).isFalse();
+        assertThat(state.runs()).singleElement().satisfies(view ->
+                assertThat(view.status()).isEqualTo(ChildRun.Status.CANCELLED));
         verify(contextStore, after(300).never()).save(any(), anyLong(), any());
     }
 
@@ -260,10 +297,15 @@ class ChildRunRegistryTest {
             throw new IllegalStateException("boom");
         });
 
-        assertThat(savedMessages()).singleElement().satisfies(m -> assertThat(m.getText())
-                .startsWith("【后台任务#" + spawn.run().id()).contains("失败"));
-        waitUntil(() -> spawn.run().status() == ChildRun.Status.FAILED);
-        assertThat(registry.state(SESSION).pending()).isTrue();
+        String report = savedMessages().getFirst().getText();
+        assertThat(report).startsWith("【后台任务#" + spawn.run().id()).contains("失败");
+        ChildRunRegistry.SessionState state = registry.state(SESSION);
+        assertThat(state.pending()).isTrue();
+        // 失败原因和报告里给主 agent 的是同一句
+        assertThat(state.runs()).singleElement().satisfies(view -> {
+            assertThat(view.status()).isEqualTo(ChildRun.Status.FAILED);
+            assertThat(report).endsWith(view.error());
+        });
     }
 
     @Test

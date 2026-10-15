@@ -20,7 +20,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *   <li>运行状态：切页/刷新回来后前端查 status 得知"AI 还在后台跑"（不随 SSE 断连中止）</li>
  *   <li>事件总线：主 agent 与子 agent 每批工具调用、子运行的开始/进度/结束、行为分析的阶段进度经此推给 SSE 通道；
  *       trader 动作类工具经此推表单卡，把执行权交回用户点击。没轮在跑时推不出去（返回 false），
- *       子运行的事件丢了也不要紧，前端靠 status 的 children/pending 补</li>
+ *       子运行的事件丢了也不要紧，前端本地空闲时轮询 status 的 children/pending 补</li>
  *   <li>中断：/cancel 完成那轮的信号，轮在下一个检查点收尾</li>
  * </ul>
  * 进程内存级即可：单实例部署，重启即无运行中会话，无需持久化。
@@ -116,12 +116,13 @@ public class WorkbenchRunRegistry {
     }
 
     /** 子运行结束：status 是 DONE / FAILED / CANCELLED，失败带原因 */
-    public void publishChildDone(String sessionId, ChildRun run, String error) {
+    public void publishChildDone(ChildRun run) {
         ObjectNode data = MAPPER.createObjectNode().put("runId", run.id()).put("status", run.status().name());
+        String error = run.error();
         if (error != null) {
             data.put("error", error);
         }
-        publish(sessionId, "child_done", data);
+        publish(run.sessionId(), "child_done", data);
     }
 
     /**
@@ -136,10 +137,9 @@ public class WorkbenchRunRegistry {
         ArrayNode list = MAPPER.createArrayNode();
         for (AssistantMessage.ToolCall call : calls) {
             ObjectNode row = list.addObject().put("id", call.id()).put("name", call.name());
-            try {
-                row.set("args", MAPPER.readValue(call.arguments(), ObjectNode.class));
-            } catch (Exception ignore) {
-                // 参数不是合法 JSON 就只给工具名
+            ObjectNode args = argsOf(call);
+            if (args != null) {
+                row.set("args", args);
             }
         }
         ObjectNode data = MAPPER.createObjectNode();
@@ -148,6 +148,15 @@ public class WorkbenchRunRegistry {
         }
         data.set("calls", list);
         publish(sessionId, "tool_calls", data);
+    }
+
+    /** 工具参数；不是合法 JSON 对象返回 null，只给工具名 */
+    public static ObjectNode argsOf(AssistantMessage.ToolCall call) {
+        try {
+            return MAPPER.readValue(call.arguments(), ObjectNode.class);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** 统一出口：会话已结束、通道已断连，两种都返回 false。 */

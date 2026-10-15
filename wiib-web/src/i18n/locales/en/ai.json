@@ -441,6 +441,7 @@
     "childrenRunning_other": "{{count}} background tasks running",
     "brief": "Brief",
     "reportDelivered": "Report handed to {{hub}}, follow-up coming",
+    "childLost": "The service restarted before this task finished",
     "status": {
       "running": "Running",
       "done": "Done",

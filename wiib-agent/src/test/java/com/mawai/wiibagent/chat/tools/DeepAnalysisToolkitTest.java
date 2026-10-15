@@ -49,8 +49,8 @@ class DeepAnalysisToolkitTest {
     private final ChildRunRegistry childRuns =
             new ChildRunRegistry(contextStore, runRegistry, ChatTestEndpoints.prefs(), ChatTestEndpoints.PROMPTS, 20, 300, 4000);
 
-    private final DeepAnalysisToolkit toolkit = new DeepAnalysisToolkit(model, deepAnalysisService, runRegistry,
-            childRuns, ChatTestEndpoints.PROMPTS, 1L, AgentLang.ZH);
+    private final DeepAnalysisToolkit toolkit = new DeepAnalysisToolkit(model, deepAnalysisService, childRuns,
+            ChatTestEndpoints.PROMPTS, 1L, AgentLang.ZH);
 
     private static ChildRun run() {
         return new ChildRun("1", SESSION, 1L, ChildRun.Kind.DEEP_ANALYSIS, "深研判 BTCUSDT", null, AgentLang.ZH);
