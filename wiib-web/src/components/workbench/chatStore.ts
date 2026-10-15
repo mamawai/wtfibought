@@ -1,5 +1,5 @@
 import { ApiError, workbenchApi } from '../../api';
-import type { BehaviorAnalysisReport, ChatIntent, SearchSource, TraderFormKind, TurnMeta, WorkbenchChatMessage, WorkbenchEvent } from '../../types';
+import type { BehaviorAnalysisReport, ChatIntent, ChildRunKind, SearchSource, TraderFormKind, TurnMeta, WorkbenchChatMessage, WorkbenchEvent } from '../../types';
 
 /** 与后端 ErrorCode 对齐：2200 段是研判工作台（1600 段是 Crypto，别复用） */
 export const CHAT_ERROR = {
@@ -21,6 +21,13 @@ export const CHAT_ERROR = {
  * 后端占线时消息在本地排队，本地那轮收尾后续发，见 {@link settle}。
  */
 
+type ChildStatus = 'running' | 'done' | 'failed' | 'cancelled';
+
+/** 子运行内部的一步：它调的工具，或它自己报的阶段文案 */
+export type ChildStep =
+  | { kind: 'tool'; id: string; name: string; args?: Record<string, unknown>; active: boolean }
+  | { kind: 'phase'; text: string; active: boolean };
+
 export type ChatItem =
   // queued=后端占线（有轮在跑）时先上屏排队，本轮结束自动真发。
   // at=这条消息的时刻（历史回放取库里的 createdAt，实时取本地时钟），面板上要显示。
@@ -35,14 +42,20 @@ export type ChatItem =
   // 过程轨条目（不落历史）：视图层收进"工作过程"轨，折叠状态归视图管。
   // rid=轨内条目的自增号，视图拿轨首那条的 rid 当折叠状态的键——用下标做键的话，
   // 重新生成把尾巴一砍，键就整体错位，收着的轨会自己弹开。
-  // 长工具阶段进度（深研判等）：最新一条亮着转圈，后续事件到达即熄灭。
+  // 长工具阶段进度（行为分析等）：最新一条亮着，下一条阶段到达即熄灭。
   // keyed=true 时 text 存的是 ai 词表的 key（前端自己立的说明行），由视图层渲染时现翻——
   // store 是纯 ts 模块、条目一存就是一整场会话，存翻好的字面量切了语言会僵在旧语言里。
   // 后端下发的阶段文案 keyed 为假，原样显示（那是后端数据，不进词表）
   | { kind: 'progress'; rid: number; text: string; keyed?: boolean; active: boolean }
-  // 后台子运行（深研判、派出去的子 agent）：跑着亮点，结束变状态；text 是最近一条阶段进度或失败原因。
+  // 主 agent 的一次工具调用（同一批的几条一起到）：模型的下一步（下一批工具 / 答案 token / 搜索）到了就算做完
+  | { kind: 'tool'; rid: number; id: string; name: string; args?: Record<string, unknown>; active: boolean }
+  // 后台子运行（深研判、派出去的子 agent）：跑着亮点，结束变状态。brief 是任务书（delegate 才有），
+  // steps 是它内部的每一步（它调的工具、它报的阶段），at 开跑时刻，endedAt 结束时刻，error 失败原因。
   // 它可以跨轮活着——轮结束了它还在跑，报告到了后端标 pending，本地空闲时发起唤醒轮
-  | { kind: 'child'; rid: number; runId: string; label: string; status: 'running' | 'done' | 'failed' | 'cancelled'; text?: string }
+  | {
+      kind: 'child'; rid: number; at: number; runId: string; runKind: ChildRunKind; label: string; brief?: string | null;
+      status: ChildStatus; steps: ChildStep[]; endedAt?: number; error?: string;
+    }
   // 汇总者的一次联网搜索：active=还在搜（亮着转圈），搜完回填 sources 熄灭；query 开搜时可能还没有
   | { kind: 'search'; rid: number; query: string | null; sources: SearchSource[]; active: boolean }
   // requestId 存在 item 上：hitlDecide 按它取回本条再原样回传，服务端据此确认"点的是哪张卡"
@@ -65,6 +78,8 @@ export interface ChatState {
   sessionId: string | null;
   /** 本地每开一轮流 +1：排队续发、补答是紧接着上一轮开跑的，loading 中间不落地，面板靠它认出"换了一轮" */
   runId: number;
+  /** 本轮开跑的时刻（本地时钟）："分析问题中"那行和过程轨头的秒表都从它起算；没起过轮是 null */
+  turnStartedAt: number | null;
 }
 
 const SESSION_KEY = 'wiib-workbench-session';
@@ -79,6 +94,7 @@ let state: ChatState = {
   needsConfig: false,
   sessionId: sessionStorage.getItem(SESSION_KEY),
   runId: 0,
+  turnStartedAt: null,
 };
 const listeners = new Set<() => void>();
 let abortCtrl: AbortController | null = null;
@@ -179,6 +195,18 @@ function appendTail(items: ChatItem[], ...added: ChatItem[]): ChatItem[] {
 }
 
 /**
+ * 过程条目和报告卡的落点：除了排在还没开跑的提问之前，还排在正在流式的答案之前——
+ * 模型先说一句再调工具时，后面的 token 还接在那只气泡上，过程排在它下面就成了"结论在前、过程在后"
+ */
+function appendBeforeAnswer(items: ChatItem[], ...added: ChatItem[]): ChatItem[] {
+  let at = items.length;
+  while (at > 0 && isWaitingQuestion(items[at - 1])) at--;
+  const prev = items[at - 1];
+  if (prev?.kind === 'assistant' && prev.streaming) at--;
+  return [...items.slice(0, at), ...added, ...items.slice(at)];
+}
+
+/**
  * 算"一问"的条目：用户提问，以及 HITL 续跑指令那行（落库就是一条 user 行，前端还原成了过程轨里的说明行）。
  * 重新生成的切点、能不能重新生成都按它认，跟后端回退找"最后一条 user 行"一个口径
  */
@@ -186,11 +214,34 @@ export function isTurnQuestion(it: ChatItem): boolean {
   return it.kind === 'user' || (it.kind === 'progress' && it.text === HITL_RESUME_NOTE);
 }
 
-/** 进度行熄灭：token/新进度到达说明上个阶段已过去 */
-function deactivateProgress(items: ChatItem[]): ChatItem[] {
-  return items.some(it => it.kind === 'progress' && it.active)
-    ? items.map(it => (it.kind === 'progress' && it.active ? { ...it, active: false } : it))
-    : items;
+type LitItem = Extract<ChatItem, { active: boolean }>;
+
+/** 亮着的条目熄灭，哪些算"亮着"由 lit 定 */
+function settleWhere(items: ChatItem[], lit: (it: ChatItem) => it is LitItem): ChatItem[] {
+  return items.some(lit) ? items.map(it => (lit(it) ? { ...it, active: false } : it)) : items;
+}
+
+/** 上一批工具和阶段都过去了：模型的下一步（答案 token / 下一批工具 / 搜索）到了 */
+const settleSteps = (items: ChatItem[]) =>
+  settleWhere(items, (it): it is LitItem => (it.kind === 'progress' || it.kind === 'tool') && it.active);
+
+/** 只熄灭阶段文案：新阶段到了，上一阶段过去；阶段是从工具里面推出来的，那个工具还在跑，工具条目不动 */
+const settlePhases = (items: ChatItem[]) =>
+  settleWhere(items, (it): it is LitItem => it.kind === 'progress' && it.active);
+
+/** 还亮着的搜索条目熄灭：done 到了说明搜索早已过去（searched 没配上对的那种） */
+const settleSearches = (items: ChatItem[]) =>
+  settleWhere(items, (it): it is LitItem => it.kind === 'search' && it.active);
+
+/** 子运行内部亮着的步熄灭 */
+function settleChildSteps(steps: ChildStep[]): ChildStep[] {
+  return steps.some(s => s.active) ? steps.map(s => (s.active ? { ...s, active: false } : s)) : steps;
+}
+
+/** 改某个子运行那条（按 runId 认） */
+function updateChild(items: ChatItem[], runId: string,
+                     patch: (it: Extract<ChatItem, { kind: 'child' }>) => ChatItem): ChatItem[] {
+  return items.map(it => (it.kind === 'child' && it.runId === runId ? patch(it) : it));
 }
 
 /** 来源按 url 去重合并（同一个网站可能被几次搜索重复命中） */
@@ -199,16 +250,9 @@ function mergeSources(a: SearchSource[], b: SearchSource[]): SearchSource[] {
   return [...a, ...b.filter(s => !seen.has(s.url) && seen.add(s.url))];
 }
 
-/** 还亮着的搜索条目熄灭：done 到了说明搜索早已过去（searched 没配上对的那种） */
-function settleSearches(items: ChatItem[]): ChatItem[] {
-  return items.some(it => it.kind === 'search' && it.active)
-    ? items.map(it => (it.kind === 'search' && it.active ? { ...it, active: false } : it))
-    : items;
-}
-
 /** 这一轮没走到 done 就结束了：还在流式的答案停住，进度和搜索熄灭 */
 function endStreaming(items: ChatItem[]): ChatItem[] {
-  return settleSearches(deactivateProgress(items)).map(it =>
+  return settleSearches(settleSteps(items)).map(it =>
     it.kind === 'assistant' && it.streaming ? { ...it, streaming: false } : it);
 }
 
@@ -245,7 +289,7 @@ function fillSearched(items: ChatItem[], query: string | null, sources: SearchSo
       return next;
     }
   }
-  return appendTail(next, { kind: 'search', rid: nextRid(), query, sources, active: false });
+  return appendBeforeAnswer(next, { kind: 'search', rid: nextRid(), query, sources, active: false });
 }
 
 /** 唤醒轮的实时答案气泡：对应提问不在会话末尾，与历史回放的补答行一样不给重新生成 */
@@ -268,22 +312,45 @@ function handleEvent(e: WorkbenchEvent) {
       if (state.needsConfig) set({ needsConfig: false });
       break;
     case 'progress':
-      updateItems(prev => appendTail(deactivateProgress(prev), { kind: 'progress', rid: nextRid(), text: e.text, active: true }));
+      updateItems(prev => appendBeforeAnswer(settlePhases(prev), { kind: 'progress', rid: nextRid(), text: e.text, active: true }));
       break;
+    case 'tool_calls': {
+      const calls = e.calls;
+      if (e.runId) {
+        // 子 agent 要调工具：挂进它那条的内部，它上一批熄灭
+        const runId = e.runId;
+        updateItems(prev => updateChild(prev, runId, it => ({
+          ...it,
+          steps: [...settleChildSteps(it.steps),
+            ...calls.map(c => ({ kind: 'tool' as const, id: c.id, name: c.name, args: c.args, active: true }))],
+        })));
+      } else {
+        updateItems(prev => appendBeforeAnswer(settleSteps(prev),
+          ...calls.map(c => ({ kind: 'tool' as const, rid: nextRid(), id: c.id, name: c.name, args: c.args, active: true }))));
+      }
+      break;
+    }
     case 'child_start':
-      updateItems(prev => appendTail(prev, { kind: 'child', rid: nextRid(), runId: e.runId, label: e.label, status: 'running' }));
+      updateItems(prev => appendBeforeAnswer(prev, {
+        kind: 'child', rid: nextRid(), at: Date.now(), runId: e.runId, runKind: e.kind, label: e.label,
+        brief: e.brief ?? null, status: 'running', steps: [],
+      }));
       break;
     case 'child_progress':
-      updateItems(prev => prev.map(it => it.kind === 'child' && it.runId === e.runId ? { ...it, text: e.text } : it));
+      updateItems(prev => updateChild(prev, e.runId, it => ({
+        ...it, steps: [...settleChildSteps(it.steps), { kind: 'phase' as const, text: e.text, active: true }],
+      })));
       break;
     case 'child_done':
-      updateItems(prev => prev.map(it => it.kind === 'child' && it.runId === e.runId
-        ? { ...it, status: e.status === 'DONE' ? 'done' : e.status === 'FAILED' ? 'failed' : 'cancelled', text: e.error ?? it.text }
-        : it));
+      updateItems(prev => updateChild(prev, e.runId, it => ({
+        ...it,
+        status: e.status === 'DONE' ? 'done' : e.status === 'FAILED' ? 'failed' : 'cancelled',
+        endedAt: Date.now(), error: e.error, steps: settleChildSteps(it.steps),
+      })));
       break;
     case 'token':
       updateItems(prev => {
-        const next = [...deactivateProgress(prev)];
+        const next = [...settleSteps(prev)];
         // 从尾部回扫本轮答案块：表单卡这类条目会插到尾部，只认最后一项会把一轮答案劈成两截
         for (let j = next.length - 1; j >= 0; j--) {
           const it = next[j];
@@ -309,14 +376,14 @@ function handleEvent(e: WorkbenchEvent) {
       break;
     case 'behavior_report':
       // 报告卡先上屏，模型紧接着会就着它讲两句——卡是数据、答案是解读，两者互补不重复
-      updateItems(prev => appendTail(deactivateProgress(prev), { kind: 'behavior', report: e.report }));
+      updateItems(prev => appendBeforeAnswer(settlePhases(prev), { kind: 'behavior', report: e.report }));
       break;
     case 'search':
       // 引用只并入后端攒的来源（随 done 回来），过程轨不画
       if (e.phase === 'cited') break;
       updateItems(prev => e.phase === 'searching'
-        ? appendTail(deactivateProgress(prev), { kind: 'search', rid: nextRid(), query: e.query ?? null, sources: [], active: true })
-        : fillSearched(deactivateProgress(prev), e.query ?? null, e.sources ?? []));
+        ? appendBeforeAnswer(settleSteps(prev), { kind: 'search', rid: nextRid(), query: e.query ?? null, sources: [], active: true })
+        : fillSearched(settleSteps(prev), e.query ?? null, e.sources ?? []));
       break;
     case 'done':
       // 欠不欠唤醒以后端此刻的口径为准：最后一次模型调用之后又到了报告就欠
@@ -324,7 +391,7 @@ function handleEvent(e: WorkbenchEvent) {
       updateItems(prev => {
         // 本轮出过答案流＝还挂着一个流式中的答案气泡（排队气泡也是 user 项，不能按"最后一条提问之后"找）
         const streamed = prev.some(it => it.kind === 'assistant' && it.streaming);
-        const next = settleSearches(deactivateProgress(prev)).map(it => {
+        const next = settleSearches(settleSteps(prev)).map(it => {
           // 读数与来源随 done 一起到：本轮不用等刷新就能显示端点/耗时/token 和答案底部的来源。
           // 中断的那条要整段用服务端定稿覆盖——"（已中断）"这个尾标只在服务端拼一次，
           // 前端复刻一份的话两处措辞迟早对不上，刷新前后看到的就不是同一段文字
@@ -438,7 +505,7 @@ async function send(message: string, opts?: { noBubble?: boolean; requeueAs?: Qu
   if (!opts?.noBubble) {
     updateItems(prev => [...prev, { kind: 'user', content: msg, at: Date.now(), queuedId }]);
   }
-  set({ loading: true, background: false, runId: state.runId + 1 });
+  set({ loading: true, background: false, runId: state.runId + 1, turnStartedAt: Date.now() });
   const abort = new AbortController();
   abortCtrl = abort;
   liveStreams.add(abort);
@@ -538,7 +605,7 @@ function settle() {
 async function runWake(sid: string) {
   if (abortCtrl || state.sessionId !== sid) return;
   stopPolling();
-  set({ loading: true, background: false, runId: state.runId + 1 });
+  set({ loading: true, background: false, runId: state.runId + 1, turnStartedAt: Date.now() });
   const abort = new AbortController();
   abortCtrl = abort;
   liveStreams.add(abort);
@@ -604,7 +671,7 @@ async function regenerate() {
   const cutAt = regenCutIndex(state.items);
   if (cutAt < 0) return;
   stopPolling();
-  set({ loading: true, runId: state.runId + 1 });
+  set({ loading: true, runId: state.runId + 1, turnStartedAt: Date.now() });
   const abort = new AbortController();
   abortCtrl = abort;
   liveStreams.add(abort);
@@ -787,7 +854,7 @@ function newSession() {
   sendQueue = [];
   wakePending = false;
   setSession(null);
-  set({ items: [], loading: false, background: false });
+  set({ items: [], loading: false, background: false, turnStartedAt: null });
 }
 
 export const chatStore = {

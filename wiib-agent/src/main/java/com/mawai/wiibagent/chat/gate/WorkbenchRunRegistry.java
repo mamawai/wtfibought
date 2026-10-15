@@ -1,9 +1,12 @@
 package com.mawai.wiibagent.chat.gate;
 
 import com.mawai.wiibagent.chat.run.ChildRun;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -15,7 +18,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 工作台运行注册表：sessionId → 在跑的那一轮（SSE 事件出口 + 中断信号）。
  * <ul>
  *   <li>运行状态：切页/刷新回来后前端查 status 得知"AI 还在后台跑"（不随 SSE 断连中止）</li>
- *   <li>事件总线：子运行的开始/进度/结束、行为分析的阶段进度经此推给 SSE 通道；
+ *   <li>事件总线：主 agent 与子 agent 每批工具调用、子运行的开始/进度/结束、行为分析的阶段进度经此推给 SSE 通道；
  *       trader 动作类工具经此推表单卡，把执行权交回用户点击。没轮在跑时推不出去（返回 false），
  *       子运行的事件丢了也不要紧，前端靠 status 的 children/pending 补</li>
  *   <li>中断：/cancel 完成那轮的信号，轮在下一个检查点收尾</li>
@@ -97,10 +100,14 @@ public class WorkbenchRunRegistry {
         return publish(sessionId, "behavior_report", MAPPER.createObjectNode().set("report", report));
     }
 
-    /** 子运行开跑：过程轨立一条 */
+    /** 子运行开跑：过程轨立一条。brief 是任务书（delegate 才有），前端点开那条能看到 */
     public void publishChildStart(String sessionId, ChildRun run) {
-        publish(sessionId, "child_start", MAPPER.createObjectNode()
-                .put("runId", run.id()).put("kind", run.kind().name()).put("label", run.label()));
+        ObjectNode data = MAPPER.createObjectNode()
+                .put("runId", run.id()).put("kind", run.kind().name()).put("label", run.label());
+        if (run.brief() != null) {
+            data.put("brief", run.brief());
+        }
+        publish(sessionId, "child_start", data);
     }
 
     /** 子运行的阶段进度（深研判的 Bull/Bear/Judge 等），挂在那条过程轨条目上 */
@@ -115,6 +122,32 @@ public class WorkbenchRunRegistry {
             data.put("error", error);
         }
         publish(sessionId, "child_done", data);
+    }
+
+    /**
+     * 模型要调工具了：一条回复里的那批连名带参一起推，前端画成过程条目，下一批到了就把上一批标成做完。
+     *
+     * @param runId 非空=某个子运行里的调用，前端挂进它那条的内部；空=主 agent 自己的
+     */
+    public void publishToolCalls(String sessionId, String runId, List<AssistantMessage.ToolCall> calls) {
+        if (!runs.containsKey(sessionId)) {
+            return;     // 没轮在跑推不出去，参数树也别白建：worker 常常比主轮活得久
+        }
+        ArrayNode list = MAPPER.createArrayNode();
+        for (AssistantMessage.ToolCall call : calls) {
+            ObjectNode row = list.addObject().put("id", call.id()).put("name", call.name());
+            try {
+                row.set("args", MAPPER.readValue(call.arguments(), ObjectNode.class));
+            } catch (Exception ignore) {
+                // 参数不是合法 JSON 就只给工具名
+            }
+        }
+        ObjectNode data = MAPPER.createObjectNode();
+        if (runId != null) {
+            data.put("runId", runId);
+        }
+        data.set("calls", list);
+        publish(sessionId, "tool_calls", data);
     }
 
     /** 统一出口：会话已结束、通道已断连，两种都返回 false。 */

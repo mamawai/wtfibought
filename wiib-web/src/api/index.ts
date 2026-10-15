@@ -450,7 +450,8 @@ const getSse = async <E,>(url: string, onEvent: (e: E) => void, signal?: AbortSi
 
 export const workbenchApi = {
   /**
-   * 工作台 SSE：POST /ai/workbench/chat，事件 session/token/progress/search/hitl_request/form_request/behavior_report/done/error。
+   * 工作台 SSE：POST /ai/workbench/chat，事件 session/token/progress/tool_calls/search/child_start/child_progress/child_done
+   * /hitl_request/form_request/behavior_report/done/error。
    * intent 只有功能按钮直发时带（后端据此在收尾指令里钉死本轮必须调的工具）
    */
   chat: (sessionId: string | null, message: string, onEvent: (e: WorkbenchEvent) => void,

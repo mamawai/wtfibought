@@ -105,7 +105,7 @@ class ChatWakeTest {
     }
 
     private ChatTurnRunner.TurnResult turn(String message) {
-        return new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS)
+        return new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, mock(WorkbenchRunRegistry.class))
                 .run(leaves(), 1L, SESSION, message, null, answer::append, s -> { }, null);
     }
 

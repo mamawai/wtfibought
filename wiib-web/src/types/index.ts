@@ -515,14 +515,26 @@ export interface FeedStreamHealth {
 }
 
 // ========== P7 研判工作台 ==========
+/** 后台子运行的种类：DELEGATE=主 agent 现写任务书派出去的 worker；DEEP_ANALYSIS=深研判固定流水线 */
+export type ChildRunKind = 'DELEGATE' | 'DEEP_ANALYSIS';
+
+/** 模型要调的一个工具：args 是它给的参数（不是合法 JSON 时后端不带） */
+export interface ToolCall {
+  id: string;
+  name: string;
+  args?: Record<string, unknown>;
+}
+
 /** 工作台 SSE 事件（与 ChatWorkbenchController 协议一一对应） */
 export type WorkbenchEvent =
   | { type: 'session'; sessionId: string }
   | { type: 'token'; text: string; agent: string; role: 'answer' }
   | { type: 'progress'; text: string }
-  // 后台子运行（深研判、派出去的子 agent）：开跑 / 阶段进度 / 结束。
+  // 模型这一批要调的工具（连名带参）：带 runId 的是某个子运行里的，不带的是主 agent 自己的
+  | { type: 'tool_calls'; runId?: string; calls: ToolCall[] }
+  // 后台子运行（深研判、派出去的子 agent）：开跑 / 阶段进度 / 结束。brief 是任务书（delegate 才有）。
   // 没轮在跑时推不出来，前端靠 status 的 children/pending 补
-  | { type: 'child_start'; runId: string; kind: string; label: string }
+  | { type: 'child_start'; runId: string; kind: ChildRunKind; label: string; brief?: string }
   | { type: 'child_progress'; runId: string; text: string }
   | { type: 'child_done'; runId: string; status: 'DONE' | 'FAILED' | 'CANCELLED'; error?: string }
   // requestId：这张卡的唯一标识，点同意/拒绝时原样回传，服务端据此确认"点的是哪张卡"

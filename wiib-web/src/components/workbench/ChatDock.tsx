@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Bot, KeyRound, Loader2, X } from 'lucide-react';
+import { KeyRound, Loader2, Sparkle, X } from 'lucide-react';
 import { llmEndpointApi } from '../../api';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { cn } from '../../lib/utils';
@@ -39,7 +39,10 @@ const canAnimateDock = () => typeof Element.prototype.animate === 'function'
 /** 反向关闭时接住正在显示的那一帧，不能先跳到完整尺寸再缩回去。 */
 function motionFrame(element: HTMLElement) {
   const style = getComputedStyle(element);
-  return { transform: style.transform, opacity: style.opacity, borderRadius: style.borderRadius };
+  return {
+    transform: style.transform, opacity: style.opacity, borderRadius: style.borderRadius,
+    backgroundColor: style.backgroundColor, borderColor: style.borderColor,
+  };
 }
 
 /** 面板尺寸的 CSS 上限用的是 rem（max-w-[calc(100vw-2rem)] / max-h-[calc(100vh-6.5rem)]），
@@ -110,9 +113,9 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), M
 /**
  * 全站悬浮对话入口（Layout 挂载，登录后可见）：可拖的悬浮球 + PC 浮窗 / 移动端全屏层。
  * <p>
- * <b>球</b>：按住拖走，松手吸最近的左右边（竖向随手停），位置记 localStorage；
- * 未读脉冲环、研判中雷达扫描都是纯 CSS。开着面板时球收起来——它能停在任意高度，
- * 而面板锚点固定，两者重叠时球会盖住面板的按钮。
+ * <b>球</b>：橙色小球 + 白色四角星。按住拖走，松手吸最近的左右边（竖向随手停），位置记 localStorage；
+ * 呼吸、眨星、研判中的转弧、未读的脉冲环和弹跳都是纯 CSS（见 index.css 的 .polaris-ball）。
+ * 开着面板时球收起来——它能停在任意高度，而面板锚点固定，两者重叠时球会盖住面板的按钮。
  * <p>
  * <b>面板</b>：跟着球换边（球在左就从左下角长出来），拖拽把手在外侧边缘、增量方向随之镜像，
  * 尺寸记 localStorage。PC 可全屏——铺满<b>浏览器视口</b>（地址栏、标签栏都还在），全屏时左边多出常驻的历史会话栏。
@@ -198,10 +201,14 @@ export function ChatDock() {
     const scaleX = ballRect.width / Math.max(rect.width, 1);
     const scaleY = ballRect.height / Math.max(rect.height, 1);
 
-    // 球的位置和形状。50% 的圆角在非等比缩放下也跟着压，落到球那一刻正好是个正圆
+    // 球的位置、形状和颜色。50% 的圆角在非等比缩放下也跟着压，落到球那一刻正好是个正圆；
+    // 壳的底色和边色一起变成主色，末帧就是那颗橙球
+    const primary = getComputedStyle(panel).getPropertyValue('--color-primary').trim();
     const collapsed = {
       transform: `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`,
       borderRadius: '50%',
+      backgroundColor: primary,
+      borderColor: primary,
     };
     // 展开态也写成同构的函数列表，让两端逐函数插值，不退化成矩阵插值
     const expanded = { ...motionFrame(panel), transform: 'translate(0px, 0px) scale(1, 1)' };
@@ -218,13 +225,22 @@ export function ChatDock() {
       { ...from, offset: 0 },
       // 先补齐不透明再撑开，免得背景文字从半透明的面板里透出来
       { opacity: 1, offset: .3 },
-      { borderRadius: expanded.borderRadius, offset: .5 },
+      // 撑到一半时橙色褪成卡片底、圆角方掉：后半程已经是面板的样子，内容淡入时底下不再是橙的
+      {
+        borderRadius: expanded.borderRadius,
+        backgroundColor: expanded.backgroundColor, borderColor: expanded.borderColor,
+        offset: .5,
+      },
       { ...expanded, offset: 1 },
     ] : [
       { ...from, offset: 0 },
-      // 早早开始化圆，外壳全程实心地缩。末帧就是球的样子，不淡出——
-      // 一淡就露出底下的球，成了「球先冒出来、面板还在缩」
-      { borderRadius: from.borderRadius, offset: .3 },
+      // 前 30% 保持面板的样子（内容这期间在淡出），之后一路化圆、染橙，外壳全程实心地缩。
+      // 末帧就是球的样子，不淡出——一淡就露出底下的球，成了「球先冒出来、面板还在缩」
+      {
+        borderRadius: from.borderRadius,
+        backgroundColor: from.backgroundColor, borderColor: from.borderColor,
+        offset: .3,
+      },
       { ...collapsed, opacity: from.opacity, offset: 1 },
     ];
     const animation = panel.animate(frames, {
@@ -427,11 +443,11 @@ export function ChatDock() {
           left: ballX,
           top: ballY,
           // 吸边回弹带一点过冲；拖动中必须关掉 left/top 的过渡，否则球跟不上手指。
-          // background-color 这项不能漏：它整条盖掉 className 里的过渡，漏了 hover 就成硬切
+          // 悬停/按压的缩放走的是 scale 属性（Tailwind v4 的 scale-* 不是 transform），过渡要写 scale 才接得上
           transition: present ? 'none' : dragging
-            ? 'transform .16s ease, box-shadow .16s ease, background-color .16s ease'
+            ? 'scale .16s ease, box-shadow .16s ease'
             : 'left .34s cubic-bezier(.22,1.4,.36,1), top .34s cubic-bezier(.22,1.4,.36,1),'
-              + ' transform .16s ease, box-shadow .16s ease, background-color .16s ease',
+              + ' scale .16s ease, box-shadow .16s ease',
         }}
         title={t('chat.title')}
         aria-label={t('chat.openAria')}
@@ -440,30 +456,33 @@ export function ChatDock() {
         aria-hidden={present}
         disabled={present}
         data-dragging={dragging}
+        data-busy={loading}
+        data-unread={unread}
         tabIndex={present ? -1 : 0}
         className={cn(
-          'polaris-ball fixed z-[90] flex w-12 h-12 rounded-full pt-card touch-none motion-reduce:transition-none!',
-          'items-center justify-center hover:bg-surface-hover',
+          'polaris-ball fixed z-[90] flex w-12 h-12 rounded-full touch-none motion-reduce:transition-none!',
+          'items-center justify-center',
           // 触屏的 :active 会延后释放；隐藏后去掉按压缩放，动画按原始球尺寸对位。
-          dragging ? 'cursor-grabbing scale-105' : present ? 'cursor-default' : 'cursor-grab active:scale-95',
+          dragging ? 'cursor-grabbing scale-105' : present ? 'cursor-default' : 'cursor-grab hover:scale-[1.06] active:scale-95',
           // 面板在场的整段时间都藏住球（含开合动画）：面板收到最后一帧就是球的样子，
           // 卸载那一刻球顶上来，中间不会出现「球和还在缩的面板同时在」
           present && 'invisible pointer-events-none',
         )}
       >
         {/* 球只在面板完全收起时可见 */}
-        {/* 研判中：一道扇形绕球扫。-inset-1 让环带落在球外沿，压在图标下面不挡它 */}
+        {/* 研判中：一道白弧沿球的内沿转。inset-[3px] 让环带贴在内沿，压在星下面不挡它 */}
         {loading && (
-          <span aria-hidden className="absolute -inset-1 rounded-full pointer-events-none wiib-ball-sweep" />
+          <span aria-hidden className="absolute inset-[3px] rounded-full pointer-events-none wiib-ball-sweep" />
         )}
-        {/* 有未读：一圈向外扩散 */}
+        {/* 有未读：一圈橙光向外扩散 */}
         {unread && (
           <span aria-hidden className="absolute inset-0 rounded-full border-[1.5px] border-primary pointer-events-none wiib-ball-ping" />
         )}
-        {loading ? <Loader2 className="w-5 h-5 text-primary animate-spin" /> : <Bot className="w-5 h-5 text-primary" />}
-        {/* 答案到了：亮橙点。脉冲环扩散完的那一瞬靠它留住痕迹。打开面板即清 */}
+        {/* Polaris 的星：平时偶尔眨一下，研判中慢慢转（动画在 .polaris-glyph） */}
+        <Sparkle aria-hidden className="polaris-glyph w-6 h-6 fill-current" strokeWidth={1.5} />
+        {/* 答案到了：墨点，描一圈页面底色从橙球上抠出来。脉冲环扩散完的那一瞬靠它留住痕迹。打开面板即清 */}
         {unread && (
-          <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-primary" />
+          <span className="absolute top-0.5 right-0.5 w-3 h-3 rounded-full bg-foreground ring-2 ring-background" />
         )}
       </button>
 

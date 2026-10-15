@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowDown, ChevronsDownUp, ChevronsUpDown, History, KeyRound, Loader2, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, SquarePen, X } from 'lucide-react';
+import { ArrowDown, ChevronsDownUp, ChevronsUpDown, History, KeyRound, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, SquarePen, X } from 'lucide-react';
 import { workbenchApi } from '../../api';
 import { cn } from '../../lib/utils';
 import { useToast } from '../ui/use-toast';
 import { chatStore, isTurnQuestion } from './chatStore';
-import { AssistantAnswer, HitlCard, ProcessRail, UserBubble } from './ChatMessages';
+import { AssistantAnswer, HitlCard, ProcessRail, ThinkingRow, UserBubble } from './ChatMessages';
 import { groupBlocks, HUB_NAME } from './chatView';
 import { ChatComposer } from './ChatComposer';
 import { SessionHistory } from './SessionHistory';
@@ -43,7 +43,7 @@ interface ChatPanelProps {
 export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen }: ChatPanelProps) {
   const { t } = useTranslation(['ai', 'common']);
   const { toast } = useToast();
-  const { items, loading, background, sessionId, needsConfig, runId } = useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
+  const { items, loading, background, sessionId, needsConfig, runId, turnStartedAt } = useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
   // 在途的那张确认卡（按 requestId 认）。面板里可能同时挂着几张，用一个布尔会把别的卡一起禁掉
   const [hitlBusy, setHitlBusy] = useState<{ requestId: string; approved: boolean } | null>(null);
   const [showHistory, setShowHistory] = useState(false);
@@ -212,9 +212,20 @@ export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen 
     setShowHistory(false);
   }, []);
 
-  // 有 token 流或亮着的进度行时，答案卡/过程轨自带动效，底部指示条只在"纯静默"时出现
-  const streamingNow = items.some(it =>
-    (it.kind === 'assistant' && it.streaming) || (it.kind === 'progress' && it.active));
+  const streamingNow = items.some(it => it.kind === 'assistant' && it.streaming);
+
+  // 当前这一轮的工作过程（最后一条真提问之后、答案还没开始的那条轨）：本地流跑着时它的轨头亮；
+  // 一条过程都还没有时才另出一行"分析问题中"。排队气泡、表单卡、报错这些夹在中间的不算。
+  // 后台轮询态（本地没有流）不算：条目早就全熄了，亮轨头就是假的
+  const liveRailKey = useMemo(() => {
+    if (!loading || streamingNow || background) return null;
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const b = blocks[i];
+      if (b.kind === 'rail') return b.key;
+      if (b.item.kind === 'assistant' || (b.item.kind === 'user' && !b.item.queued)) return null;
+    }
+    return null;
+  }, [blocks, loading, streamingNow, background]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -311,14 +322,12 @@ export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen 
               )}
               {blocks.map(block => {
                 if (block.kind === 'rail') {
-                  const active = block.steps.some(({ item }) =>
-                    (item.kind === 'progress' && item.active) || (item.kind === 'search' && item.active)
-                    || (item.kind === 'child' && item.status === 'running'));
                   return (
                     <ProcessRail
                       key={block.key}
                       steps={block.steps}
-                      active={active}
+                      live={block.key === liveRailKey}
+                      since={turnStartedAt}
                       open={!railClosed[block.key]}
                       onToggle={() => setRailClosed(prev => ({ ...prev, [block.key]: !prev[block.key] }))}
                     />
@@ -380,12 +389,13 @@ export function ChatPanel({ onClose, onGoConfig, fullscreen, onToggleFullscreen 
                     );
                 }
               })}
-              {/* 停止键在输入区，这里只报一句"还在跑"；有 token 流时答案自带光标，不必再说 */}
-              {loading && !streamingNow && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  {background ? t('chat.background', { hub: HUB_NAME }) : t('chat.thinking', { hub: HUB_NAME })}
-                </div>
+              {/* 一条过程都还没有时报一句"在想"；有过程轨时轨头自己亮着、有 token 流时答案自带光标，都不必再说。
+                  停止键在输入区 */}
+              {loading && !streamingNow && !liveRailKey && (
+                <ThinkingRow
+                  text={background ? t('chat.background', { hub: HUB_NAME }) : t('chat.thinking', { hub: HUB_NAME })}
+                  since={background ? null : turnStartedAt}
+                />
               )}
             </div>
 

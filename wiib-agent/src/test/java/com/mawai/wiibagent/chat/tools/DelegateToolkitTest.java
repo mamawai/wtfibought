@@ -21,9 +21,12 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.chat.prompt.Prompt;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,7 +42,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * delegate 工具：参数错直接回错不派；派了立刻回 running，worker 最后一条正文作为报告回灌；
- * 用户关了开关就被注册表拒掉。
+ * 用户关了开关就被注册表拒掉；worker 每批工具调用带 runId 推给前端。
  */
 class DelegateToolkitTest {
 
@@ -48,13 +51,17 @@ class DelegateToolkitTest {
 
     private final ChatContextStore contextStore = mock(ChatContextStore.class);
     private final ChatModel model = mock(ChatModel.class);
+    /** 真注册表，会话挂一个只记事件的出口 */
+    private final WorkbenchRunRegistry runRegistry = new WorkbenchRunRegistry();
+    private final List<Map.Entry<String, ObjectNode>> events = new CopyOnWriteArrayList<>();
+    private ChildRunRegistry childRuns;
 
     private DelegateToolkit toolkit(WorkbenchPrefService prefs) {
         when(contextStore.load(any())).thenReturn(List.of());
         when(model.call(any(Prompt.class)))
                 .thenReturn(new ChatResponse(List.of(new Generation(new AssistantMessage("调研报告正文")))));
-        ChildRunRegistry childRuns = new ChildRunRegistry(contextStore, new WorkbenchRunRegistry(), prefs,
-                ChatTestEndpoints.PROMPTS, 20, 300, 4000);
+        runRegistry.start(SESSION, (event, data) -> events.add(Map.entry(event, data)), new CompletableFuture<>());
+        childRuns = new ChildRunRegistry(contextStore, runRegistry, prefs, ChatTestEndpoints.PROMPTS, 20, 300, 4000);
         // worker 不挂工具：这里验的是派发与回灌，不是预设的工具表（那在 ChatAgentFactoryTest）
         Function<WorkerKind, ChatAgentFactory.Worker> workers = kind -> {
             UsageTrackingChatModel usage = new UsageTrackingChatModel(model);
@@ -62,7 +69,19 @@ class DelegateToolkitTest {
             return new ChatAgentFactory.Worker(ReactLoop.builder().chat(chat)
                     .limiter(new ModelCallLimiter(3, "未执行", "收尾")).build(), usage);
         };
-        return new DelegateToolkit(childRuns, workers, ChatTestEndpoints.PROMPTS, 1L, AgentLang.ZH);
+        return new DelegateToolkit(childRuns, runRegistry, workers, ChatTestEndpoints.PROMPTS, 1L, AgentLang.ZH);
+    }
+
+    private List<ObjectNode> eventsOf(String type) {
+        return events.stream().filter(e -> e.getKey().equals(type)).map(Map.Entry::getValue).toList();
+    }
+
+    /** 子运行跑在别的线程上：等到这类事件出现（最多 5 秒） */
+    private ObjectNode awaitEvent(String type) throws InterruptedException {
+        for (int i = 0; i < 250 && eventsOf(type).isEmpty(); i++) {
+            Thread.sleep(20);
+        }
+        return eventsOf(type).getFirst();
     }
 
     private List<Message> savedMessages() {
@@ -82,6 +101,51 @@ class DelegateToolkitTest {
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
         verify(model).call(prompt.capture());
         assertThat(prompt.getValue().getInstructions().getLast().getText()).isEqualTo("查一下本周 ETF 资金流");
+    }
+
+    /** 前端那条子运行点开要能看到任务书和它内部的每一步：child_start 带 brief，worker 的每批 tool_call 带 runId 推出去 */
+    @Test
+    void 任务书随child_start下发_worker工具调用带runId推给前端() {
+        DelegateToolkit toolkit = toolkit(ChatTestEndpoints.prefs());
+        // worker 先要调一个工具（没挂工具，回执是 unknown tool），再出报告
+        AssistantMessage wantsTool = AssistantMessage.builder().content("")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("c1", "function", "news_search", "{\"hours\":24}"))).build();
+        when(model.call(any(Prompt.class))).thenReturn(
+                new ChatResponse(List.of(new Generation(wantsTool))),
+                new ChatResponse(List.of(new Generation(new AssistantMessage("调研报告正文")))));
+
+        String reply = toolkit.delegate("researcher", "查一下本周 ETF 资金流", "ETF 资金流", CTX);
+        savedMessages();    // 等 worker 跑完
+
+        String runId = reply.replaceAll(".*\"runId\":\"([^\"]+)\".*", "$1");
+        assertThat(eventsOf("child_start")).singleElement().satisfies(start -> {
+            assertThat(start.get("runId").asString(null)).isEqualTo(runId);
+            assertThat(start.get("brief").asString(null)).isEqualTo("查一下本周 ETF 资金流");
+        });
+        assertThat(eventsOf("tool_calls")).singleElement().satisfies(batch -> {
+            assertThat(batch.get("runId").asString(null)).isEqualTo(runId);
+            assertThat(batch.get("calls")).hasSize(1);
+            assertThat(batch.get("calls").get(0).get("name").asString(null)).isEqualTo("news_search");
+            assertThat(batch.get("calls").get(0).get("args").get("hours").intValue()).isEqualTo(24);
+        });
+    }
+
+    /** 取消之后模型还可能回一帧带 tool_call 的回复：不再推给前端，屏上那条子运行已经是"已取消" */
+    @Test
+    void 取消后worker再要调工具不再推tool_calls() throws InterruptedException {
+        DelegateToolkit toolkit = toolkit(ChatTestEndpoints.prefs());
+        AssistantMessage wantsTool = AssistantMessage.builder().content("")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("c1", "function", "news_search", "{}"))).build();
+        // 模型回话之前整个会话被取消了（停止键 / 删会话那条路）
+        when(model.call(any(Prompt.class))).thenAnswer(inv -> {
+            childRuns.cancelAll(SESSION);
+            return new ChatResponse(List.of(new Generation(wantsTool)));
+        });
+
+        toolkit.delegate("researcher", "查点东西", null, CTX);
+
+        assertThat(awaitEvent("child_done").get("status").asString(null)).isEqualTo("CANCELLED");
+        assertThat(eventsOf("tool_calls")).isEmpty();
     }
 
     @Test

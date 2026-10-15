@@ -521,13 +521,13 @@ behavior 和 replay coach 直接建 `ResilientChatService` 用（不进 `ReactLo
 
 | 顺序 | 文件 | 行数 | 看什么 |
 |---|---|---|---|
-| 1 | `components/workbench/chatStore.ts` | 853 | **手写的外部 store，不是 zustand**（`subscribe`/`getSnapshot` + `useSyncExternalStore`）。状态与 SSE 消费脱离组件生命周期：切页只是面板卸载，流在这里继续收 |
+| 1 | `components/workbench/chatStore.ts` | 920 | **手写的外部 store，不是 zustand**（`subscribe`/`getSnapshot` + `useSyncExternalStore`）。状态与 SSE 消费脱离组件生命周期：切页只是面板卸载，流在这里继续收。`handleEvent` 是全部事件的唯一落点：`tool_calls`（主 agent 每批工具调用）落成过程条目，带 runId 的挂进对应子运行的内部；`child_start / child_progress / child_done` 落成子运行条目 |
 | 2 | 同上，`settle()` / `runWake()` | — | **唤醒由前端发起**，后端只标 pending 不偷跑。时机只有一条规则：本地没有轮在跑、排队消息也发完了。`wakePending` 只转抄后端 done / status 里的 pending，不自己推断 |
 | 3 | 同上，`sendQueue` / `queuedId` | — | 后端占线（2203）时消息先上屏排队，本轮结束自动真发。`queuedId` 是气泡与队列条目共用的身份——靠下标对应的话，流式插条目/回放重建/重生成砍尾任一处都会错位 |
-| 4 | `components/workbench/chatView.ts` | 35 | 过程条目（进度/搜索/后台子运行）归并成"工作过程轨"，折叠状态用 `rid` 当键而不是下标（同上，下标会错位） |
-| 5 | `components/workbench/ChatPanel.tsx` | 455 | SSE 消费与渲染主体；`child_start / child_progress / child_done` 落成过程轨上的子运行条目 |
-| 6 | `ChatMessages.tsx` / `ChatComposer.tsx` | 342 / 333 | 气泡与输入区（排队态、中断按钮、重新生成入口都在这儿） |
-| 7 | `ChatDock.tsx` | 573 | 浮球 + 可拖拽面板。`DRAG_THRESHOLD` / `CLICK_SWALLOW_MS` 两个常量的注释解释了"点了没反应"是怎么来的 |
+| 4 | `components/workbench/chatView.ts` | 42 | 过程条目（进度/工具调用/搜索/后台子运行）归并成"工作过程"块，折叠状态用 `rid` 当键而不是下标（同上，下标会错位）；派发类工具的条目本身不画（屏上另有子运行条目/确认卡/表单卡） |
+| 5 | `components/workbench/ChatPanel.tsx` | 465 | 渲染主体：消息流、历史栏、全屏；哪条过程块算"正在跑"（`liveRailKey`）、什么时候出"分析问题中"那行都在这儿定 |
+| 6 | `ChatMessages.tsx` / `ChatComposer.tsx` | 516 / 336 | 过程块（工具行、搜索行、可展开的子运行块）、气泡与输入区（排队态、中断按钮、重新生成入口都在这儿） |
+| 7 | `ChatDock.tsx` | 592 | 浮球 + 可拖拽面板。`DRAG_THRESHOLD` / `CLICK_SWALLOW_MS` 两个常量的注释解释了"点了没反应"是怎么来的 |
 | 8 | `TraderFormCards.tsx` | 267 | 三张表单卡——模型只弹卡，按下按钮打 REST 的是用户 |
 | 9 | `BehaviorReportCard.tsx` | 209 | `analyze_my_behavior` 的渲染出口——行为画像报告在对话里长什么样 |
 | 10 | `SessionHistory.tsx` | 143 | 会话列表与切换 |

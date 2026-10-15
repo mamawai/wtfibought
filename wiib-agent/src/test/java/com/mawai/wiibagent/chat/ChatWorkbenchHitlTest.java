@@ -163,9 +163,9 @@ class ChatWorkbenchHitlTest {
         });
         contextStore = new ChatContextStore(contextMapper);
         childRuns = ChatTestEndpoints.childRuns(contextStore);
-        ChatTurnRunner turnRunner = new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS);
-        ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
         WorkbenchRunRegistry runRegistry = mock(WorkbenchRunRegistry.class);
+        ChatTurnRunner turnRunner = new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, runRegistry);
+        ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
         ChatHistoryService history = mock(ChatHistoryService.class);
         streamer = new ChatTurnStreamer(turnRunner, history, runRegistry, registry, ChatTestEndpoints.PROMPTS);
         return new ChatWorkbenchController(mock(ChatAgentFactory.class), mock(LlmEndpointService.class),

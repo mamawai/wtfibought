@@ -75,7 +75,7 @@ class ChatCancelTest {
     }
 
     private ChatTurnRunner runner() {
-        return new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS);
+        return new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, mock(WorkbenchRunRegistry.class));
     }
 
     private List<Message> savedContext() {

@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.i18n.PromptCatalog;
@@ -28,6 +29,7 @@ import java.util.function.Consumer;
  * 挂上子运行收件箱 → 载入历史 + 本轮提问 + 收尾指令 → working
  *   ↓
  * 主 agent（ReactLoop · 深模型 · 流式；行情/新闻/trader/深研判/行为分析全是它手里的工具）
+ *   ├ 模型要调工具 ────► 这一批连名带参推给前端（tool_calls），画成过程条目
  *   ├ 子运行报告到达 ──► 下一次调模型前排进上下文
  *   ├ 用户点停止 ──────► 半截答案落库，本轮结束
  *   ↓
@@ -46,6 +48,8 @@ public class ChatTurnRunner {
     private final ChatContextStore contextStore;
     private final ChildRunRegistry childRuns;
     private final PromptCatalog prompts;
+    /** 工具调用事件的出口：ReactLoop 手里只有 sessionId，经它转成 SSE 帧 */
+    private final WorkbenchRunRegistry runRegistry;
 
     /**
      * 一轮的结局。
@@ -175,6 +179,14 @@ public class ChatTurnRunner {
                 String json = frame.getMetadata().get(SearchEvent.KEY);
                 if (json != null) {
                     searchSink.accept(SearchEvent.parse(json));
+                }
+            }
+
+            @Override
+            public void message(Message message) {
+                // 模型要调工具了：这一批连名带参推给前端画过程条目
+                if (message instanceof AssistantMessage reply && reply.hasToolCalls()) {
+                    runRegistry.publishToolCalls(sessionId, null, reply.getToolCalls());
                 }
             }
 

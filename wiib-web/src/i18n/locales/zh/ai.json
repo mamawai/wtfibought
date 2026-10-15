@@ -402,7 +402,7 @@
     "emptyTitle": "有什么可以帮你？",
     "emptyHint": "行情 · 新闻 · 你的交易员 · 深度研判，都归 {{hub}} 调度",
     "background": "{{hub}} 在后台继续研判，完成后自动展示答案",
-    "thinking": "{{hub}} 分析问题中...",
+    "thinking": "{{hub}} 分析问题中",
     "stopTitle": "停止这一轮",
     "stop": "停止",
     "stopping": "收尾中",
@@ -422,17 +422,37 @@
   },
   "rail": {
     "title_other": "工作过程 · {{count}} 步",
+    "live_other": "正在研判 · {{count}} 步",
     "hitlResume": "正在恢复深度研判的执行",
     "searching": "正在搜索：{{query}}",
     "searchingNoQuery": "正在搜索…",
     "searched_other": "搜索了 {{count}} 个网站",
     "searchedNone": "搜索完成",
-    "sumWorking": "正在研判…",
-    "child": {
-      "running": "后台任务 · {{label}} 进行中",
-      "done": "后台任务 · {{label}} 完成，结论稍后补充",
-      "failed": "后台任务 · {{label}} 失败",
-      "cancelled": "后台任务 · {{label}} 已取消"
+    "childrenRunning_other": "{{count}} 个后台任务进行中",
+    "brief": "任务书",
+    "reportDelivered": "报告已交给 {{hub}}，结论稍后补充",
+    "status": {
+      "running": "进行中",
+      "done": "完成",
+      "failed": "失败",
+      "cancelled": "已取消"
+    },
+    "tool": {
+      "klines": "读取 K 线",
+      "kline_structure": "分析 K 线结构",
+      "indicators": "计算技术指标",
+      "market_snapshot": "读取行情快照",
+      "option_iv": "读取期权波动率",
+      "funding_history": "读取资金费率历史",
+      "orderbook_depth": "读取盘口深度",
+      "news_search": "读取快讯",
+      "trader_overview": "查看交易员概况",
+      "trader_positions": "查看交易员持仓",
+      "trader_trades": "查看交易员成交",
+      "trader_plans": "查看交易员计划",
+      "trader_decisions": "查看交易员决策记录",
+      "analyze_my_behavior": "分析交易行为",
+      "unknown": "调用 {{name}}"
     }
   },
   "hitl": {

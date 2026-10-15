@@ -2,6 +2,7 @@ package com.mawai.wiibagent.chat.tools;
 
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.ChatAgentFactory;
+import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRun;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.run.WorkerKind;
@@ -27,6 +28,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 区别只在任务书是代码写死（深研判）还是模型现写（这里）。
  * <p>
  * 开关与上限归 {@link ChildRunRegistry#spawn}；这里只管把 worker 建出来、跑完取报告。
+ * worker 每批工具调用带着 runId 推给前端（tool_calls），用户点开那条子运行能看到它在做什么。
  */
 @Slf4j
 public class DelegateToolkit {
@@ -35,15 +37,18 @@ public class DelegateToolkit {
     private static final int MAX_LABEL_CHARS = 40;
 
     private final ChildRunRegistry childRuns;
+    private final WorkbenchRunRegistry runRegistry;
     /** 按预设现建一个 worker（独享账本），建法在 {@link ChatAgentFactory} */
     private final Function<WorkerKind, ChatAgentFactory.Worker> workers;
     private final PromptCatalog prompts;
     private final long userId;
     private final AgentLang lang;
 
-    public DelegateToolkit(ChildRunRegistry childRuns, Function<WorkerKind, ChatAgentFactory.Worker> workers,
+    public DelegateToolkit(ChildRunRegistry childRuns, WorkbenchRunRegistry runRegistry,
+                           Function<WorkerKind, ChatAgentFactory.Worker> workers,
                            PromptCatalog prompts, long userId, AgentLang lang) {
         this.childRuns = childRuns;
+        this.runRegistry = runRegistry;
         this.workers = workers;
         this.prompts = prompts;
         this.userId = userId;
@@ -93,8 +98,18 @@ public class DelegateToolkit {
     /** 子运行主体：任务书当唯一的用户消息喂给 worker，最后一条有正文的助手消息就是报告 */
     private String runWorker(WorkerKind kind, ChildRun run) {
         ChatAgentFactory.Worker worker = workers.apply(kind);
+        ReactLoop.Listener listener = new ReactLoop.Listener() {
+            @Override
+            public void message(Message message) {
+                // worker 要调工具了：带着 runId 推出去，前端挂进这条子运行的内部。
+                // 取消/超时之后模型还可能回一帧带 tool_call 的回复，屏上那条已经结束了，不推
+                if (!run.cancelled() && message instanceof AssistantMessage reply && reply.hasToolCalls()) {
+                    runRegistry.publishToolCalls(run.sessionId(), run.id(), reply.getToolCalls());
+                }
+            }
+        };
         ReactLoop.Result result = worker.loop().run(List.of(new UserMessage(run.brief())), run.sessionId(),
-                run.cancel(), null);
+                run.cancel(), listener);
         log.info("[Delegate] #{} {} 跑完 modelCalls={} usage={}", run.id(), kind, result.modelCalls(),
                 worker.usage().snapshot());
         List<Message> messages = result.messages();

@@ -266,7 +266,7 @@ public class ChatAgentFactory {
                         new TraderQueryToolkit(traderChatService, userId, lang),
                         new TraderActionToolkit(runRegistry, userId, prompts, lang),
                         new BehaviorToolkit(deep, behaviorAnalysisService, runRegistry, userId, lang),
-                        new DelegateToolkit(childRuns, workers, prompts, userId, lang)))
+                        new DelegateToolkit(childRuns, runRegistry, workers, prompts, userId, lang)))
                 .webSearch(webSearch)
                 .maxAttempts(3).initialDelay(500).maxDelay(4000)
                 .build();

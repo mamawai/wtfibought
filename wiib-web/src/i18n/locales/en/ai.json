@@ -429,18 +429,40 @@
   "rail": {
     "title_one": "Process · {{count}} step",
     "title_other": "Process · {{count}} steps",
+    "live_one": "Working · {{count}} step",
+    "live_other": "Working · {{count}} steps",
     "hitlResume": "Resuming the deep analysis",
     "searching": "Searching: {{query}}",
     "searchingNoQuery": "Searching…",
     "searched_one": "Searched {{count}} site",
     "searched_other": "Searched {{count}} sites",
     "searchedNone": "Search finished",
-    "sumWorking": "Working…",
-    "child": {
-      "running": "Background task · {{label}} running",
-      "done": "Background task · {{label}} done, follow-up coming",
-      "failed": "Background task · {{label}} failed",
-      "cancelled": "Background task · {{label}} cancelled"
+    "childrenRunning_one": "{{count}} background task running",
+    "childrenRunning_other": "{{count}} background tasks running",
+    "brief": "Brief",
+    "reportDelivered": "Report handed to {{hub}}, follow-up coming",
+    "status": {
+      "running": "Running",
+      "done": "Done",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "tool": {
+      "klines": "Read candles",
+      "kline_structure": "Analyze candle structure",
+      "indicators": "Compute indicators",
+      "market_snapshot": "Read market snapshot",
+      "option_iv": "Read option volatility",
+      "funding_history": "Read funding history",
+      "orderbook_depth": "Read order book depth",
+      "news_search": "Read news flashes",
+      "trader_overview": "Check trader overview",
+      "trader_positions": "Check trader positions",
+      "trader_trades": "Check trader trades",
+      "trader_plans": "Check trader plans",
+      "trader_decisions": "Check trader decisions",
+      "analyze_my_behavior": "Analyze trading behavior",
+      "unknown": "Call {{name}}"
     }
   },
   "hitl": {

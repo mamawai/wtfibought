@@ -1,19 +1,32 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, ChevronRight, Copy, Globe, Loader2, RefreshCw, ShieldQuestion, X } from 'lucide-react';
+import {
+  Activity, Bot, ChartCandlestick, Check, ChevronRight, Copy, Gauge, Globe, Layers, Loader2, Newspaper, Percent,
+  RefreshCw, Scale, ShieldQuestion, Sparkle, Sparkles, UserSearch, Waves, Wrench, X, type LucideIcon,
+} from 'lucide-react';
 import { Markdown } from '../Markdown';
 import { cn, fmtTime, fmtTokens } from '../../lib/utils';
-import { type ChatItem } from './chatStore';
-import type { SearchSource } from '../../types';
-import { HUB_NAME, type RailStep } from './chatView';
+import { type ChatItem, type ChildStep } from './chatStore';
+import type { ChildRunKind, SearchSource } from '../../types';
+import { HUB_NAME, PULSE_DOT, type RailStep } from './chatView';
 
-/** 后台子运行条目按状态取的词表 key */
-const CHILD_STATUS_KEY = {
-  running: 'rail.child.running',
-  done: 'rail.child.done',
-  failed: 'rail.child.failed',
-  cancelled: 'rail.child.cancelled',
-} as const;
+type ChildItem = Extract<ChatItem, { kind: 'child' }>;
+
+/** 工具名 → 图标；认不出的用扳手 */
+const TOOL_ICON: Record<string, LucideIcon> = {
+  klines: ChartCandlestick, kline_structure: ChartCandlestick, indicators: Activity, market_snapshot: Gauge,
+  option_iv: Waves, funding_history: Percent, orderbook_depth: Layers, news_search: Newspaper,
+  trader_overview: Bot, trader_positions: Bot, trader_trades: Bot, trader_plans: Bot, trader_decisions: Bot,
+  analyze_my_behavior: UserSearch,
+};
+/** 子运行按种类取图标：派出去的 worker 是星星，深研判是天平 */
+const CHILD_ICON: Record<ChildRunKind, LucideIcon> = { DELEGATE: Sparkles, DEEP_ANALYSIS: Scale };
+
+/** 工具参数摘要只挑这几个字段、按这个顺序：整份参数铺出来太长 */
+const ARG_KEYS = ['symbol', 'interval', 'kind', 'limit'];
+
+/** 慢转的小橙星 */
+const SPIN_STAR = 'w-3 h-3 shrink-0 text-primary fill-current animate-[wiib-star-spin_2.4s_linear_infinite] motion-reduce:animate-none';
 
 /** 来源链接的展示名：域名（去 www.），解析不了的原样给 */
 function domainOf(url: string): string {
@@ -55,36 +68,118 @@ function SourceChips({ sources }: { sources: SearchSource[] }) {
   );
 }
 
-/** 过程轨里的一次联网搜索：搜着时亮点+搜索词，搜完变成"搜索了 N 个网站"可展开站点列表 */
-function SearchStep({ item }: { item: Extract<ChatItem, { kind: 'search' }> }) {
+/** 每秒刷一次的"现在"；不在跑就停表 */
+function useClock(running: boolean): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!running) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [running]);
+  return now;
+}
+
+/** 0:42 / 3:05 这种计时 */
+function fmtClock(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function argsSummary(args?: Record<string, unknown>): string {
+  if (!args) return '';
+  return ARG_KEYS.map(k => args[k])
+    .filter((v): v is string | number => (typeof v === 'string' && v !== '') || typeof v === 'number')
+    .join(' · ');
+}
+
+/** 工具名翻成"做了什么"；词表里没有的工具显示"调用 xxx" */
+function useToolLabel() {
+  const { t } = useTranslation('ai');
+  return useCallback((name: string) => t(`rail.tool.${name}`, { defaultValue: t('rail.tool.unknown', { name }) }), [t]);
+}
+
+/** 子运行内部最后一条亮着的步 */
+function lastActive(steps: ChildStep[]): ChildStep | undefined {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (steps[i].active) return steps[i];
+  }
+  return undefined;
+}
+
+/** 过程条目的骨架：左图标、右文字；做着的那条图标变橙 */
+function RailRow({ icon: Icon, hot, children }: { icon: LucideIcon; hot?: boolean; children: ReactNode }) {
+  return (
+    <div className="flex items-start gap-2 text-[12px] leading-relaxed animate-in fade-in slide-in-from-bottom-2">
+      <Icon className={cn('w-3.5 h-3.5 shrink-0 mt-[3px]', hot ? 'text-primary' : 'text-muted-foreground')} />
+      <div className="flex-1 min-w-0">{children}</div>
+    </div>
+  );
+}
+
+/** 一行：做了什么 + 参数（灰、截断）+ 右侧状态。做着的文字扫光 */
+function StepLine({ label, detail, hot, detailHot, trailing }: {
+  label: string; detail?: string; hot?: boolean; detailHot?: boolean; trailing?: ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 min-w-0">
+      {/* 带参数的行保持一行：参数先让（shrink 3 倍），再轮到名字截断；没参数的阶段文案可以折行 */}
+      <span className={cn(detail ? 'min-w-0 truncate' : 'min-w-0 break-words', hot && 'wiib-shimmer')}>{label}</span>
+      {detail && <span className={cn('min-w-0 truncate shrink-[3]', detailHot ? 'wiib-shimmer' : 'text-muted-foreground')}>{detail}</span>}
+      {trailing && <span className="ml-auto shrink-0 pl-2 inline-flex items-center gap-1.5 microlabel">{trailing}</span>}
+    </div>
+  );
+}
+
+/** 主 agent 的一次工具调用 */
+function ToolRow({ item }: { item: Extract<ChatItem, { kind: 'tool' }> }) {
+  const label = useToolLabel();
+  return (
+    <RailRow icon={TOOL_ICON[item.name] ?? Wrench} hot={item.active}>
+      <StepLine label={label(item.name)} detail={argsSummary(item.args)} hot={item.active} />
+    </RailRow>
+  );
+}
+
+/** 后端下发的阶段文案（行为分析等）；keyed 的是前端自己立的说明行，现翻 */
+function PhaseRow({ item }: { item: Extract<ChatItem, { kind: 'progress' }> }) {
+  const { t } = useTranslation('ai');
+  return (
+    <RailRow icon={Sparkle} hot={item.active}>
+      <StepLine label={item.keyed ? t(item.text) : item.text} hot={item.active} />
+    </RailRow>
+  );
+}
+
+/** 一次联网搜索：搜着时亮着搜索词，搜完变成"搜索了 N 个网站"，点开是站点列表 */
+function SearchRow({ item }: { item: Extract<ChatItem, { kind: 'search' }> }) {
   const { t } = useTranslation('ai');
   const [open, setOpen] = useState(false);
   if (item.active) {
     return (
-      <span className="text-foreground font-bold inline-flex items-center gap-1">
-        <Globe className="w-3 h-3" /> {item.query ? t('rail.searching', { query: item.query }) : t('rail.searchingNoQuery')}
-      </span>
+      <RailRow icon={Globe} hot>
+        <StepLine label={item.query ? t('rail.searching', { query: item.query }) : t('rail.searchingNoQuery')} hot />
+      </RailRow>
     );
   }
   // 搜完但没报站点（上游不给 sources 的协议形态）：只说搜过了什么，别说"没命中"
   if (item.sources.length === 0) {
     return (
-      <span className="inline-flex items-center gap-1">
-        <Globe className="w-3 h-3" /> {t('rail.searchedNone')}
-        {item.query && <span className="text-muted-foreground/70">· {item.query}</span>}
-      </span>
+      <RailRow icon={Globe}>
+        <StepLine label={t('rail.searchedNone')} detail={item.query ?? undefined} />
+      </RailRow>
     );
   }
   return (
-    <>
-      <button onClick={() => setOpen(v => !v)} className="inline-flex items-center gap-1 hover:text-foreground">
-        <Globe className="w-3 h-3" />
-        {t('rail.searched', { count: item.sources.length })}
-        {item.query && <span className="text-muted-foreground/70">· {item.query}</span>}
-        <ChevronRight className={cn('w-3 h-3 transition-transform duration-200', open && 'rotate-90')} />
+    <RailRow icon={Globe}>
+      <button onClick={() => setOpen(v => !v)} className="w-full text-left hover:text-foreground" aria-expanded={open}>
+        <StepLine
+          label={t('rail.searched', { count: item.sources.length })}
+          detail={item.query ?? undefined}
+          trailing={<ChevronRight className={cn('w-3 h-3 transition-transform duration-200', open && 'rotate-90')} />}
+        />
       </button>
       {open && (
-        <div className="mt-1 rounded-lg border border-border bg-card-2 px-2.5 py-1.5 text-[11px] max-h-44 overflow-y-auto space-y-0.5">
+        <div className="mt-1.5 ml-[6px] border-l-2 border-border pl-3 text-[11px] max-h-44 overflow-y-auto space-y-0.5">
           {item.sources.map(s => (
             <a key={s.url} href={s.url} target="_blank" rel="noreferrer" title={s.url}
                className="flex items-baseline gap-2 hover:text-primary min-w-0">
@@ -94,7 +189,82 @@ function SearchStep({ item }: { item: Extract<ChatItem, { kind: 'search' }> }) {
           ))}
         </div>
       )}
-    </>
+    </RailRow>
+  );
+}
+
+/** 子运行内部的一步：工具调用按工具取图标，阶段文案做完打勾、做着是小星 */
+function ChildStepRow({ step, text }: { step: ChildStep; text: string }) {
+  const Icon = step.kind === 'tool' ? (TOOL_ICON[step.name] ?? Wrench) : step.active ? Sparkle : Check;
+  return (
+    <div className="flex items-start gap-2 text-[11.5px] leading-relaxed">
+      <Icon className={cn('w-3 h-3 shrink-0 mt-[3px]', step.active ? 'text-primary' : 'text-muted-foreground')} />
+      <span className={cn('min-w-0 break-words', step.active && 'wiib-shimmer')}>{text}</span>
+    </div>
+  );
+}
+
+/**
+ * 后台子运行一条：右侧是状态和计时，收着时在名字后面露一句——跑着是它当前在干什么，失败了是原因；
+ * 点开是一道细竖线下的内部——任务书、它内部的每一步、结局。
+ */
+function ChildRow({ item, open, onToggle }: { item: ChildItem; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation('ai');
+  const toolLabel = useToolLabel();
+  const running = item.status === 'running';
+  const now = useClock(running);
+  const elapsed = fmtClock((running ? now : item.endedAt ?? now) - item.at);
+  const stepText = (s: ChildStep) =>
+    s.kind === 'tool' ? [toolLabel(s.name), argsSummary(s.args)].filter(Boolean).join(' · ') : s.text;
+  const current = !open && running ? lastActive(item.steps) : undefined;
+  const detail = current ? stepText(current) : !open && item.status === 'failed' ? item.error : undefined;
+  const timed = item.status === 'running' || item.status === 'done';
+
+  return (
+    <RailRow icon={CHILD_ICON[item.runKind]} hot={running}>
+      <button onClick={onToggle} className="w-full text-left" aria-expanded={open}>
+        <StepLine
+          label={item.label}
+          detail={detail}
+          detailHot={current != null}
+          trailing={<>
+            {running && <span className={PULSE_DOT} />}
+            <span className={cn(item.status === 'failed' && 'text-loss')}>{t(`rail.status.${item.status}`)}</span>
+            {timed && <span className="num">· {elapsed}</span>}
+            <ChevronRight className={cn('w-3 h-3 transition-transform duration-200', open && 'rotate-90')} />
+          </>}
+        />
+      </button>
+      {open && (
+        <div className="mt-1.5 ml-[6px] border-l-2 border-border pl-3 py-0.5 space-y-[7px]">
+          {item.brief && (
+            <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+              <span className="microlabel text-foreground font-bold mr-1.5">{t('rail.brief')}</span>{item.brief}
+            </p>
+          )}
+          {item.steps.map((s, i) => <ChildStepRow key={i} step={s} text={stepText(s)} />)}
+          {item.status === 'done' && (
+            <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Check className="w-3 h-3 shrink-0" />{t('rail.reportDelivered', { hub: HUB_NAME })}
+            </p>
+          )}
+          {item.status === 'failed' && <p className="text-[11px] text-loss">{item.error ?? t('rail.status.failed')}</p>}
+          {item.status === 'cancelled' && <p className="text-[11px] text-muted-foreground">{t('rail.status.cancelled')}</p>}
+        </div>
+      )}
+    </RailRow>
+  );
+}
+
+/** 一条过程都还没有时的等待行：小星慢转 + 扫光文字 + 计时（刷新后发现的后台轮没有起点，不计） */
+export function ThinkingRow({ text, since }: { text: string; since: number | null }) {
+  const now = useClock(since != null);
+  return (
+    <div className="flex items-center gap-2 text-[13px]">
+      <Sparkle className={SPIN_STAR} />
+      <span className="wiib-shimmer font-semibold">{text}</span>
+      {since != null && <span className="ml-auto microlabel num">{fmtClock(now - since)}</span>}
+    </div>
   );
 }
 
@@ -176,7 +346,7 @@ export function AssistantAnswer({ item, canRegenerate, onRegenerate }: {
         {meta?.modelLabel && <span className="microlabel font-mono tabular-nums truncate min-w-0">{meta.modelLabel}</span>}
         {item.streaming && (
           <span className="ml-auto flex items-center gap-1.5 shrink-0">
-            <span className="led" />
+            <span className={PULSE_DOT} />
             <span className="microlabel">{t('chat.generating')}</span>
           </span>
         )}
@@ -221,68 +391,72 @@ export function AssistantAnswer({ item, canRegenerate, onRegenerate }: {
 }
 
 /**
- * 工作过程轨：一行摘要 + 展开后的竖轨节点。默认展开——收不收由用户点，别在他正看过程时自己收起来。
+ * 工作过程：一行摘要 + 一列条目（图标 + 做了什么 + 参数 + 右侧状态）。
+ * 默认展开——收不收由用户点，别在他正看过程时自己收起来；子运行那条默认收着，点开看里面。
  * <p>
- * 摘要按轨里有什么现挑：跑着就说正在做什么，跑完优先报搜了几个站，没搜过就退回"N 步"。
+ * 摘要：live（本轮还在跑、答案没开始）时"正在研判 · N 步"扫光 + 小星慢转 + 从本轮开跑起算的秒表
+ * （和"分析问题中"那行的表接得上）；有后台任务在跑就报几个；都完了报搜了几个站，不显示时长——答案底部的读数里有耗时。
  */
-export function ProcessRail({ steps, active, open, onToggle }: {
-  steps: RailStep[]; active: boolean; open: boolean; onToggle: () => void;
+export function ProcessRail({ steps, live, since, open, onToggle }: {
+  steps: RailStep[]; live: boolean; since: number | null; open: boolean; onToggle: () => void;
 }) {
   const { t } = useTranslation('ai');
+  // 子运行块各自的开合，键是 runId
+  const [openChildren, setOpenChildren] = useState<Record<string, boolean>>({});
+  const now = useClock(live);
 
   const sites = new Set<string>();
-  let searching = false;
+  let runningChildren = 0;
   for (const { item } of steps) {
-    if (item.kind === 'search') {
-      item.sources.forEach(s => sites.add(s.url));
-      if (item.active) searching = true;
-    }
+    if (item.kind === 'search') item.sources.forEach(s => sites.add(s.url));
+    if (item.kind === 'child' && item.status === 'running') runningChildren++;
   }
-  const summary = active
-    ? (searching ? t('rail.searchingNoQuery') : t('rail.sumWorking'))
-    : sites.size > 0 ? t('rail.searched', { count: sites.size })
-      : t('rail.title', { count: steps.length });
 
   return (
     <div>
       <button
         onClick={onToggle}
-        className="flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground hover:text-foreground py-0.5"
+        className="w-full flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground hover:text-foreground py-0.5"
       >
-        <ChevronRight className={cn('w-3 h-3 transition-transform duration-200', open && 'rotate-90')} />
-        {summary}
-        {active && <Loader2 className="w-3 h-3 animate-spin text-primary" />}
+        <ChevronRight className={cn('w-3 h-3 shrink-0 transition-transform duration-200', open && 'rotate-90')} />
+        {live ? (
+          <>
+            <span className="wiib-shimmer">{t('rail.live', { count: steps.length })}</span>
+            <Sparkle className={SPIN_STAR} />
+          </>
+        ) : (
+          <>
+            <span>{t('rail.title', { count: steps.length })}</span>
+            {runningChildren > 0 ? (
+              <span className="inline-flex items-center gap-1.5 font-normal">
+                <span className={PULSE_DOT} />{t('rail.childrenRunning', { count: runningChildren })}
+              </span>
+            ) : sites.size > 0 && <span className="font-normal">· {t('rail.searched', { count: sites.size })}</span>}
+          </>
+        )}
+        {live && since != null && <span className="ml-auto microlabel num font-normal">{fmtClock(now - since)}</span>}
       </button>
       <div className={cn(
         'grid transition-[grid-template-rows] duration-300 ease-out',
         open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
       )}>
         <div className="overflow-hidden min-h-0">
-          <div className="ml-[5px] mt-1.5 border-l-2 border-border pl-3.5 space-y-2.5 py-0.5">
-            {steps.map(({ item, index }) => {
-              const hot = (item.kind === 'progress' && item.active) || (item.kind === 'search' && item.active)
-                || (item.kind === 'child' && item.status === 'running');
-              return (
-                <div key={index} className="relative text-[11.5px] leading-relaxed text-muted-foreground">
-                  <span className={cn(
-                    'absolute -left-[18.5px] top-[5px] w-[7px] h-[7px] rounded-full border-2',
-                    hot ? 'bg-primary border-primary shadow-[0_0_6px_var(--color-primary)]' : 'bg-card border-border',
-                  )} />
-                  {/* keyed=前端自己立的说明行，存的是 key，这里现翻；其余是后端下发的阶段文案，原样显示 */}
-                  {item.kind === 'progress' && (
-                    <span className={cn(hot && 'text-foreground font-bold')}>
-                      {item.keyed ? t(item.text) : item.text}
-                    </span>
-                  )}
-                  {item.kind === 'search' && <SearchStep item={item} />}
-                  {item.kind === 'child' && (
-                    <span className={cn(hot && 'text-foreground font-bold')}>
-                      {t(CHILD_STATUS_KEY[item.status], { label: item.label })}
-                      {item.text && <span className="ml-1 font-normal text-muted-foreground">· {item.text}</span>}
-                    </span>
-                  )}
-                </div>
-              );
+          {/* 左边距 = 轨头的箭头宽 + 间距，条目和轨头的字对齐 */}
+          <div className="ml-[18px] mt-2 space-y-2 pb-0.5">
+            {steps.map(({ item }) => {
+              switch (item.kind) {
+                case 'tool': return <ToolRow key={item.rid} item={item} />;
+                case 'search': return <SearchRow key={item.rid} item={item} />;
+                case 'progress': return <PhaseRow key={item.rid} item={item} />;
+                case 'child': return (
+                  <ChildRow
+                    key={item.rid}
+                    item={item}
+                    open={!!openChildren[item.runId]}
+                    onToggle={() => setOpenChildren(prev => ({ ...prev, [item.runId]: !prev[item.runId] }))}
+                  />
+                );
+              }
             })}
           </div>
         </div>

@@ -4,7 +4,7 @@ import { ArrowUp, BookOpenCheck, MessageSquarePlus, Pencil, Plus, Square, Trash2
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { cn } from '../../lib/utils';
 import { chatStore } from './chatStore';
-import { HUB_NAME } from './chatView';
+import { HUB_NAME, PULSE_DOT } from './chatView';
 import type { ChatIntent, TraderFormKind } from '../../types';
 
 /**
@@ -244,7 +244,10 @@ export function ChatComposer({ loading, onSend, fullscreen, empty, stopping, onS
 
         <div className="flex justify-between gap-2 px-0.5 pt-1 text-[10px] text-muted-foreground/60">
           <span className="truncate">{t('composer.hint')}</span>
-          <span className="num shrink-0">{loading ? t('composer.busy', { hub: HUB_NAME }) : t('composer.ready', { hub: HUB_NAME })}</span>
+          <span className="num shrink-0 inline-flex items-center gap-1.5">
+            {loading && <span className={PULSE_DOT} />}
+            {loading ? t('composer.busy', { hub: HUB_NAME }) : t('composer.ready', { hub: HUB_NAME })}
+          </span>
         </div>
       </div>
     </div>

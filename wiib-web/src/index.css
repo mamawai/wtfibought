@@ -180,18 +180,29 @@ html.pwa nav a {
   }
   .wiib-ball-ping { animation: wiib-ball-ping 1.7s cubic-bezier(0, 0, .2, 1) infinite }
 
-  /* 研判中：一道扇形绕球扫。mask 把中心挖空，只在环带上显影 */
+  /* 研判中：一道白弧沿着球的内沿转。mask 把中心挖空，只在环带上显影 */
   @keyframes wiib-ball-sweep { to { transform: rotate(360deg) } }
   .wiib-ball-sweep {
     background: conic-gradient(from 0deg,
       transparent 0deg,
-      color-mix(in srgb, var(--color-primary) 55%, transparent) 70deg,
+      rgb(255 255 255 / .85) 70deg,
       transparent 130deg);
     /* closest-side 让半径跟着盒子走：写死 px 的话球一改尺寸这圈就露边或糊到图标上。
-       82%~84% 落在球的外沿，环带正好压着边框往外一点 */
-    -webkit-mask: radial-gradient(circle closest-side, transparent 82%, #000 84%);
-            mask: radial-gradient(circle closest-side, transparent 82%, #000 84%);
+       80%~82% 起是环带，宽约 4px，贴着球的内沿 */
+    -webkit-mask: radial-gradient(circle closest-side, transparent 80%, #000 82%);
+            mask: radial-gradient(circle closest-side, transparent 80%, #000 82%);
     animation: wiib-ball-sweep 1.15s linear infinite;
+  }
+
+  /* 做着的那条文字扫光：灰字上一道亮光从左到右扫过，对话面板里"正在干活"的标记 */
+  @keyframes wiib-shimmer { from { background-position: 150% 0 } to { background-position: -50% 0 } }
+  .wiib-shimmer {
+    background: linear-gradient(90deg, var(--color-muted-foreground) 0%, var(--color-foreground) 45%, var(--color-muted-foreground) 60%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+            background-clip: text;
+    color: transparent;
+    animation: wiib-shimmer 2.2s linear infinite;
   }
 
   /* 关掉动画偏好：这两层是纯装饰，停掉不丢信息（橙点与图标本身仍在）。
@@ -199,6 +210,8 @@ html.pwa nav a {
   @media (prefers-reduced-motion: reduce) {
     .wiib-ball-ping { animation: none; opacity: 0 }
     .wiib-ball-sweep { animation: none; opacity: 0 }
+    /* 扫光退回普通前景色 */
+    .wiib-shimmer { animation: none; background: none; color: var(--color-foreground) }
     /* 入场动画同理：一次性位移/缩放停掉即可，元素靠 fill-mode 停在终态 */
     .animate-in { animation: none }
   }
@@ -236,21 +249,74 @@ html.pwa nav a {
 .led-down { background: var(--color-loss); }
 .led-off { background: var(--color-muted-foreground); opacity: .5; }
 
-/* Polaris 浮动球：近处压住球体，外层柔影拉开与页面的距离。 */
+/* Polaris 浮动球：一颗橙色小球，里面一颗白色四角星（Polaris = 北极星）。全站只有它和底部玻璃 Tab 用渐变和阴影。
+   状态：平时外圈橙晕慢呼吸、星每隔几秒眨一下；研判中呼吸变快、星慢转、内沿一道白弧（见 .wiib-ball-sweep）；
+   答案到了整球弹一下（data-unread 一挂上就播一次） */
 @layer components {
   .polaris-ball {
-    --ball-shadow: 0 2px 5px rgb(18 19 22 / .09), 0 8px 22px rgb(18 19 22 / .14);
-    --ball-lift-shadow: 0 3px 7px rgb(18 19 22 / .12), 0 12px 28px rgb(18 19 22 / .19);
+    --ball-glow: color-mix(in srgb, var(--color-primary) 42%, transparent);
+    /* 上沿一线亮边、下沿一圈暗边，让它是个球；外面一层淡橙晕托起来 */
+    --ball-shadow:
+      inset 0 1px 1px rgb(255 255 255 / .35),
+      inset 0 -2px 4px rgb(0 0 0 / .16),
+      0 2px 5px rgb(18 19 22 / .14),
+      0 8px 22px var(--ball-glow);
+    --ball-lift-shadow:
+      inset 0 1px 1px rgb(255 255 255 / .4),
+      inset 0 -2px 4px rgb(0 0 0 / .16),
+      0 4px 9px rgb(18 19 22 / .18),
+      0 14px 30px var(--ball-glow);
+    color: var(--color-primary-foreground);
+    /* 左上一点高光 */
+    background:
+      radial-gradient(circle at 32% 28%, rgb(255 255 255 / .38), transparent 42%),
+      var(--color-primary);
     box-shadow: var(--ball-shadow);
   }
   html.dark .polaris-ball {
-    --ball-shadow: 0 3px 7px rgb(0 0 0 / .35), 0 10px 26px rgb(0 0 0 / .48), inset 0 1px 0 rgb(255 255 255 / .06);
-    --ball-lift-shadow: 0 4px 10px rgb(0 0 0 / .42), 0 14px 32px rgb(0 0 0 / .56), inset 0 1px 0 rgb(255 255 255 / .08);
+    --ball-glow: color-mix(in srgb, var(--color-primary) 55%, transparent);
+    --ball-shadow:
+      inset 0 1px 1px rgb(255 255 255 / .3),
+      inset 0 -2px 4px rgb(0 0 0 / .25),
+      0 3px 7px rgb(0 0 0 / .4),
+      0 10px 26px var(--ball-glow);
+    --ball-lift-shadow:
+      inset 0 1px 1px rgb(255 255 255 / .35),
+      inset 0 -2px 4px rgb(0 0 0 / .25),
+      0 4px 10px rgb(0 0 0 / .45),
+      0 16px 34px var(--ball-glow);
   }
   .polaris-ball[data-dragging="true"] { box-shadow: var(--ball-lift-shadow); }
   .polaris-ball:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 4px; }
   @media (hover: hover) {
     .polaris-ball:hover:not(:disabled) { box-shadow: var(--ball-lift-shadow); }
+  }
+
+  /* 呼吸的那层橙晕：独立一层只动 opacity，不跟按钮自己的 box-shadow（悬停/拖动在变）打架 */
+  .polaris-ball::after {
+    content: ""; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+    box-shadow: 0 0 18px 4px var(--ball-glow);
+    animation: wiib-ball-breathe 4.5s ease-in-out infinite;
+  }
+  .polaris-ball[data-busy="true"]::after { animation-duration: 1.4s; }
+  @keyframes wiib-ball-breathe { 0%, 100% { opacity: .3 } 50% { opacity: 1 } }
+
+  /* 星：平时每 7 秒眨一下（转 90° 收一下再放开，四角星转 90° 和原样重合，看着就是闪了一下）；研判中慢慢转 */
+  .polaris-glyph { animation: wiib-star-twinkle 7s ease-in-out infinite; }
+  .polaris-ball[data-busy="true"] .polaris-glyph { animation: wiib-star-spin 4s linear infinite; }
+  @keyframes wiib-star-twinkle {
+    0%, 86% { transform: rotate(0deg) scale(1) }
+    93% { transform: rotate(45deg) scale(.78) }
+    100% { transform: rotate(90deg) scale(1) }
+  }
+  @keyframes wiib-star-spin { to { transform: rotate(360deg) } }
+
+  /* 答案到了：整球弹一下。用 scale 属性而不是 transform，和 Tailwind 的 scale-* 工具类是同一个属性，不互相顶 */
+  .polaris-ball[data-unread="true"] { animation: wiib-ball-pop .6s cubic-bezier(.34, 1.56, .64, 1); }
+  @keyframes wiib-ball-pop { 0% { scale: 1 } 40% { scale: 1.22 } 100% { scale: 1 } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .polaris-ball::after, .polaris-glyph, .polaris-ball[data-unread="true"] { animation: none; }
   }
 }
 
@@ -374,7 +440,7 @@ html.pwa nav a {
   }
 }
 
-/* 收回时先让内容退场，剩下的外壳跟球是同一套卡片底 + 边，缩到最后就是球本身，
+/* 收回时先让内容退场，剩下的外壳一路缩成球（底色、边色由 ChatDock 的收放动画插值成主色），
    看着是面板变成了球，不是面板关掉再冒一个球出来。
    不进 @layer：面板里随手加个 transition-* 工具类就会把这里的过渡整条顶掉 */
 #polaris-dock > * { transition: opacity 150ms var(--ease-control); }

@@ -27,6 +27,7 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import reactor.core.publisher.Flux;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -68,6 +69,9 @@ class ChatTurnRunnerTest {
     private final StringBuilder answer = new StringBuilder();
     /** 主 agent 报的搜索过程 */
     private final List<SearchEvent> search = new CopyOnWriteArrayList<>();
+    /** 真注册表 + 只收 tool_calls 的出口：工具调用事件是不是连名带参推出去了 */
+    private final WorkbenchRunRegistry runRegistry = new WorkbenchRunRegistry();
+    private final List<ObjectNode> toolCallEvents = new CopyOnWriteArrayList<>();
 
     private static ChatResponse responseOf(AssistantMessage message) {
         return new ChatResponse(List.of(new Generation(message)));
@@ -119,7 +123,7 @@ class ChatTurnRunnerTest {
     }
 
     private ChatTurnRunner runner() {
-        return new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS);
+        return new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, runRegistry);
     }
 
     private void turn(String message) {
@@ -127,6 +131,12 @@ class ChatTurnRunnerTest {
     }
 
     private void turn(String message, ChatIntent intent) {
+        runRegistry.start(SESSION, (event, data) -> {
+            if ("tool_calls".equals(event)) {
+                toolCallEvents.add(data);
+            }
+            return true;
+        }, new CompletableFuture<>());
         runner().run(leaves(), 1L, SESSION, message, intent, answer::append, search::add, null);
     }
 
@@ -175,6 +185,25 @@ class ChatTurnRunnerTest {
         // 工具回执进了主 agent 的上下文，第二次调用才写得出答案
         assertThat(toolResponses()).containsExactly(overview);
         assertThat(answer.toString()).isEqualTo("你的 trader 正在运行");
+    }
+
+    /** 前端的过程条目靠它：模型每批 tool_call 连名带参推出去，主 agent 自己的不带 runId */
+    @Test
+    void 主agent每批工具调用连名带参推给前端() {
+        when(traderChatService.decisions(1L, 3, "TRADE", AgentLang.ZH)).thenReturn("[]");
+        mainCallsThenAnswers("trader_decisions", "{\"limit\":3,\"kind\":\"TRADE\"}", "最近三笔都是顺势单");
+
+        turn("它最近做了什么");
+
+        assertThat(toolCallEvents).singleElement().satisfies(event -> {
+            assertThat(event.has("runId")).isFalse();
+            assertThat(event.get("calls")).hasSize(1);
+            ObjectNode call = (ObjectNode) event.get("calls").get(0);
+            assertThat(call.get("name").asString(null)).isEqualTo("trader_decisions");
+            assertThat(call.get("args").get("limit").intValue()).isEqualTo(3);
+            assertThat(call.get("args").get("kind").asString(null)).isEqualTo("TRADE");
+        });
+        assertThat(answer.toString()).isEqualTo("最近三笔都是顺势单");
     }
 
     /** 新闻是主 agent 的工具不是预取：语言烤在叶子里，模型没法挑新闻用哪门语言 */

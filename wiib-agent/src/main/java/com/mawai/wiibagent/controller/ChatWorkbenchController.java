@@ -47,7 +47,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 /**
  * 研判工作台对话入口：SSE 流式暴露主 agent 的作答过程。
  * 事件协议：session(会话号) / token(答案流) / progress(长工具阶段进度) / search(服务端搜索过程)
- * / child_start·child_progress·child_done(后台子运行) / hitl_request(贵操作确认卡)
+ * / tool_calls(模型这一批要调的工具，带 runId 的是某个子运行里的) / child_start·child_progress·child_done(后台子运行) / hitl_request(贵操作确认卡)
  * / form_request(模型请求弹一张表单卡，执行权归用户点击) / behavior_report / done(带 pending：子运行报告到了还没答，前端空闲时经 /wake 发起唤醒轮) / error。
  * 续聊上下文按 sessionId 存在自建的 {@link ChatContextStore} 表里，带同一 sessionId 再发即续聊；
  * 断连不中止本轮：{@link ChatTurnStreamer} 跑完照样落历史，前端靠 status 接口+历史回放补答案。
