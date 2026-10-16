@@ -11,6 +11,7 @@ import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.Result;
 import com.mawai.wiibsim.service.AccountResetService;
+import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesRiskService;
 import com.mawai.wiibsim.service.FuturesTradingService;
 import com.mawai.wiibsim.service.InternalOrderIdempotency;
@@ -46,6 +47,7 @@ public class InternalFuturesTradeController {
     private final UserService userService;
     private final AccountResetService accountResetService;
     private final InternalOrderIdempotency idempotency;
+    private final CrossMarginService crossMarginService;
 
     /** 带 clientRequestId 就走幂等（调用方超时重发不会双仓），不带＝原样直发 */
     @PostMapping("/{userId}/open")
@@ -107,8 +109,10 @@ public class InternalFuturesTradeController {
     public Result<Map<String, Object>> balance(@PathVariable Long userId) {
         User user = userService.getById(userId);
         if (user == null) throw new BizException(ErrorCode.USER_NOT_FOUND);
+        // available 是全仓账本的下单额度口径（净值 − 占用保证金 − 挂单占用），和开仓校验用的同一个数
         return Result.ok(Map.of("userId", user.getId(), "balance", user.getBalance(),
-                "frozenBalance", user.getFrozenBalance() == null ? BigDecimal.ZERO : user.getFrozenBalance()));
+                "frozenBalance", user.getFrozenBalance() == null ? BigDecimal.ZERO : user.getFrozenBalance(),
+                "available", crossMarginService.snapshot(userId).available()));
     }
 
     /**

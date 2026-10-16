@@ -139,6 +139,33 @@ class KlineFetcherTest {
     }
 
     @Test
+    void callerAfterBoundaryDoesNotJoinRequestSentBefore() throws Exception {
+        // 边界前 1s 发出的请求还没回来，边界后来的调用不能等它：那份回包末根已经收盘了
+        AtomicLong clock = new AtomicLong(HOUR_BOUNDARY - 1_000L);
+        CountDownLatch leaderIn = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger calls = new AtomicInteger();
+        when(client.getFuturesKlines(anyString(), anyString(), anyInt(), isNull())).thenAnswer(inv -> {
+            if (calls.incrementAndGet() == 1) {
+                leaderIn.countDown();
+                release.await(5, TimeUnit.SECONDS);
+            }
+            return rawKlines(192);
+        });
+        KlineFetcher f = fetcher();
+        f.nowMs = clock::get;
+
+        Thread leader = Thread.startVirtualThread(() -> f.fetch("BTCUSDT", "1h", 192));
+        assertThat(leaderIn.await(5, TimeUnit.SECONDS)).isTrue();
+        clock.set(HOUR_BOUNDARY + 1_000L);
+        assertThat(f.fetch("BTCUSDT", "1h", 192)).hasSize(192);   // 自己拉，不等 leader
+        release.countDown();
+        leader.join();
+
+        assertThat(calls.get()).isEqualTo(2);
+    }
+
+    @Test
     void concurrentMissesCollapseIntoOneRequest() throws Exception {
         // 10 个 trader 在同一个 5m 边界一起醒来的场景：只许一个真打上游
         int threads = 10;

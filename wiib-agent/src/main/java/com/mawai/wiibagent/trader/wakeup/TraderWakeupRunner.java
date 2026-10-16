@@ -337,7 +337,7 @@ public class TraderWakeupRunner {
         long since = boundaryTime - Math.floorMod(boundaryTime, intervalMs) - intervalMs;
         String calendar = econCalendar.assemble(nowMs.getAsLong(), since, lang);
         String instruction = trigger != null
-                ? alertInstruction(trader, trigger, recent.isEmpty() ? null : recent.getFirst().wakeTime(), observation, calendar, lang, ownerNote)
+                ? alertInstruction(trader, trigger, lastRealWake(recent), observation, calendar, lang, ownerNote)
                 : routineInstruction(trader, boundaryTime, observation, marketSnapshot(whitelist, lang), calendar, lang, ownerNote);
         run.prompt(prompt, instruction);
         // 中断信号交给循环，finally 里 complete：在途模型流不再往下烧
@@ -395,6 +395,16 @@ public class TraderWakeupRunner {
             decision.setError(prompts.get(lang, "trader.error.callLimit", Map.of("limit", MAX_MODEL_CALLS)));
         }
         return outcome.reasoning();
+    }
+
+    /** 上次真跑过的唤醒时刻：SKIPPED 行（上轮未完跳过、触发过晚）没跑模型，不算醒过 */
+    private static Long lastRealWake(List<WakeObservation.RecentWake> recent) {
+        for (WakeObservation.RecentWake w : recent) {
+            if (!AiTraderDecision.STATUS_SKIPPED.equals(w.status())) {
+                return w.wakeTime();
+            }
+        }
+        return null;
     }
 
     /** 交易工具：绑定该 trader 的 sim 子账户、白名单与风险规格，每次唤醒 new 一个。权益按开仓时现查的持仓算 */
@@ -505,7 +515,16 @@ public class TraderWakeupRunner {
     String alertInstruction(AiTrader trader, AlertTrigger trig, Long lastWakeTime,
                             String observation, String calendar, AgentLang lang, String ownerNote) {
         long intervalMs = TraderScheduler.INTERVAL_MS.getOrDefault(trader.getIntervalCode(), 3_600_000L);
-        long toNextMin = Math.max(1, (intervalMs - Math.floorMod(trig.triggeredAt(), intervalMs)) / 60_000);
+        // 下次例行唤醒要看时段：下一边界落在时段外就是更晚的那个（时段末尾的警报，下次醒可能是第二天）
+        long next = trig.triggeredAt() - Math.floorMod(trig.triggeredAt(), intervalMs) + intervalMs;
+        WakeWindow window = WakeWindow.of(trader);
+        if (window != null) {
+            long inWindow = window.nextBoundaryFrom(next, intervalMs);
+            if (inWindow > 0) {
+                next = inWindow;
+            }
+        }
+        long toNextMin = Math.max(1, (next - trig.triggeredAt()) / 60_000);
         String lastWake = lastWakeTime == null ? prompts.get(lang, "trader.wake.alertNoWake")
                 : prompts.get(lang, "trader.wake.alertWakeAt", Map.of(
                         "time", TIME_FMT.format(Instant.ofEpochMilli(lastWakeTime)),

@@ -98,16 +98,21 @@ public class TradeTools {
     // 描述只客观说"返回什么"，不下行为指令：系统提示词明说账户状态每轮已注入、
     // 让把调用预算花在行情求证上，这里再写 ALWAYS check 就是两条强指令打架
     @Tool(name = "get_account", description = """
-            Get your full account state: available balance, open positions (with id, side, quantity,
-            entry price, leverage, unrealized PnL, liquidation price, current stop-loss/take-profit)
-            and pending limit orders. This same state is already injected into your opening message
-            every round (the [Account] block), so you normally do not need to call this; use it only
-            to confirm the account after your own trades within this round.""")
+            Get your full account state: equity, available (what is still free for new orders after
+            position margin and pending-order reservations), wallet balance, open positions (with id,
+            side, quantity, entry price, leverage, unrealized PnL, liquidation price, current
+            stop-loss/take-profit) and pending limit orders. This same state is already injected into
+            your opening message every round (the [Account] block), so you normally do not need to call
+            this; use it only to confirm the account after your own trades within this round.""")
     public String getAccount() {
         try {
             ObjectNode out = MAPPER.createObjectNode();
-            out.put("balance", simTradeClient.getBalance(simUserId));
+            Map<String, Object> balance = simTradeClient.getBalanceDetail(simUserId);
             List<FuturesPositionDTO> positions = simTradeClient.getAllPositions(simUserId);
+            // 权益与开场白同一口径；available 是 sim 全仓账本的下单额度，钱包余额里还躺着已占用的保证金，不能当可用
+            out.put("equity", equityOf.apply(positions));
+            out.put("available", decimal(balance.get("available")));
+            out.put("walletBalance", decimal(balance.get("balance")));
             ArrayNode ps = MAPPER.createArrayNode();
             for (FuturesPositionDTO p : positions) {
                 ObjectNode row = MAPPER.createObjectNode();
@@ -131,6 +136,10 @@ public class TradeTools {
         } catch (Exception e) {
             return fail("get_account", null, e);
         }
+    }
+
+    private static BigDecimal decimal(Object v) {
+        return v == null ? null : new BigDecimal(String.valueOf(v));
     }
 
     @Tool(name = "open_position", description = """
@@ -192,8 +201,8 @@ public class TradeTools {
             return rejected("open_position", argSummary, reject);
         }
         // 同向已有仓位或开仓挂单：计划走覆盖而不是新立，旧论点进修订历史
-        boolean coversPlan = acct.sameSide(req.symbol(), req.side()) != null
-                || acct.pendingOpen(req.symbol(), req.side());
+        FuturesPositionDTO sameSide = acct.sameSide(req.symbol(), req.side());
+        boolean coversPlan = sameSide != null || acct.pendingOpen(req.symbol(), req.side());
         try {
             FuturesOpenRequest openReq = new FuturesOpenRequest();
             openReq.setSymbol(req.symbol());
@@ -218,7 +227,7 @@ public class TradeTools {
                 openReq.setTakeProfits(List.of(tp));
             }
             FuturesOrderResponse resp = SimOrderRetry.send(() -> simTradeClient.openPosition(simUserId, openReq));
-            persistPlan(req, mark, coversPlan, resp);
+            persistPlan(req, mark, coversPlan, sameSide, resp);
             return ok("open_position", argSummary, MAPPER.writeValueAsString(resp));
         } catch (SimOrderRetry.UnknownOutcome e) {
             return unknown("open_position", argSummary, e);
@@ -231,7 +240,8 @@ public class TradeTools {
      * 成交/挂单即落计划（下轮唤醒回注）：同键已有持仓或挂单走覆盖，否则新立。
      * 写失败只记日志不回错——交易已真实发生，回错误会诱导模型重复开仓。
      */
-    private void persistPlan(TradeGuard.OpenReq req, BigDecimal mark, boolean coversPlan, FuturesOrderResponse resp) {
+    private void persistPlan(TradeGuard.OpenReq req, BigDecimal mark, boolean coversPlan,
+                             FuturesPositionDTO sameSide, FuturesOrderResponse resp) {
         try {
             AiTraderPlan plan = new AiTraderPlan();
             plan.setTraderId(ctx.traderId());
@@ -246,8 +256,10 @@ public class TradeTools {
             plan.setStopLossPrice(req.stopLossPrice());
             plan.setTakeProfitPrice(req.takeProfitPrice());
             plan.setOpenedWakeTime(ctx.boundaryTime());
-            // 市价单/市价加仓响应即带仓位id；限价挂单为null，成交后下次唤醒开头对账补上
-            plan.setPositionId(resp.getPositionId());
+            // 市价单/市价加仓响应即带仓位id。限价挂单为null：是加仓就先绑到它将并入的那个仓
+            // （不然下轮对账见键上有仓就把还挂着的单当成交了），首开留空等成交后对账补上
+            plan.setPositionId(resp.getPositionId() != null ? resp.getPositionId()
+                    : sameSide == null ? null : sameSide.getId());
             if (coversPlan) {
                 planStore.cover(plan, ctx.lang());
             } else {

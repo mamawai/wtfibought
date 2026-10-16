@@ -65,7 +65,8 @@ tool:
 
   funding_history: |-
     获取永续合约最近的资金费率历史（最近 30 次结算，每 8 小时一次），外加下次结算时间与
-    当前标记价。用于 carry 判断：资金费持续为正=多头付费给空头（多头拥挤），为负则相反。
+    当前标记价。费率是原始小数、按每 8 小时一次计：0.0001＝0.01%。
+    用于 carry 判断：资金费持续为正=多头付费给空头（多头拥挤），为负则相反。
 
   orderbook_depth: |-
     获取合约盘口前 10 档买卖挂单（价格、数量）。用于观察大额挂单墙相对现价的位置——
@@ -74,7 +75,8 @@ tool:
   klines: |-
     获取 Binance 合约的原始 OHLCV K 线。固定返回 192 行 [openTime(毫秒), open, high, low, close, volume]，
     从旧到新；最后一行是尚未走完的当前 K 线（其 close 即最新价，volume 只是部分量），刚收盘的那根是它前一行。
-    末行是否走完按 openTime 判断：openTime 加一个周期晚于现在就还在走。
+    末行是否走完按 openTime 判断：openTime 加一个周期晚于现在就还在走。只有这个工具带着在走的那根；
+    `indicators` 与 `kline_structure` 都只按已收盘的算。
     interval：5m/15m/1h/4h/1d——192 根分别覆盖 16小时 / 2天 / 8天 / 32天 / 192天。
     当你的方法需要逐根读 K 线时才调它：验证 K 线形态、套用你自己的摆动/结构定义、
     或细看 `kline_structure` 指给你的某一段。这是唯一给全每一根的工具——`kline_structure`
@@ -83,7 +85,8 @@ tool:
     免得它的 focus_bars 与这里的行重复。
 
   indicators: |-
-    获取标的的全套经典技术指标，按指定周期（5m/15m/1h/4h/1d）用最近 192 根计算，末根是尚未走完的当前 K 线。字段：
+    获取标的的全套经典技术指标，按指定周期（5m/15m/1h/4h/1d）用与 `klines` 同一段 192 根窗口里已收盘的 K 线计算；
+    还在走的那根不算进来，下文说的"末根"一律指刚收盘的那根。字段：
     ma7/ma25/ma99 + ema12/ema20/ema26（均线）；ma_alignment：1=MA7>MA25>MA99 多头排列，-1=空头排列，0=纠缠；
     rsi14 + rsi14_trend（>70 超买，<30 超卖）；
     macd_dif/dea/hist + macd_hist_trend（动量）；macd_cross 只在末根刚发生金叉/死叉时出现（golden/death），没发生就没这个字段；
@@ -95,8 +98,8 @@ tool:
     close_trend。各 *_trend 字段取值：rising_5=连续 5 根上行、falling_5=连续 5 根下行、mostly_up/mostly_down=多数上行/下行、sideways=涨跌各半。
 
   kline_structure: |-
-    与 `klines` 同一份 192 根 K 线的结构摘要——路径、分段、量价分布与关键价位，都替你算好。
-    只给中性事实：不下趋势/反转结论，判断是你的事。
+    与 `klines` 同一段 192 根窗口里已收盘 K 线的结构摘要——路径、分段、量价分布与关键价位，都替你算好；
+    `klines` 末行那根在走的不算进来。只给中性事实：不下趋势/反转结论，判断是你的事。
     用数字前先读这几条：
     - atr14 是 Wilder RMA——与 `indicators` 工具报的完全同值。avg_tr_* 是 True Range 的
       简单算术平均：记忆更短、更贴当前波动，但它不是 ATR，两者绝不能混用。
@@ -104,7 +107,8 @@ tool:
       （右侧尚未确认），刚发生的转折不在里面。
     - segments_swing 按摆动点切段，相邻段共享边界那一根，各段成交量相加会大于
       volume.total，不要求和。
-    - 所有 idx 都指向与 `klines` 同一 symbol+interval 的同一行序。
+    - 所有 idx 都指向与 `klines` 同一 symbol+interval 的同一行序，只是在走的那一行这里没有。
+      两次调用之间若有一根收盘，窗口整体后移一行，这时按 time_ms / openTime 对行，别按 idx。
     给到你的是算好的路径加 focus_bars——最近 N 根与各关键点附近的原始 K 线；
     要每一根原始 K 线请用 `klines`。
 

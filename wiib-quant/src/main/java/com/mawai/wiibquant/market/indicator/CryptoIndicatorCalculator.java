@@ -82,18 +82,11 @@ public class CryptoIndicatorCalculator {
      * <p>这是本类最常用的入口：下游只关心"给我一份指标快照"而不关心单个计算细节。
      * 所有指标都组装到同一个 {@link LinkedHashMap}，按 put 顺序迭代，便于日志和序列化。</p>
      *
-     * @param klines K 线列表，每行是 {@code [high, low, close, volume]}，按时间升序；
-     *               至少需要 30 根才能计算，少于 30 根直接返回 {@code {"error": "K线数据不足"}}
+     * @param klines K 线列表，每行是 {@code [high, low, close, volume]}，按时间升序，末根按已收盘对待
+     *               （还在走的那根由调用方先剔掉）；至少需要 30 根才能计算，少于 30 根直接返回 {@code {"error": "K线数据不足"}}
      * @return 指标字段 Map（字段定义见类级 Javadoc 表格）；输入不足时只含一个 {@code error} 字段
      */
     public static Map<String, Object> calcAll(List<BigDecimal[]> klines) {
-        return calcAll(klines, false);
-    }
-
-    /**
-     * @param lastClosed true 表示传入序列末根已经收盘（回测）；false 表示末根可能仍在跳动（实盘快照）
-     */
-    public static Map<String, Object> calcAll(List<BigDecimal[]> klines, boolean lastClosed) {
         if (klines == null || klines.size() < 30) return Map.of("error", "K线数据不足");
 
         // 把 K 线拆成四条并列序列，后续每个指标只挑自己需要的那几条。

@@ -98,7 +98,7 @@ class KlineStructureCalculatorTest {
 
         // window=6 时窗口不完整（13 根 < 6*2+1），换成手动指定的 3
         Map<String, Object> out = KlineStructureCalculator.compute(zigzag(),
-                new KlineStructureCalculator.Params(3, 3, 5, 2, 3, List.of(20, 60), 14, 8, 4, 5, true));
+                new KlineStructureCalculator.Params(3, 3, 5, 2, 3, List.of(20, 60), 14, 8, 4, 5));
         List<Map<String, Object>> s3 = list(out, "swings");
 
         assertThat(swings).isEmpty();          // 半窗 6 装不下 13 根，一个都出不来
@@ -111,7 +111,7 @@ class KlineStructureCalculatorTest {
     void lastWindowBarsCanNeverBeSwings() {
         // 右侧没走完就不算确认，这是防重绘的固有代价
         Map<String, Object> out = KlineStructureCalculator.compute(ramp(60),
-                new KlineStructureCalculator.Params(6, 3, 20, 3, 8, List.of(20, 60), 14, 24, 8, 5, true));
+                new KlineStructureCalculator.Params(6, 3, 20, 3, 8, List.of(20, 60), 14, 24, 8, 5));
 
         assertThat(list(out, "swings")).allSatisfy(s ->
                 assertThat((Integer) s.get("idx")).isLessThan(60 - 6));
@@ -123,7 +123,7 @@ class KlineStructureCalculatorTest {
     void swingSegmentsShareBoundaryBarSoVolumesOverlap() {
         // 段是 [a, b] 含两端，相邻段共用拐点那一根，所以各段量之和必然大于总量
         Map<String, Object> out = KlineStructureCalculator.compute(zigzag(),
-                new KlineStructureCalculator.Params(3, 3, 5, 2, 3, List.of(20, 60), 14, 8, 4, 5, true));
+                new KlineStructureCalculator.Params(3, 3, 5, 2, 3, List.of(20, 60), 14, 8, 4, 5));
         List<Map<String, Object>> segs = list(out, "segments_swing");
 
         // cuts = [0, 3, 7, 12] → 三段，各含 4 / 5 / 6 根
@@ -228,7 +228,7 @@ class KlineStructureCalculatorTest {
         Map<String, Object> meta = block(compute(ramp(90)), "meta");
 
         assertThat(meta).containsKeys("bar_count", "start_time_ms", "end_time_ms",
-                "duration_ms", "last_forming", "swing_window");
+                "duration_ms", "swing_window");
         assertThat(meta).doesNotContainKey("params");     // 参数回显已删，能从输出自行推断
     }
 

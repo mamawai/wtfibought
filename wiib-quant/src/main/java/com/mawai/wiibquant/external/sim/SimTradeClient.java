@@ -166,7 +166,26 @@ public class SimTradeClient {
             ErrorCode ec = ErrorCode.of(code);
             // 只有 1000+ 的业务码查得回词条；1000 以下那批（400/500）在 sim 侧多半是
             // Result.fail(自己写的话)，那句话本身就是全部信息，退回它比渲染成"系统错误"强
-            return ec != null && code >= 1000 ? messages.get(lang, ec.getMsgKey()) : simMsg;
+            if (ec == null || code < 1000) {
+                return simMsg;
+            }
+            String text = messages.get(lang, ec.getMsgKey());
+            // sim 在码之外另写了话（步长、最小名义额、杠杆档位这类带数字的细节）：词条里没有这些数字，拼在后面
+            return detailed(messages, ec)
+                    ? messages.get(lang, "error.simDetail", Map.of("text", text, "detail", simMsg)) : text;
+        }
+
+        /** sim 的原话不是哪门语言的词条原文＝码之外另带了细节 */
+        private boolean detailed(MessageCatalog messages, ErrorCode ec) {
+            if (simMsg == null || simMsg.isBlank()) {
+                return false;
+            }
+            for (AgentLang l : AgentLang.values()) {
+                if (simMsg.equals(messages.get(l, ec.getMsgKey()))) {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 

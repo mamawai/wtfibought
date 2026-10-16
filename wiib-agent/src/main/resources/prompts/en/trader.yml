@@ -57,9 +57,10 @@ trader:
       · kline_structure: swing points, per-segment price and volume, volume shelves, plus the actual
         candles of the latest segment and around each key point
       · klines: all 192 raw OHLCV bars, for when you need to read bar by bar
-      · indicators: point readings of RSI/MACD/BOLL/ATR and the rest on the last bar
-      · the last bar of all three is usually still forming (its openTime plus one interval is later than
-        now); the closed bar is the one before it
+      · indicators: point readings of RSI/MACD/BOLL/ATR and the rest on the bar that just closed
+      · the last bar of klines is usually still forming (its openTime plus one interval is later than
+        now); the closed bar is the one before it. kline_structure and indicators use closed bars only
+        and leave the forming one out
       When you want both, pass includeBars=false to kline_structure so you do not pay for the same bars twice
     - market_snapshot / funding_history / orderbook_depth / option_iv: funding, open interest, long/short ratio, liquidations, order book, IV
     - news_search: the recent news flashes in full (no parameters, no keyword search)
@@ -277,7 +278,7 @@ trader:
   # system prompt uses.
   wake:
     routineHeader: A new {{interval}} candle has closed ({{time}}).
-    snapshotHeader: "Market snapshot (check the details yourself with the tools):"
+    snapshotHeader: "Market snapshot (check the details yourself with the tools; funding rates are raw decimals per 8h, 0.0001 = 0.01%):"
     snapshotRow: "- {{symbol}} mark price {{price}}, funding rate {{funding}}"
     routineQuestion: "This round: handle every tradable symbol by your owner's trading instructions - whether to keep and how to manage each position, whether each open order stays, whether to enter or exit new opportunities. Read the facts above first; verify your judgement with the tools. Close with the fixed {{mark}} format, one section per tradable symbol."
     # Observation pack (TraderWakeupRunner.observation): events + account + last round's conclusion + recent trajectory; sits after the header facts, before the snapshot.
@@ -339,6 +340,9 @@ trader:
     sideInvalid: side must be LONG or SHORT
     orderTypeInvalid: orderType must be MARKET or LIMIT
     quantityPositive: quantity must be positive
+    # exchange filters (TradeFilterDefaults): sim only returns a generic line, the guard rejects first with the numbers
+    qtyStep: "{{symbol}} quantity must be a multiple of {{step}} and at least {{min}}; you gave {{given}}"
+    minNotional: "{{symbol}} notional {{notional}} USDT is below the exchange minimum of {{min}} USDT"
     leverageRange: leverage must land within {{min}}~{{max}}x (set by your owner, not negotiable); you gave {{given}}
     playTypeInvalid: "playType must be one of: {{types}}"
     invalidationRequired: invalidationCondition is required - one line on what market condition would prove this thesis wrong (a market condition, not a P&L number)

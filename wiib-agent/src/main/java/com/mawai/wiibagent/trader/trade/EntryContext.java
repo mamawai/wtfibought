@@ -61,9 +61,9 @@ public class EntryContext {
             log.warn("[EntryContext] regime 取不到 {} msg={}", sym, e.getMessage());
         }
         try {
-            List<KlineBar> bars = klineFetcher.fetch(sym, "1h", ATR_BARS);
+            List<KlineBar> bars = KlineBar.closed(klineFetcher.fetch(sym, "1h", ATR_BARS), nowMs);
             if (!bars.isEmpty()) {
-                if (CryptoIndicatorCalculator.calcAll(IndicatorToolkit.toCalcRows(bars), false).get("atr14") instanceof BigDecimal atr
+                if (CryptoIndicatorCalculator.calcAll(IndicatorToolkit.toCalcRows(bars)).get("atr14") instanceof BigDecimal atr
                         && atr.signum() > 0) {
                     out.put("atr1h", atr);
                     out.put("stopAtr", stopDist.divide(atr, 2, RoundingMode.HALF_UP));

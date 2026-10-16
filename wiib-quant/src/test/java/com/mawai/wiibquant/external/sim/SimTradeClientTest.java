@@ -189,6 +189,20 @@ class SimTradeClientTest {
         assertThat(SimTradeClient.describe(e, messages, AgentLang.ZH)).isEqualTo("余额不足");
     }
 
+    /** sim 在码之外另写了细节（步长/名义额/杠杆档位的数字）：词条换不掉它，拼在词条后面 */
+    @Test
+    void 带细节的业务码把sim原话拼在词条后() {
+        MessageCatalog messages = new MessageCatalog();
+        // 1603 = TRADE_STEP_INVALID，sim 的原话里有步长
+        responseJson = "{\"code\":1603,\"msg\":\"BTCUSDT 数量需为 0.001 的整数倍\",\"data\":null}";
+        Throwable e = catchThrowable(() -> client.openPosition(42L, new FuturesOpenRequest()));
+
+        assertThat(SimTradeClient.describe(e, messages, AgentLang.EN))
+                .isEqualTo("Quantity does not match the minimum step size (BTCUSDT 数量需为 0.001 的整数倍)");
+        assertThat(SimTradeClient.describe(e, messages, AgentLang.ZH))
+                .isEqualTo("数量不符合最小交易步长（BTCUSDT 数量需为 0.001 的整数倍）");
+    }
+
     /**
      * 1000 以下的码（sim 侧 Result.fail(自己写的话)）没有词表条目可查，退回原话。
      * 渲染成通用的"系统错误"会把唯一有用的信息弄丢——比如护栏为什么拒绝删号。

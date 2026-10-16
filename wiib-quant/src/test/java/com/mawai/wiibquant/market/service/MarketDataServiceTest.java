@@ -63,6 +63,7 @@ class MarketDataServiceTest {
 
     @Test
     void cachesAssemblyWithinTtl() {
+        stubCollectableSymbol();
         MarketDataService service = service(60_000);
 
         MarketAssembly first = service.assemble("BTCUSDT");
@@ -70,6 +71,31 @@ class MarketDataServiceTest {
 
         // TTL 内同一实例直接复用，不重复采集
         assertThat(second).isSameAs(first);
+    }
+
+    /** 一次抖动不该让接下来 60s 都报没数据：采不到的结果不进缓存，下一次照样去采 */
+    @Test
+    void 不可用的组装结果不进缓存() {
+        MarketDataService service = service(60_000);
+
+        service.assemble("BTCUSDT");
+        service.assemble("BTCUSDT");
+
+        verify(binanceRestClient, times(2)).getFutures24hTicker("BTCUSDT");
+    }
+
+    /** 整装快照活不过 5m 边界：边界前 10s 组装的，边界后 5s 还在 TTL 内也得重采——里面的指标、regime 都按收盘算 */
+    @Test
+    void 整装快照活不过5m边界() {
+        stubCollectableSymbol();
+        MarketDataService service = service(60_000);
+        long bar = T0 + 100_000L;   // T0 之后第一个 5m 边界
+        service.nowMs = () -> bar - 10_000L;
+        service.assemble("BTCUSDT");
+        service.nowMs = () -> bar + 5_000L;
+        service.assemble("BTCUSDT");
+
+        verify(binanceRestClient, times(2)).getFutures24hTicker("BTCUSDT");
     }
 
     @Test
@@ -84,6 +110,7 @@ class MarketDataServiceTest {
 
     @Test
     void normalizesSymbol() {
+        stubCollectableSymbol();
         MarketDataService service = service(60_000);
 
         MarketAssembly a = service.assemble(" btcusdt ");
@@ -388,12 +415,43 @@ class MarketDataServiceTest {
         when(binanceRestClient.getFuturesOrderbook("BTCUSDT", 10))
                 .thenReturn("{\"bids\":[],\"asks\":[]}")
                 .thenReturn(null);
-        MarketDataService service = service(0);
+        MarketDataService service = service(60_000);
+        service.nowMs = () -> T0;
 
         service.orderbook("BTCUSDT");
+        service.nowMs = () -> T0 + 3_000L;   // 2s 新鲜期已过，重取失败也不兜
         String second = service.orderbook("BTCUSDT");
 
         assertThat(second).isNull();
+    }
+
+    /** REST 兜底的盘口只存 2s，和 WS 快照的新鲜度一个口径；60s 的通用 TTL 对盘口太长 */
+    @Test
+    void 盘口REST兜底只存2秒() {
+        when(binanceRestClient.getFuturesOrderbook("BTCUSDT", 10)).thenReturn("{\"bids\":[],\"asks\":[]}");
+        MarketDataService service = service(60_000);
+        service.nowMs = () -> T0;
+        service.orderbook("BTCUSDT");
+        service.nowMs = () -> T0 + 1_999L;
+        service.orderbook("BTCUSDT");
+        service.nowMs = () -> T0 + 2_000L;
+        service.orderbook("BTCUSDT");
+
+        verify(binanceRestClient, times(2)).getFuturesOrderbook("BTCUSDT", 10);
+    }
+
+    /** 资金费上下文活不过 8h 结算边界：结算后费率和下次结算时间都换了，TTL 没到也得重取 */
+    @Test
+    void 资金费上下文活不过8h结算边界() {
+        when(binanceRestClient.getPremiumIndex("BTCUSDT")).thenReturn("{\"markPrice\":\"100\"}");
+        MarketDataService service = service(60_000);
+        long settle = T0 + 6_400_000L;   // T0 之后第一个 8h 结算边界
+        service.nowMs = () -> settle - 10_000L;
+        service.premiumIndex("BTCUSDT");
+        service.nowMs = () -> settle + 5_000L;
+        service.premiumIndex("BTCUSDT");
+
+        verify(binanceRestClient, times(2)).getPremiumIndex("BTCUSDT");
     }
 
     /** 等待者的根因不进任何返回值，只落在 join() 那条 warn 日志里，装个 appender 才验得到 */
@@ -426,6 +484,13 @@ class MarketDataServiceTest {
                 .orElseThrow(() -> new AssertionError("等待者根本没走到失败分支"));
     }
 
+    /** K线+ticker 齐活让 data_available=true，组装结果可用、会进缓存 */
+    private void stubCollectableSymbol() {
+        when(binanceRestClient.getFuturesKlines(eq("BTCUSDT"), anyString(), anyInt(), any()))
+                .thenReturn(ONE_KLINE);
+        when(binanceRestClient.getFutures24hTicker("BTCUSDT")).thenReturn("{\"lastPrice\":\"65000\"}");
+    }
+
     /** K线+ticker 齐活让 data_available=true 走进特征构建；ticker 拖 300ms 是为了撑开在途窗口 */
     private void stubSlowCollectableSymbol() {
         when(binanceRestClient.getFuturesKlines(eq("BTCUSDT"), anyString(), anyInt(), any()))
@@ -442,6 +507,9 @@ class MarketDataServiceTest {
      */
     @Test
     void assemblyCacheIsBounded() {
+        // 可用的才进缓存，所以每个假币都得采得到
+        when(binanceRestClient.getFuturesKlines(anyString(), anyString(), anyInt(), any())).thenReturn(ONE_KLINE);
+        when(binanceRestClient.getFutures24hTicker(anyString())).thenReturn("{\"lastPrice\":\"65000\"}");
         MarketDataService service = service(600_000);      // TTL 拉长，确保不是靠过期而是靠淘汰
         for (int i = 0; i < 200; i++) {
             service.assemble("FAKE" + i + "USDT");

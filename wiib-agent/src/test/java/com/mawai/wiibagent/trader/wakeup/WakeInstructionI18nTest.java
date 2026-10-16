@@ -243,6 +243,17 @@ class WakeInstructionI18nTest {
                         + "最后用[本轮结论]固定格式收尾（每个可交易币各一段）。");
     }
 
+    /** 警报里"距下一次例行唤醒"要看时段：时段末尾的警报，下次醒是时段再开门那一刻，不是下一根 */
+    @Test
+    void 警报开场白的下次例行唤醒按时段算() {
+        AiTrader t = trader();
+        // BOUNDARY 是北京时间 01:00，时段内最后一根；下一边界 02:00 已出时段，再醒是 08:00
+        t.setWakeWindow("08:00-01:00");
+
+        assertThat(runner.alertInstruction(t, alert(), null, "", null, AgentLang.ZH, ""))
+                .contains("距下一次例行唤醒还有约 420 分钟");
+    }
+
     /** 中文警报开场白逐字不变 */
     @Test
     void 中文警报开场白逐字不变() {

@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.LongSupplier;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
 
@@ -25,10 +26,11 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * {@link CryptoIndicatorCalculator} 全套现算，整段路径与关键位由
  * {@link KlineStructureCalculator} 出。三个工具的分工：
  * <ul>
- *   <li>{@code klines} —— 原始 K 线，让它自己看形态</li>
- *   <li>{@code indicators} —— 末根的点状态（RSI/MACD/BOLL/ATR…）</li>
+ *   <li>{@code klines} —— 原始 K 线，含还在走的末根（它的 close 就是最新价），让它自己看形态</li>
+ *   <li>{@code indicators} —— 刚收盘那根的点状态（RSI/MACD/BOLL/ATR…）</li>
  *   <li>{@code kline_structure} —— 整段的路径：摆动点、分段量价、量能密集带</li>
  * </ul>
+ * 后两个只按已收盘的 K 线算：唤醒时在走的那根才开了几秒，量比、金叉死叉、*_trend 掺进它全是噪声。
  * 三个工具共用 {@link #KLINE_BARS} 同一个窗口，一次网络喂三家（见 {@link KlineFetcher}）。
  * 窗口统一是硬要求，不只是省事：klines 与 kline_structure 的 idx 得能互相索引；
  * 而 ATR 走 Wilder RMA、记忆很长，同一个符号喂不同根数会算出不同的值——
@@ -57,6 +59,8 @@ public class IndicatorToolkit {
     private static final int MAX_SWING_WINDOW = 50;
 
     private final KlineFetcher klineFetcher;
+    /** 墙钟注入点：末根走没走完要测得了 */
+    LongSupplier nowMs = System::currentTimeMillis;
 
     @Tool(name = "klines", description = """
             Get raw OHLCV candlesticks for a crypto perpetual symbol from Binance futures.
@@ -64,7 +68,8 @@ public class IndicatorToolkit {
             the last row is the current still-forming candle (its close is the live price,
             its volume is only partial) and the bar that just closed is the row before it. Tell
             whether the last row is still forming by its openTime: openTime plus one interval later
-            than now means it is still running.
+            than now means it is still running. This is the only tool that includes that forming row;
+            `indicators` and `kline_structure` work on closed bars only.
             interval: 5m/15m/1h/4h/1d — 192 bars span 16h / 2d / 8d / 32d / 192d respectively.
             Call it when your method requires reading the candles bar by bar: verifying candle
             patterns, applying your own swing or structure definition, or inspecting a stretch
@@ -86,8 +91,9 @@ public class IndicatorToolkit {
 
     @Tool(name = "indicators", description = """
             Get the full classic technical indicator set for a crypto perpetual symbol, computed
-            on the requested interval (5m/15m/1h/4h/1d) over the last 192 candles; the last candle is
-            still forming. Fields:
+            on the requested interval (5m/15m/1h/4h/1d) over the closed candles of the same 192-bar
+            window `klines` returns. The still-forming candle is left out, so "last bar" below always
+            means the bar that just closed. Fields:
             ma7/ma25/ma99 + ema12/ema20/ema26 (moving averages); ma_alignment: 1 = MA7>MA25>MA99 bullish
             stacking, -1 = bearish stacking, 0 = tangled;
             rsi14 + rsi14_trend (>70 overbought, <30 oversold);
@@ -109,17 +115,17 @@ public class IndicatorToolkit {
             return error(err);
         }
         String sym = QuantConstants.normalizeSymbolLenient(symbol);
-        List<KlineBar> bars = klineFetcher.fetch(sym, interval, KLINE_BARS);
+        List<KlineBar> bars = KlineBar.closed(klineFetcher.fetch(sym, interval, KLINE_BARS), nowMs.getAsLong());
         if (bars.isEmpty()) {
             return error("kline data unavailable");
         }
-        // 末根仍在跳动，实盘快照本就该含它
-        return MAPPER.writeValueAsString(CryptoIndicatorCalculator.calcAll(toCalcRows(bars), false));
+        return MAPPER.writeValueAsString(CryptoIndicatorCalculator.calcAll(toCalcRows(bars)));
     }
 
     @Tool(name = "kline_structure", description = """
-            Structural summary of the same 192 candles that `klines` returns — path, segments,
-            volume-by-price and key levels, computed for you. Neutral facts only: no trend or
+            Structural summary of the closed candles in the same 192-bar window that `klines`
+            returns — path, segments, volume-by-price and key levels, computed for you. The
+            still-forming last row of `klines` is left out. Neutral facts only: no trend or
             reversal calls, that judgement is yours.
             Read these before using the numbers:
             - atr14 is Wilder RMA — the exact same value the `indicators` tool reports. avg_tr_* is a
@@ -129,7 +135,9 @@ public class IndicatorToolkit {
               qualify (their right side isn't confirmed yet), so a turn that just happened is missing.
             - segments_swing cuts at swing points and adjacent segments SHARE their boundary bar, so
               their volumes add up to more than volume.total. Do not sum them.
-            - every idx refers to the same row order as `klines` on this symbol+interval.
+            - every idx refers to the same row order as `klines` on this symbol+interval; the forming
+              row is simply absent here. If a bar closed between the two calls the window has slid by
+              one row — match rows by time_ms / openTime then, not by idx.
             What you get is the computed path plus focus_bars — the last N candles and the ones
             around each key point; `klines` is the tool that hands you every raw bar instead.""")
     public String klineStructure(
@@ -159,15 +167,14 @@ public class IndicatorToolkit {
         boolean withBars = includeBars == null || includeBars;
         // 与 klines 同一个 KLINE_BARS 窗口：两边 idx 才对得上，
         // 模型看到"最大量在 idx=128"能直接回 klines 那份数据里翻第 128 行
-        List<KlineBar> bars = klineFetcher.fetch(sym, interval, KLINE_BARS);
+        List<KlineBar> bars = KlineBar.closed(klineFetcher.fetch(sym, interval, KLINE_BARS), nowMs.getAsLong());
         if (bars.isEmpty()) {
             return error("kline data unavailable");
         }
-        // last_forming 恒为 true：REST 拉的末根一定还在跳
         Map<String, Object> out = KlineStructureCalculator.compute(bars,
                 new KlineStructureCalculator.Params(w, d.equalSegments(), ln, d.focusRadius(),
                         d.topVolumeBars(), d.maPeriods(), d.atrPeriod(), d.volBinCount(),
-                        d.volBinTop(), d.recentSwingLevels(), true));
+                        d.volBinTop(), d.recentSwingLevels()));
         if (!withBars) {
             out.remove("focus_bars");
         }

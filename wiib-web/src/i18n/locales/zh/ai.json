@@ -371,7 +371,7 @@
       "get_account": "余额 / 持仓 / 挂单。每轮已注入提示词，一般只在本轮自己下单后复核时才调。",
       "klines": "192 根原始 OHLCV，末根未收盘。逐根验形态、套自己的摆动定义时用。",
       "kline_structure": "同一段行情的摆动点、分段量价、量能密集带与关键价位，只给事实不下结论。",
-      "indicators": "MA/EMA · RSI · MACD · BOLL · ATR · KDJ · ADX · OBV · 量比，末根点状态。",
+      "indicators": "MA/EMA · RSI · MACD · BOLL · ATR · KDJ · ADX · OBV · 量比，按刚收盘那根算。",
       "market_snapshot": "价格变动、资金费偏离、持仓量变化、多空比、大户偏向、taker 与清算压力、盘口失衡、恐贪指数。",
       "funding_history": "最近 30 次结算 + 下次结算时间与标记价。",
       "orderbook_depth": "买卖各十档挂单，看大单墙在哪。",

@@ -38,6 +38,8 @@ error:
   cryptoPriceUnavailable: 无法获取实时价格
   cryptoSymbolInvalid: 交易对无效
   tradeStepInvalid: 数量不符合最小交易步长
+  # sim 拒单时码之外另写的细节（步长/名义额/杠杆档位的具体数字）拼在词条后面
+  simDetail: "{{text}}（{{detail}}）"
   tradeMinNotional: 下单金额低于最小名义额
   # Futures错误码 1750+
   futuresPositionNotFound: 仓位不存在

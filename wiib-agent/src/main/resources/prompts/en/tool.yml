@@ -76,7 +76,8 @@ tool:
 
   funding_history: |-
     Get recent funding rate history (last 30 settlements, 8h apart) plus the next funding
-    time and current mark price for a crypto perpetual symbol. Useful for carry judgment:
+    time and current mark price for a crypto perpetual symbol. Rates are raw decimals per
+    8h settlement: 0.0001 = 0.01%. Useful for carry judgment:
     persistently positive funding = longs paying shorts (crowded long), negative = the opposite.
 
   orderbook_depth: |-
@@ -90,7 +91,8 @@ tool:
     the last row is the current still-forming candle (its close is the live price,
     its volume is only partial) and the bar that just closed is the row before it. Tell
     whether the last row is still forming by its openTime: openTime plus one interval later
-    than now means it is still running.
+    than now means it is still running. This is the only tool that includes that forming row;
+    `indicators` and `kline_structure` work on closed bars only.
     interval: 5m/15m/1h/4h/1d — 192 bars span 16h / 2d / 8d / 32d / 192d respectively.
     Call it when your method requires reading the candles bar by bar: verifying candle
     patterns, applying your own swing or structure definition, or inspecting a stretch
@@ -102,8 +104,9 @@ tool:
 
   indicators: |-
     Get the full classic technical indicator set for a crypto perpetual symbol, computed
-    on the requested interval (5m/15m/1h/4h/1d) over the last 192 candles; the last candle is
-    still forming. Fields:
+    on the requested interval (5m/15m/1h/4h/1d) over the closed candles of the same 192-bar
+    window `klines` returns. The still-forming candle is left out, so "last bar" below always
+    means the bar that just closed. Fields:
     ma7/ma25/ma99 + ema12/ema20/ema26 (moving averages); ma_alignment: 1 = MA7>MA25>MA99 bullish
     stacking, -1 = bearish stacking, 0 = tangled;
     rsi14 + rsi14_trend (>70 overbought, <30 oversold);
@@ -120,8 +123,9 @@ tool:
     mostly_down, sideways.
 
   kline_structure: |-
-    Structural summary of the same 192 candles that `klines` returns — path, segments,
-    volume-by-price and key levels, computed for you. Neutral facts only: no trend or
+    Structural summary of the closed candles in the same 192-bar window that `klines`
+    returns — path, segments, volume-by-price and key levels, computed for you. The
+    still-forming last row of `klines` is left out. Neutral facts only: no trend or
     reversal calls, that judgement is yours.
     Read these before using the numbers:
     - atr14 is Wilder RMA — the exact same value the `indicators` tool reports. avg_tr_* is a
@@ -131,7 +135,9 @@ tool:
       qualify (their right side isn't confirmed yet), so a turn that just happened is missing.
     - segments_swing cuts at swing points and adjacent segments SHARE their boundary bar, so
       their volumes add up to more than volume.total. Do not sum them.
-    - every idx refers to the same row order as `klines` on this symbol+interval.
+    - every idx refers to the same row order as `klines` on this symbol+interval; the forming
+      row is simply absent here. If a bar closed between the two calls the window has slid by
+      one row — match rows by time_ms / openTime then, not by idx.
     What you get is the computed path plus focus_bars — the last N candles and the ones
     around each key point; `klines` is the tool that hands you every raw bar instead.
 

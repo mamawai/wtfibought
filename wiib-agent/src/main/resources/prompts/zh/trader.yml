@@ -39,8 +39,9 @@ trader:
       三者取数窗口是同一段 192 根行情，klines 与 kline_structure 的 idx 可互相索引
       · kline_structure：摆动点、分段量价、量能密集带，另附最近一段与各关键点附近的实物K线
       · klines：全部 192 根原始 OHLCV，需要逐根看时用它
-      · indicators：末根的 RSI/MACD/BOLL/ATR 等点状态
-      · 三者的末根多半还没走完（openTime 加一个周期晚于现在就还在走），已收盘的是它前一根
+      · indicators：刚收盘那根的 RSI/MACD/BOLL/ATR 等点状态
+      · klines 的末根多半还没走完（openTime 加一个周期晚于现在就还在走），已收盘的是它前一根；
+        kline_structure 与 indicators 只按已收盘的算，不含在走的那根
       两个都要时给 kline_structure 传 includeBars=false，免得同一段K线付两遍
     - market_snapshot / funding_history / orderbook_depth / option_iv：资金费、持仓量、多空比、清算、盘口、IV
     - news_search：最近快讯全量（无参数，不能按关键词搜）
@@ -228,7 +229,7 @@ trader:
   # 收尾标记一律用 {{mark}} 注入 trader.mark.conclusion，与系统提示词同源
   wake:
     routineHeader: 新一根 {{interval}} K线已收盘（{{time}}）。
-    snapshotHeader: 行情快照（细节自己用工具查证）：
+    snapshotHeader: 行情快照（细节自己用工具查证；资金费率是原始小数、每 8 小时一次，0.0001＝0.01%）：
     snapshotRow: "- {{symbol}} 标记价 {{price}}，资金费率 {{funding}}"
     routineQuestion: 本轮：按主人的交易指令处理每个可交易币——持仓的去留与管理、挂单的存废、新机会的进出。先读上面的事实，判断用工具求证。最后用{{mark}}固定格式收尾（每个可交易币各一段）。
     # 观察包（TraderWakeupRunner.observation）：事件 + 账户 + 上一轮结论 + 最近轨迹，排在头部事实之后、快照之前
@@ -287,6 +288,9 @@ trader:
     sideInvalid: side必须是LONG或SHORT
     orderTypeInvalid: orderType必须是MARKET或LIMIT
     quantityPositive: 数量必须为正数
+    # 交易所过滤器（TradeFilterDefaults）：sim 拒了只回通用文案，护栏先拒并把数字说清
+    qtyStep: "{{symbol}} 的数量必须是 {{step}} 的整数倍且不低于 {{min}}，你给了 {{given}}"
+    minNotional: "{{symbol}} 这单名义价值 {{notional}} USDT，低于交易所最小 {{min}} USDT"
     leverageRange: 杠杆必须在{{min}}~{{max}}倍之间（主人设定，不可协商），你给了{{given}}
     playTypeInvalid: "playType必须是: {{types}}"
     invalidationRequired: 必须给invalidationCondition失效条件：一句话说明什么市场状况会证明这个论点错了（市场条件，不是盈亏数字）

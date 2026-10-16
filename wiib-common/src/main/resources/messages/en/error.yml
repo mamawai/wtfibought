@@ -39,6 +39,8 @@ error:
   cryptoPriceUnavailable: Live price unavailable
   cryptoSymbolInvalid: Invalid pair
   tradeStepInvalid: Quantity does not match the minimum step size
+  # detail sim wrote beyond the code (the actual step / notional / leverage-tier numbers), appended to the entry
+  simDetail: "{{text}} ({{detail}})"
   tradeMinNotional: Order value is below the minimum notional
   # Futures codes 1750+
   futuresPositionNotFound: No such position

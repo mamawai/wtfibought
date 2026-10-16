@@ -28,11 +28,19 @@ import java.util.function.Supplier;
 /**
  * 市场数据组装服务：采集 → 特征快照 一条链，带 TTL 缓存。
  * 工具层（对话 agent / AI Trader）共用这条链，避免各处重复采集。
+ * 缓存活不过数据自己的边界（见 {@link CacheExpiry}）：整装快照到下一根 5m 收盘，资金费到下次 8h 结算。
  * 规则信号面板与脆弱度合成层已随预测管线下线（2026-08：生产验证无前瞻信息，原料字段仍在快照里原样提供）。
  */
 @Slf4j
 @Service
 public class MarketDataService {
+
+    /** 整装快照按 5m 翻篇：里面的指标、regime 都是按 5m/15m 收盘算的，唤醒也都踩在 5m 边界上 */
+    private static final long BAR_MS = Duration.ofMinutes(5).toMillis();
+    /** 资金费 8 小时结算一次：费率、下次结算时间都在这个边界上换 */
+    private static final long FUNDING_MS = Duration.ofHours(8).toMillis();
+    /** 盘口只认这么新的：WS 快照超龄就回 REST，REST 那份也只存这么久 */
+    private static final long DEPTH_FRESH_MS = 2_000L;
 
     /** 资金费历史的兜底上限：8 小时结算一次，同一周期内这个值本就没变过；超了就是跨周期的错数 */
     private static final long FUNDING_MAX_STALE_MS = Duration.ofHours(8).toMillis();
@@ -58,11 +66,14 @@ public class MarketDataService {
     private final BuildFeaturesBuilder featuresBuilder;
     private final long ttlMillis;
 
+    /** 整装快照 + 用到什么时候 */
+    private record CachedAssembly(MarketAssembly assembly, long expireAt) {}
+
     /** LRU：满了淘汰最久没被碰过的那条。accessOrder=true 让 get 也算一次访问 */
-    private final Map<String, MarketAssembly> cache = Collections.synchronizedMap(
+    private final Map<String, CachedAssembly> cache = Collections.synchronizedMap(
             new LinkedHashMap<>(16, 0.75f, true) {
                 @Override
-                protected boolean removeEldestEntry(Map.Entry<String, MarketAssembly> eldest) {
+                protected boolean removeEldestEntry(Map.Entry<String, CachedAssembly> eldest) {
                     return size() > MAX_ASSEMBLY_ENTRIES;
                 }
             });
@@ -70,8 +81,8 @@ public class MarketDataService {
     /** 在途采集：TTL 过期瞬间多个线程同时 miss，只放一个去真采集，其余等它的结果 */
     private final Map<String, CompletableFuture<MarketAssembly>> inFlight = new ConcurrentHashMap<>();
 
-    /** 裸 REST 结果的 TTL 缓存：资金费历史/盘口这类"工具直取"的数据，与整装快照分开老化 */
-    private record Cached(String value, long at) {}
+    /** 裸 REST 结果的缓存：资金费历史/盘口这类"工具直取"的数据，与整装快照分开老化。at 是写入时刻，兜底年龄按它算 */
+    private record Cached(String value, long at, long expireAt) {}
 
     private final Map<String, Cached> rawCache = Collections.synchronizedMap(
             new LinkedHashMap<>(16, 0.75f, true) {
@@ -81,10 +92,7 @@ public class MarketDataService {
                 }
             });
 
-    /**
-     * rawCache 的老化墙钟，可注入只为让"超龄不再兜"测得了——真等 8 小时不现实。
-     * 作用范围仅限 {@link #rawCached}；assemble 那条整装缓存仍读 {@code Instant.now()}，本次不动它。
-     */
+    /** 两个缓存共用的墙钟，可注入只为让到期和"超龄不再兜"测得了——真等 8 小时不现实 */
     LongSupplier nowMs = System::currentTimeMillis;
 
     public MarketDataService(BinanceRestClient binanceRestClient,
@@ -101,29 +109,35 @@ public class MarketDataService {
         this.ttlMillis = ttlMillis;
     }
 
-    /** 工具层统一入口：TTL 内直接复用；过期时同 symbol 只允许一个线程真采集（防击穿）。 */
+    /** 工具层统一入口：没到期直接复用；到期时同 symbol 只允许一个线程真采集（防击穿）。 */
     public MarketAssembly assemble(String symbol) {
         String normalized = QuantConstants.normalizeSymbolLenient(symbol);
-        MarketAssembly cached = cache.get(normalized);
+        CachedAssembly cached = cache.get(normalized);
         if (fresh(cached)) {
-            return cached;
+            return cached.assembly();
         }
+        long now = nowMs.getAsLong();
         // putIfAbsent 原子选出唯一"采集者"：抢到的去真采集，没抢到的等它的 future。
-        // 不用 computeIfAbsent——mapping 函数期间会锁住整个 bin，同 bin 的别的 symbol 也跟着卡
+        // 不用 computeIfAbsent——mapping 函数期间会锁住整个 bin，同 bin 的别的 symbol 也跟着卡。
+        // 键带 5m 边界：边界后来的不等边界前开始的采集
+        String flightKey = normalized + ":" + CacheExpiry.edge(now, BAR_MS);
         CompletableFuture<MarketAssembly> mine = new CompletableFuture<>();
-        CompletableFuture<MarketAssembly> running = inFlight.putIfAbsent(normalized, mine);
+        CompletableFuture<MarketAssembly> running = inFlight.putIfAbsent(flightKey, mine);
         if (running != null) {
             return join(running, normalized);
         }
         try {
             // 抢到采集权后复查：cache.get 到 putIfAbsent 之间可能已经有人放了新快照进来，别白打一轮
-            MarketAssembly again = cache.get(normalized);
+            CachedAssembly again = cache.get(normalized);
             if (fresh(again)) {
-                mine.complete(again);
-                return again;
+                mine.complete(again.assembly());
+                return again.assembly();
             }
             MarketAssembly assembled = assembleFresh(normalized);
-            cache.put(normalized, assembled);
+            // 不可用的不进缓存：一次抖动不该让接下来 60s 都报没数据。到期按开始采集那一刻算，采集本身要跑好几秒
+            if (assembled.available()) {
+                cache.put(normalized, new CachedAssembly(assembled, CacheExpiry.at(now, ttlMillis, BAR_MS)));
+            }
             mine.complete(assembled);
             return assembled;
         } catch (Throwable t) {
@@ -133,7 +147,7 @@ public class MarketDataService {
             mine.completeExceptionally(t);
             throw t;
         } finally {
-            inFlight.remove(normalized, mine);
+            inFlight.remove(flightKey, mine);
         }
     }
 
@@ -149,7 +163,7 @@ public class MarketDataService {
      */
     public String fundingHistory(String symbol) {
         String normalized = QuantConstants.normalizeSymbolLenient(symbol);
-        return rawCached("funding:" + normalized, FUNDING_MAX_STALE_MS,
+        return rawCached("funding:" + normalized, ttlMillis, FUNDING_MS, FUNDING_MAX_STALE_MS,
                 () -> binanceRestClient.getFundingRateHistory(normalized, 30));
     }
 
@@ -167,7 +181,7 @@ public class MarketDataService {
      */
     public String premiumIndex(String symbol) {
         String normalized = QuantConstants.normalizeSymbolLenient(symbol);
-        return rawCached("premium:" + normalized, PREMIUM_MAX_STALE_MS,
+        return rawCached("premium:" + normalized, ttlMillis, FUNDING_MS, PREMIUM_MAX_STALE_MS,
                 () -> binanceRestClient.getPremiumIndex(normalized));
     }
 
@@ -179,33 +193,35 @@ public class MarketDataService {
         String normalized = QuantConstants.normalizeSymbolLenient(symbol);
         // WS depth20@100ms 比 REST 新鲜三个数量级且不吃 Binance 配额，优先用它；
         // 字段名 feed 侧已统一成 bids/asks，与 REST 同构（见 DepthStreamHandler）
-        String ws = depthStreamCache.getFreshDepth(normalized, 2000);
+        String ws = depthStreamCache.getFreshDepth(normalized, DEPTH_FRESH_MS);
         if (ws != null) {
             return ws;
         }
-        // 盘口一点过期数据都不兜（maxStale=0）：agent 拿它挂限价单，BTC 一分钟就能走 0.1~0.3%，宁可报不可用
-        return rawCached("depth:" + normalized, 0,
+        // 盘口只存 2s、一点过期数据都不兜（maxStale=0）：agent 拿它挂限价单，BTC 一分钟就能走 0.1~0.3%，宁可报不可用
+        return rawCached("depth:" + normalized, DEPTH_FRESH_MS, 0, 0,
                 () -> binanceRestClient.getFuturesOrderbook(normalized, 10));
     }
 
     /**
-     * 裸 REST 取数 + TTL 缓存。这里有两个时间概念，别混：
-     * {@code ttlMillis}(60s) 是新鲜期，没过就直接返回、压根不发请求；
-     * {@code maxStale} 只在"过了 TTL 且取新数据失败"时才登场，管这条旧数据还顶不顶得住。
+     * 裸 REST 取数 + 缓存。这里有两个时间概念，别混：
+     * {@code ttlMs} 是新鲜期（还会被 {@code intervalMs} 的下一个边界截短），没过就直接返回、压根不发请求；
+     * {@code maxStale} 只在"过了新鲜期且取新数据失败"时才登场，管这条旧数据还顶不顶得住。
      *
+     * @param intervalMs 数据按它翻篇（资金费 8h），缓存活不过下一个边界；0 = 只看 TTL
      * @param maxStale 兜底的年龄上限，从写进缓存那一刻起算的<b>总年龄</b>（毫秒），0 = 不兜。
      *                 超龄按没有数据返回 null，走调用方既有的 available:false 降级链。
      *                 超龄条目仍留在 map 里（本层不淘汰），只是不会再被返回
      */
-    private String rawCached(String key, long maxStale, Supplier<String> loader) {
+    private String rawCached(String key, long ttlMs, long intervalMs, long maxStale, Supplier<String> loader) {
         Cached hit = rawCache.get(key);
-        if (hit != null && nowMs.getAsLong() - hit.at() < ttlMillis) {
+        long now = nowMs.getAsLong();
+        if (hit != null && now < hit.expireAt()) {
             return hit.value();
         }
         try {
             String value = loader.get();
             if (value != null) {
-                rawCache.put(key, new Cached(value, nowMs.getAsLong()));
+                rawCache.put(key, new Cached(value, now, CacheExpiry.at(now, ttlMs, intervalMs)));
                 return value;
             }
         } catch (Exception e) {
@@ -214,9 +230,8 @@ public class MarketDataService {
         return hit != null && nowMs.getAsLong() - hit.at() < maxStale ? hit.value() : null;
     }
 
-    private boolean fresh(MarketAssembly cached) {
-        return cached != null
-                && Instant.now().toEpochMilli() - cached.assembledAt().toEpochMilli() < ttlMillis;
+    private boolean fresh(CachedAssembly cached) {
+        return cached != null && nowMs.getAsLong() < cached.expireAt();
     }
 
     /**

@@ -377,7 +377,7 @@
       "get_account": "Balance / positions / pending orders. Already injected every round; normally only called to re-check after its own orders.",
       "klines": "192 raw OHLCV bars, last one still forming. For bar-by-bar pattern checks or its own swing rules.",
       "kline_structure": "Swings, segments, volume-by-price and key levels of the same bars; facts only, no calls.",
-      "indicators": "MA/EMA · RSI · MACD · BOLL · ATR · KDJ · ADX · OBV · volume ratio, as of the last bar.",
+      "indicators": "MA/EMA · RSI · MACD · BOLL · ATR · KDJ · ADX · OBV · volume ratio, as of the last closed bar.",
       "market_snapshot": "Price change, funding deviation, OI change, long/short ratios, top-trader bias, taker and liquidation pressure, book imbalance, fear & greed.",
       "funding_history": "Last 30 settlements plus next funding time and mark price.",
       "orderbook_depth": "Top 10 bid/ask levels — where the walls sit.",

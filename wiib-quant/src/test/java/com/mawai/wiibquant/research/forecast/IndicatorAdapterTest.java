@@ -25,7 +25,7 @@ class IndicatorAdapterTest {
     void researchIndicatorsMatchFullCalcForConsumedFieldsOnly() {
         List<KlineBar> bars = uptrend(120);
         Map<String, Object> light = IndicatorAdapter.researchIndicators(bars);
-        Map<String, Object> full = CryptoIndicatorCalculator.calcAll(IndicatorAdapter.toCalcInput(bars), true);
+        Map<String, Object> full = CryptoIndicatorCalculator.calcAll(IndicatorAdapter.toCalcInput(bars));
 
         assertThat(light).doesNotContainKey("error")
                 .containsKeys("ma_alignment", "rsi14", "macd_hist", "macd_hist_trend",

@@ -3,6 +3,8 @@ import com.mawai.wiibquant.market.service.KlineFetcher;
 
 import com.mawai.wiibcommon.market.BinanceRestClient;
 import com.mawai.wiibcommon.market.KlineBar;
+import com.mawai.wiibcommon.market.KlineHistoryStore;
+import com.mawai.wiibquant.market.indicator.CryptoIndicatorCalculator;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
@@ -147,6 +149,48 @@ class IndicatorToolkitTest {
                 .path("atr14").asDecimal(null);
 
         assertThat(fromStructure).isEqualByComparingTo(fromIndicators);
+    }
+
+    // ==================== 在走的末根 ====================
+
+    /** syntheticKlines(192) 末根的 openTime / closeTime */
+    private static final long LAST_OPEN = 1_700_000_000_000L + 191 * 300_000L;
+    private static final long LAST_CLOSE = LAST_OPEN + 299_999L;
+
+    private static String expectedIndicators(int bars) {
+        List<KlineBar> all = KlineHistoryStore.parseRawFuturesKlines(syntheticKlines(192));
+        return MAPPER.writeValueAsString(CryptoIndicatorCalculator.calcAll(
+                IndicatorToolkit.toCalcRows(all.subList(0, bars))));
+    }
+
+    @Test
+    void indicatorsSkipTheFormingBar() {
+        // 唤醒时末根才开了几秒：量比、金叉死叉、*_trend 掺进它全是噪声，指标按已收盘的 191 根算
+        IndicatorToolkit toolkit = toolkitWith(192);
+        toolkit.nowMs = () -> LAST_OPEN + 1_000L;
+
+        assertThat(toolkit.indicators("BTCUSDT", "5m")).isEqualTo(expectedIndicators(191));
+    }
+
+    @Test
+    void indicatorsKeepTheLastBarOnceClosed() {
+        // 刚过边界、币安还没切出新一根时，末根已收盘，不能再剔
+        IndicatorToolkit toolkit = toolkitWith(192);
+        toolkit.nowMs = () -> LAST_CLOSE + 1L;
+
+        assertThat(toolkit.indicators("BTCUSDT", "5m")).isEqualTo(expectedIndicators(192));
+    }
+
+    @Test
+    void klineStructureSkipsTheFormingBarButKlinesKeepsIt() {
+        // 结构摘要同样只看已收盘的；klines 照旧给全 192 行（末行 close 就是最新价），idx 仍一一对应
+        IndicatorToolkit toolkit = toolkitWith(192);
+        toolkit.nowMs = () -> LAST_OPEN + 1_000L;
+
+        JsonNode structure = MAPPER.readTree(toolkit.klineStructure("BTCUSDT", "5m", null, null, false));
+        assertThat(structure.get("meta").path("bar_count").asInt(0)).isEqualTo(191);
+        assertThat(structure.get("meta").path("end_time_ms").asLong(0)).isEqualTo(LAST_OPEN - 300_000L);
+        assertThat(MAPPER.readTree(toolkit.klines("BTCUSDT", "5m"))).hasSize(192);
     }
 
     @Test

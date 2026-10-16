@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
@@ -31,6 +32,8 @@ public final class BuildFeaturesBuilder {
 
     private final OrderFlowAggregator orderFlowAggregator;
     private final Supplier<KlineInterval> decisionIntervalSupplier;
+    /** 墙钟注入点：末根走没走完要测得了 */
+    LongSupplier nowMs = System::currentTimeMillis;
 
     public BuildFeaturesBuilder(OrderFlowAggregator orderFlowAggregator, KlineInterval decisionInterval) {
         this(orderFlowAggregator, () -> decisionInterval);
@@ -78,11 +81,13 @@ public final class BuildFeaturesBuilder {
         Map<String, List<BigDecimal>> spotClosesByInterval = new HashMap<>();
         Map<String, List<BigDecimal[]>> parsedSpotKlines = new HashMap<>();
 
+        long nowMs = this.nowMs.getAsLong();
         for (var entry : rawKlines.entrySet()) {
             String interval = entry.getKey();
             List<BigDecimal[]> klines = CryptoIndicatorCalculator.parseKlines(entry.getValue());
             if (klines.size() < 30) continue;
-            indicatorsByTf.put(interval, CryptoIndicatorCalculator.calcAll(klines));
+            // 指标只按已收盘的算；parsedKlines 留着在走的末根，最新价、当根高低点要用它
+            indicatorsByTf.put(interval, CryptoIndicatorCalculator.calcAll(closedRows(klines, nowMs)));
             parsedKlines.put(interval, klines);
             List<BigDecimal> closes = new ArrayList<>(klines.size());
             for (BigDecimal[] k : klines) closes.add(k[2]);
@@ -195,7 +200,7 @@ public final class BuildFeaturesBuilder {
         boolean bollSqueeze = bollBw != null && bollBw.doubleValue() < 1.5;
 
         // 6. Regime
-        MarketRegime regime = detectRegime(indicatorsByTf, bollBw, parsedKlines);
+        MarketRegime regime = detectRegime(indicatorsByTf, closedRows(parsedKlines.get("5m"), nowMs));
         log.info("[Q2.3] 波动率 atr1m={} atr={} bollBw={} squeeze={} regime={}",
                 atr1m, atr, bollBw, bollSqueeze, regime);
 
@@ -258,7 +263,7 @@ public final class BuildFeaturesBuilder {
                 lastPrice, qualityFlags, System.currentTimeMillis() - startMs);
 
         return Map.of("feature_snapshot", snapshot, "indicator_map", indicatorsByTf,
-                "price_change_map", Map.of(symbol, priceChanges));
+                "price_change_map", priceChanges);
     }
 
     private BigDecimal extractLastPrice(String tickerJson, Map<String, List<BigDecimal>> closes) {
@@ -275,6 +280,12 @@ public final class BuildFeaturesBuilder {
         // fallback: 最新1m close
         List<BigDecimal> c1m = closes.get("1m");
         return (c1m != null && !c1m.isEmpty()) ? c1m.getLast() : null;
+    }
+
+    /** 去掉末尾还在走的那根（[6] 是 closeTime）；null 原样回 */
+    private static List<BigDecimal[]> closedRows(List<BigDecimal[]> klines, long nowMs) {
+        return klines != null && !klines.isEmpty() && klines.getLast()[6].longValue() >= nowMs
+                ? klines.subList(0, klines.size() - 1) : klines;
     }
 
     private BigDecimal extractLatestKlineField(Map<String, List<BigDecimal[]>> parsedKlines,
@@ -446,19 +457,19 @@ public final class BuildFeaturesBuilder {
      * RANGE: ADX<20
      */
     private MarketRegime detectRegime(Map<String, Map<String, Object>> indicators,
-                                      BigDecimal bollBw,
-                                      Map<String, List<BigDecimal[]>> parsedKlines) {
-        // Regime 用固定 15m/5m 中短周期视角，不跟随主决策周期切换。
+                                      List<BigDecimal[]> closed5m) {
+        // Regime 用固定 15m/5m 中短周期视角，不跟随主决策周期切换；带宽也取同一周期的
         Map<String, Object> ind = indicators.getOrDefault("15m", indicators.get("5m"));
         if (ind == null) return MarketRegime.RANGE;
 
         BigDecimal adx = toBd(ind.get("adx"));
         BigDecimal plusDi = toBd(ind.get("plus_di"));
         BigDecimal minusDi = toBd(ind.get("minus_di"));
+        BigDecimal bollBw = toBd(ind.get("boll_bandwidth"));
         double adxVal = adx != null ? adx.doubleValue() : 15;
 
         // SHOCK 固定用 5m 窗口比较近期/长期 ATR，保持 30min 冲击识别口径。
-        if (isAtrSpike(parsedKlines)) {
+        if (isAtrSpike(closed5m)) {
             return MarketRegime.SHOCK;
         }
         // SQUEEZE: 布林带收敛 + ADX<15
@@ -481,8 +492,7 @@ public final class BuildFeaturesBuilder {
      * ATR突增检测：固定用 5m K线，比较近6根平均真实波幅 vs 前60根平均真实波幅。
      * 如果近期 > 2倍长期，判定为SHOCK。
      */
-    private boolean isAtrSpike(Map<String, List<BigDecimal[]>> parsedKlines) {
-        List<BigDecimal[]> k5m = parsedKlines.get("5m");
+    private boolean isAtrSpike(List<BigDecimal[]> k5m) {
         if (k5m == null || k5m.size() < 66) return false;
 
         // 近6根(30min)平均真实波幅

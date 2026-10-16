@@ -179,6 +179,40 @@ class TradeGuardTest {
                 .contains("占权益30%");
     }
 
+    // ---------- 交易所过滤器 ----------
+
+    /** 0.0625 不是 BTC 步长 0.001 的整数倍：护栏先拒并把步长说清，不等 sim 用通用文案拒 */
+    @Test
+    void quantityOffStepRejectedWithStep() {
+        assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.0625")), EQUITY, MARK, WL, cfg(), List.of()))
+                .contains("0.001").contains("0.0625");
+    }
+
+    /** 名义价值低于交易所最小 50 USDT：0.001×40000=40 */
+    @Test
+    void notionalBelowExchangeMinimumRejected() {
+        TraderRiskConfig wide = new TraderRiskConfig(5, 20, new BigDecimal("1"), new BigDecimal("20"), true, false);
+        assertThat(validateOpen(withQuantity(base(), new BigDecimal("0.001")), new BigDecimal("100"),
+                new BigDecimal("40000"), WL, wide, List.of()))
+                .contains("40").contains("50 USDT");
+    }
+
+    /** 建议数量还得对齐步长：权益不整时会算出 0.123457 这种数，照抄会被 sim 按步长拒 */
+    @Test
+    void marginHintQuantitiesAreStepAligned() {
+        TraderRiskConfig tight = new TraderRiskConfig(5, 20, new BigDecimal("10"), new BigDecimal("15"), true, false);
+        BigDecimal equity = new BigDecimal("12345.67");
+        String reject = validateOpen(withQuantity(base(), new BigDecimal("0.05")), equity, MARK, WL, tight, List.of());
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("数量应在 (\\S+) ~ (\\S+) 之间").matcher(reject);
+        assertThat(m.find()).isTrue();
+
+        for (String q : List.of(m.group(1), m.group(2))) {
+            assertThat(new BigDecimal(q).remainder(new BigDecimal("0.001"))).isZero();
+            assertThat(validateOpen(withQuantity(base(), new BigDecimal(q)), equity, MARK, WL, tight, List.of())).isNull();
+        }
+    }
+
     /** 边界含端点：0.05×100000/10=500=正好5% → 放行 */
     @Test
     void marginExactlyAtMinPasses() {

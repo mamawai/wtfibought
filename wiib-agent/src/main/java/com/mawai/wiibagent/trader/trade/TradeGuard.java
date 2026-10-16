@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.trader.trade;
 
 import com.mawai.wiibcommon.enums.AgentLang;
+import com.mawai.wiibcommon.market.TradeFilterDefaults;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 
 import java.math.BigDecimal;
@@ -66,6 +67,8 @@ public final class TradeGuard {
         if (req.symbol() == null || !symbolWhitelist.contains(req.symbol())) {
             return prompts.get(lang, "trader.guard.symbolNotWhitelisted", Map.of("whitelist", symbolWhitelist));
         }
+        // 交易所的数量步长 / 最小名义额：sim 拒了只回一句通用文案，这里先拒并把数字说清
+        TradeFilterDefaults.Filter filter = TradeFilterDefaults.futures(req.symbol());
         boolean isLong = "LONG".equals(req.side());
         if (!isLong && !"SHORT".equals(req.side())) {
             return prompts.get(lang, "trader.guard.sideInvalid");
@@ -149,8 +152,25 @@ public final class TradeGuard {
                         "min", cfg.marginPctMin().stripTrailingZeros().toPlainString(),
                         "max", cfg.marginPctMax().stripTrailingZeros().toPlainString(),
                         "lev", req.leverage(),
-                        "qtyLo", qtyFor(cfg.marginPctMin(), equity, req.leverage(), entryRef, RoundingMode.CEILING),
-                        "qtyHi", qtyFor(cfg.marginPctMax(), equity, req.leverage(), entryRef, RoundingMode.FLOOR)));
+                        "qtyLo", qtyFor(cfg.marginPctMin(), equity, req.leverage(), entryRef, RoundingMode.CEILING, filter),
+                        "qtyHi", qtyFor(cfg.marginPctMax(), equity, req.leverage(), entryRef, RoundingMode.FLOOR, filter)));
+            }
+        }
+        if (filter != null) {
+            if (req.quantity().compareTo(filter.minQty()) < 0
+                    || req.quantity().remainder(filter.stepSize()).signum() != 0) {
+                return prompts.get(lang, "trader.guard.qtyStep", Map.of(
+                        "symbol", req.symbol(),
+                        "step", plain(filter.stepSize()),
+                        "min", plain(filter.minQty()),
+                        "given", plain(req.quantity())));
+            }
+            BigDecimal notional = req.quantity().multiply(entryRef);
+            if (notional.compareTo(filter.minNotional()) < 0) {
+                return prompts.get(lang, "trader.guard.minNotional", Map.of(
+                        "symbol", req.symbol(),
+                        "notional", plain(notional.setScale(2, RoundingMode.HALF_UP)),
+                        "min", plain(filter.minNotional())));
             }
         }
         if (req.stopLossPrice() == null) {
@@ -201,13 +221,21 @@ public final class TradeGuard {
      * 拒因里把该配多少数量直接算给模型，省一轮试错。
      * 下界向上取整、上界向下取整：模型会照抄提示数字重试（一晚 8 次贴边拒绝的实测教训——
      * HALF_UP 算出的下界被模型截位后又低于下界，陷入拒绝循环）。
+     * 再按交易所步长取整，照抄过去 sim 那关也能过。
      */
     private static String qtyFor(BigDecimal marginPct, BigDecimal equity, int leverage,
-                                 BigDecimal entryRef, RoundingMode mode) {
-        return equity.multiply(marginPct).divide(new BigDecimal("100"), 8, RoundingMode.HALF_UP)
+                                 BigDecimal entryRef, RoundingMode mode, TradeFilterDefaults.Filter filter) {
+        BigDecimal qty = equity.multiply(marginPct).divide(new BigDecimal("100"), 8, RoundingMode.HALF_UP)
                 .multiply(BigDecimal.valueOf(leverage))
-                .divide(entryRef, 6, mode)
-                .stripTrailingZeros().toPlainString();
+                .divide(entryRef, 6, mode);
+        if (filter != null) {
+            qty = qty.divide(filter.stepSize(), 0, mode).multiply(filter.stepSize());
+        }
+        return plain(qty);
+    }
+
+    private static String plain(BigDecimal v) {
+        return v.stripTrailingZeros().toPlainString();
     }
 
     private static String describe(List<PosSnap> snaps) {

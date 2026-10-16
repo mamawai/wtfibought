@@ -17,6 +17,12 @@ public record KlineBar(
         BigDecimal volume
 ) {
 
+    /** 去掉末尾还在走的那根（closeTime 还没到）：REST 拉的最新页末根多半是它 */
+    public static List<KlineBar> closed(List<KlineBar> bars, long nowMs) {
+        return !bars.isEmpty() && bars.getLast().closeTime() >= nowMs
+                ? bars.subList(0, bars.size() - 1) : bars;
+    }
+
     /**
      * 只取 {@code closeTime > sinceMs} 的 bar 算 [low, high]，一根都没有返回 null。
      * since 落在哪根里面，那根整根算进来——宁多不漏，误差 ≤1 分钟。

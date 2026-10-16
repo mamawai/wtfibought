@@ -59,16 +59,13 @@ public final class KlineStructureCalculator {
      * @param volBinCount       价位量能分箱数，≤0 关闭
      * @param volBinTop         返回量最大的前 N 箱
      * @param recentSwingLevels 输出最近多少个 swing 高/低价
-     * @param lastForming       末根是否未收盘。只写进 meta 给模型看，不改算法——
-     *                          实盘快照本就该含跳动的末根，剔了反而看不见当下
      */
     public record Params(int swingWindow, int equalSegments, int lastN, int focusRadius,
                          int topVolumeBars, List<Integer> maPeriods, int atrPeriod,
-                         int volBinCount, int volBinTop, int recentSwingLevels,
-                         boolean lastForming) {
+                         int volBinCount, int volBinTop, int recentSwingLevels) {
 
         public static Params defaults() {
-            return new Params(6, 3, 20, 3, 8, List.of(20, 60), 14, 24, 8, 5, true);
+            return new Params(6, 3, 20, 3, 8, List.of(20, 60), 14, 24, 8, 5);
         }
     }
 
@@ -195,7 +192,6 @@ public final class KlineStructureCalculator {
         meta.put("end_time_ms", times[n - 1]);
         // 两个 openTime 之差，不含末根自身周期——要总时长得再加一个 bar 的周期
         meta.put("duration_ms", times[n - 1] - times[0]);
-        meta.put("last_forming", p.lastForming());
         meta.put("swing_window", p.swingWindow());
         return meta;
     }

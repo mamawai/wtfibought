@@ -114,7 +114,8 @@ public class MarketToolkit {
 
     @Tool(name = "funding_history", description = """
             Get recent funding rate history (last 30 settlements, 8h apart) plus the next funding
-            time and current mark price for a crypto perpetual symbol. Useful for carry judgment:
+            time and current mark price for a crypto perpetual symbol. Rates are raw decimals per
+            8h settlement: 0.0001 = 0.01%. Useful for carry judgment:
             persistently positive funding = longs paying shorts (crowded long), negative = the opposite.""")
     public String fundingHistory(@ToolParam(description = "Symbol, e.g. BTCUSDT") String symbol) {
         String raw = dataService.fundingHistory(symbol);
