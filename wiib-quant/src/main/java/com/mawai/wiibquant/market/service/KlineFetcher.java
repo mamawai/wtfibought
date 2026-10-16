@@ -26,6 +26,8 @@ import java.util.function.LongSupplier;
  * 所以 192 根天然含着 120 根。谁先拉了长的，后面要短的直接切，不再打网络。
  * 反过来短的不覆盖长的——否则 indicators 拉完 120 根就把 klines 的 192 根挤没了。
  * <p>
+ * <b>缓存活不过 K 线边界</b>：TTL 和下一根边界取早的，末根一收盘就得重拉。
+ * <p>
  * <b>同一份数据只放一个线程去拉，其余等它</b>：几十个 trader 在同一个 5m 边界一起醒来、
  * 首轮又都被强制调工具，缓存这时必然已过期（TTL 60s < 唤醒周期 300s），
  * 不拦就是几十个并发全打上游。等待者阻塞在 future 上，不自旋也不轮询。
@@ -40,7 +42,14 @@ public class KlineFetcher {
      */
     private static final int MAX_ENTRIES = 128;
 
-    private record Cached(List<KlineBar> bars, long at) {
+    /** 周期的毫秒数，按它找 K 线边界 */
+    private static final Map<String, Long> INTERVAL_MS = Map.of(
+            "1m", 60_000L, "5m", 300_000L, "15m", 900_000L, "1h", 3_600_000L, "4h", 14_400_000L, "1d", 86_400_000L);
+    /** 刚过边界这么久以内拉的只存这么久：我们时钟比币安快一点时，回包里上一根可能还是半成品 */
+    private static final long EDGE_MS = 2_000L;
+
+    /** expireAt：这份数据用到什么时候 */
+    private record Cached(List<KlineBar> bars, long expireAt) {
     }
 
     private final BinanceRestClient binanceRestClient;
@@ -91,11 +100,13 @@ public class KlineFetcher {
                 mine.complete(again);
                 return again;
             }
+            // 有效期按发请求那一刻算：请求跨过边界才回来的，回包可能是边界前的
+            long sentAt = nowMs.getAsLong();
             List<KlineBar> bars = List.copyOf(KlineHistoryStore.parseRawFuturesKlines(
                     binanceRestClient.getFuturesKlines(symbol, interval, limit, null)));
             // 空表不进缓存：熔断/网络失败时存进去，接下来 60s 全都拿不到数据
             if (!bars.isEmpty()) {
-                put(key, bars);
+                put(key, bars, expireAt(interval, sentAt));
             }
             mine.complete(bars);
             return bars;
@@ -111,21 +122,28 @@ public class KlineFetcher {
     /** 新鲜且根数够才算命中；返回最近 limit 根。 */
     private List<KlineBar> fromCache(String key, int limit) {
         Cached c = cache.get(key);
-        if (c == null || nowMs.getAsLong() - c.at() >= ttlMillis || c.bars().size() < limit) {
+        if (c == null || nowMs.getAsLong() >= c.expireAt() || c.bars().size() < limit) {
             return null;
         }
         return c.bars().subList(c.bars().size() - limit, c.bars().size());
     }
 
     /** 只有更长的、或旧的那份已经过期时才覆盖——短的不许把长的挤掉。 */
-    private void put(String key, List<KlineBar> bars) {
+    private void put(String key, List<KlineBar> bars, long expireAt) {
         synchronized (cache) {
             Cached prev = cache.get(key);
             if (prev == null || bars.size() >= prev.bars().size()
-                    || nowMs.getAsLong() - prev.at() >= ttlMillis) {
-                cache.put(key, new Cached(bars, nowMs.getAsLong()));
+                    || nowMs.getAsLong() >= prev.expireAt()) {
+                cache.put(key, new Cached(bars, expireAt));
             }
         }
+    }
+
+    /** TTL 和下一根 K 线边界取早的；刚过边界 EDGE_MS 内拉的只存 EDGE_MS */
+    private long expireAt(String interval, long at) {
+        long ms = INTERVAL_MS.get(interval);
+        long edge = at - Math.floorMod(at, ms);
+        return at - edge < EDGE_MS ? at + EDGE_MS : Math.min(at + ttlMillis, edge + ms);
     }
 
     /**

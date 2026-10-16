@@ -26,6 +26,8 @@ import static org.mockito.Mockito.when;
 class KlineFetcherTest {
 
     private static final long TTL = 60_000L;
+    /** 某个整点 */
+    private static final long HOUR_BOUNDARY = 400_000 * 3_600_000L;
 
     /** 合成 Binance 原始格式：openTime 递增，close 用序号，方便断言切的是不是尾部那几根 */
     private static String rawKlines(int n) {
@@ -102,6 +104,36 @@ class KlineFetcherTest {
         f.fetch("BTCUSDT", "5m", 192);
         clock.addAndGet(TTL);               // 正好到期（判据是 >= ttl）
         f.fetch("BTCUSDT", "5m", 192);
+
+        verify(client, times(2)).getFuturesKlines(anyString(), anyString(), anyInt(), isNull());
+    }
+
+    @Test
+    void cacheDoesNotOutliveBarBoundary() {
+        // 整点前 10 秒拉的 1h，整点后 5 秒还在 TTL 内，但末根已收盘，得重拉
+        when(client.getFuturesKlines(anyString(), anyString(), anyInt(), isNull())).thenReturn(rawKlines(192));
+        KlineFetcher f = fetcher();
+        AtomicLong clock = new AtomicLong(HOUR_BOUNDARY - 10_000L);
+        f.nowMs = clock::get;
+
+        f.fetch("BTCUSDT", "1h", 192);
+        clock.set(HOUR_BOUNDARY + 5_000L);
+        f.fetch("BTCUSDT", "1h", 192);
+
+        verify(client, times(2)).getFuturesKlines(anyString(), anyString(), anyInt(), isNull());
+    }
+
+    @Test
+    void fetchRightAfterBoundaryLivesOnlyEdge() {
+        // 整点后 1 秒拉的只存 2 秒
+        when(client.getFuturesKlines(anyString(), anyString(), anyInt(), isNull())).thenReturn(rawKlines(192));
+        KlineFetcher f = fetcher();
+        AtomicLong clock = new AtomicLong(HOUR_BOUNDARY + 1_000L);
+        f.nowMs = clock::get;
+
+        f.fetch("BTCUSDT", "1h", 192);
+        clock.set(HOUR_BOUNDARY + 3_000L);
+        f.fetch("BTCUSDT", "1h", 192);
 
         verify(client, times(2)).getFuturesKlines(anyString(), anyString(), anyInt(), isNull());
     }
