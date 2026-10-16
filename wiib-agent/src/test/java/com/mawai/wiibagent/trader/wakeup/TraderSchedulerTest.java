@@ -207,7 +207,7 @@ class TraderSchedulerTest {
         verify(runner, after(300).times(1)).wakeAlert(any(), any()); // 第二次被冷静期拦下
     }
 
-    /** 例行唤醒将至（距边界<30s）警报不抢戏：马上就有新鲜K线信号 */
+    /** 例行唤醒将至（距边界不足 1 分钟）警报不抢戏：马上就有新鲜K线信号 */
     @Test
     void alertBlockedWhenRoutineWakeImminent() {
         TraderScheduler s = sched();
@@ -266,6 +266,19 @@ class TraderSchedulerTest {
 
         assertThat(why).contains("距下一根K线收盘不足");
         verify(runner, after(300).never()).wakeManual(any(), anyLong());
+    }
+
+    /** 警报准入看的是离下一边界还有多久：不足 1 分钟放弃，够 1 分钟就放行 */
+    @Test
+    void alertAdmissionNeedsOneMinuteBeforeBoundary() {
+        TraderScheduler s = sched();
+        s.nowMs = () -> H1_BOUNDARY + 3_600_000L - 59_000L;
+        s.tryAlertWake(trader1h(), trig());
+        verify(runner, after(300).never()).wakeAlert(any(), any());
+
+        s.nowMs = () -> H1_BOUNDARY + 3_600_000L - 61_000L;
+        s.tryAlertWake(trader1h(), trig());
+        verify(runner, timeout(2_000)).wakeAlert(any(), any());
     }
 
     /** 手动唤醒也记进冷静期基准：刚被手动叫醒过，紧接着的波动警报没有增量价值 */

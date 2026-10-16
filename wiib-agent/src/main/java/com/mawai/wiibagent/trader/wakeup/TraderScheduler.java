@@ -55,6 +55,8 @@ public class TraderScheduler {
 
     /** 警报冷静期：距该 trader 上一次任何唤醒（例行/警报）不足 5 分钟不再警报 */
     static final long ALERT_COOLDOWN_MS = 5 * 60_000L;
+    /** 警报准入：离下一根边界至少还有这么久，不然例行轮马上就来 */
+    static final long ALERT_MIN_LEAD_MS = 60_000L;
 
     /** 同一 trader 不并行的拒因；预检与真占位两处共用一份措辞 */
 
@@ -259,9 +261,10 @@ public class TraderScheduler {
         if (intervalMs == null) {
             return;
         }
-        // 例行唤醒将至就不抢戏：马上有新鲜K线信号，警报没有增量价值
+        // 离下一边界不足 1 分钟不抢戏：例行轮马上就来。放行的警报跑满自己的预算，
+        // 跨过边界就让那根的例行轮跳过（SKIPPED 留痕）——突发行情里这一轮比按点醒更要紧
         long boundary = now - Math.floorMod(now, intervalMs);
-        if (TraderWakeupRunner.wakeBudgetSeconds(boundary, intervalMs, now) < TraderWakeupRunner.MIN_WAKE_SECONDS) {
+        if (boundary + intervalMs - now < ALERT_MIN_LEAD_MS) {
             log.info("[TraderSched] 例行唤醒将至，警报放弃 traderId={} {}", trader.getId(), trigger.symbol());
             return;
         }

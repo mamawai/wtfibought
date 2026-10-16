@@ -177,22 +177,14 @@ public class TraderWakeupRunner {
     }
 
     /**
-     * 波动哨兵警报唤醒：kind=ALERT、wake_time=触发时刻（非K线边界）；
-     * 预算截止仍是下一例行边界−5s——警报绝不占用下一根K线。
+     * 波动哨兵警报唤醒：kind=ALERT、wake_time=触发时刻（非K线边界）。
+     * 预算就是上限 600s，不按下一边界截：警报跑过边界时那根的例行轮跳过（调度器 SKIPPED 留痕），
+     * 准入侧已保证离边界至少 1 分钟（{@link TraderScheduler#ALERT_MIN_LEAD_MS}）。
      */
     public void wakeAlert(AiTrader trader, AlertTrigger trigger) {
-        long intervalMs = TraderScheduler.INTERVAL_MS.getOrDefault(trader.getIntervalCode(), 3_600_000L);
-        long now = nowMs.getAsLong();
-        long boundary = now - Math.floorMod(now, intervalMs);
-        long budgetSeconds = wakeBudgetSeconds(boundary, intervalMs, now);
-        if (budgetSeconds < MIN_WAKE_SECONDS) {
-            // 调度器已预检，这里兜底：例行将至警报静默放弃，不写决策行（SKIPPED 只属于例行调度）
-            log.info("[Trader] 例行将至警报放弃 traderId={} {}", trader.getId(), trigger.symbol());
-            return;
-        }
         AiTraderDecision decision = baseDecision(trader, trigger.triggeredAt());
         decision.setKind(AiTraderDecision.KIND_ALERT);
-        doWake(trader, trigger.triggeredAt(), budgetSeconds, decision, trigger,
+        doWake(trader, trigger.triggeredAt(), MAX_WAKE_SECONDS, decision, trigger,
                 userLangResolver.of(trader.getUserId()));
     }
 
@@ -316,8 +308,8 @@ public class TraderWakeupRunner {
         String prompt = promptAssembler.assemble(trader, lang);
         // 观察包：自己的状态事实，进开场白。上次醒来后的事件 + 账户（持仓/挂单带计划）+ 上一轮结论 + 最近轨迹 + 论点战绩
         String observation = wakeObservation.assemble(trader, equity, positions, pendingOrders, reconcile, recent, boundaryTime, lang);
-        // 留言进开场白不进 system；取一次就消费一轮，例行/警报两种开场白共用这一份
-        String ownerNote = promptAssembler.ownerNoteBlock(trader, lang);
+        // 留言进开场白不进 system；取一次就消费一轮。只给例行/手动轮：警报轮在 K 线中间，主人留的话多半是按收盘说的
+        String ownerNote = trigger != null ? "" : promptAssembler.ownerNoteBlock(trader, lang);
 
         // 全量工具轨迹（含数据工具）：收集器在本方法手里，超时 cancel 也保得住已发生的记录
         ToolCallTraceHook trace = new ToolCallTraceHook();
@@ -337,7 +329,7 @@ public class TraderWakeupRunner {
         long since = boundaryTime - Math.floorMod(boundaryTime, intervalMs) - intervalMs;
         String calendar = econCalendar.assemble(nowMs.getAsLong(), since, lang);
         String instruction = trigger != null
-                ? alertInstruction(trader, trigger, lastRealWake(recent), observation, calendar, lang, ownerNote)
+                ? alertInstruction(trader, trigger, lastRealWake(recent), observation, calendar, lang)
                 : routineInstruction(trader, boundaryTime, observation, marketSnapshot(whitelist, lang), calendar, lang, ownerNote);
         run.prompt(prompt, instruction);
         // 中断信号交给循环，finally 里 complete：在途模型流不再往下烧
@@ -510,10 +502,9 @@ public class TraderWakeupRunner {
      * @param lastWakeTime 本局上一次交易唤醒的时刻(ms)，null=本局还没醒过
      * @param observation 观察包，空串=不带；紧跟"上次唤醒"那行，排在日历之前
      * @param calendar  财经日历块，null=整块缺席——被波动惊醒时"刚才是否有数据公布/讲话"正是归因的关键事实
-     * @param ownerNote 主人留言段，空串=无待读留言；位置同例行开场白，压在最末
      */
     String alertInstruction(AiTrader trader, AlertTrigger trig, Long lastWakeTime,
-                            String observation, String calendar, AgentLang lang, String ownerNote) {
+                            String observation, String calendar, AgentLang lang) {
         long intervalMs = TraderScheduler.INTERVAL_MS.getOrDefault(trader.getIntervalCode(), 3_600_000L);
         // 下次例行唤醒要看时段：下一边界落在时段外就是更晚的那个（时段末尾的警报，下次醒可能是第二天）
         long next = trig.triggeredAt() - Math.floorMod(trig.triggeredAt(), intervalMs) + intervalMs;
@@ -542,8 +533,7 @@ public class TraderWakeupRunner {
                 + prompts.get(lang, "trader.wake.alertNotice",
                         Map.of("interval", trader.getIntervalCode())) + "\n"
                 + prompts.get(lang, "trader.wake.alertQuestion",
-                        Map.of("mark", prompts.get(lang, "trader.mark.conclusion")))
-                + ownerNote;
+                        Map.of("mark", prompts.get(lang, "trader.mark.conclusion")));
     }
 
     /**
