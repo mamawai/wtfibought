@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { Activity, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { KeyRound, Loader2, Sparkle, X } from 'lucide-react';
@@ -29,21 +29,17 @@ const DRAG_THRESHOLD = 8;
  *  （拖出元素、触摸被取消）会把布尔标记一直留着，下一次键盘 Enter 就被冤枉吞掉 */
 const CLICK_SWALLOW_MS = 300;
 
-/** 开像从 Dock 图标里放大出来，关像被吸回去。收回要看得清是「一路缩过去」，
- *  所以比打开还长一点——短了就成了原地消失，看不出面板去了哪 */
-const OPEN_MS = 400, CLOSE_MS = 440;
+/** 开像从球里长出来，关像被吸回球里 */
+const OPEN_MS = 400, CLOSE_MS = 380;
+// 开：先窜出大半再慢慢贴到位。关：起步就动，后段慢慢贴上球（球在这段淡回来）。
+// 关别用先慢后猛的 ease-in：大半路程挤在最后一瞬走完，看着像原地消失
+const OPEN_EASE = 'cubic-bezier(.25, .8, .25, 1)', CLOSE_EASE = 'cubic-bezier(.25, .1, .25, 1)';
 
 const canAnimateDock = () => typeof Element.prototype.animate === 'function'
   && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/** 反向关闭时接住正在显示的那一帧，不能先跳到完整尺寸再缩回去。 */
-function motionFrame(element: HTMLElement) {
-  const style = getComputedStyle(element);
-  return {
-    transform: style.transform, opacity: style.opacity, borderRadius: style.borderRadius,
-    backgroundColor: style.backgroundColor, borderColor: style.borderColor,
-  };
-}
+/** 收回动画的起点：外壳、内容、球各自当前那一帧 */
+type MotionFrame = { transform: string; borderRadius: string; body: string; ball: string };
 
 /** 面板尺寸的 CSS 上限用的是 rem（max-w-[calc(100vw-2rem)] / max-h-[calc(100vh-6.5rem)]），
  *  JS 侧的钳制得用同一把尺子，写死 px 在 PC(17px 根字号) 下会差出十几像素 */
@@ -122,19 +118,27 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), M
  * <p>
  * chatStore 是页面无关的单例，SSE 不随面板关闭中断——关掉球研判照跑，
  * 一轮跑完球亮橙点提醒；输入草稿也存在 store 里，关面板不会把正在敲的字弄丢。
+ * <p>
+ * 面板关掉只藏不卸（Activity）：再开不用把整段对话重新渲染一遍，没填完的表单卡、翻开的历史栏都还在。
  */
 export function ChatDock() {
   const navigate = useNavigate();
   const { t } = useTranslation('ai');
-  const { loading, items } = useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
+  // 只取 loading：取整个快照的话每来一个 token 这里都重渲一遍，藏着的面板也被带着重渲
+  const loading = useSyncExternalStore(chatStore.subscribe, () => chatStore.getSnapshot().loading);
   const [open, setOpen] = useState(false);
-  // open 管交互，present 管挂载；收回球里的动画结束后才卸载内容。
+  // open 管交互，present 管面板显不显示；收回球里的动画结束后才藏起来
   const [present, setPresent] = useState(false);
-  const motionRef = useRef<Animation | null>(null);
-  const motionStartRef = useRef<ReturnType<typeof motionFrame> | null>(null);
+  const motionRef = useRef<Animation[] | null>(null);
+  const motionStartRef = useRef<MotionFrame | null>(null);
   const [unread, setUnread] = useState(false);
-  // null=首次还没查回来（面板内转圈）。每次打开都重查：用户去配置页存完回来，不用刷新页面
+  // null=还没查回来（面板内转圈）。挂载先查一次，第一次打开就不用转圈；
+  // 每次打开再重查：用户去配置页存完回来，不用刷新页面
   const [hasConfig, setHasConfig] = useState<boolean | null>(null);
+  const checkConfig = useCallback(() => {
+    llmEndpointApi.list().then(list => setHasConfig(list.length > 0)).catch(() => setHasConfig(false));
+  }, []);
+  useEffect(() => { checkConfig(); }, [checkConfig]);
   // 订阅回调里读不到最新 state，开合状态镜像到 ref（只在事件处理器里写）
   const openRef = useRef(false);
 
@@ -160,7 +164,7 @@ export function ChatDock() {
   useEffect(() => {
     const onResize = () => {
       // 收放动画按旧的球位置和面板尺寸算的，视口一变就先让它落地
-      motionRef.current?.finish();
+      motionRef.current?.forEach(a => a.finish());
       setBounds(ballBounds());
       setDesktop(window.matchMedia('(min-width: 768px)').matches);
     };
@@ -174,18 +178,25 @@ export function ChatDock() {
   }, []);
 
   const dockRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const ballBtnRef = useRef<HTMLButtonElement>(null);
   // 全屏 = 铺满浏览器视口的一个 fixed 层，不走原生 Fullscreen API：那个连地址栏、标签栏一起吃掉，
   // 整块屏幕只剩对话，跟"一边看盘一边问"是反着的。K 线那边仍用原生（看图本来就该独占屏幕）
   const [fullscreen, setFullscreen] = useState(false);
   const toggleFullscreen = useCallback(() => {
-    motionRef.current?.finish();
+    motionRef.current?.forEach(a => a.finish());
     setFullscreen(v => !v);
   }, []);
 
+  /*
+   * 收放 = 四条动画同时起：外壳的 transform、外壳的圆角、内容层透明度、球的透明度。
+   * 外壳始终是卡片底，不变色；球压在它上面（z-90 > z-85）跟它交叉淡入淡出：
+   * 开时外壳从球底下长出来、球淡掉；关时外壳缩回球底下、球在末段淡回来，末帧球盖住外壳再藏起面板。
+   * 圆角只能在主线程跑，单拆一条，transform 和透明度才能交给合成线程。
+   */
   useLayoutEffect(() => {
-    const panel = dockRef.current, trigger = ballBtnRef.current;
-    if (!present || !panel || !trigger || !canAnimateDock()) {
+    const panel = dockRef.current, body = bodyRef.current, trigger = ballBtnRef.current;
+    if (!present || !panel || !body || !trigger || !canAnimateDock()) {
       motionStartRef.current = null;
       return;
     }
@@ -201,63 +212,54 @@ export function ChatDock() {
     const scaleX = ballRect.width / Math.max(rect.width, 1);
     const scaleY = ballRect.height / Math.max(rect.height, 1);
 
-    // 球的位置、形状和颜色。50% 的圆角在非等比缩放下也跟着压，落到球那一刻正好是个正圆；
-    // 壳的底色和边色一起变成主色，末帧就是那颗橙球
-    const primary = getComputedStyle(panel).getPropertyValue('--color-primary').trim();
-    const collapsed = {
-      transform: `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`,
-      borderRadius: '50%',
-      backgroundColor: primary,
-      borderColor: primary,
-    };
+    // 球的位置和形状。50% 的圆角在非等比缩放下也跟着压，落到球那一刻正好是个正圆
+    const collapsed = { transform: `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`, borderRadius: '50%' };
     // 展开态也写成同构的函数列表，让两端逐函数插值，不退化成矩阵插值
-    const expanded = { ...motionFrame(panel), transform: 'translate(0px, 0px) scale(1, 1)' };
-    const from = motionStartRef.current ?? (open ? { ...collapsed, opacity: '0' } : expanded);
+    const expanded = { transform: 'translate(0px, 0px) scale(1, 1)', borderRadius: getComputedStyle(panel).borderRadius };
+
+    let shell: Animation[], ballAnim: Animation;
+    if (open) {
+      const timing = { duration: OPEN_MS, fill: 'both' } as const;
+      shell = [
+        panel.animate([{ transform: collapsed.transform }, { transform: expanded.transform }], { ...timing, easing: OPEN_EASE }),
+        // 撑到六成圆角就方掉，后半程已经是面板的样子
+        panel.animate([
+          { borderRadius: collapsed.borderRadius },
+          { borderRadius: expanded.borderRadius, offset: .6 },
+          { borderRadius: expanded.borderRadius },
+        ], { ...timing, easing: OPEN_EASE }),
+        // 外壳撑到七八成内容才淡入，早了是一团压扁的字
+        body.animate([{ opacity: 0 }, { opacity: 0, offset: .3 }, { opacity: 1, offset: .8 }, { opacity: 1 }], timing),
+      ];
+      // 球在外壳长出来的同时淡掉，之后停在透明：面板开着时球就靠它藏着
+      ballAnim = trigger.animate([{ opacity: 1 }, { opacity: 0, offset: .35 }, { opacity: 0 }], timing);
+    } else {
+      // 展开到一半就关：从当前那一帧往回缩，时长按剩下的路程折算。下限 220，再短看不出收的过程
+      const from = motionStartRef.current ?? { ...expanded, body: '1', ball: '0' };
+      const startScale = new DOMMatrixReadOnly(from.transform === 'none' ? undefined : from.transform).a;
+      const extent = clamp((startScale - scaleX) / Math.max(1 - scaleX, .001), 0, 1);
+      const timing = { duration: Math.round(220 + (CLOSE_MS - 220) * Math.sqrt(extent)), fill: 'both' } as const;
+      shell = [
+        panel.animate([{ transform: from.transform }, { transform: collapsed.transform }], { ...timing, easing: CLOSE_EASE }),
+        panel.animate([{ borderRadius: from.borderRadius }, { borderRadius: collapsed.borderRadius }], { ...timing, easing: CLOSE_EASE }),
+        // 一开缩内容就淡，缩到一半前淡完
+        body.animate([{ opacity: from.body }, { opacity: 0, offset: .35 }, { opacity: 0 }], timing),
+      ];
+      // 外壳快贴上球时球淡回来，末帧球整个盖住外壳，藏掉面板看不出换了个东西
+      ballAnim = trigger.animate([
+        { opacity: from.ball }, { opacity: from.ball, offset: .45 }, { opacity: 1, offset: .85 }, { opacity: 1 },
+      ], timing);
+    }
     motionStartRef.current = null;
+    const anims = [...shell, ballAnim];
+    motionRef.current = anims;
 
-    // 展开到一半就关掉时按当前大小折算时长，剩一小截还等满程会显得拖沓。
-    // 下限给到 220：再短就看不出收的过程了
-    const startScale = new DOMMatrixReadOnly(from.transform === 'none' ? undefined : from.transform).a;
-    const extent = clamp((startScale - scaleX) / Math.max(1 - scaleX, .001), 0, 1);
-    const closeMs = Math.round(220 + (CLOSE_MS - 220) * Math.sqrt(extent));
-
-    const frames: Keyframe[] = open ? [
-      { ...from, offset: 0 },
-      // 先补齐不透明再撑开，免得背景文字从半透明的面板里透出来
-      { opacity: 1, offset: .3 },
-      // 撑到一半时橙色褪成卡片底、圆角方掉：后半程已经是面板的样子，内容淡入时底下不再是橙的
-      {
-        borderRadius: expanded.borderRadius,
-        backgroundColor: expanded.backgroundColor, borderColor: expanded.borderColor,
-        offset: .5,
-      },
-      { ...expanded, offset: 1 },
-    ] : [
-      { ...from, offset: 0 },
-      // 前 30% 保持面板的样子（内容这期间在淡出），之后一路化圆、染橙，外壳全程实心地缩。
-      // 末帧就是球的样子，不淡出——一淡就露出底下的球，成了「球先冒出来、面板还在缩」
-      {
-        borderRadius: from.borderRadius,
-        backgroundColor: from.backgroundColor, borderColor: from.borderColor,
-        offset: .3,
-      },
-      { ...collapsed, opacity: from.opacity, offset: 1 },
-    ];
-    const animation = panel.animate(frames, {
-      duration: open ? OPEN_MS : closeMs,
-      // 开：先窜出大半再慢慢贴到位。关：前段留出起势，中段收，末段贴住球停下。
-      // 关这条不能用先慢后猛的 ease-in——大半路程挤在最后一瞬走完，看着就是原地变没
-      easing: open ? 'cubic-bezier(.25, .8, .25, 1)' : 'cubic-bezier(.55, 0, .35, 1)',
-      fill: 'both',
-    });
-    motionRef.current = animation;
-
-    animation.onfinish = () => {
-      if (motionRef.current !== animation || openRef.current !== open) return;
+    // 四条同时起、同样时长，看一条就够
+    shell[0].onfinish = () => {
+      if (motionRef.current !== anims || openRef.current !== open) return;
       motionRef.current = null;
-      motionStartRef.current = null;
       if (open) {
-        animation.cancel();
+        shell.forEach(a => a.cancel());
       } else {
         setPresent(false);
         // 全屏尺寸保留到收回结束，否则关闭第一帧会先跳回小窗。
@@ -266,11 +268,16 @@ export function ChatDock() {
     };
 
     return () => {
-      if (motionRef.current === animation) {
-        motionStartRef.current = motionFrame(panel);
+      // 还没播完就被打断（展开中关掉）：记下当前那一帧，收回从这儿接着缩
+      if (motionRef.current === anims) {
+        const s = getComputedStyle(panel);
+        motionStartRef.current = {
+          transform: s.transform, borderRadius: s.borderRadius,
+          body: getComputedStyle(body).opacity, ball: getComputedStyle(trigger).opacity,
+        };
         motionRef.current = null;
       }
-      animation.cancel();
+      anims.forEach(a => a.cancel());
     };
   }, [open, present]);
 
@@ -313,14 +320,10 @@ export function ChatDock() {
     const next = !openRef.current;
     if (next) {
       setUnread(false);
-      llmEndpointApi.list().then(list => setHasConfig(list.length > 0)).catch(() => setHasConfig(false));
+      checkConfig();
     }
     setOpenBoth(next);
-  }, [setOpenBoth]);
-
-  // 面板里有没有没填完的表单卡：它的草稿在卡自己的组件 state 里，关面板就没了，
-  // 所以这时候不给 ESC / 点外部这两条"顺手关掉"的路。输入框草稿另有 store 兜着，不受影响
-  const hasPendingForm = items.some(it => it.kind === 'form' && it.status === 'pending');
+  }, [setOpenBoth, checkConfig]);
 
   // ESC 一级一级退：全屏时先回浮窗，浮窗态再按才关面板。不走原生全屏之后浏览器不再帮忙收场，这条得自己接
   useEffect(() => {
@@ -329,15 +332,15 @@ export function ChatDock() {
       // 中文输入法组合态里的 Esc 是"取消候选词"，不该顺手把面板也关了
       if (e.key !== 'Escape' || e.isComposing) return;
       if (fullscreen) setFullscreen(false);
-      else if (!hasPendingForm) setOpenBoth(false);
+      else setOpenBoth(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, fullscreen, hasPendingForm, setOpenBoth]);
+  }, [open, fullscreen, setOpenBoth]);
 
   // 点面板外部关闭。只在 PC 浮窗态：移动端是铺满视口的全屏层，没有"外部"可点；全屏态同理
   const closeOnOutside = useCallback(() => setOpenBoth(false), [setOpenBoth]);
-  useClickOutside(dockRef, closeOnOutside, open && desktop && !fullscreen && !hasPendingForm);
+  useClickOutside(dockRef, closeOnOutside, open && desktop && !fullscreen);
 
   const goConfig = useCallback(() => {
     setOpenBoth(false);
@@ -386,7 +389,7 @@ export function ChatDock() {
 
   /** 面板锚在球那一侧的底角，所以往"外"拖是放大：锚右往左拖，锚左往右拖 */
   const resizeStart = (axis: Axis) => (e: React.PointerEvent) => {
-    motionRef.current?.finish();
+    motionRef.current?.forEach(a => a.finish());
     e.preventDefault();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     dragRef.current = { axis, x: e.clientX, y: e.clientY, w: size.w, h: size.h, cur: size };
@@ -464,12 +467,11 @@ export function ChatDock() {
           'items-center justify-center',
           // 触屏的 :active 会延后释放；隐藏后去掉按压缩放，动画按原始球尺寸对位。
           dragging ? 'cursor-grabbing scale-105' : present ? 'cursor-default' : 'cursor-grab hover:scale-[1.06] active:scale-95',
-          // 面板在场的整段时间都藏住球（含开合动画）：面板收到最后一帧就是球的样子，
-          // 卸载那一刻球顶上来，中间不会出现「球和还在缩的面板同时在」
-          present && 'invisible pointer-events-none',
+          // 面板在场时球不接点击；显隐交给收放动画（开时淡掉并停在透明，关的末段淡回来），不播动画时直接藏
+          present && 'pointer-events-none',
+          present && !canAnimateDock() && 'invisible',
         )}
       >
-        {/* 球只在面板完全收起时可见 */}
         {/* 研判中：一道白弧沿球的内沿转。inset-[3px] 让环带贴在内沿，压在星下面不挡它 */}
         {loading && (
           <span aria-hidden className="absolute inset-[3px] rounded-full pointer-events-none wiib-ball-sweep" />
@@ -486,14 +488,14 @@ export function ChatDock() {
         )}
       </button>
 
-      {present && (
+      {/* 藏着时 React 只给它挂 display:none、拆掉里面的副作用，state 和 DOM 都留着；空闲时才处理藏着的更新 */}
+      <Activity mode={present ? 'visible' : 'hidden'}>
         <div
           id="polaris-dock"
           ref={dockRef}
           role="dialog"
           aria-label={HUB_NAME}
           inert={!open}
-          data-state={open ? 'open' : 'closing'}
           tabIndex={-1}
           // 收放动画绕默认的中心缩放，transform-origin 别在这儿改
           style={{ '--dock-w': `${size.w}px`, '--dock-h': `${size.h}px` } as React.CSSProperties}
@@ -515,57 +517,60 @@ export function ChatDock() {
                 ),
           )}
         >
-          {/* 拖拽把手（仅 PC 浮窗态）：贴外侧的那条边缘调宽、上边缘调高、外侧上角双向。
-              锚右时"外侧"是左边，锚左时是右边；全屏没有尺寸可调，整组撤掉 */}
-          {!fullscreen && (
-            <>
-              <div onPointerDown={resizeStart('x')} onPointerMove={resizeMove} onPointerUp={resizeEnd} onPointerCancel={resizeEnd}
-                   className={cn('hidden md:block absolute top-4 bottom-0 w-1.5 cursor-ew-resize z-20',
-                     ball.side === 'left' ? 'right-0' : 'left-0')} />
-              <div onPointerDown={resizeStart('y')} onPointerMove={resizeMove} onPointerUp={resizeEnd} onPointerCancel={resizeEnd}
-                   className={cn('hidden md:block absolute top-0 h-1.5 cursor-ns-resize z-20',
-                     ball.side === 'left' ? 'left-0 right-4' : 'left-4 right-0')} />
-              <div onPointerDown={resizeStart('xy')} onPointerMove={resizeMove} onPointerUp={resizeEnd} onPointerCancel={resizeEnd}
-                   className={cn('hidden md:flex absolute top-0 w-4 h-4 z-20 items-start group',
-                     ball.side === 'left' ? 'right-0 cursor-nesw-resize justify-end' : 'left-0 cursor-nwse-resize justify-start')}
-                   title={t('chat.resize')}>
-                <span className={cn('mt-1 w-2 h-2 border-t-2 border-muted-foreground/40 group-hover:border-primary transition-colors',
-                  ball.side === 'left' ? 'mr-1 border-r-2 rounded-tr' : 'ml-1 border-l-2 rounded-tl')} />
-              </div>
-            </>
-          )}
+          {/* 内容层：收放时单独淡入淡出，外壳只管缩放。不设定位，里面的拖拽把手仍贴着外壳的边 */}
+          <div ref={bodyRef} className="flex-1 min-h-0 flex flex-col">
+            {/* 拖拽把手（仅 PC 浮窗态）：贴外侧的那条边缘调宽、上边缘调高、外侧上角双向。
+                锚右时"外侧"是左边，锚左时是右边；全屏没有尺寸可调，整组撤掉 */}
+            {!fullscreen && (
+              <>
+                <div onPointerDown={resizeStart('x')} onPointerMove={resizeMove} onPointerUp={resizeEnd} onPointerCancel={resizeEnd}
+                     className={cn('hidden md:block absolute top-4 bottom-0 w-1.5 cursor-ew-resize z-20',
+                       ball.side === 'left' ? 'right-0' : 'left-0')} />
+                <div onPointerDown={resizeStart('y')} onPointerMove={resizeMove} onPointerUp={resizeEnd} onPointerCancel={resizeEnd}
+                     className={cn('hidden md:block absolute top-0 h-1.5 cursor-ns-resize z-20',
+                       ball.side === 'left' ? 'left-0 right-4' : 'left-4 right-0')} />
+                <div onPointerDown={resizeStart('xy')} onPointerMove={resizeMove} onPointerUp={resizeEnd} onPointerCancel={resizeEnd}
+                     className={cn('hidden md:flex absolute top-0 w-4 h-4 z-20 items-start group',
+                       ball.side === 'left' ? 'right-0 cursor-nesw-resize justify-end' : 'left-0 cursor-nwse-resize justify-start')}
+                     title={t('chat.resize')}>
+                  <span className={cn('mt-1 w-2 h-2 border-t-2 border-muted-foreground/40 group-hover:border-primary transition-colors',
+                    ball.side === 'left' ? 'mr-1 border-r-2 rounded-tr' : 'ml-1 border-l-2 rounded-tl')} />
+                </div>
+              </>
+            )}
 
-          {hasConfig == null ? (
-            <PanelShell onClose={() => setOpenBoth(false)}>
-              <div className="flex-1 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="w-4 h-4 animate-spin" /> {t('loadingConfig')}
-              </div>
-            </PanelShell>
-          ) : hasConfig ? (
-            <ChatPanel onClose={() => setOpenBoth(false)} onGoConfig={goConfig}
-                       fullscreen={fullscreen} onToggleFullscreen={toggleFullscreen} />
-          ) : (
-            <PanelShell onClose={() => setOpenBoth(false)}>
-              <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6">
-                <div className="w-12 h-12 rounded-full border border-border bg-background flex items-center justify-center text-muted-foreground/70">
-                  <KeyRound className="w-6 h-6" />
+            {hasConfig == null ? (
+              <PanelShell onClose={() => setOpenBoth(false)}>
+                <div className="flex-1 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin" /> {t('loadingConfig')}
                 </div>
-                <div className="text-sm font-bold text-muted-foreground">{t('chat.byokTitle')}</div>
-                <div className="text-[11px] text-muted-foreground/70 max-w-[16rem]">
-                  {t('chat.byokHint')}
+              </PanelShell>
+            ) : hasConfig ? (
+              <ChatPanel onClose={() => setOpenBoth(false)} onGoConfig={goConfig}
+                         fullscreen={fullscreen} onToggleFullscreen={toggleFullscreen} />
+            ) : (
+              <PanelShell onClose={() => setOpenBoth(false)}>
+                <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6">
+                  <div className="w-12 h-12 rounded-full border border-border bg-background flex items-center justify-center text-muted-foreground/70">
+                    <KeyRound className="w-6 h-6" />
+                  </div>
+                  <div className="text-sm font-bold text-muted-foreground">{t('chat.byokTitle')}</div>
+                  <div className="text-[11px] text-muted-foreground/70 max-w-[16rem]">
+                    {t('chat.byokHint')}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={goConfig}
+                    className="mt-1 border border-border rounded-lg px-4 py-2 text-xs font-bold text-primary hover:bg-surface-hover"
+                  >
+                    {t('chat.goConfig')}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={goConfig}
-                  className="mt-1 border border-border rounded-lg px-4 py-2 text-xs font-bold text-primary hover:bg-surface-hover"
-                >
-                  {t('chat.goConfig')}
-                </button>
-              </div>
-            </PanelShell>
-          )}
+              </PanelShell>
+            )}
+          </div>
         </div>
-      )}
+      </Activity>
     </>
   );
 }

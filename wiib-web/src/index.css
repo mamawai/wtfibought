@@ -440,12 +440,6 @@ html.pwa nav a {
   }
 }
 
-/* 收回时先让内容退场，剩下的外壳一路缩成球（底色、边色由 ChatDock 的收放动画插值成主色），
-   看着是面板变成了球，不是面板关掉再冒一个球出来。
-   不进 @layer：面板里随手加个 transition-* 工具类就会把这里的过渡整条顶掉 */
-#polaris-dock > * { transition: opacity 150ms var(--ease-control); }
-#polaris-dock[data-state="closing"] > * { opacity: 0; }
-
 /* 机加工边缘：实体感控件（开关/按钮）顶部 1px 高光 */
 .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5); }
 html.dark .machined { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07); }
