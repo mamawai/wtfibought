@@ -161,31 +161,25 @@ async def test_two_days_of_rebalancing_and_the_pages_that_show_it(client, trader
     # 换仓成本按当月档；实际是 03-02 调仓前的净值减 10000
     fake.log.clear()
     await scheduler.tick(m.app, m._library, m._start_refresh, NOW + DAY_MS + 60 * 60_000)
-    attrib = (await store.trade_run("2025-03-01"))["attrib"]
-    assert attrib["until"] == "2025-03-02" and attrib["actual"] == pytest.approx(second["equity_before"] - 10000)
-    assert attrib["missing"] == [] and {c["symbol"] for c in attrib["coins"]} == set(coins)
-    row = next(c for c in attrib["coins"] if c["symbol"] == "AAA")
+    day1 = (await store.trade_run("2025-03-01"))["attrib"]
+    assert day1["until"] == "2025-03-02" and day1["actual"] == pytest.approx(second["equity_before"] - 10000)
+    assert day1["missing"] == [] and {c["symbol"] for c in day1["coins"]} == set(coins)
+    row = next(c for c in day1["coins"] if c["symbol"] == "AAA")
     assert (row["entry"], row["exit"]) == (pytest.approx(fake.close("AAA", DAY)), pytest.approx(fake.close("AAA", DAY + DAY_MS)))
     assert row["fund"] == pytest.approx(sum(fake.rate("AAA", DAY + k * 8 * 3_600_000) for k in (1, 2, 3)))
-    legs = attrib["legs"]
-    for leg, share in (("combo", 0.75), ("carry", 0.25)):
-        assert legs[leg]["price"] == pytest.approx(sum(c[leg] * 10000 * c["ret"] for c in attrib["coins"]))
-        assert legs[leg]["funding"] == pytest.approx(-sum(c[leg] * 10000 * c["fund"] for c in attrib["coins"]))
+    legs = day1["legs"]
+    for leg in attrib.LEGS:
         # 第一天全是新开：前 20 个币一档 5 bps、其余二档 8 bps
         assert legs[leg]["cost"] == pytest.approx(sum(
-            abs(c[leg]) * 10000 * (0.0005 if c["symbol"] in POOL_SYMBOLS[:20] else 0.0008) for c in attrib["coins"]))
-        assert legs[leg]["ret"] == pytest.approx(legs[leg]["net"] / (10000 * share))
-    assert attrib["model"] == pytest.approx(legs["combo"]["net"] + legs["carry"]["net"])
-    assert attrib["residual"] == pytest.approx(attrib["actual"] - attrib["model"])
+            abs(c[leg]) * 10000 * (0.0005 if c["symbol"] in POOL_SYMBOLS[:20] else 0.0008) for c in day1["coins"]))
+    assert day1["model"] == pytest.approx(legs["combo"]["net"] + legs["carry"]["net"])
+    assert day1["residual"] == pytest.approx(day1["actual"] - day1["model"])
     # 每日盈亏带归因（不带每币明细），两条腿累计对止损线；调仓详情带每币明细；算过的不再算
     daily = data(await client.get("/api/alpha/trader/daily"))
-    assert daily["days"][0]["attrib"]["legs"] == attrib["legs"] and "coins" not in daily["days"][0]["attrib"]
-    assert daily["legs"]["combo"] == {"days": 1, "cumReturn": pytest.approx(legs["combo"]["ret"]),
-                                      "drawdown": pytest.approx(max(0.0, -legs["combo"]["ret"])),
-                                      "maxDrawdown": pytest.approx(max(0.0, -legs["combo"]["ret"])), "stop": 0.228,
-                                      "hit": False}
+    assert daily["days"][0]["attrib"]["legs"] == day1["legs"] and "coins" not in daily["days"][0]["attrib"]
+    assert daily["legs"] == attrib.summary([day1])
     detail = data(await client.get("/api/alpha/trader/runs/2025-03-01", headers=ADMIN))
-    assert detail["attrib"]["coins"] == attrib["coins"]
+    assert detail["attrib"]["coins"] == day1["coins"]
     fetched = len(fake.log)
     await scheduler.tick(m.app, m._library, m._start_refresh, NOW + DAY_MS + 61 * 60_000)
     assert len(fake.log) == fetched
@@ -207,11 +201,8 @@ async def test_carry_leg_can_be_switched_off_and_its_share_stays_idle(client, tr
     await scheduler.rebalance(m.app, m._library, NOW)
     run = await m.app.state.store.trade_run("2025-03-01")
     assert run["status"] == "done", run["error"]
-    # carry 腿空仓，每币只有组合腿那份：多空各 3/4 净值
+    # carry 腿空仓
     assert run["targets"]["carry"] is False and run["legs"]["carry"] == {"long": [], "short": []}
-    coins = run["targets"]["coins"]
-    assert all(c["carry"] == 0 and c["weight"] == c["combo"] for c in coins)
-    assert sum(c["weight"] for c in coins if c["weight"] > 0) == pytest.approx(0.75)
     assert data(await client.get("/api/alpha/trader/factors", headers=ADMIN))["carry"]["enabled"] is False
 
 

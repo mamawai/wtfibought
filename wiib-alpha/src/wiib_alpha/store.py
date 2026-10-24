@@ -507,9 +507,15 @@ class Store:
         await self.db.commit()
 
     async def trade_days(self) -> list[dict[str, Any]]:
-        """每次调仓：day、signal_ms、调仓前净值、出没出目标、按腿归因（还没算是 None），旧的在前"""
-        return await self._all("SELECT day, signal_ms, equity_before, targets_json IS NOT NULL AS has_targets, attrib_json "
+        """给调度找要归因的日子：每次调仓的 day、signal_ms、调仓前净值、出没出目标、归因过没有，旧的在前"""
+        return await self._all("SELECT day, signal_ms, equity_before, targets_json IS NOT NULL AS has_targets, "
+                               "attrib_json IS NOT NULL AS has_attrib "
                                "FROM trade_run WHERE equity_before IS NOT NULL ORDER BY day", ())
+
+    async def trade_daily(self) -> list[dict[str, Any]]:
+        """给 /trader/daily：每次调仓的 day、调仓前净值、按腿归因（还没算是 None），旧的在前"""
+        return await self._all("SELECT day, equity_before, attrib_json FROM trade_run WHERE equity_before IS NOT NULL "
+                               "ORDER BY day", ())
 
     async def prev_targets(self, day: str) -> dict[str, Any] | None:
         """day 之前最近一次出了目标的调仓的目标：换仓成本按它算"""

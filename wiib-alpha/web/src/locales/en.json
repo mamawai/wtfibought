@@ -450,7 +450,7 @@
     "stale": "Can't reach the paper venue — numbers frozen at {{time}}",
     "down": "Can't reach the paper venue — no account numbers yet",
     "daily": "Daily P&L",
-    "dailyHint": "A day runs from the equity before that day's rebalance to the equity before the next one (00:15 → 00:15 UTC), including the rebalance fees and the funding in between; the last day hasn't reached the next rebalance yet and follows the live numbers. The two legs and \"backtest due\" use that day's target weights, the 00:15 closes, the funding actually settled and the backtest costs (5 / 8 / 12 bps a side), and appear after the next rebalance; gap = actual − due, the execution slippage. Each leg's drawdown is on its own share of capital; touching the stop line (combo 22.8%, carry 37%, measured on the search span, fixed) switches that leg off and its share sits idle.",
+    "dailyHint": "A day runs from the equity before that day's rebalance to the equity before the next one (00:15 → 00:15 UTC), including the rebalance fees and the funding in between; the last day hasn't reached the next rebalance yet and follows the live numbers. The two legs and \"backtest due\" use that day's target weights, the 00:15 closes, the funding actually settled and the backtest costs (5 / 8 / 12 bps a side), and appear after the next rebalance; gap = actual − due, the execution slippage. Each leg's drawdown is on its own share of capital; when the drawdown touches the stop line (combo 22.8%, carry 37%, measured on the search span, fixed) you switch that leg off and its share sits idle.",
     "dailyEmpty": "No rebalances yet.",
     "dailyBars": "P&L per day (USDT)",
     "dayTip": "{{day}}  {{pnl}} ({{pct}})",

@@ -1258,7 +1258,7 @@ async def trader_daily(request: Request):
     最近一次调仓之后的还没完，在 /trader/live 的 dayPnl 里。最大回撤按每小时快照算。
     attrib 是这一天按腿归因（trade/attrib.py，每币明细在调仓详情里），还没算是 null；legs 是两条腿前向累计对止损线"""
     store: Store = request.app.state.store
-    starts = await store.trade_days()
+    starts = await store.trade_daily()
     days = [{"day": a["day"], "start": a["equity_before"], "end": b["equity_before"],
              "pnl": b["equity_before"] - a["equity_before"], "pct": b["equity_before"] / a["equity_before"] - 1,
              "attrib": {k: v for k, v in a["attrib"].items() if k != "coins"} if a["attrib"] else None}

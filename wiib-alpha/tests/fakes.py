@@ -82,12 +82,14 @@ def review_reply(prompt: str) -> str:
 
 class FakeFapi:
     """fapi 的假行情：每个币每根 15m 的价格、成交量、溢价和 5 分钟的持仓、多空比都按 (币序号, 时刻) 算出来，问几次都一样；
-    now 之后开盘的不给（没收盘的那根照样给，客户端自己扔）；halted 里的币不在交易；log 记下每个请求的路径和参数"""
+    now 之后开盘的不给（没收盘的那根照样给，客户端自己扔）；halted 里的币不在交易；broken 里的币 K 线回 500；
+    log 记下每个请求的路径和参数"""
 
     def __init__(self, symbols, now_ms: int):
         self.code = {s: i for i, s in enumerate(symbols)}
         self.now = now_ms
         self.halted: set[str] = set()
+        self.broken: set[str] = set()
         self.log: list[tuple[str, dict]] = []
 
     def close(self, s: str, t: int) -> float:
@@ -116,6 +118,8 @@ class FakeFapi:
         s, a, b = p["symbol"], int(p["startTime"]), min(int(p["endTime"]), self.now - 1)
         if s not in self.code:
             return httpx.Response(400, json={"code": -1121, "msg": "Invalid symbol."})
+        if path == "/fapi/v1/klines" and s in self.broken:
+            return httpx.Response(500)
         i, limit = self.code[s], int(p["limit"])
         if path in ("/fapi/v1/klines", "/fapi/v1/premiumIndexKlines"):
             rows = []

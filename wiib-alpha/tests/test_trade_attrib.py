@@ -78,6 +78,17 @@ def test_inputs_take_the_0015_closes_and_the_settlements_in_between():
     assert sum(1 for path, _ in fake.log if path == "/fapi/v1/fundingRate") == 2
 
 
+def test_inputs_raise_on_errors_other_than_400(monkeypatch):
+    monkeypatch.setattr(b, "_RETRIES", 1)
+    fake = FakeFapi(["AAA", "BBB"], DAY + 2 * DAY_MS)
+    fake.broken = {"BBB"}
+    today = run("2025-03-02", DAY - 1, 10000.0, {"AAA": (0.2, 0.0), "BBB": (0.0, -0.1)})
+    nxt = run("2025-03-03", DAY + DAY_MS - 1, 10000.0, {})
+    # 500 重试完还不行不当成拉不到：抛出去，这一天不记 missing
+    with pytest.raises(b.BinanceError):
+        attrib.inputs(fake.binance(), today, nxt)
+
+
 def test_tiers_follow_the_signal_month_and_fall_back_to_the_month_before():
     universe = [{"month": "2025-02", "symbol": "AAA", "rank": 1}, {"month": "2025-02", "symbol": "BBB", "rank": 30},
                 {"month": "2025-03", "symbol": "AAA", "rank": 60}, {"month": "2025-01", "symbol": "CCC", "rank": 1}]

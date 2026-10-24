@@ -116,7 +116,7 @@ class Pool:
             keep = _keep(df)
             every = df.index.to_numpy(dtype="int64")
             end = max(end, int(every.max(initial=0)))
-            first.append(int(every.min()) if len(every) else 0)
+            first.append(int(every.min()))
             close = df["close"].to_numpy(dtype="float64")
             t = every[keep]
             m = month_of(t)

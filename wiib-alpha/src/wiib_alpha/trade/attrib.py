@@ -23,7 +23,7 @@ from .scheme import SHARES
 logger = logging.getLogger(__name__)
 
 LEGS = ("combo", "carry")
-# 止损线（2026-10-24 定，不改）：前向累计回撤超过它就停这条腿。组合腿是搜索段整套方案的最大回撤，carry 腿是搜索段只跑 carry 的回撤
+# 止损线：前向累计回撤超过它就停这条腿。组合腿是剔新币前搜索段整套方案的最大回撤，carry 腿是剔新币前只跑 carry 的回撤
 STOP = {"combo": 0.228, "carry": 0.37}
 
 
@@ -35,7 +35,7 @@ def held(targets: Mapping[str, Any]) -> dict[str, dict[str, float]]:
 def inputs(binance: Binance, run: Mapping[str, Any], next_run: Mapping[str, Any]
            ) -> tuple[dict[str, tuple[float, float]], dict[str, float]]:
     """持仓币的建仓价、平仓价（这一次和下一次调仓的 00:15 那根收盘）和持有期内结算的费率之和。
-    拉不到的币不出（下架的 fapi 回 400），归因里记成 missing"""
+    fapi 回 400 的币（下架的）不出，归因里记成 missing；别的错（限流、5xx、网络）抛出去"""
     entry, exit_ = run["signal_ms"] + BAR_MS, next_run["signal_ms"] + BAR_MS
     closes, funding = {}, {}
     for s in held(run["targets"]):
@@ -43,6 +43,8 @@ def inputs(binance: Binance, run: Mapping[str, Any], next_run: Mapping[str, Any]
             bars = binance.recent_klines(s, entry + 1 - BAR_MS, exit_ + 1)
             rates = binance.recent_funding(s, entry + 1, exit_ + 1)
         except BinanceError as exc:
+            if exc.status != 400:
+                raise
             logger.warning("归因拉 %s 失败：%s", s, exc)
             continue
         close = bars.set_index("close_time")["close"]

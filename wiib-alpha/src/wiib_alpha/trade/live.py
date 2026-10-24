@@ -5,6 +5,7 @@
 和 raw 重叠的那段给一致性核对（check.py）用。
 强平三列没补（只有产品币有），用到的因子交易员不能勾（COLUMNS）。拼好按 panel.assemble 同一套规则装配。
 第一次要补满 29 天，约一小时：部署后先跑 python -m wiib_alpha.trade.live 预热，别留到 00:05 调仓时现补。
+给 live 加列时要删掉 live/ 下对应数据集的目录再预热，增量补不会回头填老行。
 """
 
 from __future__ import annotations

@@ -67,7 +67,11 @@ _MICRO_THRESHOLD = 100_000_000_000_000
 
 
 class BinanceError(RuntimeError):
-    """拉行情失败"""
+    """拉行情失败；status 是 HTTP 状态码，没有是 None"""
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 def empty_klines() -> pd.DataFrame:
@@ -215,8 +219,11 @@ class Binance:
         """[start_ms, end_ms) 内的 metrics，5 分钟一条，列同归档：持仓量（openInterestHist）、大户持仓多空比（topLongShortPositionRatio）、
         大户账户数多空比（topLongShortAccountRatio）、全体账户多空比（globalLongShortAccountRatio）、taker 买卖量比（takerlongshortRatio）。
         接口只留最近 30 天。前四个接口的时间戳比归档 metrics 的 create_time 晚一格（同一个值，接口记在 5 分钟之后），挪回来和归档对齐，
-        taker 买卖量比不晚、不挪；多空比接口只给 4 位小数，归档是 6 位"""
+        taker 买卖量比不晚、不挪；多空比接口只给 4 位小数，归档是 6 位。
+        taker 的最新一条可能比另四个早出一格，只留到每个有数据的接口都出了的那一刻，不留只有一列的半行"""
         df = None
+        # 每个有数据的接口最后一条的时刻
+        ends = []
         for name, shift, fields in (
                 ("openInterestHist", METRIC_MS, {"oi": "sumOpenInterest", "oi_value": "sumOpenInterestValue"}),
                 ("topLongShortPositionRatio", METRIC_MS, {"ls_top_pos": "longShortRatio"}),
@@ -226,9 +233,12 @@ class Binance:
             rows = self._history(name, symbol, start_ms + shift, end_ms + shift)
             part = pd.DataFrame({"time": pd.Series([r["timestamp"] - shift for r in rows], dtype="int64"),
                                  **{col: pd.Series([r[f] for r in rows], dtype="float64") for col, f in fields.items()}})
+            if rows:
+                ends.append(int(part["time"].max()))
             df = part if df is None else df.merge(part, on="time", how="outer")
         df = df.reindex(columns=METRICS_COLUMNS)
-        return df[(df["time"] >= start_ms) & (df["time"] < end_ms)].sort_values("time").reset_index(drop=True)
+        keep = (df["time"] >= start_ms) & (df["time"] < end_ms) & (df["time"] <= min(ends, default=end_ms))
+        return df[keep].sort_values("time").reset_index(drop=True)
 
     def recent_funding(self, symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
         """fapi 的实际结算记录，[start_ms, end_ms) 内的，列同归档 funding"""
@@ -334,7 +344,7 @@ class Binance:
             if resp.status_code == 429 or resp.status_code >= 500:
                 logger.warning("%s HTTP %d，第 %d 次", url, resp.status_code, attempt + 1)
                 continue
-            raise BinanceError(f"{url} 返回 HTTP {resp.status_code}")
+            raise BinanceError(f"{url} 返回 HTTP {resp.status_code}", resp.status_code)
         raise BinanceError(f"{url} 连试 {_RETRIES} 次都失败")
 
 

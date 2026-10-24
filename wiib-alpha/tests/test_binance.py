@@ -343,7 +343,9 @@ def test_recent_metrics_join_the_five_data_endpoints():
     assert int(fake.log[8][1]["startTime"]) == LIVE_NOW - 2 * DAY
     # 列同归档 metrics，七列都有数
     assert list(df.columns) == b.METRICS_COLUMNS and df.iloc[0].notna().all()
-    assert df["time"].iloc[0] == LIVE_NOW - 2 * DAY and df["time"].iloc[-1] < LIVE_NOW and df["time"].is_monotonic_increasing
+    assert df["time"].iloc[0] == LIVE_NOW - 2 * DAY and df["time"].is_monotonic_increasing
+    # taker 不挪，最新一条 LIVE_NOW - 5 分钟比另四个早出一格：那行只有一列，不留
+    assert df["time"].iloc[-1] == LIVE_NOW - 2 * b.METRIC_MS and df.iloc[-1].notna().all()
     # 挪的接口：记在 t + 5 分钟的那条值落在 t；不挪的：记在 t 的落在 t
     i, t0 = fake.code["Y"], LIVE_NOW - 2 * DAY
     api_t = t0 // b.METRIC_MS + 1

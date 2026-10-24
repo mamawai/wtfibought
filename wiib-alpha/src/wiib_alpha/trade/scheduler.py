@@ -66,13 +66,10 @@ async def tick(app: FastAPI, library: Library, refresh: Refresh, now: int) -> No
     store: Store = app.state.store
     if (await store.last_equity_ts() or 0) // HOUR_MS < now // HOUR_MS:
         await snapshot(app, now)
-    if PREPARE_AFTER_MS <= now % DAY_MS < GIVE_UP_AFTER_MS:
-        if (app.state.data is not None and not app.state.runs.jobs["refresh"].get("running")
-                and _due(await store.trade_run(day_label(now)))):
-            await rebalance(app, library, now)
-    else:
-        # 和补 live 尾巴错开：两边都走 fapi、排着队发
-        await attribute(app)
+    trade_window = PREPARE_AFTER_MS <= now % DAY_MS < GIVE_UP_AFTER_MS
+    if (trade_window and app.state.data is not None and not app.state.runs.jobs["refresh"].get("running")
+            and _due(await store.trade_run(day_label(now)))):
+        await rebalance(app, library, now)
     start = utc(now).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     month = f"{start:%Y-%m}"
     # 当月币池还没排出来就起刷新；上一次（点的或自动的）起了不到一小时不再起，失败的隔一小时再试
@@ -84,6 +81,9 @@ async def tick(app: FastAPI, library: Library, refresh: Refresh, now: int) -> No
         except HTTPException:
             # 还在刷、有 campaign 或别的后台任务占着：下一分钟再看
             pass
+    if not trade_window:
+        # 和补 live 尾巴错开：两边都走 fapi、排着队发
+        await attribute(app)
 
 
 def _due(run: Mapping[str, Any] | None) -> bool:
@@ -169,7 +169,7 @@ def _rebalance(binance: Binance, sim: executor.Sim, store: PanelStore, pool: Seq
     info = binance.exchange_info()
     # 下架、停牌的币 fapi 拉不到，不出目标
     trading = [s for s in pool if info.get(s, {}).get("status") == "TRADING"]
-    # 可能下单的币先登记给 sim，feed 据此订上行情：补 live 尾巴要五六分钟，下单时都订上了（重试也一样）；要平掉的币 sim 按仓位自己算进集合
+    # 可能下单的币先登记给 sim，feed 据此订上行情：补 live 尾巴要七八分钟，下单时都订上了（重试也一样）；要平掉的币 sim 按仓位自己算进集合
     sim.watch(trading)
     job["stage"] = "live"
     live.update(store, binance, sorted({*trading, BENCHMARK}), now, job)
@@ -212,7 +212,7 @@ async def attribute(app: FastAPI) -> None:
     """出过目标、下一次调仓已经发生、还没归因的调仓日，按腿归因存进 trade_run；一天一条，算过不再算"""
     store: Store = app.state.store
     days = await store.trade_days()
-    pending = [(a, b) for a, b in zip(days, days[1:]) if a["has_targets"] and a["attrib"] is None]
+    pending = [(a, b) for a, b in zip(days, days[1:]) if a["has_targets"] and not a["has_attrib"]]
     if not pending:
         return
     universe = await store.universe()

@@ -579,7 +579,6 @@ export interface TraderLive {
 /** 推送的一帧：ok 是 false 是这一下没问到 sim；还没建账户的只有 userId: null */
 export type TraderLiveFrame = { ts: number; ok: false } | { ts: number; ok: true; userId: null } | ({ ok: true } & TraderLive);
 
-/** 一天：从这天调仓前的净值到下一次调仓前的净值，含调仓手续费和期间的资金费 */
 /** 一条腿这一天按回测口径：价格盈亏、资金费、换仓成本、净、按自己那份资金算的收益率 */
 export interface LegAttrib {
   price: number;
@@ -627,6 +626,7 @@ export interface LegSummary {
   hit: boolean;
 }
 
+/** 一天：从这天调仓前的净值到下一次调仓前的净值，含调仓手续费和期间的资金费 */
 export interface DailyPnl {
   day: string;
   start: number;
