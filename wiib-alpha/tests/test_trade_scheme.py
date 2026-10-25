@@ -92,7 +92,7 @@ def test_targets_split_capital_between_the_legs(planted_store, planted_pool):
     # 上一期组合腿多头里有个现在排第 7 的币（24 个币的头部 2/5 以内）：留着
     kept = signal.index[6]
     listed = dict.fromkeys(panels, 0)
-    out = targets.compute(panels, [PLANTED], np.array([0.03]), {"combo": {"long": [kept]}}, t, PARAMS, True, listed)
+    out = targets.compute(panels, [PLANTED], np.array([0.03]), {"combo": {"long": [kept]}}, t, PARAMS, True, listed, 0.25)
     legs = out["legs"]
     assert legs["combo"]["long"] == sorted([*signal.index[:4], kept])
     for leg in legs.values():
@@ -108,19 +108,25 @@ def test_targets_split_capital_between_the_legs(planted_store, planted_pool):
     weights = np.array([c["weight"] for c in out["coins"].values()])
     assert weights.sum() == pytest.approx(0.0, abs=1e-12) and np.abs(weights).sum() <= 2.0 + 1e-12
     # 一条因子都没勾：组合腿空仓，carry 腿照旧
-    bare = targets.compute(panels, [], np.empty(0), {}, t, PARAMS, True, listed)
+    bare = targets.compute(panels, [], np.empty(0), {}, t, PARAMS, True, listed, 0.25)
     assert bare["legs"]["combo"]["long"] == [] and bare["legs"]["carry"] == legs["carry"]
     # carry 腿停了：空仓，每币只剩组合腿那份
-    off = targets.compute(panels, [PLANTED], np.array([0.03]), {}, t, PARAMS, False, listed)
+    off = targets.compute(panels, [PLANTED], np.array([0.03]), {}, t, PARAMS, False, listed, 0.25)
     assert off["legs"]["carry"] == {"long": [], "short": [], "coins": []}
     assert all(c["carry"] == 0 and c["weight"] == c["combo"] for c in off["coins"].values())
+    # 份额 0：carry 腿照样选币，但每币只有组合腿那份，组合腿占全部资金
+    all_in = targets.compute(panels, [PLANTED], np.array([0.03]), {}, t, PARAMS, True, listed, 0.0)
+    assert all_in["legs"]["carry"] == legs["carry"]
+    assert all(c["carry"] == 0 and c["weight"] == c["combo"] for c in all_in["coins"].values())
+    assert sum(c["combo"] for c in all_in["coins"].values() if c["combo"] > 0) == pytest.approx(1.0)
     # 上市不满一年的币 carry 腿不碰，组合腿照旧
-    young = targets.compute(panels, [PLANTED], np.array([0.03]), {}, t, PARAMS, True, {**listed, "AAA": t - 100 * DAY_MS})
+    young = targets.compute(panels, [PLANTED], np.array([0.03]), {}, t, PARAMS, True, {**listed, "AAA": t - 100 * DAY_MS},
+                            0.25)
     assert "AAA" not in {c["symbol"] for c in young["legs"]["carry"]["coins"]}
     assert "AAA" in {c["symbol"] for c in young["legs"]["combo"]["coins"]}
     # T 那根有数的币不够：不出空目标（那会把仓位全平掉），报错
     with pytest.raises(targets.TradeError):
-        targets.compute(dict(list(panels.items())[:10]), [PLANTED], np.array([0.03]), {}, t, PARAMS, True, listed)
+        targets.compute(dict(list(panels.items())[:10]), [PLANTED], np.array([0.03]), {}, t, PARAMS, True, listed, 0.25)
 
 
 def test_carry_signal_skips_coins_listed_under_a_year(planted_pool):
@@ -141,14 +147,18 @@ def test_carry_signal_skips_coins_listed_under_a_year(planted_pool):
 def test_backtest_and_weights(planted_pool):
     planted = planted_pool.values(PLANTED).f
     basis, vol = planted_pool.values(scheme.CARRY).f, planted_pool.values(scheme.VOL).f
-    with_factor = scheme.backtest(planted_pool, [planted], basis, vol, PARAMS, False)
-    carry_only = scheme.backtest(planted_pool, [], basis, vol, PARAMS, False)
-    assert set(with_factor) == {"periods", "netReturn", "sharpe", "maxDrawdown", "turnover", "carryFundingBps"}
+    with_factor = scheme.backtest(planted_pool, [planted], basis, vol, PARAMS, False, 0.25)
+    carry_only = scheme.backtest(planted_pool, [], basis, vol, PARAMS, False, 0.25)
+    # 份额 1 时组合腿不占资金，有没有因子一样
+    assert scheme.backtest(planted_pool, [planted], basis, vol, PARAMS, False, 1.0)["netReturn"] == pytest.approx(
+        scheme.backtest(planted_pool, [], basis, vol, PARAMS, False, 1.0)["netReturn"])
+    assert set(with_factor) == {"periods", "netReturn", "sharpe", "maxDrawdown", "turnover", "carryFundingBps", "carryShare"}
+    assert with_factor["carryShare"] == 0.25
     assert with_factor["periods"] == carry_only["periods"] > 0 and 0 < with_factor["turnover"] <= 1
     # 埋了信号的组合腿：搜索段比只有 carry 腿好
     assert with_factor["sharpe"] > carry_only["sharpe"] and with_factor["netReturn"] > 0
     assert 0 <= with_factor["maxDrawdown"] < 1
-    held = scheme.backtest(planted_pool, [planted], basis, vol, PARAMS, True)
+    held = scheme.backtest(planted_pool, [planted], basis, vol, PARAMS, True, 0.25)
     # holdout 只算切点之后的点
     assert 0 < held["periods"] <= 10 and held["netReturn"] > 0
     # 交易员的组合权重：全部历史上学的 24h 档，方向跟着因子走
@@ -162,9 +172,9 @@ def test_gain_is_the_change_in_the_scheme_sharpe(planted_pool, planted_vol):
     search = lambda text: planted_pool.values(parse(text, FEATURE_COLUMNS)).f[pick]
     basis = planted_pool.values(scheme.CARRY).f
     empty = scheme.Base.of(Combo.empty(planted_pool.search, planted_pool.symbols), basis[pick], planted_vol[pick],
-                           PARAMS)
+                           PARAMS, 0.25)
     # 库空时基线是只有 carry 的方案，和整段回测一样
-    assert empty.result == scheme.backtest(planted_pool, [], basis, planted_vol, PARAMS, False)
+    assert empty.result == scheme.backtest(planted_pool, [], basis, planted_vol, PARAMS, False, 0.25)
     first = scheme.gain(empty, "planted", search("Mean($volume, 4)"), PARAMS)
     assert first["sharpe"]["base"] == pytest.approx(empty.result["sharpe"]) and first["sharpe"]["gain"] > 0.5
     lib = empty.plus("planted", search("Mean($volume, 4)"), PARAMS)

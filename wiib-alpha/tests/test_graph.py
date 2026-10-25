@@ -16,7 +16,7 @@ from wiib_alpha.trade import scheme
 PARAMS = EvalParams(test_size=96, embargo=4, min_train=500, iterations=200, seed=7, holdout_days=10)
 GATES = Thresholds(min_samples=30)
 FACTS = {"symbols": list(PRODUCTS), "from": "2025-01-01", "to": "2025-03-04", "rows": 6000, "liqFrom": None,
-         "holdoutFrom": "2025-02-22", "costTiers": [5.0, 8.0, 12.0], "poolSize": 80, "poolSymbols": 24}
+         "holdoutFrom": "2025-02-22", "costTiers": [5.0, 8.0, 12.0], "poolSize": 80, "poolSymbols": 24, "carryShare": 0.25}
 
 
 @pytest.fixture
@@ -37,7 +37,7 @@ def ctx_of(planted_pool, planted_vol, planted_grid, planted_panels):
     pick = planted_pool.in_search
     empty = Combo.empty(planted_pool.search, planted_pool.symbols)
     # 库是空的：G9 的基线是只有基差 carry 的交易方案
-    base = scheme.Base.of(empty, planted_pool.values(scheme.CARRY).f[pick], planted_vol[pick], PARAMS)
+    base = scheme.Base.of(empty, planted_pool.values(scheme.CARRY).f[pick], planted_vol[pick], PARAMS, 0.25)
     funding = planted_pool.values(parse("$funding_rate", FEATURE_COLUMNS)).f
 
     def build(store, gen=gen_reply, review=review_blind_to_holdout) -> Context:

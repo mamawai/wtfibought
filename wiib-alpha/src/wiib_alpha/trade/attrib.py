@@ -18,7 +18,7 @@ import numpy as np
 from ..data.binance import BAR_MS, Binance, BinanceError
 from ..data.pool import month_label, month_of, tier_of
 from ..eval.params import EvalParams
-from .scheme import SHARES
+from .scheme import CARRY_SHARE
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +91,12 @@ def attribute(run: Mapping[str, Any], next_run: Mapping[str, Any], prev_targets:
         unit = params.costs[tiers_.get(s, 3) - 1]
         for leg in LEGS:
             legs[leg]["cost"] += abs(now_w.get(s, {}).get(leg, 0.0) - prev_w.get(s, {}).get(leg, 0.0)) * unit * equity
+    # 老记录没记份额，按当时定死的 1/4；份额 0 的腿没有资金，收益率记 0
+    carry_share = run["targets"].get("carryShare", CARRY_SHARE)
+    shares = {"combo": 1 - carry_share, "carry": carry_share}
     for leg, x in legs.items():
         x["net"] = x["price"] + x["funding"] - x["cost"]
-        x["ret"] = x["net"] / (equity * SHARES[leg])
+        x["ret"] = x["net"] / (equity * shares[leg]) if shares[leg] else 0.0
     model = sum(x["net"] for x in legs.values())
     actual = next_run["equity_before"] - equity
     return {"until": next_run["day"], "actual": actual, "model": model, "residual": actual - model, "legs": legs,

@@ -59,6 +59,21 @@ def test_first_day_has_no_previous_targets_and_pays_to_open_everything():
     assert out["model"] == pytest.approx(-3.2) and out["residual"] == pytest.approx(3.2)
 
 
+def test_leg_returns_use_the_share_recorded_that_day():
+    nxt = run("2025-03-03", DAY + DAY_MS - 1, 10000.0, {})
+    half = run("2025-03-02", DAY - 1, 10000.0, {"A": (0.5, 0.5)})
+    half["targets"]["carryShare"] = 0.5
+    out = attrib.attribute(half, nxt, None, {"A": (100.0, 110.0)}, {"A": 0.0}, {"A": 1}, PARAMS)
+    assert out["legs"]["combo"]["ret"] == pytest.approx(out["legs"]["combo"]["net"] / 5000)
+    assert out["legs"]["carry"]["ret"] == pytest.approx(out["legs"]["carry"]["net"] / 5000)
+    # 份额 0 的腿没有资金，收益率记 0
+    none = run("2025-03-02", DAY - 1, 10000.0, {"A": (1.0, 0.0)})
+    none["targets"]["carryShare"] = 0.0
+    out = attrib.attribute(none, nxt, None, {"A": (100.0, 110.0)}, {"A": 0.0}, {"A": 1}, PARAMS)
+    assert out["legs"]["carry"]["ret"] == 0.0
+    assert out["legs"]["combo"]["ret"] == pytest.approx(out["legs"]["combo"]["net"] / 10000)
+
+
 def test_inputs_take_the_0015_closes_and_the_settlements_in_between():
     fake = FakeFapi(["AAA", "BBB"], DAY + 2 * DAY_MS)
     today = run("2025-03-02", DAY - 1, 10000.0, {"AAA": (0.2, 0.0), "BBB": (0.0, -0.1), "GONE": (0.1, 0.0)})

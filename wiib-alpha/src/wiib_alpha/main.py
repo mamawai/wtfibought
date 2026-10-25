@@ -130,8 +130,8 @@ class Library:
     exprs: dict[str, str]
 
 
-def build_library(data: Data, factors: list[dict[str, Any]], params: EvalParams) -> Library:
-    """在役的每条因子全池求值一遍（全量骨架），搜索段的组合从里面切"""
+def build_library(data: Data, factors: list[dict[str, Any]], params: EvalParams, carry_share: float) -> Library:
+    """在役的每条因子全池求值一遍（全量骨架），搜索段的组合从里面切；carry_share 是 G9 基线里 carry 腿的份额"""
     pool = data.pool
     full = combo.Combo.empty(pool.rows, pool.symbols)
     for f in factors:
@@ -147,7 +147,7 @@ def build_library(data: Data, factors: list[dict[str, Any]], params: EvalParams)
             **combo.latest(full, data.vol, params),
         }
     known = data.reference_canonicals | {f["canonical"] for f in factors}
-    base = scheme.Base.of(search, data.basis[pool.in_search], vol, params)
+    base = scheme.Base.of(search, data.basis[pool.in_search], vol, params, carry_share)
     return Library(factors, known, base, report, full, {f"lib:{f['name']}": f["expr"] for f in factors})
 
 
@@ -318,33 +318,34 @@ async def _graph(app: FastAPI):
     ctx = Context(gen=gen, review=review, pool=data.pool, vol=data.vol, funding=data.funding, products=data.products,
                   reference_grid=data.reference_grid, base=lib.base, observing=obs,
                   peer_exprs={**lib.exprs, **obs_exprs}, known=lib.known | observing, library=library,
-                  facts=data.facts, store=app.state.store, params=app.state.params, thresholds=app.state.thresholds,
-                  evaluating=app.state.evaluating)
+                  facts={**data.facts, "carryShare": lib.base.carry_share}, store=app.state.store,
+                  params=app.state.params, thresholds=app.state.thresholds, evaluating=app.state.evaluating)
     return build_graph(ctx)
 
 
-def _library_key(data: Data, factors: list[dict[str, Any]]) -> tuple:
-    """库缓存的键：数据和在役因子都没变才算同一份"""
-    return data.loaded_at, tuple(f["id"] for f in factors)
+def _library_key(data: Data, factors: list[dict[str, Any]], carry_share: float) -> tuple:
+    """库缓存的键：数据、在役因子、carry 份额都没变才算同一份"""
+    return data.loaded_at, tuple(f["id"] for f in factors), carry_share
 
 
 async def _library(app: FastAPI) -> Library:
-    """库或数据变了才重算；同时来几个请求只算一次"""
+    """库、数据或 carry 份额变了才重算；同时来几个请求只算一次"""
     data: Data = _data(app)
     async with app.state.library_lock:
         factors = await app.state.store.factors()
-        key = _library_key(data, factors)
+        share = (await app.state.store.carry())["share"]
+        key = _library_key(data, factors, share)
         cache = app.state.library
         if cache is None or cache[0] != key:
-            cache = (key, await asyncio.to_thread(build_library, data, factors, app.state.params))
+            cache = (key, await asyncio.to_thread(build_library, data, factors, app.state.params, share))
             app.state.library = cache
     return cache[1]
 
 
-def _library_if_ready(app: FastAPI, factors: list[dict[str, Any]]) -> Library | None:
+def _library_if_ready(app: FastAPI, factors: list[dict[str, Any]], carry_share: float) -> Library | None:
     """现成的库；库变了还没算完就起后台算、先给 None：列表接口不能卡着等几分钟"""
     cache = app.state.library
-    if cache is not None and cache[0] == _library_key(_data(app), factors):
+    if cache is not None and cache[0] == _library_key(_data(app), factors, carry_share):
         return cache[1]
     task = app.state.library_task
     if task is None or task.done():
@@ -661,23 +662,26 @@ async def observation(request: Request):
     app = request.app
     rows = await app.state.store.observing()
     cut = app.state.data.cut_ms if app.state.data is not None else None
+    share = (await app.state.store.carry())["share"]
     items = []
     for c in rows:
-        ok, why = admission(c, cut, app.state.thresholds)
+        ok, why = admission(c, cut, share, app.state.thresholds)
         items.append({**brief(c), "run_id": c["run_id"], "created_at": c["run_created_at"], "updated_at": c["updated_at"],
                       "reeval": _reeval_view(c["reeval"]), "admission": {"ok": ok, "reason": why}})
     return _ok({"items": items, "reeval": app.state.runs.jobs["reeval"]})
 
 
-def admission(c: dict[str, Any], cut_ms: int | None, t: Thresholds) -> tuple[bool, str]:
-    """入库条件，不留人工 override：在当前这版数据上复评过且全过门，它没见过那段（发现那轮的切点起，复评时算的）
+def admission(c: dict[str, Any], cut_ms: int | None, carry_share: float, t: Thresholds) -> tuple[bool, str]:
+    """入库条件，不留人工 override：在当前这版数据、当前 carry 份额上复评过且全过门，它没见过那段（发现那轮的切点起，复评时算的）
     主档截面 IC 和搜索段同号、至少 admit_min_points 个时刻、逐点 IC 的 |均值 / 标准误| ≥ admit_t_min。
-    数据刷新过切点就变了，得重新复评；没到门槛的留在观察区，之后每次刷新自动再复评一遍，攒够了自然过"""
+    数据刷新过切点就变了、份额改过 G9 基线就变了，都得重新复评；没到门槛的留在观察区，之后每次刷新自动再复评一遍，攒够了自然过"""
     r = c.get("reeval")
     if cut_ms is None:
         return False, "还没装载数据"
     if r is None or r["eval"]["holdout"]["since"] != cut_ms:
         return False, "还没在当前这版数据上复评"
+    if (r["eval"].get("gain") or {}).get("carryShare") != carry_share:
+        return False, "份额改过，还没按现在的份额复评"
     if not r["passed"]:
         return False, f"复评没过门：{r['reason']}"
     ev = r["eval"]
@@ -807,7 +811,8 @@ async def _reeval(app: FastAPI, data: Data, rows: list[dict[str, Any]], job: dic
 async def _declare(app: FastAPI, data: Data, c: dict[str, Any], lang: str) -> int:
     """老候选补声明方向：只给假设、表达式和公式说明，不给任何数字"""
     gen = app.state.models[0]
-    obj = await ask_json(gen, prompts.system_gen(data.facts, lang), prompts.direction_message(c), prompts.parse_object)
+    facts = {**data.facts, "carryShare": (await app.state.store.carry())["share"]}
+    obj = await ask_json(gen, prompts.system_gen(facts, lang), prompts.direction_message(c), prompts.parse_object)
     direction = parse_direction((obj or {}).get("direction"))
     if direction is None:
         raise LlmError(f"{c['name']}：生成模型没给出合法的方向")
@@ -823,7 +828,7 @@ async def approve(candidate_id: str, request: Request):
     c = await store.candidate(candidate_id)
     if c is None:
         raise HTTPException(404, "没有这个候选")
-    ok, why = admission(c, _data(app).cut_ms, app.state.thresholds)
+    ok, why = admission(c, _data(app).cut_ms, (await store.carry())["share"], app.state.thresholds)
     if not ok:
         raise HTTPException(409, f"还不能入库：{why}")
     # 检查与置位一条 UPDATE：入库、丢弃同时点，只有一个能抢到
@@ -915,7 +920,7 @@ async def library(request: Request):
     app = request.app
     store: Store = app.state.store
     factors = await store.factors()
-    lib = _library_if_ready(app, factors) if app.state.data is not None else None
+    lib = _library_if_ready(app, factors, (await store.carry())["share"]) if app.state.data is not None else None
     return _ok({"factors": [_factor_view(f, full=False) for f in factors], "combo": lib.report if lib else None,
                 "computing": app.state.data is not None and lib is None,
                 "retired": [_factor_view(f, full=False) for f in await store.retired_factors()],
@@ -1056,7 +1061,7 @@ async def _library_reeval(app: FastAPI, data: Data, lib: Library, job: dict[str,
             direction = await _declare(app, data, f, lang)
         others = combo.Combo(search.rows, search.symbols, search.names[:j] + search.names[j + 1:],
                              np.delete(search.values, j, axis=1))
-        base = await asyncio.to_thread(scheme.Base.of, others, basis, vol, params)
+        base = await asyncio.to_thread(scheme.Base.of, others, basis, vol, params, lib.base.carry_share)
         exprs = {**{k: v for k, v in lib.exprs.items() if k != f"lib:{f['name']}"}, **obs_exprs}
         ev = await asyncio.to_thread(evaluate, parse(f["expr"], FEATURE_COLUMNS), pool, data.vol, params,
                                      data.reference_grid, base, data.products, True, observing, peer_exprs=exprs)
@@ -1238,7 +1243,10 @@ class TraderFactor(BaseModel):
 
 
 class TraderCarry(BaseModel):
-    enabled: bool
+    """没给的那项不改"""
+    enabled: bool | None = None
+    # carry 腿占资金的比例，0 到 1
+    share: float | None = Field(default=None, ge=0, le=1)
 
 
 @public.get("/trader/account")
@@ -1348,9 +1356,20 @@ async def trader_factors(request: Request):
 
 @router.put("/trader/carry")
 async def trader_carry(body: TraderCarry, request: Request):
-    """开或停 carry 腿，从下一次调仓起生效；停了那 1/4 资金闲着，不挪给组合腿"""
-    store: Store = request.app.state.store
-    await store.set_carry(body.enabled)
+    """开或停 carry 腿、改它占资金的比例，从下一次调仓起生效；停了那份资金闲着，不挪给组合腿。
+    份额也是回测和 G9 基线的份额：campaign、复评、对比跑着时不改，免得基线中途变；改完库和观察区要复评。
+    改了份额库缓存整个作废，先在后台算好，别留给 00:05 的调仓现算"""
+    app = request.app
+    store: Store = app.state.store
+    if body.share is not None:
+        if await store.active_campaign() is not None or app.state.runs.tasks:
+            raise HTTPException(409, "有 campaign 在跑，等它结束再改份额")
+        for name, text in (("libraryReeval", "库里因子还在复评"), ("reeval", "观察区还在复评"), ("compare", "因子对比还在跑")):
+            if app.state.runs.jobs[name].get("running"):
+                raise HTTPException(409, f"{text}，等它算完再改份额")
+    await store.set_carry(body.enabled, body.share)
+    if body.share is not None and app.state.data is not None:
+        asyncio.create_task(_warm(app))
     return _ok(await store.carry())
 
 
@@ -1416,7 +1435,7 @@ async def _compare(app: FastAPI, factor_id: str, job: dict[str, Any]) -> dict[st
 
     async def run(ids: list[str], holdout: bool) -> dict[str, Any]:
         values = [lib.full.values[:, index[i]] for i in ids]
-        return await asyncio.to_thread(scheme.backtest, pool, values, basis, vol, params, holdout)
+        return await asyncio.to_thread(scheme.backtest, pool, values, basis, vol, params, holdout, lib.base.carry_share)
 
     job["stage"] = "search"
     out: dict[str, Any] = {"action": "add" if adding else "remove",

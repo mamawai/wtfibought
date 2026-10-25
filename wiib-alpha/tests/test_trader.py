@@ -193,16 +193,26 @@ async def test_two_days_of_rebalancing_and_the_pages_that_show_it(client, trader
 
 async def test_carry_leg_can_be_switched_off_and_its_share_stays_idle(client, trader):
     fake, market = trader
-    assert data(await client.get("/api/alpha/trader/factors", headers=ADMIN))["carry"] == {"enabled": True, "changedAt": None}
+    assert data(await client.get("/api/alpha/trader/factors", headers=ADMIN))["carry"] == {
+        "enabled": True, "share": 0.25, "changedAt": None}
     assert (await client.put("/api/alpha/trader/carry", json={"enabled": False},
                              headers={"satoken": "user"})).status_code == 403
     off = data(await client.put("/api/alpha/trader/carry", json={"enabled": False}, headers=ADMIN))
     assert off["enabled"] is False and off["changedAt"] is not None
+    # 份额单独改，开关不动；超出 0 到 1 的拒绝
+    tenth = data(await client.put("/api/alpha/trader/carry", json={"share": 0.1}, headers=ADMIN))
+    assert (tenth["enabled"], tenth["share"]) == (False, 0.1)
+    assert (await client.put("/api/alpha/trader/carry", json={"share": 1.5}, headers=ADMIN)).status_code == 422
+    # 库复评跑着时改份额会让它后半截按旧基线算：拒
+    m.app.state.runs.jobs["libraryReeval"]["running"] = True
+    assert (await client.put("/api/alpha/trader/carry", json={"share": 0.2}, headers=ADMIN)).status_code == 409
+    m.app.state.runs.jobs["libraryReeval"]["running"] = False
     await scheduler.rebalance(m.app, m._library, NOW)
     run = await m.app.state.store.trade_run("2025-03-01")
     assert run["status"] == "done", run["error"]
-    # carry 腿空仓
-    assert run["targets"]["carry"] is False and run["legs"]["carry"] == {"long": [], "short": []}
+    # carry 腿空仓，那天记下的份额是改过的
+    assert run["targets"]["carry"] is False and run["targets"]["carryShare"] == 0.1
+    assert run["legs"]["carry"] == {"long": [], "short": []}
     assert data(await client.get("/api/alpha/trader/factors", headers=ADMIN))["carry"]["enabled"] is False
 
 

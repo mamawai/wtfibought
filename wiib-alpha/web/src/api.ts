@@ -646,9 +646,10 @@ export interface TraderDaily {
   legs: Record<TradeLeg, LegSummary>;
 }
 
-/** carry 腿的开关；没改过 changedAt 是 null */
+/** carry 腿的开关和占资金的比例（0 到 1，组合腿占其余）；没改过 changedAt 是 null */
 export interface TraderCarry {
   enabled: boolean;
+  share: number;
   changedAt: number | null;
 }
 
@@ -716,8 +717,10 @@ export interface TradeRunDetail extends TradeRunBrief {
   userId: number | null;
   factors: { id: string; name: string; expr: string; weight: number }[];
   legs: Record<TradeLeg, { long: string[]; short: string[] }> | null;
-  /** carry 是那天 carry 腿开没开；有开关之前的记录没有这个字段 */
-  targets: { coins: TradeCoin[]; signals: Record<TradeLeg, LegSignal[]>; notTrading: string[]; carry?: boolean } | null;
+  /** carry 是那天 carry 腿开没开，carryShare 是那天的份额；有开关、份额之前的记录没有这两个字段 */
+  targets: {
+    coins: TradeCoin[]; signals: Record<TradeLeg, LegSignal[]>; notTrading: string[]; carry?: boolean; carryShare?: number;
+  } | null;
   orders: TradeOrder[];
   attrib: DayAttrib | null;
 }
@@ -741,6 +744,8 @@ export interface SchemeResult {
   turnover: number | null;
   /** carry 腿每期平均资金费 bps，正数是收 */
   carryFundingBps: number | null;
+  /** 这次回测 carry 腿占的资金比例 */
+  carryShare: number;
 }
 
 export interface CompareSide {
@@ -919,8 +924,8 @@ export const alpha = {
   /** 勾上或取消，下一次调仓起生效；live 补不出来的列是 409 */
   selectTraderFactor: (id: string, selected: boolean) =>
     call<{ id: string; selected: boolean }>('PUT', `${ALPHA}/trader/factors/${id}`, { selected }),
-  /** 开或停 carry 腿，下一次调仓起生效；停了那 1/4 资金闲着 */
-  setTraderCarry: (enabled: boolean) => call<TraderCarry>('PUT', `${ALPHA}/trader/carry`, { enabled }),
+  /** 开或停 carry 腿、改它占的资金比例，下一次调仓起生效；停了那份资金闲着。份额也是回测和 G9 基线的份额，有 campaign 或复评在跑时改不了 */
+  setTraderCarry: (body: { enabled?: boolean; share?: number }) => call<TraderCarry>('PUT', `${ALPHA}/trader/carry`, body),
   /** 后台比"当前勾选"和"加上 / 去掉这条"，进度看 traderFactors().compare */
   compareTraderFactor: (id: string) => call<{ started: boolean }>('POST', `${ALPHA}/trader/compare/${id}`),
 };

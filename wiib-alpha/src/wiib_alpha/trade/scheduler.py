@@ -142,12 +142,12 @@ async def rebalance(app: FastAPI, library: Library, now: int) -> None:
                               "weight": float(w)} for j, w in zip(cols, weights)]
         board = await board_factors(app, lib)
         held = await store.last_trade_legs() or {}
-        carry = (await store.carry())["enabled"]
+        setting = await store.carry()
         listed = {s: int(v) for s, v in zip(data.pool.symbols, data.pool.listed)}
         exprs = [parse(lib.factors[j]["expr"], FEATURE_COLUMNS) for j in cols]
         await asyncio.to_thread(_rebalance, app.state.fapi, app.state.sim, data.pool.store, pool,
-                                universe_table.months_by_symbol(table), exprs, weights, carry, listed, held,
-                                app.state.params, now, record, job, board, list(data.products))
+                                universe_table.months_by_symbol(table), exprs, weights, setting["enabled"], setting["share"],
+                                listed, held, app.state.params, now, record, job, board, list(data.products))
     except Exception as exc:
         logger.exception("调仓失败")
         record["error"] = str(exc)[:500]
@@ -159,7 +159,7 @@ async def rebalance(app: FastAPI, library: Library, now: int) -> None:
 
 def _rebalance(binance: Binance, sim: executor.Sim, store: PanelStore, pool: Sequence[str],
                months: Mapping[str, frozenset[str]], factors: Sequence[Expr], weights: np.ndarray, carry: bool,
-               listed: Mapping[str, int], held: Mapping[str, Any], params: EvalParams, now: int,
+               carry_share: float, listed: Mapping[str, int], held: Mapping[str, Any], params: EvalParams, now: int,
                record: dict[str, Any], job: dict[str, Any], board: Sequence[Mapping[str, Any]],
                products: Sequence[str]) -> None:
     """在线程里跑；做到哪一步就往 record 里记到哪一步，中途出错外面照样落库。下完单再用同一批面板算看板"""
@@ -175,7 +175,7 @@ def _rebalance(binance: Binance, sim: executor.Sim, store: PanelStore, pool: Seq
     live.update(store, binance, sorted({*trading, BENCHMARK}), now, job)
     job["stage"] = "targets"
     panels = live.window(live.loader(store, signal_ms), trading, months, signal_ms)
-    out = targets.compute(panels, factors, weights, held, signal_ms, params, carry, listed)
+    out = targets.compute(panels, factors, weights, held, signal_ms, params, carry, listed, carry_share)
     job["stage"] = "waiting"
     time.sleep(max(0.0, (signal_ms + 1 + TRADE_AT_MS - now_ms()) / 1000))
     # 01:00 前开始的重试，补数据、算目标拖过了 01:00 的，这一天也跳过
@@ -190,7 +190,7 @@ def _rebalance(binance: Binance, sim: executor.Sim, store: PanelStore, pool: Seq
     for row in coins:
         row.update({k: out["coins"].get(row["symbol"], {}).get(k, 0.0) for k in targets.SIGNS})
     record["targets"] = {"coins": coins, "signals": {name: leg["coins"] for name, leg in out["legs"].items()},
-                         "notTrading": [s for s in pool if s not in trading], "carry": carry}
+                         "notTrading": [s for s in pool if s not in trading], "carry": carry, "carryShare": carry_share}
     # 开始下单才记这一期的多空集合：下一期的缓冲按它算
     record["legs"] = {name: {"long": leg["long"], "short": leg["short"]} for name, leg in out["legs"].items()}
     executor.execute(sim, user_id, orders, record["orders"])

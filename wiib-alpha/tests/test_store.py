@@ -125,12 +125,18 @@ async def test_open_adds_new_columns_to_old_tables(tmp_path):
         deadline_ms INTEGER, done_rounds INTEGER NOT NULL DEFAULT 0, survivors INTEGER NOT NULL DEFAULT 0,
         stop_reason TEXT, error TEXT)""")
     conn.execute("INSERT INTO campaign(id, created_at, status, rounds, k, lang) VALUES ('oldc', 1, 'done', 3, 1, 'zh')")
+    # 份额之前建的 carry 开关表，关着
+    conn.execute("CREATE TABLE trade_carry(id INTEGER PRIMARY KEY CHECK (id = 1), enabled INTEGER NOT NULL, "
+                 "changed_at INTEGER NOT NULL)")
+    conn.execute("INSERT INTO trade_carry VALUES (1, 0, 5)")
     conn.commit()
     conn.close()
     for _ in range(2):  # 第二次 open 不再加
         s = await Store.open(str(path))
         columns = [r["name"] for r in await s.db.execute_fetchall("PRAGMA table_info(run)")]
         assert columns.count("campaign_id") == 1 and columns.count("cut_ms") == 1
+        # 补上份额列，老行按默认 1/4，开关照旧
+        assert await s.carry() == {"enabled": False, "share": 0.25, "changedAt": 5}
         assert (await s.run("old"))["campaign_id"] is None and (await s.run("old"))["cut_ms"] is None
         columns = [r["name"] for r in await s.db.execute_fetchall("PRAGMA table_info(campaign)")]
         assert columns.count("gen_model") == 1 and columns.count("review_model") == 1

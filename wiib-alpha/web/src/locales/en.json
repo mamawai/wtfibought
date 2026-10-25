@@ -422,7 +422,7 @@
   },
   "trader": {
     "title": "Trader account",
-    "hint": "Paper account quant-factor: every day it signals on the 15m bar closing at 00:00 UTC and rebalances the whole basket at 00:15 — three quarters of the capital on the combo of the selected factors, a quarter on basis carry (skipping coins listed under a year), both sides sized by inverse volatility with no coin above twice the side's average, 4x cross market orders, no stops. The paper venue is optimistic: 0.04% fees and no slippage; the backtest fills one bar later at 5 / 8 / 12 bps per side.",
+    "hint": "Paper account quant-factor: every day it signals on the 15m bar closing at 00:00 UTC and rebalances the whole basket at 00:15 — capital split between the combo of the selected factors and basis carry (skipping coins listed under a year) by the carry share set below, both sides sized by inverse volatility with no coin above twice the side's average, 4x cross market orders, no stops. The paper venue is optimistic: 0.04% fees and no slippage; the backtest fills one bar later at 5 / 8 / 12 bps per side.",
     "noAccount": "No rebalance yet: the account is created on the first one.",
     "equity": "Equity",
     "balance": "Balance",
@@ -483,9 +483,13 @@
       "fund": "Funding sum",
       "pnl": "{{leg}} P&L"
     },
-    "carryExpr": "basis_7d = Mean($premium, 672), direction fixed at −1 (short the rich premium), skipping coins listed under a year, 1/4 of capital. Switched off, that quarter sits idle and is not given to the combo leg.",
+    "carryExpr": "basis_7d = Mean($premium, 672), direction fixed at −1 (short the rich premium), skipping coins listed under a year. Its share of capital is set below, the combo leg takes the rest; switched off, that share sits idle and is not given to the combo leg.",
     "carryOff": "Off: the carry leg holds nothing from the next rebalance on",
     "carryOffBadge": "carry leg off",
+    "carryShare": "Share of capital",
+    "carryShareSave": "Save share",
+    "carryShareHint": "also the share used by backtests and the G9 baseline: re-evaluate the library and the observation list after changing it and recalibrate the G9 line; locked while a campaign or a re-evaluation runs",
+    "carryShareBadge": "carry share {{pct}}",
     "positions": "Open positions",
     "positionsHint": "Leg split: target notional each leg gave this coin in the {{day}} rebalance (signed).",
     "positionsEmpty": "No open positions.",

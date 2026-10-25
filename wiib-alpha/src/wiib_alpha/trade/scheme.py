@@ -1,4 +1,4 @@
-"""交易方案的回测：组合腿占 3/4、基差 carry 腿占 1/4，24h 调仓、每边按波动分仓、晚一根成交（选方案时那段脚本收进来）。
+"""交易方案的回测：组合腿和基差 carry 腿按 carry 份额分资金（页面上设，默认 1/4），24h 调仓、每边按波动分仓、晚一根成交（选方案时那段脚本收进来）。
 
 骨架就是挖掘装载的那份（晚一根成交：信号那根收盘后再过一根才建仓，资金费从建仓那刻起算）。
 组合腿：勾选因子先转截面秩再 z 分数，按 24h 档学到的权重加权（combo 那一套：符号跟 IC，大小是单独做多空腿的净收益，
@@ -33,8 +33,8 @@ from ..store import snapshot
 
 # 24h 调仓
 BARS = HORIZON_BARS[24]
-# 每条腿占净值的比例
-SHARES = {"combo": 0.75, "carry": 0.25}
+# carry 腿占净值的比例，没设过是这个数，组合腿占其余；线上的份额存 trade_carry.share
+CARRY_SHARE = 0.25
 CARRY = parse(reference.KNOWN_EFFECTS["basis_7d"][0], FEATURE_COLUMNS)
 # carry 腿不碰上市不满这么多天的币
 CARRY_MIN_DAYS = 365
@@ -98,24 +98,24 @@ def combo_signal(rows: pd.DataFrame, symbols: tuple[str, ...], values: Sequence[
 
 
 def backtest(pool: Pool, values: Sequence[np.ndarray], basis: np.ndarray, vol: np.ndarray, params: EvalParams,
-             holdout: bool) -> dict[str, Any]:
+             holdout: bool, carry_share: float) -> dict[str, Any]:
     """values（每条勾选因子）、basis、vol 是全量骨架上的值。搜索段只用 cut 之前的数据走 walk-forward，holdout 只看 cut 之后"""
     if holdout:
-        return run(pool.rows, pool.symbols, values, basis, vol, params, pool.cut_ms)
+        return run(pool.rows, pool.symbols, values, basis, vol, params, pool.cut_ms, carry_share)
     pick = pool.in_search
-    return run(pool.search, pool.symbols, [v[pick] for v in values], basis[pick], vol[pick], params, None)
+    return run(pool.search, pool.symbols, [v[pick] for v in values], basis[pick], vol[pick], params, None, carry_share)
 
 
 def run(rows: pd.DataFrame, symbols: tuple[str, ...], values: Sequence[np.ndarray], basis: np.ndarray, vol: np.ndarray,
-        params: EvalParams, since: int | None) -> dict[str, Any]:
-    """values、basis、vol 与 rows 对齐；since 不给是 walk-forward，给了是 holdout（只算它之后、组合腿方向定 +1）。
-    出净收益、年化 Sharpe、最大回撤、换手、carry 腿每期资金费"""
+        params: EvalParams, since: int | None, carry_share: float) -> dict[str, Any]:
+    """values、basis、vol 与 rows 对齐；since 不给是 walk-forward，给了是 holdout（只算它之后、组合腿方向定 +1）；
+    carry_share 是 carry 腿占的资金比例，组合腿占其余。出净收益、年化 Sharpe、最大回撤、换手、carry 腿每期资金费"""
     signal = combo_signal(rows, symbols, values, vol, params, since)
     a = leg(rows, signal, vol, params, None if since is None else 1.0, since)
     b = leg(rows, basis, vol, params, -1.0, since)
     active = a.active & b.active
-    net = (SHARES["combo"] * a.net + SHARES["carry"] * b.net)[active]
-    traded = (SHARES["combo"] * a.traded + SHARES["carry"] * b.traded)[active]
+    net = ((1 - carry_share) * a.net + carry_share * b.net)[active]
+    traded = ((1 - carry_share) * a.traded + carry_share * b.traded)[active]
     curve = np.cumprod(np.concatenate(([1.0], 1 + net)))
     return {
         "periods": int(active.sum()),
@@ -126,6 +126,7 @@ def run(rows: pd.DataFrame, symbols: tuple[str, ...], values: Sequence[np.ndarra
         "turnover": float(np.mean(traded) / 4) if net.size else np.nan,
         # carry 腿每期平均资金费 bps，正数是收
         "carryFundingBps": float(np.mean(b.funding[active]) * 1e4) if net.size else np.nan,
+        "carryShare": carry_share,
     }
 
 
@@ -135,27 +136,29 @@ class Base:
     combo: combo.Combo
     basis: np.ndarray
     vol: np.ndarray
+    # carry 腿占的资金比例
+    carry_share: float
     result: dict[str, Any]
 
     @classmethod
-    def of(cls, library: combo.Combo, basis: np.ndarray, vol: np.ndarray, params: EvalParams) -> "Base":
-        return cls(library, basis, vol, _search(library, basis, vol, params))
+    def of(cls, library: combo.Combo, basis: np.ndarray, vol: np.ndarray, params: EvalParams, carry_share: float) -> "Base":
+        return cls(library, basis, vol, carry_share, _search(library, basis, vol, params, carry_share))
 
     def plus(self, name: str, f: np.ndarray, params: EvalParams) -> "Base":
         """组合腿再加一条（f 与 rows 对齐）"""
-        return Base.of(self.combo.plus(name, f), self.basis, self.vol, params)
+        return Base.of(self.combo.plus(name, f), self.basis, self.vol, params, self.carry_share)
 
 
 def gain(base: Base, name: str, f: np.ndarray, params: EvalParams) -> dict[str, Any]:
     """G9：f 加进组合腿后，交易方案搜索段的年化净 Sharpe、净收益比基线变了多少；Sharpe 算不出来（一期都没有）按 0"""
-    after = _search(base.combo.plus(name, f), base.basis, base.vol, params)
+    after = _search(base.combo.plus(name, f), base.basis, base.vol, params, base.carry_share)
     before, with_ = float(np.nan_to_num(base.result["sharpe"])), float(np.nan_to_num(after["sharpe"]))
-    return {"sharpe": {"base": before, "with": with_, "gain": with_ - before},
+    return {"sharpe": {"base": before, "with": with_, "gain": with_ - before}, "carryShare": base.carry_share,
             "netReturn": {"base": base.result["netReturn"], "with": after["netReturn"]}}
 
 
-def _search(c: combo.Combo, basis: np.ndarray, vol: np.ndarray, params: EvalParams) -> dict[str, Any]:
-    return run(c.rows, c.symbols, [c.values[:, j] for j in range(len(c.names))], basis, vol, params, None)
+def _search(c: combo.Combo, basis: np.ndarray, vol: np.ndarray, params: EvalParams, carry_share: float) -> dict[str, Any]:
+    return run(c.rows, c.symbols, [c.values[:, j] for j in range(len(c.names))], basis, vol, params, None, carry_share)
 
 
 def learned_weights(pool: Pool, values: Sequence[np.ndarray], vol: np.ndarray, params: EvalParams) -> np.ndarray:
@@ -173,14 +176,15 @@ def learned_signs(pool: Pool, values: Sequence[np.ndarray], params: EvalParams) 
 # ========== 命令行 ==========
 
 
-def read_db(path: str) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
-    """币池表，和交易员勾选且还在库里的因子"""
+def read_db(path: str) -> tuple[pd.DataFrame, list[dict[str, Any]], float]:
+    """币池表、交易员勾选且还在库里的因子、carry 腿的份额"""
     with snapshot(path) as db:
         universe = pd.read_sql("SELECT month, symbol, rank, avg_quote_volume FROM universe", db)
         factors = [{"id": r[0], "name": r[1], "expr": r[2]} for r in db.execute(
             """SELECT f.id, f.name, f.expr FROM factor f JOIN trade_factor t ON t.factor_id = f.id
                ORDER BY f.approved_at DESC""")]
-    return universe, factors
+        row = db.execute("SELECT share FROM trade_carry WHERE id = 1").fetchone()
+    return universe, factors, float(row[0]) if row else CARRY_SHARE
 
 
 def _line(label: str, r: dict[str, Any]) -> str:
@@ -194,16 +198,17 @@ def main() -> None:
     args = parser.parse_args()
     cfg = config()
     params = EvalParams(cost_tiers_bps=cfg.cost_tiers_bps)
-    universe, factors = read_db(cfg.db_path)
+    universe, factors, share = read_db(cfg.db_path)
     store = PanelStore(cfg.data_dir)
     # 切点与服务装载时一样：产品币面板最后一根往前数 holdout_days 天
     cut = holdout_cut({s: store.load(s, ["close"]) for s in cfg.symbols if store.has(s)}, params.holdout_days)
     pool = Pool.load(store, universe, cut, args.delay)
-    print(f"因子：{', '.join(f['name'] for f in factors) or '（没有勾选，组合腿空仓）'}；晚 {args.delay} 根成交", flush=True)
+    print(f"因子：{', '.join(f['name'] for f in factors) or '（没有勾选，组合腿空仓）'}；carry 腿占 {share:.0%}；晚 {args.delay} 根成交",
+          flush=True)
     values = [pool.values(parse(f["expr"], FEATURE_COLUMNS)).f for f in factors]
     basis, vol = carry_signal(pool), pool.values(VOL).f
-    print(_line("搜索段（walk-forward 样本外）", backtest(pool, values, basis, vol, params, False)), flush=True)
-    print(_line(f"holdout（{np.datetime64(cut, 'ms')} 之后）", backtest(pool, values, basis, vol, params, True)))
+    print(_line("搜索段（walk-forward 样本外）", backtest(pool, values, basis, vol, params, False, share)), flush=True)
+    print(_line(f"holdout（{np.datetime64(cut, 'ms')} 之后）", backtest(pool, values, basis, vol, params, True, share)))
 
 
 if __name__ == "__main__":

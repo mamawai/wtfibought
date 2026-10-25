@@ -83,9 +83,10 @@ SCHEMA = [
         short_notional REAL NOT NULL)""",
     # 交易员勾选的因子
     "CREATE TABLE IF NOT EXISTS trade_factor(factor_id TEXT PRIMARY KEY, selected_at INTEGER NOT NULL)",
-    # carry 腿的开关，一行；没有这行是开着
+    # carry 腿的开关和占资金的比例，一行；没有这行是开着、占 1/4
     """CREATE TABLE IF NOT EXISTS trade_carry(
-        id INTEGER PRIMARY KEY CHECK (id = 1), enabled INTEGER NOT NULL, changed_at INTEGER NOT NULL)""",
+        id INTEGER PRIMARY KEY CHECK (id = 1), enabled INTEGER NOT NULL, share REAL NOT NULL DEFAULT 0.25,
+        changed_at INTEGER NOT NULL)""",
 ]
 
 _JSON_COLUMNS = {"eval_json": "eval", "gates_json": "gates", "review_json": "review", "data_json": "data",
@@ -97,7 +98,8 @@ _ADDED_COLUMNS = {"campaign": {"gen_model": "TEXT", "review_model": "TEXT"},
                   "run": {"campaign_id": "TEXT", "cut_ms": "INTEGER"},
                   "candidate": {"direction": "INTEGER", "reeval_json": "TEXT"},
                   "factor": {"reeval_json": "TEXT", "retired_at": "INTEGER", "retire_reason": "TEXT"},
-                  "trade_run": {"board_json": "TEXT", "attrib_json": "TEXT"}}
+                  "trade_run": {"board_json": "TEXT", "attrib_json": "TEXT"},
+                  "trade_carry": {"share": "REAL NOT NULL DEFAULT 0.25"}}
 
 
 def clean(obj: Any) -> Any:
@@ -497,13 +499,18 @@ class Store:
         await self.db.commit()
 
     async def carry(self) -> dict[str, Any]:
-        """carry 腿开没开、什么时候改的"""
-        row = await self._one("SELECT enabled, changed_at FROM trade_carry WHERE id = 1", ())
-        return {"enabled": bool(row["enabled"]) if row else True, "changedAt": row["changed_at"] if row else None}
+        """carry 腿开没开、占多少资金、什么时候改的；没设过是开着、占 1/4（和建表的默认值一样）"""
+        row = await self._one("SELECT enabled, share, changed_at FROM trade_carry WHERE id = 1", ())
+        if row is None:
+            return {"enabled": True, "share": 0.25, "changedAt": None}
+        return {"enabled": bool(row["enabled"]), "share": float(row["share"]), "changedAt": row["changed_at"]}
 
-    async def set_carry(self, enabled: bool) -> None:
-        await self.db.execute("INSERT OR REPLACE INTO trade_carry(id, enabled, changed_at) VALUES (1, ?, ?)",
-                              (int(enabled), now_ms()))
+    async def set_carry(self, enabled: bool | None = None, share: float | None = None) -> None:
+        """没给的那项保持原样"""
+        cur = await self.carry()
+        await self.db.execute("INSERT OR REPLACE INTO trade_carry(id, enabled, share, changed_at) VALUES (1, ?, ?, ?)",
+                              (int(cur["enabled"] if enabled is None else enabled), cur["share"] if share is None else share,
+                               now_ms()))
         await self.db.commit()
 
     async def trade_days(self) -> list[dict[str, Any]]:

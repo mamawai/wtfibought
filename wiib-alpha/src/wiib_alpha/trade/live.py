@@ -118,7 +118,7 @@ def main() -> None:
     # fapi 已用权重打出来
     logging.getLogger("wiib_alpha").setLevel(logging.INFO)
     cfg = config()
-    universe, _ = scheme.read_db(cfg.db_path)
+    universe, _, _ = scheme.read_db(cfg.db_path)
     binance = Binance(cfg.binance_vision_url, fapi_url=cfg.binance_fapi_url, list_url=cfg.binance_vision_list_url)
     info = binance.exchange_info()
     # 和调仓同口径：下架、停牌的币 fapi 拉不到

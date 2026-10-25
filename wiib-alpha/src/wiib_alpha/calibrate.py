@@ -165,6 +165,13 @@ def run(name: str, exprs: dict[str, Expr], pool: Pool, vol: np.ndarray, params: 
     return out
 
 
+def carry_share(db_path: str) -> float:
+    """线上设的 carry 腿份额，和服务里的 G9 基线同口径；没设过是默认"""
+    with snapshot(db_path) as db:
+        row = db.execute("SELECT share FROM trade_carry WHERE id = 1").fetchone()
+    return float(row[0]) if row else scheme.CARRY_SHARE
+
+
 def g9(store: PanelStore, db_path: str, params: EvalParams, randoms: int, seed: int) -> None:
     """G9 的阈值怎么定：库里每条（拿掉它的方案再加回去）、库外的候选、随机因子，加进交易方案后搜索段净 Sharpe 各升多少"""
     with snapshot(db_path) as db:
@@ -173,6 +180,7 @@ def g9(store: PanelStore, db_path: str, params: EvalParams, randoms: int, seed: 
         # 每条假设留着的是最后一版表达式；同一个表达式只算一次
         candidates = {expr: name for name, expr in db.execute(
             "SELECT name, expr FROM candidate WHERE expr IS NOT NULL ORDER BY updated_at")}
+    share = carry_share(db_path)
     pool = load_pool(store, universe, params.holdout_days)
     pick = pool.in_search
     vol, basis = pool.values(scheme.VOL).f[pick], scheme.carry_signal(pool)[pick]
@@ -182,11 +190,11 @@ def g9(store: PanelStore, db_path: str, params: EvalParams, randoms: int, seed: 
         c = Combo.empty(pool.search, pool.symbols)
         for name, f in values.items():
             c = c.plus(name, f)
-        return scheme.Base.of(c, basis, vol, params)
+        return scheme.Base.of(c, basis, vol, params, share)
 
     lib = {name: search(expr) for name, expr in library}
     full = base(lib)
-    print(f"基线：库里 {len(lib)} 条 + carry，搜索段净 Sharpe {full.result['sharpe']:.2f}", flush=True)
+    print(f"基线：库里 {len(lib)} 条 + carry（占 {share:.0%}），搜索段净 Sharpe {full.result['sharpe']:.2f}", flush=True)
     print("\n== 库里每条：拿掉它的方案，再加回去 ==", flush=True)
     for name, f in lib.items():
         g = scheme.gain(base({n: v for n, v in lib.items() if n != name}), name, f, params)["sharpe"]
@@ -295,10 +303,11 @@ def main(argv: list[str] | None = None) -> int:
         known = {e.canonical() for e in ref_exprs.values()}
         print(f"参照网格 {len(grid.names)} 条，{time.perf_counter() - t0:.1f}s", flush=True)
 
-        # 库是空的：G9 的基线是只有基差 carry 的交易方案；参照集自己不查冗余、不做 BH：它们是尺子不是候选
+        # 库是空的：G9 的基线是只有基差 carry 的交易方案（份额真数据按线上设的，合成币池按默认）；
+        # 参照集自己不查冗余、不做 BH：它们是尺子不是候选
         vol, basis = pool.values(scheme.VOL).f, scheme.carry_signal(pool)
         empty = scheme.Base.of(Combo.empty(pool.search, pool.symbols), basis[pool.in_search], vol[pool.in_search],
-                               params)
+                               params, scheme.CARRY_SHARE if args.synthetic else carry_share(args.db))
         ref_evals = run("参照集", ref_exprs, pool, vol, params, thresholds, reference.Grid.empty(), set(), empty)
         baselines = [ev for ev in ref_evals if ev["name"] in handwritten]
         alpha = [ev for ev in ref_evals if ev["name"] not in handwritten]

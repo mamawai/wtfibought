@@ -297,6 +297,10 @@ async def test_admission_rule_and_duplicate_names(client):
     assert await refused(fake_reeval(real, cut, mean=-0.05, t=-5.0)) == "没见过那段主档 IC 和搜索段的 0.0400 反号（t -5.0）"
     assert await refused(fake_reeval(real, cut, t=1.7)) == "没见过那段主档 IC 的 t 1.7 不到 2"
     assert (await refused(fake_reeval(real, cut, t=None))).startswith("没见过那段算不出主档 IC 的 t")
+    # 复评之后改过 carry 份额：G9 基线变了，得重新复评
+    stale = fake_reeval(real, cut)
+    stale["eval"]["gain"]["carryShare"] = 0.5
+    assert await refused(stale) == "份额改过，还没按现在的份额复评"
     assert (await store.candidate("r2-1"))["status"] == "observing"
 
     await store.set_reeval("r2-1", fake_reeval(real, cut))

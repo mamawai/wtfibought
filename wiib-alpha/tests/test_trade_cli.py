@@ -118,6 +118,6 @@ def test_scheme_prints_search_and_holdout(tmp_path, monkeypatch, capsys, planted
                                                                      holdout_days=10))
     code, out = run(monkeypatch, capsys, scheme)
     lines = out.strip().splitlines()
-    assert code == 0 and lines[0] == "因子：planted；晚 1 根成交", out
+    assert code == 0 and lines[0] == "因子：planted；carry 腿占 25%；晚 1 根成交", out
     assert lines[1].startswith("搜索段（walk-forward 样本外）：净收益 +") and "Sharpe" in lines[1] and "最大回撤" in lines[1]
     assert lines[2].startswith("holdout（2025-02-22") and "carry 资金费每期" in lines[2]

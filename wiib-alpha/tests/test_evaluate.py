@@ -202,7 +202,7 @@ def test_redundancy_and_gain_see_the_library(planted_pool, planted_vol, planted_
     pick = planted_pool.in_search
     twin = planted_pool.values(parse("$volume * 3 + 1", COLS)).f[pick]
     library = scheme.Base.of(Combo.empty(planted_pool.search, planted_pool.symbols).plus("twin", twin),
-                             planted_pool.values(scheme.CARRY).f[pick], planted_vol[pick], PARAMS)
+                             planted_pool.values(scheme.CARRY).f[pick], planted_vol[pick], PARAMS, 0.25)
     ev = evaluate(parse("$volume", COLS), planted_pool, planted_vol, PARAMS, planted_grid, library,
                   peer_exprs={"lib:twin": "(($volume * 3) + 1)"})
     assert ev["redundancy"]["with"] == "lib:twin" and ev["redundancy"]["maxAbs"] == pytest.approx(1.0)

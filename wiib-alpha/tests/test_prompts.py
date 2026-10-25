@@ -5,7 +5,7 @@ from wiib_alpha.data.panel import FEATURE_COLUMNS
 
 FACTS = {"symbols": ["BTCUSDT", "ETHUSDT"], "from": "2024-09-21", "to": "2026-09-20", "rows": 70000,
          "liqFrom": "2026-04-27", "holdoutFrom": "2026-06-22", "costTiers": [5.0, 8.0, 12.0], "poolSize": 80,
-         "poolSymbols": 481}
+         "poolSymbols": 481, "carryShare": 0.25}
 
 
 def test_parse_object_and_list_tolerate_fences_and_chatter():
@@ -40,6 +40,10 @@ def test_system_prompt_lists_every_column_and_operator():
     assert "主档 24 小时" in text and "按 7 天波动的倒数分仓" in text and "只报不判" in text
     assert "G9 加进实盘的交易方案后净 Sharpe 至少升 0.1" in text
     assert "单边 4 / 6.5 / 10 bps" in prompts.system_gen({**FACTS, "costTiers": [4.0, 6.5, 10.0]}, "zh")
+    # 方案里两条腿的份额按设定渲染
+    assert "方案是 75% 资金做库里因子的组合" in text and "、25% 做基差 carry" in text
+    tenth = prompts.system_gen({**FACTS, "carryShare": 0.1}, "zh")
+    assert "方案是 90% 资金做库里因子的组合" in tenth and "、10% 做基差 carry" in tenth
     assert "英文" in prompts.system_gen({**FACTS, "liqFrom": None}, "en")
 
 

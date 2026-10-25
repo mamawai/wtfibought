@@ -364,6 +364,12 @@ function FactorsCard({ factors, carry, compare, loaded, onChanged, onList, onCar
   const fail = useFail();
   const [busy, setBusy] = useState<string | null>(null);
   const running = compare?.running ?? false;
+  // 份额输入框里的百分数，服务端的值变了就跟着换
+  const [share, setShare] = useState('');
+  const current = carry?.share;
+  useEffect(() => {
+    if (current !== undefined) setShare(String(Math.round(current * 1000) / 10));
+  }, [current]);
 
   const toggle = async (f: TraderFactor) => {
     setBusy(f.id);
@@ -381,7 +387,18 @@ function FactorsCard({ factors, carry, compare, loaded, onChanged, onList, onCar
     if (!carry) return;
     setBusy('carry');
     try {
-      onCarry(await alpha.setTraderCarry(!carry.enabled));
+      onCarry(await alpha.setTraderCarry({ enabled: !carry.enabled }));
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveShare = async () => {
+    setBusy('share');
+    try {
+      onCarry(await alpha.setTraderCarry({ share: Number(share) / 100 }));
     } catch (err) {
       fail(err);
     } finally {
@@ -415,6 +432,17 @@ function FactorsCard({ factors, carry, compare, loaded, onChanged, onList, onCar
               <div className="min-w-0 flex-1 space-y-0.5">
                 <div className="font-mono text-[13px] font-bold">{t('trader.leg.carry')}</div>
                 <p className="text-[12px] text-muted">{t('trader.carryExpr')}</p>
+                <div className="flex flex-wrap items-center gap-2 text-[12px]">
+                  <span className="text-muted">{t('trader.carryShare')}</span>
+                  <input type="number" min={0} max={100} step={0.5} value={share} onChange={e => setShare(e.target.value)}
+                         disabled={busy !== null} className="input w-20 text-right font-mono" />
+                  <span className="text-muted">%</span>
+                  <Button onClick={() => void saveShare()} loading={busy === 'share'}
+                          disabled={busy !== null || share === '' || Number(share) / 100 === carry.share}>
+                    {t('trader.carryShareSave')}
+                  </Button>
+                  <span className="text-muted">{t('trader.carryShareHint')}</span>
+                </div>
                 {!carry.enabled && (
                   <p className="flex items-center gap-1 text-[12px] text-warn">
                     <TriangleAlert className="w-3 h-3" />{t('trader.carryOff')}
@@ -608,6 +636,7 @@ function RunDetail({ run }: { run: TradeRunDetail }) {
             <span key={f.id} title={f.expr}><Badge>{f.name} {num(f.weight, 4)}</Badge></span>
           ))}
         {run.targets?.carry === false && <Badge tone="warn" icon={TriangleAlert}>{t('trader.carryOffBadge')}</Badge>}
+        {run.targets?.carryShare != null && <Badge>{t('trader.carryShareBadge', { pct: pct(run.targets.carryShare, 0) })}</Badge>}
       </div>
       {run.attrib && <AttribView attrib={run.attrib} />}
       {run.legs && TRADE_LEGS.map(leg => (

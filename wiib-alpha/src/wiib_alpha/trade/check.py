@@ -159,7 +159,7 @@ def main() -> None:
     logging.getLogger("wiib_alpha").setLevel(logging.INFO)
     cfg = config()
     params = EvalParams(cost_tiers_bps=cfg.cost_tiers_bps)
-    universe, factors = scheme.read_db(cfg.db_path)
+    universe, factors, _ = scheme.read_db(cfg.db_path)
     store = PanelStore(cfg.data_dir)
     symbols = sorted({*universe.loc[universe["month"] == universe["month"].max(), "symbol"], BENCHMARK})
     if args.fetch:
