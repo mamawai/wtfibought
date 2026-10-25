@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -132,5 +134,10 @@ def test_summary_only_counts_the_given_range():
     assert s["segments"] == pytest.approx([-1.0, -1.0]) and s["monotonic"]["rho"] == pytest.approx(-1.0)
     # 四个点的 IC 全是 -1，没波动：逐点的 t 算不出
     assert set(cs_ic.compact(s)) == {"mean", "icir", "se", "t", "months", "samples", "monotonic"} and np.isnan(s["t"])
+    # recent 是 recent_from 起那段的同一套数：起点放在最早就和全段一样，放到未来就是空的
+    since = lambda ms: cs_ic.summary(p, cs_ic.series(p), 4, 8, replace(PARAMS, recent_from=ms))["recent"]
+    assert since(0)["samples"] == 4 and since(0)["months"] == 1 and since(0)["mean"] == pytest.approx(-1.0)
+    assert since(int(p.times[6]))["samples"] == 2
+    assert since(10 ** 15)["samples"] == 0 and np.isnan(since(10 ** 15)["mean"])
     empty = cs_ic.summary(p, cs_ic.series(p), 8, 8, PARAMS)
     assert np.isnan(empty["mean"]) and empty["samples"] == 0 and np.isnan(empty["monotonic"]["rho"])

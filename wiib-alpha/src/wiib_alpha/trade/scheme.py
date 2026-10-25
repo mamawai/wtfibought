@@ -50,11 +50,12 @@ def carry_signal(pool: Pool) -> np.ndarray:
 
 @dataclass(frozen=True)
 class Leg:
-    """一条腿每个网格点一期：净收益、资金费（正数是收）、Σ|Δw|；active 是这一腿算数的点"""
+    """一条腿每个网格点一期：净收益、资金费（正数是收）、Σ|Δw|；active 是这一腿算数的点，recent 是 params.recent_from 起的点"""
     net: np.ndarray
     funding: np.ndarray
     traded: np.ndarray
     active: np.ndarray
+    recent: np.ndarray
 
 
 def positions(p: cs_ic.Points, vol: np.ndarray, direction: np.ndarray, params: EvalParams) -> np.ndarray:
@@ -81,7 +82,8 @@ def leg(rows: pd.DataFrame, f: np.ndarray, vol: np.ndarray, params: EvalParams, 
     cost, traded = cs_leg.rebalance(p, w, params.costs)
     # 一个币持有一期的收益：涨跌减资金费，空头仓位 w < 0 正好变成收费
     r = np.expm1(p.y) - p.fund
-    return Leg(np.bincount(p.g, w * r, p.total) - cost, -np.bincount(p.g, w * p.fund, p.total), traded, active)
+    return Leg(np.bincount(p.g, w * r, p.total) - cost, -np.bincount(p.g, w * p.fund, p.total), traded, active,
+               p.times >= params.recent_from)
 
 
 def combo_signal(rows: pd.DataFrame, symbols: tuple[str, ...], values: Sequence[np.ndarray], vol: np.ndarray,
@@ -109,12 +111,15 @@ def backtest(pool: Pool, values: Sequence[np.ndarray], basis: np.ndarray, vol: n
 def run(rows: pd.DataFrame, symbols: tuple[str, ...], values: Sequence[np.ndarray], basis: np.ndarray, vol: np.ndarray,
         params: EvalParams, since: int | None, carry_share: float) -> dict[str, Any]:
     """values、basis、vol 与 rows 对齐；since 不给是 walk-forward，给了是 holdout（只算它之后、组合腿方向定 +1）；
-    carry_share 是 carry 腿占的资金比例，组合腿占其余。出净收益、年化 Sharpe、最大回撤、换手、carry 腿每期资金费"""
+    carry_share 是 carry 腿占的资金比例，组合腿占其余。出净收益、年化 Sharpe、最大回撤、换手、carry 腿每期资金费，
+    再加 params.recent_from 起那段的净收益和 Sharpe"""
     signal = combo_signal(rows, symbols, values, vol, params, since)
     a = leg(rows, signal, vol, params, None if since is None else 1.0, since)
     b = leg(rows, basis, vol, params, -1.0, since)
     active = a.active & b.active
-    net = ((1 - carry_share) * a.net + carry_share * b.net)[active]
+    every = (1 - carry_share) * a.net + carry_share * b.net
+    net = every[active]
+    recent = every[active & a.recent]
     traded = ((1 - carry_share) * a.traded + carry_share * b.traded)[active]
     curve = np.cumprod(np.concatenate(([1.0], 1 + net)))
     return {
@@ -126,6 +131,9 @@ def run(rows: pd.DataFrame, symbols: tuple[str, ...], values: Sequence[np.ndarra
         "turnover": float(np.mean(traded) / 4) if net.size else np.nan,
         # carry 腿每期平均资金费 bps，正数是收
         "carryFundingBps": float(np.mean(b.funding[active]) * 1e4) if net.size else np.nan,
+        "recentFrom": params.recent_from,
+        "recentNetReturn": compound(recent),
+        "recentSharpe": annualized_sharpe(recent, periods_per_year(BARS)),
         "carryShare": carry_share,
     }
 
@@ -150,11 +158,16 @@ class Base:
 
 
 def gain(base: Base, name: str, f: np.ndarray, params: EvalParams) -> dict[str, Any]:
-    """G9：f 加进组合腿后，交易方案搜索段的年化净 Sharpe、净收益比基线变了多少；Sharpe 算不出来（一期都没有）按 0"""
+    """G9：f 加进组合腿后，交易方案搜索段的年化净 Sharpe、净收益比基线变了多少，recentSharpe 是只看 params.recent_from 起的那份；
+    Sharpe 算不出来（一期都没有）按 0"""
     after = _search(base.combo.plus(name, f), base.basis, base.vol, params, base.carry_share)
-    before, with_ = float(np.nan_to_num(base.result["sharpe"])), float(np.nan_to_num(after["sharpe"]))
-    return {"sharpe": {"base": before, "with": with_, "gain": with_ - before}, "carryShare": base.carry_share,
-            "netReturn": {"base": base.result["netReturn"], "with": after["netReturn"]}}
+
+    def delta(key: str) -> dict[str, float]:
+        before, with_ = float(np.nan_to_num(base.result[key])), float(np.nan_to_num(after[key]))
+        return {"base": before, "with": with_, "gain": with_ - before}
+
+    return {"sharpe": delta("sharpe"), "recentSharpe": delta("recentSharpe"), "recentFrom": params.recent_from,
+            "carryShare": base.carry_share, "netReturn": {"base": base.result["netReturn"], "with": after["netReturn"]}}
 
 
 def _search(c: combo.Combo, basis: np.ndarray, vol: np.ndarray, params: EvalParams, carry_share: float) -> dict[str, Any]:

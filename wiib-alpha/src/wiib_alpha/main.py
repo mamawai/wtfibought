@@ -141,7 +141,7 @@ def build_library(data: Data, factors: list[dict[str, Any]], params: EvalParams,
     report = None
     if factors:
         report = {
-            "brief": {"primary": prompts.hours(params.primary),
+            "brief": {"primary": prompts.hours(params.primary), "recentFrom": _day(params.recent_from),
                       "horizons": horizons_brief(combo.evaluate(search, vol, params)),
                       "holdout": holdout_brief(combo.holdout(full, data.vol, data.cut_ms, params))},
             **combo.latest(full, data.vol, params),

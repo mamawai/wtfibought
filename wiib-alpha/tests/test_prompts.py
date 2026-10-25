@@ -222,6 +222,9 @@ def test_eval_brief_rounds_and_maps_nan():
     # 之前落库的老结果没有顶减底的 t 和形状
     assert brief["horizons"]["12h"]["spreadT"] is None and brief["horizons"]["12h"]["shape"] is None
     assert brief["horizons"]["12h"]["breakEvenBps"] == 7.1235 and brief["horizons"]["12h"]["turnover"] is None
+    # 老结果没算过 recent 那段
+    assert brief["horizons"]["12h"]["recentIc"] is None and brief["horizons"]["12h"]["recentSharpe"] is None
+    assert "recentFrom" not in brief
     # 之前落库的结果没有最像的前几个
     assert brief["redundancy"] == {"maxAbs": 0.2, "with": "MA48", "ready": True, "top": []}
     top = [{"name": "MA48", "abs": 0.212345, "expr": "Mean($close, 48) / $close"}]
@@ -252,5 +255,8 @@ def test_eval_brief_rounds_and_maps_nan():
                                              "sharpe": {"base": 0, "with": 1.2, "gain": 1.2}}}, gates)
     assert old["gain"] == {"12h": 0.031} and old["gainSharpe"]["gain"] == 1.2
     new = prompts.eval_brief({**ev, "gain": {"sharpe": {"base": 1.0, "with": 1.3, "gain": 0.3},
-                                             "netReturn": {"base": 2.0, "with": 2.5}}}, gates)
+                                             "recentSharpe": {"base": 0.8, "with": 1.0, "gain": 0.2},
+                                             "netReturn": {"base": 2.0, "with": 2.5}},
+                              "recentFrom": 1_640_995_200_000}, gates)
     assert "gain" not in new and new["gainSharpe"] == {"base": 1.0, "with": 1.3, "gain": 0.3}
+    assert new["gainSharpeRecent"] == {"base": 0.8, "with": 1.0, "gain": 0.2} and new["recentFrom"] == "2022-01-01"

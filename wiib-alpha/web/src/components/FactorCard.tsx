@@ -150,13 +150,16 @@ function Shape({ h }: { h: HorizonBrief }) {
 }
 
 const ROWS: { key: string; get: (h: HorizonBrief) => ReactNode }[] = [
-  { key: 'meanIc', get: h => num(h.meanIc) },
+  { key: 'meanIc', get: h => (h.t == null ? num(h.meanIc) : `${num(h.meanIc)} · t ${h.t.toFixed(1)}`) },
   { key: 'icir', get: h => num(h.icir, 2) },
   { key: 'months', get: h => h.months },
   { key: 'spread', get: h => (h.spreadT == null ? signedPct(h.spread, 2) : `${signedPct(h.spread, 2)} · t ${h.spreadT.toFixed(1)}`) },
   { key: 'shape', get: h => <Shape h={h} /> },
   { key: 'segments', get: h => <Segments h={h} /> },
-  { key: 'net', get: h => signedPct(h.netReturn) },
+  { key: 'net', get: h => (h.sharpe == null ? signedPct(h.netReturn) : `${signedPct(h.netReturn)} · Sharpe ${h.sharpe.toFixed(2)}`) },
+  { key: 'recentIc', get: h => (h.recentT == null ? num(h.recentIc) : `${num(h.recentIc)} · t ${h.recentT.toFixed(1)}`) },
+  { key: 'recentNet', get: h => (h.recentSharpe == null ? signedPct(h.recentNetReturn)
+    : `${signedPct(h.recentNetReturn)} · Sharpe ${h.recentSharpe.toFixed(2)}`) },
   { key: 'perm', get: h => num(h.permPct, 3) },
   { key: 'hit', get: h => pct(h.hitRate) },
   { key: 'exposure', get: h => pct(h.exposure) },
@@ -250,23 +253,26 @@ function TimeseriesTable({ ts, primary }: { ts: TimeseriesBrief; primary: string
 }
 
 type BriefLike = Pick<EvalBrief, 'horizons'>
-  & Partial<Pick<EvalBrief, 'primary' | 'gain' | 'gainSharpe' | 'holdout' | 'unseen' | 'timeseries' | 'redundancy'
-    | 'complexity' | 'neutral'>>;
+  & Partial<Pick<EvalBrief, 'primary' | 'gain' | 'gainSharpe' | 'gainSharpeRecent' | 'recentFrom' | 'holdout' | 'unseen'
+    | 'timeseries' | 'redundancy' | 'complexity' | 'neutral'>>;
 
 /** 三档截面数字表；单因子再带交易方案增量一行、冗余/复杂度两项；算过 holdout、没见过的那段、时序报告的再各来一张 */
 export function BriefTable({ brief }: { brief: BriefLike }) {
   const { t } = useTranslation();
-  const { gain, gainSharpe, holdout, unseen, timeseries, redundancy, complexity, neutral } = brief;
+  const { gain, gainSharpe, gainSharpeRecent, recentFrom, holdout, unseen, timeseries, redundancy, complexity, neutral } = brief;
   const primary = primaryOf(brief);
+  // recent 那几行从哪一年起；老结果没算过就不显示
+  const from = recentFrom?.slice(0, 4);
+  const rows = from ? ROWS : ROWS.filter(r => !r.key.startsWith('recent'));
   return (
     <div className="space-y-5 min-w-0">
       <div className="overflow-x-auto">
         <table className="tbl">
           <HorizonHead label={t('brief.metric')} primary={primary} />
           <tbody>
-            {ROWS.map(r => (
+            {rows.map(r => (
               <tr key={r.key}>
-                <td className="text-muted whitespace-nowrap">{t(`brief.${r.key}`)}</td>
+                <td className="text-muted whitespace-nowrap">{t(`brief.${r.key}`, { from })}</td>
                 {HORIZONS.map(h => <td key={h} className={primaryCell(h, primary)}>{brief.horizons[h] ? r.get(brief.horizons[h]) : '—'}</td>)}
               </tr>
             ))}
@@ -282,6 +288,16 @@ export function BriefTable({ brief }: { brief: BriefLike }) {
                 {HORIZONS.map(h => (
                   <td key={h} className={primaryCell(h, primary)}>
                     {h === primary ? `${num(gainSharpe.base, 2)} → ${num(gainSharpe.with, 2)}` : '—'}
+                  </td>
+                ))}
+              </tr>
+            )}
+            {gainSharpeRecent && from && (
+              <tr>
+                <td className="text-muted whitespace-nowrap">{t('brief.gainSharpeRecent', { from })}</td>
+                {HORIZONS.map(h => (
+                  <td key={h} className={primaryCell(h, primary)}>
+                    {h === primary ? `${num(gainSharpeRecent.base, 2)} → ${num(gainSharpeRecent.with, 2)}` : '—'}
                   </td>
                 ))}
               </tr>

@@ -112,9 +112,13 @@ def gain_gate(gain: dict[str, Any] | None, t: Thresholds) -> dict[str, Any]:
     if gain is None:
         return _gate("G9", "增量", True, None, threshold, "没算对交易方案的增量")
     s, net = gain["sharpe"], gain["netReturn"]
+    # 只看 recent_from 起那段的增量，并排给人和评审看，不判；老结果没有
+    recent = (f"；{str(np.datetime64(gain['recentFrom'], 'ms'))[:10]} 起 {fmt(gain['recentSharpe']['base'], 2)} → "
+              f"{fmt(gain['recentSharpe']['with'], 2)}（增量 {fmt(gain['recentSharpe']['gain'], 2)}）"
+              if gain.get("recentSharpe") else "")
     return _gate("G9", "增量", _finite(s["gain"]) and s["gain"] > t.sharpe_gain_min, gain, threshold,
                  f"加进交易方案后搜索段净 Sharpe {fmt(s['base'], 2)} → {fmt(s['with'], 2)}（增量 {fmt(s['gain'], 2)}），"
-                 f"净收益 {fmt(net['base'])} → {fmt(net['with'])}")
+                 f"净收益 {fmt(net['base'])} → {fmt(net['with'])}{recent}")
 
 
 def apply_fdr(evals: list[dict[str, Any]], q: float, iterations: int, extra_tests: int = 0) -> None:

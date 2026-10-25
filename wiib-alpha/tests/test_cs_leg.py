@@ -177,6 +177,11 @@ def test_break_even_is_the_cost_that_zeroes_the_net():
     out = cs_leg.simulate(p, unit(p), ic, [Window(1, 1, 3)], 24, params, 0)
     assert out["periods"] == 2 and out["breakEvenBps"] == pytest.approx(100.0)
     assert out["netReturn"] == pytest.approx(0.0, abs=1e-12) and out["grossReturn"] == pytest.approx(0.02)
+    # recent 只看 recent_from 起的样本外期：起点放在最早就和全段一样，放到未来就什么都没有
+    early = cs_leg.simulate(p, unit(p), ic, [Window(1, 1, 3)], 24, replace(params, recent_from=0), 0)
+    assert early["recentNetReturn"] == early["netReturn"] and early["recentSharpe"] == early["sharpe"]
+    late = cs_leg.simulate(p, unit(p), ic, [Window(1, 1, 3)], 24, replace(params, recent_from=10 ** 15), 0)
+    assert late["recentNetReturn"] == 0.0 and np.isnan(late["recentSharpe"])
     # 一直没仓位：换手量是 0，盈亏平衡算不出来
     none = cs_leg.simulate(p, unit(p), np.full(3, np.nan), [Window(1, 1, 3)], 24, params, 0)
     assert np.isnan(none["breakEvenBps"])

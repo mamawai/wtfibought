@@ -34,6 +34,8 @@ class EvalParams:
     leg_cap: float = 2.0        # 按波动分仓时单个币最多是这一边平均仓位的这么多倍；inf 是不设
     segments: int = 4
     holdout_days: int = 180     # 最近这么多天锁成 holdout：门和模型都看不到，过门后只算一次 IC 给人看
+    # IC、多空腿、G9 增量各再算一份只看这天（UTC 毫秒，2022-01-01）起的，和全段并排看：2021 年的行情太特殊，会把全段数字撑大
+    recent_from: int = 1_640_995_200_000
 
     @property
     def costs(self) -> tuple[float, float, float]:

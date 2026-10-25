@@ -420,11 +420,18 @@ def review_message(cand: Mapping[str, Any], brief: Mapping[str, Any]) -> str:
 公式说明：{cand.get('note') or '（无）'}
 声明的方向：{said}
 
-代码算出的数字（供参考，你不对它们投票）：
+代码算出的数字（供参考，你不对它们投票）{_recent_note(brief)}：
 {json.dumps(brief, ensure_ascii=False, indent=1)}
 
 只输出一个 JSON 对象，不要代码块、不要任何别的字：
 {{"verdict": "pass|revise|reject", "comment": "一两句话", "suggestion": "revise 时给具体改法，否则留空"}}"""
+
+
+def _recent_note(brief: Mapping[str, Any]) -> str:
+    """带 recent 的数字是哪段的"""
+    if not brief.get("recentFrom"):
+        return ""
+    return f"；带 recent 的是 {brief['recentFrom']} 起同口径再算的一份，2021 年行情特殊，和全段并排看"
 
 
 def json_retry() -> str:
@@ -483,6 +490,11 @@ def eval_brief(ev: Mapping[str, Any], gates: Sequence[Mapping[str, Any]]) -> dic
             out["gain"] = {hours(bars): _r(h["gain"]) for bars, h in ev["gain"]["horizons"].items()}
         if ev["gain"].get("sharpe"):
             out["gainSharpe"] = {k: _r(v) for k, v in ev["gain"]["sharpe"].items()}
+        if ev["gain"].get("recentSharpe"):
+            out["gainSharpeRecent"] = {k: _r(v) for k, v in ev["gain"]["recentSharpe"].items()}
+    # recent 那些数从哪天起算；老结果没有
+    if ev.get("recentFrom"):
+        out["recentFrom"] = str(np.datetime64(ev["recentFrom"], "ms"))[:10]
     if ev.get("holdout"):
         out["holdout"] = holdout_brief(ev["holdout"])
     # 复评时发现它的那一轮切点比现在早才有：从那个切点起它都没见过
@@ -498,14 +510,18 @@ def horizons_brief(horizons: Mapping[Any, Mapping[str, Any]]) -> dict[str, Any]:
     out = {}
     for bars, h in horizons.items():
         ic, leg, mono = h["ic"], h["leg"], h["ic"]["monotonic"]
+        # recentFrom 起那段的同口径数字；老结果没有
+        recent = ic.get("recent") or {}
         out[hours(bars)] = {
-            "meanIc": _r(ic["mean"]), "icir": _r(ic["icir"]), "months": ic["months"],
+            "meanIc": _r(ic["mean"]), "icir": _r(ic["icir"]), "t": _r(ic.get("t")), "months": ic["months"],
             "monotonic": _r(mono["rho"]), "spread": _r(mono["spread"]), "spreadT": _r(mono.get("spreadT")),
             "shape": shape(mono, ic["mean"]),
             "segments": [_r(v) for v in ic["segments"]],
-            "netReturn": _r(leg.get("netReturn")), "permPct": _r(leg.get("permPct")),
+            "netReturn": _r(leg.get("netReturn")), "sharpe": _r(leg.get("sharpe")), "permPct": _r(leg.get("permPct")),
             "hitRate": _r(leg.get("hitRate")), "exposure": _r(leg.get("exposure")), "turnover": _r(leg.get("turnover")),
             "fundingBps": _r(leg.get("fundingBps")), "breakEvenBps": _r(leg.get("breakEvenBps")),
+            "recentIc": _r(recent.get("mean")), "recentT": _r(recent.get("t")), "recentMonths": recent.get("months"),
+            "recentNetReturn": _r(leg.get("recentNetReturn")), "recentSharpe": _r(leg.get("recentSharpe")),
         }
     return out
 

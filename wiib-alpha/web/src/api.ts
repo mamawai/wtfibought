@@ -193,6 +193,8 @@ export interface Gate extends GateBrief {
 export interface HorizonBrief {
   meanIc: number | null;
   icir: number | null;
+  /** 逐点 IC 的均值 ÷ 标准误；老结果是 null */
+  t: number | null;
   months: number;
   /** 分组单调性：三组平均收益与组序的 Spearman ρ */
   monotonic: number | null;
@@ -204,6 +206,8 @@ export interface HorizonBrief {
   shape: 'monotone' | 'weakEnd' | 'strongEnd' | 'flat' | 'midHigh' | 'midLow' | null;
   segments: (number | null)[];
   netReturn: number | null;
+  /** 多空腿年化 Sharpe；老结果是 null */
+  sharpe: number | null;
   /** 排列检验只做主档，别的档是 null */
   permPct: number | null;
   hitRate: number | null;
@@ -214,6 +218,12 @@ export interface HorizonBrief {
   fundingBps: number | null;
   /** 盈亏平衡单边成本 bps：Σ毛收益（含资金费）/ Σ换手量；没换过手是 null */
   breakEvenBps: number | null;
+  /** EvalBrief.recentFrom 起那段的同口径数字：IC 均值、逐点 t、月数、多空腿净收益和 Sharpe；老结果是 null */
+  recentIc: number | null;
+  recentT: number | null;
+  recentMonths: number | null;
+  recentNetReturn: number | null;
+  recentSharpe: number | null;
 }
 
 export interface HoldoutHorizon {
@@ -256,6 +266,10 @@ export interface EvalBrief {
   gain?: Record<string, number | null>;
   /** G9：交易方案（库里因子的组合 + 基差 carry）搜索段的年化净 Sharpe，加进去前、后、增量；老结果是库组合多空腿的 */
   gainSharpe?: { base: number | null; with: number | null; gain: number | null };
+  /** G9 只看 recentFrom 起那段的同一组数；老结果没有 */
+  gainSharpeRecent?: { base: number | null; with: number | null; gain: number | null };
+  /** 带 recent 的数字从这天起算（YYYY-MM-DD）；老结果没有 */
+  recentFrom?: string;
   holdout?: HoldoutBrief;
   /** 复评时才有：发现它的那一轮切点比现在的 holdout 切点早，从那个切点起它都没见过 */
   unseen?: HoldoutBrief;
@@ -380,7 +394,7 @@ export interface FactorDetail extends Factor {
 
 /** 库里全部因子的组合（main.build_library 的 report） */
 export interface ComboReport {
-  brief: { primary?: string; horizons: Record<string, HorizonBrief>; holdout: HoldoutBrief };
+  brief: { primary?: string; recentFrom?: string; horizons: Record<string, HorizonBrief>; holdout: HoldoutBrief };
   /** latest 对应的时刻：最后一个 6h 网格点 */
   asOf: number;
   weights: { name: string; weight: number }[];
@@ -744,6 +758,10 @@ export interface SchemeResult {
   turnover: number | null;
   /** carry 腿每期平均资金费 bps，正数是收 */
   carryFundingBps: number | null;
+  /** 只看这个时刻（UTC 毫秒）起那段的净收益和 Sharpe */
+  recentFrom: number;
+  recentNetReturn: number | null;
+  recentSharpe: number | null;
   /** 这次回测 carry 腿占的资金比例 */
   carryShare: number;
 }
@@ -924,7 +942,7 @@ export const alpha = {
   /** 勾上或取消，下一次调仓起生效；live 补不出来的列是 409 */
   selectTraderFactor: (id: string, selected: boolean) =>
     call<{ id: string; selected: boolean }>('PUT', `${ALPHA}/trader/factors/${id}`, { selected }),
-  /** 开或停 carry 腿、改它占的资金比例，下一次调仓起生效；停了那份资金闲着。份额也是回测和 G9 基线的份额，有 campaign 或复评在跑时改不了 */
+  /** 开或停 carry 腿、改它占的资金比例，下一次调仓起生效；停了那份资金闲着。份额也是回测和 G9 基线的份额，有 campaign 在跑时改不了 */
   setTraderCarry: (body: { enabled?: boolean; share?: number }) => call<TraderCarry>('PUT', `${ALPHA}/trader/carry`, body),
   /** 后台比"当前勾选"和"加上 / 去掉这条"，进度看 traderFactors().compare */
   compareTraderFactor: (id: string) => call<{ started: boolean }>('POST', `${ALPHA}/trader/compare/${id}`),

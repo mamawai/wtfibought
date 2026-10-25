@@ -186,10 +186,22 @@ def shape(mono: dict[str, Any], ic: float | None) -> str | None:
 
 
 def summary(p: Points, ic: np.ndarray, lo: int, hi: int, params: EvalParams) -> dict[str, Any]:
-    """只看 [lo, hi) 的网格点（样本外，或 holdout 之后）"""
+    """只看 [lo, hi) 的网格点（样本外，或 holdout 之后）；recent 是其中 params.recent_from 起的那段，口径一样"""
     part = np.full(p.total, np.nan)
     part[lo:hi] = ic[lo:hi]
+    recent = np.where(p.times >= params.recent_from, part, np.nan)
     table = monthly(part, p.months, params.min_points)
+    return {
+        **_stats(part, table),
+        "monthly": {m: float(v) for m, v in table.items()},
+        "segments": segments(part, params.segments, params.min_points),
+        "monotonic": monotonic(p, lo, hi, params.groups, params.trim),
+        "recent": _stats(recent, monthly(recent, p.months, params.min_points)),
+    }
+
+
+def _stats(part: np.ndarray, table: pd.Series) -> dict[str, Any]:
+    """一段网格点 IC 的汇总：table 是它的月度均值"""
     mean = float(table.mean()) if len(table) else np.nan
     std = float(table.std(ddof=1)) if len(table) > 1 else np.nan
     return {
@@ -200,10 +212,7 @@ def summary(p: Points, ic: np.ndarray, lo: int, hi: int, params: EvalParams) -> 
         # 逐网格点 IC 的均值 ÷ 标准误：不按月分，几个月的短段也算得出，入库条件看它
         "t": t_stat(part),
         "months": int(len(table)),
-        "monthly": {m: float(v) for m, v in table.items()},
-        "segments": segments(part, params.segments, params.min_points),
         "samples": int(np.isfinite(part).sum()),
-        "monotonic": monotonic(p, lo, hi, params.groups, params.trim),
     }
 
 

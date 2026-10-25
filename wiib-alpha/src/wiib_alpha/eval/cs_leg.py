@@ -175,6 +175,8 @@ def simulate(p: Points, vol: np.ndarray, ic: np.ndarray, wins: list[Window], bar
     net = (gross - cost)[oos]
     active = (np.bincount(p.g, np.abs(w), p.total) > 0)[oos]
     volume = traded[oos].sum()
+    # params.recent_from 起的样本外期，和全段并排看
+    recent = (p.times >= params.recent_from)[oos]
     # 排列检验打乱的是收益 / 波动；w·r 不变
     scale = np.maximum(vol, 1e-6)
     return {
@@ -191,4 +193,6 @@ def simulate(p: Points, vol: np.ndarray, ic: np.ndarray, wins: list[Window], bar
         # 每单位换手量赚的毛收益：单边成本到这个数，净收益正好是 0
         "breakEvenBps": float(gross[oos].sum() / volume * 1e4) if volume > 0 else np.nan,
         "permPct": permutation(p, w * scale, r / scale, iterations, params.seed) if iterations else None,
+        "recentNetReturn": compound(net[recent]),
+        "recentSharpe": annualized_sharpe(net[recent], periods_per_year(bars)),
     }

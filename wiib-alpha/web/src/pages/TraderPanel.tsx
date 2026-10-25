@@ -15,7 +15,7 @@ import { Badge, Button, Card, Empty, Progress, Spinner, Stat, Strip, type Tone }
 
 const STATUS_TONE: Record<TradeStatus, Tone> = { done: 'gain', partial: 'warn', failed: 'loss' };
 const STATUS_ICON = { done: CircleCheck, partial: TriangleAlert, failed: CircleX };
-const METRICS: (keyof SchemeResult)[] = ['netReturn', 'sharpe', 'maxDrawdown', 'turnover', 'carryFundingBps', 'periods'];
+const METRICS: (keyof SchemeResult)[] = ['netReturn', 'sharpe', 'recentSharpe', 'maxDrawdown', 'turnover', 'carryFundingBps', 'periods'];
 
 /** 金额两位小数 */
 const money = (v: number | null | undefined) => num(v, 2);
@@ -503,6 +503,8 @@ function CompareView({ job }: { job: CompareJob }) {
   const r = job.result;
   if (!r) return null;
   const action = t(`trader.compareAction.${r.action}`);
+  // "Sharpe（xxxx 起）"那一行从哪一年起
+  const from = String(new Date(r.base.search.recentFrom).getUTCFullYear());
   const columns = [
     { label: `${t('trader.compareBase')} · ${t('trader.search')}`, v: r.base.search },
     { label: `${t('trader.compareAlt', { action })} · ${t('trader.search')}`, v: r.alt.search },
@@ -534,7 +536,7 @@ function CompareView({ job }: { job: CompareJob }) {
           <tbody>
             {METRICS.map(k => (
               <tr key={k}>
-                <td className="text-muted">{t(`trader.metric.${k}`)}</td>
+                <td className="text-muted">{t(`trader.metric.${k}`, { from })}</td>
                 {columns.map(c => <td key={c.label} className="r num">{schemeValue(k, c.v[k])}</td>)}
               </tr>
             ))}
@@ -551,7 +553,7 @@ function schemeValue(k: keyof SchemeResult, v: number | null): string {
   if (k === 'maxDrawdown') return pct(v, 1);
   if (k === 'carryFundingBps') return v == null ? DASH : `${num(v, 2)} bps`;
   if (k === 'periods') return v == null ? DASH : String(v);
-  return num(v, k === 'sharpe' ? 2 : 3);
+  return num(v, k === 'sharpe' || k === 'recentSharpe' ? 2 : 3);
 }
 
 // ========== 调仓记录 ==========

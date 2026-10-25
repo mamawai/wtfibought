@@ -50,6 +50,8 @@ def evaluate(expr: Expr, pool: Pool, vol: np.ndarray, params: EvalParams = EvalP
         "lookaheadFree": _lookahead_free(expr, pool, values, params),
         # 判门用的是哪一档：落过库的老结果没有这一项，是 12h
         "primary": params.primary,
+        # IC、多空腿、G9 里 recent 那份从这天起算；老结果没有
+        "recentFrom": params.recent_from,
         # 排列检验只给主档做：G5 只看主档，三档全做要多花一倍多的时间
         "horizons": {bars: horizon(pool.search, f, v, bars, params, params.iterations if bars == params.primary else 0)
                      for bars in HORIZON_BARS.values()},

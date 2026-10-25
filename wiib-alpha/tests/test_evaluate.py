@@ -125,6 +125,10 @@ def test_g9_needs_the_scheme_sharpe_to_rise_past_the_threshold(planted):
     ev["gain"] = {"sharpe": {"base": 1.0, "with": 0.9, "gain": -0.1}, "netReturn": {"base": 0.5, "with": 0.4}}
     g9 = judge(ev, GATES)[9]
     assert g9["id"] == "G9" and not g9["passed"] and "加进交易方案后搜索段净 Sharpe 1.00 → 0.90" in g9["note"]
+    # 老结果没有 2022 起那段；新结果备注里带上，不判
+    assert "起" not in g9["note"]
+    ev["gain"].update(recentSharpe={"base": 0.8, "with": 1.0, "gain": 0.2}, recentFrom=1_640_995_200_000)
+    assert "2022-01-01 起 0.80 → 1.00（增量 0.20）" in judge(ev, GATES)[9]["note"]
     ev["gain"]["sharpe"] = {"base": 1.0, "with": 1.2, "gain": 0.2}
     assert judge(ev, GATES)[9]["passed"]
     # 升了但不到默认的 0.1：和随机因子分不开，不过

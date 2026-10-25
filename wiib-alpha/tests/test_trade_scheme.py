@@ -152,9 +152,12 @@ def test_backtest_and_weights(planted_pool):
     # 份额 1 时组合腿不占资金，有没有因子一样
     assert scheme.backtest(planted_pool, [planted], basis, vol, PARAMS, False, 1.0)["netReturn"] == pytest.approx(
         scheme.backtest(planted_pool, [], basis, vol, PARAMS, False, 1.0)["netReturn"])
-    assert set(with_factor) == {"periods", "netReturn", "sharpe", "maxDrawdown", "turnover", "carryFundingBps", "carryShare"}
+    assert set(with_factor) == {"periods", "netReturn", "sharpe", "maxDrawdown", "turnover", "carryFundingBps",
+                                "recentFrom", "recentNetReturn", "recentSharpe", "carryShare"}
     assert with_factor["carryShare"] == 0.25
     assert with_factor["periods"] == carry_only["periods"] > 0 and 0 < with_factor["turnover"] <= 1
+    # 埋的数据都在 recent_from 之后：recent 那份和全段一样
+    assert with_factor["recentFrom"] == PARAMS.recent_from and with_factor["recentSharpe"] == pytest.approx(with_factor["sharpe"])
     # 埋了信号的组合腿：搜索段比只有 carry 腿好
     assert with_factor["sharpe"] > carry_only["sharpe"] and with_factor["netReturn"] > 0
     assert 0 <= with_factor["maxDrawdown"] < 1
@@ -177,6 +180,7 @@ def test_gain_is_the_change_in_the_scheme_sharpe(planted_pool, planted_vol):
     assert empty.result == scheme.backtest(planted_pool, [], basis, planted_vol, PARAMS, False, 0.25)
     first = scheme.gain(empty, "planted", search("Mean($volume, 4)"), PARAMS)
     assert first["sharpe"]["base"] == pytest.approx(empty.result["sharpe"]) and first["sharpe"]["gain"] > 0.5
+    assert first["recentSharpe"] == pytest.approx(first["sharpe"]) and first["recentFrom"] == PARAMS.recent_from
     lib = empty.plus("planted", search("Mean($volume, 4)"), PARAMS)
     assert lib.result["sharpe"] == pytest.approx(first["sharpe"]["with"])
     # 换个窗口的翻版、噪音：加进去方案几乎不动
