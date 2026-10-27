@@ -1,5 +1,6 @@
 package com.mawai.wiibsim.controller;
 
+import com.mawai.wiibcommon.dto.FuturesAdjustLeverageRequest;
 import com.mawai.wiibcommon.dto.FuturesCloseRequest;
 import com.mawai.wiibcommon.dto.FuturesOpenRequest;
 import com.mawai.wiibcommon.dto.FuturesOrderResponse;
@@ -10,6 +11,7 @@ import com.mawai.wiibcommon.entity.User;
 import com.mawai.wiibcommon.enums.ErrorCode;
 import com.mawai.wiibcommon.exception.BizException;
 import com.mawai.wiibcommon.util.Result;
+import com.mawai.wiibsim.config.FuturesLeverageBracketRegistry;
 import com.mawai.wiibsim.service.AccountResetService;
 import com.mawai.wiibsim.service.CrossMarginService;
 import com.mawai.wiibsim.service.FuturesRiskService;
@@ -27,6 +29,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -50,6 +53,7 @@ public class InternalFuturesTradeController {
     private final InternalOrderIdempotency idempotency;
     private final CrossMarginService crossMarginService;
     private final TraderSymbolService traderSymbolService;
+    private final FuturesLeverageBracketRegistry bracketRegistry;
 
     /** 带 clientRequestId 就走幂等（调用方超时重发不会双仓），不带＝原样直发 */
     @PostMapping("/{userId}/open")
@@ -122,6 +126,24 @@ public class InternalFuturesTradeController {
     public Result<Void> watch(@RequestBody List<String> symbols) {
         traderSymbolService.watch(symbols);
         return Result.ok();
+    }
+
+    /** 调杠杆：币种级，作用于这个币的全部仓位，全仓双向可调 */
+    @PostMapping("/{userId}/leverage")
+    public Result<Void> adjustLeverage(@PathVariable Long userId, @RequestBody FuturesAdjustLeverageRequest request) {
+        tradingService.adjustLeverage(userId, request);
+        return Result.ok();
+    }
+
+    /** 这些币的档位：表里的照表，表外的 USDT 永续给默认档，不认识的不出 */
+    @GetMapping("/brackets")
+    public Result<Map<String, List<FuturesLeverageBracketRegistry.Bracket>>> brackets(@RequestParam List<String> symbols) {
+        Map<String, List<FuturesLeverageBracketRegistry.Bracket>> out = new LinkedHashMap<>();
+        for (String symbol : symbols) {
+            List<FuturesLeverageBracketRegistry.Bracket> brackets = bracketRegistry.getBrackets(symbol);
+            if (brackets != null) out.put(symbol, brackets);
+        }
+        return Result.ok(out);
     }
 
     /**

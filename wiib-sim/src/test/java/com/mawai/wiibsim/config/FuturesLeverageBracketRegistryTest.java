@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 档位：表里的币照表；表外的 USDT 永续一档默认（最高 5x、MMR 2.5%、速算数 0）；其余抛未配置。
+ * 档位：表里的币照表；表外的 USDT 永续一档默认（最高 10x、MMR 2.5%、速算数 0）；其余抛未配置。
  */
 class FuturesLeverageBracketRegistryTest {
 
@@ -23,10 +23,10 @@ class FuturesLeverageBracketRegistryTest {
     }
 
     @Test
-    void 表外的USDT永续_一档到底_最高5倍_维持保证金按2点5算() {
+    void 表外的USDT永续_一档到底_最高10倍_维持保证金按2点5算() {
         assertThat(registry.getBrackets("PEPEUSDT")).hasSize(1);
-        assertThat(registry.getEffectiveMaxLeverage("PEPEUSDT", new BigDecimal("100"))).isEqualTo(5);
-        assertThat(registry.getEffectiveMaxLeverage("PEPEUSDT", new BigDecimal("50000000000"))).isEqualTo(5);
+        assertThat(registry.getEffectiveMaxLeverage("PEPEUSDT", new BigDecimal("100"))).isEqualTo(10);
+        assertThat(registry.getEffectiveMaxLeverage("PEPEUSDT", new BigDecimal("50000000000"))).isEqualTo(10);
         // 10000 × 2.5% − 0
         assertThat(registry.calcMaintenanceMargin("PEPEUSDT", new BigDecimal("10000"))).isEqualByComparingTo("250");
     }

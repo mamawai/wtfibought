@@ -239,9 +239,9 @@ public class FuturesLeverageBracketRegistry {
             Map.entry("SPCXUSDT",    SPCX_BRACKETS)
     );
 
-    // 表外 USDT 永续的默认档：一档到底，最高 5x、MMR 2.5%、速算数 0
+    // 表外 USDT 永续的默认档：一档到底，最高 10x、MMR 2.5%、速算数 0
     private static final List<Bracket> DEFAULT_BRACKETS = List.of(
-            new Bracket(1,  bd("0"),            bd("1000000000"),   5,  bd("0.0250"),  bd("0"))
+            new Bracket(1,  bd("0"),            bd("1000000000"),   10, bd("0.0250"),  bd("0"))
     );
 
     /**
