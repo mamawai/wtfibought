@@ -24,6 +24,8 @@ FACTS = {"symbols": list(PRODUCTS), "from": "2025-01-01", "to": "2025-03-04", "r
 @pytest.fixture
 async def store():
     s = await Store.open(":memory:")
+    # Context 里写的口径版本 1：成败表按它在表里找数字可比的各版
+    await s.ensure_standard("f", "b", {})
     yield s
     await s.close()
 
@@ -47,7 +49,7 @@ def ctx_of(planted_pool, planted_vol, planted_grid, planted_panels):
         return Context(gen=model(gen), review=model(review), pool=planted_pool, vol=planted_vol, funding=funding,
                        products=products,
                        reference_grid=planted_grid, base=base, observing=empty, peer_exprs={}, known=set(), library=[],
-                       facts=FACTS, policy=prompts.DEFAULT_POLICY,
+                       facts=FACTS, policy=prompts.DEFAULT_POLICY, standard=1,
                        store=store, params=PARAMS, thresholds=GATES)
     return build
 
@@ -78,8 +80,8 @@ async def test_full_round_rewrites_reviews_reflects_and_observes(store, ctx_of, 
     assert planted["status"] == "observing" and planted["attempts"] == 3 and planted["review"]["verdict"] == "pass"
     assert planted["expr"] == "Mean($volume, 4)" and planted["reason"] is None and planted["direction"] == 1
     assert planted["gates"][10]["id"] == "G10" and planted["gates"][10]["passed"]
-    # 评估前的预检记在 eval 里
-    assert isinstance(planted["eval"]["precheck"]["rankAutocorr"], float)
+    # 评估前的预检记在 eval 里；每条评估记下是哪版口径算的
+    assert isinstance(planted["eval"]["precheck"]["rankAutocorr"], float) and planted["eval"]["standard"] == 1
     # 幸存者带着 holdout 的数字；埋进去的信号在 holdout 上也该是正的
     assert planted["eval"]["holdout"]["since"] == planted_pool.cut_ms
     assert planted["eval"]["holdout"]["horizons"]["48"]["mean"] > 0

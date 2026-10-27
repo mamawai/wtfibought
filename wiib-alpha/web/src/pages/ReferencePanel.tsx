@@ -74,6 +74,7 @@ export function ReferencePanel({ active, admin }: { active: boolean; admin: bool
 
   if (!list) return <Spinner />;
   const { job } = list;
+  const stale = items.filter(i => i.standard !== list.standard).length;
 
   return (
     <div className="space-y-14">
@@ -136,6 +137,12 @@ export function ReferencePanel({ active, admin }: { active: boolean; admin: bool
                 {t('reference.passed', { n: items.filter(i => i.passed).length, total: items.length })}
               </span>
             </div>
+            {/* 过没过是按哪版口径判的：有旧版算的就提醒重跑 */}
+            {stale > 0 ? (
+              <p className="flex items-center gap-1.5 text-[12px] text-warn">
+                <TriangleAlert className="w-3 h-3" />{t('reference.standardStale', { n: stale, now: list.standard })}
+              </p>
+            ) : <p className="text-[12px] text-muted">{t('reference.standard', { id: list.standard })}</p>}
             <div className="tw max-h-[40rem] overflow-y-auto">
               <table className="tbl tbl-sticky">
                 <thead>

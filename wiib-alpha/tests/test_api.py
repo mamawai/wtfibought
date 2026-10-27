@@ -156,7 +156,7 @@ async def library_ready(client: httpx.AsyncClient) -> dict:
 
 async def test_one_round_campaign_then_approve_from_observation(client, planted_panels):
     assert await library_ready(client) == {"factors": [], "combo": None, "computing": False, "retired": [],
-                                           "reeval": {"running": False}}
+                                           "reeval": {"running": False}, "standard": 1}
     started = data(await client.post("/api/alpha/campaigns", json={"rounds": 1, "k": 2}, headers=ADMIN))
     campaign_id, run_id = started["id"], started["runId"]
     # 每一轮记下当时数据的 holdout 切点：之后复评按它算"它没见过的那段"
@@ -177,6 +177,7 @@ async def test_one_round_campaign_then_approve_from_observation(client, planted_
     assert state["run"]["status"] == "done" and state["run"]["campaign_id"] == campaign_id and state["trials"] == 5
     by_name = {c["name"]: c for c in state["candidates"]}
     assert by_name["planted"]["status"] == "observing" and by_name["planted"]["brief"]["gates"][2]["passed"]
+    assert by_name["planted"]["standard"] == 1
     assert by_name["planted"]["brief"]["holdout"]["horizons"]["12h"]["samples"] > 0
     assert by_name["planted"]["brief"]["horizons"]["12h"]["breakEvenBps"] > 12
     assert by_name["noise"]["status"] == "rejected_gates" and "holdout" not in by_name["noise"]["brief"]
@@ -265,9 +266,10 @@ async def test_one_round_campaign_then_approve_from_observation(client, planted_
 
 
 def fake_reeval(real: dict, cut_ms: int, mean: float = 0.05, t: float | None = 5.0, samples: int = 100,
-                search: float = 0.04, passed: bool = True) -> dict:
-    """拿一份真评估改出能喂给 admission 的复评：主档 24h 的搜索段 IC、holdout 的起点和逐点 t 按参数改"""
+                search: float = 0.04, passed: bool = True, standard: int | None = 1) -> dict:
+    """拿一份真评估改出能喂给 admission 的复评：主档 24h 的搜索段 IC、holdout 的起点、逐点 t 和口径版本按参数改"""
     ev = json.loads(json.dumps(real["eval"]))
+    ev["standard"] = standard
     ev["horizons"]["96"]["ic"]["mean"] = search
     ev["holdout"] = {"since": cut_ms, "at": 1, "horizons": {"96": {"mean": mean, "icir": None, "se": None, "t": t,
                                                                   "months": 3, "samples": samples, "monotonic": None}}}
@@ -306,10 +308,9 @@ async def test_admission_rule_and_duplicate_names(client):
     assert await refused(fake_reeval(real, cut, mean=-0.05, t=-5.0)) == "没见过那段主档 IC 和搜索段的 0.0400 反号（t -5.0）"
     assert await refused(fake_reeval(real, cut, t=1.7)) == "没见过那段主档 IC 的 t 1.7 不到 2"
     assert (await refused(fake_reeval(real, cut, t=None))).startswith("没见过那段算不出主档 IC 的 t")
-    # 复评之后改过 carry 份额：G9 基线变了，得重新复评
-    stale = fake_reeval(real, cut)
-    stale["eval"]["gain"]["carryShare"] = 0.5
-    assert await refused(stale) == "份额改过，还没按现在的份额复评"
+    # 复评是别的版本口径算的（门槛、份额改过都算），或者是没有版本号的老结果：得重新复评
+    assert await refused(fake_reeval(real, cut, standard=7)) == "复评是按第 7 版口径算的，现在是第 1 版，再复评一次"
+    assert await refused(fake_reeval(real, cut, standard=None)) == "复评是按没有版本号的旧口径算的，现在是第 1 版，再复评一次"
     assert (await store.candidate("r2-1"))["status"] == "observing"
 
     await store.set_reeval("r2-1", fake_reeval(real, cut))
@@ -478,6 +479,78 @@ async def test_observation_reeval(client):
     assert len(factor["gates"]) == 11 and factor["eval"]["horizons"]["48"]["leg"]["fundingBps"] == 0
 
 
+async def test_g9_calibration_runs_in_the_service_and_knows_when_it_is_outdated(client):
+    """标定 G9：库里每条拿掉再加回去、库外候选、随机因子加进方案后的增量，结果连同口径、切点、在役库存下；三样有一样变了就不作数"""
+    store = m.app.state.store
+    e = parse("Mean($volume, 4)", ["volume"])
+    ev = await evaluated(client, "Mean($volume, 4)")
+    await store.add_factor({"id": "f-vol", "name": "vol4", "hypothesis": "h", "expr": "Mean($volume, 4)",
+                            "canonical": e.canonical(), "columns": ["volume"], "eval": ev["eval"], "gates": ev["gates"],
+                            "approved_at": 1, "run_id": "old"})
+    await store.create_run("old", 1, "", "zh", None)
+    # 评估过的候选是库外候选，和库里重复的表达式不算
+    for cid, name, expr in (("old-1", "trades", "$trades"), ("old-2", "vol_again", "Mean($volume, 4)")):
+        await store.upsert_candidate({"id": cid, "run_id": "old", "seq": 1, "name": name, "hypothesis": "h", "expr": expr,
+                                      "status": "rejected_gates"})
+    assert data(await client.get("/api/alpha/standard", headers=ADMIN))["calibration"] is None
+    assert data(await client.post("/api/alpha/standard/calibrate", json={"randoms": 2}, headers=ADMIN)) == {"started": True}
+    assert (await client.post("/api/alpha/standard/calibrate", json={"randoms": 2}, headers=ADMIN)).status_code == 409
+
+    async def finished():
+        return not data(await client.get("/api/alpha/standard", headers=ADMIN))["job"]["running"]
+
+    await wait_until(finished, 60)
+    std = data(await client.get("/api/alpha/standard", headers=ADMIN))
+    cal = std["calibration"]
+    # 库 1 条 + 库外候选 1 条 + 随机 2 条
+    assert std["job"]["error"] is None and (std["job"]["done"], std["job"]["total"]) == (4, 4)
+    assert (cal["standardId"], cal["cutMs"], cal["randoms"], cal["seed"]) == (1, m.app.state.data.cut_ms, 2, 0)
+    assert cal["library"] == [{"name": "vol4", "expr": "Mean($volume, 4)"}]
+    assert cal["same"] == {"standard": True, "data": True, "library": True}
+    result = cal["result"]
+    assert result["base"]["carryShare"] == 0.25 and result["base"]["recentFrom"] == "2022-01-01"
+    # 库里那条埋了信号：拿掉再加回去 Sharpe 升；库外候选只有成交笔数那条；随机因子两条，分位数都有
+    assert result["library"][0]["name"] == "vol4" and result["library"][0]["full"]["gain"] > 0
+    assert [x["name"] for x in result["candidates"]["items"]] == ["trades"]
+    assert result["random"]["n"] == 2 and set(result["random"]["full"]) == {"median", "p90", "p95", "p99", "max"}
+    # 按标定改 G9 的线：口径换了一版、库里那条成了旧版算的，标定照样作数（增量不看线）；改份额才不作数
+    std = data(await client.put("/api/alpha/standard", json={"sharpeGainMin": 0.12}, headers=ADMIN))
+    assert (std["id"], std["stale"]) == (2, {"library": 1, "observing": 0})
+    assert std["calibration"]["same"] == {"standard": True, "data": True, "library": True}
+    await client.put("/api/alpha/trader/carry", json={"share": 0.1}, headers=ADMIN)
+    cal = data(await client.get("/api/alpha/standard", headers=ADMIN))["calibration"]
+    assert cal["same"] == {"standard": False, "data": True, "library": True}
+
+
+async def test_g9_line_is_set_on_the_page_and_survives_a_restart(prepared):
+    """G9 的线在页面上改：存成库里的覆盖、口径换成新的一版（改回去回到原来那版）、服务里的门槛跟着变；重启后还是改过的值。
+    campaign、复评跑着时改不了，标定跑着可以改"""
+    async with m.lifespan(prepared):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=prepared), base_url="http://t") as client:
+            std = data(await client.get("/api/alpha/standard", headers=ADMIN))
+            assert (std["id"], std["content"]["thresholds"]["sharpe_gain_min"]) == (1, 0.1)
+            std = data(await client.put("/api/alpha/standard", json={"sharpeGainMin": 0.12}, headers=ADMIN))
+            assert (std["id"], std["content"]["thresholds"]["sharpe_gain_min"]) == (2, 0.12)
+            assert [h["id"] for h in std["history"]] == [2, 1]
+            assert m.app.state.standard.thresholds.sharpe_gain_min == 0.12
+            assert data(await client.put("/api/alpha/standard", json={"sharpeGainMin": 0.1}, headers=ADMIN))["id"] == 1
+            assert data(await client.put("/api/alpha/standard", json={"sharpeGainMin": 0.12}, headers=ADMIN))["id"] == 2
+            jobs = m.app.state.runs.jobs
+            jobs["reeval"]["running"] = True
+            resp = await client.put("/api/alpha/standard", json={"sharpeGainMin": 0.13}, headers=ADMIN)
+            assert resp.status_code == 409 and "复评" in resp.json()["msg"]
+            assert data(await client.get("/api/alpha/busy", headers=ADMIN))["standard"] == "观察区还在复评，等它算完"
+            jobs["reeval"]["running"] = False
+            jobs["calibrate"]["running"] = True
+            assert data(await client.get("/api/alpha/busy", headers=ADMIN))["standard"] is None
+            jobs["calibrate"]["running"] = False
+    # 重启：线是库里改过的那个，口径还是第 2 版
+    async with m.lifespan(prepared):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=prepared), base_url="http://t") as client:
+            std = data(await client.get("/api/alpha/standard", headers=ADMIN))
+            assert (std["id"], std["content"]["thresholds"]["sharpe_gain_min"]) == (2, 0.12)
+
+
 async def test_library_reeval(client):
     """库里因子复评：G9 的基线是拿掉它的库 + carry，G6 的库对比集是别的因子，G8 的已知结构去掉它自己，
     G10 用它当初声明的方向（没声明过的问模型补）；结果另存在 reeval，入库时那份和状态都不动"""
@@ -517,6 +590,18 @@ async def test_library_reeval(client):
     # 入库时那份不动，详情里两份都在
     factor = await store.factor("f-vol")
     assert factor["eval"]["horizons"] and factor["gates"] and factor["reeval"]["passed"] is True
+    # 两份都记着是第 1 版口径算的；改 carry 份额就是另一版口径，库里的数字都成了旧版的，改回去回到第 1 版
+    assert (by["vol4"]["standard"], vol["standard"], out["standard"]) == (1, 1, 1)
+    std = data(await client.get("/api/alpha/standard", headers=ADMIN))
+    assert std["id"] == 1 and std["stale"] == {"library": 0, "observing": 0} and std["content"]["scheme"]["carryShare"] == 0.25
+    assert std["content"]["reference"]["count"] == 1 and std["content"]["thresholds"]["min_samples"] == 30
+    await client.put("/api/alpha/trader/carry", json={"share": 0.1}, headers=ADMIN)
+    std = data(await client.get("/api/alpha/standard", headers=ADMIN))
+    assert (std["id"], std["stale"]["library"], std["content"]["scheme"]["carryShare"]) == (2, 2, 0.1)
+    assert [h["id"] for h in std["history"]] == [2, 1]
+    assert data(await client.get("/api/alpha/library", headers=ADMIN))["standard"] == 2
+    await client.put("/api/alpha/trader/carry", json={"share": 0.25}, headers=ADMIN)
+    assert data(await client.get("/api/alpha/standard", headers=ADMIN))["id"] == 1
     detail = data(await client.get("/api/alpha/library/f-vol", headers=ADMIN))
     assert detail["reeval"]["passed"] is True and detail["gates"] == factor["gates"]
     assert await store.trials() == 0
@@ -588,7 +673,8 @@ async def test_refresh_and_reference_block_campaigns_and_each_other(client):
         assert resp.status_code == 409 and "刷新" in resp.json()["msg"], path
     # 页面先拿到同一句原因，按钮直接灰掉；改方针不靠数据，照样能改
     busy = data(await client.get("/api/alpha/busy", headers=ADMIN))
-    assert busy["campaign"] == busy["reeval"] == busy["reference"] == "正在刷新数据，等它刷完" and busy["policy"] is None
+    assert busy["campaign"] == busy["reeval"] == busy["reference"] == busy["calibrate"] == "正在刷新数据，等它刷完"
+    assert busy["policy"] is None
     jobs["refresh"]["running"] = False
     # 参照集在跑：campaign 开不了（抢内存），刷新也不开（它可能在读上一版面板）
     jobs["reference"]["running"] = True

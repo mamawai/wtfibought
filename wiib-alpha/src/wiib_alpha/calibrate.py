@@ -16,10 +16,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import tempfile
 import time
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -173,8 +175,66 @@ def carry_share(db_path: str) -> float:
     return float(row[0]) if row else scheme.CARRY_SHARE
 
 
+def service_thresholds(db_path: str) -> Thresholds:
+    """服务里的门槛：页面上改过的项（现在只有 G9 的线）盖掉代码默认值"""
+    with snapshot(db_path) as db:
+        rows = db.execute("SELECT key, value_json FROM standard_override").fetchall()
+    return replace(Thresholds(), **{key: json.loads(value) for key, value in rows})
+
+
+def g9_gains(pool: Pool, vol: np.ndarray, basis: np.ndarray, library: dict[str, np.ndarray],
+             candidates: list[tuple[str, str]], params: EvalParams, share: float, randoms: int, seed: int,
+             progress: dict[str, Any]) -> dict[str, Any]:
+    """G9 的线怎么定：库里每条（拿掉它的方案再加回去）、库外的候选、随机因子，加进交易方案后搜索段净 Sharpe 各升多少，
+    2022 起（G9 判这份）和全段各一份。library 是在役因子在搜索段上的值，candidates 是库外候选的 (名字, 表达式)；
+    vol、basis 与 pool.search 对齐。页面的标定任务和命令行都走这里，progress["done"] 每过一条加一（解析不了跳过的也算）"""
+    pick = pool.in_search
+
+    def base(values: dict[str, np.ndarray]) -> scheme.Base:
+        c = Combo.empty(pool.search, pool.symbols)
+        for name, f in values.items():
+            c = c.plus(name, f)
+        return scheme.Base.of(c, basis, vol, params, share)
+
+    def delta(g: dict[str, Any]) -> dict[str, Any]:
+        return {"recent": g["recentSharpe"], "full": g["sharpe"]}
+
+    full = base(library)
+    out: dict[str, Any] = {"base": {"recentSharpe": full.result["recentSharpe"], "sharpe": full.result["sharpe"],
+                                    "recentFrom": day_name(params.recent_from), "carryShare": share},
+                           "library": []}
+    for name, f in library.items():
+        g = scheme.gain(base({n: v for n, v in library.items() if n != name}), name, f, params)
+        out["library"].append({"name": name, **delta(g)})
+        progress["done"] += 1
+    rng = np.random.default_rng(seed)
+    first = pool.store.load(pool.symbols[0])
+    groups = {"candidates": candidates,
+              "random": [(f"rand{i:03d}", str(random_expression(rng, first))) for i in range(randoms)]}
+    for key, items in groups.items():
+        rows = []
+        for name, expr in items:
+            progress["done"] += 1
+            try:
+                f = pool.values(parse(expr, FEATURE_COLUMNS)).f[pick]
+            except DslError:
+                continue
+            rows.append({"name": name, "expr": expr, **delta(scheme.gain(full, name, f, params))})
+        out[key] = {"n": len(rows), "items": rows,
+                    **{which: _quantiles([r[which]["gain"] for r in rows]) for which in ("recent", "full")}}
+    return out
+
+
+def _quantiles(xs: list[float]) -> dict[str, float] | None:
+    """增量的中位、90%、95%、99% 分位和最大；一条都没有是 None"""
+    if not xs:
+        return None
+    q = np.quantile(xs, [0.5, 0.9, 0.95, 0.99])
+    return {"median": float(q[0]), "p90": float(q[1]), "p95": float(q[2]), "p99": float(q[3]), "max": float(max(xs))}
+
+
 def g9(store: PanelStore, db_path: str, params: EvalParams, randoms: int, seed: int) -> None:
-    """G9 的阈值怎么定：库里每条（拿掉它的方案再加回去）、库外的候选、随机因子，加进交易方案后搜索段净 Sharpe 各升多少"""
+    """命令行：读库里的在役因子和候选，算完打印"""
     with snapshot(db_path) as db:
         universe = pd.read_sql_query("SELECT month, symbol, rank, avg_quote_volume FROM universe", db)
         library = db.execute("SELECT name, expr FROM factor WHERE retired_at IS NULL ORDER BY approved_at").fetchall()
@@ -185,47 +245,31 @@ def g9(store: PanelStore, db_path: str, params: EvalParams, randoms: int, seed: 
     pool = load_pool(store, universe, params.holdout_days)
     pick = pool.in_search
     vol, basis = pool.values(scheme.VOL).f[pick], scheme.carry_signal(pool)[pick]
-    search = lambda expr: pool.values(parse(expr, FEATURE_COLUMNS)).f[pick]
+    lib = {name: pool.values(parse(expr, FEATURE_COLUMNS)).f[pick] for name, expr in library}
+    outside = [(n, e) for e, n in candidates.items() if e not in {x for _, x in library}]
+    print_g9(g9_gains(pool, vol, basis, lib, outside, params, share, randoms, seed, {"done": 0}))
 
-    def base(values: dict[str, np.ndarray]) -> scheme.Base:
-        c = Combo.empty(pool.search, pool.symbols)
-        for name, f in values.items():
-            c = c.plus(name, f)
-        return scheme.Base.of(c, basis, vol, params, share)
 
-    lib = {name: search(expr) for name, expr in library}
-    full = base(lib)
-    since = day_name(params.recent_from)
-    print(f"基线：库里 {len(lib)} 条 + carry（占 {share:.0%}），搜索段净 Sharpe {since} 起 {full.result['recentSharpe']:.2f}、"
-          f"全段 {full.result['sharpe']:.2f}；下面的增量都是 {since} 起（G9 判这份） / 全段", flush=True)
+def print_g9(result: dict[str, Any]) -> None:
+    base, since = result["base"], result["base"]["recentFrom"]
+    print(f"基线：库里 {len(result['library'])} 条 + carry（占 {base['carryShare']:.0%}），"
+          f"搜索段净 Sharpe {since} 起 {base['recentSharpe']:.2f}、全段 {base['sharpe']:.2f}；"
+          f"下面的增量都是 {since} 起（G9 判这份） / 全段", flush=True)
     print("\n== 库里每条：拿掉它的方案，再加回去 ==", flush=True)
-    for name, f in lib.items():
-        g = scheme.gain(base({n: v for n, v in lib.items() if n != name}), name, f, params)
-        r, s = g["recentSharpe"], g["sharpe"]
-        print(f"  {name}: {r['base']:.2f} → {r['with']:.2f}（{r['gain']:+.2f}） / "
+    for x in result["library"]:
+        r, s = x["recent"], x["full"]
+        print(f"  {x['name']}: {r['base']:.2f} → {r['with']:.2f}（{r['gain']:+.2f}） / "
               f"{s['base']:.2f} → {s['with']:.2f}（{s['gain']:+.2f}）", flush=True)
-    rng = np.random.default_rng(seed)
-    first = store.load(pool.symbols[0])
-    groups = {"库外候选": [(n, e) for e, n in candidates.items() if e not in {x for _, x in library}],
-              "随机因子": [(f"rand{i:03d}", str(random_expression(rng, first))) for i in range(randoms)]}
-    for label, items in groups.items():
-        print(f"\n== {label}：{len(items)} 条 ==", flush=True)
-        gains = []
-        for name, expr in items:
-            try:
-                f = search(expr)
-            except DslError as exc:
-                print(f"  {name}：解析不了，跳过（{exc}）", flush=True)
-                continue
-            g = scheme.gain(full, name, f, params)
-            gains.append((g["recentSharpe"]["gain"], g["sharpe"]["gain"]))
-            print(f"  {gains[-1][0]:+.3f} / {gains[-1][1]:+.3f}  {name}  {expr}", flush=True)
-        if gains:
-            for k, which in enumerate((f"{since} 起", "全段")):
-                xs = [x[k] for x in gains]
-                q = np.quantile(xs, [0.5, 0.9, 0.95, 0.99])
-                print(f"  {label}{which}增量：中位 {q[0]:+.3f}，90% {q[1]:+.3f}，95% {q[2]:+.3f}，99% {q[3]:+.3f}，"
-                      f"最大 {max(xs):+.3f}（{len(xs)} 条）", flush=True)
+    for key, label in (("candidates", "库外候选"), ("random", "随机因子")):
+        group = result[key]
+        print(f"\n== {label}：{group['n']} 条 ==", flush=True)
+        for x in group["items"]:
+            print(f"  {x['recent']['gain']:+.3f} / {x['full']['gain']:+.3f}  {x['name']}  {x['expr']}", flush=True)
+        for which, name in (("recent", f"{since} 起"), ("full", "全段")):
+            q = group[which]
+            if q:
+                print(f"  {label}{name}增量：中位 {q['median']:+.3f}，90% {q['p90']:+.3f}，95% {q['p95']:+.3f}，"
+                      f"99% {q['p99']:+.3f}，最大 {q['max']:+.3f}（{group['n']} 条）", flush=True)
 
 
 # ========== 打印 ==========
@@ -282,7 +326,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--g9", type=int, default=0, help="真数据：量 G9 阈值，随机因子这么多条；只跑这一项")
     args = ap.parse_args(argv)
 
-    params, thresholds = EvalParams(), Thresholds()
+    # 真数据按线上的门槛判，合成币池没有库、按代码默认
+    params, thresholds = EvalParams(), Thresholds() if args.synthetic else service_thresholds(args.db)
     print(f"参数 {params}\n阈值 {thresholds}")
     if args.g9:
         g9(PanelStore(args.data_dir), args.db, params, args.g9, args.seed)

@@ -117,7 +117,7 @@ export function GateList({ gates }: { gates: GateRow[] }) {
         </span>
         {failed.length > 0 && (
           <span className="text-[12.5px] text-loss">
-            {t('gates.failed', { list: failed.map(g => `${g.id}${g.name ? ` ${g.name}` : ''}`).join('、') })}
+            {t('gates.failed', { list: failed.map(g => `${g.id}${g.name ? ` ${g.name}` : ''}`).join(t('common.sep')) })}
           </span>
         )}
       </div>

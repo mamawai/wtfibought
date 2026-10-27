@@ -71,6 +71,8 @@ class Context:
     facts: dict[str, Any]
     # 研究方针的当前版：机制清单、出题和写公式的建议、评审标准
     policy: prompts.Policy
+    # 评估口径的版本号（standard.py）：每条评估结果记下它，成败表只统计这一版的
+    standard: int
     store: Store
     params: EvalParams = field(default_factory=EvalParams)
     thresholds: Thresholds = field(default_factory=Thresholds)
@@ -106,7 +108,8 @@ def build_graph(ctx: Context):
         await emit(ctx.store, state["run_id"], "status", {"stage": "proposing"})
         tried = await ctx.store.tried()
         lessons = await ctx.store.lessons()
-        outcomes = prompts.outcomes(await ctx.store.evaluated_candidates(), ctx.policy.families)
+        outcomes = prompts.outcomes(await ctx.store.evaluated_candidates(ctx.standard), ctx.policy.families,
+                                    ctx.thresholds)
         system = prompts.system_gen(ctx.facts, state["lang"], ctx.policy)
         message = prompts.propose_message(state["k"], ctx.library, tried, lessons, outcomes, state.get("note", ""),
                                           state["lang"], ctx.policy)
@@ -209,6 +212,7 @@ def build_graph(ctx: Context):
         ev = evaluate(expr, ctx.pool, ctx.vol, ctx.params, ctx.reference_grid, ctx.base, ctx.products,
                       observing=ctx.observing, values=values, peer_exprs=ctx.peer_exprs)
         ev["precheck"] = pre
+        ev["standard"] = ctx.standard
         return ev
 
     async def _implement(cand: dict[str, Any], system: str, feedback: str | None, written: dict[str, int],
@@ -405,6 +409,7 @@ def brief(c: dict[str, Any]) -> dict[str, Any]:
         out["gates"] = [gate_row(g) for g in c["gates"]]
     if c.get("eval"):
         out["brief"] = prompts.eval_brief(c["eval"], c["gates"])
+        out["standard"] = c["eval"].get("standard")
     return out
 
 

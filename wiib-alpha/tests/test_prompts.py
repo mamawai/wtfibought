@@ -2,12 +2,14 @@ import copy
 
 from wiib_alpha import ops, prompts
 from wiib_alpha.data.panel import FEATURE_COLUMNS
+from wiib_alpha.eval.params import Thresholds
 
 FACTS = {"symbols": ["BTCUSDT", "ETHUSDT"], "from": "2024-09-21", "to": "2026-09-20", "rows": 70000,
          "liqFrom": "2026-04-27", "holdoutFrom": "2026-06-22", "recentFrom": "2022-01-01", "costTiers": [5.0, 8.0, 12.0],
          "poolSize": 80,
          "poolSymbols": 481, "carryShare": 0.25, "g9Min": 0.1}
 P = prompts.DEFAULT_POLICY
+T = Thresholds()
 
 
 def test_parse_object_and_list_tolerate_fences_and_chatter():
@@ -55,7 +57,7 @@ def test_propose_and_implement_messages():
                                      "reason": f"G2 主档 IC 0.0062；G9 增量 -0.03；2022-01-01 起 1.66 → 1.82；{prompts.STUCK}：和第 1 版一样"},
                                     {"outcome": "rejected_review", "hypothesis": "bad", "expr": "$y", "reason": "机制不成立"}],
                                    [{"kind": "try", "text": "新的"}, {"kind": "avoid", "text": "旧的"}],
-                                   prompts.outcomes([], P.families), "只看资金费率", "zh", P)
+                                   prompts.outcomes([], P.families, T), "只看资金费率", "zh", P)
     assert "mom：$ret" in text and "只看资金费率" in text and "提出 3 条" in text
     # 门没过的只列门号，写不出新表达式那截和评审的评语原样
     assert (f"- [rejected_gates] old｜$x｜没过的门：G2、G9；{prompts.STUCK}：和第 1 版一样\n"
@@ -69,7 +71,7 @@ def test_propose_and_implement_messages():
     # 清单里没有强平（只有产品币有数）和时段（同一时刻所有币一样）
     assert "强平" not in text and "时段" not in text
     assert "已折算成每 8 小时的等价费率" in prompts.system_gen(FACTS, "zh", P)
-    assert "经验（最新在前）：\n（还没有）" in prompts.propose_message(1, [], [], [], prompts.outcomes([], P.families), "",
+    assert "经验（最新在前）：\n（还没有）" in prompts.propose_message(1, [], [], [], prompts.outcomes([], P.families, T), "",
                                                                     "zh", P)
     cand = {"name": "carry", "hypothesis": "费率高做空"}
     plain = prompts.implement_message(cand, None, P)
@@ -92,7 +94,7 @@ def test_policy_replaces_the_opinions_and_leaves_the_facts():
                           "你只判一件事：丙")
     gen = prompts.system_gen(FACTS, "zh", mine)
     assert "- 规则甲\n\n假设与说明" in gen and "参数越少越好" not in gen and "G9 加进实盘的交易方案后" in gen
-    propose = prompts.propose_message(1, [], [], [], prompts.outcomes([], mine.families), "", "zh", mine)
+    propose = prompts.propose_message(1, [], [], [], prompts.outcomes([], mine.families, T), "", "zh", mine)
     assert "- basis：溢价（列：premium；持有期：7 天）\n- other：清单外\n" in propose and "- price：" not in propose
     implement = prompts.implement_message({"name": "x", "hypothesis": "h"}, None, mine)
     assert "\n\n自查乙\n\n把这条假设写成" in implement and "想清楚再写" not in implement
@@ -102,24 +104,24 @@ def test_policy_replaces_the_opinions_and_leaves_the_facts():
     assert prompts.Policy.of(mine.to_row()) == mine
 
 
-def scored(expr: str, family: str, ic: dict, leg: dict, g9: bool) -> dict:
-    """store.evaluated_candidates 的一行：落过库，档的键是字符串"""
-    return {"expr": expr, "family": family, "gates": [{"id": "G9", "passed": g9}],
-            "eval": {"primary": 96, "horizons": {"96": {"ic": ic, "leg": leg}}}}
+def scored(expr: str, family: str, ic: dict, leg: dict, gain: float | None) -> dict:
+    """store.evaluated_candidates 的一行：落过库，档的键是字符串；gain 是 G9 判的那份增量"""
+    return {"expr": expr, "family": family,
+            "eval": {"primary": 96, "horizons": {"96": {"ic": ic, "leg": leg}}, "gain": {"recentSharpe": {"gain": gain}}}}
 
 
 def test_outcomes_tally_by_data_class_and_family():
     rows = [
-        # 有信号（t = 0.8 × √20 ≈ 3.6）、扣成本还赚、过 G9；用到溢价和成交量，两类各算一次
+        # 有信号（t = 0.8 × √20 ≈ 3.6）、扣成本还赚、增量过现在的线（0.10）；用到溢价和成交量，两类各算一次
         scored("$premium + Mean($volume, 4)", "basis", {"mean": 0.03, "icir": 0.8, "months": 20},
-               {"netReturn": 0.2, "turnover": 0.25, "breakEvenBps": 15.0}, True),
-        # IC 够了但 t 不够（0.5 × √16 = 2）；净收益、盈亏平衡落库成了 None
+               {"netReturn": 0.2, "turnover": 0.25, "breakEvenBps": 15.0}, 0.15),
+        # IC 够了但 t 不够（0.5 × √16 = 2）；净收益、盈亏平衡、增量落库成了 None
         scored("$premium", "basis", {"mean": -0.02, "icir": -0.5, "months": 16},
-               {"netReturn": None, "turnover": 0.75, "breakEvenBps": None}, False),
-        # IC 不够；多空腿没有样本外期数；老候选的中文 family 算 other
-        scored("Sum($ret, 96)", "动量", {"mean": 0.005, "icir": 2.0, "months": 20}, {"periods": 0}, False),
+               {"netReturn": None, "turnover": 0.75, "breakEvenBps": None}, None),
+        # IC 不够；多空腿没有样本外期数；增量不到线；老候选的中文 family 算 other
+        scored("Sum($ret, 96)", "动量", {"mean": 0.005, "icir": 2.0, "months": 20}, {"periods": 0}, 0.05),
     ]
-    table = prompts.outcomes(rows, P.families)
+    table = prompts.outcomes(rows, P.families, T)
     assert table["byClass"] == {
         "溢价": {"tried": 2, "signal": 1, "net": 1, "g9": 1, "turnover": 0.5, "breakEven": 15.0},
         "成交量": {"tried": 1, "signal": 1, "net": 1, "g9": 1, "turnover": 0.25, "breakEven": 15.0},

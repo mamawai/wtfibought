@@ -14,6 +14,7 @@ import { useFail, useToast } from '../toast';
 import { CampaignBadge, CandidateCard, RunBadge } from '../components/FactorCard';
 import { ModelSettings } from '../components/ModelSettings';
 import { PolicySettings } from '../components/PolicySettings';
+import { StandardCard } from '../components/StandardCard';
 import { Badge, Button, Card, Empty, Progress, Spinner, Tip, Waiting } from '../components/ui';
 import { OverviewStats, StatusCountBadges } from './Overview';
 
@@ -244,6 +245,7 @@ export function MinePanel({ active }: { active: boolean }) {
       <div className="space-y-14">
         <ModelSettings onReady={setModelsReady} />
         <PolicySettings blocked={blocked?.policy} />
+        <StandardCard busy={blocked} active={active} />
 
         {running
           ? <LiveCampaign campaign={liveNow?.campaign ?? running}

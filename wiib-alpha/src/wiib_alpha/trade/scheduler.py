@@ -148,7 +148,8 @@ async def rebalance(app: FastAPI, library: Library, now: int) -> None:
         exprs = [parse(lib.factors[j]["expr"], FEATURE_COLUMNS) for j in cols]
         await asyncio.to_thread(_rebalance, app.state.fapi, app.state.sim, data.pool.store, pool,
                                 universe_table.months_by_symbol(table), exprs, weights, setting["enabled"], setting["share"],
-                                scale, listed, held, app.state.params, now, record, job, board, list(data.products))
+                                scale, listed, held, app.state.standard.params, now, record, job, board,
+                                list(data.products))
     except Exception as exc:
         logger.exception("调仓失败")
         record["error"] = str(exc)[:500]
@@ -225,7 +226,8 @@ async def attribute(app: FastAPI) -> None:
         run = await store.trade_run(a["day"])
         prev = await store.prev_targets(a["day"])
         closes, funding = await asyncio.to_thread(attrib.inputs, app.state.fapi, run, b)
-        out = attrib.attribute(run, b, prev, closes, funding, attrib.tiers(universe, run["signal_ms"]), app.state.params)
+        out = attrib.attribute(run, b, prev, closes, funding, attrib.tiers(universe, run["signal_ms"]),
+                               app.state.standard.params)
         await store.set_trade_attrib(a["day"], out)
         logger.info("%s 按腿归因：实际 %+.2f、回测应得 %+.2f（组合腿 %+.2f、carry 腿 %+.2f）", a["day"], out["actual"],
                     out["model"], out["legs"]["combo"]["net"], out["legs"]["carry"]["net"])
@@ -268,13 +270,14 @@ async def combo_weights(app: FastAPI, lib: Any, cols: Sequence[int]) -> np.ndarr
     """这几列因子的组合权重（scheme.learned_weights）"""
     data = app.state.data
     return await _per_factor(app, lib, cols, "weights",
-                             lambda v: scheme.learned_weights(data.pool, v, data.vol, app.state.params))
+                             lambda v: scheme.learned_weights(data.pool, v, data.vol, app.state.standard.params))
 
 
 async def combo_signs(app: FastAPI, lib: Any, cols: Sequence[int]) -> np.ndarray:
     """这几列因子的方向（scheme.learned_signs），看板用"""
     data = app.state.data
-    return await _per_factor(app, lib, cols, "signs", lambda v: scheme.learned_signs(data.pool, v, app.state.params))
+    return await _per_factor(app, lib, cols, "signs",
+                             lambda v: scheme.learned_signs(data.pool, v, app.state.standard.params))
 
 
 async def board_factors(app: FastAPI, lib: Any) -> list[dict[str, Any]]:

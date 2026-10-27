@@ -96,12 +96,26 @@ SCHEMA = [
     """CREATE TABLE IF NOT EXISTS policy(
         id INTEGER PRIMARY KEY AUTOINCREMENT, families_json TEXT NOT NULL, gen_rules TEXT NOT NULL,
         implement_checks TEXT NOT NULL, review_rules TEXT NOT NULL, created_at INTEGER NOT NULL)""",
+    # 评估口径的各版（standard.py）：fingerprint 是整份内容的指纹，内容一样就是同一版；
+    # basis 是只看评估参数和交易方案的指纹，basis 一样、只是门槛不同的各版算出来的数字可比
+    """CREATE TABLE IF NOT EXISTS standard(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL UNIQUE, basis TEXT NOT NULL,
+        content_json TEXT NOT NULL, created_at INTEGER NOT NULL)""",
+    # 口径里在页面上改过的项：key 是 Thresholds 的字段名，value_json 是值；没改过的项用代码默认值
+    """CREATE TABLE IF NOT EXISTS standard_override(
+        key TEXT PRIMARY KEY, value_json TEXT NOT NULL, changed_at INTEGER NOT NULL)""",
+    # G9 的标定：在哪版口径、哪版数据（切点）、哪个在役库上标的；result_json 是 calibrate.g9_gains 的结果
+    """CREATE TABLE IF NOT EXISTS calibration(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, standard_id INTEGER NOT NULL, cut_ms INTEGER NOT NULL,
+        library_json TEXT NOT NULL, randoms INTEGER NOT NULL, seed INTEGER NOT NULL, result_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL)""",
 ]
 
 _JSON_COLUMNS = {"eval_json": "eval", "gates_json": "gates", "review_json": "review", "data_json": "data",
                  "columns_json": "columns", "recheck_json": "recheck", "reeval_json": "reeval",
                  "factors_json": "factors", "legs_json": "legs", "targets_json": "targets", "orders_json": "orders",
-                 "board_json": "board", "attrib_json": "attrib", "families_json": "families"}
+                 "board_json": "board", "attrib_json": "attrib", "families_json": "families",
+                 "content_json": "content", "library_json": "library", "result_json": "result", "value_json": "value"}
 # 建表之后才加的列：老库启动时补上
 _ADDED_COLUMNS = {"campaign": {"gen_model": "TEXT", "review_model": "TEXT", "policy_id": "INTEGER"},
                   "run": {"campaign_id": "TEXT", "cut_ms": "INTEGER"},
@@ -279,10 +293,16 @@ class Store:
         await self.db.commit()
         return cur.rowcount == 1
 
-    async def evaluated_candidates(self) -> list[dict[str, Any]]:
-        """评估过、记着主档的候选（现在的口径），出题时统计成败用"""
-        return await self._all("SELECT expr, family, eval_json, gates_json FROM candidate "
-                               "WHERE json_extract(eval_json, '$.primary') IS NOT NULL", ())
+    async def evaluated_candidates(self, standard_id: int) -> list[dict[str, Any]]:
+        """和这版口径数字可比的各版（basis 一样，只是门槛不同）下评估过的候选，出题时统计成败用"""
+        return await self._all(
+            "SELECT expr, family, eval_json FROM candidate WHERE json_extract(eval_json, '$.standard') IN "
+            "(SELECT id FROM standard WHERE basis = (SELECT basis FROM standard WHERE id = ?))", (standard_id,))
+
+    async def candidate_exprs(self) -> list[tuple[str, str]]:
+        """写出过表达式的候选的 (名字, 表达式)，同一个表达式只留最后交的那条；标定 G9 拿它们当库外候选"""
+        rows = await self._all("SELECT name, expr FROM candidate WHERE expr IS NOT NULL ORDER BY updated_at", ())
+        return [(name, expr) for expr, name in {r["expr"]: r["name"] for r in rows}.items()]
 
     async def candidate_counts(self) -> dict[str, dict[str, int]]:
         """每轮各状态的候选数：run_id → {status: 条数}；公开概览只给数字"""
@@ -524,6 +544,45 @@ class Store:
              row["review_rules"], now_ms()))
         await self.db.commit()
         return await self.policy()
+
+    async def ensure_standard(self, fingerprint: str, basis: str, content: Mapping[str, Any]) -> dict[str, Any]:
+        """这份内容的口径：没有就存成新的一版，有就是原来那版"""
+        row = await self._one("SELECT * FROM standard WHERE fingerprint = ?", (fingerprint,))
+        if row is None:
+            await self.db.execute("INSERT INTO standard(fingerprint, basis, content_json, created_at) VALUES (?, ?, ?, ?)",
+                                  (fingerprint, basis, dumps(content), now_ms()))
+            await self.db.commit()
+            row = await self._one("SELECT * FROM standard WHERE fingerprint = ?", (fingerprint,))
+        return row
+
+    async def standards(self) -> list[dict[str, Any]]:
+        """各版的编号和时间，最新在前"""
+        return await self._all("SELECT id, created_at FROM standard ORDER BY id DESC", ())
+
+    async def standard(self, standard_id: int) -> dict[str, Any] | None:
+        """某一版口径，带内容"""
+        return await self._one("SELECT * FROM standard WHERE id = ?", (standard_id,))
+
+    async def overrides(self) -> dict[str, Any]:
+        """页面上改过的口径项：字段名 → 值"""
+        return {r["key"]: r["value"] for r in await self._all("SELECT key, value_json FROM standard_override", ())}
+
+    async def set_override(self, key: str, value: Any) -> None:
+        await self.db.execute("INSERT OR REPLACE INTO standard_override(key, value_json, changed_at) VALUES (?, ?, ?)",
+                              (key, dumps(value), now_ms()))
+        await self.db.commit()
+
+    async def add_calibration(self, standard_id: int, cut_ms: int, library: list[dict[str, str]], randoms: int,
+                              seed: int, result: Mapping[str, Any]) -> None:
+        await self.db.execute(
+            """INSERT INTO calibration(standard_id, cut_ms, library_json, randoms, seed, result_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (standard_id, cut_ms, dumps(library), randoms, seed, dumps(result), now_ms()))
+        await self.db.commit()
+
+    async def calibration(self) -> dict[str, Any] | None:
+        """最近一次 G9 标定"""
+        return await self._one("SELECT * FROM calibration ORDER BY id DESC LIMIT 1", ())
 
     async def carry(self) -> dict[str, Any]:
         """carry 腿开没开、占多少资金、什么时候改的；没设过是开着、占 1/4（和建表的默认值一样）"""

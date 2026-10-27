@@ -339,12 +339,11 @@ def _families(families: Mapping[str, tuple[str, str, str]]) -> str:
                      for fid, (what, cols, hold) in families.items())
 
 
-def outcomes(rows: Sequence[Mapping[str, Any]],
-             families: Mapping[str, tuple[str, str, str]]) -> dict[str, dict[str, dict[str, Any]]]:
-    """评估过的候选（store.evaluated_candidates）在主档上的成败，按用到的数据类、按机制 ID 各汇总一张：
-    试过几条、有信号几条（和 G2 同口径）、单条多空腿扣完成本还赚几条、过 G9 几条，换手和盈亏平衡成本的中位数。
-    用到几类数据就在几类里各算一次；family 不在清单里的（老候选是中文）算 other"""
-    t = Thresholds()
+def outcomes(rows: Sequence[Mapping[str, Any]], families: Mapping[str, tuple[str, str, str]],
+             t: Thresholds) -> dict[str, Any]:
+    """数字可比的各版口径下评估过的候选（store.evaluated_candidates）在主档上的成败，按用到的数据类、按机制 ID 各汇总一张：
+    试过几条、有信号几条（和 G2 同口径）、单条多空腿扣完成本还赚几条、过 G9 几条（存下的增量对现在的线），换手和盈亏平衡成本的中位数；
+    t 是现在的阈值，门槛改了不用重评。用到几类数据就在几类里各算一次；family 不在清单里的（老候选是中文）算 other"""
     by_class: dict[str, list[dict[str, Any]]] = {}
     by_family: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
@@ -353,7 +352,7 @@ def outcomes(rows: Sequence[Mapping[str, Any]],
         ic, leg = h["ic"], h["leg"]
         item = {"signal": abs(_f(ic["mean"])) >= t.ic_min and abs(_f(ic["icir"])) * math.sqrt(ic["months"]) >= t.t_min,
                 "net": _f(leg.get("netReturn")) > 0,
-                "g9": any(g["id"] == "G9" and g["passed"] for g in r["gates"]),
+                "g9": _f(ev["gain"]["recentSharpe"]["gain"]) > t.sharpe_gain_min,
                 "turnover": leg.get("turnover"), "breakEven": leg.get("breakEvenBps")}
         columns = parse(r["expr"], FEATURE_COLUMNS).columns()
         for name, cols in DATA_CLASSES.items():
@@ -361,7 +360,8 @@ def outcomes(rows: Sequence[Mapping[str, Any]],
                 by_class.setdefault(name, []).append(item)
         by_family.setdefault(r["family"] if r["family"] in families else "other", []).append(item)
     return {"byClass": {name: _tally(by_class[name]) for name in DATA_CLASSES if name in by_class},
-            "byFamily": {fid: _tally(by_family[fid]) for fid in families if fid in by_family}}
+            "byFamily": {fid: _tally(by_family[fid]) for fid in families if fid in by_family},
+            "icMin": t.ic_min, "tMin": t.t_min}
 
 
 def _tally(items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -378,7 +378,6 @@ def _outcome_lines(table: Mapping[str, Any]) -> str:
     """两张成败表；都空（还没有现在口径的候选）整段不出"""
     if not table["byClass"] and not table["byFamily"]:
         return ""
-    t = Thresholds()
 
     def line(name: str, x: Mapping[str, Any]) -> str:
         turnover = "—" if x["turnover"] is None else f"{x['turnover']:.2f}"
@@ -388,7 +387,7 @@ def _outcome_lines(table: Mapping[str, Any]) -> str:
 
     classes = "\n".join(line(name, x) for name, x in table["byClass"].items())
     families = "\n".join(line(fid, x) for fid, x in table["byFamily"].items())
-    return (f"\n已试过的候选按数据类的成败（搜索段数字；有信号 = |IC| ≥ {t.ic_min:g} 且 t ≥ {t.t_min:g}）：\n{classes}\n"
+    return (f"\n已试过的候选按数据类的成败（搜索段数字；有信号 = |IC| ≥ {table['icMin']:g} 且 t ≥ {table['tMin']:g}）：\n{classes}\n"
             f"按机制 ID：\n{families}\n")
 
 

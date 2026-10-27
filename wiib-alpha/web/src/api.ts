@@ -293,6 +293,8 @@ export interface Candidate {
   review: Review | null;
   gates?: GateRow[];
   brief?: EvalBrief;
+  /** 评估是哪版口径算的；没评估过没有，老结果是 null */
+  standard?: number | null;
 }
 
 /** 观察区复评（main._reeval_view）：当前评估器的结果，原来的 eval 不动 */
@@ -308,6 +310,8 @@ export interface Reeval {
   peers: [string, number][];
   gates: GateRow[];
   brief: EvalBrief;
+  /** 复评是哪版口径算的；老结果是 null */
+  standard: number | null;
 }
 
 /** 观察区的一条：created_at 是它那一轮开始的时间，updated_at 是进观察区的时间 */
@@ -381,10 +385,15 @@ export interface Factor {
   /** 用当前评估器复评的结果；没有同批，asked 恒 false、peers 空 */
   reeval: Reeval | null;
   brief: EvalBrief;
+  /** 入库那份评估是哪版口径算的；老结果是 null */
+  standard: number | null;
   /** 退役的时刻和原因，在役是 null */
   retired_at: number | null;
   retire_reason: string | null;
 }
+
+/** 一条因子最新的数字是哪版口径算的：复评过看复评，没有看入库那份 */
+export const latestStandard = (f: Factor) => (f.reeval ? f.reeval.standard : f.standard);
 
 /** 因子详情多带整份 eval 和完整的门 */
 export interface FactorDetail extends Factor {
@@ -413,12 +422,15 @@ export interface LibraryList {
   retired: Factor[];
   /** 库里因子复评任务的进度 */
   reeval: ReevalJob;
+  /** 当前口径的版本号 */
+  standard: number;
 }
 
 export interface ReferenceJob {
   running: boolean;
   startedAt?: number;
-  total?: number;
+  /** 标定任务要等库算好才有 total，之前是 null */
+  total?: number | null;
   done?: number;
   error?: string | null;
   finishedAt?: number;
@@ -431,11 +443,78 @@ export interface ReferenceItem {
   updatedAt: number;
   gates: GateRow[];
   brief: EvalBrief;
+  /** 这条是哪版口径算的；老结果是 null */
+  standard: number | null;
 }
 
 export interface ReferenceList {
   job: ReferenceJob;
   items: ReferenceItem[];
+  /** 当前口径的版本号 */
+  standard: number;
+}
+
+/** 评估口径的内容（standard.Standard.content）：评估参数、门和入库的阈值、交易方案常量和 carry 份额、参照集条数和指纹 */
+export interface StandardContent {
+  params: Record<string, number | number[]>;
+  thresholds: Record<string, number>;
+  scheme: { bars: number; carry: string; carryMinDays: number; vol: string; carryShare: number };
+  reference: { count: number; digest: string };
+}
+
+/** 加进交易方案前后的净 Sharpe 和增量 */
+export interface Gain {
+  base: number;
+  with: number;
+  gain: number;
+}
+
+export interface Quantiles {
+  median: number;
+  p90: number;
+  p95: number;
+  p99: number;
+  max: number;
+}
+
+/** 一组因子（库外候选、随机因子）加进方案后的增量：每条的，和 2022 起 / 全段的分位数（一条都没有是 null） */
+export interface GainGroup {
+  n: number;
+  items: { name: string; expr: string; recent: Gain; full: Gain }[];
+  recent: Quantiles | null;
+  full: Quantiles | null;
+}
+
+/** 一次 G9 标定（calibrate.g9_gains 的结果）和它是在哪版口径、哪版数据、哪个在役库上标的 */
+export interface Calibration {
+  standardId: number;
+  cutMs: number;
+  library: { name: string; expr: string }[];
+  randoms: number;
+  seed: number;
+  createdAt: number;
+  result: {
+    base: { recentSharpe: number; sharpe: number; recentFrom: string; carryShare: number };
+    /** 库里每条：拿掉它的方案再加回去 */
+    library: { name: string; recent: Gain; full: Gain }[];
+    candidates: GainGroup;
+    random: GainGroup;
+  };
+  /** 口径、数据、在役库和现在一样不一样，三样都一样才作数 */
+  same: { standard: boolean; data: boolean; library: boolean };
+}
+
+export interface StandardView {
+  id: number;
+  createdAt: number;
+  content: StandardContent;
+  /** 各版，最新在前 */
+  history: { id: number; createdAt: number }[];
+  /** 最新数字是旧版口径算的条数 */
+  stale: { library: number; observing: number };
+  calibration: Calibration | null;
+  /** 标定任务的进度，和参照集任务一个样 */
+  job: ReferenceJob;
 }
 
 export interface EvalResult {
@@ -457,8 +536,8 @@ export interface DslReference {
 }
 
 /** 各动作现在为什么做不了（main.blocked），做得了是 null */
-export type Busy = Record<'refresh' | 'campaign' | 'reeval' | 'libraryReeval' | 'reference' | 'recheck' | 'policy'
-  | 'carryShare' | 'compare', string | null>;
+export type Busy = Record<'refresh' | 'campaign' | 'reeval' | 'libraryReeval' | 'reference' | 'calibrate' | 'recheck'
+  | 'policy' | 'standard' | 'carryShare' | 'compare', string | null>;
 
 /** 一条因子（或组合）对一个产品币的看法：全池从强数第 rank、共 of 个，头部 1/5 看多、尾部 1/5 看空 */
 export interface StanceView {
@@ -989,6 +1068,11 @@ export const alpha = {
   /** 真发一句话，回答与耗时；上游报错会以 400 带回来 */
   testModel: (role: ModelRole, body: ModelSave) =>
     call<{ reply: string; ms: number }>('POST', `${ALPHA}/models/${role}/test`, body),
+  standard: () => call<StandardView>('GET', `${ALPHA}/standard`),
+  /** 后台标定 G9，进度和结果看 standard()，total 要等库算好才有；有 campaign、刷新、参照集在跑是 409 */
+  calibrate: (randoms: number) => call<{ started: boolean }>('POST', `${ALPHA}/standard/calibrate`, { randoms }),
+  /** 改 G9 的线：口径换成新的一版，下一次评估起按它判；campaign、复评在跑是 409 */
+  saveStandard: (body: { sharpeGainMin: number }) => call<StandardView>('PUT', `${ALPHA}/standard`, body),
   policy: () => call<Policy>('GET', `${ALPHA}/policy`),
   /** 存成新的一版，下一个 campaign 起用；机制 id 删了或重复是 400，campaign 跑着是 409 */
   savePolicy: (body: PolicySave) => call<Policy>('PUT', `${ALPHA}/policy`, body),

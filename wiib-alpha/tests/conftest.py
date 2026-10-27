@@ -19,15 +19,16 @@ REFERENCES = {"noise4": "Mean($trades, 4)"}
 
 
 def planted_panel(seed: int, n: int = PLANTED_N) -> pd.DataFrame:
-    """volume 是埋进去的 AR(1) 预测信号，trades、premium、funding_rate 是纯噪音；全程在池；列够 evaluate、预检和交易方案用。
-    每个币各埋一条：同一时刻 volume 高的币之后也涨得多，截面上就是信号"""
+    """volume 是埋进去的 AR(1) 预测信号，trades、premium、funding_rate 是纯噪音；全程在池；列够 evaluate、预检、交易方案和
+    标定 G9 的随机因子用。每个币各埋一条：同一时刻 volume 高的币之后也涨得多，截面上就是信号"""
     rng = np.random.default_rng(seed)
     s = np.zeros(n)
     for i in range(1, n):
         s[i] = 0.98 * s[i - 1] + rng.normal(0, 1.0)
     r = 0.0004 * np.roll(s, 1) + rng.normal(0, 0.003, n)
     close = 100 * np.exp(np.cumsum(r))
-    df = pd.DataFrame({"close": close, "ret": r, "volume": s, "trades": rng.normal(0, 1, n),
+    df = pd.DataFrame({"close": close, "high": close * 1.001, "low": close * 0.999, "ret": r, "volume": s,
+                       "quote_volume": np.abs(s) * close, "taker_buy_base": s / 2, "trades": rng.normal(0, 1, n),
                        "liq_long": np.nan, "liq_short": np.nan, "liq_count": np.nan, "in_pool": 1.0},
                       index=np.arange(n) * BAR_MS + 1_735_689_600_000)
     df["premium"] = rng.normal(0, 0.0005, n)

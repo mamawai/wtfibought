@@ -13,7 +13,7 @@ import logging
 import uuid
 from collections import Counter
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, AsyncIterator
@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.types import Scope
 
-from . import prompts, reference
+from . import calibrate, prompts, reference
 from .auth import Auth, AuthError, Authenticator, Forbidden, UpstreamError
 from .config import Config, ModelSpec, config
 from .data import universe as universe_table
@@ -44,6 +44,7 @@ from .graph import Context, ask_json, brief, build_graph, parse_direction, scree
 from .llm import LlmError, build_chat_model
 from .prompts import eval_brief, holdout_brief, horizons_brief
 from .reference import Grid
+from .standard import Standard, standard_of
 from .store import Store, clean, now_ms
 from .trade import attrib, executor, live, realtime, scheduler, scheme, sizing
 
@@ -195,10 +196,10 @@ class Runs:
         self.tasks: dict[str, asyncio.Task] = {}
         self.subscribers: dict[str, set[asyncio.Queue]] = {}
         # grid 是启动时补算参照网格（刷新收尾那次算在 refresh 的进度里）；reeval 是观察区复评，libraryReeval 是库里因子复评；
-        # trader 是交易员调仓，compare 是交易员的因子对比，eval 是手填评估
+        # calibrate 是 G9 标定；trader 是交易员调仓，compare 是交易员的因子对比，eval 是手填评估
         self.jobs: dict[str, dict[str, Any]] = {"refresh": {"running": False}, "reference": {"running": False},
                                                 "grid": {"running": False}, "reeval": {"running": False},
-                                                "libraryReeval": {"running": False},
+                                                "libraryReeval": {"running": False}, "calibrate": {"running": False},
                                                 "trader": {"running": False}, "compare": {"running": False},
                                                 "eval": {"running": False}}
 
@@ -302,6 +303,7 @@ async def _start_round(app: FastAPI, campaign: dict[str, Any]) -> str:
 async def _graph(app: FastAPI):
     """每次现建 Context：库摘要取当下的，模型第一次建好后复用"""
     data: Data = _data(app)
+    std: Standard = app.state.standard
     if app.state.models is None:
         app.state.models = build_models(await _model_specs(app))
     gen, review = app.state.models
@@ -314,10 +316,9 @@ async def _graph(app: FastAPI):
     ctx = Context(gen=gen, review=review, pool=data.pool, vol=data.vol, funding=data.funding, products=data.products,
                   reference_grid=data.reference_grid, base=lib.base, observing=obs,
                   peer_exprs={**lib.exprs, **obs_exprs}, known=lib.known | observing, library=library,
-                  facts={**data.facts, "carryShare": lib.base.carry_share,
-                         "g9Min": app.state.thresholds.sharpe_gain_min},
-                  policy=prompts.Policy.of(await app.state.store.policy()), store=app.state.store,
-                  params=app.state.params, thresholds=app.state.thresholds, evaluating=app.state.evaluating)
+                  facts={**data.facts, "carryShare": std.carry_share, "g9Min": std.thresholds.sharpe_gain_min},
+                  policy=prompts.Policy.of(await app.state.store.policy()), standard=std.id, store=app.state.store,
+                  params=std.params, thresholds=std.thresholds, evaluating=app.state.evaluating)
     return build_graph(ctx)
 
 
@@ -335,7 +336,7 @@ async def _library(app: FastAPI) -> Library:
         key = _library_key(data, factors, share)
         cache = app.state.library
         if cache is None or cache[0] != key:
-            cache = (key, await asyncio.to_thread(build_library, data, factors, app.state.params, share))
+            cache = (key, await asyncio.to_thread(build_library, data, factors, app.state.standard.params, share))
             app.state.library = cache
     return cache[1]
 
@@ -397,21 +398,25 @@ _HOLDS = {
     "reeval": "观察区还在复评，等它算完",
     "libraryReeval": "库里因子还在复评，等它算完",
     "reference": "参照集还在跑，等它算完",
+    "calibrate": "G9 标定还在跑，等它算完",
     "trader": "交易员在调仓，等它调完",
     "compare": "交易员的因子对比还在算，等它算完",
 }
 # 每个动作按顺序查，第一个占着的就是做不了的原因。刷新一完成就换数据和 holdout 切点，会存结果的都不和它同时跑；
 # 刷新开头要删上一版面板，读着面板的后台任务都挡它；campaign 跑着时数据、方针、G9 基线（carry 份额）都不能变；
-# 参照网格没算好 G6 一律不过，campaign、复评白跑；campaign 和两种复评三个互相不同时跑，campaign 也不和参照集同时跑（抢内存）
+# 参照网格没算好 G6 一律不过，campaign、复评白跑；campaign 和两种复评三个互相不同时跑，campaign 也不和参照集、G9 标定同时跑（抢内存）；
+# 改口径（standard 是页面上开放的项，carryShare 是份额）时 campaign、复评不能在跑，份额还动 G9 基线，标定、对比也不能在跑
 _BLOCKED_BY = {
-    "refresh": ("refresh", "campaign", "grid", "reeval", "libraryReeval", "reference", "trader", "compare"),
-    "campaign": ("noData", "campaign", "refresh", "noGrid", "reeval", "libraryReeval", "reference"),
+    "refresh": ("refresh", "campaign", "grid", "reeval", "libraryReeval", "reference", "calibrate", "trader", "compare"),
+    "campaign": ("noData", "campaign", "refresh", "noGrid", "reeval", "libraryReeval", "reference", "calibrate"),
     "reeval": ("noData", "reeval", "campaign", "refresh", "noGrid", "libraryReeval"),
     "libraryReeval": ("noData", "libraryReeval", "campaign", "refresh", "noGrid", "reeval"),
-    "reference": ("noData", "reference", "campaign", "refresh"),
+    "reference": ("noData", "reference", "campaign", "refresh", "calibrate"),
+    "calibrate": ("noData", "calibrate", "campaign", "refresh", "reference"),
     "recheck": ("noData", "refresh"),
     "policy": ("campaign",),
-    "carryShare": ("campaign", "libraryReeval", "reeval", "compare"),
+    "standard": ("campaign", "reeval", "libraryReeval"),
+    "carryShare": ("campaign", "libraryReeval", "reeval", "calibrate", "compare"),
     "compare": ("noData", "compare", "refresh"),
 }
 
@@ -419,7 +424,7 @@ _BLOCKED_BY = {
 async def _holding(app: FastAPI) -> set[str]:
     """现在占着的东西（_HOLDS 的键）"""
     data, jobs = app.state.data, app.state.runs.jobs
-    held = {name for name in ("refresh", "grid", "reeval", "libraryReeval", "reference", "trader", "compare")
+    held = {name for name in ("refresh", "grid", "reeval", "libraryReeval", "reference", "calibrate", "trader", "compare")
             if jobs[name].get("running")}
     if data is None:
         held.add("noData")
@@ -444,7 +449,7 @@ async def _check(app: FastAPI, action: str) -> None:
 async def _load(app: FastAPI, cfg: Config) -> None:
     """装载数据；参照网格缺了或比面板旧就后台补算，算好挂到这份 data 上（中途又刷新换了 data 也不串）"""
     universe = await app.state.store.universe()
-    app.state.data = data = await asyncio.to_thread(load_data, cfg, app.state.params, universe)
+    app.state.data = data = await asyncio.to_thread(load_data, cfg, app.state.standard.params, universe)
     if data is not None:
         asyncio.create_task(_warm(app))
     job = app.state.runs.jobs["grid"]
@@ -692,22 +697,23 @@ async def observation(request: Request):
     app = request.app
     rows = await app.state.store.observing()
     cut = app.state.data.cut_ms if app.state.data is not None else None
-    share = (await app.state.store.carry())["share"]
+    std: Standard = app.state.standard
     items = []
     for c in rows:
-        checks = admission(c, cut, share, app.state.thresholds)
+        checks = admission(c, cut, std.id, std.thresholds)
         items.append({**brief(c), "run_id": c["run_id"], "created_at": c["run_created_at"], "updated_at": c["updated_at"],
                       "reeval": _reeval_view(c["reeval"]),
                       "admission": {"ok": refused(checks) is None, "checks": checks}})
     return _ok({"items": items, "reeval": app.state.runs.jobs["reeval"]})
 
 
-def admission(c: dict[str, Any], cut_ms: int | None, carry_share: float, t: Thresholds) -> list[dict[str, Any]]:
-    """入库条件逐项，全过才能入库，不留人工 override：在当前这版数据、当前 carry 份额上复评过且全过门，
+def admission(c: dict[str, Any], cut_ms: int | None, standard_id: int, t: Thresholds) -> list[dict[str, Any]]:
+    """入库条件逐项，全过才能入库，不留人工 override：在当前口径（standard_id）、当前这版数据上复评过且全过门，
     它没见过那段（发现那轮的切点起，复评时算的）至少 admit_min_points 个时刻、主档截面 IC 和搜索段同号、
     逐点 IC 的 |均值 / 标准误| ≥ admit_t_min。ok 是过没过，前面的没过、后面判不了的是 None。
-    数据刷新过切点就变了、份额改过 G9 基线就变了，都得重新复评；没到门槛的留在观察区，之后每次刷新自动再复评一遍，攒够了自然过"""
-    checks = [{"ok": None, "text": "在当前这版数据、当前 carry 份额上复评过"}, {"ok": None, "text": "复评全过门"},
+    数据刷新过切点就变了、口径改过（门槛、份额都算）数字就不可比了，都得重新复评；没到门槛的留在观察区，之后每次刷新自动再复评一遍，
+    攒够了自然过"""
+    checks = [{"ok": None, "text": f"在当前口径（第 {standard_id} 版）、当前这版数据上复评过"}, {"ok": None, "text": "复评全过门"},
               {"ok": None, "text": f"没见过那段至少 {t.admit_min_points} 个时刻"},
               {"ok": None, "text": "没见过那段主档 IC 和搜索段同号"},
               {"ok": None, "text": f"没见过那段主档 IC 的 t ≥ {t.admit_t_min:g}"}]
@@ -717,8 +723,9 @@ def admission(c: dict[str, Any], cut_ms: int | None, carry_share: float, t: Thre
         fresh.update(ok=False, text="还没装载数据")
     elif r is None or r["eval"]["holdout"]["since"] != cut_ms:
         fresh.update(ok=False, text="还没在当前这版数据上复评")
-    elif (r["eval"].get("gain") or {}).get("carryShare") != carry_share:
-        fresh.update(ok=False, text="份额改过，还没按现在的份额复评")
+    elif r["eval"].get("standard") != standard_id:
+        old = r["eval"].get("standard")
+        fresh.update(ok=False, text=f"复评是按{f'第 {old} 版' if old else '没有版本号的旧'}口径算的，现在是第 {standard_id} 版，再复评一次")
     else:
         fresh["ok"] = True
     if not fresh["ok"]:
@@ -761,7 +768,7 @@ def _reeval_view(r: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
     return {"at": r["at"], "direction": r["direction"], "asked": r.get("asked", False), "passed": r["passed"],
             "reason": r["reason"], "peers": r.get("peers", []), "gates": [gate_row(g) for g in r["gates"]],
-            "brief": eval_brief(r["eval"], r["gates"])}
+            "brief": eval_brief(r["eval"], r["gates"]), "standard": r["eval"].get("standard")}
 
 
 @router.post("/observation/reeval")
@@ -814,7 +821,8 @@ async def _reeval_after_refresh(app: FastAPI, data: Data) -> None:
 async def _reeval(app: FastAPI, data: Data, rows: list[dict[str, Any]], job: dict[str, Any]) -> None:
     """逐条评估判门（G6 比参照与库，G10 用声明的方向），过门的按同批规则互相查重；再算两两的截面相关给人看。
     G5 只按单条的排列分位判：同批 BH 是发现那一轮做过的，这里换一批人再做没有意义"""
-    params, thresholds = app.state.params, app.state.thresholds
+    std: Standard = app.state.standard
+    params, thresholds = std.params, std.thresholds
     lib = await _library(app)
     items, full = [], {}
     for c in rows:
@@ -825,6 +833,7 @@ async def _reeval(app: FastAPI, data: Data, rows: list[dict[str, Any]], job: dic
         values = await asyncio.to_thread(data.pool.values, expr)
         ev = await asyncio.to_thread(evaluate, expr, data.pool, data.vol, params, data.reference_grid, lib.base,
                                      data.products, True, values=values, peer_exprs=lib.exprs)
+        ev["standard"] = std.id
         gates = judge(ev, thresholds, lib.known, direction)
         full[c["id"]] = values.f
         # 发现它的那一轮切点比现在早：从那个切点到现在都是它没见过的，比当前 holdout 长
@@ -856,8 +865,8 @@ async def _reeval(app: FastAPI, data: Data, rows: list[dict[str, Any]], job: dic
 async def _declare(app: FastAPI, data: Data, c: dict[str, Any], lang: str) -> int:
     """老候选补声明方向：只给假设、表达式和公式说明，不给任何数字"""
     gen = app.state.models[0]
-    facts = {**data.facts, "carryShare": (await app.state.store.carry())["share"],
-             "g9Min": app.state.thresholds.sharpe_gain_min}
+    std: Standard = app.state.standard
+    facts = {**data.facts, "carryShare": std.carry_share, "g9Min": std.thresholds.sharpe_gain_min}
     policy = prompts.Policy.of(await app.state.store.policy())
     obj = await ask_json(gen, prompts.system_gen(facts, lang, policy), prompts.direction_message(c), prompts.parse_object)
     direction = parse_direction((obj or {}).get("direction"))
@@ -875,7 +884,8 @@ async def approve(candidate_id: str, request: Request):
     c = await store.candidate(candidate_id)
     if c is None:
         raise HTTPException(404, "没有这个候选")
-    why = refused(admission(c, _data(app).cut_ms, (await store.carry())["share"], app.state.thresholds))
+    std: Standard = app.state.standard
+    why = refused(admission(c, _data(app).cut_ms, std.id, std.thresholds))
     if why is not None:
         raise HTTPException(409, f"还不能入库：{why}")
     # 检查与置位一条 UPDATE：入库、丢弃同时点，只有一个能抢到
@@ -971,7 +981,7 @@ async def library(request: Request):
     return _ok({"factors": [_factor_view(f, full=False) for f in factors], "combo": lib.report if lib else None,
                 "computing": app.state.data is not None and lib is None,
                 "retired": [_factor_view(f, full=False) for f in await store.retired_factors()],
-                "reeval": app.state.runs.jobs["libraryReeval"]})
+                "reeval": app.state.runs.jobs["libraryReeval"], "standard": app.state.standard.id})
 
 
 @router.get("/library/{factor_id}")
@@ -986,6 +996,7 @@ def _factor_view(f: dict[str, Any], full: bool) -> dict[str, Any]:
     out = {k: f.get(k) for k in ("id", "name", "hypothesis", "expr", "canonical", "columns", "approved_at",
                                   "run_id", "review", "recheck", "retired_at", "retire_reason")}
     out["brief"] = eval_brief(f["eval"], f["gates"])
+    out["standard"] = f["eval"].get("standard")
     out["reeval"] = _reeval_view(f.get("reeval"))
     if full:
         out["eval"] = f["eval"]
@@ -1038,7 +1049,8 @@ async def library_recheck(factor_id: str, request: Request):
     await _check(app, "recheck")
     data = _data(app)
     values = await asyncio.to_thread(data.pool.values, parse(f["expr"], FEATURE_COLUMNS))
-    result = await asyncio.to_thread(recheck, data.pool.rows, values.f, int(f["approved_at"]), app.state.params)
+    result = await asyncio.to_thread(recheck, data.pool.rows, values.f, int(f["approved_at"]),
+                                     app.state.standard.params)
     await app.state.store.set_recheck(factor_id, result)
     return _ok(result)
 
@@ -1086,7 +1098,8 @@ async def _declared(store: Store, f: Mapping[str, Any]) -> int | None:
 
 async def _library_reeval(app: FastAPI, data: Data, lib: Library, job: dict[str, Any], lang: str) -> None:
     """逐条评估判门；lib.full 的列与 lib.factors 同序，拿掉第 j 列就是没有它的库"""
-    params, thresholds = app.state.params, app.state.thresholds
+    std: Standard = app.state.standard
+    params, thresholds = std.params, std.thresholds
     store: Store = app.state.store
     pool = data.pool
     observing, obs_exprs = await _observing(app)
@@ -1104,6 +1117,7 @@ async def _library_reeval(app: FastAPI, data: Data, lib: Library, job: dict[str,
         exprs = {**{k: v for k, v in lib.exprs.items() if k != f"lib:{f['name']}"}, **obs_exprs}
         ev = await asyncio.to_thread(evaluate, parse(f["expr"], FEATURE_COLUMNS), pool, data.vol, params,
                                      data.reference_grid, base, data.products, True, observing, peer_exprs=exprs)
+        ev["standard"] = std.id
         gates = judge(ev, thresholds, lib.known - {f["canonical"]}, direction)
         # 发现它那一轮的切点之后都是它没见过的，比当前 holdout 长
         run = await store.run(f["run_id"])
@@ -1163,13 +1177,15 @@ async def eval_job(request: Request):
 
 
 async def _eval_expression(app: FastAPI, data: Data, expr: Expr) -> dict[str, Any]:
-    params = app.state.params
+    std: Standard = app.state.standard
+    params = std.params
     lib = await _library(app)
     values = await asyncio.to_thread(data.pool.values, expr)
     observing, obs_exprs = await _observing(app)
     ev = await asyncio.to_thread(evaluate, expr, data.pool, data.vol, params, data.reference_grid, lib.base,
                                  data.products, False, observing, values, peer_exprs={**lib.exprs, **obs_exprs})
-    gates = judge(ev, app.state.thresholds, lib.known)
+    ev["standard"] = std.id
+    gates = judge(ev, std.thresholds, lib.known)
     if passed(gates):
         ev["holdout"] = await asyncio.to_thread(recheck, data.pool.rows, values.f, data.pool.cut_ms, params)
     return {"expr": str(expr), "canonical": expr.canonical(), "passed": passed(gates),
@@ -1182,7 +1198,9 @@ async def reference_list(request: Request):
     return _ok({
         "job": request.app.state.runs.jobs["reference"],
         "items": [{"name": r["name"], "expr": r["expr"], "passed": bool(r["passed"]), "updatedAt": r["updated_at"],
-                   "gates": [gate_row(g) for g in r["gates"]], "brief": eval_brief(r["eval"], r["gates"])} for r in rows],
+                   "gates": [gate_row(g) for g in r["gates"]], "brief": eval_brief(r["eval"], r["gates"]),
+                   "standard": r["eval"].get("standard")} for r in rows],
+        "standard": request.app.state.standard.id,
     })
 
 
@@ -1279,6 +1297,104 @@ async def _policy_view(store: Store, row: dict[str, Any]) -> dict[str, Any]:
             "history": [{"id": r["id"], "createdAt": r["created_at"]} for r in await store.policies()]}
 
 
+async def _standard(app: FastAPI, standard: Standard) -> Standard:
+    """这份口径存库（内容一样就是原来那版），带上版本号"""
+    row = await app.state.store.ensure_standard(standard.fingerprint(), standard.basis(), standard.content())
+    return replace(standard, id=row["id"])
+
+
+class Calibrate(BaseModel):
+    randoms: int = Field(default=300, ge=1, le=2000)
+    seed: int = 0
+
+
+class StandardSave(BaseModel):
+    """口径里页面上开放的项，现在只有 G9 的线"""
+    sharpeGainMin: float = Field(ge=0, le=1)
+
+
+async def _standard_view(app: FastAPI) -> dict[str, Any]:
+    """评估口径的当前版：内容、各版编号和时间、库里和观察区各有几条最新数字是旧版算的、最近一次 G9 标定和它还作不作数"""
+    store: Store = app.state.store
+    std: Standard = app.state.standard
+    data: Data | None = app.state.data
+    history = await store.standards()
+    factors = await store.factors()
+    cal = await store.calibration()
+    content = std.content()
+    return {
+        "id": std.id, "createdAt": next(r["created_at"] for r in history if r["id"] == std.id), "content": content,
+        "history": [{"id": r["id"], "createdAt": r["created_at"]} for r in history],
+        "stale": {"library": sum(1 for f in factors if standard_of(f) != std.id),
+                  "observing": sum(1 for c in await store.observing() if standard_of(c) != std.id)},
+        "calibration": cal and {
+            "standardId": cal["standard_id"], "cutMs": cal["cut_ms"], "library": cal["library"], "randoms": cal["randoms"],
+            "seed": cal["seed"], "result": cal["result"], "createdAt": cal["created_at"],
+            # 口径里决定数字的那部分（评估参数、交易方案）、数据、在役库都没变才作数；按标定改 G9 的线不算变
+            "same": {"standard": (await store.standard(cal["standard_id"]))["basis"] == std.basis(),
+                     "data": data is not None and cal["cut_ms"] == data.cut_ms,
+                     "library": [x["name"] for x in cal["library"]] == sorted(f["name"] for f in factors)}},
+        "job": app.state.runs.jobs["calibrate"],
+    }
+
+
+@router.get("/standard")
+async def current_standard(request: Request):
+    return _ok(await _standard_view(request.app))
+
+
+@router.put("/standard")
+async def save_standard(body: StandardSave, request: Request):
+    """改 G9 的线：存成库里的覆盖、口径换成新的一版（改回去回到原来那版），下一次评估起按它判。campaign、复评跑着时不改；
+    改完库和观察区要复评，G9 的标定不看线、照样作数"""
+    app = request.app
+    await _check(app, "standard")
+    std: Standard = app.state.standard
+    new = await _standard(app, replace(std, thresholds=replace(std.thresholds, sharpe_gain_min=body.sharpeGainMin)))
+    await app.state.store.set_override("sharpe_gain_min", body.sharpeGainMin)
+    app.state.standard = new
+    return _ok(await _standard_view(app))
+
+
+@router.post("/standard/calibrate")
+async def calibrate_g9(body: Calibrate, request: Request):
+    """标定 G9 的线：库里每条拿掉再加回去、库外候选、随机因子各加进交易方案后搜索段净 Sharpe 升多少（calibrate.g9_gains），
+    结果连同口径版本、数据切点、在役库存下。库没算好时在后台先算库，running 一进来就置上，刷新、campaign 挡得住；
+    total 要等库和候选齐了才有。线在 PUT /standard 上改"""
+    app = request.app
+    await _check(app, "calibrate")
+    data = _data(app)
+    store: Store = app.state.store
+    std: Standard = app.state.standard
+    job = app.state.runs.jobs["calibrate"]
+    job.clear()
+    job.update(running=True, startedAt=now_ms(), total=None, done=0, error=None, finishedAt=None)
+
+    async def work() -> None:
+        try:
+            lib = await _library(app)
+            taken = {f["expr"] for f in lib.factors}
+            candidates = [(name, expr) for name, expr in await store.candidate_exprs() if expr not in taken]
+            job["total"] = len(lib.factors) + len(candidates) + body.randoms
+            pick = data.pool.in_search
+            library = {f["name"]: lib.full.values[pick, j] for j, f in enumerate(lib.factors)}
+            result = await asyncio.to_thread(calibrate.g9_gains, data.pool, data.vol[pick], data.basis[pick], library,
+                                             candidates, std.params, std.carry_share, body.randoms, body.seed, job)
+            await store.add_calibration(std.id, data.cut_ms,
+                                        [{"name": f["name"], "expr": f["expr"]}
+                                         for f in sorted(lib.factors, key=lambda f: f["name"])],
+                                        body.randoms, body.seed, result)
+            job.update(finishedAt=now_ms())
+        except Exception as exc:
+            logger.exception("G9 标定失败")
+            job.update(error=str(exc)[:300])
+        finally:
+            job["running"] = False
+
+    asyncio.create_task(work())
+    return _ok({"started": True})
+
+
 def _model_view(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
@@ -1298,13 +1414,15 @@ async def reference_run(body: ReferenceRun, request: Request):
         keep = {str(w) for w in body.windows}
         exprs = {k: v for k, v in exprs.items() if k in reference.BASELINES or _window_of(k) in keep | {""}}
     job.update(running=True, startedAt=now_ms(), total=len(exprs), done=0, error=None, finishedAt=None)
+    std: Standard = app.state.standard
 
     async def work() -> None:
         try:
             for name, expr in exprs.items():
-                ev = await asyncio.to_thread(evaluate, expr, data.pool, data.vol, app.state.params, Grid.empty(), None,
+                ev = await asyncio.to_thread(evaluate, expr, data.pool, data.vol, std.params, Grid.empty(), None,
                                              data.products)
-                gates = judge(ev, app.state.thresholds, set())
+                ev["standard"] = std.id
+                gates = judge(ev, std.thresholds, set())
                 await app.state.store.set_reference_eval(name, str(expr), ev, gates, passed(gates))
                 job["done"] += 1
             job.update(finishedAt=now_ms())
@@ -1449,9 +1567,13 @@ async def trader_carry(body: TraderCarry, request: Request):
     改了份额库缓存整个作废，先在后台算好，别留给 00:05 的调仓现算"""
     app = request.app
     store: Store = app.state.store
+    std: Standard = app.state.standard
     if body.share is not None:
         await _check(app, "carryShare")
+        # 份额是口径的一部分：改了就是另一版（改回去回到原来那版）
+        std = await _standard(app, replace(std, carry_share=body.share))
     await store.set_carry(body.enabled, body.share)
+    app.state.standard = std
     if body.share is not None and app.state.data is not None:
         asyncio.create_task(_warm(app))
     return _ok(await store.carry())
@@ -1541,7 +1663,7 @@ async def trader_compare(factor_id: str, request: Request):
 
 
 async def _compare(app: FastAPI, factor_id: str, job: dict[str, Any]) -> dict[str, Any]:
-    params: EvalParams = app.state.params
+    params = app.state.standard.params
     lib = await _library(app)
     job["stage"] = "inputs"
     data = app.state.data
@@ -1576,8 +1698,9 @@ async def _compare(app: FastAPI, factor_id: str, job: dict[str, Any]) -> dict[st
 async def lifespan(app: FastAPI):
     cfg = config()
     Path(cfg.db_path).parent.mkdir(parents=True, exist_ok=True)
-    app.state.params = getattr(app.state, "params", None) or EvalParams(cost_tiers_bps=cfg.cost_tiers_bps)
-    app.state.thresholds = getattr(app.state, "thresholds", None) or Thresholds()
+    # 启动参数：测试在进 lifespan 前塞进来；起来之后都从 app.state.standard 读
+    params = getattr(app.state, "params", None) or EvalParams(cost_tiers_bps=cfg.cost_tiers_bps)
+    thresholds = getattr(app.state, "thresholds", None) or Thresholds()
     app.state.models = None
     app.state.library = None
     app.state.library_lock = asyncio.Lock()
@@ -1611,6 +1734,9 @@ async def lifespan(app: FastAPI):
         # 库里还没有研究方针就把代码里的默认存成第一版
         if await store.policy() is None:
             await store.add_policy(prompts.DEFAULT_POLICY.to_row())
+        # 页面上改过的项（现在只有 G9 的线）盖掉代码默认值
+        thresholds = replace(thresholds, **await store.overrides())
+        app.state.standard = await _standard(app, Standard(params, thresholds, (await store.carry())["share"]))
         await _load(app, cfg)
         # 交易员的后台循环：整点记净值，每天 UTC 00:05 起补尾巴、00:15 下单，每月 1 日 UTC 14 点起自动刷新数据
         trader = asyncio.create_task(scheduler.loop(app, _library, _start_refresh))

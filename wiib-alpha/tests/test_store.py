@@ -71,18 +71,42 @@ async def test_observation_and_claim_candidate(store):
     assert [r["id"] for r in await store.observing()] == ["r2-1"]
 
 
-async def test_evaluated_candidates_only_count_the_ones_with_a_primary(store):
-    """出题的成败表只统计记着主档的（现在的口径）；老结果没有主档，不算"""
-    await store.create_run("r1", 2, "", "zh", None)
-    base = {"run_id": "r1", "hypothesis": "h", "status": "rejected_gates", "expr": "$ret",
-            "gates": [{"id": "G9", "passed": False}]}
-    await store.upsert_candidate({**base, "id": "r1-1", "seq": 1, "name": "new", "family": "basis",
-                                  "eval": {"primary": 96, "horizons": {}}})
-    await store.upsert_candidate({**base, "id": "r1-2", "seq": 2, "name": "old", "family": "动量",
-                                  "eval": {"horizons": {}}})
-    assert await store.evaluated_candidates() == [{"expr": "$ret", "family": "basis",
-                                                   "eval": {"primary": 96, "horizons": {}},
-                                                   "gates": [{"id": "G9", "passed": False}]}]
+async def test_evaluated_candidates_only_count_comparable_standards(store):
+    """出题的成败表统计数字可比的各版（basis 一样、只是门槛不同）下评估的候选；别的 basis 和没有版本号的老结果不算。
+    标定 G9 拿的是去重后的表达式"""
+    # 第 1、2 版只差门槛，第 3 版评估参数不一样
+    for fingerprint, basis in (("a", "b1"), ("b", "b1"), ("c", "b2")):
+        await store.ensure_standard(fingerprint, basis, {})
+    await store.create_run("r1", 3, "", "zh", None)
+    base = {"run_id": "r1", "hypothesis": "h", "status": "rejected_gates", "gates": [{"id": "G9", "passed": False}]}
+    for seq, name, family, expr, standard in ((1, "new", "basis", "$ret", 2), (2, "older", "basis", "$ret", 1),
+                                              (3, "other_basis", "basis", "$trades", 3), (4, "old", "动量", "$volume", None)):
+        await store.upsert_candidate({**base, "id": f"r1-{seq}", "seq": seq, "name": name, "family": family, "expr": expr,
+                                      "eval": {"standard": standard, "horizons": {}}})
+    assert await store.evaluated_candidates(2) == [
+        {"expr": "$ret", "family": "basis", "eval": {"standard": 2, "horizons": {}}},
+        {"expr": "$ret", "family": "basis", "eval": {"standard": 1, "horizons": {}}}]
+    assert await store.candidate_exprs() == [("older", "$ret"), ("other_basis", "$trades"), ("old", "$volume")]
+
+
+async def test_standard_versions_follow_the_content_and_calibration_is_kept(store):
+    first = await store.ensure_standard("abc", "b1", {"thresholds": {"ic_min": 0.01}})
+    assert first["id"] == 1 and first["content"] == {"thresholds": {"ic_min": 0.01}}
+    # 内容一样是同一版；变了是新的一版
+    assert (await store.ensure_standard("abc", "b1", {"thresholds": {"ic_min": 0.01}}))["id"] == 1
+    assert (await store.ensure_standard("def", "b1", {"thresholds": {"ic_min": 0.02}}))["id"] == 2
+    assert [r["id"] for r in await store.standards()] == [2, 1]
+    assert (await store.standard(1))["content"] == {"thresholds": {"ic_min": 0.01}} and (await store.standard(2))["basis"] == "b1"
+    # 页面上改过的项：一个键一个值，再改就是覆盖
+    assert await store.overrides() == {}
+    await store.set_override("sharpe_gain_min", 0.12)
+    await store.set_override("sharpe_gain_min", 0.11)
+    assert await store.overrides() == {"sharpe_gain_min": 0.11}
+    assert await store.calibration() is None
+    await store.add_calibration(2, 1_000, [{"name": "a", "expr": "$ret"}], 300, 0, {"random": {"n": 300}})
+    cal = await store.calibration()
+    assert (cal["standard_id"], cal["cut_ms"], cal["library"], cal["result"]) == (2, 1_000, [{"name": "a", "expr": "$ret"}],
+                                                                                  {"random": {"n": 300}})
 
 
 async def test_campaign_lifecycle_and_lessons(store):

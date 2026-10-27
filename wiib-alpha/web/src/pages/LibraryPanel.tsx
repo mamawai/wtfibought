@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Archive, ArchiveRestore, RefreshCw, ScanSearch } from 'lucide-react';
-import { alpha, type ComboReport, type Factor, type FactorDetail, type Recheck, type ReevalJob } from '../api';
+import { alpha, latestStandard, type ComboReport, type Factor, type FactorDetail, type Recheck, type ReevalJob } from '../api';
 import { useBusy } from '../busy';
 import { cx, HORIZON_BARS, HORIZONS, localTime, num, pct, primaryOf, utcMinute } from '../format';
 import { usePoll } from '../poll';
@@ -42,13 +42,18 @@ export function LibraryPanel({ active, loaded }: { active: boolean; loaded: bool
   // 库刚变过，组合报告在后台重算：轮询到算完
   const [computing, setComputing] = useState(false);
   const [job, setJob] = useState<ReevalJob | null>(null);
+  // 当前口径的版本号：最新数字不是这一版算的因子打"旧口径"
+  const [standard, setStandard] = useState<number | null>(null);
   const [detail, setDetail] = useState<FactorDetail | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [rechecking, setRechecking] = useState(false);
   const [starting, setStarting] = useState(false);
 
   const load = useCallback(() => alpha.library()
-    .then(r => { setFactors(r.factors); setRetired(r.retired); setCombo(r.combo); setComputing(r.computing); setJob(r.reeval); })
+    .then(r => {
+      setFactors(r.factors); setRetired(r.retired); setCombo(r.combo); setComputing(r.computing); setJob(r.reeval);
+      setStandard(r.standard);
+    })
     .catch(fail), [fail]);
 
   useEffect(() => {
@@ -102,6 +107,13 @@ export function LibraryPanel({ active, loaded }: { active: boolean; loaded: bool
   const th = (k: FactorKey, label: string, right = true) =>
     <SortTh key={k} k={k} sort={sort} onSort={toggle} right={right}>{label}</SortTh>;
 
+  // 最新数字不是当前口径算的：名字旁一个"旧口径"
+  const staleBadge = (f: Factor, className?: string) => standard != null && latestStandard(f) !== standard && (
+    <Tip text={t('library.staleTip', { which: latestStandard(f) == null ? t('library.noStandard') : `#${latestStandard(f)}`, now: standard })}>
+      <Badge tone="warn" className={className}>{t('library.stale')}</Badge>
+    </Tip>
+  );
+
   return (
     <div className="space-y-14">
       {combo ? <ComboCard combo={combo} /> : factors && factors.length > 0 && (computing || !loaded) && (
@@ -141,7 +153,7 @@ export function LibraryPanel({ active, loaded }: { active: boolean; loaded: bool
                 <tbody>
                   {sorted.map(f => (
                     <tr key={f.id} onClick={() => open(f.id)} className="cursor-pointer">
-                      <td className="font-mono text-[12.5px] font-bold whitespace-nowrap">{f.name}</td>
+                      <td className="font-mono text-[12.5px] font-bold whitespace-nowrap">{f.name}{staleBadge(f, 'ml-1.5 font-sans')}</td>
                       <td className="max-w-[28rem]"><code className="block truncate text-[12px] text-muted" title={f.expr}>{f.expr}</code></td>
                       <td className="r num whitespace-nowrap">{localTime(f.approved_at)}</td>
                       <td className="r num">{num(primaryIc(f))}</td>
@@ -192,6 +204,7 @@ export function LibraryPanel({ active, loaded }: { active: boolean; loaded: bool
                     {detail.retired_at == null
                       ? <Badge tone="gain">{t('status.approved')}</Badge>
                       : <Badge tone="muted" icon={Archive}>{t('status.retired')}</Badge>}
+                    {staleBadge(detail)}
                   </div>
                 : <Spinner />}>
         {detail && (

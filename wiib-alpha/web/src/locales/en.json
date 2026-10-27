@@ -40,6 +40,7 @@
     "adminOnly": "The mining process and candidate details are visible to the admin only."
   },
   "common": {
+    "sep": ", ",
     "raw": "Raw JSON",
     "close": "Close",
     "refresh": "Refresh",
@@ -400,6 +401,9 @@
       "retiredAt": "Retired",
       "reason": "Reason"
     },
+    "stale": "old standard",
+    "staleTip": "Its latest numbers were computed under an old standard ({{which}}); the current one is #{{now}}. Re-evaluate before comparing",
+    "noStandard": "no version",
     "retiredTitle": "Retired ({{n}})",
     "retiredHint": "Out of the combo and the trader, and no longer a G6 redundancy comparison or part of the G9 gain baseline; open one for details or to restore it.",
     "retireSection": "Retire",
@@ -438,6 +442,8 @@
     "error": "Last run failed: {{msg}}",
     "empty": "Not run yet.",
     "passed": "{{n}} / {{total}} cleared every gate",
+    "standard": "Judged under standard #{{id}}",
+    "standardStale": "{{n}} were judged under an old standard; the current one is #{{now}}, rerun to count",
     "col": {
       "name": "Name",
       "expr": "Expression",
@@ -489,6 +495,47 @@
     "save": "Save as a new version",
     "saved": "Research policy saved as a new version",
     "history": "History: {{ids}}"
+  },
+  "standard": {
+    "title": "Evaluation standard",
+    "hint": "Everything that decides whether a factor passes the gates, can be approved and how the G9 baseline is computed, versioned by content: changing the G9 line, the carry share or a threshold or parameter in code makes a new version. Approval only accepts re-evaluations under the current version; the proposer's outcome table counts every version whose numbers are comparable (same evaluation parameters and trading scheme, thresholds aside).",
+    "more": "Contents: evaluation parameters (windows, cost tiers, primary horizon, holdout days, the 2022 cut, long-short legs), the 11 gates' and approval thresholds, the trading scheme (rebalance period, carry formula, new-coin days, the volatility used for sizing, carry share), and the reference set's count and digest.\nPool rules are not part of it: changing them needs a refresh, and a new cut invalidates every re-evaluation anyway.\nRestoring the old contents returns to the old version number. The contents are the code defaults plus what was changed on this page: only the G9 line is open so far, the rest still means changing code, and items are opened as they are needed.",
+    "summary": "Version #{{id}} · since {{time}} · history {{ids}}",
+    "fresh": "Every number in the library and observation is from this version",
+    "stale": "{{library}} library factors and {{observing}} observation candidates have their latest numbers from an old standard: re-evaluate before approving or comparing",
+    "content": "Show contents",
+    "group": {
+      "params": "Evaluation parameters",
+      "thresholds": "Gate and approval thresholds",
+      "scheme": "Trading scheme",
+      "reference": "Reference set"
+    },
+    "calibration": "G9 calibration",
+    "calibrationHint": "How much the search-span net Sharpe rises when each library factor is removed and added back, and when outside candidates or random factors are added to the scheme. Once the evaluation parameters, the trading scheme (carry share included), the data or the active library changes, the last calibration no longer counts; the G9 line does not affect the gains, so adopting it from the calibration keeps the calibration valid.",
+    "none": "Not calibrated yet.",
+    "last": "Last run {{time}}: standard #{{id}}, data to {{cut}}, library {{library}}, {{randoms}} random factors",
+    "emptyLibrary": "empty",
+    "quantiles": "{{label}} ({{n}}) gain, 95th percentile: {{recent}} (since {{from}}, what G9 judges) / {{full}} (full period)",
+    "random": "Random factors",
+    "candidates": "Outside candidates",
+    "noCandidates": "No outside candidates",
+    "valid": "counts",
+    "outdated": "Recalibrate: {{what}}",
+    "changed": {
+      "standard": "the evaluation parameters or the trading scheme changed",
+      "data": "the data changed",
+      "library": "the library changed"
+    },
+    "randoms": "Random factors",
+    "run": "Calibrate",
+    "running": "Calibrating",
+    "progress": "{{done}} / {{total}}",
+    "error": "Last calibration failed: {{msg}}",
+    "line": "G9 line",
+    "lineHint": "A factor passes G9 when the scheme's net Sharpe since 2022 rises by at least this much after adding it; set it to the 95th percentile of the random factors' gain. Changing it makes a new version of the standard: the library and the observation have to be re-evaluated once before approval; the outcome table and the calibration stay valid.",
+    "lineNow": "{{line}} now, change to",
+    "lineSave": "Save",
+    "adopt": "Adopt the random factors' 95th percentile {{p95}}"
   },
   "eval": {
     "title": "Evaluate an expression",
