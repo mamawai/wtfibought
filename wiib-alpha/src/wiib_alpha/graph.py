@@ -22,6 +22,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
 from . import prompts
+from .data.binance import day_name
 from .data.panel import FEATURE_COLUMNS
 from .data.pool import Pool
 from .dsl import DslError, Expr, parse
@@ -151,7 +152,7 @@ def build_graph(ctx: Context):
                 if settled is None:
                     cand["status"], cand["reason"] = "failed", f"连试三次都没写出能用的表达式：{problem}"
                 else:
-                    cand["status"], cand["reason"] = settled[0], f"{settled[1]}；重写连试三次都没写出新的表达式：{problem}"
+                    cand["status"], cand["reason"] = settled[0], f"{settled[1]}；{prompts.STUCK}：{problem}"
                 break
             written[str(expr)] = len(written) + 1
             cand["expr"], cand["canonical"] = str(expr), expr.canonical()
@@ -356,9 +357,10 @@ def build_graph(ctx: Context):
 
 def screen_batch(cands: list[dict[str, Any]], full: dict[str, np.ndarray], pool: Pool, base: Base,
                  params: EvalParams, thresholds: Thresholds) -> list[dict[str, Any]]:
-    """同批过了门的按交易方案净 Sharpe 增量从大到小排队，就地改：规范形和前面留下的重合按 G8 拒，和前面留下的截面相关到了 G6 阈值按 G6 拒；
-    留下的再对 base 加前面留下的算一次增量，写进 G9 备注给人看（不是门）。full 是每条在全量骨架上的值，按 id。返回留下的"""
-    cands.sort(key=lambda c: -c["eval"]["gain"]["sharpe"]["gain"])
+    """同批过了门的按 G9 判的那份增量（交易方案 recent_from 起的净 Sharpe）从大到小排队，就地改：规范形和前面留下的重合按 G8 拒，
+    和前面留下的截面相关到了 G6 阈值按 G6 拒；留下的再对 base 加前面留下的算一次增量，写进 G9 备注给人看（不是门）。
+    full 是每条在全量骨架上的值，按 id。返回留下的"""
+    cands.sort(key=lambda c: -c["eval"]["gain"]["recentSharpe"]["gain"])
     kept, batch, canon, out = base, Combo.empty(pool.search, pool.symbols), {}, []
     for c in cands:
         if c["canonical"] in canon:
@@ -375,7 +377,8 @@ def screen_batch(cands: list[dict[str, Any]], full: dict[str, np.ndarray], pool:
             continue
         if out:
             again = gain(kept, c["name"], f, params)
-            note = f"；排在同批 {'、'.join(x['name'] for x in out)} 之后净 Sharpe 增量 {fmt(again['sharpe']['gain'], 2)}"
+            note = (f"；排在同批 {'、'.join(x['name'] for x in out)} 之后 {day_name(again['recentFrom'])} 起净 Sharpe 增量 "
+                    f"{fmt(again['recentSharpe']['gain'], 2)}")
             c["gates"] = [{**g, "note": g["note"] + note} if g["id"] == "G9" else g for g in c["gates"]]
         kept, batch = kept.plus(c["name"], f, params), batch.plus(c["name"], f)
         canon[c["canonical"]] = c["name"]

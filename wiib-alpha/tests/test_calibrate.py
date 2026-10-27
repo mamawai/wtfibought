@@ -50,7 +50,8 @@ def test_g9_prints_the_gain_of_the_library_candidates_and_random_factors(tmp_pat
     out = capsys.readouterr().out
     assert "基线：库里 1 条 + carry" in out and "  carry: " in out
     assert "== 库外候选：1 条 ==" in out and "vol_again  Mean($volume, 4)" in out
-    assert "== 随机因子：2 条 ==" in out and out.count("增量：中位") == 2
+    # 两组各出 2022 起（G9 判这份）和全段两行分位数
+    assert "== 随机因子：2 条 ==" in out and out.count("2022-01-01 起增量：中位") == 2 and out.count("全段增量：中位") == 2
 
 
 def test_random_expression_is_valid_and_not_degenerate(tmp_path):

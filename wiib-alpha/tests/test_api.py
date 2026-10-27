@@ -588,7 +588,7 @@ async def test_eval_endpoint(client):
     # 手填的没有假设，方向不判
     assert out["gates"][10]["id"] == "G10" and out["gates"][10]["passed"] and out["gates"][10]["note"] == "没有声明方向，不判"
     assert out["brief"]["redundancy"]["with"] == "noise4" and out["brief"]["redundancy"]["maxAbs"] < 0.2
-    assert out["gates"][9]["id"] == "G9" and "加进交易方案后搜索段净 Sharpe" in out["gates"][9]["note"]
+    assert out["gates"][9]["id"] == "G9" and "加进交易方案后搜索段 2022-01-01 起净 Sharpe" in out["gates"][9]["note"]
     # 全过了才带 holdout：门看搜索段，holdout 另算
     assert out["brief"]["holdout"]["horizons"]["12h"]["meanIc"] > 0 and out["eval"]["holdout"]["since"] == out["brief"]["holdout"]["since"]
     # 没过门的和 campaign 一样碰都不碰 holdout

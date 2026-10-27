@@ -3,7 +3,8 @@
   uv run python -m wiib_alpha.calibrate --synthetic            合成币池：验假阳率、泄漏捕获、植入信号过不过
   uv run python -m wiib_alpha.calibrate --data-dir ./data      真数据：看基线与参照集能活几个（要先刷新出池子面板）
   uv run python -m wiib_alpha.calibrate --g9 60 --data-dir ./data   真数据：G9 阈值怎么定，库里每条、库外候选、60 条随机因子
-                                                                    加进交易方案后净 Sharpe 各升多少，只跑这一项
+                                                                    加进交易方案后净 Sharpe 各升多少（G9 判的 2022 起和全段各一份），
+                                                                    只跑这一项
 
 合成币池：N 个币随机游走（第一个当 BTC），共同的市场因子乘各币的 beta 再加各币自己的噪音，全程在池，排名按成交额；
 资金费率每 8 小时结算、按 AR(1) 慢慢变，植入一个截面信号：每根 bar 的收益加 β × 上一根费率的截面 z 分数，
@@ -27,7 +28,7 @@ import pandas as pd
 
 from . import ops, reference
 from .data import universe as universe_table
-from .data.binance import BAR_MS, DAY_MS, KLINE_COLUMNS
+from .data.binance import BAR_MS, DAY_MS, KLINE_COLUMNS, day_name
 from .data.panel import BENCHMARK, FEATURE_COLUMNS, PanelStore, assemble
 from .data.pool import Pool
 from .dsl import DslError, Expr, parse
@@ -194,11 +195,15 @@ def g9(store: PanelStore, db_path: str, params: EvalParams, randoms: int, seed: 
 
     lib = {name: search(expr) for name, expr in library}
     full = base(lib)
-    print(f"基线：库里 {len(lib)} 条 + carry（占 {share:.0%}），搜索段净 Sharpe {full.result['sharpe']:.2f}", flush=True)
+    since = day_name(params.recent_from)
+    print(f"基线：库里 {len(lib)} 条 + carry（占 {share:.0%}），搜索段净 Sharpe {since} 起 {full.result['recentSharpe']:.2f}、"
+          f"全段 {full.result['sharpe']:.2f}；下面的增量都是 {since} 起（G9 判这份） / 全段", flush=True)
     print("\n== 库里每条：拿掉它的方案，再加回去 ==", flush=True)
     for name, f in lib.items():
-        g = scheme.gain(base({n: v for n, v in lib.items() if n != name}), name, f, params)["sharpe"]
-        print(f"  {name}: {g['base']:.2f} → {g['with']:.2f}（{g['gain']:+.2f}）", flush=True)
+        g = scheme.gain(base({n: v for n, v in lib.items() if n != name}), name, f, params)
+        r, s = g["recentSharpe"], g["sharpe"]
+        print(f"  {name}: {r['base']:.2f} → {r['with']:.2f}（{r['gain']:+.2f}） / "
+              f"{s['base']:.2f} → {s['with']:.2f}（{s['gain']:+.2f}）", flush=True)
     rng = np.random.default_rng(seed)
     first = store.load(pool.symbols[0])
     groups = {"库外候选": [(n, e) for e, n in candidates.items() if e not in {x for _, x in library}],
@@ -212,12 +217,15 @@ def g9(store: PanelStore, db_path: str, params: EvalParams, randoms: int, seed: 
             except DslError as exc:
                 print(f"  {name}：解析不了，跳过（{exc}）", flush=True)
                 continue
-            gains.append(scheme.gain(full, name, f, params)["sharpe"]["gain"])
-            print(f"  {gains[-1]:+.3f}  {name}  {expr}", flush=True)
+            g = scheme.gain(full, name, f, params)
+            gains.append((g["recentSharpe"]["gain"], g["sharpe"]["gain"]))
+            print(f"  {gains[-1][0]:+.3f} / {gains[-1][1]:+.3f}  {name}  {expr}", flush=True)
         if gains:
-            q = np.quantile(gains, [0.5, 0.9, 0.95, 0.99])
-            print(f"  {label}增量：中位 {q[0]:+.3f}，90% {q[1]:+.3f}，95% {q[2]:+.3f}，99% {q[3]:+.3f}，"
-                  f"最大 {max(gains):+.3f}（{len(gains)} 条）", flush=True)
+            for k, which in enumerate((f"{since} 起", "全段")):
+                xs = [x[k] for x in gains]
+                q = np.quantile(xs, [0.5, 0.9, 0.95, 0.99])
+                print(f"  {label}{which}增量：中位 {q[0]:+.3f}，90% {q[1]:+.3f}，95% {q[2]:+.3f}，99% {q[3]:+.3f}，"
+                      f"最大 {max(xs):+.3f}（{len(xs)} 条）", flush=True)
 
 
 # ========== 打印 ==========

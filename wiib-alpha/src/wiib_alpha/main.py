@@ -14,7 +14,6 @@ import uuid
 from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, AsyncIterator
@@ -31,7 +30,7 @@ from . import prompts, reference
 from .auth import Auth, AuthError, Authenticator, Forbidden, UpstreamError
 from .config import Config, ModelSpec, config
 from .data import universe as universe_table
-from .data.binance import Binance
+from .data.binance import Binance, day_name
 from .data.panel import FEATURE_COLUMNS, PanelStore, describe, holdout_cut, truncate
 from .data.pool import Pool
 from .data.refresh import RefreshResult, refresh
@@ -141,7 +140,7 @@ def build_library(data: Data, factors: list[dict[str, Any]], params: EvalParams,
     report = None
     if factors:
         report = {
-            "brief": {"primary": prompts.hours(params.primary), "recentFrom": _day(params.recent_from),
+            "brief": {"primary": prompts.hours(params.primary), "recentFrom": day_name(params.recent_from),
                       "horizons": horizons_brief(combo.evaluate(search, vol, params)),
                       "holdout": holdout_brief(combo.holdout(full, data.vol, data.cut_ms, params))},
             **combo.latest(full, data.vol, params),
@@ -157,19 +156,16 @@ def _facts(described: dict[str, dict[str, Any]], cut_ms: int, params: EvalParams
     liq = [d["liqFrom"] for d in described.values() if d["liqFrom"]]
     return {
         "symbols": list(described),
-        "from": _day(min(d["from"] for d in described.values())),
-        "to": _day(max(d["to"] for d in described.values())),
+        "from": day_name(min(d["from"] for d in described.values())),
+        "to": day_name(max(d["to"] for d in described.values())),
         "rows": min(d["rows"] for d in described.values()),
-        "liqFrom": _day(min(liq)) if liq else None,
-        "holdoutFrom": _day(cut_ms),
+        "liqFrom": day_name(min(liq)) if liq else None,
+        "holdoutFrom": day_name(cut_ms),
+        "recentFrom": day_name(params.recent_from),
         "costTiers": list(params.cost_tiers_bps),
         "poolSize": pool_size,
         "poolSymbols": pool_symbols,
     }
-
-
-def _day(ms: int) -> str:
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
 # 两个角色：gen 提假设写表达式，review 评审；协议分叉见 llm.py
@@ -318,7 +314,8 @@ async def _graph(app: FastAPI):
     ctx = Context(gen=gen, review=review, pool=data.pool, vol=data.vol, funding=data.funding, products=data.products,
                   reference_grid=data.reference_grid, base=lib.base, observing=obs,
                   peer_exprs={**lib.exprs, **obs_exprs}, known=lib.known | observing, library=library,
-                  facts={**data.facts, "carryShare": lib.base.carry_share}, store=app.state.store,
+                  facts={**data.facts, "carryShare": lib.base.carry_share,
+                         "g9Min": app.state.thresholds.sharpe_gain_min}, store=app.state.store,
                   params=app.state.params, thresholds=app.state.thresholds, evaluating=app.state.evaluating)
     return build_graph(ctx)
 
@@ -811,7 +808,8 @@ async def _reeval(app: FastAPI, data: Data, rows: list[dict[str, Any]], job: dic
 async def _declare(app: FastAPI, data: Data, c: dict[str, Any], lang: str) -> int:
     """老候选补声明方向：只给假设、表达式和公式说明，不给任何数字"""
     gen = app.state.models[0]
-    facts = {**data.facts, "carryShare": (await app.state.store.carry())["share"]}
+    facts = {**data.facts, "carryShare": (await app.state.store.carry())["share"],
+             "g9Min": app.state.thresholds.sharpe_gain_min}
     obj = await ask_json(gen, prompts.system_gen(facts, lang), prompts.direction_message(c), prompts.parse_object)
     direction = parse_direction((obj or {}).get("direction"))
     if direction is None:

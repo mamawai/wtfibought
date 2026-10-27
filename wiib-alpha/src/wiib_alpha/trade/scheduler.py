@@ -19,7 +19,6 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -27,7 +26,7 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 
 from ..data import universe as universe_table
-from ..data.binance import BAR_MS, DAY_MS, Binance, ms, utc
+from ..data.binance import BAR_MS, DAY_MS, Binance, day_name, ms, utc
 from ..data.panel import BENCHMARK, FEATURE_COLUMNS, PanelStore
 from ..data.pool import month_label, month_of
 from ..dsl import Expr, parse
@@ -68,7 +67,7 @@ async def tick(app: FastAPI, library: Library, refresh: Refresh, now: int) -> No
         await snapshot(app, now)
     trade_window = PREPARE_AFTER_MS <= now % DAY_MS < GIVE_UP_AFTER_MS
     if (trade_window and app.state.data is not None and not app.state.runs.jobs["refresh"].get("running")
-            and _due(await store.trade_run(day_label(now)))):
+            and _due(await store.trade_run(day_name(now)))):
         await rebalance(app, library, now)
     start = utc(now).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     month = f"{start:%Y-%m}"
@@ -89,10 +88,6 @@ async def tick(app: FastAPI, library: Library, refresh: Refresh, now: int) -> No
 def _due(run: Mapping[str, Any] | None) -> bool:
     """今天还没调过，或者调了但一笔单都没成"""
     return run is None or (run["status"] != "done" and not any(o["ok"] for o in run["orders"]))
-
-
-def day_label(ms: int) -> str:
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
 def account(sim: executor.Sim, user_id: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -119,7 +114,7 @@ async def rebalance(app: FastAPI, library: Library, now: int) -> None:
     """调一次仓，结果落 trade_run；出错也落，记下错误"""
     store: Store = app.state.store
     job = app.state.runs.jobs["trader"]
-    day = day_label(now)
+    day = day_name(now)
     job.clear()
     job.update(running=True, startedAt=now_ms(), day=day, stage="prepare", total=0, done=0, symbol=None, error=None,
                finishedAt=None)

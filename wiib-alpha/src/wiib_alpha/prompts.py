@@ -14,6 +14,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from . import ops, reference
+from .data.binance import day_name
 from .data.panel import FEATURE_COLUMNS
 from .dsl import COMPLEXITY, MAX_TEXT, MAX_WINDOW, parse
 from .eval.cs_ic import SHAPES, shape
@@ -126,7 +127,7 @@ def system_gen(facts: Mapping[str, Any], lang: str) -> str:
 - G6 与参照集、库里的因子、观察区里的候选截面相关 |ρ| < 0.7，参照集里有规模（成交额、持仓名义）、换手（成交额 ÷ 持仓）、7 天波动、7 天最大涨幅、7 天和 3 周动量、对 BTC 的 beta、资金费率水平、基差水平这些早有文献的效应，和它们高度相关就是老效应换了个列名。
 - G7 复杂度（上限见上面表达式语法那段，解析时就会拒）。
 - G8 换个窗口的翻版不算新；加法、乘法换个左右也不算。
-- G9 加进实盘的交易方案后净 Sharpe 至少升 0.1（随机因子加进去，95% 都升不到这么多，平均还是往下拉）：方案是 {combo} 资金做库里因子的组合（每个时刻先转截面秩再加权：权重的符号跟 24 小时 IC，大小是这条因子单独做上面那条多空腿扣完成本和资金费的净收益，单独做不赚钱的权重是 0；多空两头按上面的缓冲带选币、按波动分仓）、{carry} 做基差 carry（做空 7 天溢价高的、做多折价的，不碰上市不满一年的币），24 小时调一次，扣成本和资金费，你的因子加进组合那部分。
+- G9 加进实盘的交易方案后，{facts['recentFrom']} 起那段的净 Sharpe 至少升 {facts['g9Min']:g}（随机因子加进去，95% 都升不到这么多，平均还是往下拉；2021 年行情特殊，全段的增量只报不判）：方案是 {combo} 资金做库里因子的组合（每个时刻先转截面秩再加权：权重的符号跟 24 小时 IC，大小是这条因子单独做上面那条多空腿扣完成本和资金费的净收益，单独做不赚钱的权重是 0；多空两头按上面的缓冲带选币、按波动分仓）、{carry} 做基差 carry（做空 7 天溢价高的、做多折价的，不碰上市不满一年的币），24 小时调一次，扣成本和资金费，你的因子加进组合那部分。
 - G10 主档截面 IC 的符号要和你声明的方向一样。
 - 另外每条都会算"去老效应"：把下面这些已知效应一起回归掉，剩下的 IC 还有原来的百分之几、显不显著；它不是门，但评审和人都会看，老效应和别的量混在一起、相关度压到 0.7 以下的，在这里会露出来。
 - 同批过门的还会互相查一遍：结构重合或截面相关 ≥ 0.7 的只留增量大的那条；留下的再算一次相对排在前面那几条的增量写给人看，不是门。
@@ -147,7 +148,7 @@ def propose_message(k: int, library: Sequence[Mapping[str, Any]], tried: Sequenc
                     lessons: Sequence[Mapping[str, Any]], outcomes: Mapping[str, Any], note: str, lang: str) -> str:
     """lessons、tried 都是最新在前；outcomes 是 outcomes() 算的两张成败表"""
     lib = "\n".join(f"- {f['name']}：{f['expr']}（{f['hypothesis']}）" for f in library) or "（空）"
-    past = "\n".join(f"- [{t['outcome']}] {t['hypothesis']}｜{t['expr'] or '未写出'}｜{t['reason'] or ''}"
+    past = "\n".join(f"- [{t['outcome']}] {t['hypothesis']}｜{t['expr'] or '未写出'}｜{_tried_reason(t)}"
                      for t in tried) or "（无）"
     extra = f"\n本轮方向要求：{note}\n" if note.strip() else ""
     return f"""库里已有的因子（别重复，也别换个窗口翻版）：
@@ -269,6 +270,18 @@ def neutral_brief(ev: Mapping[str, Any]) -> dict[str, Any] | None:
     mean, icir = _f(pure["mean"]), _f(pure["icir"])
     return {"meanIc": _r(mean), "icir": _r(icir), "t": _r(abs(icir) * math.sqrt(pure["months"])),
             "retained": _r(mean / raw if raw else math.nan), "against": pure["against"]}
+
+
+# 门没过、重写时连试三次都没写出新表达式：graph 把它接在门的原因后面
+STUCK = "重写连试三次都没写出新的表达式"
+
+
+def _tried_reason(t: Mapping[str, Any]) -> str:
+    """门没过的只列门号：reason 是"G2 说明；G9 说明"，说明里也可能带"；"，后面接着的 STUCK 那截照留。别的结局原样"""
+    if t["outcome"] != "rejected_gates":
+        return t["reason"] or ""
+    gates, stuck, rest = t["reason"].partition(f"；{STUCK}")
+    return "没过的门：" + "、".join(re.findall(r"(?:^|；)(G\d+)", gates)) + stuck + rest
 
 
 def _lessons(lessons: Sequence[Mapping[str, Any]]) -> str:
@@ -431,7 +444,7 @@ def _recent_note(brief: Mapping[str, Any]) -> str:
     """带 recent 的数字是哪段的"""
     if not brief.get("recentFrom"):
         return ""
-    return f"；带 recent 的是 {brief['recentFrom']} 起同口径再算的一份，2021 年行情特殊，和全段并排看"
+    return f"；带 recent 的是 {brief['recentFrom']} 起同口径再算的一份，2021 年行情特殊，和全段并排看；G9 只判 gainSharpeRecent"
 
 
 def json_retry() -> str:
@@ -494,7 +507,7 @@ def eval_brief(ev: Mapping[str, Any], gates: Sequence[Mapping[str, Any]]) -> dic
             out["gainSharpeRecent"] = {k: _r(v) for k, v in ev["gain"]["recentSharpe"].items()}
     # recent 那些数从哪天起算；老结果没有
     if ev.get("recentFrom"):
-        out["recentFrom"] = str(np.datetime64(ev["recentFrom"], "ms"))[:10]
+        out["recentFrom"] = day_name(ev["recentFrom"])
     if ev.get("holdout"):
         out["holdout"] = holdout_brief(ev["holdout"])
     # 复评时发现它的那一轮切点比现在早才有：从那个切点起它都没见过

@@ -264,6 +264,15 @@ export function BriefTable({ brief }: { brief: BriefLike }) {
   // recent 那几行从哪一年起；老结果没算过就不显示
   const from = recentFrom?.slice(0, 4);
   const rows = from ? ROWS : ROWS.filter(r => !r.key.startsWith('recent'));
+  // 交易方案净 Sharpe 那一行：主档写加进去前 → 后，别的档是 —
+  const sharpeRow = (label: string, g: { base: number | null; with: number | null }) => (
+    <tr key={label}>
+      <td className="text-muted whitespace-nowrap">{label}</td>
+      {HORIZONS.map(h => (
+        <td key={h} className={primaryCell(h, primary)}>{h === primary ? `${num(g.base, 2)} → ${num(g.with, 2)}` : '—'}</td>
+      ))}
+    </tr>
+  );
   return (
     <div className="space-y-5 min-w-0">
       <div className="overflow-x-auto">
@@ -282,26 +291,8 @@ export function BriefTable({ brief }: { brief: BriefLike }) {
                 {HORIZONS.map(h => <td key={h} className={primaryCell(h, primary)}>{num(gain[h])}</td>)}
               </tr>
             )}
-            {gainSharpe && (
-              <tr>
-                <td className="text-muted whitespace-nowrap">{t('brief.gainSharpe')}</td>
-                {HORIZONS.map(h => (
-                  <td key={h} className={primaryCell(h, primary)}>
-                    {h === primary ? `${num(gainSharpe.base, 2)} → ${num(gainSharpe.with, 2)}` : '—'}
-                  </td>
-                ))}
-              </tr>
-            )}
-            {gainSharpeRecent && from && (
-              <tr>
-                <td className="text-muted whitespace-nowrap">{t('brief.gainSharpeRecent', { from })}</td>
-                {HORIZONS.map(h => (
-                  <td key={h} className={primaryCell(h, primary)}>
-                    {h === primary ? `${num(gainSharpeRecent.base, 2)} → ${num(gainSharpeRecent.with, 2)}` : '—'}
-                  </td>
-                ))}
-              </tr>
-            )}
+            {gainSharpeRecent && from && sharpeRow(t('brief.gainSharpeRecent', { from }), gainSharpeRecent)}
+            {gainSharpe && sharpeRow(t(gainSharpeRecent && from ? 'brief.gainSharpeFull' : 'brief.gainSharpe'), gainSharpe)}
           </tbody>
         </table>
       </div>

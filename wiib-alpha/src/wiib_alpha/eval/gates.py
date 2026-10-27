@@ -10,6 +10,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from ..data.binance import day_name
 from .cs_ic import SHAPES, shape
 from .params import Thresholds
 from .stats import bh_reject
@@ -106,19 +107,17 @@ def origin_gate(canonical: str, known: Iterable[str]) -> dict[str, Any]:
 
 
 def gain_gate(gain: dict[str, Any] | None, t: Thresholds) -> dict[str, Any]:
-    """G9：加进交易方案（库里因子的组合 + 基差 carry，24h、按波动）的组合腿后，搜索段年化净 Sharpe 要升过阈值。
-    同批阶段排在别的候选后面会重算一次写进备注"""
+    """G9：加进交易方案（库里因子的组合 + 基差 carry，24h、按波动）的组合腿后，搜索段 recent_from 起的年化净 Sharpe 要升过阈值；
+    全段的增量写在备注里并排看，不判。同批阶段排在别的候选后面会重算一次写进备注"""
     threshold = {"sharpeGain": f"> {t.sharpe_gain_min:g}"}
     if gain is None:
         return _gate("G9", "增量", True, None, threshold, "没算对交易方案的增量")
-    s, net = gain["sharpe"], gain["netReturn"]
-    # 只看 recent_from 起那段的增量，并排给人和评审看，不判；老结果没有
-    recent = (f"；{str(np.datetime64(gain['recentFrom'], 'ms'))[:10]} 起 {fmt(gain['recentSharpe']['base'], 2)} → "
-              f"{fmt(gain['recentSharpe']['with'], 2)}（增量 {fmt(gain['recentSharpe']['gain'], 2)}）"
-              if gain.get("recentSharpe") else "")
+    s, full, net = gain["recentSharpe"], gain["sharpe"], gain["netReturn"]
     return _gate("G9", "增量", _finite(s["gain"]) and s["gain"] > t.sharpe_gain_min, gain, threshold,
-                 f"加进交易方案后搜索段净 Sharpe {fmt(s['base'], 2)} → {fmt(s['with'], 2)}（增量 {fmt(s['gain'], 2)}），"
-                 f"净收益 {fmt(net['base'])} → {fmt(net['with'])}{recent}")
+                 f"加进交易方案后搜索段 {day_name(gain['recentFrom'])} 起净 Sharpe "
+                 f"{fmt(s['base'], 2)} → {fmt(s['with'], 2)}（增量 {fmt(s['gain'], 2)}）；"
+                 f"全段 {fmt(full['base'], 2)} → {fmt(full['with'], 2)}（增量 {fmt(full['gain'], 2)}），"
+                 f"净收益 {fmt(net['base'])} → {fmt(net['with'])}")
 
 
 def apply_fdr(evals: list[dict[str, Any]], q: float, iterations: int, extra_tests: int = 0) -> None:

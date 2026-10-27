@@ -4,8 +4,9 @@ from wiib_alpha import ops, prompts
 from wiib_alpha.data.panel import FEATURE_COLUMNS
 
 FACTS = {"symbols": ["BTCUSDT", "ETHUSDT"], "from": "2024-09-21", "to": "2026-09-20", "rows": 70000,
-         "liqFrom": "2026-04-27", "holdoutFrom": "2026-06-22", "costTiers": [5.0, 8.0, 12.0], "poolSize": 80,
-         "poolSymbols": 481, "carryShare": 0.25}
+         "liqFrom": "2026-04-27", "holdoutFrom": "2026-06-22", "recentFrom": "2022-01-01", "costTiers": [5.0, 8.0, 12.0],
+         "poolSize": 80,
+         "poolSymbols": 481, "carryShare": 0.25, "g9Min": 0.1}
 
 
 def test_parse_object_and_list_tolerate_fences_and_chatter():
@@ -38,7 +39,7 @@ def test_system_prompt_lists_every_column_and_operator():
     assert "t（ICIR × √月数）≥ 3" in text and "最近一段必须同号" in text
     # 门对齐交易方案：主档 24h、按波动分仓，单条净收益只报，G9 看加进交易方案后的净 Sharpe
     assert "主档 24 小时" in text and "按 7 天波动的倒数分仓" in text and "只报不判" in text
-    assert "G9 加进实盘的交易方案后净 Sharpe 至少升 0.1" in text
+    assert "G9 加进实盘的交易方案后，2022-01-01 起那段的净 Sharpe 至少升 0.1" in text and "全段的增量只报不判" in text
     assert "单边 4 / 6.5 / 10 bps" in prompts.system_gen({**FACTS, "costTiers": [4.0, 6.5, 10.0]}, "zh")
     # 方案里两条腿的份额按设定渲染
     assert "方案是 75% 资金做库里因子的组合" in text and "、25% 做基差 carry" in text
@@ -49,10 +50,15 @@ def test_system_prompt_lists_every_column_and_operator():
 
 def test_propose_and_implement_messages():
     text = prompts.propose_message(3, [{"name": "mom", "expr": "$ret", "hypothesis": "h"}],
-                                   [{"outcome": "rejected_gates", "hypothesis": "old", "expr": "$x", "reason": "G2"}],
+                                   [{"outcome": "rejected_gates", "hypothesis": "old", "expr": "$x",
+                                     "reason": f"G2 主档 IC 0.0062；G9 增量 -0.03；2022-01-01 起 1.66 → 1.82；{prompts.STUCK}：和第 1 版一样"},
+                                    {"outcome": "rejected_review", "hypothesis": "bad", "expr": "$y", "reason": "机制不成立"}],
                                    [{"kind": "try", "text": "新的"}, {"kind": "avoid", "text": "旧的"}],
                                    prompts.outcomes([]), "只看资金费率", "zh")
-    assert "mom：$ret" in text and "[rejected_gates] old" in text and "只看资金费率" in text and "提出 3 条" in text
+    assert "mom：$ret" in text and "只看资金费率" in text and "提出 3 条" in text
+    # 门没过的只列门号，写不出新表达式那截和评审的评语原样
+    assert (f"- [rejected_gates] old｜$x｜没过的门：G2、G9；{prompts.STUCK}：和第 1 版一样\n"
+            "- [rejected_review] bad｜$y｜机制不成立") in text
     assert "- [try] 新的\n- [avoid] 旧的" in text
     # 还没有现在口径的候选：成败表整段不出
     assert "按数据类" not in text and "（h）\n\n之前几轮复盘写下的经验" in text

@@ -122,19 +122,18 @@ def test_neutral_regresses_out_known_effects(planted_pool, planted_vol):
 
 def test_g9_needs_the_scheme_sharpe_to_rise_past_the_threshold(planted):
     ev = copy.deepcopy(planted)
-    ev["gain"] = {"sharpe": {"base": 1.0, "with": 0.9, "gain": -0.1}, "netReturn": {"base": 0.5, "with": 0.4}}
+    ev["gain"] = {"sharpe": {"base": 1.0, "with": 1.5, "gain": 0.5}, "recentSharpe": {"base": 1.0, "with": 0.9, "gain": -0.1},
+                  "recentFrom": 1_640_995_200_000, "netReturn": {"base": 0.5, "with": 0.4}}
     g9 = judge(ev, GATES)[9]
-    assert g9["id"] == "G9" and not g9["passed"] and "加进交易方案后搜索段净 Sharpe 1.00 → 0.90" in g9["note"]
-    # 老结果没有 2022 起那段；新结果备注里带上，不判
-    assert "起" not in g9["note"]
-    ev["gain"].update(recentSharpe={"base": 0.8, "with": 1.0, "gain": 0.2}, recentFrom=1_640_995_200_000)
-    assert "2022-01-01 起 0.80 → 1.00（增量 0.20）" in judge(ev, GATES)[9]["note"]
-    ev["gain"]["sharpe"] = {"base": 1.0, "with": 1.2, "gain": 0.2}
+    # 判的是 2022 起那份：全段升 0.5 也不过，全段的数写在备注里并排看
+    assert g9["id"] == "G9" and not g9["passed"]
+    assert "搜索段 2022-01-01 起净 Sharpe 1.00 → 0.90（增量 -0.10）；全段 1.00 → 1.50（增量 0.50）" in g9["note"]
+    ev["gain"]["recentSharpe"] = {"base": 1.0, "with": 1.2, "gain": 0.2}
     assert judge(ev, GATES)[9]["passed"]
     # 升了但不到默认的 0.1：和随机因子分不开，不过
-    ev["gain"]["sharpe"] = {"base": 1.0, "with": 1.05, "gain": 0.05}
+    ev["gain"]["recentSharpe"] = {"base": 1.0, "with": 1.05, "gain": 0.05}
     assert not judge(ev, GATES)[9]["passed"] and judge(ev, GATES)[9]["threshold"] == {"sharpeGain": "> 0.1"}
-    ev["gain"]["sharpe"] = {"base": 1.0, "with": 1.2, "gain": 0.2}
+    ev["gain"]["recentSharpe"] = {"base": 1.0, "with": 1.2, "gain": 0.2}
     # 阈值抬到 0.3：升 0.2 不够
     g9 = judge(ev, Thresholds(min_samples=30, sharpe_gain_min=0.3))[9]
     assert not g9["passed"] and g9["threshold"] == {"sharpeGain": "> 0.3"}

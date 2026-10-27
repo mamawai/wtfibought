@@ -16,7 +16,8 @@ from wiib_alpha.trade import scheme
 PARAMS = EvalParams(test_size=96, embargo=4, min_train=500, iterations=200, seed=7, holdout_days=10)
 GATES = Thresholds(min_samples=30)
 FACTS = {"symbols": list(PRODUCTS), "from": "2025-01-01", "to": "2025-03-04", "rows": 6000, "liqFrom": None,
-         "holdoutFrom": "2025-02-22", "costTiers": [5.0, 8.0, 12.0], "poolSize": 80, "poolSymbols": 24, "carryShare": 0.25}
+         "holdoutFrom": "2025-02-22", "recentFrom": "2022-01-01", "costTiers": [5.0, 8.0, 12.0], "poolSize": 80,
+         "poolSymbols": 24, "carryShare": 0.25, "g9Min": 0.1}
 
 
 @pytest.fixture
@@ -170,7 +171,9 @@ async def test_batch_notes_later_survivors_gain_after_earlier_ones(store, ctx_of
     """截面相关没到阈值的照样留（这里把相关压成 0.1）：同批规范形相同的只留一条（G8 拒），
     排在后面的 G9 备注里写明排在谁后面增量多少，留给人判"""
     def no_gain(base, name, f, params):
-        return {"sharpe": {"base": 2.0, "with": 1.9, "gain": -0.1}, "netReturn": {"base": 0.5, "with": 0.49}}
+        flat = {"base": 2.0, "with": 1.9, "gain": -0.1}
+        return {"sharpe": flat, "recentSharpe": flat, "recentFrom": params.recent_from,
+                "netReturn": {"base": 0.5, "with": 0.49}}
 
     monkeypatch.setattr(graph_module, "gain", no_gain)
     monkeypatch.setattr(graph_module, "cross_corr", lambda rows, f, others, params: [(n, 0.1) for n in others.names])
@@ -185,7 +188,7 @@ async def test_batch_notes_later_survivors_gain_after_earlier_ones(store, ctx_of
     # 排在后面的那条 G9 没被翻成不过，备注里带着相对前一条的增量
     noted = [c for c in survivors if "排在同批" in c["gates"][9]["note"]]
     assert len(noted) == 1 and all(g["passed"] for g in noted[0]["gates"])
-    assert noted[0]["gates"][9]["note"].endswith("之后净 Sharpe 增量 -0.10")
+    assert noted[0]["gates"][9]["note"].endswith("之后 2022-01-01 起净 Sharpe 增量 -0.10")
     assert all("holdout" in c["eval"] for c in survivors)
     assert rows["noise"]["status"] == "rejected_gates"
 

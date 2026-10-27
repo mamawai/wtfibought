@@ -155,7 +155,7 @@ class Binance:
     def metrics(self, symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
         """[start_ms, end_ms) 内的 metrics，只有日度文件，按 time 升序"""
         prefix = f"{_UM}/daily/metrics/{symbol}/"
-        keys = self._zips(prefix, f"{symbol}-metrics-{_day_name(start_ms)}")
+        keys = self._zips(prefix, f"{symbol}-metrics-{day_name(start_ms)}")
         frames = [_parse_metrics(csv) for csv in self._download(keys)]
         if not frames:
             return empty_metrics()
@@ -365,7 +365,7 @@ def _short_days(open_time: pd.Series, per_day: int, before_ms: int) -> list[str]
     """before_ms 之前、根数不满 per_day 的日子（YYYY-MM-DD）；头尾两天不算，上市下架就在那天"""
     counts = (open_time // DAY_MS).value_counts()
     first, last = int(counts.index.min()) + 1, min(int(counts.index.max()), before_ms // DAY_MS)
-    return [_day_name(d * DAY_MS) for d in range(first, last) if counts.get(d, 0) < per_day]
+    return [day_name(d * DAY_MS) for d in range(first, last) if counts.get(d, 0) < per_day]
 
 
 def _parse_metrics(csv: bytes) -> pd.DataFrame:
@@ -402,7 +402,8 @@ def _month_name(ms_: int) -> str:
     return utc(ms_).strftime("%Y-%m")
 
 
-def _day_name(ms_: int) -> str:
+def day_name(ms_: int) -> str:
+    """UTC 日期 YYYY-MM-DD"""
     return utc(ms_).strftime("%Y-%m-%d")
 
 

@@ -264,9 +264,10 @@ export interface EvalBrief {
   neutral?: { meanIc: number | null; icir: number | null; t: number | null; retained: number | null; against: number };
   /** 老结果的 G9：加进库组合后三档 IC 的变化；现在的结果没有 */
   gain?: Record<string, number | null>;
-  /** G9：交易方案（库里因子的组合 + 基差 carry）搜索段的年化净 Sharpe，加进去前、后、增量；老结果是库组合多空腿的 */
+  /** 交易方案（库里因子的组合 + 基差 carry）搜索段全段的年化净 Sharpe，加进去前、后、增量：有 gainSharpeRecent 时只报不判，
+   * 没有它的老结果 G9 判的是这一份（更老的是库组合多空腿的） */
   gainSharpe?: { base: number | null; with: number | null; gain: number | null };
-  /** G9 只看 recentFrom 起那段的同一组数；老结果没有 */
+  /** 同一组数只看 recentFrom 起那段，G9 判的是这一份；老结果没有 */
   gainSharpeRecent?: { base: number | null; with: number | null; gain: number | null };
   /** 带 recent 的数字从这天起算（YYYY-MM-DD）；老结果没有 */
   recentFrom?: string;

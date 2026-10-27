@@ -247,7 +247,7 @@ async def test_tick_rebalances_between_0005_and_0100_and_records_equity_every_ho
     async def rebalance(app, library, now):
         ran.append(now)
         status, orders = outcomes.pop(0)
-        await store.add_trade_run({"day": scheduler.day_label(now), "signal_ms": 0, "started_at": now,
+        await store.add_trade_run({"day": b.day_name(now), "signal_ms": 0, "started_at": now,
                                    "finished_at": now, "status": status, "user_id": 42, "orders": orders})
 
     monkeypatch.setattr(scheduler, "rebalance", rebalance)
@@ -272,7 +272,7 @@ async def test_tick_rebalances_between_0005_and_0100_and_records_equity_every_ho
     # 01:00 之后还没调过：跳过这一天，不拿 0 点的信号隔几小时再下
     day3 = DAY + 2 * DAY_MS + 61 * 60_000
     await scheduler.tick(m.app, m._library, m._start_refresh, day3)
-    assert ran == [t0, t0 + 60_000, day2, day2 + 60_000] and await store.trade_run(scheduler.day_label(day3)) is None
+    assert ran == [t0, t0 + 60_000, day2, day2 + 60_000] and await store.trade_run(b.day_name(day3)) is None
     curve = await store.trade_equity()
     assert [p["ts"] for p in curve] == [t0 + 60_000, day2, day3]
     assert curve[0] == {"ts": t0 + 60_000, "equity": 10000, "balance": 10000, "long_notional": 0, "short_notional": 0}

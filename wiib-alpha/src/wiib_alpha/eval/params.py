@@ -34,7 +34,7 @@ class EvalParams:
     leg_cap: float = 2.0        # 按波动分仓时单个币最多是这一边平均仓位的这么多倍；inf 是不设
     segments: int = 4
     holdout_days: int = 180     # 最近这么多天锁成 holdout：门和模型都看不到，过门后只算一次 IC 给人看
-    # IC、多空腿、G9 增量各再算一份只看这天（UTC 毫秒，2022-01-01）起的，和全段并排看：2021 年的行情太特殊，会把全段数字撑大
+    # IC、多空腿、G9 增量各再算一份只看这天（UTC 毫秒，2022-01-01）起的：G9 按这一份判，别的和全段并排看；2021 年的行情太特殊，会把全段数字撑大
     recent_from: int = 1_640_995_200_000
 
     @property
@@ -62,7 +62,7 @@ class Thresholds:
     min_segments: int = 3               # G3：四段里同号的段数，最后一段必须同号
     perm_pct: float = 0.95              # G5：截面排列分位
     fdr_q: float = 0.10                 # G5：同批 BH-FDR
-    sharpe_gain_min: float = 0.10       # G9：加进交易方案后搜索段年化净 Sharpe 至少升这么多；随机因子 95% 升不到（calibrate --g9）
+    sharpe_gain_min: float = 0.10       # G9：加进交易方案后搜索段 recent_from 起的年化净 Sharpe 至少升这么多；按随机因子的 95 分位定（calibrate --g9）
     max_redundancy: float = 0.7         # G6
     # 入库：它没见过那段（发现那轮的切点起）主档截面 IC 至少这么多个时刻、|均值 / 标准误| 至少这么大，且和搜索段同号
     admit_min_points: int = 150
