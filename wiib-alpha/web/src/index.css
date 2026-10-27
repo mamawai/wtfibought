@@ -146,11 +146,18 @@ html.dark {
   .sec-h h2 { font-size: 17px; font-weight: 800; letter-spacing: -.01em; transition: clip-path .8s var(--ease-out) .3s, transform .8s var(--ease-out) .3s; }
   .sec-acts { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .sec-hint { margin-top: 4px; max-width: 96ch; font-size: 13px; line-height: 1.75; color: var(--color-muted); }
+  /* 折起来的详细说明：一行"展开说明"，点开是和说明一样的小灰字 */
+  .sec-more { margin-top: 2px; max-width: 96ch; font-size: 13px; line-height: 1.75; color: var(--color-muted); }
+  .sec-more summary { display: inline-flex; align-items: center; gap: 3px; list-style: none; cursor: pointer; user-select: none; transition: color .15s; }
+  .sec-more summary::-webkit-details-marker { display: none; }
+  .sec-more summary svg { width: 13px; height: 13px; transition: transform .2s; }
+  .sec-more summary:hover { color: var(--color-fg); }
+  .sec-more[open] summary svg { transform: rotate(180deg); }
   .sec-body { margin-top: 18px; }
-  .sec-hint, .sec-body { transition: opacity .6s var(--ease-out) .4s, transform .6s var(--ease-out) .4s; }
+  .sec-hint, .sec-more, .sec-body { transition: opacity .6s var(--ease-out) .4s, transform .6s var(--ease-out) .4s; }
   .sec.rv:not(.in)::before { transform: scaleX(0); }
   .sec.rv:not(.in) .sec-h h2 { clip-path: inset(0 0 100% 0); transform: translateY(-.3em); }
-  .sec.rv:not(.in) .sec-hint, .sec.rv:not(.in) .sec-body { opacity: 0; transform: translateY(8px); }
+  .sec.rv:not(.in) .sec-hint, .sec.rv:not(.in) .sec-more, .sec.rv:not(.in) .sec-body { opacity: 0; transform: translateY(8px); }
 
   /* ===== 指标条：格间细线，窄体大数，数字一位一位滚到位 ===== */
   .strip { display: grid; border-bottom: 1px solid var(--color-line); }
@@ -196,6 +203,13 @@ html.dark {
   .chip.primary { border-color: var(--color-primary); color: var(--color-primary); }
   .chip.muted { border-color: var(--color-muted); color: var(--color-muted); }
   .chip .dot { width: 6px; height: 6px; flex: none; background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
+
+  /* ===== 悬停说明：小问号或包住的字，指上去出一块墨框说明（挂在 body 上，按位置定） ===== */
+  .tip { cursor: help; }
+  .help { display: inline-flex; align-items: center; margin-left: 3px; vertical-align: -1px; color: var(--color-muted); transition: color .15s; }
+  .help:hover, .help:focus-visible { color: var(--color-fg); }
+  .help svg { width: 12px; height: 12px; }
+  .tip-box { position: fixed; z-index: 70; width: max-content; padding: 6px 9px; border: 1px solid var(--color-fg); background: var(--color-bg); color: var(--color-fg); font-size: 12px; font-weight: 400; line-height: 1.6; letter-spacing: 0; text-align: left; white-space: normal; pointer-events: none; animation: fade .12s ease; }
 
   /* ===== 按钮：1.5px 墨框 / 橙色实心 / 涨跌色实心；图标钮 30 方格细框 ===== */
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 32px; padding: 0 12px; border: 1.5px solid var(--color-fg); background: transparent; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; transition: background-color 160ms var(--ease-control), border-color 160ms var(--ease-control), color 160ms var(--ease-control), opacity 160ms, transform 100ms var(--ease-control); }

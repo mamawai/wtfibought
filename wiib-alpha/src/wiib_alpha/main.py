@@ -37,7 +37,7 @@ from .data.refresh import RefreshResult, refresh
 from .dsl import DslError, Expr, parse
 from .eval import combo
 from .eval.evaluate import cross_corr, evaluate
-from .eval.gates import fmt, judge, passed
+from .eval.gates import fmt, gate_row, judge, passed
 from .eval.params import EvalParams, Thresholds
 from .eval.recheck import recheck
 from .graph import Context, ask_json, brief, build_graph, parse_direction, screen_batch
@@ -45,7 +45,7 @@ from .llm import LlmError, build_chat_model
 from .prompts import eval_brief, holdout_brief, horizons_brief
 from .reference import Grid
 from .store import Store, clean, now_ms
-from .trade import attrib, executor, live, realtime, scheduler, scheme
+from .trade import attrib, executor, live, realtime, scheduler, scheme, sizing
 
 logger = logging.getLogger(__name__)
 # 包里的 info 日志（刷新进度、fapi 已用权重、调仓）打到容器日志；根 logger 没有 handler
@@ -315,7 +315,8 @@ async def _graph(app: FastAPI):
                   reference_grid=data.reference_grid, base=lib.base, observing=obs,
                   peer_exprs={**lib.exprs, **obs_exprs}, known=lib.known | observing, library=library,
                   facts={**data.facts, "carryShare": lib.base.carry_share,
-                         "g9Min": app.state.thresholds.sharpe_gain_min}, store=app.state.store,
+                         "g9Min": app.state.thresholds.sharpe_gain_min},
+                  policy=prompts.Policy.of(await app.state.store.policy()), store=app.state.store,
                   params=app.state.params, thresholds=app.state.thresholds, evaluating=app.state.evaluating)
     return build_graph(ctx)
 
@@ -384,6 +385,60 @@ def _data(app: FastAPI) -> Data:
     if app.state.data is None:
         raise HTTPException(409, "还没有行情数据，先刷新数据")
     return app.state.data
+
+
+# 挡住别的动作的东西，和挡住时怎么说
+_HOLDS = {
+    "noData": "还没有行情数据，先刷新数据",
+    "noGrid": "参照网格还没算好，等它算完",
+    "campaign": "有 campaign 在跑，等它结束",
+    "refresh": "正在刷新数据，等它刷完",
+    "grid": "参照网格还在补算，等它算完",
+    "reeval": "观察区还在复评，等它算完",
+    "libraryReeval": "库里因子还在复评，等它算完",
+    "reference": "参照集还在跑，等它算完",
+    "trader": "交易员在调仓，等它调完",
+    "compare": "交易员的因子对比还在算，等它算完",
+}
+# 每个动作按顺序查，第一个占着的就是做不了的原因。刷新一完成就换数据和 holdout 切点，会存结果的都不和它同时跑；
+# 刷新开头要删上一版面板，读着面板的后台任务都挡它；campaign 跑着时数据、方针、G9 基线（carry 份额）都不能变；
+# 参照网格没算好 G6 一律不过，campaign、复评白跑；campaign 和两种复评三个互相不同时跑，campaign 也不和参照集同时跑（抢内存）
+_BLOCKED_BY = {
+    "refresh": ("refresh", "campaign", "grid", "reeval", "libraryReeval", "reference", "trader", "compare"),
+    "campaign": ("noData", "campaign", "refresh", "noGrid", "reeval", "libraryReeval", "reference"),
+    "reeval": ("noData", "reeval", "campaign", "refresh", "noGrid", "libraryReeval"),
+    "libraryReeval": ("noData", "libraryReeval", "campaign", "refresh", "noGrid", "reeval"),
+    "reference": ("noData", "reference", "campaign", "refresh"),
+    "recheck": ("noData", "refresh"),
+    "policy": ("campaign",),
+    "carryShare": ("campaign", "libraryReeval", "reeval", "compare"),
+    "compare": ("noData", "compare", "refresh"),
+}
+
+
+async def _holding(app: FastAPI) -> set[str]:
+    """现在占着的东西（_HOLDS 的键）"""
+    data, jobs = app.state.data, app.state.runs.jobs
+    held = {name for name in ("refresh", "grid", "reeval", "libraryReeval", "reference", "trader", "compare")
+            if jobs[name].get("running")}
+    if data is None:
+        held.add("noData")
+    elif data.reference_grid is None:
+        held.add("noGrid")
+    if await app.state.store.active_campaign() is not None or app.state.runs.tasks:
+        held.add("campaign")
+    return held
+
+
+def _why(action: str, held: set[str]) -> str | None:
+    """这个动作现在为什么做不了，做得了是 None；接口拿它报 409，页面拿它把按钮灰掉"""
+    return next((_HOLDS[h] for h in _BLOCKED_BY[action] if h in held), None)
+
+
+async def _check(app: FastAPI, action: str) -> None:
+    why = _why(action, await _holding(app))
+    if why is not None:
+        raise HTTPException(409, why)
 
 
 async def _load(app: FastAPI, cfg: Config) -> None:
@@ -481,6 +536,13 @@ async def me(who: Auth = Depends(auth)):
     return _ok({"admin": True, "lang": who.lang})
 
 
+@router.get("/busy")
+async def busy(request: Request):
+    """各个动作现在为什么做不了，做得了是 null：页面拿它把按钮灰掉、写明在等谁"""
+    held = await _holding(request.app)
+    return _ok({action: _why(action, held) for action in _BLOCKED_BY})
+
+
 @public.get("/overview")
 async def overview(request: Request):
     """公开概览：每轮的状态与各状态候选数、累计试验数、库里因子数、观察区条数。只有数字，没有假设、公式和过程"""
@@ -522,17 +584,8 @@ async def data_refresh(request: Request):
 
 async def _start_refresh(app: FastAPI) -> None:
     """起刷新的后台任务：页面上点的和交易员调度月初自动起的都走这里"""
+    await _check(app, "refresh")
     job = app.state.runs.jobs["refresh"]
-    if job.get("running"):
-        raise HTTPException(409, "已经在刷新了")
-    # campaign 各轮共用装载时的数据和 holdout 切点，跑着的时候不换
-    if await app.state.store.active_campaign() is not None:
-        raise HTTPException(409, "有 campaign 在跑，停了再刷新")
-    # 后台任务可能还在读上一版面板，刷新开头要把上一版删掉
-    for name, label in (("grid", "参照网格还在补算"), ("reeval", "观察区还在复评"), ("libraryReeval", "库里因子还在复评"),
-                        ("reference", "参照集还在跑"), ("trader", "交易员在调仓"), ("compare", "交易员的因子对比还在算")):
-        if app.state.runs.jobs[name].get("running"):
-            raise HTTPException(409, f"{label}，等它算完再刷新")
     # 上一轮留下的阶段、进度、币数全清掉，页面不会先看到旧值
     job.clear()
     job.update(running=True, startedAt=now_ms(), error=None, finishedAt=None)
@@ -559,12 +612,6 @@ async def _start_refresh(app: FastAPI) -> None:
     asyncio.create_task(work())
 
 
-def _not_refreshing(app: FastAPI) -> None:
-    """刷新一完成就换数据和 holdout 切点：campaign 和会存结果的评估在刷新期间不起，不然存下的是旧数据算的"""
-    if app.state.runs.jobs["refresh"].get("running"):
-        raise HTTPException(409, "正在刷新数据，等它刷完")
-
-
 def _refresh_panels(cfg: Config, progress: dict[str, Any]) -> RefreshResult:
     binance = Binance(cfg.binance_vision_url, fapi_url=cfg.binance_fapi_url, list_url=cfg.binance_vision_list_url,
                       concurrency=cfg.fetch_concurrency)
@@ -578,29 +625,15 @@ async def create_campaign(body: CreateCampaign, request: Request, who: Auth = De
     """建 campaign 并起第一轮"""
     app = request.app
     store: Store = app.state.store
-    data = _data(app)
     # 同时只有一个 campaign、一轮：一轮已经是 K 条候选并发评估，再叠一轮内存和模型额度都扛不住
-    if await store.active_campaign() is not None or app.state.runs.tasks:
-        raise HTTPException(409, "有 campaign 还在跑，等它结束")
-    _not_refreshing(app)
-    # 参照网格没算好 G6 一律不过，白烧重写次数和试验数
-    if data.reference_grid is None:
-        raise HTTPException(409, "参照网格还没算好，等它算完")
-    jobs = app.state.runs.jobs
-    if jobs["reeval"].get("running"):
-        raise HTTPException(409, "观察区还在复评，等它算完")
-    if jobs["libraryReeval"].get("running"):
-        raise HTTPException(409, "库里因子还在复评，等它算完")
-    # 参照集和 campaign 一起跑会抢内存和 CPU，超了容器上限会被杀掉
-    if jobs["reference"].get("running"):
-        raise HTTPException(409, "参照集还在跑，等它算完")
+    await _check(app, "campaign")
     specs = await _model_specs(app)
     if app.state.models is None:
         app.state.models = build_models(specs)
     campaign_id = uuid.uuid4().hex[:12]
     deadline = now_ms() + body.deadlineMinutes * 60_000 if body.deadlineMinutes else None
     await store.create_campaign(campaign_id, body.rounds, body.k, body.note.strip(), who.lang, body.maxSurvivors,
-                                deadline, specs["gen"].model, specs["review"].model)
+                                deadline, specs["gen"].model, specs["review"].model, (await store.policy())["id"])
     run_id = await _start_round(app, await store.campaign(campaign_id))
     return _ok({"id": campaign_id, "runId": run_id})
 
@@ -655,47 +688,71 @@ async def run_state(run_id: str, request: Request):
 @router.get("/observation")
 async def observation(request: Request):
     """观察区：过了全部门、评审、同批 BH 的候选，等人入库或丢弃；created_at 是它那一轮开始的时间。
-    复评过的带 reeval（当前评估器的结果），admission 是现在能不能入库和原因，reeval 任务的进度一起回"""
+    复评过的带 reeval（当前评估器的结果），admission 是现在能不能入库和入库条件逐项，reeval 任务的进度一起回"""
     app = request.app
     rows = await app.state.store.observing()
     cut = app.state.data.cut_ms if app.state.data is not None else None
     share = (await app.state.store.carry())["share"]
     items = []
     for c in rows:
-        ok, why = admission(c, cut, share, app.state.thresholds)
+        checks = admission(c, cut, share, app.state.thresholds)
         items.append({**brief(c), "run_id": c["run_id"], "created_at": c["run_created_at"], "updated_at": c["updated_at"],
-                      "reeval": _reeval_view(c["reeval"]), "admission": {"ok": ok, "reason": why}})
+                      "reeval": _reeval_view(c["reeval"]),
+                      "admission": {"ok": refused(checks) is None, "checks": checks}})
     return _ok({"items": items, "reeval": app.state.runs.jobs["reeval"]})
 
 
-def admission(c: dict[str, Any], cut_ms: int | None, carry_share: float, t: Thresholds) -> tuple[bool, str]:
-    """入库条件，不留人工 override：在当前这版数据、当前 carry 份额上复评过且全过门，它没见过那段（发现那轮的切点起，复评时算的）
-    主档截面 IC 和搜索段同号、至少 admit_min_points 个时刻、逐点 IC 的 |均值 / 标准误| ≥ admit_t_min。
+def admission(c: dict[str, Any], cut_ms: int | None, carry_share: float, t: Thresholds) -> list[dict[str, Any]]:
+    """入库条件逐项，全过才能入库，不留人工 override：在当前这版数据、当前 carry 份额上复评过且全过门，
+    它没见过那段（发现那轮的切点起，复评时算的）至少 admit_min_points 个时刻、主档截面 IC 和搜索段同号、
+    逐点 IC 的 |均值 / 标准误| ≥ admit_t_min。ok 是过没过，前面的没过、后面判不了的是 None。
     数据刷新过切点就变了、份额改过 G9 基线就变了，都得重新复评；没到门槛的留在观察区，之后每次刷新自动再复评一遍，攒够了自然过"""
+    checks = [{"ok": None, "text": "在当前这版数据、当前 carry 份额上复评过"}, {"ok": None, "text": "复评全过门"},
+              {"ok": None, "text": f"没见过那段至少 {t.admit_min_points} 个时刻"},
+              {"ok": None, "text": "没见过那段主档 IC 和搜索段同号"},
+              {"ok": None, "text": f"没见过那段主档 IC 的 t ≥ {t.admit_t_min:g}"}]
+    fresh, gates_, points, sign, strong = checks
     r = c.get("reeval")
     if cut_ms is None:
-        return False, "还没装载数据"
-    if r is None or r["eval"]["holdout"]["since"] != cut_ms:
-        return False, "还没在当前这版数据上复评"
-    if (r["eval"].get("gain") or {}).get("carryShare") != carry_share:
-        return False, "份额改过，还没按现在的份额复评"
+        fresh.update(ok=False, text="还没装载数据")
+    elif r is None or r["eval"]["holdout"]["since"] != cut_ms:
+        fresh.update(ok=False, text="还没在当前这版数据上复评")
+    elif (r["eval"].get("gain") or {}).get("carryShare") != carry_share:
+        fresh.update(ok=False, text="份额改过，还没按现在的份额复评")
+    else:
+        fresh["ok"] = True
+    if not fresh["ok"]:
+        return checks
+    gates_["ok"] = r["passed"]
     if not r["passed"]:
-        return False, f"复评没过门：{r['reason']}"
+        gates_["text"] = f"复评没过门：{r['reason']}"
     ev = r["eval"]
     primary = prompts.primary_of(ev)
     search = {int(k): v for k, v in ev["horizons"].items()}[primary]["ic"]["mean"]
-    fresh = ev.get("unseen") or ev["holdout"]
-    h = {int(k): v for k, v in fresh["horizons"].items()}[primary]
+    unseen = ev.get("unseen") or ev["holdout"]
+    h = {int(k): v for k, v in unseen["horizons"].items()}[primary]
     samples, stat = h["samples"], h.get("t")
-    if samples < t.admit_min_points:
-        return False, f"没见过那段只有 {samples} 个时刻，要 {t.admit_min_points} 个"
+    points["ok"] = samples >= t.admit_min_points
+    points["text"] = (f"没见过那段 {samples} 个时刻（要 {t.admit_min_points} 个）" if points["ok"]
+                      else f"没见过那段只有 {samples} 个时刻，要 {t.admit_min_points} 个")
+    # 时刻不够，同号和 t 判不了
+    if not points["ok"]:
+        return checks
     if stat is None or search is None:
-        return False, "没见过那段算不出主档 IC 的 t（复评是老版本算的，再复评一次）"
-    if (stat > 0) != (search > 0):
-        return False, f"没见过那段主档 IC 和搜索段的 {fmt(search)} 反号（t {fmt(stat, 1)}）"
-    if abs(stat) < t.admit_t_min:
-        return False, f"没见过那段主档 IC 的 t {fmt(abs(stat), 1)} 不到 {t.admit_t_min:g}"
-    return True, f"没见过那段 {samples} 个时刻，主档 IC 同号，t {fmt(abs(stat), 1)}"
+        sign.update(ok=False, text="没见过那段算不出主档 IC 的 t（复评是老版本算的，再复评一次）")
+        return checks
+    sign["ok"] = (stat > 0) == (search > 0)
+    sign["text"] = (f"没见过那段主档 IC 和搜索段的 {fmt(search)} 同号" if sign["ok"]
+                    else f"没见过那段主档 IC 和搜索段的 {fmt(search)} 反号（t {fmt(stat, 1)}）")
+    strong["ok"] = abs(stat) >= t.admit_t_min
+    strong["text"] = (f"没见过那段主档 IC 的 t {fmt(abs(stat), 1)}（要 ≥ {t.admit_t_min:g}）" if strong["ok"]
+                      else f"没见过那段主档 IC 的 t {fmt(abs(stat), 1)} 不到 {t.admit_t_min:g}")
+    return checks
+
+
+def refused(checks: list[dict[str, Any]]) -> str | None:
+    """入库条件里第一条没过的；全过是 None"""
+    return next((x["text"] for x in checks if not x["ok"]), None)
 
 
 def _reeval_view(r: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -703,8 +760,7 @@ def _reeval_view(r: dict[str, Any] | None) -> dict[str, Any] | None:
     if r is None:
         return None
     return {"at": r["at"], "direction": r["direction"], "asked": r.get("asked", False), "passed": r["passed"],
-            "reason": r["reason"], "peers": r.get("peers", []),
-            "gates": [{"id": g["id"], "name": g["name"], "passed": g["passed"], "note": g["note"]} for g in r["gates"]],
+            "reason": r["reason"], "peers": r.get("peers", []), "gates": [gate_row(g) for g in r["gates"]],
             "brief": eval_brief(r["eval"], r["gates"])}
 
 
@@ -713,16 +769,8 @@ async def observation_reeval(request: Request):
     """观察区全部候选用当前评估器重算一遍，当成一批互相查重；结果写进 reeval，原来的 eval、门、状态都不动，不计试验数。
     写表达式时还没声明方向的老候选，先只拿假设和表达式问生成模型补一个。数据刷新完也会自动跑一遍"""
     app = request.app
+    await _check(app, "reeval")
     data = _data(app)
-    if app.state.runs.jobs["reeval"].get("running"):
-        raise HTTPException(409, "已经在复评了")
-    if await app.state.store.active_campaign() is not None or app.state.runs.tasks:
-        raise HTTPException(409, "有 campaign 在跑，等它结束再复评")
-    _not_refreshing(app)
-    if data.reference_grid is None:
-        raise HTTPException(409, "参照网格还没算好，等它算完再复评")
-    if app.state.runs.jobs["libraryReeval"].get("running"):
-        raise HTTPException(409, "库里因子还在复评，等它算完")
     rows = await app.state.store.observing()
     if not rows:
         raise HTTPException(409, "观察区是空的")
@@ -810,7 +858,8 @@ async def _declare(app: FastAPI, data: Data, c: dict[str, Any], lang: str) -> in
     gen = app.state.models[0]
     facts = {**data.facts, "carryShare": (await app.state.store.carry())["share"],
              "g9Min": app.state.thresholds.sharpe_gain_min}
-    obj = await ask_json(gen, prompts.system_gen(facts, lang), prompts.direction_message(c), prompts.parse_object)
+    policy = prompts.Policy.of(await app.state.store.policy())
+    obj = await ask_json(gen, prompts.system_gen(facts, lang, policy), prompts.direction_message(c), prompts.parse_object)
     direction = parse_direction((obj or {}).get("direction"))
     if direction is None:
         raise LlmError(f"{c['name']}：生成模型没给出合法的方向")
@@ -826,8 +875,8 @@ async def approve(candidate_id: str, request: Request):
     c = await store.candidate(candidate_id)
     if c is None:
         raise HTTPException(404, "没有这个候选")
-    ok, why = admission(c, _data(app).cut_ms, (await store.carry())["share"], app.state.thresholds)
-    if not ok:
+    why = refused(admission(c, _data(app).cut_ms, (await store.carry())["share"], app.state.thresholds))
+    if why is not None:
         raise HTTPException(409, f"还不能入库：{why}")
     # 检查与置位一条 UPDATE：入库、丢弃同时点，只有一个能抢到
     if not await store.claim_candidate(candidate_id, "observing", "approved"):
@@ -986,8 +1035,8 @@ async def library_recheck(factor_id: str, request: Request):
     f = await app.state.store.factor(factor_id)
     if f is None:
         raise HTTPException(404, "没有这个因子")
+    await _check(app, "recheck")
     data = _data(app)
-    _not_refreshing(app)
     values = await asyncio.to_thread(data.pool.values, parse(f["expr"], FEATURE_COLUMNS))
     result = await asyncio.to_thread(recheck, data.pool.rows, values.f, int(f["approved_at"]), app.state.params)
     await app.state.store.set_recheck(factor_id, result)
@@ -1000,18 +1049,10 @@ async def library_reeval(request: Request, who: Auth = Depends(auth)):
     G8 的已知结构去掉它自己，G10 用它当初（候选）声明的方向，G5 只判单条的排列分位。结果写进 reeval，入库时那份和入库状态都不动。
     当初没声明过方向的（加 direction 列之前的老候选，观察区复评也没补过）先只拿假设和表达式问生成模型补一个"""
     app = request.app
+    await _check(app, "libraryReeval")
     data = _data(app)
     store: Store = app.state.store
     job = app.state.runs.jobs["libraryReeval"]
-    if job.get("running"):
-        raise HTTPException(409, "已经在复评了")
-    if await store.active_campaign() is not None or app.state.runs.tasks:
-        raise HTTPException(409, "有 campaign 在跑，等它结束再复评")
-    _not_refreshing(app)
-    if data.reference_grid is None:
-        raise HTTPException(409, "参照网格还没算好，等它算完再复评")
-    if app.state.runs.jobs["reeval"].get("running"):
-        raise HTTPException(409, "观察区还在复评，等它算完")
     rows = await store.factors()
     if not rows:
         raise HTTPException(409, "库是空的")
@@ -1078,6 +1119,12 @@ async def _library_reeval(app: FastAPI, data: Data, lib: Library, job: dict[str,
     job["current"] = None
 
 
+@router.get("/dsl")
+async def dsl_reference():
+    """手填评估页的参考：能用的列、算子、窗口换算、复杂度上限"""
+    return _ok(prompts.dsl_reference())
+
+
 @router.post("/eval")
 async def eval_expression(body: EvalBody, request: Request):
     """手填一条表达式后台评估，进度与结果看 GET /eval；不进循环不计试验数。
@@ -1135,7 +1182,7 @@ async def reference_list(request: Request):
     return _ok({
         "job": request.app.state.runs.jobs["reference"],
         "items": [{"name": r["name"], "expr": r["expr"], "passed": bool(r["passed"]), "updatedAt": r["updated_at"],
-                   "brief": eval_brief(r["eval"], r["gates"])} for r in rows],
+                   "gates": [gate_row(g) for g in r["gates"]], "brief": eval_brief(r["eval"], r["gates"])} for r in rows],
     })
 
 
@@ -1186,6 +1233,52 @@ async def _spec_of(app: FastAPI, role: str, body: ModelSave) -> ModelSpec:
                      effort=body.effort.strip())
 
 
+class FamilyItem(BaseModel):
+    id: str = Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=32)
+    what: str = Field(min_length=1, max_length=300)
+    # 用哪些列、典型持有期；price、other 这种清单外的留空
+    cols: str = Field(default="", max_length=200)
+    hold: str = Field(default="", max_length=50)
+
+
+class PolicySave(BaseModel):
+    families: list[FamilyItem]
+    genRules: str = Field(max_length=4000)
+    implementChecks: str = Field(max_length=4000)
+    reviewRules: str = Field(max_length=4000)
+
+
+@router.get("/policy")
+async def current_policy(request: Request):
+    """研究方针的当前版，带各版的编号和时间"""
+    store: Store = request.app.state.store
+    return _ok(await _policy_view(store, await store.policy()))
+
+
+@router.put("/policy")
+async def save_policy(body: PolicySave, request: Request):
+    """存成新的一版，下一个 campaign 起用。campaign 跑着时不改，免得一个 campaign 前后几轮用的不一样；
+    机制清单的 ID 只加不删：候选的 family、成败表都按它"""
+    app = request.app
+    store: Store = app.state.store
+    await _check(app, "policy")
+    ids = [f.id for f in body.families]
+    if len(set(ids)) != len(ids):
+        raise HTTPException(400, "机制 ID 有重复")
+    gone = [f["id"] for f in (await store.policy())["families"] if f["id"] not in ids]
+    if gone:
+        raise HTTPException(400, f"机制 ID 只能加不能删：{'、'.join(gone)}")
+    row = await store.add_policy({"families": [f.model_dump() for f in body.families], "gen_rules": body.genRules,
+                                  "implement_checks": body.implementChecks, "review_rules": body.reviewRules})
+    return _ok(await _policy_view(store, row))
+
+
+async def _policy_view(store: Store, row: dict[str, Any]) -> dict[str, Any]:
+    return {"id": row["id"], "createdAt": row["created_at"], "families": row["families"], "genRules": row["gen_rules"],
+            "implementChecks": row["implement_checks"], "reviewRules": row["review_rules"],
+            "history": [{"id": r["id"], "createdAt": r["created_at"]} for r in await store.policies()]}
+
+
 def _model_view(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
@@ -1197,13 +1290,9 @@ def _model_view(row: dict[str, Any] | None) -> dict[str, Any] | None:
 async def reference_run(body: ReferenceRun, request: Request):
     """基线 + Alpha158 过一遍全部门；参照集自己不查冗余、不做 BH"""
     app = request.app
+    await _check(app, "reference")
     data = _data(app)
     job = app.state.runs.jobs["reference"]
-    if job.get("running"):
-        raise HTTPException(409, "参照集已经在跑了")
-    if await app.state.store.active_campaign() is not None or app.state.runs.tasks:
-        raise HTTPException(409, "有 campaign 在跑，等它结束再跑参照集")
-    _not_refreshing(app)
     exprs = reference.parsed()
     if body.windows:
         keep = {str(w) for w in body.windows}
@@ -1333,7 +1422,8 @@ async def trader_run(day: str, request: Request):
 
 
 def _trade_brief(r: dict[str, Any]) -> dict[str, Any]:
-    orders = r["orders"] or []
+    """笔数只算开平仓，调杠杆那几行在详情里"""
+    orders = [o for o in r["orders"] or [] if o["action"] != "leverage"]
     return {"day": r["day"], "status": r["status"], "signalMs": r["signal_ms"], "startedAt": r["started_at"],
             "finishedAt": r["finished_at"], "equityBefore": r["equity_before"], "equityAfter": r["equity_after"],
             "error": r["error"], "factorNames": [f["name"] for f in r["factors"] or []], "orderCount": len(orders),
@@ -1360,15 +1450,49 @@ async def trader_carry(body: TraderCarry, request: Request):
     app = request.app
     store: Store = app.state.store
     if body.share is not None:
-        if await store.active_campaign() is not None or app.state.runs.tasks:
-            raise HTTPException(409, "有 campaign 在跑，等它结束再改份额")
-        for name, text in (("libraryReeval", "库里因子还在复评"), ("reeval", "观察区还在复评"), ("compare", "因子对比还在跑")):
-            if app.state.runs.jobs[name].get("running"):
-                raise HTTPException(409, f"{text}，等它算完再改份额")
+        await _check(app, "carryShare")
     await store.set_carry(body.enabled, body.share)
     if body.share is not None and app.state.data is not None:
         asyncio.create_task(_warm(app))
     return _ok(await store.carry())
+
+
+class TraderSizing(BaseModel):
+    """杠杆所有币统一；保证金比例是保证金最多占净值多少"""
+    leverage: int = Field(ge=1, le=150)
+    margin: float = Field(gt=0, le=1 - sizing.HEADROOM)
+
+
+@router.get("/trader/sizing")
+async def trader_sizing(request: Request):
+    """杠杆和保证金比例；preview 是按最近一次调仓（day）的篮子、净值和 sim 现在的档位算的下单规模，还没出过目标是 None；
+    previewError 是问 sim 档位失败的原因"""
+    return _ok(await _sizing_view(request.app))
+
+
+@router.put("/trader/sizing")
+async def save_trader_sizing(body: TraderSizing, request: Request):
+    """改杠杆和保证金比例，下一次调仓起生效"""
+    await request.app.state.store.set_sizing(body.leverage, body.margin)
+    return _ok(await _sizing_view(request.app))
+
+
+async def _sizing_view(app: FastAPI) -> dict[str, Any]:
+    store: Store = app.state.store
+    setting = await store.sizing()
+    last = await store.last_targets()
+    preview, error = None, None
+    if last is not None:
+        weights = {c["symbol"]: c["weight"] for c in last["targets"]["coins"]}
+        try:
+            brackets = await asyncio.to_thread(app.state.sim.brackets, sorted(weights)) if weights else {}
+        except executor.SimError as exc:
+            # 问不到档位就没有预览，设定照给
+            error = str(exc)
+        else:
+            preview = {**sizing.size(weights, brackets, setting["leverage"], setting["margin"],
+                                     last["equity_before"]).view(), "day": last["day"]}
+    return {**setting, "maxMargin": 1 - sizing.HEADROOM, "preview": preview, "previewError": error}
 
 
 @router.put("/trader/factors/{factor_id}")
@@ -1391,11 +1515,8 @@ async def trader_select(factor_id: str, body: TraderFactor, request: Request):
 async def trader_compare(factor_id: str, request: Request):
     """按交易方案在搜索段比"当前勾选"和"加上 / 去掉这一条"；后者搜索段 Sharpe 更高才算两组的 holdout，免得按 holdout 挑"""
     app = request.app
-    _data(app)
+    await _check(app, "compare")
     job = app.state.runs.jobs["compare"]
-    if job.get("running"):
-        raise HTTPException(409, "已经在对比了")
-    _not_refreshing(app)
     factor = await app.state.store.factor(factor_id)
     if factor is None:
         raise HTTPException(404, "没有这个因子")
@@ -1487,6 +1608,9 @@ async def lifespan(app: FastAPI):
         active = await store.active_campaign()
         if active is not None:
             await store.update_campaign(active["id"], status="stopped", stop_reason="服务重启")
+        # 库里还没有研究方针就把代码里的默认存成第一版
+        if await store.policy() is None:
+            await store.add_policy(prompts.DEFAULT_POLICY.to_row())
         await _load(app, cfg)
         # 交易员的后台循环：整点记净值，每天 UTC 00:05 起补尾巴、00:15 下单，每月 1 日 UTC 14 点起自动刷新数据
         trader = asyncio.create_task(scheduler.loop(app, _library, _start_refresh))

@@ -170,9 +170,13 @@ class FakeFapi:
 
 class FakeSim:
     """sim 的 /internal/futures：一个账户（userId 42），按 price(币) 市价成交、不收手续费，同方向合并、平仓减量；
-    calls 按顺序记下每笔下单的 (open/close, 请求体)；watched 记下每次登记的币；fail 里的币下单回业务失败"""
+    同一个币的仓位杠杆得一样（开仓带的杠杆对不上回 1764），调杠杆改这个币全部仓位；档位全是表外默认档。
+    calls 按顺序记下每笔下单、调杠杆的 (open/close/leverage, 请求体)；watched 记下每次登记的币；fail 里的币下单、调杠杆回业务失败"""
 
     USER = 42
+    # sim 表外 USDT 永续的默认档：一档到底，最高 10 倍
+    BRACKETS = [{"tier": 1, "notionalFloor": 0, "notionalCap": 1_000_000_000, "maxLeverage": 10, "mmr": 0.025,
+                 "maintAmount": 0}]
 
     def __init__(self, price):
         self.price = price
@@ -183,46 +187,64 @@ class FakeSim:
         self.fail: set[str] = set()
         self._ids = 0
 
+    def hold(self, symbol: str, side: str, quantity: float, leverage: int) -> None:
+        """按现价建一个仓位"""
+        self._ids += 1
+        self.positions[self._ids] = {"id": self._ids, "symbol": symbol, "side": side, "quantity": quantity,
+                                     "entryPrice": self.price(symbol), "leverage": leverage}
+
     def view(self, p: dict) -> dict:
         mark = self.price(p["symbol"])
         sign = 1 if p["side"] == "LONG" else -1
         return {**p, "markPrice": mark, "positionValue": p["quantity"] * mark,
-                "unrealizedPnl": sign * (mark - p["entryPrice"]) * p["quantity"], "marginMode": "CROSS", "leverage": 4}
+                "unrealizedPnl": sign * (mark - p["entryPrice"]) * p["quantity"], "marginMode": "CROSS"}
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         if request.headers.get("X-Internal-Token") != "tok":
             return httpx.Response(401, text="internal api unauthorized")
         path = request.url.path
         ok = lambda data: httpx.Response(200, json={"code": 0, "msg": None, "data": data})
+        refuse = lambda code, msg: httpx.Response(200, json={"code": code, "msg": msg, "data": None})
         if path.endswith("/ensure-account"):
             return ok({"userId": self.USER, "balance": self.balance})
         if path.endswith("/balance"):
             return ok({"userId": self.USER, "balance": self.balance, "frozenBalance": 0, "available": self.balance})
         if path.endswith("/positions"):
             return ok([self.view(p) for p in self.positions.values()])
+        if path.endswith("/brackets"):
+            return ok({s: self.BRACKETS for s in request.url.params.get_list("symbols")})
         if path.endswith("/watch"):
             self.watched.append(json.loads(request.content))
             return ok(None)
         action = path.rsplit("/", 1)[-1]
         body = json.loads(request.content)
         self.calls.append((action, body))
+        if action == "leverage":
+            if body["symbol"] in self.fail:
+                return refuse(1601, "价格不可用")
+            mine = [p for p in self.positions.values() if p["symbol"] == body["symbol"]]
+            if not mine:
+                return refuse(1750, "仓位不存在")
+            for p in mine:
+                p["leverage"] = body["leverage"]
+            return ok(None)
         if action == "open":
             if body["symbol"] in self.fail:
-                return httpx.Response(200, json={"code": 1601, "msg": "价格不可用", "data": None})
+                return refuse(1601, "价格不可用")
+            if any(p["symbol"] == body["symbol"] and p["leverage"] != body["leverage"] for p in self.positions.values()):
+                return refuse(1764, "杠杆和这个币已有的仓位不一样")
             mark = self.price(body["symbol"])
             same = next((p for p in self.positions.values()
                          if p["symbol"] == body["symbol"] and p["side"] == body["side"]), None)
             if same is None:
-                self._ids += 1
-                self.positions[self._ids] = {"id": self._ids, "symbol": body["symbol"], "side": body["side"],
-                                             "quantity": body["quantity"], "entryPrice": mark}
+                self.hold(body["symbol"], body["side"], body["quantity"], body["leverage"])
             else:
                 q = same["quantity"] + body["quantity"]
                 same.update(entryPrice=(same["entryPrice"] * same["quantity"] + mark * body["quantity"]) / q, quantity=q)
             return ok({"orderId": len(self.calls), "quantity": body["quantity"], "filledPrice": mark, "commission": 0})
         p = self.positions[body["positionId"]]
         if p["symbol"] in self.fail:
-            return httpx.Response(200, json={"code": 1601, "msg": "价格不可用", "data": None})
+            return refuse(1601, "价格不可用")
         mark = self.price(p["symbol"])
         q = body["quantity"] if body["quantity"] is not None else p["quantity"]
         self.balance += (1 if p["side"] == "LONG" else -1) * (mark - p["entryPrice"]) * q

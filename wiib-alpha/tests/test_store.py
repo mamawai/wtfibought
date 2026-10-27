@@ -86,11 +86,11 @@ async def test_evaluated_candidates_only_count_the_ones_with_a_primary(store):
 
 
 async def test_campaign_lifecycle_and_lessons(store):
-    await store.create_campaign("c1", 10, 5, "费率", "zh", None, 123, "gpt-5", "claude-opus")
+    await store.create_campaign("c1", 10, 5, "费率", "zh", None, 123, "gpt-5", "claude-opus", 3)
     camp = await store.campaign("c1")
     assert camp["status"] == "running" and camp["rounds"] == 10 and camp["k"] == 5 and camp["deadline_ms"] == 123
     assert camp["done_rounds"] == 0 and camp["survivors"] == 0 and camp["max_survivors"] is None
-    assert (camp["gen_model"], camp["review_model"]) == ("gpt-5", "claude-opus")
+    assert (camp["gen_model"], camp["review_model"], camp["policy_id"]) == ("gpt-5", "claude-opus", 3)
     assert (await store.active_campaign())["id"] == "c1"
     await store.create_run("r1", 5, "费率", "zh", "c1")
     await store.create_run("r2", 5, "费率", "zh", "c1")
@@ -139,14 +139,14 @@ async def test_open_adds_new_columns_to_old_tables(tmp_path):
         assert await s.carry() == {"enabled": False, "share": 0.25, "changedAt": 5}
         assert (await s.run("old"))["campaign_id"] is None and (await s.run("old"))["cut_ms"] is None
         columns = [r["name"] for r in await s.db.execute_fetchall("PRAGMA table_info(campaign)")]
-        assert columns.count("gen_model") == 1 and columns.count("review_model") == 1
+        assert columns.count("gen_model") == 1 and columns.count("review_model") == 1 and columns.count("policy_id") == 1
         old = await s.campaign("oldc")
-        assert old["gen_model"] is None and old["review_model"] is None
+        assert old["gen_model"] is None and old["review_model"] is None and old["policy_id"] is None
         await s.close()
     s = await Store.open(str(path))
     await s.create_run("new", 1, "", "zh", "c1")
     assert (await s.run("new"))["campaign_id"] == "c1" and [c["id"] for c in await s.campaigns()] == ["oldc"]
-    await s.create_campaign("c1", 1, 1, "", "zh", None, None, "gpt-5", "claude-opus")
+    await s.create_campaign("c1", 1, 1, "", "zh", None, None, "gpt-5", "claude-opus", 1)
     assert (await s.campaign("c1"))["gen_model"] == "gpt-5"
     await s.close()
 

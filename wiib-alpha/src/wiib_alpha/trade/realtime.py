@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from ..store import Store, now_ms
-from . import executor, scheduler
+from . import attrib, executor, scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +71,10 @@ async def frame(app: FastAPI) -> dict[str, Any]:
     starts = await store.rebalances()
     start = starts[-1] if starts else None
     last = await store.last_targets()
-    legs = {} if last is None else {c["symbol"]: {k: c[k] * last["equity_before"] for k in ("combo", "carry")}
-                                    for c in last["targets"]["coins"]}
+    legs = {}
+    if last is not None:
+        unit = last["equity_before"] * attrib.multiple(last["targets"])
+        legs = {c["symbol"]: {k: c[k] * unit for k in attrib.LEGS} for c in last["targets"]["coins"]}
     return {
         "ts": now_ms(), "ok": True, "userId": user_id, "equity": equity, "balance": float(balance["balance"]),
         "available": float(balance["available"]),

@@ -170,23 +170,22 @@ export interface Review {
   suggestion: string;
 }
 
-/** brief 里的门：只有 id、过没过、一句原因 */
+/** brief 里的门（给评审看的也是这份）：只有 id、过没过、一句原因 */
 export interface GateBrief {
   id: string;
   passed: boolean;
   note: string;
 }
 
-/** 候选摘要里的门多一个中文门名 */
-export interface CandidateGate extends GateBrief {
+/** 页面上的一行门（eval.gates.row）：多门名和要求；老结果没有要求 */
+export interface GateRow extends GateBrief {
   name: string | null;
+  need?: string | null;
 }
 
-/** 完整的门（手填评估、因子详情）：带数字与阈值 */
-export interface Gate extends GateBrief {
-  name: string;
+/** 完整的门（手填评估、因子详情）：再带数字 */
+export interface Gate extends GateRow {
   value: unknown;
-  threshold: unknown;
 }
 
 /** 一档的精简数字（prompts.horizons_brief），键是 6h/12h/24h；全是截面口径 */
@@ -292,7 +291,7 @@ export interface Candidate {
   attempts: number;
   reason: string | null;
   review: Review | null;
-  gates?: CandidateGate[];
+  gates?: GateRow[];
   brief?: EvalBrief;
 }
 
@@ -307,7 +306,7 @@ export interface Reeval {
   reason: string | null;
   /** 和观察区其它候选的截面 |ρ|：[名字, 值]，名字可能重复 */
   peers: [string, number][];
-  gates: CandidateGate[];
+  gates: GateRow[];
   brief: EvalBrief;
 }
 
@@ -317,8 +316,8 @@ export interface ObservationItem extends Candidate {
   created_at: number;
   updated_at: number;
   reeval: Reeval | null;
-  /** 现在能不能入库和原因：要在当前数据上复评全过，没见过那段主档 IC 同号、够长、t 够大 */
-  admission: { ok: boolean; reason: string };
+  /** 现在能不能入库和入库条件逐项（main.admission）：前面一项没过、后面判不了的 ok 是 null */
+  admission: { ok: boolean; checks: { ok: boolean | null; text: string }[] };
 }
 
 export interface ReevalJob {
@@ -430,6 +429,7 @@ export interface ReferenceItem {
   expr: string;
   passed: boolean;
   updatedAt: number;
+  gates: GateRow[];
   brief: EvalBrief;
 }
 
@@ -446,6 +446,19 @@ export interface EvalResult {
   gates: Gate[];
   eval: Record<string, unknown>;
 }
+
+/** 手填评估页的参考（prompts.dsl_reference）：列、算子、窗口换算、复杂度上限 */
+export interface DslReference {
+  columns: { name: string; doc: string }[];
+  operators: { name: string; doc: string }[];
+  windows: string;
+  maxWindow: number;
+  complexity: { nodes: number; windows: number; constants: number; cross: number };
+}
+
+/** 各动作现在为什么做不了（main.blocked），做得了是 null */
+export type Busy = Record<'refresh' | 'campaign' | 'reeval' | 'libraryReeval' | 'reference' | 'recheck' | 'policy'
+  | 'carryShare' | 'compare', string | null>;
 
 /** 一条因子（或组合）对一个产品币的看法：全池从强数第 rank、共 of 个，头部 1/5 看多、尾部 1/5 看空 */
 export interface StanceView {
@@ -533,6 +546,27 @@ export interface ModelSave {
 }
 
 export type Models = Record<ModelRole, ModelView | null>;
+
+/** 研究方针里的一条机制：出题按 id 选，存过的 id 不能改名、不能删；cols、hold 是用哪些列、典型持有期，清单外的留空 */
+export interface PolicyFamily {
+  id: string;
+  what: string;
+  cols: string;
+  hold: string;
+}
+
+/** 研究方针的当前版：出题、写公式、评审时给模型看的观点；history 是各版的编号和时间，最新在前 */
+export interface Policy {
+  id: number;
+  createdAt: number;
+  families: PolicyFamily[];
+  genRules: string;
+  implementChecks: string;
+  reviewRules: string;
+  history: { id: number; createdAt: number }[];
+}
+
+export type PolicySave = Pick<Policy, 'families' | 'genRules' | 'implementChecks' | 'reviewRules'>;
 
 // ========== 交易员：对着 main.py 的 /trader 接口与 trade/ 下的模块写 ==========
 
@@ -668,6 +702,26 @@ export interface TraderCarry {
   changedAt: number | null;
 }
 
+/** 一天的下单规模（trade/sizing.py）：leverage 是实际下单的杠杆，设定超过上限时按上限；multiple 是名义倍数（多空各是净值的几倍，回测是 1）；
+ *  caps 是这个篮子杠杆的两条上限：bracket 是篮子里档位最低的那个币，stress 是强平距离；篮子空的是 null */
+export interface SizingResult {
+  leverage: number;
+  margin: number;
+  multiple: number;
+  caps: { bracket: number | null; stress: number | null };
+}
+
+/** 杠杆（所有币一样）和保证金比例（保证金最多占净值多少）；没改过 changedAt 是 null。
+ *  preview 是按 day 那次调仓的篮子、净值和 sim 现在的档位算的，还没调过仓、问不到档位是 null；previewError 是问档位失败的原因 */
+export interface TraderSizing {
+  leverage: number;
+  margin: number;
+  changedAt: number | null;
+  maxMargin: number;
+  preview: (SizingResult & { day: string }) | null;
+  previewError: string | null;
+}
+
 /** done 全成；partial 有币失败或停在半路但有成交；failed 一笔没成 */
 export type TradeStatus = 'done' | 'partial' | 'failed';
 
@@ -689,7 +743,7 @@ export interface TradeRunBrief {
 /** 一个币的目标与现有（executor.plan 的明细）：数量带正负，多是正 */
 export interface TradeCoin {
   symbol: string;
-  /** 净权重 = combo + carry，乘净值是目标名义 */
+  /** 净权重 = combo + carry（1 倍名义的），乘净值、再乘名义倍数是目标名义 */
   weight: number;
   combo: number;
   carry: number;
@@ -713,13 +767,16 @@ export interface LegSignal {
   weight: number;
 }
 
+/** 下的单，和平完、开之前把还拿着的币调成当天杠杆的那几行（action 是 leverage，没有方向、数量、requestId） */
 export interface TradeOrder {
   symbol: string;
-  action: 'open' | 'close';
-  side: 'LONG' | 'SHORT';
+  action: 'open' | 'close' | 'leverage';
+  side: 'LONG' | 'SHORT' | null;
   /** null 是全平 */
   quantity: number | null;
-  requestId: string;
+  requestId: string | null;
+  /** 调到几倍，只有调杠杆那行有 */
+  leverage?: number;
   ok: boolean;
   orderId?: number;
   filled?: number;
@@ -732,9 +789,10 @@ export interface TradeRunDetail extends TradeRunBrief {
   userId: number | null;
   factors: { id: string; name: string; expr: string; weight: number }[];
   legs: Record<TradeLeg, { long: string[]; short: string[] }> | null;
-  /** carry 是那天 carry 腿开没开，carryShare 是那天的份额；有开关、份额之前的记录没有这两个字段 */
+  /** carry 是那天 carry 腿开没开，carryShare 是那天的份额，sizing 是那天的下单规模和当时的设定；有这几项之前的记录没有这些字段 */
   targets: {
     coins: TradeCoin[]; signals: Record<TradeLeg, LegSignal[]>; notTrading: string[]; carry?: boolean; carryShare?: number;
+    sizing?: SizingResult & { setting: { leverage: number; margin: number } };
   } | null;
   orders: TradeOrder[];
   attrib: DayAttrib | null;
@@ -886,6 +944,7 @@ const ALPHA = '/api/alpha';
 export const alpha = {
   /** 手里的 token 是不是管理员 */
   me: (signal?: AbortSignal) => call<{ admin: boolean; lang: string }>('GET', `${ALPHA}/me`, undefined, signal),
+  busy: () => call<Busy>('GET', `${ALPHA}/busy`),
   overview: () => call<Overview>('GET', `${ALPHA}/overview`),
   dataStatus: () => call<DataStatus>('GET', `${ALPHA}/data/status`),
   /** 后台刷新，进度看 dataStatus().refresh */
@@ -920,6 +979,7 @@ export const alpha = {
   /** 后台评估，进度和结果看 evalJob() */
   evaluate: (expr: string) => call<{ started: boolean }>('POST', `${ALPHA}/eval`, { expr }),
   evalJob: () => call<EvalJob>('GET', `${ALPHA}/eval`),
+  dsl: () => call<DslReference>('GET', `${ALPHA}/dsl`),
   reference: () => call<ReferenceList>('GET', `${ALPHA}/reference`),
   /** windows 为 null 跑全部窗口 */
   referenceRun: (windows: number[] | null) =>
@@ -929,6 +989,9 @@ export const alpha = {
   /** 真发一句话，回答与耗时；上游报错会以 400 带回来 */
   testModel: (role: ModelRole, body: ModelSave) =>
     call<{ reply: string; ms: number }>('POST', `${ALPHA}/models/${role}/test`, body),
+  policy: () => call<Policy>('GET', `${ALPHA}/policy`),
+  /** 存成新的一版，下一个 campaign 起用；机制 id 删了或重复是 400，campaign 跑着是 409 */
+  savePolicy: (body: PolicySave) => call<Policy>('PUT', `${ALPHA}/policy`, body),
   traderAccount: () => call<TraderAccount>('GET', `${ALPHA}/trader/account`),
   traderDaily: () => call<TraderDaily>('GET', `${ALPHA}/trader/daily`),
   /** 实时数，每 3 秒一帧；EventSource 断了会自己重连。返回关掉它的函数 */
@@ -945,6 +1008,9 @@ export const alpha = {
     call<{ id: string; selected: boolean }>('PUT', `${ALPHA}/trader/factors/${id}`, { selected }),
   /** 开或停 carry 腿、改它占的资金比例，下一次调仓起生效；停了那份资金闲着。份额也是回测和 G9 基线的份额，有 campaign 在跑时改不了 */
   setTraderCarry: (body: { enabled?: boolean; share?: number }) => call<TraderCarry>('PUT', `${ALPHA}/trader/carry`, body),
+  traderSizing: () => call<TraderSizing>('GET', `${ALPHA}/trader/sizing`),
+  /** 下一次调仓起生效；保证金比例超过 maxMargin 是 422 */
+  setTraderSizing: (body: { leverage: number; margin: number }) => call<TraderSizing>('PUT', `${ALPHA}/trader/sizing`, body),
   /** 后台比"当前勾选"和"加上 / 去掉这条"，进度看 traderFactors().compare */
   compareTraderFactor: (id: string) => call<{ started: boolean }>('POST', `${ALPHA}/trader/compare/${id}`),
 };

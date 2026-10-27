@@ -5,6 +5,7 @@ from conftest import PRODUCTS
 from fakes import LESSONS, gen_reply, model, review_reply
 
 from wiib_alpha import graph as graph_module
+from wiib_alpha import prompts
 from wiib_alpha.data.panel import FEATURE_COLUMNS, truncate
 from wiib_alpha.dsl import parse
 from wiib_alpha.eval.combo import Combo
@@ -46,7 +47,7 @@ def ctx_of(planted_pool, planted_vol, planted_grid, planted_panels):
         return Context(gen=model(gen), review=model(review), pool=planted_pool, vol=planted_vol, funding=funding,
                        products=products,
                        reference_grid=planted_grid, base=base, observing=empty, peer_exprs={}, known=set(), library=[],
-                       facts=FACTS,
+                       facts=FACTS, policy=prompts.DEFAULT_POLICY,
                        store=store, params=PARAMS, thresholds=GATES)
     return build
 

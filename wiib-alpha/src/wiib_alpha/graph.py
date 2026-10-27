@@ -28,7 +28,7 @@ from .data.pool import Pool
 from .dsl import DslError, Expr, parse
 from .eval.combo import Combo
 from .eval.evaluate import cross_corr, evaluate
-from .eval.gates import apply_fdr, fmt, judge, origin_gate, passed
+from .eval.gates import apply_fdr, fmt, gate_row, judge, origin_gate, passed
 from .eval.params import EvalParams, Thresholds
 from .eval.precheck import precheck
 from .eval.recheck import recheck
@@ -69,6 +69,8 @@ class Context:
     known: set[str]
     library: list[dict[str, Any]]
     facts: dict[str, Any]
+    # 研究方针的当前版：机制清单、出题和写公式的建议、评审标准
+    policy: prompts.Policy
     store: Store
     params: EvalParams = field(default_factory=EvalParams)
     thresholds: Thresholds = field(default_factory=Thresholds)
@@ -104,10 +106,10 @@ def build_graph(ctx: Context):
         await emit(ctx.store, state["run_id"], "status", {"stage": "proposing"})
         tried = await ctx.store.tried()
         lessons = await ctx.store.lessons()
-        outcomes = prompts.outcomes(await ctx.store.evaluated_candidates())
-        system = prompts.system_gen(ctx.facts, state["lang"])
+        outcomes = prompts.outcomes(await ctx.store.evaluated_candidates(), ctx.policy.families)
+        system = prompts.system_gen(ctx.facts, state["lang"], ctx.policy)
         message = prompts.propose_message(state["k"], ctx.library, tried, lessons, outcomes, state.get("note", ""),
-                                          state["lang"])
+                                          state["lang"], ctx.policy)
         items = await ask_json(ctx.gen, system, message, prompts.parse_list)
         hypotheses = []
         for item in items or []:
@@ -117,7 +119,7 @@ def build_graph(ctx: Context):
                 hypotheses.append({
                     "id": f"{state['run_id']}-{seq}", "run_id": state["run_id"], "seq": seq,
                     "name": str(item["name"]).strip(), "hypothesis": str(item["hypothesis"]).strip(),
-                    "family": family if family in prompts.FAMILIES else "other", "status": "proposed", "attempts": 0,
+                    "family": family if family in ctx.policy.families else "other", "status": "proposed", "attempts": 0,
                 })
             if len(hypotheses) >= state["k"]:
                 break
@@ -136,7 +138,7 @@ def build_graph(ctx: Context):
     async def candidate(payload: dict[str, Any]) -> dict[str, Any]:
         cand = dict(payload["cand"])
         run_id, lang = payload["run_id"], payload["lang"]
-        system = prompts.system_gen(ctx.facts, lang)
+        system = prompts.system_gen(ctx.facts, lang, ctx.policy)
         # 上一版的门或评审意见，下一版写的时候带上
         feedback: str | None = None
         # 上一版的结局：重写时没写出新的表达式，这条假设就停在它上面
@@ -216,7 +218,7 @@ def build_graph(ctx: Context):
         problem = None
         for _ in range(MAX_PARSE_RETRIES + 1):
             cand["attempts"] = cand.get("attempts", 0) + 1
-            obj = await ask_json(ctx.gen, system, prompts.implement_message(cand, feedback, problem),
+            obj = await ask_json(ctx.gen, system, prompts.implement_message(cand, feedback, ctx.policy, problem),
                                   prompts.parse_object)
             text = (obj or {}).get("expr")
             if not text:
@@ -241,7 +243,7 @@ def build_graph(ctx: Context):
 
     async def _review(cand: dict[str, Any], lang: str) -> dict[str, Any]:
         summary = prompts.eval_brief(cand["eval"], cand["gates"])
-        obj = await ask_json(ctx.review, prompts.system_review(lang), prompts.review_message(cand, summary),
+        obj = await ask_json(ctx.review, prompts.system_review(lang, ctx.policy), prompts.review_message(cand, summary),
                               prompts.parse_object)
         verdict = str((obj or {}).get("verdict") or "").strip().lower()
         if verdict not in ("pass", "revise", "reject"):
@@ -400,8 +402,7 @@ def brief(c: dict[str, Any]) -> dict[str, Any]:
     out = {k: c.get(k) for k in ("id", "seq", "name", "hypothesis", "family", "expr", "note", "direction", "status",
                                   "attempts", "reason", "review")}
     if c.get("gates"):
-        out["gates"] = [{"id": g["id"], "name": g.get("name"), "passed": g["passed"], "note": g["note"]}
-                        for g in c["gates"]]
+        out["gates"] = [gate_row(g) for g in c["gates"]]
     if c.get("eval"):
         out["brief"] = prompts.eval_brief(c["eval"], c["gates"])
     return out

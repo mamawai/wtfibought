@@ -9,9 +9,10 @@ from conftest import POOL_SYMBOLS, REFERENCES, planted_universe, write_store
 from fakes import LESSONS, gen_reply, model, review_reply
 
 from wiib_alpha import main as m
-from wiib_alpha import reference
+from wiib_alpha import prompts, reference
 from wiib_alpha.auth import Authenticator
 from wiib_alpha.config import ModelSpec, config
+from wiib_alpha.data.panel import FEATURE_COLUMNS
 from wiib_alpha.data.pool import on_grid
 from wiib_alpha.data.refresh import RefreshResult
 from wiib_alpha.dsl import parse
@@ -203,8 +204,10 @@ async def test_one_round_campaign_then_approve_from_observation(client, planted_
     assert overview["observing"] == 1 and overview["factors"] == 0
 
     planted_id = items[0]["id"]
-    # 入库条件：先在当前数据上复评过，没复评就是 409
-    assert items[0]["admission"] == {"ok": False, "reason": "还没在当前这版数据上复评"}
+    # 入库条件：先在当前数据上复评过，没复评就是 409，后面几项判不了
+    checks = items[0]["admission"]["checks"]
+    assert not items[0]["admission"]["ok"] and checks[0] == {"ok": False, "text": "还没在当前这版数据上复评"}
+    assert [x["ok"] for x in checks[1:]] == [None] * 4
     resp = await client.post(f"/api/alpha/candidates/{planted_id}/approve", headers=ADMIN)
     assert resp.status_code == 409 and resp.json()["msg"].startswith("还不能入库：还没在当前这版数据上复评")
     await client.post("/api/alpha/observation/reeval", headers=ADMIN)
@@ -214,9 +217,10 @@ async def test_one_round_campaign_then_approve_from_observation(client, planted_
 
     await wait_until(reevaluated, 60)
     items = data(await client.get("/api/alpha/observation", headers=ADMIN))["items"]
-    # 复评全过，没见过那段（holdout）IC 同号且显著：能入库，原因里是那段的数字
+    # 复评全过，没见过那段（holdout）IC 同号且显著：能入库，逐项都过、写着那段的数字
     assert items[0]["admission"]["ok"], items[0]["admission"]
-    assert items[0]["admission"]["reason"].startswith("没见过那段")
+    checks = items[0]["admission"]["checks"]
+    assert all(x["ok"] for x in checks) and checks[2]["text"].endswith("个时刻（要 5 个）")
     assert data(await client.post(f"/api/alpha/candidates/{planted_id}/approve", headers=ADMIN)) == {
         "id": planted_id, "name": "planted"}
     # 入过库的不在观察区了：再点入库、丢弃都是 409
@@ -288,12 +292,17 @@ async def test_admission_rule_and_duplicate_names(client):
         resp = await client.post("/api/alpha/candidates/r2-1/approve", headers=ADMIN)
         assert resp.status_code == 409
         item = next(c for c in data(await client.get("/api/alpha/observation", headers=ADMIN))["items"] if c["id"] == "r2-1")
-        assert not item["admission"]["ok"] and resp.json()["msg"] == "还不能入库：" + item["admission"]["reason"]
-        return item["admission"]["reason"]
+        first = next(x["text"] for x in item["admission"]["checks"] if not x["ok"])
+        assert not item["admission"]["ok"] and resp.json()["msg"] == "还不能入库：" + first
+        return first
 
     assert await refused(fake_reeval(real, cut - 1)) == "还没在当前这版数据上复评"
     assert await refused(fake_reeval(real, cut, passed=False)) == "复评没过门：G2 x"
     assert await refused(fake_reeval(real, cut, samples=4)) == "没见过那段只有 4 个时刻，要 5 个"
+    # 时刻太少算不出 t：同号和 t 两项判不了，不说成复评版本老
+    await refused(fake_reeval(real, cut, samples=4, t=None))
+    item = next(c for c in data(await client.get("/api/alpha/observation", headers=ADMIN))["items"] if c["id"] == "r2-1")
+    assert [x["ok"] for x in item["admission"]["checks"]] == [True, True, False, None, None]
     assert await refused(fake_reeval(real, cut, mean=-0.05, t=-5.0)) == "没见过那段主档 IC 和搜索段的 0.0400 反号（t -5.0）"
     assert await refused(fake_reeval(real, cut, t=1.7)) == "没见过那段主档 IC 的 t 1.7 不到 2"
     assert (await refused(fake_reeval(real, cut, t=None))).startswith("没见过那段算不出主档 IC 的 t")
@@ -541,6 +550,34 @@ async def test_stop_after_this_round_and_only_one_campaign(client):
     assert data(await client.post("/api/alpha/campaigns", json={"rounds": 1}, headers=ADMIN))["id"] != started["id"]
 
 
+async def test_policy_versions_are_add_only_and_locked_while_a_campaign_runs(client):
+    first = data(await client.get("/api/alpha/policy", headers=ADMIN))
+    # 启动时代码里的默认方针存成第一版
+    assert first["id"] == 1 and first["genRules"] == prompts.DEFAULT_POLICY.gen_rules
+    assert [f["id"] for f in first["families"]] == list(prompts.FAMILIES)
+    body = {"families": [*first["families"], {"id": "liq_gap", "what": "强平缺口"}], "genRules": "- 新规则",
+            "implementChecks": first["implementChecks"], "reviewRules": first["reviewRules"]}
+    second = data(await client.put("/api/alpha/policy", json=body, headers=ADMIN))
+    assert second["families"][-1] == {"id": "liq_gap", "what": "强平缺口", "cols": "", "hold": ""}
+    assert second["genRules"] == "- 新规则" and [h["id"] for h in second["history"]] == [second["id"], first["id"]]
+    # 机制 ID 只加不删
+    resp = await client.put("/api/alpha/policy", json={**body, "families": body["families"][1:]}, headers=ADMIN)
+    assert resp.status_code == 400 and "basis" in resp.json()["msg"]
+    gate = threading.Event()
+
+    def slow(prompt: str) -> str:
+        gate.wait(10)
+        return "[]"
+
+    m.app.state.models = (model(slow), model(review_reply))
+    started = data(await client.post("/api/alpha/campaigns", json={"rounds": 1}, headers=ADMIN))
+    # campaign 记下建的时候是哪一版；跑着的时候不改
+    assert (await m.app.state.store.campaign(started["id"]))["policy_id"] == second["id"]
+    assert (await client.put("/api/alpha/policy", json=body, headers=ADMIN)).status_code == 409
+    gate.set()
+    await wait_campaign(client, started["id"], "done")
+
+
 async def test_refresh_and_reference_block_campaigns_and_each_other(client):
     jobs = m.app.state.runs.jobs
     # 刷新中开不了 campaign，也不起会存结果的复评、参照集：刷完会换数据和切点
@@ -549,6 +586,9 @@ async def test_refresh_and_reference_block_campaigns_and_each_other(client):
                  "/api/alpha/reference/run"):
         resp = await client.post(path, json={"rounds": 1}, headers=ADMIN)
         assert resp.status_code == 409 and "刷新" in resp.json()["msg"], path
+    # 页面先拿到同一句原因，按钮直接灰掉；改方针不靠数据，照样能改
+    busy = data(await client.get("/api/alpha/busy", headers=ADMIN))
+    assert busy["campaign"] == busy["reeval"] == busy["reference"] == "正在刷新数据，等它刷完" and busy["policy"] is None
     jobs["refresh"]["running"] = False
     # 参照集在跑：campaign 开不了（抢内存），刷新也不开（它可能在读上一版面板）
     jobs["reference"]["running"] = True
@@ -599,6 +639,10 @@ async def test_eval_endpoint(client):
     assert (await client.post("/api/alpha/eval", json={"expr": "$trades"}, headers=ADMIN)).status_code == 409
     resp = await client.post("/api/alpha/eval", json={"expr": "Mean(close, 5)"}, headers=ADMIN)
     assert resp.status_code == 400 and "列要写成" in resp.json()["msg"]
+    # 页面上的参考：全部列和算子，和提示词里的同一份
+    ref = data(await client.get("/api/alpha/dsl", headers=ADMIN))
+    assert [c["name"] for c in ref["columns"]] == list(FEATURE_COLUMNS) and ref["columns"][0]["doc"] == "开盘价"
+    assert any(o["name"] == "Mean" for o in ref["operators"]) and ref["maxWindow"] == 2016
 
     async def finished():
         return not data(await client.get("/api/alpha/eval", headers=ADMIN))["running"]
@@ -722,7 +766,7 @@ async def test_missing_reference_grid_is_built_in_the_background(prepared, tmp_p
 async def test_restart_marks_running_runs_failed_and_stops_the_campaign(prepared):
     async with m.lifespan(prepared):
         store = prepared.state.store
-        await store.create_campaign("cc", 10, 1, "", "zh", None, None, "fake-gen", "fake-review")
+        await store.create_campaign("cc", 10, 1, "", "zh", None, None, "fake-gen", "fake-review", 1)
         await store.create_run("zz", 1, "", "zh", "cc")
         await store.upsert_candidate({"id": "zz-1", "run_id": "zz", "seq": 1, "name": "x", "hypothesis": "h",
                                       "status": "rewrite"})

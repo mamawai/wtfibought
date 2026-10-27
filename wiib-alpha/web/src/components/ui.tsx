@@ -1,15 +1,19 @@
 import { Fragment, useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowDown, ArrowUp, ArrowUpDown, Braces, ChevronDown, LoaderCircle, X, type LucideIcon } from 'lucide-react';
+import {
+  ArrowDown, ArrowUp, ArrowUpDown, Braces, ChevronDown, CircleHelp, Clock, LoaderCircle, X, type LucideIcon,
+} from 'lucide-react';
 import { cx } from '../format';
 import { useReveal } from '../reveal';
 import type { SortState } from '../sort';
 
-/** 一节：2px 墨线开头，标题、说明、正文；进视口时线从左画到右 */
-export function Card({ title, actions, hint, children, className }: {
+/** 一节：2px 墨线开头，标题、一句说明、折起来的详细说明、正文；进视口时线从左画到右 */
+export function Card({ title, actions, hint, more, children, className }: {
   title?: ReactNode;
   actions?: ReactNode;
   hint?: ReactNode;
+  more?: ReactNode;
   children?: ReactNode;
   className?: string;
 }) {
@@ -26,9 +30,51 @@ export function Card({ title, actions, hint, children, className }: {
         </header>
       )}
       {hint && <p className="sec-hint">{hint}</p>}
+      {more && <More>{more}</More>}
       <div className="sec-body">{children}</div>
     </section>
   );
+}
+
+/** 折起来的详细说明，点"展开说明"（或 label）才出来；文案里的换行照样换行 */
+export function More({ label, children }: { label?: ReactNode; children: ReactNode }) {
+  const { t } = useTranslation();
+  return (
+    <details className="sec-more">
+      <summary>{label ?? t('common.more')}<ChevronDown /></summary>
+      <div className="whitespace-pre-line">{children}</div>
+    </details>
+  );
+}
+
+// 说明浮层的最大宽度，靠右放不下就往左挪
+const TIP_W = 352;
+
+/** 悬停说明：指上去（手机上点一下）出一块墨框说明，挂在 body 上，表格的滚动框裁不掉；没包东西就是一个小问号 */
+export function Tip({ text, children }: { text: ReactNode; children?: ReactNode }) {
+  const [at, setAt] = useState<{ x: number; y: number; up: boolean } | null>(null);
+  const show = (e: { currentTarget: HTMLElement }) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    // 下面放不下就放上面
+    const up = r.bottom + 160 > window.innerHeight;
+    setAt({ x: Math.max(8, Math.min(r.left, window.innerWidth - TIP_W - 8)), y: up ? r.top - 6 : r.bottom + 6, up });
+  };
+  const hide = () => setAt(null);
+  return (
+    <span className={children ? 'tip' : 'tip help'} tabIndex={children ? undefined : 0} onMouseEnter={show}
+          onMouseLeave={hide} onFocus={show} onBlur={hide}>
+      {children ?? <CircleHelp />}
+      {at && createPortal(
+        <span role="tooltip" className="tip-box" style={{ left: at.x, top: at.y, maxWidth: TIP_W,
+          transform: at.up ? 'translateY(-100%)' : undefined }}>{text}</span>, document.body)}
+    </span>
+  );
+}
+
+/** 按钮被别的后台任务挡着时，写一句在等谁 */
+export function Waiting({ why, className }: { why: string | null | undefined; className?: string }) {
+  if (!why) return null;
+  return <p className={cx('flex items-center gap-1 text-[12px] text-warn', className)}><Clock className="w-3 h-3 shrink-0" />{why}</p>;
 }
 
 type Variant = 'primary' | 'outline' | 'ghost' | 'gain' | 'loss' | 'icon';

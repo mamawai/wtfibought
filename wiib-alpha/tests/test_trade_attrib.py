@@ -74,6 +74,25 @@ def test_leg_returns_use_the_share_recorded_that_day():
     assert out["legs"]["combo"]["ret"] == pytest.approx(out["legs"]["combo"]["net"] / 10000)
 
 
+def test_twice_the_notional_earns_twice_but_the_leg_return_stays_per_unit():
+    nxt = run("2025-03-03", DAY + DAY_MS - 1, 10000.0, {})
+    # 同一个篮子，前一天 1 倍名义（老记录没有 sizing），今天 2 倍
+    prev = run("2025-03-01", DAY - DAY_MS - 1, 10000.0, {"A": (0.3, 0.1)})
+    one = run("2025-03-02", DAY - 1, 10000.0, {"A": (0.3, 0.1)})
+    two = run("2025-03-02", DAY - 1, 10000.0, {"A": (0.3, 0.1)})
+    two["targets"]["sizing"] = {"multiple": 2.0}
+    args = ({"A": (100.0, 110.0)}, {"A": 0.001}, {"A": 1}, PARAMS)
+    a, b = attrib.attribute(one, nxt, prev["targets"], *args), attrib.attribute(two, nxt, None, *args)
+    for leg in attrib.LEGS:
+        assert b["legs"][leg]["price"] == pytest.approx(2 * a["legs"][leg]["price"])
+        assert b["legs"][leg]["funding"] == pytest.approx(2 * a["legs"][leg]["funding"])
+    # 收益率折回 1 倍名义：止损线是按 1 倍名义的回测定的
+    assert b["legs"]["combo"]["ret"] == pytest.approx(b["legs"]["combo"]["net"] / (7500 * 2))
+    # 换仓成本按实际名义的变化：昨天 1 倍、今天 2 倍，两条腿都加了一倍
+    c = attrib.attribute(two, nxt, prev["targets"], *args)
+    assert (c["legs"]["combo"]["cost"], c["legs"]["carry"]["cost"]) == (pytest.approx(0.3 * 5), pytest.approx(0.1 * 5))
+
+
 def test_inputs_take_the_0015_closes_and_the_settlements_in_between():
     fake = FakeFapi(["AAA", "BBB"], DAY + 2 * DAY_MS)
     today = run("2025-03-02", DAY - 1, 10000.0, {"AAA": (0.2, 0.0), "BBB": (0.0, -0.1), "GONE": (0.1, 0.0)})

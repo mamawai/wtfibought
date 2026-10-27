@@ -4,14 +4,21 @@ import { Check, RefreshCw, Search, TriangleAlert } from 'lucide-react';
 import {
   alpha, COVERAGE_COLUMNS, type CoverageColumn, type DataStatus, type GridStatus, type PanelStatus, type RefreshJob,
 } from '../api';
+import { useBusy } from '../busy';
 import { cx, DASH, localTime, pct, utcDay, utcMinute } from '../format';
 import { useSort, type SortState } from '../sort';
 import { useFail } from '../toast';
-import { Badge, Button, Card, Empty, Progress, SortTh, Stat, Strip } from '../components/ui';
+import { Badge, Button, Card, Empty, Progress, SortTh, Stat, Strip, Tip, Waiting } from '../components/ui';
 
-export function DataPanel({ status, admin, onReload }: { status: DataStatus; admin: boolean; onReload: () => Promise<void> }) {
+export function DataPanel({ status, active, admin, onReload }: {
+  status: DataStatus;
+  active: boolean;
+  admin: boolean;
+  onReload: () => Promise<void>;
+}) {
   const { t } = useTranslation();
   const fail = useFail();
+  const blocked = useBusy(active && admin);
   const [starting, setStarting] = useState(false);
   const { facts, refresh, pool } = status;
   const products = facts?.symbols ?? [];
@@ -30,12 +37,14 @@ export function DataPanel({ status, admin, onReload }: { status: DataStatus; adm
 
   return (
     <div className="space-y-14">
-      <Card title={t('data.title')} hint={t('data.refreshHint')}
+      <Card title={t('data.title')} hint={t('data.refreshHint')} more={t('data.refreshMore')}
             actions={admin && (
-              <Button variant="primary" icon={RefreshCw} loading={starting || refresh.running} onClick={() => void start()}>
+              <Button variant="primary" icon={RefreshCw} loading={starting || refresh.running}
+                      disabled={!!blocked?.refresh} onClick={() => void start()}>
                 {refresh.running ? t('data.refreshing') : t('data.refresh')}
               </Button>
             )}>
+        {!refresh.running && <Waiting why={blocked?.refresh} className="mb-4" />}
         {status.loaded && facts ? (
           <div className="space-y-5">
             <Strip cols={4}>
@@ -48,7 +57,7 @@ export function DataPanel({ status, admin, onReload }: { status: DataStatus; adm
               <Stat label={t('data.loadedAt')} size="sm">{localTime(status.loadedAt)}</Stat>
             </Strip>
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="mr-1.5 text-[12.5px] text-muted">{t('data.products')}</span>
+              <span className="mr-1.5 text-[12.5px] text-muted">{t('data.products')}<Tip text={t('data.productsTip')} /></span>
               {facts.symbols.map(s => <Badge key={s} tone="primary">{s}</Badge>)}
             </div>
           </div>
@@ -152,7 +161,7 @@ function GridLine({ grid }: { grid: GridStatus }) {
   const { t } = useTranslation();
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px]">
-      <span className="text-muted">{t('pool.grid')}</span>
+      <span className="text-muted">{t('pool.grid')}<Tip text={t('pool.gridTip')} /></span>
       {grid.ready
         ? <Badge tone="gain" icon={Check}>{t('pool.gridReady')}</Badge>
         : <Badge tone="warn" icon={TriangleAlert}>{t('pool.gridNotReady')}</Badge>}

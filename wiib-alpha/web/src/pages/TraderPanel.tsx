@@ -1,17 +1,19 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  ChevronDown, ChevronRight, CircleCheck, CircleX, Clock, GitCompare, RefreshCw, Square, SquareCheck, TriangleAlert,
+  ChevronDown, ChevronRight, CircleCheck, CircleX, Clock, GitCompare, RefreshCw, Save, Square, SquareCheck,
+  TriangleAlert,
 } from 'lucide-react';
 import {
-  alpha, TRADE_LEGS, type CompareJob, type DailyPnl, type DayAttrib, type LegSummary, type SchemeResult,
+  alpha, TRADE_LEGS, type Busy, type CompareJob, type DailyPnl, type DayAttrib, type LegSummary, type SchemeResult,
   type TradeLeg, type TradeRunBrief, type TradeRunDetail, type TradeStatus, type TraderAccount, type TraderCarry,
-  type TraderDaily, type TraderFactor, type TraderJob, type TraderLive, type TraderPosition,
+  type TraderDaily, type TraderFactor, type TraderJob, type TraderLive, type TraderPosition, type TraderSizing,
 } from '../api';
+import { useBusy } from '../busy';
 import { cx, DASH, localClock, localTime, num, pct, signedPct, utcMinute } from '../format';
 import { usePoll } from '../poll';
 import { useFail } from '../toast';
-import { Badge, Button, Card, Empty, Progress, Spinner, Stat, Strip, type Tone } from '../components/ui';
+import { Badge, Button, Card, Empty, Progress, Spinner, Stat, Strip, Tip, Waiting, type Tone } from '../components/ui';
 
 const STATUS_TONE: Record<TradeStatus, Tone> = { done: 'gain', partial: 'warn', failed: 'loss' };
 const STATUS_ICON = { done: CircleCheck, partial: TriangleAlert, failed: CircleX };
@@ -24,10 +26,12 @@ const signedMoney = (v: number | null | undefined) => (v == null ? DASH : `${v >
 /** 这么久没收到推送（后端重启、网断了、sim 卡住）也算停了；正常 3 秒一帧 */
 const STALE_MS = 10_000;
 
-/** 交易员页：账户、每日盈亏、持仓谁都能看，净值和持仓走实时推送；交易因子的勾选与对比、调仓记录（带着因子名和权重）只给管理员 */
-export function TraderPanel({ active, admin, loaded }: { active: boolean; admin: boolean; loaded: boolean }) {
+/** 交易员页：账户、每日盈亏、持仓谁都能看，净值和持仓走实时推送；两条腿的归因与止损线、仓位规模、交易因子的勾选与对比、
+ *  调仓记录（带着因子名和权重）只给管理员 */
+export function TraderPanel({ active, admin }: { active: boolean; admin: boolean }) {
   const { t } = useTranslation();
   const fail = useFail();
+  const blocked = useBusy(active && admin);
   const [account, setAccount] = useState<TraderAccount | null>(null);
   const [daily, setDaily] = useState<TraderDaily | null>(null);
   const [live, setLive] = useState<TraderLive | null>(null);
@@ -37,7 +41,8 @@ export function TraderPanel({ active, admin, loaded }: { active: boolean; admin:
   const [factors, setFactors] = useState<TraderFactor[] | null>(null);
   const [carry, setCarry] = useState<TraderCarry | null>(null);
   const [compare, setCompare] = useState<CompareJob | null>(null);
-  // 实时数里的调仓日：变了是又调过一次仓，每日盈亏和调仓记录重拉
+  const [sizing, setSizing] = useState<TraderSizing | null>(null);
+  // 实时数里的调仓日：变了是又调过一次仓，每日盈亏、调仓记录和仓位规模重拉
   const liveDay = useRef<string | null>(null);
   // 上一次收到推送的时刻
   const lastFrame = useRef(0);
@@ -52,11 +57,16 @@ export function TraderPanel({ active, admin, loaded }: { active: boolean; admin:
     .then(r => { setFactors(r.items); setCarry(r.carry); setCompare(r.compare); })
     .catch(fail), [fail]);
 
+  // 仓位规模的预览按最近一次调仓的篮子算
+  const loadSizing = useCallback(() => alpha.traderSizing().then(setSizing).catch(fail), [fail]);
+
   useEffect(() => {
     if (!active) return;
     void loadTrader();
-    if (admin) void loadFactors();
-  }, [active, admin, loadTrader, loadFactors]);
+    if (!admin) return;
+    void loadFactors();
+    void loadSizing();
+  }, [active, admin, loadTrader, loadFactors, loadSizing]);
 
   // 实时数：在这一页才连，离开就断
   useEffect(() => {
@@ -67,7 +77,10 @@ export function TraderPanel({ active, admin, loaded }: { active: boolean; admin:
       setStale(!f.ok);
       if (!f.ok || f.userId == null) return;
       setLive(f);
-      if (liveDay.current !== null && f.day !== liveDay.current) void loadTrader();
+      if (liveDay.current !== null && f.day !== liveDay.current) {
+        void loadTrader();
+        if (admin) void loadSizing();
+      }
       liveDay.current = f.day;
     });
     const watchdog = window.setInterval(() => {
@@ -77,7 +90,7 @@ export function TraderPanel({ active, admin, loaded }: { active: boolean; admin:
       close();
       clearInterval(watchdog);
     };
-  }, [active, loadTrader]);
+  }, [active, admin, loadTrader, loadSizing]);
 
   usePoll(active && (account?.job.running ?? false), loadTrader, 5000);
   usePoll(active && (compare?.running ?? false), loadFactors, 3000);
@@ -90,16 +103,19 @@ export function TraderPanel({ active, admin, loaded }: { active: boolean; admin:
     <div className="space-y-14">
       <AccountCard account={account} live={live} stale={stale} daily={daily} lastRun={runs?.[0] ?? null}
                    onReload={loadTrader} />
-      <Card title={t('trader.daily')} hint={t('trader.dailyHint')}>
-        {!daily ? <Spinner /> : <DailyView daily={daily} live={live} />}
+      <Card title={t('trader.daily')} hint={t('trader.dailyHint')} more={admin && t('trader.dailyMore')}>
+        {!daily ? <Spinner /> : <DailyView daily={daily} live={live} admin={admin} />}
       </Card>
       {admin ? (
         <div className="grid items-start gap-x-12 gap-y-14 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          <PositionsCard positions={positions} />
-          <FactorsCard factors={factors} carry={carry} compare={compare} loaded={loaded} onChanged={loadFactors}
-                       onList={setFactors} onCarry={setCarry} />
+          <PositionsCard positions={positions} admin />
+          <div className="space-y-14">
+            <SizingCard sizing={sizing} onSaved={setSizing} />
+            <FactorsCard factors={factors} carry={carry} compare={compare} blocked={blocked} onChanged={loadFactors}
+                         onList={setFactors} onCarry={setCarry} />
+          </div>
         </div>
-      ) : <PositionsCard positions={positions} />}
+      ) : <PositionsCard positions={positions} admin={false} />}
       {admin && <RunsCard runs={runs} />}
     </div>
   );
@@ -115,7 +131,7 @@ function AccountCard({ account, live, stale, daily, lastRun, onReload }: {
 }) {
   const { t } = useTranslation();
   return (
-    <Card title={t('trader.title')} hint={t('trader.hint')}
+    <Card title={t('trader.title')} hint={t('trader.hint')} more={t('trader.hintMore')}
           actions={<Button variant="icon" icon={RefreshCw} aria-label={t('common.refresh')} onClick={() => void onReload()} />}>
       {!account ? <Spinner /> : (
         <div className="space-y-4">
@@ -191,8 +207,8 @@ function JobLine({ job, lastRun }: { job: TraderJob; lastRun: TradeRunBrief | nu
 /** 一天一行；live 是还没到下次调仓的今天，跟着实时数走 */
 type DayRow = DailyPnl & { live: boolean };
 
-/** 上面一天一根柱，底下明细表（新的在前） */
-function DailyView({ daily, live }: { daily: TraderDaily; live: TraderLive | null }) {
+/** 上面一天一根柱，底下明细表（新的在前）；两条腿对止损线、每天按腿归因的几列只给管理员 */
+function DailyView({ daily, live, admin }: { daily: TraderDaily; live: TraderLive | null; admin: boolean }) {
   const { t } = useTranslation();
   const rows = useMemo<DayRow[]>(() => {
     const done = daily.days.map(d => ({ ...d, live: false }));
@@ -206,7 +222,7 @@ function DailyView({ daily, live }: { daily: TraderDaily; live: TraderLive | nul
   if (!rows.length) return <Empty>{t('trader.dailyEmpty')}</Empty>;
   return (
     <div className="space-y-6">
-      <LegsStrip legs={daily.legs} />
+      {admin && <LegsStrip legs={daily.legs} />}
       <PnlBars rows={rows} />
       <div className="tw max-h-[24rem] overflow-y-auto">
         <table className="tbl tbl-sticky">
@@ -218,9 +234,13 @@ function DailyView({ daily, live }: { daily: TraderDaily; live: TraderLive | nul
               <th className="r">{t('trader.dailyCol.pnl')}</th>
               <th className="r">{t('trader.dailyCol.pct')}</th>
               <th className="r">{t('trader.dailyCol.total')}</th>
-              {TRADE_LEGS.map(leg => <th key={leg} className="r">{t(`trader.leg.${leg}`)}</th>)}
-              <th className="r">{t('trader.dailyCol.model')}</th>
-              <th className="r">{t('trader.dailyCol.residual')}</th>
+              {admin && (
+                <>
+                  {TRADE_LEGS.map(leg => <th key={leg} className="r">{t(`trader.leg.${leg}`)}</th>)}
+                  <th className="r">{t('trader.dailyCol.model')}</th>
+                  <th className="r">{t('trader.dailyCol.residual')}</th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -236,11 +256,15 @@ function DailyView({ daily, live }: { daily: TraderDaily; live: TraderLive | nul
                 <td className={cx('r num', tone(r.end - daily.initialBalance))}>
                   {signedPct(r.end / daily.initialBalance - 1, 2)}
                 </td>
-                {TRADE_LEGS.map(leg => (
-                  <td key={leg} className={cx('r num', tone(r.attrib?.legs[leg].net))}>{signedMoney(r.attrib?.legs[leg].net)}</td>
-                ))}
-                <td className={cx('r num', tone(r.attrib?.model))}>{signedMoney(r.attrib?.model)}</td>
-                <td className={cx('r num', tone(r.attrib?.residual))}>{signedMoney(r.attrib?.residual)}</td>
+                {admin && (
+                  <>
+                    {TRADE_LEGS.map(leg => (
+                      <td key={leg} className={cx('r num', tone(r.attrib?.legs[leg].net))}>{signedMoney(r.attrib?.legs[leg].net)}</td>
+                    ))}
+                    <td className={cx('r num', tone(r.attrib?.model))}>{signedMoney(r.attrib?.model)}</td>
+                    <td className={cx('r num', tone(r.attrib?.residual))}>{signedMoney(r.attrib?.residual)}</td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>
@@ -260,7 +284,7 @@ function LegsStrip({ legs }: { legs: Record<TradeLeg, LegSummary> }) {
         return (
           <div key={leg} className={cx('space-y-2 border-t pt-3', s.hit ? 'border-loss' : 'border-fg')}>
             <div className="flex items-center gap-2 text-[13px] font-extrabold">
-              {t(`trader.leg.${leg}`)}
+              <span>{t(`trader.leg.${leg}`)}<Tip text={t(`trader.legTip.${leg}`)} /></span>
               <span className="text-[12px] font-normal text-muted num">{t('trader.legDays', { n: s.days })}</span>
               {s.hit && <Badge tone="loss" icon={TriangleAlert} className="ml-auto">{t('trader.legHit')}</Badge>}
             </div>
@@ -309,12 +333,13 @@ function PnlBars({ rows }: { rows: DayRow[] }) {
 
 // ========== 持仓 ==========
 
-function PositionsCard({ positions }: { positions: { items: TraderPosition[]; day: string | null } | null }) {
+/** 两条腿各占多少的那两列只给管理员 */
+function PositionsCard({ positions, admin }: { positions: { items: TraderPosition[]; day: string | null } | null; admin: boolean }) {
   const { t } = useTranslation();
   const items = useMemo(() => [...(positions?.items ?? [])].sort((a, b) => b.notional - a.notional), [positions]);
   return (
     <Card title={t('trader.positions')}
-          hint={positions?.day ? t('trader.positionsHint', { day: positions.day }) : undefined}>
+          hint={admin && positions?.day ? t('trader.positionsHint', { day: positions.day }) : undefined}>
       {!positions ? <Spinner /> : items.length === 0 ? <Empty>{t('trader.positionsEmpty')}</Empty> : (
         <div className="tw max-h-[32rem] overflow-y-auto">
           <table className="tbl tbl-sticky">
@@ -324,7 +349,7 @@ function PositionsCard({ positions }: { positions: { items: TraderPosition[]; da
                 <th>{t('trader.col.side')}</th>
                 <th className="r">{t('trader.col.quantity')}</th>
                 <th className="r">{t('trader.col.notional')}</th>
-                {TRADE_LEGS.map(leg => <th key={leg} className="r">{t(`trader.leg.${leg}`)}</th>)}
+                {admin && TRADE_LEGS.map(leg => <th key={leg} className="r">{t(`trader.leg.${leg}`)}</th>)}
                 <th className="r">{t('trader.col.mark')}</th>
                 <th className="r">{t('trader.col.pnl')}</th>
               </tr>
@@ -336,7 +361,7 @@ function PositionsCard({ positions }: { positions: { items: TraderPosition[]; da
                   <td><SideBadge side={p.side} /></td>
                   <td className="r num">{p.quantity}</td>
                   <td className="r num">{money(p.notional)}</td>
-                  {TRADE_LEGS.map(leg => <td key={leg} className="r num">{money(p.legs?.[leg])}</td>)}
+                  {admin && TRADE_LEGS.map(leg => <td key={leg} className="r num">{money(p.legs?.[leg])}</td>)}
                   <td className="r num" title={`${t('trader.col.entry')} ${p.entryPrice}`}>{p.markPrice}</td>
                   <td className={cx('r num font-semibold', tone(p.unrealizedPnl))}>{money(p.unrealizedPnl)}</td>
                 </tr>
@@ -349,13 +374,102 @@ function PositionsCard({ positions }: { positions: { items: TraderPosition[]; da
   );
 }
 
+// ========== 仓位规模 ==========
+
+/** 杠杆和保证金比例：上面改设定，底下是按最近一次调仓的篮子实际按几倍下 */
+function SizingCard({ sizing, onSaved }: { sizing: TraderSizing | null; onSaved: (s: TraderSizing) => void }) {
+  const { t } = useTranslation();
+  const p = sizing?.preview;
+  return (
+    <Card title={t('trader.sizing.title')} hint={t('trader.sizing.hint')} more={t('trader.sizing.more')}>
+      {!sizing ? <Spinner /> : (
+        <div className="space-y-3">
+          {/* 设定变了换一个表单，输入框从新的值起 */}
+          <SizingForm key={`${sizing.leverage}/${sizing.margin}`} sizing={sizing} onSaved={onSaved} />
+          {sizing.previewError ? (
+            <p className="flex items-start gap-1.5 text-[12px] text-warn break-words">
+              <TriangleAlert className="w-3 h-3 shrink-0 mt-0.5" />{t('trader.sizing.previewError', { msg: sizing.previewError })}
+            </p>
+          ) : !p ? <p className="text-[12px] text-muted">{t('trader.sizing.noPreview')}</p> : (
+            <div className="space-y-1 text-[12px]">
+              <p>{t('trader.sizing.preview', { day: p.day, leverage: p.leverage, side: +p.multiple.toFixed(2) })}</p>
+              {p.caps.bracket != null && (
+                <p className="text-muted">{t('trader.sizing.caps', { bracket: p.caps.bracket, stress: p.caps.stress })}</p>
+              )}
+              {p.leverage < sizing.leverage && (
+                <p className="flex items-center gap-1 text-warn">
+                  <TriangleAlert className="w-3 h-3" />{t('trader.sizing.capped', { set: sizing.leverage, leverage: p.leverage })}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function SizingForm({ sizing, onSaved }: { sizing: TraderSizing; onSaved: (s: TraderSizing) => void }) {
+  const { t } = useTranslation();
+  const fail = useFail();
+  const [leverage, setLeverage] = useState(String(sizing.leverage));
+  // 保证金比例的输入框里是百分数
+  const [margin, setMargin] = useState(String(Math.round(sizing.margin * 1000) / 10));
+  const [busy, setBusy] = useState(false);
+  const lev = Number(leverage);
+  const m = Number(margin) / 100;
+  const tooMuch = m > sizing.maxMargin;
+  const valid = Number.isInteger(lev) && lev >= 1 && m > 0 && !tooMuch;
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      onSaved(await alpha.setTraderSizing({ leverage: lev, margin: m }));
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={e => void save(e)} className="space-y-2 border-t border-fg pt-3">
+      <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
+        <span className="text-muted">{t('trader.sizing.leverage')}</span>
+        <input type="number" min={1} step={1} value={leverage} onChange={e => setLeverage(e.target.value)} disabled={busy}
+               className="input w-20 text-right font-mono" />
+        <span className="mr-3 text-muted">{t('trader.sizing.times')}</span>
+        <span className="text-muted">{t('trader.sizing.margin')}</span>
+        <input type="number" min={1} step={1} value={margin} onChange={e => setMargin(e.target.value)} disabled={busy}
+               className="input w-20 text-right font-mono" />
+        <span className="text-muted">%</span>
+        <Button type="submit" icon={Save} loading={busy}
+                disabled={!valid || (lev === sizing.leverage && m === sizing.margin)}>
+          {t('trader.sizing.save')}
+        </Button>
+      </div>
+      {tooMuch ? (
+        <p className="flex items-center gap-1 text-[12px] text-warn">
+          <TriangleAlert className="w-3 h-3" />{t('trader.sizing.maxMargin', { max: +(sizing.maxMargin * 100).toFixed(1) })}
+        </p>
+      ) : valid && (
+        <p className="text-[12px] text-muted">
+          {t('trader.sizing.effect', { margin: +(m * 100).toFixed(1), leverage: lev, side: +(m * lev / 2).toFixed(2) })}
+        </p>
+      )}
+    </form>
+  );
+}
+
 // ========== 交易因子：勾选与对比 ==========
 
-function FactorsCard({ factors, carry, compare, loaded, onChanged, onList, onCarry }: {
+/** blocked 里看改份额、对比现在做不做得了 */
+function FactorsCard({ factors, carry, compare, blocked, onChanged, onList, onCarry }: {
   factors: TraderFactor[] | null;
   carry: TraderCarry | null;
   compare: CompareJob | null;
-  loaded: boolean;
+  blocked: Busy | null;
   onChanged: () => Promise<unknown>;
   onList: (list: TraderFactor[]) => void;
   onCarry: (c: TraderCarry) => void;
@@ -364,12 +478,6 @@ function FactorsCard({ factors, carry, compare, loaded, onChanged, onList, onCar
   const fail = useFail();
   const [busy, setBusy] = useState<string | null>(null);
   const running = compare?.running ?? false;
-  // 份额输入框里的百分数，服务端的值变了就跟着换
-  const [share, setShare] = useState('');
-  const current = carry?.share;
-  useEffect(() => {
-    if (current !== undefined) setShare(String(Math.round(current * 1000) / 10));
-  }, [current]);
 
   const toggle = async (f: TraderFactor) => {
     setBusy(f.id);
@@ -395,10 +503,10 @@ function FactorsCard({ factors, carry, compare, loaded, onChanged, onList, onCar
     }
   };
 
-  const saveShare = async () => {
+  const saveShare = async (share: number) => {
     setBusy('share');
     try {
-      onCarry(await alpha.setTraderCarry({ share: Number(share) / 100 }));
+      onCarry(await alpha.setTraderCarry({ share }));
     } catch (err) {
       fail(err);
     } finally {
@@ -419,7 +527,7 @@ function FactorsCard({ factors, carry, compare, loaded, onChanged, onList, onCar
   };
 
   return (
-    <Card title={t('trader.factors')} hint={t('trader.factorsHint')}>
+    <Card title={t('trader.factors')} hint={t('trader.factorsHint')} more={t('trader.factorsMore')}>
       {!factors || !carry ? <Spinner /> : (
         <div className="space-y-5">
           <ul className="border-t border-fg divide-y divide-line border-b border-b-line">
@@ -432,17 +540,9 @@ function FactorsCard({ factors, carry, compare, loaded, onChanged, onList, onCar
               <div className="min-w-0 flex-1 space-y-0.5">
                 <div className="font-mono text-[13px] font-bold">{t('trader.leg.carry')}</div>
                 <p className="text-[12px] text-muted">{t('trader.carryExpr')}</p>
-                <div className="flex flex-wrap items-center gap-2 text-[12px]">
-                  <span className="text-muted">{t('trader.carryShare')}</span>
-                  <input type="number" min={0} max={100} step={0.5} value={share} onChange={e => setShare(e.target.value)}
-                         disabled={busy !== null} className="input w-20 text-right font-mono" />
-                  <span className="text-muted">%</span>
-                  <Button onClick={() => void saveShare()} loading={busy === 'share'}
-                          disabled={busy !== null || share === '' || Number(share) / 100 === carry.share}>
-                    {t('trader.carryShareSave')}
-                  </Button>
-                  <span className="text-muted">{t('trader.carryShareHint')}</span>
-                </div>
+                {/* 份额变了换一个输入框，从新的值起 */}
+                <CarryShare key={carry.share} share={carry.share} busy={busy} blocked={blocked?.carryShare}
+                            onSave={v => void saveShare(v)} />
                 {!carry.enabled && (
                   <p className="flex items-center gap-1 text-[12px] text-warn">
                     <TriangleAlert className="w-3 h-3" />{t('trader.carryOff')}
@@ -469,17 +569,45 @@ function FactorsCard({ factors, carry, compare, loaded, onChanged, onList, onCar
                   )}
                 </div>
                 <Button icon={GitCompare} loading={busy === f.id || (running && compare?.factorId === f.id)}
-                        disabled={busy !== null || running || !loaded} onClick={() => void start(f)}>
+                        disabled={busy !== null || running || !!blocked?.compare} onClick={() => void start(f)}>
                   {t('trader.compare')}
                 </Button>
               </li>
             ))}
           </ul>
-          {!loaded && <p className="text-[12px] text-warn">{t('common.needData')}</p>}
+          {!running && <Waiting why={blocked?.compare} />}
           {compare && <CompareView job={compare} />}
         </div>
       )}
     </Card>
+  );
+}
+
+/** carry 份额的输入和保存；busy 是卡片里正在做的动作，blocked 是现在改不了的原因 */
+function CarryShare({ share, busy, blocked, onSave }: {
+  share: number;
+  busy: string | null;
+  blocked: string | null | undefined;
+  onSave: (share: number) => void;
+}) {
+  const { t } = useTranslation();
+  // 输入框里是百分数
+  const [value, setValue] = useState(String(Math.round(share * 1000) / 10));
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2 text-[12px]">
+        <span className="text-muted">{t('trader.carryShare')}</span>
+        <input type="number" min={0} max={100} step={0.5} value={value} onChange={e => setValue(e.target.value)}
+               disabled={busy !== null} className="input w-20 text-right font-mono" />
+        <span className="text-muted">%</span>
+        <Button onClick={() => onSave(Number(value) / 100)} loading={busy === 'share'}
+                disabled={busy !== null || !!blocked || value === '' || Number(value) / 100 === share}>
+          {t('trader.carryShareSave')}
+        </Button>
+        <span className="text-muted">{t('trader.carryShareHint')}</span>
+      </div>
+      <Waiting why={blocked} />
+    </>
   );
 }
 
@@ -620,6 +748,7 @@ function RunsCard({ runs }: { runs: TradeRunBrief[] | null }) {
 function RunDetail({ run }: { run: TradeRunDetail }) {
   const { t } = useTranslation();
   const coins = run.targets?.coins ?? [];
+  const sized = run.targets?.sizing;
   return (
     <div className="space-y-5">
       <p className="text-[12px] text-muted num">
@@ -639,6 +768,14 @@ function RunDetail({ run }: { run: TradeRunDetail }) {
           ))}
         {run.targets?.carry === false && <Badge tone="warn" icon={TriangleAlert}>{t('trader.carryOffBadge')}</Badge>}
         {run.targets?.carryShare != null && <Badge>{t('trader.carryShareBadge', { pct: pct(run.targets.carryShare, 0) })}</Badge>}
+        {sized && (
+          <Badge>{t('trader.sizingBadge', { leverage: sized.leverage, margin: pct(sized.margin, 0), side: +sized.multiple.toFixed(2) })}</Badge>
+        )}
+        {sized && sized.leverage < sized.setting.leverage && (
+          <Badge tone="warn" icon={TriangleAlert}>
+            {t('trader.sizing.capped', { set: sized.setting.leverage, leverage: sized.leverage })}
+          </Badge>
+        )}
       </div>
       {run.attrib && <AttribView attrib={run.attrib} />}
       {run.legs && TRADE_LEGS.map(leg => (
@@ -704,16 +841,21 @@ function RunDetail({ run }: { run: TradeRunDetail }) {
               </thead>
               <tbody>
                 {run.orders.map(o => (
-                  <tr key={o.requestId}>
+                  <tr key={`${o.symbol}-${o.action}-${o.side}`}>
                     <td className="num font-mono text-[12.5px] font-bold">{o.symbol}</td>
                     <td className="whitespace-nowrap">
-                      <span className="mr-1.5">{t(`trader.action.${o.action}`)}</span><SideBadge side={o.side} />
+                      <span className="mr-1.5">{t(`trader.action.${o.action}`)}</span>{o.side && <SideBadge side={o.side} />}
                     </td>
-                    <td className="r num">{o.quantity ?? t('trader.closeAll')}</td>
+                    <td className="r num">
+                      {o.action === 'leverage' ? t('trader.toLeverage', { n: o.leverage }) : o.quantity ?? t('trader.closeAll')}
+                    </td>
                     <td className="r num">{o.price ?? DASH}</td>
                     <td className="text-[12px]">
-                      {o.ok ? <Badge tone="gain" icon={CircleCheck}>{t('trader.filled')} {o.filled}</Badge>
-                        : <span className="text-loss break-words">{o.error}</span>}
+                      {o.ok ? (
+                        <Badge tone="gain" icon={CircleCheck}>
+                          {o.action === 'leverage' ? t('trader.adjusted') : `${t('trader.filled')} ${o.filled}`}
+                        </Badge>
+                      ) : <span className="text-loss break-words">{o.error}</span>}
                     </td>
                   </tr>
                 ))}

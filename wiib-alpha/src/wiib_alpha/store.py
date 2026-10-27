@@ -14,7 +14,7 @@ import shutil
 import sqlite3
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
 
@@ -24,12 +24,13 @@ import numpy as np
 from .config import ModelSpec
 
 SCHEMA = [
-    # status：running / stopping（这轮跑完就停）/ stopped / done / failed；gen_model、review_model：建的时候两个角色用的模型名
+    # status：running / stopping（这轮跑完就停）/ stopped / done / failed；gen_model、review_model：建的时候两个角色用的模型名；
+    # policy_id：建的时候研究方针是哪一版，加这列之前建的是 NULL
     """CREATE TABLE IF NOT EXISTS campaign(
         id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, status TEXT NOT NULL, rounds INTEGER NOT NULL,
         k INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '', lang TEXT NOT NULL, max_survivors INTEGER,
         deadline_ms INTEGER, done_rounds INTEGER NOT NULL DEFAULT 0, survivors INTEGER NOT NULL DEFAULT 0,
-        stop_reason TEXT, error TEXT, gen_model TEXT, review_model TEXT)""",
+        stop_reason TEXT, error TEXT, gen_model TEXT, review_model TEXT, policy_id INTEGER)""",
     # cut_ms：这一轮用的数据的 holdout 切点，之后的数据这一轮的候选都没见过；加这列之前跑的轮是 NULL
     """CREATE TABLE IF NOT EXISTS run(
         id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, status TEXT NOT NULL, k INTEGER NOT NULL,
@@ -87,14 +88,22 @@ SCHEMA = [
     """CREATE TABLE IF NOT EXISTS trade_carry(
         id INTEGER PRIMARY KEY CHECK (id = 1), enabled INTEGER NOT NULL, share REAL NOT NULL DEFAULT 0.25,
         changed_at INTEGER NOT NULL)""",
+    # 交易员的杠杆（所有币统一）和保证金比例，一行；没有这行是杠杆 4、保证金一半，名义和回测一样
+    """CREATE TABLE IF NOT EXISTS trade_sizing(
+        id INTEGER PRIMARY KEY CHECK (id = 1), leverage INTEGER NOT NULL, margin REAL NOT NULL,
+        changed_at INTEGER NOT NULL)""",
+    # 研究方针，改一次存一版、不覆盖，最新一版是当前的；families_json 是机制清单的有序列表
+    """CREATE TABLE IF NOT EXISTS policy(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, families_json TEXT NOT NULL, gen_rules TEXT NOT NULL,
+        implement_checks TEXT NOT NULL, review_rules TEXT NOT NULL, created_at INTEGER NOT NULL)""",
 ]
 
 _JSON_COLUMNS = {"eval_json": "eval", "gates_json": "gates", "review_json": "review", "data_json": "data",
                  "columns_json": "columns", "recheck_json": "recheck", "reeval_json": "reeval",
                  "factors_json": "factors", "legs_json": "legs", "targets_json": "targets", "orders_json": "orders",
-                 "board_json": "board", "attrib_json": "attrib"}
+                 "board_json": "board", "attrib_json": "attrib", "families_json": "families"}
 # 建表之后才加的列：老库启动时补上
-_ADDED_COLUMNS = {"campaign": {"gen_model": "TEXT", "review_model": "TEXT"},
+_ADDED_COLUMNS = {"campaign": {"gen_model": "TEXT", "review_model": "TEXT", "policy_id": "INTEGER"},
                   "run": {"campaign_id": "TEXT", "cut_ms": "INTEGER"},
                   "candidate": {"direction": "INTEGER", "reeval_json": "TEXT"},
                   "factor": {"reeval_json": "TEXT", "retired_at": "INTEGER", "retire_reason": "TEXT"},
@@ -168,12 +177,13 @@ class Store:
 
     async def create_campaign(self, campaign_id: str, rounds: int, k: int, note: str, lang: str,
                               max_survivors: int | None, deadline_ms: int | None, gen_model: str,
-                              review_model: str) -> None:
+                              review_model: str, policy_id: int) -> None:
         await self.db.execute(
             """INSERT INTO campaign(id, created_at, status, rounds, k, note, lang, max_survivors, deadline_ms,
-                                    gen_model, review_model)
-               VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (campaign_id, now_ms(), rounds, k, note, lang, max_survivors, deadline_ms, gen_model, review_model))
+                                    gen_model, review_model, policy_id)
+               VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (campaign_id, now_ms(), rounds, k, note, lang, max_survivors, deadline_ms, gen_model, review_model,
+             policy_id))
         await self.db.commit()
 
     async def update_campaign(self, campaign_id: str, **fields: Any) -> None:
@@ -498,6 +508,23 @@ class Store:
             await self.db.execute("DELETE FROM trade_factor WHERE factor_id = ?", (factor_id,))
         await self.db.commit()
 
+    async def policy(self) -> dict[str, Any] | None:
+        """研究方针的当前版，一版都没有是 None"""
+        return await self._one("SELECT * FROM policy ORDER BY id DESC LIMIT 1", ())
+
+    async def policies(self) -> list[dict[str, Any]]:
+        """各版的编号和时间，最新在前"""
+        return await self._all("SELECT id, created_at FROM policy ORDER BY id DESC", ())
+
+    async def add_policy(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        """存成新的一版，返回它"""
+        await self.db.execute(
+            "INSERT INTO policy(families_json, gen_rules, implement_checks, review_rules, created_at) VALUES (?, ?, ?, ?, ?)",
+            (json.dumps(row["families"], ensure_ascii=False), row["gen_rules"], row["implement_checks"],
+             row["review_rules"], now_ms()))
+        await self.db.commit()
+        return await self.policy()
+
     async def carry(self) -> dict[str, Any]:
         """carry 腿开没开、占多少资金、什么时候改的；没设过是开着、占 1/4（和建表的默认值一样）"""
         row = await self._one("SELECT enabled, share, changed_at FROM trade_carry WHERE id = 1", ())
@@ -511,6 +538,18 @@ class Store:
         await self.db.execute("INSERT OR REPLACE INTO trade_carry(id, enabled, share, changed_at) VALUES (1, ?, ?, ?)",
                               (int(cur["enabled"] if enabled is None else enabled), cur["share"] if share is None else share,
                                now_ms()))
+        await self.db.commit()
+
+    async def sizing(self) -> dict[str, Any]:
+        """交易员的杠杆、保证金比例、什么时候改的；没设过是杠杆 4、保证金一半（和建表的注释一样）"""
+        row = await self._one("SELECT leverage, margin, changed_at FROM trade_sizing WHERE id = 1", ())
+        if row is None:
+            return {"leverage": 4, "margin": 0.5, "changedAt": None}
+        return {"leverage": int(row["leverage"]), "margin": float(row["margin"]), "changedAt": row["changed_at"]}
+
+    async def set_sizing(self, leverage: int, margin: float) -> None:
+        await self.db.execute("INSERT OR REPLACE INTO trade_sizing(id, leverage, margin, changed_at) VALUES (1, ?, ?, ?)",
+                              (leverage, margin, now_ms()))
         await self.db.commit()
 
     async def trade_days(self) -> list[dict[str, Any]]:

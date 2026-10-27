@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -57,7 +58,7 @@ COLUMN_DOCS = {
 
 WINDOW_TABLE = "4=1h、16=4h、48=12h、96=24h、192=48h、672=7d"
 
-# 机制清单：ID → (机制, 用哪些列, 典型持有期)，出题按 ID 选；price 是已证做不成的纯价格类，other 给清单外的机制
+# 研究方针里机制清单的默认值：ID → (机制, 用哪些列, 典型持有期)，出题按 ID 选；price 是已证做不成的纯价格类，other 给清单外的机制
 FAMILIES = {
     "basis": ("基差 / carry：溢价高的币在付费、被做空，折价的反过来", "premium、funding_rate", "7 天到 3 周"),
     "oi_crowd": ("持仓拥挤：持仓在变而价格没怎么动，有人在悄悄建仓或平仓", "oi、oi_value、ret", "1~7 天"),
@@ -81,6 +82,46 @@ DATA_CLASSES = {
 }
 
 
+@dataclass(frozen=True)
+class Policy:
+    """研究方针：给出题、写公式、评审看的观点，管理员在挖掘页改、改一次存一版；事实（数据、列、算子、门、口径）不在这里。
+    families 是机制清单 ID → (机制, 用哪些列, 典型持有期)：候选的 family 按它校验、成败表按它分组，所以 ID 只加不删"""
+    families: Mapping[str, tuple[str, str, str]]
+    # 系统提示末尾给出题、写公式的建议
+    gen_rules: str
+    # 写公式前的自查清单
+    implement_checks: str
+    # 评审判哪几件事
+    review_rules: str
+
+    @classmethod
+    def of(cls, row: Mapping[str, Any]) -> "Policy":
+        """库里的一版：机制清单存成有序列表"""
+        return cls({f["id"]: (f["what"], f["cols"], f["hold"]) for f in row["families"]}, row["gen_rules"],
+                   row["implement_checks"], row["review_rules"])
+
+    def to_row(self) -> dict[str, Any]:
+        return {"families": [{"id": fid, "what": what, "cols": cols, "hold": hold}
+                             for fid, (what, cols, hold) in self.families.items()],
+                "gen_rules": self.gen_rules, "implement_checks": self.implement_checks, "review_rules": self.review_rules}
+
+
+# 库里还没有方针时存成第一版
+DEFAULT_POLICY = Policy(
+    families=FAMILIES,
+    gen_rules="- 参数越少越好，先有一句能说清的经济理由，再写公式。",
+    implement_checks="""写之前先过一遍这几条，想清楚再写，别先交一版简单的、等门的数字回来再往上加东西：
+1. 截面上排出来的到底是什么：会不会只是系统提示里那些已知效应换了个说法，和库里的因子差在哪。
+2. 换手：窗口多长、信号变得多快，24 小时调一次仓扣不扣得起成本。
+3. 资金费：排在做多那头和做空那头的币，费率通常各是正是负，持仓期间哪头在付。
+4. 方向：按假设，因子值越大越强还是越弱。""",
+    review_rules="""你只判三件事：
+1. 表达式和假设对不对得上：公式算的是不是假设说的那个东西，窗口、归一化有没有跑偏；声明的方向是不是假设说的那个方向（代码只核对声明的方向和 IC 符号一不一样，声明本身对不对由你看）。
+2. 经济上讲不讲得通：这条假设在 15 分钟 K 线、6~24 小时持有期的永续合约上有没有一个说得出口的机制。
+3. 硬门看不见的问题：常量凑数、把一个已知因子换皮、依赖历史很短的列、结果实际上由某个退化项主导。""",
+)
+
+
 # ========== 生成角色 ==========
 
 
@@ -99,7 +140,14 @@ def _dsl_docs() -> str:
 复杂度上限，解析时就拒：不同的子式 ≤ {COMPLEXITY['nodes']} 个、不同的窗口值 ≤ {COMPLEXITY['windows']} 个、不同的常量值 ≤ {COMPLEXITY['constants']} 个（分位数也算常量）、不同的截面算子 ≤ {COMPLEXITY['cross']} 个，整条不超过 {MAX_TEXT} 字。都按不同的数：同一个子式、同一个窗口值或常量值重复写只算一个，比如四个桶都用 Sum(…, 672) 只算 1 个窗口。"""
 
 
-def system_gen(facts: Mapping[str, Any], lang: str) -> str:
+def dsl_reference() -> dict[str, Any]:
+    """给页面的同一份列、算子、窗口换算和复杂度上限"""
+    return {"columns": [{"name": c, "doc": COLUMN_DOCS.get(c, "")} for c in FEATURE_COLUMNS],
+            "operators": [{"name": n, "doc": OPERATOR_DOCS.get(n, "")} for n in ops.OPERATORS],
+            "windows": WINDOW_TABLE, "maxWindow": MAX_WINDOW, "complexity": COMPLEXITY}
+
+
+def system_gen(facts: Mapping[str, Any], lang: str, policy: Policy) -> str:
     known = "\n".join(f"- {name}：{text}（{what}）"
                       for name, (text, what) in {**reference.BASELINES, **reference.KNOWN_EFFECTS}.items())
     # 强平桶只给产品币装配（refresh 里 s in product），池里别的币全是空的
@@ -139,13 +187,14 @@ def system_gen(facts: Mapping[str, Any], lang: str) -> str:
 - 截面上比的是币与币：价格、成交量、持仓量的绝对水平在币之间不可比，直接排序排出来的是"哪个币大"。用收益、比值、z-score、秩这类各币可比的量。
 - 换手越高成本越高：24 小时持有期上，变化很快的短窗信号要扣更多成本。
 - 资金费率一期才变一次（各币结算间隔不同，这一列已折算成每 8 小时的等价费率），对它做短窗差分几乎全是 0。强平列只有产品币有数，截面上用不了；$hour 同一时刻所有币都一样，单独排序没有意义。
-- 参数越少越好，先有一句能说清的经济理由，再写公式。
+{policy.gen_rules}
 
 假设与说明用{_LANG_NAME[lang]}写，因子名用短英文 slug。"""
 
 
 def propose_message(k: int, library: Sequence[Mapping[str, Any]], tried: Sequence[Mapping[str, Any]],
-                    lessons: Sequence[Mapping[str, Any]], outcomes: Mapping[str, Any], note: str, lang: str) -> str:
+                    lessons: Sequence[Mapping[str, Any]], outcomes: Mapping[str, Any], note: str, lang: str,
+                    policy: Policy) -> str:
     """lessons、tried 都是最新在前；outcomes 是 outcomes() 算的两张成败表"""
     lib = "\n".join(f"- {f['name']}：{f['expr']}（{f['hypothesis']}）" for f in library) or "（空）"
     past = "\n".join(f"- [{t['outcome']}] {t['hypothesis']}｜{t['expr'] or '未写出'}｜{_tried_reason(t)}"
@@ -161,14 +210,14 @@ def propose_message(k: int, library: Sequence[Mapping[str, Any]], tried: Sequenc
 {past}
 {extra}
 可选的机制：
-{_families()}
+{_families(policy.families)}
 family 填清单里的 ID；机制不在清单里的填 other。
 
 提出 {k} 条彼此不同的假设。只输出一个 JSON 数组，不要代码块、不要任何别的字：
 [{{"name": "短英文 slug", "family": "清单里的 ID", "hypothesis": "一两句话（用{_LANG_NAME[lang]}）：什么现象、为什么能预测未来 24 小时哪些币比别的币强"}}]"""
 
 
-def implement_message(cand: Mapping[str, Any], feedback: str | None, problem: str | None = None) -> str:
+def implement_message(cand: Mapping[str, Any], feedback: str | None, policy: Policy, problem: str | None = None) -> str:
     """feedback 是上一版的门或评审意见；problem 是上一次输出本身的毛病（不是 JSON、表达式不合法、和评估过的某版一模一样）"""
     parts = [f"假设 [{cand['name']}]：{cand['hypothesis']}"]
     if feedback:
@@ -178,11 +227,7 @@ def implement_message(cand: Mapping[str, Any], feedback: str | None, problem: st
     body = "\n\n".join(parts)
     return f"""{body}
 
-写之前先过一遍这几条，想清楚再写，别先交一版简单的、等门的数字回来再往上加东西：
-1. 截面上排出来的到底是什么：会不会只是系统提示里那些已知效应换了个说法，和库里的因子差在哪。
-2. 换手：窗口多长、信号变得多快，24 小时调一次仓扣不扣得起成本。
-3. 资金费：排在做多那头和做空那头的币，费率通常各是正是负，持仓期间哪头在付。
-4. 方向：按假设，因子值越大越强还是越弱。
+{policy.implement_checks}
 
 把这条假设写成一条表达式，并按假设声明方向：因子值越大、未来 24 小时相对越强填 1，越弱填 -1。只输出一个 JSON 对象，不要代码块、不要任何别的字：
 {{"expr": "表达式", "direction": 1 或 -1, "note": "一句话说明公式怎么对应假设"}}"""
@@ -288,13 +333,14 @@ def _lessons(lessons: Sequence[Mapping[str, Any]]) -> str:
     return "\n".join(f"- [{x['kind']}] {x['text']}" for x in lessons) or "（还没有）"
 
 
-def _families() -> str:
+def _families(families: Mapping[str, tuple[str, str, str]]) -> str:
     """机制清单一条一行；没有列和持有期的（price、other）只写机制"""
     return "\n".join(f"- {fid}：{what}（列：{cols}；持有期：{hold}）" if cols else f"- {fid}：{what}"
-                     for fid, (what, cols, hold) in FAMILIES.items())
+                     for fid, (what, cols, hold) in families.items())
 
 
-def outcomes(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:
+def outcomes(rows: Sequence[Mapping[str, Any]],
+             families: Mapping[str, tuple[str, str, str]]) -> dict[str, dict[str, dict[str, Any]]]:
     """评估过的候选（store.evaluated_candidates）在主档上的成败，按用到的数据类、按机制 ID 各汇总一张：
     试过几条、有信号几条（和 G2 同口径）、单条多空腿扣完成本还赚几条、过 G9 几条，换手和盈亏平衡成本的中位数。
     用到几类数据就在几类里各算一次；family 不在清单里的（老候选是中文）算 other"""
@@ -313,9 +359,9 @@ def outcomes(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, dict[str,
         for name, cols in DATA_CLASSES.items():
             if columns & set(cols):
                 by_class.setdefault(name, []).append(item)
-        by_family.setdefault(r["family"] if r["family"] in FAMILIES else "other", []).append(item)
+        by_family.setdefault(r["family"] if r["family"] in families else "other", []).append(item)
     return {"byClass": {name: _tally(by_class[name]) for name in DATA_CLASSES if name in by_class},
-            "byFamily": {fid: _tally(by_family[fid]) for fid in FAMILIES if fid in by_family}}
+            "byFamily": {fid: _tally(by_family[fid]) for fid in families if fid in by_family}}
 
 
 def _tally(items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -413,11 +459,8 @@ def reflect_message(candidates: Sequence[Mapping[str, Any]], lessons: Sequence[M
 # ========== 评审角色 ==========
 
 
-def system_review(lang: str) -> str:
-    return f"""你是加密永续合约因子研究的评审。数字已经由代码算过并过了硬门，你不对数字投票。你只判三件事：
-1. 表达式和假设对不对得上：公式算的是不是假设说的那个东西，窗口、归一化有没有跑偏；声明的方向是不是假设说的那个方向（代码只核对声明的方向和 IC 符号一不一样，声明本身对不对由你看）。
-2. 经济上讲不讲得通：这条假设在 15 分钟 K 线、6~24 小时持有期的永续合约上有没有一个说得出口的机制。
-3. 硬门看不见的问题：常量凑数、把一个已知因子换皮、依赖历史很短的列、结果实际上由某个退化项主导。
+def system_review(lang: str, policy: Policy) -> str:
+    return f"""你是加密永续合约因子研究的评审。数字已经由代码算过并过了硬门，你不对数字投票。{policy.review_rules}
 
 裁决：pass = 可以进观察区等人决定入库；revise = 假设对但公式要改，给出具体改法，改法要能在下面的复杂度上限内写出来，给公式前先数一遍；reject = 假设本身不成立或就是换皮。
 评语用{_LANG_NAME[lang]}写。

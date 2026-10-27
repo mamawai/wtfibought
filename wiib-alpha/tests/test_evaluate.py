@@ -46,7 +46,7 @@ def test_planted_signal_passes_every_gate(planted):
     # 去老效应只是标签，不在门里
     assert [g["id"] for g in gates] == [f"G{i}" for i in range(11)]
     # G5 只判排列检验，净收益、盈亏平衡成本只报
-    assert gates[5]["name"] == "排列检验" and gates[5]["threshold"] == {"permPct": 0.95, "fdrQ": 0.10}
+    assert gates[5]["name"] == "排列检验" and gates[5]["need"] == "主档排列分位 ≥ 0.95，同批 BH（q = 0.1）后还显著"
     assert gates[5]["value"]["breakEvenBps"] == leg["breakEvenBps"] and "盈亏平衡单边成本" in gates[5]["note"]
     assert gates[2]["value"]["t"] == pytest.approx(abs(main["icir"]) * np.sqrt(main["months"]))
     # 植入池子没有结算记录，资金费是 0
@@ -68,7 +68,7 @@ def test_g10_checks_the_declared_direction(planted):
     g10 = judge(planted, GATES, direction=-1)[10]
     assert g10["id"] == "G10" and not g10["passed"] and "越大越弱" in g10["note"] and "对不上" in g10["note"]
     assert judge(planted, GATES)[10] == {"id": "G10", "name": "方向", "passed": True, "value": None,
-                                         "threshold": None, "note": "没有声明方向，不判"}
+                                         "need": "主档 IC 的符号和假设声明的方向一致", "note": "没有声明方向，不判"}
 
 
 def test_noise_factor_fails(planted_pool, planted_vol, planted_grid):
@@ -132,11 +132,12 @@ def test_g9_needs_the_scheme_sharpe_to_rise_past_the_threshold(planted):
     assert judge(ev, GATES)[9]["passed"]
     # 升了但不到默认的 0.1：和随机因子分不开，不过
     ev["gain"]["recentSharpe"] = {"base": 1.0, "with": 1.05, "gain": 0.05}
-    assert not judge(ev, GATES)[9]["passed"] and judge(ev, GATES)[9]["threshold"] == {"sharpeGain": "> 0.1"}
+    assert not judge(ev, GATES)[9]["passed"]
+    assert judge(ev, GATES)[9]["need"] == "加进交易方案后搜索段 2022-01-01 起净 Sharpe 增量 > 0.1"
     ev["gain"]["recentSharpe"] = {"base": 1.0, "with": 1.2, "gain": 0.2}
     # 阈值抬到 0.3：升 0.2 不够
     g9 = judge(ev, Thresholds(min_samples=30, sharpe_gain_min=0.3))[9]
-    assert not g9["passed"] and g9["threshold"] == {"sharpeGain": "> 0.3"}
+    assert not g9["passed"] and g9["need"].endswith("> 0.3")
 
 
 def test_g6_compares_against_observing_candidates(planted_pool, planted_vol, planted_grid):
@@ -169,7 +170,7 @@ def test_g2_needs_a_clear_top_minus_bottom_and_t(planted):
     # t = ICIR × √月数 不到 3：不过
     main["icir"] = 2.9 / np.sqrt(main["months"])
     g2 = judge(ev, GATES)[2]
-    assert not g2["passed"] and g2["threshold"]["tMin"] == 3.0 and g2["value"]["t"] == pytest.approx(2.9)
+    assert not g2["passed"] and "t ≥ 3；" in g2["need"] and g2["value"]["t"] == pytest.approx(2.9)
 
 
 def test_g3_needs_the_last_segment_in_the_same_direction(planted):
@@ -237,7 +238,7 @@ def test_gates_structural_checks(planted):
     leaky = copy.deepcopy(ev)
     leaky["lookaheadFree"] = False
     g0 = judge(leaky, GATES)[0]
-    assert not g0["passed"] and g0["value"] is False and g0["threshold"] is True
+    assert not g0["passed"] and g0["value"] is False
     dup = copy.deepcopy(ev)
     dup["redundancy"] = {"maxAbs": 0.9, "with": "x", "ready": True}
     assert not judge(dup, GATES)[6]["passed"]

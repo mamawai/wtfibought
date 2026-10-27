@@ -32,7 +32,7 @@ from ..data.pool import month_label, month_of
 from ..dsl import Expr, parse
 from ..eval.params import EvalParams
 from ..store import Store, now_ms
-from . import attrib, executor, live, scheme, targets
+from . import attrib, executor, live, scheme, sizing, targets
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,12 @@ async def tick(app: FastAPI, library: Library, refresh: Refresh, now: int) -> No
 
 def _due(run: Mapping[str, Any] | None) -> bool:
     """今天还没调过，或者调了但一笔单都没成"""
-    return run is None or (run["status"] != "done" and not any(o["ok"] for o in run["orders"]))
+    return run is None or (run["status"] != "done" and not _filled(run["orders"]))
+
+
+def _filled(orders: Sequence[Mapping[str, Any]]) -> bool:
+    """有没有成交的单：调杠杆那几行不算"""
+    return any(o["ok"] for o in orders if o["action"] != "leverage")
 
 
 def account(sim: executor.Sim, user_id: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -138,11 +143,12 @@ async def rebalance(app: FastAPI, library: Library, now: int) -> None:
         board = await board_factors(app, lib)
         held = await store.last_trade_legs() or {}
         setting = await store.carry()
+        scale = await store.sizing()
         listed = {s: int(v) for s, v in zip(data.pool.symbols, data.pool.listed)}
         exprs = [parse(lib.factors[j]["expr"], FEATURE_COLUMNS) for j in cols]
         await asyncio.to_thread(_rebalance, app.state.fapi, app.state.sim, data.pool.store, pool,
                                 universe_table.months_by_symbol(table), exprs, weights, setting["enabled"], setting["share"],
-                                listed, held, app.state.params, now, record, job, board, list(data.products))
+                                scale, listed, held, app.state.params, now, record, job, board, list(data.products))
     except Exception as exc:
         logger.exception("调仓失败")
         record["error"] = str(exc)[:500]
@@ -154,7 +160,8 @@ async def rebalance(app: FastAPI, library: Library, now: int) -> None:
 
 def _rebalance(binance: Binance, sim: executor.Sim, store: PanelStore, pool: Sequence[str],
                months: Mapping[str, frozenset[str]], factors: Sequence[Expr], weights: np.ndarray, carry: bool,
-               carry_share: float, listed: Mapping[str, int], held: Mapping[str, Any], params: EvalParams, now: int,
+               carry_share: float, scale: Mapping[str, Any], listed: Mapping[str, int], held: Mapping[str, Any],
+               params: EvalParams, now: int,
                record: dict[str, Any], job: dict[str, Any], board: Sequence[Mapping[str, Any]],
                products: Sequence[str]) -> None:
     """在线程里跑；做到哪一步就往 record 里记到哪一步，中途出错外面照样落库。下完单再用同一批面板算看板"""
@@ -180,15 +187,18 @@ def _rebalance(binance: Binance, sim: executor.Sim, store: PanelStore, pool: Seq
     balance, positions = account(sim, user_id)
     equity = record["equity_before"] = executor.equity(balance, positions)
     prices = binance.mark_prices()
-    orders, coins = executor.plan({s: c["weight"] for s, c in out["coins"].items()}, positions, prices,
-                                  executor.rules(info), equity, record["day"])
+    net = {s: c["weight"] for s, c in out["coins"].items()}
+    size = sizing.size(net, sim.brackets(sorted(net)) if net else {}, scale["leverage"], scale["margin"], equity)
+    orders, coins = executor.plan(net, positions, prices, executor.rules(info), equity, size.multiple, record["day"])
     for row in coins:
         row.update({k: out["coins"].get(row["symbol"], {}).get(k, 0.0) for k in targets.SIGNS})
+    # sizing 是当天实际下的规模，setting 是页面上的设定
     record["targets"] = {"coins": coins, "signals": {name: leg["coins"] for name, leg in out["legs"].items()},
-                         "notTrading": [s for s in pool if s not in trading], "carry": carry, "carryShare": carry_share}
+                         "notTrading": [s for s in pool if s not in trading], "carry": carry, "carryShare": carry_share,
+                         "sizing": {**size.view(), "setting": {"leverage": scale["leverage"], "margin": scale["margin"]}}}
     # 开始下单才记这一期的多空集合：下一期的缓冲按它算
     record["legs"] = {name: {"long": leg["long"], "short": leg["short"]} for name, leg in out["legs"].items()}
-    executor.execute(sim, user_id, orders, record["orders"])
+    executor.execute(sim, user_id, orders, positions, size.leverage, record["orders"])
     # 00:15 那根的收盘价：回测按它成交，下单时它刚收盘，下完单再拉来对成交价
     refs = live.closes(binance, [row["symbol"] for row in coins], signal_ms + BAR_MS)
     for row in coins:
@@ -225,7 +235,7 @@ def _status(record: Mapping[str, Any]) -> str:
     """出错停在半路的：有成交的算 partial，没有的 failed；跑完的有币失败算 partial"""
     orders = record["orders"]
     if record.get("error"):
-        return "partial" if any(o["ok"] for o in orders) else "failed"
+        return "partial" if _filled(orders) else "failed"
     coins = (record.get("targets") or {}).get("coins", [])
     return "partial" if any(not o["ok"] for o in orders) or any(c["failed"] for c in coins) else "done"
 

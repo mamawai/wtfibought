@@ -4,11 +4,11 @@ import {
   Activity, Check, CircleCheck, CircleX, Eye, PenLine, RotateCcw, TrendingDown, TrendingUp, X, type LucideIcon,
 } from 'lucide-react';
 import type {
-  CampaignStatus, Candidate, CandidateStatus, EvalBrief, GateBrief, HoldoutBrief, HorizonBrief, Review, RunStatus,
+  CampaignStatus, Candidate, CandidateStatus, EvalBrief, GateRow, HoldoutBrief, HorizonBrief, Review, RunStatus,
   TimeseriesBrief,
 } from '../api';
 import { cx, HORIZONS, num, pct, primaryOf, signedPct, utcDay } from '../format';
-import { Badge, type Tone } from './ui';
+import { Badge, Tip, type Tone } from './ui';
 
 const STATUS: Record<CandidateStatus, { tone: Tone; icon: LucideIcon }> = {
   proposed: { tone: 'info', icon: Activity },
@@ -47,13 +47,15 @@ export function CampaignBadge({ status }: { status: CampaignStatus }) {
   return <Badge tone={CAMPAIGN_TONE[status]} pulse={status === 'running' || status === 'stopping'}>{t(`campaignStatus.${status}`)}</Badge>;
 }
 
-/** count 给了就在状态后面带条数（公开概览用） */
+/** count 给了就在状态后面带条数（公开概览用）；指上去说这个状态是什么 */
 export function StatusBadge({ status, count }: { status: CandidateStatus; count?: number }) {
   const { t } = useTranslation();
   return (
-    <Badge tone={STATUS[status].tone} icon={STATUS[status].icon} pulse={count == null && IN_FLIGHT.has(status)}>
-      {t(`status.${status}`)}{count != null && <span className="num">{count}</span>}
-    </Badge>
+    <Tip text={t(`statusTip.${status}`)}>
+      <Badge tone={STATUS[status].tone} icon={STATUS[status].icon} pulse={count == null && IN_FLIGHT.has(status)}>
+        {t(`status.${status}`)}{count != null && <span className="num">{count}</span>}
+      </Badge>
+    </Tip>
   );
 }
 
@@ -102,17 +104,22 @@ export function DirectionLine({ direction, asked }: { direction: 1 | -1; asked?:
   );
 }
 
-/** 每门一行：过没过 + 门名 + 一句带数字的原因 */
-export function GateList({ gates }: { gates: (GateBrief & { name?: string | null })[] }) {
+/** 每门一行：过没过 + 门名 + 一句带数字的原因，底下一行要求；标题旁写明没过的是哪几道 */
+export function GateList({ gates }: { gates: GateRow[] }) {
   const { t } = useTranslation();
-  const passed = gates.filter(g => g.passed).length;
+  const failed = gates.filter(g => !g.passed);
   return (
     <div className="space-y-2">
-      <div className="flex items-baseline gap-2">
+      <div className="flex flex-wrap items-baseline gap-x-2">
         <span className="microlabel">{t('gates.title')}</span>
-        <span className={cx('text-[12.5px] font-bold num', passed === gates.length ? 'text-gain' : 'text-loss')}>
-          {passed}/{gates.length}
+        <span className={cx('text-[12.5px] font-bold num', failed.length ? 'text-loss' : 'text-gain')}>
+          {gates.length - failed.length}/{gates.length}
         </span>
+        {failed.length > 0 && (
+          <span className="text-[12.5px] text-loss">
+            {t('gates.failed', { list: failed.map(g => `${g.id}${g.name ? ` ${g.name}` : ''}`).join('、') })}
+          </span>
+        )}
       </div>
       <ul className="border-t border-fg">
         {gates.map(g => (
@@ -122,12 +129,21 @@ export function GateList({ gates }: { gates: (GateBrief & { name?: string | null
               : <X className="w-3 h-3 shrink-0 mt-[4px] text-loss" />}
             <span className="num font-mono font-bold shrink-0 w-7 text-[12px]">{g.id}</span>
             {g.name && <span className="text-muted shrink-0">{g.name}</span>}
-            <span className={cx('min-w-0 break-words', g.passed ? 'text-muted' : 'text-fg')}>{g.note}</span>
+            <span className="min-w-0 break-words">
+              <span className={g.passed ? 'text-muted' : 'text-fg'}>{g.note}</span>
+              {g.need && <span className="block text-[12px] text-muted">{t('gates.need')}：{g.need}</span>}
+            </span>
           </li>
         ))}
       </ul>
     </div>
   );
+}
+
+/** 指标名后面一个问号，指上去说它是什么 */
+function Metric({ k, from }: { k: string; from?: string }) {
+  const { t } = useTranslation();
+  return <>{t(`brief.${k}`, { from })}<Tip text={t(`briefTip.${k}`, { from })} /></>;
 }
 
 /** 四段 IC，两行两列按时间先后排；与总体反号的段标黄（G3 数的就是同号段） */
@@ -182,7 +198,7 @@ function HorizonHead({ label, primary }: { label: ReactNode; primary: string }) 
         <th>{label}</th>
         {HORIZONS.map(h => (
           <th key={h} className={cx('r', h === primary && 'text-primary')}>
-            {h}{h === primary && <span className="ml-1 font-normal">{t('brief.primary')}</span>}
+            {h}{h === primary && <span className="ml-1 font-normal">{t('brief.primary')}<Tip text={t('briefTip.primary')} /></span>}
           </th>
         ))}
       </tr>
@@ -209,11 +225,12 @@ export function HoldoutTable({ holdout, primary, titleKey = 'brief.holdout' }: {
   ];
   return (
     <table className="tbl">
-      <HorizonHead label={t(titleKey, { from: utcDay(holdout.since) })} primary={primary} />
+      <HorizonHead label={<>{t(titleKey, { from: utcDay(holdout.since) })}<Tip text={t(titleKey.replace('brief.', 'briefTip.'))} /></>}
+                   primary={primary} />
       <tbody>
         {rows.map(r => (
           <tr key={r.key}>
-            <td className="text-muted">{t(`brief.${r.key}`)}</td>
+            <td className="text-muted"><Metric k={r.key} /></td>
             {HORIZONS.map(h => <td key={h} className={primaryCell(h, primary)}>{holdout.horizons[h] ? r.get(holdout.horizons[h]) : '—'}</td>)}
           </tr>
         ))}
@@ -234,7 +251,7 @@ function TimeseriesTable({ ts, primary }: { ts: TimeseriesBrief; primary: string
   return (
     <div className="space-y-2">
       <table className="tbl">
-        <HorizonHead label={t('brief.timeseries')} primary={primary} />
+        <HorizonHead label={<>{t('brief.timeseries')}<Tip text={t('briefTip.timeseries')} /></>} primary={primary} />
         <tbody>
           {rows.map(r => (
             <tr key={r.key}>
@@ -267,7 +284,7 @@ export function BriefTable({ brief }: { brief: BriefLike }) {
   // 交易方案净 Sharpe 那一行：主档写加进去前 → 后，别的档是 —
   const sharpeRow = (label: string, g: { base: number | null; with: number | null }) => (
     <tr key={label}>
-      <td className="text-muted whitespace-nowrap">{label}</td>
+      <td className="text-muted whitespace-nowrap">{label}<Tip text={t('briefTip.gainSharpe')} /></td>
       {HORIZONS.map(h => (
         <td key={h} className={primaryCell(h, primary)}>{h === primary ? `${num(g.base, 2)} → ${num(g.with, 2)}` : '—'}</td>
       ))}
@@ -281,13 +298,13 @@ export function BriefTable({ brief }: { brief: BriefLike }) {
           <tbody>
             {rows.map(r => (
               <tr key={r.key}>
-                <td className="text-muted whitespace-nowrap">{t(`brief.${r.key}`, { from })}</td>
+                <td className="text-muted whitespace-nowrap"><Metric k={r.key} from={from} /></td>
                 {HORIZONS.map(h => <td key={h} className={primaryCell(h, primary)}>{brief.horizons[h] ? r.get(brief.horizons[h]) : '—'}</td>)}
               </tr>
             ))}
             {gain && (
               <tr>
-                <td className="text-muted whitespace-nowrap">{t('brief.gain')}</td>
+                <td className="text-muted whitespace-nowrap"><Metric k="gain" /></td>
                 {HORIZONS.map(h => <td key={h} className={primaryCell(h, primary)}>{num(gain[h])}</td>)}
               </tr>
             )}
@@ -298,7 +315,7 @@ export function BriefTable({ brief }: { brief: BriefLike }) {
       </div>
       {redundancy && complexity && (
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[12.5px]">
-          <dt className="text-muted">{t('brief.redundancy')}</dt>
+          <dt className="text-muted"><Metric k="redundancy" /></dt>
           <dd className={cx('num break-all', !redundancy.ready && 'text-warn')}>
             {!redundancy.ready ? t('brief.gridNotReady')
               : redundancy.with ? t('brief.redundancyValue', { name: redundancy.with, r: num(redundancy.maxAbs, 3) })
@@ -306,7 +323,7 @@ export function BriefTable({ brief }: { brief: BriefLike }) {
           </dd>
           {neutral && (
             <>
-              <dt className="text-muted">{t('brief.neutral')}</dt>
+              <dt className="text-muted"><Metric k="neutral" /></dt>
               <dd className="num">
                 {t('brief.neutralValue', {
                   n: neutral.against, ic: num(neutral.meanIc), kept: pct(neutral.retained, 0), t: num(neutral.t, 1),
@@ -314,7 +331,7 @@ export function BriefTable({ brief }: { brief: BriefLike }) {
               </dd>
             </>
           )}
-          <dt className="text-muted">{t('brief.complexity')}</dt>
+          <dt className="text-muted"><Metric k="complexity" /></dt>
           <dd className="num">{t('brief.complexityValue', complexity)}</dd>
         </dl>
       )}
@@ -337,7 +354,7 @@ export function FactorCard({ title, badges, meta, hypothesis, expr, note, direct
   direction?: 1 | -1 | null;
   reason?: string | null;
   review?: Review | null;
-  gates?: (GateBrief & { name?: string | null })[];
+  gates?: GateRow[];
   brief?: BriefLike;
   highlight?: boolean;
   children?: ReactNode;

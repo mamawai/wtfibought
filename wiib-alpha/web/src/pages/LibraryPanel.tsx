@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Archive, ArchiveRestore, RefreshCw, ScanSearch } from 'lucide-react';
 import { alpha, type ComboReport, type Factor, type FactorDetail, type Recheck, type ReevalJob } from '../api';
+import { useBusy } from '../busy';
 import { cx, HORIZON_BARS, HORIZONS, localTime, num, pct, primaryOf, utcMinute } from '../format';
 import { usePoll } from '../poll';
 import { useSort } from '../sort';
 import { useFail } from '../toast';
 import { BriefTable, ExprBlock, GateList, ReviewLine } from '../components/FactorCard';
-import { Badge, Button, Card, Drawer, Empty, RawJson, SortTh, Spinner } from '../components/ui';
+import { Badge, Button, Card, Drawer, Empty, RawJson, SortTh, Spinner, Tip, Waiting } from '../components/ui';
 import { ReevalBlock, ReevalProgress } from './ObservationPanel';
 
 type FactorKey = 'name' | 'approvedAt' | 'ic' | 'icir' | 'holdout' | 'recheck' | 'reeval';
@@ -34,6 +35,7 @@ const FACTOR_VALUES: Record<FactorKey, (f: Factor) => string | number | null | u
 export function LibraryPanel({ active, loaded }: { active: boolean; loaded: boolean }) {
   const { t } = useTranslation();
   const fail = useFail();
+  const blocked = useBusy(active);
   const [factors, setFactors] = useState<Factor[] | null>(null);
   const [retired, setRetired] = useState<Factor[]>([]);
   const [combo, setCombo] = useState<ComboReport | null>(null);
@@ -107,17 +109,20 @@ export function LibraryPanel({ active, loaded }: { active: boolean; loaded: bool
                                 : t('library.comboNone')}</Empty></Card>
       )}
 
-      <Card title={t('library.title')}
+      <Card title={t('library.title')} hint={t('library.hint')}
             actions={<Button variant="icon" icon={RefreshCw} aria-label={t('common.refresh')} onClick={() => void load()} />}>
         {!factors ? <Spinner /> : factors.length === 0 ? <Empty>{t('library.empty')}</Empty> : (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-3">
-              <p className="max-w-[90ch] text-[12.5px] leading-relaxed text-muted">{t('library.reevalHint')}</p>
-              <Button icon={ScanSearch} loading={starting || running} disabled={!loaded}
+              <p className="max-w-[90ch] text-[12.5px] leading-relaxed text-muted">
+                {t('library.reevalHint')}<Tip text={t('library.reevalTip')} />
+              </p>
+              <Button icon={ScanSearch} loading={starting || running} disabled={!!blocked?.libraryReeval}
                       onClick={() => void reeval()} className="ml-auto">
                 {running ? t('library.reevalRunning') : t('library.reeval')}
               </Button>
             </div>
+            {!running && <Waiting why={blocked?.libraryReeval} />}
             {job && <ReevalProgress job={job} />}
             <div className="tw">
               <table className="tbl">
@@ -190,17 +195,18 @@ export function LibraryPanel({ active, loaded }: { active: boolean; loaded: bool
                   </div>
                 : <Spinner />}>
         {detail && (
-          <FactorDetailView f={detail} loaded={loaded} rechecking={rechecking} onRecheck={() => void recheck(detail.id)}
-                            onChanged={() => changed(detail.id)} />
+          <FactorDetailView f={detail} blocked={blocked?.recheck} rechecking={rechecking}
+                            onRecheck={() => void recheck(detail.id)} onChanged={() => changed(detail.id)} />
         )}
       </Drawer>
     </div>
   );
 }
 
-function FactorDetailView({ f, loaded, rechecking, onRecheck, onChanged }: {
+/** blocked 是重算入库后表现被挡住的原因 */
+function FactorDetailView({ f, blocked, rechecking, onRecheck, onChanged }: {
   f: FactorDetail;
-  loaded: boolean;
+  blocked: string | null | undefined;
   rechecking: boolean;
   onRecheck: () => void;
   onChanged: () => Promise<void>;
@@ -211,7 +217,7 @@ function FactorDetailView({ f, loaded, rechecking, onRecheck, onChanged }: {
       <ExprBlock expr={f.expr} />
       <dl className="grid gap-x-6 gap-y-3 text-[12.5px] sm:grid-cols-2">
         <div className="sm:col-span-2">
-          <dt className="text-muted">{t('library.canonical')}</dt>
+          <dt className="text-muted">{t('library.canonical')}<Tip text={t('library.canonicalTip')} /></dt>
           <dd><code className="break-all">{f.canonical}</code></dd>
         </div>
         <div>
@@ -235,11 +241,11 @@ function FactorDetailView({ f, loaded, rechecking, onRecheck, onChanged }: {
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[14px] font-extrabold">{t('library.recheck')}</span>
           <span className="text-[12.5px] text-muted">{t('library.recheckHint')}</span>
-          <Button icon={RefreshCw} loading={rechecking} disabled={!loaded} onClick={onRecheck} className="ml-auto">
+          <Button icon={RefreshCw} loading={rechecking} disabled={!!blocked} onClick={onRecheck} className="ml-auto">
             {t('library.recheckRun')}
           </Button>
         </div>
-        {!loaded && <p className="text-[12px] text-warn">{t('common.needData')}</p>}
+        <Waiting why={blocked} />
         {f.recheck ? <RecheckView recheck={f.recheck} primary={primaryOf(f.brief)} /> : <Empty>{t('library.recheckNone')}</Empty>}
       </section>
       <RetireSection f={f} onChanged={onChanged} />
@@ -355,7 +361,7 @@ function ComboCard({ combo }: { combo: ComboReport }) {
     [combo.latest]);
   const maxLatest = Math.max(0, ...latest.map(([, v]) => Math.abs(v ?? 0)));
   return (
-    <Card title={t('library.combo', { n: combo.weights.length })} hint={t('library.comboHint')}>
+    <Card title={t('library.combo', { n: combo.weights.length })} hint={t('library.comboHint')} more={t('library.comboMore')}>
       <div className="grid gap-x-10 gap-y-8 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <BriefTable brief={combo.brief} />
         <div className="space-y-6">

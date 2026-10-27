@@ -1,10 +1,11 @@
 """按腿归因：一个调仓日结束（下一次调仓前的净值有了）后，把这一天拆成组合腿、carry 腿各赚亏多少，和回测口径的"应得"对一对。
 
-每币两条腿的目标权重（trade_run.targets_json 里的 combo、carry，已乘份额）乘调仓前净值是名义。
+每币两条腿的目标权重（trade_run.targets_json 里的 combo、carry，已乘份额）乘调仓前净值、再乘那天的名义倍数是名义。
 回测口径和 scheme.run 一样：00:15 那根收盘成交，持有到下一次调仓的 00:15 收盘；持有期内实际结算的资金费多头付、空头收；
 换仓按 |Δw| 付当月成交额档的单边成本（5 / 8 / 12 bps）。应得 = 两腿价格盈亏 + 资金费 − 成本。
 实际 = 下一次调仓前净值 − 这一次的；差额是执行偏差：成交价对收盘价、sim 手续费对回测成本、碎单、两腿合并下单省掉的成本。
-每条腿的日收益按自己那份资金算（net ÷ 份额 ÷ 净值），前向累计回撤对止损线（STOP）。
+每条腿的日收益按自己那份资金、折成 1 倍名义算（net ÷ 份额 ÷ 净值 ÷ 名义倍数），前向累计回撤对止损线（STOP）：
+止损线是按 1 倍名义的回测定的，杠杆、保证金比例调了也照样能比。
 """
 
 from __future__ import annotations
@@ -25,6 +26,11 @@ logger = logging.getLogger(__name__)
 LEGS = ("combo", "carry")
 # 止损线：前向累计回撤超过它就停这条腿。组合腿是剔新币前搜索段整套方案的最大回撤，carry 腿是剔新币前只跑 carry 的回撤
 STOP = {"combo": 0.228, "carry": 0.37}
+
+
+def multiple(targets: Mapping[str, Any]) -> float:
+    """那天的名义倍数（trade/sizing.py）；有仓位规模之前的记录没有，按 1"""
+    return targets.get("sizing", {}).get("multiple", 1.0)
 
 
 def held(targets: Mapping[str, Any]) -> dict[str, dict[str, float]]:
@@ -71,6 +77,7 @@ def attribute(run: Mapping[str, Any], next_run: Mapping[str, Any], prev_targets:
     closes 里没有的币算不了价格和资金费（记进 missing），换仓成本照算"""
     equity = run["equity_before"]
     now_w, prev_w = held(run["targets"]), held(prev_targets) if prev_targets else {}
+    now_k, prev_k = multiple(run["targets"]), multiple(prev_targets) if prev_targets else 1.0
     legs = {leg: {"price": 0.0, "funding": 0.0, "cost": 0.0} for leg in LEGS}
     coins, missing = [], []
     for s, w in now_w.items():
@@ -81,7 +88,7 @@ def attribute(run: Mapping[str, Any], next_run: Mapping[str, Any], prev_targets:
         ret, fund = b / a - 1, funding[s]
         row: dict[str, Any] = {"symbol": s, **w, "entry": a, "exit": b, "ret": ret, "fund": fund, "legs": {}}
         for leg in LEGS:
-            price, fee = w[leg] * equity * ret, -w[leg] * equity * fund
+            price, fee = w[leg] * now_k * equity * ret, -w[leg] * now_k * equity * fund
             legs[leg]["price"] += price
             legs[leg]["funding"] += fee
             row["legs"][leg] = price + fee
@@ -90,13 +97,14 @@ def attribute(run: Mapping[str, Any], next_run: Mapping[str, Any], prev_targets:
         # 两个月都不在池的币按最贵的档
         unit = params.costs[tiers_.get(s, 3) - 1]
         for leg in LEGS:
-            legs[leg]["cost"] += abs(now_w.get(s, {}).get(leg, 0.0) - prev_w.get(s, {}).get(leg, 0.0)) * unit * equity
+            change = now_w.get(s, {}).get(leg, 0.0) * now_k - prev_w.get(s, {}).get(leg, 0.0) * prev_k
+            legs[leg]["cost"] += abs(change) * unit * equity
     # 老记录没记份额，按当时定死的 1/4；份额 0 的腿没有资金，收益率记 0
     carry_share = run["targets"].get("carryShare", CARRY_SHARE)
     shares = {"combo": 1 - carry_share, "carry": carry_share}
     for leg, x in legs.items():
         x["net"] = x["price"] + x["funding"] - x["cost"]
-        x["ret"] = x["net"] / (equity * shares[leg]) if shares[leg] else 0.0
+        x["ret"] = x["net"] / (equity * shares[leg] * now_k) if shares[leg] else 0.0
     model = sum(x["net"] for x in legs.values())
     actual = next_run["equity_before"] - equity
     return {"until": next_run["day"], "actual": actual, "model": model, "residual": actual - model, "legs": legs,

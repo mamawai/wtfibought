@@ -2,12 +2,13 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, ChevronDown, Play, Search, TriangleAlert, X } from 'lucide-react';
 import { alpha, type ReferenceItem, type ReferenceList } from '../api';
+import { useBusy } from '../busy';
 import { cx, localTime, num, primaryOf } from '../format';
 import { usePoll } from '../poll';
 import { useSort } from '../sort';
 import { useFail } from '../toast';
 import { BriefTable, GateList } from '../components/FactorCard';
-import { Button, Card, Empty, Progress, SortTh, Spinner } from '../components/ui';
+import { Button, Card, Empty, Progress, SortTh, Spinner, Waiting } from '../components/ui';
 
 /** Alpha158 改写用的窗口（reference.ALPHA158_WINDOWS），单位 15m bar */
 const WINDOWS: [number, string][] = [[4, '1h'], [16, '4h'], [48, '12h'], [96, '24h'], [192, '48h']];
@@ -27,9 +28,10 @@ const REF_VALUES: Record<RefKey, (r: ReferenceItem) => string | number | null | 
   updatedAt: r => r.updatedAt,
 };
 
-export function ReferencePanel({ active, admin, loaded }: { active: boolean; admin: boolean; loaded: boolean }) {
+export function ReferencePanel({ active, admin }: { active: boolean; admin: boolean }) {
   const { t } = useTranslation();
   const fail = useFail();
+  const blocked = useBusy(active && admin);
   const [list, setList] = useState<ReferenceList | null>(null);
   const [windows, setWindows] = useState<number[]>([]);
   const [starting, setStarting] = useState(false);
@@ -88,13 +90,13 @@ export function ReferencePanel({ active, admin, loaded }: { active: boolean; adm
                   {label}<span className="ml-1 opacity-60">({w})</span>
                 </button>
               ))}
-              <Button variant="primary" icon={Play} loading={starting || running} disabled={!loaded}
+              <Button variant="primary" icon={Play} loading={starting || running} disabled={!!blocked?.reference}
                       onClick={() => void start()} className="ml-auto">
                 {running ? t('reference.running') : t('reference.run')}
               </Button>
             </div>
             <p className="mt-2 text-[12px] text-muted">{t('reference.windowsHint')}</p>
-            {!loaded && <p className="mt-1 text-[12px] text-warn">{t('common.needData')}</p>}
+            {!running && <Waiting why={blocked?.reference} className="mt-1" />}
           </>
         )}
         {job.startedAt && (
@@ -172,7 +174,7 @@ export function ReferencePanel({ active, admin, loaded }: { active: boolean; adm
                           <tr>
                             <td colSpan={8} className="expand">
                               <div className="grid gap-x-8 gap-y-5 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
-                                <GateList gates={item.brief.gates} />
+                                <GateList gates={item.gates} />
                                 <BriefTable brief={item.brief} />
                               </div>
                             </td>

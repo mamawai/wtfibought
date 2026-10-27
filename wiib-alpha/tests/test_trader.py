@@ -216,6 +216,54 @@ async def test_carry_leg_can_be_switched_off_and_its_share_stays_idle(client, tr
     assert data(await client.get("/api/alpha/trader/factors", headers=ADMIN))["carry"]["enabled"] is False
 
 
+async def test_sizing_scales_the_notional_and_moves_held_coins_to_the_new_leverage(client, trader):
+    fake, market = trader
+    store = m.app.state.store
+    # 没改过是 4 倍、保证金一半（名义和回测一样）；还没出过目标就没有预览
+    assert data(await client.get("/api/alpha/trader/sizing", headers=ADMIN)) == {
+        "leverage": 4, "margin": 0.5, "changedAt": None, "maxMargin": 0.95, "preview": None, "previewError": None}
+    assert (await client.put("/api/alpha/trader/sizing", json={"leverage": 8, "margin": 0.5},
+                             headers={"satoken": "user"})).status_code == 403
+    assert (await client.put("/api/alpha/trader/sizing", json={"leverage": 8, "margin": 0.96},
+                             headers=ADMIN)).status_code == 422
+    saved = data(await client.put("/api/alpha/trader/sizing", json={"leverage": 8, "margin": 0.5}, headers=ADMIN))
+    assert (saved["leverage"], saved["margin"]) == (8, 0.5) and saved["changedAt"] is not None
+    await scheduler.rebalance(m.app, m._library, NOW)
+    run = await store.trade_run("2025-03-01")
+    assert run["status"] == "done", run["error"]
+    # 8 倍、保证金一半：名义是回测的 2 倍；权重还是 1 倍名义的
+    sized = run["targets"]["sizing"]
+    assert (sized["leverage"], sized["multiple"], sized["caps"]["bracket"]) == (8, 2.0, 10)
+    assert sized["setting"] == {"leverage": 8, "margin": 0.5}
+    coins = {c["symbol"]: c for c in run["targets"]["coins"]}
+    assert market.calls and all(a == "open" and body["leverage"] == 8 for a, body in market.calls)
+    for _, body in market.calls:
+        c = coins[body["symbol"]]
+        assert c["weight"] == pytest.approx(c["combo"] + c["carry"]) and c["notional"] == pytest.approx(2 * c["weight"] * 10000)
+        assert 0 <= 2 * abs(c["weight"]) * 10000 / c["price"] - body["quantity"] < 0.001
+    # 实时数里两条腿的目标名义也是 2 倍；预览按这次的篮子和净值算
+    for p in (await first_frame())["positions"]:
+        c = coins[p["symbol"]]
+        assert p["legs"] == {"combo": pytest.approx(2 * c["combo"] * 10000), "carry": pytest.approx(2 * c["carry"] * 10000)}
+    preview = data(await client.get("/api/alpha/trader/sizing", headers=ADMIN))["preview"]
+    assert preview == {**{k: sized[k] for k in ("leverage", "margin", "multiple", "caps")}, "day": "2025-03-01"}
+
+    # 第二天设 20 倍：表外的币最高 10 倍，按 10 倍下；还拿着的币先调到 10 倍再加仓
+    await client.put("/api/alpha/trader/sizing", json={"leverage": 20, "margin": 0.5}, headers=ADMIN)
+    fake.now += DAY_MS
+    await scheduler.rebalance(m.app, m._library, NOW + DAY_MS)
+    second = await store.trade_run("2025-03-02")
+    assert second["status"] == "done", second["error"]
+    assert (second["targets"]["sizing"]["leverage"], second["targets"]["sizing"]["multiple"]) == (10, 2.5)
+    assert any(o["action"] == "leverage" for o in second["orders"]) and all(o["ok"] for o in second["orders"])
+    assert {p["leverage"] for p in market.positions.values()} == {10}
+    # sim 连不上：设定照样存，预览换成问档位失败的原因
+    m.app.state.sim = executor.Sim("http://sim", "tok", httpx.Client(transport=httpx.MockTransport(
+        lambda r: (_ for _ in ()).throw(httpx.ConnectError("连不上")))))
+    down = data(await client.put("/api/alpha/trader/sizing", json={"leverage": 6, "margin": 0.5}, headers=ADMIN))
+    assert (down["leverage"], down["preview"]) == (6, None) and "没有回应" in down["previewError"]
+
+
 async def test_a_month_missing_from_the_pool_table_fails_the_day_without_trading(client, trader):
     fake, market = trader
     # 4 月底：池子表只到 3 月
@@ -241,8 +289,9 @@ async def test_tick_rebalances_between_0005_and_0100_and_records_equity_every_ho
     store = m.app.state.store
     ran: list[int] = []
     # 每次调仓的结局：状态和下出去的单
-    outcomes = [("failed", []), ("done", [{"ok": True}]), ("partial", [{"ok": False}]),
-                ("partial", [{"ok": True}, {"ok": False}])]
+    outcomes = [("failed", []), ("done", [{"action": "open", "ok": True}]),
+                ("partial", [{"action": "leverage", "ok": True}, {"action": "open", "ok": False}]),
+                ("partial", [{"action": "open", "ok": True}, {"action": "open", "ok": False}])]
 
     async def rebalance(app, library, now):
         ran.append(now)
@@ -263,7 +312,7 @@ async def test_tick_rebalances_between_0005_and_0100_and_records_equity_every_ho
     await scheduler.tick(m.app, m._library, m._start_refresh, t0 + 60_000)
     await scheduler.tick(m.app, m._library, m._start_refresh, t0 + 120_000)
     assert ran == [t0, t0 + 60_000]
-    # 下了单但一笔都没成：下一分钟再来；成了一笔的当天不重跑
+    # 下了单但一笔都没成（只调成了杠杆不算）：下一分钟再来；成了一笔的当天不重跑
     day2 = t0 + DAY_MS
     await scheduler.tick(m.app, m._library, m._start_refresh, day2)
     await scheduler.tick(m.app, m._library, m._start_refresh, day2 + 60_000)

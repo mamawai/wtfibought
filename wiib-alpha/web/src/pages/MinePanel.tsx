@@ -7,12 +7,14 @@ import {
   alpha, type Campaign, type CampaignDetail, type Candidate, type LessonKind, type Run, type RunEvent, type RunRow,
   type Stage,
 } from '../api';
+import { useBusy } from '../busy';
 import { cx, localTime } from '../format';
 import { usePoll } from '../poll';
 import { useFail, useToast } from '../toast';
 import { CampaignBadge, CandidateCard, RunBadge } from '../components/FactorCard';
 import { ModelSettings } from '../components/ModelSettings';
-import { Badge, Button, Card, Empty, Progress, Spinner } from '../components/ui';
+import { PolicySettings } from '../components/PolicySettings';
+import { Badge, Button, Card, Empty, Progress, Spinner, Tip, Waiting } from '../components/ui';
 import { OverviewStats, StatusCountBadges } from './Overview';
 
 /** 当前看的那一轮：刷新页接着看，关标签页就算了 */
@@ -44,9 +46,10 @@ const live = (c: Campaign) => c.status === 'running' || c.status === 'stopping';
 const optionalInt = (v: string) => (v.trim() ? Math.max(1, Math.round(Number(v)) || 1) : null);
 
 /** 管理员的挖掘页：开始 campaign、进行中的进度与停止、campaign 与轮次、经验、事件流与候选 */
-export function MinePanel({ active, loaded }: { active: boolean; loaded: boolean }) {
+export function MinePanel({ active }: { active: boolean }) {
   const { t } = useTranslation();
   const fail = useFail();
+  const blocked = useBusy(active);
 
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -240,11 +243,12 @@ export function MinePanel({ active, loaded }: { active: boolean; loaded: boolean
       <div className="lg:col-span-2"><OverviewStats {...stats} /></div>
       <div className="space-y-14">
         <ModelSettings onReady={setModelsReady} />
+        <PolicySettings blocked={blocked?.policy} />
 
         {running
           ? <LiveCampaign campaign={liveNow?.campaign ?? running}
                           runs={groups.get(running.id) ?? []} openId={run?.id} onOpen={openRun} onStopped={loadLive} />
-          : <StartCampaign ready={loaded && modelsReady} loaded={loaded} onStarted={started} />}
+          : <StartCampaign modelsReady={modelsReady} blocked={blocked?.campaign} onStarted={started} />}
 
         <Card title={t('campaign.list')}
               actions={<Button variant="icon" icon={RefreshCw} aria-label={t('common.refresh')} onClick={() => void loadLists()} />}>
@@ -296,7 +300,7 @@ export function MinePanel({ active, loaded }: { active: boolean; loaded: boolean
                   <Button icon={RefreshCw} onClick={reconnect}>{t('detail.reconnect')}</Button>
                 )}
                 <span className="ml-auto text-[12px] text-muted num">
-                  {localTime(run.created_at)} · K={run.k}
+                  {localTime(run.created_at)} · {t('run.kValue', { k: run.k })}
                 </span>
               </div>
               {run.note && <p className="mt-2.5 text-[13px] text-muted">{t('run.col.note')}：{run.note}</p>}
@@ -315,8 +319,12 @@ export function MinePanel({ active, loaded }: { active: boolean; loaded: boolean
   );
 }
 
-/** 没有在跑的 campaign：轮数、每轮条数、方向，可选幸存者上限与时长 */
-function StartCampaign({ ready, loaded, onStarted }: { ready: boolean; loaded: boolean; onStarted: (runId: string) => void }) {
+/** 没有在跑的 campaign：轮数、每轮条数、本次重点，可选幸存者上限与时长；blocked 是现在开不了的原因 */
+function StartCampaign({ modelsReady, blocked, onStarted }: {
+  modelsReady: boolean;
+  blocked: string | null | undefined;
+  onStarted: (runId: string) => void;
+}) {
   const { t } = useTranslation();
   const toast = useToast();
   const fail = useFail();
@@ -362,7 +370,9 @@ function StartCampaign({ ready, loaded, onStarted }: { ready: boolean; loaded: b
             {intInput(k, setK, MAX_K)}
           </label>
           <label className="space-y-1.5">
-            <span className="block text-[12px] font-semibold text-muted">{t('campaign.maxSurvivors')}</span>
+            <span className="block text-[12px] font-semibold text-muted">
+              {t('campaign.maxSurvivors')}<Tip text={t('campaign.survivorsTip')} />
+            </span>
             <input type="number" min={1} value={maxSurvivors} onChange={e => setMaxSurvivors(e.target.value)}
                    placeholder={t('campaign.unlimited')} className="input w-full num" />
           </label>
@@ -377,12 +387,12 @@ function StartCampaign({ ready, loaded, onStarted }: { ready: boolean; loaded: b
           <input value={note} onChange={e => setNote(e.target.value)} placeholder={t('campaign.notePh')}
                  className="input w-full" />
         </label>
-        <Button variant="primary" icon={Play} loading={creating} disabled={!ready} onClick={() => void start()}
-                className="w-full">
+        <Button variant="primary" icon={Play} loading={creating} disabled={!modelsReady || !!blocked}
+                onClick={() => void start()} className="w-full">
           {t('campaign.start')}
         </Button>
-        {!loaded && <p className="text-[12px] text-warn">{t('common.needData')}</p>}
-        {loaded && !ready && <p className="text-[12px] text-warn">{t('models.needBoth')}</p>}
+        <Waiting why={blocked} />
+        {!modelsReady && <p className="text-[12px] text-warn">{t('models.needBoth')}</p>}
       </div>
     </Card>
   );
@@ -428,7 +438,7 @@ function LiveCampaign({ campaign: c, runs, openId, onOpen, onStopped }: {
           )}
         </div>
         <Progress done={c.done_rounds} total={c.rounds} />
-        <p className="text-[12px] text-muted num">K={c.k}{c.note && ` · ${c.note}`}</p>
+        <p className="text-[12px] text-muted num">{t('run.kValue', { k: c.k })}{c.note && ` · ${c.note}`}</p>
         <RoundList runs={runs} openId={openId} onOpen={onOpen} />
         {c.status === 'stopping'
           ? <p className="text-[12px] text-warn">{t('campaign.stopping')}</p>

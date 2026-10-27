@@ -19,15 +19,16 @@ import { ReferencePanel } from './pages/ReferencePanel';
 import { EvalPanel } from './pages/EvalPanel';
 import { TraderPanel } from './pages/TraderPanel';
 
+// 交易员是首页，放第一个；其余按流程排：数据 → 挖掘 → 观察区 → 因子库 → 看板，工具放最后
 const TABS = [
+  { id: 'trader', icon: Bot },
   { id: 'data', icon: Database },
   { id: 'mine', icon: Pickaxe },
-  { id: 'board', icon: LayoutGrid },
   { id: 'observe', icon: Eye },
   { id: 'library', icon: Library },
+  { id: 'board', icon: LayoutGrid },
   { id: 'reference', icon: Ruler },
   { id: 'eval', icon: SquareFunction },
-  { id: 'trader', icon: Bot },
 ] as const;
 
 type Tab = (typeof TABS)[number]['id'];
@@ -35,8 +36,8 @@ type Tab = (typeof TABS)[number]['id'];
 /** 只给管理员的分区，访客连 tab 都不显示 */
 const ADMIN_TABS = new Set<Tab>(['observe', 'library', 'eval']);
 
-/** 当前分区记在地址的 # 上，刷新页还在原处 */
-const tabFromHash = (): Tab => TABS.find(t => `#${t.id}` === location.hash)?.id ?? 'mine';
+/** 当前分区记在地址的 # 上，刷新页还在原处；没带 # 是首页（交易员） */
+const tabFromHash = (): Tab => TABS.find(t => `#${t.id}` === location.hash)?.id ?? 'trader';
 
 export function App() {
   const { t } = useTranslation();
@@ -54,8 +55,8 @@ export function App() {
   const [down, setDown] = useState<string | null>(null);
   const connected = useRef(false);
   const [tab, setTab] = useState<Tab>(tabFromHash);
-  // 访客停在只给管理员的分区上（带着 #library 刷新、中途退回只读）就看挖掘；/me 认了管理员再回到原分区
-  const shown: Tab = admin || !ADMIN_TABS.has(tab) ? tab : 'mine';
+  // 访客停在只给管理员的分区上（带着 #library 刷新、中途退回只读）就看首页；/me 认了管理员再回到原分区
+  const shown: Tab = admin || !ADMIN_TABS.has(tab) ? tab : 'trader';
 
   // 启动时看手里的 token：401 当失效清掉，403 是主站的普通用户，静默留在只读，别打扰读者
   useEffect(() => {
@@ -114,12 +115,14 @@ export function App() {
                 观察区、因子库、手填评估只有管理员才挂 */}
             <main className="wrap flex-1">
               <div className="page-h"><h1>{t('title')}</h1></div>
-              <div hidden={shown !== 'data'}><DataPanel status={status} admin={admin} onReload={loadStatus} /></div>
-              <div hidden={shown !== 'mine'}>
-                {admin ? <MinePanel active={shown === 'mine'} loaded={status.loaded} /> : <GuestMine active={shown === 'mine'} />}
+              <div hidden={shown !== 'trader'}>
+                <TraderPanel key={String(admin)} active={shown === 'trader'} admin={admin} />
               </div>
-              <div hidden={shown !== 'board'}>
-                <BoardPanel key={String(admin)} active={shown === 'board'} admin={admin} />
+              <div hidden={shown !== 'data'}>
+                <DataPanel status={status} active={shown === 'data'} admin={admin} onReload={loadStatus} />
+              </div>
+              <div hidden={shown !== 'mine'}>
+                {admin ? <MinePanel active={shown === 'mine'} /> : <GuestMine active={shown === 'mine'} />}
               </div>
               {admin && (
                 <>
@@ -127,11 +130,11 @@ export function App() {
                   <div hidden={shown !== 'library'}><LibraryPanel active={shown === 'library'} loaded={status.loaded} /></div>
                 </>
               )}
-              <div hidden={shown !== 'reference'}><ReferencePanel active={shown === 'reference'} admin={admin} loaded={status.loaded} /></div>
-              {admin && <div hidden={shown !== 'eval'}><EvalPanel loaded={status.loaded} /></div>}
-              <div hidden={shown !== 'trader'}>
-                <TraderPanel key={String(admin)} active={shown === 'trader'} admin={admin} loaded={status.loaded} />
+              <div hidden={shown !== 'board'}>
+                <BoardPanel key={String(admin)} active={shown === 'board'} admin={admin} />
               </div>
+              <div hidden={shown !== 'reference'}><ReferencePanel active={shown === 'reference'} admin={admin} /></div>
+              {admin && <div hidden={shown !== 'eval'}><EvalPanel loaded={status.loaded} /></div>}
             </main>
 
             <footer className="wrap">
