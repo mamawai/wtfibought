@@ -48,7 +48,7 @@ class LlmErrorSurfaceTest {
 
         // run() 要拿叶子清账本，给不了 null；否则 NPE 会先于 runner 抛的那条上游异常，测的就不是这件事了
         UsageTrackingChatModel model = new UsageTrackingChatModel(mock(ChatModel.class));
-        ChatAgentFactory.Leaves leaves = new ChatAgentFactory.Leaves("test", model, model, null, AgentLang.ZH);
+        ChatAgentFactory.Leaves leaves = new ChatAgentFactory.Leaves("test", model, model, null, AgentLang.ZH, 256_000);
 
         streamer.run(new SseChannel(emitter), 1L, "wb-1-boom", "看看行情", leaves, null, null, false);
 

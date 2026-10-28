@@ -5,7 +5,7 @@ import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.i18n.PromptCatalog;
-import com.mawai.wiibagent.llm.ConversationSummarizer;
+import com.mawai.wiibagent.llm.ContextUsage;
 import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.SearchEvent;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +21,7 @@ import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
@@ -30,6 +31,7 @@ import java.util.function.Consumer;
  *   ↓
  * 主 agent（ReactLoop · 深模型 · 流式；行情/新闻/trader/深研判/行为分析全是它手里的工具）
  *   ├ 模型要调工具 ────► 这一批连名带参推给前端（tool_calls），画成过程条目
+ *   ├ 每次调完模型 ────► 上游报的上下文用量推给前端（context），底栏计量条跟着动
  *   ├ 子运行报告到达 ──► 下一次调模型前排进上下文
  *   ├ 用户点停止 ──────► 半截答案落库，本轮结束
  *   ↓
@@ -56,10 +58,12 @@ public class ChatTurnRunner {
      *
      * @param cancelled 用户中断：半截答案就是最终答案
      * @param pending   最后一次模型调用之后还到了子运行报告、这轮没答：前端空闲时发起唤醒轮
+     * @param context   这一轮结束时的上下文用量：最后一次模型调用报的，一次都没报就按字数估。
+     *                  中断的轮为 null：工具过程没落库，轮中途测到的偏大，沿用上一轮的读数
      */
-    public record TurnResult(boolean cancelled, boolean pending) {
-        public static final TurnResult COMPLETED = new TurnResult(false, false);
-        public static final TurnResult CANCELLED = new TurnResult(true, false);
+    public record TurnResult(boolean cancelled, boolean pending, ContextUsage context) {
+        public static final TurnResult COMPLETED = new TurnResult(false, false, null);
+        public static final TurnResult CANCELLED = new TurnResult(true, false, null);
     }
 
     /** 中断这一轮的最终文本：半截答案照留（token 已经烧掉了），一个字都没出就立块牌子。
@@ -103,10 +107,12 @@ public class ChatTurnRunner {
 
         // 中断时半截答案已经攒在这儿：token 逐帧进来，掐断在哪一帧就攒到哪一帧
         StringBuilder emitted = new StringBuilder();
+        // 每次调完模型上游报的上下文用量，最后一次的就是这一轮结束时的
+        AtomicReference<ContextUsage> measured = new AtomicReference<>();
         ReactLoop.Result result = streamMain(leaves, working, userId, sessionId, inbox, chunk -> {
             emitted.append(chunk);
             answerTokenSink.accept(chunk);
-        }, searchSink, cancel);
+        }, searchSink, cancel, measured);
         if (cancelled(cancel)) {
             // 在途那条流已被中断信号掐断、循环在检查点退出了，但收尾帧没到、
             // 这次调用的 token 未知——账本就此不可信，标记让它退化成只报耗时
@@ -118,13 +124,13 @@ public class ChatTurnRunner {
         // 终态含压缩替换 + 本轮全部新消息，整体覆盖会话历史（下一轮从这里起跑）
         List<Message> finalMessages = new ArrayList<>(result.messages());
         boolean pending = childRuns.settle(sessionId, userId, finalMessages);
+        ContextUsage context = measured.get() != null ? measured.get()
+                : new ContextUsage(ContextUsage.estimate(finalMessages), leaves.contextWindow(), true);
 
-        log.info("[TurnMetrics] session={} modelCalls={} historyIn={} historyOut={} estTokensIn={} pending={} durationMs={}",
+        log.info("[TurnMetrics] session={} modelCalls={} historyIn={} historyOut={} contextTokens={} estimated={} pending={} durationMs={}",
                 sessionId, result.modelCalls(), history.size(), finalMessages.size(),
-                // 估算不是计费口径：按 CJK 1 字≈1 token 折的，只用来看"这轮喂进去多大"
-                ConversationSummarizer.estimateTokens(working), pending,
-                System.currentTimeMillis() - startedAt);
-        return new TurnResult(false, pending);
+                context.tokens(), context.estimated(), pending, System.currentTimeMillis() - startedAt);
+        return new TurnResult(false, pending, context);
     }
 
     private static boolean cancelled(CompletableFuture<Void> cancel) {
@@ -158,7 +164,7 @@ public class ChatTurnRunner {
         working.add(new AssistantMessage(cancelledAnswer(prompts, lang, partial)));
         boolean pending = childRuns.settle(sessionId, userId, working);
         log.info("[Workbench] 用户中断 session={} 已产出={}字", sessionId, partial.length());
-        return new TurnResult(true, pending);
+        return new TurnResult(true, pending, null);
     }
 
     /**
@@ -167,7 +173,8 @@ public class ChatTurnRunner {
      */
     private ReactLoop.Result streamMain(ChatAgentFactory.Leaves leaves, List<Message> working, long userId,
                                         String sessionId, Deque<Message> inbox, Consumer<String> tokenSink,
-                                        Consumer<SearchEvent> searchSink, CompletableFuture<Void> cancel) {
+                                        Consumer<SearchEvent> searchSink, CompletableFuture<Void> cancel,
+                                        AtomicReference<ContextUsage> measured) {
         ReactLoop.Listener listener = new ReactLoop.Listener() {
             @Override
             public void chunk(ChatResponse frame) {
@@ -179,6 +186,13 @@ public class ChatTurnRunner {
                 String json = frame.getMetadata().get(SearchEvent.KEY);
                 if (json != null) {
                     searchSink.accept(SearchEvent.parse(json));
+                }
+                // 收尾帧带着这次调用的用量
+                Long tokens = ContextUsage.measured(frame.getMetadata().getUsage());
+                if (tokens != null) {
+                    ContextUsage context = new ContextUsage(tokens, leaves.contextWindow(), false);
+                    measured.set(context);
+                    runRegistry.publishContext(sessionId, context);
                 }
             }
 

@@ -74,6 +74,7 @@ public final class ChatTestEndpoints {
         e.setBaseUrl("https://api.example.com");
         e.setModel(model);
         e.setApiKeyEnc(apiKeyEnc);
+        e.setContextWindow(256_000);   // 与库的默认值一致
         return e;
     }
 

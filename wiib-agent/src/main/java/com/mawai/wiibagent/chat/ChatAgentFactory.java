@@ -61,9 +61,10 @@ public class ChatAgentFactory {
      * @param main       主 agent：深模型 + 全部对话工具的 ReactLoop，流式作答
      * @param lang       这套叶子按哪门语言建的。它在缓存键里（见 {@link #leafKey}），拿到的叶子
      *                   必与请求语言一致；带出来供编排层（过程文案）直接用
+     * @param contextWindow 主模型端点配的上下文窗口（token），也在缓存键里
      */
     public record Leaves(String modelLabel, UsageTrackingChatModel deep, UsageTrackingChatModel light,
-                         ReactLoop main, AgentLang lang) {
+                         ReactLoop main, AgentLang lang, int contextWindow) {
 
         /** 轮开始清零，划出本轮账本的起点 */
         public void resetUsage() {
@@ -197,14 +198,15 @@ public class ChatAgentFactory {
     }
 
     /**
-     * 叶子的缓存键 = 模型配置指纹 + 语言。语言变则整套系统提示词与工具描述变，叶子须重建。
+     * 叶子的缓存键 = 模型配置指纹 + 语言 + 上下文窗口。语言变则整套系统提示词与工具描述变，叶子须重建；
+     * 窗口烤在叶子里，改了也得换一套。
      * <p>
-     * 语言只加在这一层，不进 {@link ChatModelFactory#fingerprint}：模型实例与语言无关，
-     * 切语言不重建 SDK 客户端与连接池。
+     * 这两样只加在这一层，不进 {@link ChatModelFactory#fingerprint}：模型实例与它们无关，
+     * 切语言、改窗口都不重建 SDK 客户端与连接池。
      */
     static String leafKey(ChatEndpoints eps, AgentLang lang) {
-        // 指纹是十六进制串，用冒号接语言码不会与它的任何取值相撞
-        return ChatModelFactory.fingerprint(eps) + ':' + lang.code();
+        // 指纹是十六进制串，用冒号接语言码与窗口不会与它的任何取值相撞
+        return ChatModelFactory.fingerprint(eps) + ':' + lang.code() + ':' + eps.deep().getContextWindow();
     }
 
     /** 端点声明了服务端搜索：协议支持且用户勾了 */
@@ -222,7 +224,7 @@ public class ChatAgentFactory {
         boolean lightSearch = serverSearch(eps.lightOrDeep());
         ReactLoop main = mainLeaf(deep, models.deep(), light, eps.userId(), lang, serverSearch(eps.deep()),
                 kind -> newWorker(kind, lang, lightSearch, models.light()));
-        return new Leaves(modelLabel(eps.deep()), deep, light, main, lang);
+        return new Leaves(modelLabel(eps.deep()), deep, light, main, lang, eps.deep().getContextWindow());
     }
 
     /**

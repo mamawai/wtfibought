@@ -68,7 +68,7 @@ class ChatWorkbenchStreamTest {
 
         // run() 要拿叶子清账本、取模型名落库，给不了 null；这条用例不看模型本身，深浅共用一个装饰器
         UsageTrackingChatModel model = new UsageTrackingChatModel(mock(ChatModel.class));
-        ChatAgentFactory.Leaves leaves = new ChatAgentFactory.Leaves("test", model, model, null, AgentLang.ZH);
+        ChatAgentFactory.Leaves leaves = new ChatAgentFactory.Leaves("test", model, model, null, AgentLang.ZH, 256_000);
 
         streamer.run(channel, 1L, SESSION, "看看行情", leaves, null, null, false);
 

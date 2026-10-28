@@ -103,7 +103,7 @@ class ChatRegenerateTest {
         UsageTrackingChatModel model = new UsageTrackingChatModel(mock(ChatModel.class));
         ChatAgentFactory agentFactory = mock(ChatAgentFactory.class);
         when(agentFactory.leavesFor(any(), any()))
-                .thenReturn(new ChatAgentFactory.Leaves("端点 · gpt-5", model, model, null, AgentLang.ZH));
+                .thenReturn(new ChatAgentFactory.Leaves("端点 · gpt-5", model, model, null, AgentLang.ZH, 256_000));
 
         ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
         WorkbenchRunRegistry runRegistry = mock(WorkbenchRunRegistry.class);

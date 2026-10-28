@@ -5,6 +5,7 @@ import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.llm.ContextUsage;
 import com.mawai.wiibagent.llm.LlmErrorMessages;
 import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.llm.SseChannel;
@@ -145,7 +146,7 @@ public class ChatTurnStreamer {
                     finishCancelled(result.pending());
                 } else {
                     sendHitlCardIfAny();
-                    finishAnswered(result.pending());
+                    finishAnswered(result.pending(), result.context());
                 }
             } catch (Exception e) {
                 log.error("[Workbench] 对话失败 sessionId={}", sessionId, e);
@@ -196,7 +197,8 @@ public class ChatTurnStreamer {
          */
         private void finishCancelled(boolean pending) {
             String stopped = ChatTurnRunner.cancelledAnswer(prompts, leaves.lang(), fullAnswer());
-            ChatHistoryService.TurnMeta meta = turnMeta();
+            // 中断的轮不报上下文用量：工具过程没落库，轮中途测到的偏大
+            ChatHistoryService.TurnMeta meta = turnMeta(null);
             boolean saved = chatHistoryService.append(sessionId, userId, "assistant", stopped, meta, sourceList());
             // 重生成轮：出了半截才顶掉旧答案，半截也是这一次重生成的产物，留着旧的同一个提问下
             // 就是两条 assistant 行。一个字都没出（点得快）就别删——那等于拿一行"未作答"
@@ -233,9 +235,9 @@ public class ChatTurnStreamer {
         }
 
         /** 正常作答收尾：答案落库、顶掉旧答案（重生成轮）、发 done。 */
-        private void finishAnswered(boolean pending) {
+        private void finishAnswered(boolean pending, ContextUsage context) {
             String finalAnswer = fullAnswer();
-            ChatHistoryService.TurnMeta meta = turnMeta();
+            ChatHistoryService.TurnMeta meta = turnMeta(context);
             // 历史不看连接死活：切页断连后这一轮照跑完，答案必须落库（前端回来靠 status+历史补）。
             // 且必须在 finally 摘运行标记之前写完——轮询端不能出现"已结束但查不到答案"的空窗
             boolean saved = chatHistoryService.append(sessionId, userId, "assistant", finalAnswer, meta, sourceList());
@@ -267,11 +269,11 @@ public class ChatTurnStreamer {
         }
 
         /** 本轮读数。中断丢下的在途流会在读数之后才入账，账本不可信时只报耗时（null=没报，与全站 token 语义一致） */
-        private ChatHistoryService.TurnMeta turnMeta() {
+        private ChatHistoryService.TurnMeta turnMeta(ContextUsage context) {
             int latencyMs = (int) (System.currentTimeMillis() - startedAt);
             return leaves.usageUntrusted()
-                    ? ChatHistoryService.TurnMeta.latencyOnly(leaves.modelLabel(), latencyMs)
-                    : ChatHistoryService.TurnMeta.of(leaves.modelLabel(), leaves.usageSnapshot(), latencyMs);
+                    ? ChatHistoryService.TurnMeta.latencyOnly(leaves.modelLabel(), latencyMs, context)
+                    : ChatHistoryService.TurnMeta.of(leaves.modelLabel(), leaves.usageSnapshot(), latencyMs, context);
         }
     }
 
@@ -281,13 +283,17 @@ public class ChatTurnStreamer {
      * 而历史接口走 Spring 的 HTTP 出站会输出 {@code null}——前端两边都按"取不到值=没报"判，不要判 0。
      */
     private static ObjectNode metaJson(ChatHistoryService.TurnMeta meta) {
-        return MAPPER.createObjectNode()
+        ObjectNode json = MAPPER.createObjectNode()
                 .put("modelLabel", meta.modelLabel())
                 .put("modelCalls", meta.modelCalls())
                 .put("promptTokens", meta.promptTokens())
                 .put("completionTokens", meta.completionTokens())
                 .put("totalTokens", meta.totalTokens())
                 .put("latencyMs", meta.latencyMs());
+        if (meta.context() != null) {
+            json.set("context", meta.context().toJson());
+        }
+        return json;
     }
 
     /** 答案流的一帧。agent=supervisor / role=answer 是既有前端事件契约 */

@@ -180,6 +180,18 @@ class ChatAgentFactoryTest {
                 .startsWith(ChatModelFactory.fingerprint(config("gpt-5")));
     }
 
+    /** 上下文窗口烤在叶子上，改了要拿新叶子；它同样不进模型指纹，改窗口不重建 SDK 客户端 */
+    @Test
+    void 改上下文窗口拿到新叶子() {
+        ChatEndpoints small = config("gpt-5");
+        small.deep().setContextWindow(128_000);
+
+        assertThat(ChatAgentFactory.leafKey(small, AgentLang.ZH))
+                .isNotEqualTo(ChatAgentFactory.leafKey(config("gpt-5"), AgentLang.ZH));
+        assertThat(ChatModelFactory.fingerprint(small)).isEqualTo(ChatModelFactory.fingerprint(config("gpt-5")));
+        assertThat(factory().leavesFor(small, AgentLang.ZH).contextWindow()).isEqualTo(128_000);
+    }
+
     // ===== 服务端搜索：提示词跟着端点能力走，许可随每次调用捎上 =====
 
     /** 提示词不许承诺端点给不了的能力——搜索静默失效一个月才被发现，病根之一就是文案与能力脱节 */

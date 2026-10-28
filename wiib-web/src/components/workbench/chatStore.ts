@@ -1,5 +1,5 @@
 import { ApiError, workbenchApi } from '../../api';
-import type { BehaviorAnalysisReport, ChatIntent, ChildRunKind, ChildRunStatus, ChildRunStepView, ChildRunView, SearchSource, TraderFormKind, TurnMeta, WorkbenchChatMessage, WorkbenchEvent } from '../../types';
+import type { BehaviorAnalysisReport, ChatIntent, ChildRunKind, ChildRunStatus, ChildRunStepView, ChildRunView, ContextUsage, SearchSource, TraderFormKind, TurnMeta, WorkbenchChatMessage, WorkbenchEvent } from '../../types';
 
 /** 与后端 ErrorCode 对齐：2200 段是研判工作台（1600 段是 Crypto，别复用） */
 export const CHAT_ERROR = {
@@ -84,6 +84,8 @@ export interface ChatState {
   runId: number;
   /** 本轮开跑的时刻（本地时钟）："分析问题中"那行和过程轨头的秒表都从它起算；没起过轮是 null */
   turnStartedAt: number | null;
+  /** 当前会话的上下文用量（底栏计量条）：每次调完模型推一次，载入历史时取最后一条答案带的；新会话为 null */
+  context: ContextUsage | null;
 }
 
 const SESSION_KEY = 'wiib-workbench-session';
@@ -100,6 +102,7 @@ let state: ChatState = {
   sessionId: sessionStorage.getItem(SESSION_KEY),
   runId: 0,
   turnStartedAt: null,
+  context: null,
 };
 const listeners = new Set<() => void>();
 let abortCtrl: AbortController | null = null;
@@ -179,6 +182,15 @@ function toItems(messages: WorkbenchChatMessage[]): ChatItem[] {
       ? { kind: 'progress' as const, rid: nextRid(), text: HITL_RESUME_NOTE, keyed: true, active: false }
       : { kind: 'user' as const, content: m.content, at: m.createdAt };
   });
+}
+
+/** 载入历史时的上下文用量：最后一条带用量的答案（中断的轮不带，往前找） */
+function lastContext(messages: WorkbenchChatMessage[]): ContextUsage | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const context = messages[i].meta?.context;
+    if (context) return context;
+  }
+  return null;
 }
 
 /** 没填完的表单卡：历史回放整体重建 items 时得接回尾部，否则用户填一半的内容无声消失 */
@@ -366,6 +378,9 @@ function handleEvent(e: WorkbenchEvent) {
     case 'progress':
       updateItems(prev => appendBeforeAnswer(settlePhases(prev), { kind: 'progress', rid: nextRid(), text: e.text, active: true }));
       break;
+    case 'context':
+      set({ context: { tokens: e.tokens, window: e.window, estimated: e.estimated } });
+      break;
     case 'tool_calls': {
       const calls = e.calls;
       if (e.runId) {
@@ -440,6 +455,8 @@ function handleEvent(e: WorkbenchEvent) {
     case 'done':
       // 欠不欠唤醒以后端此刻的口径为准：最后一次模型调用之后又到了报告就欠
       wakePending = e.pending === true;
+      // 一次都没报用量的轮只在这里带一份估算；中断的轮不带，计量条停在轮中途的读数上
+      if (e.meta?.context) set({ context: e.meta.context });
       updateItems(prev => {
         // 本轮出过答案流＝还挂着一个流式中的答案气泡（排队气泡也是 user 项，不能按"最后一条提问之后"找）
         const streamed = prev.some(it => it.kind === 'assistant' && it.streaming);
@@ -524,7 +541,7 @@ function startPolling() {
         const queued = sendQueue.filter(q => q.bubbled)
           .map(q => ({ kind: 'user' as const, content: q.text, at: Date.now(), queued: true, queuedId: q.id }));
         set({
-          ...(msgs && status ? { items: [...toItems(msgs), ...runningChildren(status.children), ...pendingForms(), ...queued] } : {}),
+          ...(msgs && status ? { items: [...toItems(msgs), ...runningChildren(status.children), ...pendingForms(), ...queued], context: lastContext(msgs) } : {}),
           loading: false, background: false, promptGenBusy: false,
         });
         settle();
@@ -915,7 +932,7 @@ async function openSession(sid: string) {
   // 表单卡是 trader 动作、不属于哪个会话（跟排队消息不同），换会话也带过去，别抹掉填一半的
   const forms = pendingForms();
   setSession(sid);
-  set({ items: [...toItems(msgs), ...runningChildren(status.children), ...forms], loading: status.running, background: status.running, promptGenBusy: false });
+  set({ items: [...toItems(msgs), ...runningChildren(status.children), ...forms], loading: status.running, background: status.running, promptGenBusy: false, context: lastContext(msgs) });
   if (status.running) startPolling();
   else settle();
 }
@@ -943,7 +960,7 @@ function newSession() {
   sendQueue = [];
   wakePending = false;
   setSession(null);
-  set({ items: [], loading: false, background: false, promptGenBusy: false, turnStartedAt: null });
+  set({ items: [], loading: false, background: false, promptGenBusy: false, turnStartedAt: null, context: null });
 }
 
 export const chatStore = {

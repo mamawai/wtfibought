@@ -4,6 +4,7 @@ import com.mawai.wiibagent.chat.ChatTestEndpoints;
 
 import com.mawai.wiibcommon.entity.WorkbenchChatMessage;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
+import com.mawai.wiibagent.llm.ContextUsage;
 import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.mapper.WorkbenchChatMessageMapper;
 import org.junit.jupiter.api.Test;
@@ -40,12 +41,13 @@ class ChatHistoryMetaTest {
     }
 
     @Test
-    void 带读数的追加把六列都写下去() {
+    void 带读数的追加把各列都写下去() {
         WorkbenchChatMessageMapper mapper = mock(WorkbenchChatMessageMapper.class);
         ChatHistoryService service = new ChatHistoryService(mapper, ChatTestEndpoints.PROMPTS, new MessageCatalog());
 
         service.append(SESSION, 1L, "assistant", "答案",
-                new ChatHistoryService.TurnMeta("我的端点 · gpt-5", 3, 160L, 30L, 190L, 4200),
+                new ChatHistoryService.TurnMeta("我的端点 · gpt-5", 3, 160L, 30L, 190L, 4200,
+                        new ContextUsage(201_000, 256_000, true)),
                 List.of(new SearchEvent.Source("https://a.com/1", "A1")));
 
         ArgumentCaptor<WorkbenchChatMessage> captor = ArgumentCaptor.forClass(WorkbenchChatMessage.class);
@@ -59,6 +61,9 @@ class ChatHistoryMetaTest {
         assertThat(saved.getLatencyMs()).isEqualTo(4200);
         // 来源单独一列，JSON 数组 [{url,title}]
         assertThat(saved.getSources()).contains("https://a.com/1").contains("A1");
+        assertThat(saved.getContextTokens()).isEqualTo(201_000L);
+        assertThat(saved.getContextWindow()).isEqualTo(256_000);
+        assertThat(saved.getContextEstimated()).isTrue();
     }
 
     @Test
@@ -71,6 +76,9 @@ class ChatHistoryMetaTest {
         fresh.setTotalTokens(190L);
         fresh.setLatencyMs(4200);
         fresh.setSources("[{\"url\":\"https://a.com/1\",\"title\":\"A1\"}]");
+        fresh.setContextTokens(201_000L);
+        fresh.setContextWindow(256_000);
+        fresh.setContextEstimated(false);
 
         WorkbenchChatMessageMapper mapper = mock(WorkbenchChatMessageMapper.class);
         when(mapper.selectList(any())).thenReturn(List.of(user, legacy, fresh));
@@ -85,6 +93,7 @@ class ChatHistoryMetaTest {
         assertThat(messages.get(2).meta().totalTokens()).isEqualTo(190L);
         // 上游没报 usage 的那两项照样是 null，不能被补成 0
         assertThat(messages.get(2).meta().promptTokens()).isNull();
+        assertThat(messages.get(2).meta().context()).isEqualTo(new ContextUsage(201_000, 256_000, false));
         // 来源同理：没搜过的行是 null 不是空列表
         assertThat(messages.get(1).sources()).isNull();
         assertThat(messages.get(2).sources()).extracting(SearchEvent.Source::url).containsExactly("https://a.com/1");

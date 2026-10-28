@@ -53,6 +53,15 @@ public class WorkbenchChatMessage {
     @TableField(typeHandler = JsonbStringTypeHandler.class)
     private String sources;
 
+    /** 这一轮结束时的上下文用量（token），中断的轮与老数据为 null */
+    private Long contextTokens;
+
+    /** 这一轮时对话主模型端点配的上下文窗口（token） */
+    private Integer contextWindow;
+
+    /** true=上游没报用量，contextTokens 是按字数估的 */
+    private Boolean contextEstimated;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 }

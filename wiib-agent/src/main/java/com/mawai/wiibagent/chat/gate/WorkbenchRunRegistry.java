@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.chat.gate;
 
 import com.mawai.wiibagent.chat.run.ChildRun;
+import com.mawai.wiibagent.llm.ContextUsage;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.node.ArrayNode;
@@ -18,7 +19,8 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 工作台运行注册表：sessionId → 在跑的那一轮（SSE 事件出口 + 中断信号）。
  * <ul>
  *   <li>运行状态：切页/刷新回来后前端查 status 得知"AI 还在后台跑"（不随 SSE 断连中止）</li>
- *   <li>事件总线：主 agent 与子 agent 每批工具调用、子运行的开始/进度/结束、行为分析的阶段进度经此推给 SSE 通道；
+ *   <li>事件总线：主 agent 与子 agent 每批工具调用、主 agent 每次调完模型的上下文用量、子运行的开始/进度/结束、
+ *       行为分析的阶段进度经此推给 SSE 通道；
  *       trader 动作类工具经此推表单卡，把执行权交回用户点击。没轮在跑时推不出去（返回 false），
  *       子运行的事件丢了也不要紧，前端本地空闲时轮询 status 的 children/pending 补</li>
  *   <li>中断：/cancel 完成那轮的信号，轮在下一个检查点收尾</li>
@@ -68,6 +70,11 @@ public class WorkbenchRunRegistry {
     /** 工具侧：推一条阶段进度。data 字段名 {@code text} 是既有前端契约，别改。 */
     public void publishProgress(String sessionId, String text) {
         publish(sessionId, "progress", MAPPER.createObjectNode().put("text", text));
+    }
+
+    /** 主 agent 每次调完模型的上下文用量，对话框底栏的计量条跟着动 */
+    public void publishContext(String sessionId, ContextUsage context) {
+        publish(sessionId, "context", context.toJson());
     }
 
     /**

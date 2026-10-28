@@ -1,11 +1,11 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowUp, BookOpenCheck, MessageSquarePlus, Pencil, Plus, Square, Trash2, UserSearch, Zap } from 'lucide-react';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { cn } from '../../lib/utils';
 import { chatStore } from './chatStore';
 import { HUB_NAME, PULSE_DOT } from './chatView';
-import type { ChatIntent, TraderFormKind } from '../../types';
+import type { ChatIntent, ContextUsage, TraderFormKind } from '../../types';
 
 /**
  * 出厂的四条快捷提问：行情 / 新闻 / 交易员 / 深研判 四种能力各一条。
@@ -33,6 +33,31 @@ const INPUT_MAX_H = 200;
 const MENU_ITEM = 'w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-surface-hover transition-colors';
 /** 发送键与停止键同一个壳，轮流占同一个位置；提示词生成的输入框也用它 */
 export const SEND_BTN = 'ml-auto w-8 h-8 bg-foreground text-background flex items-center justify-center shrink-0 active:scale-95 transition-all disabled:opacity-40 disabled:active:scale-100';
+
+/** 上下文用到窗口的这个比例，下一轮开始前自动整理；与后端 agent.workbench.compact-trigger-ratio 同值 */
+const COMPACT_RATIO = 0.9;
+
+/** token 数按 K / M 显示：计量条只要量级 */
+function fmtK(n: number): string {
+  return n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(2)}M` : `${Math.round(n / 1000)}K`;
+}
+
+/** 底栏的上下文计量条：数字加一截细条，用到整理线变警示色；估算的数字前带 ≈ */
+function ContextMeter({ context }: { context: ContextUsage }) {
+  const { t } = useTranslation('ai');
+  const ratio = Math.min(context.tokens / context.window, 1);
+  const full = ratio >= COMPACT_RATIO;
+  return (
+    <span className={cn('num shrink-0 inline-flex items-center gap-1.5', full && 'text-warning')}
+          title={full ? t('composer.contextFull') : t('composer.contextTitle')}>
+      {t('composer.context', { used: `${context.estimated ? '≈' : ''}${fmtK(context.tokens)}`, window: fmtK(context.window) })}
+      <span className="w-10 h-1 rounded-full bg-muted overflow-hidden">
+        <span className={cn('block h-full rounded-full', full ? 'bg-warning' : 'bg-primary/60')}
+              style={{ width: `${ratio * 100}%` }} />
+      </span>
+    </span>
+  );
+}
 
 /** 用户自己配过的那份；null=没配过，交给出厂四条（它们要随语言走，不能在这儿定死） */
 function loadSuggests(): string[] | null {
@@ -69,6 +94,8 @@ export function ChatComposer({ loading, onSend, fullscreen, empty, stopping, onS
   onStop?: () => void;
 }) {
   const { t } = useTranslation(['ai', 'common']);
+  // 只订这一个字段：计量条变了才重画输入区，消息列表的流式更新不牵连它
+  const context = useSyncExternalStore(chatStore.subscribe, () => chatStore.getSnapshot().context);
   const [input, setInput] = useState(chatStore.getDraft);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // 没配过就用当前语言的出厂四条；配过的是用户自己的字，原样显示
@@ -244,9 +271,12 @@ export function ChatComposer({ loading, onSend, fullscreen, empty, stopping, onS
 
         <div className="flex justify-between gap-2 px-0.5 pt-1 text-[10px] text-muted-foreground/60">
           <span className="truncate">{t('composer.hint')}</span>
-          <span className="num shrink-0 inline-flex items-center gap-1.5">
-            {loading && <span className={PULSE_DOT} />}
-            {loading ? t('composer.busy', { hub: HUB_NAME }) : t('composer.ready', { hub: HUB_NAME })}
+          <span className="shrink-0 inline-flex items-center gap-3">
+            {context && <ContextMeter context={context} />}
+            <span className="num inline-flex items-center gap-1.5">
+              {loading && <span className={PULSE_DOT} />}
+              {loading ? t('composer.busy', { hub: HUB_NAME }) : t('composer.ready', { hub: HUB_NAME })}
+            </span>
           </span>
         </div>
       </div>

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibcommon.entity.WorkbenchChatMessage;
 import com.mawai.wiibcommon.i18n.MessageCatalog;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.llm.ContextUsage;
 import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
 import com.mawai.wiibagent.mapper.WorkbenchChatMessageMapper;
@@ -42,19 +43,21 @@ public class ChatHistoryService {
     /**
      * 一轮的读数，只挂在 assistant 行上（user 行与历史老数据为 null）。
      * token 三项 null = 上游端点没报 usage 或本轮账不可信，<b>不是 0</b>——展示层必须区分这两者。
+     * context = 这一轮结束时的上下文用量，中断的轮与老数据为 null。
      */
     public record TurnMeta(String modelLabel, Integer modelCalls, Long promptTokens,
-                           Long completionTokens, Long totalTokens, Integer latencyMs) {
+                           Long completionTokens, Long totalTokens, Integer latencyMs, ContextUsage context) {
 
         /** 正常轮：账本快照直接入账 */
-        public static TurnMeta of(String modelLabel, UsageTrackingChatModel.UsageSnapshot usage, int latencyMs) {
+        public static TurnMeta of(String modelLabel, UsageTrackingChatModel.UsageSnapshot usage, int latencyMs,
+                                  ContextUsage context) {
             return new TurnMeta(modelLabel, usage.modelCalls(), usage.promptTokens(),
-                    usage.completionTokens(), usage.totalTokens(), latencyMs);
+                    usage.completionTokens(), usage.totalTokens(), latencyMs, context);
         }
 
         /** 只报耗时：账本不可信（用户中断丢下的在途流会在读数之后才入账）时用它 */
-        public static TurnMeta latencyOnly(String modelLabel, int latencyMs) {
-            return new TurnMeta(modelLabel, null, null, null, null, latencyMs);
+        public static TurnMeta latencyOnly(String modelLabel, int latencyMs, ContextUsage context) {
+            return new TurnMeta(modelLabel, null, null, null, null, latencyMs, context);
         }
     }
 
@@ -90,6 +93,11 @@ public class ChatHistoryService {
                 row.setCompletionTokens(meta.completionTokens());
                 row.setTotalTokens(meta.totalTokens());
                 row.setLatencyMs(meta.latencyMs());
+                if (meta.context() != null) {
+                    row.setContextTokens(meta.context().tokens());
+                    row.setContextWindow(meta.context().window());
+                    row.setContextEstimated(meta.context().estimated());
+                }
             }
             if (sources != null && !sources.isEmpty()) {
                 row.setSources(MAPPER.writeValueAsString(SearchEvent.Source.toJson(sources)));
@@ -154,7 +162,12 @@ public class ChatHistoryService {
             return null;
         }
         return new TurnMeta(row.getModelLabel(), row.getModelCalls(), row.getPromptTokens(),
-                row.getCompletionTokens(), row.getTotalTokens(), row.getLatencyMs());
+                row.getCompletionTokens(), row.getTotalTokens(), row.getLatencyMs(), contextOf(row));
+    }
+
+    private static ContextUsage contextOf(WorkbenchChatMessage row) {
+        return row.getContextTokens() == null ? null : new ContextUsage(row.getContextTokens(),
+                row.getContextWindow(), Boolean.TRUE.equals(row.getContextEstimated()));
     }
 
     private String truncate(String s) {

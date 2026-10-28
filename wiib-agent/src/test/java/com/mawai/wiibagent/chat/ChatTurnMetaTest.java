@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.gate.ApprovalRegistry;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
+import com.mawai.wiibagent.llm.ContextUsage;
 import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.llm.SseChannel;
 import com.mawai.wiibagent.llm.UsageTrackingChatModel;
@@ -90,7 +91,7 @@ class ChatTurnMetaTest {
 
     /** 只有账本是真的：主 agent 用不上（runner 被替身顶了），给空 */
     private static ChatAgentFactory.Leaves leaves(UsageTrackingChatModel deep, UsageTrackingChatModel light) {
-        return new ChatAgentFactory.Leaves(LABEL, deep, light, null, AgentLang.ZH);
+        return new ChatAgentFactory.Leaves(LABEL, deep, light, null, AgentLang.ZH, 256_000);
     }
 
     /** 一套能真跑 {@code ChatTurnStreamer.run} 的最小装配 */
@@ -185,6 +186,28 @@ class ChatTurnMetaTest {
         verify(h.history()).append(eq(SESSION), eq(1L), eq("assistant"), eq("答案正文"), any(), sources.capture());
         assertThat(sources.getValue()).extracting(SearchEvent.Source::url)
                 .containsExactly("https://a.com/1", "https://b.com/2");
+    }
+
+    /** 这一轮结束时的上下文用量随 done 下发并落库：刷新后底栏计量条还在 */
+    @Test
+    void 上下文用量随done下发并落库() {
+        ChatHistoryService history = mock(ChatHistoryService.class);
+        ChatTurnRunner turnRunner = mock(ChatTurnRunner.class);
+        ContextUsage context = new ContextUsage(1200, 256_000, false);
+        doAnswer((Answer<ChatTurnRunner.TurnResult>) inv -> {
+            Consumer<String> sink = inv.getArgument(5);
+            sink.accept("答案正文");
+            return new ChatTurnRunner.TurnResult(false, false, context);
+        }).when(turnRunner).run(any(), anyLong(), any(), any(), any(), any(), any(), any());
+        ChatTurnStreamer streamer = new ChatTurnStreamer(turnRunner, history, mock(WorkbenchRunRegistry.class),
+                new ApprovalRegistry(), ChatTestEndpoints.PROMPTS);
+        UsageTrackingChatModel model = new UsageTrackingChatModel(modelReporting(1, 1, 2));
+
+        RecordingEmitter emitter = new RecordingEmitter();
+        streamer.run(new SseChannel(emitter), 1L, SESSION, "看看行情", leaves(model, model), null, null, false);
+
+        assertThat(capturedMeta(history).context()).isEqualTo(context);
+        assertThat(emitter.event("done").get("meta").get("context").path("tokens").asLong()).isEqualTo(1200L);
     }
 
     @Test

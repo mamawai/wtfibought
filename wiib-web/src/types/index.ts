@@ -569,6 +569,8 @@ export type WorkbenchEvent =
   // 主 agent 的服务端搜索过程：searching=开搜（query 可能还没有）、searched=搜完（sources 是命中站点）、
   // cited=正文引用了某来源（只并入后端攒的来源随 done 回来，过程轨不画）
   | { type: 'search'; phase: 'searching' | 'searched' | 'cited'; query?: string | null; sources: SearchSource[] }
+  // 主 agent 每次调完模型的上下文用量（底栏计量条）
+  | ({ type: 'context' } & ContextUsage)
   // meta 是本轮读数。
   // cancelled=用户中断，answer 是"半截 + （已中断）"的定稿，前端要整段用它覆盖屏上那半截
   // pending=子运行报告到了这轮没答：本地空闲时发起 /wake 补答
@@ -671,6 +673,13 @@ export interface SearchSource {
   title?: string | null;
 }
 
+/** 对话的上下文用量：tokens 是下一次调模型大约要带的量，window 是对话主模型端点配的窗口，estimated=上游没报、按字数估的 */
+export interface ContextUsage {
+  tokens: number;
+  window: number;
+  estimated: boolean;
+}
+
 export interface TurnMeta {
   /** 端点名 · 模型名 */
   modelLabel?: string | null;
@@ -679,6 +688,8 @@ export interface TurnMeta {
   completionTokens?: number | null;
   totalTokens?: number | null;
   latencyMs?: number | null;
+  /** 这一轮结束时的上下文用量；中断的轮与老数据没有 */
+  context?: ContextUsage | null;
 }
 
 /** 工作台历史消息（/ai/workbench/sessions/{id}/messages） */

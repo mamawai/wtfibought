@@ -184,7 +184,7 @@ class ChatWakeTest {
             }
         };
         UsageTrackingChatModel model = new UsageTrackingChatModel(mock(ChatModel.class));
-        ChatAgentFactory.Leaves leaves = new ChatAgentFactory.Leaves("x", model, model, null, AgentLang.ZH);
+        ChatAgentFactory.Leaves leaves = new ChatAgentFactory.Leaves("x", model, model, null, AgentLang.ZH, 256_000);
 
         streamer.run(new SseChannel(emitter), 1L, SESSION, null, leaves, null, null, true);
 
@@ -208,7 +208,7 @@ class ChatWakeTest {
         UsageTrackingChatModel model = new UsageTrackingChatModel(mock(ChatModel.class));
         ChatAgentFactory agentFactory = mock(ChatAgentFactory.class);
         when(agentFactory.leavesFor(any(), any()))
-                .thenReturn(new ChatAgentFactory.Leaves("x", model, model, null, AgentLang.ZH));
+                .thenReturn(new ChatAgentFactory.Leaves("x", model, model, null, AgentLang.ZH, 256_000));
         ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
         ChatWorkbenchController controller = new ChatWorkbenchController(agentFactory, endpointService, registry,
                 history, contextStore, streamer, mock(ChatTurnRewinder.class), mock(WorkbenchRunRegistry.class),
