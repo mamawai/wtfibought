@@ -42,6 +42,21 @@ class LlmErrorMessagesTest {
     }
 
     /**
+     * 上游拒收搜索工具提示去关联网搜索。判据要"提到 search 且带拒绝语义"：
+     * 搜索调用和结果配不上对的 400 也提到 web_search，那不是不支持，不能叫用户去关搜索
+     */
+    @Test
+    void 搜索被拒提示关掉联网搜索() {
+        assertThat(zh(new RuntimeException("400: web_search tool is not supported by this model")))
+                .contains("联网搜索");
+        assertThat(zh(new RuntimeException("Anthropic API HTTP 400: web search is not enabled for this organization")))
+                .contains("联网搜索");
+        assertThat(zh(new RuntimeException("Anthropic API HTTP 400: messages.1: `web_search` tool use with id "
+                + "`srvtoolu_01B7` was found without a corresponding `web_search_tool_result` block")))
+                .doesNotContain("联网搜索");
+    }
+
+    /**
      * message 里不能带 timeout 字样，否则同时命中 instanceof 和 contains 两条判断，
      * 删掉 instanceof 那半边测试照样绿，这条分支就没被隔离到
      */
@@ -100,12 +115,13 @@ class LlmErrorMessagesTest {
                 .doesNotContain("Zm9vYmFyMTIzNDU2");
     }
 
-    /** 英文用户不许收到一个中文字：五条归类各扫一遍 */
+    /** 英文用户不许收到一个中文字：六条归类各扫一遍 */
     @Test
     void 英文侧全部文案无中文() {
         for (Throwable t : new Throwable[]{
                 new RuntimeException("HTTP 401 Unauthorized"),
                 new RuntimeException("429 Too Many Requests"),
+                new RuntimeException("web_search tool is not supported by this model"),
                 new RuntimeException("404 model 'gpt-9' not found"),
                 new java.net.ConnectException(""),
                 new IllegalStateException("db down")}) {

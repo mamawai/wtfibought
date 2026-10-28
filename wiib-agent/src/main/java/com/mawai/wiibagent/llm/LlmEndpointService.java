@@ -11,7 +11,10 @@ import com.mawai.wiibagent.mapper.UserLlmEndpointMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.support.ToolCallbacks;
+import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Service;
 
 import java.util.Collection;
@@ -28,7 +31,8 @@ import java.util.Set;
  * <ul>
  *   <li>一人只要还有端点，就<b>恰有一条</b>默认（首条自动默认；删默认时最早的一条顶上）；</li>
  *   <li>绑定行永远指向活着的端点：删端点连带删它的绑定，受影响的用途回落默认；</li>
- *   <li>保存不发上游请求（探测是独立按钮）；测什么就是接下来真跑什么——探测走 {@link ByokModelBuilder} 的生产建模路径。</li>
+ *   <li>勾了联网搜索的保存要先探测，连得上且支持搜索才入库；其余保存不发上游请求。
+ *       测什么就是接下来真跑什么——探测走 {@link ByokModelBuilder} 的生产建模路径，见 {@link #probe}。</li>
  * </ul>
  * 错误约定与 TraderService 一致：返回 String 错误消息（跟当次请求的界面语言），成功返回 null。
  */
@@ -171,6 +175,10 @@ public class LlmEndpointService {
             return messages.get("agent.endpoint.limitReached", Map.of("max", MAX_PER_USER));
         }
         UserLlmEndpoint row = toRow(req, null);
+        String searchErr = checkSearchBeforeSave(row);
+        if (searchErr != null) {
+            return searchErr;
+        }
         row.setUserId(userId);
         row.setIsDefault(existing.isEmpty());   // 首条自动成默认：只配一条时它就是全局配置
         endpointMapper.insert(row);
@@ -190,6 +198,10 @@ public class LlmEndpointService {
             return err;
         }
         UserLlmEndpoint row = toRow(req, keyChanged ? null : cur.getApiKeyEnc());
+        String searchErr = checkSearchBeforeSave(row);
+        if (searchErr != null) {
+            return searchErr;
+        }
         row.setId(id);
         endpointMapper.updateById(row);
         log.info("[LlmEndpoint] 更新 userId={} id={} name={} model={}", userId, id, row.getName(), row.getModel());
@@ -274,8 +286,7 @@ public class LlmEndpointService {
     }
 
     /**
-     * 连通性探测（前端"测试连通性"按钮）。成功返 null，失败返上游原因。
-     * 走的就是生产建模那条路（{@link ByokModelBuilder#build}）——测什么就得是接下来真跑什么。
+     * 连通性探测（前端"测试连通性"按钮）：测连通，勾了联网搜索的再测搜索。成功返 null，失败返上游原因。
      */
     public String testConnection(long userId, Long id, SaveReq req) {
         String err = validate(req, false);
@@ -286,11 +297,48 @@ public class LlmEndpointService {
         if (keyEnc == null) {
             return messages.get("agent.endpoint.apiKeyRequired");
         }
+        return probe(toRow(req, keyEnc), "agent.endpoint.connectFailed");
+    }
+
+    /** 勾了联网搜索的端点入库前必须探测通过：连不上就没法确认，不支持就让用户取消勾选 */
+    private String checkSearchBeforeSave(UserLlmEndpoint row) {
+        return Boolean.TRUE.equals(row.getWebSearch()) ? probe(row, "agent.endpoint.searchProbeUnreachable") : null;
+    }
+
+    /**
+     * 先发一句 ping 测连通；勾了联网搜索的，再按生产的样子发一次：搜索许可和一个本地工具一起带
+     * （主 agent 两样总是同时带着，有的上游不收这个组合），上游拒收就是不支持。通过返 null。
+     * 走的就是生产建模那条路（{@link ByokModelBuilder#build}）——测什么就得是接下来真跑什么。
+     *
+     * @param unreachableKey 连不上时用哪句：测试连通性说测试失败，保存说没法确认支不支持搜索
+     */
+    private String probe(UserLlmEndpoint row, String unreachableKey) {
+        ChatModel model;
         try {
-            modelBuilder.build(toRow(req, keyEnc)).call(new Prompt(new UserMessage("ping")));
+            model = modelBuilder.build(row);
+            model.call(new Prompt(new UserMessage("ping")));
+        } catch (Exception e) {
+            return messages.get(unreachableKey, Map.of("reason", truncate(e)));
+        }
+        if (!Boolean.TRUE.equals(row.getWebSearch())) {
+            return null;
+        }
+        try {
+            LlmClient.builder().model(model).systemPrompt("Reply with: pong. Do not use any tools.")
+                    .tools(List.of(ToolCallbacks.from(new SearchProbeTool()))).webSearch(true).build()
+                    .execute(List.of(new UserMessage("ping")));
             return null;
         } catch (Exception e) {
-            return messages.get("agent.endpoint.connectFailed", Map.of("reason", truncate(e)));
+            return messages.get("agent.endpoint.searchUnsupported", Map.of("reason", truncate(e)));
+        }
+    }
+
+    /** 探搜索时挂的空工具：只为让请求和生产一样带着本地工具，不会被调用 */
+    static final class SearchProbeTool {
+
+        @Tool(name = "noop", description = "Does nothing. Never call it.")
+        public String noop() {
+            return "ok";
         }
     }
 

@@ -20,6 +20,9 @@ agent:
     effortTooLong: "思考档位最长 {{max}} 字符，留空=不传"
     apiKeyRequired: apiKey不能为空
     connectFailed: "模型连通性测试失败：{{reason}}"
+    # 勾了联网搜索的端点：测试连通性和保存时都会探一次搜索
+    searchUnsupported: "连通正常，但这个端点或模型不支持联网搜索，请取消勾选「联网搜索」。上游原因：{{reason}}"
+    searchProbeUnreachable: "勾选了联网搜索，但端点连不上，没法确认是否支持。请先修好连通性，或取消勾选「联网搜索」再保存。上游原因：{{reason}}"
     # SSRF 防线（BaseUrlGuard）的拒因
     baseUrl:
       malformed: baseUrl 不是合法 URL

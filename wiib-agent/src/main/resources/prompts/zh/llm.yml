@@ -10,6 +10,7 @@ llm:
     fallback: 处理失败，请稍后重试
     unauthorized: API key 无效或无权限，请到配置里检查
     quota: 你的 API 额度已用尽或触发限流，请稍后再试
+    searchUnsupported: 端点不支持联网搜索，请到模型配置里关掉「联网搜索」
     modelNotFound: 端点不支持该模型，请重新选择模型
     unreachable: 端点无响应，请检查 Base URL 是否正确
     # type 是最深层 cause 的类名，语言无关；归类不到的形态靠它被发现

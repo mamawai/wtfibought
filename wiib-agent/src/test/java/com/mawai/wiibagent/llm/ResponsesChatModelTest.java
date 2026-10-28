@@ -153,6 +153,18 @@ class ResponsesChatModelTest {
         assertThat(MAPPER.readTree(lastRequestBody).has("tools")).isFalse();
     }
 
+    /** 加密推理只在配了档位且不是 none 时要（配了的见金标准）：没配或 none 的多半是非推理模型，带了会被拒 */
+    @Test
+    void 请求侧_没配档位或none时不要加密推理() {
+        events = PLAIN_COMPLETED;
+        model().call(new Prompt("问题"));
+        assertThat(MAPPER.readTree(lastRequestBody).has("include")).isFalse();
+
+        new ResponsesChatModel("key", "http://127.0.0.1:" + server.getAddress().getPort(), "grok-test", null, "none",
+                mock(ToolCallingManager.class), false, ByokModelBuilder.CALL_TIMEOUT).call(new Prompt("问题"));
+        assertThat(MAPPER.readTree(lastRequestBody).has("include")).isFalse();
+    }
+
     @Test
     void 响应侧_usage带服务端搜索计数_落进响应metadata() {
         // 真实上游（xAI）usage 形态：搜没搜要有据可查
@@ -271,7 +283,8 @@ class ResponsesChatModelTest {
                 plain, result0, new UserMessage("再问"), new SystemMessage("【摘要】第1段"), inLoop, result1),
                 allowWebSearch(m)));
 
-        assertThat(lastRequestBody).isEqualTo("{\"model\":\"grok-test\",\"temperature\":0.3,\"reasoning\":{\"effort\":\"medium\"},\"store\":false,\"stream\":true,"
+        assertThat(lastRequestBody).isEqualTo("{\"model\":\"grok-test\",\"temperature\":0.3,\"reasoning\":{\"effort\":\"medium\"},"
+                + "\"include\":[\"reasoning.encrypted_content\"],\"store\":false,\"stream\":true,"
                 + "\"instructions\":\"你是助手\\n\\n【摘要】第1段\",\"input\":[{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\","
                 + "\"text\":\"问题 📈 \\\"引号\\\" \\\\ /\"}]},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\","
                 + "\"text\":\"旧答\\n第二行\"}]},{\"type\":\"function_call\",\"call_id\":\"call_0\",\"name\":\"get_price\",\"arguments\":\"{\\\"qty\\\":1.50}\"},"

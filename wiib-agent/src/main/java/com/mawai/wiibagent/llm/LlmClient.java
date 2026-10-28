@@ -41,8 +41,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *       任何帧时重试（吐过帧再重订阅会让下游聚合器拼出重复文本），NonTransient（4xx 配置类
  *       错误）不重试；耗尽则错误透传，交上层 SSE error，用户重发</li>
  * </ul>
- * 两条路径都另有一层<b>搜索降级</b>（{@link #searchRejected}）：上游拒收服务端搜索工具时去掉许可重发
- * （主 agent 走流式、researcher worker 走阻塞，都捎许可）。它不是重试——换的是请求本身，原样再发多少次都一样。
+ * 上游拒收服务端搜索工具时原样上抛，不去掉搜索工具重发：一个会话里的工具列表不能变。
+ * 端点保存时已经探测过支不支持（{@link LlmEndpointService}），运行时的提示见 {@link LlmErrorMessages}。
  * 工具一律不传 tool_choice（auto），"先调工具再答"靠各 agent 的系统提示词；为什么不强制见 {@link ToolOptions} 类头。
  * <b>中断</b>：{@link #streamingExecute} 的 cancel 完成时掐断整条流水线，取消传到模型层。
  * <p>
@@ -106,29 +106,20 @@ public class LlmClient {
 
     /** @param cancel 可空。非空且完成时掐断整条流水线 */
     public Flux<ChatResponse> streamingExecute(List<Message> messages, CompletableFuture<Void> cancel) {
-        List<Message> withSystem = withSystem(messages);
         AtomicBoolean emitted = new AtomicBoolean(false);
-        Flux<ChatResponse> stream = model.stream(promptOf(model, withSystem, chatOptions))
+        Flux<ChatResponse> stream = model.stream(promptOf(model, withSystem(messages), chatOptions))
                 .doOnNext(_ -> emitted.set(true))
                 .retryWhen(Retry.backoff(maxAttempts - 1, Duration.ofMillis(initialDelayMs))
                         .maxBackoff(Duration.ofMillis(maxDelayMs))
                         .filter(e -> !emitted.get() && !(e instanceof NonTransientAiException))
                         .doBeforeRetry(signal -> log.warn("模型流式调用失败，退避重试 {}/{}: {}",
                                 signal.totalRetries() + 2, maxAttempts, String.valueOf(signal.failure())))
-                        // 耗尽时抛原始异常而非 RetryExhausted 包装，让下面的兜底拿到真实原因
-                        .onRetryExhaustedThrow((_, signal) -> signal.failure()))
-                .onErrorResume(e -> {
-                    // 搜索工具被拒：去掉许可重发一次，这一轮就不搜。被拒发生在请求刚落地、必然还没吐过帧，重订阅不会拼出重复文本
-                    if (searchRejected(e, chatOptions)) {
-                        log.warn("上游拒收服务端搜索工具，本次降级为不搜重发: {}", e.toString());
-                        return model.stream(promptOf(model, withSystem, withoutWebSearch(chatOptions)));
-                    }
-                    return Flux.error(e);
-                });
+                        // 耗尽时抛原始异常而非 RetryExhausted 包装，让上层归类拿到真实原因
+                        .onRetryExhaustedThrow((_, signal) -> signal.failure()));
         if (cancel == null) {
             return stream;
         } else {
-            // 用户中断：整条流水线（含重试与降级）在这儿被掐断，取消向上游传到 WebClient / SDK 流
+            // 用户中断：整条流水线（含重试）在这儿被掐断，取消向上游传到 WebClient / SDK 流
             // （Spring AI 2.0.1 起 SDK 流随 dispose 关闭）。suppressCancel=true 必须给：缺省会在流正常结束时反向 cancel 这个 future，循环的中断检查点会把一次正常收尾当成用户中断
             Mono<Void> other = Mono.fromFuture(cancel, true); // 包装成Mono
             return stream.takeUntilOther(other); // 如果other complete就直接cancel掉stream 见内部的onComplete和cancelMainAndComplete
@@ -136,48 +127,13 @@ public class LlmClient {
     }
 
     /**
-     * 上游是否拒了本次声明的服务端搜索工具（老模型不认、中转站不支持、搜索与 function 工具不能同请求…）。
-     * 判据：本次 options 捎了搜索许可 ∧ 报错文案提到 search——各家措辞不一（web_search / google_search /
-     * "all search tools"），只认 search 一个词，误判的代价只是多发一次请求。撞了才退、不缓存、不探测。
-     */
-    private static boolean searchRejected(Throwable e, ChatOptions used) {
-        return carriesWebSearch(used) && e.getMessage() != null
-                && e.getMessage().toLowerCase().contains("search");
-    }
-
-    private static boolean carriesWebSearch(ChatOptions options) {
-        return options instanceof ToolCallingChatOptions tool && tool.getToolContext() != null
-                && Boolean.TRUE.equals(tool.getToolContext().get(SseChatModel.WEB_SEARCH_KEY));
-    }
-
-    /** 撤销搜索许可（写成 false：builder 的 toolContext 是合并不是替换，删不掉键），工具与其余上下文照旧 */
-    private static ChatOptions withoutWebSearch(ChatOptions options) {
-        ToolCallingChatOptions tool = (ToolCallingChatOptions) options;
-        return tool.mutate().toolContext(Map.of(SseChatModel.WEB_SEARCH_KEY, false)).build();
-    }
-
-    /**
      * 阻塞路径不重试——重试是模型层的职责（SseChatModel 自带退避、
      * OpenAI 走 SDK 的 maxRetries）。这里再来一轮会叠乘成 3×3=9 次，纯粹放大尾延迟。
      * 流式路径相反：模型层不重试，重试全在上面的 streamingExecute 里。
+     * 唯一豁免：读响应失败是 SDK 重试盲区（类头注释），就地再试一次，其余异常原样抛。
      */
     public ChatResponse execute(List<Message> messages) {
-        List<Message> withSystem = withSystem(messages);
-        try {
-            return callModel(withSystem, chatOptions);
-        } catch (RuntimeException e) {
-            // 搜索工具被拒：去掉许可重发一次，这一轮就不搜（与流式路径同一条降级）
-            if (!searchRejected(e, chatOptions)) {
-                throw e;
-            }
-            log.warn("上游拒收服务端搜索工具，本次降级为不搜重发: {}", e.toString());
-            return callModel(withSystem, withoutWebSearch(chatOptions));
-        }
-    }
-
-    /** 一处就地补救，其余异常原样抛：读响应失败是 SDK 重试盲区（类头注释的唯一豁免），再试一次 */
-    private ChatResponse callModel(List<Message> withSystem, ChatOptions options) {
-        Prompt prompt = promptOf(model, withSystem, options);
+        Prompt prompt = promptOf(model, withSystem(messages), chatOptions);
         try {
             return model.call(prompt);
         } catch (OpenAIInvalidDataException e) {

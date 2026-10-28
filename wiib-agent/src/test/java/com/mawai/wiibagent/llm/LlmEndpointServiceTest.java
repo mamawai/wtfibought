@@ -11,8 +11,16 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
+import org.springframework.ai.retry.NonTransientAiException;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -26,6 +34,7 @@ import static org.mockito.Mockito.when;
 /**
  * 端点库的三条不变量：首条自动默认；删默认时最早的一条顶上、绑定连带删；
  * 对话轻模型绑到主模型同一条等于没绑。校验口径：协议/档位脏值抹平，档位不限白名单只挡列宽。
+ * 勾了联网搜索的保存与测试连通性都要探一次搜索。
  */
 class LlmEndpointServiceTest {
 
@@ -63,11 +72,32 @@ class LlmEndpointServiceTest {
         return new LlmEndpointService.SaveReq("主力", protocol, "https://8.8.8.8/", " deepseek-chat ", effort, key, webSearch);
     }
 
-    /** 搜索开关只对 responses 协议有意义：openai 协议勾了也归一 false，不把兑现不了的承诺存进库 */
+    private static final ChatResponse PONG = new ChatResponse(List.of(new Generation(new AssistantMessage("pong"))));
+    private static final RuntimeException SEARCH_REJECTED =
+            new NonTransientAiException("400: web_search tool is not supported by this model");
+
+    /** 假模型：按顺序给出每次调用的结果（ChatResponse 照答、异常照抛），用完了重复最后一个 */
+    private static ChatModel modelAnswering(Object... outcomes) {
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        AtomicInteger calls = new AtomicInteger();
+        when(model.call(any(Prompt.class))).thenAnswer(inv -> {
+            Object outcome = outcomes[Math.min(calls.getAndIncrement(), outcomes.length - 1)];
+            if (outcome instanceof RuntimeException e) {
+                throw e;
+            }
+            return outcome;
+        });
+        return model;
+    }
+
+    /** 搜索开关只对能声明服务端搜索的协议有意义：openai 协议勾了也归一 false；没勾的保存不发上游请求 */
     @Test
     void webSearch只在responses协议下入库() {
         when(endpointMapper.selectList(any())).thenReturn(List.of());
         when(crypto.encrypt(any())).thenReturn("enc");
+        ChatModel model = modelAnswering(PONG);
+        when(builder.build(any())).thenReturn(model);
 
         assertThat(service.create(1L, req("responses", "", "sk-x", true))).isNull();
         assertThat(service.create(1L, req("openai", "", "sk-x", true))).isNull();
@@ -78,6 +108,36 @@ class LlmEndpointServiceTest {
         assertThat(cap.getAllValues().get(0).getWebSearch()).isTrue();
         assertThat(cap.getAllValues().get(1).getWebSearch()).isFalse();
         assertThat(cap.getAllValues().get(2).getWebSearch()).isFalse();
+        verify(builder, times(1)).build(any());   // 只有勾了搜索的那条探测过
+    }
+
+    /** 勾了联网搜索的保存先探测：上游不支持、端点连不上都不入库，各给各的说法 */
+    @Test
+    void 勾了联网搜索的保存要探测通过才入库() {
+        when(endpointMapper.selectList(any())).thenReturn(List.of());
+        when(crypto.encrypt(any())).thenReturn("enc");
+        ChatModel noSearch = modelAnswering(PONG, SEARCH_REJECTED);
+        ChatModel unreachable = modelAnswering(new RuntimeException("Connection refused"));
+        when(builder.build(any())).thenReturn(noSearch, unreachable);
+
+        assertThat(service.create(1L, req("responses", "", "sk-x", true))).contains("不支持联网搜索");
+        assertThat(service.create(1L, req("responses", "", "sk-x", true))).contains("连不上");
+        verify(endpointMapper, never()).insert(any(UserLlmEndpoint.class));
+    }
+
+    /** 测试连通性：没勾搜索只 ping 一次；勾了的 ping 通再探搜索 */
+    @Test
+    void 测试连通性先测连通再测搜索() {
+        when(crypto.encrypt(any())).thenReturn("enc");
+        ChatModel plain = modelAnswering(PONG);
+        ChatModel noSearch = modelAnswering(PONG, SEARCH_REJECTED);
+        ChatModel unreachable = modelAnswering(new RuntimeException("Connection refused"));
+        when(builder.build(any())).thenReturn(plain, noSearch, unreachable);
+
+        assertThat(service.testConnection(1L, null, req("responses", "", "sk-x", false))).isNull();
+        verify(plain, times(1)).call(any(Prompt.class));
+        assertThat(service.testConnection(1L, null, req("responses", "", "sk-x", true))).contains("不支持联网搜索");
+        assertThat(service.testConnection(1L, null, req("responses", "", "sk-x", true))).contains("连通性测试失败");
     }
 
     @Test

@@ -17,7 +17,6 @@ import org.springframework.ai.retry.TransientAiException;
 import org.springframework.ai.tool.ToolCallback;
 import reactor.core.publisher.Flux;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -145,71 +144,23 @@ class LlmClientTest {
         assertThat(result.getResult().getOutput().getText()).isEqualTo("重试成功");
     }
 
-    /**
-     * 搜索被拒是配置类失败（老模型 / 中转站不认服务端搜索工具，搜索与 function 工具不能同请求）：
-     * 去掉许可重发一次，这一轮不搜；工具照挂，降级只摘搜索许可。
-     */
+    /** 搜索被拒原样抛给上层出提示，流式、阻塞都只发一次：不去掉搜索工具重发，一个会话里的工具列表不能变 */
     @Test
-    void 搜索被拒时去掉许可重发一次() {
+    void 搜索被拒时原样抛出不重发() {
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
-        List<Prompt> prompts = new ArrayList<>();
-        when(model.stream(any(Prompt.class))).thenAnswer(inv -> {
-            prompts.add(inv.getArgument(0));
-            return prompts.size() == 1
-                    ? Flux.error(new NonTransientAiException(
-                            "Gemini API HTTP 400: Multiple tools are supported only when they are all search tools."))
-                    : Flux.just(responseOf("不搜也答"));
-        });
-        LlmClient client =LlmClient.builder()
+        when(model.stream(any(Prompt.class))).thenReturn(Flux.error(new NonTransientAiException(
+                "Gemini API HTTP 400: Multiple tools are supported only when they are all search tools.")));
+        when(model.call(any(Prompt.class))).thenThrow(
+                new NonTransientAiException("400: web_search tool is not supported by this model"));
+        LlmClient client = LlmClient.builder()
                 .model(model).systemPrompt("你是助手").tools(List.of(mock(ToolCallback.class)))
                 .webSearch(true).build();
-
-        List<ChatResponse> out = client.streamingExecute(ASK, null).collectList().block();
-
-        assertThat(out).hasSize(1);
-        assertThat(prompts).hasSize(2);
-        ToolCallingChatOptions first = (ToolCallingChatOptions) prompts.get(0).getOptions();
-        ToolCallingChatOptions second = (ToolCallingChatOptions) prompts.get(1).getOptions();
-        assertThat(first.getToolContext()).containsEntry(SseChatModel.WEB_SEARCH_KEY, true);
-        assertThat(second.getToolContext()).containsEntry(SseChatModel.WEB_SEARCH_KEY, false);
-        assertThat(second.getToolCallbacks()).hasSize(1);
-    }
-
-    /** 没捎许可的失败退无可退，报错原样透传，不会白发第二次 */
-    @Test
-    void 没捎许可时搜索类报错不降级() {
-        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
-        when(model.stream(any(Prompt.class))).thenReturn(Flux.error(new NonTransientAiException("400 search")));
-        LlmClient client =LlmClient.builder()
-                .model(model).systemPrompt("你是助手").tools(List.of(mock(ToolCallback.class))).build();
 
         assertThatThrownBy(() -> client.streamingExecute(ASK, null).collectList().block())
                 .isInstanceOf(NonTransientAiException.class);
+        assertThatThrownBy(() -> client.execute(ASK)).isInstanceOf(NonTransientAiException.class);
         verify(model, times(1)).stream(any(Prompt.class));
-    }
-
-    /** 阻塞路径同一条降级：researcher worker 不走流式，也捎搜索许可 */
-    @Test
-    void 阻塞路径搜索被拒时也去掉许可重发一次() {
-        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
-        List<Prompt> prompts = new ArrayList<>();
-        when(model.call(any(Prompt.class))).thenAnswer(inv -> {
-            prompts.add(inv.getArgument(0));
-            if (prompts.size() == 1) {
-                throw new NonTransientAiException("400: web_search tool is not supported by this model");
-            }
-            return responseOf("不搜也答");
-        });
-        LlmClient client =LlmClient.builder()
-                .model(model).systemPrompt("你是助手").tools(List.of(mock(ToolCallback.class)))
-                .webSearch(true).build();
-
-        assertThat(client.execute(ASK).getResult().getOutput().getText()).isEqualTo("不搜也答");
-        assertThat(prompts).hasSize(2);
-        assertThat(((ToolCallingChatOptions) prompts.get(0).getOptions()).getToolContext())
-                .containsEntry(SseChatModel.WEB_SEARCH_KEY, true);
-        assertThat(((ToolCallingChatOptions) prompts.get(1).getOptions()).getToolContext())
-                .containsEntry(SseChatModel.WEB_SEARCH_KEY, false);
+        verify(model, times(1)).call(any(Prompt.class));
     }
 
     // ========== 中断 ==========

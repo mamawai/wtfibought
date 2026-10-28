@@ -82,6 +82,11 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
         if (reasoningEffort != null) {
             body.set("reasoning", MAPPER.createObjectNode().put("effort", reasoningEffort));
         }
+        // 无状态下要显式请求加密推理，下一次才能原样回传、接上推理（xAI 的要求，OpenAI 当兼容项照收）；
+        // 没配档位或配 none 的多半是非推理模型，带了反而被拒
+        if (reasoningEffort != null && !"none".equals(reasoningEffort)) {
+            body.set("include", MAPPER.createArrayNode().add("reasoning.encrypted_content"));
+        }
         // 无状态：不让服务端存会话，OpenAI 官方 store 默认 true 必须显式关
         body.put("store", false);
         body.put("stream", true);

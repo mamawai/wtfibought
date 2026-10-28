@@ -20,6 +20,9 @@ agent:
     effortTooLong: "The reasoning level is at most {{max}} characters; leave it blank to omit it"
     apiKeyRequired: apiKey is required
     connectFailed: "Model connectivity test failed: {{reason}}"
+    # Endpoints with web search ticked: both the connectivity test and saving probe search once
+    searchUnsupported: "The endpoint is reachable, but this endpoint or model does not support web search - untick \"Web search\". Upstream reason: {{reason}}"
+    searchProbeUnreachable: "Web search is ticked, but the endpoint is unreachable, so its support can't be confirmed. Fix connectivity first, or untick \"Web search\" before saving. Upstream reason: {{reason}}"
     # Rejections from the SSRF guard (BaseUrlGuard)
     baseUrl:
       malformed: baseUrl is not a valid URL

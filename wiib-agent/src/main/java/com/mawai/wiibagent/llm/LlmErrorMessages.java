@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -11,7 +12,7 @@ import java.util.Map;
  * 异常 → 用户看得懂、也能据此动手解决的一句话。
  * <p>
  * BYOK 之后最高频的故障就是 key 相关，而 SDK 原始异常常是几百字符、带 URL 和请求片段的东西，
- * 所以认得出的那四类（401/429/模型不存在/连不上）各给一句能照着做的话。
+ * 所以认得出的那几类（401/429/不支持联网搜索/模型不存在/连不上）各给一句能照着做的话。
  * <p>
  * <b>认不出来的就不替用户判病因。</b> 调用方的 catch 罩的范围都比 LLM 大得多——
  * 落历史、写记忆、上下文落库全在里面，数据库挂了也走这条路。
@@ -28,6 +29,10 @@ public final class LlmErrorMessages {
 
     /** 因果链最多往下扒这么多层，防环 */
     private static final int MAX_CAUSE_DEPTH = 5;
+
+    /** 上游拒收搜索工具时的说法（各家措辞不一，只认小写） */
+    private static final List<String> SEARCH_REJECTIONS = List.of("not supported", "unsupported", "not enabled",
+            "not allowed", "not available", "does not support", "unknown tool", "invalid tool");
 
     private LlmErrorMessages() {
     }
@@ -54,6 +59,9 @@ public final class LlmErrorMessages {
         if (lower.contains("429") || lower.contains("quota") || lower.contains("rate limit")) {
             return prompts.get(lang, "llm.error.quota");
         }
+        if (searchUnsupported(lower)) {
+            return prompts.get(lang, "llm.error.searchUnsupported");
+        }
         if (lower.contains("404") && lower.contains("model")) {
             return prompts.get(lang, "llm.error.modelNotFound");
         }
@@ -71,9 +79,17 @@ public final class LlmErrorMessages {
         // 不写 [LLM]：这里也会收到 DB 之类的服务端故障，贴错标签会把真跑验收的观察点搅浑
         log.warn("[ErrorClassify] 归类不到 {}", root.getClass().getName());
         // 兜底不回显上游原文：中转网关的异常里经常带完整请求 URL（?api_key=…）、自定义 header，
-        // key 的形态正则永远追不全。上面四个分支返的是固定文案，天然不含 key
+        // key 的形态正则永远追不全。上面几个分支返的是固定文案，天然不含 key
         return prompts.get(lang, "llm.error.unknown",
                 Map.of("type", root.getClass().getSimpleName()));
+    }
+
+    /**
+     * 上游拒收服务端搜索工具：提到 search 且带拒绝语义。光认 search 会误判——
+     * 搜索调用和结果配不上对的 400 也提到 web_search，那不是不支持，不能叫用户去关搜索
+     */
+    private static boolean searchUnsupported(String lower) {
+        return lower.contains("search") && SEARCH_REJECTIONS.stream().anyMatch(lower::contains);
     }
 
     private static Throwable root(Throwable t) {

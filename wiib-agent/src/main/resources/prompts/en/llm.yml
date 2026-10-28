@@ -14,6 +14,7 @@ llm:
     fallback: Something went wrong, please try again later
     unauthorized: The API key is invalid or lacks permission - check it in the settings
     quota: Your API quota is used up or you have hit a rate limit, please try again later
+    searchUnsupported: This endpoint does not support web search - turn off "Web search" in the model settings
     modelNotFound: This endpoint does not support that model, pick another one
     unreachable: The endpoint is not responding - check that the Base URL is correct
     # type is the class name of the deepest cause, language-independent; it is how unclassified shapes get spotted
