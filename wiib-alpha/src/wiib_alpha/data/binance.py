@@ -104,8 +104,8 @@ class Binance:
         self._list_url = list_url.rstrip("/")
         self._client = client if client is not None else httpx.Client(timeout=60.0)
         self._concurrency = max(1, concurrency)
-        # REST 一次只发一个；fapi 和现货各记上一个结束的时刻
-        self._rest_lock = threading.Lock()
+        # REST 每个主机一次只发一个：fapi 和现货各自排队、各记上一个结束的时刻
+        self._rest_lock = {"fapi": threading.Lock(), "spot": threading.Lock()}
         self._rest_at = {"fapi": float("-inf"), "spot": float("-inf")}
 
     # ========== 目录 ==========
@@ -115,8 +115,8 @@ class Binance:
         return self._dirs(f"{_UM}/monthly/klines/")
 
     def spot_symbols(self) -> list[str]:
-        """现货归档里出现过的全部符号，含已下架"""
-        return self._dirs(f"{_SPOT}/monthly/klines/")
+        """现货归档里出现过的全部符号，含已下架；列日度目录，当月新上的对也在"""
+        return self._dirs(f"{_SPOT}/daily/klines/")
 
     def _dirs(self, prefix: str) -> list[str]:
         _, dirs = self._list(prefix)
@@ -343,7 +343,7 @@ class Binance:
         """/api/ 开头的走现货地址，其余走 fapi；两边各自排队限速"""
         host = "spot" if path.startswith("/api/") else "fapi"
         gap = SPOT_GAP_S if host == "spot" else DATA_GAP_S if path.startswith("/futures/data/") else REST_GAP_S
-        with self._rest_lock:
+        with self._rest_lock[host]:
             time.sleep(max(0.0, self._rest_at[host] + gap - time.monotonic()))
             resp = self._get((self._spot if host == "spot" else self._fapi) + path, params)
             self._rest_at[host] = time.monotonic()

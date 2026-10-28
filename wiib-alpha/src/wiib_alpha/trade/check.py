@@ -45,9 +45,7 @@ def stored(store: PanelStore, symbols: list[str]) -> Frames:
 def fetched(store: PanelStore, binance: Binance, symbols: list[str], days: int) -> Frames:
     """每个币每个数据集现拉归档最后 days 天"""
     spot = live.spot_pairs(binance, symbols)
-    fetch = {"klines_15m": binance.recent_klines, "premium_15m": binance.recent_premium,
-             "metrics": binance.recent_metrics, "funding": binance.recent_funding,
-             "spot_15m": lambda s, a, b: binance.recent_spot_klines(spot[s], a, b)}
+    fetch = live.fetchers(binance, spot)
     out: Frames = {d: {} for d in live.DATASETS}
     for s in symbols:
         for d in live.DATASETS:

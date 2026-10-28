@@ -44,9 +44,7 @@ def update(store: PanelStore, binance: Binance, symbols: Iterable[str], now: int
     """每个币每个数据集从 live 最后一条之后补到 now；没补过或断太久的从 WINDOW_DAYS + 1 天前补起，再早的出信号用不上"""
     symbols = list(symbols)
     spot = spot_pairs(binance, symbols)
-    fetch = {"klines_15m": binance.recent_klines, "premium_15m": binance.recent_premium,
-             "metrics": binance.recent_metrics, "funding": binance.recent_funding,
-             "spot_15m": lambda s, a, b: binance.recent_spot_klines(spot[s], a, b)}
+    fetch = fetchers(binance, spot)
     floor = now - (WINDOW_DAYS + 1) * DAY_MS
     progress.update(total=len(symbols), done=0)
     for s in symbols:
@@ -74,6 +72,13 @@ def spot_pairs(binance: Binance, symbols: Iterable[str]) -> dict[str, str | None
     """每个永续对应的、还在交易的现货对；没有的是 None"""
     trading = {s for s, row in binance.spot_exchange_info().items() if row.get("status") == "TRADING"}
     return {s: spot_symbol(s, trading) for s in symbols}
+
+
+def fetchers(binance: Binance, spot: Mapping[str, str | None]) -> dict[str, Callable[[str, int, int], pd.DataFrame]]:
+    """数据集 → 从实时接口拉一个币 [start, end) 的函数；现货按 spot 里对上的现货对名拉"""
+    return {"klines_15m": binance.recent_klines, "premium_15m": binance.recent_premium,
+            "metrics": binance.recent_metrics, "funding": binance.recent_funding,
+            "spot_15m": lambda s, a, b: binance.recent_spot_klines(spot[s], a, b)}
 
 
 def window_start(t_ms: int) -> int:

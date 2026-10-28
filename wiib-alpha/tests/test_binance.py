@@ -131,10 +131,10 @@ def fill(bucket: Bucket) -> None:
         bucket.put(f"{UM}/daily/premiumIndexKlines/X/15m/X-15m-{day}.zip", premium_lines(t, t + DAY))
         bucket.put(f"{UM}/daily/metrics/X/X-metrics-{day}.zip", metrics_lines(t))
         bucket.put(f"{SPOT}/daily/klines/X/15m/X-15m-{day}.zip", kline_lines(t, t + DAY))
-    # 别的符号只有目录，测 symbols() 的分页；S 只有现货
+    # 别的符号只有目录，测 symbols() 的分页；S 只有现货，而且是当月新上的、只有日度文件
     for s in ("W", "Y", "Z"):
         bucket.put(f"{UM}/monthly/klines/{s}/15m/{s}-15m-2026-07.zip", kline_lines(LISTED, LISTED + BAR))
-    bucket.put(f"{SPOT}/monthly/klines/S/15m/S-15m-2026-07.zip", kline_lines(LISTED, LISTED + BAR))
+    bucket.put(f"{SPOT}/daily/klines/S/15m/S-15m-2026-09-19.zip", kline_lines(DAILY_END - DAY, DAILY_END))
     # D 的费率月度文件停在 3 月：下架了就到此为止，还在交易就是归档断了
     bucket.put(f"{UM}/monthly/fundingRate/D/D-fundingRate-2026-03.zip", funding_lines(ms(2026, 3, 1), ms(2026, 4, 1)))
 
@@ -282,6 +282,8 @@ def test_spot_klines_come_from_the_spot_archive():
     got = downloaded(log)
     assert len(got) == 23 and all(p.startswith(f"/{SPOT}/") for p in got)
     assert client().spot_klines("W", LISTED, NOW).empty
+    # 当月新上的对没有月度文件，从日度文件起
+    assert client().spot_klines("S", LISTED, NOW)["open_time"].tolist() == list(range(DAILY_END - DAY, DAILY_END, BAR))
 
 
 def test_exchange_info():
