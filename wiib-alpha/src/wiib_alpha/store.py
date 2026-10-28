@@ -296,7 +296,7 @@ class Store:
     async def evaluated_candidates(self, standard_id: int) -> list[dict[str, Any]]:
         """和这版口径数字可比的各版（basis 一样，只是门槛不同）下评估过的候选，出题时统计成败用"""
         return await self._all(
-            "SELECT expr, family, eval_json FROM candidate WHERE json_extract(eval_json, '$.standard') IN "
+            "SELECT family, eval_json FROM candidate WHERE json_extract(eval_json, '$.standard') IN "
             "(SELECT id FROM standard WHERE basis = (SELECT basis FROM standard WHERE id = ?))", (standard_id,))
 
     async def candidate_exprs(self) -> list[tuple[str, str]]:

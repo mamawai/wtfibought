@@ -104,22 +104,22 @@ def test_policy_replaces_the_opinions_and_leaves_the_facts():
     assert prompts.Policy.of(mine.to_row()) == mine
 
 
-def scored(expr: str, family: str, ic: dict, leg: dict, gain: float | None) -> dict:
+def scored(columns: list[str], family: str, ic: dict, leg: dict, gain: float | None) -> dict:
     """store.evaluated_candidates 的一行：落过库，档的键是字符串；gain 是 G9 判的那份增量"""
-    return {"expr": expr, "family": family,
-            "eval": {"primary": 96, "horizons": {"96": {"ic": ic, "leg": leg}}, "gain": {"recentSharpe": {"gain": gain}}}}
+    return {"family": family, "eval": {"columns": columns, "primary": 96, "horizons": {"96": {"ic": ic, "leg": leg}},
+                                       "gain": {"recentSharpe": {"gain": gain}}}}
 
 
 def test_outcomes_tally_by_data_class_and_family():
     rows = [
         # 有信号（t = 0.8 × √20 ≈ 3.6）、扣成本还赚、增量过现在的线（0.10）；用到溢价和成交量，两类各算一次
-        scored("$premium + Mean($volume, 4)", "basis", {"mean": 0.03, "icir": 0.8, "months": 20},
+        scored(["premium", "volume"], "basis", {"mean": 0.03, "icir": 0.8, "months": 20},
                {"netReturn": 0.2, "turnover": 0.25, "breakEvenBps": 15.0}, 0.15),
         # IC 够了但 t 不够（0.5 × √16 = 2）；净收益、盈亏平衡、增量落库成了 None
-        scored("$premium", "basis", {"mean": -0.02, "icir": -0.5, "months": 16},
+        scored(["premium"], "basis", {"mean": -0.02, "icir": -0.5, "months": 16},
                {"netReturn": None, "turnover": 0.75, "breakEvenBps": None}, None),
         # IC 不够；多空腿没有样本外期数；增量不到线；老候选的中文 family 算 other
-        scored("Sum($ret, 96)", "动量", {"mean": 0.005, "icir": 2.0, "months": 20}, {"periods": 0}, 0.05),
+        scored(["ret"], "动量", {"mean": 0.005, "icir": 2.0, "months": 20}, {"periods": 0}, 0.05),
     ]
     table = prompts.outcomes(rows, P.families, T)
     assert table["byClass"] == {

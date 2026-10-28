@@ -84,6 +84,16 @@ def test_complexity_counts_distinct_and_limits_are_inclusive():
     parse("CsRank(CsZ($close))", COLS)                                  # 2 个截面算子
 
 
+def test_text_limit_is_measured_on_the_rewritten_form():
+    # 原文 487 字，重写后每个乘号多一对括号变成 625 字；存下来的是重写后的样子，读回来得过不了才一致
+    text = " * ".join(["$ret"] * 70)
+    assert len(text) <= dsl.MAX_TEXT
+    with pytest.raises(DslError, match="超过 500 字"):
+        parse(text, COLS)
+    short = parse(" * ".join(["$ret"] * 30), COLS)
+    assert str(parse(str(short), COLS)) == str(short)
+
+
 # ========== 截面算子 ==========
 
 

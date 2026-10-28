@@ -104,8 +104,6 @@ class Expr:
 
 def parse(text: str, columns: Iterable[str]) -> Expr:
     allowed = set(columns)
-    if len(text) > MAX_TEXT:
-        raise DslError(f"表达式超过 {MAX_TEXT} 字")
     if _MARK in text:
         raise DslError("列要写成 $名字")
     source = _COL.sub(lambda m: _MARK + m.group(1), text.strip())
@@ -117,6 +115,9 @@ def parse(text: str, columns: Iterable[str]) -> Expr:
     if not any(isinstance(n, Col) for n in _walk(root)):
         raise DslError("表达式得至少引用一个列")
     expr = Expr(root)
+    # 字数按重写后的全括号写法量：存下来再读回来过不过一样
+    if len(str(expr)) > MAX_TEXT:
+        raise DslError(f"表达式超过 {MAX_TEXT} 字")
     cx = expr.complexity()
     for key, label in (("nodes", "节点"), ("windows", "窗口"), ("constants", "常量"), ("cross", "截面算子")):
         if cx[key] > COMPLEXITY[key]:

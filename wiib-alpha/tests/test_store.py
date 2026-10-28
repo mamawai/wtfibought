@@ -84,8 +84,8 @@ async def test_evaluated_candidates_only_count_comparable_standards(store):
         await store.upsert_candidate({**base, "id": f"r1-{seq}", "seq": seq, "name": name, "family": family, "expr": expr,
                                       "eval": {"standard": standard, "horizons": {}}})
     assert await store.evaluated_candidates(2) == [
-        {"expr": "$ret", "family": "basis", "eval": {"standard": 2, "horizons": {}}},
-        {"expr": "$ret", "family": "basis", "eval": {"standard": 1, "horizons": {}}}]
+        {"family": "basis", "eval": {"standard": 2, "horizons": {}}},
+        {"family": "basis", "eval": {"standard": 1, "horizons": {}}}]
     assert await store.candidate_exprs() == [("older", "$ret"), ("other_basis", "$trades"), ("old", "$volume")]
 
 

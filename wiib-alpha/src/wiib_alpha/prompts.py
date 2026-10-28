@@ -17,7 +17,7 @@ import numpy as np
 from . import ops, reference
 from .data.binance import day_name
 from .data.panel import FEATURE_COLUMNS
-from .dsl import COMPLEXITY, MAX_TEXT, MAX_WINDOW, parse
+from .dsl import COMPLEXITY, MAX_TEXT, MAX_WINDOW
 from .eval.cs_ic import SHAPES, shape
 from .eval.gates import fmt
 from .eval.params import Thresholds
@@ -137,7 +137,7 @@ def _dsl_docs() -> str:
 
 截面算子（CsRank / CsDemean / CsZ）在同一时刻跨池内币算，不看别的时刻。评估本来就按截面排序，最外层套 CsRank 不改变 IC；它们的用处是把各币量纲不同的量先拉到可比的尺度再做运算或滚动，比如先截面标准化再和别的量相减。
 
-复杂度上限，解析时就拒：不同的子式 ≤ {COMPLEXITY['nodes']} 个、不同的窗口值 ≤ {COMPLEXITY['windows']} 个、不同的常量值 ≤ {COMPLEXITY['constants']} 个（分位数也算常量）、不同的截面算子 ≤ {COMPLEXITY['cross']} 个，整条不超过 {MAX_TEXT} 字。都按不同的数：同一个子式、同一个窗口值或常量值重复写只算一个，比如四个桶都用 Sum(…, 672) 只算 1 个窗口。"""
+复杂度上限，解析时就拒：不同的子式 ≤ {COMPLEXITY['nodes']} 个、不同的窗口值 ≤ {COMPLEXITY['windows']} 个、不同的常量值 ≤ {COMPLEXITY['constants']} 个（分位数也算常量）、不同的截面算子 ≤ {COMPLEXITY['cross']} 个，整条按重写后的全括号写法算不超过 {MAX_TEXT} 字。都按不同的数：同一个子式、同一个窗口值或常量值重复写只算一个，比如四个桶都用 Sum(…, 672) 只算 1 个窗口。"""
 
 
 def dsl_reference() -> dict[str, Any]:
@@ -354,7 +354,7 @@ def outcomes(rows: Sequence[Mapping[str, Any]], families: Mapping[str, tuple[str
                 "net": _f(leg.get("netReturn")) > 0,
                 "g9": _f(ev["gain"]["recentSharpe"]["gain"]) > t.sharpe_gain_min,
                 "turnover": leg.get("turnover"), "breakEven": leg.get("breakEvenBps")}
-        columns = parse(r["expr"], FEATURE_COLUMNS).columns()
+        columns = set(ev["columns"])
         for name, cols in DATA_CLASSES.items():
             if columns & set(cols):
                 by_class.setdefault(name, []).append(item)
