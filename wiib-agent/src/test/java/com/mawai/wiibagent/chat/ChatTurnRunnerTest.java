@@ -26,7 +26,6 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import reactor.core.publisher.Flux;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -55,8 +54,8 @@ class ChatTurnRunnerTest {
     /** 生产口径的调用上限 */
     private static final int LIMIT = 8;
 
-    private final ChatModel deep = mock(ChatModel.class);
-    private final ChatModel light = mock(ChatModel.class);
+    private final ChatModel deep = ChatTestEndpoints.model();
+    private final ChatModel light = ChatTestEndpoints.model();
     private final ApprovalRegistry registry = new ApprovalRegistry();
     private final ChatContextStore contextStore = ChatTestEndpoints.contextStore();
     private final ChildRunRegistry childRuns = ChatTestEndpoints.childRuns(contextStore);
@@ -108,9 +107,8 @@ class ChatTurnRunnerTest {
         });
     }
 
-    /** 主 agent 跑在 Antigravity 来源的端点上，先调 web_search 再收尾；web_search 那次搜索从模型 options 派生，要桩上 */
+    /** 主 agent 跑在 Antigravity 来源的端点上，先调 web_search 再收尾 */
     private void mainWebSearchesThenAnswers() {
-        when(deep.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
         llmConfig = new ChatEndpoints(1L, ChatTestEndpoints.antigravity("gemini-4-argon-high"), null);
         mainCallsThenAnswers("web_search", "{\"query\":\"BTC ETF\"}", "这是答案");
     }

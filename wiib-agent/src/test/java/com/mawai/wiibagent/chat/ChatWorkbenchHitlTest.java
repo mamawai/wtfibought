@@ -68,8 +68,8 @@ class ChatWorkbenchHitlTest {
     private final ApprovalRegistry registry = new ApprovalRegistry();
     /** 工具真跑起来的第一件事就是问它要新闻上下文——用它区分"闸门拦下了"和"工具跑过了" */
     private final DeepAnalysisService deepAnalysisService = mock(DeepAnalysisService.class);
-    private final ChatModel deep = mock(ChatModel.class);
-    private final ChatModel light = mock(ChatModel.class);
+    private final ChatModel deep = ChatTestEndpoints.model();
+    private final ChatModel light = ChatTestEndpoints.model();
     /** 每轮主 agent 的第几次模型调用（每轮开跑前归零） */
     private final AtomicInteger deepCallsThisTurn = new AtomicInteger();
     /** 本轮主 agent 要不要调深研判工具（false=直接给答案） */

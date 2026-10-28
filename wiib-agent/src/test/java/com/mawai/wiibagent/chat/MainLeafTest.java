@@ -44,8 +44,8 @@ class MainLeafTest {
 
     private static final String SESSION = "wb-1-main-leaf";
 
-    private final ChatModel deep = mock(ChatModel.class);
-    private final ChatModel light = mock(ChatModel.class);
+    private final ChatModel deep = ChatTestEndpoints.model();
+    private final ChatModel light = ChatTestEndpoints.model();
     private final ApprovalRegistry registry = new ApprovalRegistry();
     private final DeepAnalysisService deepAnalysisService = mock(DeepAnalysisService.class);
     private final WorkbenchRunRegistry runRegistry = mock(WorkbenchRunRegistry.class);

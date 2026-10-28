@@ -73,10 +73,7 @@ public class LlmClient {
         this.tools = List.copyOf(builder.tools);
         // 工具挂进 options：没挂工具时保持 null 走模型默认。
         // 从模型自己的 options 派生而非泛型 builder：具体类型必须跟着模型走，理由见 ToolOptions 类头
-        ChatOptions base = tools.isEmpty()
-                || !(model.getOptions() instanceof ToolCallingChatOptions)
-                ? null
-                : ToolOptions.withTools(model, tools);
+        ChatOptions base = tools.isEmpty() ? null : ToolOptions.withTools(model, tools);
         this.chatOptions = builder.webSearch ? withWebSearch(base, model) : base;
         this.systemMessage = SystemMessage.builder().text(builder.systemPrompt).build();
         this.webSearch = builder.webSearch;

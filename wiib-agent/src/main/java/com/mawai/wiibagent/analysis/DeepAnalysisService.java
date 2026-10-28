@@ -74,8 +74,7 @@ public class DeepAnalysisService {
     }
 
     /**
-     * 模型由调用方传入而不是自己去拿：BYOK 后每个用户的模型不同，
-     * 服务自己去 runtimeManager 取就不知道"当前是谁在用"了。
+     * 模型由调用方传入（每个用户的 BYOK 模型不同）。
      * 带不写提示缓存的标记（{@link SseChatModel#NO_CACHE_KEY}）；options 从模型自己的派生，具体类型跟着模型走。
      * 上游回了空响应（没有结果）返回 null
      */
@@ -104,7 +103,11 @@ public class DeepAnalysisService {
             String prompt = prompts.get(lang, "chat.deepAnalysis.arguePrompt", Map.of(
                     "stance", stance, "data", buildDataContext(symbol, newsContext, lang)));
             String argument = call(model, prompt);
-            return argument != null && !argument.isBlank() ? argument : argueFailed(lang, side);
+            if (argument == null || argument.isBlank()) {
+                log.warn("[Deep] {}辩手空响应 symbol={}", side, symbol);
+                return argueFailed(lang, side);
+            }
+            return argument;
         } catch (Exception e) {
             log.warn("[Deep] {}辩手失败 symbol={} msg={}", side, symbol, e.getMessage());
             return argueFailed(lang, side);

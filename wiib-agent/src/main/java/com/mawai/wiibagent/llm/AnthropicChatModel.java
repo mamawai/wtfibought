@@ -113,10 +113,7 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
 
         List<String> toolNames = new ArrayList<>();
         ArrayNode tools = MAPPER.createArrayNode();
-        // 捎了 NO_CACHE_KEY 才不打缓存断点
-        boolean cache = true;
         if (options instanceof ToolCallingChatOptions toolOptions) {
-            cache = !flag(toolOptions, NO_CACHE_KEY);
             for (ToolDefinition def : toolCallingManager.resolveToolDefinitions(toolOptions)) {
                 tools.add(MAPPER.createObjectNode()
                         .put("name", def.name())
@@ -152,6 +149,7 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
                 }
             }
         }
+        boolean cache = !(options instanceof ToolCallingChatOptions tool && flag(tool, NO_CACHE_KEY));
         if (!system.isEmpty()) {
             // 1h 只挂首块：隔 15 分钟 / 1 小时再醒的 trader 也能命中同一份 system + tools；
             // 后面的块是老会话的旧摘要，各会话不同，跟首块粘一起基础提示词的缓存就没法跨会话共用

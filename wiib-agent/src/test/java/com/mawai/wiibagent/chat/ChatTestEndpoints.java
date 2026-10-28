@@ -11,6 +11,8 @@ import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.toolkit.NewsToolkit;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -25,6 +27,13 @@ public final class ChatTestEndpoints {
     public static final LocalizedToolCallbacks TOOLS = new LocalizedToolCallbacks(PROMPTS);
 
     private ChatTestEndpoints() {
+    }
+
+    /** 模型的 mock：getOptions 给成 ToolCallingChatOptions，LlmClient 挂工具、捎标记都从它派生 */
+    public static ChatModel model() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        return model;
     }
 
     /** 恒中文的语言解析器：默认路径都按中文断言，验切语言的用例自己另造 */

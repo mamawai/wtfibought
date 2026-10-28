@@ -43,7 +43,7 @@ class ChatAgentFactoryTest {
     private final ChatModelFactory chatModelFactory = mock(ChatModelFactory.class);
 
     private ChatAgentFactory factory() {
-        return factory(mock(ChatModel.class));
+        return factory(ChatTestEndpoints.model());
     }
 
     private ChatAgentFactory factory(ChatModel model) {
@@ -105,8 +105,7 @@ class ChatAgentFactoryTest {
     /** 行情 ×4 / 新闻 / 深研判 / trader 只读 ×5 / trader 动作 ×3 / 行为分析 / 派子 agent，全在主 agent 一张表上 */
     @Test
     void 主agent工具表齐全() {
-        ChatModel model = mock(ChatModel.class);
-        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        ChatModel model = ChatTestEndpoints.model();
 
         ChatAgentFactory.Leaves leaves = factory(model).leavesFor(config("gpt-5"), AgentLang.ZH);
 
@@ -124,8 +123,7 @@ class ChatAgentFactoryTest {
     /** 整理上下文走的 client 与主 agent 同一份系统提示词和工具：请求前缀与平时一样才命中提示缓存 */
     @Test
     void 整理用的client与主agent请求前缀一致() {
-        ChatModel model = mock(ChatModel.class);
-        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        ChatModel model = ChatTestEndpoints.model();
         List<Prompt> prompts = new ArrayList<>();
         when(model.stream(any(Prompt.class))).thenAnswer(inv -> {
             prompts.add(inv.getArgument(0));
@@ -153,8 +151,7 @@ class ChatAgentFactoryTest {
      */
     @Test
     void worker预设各自的工具表与搜索许可() {
-        ChatModel model = mock(ChatModel.class);
-        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        ChatModel model = ChatTestEndpoints.model();
         ChatAgentFactory factory = factory(model);
 
         Prompt researcher = workerPrompt(model, factory.newWorker(WorkerKind.RESEARCHER, AgentLang.ZH, searchEndpoint(), model));
@@ -261,8 +258,7 @@ class ChatAgentFactoryTest {
      */
     @Test
     void 端点声明搜索时主agent的调用捎许可() {
-        ChatModel model = mock(ChatModel.class);
-        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        ChatModel model = ChatTestEndpoints.model();
         List<Prompt> prompts = new ArrayList<>();
         when(model.stream(any(Prompt.class))).thenAnswer(inv -> {
             prompts.add(inv.getArgument(0));
@@ -281,8 +277,7 @@ class ChatAgentFactoryTest {
      */
     @Test
     void Antigravity来源的搜索包成web_search工具() {
-        ChatModel model = mock(ChatModel.class);
-        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        ChatModel model = ChatTestEndpoints.model();
         List<Prompt> prompts = new ArrayList<>();
         when(model.stream(any(Prompt.class))).thenAnswer(inv -> {
             prompts.add(inv.getArgument(0));
@@ -316,8 +311,7 @@ class ChatAgentFactoryTest {
     /** 模型调 web_search：用主 agent 自己的模型单独发一次，搜的就是模型给的 query，这次也记在本轮账上 */
     @Test
     void web_search单独发一次搜索且记在本轮账上() {
-        ChatModel model = mock(ChatModel.class);
-        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        ChatModel model = ChatTestEndpoints.model();
         AtomicInteger streams = new AtomicInteger();
         when(model.stream(any(Prompt.class))).thenAnswer(inv -> Flux.just(streams.getAndIncrement() == 0
                 ? new ChatResponse(List.of(new Generation(AssistantMessage.builder().content("").toolCalls(List.of(
