@@ -22,6 +22,7 @@ import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -62,7 +63,7 @@ public class ChatTurnRunner {
      *
      * @param cancelled 用户中断：半截答案就是最终答案
      * @param pending   最后一次模型调用之后还到了子运行报告、这轮没答：前端空闲时发起唤醒轮
-     * @param context   这一轮结束时的上下文用量：最后一次模型调用报的，一次都没报就按字数估。
+     * @param context   这一轮结束时的上下文用量：最后一次模型调用报的；那次服务端搜过、或一次都没报，就连系统提示词按字数估。
      *                  中断的轮为 null：工具过程没落库，轮中途测到的偏大，沿用上一轮的读数
      */
     public record TurnResult(boolean cancelled, boolean pending, ContextUsage context) {
@@ -137,7 +138,7 @@ public class ChatTurnRunner {
 
         // 中断时半截答案已经攒在这儿：token 逐帧进来，掐断在哪一帧就攒到哪一帧
         StringBuilder emitted = new StringBuilder();
-        // 每次调完模型上游报的上下文用量，最后一次的就是这一轮结束时的
+        // 每次调完模型上游报的上下文用量，最后一次的就是这一轮结束时的；最后一次服务端搜过就是空
         AtomicReference<ContextUsage> measured = new AtomicReference<>();
         ReactLoop.Result result = streamMain(leaves, working, userId, sessionId, inbox, chunk -> {
             emitted.append(chunk);
@@ -205,6 +206,8 @@ public class ChatTurnRunner {
                                         String sessionId, Deque<Message> inbox, Consumer<String> tokenSink,
                                         Consumer<SearchEvent> searchSink, CompletableFuture<Void> cancel,
                                         AtomicReference<ContextUsage> measured) {
+        // 这次调用里服务端搜过
+        AtomicBoolean searched = new AtomicBoolean();
         ReactLoop.Listener listener = new ReactLoop.Listener() {
             @Override
             public void chunk(ChatResponse frame) {
@@ -215,14 +218,23 @@ public class ChatTurnRunner {
                 // 搜索过程帧是空文本帧，事件挂在这一帧的响应 metadata 上
                 String json = frame.getMetadata().get(SearchEvent.KEY);
                 if (json != null) {
-                    searchSink.accept(SearchEvent.parse(json));
+                    SearchEvent event = SearchEvent.parse(json);
+                    searchSink.accept(event);
+                    if (SearchEvent.SEARCHED.equals(event.phase())) {
+                        searched.set(true);
+                    }
                 }
-                // 收尾帧带着这次调用的用量
+                // 收尾帧带着这次调用的用量。服务端搜过的那次报的是计费口径：一次调用里每轮搜索都把上下文又算一遍，
+                // 不是上下文大小，不用它
                 Long tokens = ContextUsage.measured(frame.getMetadata().getUsage());
                 if (tokens != null) {
-                    ContextUsage context = new ContextUsage(tokens, leaves.contextWindow(), false);
-                    measured.set(context);
-                    runRegistry.publishContext(sessionId, context);
+                    if (searched.getAndSet(false)) {
+                        measured.set(null);
+                    } else {
+                        ContextUsage context = new ContextUsage(tokens, leaves.contextWindow(), false);
+                        measured.set(context);
+                        runRegistry.publishContext(sessionId, context);
+                    }
                 }
             }
 

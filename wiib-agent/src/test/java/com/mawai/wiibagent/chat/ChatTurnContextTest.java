@@ -10,6 +10,7 @@ import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.llm.AnthropicChatModel;
 import com.mawai.wiibagent.llm.ContextUsage;
+import com.mawai.wiibagent.llm.SearchEvent;
 import com.mawai.wiibagent.toolkit.IndicatorToolkit;
 import com.mawai.wiibagent.toolkit.MarketToolkit;
 import com.mawai.wiibagent.trader.TraderChatService;
@@ -151,6 +152,21 @@ class ChatTurnContextTest {
         assertThat(result.context()).isEqualTo(new ContextUsage(1200, 256_000, false));
         assertThat(saved().contextTokens()).isEqualTo(1200L);
         assertThat(saved().prefix()).isEqualTo(leaves.mainClient().fingerprint());
+    }
+
+    /** 服务端搜过的那次调用报的是计费口径（每轮搜索都把上下文又算一遍）：不推、不当读数，按字数估 */
+    @Test
+    void 服务端搜过的那次用量不当上下文大小() {
+        ChatResponse searched = new ChatResponse(List.of(new Generation(new AssistantMessage(""))),
+                ChatResponseMetadata.builder()
+                        .keyValue(SearchEvent.KEY, SearchEvent.searched("BTC", List.of()).toJson()).build());
+        when(deep.stream(any(Prompt.class))).thenReturn(Flux.just(searched, textFrame("答"), finalFrame(90_000, 200)));
+
+        ChatTurnRunner.TurnResult result = runTurn();
+
+        assertThat(events).isEmpty();
+        assertThat(result.context().estimated()).isTrue();
+        assertThat(result.context().tokens()).isEqualTo(leaves.mainClient().estimateTokens(saved().messages()));
     }
 
     /** 上游一次都没报：按字数估，系统提示词和工具定义也算上 */
