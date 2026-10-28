@@ -512,7 +512,7 @@ export const llmEndpointApi = {
   /** 拉模型清单：编辑已有端点时带 id，apiKey 留空=用它已存的 key */
   listModels: (req: LlmEndpointSaveRequest, id?: number) =>
     api.post<unknown, string[]>('/ai/llm-endpoints/models', req, { params: id != null ? { id } : {} }),
-  /** 连通性探测：与保存分离，对应表单里的"测试连通性"按钮 */
+  /** 表单里的"测试连通性"按钮：先 ping，勾了联网搜索的再探一次搜索 */
   test: (req: LlmEndpointSaveRequest, id?: number) =>
     api.post<unknown, void>('/ai/llm-endpoints/test', req, { params: id != null ? { id } : {} }),
 };

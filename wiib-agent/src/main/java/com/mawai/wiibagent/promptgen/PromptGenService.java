@@ -51,8 +51,6 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *   ask_user   推题卡，这一轮就收工（ReactLoop.stopWhen）
  *   write_draft 写稿人流式写正文，回执进历史时连快照存成一版（只留最近 3 版）
  * </pre>
- * 不开对话压缩：对话本来不长，压了版本快照就对不上。
- * <p>
  * 对话连同 agent 系统提示词与工具的指纹一起存：每轮开跑前比一下，变了就把起跑历史里的原始内容按文本重建——
  * Anthropic 的思考块和这段前缀绑死，照旧回放强制校验的组织会 400。
  */

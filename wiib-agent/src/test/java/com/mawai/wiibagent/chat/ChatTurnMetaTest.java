@@ -130,34 +130,6 @@ class ChatTurnMetaTest {
         return captor.getValue();
     }
 
-    @Test
-    void 一轮的读数随done下发并落库() {
-        UsageTrackingChatModel deep = new UsageTrackingChatModel(modelReporting(100, 20, 120));
-        // 一轮里调了两次模型
-        Harness h = harness(() -> {
-            deep.call(new Prompt("first"));
-            deep.call(new Prompt("second"));
-        });
-
-        RecordingEmitter emitter = new RecordingEmitter();
-        h.streamer().run(new SseChannel(emitter), 1L, SESSION, "看看行情",
-                leaves(deep), null, null, false);
-
-        ChatHistoryService.TurnMeta meta = capturedMeta(h.history());
-        assertThat(meta.modelLabel()).isEqualTo(LABEL);
-        assertThat(meta.modelCalls()).isEqualTo(2);
-        assertThat(meta.promptTokens()).isEqualTo(200L);
-        assertThat(meta.completionTokens()).isEqualTo(40L);
-        assertThat(meta.totalTokens()).isEqualTo(240L);
-        assertThat(meta.latencyMs()).isNotNull().isGreaterThanOrEqualTo(0);
-
-        // done 事件与落库同一份读数：前端本轮不用等刷新就能显示
-        JsonNode done = emitter.event("done");
-        assertThat(done).isNotNull();
-        assertThat(done.get("meta").path("totalTokens").asLong(0)).isEqualTo(240L);
-        assertThat(done.get("meta").path("modelLabel").asString(null)).isEqualTo(LABEL);
-    }
-
     /** 搜索过程逐条外发；来源按 url 去重后随 done 下发并落库——刷新后答案底部的来源还在 */
     @Test
     void 搜索事件外发且来源随done与落库() {
@@ -209,15 +181,17 @@ class ChatTurnMetaTest {
     }
 
     @Test
-    void 第二轮的账不含第一轮() {
+    void 每轮的读数随done下发并落库且不含上一轮() {
         UsageTrackingChatModel deep = new UsageTrackingChatModel(modelReporting(100, 20, 120));
+        // 一轮里调了两次模型
         Harness h = harness(() -> {
             deep.call(new Prompt("first"));
             deep.call(new Prompt("second"));
         });
         ChatAgentFactory.Leaves leaves = leaves(deep);
 
-        h.streamer().run(new SseChannel(new RecordingEmitter()), 1L, SESSION, "第一问",
+        RecordingEmitter emitter = new RecordingEmitter();
+        h.streamer().run(new SseChannel(emitter), 1L, SESSION, "第一问",
                 leaves, null, null, false);
         h.streamer().run(new SseChannel(new RecordingEmitter()), 1L, SESSION, "第二问",
                 leaves, null, null, false);
@@ -226,8 +200,19 @@ class ChatTurnMetaTest {
                 ArgumentCaptor.forClass(ChatHistoryService.TurnMeta.class);
         verify(h.history(), org.mockito.Mockito.times(2))
                 .append(eq(SESSION), eq(1L), eq("assistant"), eq("答案正文"), captor.capture(), any());
+        ChatHistoryService.TurnMeta meta = captor.getAllValues().get(0);
+        assertThat(meta.modelLabel()).isEqualTo(LABEL);
+        assertThat(meta.modelCalls()).isEqualTo(2);
+        assertThat(meta.promptTokens()).isEqualTo(200L);
+        assertThat(meta.completionTokens()).isEqualTo(40L);
+        assertThat(meta.totalTokens()).isEqualTo(240L);
+        assertThat(meta.latencyMs()).isNotNull().isGreaterThanOrEqualTo(0);
         // 两轮各烧两次；没清零的话第二轮会是 480
-        assertThat(captor.getAllValues().get(0).totalTokens()).isEqualTo(240L);
         assertThat(captor.getAllValues().get(1).totalTokens()).isEqualTo(240L);
+
+        // done 事件与落库同一份读数：前端本轮不用等刷新就能显示
+        JsonNode done = emitter.event("done");
+        assertThat(done.get("meta").path("totalTokens").asLong(0)).isEqualTo(240L);
+        assertThat(done.get("meta").path("modelLabel").asString(null)).isEqualTo(LABEL);
     }
 }

@@ -192,7 +192,7 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
       )}
 
       {/* 服务端联网搜索：能声明搜索工具的协议才有勾选框（chat-completions 没有标准的服务端搜索）。
-          端点支不支持查不到，与档位同理由用户自己勾；只有对话的主 agent 与调研子 agent 会用它 */}
+          勾了的保存前后端会探测，探测不过不让存；只有对话的主 agent 与调研子 agent 会用它 */}
       {platform ? null : SEARCHABLE.has(value.apiProtocol) ? (
         <label className="flex items-start gap-2 text-xs cursor-pointer select-none">
           <input type="checkbox" checked={value.webSearch}

@@ -75,12 +75,12 @@ class ChatContextCodecTest {
             old = in.readAllBytes();
         }
 
-        List<Message> messages = ChatContextCodec.read(old);
+        List<Message> messages = ChatContextCodec.readState(old).messages();
         assertSameMessages(bareJsonFixture(), messages);
         assertThat(messages.getLast().getMetadata().get("n")).isInstanceOf(Integer.class);
         assertThat(messages.getLast().getMetadata().get("ratio")).isEqualTo(new BigDecimal("0.50"));
         // 读进来再写出去再读回来仍一致
-        assertSameMessages(bareJsonFixture(), ChatContextCodec.read(ChatContextCodec.write(messages)));
+        assertSameMessages(bareJsonFixture(), ChatContextCodec.readState(ChatContextCodec.write(messages)).messages());
     }
 
     @Test
@@ -90,9 +90,9 @@ class ChatContextCodecTest {
         // 首两字节是对象流魔数：golden 必须一直是老格式，被谁拿新格式覆盖了就等于兼容没在测
         assertThat(golden[0]).isEqualTo((byte) 0xAC);
         assertThat(golden[1]).isEqualTo((byte) 0xED);
-        assertSameMessages(fixture(), ChatContextCodec.read(golden));
-        // 老行没有用量读数和前缀指纹：下一轮按字数估、历史按文本重建一次
         ChatContextStore.State state = ChatContextCodec.readState(golden);
+        assertSameMessages(fixture(), state.messages());
+        // 老行没有用量读数和前缀指纹：下一轮按字数估、历史按文本重建一次
         assertThat(state.contextTokens()).isNull();
         assertThat(state.prefix()).isNull();
     }
@@ -102,13 +102,14 @@ class ChatContextCodecTest {
         byte[] bytes = ChatContextCodec.write(fixture());
 
         assertThat(bytes[0]).isEqualTo((byte) '{');
-        assertSameMessages(fixture(), ChatContextCodec.read(bytes));
+        assertSameMessages(fixture(), ChatContextCodec.readState(bytes).messages());
     }
 
     @Test
     void 老行读进来再写出去不丢东西() throws Exception {
         // 生产里老行就是这么换新的：这一轮读老字节，跑完整体覆盖成裸 JSON
-        List<Message> reWritten = ChatContextCodec.read(ChatContextCodec.write(ChatContextCodec.read(golden())));
+        List<Message> reWritten = ChatContextCodec.readState(
+                ChatContextCodec.write(ChatContextCodec.readState(golden()).messages())).messages();
 
         assertSameMessages(fixture(), reWritten);
     }

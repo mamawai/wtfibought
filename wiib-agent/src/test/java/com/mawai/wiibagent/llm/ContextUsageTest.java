@@ -20,7 +20,6 @@ class ContextUsageTest {
     void 实测用量是输入加输出_没报就是null() {
         assertThat(ContextUsage.measured(new DefaultUsage(1000, 200, 1200))).isEqualTo(1200L);
         assertThat(ContextUsage.measured(new DefaultUsage(0, 0, 0))).isNull();
-        assertThat(ContextUsage.measured(null)).isNull();
     }
 
     /** 中文 1 字≈1 token、其余 4 字符≈1 token；存了原始内容的 assistant 只按原始内容算，文本不重复算 */

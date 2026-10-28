@@ -77,11 +77,6 @@ public final class ChatContextCodec {
         return MAPPER.writeValueAsBytes(root);
     }
 
-    /** 只要消息 */
-    public static List<Message> read(byte[] bytes) throws IOException {
-        return readState(bytes).messages();
-    }
-
     /** 读：AC ED 开头的先从对象流壳里剥出 JSON，否则整段就是 JSON */
     public static ChatContextStore.State readState(byte[] bytes) throws IOException {
         if (bytes == null || bytes.length == 0) {

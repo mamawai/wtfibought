@@ -37,8 +37,8 @@ public class UserLlmEndpoint {
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String reasoningEffort;
     /**
-     * 服务端联网搜索：请求里声明该协议的服务端搜索工具才搜（opt-in）；勾了的保存前会探测，上游不支持不让存。
-     * 能声明的协议才存 true（AiProtocols.supportsServerSearch）；端点支不支持查不到，由用户自己勾。当前只有对话的主 agent 与 researcher worker 会用到。
+     * 服务端联网搜索：请求里声明该协议的服务端搜索工具才搜（opt-in）；勾了的保存前会探测，探测不过不让存。
+     * 能声明的协议才存 true（AiProtocols.supportsServerSearch）。当前只有对话的主 agent 与 researcher worker 会用到。
      */
     private Boolean webSearch;
     /** 上下文窗口（token）：对话主模型的上下文用量达到它的 90% 时，下一轮开始前整理上下文；用户按模型实际窗口填 */

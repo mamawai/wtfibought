@@ -21,11 +21,10 @@ public record ContextUsage(long tokens, int window, boolean estimated) {
      * 没报用量返回 null——Spring AI 没 usage 时给的是全 0 的空壳，只认正数
      */
     public static Long measured(Usage usage) {
-        if (usage == null || usage.getPromptTokens() == null || usage.getPromptTokens() <= 0) {
+        if (usage.getPromptTokens() <= 0) {
             return null;
         }
-        Integer completion = usage.getCompletionTokens();
-        return (long) usage.getPromptTokens() + (completion == null ? 0 : completion);
+        return (long) usage.getPromptTokens() + usage.getCompletionTokens();
     }
 
     /**
