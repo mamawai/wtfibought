@@ -2,6 +2,7 @@ package com.mawai.wiibagent.promptgen;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mawai.wiibagent.chat.store.ChatContextCodec;
+import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.mapper.PromptGenSessionMapper;
 import com.mawai.wiibagent.mapper.PromptGenVersionMapper;
 import com.mawai.wiibcommon.entity.PromptGenSession;
@@ -40,13 +41,23 @@ public class PromptGenStore {
         sessionMapper.upsert(session);
     }
 
-    public void saveState(long userId, List<Message> messages) {
-        sessionMapper.updateState(userId, ChatContextCodec.write(messages));
+    /** @param prefix 这份对话是在哪套系统提示词与工具下跑出来的（{@link com.mawai.wiibagent.llm.LlmClient#fingerprint}） */
+    public void saveState(long userId, List<Message> messages, String prefix) {
+        sessionMapper.updateState(userId, ChatContextCodec.write(new ChatContextStore.State(messages, null, prefix)));
     }
 
     static List<Message> messages(byte[] state) {
+        return state(state).messages();
+    }
+
+    /** 存着的对话的前缀指纹；新开的对话、回到某一版之后、老数据为 null */
+    static String prefix(byte[] state) {
+        return state(state).prefix();
+    }
+
+    private static ChatContextStore.State state(byte[] state) {
         try {
-            return ChatContextCodec.read(state);
+            return ChatContextCodec.readState(state);
         } catch (IOException e) {
             throw new UncheckedIOException("生成器对话历史解不开", e);
         }

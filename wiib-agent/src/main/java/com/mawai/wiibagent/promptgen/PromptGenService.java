@@ -52,6 +52,9 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *   write_draft 写稿人流式写正文，回执进历史时连快照存成一版（只留最近 3 版）
  * </pre>
  * 不开对话压缩：对话本来不长，压了版本快照就对不上。
+ * <p>
+ * 对话连同 agent 系统提示词与工具的指纹一起存：每轮开跑前比一下，变了就把起跑历史里的原始内容按文本重建——
+ * Anthropic 的思考块和这段前缀绑死，照旧回放强制校验的组织会 400。
  */
 @Slf4j
 @Component
@@ -150,7 +153,8 @@ public class PromptGenService {
     /** 开新对话（旧对话整个覆盖，版本保留）并跑第一轮 */
     public void start(SseChannel channel, long userId, ChatModel model, long endpointId, AgentLang outputLang) {
         List<Message> history = List.of(new UserMessage(prompts.get(userLangResolver.of(userId), "promptgen.kickoff")));
-        round(channel, userId, model, outputLang, history, () -> store.open(userId, endpointId, outputLang, history));
+        round(channel, userId, model, outputLang, history, null,
+                () -> store.open(userId, endpointId, outputLang, history));
     }
 
     /** 这一轮的起跑历史：当前对话 + 用户这句（回答、跳过、或直接说要改哪里）；还没答的必问项不让跳 */
@@ -169,14 +173,18 @@ public class PromptGenService {
 
     public void reply(SseChannel channel, long userId, ChatModel model, PromptGenSession session,
                       List<Message> history) {
+        String prefix = PromptGenStore.prefix(session.getState());
         // 用户这句先落库：这一轮在后台跑时刷新进来也看得到
-        round(channel, userId, model, AgentLang.of(session.getOutputLang()), history,
-                () -> store.saveState(userId, history));
+        round(channel, userId, model, AgentLang.of(session.getOutputLang()), history, prefix,
+                () -> store.saveState(userId, history, prefix));
     }
 
-    /** @param open 起跑历史落库；在标上 running 之后做，/session 读到新对话时一定也读到 running */
+    /**
+     * @param prefix 起跑历史是在哪套系统提示词与工具下跑出来的，新对话为 null
+     * @param open   起跑历史落库；在标上 running 之后做，/session 读到新对话时一定也读到 running
+     */
     private void round(SseChannel channel, long userId, ChatModel model, AgentLang outputLang,
-                       List<Message> history, Runnable open) {
+                       List<Message> history, String prefix, Runnable open) {
         AgentLang lang = userLangResolver.of(userId);
         PromptGenRun run = null;
         String failure = null;
@@ -214,17 +222,22 @@ public class PromptGenService {
                     // 真推出了题卡才收工；被拒的提问让 agent 接着按回执办
                     .stopWhen(run::asked)
                     .build();
+            // 系统提示词或工具跟上一轮不一样（写出了第一稿、改了 trader、改了提示词）：以前的思考块对不上了，按文本重建
+            if (!agent.fingerprint().equals(prefix)) {
+                run.plainHistory();
+                prefix = agent.fingerprint();
+            }
 
             run.status("thinking");
-            loop.run(history, null, cancel, run);
-            store.saveState(userId, PromptGenHistory.trimDangling(run.messages()));
+            loop.run(List.copyOf(run.messages()), null, cancel, run);
+            store.saveState(userId, PromptGenHistory.trimDangling(run.messages()), prefix);
         } catch (Exception e) {
             log.error("[PromptGen] 这一轮失败 userId={}", userId, e);
             failure = LlmErrorMessages.classify(e, prompts, lang);
             failures.put(userId, failure);
             // 跑起来之后说的、读的照样落库；没跑起来就只有 open 落的起跑历史（没落成的话旧对话原样留着）
             if (run != null) {
-                store.saveState(userId, PromptGenHistory.trimDangling(run.messages()));
+                store.saveState(userId, PromptGenHistory.trimDangling(run.messages()), prefix);
             }
         } finally {
             running.remove(userId);

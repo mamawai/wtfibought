@@ -1,6 +1,7 @@
 package com.mawai.wiibagent.promptgen;
 
 import com.mawai.wiibagent.llm.ReactLoop;
+import com.mawai.wiibagent.llm.SseChatModel;
 import com.mawai.wiibcommon.entity.AiTrader;
 import com.mawai.wiibcommon.enums.AgentLang;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -74,6 +75,11 @@ final class PromptGenRun implements ReactLoop.Listener {
 
     List<Message> messages() {
         return messages;
+    }
+
+    /** 起跑历史里的原始内容（思考块等）去掉，按文本重建；循环开跑前调 */
+    void plainHistory() {
+        messages.replaceAll(m -> m instanceof AssistantMessage a ? SseChatModel.withoutRaw(a) : m);
     }
 
     CompletableFuture<Void> cancel() {
