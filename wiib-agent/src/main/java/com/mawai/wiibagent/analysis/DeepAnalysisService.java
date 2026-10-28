@@ -10,17 +10,22 @@ import com.mawai.wiibquant.market.service.MarketDataService;
 import com.mawai.wiibquant.market.service.NewsCache;
 import com.mawai.wiibquant.market.service.NewsFlashLocalizer;
 import com.mawai.wiibquant.market.service.NewsFlashLocalizer.LocalizedFlash;
+import com.mawai.wiibagent.llm.SseChatModel;
 import com.mawai.wiibagent.mapper.QuantDeepAnalysisMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
-import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.converter.BeanOutputConverter;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -71,9 +76,18 @@ public class DeepAnalysisService {
     /**
      * 模型由调用方传入而不是自己去拿：BYOK 后每个用户的模型不同，
      * 服务自己去 runtimeManager 取就不知道"当前是谁在用"了。
+     * 三次都是一问一答、之后没人复用，带上不写提示缓存的标记（{@link SseChatModel#NO_CACHE_KEY}）；
+     * options 从模型自己的派生，具体类型跟着模型走
      */
     private String call(ChatModel model, String prompt) {
-        return ChatClient.builder(model).build().prompt().user(prompt).call().content();
+        ChatOptions options = model.getOptions();
+        if (options instanceof ToolCallingChatOptions tool) {
+            Map<String, Object> context = tool.getToolContext() == null
+                    ? new HashMap<>() : new HashMap<>(tool.getToolContext());
+            context.put(SseChatModel.NO_CACHE_KEY, true);
+            options = tool.mutate().toolContext(context).build();
+        }
+        return model.call(new Prompt(new UserMessage(prompt), options)).getResult().getOutput().getText();
     }
 
     /** Bull 辩手：严格做多立场；失败给占位论据不阻断。 */

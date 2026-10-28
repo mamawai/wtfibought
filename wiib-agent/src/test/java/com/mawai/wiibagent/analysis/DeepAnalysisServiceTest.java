@@ -8,8 +8,10 @@ import com.mawai.wiibquant.market.service.MarketDataService;
 import com.mawai.wiibquant.market.service.NewsCache;
 import com.mawai.wiibquant.market.service.NewsFlashLocalizer;
 import com.mawai.wiibquant.mapper.NewsEventMapper;
+import com.mawai.wiibagent.llm.SseChatModel;
 import com.mawai.wiibagent.mapper.QuantDeepAnalysisMapper;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -27,6 +29,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class DeepAnalysisServiceTest {
@@ -47,8 +51,7 @@ class DeepAnalysisServiceTest {
             new NewsFlashLocalizer(newsEventMapper), mapper, PROMPTS);
 
     {
-        // 服务内部走 ChatClient，而 ChatClient 建请求时**无条件**执行 getOptions().mutate()
-        //（DefaultChatClientUtils），裸 mock 返回 null 会在到达任何断言前就 NPE
+        // 每次调用的 options 从模型自己的派生
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
     }
 
@@ -152,5 +155,12 @@ class DeepAnalysisServiceTest {
                 "无新闻上下文", "看多理由", "看空理由", AgentLang.ZH);
         assertThat(analysis).isNotNull();
         assertThat(analysis.getNarrative()).contains("下行脆弱");
+
+        // 三次都是一问一答、之后没人复用：都带着不写提示缓存的标记
+        ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
+        verify(model, times(3)).call(prompts.capture());
+        assertThat(prompts.getAllValues()).allSatisfy(p -> assertThat(
+                ((ToolCallingChatOptions) p.getOptions()).getToolContext().get(SseChatModel.NO_CACHE_KEY))
+                .isEqualTo(Boolean.TRUE));
     }
 }

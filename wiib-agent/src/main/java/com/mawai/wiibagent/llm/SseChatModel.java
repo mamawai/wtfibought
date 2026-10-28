@@ -51,7 +51,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  *       它把<b>最后一帧</b> AssistantMessage 的 metadata 当作最终消息的 metadata，子类靠这一点把原始内容块挂回去
  *       （阻塞路径的 {@link #mergeFrames} 同样取最后一帧的）；空文本帧也必须带一个 Generation，否则被它过滤</li>
  * </ul>
- * toolContext 键：{@link #WEB_SEARCH_KEY}。
+ * toolContext 键：{@link #WEB_SEARCH_KEY}、{@link #NO_CACHE_KEY}。
  *
  * @param <S> 单次订阅的累计状态，子类按需扩展 {@link StreamState}
  */
@@ -72,6 +72,12 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
      * analyst worker 与 trader 链路的数据源必须可控，拿不到搜索。
      */
     public static final String WEB_SEARCH_KEY = "wiib_web_search";
+
+    /**
+     * toolContext 键：本次调用不写提示缓存（Boolean.TRUE 时生效），给之后没人复用的一次性调用（深研判）用。
+     * 只有 Anthropic 要显式打缓存断点；另两家上游自动缓存，管不了
+     */
+    public static final String NO_CACHE_KEY = "wiib_no_cache";
 
     /** 三个子类各自把 assistant 的原始内容存在消息 metadata 的哪个键上 */
     static final List<String> RAW_KEYS =

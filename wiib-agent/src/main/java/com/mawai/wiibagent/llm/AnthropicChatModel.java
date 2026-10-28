@@ -149,13 +149,19 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
                 }
             }
         }
+        boolean cache = !(options instanceof ToolCallingChatOptions tool && tool.getToolContext() != null
+                && Boolean.TRUE.equals(tool.getToolContext().get(NO_CACHE_KEY)));
         if (!system.isEmpty()) {
             // 1h 只挂首块：隔 15 分钟 / 1 小时再醒的 trader 也能命中同一份 system + tools；
             // 后面的块是老会话的旧摘要，各会话不同，跟首块粘一起基础提示词的缓存就没法跨会话共用
-            ((ObjectNode) system.get(0)).set(CACHE_CONTROL, cacheControl("1h"));
+            if (cache) {
+                ((ObjectNode) system.get(0)).set(CACHE_CONTROL, cacheControl("1h"));
+            }
             body.set("system", system);
         }
-        markCacheTail(messages);
+        if (cache) {
+            markCacheTail(messages);
+        }
         body.set("messages", messages);
         logRequest(body.path("model").asString(null), toolNames);
         return body;

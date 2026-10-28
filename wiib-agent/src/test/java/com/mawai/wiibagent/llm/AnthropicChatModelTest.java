@@ -193,6 +193,18 @@ class AnthropicChatModelTest {
                 .containsExactly("首问", "新问题");
     }
 
+    /** 一次性调用（深研判）捎了不写缓存：系统提示和末尾都不打断点 */
+    @Test
+    void 请求侧_捎了不写缓存就一个断点都不打() {
+        events = PLAIN;
+        AnthropicChatModel m = model();
+        ChatOptions noCache = ((ToolCallingChatOptions) m.getOptions()).mutate()
+                .toolContext(Map.of(SseChatModel.NO_CACHE_KEY, true)).build();
+        m.call(new Prompt(List.of(new SystemMessage("你是助手"), new UserMessage("新闻")), noCache));
+
+        assertThat(lastRequestBody).contains("你是助手").doesNotContain(AnthropicChatModel.CACHE_CONTROL);
+    }
+
     @Test
     void 请求侧_档位none为disabled_留空不传() {
         events = PLAIN;
