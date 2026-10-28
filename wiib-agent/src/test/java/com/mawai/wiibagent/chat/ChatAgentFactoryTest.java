@@ -135,7 +135,7 @@ class ChatAgentFactoryTest {
         assertThat(prompts.get(1).getInstructions().getFirst().getText())
                 .isEqualTo(prompts.get(0).getInstructions().getFirst().getText());
         assertThat(toolNames(prompts.get(1))).isEqualTo(toolNames(prompts.get(0)));
-        assertThat(leaves.usageSnapshot().modelCalls()).as("整理那次也记在本轮账上").isEqualTo(2);
+        assertThat(leaves.deep().snapshot().modelCalls()).as("整理那次也记在本轮账上").isEqualTo(2);
     }
 
     /**

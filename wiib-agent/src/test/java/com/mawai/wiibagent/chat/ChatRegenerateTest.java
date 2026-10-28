@@ -234,23 +234,19 @@ class ChatRegenerateTest {
         verify(h.history(), never()).append(any(), anyLong(), eq("assistant"), any(), any(), any());
     }
 
-    /** 整理过的形状：摘要（不带标记）+ 原样留下的上一问答，上一问和本轮问的是同一句 */
+    /**
+     * 老会话：老压缩把首问原样放回队首、后面紧跟 SystemMessage 摘要。本轮问的恰好是同一句，
+     * 文本对得上但位置是假的——照切会把整段上下文连摘要清空
+     */
     @Test
-    void 整理过的会话照常重新生成() {
+    void 老会话首问与本轮同一句时拒绝() {
         Harness h = harness(
-                List.of(msg(1, "user", "BTC 怎么样"), msg(2, "assistant", "上一答"),
-                        msg(3, "user", "BTC 怎么样"), msg(4, "assistant", "旧答案")),
-                List.of(new UserMessage(ChatTestEndpoints.PROMPTS.get(AgentLang.ZH, "chat.compact.preamble") + "\n\n摘要"),
-                        turnStart("BTC 怎么样"), new AssistantMessage("上一答"),
-                        turnStart("BTC 怎么样"), new AssistantMessage("旧答案")));
+                List.of(msg(1, "user", "BTC 怎么样"), msg(2, "assistant", "旧答案")),
+                List.of(turnStart("BTC 怎么样"),
+                        new SystemMessage("【历史摘要】前面聊过行情与新闻"),
+                        new AssistantMessage("旧答案")));
 
-        regenerate(h);
-
-        // 从尾部认：切在本轮提问上，摘要与上一问答原样留着
-        ArgumentCaptor<ChatContextStore.State> ctx = ArgumentCaptor.captor();
-        verify(h.contextStore()).save(eq(SESSION), eq(1L), ctx.capture());
-        assertThat(ctx.getValue().messages()).hasSize(3);
-        assertThat(ctx.getValue().messages().getLast().getText()).isEqualTo("上一答");
+        assertRejected(h);
     }
 
     @Test

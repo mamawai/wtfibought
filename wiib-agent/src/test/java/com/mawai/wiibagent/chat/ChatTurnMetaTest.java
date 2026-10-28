@@ -43,7 +43,7 @@ import static org.mockito.Mockito.when;
  * <p>
  * 两件必须钉住的事：
  * <ol>
- *   <li><b>一轮的账含整理上下文那次调用</b>——它和作答都走主模型、记在同一本账上，前端要的是一轮的总数；</li>
+ *   <li><b>一轮里每次模型调用都进同一本账</b>，done 下发与落库的是这一轮的总数；</li>
  *   <li><b>轮边界靠 reset 划</b>——装饰器跟着叶子跨轮缓存，不清零就是上一轮的账接着涨。</li>
  * </ol>
  * 用真 {@link UsageTrackingChatModel} 包 mock 模型，在 runner 的替身里真调几次模型来"烧"token，
@@ -131,12 +131,12 @@ class ChatTurnMetaTest {
     }
 
     @Test
-    void 一轮的读数含整理上下文那次调用() {
+    void 一轮的读数随done下发并落库() {
         UsageTrackingChatModel deep = new UsageTrackingChatModel(modelReporting(100, 20, 120));
-        // 整理上下文一次、主 agent 作答一次
+        // 一轮里调了两次模型
         Harness h = harness(() -> {
-            deep.call(new Prompt("compact"));
-            deep.call(new Prompt("answer"));
+            deep.call(new Prompt("first"));
+            deep.call(new Prompt("second"));
         });
 
         RecordingEmitter emitter = new RecordingEmitter();
@@ -212,8 +212,8 @@ class ChatTurnMetaTest {
     void 第二轮的账不含第一轮() {
         UsageTrackingChatModel deep = new UsageTrackingChatModel(modelReporting(100, 20, 120));
         Harness h = harness(() -> {
-            deep.call(new Prompt("compact"));
-            deep.call(new Prompt("answer"));
+            deep.call(new Prompt("first"));
+            deep.call(new Prompt("second"));
         });
         ChatAgentFactory.Leaves leaves = leaves(deep);
 

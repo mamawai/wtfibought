@@ -23,7 +23,7 @@ class ContextUsageTest {
         assertThat(ContextUsage.measured(null)).isNull();
     }
 
-    /** 中文 1 字≈1 token、其余 4 字符≈1 token；存了原始内容的 assistant 按原始内容算，不再把文本重复算一遍 */
+    /** 中文 1 字≈1 token、其余 4 字符≈1 token；存了原始内容的 assistant 只按原始内容算，文本不重复算 */
     @Test
     void 估算按字数且原始内容优先() {
         AssistantMessage withRaw = AssistantMessage.builder().content("答")

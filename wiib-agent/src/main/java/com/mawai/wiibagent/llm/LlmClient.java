@@ -46,7 +46,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *       任何帧时重试（吐过帧再重订阅会让下游聚合器拼出重复文本），NonTransient（4xx 配置类
  *       错误）不重试；耗尽则错误透传，交上层 SSE error，用户重发</li>
  * </ul>
- * 上游拒收服务端搜索工具时原样上抛，不去掉搜索工具重发：一个会话里的工具列表不能变。
+ * 上游拒收服务端搜索工具时原样上抛，同一会话里的工具列表保持不变。
  * 端点保存时已经探测过支不支持（{@link LlmEndpointService}），运行时的提示见 {@link LlmErrorMessages}。
  * 工具一律不传 tool_choice（auto），"先调工具再答"靠各 agent 的系统提示词；为什么不强制见 {@link ToolOptions} 类头。
  * <b>中断</b>：{@link #streamingExecute} 的 cancel 完成时掐断整条流水线，取消传到模型层。

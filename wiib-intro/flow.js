@@ -243,7 +243,7 @@ const PANELS = [
           { id: 'cp', t: { zh: '到窗口 90% 主模型整理', en: '90% of window → main-model summary' } },
           { id: 'nx', t: { zh: '下一轮从这里起跑', en: 'the next turn starts here' } }
         ],
-        detail: { zh: '一轮的终态（含整理过的历史）整体覆盖写入 workbench_chat_context，裸 JSON 落库，下一轮从这里起跑。上一轮结束时的上下文用量到了主模型端点窗口（默认 256K）的 90%，下一轮开始前主模型把整段历史整理成一份摘要，只留上一轮的问答原文。', en: 'The turn’s final state — compacted history included — overwrites workbench_chat_context wholesale as plain JSON; the next turn starts from there. Once a turn ends at 90% of the main endpoint’s context window (256K by default), the main model folds the whole history into one summary before the next turn, keeping only the last question and answer verbatim.' } },
+        detail: { zh: '一轮的终态（含整理过的历史）整体覆盖写入 workbench_chat_context，裸 JSON 落库，下一轮从这里起跑。上一轮结束时的上下文用量到了主模型端点窗口（默认 256K）的 90%，下一轮开始前主模型把整段历史整理成一份摘要，只留上一问起的对话原文。', en: 'The turn’s final state — compacted history included — overwrites workbench_chat_context wholesale as plain JSON; the next turn starts from there. Once a turn ends at 90% of the main endpoint’s context window (256K by default), the main model folds the whole history into one summary before the next turn, keeping only the conversation since the last question verbatim.' } },
       { id: 'wake', x: 16, y: 444, w: 150, h: 108, tag: 'WAKE', icon: 'activity',
         title: { zh: '唤醒轮 · /wake', en: 'follow-up · /wake' },
         rows: [

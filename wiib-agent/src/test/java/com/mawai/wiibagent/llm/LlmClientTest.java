@@ -179,7 +179,7 @@ class LlmClientTest {
         assertThat(result.getResult().getOutput().getText()).isEqualTo("重试成功");
     }
 
-    /** 搜索被拒原样抛给上层出提示，流式、阻塞都只发一次：不去掉搜索工具重发，一个会话里的工具列表不能变 */
+    /** 搜索被拒原样抛给上层出提示，流式、阻塞都只发一次 */
     @Test
     void 搜索被拒时原样抛出不重发() {
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());

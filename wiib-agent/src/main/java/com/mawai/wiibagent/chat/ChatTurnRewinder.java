@@ -70,9 +70,8 @@ public class ChatTurnRewinder {
         if (cut < 0) {
             return Optional.empty();
         }
-        // 老会话：切在队首且紧跟着摘要（老压缩把摘要存成 SystemMessage，新的整理不再往历史里写它），
-        // 说明命中的是压缩原样放回的首问，不是本轮提问——同一句常用问法在一个会话里问两遍就会这样，
-        // 文本对得上但位置是假的，照切会把整段上下文连摘要清空
+        // 老会话：切在队首且紧跟着 SystemMessage 摘要（只有老压缩会写它），说明命中的是压缩原样放回的首问，
+        // 不是本轮提问——同一句常用问法在一个会话里问两遍就会这样，文本对得上但位置是假的，照切会把整段上下文连摘要清空
         if (cut == 0 && context.size() > 1 && context.get(1) instanceof SystemMessage) {
             return Optional.empty();
         }

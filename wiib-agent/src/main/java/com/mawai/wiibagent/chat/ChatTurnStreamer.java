@@ -155,7 +155,8 @@ public class ChatTurnStreamer {
                             + prompts.get(leaves.lang(), "chat.turn.questionPrefix") + message;
                 }
 
-                leaves.resetUsage();
+                // 轮开始清零，划出本轮账本的起点
+                leaves.deep().reset();
                 ChatTurnRunner.TurnResult result = turnRunner.run(leaves, userId, sessionId, enriched, intent,
                         this::onAnswerChunk, this::onSearch, cancel);
 
@@ -288,9 +289,9 @@ public class ChatTurnStreamer {
         /** 本轮读数。中断丢下的在途流会在读数之后才入账，账本不可信时只报耗时（null=没报，与全站 token 语义一致） */
         private ChatHistoryService.TurnMeta turnMeta(ContextUsage context) {
             int latencyMs = (int) (System.currentTimeMillis() - startedAt);
-            return leaves.usageUntrusted()
+            return leaves.deep().untrusted()
                     ? ChatHistoryService.TurnMeta.latencyOnly(leaves.modelLabel(), latencyMs, context)
-                    : ChatHistoryService.TurnMeta.of(leaves.modelLabel(), leaves.usageSnapshot(), latencyMs, context);
+                    : ChatHistoryService.TurnMeta.of(leaves.modelLabel(), leaves.deep().snapshot(), latencyMs, context);
         }
     }
 

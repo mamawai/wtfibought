@@ -65,21 +65,6 @@ public class ChatAgentFactory {
      */
     public record Leaves(String modelLabel, UsageTrackingChatModel deep, ReactLoop main, LlmClient mainClient,
                          AgentLang lang, int contextWindow) {
-
-        /** 轮开始清零，划出本轮账本的起点 */
-        public void resetUsage() {
-            deep.reset();
-        }
-
-        /** 本轮累计：作答和整理上下文记在同一本账上 */
-        public UsageTrackingChatModel.UsageSnapshot usageSnapshot() {
-            return deep.snapshot();
-        }
-
-        /** 账本被中断丢下的在途流写脏了，这一轮的数不能报 */
-        public boolean usageUntrusted() {
-            return deep.untrusted();
-        }
     }
 
     /** 一个现建的 worker：循环 + 它独享的账本（子运行的用量不混进主 agent 那一轮的账） */
