@@ -30,7 +30,7 @@ import java.util.stream.Stream;
  * <p>
  * 建造参数：{@code client} 调模型的客户端（必填）、{@code limiter} 调用保险丝（必填）、
  * {@code streaming} 走流式还是阻塞（缺省阻塞）、{@code gate} 工具执行前的闸门（可空，如审批卡）、
- * {@code summarizer} 长对话压缩（可空）、{@code trace} 工具调用轨迹（可空）、
+ * {@code trace} 工具调用轨迹（可空）、
  * {@code serialTools} 不许与同批别的调用并发的工具名（缺省空）、
  * {@code stopWhen} 每批回执入历史后问一次、true 就结束本次运行（缺省从不，如已经向用户提了问）。
  * <p>
@@ -102,7 +102,6 @@ public final class ReactLoop {
     private final boolean streaming;
     private final ModelCallLimiter limiter;
     private final ToolGate gate;
-    private final ConversationSummarizer summarizer;
     private final ToolCallTraceHook trace;
     private final Set<String> serialTools;
     private final BooleanSupplier stopWhen;
@@ -113,7 +112,6 @@ public final class ReactLoop {
         this.streaming = builder.streaming;
         this.limiter = builder.limiter;
         this.gate = builder.gate;
-        this.summarizer = builder.summarizer;
         this.trace = builder.trace;
         this.serialTools = builder.serialTools;
         this.stopWhen = builder.stopWhen;
@@ -129,7 +127,6 @@ public final class ReactLoop {
         private boolean streaming;
         private ModelCallLimiter limiter;
         private ToolGate gate;
-        private ConversationSummarizer summarizer;
         private ToolCallTraceHook trace;
         private Set<String> serialTools = Set.of();
         private BooleanSupplier stopWhen = () -> false;
@@ -155,12 +152,6 @@ public final class ReactLoop {
         /** 工具执行前的闸门，可空 */
         public Builder gate(ToolGate gate) {
             this.gate = gate;
-            return this;
-        }
-
-        /** 长对话压缩，可空 */
-        public Builder summarizer(ConversationSummarizer summarizer) {
-            this.summarizer = summarizer;
             return this;
         }
 
@@ -204,10 +195,6 @@ public final class ReactLoop {
             for (Message arrived : sink.inbox()) {
                 messages.add(arrived);
                 sink.message(arrived);
-            }
-            if (summarizer != null) {
-                // 压缩是整体替换历史，之后本轮都用压缩后的这份
-                messages = summarizer.compress(messages).<List<Message>>map(ArrayList::new).orElse(messages);
             }
             calls++;
             AssistantMessage reply = streaming

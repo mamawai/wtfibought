@@ -588,7 +588,7 @@
     "chatMain": "Chat · Main model",
     "chatMainHint": "Final answers in the analysis chat, plus any deep analysis or behavior analysis triggered from it, run on this",
     "chatLight": "Chat · Light model",
-    "chatLightHint": "History compaction and the research / market-analysis sub-agents it delegates run on this; a cheap one saves a lot",
+    "chatLightHint": "The research / market-analysis sub-agents it delegates run on this; a cheap one saves a lot",
     "sameAsMain": "Same as main model ({{name}} · {{model}})",
     "sameAsMainPlain": "Same as main model",
     "noEndpoint": "(no endpoint available)",
@@ -655,7 +655,7 @@
   },
   "err": {
     "disconnected": "Connection dropped — just ask again to continue",
-    "regenUnavailable": "This answer cannot be regenerated (not the last in the chat, or the context has been compacted)",
+    "regenUnavailable": "This answer cannot be regenerated (not the last in the chat, or its question has been folded into the summary)",
     "regenFailed": "Regeneration failed"
   }
 }

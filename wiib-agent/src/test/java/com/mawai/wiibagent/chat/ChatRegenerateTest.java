@@ -48,8 +48,8 @@ import static org.mockito.Mockito.when;
  * <p>
  * 三件必须钉住的事：
  * <ol>
- *   <li><b>轮起始标记只是候选</b>——历史压缩会把首条用户消息原样放回队首，那条也带标记；
- *       不拿提问原文核对就会切错位置，把中间几轮连同摘要一起抹掉。</li>
+ *   <li><b>轮起始标记只是候选</b>——整理上下文会把上一轮的提问原样留在摘要后面，老会话的压缩还把
+ *       首条用户消息原样放在队首，那几条也带标记；不拿提问原文核对就会切错位置，把中间几轮一起抹掉。</li>
  *   <li><b>旧答案要留到新答案确实落库之后才删</b>——重跑失败/空产出的路上，
  *       用户至少还留着原来那条，也还能再点一次。</li>
  *   <li><b>拒绝时名额必须还回去</b>——不还的话这个用户此后永久占线，比不给重新生成严重得多。</li>
@@ -103,7 +103,7 @@ class ChatRegenerateTest {
         UsageTrackingChatModel model = new UsageTrackingChatModel(mock(ChatModel.class));
         ChatAgentFactory agentFactory = mock(ChatAgentFactory.class);
         when(agentFactory.leavesFor(any(), any()))
-                .thenReturn(new ChatAgentFactory.Leaves("端点 · gpt-5", model, model, null, AgentLang.ZH, 256_000));
+                .thenReturn(new ChatAgentFactory.Leaves("端点 · gpt-5", model, null, null, AgentLang.ZH, 256_000));
 
         ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
         WorkbenchRunRegistry runRegistry = mock(WorkbenchRunRegistry.class);
@@ -231,9 +231,28 @@ class ChatRegenerateTest {
         verify(h.history(), never()).append(any(), anyLong(), eq("assistant"), any(), any(), any());
     }
 
+    /** 整理过的形状：摘要（不带标记）+ 原样留下的上一问答，上一问和本轮问的是同一句 */
     @Test
-    void 上下文被压缩过时拒绝而不是切在压缩留下的首问上() {
-        // 压缩产物的真实形状：首条用户消息被原样放回队首（它也带轮起始标记），中间是摘要。
+    void 整理过的会话照常重新生成() {
+        Harness h = harness(
+                List.of(msg(1, "user", "BTC 怎么样"), msg(2, "assistant", "上一答"),
+                        msg(3, "user", "BTC 怎么样"), msg(4, "assistant", "旧答案")),
+                List.of(new UserMessage(ChatTestEndpoints.PROMPTS.get(AgentLang.ZH, "chat.compact.preamble") + "\n\n摘要"),
+                        turnStart("BTC 怎么样"), new AssistantMessage("上一答"),
+                        turnStart("BTC 怎么样"), new AssistantMessage("旧答案")));
+
+        regenerate(h);
+
+        // 从尾部认：切在本轮提问上，摘要与上一问答原样留着
+        ArgumentCaptor<List<Message>> ctx = ArgumentCaptor.captor();
+        verify(h.contextStore()).save(eq(SESSION), eq(1L), ctx.capture());
+        assertThat(ctx.getValue()).hasSize(3);
+        assertThat(ctx.getValue().getLast().getText()).isEqualTo("上一答");
+    }
+
+    @Test
+    void 老会话被压缩过时拒绝而不是切在压缩留下的首问上() {
+        // 老压缩产物的真实形状：首条用户消息被原样放回队首（它也带轮起始标记），中间是 SystemMessage 摘要。
         // 只认标记的话会命中 index 0，把中间好几轮连同摘要一起抹掉，而且悄无声息
         Harness h = harness(
                 List.of(msg(1, "user", "BTC 怎么样"), msg(2, "assistant", "旧答案")),

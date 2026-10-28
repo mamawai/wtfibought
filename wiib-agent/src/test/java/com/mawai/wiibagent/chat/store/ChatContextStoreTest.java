@@ -32,7 +32,7 @@ class ChatContextStoreTest {
     private final WorkbenchChatContextMapper mapper = mock(WorkbenchChatContextMapper.class);
     private final ChatContextStore store = new ChatContextStore(mapper);
 
-    /** 生产会存的四种消息形态一个不少：用户原文、带 tool_call 的助手消息、配对回执、压缩摘要 */
+    /** 库里会有的四种消息形态一个不少：用户原文、带 tool_call 的助手消息、配对回执、老会话的摘要 */
     private static List<Message> fullShapedHistory() {
         return List.of(
                 new UserMessage("BTC 现在怎么样"),
@@ -75,7 +75,7 @@ class ChatContextStoreTest {
                     assertThat(r.id()).isEqualTo("call-1");
                     assertThat(r.responseData()).contains("97000");
                 });
-        // 摘要是 SystemMessage 且前缀完整：ConversationSummarizer 靠这个前缀认出老摘要不重压
+        // 老会话的摘要是 SystemMessage：类型和正文都得原样回来，ChatTurnRewinder 按类型认老形状
         assertThat(loaded.get(1)).isInstanceOf(SystemMessage.class);
         assertThat(loaded.get(1).getText()).startsWith("## 早前对话摘要：");
     }

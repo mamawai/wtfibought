@@ -150,6 +150,17 @@ public class ChatHistoryService {
                 .toList();
     }
 
+    /** 这个会话最近一次正常作答结束时的上下文用量（token）；没有（新会话、老数据、只有中断的轮）返回 null */
+    public Long lastContextTokens(String sessionId) {
+        WorkbenchChatMessage row = messageMapper.selectOne(new LambdaQueryWrapper<WorkbenchChatMessage>()
+                .select(WorkbenchChatMessage::getContextTokens)
+                .eq(WorkbenchChatMessage::getSessionId, sessionId)
+                .isNotNull(WorkbenchChatMessage::getContextTokens)
+                .orderByDesc(WorkbenchChatMessage::getId)
+                .last("LIMIT 1"));
+        return row == null ? null : row.getContextTokens();
+    }
+
     /** 没搜过的行（user 行、老数据）给 null，不给空列表 */
     private static List<SearchEvent.Source> sourcesOf(WorkbenchChatMessage row) {
         return row.getSources() == null ? null : SearchEvent.Source.fromJson(MAPPER.readValue(row.getSources(), ArrayNode.class));

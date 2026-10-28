@@ -41,7 +41,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 同角色连续消息合成一条多块消息（Messages 要求 user/assistant 交替）。
  * <p>
  * 提示缓存两个断点：system 首块挂 1h（tools 排在 system 前面，一个断点把两者一起盖住；
- * 每条 SystemMessage 各成一块，首块是 agent 基础提示词，后面的是压缩摘要、会变，不能跟首块粘一起），
+ * 每条 SystemMessage 各成一块，首块是 agent 基础提示词，后面的是老会话历史里存着的旧摘要，各会话不同，不能跟首块粘一起），
  * 末条消息末块挂默认 5 分钟、随对话前移（见 {@link #markCacheTail}）。
  * 收尾只认 end_turn / stop_sequence / tool_use 是完整回答，refusal / max_tokens 等显式失败（见 {@link #abnormalStop}）。
  */
@@ -151,7 +151,7 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
         }
         if (!system.isEmpty()) {
             // 1h 只挂首块：隔 15 分钟 / 1 小时再醒的 trader 也能命中同一份 system + tools；
-            // 后面的块是压缩摘要，压一次变一次，挂在首块上会把基础提示词的缓存一起冲掉
+            // 后面的块是老会话的旧摘要，各会话不同，跟首块粘一起基础提示词的缓存就没法跨会话共用
             ((ObjectNode) system.get(0)).set(CACHE_CONTROL, cacheControl("1h"));
             body.set("system", system);
         }

@@ -18,7 +18,6 @@ import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.llm.ChatEndpoints;
 import com.mawai.wiibagent.analysis.DeepAnalysisService;
 import com.mawai.wiibagent.behavior.BehaviorAnalysisService;
-import com.mawai.wiibagent.llm.ConversationSummarizer;
 import com.mawai.wiibagent.llm.LlmClient;
 import com.mawai.wiibagent.llm.ModelCallLimiter;
 import com.mawai.wiibagent.llm.ReactLoop;
@@ -55,31 +54,31 @@ public class ChatAgentFactory {
      * 一份用户配置对应的叶子。
      *
      * @param modelLabel 这份配置的对外名字（端点名 · 模型名），随每条答案落库给前端显示
-     * @param deep       深模型（主 agent 作答走它）。透出来是为了取用量——它本身就是本轮的账本；
+     * @param deep       深模型（主 agent 作答、整理上下文都走它）。透出来是为了取用量——它本身就是本轮的账本；
      *                   深研判子运行跨轮活着，另记账，见 {@link DeepAnalysisToolkit}
-     * @param light      浅模型：历史压缩用。没单独绑轻模型时与 deep 是同一个实例
      * @param main       主 agent：深模型 + 全部对话工具的 ReactLoop，流式作答
+     * @param mainClient 主 agent 调模型的客户端。整理上下文用它发：系统提示词、工具、思考配置与平时一模一样，
+     *                   请求前缀和上一轮相同，整段历史命中提示缓存（见 {@link ContextCompactor}）
      * @param lang       这套叶子按哪门语言建的。它在缓存键里（见 {@link #leafKey}），拿到的叶子
      *                   必与请求语言一致；带出来供编排层（过程文案）直接用
      * @param contextWindow 主模型端点配的上下文窗口（token），也在缓存键里
      */
-    public record Leaves(String modelLabel, UsageTrackingChatModel deep, UsageTrackingChatModel light,
-                         ReactLoop main, AgentLang lang, int contextWindow) {
+    public record Leaves(String modelLabel, UsageTrackingChatModel deep, ReactLoop main, LlmClient mainClient,
+                         AgentLang lang, int contextWindow) {
 
         /** 轮开始清零，划出本轮账本的起点 */
         public void resetUsage() {
             deep.reset();
-            light.reset();      // 没单独绑轻模型时与 deep 是同一个实例，重复清零无害
         }
 
-        /** 本轮累计：深浅两条端点合账。同一个实例时只能取一遍，否则每笔都算两次 */
+        /** 本轮累计：作答和整理上下文记在同一本账上 */
         public UsageTrackingChatModel.UsageSnapshot usageSnapshot() {
-            return light == deep ? deep.snapshot() : deep.snapshot().merge(light.snapshot());
+            return deep.snapshot();
         }
 
         /** 账本被中断丢下的在途流写脏了，这一轮的数不能报 */
         public boolean usageUntrusted() {
-            return deep.untrusted() || light.untrusted();
+            return deep.untrusted();
         }
     }
 
@@ -104,8 +103,6 @@ public class ChatAgentFactory {
     private final LocalizedToolCallbacks localizedTools;
     /** 主 agent 与每个 worker 各自一轮 ReAct 的模型调用上限：到数即收尾，防死转烧钱 */
     private final int runModelCallLimit;
-    private final int summarizeThresholdTokens;
-    private final int summarizeKeepMessages;
     /** 补充源在回答里的标签，如 [X]；源名可配，见构造参数 supplementSource 的说明 */
     private final String supplementTag;
     /** 两边都有的事件合并后的标签，如 [BlockBeats+X] */
@@ -147,8 +144,6 @@ public class ChatAgentFactory {
                             PromptCatalog prompts,
                             LocalizedToolCallbacks localizedTools,
                             @Value("${agent.workbench.run-model-call-limit:8}") int runModelCallLimit,
-                            @Value("${agent.workbench.summarize-threshold-tokens:32000}") int summarizeThresholdTokens,
-                            @Value("${agent.workbench.summarize-keep-messages:6}") int summarizeKeepMessages,
                             @Value("${agent.workbench.news-supplement-source:}") String supplementSource) {
         this.chatModelFactory = chatModelFactory;
         this.marketToolkit = marketToolkit;
@@ -163,8 +158,6 @@ public class ChatAgentFactory {
         this.prompts = prompts;
         this.localizedTools = localizedTools;
         this.runModelCallLimit = runModelCallLimit;
-        this.summarizeThresholdTokens = summarizeThresholdTokens;
-        this.summarizeKeepMessages = summarizeKeepMessages;
         // 不配就用中性的 Web：标签总得有个名字，但代码里不该替某个平台站队
         String source = supplementSource == null || supplementSource.isBlank() ? "Web" : supplementSource.trim();
         this.supplementTag = "[" + source + "]";
@@ -218,13 +211,12 @@ public class ChatAgentFactory {
         ChatModelFactory.Models models = chatModelFactory.modelsFor(eps);
         // 用量装饰器进行包装
         UsageTrackingChatModel deep = new UsageTrackingChatModel(models.deep());
-        // 没单独绑轻模型时工厂给的是同一个实例，装饰器也得共用一个，否则同一次调用记两遍账
-        UsageTrackingChatModel light = models.light() == models.deep() ? deep : new UsageTrackingChatModel(models.light());
         // worker 跑在浅模型上：它的搜索许可看浅模型那条端点
         boolean lightSearch = serverSearch(eps.lightOrDeep());
-        ReactLoop main = mainLeaf(deep, models.deep(), light, eps.userId(), lang, serverSearch(eps.deep()),
+        LlmClient client = mainClient(deep, models.deep(), eps.userId(), lang, serverSearch(eps.deep()),
                 kind -> newWorker(kind, lang, lightSearch, models.light()));
-        return new Leaves(modelLabel(eps.deep()), deep, light, main, lang, eps.deep().getContextWindow());
+        return new Leaves(modelLabel(eps.deep()), deep, mainLoop(client, lang), client, lang,
+                eps.deep().getContextWindow());
     }
 
     /**
@@ -246,18 +238,17 @@ public class ChatAgentFactory {
     }
 
     /**
-     * 主 agent：深模型 + 全部对话工具，自己取数自己作答，长活派子运行。
+     * 主 agent 调模型的客户端：深模型 + 全部对话工具，自己取数自己作答，长活派子运行。
      *
      * @param deepBase  裸深模型，给深研判子运行：它每次自己包账本，不走主轮那本
-     * @param light     压缩用浅模型：摘要是简单活，用深模型纯烧钱
      * @param userId    trader 工具（只读与动作）、行为分析、子运行烤死的归属，理由见 {@link TraderQueryToolkit}
      * @param webSearch 端点声明了服务端搜索：提示词用承诺联网的那版，且每次调用捎搜索许可
      * @param workers   delegate 按预设现建 worker 的办法
      */
-    private ReactLoop mainLeaf(ChatModel deep, ChatModel deepBase, ChatModel light, long userId, AgentLang lang,
-                               boolean webSearch, java.util.function.Function<WorkerKind, Worker> workers) {
+    private LlmClient mainClient(ChatModel deep, ChatModel deepBase, long userId, AgentLang lang,
+                                 boolean webSearch, java.util.function.Function<WorkerKind, Worker> workers) {
         // 工具的模型在这一层绑死："当前用的是谁的 key"只有这里知道
-        LlmClient client = LlmClient.builder()
+        return LlmClient.builder()
                 .model(deep)
                 .systemPrompt(mainInstruction(lang, webSearch))
                 .tools(localizedTools.of(lang,
@@ -272,14 +263,16 @@ public class ChatAgentFactory {
                 .webSearch(webSearch)
                 .maxAttempts(3).initialDelay(500).maxDelay(4000)
                 .build();
+    }
+
+    /** 主 agent：流式作答，挂保险丝与 HITL 闸门 */
+    private ReactLoop mainLoop(LlmClient client, AgentLang lang) {
         return ReactLoop.builder().client(client)
                 .streaming(true)    // 答案要逐字推给前端
                 .limiter(new ModelCallLimiter(runModelCallLimit,
                         prompts.get(lang, "llm.callLimit.notExecuted"),
                         prompts.get(lang, "llm.callLimit.lastCall")))
                 .gate(new ApprovalGate(approvalRegistry, prompts, lang))
-                .summarizer(new ConversationSummarizer(light, summarizeThresholdTokens,
-                        summarizeKeepMessages, prompts, lang))
                 .build();
     }
 

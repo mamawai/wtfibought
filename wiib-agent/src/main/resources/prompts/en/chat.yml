@@ -118,8 +118,9 @@ chat:
 
   # ---- Turn-start markers (the head of the enriched message; model-facing, never shown) ----
   # The mark and its prefix must stay in sync: written in ChatTurnStreamer.Turn.run, recognised in
-  # ChatTurnRewinder.cutAt - regenerate finds the turn by timePrefix from the tail and verifies
-  # questionPrefix + the original question. Change one, change the other. The recogniser walks every
+  # ChatTurnRewinder.cutAt and ContextCompactor - regenerate finds the turn by timePrefix from the tail and
+  # verifies questionPrefix + the original question; compaction finds the last question by timePrefix.
+  # Change one, change the other. The recogniser walks every
   # language (after a language switch old turns keep their old markers).
   turn:
     timeMark: "[Current time {{time}}]"
@@ -222,31 +223,36 @@ chat:
     opened: "The {{label}} form is now open in the conversation; nothing runs until the user fills it in and presses the button"
     failed: "The {{label}} form could not be opened (there is no channel to push it on this turn). Ask the user to open it themselves via the trader icon at the top of the chat panel"
 
-  # ---- History compression ----
-  compress:
-    prompt: |-
-      Condense the conversation history below into one block of key points. It replaces the original
-      text in the rest of the conversation, so it must keep: what the user wants and prefers, the
-      conclusions and key numbers already established, and the questions still open.
-      Output the key points only, with no preamble or commentary.
+  # ---- Context compaction (ContextCompactor) ----
+  compact:
+    # Appended after the whole history: the main model condenses the history into a summary by it
+    instruction: |-
+      [System] This is a context compaction step: condense the whole conversation so far into one summary. It replaces the original conversation; from here on only this summary and the most recent exchange remain visible.
+      Do not call any tools and do not greet - output only the summary body, under the headings below (write "None" where a heading has nothing):
 
-      Conversation history:
-      {{history}}
-    # The fixed prefix of a summary message: both the section header the model sees and the test for "this one is a summary".
-    # The test has to accept every language's version (after a language switch old summaries keep the old language); only writing follows the current language
-    summaryPrefix: "## Summary of earlier conversation:"
-    # The segment marker and its countable prefix must stay in sync: countSegments counts by the prefix. Change one, change the other
-    segmentMark: ── Part {{n}} ──
-    segmentPrefix: "── Part "
-    roleLine: "{{role}}: {{text}}"
-    role:
-      user: User
-      assistant: Assistant
-      system: System
-      tool: Tool result
-      other: Other
-    toolCall: called {{name}} {{args}}
-    clipped: …(truncated)
+      ## User goals and preferences
+      What the user wants, which symbols they follow, their risk appetite and trading habits; requirements and corrections the user stated, in their own words; mark anything overturned as "superseded".
+
+      ## Conclusions and key numbers
+      Calls made, price levels, stops and targets, probabilities - copy the numbers exactly; note the time each was made and the data it rested on.
+
+      ## Data and timing
+      Which market data, news and search results were fetched and when; note that they go stale and must be fetched again before reuse.
+
+      ## Positions, plans and actions
+      The trader's positions, open orders and plans; actions the user approved or rejected.
+
+      ## In progress and to do
+      Deep analyses or sub-tasks still running, items awaiting the user's approval, things the user asked to follow up later.
+
+      ## Failures and cautions
+      Failed tool calls and rejected approaches, so they are not repeated.
+
+      Rules: keep numbers, price levels, symbols, times and links exactly as they were; if the conversation already contains an earlier summary, merge it with the new material into one - never list them side by side; do not mention the summary or the compaction itself.
+    # The start of the summary's user message; the summary body follows
+    preamble: "[System] The following condenses the earlier part of this conversation. Treat it as established background and carry on directly - do not restate it or mention it."
+    # The line on the process rail while compacting
+    progress: Compacting the context…
 
   # ---- Deep analysis (Bull vs Bear debate + Judge verdict) ----
   deepAnalysis:

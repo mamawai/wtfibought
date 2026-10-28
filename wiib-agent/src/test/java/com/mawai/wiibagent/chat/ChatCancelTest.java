@@ -47,7 +47,6 @@ import static org.mockito.Mockito.when;
 class ChatCancelTest {
 
     private static final String SESSION = "wb-1-cancel";
-    private static final int NO_COMPRESSION = 999_999;
     private static final int LIMIT = 8;
 
     private final ChatModel deep = mock(ChatModel.class);
@@ -70,12 +69,13 @@ class ChatCancelTest {
         return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), mock(TraderChatService.class),
                 mock(WorkbenchRunRegistry.class), childRuns, registry,
-                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, LIMIT, NO_COMPRESSION, 6, "X")
+                ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS, LIMIT, "X")
                 .leavesFor(eps, AgentLang.ZH);
     }
 
     private ChatTurnRunner runner() {
-        return new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, mock(WorkbenchRunRegistry.class));
+        return new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, mock(WorkbenchRunRegistry.class),
+                ChatTestEndpoints.compactor());
     }
 
     private List<Message> savedContext() {

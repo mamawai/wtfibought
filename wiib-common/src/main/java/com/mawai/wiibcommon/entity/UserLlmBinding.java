@@ -14,7 +14,7 @@ import lombok.Data;
 @TableName("user_llm_binding")
 public class UserLlmBinding {
 
-    /** 用途常量：CHAT_MAIN 对话主模型 / CHAT_LIGHT 对话轻模型（后台子 agent、历史压缩） / TRADER 交易员 */
+    /** 用途常量：CHAT_MAIN 对话主模型 / CHAT_LIGHT 对话轻模型（后台子 agent） / TRADER 交易员 */
     public static final String CHAT_MAIN = "CHAT_MAIN";
     public static final String CHAT_LIGHT = "CHAT_LIGHT";
     public static final String TRADER = "TRADER";

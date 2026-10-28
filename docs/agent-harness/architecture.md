@@ -126,7 +126,8 @@ flowchart LR
 - 名额：每用户同时一轮，占线直接拒（2203），前端把消息排在本地、这轮结束自动续发；子运行在名额之外（否则一个深研判占着名额几分钟），行情配额靠全局闸另保。
 - trader 联动：主 agent 自己持有 trader 的只读工具（`trader_overview` / `trader_positions` / `trader_decisions` / `trader_plans` / `trader_trades`）；`wake_trader` / `review_trader_now` / `leave_note_to_trader` 只往对话里推一张表单（留言连草稿带轮次一起预填），按下按钮的是用户，模型碰不到执行路径；只有当场就烧钱的 `run_deep_analysis` 走 HITL 闸。
 - 韧性：`LlmClient` 是调模型的客户端（系统提示、工具、搜索许可、重试）。流式路径带退避重试，仅在尚未吐帧时重订阅。不挂兜底模型：BYOK 只有一个端点，切到同端点的另一个模型没有意义。
-- 横切：会话历史落 `workbench_chat_context` 自建表（终态整体覆盖写入），裸 JSON（`ChatContextCodec`，读兼容老的对象流格式）、调用限额 + 历史摘要压缩控预算。
+- 横切：会话历史落 `workbench_chat_context` 自建表（终态整体覆盖写入），裸 JSON（`ChatContextCodec`，读兼容老的对象流格式）；调用限额控预算。
+- 上下文：每轮结束把上下文用量推给前端底栏（上游报的为准，不报就按字数估、显示约数）；用量到主模型端点窗口（默认 256K，可配 128K～1M）的 90%，下一轮开始前用主模型整理一次（`ContextCompactor`）：整段历史原样发出去、末尾加一条整理指令，结果只留摘要 + 上一轮问答原文。只在两轮之间做，工具循环中间不动历史。
 - 新闻双源分工：主 agent 先调 `news_search` 拿 BlockBeats 清单，再用服务端搜索补充合并，独有条目带源标签；派出去的 researcher 同一套（它的搜索许可看浅模型那条端点）。搜索是端点显式勾选的能力，不是默认开着的——所以主 agent 的系统提示词按能力二选一拼：能搜就承诺联网补充，不能搜就如实说没有检索能力。提示词不许承诺端点给不了的事。
 - 协议适配：四条协议——openai（chat/completions，走 Spring AI `OpenAiChatModel`）、responses、anthropic（Messages）、gemini（generateContent），后三条是自研 `ResponsesChatModel` / `AnthropicChatModel` / `GeminiChatModel`。挂工具的 options 由 `ToolOptions` 从模型自己的 options 派生；tool_choice 一律不传（auto），四条路行为一致。服务端搜索只有后三条声明得了，openai 的 chat-completions 没有标准的服务端搜索——所以"能不能搜"是协议能力与用户勾选的与。
 
@@ -143,7 +144,7 @@ POST /api/ai/workbench/chat
 四道准入都在建流之前：一旦返回 `SseEmitter`，响应就是 `text/event-stream`，再报错只能推 error 事件，前端拿不到结构化错误码、没法自动引导去配置。
 
 - 叶子按指纹缓存，userId 必须进指纹：指纹 = `SHA-256(userId + 主/轻两条端点各自的协议 / baseUrl / 模型 / 思考档位 / 搜索开关 / 密文)`（分量间拿 NUL 分隔——model 是用户自由输入，用空格的话 `("gpt-5 x","y")` 和 `("gpt-5","x y")` 会撞；NUL 是 Postgres 的 text 存不下的字节，绝不会出现在任何一个从库里读出来的值里）。搜索开关也是建模要素：它既进 `ResponsesChatModel` 的构造参数，也决定主 agent 提示词拼哪版，勾了必须换指纹。用户改配置指纹就变，自然拿到新叶子，不需要显式失效。userId 进指纹不是为了缓存粒度，是数据隔离：叶子里有按用户烤死的工具（主 agent 的 trader_* 工具读的是"这个人的 trader"，子运行按用户计上限），两人共用一份叶子就会看到别人的持仓；隔离要靠键本身，不能指望密文的随机性。
-- 主模型 + 轻模型：主模型就是主 agent（作答、取数、深研判都是它）；轻模型（可选绑定 CHAT_LIGHT）跑历史压缩和派出去的 worker（researcher / analyst）。不绑就复用主模型实例本身，省一份客户端和连接池。
+- 主模型 + 轻模型：主模型就是主 agent（作答、取数、深研判都是它）；轻模型（可选绑定 CHAT_LIGHT）跑派出去的 worker（researcher / analyst）。不绑就复用主模型实例本身，省一份客户端和连接池。
 - 思考档位是端点属性，每条端点各自配；轻模型绑到别的端点就用那条自己的档位。**不设白名单**：`none/low/medium/high` 只是前端给的快捷选项，各家还有 `xhigh` / `minimal` 之类自己起的名，认不认只有上游知道，代码只抹平大小写空白、只挡列宽（VARCHAR(16)）。模型支不支持这个参数也查不到（OpenAI 标准 `/v1/models` 只回 id/object/created/owned_by），所以默认留空不传，由用户自己填，配套一个「测试连通性」按钮真发一次请求验——探测走的是生产建模路径，测什么就得是接下来真跑什么。
 - 错误归类：401/403、429、404+model、超时 / 连不上各给一句能照着做的话；认不出来的不替用户判病因，因为那个 catch 罩着落历史、写记忆、上下文落库，数据库挂了也走这条路，兜底要是说"请检查端点与模型配置"，用户会去乱改一把本来没问题的 key。任何分支都不回显上游原文：中转网关的异常里经常带完整请求 URL（`?api_key=…`），正则追不全 key 的形态。
 

@@ -52,7 +52,7 @@ class ChatAgentFactoryTest {
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), mock(TraderChatService.class),
                 mock(WorkbenchRunRegistry.class), ChatTestEndpoints.childRuns(mock(ChatContextStore.class)),
                 new ApprovalRegistry(), ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
-                12, 32000, 6, "X");
+                12, "X");
     }
 
     /** worker 真跑一次（阻塞调用），抓它挂给模型的那个 Prompt */
@@ -102,7 +102,6 @@ class ChatAgentFactoryTest {
         ChatAgentFactory.Leaves leaves = factory(model).leavesFor(config("gpt-5"), AgentLang.ZH);
 
         assertThat(leaves.main()).isNotNull();
-        assertThat(leaves.light()).isNotNull();
         assertThat(toolNamesOf(model, leaves)).containsExactlyInAnyOrder(
                 "market_snapshot", "option_iv", "funding_history", "orderbook_depth",
                 "news_search",
@@ -111,6 +110,32 @@ class ChatAgentFactoryTest {
                 "wake_trader", "review_trader_now", "leave_note_to_trader",
                 "analyze_my_behavior",
                 "delegate");
+    }
+
+    /** 整理上下文走的 client 与主 agent 同一份系统提示词和工具：请求前缀与平时一样才命中提示缓存 */
+    @Test
+    void 整理用的client与主agent请求前缀一致() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        List<Prompt> prompts = new ArrayList<>();
+        when(model.stream(any(Prompt.class))).thenAnswer(inv -> {
+            prompts.add(inv.getArgument(0));
+            return Flux.just(new ChatResponse(List.of(new Generation(new AssistantMessage("答")))));
+        });
+        when(model.call(any(Prompt.class))).thenAnswer(inv -> {
+            prompts.add(inv.getArgument(0));
+            return new ChatResponse(List.of(new Generation(new AssistantMessage("摘要"))));
+        });
+        ChatAgentFactory.Leaves leaves = factory(model).leavesFor(config("gpt-5"), AgentLang.ZH);
+
+        leaves.main().run(List.of(new UserMessage("你好")), "wb-prefix", null, null);
+        leaves.mainClient().execute(List.of(new UserMessage("你好")));
+
+        assertThat(prompts).hasSize(2);
+        assertThat(prompts.get(1).getInstructions().getFirst().getText())
+                .isEqualTo(prompts.get(0).getInstructions().getFirst().getText());
+        assertThat(toolNames(prompts.get(1))).isEqualTo(toolNames(prompts.get(0)));
+        assertThat(leaves.usageSnapshot().modelCalls()).as("整理那次也记在本轮账上").isEqualTo(2);
     }
 
     /**

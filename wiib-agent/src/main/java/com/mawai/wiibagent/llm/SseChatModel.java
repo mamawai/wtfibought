@@ -44,7 +44,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * <ul>
  *   <li>只负责"说"：返回带 toolCalls 的 AssistantMessage、接受 ToolResponseMessage 入参。
  *       工具一律由 {@link ReactLoop} 执行——Spring AI 2.0 已从 ChatModel 层移除内部工具执行</li>
- *   <li>流式叶子走 stream()，压缩等走阻塞 call()；阻塞路径也走 SSE 收帧后合并</li>
+ *   <li>流式叶子走 stream()，整理上下文等走阻塞 call()；阻塞路径也走 SSE 收帧后合并</li>
  *   <li>流式帧由 {@link ReactLoop} 聚合：每帧只发增量文本，工具调用整只发一帧，收尾帧带 finishReason/usage；
  *       它把<b>最后一帧</b> AssistantMessage 的 metadata 当作最终消息的 metadata，子类靠这一点把原始内容块挂回去
  *       （阻塞路径的 {@link #mergeFrames} 同样取最后一帧的）；空文本帧也必须带一个 Generation，否则被它过滤</li>

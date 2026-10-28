@@ -568,7 +568,7 @@
     "chatMain": "对话 · 主模型",
     "chatMainHint": "研判对话的最终回答，以及对话里触发的深研判、行为分析都走它",
     "chatLight": "对话 · 轻模型",
-    "chatLightHint": "历史压缩和派出去的调研/行情分析子 agent 走它；挑条便宜的能省不少",
+    "chatLightHint": "派出去的调研/行情分析子 agent 走它；挑条便宜的能省不少",
     "sameAsMain": "同主模型（{{name}} · {{model}}）",
     "sameAsMainPlain": "同主模型",
     "noEndpoint": "（无可用端点）",
@@ -634,7 +634,7 @@
   },
   "err": {
     "disconnected": "连接中断，可直接重问续聊",
-    "regenUnavailable": "这条回答无法重新生成（它不在会话末尾，或上下文已被压缩）",
+    "regenUnavailable": "这条回答无法重新生成（它不在会话末尾，或它的提问已被整理进摘要）",
     "regenFailed": "重新生成失败"
   }
 }

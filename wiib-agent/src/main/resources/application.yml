@@ -73,8 +73,8 @@ agent:
   workbench:
     # 主 agent（以及每个子 agent）各自一轮 ReAct 的模型调用上限，达到即收尾，防死转烧钱
     run-model-call-limit: 8
-    summarize-threshold-tokens: 32000  # 历史估算 token 超此值触发压缩：浅模型把老消息总结成一段替换原文
-    summarize-keep-messages: 6         # 压缩后保留的最近消息数(首条用户消息另外无条件保留原文)
+    # 上一轮结束时的上下文用量达到对话主模型端点窗口的这个比例，下一轮开始前整理上下文（前端计量条变色用同一个数）
+    compact-trigger-ratio: 0.9
     # 主 agent 在 BlockBeats 之外补的新闻来自服务端 web_search 工具(端点勾选开启)，搜到什么平台随上游走。
     # 这里配的是来源标签名，只影响补充条目怎么标；换源改这里，提示词不用动。留空标 [Web]
     news-supplement-source:

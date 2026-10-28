@@ -66,9 +66,9 @@ class ChatWorkbenchStreamTest {
         SseChannel channel = new SseChannel(emitter);
         channel.markClosed();   // 用户切页：连接已经断了，这一轮才刚开始
 
-        // run() 要拿叶子清账本、取模型名落库，给不了 null；这条用例不看模型本身，深浅共用一个装饰器
+        // run() 要拿叶子清账本、取模型名落库，给不了 null；这条用例不看模型本身
         UsageTrackingChatModel model = new UsageTrackingChatModel(mock(ChatModel.class));
-        ChatAgentFactory.Leaves leaves = new ChatAgentFactory.Leaves("test", model, model, null, AgentLang.ZH, 256_000);
+        ChatAgentFactory.Leaves leaves = new ChatAgentFactory.Leaves("test", model, null, null, AgentLang.ZH, 256_000);
 
         streamer.run(channel, 1L, SESSION, "看看行情", leaves, null, null, false);
 

@@ -7,7 +7,7 @@ export const CHAT_ERROR = {
   CONFIG_INVALID: 2202,
   ALREADY_RUNNING: 2203,
   CAPACITY_FULL: 2204,
-  /** 这条回答回不去（末尾不是答案／补答行／本轮触发过历史压缩），重新生成被拒 */
+  /** 这条回答回不去（末尾不是答案／补答行／本轮提问已被压进摘要），重新生成被拒 */
   REGENERATE_UNAVAILABLE: 2206,
   /** 发起唤醒轮时会话已不欠（别的标签页接走了，或后端重启丢了标记） */
   NOTHING_PENDING: 2208,

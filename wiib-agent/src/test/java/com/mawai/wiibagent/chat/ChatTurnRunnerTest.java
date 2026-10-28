@@ -50,8 +50,6 @@ import static org.mockito.Mockito.when;
 class ChatTurnRunnerTest {
 
     private static final String SESSION = "wb-1-runner";
-    /** 阈值给足 = 这几跑都不碰历史压缩，那件事归 {@link MainLeafTest} */
-    private static final int NO_COMPRESSION = 999_999;
     /** 生产口径的调用上限 */
     private static final int LIMIT = 8;
 
@@ -114,12 +112,14 @@ class ChatTurnRunnerTest {
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), traderChatService,
                 mock(WorkbenchRunRegistry.class), childRuns,
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
-                LIMIT, NO_COMPRESSION, 6, "X")
+                LIMIT, "X")
                 .leavesFor(llmConfig, AgentLang.ZH);
     }
 
+    /** 整理器用默认的：这几跑的历史够不着整理线，整理那件事归 {@link ChatTurnContextTest} */
     private ChatTurnRunner runner() {
-        return new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, runRegistry);
+        return new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, runRegistry,
+                ChatTestEndpoints.compactor());
     }
 
     private void turn(String message) {

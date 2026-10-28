@@ -64,8 +64,6 @@ class ChatWorkbenchHitlTest {
     private static final String SESSION = "wb-1-hitl";
     /** 生产口径的调用上限（application.yml 的 agent.workbench.run-model-call-limit） */
     private static final int PRODUCTION_LIMIT = 8;
-    /** 阈值给足 = 这几跑都不碰历史压缩，别让它掺进来 */
-    private static final int NO_COMPRESSION = 999_999;
 
     private final ApprovalRegistry registry = new ApprovalRegistry();
     /** 工具真跑起来的第一件事就是问它要新闻上下文——用它区分"闸门拦下了"和"工具跑过了" */
@@ -142,7 +140,7 @@ class ChatWorkbenchHitlTest {
                 deepAnalysisService, mock(BehaviorAnalysisService.class),
                 mock(TraderChatService.class), mock(WorkbenchRunRegistry.class), childRuns,
                 registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
-                PRODUCTION_LIMIT, NO_COMPRESSION, 6, "X")
+                PRODUCTION_LIMIT, "X")
                 .leavesFor(llmConfig, AgentLang.ZH);
     }
 
@@ -160,7 +158,8 @@ class ChatWorkbenchHitlTest {
         contextStore = new ChatContextStore(contextMapper);
         childRuns = ChatTestEndpoints.childRuns(contextStore);
         WorkbenchRunRegistry runRegistry = mock(WorkbenchRunRegistry.class);
-        ChatTurnRunner turnRunner = new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, runRegistry);
+        ChatTurnRunner turnRunner = new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, runRegistry,
+                ChatTestEndpoints.compactor());
         ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
         ChatHistoryService history = mock(ChatHistoryService.class);
         streamer = new ChatTurnStreamer(turnRunner, history, runRegistry, registry, ChatTestEndpoints.PROMPTS);

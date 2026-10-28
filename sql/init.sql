@@ -504,7 +504,7 @@ CREATE INDEX IF NOT EXISTS idx_wb_chat_session ON workbench_chat_message (sessio
 CREATE INDEX IF NOT EXISTS idx_wb_chat_user ON workbench_chat_message (user_id, id DESC);
 COMMENT ON TABLE workbench_chat_message IS '工作台对话历史(展示用):user/assistant按会话落库,session_id与workbench_chat_context同值';
 COMMENT ON COLUMN workbench_chat_message.model_label IS '这一轮用的对话主模型:端点名 · 模型名(与LlmEndpointSelect展示口径一致)';
-COMMENT ON COLUMN workbench_chat_message.total_tokens IS '本轮主agent与历史压缩的模型调用token合计(后台子运行另记账,不在内);NULL=上游端点没返回usage或本轮被中断账不可信,不是0';
+COMMENT ON COLUMN workbench_chat_message.total_tokens IS '本轮主agent与整理上下文的模型调用token合计(后台子运行另记账,不在内);NULL=上游端点没返回usage或本轮被中断账不可信,不是0';
 COMMENT ON COLUMN workbench_chat_message.latency_ms IS '本轮墙钟耗时:准入与建叶子之后开跑起算;比[TurnMetrics]日志多一帧session与user行落库';
 COMMENT ON COLUMN workbench_chat_message.sources IS '这一轮联网搜索搜到/引用的来源 [{url,title}],按url去重;答案底部展示;没搜过或老数据为NULL';
 COMMENT ON COLUMN workbench_chat_message.context_tokens IS '这一轮结束时的上下文用量(token):最后一次模型调用的输入+输出,上游没报就按字数估;下一轮开始前据它判断要不要整理上下文;中断的轮与老数据为NULL';
@@ -521,7 +521,7 @@ CREATE TABLE IF NOT EXISTS workbench_chat_context (
     state       BYTEA NOT NULL,
     updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-COMMENT ON TABLE workbench_chat_context IS '工作台会话模型侧上下文:完整消息历史(含工具配对/压缩摘要/子运行报告),每轮结束整体替换;删会话随展示表一并清';
+COMMENT ON TABLE workbench_chat_context IS '工作台会话模型侧上下文:完整消息历史(含工具配对/整理摘要/子运行报告),每轮结束整体替换;删会话随展示表一并清';
 COMMENT ON COLUMN workbench_chat_context.state IS '裸JSON {"messages":[...]}(Jackson,ChatContextCodec写),保Spring AI Message多态与tool_call配对往返无损;老行是Java对象流包JSON,读时兼容,下一轮整体覆盖后自然换成新格式';
 
 -- ============================================

@@ -30,24 +30,6 @@ public class UsageTrackingChatModel implements ChatModel {
 
     /** 上游没返回 usage 时 token 三项为 null——不能拿 0 冒充"没花钱" */
     public record UsageSnapshot(int modelCalls, Long promptTokens, Long completionTokens, Long totalTokens) {
-
-        /**
-         * 两条端点（深/浅）的账合并成一轮的总账。
-         * null 语义随字段各算各的：两边都没报才是 null，一边报了就用报了的那份。
-         */
-        public UsageSnapshot merge(UsageSnapshot other) {
-            return new UsageSnapshot(modelCalls + other.modelCalls,
-                    sum(promptTokens, other.promptTokens),
-                    sum(completionTokens, other.completionTokens),
-                    sum(totalTokens, other.totalTokens));
-        }
-
-        private static Long sum(Long a, Long b) {
-            if (a == null) {
-                return b;
-            }
-            return b == null ? a : a + b;
-        }
     }
 
     /** 一轮的账本。ReAct 循环可能跑在虚拟线程上，读写都加锁 */

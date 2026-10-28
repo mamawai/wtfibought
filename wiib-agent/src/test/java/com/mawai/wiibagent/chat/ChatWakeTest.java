@@ -61,7 +61,6 @@ import static org.mockito.Mockito.when;
 class ChatWakeTest {
 
     private static final String SESSION = "wb-1-wake";
-    private static final int NO_COMPRESSION = 999_999;
 
     private final ChatModel deep = mock(ChatModel.class);
     private final ChatModel light = mock(ChatModel.class);
@@ -89,7 +88,7 @@ class ChatWakeTest {
         return new ChatAgentFactory(chatModelFactory, mock(MarketToolkit.class), mock(IndicatorToolkit.class), ChatTestEndpoints.newsToolkit(),
                 mock(DeepAnalysisService.class), mock(BehaviorAnalysisService.class), traderChatService,
                 mock(WorkbenchRunRegistry.class), childRuns, registry, ChatTestEndpoints.PROMPTS, ChatTestEndpoints.TOOLS,
-                8, NO_COMPRESSION, 6, "X")
+                8, "X")
                 .leavesFor(ChatTestEndpoints.eps(1L, "gpt-5"), AgentLang.ZH);
     }
 
@@ -105,7 +104,8 @@ class ChatWakeTest {
     }
 
     private ChatTurnRunner.TurnResult turn(String message) {
-        return new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, mock(WorkbenchRunRegistry.class))
+        return new ChatTurnRunner(contextStore, childRuns, ChatTestEndpoints.PROMPTS, mock(WorkbenchRunRegistry.class),
+                ChatTestEndpoints.compactor())
                 .run(leaves(), 1L, SESSION, message, null, answer::append, s -> { }, null);
     }
 
@@ -184,7 +184,7 @@ class ChatWakeTest {
             }
         };
         UsageTrackingChatModel model = new UsageTrackingChatModel(mock(ChatModel.class));
-        ChatAgentFactory.Leaves leaves = new ChatAgentFactory.Leaves("x", model, model, null, AgentLang.ZH, 256_000);
+        ChatAgentFactory.Leaves leaves = new ChatAgentFactory.Leaves("x", model, null, null, AgentLang.ZH, 256_000);
 
         streamer.run(new SseChannel(emitter), 1L, SESSION, null, leaves, null, null, true);
 
@@ -208,7 +208,7 @@ class ChatWakeTest {
         UsageTrackingChatModel model = new UsageTrackingChatModel(mock(ChatModel.class));
         ChatAgentFactory agentFactory = mock(ChatAgentFactory.class);
         when(agentFactory.leavesFor(any(), any()))
-                .thenReturn(new ChatAgentFactory.Leaves("x", model, model, null, AgentLang.ZH, 256_000));
+                .thenReturn(new ChatAgentFactory.Leaves("x", model, null, null, AgentLang.ZH, 256_000));
         ChatConcurrencyGate gate = new ChatConcurrencyGate(10);
         ChatWorkbenchController controller = new ChatWorkbenchController(agentFactory, endpointService, registry,
                 history, contextStore, streamer, mock(ChatTurnRewinder.class), mock(WorkbenchRunRegistry.class),

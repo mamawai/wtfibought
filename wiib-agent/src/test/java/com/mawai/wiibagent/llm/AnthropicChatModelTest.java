@@ -176,7 +176,7 @@ class AnthropicChatModelTest {
     @Test
     void 请求侧_多条系统消息各成一块_只有首块挂1h断点() {
         events = PLAIN;
-        // 压缩后的形状：基础提示词 + 首问 + 摘要（SystemMessage）+ 最近消息
+        // 老会话压缩后的形状：基础提示词 + 首问 + 摘要（SystemMessage）+ 最近消息
         model().call(new Prompt(List.of(
                 new SystemMessage("你是助手"), new UserMessage("首问"),
                 new SystemMessage("【摘要】第1段"), new UserMessage("新问题"))));
@@ -184,7 +184,7 @@ class AnthropicChatModelTest {
         JsonNode system = body().get("system");
         assertThat(system).extracting(b -> b.path("text").asString(null)).containsExactly("你是助手", "【摘要】第1段");
         assertThat(system.get(0).get(AnthropicChatModel.CACHE_CONTROL).path("ttl").asString(null)).isEqualTo("1h");
-        // 摘要块不挂断点：它压一次变一次，挂上去会把基础提示词的 1h 缓存一起冲掉
+        // 摘要块不挂断点：1h 只盖各会话共用的基础提示词与工具，会话自己的部分归末尾那个 5 分钟断点
         assertThat(system.get(1).has(AnthropicChatModel.CACHE_CONTROL)).isFalse();
         // 摘要没混进 messages
         JsonNode messages = body().get("messages");

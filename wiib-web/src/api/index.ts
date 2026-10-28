@@ -456,7 +456,7 @@ export const workbenchApi = {
     postSse<WorkbenchEvent>('/api/ai/workbench/chat', { sessionId, message, intent }, onEvent, signal),
   /**
    * 重新生成会话最后一条回答：后端把模型侧上下文回退到那条提问之前，再用原提问重跑，
-   * 事件协议与 chat 完全一致。回不去的会话（末尾不是答案/补答行/本轮压缩过）返回 2206。
+   * 事件协议与 chat 完全一致。回不去的会话（末尾不是答案/补答行/本轮提问已被压进摘要）返回 2206。
    */
   regenerate: (sessionId: string, onEvent: (e: WorkbenchEvent) => void, signal?: AbortSignal) =>
     postSse<WorkbenchEvent>('/api/ai/workbench/regenerate', { sessionId }, onEvent, signal),

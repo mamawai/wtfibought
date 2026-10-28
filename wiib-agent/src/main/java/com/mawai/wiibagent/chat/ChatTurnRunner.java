@@ -27,7 +27,9 @@ import java.util.function.Consumer;
 /**
  * 一轮对话的编排：载入历史 → 加本轮提问与收尾指令 → 主 agent 流式作答 → 终态落库。
  * <pre>
- * 挂上子运行收件箱 → 载入历史 + 本轮提问 + 收尾指令 → working
+ * 挂上子运行收件箱 → 载入历史（上一轮用量到了整理线就先整理，见 {@link ContextCompactor}）
+ *   ↓
+ * 历史 + 本轮提问 + 收尾指令 → working
  *   ↓
  * 主 agent（ReactLoop · 深模型 · 流式；行情/新闻/trader/深研判/行为分析全是它手里的工具）
  *   ├ 模型要调工具 ────► 这一批连名带参推给前端（tool_calls），画成过程条目
@@ -37,7 +39,7 @@ import java.util.function.Consumer;
  *   ↓
  * 摘掉收件箱（剩余报告并进落库消息，剩余非空即欠一次唤醒）
  *   ↓
- * 终态（含压缩替换 + 本轮全部新消息）整体覆盖会话历史，下一轮从这里起跑
+ * 终态（整理过的历史 + 本轮全部新消息）整体覆盖会话历史，下一轮从这里起跑
  * </pre>
  * 没有路由、没有专家派发：取什么数由主 agent 自己定，同一批 tool_call 并发执行（见 {@link ReactLoop}）。
  * 长活走后台子运行（{@link ChildRunRegistry}），轮里只剩模型思考和快工具。
@@ -52,6 +54,7 @@ public class ChatTurnRunner {
     private final PromptCatalog prompts;
     /** 工具调用事件的出口：ReactLoop 手里只有 sessionId，经它转成 SSE 帧 */
     private final WorkbenchRunRegistry runRegistry;
+    private final ContextCompactor compactor;
 
     /**
      * 一轮的结局。
@@ -97,6 +100,11 @@ public class ChatTurnRunner {
         Deque<Message> inbox = new ConcurrentLinkedDeque<>();
         childRuns.attachTurn(sessionId, inbox);
         List<Message> history = contextStore.load(sessionId);
+        // 整理也是一次模型调用：开跑前就点了停的不整理
+        if (!cancelled(cancel) && compactor.shouldCompact(leaves, sessionId, history)) {
+            runRegistry.publishProgress(sessionId, prompts.get(lang, "chat.compact.progress"));
+            history = compactor.compact(leaves, history).orElse(history);
+        }
         List<Message> working = new ArrayList<>(history);
         working.add(new UserMessage(enrichedMessage));
         if (cancelled(cancel)) {
@@ -117,11 +125,10 @@ public class ChatTurnRunner {
             // 在途那条流已被中断信号掐断、循环在检查点退出了，但收尾帧没到、
             // 这次调用的 token 未知——账本就此不可信，标记让它退化成只报耗时
             leaves.deep().markAbandoned();
-            leaves.light().markAbandoned();
             return cancelTurn(userId, sessionId, working, emitted.toString(), lang);
         }
 
-        // 终态含压缩替换 + 本轮全部新消息，整体覆盖会话历史（下一轮从这里起跑）
+        // 终态（整理过的历史 + 本轮全部新消息）整体覆盖会话历史，下一轮从这里起跑
         List<Message> finalMessages = new ArrayList<>(result.messages());
         boolean pending = childRuns.settle(sessionId, userId, finalMessages);
         ContextUsage context = measured.get() != null ? measured.get()

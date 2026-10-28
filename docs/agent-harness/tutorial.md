@@ -42,7 +42,7 @@ flowchart LR
     FE --> TEST["⑨ 拿测试当说明书"]
 ```
 
-**为什么从 chat 开始而不是从 trader**：trader 是业务最重的（要动真账本、有护栏、有调度），chat 是**循环用得最深的**（压缩 + 闸门 + 保险丝 + 中断 + 收件箱全在主 agent 那一个叶子上，外带一套后台子运行）。先啃循环、再看业务，比反过来省力——trader 里那些看着奇怪的写法多半在 chat 里也出现过，而且 chat 那边有注释解释过为什么。
+**为什么从 chat 开始而不是从 trader**：trader 是业务最重的（要动真账本、有护栏、有调度），chat 是**循环用得最深的**（闸门 + 保险丝 + 中断 + 收件箱全在主 agent 那一个叶子上，外带两轮之间的上下文整理和一套后台子运行）。先啃循环、再看业务，比反过来省力——trader 里那些看着奇怪的写法多半在 chat 里也出现过，而且 chat 那边有注释解释过为什么。
 
 **i18n 单开一章插在中间**：它不是"翻译"这么简单，它改了叶子的缓存键、改了旧数据的识别方式（认的时候要遍历全部语言）。不先过一遍，读 trader 的提示词组装会一直卡在"为什么这里要传个 lang"。
 
@@ -119,20 +119,22 @@ POST /api/ai/workbench/chat
 
 ### 站点 4 · 叶子
 
-`ChatAgentFactory.leavesFor` 的缓存策略与 `ChatModelFactory` 同款（LRU 32、锁外建）。键是 `leafKey` = **配置指纹 + 语言码**：
+`ChatAgentFactory.leavesFor` 的缓存策略与 `ChatModelFactory` 同款（LRU 32、锁外建）。键是 `leafKey` = **配置指纹 + 语言码 + 主模型端点的上下文窗口**：
 
 - **userId 进指纹不是为了缓存粒度，是数据隔离**：叶子里有按用户烤死的工具（主 agent 的 trader_* 工具读的是"这个人的 trader"，子运行按用户计上限），两人共用一份叶子就会看到别人的持仓。隔离要靠键本身，不能指望密文的随机性。
-- **语言只加在叶子这一层，不进模型指纹**：系统提示词与工具描述按语言烤进叶子里，语言变则叶子必须重建；但模型实例与语言无关，切语言不该重建 SDK 客户端与连接池。
+- **语言、上下文窗口只加在叶子这一层，不进模型指纹**：系统提示词与工具描述按语言烤进叶子里，窗口也带在叶子上（`Leaves.contextWindow`，计量条与整理线都按它算），变了叶子必须重建；但模型实例与这两样无关，不该为它们重建 SDK 客户端与连接池。
 
 `build()` 只造一个叶子——主 agent。worker 不缓存，`delegate` 每派一次 `newWorker` 现建一个（账本要独享，循环又是把模型绑死的，只能连循环一起新建）：
 
 | 叶子 | 模型 | 工具 | 特别之处 |
 |---|---|---|---|
-| `main`（主 agent） | 深 | 16 个（行情 4 + `news_search` + 深研判 + trader 只读 5 + trader 动作 3 + 行为分析 + `delegate`） | `streaming(true)`，带压缩（浅模型）、HITL 闸门、保险丝三样；同批 tool_call 并发；trader 工具与子运行的 userId 建叶子时烤死；不强制 `tool_choice`（Opus 5.5 这类模型不收 any / required），"先取数再答"写在系统提示词里 |
-| worker `researcher` | 轻 | `news_search` + 服务端搜索许可（看浅模型那条端点） | 无闸门无压缩，任务书是它唯一的用户消息，看不到主对话 |
+| `main`（主 agent） | 深 | 16 个（行情 4 + `news_search` + 深研判 + trader 只读 5 + trader 动作 3 + 行为分析 + `delegate`） | `streaming(true)`，带 HITL 闸门、保险丝两样；同批 tool_call 并发；trader 工具与子运行的 userId 建叶子时烤死；不强制 `tool_choice`（Opus 5.5 这类模型不收 any / required），"先取数再答"写在系统提示词里 |
+| worker `researcher` | 轻 | `news_search` + 服务端搜索许可（看浅模型那条端点） | 无闸门，任务书是它唯一的用户消息，看不到主对话 |
 | worker `analyst` | 轻 | 行情 4 + 指标 3（`klines` / `indicators` / `kline_structure`） | 同上 |
 
 两个 worker 都没有 `delegate`、动作表单与深研判：深度只有一层，派出去的不许再派、不许动手。
+
+叶子还把主 agent 的 `LlmClient` 单独带出来（`Leaves.mainClient`）：两轮之间整理上下文用它发，系统提示词、工具、思考配置与平时一模一样（站点 6）。
 
 **同一个 `runModelCallLimit` 管的是"每个循环各自的上限"而不是"整轮总量"**：主 agent 和每个 worker 各跑各的循环，计数互不相通。一轮对话的模型调用是主 agent 一份加派出去的 worker 各一份，不是 8 次封顶。
 
@@ -155,7 +157,7 @@ POST /api/ai/workbench/chat
 - `finishAnswered`——落库、（重新生成轮）顶掉旧答案、发 done。**旧答案留到新答案确实落库之后才删**。
 - 两种 `done` 都带 `pending`：最后一次模型调用之后又到了子运行报告、这轮没答，前端本地空闲时发 `/wake`（站点 7）。落库必须在 finally 摘运行标记**之前**写完——轮询端不能出现"已结束但查不到答案"的空窗。
 
-还有一个 `turnMeta()`：被中断掐断的在途流 token 未知、账本不可信时**只报耗时不报 token**——宁可不报也不能报错的。
+还有一个 `turnMeta()`：被中断掐断的在途流 token 未知、账本不可信时**只报耗时不报 token**——宁可不报也不能报错的。meta 里还带这一轮结束时的上下文用量（`context`，底栏计量条用，也随答案行落库），中断的轮不带：工具过程没落库，轮中途测到的偏大。
 
 **断连不中止本轮**：通道关了照样跑完并落历史，只是不再往通道里写帧。前端回来靠 status 接口 + 历史回放补。
 
@@ -166,20 +168,22 @@ POST /api/ai/workbench/chat
 ```text
 childRuns.attachTurn(sessionId, inbox)   先挂收件箱
   → contextStore.load                   再读历史
+  → compactor.shouldCompact ? compact   上一轮用量到窗口 90% 就先整理
   → working = 历史 + 本轮提问 + turnTail
   → streamMain：leaves.main().run(working, sessionId, cancel, listener)
   → childRuns.settle：会话锁里摘收件箱，剩余报告并进终态消息，整体覆盖会话历史
 ```
 
-三个要点：
+四个要点：
 
 - **先挂收件箱再读历史**：挂上之后到的报告进收件箱，`ReactLoop` 下一次调模型前追加到尾部；挂上之前到的已经在库里，随历史读进来。顺序反了就有一个窗口的报告两头都接不到。
+- **整理上下文只在两轮之间做**（`ContextCompactor`）：判据是上一轮结束时落库的用量（`context_tokens`，没有就按字数估），到主模型端点窗口的 90%（`compact-trigger-ratio`）就整理。请求 = 整段历史原样 + 末尾一条整理指令（`chat.compact.instruction`），走 `leaves.mainClient()`，请求前缀与上一轮相同、整段命中提示缓存。产物是一条摘要（用户消息）+ 上一轮提问原文 + 最终回答的纯文本，以前的思考块、搜索密文都不再回放。整理失败（报错、模型没给文本）就沿用原历史，下一轮再试。工具循环中间不动历史：各家都要求模型输出只往后追加、原样回放。
 - **取什么数由主 agent 自己定**：行情、快讯、trader 只读全是它手里的工具，同一批 tool_call 并发执行（第 3 章）。以前的路由 + 专家那一层没了——路由本身每轮要烧一次浅模型调用，而"要不要查行情"这个判断深模型顺手就做了。
 - **`childRuns.settle()` 是每条出路的必经**：正常收尾、用户中断、`streamMain` 抛异常都从它走。剩余报告非空就是这轮没答过的，`TurnResult.pending` 为真，前端空闲时发起唤醒轮。摔了先把 working 落库再抛：用户消息此刻只在内存里，不落库的话下一轮就不知道这句问过。
 
 进模型前垫的最后一条消息（`turnTail`）恒为**用户侧**——整段输入以 assistant 结尾，模型只会补一句"没什么可补充的"。按钮意图（`ChatIntent`）的动作指令也垫在这条里：该做什么已写死，不让模型再猜。这条消息里的**输出语言硬收尾必须排在最后**：用户打的字不翻译，聊天输入随时是另一门语言，而近因权重最高。
 
-`streamMain` 的 `Listener` 只做两件事：`chunk` 把 token / 搜索事件交给 SSE 出口，`inbox` 把收件箱里到的报告交给循环。逐帧消费在 `ReactLoop` 里（那边有一条硬规矩：在调用线程上普通迭代消费，不用 `forEachAsync`——后者每个 chunk 叠一层栈帧，长回答会 `StackOverflowError`，真跑实证过）。
+`streamMain` 的 `Listener` 做三件事：`chunk` 把 token / 搜索事件 / 收尾帧报的上下文用量交给 SSE 出口，`message` 把模型要调的那批工具推给前端画过程条目，`inbox` 把收件箱里到的报告交给循环。逐帧消费在 `ReactLoop` 里（那边有一条硬规矩：在调用线程上普通迭代消费，不用 `forEachAsync`——后者每个 chunk 叠一层栈帧，长回答会 `StackOverflowError`，真跑实证过）。
 
 ### 站点 7 · 子运行与唤醒 · `ChildRunRegistry`（最该细读的一节）
 
@@ -243,8 +247,8 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 
 两个陷阱都在私有的 `cutAt`：
 
-1. **光靠轮起始标记定位不住**：历史压缩会把首条用户消息**原样**放回压缩结果队首，那条正是会话第一轮的提问、同样带着标记。所以标记只用来找候选，还要拿它与展示表里那条提问核对。
-2. **切在队首且紧跟着摘要就得拒**：同一句常用问法在一个会话里问两遍就会这样，文本对得上但位置是假的，照切会把整段上下文连摘要清空。
+1. **光靠轮起始标记定位不住**：整理上下文会把上一轮的提问**原样**留在摘要后面，老会话的压缩还把首条用户消息原样放在队首，那几条同样带着标记。所以标记只用来找候选，还要拿它与展示表里那条提问核对。
+2. **老会话切在队首且紧跟着摘要（`SystemMessage`）就得拒**：同一句常用问法在一个会话里问两遍就会这样，文本对得上但位置是假的，照切会把整段上下文连摘要清空。新的整理不往历史里写 `SystemMessage`，这条只命中老会话。
 
 两条都交回 `Optional.empty()`，由 controller 一律翻成 `2206` 拒绝，不做半吊子的补偿。另外重新生成前要 `childRuns.cancelAll`：被顶掉那轮派出去的子运行作废，它们的报告回灌到重跑后的上下文里会答非所问。
 
@@ -266,19 +270,18 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 
 ### ② 可空参数漏传，编译照过
 
-`gate`（HITL 闸门）、`summarizer`（长对话压缩）、`trace`（工具调用轨迹）三个建造参数都可空：忘了传，循环照转，那一样静默哑掉——不弹卡、不压缩、轨迹空一片。必填的只有 `client` 与 `limiter`，漏了 `build()` 当场抛。
+`gate`（HITL 闸门）、`trace`（工具调用轨迹）两个建造参数都可空：忘了传，循环照转，那一样静默哑掉——不弹卡、轨迹空一片。必填的只有 `client` 与 `limiter`，漏了 `build()` 当场抛。
 
-三根钉子守着，都是**建生产叶子真跑**而不是自己搭一个循环自己塞：
+两根钉子守着，都是**建生产叶子真跑**而不是自己搭一个循环自己塞：
 
 - `MainLeafTest.闸门在生产叶子上拦下未授权的深研判`
-- `MainLeafTest.压缩发生且不切断工具调用配对`
 - `TraderWakeupLoopTest.dataToolCallsTracedIntoActions`
 
 ### ③ 中断
 
 `cancel`（一个 `CompletableFuture<Void>`）直接传进 `run`，两头同时管：
 
-- **掐在途流**：`LlmClient.streamingExecute` 用 `takeUntilOther(Mono.fromFuture(cancel, true))` 把整条流水线（含重试与降级）掐断，取消传到 WebClient / SDK 流。`suppressCancel=true` 必须给——缺省会在流正常结束时反向 cancel 这个 future，循环的中断检查点会把一次正常收尾当成用户中断。
+- **掐在途流**：`LlmClient.streamingExecute` 用 `takeUntilOther(Mono.fromFuture(cancel, true))` 把整条流水线（含重试）掐断，取消传到 WebClient / SDK 流。`suppressCancel=true` 必须给——缺省会在流正常结束时反向 cancel 这个 future，循环的中断检查点会把一次正常收尾当成用户中断。
 - **循环退出**：两个检查点，模型答完之后不再执行工具、工具回执入历史后不再调模型。两处都是正常退出、把已有历史交出去，不抛异常。拉流时每帧还先看一眼 cancel：掐上游那一刻队列里排着的帧也不再上屏。
 
 被掐断那次调用的 token 未知，`markAbandoned` 让本轮的账退化成只报耗时；账本按轮换新（`UsageTrackingChatModel.TokenLedger`），晚到的入账只会落进旧账本。测试：`ChatCancelTest`、`LlmClientTest` 的中断两条。
@@ -312,7 +315,7 @@ pending → done / status 都带着 → 前端本地空闲时 POST /wake → 唤
 
 1. **给模型看的走 `PromptCatalog`，给用户看的走 `MessageCatalog`**。两者语言来源不同：前者跟 trader 主人 / 叶子的语言，后者跟当次请求的界面语言。
 2. **读旧数据认全部语言，校验本轮输出只认当前那门**。这条有两面，别用反：
-   - 库里的旧数据是写入时那门语言落的，所以 `ChatRowKind.of`、`ConversationSummarizer.isSummary`、`ChatTurnRewinder.cutAt`、`DecisionText.locateConclusion`、`ExperienceLedger.isRendered` 全都逐语言各认一遍。认死一门就会静默失配——补充回答行冒出"重新生成"按钮、整段结论被判成"没写结论块"。
+   - 库里的旧数据是写入时那门语言落的，所以 `ChatRowKind.of`、`ContextCompactor.lastExchange`、`ChatTurnRewinder.cutAt`、`DecisionText.locateConclusion`、`ExperienceLedger.isRendered` 全都逐语言各认一遍。认死一门就会静默失配——补充回答行冒出"重新生成"按钮、整段结论被判成"没写结论块"。
    - 反过来，`ExperienceOpParser.parse` 校验的是**模型本轮刚交出来的东西**，只认本轮提示词那一门的标记与行首固定词：提示词刚让它用英文标记、它交回中文标记，那就是没照格式走，按格式失守降级才对。两门都认会把真失守悄悄放过。
 3. **用户自己写的字不翻译**：`customPrompt`、`ownerNote` 原样注入，前面垫一句"这段是主人亲笔、可能是另一门语言、照意思做但输出语言不变"。
 
@@ -562,7 +565,8 @@ trader 那条链的前端另在两处：
 | `ChatWorkbenchAdmissionTest` | 四道准入的顺序，以及名额泄漏那条钉子（要关掉 executor 制造提交失败） |
 | `ChatWakeTest` / `ChatCancelTest` / `ChatRegenerateTest` | 唤醒补答（轮内排入 / 轮末 pending / 没轮直接落库）/ 中断 / 重新生成三条链路 |
 | `ChildRunRegistryTest` / `DelegateToolkitTest` / `WorkbenchPrefServiceTest` | 子运行的三道派发检查、回灌两条路、取消不回灌、失败回灌、报告截断；delegate 参数错不派、报告是 worker 产出；用户偏好默认值与钳位 |
-| `MainLeafTest` / `ChatWorkbenchHitlTest` | 闸门、压缩、保险丝在真叶子上真的传上了；后者跑 HITL 端到端 |
+| `MainLeafTest` / `ChatWorkbenchHitlTest` | 闸门、保险丝在真叶子上真的传上了；后者跑 HITL 端到端 |
+| `ContextCompactorTest` | 整理线（实测用量优先、没有就按字数估）、整理请求的形状（整段历史 + 指令，走主 agent 的 client）、产物形状（摘要 + 上一轮问答纯文本）、失败沿用原历史 |
 | `ChatAgentFactoryTest` | 主 agent 工具表齐全、两个 worker 预设的工具表与搜索许可（直接调 `newWorker` 真跑，验的才是生产建叶子时挂没挂）、缓存键、提示词随端点能力 |
 | `ReactLoopTest` | 同批工具并发且回执保序、串行工具整批串行、收件箱排在下一次调模型前、拼错工具名回错不抛 |
 | `AnthropicChatModelTest` / `GeminiChatModelTest` / `ResponsesChatModelTest` | 三条自研协议各自的请求体、流式解析、工具声明（不传 tool_choice） |
@@ -583,7 +587,7 @@ trader 那条链的前端另在两处：
 - **恒真断言**：断 `.contains("模型")`，而兜底文案本身就含"模型"——删掉整条分支照样绿
 - **断言点打错层**：在测试里自己 new 一个对象、自己加密、再验尾号——把生产代码改成明文落库照样绿
 - **`any()` 吃掉一切**：`when(factory.leavesFor(any()))` 之后，"传给它的是不是本人那份配置"就没人守了
-- **mock 遮蔽真跑**：直接调 `intercept` / `compress` 的用例，对"这一样根本没传给 ReactLoop"完全无感
+- **mock 遮蔽真跑**：直接调 `intercept` 的用例，对"闸门根本没传给 ReactLoop"完全无感
 
 **看到一条测试，先问：把它守的那段生产代码删掉，它会红吗？**
 
@@ -612,16 +616,17 @@ cd wiib-web && npx tsc -b && npm run build
 
 ## 附录 B · 真跑才能验的东西
 
-单测覆盖不到的，需要 `WIIB_REAL_RUN=1` + 真实上游。现有四条真跑测试：`ChatWorkbenchRealRunTest`、`ConversationSummarizerRealRunTest`、`WorkbenchChatContextMapperRealRunTest`、`TraderConclusionFormatRealRunTest`。
+单测覆盖不到的，需要 `WIIB_REAL_RUN=1` + 真实上游。现有四条真跑测试：`ChatWorkbenchRealRunTest`、`ContextCompactorRealRunTest`、`WorkbenchChatContextMapperRealRunTest`、`TraderConclusionFormatRealRunTest`。
 
 它们各自守的、以及仍需手工验的：
 
-- 压缩 / 闸门 / 保险丝在生产叶子上真的传给了 ReactLoop（可空参数漏传不报错，mock 单测已能抓一部分，真跑再兜一层）
+- 闸门 / 保险丝在生产叶子上真的传给了 ReactLoop（可空参数漏传不报错，mock 单测已能抓一部分，真跑再兜一层）
+- 整理上下文在生产装配下真的通电：整理请求带着工具与思考配置，模型交回的是摘要文本而不是去调工具；整理后的历史落库再读出来上游照收、追问接得上（`ContextCompactorRealRunTest`）
 - 点停止后上游是否真的断了（openai 协议靠 Spring AI 2.0.1 的 `sink.onDispose(response::close)`，单测里只能验到 Flux 被取消）
 - 批准"深研判 BTCUSDT"后诱导模型去查 ETH，应该**重新弹卡**（验残留授权被丢弃）
 - 子运行的真实时序：批准深研判后主 agent 当轮结束，几分钟后前端自动唤醒、补充回答带【补充回答】标头，期间发新消息能正常对话；"开两个子 agent 分别查 X 和 Y"看到两条 child 轨并行、报告各自回灌；关掉开关后模型收到拒因并自己作答
 - trader 唤醒里同批数据工具是否真的并发（看工具日志的时间戳）
 - 收尾格式的 `[SYMBOL]` 分段模型到底填不填得对（`TraderConclusionFormatRealRunTest` 就是为它建的）
-- 长对话压缩后重新生成会不会踩到"压缩原样放回的首问"那个陷阱
+- 整理上下文后重新生成会不会踩到"原样留下的上一问"那个陷阱
 - 思考档位传给不支持的模型会怎样——**模型支不支持这个参数查不到**（OpenAI 标准 `/v1/models` 只回 id/object/created/owned_by），只能真跑
 - 两个用户各用各的 key，互相看不到对方会话

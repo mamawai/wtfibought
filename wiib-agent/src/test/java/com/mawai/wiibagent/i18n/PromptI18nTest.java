@@ -129,9 +129,8 @@ class PromptI18nTest {
                 "tool.delegate",
                 "chat.deferred.prefix", "chat.hitl.label", "chat.hitl.reason", "chat.hitl.notExecuted",
                 "chat.hitl.resumeMessage", "chat.form.wake", "chat.form.review", "chat.form.note",
-                "chat.compress.summaryPrefix", "chat.compress.role.user", "chat.compress.role.assistant",
-                "chat.compress.role.system", "chat.compress.role.tool", "chat.compress.role.other",
-                "chat.compress.clipped", "chat.deepAnalysis.noNews", "chat.deepAnalysis.noIv",
+                "chat.compact.instruction", "chat.compact.preamble", "chat.compact.progress",
+                "chat.deepAnalysis.noNews", "chat.deepAnalysis.noIv",
                 "chat.deepAnalysis.bullStance",
                 "chat.deepAnalysis.bearStance", "chat.deepAnalysis.judgeFailed",
                 "chat.deepAnalysis.progress.bullDone", "chat.deepAnalysis.progress.judging",
@@ -156,8 +155,6 @@ class PromptI18nTest {
         // 主 agent 两版新闻条款（有无联网搜索）都要扫，哪版被建出来取决于用户端点配置
         assertNoCjk("英文主 agent(search)", main(AgentLang.EN, "chat.newsRule.search"));
         assertNoCjk("英文主 agent(noSearch)", main(AgentLang.EN, "chat.newsRule.noSearch"));
-        assertNoCjk("英文历史压缩提示词",
-                prompts.get(AgentLang.EN, "chat.compress.prompt", Map.of("history", "u: hi")));
         assertNoCjk("英文补答标头",
                 prompts.get(AgentLang.EN, "chat.deferred.header", Map.of("question", "btc?")));
         assertNoCjk("英文后台任务标注", prompts.get(AgentLang.EN, "chat.childRun.tag",
@@ -323,7 +320,7 @@ class PromptI18nTest {
                 "tool.run_deep_analysis", "tool.news_search", "tool.delegate",
                 "chat.main", "chat.newsRule.search", "chat.newsRule.noSearch",
                 "chat.worker.researcher", "chat.worker.analyst", "chat.wake.instruction",
-                "chat.compress.prompt", "chat.deepAnalysis.judgePrompt",
+                "chat.compact.instruction", "chat.compact.preamble", "chat.deepAnalysis.judgePrompt",
                 "chat.hitl.reason", "chat.deferred.prefix",
                 "coach.hint.system", "coach.review.system", "coach.label.barsHeader",
                 "trader.wake.routineQuestion", "trader.wake.sleepNotice", "trader.error.wakeTimeout",

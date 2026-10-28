@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class ChatContextCodecTest {
 
-    /** 生产会存的全部形态：用户原文、带图的用户消息、纯文本回答、带 tool_call 的回答、配对回执、压缩摘要 */
+    /** 库里会有的全部形态：用户原文、带图的用户消息、纯文本回答、带 tool_call 的回答、配对回执、老会话的摘要 */
     static List<Message> fixture() {
         return List.of(
                 new UserMessage("2026-09-10 10:00 ｢用户提问｣ 帮我盯 BTC"),

@@ -5,9 +5,9 @@ import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.chat.store.ChatRowKind;
 import com.mawai.wiibagent.i18n.PromptCatalog;
-import com.mawai.wiibagent.llm.ConversationSummarizer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Component;
 
@@ -39,8 +39,8 @@ public class ChatTurnRewinder {
      * 上下文从尾部回删到本轮提问为止（含它）——一轮的尾巴不止"一问一答"，中间还夹着 tool_call 配对、
      * 子运行报告与收尾指令。展示表这里一行不动：旧答案要留到新答案确实落库之后才删，见 {@link ChatTurnStreamer}。
      * <p>
-     * <b>光靠轮起始标记定位不住</b>：历史压缩会把首条用户消息<b>原样</b>放回压缩结果队首
-     *（见 {@code ConversationSummarizer}），那条正是会话第一轮的提问、同样带着标记。
+     * <b>光靠轮起始标记定位不住</b>：整理上下文会把上一轮的提问<b>原样</b>留在摘要后面（见 {@link ContextCompactor}），
+     * 老会话的压缩还把首条用户消息原样放在队首，那几条同样带着标记。
      * 所以标记只用来找候选，还要拿它与展示表里那条提问核对——对不上就说明本轮提问已被压进摘要，回不去了。
      * <p>
      * 回不去的一律交回 empty，不做半吊子的补偿。几种回不去的原因在 HTTP 上是同一个码，不分型。
@@ -70,9 +70,10 @@ public class ChatTurnRewinder {
         if (cut < 0) {
             return Optional.empty();
         }
-        // 切在队首且紧跟着摘要，说明命中的是压缩原样放回的首问，不是本轮提问——
-        // 同一句常用问法在一个会话里问两遍就会这样，文本对得上但位置是假的，照切会把整段上下文连摘要清空
-        if (cut == 0 && context.size() > 1 && ConversationSummarizer.isSummary(context.get(1), prompts)) {
+        // 老会话：切在队首且紧跟着摘要（老压缩把摘要存成 SystemMessage，新的整理不再往历史里写它），
+        // 说明命中的是压缩原样放回的首问，不是本轮提问——同一句常用问法在一个会话里问两遍就会这样，
+        // 文本对得上但位置是假的，照切会把整段上下文连摘要清空
+        if (cut == 0 && context.size() > 1 && context.get(1) instanceof SystemMessage) {
             return Optional.empty();
         }
         contextStore.save(sessionId, userId, List.copyOf(context.subList(0, cut)));
@@ -97,8 +98,8 @@ public class ChatTurnRewinder {
                 if (!text.startsWith(prompts.get(lang, "chat.turn.timePrefix"))) {
                     continue;
                 }
-                // 核对的是 enriched 的尾巴（拼法见 ChatTurnStreamer.Turn.run），对不上就是压缩把本轮提问
-                // 吃掉了，此时命中的那条是压缩留下的首问——照它切会把中间好几轮连同摘要一起抹掉
+                // 核对的是 enriched 的尾巴（拼法见 ChatTurnStreamer.Turn.run），对不上就是本轮提问已被压进摘要，
+                // 命中的是更早留下的那问——照它切会把中间好几轮一起抹掉
                 return text.endsWith(prompts.get(lang, "chat.turn.questionPrefix") + question) ? i : -1;
             }
         }

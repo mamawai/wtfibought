@@ -43,7 +43,7 @@ import static org.mockito.Mockito.when;
  * <p>
  * 两件必须钉住的事：
  * <ol>
- *   <li><b>深浅两条端点合账</b>——历史压缩烧的是浅模型，作答烧的是深模型，前端要的是一轮的总数；</li>
+ *   <li><b>一轮的账含整理上下文那次调用</b>——它和作答都走主模型、记在同一本账上，前端要的是一轮的总数；</li>
  *   <li><b>轮边界靠 reset 划</b>——装饰器跟着叶子跨轮缓存，不清零就是上一轮的账接着涨。</li>
  * </ol>
  * 用真 {@link UsageTrackingChatModel} 包 mock 模型，在 runner 的替身里真调几次模型来"烧"token，
@@ -90,8 +90,8 @@ class ChatTurnMetaTest {
     }
 
     /** 只有账本是真的：主 agent 用不上（runner 被替身顶了），给空 */
-    private static ChatAgentFactory.Leaves leaves(UsageTrackingChatModel deep, UsageTrackingChatModel light) {
-        return new ChatAgentFactory.Leaves(LABEL, deep, light, null, AgentLang.ZH, 256_000);
+    private static ChatAgentFactory.Leaves leaves(UsageTrackingChatModel deep) {
+        return new ChatAgentFactory.Leaves(LABEL, deep, null, null, AgentLang.ZH, 256_000);
     }
 
     /** 一套能真跑 {@code ChatTurnStreamer.run} 的最小装配 */
@@ -131,32 +131,30 @@ class ChatTurnMetaTest {
     }
 
     @Test
-    void 一轮的读数是深浅两条端点合起来的账() {
+    void 一轮的读数含整理上下文那次调用() {
         UsageTrackingChatModel deep = new UsageTrackingChatModel(modelReporting(100, 20, 120));
-        UsageTrackingChatModel light = new UsageTrackingChatModel(modelReporting(30, 5, 35));
-        // 浅模型两次（历史压缩）、深模型一次（主 agent 作答）
+        // 整理上下文一次、主 agent 作答一次
         Harness h = harness(() -> {
-            light.call(new Prompt("compress-1"));
-            light.call(new Prompt("compress-2"));
+            deep.call(new Prompt("compact"));
             deep.call(new Prompt("answer"));
         });
 
         RecordingEmitter emitter = new RecordingEmitter();
         h.streamer().run(new SseChannel(emitter), 1L, SESSION, "看看行情",
-                leaves(deep, light), null, null, false);
+                leaves(deep), null, null, false);
 
         ChatHistoryService.TurnMeta meta = capturedMeta(h.history());
         assertThat(meta.modelLabel()).isEqualTo(LABEL);
-        assertThat(meta.modelCalls()).isEqualTo(3);
-        assertThat(meta.promptTokens()).isEqualTo(160L);        // 30+30+100
-        assertThat(meta.completionTokens()).isEqualTo(30L);     // 5+5+20
-        assertThat(meta.totalTokens()).isEqualTo(190L);         // 35+35+120
+        assertThat(meta.modelCalls()).isEqualTo(2);
+        assertThat(meta.promptTokens()).isEqualTo(200L);
+        assertThat(meta.completionTokens()).isEqualTo(40L);
+        assertThat(meta.totalTokens()).isEqualTo(240L);
         assertThat(meta.latencyMs()).isNotNull().isGreaterThanOrEqualTo(0);
 
         // done 事件与落库同一份读数：前端本轮不用等刷新就能显示
         JsonNode done = emitter.event("done");
         assertThat(done).isNotNull();
-        assertThat(done.get("meta").path("totalTokens").asLong(0)).isEqualTo(190L);
+        assertThat(done.get("meta").path("totalTokens").asLong(0)).isEqualTo(240L);
         assertThat(done.get("meta").path("modelLabel").asString(null)).isEqualTo(LABEL);
     }
 
@@ -173,7 +171,7 @@ class ChatTurnMetaTest {
 
         RecordingEmitter emitter = new RecordingEmitter();
         h.streamer().run(new SseChannel(emitter), 1L, SESSION, "BTC 新闻",
-                leaves(shared, shared), null, null, false);
+                leaves(shared), null, null, false);
 
         JsonNode search = emitter.event("search");
         assertThat(search).isNotNull();
@@ -204,34 +202,20 @@ class ChatTurnMetaTest {
         UsageTrackingChatModel model = new UsageTrackingChatModel(modelReporting(1, 1, 2));
 
         RecordingEmitter emitter = new RecordingEmitter();
-        streamer.run(new SseChannel(emitter), 1L, SESSION, "看看行情", leaves(model, model), null, null, false);
+        streamer.run(new SseChannel(emitter), 1L, SESSION, "看看行情", leaves(model), null, null, false);
 
         assertThat(capturedMeta(history).context()).isEqualTo(context);
         assertThat(emitter.event("done").get("meta").get("context").path("tokens").asLong()).isEqualTo(1200L);
     }
 
     @Test
-    void 未绑轻模型时深浅是同一份账本不能算两遍() {
-        UsageTrackingChatModel shared = new UsageTrackingChatModel(modelReporting(100, 20, 120));
-        Harness h = harness(() -> shared.call(new Prompt("one")));
-
-        h.streamer().run(new SseChannel(new RecordingEmitter()), 1L, SESSION, "看看行情",
-                leaves(shared, shared), null, null, false);
-
-        ChatHistoryService.TurnMeta meta = capturedMeta(h.history());
-        assertThat(meta.modelCalls()).isEqualTo(1);
-        assertThat(meta.totalTokens()).isEqualTo(120L);
-    }
-
-    @Test
     void 第二轮的账不含第一轮() {
         UsageTrackingChatModel deep = new UsageTrackingChatModel(modelReporting(100, 20, 120));
-        UsageTrackingChatModel light = new UsageTrackingChatModel(modelReporting(30, 5, 35));
         Harness h = harness(() -> {
-            light.call(new Prompt("route"));
-            deep.call(new Prompt("summarize"));
+            deep.call(new Prompt("compact"));
+            deep.call(new Prompt("answer"));
         });
-        ChatAgentFactory.Leaves leaves = leaves(deep, light);
+        ChatAgentFactory.Leaves leaves = leaves(deep);
 
         h.streamer().run(new SseChannel(new RecordingEmitter()), 1L, SESSION, "第一问",
                 leaves, null, null, false);
@@ -242,8 +226,8 @@ class ChatTurnMetaTest {
                 ArgumentCaptor.forClass(ChatHistoryService.TurnMeta.class);
         verify(h.history(), org.mockito.Mockito.times(2))
                 .append(eq(SESSION), eq(1L), eq("assistant"), eq("答案正文"), captor.capture(), any());
-        // 两轮各烧一次浅一次深；没清零的话第二轮会是 310
-        assertThat(captor.getAllValues().get(0).totalTokens()).isEqualTo(155L);
-        assertThat(captor.getAllValues().get(1).totalTokens()).isEqualTo(155L);
+        // 两轮各烧两次；没清零的话第二轮会是 480
+        assertThat(captor.getAllValues().get(0).totalTokens()).isEqualTo(240L);
+        assertThat(captor.getAllValues().get(1).totalTokens()).isEqualTo(240L);
     }
 }

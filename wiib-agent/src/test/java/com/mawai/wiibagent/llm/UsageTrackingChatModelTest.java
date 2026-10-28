@@ -136,22 +136,6 @@ class UsageTrackingChatModelTest {
         assertThat(m.snapshot().totalTokens()).isEqualTo(120L);   // 只算清零之后的
     }
 
-    /** 深浅两条端点合账：报了的相加，两边都没报才留 null */
-    @Test
-    void mergeSumsPerFieldAndKeepsNullWhenNeitherReported() {
-        UsageTrackingChatModel.UsageSnapshot deep =
-                new UsageTrackingChatModel.UsageSnapshot(2, 100L, 20L, null);
-        UsageTrackingChatModel.UsageSnapshot light =
-                new UsageTrackingChatModel.UsageSnapshot(3, 30L, null, null);
-
-        UsageTrackingChatModel.UsageSnapshot merged = deep.merge(light);
-
-        assertThat(merged.modelCalls()).isEqualTo(5);
-        assertThat(merged.promptTokens()).isEqualTo(130L);
-        assertThat(merged.completionTokens()).isEqualTo(20L);   // 一边没报，用报了的那份
-        assertThat(merged.totalTokens()).isNull();              // 两边都没报
-    }
-
     /** reset 之后才终止的流入账到发起时那本账：中断丢下的在途流不会污染下一轮 */
     @Test
     void 晚到的入账落进发起时的账本不污染新一轮() {
