@@ -28,6 +28,7 @@
     "react-i18next": "^17.0.12",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.13.0",
+    "remark-cjk-friendly": "^2.3.3",
     "remark-gfm": "^4.0.1",
     "sockjs-client": "^1.6.1",
     "tailwind-merge": "^3.4.0",

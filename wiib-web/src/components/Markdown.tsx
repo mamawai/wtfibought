@@ -1,6 +1,7 @@
 import { memo, type ComponentProps } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkCjkFriendly from 'remark-cjk-friendly';
 
 /**
  * LLM 输出的 markdown 统一渲染：工作台对话与竞技场决策日志共用。
@@ -12,7 +13,8 @@ import remarkGfm from 'remark-gfm';
 /* plugins / components 必须是模块级常量：写成内联字面量则每次渲染都是新引用，
    而 react-markdown 直接拿 components 里的函数当 JSX 元素 type，type 一换 React 就整段卸载重建而不是 diff。
    流式逐 token 时的表现就是正文选中被打断、长回答越往后越卡。 */
-const REMARK_PLUGINS = [remarkGfm];
+/* remarkCjkFriendly：`**加息的理由：**9月` 这种收尾 ** 前是全角标点、后紧跟字的，标准 markdown 不认加粗，它让这种也认 */
+const REMARK_PLUGINS = [remarkGfm, remarkCjkFriendly];
 
 /** react-markdown 给每个覆写组件都多塞一个 node（hast 节点），跟着 {...props} 摊进 DOM 会渲染成
  *  node="[object Object]"，所有覆写统一从这里过一道剥掉 */
