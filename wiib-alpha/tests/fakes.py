@@ -83,13 +83,14 @@ def review_reply(prompt: str) -> str:
 class FakeFapi:
     """fapi 的假行情：每个币每根 15m 的价格、成交量、溢价和 5 分钟的持仓、多空比都按 (币序号, 时刻) 算出来，问几次都一样；
     now 之后开盘的不给（没收盘的那根照样给，客户端自己扔）；halted 里的币不在交易；broken 里的币 K 线回 500；
-    log 记下每个请求的路径和参数"""
+    spot 里的币有同名现货对（/api/v3），现货 K 线的量和笔数和永续的不一样；log 记下每个请求的路径和参数"""
 
     def __init__(self, symbols, now_ms: int):
         self.code = {s: i for i, s in enumerate(symbols)}
         self.now = now_ms
         self.halted: set[str] = set()
         self.broken: set[str] = set()
+        self.spot: set[str] = set(symbols)
         self.log: list[tuple[str, dict]] = []
 
     def close(self, s: str, t: int) -> float:
@@ -115,20 +116,25 @@ class FakeFapi:
                  "filters": rule} for s in self.code]})
         if path == "/fapi/v1/premiumIndex":
             return httpx.Response(200, json=[{"symbol": s, "markPrice": str(self.mark(s))} for s in self.code])
+        if path == "/api/v3/exchangeInfo":
+            return httpx.Response(200, json={"symbols": [{"symbol": s, "status": "TRADING", "quoteAsset": "USDT"}
+                                                         for s in sorted(self.spot)]})
         s, a, b = p["symbol"], int(p["startTime"]), min(int(p["endTime"]), self.now - 1)
-        if s not in self.code:
+        if s not in (self.spot if path.startswith("/api/") else self.code):
             return httpx.Response(400, json={"code": -1121, "msg": "Invalid symbol."})
         if path == "/fapi/v1/klines" and s in self.broken:
             return httpx.Response(500)
         i, limit = self.code[s], int(p["limit"])
-        if path in ("/fapi/v1/klines", "/fapi/v1/premiumIndexKlines"):
+        if path in ("/fapi/v1/klines", "/fapi/v1/premiumIndexKlines", "/api/v3/klines"):
             rows = []
             for t in range(-(-a // BAR_MS) * BAR_MS, b + 1, BAR_MS)[:limit]:
                 k = t // BAR_MS
-                if path == "/fapi/v1/klines":
+                if path.endswith("/klines"):
                     c, v = self.close(s, t), 1000 * (1 + i) * (1.5 + math.sin(k / 5 + i))
+                    # 现货：量是永续的三成、笔数另一个数
+                    v, n = (v * 0.3, 50 + i) if path.startswith("/api/") else (v, 100 + i)
                     rows.append([t, str(c), str(c * 1.001), str(c * 0.999), str(c), str(v), t + BAR_MS - 1, str(v * c),
-                                 100 + i, str(v / 2), str(v * c / 2), "0"])
+                                 n, str(v / 2), str(v * c / 2), "0"])
                 else:
                     prem = 0.0001 * ((i * 7) % 11 - 5) + 0.00005 * math.sin(k / 13 + i)
                     rows.append([t, "0", "0", "0", str(prem), "0", t + BAR_MS - 1, "0", 0, "0", "0", "0"])
@@ -153,10 +159,10 @@ class FakeFapi:
 
     def binance(self) -> Binance:
         return Binance("https://v", httpx.Client(transport=httpx.MockTransport(self.handle)), fapi_url="https://f",
-                       list_url="https://s3")
+                       list_url="https://s3", spot_url="https://sp")
 
     def write_raw(self, store: PanelStore, start: int, end: int) -> None:
-        """[start, end) 的 K 线、溢价 K 线、metrics 写进 raw/，和 fapi 给的一模一样（归档与实时同源）"""
+        """[start, end) 的 K 线、溢价 K 线、metrics、现货 K 线写进 raw/，和接口给的一模一样（归档与实时同源）"""
         api, now = self.binance(), self.now
         self.now = end
         for s in self.code:
@@ -164,6 +170,8 @@ class FakeFapi:
             store.save_raw("premium_15m", s, api.recent_premium(s, start, end))
             store.save_raw("metrics", s, api.recent_metrics(s, start, end))
             store.save_raw("funding", s, api.recent_funding(s, start, end))
+            if s in self.spot:
+                store.save_raw("spot_15m", s, api.recent_spot_klines(s, start, end))
         self.now = now
         self.log.clear()
 

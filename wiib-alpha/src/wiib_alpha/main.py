@@ -100,13 +100,15 @@ def load_data(cfg: Config, params: EvalParams, universe: list[dict[str, Any]]) -
     described = {s: describe(p) for s, p in panels.items()}
     pool = Pool.load(store, table, cut_ms)
     grid = reference.load_grid(store)
+    # 刷新时记下的映射：spotSymbol 为空是没有现货对（老 status 没这个键，不算）
+    spot_missing = sum(1 for d in store.read_status().values() if d.get("spotSymbol", "") is None)
     return Data(
         pool=pool,
         products={s: truncate(p, cut_ms) for s, p in panels.items()},
         cut_ms=cut_ms,
         reference_grid=reference.align(grid, pool) if grid is not None else None,
         reference_canonicals={e.canonical() for e in reference.parsed().values()},
-        facts=_facts(described, cut_ms, params, len(pool.symbols), cfg.universe_size),
+        facts=_facts(described, cut_ms, params, len(pool.symbols), cfg.universe_size, spot_missing),
         status=described,
         loaded_at=now_ms(),
         vol=pool.values(scheme.VOL).f,
@@ -152,15 +154,18 @@ def build_library(data: Data, factors: list[dict[str, Any]], params: EvalParams,
 
 
 def _facts(described: dict[str, dict[str, Any]], cut_ms: int, params: EvalParams, pool_symbols: int,
-           pool_size: int) -> dict[str, Any]:
-    """给提示词和页面的数据事实；symbols 是产品币"""
+           pool_size: int, spot_missing: int) -> dict[str, Any]:
+    """给提示词和页面的数据事实；symbols 是产品币，spot_missing 是没有现货对的币数"""
     liq = [d["liqFrom"] for d in described.values() if d["liqFrom"]]
+    spot = [d["spotFrom"] for d in described.values() if d["spotFrom"]]
     return {
         "symbols": list(described),
         "from": day_name(min(d["from"] for d in described.values())),
         "to": day_name(max(d["to"] for d in described.values())),
         "rows": min(d["rows"] for d in described.values()),
         "liqFrom": day_name(min(liq)) if liq else None,
+        "spotFrom": day_name(min(spot)) if spot else None,
+        "spotMissing": spot_missing,
         "holdoutFrom": day_name(cut_ms),
         "recentFrom": day_name(params.recent_from),
         "costTiers": list(params.cost_tiers_bps),
@@ -619,7 +624,7 @@ async def _start_refresh(app: FastAPI) -> None:
 
 def _refresh_panels(cfg: Config, progress: dict[str, Any]) -> RefreshResult:
     binance = Binance(cfg.binance_vision_url, fapi_url=cfg.binance_fapi_url, list_url=cfg.binance_vision_list_url,
-                      concurrency=cfg.fetch_concurrency)
+                      concurrency=cfg.fetch_concurrency, spot_url=cfg.binance_spot_url)
     return refresh(PanelStore(cfg.data_dir), binance, history_from=cfg.history_from, product=cfg.symbols,
                    universe_size=cfg.universe_size, min_volume=cfg.min_daily_quote_volume, exclude=cfg.exclude_symbols,
                    progress=progress, conninfo=cfg.pg_conninfo if cfg.pg_user else None, tz=cfg.force_order_tz)
@@ -1715,7 +1720,8 @@ async def lifespan(app: FastAPI):
     app.state.authenticator = getattr(app.state, "authenticator", None) or Authenticator(cfg.sim_base_url)
     # 交易员用的 fapi 实时接口和 sim 内部接口
     app.state.fapi = getattr(app.state, "fapi", None) or Binance(
-        cfg.binance_vision_url, fapi_url=cfg.binance_fapi_url, list_url=cfg.binance_vision_list_url)
+        cfg.binance_vision_url, fapi_url=cfg.binance_fapi_url, list_url=cfg.binance_vision_list_url,
+        spot_url=cfg.binance_spot_url)
     app.state.sim = getattr(app.state, "sim", None) or executor.Sim(cfg.sim_base_url, cfg.internal_api_token)
     # 交易员的缓存：组合权重，数据重新装载就作废
     app.state.trade_cache = {}

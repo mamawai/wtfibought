@@ -53,6 +53,10 @@ COLUMN_DOCS = {
     "oi": "全市场持仓量（币），约 5 分钟一条取收盘前最近值", "oi_value": "全市场持仓名义（USDT）",
     "ls_top_acct": "大户多空账户数之比", "ls_top_pos": "大户多空持仓量之比", "ls_acct": "全体账户多空数之比",
     "taker_ls_vol": "taker 买量与卖量之比",
+    "spot_quote_volume": "同名现货对本根 bar 的成交额（USDT），只算 USDT 对（BTC、ETH 有一部分现货量在 FDUSD 对里，份额会偏低）；"
+                         "没有现货对的币整列是空的，现货比永续晚上市的币早期是空的，别用 0 补",
+    "spot_taker_buy_quote": "同名现货对本根 bar 的主动买入额（USDT）；空的规则同 spot_quote_volume",
+    "spot_trades": "同名现货对本根 bar 的成交笔数；空的规则同 spot_quote_volume",
     "hour": "bar 开始时刻的 UTC 小时 0~23；同一时刻所有币都一样，只能和别的列交互着用",
 }
 
@@ -68,6 +72,8 @@ FAMILIES = {
     "idio_vol": ("对 BTC 的特质波动：剔掉 BTC 带动的部分后这个币自己的波动", "ret、btc_ret", "7 天"),
     "funding_premium_gap": ("资金费与溢价错位：已结算的费率和当前溢价对不上", "funding_rate、premium", "1~7 天"),
     "volume_weighted_basis": ("量能给溢价当权重：成交额加权的溢价对比等权的", "premium、quote_volume、volume", "7 天"),
+    "spot_flow": ("现货参与度与两市分歧：现货是没杠杆的真实需求，和永续的量、主动买、持仓对照",
+                  "spot_quote_volume、spot_taker_buy_quote、spot_trades、quote_volume、taker_buy_quote、oi_value", "7 天到 3 周"),
     "price": ("纯价格类：动量、反转、突破、K 线形态、振幅、相对 BTC。已证做不成：换手高、成本吃掉毛收益，再加空头尾部", "", ""),
     "other": ("清单外的机制", "", ""),
 }
@@ -79,6 +85,7 @@ DATA_CLASSES = {
     "taker": ("taker_buy_base", "taker_buy_quote", "taker_ls_vol"),
     "成交量": ("volume", "quote_volume", "trades"), "纯价格": ("open", "high", "low", "close", "ret"),
     "BTC": ("btc_close", "btc_ret"), "hour": ("hour",),
+    "现货": ("spot_quote_volume", "spot_taker_buy_quote", "spot_trades"),
 }
 
 
@@ -153,12 +160,15 @@ def system_gen(facts: Mapping[str, Any], lang: str, policy: Policy) -> str:
     # 强平桶只给产品币装配（refresh 里 s in product），池里别的币全是空的
     liq = (f"强平三列只有产品币有数、从 {facts['liqFrom']} 起，池里别的币全是空的，截面因子用不了" if facts.get("liqFrom")
            else "强平三列暂时没有数据")
+    # 现货三列按币名对的现货对，对不上的币整列空
+    spot = (f"现货三列从 {facts['spotFrom']} 起（各币从自己的现货对上市起才有数），{facts['spotMissing']} 个币没有现货对、整列是空的"
+            if facts.get("spotFrom") else "现货三列暂时没有数据")
     tiers = " / ".join(f"{c:g}" for c in facts["costTiers"])
     # 交易方案里两条腿的份额，页面上设的
     combo, carry = f"{1 - facts['carryShare']:.0%}", f"{facts['carryShare']:.0%}"
     return f"""你在给一套加密永续合约的因子挖掘系统提假设、写因子表达式。
 
-数据：币安 USDT 永续，每月初按过去 30 天日均成交额取前 {facts['poolSize']} 个币进池（历史上进过池的共 {facts['poolSymbols']} 个，含已下架的），15 分钟 K 线，{facts['from']} 到 {facts['to']}。{liq}。
+数据：币安 USDT 永续，每月初按过去 30 天日均成交额取前 {facts['poolSize']} 个币进池（历史上进过池的共 {facts['poolSymbols']} 个，含已下架的），15 分钟 K 线，{facts['from']} 到 {facts['to']}。{liq}。{spot}。
 {facts['holdoutFrom']} 起是锁定的 holdout：硬门、评审、你看到的所有数字都只来自它之前的数据；过门的候选会在 holdout 上单独算一次 IC 给人决定入不入库，结果不会反馈给你。
 标准答案是截面的：每 6/12/24 小时取一个时刻，把当时在池的币按因子值排序，与它们之后 6/12/24 小时的对数涨跌幅（信号那根收盘后晚 15 分钟建仓起算）算 Spearman 相关（截面 rank IC），主档 24 小时，和实盘的交易方案一样 24 小时调一次仓。因子要回答的是"此刻哪些币接下来比别的币强"，不是"这个币接下来涨不涨"。
 另外会对 {', '.join(facts['symbols'])} 这几个产品币按时间序列算一份时序报告给评审看，不做门。

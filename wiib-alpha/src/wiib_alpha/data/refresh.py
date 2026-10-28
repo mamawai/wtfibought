@@ -1,4 +1,4 @@
-"""刷新：列符号 → 日线排池子 → 每个币依次拉 15m、费率、基差、metrics 并装配面板 → 参照网格。
+"""刷新：列符号 → 日线排池子 → 每个币依次拉 15m、费率、基差、metrics、现货 15m 并装配面板 → 参照网格。
 
 跑在线程里，不碰 SQLite：池子表交回主循环写，进度写进传进来的 dict 给页面看。
 每个数据集按币一个 parquet 断点续传，中途死掉重跑只补缺的；一个币装配完就释放，不把全池装进内存。
@@ -19,8 +19,9 @@ import pandas as pd
 
 from .. import reference
 from . import liquidation, universe
-from .binance import DAY_MS, Binance
+from .binance import DAY_MS, Binance, empty_klines
 from .panel import BENCHMARK, PanelStore, assemble, describe
+from .spot import spot_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,8 @@ def refresh(store: PanelStore, binance: Binance, *, history_from: int, product: 
     # 写进进度给页面看：underlyingType 的取值用来核对排除规则有没有漏
     progress["underlyingTypes"] = sorted({str(v.get("underlyingType")) for v in info.values()})
     progress["candidates"] = len(candidates)
+    # 现货归档里出现过的对，含已下架的
+    spot_archive = set(binance.spot_symbols())
 
     # 排池子要上市满 90 天，日线从起点再往前拉 90 天
     _stage(progress, "daily", len(candidates))
@@ -60,6 +63,9 @@ def refresh(store: PanelStore, binance: Binance, *, history_from: int, product: 
     pool = universe.months_by_symbol(table)
     members = sorted(set(pool) | set(product) | {BENCHMARK})
     progress["members"] = len(members)
+    # 每个币对应的现货对；对不上的三列留空，名单给页面看
+    spot = {s: spot_symbol(s, spot_archive) for s in members}
+    progress["spotMissing"] = sorted(s for s in members if spot[s] is None)
 
     liq = liquidation.load(conninfo, product, tz) if conninfo else None
     liq_start = None if liq is None or liq.empty else int(liq["close_time"].min())
@@ -69,17 +75,18 @@ def refresh(store: PanelStore, binance: Binance, *, history_from: int, product: 
     _stage(progress, "panel", len(members))
     out = store.next_version()
     progress["symbol"] = BENCHMARK
-    btc = _pull(store, binance, BENCHMARK, history_from, now_ms, BENCHMARK in info)
+    btc = _pull(store, binance, BENCHMARK, history_from, now_ms, BENCHMARK in info, spot[BENCHMARK])
     status: dict[str, dict[str, Any]] = {}
     thin: dict[str, str] = {}
     progress["thin"] = thin
-    pull = lambda s: btc if s == BENCHMARK else _pull(store, binance, s, history_from, now_ms, s in info)
+    pull = lambda s: btc if s == BENCHMARK else _pull(store, binance, s, history_from, now_ms, s in info, spot[s])
     for s, raw in _prefetched(pull, members):
         progress["symbol"] = s
         sym_liq = liq[liq["symbol"] == s] if liq is not None and s in product else None
         panel = assemble(raw["klines"], raw["funding"], None if s == BENCHMARK else btc["klines"], sym_liq, liq_start,
-                         outage, raw["premium"], raw["metrics"], pool.get(s, frozenset()))
+                         outage, raw["premium"], raw["metrics"], pool.get(s, frozenset()), raw["spot"])
         desc = describe(panel)
+        desc["spotSymbol"] = spot[s]
         # 覆盖低也不剔：数据后来断掉常常正是这个币出事的时候，剔掉等于拿将来的事删当年的样本
         low = incomplete(desc)
         if low:
@@ -118,12 +125,16 @@ def _prefetched(fn: Callable[[str], Any], symbols: Sequence[str]) -> Iterator[tu
             yield head, future.result()
 
 
-def _pull(store: PanelStore, binance: Binance, symbol: str, earliest: int, now_ms: int, live: bool) -> dict[str, pd.DataFrame]:
+def _pull(store: PanelStore, binance: Binance, symbol: str, earliest: int, now_ms: int, live: bool,
+          spot: str | None) -> dict[str, pd.DataFrame]:
+    """spot 是这个币对应的现货对，没有就不拉、不建 raw 文件"""
     return {
         "klines": store.grow("klines_15m", symbol, binance.klines, earliest, now_ms),
         "funding": store.grow("funding", symbol, lambda s, a, b: binance.funding(s, a, b, live), earliest, now_ms),
         "premium": store.grow("premium_15m", symbol, binance.premium, earliest, now_ms),
         "metrics": store.grow("metrics", symbol, binance.metrics, earliest, now_ms),
+        "spot": (store.grow("spot_15m", symbol, lambda _, a, b: binance.spot_klines(spot, a, b), earliest, now_ms)
+                 if spot else empty_klines()),
     }
 
 

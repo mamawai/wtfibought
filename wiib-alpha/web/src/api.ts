@@ -3,7 +3,7 @@ import i18n, { currentLang } from './i18n';
 // ========== 类型：对着 wiib-alpha 的 main.py / prompts.py / graph.py / panel.py 写 ==========
 
 /** describe() 报覆盖率的列，与 panel.COVERAGE_COLUMNS 同 */
-export const COVERAGE_COLUMNS = ['funding_rate', 'premium', 'oi', 'ls_acct', 'liq_count'] as const;
+export const COVERAGE_COLUMNS = ['funding_rate', 'premium', 'oi', 'ls_acct', 'spot_quote_volume', 'liq_count'] as const;
 export type CoverageColumn = (typeof COVERAGE_COLUMNS)[number];
 
 /** 一张面板的统计（panel.describe），时间都是 bar 收盘时刻 ms */
@@ -12,6 +12,9 @@ export interface PanelStatus {
   from: number | null;
   to: number | null;
   liqFrom: number | null;
+  spotFrom: number | null;
+  /** 刷新时对上的现货对，null 是没有；现货列进面板之前刷的 status 没这个键 */
+  spotSymbol?: string | null;
   /** 相邻两根不是正好 15m 的地方 */
   gaps: number;
   coverage: Partial<Record<CoverageColumn, number>>;
@@ -26,6 +29,9 @@ export interface Facts {
   to: string;
   rows: number;
   liqFrom: string | null;
+  spotFrom: string | null;
+  /** 没有现货对的币数 */
+  spotMissing: number;
   holdoutFrom: string;
   /** 多空腿单边成本 bps：当月排名 1~20 / 21~50 / 其余 */
   costTiers: number[];
@@ -64,6 +70,8 @@ export interface RefreshJob {
   members?: number;
   /** 费率或基差覆盖偏低的币 → 哪列覆盖多少；照常在池，缺的那几段是空值 */
   thin?: Record<string, string>;
+  /** 没有现货对的币，现货三列留空 */
+  spotMissing?: string[];
 }
 
 export interface DataStatus {

@@ -16,6 +16,7 @@ DAY = b.DAY_MS
 H1 = 3_600_000
 H8 = 8 * H1
 UM = "data/futures/um"
+SPOT = "data/spot"
 HEADER = ("open_time,open,high,low,close,volume,close_time,quote_volume,count,taker_buy_volume,"
           "taker_buy_quote_volume,ignore")
 
@@ -117,6 +118,9 @@ def fill(bucket: Bucket) -> None:
         bucket.put(f"{UM}/monthly/klines/X/1d/X-1d-2026-{mo:02d}.zip", without(kline_lines(a, b_, step=DAY), *gone))
         bucket.put(f"{UM}/monthly/fundingRate/X/X-fundingRate-2026-{mo:02d}.zip", funding_lines(a, b_))
         bucket.put(f"{UM}/monthly/premiumIndexKlines/X/15m/X-15m-2026-{mo:02d}.zip", without(premium_lines(a, b_), *gone))
+        # 现货归档：目录和 CSV 都和永续一样，只是在 data/spot 下
+        bucket.put(f"{SPOT}/monthly/klines/X/15m/X-15m-2026-{mo:02d}.zip",
+                   without(kline_lines(a, b_, header=mo != 7, micro=mo == 8), *gone))
     # 日度目录里历史上每天都有文件（LOST 那天除外），7、8 月的也在，客户端只该碰 9 月的和补洞的
     for t in range(LISTED, DAILY_END, DAY):
         if t == LOST:
@@ -126,9 +130,11 @@ def fill(bucket: Bucket) -> None:
         bucket.put(f"{UM}/daily/klines/X/1d/X-1d-{day}.zip", kline_lines(t, t + DAY, step=DAY))
         bucket.put(f"{UM}/daily/premiumIndexKlines/X/15m/X-15m-{day}.zip", premium_lines(t, t + DAY))
         bucket.put(f"{UM}/daily/metrics/X/X-metrics-{day}.zip", metrics_lines(t))
-    # 别的符号只有目录，测 symbols() 的分页
+        bucket.put(f"{SPOT}/daily/klines/X/15m/X-15m-{day}.zip", kline_lines(t, t + DAY))
+    # 别的符号只有目录，测 symbols() 的分页；S 只有现货
     for s in ("W", "Y", "Z"):
         bucket.put(f"{UM}/monthly/klines/{s}/15m/{s}-15m-2026-07.zip", kline_lines(LISTED, LISTED + BAR))
+    bucket.put(f"{SPOT}/monthly/klines/S/15m/S-15m-2026-07.zip", kline_lines(LISTED, LISTED + BAR))
     # D 的费率月度文件停在 3 月：下架了就到此为止，还在交易就是归档断了
     bucket.put(f"{UM}/monthly/fundingRate/D/D-fundingRate-2026-03.zip", funding_lines(ms(2026, 3, 1), ms(2026, 4, 1)))
 
@@ -160,6 +166,7 @@ def no_rest_gap(monkeypatch):
     """fapi 限速在这里不等，翻页的用例要连发好几次"""
     monkeypatch.setattr(b, "REST_GAP_S", 0.0)
     monkeypatch.setattr(b, "DATA_GAP_S", 0.0)
+    monkeypatch.setattr(b, "SPOT_GAP_S", 0.0)
 
 
 def client(log: list[str] | None = None, fapi: str = "https://f") -> b.Binance:
@@ -260,8 +267,21 @@ def test_metrics_are_sorted_in_ms_and_cut_at_start():
 
 def test_symbols_lists_directories_across_pages():
     log: list[str] = []
-    assert client(log).symbols() == ["W", "X", "Y", "Z"]
+    api = client(log)
+    assert api.symbols() == ["W", "X", "Y", "Z"]
     assert sum(p.startswith("LIST") for p in log) >= 2
+    assert api.spot_symbols() == ["S", "X"]
+
+
+def test_spot_klines_come_from_the_spot_archive():
+    log: list[str] = []
+    df = client(log).spot_klines("X", LISTED, NOW)
+    # 和永续同一套文件规则：7、8 月月度、9 月日度、HOLE 用日度补；只碰 data/spot 下的文件
+    assert df["open_time"].tolist() == bars(LISTED, DAILY_END) and list(df.columns) == b.KLINE_COLUMNS
+    assert df["close"].iloc[-1] == (DAILY_END - BAR) // BAR and df["trades"].dtype == "int64"
+    got = downloaded(log)
+    assert len(got) == 23 and all(p.startswith(f"/{SPOT}/") for p in got)
+    assert client().spot_klines("W", LISTED, NOW).empty
 
 
 def test_exchange_info():
@@ -363,3 +383,19 @@ def test_rest_logs_the_used_weight_and_marks_come_in_one_call(caplog):
     assert "fapi /fapi/v1/klines X 已用权重 3" in caplog.text
     assert api.mark_prices() == {"X": pytest.approx(fake.mark("X")), "Y": pytest.approx(fake.mark("Y"))}
     assert fake.log[-1] == ("/fapi/v1/premiumIndex", {})
+
+
+def test_recent_spot_klines_go_to_the_spot_host_with_its_own_gap(monkeypatch, caplog):
+    monkeypatch.setattr(b, "REST_GAP_S", 0.3)
+    api, fake = live_client()
+    perp = api.recent_klines("X", LIVE_NOW - DAY, LIVE_NOW)
+    started = time.monotonic()
+    with caplog.at_level(logging.INFO, logger="wiib_alpha.data.binance"):
+        spot = api.recent_spot_klines("X", LIVE_NOW - DAY, LIVE_NOW)
+    # 刚发过 fapi 的请求，现货是另一个桶，不等 REST_GAP_S
+    assert time.monotonic() - started < 0.3
+    assert fake.log[-1][0] == "/api/v3/klines" and "spot /api/v3/klines X 已用权重" in caplog.text
+    # 列同永续，值是现货自己的
+    assert list(spot.columns) == b.KLINE_COLUMNS and spot["close_time"].tolist() == perp["close_time"].tolist()
+    assert spot["volume"].iloc[0] == pytest.approx(perp["volume"].iloc[0] * 0.3) and spot["trades"].iloc[0] == 50
+    assert api.spot_exchange_info()["Y"]["status"] == "TRADING"

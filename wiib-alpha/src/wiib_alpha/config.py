@@ -37,6 +37,8 @@ class Config:
     binance_vision_list_url: str
     # 月度费率文件还没出的月份走这里的 REST 补；留空就不补，尾巴保持 NaN（本地连不上 fapi 时用）
     binance_fapi_url: str
+    # 现货实时接口（交易员补现货 K 线尾巴），限速桶和 fapi 分开
+    binance_spot_url: str
     # 产品币：始终建面板，时序报告只看它们
     symbols: tuple[str, ...]
     # 历史从这天起（ms）
@@ -95,6 +97,7 @@ def config() -> Config:
         binance_vision_list_url=os.getenv("BINANCE_VISION_LIST_URL",
                                           "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision").rstrip("/"),
         binance_fapi_url=os.getenv("BINANCE_FAPI_URL", "https://fapi.binance.com").rstrip("/"),
+        binance_spot_url=os.getenv("BINANCE_SPOT_URL", "https://api.binance.com").rstrip("/"),
         symbols=_csv("ALPHA_SYMBOLS", DEFAULT_SYMBOLS),
         history_from=_day_ms(os.getenv("ALPHA_HISTORY_FROM", "2021-01-01")),
         universe_size=int(os.getenv("ALPHA_UNIVERSE_SIZE", "80")),

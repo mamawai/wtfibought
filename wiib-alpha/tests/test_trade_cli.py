@@ -21,6 +21,7 @@ SYMBOLS = [f"C{i:02d}" for i in range(21)]
 def no_rest_gap(monkeypatch):
     monkeypatch.setattr(b, "REST_GAP_S", 0.0)
     monkeypatch.setattr(b, "DATA_GAP_S", 0.0)
+    monkeypatch.setattr(b, "SPOT_GAP_S", 0.0)
     yield
     config.cache_clear()
 
@@ -85,7 +86,7 @@ def test_check_can_fetch_its_own_overlap(overlap, monkeypatch, capsys):
     code, out = run(monkeypatch, capsys, check, "--fetch", "2")
     assert code == 0 and "fapi 现拉归档最后 2 天" in out, out
     # 不写盘：live/ 还是交易员补的那份
-    assert {p["symbol"] for _, p in fake.log} == {*SYMBOLS, "BTCUSDT"}
+    assert {p["symbol"] for _, p in fake.log if "symbol" in p} == {*SYMBOLS, "BTCUSDT"}
 
 
 def test_live_warms_up_the_latest_pool_that_is_trading(tmp_path, monkeypatch, capsys):

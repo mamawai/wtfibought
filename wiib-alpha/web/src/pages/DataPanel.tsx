@@ -51,6 +51,9 @@ export function DataPanel({ status, active, admin, onReload }: {
               <Stat label={t('data.range')} size="sm">{`${facts.from} → ${facts.to}`}</Stat>
               <Stat label={t('data.rows')}>{facts.rows.toLocaleString()}</Stat>
               <Stat label={t('data.liqFrom')} size="sm">{facts.liqFrom ?? t('data.noLiq')}</Stat>
+              <Stat label={t('data.spotFrom')} hint={t('data.spotHint', { n: facts.spotMissing })} size="sm">
+                {facts.spotFrom ?? t('data.noLiq')}
+              </Stat>
               <Stat label={t('data.holdoutFrom')} hint={t('data.holdoutHint')} size="sm">{facts.holdoutFrom}</Stat>
               <Stat label={t('data.cost')} hint={t('data.costHint')} size="sm">{`${facts.costTiers.join(' / ')} bps`}</Stat>
               <Stat label={t('data.references')}>{status.referenceCount}</Stat>
@@ -100,6 +103,12 @@ function RefreshProgress({ job }: { job: RefreshJob }) {
           <span title={Object.entries(job.thin).map(([s, why]) => `${s}: ${why}`).join('\n')}>
             {t('data.thin')} <b className="num text-fg">{Object.keys(job.thin).length}</b>
             <span className="ml-1 num">{Object.keys(job.thin).join(' ')}</span>
+          </span>
+        )}
+        {job.spotMissing && job.spotMissing.length > 0 && (
+          <span>
+            {t('data.spotMissing')} <b className="num text-fg">{job.spotMissing.length}</b>
+            <span className="ml-1 num">{job.spotMissing.join(' ')}</span>
           </span>
         )}
         {job.underlyingTypes && (
@@ -210,13 +219,14 @@ interface PanelRow {
   product: boolean;
 }
 
-type PanelKey = 'symbol' | 'rows' | 'from' | 'to' | 'liqFrom' | 'gaps' | 'poolMonths' | CoverageColumn;
+type PanelKey = 'symbol' | 'rows' | 'from' | 'to' | 'spot' | 'liqFrom' | 'gaps' | 'poolMonths' | CoverageColumn;
 
 const PANEL_VALUES = {
   symbol: (r: PanelRow) => r.symbol,
   rows: (r: PanelRow) => r.s.rows,
   from: (r: PanelRow) => r.s.from,
   to: (r: PanelRow) => r.s.to,
+  spot: (r: PanelRow) => r.s.spotSymbol,
   liqFrom: (r: PanelRow) => r.s.liqFrom,
   gaps: (r: PanelRow) => r.s.gaps,
   poolMonths: (r: PanelRow) => r.s.poolMonths,
@@ -269,7 +279,7 @@ function PanelTable({ status, products, filterable, initial }: {
         <table className="tbl tbl-sticky">
           <thead>
             <tr>
-              <th colSpan={6} className="border-b-0" />
+              <th colSpan={7} className="border-b-0" />
               <th colSpan={COVERAGE_COLUMNS.length} className="text-center border-b-line">{t('panel.coverage')}</th>
               <th className="border-b-0" />
             </tr>
@@ -278,6 +288,7 @@ function PanelTable({ status, products, filterable, initial }: {
               {th('rows', t('panel.rows'))}
               {th('from', t('panel.from'))}
               {th('to', t('panel.to'))}
+              {th('spot', t('panel.spot'), false)}
               {th('liqFrom', t('panel.liqFrom'))}
               {th('gaps', t('panel.gaps'))}
               {COVERAGE_COLUMNS.map(c => th(c, t(`panel.cov.${c}`)))}
@@ -292,6 +303,8 @@ function PanelTable({ status, products, filterable, initial }: {
                 <td className="r num">{s.rows.toLocaleString()}</td>
                 <td className="r num whitespace-nowrap">{utcDay(s.from)}</td>
                 <td className="r num whitespace-nowrap">{utcMinute(s.to)}</td>
+                <td className={cx('num whitespace-nowrap font-mono text-[12.5px]', s.spotSymbol === null && 'text-warn')}
+                    title={s.spotSymbol === null ? t('data.spotMissing') : undefined}>{s.spotSymbol ?? DASH}</td>
                 <td className="r num whitespace-nowrap">{utcDay(s.liqFrom)}</td>
                 <td className={cx('r num', s.gaps > 0 && 'text-warn')}>{s.gaps}</td>
                 {COVERAGE_COLUMNS.map(c => <td key={c} className="r num"><Coverage v={s.coverage[c]} /></td>)}

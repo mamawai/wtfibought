@@ -58,6 +58,8 @@
     "rows": "Bars per symbol",
     "liqFrom": "Liquidation data from",
     "noLiq": "none yet",
+    "spotFrom": "Spot data from",
+    "spotHint": "15m bars of the Binance spot USDT pair matched by name; {{n}} symbols have no spot pair and their three spot columns are empty",
     "holdoutFrom": "Holdout from",
     "holdoutHint": "Data after this day is locked: gates and models never see it while mining, and it is looked at once after every gate passes",
     "cost": "One-way cost",
@@ -69,7 +71,7 @@
     "refresh": "Refresh data",
     "refreshing": "Refreshing",
     "refreshHint": "Pulls market data from Binance, ranks the pool and assembles the panels. Runs by itself from 14:00 UTC on the 1st of each month to bring in that month's pool.",
-    "refreshMore": "Steps: list contracts → pull daily bars to rank the pool → pull 15m bars, funding, premium, open interest and long/short ratios per symbol → assemble panels → build the reference grid (for the redundancy check).\nThe first run is long; a rerun only fills what is missing. A failed automatic run is retried an hour later, and while another job is running it waits for it to finish.",
+    "refreshMore": "Steps: list contracts → pull daily bars to rank the pool → pull 15m bars, funding, premium, open interest and long/short ratios, plus the 15m bars of the matching spot pair, per symbol → assemble panels → build the reference grid (for the redundancy check).\nThe first run is long; a rerun only fills what is missing. A failed automatic run is retried an hour later, and while another job is running it waits for it to finish.",
     "stage": {
       "symbols": "Listing contracts",
       "daily": "Daily bars and pool ranking",
@@ -83,6 +85,7 @@
     "candidates": "Contracts listed by the exchange",
     "members": "Symbols to pull",
     "thin": "Thin data (kept in the pool, gaps are empty)",
+    "spotMissing": "No spot pair (spot columns empty)",
     "underlyingTypes": "Contract underlying types",
     "productTitle": "Product panels",
     "productHint": "The crypto perpetuals users can trade on the site: loaded into memory on their own for the time-series report, shown to the reviewer and here, never gated."
@@ -92,6 +95,7 @@
     "rows": "Bars",
     "from": "From",
     "to": "To",
+    "spot": "Spot pair",
     "liqFrom": "Liq. from",
     "gaps": "Gaps",
     "poolMonths": "Pool months",
@@ -101,6 +105,7 @@
       "premium": "Premium",
       "oi": "OI",
       "ls_acct": "L/S",
+      "spot_quote_volume": "Spot",
       "liq_count": "Liq."
     },
     "product": "product"

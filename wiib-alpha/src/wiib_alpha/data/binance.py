@@ -10,6 +10,7 @@ metrics 八列，create_time 是 UTC 字符串，文件内可能无序。老文�
 有些币还在交易但费率月度文件早就不出了（TROY、ALPACA 停在 2025-06），尾巴可能长达一年多，分页翻完。
 基差与 metrics 也有币中途断档（FTT 基差 2023-07 停、RAY metrics 2024-07 停），REST 补不了历史，断了就是 NaN。
 交易员出信号要归档之后到现在的尾巴，另有几个 fapi 实时接口（recent_*），每次响应的已用权重打进日志。
+现货 15m K 线走同一个归档的 data/spot 目录（CSV 同 12 列），实时走 api.binance.com 的 /api/v3，限速桶和 fapi 分开。
 """
 
 from __future__ import annotations
@@ -43,12 +44,15 @@ METRIC_MS = 5 * 60_000
 _METRIC_PAGE = 500
 DEFAULT_LIST_URL = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
 _UM = "data/futures/um"
+_SPOT = "data/spot"
 _S3 = "{http://s3.amazonaws.com/doc/2006-03-01/}"
 _RETRIES = 3
 # fapi 费率接口每个 IP 5 分钟 500 次，服务器上 Java 服务也在用：两次之间至少隔这么多秒（5 分钟最多 250 次），几个币一起拉也一样
 REST_GAP_S = 1.2
 # /futures/data 下的 5 分钟统计是单独的限速桶（每个 IP 5 分钟 1000 次、权重 0）：间隔短一点（5 分钟最多 750 次）
 DATA_GAP_S = 0.4
+# 现货 /api/v3 是另一个桶（每个 IP 每分钟 6000 权重，K 线一次 2）
+SPOT_GAP_S = 0.2
 
 KLINE_COLUMNS = ["open_time", "open", "high", "low", "close", "volume", "close_time",
                  "quote_volume", "trades", "taker_buy_base", "taker_buy_quote"]
@@ -93,21 +97,28 @@ def empty_metrics() -> pd.DataFrame:
 
 class Binance:
     def __init__(self, base_url: str, client: httpx.Client | None = None, fapi_url: str = "https://fapi.binance.com",
-                 list_url: str = DEFAULT_LIST_URL, concurrency: int = 6):
+                 list_url: str = DEFAULT_LIST_URL, concurrency: int = 6, spot_url: str = "https://api.binance.com"):
         self._base = base_url.rstrip("/")
         self._fapi = fapi_url.rstrip("/")
+        self._spot = spot_url.rstrip("/")
         self._list_url = list_url.rstrip("/")
         self._client = client if client is not None else httpx.Client(timeout=60.0)
         self._concurrency = max(1, concurrency)
-        # fapi 一次只发一个，上一个结束的时刻
+        # REST 一次只发一个；fapi 和现货各记上一个结束的时刻
         self._rest_lock = threading.Lock()
-        self._rest_at = float("-inf")
+        self._rest_at = {"fapi": float("-inf"), "spot": float("-inf")}
 
     # ========== 目录 ==========
 
     def symbols(self) -> list[str]:
-        """归档里出现过的全部符号，含已下架"""
-        prefix = f"{_UM}/monthly/klines/"
+        """永续归档里出现过的全部符号，含已下架"""
+        return self._dirs(f"{_UM}/monthly/klines/")
+
+    def spot_symbols(self) -> list[str]:
+        """现货归档里出现过的全部符号，含已下架"""
+        return self._dirs(f"{_SPOT}/monthly/klines/")
+
+    def _dirs(self, prefix: str) -> list[str]:
         _, dirs = self._list(prefix)
         return sorted(d[len(prefix):].rstrip("/") for d in dirs)
 
@@ -117,16 +128,25 @@ class Binance:
             return {}
         return {row["symbol"]: row for row in self._rest("/fapi/v1/exchangeInfo", {}).get("symbols", [])}
 
+    def spot_exchange_info(self) -> dict[str, dict[str, Any]]:
+        """现货的交易对表（权重 20）；status 是 TRADING 的才拉得到 K 线"""
+        return {row["symbol"]: row for row in self._rest("/api/v3/exchangeInfo", {}).get("symbols", [])}
+
     # ========== 数据集 ==========
 
     def klines(self, symbol: str, start_ms: int, end_ms: int, interval: str = INTERVAL) -> pd.DataFrame:
         """[start_ms, end_ms) 内已收盘的 bar，按 open_time 升序"""
-        df = self._bars("klines", symbol, interval, start_ms, end_ms)
+        df = self._bars(_UM, "klines", symbol, interval, start_ms, end_ms)
+        return empty_klines() if df is None else df
+
+    def spot_klines(self, symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
+        """现货 15m K 线，symbol 是现货对的名字，列同永续"""
+        df = self._bars(_SPOT, "klines", symbol, INTERVAL, start_ms, end_ms)
         return empty_klines() if df is None else df
 
     def premium(self, symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
         """基差 K 线的收盘溢价率，按 close_time"""
-        df = self._bars("premiumIndexKlines", symbol, INTERVAL, start_ms, end_ms)
+        df = self._bars(_UM, "premiumIndexKlines", symbol, INTERVAL, start_ms, end_ms)
         if df is None:
             return empty_premium()
         return df[["close_time", "close"]].rename(columns={"close": "premium"}).reset_index(drop=True)
@@ -163,17 +183,18 @@ class Binance:
         df = df[(df["time"] >= start_ms) & (df["time"] < end_ms)]
         return df.drop_duplicates("time").sort_values("time").reset_index(drop=True)
 
-    def _bars(self, kind: str, symbol: str, interval: str, start_ms: int, end_ms: int) -> pd.DataFrame | None:
+    def _bars(self, market: str, kind: str, symbol: str, interval: str, start_ms: int, end_ms: int) -> pd.DataFrame | None:
         """K 线形状的数据集：月度 zip 从起始月起，日度 zip 从最后一个月度文件的下个月初起；一个文件都没有给 None。
 
+        market 是归档里的市场目录（永续 data/futures/um、现货 data/spot）。
         月度文件覆盖的日子里根数不满一天的，再下那天的日度文件补上；日度也没有的就缺着。
         """
         stem = f"{symbol}-{interval}-"
-        keys = self._zips(f"{_UM}/monthly/{kind}/{symbol}/{interval}/", stem + _month_name(start_ms))
+        keys = self._zips(f"{market}/monthly/{kind}/{symbol}/{interval}/", stem + _month_name(start_ms))
         day_from = utc(start_ms)
         if keys:
             day_from = max(day_from, next_month(_month(_stamp(keys[-1], 2))))
-        daily_prefix = f"{_UM}/daily/{kind}/{symbol}/{interval}/"
+        daily_prefix = f"{market}/daily/{kind}/{symbol}/{interval}/"
         keys += self._zips(daily_prefix, stem + day_from.strftime("%Y-%m-%d"))
         frames = [_parse(csv, _KLINE_CSV, ["open_time", "close_time"]) for csv in self._download(keys)]
         if not frames:
@@ -208,11 +229,15 @@ class Binance:
 
     def recent_klines(self, symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
         """fapi 的 15m K 线，open_time 在 [start_ms, end_ms) 内、已收盘的，列同归档"""
-        return self._recent_bars("klines", symbol, start_ms, end_ms)
+        return self._recent_bars("/fapi/v1/klines", symbol, start_ms, end_ms)
+
+    def recent_spot_klines(self, symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
+        """现货的 15m K 线，symbol 是现货对的名字；响应和 fapi 同 12 列"""
+        return self._recent_bars("/api/v3/klines", symbol, start_ms, end_ms)
 
     def recent_premium(self, symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
         """fapi 的 15m 溢价 K 线收盘，列同归档 premium_15m"""
-        df = self._recent_bars("premiumIndexKlines", symbol, start_ms, end_ms)
+        df = self._recent_bars("/fapi/v1/premiumIndexKlines", symbol, start_ms, end_ms)
         return df[["close_time", "close"]].rename(columns={"close": "premium"})
 
     def recent_metrics(self, symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
@@ -248,14 +273,14 @@ class Binance:
         """全部合约的标记价：/fapi/v1/premiumIndex 不带 symbol 一次全给（权重 10）"""
         return {r["symbol"]: float(r["markPrice"]) for r in self._rest("/fapi/v1/premiumIndex", {})}
 
-    def _recent_bars(self, kind: str, symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
+    def _recent_bars(self, path: str, symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
         """K 线形状的接口按窗往后翻，一窗正好装得下 limit 根：整段不到 99 根一次拿完，缺口大按 1000 根一窗；
         还没收盘的那根不要"""
         limit = _SMALL if end_ms - start_ms <= _SMALL * BAR_MS else _PAGE
         rows: list[list[Any]] = []
         for a in range(start_ms, end_ms, limit * BAR_MS):
-            rows += self._rest(f"/fapi/v1/{kind}", {"symbol": symbol, "interval": INTERVAL, "startTime": a,
-                                                    "endTime": min(end_ms, a + limit * BAR_MS) - 1, "limit": limit})
+            rows += self._rest(path, {"symbol": symbol, "interval": INTERVAL, "startTime": a,
+                                      "endTime": min(end_ms, a + limit * BAR_MS) - 1, "limit": limit})
         if not rows:
             return empty_klines()
         df = pd.DataFrame(rows, columns=_KLINE_CSV)[KLINE_COLUMNS]
@@ -315,15 +340,17 @@ class Binance:
             return zf.read(zf.namelist()[0])
 
     def _rest(self, path: str, params: dict[str, Any]) -> Any:
+        """/api/ 开头的走现货地址，其余走 fapi；两边各自排队限速"""
+        host = "spot" if path.startswith("/api/") else "fapi"
+        gap = SPOT_GAP_S if host == "spot" else DATA_GAP_S if path.startswith("/futures/data/") else REST_GAP_S
         with self._rest_lock:
-            gap = DATA_GAP_S if path.startswith("/futures/data/") else REST_GAP_S
-            time.sleep(max(0.0, self._rest_at + gap - time.monotonic()))
-            resp = self._get(self._fapi + path, params)
-            self._rest_at = time.monotonic()
+            time.sleep(max(0.0, self._rest_at[host] + gap - time.monotonic()))
+            resp = self._get((self._spot if host == "spot" else self._fapi) + path, params)
+            self._rest_at[host] = time.monotonic()
         if resp is None:
-            raise BinanceError(f"fapi {path} 返回 404")
+            raise BinanceError(f"{host} {path} 返回 404")
         # 这个 IP 这一分钟已用的权重，对着方案估的请求量看
-        logger.info("fapi %s %s 已用权重 %s", path, params.get("symbol", ""), resp.headers.get("X-MBX-USED-WEIGHT-1M"))
+        logger.info("%s %s %s 已用权重 %s", host, path, params.get("symbol", ""), resp.headers.get("X-MBX-USED-WEIGHT-1M"))
         return resp.json()
 
     def _get(self, url: str, params: dict[str, Any] | None) -> httpx.Response | None:

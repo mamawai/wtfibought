@@ -5,8 +5,8 @@ from wiib_alpha.data.panel import FEATURE_COLUMNS
 from wiib_alpha.eval.params import Thresholds
 
 FACTS = {"symbols": ["BTCUSDT", "ETHUSDT"], "from": "2024-09-21", "to": "2026-09-20", "rows": 70000,
-         "liqFrom": "2026-04-27", "holdoutFrom": "2026-06-22", "recentFrom": "2022-01-01", "costTiers": [5.0, 8.0, 12.0],
-         "poolSize": 80,
+         "liqFrom": "2026-04-27", "spotFrom": "2024-09-21", "spotMissing": 12, "holdoutFrom": "2026-06-22",
+         "recentFrom": "2022-01-01", "costTiers": [5.0, 8.0, 12.0], "poolSize": 80,
          "poolSymbols": 481, "carryShare": 0.25, "g9Min": 0.1}
 P = prompts.DEFAULT_POLICY
 T = Thresholds()
@@ -35,6 +35,8 @@ def test_system_prompt_lists_every_column_and_operator():
     text = prompts.system_gen(FACTS, "zh", P)
     assert "2026-04-27" in text and "中文" in text
     assert "强平三列只有产品币有数" in text and "截面因子用不了" in text and "单独排序没有意义" in text
+    assert "现货三列从 2024-09-21 起" in text and "12 个币没有现货对" in text
+    assert "现货三列暂时没有数据" in prompts.system_gen({**FACTS, "spotFrom": None}, "zh", P)
     assert "2026-06-22 起是锁定的 holdout" in text and "单边 5 / 8 / 12 bps" in text
     assert "前 80 个币" in text and "共 481 个" in text and "BTCUSDT, ETHUSDT" in text
     # 已知效应带公式列出来；去老效应是标签不是门

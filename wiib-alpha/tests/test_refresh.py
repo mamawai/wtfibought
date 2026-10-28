@@ -30,6 +30,8 @@ SYMBOLS = {
     "TSLAUSDT": (ms(2025, 1, 1), LIVE, 9e9),     # exchangeInfo 排除
     "BTCUSDC": (ms(2025, 1, 1), LIVE, 9e9),      # 不是 USDT
 }
+# 现货归档里有的对
+SPOT = {"BTCUSDT", "ETHUSDT", "NEWBUSDT", "BTCUSDC"}
 
 
 class FakeBinance:
@@ -41,6 +43,9 @@ class FakeBinance:
     def symbols(self):
         return sorted(SYMBOLS)
 
+    def spot_symbols(self):
+        return sorted(SPOT)
+
     def exchange_info(self):
         return {"TSLAUSDT": {"underlyingType": "STOCK"}, "BTCUSDT": {"underlyingType": "COIN"}}
 
@@ -51,11 +56,18 @@ class FakeBinance:
 
     def klines(self, symbol, start, end, interval="15m"):
         self.calls.append((symbol, interval, start))
-        step = DAY_MS if interval == "1d" else BAR_MS
+        return self._bars(symbol, start, end, DAY_MS if interval == "1d" else BAR_MS, SYMBOLS[symbol][2])
+
+    def spot_klines(self, symbol, start, end):
+        self.calls.append((symbol, "spot", start))
+        # 现货成交额是永续的三成
+        return self._bars(symbol, start, end, BAR_MS, SYMBOLS[symbol][2] * 0.3)
+
+    def _bars(self, symbol, start, end, step, quote):
         t = self._range(symbol, start, end, step)
         price = 100.0 + (t // BAR_MS % 50)
         return pd.DataFrame({"open_time": t, "open": price, "high": price + 1, "low": price - 1, "close": price,
-                             "volume": 1.0, "close_time": t + step - 1, "quote_volume": SYMBOLS[symbol][2], "trades": 1,
+                             "volume": 1.0, "close_time": t + step - 1, "quote_volume": quote, "trades": 1,
                              "taker_buy_base": 0.5, "taker_buy_quote": 50.0})[KLINE_COLUMNS]
 
     def funding(self, symbol, start, end, live=False):
@@ -116,6 +128,13 @@ def test_refresh_builds_pool_and_panels(tmp_path):
     assert btc["premium"].notna().all() and btc["oi"].notna().sum() > 0 and btc["liq_count"].isna().all()
     # 榜上有 6 个月，但 NOW 是 6 月 1 日零点，面板里还没有 6 月收盘的 bar
     assert result.status["BTCUSDT"]["poolMonths"] == 5 and result.status["ETHUSDT"]["coverage"]["premium"] == 1.0
+    # 现货：对上的币拉现货 K 线、三列有数；对不上的不拉、不建 raw 文件、三列空；映射写进 status，没对上的名单在进度里
+    assert ("BTCUSDT", "spot", FROM) in api.calls and not any(s == "AAAUSDT" and i == "spot" for s, i, _ in api.calls)
+    assert btc["spot_quote_volume"].eq(5e9 * 0.3).all() and store.load("AAAUSDT")["spot_quote_volume"].isna().all()
+    assert (store.raw / "spot_15m" / "BTCUSDT.parquet").exists() and not (store.raw / "spot_15m" / "AAAUSDT.parquet").exists()
+    assert result.status["BTCUSDT"]["spotSymbol"] == "BTCUSDT" and result.status["AAAUSDT"]["spotSymbol"] is None
+    assert result.status["BTCUSDT"]["spotFrom"] == FROM + BAR_MS - 1 and result.status["AAAUSDT"]["spotFrom"] is None
+    assert progress["spotMissing"] == ["AAAUSDT", "DEADUSDT"]
     # 收尾算参照网格：只算进过池的 4 个币，写在 status.json 之后
     assert progress["stage"] == "reference" and progress["done"] == progress["total"] == 4 and progress["symbol"] is None
     grid = store.load_reference_grid()
@@ -134,6 +153,7 @@ def test_second_refresh_is_incremental(tmp_path):
     starts = {(s, i): start for s, i, start in api.calls}
     # 15m 按 close_time 接：最后一根收在 NOW − 1；日线按 open_time 接：最后一根开在 NOW − 1 天
     assert starts[("BTCUSDT", "15m")] == NOW and starts[("BTCUSDT", "1d")] == NOW - DAY_MS + 1
+    assert starts[("BTCUSDT", "spot")] == NOW
     store = PanelStore(tmp_path)
     assert len(store.load("BTCUSDT")) == (NOW + DAY_MS - FROM) // BAR_MS
     # 上一版留着（刷新时可能还有评估在读），再早的那版删了；不是自己建的目录不碰

@@ -1,7 +1,7 @@
 """live 尾巴和归档的一致性核对（方案 2.4），在服务器上跑：python -m wiib_alpha.trade.check [--fetch 天数]
 
 默认拿 live/ 里和 raw 重叠的那段（live 存最近 29~30 天，和归档重叠大半）；--fetch N 是现从 fapi 拉每个币归档最后 N 天放内存里比，不写盘。
-K 线、溢价 K 线、费率按时刻逐条逐列比，应完全一致；metrics（持仓量、三种多空比、taker 买卖量比）报时间戳对上多少、相对差多少，只看不判；
+K 线、溢价 K 线、费率、现货 K 线按时刻逐条逐列比，应完全一致；metrics（持仓量、三种多空比、taker 买卖量比）报时间戳对上多少、相对差多少，只看不判；
 再拿重叠段里每个 UTC 0 点，分别用"归档版"（只用 raw）和"live 版"（重叠段换成 live，窗口整个落在 live 里时就是交易员用的那份）拼 28 天面板，
 算勾选因子、basis_7d、Std($ret, 672) 在那一刻的截面值，两版的 Spearman 排名相关都 ≥ 0.99 算过。全过退出码 0，否则 1。
 """
@@ -28,7 +28,8 @@ from . import live, scheme, targets
 
 MIN_RHO = 0.99
 # 逐列比的列：K 线除了收盘时刻（对齐用）全比
-COMPARE = {"klines_15m": [c for c in KLINE_COLUMNS if c != "close_time"], "premium_15m": ["premium"],
+_BARS = [c for c in KLINE_COLUMNS if c != "close_time"]
+COMPARE = {"klines_15m": _BARS, "premium_15m": ["premium"], "spot_15m": _BARS,
            "metrics": ["oi", "oi_value", "ls_top_pos", "ls_top_acct", "ls_acct", "taker_ls_vol"], "funding": ["funding_rate"]}
 _EXAMPLES = 5
 
@@ -43,13 +44,15 @@ def stored(store: PanelStore, symbols: list[str]) -> Frames:
 
 def fetched(store: PanelStore, binance: Binance, symbols: list[str], days: int) -> Frames:
     """每个币每个数据集现拉归档最后 days 天"""
+    spot = live.spot_pairs(binance, symbols)
     fetch = {"klines_15m": binance.recent_klines, "premium_15m": binance.recent_premium,
-             "metrics": binance.recent_metrics, "funding": binance.recent_funding}
+             "metrics": binance.recent_metrics, "funding": binance.recent_funding,
+             "spot_15m": lambda s, a, b: binance.recent_spot_klines(spot[s], a, b)}
     out: Frames = {d: {} for d in live.DATASETS}
     for s in symbols:
         for d in live.DATASETS:
             raw = store.load_raw(d, s)
-            if raw is None or raw.empty:
+            if raw is None or raw.empty or (d == "spot_15m" and spot[s] is None):
                 continue
             end = int(raw[RAW_DATASETS[d]].max()) + 1
             df = fetch[d](s, end - days * DAY_MS, end)
@@ -163,7 +166,8 @@ def main() -> None:
     store = PanelStore(cfg.data_dir)
     symbols = sorted({*universe.loc[universe["month"] == universe["month"].max(), "symbol"], BENCHMARK})
     if args.fetch:
-        binance = Binance(cfg.binance_vision_url, fapi_url=cfg.binance_fapi_url, list_url=cfg.binance_vision_list_url)
+        binance = Binance(cfg.binance_vision_url, fapi_url=cfg.binance_fapi_url, list_url=cfg.binance_vision_list_url,
+                          spot_url=cfg.binance_spot_url)
         tails = fetched(store, binance, symbols, args.fetch)
     else:
         tails = stored(store, symbols)
@@ -180,6 +184,7 @@ def main() -> None:
     ok = compare_rows(raws, tails, "klines_15m", True)
     ok &= compare_rows(raws, tails, "premium_15m", True)
     ok &= compare_rows(raws, tails, "funding", True)
+    ok &= compare_rows(raws, tails, "spot_15m", True)
     compare_rows(raws, tails, "metrics", False)
     ok &= compare_ranks(raws, tails, universe, factors, params)
     print(f"结论：{'通过' if ok else '不通过'}")

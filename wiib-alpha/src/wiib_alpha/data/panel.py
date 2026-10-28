@@ -1,4 +1,4 @@
-"""一币一张表：K 线 + 资金费率 + BTC 基准 + 强平桶 + 基差 + metrics + 标准答案 + 池子掩码。
+"""一币一张表：K 线 + 资金费率 + BTC 基准 + 强平桶 + 基差 + metrics + 现货三列 + 标准答案 + 池子掩码。
 
 index 是 bar 收盘时刻（ms），全部特征列在那一刻都已知；标准答案 fwd_ret_* 看未来，DSL 不许引用。
 in_pool 是评估用的掩码，不是 DSL 列。raw/ 按数据集分目录放原始数据，都是 parquet；live/ 是交易员补的归档之后的尾巴，刷新不碰。
@@ -38,16 +38,19 @@ DEAD_BARS = 96
 # metrics 约 5 分钟一条，一小时没新的当断了
 METRICS_STALE_MS = 3_600_000
 POOL_COLUMN = "in_pool"
+# 现货三列 → 现货 K 线里的哪一列
+_SPOT_SOURCE = {"spot_quote_volume": "quote_volume", "spot_taker_buy_quote": "taker_buy_quote", "spot_trades": "trades"}
+SPOT_COLUMNS = list(_SPOT_SOURCE)
 # DSL 里能用 $ 引用的列
 FEATURE_COLUMNS = ["open", "high", "low", "close", "volume", "quote_volume", "trades",
                    "taker_buy_base", "taker_buy_quote", "ret", "funding_rate", "btc_close", "btc_ret",
-                   *LIQ_COLUMNS, "premium", *METRIC_FEATURES, "hour"]
+                   *LIQ_COLUMNS, "premium", *METRIC_FEATURES, *SPOT_COLUMNS, "hour"]
 TARGET_COLUMNS = [f"fwd_ret_{bars}" for bars in HORIZON_BARS.values()]
 # describe 里报覆盖率的列：价格类永远是满的，只看会缺的
-COVERAGE_COLUMNS = ["funding_rate", "premium", "oi", "ls_acct", "liq_count"]
+COVERAGE_COLUMNS = ["funding_rate", "premium", "oi", "ls_acct", "spot_quote_volume", "liq_count"]
 # raw/ 下的数据集与各自的时间列
 RAW_DATASETS = {"klines_1d": "open_time", "klines_15m": "close_time", "funding": "funding_time",
-                "premium_15m": "close_time", "metrics": "time"}
+                "premium_15m": "close_time", "metrics": "time", "spot_15m": "close_time"}
 # 参照因子在主档网格上的截面秩，刷新收尾时算
 REFERENCE_GRID = "reference_grid.parquet"
 # 记当前面板版本目录名的文件；没有它就是最早那版 panel/
@@ -60,9 +63,10 @@ _VERSION = re.compile(r"panel(-\d{8}T\d{12})?")
 def assemble(klines: pd.DataFrame, funding: pd.DataFrame, btc_klines: pd.DataFrame | None,
              liq: pd.DataFrame | None = None, liq_start: int | None = None,
              outage: frozenset[int] = frozenset(), premium: pd.DataFrame | None = None,
-             metrics: pd.DataFrame | None = None, pool_months: frozenset[str] = frozenset()) -> pd.DataFrame:
+             metrics: pd.DataFrame | None = None, pool_months: frozenset[str] = frozenset(),
+             spot: pd.DataFrame | None = None) -> pd.DataFrame:
     """btc_klines 是基准，BTC 自己传 None 两列留空；liq 是这个币的桶；liq_start 是全部币里最早的一桶，之前没数据不是没强平；
-    outage 是断档的桶 key；pool_months 是这个币在池里的月份（YYYY-MM）"""
+    outage 是断档的桶 key；pool_months 是这个币在池里的月份（YYYY-MM）；spot 是对应现货对的 K 线，没有现货对传 None"""
     df = klines.drop_duplicates("close_time").set_index("close_time").sort_index()
     df = df[~_dead(df["trades"].to_numpy())]
     df["ret"] = np.log(df["close"] / df["close"].shift(1))
@@ -79,6 +83,9 @@ def assemble(klines: pd.DataFrame, funding: pd.DataFrame, btc_klines: pd.DataFra
     # 基差 K 线与 K 线同一套收盘时刻，精确对
     df["premium"] = _exact(df.index, premium, "close_time", "premium")
     _metrics_columns(df, metrics)
+    # 现货 K 线和永续同一套收盘时刻，精确对；没有现货对、现货还没上市或已下架的那段是 NaN
+    for col, src in _SPOT_SOURCE.items():
+        df[col] = _exact(df.index, spot, "close_time", src)
     # bar 开始时刻的 UTC 小时：00:45~01:00 那根算 0 点的（closeTime 是边界减 1ms，加回去再退一根）
     df["hour"] = ((df.index.to_numpy() + 1 - BAR_MS) // 3_600_000) % 24
     df[POOL_COLUMN] = np.isin(_months(df.index), list(pool_months)).astype("float64")
@@ -188,12 +195,15 @@ def truncate(panel: pd.DataFrame, cut_ms: int) -> pd.DataFrame:
 
 def describe(panel: pd.DataFrame) -> dict[str, Any]:
     liq_known = panel.index[panel["liq_count"].notna()]
+    # 现货列进面板之前装配的老版面板没有这列
+    spot_known = panel.index[panel["spot_quote_volume"].notna()] if "spot_quote_volume" in panel else panel.index[:0]
     times = panel.index.to_numpy(dtype="int64")
     out = {
         "rows": int(len(panel)),
         "from": int(panel.index.min()) if len(panel) else None,
         "to": int(panel.index.max()) if len(panel) else None,
         "liqFrom": int(liq_known.min()) if len(liq_known) else None,
+        "spotFrom": int(spot_known.min()) if len(spot_known) else None,
         # 相邻两根不是正好 15m 的地方：交易所维护缺 bar 时切窗按行号会漂，先把数字亮出来
         "gaps": int((np.diff(times) != BAR_MS).sum()) if len(times) > 1 else 0,
         "coverage": {c: round(float(panel[c].notna().mean()), 4) for c in COVERAGE_COLUMNS if c in panel},

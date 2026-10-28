@@ -153,7 +153,23 @@ def test_describe_coverage():
     df = build(premium=premium_frame(), metrics=metrics_frame(until=48))
     cov = panel.describe(df)["coverage"]
     assert cov["premium"] == pytest.approx((N - 1) / N, abs=1e-4) and 0 < cov["oi"] < 1 and 0 < cov["liq_count"] < 1
-    assert cov["funding_rate"] < 1
+    assert cov["funding_rate"] < 1 and cov["spot_quote_volume"] == 0.0
+
+
+def test_spot_exact_by_close_time_and_nan_where_there_is_no_spot_bar():
+    # 现货比永续晚 10 根上市，第 12 根缺
+    spot = klines(N, 50.0).iloc[10:]
+    spot = spot[spot["close_time"] != close_time(12)].copy()
+    spot["quote_volume"] = np.arange(1, len(spot) + 1, dtype="float64")
+    df = build(with_liq=False, spot=spot)
+    assert df["spot_quote_volume"].iloc[:10].isna().all() and df["spot_quote_volume"].iloc[10] == 1.0
+    assert np.isnan(df.loc[close_time(12), "spot_quote_volume"]) and df.loc[close_time(13), "spot_quote_volume"] == 3.0
+    assert df["spot_taker_buy_quote"].iloc[10] == 400.0 and df["spot_trades"].iloc[10] == 7.0
+    desc = panel.describe(df)
+    assert desc["spotFrom"] == close_time(10) and desc["coverage"]["spot_quote_volume"] == round((N - 11) / N, 4)
+    # 没有现货对：三列全空
+    none = build(with_liq=False)
+    assert none[panel.SPOT_COLUMNS].isna().all().all() and panel.describe(none)["spotFrom"] is None
 
 
 def test_describe_counts_index_gaps():

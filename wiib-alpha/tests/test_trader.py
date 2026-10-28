@@ -24,6 +24,7 @@ NOW = DAY + 20 * 60_000
 def no_rest_gap(monkeypatch):
     monkeypatch.setattr(b, "REST_GAP_S", 0.0)
     monkeypatch.setattr(b, "DATA_GAP_S", 0.0)
+    monkeypatch.setattr(b, "SPOT_GAP_S", 0.0)
 
 
 async def first_frame(stream=None) -> dict:
