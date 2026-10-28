@@ -47,12 +47,15 @@ class LlmErrorMessagesTest {
      */
     @Test
     void 搜索被拒提示关掉联网搜索() {
-        assertThat(zh(new RuntimeException("400: web_search tool is not supported by this model")))
-                .contains("联网搜索");
         assertThat(zh(new RuntimeException("Anthropic API HTTP 400: web search is not enabled for this organization")))
                 .contains("联网搜索");
+        // 搜索调用和结果配不上对：提到了搜索但不是拒收
         assertThat(zh(new RuntimeException("Anthropic API HTTP 400: messages.1: `web_search` tool use with id "
                 + "`srvtoolu_01B7` was found without a corresponding `web_search_tool_result` block")))
+                .doesNotContain("联网搜索");
+        // 本地工具 news_search 的参数被拒：带拒绝语义但说的不是服务端搜索
+        assertThat(zh(new RuntimeException("Responses API HTTP 400: Invalid schema for function 'news_search': "
+                + "'format' is not supported")))
                 .doesNotContain("联网搜索");
     }
 

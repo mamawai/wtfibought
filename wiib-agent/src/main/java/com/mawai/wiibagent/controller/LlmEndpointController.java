@@ -116,7 +116,7 @@ public class LlmEndpointController {
         return r.error() == null ? Result.ok(r.models()) : Result.fail(r.error());
     }
 
-    /** 测连通，勾了联网搜索的再测搜索；保存时只有勾了联网搜索才会探，见 LlmEndpointService */
+    /** 测连通，勾了联网搜索的再测搜索；保存时什么情况下探见 LlmEndpointService */
     @PostMapping("/test")
     @Operation(summary = "测试端点连通性（id 非空且 apiKey 传空=用该端点已存 key）")
     public Result<Void> test(@CurrentUserId long userId,

@@ -83,8 +83,7 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
     }
   };
 
-  // 连通性探测独立成按钮：保存时不再顺带发一次真实 LLM 请求，
-  // 想验通不通就点这里，不想验就直接存
+  // 测试连通性按钮：没勾联网搜索的保存不发上游请求，想验通不通就点这里
   const test = async () => {
     setTesting(true);
     try {

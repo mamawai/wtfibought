@@ -3,6 +3,7 @@ package com.mawai.wiibagent.llm;
 import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.retry.TransientAiException;
 
 import java.util.List;
 import java.util.Locale;
@@ -30,6 +31,8 @@ public final class LlmErrorMessages {
     /** 因果链最多往下扒这么多层，防环 */
     private static final int MAX_CAUSE_DEPTH = 5;
 
+    /** 服务端搜索在各家报错里的叫法（只认小写） */
+    private static final List<String> SEARCH_TERMS = List.of("web_search", "web search", "google_search", "grounding");
     /** 上游拒收搜索工具时的说法（各家措辞不一，只认小写） */
     private static final List<String> SEARCH_REJECTIONS = List.of("not supported", "unsupported", "not enabled",
             "not allowed", "not available", "does not support", "unknown tool", "invalid tool");
@@ -85,11 +88,16 @@ public final class LlmErrorMessages {
     }
 
     /**
-     * 上游拒收服务端搜索工具：提到 search 且带拒绝语义。光认 search 会误判——
-     * 搜索调用和结果配不上对的 400 也提到 web_search，那不是不支持，不能叫用户去关搜索
+     * 上游拒收服务端搜索工具：提到服务端搜索且带拒绝语义。光认 search 会误判——本地工具 news_search 的参数被拒、
+     * 搜索调用和结果配不上对的 400 都会提到 search，那不是不支持，不能叫用户去关搜索
      */
     private static boolean searchUnsupported(String lower) {
-        return lower.contains("search") && SEARCH_REJECTIONS.stream().anyMatch(lower::contains);
+        return SEARCH_TERMS.stream().anyMatch(lower::contains) && SEARCH_REJECTIONS.stream().anyMatch(lower::contains);
+    }
+
+    /** 瞬时失败（限流、上游 5xx、超时、断连，见 SseChatModel）：换个时间大概率就好，说明不了请求本身有没有问题 */
+    public static boolean transientFailure(Throwable t) {
+        return hasCause(t, TransientAiException.class);
     }
 
     private static Throwable root(Throwable t) {
