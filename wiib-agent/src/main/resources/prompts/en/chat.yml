@@ -117,10 +117,9 @@ chat:
   outputLanguage: "[SYSTEM] The user's question is in their own words and may be written in another language; answer what they mean, and output language: English."
 
   # ---- Turn-start markers (the head of the enriched message; model-facing, never shown) ----
-  # The mark and its prefix must stay in sync: written in ChatTurnStreamer.Turn.run, recognised in
-  # ChatTurnRewinder.cutAt and ContextCompactor - regenerate finds the turn by timePrefix from the tail and
-  # verifies questionPrefix + the original question; compaction finds the last question by timePrefix.
-  # Change one, change the other. The recogniser walks every
+  # The mark and its prefix must stay in sync: written in ChatTurnStreamer.Turn.run, recognised by timePrefix in
+  # ChatTurnStreamer.turnLang - regenerate finds the turn from the tail and verifies questionPrefix + the original
+  # question; compaction finds the last question. Change one, change the other. The recogniser walks every
   # language (after a language switch old turns keep their old markers).
   turn:
     timeMark: "[Current time {{time}}]"

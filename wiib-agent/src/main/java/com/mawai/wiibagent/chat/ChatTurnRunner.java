@@ -118,14 +118,19 @@ public class ChatTurnRunner {
             contextTokens = null;
         }
         // 整理也是一次模型调用：开跑前就点了停的不整理
-        if (!cancelled(cancel) && compactor.shouldCompact(leaves, contextTokens, history)) {
+        boolean compacting = !cancelled(cancel) && compactor.shouldCompact(leaves, contextTokens, history);
+        if (compacting) {
             runRegistry.publishProgress(sessionId, prompts.get(lang, "chat.compact.progress"));
-            history = compactor.compact(leaves, history).orElse(history);
+            history = compactor.compact(leaves, history, cancel).orElse(history);
         }
         List<Message> working = new ArrayList<>(history);
         working.add(new UserMessage(enrichedMessage));
         if (cancelled(cancel)) {
-            // 开跑前就点了停：一次模型调用都不烧
+            if (compacting) {
+                // 整理那次调用可能被掐在半路，用量没收齐
+                leaves.deep().markAbandoned();
+            }
+            // 开跑前或整理时点了停：作答一次都不调
             return cancelTurn(userId, sessionId, working, "", lang, prefix);
         }
         working.add(new UserMessage(turnTail(lang, intent)));

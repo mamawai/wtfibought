@@ -8,7 +8,6 @@ import com.mawai.wiibagent.i18n.PromptCatalog;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -84,26 +83,19 @@ public class ChatTurnRewinder {
     }
 
     /**
-     * 从尾部找本轮提问那条（带轮起始标记的 user 消息）。标记按语言取自词表（chat.turn.*），
-     * 认的时候遍历全部语言：切语言后旧轮的标记仍是旧语言。核对用命中那门语言的问题前缀——
-     * enriched 是一门语言一次拼成的，不存在跨语言混拼。
+     * 从尾部找本轮提问那条（带轮起始标记的 user 消息，认法见 {@link ChatTurnStreamer#turnLang}）。
+     * 核对用命中那门语言的问题前缀——enriched 是一门语言一次拼成的，不存在跨语言混拼。
      *
      * @return 切点下标；-1=一条带标记的都没有，或命中那条与提问对不上，两种都是回不去
      */
     private int cutAt(List<Message> context, String question) {
         for (int i = context.size() - 1; i >= 0; i--) {
-            Message message = context.get(i);
-            if (!(message instanceof UserMessage) || message.getText() == null) {
-                continue;
-            }
-            String text = message.getText();
-            for (AgentLang lang : AgentLang.values()) {
-                if (!text.startsWith(prompts.get(lang, "chat.turn.timePrefix"))) {
-                    continue;
-                }
+            Optional<AgentLang> lang = ChatTurnStreamer.turnLang(context.get(i), prompts);
+            if (lang.isPresent()) {
                 // 核对的是 enriched 的尾巴（拼法见 ChatTurnStreamer.Turn.run），对不上就是本轮提问已被压进摘要，
                 // 命中的是更早留下的那问——照它切会把中间好几轮一起抹掉
-                return text.endsWith(prompts.get(lang, "chat.turn.questionPrefix") + question) ? i : -1;
+                return context.get(i).getText()
+                        .endsWith(prompts.get(lang.get(), "chat.turn.questionPrefix") + question) ? i : -1;
             }
         }
         return -1;

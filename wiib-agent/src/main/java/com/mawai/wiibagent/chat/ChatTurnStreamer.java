@@ -12,6 +12,8 @@ import com.mawai.wiibagent.llm.SseChannel;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -22,6 +24,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -70,6 +73,21 @@ public class ChatTurnStreamer {
     @PreDestroy
     public void stop() {
         heartbeatScheduler.shutdownNow();
+    }
+
+    /**
+     * 带轮起始标记的用户消息是哪门语言拼的（拼法见 {@link Turn#run}），不是就 empty。
+     * 认全部语言：切语言后旧轮还是旧语言。重新生成定位本轮提问、整理上下文找上一问都用它
+     */
+    static Optional<AgentLang> turnLang(Message message, PromptCatalog prompts) {
+        if (message instanceof UserMessage) {
+            for (AgentLang lang : AgentLang.values()) {
+                if (message.getText().startsWith(prompts.get(lang, "chat.turn.timePrefix"))) {
+                    return Optional.of(lang);
+                }
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -131,8 +149,7 @@ public class ChatTurnStreamer {
                     enriched = prompts.get(leaves.lang(), "chat.wake.instruction");
                     prefix = prompts.get(leaves.lang(), "chat.wake.header") + "\n\n";
                 } else {
-                    // 补充时间信息。轮起始标记按语言取自词表（chat.turn.*）：重新生成靠它从尾部找到
-                    // "本轮提问"那条，认的一侧在 ChatTurnRewinder.cutAt，遍历全部语言
+                    // 补充时间信息。轮起始标记按语言取自词表（chat.turn.*），认的一侧在 turnLang
                     enriched = prompts.get(leaves.lang(), "chat.turn.timeMark",
                             Map.of("time", TIME_FMT.format(Instant.now()))) + "\n"
                             + prompts.get(leaves.lang(), "chat.turn.questionPrefix") + message;

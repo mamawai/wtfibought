@@ -624,7 +624,7 @@
     "effortPh": "Blank = not sent; try none / low / medium / high / xhigh…",
     "effortHint": "Blank = the parameter is not sent and the model uses its own default; you can also enter any other level it accepts (xhigh, minimal…). Not every model accepts this, and there is no way to check up front — fill it in and hit Test connection.",
     "contextWindow": "Context window",
-    "contextWindowHint": "When this endpoint is the workbench chat's main model and context usage reaches 90% of this window, the context is compacted before the next turn starts. Use the model's actual window or a bit less (usage keeps growing within a turn); range 128K–1000K (1M).",
+    "contextWindowHint": "When this endpoint is the workbench chat's main model and context usage reaches 90% of this window, the context is compacted before the next turn starts. About 80% of the model's actual window works best: usage keeps growing within a turn, and compaction itself needs room. Range 128K–1000K (1M).",
     "webSearch": "Web search",
     "webSearchHint": "Declares this protocol's server-side search tool in requests. Saving and the connectivity test probe it first and block the endpoint if the upstream doesn't support it — untick it then. Only the workbench chat's main model and its research sub-agent use it — the trader and the market-analysis sub-agent are unaffected. Searches count toward upstream usage.",
     "webSearchOpenAiHint": "The openai protocol has no standard server-side search; pick responses / anthropic / gemini for web search",

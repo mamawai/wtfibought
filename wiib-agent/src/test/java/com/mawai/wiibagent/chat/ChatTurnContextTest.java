@@ -169,19 +169,22 @@ class ChatTurnContextTest {
     void 用量到线时开轮先整理() {
         // 256K 的 90% 是 230400
         stored(lastTurn(), 240_000L);
-        when(deep.call(any(Prompt.class))).thenReturn(textFrame("摘要正文"));
         List<Prompt> streamed = new ArrayList<>();
         when(deep.stream(any(Prompt.class))).thenAnswer(inv -> {
             streamed.add(inv.getArgument(0));
-            return Flux.just(textFrame("答"), finalFrame(1000, 200));
+            return streamed.size() == 1 ? Flux.just(textFrame("摘要正文"))
+                    : Flux.just(textFrame("答"), finalFrame(1000, 200));
         });
 
         runTurn();
 
-        verify(deep, times(1)).call(any(Prompt.class));
+        // 第一次是整理：原历史 + 整理指令
+        assertThat(streamed).hasSize(2);
+        assertThat(streamed.getFirst().getInstructions().getLast().getText())
+                .isEqualTo(ChatTestEndpoints.PROMPTS.get(AgentLang.ZH, "chat.compact.instruction"));
         assertThat(progress).containsExactly(ChatTestEndpoints.PROMPTS.get(AgentLang.ZH, "chat.compact.progress"));
-        // 系统提示词之后：摘要、上一问、上一答、本轮提问、收尾指令
-        List<Message> seen = streamed.getFirst().getInstructions();
+        // 作答那次，系统提示词之后：摘要、上一问、上一答、本轮提问、收尾指令
+        List<Message> seen = streamed.getLast().getInstructions();
         assertThat(seen).hasSize(6);
         assertThat(seen.get(1).getText()).endsWith("摘要正文");
         assertThat(seen.get(2).getText()).endsWith("上一问");
@@ -198,8 +201,24 @@ class ChatTurnContextTest {
         ChatTurnRunner.TurnResult result = runTurn(CompletableFuture.completedFuture(null));
 
         assertThat(result.cancelled()).isTrue();
-        verify(deep, never()).call(any(Prompt.class));
+        verify(deep, never()).stream(any(Prompt.class));
         assertThat(progress).isEmpty();
+    }
+
+    /** 整理时点了停：整理作废、作答不调；整理那次调用可能被掐在半路，账本标成不可信 */
+    @Test
+    void 整理时点了停就收场() {
+        stored(lastTurn(), 240_000L);
+        CompletableFuture<Void> cancel = new CompletableFuture<>();
+        when(deep.stream(any(Prompt.class))).thenAnswer(inv -> Flux.just(textFrame("半截"))
+                .doOnComplete(() -> cancel.complete(null)));
+
+        ChatTurnRunner.TurnResult result = runTurn(cancel);
+
+        assertThat(result.cancelled()).isTrue();
+        verify(deep, times(1)).stream(any(Prompt.class));
+        assertThat(leaves.deep().untrusted()).isTrue();
+        assertThat(saved().messages().getFirst().getText()).endsWith("上一问");
     }
 
     /**
@@ -220,7 +239,7 @@ class ChatTurnContextTest {
 
         runTurn();
 
-        verify(deep, never()).call(any(Prompt.class));
+        assertThat(streamed).as("读数作废、按字数估够不着线，不该整理").hasSize(1);
         Message replayed = streamed.getFirst().getInstructions().get(2);
         assertThat(replayed.getText()).isEqualTo("上一答");
         assertThat(replayed.getMetadata()).doesNotContainKey(AnthropicChatModel.BLOCKS_KEY);

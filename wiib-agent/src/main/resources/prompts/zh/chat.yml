@@ -82,8 +82,8 @@ chat:
   outputLanguage: 【系统】用户的提问是他自己打的字，可能是另一门语言写的；照他的意思答，但输出语言：中文。
 
   # ---- 轮起始标记（enriched 的开头，喂模型不上屏）----
-  # 标记与前缀必须同源：拼在 ChatTurnStreamer.Turn.run，认在 ChatTurnRewinder.cutAt 与 ContextCompactor——
-  # 重新生成按 timePrefix 从尾部认出本轮提问、再按 questionPrefix+提问原文核对，整理上下文按 timePrefix 找上一轮提问，改一个必须改另一个。
+  # 标记与前缀必须同源：拼在 ChatTurnStreamer.Turn.run，按 timePrefix 认在 ChatTurnStreamer.turnLang——
+  # 重新生成从尾部认出本轮提问、再按 questionPrefix+提问原文核对，整理上下文找上一问，改一个必须改另一个。
   # 认的一侧遍历全部语言（切语言后旧轮的标记仍是旧语言）；系统指令都以【系统】开头，不会撞
   turn:
     timeMark: "【当前时间 {{time}}】"
