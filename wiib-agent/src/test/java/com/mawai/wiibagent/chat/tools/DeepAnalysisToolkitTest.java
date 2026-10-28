@@ -45,7 +45,7 @@ class DeepAnalysisToolkitTest {
     private final ChatModel model = mock(ChatModel.class);
     private final DeepAnalysisService deepAnalysisService = mock(DeepAnalysisService.class);
     private final WorkbenchRunRegistry runRegistry = new WorkbenchRunRegistry();
-    private final ChatContextStore contextStore = mock(ChatContextStore.class);
+    private final ChatContextStore contextStore = ChatTestEndpoints.contextStore();
     private final ChildRunRegistry childRuns =
             new ChildRunRegistry(contextStore, runRegistry, ChatTestEndpoints.prefs(), ChatTestEndpoints.PROMPTS, 20, 300, 4000);
 
@@ -114,14 +114,13 @@ class DeepAnalysisToolkitTest {
     @Test
     void 工具调用立即返回RUNNING_报告异步回灌() {
         debateSucceeds();
-        when(contextStore.load(SESSION)).thenReturn(List.of());
 
         String reply = toolkit.runDeepAnalysis("BTCUSDT", CTX);
 
         assertThat(reply).contains("\"status\":\"RUNNING\"").contains("\"runId\"");
-        ArgumentCaptor<List<Message>> saved = ArgumentCaptor.captor();
+        ArgumentCaptor<ChatContextStore.State> saved = ArgumentCaptor.captor();
         verify(contextStore, timeout(5_000)).save(eq(SESSION), eq(1L), saved.capture());
-        assertThat(saved.getValue()).singleElement().satisfies(m -> assertThat(m.getText())
+        assertThat(saved.getValue().messages()).singleElement().satisfies(m -> assertThat(m.getText())
                 .startsWith("【后台任务#").contains("深研判 BTCUSDT").contains("研判叙事"));
         assertThat(childRuns.state(SESSION).pending()).isTrue();
     }
@@ -142,7 +141,6 @@ class DeepAnalysisToolkitTest {
                 .intercept(SESSION, deepCall("btc"));
         String gateSymbol = registry.peekPending(SESSION).orElseThrow().symbol();
         when(deepAnalysisService.buildNewsContext(any())).thenReturn("ctx");
-        when(contextStore.load(SESSION)).thenReturn(List.of());
 
         toolkit.runDeepAnalysis("btc", CTX);
 

@@ -1,7 +1,6 @@
 package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.enums.AgentLang;
-import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.llm.AnthropicChatModel;
 import com.mawai.wiibagent.llm.LlmClient;
 import org.junit.jupiter.api.Test;
@@ -28,10 +27,7 @@ import static org.mockito.Mockito.when;
 /** 整理线怎么判、整理请求长什么样、产物长什么样、失败了怎么办 */
 class ContextCompactorTest {
 
-    private static final String SESSION = "wb-1-compact";
-
-    private final ChatHistoryService chatHistory = mock(ChatHistoryService.class);
-    private final ContextCompactor compactor = new ContextCompactor(chatHistory, ChatTestEndpoints.PROMPTS, 0.9);
+    private final ContextCompactor compactor = new ContextCompactor(ChatTestEndpoints.PROMPTS, 0.9);
     private final ChatModel model = mock(ChatModel.class);
     /** 整理时发给模型的请求 */
     private final List<Prompt> requests = new ArrayList<>();
@@ -79,34 +75,24 @@ class ContextCompactorTest {
     }
 
     @Test
-    void 上一轮用量到窗口九成才整理() {
+    void 用量读数到窗口九成才整理() {
         List<Message> history = List.of(turnStart("问"), new AssistantMessage("答"));
 
         // 256K 的 90% 是 230400
-        when(chatHistory.lastContextTokens(SESSION)).thenReturn(230_399L);
-        assertThat(compactor.shouldCompact(leaves(), SESSION, history)).isFalse();
-        when(chatHistory.lastContextTokens(SESSION)).thenReturn(230_400L);
-        assertThat(compactor.shouldCompact(leaves(), SESSION, history)).isTrue();
+        assertThat(compactor.shouldCompact(leaves(), 230_399L, history)).isFalse();
+        assertThat(compactor.shouldCompact(leaves(), 230_400L, history)).isTrue();
     }
 
-    /** 老会话、上游不报用量的会话没有实测值：按字数估（中文 1 字≈1 token） */
+    /** 没有读数（老会话、中断过、回退过）：连系统提示词一起按字数估（中文 1 字≈1 token） */
     @Test
-    void 没有实测用量时按字数估() {
-        // mock 对 Long 默认回 0，得显式给 null 才是"库里没有读数"
-        when(chatHistory.lastContextTokens(SESSION)).thenReturn(null);
+    void 没有读数时按字数估() {
+        ChatAgentFactory.Leaves leaves = leaves(1000);
+        int prefix = (int) leaves.mainClient().estimateTokens(List.of());
 
-        assertThat(compactor.shouldCompact(leaves(1000), SESSION, List.of(new UserMessage("字".repeat(899)))))
+        assertThat(compactor.shouldCompact(leaves, null, List.of(new UserMessage("字".repeat(899 - prefix)))))
                 .isFalse();
-        assertThat(compactor.shouldCompact(leaves(1000), SESSION, List.of(new UserMessage("字".repeat(900)))))
+        assertThat(compactor.shouldCompact(leaves, null, List.of(new UserMessage("字".repeat(900 - prefix)))))
                 .isTrue();
-    }
-
-    /** 重新生成第一轮时上下文已回退成空，展示表里那条旧答案的读数还很大——没东西可整理 */
-    @Test
-    void 历史为空不整理() {
-        when(chatHistory.lastContextTokens(SESSION)).thenReturn(250_000L);
-
-        assertThat(compactor.shouldCompact(leaves(), SESSION, List.of())).isFalse();
     }
 
     /** 请求 = 主 agent 的系统提示词 + 原历史原样 + 末尾一条整理指令：前缀与上一轮相同才命中提示缓存 */

@@ -6,6 +6,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 
 /**
@@ -17,7 +19,7 @@ import java.util.List;
  * <p>
  * 序列化经 {@link ChatContextCodec}：读兼容老的对象流格式，写裸 JSON。
  * <p>
- * 三个方法一律不向上抛：读失败当这轮没有历史，写、删失败只记日志。上下文存取不中断对话。
+ * 读失败往上抛：当成空历史跑完一轮，会拿这一轮整体覆盖掉整段上下文。写、删失败只记日志。
  */
 @Slf4j
 @Component
@@ -27,35 +29,35 @@ public class ChatContextStore {
     private final WorkbenchChatContextMapper contextMapper;
 
     /**
-     * 取会话历史。无行（新会话）返回空；读失败也返回空——降级成"这轮没有上下文"，
+     * 一个会话的模型上下文。
+     *
+     * @param contextTokens 这份上下文多大（token）：正常作答结束时记下的读数；中断、出错、回退过的为 null，用时按字数估
+     * @param prefix        这份历史是在哪套系统提示词与工具下跑出来的（{@link com.mawai.wiibagent.llm.LlmClient#fingerprint}），老数据为 null
      */
-    public List<Message> load(String sessionId) {
-        List<byte[]> rows;
-        try {
-            rows = contextMapper.selectState(sessionId);
-        } catch (Exception e) {
-            log.error("[ChatContext] 上下文读取失败，本轮无历史续跑 sessionId={}", sessionId, e);
-            return List.of();
-        }
+    public record State(List<Message> messages, Long contextTokens, String prefix) {
+        public static final State EMPTY = new State(List.of(), null, null);
+    }
+
+    /** 取会话上下文；没有行（新会话）返回 {@link State#EMPTY} */
+    public State load(String sessionId) {
+        List<byte[]> rows = contextMapper.selectState(sessionId);
         if (rows.isEmpty()) {
-            return List.of();
+            return State.EMPTY;
         }
-        byte[] bytes = rows.getFirst();
         try {
-            return ChatContextCodec.read(bytes);
-        } catch (Exception e) {
-            log.error("[ChatContext] 上下文反序列化失败，本轮无历史续跑 sessionId={}", sessionId, e);
-            return List.of();
+            return ChatContextCodec.readState(rows.getFirst());
+        } catch (IOException e) {
+            throw new UncheckedIOException("会话上下文解不开 sessionId=" + sessionId, e);
         }
     }
 
     /**
-     * 整体覆盖会话历史。失败只记日志不抛：调用点在答案已经流给用户之后，
+     * 整体覆盖会话上下文。失败只记日志不抛：调用点在答案已经流给用户之后，
      * 抛上去救不回本轮，只会把成功的回答标成失败；代价是下一轮丢这轮的上下文。
      */
-    public void save(String sessionId, long userId, List<Message> messages) {
+    public void save(String sessionId, long userId, State state) {
         try {
-            byte[] bytes = ChatContextCodec.write(messages);
+            byte[] bytes = ChatContextCodec.write(state);
             contextMapper.upsert(sessionId, userId, bytes);
         } catch (Exception e) {
             log.error("[ChatContext] 上下文落库失败，下一轮将丢失本轮历史 sessionId={}", sessionId, e);

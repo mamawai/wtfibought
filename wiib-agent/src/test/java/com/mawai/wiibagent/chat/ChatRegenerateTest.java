@@ -87,7 +87,7 @@ class ChatRegenerateTest {
         // 默认落库成功：删旧答案的前提就是这个返回值，桩成默认的 false 整条重生成都不会走到删
         when(history.append(any(), anyLong(), any(), any(), any(), any())).thenReturn(true);
         ChatContextStore contextStore = mock(ChatContextStore.class);
-        when(contextStore.load(SESSION)).thenReturn(context);
+        when(contextStore.load(SESSION)).thenReturn(new ChatContextStore.State(context, 1000L, "fp"));
 
         ChatTurnRunner turnRunner = mock(ChatTurnRunner.class);
         doAnswer((Answer<ChatTurnRunner.TurnResult>) inv -> {
@@ -148,10 +148,13 @@ class ChatRegenerateTest {
 
         regenerate(h);
 
-        // 上下文回删到那条提问为止（含它）：重跑时 run() 会自己把提问重新垫进去
-        ArgumentCaptor<List<Message>> ctx = ArgumentCaptor.captor();
+        // 上下文回删到那条提问为止（含它）：重跑时 run() 会自己把提问重新垫进去；
+        // 回删后读数作废，前缀指纹照旧带着
+        ArgumentCaptor<ChatContextStore.State> ctx = ArgumentCaptor.captor();
         verify(h.contextStore()).save(eq(SESSION), eq(1L), ctx.capture());
-        assertThat(ctx.getValue()).isEmpty();
+        assertThat(ctx.getValue().messages()).isEmpty();
+        assertThat(ctx.getValue().contextTokens()).isNull();
+        assertThat(ctx.getValue().prefix()).isEqualTo("fp");
 
         // 重跑喂给 runner 的是库里那条原提问
         ArgumentCaptor<String> enriched = ArgumentCaptor.captor();
@@ -176,9 +179,9 @@ class ChatRegenerateTest {
 
         regenerate(h);
 
-        ArgumentCaptor<List<Message>> ctx = ArgumentCaptor.captor();
+        ArgumentCaptor<ChatContextStore.State> ctx = ArgumentCaptor.captor();
         verify(h.contextStore()).save(eq(SESSION), eq(1L), ctx.capture());
-        assertThat(ctx.getValue()).isEmpty();
+        assertThat(ctx.getValue().messages()).isEmpty();
     }
 
     /**
@@ -244,10 +247,10 @@ class ChatRegenerateTest {
         regenerate(h);
 
         // 从尾部认：切在本轮提问上，摘要与上一问答原样留着
-        ArgumentCaptor<List<Message>> ctx = ArgumentCaptor.captor();
+        ArgumentCaptor<ChatContextStore.State> ctx = ArgumentCaptor.captor();
         verify(h.contextStore()).save(eq(SESSION), eq(1L), ctx.capture());
-        assertThat(ctx.getValue()).hasSize(3);
-        assertThat(ctx.getValue().getLast().getText()).isEqualTo("上一答");
+        assertThat(ctx.getValue().messages()).hasSize(3);
+        assertThat(ctx.getValue().messages().getLast().getText()).isEqualTo("上一答");
     }
 
     @Test

@@ -65,7 +65,7 @@ class ChatWakeTest {
     private final ChatModel deep = mock(ChatModel.class);
     private final ChatModel light = mock(ChatModel.class);
     private final ApprovalRegistry registry = new ApprovalRegistry();
-    private final ChatContextStore contextStore = mock(ChatContextStore.class);
+    private final ChatContextStore contextStore = ChatTestEndpoints.contextStore();
     private final ChildRunRegistry childRuns = ChatTestEndpoints.childRuns(contextStore);
     private final TraderChatService traderChatService = mock(TraderChatService.class);
     private final List<Prompt> mainPrompts = new CopyOnWriteArrayList<>();
@@ -110,9 +110,9 @@ class ChatWakeTest {
     }
 
     private String savedText() {
-        ArgumentCaptor<List<Message>> saved = ArgumentCaptor.captor();
+        ArgumentCaptor<ChatContextStore.State> saved = ArgumentCaptor.captor();
         verify(contextStore).save(eq(SESSION), eq(1L), saved.capture());
-        return saved.getValue().stream().map(m -> m.getText() == null ? "" : m.getText())
+        return saved.getValue().messages().stream().map(m -> m.getText() == null ? "" : m.getText())
                 .reduce("", (a, b) -> a + "\n" + b);
     }
 
@@ -158,7 +158,6 @@ class ChatWakeTest {
     @Test
     void 没轮在跑时报告落库_唤醒轮带补充标头作答不落提问行() {
         // 没轮在跑：报告直接落库、标 pending
-        when(contextStore.load(SESSION)).thenReturn(List.of());
         spawnAndDeliver("离线到的调研结论");
         assertThat(childRuns.state(SESSION).pending()).isTrue();
         verify(contextStore).save(eq(SESSION), eq(1L), any());
@@ -224,7 +223,6 @@ class ChatWakeTest {
         gate.release(1L);
 
         // 欠着：放行，跑的是唤醒轮（没有用户提问，消息是唤醒指令）
-        when(contextStore.load(SESSION)).thenReturn(List.of());
         spawnAndDeliver("离线到的调研结论");
         controller.wake(1L, request, mock(HttpServletResponse.class));
 

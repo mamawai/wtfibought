@@ -4,10 +4,12 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.ChatTestEndpoints;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
+import com.mawai.wiibagent.llm.ContextUsage;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -41,14 +43,13 @@ class ChildRunRegistryTest {
 
     private static final String SESSION = "wb-1-child";
 
-    private final ChatContextStore contextStore = mock(ChatContextStore.class);
+    private final ChatContextStore contextStore = ChatTestEndpoints.contextStore();
 
     private ChildRunRegistry registry(int perUser, int global) {
         return registry(ChatTestEndpoints.prefs(true, perUser), global);
     }
 
     private ChildRunRegistry registry(WorkbenchPrefService prefs, int global) {
-        when(contextStore.load(any())).thenReturn(List.of());
         return new ChildRunRegistry(contextStore, new WorkbenchRunRegistry(), prefs, ChatTestEndpoints.PROMPTS,
                 global, 5, 20);
     }
@@ -71,9 +72,9 @@ class ChildRunRegistryTest {
     }
 
     private List<Message> savedMessages() {
-        ArgumentCaptor<List<Message>> saved = ArgumentCaptor.captor();
+        ArgumentCaptor<ChatContextStore.State> saved = ArgumentCaptor.captor();
         verify(contextStore, timeout(5_000)).save(eq(SESSION), eq(1L), saved.capture());
-        return saved.getValue();
+        return saved.getValue().messages();
     }
 
     /** 没轮在跑时 child_done 推不出去：跑完的子运行留在 status 里，结局与 pending 一起看得到 */
@@ -123,6 +124,47 @@ class ChildRunRegistryTest {
         assertThat(registry.state(SESSION).runs().getFirst().steps()).noneMatch(ChildRun.Step::active);
     }
 
+    /** 落库时上下文里原有的用量读数要加上报告这一截，前缀指纹照旧 */
+    @Test
+    void 报告落库时读数加上报告的估算() {
+        when(contextStore.load(SESSION)).thenReturn(new ChatContextStore.State(List.of(), 1000L, "fp"));
+        ChildRunRegistry registry = registry(3, 3);
+
+        registry.spawn(spec(SESSION), run -> "报告正文");
+
+        ArgumentCaptor<ChatContextStore.State> saved = ArgumentCaptor.captor();
+        verify(contextStore, timeout(5_000)).save(eq(SESSION), eq(1L), saved.capture());
+        assertThat(saved.getValue().contextTokens())
+                .isEqualTo(1000L + ContextUsage.estimate(saved.getValue().messages()));
+        assertThat(saved.getValue().prefix()).isEqualTo("fp");
+    }
+
+    /** 这一轮没开跑就收场：收件箱里已经到的报告按没轮在跑的路子落库，欠一次唤醒 */
+    @Test
+    void 摘掉收件箱时已到的报告照样落库() {
+        ChildRunRegistry registry = registry(3, 3);
+        Deque<Message> inbox = new ArrayDeque<>();
+        registry.attachTurn(SESSION, inbox);
+        inbox.add(new UserMessage("【后台任务#1】报告正文"));
+
+        registry.detachTurn(SESSION, 1L);
+
+        assertThat(savedMessages()).singleElement().satisfies(m -> assertThat(m.getText()).endsWith("报告正文"));
+        assertThat(registry.state(SESSION).pending()).isTrue();
+    }
+
+    /** 上下文读不出来：报告不落库（不拿空历史覆盖），子运行照常收尾，不卡在跑着 */
+    @Test
+    void 上下文读不出来时报告不覆盖() {
+        when(contextStore.load(SESSION)).thenThrow(new RuntimeException("db down"));
+        ChildRunRegistry registry = registry(3, 3);
+
+        ChildRunRegistry.Spawn spawn = registry.spawn(spec(SESSION), run -> "报告正文");
+
+        waitUntil(() -> spawn.run().status() == ChildRun.Status.DONE);
+        verify(contextStore, never()).save(any(), anyLong(), any());
+    }
+
     @Test
     void 有轮挂着时报告进收件箱_摘掉时剩余即欠唤醒() {
         ChildRunRegistry registry = registry(3, 3);
@@ -137,7 +179,7 @@ class ChildRunRegistryTest {
         assertThat(registry.state(SESSION).pending()).isFalse();
 
         // 轮结束时收件箱里还剩着：并进终态一起落库，同时欠一次唤醒
-        assertThat(registry.settle(SESSION, 1L, new ArrayList<>())).isTrue();
+        assertThat(registry.settle(SESSION, 1L, ChatContextStore.State.EMPTY)).isTrue();
         assertThat(savedMessages()).singleElement().satisfies(m -> assertThat(m.getText()).startsWith("【后台任务#"));
         assertThat(registry.state(SESSION).pending()).isTrue();
         // 下一轮挂上收件箱就不欠了：落库的报告它随历史读得到
@@ -151,16 +193,16 @@ class ChildRunRegistryTest {
         ChildRunRegistry registry = registry(3, 3);
         registry.attachTurn(SESSION, new ArrayDeque<>());
         // 模拟库：写完才可见；轮那次保存慢一拍，子运行就在这期间跑完
-        AtomicReference<List<Message>> db = new AtomicReference<>(List.of());
+        AtomicReference<ChatContextStore.State> db = new AtomicReference<>(ChatContextStore.State.EMPTY);
         CountDownLatch turnSaving = new CountDownLatch(1);
         when(contextStore.load(SESSION)).thenAnswer(inv -> db.get());
         doAnswer(inv -> {
-            List<Message> messages = List.copyOf(inv.getArgument(2));
+            ChatContextStore.State state = inv.getArgument(2);
             if (turnSaving.getCount() > 0) {
                 turnSaving.countDown();
                 Thread.sleep(300);
             }
-            db.set(messages);
+            db.set(state);
             return null;
         }).when(contextStore).save(eq(SESSION), eq(1L), any());
         ChildRunRegistry.Spawn spawn = registry.spawn(spec(SESSION), run -> {
@@ -172,10 +214,10 @@ class ChildRunRegistryTest {
             return "报告正文";
         });
 
-        registry.settle(SESSION, 1L, new ArrayList<>());
+        registry.settle(SESSION, 1L, ChatContextStore.State.EMPTY);
         waitUntil(() -> spawn.run().status() == ChildRun.Status.DONE);
 
-        assertThat(db.get()).singleElement().satisfies(m -> assertThat(m.getText()).endsWith("报告正文"));
+        assertThat(db.get().messages()).singleElement().satisfies(m -> assertThat(m.getText()).endsWith("报告正文"));
         assertThat(registry.state(SESSION).pending()).isTrue();
     }
 

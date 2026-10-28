@@ -8,6 +8,7 @@ import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.llm.ContextUsage;
 import com.mawai.wiibagent.llm.ReactLoop;
 import com.mawai.wiibagent.llm.SearchEvent;
+import com.mawai.wiibagent.llm.SseChatModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -27,7 +28,7 @@ import java.util.function.Consumer;
 /**
  * 一轮对话的编排：载入历史 → 加本轮提问与收尾指令 → 主 agent 流式作答 → 终态落库。
  * <pre>
- * 挂上子运行收件箱 → 载入历史（上一轮用量到了整理线就先整理，见 {@link ContextCompactor}）
+ * 挂上子运行收件箱 → 载入上下文（提示词或工具变了就按文本重建；上一轮用量到了整理线就先整理，见 {@link ContextCompactor}）
  *   ↓
  * 历史 + 本轮提问 + 收尾指令 → working
  *   ↓
@@ -96,12 +97,28 @@ public class ChatTurnRunner {
         long startedAt = System.currentTimeMillis();
         // 语言取自叶子：它是建叶子时按用户语言写死的，已经在叶子缓存键里，不必再查一次
         AgentLang lang = leaves.lang();
+        String prefix = leaves.mainClient().fingerprint();
         // 先挂收件箱再读历史：之后到的报告进收件箱，之前到的已经在库里、随历史读进来
         Deque<Message> inbox = new ConcurrentLinkedDeque<>();
         childRuns.attachTurn(sessionId, inbox);
-        List<Message> history = contextStore.load(sessionId);
+        ChatContextStore.State state;
+        try {
+            state = contextStore.load(sessionId);
+        } catch (RuntimeException e) {
+            childRuns.detachTurn(sessionId, userId);
+            throw e;
+        }
+        List<Message> history = state.messages();
+        Long contextTokens = state.contextTokens();
+        // 系统提示词或工具跟上次不一样（改了提示词、切了语言、改了联网搜索）：以前的思考块、搜索块对不上了，按文本重建
+        if (!prefix.equals(state.prefix())) {
+            history = history.stream()
+                    .map(m -> m instanceof AssistantMessage a ? SseChatModel.withoutRaw(a) : m)
+                    .toList();
+            contextTokens = null;
+        }
         // 整理也是一次模型调用：开跑前就点了停的不整理
-        if (!cancelled(cancel) && compactor.shouldCompact(leaves, sessionId, history)) {
+        if (!cancelled(cancel) && compactor.shouldCompact(leaves, contextTokens, history)) {
             runRegistry.publishProgress(sessionId, prompts.get(lang, "chat.compact.progress"));
             history = compactor.compact(leaves, history).orElse(history);
         }
@@ -109,7 +126,7 @@ public class ChatTurnRunner {
         working.add(new UserMessage(enrichedMessage));
         if (cancelled(cancel)) {
             // 开跑前就点了停：一次模型调用都不烧
-            return cancelTurn(userId, sessionId, working, "", lang);
+            return cancelTurn(userId, sessionId, working, "", lang, prefix);
         }
         working.add(new UserMessage(turnTail(lang, intent)));
 
@@ -125,14 +142,15 @@ public class ChatTurnRunner {
             // 在途那条流已被中断信号掐断、循环在检查点退出了，但收尾帧没到、
             // 这次调用的 token 未知——账本就此不可信，标记让它退化成只报耗时
             leaves.deep().markAbandoned();
-            return cancelTurn(userId, sessionId, working, emitted.toString(), lang);
+            return cancelTurn(userId, sessionId, working, emitted.toString(), lang, prefix);
         }
 
-        // 终态（整理过的历史 + 本轮全部新消息）整体覆盖会话历史，下一轮从这里起跑
-        List<Message> finalMessages = new ArrayList<>(result.messages());
-        boolean pending = childRuns.settle(sessionId, userId, finalMessages);
+        List<Message> finalMessages = result.messages();
         ContextUsage context = measured.get() != null ? measured.get()
-                : new ContextUsage(ContextUsage.estimate(finalMessages), leaves.contextWindow(), true);
+                : new ContextUsage(leaves.mainClient().estimateTokens(finalMessages), leaves.contextWindow(), true);
+        // 终态（整理过的历史 + 本轮全部新消息）连同用量读数整体覆盖会话上下文，下一轮从这里起跑
+        boolean pending = childRuns.settle(sessionId, userId,
+                new ChatContextStore.State(finalMessages, context.tokens(), prefix));
 
         log.info("[TurnMetrics] session={} modelCalls={} historyIn={} historyOut={} contextTokens={} estimated={} pending={} durationMs={}",
                 sessionId, result.modelCalls(), history.size(), finalMessages.size(),
@@ -167,9 +185,9 @@ public class ChatTurnRunner {
      * 这个问题就到此为止，用户要么接着问、要么点重新生成。
      */
     private TurnResult cancelTurn(long userId, String sessionId, List<Message> working, String partial,
-                                  AgentLang lang) {
+                                  AgentLang lang, String prefix) {
         working.add(new AssistantMessage(cancelledAnswer(prompts, lang, partial)));
-        boolean pending = childRuns.settle(sessionId, userId, working);
+        boolean pending = childRuns.settle(sessionId, userId, new ChatContextStore.State(working, null, prefix));
         log.info("[Workbench] 用户中断 session={} 已产出={}字", sessionId, partial.length());
         return new TurnResult(true, pending, null);
     }
@@ -223,7 +241,8 @@ public class ChatTurnRunner {
             // 会话号进 ToolContext 与闸门；中断信号直接掐模型流，点停止就在下一个检查点退出
             return leaves.main().run(working, sessionId, cancel, listener);
         } catch (RuntimeException e) {
-            childRuns.settle(sessionId, userId, working);
+            childRuns.settle(sessionId, userId,
+                    new ChatContextStore.State(working, null, leaves.mainClient().fingerprint()));
             throw e;
         }
     }

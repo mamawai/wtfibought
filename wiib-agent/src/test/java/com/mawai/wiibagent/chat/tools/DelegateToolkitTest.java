@@ -49,7 +49,7 @@ class DelegateToolkitTest {
     private static final String SESSION = "wb-1-delegate";
     private static final ToolContext CTX = new ToolContext(Map.of(ToolRunContext.SESSION_KEY, SESSION));
 
-    private final ChatContextStore contextStore = mock(ChatContextStore.class);
+    private final ChatContextStore contextStore = ChatTestEndpoints.contextStore();
     private final ChatModel model = mock(ChatModel.class);
     /** 真注册表，会话挂一个只记事件的出口 */
     private final WorkbenchRunRegistry runRegistry = new WorkbenchRunRegistry();
@@ -57,7 +57,6 @@ class DelegateToolkitTest {
     private ChildRunRegistry childRuns;
 
     private DelegateToolkit toolkit(WorkbenchPrefService prefs) {
-        when(contextStore.load(any())).thenReturn(List.of());
         when(model.call(any(Prompt.class)))
                 .thenReturn(new ChatResponse(List.of(new Generation(new AssistantMessage("调研报告正文")))));
         runRegistry.start(SESSION, (event, data) -> events.add(Map.entry(event, data)), new CompletableFuture<>());
@@ -85,9 +84,9 @@ class DelegateToolkitTest {
     }
 
     private List<Message> savedMessages() {
-        ArgumentCaptor<List<Message>> saved = ArgumentCaptor.captor();
+        ArgumentCaptor<ChatContextStore.State> saved = ArgumentCaptor.captor();
         verify(contextStore, timeout(5_000)).save(eq(SESSION), eq(1L), saved.capture());
-        return saved.getValue();
+        return saved.getValue().messages();
     }
 
     @Test

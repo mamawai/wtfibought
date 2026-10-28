@@ -11,13 +11,18 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.ToolDefinition;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -59,6 +64,7 @@ public class LlmClient {
     private final SystemMessage systemMessage;
     /** 工具表：既挂进 options 给模型看，也是 {@link ReactLoop} 执行工具时的查表处 */
     private final List<ToolCallback> tools;
+    private final boolean webSearch;
 
     private LlmClient(Builder builder) {
         this.model = builder.model;
@@ -74,6 +80,7 @@ public class LlmClient {
                 : ToolOptions.withTools(model, tools);
         this.chatOptions = builder.webSearch ? withWebSearch(base, model) : base;
         this.systemMessage = SystemMessage.builder().text(builder.systemPrompt).build();
+        this.webSearch = builder.webSearch;
     }
 
     public static Builder builder() {
@@ -102,6 +109,35 @@ public class LlmClient {
 
     public Optional<ChatOptions> chatOptions() {
         return Optional.ofNullable(chatOptions);
+    }
+
+    /**
+     * 每次请求固定带的那段前缀（系统提示词、工具定义、搜索许可）的指纹。
+     * Anthropic 的思考块和这段前缀绑在一起，前缀变了，历史里以前的思考块就对不上了
+     */
+    public String fingerprint() {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest((prefix() + '\0' + webSearch).getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("JDK 没有 SHA-256", e);
+        }
+    }
+
+    /** 按字数估这份 messages 发出去有多少 token：系统提示词和工具定义也算上 */
+    public long estimateTokens(List<Message> messages) {
+        return ContextUsage.estimate(prefix()) + ContextUsage.estimate(messages);
+    }
+
+    /** 每次请求固定带的文本：系统提示词 + 每个工具的名字、描述、参数结构 */
+    private String prefix() {
+        StringBuilder prefix = new StringBuilder(systemMessage.getText());
+        for (ToolCallback tool : tools) {
+            ToolDefinition def = tool.getToolDefinition();
+            prefix.append('\0').append(def.name()).append('\0').append(def.description())
+                    .append('\0').append(def.inputSchema());
+        }
+        return prefix.toString();
     }
 
     /** @param cancel 可空。非空且完成时掐断整条流水线 */

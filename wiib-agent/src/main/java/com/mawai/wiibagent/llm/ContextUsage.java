@@ -30,7 +30,8 @@ public record ContextUsage(long tokens, int window, boolean estimated) {
 
     /**
      * 上游不报用量时按字数估：中文 1 字≈1 token，其余 4 字符≈1 token。
-     * 存了原始内容的 assistant 按原始内容算（回放时发出去的就是它）；系统提示词与工具定义不在 messages 里，没算
+     * 存了原始内容的 assistant 按原始内容算（回放时发出去的就是它）；只算 messages，连系统提示词与工具定义一起估用
+     * {@link LlmClient#estimateTokens}
      */
     public static long estimate(List<Message> messages) {
         long total = 0;
@@ -62,7 +63,7 @@ public record ContextUsage(long tokens, int window, boolean estimated) {
 
     /** 三个协议各自存的原始内容 */
     private static String rawContent(AssistantMessage assistant) {
-        for (String key : List.of(AnthropicChatModel.BLOCKS_KEY, ResponsesChatModel.ITEMS_KEY, GeminiChatModel.PARTS_KEY)) {
+        for (String key : SseChatModel.RAW_KEYS) {
             if (assistant.getMetadata().get(key) instanceof String raw) {
                 return raw;
             }
@@ -70,7 +71,7 @@ public record ContextUsage(long tokens, int window, boolean estimated) {
         return null;
     }
 
-    private static long estimate(String text) {
+    static long estimate(String text) {
         if (text == null || text.isEmpty()) {
             return 0;
         }

@@ -14,7 +14,9 @@ import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.retry.TransientAiException;
+import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.annotation.Tool;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -68,6 +70,39 @@ class LlmClientTest {
     void systemPrompt缺省直接拦下() {
         assertThatThrownBy(() -> LlmClient.builder().model(model).build())
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    static final class EchoTool {
+        @Tool(name = "echo", description = "Echo the text back.")
+        public String echo(String text) {
+            return text;
+        }
+    }
+
+    private LlmClient client(String systemPrompt, boolean withTool, boolean webSearch) {
+        when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        return LlmClient.builder().model(model).systemPrompt(systemPrompt)
+                .tools(withTool ? List.of(ToolCallbacks.from(new EchoTool())) : List.of())
+                .webSearch(webSearch).build();
+    }
+
+    /** 前缀指纹跟着系统提示词、工具定义、搜索许可走：哪样变了都得变，一样的配置得一样 */
+    @Test
+    void 前缀指纹随系统提示词工具和搜索许可变() {
+        String base = client("你是助手", true, false).fingerprint();
+
+        assertThat(client("你是助手", true, false).fingerprint()).isEqualTo(base);
+        assertThat(client("你是分析师", true, false).fingerprint()).isNotEqualTo(base);
+        assertThat(client("你是助手", false, false).fingerprint()).isNotEqualTo(base);
+        assertThat(client("你是助手", true, true).fingerprint()).isNotEqualTo(base);
+    }
+
+    /** 按字数估把系统提示词和工具定义也算上 */
+    @Test
+    void 估算算上系统提示词和工具定义() {
+        assertThat(client("你是助手", false, false).estimateTokens(ASK)).isEqualTo(4 + ContextUsage.estimate(ASK));
+        assertThat(client("你是助手", true, false).estimateTokens(ASK))
+                .isGreaterThan(client("你是助手", false, false).estimateTokens(ASK));
     }
 
     /** 模型收到的 Prompt 的 options */

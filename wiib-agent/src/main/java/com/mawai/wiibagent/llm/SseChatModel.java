@@ -28,6 +28,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -70,6 +71,18 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
      * analyst worker 与 trader 链路的数据源必须可控，拿不到搜索。
      */
     public static final String WEB_SEARCH_KEY = "wiib_web_search";
+
+    /** 三个子类各自把 assistant 的原始内容存在消息 metadata 的哪个键上 */
+    static final List<String> RAW_KEYS =
+            List.of(AnthropicChatModel.BLOCKS_KEY, ResponsesChatModel.ITEMS_KEY, GeminiChatModel.PARTS_KEY);
+
+    /** 去掉原始内容（思考块、搜索块、推理项、签名），只留文本与工具调用：各协议按文本重建 */
+    public static AssistantMessage withoutRaw(AssistantMessage message) {
+        Map<String, Object> properties = new HashMap<>(message.getMetadata());
+        RAW_KEYS.forEach(properties::remove);
+        return AssistantMessage.builder().content(message.getText()).toolCalls(message.getToolCalls())
+                .properties(properties).build();
+    }
 
     /** 瞬时错误重试参数，与 LlmClient 对齐 */
     private static final int MAX_ATTEMPTS = 3;

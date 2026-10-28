@@ -6,7 +6,6 @@ import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.run.ChildRunRegistry;
 import com.mawai.wiibagent.chat.run.WorkbenchPrefService;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
-import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.i18n.LocalizedToolCallbacks;
 import com.mawai.wiibagent.i18n.PromptCatalog;
 import com.mawai.wiibagent.i18n.UserLangResolver;
@@ -57,14 +56,21 @@ public final class ChatTestEndpoints {
         return prefs(true, 3);
     }
 
+    /** 上下文存储的 mock：没单独桩过的会话读出来是空上下文 */
+    public static ChatContextStore contextStore() {
+        ChatContextStore store = mock(ChatContextStore.class);
+        when(store.load(any())).thenReturn(ChatContextStore.State.EMPTY);
+        return store;
+    }
+
     /** 子运行注册表的真实现：没轮在跑时报告落进传进来的 contextStore；SSE 没通道可推；偏好按默认 */
     public static ChildRunRegistry childRuns(ChatContextStore contextStore) {
         return new ChildRunRegistry(contextStore, new WorkbenchRunRegistry(), prefs(), PROMPTS, 20, 300, 4000);
     }
 
-    /** 整理器的真实现：历史服务是 mock，上一轮用量读出来是 0，永远够不着整理线，等于不整理 */
+    /** 整理器的真实现，线在窗口的 90%：测试里那点历史够不着，等于不整理 */
     public static ContextCompactor compactor() {
-        return new ContextCompactor(mock(ChatHistoryService.class), PROMPTS, 0.9);
+        return new ContextCompactor(PROMPTS, 0.9);
     }
 
     public static UserLlmEndpoint endpoint(String model) {

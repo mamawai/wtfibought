@@ -4,6 +4,7 @@ import com.mawai.wiibcommon.enums.AgentLang;
 import com.mawai.wiibagent.chat.gate.WorkbenchRunRegistry;
 import com.mawai.wiibagent.chat.store.ChatContextStore;
 import com.mawai.wiibagent.i18n.PromptCatalog;
+import com.mawai.wiibagent.llm.ContextUsage;
 import com.mawai.wiibagent.llm.LlmErrorMessages;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -147,21 +148,44 @@ public class ChildRunRegistry {
     }
 
     /**
-     * 一轮结束（每条出路都走这里）：摘掉收件箱，剩余报告并进终态消息，整体覆盖会话历史。
+     * 一轮结束（每条出路都走这里）：摘掉收件箱，剩余报告并进终态，整体覆盖会话上下文。
      * 摘和存在同一把锁里：这当口到的报告要么还赶上进收件箱随这次一起落库，要么排在这次之后自己落库。
      *
      * @return 剩余报告非空——这些报告这轮没答过，欠一次唤醒
      */
-    public boolean settle(String sessionId, long userId, List<Message> messages) {
+    public boolean settle(String sessionId, long userId, ChatContextStore.State state) {
         Session session = sessions.computeIfAbsent(sessionId, k -> new Session());
         synchronized (session) {
             List<Message> leftover = session.inbox == null ? List.of() : List.copyOf(session.inbox);
             session.inbox = null;
-            messages.addAll(leftover);
-            contextStore.save(sessionId, userId, messages);
+            contextStore.save(sessionId, userId, appended(state, leftover));
             session.pending = !leftover.isEmpty();
             return session.pending;
         }
+    }
+
+    /** 这一轮读不出上下文、没开跑就收场：摘掉收件箱，这当口到的报告按没轮在跑的路子追加落库 */
+    public void detachTurn(String sessionId, long userId) {
+        Session session = sessions.computeIfAbsent(sessionId, k -> new Session());
+        synchronized (session) {
+            List<Message> leftover = session.inbox == null ? List.of() : List.copyOf(session.inbox);
+            session.inbox = null;
+            if (!leftover.isEmpty()) {
+                contextStore.save(sessionId, userId, appended(contextStore.load(sessionId), leftover));
+                session.pending = true;
+            }
+        }
+    }
+
+    /** 上下文末尾追加报告；有用量读数的加上报告按字数估的量 */
+    private static ChatContextStore.State appended(ChatContextStore.State state, List<Message> reports) {
+        if (reports.isEmpty()) {
+            return state;
+        }
+        List<Message> messages = new ArrayList<>(state.messages());
+        messages.addAll(reports);
+        Long tokens = state.contextTokens() == null ? null : state.contextTokens() + ContextUsage.estimate(reports);
+        return new ChatContextStore.State(messages, tokens, state.prefix());
     }
 
     /** 在会话锁里取，结局和 pending 对得上 */
@@ -259,10 +283,13 @@ public class ChildRunRegistry {
                 session.inbox.add(report);
             } else {
                 // 没轮在跑：直接追加进会话上下文。整体覆盖式存储，读-加-写要在锁里
-                List<Message> messages = new ArrayList<>(contextStore.load(run.sessionId()));
-                messages.add(report);
-                contextStore.save(run.sessionId(), run.userId(), messages);
-                session.pending = true;
+                try {
+                    contextStore.save(run.sessionId(), run.userId(),
+                            appended(contextStore.load(run.sessionId()), List.of(report)));
+                    session.pending = true;
+                } catch (RuntimeException e) {
+                    log.error("[ChildRun] #{} 上下文读不出来，报告没能落库 session={}", run.id(), run.sessionId(), e);
+                }
             }
             run.end(error == null ? ChildRun.Status.DONE : ChildRun.Status.FAILED, error);
             return true;

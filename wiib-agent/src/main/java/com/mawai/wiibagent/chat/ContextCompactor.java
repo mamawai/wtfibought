@@ -1,9 +1,7 @@
 package com.mawai.wiibagent.chat;
 
 import com.mawai.wiibcommon.enums.AgentLang;
-import com.mawai.wiibagent.chat.store.ChatHistoryService;
 import com.mawai.wiibagent.i18n.PromptCatalog;
-import com.mawai.wiibagent.llm.ContextUsage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -32,24 +30,22 @@ import java.util.Optional;
 @Component
 public class ContextCompactor {
 
-    private final ChatHistoryService chatHistoryService;
     private final PromptCatalog prompts;
     private final double triggerRatio;
 
-    public ContextCompactor(ChatHistoryService chatHistoryService, PromptCatalog prompts,
+    public ContextCompactor(PromptCatalog prompts,
                             @Value("${agent.workbench.compact-trigger-ratio:0.9}") double triggerRatio) {
-        this.chatHistoryService = chatHistoryService;
         this.prompts = prompts;
         this.triggerRatio = triggerRatio;
     }
 
-    /** 上一轮结束时的用量到没到整理线；没有实测值（老会话、上游不报用量）按字数估 */
-    public boolean shouldCompact(ChatAgentFactory.Leaves leaves, String sessionId, List<Message> history) {
-        if (history.isEmpty()) {
-            return false;
-        }
-        Long measured = chatHistoryService.lastContextTokens(sessionId);
-        long tokens = measured != null ? measured : ContextUsage.estimate(history);
+    /**
+     * 上下文到没到整理线。
+     *
+     * @param contextTokens 随上下文存的用量读数，没有（老会话、中断过、回退过）就按字数估
+     */
+    public boolean shouldCompact(ChatAgentFactory.Leaves leaves, Long contextTokens, List<Message> history) {
+        long tokens = contextTokens != null ? contextTokens : leaves.mainClient().estimateTokens(history);
         return tokens >= leaves.contextWindow() * triggerRatio;
     }
 

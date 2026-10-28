@@ -65,7 +65,8 @@ public class ChatTurnRewinder {
         if (question == null) {
             return Optional.empty();
         }
-        List<Message> context = contextStore.load(sessionId);
+        ChatContextStore.State state = contextStore.load(sessionId);
+        List<Message> context = state.messages();
         int cut = cutAt(context, question);
         if (cut < 0) {
             return Optional.empty();
@@ -76,7 +77,9 @@ public class ChatTurnRewinder {
         if (cut == 0 && context.size() > 1 && context.get(1) instanceof SystemMessage) {
             return Optional.empty();
         }
-        contextStore.save(sessionId, userId, List.copyOf(context.subList(0, cut)));
+        // 回删之后上下文变小了，读数作废，下一轮按字数估
+        contextStore.save(sessionId, userId,
+                new ChatContextStore.State(List.copyOf(context.subList(0, cut)), null, state.prefix()));
         return Optional.of(new Rollback(question, answer.id()));
     }
 

@@ -91,6 +91,10 @@ class ChatContextCodecTest {
         assertThat(golden[0]).isEqualTo((byte) 0xAC);
         assertThat(golden[1]).isEqualTo((byte) 0xED);
         assertSameMessages(fixture(), ChatContextCodec.read(golden));
+        // 老行没有用量读数和前缀指纹：下一轮按字数估、历史按文本重建一次
+        ChatContextStore.State state = ChatContextCodec.readState(golden);
+        assertThat(state.contextTokens()).isNull();
+        assertThat(state.prefix()).isNull();
     }
 
     @Test

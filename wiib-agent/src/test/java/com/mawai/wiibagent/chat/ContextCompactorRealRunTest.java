@@ -120,7 +120,7 @@ class ContextCompactorRealRunTest {
                     .filter(row -> "assistant".equals(row.role()))
                     .map(ChatHistoryService.ChatMessage::content)
                     .toList();
-            finalHistory = chatContextStore.load(sessionId);
+            finalHistory = chatContextStore.load(sessionId).messages();
         } finally {
             // 真跑不留脏行；模型若派了子运行也一并停掉，免得报告晚到又写回上下文
             childRuns.purge(sessionId);

@@ -52,7 +52,7 @@ class ChatCancelTest {
     private final ChatModel deep = mock(ChatModel.class);
     private final ChatModel light = mock(ChatModel.class);
     private final ApprovalRegistry registry = new ApprovalRegistry();
-    private final ChatContextStore contextStore = mock(ChatContextStore.class);
+    private final ChatContextStore contextStore = ChatTestEndpoints.contextStore();
     private final ChildRunRegistry childRuns = ChatTestEndpoints.childRuns(contextStore);
     private final StringBuilder answer = new StringBuilder();
 
@@ -79,10 +79,9 @@ class ChatCancelTest {
     }
 
     private List<Message> savedContext() {
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<Message>> captor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<ChatContextStore.State> captor = ArgumentCaptor.forClass(ChatContextStore.State.class);
         verify(contextStore).save(eq(SESSION), eq(1L), captor.capture());
-        return captor.getValue();
+        return captor.getValue().messages();
     }
 
     @Test

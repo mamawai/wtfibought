@@ -56,7 +56,7 @@ class ChatTurnRunnerTest {
     private final ChatModel deep = mock(ChatModel.class);
     private final ChatModel light = mock(ChatModel.class);
     private final ApprovalRegistry registry = new ApprovalRegistry();
-    private final ChatContextStore contextStore = mock(ChatContextStore.class);
+    private final ChatContextStore contextStore = ChatTestEndpoints.contextStore();
     private final ChildRunRegistry childRuns = ChatTestEndpoints.childRuns(contextStore);
     private final NewsToolkit newsToolkit = ChatTestEndpoints.newsToolkit();
     private final TraderChatService traderChatService = mock(TraderChatService.class);
@@ -151,9 +151,16 @@ class ChatTurnRunnerTest {
         return mainPrompts.getLast().getInstructions().getLast();
     }
 
+    /** 落库的终态 */
+    private List<Message> saved() {
+        ArgumentCaptor<ChatContextStore.State> saved = ArgumentCaptor.captor();
+        verify(contextStore).save(eq(SESSION), eq(1L), saved.capture());
+        return saved.getValue().messages();
+    }
+
     /** 落库终态拼成一段文本比对 */
-    private static String savedText(ArgumentCaptor<List<Message>> saved) {
-        return saved.getValue().stream()
+    private String savedText() {
+        return saved().stream()
                 .map(m -> m.getText() == null ? "" : m.getText())
                 .collect(Collectors.joining("\n"));
     }
@@ -251,8 +258,8 @@ class ChatTurnRunnerTest {
      */
     @Test
     void 上一轮历史进得来本轮产出落得回去() {
-        when(contextStore.load(SESSION)).thenReturn(List.of(
-                new UserMessage("上轮问题"), new AssistantMessage("上轮回答")));
+        when(contextStore.load(SESSION)).thenReturn(new ChatContextStore.State(List.of(
+                new UserMessage("上轮问题"), new AssistantMessage("上轮回答")), null, null));
         mainAnswers("这是本轮答案");
 
         turn("这一轮问题");
@@ -260,9 +267,7 @@ class ChatTurnRunnerTest {
         // 进：上轮内容原样在主 agent 的输入里
         assertThat(mainInput()).contains("上轮问题").contains("上轮回答");
         // 出：终态整体覆盖回存储，含本轮提问与答案
-        ArgumentCaptor<List<Message>> saved = ArgumentCaptor.captor();
-        verify(contextStore).save(eq(SESSION), eq(1L), saved.capture());
-        assertThat(savedText(saved))
+        assertThat(savedText())
                 .contains("上轮问题").contains("这一轮问题").contains("这是本轮答案");
     }
 
@@ -293,9 +298,7 @@ class ChatTurnRunnerTest {
         runner().run(leaves(), 1L, SESSION, "看看", null, answer::append, search::add, cancel);
 
         assertThat(mainInput()).contains("报告正文");
-        ArgumentCaptor<List<Message>> saved = ArgumentCaptor.captor();
-        verify(contextStore).save(eq(SESSION), eq(1L), saved.capture());
-        assertThat(savedText(saved)).contains("报告正文").doesNotContain("不该出现的答案");
+        assertThat(savedText()).contains("报告正文").doesNotContain("不该出现的答案");
     }
 
     /** 作答摔了也要把提问留住：不落库的话下一轮不知道这句问过 */
@@ -305,9 +308,7 @@ class ChatTurnRunnerTest {
 
         assertThatThrownBy(() -> turn("看看行情")).isInstanceOf(RuntimeException.class);
 
-        ArgumentCaptor<List<Message>> saved = ArgumentCaptor.captor();
-        verify(contextStore).save(eq(SESSION), eq(1L), saved.capture());
-        assertThat(savedText(saved)).contains("看看行情");
+        assertThat(savedText()).contains("看看行情");
     }
 
     /** 没按钮意图时最后一条就是输出语言硬收尾，一个字不多 */
@@ -352,14 +353,13 @@ class ChatTurnRunnerTest {
      */
     @Test
     void 内容相同的消息不再被静默丢弃() {
-        when(contextStore.load(SESSION)).thenReturn(List.of(new UserMessage("同一句话")));
+        when(contextStore.load(SESSION)).thenReturn(
+                new ChatContextStore.State(List.of(new UserMessage("同一句话")), null, null));
         mainAnswers("这是答案");
 
         turn("同一句话");
 
-        ArgumentCaptor<List<Message>> saved = ArgumentCaptor.captor();
-        verify(contextStore).save(eq(SESSION), eq(1L), saved.capture());
-        assertThat(saved.getValue()).filteredOn(m -> "同一句话".equals(m.getText())).hasSize(2);
+        assertThat(saved()).filteredOn(m -> "同一句话".equals(m.getText())).hasSize(2);
     }
 
     /** 一轮跑完必须落库，否则下一轮从零起跑（用户表现为 AI 失忆） */

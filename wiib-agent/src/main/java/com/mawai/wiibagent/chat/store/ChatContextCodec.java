@@ -29,13 +29,14 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 读认两种：老行是 Java 对象流的壳（{@code AC ED} 开头，块数据里一个 int 长度 + JSON 的 UTF-8 字节）包着 JSON，
  * 新行整段就是裸 JSON。写只出裸 JSON。一个会话一行、每轮结束整体覆盖，所以老行下一轮写回去自然就成新格式了。
  * <p>
- * JSON 形状（{@code @type} 认消息类型）：
+ * JSON 形状（{@code @type} 认消息类型；contextTokens、prefix 见 {@link ChatContextStore.State}，没有就不写）：
  * <pre>
  * {"messages":[
  *   {"@type":"USER","text":"…","media":[{…,"mimetype":"image/png","data":"&lt;base64&gt;"}],"metadata":{…}},
  *   {"@type":"ASSISTANT","text":"…","toolCalls":[{"id":"…","type":"function","name":"…","arguments":"{…}"}],"metadata":{…}},
  *   {"@type":"TOOL","responses":[{"id":"…","name":"…","responseData":"…"}],"metadata":{…}},
- *   {"@type":"SYSTEM","text":"…","metadata":{…}}]}
+ *   {"@type":"SYSTEM","text":"…","metadata":{…}}],
+ *  "contextTokens":123456,"prefix":"…"}
  * </pre>
  * metadata 恒写整个 map（里头的 messageType 枚举写成名字串）；media 只在非空时写，toolCalls 恒写；
  * 值为 null 的键不写（text 为 null 就没有 text 键，老行里写的是 {@code "text":null}，读起来一样）。
@@ -56,35 +57,53 @@ public final class ChatContextCodec {
     private ChatContextCodec() {
     }
 
-    /** 写成裸 JSON 的 UTF-8 字节 */
+    /** 只有消息：写成裸 JSON 的 UTF-8 字节 */
     public static byte[] write(List<Message> messages) {
+        return write(new ChatContextStore.State(messages, null, null));
+    }
+
+    public static byte[] write(ChatContextStore.State state) {
         ArrayNode list = MAPPER.createArrayNode();
-        for (Message message : messages) {
+        for (Message message : state.messages()) {
             list.add(toJson(message));
         }
-        return MAPPER.writeValueAsBytes(MAPPER.createObjectNode().set("messages", list));
+        ObjectNode root = MAPPER.createObjectNode().set("messages", list);
+        if (state.contextTokens() != null) {
+            root.put("contextTokens", state.contextTokens());
+        }
+        if (state.prefix() != null) {
+            root.put("prefix", state.prefix());
+        }
+        return MAPPER.writeValueAsBytes(root);
+    }
+
+    /** 只要消息 */
+    public static List<Message> read(byte[] bytes) throws IOException {
+        return readState(bytes).messages();
     }
 
     /** 读：AC ED 开头的先从对象流壳里剥出 JSON，否则整段就是 JSON */
-    public static List<Message> read(byte[] bytes) throws IOException {
+    public static ChatContextStore.State readState(byte[] bytes) throws IOException {
         if (bytes == null || bytes.length == 0) {
-            return List.of();
+            return ChatContextStore.State.EMPTY;
         }
         String json = bytes.length >= 2 && bytes[0] == (byte) 0xAC && bytes[1] == (byte) 0xED
                 ? unwrap(bytes)
                 : new String(bytes, StandardCharsets.UTF_8);
         if (json.isBlank()) {
-            return List.of();
+            return ChatContextStore.State.EMPTY;
         }
-        JsonNode list = MAPPER.readTree(json).get("messages");
-        if (list == null || list.isNull()) {
-            return List.of();
+        JsonNode root = MAPPER.readTree(json);
+        JsonNode list = root.get("messages");
+        List<Message> messages = new ArrayList<>(list == null ? 0 : list.size());
+        if (list != null) {
+            for (JsonNode item : list) {
+                messages.add(fromJson(item));
+            }
         }
-        List<Message> messages = new ArrayList<>(list.size());
-        for (JsonNode item : list) {
-            messages.add(fromJson(item));
-        }
-        return messages;
+        JsonNode tokens = root.get("contextTokens");
+        return new ChatContextStore.State(messages, tokens == null ? null : tokens.asLong(),
+                root.path("prefix").asString(null));
     }
 
     /** 对象流壳里只有一段块数据：int 长度 + UTF-8 字节，没有任何对象，不会触发类加载 */
