@@ -21,10 +21,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -95,13 +93,7 @@ public class LlmClient {
      */
     private static ChatOptions withWebSearch(ChatOptions base, ChatModel model) {
         ChatOptions source = base != null ? base : model.getOptions();
-        if (!(source instanceof ToolCallingChatOptions tool)) {
-            return base;    // openai 协议之外的裸 options：捎不了也不该在这炸，端点本就搜不了
-        }
-        Map<String, Object> context = tool.getToolContext() == null
-                ? new HashMap<>() : new HashMap<>(tool.getToolContext());
-        context.put(SseChatModel.WEB_SEARCH_KEY, true);
-        return tool.mutate().toolContext(context).build();
+        return ((ToolCallingChatOptions) source).mutate().toolContext(SseChatModel.WEB_SEARCH_KEY, true).build();
     }
 
     /** 挂的工具，{@link ReactLoop} 按 tool_call 的名字在这份表里找 callback */

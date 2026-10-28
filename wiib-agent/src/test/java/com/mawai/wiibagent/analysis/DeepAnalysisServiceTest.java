@@ -156,7 +156,7 @@ class DeepAnalysisServiceTest {
         assertThat(analysis).isNotNull();
         assertThat(analysis.getNarrative()).contains("下行脆弱");
 
-        // 三次都是一问一答、之后没人复用：都带着不写提示缓存的标记
+        // 三次都带不写提示缓存的标记
         ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
         verify(model, times(3)).call(prompts.capture());
         assertThat(prompts.getAllValues()).allSatisfy(p -> assertThat(

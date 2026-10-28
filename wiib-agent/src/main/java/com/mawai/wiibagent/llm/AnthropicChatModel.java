@@ -42,7 +42,7 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * <p>
  * 提示缓存两个断点：system 首块挂 1h（tools 排在 system 前面，一个断点把两者一起盖住；
  * 每条 SystemMessage 各成一块，首块是 agent 基础提示词，后面的是老会话历史里存着的旧摘要，各会话不同，不能跟首块粘一起），
- * 末条消息末块挂默认 5 分钟、随对话前移（见 {@link #markCacheTail}）。
+ * 末条消息末块挂默认 5 分钟、随对话前移（见 {@link #markCacheTail}）。捎了 {@link SseChatModel#NO_CACHE_KEY} 的请求两个断点都不打。
  * 收尾只认 end_turn / stop_sequence / tool_use 是完整回答，refusal / max_tokens 等显式失败（见 {@link #abnormalStop}）。
  */
 public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
@@ -113,7 +113,10 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
 
         List<String> toolNames = new ArrayList<>();
         ArrayNode tools = MAPPER.createArrayNode();
+        // 捎了 NO_CACHE_KEY 才不打缓存断点
+        boolean cache = true;
         if (options instanceof ToolCallingChatOptions toolOptions) {
+            cache = !flag(toolOptions, NO_CACHE_KEY);
             for (ToolDefinition def : toolCallingManager.resolveToolDefinitions(toolOptions)) {
                 tools.add(MAPPER.createObjectNode()
                         .put("name", def.name())
@@ -149,8 +152,6 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
                 }
             }
         }
-        boolean cache = !(options instanceof ToolCallingChatOptions tool && tool.getToolContext() != null
-                && Boolean.TRUE.equals(tool.getToolContext().get(NO_CACHE_KEY)));
         if (!system.isEmpty()) {
             // 1h 只挂首块：隔 15 分钟 / 1 小时再醒的 trader 也能命中同一份 system + tools；
             // 后面的块是老会话的旧摘要，各会话不同，跟首块粘一起基础提示词的缓存就没法跨会话共用

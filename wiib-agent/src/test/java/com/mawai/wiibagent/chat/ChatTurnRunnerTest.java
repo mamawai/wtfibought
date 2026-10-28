@@ -26,6 +26,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import reactor.core.publisher.Flux;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -105,6 +106,13 @@ class ChatTurnRunnerTest {
                     ? responseOf(toolCall(tool, args))
                     : responseOf(new AssistantMessage(text)));
         });
+    }
+
+    /** 主 agent 跑在 Antigravity 来源的端点上，先调 web_search 再收尾；web_search 那次搜索从模型 options 派生，要桩上 */
+    private void mainWebSearchesThenAnswers() {
+        when(deep.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
+        llmConfig = new ChatEndpoints(1L, ChatTestEndpoints.antigravity("gemini-4-argon-high"), null);
+        mainCallsThenAnswers("web_search", "{\"query\":\"BTC ETF\"}", "这是答案");
     }
 
     private ChatAgentFactory.Leaves leaves() {
@@ -246,8 +254,7 @@ class ChatTurnRunnerTest {
      */
     @Test
     void web_search的调用与回执画成搜索事件() {
-        llmConfig = new ChatEndpoints(1L, ChatTestEndpoints.antigravity("gemini-4-argon-high"), null);
-        mainCallsThenAnswers("web_search", "{\"query\":\"BTC ETF\"}", "这是答案");
+        mainWebSearchesThenAnswers();
         when(deep.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of(new Generation(new AssistantMessage("据报道"),
                 ChatGenerationMetadata.builder().finishReason("STOP").metadata(SearchEvent.KEY, List.of(SearchEvent.searched(
                         "BTC ETF flows", List.of(new SearchEvent.Source("https://a.com/1", "a.com"))))).build()))));
@@ -264,8 +271,7 @@ class ChatTurnRunnerTest {
     /** web_search 没搜成（这里是上游没执行搜索，工具回 available=false）：那条画成搜索失败，不带来源 */
     @Test
     void web_search没搜成画成搜索失败() {
-        llmConfig = new ChatEndpoints(1L, ChatTestEndpoints.antigravity("gemini-4-argon-high"), null);
-        mainCallsThenAnswers("web_search", "{\"query\":\"BTC ETF\"}", "这是答案");
+        mainWebSearchesThenAnswers();
         when(deep.call(any(Prompt.class))).thenReturn(responseOf(new AssistantMessage("凭记忆答的")));
 
         turn("BTC ETF 最近怎么样");

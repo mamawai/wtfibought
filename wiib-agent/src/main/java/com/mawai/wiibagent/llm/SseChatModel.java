@@ -377,8 +377,12 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
 
     /** 服务端搜索双闸门：端点声明支持 ∧ 本次调用捎了许可 */
     protected boolean searchAllowed(ToolCallingChatOptions options) {
-        return webSearch && options.getToolContext() != null
-                && Boolean.TRUE.equals(options.getToolContext().get(WEB_SEARCH_KEY));
+        return webSearch && flag(options, WEB_SEARCH_KEY);
+    }
+
+    /** 本次调用的 toolContext 里捎了这个标记（Boolean.TRUE） */
+    protected static boolean flag(ToolCallingChatOptions options, String key) {
+        return options.getToolContext() != null && Boolean.TRUE.equals(options.getToolContext().get(key));
     }
 
     /**
