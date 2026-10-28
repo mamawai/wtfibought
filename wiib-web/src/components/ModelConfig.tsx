@@ -11,7 +11,7 @@ import i18n from '../i18n';
 import { cn } from '../lib/utils';
 import type { LlmBindings, LlmEndpointView, LlmPurpose, TraderOwnerView, WorkbenchPrefs } from '../types';
 
-// webSearch 默认勾上：能声明搜索的协议就声明，上游不支持会自动退回不搜；openai 协议后端归一 false
+// webSearch 默认勾上：能声明搜索的协议就声明，保存时探测，上游不支持会拦下请用户取消勾选；openai 协议后端归一 false
 const EMPTY: LlmEndpointValue = { name: '', apiProtocol: 'openai', baseUrl: '', model: '', reasoningEffort: '', apiKey: '', webSearch: true };
 
 /** 一条端点被谁用着：主标签 + 是否经"默认"落到它头上 */

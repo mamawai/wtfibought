@@ -111,7 +111,7 @@ public class LlmEndpointController {
         return r.error() == null ? Result.ok(r.models()) : Result.fail(r.error());
     }
 
-    /** 探测独立成端点而不是塞进 save：保存不该被端点抖动挡住，也不该每次都烧一次 token */
+    /** 测连通，勾了联网搜索的再测搜索；保存时只有勾了联网搜索才会探，见 LlmEndpointService */
     @PostMapping("/test")
     @Operation(summary = "测试端点连通性（id 非空且 apiKey 传空=用该端点已存 key）")
     public Result<Void> test(@CurrentUserId long userId,
