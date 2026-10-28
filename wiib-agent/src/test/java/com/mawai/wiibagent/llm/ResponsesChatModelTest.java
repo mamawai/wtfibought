@@ -241,8 +241,8 @@ class ResponsesChatModelTest {
     }
 
     /**
-     * 请求体整串钉死：温度/档位、store/stream、instructions 拼接、已结束轮次按文本+function_call 拼、
-     * 工具循环里的原始 item 原样回放（密文、小数、null 字段）、function 工具带 schema 小数、搜索声明、不传 tool_choice、缓存分组键、转义与 emoji
+     * 请求体整串钉死：温度/档位、store/stream、instructions 拼接、没原始 item 的按文本+function_call 拼、
+     * 有原始 item 的原样回放（密文、小数、null 字段）、function 工具带 schema 小数、搜索声明、不传 tool_choice、缓存分组键、转义与 emoji
      */
     @Test
     void 请求侧_请求体整串金标准() {
@@ -307,7 +307,7 @@ class ResponsesChatModelTest {
     }
 
     @Test
-    void 阻塞路径_工具帧_收齐并标TOOL_CALLS_原始item只在工具循环里回放() {
+    void 阻塞路径_工具帧_收齐并标TOOL_CALLS_原始item一律原样回放() {
         // 有的渠道 completed 里 output 不全，工具调用只能从 output_item.done 收——
         // 帧合并必须靠工具帧而不是 completed 的 output（cpa 对 grok 专门打过 output 补丁，上游真有此形态）
         events = new String[]{
@@ -332,7 +332,7 @@ class ResponsesChatModelTest {
         // 原始 item 挂在消息 metadata 上，阻塞路径的帧合并不能把它丢了
         assertThat(assistant.getMetadata()).containsKey(ResponsesChatModel.ITEMS_KEY);
 
-        // 回传工具结果：工具循环里的 assistant 按原始 item 回放，reasoning 带着 encrypted_content 原样回去
+        // 回传工具结果：assistant 按原始 item 回放，reasoning 带着 encrypted_content 原样回去
         events = PLAIN_COMPLETED;
         ToolResponseMessage toolResult = ToolResponseMessage.builder().responses(List.of(
                 new ToolResponseMessage.ToolResponse("c1", "get_account", "{\"equity\":100}"))).build();
@@ -344,12 +344,14 @@ class ResponsesChatModelTest {
         assertThat(input.get(2).path("id").asString(null)).isEqualTo("fc_1");
         assertThat(input.get(3).path("call_id").asString(null)).isEqualTo("c1");
 
-        // 已结束的轮次（后面是新提问）：按 function_call 现拼，reasoning 不带
-        model().call(new Prompt(List.of(new UserMessage("查账户"), assistant, new UserMessage("再问"))));
+        // 这一轮结束、后面来了新提问：照样原样回放；没有原始 item 的那条（中断时补的）按文本拼
+        model().call(new Prompt(List.of(new UserMessage("查账户"), assistant, toolResult,
+                new AssistantMessage("一百"), new UserMessage("再问"))));
         input = MAPPER.readTree(lastRequestBody).get("input");
         assertThat(input).extracting(i -> i.path("type").asString(null))
-                .containsExactly("message", "function_call", "message");
-        assertThat(input.get(1).has("id")).isFalse();
+                .containsExactly("message", "reasoning", "function_call", "function_call_output", "message", "message");
+        assertThat(input.get(1).path("encrypted_content").asString(null)).isEqualTo("enc-1");
+        assertThat(input.get(4).path("role").asString(null)).isEqualTo("assistant");
     }
 
     @Test

@@ -262,7 +262,7 @@ class AnthropicChatModelTest {
 
     /**
      * 请求体整串钉死：温度/档位、工具定义与 schema 里的小数、搜索声明、系统块与断点、
-     * 没原始块的按文本+tool_use 拼、工具循环里的原始块原样回放（签名、密文、小数、null 字段）、转义与 emoji
+     * 没原始块的按文本+tool_use 拼、有原始块的原样回放（签名、密文、小数、null 字段）、转义与 emoji
      */
     @Test
     void 请求侧_请求体整串金标准() {
@@ -410,38 +410,41 @@ class AnthropicChatModelTest {
                 .isEqualTo("tool_result");
     }
 
-    /** 原始块只在工具循环里回放（后面紧跟工具回执）；已结束的轮次按文本拼，思考块/搜索密文/引用都不带 */
+    /**
+     * 原始块不分轮次一律原样回放。形状照真跑踩过的：搜索调用和本地工具同一次回复发出（first），
+     * 搜索结果到下一次调用才回来（second）——这一轮结束后两条也都原样回去，调用和结果配得上对
+     */
     @Test
-    void 请求侧_原始块只在工具循环里回放() {
+    void 请求侧_原始块一律原样回放() {
         events = PLAIN;
-        String blocks = """
-                [{"type":"thinking","thinking":"先查","signature":"sig-1"},
-                 {"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"btc"}},
-                 {"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[
-                     {"type":"web_search_result","url":"https://a.com/x","title":"A","encrypted_content":"enc"}]},
-                 {"type":"text","text":"答","citations":[{"type":"web_search_result_location","url":"https://a.com/x"}]},
-                 {"type":"tool_use","id":"toolu_1","name":"get_price","input":{"symbol":"BTC"}}]""";
-        AssistantMessage assistant = AssistantMessage.builder().content("答").toolCalls(List.of(
+        AssistantMessage first = AssistantMessage.builder().content("").toolCalls(List.of(
                         new AssistantMessage.ToolCall("toolu_1", "function", "get_price", "{\"symbol\":\"BTC\"}")))
-                .properties(Map.of(AnthropicChatModel.BLOCKS_KEY, blocks)).build();
-        AnthropicChatModel m = model(null, true, mock(ToolCallingManager.class));
-
-        // 已结束的轮次：后面是新提问
-        m.call(new Prompt(List.of(new UserMessage("q"), assistant, new UserMessage("再问")), allowWebSearch(m)));
-        JsonNode ended = body().get("messages").get(1).get("content");
-        assertThat(ended).extracting(b -> b.path("type").asString(null)).containsExactly("text", "tool_use");
-        assertThat(ended.get(0).has("citations")).isFalse();
-
-        // 工具循环里：后面紧跟工具回执
+                .properties(Map.of(AnthropicChatModel.BLOCKS_KEY, """
+                        [{"type":"thinking","thinking":"先查","signature":"sig-1"},
+                         {"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"btc"}},
+                         {"type":"tool_use","id":"toolu_1","name":"get_price","input":{"symbol":"BTC"}}]""")).build();
         ToolResponseMessage toolResult = ToolResponseMessage.builder().responses(List.of(
                 new ToolResponseMessage.ToolResponse("toolu_1", "get_price", "60000"))).build();
-        m.call(new Prompt(List.of(new UserMessage("q"), assistant, toolResult), allowWebSearch(m)));
-        JsonNode inLoop = body().get("messages").get(1).get("content");
-        assertThat(inLoop).extracting(b -> b.path("type").asString(null))
-                .containsExactly("thinking", "server_tool_use", "web_search_tool_result", "text", "tool_use");
-        assertThat(inLoop.get(0).path("signature").asString(null)).isEqualTo("sig-1");
-        assertThat(inLoop.get(2).get("content").get(0).path("encrypted_content").asString(null))
-                .isEqualTo("enc");
+        AssistantMessage second = AssistantMessage.builder().content("答")
+                .properties(Map.of(AnthropicChatModel.BLOCKS_KEY, """
+                        [{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[
+                             {"type":"web_search_result","url":"https://a.com/x","title":"A","encrypted_content":"enc"}]},
+                         {"type":"text","text":"答","citations":[{"type":"web_search_result_location","url":"https://a.com/x"}]}]""")).build();
+        AnthropicChatModel m = model(null, true, mock(ToolCallingManager.class));
+
+        m.call(new Prompt(List.of(new UserMessage("q"), first, toolResult, second, new UserMessage("再问")),
+                allowWebSearch(m)));
+        JsonNode messages = body().get("messages");
+        JsonNode firstBlocks = messages.get(1).get("content");
+        assertThat(firstBlocks).extracting(b -> b.path("type").asString(null))
+                .containsExactly("thinking", "server_tool_use", "tool_use");
+        assertThat(firstBlocks.get(0).path("signature").asString(null)).isEqualTo("sig-1");
+        JsonNode secondBlocks = messages.get(3).get("content");
+        assertThat(secondBlocks).extracting(b -> b.path("type").asString(null))
+                .containsExactly("web_search_tool_result", "text");
+        assertThat(secondBlocks.get(0).path("tool_use_id").asString(null)).isEqualTo("srvtoolu_1");
+        assertThat(secondBlocks.get(0).get("content").get(0).path("encrypted_content").asString(null)).isEqualTo("enc");
+        assertThat(secondBlocks.get(1).has("citations")).isTrue();
     }
 
     // ========== 搜索过程帧 ==========

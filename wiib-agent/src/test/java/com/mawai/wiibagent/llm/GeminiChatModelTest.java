@@ -235,7 +235,7 @@ class GeminiChatModelTest {
 
     /**
      * 请求体整串钉死：温度/档位、系统指令拼接、同角色合并、合成 id 不回传真实 id 回传、回执是对象直接用否则包 output、
-     * 工具循环里的原始 parts 原样回放（签名、小数、null 字段）、function 声明带 schema 小数、搜索声明、转义与 emoji
+     * 有原始 parts 的原样回放（签名、小数、null 字段）、function 声明带 schema 小数、搜索声明、转义与 emoji
      */
     @Test
     void 请求侧_请求体整串金标准() {
@@ -329,16 +329,17 @@ class GeminiChatModelTest {
         assertThat(fr.path("name").asString(null)).isEqualTo("get_price");
         assertThat(fr.has("id")).isFalse();
 
-        // 已结束的轮次（后面是新提问）不回放原始 parts：签名不带，按文本 + functionCall 拼
+        // 这一轮结束、后面来了新提问：照样原样回放，最终答案那段文本上的签名也带着
         m.call(new Prompt(List.of(new UserMessage("BTC 多少钱"), assistant, toolResult,
                 AssistantMessage.builder().content("六万").properties(Map.of(GeminiChatModel.PARTS_KEY,
                         "[{\"text\":\"六万\",\"thoughtSignature\":\"sig-z\"}]")).build(),
                 new UserMessage("再问"))));
+        assertThat(body().get("contents").get(1).get("parts").get(1).path("thoughtSignature").asString(null))
+                .isEqualTo("sig-y");
         JsonNode ended = body().get("contents").get(3);
         assertThat(ended.path("role").asString(null)).isEqualTo("model");
         assertThat(ended.get("parts")).hasSize(1);
-        assertThat(ended.get("parts").get(0).path("text").asString(null)).isEqualTo("六万");
-        assertThat(ended.get("parts").get(0).has("thoughtSignature")).isFalse();
+        assertThat(ended.get("parts").get(0).path("thoughtSignature").asString(null)).isEqualTo("sig-z");
     }
 
     // ========== 搜索过程帧 ==========

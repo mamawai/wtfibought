@@ -39,9 +39,10 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 流式：正文只认 output_text.delta，工具调用整只收在 output_item.done，response.completed 发收尾帧；
  * 不发增量事件的网关，正文、工具与原始 item 都从 completed 的 output 兜底。
  * <p>
- * 原始 item 回放：本轮 output 的 item 数组（reasoning / message / function_call…）挂在收尾帧消息的 {@link #ITEMS_KEY} 上，
- * 只有还在工具循环里的那条（后面紧跟工具回执）原样回放——store=false 下 reasoning 的 encrypted_content 得原样回去，
- * 模型才接得上上一步的推理；其余按文本 + function_call 拼（见 {@link #inToolLoop}）。
+ * 原始 item 回放：每条 assistant 的 output item 数组（reasoning / message / function_call…）挂在收尾帧消息的
+ * {@link #ITEMS_KEY} 上，之后每次请求都原样回放。官方要求自己管理历史时每个 output item 都原样保留、整段重放
+ * （store=false 下 reasoning 的 encrypted_content 得原样回去，模型才接得上推理），以前轮次的推理用不用由上游自己判断。
+ * 没有原始 item 的（别的协议留下的、中断时补的那条）按文本 + function_call 拼。
  */
 public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
 
@@ -89,9 +90,7 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
         StringBuilder instructions = new StringBuilder();
         String firstUser = null;
         ArrayNode input = MAPPER.createArrayNode();
-        List<Message> history = prompt.getInstructions();
-        for (int i = 0; i < history.size(); i++) {
-            Message message = history.get(i);
+        for (Message message : prompt.getInstructions()) {
             switch (message.getMessageType()) {
                 case SYSTEM -> {
                     if (!instructions.isEmpty()) {
@@ -105,7 +104,7 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
                     }
                     input.add(messageItem("user", "input_text", message.getText()));
                 }
-                case ASSISTANT -> input.addAll(assistantItems((AssistantMessage) message, inToolLoop(history, i)));
+                case ASSISTANT -> input.addAll(assistantItems((AssistantMessage) message));
                 case TOOL -> {
                     for (ToolResponseMessage.ToolResponse tr : ((ToolResponseMessage) message).getResponses()) {
                         input.add(MAPPER.createObjectNode()
@@ -175,13 +174,10 @@ public class ResponsesChatModel extends SseChatModel<ResponsesChatModel.State> {
                         .put("text", text == null ? "" : text)));
     }
 
-    /**
-     * assistant 消息 → input item。工具循环里的那条带 {@link #ITEMS_KEY} 就原样回放；
-     * 其余按文本 + function_call 拼（已结束的轮次、别的协议留下的历史、压缩产物）。
-     */
-    private List<ObjectNode> assistantItems(AssistantMessage assistant, boolean replayRaw) {
+    /** assistant 消息 → input item：带 {@link #ITEMS_KEY} 的原样回放，没有的按文本 + function_call 拼 */
+    private List<ObjectNode> assistantItems(AssistantMessage assistant) {
         List<ObjectNode> items = new ArrayList<>();
-        if (replayRaw && assistant.getMetadata().get(ITEMS_KEY) instanceof String raw) {
+        if (assistant.getMetadata().get(ITEMS_KEY) instanceof String raw) {
             for (JsonNode item : MAPPER.readValue(raw, ArrayNode.class)) {
                 items.add((ObjectNode) item);
             }

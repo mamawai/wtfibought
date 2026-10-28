@@ -34,9 +34,10 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 思考档位：留空不传；none → {@code thinking:{type:disabled}}；其余 → {@code thinking:{type:adaptive}} +
  * {@code output_config.effort}。服务端搜索声明 {@code {type:web_search_20250305,name:web_search}}。
  * <p>
- * 内容块原样回传：本轮 assistant 的原始 content 块数组挂在收尾帧消息的 {@link #BLOCKS_KEY} 上，
- * 只有还在工具循环里的那条（后面紧跟工具回执）原样回放这些块（思考块 signature、搜索结果 encrypted_content
- * 都要原样回去），其余按文本 + tool_use 拼（见 {@link #inToolLoop}）。
+ * 内容块原样回传：每条 assistant 的原始 content 块数组挂在收尾帧消息的 {@link #BLOCKS_KEY} 上，之后每次请求都原样回放。
+ * 官方要求对话只往后追加：思考块 signature、搜索调用与结果的 encrypted_content、引用都得原样回去，
+ * 前面删改一处，它后面的思考块全部失效；一次搜索的调用和结果还可能分在前后两条回复里，拆开回放直接 400。
+ * 没有原始块的（别的协议留下的、中断时补的那条）按文本 + tool_use 拼。
  * 同角色连续消息合成一条多块消息（Messages 要求 user/assistant 交替）。
  * <p>
  * 提示缓存两个断点：system 首块挂 1h（tools 排在 system 前面，一个断点把两者一起盖住；
@@ -131,14 +132,11 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
 
         ArrayNode system = MAPPER.createArrayNode();
         ArrayNode messages = MAPPER.createArrayNode();
-        List<Message> history = prompt.getInstructions();
-        for (int i = 0; i < history.size(); i++) {
-            Message message = history.get(i);
+        for (Message message : prompt.getInstructions()) {
             switch (message.getMessageType()) {
                 case SYSTEM -> system.add(textBlock(message.getText()));
                 case USER -> append(messages, "user", List.of(textBlock(message.getText())));
-                case ASSISTANT -> append(messages, "assistant",
-                        assistantBlocks((AssistantMessage) message, inToolLoop(history, i)));
+                case ASSISTANT -> append(messages, "assistant", assistantBlocks((AssistantMessage) message));
                 case TOOL -> {
                     List<ObjectNode> blocks = new ArrayList<>();
                     for (ToolResponseMessage.ToolResponse tr : ((ToolResponseMessage) message).getResponses()) {
@@ -195,13 +193,10 @@ public class AnthropicChatModel extends SseChatModel<AnthropicChatModel.State> {
         return MAPPER.createObjectNode().put("type", "text").put("text", text == null ? "" : text);
     }
 
-    /**
-     * assistant 消息 → 内容块。工具循环里的那条带 {@link #BLOCKS_KEY} 就原样回放；
-     * 其余按文本 + tool_use 拼（已结束的轮次、别的协议留下的历史、压缩产物）。
-     */
-    private static List<ObjectNode> assistantBlocks(AssistantMessage assistant, boolean replayRaw) {
+    /** assistant 消息 → 内容块：带 {@link #BLOCKS_KEY} 的原样回放，没有的按文本 + tool_use 拼 */
+    private static List<ObjectNode> assistantBlocks(AssistantMessage assistant) {
         List<ObjectNode> blocks = new ArrayList<>();
-        if (replayRaw && assistant.getMetadata().get(BLOCKS_KEY) instanceof String raw) {
+        if (assistant.getMetadata().get(BLOCKS_KEY) instanceof String raw) {
             for (JsonNode block : MAPPER.readValue(raw, ArrayNode.class)) {
                 blocks.add((ObjectNode) block);
             }

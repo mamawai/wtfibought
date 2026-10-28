@@ -4,8 +4,6 @@ import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.model.ChatModel;
@@ -334,15 +332,6 @@ public abstract class SseChatModel<S extends SseChatModel.StreamState> implement
 
     protected ChatResponseMetadata.Builder metadata() {
         return ChatResponseMetadata.builder().model(model);
-    }
-
-    /**
-     * 第 i 条 assistant 是否还在工具循环里（后面紧跟工具回执）。
-     * 原始内容块（思考块 signature、搜索结果密文）只在这条上回放，已结束的轮次按文本 + 工具调用拼：
-     * 换模型后旧 signature 会被拒，密文也只会把请求体越滚越大
-     */
-    protected static boolean inToolLoop(List<Message> history, int i) {
-        return i + 1 < history.size() && history.get(i + 1).getMessageType() == MessageType.TOOL;
     }
 
     /** 请求级 model 覆盖端点配置（一般就是端点的） */

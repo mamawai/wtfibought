@@ -33,9 +33,9 @@ import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
  * 思考档位：留空不传；none → {@code thinkingConfig.thinkingBudget=0}；其余 → {@code thinkingConfig.thinkingLevel}（大写枚举）。
  * 服务端搜索声明 {@code {google_search:{}}}；搜索只有完成态（groundingMetadata），没有"开始"信号。
  * <p>
- * parts 原样回传：本轮 model 的原始 parts 数组挂在收尾帧消息的 {@link #PARTS_KEY} 上，只有还在工具循环里的那条
- * （后面紧跟工具回执）原样回放（thoughtSignature、functionCall 自带的 id 都在里面），其余按文本 + functionCall 拼
- * （见 {@link #inToolLoop}）。
+ * parts 原样回传：每条 model 消息的原始 parts 数组挂在收尾帧消息的 {@link #PARTS_KEY} 上，之后每次请求都原样回放
+ * （thoughtSignature、functionCall 自带的 id 都在里面）。官方要求签名原样回传、不删不改，换模型也照样回传；
+ * 签名可能挂在 functionCall 上，也可能挂在最终答案那段文本上。没有原始 parts 的按文本 + functionCall 拼。
  * functionCall 不带 id 时自己合成一个（{@link #SYNTHETIC_ID_PREFIX} + 本次订阅的随机段 + 序号 + 名字，跨轮不重），
  * 回传 functionResponse 认出合成 id 就不带 id，按名字配。
  * 同角色连续消息合成一条多 part 消息（多轮要求 user/model 交替）。
@@ -103,9 +103,7 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
 
         StringBuilder system = new StringBuilder();
         ArrayNode contents = MAPPER.createArrayNode();
-        List<Message> history = prompt.getInstructions();
-        for (int i = 0; i < history.size(); i++) {
-            Message message = history.get(i);
+        for (Message message : prompt.getInstructions()) {
             switch (message.getMessageType()) {
                 case SYSTEM -> {
                     if (!system.isEmpty()) {
@@ -114,8 +112,7 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
                     system.append(message.getText());
                 }
                 case USER -> append(contents, "user", List.of(textPart(message.getText())));
-                case ASSISTANT -> append(contents, "model",
-                        assistantParts((AssistantMessage) message, inToolLoop(history, i)));
+                case ASSISTANT -> append(contents, "model", assistantParts((AssistantMessage) message));
                 case TOOL -> {
                     List<ObjectNode> parts = new ArrayList<>();
                     for (ToolResponseMessage.ToolResponse tr : ((ToolResponseMessage) message).getResponses()) {
@@ -179,10 +176,10 @@ public class GeminiChatModel extends SseChatModel<GeminiChatModel.State> {
         return MAPPER.createObjectNode().put("text", text == null ? "" : text);
     }
 
-    /** 工具循环里的那条带 {@link #PARTS_KEY} 就原样回放；其余按文本 + functionCall 拼（合成 id 不回传） */
-    private static List<ObjectNode> assistantParts(AssistantMessage assistant, boolean replayRaw) {
+    /** 带 {@link #PARTS_KEY} 的原样回放；没有的按文本 + functionCall 拼（合成 id 不回传） */
+    private static List<ObjectNode> assistantParts(AssistantMessage assistant) {
         List<ObjectNode> parts = new ArrayList<>();
-        if (replayRaw && assistant.getMetadata().get(PARTS_KEY) instanceof String raw) {
+        if (assistant.getMetadata().get(PARTS_KEY) instanceof String raw) {
             for (JsonNode part : MAPPER.readValue(raw, ArrayNode.class)) {
                 parts.add((ObjectNode) part);
             }
