@@ -47,11 +47,19 @@ public class LlmEndpointService {
     /** 档位列宽 VARCHAR(16)，超了留给 SQL 报错不如这里说人话 */
     private static final int MAX_EFFORT_LEN = 16;
 
+    /** 上下文窗口（token）：默认 256K；下限 128K（不少模型就是 128K / 200K），上限 1M */
+    static final int DEFAULT_CONTEXT_WINDOW = 256_000;
+    static final int MIN_CONTEXT_WINDOW = 128_000;
+    static final int MAX_CONTEXT_WINDOW = 1_000_000;
+
     private static final Set<String> PURPOSES = Set.of(UserLlmBinding.CHAT_MAIN, UserLlmBinding.CHAT_LIGHT, UserLlmBinding.TRADER);
 
-    /** apiKey 传空=沿用已存的 key（只在 update/探测已有端点时合法）；webSearch 只在能声明服务端搜索的协议下入库 */
+    /**
+     * apiKey 传空=沿用已存的 key（只在 update/探测已有端点时合法）；webSearch 只在能声明服务端搜索的协议下入库；
+     * contextWindow 传空=默认 256K
+     */
     public record SaveReq(String name, String apiProtocol, String baseUrl, String model,
-                          String reasoningEffort, String apiKey, Boolean webSearch) {
+                          String reasoningEffort, String apiKey, Boolean webSearch, Integer contextWindow) {
     }
 
     public record ListModelsResult(String error, List<String> models) {
@@ -390,6 +398,7 @@ public class LlmEndpointService {
         // 归一而非报错：协议声明不了服务端搜索的（chat-completions），勾了也不把兑现不了的承诺存进库
         row.setWebSearch(Boolean.TRUE.equals(req.webSearch())
                 && AiProtocols.supportsServerSearch(row.getApiProtocol()));
+        row.setContextWindow(req.contextWindow() == null ? DEFAULT_CONTEXT_WINDOW : req.contextWindow());
         row.setApiKeyEnc(keepKeyEnc != null ? keepKeyEnc : apiKeyCrypto.encrypt(req.apiKey().trim()));
         return row;
     }
@@ -419,6 +428,11 @@ public class LlmEndpointService {
         String effort = normalizeEffort(req.reasoningEffort());
         if (effort != null && effort.length() > MAX_EFFORT_LEN) {
             return messages.get("agent.endpoint.effortTooLong", Map.of("max", MAX_EFFORT_LEN));
+        }
+        Integer window = req.contextWindow();
+        if (window != null && (window < MIN_CONTEXT_WINDOW || window > MAX_CONTEXT_WINDOW)) {
+            return messages.get("agent.endpoint.contextWindowInvalid",
+                    Map.of("min", MIN_CONTEXT_WINDOW / 1000, "max", MAX_CONTEXT_WINDOW / 1000));
         }
         if (requireKey && (req.apiKey() == null || req.apiKey().isBlank())) {
             return messages.get("agent.endpoint.apiKeyRequired");

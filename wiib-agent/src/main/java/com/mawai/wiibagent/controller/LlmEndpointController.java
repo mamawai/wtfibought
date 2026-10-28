@@ -32,16 +32,21 @@ public class LlmEndpointController {
 
     private final LlmEndpointService service;
 
-    /** key 只回尾 4 位 */
+    /** key 只回尾 4 位；contextWindow 单位 token */
     public record EndpointView(long id, String name, String apiProtocol, String baseUrl, String model,
-                               String reasoningEffort, boolean webSearch, String apiKeyTail, boolean isDefault) {
+                               String reasoningEffort, boolean webSearch, int contextWindow, String apiKeyTail,
+                               boolean isDefault) {
     }
 
-    /** reasoningEffort 留空=不传给上游走模型默认；apiKey 更新时留空=不换；webSearch 只在能声明服务端搜索的协议下入库 */
+    /**
+     * reasoningEffort 留空=不传给上游走模型默认；apiKey 更新时留空=不换；webSearch 只在能声明服务端搜索的协议下入库；
+     * contextWindow 单位 token，留空=默认 256K
+     */
     public record SaveRequest(String name, String apiProtocol, String baseUrl, String model,
-                              String reasoningEffort, String apiKey, Boolean webSearch) {
+                              String reasoningEffort, String apiKey, Boolean webSearch, Integer contextWindow) {
         LlmEndpointService.SaveReq toReq() {
-            return new LlmEndpointService.SaveReq(name, apiProtocol, baseUrl, model, reasoningEffort, apiKey, webSearch);
+            return new LlmEndpointService.SaveReq(name, apiProtocol, baseUrl, model, reasoningEffort, apiKey,
+                    webSearch, contextWindow);
         }
     }
 
@@ -51,7 +56,7 @@ public class LlmEndpointController {
 
     private EndpointView view(UserLlmEndpoint e) {
         return new EndpointView(e.getId(), e.getName(), e.getApiProtocol(), e.getBaseUrl(), e.getModel(),
-                e.getReasoningEffort(), Boolean.TRUE.equals(e.getWebSearch()),
+                e.getReasoningEffort(), Boolean.TRUE.equals(e.getWebSearch()), e.getContextWindow(),
                 service.keyTail(e), Boolean.TRUE.equals(e.getIsDefault()));
     }
 

@@ -18,6 +18,7 @@ agent:
     protocolRequired: apiProtocol is required
     protocolInvalid: The protocol must be openai, responses, anthropic or gemini
     effortTooLong: "The reasoning level is at most {{max}} characters; leave it blank to omit it"
+    contextWindowInvalid: "The context window must be between {{min}}K and {{max}}K"
     apiKeyRequired: apiKey is required
     connectFailed: "Model connectivity test failed: {{reason}}"
     # Endpoints with web search ticked: both the connectivity test and saving probe search once

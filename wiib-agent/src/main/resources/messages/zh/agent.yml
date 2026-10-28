@@ -18,6 +18,7 @@ agent:
     protocolRequired: apiProtocol不能为空
     protocolInvalid: 协议仅支持 openai / responses / anthropic / gemini
     effortTooLong: "思考档位最长 {{max}} 字符，留空=不传"
+    contextWindowInvalid: "上下文窗口需在 {{min}}K ~ {{max}}K 之间"
     apiKeyRequired: apiKey不能为空
     connectFailed: "模型连通性测试失败：{{reason}}"
     # 勾了联网搜索的端点：测试连通性和保存时都会探一次搜索

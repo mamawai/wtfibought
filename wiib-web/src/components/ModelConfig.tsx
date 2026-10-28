@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Trans, useTranslation } from 'react-i18next';
 import { Bot, KeyRound, Loader2, MessagesSquare, Pencil, Plus, Rocket, Sparkles, Star, Trash2, X } from 'lucide-react';
 import { llmEndpointApi, traderApi, workbenchApi } from '../api';
-import { LlmEndpointForm, type LlmEndpointValue } from './LlmEndpointForm';
+import { DEFAULT_CONTEXT_WINDOW, LlmEndpointForm, type LlmEndpointValue } from './LlmEndpointForm';
 import { LlmEndpointSelect } from './LlmEndpointSelect';
 import { Button } from './ui/button';
 import { useToast } from './ui/use-toast';
@@ -12,7 +12,10 @@ import { cn } from '../lib/utils';
 import type { LlmBindings, LlmEndpointView, LlmPurpose, TraderOwnerView, WorkbenchPrefs } from '../types';
 
 // webSearch 默认勾上：能声明搜索的协议就声明，保存时探测，上游不支持会拦下请用户取消勾选；openai 协议后端归一 false
-const EMPTY: LlmEndpointValue = { name: '', apiProtocol: 'openai', baseUrl: '', model: '', reasoningEffort: '', apiKey: '', webSearch: true };
+const EMPTY: LlmEndpointValue = {
+  name: '', apiProtocol: 'openai', baseUrl: '', model: '', reasoningEffort: '', apiKey: '', webSearch: true,
+  contextWindow: DEFAULT_CONTEXT_WINDOW,
+};
 
 /** 一条端点被谁用着：主标签 + 是否经"默认"落到它头上 */
 interface Usage { label: string; viaDefault: boolean; }
@@ -90,7 +93,7 @@ export function ModelConfig() {
     setForm({
       name: e.name, apiProtocol: e.apiProtocol, baseUrl: e.baseUrl, model: e.model,
       reasoningEffort: e.reasoningEffort ?? '', apiKey: '',   // 明文 key 不出服务端，改 key 才填
-      webSearch: e.webSearch,
+      webSearch: e.webSearch, contextWindow: e.contextWindow,
     });
     setEditing({ id: e.id, keyTail: e.apiKeyTail });
   };
@@ -201,7 +204,7 @@ export function ModelConfig() {
                       )}
                     </div>
                     <div className="text-[10px] text-muted-foreground num truncate mt-0.5">
-                      {e.apiProtocol}{e.webSearch ? '+search' : ''} · {e.baseUrl} · {t('model.effortTail', {
+                      {e.apiProtocol}{e.webSearch ? '+search' : ''} · {e.baseUrl} · {e.contextWindow / 1000}K · {t('model.effortTail', {
                         effort: e.reasoningEffort || t('effort.default'), tail: e.apiKeyTail,
                       })}
                     </div>

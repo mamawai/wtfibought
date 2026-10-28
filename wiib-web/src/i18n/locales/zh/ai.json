@@ -599,6 +599,8 @@
     "effort": "思考档位",
     "effortPh": "留空=不传；可填 none / low / medium / high / xhigh…",
     "effortHint": "留空＝不传这个参数，用模型自己的默认行为；也可以填模型认的其他档位（如 xhigh、minimal）。不是所有模型都认这个参数——认不认没法提前查出来，填完点「测试连通性」试一下最稳。",
+    "contextWindow": "上下文窗口",
+    "contextWindowHint": "研判对话用这个端点当主模型时，上下文用量达到它的 90%，下一轮开始前会自动整理上下文。填模型实际窗口或略小一点（一轮里用量还会接着涨），范围 128K–1000K（1M）。",
     "webSearch": "联网搜索",
     "webSearchHint": "在请求里声明该协议的服务端搜索工具。保存和测试连通性时会先探一次，上游不支持就拦下，请取消勾选。只有研判对话的主模型与调研子 agent 会用它，交易员与行情分析子 agent 不受影响。搜索会计入上游用量。",
     "webSearchOpenAiHint": "openai 协议没有标准的服务端搜索；要联网搜索请选 responses / anthropic / gemini",

@@ -17,7 +17,14 @@ export interface LlmEndpointValue {
   apiKey: string;
   /** 服务端联网搜索（responses / anthropic / gemini 协议可勾；openai 协议下后端归一 false） */
   webSearch: boolean;
+  /** 上下文窗口（token），界面按 K 填 */
+  contextWindow: number;
 }
+
+/** 上下文窗口默认 256K；界面上的范围 128K–1000K，与后端 LlmEndpointService 同口径 */
+export const DEFAULT_CONTEXT_WINDOW = 256_000;
+const CONTEXT_WINDOW_MIN_K = 128;
+const CONTEXT_WINDOW_MAX_K = 1000;
 
 const PROTOCOLS = ['openai', 'responses', 'anthropic', 'gemini'];
 /** 各协议的 Base URL 示例，只是占位不是白名单 */
@@ -41,8 +48,8 @@ export interface LlmEndpointFormProps {
   onDetect: () => Promise<string[]>;
   /** 连通性探测 */
   onTest: () => Promise<void>;
-  /** 不显示联网搜索那块（Admin 平台位没有搜索这回事） */
-  noWebSearch?: boolean;
+  /** Admin 平台位：没有联网搜索、上下文窗口这两项 */
+  platform?: boolean;
 }
 
 /**
@@ -53,7 +60,7 @@ export interface LlmEndpointFormProps {
  * keyTail={exists ? mine?.apiKeyTail : undefined}，一旦 apiKeyTail 恰好是 undefined，
  * 推导出的 exists 就翻成 false，key 突然变必填、"留空=不换"提示消失。
  */
-export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, onTest, noWebSearch }: LlmEndpointFormProps) {
+export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, onTest, platform }: LlmEndpointFormProps) {
   const { toast } = useToast();
   const { t } = useTranslation('ai');
   const [models, setModels] = useState<string[]>([]);
@@ -168,9 +175,26 @@ export function LlmEndpointForm({ value, onChange, exists, keyTail, onDetect, on
         </span>
       </div>
 
+      {/* 上下文窗口：按 K 填、按 token 存；清空时存 0，交给后端报范围 */}
+      {!platform && (
+        <label className="block space-y-1 text-xs">
+          <span className="text-muted-foreground font-bold">{t('endpoint.contextWindow')}</span>
+          <span className="flex items-center gap-1.5 w-36">
+            <input type="number" min={CONTEXT_WINDOW_MIN_K} max={CONTEXT_WINDOW_MAX_K} step={1}
+                   value={value.contextWindow ? value.contextWindow / 1000 : ''}
+                   onChange={e => onChange({
+                     contextWindow: e.target.value === '' ? 0 : Math.round(Number(e.target.value) * 1000),
+                   })}
+                   className="flex-1 min-w-0 h-9 rounded-lg border border-border bg-card-2 px-3 text-xs num" />
+            <span className="text-muted-foreground font-bold num">K</span>
+          </span>
+          <span className="text-[10px] text-muted-foreground/70 block">{t('endpoint.contextWindowHint')}</span>
+        </label>
+      )}
+
       {/* 服务端联网搜索：能声明搜索工具的协议才有勾选框（chat-completions 没有标准的服务端搜索）。
           端点支不支持查不到，与档位同理由用户自己勾；只有对话的主 agent 与调研子 agent 会用它 */}
-      {noWebSearch ? null : SEARCHABLE.has(value.apiProtocol) ? (
+      {platform ? null : SEARCHABLE.has(value.apiProtocol) ? (
         <label className="flex items-start gap-2 text-xs cursor-pointer select-none">
           <input type="checkbox" checked={value.webSearch}
                  onChange={e => onChange({ webSearch: e.target.checked })}

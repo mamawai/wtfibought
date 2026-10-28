@@ -69,7 +69,13 @@ class LlmEndpointServiceTest {
     }
 
     private static LlmEndpointService.SaveReq req(String protocol, String effort, String key, Boolean webSearch) {
-        return new LlmEndpointService.SaveReq("主力", protocol, "https://8.8.8.8/", " deepseek-chat ", effort, key, webSearch);
+        return req(protocol, effort, key, webSearch, null);
+    }
+
+    private static LlmEndpointService.SaveReq req(String protocol, String effort, String key, Boolean webSearch,
+                                                  Integer contextWindow) {
+        return new LlmEndpointService.SaveReq("主力", protocol, "https://8.8.8.8/", " deepseek-chat ", effort, key,
+                webSearch, contextWindow);
     }
 
     private static final ChatResponse PONG = new ChatResponse(List.of(new Generation(new AssistantMessage("pong"))));
@@ -185,13 +191,30 @@ class LlmEndpointServiceTest {
     @Test
     void 校验挡住内网地址与超长档位与缺key() {
         when(endpointMapper.selectList(any())).thenReturn(List.of());
-        assertThat(service.create(1L, new LlmEndpointService.SaveReq("x", "openai", "http://127.0.0.1:8080", "m", "", "sk", null)))
+        assertThat(service.create(1L, new LlmEndpointService.SaveReq("x", "openai", "http://127.0.0.1:8080", "m", "", "sk", null, null)))
                 .contains("内网");
         assertThat(service.create(1L, req("openai", "seventeen-chars-x", "sk"))).contains("思考档位");   // 17 字符，超列宽
         assertThat(service.create(1L, req("openai", "", ""))).isEqualTo("apiKey不能为空");
-        assertThat(service.create(1L, new LlmEndpointService.SaveReq(" ", "openai", "https://8.8.8.8", "m", "", "sk", null)))
+        assertThat(service.create(1L, new LlmEndpointService.SaveReq(" ", "openai", "https://8.8.8.8", "m", "", "sk", null, null)))
                 .contains("名称");
         verify(endpointMapper, never()).insert(any(UserLlmEndpoint.class));
+    }
+
+    /** 上下文窗口：不填用默认 256K，128K~1M 之外的挡住 */
+    @Test
+    void 上下文窗口不填用默认且挡住范围外的值() {
+        when(endpointMapper.selectList(any())).thenReturn(List.of());
+        when(crypto.encrypt(any())).thenReturn("enc");
+
+        assertThat(service.create(1L, req("openai", "", "sk-x", null, 127_999))).contains("128K");
+        assertThat(service.create(1L, req("openai", "", "sk-x", null, 1_000_001))).contains("1000K");
+        assertThat(service.create(1L, req("openai", "", "sk-x", null, null))).isNull();
+        assertThat(service.create(1L, req("openai", "", "sk-x", null, 1_000_000))).isNull();
+
+        ArgumentCaptor<UserLlmEndpoint> cap = ArgumentCaptor.forClass(UserLlmEndpoint.class);
+        verify(endpointMapper, times(2)).insert(cap.capture());
+        assertThat(cap.getAllValues().get(0).getContextWindow()).isEqualTo(256_000);
+        assertThat(cap.getAllValues().get(1).getContextWindow()).isEqualTo(1_000_000);
     }
 
     @Test

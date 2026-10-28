@@ -714,6 +714,8 @@ export interface LlmEndpointView {
   reasoningEffort: string | null;
   /** 服务端联网搜索（responses / anthropic / gemini 协议端点可开；只有对话的主 agent 与调研子 agent 用它） */
   webSearch: boolean;
+  /** 上下文窗口（token）：对话主模型用到它的 90% 时，下一轮开始前整理上下文 */
+  contextWindow: number;
   apiKeyTail: string;
   /** 默认端点：没按用途绑定的地方都用它 */
   isDefault: boolean;
@@ -728,6 +730,8 @@ export interface LlmEndpointSaveRequest {
   reasoningEffort: string;
   apiKey: string;
   webSearch: boolean;
+  /** 上下文窗口（token），128000~1000000 */
+  contextWindow: number;
 }
 
 /** 用途 → 端点 id；缺的用途 = 跟随默认端点 */

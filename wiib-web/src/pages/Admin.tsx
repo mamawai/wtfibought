@@ -11,7 +11,7 @@ import { Input } from '../components/ui/input';
 import { useToast } from '../components/ui/use-toast';
 import { FeedStreamHealthCard } from '../components/FeedStreamHealthCard';
 import { MonitorCarousel } from '../components/MonitorCarousel';
-import { LlmEndpointForm, type LlmEndpointValue } from '../components/LlmEndpointForm';
+import { DEFAULT_CONTEXT_WINDOW, LlmEndpointForm, type LlmEndpointValue } from '../components/LlmEndpointForm';
 import { runName } from '../components/jev/format';
 import { RefreshCw, Calendar, Plus, Trash2, Pencil, Save, Ban } from 'lucide-react';
 
@@ -471,6 +471,7 @@ export function Admin() {
                   </Button>
                   <Button size="sm" onClick={() => setEditingKey({ form: {
                     name: '', apiProtocol: 'openai', baseUrl: '', model: '', reasoningEffort: '', apiKey: '', webSearch: false,
+                    contextWindow: DEFAULT_CONTEXT_WINDOW,
                   } })}>
                     <Plus className="w-3.5 h-3.5 mr-1" /> {t('admin.llm.add')}
                   </Button>
@@ -497,6 +498,7 @@ export function Admin() {
                   <Button variant="ghost" size="sm" onClick={() => setEditingKey({ id: key.id, form: {
                     name: key.configName, apiProtocol: key.apiProtocol || 'openai', baseUrl: key.baseUrl,
                     model: key.model || '', reasoningEffort: key.reasoningEffort || '', apiKey: key.apiKey, webSearch: false,
+                    contextWindow: DEFAULT_CONTEXT_WINDOW,
                   } })}>
                     <Pencil className="w-3.5 h-3.5" />
                   </Button>
@@ -516,7 +518,7 @@ export function Admin() {
                     key={editingKey.id ?? 'new'}
                     value={editingKey.form}
                     onChange={patch => setEditingKey(prev => prev ? { ...prev, form: { ...prev.form, ...patch } } : prev)}
-                    noWebSearch
+                    platform
                     onDetect={() => adminApi.listAiKeyModels(toKeyConfig(editingKey.id, editingKey.form))}
                     onTest={() => adminApi.testAiKey(toKeyConfig(editingKey.id, editingKey.form))}
                   />
