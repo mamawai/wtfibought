@@ -32,10 +32,12 @@ public final class LlmErrorMessages {
     private static final int MAX_CAUSE_DEPTH = 5;
 
     /** 服务端搜索在各家报错里的叫法（只认小写） */
-    private static final List<String> SEARCH_TERMS = List.of("web_search", "web search", "google_search", "grounding");
+    private static final List<String> SEARCH_TERMS =
+            List.of("web_search", "web search", "google_search", "grounding", "search tool");
     /** 上游拒收搜索工具时的说法（各家措辞不一，只认小写） */
     private static final List<String> SEARCH_REJECTIONS = List.of("not supported", "unsupported", "not enabled",
-            "not allowed", "not available", "does not support", "unknown tool", "invalid tool");
+            "not allowed", "not available", "does not support", "unknown tool", "invalid tool",
+            "supported only when");
 
     private LlmErrorMessages() {
     }

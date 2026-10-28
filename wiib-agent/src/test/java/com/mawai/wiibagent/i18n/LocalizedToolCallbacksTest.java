@@ -115,6 +115,13 @@ class LocalizedToolCallbacksTest {
         assertThat(all).hasSize(10);
     }
 
+    /** 反射的方法顺序每次启动都不一样：出来的工具按名字排，请求、提示缓存、前缀指纹才稳 */
+    @Test
+    void 工具按名字排好() {
+        assertThat(localized.of(AgentLang.ZH, new DemoTools())).extracting(cb -> cb.getToolDefinition().name())
+                .containsExactly("boom_tool", "echo_tool", "interrupted_tool", "untouched_tool", "zh_only_tool");
+    }
+
     /** ReactLoop 执行工具不接异常：抛出去整轮唤醒作废，所以失败必须变成模型看得懂的结果 */
     @Test
     void 工具抛异常_回给模型的是失败结果而不是异常() {

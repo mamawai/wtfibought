@@ -20,6 +20,7 @@ import org.springframework.util.ReflectionUtils;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 import static com.mawai.wiibcommon.util.JsonUtils.MAPPER;
@@ -51,6 +52,7 @@ public class LocalizedToolCallbacks {
      * 扫这些对象上的 {@code @Tool} 方法，出一批带当前语言描述的 callback。
      * 扫描口径与 Spring AI 的 MethodToolCallbackProvider 一致：只认 @Tool 标注的用户声明方法
      * （桥接/合成方法排除，否则泛型工具类会出重名工具）。
+     * 按工具名排好：反射拿到的方法顺序每次启动都不一样，请求里的工具顺序、提示缓存、前缀指纹都要它稳。
      */
     public List<ToolCallback> of(AgentLang lang, Object... toolObjects) {
         List<ToolCallback> callbacks = new ArrayList<>();
@@ -64,6 +66,7 @@ public class LocalizedToolCallbacks {
                 }
             }
         }
+        callbacks.sort(Comparator.comparing(callback -> callback.getToolDefinition().name()));
         return List.copyOf(callbacks);
     }
 

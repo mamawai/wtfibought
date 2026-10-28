@@ -198,7 +198,7 @@ public class ChatAgentFactory {
         UsageTrackingChatModel deep = new UsageTrackingChatModel(models.deep());
         // worker 跑在浅模型上：它的搜索许可看浅模型那条端点
         boolean lightSearch = serverSearch(eps.lightOrDeep());
-        LlmClient client = mainClient(deep, models.deep(), eps.userId(), lang, serverSearch(eps.deep()),
+        LlmClient client = mainClient(deep, models.deep(), eps.userId(), lang, eps.deep(),
                 kind -> newWorker(kind, lang, lightSearch, models.light()));
         return new Leaves(modelLabel(eps.deep()), deep, mainLoop(client, lang), client, lang,
                 eps.deep().getContextWindow());
@@ -225,13 +225,14 @@ public class ChatAgentFactory {
     /**
      * 主 agent 调模型的客户端：深模型 + 全部对话工具，自己取数自己作答，长活派子运行。
      *
-     * @param deepBase  裸深模型，给深研判子运行：它每次自己包账本，不走主轮那本
-     * @param userId    trader 工具（只读与动作）、行为分析、子运行烤死的归属，理由见 {@link TraderQueryToolkit}
-     * @param webSearch 端点声明了服务端搜索：提示词用承诺联网的那版，且每次调用捎搜索许可
-     * @param workers   delegate 按预设现建 worker 的办法
+     * @param deepBase 裸深模型，给深研判子运行：它每次自己包账本，不走主轮那本
+     * @param userId   trader 工具（只读与动作）、行为分析、子运行烤死的归属，理由见 {@link TraderQueryToolkit}
+     * @param endpoint 主模型端点：声明了服务端搜索就用承诺联网的那版提示词、每次调用捎搜索许可；端点身份进前缀指纹
+     * @param workers  delegate 按预设现建 worker 的办法
      */
     private LlmClient mainClient(ChatModel deep, ChatModel deepBase, long userId, AgentLang lang,
-                                 boolean webSearch, java.util.function.Function<WorkerKind, Worker> workers) {
+                                 UserLlmEndpoint endpoint, java.util.function.Function<WorkerKind, Worker> workers) {
+        boolean webSearch = serverSearch(endpoint);
         // 工具的模型在这一层绑死："当前用的是谁的 key"只有这里知道
         return LlmClient.builder()
                 .model(deep)
@@ -246,6 +247,8 @@ public class ChatAgentFactory {
                         new BehaviorToolkit(deep, behaviorAnalysisService, runRegistry, userId, lang),
                         new DelegateToolkit(childRuns, workers, prompts, userId, lang)))
                 .webSearch(webSearch)
+                .origin(String.join("\0", endpoint.getApiProtocol(), endpoint.getBaseUrl(), endpoint.getModel(),
+                        endpoint.getApiKeyEnc()))
                 .maxAttempts(3).initialDelay(500).maxDelay(4000)
                 .build();
     }
@@ -262,7 +265,7 @@ public class ChatAgentFactory {
     }
 
     /**
-     * 按预设现建一个 worker：浅模型 + 预设的只读工具集，独享账本，没有闸门与压缩（任务书短、一次性）。
+     * 按预设现建一个 worker：浅模型 + 预设的只读工具集，独享账本，没有闸门。
      * 每次派发现建而不是建叶子时缓存：账本要独享，循环又是把模型绑死的，只能连循环一起新建。
      *
      * @param lightSearch researcher 的服务端搜索许可：浅模型端点声明了才给

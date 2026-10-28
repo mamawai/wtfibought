@@ -205,6 +205,17 @@ class ChatAgentFactoryTest {
                 .startsWith(ChatModelFactory.fingerprint(config("gpt-5")));
     }
 
+    /** 换了主模型端点（换模型、key 换到别的组织）：前缀指纹跟着变，旧端点留下的加密推理不再原样回放 */
+    @Test
+    void 换主模型端点前缀指纹跟着变() {
+        ChatAgentFactory factory = factory();
+        String base = factory.leavesFor(config("gpt-5"), AgentLang.ZH).mainClient().fingerprint();
+
+        assertThat(factory.leavesFor(config("gpt-5.1"), AgentLang.ZH).mainClient().fingerprint()).isNotEqualTo(base);
+        assertThat(factory.leavesFor(new ChatEndpoints(1L, ChatTestEndpoints.endpoint("gpt-5", "另一把key"), null),
+                AgentLang.ZH).mainClient().fingerprint()).isNotEqualTo(base);
+    }
+
     /** 上下文窗口烤在叶子上，改了要拿新叶子；它同样不进模型指纹，改窗口不重建 SDK 客户端 */
     @Test
     void 改上下文窗口拿到新叶子() {

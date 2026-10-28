@@ -49,6 +49,10 @@ class LlmErrorMessagesTest {
     void 搜索被拒提示关掉联网搜索() {
         assertThat(zh(new RuntimeException("Anthropic API HTTP 400: web search is not enabled for this organization")))
                 .contains("联网搜索");
+        // Gemini 不收"服务端搜索 + 本地工具"这个组合
+        assertThat(zh(new RuntimeException(
+                "Gemini API HTTP 400: Multiple tools are supported only when they are all search tools.")))
+                .contains("联网搜索");
         // 搜索调用和结果配不上对：提到了搜索但不是拒收
         assertThat(zh(new RuntimeException("Anthropic API HTTP 400: messages.1: `web_search` tool use with id "
                 + "`srvtoolu_01B7` was found without a corresponding `web_search_tool_result` block")))

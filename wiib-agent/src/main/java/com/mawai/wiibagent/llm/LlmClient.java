@@ -65,6 +65,7 @@ public class LlmClient {
     /** 工具表：既挂进 options 给模型看，也是 {@link ReactLoop} 执行工具时的查表处 */
     private final List<ToolCallback> tools;
     private final boolean webSearch;
+    private final String origin;
 
     private LlmClient(Builder builder) {
         this.model = builder.model;
@@ -81,6 +82,7 @@ public class LlmClient {
         this.chatOptions = builder.webSearch ? withWebSearch(base, model) : base;
         this.systemMessage = SystemMessage.builder().text(builder.systemPrompt).build();
         this.webSearch = builder.webSearch;
+        this.origin = builder.origin;
     }
 
     public static Builder builder() {
@@ -112,13 +114,13 @@ public class LlmClient {
     }
 
     /**
-     * 每次请求固定带的那段前缀（系统提示词、工具定义、搜索许可）的指纹。
-     * Anthropic 的思考块和这段前缀绑在一起，前缀变了，历史里以前的思考块就对不上了
+     * 每次请求固定带的那段前缀（系统提示词、工具定义、搜索许可）加上背后端点（{@link Builder#origin}）的指纹。
+     * Anthropic 的思考块和这段前缀绑在一起，Responses 的加密推理和组织绑在一起，变了历史里以前的原始内容就对不上了
      */
     public String fingerprint() {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest((prefix() + '\0' + webSearch).getBytes(StandardCharsets.UTF_8)));
+                    .digest((prefix() + '\0' + webSearch + '\0' + origin).getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("JDK 没有 SHA-256", e);
         }
@@ -201,6 +203,13 @@ public class LlmClient {
         private long initialDelayMs = 500;
         private long maxDelayMs = 4000;
         private boolean webSearch;
+        private String origin;
+
+        /** 背后是哪条端点（协议、地址、模型、key 密文拼起来），进 {@link LlmClient#fingerprint}；不需要的 client 不给 */
+        public Builder origin(String origin) {
+            this.origin = origin;
+            return this;
+        }
 
         /**
          * 授权这个 client 使用服务端联网搜索（每次调用都生效）。只给 chat 的主 agent 与 researcher worker 开——

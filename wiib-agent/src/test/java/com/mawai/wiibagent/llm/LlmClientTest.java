@@ -22,6 +22,7 @@ import reactor.core.publisher.Flux;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -79,30 +80,31 @@ class LlmClientTest {
         }
     }
 
-    private LlmClient client(String systemPrompt, boolean withTool, boolean webSearch) {
+    private LlmClient client(String systemPrompt, boolean withTool, boolean webSearch, String origin) {
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
         return LlmClient.builder().model(model).systemPrompt(systemPrompt)
                 .tools(withTool ? List.of(ToolCallbacks.from(new EchoTool())) : List.of())
-                .webSearch(webSearch).build();
+                .webSearch(webSearch).origin(origin).build();
     }
 
-    /** 前缀指纹跟着系统提示词、工具定义、搜索许可走：哪样变了都得变，一样的配置得一样 */
+    /** 前缀指纹跟着系统提示词、工具定义、搜索许可、背后端点走：哪样变了都得变，一样的配置得一样 */
     @Test
-    void 前缀指纹随系统提示词工具和搜索许可变() {
-        String base = client("你是助手", true, false).fingerprint();
+    void 前缀指纹随系统提示词工具搜索许可和端点变() {
+        String base = client("你是助手", true, false, "端点").fingerprint();
 
-        assertThat(client("你是助手", true, false).fingerprint()).isEqualTo(base);
-        assertThat(client("你是分析师", true, false).fingerprint()).isNotEqualTo(base);
-        assertThat(client("你是助手", false, false).fingerprint()).isNotEqualTo(base);
-        assertThat(client("你是助手", true, true).fingerprint()).isNotEqualTo(base);
+        assertThat(client("你是助手", true, false, "端点").fingerprint()).isEqualTo(base);
+        assertThat(client("你是分析师", true, false, "端点").fingerprint()).isNotEqualTo(base);
+        assertThat(client("你是助手", false, false, "端点").fingerprint()).isNotEqualTo(base);
+        assertThat(client("你是助手", true, true, "端点").fingerprint()).isNotEqualTo(base);
+        assertThat(client("你是助手", true, false, "别的端点").fingerprint()).isNotEqualTo(base);
     }
 
     /** 按字数估把系统提示词和工具定义也算上 */
     @Test
     void 估算算上系统提示词和工具定义() {
-        assertThat(client("你是助手", false, false).estimateTokens(ASK)).isEqualTo(4 + ContextUsage.estimate(ASK));
-        assertThat(client("你是助手", true, false).estimateTokens(ASK))
-                .isGreaterThan(client("你是助手", false, false).estimateTokens(ASK));
+        assertThat(client("你是助手", false, false, null).estimateTokens(ASK)).isEqualTo(4 + ContextUsage.estimate(ASK));
+        assertThat(client("你是助手", true, false, null).estimateTokens(ASK))
+                .isGreaterThan(client("你是助手", false, false, null).estimateTokens(ASK));
     }
 
     /** 模型收到的 Prompt 的 options */
@@ -179,23 +181,23 @@ class LlmClientTest {
         assertThat(result.getResult().getOutput().getText()).isEqualTo("重试成功");
     }
 
-    /** 搜索被拒原样抛给上层出提示，流式、阻塞都只发一次 */
+    /** 上游拒收（4xx，如不收搜索工具）流式不重试，原样抛给上层出提示；重试是重订阅，数订阅次数才看得出来 */
     @Test
-    void 搜索被拒时原样抛出不重发() {
+    void 上游拒收时流式不重试原样抛出() {
         when(model.getOptions()).thenReturn(ToolCallingChatOptions.builder().build());
-        when(model.stream(any(Prompt.class))).thenReturn(Flux.error(new NonTransientAiException(
-                "Gemini API HTTP 400: Multiple tools are supported only when they are all search tools.")));
-        when(model.call(any(Prompt.class))).thenThrow(
-                new NonTransientAiException("400: web_search tool is not supported by this model"));
+        AtomicInteger subscriptions = new AtomicInteger();
+        when(model.stream(any(Prompt.class))).thenReturn(Flux.defer(() -> {
+            subscriptions.incrementAndGet();
+            return Flux.error(new NonTransientAiException(
+                    "Gemini API HTTP 400: Multiple tools are supported only when they are all search tools."));
+        }));
         LlmClient client = LlmClient.builder()
                 .model(model).systemPrompt("你是助手").tools(List.of(mock(ToolCallback.class)))
                 .webSearch(true).build();
 
         assertThatThrownBy(() -> client.streamingExecute(ASK, null).collectList().block())
                 .isInstanceOf(NonTransientAiException.class);
-        assertThatThrownBy(() -> client.execute(ASK)).isInstanceOf(NonTransientAiException.class);
-        verify(model, times(1)).stream(any(Prompt.class));
-        verify(model, times(1)).call(any(Prompt.class));
+        assertThat(subscriptions).hasValue(1);
     }
 
     // ========== 中断 ==========
