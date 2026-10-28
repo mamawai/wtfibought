@@ -1,11 +1,14 @@
 from wiib_alpha.data.spot import spot_symbol
 
 # 现货归档里有的对
-SPOT = {"BTCUSDT", "PEPEUSDT", "BONKUSDT", "MOGUSDT", "1000SATSUSDT", "1MBABYDOGEUSDT", "1INCHUSDT", "0GUSDT"}
+SPOT = {"BTCUSDT", "PEPEUSDT", "BONKUSDT", "MOGUSDT", "1000SATSUSDT", "1MBABYDOGEUSDT", "1INCHUSDT", "0GUSDT",
+        "LUNAUSDT", "DODOUSDT"}
 
 
 def test_same_name_first_then_strip_the_multiplier_prefix():
     assert spot_symbol("BTCUSDT", SPOT) == "BTCUSDT"
+    # 改过名的同一个币按别名表
+    assert spot_symbol("LUNA2USDT", SPOT) == "LUNAUSDT" and spot_symbol("DODOXUSDT", SPOT) == "DODOUSDT"
     assert spot_symbol("1000PEPEUSDT", SPOT) == "PEPEUSDT"
     assert spot_symbol("1000BONKUSDT", SPOT) == "BONKUSDT"
     assert spot_symbol("1000000MOGUSDT", SPOT) == "MOGUSDT"
